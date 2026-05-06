@@ -35,6 +35,8 @@ import { verifySeedingManifest } from '../seeding-manifest.js'
 import { ERR, formatErr } from '../error-prefixes.js'
 import { SetupWizard } from '../wizard.js'
 import { verifyForkProof } from '../fork-proof-signing.js'
+import { verifySeedRequestSignature } from '../protocol/seed-request.js'
+import b4a from 'b4a'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -64,7 +66,14 @@ const ENDPOINT_RATE_LIMITS = {
   '/api/wizard/accept-mode': 30,
   '/api/wizard/goto': 30,
   '/api/wizard/reset': 5,
-  '/api/forks/proof': 20 // signed proofs; multiple legitimate publishes may happen but not 60/min
+  '/api/forks/proof': 20, // signed proofs; multiple legitimate publishes may happen but not 60/min
+  // Publisher-signed endpoints — gated by signature, not by API key. Rate
+  // limit per-IP to bound DoS surface from anonymous publishers spending
+  // relay storage/CPU. Numbers chosen to be permissive for legitimate
+  // app workflows while still bounding abuse: a publisher running drop
+  // creation loops at full tilt won't hit 30/min.
+  '/api/v1/seed': 30,
+  '/api/v1/custody/intent': 30
 }
 
 const MAX_DISCOVERY_KEYS = 100
@@ -1552,6 +1561,215 @@ export class RelayAPI extends EventEmitter {
           this.node.broadcastUnseed(body.appKey, body.publisherPubkey, body.signature, body.timestamp)
 
           return this._json(res, { ok: true, message: 'App unseeded and unseed broadcast to network' })
+        }
+
+        // ─── Publisher-signed seed (no operator API key required) ────
+        // Mirrors /seed but verifies a publisher Ed25519 signature over
+        // the canonical v2 seed-request payload (the same scheme the
+        // Protomux SeedProtocol uses). This lets app developers drive
+        // seed acceptance against operator-run relays without holding
+        // the operator's API key — same trust model as /api/v1/unseed,
+        // extended to the publish side. Crucially this is the path that
+        // accepts custodyIntentId/blindContentId/ciphertextRoot and
+        // triggers the auto-emit custody-receipt downstream.
+        if (path === '/api/v1/seed') {
+          if (!this.node.seedingRegistry && !this.node.appLifecycle && !this.node.seedApp) {
+            return this._json(res, { error: 'seedApp not available' }, 503)
+          }
+          if (!body.appKey) return this._json(res, { error: 'appKey required' }, 400)
+          if (!isValidHexKey(body.appKey, 64)) return this._json(res, { error: 'appKey must be 64 hex characters' }, 400)
+          if (!body.publisherPubkey) return this._json(res, { error: 'publisherPubkey required' }, 400)
+          if (!isValidHexKey(body.publisherPubkey, 64)) return this._json(res, { error: 'publisherPubkey must be 64 hex characters' }, 400)
+          if (!body.publisherSignature) return this._json(res, { error: 'publisherSignature required' }, 400)
+          if (!isValidHexKey(body.publisherSignature, 128)) return this._json(res, { error: 'publisherSignature must be 128 hex characters' }, 400)
+
+          // Optional discoveryKeys — if omitted, signature payload uses the
+          // empty-set hash (matches Protomux behavior when array is missing).
+          let discoveryKeys = []
+          if (body.discoveryKeys !== undefined) {
+            if (!Array.isArray(body.discoveryKeys)) return this._json(res, { error: 'discoveryKeys must be an array of 64-hex strings' }, 400)
+            if (body.discoveryKeys.length > MAX_DISCOVERY_KEYS) return this._json(res, { error: 'discoveryKeys exceeds maximum (' + MAX_DISCOVERY_KEYS + ')' }, 400)
+            for (const dk of body.discoveryKeys) {
+              if (typeof dk !== 'string' || !isValidHexKey(dk, 64)) {
+                return this._json(res, { error: 'each discoveryKey must be 64 hex characters' }, 400)
+              }
+            }
+            discoveryKeys = body.discoveryKeys.map(dk => b4a.from(dk, 'hex'))
+          }
+
+          // Reconstruct the canonical seed-request shape that the publisher
+          // signed. Field defaults match Protomux SeedProtocol so a publisher
+          // who only sets appKey + a signature over the empty-defaults
+          // payload still verifies.
+          const replicationFactor = Number.isFinite(body.replicationFactor) ? body.replicationFactor : 3
+          if (replicationFactor < 1 || replicationFactor > 255) return this._json(res, { error: 'replicationFactor must be in [1,255]' }, 400)
+          const maxStorageBytes = Number.isFinite(body.maxStorageBytes) ? body.maxStorageBytes : 500 * 1024 * 1024
+          if (maxStorageBytes < 0) return this._json(res, { error: 'maxStorageBytes must be non-negative' }, 400)
+          const ttlSeconds = Number.isFinite(body.ttlSeconds) ? body.ttlSeconds : 30 * 24 * 3600
+          if (ttlSeconds < 0) return this._json(res, { error: 'ttlSeconds must be non-negative' }, 400)
+          const bountyRate = Number.isFinite(body.bountyRate) ? body.bountyRate : 0
+          if (bountyRate < 0) return this._json(res, { error: 'bountyRate must be non-negative' }, 400)
+          const revocable = body.revocable !== false
+          const unseedFreezeMs = Number.isFinite(body.unseedFreezeMs) && body.unseedFreezeMs > 0 ? Math.floor(body.unseedFreezeMs) : 0
+          const durability = Number.isFinite(body.durability) && body.durability > 0 ? Math.floor(body.durability) : 0
+
+          const sigMsg = {
+            appKey: b4a.from(body.appKey, 'hex'),
+            discoveryKeys,
+            replicationFactor,
+            maxStorageBytes,
+            ttlSeconds,
+            bountyRate,
+            revocable,
+            unseedFreezeMs,
+            durability,
+            publisherPubkey: b4a.from(body.publisherPubkey, 'hex'),
+            publisherSignature: b4a.from(body.publisherSignature, 'hex')
+          }
+          if (!verifySeedRequestSignature(sigMsg)) {
+            return this._json(res, { error: 'INVALID_SIGNATURE: publisher signature does not match canonical seed-request payload (v2 layout)' }, 403)
+          }
+
+          // Translate to the seedApp opts shape — same field set the operator
+          // /seed handler uses, plus the publisher identity recorded for
+          // future authenticated-unseed checks.
+          const seedOpts = {
+            replicas: replicationFactor,
+            maxStorage: maxStorageBytes,
+            ttlDays: Math.max(1, Math.round(ttlSeconds / 86400)),
+            bountyRate,
+            revocable,
+            unseedFreezeMs,
+            durability,
+            publisherPubkey: body.publisherPubkey.toLowerCase(),
+            publisherSignature: body.publisherSignature.toLowerCase()
+          }
+
+          // Optional content metadata — same validation as /seed.
+          if (body.type !== undefined) {
+            const type = this._readContentType(body.type, null)
+            if (!type) return this._json(res, { error: CONTENT_TYPE_ERROR }, 400)
+            seedOpts.type = type
+          }
+          if (body.storageClass !== undefined) {
+            const sc = this._readStorageClass(body.storageClass, null)
+            if (!sc) return this._json(res, { error: STORAGE_CLASS_ERROR }, 400)
+            seedOpts.storageClass = sc
+          }
+          if (body.availabilityClass !== undefined) {
+            const ac = this._readAvailabilityClass(body.availabilityClass, null)
+            if (!ac) return this._json(res, { error: AVAILABILITY_CLASS_ERROR }, 400)
+            seedOpts.availabilityClass = ac
+          }
+          if (body.privacyTier !== undefined) {
+            const tier = this._readPrivacyTier(body.privacyTier, null)
+            if (!tier) return this._json(res, { error: PRIVACY_TIER_ERROR }, 400)
+            seedOpts.privacyTier = tier
+          }
+          if (body.blind !== undefined) {
+            if (typeof body.blind !== 'boolean') return this._json(res, { error: 'blind must be a boolean' }, 400)
+            seedOpts.blind = body.blind
+          }
+
+          // Atomic-custody binding — the whole reason this endpoint exists
+          // for permissionless publishers. Same shape as /seed.
+          for (const field of ['custodyIntentId', 'blindContentId', 'ciphertextRoot']) {
+            if (body[field] !== undefined) {
+              if (typeof body[field] !== 'string' || !isValidHexKey(body[field], 64)) {
+                return this._json(res, { error: `${field} must be 64 hex characters` }, 400)
+              }
+              seedOpts[field] = body[field].toLowerCase()
+            }
+          }
+          if (body.contentVersion !== undefined) {
+            if (!Number.isFinite(body.contentVersion) || body.contentVersion < 0) {
+              return this._json(res, { error: 'contentVersion must be a non-negative number' }, 400)
+            }
+            seedOpts.contentVersion = Math.floor(body.contentVersion)
+          }
+          if (body.retainUntil !== undefined) {
+            if (!Number.isFinite(body.retainUntil) || body.retainUntil < 0) {
+              return this._json(res, { error: 'retainUntil must be a non-negative number' }, 400)
+            }
+            seedOpts.retainUntil = Math.floor(body.retainUntil)
+          }
+          if (body.shardIds !== undefined) {
+            if (!Array.isArray(body.shardIds)) return this._json(res, { error: 'shardIds must be an array' }, 400)
+            seedOpts.shardIds = []
+            for (const shardId of body.shardIds) {
+              if (!Number.isInteger(shardId) || shardId < 0) {
+                return this._json(res, { error: 'shardIds must contain non-negative integers' }, 400)
+              }
+              seedOpts.shardIds.push(shardId)
+            }
+          }
+
+          // If custodyIntentId is supplied, cross-check it against the local
+          // registry: the publisherPubkey on this seed request must match
+          // the publisher who signed the intent. Stops a publisher from
+          // anchoring their own appKey to someone else's intent.
+          if (seedOpts.custodyIntentId && this.node.seedingRegistry?.getCustodyIntent) {
+            try {
+              const intent = this.node.seedingRegistry.getCustodyIntent(seedOpts.custodyIntentId)
+              if (intent && intent.publisherPubkey &&
+                  intent.publisherPubkey.toLowerCase() !== body.publisherPubkey.toLowerCase()) {
+                return this._json(res, {
+                  error: 'CUSTODY_PUBLISHER_MISMATCH: seed publisherPubkey does not match the publisher who signed this custodyIntentId'
+                }, 403)
+              }
+            } catch (_) { /* registry lookup is best-effort here */ }
+          }
+
+          try {
+            const result = await this.node.seedApp(body.appKey, seedOpts)
+            return this._json(res, { ok: true, ...result })
+          } catch (err) {
+            return this._json(res, { error: err.message || String(err) }, 400)
+          }
+        }
+
+        // ─── Publisher-signed custody pipeline (no operator API key) ─
+        // Each entry is itself Ed25519-signed by the publisher (the
+        // signature lives on body.signature). The relay's
+        // _verifiedCustodyEntry validates the embedded signature before
+        // append, so the publisher's signing key IS the authorization.
+        // We pass `null` as the keypair so the registry refuses to
+        // fall back to relay-side signing — body MUST be pre-signed.
+        if (path === '/api/v1/custody/intent') {
+          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
+          if (!body.signature) return this._json(res, { error: 'signature required (entry must be publisher-signed; see custody-signing.createCustodyIntent)' }, 400)
+          try {
+            const entry = await this.node.seedingRegistry.publishCustodyIntent(body, null)
+            return this._json(res, { ok: true, ...entry })
+          } catch (err) {
+            return this._json(res, { error: err.message || String(err) }, 400)
+          }
+        }
+
+        if (path.startsWith('/api/v1/custody/') && path.endsWith('/commit')) {
+          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
+          const intentId = path.slice('/api/v1/custody/'.length, -'/commit'.length)
+          if (!isValidHexKey(intentId, 64)) return this._json(res, { error: 'intentId must be 64 hex characters' }, 400)
+          if (!body.signature) return this._json(res, { error: 'signature required (entry must be publisher-signed)' }, 400)
+          try {
+            const entry = await this.node.seedingRegistry.publishCustodyCommit({ ...body, intentId }, null)
+            return this._json(res, { ok: true, ...entry })
+          } catch (err) {
+            return this._json(res, { error: err.message || String(err) }, 400)
+          }
+        }
+
+        if (path.startsWith('/api/v1/custody/') && path.endsWith('/source-retired')) {
+          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
+          const intentId = path.slice('/api/v1/custody/'.length, -'/source-retired'.length)
+          if (!isValidHexKey(intentId, 64)) return this._json(res, { error: 'intentId must be 64 hex characters' }, 400)
+          if (!body.signature) return this._json(res, { error: 'signature required (entry must be publisher-signed)' }, 400)
+          try {
+            const entry = await this.node.seedingRegistry.publishSourceRetired({ ...body, intentId }, null)
+            return this._json(res, { ok: true, ...entry })
+          } catch (err) {
+            return this._json(res, { error: err.message || String(err) }, 400)
+          }
         }
 
         // ─── Live Management API (requires API key or localhost) ─────

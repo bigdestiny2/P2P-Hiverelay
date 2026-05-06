@@ -42,7 +42,10 @@ test('client.publishCustodyIntent: POSTs intent to /api/custody/intent with API 
       t.is(calls.length, 1)
       t.is(calls[0].url, 'http://relay.example:9100/api/custody/intent')
       t.is(calls[0].opts.method, 'POST')
-      t.is(calls[0].opts.headers['X-API-Key'], 'test-key')
+      // Server reads only Authorization: Bearer (api.js _checkAuth, line 248).
+      // X-API-Key was the previous (broken) header — silently ignored.
+      t.is(calls[0].opts.headers.Authorization, 'Bearer test-key')
+      t.absent(calls[0].opts.headers['X-API-Key'], 'X-API-Key must NOT be set')
       const body = JSON.parse(calls[0].opts.body)
       t.is(body.blindContentId, 'b-1')
     }

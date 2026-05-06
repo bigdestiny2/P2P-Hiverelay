@@ -303,29 +303,7 @@ export class SeedProtocol extends EventEmitter {
   }
 
   _verifyRequestSignature (msg) {
-    if (!msg.publisherPubkey || !msg.publisherSignature) return false
-
-    // Try v2 layout first (includes revocable + unseedFreezeMs in the
-    // signed bytes). If that fails, fall back to v1 — necessary because
-    // older clients sign without those fields and we want them to keep
-    // working until they upgrade.
-    const v2 = this._serializeForSigning(msg)
-    if (sodium.crypto_sign_verify_detached(msg.publisherSignature, v2, msg.publisherPubkey)) {
-      return true
-    }
-
-    // Only allow v1 fallback for the fully-permissive default — revocable,
-    // no freeze, standard durability. A v1 signature cannot legitimately
-    // commit to ANY of the newer fields, so if a client claims a non-default
-    // value while presenting a v1-shaped signature, that's a protocol
-    // violation and the relay rejects.
-    if (msg.revocable === false ||
-        (msg.unseedFreezeMs && msg.unseedFreezeMs > 0) ||
-        (msg.durability && msg.durability > 0)) {
-      return false
-    }
-    const v1 = this._serializeForSigningLegacy(msg)
-    return sodium.crypto_sign_verify_detached(msg.publisherSignature, v1, msg.publisherPubkey)
+    return verifySeedRequestSignature(msg)
   }
 
   _verifyAcceptSignature (msg) {
@@ -335,69 +313,11 @@ export class SeedProtocol extends EventEmitter {
   }
 
   _serializeForSigning (msg) {
-    const parts = [msg.appKey]
-
-    // Hash discoveryKeys array to prevent tampering
-    // This ensures the entire array is committed to, not just individual elements
-    const discoveryKeysHash = b4a.alloc(32)
-    if (msg.discoveryKeys && msg.discoveryKeys.length > 0) {
-      const dkConcat = b4a.concat(msg.discoveryKeys)
-      sodium.crypto_generichash(discoveryKeysHash, dkConcat)
-    }
-    parts.push(discoveryKeysHash)
-
-    // Layout (40 bytes):
-    //   [0]      replicationFactor (uint8)
-    //   [1]      revocable flag    (uint8: 1=revocable, 0=non-revocable)
-    //   [2]      durability tier   (uint8: 0=standard, 1=archive, ...)
-    //   [3..7]   reserved          (zeros for forward-compat)
-    //   [8..15]  maxStorageBytes   (uint64 BE)
-    //   [16..23] ttlSeconds        (uint64 BE)
-    //   [24..27] bountyRate        (uint32 BE)
-    //   [28..35] unseedFreezeMs    (uint64 BE)
-    //   [36..39] reserved          (zeros)
-    //
-    // Bytes 0..27 match the original v1 layout — older verifiers that only
-    // read 28 bytes still see the same prefix. Bytes 28..35 carry the freeze
-    // period; bytes 36..39 are reserved (zero-padded — durability lives in
-    // byte 2 of the prefix, picked up by parsers that read the full 40
-    // bytes). Older publishers omit the trailing bytes entirely.
-    //
-    // Backward compatibility: _verifyRequestSignature falls back to v1
-    // (28-byte) verification if v2 fails AND the request advertised the
-    // permissive defaults (revocable=true, freeze=0, durability=standard).
-    const meta = b4a.alloc(40)
-    const view = new DataView(meta.buffer, meta.byteOffset)
-    view.setUint8(0, msg.replicationFactor)
-    view.setUint8(1, msg.revocable === false ? 0 : 1)
-    view.setUint8(2, msg.durability || 0)
-    view.setBigUint64(8, BigInt(msg.maxStorageBytes))
-    view.setBigUint64(16, BigInt(msg.ttlSeconds))
-    view.setUint32(24, msg.bountyRate || 0)
-    view.setBigUint64(28, BigInt(msg.unseedFreezeMs || 0))
-    parts.push(meta)
-    return b4a.concat(parts)
+    return serializeSeedRequestForSigning(msg)
   }
 
-  // Legacy v1 signing layout — 28 bytes, no revocability fields.
-  // Used as a fallback during signature verification so seed requests
-  // signed by older clients (running pre-revocability code) still verify.
   _serializeForSigningLegacy (msg) {
-    const parts = [msg.appKey]
-    const discoveryKeysHash = b4a.alloc(32)
-    if (msg.discoveryKeys && msg.discoveryKeys.length > 0) {
-      const dkConcat = b4a.concat(msg.discoveryKeys)
-      sodium.crypto_generichash(discoveryKeysHash, dkConcat)
-    }
-    parts.push(discoveryKeysHash)
-    const meta = b4a.alloc(28)
-    const view = new DataView(meta.buffer, meta.byteOffset)
-    view.setUint8(0, msg.replicationFactor)
-    view.setBigUint64(8, BigInt(msg.maxStorageBytes))
-    view.setBigUint64(16, BigInt(msg.ttlSeconds))
-    view.setUint32(24, msg.bountyRate || 0)
-    parts.push(meta)
-    return b4a.concat(parts)
+    return serializeSeedRequestForSigningLegacy(msg)
   }
 
   _evictStaleNonces () {
@@ -429,4 +349,110 @@ export class SeedProtocol extends EventEmitter {
     this.acceptedSeeds.clear()
     this.rateLimiter.destroy()
   }
+}
+
+/**
+ * Canonical v2 serialization of a seed request for publisher signing.
+ *
+ * Layout (40 bytes after appKey + hash(discoveryKeys)):
+ *   [0]      replicationFactor (uint8)
+ *   [1]      revocable flag    (uint8: 1=revocable, 0=non-revocable)
+ *   [2]      durability tier   (uint8: 0=standard, 1=archive, ...)
+ *   [3..7]   reserved          (zeros for forward-compat)
+ *   [8..15]  maxStorageBytes   (uint64 BE)
+ *   [16..23] ttlSeconds        (uint64 BE)
+ *   [24..27] bountyRate        (uint32 BE)
+ *   [28..35] unseedFreezeMs    (uint64 BE)
+ *   [36..39] reserved          (zeros)
+ *
+ * Bytes 0..27 match the original v1 layout — older verifiers that only
+ * read 28 bytes still see the same prefix. Older publishers omit the
+ * trailing bytes entirely; verifySeedRequestSignature falls back to v1
+ * (28-byte) verification when the request advertised the permissive
+ * defaults.
+ *
+ * Exported so the REST layer (api.js /api/v1/seed) can verify
+ * publisher-signed seed requests without instantiating SeedProtocol.
+ */
+export function serializeSeedRequestForSigning (msg) {
+  const parts = [msg.appKey]
+
+  const discoveryKeysHash = b4a.alloc(32)
+  if (msg.discoveryKeys && msg.discoveryKeys.length > 0) {
+    const dkConcat = b4a.concat(msg.discoveryKeys)
+    sodium.crypto_generichash(discoveryKeysHash, dkConcat)
+  }
+  parts.push(discoveryKeysHash)
+
+  const meta = b4a.alloc(40)
+  const view = new DataView(meta.buffer, meta.byteOffset)
+  view.setUint8(0, msg.replicationFactor)
+  view.setUint8(1, msg.revocable === false ? 0 : 1)
+  view.setUint8(2, msg.durability || 0)
+  view.setBigUint64(8, BigInt(msg.maxStorageBytes))
+  view.setBigUint64(16, BigInt(msg.ttlSeconds))
+  view.setUint32(24, msg.bountyRate || 0)
+  view.setBigUint64(28, BigInt(msg.unseedFreezeMs || 0))
+  parts.push(meta)
+  return b4a.concat(parts)
+}
+
+/**
+ * Legacy v1 (28-byte) serialization. Kept for backward compatibility — used
+ * by verifySeedRequestSignature as a fallback when the v2 verify fails AND
+ * the request advertised permissive defaults.
+ */
+export function serializeSeedRequestForSigningLegacy (msg) {
+  const parts = [msg.appKey]
+  const discoveryKeysHash = b4a.alloc(32)
+  if (msg.discoveryKeys && msg.discoveryKeys.length > 0) {
+    const dkConcat = b4a.concat(msg.discoveryKeys)
+    sodium.crypto_generichash(discoveryKeysHash, dkConcat)
+  }
+  parts.push(discoveryKeysHash)
+  const meta = b4a.alloc(28)
+  const view = new DataView(meta.buffer, meta.byteOffset)
+  view.setUint8(0, msg.replicationFactor)
+  view.setBigUint64(8, BigInt(msg.maxStorageBytes))
+  view.setBigUint64(16, BigInt(msg.ttlSeconds))
+  view.setUint32(24, msg.bountyRate || 0)
+  parts.push(meta)
+  return b4a.concat(parts)
+}
+
+/**
+ * Verify a seed request's publisher signature.
+ *
+ * `msg` must have publisherPubkey (Buffer 32) + publisherSignature
+ * (Buffer 64) + the seed-request fields covered by the canonical
+ * serialization (appKey, discoveryKeys[], replicationFactor,
+ * maxStorageBytes, ttlSeconds, bountyRate, and optionally revocable,
+ * unseedFreezeMs, durability).
+ *
+ * Returns true if the v2 layout verifies, OR if the v1 (legacy) layout
+ * verifies AND the request advertised the permissive defaults — same
+ * back-compat behavior the Protomux protocol uses.
+ *
+ * Exported so the REST layer (api.js /api/v1/seed) can verify
+ * publisher-signed seed requests without instantiating SeedProtocol.
+ */
+export function verifySeedRequestSignature (msg) {
+  if (!msg || !msg.publisherPubkey || !msg.publisherSignature) return false
+
+  const v2 = serializeSeedRequestForSigning(msg)
+  if (sodium.crypto_sign_verify_detached(msg.publisherSignature, v2, msg.publisherPubkey)) {
+    return true
+  }
+
+  // v1 fallback: only allowed when the request claims the permissive
+  // defaults. A v1 signature CANNOT legitimately commit to non-default
+  // revocability/freeze/durability — claiming those with a v1-shaped
+  // signature is a protocol violation and we reject.
+  if (msg.revocable === false ||
+      (msg.unseedFreezeMs && msg.unseedFreezeMs > 0) ||
+      (msg.durability && msg.durability > 0)) {
+    return false
+  }
+  const v1 = serializeSeedRequestForSigningLegacy(msg)
+  return sodium.crypto_sign_verify_detached(msg.publisherSignature, v1, msg.publisherPubkey)
 }

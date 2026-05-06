@@ -1910,7 +1910,11 @@ export class HiveRelayClient extends EventEmitter {
     }
     const base = relayUrl.replace(/\/+$/, '')
     const headers = { 'Content-Type': 'application/json' }
-    if (opts.apiKey) headers['X-API-Key'] = opts.apiKey
+    // RelayAPI._checkAuth (packages/core/core/relay-node/api.js) reads ONLY
+    // `req.headers.authorization` and requires `Bearer <key>`. The previous
+    // X-API-Key header was silently ignored by every v0.8.x relay; no SDK
+    // call to a custody POST endpoint with apiKey would ever authenticate.
+    if (opts.apiKey) headers.Authorization = 'Bearer ' + opts.apiKey
     const res = await _fetchJson(base + path, {
       method: 'POST',
       headers,
