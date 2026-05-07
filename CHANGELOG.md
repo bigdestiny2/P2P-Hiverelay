@@ -6,22 +6,16 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
-## [0.6.0] — Unreleased (in `feat/umbrel-app` branch)
+## [0.6.0] — 2026-04-28
 
-The v0.6.0 pipeline. Three thematic chunks: Umbrel App Store packaging
-(consumer brand: Blindspark), threat-model security infrastructure, and
-audit-driven hardening that addresses every issue from a comprehensive
-post-implementation security audit.
+The v0.6.0 pipeline. Two thematic chunks: threat-model security
+infrastructure, and audit-driven hardening that addresses every issue
+from a comprehensive post-implementation security audit.
 
-**~10,000 lines added across 9 commits, 354 new tests, all passing.**
+**Threat-model + audit work landed across 9 commits, 354 new tests, all passing.**
 
-### Added — Umbrel App Store package
+### Added — First-run setup wizard
 
-- `umbrel-app/` directory with submission-ready `umbrel-app.yml`,
-  `docker-compose.yml`, `README.md`, `SUBMISSION-CHECKLIST.md`,
-  placeholder icon + gallery
-- Consumer brand: **Blindspark** (internal package names stay
-  `p2p-hiverelay` until v0.7.0 dedicated rebrand)
 - 5-step setup wizard module (`packages/core/core/wizard.js`):
   welcome → relay name → LNbits connect → accept-mode → done
 - Wizard front-end UI (`dashboard/wizard.html`) — self-contained,
@@ -30,11 +24,6 @@ post-implementation security audit.
   → `/dashboard`
 - Updated `Dockerfile` for monorepo paths post-v0.5.0 split; switched
   to Alpine for Pi-class image size
-- CI: `docker-publish.yml` publishes to BOTH `ghcr.io/.../p2p-hiverelay`
-  AND `ghcr.io/.../blindspark` during transition
-- `umbrel-app-validate.yml` CI catches submission breakage on every PR
-- ToS compliance: `category: bitcoin` (lightning isn't valid Umbrel
-  category), 256×256 SVG icon spec, 1440×900 PNG gallery
 
 ### Added — Threat-model security infrastructure
 
@@ -105,8 +94,6 @@ post-implementation security audit.
   bootstrap + foundation network triad
 - `docs/M2-ROADMAP.md` — explicitly scoped M2 deliverables with
   effort estimates and sequencing
-- `umbrel-app/SUBMISSION-CHECKLIST.md` — full compliance audit + PR
-  template ready to paste into the upstream Umbrel App Store repo
 
 ### Notes for operators
 

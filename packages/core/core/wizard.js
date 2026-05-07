@@ -1,9 +1,8 @@
 /**
  * First-run setup wizard — state machine + persistence.
  *
- * Used by the Umbrel App Store package (and any other one-click install
- * surface) to guide a fresh operator from "I just installed this" to
- * "my relay is online and earning sats" in 5 steps:
+ * Guides a fresh operator from "I just installed this" to "my relay
+ * is online and earning sats" in 5 steps:
  *
  *   1. welcome         — user clicks "Let's go"
  *   2. relay_name      — operator picks a name (or accepts default)
@@ -14,7 +13,7 @@
  * State persists to a small JSON file in the storage dir so that:
  *   - Container restarts don't reset wizard progress
  *   - Operators returning mid-wizard pick up where they left off
- *   - Docker volume preservation (Umbrel's default) survives reinstalls
+ *   - Docker volume preservation survives reinstalls
  *
  * The wizard is OPTIONAL — relays started via CLI or env-only configs
  * skip it entirely. The HTTP layer checks `wizard.isComplete()` and
@@ -51,8 +50,8 @@ export class SetupWizard extends EventEmitter {
     this.storagePath = opts.storagePath
     this.defaults = opts.defaults || {}
     // Encryption key source — caller can override for tests, otherwise
-    // we derive from $APP_SEED (Umbrel-provided) or fall back to a
-    // local key file. See _resolveEncryptionKey().
+    // we derive from the host-provided $APP_SEED env var or fall back
+    // to a local key file. See _resolveEncryptionKey().
     this._appSeed = opts.appSeed || process.env.APP_SEED || null
     this._encryptionKey = null // lazily derived on first encrypt/decrypt
     this.state = {
@@ -205,14 +204,14 @@ export class SetupWizard extends EventEmitter {
   }
 
   /**
-   * Configure LNbits connection. URL is usually auto-detected (Umbrel's
-   * internal Docker DNS); admin key is what the operator pastes.
+   * Configure LNbits connection. URL is usually auto-detected via the
+   * host's internal Docker DNS; admin key is what the operator pastes.
    *
    * The adminKey is ENCRYPTED at rest using AES-256-GCM with a key
-   * derived from $APP_SEED (Umbrel-provided) — see _resolveEncryptionKey.
-   * The plaintext lives in memory only between this call and the next
-   * save(); after save(), the plaintext is gone and only ciphertext
-   * remains.
+   * derived from the host-provided $APP_SEED — see
+   * _resolveEncryptionKey. The plaintext lives in memory only between
+   * this call and the next save(); after save(), the plaintext is
+   * gone and only ciphertext remains.
    *
    * Does NOT test the connection here — the HTTP handler should do a
    * live ping before persisting, so the wizard only ever stores credentials
@@ -313,14 +312,15 @@ export class SetupWizard extends EventEmitter {
   // ─── Encryption helpers (private) ────────────────────────────────
   //
   // Two-tier key resolution:
-  //   1. If $APP_SEED is available (Umbrel sets this; deterministic per
-  //      app id), derive the encryption key from it via HKDF-SHA256.
-  //      Reinstalls of the app on the same Umbrel restore the same
-  //      key — operator's saved adminKey survives reinstall.
-  //   2. Otherwise (dev/test/non-Umbrel deploy), generate a random key
-  //      and persist it to <storage>/wizard.key with 0600 perms. Less
-  //      secure than $APP_SEED-derived (key-on-disk vs key-from-env)
-  //      but better than nothing.
+  //   1. If $APP_SEED is available (a deterministic-per-app-id env var
+  //      typically supplied by self-hosting platforms), derive the
+  //      encryption key from it via HKDF-SHA256. Reinstalls of the
+  //      app on the same host restore the same key — operator's saved
+  //      adminKey survives reinstall.
+  //   2. Otherwise (dev/test/bare deploy without an APP_SEED), generate
+  //      a random key and persist it to <storage>/wizard.key with 0600
+  //      perms. Less secure than $APP_SEED-derived (key-on-disk vs
+  //      key-from-env) but better than nothing.
 
   async _resolveEncryptionKey () {
     if (this._encryptionKey) return this._encryptionKey

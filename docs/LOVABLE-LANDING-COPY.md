@@ -211,11 +211,8 @@ npm install -g p2p-hiverelay
 p2p-hiverelay setup
 ```
 
-Or one-click on Umbrel — search **Blindspark** in the App Store.
-
 ### CTAs
 - **Operator guide** → /docs/operator
-- **Umbrel app** → /umbrel-app
 - **Live dashboard preview** → /screenshots
 
 ---

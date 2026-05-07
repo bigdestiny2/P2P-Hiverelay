@@ -10,7 +10,7 @@ A relay network where availability is provable, not promised. Your P2P app stays
 >
 > **v0.8.0** — Atomic Blind Custody is now a first-class signed protocol. AutoHeal recruits archive replicas with cryptographic peer verification. Two new Protomux channels (`hiverelay-anchor`, `hiverelay-custody`) close the HTTPS dependency. Witness Tombstones close the post-expiry serving leak. Read the [whitepaper](./docs/ATOMIC-BLIND-CUSTODY.md), the [components tour](./docs/WHATS-IN-THE-RELAY.md), or the [v0.8.0 release notes](./docs/RELEASE-NOTES-0.8.0.md).
 
-> The relay layer of the Hive substrate. Consumer-facing Umbrel build is branded **Blindspark**. The protocol and SDK retain the HiveRelay name.
+> The relay layer of the Hive substrate.
 
 ---
 
@@ -176,7 +176,7 @@ npm install p2p-hiverelay-client
 
 ## For Operators
 
-You have hardware — a VPS, a Mac Mini, a Raspberry Pi, an Umbrel. HiveRelay turns it into part of a verifiable trust network.
+You have hardware — a VPS, a Mac Mini, a Raspberry Pi. HiveRelay turns it into part of a verifiable trust network.
 
 ### Direct install
 
@@ -188,10 +188,6 @@ p2p-hiverelay start --region NA --operator your-org-name --max-storage 50GB
 ```
 
 The new `--operator` flag is **important** for v0.8.0. Without a stable operator identifier, AutoHeal treats each pubkey as its own operator and the per-operator fairshare cap doesn't activate. Set it to your org / deployment name (`"acme-corp"`, `"foundation-prod"`, etc.).
-
-### One-click install on Umbrel
-
-The consumer-facing build is branded **Blindspark**. Install from the Umbrel App Store, run the setup wizard, start participating.
 
 ### Live Management TUI
 
@@ -361,10 +357,6 @@ Two simulation harnesses cover behaviors unit tests can't reach:
 - **[PEAR-INTEGRATION.md](docs/PEAR-INTEGRATION.md)** — Pear/Bare usage guide
 - **[HOMEHIVE.md](docs/HOMEHIVE.md)** — private mode for home/family
 - **[ECONOMICS.md](docs/ECONOMICS.md)** — economics design
-
-### Umbrel
-- **[umbrel-app/README.md](umbrel-app/README.md)** — operator-facing description
-- **[umbrel-app/SUBMISSION-CHECKLIST.md](umbrel-app/SUBMISSION-CHECKLIST.md)** — pre-submission audit
 
 ---
 

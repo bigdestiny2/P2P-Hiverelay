@@ -124,7 +124,7 @@ Honest accounting of what we ourselves added:
 | 8.2 | `/api/forks/proof` POST | Signed observer attestation required (this commit) | 🟡 (this commit) |
 | 8.3 | `/api/forks/proofs` GET | Public-good info; no defense needed | 🟢 |
 | 8.4 | drive.core.on('truncate') auto-quarantine | Truncate event requires real conflicting blocks; bounded by 4.x prerequisites | 🟢 |
-| 8.5 | Wizard collecting LNbits admin key | Localhost-only + Umbrel app proxy | 🟢 |
+| 8.5 | Wizard collecting LNbits admin key | Localhost-only; reverse-proxy hardening up to operator | 🟢 |
 | 8.6 | pinRelay registry | Constructor + method only mutation paths | 🟢 |
 | 8.7 | Capability doc signature TOCTOU | Each fetch independently verified | 🟢 |
 | 8.8 | ForkDetector bypass log | Only `client.open(force:true)` writes; no remote API | 🟢 |
@@ -150,7 +150,7 @@ Honest accounting of what we ourselves added:
 | 10.2 | Docker Hub / GHCR credential theft | M2: same as 10.1 plus image cosign attestation | 🟠 |
 | 10.3 | Hardware backdoor in operator device | Out of our control; recommend operators choose trusted hardware | 🟢 (disclosed) |
 | 10.4 | Pull-request poisoning | Code review on every PR; no rubber-stamp merges; this strategy doc is reviewed before commit | 🟢 (process) |
-| 10.5 | Phishing fake-app on Umbrel App Store | Umbrel App Store reviewer gate | 🟢 (by design) |
+| 10.5 | Phishing fake-app in third-party app stores | Distribution-channel reviewer gates (when applicable) | 🟢 (by design) |
 | 10.6 | Negative campaign / FUD | Honest threat model + audit transparency (this doc) | 🟢 (by design) |
 
 ---

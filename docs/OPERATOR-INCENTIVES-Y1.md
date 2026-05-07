@@ -31,14 +31,21 @@ The largest cost barrier for new operators is hardware + setup time.
 We eliminate both by targeting installations that **already paid for
 the box**.
 
-**Channel: Umbrel App Store**
+**Channel: self-hosted Bitcoin/Lightning platforms**
 
-- Umbrel install base: ~120,000 globally (best estimate)
+Combined install base across consumer self-hosting platforms (the
+Bitcoin-and-Lightning-node-in-a-box category) is in the low hundreds
+of thousands of devices globally — boxes that are already running
+24/7, already paying for power and internet, and whose owners have
+already opted into self-hosting. That is exactly the operator profile
+HiveRelay needs.
+
+- Combined target install base: ~150,000+ devices globally
 - Tier 1 conversion (Bitcoin/LN-active operators): 40-60%
 - Tier 2 conversion (self-hosted enthusiasts with LN): 15-25%
 - Tier 3 conversion (casual installers): 2-5%
 
-**Year-one funnel (Umbrel App Store inclusion + one-click install +
+**Year-one funnel (one-click install in self-hosting app stores +
 sane defaults):**
 
 | Time after launch | Active relays |
@@ -53,12 +60,8 @@ hardware, already paying for power and internet), even modest sat
 flow > $0 is a positive ROI from week one. This dissolves the operator
 chicken-and-egg problem from the supply side.
 
-Adjacent platforms (Start9, BTCPay Server, Synology, custom Pi
-self-hosters) plausibly add another 10-15k Year 1 relays through the
-same one-click install pattern.
-
 → Detailed funnel math in conversation history; will be canonicalized
-   into `docs/UMBREL-FUNNEL.md` when the App Store launch goes live.
+   into `docs/SELF-HOST-FUNNEL.md` when distribution-channel launches go live.
 
 ### Prong 2: Direct cash subsidy (the founder bootstrap)
 
@@ -97,8 +100,9 @@ makes the crossover predictable, not fragile.
 
 ### Prong 3: Operator-of-last-resort (the foundation network)
 
-Six properties owned by the founder, each running an Umbrel Home 4TB
-with a HiveRelay (Blindspark) install, all federated with each other.
+Six properties owned by the founder, each running a 4TB
+Bitcoin/Lightning node box with a HiveRelay install, all federated
+with each other.
 
 **Coverage:** Japan, Australia, Argentina, Portugal, Sri Lanka, UAE.
 
@@ -128,7 +132,7 @@ Each prong by itself is partial. Together they close the loop:
 
 | Year-one risk | Mitigated by |
 |---|---|
-| No operators show up | Trojan horse — 5-8k pre-installed Umbrel users with zero marginal cost |
+| No operators show up | Trojan horse — 5-8k pre-installed self-hosting users with zero marginal cost |
 | Operators show up but lose money | Founder bootstrap — quarterly USD-equivalent subsidy |
 | Network has gaps in regions or capacity | Foundation network — guaranteed always-on coverage from 6 founder-owned nodes |
 | Subsidy creates dependency | Crossover model — subsidy sunsets as paid demand grows; quality gates prevent gaming |
