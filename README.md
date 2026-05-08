@@ -4,11 +4,11 @@
 
 A relay network where availability is provable, not promised. Your P2P app stays online forever; your encrypted handoffs come with quorum receipts; expiry is enforced by the network and witnessed by independent attesters; and no relay ever sees your plaintext.
 
-**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.8.1**
+**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.8.6**
 
-> **v0.8.1** — Custody hardening: witness tombstones now require a matching non-serving-proof, source retirement is irreversible, redacted catalog no longer leaks `appKey`. See the [v0.8.1 release notes](./docs/RELEASE-NOTES-0.8.1.md).
+> **v0.8.6** — Repo housekeeping + publisher-signed REST endpoints (`/api/v1/seed`, `/api/v1/custody/intent` and friends). Third-party publishers can now drive the seed and atomic-custody pipelines against a public relay without holding the operator's API key. Plus the SDK auth bug in `_postCustody` (silent failure on every 0.8.x relay) is fixed. CI is green for the first time since the v0.8.0 series shipped — lint, audit, docker, and integration tests all clean.
 >
-> **v0.8.0** — Atomic Blind Custody is now a first-class signed protocol. AutoHeal recruits archive replicas with cryptographic peer verification. Two new Protomux channels (`hiverelay-anchor`, `hiverelay-custody`) close the HTTPS dependency. Witness Tombstones close the post-expiry serving leak. Read the [whitepaper](./docs/ATOMIC-BLIND-CUSTODY.md), the [components tour](./docs/WHATS-IN-THE-RELAY.md), or the [v0.8.0 release notes](./docs/RELEASE-NOTES-0.8.0.md).
+> **v0.8.0–v0.8.5** — Atomic Blind Custody as a first-class signed protocol. AutoHeal recruits archive replicas with cryptographic peer verification. Two new Protomux channels (`hiverelay-anchor`, `hiverelay-custody`) close the HTTPS dependency. Witness Tombstones close the post-expiry serving leak. Patch series: custody hardening (0.8.1), `--operator`/`--auto-heal` deploy flags (0.8.2), bug-hunt + `doctor` command (0.8.3), DHT recoverable-error fix (0.8.4), client SDK Bare-runtime compatibility (0.8.5). Read the [whitepaper](./docs/ATOMIC-BLIND-CUSTODY.md), the [components tour](./docs/WHATS-IN-THE-RELAY.md), or the [v0.8.0 release notes](./docs/RELEASE-NOTES-0.8.0.md).
 
 > The relay layer of the Hive substrate.
 
