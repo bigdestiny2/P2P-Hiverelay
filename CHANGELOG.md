@@ -6,6 +6,251 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.5] — 2026-05-06
+
+Client SDK Bare-runtime compatibility fix.
+
+### Fixed
+
+- `p2p-hiverelay-client` was unimportable under Bare/Pear runtime: `pairing.js`
+  imported Node's `crypto` module, which crashed Bare apps at load with
+  `MODULE_NOT_FOUND: crypto`. Caught by the Drop v3 escrow integration team.
+  Fix is two-part:
+  - Replace `crypto.randomBytes(N)` with `sodium.randombytes_buf` via a local
+    helper. Removes the only mass-Node-crypto dependency in `pairing.js`.
+  - Add an `imports` map to `packages/client/package.json` with bare aliases
+    for `events`, `fs/promises`, `path`, and `crypto`. The remaining
+    `crypto.createHmac()` call in `proofFor()` now resolves to `bare-crypto`
+    under Bare and Node's `crypto` otherwise.
+- Pre-existing lint nits in `pairing.js` cleaned up while in the file.
+
+Dependencies bumped: `bare-crypto` `^1.13.4` → `^1.13.6` across the client.
+Added `bare-crypto`, `bare-events`, `bare-fs`, `bare-path` to client direct
+deps (pinned to versions matching core's existing pins).
+
+Smoke-tested under Node: `HiveRelayClient` imports cleanly; all three
+pairing helpers (`generateCode`, `deriveTopic`, `proofFor`) produce correct
+output.
+
+## [0.8.4] — 2026-05-05
+
+DHT error classification fix.
+
+### Fixed
+
+- `DHTError REQUEST_DESTROYED` is now classified as recoverable rather than
+  fatal. Errors from `pearbrowser-desktop`-class consumers and other
+  publishers seeing transient DHT request teardowns no longer escalate to
+  the unrecoverable error path; the relevant connection retry logic
+  proceeds normally.
+
+## [0.8.3] — 2026-05-05
+
+Bug-hunt patch — six fixes from the v0.8.2 operator audit.
+
+### Fixed
+
+- **Null discoveryKey crash on startup (recurring v0.3.0 → v0.8.2).**
+  `AppRegistry.load()` populated `this.apps` with placeholder entries whose
+  `discoveryKey: null`. `seedApp`'s "already seeded — no-op" branch ran
+  first and crashed via `b4a.toString(null, 'hex')`. Fix: when the no-op
+  branch encounters null discoveryKey, fall through to seed for real. Both
+  pre-mutex and post-mutex checks guarded.
+- **EADDRINUSE on self-heal restart caused zombie relay state.** Wrapped
+  API `server.listen()` in exponential-backoff retry (1s/2s/4s/8s/16s, max
+  5 retries). Re-creates server on each retry. Emits `api-bind-retry` events.
+- **Memory threshold too aggressive at 144MB RSS.** V8 routinely runs at
+  95% heap pre-GC. Heap threshold raised 95% → 98%; now requires BOTH
+  high heap AND high RSS (was OR).
+- **`drive.update` retry strategy.** Tail backoff capped at 30s (was 120s);
+  error renamed `eager-replicate-exhausted` with `recoverable: true`;
+  repair monitor interval 10min → 5min default.
+- **`--version` flag** added to the CLI.
+- **`p2p-hiverelay seed <key>` UX** — clearer output explaining replication
+  runs in the background.
+
+### Added
+
+- **`p2p-hiverelay doctor [--fix]`** — diagnose config + runtime drift.
+  Reads `~/.hiverelay/config.json` + the running relay's `/catalog.json`,
+  reports missing regions/operator/autoHeal config, and optionally writes
+  recommendations. Catches v0.8.2-binary-with-v0.7.x-flags drift and
+  similar.
+
+67 / 67 unit tests pass. Lint clean.
+
+## [0.8.2] — 2026-05-05
+
+Operational release for npm publish — packages 0.8.0/0.8.1 work landed in
+git but only a single npm release of the consolidated 0.8.x series was
+needed.
+
+### Added
+
+- **`--operator` and `--auto-heal` CLI flags** wired through to the systemd
+  deploy. The new `--operator` flag is **important for v0.8.0**: without a
+  stable operator identifier, AutoHeal treats each pubkey as its own
+  operator and the per-operator fairshare cap doesn't activate.
+
+### Fixed
+
+- **Deploy CLI path correction**: deploy script was pointing at a pre-monorepo
+  `cli/index.js` location; now correctly references
+  `packages/core/cli/index.js`.
+
+## [0.8.1] — 2026-05-04
+
+Custody hardening patch.
+
+### Added
+
+- **Witness tombstone validation**: tombstones are now checked against a
+  matching non-serving-proof from the same relay before being accepted.
+  Closes a window where a witness could attest "did not see" without the
+  relay confirming "did not serve."
+- **Source retirement is irreversible**: once a publisher has signed
+  `/source-retired`, no further intent / commit / extension on the same
+  intent ID is accepted by any relay.
+- **Redacted-catalog `appKey` hardening**: blind-tier custody entries no
+  longer leak `appKey` in catalog responses. The catalog redactor now
+  scrubs `appKey` along with the previously-scrubbed plaintext fields.
+
+## [0.8.0] — 2026-05-04
+
+Atomic Blind Custody as a first-class signed protocol. AutoHeal recruits
+archive replicas with cryptographic peer verification. Two new Protomux
+channels close the HTTPS dependency. Witness Tombstones close the
+post-expiry serving leak.
+
+See [`docs/RELEASE-NOTES-0.8.0.md`](docs/RELEASE-NOTES-0.8.0.md) and the
+[Atomic Blind Custody whitepaper](docs/ATOMIC-BLIND-CUSTODY.md) for the
+full picture.
+
+### Added
+
+- **Atomic Blind Custody pipeline**: six signed message types (intent,
+  receipt, commit, source-retired, proof, non-serving-proof). The
+  `retainUntil` field is now enforced state — the expiry monitor unseeds
+  at the deadline and the relay signs a non-serving-proof.
+- **Two Protomux channels** carrying the trust pipeline directly over
+  Hyperswarm: `hiverelay-anchor` (anchor proofs for AutoHeal) and
+  `hiverelay-custody` (real-time push of custody entries between connected
+  relays). Pure-DHT and NAT'd fleets no longer require HTTPS for the
+  AutoHeal or custody paths. Hypercore log replication remains the
+  durable backstop.
+- **Witness Tombstones** — independent non-storage witnesses probe a
+  relay's catalog, gateway, and swarm after `retainUntil` and sign over
+  what they observed. Drops undetected post-expiry serving from ~82% to
+  <1% in simulation.
+- **AutoHeal — diversity-enforced replica maintenance**: keeps replicas
+  across ≥4 regions and ≥5 operators. Cryptographic peer verification —
+  peers without fresh anchor proofs don't count toward diversity.
+  `replicaBuffer` of +2 over the SLO floor absorbs transient offline dips.
+  Per-operator fairshare cap prevents sybil clusters from dominating any
+  drive.
+- **Live telemetry** — WebSocket `/ws` dashboard feed surfaces per-drive
+  diversity, custody pipeline health, and immediate event push.
+- **Client SDK custody methods**: `publishCustodyIntent`,
+  `publishCustodyCommit`, `publishSourceRetired`, `recordCustodyProof`,
+  `recordCustodyNonServingProof`, `recordCustodyExpiryWitness`,
+  `getCustodyStatus`.
+
+91 unit tests + a 19-assertion E2E integration test (3 real relays on a
+Hyperswarm testnet, full custody pipeline through real signing, log
+replication, anchoring, expiry, post-expiry tombstone) all green.
+
+## [0.7.3] — 2026-04-28
+
+Drops HiveWorm from the relay core.
+
+### Changed
+
+- **HiveWorm removed from `packages/core`**. The showcase game shipped in
+  v0.7.1 is its own app and doesn't belong in the relay's core surface.
+  Relay nodes no longer maintain HiveWorm-specific state, endpoints, or
+  schema. The example app is preserved at `examples/hiveworm-app/`.
+
+### Added
+
+- **Publisher-side revocability commitments**: new opt-in seed flags
+  `revocable: false` (publisher commits to never unseeding) and
+  `unseedFreezeMs` (publisher commits to a minimum lock period). Lets
+  apps make on-the-record durability promises that future-them cannot
+  silently break.
+
+## [0.7.2] — 2026-04-28
+
+TUI cleanup release.
+
+### Fixed
+
+- TUI management console: deprecated and missing surfaces cleaned up.
+  `manage` / `tui` now surfaces only the dashboards backed by the v0.7.0
+  capability set.
+
+### Added
+
+- `docs/V0.7-KNOWN-LIMITATIONS.md` — explicit catalogue of v0.7's known
+  gaps with follow-up plan; useful for operators sizing v0.7.x deploy vs
+  waiting for v0.8.
+
+## [0.7.1] — 2026-04-28
+
+HiveWorm — first showcase game on the relay network.
+
+### Added
+
+- HiveWorm game (slither-style multiplayer) shipped as the relay
+  network's first showcase app. Backend schema + state + endpoints,
+  with a browser front-end that talks to any relay's gateway.
+
+(Subsequently removed from relay core in v0.7.3 and rebuilt as a pure-P2P
+browser app on top of `window.pear.swarm.v1`.)
+
+## [0.7.0] — 2026-04-28
+
+Anchor proofs and follow-anchored discovery.
+
+### Added
+
+- **Signed anchor proofs**: relays sign a fresh Ed25519 anchor proof
+  declaring their current state. Used by AutoHeal (v0.8.0) to gate replica
+  diversity counting.
+- **Follow-anchored discovery**: relays follow each other's anchor history
+  via federation gossip; new relays joining a region pull the latest
+  anchored state from peers rather than re-deriving it from scratch.
+- **Cold-start primer**: relays without persistent state can request a
+  primer pack from a known-good peer to reach steady-state in seconds
+  rather than minutes.
+
+## [0.6.3] — 2026-04-28
+
+Cross-relay block replication via the self-heal repair loop.
+
+### Added
+
+- The self-heal repair loop now actively replicates Hypercore blocks
+  between relays in the same drive's quorum, not just metadata. Recovers
+  from per-relay block loss without operator intervention.
+
+## [0.6.2] — 2026-04-28
+
+Patch release on the v0.6 line.
+
+### Fixed
+
+- Internal stability improvements in the self-heal scheduler and quorum
+  diversity calculation. No public API changes.
+
+## [0.6.1] — 2026-04-28
+
+Patch release on the v0.6 line.
+
+### Fixed
+
+- Internal stability improvements following the v0.6.0 ship; no public
+  API changes.
+
 ## [0.6.0] — 2026-04-28
 
 The v0.6.0 pipeline. Two thematic chunks: threat-model security
