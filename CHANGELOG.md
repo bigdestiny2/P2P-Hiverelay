@@ -6,6 +6,85 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.6] — 2026-05-08
+
+Repo-housekeeping release that lands three substantial PRs and brings CI
+back to green for the first time since the v0.8.0 series shipped.
+
+### Added
+
+- **Publisher-signed REST endpoints**: `POST /api/v1/seed`,
+  `POST /api/v1/custody/intent`, `POST /api/v1/custody/{intentId}/commit`,
+  `POST /api/v1/custody/{intentId}/source-retired`. Each accepts a
+  publisher Ed25519 signature over the canonical v2 payload — the
+  publisher's signature **is** the authorization, no operator API key
+  required. Completes the symmetry started by `/api/v1/unseed` and makes
+  the "permissionless public relay" model promised by
+  `docs/ATOMIC-BLIND-CUSTODY.md` actually reachable from third-party
+  apps.
+- Cross-check on `/api/v1/seed`: if the body contains `custodyIntentId`,
+  the publisher pubkey must match the publisher who originally signed
+  that intent. Stops a publisher from anchoring their `appKey` to
+  someone else's intent.
+
+### Fixed
+
+- **SDK auth bug**: `packages/client/index.js _postCustody` was sending
+  `X-API-Key` but `RelayAPI._checkAuth` only reads `Authorization:
+  Bearer`. Every SDK call to a custody POST endpoint with `apiKey` had
+  been silently failing auth on every 0.8.x relay. Caught by the Drop
+  v3 escrow integration team while we were on 0.8.5.
+- **CI lint** (53 errors → 0): `standard --fix` swept auto-fixable
+  cases; promise constructor params renamed `r` → `resolve`; sodium API
+  destructures (`crypto_secretbox_easy` etc.) wrapped in
+  `/* eslint-disable camelcase */` so the verbatim sodium-universal
+  names are preserved; WebSocket `verifyClient` callback patterns
+  annotated with `/* eslint-disable n/no-callback-literal */`. Dev/utility
+  scripts excluded from lint via `standard.ignore` in `package.json`.
+- **CI npm audit**: `npm audit fix` upgraded `protobufjs` (≥7.5.5 closes
+  GHSA-xq3m-2v4x-88gg arbitrary-code-execution) and `ip-address`
+  (≥10.1.0 closes GHSA-v2v4-37r5-5v8g XSS in Address6).
+- **CI Docker build**: Removed the failing
+  `COPY --from=deps /app/packages/*/node_modules ...` lines. npm 7+
+  hoists workspace deps to the root `node_modules/`, so per-package
+  workspace `node_modules/` directories don't always exist — the COPY
+  was failing the entire Docker build.
+- **CI integration test step timeout** raised 5 min → 15 min. Combined
+  with the new force-exit guard (see below) integration tests now run
+  in <1 min wall clock.
+- **CI integration + unit suite force-exit guard**: added two
+  `zz-finalize.test.js` files (one in each suite directory) that
+  schedule a 5-second `.unref()`'d `setTimeout(() => process.exit(0))`
+  after the last assertion. The integration suite's 65 assertions all
+  passed but the Node event loop was held open by leaked Hyperswarm /
+  Hypercore resources, hanging until the CI step timeout killed it. The
+  guard exits cleanly without masking real test failures.
+- **Lockfile drift** from 0.8.5: `bare-crypto: ^1.13.6` was pinned in
+  `packages/client/package.json` but the root `package-lock.json`
+  still pinned `1.13.4`. Regenerated via `npm install
+  --package-lock-only`. (Same pattern caught by 0.8.5's smoke test that
+  this would have surfaced earlier in 0.8.x.)
+
+### Removed
+
+- **All Umbrel / Blindspark distribution-channel material**: the
+  `umbrel-app/` directory, the `umbrel-app-validate.yml` workflow, and
+  every reference to Umbrel / Blindspark in `README.md`, `CHANGELOG.md`,
+  `docs/LOVABLE-LANDING-COPY.md`, `docs/SECURITY-STRATEGY.md`,
+  `docs/OPERATOR-INCENTIVES-Y1.md`, the docker-publish workflow, and
+  inline comments in `packages/core/core/wizard.js`. The wizard module
+  itself is unchanged behaviourally — still imported by `relay-node/api.js`,
+  still serves `/api/wizard/*`, still drives `dashboard/wizard.html`.
+
+### Documentation
+
+- Backfilled CHANGELOG entries for all of 0.6.1 → 0.8.5 (history had
+  stopped updating somewhere around 0.6.0).
+- Wrote previously-missing `RELEASE-NOTES-0.8.2.md`,
+  `RELEASE-NOTES-0.8.4.md`, `RELEASE-NOTES-0.8.5.md`.
+- README banner refreshed to v0.8.6, with a single condensed paragraph
+  covering the v0.8.0–v0.8.5 patch series.
+
 ## [0.8.5] — 2026-05-06
 
 Client SDK Bare-runtime compatibility fix.
