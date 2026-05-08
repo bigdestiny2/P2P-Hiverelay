@@ -39,7 +39,7 @@ const STORAGE_DIR = process.env.STORAGE_DIR || './storage-client'
 // State
 // ---------------------------------------------------------------------------
 
-let store, swarm, rpc, connected = false
+let store; let swarm; let rpc; let connected = false
 
 // ---------------------------------------------------------------------------
 // Main

@@ -120,7 +120,7 @@ async function testRapidFire () {
       const promises = Array.from({ length: 50 }, () =>
         timedFetch(relay.base + '/status').then(r => ({
           ok: r.res.status === 200,
-          ms: r.ms,
+          ms: r.ms
         })).catch(err => ({ ok: false, ms: -1, error: err.message }))
       )
       const results50 = await Promise.all(promises)
@@ -238,9 +238,9 @@ async function testCORS () {
       const { res, ms } = await timedFetch(relay.base + '/status', {
         method: 'OPTIONS',
         headers: {
-          'Origin': 'http://example.com',
-          'Access-Control-Request-Method': 'GET',
-        },
+          Origin: 'http://example.com',
+          'Access-Control-Request-Method': 'GET'
+        }
       })
       const acao = res.headers.get('access-control-allow-origin')
       if (acao) {

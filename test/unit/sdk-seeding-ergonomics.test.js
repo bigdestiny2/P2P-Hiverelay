@@ -276,7 +276,7 @@ test('gap 2: late-registered drive auto-mirrors when user already opted in', asy
   // App adds a new drive to the manifest — should auto-mirror since user is opted in.
   client.registerCommunityReplicas([{ driveKey: 'b'.repeat(64) }])
   // _autoMirrorCommunity runs async; wait a microtask.
-  await new Promise((r) => setTimeout(r, 20))
+  await new Promise((resolve) => setTimeout(resolve, 20))
   t.is(mirrored.length, 2, 'late-registered drive auto-mirrored')
 
   await client.destroy()

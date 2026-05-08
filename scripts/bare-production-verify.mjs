@@ -113,7 +113,7 @@ if (driveKey) {
     else pass(`C2: ${acceptances.length} mesh acceptances (Bare's may have raced)`)
   } catch (e) { fail('C2: seed broadcast', e) }
 
-  await new Promise(r => setTimeout(r, 2500))
+  await new Promise(resolve => setTimeout(resolve, 2500))
 
   try {
     const status = await http('/status')
@@ -147,7 +147,7 @@ if (driveKey) {
   rmSync(storeB, { recursive: true, force: true })
   const reader = new HiveRelayClient(storeB)
   await reader.start()
-  await new Promise(r => setTimeout(r, 5000))
+  await new Promise(resolve => setTimeout(resolve, 5000))
 
   try {
     await reader.open(driveKey)

@@ -139,9 +139,11 @@ export class DHTRelayWS extends EventEmitter {
           this._totalRateLimited++
           this.emit('rate-limited', { ip, reason: rateLimitReason })
           const status = rateLimitReason === 'max-concurrent' ? 503 : 429
+          // eslint-disable-next-line n/no-callback-literal
           cb(false, status, rateLimitReason)
           return
         }
+        // eslint-disable-next-line n/no-callback-literal
         cb(true)
       }
     })

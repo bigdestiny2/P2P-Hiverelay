@@ -59,13 +59,12 @@ function request (relay, method, path, body = null, opts = {}) {
   })
 }
 
-let passed = 0, failed = 0
+let passed = 0; let failed = 0
 const results = []
 function log (icon, msg) { console.log(`  ${icon} ${msg}`) }
 async function test (name, fn) {
   const start = Date.now()
-  try { await fn(); log('✅', `${name} (${Date.now() - start}ms)`); passed++; results.push({ name, status: 'pass' }) }
-  catch (err) { log('❌', `${name} — ${err.message}`); failed++; results.push({ name, status: 'fail', error: err.message }) }
+  try { await fn(); log('✅', `${name} (${Date.now() - start}ms)`); passed++; results.push({ name, status: 'pass' }) } catch (err) { log('❌', `${name} — ${err.message}`); failed++; results.push({ name, status: 'fail', error: err.message }) }
 }
 function assert (cond, msg) { if (!cond) throw new Error(msg) }
 
@@ -101,7 +100,7 @@ async function runTests () {
   console.log('\n── Test Group 2: App Discovery ──')
 
   let testApps = []
-  let testRelay = RELAYS[1] // Use Utah-US (more resources)
+  const testRelay = RELAYS[1] // Use Utah-US (more resources)
 
   await test('Discover seeded apps for gateway testing', async () => {
     const apps = await getSeededApps(testRelay)
@@ -127,14 +126,14 @@ async function runTests () {
       if (res.status === 200) {
         log('ℹ️', `Root served: ${res.bytes} bytes, content-type: ${res.headers['content-type']?.slice(0, 40)}`)
       } else {
-        log('ℹ️', `Root returned 404 (drive may not have index.html)`)
+        log('ℹ️', 'Root returned 404 (drive may not have index.html)')
       }
     })
 
     await test('Verify gateway headers', async () => {
       const res = await request(testRelay, 'GET', `/v1/hyper/${app.driveKey}/`, null, { auth: false, timeout: 30000 })
       if (res.status === 200) {
-        assert(res.headers['x-served-by'] === 'hiverelay-gateway', `Missing X-Served-By header`)
+        assert(res.headers['x-served-by'] === 'hiverelay-gateway', 'Missing X-Served-By header')
         assert(res.headers['x-hyper-key'] === app.driveKey, 'Mismatched X-Hyper-Key')
         assert(res.headers['cache-control'], 'Missing Cache-Control')
       }
@@ -211,7 +210,7 @@ async function runTests () {
         assert(res.headers['content-type'].includes('text/html'), `Expected text/html, got ${res.headers['content-type']}`)
         log('ℹ️', `Content-Type: ${res.headers['content-type']}`)
       } else {
-        log('ℹ️', `Skipped (no index.html in this drive)`)
+        log('ℹ️', 'Skipped (no index.html in this drive)')
       }
     })
   }

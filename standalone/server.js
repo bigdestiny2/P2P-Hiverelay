@@ -21,14 +21,14 @@ import c from 'compact-encoding'
 import b4a from 'b4a'
 import goodbye from 'graceful-goodbye'
 import { mkdirSync } from 'fs'
-import { join } from 'path'
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
 const STORAGE_DIR = process.env.STORAGE_DIR || './storage-server'
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : undefined // Let Hyperswarm choose
+// $PORT is intentionally unused — Hyperswarm chooses its own port. Kept
+// here as documentation for operators who might be tempted to set it.
 
 // ---------------------------------------------------------------------------
 // State
@@ -54,7 +54,7 @@ async function main () {
   await core.ready()
 
   blockCount = core.length
-  console.log(`\n  Hypercore ready`)
+  console.log('\n  Hypercore ready')
   console.log(`  Public key : ${b4a.toString(core.key, 'hex')}`)
   console.log(`  Blocks     : ${blockCount}`)
 
@@ -66,9 +66,9 @@ async function main () {
   const discovery = swarm.join(core.discoveryKey, { server: true, client: false })
   await discovery.flushed()
 
-  console.log(`\n  Swarm listening`)
+  console.log('\n  Swarm listening')
   console.log(`  Discovery  : ${b4a.toString(core.discoveryKey, 'hex')}`)
-  console.log(`\n  Waiting for peers...\n`)
+  console.log('\n  Waiting for peers...\n')
 
   // 4. Graceful shutdown
   goodbye(async () => {

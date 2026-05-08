@@ -69,10 +69,10 @@ async function waitForSettled (clients, timeoutMs = 5000) {
     const pending = clients.filter(c => !c.opened && !c.closed && !c.error)
     if (pending.length === 0) {
       // Give the close-after-open handlers a brief moment to fire too.
-      await new Promise(r => setTimeout(r, 50))
+      await new Promise(resolve => setTimeout(resolve, 50))
       return
     }
-    await new Promise(r => setTimeout(r, 25))
+    await new Promise(resolve => setTimeout(resolve, 25))
   }
 }
 
@@ -106,7 +106,7 @@ test('load: ~100 concurrent clients under a generous per-IP cap all succeed', as
     try { c.socket.close() } catch (_) {}
   }
   // Let close events flush.
-  await new Promise(r => setTimeout(r, 200))
+  await new Promise(resolve => setTimeout(resolve, 200))
 })
 
 test('load: 50-burst against default 5/concurrent gets exactly 5 through, rest rejected at upgrade', async (t) => {
@@ -138,7 +138,7 @@ test('load: 50-burst against default 5/concurrent gets exactly 5 through, rest r
   for (const c of survivors) {
     try { c.socket.close() } catch (_) {}
   }
-  await new Promise(r => setTimeout(r, 200))
+  await new Promise(resolve => setTimeout(resolve, 200))
 })
 
 test('load: closing some connections frees concurrent slots for new ones', async (t) => {
@@ -159,7 +159,7 @@ test('load: closing some connections frees concurrent slots for new ones', async
     first.push(s)
   }
   // Tiny pause to let the server register everything.
-  await new Promise(r => setTimeout(r, 50))
+  await new Promise(resolve => setTimeout(resolve, 50))
   t.is(transport.getStats().activeConnections, 5, '5 concurrent active')
 
   // Close 3 of them and wait for the server to release the slots.
@@ -169,7 +169,7 @@ test('load: closing some connections frees concurrent slots for new ones', async
   // Wait for server-side close handlers to release the bucket.
   const releasedDeadline = Date.now() + 2000
   while (transport.getStats().activeConnections > 2 && Date.now() < releasedDeadline) {
-    await new Promise(r => setTimeout(r, 25))
+    await new Promise(resolve => setTimeout(resolve, 25))
   }
   t.is(transport.getStats().activeConnections, 2, 'down to 2 after closing 3')
 
@@ -184,7 +184,7 @@ test('load: closing some connections frees concurrent slots for new ones', async
   // Cleanup.
   for (let i = 3; i < 5; i++) try { first[i].close() } catch (_) {}
   for (const c of second) try { c.socket.close() } catch (_) {}
-  await new Promise(r => setTimeout(r, 200))
+  await new Promise(resolve => setTimeout(resolve, 200))
 })
 
 test('load: server stays responsive — fresh client opens quickly under load', async (t) => {
@@ -217,7 +217,7 @@ test('load: server stays responsive — fresh client opens quickly under load', 
 
   fresh.close()
   for (const c of background) try { c.socket.close() } catch (_) {}
-  await new Promise(r => setTimeout(r, 200))
+  await new Promise(resolve => setTimeout(resolve, 200))
 })
 
 test('load: stop() with 50+ open connections cleans up state and timers', async (t) => {
@@ -256,7 +256,7 @@ test('load: stop() with 50+ open connections cleans up state and timers', async 
 
   const codes = await Promise.race([
     allClosed,
-    new Promise((_, reject) =>
+    new Promise((_resolve, reject) =>
       setTimeout(() => reject(new Error('not all clients received close in time')), 3000)
     )
   ])

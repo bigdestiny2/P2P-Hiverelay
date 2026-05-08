@@ -15,13 +15,12 @@
 import test from 'brittle'
 import b4a from 'b4a'
 import { mkdirSync, readFileSync, readdirSync, existsSync } from 'fs'
-import { rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { PrivacyManager } from 'p2p-hiverelay/platform/privacy.js'
 import { KeyManager } from 'p2p-hiverelay/platform/keys.js'
 import { LocalStorage } from 'p2p-hiverelay/platform/storage.js'
-import { encrypt, decrypt, generateKey, hash } from 'p2p-hiverelay/platform/crypto.js'
+import { encrypt, decrypt, generateKey } from 'p2p-hiverelay/platform/crypto.js'
 
 // ── Helpers ─────────────────────────────────────────���───────
 
@@ -208,7 +207,7 @@ test('storage: export encrypted blobs for P2P backup', async (t) => {
   t.is(blobs.size, 2, 'Exported 2 blobs')
 
   // Verify blobs are encrypted
-  for (const [k, blob] of blobs) {
+  for (const [, blob] of blobs) {
     t.ok(b4a.isBuffer(blob), 'Blob is a buffer')
     t.ok(!blob.toString().includes('amount'), 'Blob is not plaintext')
   }
@@ -363,7 +362,7 @@ test('tier LOCAL-FIRST: encrypted P2P sync between devices', async (t) => {
   t.is(blobs.size, 5, '5 encrypted blobs exported')
 
   // Verify blobs are opaque (relay/attacker can't read them)
-  for (const [key, blob] of blobs) {
+  for (const [, blob] of blobs) {
     const blobStr = blob.toString()
     t.ok(!blobStr.includes('alice'), 'Blob: no "alice"')
     t.ok(!blobStr.includes('salary'), 'Blob: no "salary"')
@@ -563,6 +562,7 @@ test('blind mode: drive encryption key is tier-dependent', async (t) => {
 
 test('invalid tier rejected', async (t) => {
   try {
+    // eslint-disable-next-line no-new
     new PrivacyManager({ appName: 'test', privacyTier: 'maximum-stealth' }, '/tmp/test')
     t.fail('Should have thrown')
   } catch (err) {

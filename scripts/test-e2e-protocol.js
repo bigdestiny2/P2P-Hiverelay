@@ -66,7 +66,7 @@ function logResult (step, passed, detail) {
 }
 
 function timeout (ms, label) {
-  return new Promise((_, reject) =>
+  return new Promise((_resolve, reject) =>
     setTimeout(() => reject(new Error(`Timeout: ${label} exceeded ${ms}ms`)), ms)
   )
 }
@@ -113,7 +113,7 @@ async function testDHTDiscovery (swarm) {
     await Promise.race([connPromise, timeout(STEP_TIMEOUT, 'DHT Discovery')])
     stopTimer(step)
     // Wait a brief moment for additional peers
-    await new Promise((r) => setTimeout(r, 3000))
+    await new Promise((resolve) => setTimeout(resolve, 3000))
     const detail = `${discoveredPeers.length} peer(s) found`
     results.push(logResult(step, discoveredPeers.length > 0, detail))
     return discoveredPeers

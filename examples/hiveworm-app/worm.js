@@ -25,7 +25,7 @@ const WORM_PALETTE = [
   { body: '#4fc3f7', outline: '#0d4e7a', hi: '#bde8ff' }, // electric blue
   { body: '#ffd54f', outline: '#7a5410', hi: '#fff0bd' }, // sunshine yellow
   { body: '#ff5e3a', outline: '#7a1810', hi: '#ffc7b8' }, // tomato
-  { body: '#b266ff', outline: '#46197a', hi: '#dfc5ff' }  // hot purple
+  { body: '#b266ff', outline: '#46197a', hi: '#dfc5ff' } // hot purple
 ]
 
 export function paletteFromPubkey (hex) {
@@ -38,7 +38,7 @@ export function paletteFromPubkey (hex) {
 
 // Backwards-compat exports for callers that still want a single hex color.
 export function colorFromPubkey (hex) { return paletteFromPubkey(hex).body }
-export function glowFromPubkey  (hex) { return paletteFromPubkey(hex).hi }
+export function glowFromPubkey (hex) { return paletteFromPubkey(hex).hi }
 
 export function darken (hex, amt = 0.35) {
   const r = parseInt(hex.slice(1, 3), 16)
@@ -65,7 +65,7 @@ export class Worm {
     this.glow = pal.hi
 
     // Authoritative truth from the relay:
-    this.targetSegments = []   // [[x, y], ...]
+    this.targetSegments = [] // [[x, y], ...]
     this.length = 3
     this.alive = true
     this.bornAt = 0
@@ -91,7 +91,7 @@ export class Worm {
     this.squashStrength = 0
 
     // Death: x_x eyes + slight rotation on the head
-    this.dyingAt = 0      // performance.now() at the moment of death
+    this.dyingAt = 0 // performance.now() at the moment of death
 
     // Idle bob — tiny sinusoid, NOT bouncy
     this.bobOffset = Math.random() * Math.PI * 2

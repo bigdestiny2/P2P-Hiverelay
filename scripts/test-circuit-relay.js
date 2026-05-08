@@ -51,7 +51,7 @@ function request (relay, method, path, body = null, opts = {}) {
   })
 }
 
-let passed = 0, failed = 0
+let passed = 0; let failed = 0
 const results = []
 
 function log (icon, msg) { console.log(`  ${icon} ${msg}`) }

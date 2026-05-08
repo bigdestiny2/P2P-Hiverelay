@@ -38,7 +38,6 @@
 
 import Hyperswarm from 'hyperswarm'
 import Corestore from 'corestore'
-import Hyperdrive from 'hyperdrive'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 // Use Node-shaped names. Under Bare/Pear they get remapped via the
@@ -56,7 +55,7 @@ import { SeedProtocol } from '../protocol/seed-request.js'
 import { CircuitRelay } from '../protocol/relay-circuit.js'
 import { ProofOfRelay } from '../protocol/proof-of-relay.js'
 import { AppRegistry } from '../app-registry.js'
-import { RELAY_DISCOVERY_TOPIC, FOUNDATION_TOPIC, regionTopic } from '../constants.js'
+import { RELAY_DISCOVERY_TOPIC, FOUNDATION_TOPIC } from '../constants.js'
 import { SwarmFirewall } from './swarm-firewall.js'
 
 // Services framework lives in Core (p2p-hiverelay). Builtin service
@@ -306,8 +305,8 @@ export class BareRelay extends EventEmitter {
     // Bound flush — don't hang indefinitely if no peers
     await Promise.race([
       this.swarm.flush().catch(() => {}),
-      new Promise(r => {
-        const t = setTimeout(r, 2000)
+      new Promise(resolve => {
+        const t = setTimeout(resolve, 2000)
         if (t.unref) t.unref()
       })
     ])

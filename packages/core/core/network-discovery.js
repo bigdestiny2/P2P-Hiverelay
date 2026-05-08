@@ -343,7 +343,7 @@ export class NetworkDiscovery extends EventEmitter {
   async _pollAll () {
     const polls = []
 
-    for (const [pubkey, relay] of this._relays) {
+    for (const [, relay] of this._relays) {
       let pollPromise
 
       if (relay.holesailConnected && relay.holesailKey) {

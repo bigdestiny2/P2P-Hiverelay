@@ -18,6 +18,7 @@ function fakeDHT () {
 
 test('DHTRelayWS: requires dht', (t) => {
   try {
+    // eslint-disable-next-line no-new
     new DHTRelayWS({})
     t.fail('should throw')
   } catch (err) {
@@ -56,7 +57,7 @@ test('DHTRelayWS: enforces maxConnections', async (t) => {
   await new Promise((resolve) => c1.on('open', resolve))
 
   // Wait a tick so the server registers the connection in `connections`.
-  await new Promise((r) => setTimeout(r, 50))
+  await new Promise((resolve) => setTimeout(resolve, 50))
 
   // Second client should be closed by the server with our capacity code.
   const c2 = new WebSocket(`ws://127.0.0.1:${port}`)
@@ -84,7 +85,7 @@ test('DHTRelayWS: getStats reports operating numbers', async (t) => {
     const c = new WebSocket(`ws://127.0.0.1:${port}`)
     await new Promise((resolve) => c.on('open', resolve))
     c.close()
-    await new Promise((r) => setTimeout(r, 30))
+    await new Promise((resolve) => setTimeout(resolve, 30))
   }
 
   const after = transport.getStats()

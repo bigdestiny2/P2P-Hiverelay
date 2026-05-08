@@ -172,7 +172,7 @@ console.log(`  All swarms destroyed in ${fmt(Date.now() - destroyStart)}`)
 // ── Final relay status after cleanup ─────────────────────────────────
 try {
   // Give the relay a moment to notice disconnections
-  await new Promise(r => setTimeout(r, 2000))
+  await new Promise(resolve => setTimeout(resolve, 2000))
   const after = await httpGet(`${RELAY_API}/status`)
   console.log(`  Relay connections after cleanup: ${after.connections}`)
 } catch { /* ignore */ }

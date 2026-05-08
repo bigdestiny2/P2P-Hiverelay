@@ -56,13 +56,12 @@ function dispatch (relay, route, params = {}) {
   return request(relay, 'POST', '/api/v1/dispatch', { route, params })
 }
 
-let passed = 0, failed = 0
+let passed = 0; let failed = 0
 const results = []
 function log (icon, msg) { console.log(`  ${icon} ${msg}`) }
 async function test (name, fn) {
   const start = Date.now()
-  try { await fn(); log('✅', `${name} (${Date.now() - start}ms)`); passed++; results.push({ name, status: 'pass' }) }
-  catch (err) { log('❌', `${name} — ${err.message}`); failed++; results.push({ name, status: 'fail', error: err.message }) }
+  try { await fn(); log('✅', `${name} (${Date.now() - start}ms)`); passed++; results.push({ name, status: 'pass' }) } catch (err) { log('❌', `${name} — ${err.message}`); failed++; results.push({ name, status: 'fail', error: err.message }) }
 }
 function assert (cond, msg) { if (!cond) throw new Error(msg) }
 
@@ -103,7 +102,7 @@ async function runTests () {
       knownDevKey = res.data.developers[0].pubkey
       log('ℹ️', `${developerCount} developers. First: ${knownDevKey?.slice(0, 16)}...`)
     } else {
-      log('ℹ️', `No developers registered yet`)
+      log('ℹ️', 'No developers registered yet')
     }
   })
 
@@ -206,7 +205,7 @@ async function runTests () {
   await test('Logout with no token succeeds (no-op)', async () => {
     const res = await request(relay, 'POST', '/api/v1/identity/logout', {}, { auth: false })
     assert(res.status === 200, `Expected 200, got ${res.status}`)
-    assert(res.data.success === true, `Expected success`)
+    assert(res.data.success === true, 'Expected success')
   })
 
   // ──────────────────────────────────────────

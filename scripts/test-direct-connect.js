@@ -37,7 +37,7 @@ console.log('DHT bootstrapped:', dht.bootstrapped)
 
 // Wait and check repeatedly
 for (let i = 0; i < 6; i++) {
-  await new Promise(r => setTimeout(r, 5000))
+  await new Promise(resolve => setTimeout(resolve, 5000))
   console.log(`[${(i + 1) * 5}s] connections: ${swarm.connections.size}, peers: ${swarm.peers?.size || 0}`)
 }
 

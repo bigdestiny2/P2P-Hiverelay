@@ -60,13 +60,12 @@ function request (relay, method, path, body = null, opts = {}) {
   })
 }
 
-let passed = 0, failed = 0
+let passed = 0; let failed = 0
 const results = []
 function log (icon, msg) { console.log(`  ${icon} ${msg}`) }
 async function test (name, fn) {
   const start = Date.now()
-  try { await fn(); log('✅', `${name} (${Date.now() - start}ms)`); passed++; results.push({ name, status: 'pass' }) }
-  catch (err) { log('❌', `${name} — ${err.message}`); failed++; results.push({ name, status: 'fail', error: err.message }) }
+  try { await fn(); log('✅', `${name} (${Date.now() - start}ms)`); passed++; results.push({ name, status: 'pass' }) } catch (err) { log('❌', `${name} — ${err.message}`); failed++; results.push({ name, status: 'fail', error: err.message }) }
 }
 function assert (cond, msg) { if (!cond) throw new Error(msg) }
 
@@ -170,7 +169,7 @@ async function runTests () {
       const fakeKey = crypto.randomBytes(32).toString('hex')
       const res = await request(testRelay, 'GET', `/v1/hyper/${fakeKey}/`, null, { auth: false })
       assert(res.status === 404, `Expected 404 for non-seeded key, got ${res.status}`)
-      log('ℹ️', `Non-seeded key correctly returned 404`)
+      log('ℹ️', 'Non-seeded key correctly returned 404')
     })
   }
 
@@ -341,8 +340,8 @@ async function runTests () {
     for (const app of apps) {
       if (app.blind) {
         // Blind apps should have driveKey (for P2P connection) but no content preview
-        assert(app.driveKey, `Blind app missing driveKey`)
-        assert(app.driveKey.length === 64, `Invalid driveKey length`)
+        assert(app.driveKey, 'Blind app missing driveKey')
+        assert(app.driveKey.length === 64, 'Invalid driveKey length')
         log('ℹ️', `Blind app "${app.name || 'unnamed'}": key=${app.driveKey.slice(0, 12)}...`)
 
         // Verify gateway blocks it
@@ -403,7 +402,7 @@ async function runTests () {
 
       // Since both are local and on the same swarm, reader might find publisher
       // Wait a moment for the DHT to connect them
-      await new Promise(r => setTimeout(r, 3000))
+      await new Promise(resolve => setTimeout(resolve, 3000))
 
       try {
         await readDrive.update({ wait: true })
@@ -411,7 +410,7 @@ async function runTests () {
         if (html) {
           assert(html.toString().includes(`E2E Blind Test ${ts}`),
             'Decrypted content mismatch on reader side')
-          log('ℹ️', `Reader: decrypted index.html successfully`)
+          log('ℹ️', 'Reader: decrypted index.html successfully')
         }
       } catch (err) {
         // If peers can't connect (no direct DHT route), that's OK for this test

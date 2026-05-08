@@ -16,20 +16,20 @@ import { config } from './config.js'
 
 const COL = {
   // sky / scenery
-  skyTop:    '#7ec8e3',
-  skyMid:    '#a8e6cf',
-  grass:     '#7cba5f',
+  skyTop: '#7ec8e3',
+  skyMid: '#a8e6cf',
+  grass: '#7cba5f',
   grassDeep: '#4a8a3c',
   grassLine: '#6aa64f',
-  hillFar:   '#5fa64e',
-  hillNear:  '#6fb358',
-  dirt:      '#8b5a2b',
-  flowerR:   '#e74c3c',
-  flowerY:   '#f1c40f',
-  cloud:     '#ffffff',
-  ink:       '#1f1d2b',
-  bone:      '#fff8e7',
-  shadow:    'rgba(31, 29, 43, 0.25)'
+  hillFar: '#5fa64e',
+  hillNear: '#6fb358',
+  dirt: '#8b5a2b',
+  flowerR: '#e74c3c',
+  flowerY: '#f1c40f',
+  cloud: '#ffffff',
+  ink: '#1f1d2b',
+  bone: '#fff8e7',
+  shadow: 'rgba(31, 29, 43, 0.25)'
 }
 
 // Food sprite types — drawn procedurally on each frame so we keep zero
@@ -59,8 +59,8 @@ export class Renderer {
     this.shake = { until: 0, magnitude: 0 }
     this.slowMo = { until: 0, factor: 1 }
     this.particles = []
-    this.popups = []         // floating "+1" texts
-    this.confetti = []       // rare-eat confetti bits
+    this.popups = [] // floating "+1" texts
+    this.confetti = [] // rare-eat confetti bits
     this.cloudPhase = 0
 
     // Pre-baked decoration for the world: stable per-cell decisions for
@@ -140,9 +140,12 @@ export class Renderer {
         this.particles.push({
           kind: 'food-bit',
           foodType: Math.floor(Math.random() * FOOD_TYPES.length),
-          x: px, y: py,
-          vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed - 1.5,
-          life: 900 + Math.random() * 500, maxLife: 1400,
+          x: px,
+          y: py,
+          vx: Math.cos(ang) * speed,
+          vy: Math.sin(ang) * speed - 1.5,
+          life: 900 + Math.random() * 500,
+          maxLife: 1400,
           size: 5 + Math.random() * 3,
           spin: (Math.random() - 0.5) * 0.4,
           rot: Math.random() * Math.PI * 2
@@ -161,17 +164,23 @@ export class Renderer {
       const ang = (i / 7) * Math.PI * 2
       this.particles.push({
         kind: 'spark',
-        x: px, y: py,
-        vx: Math.cos(ang) * 1.2, vy: Math.sin(ang) * 1.2 - 0.6,
-        life: 280, maxLife: 280,
-        color: COL.bone, size: 2.2
+        x: px,
+        y: py,
+        vx: Math.cos(ang) * 1.2,
+        vy: Math.sin(ang) * 1.2 - 0.6,
+        life: 280,
+        maxLife: 280,
+        color: COL.bone,
+        size: 2.2
       })
     }
     // Floating "+1" popup
     this.popups.push({
       text: opts.rare ? '+5!' : '+1',
-      x: px, y: py - 8,
-      life: 600, maxLife: 600,
+      x: px,
+      y: py - 8,
+      life: 600,
+      maxLife: 600,
       rare: !!opts.rare
     })
     if (opts.rare) {
@@ -181,10 +190,12 @@ export class Renderer {
         const ang = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI
         const speed = 2 + Math.random() * 3
         this.confetti.push({
-          x: px, y: py,
+          x: px,
+          y: py,
           vx: Math.cos(ang) * speed,
           vy: Math.sin(ang) * speed,
-          life: 1200, maxLife: 1200,
+          life: 1200,
+          maxLife: 1200,
           color: [COL.flowerR, COL.flowerY, '#4fc3f7', '#ff5e9c', '#aedb45', '#b266ff'][i % 6],
           rot: Math.random() * Math.PI * 2,
           spin: (Math.random() - 0.5) * 0.3,
@@ -202,10 +213,14 @@ export class Renderer {
       const ang = (i / 14) * Math.PI * 2
       this.particles.push({
         kind: 'spark',
-        x: px, y: py,
-        vx: Math.cos(ang) * 1.5, vy: Math.sin(ang) * 1.5 - 0.8,
-        life: 500, maxLife: 500,
-        color: COL.bone, size: 3
+        x: px,
+        y: py,
+        vx: Math.cos(ang) * 1.5,
+        vy: Math.sin(ang) * 1.5 - 0.8,
+        life: 500,
+        maxLife: 500,
+        color: COL.bone,
+        size: 3
       })
     }
   }
@@ -308,9 +323,9 @@ export class Renderer {
     const ctx = this.ctx
     // Gradient from sky-top through mint to grass at the bottom
     const grad = ctx.createLinearGradient(0, 0, 0, this.height)
-    grad.addColorStop(0,   COL.skyTop)
+    grad.addColorStop(0, COL.skyTop)
     grad.addColorStop(0.55, COL.skyMid)
-    grad.addColorStop(1,   COL.grass)
+    grad.addColorStop(1, COL.grass)
     ctx.fillStyle = grad
     ctx.fillRect(0, 0, this.width, this.height)
   }
@@ -326,9 +341,9 @@ export class Renderer {
     const wmax = this.world.config.width * config.cellSize
     // Three cloud layers, scrolled by cloudPhase
     const clouds = [
-      { x: 80,  y: 60,  s: 1.0, drift: 18 },
+      { x: 80, y: 60, s: 1.0, drift: 18 },
       { x: 380, y: 130, s: 0.8, drift: 12 },
-      { x: 720, y: 50,  s: 1.2, drift: 22 }
+      { x: 720, y: 50, s: 1.2, drift: 22 }
     ]
     ctx.save()
     for (const c of clouds) {
@@ -345,10 +360,10 @@ export class Renderer {
     ctx.strokeStyle = COL.ink
     ctx.lineWidth = 3
     ctx.beginPath()
-    ctx.ellipse(x,            y,         42 * s, 22 * s, 0, 0, Math.PI * 2)
-    ctx.ellipse(x + 36 * s,   y - 8 * s, 30 * s, 20 * s, 0, 0, Math.PI * 2)
-    ctx.ellipse(x + 70 * s,   y + 4 * s, 26 * s, 18 * s, 0, 0, Math.PI * 2)
-    ctx.ellipse(x - 28 * s,   y + 6 * s, 24 * s, 16 * s, 0, 0, Math.PI * 2)
+    ctx.ellipse(x, y, 42 * s, 22 * s, 0, 0, Math.PI * 2)
+    ctx.ellipse(x + 36 * s, y - 8 * s, 30 * s, 20 * s, 0, 0, Math.PI * 2)
+    ctx.ellipse(x + 70 * s, y + 4 * s, 26 * s, 18 * s, 0, 0, Math.PI * 2)
+    ctx.ellipse(x - 28 * s, y + 6 * s, 24 * s, 16 * s, 0, 0, Math.PI * 2)
     ctx.fill()
     ctx.stroke()
   }
@@ -366,7 +381,7 @@ export class Renderer {
     ctx.beginPath()
     const baseY = -10
     ctx.moveTo(-200, baseY + 80)
-    let phase = 0
+    const phase = 0
     for (let x = -200; x <= wmax + 200; x += 60) {
       const yy = baseY + 60 + Math.sin((x / 200) + phase) * 28
       ctx.lineTo(x, yy)
@@ -425,7 +440,7 @@ export class Renderer {
       ctx.beginPath()
       ctx.moveTo(x - 4, y + 4)
       ctx.lineTo(x - 2, y - 5)
-      ctx.lineTo(x,     y + 4)
+      ctx.lineTo(x, y + 4)
       ctx.lineTo(x + 2, y - 6)
       ctx.lineTo(x + 4, y + 4)
       ctx.closePath()
@@ -514,7 +529,7 @@ export class Renderer {
     if (!worm.renderSegments.length) return
 
     const baseColor = worm.alive ? worm.color : '#9e9989'
-    const outline   = worm.alive ? worm.outline : '#3a3530'
+    const outline = worm.alive ? worm.outline : '#3a3530'
     const highlight = worm.alive ? worm.highlight : '#cccabb'
 
     // Drop shadow under each segment
@@ -555,8 +570,7 @@ export class Renderer {
         const k = worm.squashStrength
         // Squash y, stretch x... on the worm's facing axis
         const horiz = Math.abs(worm.lastMoveDir[0]) > Math.abs(worm.lastMoveDir[1])
-        if (horiz) { sx = 1 + 0.18 * k; sy = 1 - 0.22 * k }
-        else        { sx = 1 - 0.22 * k; sy = 1 + 0.18 * k }
+        if (horiz) { sx = 1 + 0.18 * k; sy = 1 - 0.22 * k } else { sx = 1 - 0.22 * k; sy = 1 + 0.18 * k }
       }
 
       // Death wobble on the head: rotate slightly + flip
@@ -629,10 +643,10 @@ export class Renderer {
     // dirs), this gives the worm a clean "looking forward" feel.
     const facex = dx / Math.max(1e-3, Math.hypot(dx, dy))
     const facey = dy / Math.max(1e-3, Math.hypot(dx, dy))
-    const px1 = cx + facex * sz * 0.18 + (-facey) *  sz * 0.22
-    const py1 = cy + facey * sz * 0.18 + (facex) *   sz * 0.22
+    const px1 = cx + facex * sz * 0.18 + (-facey) * sz * 0.22
+    const py1 = cy + facey * sz * 0.18 + (facex) * sz * 0.22
     const px2 = cx + facex * sz * 0.18 + (-facey) * -sz * 0.22
-    const py2 = cy + facey * sz * 0.18 + (facex) *  -sz * 0.22
+    const py2 = cy + facey * sz * 0.18 + (facex) * -sz * 0.22
     const eyeR = sz * 0.18
 
     const dead = !worm.alive
@@ -961,7 +975,7 @@ function drawIceCream (ctx, cx, cy, r) {
   ctx.beginPath()
   ctx.moveTo(cx - r * 0.6, cy)
   ctx.lineTo(cx + r * 0.6, cy)
-  ctx.lineTo(cx,           cy + r * 1.0)
+  ctx.lineTo(cx, cy + r * 1.0)
   ctx.closePath()
   ctx.fill(); ctx.stroke()
   // waffle lines

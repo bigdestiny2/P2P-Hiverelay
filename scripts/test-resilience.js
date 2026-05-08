@@ -79,10 +79,6 @@ async function getApps (relay) {
   return r.data?.apps || []
 }
 
-async function getSyncStatus (relay) {
-  return fetchJson(relay.ip, relay.port, '/api/v1/sync')
-}
-
 async function getOverview (relay) {
   return fetchJson(relay.ip, relay.port, '/api/overview')
 }
@@ -212,8 +208,8 @@ async function test1 () {
   const utahTime = await waitForApp(RELAYS[0], testKey, 120000)
   const sgTime = await waitForApp(RELAYS[2], testKey, 120000)
 
-  result(utahTime > 0, `Utah synced`, utahTime)
-  result(sgTime > 0, `Singapore synced`, sgTime)
+  result(utahTime > 0, 'Utah synced', utahTime)
+  result(sgTime > 0, 'Singapore synced', sgTime)
 
   const pass = utahTime > 0 && sgTime > 0
   result(pass, pass ? 'Propagation successful across all relays' : 'Propagation FAILED')

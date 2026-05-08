@@ -68,13 +68,13 @@ RUN apk add --no-cache tini wget
 
 WORKDIR /app
 
-# Bring in already-installed modules from the deps stage. This includes
-# every workspace's node_modules (npm hoists most to the root), keeping
-# the runtime image small.
+# Bring in already-installed modules from the deps stage. npm 7+ hoists
+# most workspace deps to the root `node_modules/`. Per-package
+# `node_modules/` only exist when there's a version conflict — historically
+# `packages/core/node_modules/` etc. weren't created by `npm ci --workspaces`
+# at all, so the per-package COPY commands here used to fail the whole
+# build. Copy the root tree once; that's enough for production startup.
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/packages/core/node_modules ./packages/core/node_modules
-COPY --from=deps /app/packages/services/node_modules ./packages/services/node_modules
-COPY --from=deps /app/packages/client/node_modules ./packages/client/node_modules
 
 # Copy application source (respects .dockerignore)
 COPY . .

@@ -185,10 +185,12 @@ test('IdentityService - resolve via IPL attestation', async (t) => {
   const pubkey = b4a.toString(b4a.alloc(32, 0xbb), 'hex')
   const { svc } = await createService({
     identity: mockIPL({
-      resolveIdentity: async (key) => key === pubkey ? {
-        developerKey: 'devABC',
-        profile: { displayName: 'Alice', name: 'alice' }
-      } : null
+      resolveIdentity: async (key) => key === pubkey
+        ? {
+            developerKey: 'devABC',
+            profile: { displayName: 'Alice', name: 'alice' }
+          }
+        : null
     })
   })
   const result = await svc.resolve({ pubkey })

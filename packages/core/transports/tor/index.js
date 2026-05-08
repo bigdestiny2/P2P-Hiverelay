@@ -27,7 +27,6 @@
 import { EventEmitter } from 'events'
 import net from 'net'
 import { readFile } from 'fs/promises'
-import { join } from 'path'
 import { SocksClient } from 'socks'
 import { Duplex } from 'stream'
 

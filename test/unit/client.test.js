@@ -5,6 +5,13 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
 
+// ─── Multi-device pairing ────────────────────────────────────────────
+// Two paths: identity sharing (full trust, both devices = same key) and
+// device attestation (signed cert authorising a secondary device pubkey).
+
+import sodium from 'sodium-universal'
+import b4a from 'b4a'
+
 function tmpStorage () {
   return join(tmpdir(), 'hiverelay-client-test-' + randomBytes(8).toString('hex'))
 }
@@ -454,7 +461,6 @@ test('HiveRelayClient - open() does NOT seed-as-reader by default', async (t) =>
 
   // Stub Hyperdrive open so we don't need a real Corestore — but we DO
   // care that swarm.join was called with server=false for a reader.
-  const fakeKey = Buffer.from('a'.repeat(64), 'hex')
   client.store = {
     get: () => ({ ready: async () => {} }),
     namespace: () => ({})
@@ -572,13 +578,6 @@ test('HiveRelayClient - enableReaderReplica throws for unknown drive', async (t)
   }
   await client.destroy()
 })
-
-// ─── Multi-device pairing ────────────────────────────────────────────
-// Two paths: identity sharing (full trust, both devices = same key) and
-// device attestation (signed cert authorising a secondary device pubkey).
-
-import sodium from 'sodium-universal'
-import b4a from 'b4a'
 
 function genKeypair () {
   const publicKey = Buffer.alloc(sodium.crypto_sign_PUBLICKEYBYTES)

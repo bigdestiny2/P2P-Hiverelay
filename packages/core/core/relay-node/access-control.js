@@ -237,10 +237,14 @@ export class AccessControl extends EventEmitter {
     const nonce = randomBytes(24)
     const key = b4a.isBuffer(secretKey) ? secretKey.subarray(0, 32) : b4a.from(secretKey, 'hex').subarray(0, 32)
 
-    // XSalsa20-Poly1305 symmetric encryption
-    const { sodium_malloc, crypto_secretbox_easy, crypto_secretbox_MACBYTES } = await this._getSodium()
+    // XSalsa20-Poly1305 symmetric encryption. Sodium API uses snake_case
+    // names — keep them verbatim and silence the camelcase rule for the
+    // block where they appear.
+    /* eslint-disable camelcase */
+    const { crypto_secretbox_easy, crypto_secretbox_MACBYTES } = await this._getSodium()
     const ciphertext = b4a.alloc(plaintext.length + crypto_secretbox_MACBYTES)
     crypto_secretbox_easy(ciphertext, plaintext, b4a.from(nonce), key)
+    /* eslint-enable camelcase */
 
     return {
       encrypted: b4a.toString(ciphertext, 'hex'),
@@ -263,10 +267,12 @@ export class AccessControl extends EventEmitter {
     const ciphertext = b4a.from(backup.encrypted, 'hex')
     const nonce = b4a.from(backup.nonce, 'hex')
 
+    /* eslint-disable camelcase */
     const { crypto_secretbox_open_easy, crypto_secretbox_MACBYTES } = await this._getSodium()
     const plaintext = b4a.alloc(ciphertext.length - crypto_secretbox_MACBYTES)
 
     const success = crypto_secretbox_open_easy(plaintext, ciphertext, nonce, key)
+    /* eslint-enable camelcase */
     if (!success) {
       throw new Error('BACKUP_DECRYPT_FAILED: wrong key or corrupted backup')
     }

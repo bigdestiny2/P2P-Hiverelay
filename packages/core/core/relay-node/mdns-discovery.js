@@ -125,7 +125,7 @@ export class MDNSDiscovery extends EventEmitter {
         data: [
           `pk=${pubkeyHex}`,
           `mode=${this.mode}`,
-          `v=1`,
+          'v=1',
           `addrs=${localAddresses.map(a => a.address).join(',')}`
         ]
       }

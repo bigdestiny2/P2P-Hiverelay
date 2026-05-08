@@ -14,7 +14,7 @@ import createTestnet from '@hyperswarm/testnet'
 import c from 'compact-encoding'
 import b4a from 'b4a'
 import crypto from 'crypto'
-import { mkdirSync, rmSync } from 'fs'
+import { mkdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -90,7 +90,6 @@ async function runDemo () {
 
   const clientSwarm = new Hyperswarm(testnet)
   let clientRPC = null
-  let clientConnected = false
 
   const connectionPromise = new Promise((resolve) => {
     clientSwarm.on('connection', (conn) => {
@@ -101,7 +100,6 @@ async function runDemo () {
         valueEncoding: c.json
       })
 
-      clientConnected = true
       resolve()
     })
   })

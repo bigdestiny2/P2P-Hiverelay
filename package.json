@@ -42,5 +42,12 @@
     "holepunch",
     "decentralized",
     "peer-to-peer"
-  ]
+  ],
+  "standard": {
+    "ignore": [
+      "scripts/test-*.js",
+      "examples/**",
+      "**/dist/**"
+    ]
+  }
 }

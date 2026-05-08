@@ -328,7 +328,7 @@ export class ZKService extends ServiceProvider {
     const PK = hexToPoint(publicKey)
     const r = randomScalar()
 
-    const C1 = G.multiply(r)       // ephemeral key
+    const C1 = G.multiply(r) // ephemeral key
     const C2 = M.add(PK.multiply(r)) // masked card
 
     return {
@@ -487,7 +487,7 @@ export class ZKService extends ServiceProvider {
    * Only requires the leaf hash and Merkle path.
    */
   async 'verify-membership' (params) {
-    const { leafHash, merkleRoot, proof, leafIndex } = params
+    const { leafHash, merkleRoot, proof } = params
     if (!leafHash || !merkleRoot || !proof) {
       throw new Error('ZK_MISSING_PARAMS')
     }

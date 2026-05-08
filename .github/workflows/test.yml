@@ -39,7 +39,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:integration
-        timeout-minutes: 5
+        # Integration tests spin up real Hyperswarm testnets + Hypercore
+        # replication. The previous 5-minute cap killed the suite mid-run
+        # (CI green up to test #65 then SIGKILL). 15 is generous headroom
+        # for the slowest-runner edge case.
+        timeout-minutes: 15
 
   audit:
     runs-on: ubuntu-latest

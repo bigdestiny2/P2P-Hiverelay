@@ -140,7 +140,7 @@ async function testHyperswarmDHT () {
         if (dht.bootstrapped) return resolve()
         dht.once('ready', resolve)
       }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('DHT ready timeout (10s)')), 10000))
+      new Promise((_resolve, reject) => setTimeout(() => reject(new Error('DHT ready timeout (10s)')), 10000))
     ])
     assert(true, 'DHT bootstrapped successfully (ready event fired)')
 

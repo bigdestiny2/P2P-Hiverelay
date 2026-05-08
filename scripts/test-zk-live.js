@@ -7,8 +7,6 @@
 
 import { HiveRelayClient } from '../client/index.js'
 
-const TIMEOUT = 15000
-
 console.log('=== HiveRelay Live ZK Test ===\n')
 
 const client = new HiveRelayClient('./test-zk-storage')

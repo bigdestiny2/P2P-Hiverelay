@@ -115,7 +115,7 @@ test('SLAService - check detects reliability violation', async (t) => {
 test('SLAService - check detects latency violation', async (t) => {
   const scores = new Map()
   scores.set('b'.repeat(64), { challenges: 100, passes: 100, fails: 0, avgLatencyMs: 3000 })
-  const { svc, node } = createService({ scores })
+  const { svc } = createService({ scores })
   const c = await svc.create(baseParams)
 
   const result = await svc.check({ id: c.id })
@@ -137,7 +137,7 @@ test('SLAService - check passes when guarantees met', async (t) => {
 test('SLAService - auto-terminate after 3 violations', async (t) => {
   const scores = new Map()
   scores.set('b'.repeat(64), { challenges: 100, passes: 50, fails: 50, avgLatencyMs: 5000 })
-  const { svc, node } = createService({ scores })
+  const { svc } = createService({ scores })
   const c = await svc.create(baseParams)
 
   // Each check produces 2 violations (reliability + latency)

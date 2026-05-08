@@ -58,14 +58,14 @@ export class AudioEngine {
   play (name, opts = {}) {
     if (!this._unlocked || !this.ctx) return
     switch (name) {
-      case 'blip':   return this._eat(opts)
-      case 'rare':   return this._rareEat()
-      case 'splat':  return this._death()
-      case 'ko':     return this._ko()
+      case 'blip': return this._eat(opts)
+      case 'rare': return this._rareEat()
+      case 'splat': return this._death()
+      case 'ko': return this._ko()
       case 'swoosh': return this._swoosh()
-      case 'chime':  return this._chime()
-      case 'spawn':  return this._spawn()
-      case 'click':  return this._click()
+      case 'chime': return this._chime()
+      case 'spawn': return this._spawn()
+      case 'click': return this._click()
     }
   }
 
@@ -120,7 +120,7 @@ export class AudioEngine {
     const t = this.ctx.currentTime
     const root = 523.25 // C5
     // C E G C — major arpeggio
-    const ratios = [1, 5/4, 3/2, 2]
+    const ratios = [1, 5 / 4, 3 / 2, 2]
     ratios.forEach((r, i) => {
       this._tone('square', root * r, t + i * 0.06, 0.12, 0.24)
       // Octave-up FM tinge for sparkle
@@ -273,7 +273,7 @@ export class AudioEngine {
     // Bassline — looping 4-note pattern at ~110 BPM (8 eighth-notes per bar,
     // 4-bar phrase)
     const bpm = 110
-    const eighth = 60 / bpm / 2  // seconds per 8th
+    const eighth = 60 / bpm / 2 // seconds per 8th
     const bass = [65.41, 65.41, 82.41, 65.41, 49.00, 49.00, 65.41, 73.42]
     let i = 0
     const tickBass = () => {

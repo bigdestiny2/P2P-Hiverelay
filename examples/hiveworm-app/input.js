@@ -7,10 +7,22 @@
 import { config } from './config.js'
 
 const KEY_TO_DIR = {
-  ArrowUp: 'N', ArrowDown: 'S', ArrowLeft: 'W', ArrowRight: 'E',
-  w: 'N', s: 'S', a: 'W', d: 'E',
-  W: 'N', S: 'S', A: 'W', D: 'E',
-  k: 'N', j: 'S', h: 'W', l: 'E'
+  ArrowUp: 'N',
+  ArrowDown: 'S',
+  ArrowLeft: 'W',
+  ArrowRight: 'E',
+  w: 'N',
+  s: 'S',
+  a: 'W',
+  d: 'E',
+  W: 'N',
+  S: 'S',
+  A: 'W',
+  D: 'E',
+  k: 'N',
+  j: 'S',
+  h: 'W',
+  l: 'E'
 }
 
 export class Input {

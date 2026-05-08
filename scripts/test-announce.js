@@ -31,7 +31,7 @@ await client.flush()
 console.log('Client flushed. PK:', b4a.toString(client.keyPair.publicKey, 'hex').slice(0, 16))
 
 console.log('Waiting 15s...')
-await new Promise(r => setTimeout(r, 15000))
+await new Promise(resolve => setTimeout(resolve, 15000))
 
 console.log('Server connections:', server.connections.size)
 console.log('Client connections:', client.connections.size)

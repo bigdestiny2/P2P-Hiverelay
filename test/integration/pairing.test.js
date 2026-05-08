@@ -2,11 +2,11 @@ import test from 'brittle'
 import createTestnet from '@hyperswarm/testnet'
 import Hyperswarm from 'hyperswarm'
 import { HiveRelayClient, _pairing } from 'p2p-hiverelay-client'
-const { deriveTopic, generateCode, proofFor } = _pairing
 import b4a from 'b4a'
 import path from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
+const { deriveTopic, generateCode, proofFor } = _pairing
 
 function tmpStorage () {
   return path.join(tmpdir(), 'hiverelay-pair-test-' + randomBytes(8).toString('hex'))

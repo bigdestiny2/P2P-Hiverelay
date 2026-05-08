@@ -50,7 +50,7 @@ test('e2e: relayed client completes handshake and ready() through the WS', async
   await browserDHT.destroy()
   socket.close()
   // Give the server-side close handler a moment.
-  await new Promise(r => setTimeout(r, 100))
+  await new Promise(resolve => setTimeout(resolve, 100))
 })
 
 test('e2e: WS server cleanly handles client disconnect mid-session', async (t) => {
@@ -71,7 +71,7 @@ test('e2e: WS server cleanly handles client disconnect mid-session', async (t) =
 
   // Hard close — the relay should drop the session, not leak it.
   socket.terminate()
-  await new Promise((r) => setTimeout(r, 100))
+  await new Promise((resolve) => setTimeout(resolve, 100))
 
   t.is(relayWs.getStats().activeConnections, 0, 'relay cleaned up the dropped connection')
 })

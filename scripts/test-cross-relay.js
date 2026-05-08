@@ -29,7 +29,7 @@ const KNOWN_RELAYS = (() => {
   }
 })()
 const DISCOVERY_TIMEOUT_MS = 45_000
-const STABILITY_WINDOW_MS  = 15_000
+const STABILITY_WINDOW_MS = 15_000
 
 // --- Derive topic ---
 const RELAY_DISCOVERY_TOPIC = b4a.alloc(32)
@@ -37,8 +37,8 @@ sodium.crypto_generichash(RELAY_DISCOVERY_TOPIC, b4a.from('hiverelay-discovery-v
 
 // --- State ---
 const startTime = Date.now()
-const discovered = new Map()          // pkHex -> { label, time, conn, disconnected }
-const allConnections = []              // every connection we see
+const discovered = new Map() // pkHex -> { label, time, conn, disconnected }
+const allConnections = [] // every connection we see
 let stabilityTimer = null
 let discoveryTimer = null
 
@@ -129,7 +129,7 @@ swarm.on('connection', (conn, info) => {
     }
   }
 
-  conn.on('error', () => {})  // swallow to avoid crash
+  conn.on('error', () => {}) // swallow to avoid crash
 
   conn.on('close', () => {
     console.log(`[${elapsed()}s] Disconnected: ${short}...`)

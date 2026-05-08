@@ -16,9 +16,9 @@ import { config } from './config.js'
 
 export class World {
   constructor () {
-    this.worms = new Map()  // pubkey -> Worm
-    this.food = new Map()   // "x,y" -> { x, y, value, born, pulse }
-    this.deaths = []        // recent deaths { pubkey, atPos, byPubkey, ts }
+    this.worms = new Map() // pubkey -> Worm
+    this.food = new Map() // "x,y" -> { x, y, value, born, pulse }
+    this.deaths = [] // recent deaths { pubkey, atPos, byPubkey, ts }
     this.memorials = []
     this.config = {
       width: config.worldWidth,
@@ -82,7 +82,9 @@ export class World {
     this.food.clear()
     for (const f of (stateJson.food || [])) {
       this.food.set(this.cellKey(f.x, f.y), {
-        x: f.x, y: f.y, value: f.value || 1,
+        x: f.x,
+        y: f.y,
+        value: f.value || 1,
         born: now,
         pulse: Math.random() * Math.PI * 2,
         rare: ((f.x * 31 + f.y * 17) % 23) === 0
@@ -179,8 +181,12 @@ export class World {
       for (const [sx, sy] of worm.targetSegments) {
         if (sx >= 0 && sy >= 0 && sx < this.config.width && sy < this.config.height) {
           this.food.set(this.cellKey(sx, sy), {
-            x: sx, y: sy, value: 1, born: now,
-            pulse: Math.random() * Math.PI * 2, rare: false
+            x: sx,
+            y: sy,
+            value: 1,
+            born: now,
+            pulse: Math.random() * Math.PI * 2,
+            rare: false
           })
         }
       }

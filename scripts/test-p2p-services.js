@@ -20,13 +20,12 @@
 
 import { HiveRelayClient } from '../client/index.js'
 
-let passed = 0, failed = 0
+let passed = 0; let failed = 0
 const results = []
 function log (icon, msg) { console.log(`  ${icon} ${msg}`) }
 async function test (name, fn) {
   const start = Date.now()
-  try { await fn(); log('✅', `${name} (${Date.now() - start}ms)`); passed++; results.push({ name, status: 'pass' }) }
-  catch (err) { log('❌', `${name} — ${err.message}`); failed++; results.push({ name, status: 'fail', error: err.message }) }
+  try { await fn(); log('✅', `${name} (${Date.now() - start}ms)`); passed++; results.push({ name, status: 'pass' }) } catch (err) { log('❌', `${name} — ${err.message}`); failed++; results.push({ name, status: 'fail', error: err.message }) }
 }
 function assert (cond, msg) { if (!cond) throw new Error(msg) }
 
@@ -79,7 +78,7 @@ async function runTests () {
       log('ℹ️', `Connected to ${relays.length} relay(s), ${relays.filter(r => r.hasServiceProtocol).length} with service channel`)
       break
     }
-    await new Promise(r => setTimeout(r, 1000))
+    await new Promise(resolve => setTimeout(resolve, 1000))
     process.stdout.write('.')
   }
   console.log()
@@ -91,7 +90,7 @@ async function runTests () {
   }
 
   // Give a moment for catalogs to arrive
-  await new Promise(r => setTimeout(r, 2000))
+  await new Promise(resolve => setTimeout(resolve, 2000))
 
   // ──────────────────────────────────────────
   // 1. Service Channel Opens
@@ -190,7 +189,7 @@ async function runTests () {
       await client.callService('nonexistent', 'method', {}, { timeout: 5000 })
       assert(false, 'Should have thrown')
     } catch (err) {
-      assert(err.message !== 'SERVICE_TIMEOUT', `Got timeout instead of error — relay may not be handling unknown services`)
+      assert(err.message !== 'SERVICE_TIMEOUT', 'Got timeout instead of error — relay may not be handling unknown services')
       log('ℹ️', `Error for unknown service: ${err.message}`)
     }
   })
@@ -200,7 +199,7 @@ async function runTests () {
       await client.callService('identity', 'nonexistent-method', {}, { timeout: 5000 })
       assert(false, 'Should have thrown')
     } catch (err) {
-      assert(err.message !== 'SERVICE_TIMEOUT', `Got timeout instead of error`)
+      assert(err.message !== 'SERVICE_TIMEOUT', 'Got timeout instead of error')
       log('ℹ️', `Error for unknown method: ${err.message}`)
     }
   })

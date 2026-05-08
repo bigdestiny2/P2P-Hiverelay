@@ -113,7 +113,7 @@ test('DHTRelayWS rate limit: 11th connection within window is rejected at upgrad
     c.close()
     await new Promise((resolve) => c.on('close', resolve))
     // tiny breath so the server's close handler runs and decrements concurrent
-    await new Promise((r) => setTimeout(r, 10))
+    await new Promise((resolve) => setTimeout(resolve, 10))
   }
 
   // 11th — rejected at HTTP upgrade time. The client never sees 'open'; it
@@ -223,14 +223,14 @@ test('DHTRelayWS rate limit: window refill restores capacity', async (t) => {
     })
     c.close()
     await new Promise((resolve) => c.on('close', resolve))
-    await new Promise((r) => setTimeout(r, 10))
+    await new Promise((resolve) => setTimeout(resolve, 10))
   }
 
   const blocked = await probe(port)
   t.is(blocked.code, 1006, '3rd within window blocked at upgrade (close 1006)')
 
   // Wait past the window so the bucket fully refills.
-  await new Promise((r) => setTimeout(r, 250))
+  await new Promise((resolve) => setTimeout(resolve, 250))
 
   // Should succeed now.
   const after = await probe(port)

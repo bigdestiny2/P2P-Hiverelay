@@ -22,7 +22,6 @@
 import test from 'brittle'
 import http from 'http'
 import { EventEmitter } from 'events'
-import { randomBytes } from 'crypto'
 import { Federation } from 'p2p-hiverelay/core/federation.js'
 
 // ─── Helpers ─────────────────────────────────────────────────────────

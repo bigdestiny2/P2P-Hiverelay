@@ -45,19 +45,19 @@ await client.start()
 // Poll for relay connection (DHT discovery can take a few seconds)
 for (let i = 0; i < 20; i++) {
   if (client.relays.size > 0) break
-  await new Promise(r => setTimeout(r, 500))
+  await new Promise(resolve => setTimeout(resolve, 500))
   await clientSwarm.flush()
 }
 
 console.log('Client connected to', client.getRelays().length, 'relay(s)')
 
 // Wait for service channel to open
-await new Promise(r => {
+await new Promise(resolve => {
   for (const [, relay] of client.relays) {
-    if (relay.channels?.service) return r()
+    if (relay.channels?.service) return resolve()
   }
-  client.on('service-channel-open', () => r())
-  setTimeout(r, 3000)
+  client.on('service-channel-open', () => resolve())
+  setTimeout(resolve, 3000)
 })
 
 let passed = 0

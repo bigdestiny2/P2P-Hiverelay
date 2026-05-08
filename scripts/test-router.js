@@ -43,8 +43,6 @@ function request (relay, method, path, body = null, opts = {}) {
 
     const payload = body ? JSON.stringify(body) : null
     if (payload) headers['Content-Length'] = Buffer.byteLength(payload)
-
-    const url = `http://${relay.host}:${relay.port}${path}`
     const reqOpts = {
       method,
       hostname: relay.host,
@@ -84,7 +82,7 @@ async function dispatch (relay, route, params = {}) {
 
 let passed = 0
 let failed = 0
-let skipped = 0
+const skipped = 0
 const results = []
 
 function log (icon, msg) {
@@ -321,7 +319,7 @@ async function runTests () {
     })
 
     // Trigger events by seeding/unseeding
-    await new Promise(r => setTimeout(r, 500))
+    await new Promise(resolve => setTimeout(resolve, 500))
 
     // Check pub/sub stats
     const statsRes = await request(relay, 'GET', '/api/v1/router')
@@ -402,7 +400,6 @@ async function runTests () {
   await test('Sustained burst: 15 requests over 3 seconds (spread across relays)', async () => {
     const allTimes = []
     let ok = 0
-    let errors = 0
 
     for (let wave = 0; wave < 3; wave++) {
       const batch = []
@@ -415,11 +412,9 @@ async function runTests () {
         if (r.status === 'fulfilled' && r.value.status === 200) {
           ok++
           allTimes.push(r.value.ms)
-        } else {
-          errors++
         }
       }
-      await new Promise(r => setTimeout(r, 1000))
+      await new Promise(resolve => setTimeout(resolve, 1000))
     }
 
     const avg = Math.round(allTimes.reduce((a, b) => a + b, 0) / allTimes.length)
@@ -433,7 +428,7 @@ async function runTests () {
   // ────────────────────────────────────────────────
   console.log('\n── Test Group 9: Storage Service ──')
   console.log('  ⏳ Cooldown (rate limit recovery)...')
-  await new Promise(r => setTimeout(r, 5000))
+  await new Promise(resolve => setTimeout(resolve, 5000))
 
   await test('List drives', async () => {
     const res = await dispatch(RELAYS[1], 'storage.drive-list')
@@ -477,7 +472,7 @@ async function runTests () {
   console.log('\n── Test Group 11: Network Connectivity ──')
 
   console.log('  ⏳ Cooldown (rate limit recovery)...')
-  await new Promise(r => setTimeout(r, 5000))
+  await new Promise(resolve => setTimeout(resolve, 5000))
 
   await test('All relays see peer connections', async () => {
     for (const relay of RELAYS) {
