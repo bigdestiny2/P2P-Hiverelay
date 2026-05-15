@@ -31,6 +31,14 @@ test('isTransientCoreError: detects CORE_CLOSED prefix', (t) => {
   t.ok(isTransientCoreError(new Error('CORE_CLOSED')))
 })
 
+test('isTransientCoreError: detects "Mutex has been destroyed"', (t) => {
+  // Observed live in production against a publish-channel intent submit
+  // — same recovery posture as the closed-store cases, but the marker
+  // wasn't recognised pre-this-change so it surfaced as retryable=false.
+  t.ok(isTransientCoreError(new Error('Mutex has been destroyed')))
+  t.ok(isTransientCoreError(new Error('append failed: Mutex has been destroyed')))
+})
+
 test('isTransientCoreError: matches on err.code as well as err.message', (t) => {
   // Some hypercore versions surface a code string instead of (or in
   // addition to) the message. Accept either.
