@@ -17,6 +17,7 @@ import {
   normalizePrivacyTier,
   normalizeStorageClass
 } from '../constants.js'
+import { isAbortError } from '../relay-node/lifecycle-scope.js'
 import {
   computeReceiptRoot,
   createCustodyCommit,
@@ -104,6 +105,11 @@ export class SeedingRegistry extends EventEmitter {
     this._maxLogsPerPeer = Number.isFinite(opts.maxLogsPerPeer) && opts.maxLogsPerPeer > 0
       ? Math.floor(opts.maxLogsPerPeer)
       : 4
+    // Optional LifecycleScope from the owning RelayNode — used so
+    // _indexLog can short-circuit on stop() instead of running its
+    // for-loop's next `log.get(i)` against a freshly-closed core. See
+    // STALE-REF-INVENTORY.md vector A3 and CANCELLATION-CONTRACT.md.
+    this._scope = opts.scope || null
   }
 
   async start () {
@@ -116,9 +122,14 @@ export class SeedingRegistry extends EventEmitter {
     // Rebuild index from local log
     await this._indexLog(this.localLog, localLogKeyHex)
     this._onLocalAppend = () => {
-      this._indexLog(this.localLog, localLogKeyHex).catch((err) => {
+      // Track in the LifecycleScope so RelayNode.stop()'s drain awaits
+      // any in-flight indexing before closing the localLog. AbortError
+      // is the normal exit path during stop() — swallow it silently.
+      const promise = this._indexLog(this.localLog, localLogKeyHex).catch((err) => {
+        if (isAbortError(err)) return
         this.emit('index-error', { context: 'local-append', error: err.message || String(err) })
       })
+      if (this._scope) this._scope.tracked(promise)
     }
     this.localLog.on('append', this._onLocalAppend)
 
@@ -259,7 +270,8 @@ export class SeedingRegistry extends EventEmitter {
     await this._indexLog(log, logKeyHex, peerPubkey)
 
     const onAppend = () => {
-      this._indexLog(log, logKeyHex, peerPubkey).catch((err) => {
+      const promise = this._indexLog(log, logKeyHex, peerPubkey).catch((err) => {
+        if (isAbortError(err)) return
         this.emit('index-error', {
           context: 'peer-append',
           logKey: logKeyHex,
@@ -267,6 +279,7 @@ export class SeedingRegistry extends EventEmitter {
           error: err.message || String(err)
         })
       })
+      if (this._scope) this._scope.tracked(promise)
     }
     log.on('append', onAppend)
 
@@ -282,15 +295,34 @@ export class SeedingRegistry extends EventEmitter {
 
   async _indexLog (log, logId = null, sourcePeerPubkey = null) {
     const id = logId || b4a.toString(log.key, 'hex')
+    const scope = this._scope
     let offset = this._indexedOffsets.get(id) || 0
     const source = sourcePeerPubkey
       ? { peerPubkey: sourcePeerPubkey }
       : (this._peerLogMeta.get(id) || null)
 
     for (let i = offset; i < log.length; i++) {
+      // Bail before each `log.get(i)` if stop() has begun — otherwise
+      // the next get() runs against a closed core and throws (vector A3
+      // in STALE-REF-INVENTORY.md). We also bail if the log itself
+      // reports closing — defense in depth for the case where stop()
+      // closed the log before draining the scope, e.g. shutdown
+      // sequencing bug.
+      if (scope && scope.aborted) {
+        const err = new Error('Operation aborted')
+        err.name = 'AbortError'
+        err.code = 'ABORT_ERR'
+        throw err
+      }
+      if (log.closed || log.closing) return
+
       try {
         const block = await log.get(i)
-        if (!block) continue
+        if (!block) {
+          offset = i + 1
+          this._indexedOffsets.set(id, offset)
+          continue
+        }
         if (block.byteLength > MAX_REGISTRY_ENTRY_BYTES) {
           this.emit('entry-rejected', {
             reason: 'registry-entry-too-large',
@@ -298,13 +330,24 @@ export class SeedingRegistry extends EventEmitter {
             index: i,
             bytes: block.byteLength
           })
+          offset = i + 1
+          this._indexedOffsets.set(id, offset)
           continue
         }
         const entry = JSON.parse(b4a.toString(block))
         this._applyEntry(entry, { logId: id, peerPubkey: source?.peerPubkey || null })
+        offset = i + 1
+        this._indexedOffsets.set(id, offset)
       } catch (err) {
+        // Re-throw AbortError so callers (the listener wrappers) can
+        // distinguish stop()-driven bail from a real index error.
+        if (isAbortError(err)) throw err
+        // Real index error — emit and continue. But check whether the
+        // error is from a freshly-closed log (the symptom we're fixing):
+        // if so, exit the loop instead of repeatedly hitting closed-core
+        // errors on every remaining iteration.
         this.emit('index-error', { context: 'indexLog', logId: id, index: i, error: err.message || String(err) })
-      } finally {
+        if (log.closed || log.closing) return
         offset = i + 1
         this._indexedOffsets.set(id, offset)
       }

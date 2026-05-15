@@ -5,6 +5,7 @@ import { EventEmitter } from 'events'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { updateWithTimeout, downloadWithTimeout, getDriveSize } from './cancellable-drive-update.js'
+import { isAbortError } from './lifecycle-scope.js'
 import {
   isValidHexKey,
   normalizeAvailabilityClass,
@@ -268,7 +269,10 @@ export class AppLifecycle extends EventEmitter {
       // Eagerly replicate drive content. Extracted to a method in v0.8.12
       // so the alreadySeeded re-pin path can call it too — see
       // _reconcileSeedOptsOnRepin.
-      this._eagerReplicate(appKeyHex, drive, opts, { source: 'fresh-seed' }).catch(() => {})
+      //
+      // Tracked in the LifecycleScope so stop() drains the loop before
+      // tearing down the corestore (vector A1 in STALE-REF-INVENTORY.md).
+      this._trackEagerReplicate(appKeyHex, drive, opts, { source: 'fresh-seed' })
 
       // Revocability commitments — recorded at seed time, derived from the
       // signed seed-request payload (committed by publisher signature, so
@@ -344,6 +348,42 @@ export class AppLifecycle extends EventEmitter {
   }
 
   /**
+   * Fire-and-forget wrapper around _eagerReplicate that participates in
+   * the LifecycleScope cancellation contract (see lifecycle-scope.js +
+   * CANCELLATION-CONTRACT.md). Tracking the promise lets RelayNode.stop()
+   * drain the loop before tearing down the corestore — closes vectors A1
+   * (fresh-seed eager-replicate retry loop) and A4 (re-pin retrigger) in
+   * STALE-REF-INVENTORY.md.
+   *
+   * Callers should NOT chain their own `.catch(() => {})` on the return —
+   * this helper already swallows non-Abort errors via the `.catch()` inside.
+   *
+   * @returns {Promise} the tracked, error-swallowed promise (settles
+   *   either way; the caller doesn't usually need to await it, but
+   *   tests can).
+   */
+  _trackEagerReplicate (appKeyHex, drive, opts, meta = {}) {
+    const node = this.node
+    const scope = node && node._scope
+    const promise = this._eagerReplicate(appKeyHex, drive, opts, meta)
+      .catch((err) => {
+        // AbortError is the normal exit path during stop() — swallow
+        // silently. Anything else is unexpected; surface as a
+        // recoverable reseed-error so observers see it.
+        if (isAbortError(err)) return
+        this.emit('reseed-error', {
+          appKey: appKeyHex,
+          error: (err && err.message) || String(err),
+          recoverable: true,
+          source: meta.source || 'fresh-seed',
+          hint: 'unexpected error in eagerReplicate; periodic repair monitor will keep retrying'
+        })
+      })
+    if (scope) scope.tracked(promise)
+    return promise
+  }
+
+  /**
    * Eagerly replicate a drive with the v0.8.11 size-check. Called from:
    *   1. _seedAppInner — fresh seed, after the drive is created.
    *   2. _reconcileSeedOptsOnRepin — re-pin with raised maxStorage, drive
@@ -354,6 +394,15 @@ export class AppLifecycle extends EventEmitter {
    * v0.8.12 to support the re-pin path that swallows new opts on
    * alreadySeeded — see FEEDBACK-PEARBROWSER-PIN-CAP-FAILURE.md ask (6).
    *
+   * v0.8.13 (Reliability v2): every long await is wrapped in
+   * `scope.race(...)` so a `stop()` call short-circuits the loop with an
+   * AbortError, and the retry-delay sleep is `scope.sleep(...)` so it
+   * exits promptly on abort instead of running the full RETRY_DELAYS
+   * tail. The fire-and-forget wrapper (_trackEagerReplicate above)
+   * registers this promise in node._scope so stop() waits for the bail
+   * to complete before destroying the swarm / corestore. See
+   * STALE-REF-INVENTORY.md vector A1.
+   *
    * @param {string} appKeyHex
    * @param {Hyperdrive} drive
    * @param {object} opts - seed opts (maxStorage is the relevant field)
@@ -361,6 +410,8 @@ export class AppLifecycle extends EventEmitter {
    */
   async _eagerReplicate (appKeyHex, drive, opts, meta = {}) {
     const node = this.node
+    const scope = node && node._scope
+    if (scope && scope.aborted) return
     if (!drive || drive.closed || drive.closing) return
     const discoveryKey = drive.discoveryKey
     const source = meta.source || 'fresh-seed'
@@ -370,15 +421,19 @@ export class AppLifecycle extends EventEmitter {
     // over anyway. Total wall time: ~2 min instead of ~4 min.
     const RETRY_DELAYS = [5000, 10000, 15000, 30000, 30000, 30000]
 
+    const aborted = () => scope ? scope.aborted : false
+    const raceOr = (promise) => scope ? scope.race(promise) : promise
+
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      // Bail out if the drive was closed (e.g. by unseedApp)
-      if (drive.closed || drive.closing) return
+      // Bail out if the drive was closed (e.g. by unseedApp) or the scope
+      // was aborted (stop() / self-heal restart in progress).
+      if (aborted() || drive.closed || drive.closing) return
 
       try {
         node.swarm.join(discoveryKey, { server: true, client: true })
-        await node.swarm.flush()
+        await raceOr(node.swarm.flush())
 
-        if (drive.closed || drive.closing) return
+        if (aborted() || drive.closed || drive.closing) return
 
         // Cancellable update — on timeout, the helper detaches any
         // in-flight hypercore upgrade refs from the replicator's
@@ -386,9 +441,9 @@ export class AppLifecycle extends EventEmitter {
         // raw Promise.race left the upgrade ref pending, leading to
         // the "Cannot make sessions on a closing core" leak that
         // PR #14 papered over with 503 + Retry-After.
-        await updateWithTimeout(drive, { timeoutMs: 30_000 })
+        await raceOr(updateWithTimeout(drive, { timeoutMs: 30_000 }))
 
-        if (drive.version > 0 && !drive.closed && !drive.closing) {
+        if (drive.version > 0 && !drive.closed && !drive.closing && !aborted()) {
           // ── Size-check the drive against the publisher's maxStorage ──
           //
           // See docs/FEEDBACK-PEARBROWSER-PIN-CAP-FAILURE.md for the case
@@ -405,7 +460,9 @@ export class AppLifecycle extends EventEmitter {
             ? opts.maxStorage
             : null
           if (cap !== null) {
-            const { totalBytes, metaBytes, blobBytes } = await getDriveSize(drive, { timeoutMs: 10_000 })
+            const { totalBytes, metaBytes, blobBytes } = await raceOr(
+              getDriveSize(drive, { timeoutMs: 10_000 })
+            )
             if (totalBytes > cap) {
               const recommendedCap = Math.ceil(totalBytes * 1.25)
               this.emit('seed-aborted', {
@@ -429,10 +486,14 @@ export class AppLifecycle extends EventEmitter {
 
           // Cancellable download — destroys the download tracker on
           // timeout so its in-flight block requests are released.
-          await downloadWithTimeout(drive, '/', { timeoutMs: 120_000 })
-            .catch(() => {}) // partial download is fine; version is what matters
+          try {
+            await raceOr(downloadWithTimeout(drive, '/', { timeoutMs: 120_000 }))
+          } catch (err) {
+            if (isAbortError(err)) return
+            // partial download is fine; version is what matters — keep going
+          }
 
-          if (drive.closed || drive.closing) return
+          if (aborted() || drive.closed || drive.closing) return
 
           // After content is downloaded, read manifest and deduplicate.
           // Idempotent — safe to call on retrigger.
@@ -451,18 +512,32 @@ export class AppLifecycle extends EventEmitter {
           this.emit('reseeded', { appKey: appKeyHex, version: drive.version, source })
           return
         }
-      } catch (_) {
-        // SESSION_CLOSED, timeout, or drive closed during replication
+      } catch (err) {
+        // AbortError = stop() in progress; exit immediately without retry.
+        if (isAbortError(err)) return
+        // SESSION_CLOSED / timeout / drive closed mid-call → fall through
+        // to the retry delay below if the drive is still considered open.
         if (drive.closed || drive.closing) return
       }
 
       if (attempt < MAX_RETRIES - 1) {
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[attempt]))
+        try {
+          if (scope) {
+            await scope.sleep(RETRY_DELAYS[attempt])
+          } else {
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[attempt]))
+          }
+        } catch (err) {
+          // AbortError during the inter-attempt sleep — bail.
+          if (isAbortError(err)) return
+          throw err
+        }
       }
     }
     // Exhausted eager retries — record the check, mark not anchored.
     // The periodic repair monitor will keep trying; this is NOT a
     // permanent failure, just the end of the fast-path attempt.
+    if (aborted()) return
     if (node.appRegistry && typeof node.appRegistry.recordAnchorCheck === 'function') {
       node.appRegistry.recordAnchorCheck(appKeyHex)
     }
@@ -574,9 +649,32 @@ export class AppLifecycle extends EventEmitter {
     if (!drive || drive.closed || drive.closing) return
 
     existing._replicating = true
-    this._eagerReplicate(appKeyHex, drive, { ...newOpts, maxStorage: newCap }, { source: 'repin-cap-raised' })
-      .catch(() => {})
-      .finally(() => { existing._replicating = false })
+    const scope = node && node._scope
+    const promise = this._eagerReplicate(appKeyHex, drive, { ...newOpts, maxStorage: newCap }, { source: 'repin-cap-raised' })
+      .catch((err) => {
+        // Swallow AbortError silently; surface unexpected errors so
+        // observers see them (same shape as _trackEagerReplicate).
+        if (isAbortError(err)) return
+        this.emit('reseed-error', {
+          appKey: appKeyHex,
+          error: (err && err.message) || String(err),
+          recoverable: true,
+          source: 'repin-cap-raised',
+          hint: 'unexpected error in eagerReplicate retrigger; periodic repair monitor will keep retrying'
+        })
+      })
+      .finally(() => {
+        // Signal-aware finally: if stop() / unseedApp ran during the
+        // replicate and removed the entry, writing _replicating = false
+        // would mutate state that no longer should exist (see vector A4
+        // in STALE-REF-INVENTORY.md). Re-check the live registry instead
+        // of trusting the captured `existing` reference.
+        const liveEntry = node.appRegistry ? node.appRegistry.get(appKeyHex) : null
+        if (liveEntry && liveEntry === existing) {
+          existing._replicating = false
+        }
+      })
+    if (scope) scope.tracked(promise)
   }
 
   /**
@@ -689,34 +787,47 @@ export class AppLifecycle extends EventEmitter {
     const drive = entry.drive
     if (drive.closed || drive.closing) return false
 
+    // LifecycleScope integration: every long await participates in the
+    // cancellation contract so stop() can drain in-flight repair attempts
+    // (Tier B vectors B4/B5/B16 in STALE-REF-INVENTORY.md). When the
+    // scope is missing (test harness without a RelayNode), behavior
+    // falls back to the original raw-await path.
+    const scope = node && node._scope
+    if (scope && scope.aborted) return false
+    const raceOr = (promise) => scope ? scope.race(promise) : promise
+
     const updateTimeout = opts.updateTimeout || 15_000
     const downloadTimeout = opts.downloadTimeout || 60_000
 
     // Re-announce on the discovery topic in case the swarm dropped us
     try {
       node.swarm.join(drive.discoveryKey, { server: true, client: true })
-      await Promise.race([
+      await raceOr(Promise.race([
         node.swarm.flush().catch(() => {}),
         new Promise(resolve => {
           const t = setTimeout(resolve, 2000)
           if (t.unref) t.unref()
         })
-      ])
-    } catch (_) { /* swarm-leave-during-repair race */ }
+      ]))
+    } catch (err) {
+      if (isAbortError(err)) return false
+      /* swarm-leave-during-repair race */
+    }
 
-    if (drive.closed || drive.closing) return false
+    if ((scope && scope.aborted) || drive.closed || drive.closing) return false
 
     try {
       // Cancellable update — see cancellable-drive-update.js. On timeout,
       // detaches in-flight hypercore upgrade refs from activeRequests so
       // they don't leak.
-      await updateWithTimeout(drive, { timeoutMs: updateTimeout })
+      await raceOr(updateWithTimeout(drive, { timeoutMs: updateTimeout }))
     } catch (err) {
+      if (isAbortError(err)) return false
       this.emit('repair-update-failed', { appKey: appKeyHex, error: err.message })
       return false
     }
 
-    if (drive.closed || drive.closing || drive.version === 0) {
+    if ((scope && scope.aborted) || drive.closed || drive.closing || drive.version === 0) {
       // Still no version — no peer has data for this drive yet
       if (typeof node.appRegistry.recordAnchorCheck === 'function') {
         node.appRegistry.recordAnchorCheck(appKeyHex)
@@ -726,10 +837,14 @@ export class AppLifecycle extends EventEmitter {
 
     // We have metadata; pull blob content (cancellable on timeout)
     try {
-      await downloadWithTimeout(drive, '/', { timeoutMs: downloadTimeout })
-        .catch(() => {}) // partial download still counts — version is what matters
+      try {
+        await raceOr(downloadWithTimeout(drive, '/', { timeoutMs: downloadTimeout }))
+      } catch (err) {
+        if (isAbortError(err)) return false
+        // partial download still counts — version is what matters
+      }
 
-      if (drive.closed || drive.closing) return false
+      if ((scope && scope.aborted) || drive.closed || drive.closing) return false
 
       if (drive.version > 0) {
         node.appRegistry.setAnchored(appKeyHex, drive.version)
@@ -738,6 +853,7 @@ export class AppLifecycle extends EventEmitter {
         return true
       }
     } catch (err) {
+      if (isAbortError(err)) return false
       this.emit('repair-download-failed', { appKey: appKeyHex, error: err.message })
     }
     return false
@@ -756,6 +872,8 @@ export class AppLifecycle extends EventEmitter {
   async runRepairPass (opts = {}) {
     const node = this.node
     if (!node.appRegistry) return { checked: 0, repaired: 0, stillUnanchored: 0 }
+    const scope = node && node._scope
+    if (scope && scope.aborted) return { checked: 0, repaired: 0, stillUnanchored: 0 }
 
     const maxConcurrent = Math.max(1, opts.maxConcurrent || 3)
     const budget = opts.budget || Infinity
@@ -771,9 +889,12 @@ export class AppLifecycle extends EventEmitter {
     let repaired = 0
     let checked = 0
 
-    // Worker pool — process queue with bounded concurrency
+    // Worker pool — process queue with bounded concurrency. Workers drop
+    // the remaining queue on scope abort so a long repair pass doesn't
+    // keep firing fresh `drive.update`s against a tearing-down corestore.
     const workers = Array.from({ length: maxConcurrent }, () => (async () => {
       while (queue.length > 0) {
+        if (scope && scope.aborted) return
         const appKey = queue.shift()
         if (!appKey) return
         checked++
@@ -781,6 +902,7 @@ export class AppLifecycle extends EventEmitter {
           const ok = await this.repairUnanchored(appKey)
           if (ok) repaired++
         } catch (err) {
+          if (isAbortError(err)) return
           this.emit('repair-error', { appKey, error: err.message })
         }
       }

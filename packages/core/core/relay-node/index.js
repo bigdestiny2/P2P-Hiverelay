@@ -56,6 +56,7 @@ import { SwarmFirewall } from './swarm-firewall.js'
 import { PolicyGuard } from '../policy-guard.js'
 import { AppLifecycle } from './app-lifecycle.js'
 import { GatewayServer } from './gateway-server.js'
+import { LifecycleScope, isAbortError } from './lifecycle-scope.js'
 
 const DEFAULT_CONFIG = {
   productProfile: 'relay-core',
@@ -364,12 +365,36 @@ export class RelayNode extends EventEmitter {
     this._lastRepairAt = null
     this._custodyExpiryInterval = null
     this._lastCustodyExpiryAt = null
+    // LifecycleScope — cancellation contract for fire-and-forget loops and
+    // event handlers (see lifecycle-scope.js). Recreated by every start()
+    // call so post-stop+start sequences get a fresh signal. stop()'s
+    // first action is `await this._scope.drain()` so no closure outlives
+    // the corestore.
+    this._scope = null
     this.running = false
   }
 
   // Backwards compat: expose the seeded apps Map owned by AppLifecycle.
   get seededApps () {
     return this.appLifecycle.seededApps
+  }
+
+  /**
+   * Register a fire-and-forget promise with the active LifecycleScope so
+   * stop() drains it before tearing down state. Used by all the
+   * `setInterval(...)`/`setTimeout(...)` handlers that previously did
+   * `someAsync().catch(() => {})` — see CANCELLATION-CONTRACT.md.
+   *
+   * Returns the promise unchanged. If start() has not run (no active
+   * scope), the promise is left alone — caller is responsible for its
+   * lifetime.
+   *
+   * @param {Promise} promise
+   * @returns {Promise}
+   */
+  _trackFireAndForget (promise) {
+    if (this._scope) this._scope.tracked(promise)
+    return promise
   }
 
   _isRestrictedMode () {
@@ -453,6 +478,12 @@ export class RelayNode extends EventEmitter {
 
   async start () {
     if (this.running) return
+
+    // Fresh lifecycle scope — every loop / handler that participates in
+    // the cancellation contract reads `this._scope` and is automatically
+    // aborted + drained by stop(). Recreated here so a stop()/start()
+    // cycle (e.g. self-heal restart) gets a clean signal.
+    this._scope = new LifecycleScope()
 
     try {
       // Re-create store if it was closed (e.g. after self-heal restart)
@@ -915,7 +946,7 @@ export class RelayNode extends EventEmitter {
               if (isMirrored || followThisAnchored) {
                 // Trusted partner OR auto-followed anchored content.
                 acted++
-                this.seedApp(appKey, {
+                this._trackFireAndForget(this.seedApp(appKey, {
                   appId: app.id || app.appId || null,
                   name: app.name || null,
                   version: app.version || null,
@@ -935,8 +966,9 @@ export class RelayNode extends EventEmitter {
                     sourceRelay: relayPubkey
                   })
                 }).catch((err) => {
+                  if (isAbortError(err)) return
                   this.emit('catalog-sync-error', { appKey, error: err.message })
-                })
+                }))
                 continue
               }
 
@@ -957,7 +989,7 @@ export class RelayNode extends EventEmitter {
               }
               if (decision === 'accept') {
                 acted++
-                this.seedApp(appKey, {
+                this._trackFireAndForget(this.seedApp(appKey, {
                   appId: app.id || app.appId || null,
                   name: app.name || null,
                   version: app.version || null,
@@ -973,8 +1005,9 @@ export class RelayNode extends EventEmitter {
                 }).then(() => {
                   this.emit('catalog-sync', { appKey, source: 'remote-catalog', mode: acceptMode })
                 }).catch((err) => {
+                  if (isAbortError(err)) return
                   this.emit('catalog-sync-error', { appKey, error: err.message })
-                })
+                }))
                 continue
               }
               // 'review' — queue for operator approval.
@@ -1012,7 +1045,11 @@ export class RelayNode extends EventEmitter {
           // Registry uses its own Corestore namespace to avoid conflicts
           const registryStore = this.store.namespace('seeding-registry')
           this.seedingRegistry = new SeedingRegistry(registryStore, this.swarm, {
-            registryKey: this.config.registryKey || null
+            registryKey: this.config.registryKey || null,
+            // Pass the node's LifecycleScope so _indexLog can bail on
+            // stop() instead of running against a freshly-closed log
+            // (vector A3 in STALE-REF-INVENTORY.md).
+            scope: this._scope
           })
 
           // Custody push channel — broadcasts new custody entries to every
@@ -1113,15 +1150,16 @@ export class RelayNode extends EventEmitter {
           // Periodic scan for matching seed requests
           const scanInterval = this.config.registryScanInterval || 60_000 // 1 min default
           this._registryScanInterval = setInterval(() => {
-            this._scanRegistry().catch((err) => {
+            this._trackFireAndForget(this._scanRegistry().catch((err) => {
+              if (isAbortError(err)) return
               this.emit('registry-error', { error: err })
-            })
+            }))
           }, scanInterval)
           if (this._registryScanInterval.unref) this._registryScanInterval.unref()
 
           // Run initial scan after a short delay to let the registry sync
           setTimeout(() => {
-            this._scanRegistry().catch(() => {})
+            this._trackFireAndForget(this._scanRegistry().catch(() => {}))
           }, 5000)
 
           this._startReplicationMonitor()
@@ -1134,9 +1172,10 @@ export class RelayNode extends EventEmitter {
           // start.
           if (Array.isArray(this.config.coldStartRelays) && this.config.coldStartRelays.length > 0) {
             setTimeout(() => {
-              this._runColdStartPrimer().catch((err) => {
+              this._trackFireAndForget(this._runColdStartPrimer().catch((err) => {
+                if (isAbortError(err)) return
                 this.emit('cold-start-error', { error: err.message || String(err) })
-              })
+              }))
             }, 15_000)
           }
         } catch (err) {
@@ -1147,10 +1186,14 @@ export class RelayNode extends EventEmitter {
 
       this._startCustodyExpiryMonitor()
 
-      // Load app registry from disk and reseed all persisted apps
-      this._reseedFromRegistry().catch((err) => {
+      // Load app registry from disk and reseed all persisted apps.
+      // Tracked so a stop() that fires while reseed is fanning out
+      // (each seedApp cascades into eagerReplicate — see vector A1)
+      // drains every fan-out before tearing down the corestore.
+      this._trackFireAndForget(this._reseedFromRegistry().catch((err) => {
+        if (isAbortError(err)) return
         this.emit('reseed-error', { error: err })
-      })
+      }))
 
       // Start network discovery — shares this node's swarm to discover other relays
       this.networkDiscovery = new NetworkDiscovery({ swarm: this.swarm })
@@ -1248,12 +1291,20 @@ export class RelayNode extends EventEmitter {
 
       this.emit('started', { publicKey: this.swarm.keyPair.publicKey })
 
-      // Auto-enable holesail if API is not publicly reachable
+      // Auto-enable holesail if API is not publicly reachable.
+      // Tracked so the 15s setTimeout inside doesn't fire post-stop
+      // and start a transport on a destroyed swarm (vector B13).
       if (!this.holesailTransport && this.config.enableAPI) {
-        this._autoEnableHolesail().catch(() => {})
+        this._trackFireAndForget(this._autoEnableHolesail().catch(() => {}))
       }
     } catch (err) {
-      // Rollback in reverse order
+      // Rollback in reverse order. Drain the scope first so any
+      // fire-and-forget that already fired (e.g. _reseedFromRegistry)
+      // unwinds before we tear down the corestore.
+      if (this._scope) {
+        try { await this._scope.drain() } catch (_) {}
+        this._scope = null
+      }
       this.bootstrapCache.stop()
       if (this._catalogThrottleCleanup) { clearInterval(this._catalogThrottleCleanup); this._catalogThrottleCleanup = null }
       if (this._reputationSaveInterval) { clearInterval(this._reputationSaveInterval); this._reputationSaveInterval = null }
@@ -2248,13 +2299,14 @@ export class RelayNode extends EventEmitter {
 
     const intervalMs = Math.max(10_000, Number(this.config.replicationCheckInterval) || 60_000)
     this._replicationCheckInterval = setInterval(() => {
-      this._checkReplicationHealth().catch((err) => {
+      this._trackFireAndForget(this._checkReplicationHealth().catch((err) => {
+        if (isAbortError(err)) return
         this.emit('replication-error', { error: err.message || String(err) })
-      })
+      }))
     }, intervalMs)
     if (this._replicationCheckInterval.unref) this._replicationCheckInterval.unref()
 
-    this._checkReplicationHealth().catch(() => {})
+    this._trackFireAndForget(this._checkReplicationHealth().catch(() => {}))
   }
 
   _startAnchorMonitor () {
@@ -2267,14 +2319,15 @@ export class RelayNode extends EventEmitter {
     // gets its first honest verification right away.
     const intervalMs = Math.max(30_000, Number(this.config.anchorCheckInterval) || 300_000)
     this._anchorCheckInterval = setInterval(() => {
-      this._runAnchorCheck().catch((err) => {
+      this._trackFireAndForget(this._runAnchorCheck().catch((err) => {
+        if (isAbortError(err)) return
         this.emit('anchor-check-error', { error: err.message || String(err) })
-      })
+      }))
     }, intervalMs)
     if (this._anchorCheckInterval.unref) this._anchorCheckInterval.unref()
 
     setTimeout(() => {
-      this._runAnchorCheck().catch(() => {})
+      this._trackFireAndForget(this._runAnchorCheck().catch(() => {}))
     }, 5000)
   }
 
@@ -2296,16 +2349,17 @@ export class RelayNode extends EventEmitter {
     // min after seedApp; this monitor takes over for the long tail.
     const intervalMs = Math.max(60_000, Number(this.config.repairInterval) || 300_000)
     this._repairInterval = setInterval(() => {
-      this._runRepairPass().catch((err) => {
+      this._trackFireAndForget(this._runRepairPass().catch((err) => {
+        if (isAbortError(err)) return
         this.emit('repair-error', { error: err.message || String(err) })
-      })
+      }))
     }, intervalMs)
     if (this._repairInterval.unref) this._repairInterval.unref()
 
     // First pass shortly after startup so we attempt to recover ghost
     // entries from the previous run.
     setTimeout(() => {
-      this._runRepairPass().catch(() => {})
+      this._trackFireAndForget(this._runRepairPass().catch(() => {}))
     }, 30_000)
   }
 
@@ -2416,14 +2470,15 @@ export class RelayNode extends EventEmitter {
 
     const intervalMs = Math.max(10_000, Number(this.config.custodyExpiryInterval) || 60_000)
     this._custodyExpiryInterval = setInterval(() => {
-      this._runCustodyExpiryPass().catch((err) => {
+      this._trackFireAndForget(this._runCustodyExpiryPass().catch((err) => {
+        if (isAbortError(err)) return
         this.emit('custody-expiry-error', { error: err.message || String(err) })
-      })
+      }))
     }, intervalMs)
     if (this._custodyExpiryInterval.unref) this._custodyExpiryInterval.unref()
 
     setTimeout(() => {
-      this._runCustodyExpiryPass().catch(() => {})
+      this._trackFireAndForget(this._runCustodyExpiryPass().catch(() => {}))
     }, 5000)
   }
 
@@ -2634,8 +2689,10 @@ export class RelayNode extends EventEmitter {
     if (!this.appRegistry) return
     const entry = this.appRegistry.get(appKeyHex)
     if (!entry || entry.anchored === true) return
-    // Fire-and-forget; runRepairPass will retry if this one fails
-    this.appLifecycle.repairUnanchored(appKeyHex).catch(() => {})
+    // Fire-and-forget; runRepairPass will retry if this one fails.
+    // Tracked so stop() drains an in-flight targeted repair before
+    // closing the corestore (vector B18 in STALE-REF-INVENTORY.md).
+    this._trackFireAndForget(this.appLifecycle.repairUnanchored(appKeyHex).catch(() => {}))
   }
 
   async _checkReplicationHealth () {
@@ -2817,6 +2874,23 @@ export class RelayNode extends EventEmitter {
 
   async stop () {
     if (!this.running) return
+
+    // Cancellation contract: fire the abort signal FIRST and drain every
+    // fire-and-forget that participates in the LifecycleScope before
+    // touching any subsystem. By the time we reach swarm.destroy() and
+    // store.close() below, no captured-reference closure is still
+    // running against the corestore. This is the fix for the
+    // "Mutex has been destroyed" / "corestore is closed" leaks (see
+    // STALE-REF-INVENTORY.md + CANCELLATION-CONTRACT.md).
+    //
+    // Drain is bounded by shutdownTimeoutMs * each tracked promise's
+    // own timeout; in practice every contract-aware loop exits within
+    // a few hundred ms of the abort.
+    const scope = this._scope
+    this._scope = null
+    if (scope) {
+      try { await scope.drain() } catch (_) {}
+    }
 
     // Clean up catalog broadcast debounce timer and peer throttle map
     if (this._catalogBroadcastTimer) {
