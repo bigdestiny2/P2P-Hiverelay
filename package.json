@@ -1,6 +1,6 @@
 {
   "name": "p2p-hiverelay-monorepo",
-  "version": "0.8.12",
+  "version": "0.8.13",
   "description": "Monorepo root for HiveRelay (Core + Services + Client)",
   "private": true,
   "type": "module",

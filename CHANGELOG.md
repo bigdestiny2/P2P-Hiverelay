@@ -6,6 +6,73 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.13] — 2026-05-15
+
+Reliability v2 — closes the class of corestore-state-corruption bugs
+that manifested as `Mutex has been destroyed`, `The corestore is
+closed`, and `SESSION_CLOSED: Cannot make sessions on a closing core`
+after hours/days of uptime on production relays.
+
+Co-authored with **Iain K** (audit + design + fix). See full notes at
+[`docs/RELEASE-NOTES-0.8.13.md`](docs/RELEASE-NOTES-0.8.13.md). Bug
+class first reported in his 2026-05-15 09:56Z message; reproduction
+captured in [`docs/repro/2026-05-15-corestore-closed-repro.md`](docs/repro/2026-05-15-corestore-closed-repro.md).
+
+### Fixed
+
+- **State corruption from fire-and-forget closures outliving stop()**.
+  Several long-running async paths (eagerReplicate's 6-attempt retry
+  loop, `_indexLog` from `localLog.on('append')`, repair pass,
+  catalog-sync seedApp fan-out, cold-start primer, holesail auto-enable,
+  replication/anchor/custody-expiry monitors, and the v0.8.12 re-pin
+  retrigger) captured references to Hyperdrives / Hypercores / registry
+  entries and continued running after `stop()` closed the corestore.
+  The next `swarm.flush()` / `drive.update()` / `log.get(i)` would
+  throw a stale-ref error. Over hours of uptime + self-heal restarts,
+  these accumulated until `POST /api/v1/seed` started returning
+  `503 The corestore is closed` and the relay was wedged until a
+  full process restart.
+
+### Added
+
+- **`LifecycleScope`** (`packages/core/core/relay-node/lifecycle-scope.js`,
+  174 lines). Single primitive: AbortSignal + tracked-promise Set with
+  4 methods (`tracked()`, `race()`, `sleep()`, `drain()`,
+  `throwIfAborted()`). Every fire-and-forget closure registers itself
+  in the scope; every long `await` inside a participating loop is
+  wrapped in `scope.race(promise)` so abort short-circuits the wait;
+  every retry-delay uses `scope.sleep(ms)` so abort exits the backoff
+  immediately. `RelayNode.stop()`'s first action is `await
+  this._scope.drain()` — by the time it returns, no closure is still
+  running against the corestore.
+- 13 new unit tests for LifecycleScope (signal, drain, race, sleep,
+  abort plumbing, regression guards).
+- 4 new integration tests for Reliability v2 (testnet-backed):
+  scope-created-on-start, stop()-blocks-on-tracked, 3-cycle
+  start/stop with seeded apps (zero stale-ref errors), catch()-tails
+  observed by drain.
+
+### Verified (canary on Utah-US)
+
+- 23/23 publishes succeeded under load
+- 3/3 stop/start cycles clean — no wedge, no 503s
+- Custody E2E (`scripts/custody-e2e.js`) passed in 12.5s with all 5
+  relays consistent
+- Zero `SESSION_CLOSED` / `corestore is closed` warnings on new pid
+- `REQUEST_CANCELLED — recoverable rejection — continuing` warnings
+  observed during restart cycles = abort signal cancelling in-flight
+  requests gracefully, exactly as designed
+- 80/80 existing lifecycle-adjacent unit tests still pass (per Iain's
+  audit run); 42/42 verified locally on validate-reliability-v2 branch
+
+### Notes for operators
+
+Behavior change is invisible during normal operation. The drain on
+`stop()` is bounded by `config.shutdownTimeoutMs` × each participant's
+own timeout, in practice ≤ 1s per scope drain. Self-heal `stop()`
++ `start()` cycles now produce clean transitions instead of
+accumulating zombie refs in the new corestore.
+
 ## [0.8.12] — 2026-05-14
 
 Structural follow-up to v0.8.11. Closes ask (6) from the
