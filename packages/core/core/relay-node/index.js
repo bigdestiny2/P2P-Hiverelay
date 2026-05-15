@@ -1076,19 +1076,30 @@ export class RelayNode extends EventEmitter {
           // verifyCustodyEntry path the HTTP route does — there is no shorter
           // route in, so a malicious caller cannot bypass signature checks
           // by submitting via Protomux instead.
+          // Wrap each registry call so transient corestore/hypercore
+          // lifecycle errors surface as `{ ok: false, error, retryable: true }`
+          // — same convention as the seed handler below + the HTTPS
+          // /api/v1/* routes. Without this, exceptions thrown by the
+          // registry (e.g. "The corestore is closed", "Mutex has been
+          // destroyed") bubble up to PublishProtocol's default catch
+          // which converts them to `retryable: false` — making clients
+          // give up on what is actually a recoverable relay-state issue.
+          const wrapTransient = async (work) => {
+            try {
+              const entry = await work()
+              return { ok: true, result: entry }
+            } catch (err) {
+              const msg = err && err.message ? err.message : String(err)
+              if (isTransientCoreError(err)) {
+                return { ok: false, error: msg, retryable: true }
+              }
+              return { ok: false, error: msg }
+            }
+          }
           this._publishProtocol = new PublishProtocol({
-            onSubmitIntent: async (body) => {
-              const entry = await this.seedingRegistry.publishCustodyIntent(body, null)
-              return { ok: true, result: entry }
-            },
-            onSubmitCommit: async (body) => {
-              const entry = await this.seedingRegistry.publishCustodyCommit(body, null)
-              return { ok: true, result: entry }
-            },
-            onSubmitSourceRetired: async (body) => {
-              const entry = await this.seedingRegistry.publishSourceRetired(body, null)
-              return { ok: true, result: entry }
-            },
+            onSubmitIntent: (body) => wrapTransient(() => this.seedingRegistry.publishCustodyIntent(body, null)),
+            onSubmitCommit: (body) => wrapTransient(() => this.seedingRegistry.publishCustodyCommit(body, null)),
+            onSubmitSourceRetired: (body) => wrapTransient(() => this.seedingRegistry.publishSourceRetired(body, null)),
             // Seed handler — runs the publisher-signed body through the
             // same shared builder the HTTPS /api/v1/seed route uses, so
             // both transports speak identical vocabulary. Validation
