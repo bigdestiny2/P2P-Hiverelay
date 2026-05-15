@@ -432,7 +432,42 @@ export function validateCustodyTransition (entry, status = {}) {
   }
 
   if (entry.type === 'custody-commit' && intent) {
-    const receipts = Array.isArray(status.receipts) ? status.receipts.filter(r => r.anchored === true) : []
+    const anchored = Array.isArray(status.receipts) ? status.receipts.filter(r => r.anchored === true) : []
+
+    // Partial-quorum support: when the commit carries an explicit
+    // `relayQuorum` (the publisher's canonical receipt set), validate
+    // against ONLY the receipts from those pubkeys — not the full set
+    // of receipts the relay happens to have visible.
+    //
+    // Pre-this-change, validation used `anchored` directly. That worked
+    // for t === n quorums but rejected any partial-quorum (t < n) commit
+    // as `receiptRoot mismatch` or `relayQuorum mismatch` the moment the
+    // relay had MORE receipts than the publisher's chosen subset (e.g.
+    // receipt #4 arrived via gossip between collect-threshold and
+    // commit-submit). drop-pear's v3.0.7 → v3.0.13 partial-quorum design
+    // (Shamir threshold < replication factor) hit this in production
+    // against ≥4-relay quorums; v3.0.14 worked around it by reverting to
+    // wait-for-n-receipts.
+    //
+    // Treating `commit.relayQuorum` as authoritative makes T-of-N quorums
+    // work properly: publisher picks the receipts to commit, relay verifies
+    // those specific receipts exist + sign correctly, the publisher
+    // signature on the commit binds the chosen set so no one can swap
+    // receipts after the fact. Backwards-compatible: an empty/missing
+    // `relayQuorum` falls back to the original "use all visible" behavior.
+    let receipts
+    if (Array.isArray(entry.relayQuorum) && entry.relayQuorum.length > 0) {
+      const quorumSet = new Set(entry.relayQuorum)
+      receipts = anchored.filter(r => quorumSet.has(r.relayPubkey))
+      // Must have a receipt for every pubkey the commit names — the
+      // publisher can't reference receipts the relay can't see.
+      if (receipts.length !== entry.relayQuorum.length) {
+        return { valid: false, reason: 'relayQuorum names receipts not yet visible to this relay' }
+      }
+    } else {
+      receipts = anchored
+    }
+
     if (receipts.length < intent.requiredReplicas) return { valid: false, reason: 'quorum not reached' }
     const receiptRoot = computeReceiptRoot(receipts)
     if (entry.receiptRoot !== receiptRoot) return { valid: false, reason: 'receiptRoot mismatch' }
