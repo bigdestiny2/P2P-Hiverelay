@@ -27,12 +27,27 @@ const LOG_TAIL_ENABLED = process.env.OBSERVATORY_LOG_TAIL !== 'false'
 // Fleet config. Per-relay API keys are intentionally NOT here — the
 // observatory only hits public endpoints. If we later add authenticated
 // pulls (/api/manage/*), we'll thread keys via env vars per relay.
+//
+// Each entry: { id, host, region, operator, baseUrl?, pubkey? }.
+//
+//   baseUrl  overrides the default `http://${host}:9100` for hosts that
+//            terminate TLS upstream — e.g. Fly.io apps reachable only on
+//            https/:443.
+//   pubkey   declared 12-char relay pubkey. Some relays don't expose it
+//            via /.well-known/hiverelay.json (identity is null when the
+//            capability doc is built without a swarm.keyPair handle).
+//            Declaring it here lets the dashboard's known-peer labeller
+//            still resolve `1e7d8b1ffe69` → `utah` etc. when those
+//            pubkeys appear in OTHER relays' /peers lists.
 const RELAYS = [
-  { id: 'utah',        host: '144.172.101.215', region: 'NA', operator: 'hive-foundation-utah' },
-  { id: 'utah-us',     host: '144.172.91.26',   region: 'NA', operator: 'hive-foundation-utah-us' },
-  { id: 'singapore-1', host: '104.194.153.179', region: 'AS', operator: 'hive-foundation-singapore' },
-  { id: 'singapore-2', host: '104.194.152.121', region: 'AS', operator: 'hive-foundation-singapore-2' },
-  { id: 'bern',        host: '45.59.123.112',   region: 'EU', operator: 'hive-foundation-bern' }
+  { id: 'utah',        host: '144.172.101.215', region: 'NA', operator: 'hive-foundation-utah',        pubkey: '1e7d8b1ffe69' },
+  { id: 'utah-us',     host: '144.172.91.26',   region: 'NA', operator: 'hive-foundation-utah-us',     pubkey: '37cf4bfbdf33' },
+  { id: 'singapore-1', host: '104.194.153.179', region: 'AS', operator: 'hive-foundation-singapore',   pubkey: '17ba6ae38d69' },
+  { id: 'singapore-2', host: '104.194.152.121', region: 'AS', operator: 'hive-foundation-singapore-2', pubkey: '6b11208ad547' },
+  { id: 'bern',        host: '45.59.123.112',   region: 'EU', operator: 'hive-foundation-bern',        pubkey: 'bc421fedea8a' },
+  { id: 'milkyb-fra',  host: 'milkyb-hiverelay-fra.fly.dev', region: 'EU', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-fra.fly.dev', pubkey: '478462ed8597' },
+  { id: 'milkyb-iad',  host: 'milkyb-hiverelay-iad.fly.dev', region: 'NA', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-iad.fly.dev', pubkey: '3a5082096400' },
+  { id: 'milkyb-syd',  host: 'milkyb-hiverelay-syd.fly.dev', region: 'OC', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-syd.fly.dev', pubkey: '9ca3aa7ff6de' }
 ]
 
 // Current snapshot (overwritten every poll) + ring buffer of last N snapshots
@@ -54,12 +69,19 @@ async function fetchJson (url, timeoutMs = 5_000) {
 }
 
 async function pollRelay (relay) {
-  const base = `http://${relay.host}:9100`
+  // baseUrl overrides the default `http://${host}:9100` for relays that
+  // terminate TLS upstream (Fly.io, Cloudflare, etc.) and don't expose
+  // a per-relay port — see RELAYS comment.
+  const base = relay.baseUrl || `http://${relay.host}:9100`
   const snap = {
     id: relay.id,
     host: relay.host,
     region: relay.region,
     operator: relay.operator,
+    // Surface the declared pubkey in the snapshot so the dashboard's
+    // KNOWN map can label peers regardless of whether the relay's own
+    // capability doc exposes its identity.
+    declaredPubkey: relay.pubkey || null,
     fetchedAt: Date.now(),
     up: false,
     errors: []

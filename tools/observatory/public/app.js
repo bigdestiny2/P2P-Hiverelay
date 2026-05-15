@@ -32,7 +32,14 @@ async function refresh () {
 function rebuildKnownMap (state) {
   KNOWN.clear()
   for (const [id, snap] of Object.entries(state.relays || {})) {
-    const k = snap.capability?.identity || snap.catalog?.relayKey?.slice(0, 12)
+    // Three-way preference, in order:
+    //   1. declaredPubkey from the RELAYS config — works even if the
+    //      remote relay's capability doc is identity-redacted.
+    //   2. capability.identity — the natural source when present.
+    //   3. catalog.relayKey prefix — last-resort fallback.
+    const k = snap.declaredPubkey ||
+      snap.capability?.identity ||
+      snap.catalog?.relayKey?.slice(0, 12)
     if (k) KNOWN.set(k, id)
   }
 }
