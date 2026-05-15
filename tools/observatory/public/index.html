@@ -62,6 +62,43 @@
     .apps-summary { color: var(--muted); font-size: 0.85em; margin-top: 8px; }
     .footer { margin-top: 24px; color: var(--muted); font-size: 0.78em; }
     code { font-family: "SF Mono", monospace; background: var(--pubkey-bg); padding: 1px 4px; border-radius: 2px; }
+    /* ─── log panel ─── */
+    .log-panel {
+      margin-top: 20px;
+      border: 1px solid var(--panel-edge);
+      background: var(--panel);
+      border-radius: 6px;
+      padding: 12px;
+      max-height: 50vh;
+      display: flex; flex-direction: column;
+    }
+    .log-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--panel-edge);
+    }
+    .log-title { color: var(--accent); font-size: 1em; font-weight: 600; }
+    .log-controls { font-size: 0.85em; color: var(--muted); display: flex; gap: 10px; align-items: center; }
+    .log-controls label { cursor: pointer; }
+    .log-controls input[type="text"] {
+      background: var(--bg); border: 1px solid var(--panel-edge); color: var(--text);
+      padding: 2px 6px; border-radius: 3px; font-size: 0.9em; font-family: inherit; width: 160px;
+    }
+    .log-stream {
+      overflow-y: auto; font-family: "SF Mono", monospace;
+      font-size: 0.78em; line-height: 1.55; flex: 1; min-height: 240px;
+    }
+    .log-line { padding: 2px 4px; display: flex; gap: 8px; }
+    .log-line:hover { background: var(--pubkey-bg); }
+    .log-time { color: var(--muted); flex-shrink: 0; }
+    .log-relay { color: var(--accent); flex-shrink: 0; min-width: 88px; }
+    .log-level { flex-shrink: 0; min-width: 50px; }
+    .log-level.info  { color: var(--up); }
+    .log-level.warn  { color: var(--warn); }
+    .log-level.error { color: var(--down); }
+    .log-level.fatal { color: var(--down); font-weight: bold; }
+    .log-msg { color: var(--text); word-break: break-word; }
+    .log-msg em { color: var(--muted); font-style: normal; }
+    .log-empty { color: var(--muted); padding: 12px; text-align: center; }
   </style>
 </head>
 <body>
@@ -75,8 +112,24 @@
     </div>
   </div>
   <div class="grid" id="grid"></div>
+
+  <div class="log-panel">
+    <div class="log-header">
+      <span class="log-title">live logs</span>
+      <div class="log-controls">
+        <label><input type="checkbox" id="log-auto-scroll" checked> auto-scroll</label>
+        <label><input type="checkbox" id="log-hide-info"> hide info</label>
+        <label>filter: <input type="text" id="log-filter" placeholder="text or relay:utah"></label>
+        <span id="log-status" class="updated">connecting…</span>
+      </div>
+    </div>
+    <div class="log-stream" id="log-stream">
+      <div class="log-empty" id="log-empty">No log lines yet. Stream connects on page load.</div>
+    </div>
+  </div>
+
   <div class="footer">
-    v0.1 · pull-model from each relay's <code>/health</code>, <code>/peers</code>, <code>/status</code>, <code>/catalog.json</code>, <code>/.well-known/hiverelay.json</code> · in-memory snapshot only · <code>/api/state</code> for raw JSON
+    v0.2 · poll <code>/health</code> <code>/peers</code> <code>/status</code> <code>/catalog.json</code> <code>/.well-known/hiverelay.json</code> + SSE log tail via SSH force-command <code>tail -F</code> · in-memory ring buffer
   </div>
   <script src="/public/app.js"></script>
 </body>

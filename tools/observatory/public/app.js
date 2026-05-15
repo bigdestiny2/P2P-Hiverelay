@@ -141,3 +141,97 @@ function escapeHtml (s) {
 
 bootConfig().then(refresh)
 setInterval(refresh, REFRESH_MS)
+
+// ── Log stream (SSE) ────────────────────────────────────────────────────
+
+const LOG_MAX_DISPLAYED = 800   // cap the DOM size so the page stays fast
+const logEl = document.getElementById('log-stream')
+const logEmptyEl = document.getElementById('log-empty')
+const logStatusEl = document.getElementById('log-status')
+const autoScrollEl = document.getElementById('log-auto-scroll')
+const hideInfoEl = document.getElementById('log-hide-info')
+const filterEl = document.getElementById('log-filter')
+let logFilter = ''
+filterEl.addEventListener('input', () => { logFilter = filterEl.value.toLowerCase(); applyFilter() })
+hideInfoEl.addEventListener('change', applyFilter)
+
+function applyFilter () {
+  const hideInfo = hideInfoEl.checked
+  const f = logFilter
+  // Optional "relay:utah" filter
+  let relayMatch = null
+  let textMatch = f
+  const m = f.match(/^relay:(\S+)\s*(.*)/)
+  if (m) { relayMatch = m[1]; textMatch = m[2].trim() }
+  for (const line of logEl.children) {
+    if (line === logEmptyEl) continue
+    const relay = line.dataset.relay
+    const level = line.dataset.level
+    const text = line.dataset.text || ''
+    let visible = true
+    if (hideInfo && level === 'info') visible = false
+    if (visible && relayMatch && relay !== relayMatch) visible = false
+    if (visible && textMatch && !text.toLowerCase().includes(textMatch)) visible = false
+    line.style.display = visible ? '' : 'none'
+  }
+}
+
+function appendLogLine (entry) {
+  if (logEmptyEl.parentNode) logEmptyEl.remove()
+  const line = document.createElement('div')
+  line.className = 'log-line'
+  const level = String(entry.level || 'info').toLowerCase()
+  const time = entry.ts
+    ? new Date(entry.ts).toLocaleTimeString('en-GB', { hour12: false }) +
+      '.' + String(entry.ts % 1000).padStart(3, '0')
+    : ''
+  // Build a contextual suffix from JSON fields if present
+  const fields = entry.fields || {}
+  const extras = []
+  if (fields.peer) extras.push(`<em>peer=${escapeHtml(String(fields.peer).slice(0, 12))}</em>`)
+  if (fields.appKey) extras.push(`<em>appKey=${escapeHtml(String(fields.appKey).slice(0, 12))}</em>`)
+  if (fields.source) extras.push(`<em>src=${escapeHtml(fields.source)}</em>`)
+  if (fields.error) extras.push(`<em>err=${escapeHtml(String(fields.error).slice(0, 100))}</em>`)
+  if (fields.health) extras.push(`<em>health=${escapeHtml(JSON.stringify(fields.health).slice(0, 80))}</em>`)
+  line.innerHTML = `
+    <span class="log-time">${time}</span>
+    <span class="log-relay">${escapeHtml(entry.relay)}</span>
+    <span class="log-level ${level}">${level}</span>
+    <span class="log-msg">${escapeHtml(entry.msg || '')} ${extras.join(' ')}</span>
+  `
+  line.dataset.relay = entry.relay
+  line.dataset.level = level
+  line.dataset.text = (entry.msg + ' ' + JSON.stringify(fields)).toLowerCase()
+  logEl.appendChild(line)
+  // Cap DOM
+  while (logEl.children.length > LOG_MAX_DISPLAYED + 1) {  // +1 for empty placeholder if still there
+    if (logEl.firstChild === logEmptyEl) logEl.firstChild.remove()
+    else logEl.firstChild.remove()
+  }
+  if (logFilter || hideInfoEl.checked) {
+    applyFilter()
+  }
+  if (autoScrollEl.checked) {
+    logEl.scrollTop = logEl.scrollHeight
+  }
+}
+
+function connectLogStream () {
+  logStatusEl.textContent = 'connecting…'
+  const es = new EventSource('/api/logs/stream')
+  es.onopen = () => { logStatusEl.textContent = 'streaming' }
+  es.onmessage = (ev) => {
+    try {
+      const entry = JSON.parse(ev.data)
+      appendLogLine(entry)
+    } catch (err) {
+      // ignore malformed payload
+    }
+  }
+  es.onerror = () => {
+    logStatusEl.textContent = 'reconnecting…'
+    // EventSource auto-reconnects, but if it persistently fails we want
+    // to surface that. Browser will retry every few seconds.
+  }
+}
+connectLogStream()

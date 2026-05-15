@@ -13,12 +13,16 @@ import http from 'http'
 import { readFile } from 'fs/promises'
 import { fileURLToPath } from 'url'
 import path from 'path'
+import { LogTailer } from './log-tail.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const PORT = Number(process.env.OBSERVATORY_PORT) || 9200
 const POLL_INTERVAL_MS = Number(process.env.OBSERVATORY_POLL_MS) || 10_000
 const HISTORY_LEN = Number(process.env.OBSERVATORY_HISTORY) || 360 // ~1 hour at 10s
+const LOG_RING_SIZE = Number(process.env.OBSERVATORY_LOG_RING) || 2000
+const LOG_TAIL_KEY = process.env.OBSERVATORY_TAIL_KEY || '/root/.ssh/observatory_tail'
+const LOG_TAIL_ENABLED = process.env.OBSERVATORY_LOG_TAIL !== 'false'
 
 // Fleet config. Per-relay API keys are intentionally NOT here — the
 // observatory only hits public endpoints. If we later add authenticated
@@ -169,6 +173,37 @@ setInterval(() => {
   pollAll().catch(err => console.error('poll error:', err.message))
 }, POLL_INTERVAL_MS)
 
+// ── Log tailer ──────────────────────────────────────────────────────────
+// Multiplexed SSH tail from each relay, fanned out to SSE subscribers.
+// Off by default if the SSH key isn't present (e.g. running locally).
+
+const sseClients = new Set()
+let logTailer = null
+
+if (LOG_TAIL_ENABLED) {
+  // For Bern→self tailing, the relay's HTTP host is its public IP. The
+  // SSH host needs to either be 127.0.0.1 (no force-command on self?) or
+  // the same IP. We use 127.0.0.1 for the self-tail.
+  const tailRelays = RELAYS.map(r => ({
+    id: r.id,
+    host: r.host === '45.59.123.112' ? '127.0.0.1' : r.host
+  }))
+  logTailer = new LogTailer({
+    relays: tailRelays,
+    sshKey: LOG_TAIL_KEY,
+    ringSize: LOG_RING_SIZE
+  })
+  logTailer.on('line', (entry) => {
+    if (sseClients.size === 0) return
+    const payload = `data: ${JSON.stringify(entry)}\n\n`
+    for (const res of sseClients) {
+      try { res.write(payload) } catch (_) { /* will be cleaned up on close */ }
+    }
+  })
+  logTailer.start()
+  console.log(`Log tailer started — ${tailRelays.length} relays, ring=${LOG_RING_SIZE}`)
+}
+
 // ── HTTP surface ─────────────────────────────────────────────────────────
 
 const STATIC_TYPES = {
@@ -191,10 +226,47 @@ const server = http.createServer(async (req, res) => {
       return json(res, { points: history.length, history })
     }
     if (route === '/api/config') {
-      return json(res, { relays: RELAYS, pollIntervalMs: POLL_INTERVAL_MS })
+      return json(res, {
+        relays: RELAYS,
+        pollIntervalMs: POLL_INTERVAL_MS,
+        logTailEnabled: !!logTailer,
+        logRingSize: LOG_RING_SIZE
+      })
     }
     if (route === '/healthz') {
-      return json(res, { ok: true, pollAt: current.updatedAt })
+      return json(res, { ok: true, pollAt: current.updatedAt, sseClients: sseClients.size })
+    }
+
+    // ── Log stream — Server-Sent Events ─────────────────────────────────
+    if (route === '/api/logs/stream') {
+      res.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no' // disable proxy buffering if any
+      })
+      // Send the recent ring on connect so late joiners see context.
+      const since = Number(url.searchParams.get('since')) || 0
+      const recent = (logTailer?.recent(LOG_RING_SIZE) || [])
+        .filter(e => e.ts > since)
+      for (const entry of recent) {
+        res.write(`data: ${JSON.stringify(entry)}\n\n`)
+      }
+      // Heartbeat every 20s to keep proxies happy.
+      const heartbeat = setInterval(() => {
+        try { res.write(`: heartbeat\n\n`) } catch (_) {}
+      }, 20_000)
+      sseClients.add(res)
+      req.on('close', () => {
+        clearInterval(heartbeat)
+        sseClients.delete(res)
+      })
+      return
+    }
+
+    if (route === '/api/logs/recent') {
+      const n = Number(url.searchParams.get('n')) || 200
+      return json(res, { lines: logTailer?.recent(n) || [] })
     }
 
     // Static dashboard

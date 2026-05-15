@@ -55,19 +55,50 @@ inbound 9200, or tunnel: `ssh -L 9200:127.0.0.1:9200 root@45.59.123.112`.
 
 ## Roadmap
 
-- **v0.1** (current): pull poller, per-relay cards, in-memory history
-- **v0.2**: live log tail (SSH `tail -F` aggregated → SSE)
+- **v0.1**: pull poller, per-relay cards, in-memory history
+- **v0.2** (current): live log tail (SSH `tail -F` aggregated → SSE) + filter/auto-scroll panel
 - **v0.3**: topology graph (force-directed) showing peer connections
 - **v0.4**: custody flow visualizer — driven by `scripts/custody-e2e.js`
 - **v1.0**: persistent storage (SQLite), alert hooks, historical queries
 
+## Log streaming setup (v0.2)
+
+Each relay gets a dedicated SSH key authorized to do nothing but
+`tail -F /var/log/hiverelay.log`. The observatory spawns one SSH per
+relay, parses the output (JSON pino lines + plaintext), filters out
+`[status]` clutter, and fans out to SSE subscribers at
+`/api/logs/stream`. The dashboard's log panel attaches to that stream.
+
+Bootstrap on each relay (already done for the production fleet, listed
+for repro):
+
+```sh
+# On the observatory host (Bern):
+ssh-keygen -t ed25519 -N "" -f /root/.ssh/observatory_tail \
+  -C "observatory-log-tail@bern"
+
+# On each relay, append to /root/.ssh/authorized_keys (one line):
+command="tail -n 50 -F /var/log/hiverelay.log",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 <PUBKEY> observatory-log-tail@bern
+```
+
+The `command="..."` force-prefix is the security boundary: even if the
+private key on Bern leaks, the attacker can only read `/var/log/
+hiverelay.log` on each relay. No shell, no port forwarding, no other
+files.
+
+Set `OBSERVATORY_LOG_TAIL=false` to disable log tailing (useful when
+running locally without the SSH key on disk).
+
 ## Env vars
 
-| Var                       | Default | Notes                                     |
-| ------------------------- | ------- | ----------------------------------------- |
-| `OBSERVATORY_PORT`        | `9200`  | HTTP listen port                          |
-| `OBSERVATORY_POLL_MS`     | `10000` | Poll interval per relay                   |
-| `OBSERVATORY_HISTORY`     | `360`   | Ring buffer size (~1h at 10s)             |
+| Var                       | Default                       | Notes                                       |
+| ------------------------- | ----------------------------- | ------------------------------------------- |
+| `OBSERVATORY_PORT`        | `9200`                        | HTTP listen port                            |
+| `OBSERVATORY_POLL_MS`     | `10000`                       | Poll interval per relay                    |
+| `OBSERVATORY_HISTORY`     | `360`                         | State-poll history ring size (~1h at 10s) |
+| `OBSERVATORY_LOG_TAIL`    | `true`                        | Set `false` to disable log streaming        |
+| `OBSERVATORY_TAIL_KEY`    | `/root/.ssh/observatory_tail` | SSH key path                                |
+| `OBSERVATORY_LOG_RING`    | `2000`                        | Log-line ring buffer size                   |
 
 ## Adding/removing relays
 
