@@ -353,3 +353,178 @@ test('custody signing: receiptRoot is unique per quorum (different signatures �
   const rootAC = computeReceiptRoot([r1, r3])
   t.not(rootAB, rootAC, 'different relay quorums produce different roots')
 })
+
+// ─── Partial-quorum support ────────────────────────────────────────────
+//
+// validateCustodyTransition for 'custody-commit' previously rejected any
+// commit whose set of receipts didn't match the relay's full set of
+// anchored receipts. That made T-of-N quorums (T < N) inherently racy:
+// any receipts arriving after the publisher's threshold-collect but
+// before the relay's commit-process tipped the receiptRoot or
+// relayQuorum into a mismatch. drop-pear's v3.0.7 partial-quorum design
+// hit this whenever real-world gossip arrived faster than the publisher
+// submitted the commit (which was every time against ≥4-relay sets).
+//
+// The fix: when commit carries an explicit `relayQuorum`, validate only
+// against the receipts from those specific pubkeys. Publisher signature
+// on the commit binds the chosen set, so a malicious publisher can't
+// swap in alternative receipts after the relays have signed.
+//
+// These tests pin the new behaviour.
+
+test('custody signing: commit with explicit relayQuorum is validated against the named subset, not all visible receipts (partial-quorum support)', (t) => {
+  const publisher = keyPair()
+  const relayA = keyPair()
+  const relayB = keyPair()
+  const relayC = keyPair()
+  const now = Date.now()
+  const blindContentId = hashHex('partial-quorum-blind')
+  const ciphertextRoot = hashHex('partial-quorum-ciphertext')
+
+  // n=3 relays, threshold=2. Intent declares the 2-of-3 floor.
+  const intent = createCustodyIntent({
+    addressKey: hashHex('partial-quorum-address'),
+    blindContentId,
+    ciphertextRoot,
+    contentVersion: 1,
+    requiredReplicas: 2, // = threshold = the commit-quorum floor
+    deadline: now + 60_000,
+    retainUntil: now + 120_000
+  }, publisher, { timestamp: now })
+
+  const mkReceipt = (relay, ts) => createCustodyReceipt({
+    intentId: intent.intentId,
+    blindContentId,
+    ciphertextRoot,
+    contentVersion: 1,
+    retainUntil: now + 120_000,
+    relayRegion: 'test',
+    shardIds: []
+  }, relay, { timestamp: ts })
+
+  const receiptA = mkReceipt(relayA, now + 1000)
+  const receiptB = mkReceipt(relayB, now + 1500)
+  // receiptC arrives later via gossip — the publisher collected only A+B,
+  // then went to commit. Previously this caused receiptRoot mismatch on
+  // any relay that had seen receiptC via gossip.
+  const receiptC = mkReceipt(relayC, now + 2000)
+
+  // Publisher commits referencing only A+B.
+  const ab = [receiptA, receiptB]
+  const commit = createCustodyCommit({
+    intentId: intent.intentId,
+    blindContentId,
+    ciphertextRoot,
+    contentVersion: 1,
+    relayQuorum: ab.map(r => r.relayPubkey).sort(),
+    receiptRoot: computeReceiptRoot(ab)
+  }, publisher, { timestamp: now + 3000 })
+
+  // Relay's view includes C via gossip (the bug condition).
+  const status = { intent, receipts: [receiptA, receiptB, receiptC] }
+  const result = validateCustodyTransition(commit, status)
+  t.is(result.valid, true, `commit must validate against named subset (got: ${result.reason || 'OK'})`)
+})
+
+test('custody signing: commit naming a pubkey with no visible receipt is rejected', (t) => {
+  // Publisher can't reference receipts the relay can't see — that would
+  // let a malicious publisher forge a commit citing a relay that never
+  // signed. The new check requires every pubkey in relayQuorum to have
+  // a corresponding anchored receipt visible to the relay.
+  const publisher = keyPair()
+  const relayA = keyPair()
+  const relayB = keyPair()
+  const relayPhantom = keyPair() // never signed anything
+  const now = Date.now()
+  const blindContentId = hashHex('phantom-blind')
+  const ciphertextRoot = hashHex('phantom-ciphertext')
+
+  const intent = createCustodyIntent({
+    addressKey: hashHex('phantom-address'),
+    blindContentId,
+    ciphertextRoot,
+    contentVersion: 1,
+    requiredReplicas: 2,
+    deadline: now + 60_000,
+    retainUntil: now + 120_000
+  }, publisher, { timestamp: now })
+
+  const mkReceipt = (relay) => createCustodyReceipt({
+    intentId: intent.intentId,
+    blindContentId,
+    ciphertextRoot,
+    contentVersion: 1,
+    retainUntil: now + 120_000,
+    relayRegion: 'test',
+    shardIds: []
+  }, relay, { timestamp: now + 1000 })
+
+  const receiptA = mkReceipt(relayA)
+  const receiptB = mkReceipt(relayB)
+
+  // Commit claims phantom is in the quorum (it never anchored).
+  const fakeQuorum = [
+    receiptA.relayPubkey,
+    b4a.toString(relayPhantom.publicKey, 'hex')
+  ].sort()
+  const commit = createCustodyCommit({
+    intentId: intent.intentId,
+    blindContentId,
+    ciphertextRoot,
+    contentVersion: 1,
+    relayQuorum: fakeQuorum,
+    // Even with the receiptRoot computed correctly, the named pubkey
+    // doesn't correspond to a visible receipt → reject.
+    receiptRoot: hashHex('fake-root')
+  }, publisher, { timestamp: now + 2000 })
+
+  const status = { intent, receipts: [receiptA, receiptB] }
+  const result = validateCustodyTransition(commit, status)
+  t.is(result.valid, false, 'phantom quorum must be rejected')
+  t.ok(/not yet visible/.test(result.reason), `expected "not yet visible" reason, got: ${result.reason}`)
+})
+
+test('custody signing: legacy commit without relayQuorum still validates against all visible receipts (backwards compat)', (t) => {
+  // Pre-this-change publishers always committed with relayQuorum = all
+  // visible receipts. Those still need to verify cleanly. Backwards-compat
+  // path: empty or missing relayQuorum → use all anchored receipts.
+  const publisher = keyPair()
+  const relay = keyPair()
+  const now = Date.now()
+  const blindContentId = hashHex('legacy-blind')
+  const ciphertextRoot = hashHex('legacy-ciphertext')
+
+  const intent = createCustodyIntent({
+    addressKey: hashHex('legacy-address'),
+    blindContentId,
+    ciphertextRoot,
+    contentVersion: 1,
+    requiredReplicas: 1,
+    deadline: now + 60_000,
+    retainUntil: now + 120_000
+  }, publisher, { timestamp: now })
+
+  const receipt = createCustodyReceipt({
+    intentId: intent.intentId,
+    blindContentId,
+    ciphertextRoot,
+    contentVersion: 1,
+    retainUntil: now + 120_000,
+    relayRegion: 'test',
+    shardIds: []
+  }, relay, { timestamp: now + 1000 })
+
+  // Legacy commit — relayQuorum = single relay (matches all visible).
+  const commit = createCustodyCommit({
+    intentId: intent.intentId,
+    blindContentId,
+    ciphertextRoot,
+    contentVersion: 1,
+    relayQuorum: [receipt.relayPubkey],
+    receiptRoot: computeReceiptRoot([receipt])
+  }, publisher, { timestamp: now + 2000 })
+
+  const status = { intent, receipts: [receipt] }
+  const result = validateCustodyTransition(commit, status)
+  t.is(result.valid, true, 'legacy single-relay commit still validates')
+})
