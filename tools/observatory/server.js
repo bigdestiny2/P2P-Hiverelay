@@ -28,26 +28,30 @@ const LOG_TAIL_ENABLED = process.env.OBSERVATORY_LOG_TAIL !== 'false'
 // observatory only hits public endpoints. If we later add authenticated
 // pulls (/api/manage/*), we'll thread keys via env vars per relay.
 //
-// Each entry: { id, host, region, operator, baseUrl?, pubkey? }.
+// Each entry: { id, host, region, operator, baseUrl?, pubkey?, tailable? }.
 //
-//   baseUrl  overrides the default `http://${host}:9100` for hosts that
-//            terminate TLS upstream — e.g. Fly.io apps reachable only on
-//            https/:443.
-//   pubkey   declared 12-char relay pubkey. Some relays don't expose it
-//            via /.well-known/hiverelay.json (identity is null when the
-//            capability doc is built without a swarm.keyPair handle).
-//            Declaring it here lets the dashboard's known-peer labeller
-//            still resolve `1e7d8b1ffe69` → `utah` etc. when those
-//            pubkeys appear in OTHER relays' /peers lists.
+//   baseUrl   overrides the default `http://${host}:9100` for hosts that
+//             terminate TLS upstream — e.g. Fly.io apps reachable only
+//             on https/:443.
+//   pubkey    declared 12-char relay pubkey. Some relays don't expose it
+//             via /.well-known/hiverelay.json (identity is null when the
+//             capability doc is built without a swarm.keyPair handle).
+//             Declaring it here lets the dashboard's known-peer labeller
+//             still resolve `1e7d8b1ffe69` → `utah` etc. when those
+//             pubkeys appear in OTHER relays' /peers lists.
+//   tailable  default true. Set false for relays we can't reach over
+//             port-22 SSH (Fly.io apps, anything behind a proxy that
+//             doesn't expose sshd). Non-tailable relays still get
+//             polled — they just don't contribute log lines.
 const RELAYS = [
   { id: 'utah',        host: '144.172.101.215', region: 'NA', operator: 'hive-foundation-utah',        pubkey: '1e7d8b1ffe69' },
   { id: 'utah-us',     host: '144.172.91.26',   region: 'NA', operator: 'hive-foundation-utah-us',     pubkey: '37cf4bfbdf33' },
   { id: 'singapore-1', host: '104.194.153.179', region: 'AS', operator: 'hive-foundation-singapore',   pubkey: '17ba6ae38d69' },
   { id: 'singapore-2', host: '104.194.152.121', region: 'AS', operator: 'hive-foundation-singapore-2', pubkey: '6b11208ad547' },
   { id: 'bern',        host: '45.59.123.112',   region: 'EU', operator: 'hive-foundation-bern',        pubkey: 'bc421fedea8a' },
-  { id: 'milkyb-fra',  host: 'milkyb-hiverelay-fra.fly.dev', region: 'EU', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-fra.fly.dev', pubkey: '478462ed8597' },
-  { id: 'milkyb-iad',  host: 'milkyb-hiverelay-iad.fly.dev', region: 'NA', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-iad.fly.dev', pubkey: '3a5082096400' },
-  { id: 'milkyb-syd',  host: 'milkyb-hiverelay-syd.fly.dev', region: 'OC', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-syd.fly.dev', pubkey: '9ca3aa7ff6de' }
+  { id: 'milkyb-fra',  host: 'milkyb-hiverelay-fra.fly.dev', region: 'EU', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-fra.fly.dev', pubkey: '478462ed8597', tailable: false },
+  { id: 'milkyb-iad',  host: 'milkyb-hiverelay-iad.fly.dev', region: 'NA', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-iad.fly.dev', pubkey: '3a5082096400', tailable: false },
+  { id: 'milkyb-syd',  host: 'milkyb-hiverelay-syd.fly.dev', region: 'OC', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-syd.fly.dev', pubkey: '9ca3aa7ff6de', tailable: false }
 ]
 
 // Current snapshot (overwritten every poll) + ring buffer of last N snapshots
@@ -203,13 +207,22 @@ const sseClients = new Set()
 let logTailer = null
 
 if (LOG_TAIL_ENABLED) {
+  // Filter to relays we can actually SSH-tail. Relays with `tailable:
+  // false` are behind proxies that don't expose port-22 sshd (Fly.io,
+  // Cloudflare tunnels, etc.) — attempting to connect to them produces
+  // a `kex_exchange_identification: Connection reset by peer` every
+  // ~8s, which drowns the real signal in the SSE log stream.
+  //
   // For Bern→self tailing, the relay's HTTP host is its public IP. The
-  // SSH host needs to either be 127.0.0.1 (no force-command on self?) or
-  // the same IP. We use 127.0.0.1 for the self-tail.
-  const tailRelays = RELAYS.map(r => ({
-    id: r.id,
-    host: r.host === '45.59.123.112' ? '127.0.0.1' : r.host
-  }))
+  // SSH host needs to be 127.0.0.1 for the self-tail. We rewrite Bern's
+  // host here.
+  const tailRelays = RELAYS
+    .filter(r => r.tailable !== false)
+    .map(r => ({
+      id: r.id,
+      host: r.host === '45.59.123.112' ? '127.0.0.1' : r.host
+    }))
+  const skipped = RELAYS.filter(r => r.tailable === false).map(r => r.id)
   logTailer = new LogTailer({
     relays: tailRelays,
     sshKey: LOG_TAIL_KEY,
@@ -223,7 +236,10 @@ if (LOG_TAIL_ENABLED) {
     }
   })
   logTailer.start()
-  console.log(`Log tailer started — ${tailRelays.length} relays, ring=${LOG_RING_SIZE}`)
+  console.log(`Log tailer started — tailing ${tailRelays.length} of ${RELAYS.length} relays (ring=${LOG_RING_SIZE})`)
+  if (skipped.length > 0) {
+    console.log(`Log tailer skipping non-tailable: ${skipped.join(', ')}`)
+  }
 }
 
 // ── HTTP surface ─────────────────────────────────────────────────────────
