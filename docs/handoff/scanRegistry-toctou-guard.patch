@@ -1,0 +1,51 @@
+diff --git a/packages/core/core/relay-node/index.js b/packages/core/core/relay-node/index.js
+index 180fe71..6bcbb5d 100644
+--- a/packages/core/core/relay-node/index.js
++++ b/packages/core/core/relay-node/index.js
+@@ -1901,8 +1901,14 @@ export class RelayNode extends EventEmitter {
+     return { ok: true, primaryPubkey: result.primaryPubkey }
+   }
+ 
++  _scanAlive () {
++    // TOCTOU signal = deps nulled by stop(), not the running flag
++    // (false pre-start too, where direct scan calls are legitimate).
++    return !!this.seedingRegistry && !!this.seeder
++  }
++
+   async _scanRegistry () {
+-    if (!this.seedingRegistry || !this.seeder) return
++    if (!this._scanAlive()) return
+ 
+     const region = (this.config.regions && this.config.regions[0]) || null
+     let availableBytes = this.config.maxStorageBytes - (this.seeder.totalBytesStored || 0)
+@@ -1912,10 +1918,12 @@ export class RelayNode extends EventEmitter {
+       region,
+       maxStorageBytes: availableBytes
+     })
++    if (!this._scanAlive()) return
+ 
+     const myPubkey = this.swarm ? b4a.toString(this.swarm.keyPair.publicKey, 'hex') : null
+ 
+     for (const req of requests) {
++      if (!this._scanAlive()) return
+       availableBytes = this.config.maxStorageBytes - (this.seeder.totalBytesStored || 0)
+       const reqTier = normalizePrivacyTier(req.privacyTier, 'public')
+ 
+@@ -2696,14 +2704,16 @@ export class RelayNode extends EventEmitter {
+   }
+ 
+   async _checkReplicationHealth () {
+-    if (!this.seedingRegistry) return
++    if (!this._scanAlive()) return
+ 
+     const requests = await this.seedingRegistry.getActiveRequests()
++    if (!this._scanAlive()) return
+     const targetFloor = Math.max(1, Number(this.config.targetReplicaFloor) || 1)
+     const nextHealth = new Map()
+     let underReplicated = 0
+ 
+     for (const req of requests) {
++      if (!this._scanAlive()) return
+       const relays = await this.seedingRegistry.getRelaysForApp(req.appKey)
+       const target = Math.max(targetFloor, req.replicationFactor || 1)
+       const current = relays.length
