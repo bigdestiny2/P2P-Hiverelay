@@ -1,0 +1,120 @@
+{"level":"info","time":"2026-05-17T17:55:58.149Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T18:01:25.201Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T18:01:26.543Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"bc421fedea8a","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:01:26.565Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"3a5082096400","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:01:26.709Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"0da2f0626d24","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:01:27.188Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"17ba6ae38d69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:01:27.302Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:01:27.432Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"478462ed8597","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T18:06:55.209Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T18:06:56.863Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"0da2f0626d24","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:06:57.110Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"bc421fedea8a","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:06:57.295Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"1e7d8b1ffe69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:06:57.576Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:06:57.780Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"17ba6ae38d69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:06:57.861Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"478462ed8597","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T18:12:25.215Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T18:12:26.478Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"1e7d8b1ffe69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:12:26.598Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"3a5082096400","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:12:26.815Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"bc421fedea8a","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:12:27.061Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"478462ed8597","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:12:27.306Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"17ba6ae38d69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:12:27.824Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T18:17:55.219Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T18:17:56.501Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"bc421fedea8a","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:17:56.564Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"1e7d8b1ffe69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:17:57.215Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"0da2f0626d24","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:17:57.484Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"478462ed8597","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:17:57.882Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"17ba6ae38d69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:17:58.087Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T18:23:25.225Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T18:23:26.638Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"3a5082096400","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:23:26.668Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"1e7d8b1ffe69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:23:27.244Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:23:27.386Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"17ba6ae38d69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:23:27.409Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"0da2f0626d24","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:23:27.924Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"478462ed8597","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T18:28:55.231Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T18:28:55.608Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"3a5082096400","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:28:56.560Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"0da2f0626d24","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:28:56.743Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"bc421fedea8a","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:28:56.772Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"1e7d8b1ffe69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:28:57.125Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"478462ed8597","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:28:57.497Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T18:34:25.235Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T18:34:26.435Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"bc421fedea8a","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:34:26.668Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"3a5082096400","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:34:26.693Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"0da2f0626d24","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:34:26.862Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"1e7d8b1ffe69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:34:27.571Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"478462ed8597","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:34:27.758Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T18:39:55.238Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T18:39:56.843Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"0da2f0626d24","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:39:56.947Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"bc421fedea8a","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:39:57.015Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"1e7d8b1ffe69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:39:58.003Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:39:58.012Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"478462ed8597","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:39:58.045Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"17ba6ae38d69","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T18:45:25.240Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T18:45:26.214Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:45:26.644Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"bc421fedea8a","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:45:26.692Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"3a5082096400","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:45:26.974Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"0da2f0626d24","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:45:27.352Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"1e7d8b1ffe69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:45:27.535Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"17ba6ae38d69","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T18:50:55.244Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T18:50:56.679Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"1e7d8b1ffe69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:50:57.163Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"3a5082096400","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:50:57.219Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"bc421fedea8a","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:50:57.433Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:50:57.627Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"478462ed8597","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:50:58.092Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"17ba6ae38d69","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T18:56:25.250Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T18:56:25.930Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"0da2f0626d24","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:56:25.941Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"3a5082096400","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:56:25.976Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"17ba6ae38d69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:56:26.241Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"1e7d8b1ffe69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:56:26.934Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"bc421fedea8a","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T18:56:28.070Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"478462ed8597","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T19:01:55.254Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T19:01:56.624Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"3a5082096400","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:01:56.648Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"bc421fedea8a","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:01:57.262Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"478462ed8597","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:01:57.585Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"0da2f0626d24","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:01:57.634Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"17ba6ae38d69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:01:57.951Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T19:07:25.258Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T19:07:26.568Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"1e7d8b1ffe69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:07:26.723Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"3a5082096400","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:07:26.875Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"0da2f0626d24","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:07:26.973Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"17ba6ae38d69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:07:27.710Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"478462ed8597","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:07:28.205Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T19:12:55.263Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T19:12:56.333Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"17ba6ae38d69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:12:56.849Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"bc421fedea8a","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:12:57.212Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"3a5082096400","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:12:57.386Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:12:57.510Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"0da2f0626d24","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:12:58.162Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"478462ed8597","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T19:18:25.266Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T19:18:25.580Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"1e7d8b1ffe69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:18:26.540Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"bc421fedea8a","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:18:26.763Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"3a5082096400","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:18:26.835Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"0da2f0626d24","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:18:27.635Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:18:27.712Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"17ba6ae38d69","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T19:23:55.269Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T19:23:56.817Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"1e7d8b1ffe69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:23:57.052Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"bc421fedea8a","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:23:57.110Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"0da2f0626d24","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:23:57.788Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"478462ed8597","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:23:57.888Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:23:58.293Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"17ba6ae38d69","msg":"peer connected"}
+{"level":"warn","time":"2026-05-17T19:29:25.272Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","health":{"check":"stale-connections","staleCount":7,"totalConns":8,"stalePct":88},"msg":"health warning: stale-connections — threshold exceeded"}
+{"level":"info","time":"2026-05-17T19:29:26.736Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"bc421fedea8a","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:29:26.792Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"3a5082096400","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:29:27.058Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"1e7d8b1ffe69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:29:27.776Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"17ba6ae38d69","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:29:28.142Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"6b11208ad547","msg":"peer connected"}
+{"level":"info","time":"2026-05-17T19:29:28.220Z","pid":88867,"hostname":"ubuntu-Utah-2gb","name":"hiverelay-cli","peer":"478462ed8597","msg":"peer connected"}
