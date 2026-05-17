@@ -370,7 +370,11 @@ async function start () {
   })
 
   node.on('connection', ({ remotePubKey }) => {
-    log.info({ peer: remotePubKey.slice(0, 12) }, 'peer connected')
+    // debug, not info: on a busy relay this fires thousands of times and
+    // buries the real signal (seeds, anchors, repairs). Symmetric with
+    // 'peer disconnected' just below. Confirmed as primary log-noise
+    // source in repro/2026-05-17-v0.8.13-partial-recurrence.md.
+    log.debug({ peer: remotePubKey.slice(0, 12) }, 'peer connected')
   })
 
   node.on('connection-closed', () => {
@@ -390,6 +394,17 @@ async function start () {
   })
 
   node.on('health-warning', (details) => {
+    // stale-connections is always auto-remediated by self-heal
+    // (destroy-stale-connections). It's routine maintenance, not an
+    // operator-actionable problem — log at info so it doesn't drown the
+    // real warnings (memory/disk/error-rate). The event itself is
+    // unchanged so dashboards/metrics still see it as a health-warning.
+    // Confirmed log-noise source in the v0.8.13 recurrence repro.
+    if (details.check === 'stale-connections') {
+      log.info({ health: details },
+        `self-heal: reaping ${details.staleCount}/${details.totalConns} stale connections`)
+      return
+    }
     log.warn({ health: details }, `health warning: ${details.check} — ${details.reason || 'threshold exceeded'}`)
   })
 
