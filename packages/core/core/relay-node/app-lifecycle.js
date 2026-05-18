@@ -254,7 +254,15 @@ export class AppLifecycle extends EventEmitter {
       : null
 
     const appKey = b4a.from(appKeyHex, 'hex')
-    const drive = new Hyperdrive(node.store, appKey)
+    // Use a per-app corestore session so drive.close() does NOT propagate to
+    // the shared root store. A session shares the same key-addressed hypercore
+    // objects (same _root.cores map, same key derivation for explicit keys) but
+    // its _close() only tears down this session's refs — the root store stays
+    // open for all other seeded drives. Without this, any unseed path (custody
+    // expiry, eviction, manual unseed) would call corestore.close() on the root
+    // store and wedge the entire relay until systemd restarted the process.
+    // See: .planning/debug/CAPTURED-TRACE-2026-05-18.md (root cause confirmed).
+    const drive = new Hyperdrive(node.store.session(), appKey)
 
     try {
       await drive.ready()
