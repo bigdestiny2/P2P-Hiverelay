@@ -6,6 +6,81 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.14] — 2026-05-18
+
+Root-cause fix for the silent corestore-close that wedged relays under
+continuous operation. This is the actual fix for the bug class that
+v0.8.13's LifecycleScope only *masked the faster half of*. Full
+forensic writeup: `docs/repro/2026-05-17-v0.8.13-partial-recurrence.md`
+and `.planning/debug/resolved/silent-corestore-close.md`.
+
+### Fixed
+
+- **`unseedApp()` no longer tears down the shared root corestore.**
+  Every seeded drive was constructed `new Hyperdrive(node.store,
+  appKey)` against the one shared root store. `hyperdrive@11.13.4`'s
+  `_close()` unconditionally calls `this.corestore.close()`. So *any*
+  unseed path — `_runCustodyExpiryPass` (temporary/atomic/blind entry
+  past `retainUntil`), `_evictOldestApp`, version-supersede dedup,
+  manual unseed — closed `node.store` for the **entire relay**. Every
+  subsequent `new Hyperdrive(node.store, …)` in the seed path then
+  threw `The corestore is closed` → relay-wide `POST /api/v1/seed`
+  503 until systemd `Restart=always` reaped the crashed process.
+  Mean-time-to-wedge (~57h pre-canary) tracked the time-to-first
+  temporary-entry expiry, which is why it looked load-dependent and
+  random.
+
+  Fix: `new Hyperdrive(node.store.session(), appKey)`. A corestore
+  session shares the same key-addressed hypercores (on-disk identity
+  is byte-identical — the 300+ live entries on every production relay
+  keep their storage, no re-replication) but its `_close()` only
+  drops that session's refs. The root store stays open. One-line
+  change in `app-lifecycle.js` `_seedAppInner`.
+
+  This is the root cause of BOTH the original pre-v0.8.13 bug and the
+  post-v0.8.13 recurrence. v0.8.13's `LifecycleScope` was orthogonal
+  and still valuable — it eliminated the *restart-triggered* fire-
+  and-forget vector that was wedging first (~6h) and masking this
+  slower one (~57h).
+
+### Added
+
+- `test/unit/drive-close-cascade.test.js` — 7 tests / 17 assertions:
+  seed 2 drives sharing the root store, unseed 1, assert
+  `node.store.closed === false`, the other drive still resolves, a
+  fresh `Hyperdrive` still opens, and the unseeded session's refs are
+  released. Includes a regression test that documents + asserts the
+  old broken pattern so it can't silently return.
+
+### Fixed (build)
+
+- **Dockerfile**: deps stage now also copies
+  `packages/verifier/package.json`. `verifier` is in the root
+  `workspaces` array + the lockfile, so `npm ci --workspaces` failed
+  the image build without it (it was added to the workspace set after
+  the Dockerfile's COPY list was last updated).
+
+### Verified
+
+- 7/7 unit regression tests pass; `npx standard` clean
+- Canary (utah-us, `HIVERELAY_STORE_TRACE=1`): 5 rounds of
+  seed-temporary-drive → `_runCustodyExpiryPass` unseed → **0**
+  `[STORE-CLOSE-TRACE]` events; relay `active` + serving throughout.
+  Independent re-verification: zero traces on the fixed process
+  (last historical trace 0.7s *before* the fixed process started),
+  plus a further forced-unseed round with zero traces and the relay
+  still healthy.
+- Before the fix the trace fired on the **first** unseed
+  (2026-05-18T09:38:53Z captured stack).
+
+### Operator note
+
+`HIVERELAY_STORE_TRACE=1` is debug-only instrumentation on the
+`debug/store-close-trace` branch — NOT in v0.8.14. Leave it off in
+production. The `fix/drive-close-corestore-cascade` work is merged to
+`main`; the instrumentation branch is kept until the fleet is
+confirmed silent for 48h, then retired.
+
 ## [0.8.13] — 2026-05-15
 
 Reliability v2 — closes the class of corestore-state-corruption bugs

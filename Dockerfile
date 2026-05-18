@@ -48,6 +48,7 @@ COPY package.json package-lock.json ./
 COPY packages/core/package.json packages/core/
 COPY packages/services/package.json packages/services/
 COPY packages/client/package.json packages/client/
+COPY packages/verifier/package.json packages/verifier/
 
 # Install production deps across all workspaces. --workspaces installs deps
 # for every workspace; --include-workspace-root pulls in root devDeps if any

@@ -1,6 +1,6 @@
 {
   "name": "p2p-hiverelay-monorepo",
-  "version": "0.8.13",
+  "version": "0.8.14",
   "description": "Monorepo root for HiveRelay (Core + Services + Client)",
   "private": true,
   "type": "module",
@@ -22,7 +22,7 @@
   },
   "devDependencies": {
     "@hyperswarm/testnet": "^3.0.0",
-    "brittle": "^3.5.0",
+    "brittle": "^3.19.1",
     "standard": "^17.1.0"
   },
   "engines": {
@@ -49,5 +49,9 @@
       "examples/**",
       "**/dist/**"
     ]
+  },
+  "dependencies": {
+    "ip-address": "^10.2.0",
+    "socks": "^2.8.9"
   }
 }
