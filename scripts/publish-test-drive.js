@@ -58,6 +58,11 @@ const args = parseArgs(process.argv.slice(2))
 const TARGETS = resolveTargets(args)
 const SIZE_BYTES = parseSize(args.size || '1mb')
 const HOLD_SECONDS = Number(args['hold-seconds'] || 300)
+// Synthetic drives self-expire: relay's _runCustodyExpiryPass unseeds
+// storageClass:temporary entries once retainUntil passes. Default 60 min;
+// --retain-mins 0 disables (permanent — only for deliberate load tests).
+const RETAIN_MINS = args['retain-mins'] != null ? Number(args['retain-mins']) : 60
+const RETAIN_MS = RETAIN_MINS > 0 ? RETAIN_MINS * 60 * 1000 : 0
 const LABEL = args.label || `test-${Date.now().toString(36)}`
 const OBSERVATORY_URL = args.observatory || process.env.OBSERVATORY_URL || 'http://45.59.123.112:9200'
 const WATCH_SECONDS = args.watch != null ? Number(args.watch) : 0
@@ -157,7 +162,18 @@ async function main () {
     description: `Synthetic test drive (${formatBytes(SIZE_BYTES)})`,
     version: '1.0.0',
     type: 'app',
-    privacyTier: 'public'
+    privacyTier: 'public',
+    // Self-expiring: storageClass:temporary + a short retainUntil makes
+    // the relay's existing 60s _runCustodyExpiryPass auto-unseed this
+    // entry once retainUntil passes — so synthetic test drives never
+    // accumulate as permanent junk on the fleet. --retain-mins 0 opts
+    // out (permanent; only for deliberate load tests). storageClass/
+    // retainUntil are unsigned metadata (not in
+    // serializeSeedRequestForSigning) so this does not affect the
+    // publisher signature.
+    ...(RETAIN_MS > 0
+      ? { storageClass: 'temporary', retainUntil: Date.now() + RETAIN_MS }
+      : {})
   }
 
   // ── Start swarm so the relay can actually pull blocks ────────────────

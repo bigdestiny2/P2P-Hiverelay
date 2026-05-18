@@ -78,6 +78,13 @@ const HOLD_SECONDS = Number(args.hold || 180)
 const QUORUM_TIMEOUT_S = Number(args['quorum-timeout'] || 90)
 const POLL_INTERVAL_MS = 2000
 const LABEL = args.label || `custody-${Date.now().toString(36)}`
+// Test custody drives self-expire. createCustodyIntent defaults
+// retainUntil to now+30d; we override to a short window so the relay's
+// _runCustodyExpiryPass (blind entry + finite retainUntil qualifies)
+// auto-unseeds these test artifacts. --retain-mins 0 keeps the 30d
+// default (only for deliberate long-lived custody tests).
+const RETAIN_MINS = args['retain-mins'] != null ? Number(args['retain-mins']) : 60
+const RETAIN_UNTIL = RETAIN_MINS > 0 ? Date.now() + RETAIN_MINS * 60 * 1000 : null
 
 if (!RELAYS[SOURCE]) die(`unknown --source: ${SOURCE}. choices: ${Object.keys(RELAYS).join(', ')}`)
 for (const c of CUSTODIANS) {
@@ -165,7 +172,10 @@ async function main () {
     requiredReplicas: REPLICAS,
     candidateRelays: [],  // accept receipts from any qualified relay
     privacyTier: 'p2p-only',
-    metadataVisibility: 'redacted'
+    metadataVisibility: 'redacted',
+    // Short retainUntil so test custody drives self-expire via the
+    // relay's 60s custody-expiry pass instead of lingering 30 days.
+    ...(RETAIN_UNTIL ? { retainUntil: RETAIN_UNTIL } : {})
   }, publisherKeypair)
 
   const intentId = intent.intentId
@@ -194,7 +204,8 @@ async function main () {
     ciphertextRoot,
     contentVersion,
     label: LABEL,
-    driveBytes
+    driveBytes,
+    retainUntil: RETAIN_UNTIL
   })
 
   const seedResults = await Promise.all(seedTargets.map(async (id) => {
@@ -385,6 +396,11 @@ function buildSeedBody (o) {
     type: 'app',
     privacyTier: 'p2p-only',
     blind: true,
+    // Self-expiring: a short retainUntil on the seeded entry makes the
+    // relay's _runCustodyExpiryPass (blind + finite retainUntil) unseed
+    // this test drive automatically. Unsigned metadata — does not affect
+    // the seed-request signature.
+    ...(o.retainUntil ? { retainUntil: o.retainUntil } : {}),
     // ── Custody linkage ──
     // These three fields are the bridge between seedApp and the custody
     // registry — when the relay anchors this content, it sees the custody
