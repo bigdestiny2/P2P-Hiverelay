@@ -95,6 +95,13 @@ within seconds.
 
 So the bug reproduces deterministically and the fix is real.
 
+**Independent corroboration (2026-05-19):** independently reproduced on
+the Drop drive (537 MB, key `i687xpzb…`, release 7999) — metadata
+resolves, blobs unreachable, `pear run` hangs silently. Different
+publisher, different drive, identical symptom. Confirms this is not
+publisher-specific misconfiguration but a systemic large-drive seeding
+gap.
+
 ---
 
 ## What we'd like HiveRelay to change
