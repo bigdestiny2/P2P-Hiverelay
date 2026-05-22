@@ -1111,6 +1111,39 @@ export class HiveRelayClient extends EventEmitter {
     })
   }
 
+  /**
+   * Send data through an established circuit. The relay forwards the
+   * bytes to the other endpoint of the named circuit. Caller is
+   * responsible for E2E encryption on top — the relay sees ciphertext
+   * but could (in principle) tamper with framing, so peers MUST run
+   * their own authenticated handshake (Noise, etc.) over this byte
+   * channel before trusting anything.
+   *
+   * @param {string} relayPubKey - hex pubkey of the relay routing this circuit
+   * @param {string} circuitId - hex circuitId from the circuit-ready event
+   * @param {Uint8Array} data - payload (max 64 KB per call by default)
+   * @returns {boolean} true if the message was sent, false if the
+   *                    relay or its circuit channel isn't available
+   */
+  sendCircuitData (relayPubKey, circuitId, data) {
+    const relayHex = typeof relayPubKey === 'string' ? relayPubKey : b4a.toString(relayPubKey, 'hex')
+    const relay = this.relays.get(relayHex)
+    if (!relay || !relay.channels.circuit || !relay.channels.circuit.dataMsg) return false
+
+    const circuitIdBuf = typeof circuitId === 'string' ? b4a.from(circuitId, 'hex') : circuitId
+    if (!circuitIdBuf || circuitIdBuf.byteLength !== 16) {
+      throw new Error('circuitId must be 16 bytes (hex string or buffer)')
+    }
+
+    const payload = data instanceof Uint8Array ? data : b4a.from(data)
+    try {
+      relay.channels.circuit.dataMsg.send({ circuitId: circuitIdBuf, data: payload })
+      return true
+    } catch (_) {
+      return false
+    }
+  }
+
   // ─── Status ──────────────────────────────────────────────────────
 
   /**
@@ -2594,7 +2627,98 @@ export class HiveRelayClient extends EventEmitter {
         }
       })
 
-      channels.circuit = { channel: circuitChannel, reserveMsg, connectMsg, statusMsg }
+      // v0.8.19: data-plane message. Both sides of a bridged circuit
+      // exchange opaque bytes through this. Server validates ownership,
+      // applies byte/bandwidth caps, then forwards.
+      const dataMsg = circuitChannel.addMessage({
+        encoding: {
+          preencode (state, msg) {
+            c.fixed(16).preencode(state, msg.circuitId)
+            c.buffer.preencode(state, msg.data)
+          },
+          encode (state, msg) {
+            c.fixed(16).encode(state, msg.circuitId)
+            c.buffer.encode(state, msg.data)
+          },
+          decode (state) {
+            return {
+              circuitId: c.fixed(16).decode(state),
+              data: c.buffer.decode(state)
+            }
+          }
+        },
+        onmessage: (msg) => {
+          const relay = this.relays.get(pubkeyHex)
+          if (relay) relay.lastSeen = Date.now()
+          this.emit('circuit-data', {
+            relay: pubkeyHex,
+            circuitId: b4a.toString(msg.circuitId, 'hex'),
+            data: msg.data
+          })
+        }
+      })
+
+      // v0.8.19: server signals "circuit is bridged" with the remote
+      // peer's pubkey. Carries the circuitId clients should use for
+      // subsequent dataMsg sends + the identity to verify in their own
+      // Noise handshake on top.
+      const readyMsg = circuitChannel.addMessage({
+        encoding: {
+          preencode (state, msg) {
+            c.fixed(16).preencode(state, msg.circuitId)
+            c.fixed32.preencode(state, msg.remotePubkey)
+          },
+          encode (state, msg) {
+            c.fixed(16).encode(state, msg.circuitId)
+            c.fixed32.encode(state, msg.remotePubkey)
+          },
+          decode (state) {
+            return {
+              circuitId: c.fixed(16).decode(state),
+              remotePubkey: c.fixed32.decode(state)
+            }
+          }
+        },
+        onmessage: (msg) => {
+          const circuitIdHex = b4a.toString(msg.circuitId, 'hex')
+          const remoteHex = b4a.toString(msg.remotePubkey, 'hex')
+          this.emit('circuit-ready', {
+            relay: pubkeyHex,
+            circuitId: circuitIdHex,
+            remotePubkey: remoteHex
+          })
+        }
+      })
+
+      // v0.8.19: explicit close notification from the server side.
+      const closeMsgClient = circuitChannel.addMessage({
+        encoding: {
+          preencode (state, msg) {
+            c.fixed(16).preencode(state, msg.circuitId)
+            c.uint.preencode(state, msg.reason)
+          },
+          encode (state, msg) {
+            c.fixed(16).encode(state, msg.circuitId)
+            c.uint.encode(state, msg.reason)
+          },
+          decode (state) {
+            return {
+              circuitId: c.fixed(16).decode(state),
+              reason: c.uint.decode(state)
+            }
+          }
+        },
+        onmessage: (msg) => {
+          const circuitIdHex = b4a.toString(msg.circuitId, 'hex')
+          this.emit('circuit-closed', {
+            relay: pubkeyHex,
+            circuitId: circuitIdHex,
+            reason: msg.reason
+          })
+        }
+      })
+
+      channels.circuit = { channel: circuitChannel, reserveMsg, connectMsg, statusMsg, dataMsg, readyMsg, closeMsg: closeMsgClient }
       circuitChannel.open()
     } catch (err) {
       this.emit('protocol-error', { relay: pubkeyHex, protocol: 'circuit', error: err })

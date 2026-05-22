@@ -180,6 +180,118 @@ export class Relay extends EventEmitter {
     }
   }
 
+  // ─── v0.8.19: protomux-channel-based circuit accounting ──────────
+  //
+  // The original createCircuit() forwarded raw bytes between two
+  // duplex streams. That model never worked over protomux (channels
+  // don't have an exposed underlying stream you can safely forward).
+  // The new model: CircuitRelay does the byte forwarding via protomux
+  // data messages; Relay just tracks counters and applies caps.
+  //
+  // These methods are channel-agnostic — they accept the same opaque
+  // circuitId hex CircuitRelay uses, and return bool for accept/reject.
+
+  /**
+   * Register a new circuit for accounting. Returns false if the relay
+   * is at capacity or this peer is at their per-peer circuit limit.
+   * @param {string} circuitId - hex string identifier
+   * @param {string} sourcePeerKey - hex pubkey of the source peer (for per-peer cap)
+   * @param {number} [maxBytes] - per-circuit byte cap (defaults to this.maxCircuitBytes)
+   * @returns {boolean} true if accepted, false if rejected
+   */
+  registerCircuit (circuitId, sourcePeerKey, maxBytes) {
+    if (this.circuits.size >= this.maxConnections) return false
+
+    if (sourcePeerKey) {
+      const current = this.circuitsPerPeer.get(sourcePeerKey) || 0
+      if (current >= this.maxCircuitsPerPeer) return false
+      this.circuitsPerPeer.set(sourcePeerKey, current + 1)
+    }
+
+    const circuit = {
+      id: circuitId,
+      source: null, // legacy field; null in the new model
+      dest: null,
+      sourcePeerKey: sourcePeerKey || null,
+      bytesRelayed: 0,
+      startedAt: Date.now(),
+      maxBytes: maxBytes || this.maxCircuitBytes,
+      timer: null
+    }
+
+    // Max-duration safety timer — if CircuitRelay doesn't call closeCircuit
+    // within the window, we tear down accounting on our own.
+    circuit.timer = setTimeout(() => {
+      this.closeCircuit(circuitId, 'DURATION_EXCEEDED')
+    }, this.maxCircuitDuration)
+
+    this.circuits.set(circuitId, circuit)
+    this.totalCircuitsServed++
+
+    this.emit('circuit-created', {
+      circuitId,
+      maxBytes: circuit.maxBytes,
+      maxDuration: this.maxCircuitDuration
+    })
+
+    return true
+  }
+
+  /**
+   * Record bytes relayed for a circuit. Returns false if the per-circuit
+   * byte cap or the relay-wide bandwidth cap has been reached; caller
+   * should close the circuit. Returns true to continue.
+   */
+  recordCircuitBytes (circuitId, bytes) {
+    const circuit = this.circuits.get(circuitId)
+    if (!circuit) return false
+
+    if (circuit.bytesRelayed + bytes > circuit.maxBytes) return false
+    if (this._isOverBandwidthLimit()) return false
+
+    circuit.bytesRelayed += bytes
+    this.totalBytesRelayed += bytes
+    this._recordBandwidth(bytes)
+    return true
+  }
+
+  /**
+   * Close a circuit and decrement counters. Idempotent.
+   */
+  closeCircuit (circuitId, reason = 'UNKNOWN') {
+    const circuit = this.circuits.get(circuitId)
+    if (!circuit) return
+
+    if (circuit.timer) {
+      clearTimeout(circuit.timer)
+      circuit.timer = null
+    }
+    this.circuits.delete(circuitId)
+
+    if (circuit.sourcePeerKey) {
+      const count = this.circuitsPerPeer.get(circuit.sourcePeerKey) || 0
+      if (count <= 1) this.circuitsPerPeer.delete(circuit.sourcePeerKey)
+      else this.circuitsPerPeer.set(circuit.sourcePeerKey, count - 1)
+    }
+
+    // Legacy createCircuit set source/dest to stream refs — only destroy
+    // if they look like streams (have a destroy method). In the new model
+    // they're null, so this is a no-op.
+    if (circuit.source && typeof circuit.source.destroy === 'function') {
+      try { circuit.source.destroy() } catch {}
+    }
+    if (circuit.dest && typeof circuit.dest.destroy === 'function') {
+      try { circuit.dest.destroy() } catch {}
+    }
+
+    this.emit('circuit-closed', {
+      circuitId,
+      reason,
+      bytesRelayed: circuit.bytesRelayed,
+      durationMs: Date.now() - circuit.startedAt
+    })
+  }
+
   getStats () {
     return {
       activeCircuits: this.circuits.size,

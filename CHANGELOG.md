@@ -6,6 +6,114 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.19] — 2026-05-22
+
+Circuit-relay bridge data plane — fixes a silently-broken cross-NAT
+pair path that never worked in production. Also closes a related
+silent auth bypass on the reserve/connect handshake.
+
+### Background
+
+The `hiverelay-circuit` protocol's reservation + connect handshake
+shipped working, but the actual bridge data plane never did. The
+`_bridgeCircuit` code at `core/protocol/relay-circuit.js:206` called
+`Relay.createCircuit(circuitId, sourceChannel.stream, destChannel.stream, ...)`.
+But `channel.stream` is undefined in modern protomux (Channel exposes
+`_mux.stream`, not `.stream`), so `createCircuit` would have been
+called with `(circuitId, undefined, undefined, sourcePeerKey)` and
+crashed at the first `.on('data')`. In practice the code path was
+never exercised because no production app drove a reservation + a
+matching connect from a different peer until PearPaste tried to use
+the fleet for cross-NAT pairing.
+
+Even if the bridge had worked, raw-byte forwarding between two
+protomux `_mux.streams` would corrupt every channel sharing them
+(channel-id space is per-mux; noise encryption is per-stream). The
+design needed to be a data-plane message at the protomux channel
+layer, not stream-level forwarding.
+
+### What ships
+
+**1. Proper data-plane message at the protomux channel layer.**
+The `hiverelay-circuit` channel gets three new message types:
+- `dataMsg { circuitId: 16 bytes, data: bytes }` — opaque payload
+  forwarding. The relay validates the sender is one of the two
+  endpoints of the named circuit, applies per-frame size cap
+  (default 64 KB), per-circuit byte cap, and relay-wide bandwidth
+  cap, then forwards to the other endpoint's channel.
+- `readyMsg { circuitId, remotePubkey }` — server→client signal
+  that a circuit is bridged and the client can start sending. Sent
+  to BOTH peers, carrying the other end's pubkey so they can run a
+  verified Noise handshake on top of the byte channel. Previously
+  only the connecting side got a status; the reservation holder had
+  no signal that anyone had connected.
+- `closeMsg { circuitId, reason }` — explicit close notification
+  with a coded reason (PEER_CLOSED, BYTES_EXCEEDED, BANDWIDTH_EXCEEDED,
+  DURATION_EXCEEDED, FRAME_TOO_LARGE, FORWARD_FAILED, SHUTDOWN).
+
+**2. Silent auth bypass closed.** The reserve/connect identity checks
+at `relay-circuit.js:113,167` read `channel.stream?.remotePublicKey` —
+which was always undefined, so `authenticatedKey` was undefined, so
+the `if (authenticatedKey && ...)` short-circuited to false and the
+identity check silently passed. Result: any peer could reserve under
+any pubkey, and connect under any source pubkey. **This was a
+MitM-enabling bug** had the bridge ever worked — an attacker could
+insert themselves between two pairing peers. The check now reads
+`channel._mux.stream.remotePublicKey` correctly (with a fallback to
+the legacy `.stream` path for forward compat).
+
+**3. New `Relay` accounting methods.** `registerCircuit`,
+`recordCircuitBytes`, `closeCircuit` — channel-based equivalents of
+the old stream-based `createCircuit`. Track per-peer circuit counts,
+total bytes, bandwidth window, and feed the same `/status` counters
+dashboards already read. Old `createCircuit` left in place for
+backward compatibility but unused.
+
+**4. Client SDK exposes the new data plane.** `packages/client`
+adds `dataMsg`/`readyMsg`/`closeMsg` to the circuit channel attach,
+plus `sendCircuitData(relayPubKey, circuitId, data)` method.
+Emits `circuit-ready`, `circuit-data`, `circuit-closed` events.
+
+**5. Connect-before-reserve queueing.** When a peer tries to connect
+to a target that hasn't reserved yet, the request is queued in
+`pendingConnects` rather than rejected outright. Existing semantics
+preserved; previously the rejection was final.
+
+### Tests
+
+`test/unit/circuit-relay-bridge.test.js` — 12 tests / 49 asserts:
+- Reserve + connect bridges a circuit, both peers receive ready
+- Data forwards in both directions
+- Data from a non-endpoint channel is dropped (no impersonation)
+- Data for unknown circuitId is dropped silently (no oracle for attackers)
+- Per-frame size cap closes the circuit
+- Per-circuit byte cap closes the circuit
+- Reserve with mismatched pubkey is rejected (auth bypass closed)
+- Connect with mismatched sourcePubkey is rejected (auth bypass closed)
+- Connect-before-reserve queues correctly
+- Channel close tears down circuits the channel was part of
+- Relay at-capacity refuses to register new circuit
+- `getStats` exposes new `activeCircuits` field
+
+### Risk
+
+`Relay.createCircuit` (the old stream-based method) is left in place
+but no longer called internally. No external callers. Safe to leave.
+
+Protocol-wire change: receivers that don't know about `dataMsg` /
+`readyMsg` / `closeMsg` will see them as unknown protomux message
+types. Protomux's default policy is to silently ignore unknown
+messages (no error, no disconnect), so old clients connecting to new
+relays remain functional — they just can't use the bridge until they
+upgrade.
+
+### Customer
+
+This unblocks PearPaste's cross-NAT pair flow (cellular ↔ home Wi-Fi)
+once the fleet rolls v0.8.19. PearPaste already shipped the
+`reserveRelay` + `connectViaRelay` plumbing on their side; they were
+waiting on the bridge data plane.
+
 ## [0.8.18] — 2026-05-22
 
 Provenance surfacing in the catalog broadcast — Phase A of the
