@@ -691,6 +691,19 @@ export class AppLifecycle extends EventEmitter {
    */
   async _indexAppManifest (appKeyHex, drive) {
     const node = this.node
+    // Blind drives: publisher's privacy contract says "do not inspect."
+    // We don't open /manifest.json, don't persist any manifest-derived
+    // fields (appId/name/description/author/categories/version), and
+    // don't fire app-replaced / app-version-rejected events (which
+    // would leak appId+version into logs and the ws-feed). The registry
+    // entry keeps its commitment-level fields — appKey, blindContentId,
+    // ciphertextRoot, durability, revocable, custodyIntentId — which
+    // are signed publisher commitments, not inspected content.
+    //
+    // See docs/audit/2026-05-19-blind-path-audit.md (Path 1).
+    const existingForBlindCheck = node.appRegistry && node.appRegistry.get(appKeyHex)
+    if (existingForBlindCheck && existingForBlindCheck.blind === true) return
+
     try {
       const manifestBuf = await Promise.race([
         drive.get('/manifest.json'),

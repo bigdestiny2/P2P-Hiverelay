@@ -494,7 +494,15 @@ export class HyperGateway extends EventEmitter {
     await this._ensureReady()
 
     try {
-      const drive = new Hyperdrive(this._store, Buffer.from(keyHex, 'hex'))
+      // Per-drive corestore session so cache eviction / drive.close()
+      // tears down only this session's refs, not the root store. Without
+      // .session(), hyperdrive._close() cascades to the externalStore
+      // (the relay's node.store) and wedges the entire relay until
+      // restart — same class as the v0.8.14 fix in
+      // app-lifecycle.js:_seedAppInner. The captured trace from utah-us
+      // canary 2026-05-18 confirms this path fires (DriveCache eviction
+      // → hyperdrive._close → store.close on the wrapped root).
+      const drive = new Hyperdrive(this._store.session(), Buffer.from(keyHex, 'hex'))
       await drive.ready()
 
       // Join the drive's discovery key on the swarm (only when we own it)

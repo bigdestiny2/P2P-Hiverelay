@@ -267,11 +267,20 @@ export class AppRegistry extends EventEmitter {
   // ─── Catalog Output ────────────────────────────────────────
 
   _shouldRedactEntry (entry, opts = {}) {
+    // The blind flag is the publisher's privacy commitment — the relay
+    // honors it unconditionally, regardless of caller opts or operator
+    // config. opts.redactPrivate only controls whether non-blind
+    // privacy-tier entries also get redacted.
+    //
+    // Without this unconditional check, a custody.redactedCatalog:false
+    // operator config OR a catalog() call site that forgets to pass
+    // redactPrivate would expose blind entries' full metadata.
+    //
+    // See docs/audit/2026-05-19-blind-path-audit.md (Path 3).
+    if (entry.blind === true) return true
     if (opts.redactPrivate !== true) return false
     const privacyTier = String(entry.privacyTier || 'public').toLowerCase()
-    return entry.blind === true ||
-      privacyTier !== 'public' ||
-      entry.metadataVisibility === 'redacted'
+    return privacyTier !== 'public' || entry.metadataVisibility === 'redacted'
   }
 
   _redactCatalogEntry (catalogEntry, entry, opts = {}) {

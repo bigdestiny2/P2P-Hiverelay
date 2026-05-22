@@ -62,7 +62,13 @@ export class StorageService extends ServiceProvider {
       throw new Error('DRIVE_LIMIT: max drives reached')
     }
 
-    const drive = new Hyperdrive(this.store, params.key ? b4a.from(params.key, 'hex') : undefined)
+    // Per-drive corestore session so this.drives.delete(...) + drive.close()
+    // tears down only this session's refs. Without .session(), hyperdrive's
+    // _close cascades to this.store (the relay's node.store under bare-relay
+    // mode — see bare-relay.js:223 which passes node.store as opts.store)
+    // and wedges the whole process. Matches v0.8.14's pattern in
+    // app-lifecycle.js:_seedAppInner.
+    const drive = new Hyperdrive(this.store.session(), params.key ? b4a.from(params.key, 'hex') : undefined)
     await drive.ready()
 
     const keyHex = b4a.toString(drive.key, 'hex')

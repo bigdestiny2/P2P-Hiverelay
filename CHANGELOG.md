@@ -6,6 +6,89 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.15] — 2026-05-19
+
+Hardening release: Hyperdrive-session audit follow-up + blind-path
+audit. No protocol changes. Two surgical edits guard previously-leaky
+paths against an operator-untrusted threat model.
+
+See [`docs/RELEASE-NOTES-0.8.15.md`](docs/RELEASE-NOTES-0.8.15.md) for
+full notes and the audit reports at
+[`docs/audit/2026-05-19-blind-path-audit.md`](docs/audit/2026-05-19-blind-path-audit.md).
+
+### Fixed (Hyperdrive-session audit follow-up to v0.8.14)
+
+- **`gateway/hyper-gateway.js:497`** — `new Hyperdrive(this._store, …)`
+  was passing the relay's raw `node.store`, so DriveCache evictions
+  could close the root corestore. Now wrapped with `.session()`,
+  matching v0.8.14's pattern.
+- **`services/builtin/storage-service.js:65`** — same fix for the
+  bare-relay storage service.
+- **`gateway/server.js:43,98`** — same fix for the standalone gateway
+  entrypoint. Defensive, not in fleet runtime.
+
+The fleet ran 95.7h on v0.8.14 without wedging despite the canary's
+trace showing 15 close-call events through the unguarded paths above
+— v0.8.14's seed-path session() boundary absorbed the cascade, but
+covering every site removes the residual exposure.
+
+### Fixed (blind-path airtight audit)
+
+- **`_indexAppManifest`** (`app-lifecycle.js:692`) — now early-returns
+  when `entry.blind === true`. Previously it unconditionally opened
+  `/manifest.json` on every anchored drive and persisted
+  `appId`/`name`/`description`/`author`/`categories`/`version` into
+  `app-registry.json`. Operator with disk access could read blind
+  drives' manifest metadata. Cascade-closes the
+  `app-replaced` / `app-version-rejected` event leaks (emitted from
+  inside this method).
+- **`_shouldRedactEntry`** (`app-registry.js:269`) — `entry.blind === true`
+  now forces redaction unconditionally, independent of caller opts
+  or `custody.redactedCatalog` config. Previously a config of
+  `redactedCatalog: false` (or a bare `catalog()` call with no opts)
+  exposed blind entries' full metadata via public `/catalog.json`
+  and internal `/api/manage/*` endpoints. Cascade-closes the
+  `/api/manage/*` catalog leak and any callsite that forgets to pass
+  `redactPrivate: true`.
+
+Internal code paths that legitimately need unredacted access continue
+to work — they use `appRegistry.get(appKey)` directly, not the
+`catalog()` projection.
+
+### Added
+
+- 7 new unit tests in
+  [`test/unit/blind-path-airtight.test.js`](test/unit/blind-path-airtight.test.js)
+  fuzzing the blind-flag boundary across catalog projections,
+  broadcast, predicate behavior, and the public/non-blind regression
+  guard.
+- Audit report:
+  [`docs/audit/2026-05-19-blind-path-audit.md`](docs/audit/2026-05-19-blind-path-audit.md)
+  enumerating all 9 paths walked, with verdict + fix per path.
+- Handoff doc:
+  [`docs/handoff/2026-05-19-fleet-status-agent-handoff.md`](docs/handoff/2026-05-19-fleet-status-agent-handoff.md)
+  for any agent picking up cold.
+
+### Operational
+
+- utah-us canary retired. Moves from `fix/drive-close-corestore-cascade`
+  back to `main` (v0.8.15) as part of fleet rollout. Disarmed:
+  `HIVERELAY_STORE_TRACE` env drop-in removed, `store-close-watcher`
+  cron + log files cleaned up. The canary served its purpose
+  (captured the root cause stack at 2026-05-18T09:38:53Z); leaving it
+  in place created a fork against main.
+
+### Compatibility
+
+- **Backward-compatible.** No protocol changes. Public/non-blind
+  drives behave identically.
+- One semantic narrowing: any operator-side tooling that relied on
+  `catalog()` returning unredacted data for blind entries (without
+  passing `redactPrivate: true` or with `redactedCatalog: false` set)
+  now sees redacted output. Switch to `appRegistry.get(appKey)` for
+  direct internal access. The behavior was a leak; the fix is
+  intentional.
+
 ## [0.8.14] — 2026-05-18
 
 Root-cause fix for the silent corestore-close that wedged relays under

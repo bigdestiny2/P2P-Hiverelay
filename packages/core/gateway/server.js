@@ -37,10 +37,12 @@ export async function startGateway (opts = {}) {
   // Join relay discovery topic so clients can find us
   swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: false })
 
-  // Seed requested drives
+  // Seed requested drives. Per-drive corestore session so a later
+  // drive.close() / cleanup never cascades into the root store.close()
+  // and wedges the standalone gateway. Matches v0.8.14's pattern.
   const seededDrives = new Map()
   for (const keyHex of seedKeys) {
-    const drive = new Hyperdrive(store, Buffer.from(keyHex, 'hex'))
+    const drive = new Hyperdrive(store.session(), Buffer.from(keyHex, 'hex'))
     await drive.ready()
     swarm.join(drive.discoveryKey, { server: true, client: true })
     seededDrives.set(keyHex, drive)
@@ -95,7 +97,8 @@ export async function startGateway (opts = {}) {
         try {
           const { key } = JSON.parse(body)
           if (!key || key.length < 52) throw new Error('Invalid key')
-          const drive = new Hyperdrive(store, Buffer.from(key, 'hex'))
+          // Per-drive session — see Seed-loop comment above.
+          const drive = new Hyperdrive(store.session(), Buffer.from(key, 'hex'))
           await drive.ready()
           swarm.join(drive.discoveryKey, { server: true, client: true })
           seededDrives.set(key, drive)

@@ -78,9 +78,20 @@ test('AppRegistry: redacted catalog hides blind/private metadata', (t) => {
     discoveryKey: 'b'.repeat(64)
   })
 
-  const raw = registry.catalog()[0]
-  t.is(raw.name, 'Alice Tax Docs', 'raw internal catalog preserves operator metadata')
-  t.is(raw.driveKey, 'f'.repeat(64), 'raw internal catalog preserves drive key')
+  // Audit 2026-05-19 (Path 3): blind entries are ALWAYS redacted via
+  // catalog(), regardless of whether the caller passes redactPrivate.
+  // The blind flag is the publisher's privacy commitment — operator
+  // config and caller opts cannot override it. Internal code paths
+  // that legitimately need unredacted access use appRegistry.get()
+  // directly, not the catalog() projection.
+  const rawNoOpts = registry.catalog()[0]
+  t.is(rawNoOpts.redacted, true, 'catalog() no-opts redacts blind entry (Path 3 contract)')
+  t.is(rawNoOpts.name, 'Private Content', 'no-opts call scrubs name')
+  t.is(rawNoOpts.driveKey, null, 'no-opts call scrubs drive key')
+
+  const optOut = registry.catalog({ redactPrivate: false })[0]
+  t.is(optOut.redacted, true, 'redactPrivate:false STILL redacts blind (audit fix)')
+  t.is(optOut.name, 'Private Content', 'opt-out cannot override blind commitment')
 
   const redacted = registry.catalog({ redactPrivate: true })[0]
   t.is(redacted.redacted, true, 'redacted flag is set')
