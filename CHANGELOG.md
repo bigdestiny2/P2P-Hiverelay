@@ -6,6 +6,50 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.16] — 2026-05-22
+
+Pre-rollout privacy hardening of the `dht-relay-ws` transport. The
+transport is still off by default; this release lands the IP-stripping
+guards so we have a clean audit trail before flipping it on in a
+follow-up release.
+
+### Fixed (privacy)
+
+- `dht-relay-ws` transport's emitted events (`rate-limited`,
+  `client-connected`, `client-disconnected`, `client-error`,
+  `relay-error`) now carry a salted, non-reversible
+  `remoteAddressHash` (16 hex chars) instead of the raw client IP.
+  The raw IP stays in-process in `_ipBuckets` for the rate-limiter
+  only (5-minute TTL) and is never exposed to downstream subscribers
+  (ws-feed, observatory, `/api/manage/*`, logs).
+- `relay-error` and `client-error` events now run their `Error`
+  through a `scrubError` helper that strips `.stack` (server-side
+  paths) and IP-pattern substrings from `.message`, keeping only
+  `{ message, code, name }`.
+- Per-process random salt on the IP hash so the same client IP
+  produces different hashes across relays / restarts — useful for
+  in-session correlation, useless for cross-fleet tracking.
+
+### Added
+
+- Top-of-file threat-model doc-comment in
+  `packages/core/transports/dht-relay-ws/index.js` enumerating what
+  operators CAN and CANNOT see.
+- 7 new unit tests in
+  [`test/unit/dht-relay-ws-privacy.test.js`](test/unit/dht-relay-ws-privacy.test.js)
+  asserting no raw IP survives the event boundary.
+
+### Compatibility
+
+- **Backward-compatible.** Transport is still disabled by default
+  (`config.transports.dhtRelayWs` defaults false). No relay's runtime
+  behavior changes. The hardening only takes effect once an operator
+  opts the transport in (planned v0.8.17).
+- Downstream subscribers expecting `info.remoteAddress` see
+  `undefined`; switch to `info.remoteAddressHash` for in-session
+  correlation. No known external subscribers depend on the field
+  today.
+
 ## [0.8.15] — 2026-05-19
 
 Hardening release: Hyperdrive-session audit follow-up + blind-path

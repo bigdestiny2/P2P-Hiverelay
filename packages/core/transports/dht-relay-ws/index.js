@@ -12,12 +12,48 @@
  * (`transports/websocket/`), which carries replication streams. This one
  * carries DHT control traffic.
  *
+ * ─── Threat model (v0.8.16 hardening) ─────────────────────────────────
+ *
+ * What an operator running this transport CAN see:
+ *   - The fact that a client connected (counted in getStats aggregates)
+ *   - Frame sizes + timing of Hypercore traffic flowing through the
+ *     WebSocket after a peer match
+ *
+ * What an operator CANNOT see (Noise-tunneled end-to-end between the
+ * client and its DHT peer):
+ *   - Hypercore block contents
+ *   - Hyperdrive contents / manifests
+ *   - Anything the publisher encrypted
+ *
+ * What the transport KEEPS IN MEMORY (never emitted, never logged):
+ *   - Raw client IP — held in the per-IP rate-limiter bucket
+ *     (`_ipBuckets`) for `rateLimit.staleAfterMs` (5 minutes default)
+ *     after the connection's last activity. This is the minimum needed
+ *     for rate limiting to work. The bucket is opaque to anything
+ *     outside this file.
+ *
+ * What the transport DOES NOT EXPOSE externally:
+ *   - Emitted events (`client-connected`, `client-disconnected`,
+ *     `client-error`, `relay-error`, `rate-limited`) carry a
+ *     `remoteAddressHash` — a short SHA-256-derived prefix of the IP.
+ *     This lets operators correlate same-client activity across a
+ *     session for ops/debug, without exposing the raw IP through any
+ *     downstream subscriber (ws-feed, observatory, /api/manage, logs).
+ *   - getStats() returns only aggregates (active count, total served,
+ *     total rate-limited) — never per-IP data.
+ *
+ * If you need to investigate a specific abuser, attach to the
+ * `rate-limited` event in-process and read the bucket directly; the
+ * raw IP is available there for the lifetime of the bucket. It is
+ * intentionally never persisted or emitted.
+ *
  * Usage:
  *   const dhtRelay = new DHTRelayWS({ dht: swarm.dht, port: 8766 })
  *   await dhtRelay.start()
  */
 
 import { EventEmitter } from 'events'
+import { createHash } from 'crypto'
 import { WebSocketServer } from 'ws'
 import { relay } from '@hyperswarm/dht-relay'
 import Stream from '@hyperswarm/dht-relay/ws'
@@ -50,6 +86,13 @@ export class DHTRelayWS extends EventEmitter {
     this.port = opts.port || DEFAULT_PORT
     this.host = opts.host || '0.0.0.0'
     this.maxConnections = opts.maxConnections || 256
+    // Per-process random salt for the IP-hash exposed in events. Without
+    // a salt, a hash prefix is a stable global identifier for the IP and
+    // could be cross-correlated across relays. With a per-process salt,
+    // the hash is only meaningful within one relay's session — useful
+    // for in-session correlation, useless for cross-fleet tracking. The
+    // salt is never persisted and changes on every restart.
+    this._ipHashSalt = createHash('sha256').update(String(Math.random()) + String(process.hrtime.bigint())).digest()
 
     const rl = opts.rateLimit || {}
     this.rateLimit = {
@@ -68,6 +111,25 @@ export class DHTRelayWS extends EventEmitter {
     // Map<ip, { tokens, lastRefill, concurrent, lastSeen }>
     this._ipBuckets = new Map()
     this._cleanupTimer = null
+  }
+
+  // Per-process salted prefix of SHA-256(ip). 16 hex chars is enough to
+  // distinguish concurrent clients within a session without being
+  // reversible. The salt rotates on every relay restart.
+  _hashIp (ip) {
+    if (!ip) return null
+    return createHash('sha256').update(this._ipHashSalt).update(String(ip)).digest('hex').slice(0, 16)
+  }
+
+  // Build the event-safe info payload — `remoteAddressHash` (not raw IP),
+  // remotePort, type. Anything external (ws-feed, observatory, /api/manage,
+  // downstream loggers) sees only this shape.
+  _safeInfo (ip, remotePort) {
+    return {
+      type: 'dht-relay-ws',
+      remoteAddressHash: this._hashIp(ip),
+      remotePort
+    }
   }
 
   // Token-bucket check + decrement. Returns null if allowed, or a string
@@ -137,7 +199,7 @@ export class DHTRelayWS extends EventEmitter {
         const rateLimitReason = this._checkRateLimit(ip)
         if (rateLimitReason) {
           this._totalRateLimited++
-          this.emit('rate-limited', { ip, reason: rateLimitReason })
+          this.emit('rate-limited', { remoteAddressHash: this._hashIp(ip), reason: rateLimitReason })
           const status = rateLimitReason === 'max-concurrent' ? 503 : 429
           // eslint-disable-next-line n/no-callback-literal
           cb(false, status, rateLimitReason)
@@ -167,11 +229,10 @@ export class DHTRelayWS extends EventEmitter {
       this.connections.add(socket)
       this._totalConnectionsServed++
 
-      const info = {
-        type: 'dht-relay-ws',
-        remoteAddress: ip,
-        remotePort: req.socket.remotePort
-      }
+      // External-safe info payload: salted-hash prefix instead of raw IP.
+      // Raw IP stays in the in-process _ipBuckets Map for rate-limiting.
+      // See threat model in the file header.
+      const info = this._safeInfo(ip, req.socket.remotePort)
 
       // Hand the socket off to dht-relay. It speaks its own framed
       // protocol over the WebSocket and proxies DHT operations to our
@@ -179,7 +240,10 @@ export class DHTRelayWS extends EventEmitter {
       try {
         relay(this.dht, new Stream(false, socket))
       } catch (err) {
-        this.emit('relay-error', { error: err, info })
+        // Scrub error: only carry message/code/name, never the full Error
+        // (whose .stack would expose server-side paths, and whose
+        // .message could in rare upstream-library cases include an IP).
+        this.emit('relay-error', { error: scrubError(err), info })
         try { socket.close(1011, 'DHT_RELAY_INIT_FAILED') } catch (_) {}
         this.connections.delete(socket)
         this._releaseConnection(ip)
@@ -193,7 +257,7 @@ export class DHTRelayWS extends EventEmitter {
       })
 
       socket.on('error', (err) => {
-        this.emit('client-error', { error: err, info })
+        this.emit('client-error', { error: scrubError(err), info })
       })
 
       this.emit('client-connected', info)
@@ -246,4 +310,19 @@ export class DHTRelayWS extends EventEmitter {
       }
     }
   }
+}
+
+// Normalize an Error into an emit-safe shape. Strips .stack (server-side
+// paths) and any unexpected own properties; keeps just {message, code,
+// name}. Also runs a defensive IP-regex strip on the message in case an
+// upstream library leaked an IP into an error string.
+function scrubError (err) {
+  if (!err) return { message: 'unknown', code: null, name: null }
+  const message = String(err.message || err)
+    // crude IPv4
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[ip]')
+    // crude IPv6 (any string of hex-and-colons with at least one ::)
+    .replace(/(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}/g, '[ip]')
+    .replace(/::1\b/g, '[ip]')
+  return { message, code: err.code || null, name: err.name || null }
 }
