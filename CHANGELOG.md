@@ -6,6 +6,58 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.17] — 2026-05-22
+
+Operational release: turns on the `dht-relay-ws` transport — the
+WebSocket bridge into HyperDHT that lets browsers / Android WebViews
+reach the relay over `wss://`. Three of the five fleet relays
+(utah-us, singapore-1, bern) are exposed at named subdomains under
+`p2phiverelay.xyz`, fronted by Caddy + Let's Encrypt TLS. The privacy
+hardening shipped in v0.8.16 is now active behind those endpoints.
+
+### Added
+
+- **CLI / env-var enablement for the transport.** `--dht-relay-ws`
+  flag, or `HIVERELAY_DHT_RELAY_WS=1` env var, opts a relay into
+  serving the WS bridge. Defaults to bind `127.0.0.1:8766` (the relay
+  never goes directly internet-exposed — Caddy in front does TLS at
+  443). Port and host overrides:
+  `HIVERELAY_DHT_RELAY_WS_PORT` / `HIVERELAY_DHT_RELAY_WS_HOST`.
+- Operational: Caddy reverse-proxy config templates per relay (in
+  the deploy notes), no relay-side change required for TLS.
+
+### Public WSS endpoints (for browser/Android clients)
+
+| URL | Backed by | Pubkey |
+| --- | --- | --- |
+| `wss://relay-us.p2phiverelay.xyz/relay-ws` | utah-us | `37cf4bfbdf33320f34c41f5fa8b8095ed5eb2f49cef58c3194392c4f6be4e29a` |
+| `wss://relay-sg.p2phiverelay.xyz/relay-ws` | singapore-1 | `17ba6ae38d69f489def7c7a94fbd94f873b40eb8b3b96df902d1a3eb2cb56c54` |
+| `wss://relay-eu.p2phiverelay.xyz/relay-ws` | bern | `bc421fedea8a79607581da49210cd39fb5b08ce942b2a62884b831508c23d7ee` |
+
+Reminder: these are DHT-relay-WS *transport* endpoints, not
+application-level relay identities to hardcode. The HiveRelay SDK
+auto-discovers relays over the DHT once one of these is used as a
+WS bootstrap. Use a public Holepunch bridge instead if you want
+metadata privacy from our fleet (we'd see your client IP — only as
+a salted-hash within a session, never as raw, per the v0.8.16
+hardening — plus your DHT lookups).
+
+### Operational
+
+- utah, singapore-2: transport stays disabled (no domain attached).
+  They keep serving via DHT only.
+- All emitted events (rate-limited / client-connected /
+  client-disconnected / client-error / relay-error) now actually
+  fire on real traffic against the 3 enabled relays — verified
+  carrying `remoteAddressHash` only, no raw IP. Per the v0.8.16
+  audit + tests.
+
+### Compatibility
+
+- **Backward-compatible.** Relays without the env var stay
+  DHT-only as before. Existing publisher/seed flows untouched.
+- Caddy is the only new dependency on the 3 domained relays.
+
 ## [0.8.16] — 2026-05-22
 
 Pre-rollout privacy hardening of the `dht-relay-ws` transport. The

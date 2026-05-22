@@ -319,6 +319,29 @@ async function start () {
     if (!cliOverrides.transports) cliOverrides.transports = {}
     cliOverrides.transports.holesail = true
   }
+  // --dht-relay-ws OR HIVERELAY_DHT_RELAY_WS=1 enables the WebSocket
+  // bridge to HyperDHT. Lets browser/Android clients (which can't speak
+  // UDP) reach this relay over wss://. Hardened for privacy in v0.8.16
+  // — emitted events carry only a salted hash of the client IP, never
+  // the raw IP. See packages/core/transports/dht-relay-ws/index.js
+  // header for the full threat model.
+  if (args['dht-relay-ws'] === true || process.env.HIVERELAY_DHT_RELAY_WS === '1' ||
+      process.env.HIVERELAY_DHT_RELAY_WS === 'true') {
+    if (!cliOverrides.transports) cliOverrides.transports = {}
+    cliOverrides.transports.dhtRelayWs = true
+    // Operators almost always front the transport with TLS at a reverse
+    // proxy (Caddy/nginx) on port 443; the relay itself binds plain ws://
+    // on localhost. Override port via --dht-relay-ws-port or
+    // HIVERELAY_DHT_RELAY_WS_PORT.
+    const port = args['dht-relay-ws-port'] || process.env.HIVERELAY_DHT_RELAY_WS_PORT
+    if (port) cliOverrides.dhtRelayWsPort = parseInt(port, 10)
+    // Default bind to 127.0.0.1 when the transport is enabled — the
+    // reverse proxy talks to localhost, and the transport should never
+    // be directly internet-exposed.
+    if (!cliOverrides.dhtRelayWsHost) {
+      cliOverrides.dhtRelayWsHost = process.env.HIVERELAY_DHT_RELAY_WS_HOST || '127.0.0.1'
+    }
+  }
 
   const config = loadConfig(cliOverrides)
 
