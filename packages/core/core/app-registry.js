@@ -302,7 +302,17 @@ export class AppRegistry extends EventEmitter {
       redacted: true,
       addressKeyRedacted: true,
       metadataVisibility: 'redacted',
-      blindContentId: entry.blindContentId || null
+      blindContentId: entry.blindContentId || null,
+      // v0.8.18 Phase A: provenance fields MUST be stripped for blind/
+      // redacted entries — leaking publisherPubkey would link the
+      // publisher to the blind drive; leaking durability/retainUntil
+      // would reveal commitment signals about "interesting" content.
+      // Cascades with the new provenance fields added to catalog()
+      // and catalogForBroadcast().
+      publisherPubkey: null,
+      durability: 0,
+      revocable: true,
+      retainUntil: null
     }
   }
 
@@ -352,7 +362,14 @@ export class AppRegistry extends EventEmitter {
         // Revocability — surfaced so quorum clients and ForkDetector can
         // distinguish "publisher can pull this back" from "permanent
         // commitment" content.
-        revocable: entry.revocable !== false
+        revocable: entry.revocable !== false,
+        // v0.8.18 Phase A: surface publisher provenance so downstream
+        // relays receiving this catalog (via federation HTTP or P2P
+        // broadcast) can distinguish "published-with-commitment" from
+        // "pure-anonymous-mirror." Redacted entries strip these in
+        // _redactCatalogEntry — never leaked for blind drives.
+        publisherPubkey: entry.publisherPubkey || null,
+        retainUntil: entry.retainUntil || null
       }, entry, opts)
 
       // Dedup app entries by appId — keep latest version
@@ -415,7 +432,17 @@ export class AppRegistry extends EventEmitter {
         // Anchor signal — tells peer relays whether we actually have
         // blocks. Receiving relay uses this to trigger targeted repair
         // when they have the drive unanchored and we have it anchored.
-        anchored: entry.anchored === true
+        anchored: entry.anchored === true,
+        // v0.8.18 Phase A: provenance fields. For non-redacted entries,
+        // carry publisher commitments downstream so federation accept
+        // logic (and the future durability-floor policy) can distinguish
+        // published-with-commitment from pure-anonymous-gossip. Redacted
+        // entries (blind drives) MUST not surface these — would leak
+        // publisher identity + commitment signals about the blind drive.
+        publisherPubkey: redacted ? null : (entry.publisherPubkey || null),
+        durability: redacted ? 0 : (entry.durability || 0),
+        revocable: redacted ? true : (entry.revocable !== false),
+        retainUntil: redacted ? null : (entry.retainUntil || null)
       })
     }
     return apps
@@ -481,6 +508,13 @@ export class AppRegistry extends EventEmitter {
           retainUntil: entry.retainUntil || null,
           shardIds: Array.isArray(entry.shardIds) ? entry.shardIds : null,
           privacyTier: entry.privacyTier || 'public',
+          // v0.8.18 Phase A: restore provenance from disk so catalog and
+          // catalogForBroadcast surface the publisher's commitments after
+          // restart. Older registry files won't have these — null/0/true
+          // defaults mean "no provenance recorded" (matches pre-v0.8.18).
+          publisherPubkey: entry.publisherPubkey || null,
+          durability: Number.isFinite(entry.durability) ? entry.durability : 0,
+          revocable: entry.revocable !== false,
           categories: entry.categories || null,
           bytesServed: 0,
           // Anchor state restored from disk so we don't forget what we
@@ -524,6 +558,15 @@ export class AppRegistry extends EventEmitter {
         contentVersion: Number.isFinite(e.contentVersion) ? e.contentVersion : null,
         retainUntil: e.retainUntil || null,
         shardIds: Array.isArray(e.shardIds) ? e.shardIds : null,
+        // v0.8.18 Phase A: forward provenance to the reseed call so it
+        // makes it back into the freshly-initialized in-memory entry
+        // post-restart. Without this, even though save() now persists
+        // these, _seedAppInner wouldn't see them on reseed and the
+        // entry would re-set publisherPubkey: opts.publisherPubkey (which
+        // would be undefined), clobbering what we just loaded.
+        publisherPubkey: e.publisherPubkey || null,
+        durability: Number.isFinite(e.durability) ? e.durability : 0,
+        revocable: e.revocable !== false,
         // v0.8.12: surface persisted maxStorage so reseedFromRegistry
         // can pass it back through seedApp and the size-check fires
         // on startup too (not just on fresh publisher seed requests).
@@ -572,6 +615,13 @@ export class AppRegistry extends EventEmitter {
           retainUntil: entry.retainUntil || null,
           shardIds: Array.isArray(entry.shardIds) ? entry.shardIds : null,
           privacyTier: entry.privacyTier || 'public',
+          // v0.8.18 Phase A: persist provenance so it survives restart.
+          // Without this, federation broadcasts would lose publisher
+          // attribution on every service bounce — the in-memory entry
+          // sets these via _seedAppInner but they were vanishing on disk.
+          publisherPubkey: entry.publisherPubkey || null,
+          durability: Number.isFinite(entry.durability) ? entry.durability : 0,
+          revocable: entry.revocable !== false,
           categories: entry.categories || null,
           startedAt: entry.startedAt || Date.now(),
           discoveryKey: entry.discoveryKey

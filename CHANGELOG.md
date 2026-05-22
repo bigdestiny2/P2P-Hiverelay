@@ -6,6 +6,64 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.18] — 2026-05-22
+
+Provenance surfacing in the catalog broadcast — Phase A of the
+fed-junk upstream policy. Closes the persistence + broadcast gap that
+left federation receivers unable to distinguish published-with-
+commitment content from pure-anonymous mirrors. The 444/455 (97.6%)
+"anonymous mirror" share on utah-us was a symptom of this gap, not of
+malicious publishers: publisher SDKs were sending provenance, but the
+fields were being dropped at save() and stripped at broadcast.
+
+### What ships
+
+- `catalog()` and `catalogForBroadcast()` now include
+  `publisherPubkey`, `durability`, `revocable`, `retainUntil` for
+  non-redacted entries. Cascade with the v0.8.15 blind-path audit:
+  redacted entries (blind drives) MUST not surface these — leaking
+  `publisherPubkey` would link the publisher to the blind drive,
+  leaking `durability` / `retainUntil` would signal which blind drives
+  are "important." `_redactCatalogEntry` now explicitly nulls all four.
+- `AppRegistry.save()` persists `publisherPubkey`, `durability`,
+  `revocable` to disk. Previously these lived only in memory and
+  vanished on every service bounce.
+- `AppRegistry.load()` restores them on startup AND forwards them via
+  the reseed return value so `_seedAppInner` doesn't clobber the
+  freshly-loaded entry with undefined opts.
+
+### Why now
+
+The fed-junk analysis on utah-us (455 entries, all with
+`durability: 0`, `revocable: true`, `publisherPubkey: null`) showed
+the data needed to gate federation acceptance simply wasn't reaching
+downstream relays. Phase A is the foundation: surface the fields so
+they exist on the wire. Phase B (later — v0.9.0) adds an opt-in
+`federation.acceptDurabilityFloor` gate that uses them. Phase C
+covers SDK guidance + migration docs.
+
+### Risk
+
+Backwards-compatible. Older registry files load with default values
+(`null` / `0` / `true`) matching pre-v0.8.18 behavior. Broadcast adds
+4 new fields — receivers that ignore unknown fields (the safe default
+in this codebase) are unaffected.
+
+### Tests
+
+`test/unit/app-registry-provenance.test.js` — 7 tests / 42 asserts:
+non-blind surfacing in catalog + broadcast, blind force-stripping,
+missing-provenance graceful defaults, save/load round-trip, legacy
+registry file load. The v0.8.15 blind-path airtight tests still pass
+unchanged.
+
+### Side benefit
+
+Once durability is on the wire, the janitor's Tier-2 can distinguish
+"published-but-mirrored" from "pure-gossip" entries — partially
+unlocks safe automation of fed-junk sweeping. Not enabled in v0.8.18
+(janitor stays version-gated to v0.8.14+ data only).
+
 ## [0.8.17] — 2026-05-22
 
 Operational release: turns on the `dht-relay-ws` transport — the
