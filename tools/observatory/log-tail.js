@@ -24,8 +24,8 @@ export class LogTailer extends EventEmitter {
     this.relays = opts.relays || []
     this.sshKey = opts.sshKey || DEFAULT_KEY
     this.ringSize = opts.ringSize || LINE_RING_DEFAULT
-    this.ring = []  // [{ ts, relay, level, msg, raw }]
-    this._procs = new Map()  // relay.id → child_process
+    this.ring = [] // [{ ts, relay, level, msg, raw }]
+    this._procs = new Map() // relay.id → child_process
     this._buffers = new Map() // relay.id → partial-line buffer
     this._restartTimers = new Map()
   }
@@ -39,7 +39,7 @@ export class LogTailer extends EventEmitter {
   stop () {
     for (const t of this._restartTimers.values()) clearTimeout(t)
     this._restartTimers.clear()
-    for (const [id, proc] of this._procs) {
+    for (const [, proc] of this._procs) {
       try { proc.kill('SIGTERM') } catch (_) {}
     }
     this._procs.clear()
@@ -110,7 +110,7 @@ export class LogTailer extends EventEmitter {
     // the per-relay buffer for the next chunk.
     let buf = this._buffers.get(relay.id) + chunk.toString('utf8')
     const lines = buf.split('\n')
-    buf = lines.pop()  // last element is the partial / empty
+    buf = lines.pop() // last element is the partial / empty
     this._buffers.set(relay.id, buf)
 
     for (const line of lines) {

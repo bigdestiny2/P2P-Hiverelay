@@ -47,11 +47,11 @@ import { serializeSeedRequestForSigning } from '../packages/core/core/protocol/s
 // ── Config ──────────────────────────────────────────────────────────────
 
 const RELAYS = {
-  utah:        { host: '144.172.101.215', port: 9100 },
-  'utah-us':   { host: '144.172.91.26',   port: 9100 },
+  utah: { host: '144.172.101.215', port: 9100 },
+  'utah-us': { host: '144.172.91.26', port: 9100 },
   'singapore-1': { host: '104.194.153.179', port: 9100 },
   'singapore-2': { host: '104.194.152.121', port: 9100 },
-  bern:        { host: '45.59.123.112',   port: 9100 }
+  bern: { host: '45.59.123.112', port: 9100 }
 }
 
 const args = parseArgs(process.argv.slice(2))
@@ -64,7 +64,6 @@ const HOLD_SECONDS = Number(args['hold-seconds'] || 300)
 const RETAIN_MINS = args['retain-mins'] != null ? Number(args['retain-mins']) : 60
 const RETAIN_MS = RETAIN_MINS > 0 ? RETAIN_MINS * 60 * 1000 : 0
 const LABEL = args.label || `test-${Date.now().toString(36)}`
-const OBSERVATORY_URL = args.observatory || process.env.OBSERVATORY_URL || 'http://45.59.123.112:9200'
 const WATCH_SECONDS = args.watch != null ? Number(args.watch) : 0
 
 console.log(`▸ Synthetic publish — ${LABEL}, ${formatBytes(SIZE_BYTES)} → ${TARGETS.join(', ')}\n`)
@@ -87,7 +86,7 @@ async function main () {
   const appKey = b4a.toString(drive.key, 'hex')
   const discoveryKey = b4a.toString(drive.discoveryKey, 'hex')
 
-  console.log(`  drive ready`)
+  console.log('  drive ready')
   console.log(`    appKey:       ${appKey}`)
   console.log(`    discoveryKey: ${discoveryKey}`)
 
@@ -181,7 +180,7 @@ async function main () {
   swarm.on('connection', (conn) => store.replicate(conn))
   swarm.join(drive.discoveryKey, { server: true, client: true })
   await swarm.flush()
-  console.log(`  swarm announced, awaiting relay pulls`)
+  console.log('  swarm announced, awaiting relay pulls')
   console.log()
 
   // ── POST to each target relay ────────────────────────────────────────
@@ -220,15 +219,15 @@ async function main () {
 
   // ── Hold the drive open so relays can pull ───────────────────────────
   console.log(`  holding drive open for ${HOLD_SECONDS}s so relays can pull blocks ...`)
-  console.log(`  (Ctrl-C to release early)`)
+  console.log('  (Ctrl-C to release early)')
   await new Promise(resolve => setTimeout(resolve, HOLD_SECONDS * 1000))
 
-  console.log(`  releasing drive`)
+  console.log('  releasing drive')
   try { await swarm.destroy() } catch (_) {}
   try { await drive.close() } catch (_) {}
   try { await store.close() } catch (_) {}
   try { await rm(storagePath, { recursive: true, force: true }) } catch (_) {}
-  console.log(`done.`)
+  console.log('done.')
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -262,10 +261,10 @@ async function watchObservatory (appKey, seconds) {
     })
     await Promise.all(checks)
     if (seenAnchored.size === Object.keys(RELAYS).length) {
-      console.log(`    all relays anchored — exiting watch early`)
+      console.log('    all relays anchored — exiting watch early')
       break
     }
-    await new Promise(r => setTimeout(r, 5000))
+    await new Promise(resolve => setTimeout(resolve, 5000))
   }
   console.log(`  watch finished. anchored on ${seenAnchored.size}/${Object.keys(RELAYS).length} relays: ${[...seenAnchored].join(', ') || '(none)'}`)
   console.log()
@@ -278,8 +277,7 @@ function parseArgs (argv) {
     if (a.startsWith('--')) {
       const k = a.slice(2)
       const next = argv[i + 1]
-      if (next && !next.startsWith('--')) { out[k] = next; i++ }
-      else { out[k] = true }
+      if (next && !next.startsWith('--')) { out[k] = next; i++ } else { out[k] = true }
     }
   }
   return out

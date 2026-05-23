@@ -127,7 +127,11 @@ test('RelayNode - emits started event with publicKey', async (t) => {
 
 test('RelayNode - applyMode updates mode profile config', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
-  t.is(node.mode, 'public')
+  // Default mode is 'relay-core' (the productProfile default since the
+  // mode/productProfile unification). The legacy 'public' name was the
+  // pre-unification default and is no longer used as a mode identifier
+  // — privacyTier='public' is still a thing on individual entries.
+  t.is(node.mode, 'relay-core')
 
   await node.applyMode('homehive')
   t.is(node.mode, 'homehive')

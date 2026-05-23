@@ -1,3 +1,4 @@
+/* global EventSource */
 // Dashboard client — polls /api/state every 5s, renders relay cards.
 // No framework, no build step. ~150 lines, fits in one screen.
 
@@ -6,7 +7,6 @@ const REFRESH_MS = 5_000
 // Map of known relay pubkeys → friendly names so the peer list reads as
 // "(Utah-US)" instead of "37cf4bfbdf33". Populated from /api/config on boot.
 const KNOWN = new Map()
-let SELF_KEY = null
 
 async function bootConfig () {
   try {
@@ -87,10 +87,6 @@ function renderRelay (id, snap) {
     ? `<div class="errors">errors: ${snap.errors.map(e => `${e.endpoint} (${e.error})`).join(', ')}</div>`
     : ''
 
-  const anchoredVsTotal = (snap.catalog?.total && snap.catalog?.total > 0)
-    ? `<span class="apps-summary">${anchored}/${apps} anchored</span>`
-    : ''
-
   div.innerHTML = `
     <div class="relay-header">
       <span class="relay-name">${escapeHtml(id)}</span>
@@ -151,7 +147,7 @@ setInterval(refresh, REFRESH_MS)
 
 // ── Log stream (SSE) ────────────────────────────────────────────────────
 
-const LOG_MAX_DISPLAYED = 800   // cap the DOM size so the page stays fast
+const LOG_MAX_DISPLAYED = 800 // cap the DOM size so the page stays fast
 const logEl = document.getElementById('log-stream')
 const logEmptyEl = document.getElementById('log-empty')
 const logStatusEl = document.getElementById('log-status')
@@ -211,7 +207,7 @@ function appendLogLine (entry) {
   line.dataset.text = (entry.msg + ' ' + JSON.stringify(fields)).toLowerCase()
   logEl.appendChild(line)
   // Cap DOM
-  while (logEl.children.length > LOG_MAX_DISPLAYED + 1) {  // +1 for empty placeholder if still there
+  while (logEl.children.length > LOG_MAX_DISPLAYED + 1) { // +1 for empty placeholder if still there
     if (logEl.firstChild === logEmptyEl) logEl.firstChild.remove()
     else logEl.firstChild.remove()
   }

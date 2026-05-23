@@ -18,7 +18,6 @@
 import test from 'brittle'
 import { AppLifecycle } from 'p2p-hiverelay/core/relay-node/app-lifecycle.js'
 import { AppRegistry } from 'p2p-hiverelay/core/app-registry.js'
-import { EventEmitter } from 'events'
 
 function fakeNode () {
   const registry = new AppRegistry(null)

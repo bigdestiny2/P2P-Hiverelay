@@ -44,14 +44,14 @@ const LOG_TAIL_ENABLED = process.env.OBSERVATORY_LOG_TAIL !== 'false'
 //             doesn't expose sshd). Non-tailable relays still get
 //             polled — they just don't contribute log lines.
 const RELAYS = [
-  { id: 'utah',        host: '144.172.101.215', region: 'NA', operator: 'hive-foundation-utah',        pubkey: '1e7d8b1ffe69' },
-  { id: 'utah-us',     host: '144.172.91.26',   region: 'NA', operator: 'hive-foundation-utah-us',     pubkey: '37cf4bfbdf33' },
-  { id: 'singapore-1', host: '104.194.153.179', region: 'AS', operator: 'hive-foundation-singapore',   pubkey: '17ba6ae38d69' },
+  { id: 'utah', host: '144.172.101.215', region: 'NA', operator: 'hive-foundation-utah', pubkey: '1e7d8b1ffe69' },
+  { id: 'utah-us', host: '144.172.91.26', region: 'NA', operator: 'hive-foundation-utah-us', pubkey: '37cf4bfbdf33' },
+  { id: 'singapore-1', host: '104.194.153.179', region: 'AS', operator: 'hive-foundation-singapore', pubkey: '17ba6ae38d69' },
   { id: 'singapore-2', host: '104.194.152.121', region: 'AS', operator: 'hive-foundation-singapore-2', pubkey: '6b11208ad547' },
-  { id: 'bern',        host: '45.59.123.112',   region: 'EU', operator: 'hive-foundation-bern',        pubkey: 'bc421fedea8a' },
-  { id: 'milkyb-fra',  host: 'milkyb-hiverelay-fra.fly.dev', region: 'EU', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-fra.fly.dev', pubkey: '478462ed8597', tailable: false },
-  { id: 'milkyb-iad',  host: 'milkyb-hiverelay-iad.fly.dev', region: 'NA', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-iad.fly.dev', pubkey: '3a5082096400', tailable: false },
-  { id: 'milkyb-syd',  host: 'milkyb-hiverelay-syd.fly.dev', region: 'OC', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-syd.fly.dev', pubkey: '9ca3aa7ff6de', tailable: false }
+  { id: 'bern', host: '45.59.123.112', region: 'EU', operator: 'hive-foundation-bern', pubkey: 'bc421fedea8a' },
+  { id: 'milkyb-fra', host: 'milkyb-hiverelay-fra.fly.dev', region: 'EU', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-fra.fly.dev', pubkey: '478462ed8597', tailable: false },
+  { id: 'milkyb-iad', host: 'milkyb-hiverelay-iad.fly.dev', region: 'NA', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-iad.fly.dev', pubkey: '3a5082096400', tailable: false },
+  { id: 'milkyb-syd', host: 'milkyb-hiverelay-syd.fly.dev', region: 'OC', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-syd.fly.dev', pubkey: '9ca3aa7ff6de', tailable: false }
 ]
 
 // Current snapshot (overwritten every poll) + ring buffer of last N snapshots
@@ -292,7 +292,7 @@ const server = http.createServer(async (req, res) => {
       }
       // Heartbeat every 20s to keep proxies happy.
       const heartbeat = setInterval(() => {
-        try { res.write(`: heartbeat\n\n`) } catch (_) {}
+        try { res.write(': heartbeat\n\n') } catch (_) {}
       }, 20_000)
       sseClients.add(res)
       req.on('close', () => {
@@ -309,7 +309,7 @@ const server = http.createServer(async (req, res) => {
 
     // Static dashboard
     const file = route === '/' ? '/public/index.html' : route
-    const safe = path.normalize(file).replace(/^(\.\.[\/])+/, '')
+    const safe = path.normalize(file).replace(/^(\.\.[/])+/, '')
     const full = path.join(__dirname, safe)
     if (!full.startsWith(__dirname)) {
       res.writeHead(403); return res.end('forbidden')

@@ -49,7 +49,7 @@ import b4a from 'b4a'
 import { tmpdir } from 'os'
 import { mkdir, rm } from 'fs/promises'
 import { join } from 'path'
-import { randomBytes, createHash } from 'crypto'
+import { randomBytes } from 'crypto'
 
 import { serializeSeedRequestForSigning } from '../packages/core/core/protocol/seed-request.js'
 import {
@@ -62,11 +62,11 @@ import {
 // ── Config ──────────────────────────────────────────────────────────────
 
 const RELAYS = {
-  utah:        { host: '144.172.101.215', port: 9100 },
-  'utah-us':   { host: '144.172.91.26',   port: 9100 },
+  utah: { host: '144.172.101.215', port: 9100 },
+  'utah-us': { host: '144.172.91.26', port: 9100 },
   'singapore-1': { host: '104.194.153.179', port: 9100 },
   'singapore-2': { host: '104.194.152.121', port: 9100 },
-  bern:        { host: '45.59.123.112',   port: 9100 }
+  bern: { host: '45.59.123.112', port: 9100 }
 }
 
 const args = parseArgs(process.argv.slice(2))
@@ -101,7 +101,7 @@ console.log(`  replicas:   ${REPLICAS} (quorum threshold)`)
 console.log(`  drive size: ${formatBytes(SIZE_BYTES)}`)
 console.log()
 
-const timeline = []  // [{ stage, t, ms-since-start, detail }]
+const timeline = [] // [{ stage, t, ms-since-start, detail }]
 const startedAt = Date.now()
 function mark (stage, detail = null) {
   const ms = Date.now() - startedAt
@@ -170,7 +170,7 @@ async function main () {
     ciphertextRoot,
     contentVersion,
     requiredReplicas: REPLICAS,
-    candidateRelays: [],  // accept receipts from any qualified relay
+    candidateRelays: [], // accept receipts from any qualified relay
     privacyTier: 'p2p-only',
     metadataVisibility: 'redacted',
     // Short retainUntil so test custody drives self-expire via the
@@ -259,7 +259,7 @@ async function main () {
   // to drive a valid commit.
   const status = await getStatusFromSource(intentId, sourceUrl)
   if (!status?.receiptRoot) {
-    throw new Error(`status missing receiptRoot — cannot commit without canonical hash`)
+    throw new Error('status missing receiptRoot — cannot commit without canonical hash')
   }
   if (!Array.isArray(status.relayQuorum) || status.relayQuorum.length < REPLICAS) {
     throw new Error(`status.relayQuorum has ${status.relayQuorum?.length || 0} entries (need ${REPLICAS})`)
@@ -391,7 +391,7 @@ function buildSeedBody (o) {
     publisherPubkey: b4a.toString(o.publisherPub, 'hex'),
     publisherSignature: b4a.toString(signature, 'hex'),
     name: o.label,
-    description: `Custody E2E test drive`,
+    description: 'Custody E2E test drive',
     version: '1.0.0',
     type: 'app',
     privacyTier: 'p2p-only',
@@ -460,8 +460,7 @@ function parseArgs (argv) {
     if (a.startsWith('--')) {
       const k = a.slice(2)
       const next = argv[i + 1]
-      if (next && !next.startsWith('--')) { out[k] = next; i++ }
-      else { out[k] = true }
+      if (next && !next.startsWith('--')) { out[k] = next; i++ } else { out[k] = true }
     }
   }
   return out
@@ -488,7 +487,7 @@ function truncate (s, n) {
 }
 
 function sleep (ms) {
-  return new Promise(r => setTimeout(r, ms))
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 function die (msg) {
