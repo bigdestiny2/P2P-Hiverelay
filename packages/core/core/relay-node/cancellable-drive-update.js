@@ -100,8 +100,28 @@ export async function updateWithTimeout (drive, opts = {}) {
 }
 
 /**
- * Race a drive download against a timeout. On timeout, destroy the
- * download tracker so its in-flight block requests are released.
+ * Race a drive download against a timeout. On timeout, destroy any
+ * in-flight block-download trackers so their pending requests are
+ * released and don't accumulate refs in the replicator.
+ *
+ * 2026-05-23: hyperdrive 11.x changed the `drive.download()` API. It used
+ * to return a download-tracker object with `.done()` and `.destroy()`
+ * methods. It now returns a `Promise<void>` (the function is `async`).
+ * Calling `.done()` on the Promise throws `TypeError: dl.done is not a
+ * function`, which previously caused this helper to silently fail every
+ * download in production — and the silent failure was masked by the
+ * pre-PR #19 anchor-honesty bug, which marked entries anchored=true on
+ * metadata-only so the repair loop skipped them anyway. Once PR #19
+ * surfaced the honest anchored=false signal on partial pins, the repair
+ * loop started trying to fix them — and discovered this latent bug.
+ *
+ * Fix: detect both API shapes. For the Promise (new) shape, race against
+ * a timeout; for the tracker (old) shape, preserve the prior behavior.
+ * Tracker-shape cleanup is the only one that can actually cancel
+ * in-flight requests; the Promise-shape path lets orphaned in-flight
+ * blob.core.download trackers settle on their own background — slight
+ * waste but no leak, since the trackers are bounded to the file's
+ * blob extent.
  *
  * @param {object} drive — Hyperdrive instance
  * @param {string} [path] — path to download (default '/')
@@ -115,6 +135,7 @@ export async function downloadWithTimeout (drive, path = '/', opts = {}) {
   // let that bubble up so the caller can handle it the same way it
   // would have without the timeout wrapper.
   const dl = drive.download(path)
+  const isOldTrackerApi = dl && typeof dl.done === 'function' && typeof dl.destroy === 'function'
 
   let timer = null
   let timedOut = false
@@ -123,12 +144,15 @@ export async function downloadWithTimeout (drive, path = '/', opts = {}) {
     return await new Promise((resolve, reject) => {
       timer = setTimeout(() => {
         timedOut = true
-        try { dl.destroy() } catch { /* best-effort */ }
+        if (isOldTrackerApi) {
+          try { dl.destroy() } catch { /* best-effort */ }
+        }
         reject(new Error('download timeout'))
       }, timeoutMs)
       // No .unref() — see updateWithTimeout for the brittle-deadlock note.
 
-      dl.done().then(
+      const settledPromise = isOldTrackerApi ? dl.done() : dl
+      settledPromise.then(
         () => {
           if (!timedOut) {
             clearTimeout(timer)
@@ -146,7 +170,9 @@ export async function downloadWithTimeout (drive, path = '/', opts = {}) {
   } finally {
     if (timer) clearTimeout(timer)
     // Defensive: destroy() is idempotent on hyperdrive download trackers.
-    if (dl && typeof dl.destroy === 'function') {
+    // For Promise-shape (hyperdrive 11.x), there's no tracker to destroy
+    // here — the inner blob.core.download trackers settle naturally.
+    if (isOldTrackerApi) {
       try { dl.destroy() } catch {}
     }
   }
