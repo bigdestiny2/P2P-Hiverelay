@@ -390,6 +390,335 @@ test('RelayNode - custody expiry removes expired temporary atomic entries only',
   await node.appRegistry.flush()
 })
 
+test('RelayNode - custody expiry auto-emits non-serving-proof for blind handoffs with intent', async (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  const now = Date.now()
+  const appKey = 'a'.repeat(64)
+  const intentId = 'b'.repeat(64)
+  const blindContentId = 'c'.repeat(64)
+  const closed = []
+  const attestedEvents = []
+  const recordedProofs = []
+
+  node.appRegistry._filePath = null
+  node.swarm = {
+    keyPair: { publicKey: Buffer.alloc(32, 1), secretKey: Buffer.alloc(64, 2) },
+    async leave () {}
+  }
+  // Minimal fake seedingRegistry — captures the proof the expiry pass
+  // tries to record. getCustodyIntent must return a matching intent or
+  // createCustodyNonServingProof will throw 'Custody intent not found'.
+  node.seedingRegistry = {
+    getCustodyIntent: (id) => id === intentId
+      ? { intentId, addressKey: appKey, blindContentId, retainUntil: now - 1, publisherPubkey: 'd'.repeat(64) }
+      : null,
+    recordCustodyNonServingProof: async (entry) => {
+      recordedProofs.push(entry)
+      return entry
+    }
+  }
+  node.on('custody-non-serving-attested', e => attestedEvents.push(e))
+
+  node.appRegistry.apps.set(appKey, {
+    storageClass: 'temporary',
+    availabilityClass: 'atomic-handoff',
+    blind: true,
+    retainUntil: now - 1,
+    custodyIntentId: intentId,
+    blindContentId,
+    discoveryKey: randomBytes(32),
+    drive: { async close () { closed.push(appKey) } }
+  })
+
+  const result = await node._runCustodyExpiryPass(now)
+
+  t.is(result.expired, 1, 'entry expired')
+  t.is(result.attested, 1, 'non-serving-proof auto-emitted')
+  t.is(recordedProofs.length, 1, 'recordCustodyNonServingProof called once')
+  t.is(recordedProofs[0].intentId, intentId, 'proof references the custody intent')
+  t.is(recordedProofs[0].addressKey, appKey, 'proof references the appKey')
+  t.is(recordedProofs[0].blindContentId, blindContentId, 'proof carries the blindContentId')
+  t.is(recordedProofs[0].notServing, true, 'notServing flag set')
+  t.is(recordedProofs[0].notServingReason, 'expired-unseeded', 'reason captured')
+  t.is(attestedEvents.length, 1, 'custody-non-serving-attested event emitted')
+  t.is(attestedEvents[0].custodyIntentId, intentId)
+
+  await node.appRegistry.flush()
+})
+
+test('RelayNode - custody expiry without custodyIntentId expires but does not attest', async (t) => {
+  // Older blind entries (pre-custody-pipeline) have retainUntil set but no
+  // custodyIntentId. They should still self-remove at expiry; no proof
+  // can be signed without an intent to bind against.
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  const now = Date.now()
+  const appKey = 'e'.repeat(64)
+  const expiredEvents = []
+  const attestedEvents = []
+  const errorEvents = []
+
+  node.appRegistry._filePath = null
+  node.swarm = { keyPair: { publicKey: Buffer.alloc(32), secretKey: Buffer.alloc(64) }, async leave () {} }
+  let proofCalls = 0
+  node.seedingRegistry = {
+    getCustodyIntent: () => null,
+    recordCustodyNonServingProof: async () => { proofCalls++ }
+  }
+  node.on('custody-expired', e => expiredEvents.push(e))
+  node.on('custody-non-serving-attested', e => attestedEvents.push(e))
+  node.on('custody-non-serving-attest-error', e => errorEvents.push(e))
+
+  node.appRegistry.apps.set(appKey, {
+    storageClass: 'temporary',
+    availabilityClass: 'atomic-handoff',
+    blind: true,
+    retainUntil: now - 1,
+    // custodyIntentId intentionally absent
+    discoveryKey: randomBytes(32),
+    drive: { async close () {} }
+  })
+
+  const result = await node._runCustodyExpiryPass(now)
+
+  t.is(result.expired, 1, 'entry still expires')
+  t.is(result.attested, 0, 'no proof attempted without intent linkage')
+  t.is(proofCalls, 0, 'recordCustodyNonServingProof not called')
+  t.is(attestedEvents.length, 0)
+  t.is(errorEvents.length, 0, 'no error event for absent intent (silent skip)')
+
+  await node.appRegistry.flush()
+})
+
+test('RelayNode - custody expiry surfaces attest errors but keeps unseed clean', async (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  const now = Date.now()
+  const appKey = 'f'.repeat(64)
+  const intentId = '0'.repeat(64)
+  const errorEvents = []
+  const expiredEvents = []
+
+  node.appRegistry._filePath = null
+  node.swarm = { keyPair: { publicKey: Buffer.alloc(32, 1), secretKey: Buffer.alloc(64, 2) }, async leave () {} }
+  // Intent missing from this relay's registry (federation hasn't gossiped
+  // it back yet) — createCustodyNonServingProof throws inside the call.
+  node.seedingRegistry = {
+    getCustodyIntent: () => null,
+    recordCustodyNonServingProof: async () => { throw new Error('should not reach') }
+  }
+  node.on('custody-expired', e => expiredEvents.push(e))
+  node.on('custody-non-serving-attest-error', e => errorEvents.push(e))
+
+  node.appRegistry.apps.set(appKey, {
+    storageClass: 'temporary',
+    availabilityClass: 'atomic-handoff',
+    blind: true,
+    retainUntil: now - 1,
+    custodyIntentId: intentId,
+    discoveryKey: randomBytes(32),
+    drive: { async close () {} }
+  })
+
+  const result = await node._runCustodyExpiryPass(now)
+
+  t.is(result.expired, 1, 'unseed still succeeds')
+  t.is(result.attested, 0, 'no proof when intent missing')
+  t.is(expiredEvents.length, 1, 'custody-expired still emitted')
+  t.is(errorEvents.length, 1, 'attest error surfaced for observability')
+  t.is(errorEvents[0].custodyIntentId, intentId)
+
+  await node.appRegistry.flush()
+})
+
+test('RelayNode - witness pass signs expiry-witness for peer relay non-serving-proofs', async (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  const now = Date.now()
+  const intentId = 'a'.repeat(64)
+  const appKey = 'b'.repeat(64)
+  const peerRelayPubkey = '1'.repeat(64)
+  const peerProof = {
+    type: 'custody-non-serving-proof',
+    intentId,
+    addressKey: appKey,
+    relayPubkey: peerRelayPubkey,
+    notServing: true,
+    notServingReason: 'expired-unseeded',
+    timestamp: now - 1000,
+    signature: 'a'.repeat(128)
+  }
+  const recordedWitnesses = []
+  const attestedEvents = []
+
+  node.appRegistry._filePath = null
+  node.swarm = {
+    keyPair: { publicKey: Buffer.alloc(32, 9), secretKey: Buffer.alloc(64, 8) },
+    async leave () {}
+  }
+  node.seedingRegistry = {
+    _custodyIntents: new Map([[intentId, { intentId, addressKey: appKey, retainUntil: now - 5000, blindContentId: 'c'.repeat(64), publisherPubkey: 'd'.repeat(64) }]]),
+    getCustodyIntent: (id) => id === intentId
+      ? { intentId, addressKey: appKey, retainUntil: now - 5000, blindContentId: 'c'.repeat(64), publisherPubkey: 'd'.repeat(64) }
+      : null,
+    getCustodyStatus: () => ({
+      intent: { intentId, addressKey: appKey, retainUntil: now - 5000, blindContentId: 'c'.repeat(64), publisherPubkey: 'd'.repeat(64) },
+      nonServingProofs: [peerProof],
+      expiryWitnesses: []
+    }),
+    recordCustodyExpiryWitness: async (witness) => {
+      recordedWitnesses.push(witness)
+      return witness
+    }
+  }
+  node.on('custody-witness-attested', e => attestedEvents.push(e))
+
+  const result = await node._runCustodyExpiryWitnessPass(now)
+
+  t.is(result.checked, 1, 'one expired intent scanned')
+  t.is(result.witnessed, 1, 'one witness signed')
+  t.is(result.errors, 0)
+  t.is(recordedWitnesses.length, 1, 'recordCustodyExpiryWitness invoked')
+  t.is(recordedWitnesses[0].intentId, intentId)
+  t.is(recordedWitnesses[0].relayPubkey, peerRelayPubkey, 'witness names the subject relay')
+  t.ok(recordedWitnesses[0].nonServingProofHash, 'proof-hash carried for verifier')
+  t.is(recordedWitnesses[0].catalogPresent, false)
+  t.is(attestedEvents.length, 1, 'event emitted')
+
+  await node.appRegistry.flush()
+})
+
+test('RelayNode - witness pass skips own non-serving-proofs', async (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  const now = Date.now()
+  const intentId = '2'.repeat(64)
+  const myPubkey = Buffer.alloc(32, 7).toString('hex')
+  const ownProof = {
+    type: 'custody-non-serving-proof',
+    intentId,
+    relayPubkey: myPubkey,
+    notServing: true,
+    signature: 'a'.repeat(128)
+  }
+  let recordCalls = 0
+
+  node.appRegistry._filePath = null
+  node.swarm = {
+    keyPair: { publicKey: Buffer.alloc(32, 7), secretKey: Buffer.alloc(64, 0) },
+    async leave () {}
+  }
+  node.seedingRegistry = {
+    _custodyIntents: new Map([[intentId, { intentId, retainUntil: now - 1000 }]]),
+    getCustodyIntent: () => ({ intentId, retainUntil: now - 1000 }),
+    getCustodyStatus: () => ({
+      intent: { intentId, retainUntil: now - 1000 },
+      nonServingProofs: [ownProof],
+      expiryWitnesses: []
+    }),
+    recordCustodyExpiryWitness: async () => { recordCalls++ }
+  }
+
+  const result = await node._runCustodyExpiryWitnessPass(now)
+
+  t.is(result.witnessed, 0, 'no witnesses signed for own proof')
+  t.is(recordCalls, 0, 'recordCustodyExpiryWitness not invoked')
+
+  await node.appRegistry.flush()
+})
+
+test('RelayNode - witness pass deduplicates by (intent, relay) pair', async (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  const now = Date.now()
+  const intentId = '3'.repeat(64)
+  const myPubkey = Buffer.alloc(32, 5).toString('hex')
+  const peerRelay = '4'.repeat(64)
+  const peerProof = {
+    type: 'custody-non-serving-proof',
+    intentId,
+    relayPubkey: peerRelay,
+    notServing: true,
+    signature: 'a'.repeat(128)
+  }
+  // Witness already exists from a previous pass.
+  const existingWitness = { witnessPubkey: myPubkey, relayPubkey: peerRelay, intentId, signature: 'b'.repeat(128) }
+  let recordCalls = 0
+
+  node.appRegistry._filePath = null
+  node.swarm = {
+    keyPair: { publicKey: Buffer.alloc(32, 5), secretKey: Buffer.alloc(64, 0) },
+    async leave () {}
+  }
+  node.seedingRegistry = {
+    _custodyIntents: new Map([[intentId, { intentId, retainUntil: now - 1000 }]]),
+    getCustodyIntent: () => ({ intentId, retainUntil: now - 1000 }),
+    getCustodyStatus: () => ({
+      intent: { intentId, retainUntil: now - 1000 },
+      nonServingProofs: [peerProof],
+      expiryWitnesses: [existingWitness]
+    }),
+    recordCustodyExpiryWitness: async () => { recordCalls++ }
+  }
+
+  const result = await node._runCustodyExpiryWitnessPass(now)
+
+  t.is(result.witnessed, 0, 'no duplicate witness signed')
+  t.is(recordCalls, 0)
+
+  await node.appRegistry.flush()
+})
+
+test('RelayNode - witness pass skips intents whose retainUntil has not passed', async (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  const now = Date.now()
+  const intentId = '5'.repeat(64)
+  let recordCalls = 0
+
+  node.appRegistry._filePath = null
+  node.swarm = {
+    keyPair: { publicKey: Buffer.alloc(32, 1), secretKey: Buffer.alloc(64, 0) },
+    async leave () {}
+  }
+  node.seedingRegistry = {
+    _custodyIntents: new Map([[intentId, { intentId, retainUntil: now + 60_000 }]]),
+    getCustodyIntent: () => ({ intentId, retainUntil: now + 60_000 }),
+    getCustodyStatus: () => ({
+      intent: { intentId, retainUntil: now + 60_000 },
+      nonServingProofs: [],
+      expiryWitnesses: []
+    }),
+    recordCustodyExpiryWitness: async () => { recordCalls++ }
+  }
+
+  const result = await node._runCustodyExpiryWitnessPass(now)
+
+  t.is(result.checked, 0, 'not-yet-expired intents not checked')
+  t.is(result.skipped, 1)
+  t.is(recordCalls, 0)
+
+  await node.appRegistry.flush()
+})
+
+test('RelayNode - createCustodyExpiryWitness refuses to witness own proofs', async (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  const intentId = '6'.repeat(64)
+
+  node.swarm = {
+    keyPair: { publicKey: Buffer.alloc(32, 3), secretKey: Buffer.alloc(64) },
+    async leave () {}
+  }
+  node.seedingRegistry = {
+    getCustodyIntent: () => ({ intentId }),
+    recordCustodyExpiryWitness: async () => { throw new Error('should not reach') }
+  }
+
+  const myPubkey = Buffer.alloc(32, 3).toString('hex')
+  let threw = null
+  try {
+    await node.createCustodyExpiryWitness(intentId, myPubkey)
+  } catch (err) {
+    threw = err
+  }
+  t.ok(threw, 'throws')
+  t.ok(threw.message.includes('SELF_WITNESS_REFUSED'), 'specific error code')
+})
+
 test('RelayNode - service supervision restarts failed persistent services', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
   let starts = 0

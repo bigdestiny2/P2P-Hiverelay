@@ -57,6 +57,7 @@ import { PolicyGuard } from '../policy-guard.js'
 import { AppLifecycle } from './app-lifecycle.js'
 import { GatewayServer } from './gateway-server.js'
 import { LifecycleScope, isAbortError } from './lifecycle-scope.js'
+import { hashHex } from '../custody-signing.js'
 
 const DEFAULT_CONFIG = {
   productProfile: 'relay-core',
@@ -2469,16 +2470,31 @@ export class RelayNode extends EventEmitter {
     if (this.config.custody?.enabled === false) return
 
     const intervalMs = Math.max(10_000, Number(this.config.custodyExpiryInterval) || 60_000)
+    const runBoth = async () => {
+      // Expiry pass first — unseeds locally-owned expired entries and
+      // auto-emits non-serving-proofs about our own deletions.
+      try { await this._runCustodyExpiryPass() } catch (err) {
+        if (!isAbortError(err)) {
+          this.emit('custody-expiry-error', { error: err.message || String(err) })
+        }
+      }
+      // Witness pass second — observes peer relays' non-serving-proofs
+      // and signs independent witness attestations. Disabled via
+      // config.custodyWitnessEnabled = false.
+      if (this.config.custodyWitnessEnabled === false) return
+      try { await this._runCustodyExpiryWitnessPass() } catch (err) {
+        if (!isAbortError(err)) {
+          this.emit('custody-witness-error', { error: err.message || String(err) })
+        }
+      }
+    }
     this._custodyExpiryInterval = setInterval(() => {
-      this._trackFireAndForget(this._runCustodyExpiryPass().catch((err) => {
-        if (isAbortError(err)) return
-        this.emit('custody-expiry-error', { error: err.message || String(err) })
-      }))
+      this._trackFireAndForget(runBoth())
     }, intervalMs)
     if (this._custodyExpiryInterval.unref) this._custodyExpiryInterval.unref()
 
     setTimeout(() => {
-      this._trackFireAndForget(this._runCustodyExpiryPass().catch(() => {}))
+      this._trackFireAndForget(runBoth())
     }, 5000)
   }
 
@@ -2492,7 +2508,7 @@ export class RelayNode extends EventEmitter {
   }
 
   async _runCustodyExpiryPass (now = Date.now()) {
-    if (!this.appRegistry) return { checked: 0, expired: 0, skipped: 0 }
+    if (!this.appRegistry) return { checked: 0, expired: 0, skipped: 0, attested: 0 }
 
     const graceMs = Math.max(0, Number(this.config.custodyExpiryGraceMs) || 0)
     const expiredKeys = []
@@ -2511,23 +2527,65 @@ export class RelayNode extends EventEmitter {
         continue
       }
       if ((retainUntil + graceMs) <= now) {
-        expiredKeys.push({ appKey, retainUntil })
+        // Capture the custody linkage BEFORE unseedApp removes the entry —
+        // we need it to sign a custody-non-serving-proof afterward.
+        expiredKeys.push({
+          appKey,
+          retainUntil,
+          custodyIntentId: entry.custodyIntentId || null,
+          blindContentId: entry.blindContentId || null
+        })
       }
     }
 
     let expired = 0
-    for (const { appKey, retainUntil } of expiredKeys) {
+    let attested = 0
+    for (const { appKey, retainUntil, custodyIntentId, blindContentId } of expiredKeys) {
       try {
         await this.unseedApp(appKey)
         expired++
         this.emit('custody-expired', { appKey, retainUntil, at: now })
       } catch (err) {
         this.emit('custody-expiry-error', { appKey, error: err.message || String(err) })
+        // Don't attempt to sign a non-serving-proof if we couldn't even
+        // unseed — createCustodyNonServingProof would throw STILL_SERVING
+        // and we'd be lying about what we cleaned up.
+        continue
+      }
+
+      // Auto-emit a custody-non-serving-proof so recipients probing for
+      // BURNED don't need an out-of-band orchestrator to ask each relay
+      // to attest. The proof closes the "K is gone" cryptographic loop
+      // alongside source-retired: source-retired = publisher signs "I
+      // deleted K"; non-serving-proof = relay signs "I deleted my copy".
+      // Together with ≥ threshold such proofs, the recipient gets
+      // provable destruction.
+      if (!custodyIntentId || !this.seedingRegistry) continue
+      try {
+        await this.createCustodyNonServingProof(custodyIntentId, {
+          appKey,
+          blindContentId,
+          retainUntil,
+          notServingReason: 'expired-unseeded'
+        })
+        attested++
+        this.emit('custody-non-serving-attested', {
+          appKey, custodyIntentId, retainUntil, at: now
+        })
+      } catch (err) {
+        // Don't fail the pass — the entry is unseeded either way. Surface
+        // the attestation failure for observability. Common causes:
+        // intent not in this relay's registry (federation hasn't gossiped
+        // it back), STILL_SERVING race (another concurrent reseed put it
+        // back), missing relay keypair.
+        this.emit('custody-non-serving-attest-error', {
+          appKey, custodyIntentId, error: err.message || String(err)
+        })
       }
     }
 
     this._lastCustodyExpiryAt = now
-    const result = { checked, expired, skipped }
+    const result = { checked, expired, skipped, attested }
     this.emit('custody-expiry-pass', { ...result, at: now })
     return result
   }
@@ -2609,6 +2667,131 @@ export class RelayNode extends EventEmitter {
       catalogPresent,
       activeSwarmServing
     }, this.swarm.keyPair)
+  }
+
+  /**
+   * Sign and record a custody-expiry-witness attestation about a peer
+   * relay we observed having posted a custody-non-serving-proof for
+   * this intent. This is the third-party-confirmation primitive that
+   * closes the BURNED loop for recipients: relay-X signs "I deleted
+   * my copy" (custody-non-serving-proof), then independent relay-Y
+   * signs "I observed relay-X's signed deletion" (custody-expiry-
+   * witness referring by nonServingProofHash). ≥ threshold of these
+   * witnesses gives recipients cryptographic confirmation that's
+   * resistant to a single relay self-attesting falsely.
+   *
+   * Refuses to witness our own proofs — only peer relays.
+   */
+  async createCustodyExpiryWitness (intentId, subjectRelayPubkey, opts = {}) {
+    if (!this.seedingRegistry) throw new Error('Registry not running')
+    if (!this.swarm?.keyPair) throw new Error('Relay keypair unavailable')
+    if (!isValidHexKey(intentId, 64)) throw new Error('intentId must be 64 hex characters')
+    if (!isValidHexKey(subjectRelayPubkey, 64)) throw new Error('subjectRelayPubkey must be 64 hex characters')
+
+    const myPubkey = b4a.toString(this.swarm.keyPair.publicKey, 'hex')
+    if (subjectRelayPubkey === myPubkey) {
+      throw new Error('SELF_WITNESS_REFUSED: cannot witness own non-serving-proof; use createCustodyNonServingProof instead')
+    }
+
+    const intent = this.seedingRegistry.getCustodyIntent(intentId)
+    if (!intent) throw new Error('Custody intent not found')
+
+    return this.seedingRegistry.recordCustodyExpiryWitness({
+      intentId,
+      blindContentId: opts.blindContentId || intent.blindContentId,
+      relayPubkey: subjectRelayPubkey,
+      challengeNonce: opts.challengeNonce,
+      nonServingProofHash: opts.nonServingProofHash || null,
+      catalogPresent: opts.catalogPresent === true,
+      gatewayServing: opts.gatewayServing === true,
+      activeSwarmObserved: opts.activeSwarmObserved === true
+    }, this.swarm.keyPair)
+  }
+
+  /**
+   * Periodically scan custody intents whose retainUntil has passed and
+   * — for every peer relay's published custody-non-serving-proof we
+   * haven't already witnessed — sign + push an independent
+   * custody-expiry-witness attestation.
+   *
+   * This is the v1 cross-relay witness pass: "I observed relay-X's
+   * signed deletion." Active swarm/HTTP probing (verifying the relay
+   * is reachable but no longer serves) is a follow-up — see
+   * docs/CUSTODY-WITNESS-NEXT.md when written.
+   *
+   * Manifesto-pure: pure P2P, no central witness role, no required
+   * infrastructure. Every relay automatically witnesses every other
+   * relay's deletions. Threshold-many witnesses = strong BURNED
+   * guarantee for recipients.
+   */
+  async _runCustodyExpiryWitnessPass (now = Date.now()) {
+    if (!this.seedingRegistry) return { checked: 0, witnessed: 0, skipped: 0 }
+    if (!this.swarm?.keyPair) return { checked: 0, witnessed: 0, skipped: 0 }
+
+    const myPubkey = b4a.toString(this.swarm.keyPair.publicKey, 'hex')
+    const graceMs = Math.max(0, Number(this.config.custodyExpiryGraceMs) || 0)
+    let checked = 0
+    let witnessed = 0
+    let skipped = 0
+    let errors = 0
+
+    // Enumerate all known intents (replicated via registry gossip).
+    // Direct access to _custodyIntents is the only enumeration path
+    // today — a public iterator on SeedingRegistry would be nicer but
+    // adding one is out of scope for this pass.
+    const intentIds = this.seedingRegistry._custodyIntents
+      ? [...this.seedingRegistry._custodyIntents.keys()]
+      : []
+
+    for (const intentId of intentIds) {
+      const status = this.seedingRegistry.getCustodyStatus(intentId)
+      if (!status?.intent) { skipped++; continue }
+
+      const retainUntil = Number(status.intent.retainUntil)
+      if (!Number.isFinite(retainUntil) || (retainUntil + graceMs) > now) {
+        // Not expired yet — nothing to witness.
+        skipped++
+        continue
+      }
+
+      checked++
+
+      for (const proof of status.nonServingProofs || []) {
+        // Skip our own proofs; we'd just be witnessing ourselves.
+        if (proof.relayPubkey === myPubkey) continue
+        // Skip if we've already witnessed this (intent, relay) pair.
+        const alreadyWitnessed = (status.expiryWitnesses || []).some(w =>
+          w.witnessPubkey === myPubkey &&
+          w.relayPubkey === proof.relayPubkey &&
+          w.intentId === intentId
+        )
+        if (alreadyWitnessed) continue
+
+        try {
+          await this.createCustodyExpiryWitness(intentId, proof.relayPubkey, {
+            blindContentId: status.intent.blindContentId,
+            nonServingProofHash: hashHex(proof),
+            catalogPresent: false,
+            gatewayServing: false,
+            activeSwarmObserved: false
+          })
+          witnessed++
+          this.emit('custody-witness-attested', {
+            intentId, relayPubkey: proof.relayPubkey, at: now
+          })
+        } catch (err) {
+          errors++
+          this.emit('custody-witness-attest-error', {
+            intentId, relayPubkey: proof.relayPubkey, error: err.message || String(err)
+          })
+        }
+      }
+    }
+
+    this._lastCustodyWitnessPassAt = now
+    const result = { checked, witnessed, skipped, errors }
+    this.emit('custody-witness-pass', { ...result, at: now })
+    return result
   }
 
   // ─── Cold-start primer ────────────────────────────────────────
