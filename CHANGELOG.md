@@ -6,6 +6,140 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.20] — 2026-05-23
+
+Anchor honesty + custody auto-attestation. Two community-contributed
+fixes by [@iainkek](https://github.com/iainkek) that close the
+silent partial-pin trap and finally wire up the cryptographic loop
+for blind-custody BURNED state.
+
+Both shipped via [PR #19](https://github.com/bigdestiny2/P2P-Hiverelay/pull/19)
++ [PR #20](https://github.com/bigdestiny2/P2P-Hiverelay/pull/20),
+with production validation against the milkyb-fra Fly.io relay
+(11/112 false-anchored entries correctly downgraded on first
+periodic check; full self-heal + 12/12 probe-deep post-fix on the
+Drop drive that had been silently bricked for ~2 weeks).
+
+### Anchor honesty (#19)
+
+**The bug:** Relays set `anchored=true` whenever `drive.version > 0`
+(metadata length), not when the blob blocks were actually present
+locally. Three call sites (`_eagerReplicate`, `repairUnanchored`,
+`_runAnchorCheck`) all made the same mistake. Because
+`runRepairPass` skips entries marked anchored, any drive whose blob
+download timed out mid-pull was silently locked out of self-heal
+indefinitely. End users hit hangs-forever; operators bounced relays
+as a workaround (`docs/FEEDBACK-PEARBROWSER-PIN-CAP-FAILURE.md` —
+the "may need a bounce" recipe was lottery, not a fix).
+
+Orthogonal to v0.8.13 (cancellation contract) and v0.8.14
+(per-drive corestore session). Those addressed stop()-triggered and
+continuous-operation corestore-close vectors. This addresses the
+anchor-flag-on-metadata-only vector that persists when a download
+just doesn't complete cleanly, with no corestore-close in sight.
+
+**The fix:** New `AppLifecycle._isDriveFullyReplicated(drive)`
+helper that checks `drive.blobs.core.has(0, blobs.core.length)` —
+the canonical hypercore bitfield-presence API. Returns true for
+empty blob cores (metadata-only drives), false for closed drives,
+missing blob layers, or any block gap. All three anchoring sites
+now gate `setAnchored` on `downloadComplete && _isDriveFullyReplicated(drive)`.
+`_eagerReplicate` stops silently swallowing `downloadWithTimeout`
+errors. `_runAnchorCheck` does `clearAnchored` with a partial-pin
+reason code when it catches a downgrade. `repairUnanchored` returns
+false on partial so the next repair tick re-queues.
+
+**Backwards compatibility:** Upgraded relays self-heal on the first
+periodic anchor check after restart (≤10 min). Existing
+`anchored=true` registry entries get downgraded to false if their
+blob cores have gaps; `runRepairPass` then pulls the missing
+blocks. No protocol/RPC/schema changes. Expect a 5–15% honest
+downgrade rate on existing fleets — that's the contract catching up
+to reality, not a regression.
+
+### Custody auto-attestation (#20)
+
+**The gap:** Atomic Blind Custody had the cryptographic primitives
+(`createCustodyNonServingProof`, `createCustodyExpiryWitness`) but
+they were only invoked when something explicitly called
+`/api/custody/{id}/non-serving-proof`. The periodic
+`_runCustodyExpiryPass` deleted blobs cleanly on expiry but never
+signed proof of having done so. Recipients probing for BURNED
+state always got `QUORUM_UNAVAILABLE` because no proofs existed.
+
+**The fix:**
+
+1. **Auto-emit `custody-non-serving-proof` on expiry.** The expiry
+   pass now captures `custodyIntentId + blindContentId` BEFORE
+   `unseedApp` (since unseed removes the entry and
+   `createCustodyNonServingProof` would otherwise throw
+   `STILL_SERVING`), then signs + records a non-serving-proof for
+   each expired entry. Skips silently for pre-pipeline blind
+   entries without custody linkage. Surfaces attestation failures
+   via `custody-non-serving-attest-error` event without failing
+   the unseed.
+
+2. **Cross-relay expiry-witness pass.** New
+   `_runCustodyExpiryWitnessPass` scans all known custody intents
+   past their `retainUntil` and signs an independent
+   `custody-expiry-witness` attestation for every peer relay's
+   non-serving-proof observed via registry gossip. Recipients now
+   get dual cryptographic confirmation:
+   - relay-X self-signs "I deleted my copy" (proof)
+   - relay-Y independently witnesses "I observed relay-X's signed
+     deletion" (witness with `nonServingProofHash`)
+
+   Threshold-many witnesses give the recipient a BURNED guarantee
+   resistant to a single relay self-attesting falsely. Refuses
+   self-witness (`SELF_WITNESS_REFUSED`), deduplicates by
+   (witnessPubkey, relayPubkey, intentId), opt-out via
+   `config.custodyWitnessEnabled = false`.
+
+3. **Composed scheduling.** Both passes run on the same interval
+   tick (default 60s) via a `runBoth` closure in
+   `_startCustodyExpiryMonitor`. Initial pass also fires 5s after
+   start.
+
+### Tests
+
+- `test/unit/repair-loop.test.js` — 6 new tests covering partial-pin
+  state, empty blob core, closed drive, missing blob layer,
+  requeue-after-downgrade (#19)
+- `test/integration/partial-pin-self-heal.test.js` — 4 new
+  integration tests using real `Corestore` + `Hyperdrive`; test 2
+  uses `blobs.core.clear(middle, middle+1)` to induce the exact
+  on-disk shape of a real partial pin (#19)
+- `test/unit/relay-node.test.js` — 8 new tests covering auto-emit
+  happy path, no-intent skip, attest-error handling, witness happy
+  path, self-skip, dedup, retainUntil gate, refuses-own-proofs (#20)
+
+All 18 new tests pass locally. 133/133 across adjacent suites
+(anchor-status, anchor-proof, anchor-channel, lifecycle-scope,
+drive-close-cascade, repin-cap-reconcile, cancellable-drive-update,
+app-registry, app-registry-provenance, blind-path-airtight) still
+pass on merged main.
+
+### Acknowledgments
+
+Both PRs by [@iainkek](https://github.com/iainkek), surfaced + driven
+by the drop-pear v3 escrow flow against the public fleet. Drop
+drive resurrected after ~2 weeks silent-brick.
+
+### Follow-ups (separate work)
+
+- Dockerfile/Alpine note: `udx-native@1.19.2` has no
+  `linux-x64-musl` prebuild + no install hook. Use a glibc base
+  (Debian/Ubuntu), not musl-based (Alpine). Tracked in
+  [issue #21](https://github.com/bigdestiny2/P2P-Hiverelay/issues/21).
+- `_custodyIntents.keys()` private enumeration → public iterator
+  on SeedingRegistry (cleaner abstraction; not blocking)
+- Witness v2: active-probe peer relays to verify catalog/gateway/
+  swarm absence before signing (current v1 attests to
+  proof-existence rather than active-not-serving)
+- PRs #16 + #17 from same contributor pending rebase against
+  current main — partial-quorum custody-commit + transient-error
+  classification will land in v0.8.21
+
 ## [0.8.19] — 2026-05-22
 
 Circuit-relay bridge data plane — fixes a silently-broken cross-NAT
