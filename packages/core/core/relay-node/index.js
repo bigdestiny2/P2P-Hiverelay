@@ -2755,8 +2755,20 @@ export class RelayNode extends EventEmitter {
       if (!drive) continue
       checked++
       try {
+        // 2026-05-22: anchored now means "every blob block present",
+        // not just "drive.version > 0". The metadata-only check used
+        // to rubber-stamp partial-pin entries (metadata replicates
+        // long before blob content does), which then made
+        // runRepairPass skip them indefinitely. The full-replication
+        // check is delegated to AppLifecycle._isDriveFullyReplicated
+        // so the contract lives in one place. See
+        // docs/AUTO-HEAL-ROOT-CAUSE-2026-05-22.md.
         const length = drive.version || 0
-        if (length > 0) {
+        const fullyReplicated = length > 0 &&
+          this.appLifecycle &&
+          typeof this.appLifecycle._isDriveFullyReplicated === 'function' &&
+          await this.appLifecycle._isDriveFullyReplicated(drive)
+        if (fullyReplicated) {
           const wasAnchored = entry.anchored === true
           this.appRegistry.setAnchored(appKey, length)
           if (!wasAnchored && this.appLifecycle && typeof this.appLifecycle._recordCustodyReceipt === 'function') {
@@ -2764,9 +2776,12 @@ export class RelayNode extends EventEmitter {
           }
           anchored++
         } else {
-          // No blocks — clear anchored if it was set, record the check
+          // Not fully replicated — clear anchored if it was set so the
+          // repair monitor picks the entry back up.
           if (entry.anchored === true) {
-            this.appRegistry.clearAnchored(appKey, 'length=0 on periodic check')
+            this.appRegistry.clearAnchored(appKey, length > 0
+              ? 'partial-pin detected on periodic check (blob blocks missing)'
+              : 'length=0 on periodic check')
           } else {
             this.appRegistry.recordAnchorCheck(appKey)
           }

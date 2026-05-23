@@ -494,11 +494,21 @@ export class AppLifecycle extends EventEmitter {
 
           // Cancellable download — destroys the download tracker on
           // timeout so its in-flight block requests are released.
+          //
+          // Two concerns wrapped into one try/catch:
+          //   - Reliability v2 (v0.8.13): raceOr arms the LifecycleScope so
+          //     stop() can drain mid-download. AbortError exits cleanly.
+          //   - Anchor honesty (2026-05-22, AUTO-HEAL-ROOT-CAUSE-...):
+          //     do NOT silently treat a download timeout as success.
+          //     Track downloadComplete and gate setAnchored below on
+          //     blob-core completeness — partial-pin entries must stay
+          //     unanchored so runRepairPass keeps re-queuing them.
+          let downloadComplete = true
           try {
             await raceOr(downloadWithTimeout(drive, '/', { timeoutMs: 120_000 }))
           } catch (err) {
             if (isAbortError(err)) return
-            // partial download is fine; version is what matters — keep going
+            downloadComplete = false
           }
 
           if (aborted() || drive.closed || drive.closing) return
@@ -507,18 +517,24 @@ export class AppLifecycle extends EventEmitter {
           // Idempotent — safe to call on retrigger.
           await this._indexAppManifest(appKeyHex, drive)
 
-          // Mark anchored — we have actual replicated blocks. This is the
-          // signal that distinguishes "we accepted the seed" from "we
-          // can actually serve the content." Catalog/capability docs
-          // surface this so clients can prefer relays that have the data.
-          if (node.appRegistry && typeof node.appRegistry.setAnchored === 'function') {
+          // Mark anchored only if the drive is *actually* fully replicated
+          // (every blob block present), not just that metadata synced.
+          // If we don't have all blocks yet, record an anchor check and
+          // let the retry loop / periodic repair monitor keep pulling.
+          const fullyReplicated = downloadComplete && await this._isDriveFullyReplicated(drive)
+          if (fullyReplicated && node.appRegistry && typeof node.appRegistry.setAnchored === 'function') {
             node.appRegistry.setAnchored(appKeyHex, drive.version)
             await this._recordCustodyReceipt(appKeyHex, opts, drive.version)
             this.emit('anchored', { appKey: appKeyHex, version: drive.version, source })
+            this.emit('reseeded', { appKey: appKeyHex, version: drive.version, source })
+            return
           }
 
-          this.emit('reseeded', { appKey: appKeyHex, version: drive.version, source })
-          return
+          // Partial pin — let the loop keep trying. recordAnchorCheck
+          // updates the timestamp so dashboards see we're working on it.
+          if (node.appRegistry && typeof node.appRegistry.recordAnchorCheck === 'function') {
+            node.appRegistry.recordAnchorCheck(appKeyHex)
+          }
         }
       } catch (err) {
         // AbortError = stop() in progress; exit immediately without retry.
@@ -856,28 +872,85 @@ export class AppLifecycle extends EventEmitter {
       return false
     }
 
-    // We have metadata; pull blob content (cancellable on timeout)
+    // We have metadata; pull blob content (cancellable on timeout).
+    //
+    // 2026-05-22: same fix as _eagerReplicate — don't mark anchored on a
+    // partial download. The repair loop is the safety net that pulls
+    // missing blocks over time; if we declare victory on the first
+    // attempt, runRepairPass will skip this entry forever and the gap
+    // never closes. Return false on partial; the next repair tick will
+    // pull more blocks and eventually the full-replication check passes.
+    let downloadComplete = true
     try {
       try {
+        // Reliability v2 (v0.8.13): raceOr arms the LifecycleScope so
+        // stop() can drain mid-download. AbortError exits cleanly.
+        // Anchor honesty (2026-05-22): don't silently treat a timeout
+        // as success — flag downloadComplete=false so the partial-pin
+        // gate below keeps the entry unanchored and runRepairPass
+        // re-queues it on the next tick.
         await raceOr(downloadWithTimeout(drive, '/', { timeoutMs: downloadTimeout }))
       } catch (err) {
         if (isAbortError(err)) return false
-        // partial download still counts — version is what matters
+        downloadComplete = false
       }
 
       if ((scope && scope.aborted) || drive.closed || drive.closing) return false
 
-      if (drive.version > 0) {
+      if (drive.version > 0 && downloadComplete && await this._isDriveFullyReplicated(drive)) {
         node.appRegistry.setAnchored(appKeyHex, drive.version)
         await this._recordCustodyReceipt(appKeyHex, entry, drive.version)
         this.emit('anchored', { appKey: appKeyHex, version: drive.version, source: 'repair' })
         return true
+      }
+
+      // Partial pin — record the attempt and signal to the caller that
+      // we're not done. The next repair tick re-queues this entry and
+      // tries again with a fresh download tracker.
+      if (typeof node.appRegistry.recordAnchorCheck === 'function') {
+        node.appRegistry.recordAnchorCheck(appKeyHex)
       }
     } catch (err) {
       if (isAbortError(err)) return false
       this.emit('repair-download-failed', { appKey: appKeyHex, error: err.message })
     }
     return false
+  }
+
+  /**
+   * Verify that a hyperdrive's blob core is fully present locally —
+   * every block from 0..length-1 has been downloaded. This is the
+   * proper definition of "anchored": we can actually serve the
+   * content to a peer that asks. Returns true for empty drives
+   * (no blob blocks needed); returns false if the drive is closed,
+   * if the blob layer hasn't loaded yet, or if any block is missing.
+   *
+   * Was previously implicit and incorrect: the old code took
+   * `drive.version > 0` (metadata length) as proof of anchoring,
+   * which let the partial-pin failure mode persist indefinitely
+   * because the periodic repair monitor skips anchored entries.
+   * See docs/AUTO-HEAL-ROOT-CAUSE-2026-05-22.md.
+   *
+   * @param {Hyperdrive} drive
+   * @returns {Promise<boolean>}
+   */
+  async _isDriveFullyReplicated (drive) {
+    if (!drive || drive.closed || drive.closing) return false
+    const blobs = drive.blobs || (typeof drive.getBlobs === 'function'
+      ? await drive.getBlobs().catch(() => null)
+      : null)
+    const blobCore = blobs && blobs.core
+    if (!blobCore) return false
+    const length = blobCore.length
+    if (!Number.isFinite(length) || length < 0) return false
+    if (length === 0) return true // metadata-only drive — nothing to download
+    try {
+      // core.has(0, length) walks the bitfield for the first unset bit
+      // in [0, length); returns true only if every block is present.
+      return await blobCore.has(0, length)
+    } catch (_) {
+      return false
+    }
   }
 
   /**
