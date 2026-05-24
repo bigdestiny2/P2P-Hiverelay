@@ -934,8 +934,46 @@ export class AppLifecycle extends EventEmitter {
    * @param {Hyperdrive} drive
    * @returns {Promise<boolean>}
    */
-  async _isDriveFullyReplicated (drive) {
+  async _isDriveFullyReplicated (drive, opts = {}) {
     if (!drive || drive.closed || drive.closing) return false
+
+    // 2026-05-24: hard timeout on the whole check. drive.getBlobs() can
+    // hang indefinitely on a freshly-loaded entry whose blob layer
+    // hasn't been resolved by any peer yet (the lazy init awaits a
+    // hypercore replication session that may never come). Without a
+    // timeout, a single such entry deadlocks the entire _runAnchorCheck
+    // sequential loop — observed live on milkyb-iad where the first
+    // anchor pass at startup processed 5 of 145 entries, then hung
+    // forever on entry 6. 15h uptime, 144 entries never checked again.
+    //
+    // Default 3s is generous: getBlobs() resolves in milliseconds when
+    // it works at all. If it doesn't resolve quickly, the drive's blob
+    // layer isn't accessible from any current peer, so we should return
+    // false (treat as not-fully-replicated) and move on so the loop
+    // can keep making progress on other entries. Next pass will retry.
+    const timeoutMs = Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0
+      ? Math.floor(opts.timeoutMs)
+      : 3000
+
+    let timer
+    const timeout = new Promise(resolve => {
+      timer = setTimeout(() => resolve('__TIMEOUT__'), timeoutMs)
+      if (timer.unref) timer.unref()
+    })
+
+    try {
+      const result = await Promise.race([this._isDriveFullyReplicatedInner(drive), timeout])
+      if (result === '__TIMEOUT__') return false
+      return result === true
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  // Inner implementation — extracted so _isDriveFullyReplicated can
+  // wrap it in a timeout race without duplicating the logic. Pre-2026-
+  // 05-24 this was the body of _isDriveFullyReplicated directly.
+  async _isDriveFullyReplicatedInner (drive) {
     const blobs = drive.blobs || (typeof drive.getBlobs === 'function'
       ? await drive.getBlobs().catch(() => null)
       : null)
