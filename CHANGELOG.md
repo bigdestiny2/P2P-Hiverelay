@@ -6,6 +6,71 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.22] — 2026-05-24
+
+Defensive timeouts on the two `await`s in the reseed + anchor paths
+that could (and did) deadlock the entire relay when one entry hit a
+hung hypercore. Surfaced by [@iainkek](https://github.com/iainkek)'s
+investigation of milkyb-iad after the v0.8.21 deploy: iad's 1 GB Fly
+volume hit 100%, which made `writeFile` hang on registry saves, which
+compounded into hung `drive.ready()` calls + hung `getBlobs()` calls,
+which made the sequential reseed + anchor-check loops stop making
+forward progress entirely. 15 hours of silent partial-function before
+the disk-full root cause was found.
+
+### What ships
+
+**1. `drive.ready()` timeout in `_seedAppInner` (8s, PR #25 commit 1).**
+`reseedFromRegistry` awaits `seedApp` sequentially. One entry whose
+hypercore can't `ready()` blocks every subsequent entry from being
+opened. The new race-against-timeout throws on hang, lets `seedApp`'s
+outer try/catch in `reseedFromRegistry` emit a `reseed-error`, and
+the next entry proceeds. 8 seconds is a generous liveness floor —
+healthy `ready()` resolves in milliseconds.
+
+**2. `_isDriveFullyReplicated` timeout (3s, PR #25 commit 2).**
+`_runAnchorCheck` iterates `appRegistry.apps` sequentially with
+`await _isDriveFullyReplicated(drive)` per entry. Internally that
+awaits `drive.getBlobs()` for the blob-layer lazy-init — which can
+hang indefinitely if no current peer has the blob layer resolvable.
+Body extracted to `_isDriveFullyReplicatedInner` so the public method
+wraps the race cleanly; on timeout, returns false and the next pass
+retries.
+
+### Empirical proof (Ian's milkyb-iad)
+
+| Metric | v0.8.21 (= v0.8.20 + #22 + #24) | v0.8.22 (= v0.8.21 + #25) |
+|---|---|---|
+| iad reseed completion | 12 of 145 entries after 15h | All 145 within minutes |
+| iad anchor-check pass | 0 entries after startup | Periodic ticks every 5min |
+| iad Drop status | `anchored=false, len=0` for 15h+ | **`anchored=true, len=7999`** |
+| Cross-fleet self-heal proof | fra + syd | **fra + syd + iad** |
+
+### Behavior in the no-hang case
+
+Identical to v0.8.21. Both timeouts are pure-additive — existing code
+paths execute exactly as before; the timeout serves only as a fallback
+when something hangs that previously would have hung silently forever.
+
+### Acknowledgments
+
+PR #25 by [@iainkek](https://github.com/iainkek), with field
+validation against milkyb-iad's recovery. Cherry-picked onto current
+main (PR #25 branched from v0.8.20, not v0.8.21) preserving Ian's
+authorship on both commits.
+
+### Known follow-ups
+
+Both flagged by Ian in PR #25, separate scope:
+
+- `app-registry.js#save()` should also Promise.race a timeout against
+  `writeFile` — closes the last leg of the hung-disk cascade
+- Operator-facing disk-usage signal in `/health` or metrics — no
+  visible indicator today for "this relay's volume is at 90%"
+- (carried over from v0.8.21) Promise-shape `drive.download()`
+  cancellation hook on scope abort — test-runner artifact, no
+  production impact
+
 ## [0.8.21] — 2026-05-24
 
 Self-heal that actually heals. v0.8.20 shipped the honest-anchor

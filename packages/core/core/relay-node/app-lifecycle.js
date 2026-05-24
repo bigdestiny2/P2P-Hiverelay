@@ -285,7 +285,7 @@ export class AppLifecycle extends EventEmitter {
       try {
         await Promise.race([
           drive.ready(),
-          new Promise((_, reject) => {
+          new Promise((_resolve, reject) => {
             readyTimer = setTimeout(
               () => reject(new Error('DRIVE_READY_TIMEOUT after ' + READY_TIMEOUT_MS + 'ms')),
               READY_TIMEOUT_MS
