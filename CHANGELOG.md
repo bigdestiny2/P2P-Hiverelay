@@ -6,6 +6,136 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.21] — 2026-05-24
+
+Self-heal that actually heals. v0.8.20 shipped the honest-anchor
+signal but exposed two latent replication bugs that prevented the
+repair loop from doing its job. v0.8.21 closes both — production
+validation by [@iainkek](https://github.com/iainkek) on milkyb-fra
+and milkyb-syd demonstrated the first cross-relay peer-to-peer
+self-heal HiveRelay has ever shipped: syd anchored a previously-
+unanchored drive within 5 seconds of restart by pulling
+peer-to-peer from fra, with no publisher in the loop.
+
+### What v0.8.20 left broken
+
+After [v0.8.20](#0820--2026-05-23) deployed, drives correctly
+downgraded to `anchored=false` (PR #19's honest-anchor signal),
+but they sat there indefinitely without recovering. milkyb-fra
+showed 11/112 entries unanchored for 30+ minutes despite the
+publisher being online the entire time. Our 5-relay fleet showed
+the same pattern: `hiverelay_coresSeeded=1` across 555 seeded
+apps on utah alone — the lone seeded core was the registry log;
+every per-app drive had no persistent download "want" registered
+with the replicator.
+
+Two distinct bugs:
+
+1. **`downloadWithTimeout` was written for hyperdrive 10.x's
+   tracker-shape `drive.download()` API.** Hyperdrive 11.x made
+   `download()` async-returning-Promise — calling `.done()` on a
+   Promise threw `TypeError: dl.done is not a function`, which
+   the surrounding try/catch silently absorbed as "download
+   didn't complete." Pre-v0.8.20 the relay marked entries
+   `anchored=true` on metadata-only and `runRepairPass` skipped
+   them, so the bug never executed. v0.8.20's honest signal
+   surfaced it.
+
+2. **Per-app Hyperdrives never registered persistent download
+   ranges.** `seeder.seedCore()` does `core.download({ start: 0,
+   end: -1 })` on the registry log core to maintain a persistent
+   "want" with the replicator. The appRegistry path opened
+   drives but never registered any such want on their meta or
+   blob cores. Drives only requested blocks during the brief
+   60s `_eagerReplicate` + `repairUnanchored` download windows
+   — and only if a peer happened to be reachable in exactly that
+   window. For drives whose publisher was intermittent, the
+   window almost never landed; self-heal was structurally
+   non-functional.
+
+### What v0.8.21 ships
+
+**1. Hyperdrive 11.x Promise-shape detection (PR #22).** New
+`isOldTrackerApi` probe in `downloadWithTimeout` detects both
+API shapes via `.done && .destroy`. Old-shape path preserves
+`tracker.destroy()` cleanup on timeout. New-shape path races
+the Promise against the timeout; orphaned inner
+`blob.core.download` trackers settle naturally bounded by the
+file's blob extent. 3 new unit tests covering both shapes;
+all 16 in `cancellable-drive-update.test.js` pass.
+
+**2. Persistent download ranges on Hyperdrive cores (PR #24).**
+New `_registerPersistentDownloads(appKey, drive)` helper called
+from `_seedAppInner` after the drive is registered. Issues
+`core.download({ start: 0, end: -1 })` on `drive.db.core` +
+the blob core (after `getBlobs()` resolves lazily), storing
+trackers on `entry.downloadRanges`. `unseedApp` destroys the
+trackers before drive close, matching the v0.8.13 LifecycleScope
+defensive pattern. Idempotent, best-effort, non-throwing
+(failures emit `persistent-download-error` event without
+breaking the seed).
+
+### Production validation
+
+Empirical proof, fra:
+
+| Time after publisher rejoins swarm | requests-rx | blocks-tx |
+|---|---|---|
+| 5s | 211 | 211 |
+| 10s | 654 | 654 |
+| 30s | 1,471 | 1,471 |
+| 80s | 3,431 | 3,431 |
+
+Pre-fix on identical setup: zero block requests for 30+
+minutes. Post-fix: first block requests within 5 seconds of
+publisher availability.
+
+**Cross-relay self-heal, syd:**
+After fra was on v0.8.21, syd was upgraded. Within ~5s of
+restart, syd's newly-registered persistent download range on
+the Drop drive's blob core discovered fra via DHT, pulled the
+missing blob bytes peer-to-peer between relays, and marked
+Drop `anchored=true` — **no external publisher involvement at
+all**. This is the first cross-relay autonomous self-heal
+HiveRelay has shipped.
+
+### Why this matters
+
+Pre-v0.8.21, the relay's repair loop was structurally
+unreliable: bounded download windows + intermittent publisher
+availability = drives that never recovered. v0.8.21 makes the
+replicator-level "want" persistent, so the moment any peer
+with the missing bytes becomes reachable — publisher OR another
+relay — the missing blocks flow. The fleet now functions as a
+cooperative self-healing mesh, not a collection of relays each
+hoping the publisher comes back online during their 60s
+window.
+
+### Known follow-ups
+
+- **v0.8.22 — Promise-shape cancellation hook.** PR #22's
+  Promise-shape path doesn't currently cancel the underlying
+  `drive.download()` Promise on scope abort — the outer
+  `raceOr` returns cleanly via AbortError (so `stop()` drains
+  in <10ms), but the inner Promise stays in-flight in
+  background until the 120s timeout fires. Surfaces as
+  `reliability-v2.test.js` test-runner timeout when tests
+  seed random keys with no peers; production behavior with
+  active peers is unaffected.
+- **v0.8.22 — `coresSeeded` metric scope.** Persistent
+  download ranges aren't routed through `seeder.seedCore()`,
+  so the `hiverelay_coresSeeded` counter still shows 1 (the
+  registry core). Per-drive storage accounting is operator-
+  visibility, separate from the behavior fix that landed here.
+
+### Acknowledgments
+
+PR #22 + PR #24 by [@iainkek](https://github.com/iainkek), with
+production validation against three milkyb relays (fra, syd,
+iad). The "syd anchored Drop in 5s peer-to-peer without
+publisher" demonstration is the cleanest validation we've ever
+gotten for a replication-layer change.
+
 ## [0.8.20] — 2026-05-23
 
 Anchor honesty + custody auto-attestation. Two community-contributed
