@@ -265,7 +265,37 @@ export class AppLifecycle extends EventEmitter {
     const drive = new Hyperdrive(node.store.session(), appKey)
 
     try {
-      await drive.ready()
+      // 2026-05-24: hard timeout on drive.ready(). On a drive whose
+      // underlying hypercore is in a bad state (corrupted index, hung
+      // session, etc.), ready() can hang indefinitely — and because
+      // reseedFromRegistry awaits seedApp sequentially, ONE such drive
+      // blocks every subsequent entry from getting opened. Observed
+      // live on milkyb-iad where reseed processed only 12 of 145
+      // entries at startup, then hung forever on entry 13. The other
+      // 132 entries' drives were never opened, so the periodic anchor
+      // check + repair loop had nothing to iterate (skipped by the
+      // `if (!entry.drive) continue` guards).
+      //
+      // 8 seconds is generous — drive.ready() on a healthy entry
+      // resolves in milliseconds. If it doesn't, throw so seedApp's
+      // outer try/catch in reseedFromRegistry catches it, emits a
+      // reseed-error, and the next entry gets its turn.
+      const READY_TIMEOUT_MS = 8000
+      let readyTimer
+      try {
+        await Promise.race([
+          drive.ready(),
+          new Promise((_, reject) => {
+            readyTimer = setTimeout(
+              () => reject(new Error('DRIVE_READY_TIMEOUT after ' + READY_TIMEOUT_MS + 'ms')),
+              READY_TIMEOUT_MS
+            )
+            if (readyTimer.unref) readyTimer.unref()
+          })
+        ])
+      } finally {
+        if (readyTimer) clearTimeout(readyTimer)
+      }
 
       const discoveryKey = drive.discoveryKey
 
