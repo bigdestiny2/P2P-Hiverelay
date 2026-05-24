@@ -200,6 +200,54 @@ test('downloadWithTimeout: propagates download() construction errors', async (t)
   }
 })
 
+test('downloadWithTimeout: works against hyperdrive 11.x Promise-shape download() API', async (t) => {
+  // Real hyperdrive 11.13.4's drive.download() is async — returns a
+  // Promise<void>, NOT a tracker object with .done()/.destroy(). The
+  // pre-fix code called dl.done() unconditionally and threw
+  // "TypeError: dl.done is not a function" in production, silently
+  // breaking every repair-loop download.
+  let resolveDownload
+  const downloadPromise = new Promise(resolve => { resolveDownload = resolve })
+  const drive = {
+    closed: false,
+    closing: false,
+    download (path) { return downloadPromise }
+  }
+  setTimeout(() => resolveDownload(), 20)
+  await downloadWithTimeout(drive, '/', { timeoutMs: 500 })
+  t.pass('Promise-shape download resolved without TypeError')
+})
+
+test('downloadWithTimeout: Promise-shape download timeout rejects cleanly', async (t) => {
+  // Same shape as 11.x but the download never resolves; ensure the
+  // timeout still rejects with "download timeout".
+  const drive = {
+    closed: false,
+    closing: false,
+    download (path) { return new Promise(() => {}) } // hangs forever
+  }
+  try {
+    await downloadWithTimeout(drive, '/', { timeoutMs: 50 })
+    t.fail('should have timed out')
+  } catch (err) {
+    t.is(err.message, 'download timeout', 'timeout fires even without tracker.destroy()')
+  }
+})
+
+test('downloadWithTimeout: Promise-shape download rejection propagates', async (t) => {
+  const drive = {
+    closed: false,
+    closing: false,
+    download (path) { return Promise.reject(new Error('replication failed')) }
+  }
+  try {
+    await downloadWithTimeout(drive, '/', { timeoutMs: 500 })
+    t.fail('should have rejected with the underlying error')
+  } catch (err) {
+    t.is(err.message, 'replication failed', 'underlying download error surfaces verbatim')
+  }
+})
+
 test('downloadWithTimeout: defensive destroy on rejection path', async (t) => {
   const { drive } = mockDrive({ downloadRejects: new Error('replication failed') })
   let trackerRef = null
