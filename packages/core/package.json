@@ -10,6 +10,16 @@
       "default": "./core/index.js"
     },
     "./gateway": "./gateway/hyper-gateway.js",
+    "./core/custody-signing": "./core/custody-signing.js",
+    "./core/custody-signing.js": "./core/custody-signing.js",
+    "./core/constants": "./core/constants.js",
+    "./core/constants.js": "./core/constants.js",
+    "./core/protocol/custody-channel": "./core/protocol/custody-channel.js",
+    "./core/protocol/custody-channel.js": "./core/protocol/custody-channel.js",
+    "./core/protocol/publish-channel": "./core/protocol/publish-channel.js",
+    "./core/protocol/publish-channel.js": "./core/protocol/publish-channel.js",
+    "./core/protocol/seed-request": "./core/protocol/seed-request.js",
+    "./core/protocol/seed-request.js": "./core/protocol/seed-request.js",
     "./*": "./*"
   },
   "imports": {
