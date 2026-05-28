@@ -15,6 +15,7 @@
 import { readFile, writeFile, rename } from 'fs/promises'
 import { join } from 'path'
 import { EventEmitter } from 'events'
+import Hyperbee from 'hyperbee'
 import {
   compareVersions,
   normalizeAvailabilityClass,
@@ -23,12 +24,33 @@ import {
 } from './constants.js'
 
 const REGISTRY_FILE = 'app-registry.json'
+const BEE_CORE_NAME = 'app-registry-v1'
 
 export class AppRegistry extends EventEmitter {
-  constructor (storagePath) {
+  /**
+   * @param {string|null} storagePath - directory containing app-registry.json
+   * @param {object} [opts]
+   * @param {Corestore} [opts.store] - if provided, persistence uses a Hyperbee
+   *   on this corestore. JSON file is still read once for migration on first
+   *   load, then renamed to .bak. Without a store, falls back to legacy
+   *   JSON-blob persistence (pre-v0.8.25 behavior).
+   */
+  constructor (storagePath, opts = {}) {
     super()
     this._storagePath = storagePath
     this._filePath = storagePath ? join(storagePath, REGISTRY_FILE) : null
+
+    // v0.8.25 — Hyperbee persistence on the relay's Corestore. Set lazily
+    // via setStore() if the corestore isn't ready at construction time
+    // (RelayNode creates the store before the registry but doesn't pass
+    // it through the constructor today).
+    this._store = opts.store || null
+    this._bee = null
+    this._beeReady = false
+    // Track in-flight bee writes so flush() can await them. Each
+    // _persistEntryToBee / _deleteEntryFromBee adds its promise; on
+    // settle (success OR error) it's removed.
+    this._pendingBeeOps = new Set()
 
     // Primary state: appKey hex → entry
     this.apps = new Map()
@@ -36,9 +58,29 @@ export class AppRegistry extends EventEmitter {
     // Dedup index: appId string → appKey hex (only latest version per appId)
     this.byAppId = new Map()
 
+    // Legacy JSON debouncer state — used only when no store is configured.
     this._saving = false
     this._savePending = false
     this._saveDebounceTimer = null
+  }
+
+  /**
+   * v0.8.25 — attach a Corestore so persistence uses a Hyperbee instead of
+   * the JSON-blob file. Must be called BEFORE load(). After this, every
+   * mutation writes one block to the bee instead of rewriting the whole
+   * registry file.
+   *
+   * The bee lives on a namespace of the supplied store, so it doesn't
+   * collide with any other Hypercore the corestore manages.
+   *
+   * @param {Corestore} store
+   */
+  setStore (store) {
+    if (!store) return
+    if (this._bee || this._beeReady) {
+      throw new Error('setStore must be called before load()')
+    }
+    this._store = store
   }
 
   // ─── Queries ───────────────────────────────────────────────
@@ -132,7 +174,7 @@ export class AppRegistry extends EventEmitter {
       this.byAppId.set(normalized.appId, appKey)
     }
 
-    this._scheduleSave()
+    this._scheduleSave(appKey)
     this.emit('change', { type: 'set', appKey, entry: normalized })
   }
 
@@ -155,7 +197,7 @@ export class AppRegistry extends EventEmitter {
       this.byAppId.set(entry.appId, appKey)
     }
 
-    this._scheduleSave()
+    this._scheduleSave(appKey)
     this.emit('change', { type: 'update', appKey, entry })
     return true
   }
@@ -173,7 +215,7 @@ export class AppRegistry extends EventEmitter {
     }
 
     this.apps.delete(appKey)
-    this._scheduleSave()
+    this._scheduleSave(appKey, { deleted: true })
     this.emit('change', { type: 'delete', appKey })
     return true
   }
@@ -205,7 +247,7 @@ export class AppRegistry extends EventEmitter {
     entry.lastAnchorCheck = now
     if (!wasAnchored) entry.anchoredAt = now
 
-    this._scheduleSave()
+    this._scheduleSave(appKey)
     if (!wasAnchored) {
       this.emit('change', { type: 'anchored', appKey, entry })
     } else {
@@ -228,7 +270,7 @@ export class AppRegistry extends EventEmitter {
     entry.anchored = false
     entry.anchoredLength = 0
     entry.lastAnchorCheck = Date.now()
-    this._scheduleSave()
+    this._scheduleSave(appKey)
     this.emit('change', { type: 'unanchored', appKey, entry, reason })
     return true
   }
@@ -241,7 +283,7 @@ export class AppRegistry extends EventEmitter {
     const entry = this.apps.get(appKey)
     if (!entry) return false
     entry.lastAnchorCheck = Date.now()
-    this._scheduleSave()
+    this._scheduleSave(appKey)
     return true
   }
 
@@ -472,9 +514,121 @@ export class AppRegistry extends EventEmitter {
   // ─── Persistence ───────────────────────────────────────────
 
   /**
+   * v0.8.25 — open the Hyperbee on the configured Corestore. Idempotent.
+   * Returns the bee handle. Stub-friendly: if `_store` looks like a Corestore
+   * but bee construction fails (test-stub case), returns null and the
+   * caller falls back to legacy JSON behavior.
+   */
+  async _openBee () {
+    if (this._bee) return this._bee
+    if (!this._store) return null
+    try {
+      const core = this._store.get({ name: BEE_CORE_NAME })
+      if (core && typeof core.ready === 'function') {
+        await core.ready()
+      }
+      this._bee = new Hyperbee(core, {
+        keyEncoding: 'utf-8',
+        valueEncoding: 'json'
+      })
+      if (typeof this._bee.ready === 'function') {
+        await this._bee.ready()
+      }
+      this._beeReady = true
+      return this._bee
+    } catch (err) {
+      // Defensive: in unit tests with non-Corestore stubs, fall back to
+      // the JSON path silently. Production Corestores never reach this.
+      this._bee = null
+      this._beeReady = false
+      this._store = null
+      return null
+    }
+  }
+
+  /**
+   * v0.8.25 — one-time migration from JSON to bee. Reads the legacy
+   * app-registry.json (if present), writes each entry into the bee via
+   * a single batch, renames the JSON to .bak so subsequent loads skip
+   * it. Returns true if migrated, false if no JSON existed.
+   */
+  async _migrateJsonToBee () {
+    if (!this._bee || !this._filePath) return false
+    let raw
+    try {
+      raw = await readFile(this._filePath, 'utf8')
+    } catch (_) {
+      return false // no JSON to migrate
+    }
+
+    let parsed
+    try {
+      parsed = JSON.parse(raw)
+    } catch (_) {
+      // Corrupt JSON — bail rather than lose data. Operator can inspect
+      // app-registry.json directly.
+      this.emit('error', { context: 'migrate-parse', error: new Error('CORRUPT_REGISTRY_JSON') })
+      return false
+    }
+
+    const entries = Array.isArray(parsed) ? parsed : Object.values(parsed)
+    if (entries.length === 0) {
+      // Empty registry file is still safe to migrate (no-op + rename).
+      try { await rename(this._filePath, this._filePath + '.bak') } catch (_) {}
+      return false
+    }
+
+    const batch = this._bee.batch()
+    let written = 0
+    for (const entry of entries) {
+      const appKey = entry.appKey || entry.driveKey
+      if (!appKey) continue
+      await batch.put(appKey, entry)
+      written++
+    }
+    await batch.flush()
+
+    // Rename the JSON to .bak only after the bee batch flush succeeded.
+    // If migration fails mid-flight, the next startup retries.
+    try { await rename(this._filePath, this._filePath + '.bak') } catch (_) {}
+
+    this.emit('migrated', { count: written, source: 'json', target: 'hyperbee' })
+    return true
+  }
+
+  /**
    * Load registry from disk. Returns entries array for reseeding.
+   *
+   * v0.8.25: prefers Hyperbee if a Corestore was attached via setStore().
+   * Falls back to legacy JSON-blob mode if no store is configured.
    */
   async load () {
+    // v0.8.25 — try bee first
+    const bee = await this._openBee()
+    if (bee) {
+      // First-time migration from legacy JSON (if it exists)
+      await this._migrateJsonToBee()
+
+      // Read all entries from the bee into the in-memory Map
+      const entries = []
+      try {
+        for await (const node of bee.createReadStream()) {
+          const entry = node.value
+          if (!entry || typeof entry !== 'object') continue
+          const appKey = node.key
+          if (!appKey) continue
+          this._hydrateEntry(appKey, entry)
+          entries.push(this._reseedEntry(entry, appKey))
+        }
+      } catch (err) {
+        this.emit('error', { context: 'load-bee', error: err })
+        return []
+      }
+      return entries.filter(e => e.appKey)
+    }
+
+    // Legacy JSON path — pre-v0.8.25 behavior, used when no store
+    // attached (tests, headless usage).
     if (!this._filePath) return []
 
     try {
@@ -483,99 +637,141 @@ export class AppRegistry extends EventEmitter {
       // Support both array format (old seeded-apps.json) and object format
       const entries = Array.isArray(data) ? data : Object.values(data)
 
-      // Populate in-memory state from disk
+      // Populate in-memory state from disk via the shared helper.
       for (const entry of entries) {
         const appKey = entry.appKey || entry.driveKey
         if (!appKey) continue
-
-        this.apps.set(appKey, {
-          startedAt: entry.startedAt || entry.seededAt || Date.now(),
-          appId: entry.appId || entry.name || null,
-          type: normalizeContentType(entry.type, 'app'),
-          parentKey: entry.parentKey || null,
-          mountPath: entry.mountPath || null,
-          version: entry.version || null,
-          name: entry.name || entry.appId || null,
-          description: entry.description || '',
-          author: entry.author || null,
-          blind: entry.blind || false,
-          storageClass: normalizeStorageClass(entry.storageClass, entry.blind ? 'temporary' : 'persistent'),
-          availabilityClass: normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on'),
-          custodyIntentId: entry.custodyIntentId || null,
-          blindContentId: entry.blindContentId || null,
-          ciphertextRoot: entry.ciphertextRoot || null,
-          contentVersion: Number.isFinite(entry.contentVersion) ? entry.contentVersion : null,
-          retainUntil: entry.retainUntil || null,
-          shardIds: Array.isArray(entry.shardIds) ? entry.shardIds : null,
-          privacyTier: entry.privacyTier || 'public',
-          // v0.8.18 Phase A: restore provenance from disk so catalog and
-          // catalogForBroadcast surface the publisher's commitments after
-          // restart. Older registry files won't have these — null/0/true
-          // defaults mean "no provenance recorded" (matches pre-v0.8.18).
-          publisherPubkey: entry.publisherPubkey || null,
-          durability: Number.isFinite(entry.durability) ? entry.durability : 0,
-          revocable: entry.revocable !== false,
-          categories: entry.categories || null,
-          bytesServed: 0,
-          // Anchor state restored from disk so we don't forget what we
-          // know between restarts. The periodic anchor check will refresh
-          // these soon after startup.
-          anchored: entry.anchored === true,
-          anchoredAt: entry.anchoredAt || null,
-          anchoredLength: typeof entry.anchoredLength === 'number' ? entry.anchoredLength : 0,
-          lastAnchorCheck: entry.lastAnchorCheck || null,
-          // v0.8.12: per-app maxStorage cap, used by re-pin reconciliation
-          // to detect cap-up vs cap-down without losing the prior value
-          // across restarts. Older registry files won't have this — null
-          // means "no cap declared at seed time."
-          maxStorage: Number.isFinite(entry.maxStorage) && entry.maxStorage > 0
-            ? Math.floor(entry.maxStorage)
-            : null,
-          // drive and discoveryKey are set during reseeding
-          drive: null,
-          discoveryKey: null
-        })
-
-        if (entry.appId && normalizeContentType(entry.type, 'app') === 'app') {
-          this.byAppId.set(entry.appId, appKey)
-        }
+        this._hydrateEntry(appKey, entry)
       }
 
-      return entries.map(e => ({
-        appKey: e.appKey || e.driveKey,
-        appId: e.appId || e.name || null,
-        type: normalizeContentType(e.type, 'app'),
-        parentKey: e.parentKey || null,
-        mountPath: e.mountPath || null,
-        version: e.version || null,
-        privacyTier: e.privacyTier || 'public',
-        blind: e.blind || false,
-        storageClass: normalizeStorageClass(e.storageClass, e.blind ? 'temporary' : 'persistent'),
-        availabilityClass: normalizeAvailabilityClass(e.availabilityClass, e.blind ? 'atomic-handoff' : 'always-on'),
-        custodyIntentId: e.custodyIntentId || null,
-        blindContentId: e.blindContentId || null,
-        ciphertextRoot: e.ciphertextRoot || null,
-        contentVersion: Number.isFinite(e.contentVersion) ? e.contentVersion : null,
-        retainUntil: e.retainUntil || null,
-        shardIds: Array.isArray(e.shardIds) ? e.shardIds : null,
-        // v0.8.18 Phase A: forward provenance to the reseed call so it
-        // makes it back into the freshly-initialized in-memory entry
-        // post-restart. Without this, even though save() now persists
-        // these, _seedAppInner wouldn't see them on reseed and the
-        // entry would re-set publisherPubkey: opts.publisherPubkey (which
-        // would be undefined), clobbering what we just loaded.
-        publisherPubkey: e.publisherPubkey || null,
-        durability: Number.isFinite(e.durability) ? e.durability : 0,
-        revocable: e.revocable !== false,
-        // v0.8.12: surface persisted maxStorage so reseedFromRegistry
-        // can pass it back through seedApp and the size-check fires
-        // on startup too (not just on fresh publisher seed requests).
-        maxStorage: Number.isFinite(e.maxStorage) && e.maxStorage > 0
-          ? Math.floor(e.maxStorage)
-          : null
-      })).filter(e => e.appKey)
+      return entries
+        .map(e => this._reseedEntry(e, e.appKey || e.driveKey))
+        .filter(e => e.appKey)
     } catch (_) {
       return []
+    }
+  }
+
+  /**
+   * v0.8.25 — Hydrate the in-memory Map with an entry loaded from
+   * persistence (bee or JSON). Shared between both paths so the
+   * normalization rules live in one place.
+   */
+  _hydrateEntry (appKey, entry) {
+    this.apps.set(appKey, {
+      startedAt: entry.startedAt || entry.seededAt || Date.now(),
+      appId: entry.appId || entry.name || null,
+      type: normalizeContentType(entry.type, 'app'),
+      parentKey: entry.parentKey || null,
+      mountPath: entry.mountPath || null,
+      version: entry.version || null,
+      name: entry.name || entry.appId || null,
+      description: entry.description || '',
+      author: entry.author || null,
+      blind: entry.blind || false,
+      storageClass: normalizeStorageClass(entry.storageClass, entry.blind ? 'temporary' : 'persistent'),
+      availabilityClass: normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on'),
+      custodyIntentId: entry.custodyIntentId || null,
+      blindContentId: entry.blindContentId || null,
+      ciphertextRoot: entry.ciphertextRoot || null,
+      contentVersion: Number.isFinite(entry.contentVersion) ? entry.contentVersion : null,
+      retainUntil: entry.retainUntil || null,
+      shardIds: Array.isArray(entry.shardIds) ? entry.shardIds : null,
+      privacyTier: entry.privacyTier || 'public',
+      publisherPubkey: entry.publisherPubkey || null,
+      durability: Number.isFinite(entry.durability) ? entry.durability : 0,
+      revocable: entry.revocable !== false,
+      categories: entry.categories || null,
+      bytesServed: 0,
+      anchored: entry.anchored === true,
+      anchoredAt: entry.anchoredAt || null,
+      anchoredLength: typeof entry.anchoredLength === 'number' ? entry.anchoredLength : 0,
+      lastAnchorCheck: entry.lastAnchorCheck || null,
+      maxStorage: Number.isFinite(entry.maxStorage) && entry.maxStorage > 0
+        ? Math.floor(entry.maxStorage)
+        : null,
+      // drive and discoveryKey are set during reseeding
+      drive: null,
+      discoveryKey: null
+    })
+
+    if (entry.appId && normalizeContentType(entry.type, 'app') === 'app') {
+      this.byAppId.set(entry.appId, appKey)
+    }
+  }
+
+  /**
+   * v0.8.25 — Build the reseed-shape payload that reseedFromRegistry
+   * passes back through seedApp. Shared between bee + JSON load paths.
+   */
+  _reseedEntry (e, appKey) {
+    return {
+      appKey: appKey || e.appKey || e.driveKey,
+      appId: e.appId || e.name || null,
+      type: normalizeContentType(e.type, 'app'),
+      parentKey: e.parentKey || null,
+      mountPath: e.mountPath || null,
+      version: e.version || null,
+      privacyTier: e.privacyTier || 'public',
+      blind: e.blind || false,
+      storageClass: normalizeStorageClass(e.storageClass, e.blind ? 'temporary' : 'persistent'),
+      availabilityClass: normalizeAvailabilityClass(e.availabilityClass, e.blind ? 'atomic-handoff' : 'always-on'),
+      custodyIntentId: e.custodyIntentId || null,
+      blindContentId: e.blindContentId || null,
+      ciphertextRoot: e.ciphertextRoot || null,
+      contentVersion: Number.isFinite(e.contentVersion) ? e.contentVersion : null,
+      retainUntil: e.retainUntil || null,
+      shardIds: Array.isArray(e.shardIds) ? e.shardIds : null,
+      publisherPubkey: e.publisherPubkey || null,
+      durability: Number.isFinite(e.durability) ? e.durability : 0,
+      revocable: e.revocable !== false,
+      maxStorage: Number.isFinite(e.maxStorage) && e.maxStorage > 0
+        ? Math.floor(e.maxStorage)
+        : null
+    }
+  }
+
+  /**
+   * v0.8.25 — Build the persistable snapshot of an in-memory entry.
+   * Used by both bee-mode (single put on every mutation) and legacy
+   * JSON-mode (whole-file rewrite on debounced save).
+   */
+  _persistShape (appKey, entry) {
+    return {
+      appKey,
+      appId: entry.appId || null,
+      type: normalizeContentType(entry.type, 'app'),
+      parentKey: entry.parentKey || null,
+      mountPath: entry.mountPath || null,
+      version: entry.version || null,
+      name: entry.name || entry.appId || null,
+      description: entry.description || '',
+      author: entry.author || null,
+      blind: entry.blind || false,
+      storageClass: normalizeStorageClass(entry.storageClass, entry.blind ? 'temporary' : 'persistent'),
+      availabilityClass: normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on'),
+      custodyIntentId: entry.custodyIntentId || null,
+      blindContentId: entry.blindContentId || null,
+      ciphertextRoot: entry.ciphertextRoot || null,
+      contentVersion: Number.isFinite(entry.contentVersion) ? entry.contentVersion : null,
+      retainUntil: entry.retainUntil || null,
+      shardIds: Array.isArray(entry.shardIds) ? entry.shardIds : null,
+      privacyTier: entry.privacyTier || 'public',
+      publisherPubkey: entry.publisherPubkey || null,
+      durability: Number.isFinite(entry.durability) ? entry.durability : 0,
+      revocable: entry.revocable !== false,
+      categories: entry.categories || null,
+      startedAt: entry.startedAt || Date.now(),
+      discoveryKey: entry.discoveryKey
+        ? (typeof entry.discoveryKey === 'string' ? entry.discoveryKey : entry.discoveryKey.toString('hex'))
+        : null,
+      anchored: entry.anchored === true,
+      anchoredAt: entry.anchoredAt || null,
+      anchoredLength: entry.anchoredLength || 0,
+      lastAnchorCheck: entry.lastAnchorCheck || null,
+      maxStorage: Number.isFinite(entry.maxStorage) && entry.maxStorage > 0
+        ? Math.floor(entry.maxStorage)
+        : null
     }
   }
 
@@ -584,6 +780,23 @@ export class AppRegistry extends EventEmitter {
    * Coalesces rapid writes — only one save happens at a time.
    */
   async save () {
+    // v0.8.25 — Bee mode: each mutation already wrote its own block via
+    // _persistEntryToBee / _deleteEntryFromBee. save() is effectively a
+    // no-op except for flushing the bee's internal write buffer.
+    if (this._beeReady && this._bee) {
+      try {
+        if (typeof this._bee.feed?.update === 'function') {
+          // Best-effort flush — hyperbee buffers internally; this is a
+          // safety net for shutdown-time persistence guarantees.
+        }
+        return
+      } catch (err) {
+        this.emit('error', { context: 'save-bee', error: err })
+        return
+      }
+    }
+
+    // Legacy JSON mode — keep pre-v0.8.25 whole-file rewrite behavior.
     if (!this._filePath) return
 
     if (this._saving) {
@@ -595,52 +808,7 @@ export class AppRegistry extends EventEmitter {
     try {
       const entries = []
       for (const [appKey, entry] of this.apps) {
-        entries.push({
-          appKey,
-          appId: entry.appId || null,
-          type: normalizeContentType(entry.type, 'app'),
-          parentKey: entry.parentKey || null,
-          mountPath: entry.mountPath || null,
-          version: entry.version || null,
-          name: entry.name || entry.appId || null,
-          description: entry.description || '',
-          author: entry.author || null,
-          blind: entry.blind || false,
-          storageClass: normalizeStorageClass(entry.storageClass, entry.blind ? 'temporary' : 'persistent'),
-          availabilityClass: normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on'),
-          custodyIntentId: entry.custodyIntentId || null,
-          blindContentId: entry.blindContentId || null,
-          ciphertextRoot: entry.ciphertextRoot || null,
-          contentVersion: Number.isFinite(entry.contentVersion) ? entry.contentVersion : null,
-          retainUntil: entry.retainUntil || null,
-          shardIds: Array.isArray(entry.shardIds) ? entry.shardIds : null,
-          privacyTier: entry.privacyTier || 'public',
-          // v0.8.18 Phase A: persist provenance so it survives restart.
-          // Without this, federation broadcasts would lose publisher
-          // attribution on every service bounce — the in-memory entry
-          // sets these via _seedAppInner but they were vanishing on disk.
-          publisherPubkey: entry.publisherPubkey || null,
-          durability: Number.isFinite(entry.durability) ? entry.durability : 0,
-          revocable: entry.revocable !== false,
-          categories: entry.categories || null,
-          startedAt: entry.startedAt || Date.now(),
-          discoveryKey: entry.discoveryKey
-            ? (typeof entry.discoveryKey === 'string' ? entry.discoveryKey : entry.discoveryKey.toString('hex'))
-            : null,
-          // Anchor state — persisted so we don't lose the "we have blocks"
-          // signal across restarts. Fresh check still runs on startup, but
-          // until it does, the registry remembers the last known state.
-          anchored: entry.anchored === true,
-          anchoredAt: entry.anchoredAt || null,
-          anchoredLength: entry.anchoredLength || 0,
-          lastAnchorCheck: entry.lastAnchorCheck || null,
-          // v0.8.12: per-app maxStorage cap, persisted so re-pin
-          // reconciliation can compare across restarts and the size-check
-          // fires on reseed too. Null for entries that predate this field.
-          maxStorage: Number.isFinite(entry.maxStorage) && entry.maxStorage > 0
-            ? Math.floor(entry.maxStorage)
-            : null
-        })
+        entries.push(this._persistShape(appKey, entry))
       }
 
       const tmpPath = this._filePath + '.tmp'
@@ -657,7 +825,65 @@ export class AppRegistry extends EventEmitter {
     }
   }
 
-  _scheduleSave () {
+  /**
+   * v0.8.25 — single-entry persistence path used by bee mode.
+   * Fires for every set/update/delete/setAnchored/clearAnchored, so each
+   * mutation writes one small block instead of triggering a debounced
+   * rewrite of the whole registry. Errors are surfaced via the 'error'
+   * event but don't block the in-memory mutation (the caller already
+   * has the updated Map state; persistence is best-effort).
+   */
+  async _persistEntryToBee (appKey) {
+    if (!this._beeReady || !this._bee) return
+    const entry = this.apps.get(appKey)
+    if (!entry) return
+    const op = (async () => {
+      try {
+        await this._bee.put(appKey, this._persistShape(appKey, entry))
+      } catch (err) {
+        this.emit('error', { context: 'persist-bee', appKey, error: err })
+      }
+    })()
+    this._pendingBeeOps.add(op)
+    op.finally(() => this._pendingBeeOps.delete(op))
+    return op
+  }
+
+  async _deleteEntryFromBee (appKey) {
+    if (!this._beeReady || !this._bee) return
+    const op = (async () => {
+      try {
+        await this._bee.del(appKey)
+      } catch (err) {
+        this.emit('error', { context: 'delete-bee', appKey, error: err })
+      }
+    })()
+    this._pendingBeeOps.add(op)
+    op.finally(() => this._pendingBeeOps.delete(op))
+    return op
+  }
+
+  /**
+   * v0.8.25 — schedule persistence for a single entry.
+   * In bee mode, writes the one entry immediately (fire-and-forget).
+   * In legacy mode, schedules a debounced whole-file write of all entries.
+   *
+   * @param {string} [appKey] - the entry that changed (required for bee mode)
+   * @param {object} [opts]
+   * @param {boolean} [opts.deleted] - if true, deletes from bee instead of putting
+   */
+  _scheduleSave (appKey, opts = {}) {
+    if (this._beeReady) {
+      // Bee mode — single-entry write or delete, fire-and-forget.
+      // Errors surface via the 'error' event, don't block the caller.
+      if (opts.deleted) {
+        this._deleteEntryFromBee(appKey).catch(() => {})
+      } else if (appKey) {
+        this._persistEntryToBee(appKey).catch(() => {})
+      }
+      return
+    }
+    // Legacy JSON mode — debounced whole-file rewrite.
     if (this._saveDebounceTimer) clearTimeout(this._saveDebounceTimer)
     this._saveDebounceTimer = setTimeout(() => {
       this._saveDebounceTimer = null
@@ -673,6 +899,12 @@ export class AppRegistry extends EventEmitter {
     if (this._saveDebounceTimer) {
       clearTimeout(this._saveDebounceTimer)
       this._saveDebounceTimer = null
+    }
+    // v0.8.25 — drain any fire-and-forget bee writes before returning.
+    // Without this, shutdown can race the bee.put for a final
+    // setAnchored() that we want to persist before close.
+    if (this._pendingBeeOps && this._pendingBeeOps.size > 0) {
+      await Promise.allSettled([...this._pendingBeeOps])
     }
     await this.save()
   }

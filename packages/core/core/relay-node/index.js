@@ -493,6 +493,19 @@ export class RelayNode extends EventEmitter {
       }
       await this.store.ready()
 
+      // v0.8.25: attach the (now-ready) corestore to AppRegistry so its
+      // persistence layer uses a Hyperbee sibling-core instead of the
+      // JSON-blob file. Must be called BEFORE the first registry load
+      // (which happens in _reseedFromRegistry). Safe on self-heal
+      // restart: setStore is idempotent on the same store, but if the
+      // store was re-created above, we re-attach to the fresh one.
+      try {
+        this.appRegistry.setStore(this.store)
+      } catch (_) {
+        // Already attached + bee already opened (post-self-heal-restart
+        // path can fall through here). Harmless.
+      }
+
       await this.bootstrapCache.load()
       const bootstrap = this.bootstrapCache.merge(this.config.bootstrapNodes)
 

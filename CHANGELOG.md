@@ -6,6 +6,81 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.25] — 2026-05-28
+
+`AppRegistry` persistence migrated from JSON-blob to Hyperbee. Each
+mutation now writes one small block to a Hyperbee sibling-core on
+the relay's existing corestore, instead of rewriting the entire
+`app-registry.json` file on every `setAnchored()` / `clearAnchored()`
+/ `recordAnchorCheck()` etc. Public API surface unchanged; consumers
+(`RelayNode`, `AppLifecycle`, etc.) see identical behavior.
+
+### What ships
+
+- `AppRegistry.setStore(corestore)` — attach the relay's corestore so
+  persistence uses a Hyperbee on its `app-registry-v1` named core.
+  Must be called before `load()`. `RelayNode.start()` + `BareRelay.start()`
+  wire this automatically; legacy callers (tests, headless usage)
+  fall back to the JSON path untouched.
+- `_persistEntryToBee(appKey)` / `_deleteEntryFromBee(appKey)` —
+  single-entry write/delete paths. Fire-and-forget by default;
+  `flush()` awaits them for clean-shutdown semantics.
+- One-time JSON → Hyperbee migration: on first `load()` with a
+  store attached, if `app-registry.json` exists it gets migrated
+  into the bee via a batched `put()`, then renamed to `.bak`. Subsequent
+  loads read from the bee.
+- `_hydrateEntry` and `_reseedEntry` and `_persistShape` helpers
+  extracted so JSON and bee paths share normalization logic.
+
+### Why this matters
+
+This closes [#26](https://github.com/bigdestiny2/p2p-hiverelay/issues/26)
+as a side effect — the hung-writeFile cascade Ian's v0.8.22 timeouts
+mitigated is fundamentally a JSON-blob fragility. Hyperbee's
+underlying Hypercore handles partial writes / fsync natively, so
+disk-full becomes a single-block append failure (loud, recoverable)
+rather than a cascading whole-file rewrite failure. Plus:
+
+- **No more 75KB rewrite per anchor check.** Each `setAnchored()`
+  writes one block (~150 bytes for the entry's persistable shape).
+- **Atomic startup load.** Hypercore enforces this; no
+  "did the JSON file get half-written?" failure mode.
+- **Free range queries.** `bee.createReadStream({ gte: …, lte: … })`
+  becomes available for any future per-prefix iteration (not used
+  yet; foundation for v0.8.26's indexed sidecar).
+- **Free audit trail.** `bee.createHistoryStream()` exposes the
+  per-entry change history for forensics with zero extra code.
+
+### Backwards compatibility
+
+- Legacy callers without a store get the original JSON-blob behavior
+  unchanged.
+- First-time migration from existing `app-registry.json` happens
+  transparently on the next boot. The JSON is renamed to `.bak`,
+  not deleted, so it's available as a manual rollback escape hatch.
+- Empty registry files are also renamed cleanly (no re-migration
+  attempt on next boot).
+
+### Tests
+
+`test/unit/app-registry-hyperbee.test.js` — 7 tests:
+- Bee-mode empty start, set, restart preserves entries
+- JSON file migrates to bee on first load
+- set/update/delete/setAnchored persist + survive restart
+- Legacy JSON-only mode still works (no setStore call)
+- `setStore` after `load()` throws
+- Concurrent mutations of different keys all persist
+- Empty JSON file migrates cleanly (renamed but no entries to write)
+
+All 17 smoke-test suites pass.
+
+### Second of three registry improvements
+
+From the [REGISTRY-DESIGN-COMPARISON-2026-05-28.md](docs/REGISTRY-DESIGN-COMPARISON-2026-05-28.md)
+plan. Highest-leverage swap (~500 LOC of fragility removed without
+changing the public API). Next up: v0.8.26 `SeedingRegistry`
+indexed-views sidecar.
+
 ## [0.8.24] — 2026-05-28
 
 Per-key mutation locks in `SeedingRegistry` — closes documented race

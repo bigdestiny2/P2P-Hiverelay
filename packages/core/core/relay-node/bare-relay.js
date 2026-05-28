@@ -158,7 +158,12 @@ export class BareRelay extends EventEmitter {
 
     // 2. App registry — tracks what we're seeding.
     // AppRegistry takes a storage *directory*, not a full file path.
+    // v0.8.25: also pass the corestore so persistence uses a Hyperbee
+    // sibling-core instead of the JSON-blob file. setStore() must be
+    // called BEFORE load() — load() does one-time JSON→bee migration
+    // on first boot if app-registry.json exists.
     this.appRegistry = new AppRegistry(this.config.storage)
+    this.appRegistry.setStore(this.store)
     await this.appRegistry.load()
 
     // 3. Connection-layer firewall — runs before Noise handshake. Cheapest
