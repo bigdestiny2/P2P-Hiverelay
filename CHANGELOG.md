@@ -6,6 +6,119 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.23] — 2026-05-27
+
+Three community-contributed maintenance + correctness changes from
+[@iainkek](https://github.com/iainkek). Two had been waiting since
+v0.8.13 (pre-LifecycleScope vintage), now rebased + cherry-picked
+cleanly. One was opened, reviewed, and shipped within hours of
+its filing today.
+
+### Partial-quorum custody-commit support (PR #16)
+
+`validateCustodyTransition` now honors `commit.relayQuorum` as the
+authoritative receipt subset when the commit carries an explicit
+quorum list. Pre-fix, validation filtered to all receipts the relay
+happened to have visible (`anchored.filter(r => r.anchored === true)`),
+which rejected any T-of-N partial-quorum commit (T < N) the moment
+the relay accumulated MORE receipts than the publisher's chosen
+subset — e.g. receipt #4 gossiping in between collect-threshold
+and commit-submit on a 3-of-4 quorum.
+
+**The fix.** When `commit.relayQuorum` is a non-empty array, filter
+the visible receipts to that exact pubkey set:
+
+```js
+const quorumSet = new Set(entry.relayQuorum)
+receipts = anchored.filter(r => quorumSet.has(r.relayPubkey))
+if (receipts.length !== entry.relayQuorum.length) {
+  return { valid: false, reason: 'relayQuorum names receipts not yet visible' }
+}
+```
+
+Phantom-pubkey protection: if the publisher names a relay we have
+no receipt for, reject — they can't reference receipts we can't
+see. Backwards-compat: missing/empty `relayQuorum` falls back to
+the original "use all visible" behavior. Publisher's Ed25519
+signature on the commit binds the chosen set so the quorum can't
+be MitM-swapped after the fact.
+
+**Downstream impact:** drop-pear v3.0.14 reverted to wait-for-n
+on the publisher side as a workaround. With v0.8.23, drop-pear
+can revert to the v3.0.7 partial-quorum design (collect fastest
+T receipts, commit referencing them, slow relays catch up async
+without blocking drop completion). Coordinate with the drop-pear
+team before bumping.
+
+**3 new tests** in `custody-signing.test.js`: relayQuorum honored
+against named subset, phantom-pubkey rejected, legacy commits
+without relayQuorum still validate against all-visible.
+
+### Transient core error classification on Protomux publish channel (PR #17)
+
+`'Mutex has been destroyed'` added to `TRANSIENT_MARKERS`. The three
+Protomux registry-publish handlers (`onSubmitIntent`,
+`onSubmitCommit`, `onSubmitSourceRetired`) now route through a
+`wrapTransient` closure that mirrors `onSubmitSeed`'s `{ ok, result,
+error, retryable }` contract. Previously, exceptions thrown by the
+registry (corestore-close window, Mutex destroyed, etc.) bubbled
+up to PublishProtocol's default catch which converted them to
+`retryable: false` — making publishers give up on what were
+actually recoverable transient relay-state issues. The HTTP API
+already classified these correctly; this PR brings the Protomux
+path to parity.
+
+### Drop's import-subpath exports pinning (PR #30)
+
+Pinned 5 subpaths Drop imports from `p2p-hiverelay` as explicit
+named entries in `packages/core/package.json` `exports`. Today
+they resolve via the `"./*": "./*"` wildcard catch-all; named
+entries protect downstream code against future restructuring of
+`core/` (moving to `dist/`, swapping to subpath patterns, etc.).
+Both `bare-spec` and `.js`-spec entries per path. Named entries
+placed before the wildcard so resolver hits them first. Wildcard
+preserved as fallback — no regression possible for any other
+subpath consumer.
+
+This is the right precedent: the wildcard is convenient for
+development but accidentally leaks the entire internal layout
+as a stable contract. Pinning the genuinely-public subpaths
+first gives us a clean migration path to eventually narrow the
+wildcard (`"./*": null`) without a big-bang break.
+
+### Acknowledgments
+
+All three PRs by [@iainkek](https://github.com/iainkek). #16 and
+#17 were pre-v0.8.13 vintage (Ian's original work that predated
+the LifecycleScope cancellation contract); both rebased cleanly
+against current main this week. #30 was opened, reviewed,
+merged, and now released within ~24 hours of filing.
+
+### Verification
+
+15/15 smoke-test suites pass on current main with all three
+landed (custody-signing, transient-core-errors, app-registry,
+app-registry-provenance, blind-path-airtight, circuit-relay-
+bridge, dht-relay-ws-privacy, lifecycle-scope, drive-close-
+cascade, repin-cap-reconcile, cancellable-drive-update,
+anchor-status, anchor-proof, anchor-channel, partial-pin-self-
+heal integration). Total 5.3s wall time.
+
+### Carryover follow-ups (v0.8.24+)
+
+All filed as issues for tracking:
+
+- [#26](https://github.com/bigdestiny2/P2P-Hiverelay/issues/26)
+  — `app-registry save()` write-timeout (closes hung-disk
+  cascade)
+- [#27](https://github.com/bigdestiny2/P2P-Hiverelay/issues/27)
+  — Operator-facing disk-usage signal in `/health` / status
+- [#28](https://github.com/bigdestiny2/P2P-Hiverelay/issues/28)
+  — Promise-shape `drive.download()` cancellation hook (test-
+  runner artifact, no production impact)
+- [#29](https://github.com/bigdestiny2/P2P-Hiverelay/issues/29)
+  — `hiverelay_coresSeeded` metric scope expansion
+
 ## [0.8.22] — 2026-05-24
 
 Defensive timeouts on the two `await`s in the reseed + anchor paths
