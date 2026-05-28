@@ -1,6 +1,16 @@
 # HiveRelay Overview
 
-**Verifiable trust infrastructure for the peer-to-peer internet.**
+**A versatile blind peer for Pear applications. Application-agnostic. Always-on. Cryptographically gated. Privacy-preserving by default.**
+
+HiveRelay is the substrate any Pear application can plug into. Hand
+the relay a Hyperdrive key and your app comes online — discovered
+via the DHT, replicated across regions, reachable from browsers,
+mobile, and behind NATs. The relay is **blind to your application
+data** (encrypted drives stay encrypted on disk; plaintext fields
+are structurally rejected at the protocol boundary). And it's
+**application-agnostic** — the same relay simultaneously carries a
+binary mirror, a chat backend, an app store, a notes app, and
+anything else built on Hypercore + Hyperswarm.
 
 This document is the single-page mental model. If you have 10 minutes,
 read this. If you have an hour, read the
@@ -27,31 +37,46 @@ Existing relay infrastructure offers availability without provable
 custody. A relay that says "I have your content" cannot be
 distinguished, by an observer, from one that says it but doesn't.
 Encryption-aware relays solve confidentiality but leave the custody
-question unanswered.
+question unanswered. And no other Hyperswarm-compatible relay tries
+to be *application-agnostic* — most are built around a specific app
+or workload, baking assumptions into the substrate that limit reuse.
 
 ## The Fix
 
 HiveRelay is a Hyperswarm peer that joins the same DHT, speaks the
-same protocols, and replicates the same Hypercores — plus four things
-no other relay does:
+same protocols, and replicates the same Hypercores —
+application-agnostic — plus five capabilities purpose-built for
+being a versatile blind substrate:
 
-1. **Cryptographically verified replica durability.** Peers count
+1. **Bootstrap any Pear application.** Hand the relay a Hyperdrive
+   key plus your accept-mode policy; the relay keeps it online and
+   discoverable. No application-specific code, no opinionated
+   metadata schema, no privileged knowledge of what's being hosted.
+
+2. **Cryptographically verified replica durability.** Peers count
    toward archive replication only when they produce a fresh signed
    Ed25519 anchor proof. The AutoHeal scheduler recruits diverse
-   replicas across regions and operators automatically.
+   replicas across regions and operators automatically. Self-heal
+   (since v0.8.21) now pulls missing blocks peer-to-peer between
+   relays once a publisher's been online once.
 
-2. **Atomic Blind Custody.** Encrypted content handoff with quorum
+3. **Atomic Blind Custody.** Encrypted content handoff with quorum
    receipts, source-authority retirement, possession proofs, and
    independent witness tombstones for post-expiry attestation. Relays
-   never see plaintext or decryption keys.
+   never see plaintext or decryption keys; the validator
+   hard-blocks ten plaintext field names so leakage is structurally
+   impossible.
 
-3. **Real-time P2P trust pipeline.** Custody and proof traffic flow
-   over Protomux channels on the existing Hyperswarm connection. No
-   HTTPS dependency. Works on pure-DHT and NAT'd fleets.
+4. **Cross-NAT + browser/mobile ingress.** Circuit-relay protocol
+   for hole-punching fallback (cellular ↔ home Wi-Fi). `dht-relay-ws`
+   transport (WSS) for browsers and WebView Android clients to
+   participate in the DHT. No application code changes for any of it.
 
-4. **Live telemetry.** WebSocket dashboard feed surfaces per-drive
-   diversity, custody pipeline health, and immediate event push for
-   every state change.
+5. **Real-time P2P trust pipeline + live telemetry.** Custody,
+   anchor, and publish messages flow over Protomux channels on the
+   existing Hyperswarm connection — no HTTPS dependency. WebSocket
+   dashboard feed surfaces per-drive diversity, custody pipeline
+   health, and event push for every state change.
 
 ```js
 import { HiveRelayClient } from 'p2p-hiverelay-client'

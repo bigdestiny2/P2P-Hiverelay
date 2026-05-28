@@ -1,20 +1,29 @@
 # HiveRelay
 
-**Verifiable trust infrastructure for P2P apps. Always-on. Cryptographically gated. Privacy-preserving.**
+**A versatile blind peer for Pear applications. Application-agnostic. Always-on. Cryptographically gated. Privacy-preserving by default.**
 
-A relay network where availability is provable, not promised. Your P2P app stays online forever; your encrypted handoffs come with quorum receipts; expiry is enforced by the network and witnessed by independent attesters; and no relay ever sees your plaintext.
+Drop a Hyperdrive key in front of a HiveRelay node and your Pear app comes online — discovered via the DHT, replicated across regions, reachable from browsers, mobile, and behind NATs. The relay is **blind to your application data**: encrypted drives stay encrypted on disk, plaintext fields are structurally rejected at the protocol boundary, and the operator never sees what you're hosting. **Application-agnostic at every layer** — anything built on Hypercore + Hyperswarm works, whether you're shipping a notes app, a marketplace, a chat client, a binary distribution, a P2P forum, or something nobody's built yet.
 
-**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.8.15**
+It's the substrate. You build the app; the network handles availability, NAT traversal, browser/mobile ingress, custody, and self-heal.
 
-> **v0.8.15** — Audit hardening. Extends the v0.8.14 `node.store.session()` pattern to the three remaining `new Hyperdrive(...)` sites the original fix missed (gateway HTTP, storage service, standalone gateway entrypoint) — every Hyperdrive constructor in the codebase is now consistent. Plus a blind-path airtight audit: `_indexAppManifest` now skips `blind: true` drives instead of opening their manifests, and `_shouldRedactEntry` forces redaction for blind entries unconditionally so operator config cannot override the publisher's privacy commitment. 7 new unit tests guarding the boundary. Drop-in upgrade. See the [v0.8.15 release notes](./docs/RELEASE-NOTES-0.8.15.md).
->
-> **v0.8.14** — Root-cause fix for the silent `The corestore is closed` wedge that periodically forced production relays into a 503-loop after ~57h of uptime. One-line change in `_seedAppInner`: each seeded drive now gets its own `node.store.session()` so unseeding (custody-expiry, eviction, version-supersede, manual unseed) never tears down the shared root store. Closes a bug class the v0.8.13 cancellation contract only masked the *faster half of*. See the [v0.8.14 release notes](./docs/RELEASE-NOTES-0.8.14.md).
->
-> **v0.8.7–v0.8.13** — Reliability series. v0.8.13 introduced the `LifecycleScope` cancellation contract — every fire-and-forget closure is tracked and drained before `stop()` returns, eliminating the restart-triggered stale-ref class (co-authored with Iain K). v0.8.11/v0.8.12 closed the silent partial-pin trap surfaced by the pearbrowser-desktop team (`maxStorage` size-check now loud, per-app cap persistence across restarts, re-pin reconcile honoring new opts). v0.8.10 fixed an `eagerReplicate` Hypercore session leak. v0.8.8 added the `hiverelay-publish` v1 Protomux channel for external publisher-signed submits. v0.8.7 returns `503 + Retry-After` for transient corestore errors instead of hard-failing.
->
-> **v0.8.0–v0.8.6** — Atomic Blind Custody as a first-class signed protocol. AutoHeal recruits archive replicas with cryptographic peer verification. Two Protomux channels (`hiverelay-anchor`, `hiverelay-custody`) close the HTTPS dependency. Witness Tombstones close the post-expiry serving leak. Patch series: custody hardening (0.8.1), `--operator`/`--auto-heal` deploy flags (0.8.2), bug-hunt + `doctor` command (0.8.3), DHT recoverable-error fix (0.8.4), client SDK Bare-runtime compatibility (0.8.5), publisher-signed REST endpoints + CI fully green (0.8.6). Read the [whitepaper](./docs/ATOMIC-BLIND-CUSTODY.md), the [components tour](./docs/WHATS-IN-THE-RELAY.md), or the [v0.8.0 release notes](./docs/RELEASE-NOTES-0.8.0.md).
+**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.8.23**
 
-> The relay layer of the Hive substrate.
+### Recent releases
+
+For full details on each see the [CHANGELOG](./CHANGELOG.md).
+
+- **v0.8.23** — Partial-quorum custody-commit support + transient core error classification on Protomux publish channel + Drop's import-subpath exports pinned. Unblocks downstream T-of-N quorum workflows; brings Protomux retry semantics to parity with the HTTP API path.
+- **v0.8.22** — Defensive timeouts on `drive.ready()` (8s) and `_isDriveFullyReplicated` (3s). One hung drive no longer deadlocks the reseed or anchor-check loops. Surfaced by milkyb-iad's disk-full investigation: 12-of-145 entries reseeded over 15h → all 145 in minutes post-fix.
+- **v0.8.21** — Self-heal that actually heals. Hyperdrive 11.x Promise-shape `download()` API support + persistent download ranges (`core.download({ start: 0, end: -1 })`) registered on every per-app Hyperdrive's meta + blob cores. First cross-relay autonomous self-heal demonstrated on the milkyb fleet (syd anchored a drive in ~5s by pulling peer-to-peer from fra, no publisher in the loop).
+- **v0.8.20** — Anchor honesty + custody auto-attestation. `anchored=true` now requires every blob block present locally, not just metadata length. Periodic `_runCustodyExpiryPass` auto-signs `custody-non-serving-proof` on every retainUntil expiry; cross-relay witness pass signs independent witnesses of peers' proofs.
+- **v0.8.19** — Circuit-relay bridge data plane + auth-bypass closure. Reservation + connect handshake now actually completes a usable bridge over Protomux; identity binding can no longer be silently bypassed.
+- **v0.8.18** — Catalog provenance (Phase A): `publisherPubkey`, `durability`, `revocable`, `retainUntil` surfaced on broadcasts so federation peers can distinguish published-with-commitment from pure-anonymous gossip.
+- **v0.8.17** — Browser / WSS bridge enabled on 3 fleet relays via Caddy + Let's Encrypt. `wss://relay-us.p2phiverelay.xyz`, `wss://relay-sg.p2phiverelay.xyz`, `wss://relay-eu.p2phiverelay.xyz` now reachable for browser + Android WebView consumers.
+- **v0.8.16** — `dht-relay-ws` transport privacy hardening: per-process salted IP hashing, error-message scrubbing, no raw client IPs in any emitted event or log.
+- **v0.8.15** — Blind-path audit: `_indexAppManifest` skips `blind: true` drives, `_shouldRedactEntry` forces redaction unconditionally for blind entries (operator config can't override the publisher's privacy commitment). Plus extends the v0.8.14 `node.store.session()` pattern to all remaining `new Hyperdrive(...)` sites.
+- **v0.8.14** — One-line root-cause fix for the silent `The corestore is closed` wedge. Each seeded drive now gets its own `node.store.session()` so unseeding never tears down the shared root store. Closes the failure class the v0.8.13 cancellation contract only masked half of.
+- **v0.8.13** — `LifecycleScope` cancellation contract: every fire-and-forget closure is tracked and drained before `stop()` returns, eliminating the restart-triggered stale-ref class (co-authored with [@iainkek](https://github.com/iainkek)).
+- **v0.8.0–v0.8.12** — Atomic Blind Custody as a first-class signed protocol; reliability series fixing the silent partial-pin trap and Hypercore session leaks; publisher-signed REST + Protomux submission paths; `--operator` / `--auto-heal` deploy flags.
 
 ---
 
@@ -24,12 +33,13 @@ P2P apps built on Hyperswarm work beautifully — until the developer closes the
 
 HiveRelay solves all of that, then keeps going.
 
-A relay node is a Hyperswarm peer that joins the same DHT, speaks the same protocols, and replicates the same Hypercores — plus four things no other relay does:
+A HiveRelay node is a Hyperswarm peer that joins the same DHT, speaks the same protocols, and replicates the same Hypercores — application-agnostic — plus five capabilities purpose-built for being a versatile blind substrate:
 
-1. **Cryptographically verified replica durability** — peers count toward archive replication only when they produce a fresh signed Ed25519 anchor proof. AutoHeal recruits diverse replicas across regions and operators automatically.
-2. **Atomic Blind Custody** — encrypted content handoff with quorum receipts, source-authority retirement, possession proofs, and witness tombstones for post-expiry attestation. Relays never see plaintext or decryption keys.
-3. **Real-time P2P trust pipeline** — custody and proof traffic flow over Protomux channels on the existing Hyperswarm connection. Works on pure-DHT and NAT'd fleets without HTTPS.
-4. **Live telemetry** — WebSocket dashboard feed surfaces per-drive diversity, custody pipeline health, and immediate event push for every state change.
+1. **Bootstrap any Pear application.** Hand the relay a Hyperdrive key + your accept-mode policy; the relay keeps the app online and discoverable from the DHT. No application-specific code; no opinionated metadata schema; no privileged knowledge of what you're hosting. The same relay can carry a binary mirror, a chat backend, an app store, and a notes app simultaneously.
+2. **Blind by default for encrypted workloads.** The Atomic Blind Custody plane processes ciphertext only — the validator hard-blocks ten plaintext field names so leakage is structurally impossible. Operators can't see what you encrypted, and can prove they stopped storing it at expiry without ever decrypting.
+3. **Cryptographically verified replica durability.** Peers count toward archive replication only when they produce a fresh signed Ed25519 anchor proof. AutoHeal recruits diverse replicas across regions and operators automatically. Self-heal pulls missing blocks peer-to-peer between relays once a publisher's been online once.
+4. **Cross-NAT + browser/mobile ingress.** Circuit-relay protocol for hole-punching fallback (cellular ↔ home Wi-Fi). `dht-relay-ws` transport for browsers and WebView Android clients to participate in the DHT over WSS. No application code needs to change for any of it.
+5. **Real-time P2P trust pipeline + live telemetry.** Custody, anchor, and publish messages flow over Protomux channels on the existing Hyperswarm connection — no HTTPS dependency. WebSocket dashboard feed surfaces per-drive diversity, custody pipeline health, and event push for every state change.
 
 ```js
 import { HiveRelayClient } from 'p2p-hiverelay-client'
@@ -328,7 +338,7 @@ npx p2p-hiverelay testnet --nodes 5
 
 ## Test coverage
 
-The v0.8.0 trust-stack bundle (custody-signing, registry-custody, anchor-channel, custody-channel, auto-heal, ws-feed-payload, client-custody, seed-revocability, seeding-registry-hardening) runs **91 unit tests** plus a 19-assertion **end-to-end integration test** that spins up three real relays on a Hyperswarm testnet and runs the full custody pipeline.
+The v0.8.0 trust-stack bundle (custody-signing, registry-custody, anchor-channel, custody-channel, auto-heal, ws-feed-payload, client-custody, seed-revocability, seeding-registry-hardening) was the foundation. Eight subsequent releases added regression coverage for each shipped fix: anchor honesty (PR #19), circuit-relay bridge (v0.8.19), catalog provenance (v0.8.18), blind-path airtight (v0.8.15), `dht-relay-ws` privacy (v0.8.16), partial-pin self-heal integration (v0.8.21), defensive timeouts (v0.8.22), partial-quorum custody-commit (v0.8.23), and more. Current core smoke battery is 15 suites / hundreds of assertions, 5.3s wall time on a clean checkout, all green on each release.
 
 Two simulation harnesses cover behaviors unit tests can't reach:
 - `scripts/simulate-blind-atomic-custody.js` — Monte Carlo across 7 protocol scenarios, 5,000 trials each. Surfaced the witness tombstone primitive as the highest-leverage post-expiry attestation.
@@ -338,32 +348,36 @@ Two simulation harnesses cover behaviors unit tests can't reach:
 
 ## Documentation
 
+### Start here
+- **[HIVERELAY_OVERVIEW.md](docs/HIVERELAY_OVERVIEW.md)** — single-page mental model
+- **[PEAR-INTEGRATION.md](docs/PEAR-INTEGRATION.md)** — Pear / Bare usage guide
+- **[CHANGELOG.md](./CHANGELOG.md)** — release-by-release notes for every version
+
+### Atomic Blind Custody
+- **[ATOMIC-BLIND-CUSTODY.md](docs/ATOMIC-BLIND-CUSTODY.md)** — full protocol whitepaper (threat model, state machine, security analysis, simulation evidence, comparison to Filecoin/Sia/Storj/IPFS)
+- **[WHATS-IN-THE-RELAY.md](docs/WHATS-IN-THE-RELAY.md)** — guided tour of every component
+- **[TUTORIAL-CUSTODY-QUICKSTART.md](docs/TUTORIAL-CUSTODY-QUICKSTART.md)** — build an encrypted custody handoff in 10 minutes
+- **[atomic-network-design.md](docs/atomic-network-design.md)** — extended design doc with rollout matrix and protocol shape
+- **[ATOMIC-CUSTODY-SIMULATION.md](docs/ATOMIC-CUSTODY-SIMULATION.md)** — simulation methodology and findings
+
 ### Publisher guides
 - **[PUBLISHING.md](docs/PUBLISHING.md)** — what to know before you pin a Hyperdrive (the `maxStorage` trap, `verify-pin` pattern, publisher commitments)
 
-### v0.8.0 release
-- **[ATOMIC-BLIND-CUSTODY.md](docs/ATOMIC-BLIND-CUSTODY.md)** — full protocol whitepaper (threat model, state machine, security analysis, simulation evidence, comparison to Filecoin/Sia/Storj/IPFS)
-- **[WHATS-IN-THE-RELAY.md](docs/WHATS-IN-THE-RELAY.md)** — guided tour of every component the relay picks up at v0.8.0
-- **[TUTORIAL-CUSTODY-QUICKSTART.md](docs/TUTORIAL-CUSTODY-QUICKSTART.md)** — build an encrypted custody handoff in 10 minutes
-- **[RELEASE-NOTES-0.8.1.md](docs/RELEASE-NOTES-0.8.1.md)** — custody hardening patch (witness validation, source retirement immutability, appKey redaction)
-- **[RELEASE-NOTES-0.8.0.md](docs/RELEASE-NOTES-0.8.0.md)** — what's new + migration guide for operators upgrading from 0.7.x
-- **[HIVERELAY_OVERVIEW.md](docs/HIVERELAY_OVERVIEW.md)** — single-page mental model
-- **[atomic-network-design.md](docs/atomic-network-design.md)** — extended design doc with rollout matrix and protocol shape
-- **[ATOMIC-CUSTODY-SIMULATION.md](docs/ATOMIC-CUSTODY-SIMULATION.md)** — simulation methodology and findings
-- **[M2-ROADMAP.md](docs/M2-ROADMAP.md)** — what's next (post-v0.8.0)
-
-### Strategic & security
-- **[MANIFESTO.md](docs/MANIFESTO.md)** — non-negotiable architectural values
-- **[Hive_Engineering_Brief.md](docs/Hive_Engineering_Brief.md)** — architecture + business decisions
+### Security & threat model
 - **[THREAT-MODEL.md](docs/THREAT-MODEL.md)** — security thesis
 - **[SECURITY-STRATEGY.md](docs/SECURITY-STRATEGY.md)** — attack-vector mitigation tracker
 - **[CRYPTO-GUARANTEES.md](docs/CRYPTO-GUARANTEES.md)** — cryptographic primitives audit
+- **[AUTO-HEAL-ROOT-CAUSE-2026-05-22.md](docs/AUTO-HEAL-ROOT-CAUSE-2026-05-22.md)** — v0.8.20 partial-pin root-cause investigation (the "anchor honesty" backstory)
 
-### Operator & developer
+### Operator
 - **[v0.5.1-CAPABILITIES.md](docs/v0.5.1-CAPABILITIES.md)** — capability doc + error prefixes + manifests spec
-- **[PEAR-INTEGRATION.md](docs/PEAR-INTEGRATION.md)** — Pear/Bare usage guide
-- **[HOMEHIVE.md](docs/HOMEHIVE.md)** — private mode for home/family
+- **[HOMEHIVE.md](docs/HOMEHIVE.md)** — private mode for home / family
 - **[ECONOMICS.md](docs/ECONOMICS.md)** — economics design
+- **[OPERATOR-INCENTIVES-Y1.md](docs/OPERATOR-INCENTIVES-Y1.md)** — operator-side incentive design
+
+### Roadmap
+- **[M2-ROADMAP.md](docs/M2-ROADMAP.md)** — what's next (post-v0.8.0 milestone)
+- **[AUDIT-ROADMAP.md](docs/AUDIT-ROADMAP.md)** — outstanding audit items + tracking
 
 ---
 
