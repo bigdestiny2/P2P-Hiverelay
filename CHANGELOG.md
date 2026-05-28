@@ -6,6 +6,47 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.24] — 2026-05-28
+
+Per-key mutation locks in `SeedingRegistry` — closes documented race
+windows where concurrent custody mutations on the same intentId (or
+seed mutations on the same appKey) could each observe a stale status,
+each pass `validateCustodyTransition`, and each append, producing
+duplicate entries.
+
+Lifted from the Holepunch challenge `username-registry`'s
+`_withMutationLock` pattern, but scoped **per-key** so unrelated
+operations stay parallel — only mutations sharing a key serialize.
+Lock map entries clean up automatically when no waiters are queued
+behind, so the map doesn't grow unbounded.
+
+### What ships
+
+- New `SeedingRegistry._withKeyLock(key, fn)` helper
+- `_appendCustodyEntry` now serializes on `custody:${intentId}` —
+  closes the `read status → validate → append` race
+- `publishRequest`, `recordAcceptance`, `cancelRequest` serialize on
+  `seed:${appKey}` — closes the `append → applyEntry → emit` race
+- 6 new unit tests in `test/unit/registry-mutation-locks.test.js`:
+  same-key serialization, different-key parallelism, slot cleanup,
+  chained queueing mid-flight, failure-doesn't-block-next-op,
+  chained-failures-still-serialize
+
+### Behavior in the no-contention case
+
+Identical. The lock is a best-case noop — a non-contended key sees
+the lock chain reduce to `await Promise.resolve()` which the engine
+optimizes to nothing.
+
+### Why this is the right starter
+
+First of three registry-design improvements derived from the
+Holepunch challenge comparison (see
+[REGISTRY-DESIGN-COMPARISON-2026-05-28.md](docs/REGISTRY-DESIGN-COMPARISON-2026-05-28.md)).
+Smallest surface, lowest risk, real race closure — good warm-up
+before v0.8.25 (AppRegistry → Hyperbee) and v0.8.26 (SeedingRegistry
+indexed-views sidecar).
+
 ## [0.8.23] — 2026-05-27
 
 Three community-contributed maintenance + correctness changes from

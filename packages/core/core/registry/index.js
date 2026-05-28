@@ -81,6 +81,16 @@ export class SeedingRegistry extends EventEmitter {
     this.peerLogs = new Map() // logKey hex -> Hypercore
     this.running = false
 
+    // v0.8.24 — per-key mutation locks. Wraps the read→validate→append
+    // dance for custody entries (and seed-request appends keyed by
+    // appKey) so concurrent in-process mutations on the SAME intentId
+    // or appKey serialize cleanly. Different keys don't block each
+    // other. Pattern lifted from the Holepunch challenge's
+    // _withMutationLock, scoped per-key so unrelated operations stay
+    // parallel. See docs/REGISTRY-DESIGN-COMPARISON-2026-05-28.md for
+    // motivation.
+    this._keyLocks = new Map() // key string -> tail Promise
+
     // In-memory indexes rebuilt from logs
     this._requests = new Map() // appKey -> latest seed-request entry
     this._acceptances = new Map() // appKey -> [{ relayPubkey, region, timestamp }]
@@ -630,10 +640,11 @@ export class SeedingRegistry extends EventEmitter {
     const mountPath = typeof request.mountPath === 'string' && request.mountPath.trim().startsWith('/')
       ? request.mountPath.trim()
       : null
+    const appKeyHex = b4a.toString(request.appKey, 'hex')
     const entry = {
       type: 'seed-request',
       timestamp: Date.now(),
-      appKey: b4a.toString(request.appKey, 'hex'),
+      appKey: appKeyHex,
       discoveryKeys: request.discoveryKeys.map(dk => b4a.toString(dk, 'hex')),
       contentType,
       parentKey,
@@ -650,10 +661,14 @@ export class SeedingRegistry extends EventEmitter {
       publisherPubkey: b4a.toString(request.publisherPubkey, 'hex')
     }
 
-    await this.localLog.append(b4a.from(JSON.stringify(entry)))
-    this._applyEntry(entry)
-    this.emit('request-published', entry)
-    return entry
+    // v0.8.24: serialize on appKey so two concurrent publishRequest calls
+    // for the same drive can't race the _applyEntry index update.
+    return this._withKeyLock(`seed:${appKeyHex}`, async () => {
+      await this.localLog.append(b4a.from(JSON.stringify(entry)))
+      this._applyEntry(entry)
+      this.emit('request-published', entry)
+      return entry
+    })
   }
 
   /**
@@ -668,10 +683,15 @@ export class SeedingRegistry extends EventEmitter {
       region
     }
 
-    await this.localLog.append(b4a.from(JSON.stringify(entry)))
-    this._applyEntry(entry)
-    this.emit('acceptance-recorded', entry)
-    return entry
+    // v0.8.24: serialize on appKey so concurrent acceptance records for
+    // the same drive (e.g. multiple seed flows mid-flight) can't both
+    // pass index updates and emit duplicate events.
+    return this._withKeyLock(`seed:${appKeyHex}`, async () => {
+      await this.localLog.append(b4a.from(JSON.stringify(entry)))
+      this._applyEntry(entry)
+      this.emit('acceptance-recorded', entry)
+      return entry
+    })
   }
 
   async publishCustodyIntent (intent, publisherKeyPair) {
@@ -767,18 +787,56 @@ export class SeedingRegistry extends EventEmitter {
     return verified.entry
   }
 
+  /**
+   * v0.8.24 — Per-key mutation lock. Serializes async mutations that
+   * share the same key (intentId for custody, appKey for seed), while
+   * leaving different keys parallel. Lifted from the Holepunch
+   * challenge's _withMutationLock pattern, but scoped per-key so
+   * unrelated operations don't queue behind each other.
+   *
+   * The map entry is cleared when no operation is waiting, so the
+   * lock map doesn't grow unbounded — short-lived keys release their
+   * slots automatically.
+   *
+   * @param {string} key
+   * @param {() => Promise<T>} fn
+   * @returns {Promise<T>}
+   */
+  async _withKeyLock (key, fn) {
+    const previous = this._keyLocks.get(key) || Promise.resolve()
+    let release
+    const next = new Promise((resolve) => { release = resolve })
+    this._keyLocks.set(key, next)
+    try {
+      await previous
+      return await fn()
+    } finally {
+      release()
+      // Only delete if no one queued behind us. If another op grabbed
+      // the slot, leave their `next` Promise as the new tail.
+      if (this._keyLocks.get(key) === next) this._keyLocks.delete(key)
+    }
+  }
+
   async _appendCustodyEntry (entry, eventName) {
-    const status = this.getCustodyStatus(entry.intentId)
-    const transition = validateCustodyTransition(entry, status)
-    if (!transition.valid) throw new Error(`INVALID_CUSTODY_TRANSITION: ${transition.reason}`)
-    await this.localLog.append(b4a.from(JSON.stringify(entry)))
-    this._applyEntry(entry)
-    this.emit(eventName, entry)
-    // Local-append also fires `custody-entry-appended` so the relay-node
-    // (or any other consumer) can broadcast the entry over Protomux for
-    // real-time push without waiting for log replication.
-    this.emit('custody-entry-appended', { entry, eventName })
-    return entry
+    // Serialize on intentId so concurrent calls for the same intent
+    // can't both observe a stale status, both pass validation, and
+    // both append. Without this lock, e.g. two concurrent
+    // publishCustodyCommit() for the same intentId can each see "no
+    // commit yet" and append two duplicate commits.
+    return this._withKeyLock(`custody:${entry.intentId}`, async () => {
+      const status = this.getCustodyStatus(entry.intentId)
+      const transition = validateCustodyTransition(entry, status)
+      if (!transition.valid) throw new Error(`INVALID_CUSTODY_TRANSITION: ${transition.reason}`)
+      await this.localLog.append(b4a.from(JSON.stringify(entry)))
+      this._applyEntry(entry)
+      this.emit(eventName, entry)
+      // Local-append also fires `custody-entry-appended` so the relay-node
+      // (or any other consumer) can broadcast the entry over Protomux for
+      // real-time push without waiting for log replication.
+      this.emit('custody-entry-appended', { entry, eventName })
+      return entry
+    })
   }
 
   /**
@@ -878,10 +936,18 @@ export class SeedingRegistry extends EventEmitter {
       publisherPubkey: publisherPubkeyHex
     }
 
-    await this.localLog.append(b4a.from(JSON.stringify(entry)))
-    this._applyEntry(entry)
-    this.emit('request-cancelled', entry)
-    return entry
+    // v0.8.24: serialize on appKey so concurrent cancel + publishRequest
+    // for the same drive can't interleave. publishRequest first then
+    // cancel arrives = entry properly cancelled. Cancel first then
+    // publishRequest arrives = new publish supersedes the cancel (the
+    // cancellation has timestamp; getActiveRequests only treats it as
+    // canceling entries with earlier timestamps).
+    return this._withKeyLock(`seed:${appKeyHex}`, async () => {
+      await this.localLog.append(b4a.from(JSON.stringify(entry)))
+      this._applyEntry(entry)
+      this.emit('request-cancelled', entry)
+      return entry
+    })
   }
 
   /**
