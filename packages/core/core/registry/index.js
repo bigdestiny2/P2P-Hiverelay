@@ -9,6 +9,7 @@
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import Protomux from 'protomux'
+import Hyperbee from 'hyperbee'
 import { EventEmitter } from 'events'
 import {
   isValidHexKey,
@@ -120,16 +121,60 @@ export class SeedingRegistry extends EventEmitter {
     // for-loop's next `log.get(i)` against a freshly-closed core. See
     // STALE-REF-INVENTORY.md vector A3 and CANCELLATION-CONTRACT.md.
     this._scope = opts.scope || null
+
+    // v0.8.26 — Hyperbee indexed-views sidecar. A sibling Hypercore
+    // (named 'seeding-registry-index-v1') holds the post-_applyEntry
+    // state keyed by entry-shape so the in-memory maps can be
+    // hydrated without replaying every log on every restart. The
+    // bee is a CACHE of derived state; the multi-writer logs remain
+    // the canonical source of truth. _indexLog still runs after
+    // hydration to catch up entries appended since the last bee
+    // write — the in-memory _applyEntry timestamp deduping makes
+    // those replays idempotent.
+    //
+    // Schema:
+    //   entry:<type>:<composite-key> → entry JSON
+    // See _entryKey() below for the composite-key formats per type.
+    this._indexBee = null
+    this._indexBeeReady = false
+    this._pendingIndexOps = new Set()
   }
 
   async start () {
+    // v0.8.26 — open the indexed-views sidecar BEFORE the log replay so
+    // hydration happens first. Defensive against bee-open failures
+    // (test stubs, missing corestore caps): falls back silently and
+    // the existing log-replay path is unchanged.
+    try {
+      const beeCore = this.store.get({ name: 'seeding-registry-index-v1' })
+      if (beeCore && typeof beeCore.ready === 'function') {
+        await beeCore.ready()
+        this._indexBee = new Hyperbee(beeCore, {
+          keyEncoding: 'utf-8',
+          valueEncoding: 'json'
+        })
+        if (typeof this._indexBee.ready === 'function') {
+          await this._indexBee.ready()
+        }
+        this._indexBeeReady = true
+        await this._hydrateFromIndexBee()
+      }
+    } catch (err) {
+      // Bee unavailable — continue with log-only behavior.
+      this._indexBee = null
+      this._indexBeeReady = false
+    }
+
     // Create local log for this node's registry entries
     this.localLog = this.store.get({ name: 'seeding-registry-local' })
     await this.localLog.ready()
 
     const localLogKeyHex = b4a.toString(this.localLog.key, 'hex')
 
-    // Rebuild index from local log
+    // Rebuild index from local log (idempotent thanks to _applyEntry
+    // timestamp deduping; the bee hydration above already populated
+    // most/all entries — this catches up anything appended since the
+    // last bee write).
     await this._indexLog(this.localLog, localLogKeyHex)
     this._onLocalAppend = () => {
       // Track in the LifecycleScope so RelayNode.stop()'s drain awaits
@@ -490,6 +535,15 @@ export class SeedingRegistry extends EventEmitter {
     }
 
     entry = normalized
+
+    // v0.8.26 — persist the normalized entry to the indexed-views bee.
+    // Skipped for hydration source (entry is already in the bee — no
+    // need to re-write it) so we don't kick off a full bee-rewrite
+    // during startup hydration. New entries (from log replay or local
+    // append) get persisted so the next restart's hydration sees them.
+    if (source.source !== 'hydrate') {
+      this._persistToIndexBee(entry)
+    }
     if (entry.type === 'seed-request') {
       const cancelKey = entry.appKey + ':' + entry.publisherPubkey
       const canceledAt = this._cancellations.get(cancelKey)
@@ -779,6 +833,112 @@ export class SeedingRegistry extends EventEmitter {
         blindContentId: witness.blindContentId || intent?.blindContentId
       }, witnessKeyPair)
     return this._appendCustodyEntry(entry, 'custody-expiry-witness-recorded')
+  }
+
+  // ─── v0.8.26 — Indexed-views sidecar helpers ────────────────────
+
+  /**
+   * Build a stable composite-key for an indexed entry. Format:
+   * `entry:<type>:<id>` so the bee's natural ordering groups by type.
+   * Returns null if the entry doesn't have a stable identity (we
+   * skip persistence for those — they're transient anyway).
+   */
+  _entryKey (entry) {
+    if (!entry || typeof entry !== 'object') return null
+    switch (entry.type) {
+      case 'seed-request':
+        return entry.appKey ? `entry:seed-request:${entry.appKey}` : null
+      case 'seed-accept':
+        return (entry.appKey && entry.relayPubkey)
+          ? `entry:seed-accept:${entry.appKey}:${entry.relayPubkey}`
+          : null
+      case 'seed-cancel':
+        return (entry.appKey && entry.publisherPubkey)
+          ? `entry:seed-cancel:${entry.appKey}:${entry.publisherPubkey}`
+          : null
+      case 'custody-intent':
+        return entry.intentId ? `entry:custody-intent:${entry.intentId}` : null
+      case 'custody-receipt':
+        return (entry.intentId && entry.relayPubkey)
+          ? `entry:custody-receipt:${entry.intentId}:${entry.relayPubkey}`
+          : null
+      case 'custody-commit':
+        return entry.intentId ? `entry:custody-commit:${entry.intentId}` : null
+      case 'source-retired':
+        return entry.intentId ? `entry:source-retired:${entry.intentId}` : null
+      case 'custody-proof':
+        return (entry.intentId && entry.observerPubkey && entry.relayPubkey && entry.challengeNonce)
+          ? `entry:custody-proof:${entry.intentId}:${entry.observerPubkey}:${entry.relayPubkey}:${entry.challengeNonce}`
+          : null
+      case 'custody-non-serving-proof':
+        return (entry.intentId && entry.relayPubkey && entry.challengeNonce)
+          ? `entry:custody-non-serving-proof:${entry.intentId}:${entry.relayPubkey}:${entry.challengeNonce}`
+          : null
+      case 'custody-expiry-witness':
+        return (entry.intentId && entry.witnessPubkey && entry.relayPubkey && entry.challengeNonce)
+          ? `entry:custody-expiry-witness:${entry.intentId}:${entry.witnessPubkey}:${entry.relayPubkey}:${entry.challengeNonce}`
+          : null
+      default:
+        return null
+    }
+  }
+
+  /**
+   * v0.8.26 — Hydrate the in-memory indexes from the bee BEFORE log replay.
+   * For every entry stored under the `entry:` prefix, call _applyEntry
+   * (which dedupes by timestamp — idempotent). After this, the
+   * subsequent _indexLog calls only catch up entries appended since
+   * the last bee write.
+   */
+  async _hydrateFromIndexBee () {
+    if (!this._indexBeeReady || !this._indexBee) return 0
+    let hydrated = 0
+    try {
+      for await (const node of this._indexBee.createReadStream({
+        gte: 'entry:',
+        lte: 'entry:~'
+      })) {
+        const entry = node.value
+        if (!entry || typeof entry !== 'object') continue
+        // Apply through the normal entry path so timestamp deduping
+        // + custody-status invalidation fire correctly.
+        this._applyEntry(entry, { source: 'hydrate', logId: null })
+        hydrated++
+      }
+      this.emit('hydrated', { count: hydrated, source: 'index-bee' })
+    } catch (err) {
+      this.emit('index-error', { context: 'hydrate', error: err.message || String(err) })
+    }
+    return hydrated
+  }
+
+  /**
+   * v0.8.26 — fire-and-forget bee write for an indexed entry.
+   * Caller MUST NOT block on this; the bee is a cache. The
+   * authoritative state remains the multi-writer logs.
+   */
+  _persistToIndexBee (entry) {
+    if (!this._indexBeeReady || !this._indexBee) return
+    const key = this._entryKey(entry)
+    if (!key) return
+    const op = (async () => {
+      try {
+        await this._indexBee.put(key, entry)
+      } catch (err) {
+        this.emit('index-error', { context: 'persist-bee', error: err.message || String(err) })
+      }
+    })()
+    this._pendingIndexOps.add(op)
+    op.finally(() => this._pendingIndexOps.delete(op))
+  }
+
+  /**
+   * Await any in-flight bee writes. Used by stop() so the next
+   * startup's hydration sees a complete view of recent mutations.
+   */
+  async _flushIndexBee () {
+    if (!this._pendingIndexOps || this._pendingIndexOps.size === 0) return
+    await Promise.allSettled([...this._pendingIndexOps])
   }
 
   _verifiedCustodyEntry (entry) {
@@ -1110,6 +1270,10 @@ export class SeedingRegistry extends EventEmitter {
 
   async stop () {
     this.running = false
+    // v0.8.26 — drain any fire-and-forget index-bee writes BEFORE
+    // closing the underlying core. Otherwise the next startup's
+    // hydration may miss the last few mutations.
+    try { await this._flushIndexBee() } catch (_) {}
     try { await this.swarm.leave(REGISTRY_TOPIC) } catch (err) {
       this.emit('stop-error', { operation: 'swarm.leave', error: err.message })
     }

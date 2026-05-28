@@ -6,6 +6,78 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.26] — 2026-05-28
+
+`SeedingRegistry` Hyperbee indexed-views sidecar. A sibling Hypercore
+named `seeding-registry-index-v1` mirrors `_applyEntry` output keyed
+by entry-shape, so startup hydration restores the in-memory custody +
+seed state without replaying every log block from offset 0.
+
+The multi-writer logs remain the canonical source of truth — the bee
+is a cache of derived state. `_indexLog` still runs after hydration
+to catch up entries appended since the last bee write; the existing
+`_applyEntry` timestamp deduping makes the replay idempotent so
+duplicates are no-ops.
+
+### What ships
+
+- `Hyperbee` import + sibling-core open in `start()` before any log
+  replay, with defensive fallback to log-only behavior if the bee
+  can't open (test stubs, missing corestore caps).
+- `_entryKey(entry)` — stable composite-key derivation per entry
+  type (`entry:custody-intent:<intentId>`,
+  `entry:custody-receipt:<intentId>:<relayPubkey>`,
+  `entry:custody-proof:<intentId>:<observerPubkey>:<relayPubkey>:<challengeNonce>`,
+  etc.)
+- `_hydrateFromIndexBee()` — iterates the `entry:` prefix on startup
+  and replays each entry through `_applyEntry(...{ source: 'hydrate' })`.
+  Skips re-persistence on hydrate-source so we don't loop.
+- `_persistToIndexBee(entry)` — fire-and-forget put hook inserted
+  into `_applyEntry` after normalization. Tracks in-flight ops in
+  `_pendingIndexOps` so `stop()` / `_flushIndexBee()` can drain.
+- `stop()` awaits in-flight bee writes before closing the local log
+  — guarantees the next start's hydration sees a complete view.
+- `'hydrated'` event with `{ count, source: 'index-bee' }` so
+  consumers/dashboards can observe restart speed.
+
+### Why this matters
+
+Pre-v0.8.26, every relay restart re-indexed every log from block 0.
+On a relay with 2,400 entries across 5 logs that's an O(N·M)
+sequential read. With the bee sidecar, hydration is O(M) and the
+in-memory state is up before the swarm even reaches steady state.
+
+### Backwards compatibility
+
+- Fully backwards-compatible. Defensive fallback: if the bee can't
+  open (e.g. test stubs, headless usage), `_indexBeeReady` stays
+  false and the existing log-only behavior runs unchanged.
+- No wire format changes. Logs are unaffected.
+- Sidecar core is named `seeding-registry-index-v1` on the same
+  corestore. Created on first start, populated incrementally.
+
+### Tests
+
+`test/unit/registry-index-bee.test.js` — 4 tests:
+- End-to-end persistence + survival across restart (with real
+  testnet + swarm)
+- `_entryKey` returns stable composite keys per type
+- Hydration is idempotent — dedup via timestamp on subsequent
+  log replay
+- `'hydrated'` event fires with the right shape
+
+All 11 adjacent suites still pass.
+
+### Third of three registry improvements
+
+Completes the [REGISTRY-DESIGN-COMPARISON-2026-05-28.md](docs/REGISTRY-DESIGN-COMPARISON-2026-05-28.md)
+plan (Priorities 4, 1, 2 in order — v0.8.24, v0.8.25, v0.8.26).
+
+Deferred to v0.8.27+: secondary indexes on the bee
+(`byPublisher:<pubkey>`, `byTimestamp:<ts>`) for cheap range queries
+and per-log `lastIndexedOffset` tracking so subsequent restarts can
+SKIP the log-replay catchup entirely.
+
 ## [0.8.25] — 2026-05-28
 
 `AppRegistry` persistence migrated from JSON-blob to Hyperbee. Each
