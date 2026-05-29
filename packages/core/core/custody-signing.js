@@ -416,6 +416,16 @@ export function validateCustodyTransition (entry, status = {}) {
   if (!entry || !entry.type) return { valid: false, reason: 'entry required' }
   const intent = status.intent
 
+  // Claim path. A validated source-retirement (publisher signed "I deleted
+  // the source" — which itself requires a custody commit, so the recipient/
+  // quorum already holds the content) discharges the relay's serving
+  // obligation BEFORE retainUntil. On that path a non-serving-proof or
+  // expiry-witness timestamped before retainUntil is legitimate, not
+  // premature. Outside it, the retainUntil floor still holds.
+  // getCustodyStatus() exposes the retirement as `sourceRetirement`;
+  // summarizeCustodyStatus() passes it as `sourceRetired`.
+  const sourceRetired = !!(status.sourceRetired || status.sourceRetirement)
+
   if (entry.type === 'custody-receipt') {
     if (!intent) return { valid: true }
     if (entry.blindContentId !== intent.blindContentId) return { valid: false, reason: 'blindContentId mismatch' }
@@ -485,7 +495,9 @@ export function validateCustodyTransition (entry, status = {}) {
     if (intent && entry.blindContentId !== intent.blindContentId) return { valid: false, reason: 'blindContentId mismatch' }
     if (intent && entry.addressKey !== intent.addressKey) return { valid: false, reason: 'addressKey mismatch' }
     if (intent && entry.retainUntil < intent.retainUntil) return { valid: false, reason: 'retainUntil below intent' }
-    if (intent && entry.timestamp < intent.retainUntil) return { valid: false, reason: 'non-serving proof before retainUntil' }
+    if (intent && entry.timestamp < intent.retainUntil && !sourceRetired) {
+      return { valid: false, reason: 'non-serving proof before retainUntil' }
+    }
     if (entry.notServing !== true) return { valid: false, reason: 'notServing must be true' }
     if (entry.catalogPresent || entry.activeSwarmServing) return { valid: false, reason: 'relay still reports active serving state' }
   }
@@ -493,7 +505,9 @@ export function validateCustodyTransition (entry, status = {}) {
   if (entry.type === 'custody-expiry-witness') {
     if (!intent) return { valid: false, reason: 'custody intent required before witness tombstone' }
     if (entry.blindContentId !== intent.blindContentId) return { valid: false, reason: 'blindContentId mismatch' }
-    if (entry.timestamp < intent.retainUntil) return { valid: false, reason: 'witness before retainUntil' }
+    if (entry.timestamp < intent.retainUntil && !sourceRetired) {
+      return { valid: false, reason: 'witness before retainUntil' }
+    }
     if (entry.catalogPresent || entry.gatewayServing || entry.activeSwarmObserved) {
       return { valid: false, reason: 'witness observed active serving state' }
     }
@@ -512,7 +526,7 @@ export function validateCustodyTransition (entry, status = {}) {
 export function summarizeCustodyStatus (intent, receipts = [], commit = null, retirement = null, proofs = [], nonServingProofs = [], expiryWitnesses = []) {
   const requiredReplicas = intent?.requiredReplicas || 0
   const validReceipts = receipts.filter(r => r.anchored === true)
-  const validExpiryWitnesses = expiryWitnesses.filter(w => validateCustodyTransition(w, { intent, nonServingProofs }).valid)
+  const validExpiryWitnesses = expiryWitnesses.filter(w => validateCustodyTransition(w, { intent, nonServingProofs, sourceRetired: retirement }).valid)
   return {
     intentId: intent?.intentId || null,
     blindContentId: intent?.blindContentId || null,

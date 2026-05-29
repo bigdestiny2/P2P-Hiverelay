@@ -220,3 +220,40 @@ export function buildPublisherSignedSeedOpts (body, opts = {}) {
 
   return { ok: true, appKey: body.appKey, opts: seedOpts }
 }
+
+/**
+ * Pull the optional atomic-custody linkage off a seed-request-like object
+ * into a `seedApp()`-ready opts fragment. Used by the legacy Protomux
+ * seed-protocol handlers (`_onSeedRequest`) so they keep the custody binding
+ * the publisher-signed publish-channel / HTTP path keeps via
+ * `buildPublisherSignedSeedOpts`. Without it, a custody seed accepted over
+ * the legacy path lands with no `custodyIntentId`/`retainUntil`, so the
+ * relay can never sign a non-serving-proof for it (it would silently never
+ * attest).
+ *
+ * Only well-formed fields are included; anything absent or malformed is
+ * omitted (seedApp normalizes missing custody fields to null). This is
+ * deliberately permissive on read — it does NOT re-verify the publisher
+ * signature, because the legacy seed-protocol already gates acceptance
+ * upstream and the binary wire encoding doesn't yet carry (or sign) these
+ * fields. Treat the publish channel as the authenticated custody path.
+ *
+ * @param {object} msg seed-request message (decoded wire msg or enriched object)
+ * @returns {object} fragment to spread into seedApp opts
+ */
+export function extractCustodySeedOpts (msg) {
+  const out = {}
+  if (!msg || typeof msg !== 'object') return out
+  for (const field of ['custodyIntentId', 'blindContentId', 'ciphertextRoot']) {
+    if (typeof msg[field] === 'string' && isValidHexKey(msg[field], 64)) {
+      out[field] = msg[field].toLowerCase()
+    }
+  }
+  if (Number.isFinite(msg.contentVersion) && msg.contentVersion >= 0) {
+    out.contentVersion = Math.floor(msg.contentVersion)
+  }
+  if (Number.isFinite(msg.retainUntil) && msg.retainUntil >= 0) {
+    out.retainUntil = Math.floor(msg.retainUntil)
+  }
+  return out
+}

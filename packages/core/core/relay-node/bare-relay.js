@@ -52,6 +52,7 @@ import { Seeder } from './seeder.js'
 import { Relay } from './relay.js'
 import { AppLifecycle } from './app-lifecycle.js'
 import { SeedProtocol } from '../protocol/seed-request.js'
+import { extractCustodySeedOpts } from '../seed-request-builder.js'
 import { CircuitRelay } from '../protocol/relay-circuit.js'
 import { ProofOfRelay } from '../protocol/proof-of-relay.js'
 import { AppRegistry } from '../app-registry.js'
@@ -571,12 +572,21 @@ export class BareRelay extends EventEmitter {
       availableBytes
     )
 
-    // Propagate revocability commitments from the signed seed request.
+    // Propagate revocability commitments + any atomic-custody linkage from
+    // the signed seed request, matching the Node relay's _onSeedRequest. The
+    // custody fields keep parity with the publish-channel path so a custody
+    // seed accepted here records the same intent binding (see
+    // extractCustodySeedOpts). The binary wire encoding doesn't yet carry
+    // them, so they only arrive on an enriched msg today.
     this.appLifecycle.seedApp(appKeyHex, {
       publisherPubkey: effectivePublisher,
       revocable: msg.revocable !== false,
       unseedFreezeMs: msg.unseedFreezeMs || 0,
-      durability: msg.durability || 0
+      durability: msg.durability || 0,
+      blind: msg.blind === true,
+      storageClass: msg.storageClass || null,
+      availabilityClass: msg.availabilityClass || null,
+      ...extractCustodySeedOpts(msg)
     }).then(() => {
       log.info('  ✓ seeded:', appKeyHex.slice(0, 16))
     }).catch((err) => {

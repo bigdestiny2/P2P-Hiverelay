@@ -6,6 +6,88 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.27] — 2026-05-29
+
+Claim-path erasure witness. Closes the gap where a *claimed* custody drop
+produced no third-party-provable destruction until its (often weeks-long)
+`retainUntil` window elapsed — the exact piece dmc flagged as missing for
+"provable to a third party," and what Drop's Ian saw as empty
+`nonServingProofs` / `expiryWitnesses` on a committed-and-retired intent.
+
+Before this release the expiry sweep only attested the *unclaimed*-expiry
+path: content that sat untouched until `retainUntil` lapsed. A drop whose
+publisher had already signed a `source-retired` entry (which requires a
+validated `commit`, so the recipient/quorum already holds the content)
+produced no destruction proof until that same window passed.
+
+v0.8.27 relaxes the `retainUntil` floor on the claim path: once a validated
+source-retirement exists, a relay may attest non-serving — and peers may
+witness it — immediately.
+
+### What ships
+
+- `validateCustodyTransition` now discharges the `retainUntil` floor for
+  both non-serving-proofs and expiry-witnesses when the status context
+  carries a truthy source-retirement. It reads either `sourceRetired` or
+  the `getCustodyStatus()` field name `sourceRetirement`, so callers on
+  both shapes work. With no retirement the floor is unchanged.
+- `_runCustodyExpiryPass` (relay-node) treats a committed-and-retired
+  entry as expirable before `retainUntil` and attests it with
+  `notServingReason: 'source-retired'` (vs `'expired-unseeded'` for the
+  untouched-window path). The `custody-expired` /
+  `custody-non-serving-attested` events now carry `reason`.
+- `_runCustodyExpiryWitnessPass` lets peers witness a claim-path proof
+  before `retainUntil` once the source is retired (skip gate keyed on
+  `retainElapsed || sourceRetirement`).
+- `summarizeCustodyStatus` threads the retirement through, so
+  `validExpiryWitnessCount` counts claim-path witnesses.
+- **Seed-path custody parity (latent fix):** `extractCustodySeedOpts(msg)`
+  added to `seed-request-builder.js`; both the Node (`relay-node/index.js`)
+  and Bare (`relay-node/bare-relay.js`) legacy `_onSeedRequest` handlers
+  now spread it, so `custodyIntentId` / `blindContentId` / `ciphertextRoot`
+  / `contentVersion` / `retainUntil` survive the legacy Protomux seed path.
+  Previously a custody seed accepted there landed with no binding, so the
+  relay could never sign a non-serving-proof for it.
+
+### Why this matters
+
+A claimed drop is the common case: the handoff completed, the publisher
+retired the source, and the only thing standing between "done" and a
+third-party-provable erasure record was a timer. Sealing the claim path
+means the destruction proof lands when the claim completes, not weeks
+later — which is what an auditor or the original publisher actually needs.
+
+### Backwards compatibility
+
+- Fully backwards-compatible. The `retainUntil` floor still holds on the
+  unclaimed-expiry path (no source-retirement → behavior unchanged).
+- No wire format changes. The binary `seedRequestEncoding` still carries
+  and signs no custody fields, so the **publish channel remains the
+  authenticated custody seed path**; `extractCustodySeedOpts` is a
+  read-only, present-guarded handler propagation for already-enriched
+  messages — absent/malformed fields spread to nothing, identical to
+  prior behavior.
+- Replication indexing only signature-checks non-serving-proofs and
+  witnesses (it does not re-run `validateCustodyTransition`), so peers
+  accept claim-path proofs without a code change.
+
+### Tests
+
+- `test/unit/custody-claim-path-witness.test.js` — 4 tests: two pin the
+  pure `validateCustodyTransition` relaxation (non-serving-proof and
+  expiry-witness, rejected pre-`retainUntil` without retirement, accepted
+  with it, both `sourceRetired` and `sourceRetirement` aliases); two are
+  `SeedingRegistry` integration tests (registry rejects a pre-`retainUntil`
+  proof until `publishSourceRetired`, then indexes it; a peer witness
+  counts as valid before `retainUntil` once retired).
+- `test/unit/seed-request-builder.test.js` — +6 `extractCustodySeedOpts`
+  tests (now 25): well-formed carry-through, hex lowercasing, malformed/
+  absent omission, nullish → `{}`, integer flooring, and `0` kept as a
+  valid floor value.
+
+All adjacent custody + seed suites pass; the full unit suite is green
+modulo one pre-existing, unrelated stale assertion in `private-mode.test.js`.
+
 ## [0.8.26] — 2026-05-28
 
 `SeedingRegistry` Hyperbee indexed-views sidecar. A sibling Hypercore

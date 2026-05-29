@@ -16,7 +16,7 @@ import test from 'brittle'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import { serializeSeedRequestForSigning } from 'p2p-hiverelay/core/protocol/seed-request.js'
-import { buildPublisherSignedSeedOpts } from 'p2p-hiverelay/core/seed-request-builder.js'
+import { buildPublisherSignedSeedOpts, extractCustodySeedOpts } from 'p2p-hiverelay/core/seed-request-builder.js'
 
 function keyPair () {
   const publicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
@@ -274,4 +274,69 @@ test('builder: non-object body → 400', (t) => {
   const r = buildPublisherSignedSeedOpts('garbage')
   t.is(r.ok, false)
   t.is(r.error, 'body required')
+})
+
+// ─── extractCustodySeedOpts (legacy Protomux seed path) ─────────────
+//
+// The binary seedRequestEncoding carries no custody fields and signs
+// none, so the legacy `_onSeedRequest` handler historically dropped the
+// custody binding — a custody seed accepted there landed with no
+// custodyIntentId/retainUntil, so the relay could never attest a
+// non-serving-proof for it. extractCustodySeedOpts pulls any well-formed
+// custody linkage off an enriched message into a seedApp()-ready fragment.
+// It is deliberately read-only and permissive: it does NOT re-verify the
+// publisher signature (the publish channel remains the authenticated path).
+
+test('extractCustodySeedOpts: well-formed custody fields are carried through', (t) => {
+  const msg = {
+    custodyIntentId: '0'.repeat(63) + '1',
+    blindContentId: '0'.repeat(63) + '2',
+    ciphertextRoot: '0'.repeat(63) + '3',
+    contentVersion: 4,
+    retainUntil: 1_700_000_000_000
+  }
+  const out = extractCustodySeedOpts(msg)
+  t.is(out.custodyIntentId, msg.custodyIntentId)
+  t.is(out.blindContentId, msg.blindContentId)
+  t.is(out.ciphertextRoot, msg.ciphertextRoot)
+  t.is(out.contentVersion, 4)
+  t.is(out.retainUntil, 1_700_000_000_000)
+})
+
+test('extractCustodySeedOpts: hex fields are lowercased', (t) => {
+  const out = extractCustodySeedOpts({ custodyIntentId: 'A'.repeat(64) })
+  t.is(out.custodyIntentId, 'a'.repeat(64))
+})
+
+test('extractCustodySeedOpts: malformed / absent fields are omitted', (t) => {
+  // Non-hex, wrong length, and wrong types are all dropped silently so the
+  // fragment spreads to nothing — identical to the pre-fix behavior.
+  const out = extractCustodySeedOpts({
+    custodyIntentId: 'not-hex',
+    blindContentId: 'abc', // too short
+    ciphertextRoot: 123, // wrong type
+    contentVersion: -1, // negative → dropped
+    retainUntil: -5 // negative → dropped
+  })
+  t.alike(out, {})
+})
+
+test('extractCustodySeedOpts: empty object for non-object / nullish input', (t) => {
+  t.alike(extractCustodySeedOpts(null), {})
+  t.alike(extractCustodySeedOpts(undefined), {})
+  t.alike(extractCustodySeedOpts('garbage'), {})
+  t.alike(extractCustodySeedOpts({}), {})
+})
+
+test('extractCustodySeedOpts: contentVersion/retainUntil floored to integers', (t) => {
+  const out = extractCustodySeedOpts({ contentVersion: 4.9, retainUntil: 100.7 })
+  t.is(out.contentVersion, 4)
+  t.is(out.retainUntil, 100)
+})
+
+test('extractCustodySeedOpts: contentVersion 0 and retainUntil 0 are kept', (t) => {
+  // 0 is a valid floor value (>= 0 guard), not absence.
+  const out = extractCustodySeedOpts({ contentVersion: 0, retainUntil: 0 })
+  t.is(out.contentVersion, 0)
+  t.is(out.retainUntil, 0)
 })

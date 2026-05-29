@@ -6,7 +6,7 @@ Drop a Hyperdrive key in front of a HiveRelay node and your Pear app comes onlin
 
 It's the substrate. You build the app; the network handles availability, NAT traversal, browser/mobile ingress, custody, and self-heal.
 
-**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.8.26**
+**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.8.27**
 
 ### Recent releases
 
@@ -14,6 +14,7 @@ For full details on each see the [CHANGELOG](./CHANGELOG.md). The
 three-step registry redesign (v0.8.24 → v0.8.25 → v0.8.26) is
 covered in plain English in [docs/RETRO-2026-05-28-REGISTRY-UPGRADES.md](./docs/RETRO-2026-05-28-REGISTRY-UPGRADES.md).
 
+- **v0.8.27** — Claim-path erasure witness. A *claimed* drop (publisher signed `source-retired`, which requires a validated `commit`, so the quorum already holds the content) now produces a third-party-provable destruction record immediately, instead of waiting out the full `retainUntil` window. `validateCustodyTransition` discharges the `retainUntil` floor for non-serving-proofs + expiry-witnesses once a source-retirement exists; the expiry sweep attests them with `reason: 'source-retired'`. Plus a latent seed-path fix: the legacy Protomux `_onSeedRequest` (Node + Bare) now preserves the custody binding via `extractCustodySeedOpts`. Closes dmc's "provable to a third party" gap for the claim path.
 - **v0.8.26** — `SeedingRegistry` Hyperbee indexed-views sidecar. Sibling Hypercore (`seeding-registry-index-v1`) mirrors `_applyEntry` output keyed by entry-shape, so restart hydration restores the in-memory custody + seed state without replaying every log block. Restart cost: O(N·M) → O(M).
 - **v0.8.25** — `AppRegistry` persistence migrated from JSON-blob to Hyperbee. Each mutation now writes one small block to a Hyperbee sibling-core on the relay's existing corestore, instead of rewriting the entire `app-registry.json` file on every `setAnchored()` / `clearAnchored()`. Closes the hung-writeFile cascade as a side effect.
 - **v0.8.24** — Per-key mutation locks in `SeedingRegistry`. Closes documented race windows where concurrent custody mutations on the same `intentId` (or seed mutations on the same `appKey`) could each observe a stale status, each pass `validateCustodyTransition`, and each append duplicate entries. Pattern lifted from the Holepunch challenge's `_withMutationLock`.
@@ -343,7 +344,7 @@ npx p2p-hiverelay testnet --nodes 5
 
 ## Test coverage
 
-The v0.8.0 trust-stack bundle (custody-signing, registry-custody, anchor-channel, custody-channel, auto-heal, ws-feed-payload, client-custody, seed-revocability, seeding-registry-hardening) was the foundation. Subsequent releases each added regression coverage for the shipped fix: anchor honesty (PR #19), circuit-relay bridge (v0.8.19), catalog provenance (v0.8.18), blind-path airtight (v0.8.15), `dht-relay-ws` privacy (v0.8.16), partial-pin self-heal integration (v0.8.21), defensive timeouts (v0.8.22), partial-quorum custody-commit (v0.8.23), per-key mutation locks (v0.8.24), `AppRegistry` Hyperbee persistence (v0.8.25), `SeedingRegistry` indexed-views sidecar (v0.8.26), and more. Current core smoke battery is 17+ suites / hundreds of assertions, ~5s wall time on a clean checkout, all green on each release.
+The v0.8.0 trust-stack bundle (custody-signing, registry-custody, anchor-channel, custody-channel, auto-heal, ws-feed-payload, client-custody, seed-revocability, seeding-registry-hardening) was the foundation. Subsequent releases each added regression coverage for the shipped fix: anchor honesty (PR #19), circuit-relay bridge (v0.8.19), catalog provenance (v0.8.18), blind-path airtight (v0.8.15), `dht-relay-ws` privacy (v0.8.16), partial-pin self-heal integration (v0.8.21), defensive timeouts (v0.8.22), partial-quorum custody-commit (v0.8.23), per-key mutation locks (v0.8.24), `AppRegistry` Hyperbee persistence (v0.8.25), `SeedingRegistry` indexed-views sidecar (v0.8.26), claim-path erasure witness (v0.8.27), and more. Current core smoke battery is 18+ suites / hundreds of assertions, ~5s wall time on a clean checkout, all green on each release.
 
 Two simulation harnesses cover behaviors unit tests can't reach:
 - `scripts/simulate-blind-atomic-custody.js` — Monte Carlo across 7 protocol scenarios, 5,000 trials each. Surfaced the witness tombstone primitive as the highest-leverage post-expiry attestation.

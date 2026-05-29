@@ -24,7 +24,7 @@ import { SeedProtocol } from '../protocol/seed-request.js'
 import { AnchorProtocol } from '../protocol/anchor-channel.js'
 import { CustodyProtocol } from '../protocol/custody-channel.js'
 import { PublishProtocol } from '../protocol/publish-channel.js'
-import { buildPublisherSignedSeedOpts } from '../seed-request-builder.js'
+import { buildPublisherSignedSeedOpts, extractCustodySeedOpts } from '../seed-request-builder.js'
 import { isTransientCoreError } from '../transient-core-errors.js'
 import { verifyDelegationCert, verifyRevocation } from '../delegation.js'
 import { CircuitRelay } from '../protocol/relay-circuit.js'
@@ -2239,6 +2239,19 @@ export class RelayNode extends EventEmitter {
     const publisherHex = msg.publisherPubkey
       ? (typeof msg.publisherPubkey === 'string' ? msg.publisherPubkey : b4a.toString(msg.publisherPubkey, 'hex'))
       : null
+    // Propagate atomic-custody linkage when the request carries it, so a
+    // custody seed accepted over the legacy seed-protocol path records the
+    // SAME intent binding the publish-channel / HTTP path does (see
+    // buildPublisherSignedSeedOpts). Without this, the registry entry would
+    // carry no custodyIntentId/retainUntil and the expiry sweep could never
+    // sign a non-serving-proof for it — i.e. anything seeded this way would
+    // silently never attest.
+    //
+    // NOTE: the binary seedRequestEncoding does not yet carry these fields,
+    // so over the wire they only arrive if a future encoding adds them (with
+    // publisher-signature coverage) or an in-process caller supplies an
+    // enriched msg. The authenticated, canonical custody path remains the
+    // publish channel; this closes the latent drop so the two paths agree.
     this.seedApp(appKeyHex, {
       publisherPubkey: effectivePublisher || publisherHex,
       revocable: msg.revocable !== false,
@@ -2246,7 +2259,8 @@ export class RelayNode extends EventEmitter {
       durability: msg.durability || 0,
       blind: msg.blind === true,
       storageClass: msg.storageClass || null,
-      availabilityClass: msg.availabilityClass || null
+      availabilityClass: msg.availabilityClass || null,
+      ...extractCustodySeedOpts(msg)
     }).catch((err) => {
       this.emit('seed-error', { appKey: appKeyHex, error: err })
     })
@@ -2545,30 +2559,54 @@ export class RelayNode extends EventEmitter {
         continue
       }
       checked++
+      const custodyIntentId = entry.custodyIntentId || null
       const retainUntil = Number(entry.retainUntil)
-      if (!Number.isFinite(retainUntil) || retainUntil <= 0) {
+      const retainElapsed = Number.isFinite(retainUntil) && retainUntil > 0 &&
+        (retainUntil + graceMs) <= now
+
+      // Claim-path erasure witness. The retainUntil deadline only covers
+      // the UNCLAIMED-expiry path: content sat untouched until its retain
+      // window lapsed. A *claimed* drop — where the publisher has signed a
+      // source-retired entry ("I deleted the original; the handoff is
+      // complete") — should be burned + attested immediately, not held for
+      // the (often weeks-long) retain window. Without this, a recipient who
+      // claimed a drop has no third-party-provable destruction until
+      // retainUntil, which is the exact gap dmc flagged. Reuses the same
+      // unseed + non-serving-proof machinery; the only change is the
+      // trigger condition.
+      let retired = false
+      if (custodyIntentId && this.seedingRegistry) {
+        try {
+          const status = this.seedingRegistry.getCustodyStatus(custodyIntentId)
+          retired = !!status?.sourceRetirement
+        } catch (_) { /* status lookup is best-effort */ }
+      }
+
+      if (!retainElapsed && !retired) {
         skipped++
         continue
       }
-      if ((retainUntil + graceMs) <= now) {
-        // Capture the custody linkage BEFORE unseedApp removes the entry —
-        // we need it to sign a custody-non-serving-proof afterward.
-        expiredKeys.push({
-          appKey,
-          retainUntil,
-          custodyIntentId: entry.custodyIntentId || null,
-          blindContentId: entry.blindContentId || null
-        })
-      }
+
+      // Capture the custody linkage BEFORE unseedApp removes the entry —
+      // we need it to sign a custody-non-serving-proof afterward. The
+      // reason distinguishes the claim path (source-retired) from the
+      // time path (expired-unseeded) in the signed proof.
+      expiredKeys.push({
+        appKey,
+        retainUntil: Number.isFinite(retainUntil) && retainUntil > 0 ? retainUntil : null,
+        custodyIntentId,
+        blindContentId: entry.blindContentId || null,
+        notServingReason: retired && !retainElapsed ? 'source-retired' : 'expired-unseeded'
+      })
     }
 
     let expired = 0
     let attested = 0
-    for (const { appKey, retainUntil, custodyIntentId, blindContentId } of expiredKeys) {
+    for (const { appKey, retainUntil, custodyIntentId, blindContentId, notServingReason } of expiredKeys) {
       try {
         await this.unseedApp(appKey)
         expired++
-        this.emit('custody-expired', { appKey, retainUntil, at: now })
+        this.emit('custody-expired', { appKey, retainUntil, reason: notServingReason, at: now })
       } catch (err) {
         this.emit('custody-expiry-error', { appKey, error: err.message || String(err) })
         // Don't attempt to sign a non-serving-proof if we couldn't even
@@ -2590,11 +2628,11 @@ export class RelayNode extends EventEmitter {
           appKey,
           blindContentId,
           retainUntil,
-          notServingReason: 'expired-unseeded'
+          notServingReason
         })
         attested++
         this.emit('custody-non-serving-attested', {
-          appKey, custodyIntentId, retainUntil, at: now
+          appKey, custodyIntentId, retainUntil, reason: notServingReason, at: now
         })
       } catch (err) {
         // Don't fail the pass — the entry is unseeded either way. Surface
@@ -2772,8 +2810,14 @@ export class RelayNode extends EventEmitter {
       if (!status?.intent) { skipped++; continue }
 
       const retainUntil = Number(status.intent.retainUntil)
-      if (!Number.isFinite(retainUntil) || (retainUntil + graceMs) > now) {
-        // Not expired yet — nothing to witness.
+      const retainElapsed = Number.isFinite(retainUntil) && (retainUntil + graceMs) <= now
+      // Claim path: an intent whose source the publisher has retired can be
+      // witnessed before retainUntil, mirroring _runCustodyExpiryPass. This
+      // is what lets a peer relay's "I observed relay-X delete its copy"
+      // attestation materialize for a *claimed* drop instead of waiting for
+      // the (often weeks-long) retain window. Outside it, nothing to witness
+      // until the window lapses.
+      if (!retainElapsed && !status.sourceRetirement) {
         skipped++
         continue
       }
