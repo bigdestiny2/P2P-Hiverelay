@@ -167,7 +167,12 @@ export function buildPublisherSignedSeedOpts (body, opts = {}) {
   }
 
   // ── Atomic-custody binding ──
-  for (const field of ['custodyIntentId', 'blindContentId', 'ciphertextRoot']) {
+  // commitmentRoot rides alongside the existing 64-hex custody anchors: it is
+  // the BLAKE2b root over the published PVSS Feldman commitments. Like the
+  // other custody fields it carries UNSIGNED (added after the signature check)
+  // — the authenticated binding lives in the publisher-signed custody-intent,
+  // and the relay re-derives + verifies commitments independently anyway.
+  for (const field of ['custodyIntentId', 'blindContentId', 'ciphertextRoot', 'commitmentRoot']) {
     if (body[field] !== undefined) {
       if (typeof body[field] !== 'string' || !isValidHexKey(body[field], 64)) {
         return reject(`${field} must be 64 hex characters`)
@@ -196,6 +201,22 @@ export function buildPublisherSignedSeedOpts (body, opts = {}) {
       }
       seedOpts.shardIds.push(shardId)
     }
+  }
+  // PVSS share-scheme metadata (mirrors contentVersion/retainUntil: a bare
+  // scalar/string carried unsigned alongside the custody anchors). shareScheme
+  // names the protocol the commitmentRoot belongs to; shareThreshold is the
+  // recovery threshold t the dealer chose (1..255, ≤ replicationFactor).
+  if (body.shareScheme !== undefined) {
+    if (typeof body.shareScheme !== 'string' || body.shareScheme.length < 1 || body.shareScheme.length > 64) {
+      return reject('shareScheme must be a string of 1-64 characters')
+    }
+    seedOpts.shareScheme = body.shareScheme
+  }
+  if (body.shareThreshold !== undefined) {
+    if (!Number.isInteger(body.shareThreshold) || body.shareThreshold < 1 || body.shareThreshold > 255) {
+      return reject('shareThreshold must be in [1,255]')
+    }
+    seedOpts.shareThreshold = body.shareThreshold
   }
 
   // ── Custody cross-check ──
@@ -244,7 +265,7 @@ export function buildPublisherSignedSeedOpts (body, opts = {}) {
 export function extractCustodySeedOpts (msg) {
   const out = {}
   if (!msg || typeof msg !== 'object') return out
-  for (const field of ['custodyIntentId', 'blindContentId', 'ciphertextRoot']) {
+  for (const field of ['custodyIntentId', 'blindContentId', 'ciphertextRoot', 'commitmentRoot']) {
     if (typeof msg[field] === 'string' && isValidHexKey(msg[field], 64)) {
       out[field] = msg[field].toLowerCase()
     }
@@ -254,6 +275,15 @@ export function extractCustodySeedOpts (msg) {
   }
   if (Number.isFinite(msg.retainUntil) && msg.retainUntil >= 0) {
     out.retainUntil = Math.floor(msg.retainUntil)
+  }
+  // PVSS metadata mirrors the permissive read of the other custody fields:
+  // include only when well-formed, omit otherwise (seedApp normalizes missing
+  // custody fields to null).
+  if (typeof msg.shareScheme === 'string' && msg.shareScheme.length >= 1 && msg.shareScheme.length <= 64) {
+    out.shareScheme = msg.shareScheme
+  }
+  if (Number.isInteger(msg.shareThreshold) && msg.shareThreshold >= 1 && msg.shareThreshold <= 255) {
+    out.shareThreshold = msg.shareThreshold
   }
   return out
 }

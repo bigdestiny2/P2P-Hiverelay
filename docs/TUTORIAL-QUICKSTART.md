@@ -40,7 +40,7 @@ Open `http://127.0.0.1:9100/dashboard` to see the live dashboard.
 Create `my-app.js`:
 
 ```js
-import { HiveRelayClient } from 'p2p-hiverelay/client'
+import { HiveRelayClient } from 'p2p-hiverelay-client'
 
 const client = new HiveRelayClient({
   storage: './my-app-storage',

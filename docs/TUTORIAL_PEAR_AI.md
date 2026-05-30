@@ -42,7 +42,7 @@ Add `"type": "module"` to your `package.json`:
 Create `app.js`:
 
 ```javascript
-import { HiveRelayClient } from 'p2p-hiverelay/client'
+import { HiveRelayClient } from 'p2p-hiverelay-client'
 
 const app = new HiveRelayClient('./storage')
 
@@ -64,7 +64,7 @@ That's it. Your app discovers relay nodes automatically via the DHT. No configur
 Replace `app.js` with:
 
 ```javascript
-import { HiveRelayClient } from 'p2p-hiverelay/client'
+import { HiveRelayClient } from 'p2p-hiverelay-client'
 
 const app = new HiveRelayClient('./storage')
 await app.start()
@@ -97,7 +97,7 @@ await app.destroy()
 Replace `app.js` with a chat loop:
 
 ```javascript
-import { HiveRelayClient } from 'p2p-hiverelay/client'
+import { HiveRelayClient } from 'p2p-hiverelay-client'
 import { createInterface } from 'readline'
 
 const app = new HiveRelayClient('./storage')
@@ -162,7 +162,7 @@ The chat history is sent as messages, so the model has full context of the conve
 Make your app distributable over P2P:
 
 ```javascript
-import { HiveRelayClient } from 'p2p-hiverelay/client'
+import { HiveRelayClient } from 'p2p-hiverelay-client'
 import { readFileSync } from 'fs'
 
 const app = new HiveRelayClient('./storage')

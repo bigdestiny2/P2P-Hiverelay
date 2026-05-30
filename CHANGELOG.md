@@ -6,6 +6,79 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.9.0] — 2026-05-30
+
+Publicly verifiable blind custody. Relays can now hold an *opaque,
+guardian-encrypted share* of a secret that they can publicly verify but
+cannot read, and any *t-of-n* guardians can later reconstruct the secret
+entirely client-side. This extends HiveRelay's blind-content guarantee to
+the keys themselves and gives serverless/Pear apps always-on, auditable
+threshold custody — social recovery, team break-glass, inheritance — with
+no party (relay or single guardian) ever able to reconstruct alone.
+
+The custody scheme is Schoenmakers PVSS over secp256k1
+(`pvss-secp256k1-v1`): Feldman commitments, per-share DLEQ proofs, and
+Lagrange-in-exponent reconstruction. A relay verifies the share it
+custodies against the published commitments before it signs a
+share-verified receipt, so a malformed or substituted share is caught at
+custody time rather than at recovery.
+
+Minor bump: new public client API + v2 custody wire fields, additive and
+backwards compatible.
+
+### What ships
+
+- **Client SDK — two new methods on `HiveRelayClient`:**
+  - `splitForCustody({ secret?, guardians, threshold, relays, appKey, opts? })`
+    — PVSS-split a secret to the guardians' recipient pubkeys, publish the
+    PUBLIC share bundle over the P2P replication data plane, author + sign
+    the v2 custody intent, collect a share-verified receipt from every
+    relay, then sign + publish the quorum commit.
+  - `reconstructFromCustody({ intentId, guardianSecretKeys, relays?, shareBundleKey?, threshold? })`
+    — recover the secret from any `t` guardian secret keys, client-side.
+- **New Bare-safe client subpath exports:**
+  - `p2p-hiverelay-client/secret-sharing.js` — PVSS prover (`keygen`,
+    `split`, `reconstruct`, `decryptShare`, `SCHEME`); deps limited to
+    sodium-universal + b4a + @noble so it runs on Bare/Pear.
+  - `p2p-hiverelay-client/custody.js` — self-contained intent/commit/
+    receipt signing (no dependency on the frozen `p2p-hiverelay@0.7.2`).
+- **Relay/core — v2 custody:**
+  - `custody-signing.js` gains version-2 fields (`shareScheme`,
+    `shareThreshold`, `commitmentRoot`, `shareBundleKey`,
+    `shareAssignments`) with version-gated validation; v1 is unchanged.
+  - `relay-node/app-lifecycle.js` verifies each custodied share (DLEQ +
+    commitment) before emitting a `shareVerified` receipt.
+  - `seed-request-builder.js` carries the PVSS public fields through the
+    seed path.
+  - `core/pvss.js` — shared verify-side PVSS primitives.
+- **Share delivery (SD3):** the encrypted share bundle travels on the P2P
+  replication data plane (a sibling hypercore named in the signed intent
+  as `shareBundleKey`); the intent/commit control plane stays on the HTTP
+  custody channel.
+- **Docs:** a new `p2p-hiverelay-client/README.md` with a full PVSS
+  blind-custody walkthrough; client import path corrected to
+  `p2p-hiverelay-client` across the docs.
+
+### Why this matters
+
+Serverless/Pear apps are keypair-as-identity: lose the device, lose the
+key, with no server to recover from. Publicly verifiable blind custody is
+the first always-on recovery layer for that model that does not
+reintroduce a trusted custodian — the relay fleet keeps the shares alive
+24/7, can prove it is holding valid recovery material, and still cannot
+read the secret. The relay can now hold both your encrypted content and
+the key to it, reading neither.
+
+### Backwards compatibility
+
+- Additive only. v1 custody intents, commits, and receipts validate
+  unchanged; the v2 fields are version-gated.
+- The published-package boundary is preserved: `p2p-hiverelay-client` and
+  `p2p-hiveservices` still pin `p2p-hiverelay@0.7.2`; the client gets
+  custody + crypto from its own self-contained modules, never from core.
+- No changes to existing client methods or to the relay wire for
+  non-PVSS flows.
+
 ## [0.8.27] — 2026-05-29
 
 Claim-path erasure witness. Closes the gap where a *claimed* custody drop

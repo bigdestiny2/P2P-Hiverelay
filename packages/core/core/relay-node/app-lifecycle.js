@@ -6,6 +6,7 @@ import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { updateWithTimeout, downloadWithTimeout, getDriveSize } from './cancellable-drive-update.js'
 import { isAbortError } from './lifecycle-scope.js'
+import { verifyShareBundleForRelay } from '../pvss.js'
 import {
   isValidHexKey,
   normalizeAvailabilityClass,
@@ -1104,6 +1105,61 @@ export class AppLifecycle extends EventEmitter {
   async _recordCustodyReceipt (appKeyHex, opts = {}, contentVersion = 0) {
     const node = this.node
     if (!opts.blind || !opts.custodyIntentId || !node.seedingRegistry || !node.swarm?.keyPair) return null
+
+    // PVSS share custody (v2). If the bound intent declares a share scheme,
+    // this relay must PUBLICLY verify the encrypted share it was assigned —
+    // no secret key — before anchoring a receipt. SD2: a failed (or
+    // unavailable) verification must NOT anchor; emit
+    // `custody:share-verify-failed` and skip the receipt so this relay is not
+    // counted toward the publisher's reconstruction quorum. The content drive
+    // it replicated stays served regardless — share custody is an added layer.
+    let pvssFields = null
+    let intent = null
+    try {
+      intent = typeof node.seedingRegistry.getCustodyIntent === 'function'
+        ? node.seedingRegistry.getCustodyIntent(opts.custodyIntentId)
+        : null
+    } catch (_) { intent = null }
+
+    // Fail closed: if EITHER the signed intent declares share custody, or the
+    // (unsigned) seed request hints at it via opts.shareScheme, this is a PVSS
+    // custody and must be share-verified. The seed hint can only make us
+    // non-anchor more often, never wrongly anchor — so if the publisher said
+    // "PVSS" but the signed intent isn't loaded yet, we decline rather than
+    // anchor a plain receipt that the transition check would later reject.
+    const wantsPvss = !!(intent && intent.shareScheme) || !!opts.shareScheme
+    if (wantsPvss) {
+      if (!intent || !intent.shareScheme) {
+        this.emit('custody:share-verify-failed', {
+          appKey: appKeyHex,
+          intentId: opts.custodyIntentId,
+          shareBundleKey: null,
+          reason: 'intent-unavailable'
+        })
+        return null
+      }
+      const relayPubkey = b4a.toString(node.swarm.keyPair.publicKey, 'hex')
+      const bundle = await this._readShareBundle(intent.shareBundleKey)
+      const result = verifyShareBundleForRelay(intent, bundle, relayPubkey)
+      if (!result.ok) {
+        this.emit('custody:share-verify-failed', {
+          appKey: appKeyHex,
+          intentId: opts.custodyIntentId,
+          shareBundleKey: intent.shareBundleKey || null,
+          reason: result.reason
+        })
+        return null
+      }
+      pvssFields = {
+        version: 2,
+        shareScheme: result.shareScheme,
+        commitmentRoot: result.commitmentRoot,
+        shareIndex: result.shareIndex,
+        shareCommitment: result.shareCommitment,
+        shareVerified: true
+      }
+    }
+
     try {
       const receipt = await node.seedingRegistry.recordCustodyReceipt({
         intentId: opts.custodyIntentId,
@@ -1114,7 +1170,8 @@ export class AppLifecycle extends EventEmitter {
         relayRegion: node.config.region || 'unknown',
         shardIds: Array.isArray(opts.shardIds) ? opts.shardIds : [],
         anchored: true,
-        retainUntil: opts.retainUntil || (Date.now() + 30 * 24 * 60 * 60 * 1000)
+        retainUntil: opts.retainUntil || (Date.now() + 30 * 24 * 60 * 60 * 1000),
+        ...(pvssFields || {})
       }, node.swarm.keyPair)
       this.emit('custody-receipt', { appKey: appKeyHex, intentId: opts.custodyIntentId, receipt })
       return receipt
@@ -1125,6 +1182,61 @@ export class AppLifecycle extends EventEmitter {
         error: err.message || String(err)
       })
       return null
+    }
+  }
+
+  /**
+   * Replicate + read a public PVSS share bundle from its hypercore key.
+   *
+   * The publisher writes the bundle (commitments[] + encryptedShares[]) to a
+   * sibling hypercore as a single JSON block and names that core's key in the
+   * signed v2 custody intent (shareBundleKey). The relay joins the core's swarm
+   * topic — the corestore's `connection` handler already replicates every core
+   * it holds — and reads block 0, which `core.get` waits for until a peer
+   * supplies it (or the timeout fires).
+   *
+   * Best-effort + non-throwing: any failure (malformed key, no peers, timeout,
+   * unparseable block) returns null, and the caller treats a null bundle as an
+   * unverifiable share — so it does not anchor (SD2). Read-once: the topic is
+   * left and the core session closed in `finally`, so no swarm/topic state
+   * leaks past the verification.
+   *
+   * @param {string} shareBundleKey 64-hex hypercore key
+   * @param {{timeoutMs?:number}} [opts]
+   * @returns {Promise<object|null>} parsed { commitments, encryptedShares } or null
+   */
+  async _readShareBundle (shareBundleKey, opts = {}) {
+    const node = this.node
+    if (!isValidHexKey(shareBundleKey, 64) || !node.store || !node.swarm) return null
+    const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 30_000
+    let core = null
+    let joined = false
+    try {
+      core = node.store.get({ key: b4a.from(shareBundleKey, 'hex') })
+      await core.ready()
+      // Pull-only join; the swarm 'connection' handler replicates the store.
+      const discovery = node.swarm.join(core.discoveryKey, { server: false, client: true })
+      joined = true
+      if (discovery && typeof discovery.flushed === 'function') {
+        await Promise.race([
+          discovery.flushed().catch(() => {}),
+          new Promise(resolve => setTimeout(resolve, Math.min(timeoutMs, 5_000)))
+        ])
+      }
+      // get() waits for block 0 to replicate from a peer, or rejects on timeout.
+      const block = await core.get(0, { timeout: timeoutMs })
+      if (!block) return null
+      const parsed = JSON.parse(b4a.toString(block))
+      return parsed && typeof parsed === 'object' ? parsed : null
+    } catch (_) {
+      return null
+    } finally {
+      if (joined && core) {
+        try { await node.swarm.leave(core.discoveryKey) } catch (_) {}
+      }
+      if (core) {
+        try { await core.close() } catch (_) {}
+      }
     }
   }
 

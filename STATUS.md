@@ -37,7 +37,7 @@ Everything below has been tested end-to-end against the live network (179 integr
 **Publish an app in 4 lines:**
 
 ```js
-import { HiveRelayClient } from 'p2p-hiverelay/client'
+import { HiveRelayClient } from 'p2p-hiverelay-client'
 const client = new HiveRelayClient({ storage: './my-storage' })
 await client.start()
 const drive = await client.publish('./my-app')

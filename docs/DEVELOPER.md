@@ -46,7 +46,7 @@ npm install p2p-hiverelay
 Publish a Pear app that stays alive when you go offline:
 
 ```js
-import { HiveRelayClient } from 'p2p-hiverelay/client'
+import { HiveRelayClient } from 'p2p-hiverelay-client'
 
 const app = new HiveRelayClient('./my-app-storage')
 await app.start()
@@ -270,7 +270,7 @@ Import from the package:
 import { RelayNode, ProofOfRelay, BandwidthReceipt } from 'p2p-hiverelay'
 
 // Client SDK (app developers)
-import { HiveRelayClient } from 'p2p-hiverelay/client'
+import { HiveRelayClient } from 'p2p-hiverelay-client'
 ```
 
 ### Dependencies
@@ -297,7 +297,7 @@ import { HiveRelayClient } from 'p2p-hiverelay/client'
 ## 4. Client SDK Reference
 
 **File:** `client/index.js` (670 lines)
-**Import:** `import { HiveRelayClient } from 'p2p-hiverelay/client'`
+**Import:** `import { HiveRelayClient } from 'p2p-hiverelay-client'`
 
 ### Constructor
 

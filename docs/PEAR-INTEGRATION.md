@@ -10,7 +10,7 @@ HiveRelay gives your Pear app always-on content persistence, NAT traversal relay
 ```js
 import Hyperswarm from 'hyperswarm'
 import Corestore from 'corestore'
-import { HiveRelayClient } from 'p2p-hiverelay/client'
+import { HiveRelayClient } from 'p2p-hiverelay-client'
 
 // Use Pear's storage -- NOT a filesystem path
 const store = new Corestore(Pear.config.storage)

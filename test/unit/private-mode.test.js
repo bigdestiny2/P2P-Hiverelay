@@ -190,10 +190,10 @@ test('AccessControl - pairing payload generation', async (t) => {
 
 // ─── Mode Configuration Tests ───────────────────────────────────
 
-test('RelayNode - public mode (default)', async (t) => {
+test('RelayNode - default mode (relay-core)', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
-  t.is(node.mode, 'public', 'default mode is public')
-  t.is(node.accessControl, null, 'no access control in public mode')
+  t.is(node.mode, 'relay-core', 'default mode is relay-core')
+  t.is(node.accessControl, null, 'no access control by default')
   t.is(node.config.discovery.dht, true, 'DHT enabled')
   t.is(node.config.discovery.announce, true, 'announce enabled')
   t.is(node.config.discovery.mdns, false, 'mDNS disabled')

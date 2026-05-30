@@ -1,6 +1,6 @@
 {
   "name": "p2p-hiverelay",
-  "version": "0.8.27",
+  "version": "0.9.0",
   "description": "HiveRelay Core \u2014 minimal always-on P2P availability infrastructure (seeding, circuit relay, proof-of-relay, gateway)",
   "type": "module",
   "main": "core/index.js",
@@ -12,6 +12,8 @@
     "./gateway": "./gateway/hyper-gateway.js",
     "./core/custody-signing": "./core/custody-signing.js",
     "./core/custody-signing.js": "./core/custody-signing.js",
+    "./core/pvss": "./core/pvss.js",
+    "./core/pvss.js": "./core/pvss.js",
     "./core/constants": "./core/constants.js",
     "./core/constants.js": "./core/constants.js",
     "./core/protocol/custody-channel": "./core/protocol/custody-channel.js",

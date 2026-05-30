@@ -1,3 +1,29 @@
+/**
+ * Custody-log signing — CLIENT (publisher) copy.
+ *
+ * This is a self-contained, Bare-safe duplicate of the relay's
+ * packages/core/core/custody-signing.js. It exists because the client SDK
+ * (p2p-hiverelay-client, which runs on Bare inside Pear apps like Drop) pins
+ * an EXACT frozen `p2p-hiverelay@0.7.2` core, and that 0.7.2 core predates
+ * custody-signing.js — the module simply isn't there to import. Rather than
+ * loosen the version pin (which would change the relay wire peer the client
+ * talks to) we carry our own copy.
+ *
+ * It is a DUPLICATE, not a shared import: the client and relay are
+ * independently-versioned wire peers, so the two custody modules must agree
+ * byte-for-byte on the *signed payload* without sharing code. That agreement
+ * is pinned by test/unit/client-custody-crossimpl.test.js — the client signs
+ * an intent/commit here and core's verifyCustodyEntry/validateCustodyTransition
+ * must accept it unchanged. If you edit signing/normalization here, mirror it
+ * in core (and vice-versa) or the cross-impl test will fail.
+ *
+ * Bare-safety: imports only `b4a` + `sodium-universal` (both Bare-safe). No
+ * node `crypto`, no `Buffer` — those throw on Bare. The nested shareAssignments
+ * objects are constructed `{ relayPubkey, shareIndex }` in that exact key order
+ * because custodySignablePayload stringifies them positionally (JSON.stringify,
+ * not stableStringify); changing the key order would change every v2 signature.
+ */
+
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 
@@ -7,7 +33,7 @@ const MAX_ENTRY_AGE_MS = 180 * 24 * 60 * 60 * 1000
 const HEX_32 = /^[0-9a-f]{64}$/i
 const HEX_SIG = /^[0-9a-f]{128}$/i
 const HEX_POINT = /^0[23][0-9a-f]{64}$/i // compressed secp256k1 point (33 bytes)
-const FORBIDDEN_KEYS = new Set([
+export const FORBIDDEN_KEYS = new Set([
   'dataKey',
   'decryptionKey',
   'plaintext',

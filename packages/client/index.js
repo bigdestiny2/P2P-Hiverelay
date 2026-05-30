@@ -8,7 +8,7 @@
  *
  * Simple usage (auto-creates everything):
  *
- *   import { HiveRelayClient } from 'p2p-hiverelay/client'
+ *   import { HiveRelayClient } from 'p2p-hiverelay-client'
  *
  *   const app = new HiveRelayClient('./my-app-storage')
  *   await app.start()
@@ -55,6 +55,21 @@ import {
 import { SeedingRegistry } from 'p2p-hiverelay/core/registry/index.js'
 import { RELAY_DISCOVERY_TOPIC } from 'p2p-hiverelay/core/constants.js'
 import { attachPairing, deriveTopic as _deriveTopic, generateCode as _generateCode, proofFor as _proofFor } from './pairing.js'
+// PVSS blind-custody orchestration composes the SELF-CONTAINED client modules
+// (Bare-safe; @noble + sodium + b4a) — never core's custody-signing/pvss, which
+// the frozen p2p-hiverelay@0.7.2 pin does not carry. Cross-impl agreement with
+// the relay verifier is pinned by test (client-custody-crossimpl.test.js).
+import {
+  createCustodyIntent as _createCustodyIntent,
+  createCustodyCommit as _createCustodyCommit,
+  computeReceiptRoot as _computeReceiptRoot,
+  hashHex as _custodyHashHex
+} from './custody.js'
+import {
+  split as _pvssSplit,
+  decryptShare as _pvssDecryptShare,
+  reconstruct as _pvssReconstruct
+} from './secret-sharing.js'
 
 // Re-exports for test/inspection use. Not part of the stable public surface.
 export const _pairing = {
@@ -2051,6 +2066,293 @@ export class HiveRelayClient extends EventEmitter {
       throw err
     }
     return res.body
+  }
+
+  // ─── PVSS blind custody (dealer-side orchestration) ─────────────────
+  //
+  // The DX payoff: compose split (secret-sharing.js) + signed v2 intents/commits
+  // (custody.js) + share-bundle replication + the existing custody control
+  // channel into two calls. The relay never sees the secret, never runs split,
+  // never reconstructs — it holds an opaque guardian-encrypted share it can only
+  // publicly verify. Only `key`/`secretPoint` (dealer-private) are returned to
+  // the caller and must never be published.
+  //
+  // Quorum model: `threshold` (t) is the PVSS RECONSTRUCTION threshold; custody
+  // requires every assigned relay to hold + verify its share, so the intent's
+  // `requiredReplicas` equals the relay/share count n (it is also the upper
+  // bound on shareIndex and the commit quorum floor — see core
+  // validateCustodyTransition). The secret later recovers from any t guardians.
+
+  /**
+   * Blind-custody a secret t-of-n across a relay quorum (PVSS over secp256k1).
+   *
+   * @param {object} params
+   * @param {string} [params.secret] 64-hex scalar; random if omitted
+   * @param {string[]} params.guardians recipient pubkey hexes (length n ≥ t);
+   *   only holders of the matching secret keys can later decrypt a share
+   * @param {number} params.threshold reconstruction threshold t (1 ≤ t ≤ n)
+   * @param {Array<{url:string,pubkey:string}>} params.relays custodying relays
+   *   (length n); relays[i] is assigned shareIndex i+1
+   * @param {string} params.appKey 64-hex content drive key this custody binds to
+   * @param {object} [params.opts] blindContentId, ciphertextRoot, contentVersion,
+   *   deadlineMs, retainMs, apiKey, pollIntervalMs, pollTimeoutMs, timestamp
+   * @returns {Promise<{intentId:string, commitmentRoot:string,
+   *   shareBundleKey:string, key:string, secretPoint:string, intent:object,
+   *   commit:object, receipts:object[]}>}
+   */
+  async splitForCustody ({ secret, guardians, threshold, relays, appKey, opts = {} } = {}) {
+    if (!this.keyPair || !this.keyPair.secretKey) {
+      throw new Error('splitForCustody: client keyPair required (call start() first)')
+    }
+    if (!Array.isArray(guardians) || guardians.length < 1) {
+      throw new Error('splitForCustody: guardians[] required')
+    }
+    if (!Number.isInteger(threshold) || threshold < 1) {
+      throw new Error('splitForCustody: threshold must be a positive integer')
+    }
+    if (!Array.isArray(relays) || relays.length !== guardians.length) {
+      throw new Error('splitForCustody: relays[] length must equal guardians[] length (one share per relay)')
+    }
+    if (threshold > relays.length) {
+      throw new Error('splitForCustody: threshold exceeds relay/share count')
+    }
+    const appKeyHex = typeof appKey === 'string' ? appKey : (appKey ? b4a.toString(appKey, 'hex') : null)
+    if (!appKeyHex || !/^[0-9a-f]{64}$/i.test(appKeyHex)) {
+      throw new Error('splitForCustody: appKey must be a 64-hex drive key')
+    }
+
+    // 1. Split the secret to the guardian recipient pubkeys.
+    const res = await _pvssSplit({ threshold, shareholders: guardians, secret })
+
+    // 2. Publish the PUBLIC share bundle over the replication data plane (a
+    //    sibling hypercore the relays replicate) — no HTTP, no 0.7.2 dependency,
+    //    no seed-request wire collision. Public material only; blind preserved.
+    const shareBundleKey = await this._writeShareBundle(res.public)
+
+    // 3. Author + sign the v2 custody intent (self-contained custody.js).
+    const now = Number.isFinite(opts.timestamp) ? opts.timestamp : Date.now()
+    const shareAssignments = relays.map((r, i) => {
+      const relayPubkey = typeof r.pubkey === 'string' ? r.pubkey : (r.pubkey ? b4a.toString(r.pubkey, 'hex') : null)
+      if (!relayPubkey) throw new Error('splitForCustody: relays[' + i + '].pubkey required')
+      return { relayPubkey, shareIndex: i + 1 }
+    })
+    const intent = _createCustodyIntent({
+      version: 2,
+      blindContentId: opts.blindContentId || _custodyHashHex('hiverelay-blind:' + appKeyHex),
+      ciphertextRoot: opts.ciphertextRoot || _custodyHashHex('hiverelay-cipher:' + appKeyHex),
+      contentVersion: Number.isFinite(opts.contentVersion) ? opts.contentVersion : 1,
+      addressKey: appKeyHex,
+      requiredReplicas: relays.length,
+      deadline: now + (Number.isFinite(opts.deadlineMs) ? opts.deadlineMs : 10 * 60 * 1000),
+      retainUntil: now + (Number.isFinite(opts.retainMs) ? opts.retainMs : 30 * 24 * 60 * 60 * 1000),
+      shareScheme: res.public.scheme,
+      shareThreshold: threshold,
+      commitmentRoot: res.public.commitmentRoot,
+      shareBundleKey,
+      shareAssignments
+    }, this.keyPair, { timestamp: now })
+
+    // 4. Hand the signed intent to each relay. SD3: the intent/commit CONTROL
+    //    plane stays on the existing (tiny, publisher-authed) custody channel;
+    //    only the bulky share DATA moved to P2P.
+    for (const r of relays) {
+      await this.publishCustodyIntent(r.url, intent, { apiKey: opts.apiKey })
+    }
+
+    // 5. Poll until every relay returns a share-VERIFIED, anchored receipt.
+    const receipts = await this._awaitVerifiedReceipts(relays, intent.intentId, relays.length, opts)
+
+    // 6. Commit the quorum (publisher-signed; binds the chosen receipt set).
+    const relayQuorum = receipts.map(rcpt => rcpt.relayPubkey).sort()
+    const commit = _createCustodyCommit({
+      intentId: intent.intentId,
+      blindContentId: intent.blindContentId,
+      ciphertextRoot: intent.ciphertextRoot,
+      contentVersion: intent.contentVersion,
+      relayQuorum,
+      receiptRoot: _computeReceiptRoot(receipts)
+    }, this.keyPair, { timestamp: Date.now() })
+    for (const r of relays) {
+      try { await this.publishCustodyCommit(r.url, intent.intentId, commit, { apiKey: opts.apiKey }) } catch (_) {}
+    }
+
+    return {
+      intentId: intent.intentId,
+      commitmentRoot: res.public.commitmentRoot,
+      shareBundleKey,
+      key: res.key,
+      secretPoint: res.secretPoint,
+      intent,
+      commit,
+      receipts
+    }
+  }
+
+  /**
+   * Recover the dealer key from a blind custody, client-side, using any t
+   * guardian secret keys. Reads the public share bundle, decrypts each
+   * guardian's own share (matched by recovering its recipient pubkey from the
+   * key), and Lagrange-reconstructs. A forged or merely-encrypted share is
+   * rejected by reconstruct()'s per-share DLEQ check.
+   *
+   * @param {object} params
+   * @param {string} params.intentId custody intent id
+   * @param {string[]} params.guardianSecretKeys ≥ t guardian secret-key hexes
+   * @param {Array<{url:string}|string>} [params.relays] relays to resolve the
+   *   signed intent's shareBundleKey/threshold from (if not passed explicitly)
+   * @param {string} [params.shareBundleKey] 64-hex bundle key (skips relay query)
+   * @param {number} [params.threshold] reconstruction threshold (else from intent/bundle)
+   * @returns {Promise<{key:string, secretPoint:string, shares:number}>}
+   */
+  async reconstructFromCustody ({ intentId, guardianSecretKeys, relays, shareBundleKey, threshold } = {}) {
+    if (!Array.isArray(guardianSecretKeys) || guardianSecretKeys.length < 1) {
+      throw new Error('reconstructFromCustody: guardianSecretKeys[] required')
+    }
+    let bundleKey = shareBundleKey || null
+    let t = Number.isInteger(threshold) ? threshold : null
+    if (!bundleKey) {
+      const urls = Array.isArray(relays)
+        ? relays.map(r => (typeof r === 'string' ? r : (r && r.url))).filter(Boolean)
+        : []
+      for (const url of urls) {
+        let status = null
+        try { status = await this.getCustodyStatus(url, intentId) } catch (_) { status = null }
+        if (status && status.intent && status.intent.shareBundleKey) {
+          bundleKey = status.intent.shareBundleKey
+          if (t == null && Number.isInteger(status.intent.shareThreshold)) t = status.intent.shareThreshold
+          break
+        }
+      }
+    }
+    if (!bundleKey) {
+      throw new Error('reconstructFromCustody: could not resolve shareBundleKey (pass it explicitly or provide relays)')
+    }
+
+    const bundle = await this._readShareBundle(bundleKey)
+    if (!bundle || !Array.isArray(bundle.encryptedShares)) {
+      throw new Error('reconstructFromCustody: share bundle unavailable')
+    }
+    if (t == null && Number.isInteger(bundle.threshold)) t = bundle.threshold
+
+    // Each guardian decrypts ONLY the share encrypted to it: decryptShare
+    // returns shareholder = x·G, which matches the bundle's signed `shareholder`
+    // field iff this key is that share's intended recipient.
+    const decrypted = []
+    const usedIndex = new Set()
+    for (const secretKey of guardianSecretKeys) {
+      for (const encryptedShare of bundle.encryptedShares) {
+        if (usedIndex.has(encryptedShare.index)) continue
+        let dec = null
+        try { dec = await _pvssDecryptShare({ encryptedShare, secretKey }) } catch (_) { dec = null }
+        if (dec && dec.shareholder === encryptedShare.shareholder) {
+          decrypted.push(dec)
+          usedIndex.add(encryptedShare.index)
+          break
+        }
+      }
+    }
+    if (t != null && decrypted.length < t) {
+      throw new Error('reconstructFromCustody: only ' + decrypted.length + ' of ' + t + ' shares decrypted')
+    }
+    // reconstruct() re-verifies each share's decryption DLEQ — an encrypted
+    // share (Y_i) substituted for a decrypted one (S_i) fails here.
+    const out = await _pvssReconstruct({ shares: decrypted, threshold: t || undefined })
+    return { key: out.key, secretPoint: out.secretPoint, shares: decrypted.length }
+  }
+
+  /**
+   * Poll each relay's custody status until `requiredCount` distinct relays have
+   * returned an anchored, share-verified receipt for the intent. Returns those
+   * receipts (lowest shareIndex first). Throws CUSTODY_QUORUM_TIMEOUT on expiry.
+   */
+  async _awaitVerifiedReceipts (relays, intentId, requiredCount, opts = {}) {
+    const pollIntervalMs = Number.isFinite(opts.pollIntervalMs) ? opts.pollIntervalMs : 1000
+    const pollTimeoutMs = Number.isFinite(opts.pollTimeoutMs) ? opts.pollTimeoutMs : 60_000
+    const deadline = Date.now() + pollTimeoutMs
+    const urls = relays.map(r => (typeof r === 'string' ? r : (r && r.url))).filter(Boolean)
+    for (;;) {
+      const byRelay = new Map()
+      for (const url of urls) {
+        let status = null
+        try { status = await this.getCustodyStatus(url, intentId) } catch (_) { status = null }
+        if (status && Array.isArray(status.receipts)) {
+          for (const rcpt of status.receipts) {
+            if (rcpt && rcpt.shareVerified === true && rcpt.anchored === true) {
+              byRelay.set(rcpt.relayPubkey, rcpt)
+            }
+          }
+        }
+      }
+      const verified = [...byRelay.values()].sort((a, b) => (a.shareIndex || 0) - (b.shareIndex || 0))
+      if (verified.length >= requiredCount) return verified.slice(0, requiredCount)
+      if (Date.now() >= deadline) {
+        const err = new Error('splitForCustody: timed out waiting for ' + requiredCount +
+          ' verified receipts (got ' + verified.length + ')')
+        err.code = 'CUSTODY_QUORUM_TIMEOUT'
+        err.receipts = verified
+        throw err
+      }
+      await new Promise(resolve => setTimeout(resolve, pollIntervalMs))
+    }
+  }
+
+  /**
+   * Write a PUBLIC PVSS share bundle to a fresh sibling hypercore and serve it
+   * so custodying relays can replicate block 0. Returns the 64-hex core key
+   * (named in the signed intent as shareBundleKey). No secret material.
+   */
+  async _writeShareBundle (bundle) {
+    if (!this.store) throw new Error('_writeShareBundle: client store not ready (call start() first)')
+    const name = 'share-bundle-' + Date.now() + '-' + Math.random().toString(36).slice(2)
+    const core = this.store.get({ name })
+    await core.ready()
+    await core.append(b4a.from(JSON.stringify(bundle)))
+    // Serve block 0. Kept open for the client's lifetime so the bundle stays
+    // available while the custody is live.
+    if (this.swarm) {
+      try {
+        this.swarm.join(core.discoveryKey, { server: true, client: false })
+        this.swarm.flush().catch(() => {})
+      } catch (_) {}
+    }
+    return b4a.toString(core.key, 'hex')
+  }
+
+  /**
+   * Replicate + read a PUBLIC share bundle by its hypercore key. If block 0 is
+   * already local (the dealer's own write), returns it without joining a topic.
+   * Best-effort + non-throwing: returns the parsed bundle or null.
+   */
+  async _readShareBundle (shareBundleKey, opts = {}) {
+    if (typeof shareBundleKey !== 'string' || !/^[0-9a-f]{64}$/i.test(shareBundleKey) || !this.store) return null
+    const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 30_000
+    let core = null
+    let joined = false
+    try {
+      core = this.store.get({ key: b4a.from(shareBundleKey, 'hex') })
+      await core.ready()
+      if (core.length === 0 && this.swarm) {
+        const discovery = this.swarm.join(core.discoveryKey, { server: false, client: true })
+        joined = true
+        if (discovery && typeof discovery.flushed === 'function') {
+          await Promise.race([
+            discovery.flushed().catch(() => {}),
+            new Promise(resolve => setTimeout(resolve, Math.min(timeoutMs, 5_000)))
+          ])
+        }
+      }
+      const block = await core.get(0, { timeout: timeoutMs })
+      if (!block) return null
+      const parsed = JSON.parse(b4a.toString(block))
+      return parsed && typeof parsed === 'object' ? parsed : null
+    } catch (_) {
+      return null
+    } finally {
+      if (joined && core && this.swarm) {
+        try { await this.swarm.leave(core.discoveryKey) } catch (_) {}
+      }
+      if (core) { try { await core.close() } catch (_) {} }
+    }
   }
 
   async fetchSeedingManifest (relayUrl, pubkey) {
