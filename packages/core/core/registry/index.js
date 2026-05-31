@@ -1150,6 +1150,34 @@ export class SeedingRegistry extends EventEmitter {
     return this._custodyIntents.get(intentId) || null
   }
 
+  /**
+   * Resolve the most recent custody intentId bound to a content addressKey.
+   *
+   * The expiry sweep keys non-serving attestation off the appRegistry entry's
+   * custodyIntentId. But content seeded over the seed-request channel — whose
+   * binary encoding does not carry custody fields — lands with
+   * custodyIntentId = null even though a signed intent for that addressKey
+   * exists in this registry (published over the custody/HTTP channel). That
+   * left a publisher who source-retired a drop with committed:true,
+   * sourceRetired:true but no non-serving-proof, because the sweep had no
+   * intent to attest against. This recovers the linkage by addressKey
+   * (intent.addressKey === appKey) so the sweep can still attest. Returns the
+   * latest matching intentId (by timestamp), or null.
+   */
+  getCustodyIntentIdByAddressKey (addressKey) {
+    if (typeof addressKey !== 'string' || !addressKey) return null
+    const target = addressKey.toLowerCase()
+    let best = null
+    let bestTs = -1
+    for (const intent of this._custodyIntents.values()) {
+      const ak = typeof intent.addressKey === 'string' ? intent.addressKey.toLowerCase() : null
+      if (ak !== target) continue
+      const ts = Number.isFinite(intent.timestamp) ? intent.timestamp : 0
+      if (ts >= bestTs) { bestTs = ts; best = intent.intentId }
+    }
+    return best
+  }
+
   getCustodyReceipts (intentId) {
     return Array.from(this._custodyReceipts.get(intentId)?.values() || [])
   }

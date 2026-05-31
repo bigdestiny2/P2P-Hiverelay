@@ -6,6 +6,56 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.9.2] — 2026-05-31
+
+Patch: the custody expiry sweep now actually emits non-serving-proofs (and
+expiry-witnesses) for content seeded over the seed-request channel. A
+publisher who claimed/retired a drop — or whose retain window elapsed — was
+seeing committed:true / sourceRetired:true on the relays but
+nonServingProofCount:0, with no third-party-provable destruction. Two
+independent root causes, both fixed; no wire-format or public-API changes.
+
+### Fixed
+
+- **Sweep recovers the custody linkage by addressKey.** The binary
+  seedRequestEncoding does not carry custody fields, so content seeded over
+  the seed-request channel registers an appRegistry entry with
+  custodyIntentId = null even though a signed intent for that addressKey
+  exists in the registry (delivered separately over the custody channel). The
+  expiry sweep keyed attestation off entry.custodyIntentId, so it could never
+  link the two and never attested. The sweep now resolves the intent by
+  addressKey (`SeedingRegistry.getCustodyIntentIdByAddressKey`) when the entry
+  lacks it, and backfills custodyIntentId / retainUntil / blindContentId onto
+  the entry (persisted, so it survives restart and shows on
+  `GET /api/anchors?detailed=1`).
+- **Auto-attestation now supplies a challengeNonce.** Even with a
+  custodyIntentId, the sweep (and the periodic witness scan) called
+  `createCustodyNonServingProof` / `createCustodyExpiryWitness` without a
+  challengeNonce, and proof signing requires a 64-hex nonce — so every
+  auto-attest threw "challengeNonce must be 64 hex characters". These now
+  self-generate a nonce when the caller supplies none (a relay-signed
+  self-attestation needs only a unique nonce, not a challenger-issued one).
+  This is why v0.8.27's claim-path erasure witness never actually emitted a
+  proof through the sweep.
+
+### Added
+
+- **Custody-linkage diagnostics on `catalog()` + `GET /api/anchors?detailed=1`**
+  (`custodyIntentId`, `blind`, `storageClass`, `availabilityClass`) so a
+  publisher can externally confirm whether the sweep can attest for an entry —
+  `catalog()` previously dropped the custody binding entirely. `custodyIntentId`
+  is preserved even on redacted/blind entries (it is already public via
+  `GET /api/custody/{id}/status`; only the linkage is new information), while
+  sensitive signals such as `retainUntil` stay redacted for blind entries.
+  Via PR #31 (@iainkek).
+
+### Tests
+
+- `test/integration/custody-sweep-linkage.test.js` — one sweep pass over a
+  still-live entry (custodyIntentId backfilled, not expired) and an expired
+  one (resolved by addressKey, unseeded, and attested), reproducing + fixing
+  the Drop gap.
+
 ## [0.9.1] — 2026-05-31
 
 Patch: makes v0.9.0 publicly verifiable blind custody work end-to-end over

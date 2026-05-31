@@ -2545,6 +2545,36 @@ export class RelayNode extends EventEmitter {
       (entry.blind === true && Number.isFinite(entry.retainUntil))
   }
 
+  /**
+   * Write a custody intent's binding onto an already-seeded appRegistry entry
+   * that was registered without it (seed-request channel drops custody fields).
+   * Copies custodyIntentId plus retainUntil/blindContentId from the signed
+   * intent when the entry is missing them, and persists so the linkage survives
+   * restart + shows on GET /api/anchors?detailed=1. Best-effort + non-throwing.
+   */
+  _backfillCustodyLinkage (appKey, entry, intentId) {
+    if (!entry || !intentId) return
+    const intent = this.seedingRegistry && typeof this.seedingRegistry.getCustodyIntent === 'function'
+      ? this.seedingRegistry.getCustodyIntent(intentId)
+      : null
+    entry.custodyIntentId = intentId
+    if (entry.retainUntil == null && intent && Number.isFinite(intent.retainUntil)) {
+      entry.retainUntil = intent.retainUntil
+    }
+    if (!entry.blindContentId && intent && intent.blindContentId) {
+      entry.blindContentId = intent.blindContentId
+    }
+    try {
+      if (this.appRegistry && typeof this.appRegistry.update === 'function') {
+        this.appRegistry.update(appKey, {
+          custodyIntentId: entry.custodyIntentId,
+          retainUntil: entry.retainUntil,
+          blindContentId: entry.blindContentId
+        })
+      }
+    } catch (_) { /* persistence is best-effort; in-memory linkage already set */ }
+  }
+
   async _runCustodyExpiryPass (now = Date.now()) {
     if (!this.appRegistry) return { checked: 0, expired: 0, skipped: 0, attested: 0 }
 
@@ -2559,7 +2589,22 @@ export class RelayNode extends EventEmitter {
         continue
       }
       checked++
-      const custodyIntentId = entry.custodyIntentId || null
+      let custodyIntentId = entry.custodyIntentId || null
+      // Content seeded over the seed-request channel carries no custody fields
+      // (the binary seedRequestEncoding drops them — see _onSeedRequest), so a
+      // temporary custody entry can lack custodyIntentId even though a signed
+      // intent for its addressKey exists in the registry. Recover the linkage
+      // by addressKey and backfill the entry — otherwise the sweep can never
+      // attest a non-serving-proof for it (the gap Drop hit: committed +
+      // source-retired, but proofCount 0).
+      if (!custodyIntentId && this.seedingRegistry &&
+          typeof this.seedingRegistry.getCustodyIntentIdByAddressKey === 'function') {
+        const resolved = this.seedingRegistry.getCustodyIntentIdByAddressKey(appKey)
+        if (resolved) {
+          custodyIntentId = resolved
+          this._backfillCustodyLinkage(appKey, entry, resolved)
+        }
+      }
       const retainUntil = Number(entry.retainUntil)
       const retainElapsed = Number.isFinite(retainUntil) && retainUntil > 0 &&
         (retainUntil + graceMs) <= now
@@ -2700,6 +2745,24 @@ export class RelayNode extends EventEmitter {
     }
   }
 
+  /**
+   * Return a valid 64-hex challengeNonce, generating a random one when the
+   * caller supplies none. Non-serving-proof + expiry-witness signing both
+   * require a 64-hex nonce; the auto-attestation paths (the expiry sweep and
+   * the periodic witness scan) have no challenger to provide one, so without a
+   * default every auto-attest threw "challengeNonce must be 64 hex characters"
+   * — which is why Fix #1's claim-path witness never actually emitted a proof
+   * through the sweep. A self-generated nonce is correct here: the proof is
+   * already relay-signed; the nonce only needs to be unique, not challenger-
+   * issued. Explicit challenge-response callers still pass their own.
+   */
+  _resolveChallengeNonce (provided) {
+    if (typeof provided === 'string' && /^[0-9a-f]{64}$/i.test(provided)) return provided
+    const nonce = b4a.alloc(32)
+    sodium.randombytes_buf(nonce)
+    return b4a.toString(nonce, 'hex')
+  }
+
   async createCustodyNonServingProof (intentId, opts = {}) {
     if (!this.seedingRegistry) throw new Error('Registry not running')
     if (!this.swarm?.keyPair) throw new Error('Relay keypair unavailable')
@@ -2722,7 +2785,7 @@ export class RelayNode extends EventEmitter {
       intentId,
       addressKey: appKey,
       blindContentId: opts.blindContentId || intent.blindContentId,
-      challengeNonce: opts.challengeNonce,
+      challengeNonce: this._resolveChallengeNonce(opts.challengeNonce),
       retainUntil: opts.retainUntil ?? intent.retainUntil,
       notServing: true,
       notServingReason: opts.notServingReason || 'expired-unseeded',
@@ -2762,7 +2825,7 @@ export class RelayNode extends EventEmitter {
       intentId,
       blindContentId: opts.blindContentId || intent.blindContentId,
       relayPubkey: subjectRelayPubkey,
-      challengeNonce: opts.challengeNonce,
+      challengeNonce: this._resolveChallengeNonce(opts.challengeNonce),
       nonServingProofHash: opts.nonServingProofHash || null,
       catalogPresent: opts.catalogPresent === true,
       gatewayServing: opts.gatewayServing === true,
