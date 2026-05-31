@@ -6,7 +6,7 @@ Drop a Hyperdrive key in front of a HiveRelay node and your Pear app comes onlin
 
 It's the substrate. You build the app; the network handles availability, NAT traversal, browser/mobile ingress, custody, and self-heal.
 
-**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.8.27**
+**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.9.2**
 
 ### Recent releases
 
@@ -14,6 +14,9 @@ For full details on each see the [CHANGELOG](./CHANGELOG.md). The
 three-step registry redesign (v0.8.24 → v0.8.25 → v0.8.26) is
 covered in plain English in [docs/RETRO-2026-05-28-REGISTRY-UPGRADES.md](./docs/RETRO-2026-05-28-REGISTRY-UPGRADES.md).
 
+- **v0.9.0** — **Publicly verifiable blind custody (PVSS over secp256k1).** A relay can now hold an *opaque, guardian-encrypted share* of a secret that it can publicly verify but cannot read, and any *t-of-n* guardians later reconstruct the secret entirely client-side. Two new `HiveRelayClient` methods — `splitForCustody({ guardians, threshold, relays, appKey })` and `reconstructFromCustody({ intentId, guardianSecretKeys })` — compose Schoenmakers PVSS (Feldman commitments, per-share DLEQ proofs, Lagrange-in-exponent reconstruction) with the v2 signed custody protocol. The relay verifies the share it custodies against the published commitments before signing a share-verified receipt, so a malformed/substituted share is caught at custody time, not recovery. Bare-safe prover + signing live in the client (`p2p-hiverelay-client/secret-sharing.js`, `/custody.js`); the relay holds the share but never the guardian keys. Social recovery, team break-glass, inheritance — with no party (relay or single guardian) ever able to reconstruct alone.
+- **v0.9.1** — Makes v0.9.0 work end-to-end over the wire. `splitForCustody` now triggers the per-relay custody seed (the step that drives share verification + receipt anchoring); the public `GET /api/custody/{id}/status` surfaces the `receipts[]` the dealer polls; and an already-seeded re-pin (publish-then-custody) now anchors a share receipt. Proven by an in-process integration test driving the real split→receipt→commit→reconstruct against a live relay.
+- **v0.9.2** — Custody expiry sweep now actually attests for content seeded over the seed-request channel. The sweep keyed non-serving attestation off `entry.custodyIntentId`, but the binary seed encoding drops custody fields, so that entry field was `null` even when a signed intent existed — the sweep now recovers the linkage by `addressKey` and backfills the entry. Also: auto-attestation self-generates the required `challengeNonce` (without it, every sweep attest threw, so v0.8.27's claim-path witness never actually fired). Custody linkage is now visible on `catalog()` + `GET /api/anchors?detailed=1` (PR #31, [@iainkek](https://github.com/iainkek)).
 - **v0.8.27** — Claim-path erasure witness. A *claimed* drop (publisher signed `source-retired`, which requires a validated `commit`, so the quorum already holds the content) now produces a third-party-provable destruction record immediately, instead of waiting out the full `retainUntil` window. `validateCustodyTransition` discharges the `retainUntil` floor for non-serving-proofs + expiry-witnesses once a source-retirement exists; the expiry sweep attests them with `reason: 'source-retired'`. Plus a latent seed-path fix: the legacy Protomux `_onSeedRequest` (Node + Bare) now preserves the custody binding via `extractCustodySeedOpts`. Closes dmc's "provable to a third party" gap for the claim path.
 - **v0.8.26** — `SeedingRegistry` Hyperbee indexed-views sidecar. Sibling Hypercore (`seeding-registry-index-v1`) mirrors `_applyEntry` output keyed by entry-shape, so restart hydration restores the in-memory custody + seed state without replaying every log block. Restart cost: O(N·M) → O(M).
 - **v0.8.25** — `AppRegistry` persistence migrated from JSON-blob to Hyperbee. Each mutation now writes one small block to a Hyperbee sibling-core on the relay's existing corestore, instead of rewriting the entire `app-registry.json` file on every `setAnchored()` / `clearAnchored()`. Closes the hung-writeFile cascade as a side effect.
@@ -84,8 +87,9 @@ For encrypted file handoffs, blind dead drops, time-bounded transfers. Marked `s
 - Six signed message types: intent → receipt → commit → source-retired → proof → non-serving-proof, with witness tombstones layered on top.
 - `retainUntil` is enforced state — the expiry monitor unseeds at the deadline and the relay signs a non-serving-proof.
 - Independent witnesses probe relays after expiry and sign tombstones — drops undetected post-expiry serving from ~82% to <1%.
+- **Publicly verifiable key custody (v0.9.0).** Beyond blind *content*, a relay can custody an opaque, guardian-encrypted *share* of a secret (PVSS over secp256k1). It publicly verifies the share against the published commitments — without ever decrypting it — and any *t-of-n* guardians reconstruct the secret client-side. No party (relay or single guardian) can reconstruct alone.
 
-For the full protocol, see the [Atomic Blind Custody whitepaper](docs/ATOMIC-BLIND-CUSTODY.md).
+For the full protocol, see the [Atomic Blind Custody whitepaper](docs/ATOMIC-BLIND-CUSTODY.md) and [PVSS blind key custody](docs/PVSS-BLIND-CUSTODY.md).
 
 ---
 
@@ -181,6 +185,43 @@ npm install p2p-hiverelay-client
 | `app.recordCustodyNonServingProof(url, intentId, proof, opts)` | Relay's post-expiry attestation |
 | `app.recordCustodyExpiryWitness(url, intentId, witness, opts)` | Independent witness tombstone |
 | `app.getCustodyStatus(url, intentId)` | Read-only quorum + commit status |
+
+### Blind key custody — PVSS (v0.9.0)
+
+Threshold-custody a secret across a relay quorum where each relay holds only an opaque, publicly-verifiable share. Crypto + signing are Bare-safe and self-contained (no dependency on the relay package).
+
+| Method | Description |
+|---|---|
+| `app.splitForCustody({ secret?, guardians, threshold, relays, appKey, opts? })` | PVSS-split a secret to the guardians' pubkeys, publish the public share bundle over the P2P data plane, sign the v2 intent, collect a share-verified receipt from every relay, then sign + publish the quorum commit |
+| `app.reconstructFromCustody({ intentId, guardianSecretKeys, relays?, shareBundleKey?, threshold? })` | Recover the secret from any `t` guardian secret keys, entirely client-side |
+
+```js
+import { HiveRelayClient } from 'p2p-hiverelay-client'
+import { keygen } from 'p2p-hiverelay-client/secret-sharing.js'
+
+const g1 = await keygen(); const g2 = await keygen(); const g3 = await keygen()
+
+// 2-of-3 custody across three relays (each holds one opaque share).
+const res = await app.splitForCustody({
+  guardians: [g1.publicKey, g2.publicKey, g3.publicKey],
+  threshold: 2,
+  relays: [r1, r2, r3],            // { url, pubkey } each
+  appKey,                          // the content drive this custody binds to
+  opts: { apiKey }
+})
+// res.key is dealer-private — never published. Relays only ever hold verified shares.
+
+// Later, any 2 guardians recover it — no relay can:
+const out = await app.reconstructFromCustody({
+  intentId: res.intentId,
+  guardianSecretKeys: [g1.secretKey, g3.secretKey],
+  shareBundleKey: res.shareBundleKey,
+  threshold: 2
+})
+// out.key === res.key
+```
+
+See [PVSS blind key custody](docs/PVSS-BLIND-CUSTODY.md) for the scheme + threat model.
 
 ### Quorum + verification API
 
@@ -361,6 +402,7 @@ Two simulation harnesses cover behaviors unit tests can't reach:
 
 ### Atomic Blind Custody
 - **[ATOMIC-BLIND-CUSTODY.md](docs/ATOMIC-BLIND-CUSTODY.md)** — full protocol whitepaper (threat model, state machine, security analysis, simulation evidence, comparison to Filecoin/Sia/Storj/IPFS)
+- **[PVSS-BLIND-CUSTODY.md](docs/PVSS-BLIND-CUSTODY.md)** — publicly verifiable threshold *key* custody (PVSS over secp256k1): scheme, data path, `splitForCustody` / `reconstructFromCustody`, relay-side verification, threat model
 - **[WHATS-IN-THE-RELAY.md](docs/WHATS-IN-THE-RELAY.md)** — guided tour of every component
 - **[TUTORIAL-CUSTODY-QUICKSTART.md](docs/TUTORIAL-CUSTODY-QUICKSTART.md)** — build an encrypted custody handoff in 10 minutes
 - **[atomic-network-design.md](docs/atomic-network-design.md)** — extended design doc with rollout matrix and protocol shape
