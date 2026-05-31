@@ -354,7 +354,15 @@ export class AppRegistry extends EventEmitter {
       publisherPubkey: null,
       durability: 0,
       revocable: true,
-      retainUntil: null
+      retainUntil: null,
+      // custodyIntentId is NOT redacted: it is already a public identifier
+      // exposed by GET /api/custody/{intentId}/status. Surfacing it on
+      // the catalog entry only reveals the linkage (intent ↔ appRegistry
+      // entry), which is the load-bearing diagnostic for the claim-path
+      // expiry sweep (_runCustodyExpiryPass in relay-node/index.js) —
+      // operators need to verify the entry carries the binding the sweep
+      // gates on (`if (custodyIntentId && this.seedingRegistry) ...`).
+      custodyIntentId: entry.custodyIntentId || null
     }
   }
 
@@ -411,7 +419,14 @@ export class AppRegistry extends EventEmitter {
         // "pure-anonymous-mirror." Redacted entries strip these in
         // _redactCatalogEntry — never leaked for blind drives.
         publisherPubkey: entry.publisherPubkey || null,
-        retainUntil: entry.retainUntil || null
+        retainUntil: entry.retainUntil || null,
+        // custodyIntentId — atomic-custody binding from seed opts. Surfaced
+        // here so the claim-path expiry sweep diagnostic can verify the
+        // entry is linked to its custody intent. Preserved through
+        // _redactCatalogEntry because the identifier itself is already
+        // public (GET /api/custody/{intentId}/status) — only the linkage
+        // is new info, and the linkage is exactly what the sweep gates on.
+        custodyIntentId: entry.custodyIntentId || null
       }, entry, opts)
 
       // Dedup app entries by appId — keep latest version

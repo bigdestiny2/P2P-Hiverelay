@@ -129,3 +129,68 @@ test('AppRegistry — setAnchored on missing entry returns false', (t) => {
   const reg = new AppRegistry(dir)
   t.is(reg.setAnchored('nope', 1), false)
 })
+
+// ── Custody-binding diagnostic exposure on catalog() ───────────────────────
+//
+// Background: v0.8.27's _runCustodyExpiryPass (relay-node/index.js) iterates
+// appRegistry.apps and gates the retired-discharge on entry.custodyIntentId.
+// Without exposing custodyIntentId on catalog() output (and through
+// _redactCatalogEntry), operators have no external way to verify the entry
+// actually carries the binding the sweep is gating on — making claim-path
+// non-serving-proof failures unpinnable from outside.
+//
+// custodyIntentId is intentionally NOT redacted: it is already public via
+// GET /api/custody/{intentId}/status, so surfacing it on the catalog entry
+// only reveals the linkage (intent ↔ appRegistry entry), which is exactly
+// what the sweep gates on.
+
+test('AppRegistry — catalog() surfaces custodyIntentId for non-blind entries', (t) => {
+  const { dir, cleanup } = tmpDir()
+  t.teardown(cleanup)
+  const reg = new AppRegistry(dir)
+  const intentId = 'a'.repeat(64)
+  reg.set('aa', {
+    type: 'app',
+    blind: false,
+    custodyIntentId: intentId,
+    startedAt: Date.now()
+  })
+  const items = reg.catalog()
+  const item = items.find(i => i.appKey === 'aa')
+  t.ok(item, 'entry present in catalog')
+  t.is(item.custodyIntentId, intentId, 'custodyIntentId surfaced on non-blind entry')
+})
+
+test('AppRegistry — catalog() surfaces custodyIntentId on BLIND/redacted entries (linkage is non-sensitive)', (t) => {
+  const { dir, cleanup } = tmpDir()
+  t.teardown(cleanup)
+  const reg = new AppRegistry(dir)
+  const intentId = 'b'.repeat(64)
+  const blindId = 'c'.repeat(64)
+  reg.set('bb', {
+    type: 'app',
+    blind: true,
+    blindContentId: blindId,
+    custodyIntentId: intentId,
+    publisherPubkey: 'd'.repeat(64),
+    retainUntil: Date.now() + 5000,
+    startedAt: Date.now()
+  })
+  const items = reg.catalog()
+  // Redacted entries have their appKey replaced with blindContentId.
+  const item = items.find(i => i.appKey === blindId)
+  t.ok(item, 'blind entry present in catalog (keyed by blindContentId after redaction)')
+  t.is(item.redacted, true, 'entry is marked redacted')
+  t.is(item.publisherPubkey, null, 'publisherPubkey stripped (sensitive provenance)')
+  t.is(item.retainUntil, null, 'retainUntil stripped (sensitive commitment signal)')
+  t.is(item.custodyIntentId, intentId, 'custodyIntentId PRESERVED — already public via /api/custody/{id}/status, linkage needed for sweep diagnostic')
+})
+
+test('AppRegistry — catalog() custodyIntentId defaults to null when not in entry', (t) => {
+  const { dir, cleanup } = tmpDir()
+  t.teardown(cleanup)
+  const reg = new AppRegistry(dir)
+  reg.set('ee', { type: 'app', startedAt: Date.now() })
+  const item = reg.catalog().find(i => i.appKey === 'ee')
+  t.is(item.custodyIntentId, null, 'custodyIntentId null for entries without custody binding')
+})
