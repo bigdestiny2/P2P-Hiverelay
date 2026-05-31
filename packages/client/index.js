@@ -2068,6 +2068,52 @@ export class HiveRelayClient extends EventEmitter {
     return res.body
   }
 
+  /**
+   * Ask a relay to seed the custody addressKey under a signed intent it has
+   * already been handed (publishCustodyIntent). Seeding is what drives the
+   * relay's PVSS share verification + receipt anchoring (core seedApp →
+   * _recordCustodyReceipt). The relay re-fetches the signed intent by
+   * custodyIntentId to learn its assigned shareIndex, the share scheme, and the
+   * shareBundleKey it must replicate + verify against — so only the binding
+   * fields are sent here; nothing secret. Authenticated: /seed requires a
+   * Bearer API key (opts.apiKey).
+   */
+  async _seedForCustody (relayUrl, intent, opts = {}) {
+    const body = {
+      appKey: intent.addressKey,
+      blind: true,
+      custodyIntentId: intent.intentId,
+      blindContentId: intent.blindContentId,
+      ciphertextRoot: intent.ciphertextRoot
+    }
+    if (Number.isFinite(intent.contentVersion)) body.contentVersion = intent.contentVersion
+    if (Number.isFinite(intent.retainUntil)) body.retainUntil = intent.retainUntil
+    return this._postSeed(relayUrl, body, opts)
+  }
+
+  async _postSeed (relayUrl, body, opts = {}) {
+    if (typeof relayUrl !== 'string' || !relayUrl.length) {
+      throw new Error('relayUrl required')
+    }
+    const base = relayUrl.replace(/\/+$/, '')
+    const headers = { 'Content-Type': 'application/json' }
+    // /seed (core relay-node/api.js) requires Bearer auth — same scheme as the
+    // custody POST endpoints (_postCustody). The X-API-Key header is ignored.
+    if (opts.apiKey) headers.Authorization = 'Bearer ' + opts.apiKey
+    const res = await _fetchJson(base + '/seed', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body || {})
+    })
+    if (!res.ok) {
+      const err = new Error('seed endpoint failed: ' + (res.body?.error || res.status))
+      err.status = res.status
+      err.body = res.body
+      throw err
+    }
+    return res.body
+  }
+
   // ─── PVSS blind custody (dealer-side orchestration) ─────────────────
   //
   // The DX payoff: compose split (secret-sharing.js) + signed v2 intents/commits
@@ -2157,6 +2203,28 @@ export class HiveRelayClient extends EventEmitter {
     //    only the bulky share DATA moved to P2P.
     for (const r of relays) {
       await this.publishCustodyIntent(r.url, intent, { apiKey: opts.apiKey })
+    }
+
+    // 4.5 Trigger each relay to SEED the custody addressKey under the intent it
+    //     was just handed. This is the load-bearing step: a relay only verifies
+    //     its assigned PVSS share + anchors a receipt from inside seedApp
+    //     (core app-lifecycle.js → _recordCustodyReceipt). The intent/commit
+    //     control channel alone never produces a receipt — without this seed,
+    //     _awaitVerifiedReceipts below polls a quorum that never forms and every
+    //     split times out with CUSTODY_QUORUM_TIMEOUT. /seed is authenticated,
+    //     so opts.apiKey (per-relay Bearer) must be supplied. Per-relay failures
+    //     are non-fatal: a relay that rejects the seed simply won't anchor, and
+    //     the quorum poll decides overall success vs. timeout.
+    for (const r of relays) {
+      try {
+        await this._seedForCustody(r.url, intent, { apiKey: opts.apiKey })
+      } catch (err) {
+        this.emit('custody-seed-error', {
+          relay: r.url,
+          intentId: intent.intentId,
+          error: (err && err.message) || String(err)
+        })
+      }
     }
 
     // 5. Poll until every relay returns a share-VERIFIED, anchored receipt.

@@ -188,6 +188,7 @@ export class AppLifecycle extends EventEmitter {
           ? existing.discoveryKey
           : b4a.toString(existing.discoveryKey, 'hex')
         this._reconcileSeedOptsOnRepin(appKeyHex, existing, normalizedOpts)
+        this._recordCustodyReceiptOnRepin(appKeyHex, existing, normalizedOpts)
         return { discoveryKey: dkHex, alreadySeeded: true }
       }
       // else: placeholder entry from load() — fall through to seed properly.
@@ -218,6 +219,7 @@ export class AppLifecycle extends EventEmitter {
           ? existing.discoveryKey
           : b4a.toString(existing.discoveryKey, 'hex')
         this._reconcileSeedOptsOnRepin(appKeyHex, existing, opts)
+        this._recordCustodyReceiptOnRepin(appKeyHex, existing, opts)
         return { discoveryKey: dkHex, alreadySeeded: true }
       }
       // else: placeholder entry from load() — fall through.
@@ -1100,6 +1102,48 @@ export class AppLifecycle extends EventEmitter {
 
     const stillUnanchored = checked - repaired
     return { checked, repaired, stillUnanchored }
+  }
+
+  /**
+   * Record a custody receipt for an ALREADY-seeded app when a re-pin carries a
+   * custody intent. The first-seed flow anchors the receipt at the end of
+   * _seedAppInner (after the content drive replicates); an app that is already
+   * seeded never re-enters that path. The canonical gap: a publisher calls
+   * client.publish() — which auto-seeds the content drive — and THEN
+   * splitForCustody(), which POSTs /seed carrying the custodyIntentId. By then
+   * the addressKey is already in seededApps, so seedApp short-circuits
+   * ({ alreadySeeded:true }) and no PVSS share receipt is ever anchored. The
+   * dealer's _awaitVerifiedReceipts then polls a quorum that never forms and
+   * every live split times out (CUSTODY_QUORUM_TIMEOUT).
+   *
+   * Fire-and-forget by design: the /seed HTTP response must not block on a
+   * share-bundle replication that can take seconds, exactly as the first-seed
+   * path returns before the async anchor completes — the dealer polls for the
+   * receipt either way. Fail-closed for PVSS (a share that doesn't verify
+   * yields no receipt) and idempotent (recordCustodyReceipt is keyed
+   * intentId→relayPubkey, so a repeated re-pin just overwrites the same slot).
+   *
+   * @param {string} appKeyHex
+   * @param {object} existing - entry from this.seededApps
+   * @param {object} opts - normalized opts from the new (re-pin) seedApp call
+   */
+  _recordCustodyReceiptOnRepin (appKeyHex, existing, opts) {
+    if (!opts || opts.blind !== true || !opts.custodyIntentId) return
+    const node = this.node
+    const version = Number.isFinite(opts.contentVersion)
+      ? opts.contentVersion
+      : (existing && Number.isFinite(existing.version) ? existing.version : 0)
+    const promise = this._recordCustodyReceipt(appKeyHex, opts, version)
+      .catch((err) => {
+        this.emit('custody-receipt-error', {
+          appKey: appKeyHex,
+          intentId: opts.custodyIntentId,
+          error: (err && err.message) || String(err)
+        })
+        return null
+      })
+    const scope = node && node._scope
+    if (scope && typeof scope.tracked === 'function') scope.tracked(promise)
   }
 
   async _recordCustodyReceipt (appKeyHex, opts = {}, contentVersion = 0) {

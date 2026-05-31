@@ -2363,6 +2363,21 @@ export class RelayAPI extends EventEmitter {
       quorumReached: status.quorumReached === true,
       receiptRoot: status.receiptRoot || null,
       relayQuorum: Array.isArray(status.relayQuorum) ? status.relayQuorum : [],
+      // Per-receipt PUBLIC attestation fields — required for publicly
+      // verifiable custody. A dealer/guardian/third party polls these (no auth)
+      // to confirm each relay holds + DLEQ-verified its share. Only the
+      // non-secret fields are exposed (relayPubkey is already in relayQuorum,
+      // shareIndex already in pvss.shareIndices); the rest of the receipt
+      // (addressKey, blindContentId, ciphertextRoot, signature, …) stays
+      // behind ?detailed=1 + auth, preserving the redacted-catalog privacy tier.
+      receipts: Array.isArray(status.receipts)
+        ? status.receipts.map(r => ({
+          relayPubkey: r.relayPubkey || null,
+          shareIndex: Number.isInteger(r.shareIndex) ? r.shareIndex : null,
+          shareVerified: r.shareVerified === true,
+          anchored: r.anchored === true
+        }))
+        : [],
       committed: status.committed === true,
       sourceRetired: status.sourceRetired === true,
       proofCount: status.proofCount || 0,

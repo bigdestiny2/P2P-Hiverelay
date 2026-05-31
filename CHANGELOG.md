@@ -6,6 +6,49 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.9.1] — 2026-05-31
+
+Patch: makes v0.9.0 publicly verifiable blind custody work end-to-end over
+the wire. The 0.9.0 release shipped the PVSS crypto, the v2 signing, and the
+relay-side share verification, but two integration seams left the live
+dealer→relay path non-functional. Both are fixed here, and a new in-process
+integration test now drives the *real* split→receipt→commit→reconstruct
+against a live relay over HTTP + Hyperswarm — the unit suite had stubbed
+exactly those seams, which is why the gaps slipped through 0.9.0. No
+wire-format or public-API changes; purely additive bug fixes.
+
+### Fixed
+
+- **`splitForCustody` now triggers the custody seed.** A PVSS share receipt
+  is only produced inside a relay's `seedApp` path, but `splitForCustody`
+  published the signed intent without ever asking any relay to seed the
+  address key — so no relay verified its share, no receipt was anchored, and
+  the dealer's receipt poll always timed out (`CUSTODY_QUORUM_TIMEOUT`). The
+  client now POSTs an authenticated `/seed` to each relay (carrying the
+  `custodyIntentId` and binding fields) after publishing the intent.
+- **Public custody status now surfaces `receipts[]`.** The unauthenticated
+  `GET /api/custody/:id/status` redacted the receipts array entirely, but that
+  array is exactly what the dealer polls to confirm a share-verified quorum.
+  It now exposes the four PUBLIC per-receipt fields (`relayPubkey`,
+  `shareIndex`, `shareVerified`, `anchored`); all sensitive receipt fields and
+  the full signed intent remain behind `?detailed=1` + Bearer auth.
+- **Already-seeded re-pin anchors a custody receipt.** When an address key is
+  already seeded — the canonical case being `client.publish()` (which
+  auto-seeds the content) followed by `splitForCustody()` — `seedApp`
+  short-circuited and never recorded a share receipt. The relay now verifies
+  its assigned share and anchors a receipt on a custody re-pin as well.
+  Fail-closed for PVSS: a share that does not verify yields no receipt.
+
+### Tests
+
+- `test/integration/pvss-custody-e2e.test.js` — real dealer→relay E2E with no
+  stubs: both the clean first-seed and already-seeded re-pin paths, through
+  share-verified receipt, quorum commit, and guardian reconstruct, plus
+  relay-side blindness (the dealer key/secret never appear in relay state).
+- `test/unit/custody-status-redaction.test.js` — guards the public-status
+  redaction contract (`receipts[]` exposed; secrets + full intent stay behind
+  auth).
+
 ## [0.9.0] — 2026-05-30
 
 Publicly verifiable blind custody. Relays can now hold an *opaque,
