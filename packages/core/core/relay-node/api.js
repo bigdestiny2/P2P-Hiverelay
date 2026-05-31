@@ -794,7 +794,24 @@ export class RelayAPI extends EventEmitter {
               type: e.type,
               anchored: e.anchored,
               anchoredAt: e.anchoredAt,
-              anchoredLength: e.anchoredLength
+              anchoredLength: e.anchoredLength,
+              // Custody-binding diagnostic fields (auth-gated, same as the
+              // rest of ?detailed=1). Needed to externally verify an
+              // atomic-custody seed produced an entry the v0.8.27 claim-
+              // path sweep will pick up:
+              //   _runCustodyExpiryPass (relay-node/index.js) iterates
+              //   appRegistry.apps, requires _isTemporaryCustodyEntry(entry)
+              //   to be true (driven by blind / storageClass / availability-
+              //   Class), then gates the retired-discharge on
+              //   `if (custodyIntentId && this.seedingRegistry)`.
+              // Without these fields surfaced, operators can't tell whether
+              // a missing non-serving-proof is due to (a) entry not linked,
+              // (b) entry not classified as temporary, or (c) something
+              // downstream in createCustodyNonServingProof.
+              custodyIntentId: e.custodyIntentId || null,
+              blind: e.blind === true,
+              storageClass: e.storageClass || null,
+              availabilityClass: e.availabilityClass || null
             }))
           }
           return this._json(res, { ...stats, lastCheckedAt: this.node._lastAnchorCheckAt || null, entries })
