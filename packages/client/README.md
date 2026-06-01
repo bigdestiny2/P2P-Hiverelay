@@ -121,14 +121,21 @@ const drive = await client.publish([{ path: '/note.enc', content: ciphertext }])
 const appKey = drive.key.toString('hex')
 
 // 4. Split + custody. Omit `secret` to have a fresh dealer key generated.
+//    The custody POST endpoints (intent / seed / commit) are AUTHENTICATED —
+//    pass the relay's API key via opts.apiKey (per-relay Bearer key).
 const custody = await client.splitForCustody({
   guardians: guardians.map(g => g.publicKey),
   threshold: 2, // any 2 of 3 guardians can recover
   relays,
-  appKey
+  appKey,
+  opts: {
+    apiKey,            // required: Bearer key the relays accept for custody writes
+    retainMs: 365 * 24 * 60 * 60 * 1000, // how long relays hold the share
+    pollTimeoutMs: 90_000                // how long to wait for verified receipts
+  }
 })
 
-console.log('dealer key:', custody.key) // encrypt your content with THIS — never published
+console.log('dealer key:', custody.key) // 64-hex — DEALER-PRIVATE, never published
 console.log('intentId:', custody.intentId)
 console.log('share bundle:', custody.shareBundleKey)
 ```
@@ -155,6 +162,70 @@ share-index per relay, hands the intent to each relay, waits for a
 **share-verified** receipt from every relay, then signs and publishes the quorum
 commit. `requiredReplicas` equals `n` (every relay must anchor); the
 reconstruction threshold `t` is the separate `shareThreshold` field.
+
+### Options (`opts`)
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `apiKey` | — | **Bearer key for the custody writes.** The intent / seed / commit endpoints are authenticated; without it they 401. Per-relay. |
+| `secret` | random | 64-hex scalar to split. Omit for a fresh dealer key. |
+| `retainMs` | 30 days | How long relays retain the share before expiry. |
+| `deadlineMs` | 10 min | Receipt-collection window. |
+| `pollTimeoutMs` | 60_000 | How long to wait for every relay's verified receipt before `CUSTODY_QUORUM_TIMEOUT`. |
+| `pollIntervalMs` | 1000 | Status poll interval. |
+| `blindContentId` / `ciphertextRoot` / `contentVersion` | derived | Bind the custody to a specific encrypted payload (see below). |
+
+### Authentication & finding relays
+
+Custody **writes** need an API key the relay accepts (`opts.apiKey`); custody
+**reads** (status, share bundle) and `reconstructFromCustody` are
+**permissionless** — recovery needs only guardian keys + the public bundle, no
+relay auth. Requires relays on **v0.9.1+**.
+
+Each relay entry is `{ url, pubkey }`. Get both from the relay's public
+capability doc:
+
+```js
+const doc = await (await fetch(url + '/.well-known/hiverelay.json')).json()
+const relay = { url, pubkey: doc.pubkey }   // doc.version must be >= 0.9.1
+```
+
+### Recovering an arbitrary secret (encrypt-then-custody)
+
+**Important:** `custody.key` is a *fresh 32-byte dealer key* — it is **not** your
+secret bytes. To make an existing secret (a seed, a mnemonic, a master key)
+recoverable, **encrypt your secret with the dealer key and custody the dealer
+key.** Then recovery = reconstruct the dealer key → decrypt your secret.
+
+```js
+import sodium from 'sodium-universal'
+import b4a from 'b4a'
+
+// SETUP — custody a fresh dealer key, encrypt your real secret under it.
+const custody = await client.splitForCustody({ guardians, threshold: 2, relays, appKey, opts: { apiKey } })
+const dealerKey = b4a.from(custody.key, 'hex')                 // 32 bytes
+const nonce = b4a.alloc(sodium.crypto_secretbox_NONCEBYTES); sodium.randombytes_buf(nonce)
+const box = b4a.alloc(mySecret.length + sodium.crypto_secretbox_MACBYTES)
+sodium.crypto_secretbox_easy(box, mySecret, nonce, dealerKey) // mySecret = e.g. rootSeed
+// Store { nonce, box } anywhere (it's ciphertext) — e.g. a blind drive — and keep
+// the RECOVERY COORDINATES so a future device can find the custody:
+const coordinates = { intentId: custody.intentId, shareBundleKey: custody.shareBundleKey, threshold: 2, relays }
+
+// RECOVER — gather t guardian SECRET keys (no relay API key needed).
+const out = await client.reconstructFromCustody({
+  ...coordinates,
+  guardianSecretKeys: [g1.secretKey, g3.secretKey]
+})
+const recoveredKey = b4a.from(out.key, 'hex')
+const mySecretBack = b4a.alloc(box.length - sodium.crypto_secretbox_MACBYTES)
+sodium.crypto_secretbox_open_easy(mySecretBack, box, nonce, recoveredKey)
+// mySecretBack === mySecret
+```
+
+The **recovery coordinates** (`intentId`, `shareBundleKey`, `threshold`,
+relays) are *not secret* — they're useless without `t` guardian keys. Hand them
+to each guardian alongside their share, or keep them on a short "recovery card."
+That's the bootstrap a fresh device needs to find the custody.
 
 ### Reconstruct
 
