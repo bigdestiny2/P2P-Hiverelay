@@ -18,6 +18,7 @@ export { WorkerPool } from './router/worker-pool.js'
 export { PokerApp, SignedLog, REJECT as POKER_REJECT } from './poker/index.js'
 export { handlePokerRoute, POKER_API_PREFIX } from './poker/http-adapter.js'
 export { PokerWsAdapter, POKER_EVENTS_PREFIX, POKER_EVENTS_SUFFIX } from './poker/ws-adapter.js'
+export { HypercorePersistence } from './poker/persistence-hypercore.js'
 export {
   createCustodyIntent,
   createCustodyReceipt,

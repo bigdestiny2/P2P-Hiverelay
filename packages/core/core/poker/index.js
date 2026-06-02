@@ -233,6 +233,30 @@ export class PokerApp extends ServiceProvider {
     return this._tables.delete(String(tableKey).toLowerCase())
   }
 
+  /**
+   * Rehydrate a table's log from an array of already-validated entries.
+   * Used by persistence adapters at startup to replay a stored stream
+   * into the in-memory SignedLog.
+   *
+   * SAFETY: the entries are NOT re-validated. The caller is responsible for
+   * having validated them on the way INTO the store originally (this is the
+   * standard pattern — validate at ingest, trust at hydrate). Only call
+   * this from your own persistence layer, never from user input.
+   *
+   * @param {string} tableKey
+   * @param {object[]} entries Entries in the same shape SignedLog.append
+   *   accepts (already signed). Order matters — per-writer seq order must
+   *   be preserved.
+   * @returns {number} Number of entries replayed.
+   */
+  replayEntries (tableKey, entries) {
+    const record = this._get(tableKey)
+    if (!record) throw new Error('replayEntries: no such table')
+    if (!Array.isArray(entries)) throw new Error('replayEntries: entries must be an array')
+    record.log._replay(entries)
+    return entries.length
+  }
+
   // ─── Internal ─────────────────────────────────────────────────────────────
 
   _get (tableKey) {

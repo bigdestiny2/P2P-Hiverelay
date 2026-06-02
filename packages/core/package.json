@@ -28,6 +28,8 @@
     "./core/poker/http-adapter.js": "./core/poker/http-adapter.js",
     "./core/poker/ws-adapter": "./core/poker/ws-adapter.js",
     "./core/poker/ws-adapter.js": "./core/poker/ws-adapter.js",
+    "./core/poker/persistence-hypercore": "./core/poker/persistence-hypercore.js",
+    "./core/poker/persistence-hypercore.js": "./core/poker/persistence-hypercore.js",
     "./*": "./*"
   },
   "imports": {
