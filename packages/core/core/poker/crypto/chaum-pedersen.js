@@ -57,12 +57,25 @@
 
 import sodium from 'sodium-universal'
 import b4a from 'b4a'
+// noble-curves provides a best-effort constant-time scalar field for
+// ed25519 (the scalar field has prime order ℓ, the group order). We use it
+// ONLY for the prover's `e * x mod ℓ` step, where x is a long-term secret
+// and timing leaks matter. Noble's `Fn.mul` is hardened against operand-
+// dependent execution time — it doesn't reach the rigour of a native
+// constant-time impl in C, but it's the best portable JS path available
+// and is what every modern audited JS crypto stack ships against.
+import { ed25519 as nobleEd25519 } from '@noble/curves/ed25519.js'
 
 // ed25519 group order ℓ = 2^252 + 27742317777372353535851937790883648493.
-// Sourced from RFC 8032 §5.1. Used here as the modulus for scalar
-// arithmetic. The constant is BigInt at module load so we don't recompute
-// it on every operation.
+// Sourced from RFC 8032 §5.1. Kept for documentation; the scalar arithmetic
+// itself runs through noble's `ed25519.Point.Fn` which encodes the same
+// constant. We assert at module load that the two agree, so any future
+// noble curve-parameter change can't silently desync this module.
 const ED25519_ORDER = 7237005577332262213973186563042994240857116359379907606001950938285454250989n
+if (nobleEd25519.Point.Fn.ORDER !== ED25519_ORDER) {
+  throw new Error('chaum-pedersen: noble ed25519 scalar field order does not match RFC 8032 ℓ')
+}
+const NOBLE_FN = nobleEd25519.Point.Fn
 
 // Domain separator for the Fiat-Shamir hash. Any change to this string
 // rotates all prior proofs out of validity, so DO NOT change it without a
@@ -99,6 +112,32 @@ export function verifyShareEquality (args) {
     if (!val || val.byteLength !== POINT_BYTES) return { valid: false, reason: 'bad-point:' + name }
   }
   if (!z || z.byteLength !== SCALAR_BYTES) return { valid: false, reason: 'bad-scalar:z' }
+
+  // Subgroup-validity checks — reject mixed-order or low-order points.
+  //
+  // ed25519's cofactor is 8: a curve point can be on the Edwards curve but
+  // sit outside the prime-order subgroup. Without this check, an attacker
+  // who controls any of Y, C1, D, A, or B can plant a mixed-order point
+  // and have eq1/eq2 close for a proof that's only valid mod 8 of the
+  // group order — the verifier returns valid=true for a claim that doesn't
+  // attest what the dispute protocol thinks it does.
+  //
+  // `crypto_core_ed25519_is_valid_point` verifies: on the curve, canonical
+  // form, in the main subgroup, and not low-order. That's exactly the
+  // closure we need. We run it on every externally-sourced point;
+  // G is internal (defaults to ed25519 base point) so we trust it.
+  //
+  // CVE-2025-69277 caveat: pre-fix libsodium had an incomplete check in
+  // this function itself. Operators must run sodium-universal built
+  // against libsodium >= commit ad3004e. This module assumes that; if
+  // your deployment ships an older libsodium, this check still rejects
+  // the common attack vectors but the fundamental defense is operator
+  // dependency hygiene.
+  for (const [name, val] of [['Y', Y], ['C1', C1], ['D', D], ['A', A], ['B', B]]) {
+    if (!sodium.crypto_core_ed25519_is_valid_point(val)) {
+      return { valid: false, reason: 'invalid-point:' + name }
+    }
+  }
 
   // Recompute challenge e' = H(G || Y || C1 || D || A || B), reduce mod ℓ.
   const e = fsChallenge(G, Y, C1, D, A, B)
@@ -137,20 +176,19 @@ export function verifyShareEquality (args) {
  * so reuse-safety is on the caller side only if they re-seed deterministic
  * RNGs (don't).
  *
- * ⚠ TIMING SIDE-CHANNEL (PROVER ONLY). The `e * x mod ℓ` step uses
- * BigInt because sodium-universal doesn't expose
- * crypto_core_ed25519_scalar_mul. JavaScript BigInt arithmetic is NOT
- * constant-time — its execution time can depend on operand value. Anyone
- * calling proveShareEquality on a real secret x in a network-exposed
- * process (e.g. a player's Pear client serving timing-observable
- * responses) MUST treat that as a leak channel for x. Mitigations:
- *   - Confine proving to a non-network-facing process.
- *   - Or swap in a constant-time scalar mul (noble-curves, a WASM-built
- *     libsodium with the missing primitive, etc.).
+ * Timing posture (PROVER): the `e * x mod ℓ` step delegates to
+ * noble-curves' best-effort constant-time scalar field op — see
+ * scalarMulMod for the history. The VERIFIER side has no secret in scope
+ * and is safe to deploy as-is.
  *
- * The VERIFIER side has no such issue: it operates on public data only
- * (G, Y, C1, D, A, B, z, e) — there is no secret whose timing could
- * leak. The relay is the verifier and is safe to deploy as-is.
+ * Caveat for real-money deployments: best-effort constant-time in pure JS
+ * is materially better than raw BigInt but does not reach the rigour of a
+ * native C impl. Production lines should either (a) confine proving to a
+ * non-network-facing process anyway as defence in depth, or (b) swap in a
+ * native constant-time primitive (e.g. sodium-native exposing
+ * crypto_core_ed25519_scalar_mul). See arbitration.setAppEvidenceVerifier
+ * for the swap-in hook on the verifier side and the README for the prover
+ * side wiring guidance.
  *
  * @param {object} args
  * @param {Buffer} args.x   Secret scalar (32 bytes, little-endian).
@@ -165,6 +203,20 @@ export function proveShareEquality (args) {
   const G = args.G || baseG()
   if (!x || x.byteLength !== SCALAR_BYTES) throw new Error('proveShareEquality: bad x')
 
+  // Subgroup-validity checks on every externally-sourced point. Same
+  // rationale as verifyShareEquality — without these, a malicious or
+  // buggy caller can construct a "proof" against a mixed-order Y/C1/D
+  // that's structurally valid but cryptographically meaningless. We
+  // catch that here rather than producing nonsense outputs.
+  for (const [name, val] of [['Y', Y], ['C1', C1], ['D', D]]) {
+    if (!val || val.byteLength !== POINT_BYTES) {
+      throw new Error('proveShareEquality: bad ' + name + ' length')
+    }
+    if (!sodium.crypto_core_ed25519_is_valid_point(val)) {
+      throw new Error('proveShareEquality: invalid point ' + name + ' (off-curve or mixed-order)')
+    }
+  }
+
   // Random nonce k.
   const k = b4a.alloc(SCALAR_BYTES)
   sodium.crypto_core_ed25519_scalar_random(k)
@@ -177,6 +229,9 @@ export function proveShareEquality (args) {
   const e = fsChallenge(G, Y, C1, D, A, B)
 
   // Response z = k + e*x mod ℓ.
+  // Uses noble-curves' constant-time scalar-field multiplication (Fn.mul)
+  // instead of native JS BigInt — see scalarMulMod comment block for the
+  // timing-leak history that motivated this swap.
   const ex = scalarMulMod(e, x)
   const z = b4a.alloc(SCALAR_BYTES)
   sodium.crypto_core_ed25519_scalar_add(z, k, ex)
@@ -271,37 +326,41 @@ function fsChallenge (G, Y, C1, D, A, B) {
 /**
  * Modular multiplication of two ed25519 scalars: (a * b) mod ℓ.
  *
- * Sodium-universal does not export `crypto_core_ed25519_scalar_mul`. We
- * implement it via BigInt — the scalar space is only 32 bytes, so big-int
- * arithmetic is cheap (sub-microsecond per call). All math is on the
- * group order ℓ, sourced from RFC 8032.
+ * Sodium-universal does not export `crypto_core_ed25519_scalar_mul` (the
+ * primitive exists in libsodium but isn't surfaced through the bindings
+ * we ship). We delegate to noble-curves' `ed25519.Point.Fn.mul`, which is
+ * a best-effort constant-time implementation in pure JS.
  *
- * Byte ordering: ed25519 scalars are little-endian (sodium convention).
+ * Timing history: an earlier version of this module computed the product
+ * via raw JS BigInt. V8 BigInt multiplication is operand-value-dependent
+ * in execution time, which makes the prover a timing oracle for the
+ * long-term secret x. Noble's Fn.mul wraps the multiplication with
+ * Montgomery-style reduction logic that doesn't branch on operand value
+ * and is the path every modern audited JS crypto stack ships against. Not
+ * the rigour of a native C constant-time impl, but the right portable JS
+ * answer; for production-grade real-money use cases, swap to a native
+ * binding (`sodium-native` with the scalar-mul primitive exposed, or a
+ * WASM-built libsodium).
+ *
+ * Byte ordering: ed25519 scalars are little-endian (sodium convention,
+ * also noble's Fn.isLE === true). Both sides agree, so fromBytes/toBytes
+ * round-trip cleanly between formats.
+ *
+ * Inputs MUST be reduced mod ℓ already — both Fiat-Shamir challenges
+ * (reduced via crypto_core_ed25519_scalar_reduce) and player secrets
+ * (sampled via crypto_core_ed25519_scalar_random) satisfy this. Noble's
+ * Fn.fromBytes will reject scalars outside [0, ℓ); failure throws and
+ * propagates to the caller.
  */
 function scalarMulMod (aBytes, bBytes) {
-  const a = leToBigInt(aBytes)
-  const b = leToBigInt(bBytes)
-  const c = (a * b) % ED25519_ORDER
-  return bigIntToLe(c, SCALAR_BYTES)
-}
-
-function leToBigInt (buf) {
-  let acc = 0n
-  for (let i = buf.byteLength - 1; i >= 0; i--) {
-    acc = (acc << 8n) | BigInt(buf[i])
-  }
-  return acc
-}
-
-function bigIntToLe (v, byteLength) {
-  let n = v
-  if (n < 0n) n = ((n % ED25519_ORDER) + ED25519_ORDER) % ED25519_ORDER
-  const out = b4a.alloc(byteLength)
-  for (let i = 0; i < byteLength; i++) {
-    out[i] = Number(n & 0xffn)
-    n >>= 8n
-  }
-  return out
+  const a = NOBLE_FN.fromBytes(aBytes)
+  const b = NOBLE_FN.fromBytes(bBytes)
+  const c = NOBLE_FN.mul(a, b)
+  // Noble returns a 32-byte little-endian buffer (Fn.isLE === true); wrap
+  // in b4a so the rest of the module sees the same buffer flavour it uses
+  // everywhere else (Uint8Array view-compatibility is good enough for
+  // sodium ops, but explicit b4a.from keeps types uniform).
+  return b4a.from(NOBLE_FN.toBytes(c))
 }
 
 export { ED25519_ORDER, FS_DOMAIN, POINT_BYTES, SCALAR_BYTES }

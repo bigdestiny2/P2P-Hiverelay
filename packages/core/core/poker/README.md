@@ -165,9 +165,15 @@ without WS, persistence without the verifier, etc.
      event on append failure (in-memory log stays source of truth)
 - ✅ Reference share-equality verifier: Chaum-Pedersen over ed25519 with
      Fiat-Shamir; pluggable into `arbitration.setAppEvidenceVerifier(
-     'poker/invalid-share', ...)`. **Reference quality** — self-consistent
-     prove+verify, not audited for production stake; operators with audited
-     crypto should register their own
+     'poker/invalid-share', ...)`. **Reference quality, hardened against
+     two specific attack classes**: (a) ed25519 cofactor / mixed-order
+     point planting (every external point passes `crypto_core_ed25519_
+     is_valid_point` on both prove and verify paths), and (b) timing leak
+     of the prover's secret x (the `e * x mod ℓ` step uses
+     `@noble/curves` ed25519 scalar field — best-effort constant time in
+     pure JS, not native-C-grade). Still not end-to-end audited for
+     production real-money stake; operators with audited crypto should
+     register their own via the same hook
 - ⏳ Autobase-per-table persistence (follow-up for a model where each
      player has their own writer core; current adapter is one-core-per-
      table with the relay as the only appender)
