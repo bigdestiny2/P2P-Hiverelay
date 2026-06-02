@@ -13,6 +13,10 @@ export { HiveRelayClient } from '../client/index.js'
 export { Router } from './router/index.js'
 export { PubSub } from './router/pubsub.js'
 export { WorkerPool } from './router/worker-pool.js'
+// PokerApp — card-blind signed-log substrate for turn-based games. Opt-in;
+// relays that don't instantiate it are unaffected. See ./poker/README.md.
+export { PokerApp, SignedLog, REJECT as POKER_REJECT } from './poker/index.js'
+export { handlePokerRoute, POKER_API_PREFIX } from './poker/http-adapter.js'
 export {
   createCustodyIntent,
   createCustodyReceipt,

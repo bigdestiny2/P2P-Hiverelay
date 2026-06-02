@@ -20,6 +20,12 @@
     "./core/protocol/publish-channel.js": "./core/protocol/publish-channel.js",
     "./core/protocol/seed-request": "./core/protocol/seed-request.js",
     "./core/protocol/seed-request.js": "./core/protocol/seed-request.js",
+    "./core/poker": "./core/poker/index.js",
+    "./core/poker/index.js": "./core/poker/index.js",
+    "./core/poker/signed-log": "./core/poker/signed-log.js",
+    "./core/poker/signed-log.js": "./core/poker/signed-log.js",
+    "./core/poker/http-adapter": "./core/poker/http-adapter.js",
+    "./core/poker/http-adapter.js": "./core/poker/http-adapter.js",
     "./*": "./*"
   },
   "imports": {
