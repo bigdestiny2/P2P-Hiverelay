@@ -26,6 +26,8 @@
     "./core/poker/signed-log.js": "./core/poker/signed-log.js",
     "./core/poker/http-adapter": "./core/poker/http-adapter.js",
     "./core/poker/http-adapter.js": "./core/poker/http-adapter.js",
+    "./core/poker/ws-adapter": "./core/poker/ws-adapter.js",
+    "./core/poker/ws-adapter.js": "./core/poker/ws-adapter.js",
     "./*": "./*"
   },
   "imports": {
