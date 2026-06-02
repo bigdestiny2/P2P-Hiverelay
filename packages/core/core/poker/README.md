@@ -102,9 +102,10 @@ proof library is wired in.
 
 ## Operator wiring
 
+Minimal — HTTP only, in-memory only:
+
 ```js
-import { PokerApp } from 'p2p-hiverelay/core/poker/index.js'
-import { handlePokerRoute } from 'p2p-hiverelay/core/poker/http-adapter.js'
+import { PokerApp, handlePokerRoute } from 'p2p-hiverelay'
 
 const poker = new PokerApp({ maxTables: 256 })
 await poker.start({ node: relayNode })
@@ -113,16 +114,63 @@ await poker.start({ node: relayNode })
 if (await handlePokerRoute(req, res, { pokerApp: poker })) return
 ```
 
+Full — HTTP + WS + hypercore persistence + Chaum-Pedersen share verifier:
+
+```js
+import {
+  PokerApp, handlePokerRoute, PokerWsAdapter,
+  HypercorePersistence, makeInvalidShareVerifier
+} from 'p2p-hiverelay'
+import { ArbitrationService } from 'p2p-hiveservices/builtin/arbitration-service.js'
+
+const poker = new PokerApp({ maxTables: 256 })
+await poker.start({ node: relayNode })
+
+// Durable storage: every successful append mirrors to a per-table hypercore.
+const persistence = new HypercorePersistence({ pokerApp: poker, store: relayNode.store })
+// Rehydrate any tables you intend to keep running across restarts:
+await persistence.createPersistentTable({ tableKey, writers, options })
+
+// HTTP routes — list, create, state, log, move.
+httpServer.on('request', async (req, res) => {
+  if (await handlePokerRoute(req, res, { pokerApp: poker })) return
+  // ... other routes
+})
+
+// WebSocket push — /api/poker/<tableKey>/events
+const ws = new PokerWsAdapter({ pokerApp: poker, server: httpServer })
+ws.start()
+
+// Slashing-grade share validation in the arbitration service.
+arbitrationService.setAppEvidenceVerifier('poker/invalid-share', makeInvalidShareVerifier())
+```
+
 The substrate is opt-in: relays that don't instantiate `PokerApp` are
-unaffected.
+unaffected. Each layer above PokerApp is also opt-in — you can ship HTTP
+without WS, persistence without the verifier, etc.
 
 ## Status
 
 - ✅ SignedLog: signature, ordering, skew, byte budget, subscriber fan-out
-- ✅ PokerApp: tables, getState, getLog, submitEntry, listTables, reaper
+- ✅ PokerApp: tables, getState, getLog, submitEntry, listTables, reaper,
+     replayEntries (for persistence adapters)
 - ✅ HTTP adapter: list, create, state, log, move
 - ✅ Arbitration: 3 poker dispute types, pluggable verifier
 - ✅ Seeding manifest: `lifetime` hint
-- ⏳ WS fan-out endpoint (deferred — wire to the relay's existing WS infra)
-- ⏳ Persistence adapters (autobase / hypercore — operator's choice)
-- ⏳ Reference shuffle / share-proof verifier (wire via `setAppEvidenceVerifier`)
+- ✅ WS fan-out: `PokerWsAdapter`, `/api/poker/<tableKey>/events` with
+     initial-state snapshot, per-table fan-out, backpressure disconnect,
+     optional API-key gate, 404 at handshake for unknown tables
+- ✅ Hypercore persistence: `HypercorePersistence` — one core per table,
+     mirrors successful appends, rehydrates on restart, 'mirror-error'
+     event on append failure (in-memory log stays source of truth)
+- ✅ Reference share-equality verifier: Chaum-Pedersen over ed25519 with
+     Fiat-Shamir; pluggable into `arbitration.setAppEvidenceVerifier(
+     'poker/invalid-share', ...)`. **Reference quality** — self-consistent
+     prove+verify, not audited for production stake; operators with audited
+     crypto should register their own
+- ⏳ Autobase-per-table persistence (follow-up for a model where each
+     player has their own writer core; current adapter is one-core-per-
+     table with the relay as the only appender)
+- ⏳ Cross-implementation verification of the share verifier against
+     RFC 9497 / libsignal / noble-curves (this PR's verifier is self-
+     consistent only)

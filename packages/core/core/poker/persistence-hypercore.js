@@ -179,9 +179,8 @@ export class HypercorePersistence extends EventEmitter {
    */
   async stop () {
     this._stopped = true
-    for (const [key, { unsub }] of this._mirrors) {
+    for (const { unsub } of this._mirrors.values()) {
       try { unsub && unsub() } catch {}
-      void key // referenced via key in the iteration above
     }
     this._mirrors.clear()
   }
