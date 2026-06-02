@@ -506,32 +506,59 @@ export class ArbitrationService extends ServiceProvider {
     dispute.status = 'resolved'
     dispute.resolvedAt = Date.now()
 
-    // Slash respondent if claimant wins
+    // Slash respondent if claimant wins.
+    //
+    // Wrapped in try/catch because:
+    //   1. For app-level disputes (poker/*) the respondent is a PLAYER
+    //      pubkey, which the relay's paymentManager (focused on relay-to-
+    //      relay incentives) likely doesn't know about — a strict
+    //      paymentManager would throw on an unknown account.
+    //   2. Even for relay-level disputes a misconfigured paymentManager
+    //      shouldn't be able to block dispute resolution — the verdict has
+    //      already been recorded above, and the arbitration/resolved
+    //      pubsub event below must still fire so downstream subscribers
+    //      (escrow contracts, dashboards, audit log) see the outcome.
+    //
+    // Slash failures are surfaced as 'slash-failed' so operators can
+    // reconcile out-of-band; we explicitly do NOT roll back the verdict.
     if (dispute.verdict === 'claimant' && dispute.penalty > 0) {
-      this.node?.paymentManager?.slash(
-        dispute.respondent,
-        dispute.penalty,
-        `Arbitration ${dispute.id}: ${dispute.type}`
-      )
+      try {
+        this.node?.paymentManager?.slash(
+          dispute.respondent,
+          dispute.penalty,
+          `Arbitration ${dispute.id}: ${dispute.type}`
+        )
+      } catch (err) {
+        dispute.slashError = err && err.message ? err.message : 'unknown'
+        this.node?.router?.pubsub?.publish('arbitration/slash-failed', {
+          disputeId: dispute.id,
+          respondent: dispute.respondent,
+          penalty: dispute.penalty,
+          error: dispute.slashError
+        })
+      }
     }
 
-    // Reputation adjustments for voters
+    // Reputation adjustments for voters. Same fault-isolation argument as
+    // the slash above — a misbehaving reputation provider mustn't block
+    // verdict propagation.
     if (this.node?.reputation) {
       const winnerSide = voters[dispute.verdict]
       const loserSide = dispute.verdict === 'claimant' ? voters.respondent : voters.claimant
-
-      for (const voter of winnerSide) {
-        this.node.reputation.recordChallenge(voter, true, 0) // +10 score
-      }
-      for (const voter of loserSide) {
-        this.node.reputation.recordChallenge(voter, false, 0) // -20 score
+      try {
+        for (const voter of winnerSide) this.node.reputation.recordChallenge(voter, true, 0)   // +10
+        for (const voter of loserSide)  this.node.reputation.recordChallenge(voter, false, 0)  // -20
+      } catch (err) {
+        dispute.reputationError = err && err.message ? err.message : 'unknown'
       }
     }
 
     this.node?.router?.pubsub?.publish('arbitration/resolved', {
       disputeId: dispute.id,
       verdict: dispute.verdict,
-      penalty: dispute.penalty
+      penalty: dispute.penalty,
+      slashError: dispute.slashError || null,
+      reputationError: dispute.reputationError || null
     })
   }
 

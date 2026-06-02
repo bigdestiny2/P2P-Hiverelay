@@ -137,6 +137,21 @@ export function verifyShareEquality (args) {
  * so reuse-safety is on the caller side only if they re-seed deterministic
  * RNGs (don't).
  *
+ * ⚠ TIMING SIDE-CHANNEL (PROVER ONLY). The `e * x mod ℓ` step uses
+ * BigInt because sodium-universal doesn't expose
+ * crypto_core_ed25519_scalar_mul. JavaScript BigInt arithmetic is NOT
+ * constant-time — its execution time can depend on operand value. Anyone
+ * calling proveShareEquality on a real secret x in a network-exposed
+ * process (e.g. a player's Pear client serving timing-observable
+ * responses) MUST treat that as a leak channel for x. Mitigations:
+ *   - Confine proving to a non-network-facing process.
+ *   - Or swap in a constant-time scalar mul (noble-curves, a WASM-built
+ *     libsodium with the missing primitive, etc.).
+ *
+ * The VERIFIER side has no such issue: it operates on public data only
+ * (G, Y, C1, D, A, B, z, e) — there is no secret whose timing could
+ * leak. The relay is the verifier and is safe to deploy as-is.
+ *
  * @param {object} args
  * @param {Buffer} args.x   Secret scalar (32 bytes, little-endian).
  * @param {Buffer} args.Y   Threshold public key (32 bytes).

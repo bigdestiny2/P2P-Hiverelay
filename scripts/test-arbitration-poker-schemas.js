@@ -271,6 +271,90 @@ async function testSetVerifierGuards () {
   assert(threw, 'rejects non-function')
 }
 
+// ── 9. _resolve fault-isolation: slash throws, verdict still propagates ────
+async function testResolveFaultIsolation () {
+  console.log('\n── 9. _resolve guards: throwing slash / reputation ──')
+  const svc = newSvc()
+
+  // Stage a paymentManager that THROWS — simulating "respondent unknown to
+  // this payment system", which is the realistic poker-dispute case.
+  let pubsubEvents = []
+  svc.node = {
+    router: { pubsub: { publish: (topic, payload) => pubsubEvents.push({ topic, payload }) } },
+    paymentManager: { slash: () => { throw new Error('unknown-account') } }
+  }
+
+  // Submit + 3 votes for claimant → triggers _resolve with verdict=claimant.
+  const d = await svc.submit({
+    type: 'sla-violation',
+    respondent: RESPONDENT,
+    claimant: CLAIMANT,
+    penalty: 100,
+    minVotes: 3
+  }, { caller: 'local' })
+
+  // Need eligible voters. Stub reputation so the eligibility check passes,
+  // and so recordChallenge can be tested in the same setup.
+  const goodRep = {
+    getRecord: () => ({ score: 200, totalChallenges: 100 }),
+    getReliability: () => 0.99,
+    recordChallenge: () => {}
+  }
+  svc.node.reputation = goodRep
+
+  let resolved = null
+  try {
+    for (const v of ['v1', 'v2', 'v3']) {
+      await svc.vote({ id: d.id, verdict: 'claimant' }, { caller: 'remote', remotePubkey: v })
+    }
+    resolved = await svc.get({ id: d.id })
+  } catch (err) {
+    assert(false, 'vote() threw despite slash guard: ' + err.message)
+    return
+  }
+
+  assert(resolved && resolved.status === 'resolved', 'dispute resolved despite slash throw')
+  assert(resolved.verdict === 'claimant', 'verdict recorded')
+  assert(resolved.slashError === 'unknown-account', 'slashError surfaced')
+  const slashFailed = pubsubEvents.find(e => e.topic === 'arbitration/slash-failed')
+  const resolvedEv = pubsubEvents.find(e => e.topic === 'arbitration/resolved')
+  assert(!!slashFailed, 'arbitration/slash-failed pubsub fired')
+  assert(!!resolvedEv, 'arbitration/resolved pubsub still fired (downstream subscribers see verdict)')
+  assert(resolvedEv.payload.slashError === 'unknown-account', 'resolved payload carries slashError for downstream')
+}
+
+// ── 10. _resolve fault-isolation: recordChallenge throws too ──────────────
+async function testReputationFaultIsolation () {
+  console.log('\n── 10. _resolve guards: throwing recordChallenge ──')
+  const svc = newSvc()
+  let pubsubEvents = []
+  svc.node = {
+    router: { pubsub: { publish: (topic, payload) => pubsubEvents.push({ topic, payload }) } },
+    reputation: {
+      getRecord: () => ({ score: 200, totalChallenges: 100 }),
+      getReliability: () => 0.99,
+      recordChallenge: () => { throw new Error('rep-down') }
+    }
+  }
+
+  const d = await svc.submit({
+    type: 'sla-violation', respondent: RESPONDENT, claimant: CLAIMANT, penalty: 0, minVotes: 3
+  }, { caller: 'local' })
+
+  let threw = false
+  try {
+    for (const v of ['v1', 'v2', 'v3']) {
+      await svc.vote({ id: d.id, verdict: 'claimant' }, { caller: 'remote', remotePubkey: v })
+    }
+  } catch (err) { threw = true; console.log('   vote threw:', err.message) }
+  assert(!threw, 'vote() did not throw despite reputation throw')
+
+  const resolved = await svc.get({ id: d.id })
+  assert(resolved.verdict === 'claimant', 'verdict recorded')
+  assert(resolved.reputationError === 'rep-down', 'reputationError surfaced')
+  assert(pubsubEvents.some(e => e.topic === 'arbitration/resolved'), 'resolved pubsub still fired')
+}
+
 async function main () {
   await testRelayDisputesUnchanged()
   await testPokerWellFormed()
@@ -280,6 +364,8 @@ async function main () {
   await testEvidenceNoVerifier()
   await testEvidenceWithVerifier()
   await testSetVerifierGuards()
+  await testResolveFaultIsolation()
+  await testReputationFaultIsolation()
   console.log(`\n── done: ${passed} passed, ${failed} failed ──`)
   process.exit(failed === 0 ? 0 : 1)
 }

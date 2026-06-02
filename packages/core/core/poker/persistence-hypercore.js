@@ -126,19 +126,33 @@ export class HypercorePersistence extends EventEmitter {
 
     // Replay existing blocks. We deliberately read all at once — tables are
     // bounded in size by maxEntriesPerTable and this only runs at startup.
+    //
+    // Validate shape BEFORE handing to replayEntries. SignedLog._replay is
+    // documented as the trust-at-hydrate path — it does NOT re-validate
+    // signatures, but it DOES dereference entry.writer / entry.seq / entry.ts
+    // directly. A JSON-valid block missing those fields would throw a raw
+    // TypeError inside the SignedLog and leave the in-memory table in a
+    // half-replayed state. We catch that here instead: any bad block aborts
+    // the whole replay, closes the half-created table, and surfaces the
+    // index of the offender so the operator can repair.
     const length = core.length
     if (length > 0) {
       const entries = []
       for (let i = 0; i < length; i++) {
         const block = await core.get(i)
+        let parsed
         try {
-          entries.push(JSON.parse(block.toString('utf8')))
+          parsed = JSON.parse(block.toString('utf8'))
         } catch (err) {
-          // Corrupt block — give up rather than partially rehydrate, which
-          // would leave per-writer cursors in a half-state.
           this.pokerApp.closeTable(key)
           throw new Error('HypercorePersistence: corrupt block ' + i + ': ' + err.message)
         }
+        const shapeError = _validateReplayEntryShape(parsed)
+        if (shapeError) {
+          this.pokerApp.closeTable(key)
+          throw new Error('HypercorePersistence: bad-shape block ' + i + ': ' + shapeError)
+        }
+        entries.push(parsed)
       }
       this.pokerApp.replayEntries(key, entries)
       this.emit('hydrated', { tableKey: key, count: entries.length })
@@ -221,4 +235,23 @@ export class HypercorePersistence extends EventEmitter {
   }
 }
 
-export { CORE_NAME_PREFIX }
+/**
+ * Verify a parsed block looks like a SignedLog entry — enough that
+ * `SignedLog._replay` won't crash on `entry.writer.toLowerCase()` or
+ * `entry.seq` or `entry.ts`. We don't re-check the signature here (that
+ * was checked at original ingest); we just ensure the fields exist with
+ * the right primitive types.
+ *
+ * Returns null on OK, or a short reason string on failure.
+ */
+function _validateReplayEntryShape (e) {
+  if (!e || typeof e !== 'object') return 'not-an-object'
+  if (typeof e.writer !== 'string' || e.writer.length !== 64) return 'writer'
+  if (typeof e.tableKey !== 'string' || e.tableKey.length !== 64) return 'tableKey'
+  if (!Number.isInteger(e.seq) || e.seq < 0) return 'seq'
+  if (typeof e.ts !== 'number' || !Number.isFinite(e.ts)) return 'ts'
+  if (typeof e.signature !== 'string') return 'signature'
+  return null
+}
+
+export { CORE_NAME_PREFIX, _validateReplayEntryShape as _validateReplayEntryShapeForTest }

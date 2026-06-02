@@ -244,12 +244,50 @@ async function testListMirrorsShape () {
   }
 }
 
+// ── 8. Valid JSON but bad SHAPE → caught before _replay ───────────────────
+async function testBadShapeBlock () {
+  console.log('\n── 8. Valid JSON but bad shape on replay ──')
+  const dir = await mkdtemp(join(tmpdir(), 'poker-badshape-'))
+  const a = makeKeyPair()
+  // Write a JSON-valid block that's missing `writer` — would crash inside
+  // SignedLog._replay with TypeError if persistence didn't catch it.
+  {
+    const store = new Corestore(dir)
+    await store.ready()
+    const core = store.get({ name: 'poker/' + TABLE })
+    await core.ready()
+    await core.append(Buffer.from(JSON.stringify({
+      tableKey: TABLE, seq: 0, ts: Date.now(), signature: 'aa', payload: 'x'
+      // intentionally no `writer`
+    }), 'utf8'))
+    await store.close()
+  }
+  {
+    const store = new Corestore(dir)
+    await store.ready()
+    const app = new PokerApp()
+    await app.start({})
+    const p = new HypercorePersistence({ pokerApp: app, store })
+
+    let err = null
+    try { await p.createPersistentTable({ tableKey: TABLE, writers: [a.pubHex] }) }
+    catch (e) { err = e }
+    assert(err && /bad-shape/.test(err.message), 'bad-shape block triggers specific error (' + (err ? err.message : 'no throw') + ')')
+    assert(err && /writer/.test(err.message), 'error names the missing field')
+    assert(app.listTables().length === 0, 'no half-table left behind')
+
+    await p.stop(); await app.stop(); await store.close()
+  }
+  await rm(dir, { recursive: true, force: true })
+}
+
 async function main () {
   await testCreateAndMirror()
   await testRestart()
   await testCorruptBlock()
   await testMirrorErrorEvent()
   await testListMirrorsShape()
+  await testBadShapeBlock()
   console.log(`\n── done: ${passed} passed, ${failed} failed ──`)
   process.exit(failed === 0 ? 0 : 1)
 }
