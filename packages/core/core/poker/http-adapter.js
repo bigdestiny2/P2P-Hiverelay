@@ -45,9 +45,19 @@
  * The adapter does NOT enforce auth — the relay's outer middleware should.
  * Endpoints that mutate state (POST /tables, POST /move) carry signed
  * payloads, so the cryptographic check happens in SignedLog regardless.
+ *
+ * ─── Why no /dispute-types endpoint here ────────────────────────────────────
+ *
+ * Poker disputes go through the arbitration service (a separate package).
+ * The substrate intentionally does NOT import arbitration — that would make
+ * `packages/core` depend on `packages/services`, the wrong dependency
+ * direction (services depends on core, never the reverse). Relays that load
+ * PokerApp but not arbitration would otherwise fail at module-resolve time.
+ *
+ * Clients that want the canonical dispute-type list call the arbitration
+ * service's own endpoint, or read POKER_DISPUTE_TYPES from
+ * `arbitration-service.js` at build time.
  */
-
-import { POKER_DISPUTE_TYPES } from '../../../services/builtin/arbitration-service.js'
 
 const PREFIX = '/api/poker'
 
@@ -117,13 +127,6 @@ export async function handlePokerRoute (req, res, ctx) {
 
   if (verb === 'move' && req.method === 'POST') {
     return _submitMove(req, res, ctx, tableKey)
-  }
-
-  // Disputes namespace — convenience read-only surface that surfaces the
-  // canonical poker dispute type list for clients building UIs around it.
-  // (The actual submit endpoint lives on the arbitration service's own API.)
-  if (verb === 'dispute-types' && req.method === 'GET') {
-    return _respond(res, 200, { types: POKER_DISPUTE_TYPES })
   }
 
   return _respond(res, 404, { error: 'not found' })

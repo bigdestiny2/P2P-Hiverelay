@@ -20,10 +20,12 @@ Concretely the relay provides:
    pubsub so connected clients (WS subscribers) get push semantics.
 3. **State + log read endpoints.** `/api/poker/<tableKey>/state` for cursors;
    `/api/poker/<tableKey>/log?from=N` for replay.
-4. **Audit retention.** Because the substrate sits behind the existing
-   seeder + custody pipeline + cancellation contract, entries are persisted
+4. **Audit retention** *(when persistence is wired)*. The substrate ships
+   in-memory only — durability is the operator's choice. When operators
+   mirror entries into a hypercore (the natural fit) those cores are picked
+   up by the existing seeder + custody pipeline + cancellation contract
    with the same guarantees as any other seeded content. The
-   `seeding-manifest.lifetime: 'session'` hint lets operators evict per-hand
+   `seeding-manifest.lifetime: 'session'` hint lets them evict per-hand
    ephemera without conflating it with publication drives.
 
 What the relay does **not** do:

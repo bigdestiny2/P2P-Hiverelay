@@ -314,11 +314,10 @@ async function testHttpAdapter () {
   await handlePokerRoute(stubReq('GET', '/api/poker/' + 'd'.repeat(64) + '/state'), res, ctx)
   assert(res.statusCode === 404, 'GET unknown table → 404')
 
-  // GET /api/poker/.../dispute-types → list
+  // Unknown verb under a known table → 404 (not 5xx)
   res = stubRes()
-  await handlePokerRoute(stubReq('GET', '/api/poker/' + TABLE_KEY + '/dispute-types'), res, ctx)
-  assert(res.statusCode === 200, 'GET dispute-types → 200')
-  assert(JSON.parse(res.body).types.includes('poker/missing-share'), 'dispute-types includes missing-share')
+  await handlePokerRoute(stubReq('GET', '/api/poker/' + TABLE_KEY + '/bogus'), res, ctx)
+  assert(res.statusCode === 404, 'unknown verb → 404')
 
   // Wrong-prefix path passes through (returns false)
   res = stubRes()
