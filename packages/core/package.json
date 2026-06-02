@@ -30,6 +30,10 @@
     "./core/poker/ws-adapter.js": "./core/poker/ws-adapter.js",
     "./core/poker/persistence-hypercore": "./core/poker/persistence-hypercore.js",
     "./core/poker/persistence-hypercore.js": "./core/poker/persistence-hypercore.js",
+    "./core/poker/crypto/chaum-pedersen": "./core/poker/crypto/chaum-pedersen.js",
+    "./core/poker/crypto/chaum-pedersen.js": "./core/poker/crypto/chaum-pedersen.js",
+    "./core/poker/crypto/share-verifier": "./core/poker/crypto/share-verifier.js",
+    "./core/poker/crypto/share-verifier.js": "./core/poker/crypto/share-verifier.js",
     "./*": "./*"
   },
   "imports": {

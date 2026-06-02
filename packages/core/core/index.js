@@ -20,6 +20,14 @@ export { handlePokerRoute, POKER_API_PREFIX } from './poker/http-adapter.js'
 export { PokerWsAdapter, POKER_EVENTS_PREFIX, POKER_EVENTS_SUFFIX } from './poker/ws-adapter.js'
 export { HypercorePersistence } from './poker/persistence-hypercore.js'
 export {
+  verifyShareEquality,
+  proveShareEquality,
+  publicFromSecret,
+  shareFor,
+  baseG as pokerShareBaseG
+} from './poker/crypto/chaum-pedersen.js'
+export { makeInvalidShareVerifier } from './poker/crypto/share-verifier.js'
+export {
   createCustodyIntent,
   createCustodyReceipt,
   createCustodyCommit,
