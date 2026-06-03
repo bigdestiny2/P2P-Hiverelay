@@ -6,6 +6,114 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [Unreleased]
+
+### Added
+
+- **VRF service** (`vrf`) at `packages/services/builtin/vrf-service.js` —
+  Verifiable Random Functions via ECVRF-EDWARDS25519-SHA512-TAI
+  (RFC 9381, suite 0x03). The relay produces deterministic,
+  publicly-verifiable, unbiasable randomness: for any input `alpha` it
+  returns an output `beta` plus an 80-byte proof `pi` checkable against
+  the relay's VRF public key. Capabilities: `prove`, `verify`,
+  `proof-to-hash`, `pubkey`, `info`, the verifiable-sortition RPCs
+  (`select`/`shuffle`/`select-verify`/`shuffle-verify`), and the beacon
+  reads (`beacon-info`/`-latest`/`-round`/`-range`/`-verify`).
+  - **ECVRF core** at `packages/services/builtin/vrf/ecvrf.js`, built on
+    the same vetted `@noble/curves` ed25519 / `@noble/hashes` SHA-512
+    primitives the poker Chaum-Pedersen module uses. Validated
+    **byte-exact** against all three RFC 9381 Appendix A.4 test vectors
+    (`pi`, `beta`, `verify`) plus tamper/negative cases —
+    `scripts/test-vrf-vectors.js` (30 assertions).
+  - **Dedicated VRF key** derived from the node seed by domain
+    separation (`SHA-512("hiverelay/vrf-key/v1" || node_seed)`), so the
+    VRF scalar is never the same one used to sign protocol messages. The
+    VRF public key is distinct from the node identity pubkey; consumers
+    fetch it via `pubkey`.
+  - **Chained randomness beacon** at
+    `packages/services/builtin/vrf/beacon.js` (opt-in via
+    `vrfBeacon: { enabled, intervalMs, domain, retain }`):
+    `beta_N = VRF(beta_{N-1} || N)`, anchored at
+    `beta_0 = SHA-512(domain || pubkey)`. Self-verifying and
+    tamper-evident — `verifyBeaconChain()` re-derives the genesis and
+    checks every round with no trust in the operator. Retained history
+    is an in-memory ring buffer; durable persistence is a planned
+    follow-on. Service + beacon covered by `scripts/test-vrf-service.js`
+    (44 assertions).
+  - **Verifiable sortition primitive** at
+    `packages/services/builtin/vrf/sortition.js` — the bridge from raw
+    `beta` to decisions. Deterministic and **integer-only** (no floating
+    point, so every node/engine agrees bit-for-bit): a domain-separated
+    counter-hash stream drives Fisher-Yates `seededShuffle` and
+    sampling-without-replacement `weightedSample` (uniform or
+    weighted via A-Res-style integer cumulative draws). Candidates are
+    canonically sorted by id so the result depends on the *set*, not
+    enumeration order; `quantizeWeights` maps real-valued weights to
+    integers. `verifyCommittee` / `verifyShuffle` re-check a result and
+    never throw. Covered by `scripts/test-vrf-sortition.js`
+    (48 assertions).
+  - **`select` / `shuffle` RPCs** on the VRF service bind a draw to a
+    caller's `alpha` (e.g. a disputeId or poker handId), prove it, and
+    apply the sortition primitive to `beta` — returning
+    `{ alpha, pi, beta, pubkey, suite, committee/order }` that any third
+    party reproduces. `select-verify` / `shuffle-verify` validate a
+    proof + result in one call. Added to `scripts/test-vrf-service.js`
+    (now 65 assertions).
+  - Registered as a bare-safe builtin (uses only `@noble`/sodium, no
+    Node-only deps) and added to the `service-operator` setup profile.
+    Opt-in like every service via `enableServices`.
+- **Verifiable arbitrator panels** (opt-in, default OFF) in the
+  arbitration service. Instead of open voting by any eligible peer, a
+  dispute can be judged by a fixed committee drawn by VRF from the
+  eligible pool. `submit` binds `alpha` to immutable dispute content,
+  snapshots the pool (parties excluded; weight = `score × reliability`),
+  and calls the VRF `select` RPC; the dispute records the full proof
+  material (`vrfPubkey`/`alpha`/`pi`/`beta`/`candidates`/`members`) so
+  the committee is independently reproducible. `vote` then gates on panel
+  membership (`ARBITRATOR_NOT_ON_PANEL`) and the quorum caps to panel
+  size. Configurable globally (`arbitration: { panel: { enabled, size,
+  weighted } }`) or per dispute (`params.panel`), with graceful fallback
+  to open voting when VRF/reputation/pool are unavailable. Tested in
+  `scripts/test-arbitration-panel.js` (27 assertions). Default-off means
+  a relay that never opts in is byte-zero affected.
+- **Verifiable per-hand poker randomness** at
+  `packages/services/builtin/poker/hand-seed.js` — a pure, dependency-
+  light (`@noble/hashes` only, Bare/Pear-portable) helper that anchors
+  an unbiasable random number to a specific hand without the card-blind
+  relay ever seeing a card. `handSeedAlpha(tableKey, handId)` is the
+  canonical VRF input every seat derives identically;
+  `verifyHandSeed(...)` checks the relay's proof (never throws);
+  `handDeckOrder(beta)` is the nothing-up-my-sleeve starting permutation
+  the clients' mental-poker shuffle layers on top of; `combineBetas([…])`
+  XOR-combines per-seat betas over the same alpha into a seed no single
+  party (not even the key-holding relay) controls. Re-exported from
+  `poker/index.js`; tested in `scripts/test-poker-hand-seed.js`
+  (37 assertions).
+
+### Security
+
+- **Poker block size-blindness** in `HypercorePersistence`
+  (`packages/services/builtin/poker/persistence-hypercore.js`). The relay
+  is card-blind — it never reads `entry.payload` — but the *size* of each
+  Hypercore block still leaked the action type: a fold, a raise, and a
+  card-reveal-with-decryption-shares produce very different JSON lengths,
+  so anyone watching the (cross-relay-replicated) core could infer table
+  activity by block size alone. Each block is now padded up to the next
+  size bucket (`DEFAULT_PAD_BUCKETS = [1024, 4096, 16384, 65536]`) with
+  trailing ASCII whitespace before append, so common betting actions
+  become mutually size-indistinguishable. The pad is deliberately
+  *whitespace outside the JSON object*, making it **signature-transparent**
+  (the ed25519 signature covers only canonical entry fields),
+  **reader-transparent** (`JSON.parse` ignores trailing whitespace, so
+  replay and clients parse identically), and **backward-compatible**
+  (legacy un-padded cores replay without migration). Opt out with
+  `padding: false` or supply a custom ascending ladder. Tested in
+  `test/unit/poker-block-padding.test.js` (15 tests / 26 assertions) with
+  the real-Corestore write→restart→replay cycle reverified by
+  `scripts/test-poker-persistence-hypercore.js` (22 assertions). Timing-
+  channel decorrelation (append-order jitter) is intentionally deferred —
+  it requires a serialized append queue to preserve strict log ordering.
+
 ## [0.10.0] — 2026-06-03
 
 Minor: first application lands under the services-module pattern — a

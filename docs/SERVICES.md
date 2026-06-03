@@ -1,5 +1,5 @@
 > [!NOTE]
-> Refreshed for v0.10.0: seven builtin services (`identity`, `storage`, `schema`, `ai`, `zk`, `sla`, `arbitration`) plus the card-blind poker/SignedLog substrate. Services are opt-in (`enableServices`), and `ai`/`zk`/`sla`/`arbitration` are experimental. See the [CHANGELOG](../CHANGELOG.md) for the authoritative architecture.
+> Refreshed for v0.10.0: eight builtin services (`identity`, `storage`, `schema`, `vrf`, `ai`, `zk`, `sla`, `arbitration`) plus the card-blind poker/SignedLog substrate. Services are opt-in (`enableServices`); `vrf` is production-ready (RFC 9381, validated against the spec's own test vectors), while `ai`/`zk`/`sla`/`arbitration` remain experimental. See the [CHANGELOG](../CHANGELOG.md) for the authoritative architecture.
 
 # HiveRelay Services Layer
 
@@ -121,6 +121,19 @@ Privacy-preserving proof generation and verification.
 
 **Phase 2 (planned):** snarkjs/circom circuit compilation and verification.
 
+### VRF Service (Verifiable Random Functions)
+
+Unbiasable, publicly-verifiable randomness via ECVRF-EDWARDS25519-SHA512-TAI (RFC 9381, suite 0x03). The relay holds a VRF key and, for any input `alpha`, returns a deterministic output `beta` plus an 80-byte proof `pi` that anyone can verify against the relay's VRF public key — the relay cannot bias `beta`, and verifiers need no trust in the operator.
+
+**Capabilities:** `prove`, `verify`, `proof-to-hash`, `pubkey`, `info`, `select`, `shuffle`, `select-verify`, `shuffle-verify`, `beacon-info`, `beacon-latest`, `beacon-round`, `beacon-range`, `beacon-verify`
+
+- **Correctness gate:** the ECVRF core is validated byte-exact against all three RFC 9381 Appendix A.4 test vectors (`pi`, `beta`, and `verify`), plus tamper/negative cases — see `scripts/test-vrf-vectors.js`.
+- **Dedicated key:** the VRF seed is domain-separated from the node's EdDSA identity key (`SHA-512("hiverelay/vrf-key/v1" || node_seed)`), so the same scalar never both signs protocol messages and produces VRF proofs. The VRF public key is therefore distinct from the node identity pubkey — consumers fetch it via `pubkey`.
+- **Verifiable sortition (`select` / `shuffle`):** the bridge from raw randomness to decisions. The relay binds a draw to a caller's context via `alpha` (e.g. a disputeId or poker handId), proves it, and applies a deterministic, integer-only sortition primitive to `beta` (`packages/services/builtin/vrf/sortition.js`). `select` draws a committee without replacement (uniform or reputation-**weighted**, via `quantizeWeights` + A-Res-style integer draws — no floating point, so every node agrees); `shuffle` returns a verifiable permutation. The result `{ pi, beta, committee/order }` is self-verifying: anyone replays `verify(pubkey, alpha, pi) → beta → weightedSample/seededShuffle`, or calls `select-verify` / `shuffle-verify`. Tested in `scripts/test-vrf-sortition.js` and `scripts/test-vrf-service.js`.
+- **Randomness beacon (opt-in):** a chained, self-verifying randomness chain where `beta_N = VRF(beta_{N-1} || N)`, anchored at `beta_0 = SHA-512(domain || pubkey)`. Each round is world-readable and independently verifiable; the operator cannot grind or skip outputs. Enabled via `vrfBeacon: { enabled, intervalMs, domain, retain }`. The retained history is in-memory (a ring buffer of recent rounds); durable persistence is a planned follow-on.
+- **Use cases:** unbiasable shuffles/deals (poker, lotteries), fair leader/committee/arbitrator selection (see the Arbitration panel below), and the public beacon.
+- **Trust boundary:** the VRF holder cannot bias *which* members are drawn from a fixed pool, but — holding the key — it could grind `alpha`. Bind `alpha` to immutable, append-only content (and, for adversarial settings, fold in an external/multi-party beacon) so grinding is either detectable or impossible.
+
 ### AI Service
 
 Model registry and inference routing. Wraps local models (Ollama) or remote endpoints (OpenAI-compatible).
@@ -165,10 +178,17 @@ Decentralized dispute resolution via peer voting.
 - Evidence verification: validates bandwidth receipts cryptographically
 - Resolution: majority vote wins, loser slashed, voters gain/lose reputation
 - `setAppEvidenceVerifier(appType, fn)` seam — apps register their own cryptographic evidence verifier (e.g. the reference Chaum-Pedersen share-equality verifier for `poker/invalid-share`). Disputes without a registered verifier resolve `inconclusive` rather than `claim-supported`.
+- **Verifiable arbitrator panels (opt-in, default OFF):** instead of open voting by any eligible peer, a dispute can be judged by a fixed committee drawn by VRF from the eligible pool. On `submit`, the service builds `alpha = SHA-256(domain || disputeId || type || claimant || respondent || createdAt)`, snapshots the eligible pool (parties excluded; weight = `score × reliability`, optionally `quantizeWeights`'d), and calls the VRF service's `select`. The dispute records the full proof material `{ vrfPubkey, alpha, pi, beta, candidates, members }`, so any observer reproduces the exact committee via `verify(pubkey, alpha, pi) → beta → weightedSample(candidates)` (or the VRF `select-verify` capability). `vote` then gates on panel membership (`ARBITRATOR_NOT_ON_PANEL`) and the quorum is capped to the panel size. Enable globally via `arbitration: { panel: { enabled, size, weighted } }` (or `new ArbitrationService({ panel })`), or per dispute via `params.panel` (`true`/`false` overrides the default). **Graceful fallback to open voting** when there is no VRF service, no reputation pool, or the eligible pool is smaller than the panel size — the dispute records `panel.active === false` with a `reason` and proceeds with open voting. Tested in `scripts/test-arbitration-panel.js`.
 
 ### Poker / SignedLog Substrate (v0.10.0)
 
 A card-blind, append-only signed-log substrate for turn-based games with hidden information. It is **not** a service in the `ServiceProvider`/RPC sense — it lives at `packages/services/builtin/poker/` and owns the `/api/poker/*` HTTP + WebSocket namespace. The relay enforces per-writer signatures, monotonic `seq`, a 60s clock-skew bound, and a byte budget; the `entry.payload` stays opaque and all game rules run in the Pear client. Poker is the first consumer; the same substrate composes for liar's dice, mafia, and sealed-bid auctions.
+
+**Verifiable per-hand randomness (`hand-seed.js`):** because the relay is card-blind it cannot shuffle a deck — but it *can* anchor an unbiasable, publicly-verifiable random number to a specific hand that clients fold into their own mental-poker shuffle. The pure, dependency-light helper (`@noble/hashes` only, so it runs unchanged in a Bare/Pear client) exposes:
+- `handSeedAlpha(tableKey, handId)` — the canonical VRF input `SHA-256(domain || tableKey || handId)`. Every seat derives the same `alpha`, so all agree on exactly what the relay should prove. A seat requests `vrf.prove({ alpha })` and posts `pi` to the log.
+- `verifyHandSeed({ vrfPubkey, tableKey, handId, pi, beta })` — recomputes `alpha`, verifies the proof, and (if given) cross-checks `beta`. Never throws; returns `{ valid, reason, alpha, beta }`.
+- `handDeckOrder(beta, deckSize = 52)` — the nothing-up-my-sleeve starting permutation all seats agree on, on top of which the secret commutative encrypt-and-shuffle layers.
+- `combineBetas([...])` — XOR-combines independent per-seat betas over the *same* alpha into a hand seed no single party controls. This removes trust in the key-holding relay: the seed is unbiasable unless every contributor colludes, and each contribution stays independently verifiable. Use this for adversarial play (the relay holds the VRF key and could otherwise grind `alpha`, though binding to the append-only log makes grinding detectable). Tested in `scripts/test-poker-hand-seed.js`.
 
 See the [poker substrate README](../packages/services/builtin/poker/README.md).
 
@@ -266,8 +286,8 @@ The `p2p-hiverelay setup` wizard selects services by node profile. The relay-onl
 | Relay Core | false | none — availability + custody kernel only |
 | Custody Relay | false | none — blind atomic custody focus |
 | HomeHive | false | none — private/local relay |
-| Service Operator | true | identity, storage, schema |
-| Experimental Lab | true | identity, storage, schema, ai, zk, sla, arbitration |
+| Service Operator | true | identity, storage, schema, vrf |
+| Experimental Lab | true | identity, storage, schema, vrf, ai, zk, sla, arbitration |
 | Custom | — | hand-picked from the full service list |
 
-The seven builtin services are `identity`, `storage`, `schema`, `ai`, `zk`, `sla`, and `arbitration`. The `ai`, `zk`, `sla`, and `arbitration` services are experimental and ship enabled only under the Experimental Lab profile or an explicit custom selection.
+The eight builtin services are `identity`, `storage`, `schema`, `vrf`, `ai`, `zk`, `sla`, and `arbitration`. `vrf` is production-ready and ships with the Service Operator profile. The `ai`, `zk`, `sla`, and `arbitration` services are experimental and ship enabled only under the Experimental Lab profile or an explicit custom selection.
