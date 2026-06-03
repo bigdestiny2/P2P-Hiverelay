@@ -133,10 +133,10 @@ Releases shipped in the last week:
 | Date | Version | What |
 |---|---|---|
 | 2026-05-22 | v0.8.19 | Circuit-relay bridge data plane + auth-bypass fix |
-| 2026-05-22 | v0.8.20 | Anchor honesty + custody auto-attestation (Ian) |
-| 2026-05-22 | v0.8.21 | Hyperdrive 11.x API + persistent download ranges (Ian) |
-| 2026-05-22 | v0.8.22 | Defensive timeouts on reseed + anchor (Ian) |
-| 2026-05-27 | v0.8.23 | Partial-quorum custody-commit + transient errors + exports (Ian) |
+| 2026-05-22 | v0.8.20 | Anchor honesty + custody auto-attestation |
+| 2026-05-22 | v0.8.21 | Hyperdrive 11.x API + persistent download ranges |
+| 2026-05-22 | v0.8.22 | Defensive timeouts on reseed + anchor |
+| 2026-05-27 | v0.8.23 | Partial-quorum custody-commit + transient errors + exports |
 | 2026-05-28 | v0.8.24 | Per-key mutation locks (today) |
 | 2026-05-28 | v0.8.25 | AppRegistry → Hyperbee persistence (today) |
 | 2026-05-28 | v0.8.26 | SeedingRegistry indexed-views sidecar (today) |

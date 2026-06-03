@@ -7,7 +7,7 @@ on production relays as `Mutex has been destroyed`, `The corestore
 is closed`, and `SESSION_CLOSED: Cannot make sessions on a closing
 core` after hours or days of uptime.
 
-Co-authored with **Iain K** — he ran the audit, designed the
+Co-authored with **the contributor** — he ran the audit, designed the
 cancellation contract, and shipped the fix. The bug class was first
 flagged in his 2026-05-15 09:56Z message; the production reproduction
 was captured in
@@ -106,7 +106,7 @@ depth.
 
 ### Per-vector coverage
 
-From Iain's `STALE-REF-INVENTORY.md`:
+From the contributor's `STALE-REF-INVENTORY.md`:
 
 | Vector | Site | Coverage |
 | --- | --- | --- |
@@ -124,7 +124,7 @@ From Iain's `STALE-REF-INVENTORY.md`:
   stop-blocks-on-tracked, 3-cycle start/stop with seeded apps
   (zero stale-ref errors), catch() tails observed by drain
 - **80/80 existing lifecycle-adjacent unit tests still pass**
-  (per Iain's audit run; 42/42 verified locally on the validation
+  (per the contributor's audit run; 42/42 verified locally on the validation
   branch)
 - **standard** lint clean
 
@@ -164,7 +164,7 @@ Nothing else.
 
 ## Acknowledgements
 
-Iain K did the heavy lift here: he traced the symptom across multiple
+The contributor did the heavy lift here: he traced the symptom across multiple
 production relays, mapped the call graph in the audit, designed the
 LifecycleScope contract, wired it into every fire-and-forget site,
 and wrote the tests. We pair-reviewed the design before the PR

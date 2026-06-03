@@ -33,7 +33,7 @@
 //   - Stage 2 reaches the relays via the public /api/v1/seed surface; we then
 //     pull blocks via Hyperswarm just like real publishers do.
 //   - Stage 3 (receipts) depends on relays auto-emitting after anchoring. If
-//     a relay returns 503 (Iain's bug), the receipt won't fire and quorum
+//     a relay returns 503 (the contributor's bug), the receipt won't fire and quorum
 //     stalls. The script reports per-relay receipt presence so failures are
 //     attributable.
 //   - Proofs + non-serving-proofs + expiry-witnesses are observer-emitted and

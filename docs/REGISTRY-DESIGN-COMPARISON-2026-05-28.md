@@ -88,7 +88,7 @@ async unregister (name, publicKey) {
 
 `unregister` doesn't remove the key. It flips a flag. `lookup` filters out tombstones. `register` still sees the tombstone and rejects a different owner. This preserves the immutability rule ("once a name is bound to a pubkey, it cannot point to a different one") while allowing the name to be "freed" from a reader's perspective.
 
-Ian flagged this as a monotonic-growth issue. True. But for the registry's correctness, it's the right call.
+The contributor flagged this as a monotonic-growth issue. True. But for the registry's correctness, it's the right call.
 
 ### 5. Replication-staleness handling
 
@@ -149,7 +149,7 @@ this._custodyReceipts = new Map()
 2. **O(N · M) startup cost.** N peer logs × M entries each, every restart. With our fleet at ~2,400 total entries across 5 relays' logs, this is bounded — but a 1000-app fleet would feel it.
 3. **In-memory index correctness is our responsibility.** A bug in `_indexLog` means inconsistent reads. Hyperbee outsources this to a well-tested library.
 4. **No range queries.** "All intents created in the last 24h", "all receipts for publisher X", "all expired custody chains" all require full scans or pre-built secondary indexes.
-5. **Cancellations accumulate.** Same monotonic-growth Ian flagged on his bee — but at least his bee surfaces it cleanly through `bee.createHistoryStream()`. Our cancellations are buried in the log replay.
+5. **Cancellations accumulate.** Same monotonic-growth the contributor flagged on his bee — but at least his bee surfaces it cleanly through `bee.createHistoryStream()`. Our cancellations are buried in the log replay.
 
 ### `AppRegistry` — local, JSON-blob persistence
 
@@ -393,4 +393,4 @@ Each step lands independently, has its own test surface, and doesn't break wire 
 
 3. **Should the indexed-views sidecar replicate to peers?** The view bee is a *derived* index; in principle each relay can rebuild it from the logs. So no, don't replicate it. Each relay maintains its own.
 
-4. **Compaction.** Both Ian's bee and ours have monotonic-growth via tombstones / cancellations / supersedes. When does it matter? Probably not for years. Worth planning the eventual compaction primitive but not building it now.
+4. **Compaction.** Both the contributor's bee and ours have monotonic-growth via tombstones / cancellations / supersedes. When does it matter? Probably not for years. Worth planning the eventual compaction primitive but not building it now.

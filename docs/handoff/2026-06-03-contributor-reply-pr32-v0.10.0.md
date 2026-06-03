@@ -1,6 +1,6 @@
-# Reply to Ian — PR #32 merged + restructured + shipped as v0.10.0
+# Reply to the contributor — PR #32 merged + restructured + shipped as v0.10.0
 
-Ian — merged your PR and shipped as **v0.10.0** (tag pushed, release commit
+Thanks — merged your PR and shipped as **v0.10.0** (tag pushed, release commit
 `70746b0`). Took the architectural restructure on our side rather than
 asking you to redo the stack. Closing the loop on all of it.
 

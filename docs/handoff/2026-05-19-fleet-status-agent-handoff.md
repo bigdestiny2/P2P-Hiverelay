@@ -65,7 +65,7 @@ d64c893 Merge fix/drive-close-corestore-cascade — silent corestore-close root 
    `POST /api/v1/seed` returns 503 `corestore is closed` on valid
    signed requests; bare probes still work because validation is
    pre-store.
-2. **v0.8.13** (Iain) shipped `LifecycleScope` cancellation contract
+2. **v0.8.13** (the contributor) shipped `LifecycleScope` cancellation contract
    that drains fire-and-forget loops on `stop()`. Improved time-to-
    wedge ~6h → ~57.8h. But continuous-operation vector survived (these
    relays never called `stop()`).
@@ -149,7 +149,7 @@ at async RelayNode._runCustodyExpiryPass (relay-node/index.js:2580:9)
 | singapore-1  | 104.194.153.179   | `ssh root@104.194.153.179`                                           |
 | singapore-2  | 104.194.152.121   | `ssh -i ~/.ssh/cloudzy_hiverelay root@104.194.152.121`               |
 | bern         | 45.59.123.112     | `ssh -i ~/.ssh/cloudzy_hiverelay root@45.59.123.112`                 |
-| milkyb-{fra,iad,syd} | Fly.io   | **no SSH for us** — external operator (Iain), HTTPS only             |
+| milkyb-{fra,iad,syd} | Fly.io   | **no SSH for us** — external operator (the contributor), HTTPS only             |
 
 All five in-house: code at `/root/hiverelay`, systemd unit `hiverelay`,
 log at `/var/log/hiverelay.log`, API on `:9100` localhost-bound.
@@ -161,7 +161,7 @@ log at `/var/log/hiverelay.log`, API on `:9100` localhost-bound.
   `ssh -i ~/.ssh/cloudzy_hiverelay -N -L 9200:127.0.0.1:9200 root@45.59.123.112`
 - Open `http://localhost:9200/` — relay cards + SSE log stream
 - Endpoints: `/api/state`, `/api/logs/stream` (SSE), `/api/logs/recent?n=200`, `/healthz`
-- Iain (`iain@laptop`) has an SSH tunnel key with port-forwarding-only
+- the contributor (`operator@laptop`) has an SSH tunnel key with port-forwarding-only
   restriction; he can be on the dashboard concurrently.
 
 ### The wedge-detection probe ladder
@@ -234,7 +234,7 @@ signed detector is `node scripts/publish-test-drive.js --target <relay>`.
   '\[status\]'` to read JSON pino lines cleanly.
 - 4th-party peer `299a0be26e5e…` shows up in every relay's `/peers`
   and is NOT in our fleet; mystery operator federating with us. Same
-  for the milkyb fleet which IS Iain's. Both benign.
+  for the milkyb fleet which IS the contributor's. Both benign.
 
 ### Active TODO / decision queue
 

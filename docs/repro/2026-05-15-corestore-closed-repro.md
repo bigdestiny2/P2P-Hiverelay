@@ -23,7 +23,7 @@ Status: 503. Retry returns the same. The relay's `/health` returns
 seems healthy at the systemd / health-monitor level, but the corestore
 underlying its hyperdrive layer is wedged.
 
-This matches the class Iain flagged in the message of 2026-05-15 09:56Z:
+This matches the class the contributor flagged in the message of 2026-05-15 09:56Z:
 > every prod host we've connected to (1e7d, 17ba, bc42, 0da2, 6b11, 37cf)
 > accumulates state corruption after hours/days of uptime, surfacing as:
 >   - Mutex has been destroyed on publish-channel SUBMIT_INTENT
@@ -86,7 +86,7 @@ exceeded` warnings with growing counts over hours:
 ```
 
 The `REQUEST_CANCELLED` rejections + the destroy-stale-connections
-cycle correlate with the stale-ref accumulation Iain hypothesised: the
+cycle correlate with the stale-ref accumulation the contributor hypothesised: the
 relay is destroying connections that still have in-flight ops attached
 to closed cores.
 
@@ -112,7 +112,7 @@ again over hours. Same shape as the pearbrowser bounce request from
 
 ## Permanent fix
 
-Tracked under "Reliability v2" — Iain owns the audit + structural fix.
+Tracked under "Reliability v2" — the contributor owns the audit + structural fix.
 See his 2026-05-15 09:56Z message for the analysis. Expected fix shape:
 a cancellation contract (AbortSignal + in-flight promise set drained
 by `stop()`) covering `_eagerReplicate`, `_indexLog`, `_onConnection`,

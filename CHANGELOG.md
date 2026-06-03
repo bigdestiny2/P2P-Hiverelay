@@ -14,8 +14,8 @@ information, with poker as the driving consumer. Backward-compatible:
 opt-in via `new PokerApp({...})`; a relay that never instantiates it is
 byte-zero affected. Seeding-manifest gains an optional `lifetime` hint;
 manifests without the field canonicalize byte-identical to pre-0.10.0,
-so existing signatures verify unchanged. Landed via PR #32
-(@iainkek), restructured at merge to sit under
+so existing signatures verify unchanged. Landed via PR #32,
+restructured at merge to sit under
 `packages/services/builtin/poker/` alongside the other builtin services.
 
 ### Added
@@ -128,7 +128,7 @@ independent root causes, both fixed; no wire-format or public-API changes.
   is preserved even on redacted/blind entries (it is already public via
   `GET /api/custody/{id}/status`; only the linkage is new information), while
   sensitive signals such as `retainUntil` stay redacted for blind entries.
-  Via PR #31 (@iainkek).
+  Via PR #31.
 
 ### Tests
 
@@ -258,7 +258,7 @@ the key to it, reading neither.
 Claim-path erasure witness. Closes the gap where a *claimed* custody drop
 produced no third-party-provable destruction until its (often weeks-long)
 `retainUntil` window elapsed — the exact piece dmc flagged as missing for
-"provable to a third party," and what Drop's Ian saw as empty
+"provable to a third party," and what Drop saw as empty
 `nonServingProofs` / `expiryWitnesses` on a committed-and-retired intent.
 
 Before this release the expiry sweep only attested the *unclaimed*-expiry
@@ -436,7 +436,7 @@ the relay's existing corestore, instead of rewriting the entire
 ### Why this matters
 
 This closes [#26](https://github.com/bigdestiny2/p2p-hiverelay/issues/26)
-as a side effect — the hung-writeFile cascade Ian's v0.8.22 timeouts
+as a side effect — the hung-writeFile cascade the contributor's v0.8.22 timeouts
 mitigated is fundamentally a JSON-blob fragility. Hyperbee's
 underlying Hypercore handles partial writes / fsync natively, so
 disk-full becomes a single-block append failure (loud, recoverable)
@@ -526,7 +526,7 @@ indexed-views sidecar).
 ## [0.8.23] — 2026-05-27
 
 Three community-contributed maintenance + correctness changes from
-[@iainkek](https://github.com/iainkek). Two had been waiting since
+the contributor. Two had been waiting since
 v0.8.13 (pre-LifecycleScope vintage), now rebased + cherry-picked
 cleanly. One was opened, reviewed, and shipped within hours of
 its filing today.
@@ -605,8 +605,8 @@ wildcard (`"./*": null`) without a big-bang break.
 
 ### Acknowledgments
 
-All three PRs by [@iainkek](https://github.com/iainkek). #16 and
-#17 were pre-v0.8.13 vintage (Ian's original work that predated
+All three PRs by the contributor. #16 and
+#17 were pre-v0.8.13 vintage (the contributor's original work that predated
 the LifecycleScope cancellation contract); both rebased cleanly
 against current main this week. #30 was opened, reviewed,
 merged, and now released within ~24 hours of filing.
@@ -640,7 +640,7 @@ All filed as issues for tracking:
 
 Defensive timeouts on the two `await`s in the reseed + anchor paths
 that could (and did) deadlock the entire relay when one entry hit a
-hung hypercore. Surfaced by [@iainkek](https://github.com/iainkek)'s
+hung hypercore. Surfaced by the contributor's
 investigation of milkyb-iad after the v0.8.21 deploy: iad's 1 GB Fly
 volume hit 100%, which made `writeFile` hang on registry saves, which
 compounded into hung `drive.ready()` calls + hung `getBlobs()` calls,
@@ -667,7 +667,7 @@ Body extracted to `_isDriveFullyReplicatedInner` so the public method
 wraps the race cleanly; on timeout, returns false and the next pass
 retries.
 
-### Empirical proof (Ian's milkyb-iad)
+### Empirical proof (the contributor's milkyb-iad)
 
 | Metric | v0.8.21 (= v0.8.20 + #22 + #24) | v0.8.22 (= v0.8.21 + #25) |
 |---|---|---|
@@ -684,14 +684,14 @@ when something hangs that previously would have hung silently forever.
 
 ### Acknowledgments
 
-PR #25 by [@iainkek](https://github.com/iainkek), with field
+PR #25 by the contributor, with field
 validation against milkyb-iad's recovery. Cherry-picked onto current
-main (PR #25 branched from v0.8.20, not v0.8.21) preserving Ian's
+main (PR #25 branched from v0.8.20, not v0.8.21) preserving the contributor's
 authorship on both commits.
 
 ### Known follow-ups
 
-Both flagged by Ian in PR #25, separate scope:
+Both flagged by the contributor in PR #25, separate scope:
 
 - `app-registry.js#save()` should also Promise.race a timeout against
   `writeFile` — closes the last leg of the hung-disk cascade
@@ -706,7 +706,7 @@ Both flagged by Ian in PR #25, separate scope:
 Self-heal that actually heals. v0.8.20 shipped the honest-anchor
 signal but exposed two latent replication bugs that prevented the
 repair loop from doing its job. v0.8.21 closes both — production
-validation by [@iainkek](https://github.com/iainkek) on milkyb-fra
+validation by the contributor on milkyb-fra
 and milkyb-syd demonstrated the first cross-relay peer-to-peer
 self-heal HiveRelay has ever shipped: syd anchored a previously-
 unanchored drive within 5 seconds of restart by pulling
@@ -825,7 +825,7 @@ window.
 
 ### Acknowledgments
 
-PR #22 + PR #24 by [@iainkek](https://github.com/iainkek), with
+PR #22 + PR #24 by the contributor, with
 production validation against three milkyb relays (fra, syd,
 iad). The "syd anchored Drop in 5s peer-to-peer without
 publisher" demonstration is the cleanest validation we've ever
@@ -834,7 +834,7 @@ gotten for a replication-layer change.
 ## [0.8.20] — 2026-05-23
 
 Anchor honesty + custody auto-attestation. Two community-contributed
-fixes by [@iainkek](https://github.com/iainkek) that close the
+fixes by the contributor that close the
 silent partial-pin trap and finally wire up the cryptographic loop
 for blind-custody BURNED state.
 
@@ -946,7 +946,7 @@ pass on merged main.
 
 ### Acknowledgments
 
-Both PRs by [@iainkek](https://github.com/iainkek), surfaced + driven
+Both PRs by the contributor, surfaced + driven
 by the drop-pear v3 escrow flow against the public fleet. Drop
 drive resurrected after ~2 weeks silent-brick.
 
@@ -1392,7 +1392,7 @@ that manifested as `Mutex has been destroyed`, `The corestore is
 closed`, and `SESSION_CLOSED: Cannot make sessions on a closing core`
 after hours/days of uptime on production relays.
 
-Co-authored with **Iain K** (audit + design + fix). See full notes at
+Co-authored with **the contributor** (audit + design + fix). See full notes at
 [`docs/RELEASE-NOTES-0.8.13.md`](docs/RELEASE-NOTES-0.8.13.md). Bug
 class first reported in his 2026-05-15 09:56Z message; reproduction
 captured in [`docs/repro/2026-05-15-corestore-closed-repro.md`](docs/repro/2026-05-15-corestore-closed-repro.md).
@@ -1441,7 +1441,7 @@ captured in [`docs/repro/2026-05-15-corestore-closed-repro.md`](docs/repro/2026-
 - `REQUEST_CANCELLED — recoverable rejection — continuing` warnings
   observed during restart cycles = abort signal cancelling in-flight
   requests gracefully, exactly as designed
-- 80/80 existing lifecycle-adjacent unit tests still pass (per Iain's
+- 80/80 existing lifecycle-adjacent unit tests still pass (per the contributor's
   audit run); 42/42 verified locally on validate-reliability-v2 branch
 
 ### Notes for operators
@@ -1601,7 +1601,7 @@ over with `503 Retry-After`.
 
 ## [0.8.9] — 2026-05-14
 
-Closes the seed-kind follow-up iainkek noted in PR #15.
+Closes the seed-kind follow-up the contributor noted in PR #15.
 
 ### Added
 
@@ -1629,7 +1629,7 @@ Closes the seed-kind follow-up iainkek noted in PR #15.
 
 ## [0.8.8] — 2026-05-14
 
-Merges PR #15 by `iainkek` — new `hiverelay-publish` Protomux channel.
+Merges PR #15 — new `hiverelay-publish` Protomux channel.
 
 ### Added
 
@@ -1654,7 +1654,7 @@ Merges PR #15 by `iainkek` — new `hiverelay-publish` Protomux channel.
 
 ## [0.8.7] — 2026-05-14
 
-Merges PR #14 by `iainkek` — band-aid for the transient corestore
+Merges PR #14 — band-aid for the transient corestore
 errors (root cause shipped in v0.8.10).
 
 ### Fixed

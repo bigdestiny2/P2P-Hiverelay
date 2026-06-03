@@ -1,5 +1,5 @@
 /**
- * Regression for the gap Drop hit (Ian, 2026-05-31): a relay's custody expiry
+ * Regression for the gap Drop hit (2026-05-31): a relay's custody expiry
  * sweep never emitted a non-serving-proof for content seeded over the
  * seed-request channel. Two independent root causes, both fixed in v0.9.2:
  *

@@ -1,6 +1,6 @@
-# Reply to Ian — #1 root-caused + fixed (v0.9.2), PR #31, v0.9.x custody live
+# Reply to the contributor — #1 root-caused + fixed (v0.9.2), PR #31, v0.9.x custody live
 
-Ian — huge thanks for the #3 end-to-end confirmation, the #2 read, and the PR.
+Thanks — huge thanks for the #3 end-to-end confirmation, the #2 read, and the PR.
 Closing the loop on all of it.
 
 ## #1 — found it. Two bugs, both fixed in v0.9.2 (on `main`, `b30226c`).
