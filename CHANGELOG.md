@@ -6,6 +6,87 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.10.0] — 2026-06-03
+
+Minor: first application lands under the services-module pattern — a
+card-blind signed-log substrate for turn-based games with hidden
+information, with poker as the driving consumer. Backward-compatible:
+opt-in via `new PokerApp({...})`; a relay that never instantiates it is
+byte-zero affected. Seeding-manifest gains an optional `lifetime` hint;
+manifests without the field canonicalize byte-identical to pre-0.10.0,
+so existing signatures verify unchanged. Landed via PR #32
+(@iainkek), restructured at merge to sit under
+`packages/services/builtin/poker/` alongside the other builtin services.
+
+### Added
+
+- **SignedLog substrate** at
+  `packages/services/builtin/poker/signed-log.js` — append-only signed
+  log per table with per-writer monotonic `seq`, 60s clock-skew bound,
+  byte-budget enforcement, opaque payload. Relay never inspects
+  `entry.payload`; game rules live in the Pear client.
+- **PokerApp service** as the first first-class consumer of the
+  services-module pattern, alongside `ai-service`, `schema-service`,
+  `zk-service`, `arbitration-service`. HTTP at
+  `/api/poker/<tableKey>/{state,log,move}`; WebSocket fan-out at
+  `ws://<host>/api/poker/<tableKey>/events` (initial-state-frame on
+  connect, API-key auth via the existing gate).
+- **HypercorePersistence adapter** — mirrors the in-memory signed-log
+  to a hypercore for durability + replay-on-restart. Mirrored cores
+  flow through the existing seeder + custody pipeline like any other
+  seeded content (no relay-side special casing).
+- **Seeding-manifest `lifetime` hint** — optional per-drive
+  `lifetime: 'persistent' | 'session' | 'ephemeral'` so operators can
+  evict per-hand / per-session content without conflating with
+  publication drives. **Manifests without the field canonicalize to
+  identical bytes** as pre-0.10.0 manifests; existing signatures
+  verify unchanged. `defaultLifetimeTtlMs(lifetime)` helper exposed.
+- **Arbitration extension for poker disputes** —
+  `poker/missing-share`, `poker/invalid-share`, `poker/refused-reveal`
+  dispute types with schema + size-cap validation. New
+  `setAppEvidenceVerifier(appType, fn)` seam: pluggable per-app
+  evidence verification. Disputes without a registered verifier
+  resolve `inconclusive` rather than silently `claim-supported`.
+- **Chaum-Pedersen share-equality verifier (REFERENCE QUALITY)** —
+  refutes false `poker/invalid-share` claims with a real cryptographic
+  proof rather than a vote. Hardened against ed25519 cofactor leak
+  (mixed-order / torsion points rejected on all five points) and
+  `@noble/curves` `Fn.mul` stress (50 random prove+verify cycles).
+  **Not audited.** Real-money deployments should swap their own
+  verifier in via `setAppEvidenceVerifier`. Called out in
+  `packages/services/builtin/poker/README.md` and at the top of the
+  verifier file.
+
+### Changed
+
+- **Architectural location of poker code.** PR #32 originally placed
+  the substrate under `packages/core/core/poker/`. Relocated to
+  `packages/services/builtin/poker/` to match the services-module
+  pattern. `p2p-hiverelay-core` stays scoped to substrate primitives
+  (signed-log primitives, custody, seeding, registry). Public HTTP/WS
+  namespace unchanged at `/api/poker/*` (the existing per-service
+  convention). JS import surface moves: `p2p-hiverelay/core/poker/*`
+  → `p2p-hiveservices/builtin/poker/*`. Consumers go through the
+  services package going forward.
+- **Arbitration resolution path hardened** against throwing slash /
+  reputation hooks. Verdict still records; error surfaces in the
+  resolved payload; downstream subscribers still see the verdict.
+
+### Notes
+
+- 188/188 across the 7 new test suites under `scripts/test-poker-*.js`
+  + `scripts/test-seeding-manifest-lifetime.js`, including
+  `test-poker-flow-e2e.js` (sit → DKG commit → pre-committed reveal
+  shares → betting → restart with hypercore replay → WS push fan-out →
+  arbitration with a real CP proof).
+- Targeted brittle regression on the merge's touched files —
+  `seeding-manifest` 15/15 (35 asserts), `arbitration-service` 14/14
+  (37 asserts), `custody-signing` 13/13 (43 asserts),
+  `app-registry` 4/4 (40 asserts) — all green.
+- Lockstep version bump 0.9.2 → 0.10.0 across `p2p-hiverelay`,
+  `p2p-hiveservices`, `p2p-hiverelay-client`,
+  `p2p-hiverelay-verifier`.
+
 ## [0.9.2] — 2026-05-31
 
 Patch: the custody expiry sweep now actually emits non-serving-proofs (and
