@@ -23,7 +23,8 @@
  *     ],
  *     drives: [
  *       { driveKey: '<hex>', channel: 'production' },
- *       { driveKey: '<hex>', channel: 'beta' }
+ *       // Optional `lifetime` hint — see LIFETIME_VALUES below.
+ *       { driveKey: '<hex>', channel: 'beta', lifetime: 'session' }
  *     ],
  *     signature: '<hex, covers a canonical serialization>'
  *   }
@@ -31,6 +32,34 @@
  * Signature coverage: `type|version|pubkey|timestamp|relays_json|drives_json`
  * where each JSON blob is canonicalized (keys sorted, no whitespace). This
  * keeps verification deterministic across runtimes and JSON encoders.
+ *
+ * ─── Drive lifetimes ────────────────────────────────────────────────────────
+ * The optional `lifetime` field on a drive entry hints to the seeding side
+ * how long the drive's content is expected to stay relevant. It's an
+ * application-level signal, NOT a contract — the relay is still free to
+ * keep data longer (e.g. for audit) or evict earlier under pressure. But it
+ * lets operators size storage policies for ephemeral workloads (per-hand
+ * poker reveal shares, ephemeral chat backlogs, etc.) without conflating
+ * them with long-lived publication drives.
+ *
+ * Valid values:
+ *   'persistent'  — default; drive is treated as long-lived publication
+ *                   content. Author expects it to be retained indefinitely.
+ *   'session'     — drive is bound to an active session (e.g. ~24h). After
+ *                   expiry, the relay MAY evict if storage pressure is high.
+ *   'ephemeral'   — short-lived; eviction allowed as soon as practical
+ *                   (~1h or end of holding session). Useful for per-round
+ *                   game state, one-shot share material, throwaway transcripts.
+ *
+ * Backward compatibility: omitting `lifetime` is equivalent to 'persistent'.
+ * Old verifiers tolerate the new field — they re-canonicalize through
+ * `sortKeys()` (which preserves all keys), so signatures over new manifests
+ * verify with old code; the old code just doesn't act on the hint. New
+ * verifiers treat absent `lifetime` as 'persistent' for backward parity.
+ *
+ * This file does NOT enforce eviction — that's the seeder's job. We only
+ * define the spec, the validator, and a small `defaultLifetimeTtlMs()` helper
+ * consumers can use as a starting policy if they don't have their own.
  */
 
 import b4a from 'b4a'
@@ -39,6 +68,20 @@ import sodium from 'sodium-universal'
 const MANIFEST_TYPE = 'hiverelay/seeding-manifest'
 const MANIFEST_VERSION = 1
 const VALID_RELAY_ROLES = new Set(['primary', 'backup', 'mirror'])
+// Drive lifetime classes — see the file header for semantics. The default
+// when absent is 'persistent' (preserves pre-lifetime-field behaviour).
+const LIFETIME_VALUES = new Set(['persistent', 'session', 'ephemeral'])
+const DEFAULT_LIFETIME = 'persistent'
+// Default TTL hints for each lifetime class. These are SUGGESTIONS the
+// seeder is free to override based on its own storage policy / pressure
+// signals. 'persistent' has no TTL (Infinity); 'session' is roughly a day
+// (typical app session boundary); 'ephemeral' is roughly an hour (covers
+// per-round game state without bloating disk).
+const LIFETIME_TTL_MS = Object.freeze({
+  persistent: Infinity,
+  session: 24 * 60 * 60 * 1000,
+  ephemeral: 60 * 60 * 1000
+})
 // Manifests newer than this many milliseconds in the future are rejected to
 // limit replay/timestamp-tampering windows. 5 min is a reasonable default
 // that accommodates clock drift without opening a meaningful replay window.
@@ -180,6 +223,21 @@ function normalizeDrives (drives) {
       }
       entry.channel = d.channel
     }
+    // Optional lifetime hint. Reject unknown values rather than silently
+    // dropping — a typo like 'sesion' should error loudly at publish time,
+    // not become an unenforced no-op that the operator can't debug later.
+    // We only include the field in the normalized output when it was
+    // explicitly set, so default-'persistent' callers continue to produce
+    // byte-identical canonical payloads to pre-lifetime-field code.
+    if (d.lifetime !== undefined) {
+      if (typeof d.lifetime !== 'string' || !LIFETIME_VALUES.has(d.lifetime)) {
+        throw new Error('bad lifetime: ' + d.lifetime)
+      }
+      // Don't emit the field for the default value — keeps the canonical
+      // signing payload stable for the common case and avoids needing a
+      // version bump just to add a hint.
+      if (d.lifetime !== DEFAULT_LIFETIME) entry.lifetime = d.lifetime
+    }
     out.push(entry)
   }
   return out
@@ -219,10 +277,47 @@ function sortKeys (obj) {
   return out
 }
 
+/**
+ * Look up the recommended TTL for a drive lifetime class. Returns a number
+ * in milliseconds, or `Infinity` for 'persistent'. Unknown values fall back
+ * to the persistent TTL — this is the safer default: never accidentally evict
+ * something an old/forward-compat manifest is asking us to hold.
+ *
+ * Consumers (seeder, manifest-store) call this to seed their initial
+ * retention policy. They are free to override with their own operator-config
+ * knobs; this is just a sensible starting point that everyone agrees on.
+ *
+ * @param {string} [lifetime] One of LIFETIME_VALUES, or undefined.
+ * @returns {number} TTL in ms (Infinity for persistent / unknown).
+ */
+export function defaultLifetimeTtlMs (lifetime) {
+  if (lifetime === undefined || lifetime === null) return LIFETIME_TTL_MS[DEFAULT_LIFETIME]
+  return LIFETIME_TTL_MS[lifetime] !== undefined
+    ? LIFETIME_TTL_MS[lifetime]
+    : LIFETIME_TTL_MS[DEFAULT_LIFETIME]
+}
+
+/**
+ * Resolve a drive entry's effective lifetime, applying the default. Useful
+ * for code that doesn't want to re-implement the "absent === persistent"
+ * rule everywhere.
+ *
+ * @param {{lifetime?: string}} driveEntry
+ * @returns {string} One of LIFETIME_VALUES.
+ */
+export function driveLifetime (driveEntry) {
+  if (!driveEntry || typeof driveEntry !== 'object') return DEFAULT_LIFETIME
+  if (driveEntry.lifetime && LIFETIME_VALUES.has(driveEntry.lifetime)) return driveEntry.lifetime
+  return DEFAULT_LIFETIME
+}
+
 export {
   MANIFEST_TYPE,
   MANIFEST_VERSION,
   MAX_RELAYS,
   MAX_DRIVES,
-  TIMESTAMP_SKEW_MS
+  TIMESTAMP_SKEW_MS,
+  LIFETIME_VALUES,
+  DEFAULT_LIFETIME,
+  LIFETIME_TTL_MS
 }
