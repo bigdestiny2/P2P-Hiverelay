@@ -322,3 +322,16 @@ function deepFreeze (o) {
 
 export { REJECT }
 export { SignedLog } from './signed-log.js'
+
+// Verifiable hand-seed helpers. The relay stays card-blind; these let clients
+// derive and check an unbiasable per-hand randomness anchor from the VRF
+// service and fold it into their own mental-poker shuffle. See ./hand-seed.js.
+export {
+  handSeedAlpha,
+  verifyHandSeed,
+  handDeckOrder,
+  combineBetas,
+  HAND_SEED_DOMAIN,
+  DECK_DOMAIN,
+  DEFAULT_DECK_SIZE
+} from './hand-seed.js'

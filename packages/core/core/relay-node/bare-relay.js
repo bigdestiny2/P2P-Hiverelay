@@ -230,7 +230,8 @@ export class BareRelay extends EventEmitter {
         { name: 'schema', module: 'p2p-hiveservices/builtin/schema-service.js', className: 'SchemaService' },
         { name: 'sla', module: 'p2p-hiveservices/builtin/sla-service.js', className: 'SLAService', opts: { maxContracts: 1000 } },
         { name: 'arbitration', module: 'p2p-hiveservices/builtin/arbitration-service.js', className: 'ArbitrationService' },
-        { name: 'zk', module: 'p2p-hiveservices/builtin/zk-service.js', className: 'ZKService' }
+        { name: 'zk', module: 'p2p-hiveservices/builtin/zk-service.js', className: 'ZKService' },
+        { name: 'vrf', module: 'p2p-hiveservices/builtin/vrf-service.js', className: 'VRFService', opts: { keyPair: this.swarm.keyPair, beacon: this.config.vrfBeacon } }
       ]
 
       let registered = 0

@@ -42,16 +42,44 @@
  * Adding new app dispute classes should follow the same pattern: extend
  * VALID_DISPUTE_TYPES, add a verifier in `_appEvidenceVerifiers`, and document
  * the evidence shape here.
+ *
+ * ─── Verifiable arbitrator panels (opt-in) ──────────────────────────────────
+ * By default this service uses OPEN voting: any peer that clears the
+ * eligibility bar may vote, and the first `minVotes` decide. That is simple
+ * and unchanged.
+ *
+ * When `panel.enabled` is set (constructor opts or node config), each new
+ * dispute instead draws a fixed committee up-front via the VRF service: alpha
+ * is bound to the immutable dispute content, the relay proves it, and the
+ * resulting unbiasable `beta` seeds a reputation-WEIGHTED sortition over the
+ * eligible pool (sortition.js). Only the drawn members may then vote. The
+ * dispute records the candidate snapshot + proof, so any peer can replay
+ * verify(vrfPubkey, alpha, pi) → beta → weightedSample(...) and confirm the
+ * committee was not hand-picked.
+ *
+ * Trust note: the VRF holder (the relay) cannot bias WHICH members are drawn
+ * from a given pool, but — holding the key — it could in principle grind the
+ * alpha by re-deriving it. We bind alpha to immutable dispute fields to make
+ * that observable; for adversarial deployments the alpha should additionally
+ * fold in an external/committee randomness beacon the relay does not control.
+ * If a panel cannot be formed (VRF unavailable, pool smaller than the panel
+ * size) the dispute transparently falls back to open voting.
  */
 
 import crypto from 'crypto'
 import { ServiceProvider } from 'p2p-hiverelay/core/services/provider.js'
+import { quantizeWeights } from './vrf/sortition.js'
 
 const MIN_ARBITRATOR_SCORE = 100
 const MIN_ARBITRATOR_RELIABILITY = 0.95
 const MIN_ARBITRATOR_CHALLENGES = 50
 const DEFAULT_MIN_VOTES = 3
 const MIN_VOTES_FLOOR = 3
+
+// Verifiable-panel defaults. Panels are OFF unless explicitly enabled.
+const DEFAULT_PANEL_SIZE = 5
+const PANEL_VRF_SERVICE = 'vrf'
+const PANEL_ALPHA_DOMAIN = 'hiverelay/arb-panel/v1'
 
 // Relay-level disputes — the original three classes, unchanged.
 const RELAY_DISPUTE_TYPES = ['sla-violation', 'proof-failure', 'receipt-dispute']
@@ -78,10 +106,27 @@ const MAX_APP_EVIDENCE_BYTES = 64 * 1024
 const MAX_POKER_BLOB_BYTES = 2048
 
 export class ArbitrationService extends ServiceProvider {
-  constructor () {
+  constructor (opts = {}) {
     super()
     this.disputes = new Map() // id -> dispute
     this.node = null
+    this.config = {}
+    // Panel config from constructor opts; merged with node config in start().
+    this._panelOpts = opts.panel || null
+    this.panelConfig = this._resolvePanelConfig(this._panelOpts)
+  }
+
+  /** Merge panel settings from (defaults ← node config ← constructor opts). */
+  _resolvePanelConfig (...sources) {
+    const merged = {}
+    for (const s of sources) { if (s && typeof s === 'object') Object.assign(merged, s) }
+    return {
+      enabled: merged.enabled === true,
+      // A panel must be at least the vote floor or it could never resolve.
+      size: Math.max(MIN_VOTES_FLOOR, Number(merged.size) || DEFAULT_PANEL_SIZE),
+      weighted: merged.weighted !== false, // reputation-weighted by default
+      vrfService: typeof merged.vrfService === 'string' ? merged.vrfService : PANEL_VRF_SERVICE
+    }
   }
 
   manifest () {
@@ -95,6 +140,10 @@ export class ArbitrationService extends ServiceProvider {
 
   async start (context) {
     this.node = context.node
+    this.config = context.config || this.config || {}
+    // Node config may carry arbitration.panel; constructor opts win over it.
+    const nodePanel = this.config.arbitration?.panel || this.config.arbitrationPanel || null
+    this.panelConfig = this._resolvePanelConfig(nodePanel, this._panelOpts)
   }
 
   async stop () {
@@ -177,7 +226,21 @@ export class ArbitrationService extends ServiceProvider {
       penalty: Math.min(Math.max(0, params.penalty || 0), this.config?.maxPenalty || 1000000),
       createdAt: Date.now(),
       resolvedAt: null,
-      minVotes: Math.max(MIN_VOTES_FLOOR, params.minVotes || this.config?.minVotes || DEFAULT_MIN_VOTES)
+      minVotes: Math.max(MIN_VOTES_FLOOR, params.minVotes || this.config?.minVotes || DEFAULT_MIN_VOTES),
+      // Verifiable committee (null when panels are off or selection fell back).
+      panel: null
+    }
+
+    // Per-dispute override: params.panel === true/false forces panels on/off
+    // for this dispute regardless of the service default.
+    const wantPanel = params.panel === true || (params.panel !== false && this.panelConfig.enabled)
+    if (wantPanel) {
+      dispute.panel = await this._formPanel(dispute)
+      // If a committee was actually drawn, cap the quorum to its size so the
+      // dispute can resolve once enough panellists have voted.
+      if (dispute.panel?.active) {
+        dispute.minVotes = Math.min(dispute.minVotes, dispute.panel.members.length)
+      }
     }
 
     this.disputes.set(id, dispute)
@@ -185,7 +248,8 @@ export class ArbitrationService extends ServiceProvider {
     this.node?.router?.pubsub?.publish('arbitration/submitted', {
       disputeId: id,
       type: dispute.type,
-      respondent: dispute.respondent
+      respondent: dispute.respondent,
+      panel: dispute.panel?.active ? dispute.panel.members : null
     })
 
     return this._serialize(dispute)
@@ -215,6 +279,12 @@ export class ArbitrationService extends ServiceProvider {
     // Eligibility check
     if (!this._isEligibleArbitrator(voter, dispute)) {
       throw new Error('ARBITRATOR_INELIGIBLE')
+    }
+
+    // If a verifiable panel was drawn for this dispute, only its members may
+    // vote. Open-voting disputes (panel null/inactive) skip this gate.
+    if (dispute.panel?.active && !dispute.panel.members.includes(voter)) {
+      throw new Error('ARBITRATOR_NOT_ON_PANEL')
     }
 
     if (dispute.votes.has(voter)) {
@@ -466,6 +536,101 @@ export class ArbitrationService extends ServiceProvider {
   }
 
   // --- Internal ---
+
+  /**
+   * Derive the VRF input `alpha` for a dispute's panel draw. Bound to immutable
+   * dispute fields so the proof attests to THIS dispute and the binding is
+   * auditable. Returns a 32-byte hex string.
+   */
+  _panelAlpha (dispute) {
+    const h = crypto.createHash('sha256')
+    for (const part of [
+      PANEL_ALPHA_DOMAIN,
+      dispute.id,
+      dispute.type,
+      String(dispute.claimant),
+      String(dispute.respondent),
+      String(dispute.createdAt)
+    ]) {
+      h.update(Buffer.from(String(part), 'utf8'))
+      h.update(Buffer.from([0x00])) // length-independent separator
+    }
+    return h.digest('hex')
+  }
+
+  /**
+   * Draw a verifiable arbitrator committee for a dispute via the VRF service.
+   * Never throws: any failure (no VRF service, no reputation, pool too small)
+   * returns an inactive panel with a reason and the dispute falls back to open
+   * voting. On success returns the proof + candidate snapshot needed to replay
+   * the draw independently.
+   */
+  async _formPanel (dispute) {
+    const size = this.panelConfig.size
+    const reputation = this.node?.reputation
+    const registry = this.node?.serviceRegistry
+    if (!registry) return { active: false, reason: 'no-service-registry' }
+    if (!reputation || !(reputation.records instanceof Map)) {
+      return { active: false, reason: 'no-reputation' }
+    }
+
+    // Build the eligible candidate pool, excluding the parties. Weight each by
+    // score x reliability — both are positive for anyone past the eligibility
+    // bar, so (unlike the full composite, which zeroes out on missing latency)
+    // every eligible arbitrator keeps a meaningful, drawable weight.
+    const candidates = []
+    for (const [pubkey, record] of reputation.records) {
+      if (pubkey === dispute.claimant || pubkey === dispute.respondent) continue
+      if (!this._isEligibleArbitrator(pubkey, dispute)) continue
+      const reliability = record.totalChallenges > 0
+        ? record.passedChallenges / record.totalChallenges
+        : 0
+      candidates.push({ id: pubkey, weight: record.score * reliability })
+    }
+
+    if (candidates.length < size) {
+      return { active: false, reason: 'insufficient-eligible-pool', poolSize: candidates.length, size }
+    }
+
+    // Integer weights for the pure-integer VRF sortition (so prover and any
+    // verifier agree exactly). Unweighted panels collapse to a uniform draw.
+    const drawCandidates = this.panelConfig.weighted
+      ? quantizeWeights(candidates)
+      : candidates.map(c => ({ id: c.id, weight: 1 }))
+
+    const alpha = this._panelAlpha(dispute)
+    let result
+    try {
+      result = await registry.handleRequest(this.panelConfig.vrfService, 'select', {
+        alpha,
+        candidates: drawCandidates,
+        count: size,
+        weighted: this.panelConfig.weighted
+      }, { caller: 'local' })
+    } catch (err) {
+      return { active: false, reason: 'vrf-unavailable:' + (err?.message || 'unknown') }
+    }
+
+    if (!result || !Array.isArray(result.committee) || result.committee.length === 0) {
+      return { active: false, reason: 'empty-committee' }
+    }
+
+    return {
+      active: true,
+      weighted: this.panelConfig.weighted,
+      size,
+      poolSize: candidates.length,
+      vrfService: this.panelConfig.vrfService,
+      vrfPubkey: result.pubkey,
+      suite: result.suite,
+      alpha: result.alpha,
+      pi: result.pi,
+      beta: result.beta,
+      // Snapshot the exact pool + weights used, so the draw is replayable.
+      candidates: drawCandidates,
+      members: result.committee
+    }
+  }
 
   _isEligibleArbitrator (pubkey, dispute) {
     // Cannot be a party to the dispute

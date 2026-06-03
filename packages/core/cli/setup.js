@@ -66,7 +66,7 @@ const PROFILES = {
     maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
     maxConnections: 256,
     maxRelayBandwidthMbps: 100,
-    services: ['identity', 'storage', 'schema'],
+    services: ['identity', 'storage', 'schema', 'vrf'],
     config: {
       mode: 'service-operator',
       enableServices: true
@@ -77,7 +77,7 @@ const PROFILES = {
     maxStorageBytes: 200 * 1024 * 1024 * 1024, // 200 GB
     maxConnections: 1024,
     maxRelayBandwidthMbps: 500,
-    services: ['identity', 'storage', 'schema', 'ai', 'zk', 'sla', 'arbitration'],
+    services: ['identity', 'storage', 'schema', 'vrf', 'ai', 'zk', 'sla', 'arbitration'],
     config: {
       mode: 'experimental-lab',
       enableServices: true
@@ -93,6 +93,7 @@ const ALL_SERVICES = [
   { name: 'identity  — plugin: identity and relay-local signing helpers', value: 'identity' },
   { name: 'storage   — plugin: service RPC storage helpers', value: 'storage' },
   { name: 'schema    — plugin: schema validation', value: 'schema' },
+  { name: 'vrf       — plugin: verifiable random functions (RFC 9381) + randomness beacon', value: 'vrf' },
   { name: 'ai        — experimental plugin: AI/ML inference', value: 'ai' },
   { name: 'zk        — experimental plugin: zero-knowledge proofs', value: 'zk' },
   { name: 'sla       — experimental plugin: service-level agreements', value: 'sla' },
