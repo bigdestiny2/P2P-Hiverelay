@@ -25,6 +25,7 @@
 import { ServiceProvider } from 'p2p-hiverelay/core/services/provider.js'
 import { randomBytes } from 'crypto'
 import dns from 'node:dns/promises'
+import net from 'node:net'
 
 const JOB_STATES = {
   PENDING: 'pending',
@@ -83,32 +84,11 @@ export class AIService extends ServiceProvider {
 
     if (this.models.has(modelId)) throw new Error(`AI_MODEL_EXISTS: ${modelId}`)
 
-    // Validate endpoint URL if provided
+    // Validate endpoint URL if provided. The same helper re-validates and
+    // pins the connection at inference time (see _httpInfer), so a model that
+    // passes here cannot be rebound to a private target later.
     if (endpoint) {
-      let parsed
-      try { parsed = new URL(endpoint) } catch { throw new Error('AI_INVALID_ENDPOINT: malformed URL') }
-      if (!['http:', 'https:'].includes(parsed.protocol)) {
-        throw new Error('AI_INVALID_ENDPOINT: only http/https allowed')
-      }
-      const host = parsed.hostname
-      if (host === 'localhost' || host === '127.0.0.1' || host === '::1') {
-        // Allow localhost for local models (Ollama, etc.)
-      } else {
-        // Check if the hostname is itself a private IP
-        if (this._isPrivateIP(host)) {
-          throw new Error('AI_INVALID_ENDPOINT: private/internal IPs not allowed for remote models')
-        }
-        // Resolve DNS and check resolved IPs for SSRF
-        try {
-          const { address } = await dns.lookup(host)
-          if (this._isPrivateIP(address)) {
-            throw new Error('AI_INVALID_ENDPOINT: hostname resolves to private/internal IP')
-          }
-        } catch (err) {
-          if (err.message.startsWith('AI_INVALID_ENDPOINT')) throw err
-          throw new Error('AI_INVALID_ENDPOINT: could not resolve hostname')
-        }
-      }
+      await this._assertEndpointSafe(endpoint)
     }
 
     const entry = {
@@ -319,27 +299,60 @@ export class AIService extends ServiceProvider {
   /**
    * HTTP inference for endpoint-based models.
    * Supports Ollama and OpenAI-compatible APIs.
+   *
+   * Re-validates the endpoint at call time and pins the socket to the exact
+   * address(es) that just passed validation. This closes the DNS-rebinding
+   * TOCTOU window: even if a hostname's DNS record changed to a private/
+   * internal target after register-model, the connection can only land on a
+   * vetted address.
    */
   async _httpInfer (model, request) {
-    const { request: httpRequest } = await import('http')
-    const url = new URL(model.endpoint)
+    const { url, pinnedAddresses } = await this._assertEndpointSafe(model.endpoint)
+
+    const isHttps = url.protocol === 'https:'
+    const { request: httpRequest } = await import(isHttps ? 'node:https' : 'node:http')
     const format = model.config.format || this._detectFormat(url)
 
     const payload = this._buildPayload(model, request, format)
     const path = this._resolvePath(url, request, format)
+    const maxBytes = this.maxOutputBytes
+
+    // Pin DNS resolution to the addresses we already validated. Node skips
+    // `lookup` entirely for IP-literal hostnames (already validated above).
+    const pinnedLookup = (hostname, options, callback) => {
+      const cb = typeof options === 'function' ? options : callback
+      const opts = typeof options === 'function' ? {} : (options || {})
+      if (opts.all) {
+        cb(null, pinnedAddresses.map(r => ({ address: r.address, family: r.family })))
+      } else {
+        cb(null, pinnedAddresses[0].address, pinnedAddresses[0].family)
+      }
+    }
 
     return new Promise((resolve, reject) => {
       const req = httpRequest({
+        protocol: url.protocol,
         hostname: url.hostname,
-        port: url.port,
+        port: url.port || (isHttps ? 443 : 80),
         path,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        timeout: model.config.timeout || 60_000
+        timeout: model.config.timeout || 60_000,
+        lookup: pinnedLookup
       }, (res) => {
         let body = ''
-        res.on('data', chunk => { body += chunk })
+        let aborted = false
+        res.on('data', chunk => {
+          if (aborted) return
+          body += chunk
+          if (body.length > maxBytes) {
+            aborted = true
+            req.destroy()
+            reject(new Error('AI_OUTPUT_TOO_LARGE'))
+          }
+        })
         res.on('end', () => {
+          if (aborted) return
           try {
             const parsed = JSON.parse(body)
             resolve(this._normalizeResponse(parsed, format))
@@ -358,6 +371,66 @@ export class AIService extends ServiceProvider {
       req.write(JSON.stringify(payload))
       req.end()
     })
+  }
+
+  /**
+   * Parse, validate, and resolve an endpoint URL for SSRF safety.
+   * Returns { url, pinnedAddresses } where pinnedAddresses are the vetted
+   * IP records the caller should pin the connection to.
+   *
+   * Rules:
+   *   - Only http/https.
+   *   - An explicit loopback host (`localhost`, 127.0.0.0/8, ::1) is allowed
+   *     for local models (Ollama, etc.).
+   *   - A literal non-loopback IP must be public.
+   *   - A hostname is resolved via dns.lookup({ all: true }) and EVERY
+   *     resolved record must be public — a single private answer is rejected.
+   */
+  async _assertEndpointSafe (endpoint) {
+    let url
+    try { url = new URL(endpoint) } catch { throw new Error('AI_INVALID_ENDPOINT: malformed URL') }
+    if (!['http:', 'https:'].includes(url.protocol)) {
+      throw new Error('AI_INVALID_ENDPOINT: only http/https allowed')
+    }
+
+    let host = url.hostname
+    if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1)
+
+    const family = net.isIP(host) // 0 if not an IP literal
+    const explicitLoopback = host === 'localhost' || (family !== 0 && this._isLoopbackIP(host))
+
+    if (explicitLoopback) {
+      // Local model endpoint — permitted. Pin to loopback.
+      const pinnedAddresses = family !== 0
+        ? [{ address: host, family }]
+        : [{ address: '127.0.0.1', family: 4 }]
+      return { url, pinnedAddresses }
+    }
+
+    if (family !== 0) {
+      // Literal non-loopback IP — must be public.
+      if (this._isPrivateIP(host)) {
+        throw new Error('AI_INVALID_ENDPOINT: private/internal IPs not allowed for remote models')
+      }
+      return { url, pinnedAddresses: [{ address: host, family }] }
+    }
+
+    // Hostname: resolve ALL records and require every one to be public.
+    let resolved
+    try {
+      resolved = await dns.lookup(host, { all: true })
+    } catch {
+      throw new Error('AI_INVALID_ENDPOINT: could not resolve hostname')
+    }
+    if (!resolved || resolved.length === 0) {
+      throw new Error('AI_INVALID_ENDPOINT: hostname did not resolve')
+    }
+    for (const rec of resolved) {
+      if (this._isPrivateIP(rec.address)) {
+        throw new Error('AI_INVALID_ENDPOINT: hostname resolves to private/internal IP')
+      }
+    }
+    return { url, pinnedAddresses: resolved.map(r => ({ address: r.address, family: r.family })) }
   }
 
   _detectFormat (url) {
@@ -460,25 +533,70 @@ export class AIService extends ServiceProvider {
     return context.role === 'relay-admin' || context.role === 'local' || context.caller === 'local'
   }
 
+  /**
+   * Normalize an IP string: lowercase, strip IPv6 zone id, and decode
+   * IPv4-mapped IPv6 forms (::ffff:192.168.0.1 and ::ffff:c0a8:0001) to their
+   * dotted-quad equivalent so range checks can't be bypassed.
+   */
+  _normalizeIP (ip) {
+    if (ip === null || ip === undefined) return ''
+    let v = String(ip).toLowerCase().trim()
+    const zone = v.indexOf('%')
+    if (zone !== -1) v = v.slice(0, zone)
+    if (v.startsWith('::ffff:')) {
+      const tail = v.slice(7)
+      if (net.isIPv4(tail)) {
+        v = tail
+      } else {
+        const m = tail.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+        if (m) {
+          const hi = parseInt(m[1], 16)
+          const lo = parseInt(m[2], 16)
+          v = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`
+        }
+      }
+    }
+    return v
+  }
+
+  _isLoopbackIP (ip) {
+    const v = this._normalizeIP(ip)
+    if (v === '::1') return true
+    if (/^127\./.test(v)) return true
+    return false
+  }
+
   _isPrivateIP (ip) {
     if (!ip) return true
-    if (ip === '0.0.0.0' || ip === '::') return true
-    // 127.x.x.x
-    if (/^127\./.test(ip)) return true
-    // 10.x.x.x
-    if (/^10\./.test(ip)) return true
-    // 172.16-31.x.x
-    if (/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) return true
-    // 192.168.x.x
-    if (/^192\.168\./.test(ip)) return true
-    // 169.254.x.x (link-local)
-    if (/^169\.254\./.test(ip)) return true
-    // IPv6 loopback
-    if (ip === '::1') return true
-    // IPv6 link-local
-    if (/^fe80:/i.test(ip)) return true
-    // IPv6 unique local
-    if (/^f[cd]/i.test(ip)) return true
+    const v = this._normalizeIP(ip)
+    // Unspecified address
+    if (v === '0.0.0.0' || v === '::' || v === '0:0:0:0:0:0:0:0') return true
+    // Anything that isn't a recognizable IP after normalization fails closed.
+    const fam = net.isIP(v)
+    if (fam === 0) return true
+
+    if (fam === 4) {
+      // 0.0.0.0/8 ("this network")
+      if (/^0\./.test(v)) return true
+      // 127.0.0.0/8 loopback
+      if (/^127\./.test(v)) return true
+      // 10.0.0.0/8
+      if (/^10\./.test(v)) return true
+      // 172.16.0.0/12
+      if (/^172\.(1[6-9]|2\d|3[01])\./.test(v)) return true
+      // 192.168.0.0/16
+      if (/^192\.168\./.test(v)) return true
+      // 169.254.0.0/16 link-local
+      if (/^169\.254\./.test(v)) return true
+      // 100.64.0.0/10 carrier-grade NAT
+      if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(v)) return true
+      return false
+    }
+
+    // IPv6
+    if (v === '::1') return true            // loopback
+    if (/^fe[89ab]/.test(v)) return true     // link-local fe80::/10
+    if (/^f[cd]/.test(v)) return true        // unique local fc00::/7
     return false
   }
 

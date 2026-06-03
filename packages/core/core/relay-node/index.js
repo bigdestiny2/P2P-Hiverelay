@@ -101,9 +101,14 @@ const DEFAULT_CONFIG = {
   // when callers haven't migrated. Default mode is decided in `_resolveAcceptMode`.
   acceptMode: undefined,
   acceptAllowlist: [], // array of publisher pubkeys (hex) — only used when acceptMode === 'allowlist'
-  // P2P service auth defaults. Noise-session peers are treated as authenticated
-  // users by default; operators can promote selected pubkeys to relay-admin.
-  serviceDefaultPeerRole: 'authenticated-user',
+  // P2P service auth defaults. Secure-by-default: anonymous swarm peers get the
+  // 'anonymous' role and therefore cannot reach 'authenticated-user' or
+  // 'relay-admin' service routes. Operators promote selected pubkeys to
+  // relay-admin via serviceAdminAllowlist, or — only if they explicitly want an
+  // open, unauthenticated service surface — set serviceDefaultPeerRole to
+  // 'authenticated-user'. Knowing the discovery key must not be enough to call
+  // storage/ai/zk/arbitration/sla over the swarm.
+  serviceDefaultPeerRole: 'anonymous',
   serviceAdminAllowlist: [],
   enableServices: false,
   plugins: [],
@@ -794,7 +799,7 @@ export class RelayNode extends EventEmitter {
       if (this.config.enableServices !== false && this.config.plugins) {
         this.serviceRegistry = new ServiceRegistry()
         this.serviceProtocol = new ServiceProtocol(this.serviceRegistry, {
-          defaultPeerRole: this.config.serviceDefaultPeerRole || 'authenticated-user'
+          defaultPeerRole: this.config.serviceDefaultPeerRole || 'anonymous'
         })
         this.pluginLoader = new PluginLoader()
 

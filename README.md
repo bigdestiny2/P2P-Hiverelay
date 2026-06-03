@@ -57,7 +57,7 @@ For Pear apps, public drives, package mirrors, routing services. Marked `durabil
 For encrypted file handoffs, blind dead drops, time-bounded transfers. Marked `storageClass: 'temporary'`.
 
 - Relays process ciphertext only — never plaintext, never decryption keys.
-- Validator hard-blocks ten plaintext field names so leakage is structurally impossible.
+- The signed custody log is schema-constrained: a per-type field **allowlist** rejects any unknown field, and a denylist hard-blocks known plaintext/key names (`plaintext`, `dataKey`, `fileName`, `path`, PVSS share scalars, …). Custody metadata therefore can't carry cleartext content or key material.
 - Six signed message types: intent → receipt → commit → source-retired → proof → non-serving-proof, with witness tombstones layered on top.
 - `retainUntil` is enforced state — the expiry monitor unseeds at the deadline and the relay signs a non-serving-proof; independent witnesses probe after expiry and sign tombstones.
 - **Publicly verifiable key custody (v0.9.0).** Beyond blind *content*, a relay can custody an opaque, guardian-encrypted *share* of a secret (PVSS over secp256k1). It publicly verifies the share against the published commitments — without ever decrypting it — and any *t-of-n* guardians reconstruct the secret client-side. No party (relay or single guardian) can reconstruct alone.
@@ -76,7 +76,7 @@ Beyond the relay kernel, optional services live under `packages/services/builtin
 
 - **HTTP** at `/api/poker/<tableKey>/{state,log,move}`; **WebSocket** fan-out at `ws://<host>/api/poker/<tableKey>/events` (initial-state frame on connect, API-key auth via the existing gate).
 - **HypercorePersistence adapter** mirrors the in-memory log to a hypercore for durability + replay-on-restart; mirrored cores flow through the existing seeder + custody pipeline like any other content.
-- Mental poker's classic disconnection-survival gap is closed by composing three relay primitives — "reliability v2": the custody pipeline holds DKG-encrypted reveal shares blindly, the cancellation contract keeps the relay from lying about holding them, and partial-pin auto-heal recovers from a peer drop with no trusted coordinator. Every future `SignedLogApp` service inherits this at instantiation.
+- Mental poker's classic disconnection-survival gap is closed by composing three relay primitives — "reliability v2": the custody pipeline blindly holds the players' pre-committed reveal-share entries as opaque bytes, the cancellation contract keeps the relay from lying about holding them, and partial-pin auto-heal recovers from a peer drop with no trusted coordinator. The reveal-share scheme itself lives in the Pear client; the relay stays card-blind. Every future `SignedLogApp` service inherits this at instantiation.
 - **Arbitration** gains `poker/missing-share`, `poker/invalid-share`, `poker/refused-reveal` dispute types and a `setAppEvidenceVerifier(appType, fn)` seam for pluggable per-app evidence verification. The bundled **Chaum-Pedersen share-equality verifier** is **reference quality and not audited** — real-money deployments should swap in their own.
 - Seeding-manifest gains an optional `lifetime` hint (`persistent` | `session` | `ephemeral`). When absent or default, canonical bytes are byte-identical to pre-0.10.0 manifests, so existing signatures verify unchanged.
 
@@ -94,7 +94,7 @@ Apps declare their own privacy tier. The relay enforces what it sees based on th
 | `local-first` | Discovery key only; data exchanged peer-to-peer | Local + opportunistic relay cache | Personal notes, journal |
 | `p2p-only` (blind) | Opaque ciphertext bytes | Encrypted on relay disk; gateway returns 403 | Wallets, medical, private messaging |
 
-The `p2p-only` tier is the key feature for production privacy-preserving apps. Combined with atomic blind custody, the relay can prove it stored your encrypted content and stopped storing it at expiry — without ever decrypting it.
+The `p2p-only` tier is the key feature for production privacy-preserving apps. Combined with atomic blind custody, the relay attests it stored your encrypted content and signs a non-serving proof at expiry — corroborated by independent witness tombstones — without ever decrypting it.
 
 ---
 

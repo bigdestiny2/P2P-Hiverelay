@@ -261,8 +261,11 @@ export class BareRelay extends EventEmitter {
         log.info('  services: p2p-hiveservices not installed — running Core-only')
       } else {
         // ServiceProtocol signature is (registry, opts)
+        // Secure-by-default: anonymous swarm peers cannot reach
+        // authenticated-user/relay-admin routes. Operators opt into an open
+        // surface explicitly via config.serviceDefaultPeerRole.
         this._serviceProtocol = new ServiceProtocol(this.serviceRegistry, {
-          defaultPeerRole: 'authenticated-user'
+          defaultPeerRole: (this.config && this.config.serviceDefaultPeerRole) || 'anonymous'
         })
         log.info('  services:', registered, 'registered')
       }

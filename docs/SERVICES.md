@@ -1,5 +1,5 @@
-> [!WARNING]
-> **Doc may be partially out of date.** This file has been refreshed for service lifecycle and supervision, but some optional service descriptions may still describe experimental or disabled-by-default modules. See the [CHANGELOG](../CHANGELOG.md) for current architecture.
+> [!NOTE]
+> Refreshed for v0.10.0: seven builtin services (`identity`, `storage`, `schema`, `ai`, `zk`, `sla`, `arbitration`) plus the card-blind poker/SignedLog substrate. Services are opt-in (`enableServices`), and `ai`/`zk`/`sla`/`arbitration` are experimental. See the [CHANGELOG](../CHANGELOG.md) for the authoritative architecture.
 
 # HiveRelay Services Layer
 
@@ -111,16 +111,6 @@ Manages keypair identities and peer verification using Ed25519 signatures (sodiu
 - `verify` -- Verifies a detached signature against a public key
 - `resolve` -- Looks up a pubkey in the device allowlist (private mode)
 
-### Compute Service
-
-Task queue with concurrency-limited execution. Apps submit tasks that run in worker threads.
-
-**Capabilities:** `submit`, `status`, `result`, `cancel`, `list`, `capabilities`
-
-- Configurable concurrency limit (default: 4)
-- Job states: `pending` -> `running` -> `completed` | `failed` | `cancelled`
-- Task types: `wasm`, `js`, `docker` (extensible via handlers)
-
 ### ZK Service (Zero-Knowledge Proofs)
 
 Privacy-preserving proof generation and verification.
@@ -145,7 +135,7 @@ Model registry and inference routing. Wraps local models (Ollama) or remote endp
 
 Service-level agreement contracts between app developers and relay operators. This is the revenue mechanism -- developers pay relays that meet performance guarantees.
 
-**Capabilities:** `create`, `list`, `get`, `terminate`
+**Capabilities:** `create`, `list`, `get`, `terminate`, `check`, `violations`, `stats`
 
 **Automated enforcement:**
 - Reads proof-of-relay reliability scores every 60 seconds
@@ -170,10 +160,17 @@ Decentralized dispute resolution via peer voting.
 
 **Capabilities:** `submit`, `vote`, `get`, `list`
 
-- Dispute types: `sla-violation`, `proof-failure`, `receipt-dispute`
+- Dispute types: `sla-violation`, `proof-failure`, `receipt-dispute`, plus the poker substrate's `poker/missing-share`, `poker/invalid-share`, `poker/refused-reveal`
 - Arbitrator eligibility: reputation score > 100, reliability > 0.95, 50+ challenges
 - Evidence verification: validates bandwidth receipts cryptographically
 - Resolution: majority vote wins, loser slashed, voters gain/lose reputation
+- `setAppEvidenceVerifier(appType, fn)` seam — apps register their own cryptographic evidence verifier (e.g. the reference Chaum-Pedersen share-equality verifier for `poker/invalid-share`). Disputes without a registered verifier resolve `inconclusive` rather than `claim-supported`.
+
+### Poker / SignedLog Substrate (v0.10.0)
+
+A card-blind, append-only signed-log substrate for turn-based games with hidden information. It is **not** a service in the `ServiceProvider`/RPC sense — it lives at `packages/services/builtin/poker/` and owns the `/api/poker/*` HTTP + WebSocket namespace. The relay enforces per-writer signatures, monotonic `seq`, a 60s clock-skew bound, and a byte budget; the `entry.payload` stays opaque and all game rules run in the Pear client. Poker is the first consumer; the same substrate composes for liar's dice, mafia, and sealed-bid auctions.
+
+See the [poker substrate README](../packages/services/builtin/poker/README.md).
 
 ## Creating Custom Services
 
@@ -220,7 +217,12 @@ Service lifecycle is controlled by:
 
 ```javascript
 {
-  serviceDefaultPeerRole: 'authenticated-user',
+  // Secure-by-default: anonymous swarm peers get the 'anonymous' role and
+  // therefore cannot reach 'authenticated-user' or 'relay-admin' service
+  // routes. Promote selected pubkeys via serviceAdminAllowlist, or — only if
+  // you explicitly want an open, unauthenticated service surface — set this to
+  // 'authenticated-user'.
+  serviceDefaultPeerRole: 'anonymous',
   serviceAdminAllowlist: [],
   serviceSupervision: {
     enabled: true,
@@ -252,15 +254,20 @@ curl -X POST http://localhost:9100/api/manage/services \
 # Restart a service
 curl -X POST http://localhost:9100/api/manage/services \
   -H "Content-Type: application/json" \
-  -d '{"action": "restart", "service": "compute"}'
+  -d '{"action": "restart", "service": "ai"}'
 ```
 
 ### Service Selection During Setup
 
-The `p2p-hiverelay setup` wizard provides checkbox selection of services based on node profile:
+The `p2p-hiverelay setup` wizard selects services by node profile. The relay-only profiles run no app services at all (`enableServices: false`); services are opt-in:
 
-| Profile | Default Services |
-|---------|-----------------|
-| Light | identity, schema, sla |
-| Standard | identity, schema, sla, storage, compute, arbitration |
-| Heavy | All 8 services |
+| Profile | `enableServices` | Default Services |
+|---------|------------------|------------------|
+| Relay Core | false | none — availability + custody kernel only |
+| Custody Relay | false | none — blind atomic custody focus |
+| HomeHive | false | none — private/local relay |
+| Service Operator | true | identity, storage, schema |
+| Experimental Lab | true | identity, storage, schema, ai, zk, sla, arbitration |
+| Custom | — | hand-picked from the full service list |
+
+The seven builtin services are `identity`, `storage`, `schema`, `ai`, `zk`, `sla`, and `arbitration`. The `ai`, `zk`, `sla`, and `arbitration` services are experimental and ship enabled only under the Experimental Lab profile or an explicit custom selection.
