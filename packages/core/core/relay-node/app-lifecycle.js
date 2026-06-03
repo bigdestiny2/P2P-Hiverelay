@@ -1377,6 +1377,18 @@ export class AppLifecycle extends EventEmitter {
    */
   verifyUnseedRequest (appKeyHex, publisherPubkeyHex, signatureHex, timestamp) {
     const node = this.node
+
+    // Defensive input validation — keep this verifier total (never throws),
+    // matching the convention of the other verify-style helpers. It is reached
+    // from the P2P unseed path and from direct callers; without this a wrong-
+    // length signature makes sodium assert and a non-integer timestamp makes
+    // BigInt() throw. The HTTP API validates these at its boundary already, so
+    // this changes behaviour only for inputs that previously threw.
+    if (!isValidHexKey(appKeyHex, 64) || !isValidHexKey(publisherPubkeyHex, 64) ||
+        !isValidHexKey(signatureHex, 128) || !Number.isFinite(timestamp)) {
+      return { ok: false, error: 'MALFORMED_REQUEST' }
+    }
+
     const entry = node.appRegistry.get(appKeyHex)
     if (!entry) return { ok: false, error: 'APP_NOT_FOUND' }
 

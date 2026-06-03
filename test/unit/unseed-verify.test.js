@@ -167,3 +167,80 @@ test('unseed-verify: invalid signature returns INVALID_SIGNATURE', async (t) => 
   t.is(result.ok, false, 'result.ok is false')
   t.is(result.error, 'INVALID_SIGNATURE', 'error is INVALID_SIGNATURE')
 })
+
+// ─── adversarial / malformed input robustness ───────────────────────────────
+// The verifier must be total: a malformed unseed request (garbage hex, wrong
+// length, non-string, non-finite timestamp) must be rejected cleanly with
+// { ok:false, error:'MALFORMED_REQUEST' } and must never throw. Without the
+// input guard, sodium asserts on a wrong-length signature and BigInt() throws
+// on a non-integer timestamp — turning a bad request into an exception that a
+// P2P/direct caller would have to catch. These cases lock in graceful rejection.
+
+test('unseed-verify: non-hex signature returns MALFORMED_REQUEST (no throw)', async (t) => {
+  const { pk } = keygen()
+  const appKeyHex = b4a.toString(b4a.alloc(32, 0x61), 'hex')
+  const publisherHex = b4a.toString(pk, 'hex')
+  const node = mockNode([[appKeyHex, { publisherPubkey: publisherHex }]])
+
+  let result
+  t.execution(() => { result = verify(node, appKeyHex, publisherHex, 'z'.repeat(128), Date.now()) }, 'does not throw')
+  t.is(result.ok, false, 'result.ok is false')
+  t.is(result.error, 'MALFORMED_REQUEST', 'error is MALFORMED_REQUEST')
+})
+
+test('unseed-verify: wrong-length signature returns MALFORMED_REQUEST (no throw)', async (t) => {
+  const { pk, sk } = keygen()
+  const appKeyHex = b4a.toString(b4a.alloc(32, 0x62), 'hex')
+  const publisherHex = b4a.toString(pk, 'hex')
+  const node = mockNode([[appKeyHex, { publisherPubkey: publisherHex }]])
+  const ts = Date.now()
+  // a valid signature truncated to the wrong byte length
+  const shortSig = signUnseed(appKeyHex, ts, sk).slice(0, 40)
+
+  let result
+  t.execution(() => { result = verify(node, appKeyHex, publisherHex, shortSig, ts) }, 'does not throw')
+  t.is(result.error, 'MALFORMED_REQUEST', 'error is MALFORMED_REQUEST')
+})
+
+test('unseed-verify: empty / null signature returns MALFORMED_REQUEST (no throw)', async (t) => {
+  const { pk } = keygen()
+  const appKeyHex = b4a.toString(b4a.alloc(32, 0x63), 'hex')
+  const publisherHex = b4a.toString(pk, 'hex')
+  const node = mockNode([[appKeyHex, { publisherPubkey: publisherHex }]])
+  const ts = Date.now()
+
+  for (const badSig of ['', null, undefined]) {
+    let result
+    t.execution(() => { result = verify(node, appKeyHex, publisherHex, badSig, ts) }, `does not throw for ${String(badSig)}`)
+    t.is(result.error, 'MALFORMED_REQUEST', `${String(badSig)} signature is MALFORMED_REQUEST`)
+  }
+})
+
+test('unseed-verify: non-finite timestamp returns MALFORMED_REQUEST (no throw)', async (t) => {
+  const { pk, sk } = keygen()
+  const appKeyHex = b4a.toString(b4a.alloc(32, 0x64), 'hex')
+  const publisherHex = b4a.toString(pk, 'hex')
+  const node = mockNode([[appKeyHex, { publisherPubkey: publisherHex }]])
+  const sigHex = signUnseed(appKeyHex, Date.now(), sk)
+
+  for (const badTs of [NaN, Infinity, 'not-a-number', null]) {
+    let result
+    t.execution(() => { result = verify(node, appKeyHex, publisherHex, sigHex, badTs) }, `does not throw for ${String(badTs)}`)
+    t.is(result.error, 'MALFORMED_REQUEST', `${String(badTs)} timestamp is MALFORMED_REQUEST`)
+  }
+})
+
+test('unseed-verify: non-string / wrong-length appKey returns MALFORMED_REQUEST (no throw)', async (t) => {
+  const { pk, sk } = keygen()
+  const appKeyHex = b4a.toString(b4a.alloc(32, 0x65), 'hex')
+  const publisherHex = b4a.toString(pk, 'hex')
+  const node = mockNode([[appKeyHex, { publisherPubkey: publisherHex }]])
+  const ts = Date.now()
+  const sigHex = signUnseed(appKeyHex, ts, sk)
+
+  for (const badKey of [{}, 'abcd', 'z'.repeat(64), 12345, null]) {
+    let result
+    t.execution(() => { result = verify(node, badKey, publisherHex, sigHex, ts) }, `does not throw for ${JSON.stringify(badKey)}`)
+    t.is(result.error, 'MALFORMED_REQUEST', `${JSON.stringify(badKey)} appKey is MALFORMED_REQUEST`)
+  }
+})

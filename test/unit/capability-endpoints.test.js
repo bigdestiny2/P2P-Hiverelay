@@ -376,3 +376,38 @@ test('non-rate-limited endpoints unaffected', async (t) => {
     if (res.statusCode !== 200) break
   }
 })
+
+// ─── Content-Type validation for POST (audit item 1.6) ──────────
+// A POST carrying a non-JSON Content-Type must be rejected with 400 before
+// any handler runs, so a body parser is never handed a non-JSON payload.
+
+test('POST with non-JSON Content-Type is rejected with 400', async (t) => {
+  const { port } = await setupApi(t)
+  // /api/v1/dispatch sits after the global Content-Type gate; the gate fires
+  // before its auth check, so a text/plain body is rejected up front.
+  const res = await request(port, 'POST', '/api/v1/dispatch', 'route=ai.infer', {
+    'Content-Type': 'text/plain'
+  })
+  t.is(res.statusCode, 400, 'non-JSON Content-Type rejected')
+  t.ok(/Content-Type must be application\/json/.test(res.body.error || ''),
+    'error explains the JSON requirement')
+})
+
+test('POST with application/json Content-Type passes the gate', async (t) => {
+  const { port } = await setupApi(t)
+  // Positive control: same endpoint, correct Content-Type → the gate does NOT
+  // fire, so we get past it (401 auth, not the 400 Content-Type rejection).
+  const res = await request(port, 'POST', '/api/v1/dispatch', { route: 'ai.infer' }, {
+    'Content-Type': 'application/json'
+  })
+  t.not(res.statusCode, 400, 'JSON Content-Type is not blocked by the gate')
+})
+
+// ─── Unknown-route 404 ──────────────────────────────────────────
+
+test('GET an unknown API route returns 404 with an error body', async (t) => {
+  const { port } = await setupApi(t)
+  const res = await request(port, 'GET', '/api/this-route-does-not-exist')
+  t.is(res.statusCode, 404, 'unknown route is 404')
+  t.ok(res.body.error, 'error body present')
+})

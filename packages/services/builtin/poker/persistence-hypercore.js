@@ -26,6 +26,35 @@
  * any binary framing on top — the SignedLog format already covers
  * everything the relay needs and JSON keeps debugging trivial.
  *
+ * ─── Block padding (size-blindness) ─────────────────────────────────────────
+ *
+ * The relay is card-blind — it never reads entry.payload. But the *size* of
+ * each block still leaks: a fold, a raise, and a card-reveal-with-decryption-
+ * shares produce JSON of very different lengths, so anyone watching the core
+ * (it replicates across relays) can infer the action type and table tempo
+ * from block sizes alone — traffic analysis on an otherwise-opaque substrate.
+ *
+ * To close that, each block is padded up to the next size bucket with trailing
+ * ASCII spaces before append. This is deliberately a *whitespace* pad rather
+ * than a framing change, which makes it free on every axis that matters:
+ *
+ *   - Signature-transparent: the ed25519 signature covers only the canonical
+ *     entry fields (tableKey/writer/seq/ts/payload). Padding lives entirely
+ *     outside the JSON object, so it never touches what was signed.
+ *   - Reader-transparent: JSON.parse ignores trailing whitespace, so the
+ *     replay path (and any client) parses a padded block identically to an
+ *     unpadded one — no decode change, no entry pollution.
+ *   - Backward-compatible: legacy un-padded blocks parse exactly as before,
+ *     so a core written by an older relay replays without migration.
+ *
+ * Common betting actions (fold/check/call/bet/raise) all fall in the smallest
+ * bucket and become mutually indistinguishable by size. The default ladder is
+ * DEFAULT_PAD_BUCKETS; pass `padding: false` to opt out (legacy raw JSON) or
+ * `padding: [n, …]` for a custom ascending ladder. Timing-channel
+ * decorrelation (jittering append order) is intentionally NOT done here —
+ * appends must stay strictly ordered, so that belongs in a serialized queue,
+ * a separate follow-up.
+ *
  * ─── Table provisioning ────────────────────────────────────────────────────
  *
  *   await persistence.createPersistentTable({ tableKey, writers, options })
@@ -63,12 +92,26 @@ import { EventEmitter } from 'events'
 const CORE_NAME_PREFIX = 'poker/'
 const APPEND_TIMEOUT_MS = 5000
 
+/**
+ * Default block-size ladder for padding (bytes). A block is padded up to the
+ * smallest bucket >= its length. Chosen so every common betting action lands
+ * in the first bucket (and is therefore size-indistinguishable), while the
+ * larger buckets absorb shuffle proofs / decryption-share reveals without
+ * rounding everything up to the 64 KiB MAX_ENTRY_BYTES ceiling. Blocks larger
+ * than the top bucket are rounded up to the next multiple of it.
+ */
+const DEFAULT_PAD_BUCKETS = Object.freeze([1024, 4096, 16384, 65536])
+
 export class HypercorePersistence extends EventEmitter {
   /**
    * @param {object} opts
    * @param {object} opts.pokerApp                A started PokerApp.
    * @param {object} opts.store                   A Corestore.
    * @param {(label, info) => void} [opts.log]    Optional logger.
+   * @param {false|number[]} [opts.padding]       Block-size padding ladder.
+   *   Omitted/true → DEFAULT_PAD_BUCKETS (on). `false` → disabled (legacy raw
+   *   JSON). An ascending positive-integer array → custom buckets. See the
+   *   "Block padding" section in the module header.
    */
   constructor (opts) {
     super()
@@ -77,6 +120,8 @@ export class HypercorePersistence extends EventEmitter {
     this.pokerApp = opts.pokerApp
     this.store = opts.store
     this._log = opts.log || (() => {})
+    /** @type {?number[]} Ascending pad buckets, or null when padding disabled. */
+    this._padBuckets = _resolvePadBuckets(opts.padding)
     /** @type {Map<string, { core: object, unsub: () => void }>} */
     this._mirrors = new Map()
     this._stopped = false
@@ -222,7 +267,11 @@ export class HypercorePersistence extends EventEmitter {
    */
   async _mirror (tableKey, core, entry) {
     if (this._stopped) return
-    const blob = Buffer.from(JSON.stringify(entry), 'utf8')
+    // Pad the serialized block up to a fixed size bucket so block sizes don't
+    // leak the action type (see "Block padding" in the module header). The pad
+    // is trailing whitespace OUTSIDE the JSON object, so JSON.parse on replay
+    // recovers the exact entry and the signature is untouched.
+    const blob = Buffer.from(_padBlock(JSON.stringify(entry), this._padBuckets), 'utf8')
     let timer
     const timeout = new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error('append-timeout')), APPEND_TIMEOUT_MS)
@@ -254,4 +303,59 @@ function _validateReplayEntryShape (e) {
   return null
 }
 
-export { CORE_NAME_PREFIX, _validateReplayEntryShape as _validateReplayEntryShapeForTest }
+/**
+ * Normalize the constructor `padding` option into an ascending bucket array,
+ * or null when padding is disabled.
+ *
+ *   undefined / true  → DEFAULT_PAD_BUCKETS (padding on)
+ *   false             → null (padding off, legacy raw JSON)
+ *   number[]          → sorted positive integers (falls back to defaults if
+ *                       the array has no usable entries)
+ *
+ * @param {undefined|boolean|number[]} padding
+ * @returns {?number[]}
+ */
+function _resolvePadBuckets (padding) {
+  if (padding === false) return null
+  if (Array.isArray(padding)) {
+    const buckets = padding
+      .filter((n) => Number.isInteger(n) && n > 0)
+      .sort((a, b) => a - b)
+    return buckets.length ? buckets : DEFAULT_PAD_BUCKETS.slice()
+  }
+  return DEFAULT_PAD_BUCKETS.slice()
+}
+
+/**
+ * Pad a JSON string up to the smallest bucket >= its UTF-8 byte length using
+ * trailing ASCII spaces (1 byte each, ignored by JSON.parse). Blocks larger
+ * than the top bucket round up to the next multiple of the top bucket. Returns
+ * the input unchanged when padding is disabled (buckets === null) or the
+ * string already sits exactly on a bucket boundary.
+ *
+ * @param {string} jsonStr
+ * @param {?number[]} buckets  Ascending bucket ladder, or null to disable.
+ * @returns {string}
+ */
+function _padBlock (jsonStr, buckets) {
+  if (!buckets || buckets.length === 0) return jsonStr
+  const len = Buffer.byteLength(jsonStr, 'utf8')
+  let target = null
+  for (const b of buckets) {
+    if (b >= len) { target = b; break }
+  }
+  if (target === null) {
+    const top = buckets[buckets.length - 1]
+    target = Math.ceil(len / top) * top
+  }
+  if (target <= len) return jsonStr
+  return jsonStr + ' '.repeat(target - len)
+}
+
+export {
+  CORE_NAME_PREFIX,
+  DEFAULT_PAD_BUCKETS,
+  _validateReplayEntryShape as _validateReplayEntryShapeForTest,
+  _resolvePadBuckets as _resolvePadBucketsForTest,
+  _padBlock as _padBlockForTest
+}
