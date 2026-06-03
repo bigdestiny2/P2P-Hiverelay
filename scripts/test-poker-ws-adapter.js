@@ -20,9 +20,9 @@ import http from 'http'
 import sodium from 'sodium-universal'
 import b4a from 'b4a'
 import WebSocket from 'ws'
-import { SignedLog } from '../packages/core/core/poker/signed-log.js'
-import { PokerApp } from '../packages/core/core/poker/index.js'
-import { PokerWsAdapter, _matchTableKeyForTest as matchTableKey } from '../packages/core/core/poker/ws-adapter.js'
+import { SignedLog } from '../packages/services/builtin/poker/signed-log.js'
+import { PokerApp } from '../packages/services/builtin/poker/index.js'
+import { PokerWsAdapter, _matchTableKeyForTest as matchTableKey } from '../packages/services/builtin/poker/ws-adapter.js'
 
 let passed = 0
 let failed = 0

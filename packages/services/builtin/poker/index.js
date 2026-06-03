@@ -60,7 +60,7 @@
  * (default writer counts, schema hooks, dispute-evidence builders).
  */
 
-import { ServiceProvider } from '../services/provider.js'
+import { ServiceProvider } from 'p2p-hiverelay/core/services/provider.js'
 import { SignedLog, REJECT } from './signed-log.js'
 
 const DEFAULT_MAX_TABLES = 1024

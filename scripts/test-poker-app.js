@@ -21,9 +21,9 @@
 import sodium from 'sodium-universal'
 import b4a from 'b4a'
 import { EventEmitter } from 'events'
-import { SignedLog, REJECT } from '../packages/core/core/poker/signed-log.js'
-import { PokerApp } from '../packages/core/core/poker/index.js'
-import { handlePokerRoute } from '../packages/core/core/poker/http-adapter.js'
+import { SignedLog, REJECT } from '../packages/services/builtin/poker/signed-log.js'
+import { PokerApp } from '../packages/services/builtin/poker/index.js'
+import { handlePokerRoute } from '../packages/services/builtin/poker/http-adapter.js'
 
 let passed = 0
 let failed = 0

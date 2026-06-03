@@ -26,9 +26,9 @@ import { join } from 'path'
 import Corestore from 'corestore'
 import sodium from 'sodium-universal'
 import b4a from 'b4a'
-import { SignedLog } from '../packages/core/core/poker/signed-log.js'
-import { PokerApp } from '../packages/core/core/poker/index.js'
-import { HypercorePersistence } from '../packages/core/core/poker/persistence-hypercore.js'
+import { SignedLog } from '../packages/services/builtin/poker/signed-log.js'
+import { PokerApp } from '../packages/services/builtin/poker/index.js'
+import { HypercorePersistence } from '../packages/services/builtin/poker/persistence-hypercore.js'
 
 let passed = 0
 let failed = 0

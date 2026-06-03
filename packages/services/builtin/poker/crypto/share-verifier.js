@@ -6,7 +6,7 @@
  * the arbitration service at startup:
  *
  *   import { ArbitrationService } from 'p2p-hiveservices/builtin/arbitration-service.js'
- *   import { makeInvalidShareVerifier } from 'p2p-hiverelay/core/poker/crypto/share-verifier.js'
+ *   import { makeInvalidShareVerifier } from 'p2p-hiveservices/builtin/poker/crypto/share-verifier.js'
  *
  *   const arb = new ArbitrationService()
  *   arb.setAppEvidenceVerifier('poker/invalid-share', makeInvalidShareVerifier())

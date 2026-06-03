@@ -24,8 +24,8 @@ import b4a from 'b4a'
 import {
   verifyShareEquality, proveShareEquality, publicFromSecret, shareFor, baseG,
   POINT_BYTES, SCALAR_BYTES
-} from '../packages/core/core/poker/crypto/chaum-pedersen.js'
-import { makeInvalidShareVerifier } from '../packages/core/core/poker/crypto/share-verifier.js'
+} from '../packages/services/builtin/poker/crypto/chaum-pedersen.js'
+import { makeInvalidShareVerifier } from '../packages/services/builtin/poker/crypto/share-verifier.js'
 import { ArbitrationService } from '../packages/services/builtin/arbitration-service.js'
 
 let passed = 0

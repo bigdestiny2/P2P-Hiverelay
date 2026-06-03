@@ -52,14 +52,14 @@ import WebSocket from 'ws'
 import sodium from 'sodium-universal'
 import b4a from 'b4a'
 
-import { SignedLog } from '../packages/core/core/poker/signed-log.js'
-import { PokerApp } from '../packages/core/core/poker/index.js'
-import { HypercorePersistence } from '../packages/core/core/poker/persistence-hypercore.js'
-import { PokerWsAdapter } from '../packages/core/core/poker/ws-adapter.js'
+import { SignedLog } from '../packages/services/builtin/poker/signed-log.js'
+import { PokerApp } from '../packages/services/builtin/poker/index.js'
+import { HypercorePersistence } from '../packages/services/builtin/poker/persistence-hypercore.js'
+import { PokerWsAdapter } from '../packages/services/builtin/poker/ws-adapter.js'
 import {
   proveShareEquality, publicFromSecret, shareFor, SCALAR_BYTES, POINT_BYTES
-} from '../packages/core/core/poker/crypto/chaum-pedersen.js'
-import { makeInvalidShareVerifier } from '../packages/core/core/poker/crypto/share-verifier.js'
+} from '../packages/services/builtin/poker/crypto/chaum-pedersen.js'
+import { makeInvalidShareVerifier } from '../packages/services/builtin/poker/crypto/share-verifier.js'
 import { ArbitrationService } from '../packages/services/builtin/arbitration-service.js'
 
 let passed = 0

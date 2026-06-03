@@ -16,6 +16,7 @@
     "LICENSE"
   ],
   "dependencies": {
+    "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
     "@noble/secp256k1": "^3.1.0",
     "b4a": "^1.6.6",
