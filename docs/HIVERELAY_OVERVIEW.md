@@ -435,7 +435,7 @@ Key entry points:
 
 - **[Atomic Blind Custody whitepaper](./ATOMIC-BLIND-CUSTODY.md)** — formal protocol specification
 - **[What's in the Relay](./WHATS-IN-THE-RELAY.md)** — guided tour of every v0.8.0 component
-- **[Release Notes 0.8.0](./RELEASE-NOTES-0.8.0.md)** — what's new + migration guide
+- **[CHANGELOG](../CHANGELOG.md)** — release-by-release notes for every version
 - **[Atomic Network Design](./atomic-network-design.md)** — extended design doc
 - **[Atomic Custody Simulation](./ATOMIC-CUSTODY-SIMULATION.md)** — methodology and findings
 - **[Threat Model](./THREAT-MODEL.md)** — security thesis

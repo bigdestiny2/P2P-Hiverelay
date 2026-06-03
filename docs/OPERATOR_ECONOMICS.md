@@ -5,7 +5,7 @@
 > dominant revenue driver — that revenue line no longer exists. Numbers
 > quoted below are framework-level, not promises. Lightning settlement is
 > not yet live, so all current operation is on the bootstrap reputation
-> phase. See [REFACTOR-NOTES.md](REFACTOR-NOTES.md) for the architecture.
+> phase. See the [CHANGELOG](../CHANGELOG.md) for the architecture.
 
 ## Who earns
 

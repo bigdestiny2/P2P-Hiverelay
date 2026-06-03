@@ -1,5 +1,5 @@
 > [!WARNING]
-> **Archived economics exploration.** This is not part of the default HiveRelay product promise. The current kernel is always-on P2P availability plus blind atomic custody; payments, tokens, SLA collateral, and market settlement should be packaged as optional plugin/marketplace artifacts. See [PROJECT-FOCUS-AND-BLOAT-AUDIT.md](PROJECT-FOCUS-AND-BLOAT-AUDIT.md).
+> **Archived economics exploration.** This is not part of the default HiveRelay product promise. The current kernel is always-on P2P availability plus blind atomic custody; payments, tokens, SLA collateral, and market settlement should be packaged as optional plugin/marketplace artifacts. See the [README](../README.md).
 
 # HiveRelay: Token Economics and Incentive Design
 

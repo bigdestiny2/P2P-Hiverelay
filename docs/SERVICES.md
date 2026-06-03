@@ -1,5 +1,5 @@
 > [!WARNING]
-> **Doc may be partially out of date.** This file has been refreshed for service lifecycle and supervision, but some optional service descriptions may still describe experimental or disabled-by-default modules. See [REFACTOR-NOTES.md](REFACTOR-NOTES.md) for current architecture.
+> **Doc may be partially out of date.** This file has been refreshed for service lifecycle and supervision, but some optional service descriptions may still describe experimental or disabled-by-default modules. See the [CHANGELOG](../CHANGELOG.md) for current architecture.
 
 # HiveRelay Services Layer
 

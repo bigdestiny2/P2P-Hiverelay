@@ -8,32 +8,7 @@ It's the substrate. You build the app; the network handles availability, NAT tra
 
 **Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.10.0**
 
-### Recent releases
-
-For full details on each see the [CHANGELOG](./CHANGELOG.md). The
-three-step registry redesign (v0.8.24 → v0.8.25 → v0.8.26) is
-covered in plain English in [docs/RETRO-2026-05-28-REGISTRY-UPGRADES.md](./docs/RETRO-2026-05-28-REGISTRY-UPGRADES.md).
-
-- **v0.10.0** — **First services-module application: card-blind signed-log substrate (poker).** A generic primitive for turn-based games with hidden information — the relay enforces signatures, per-writer monotonic ordering, a 60s clock-skew bound, and a byte budget; the payload stays opaque and game rules live in the Pear client. Poker is the driving consumer (DKG-encrypted reveal shares, hypercore-mirrored append-only log, WS push fan-out at `ws://<host>/api/poker/<tableKey>/events`, Chaum-Pedersen share-equality verifier for arbitration), but the same substrate composes for liar's dice, mafia, sealed-bid auctions. Lands under `packages/services/builtin/poker/` next to ai-service / zk-service / arbitration-service — the first first-class consumer of the services-module pattern. Mental poker's classic disconnection-survival gap (the "central card server" workaround) is solved by composing three existing relay primitives: the custody pipeline holds encrypted reveal shares blindly, the cancellation contract prevents the relay from lying about holding them, and partial-pin auto-heal recovers from a peer drop without a trusted coordinator — "reliability v2" that every future SignedLogApp service inherits at instantiation. Backward-compatible: poker is opt-in via `new PokerApp({...})`; a relay that never instantiates it is byte-zero affected. Seeding-manifest gains an optional `lifetime` hint (`persistent` | `session` | `ephemeral`) for ephemeral per-hand content — when absent or default, canonical bytes are identical to pre-0.10.0 manifests so existing signatures verify unchanged. New `setAppEvidenceVerifier(appType, fn)` seam on the arbitration service for pluggable per-app evidence verification. The bundled CP verifier is reference quality — real-money deployments should swap their own. PR #32.
-- **v0.9.0** — **Publicly verifiable blind custody (PVSS over secp256k1).** A relay can now hold an *opaque, guardian-encrypted share* of a secret that it can publicly verify but cannot read, and any *t-of-n* guardians later reconstruct the secret entirely client-side. Two new `HiveRelayClient` methods — `splitForCustody({ guardians, threshold, relays, appKey })` and `reconstructFromCustody({ intentId, guardianSecretKeys })` — compose Schoenmakers PVSS (Feldman commitments, per-share DLEQ proofs, Lagrange-in-exponent reconstruction) with the v2 signed custody protocol. The relay verifies the share it custodies against the published commitments before signing a share-verified receipt, so a malformed/substituted share is caught at custody time, not recovery. Bare-safe prover + signing live in the client (`p2p-hiverelay-client/secret-sharing.js`, `/custody.js`); the relay holds the share but never the guardian keys. Social recovery, team break-glass, inheritance — with no party (relay or single guardian) ever able to reconstruct alone.
-- **v0.9.1** — Makes v0.9.0 work end-to-end over the wire. `splitForCustody` now triggers the per-relay custody seed (the step that drives share verification + receipt anchoring); the public `GET /api/custody/{id}/status` surfaces the `receipts[]` the dealer polls; and an already-seeded re-pin (publish-then-custody) now anchors a share receipt. Proven by an in-process integration test driving the real split→receipt→commit→reconstruct against a live relay.
-- **v0.9.2** — Custody expiry sweep now actually attests for content seeded over the seed-request channel. The sweep keyed non-serving attestation off `entry.custodyIntentId`, but the binary seed encoding drops custody fields, so that entry field was `null` even when a signed intent existed — the sweep now recovers the linkage by `addressKey` and backfills the entry. Also: auto-attestation self-generates the required `challengeNonce` (without it, every sweep attest threw, so v0.8.27's claim-path witness never actually fired). Custody linkage is now visible on `catalog()` + `GET /api/anchors?detailed=1` (PR #31).
-- **v0.8.27** — Claim-path erasure witness. A *claimed* drop (publisher signed `source-retired`, which requires a validated `commit`, so the quorum already holds the content) now produces a third-party-provable destruction record immediately, instead of waiting out the full `retainUntil` window. `validateCustodyTransition` discharges the `retainUntil` floor for non-serving-proofs + expiry-witnesses once a source-retirement exists; the expiry sweep attests them with `reason: 'source-retired'`. Plus a latent seed-path fix: the legacy Protomux `_onSeedRequest` (Node + Bare) now preserves the custody binding via `extractCustodySeedOpts`. Closes dmc's "provable to a third party" gap for the claim path.
-- **v0.8.26** — `SeedingRegistry` Hyperbee indexed-views sidecar. Sibling Hypercore (`seeding-registry-index-v1`) mirrors `_applyEntry` output keyed by entry-shape, so restart hydration restores the in-memory custody + seed state without replaying every log block. Restart cost: O(N·M) → O(M).
-- **v0.8.25** — `AppRegistry` persistence migrated from JSON-blob to Hyperbee. Each mutation now writes one small block to a Hyperbee sibling-core on the relay's existing corestore, instead of rewriting the entire `app-registry.json` file on every `setAnchored()` / `clearAnchored()`. Closes the hung-writeFile cascade as a side effect.
-- **v0.8.24** — Per-key mutation locks in `SeedingRegistry`. Closes documented race windows where concurrent custody mutations on the same `intentId` (or seed mutations on the same `appKey`) could each observe a stale status, each pass `validateCustodyTransition`, and each append duplicate entries. Pattern lifted from the Holepunch challenge's `_withMutationLock`.
-- **v0.8.23** — Partial-quorum custody-commit support + transient core error classification on Protomux publish channel + Drop's import-subpath exports pinned. Unblocks downstream T-of-N quorum workflows; brings Protomux retry semantics to parity with the HTTP API path.
-- **v0.8.22** — Defensive timeouts on `drive.ready()` (8s) and `_isDriveFullyReplicated` (3s). One hung drive no longer deadlocks the reseed or anchor-check loops. Surfaced by milkyb-iad's disk-full investigation: 12-of-145 entries reseeded over 15h → all 145 in minutes post-fix.
-- **v0.8.21** — Self-heal that actually heals. Hyperdrive 11.x Promise-shape `download()` API support + persistent download ranges (`core.download({ start: 0, end: -1 })`) registered on every per-app Hyperdrive's meta + blob cores. First cross-relay autonomous self-heal demonstrated on the milkyb fleet (syd anchored a drive in ~5s by pulling peer-to-peer from fra, no publisher in the loop).
-- **v0.8.20** — Anchor honesty + custody auto-attestation. `anchored=true` now requires every blob block present locally, not just metadata length. Periodic `_runCustodyExpiryPass` auto-signs `custody-non-serving-proof` on every retainUntil expiry; cross-relay witness pass signs independent witnesses of peers' proofs.
-- **v0.8.19** — Circuit-relay bridge data plane + auth-bypass closure. Reservation + connect handshake now actually completes a usable bridge over Protomux; identity binding can no longer be silently bypassed.
-- **v0.8.18** — Catalog provenance (Phase A): `publisherPubkey`, `durability`, `revocable`, `retainUntil` surfaced on broadcasts so federation peers can distinguish published-with-commitment from pure-anonymous gossip.
-- **v0.8.17** — Browser / WSS bridge enabled on 3 fleet relays via Caddy + Let's Encrypt. `wss://relay-us.p2phiverelay.xyz`, `wss://relay-sg.p2phiverelay.xyz`, `wss://relay-eu.p2phiverelay.xyz` now reachable for browser + Android WebView consumers.
-- **v0.8.16** — `dht-relay-ws` transport privacy hardening: per-process salted IP hashing, error-message scrubbing, no raw client IPs in any emitted event or log.
-- **v0.8.15** — Blind-path audit: `_indexAppManifest` skips `blind: true` drives, `_shouldRedactEntry` forces redaction unconditionally for blind entries (operator config can't override the publisher's privacy commitment). Plus extends the v0.8.14 `node.store.session()` pattern to all remaining `new Hyperdrive(...)` sites.
-- **v0.8.14** — One-line root-cause fix for the silent `The corestore is closed` wedge. Each seeded drive now gets its own `node.store.session()` so unseeding never tears down the shared root store. Closes the failure class the v0.8.13 cancellation contract only masked half of.
-- **v0.8.13** — `LifecycleScope` cancellation contract: every fire-and-forget closure is tracked and drained before `stop()` returns, eliminating the restart-triggered stale-ref class.
-- **v0.8.0–v0.8.12** — Atomic Blind Custody as a first-class signed protocol; reliability series fixing the silent partial-pin trap and Hypercore session leaks; publisher-signed REST + Protomux submission paths; `--operator` / `--auto-heal` deploy flags.
+The four packages — `p2p-hiverelay` (core), `p2p-hiveservices` (services), `p2p-hiverelay-client` (SDK), `p2p-hiverelay-verifier` — are versioned in lockstep. Release-by-release notes live in the [CHANGELOG](./CHANGELOG.md).
 
 ---
 
@@ -41,15 +16,13 @@ covered in plain English in [docs/RETRO-2026-05-28-REGISTRY-UPGRADES.md](./docs/
 
 P2P apps built on Hyperswarm work beautifully — until the developer closes their laptop. Users see "offline." Mobile users behind carrier NATs can't connect. Browser users can't use UDP. There is no durable availability layer and no shared discovery surface.
 
-HiveRelay solves all of that, then keeps going.
+HiveRelay solves all of that, then keeps going. A HiveRelay node is a Hyperswarm peer that joins the same DHT, speaks the same protocols, and replicates the same Hypercores — application-agnostic — plus five capabilities purpose-built for being a versatile blind substrate:
 
-A HiveRelay node is a Hyperswarm peer that joins the same DHT, speaks the same protocols, and replicates the same Hypercores — application-agnostic — plus five capabilities purpose-built for being a versatile blind substrate:
-
-1. **Bootstrap any Pear application.** Hand the relay a Hyperdrive key + your accept-mode policy; the relay keeps the app online and discoverable from the DHT. No application-specific code; no opinionated metadata schema; no privileged knowledge of what you're hosting. The same relay can carry a binary mirror, a chat backend, an app store, and a notes app simultaneously.
+1. **Bootstrap any Pear application.** Hand the relay a Hyperdrive key + your accept-mode policy; it keeps the app online and discoverable from the DHT. No application-specific code, no opinionated metadata schema, no privileged knowledge of what you're hosting. One relay can carry a binary mirror, a chat backend, an app store, and a notes app simultaneously.
 2. **Blind by default for encrypted workloads.** The Atomic Blind Custody plane processes ciphertext only — the validator hard-blocks ten plaintext field names so leakage is structurally impossible. Operators can't see what you encrypted, and can prove they stopped storing it at expiry without ever decrypting.
-3. **Cryptographically verified replica durability.** Peers count toward archive replication only when they produce a fresh signed Ed25519 anchor proof. AutoHeal recruits diverse replicas across regions and operators automatically. Self-heal pulls missing blocks peer-to-peer between relays once a publisher's been online once.
-4. **Cross-NAT + browser/mobile ingress.** Circuit-relay protocol for hole-punching fallback (cellular ↔ home Wi-Fi). `dht-relay-ws` transport for browsers and WebView Android clients to participate in the DHT over WSS. No application code needs to change for any of it.
-5. **Real-time P2P trust pipeline + live telemetry.** Custody, anchor, and publish messages flow over Protomux channels on the existing Hyperswarm connection — no HTTPS dependency. WebSocket dashboard feed surfaces per-drive diversity, custody pipeline health, and event push for every state change.
+3. **Cryptographically verified replica durability.** Peers count toward archive replication only when they produce a fresh signed Ed25519 anchor proof. AutoHeal recruits diverse replicas across regions and operators automatically; self-heal pulls missing blocks peer-to-peer between relays once a publisher has been online once.
+4. **Cross-NAT + browser/mobile ingress.** Circuit-relay protocol for hole-punching fallback (cellular ↔ home Wi-Fi). `dht-relay-ws` transport lets browsers and Android WebView clients participate in the DHT over WSS. No application code changes for any of it.
+5. **Real-time P2P trust pipeline + live telemetry.** Custody, anchor, and publish messages flow over Protomux channels on the existing Hyperswarm connection — no HTTPS dependency. A WebSocket dashboard feed surfaces per-drive diversity, custody pipeline health, and event push for every state change.
 
 ```js
 import { HiveRelayClient } from 'p2p-hiverelay-client'
@@ -61,13 +34,13 @@ const drive = await app.publish('./my-app')
 // Close your laptop. Your app stays online via the relay network.
 ```
 
-Works in **Pear/Bare runtime** natively. See [docs/PEAR-INTEGRATION.md](docs/PEAR-INTEGRATION.md) for full usage.
+Runs natively in the **Pear / Bare runtime**. See [docs/PEAR-INTEGRATION.md](docs/PEAR-INTEGRATION.md) for full usage.
 
 ---
 
 ## The two storage planes
 
-HiveRelay 0.8.0 distinguishes two storage classes with different semantics. A single relay can run both.
+HiveRelay distinguishes two storage classes with different semantics. A single relay can run both.
 
 ### Persistent Availability Plane
 
@@ -86,61 +59,28 @@ For encrypted file handoffs, blind dead drops, time-bounded transfers. Marked `s
 - Relays process ciphertext only — never plaintext, never decryption keys.
 - Validator hard-blocks ten plaintext field names so leakage is structurally impossible.
 - Six signed message types: intent → receipt → commit → source-retired → proof → non-serving-proof, with witness tombstones layered on top.
-- `retainUntil` is enforced state — the expiry monitor unseeds at the deadline and the relay signs a non-serving-proof.
-- Independent witnesses probe relays after expiry and sign tombstones — drops undetected post-expiry serving from ~82% to <1%.
+- `retainUntil` is enforced state — the expiry monitor unseeds at the deadline and the relay signs a non-serving-proof; independent witnesses probe after expiry and sign tombstones.
 - **Publicly verifiable key custody (v0.9.0).** Beyond blind *content*, a relay can custody an opaque, guardian-encrypted *share* of a secret (PVSS over secp256k1). It publicly verifies the share against the published commitments — without ever decrypting it — and any *t-of-n* guardians reconstruct the secret client-side. No party (relay or single guardian) can reconstruct alone.
 
-For the full protocol, see the [Atomic Blind Custody whitepaper](docs/ATOMIC-BLIND-CUSTODY.md) and [PVSS blind key custody](docs/PVSS-BLIND-CUSTODY.md).
+See the [Atomic Blind Custody whitepaper](docs/ATOMIC-BLIND-CUSTODY.md) and [PVSS blind key custody](docs/PVSS-BLIND-CUSTODY.md) for the full protocols.
 
 ---
 
-## Five things you can build
+## Services module
 
-### 1. Encrypted file handoff with a TTL that the network enforces
+Beyond the relay kernel, optional services live under `packages/services/builtin/` (`p2p-hiveservices`) and each own an HTTP/WS prefix on top of relay core: `ai-service`, `schema-service`, `zk-service`, `arbitration-service`, `sla-service`, `storage-service`, `identity-service`. A relay that never instantiates a service is byte-zero affected by it.
 
-```js
-const intent = await client.publishCustodyIntent(relayUrl, {
-  blindContentId: hashHex(yourPayload),
-  ciphertextRoot: yourCiphertextRoot,
-  requiredReplicas: 3,
-  deadline: Date.now() + 60_000,
-  retainUntil: Date.now() + 24 * 60 * 60_000  // 24 hours
-}, { apiKey })
+### Card-blind signed-log substrate — poker (v0.10.0)
 
-// Wait for quorum, then commit + retire authority.
-let status
-while (!(status = await client.getCustodyStatus(relayUrl, intent.intentId)).quorumReached) {
-  await sleep(2000)
-}
-await client.publishCustodyCommit(relayUrl, intent.intentId, {}, { apiKey })
-await client.publishSourceRetired(relayUrl, intent.intentId, {}, { apiKey })
+`packages/services/builtin/poker/` is the first first-class consumer of the services-module pattern: a generic primitive for turn-based games with hidden information. The relay enforces signatures, per-writer monotonic ordering, a 60s clock-skew bound, and a byte budget; the payload stays opaque and the game rules live in the Pear client. The same `SignedLog` substrate composes for liar's dice, mafia, and sealed-bid auctions.
 
-// 24h later, retainUntil elapses, relays unseed, witnesses sign tombstones.
-```
+- **HTTP** at `/api/poker/<tableKey>/{state,log,move}`; **WebSocket** fan-out at `ws://<host>/api/poker/<tableKey>/events` (initial-state frame on connect, API-key auth via the existing gate).
+- **HypercorePersistence adapter** mirrors the in-memory log to a hypercore for durability + replay-on-restart; mirrored cores flow through the existing seeder + custody pipeline like any other content.
+- Mental poker's classic disconnection-survival gap is closed by composing three relay primitives — "reliability v2": the custody pipeline holds DKG-encrypted reveal shares blindly, the cancellation contract keeps the relay from lying about holding them, and partial-pin auto-heal recovers from a peer drop with no trusted coordinator. Every future `SignedLogApp` service inherits this at instantiation.
+- **Arbitration** gains `poker/missing-share`, `poker/invalid-share`, `poker/refused-reveal` dispute types and a `setAppEvidenceVerifier(appType, fn)` seam for pluggable per-app evidence verification. The bundled **Chaum-Pedersen share-equality verifier** is **reference quality and not audited** — real-money deployments should swap in their own.
+- Seeding-manifest gains an optional `lifetime` hint (`persistent` | `session` | `ephemeral`). When absent or default, canonical bytes are byte-identical to pre-0.10.0 manifests, so existing signatures verify unchanged.
 
-### 2. Verifiable archive durability
-
-```js
-await client.seed(driveKey, { durability: 1, revocable: false })
-// AutoHeal across the network ensures ≥7 replicas, ≥4 regions, ≥5 operators.
-// Each replica's "I have it" claim is gated on a fresh Ed25519 anchor proof.
-```
-
-### 3. Cryptographic dead drops
-
-Two parties, one signed handoff record, no trust in any single relay.
-
-### 4. Multi-region read-replica distribution with provable freshness
-
-```js
-const peers = await client.getRelays()
-const fresh = peers.filter(p => p.hasFreshAnchorProof)
-// Read from any of them — they all cryptographically demonstrated current state.
-```
-
-### 5. Per-app SLA enforcement via live dashboard feed
-
-Subscribe to `/ws` and drive UX off the actual durability state.
+See [docs/SERVICES.md](docs/SERVICES.md) and the [poker substrate README](packages/services/builtin/poker/README.md).
 
 ---
 
@@ -154,7 +94,7 @@ Apps declare their own privacy tier. The relay enforces what it sees based on th
 | `local-first` | Discovery key only; data exchanged peer-to-peer | Local + opportunistic relay cache | Personal notes, journal |
 | `p2p-only` (blind) | Opaque ciphertext bytes | Encrypted on relay disk; gateway returns 403 | Wallets, medical, private messaging |
 
-The `p2p-only` tier is the killer feature for production privacy-preserving apps. Combined with atomic blind custody, the relay can prove it stored your encrypted content and stopped storing it at expiry — without ever decrypting it.
+The `p2p-only` tier is the key feature for production privacy-preserving apps. Combined with atomic blind custody, the relay can prove it stored your encrypted content and stopped storing it at expiry — without ever decrypting it.
 
 ---
 
@@ -175,7 +115,7 @@ npm install p2p-hiverelay-client
 | `app.unseed(driveKey)` | Signed kill switch |
 | `app.closeDrive(key)` | Close a drive |
 
-### Custody API (v0.8.0)
+### Custody API
 
 | Method | Description |
 |---|---|
@@ -193,7 +133,7 @@ Threshold-custody a secret across a relay quorum where each relay holds only an 
 
 | Method | Description |
 |---|---|
-| `app.splitForCustody({ secret?, guardians, threshold, relays, appKey, opts? })` | PVSS-split a secret to the guardians' pubkeys, publish the public share bundle over the P2P data plane, sign the v2 intent, collect a share-verified receipt from every relay, then sign + publish the quorum commit |
+| `app.splitForCustody({ secret?, guardians, threshold, relays, appKey, opts? })` | PVSS-split a secret to the guardians' pubkeys, publish the public share bundle, sign the v2 intent, collect a share-verified receipt from every relay, then sign + publish the quorum commit |
 | `app.reconstructFromCustody({ intentId, guardianSecretKeys, relays?, shareBundleKey?, threshold? })` | Recover the secret from any `t` guardian secret keys, entirely client-side |
 
 ```js
@@ -236,7 +176,7 @@ See [PVSS blind key custody](docs/PVSS-BLIND-CUSTODY.md) for the scheme + threat
 
 ---
 
-## For Operators
+## For operators
 
 You have hardware — a VPS, a Mac Mini, a Raspberry Pi. HiveRelay turns it into part of a verifiable trust network.
 
@@ -244,22 +184,22 @@ You have hardware — a VPS, a Mac Mini, a Raspberry Pi. HiveRelay turns it into
 
 ```bash
 npm install -g p2p-hiverelay
-p2p-hiverelay setup        # Interactive wizard
+p2p-hiverelay setup        # interactive wizard
 # or:
 p2p-hiverelay start --region NA --operator your-org-name --max-storage 50GB
 ```
 
-The new `--operator` flag is **important** for v0.8.0. Without a stable operator identifier, AutoHeal treats each pubkey as its own operator and the per-operator fairshare cap doesn't activate. Set it to your org / deployment name (`"acme-corp"`, `"foundation-prod"`, etc.).
+Set `--operator` to a stable identifier (your org / deployment name). Without it, AutoHeal treats each pubkey as its own operator and the per-operator fairshare cap doesn't activate.
 
-### Live Management TUI
+### Live management TUI
 
 ```bash
 p2p-hiverelay tui
 ```
 
-Interactive control of everything — accept-mode, federation, custody settings, AutoHeal thresholds, network discovery.
+Interactive control of accept-mode, federation, custody settings, AutoHeal thresholds, and network discovery.
 
-### Operating Modes
+### Operating modes
 
 | Mode | Description |
 |---|---|
@@ -273,7 +213,7 @@ Interactive control of everything — accept-mode, federation, custody settings,
 | **Stealth** | Minimal footprint, designed for Tor-only |
 | **Gateway** | HTTP gateway focus — high connection limits |
 
-### Accept-Mode
+### Accept-mode
 
 | Mode | Behavior |
 |---|---|
@@ -289,16 +229,11 @@ hiverelay federation follow https://relay.example.com
 hiverelay federation mirror https://my-other-relay.example.com
 ```
 
-Followed catalogs go through your accept-mode gate. Mirrored peers bypass the gate (use sparingly — only for "your own other node" or trusted partners).
+Followed catalogs go through your accept-mode gate. Mirrored peers bypass the gate — use sparingly, only for "your own other node" or trusted partners.
 
-### Live Dashboard
+### Live dashboard
 
-Every relay exposes a WebSocket feed at `/ws` that broadcasts:
-- Per-drive AutoHeal diversity scorecard (replicas, regions, operators, threshold status)
-- Aggregate custody snapshot (intents, quorums met, commits, witness tombstones, commit rate)
-- Real-time event push on recruit, proof-fail, throttle, and every custody pipeline transition
-
-Dashboards subscribe and reflect actual state, not polled state.
+Every relay exposes a WebSocket feed at `/ws` broadcasting per-drive AutoHeal diversity (replicas, regions, operators, threshold status), an aggregate custody snapshot (intents, quorums met, commits, witness tombstones, commit rate), and real-time event push on recruit, proof-fail, throttle, and every custody pipeline transition.
 
 ---
 
@@ -335,13 +270,13 @@ Dashboards subscribe and reflect actual state, not polled state.
         Plane                  Plane
 ```
 
-Seven Protomux channels run over each Hyperswarm connection: `hiverelay-seed`, `hiverelay-proof`, `hiverelay-circuit`, `hiverelay-services`, `hiverelay-registry-meta`, `hiverelay-anchor` (new in 0.8.0), `hiverelay-custody` (new in 0.8.0). Plus Hypercore replication for the registry log itself.
+Seven Protomux channels run over each Hyperswarm connection: `hiverelay-seed`, `hiverelay-proof`, `hiverelay-circuit`, `hiverelay-services`, `hiverelay-registry-meta`, `hiverelay-anchor`, `hiverelay-custody`. Plus Hypercore replication for the registry log itself.
 
 ---
 
 ## Quick start
 
-> **Requirements**: Node.js 20+
+> **Requirements:** Node.js 20+
 
 ### For developers
 
@@ -386,11 +321,11 @@ npx p2p-hiverelay testnet --nodes 5
 
 ## Test coverage
 
-The v0.8.0 trust-stack bundle (custody-signing, registry-custody, anchor-channel, custody-channel, auto-heal, ws-feed-payload, client-custody, seed-revocability, seeding-registry-hardening) was the foundation. Subsequent releases each added regression coverage for the shipped fix: anchor honesty (PR #19), circuit-relay bridge (v0.8.19), catalog provenance (v0.8.18), blind-path airtight (v0.8.15), `dht-relay-ws` privacy (v0.8.16), partial-pin self-heal integration (v0.8.21), defensive timeouts (v0.8.22), partial-quorum custody-commit (v0.8.23), per-key mutation locks (v0.8.24), `AppRegistry` Hyperbee persistence (v0.8.25), `SeedingRegistry` indexed-views sidecar (v0.8.26), claim-path erasure witness (v0.8.27), and more. Current core smoke battery is 18+ suites / hundreds of assertions, ~5s wall time on a clean checkout, all green on each release.
+The core trust stack — custody-signing, registry-custody, anchor- and custody-channel, auto-heal, ws-feed payload, client-custody, seed-revocability, seeding-registry hardening — is covered by a smoke battery that runs in seconds on a clean checkout. The v0.10.0 services-module work adds 7 poker suites (`scripts/test-poker-*.js` + seeding-manifest lifetime), 188/188 green, including an end-to-end flow (sit → DKG commit → pre-committed reveal shares → betting → restart with hypercore replay → WS push fan-out → arbitration with a real Chaum-Pedersen proof).
 
 Two simulation harnesses cover behaviors unit tests can't reach:
 - `scripts/simulate-blind-atomic-custody.js` — Monte Carlo across 7 protocol scenarios, 5,000 trials each. Surfaced the witness tombstone primitive as the highest-leverage post-expiry attestation.
-- `scripts/simulate-auto-heal-bridge.js` — drives real AutoHeal against an in-memory simulated network with 7 deterministic scenarios (cold-start, sybil, liar, churn at 4 rates, stampede, partition heal, scaling).
+- `scripts/simulate-auto-heal-bridge.js` — drives real AutoHeal against an in-memory simulated network across 7 deterministic scenarios (cold-start, sybil, liar, churn at 4 rates, stampede, partition heal, scaling).
 
 ---
 
@@ -399,34 +334,36 @@ Two simulation harnesses cover behaviors unit tests can't reach:
 ### Start here
 - **[HIVERELAY_OVERVIEW.md](docs/HIVERELAY_OVERVIEW.md)** — single-page mental model
 - **[PEAR-INTEGRATION.md](docs/PEAR-INTEGRATION.md)** — Pear / Bare usage guide
+- **[DEVELOPER.md](docs/DEVELOPER.md)** — full developer reference
+- **[TUTORIAL-QUICKSTART.md](docs/TUTORIAL-QUICKSTART.md)** — build and publish your first app
 - **[CHANGELOG.md](./CHANGELOG.md)** — release-by-release notes for every version
 
-### Atomic Blind Custody
-- **[ATOMIC-BLIND-CUSTODY.md](docs/ATOMIC-BLIND-CUSTODY.md)** — full protocol whitepaper (threat model, state machine, security analysis, simulation evidence, comparison to Filecoin/Sia/Storj/IPFS)
-- **[PVSS-BLIND-CUSTODY.md](docs/PVSS-BLIND-CUSTODY.md)** — publicly verifiable threshold *key* custody (PVSS over secp256k1): scheme, data path, `splitForCustody` / `reconstructFromCustody`, relay-side verification, threat model
+### Protocol & services
+- **[PROTOCOL-SPEC.md](docs/PROTOCOL-SPEC.md)** — wire protocol, channels, message encodings
+- **[SERVICES.md](docs/SERVICES.md)** — the services module and how to build one
 - **[WHATS-IN-THE-RELAY.md](docs/WHATS-IN-THE-RELAY.md)** — guided tour of every component
-- **[TUTORIAL-CUSTODY-QUICKSTART.md](docs/TUTORIAL-CUSTODY-QUICKSTART.md)** — build an encrypted custody handoff in 10 minutes
-- **[atomic-network-design.md](docs/atomic-network-design.md)** — extended design doc with rollout matrix and protocol shape
-- **[ATOMIC-CUSTODY-SIMULATION.md](docs/ATOMIC-CUSTODY-SIMULATION.md)** — simulation methodology and findings
 
-### Publisher guides
-- **[PUBLISHING.md](docs/PUBLISHING.md)** — what to know before you pin a Hyperdrive (the `maxStorage` trap, `verify-pin` pattern, publisher commitments)
+### Atomic blind custody
+- **[ATOMIC-BLIND-CUSTODY.md](docs/ATOMIC-BLIND-CUSTODY.md)** — full protocol whitepaper (threat model, state machine, security analysis, comparison to Filecoin/Sia/Storj/IPFS)
+- **[PVSS-BLIND-CUSTODY.md](docs/PVSS-BLIND-CUSTODY.md)** — publicly verifiable threshold *key* custody (PVSS over secp256k1)
+- **[TUTORIAL-CUSTODY-QUICKSTART.md](docs/TUTORIAL-CUSTODY-QUICKSTART.md)** — build an encrypted custody handoff in 10 minutes
+- **[atomic-network-design.md](docs/atomic-network-design.md)** — extended design doc
+- **[ATOMIC-CUSTODY-SIMULATION.md](docs/ATOMIC-CUSTODY-SIMULATION.md)** — simulation methodology and findings
 
 ### Security & threat model
 - **[THREAT-MODEL.md](docs/THREAT-MODEL.md)** — security thesis
 - **[SECURITY-STRATEGY.md](docs/SECURITY-STRATEGY.md)** — attack-vector mitigation tracker
 - **[CRYPTO-GUARANTEES.md](docs/CRYPTO-GUARANTEES.md)** — cryptographic primitives audit
-- **[AUTO-HEAL-ROOT-CAUSE-2026-05-22.md](docs/AUTO-HEAL-ROOT-CAUSE-2026-05-22.md)** — v0.8.20 partial-pin root-cause investigation (the "anchor honesty" backstory)
+- **[AUDIT-ROADMAP.md](docs/AUDIT-ROADMAP.md)** — outstanding audit items + tracking
 
-### Operator
-- **[v0.5.1-CAPABILITIES.md](docs/v0.5.1-CAPABILITIES.md)** — capability doc + error prefixes + manifests spec
+### Publisher & operator
+- **[PUBLISHING.md](docs/PUBLISHING.md)** — what to know before you pin a Hyperdrive
+- **[PRODUCTION.md](./PRODUCTION.md)** — production deployment guide
 - **[HOMEHIVE.md](docs/HOMEHIVE.md)** — private mode for home / family
-- **[ECONOMICS.md](docs/ECONOMICS.md)** — economics design
-- **[OPERATOR-INCENTIVES-Y1.md](docs/OPERATOR-INCENTIVES-Y1.md)** — operator-side incentive design
+- **[ECONOMICS.md](docs/ECONOMICS.md)** / **[OPERATOR-INCENTIVES-Y1.md](docs/OPERATOR-INCENTIVES-Y1.md)** — economics + operator incentive design
 
 ### Roadmap
-- **[M2-ROADMAP.md](docs/M2-ROADMAP.md)** — what's next (post-v0.8.0 milestone)
-- **[AUDIT-ROADMAP.md](docs/AUDIT-ROADMAP.md)** — outstanding audit items + tracking
+- **[M2-ROADMAP.md](docs/M2-ROADMAP.md)** — what's next
 
 ---
 
@@ -437,7 +374,7 @@ Two simulation harnesses cover behaviors unit tests can't reach:
 - **npm (client)**: [p2p-hiverelay-client](https://www.npmjs.com/package/p2p-hiverelay-client)
 - **npm (verifier)**: [p2p-hiverelay-verifier](https://www.npmjs.com/package/p2p-hiverelay-verifier)
 - **Docker image**: `ghcr.io/bigdestiny2/p2p-hiverelay:latest`
-- **Live Dashboard**: `http://{relay}:9100/dashboard`
+- **Live dashboard**: `http://{relay}:9100/dashboard`
 - **Catalog**: `http://{relay}:9100/catalog.json`
 
 ---
