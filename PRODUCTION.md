@@ -64,6 +64,32 @@ curl http://127.0.0.1:9100/status   # Full status
 
 ## Option 2: Docker
 
+### Base image: use glibc, not musl
+
+If you're building your own image from the repo `Dockerfile`, or rolling
+your own from scratch, **use a glibc-based base** (`node:22-bookworm-slim`,
+`node:20-bookworm-slim`, Ubuntu, RHEL-family, etc.). **Alpine/musl is not
+currently supported** because:
+
+- `udx-native` ships prebuilds for `linux-x64`/`linux-arm64` (glibc) but
+  not for `linux-x64-musl`/`linux-arm64-musl`. On Alpine, `require-addon`
+  detects musl via `/etc/alpine-release` and looks for a musl prebuild
+  that doesn't exist → first import crashes with
+  `Cannot find module '/prebuilds/linux-x64-musl/udx-native.node'`.
+- `sodium-native` has the same gap.
+- Building from source on Alpine works but requires `cmake-bare` +
+  `cmake-napi` + `python3` + `make` + `g++` in both build and runtime
+  stages and roughly doubles image size.
+
+Trade-off: `bookworm-slim` is ~50 MB larger than Alpine but loads the
+native prebuilds directly, so the runtime image stays clean and starts
+without surprises.
+
+Tracked in [#21](https://github.com/bigdestiny2/P2P-Hiverelay/issues/21).
+Upstream context: [`holepunchto/udx-native`](https://github.com/holepunchto/udx-native)
+— add musl prebuilds for parity with the P2P/relay/CLI ecosystem's
+common Alpine deployments.
+
 ### Quick start
 
 ```bash

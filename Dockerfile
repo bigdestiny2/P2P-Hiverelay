@@ -7,7 +7,7 @@
 #
 # Multi-stage build:
 #   Stage 1 (deps):    install production deps for all workspaces
-#   Stage 2 (runtime): minimal Alpine runtime, non-root user, tini PID 1
+#   Stage 2 (runtime): minimal Debian bookworm-slim runtime, non-root user, tini PID 1
 #
 # Build:
 #   docker build -t p2p-hiverelay:latest .
@@ -35,13 +35,30 @@
 #   LNBITS_ADMIN_KEY=...          (LNbits admin key for invoice creation)
 
 # ─── Stage 1: dependencies ────────────────────────────────────────────
-# Use Alpine for the smaller image footprint critical on Pi-class Umbrel
-# hardware. node:20 LTS — Bare/Pear runtime targets stay aligned.
-FROM node:20-alpine AS deps
+# Use Debian bookworm-slim (glibc) instead of Alpine (musl). Two upstream
+# Bare ecosystem packages — udx-native, sodium-native — ship prebuilt
+# binaries for `linux-x64`/`linux-arm64` (glibc) but NOT for
+# `linux-x64-musl`/`linux-arm64-musl`. On Alpine, require-addon detects
+# musl via /etc/alpine-release and looks for a musl prebuild that doesn't
+# exist → crash at first import. Building from source on Alpine works
+# but requires cmake-bare/cmake-napi + python3 + make + g++ in BOTH
+# stages (the binary lands in a path require-addon doesn't search by
+# default) and roughly doubles the runtime image. Debian bookworm-slim
+# is ~50 MB larger than Alpine but loads the glibc prebuilds directly.
+#
+# Tracked in issue #21. Reconsider when udx-native ships musl prebuilds:
+#   https://github.com/holepunchto/udx-native
+#
+# Node 22 LTS — Bare/Pear runtime targets stay aligned.
+FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 
-# Install build tools needed for native deps (sodium-universal, hypercore-crypto)
-RUN apk add --no-cache python3 make g++ git
+# Install build tools needed for any native deps that DO build from
+# source on Linux (sodium-universal's fallback, hypercore-crypto, etc).
+# Debian-based — no musl complications.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 make g++ git ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy ALL workspace package.json files (npm needs them all to resolve workspaces)
 COPY package.json package-lock.json ./
@@ -56,7 +73,7 @@ COPY packages/verifier/package.json packages/verifier/
 RUN npm ci --omit=dev --workspaces --include-workspace-root --no-audit --no-fund
 
 # ─── Stage 2: runtime ─────────────────────────────────────────────────
-FROM node:20-alpine AS runtime
+FROM node:22-bookworm-slim AS runtime
 
 LABEL org.opencontainers.image.title="p2p-hiverelay"
 LABEL org.opencontainers.image.description="Always-on P2P relay infrastructure for the Holepunch/Pear ecosystem"
@@ -65,7 +82,10 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # tini for proper PID 1 signal handling (graceful shutdown).
 # wget for HEALTHCHECK without bringing curl/openssl bloat.
-RUN apk add --no-cache tini wget
+# ca-certificates so HTTPS to public registries / payment providers works.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends tini wget ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -80,10 +100,11 @@ COPY --from=deps /app/node_modules ./node_modules
 # Copy application source (respects .dockerignore)
 COPY . .
 
-# Non-root user for security. Alpine uses addgroup/adduser instead of
-# Debian's groupadd/useradd.
-RUN addgroup -S hiverelay && \
-    adduser -S -G hiverelay -h /data -s /sbin/nologin hiverelay && \
+# Non-root user for security. Fixed UID/GID so volume permissions stay
+# consistent across image rebuilds — operators with existing data
+# volumes don't get bitten by an auto-assigned UID drift between builds.
+RUN groupadd -r -g 999 hiverelay && \
+    useradd -r -u 999 -g hiverelay -d /data -s /usr/sbin/nologin hiverelay && \
     mkdir -p /data /config && \
     chown -R hiverelay:hiverelay /app /data /config
 
@@ -108,15 +129,16 @@ ENV NODE_ENV=production \
     HIVERELAY_API_PORT=9100 \
     HIVERELAY_API_HOST=0.0.0.0
 
-# Health check hits the local API. wget is the smallest http client we have
-# in Alpine; using it instead of node -e fetch() keeps startup faster and
-# avoids loading the entire app to check liveness.
+# Health check hits the local API. wget is a small http client; using it
+# instead of node -e fetch() keeps healthcheck startup fast and avoids
+# loading the entire app just to check liveness.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget --quiet --tries=1 --timeout=4 --spider \
     http://127.0.0.1:${HIVERELAY_API_PORT:-9100}/health || exit 1
 
 # tini as PID 1 → graceful SIGTERM handling so shutdown actually runs.
-ENTRYPOINT ["/sbin/tini", "--", "node", "/app/packages/core/cli/index.js"]
+# Debian installs tini at /usr/bin/tini (vs Alpine's /sbin/tini).
+ENTRYPOINT ["/usr/bin/tini", "--", "node", "/app/packages/core/cli/index.js"]
 
 # Default: start a relay node. Override to run other subcommands, e.g.:
 #   docker run ... p2p-hiverelay:latest help
