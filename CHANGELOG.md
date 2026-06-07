@@ -10,6 +10,21 @@ The packages are versioned in lockstep.
 
 ### Added
 
+- **Forward Relay** (`hiverelay-forward`) — a demand-dialled relay transport
+  (`packages/core/core/protocol/forward-relay.js`, wired into `RelayNode`).
+  A client sends `OPEN(targetPubkey)`; the relay dials that target over the
+  DHT and byte-bridges the channel ⇄ target stream. Unlike CircuitRelay the
+  target needs no reservation (it just sees a normal incoming connection).
+  Turns a relay into a usable transport for NAT/UDP-blocked apps and composes
+  into onion routing (reach relay2 through relay1, then the seller through
+  relay2 — no single relay links client↔target). **Opt-in**
+  (`config.forwardRelay.enabled`, OFF by default); bounded by per-peer
+  concurrency + per-forward (64 MB) + per-frame (64 KB) caps, forwards only to
+  DHT pubkeys (never an internet proxy), honours the SwarmFirewall, optional
+  `allowTarget` policy hook. Client: `HiveRelayClient.connectViaForward(target,
+  relay)` returns a Duplex over the relayed channel. Proven E2E in
+  `test/integration/forward-relay.test.js` (byte round-trip + fail-closed when
+  disabled). See `docs/forward-relay.md`.
 - **VRF service** (`vrf`) at `packages/services/builtin/vrf-service.js` —
   Verifiable Random Functions via ECVRF-EDWARDS25519-SHA512-TAI
   (RFC 9381, suite 0x03). The relay produces deterministic,

@@ -34,6 +34,7 @@ import Hyperdrive from 'hyperdrive'
 import b4a from 'b4a'
 import Protomux from 'protomux'
 import c from 'compact-encoding'
+import { Duplex } from 'streamx'
 import sodium from 'sodium-universal'
 import hypercoreCrypto from 'hypercore-crypto'
 import { createRevocation } from 'p2p-hiverelay/core/delegation.js'
@@ -80,6 +81,8 @@ export const _pairing = {
 
 const SEED_PROTOCOL = 'hiverelay-seed'
 const CIRCUIT_PROTOCOL = 'hiverelay-circuit'
+const FORWARD_PROTOCOL = 'hiverelay-forward'
+const FORWARD_MAX_FRAME = 64 * 1024 // match relay maxDataMsgBytes
 
 export class HiveRelayClient extends EventEmitter {
   /**
@@ -1124,6 +1127,61 @@ export class HiveRelayClient extends EventEmitter {
         resolve(false)
       }, this.connectionTimeout)
     })
+  }
+
+  /**
+   * Forward-relay TRANSPORT: connect to `targetPubKey` THROUGH `relayPubKey`'s
+   * forward service and return a Duplex stream of the relayed byte channel.
+   * The relay dials the target on demand and byte-bridges (it sees transport
+   * traffic — run your own Noise / a sealed payload on top for secrecy). Run
+   * a NoiseSecretStream + Protomux/ServiceProtocol over the returned stream,
+   * keyed by the RELAY's pubkey (the relay is your immediate peer).
+   *
+   * Onion: call connectViaForward(relay2, relay1) to get a stream to relay2
+   * through relay1, run a forward client over THAT, and connectViaForward(
+   * seller, relay2) over it — no single relay links you to the seller.
+   *
+   * v1: one forward per relay connection. Resolves to a Duplex, or null if
+   * the relay has no forward channel / is busy / the open is rejected.
+   * @returns {Promise<Duplex|null>}
+   */
+  async connectViaForward (targetPubKey, relayPubKey) {
+    const relayHex = typeof relayPubKey === 'string' ? relayPubKey.toLowerCase() : b4a.toString(relayPubKey, 'hex')
+    const relay = this.relays.get(relayHex)
+    if (!relay || !relay.channels.forward) return null
+    const fwd = relay.channels.forward
+    if (fwd.busy) return null
+    fwd.busy = true
+    const target = typeof targetPubKey === 'string' ? b4a.from(targetPubKey, 'hex') : targetPubKey
+
+    const ok = await new Promise((resolve) => {
+      const onStatus = (msg) => { this.removeListener('_forward-status-' + relayHex, onStatus); resolve(msg.code === 0) }
+      this.on('_forward-status-' + relayHex, onStatus)
+      try { fwd.openMsg.send({ target }) } catch (_) { this.removeListener('_forward-status-' + relayHex, onStatus); resolve(false) }
+      setTimeout(() => { this.removeListener('_forward-status-' + relayHex, onStatus); resolve(false) }, this.connectionTimeout)
+    })
+    if (!ok) { fwd.busy = false; return null }
+
+    const onData = (msg) => { if (msg && msg.data) stream.push(msg.data) }
+    const onClose = () => { try { stream.push(null) } catch (_) {} }
+    this.on('_forward-data-' + relayHex, onData)
+    this.on('_forward-closed-' + relayHex, onClose)
+    const cleanup = () => {
+      this.removeListener('_forward-data-' + relayHex, onData)
+      this.removeListener('_forward-closed-' + relayHex, onClose)
+      fwd.busy = false
+    }
+    const stream = new Duplex({
+      write (data, cb) {
+        try {
+          for (let i = 0; i < data.length; i += FORWARD_MAX_FRAME) fwd.dataMsg.send({ data: data.subarray(i, Math.min(i + FORWARD_MAX_FRAME, data.length)) })
+          cb()
+        } catch (err) { cb(err) }
+      },
+      final (cb) { try { fwd.closeMsg.send({ reason: 0 }) } catch (_) {} ; cb() },
+      destroy (cb) { try { fwd.closeMsg.send({ reason: 0 }) } catch (_) {} ; cleanup(); cb() }
+    })
+    return stream
   }
 
   /**
@@ -3090,6 +3148,26 @@ export class HiveRelayClient extends EventEmitter {
 
       channels.circuit = { channel: circuitChannel, reserveMsg, connectMsg, statusMsg, dataMsg, readyMsg, closeMsg: closeMsgClient }
       circuitChannel.open()
+
+      // Forward transport channel (hiverelay-forward): demand-dialled relay
+      // hop. One forward per relay connection (v1). connectViaForward() drives
+      // openMsg/dataMsg and wraps them in a Duplex.
+      const forwardChannel = mux.createChannel({ protocol: FORWARD_PROTOCOL, id: null, onclose: () => { this.emit('_forward-closed-' + pubkeyHex, { reason: 0 }) } })
+      const fStatusMsg = forwardChannel.addMessage({
+        encoding: { preencode (s, m) { c.uint.preencode(s, m.code); c.string.preencode(s, m.message || '') }, encode (s, m) { c.uint.encode(s, m.code); c.string.encode(s, m.message || '') }, decode (s) { return { code: c.uint.decode(s), message: c.string.decode(s) } } },
+        onmessage: (msg) => this.emit('_forward-status-' + pubkeyHex, msg)
+      })
+      const fDataMsg = forwardChannel.addMessage({
+        encoding: { preencode (s, m) { c.buffer.preencode(s, m.data) }, encode (s, m) { c.buffer.encode(s, m.data) }, decode (s) { return { data: c.buffer.decode(s) } } },
+        onmessage: (msg) => this.emit('_forward-data-' + pubkeyHex, msg)
+      })
+      const fCloseMsg = forwardChannel.addMessage({
+        encoding: { preencode (s, m) { c.uint.preencode(s, m.reason || 0) }, encode (s, m) { c.uint.encode(s, m.reason || 0) }, decode (s) { return { reason: c.uint.decode(s) } } },
+        onmessage: (msg) => this.emit('_forward-closed-' + pubkeyHex, msg)
+      })
+      const fOpenMsg = forwardChannel.addMessage({ encoding: { preencode (s, m) { c.fixed32.preencode(s, m.target) }, encode (s, m) { c.fixed32.encode(s, m.target) }, decode (s) { return { target: c.fixed32.decode(s) } } } })
+      channels.forward = { channel: forwardChannel, openMsg: fOpenMsg, dataMsg: fDataMsg, statusMsg: fStatusMsg, closeMsg: fCloseMsg, busy: false }
+      forwardChannel.open()
     } catch (err) {
       this.emit('protocol-error', { relay: pubkeyHex, protocol: 'circuit', error: err })
     }
