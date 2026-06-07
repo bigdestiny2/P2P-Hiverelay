@@ -44,6 +44,29 @@ cat <<EOF | sudo tee /home/hiverelay/.hiverelay/config.json
 EOF
 ```
 
+### Forward relay (opt-in transport)
+
+`ForwardRelay` (`hiverelay-forward`) lets this node relay app connections for
+peers behind NAT / UDP-blocking, and is the building block for onion routing
+(see `docs/forward-relay.md`). It is **OFF by default** — enable it per node by
+adding to `config.json`:
+
+```json
+{
+  "forwardRelay": {
+    "enabled": true,
+    "maxForwardsPerPeer": 5,
+    "maxForwardBytes": 67108864
+  }
+}
+```
+
+It only ever reaches **DHT pubkeys** (never an arbitrary IP — not an internet
+open proxy), is bounded by per-peer concurrency + per-forward (64 MB) +
+per-frame (64 KB) caps, and honours the node's `SwarmFirewall`. Enable it
+deliberately: it lets peers reach other DHT peers through your node. Verify
+with `npx brittle test/integration/forward-relay.test.js`.
+
 ### Install systemd service
 
 ```bash
