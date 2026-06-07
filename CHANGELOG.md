@@ -6,6 +6,72 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.10.1] — 2026-06-07
+
+Operator-facing observability + dev-experience patch release. Six
+commits since v0.10.0 — four resolving operator-flagged issues
+(#21/#27/#28/#29), two landing the forward-relay opt-in transport.
+
+### Operator observability (#27 + #29)
+
+- **Disk-usage signal in `/status`** (#27). New `disk` field exposes
+  `usedPct`, `usedBytes`, `freeBytes`, `totalBytes`, `mountPath`, and
+  `status` (`ok`/`warn`/`critical`). 30-second background `df -kP`
+  poll; no I/O on the status hot path. Optional `diskHealthGate`
+  config makes `/health` return 503 above the critical threshold so
+  load balancers can drain traffic before the volume fills. Closes
+  the cost-of-discovery gap that bit milkyb-iad with a 15-hour
+  debugging fire when its 1 GB Fly volume hit 100%.
+
+- **AppRegistry counts in `/status` + Prometheus** (#29). New
+  `appRegistry` field exposes `entries`, `anchored`, `unanchored`,
+  and `cores` (entries × 2 for meta+blob). Four new gauges:
+  `hiverelay_app_registry_entries`, `hiverelay_app_registry_anchored`,
+  `hiverelay_app_registry_unanchored`, `hiverelay_app_registry_cores`.
+  Existing `hiverelay_cores_seeded` stays unchanged for dashboard
+  compat; its HELP text now points at the new metric. On utah-us
+  Prometheus will report `hiverelay_app_registry_cores=1154` instead
+  of the misleading `hiverelay_cores_seeded=1`.
+
+### Reliability (#28)
+
+- **Promise-shape `drive.download()` cancellation.** Reimplements the
+  download loop inside `downloadWithTimeout` so it can destroy every
+  inner `blob.core.download` tracker when the LifecycleScope signal
+  fires. `_eagerReplicate` and `repairUnanchored` now thread
+  `scope.signal` through. Without this, `raceOr()` rejected cleanly
+  via AbortError but the orphaned trackers kept the event loop alive
+  (production-safe; broke `reliability-v2.test.js` cleanup).
+  Reliability-v2 multi-cycle start/stop now completes all assertions
+  in <1s wall time vs hanging at file-level timeout.
+
+- **`AppRegistry.load()` quiets shutdown-race noise.** The fix above
+  exposed a latent SESSION_CLOSED on `bee.createReadStream()` when
+  `node.stop()` fires during start()'s registry hand-off. These are
+  clean concurrent-shutdown signals, not stale-ref bugs; filtering
+  prevents them from spamming the `'error'` event channel. Real
+  errors (corruption, schema drift) still surface.
+
+### Build infrastructure (#21)
+
+- **Dockerfile: `node:20-alpine` → `node:22-bookworm-slim`.**
+  `udx-native` and `sodium-native` ship glibc prebuilds but not musl
+  ones. On Alpine, the first import crashes with
+  `Cannot find module '/prebuilds/linux-x64-musl/udx-native.node'`.
+  Public fleet images were already Debian-based so this didn't bite
+  there, but anyone building from the repo Dockerfile against a
+  fresh environment did. Stage transitions: `apk` → `apt-get`,
+  `addgroup`/`adduser` → `groupadd`/`useradd` with fixed UID/GID
+  999 so volume permissions stay consistent across rebuilds,
+  `/sbin/tini` → `/usr/bin/tini`. ~50 MB image-size increase
+  accepted in exchange for reliable native loads. Tracked upstream
+  at [holepunchto/udx-native](https://github.com/holepunchto/udx-native).
+
+### Forward-relay transport
+
+- **Opt-in forward-relay support.** New `forward-relay.js` protocol
+  + integration test + `PRODUCTION.md` operator enable guide.
+
 ## [Unreleased]
 
 ### Added
