@@ -180,13 +180,20 @@ scrape_configs:
 
 Available metrics:
 - `hiverelay_uptime_seconds` — Node uptime
-- `hiverelay_seeded_apps` — Number of apps being seeded
+- `hiverelay_seeded_apps` — Number of apps being seeded (appRegistry size)
 - `hiverelay_bytes_stored` — Total bytes stored
 - `hiverelay_bytes_served` — Total bytes served to peers
+- `hiverelay_cores_seeded` — Cores routed through `Seeder.seedCore()` (registry log core + any standalone cores). Does NOT include appRegistry-managed Hyperdrive cores — see the registry counters below.
+- `hiverelay_app_registry_entries` — Total appRegistry entries
+- `hiverelay_app_registry_anchored` — Entries with blob blocks fully replicated locally
+- `hiverelay_app_registry_unanchored` — Entries waiting on the repair pass
+- `hiverelay_app_registry_cores` — Underlying Hypercores managed via appRegistry (≈ 2× entries: meta + blob per Hyperdrive)
 - `hiverelay_connections` — Current active connections
 - `hiverelay_active_circuits` — Active relay circuits
 - `hiverelay_process_heap_bytes` — V8 heap usage
 - `hiverelay_process_rss_bytes` — Resident set size
+
+Why both `cores_seeded` and `app_registry_cores` exist: the `coresSeeded` counter pre-dates the appRegistry-managed download-range work (PR #24 / v0.8.21). It only counts what's routed through `Seeder.seedCore`, which is the seedingRegistry's log core and a small number of standalone seeds. Dashboards that read it for "how much is this relay serving?" undercount by 1000× on a busy relay; switch to `hiverelay_app_registry_cores` for that question, and keep `hiverelay_cores_seeded` for "is the registry log seeding healthy?"
 
 ### Health checks
 

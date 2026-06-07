@@ -28,6 +28,7 @@ import { buildPublisherSignedSeedOpts, extractCustodySeedOpts } from '../seed-re
 import { isTransientCoreError } from '../transient-core-errors.js'
 import { verifyDelegationCert, verifyRevocation } from '../delegation.js'
 import { CircuitRelay } from '../protocol/relay-circuit.js'
+import { ForwardRelay } from '../protocol/forward-relay.js'
 import { ProofOfRelay } from '../protocol/proof-of-relay.js'
 import { BandwidthReceipt } from '../protocol/bandwidth-receipt.js'
 import { ReputationSystem } from '../../incentive/reputation/index.js'
@@ -600,6 +601,18 @@ export class RelayNode extends EventEmitter {
       if (this.relay) {
         this._circuitRelay = new CircuitRelay(this.swarm, this.relay, {
           maxCircuitsPerPeer: this.config.maxCircuitsPerPeer || 5
+        })
+      }
+
+      // Forward relay (opt-in): demand-dialled relay TRANSPORT for apps behind
+      // NAT / UDP-blocking, and the building block for onion routing. OFF
+      // unless explicitly enabled by the operator (config.forwardRelay.enabled),
+      // since it lets peers reach other DHT peers through this node (bounded by
+      // per-peer + byte caps + the SwarmFirewall; never an internet proxy).
+      if (this.config.forwardRelay && this.config.forwardRelay.enabled) {
+        this._forwardRelay = new ForwardRelay(this.swarm, {
+          maxForwardsPerPeer: this.config.forwardRelay.maxForwardsPerPeer,
+          maxForwardBytes: this.config.forwardRelay.maxForwardBytes
         })
       }
 
@@ -1452,6 +1465,32 @@ export class RelayNode extends EventEmitter {
       },
       accessControl: accessControlStats,
       disk: this.diskMonitor ? this.diskMonitor.getInfo() : null,
+      // v0.8.28 (#29): existing seeder.coresSeeded only counts the
+      // seedingRegistry's local log core (it's the only thing routed
+      // through Seeder.seedCore). The appRegistry-managed Hyperdrives
+      // — meta + blob cores per entry — are missing from that count,
+      // so a relay with 555 seeded apps still shows coresSeeded=1.
+      // Expose the actual operator-visible counts here without
+      // breaking existing dashboards that read seeder.coresSeeded.
+      // Each Hyperdrive has 2 underlying hypercores (meta + blob);
+      // anchored entries have both fully replicated.
+      appRegistry: this.appRegistry
+        ? (() => {
+            const stats = typeof this.appRegistry.anchorStats === 'function'
+              ? this.appRegistry.anchorStats()
+              : { total: this.appRegistry.size || 0, anchored: 0, unanchored: 0 }
+            return {
+              entries: stats.total,
+              anchored: stats.anchored,
+              unanchored: stats.unanchored,
+              // Each Hyperdrive is 2 cores (db + blob). Approximation —
+              // see Hyperdrive._open() for the actual subcore graph.
+              // This is the operator-visible "what's actually being
+              // replicated" count that v0.8.21 #24 made meaningful.
+              cores: stats.total * 2
+            }
+          })()
+        : null,
       distributedDrive: this.distributedDriveBridge
         ? this.distributedDriveBridge.getStats()
         : {
@@ -1677,6 +1716,11 @@ export class RelayNode extends EventEmitter {
     if (this._circuitRelay) {
       try { this._circuitRelay.attach(conn) } catch (err) {
         this.emit('protocol-error', { protocol: 'circuit', error: err })
+      }
+    }
+    if (this._forwardRelay) {
+      try { this._forwardRelay.attach(conn) } catch (err) {
+        this.emit('protocol-error', { protocol: 'forward', error: err })
       }
     }
     if (this._proofOfRelay) {
@@ -3326,6 +3370,10 @@ export class RelayNode extends EventEmitter {
     if (this._circuitRelay) {
       if (this._circuitRelay.destroy) this._circuitRelay.destroy()
       this._circuitRelay = null
+    }
+    if (this._forwardRelay) {
+      if (this._forwardRelay.destroy) this._forwardRelay.destroy()
+      this._forwardRelay = null
     }
     if (this._registryScanInterval) { clearInterval(this._registryScanInterval); this._registryScanInterval = null }
     if (this.seedingRegistry) { try { await this.seedingRegistry.stop() } catch (_) {} this.seedingRegistry = null }

@@ -76,7 +76,7 @@ export class Metrics extends EventEmitter {
     lines.push(`hiverelay_connections ${stats.connections}`)
 
     if (stats.seeder) {
-      lines.push('# HELP hiverelay_cores_seeded Number of Hypercores being seeded')
+      lines.push('# HELP hiverelay_cores_seeded Number of Hypercores being seeded via Seeder.seedCore (registry log + standalone cores). Does NOT count appRegistry-managed Hyperdrive cores — see hiverelay_app_registry_cores.')
       lines.push('# TYPE hiverelay_cores_seeded gauge')
       lines.push(`hiverelay_cores_seeded ${stats.seeder.coresSeeded}`)
 
@@ -87,6 +87,30 @@ export class Metrics extends EventEmitter {
       lines.push('# HELP hiverelay_bytes_served Total bytes served to peers')
       lines.push('# TYPE hiverelay_bytes_served counter')
       lines.push(`hiverelay_bytes_served ${stats.seeder.totalBytesServed}`)
+    }
+
+    if (stats.appRegistry) {
+      // v0.8.28 (#29): operator-visible counts for appRegistry-managed
+      // Hyperdrives. The existing hiverelay_cores_seeded only counted
+      // the seedingRegistry's log core (the only thing that went
+      // through Seeder.seedCore), so a relay with 555 seeded apps
+      // reported coresSeeded=1. These four counters give Prometheus
+      // the actual operational state.
+      lines.push('# HELP hiverelay_app_registry_entries Number of appRegistry entries (one per published app/drive)')
+      lines.push('# TYPE hiverelay_app_registry_entries gauge')
+      lines.push(`hiverelay_app_registry_entries ${stats.appRegistry.entries}`)
+
+      lines.push('# HELP hiverelay_app_registry_anchored Number of entries with blob blocks fully replicated locally')
+      lines.push('# TYPE hiverelay_app_registry_anchored gauge')
+      lines.push(`hiverelay_app_registry_anchored ${stats.appRegistry.anchored}`)
+
+      lines.push('# HELP hiverelay_app_registry_unanchored Number of entries waiting on the repair pass to pull blocks')
+      lines.push('# TYPE hiverelay_app_registry_unanchored gauge')
+      lines.push(`hiverelay_app_registry_unanchored ${stats.appRegistry.unanchored}`)
+
+      lines.push('# HELP hiverelay_app_registry_cores Total underlying Hypercores managed via appRegistry (2 per Hyperdrive: meta + blob)')
+      lines.push('# TYPE hiverelay_app_registry_cores gauge')
+      lines.push(`hiverelay_app_registry_cores ${stats.appRegistry.cores}`)
     }
 
     if (stats.relay) {
