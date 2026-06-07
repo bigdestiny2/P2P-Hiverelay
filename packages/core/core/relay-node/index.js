@@ -33,6 +33,7 @@ import { BandwidthReceipt } from '../protocol/bandwidth-receipt.js'
 import { ReputationSystem } from '../../incentive/reputation/index.js'
 import { NetworkDiscovery } from '../network-discovery.js'
 import { HealthMonitor } from './health-monitor.js'
+import { DiskMonitor } from './disk-monitor.js'
 import { AlertManager } from './alert-manager.js'
 import { SelfHeal } from './self-heal.js'
 import { AccessControl } from './access-control.js'
@@ -335,6 +336,7 @@ export class RelayNode extends EventEmitter {
     this._reputationSaveInterval = null
     this.networkDiscovery = null
     this.healthMonitor = null
+    this.diskMonitor = null
     this.alertManager = null
     this.selfHeal = null
     this.seedingRegistry = null
@@ -1314,6 +1316,19 @@ export class RelayNode extends EventEmitter {
       this.selfHeal.on('self-heal-action', (action) => this.emit('self-heal-action', action))
       this.healthMonitor.start()
 
+      // v0.8.28 (#27): operator-visible disk-usage signal. Surfaces via
+      // /status (always) and optionally gates /health → 503 when over
+      // criticalThreshold (config.diskHealthGate, default false to keep
+      // existing /health semantics). milkyb-iad's 1 GB Fly volume
+      // hitting 100% was the root cause of the v0.8.22 fire-drill;
+      // this is the cheap signal that closes that observability gap.
+      this.diskMonitor = new DiskMonitor(this.config.storage || '/data', {
+        warnThreshold: this.config.diskWarnThreshold,
+        criticalThreshold: this.config.diskCriticalThreshold,
+        refreshIntervalMs: this.config.diskRefreshIntervalMs
+      })
+      this.diskMonitor.start()
+
       // Start alert manager (if configured) — wires to health monitor + subsystems
       if (this.config.alerts?.enabled) {
         this.alertManager = new AlertManager(this, this.config.alerts)
@@ -1436,6 +1451,7 @@ export class RelayNode extends EventEmitter {
         settlementIntervalMs: this.config.payment?.settlementInterval || null
       },
       accessControl: accessControlStats,
+      disk: this.diskMonitor ? this.diskMonitor.getInfo() : null,
       distributedDrive: this.distributedDriveBridge
         ? this.distributedDriveBridge.getStats()
         : {
@@ -3247,6 +3263,7 @@ export class RelayNode extends EventEmitter {
     if (this.selfHeal) { this.selfHeal.stop(); this.selfHeal = null }
     if (this.alertManager) { this.alertManager.stop(); this.alertManager = null }
     if (this.healthMonitor) { this.healthMonitor.stop(); this.healthMonitor = null }
+    if (this.diskMonitor) { this.diskMonitor.stop(); this.diskMonitor = null }
     if (this._healthCheckInterval) { clearInterval(this._healthCheckInterval); this._healthCheckInterval = null }
     if (this.settlementInterval) { clearInterval(this.settlementInterval); this.settlementInterval = null }
     if (this._replicationCheckInterval) { clearInterval(this._replicationCheckInterval); this._replicationCheckInterval = null }

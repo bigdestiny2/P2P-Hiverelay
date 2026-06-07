@@ -201,6 +201,51 @@ curl http://127.0.0.1:9100/status
 curl http://127.0.0.1:9100/peers
 ```
 
+#### Disk-usage signal
+
+`/status` includes a `disk` field with the relay's storage volume state:
+
+```json
+{
+  "disk": {
+    "usedPct": 47,
+    "usedBytes": 24052555776,
+    "freeBytes": 26789236736,
+    "totalBytes": 51190108160,
+    "mountPath": "/data",
+    "status": "ok",
+    "checkedAt": 1779543201000
+  }
+}
+```
+
+`status` is one of:
+- `ok` — under `diskWarnThreshold` (default 85%)
+- `warn` — at or above warn threshold
+- `critical` — at or above `diskCriticalThreshold` (default 95%)
+
+The check runs every 30 seconds in the background (`df -kP`); no I/O on
+the status hot path. Override thresholds via config:
+
+```json
+{
+  "diskWarnThreshold": 80,
+  "diskCriticalThreshold": 92,
+  "diskRefreshIntervalMs": 60000
+}
+```
+
+Set `"diskHealthGate": true` to make `/health` return **503** when disk
+is `critical`, so load balancers / uptime monitors can drain traffic
+before the volume actually fills. Default is `false` (preserves existing
+`/health` semantics — always 200 unless the process is down).
+
+This signal exists because [#27](https://github.com/bigdestiny2/P2P-Hiverelay/issues/27)
+traced a 15-hour debugging fire to a 1 GB Fly.io volume hitting 100%.
+No relay-side counter surfaced the capacity pressure; the visible
+symptoms all looked like code bugs. This is the cheap signal that
+closes the observability gap.
+
 ## API Security
 
 The HTTP API binds to `0.0.0.0` by default for remote access compatibility (relays are public infrastructure). To restrict to localhost, set `apiHost: '127.0.0.1'` in config.

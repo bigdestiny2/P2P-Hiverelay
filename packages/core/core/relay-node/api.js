@@ -463,10 +463,39 @@ export class RelayAPI extends EventEmitter {
       // GET routes
       if (req.method === 'GET') {
         if (path === '/health') {
+          // v0.8.28 (#27): include disk status in the health payload.
+          // When config.diskHealthGate=true AND disk.status='critical',
+          // return 503 so load balancers / uptime monitors can drain
+          // traffic away from a relay that's about to run out of disk.
+          // Default behavior unchanged (still returns 200 even on
+          // critical) to preserve existing operator expectations.
+          const disk = this.node.diskMonitor ? this.node.diskMonitor.getInfo() : null
+          const diskSummary = disk
+            ? (disk.error
+                ? { error: disk.error }
+                : { usedPct: disk.usedPct, status: disk.status, mountPath: disk.mountPath })
+            : null
+
+          if (
+            this.node.config.diskHealthGate === true &&
+            disk && disk.status === 'critical'
+          ) {
+            res.writeHead(503, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({
+              ok: false,
+              reason: 'disk-critical',
+              uptime: this.node.metrics ? this.node.metrics.getSummary().uptime : null,
+              running: this.node.running,
+              disk: diskSummary
+            }))
+            return
+          }
+
           return this._json(res, {
             ok: true,
             uptime: this.node.metrics ? this.node.metrics.getSummary().uptime : null,
-            running: this.node.running
+            running: this.node.running,
+            disk: diskSummary
           })
         }
 
