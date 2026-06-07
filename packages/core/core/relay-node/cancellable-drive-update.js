@@ -131,28 +131,80 @@ export async function updateWithTimeout (drive, opts = {}) {
  */
 export async function downloadWithTimeout (drive, path = '/', opts = {}) {
   const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : DEFAULT_DOWNLOAD_TIMEOUT_MS
-  // drive.download() throws synchronously if the drive is closing;
-  // let that bubble up so the caller can handle it the same way it
-  // would have without the timeout wrapper.
-  const dl = drive.download(path)
-  const isOldTrackerApi = dl && typeof dl.done === 'function' && typeof dl.destroy === 'function'
+  const signal = opts.signal || null
 
+  // 2026-06-07 (#28): for hyperdrive 11.x's Promise-shape download API,
+  // we re-implement the download loop here so we can collect every inner
+  // blob.core.download tracker and destroy() them on abort/timeout.
+  // Without this, the orphaned trackers keep the event loop alive after
+  // stop() — fine in production (drives close cleanly via corestore.close
+  // on shutdown), but causes reliability-v2 test runner to hang at the
+  // file-level timeout. The trackers DO eventually settle on their own
+  // (bounded by each file's blob extent) so this is a developer-
+  // experience fix, not a production reliability concern.
+  //
+  // For the old tracker API (hyperdrive 10.x), preserve the prior
+  // single-tracker path — destroy() on the top-level tracker cancels
+  // its inner block requests via hypercore's documented API.
+
+  // Probe: call drive.download(path) once with no opts to detect API shape.
+  // If old API, the result has .done() + .destroy() and we use the
+  // tracker-based path. If new (Promise), we throw away the result and
+  // run our cancellable re-implementation instead.
+  // drive.download() throws synchronously if the drive is closing; let
+  // that bubble up — the caller sees the same error path it would have
+  // without the timeout wrapper.
+  let oldTrackerProbe = null
+  const probe = drive.download(path)
+  if (probe && typeof probe.done === 'function' && typeof probe.destroy === 'function') {
+    oldTrackerProbe = probe
+  } else if (probe && typeof probe.then === 'function') {
+    // New API — we re-do the work below. Detach the orphan Promise so
+    // unhandled rejection warnings don't surface.
+    probe.catch(() => {})
+  }
+
+  if (oldTrackerProbe) {
+    return _runOldTrackerDownload(oldTrackerProbe, timeoutMs, signal)
+  }
+
+  return _runNewPromiseDownload(drive, path, timeoutMs, signal)
+}
+
+// ─── Old tracker API (hyperdrive 10.x) ──────────────────────────────
+async function _runOldTrackerDownload (dl, timeoutMs, signal) {
   let timer = null
+  let abortHandler = null
   let timedOut = false
 
   try {
     return await new Promise((resolve, reject) => {
       timer = setTimeout(() => {
         timedOut = true
-        if (isOldTrackerApi) {
-          try { dl.destroy() } catch { /* best-effort */ }
-        }
+        try { dl.destroy() } catch {}
         reject(new Error('download timeout'))
       }, timeoutMs)
-      // No .unref() — see updateWithTimeout for the brittle-deadlock note.
 
-      const settledPromise = isOldTrackerApi ? dl.done() : dl
-      settledPromise.then(
+      if (signal) {
+        if (signal.aborted) {
+          clearTimeout(timer)
+          try { dl.destroy() } catch {}
+          const err = new Error('Aborted')
+          err.name = 'AbortError'
+          reject(err)
+          return
+        }
+        abortHandler = () => {
+          timedOut = true
+          try { dl.destroy() } catch {}
+          const err = new Error('Aborted')
+          err.name = 'AbortError'
+          reject(err)
+        }
+        signal.addEventListener('abort', abortHandler)
+      }
+
+      dl.done().then(
         () => {
           if (!timedOut) {
             clearTimeout(timer)
@@ -169,12 +221,106 @@ export async function downloadWithTimeout (drive, path = '/', opts = {}) {
     })
   } finally {
     if (timer) clearTimeout(timer)
-    // Defensive: destroy() is idempotent on hyperdrive download trackers.
-    // For Promise-shape (hyperdrive 11.x), there's no tracker to destroy
-    // here — the inner blob.core.download trackers settle naturally.
-    if (isOldTrackerApi) {
-      try { dl.destroy() } catch {}
+    if (signal && abortHandler) signal.removeEventListener('abort', abortHandler)
+    try { dl.destroy() } catch {}
+  }
+}
+
+// ─── New Promise API (hyperdrive 11.x) ──────────────────────────────
+async function _runNewPromiseDownload (drive, path, timeoutMs, signal) {
+  // We re-implement drive.download(path) here so we control the inner
+  // trackers. Mirrors hyperdrive's own implementation (entry vs folder
+  // dispatch, blob extent calculation, allSettled on per-blob trackers)
+  // but exposes the trackers for explicit destroy() on abort/timeout.
+
+  const activeTrackers = []
+  let aborted = false
+  let abortReason = null
+
+  const destroyAll = () => {
+    for (const t of activeTrackers) {
+      try { t.destroy() } catch {}
     }
+  }
+
+  let timer = null
+  let abortHandler = null
+
+  const arm = () => {
+    timer = setTimeout(() => {
+      aborted = true
+      abortReason = new Error('download timeout')
+      destroyAll()
+    }, timeoutMs)
+    if (signal) {
+      if (signal.aborted) {
+        aborted = true
+        abortReason = new Error('Aborted')
+        abortReason.name = 'AbortError'
+        destroyAll()
+        return
+      }
+      abortHandler = () => {
+        aborted = true
+        abortReason = new Error('Aborted')
+        abortReason.name = 'AbortError'
+        destroyAll()
+      }
+      signal.addEventListener('abort', abortHandler)
+    }
+  }
+
+  const disarm = () => {
+    if (timer) clearTimeout(timer)
+    if (signal && abortHandler) signal.removeEventListener('abort', abortHandler)
+  }
+
+  arm()
+
+  try {
+    // Single-file path: drive.entry(path) returns metadata for a leaf.
+    const isFolder = !path || path.endsWith('/')
+    if (!isFolder) {
+      const entry = await drive.entry(path)
+      if (aborted) throw abortReason
+      if (entry) {
+        const b = entry.value && entry.value.blob
+        if (b) {
+          const blobs = await drive.getBlobs()
+          if (aborted) throw abortReason
+          const tracker = blobs.core.download({ start: b.blockOffset, length: b.blockLength })
+          activeTrackers.push(tracker)
+          await tracker.downloaded()
+        }
+      }
+      if (aborted) throw abortReason
+      return
+    }
+
+    // Folder path: walk entries, start a tracker per blob.
+    const blobs = await drive.getBlobs()
+    if (aborted) throw abortReason
+
+    for await (const entry of drive.list(path)) {
+      if (aborted) throw abortReason
+      const b = entry.value && entry.value.blob
+      if (!b) continue
+      const tracker = blobs.core.download({ start: b.blockOffset, length: b.blockLength })
+      activeTrackers.push(tracker)
+    }
+
+    if (aborted) throw abortReason
+
+    // Wait for all trackers; allSettled so a single block-fetch failure
+    // doesn't cascade — matches hyperdrive's own download() behavior.
+    await Promise.allSettled(activeTrackers.map(t => t.downloaded()))
+    if (aborted) throw abortReason
+  } finally {
+    disarm()
+    // Defense in depth: if anything threw mid-walk and we accumulated
+    // trackers but didn't cleanly resolve them, destroy them now so
+    // the inner blob refs release the event loop.
+    if (aborted) destroyAll()
   }
 }
 

@@ -636,7 +636,24 @@ export class AppRegistry extends EventEmitter {
           entries.push(this._reseedEntry(entry, appKey))
         }
       } catch (err) {
-        this.emit('error', { context: 'load-bee', error: err })
+        // v0.8.28 (#28 follow-up): SESSION_CLOSED here means the bee's
+        // underlying core was closed while we were reading — almost
+        // always because node.stop() fired during start()'s
+        // reseedFromRegistry hand-off. That's not a stale-ref bug; it's
+        // a clean concurrent-shutdown signal. Quiet it so the
+        // reliability-v2 multi-cycle test (and operators' logs) don't
+        // flood with benign noise. Real errors (corruption, schema
+        // drift, etc.) still surface via the 'error' event.
+        const isShutdownRace =
+          err && (
+            err.code === 'SESSION_CLOSED' ||
+            err.code === 'CORE_CLOSED' ||
+            err.code === 'ERR_CLOSED' ||
+            /closing|closed|destroyed/i.test(err.message || '')
+          )
+        if (!isShutdownRace) {
+          this.emit('error', { context: 'load-bee', error: err })
+        }
         return []
       }
       return entries.filter(e => e.appKey)

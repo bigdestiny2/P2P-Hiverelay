@@ -564,7 +564,13 @@ export class AppLifecycle extends EventEmitter {
           //     unanchored so runRepairPass keeps re-queuing them.
           let downloadComplete = true
           try {
-            await raceOr(downloadWithTimeout(drive, '/', { timeoutMs: 120_000 }))
+            // v0.8.28 (#28): pass the LifecycleScope signal through so the
+            // inner Promise-shape download path can destroy its blob.core
+            // trackers immediately on stop()/self-heal-restart. Without
+            // this, raceOr resolves cleanly via AbortError but the inner
+            // trackers keep the event loop alive (production-safe but
+            // breaks test-runner cleanup; see issue #28).
+            await raceOr(downloadWithTimeout(drive, '/', { timeoutMs: 120_000, signal: scope ? scope.signal : null }))
           } catch (err) {
             if (isAbortError(err)) return
             downloadComplete = false
@@ -948,7 +954,9 @@ export class AppLifecycle extends EventEmitter {
         // as success — flag downloadComplete=false so the partial-pin
         // gate below keeps the entry unanchored and runRepairPass
         // re-queues it on the next tick.
-        await raceOr(downloadWithTimeout(drive, '/', { timeoutMs: downloadTimeout }))
+        // v0.8.28 (#28): same scope-signal threading as _eagerReplicate
+        // — destroy inner blob.core trackers on scope abort.
+        await raceOr(downloadWithTimeout(drive, '/', { timeoutMs: downloadTimeout, signal: scope ? scope.signal : null }))
       } catch (err) {
         if (isAbortError(err)) return false
         downloadComplete = false
