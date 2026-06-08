@@ -44,6 +44,86 @@ cat <<EOF | sudo tee /home/hiverelay/.hiverelay/config.json
 EOF
 ```
 
+### Signed directory (opt-in registry)
+
+`SignedDirectory` (`hiverelay-signed-directory`) is an always-on,
+openly-writable registry of signed records keyed by author pubkey.
+First consumer: marketplace offer discovery (sellers publish a signed
+Offer; buyers list + verify). Generic enough for any "signed record set
+by author" use case (job boards, file-share directories, signed gossip
+feeds).
+
+**Trust model — identical to a topic-swarm announce:** the relay can
+omit, reorder, or refuse records; it cannot forge them. All records are
+signed over `SHA256(authorPubkey || timestamp_LE || payload)` using
+Ed25519. Buyers MUST verify signatures + timestamps client-side; the
+relay never inspects payload semantics, by design.
+
+**OFF by default.** Enable per node by adding to `config.json`:
+
+```json
+{
+  "signedDirectory": {
+    "enabled": true,
+    "maxEntryBytes": 8192,
+    "ttlSeconds": 86400,
+    "maxEntriesPerAuthor": 1,
+    "publishRatePerMinute": 5,
+    "maxTotalEntries": 10000,
+    "clockSkewToleranceSeconds": 60
+  }
+}
+```
+
+The defaults are the storage-policy commitments documented in
+[issue #33](https://github.com/bigdestiny2/P2P-Hiverelay/issues/33):
+
+- `maxEntryBytes` (8 KB) — per-record cap
+- `ttlSeconds` (24h) — TTL eviction; tradeoff between always-on
+  discovery and storage churn
+- `maxEntriesPerAuthor` (1) — newest-timestamp-wins; one live record
+  per authorPubkey
+- `publishRatePerMinute` (5, per-peer) — symmetric with circuit-relay's
+  reserve rate limit
+- `maxTotalEntries` (10000) — bounds the in-memory store for
+  storage-constrained operators
+- `clockSkewToleranceSeconds` (60) — **critical**: rejects entries
+  timestamped more than 60s in the future. Without this, a malicious
+  author with `timestamp = 2099-01-01` permanently outranks legitimate
+  updates from the same pubkey. Bidirectional bound.
+
+**Replication is automatic between enabled relays.** A publish to relay
+A is broadcast via NOTIFY to all peer-relay channels A has open; peer
+relays validate and store (no re-broadcast — single-hop). No
+configuration needed beyond `signedDirectory.enabled` on each
+participating relay.
+
+**Storage is in-memory only in v1.** Short TTL (24h default) + cross-
+relay replication means individual-relay restarts lose state but the
+network as a whole stays warm. Hyperbee-backed persistence is tracked
+as a follow-up.
+
+`/status` exposes a `signedDirectory` block when enabled:
+
+```json
+{
+  "signedDirectory": {
+    "enabled": true,
+    "entries": 47,
+    "maxTotalEntries": 10000,
+    "attachedChannels": 11,
+    "ttlSeconds": 86400,
+    "totalPublished": 312,
+    "totalRejected": 4,
+    "totalReplicated": 89,
+    "totalEvicted": 0,
+    "rejectedReasons": { "BAD_SIGNATURE": 2, "RATE_LIMITED": 2 }
+  }
+}
+```
+
+Verify with `npx brittle test/unit/signed-directory.test.js`.
+
 ### Forward relay (opt-in transport)
 
 `ForwardRelay` (`hiverelay-forward`) lets this node relay app connections for

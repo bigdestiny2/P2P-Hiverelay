@@ -29,6 +29,7 @@ import { isTransientCoreError } from '../transient-core-errors.js'
 import { verifyDelegationCert, verifyRevocation } from '../delegation.js'
 import { CircuitRelay } from '../protocol/relay-circuit.js'
 import { ForwardRelay } from '../protocol/forward-relay.js'
+import { SignedDirectory } from '../services/signed-directory.js'
 import { ProofOfRelay } from '../protocol/proof-of-relay.js'
 import { BandwidthReceipt } from '../protocol/bandwidth-receipt.js'
 import { ReputationSystem } from '../../incentive/reputation/index.js'
@@ -613,6 +614,25 @@ export class RelayNode extends EventEmitter {
         this._forwardRelay = new ForwardRelay(this.swarm, {
           maxForwardsPerPeer: this.config.forwardRelay.maxForwardsPerPeer,
           maxForwardBytes: this.config.forwardRelay.maxForwardBytes
+        })
+      }
+
+      // Signed directory (opt-in): relay-hosted openly-writable registry
+      // of signed records keyed by author pubkey. First consumer:
+      // marketplace offer discovery (sellers publish a signed Offer;
+      // buyers list + verify). Generic shape for any "signed record set
+      // by author" use case. OFF by default — operators opt in via
+      // config.signedDirectory.enabled. Trust model identical to the
+      // topic-swarm (relay can omit/reorder; cannot forge). See issue
+      // #33 + PRODUCTION.md "SignedDirectory" section.
+      if (this.config.signedDirectory && this.config.signedDirectory.enabled) {
+        this._signedDirectory = new SignedDirectory(this.swarm, {
+          maxEntryBytes: this.config.signedDirectory.maxEntryBytes,
+          ttlSeconds: this.config.signedDirectory.ttlSeconds,
+          maxEntriesPerAuthor: this.config.signedDirectory.maxEntriesPerAuthor,
+          publishRatePerMinute: this.config.signedDirectory.publishRatePerMinute,
+          maxTotalEntries: this.config.signedDirectory.maxTotalEntries,
+          clockSkewToleranceSeconds: this.config.signedDirectory.clockSkewToleranceSeconds
         })
       }
 
@@ -1465,6 +1485,7 @@ export class RelayNode extends EventEmitter {
       },
       accessControl: accessControlStats,
       disk: this.diskMonitor ? this.diskMonitor.getInfo() : null,
+      signedDirectory: this._signedDirectory ? this._signedDirectory.getStats() : null,
       // v0.8.28 (#29): existing seeder.coresSeeded only counts the
       // seedingRegistry's local log core (it's the only thing routed
       // through Seeder.seedCore). The appRegistry-managed Hyperdrives
@@ -1721,6 +1742,11 @@ export class RelayNode extends EventEmitter {
     if (this._forwardRelay) {
       try { this._forwardRelay.attach(conn) } catch (err) {
         this.emit('protocol-error', { protocol: 'forward', error: err })
+      }
+    }
+    if (this._signedDirectory) {
+      try { this._signedDirectory.attach(conn) } catch (err) {
+        this.emit('protocol-error', { protocol: 'signed-directory', error: err })
       }
     }
     if (this._proofOfRelay) {
@@ -3374,6 +3400,10 @@ export class RelayNode extends EventEmitter {
     if (this._forwardRelay) {
       if (this._forwardRelay.destroy) this._forwardRelay.destroy()
       this._forwardRelay = null
+    }
+    if (this._signedDirectory) {
+      if (this._signedDirectory.destroy) this._signedDirectory.destroy()
+      this._signedDirectory = null
     }
     if (this._registryScanInterval) { clearInterval(this._registryScanInterval); this._registryScanInterval = null }
     if (this.seedingRegistry) { try { await this.seedingRegistry.stop() } catch (_) {} this.seedingRegistry = null }

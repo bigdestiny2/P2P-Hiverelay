@@ -72,6 +72,77 @@ commits since v0.10.0 — four resolving operator-flagged issues
 - **Opt-in forward-relay support.** New `forward-relay.js` protocol
   + integration test + `PRODUCTION.md` operator enable guide.
 
+## [0.10.2] — 2026-06-07
+
+`SignedDirectory` service — relay-hosted openly-writable registry of
+signed records keyed by author pubkey. Closes [#33](https://github.com/bigdestiny2/P2P-Hiverelay/issues/33).
+
+### What ships
+
+- `packages/core/core/services/signed-directory.js` — Protomux
+  service exposing `PUBLISH` / `LIST_REQ` / `LIST_RES` / `NOTIFY` /
+  `STATUS` messages on the `hiverelay-signed-directory` channel.
+  Single-hop NOTIFY replication between enabled relays (publish at A
+  → broadcast to all open channels → peer relays store, do not
+  rebroadcast).
+- Storage policy defaults: 8 KB per entry, 24h TTL, 1 entry per
+  author (newest-timestamp-wins), 5 publishes/minute/peer, 10k total
+  entries with TTL-oldest eviction under pressure, ±60s clock-skew
+  tolerance.
+- Ed25519 signatures over `SHA256(authorPubkey || timestamp_LE_8 ||
+  payload)`. Relay never inspects payload semantics.
+- Opt-in via `config.signedDirectory.enabled` (default false). Same
+  posture as `forwardRelay`.
+- `RelayNode` wires construct → attach per incoming connection →
+  destroy on stop. `/status` exposes a `signedDirectory` block with
+  entry count + replication counters + rejection-reason breakdown.
+- Tests: 17 cases, 83 inner asserts. Cover trust-model primitives
+  (digest determinism, tamper-detection), storage policy (size cap,
+  timestamp validation, future-squat rejection, expired-on-arrival
+  rejection, malformed shape), newest-timestamp-wins overwrite +
+  idempotency, per-peer rate limit (with NOTIFY-replication bypass),
+  global-cap eviction order, TTL cleanup, `getStats` shape, destroy
+  cleanup, disabled-directory rejection, NOTIFY no-echo invariant.
+- PRODUCTION.md "SignedDirectory (opt-in registry)" operator section
+  with the full config block + threshold rationale + the critical
+  clock-skew anti-squat note.
+
+### First consumer
+
+Marketplace offer discovery (anonGPT). Seller publishes a signed
+`Offer` payload; buyer connects to the relay, lists, verifies signatures
+locally. Topic-swarm announce remains as P2P fallback so nothing
+regresses for buyers that can't reach an enabled relay.
+
+### Trust + threat model
+
+The relay can omit, reorder, refuse, or delay records. It cannot forge
+them — every record carries a detached Ed25519 signature over the
+canonical digest. Buyer-side `verifyDirectory()` adapter is the
+authoritative validator; the relay's role is transport + storage only.
+
+### Out of scope (intentional)
+
+- Relay does NOT validate payload semantics
+- Relay does NOT charge for publish
+- Relay does NOT broadcast to non-subscribing clients (NOTIFY pushes
+  only over channels that have already been attached, i.e. peer
+  relays + clients that opened a directory channel)
+- Hyperbee-backed persistence (v2; in-memory + short TTL + cross-
+  relay replication is the v1 commitment)
+
+### Risk
+
+Backwards-compatible. Default off — existing operators see no
+behavior change. Receivers that don't know about the new
+`hiverelay-signed-directory` channel ignore it (protomux's default
+policy is silent skip).
+
+### Acknowledgments
+
+Spec + design pattern co-developed with the anonGPT marketplace work;
+mirror of the `ForwardRelay` opt-in transport posture.
+
 ## [Unreleased]
 
 ### Added
