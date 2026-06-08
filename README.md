@@ -6,7 +6,7 @@ Drop a Hyperdrive key in front of a HiveRelay node and your Pear app comes onlin
 
 It's the substrate. You build the app; the network handles availability, NAT traversal, browser/mobile ingress, custody, and self-heal.
 
-**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.10.0**
+**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.10.2**
 
 The four packages — `p2p-hiverelay` (core), `p2p-hiveservices` (services), `p2p-hiverelay-client` (SDK), `p2p-hiverelay-verifier` — are versioned in lockstep. Release-by-release notes live in the [CHANGELOG](./CHANGELOG.md).
 
@@ -60,25 +60,73 @@ For encrypted file handoffs, blind dead drops, time-bounded transfers. Marked `s
 - The signed custody log is schema-constrained: a per-type field **allowlist** rejects any unknown field, and a denylist hard-blocks known plaintext/key names (`plaintext`, `dataKey`, `fileName`, `path`, PVSS share scalars, …). Custody metadata therefore can't carry cleartext content or key material.
 - Six signed message types: intent → receipt → commit → source-retired → proof → non-serving-proof, with witness tombstones layered on top.
 - `retainUntil` is enforced state — the expiry monitor unseeds at the deadline and the relay signs a non-serving-proof; independent witnesses probe after expiry and sign tombstones.
-- **Publicly verifiable key custody (v0.9.0).** Beyond blind *content*, a relay can custody an opaque, guardian-encrypted *share* of a secret (PVSS over secp256k1). It publicly verifies the share against the published commitments — without ever decrypting it — and any *t-of-n* guardians reconstruct the secret client-side. No party (relay or single guardian) can reconstruct alone.
 
-See the [Atomic Blind Custody whitepaper](docs/ATOMIC-BLIND-CUSTODY.md) and [PVSS blind key custody](docs/PVSS-BLIND-CUSTODY.md) for the full protocols.
+See the [Atomic Blind Custody whitepaper](docs/ATOMIC-BLIND-CUSTODY.md) for the full content-custody protocol.
+
+---
+
+## Blind social recovery — the threshold-custody primitive
+
+The headline feature on top of the custody plane. **A relay holds an opaque, guardian-encrypted share of a secret — publicly verifies it's well-formed without ever decrypting it — and any *t-of-n* guardians later reconstruct the secret entirely client-side.** No single party can reconstruct alone: not the relay (it never has a guardian private key), and not any single guardian (it has one share of `t`).
+
+This is the primitive behind:
+
+- **Social recovery** for self-custodial wallets, identity, and crypto keys (lose your phone → 2 of 3 friends help you recover)
+- **Team break-glass** for shared org secrets (admin departs → board majority recovers)
+- **Inheritance** for serverless / Pear apps (executor's t-of-n release is timestamp-bounded by retainUntil; relays sign non-serving proofs at expiry)
+- **Threshold signing setup** that survives operator churn — guardians can be added or rotated independently of the relays storing the shares
+
+**What makes it work without a trusted server:** the relay verifies each share against published commitments using only the share's public components, never the dealer's private witness. The fleet-wide replication mesh (5 relays) means losing any one relay doesn't lose the share; the cross-relay non-serving-proof + witness tombstone primitives mean recipients get cryptographic confirmation when shares are destroyed.
+
+```js
+import { HiveRelayClient } from 'p2p-hiverelay-client'
+import { keygen } from 'p2p-hiverelay-client/secret-sharing.js'
+
+// Dealer splits a secret into 3 shares across 3 relays, requiring any 2 guardians to recover.
+const g1 = await keygen(); const g2 = await keygen(); const g3 = await keygen()
+const res = await app.splitForCustody({
+  guardians: [g1.publicKey, g2.publicKey, g3.publicKey],
+  threshold: 2,
+  relays: [r1, r2, r3],
+  appKey,
+  opts: { apiKey }
+})
+// res.key is dealer-private. Each relay holds an opaque, publicly-verifiable share.
+
+// Later — only the guardians can recover. No relay can; no single guardian can.
+const out = await app.reconstructFromCustody({
+  intentId: res.intentId,
+  guardianSecretKeys: [g1.secretKey, g3.secretKey],
+  shareBundleKey: res.shareBundleKey,
+  threshold: 2
+})
+// out.key === res.key
+```
+
+The scheme is **`pvss-secp256k1-v1`** — Schoenmakers Publicly Verifiable Secret Sharing over secp256k1, with Chaum-Pedersen non-interactive zero-knowledge equality proofs binding each share to the dealer's commitment. Crypto + signing are Bare-safe and self-contained (no dependency on the relay package).
+
+See the [PVSS blind key custody whitepaper](docs/PVSS-BLIND-CUSTODY.md) for the scheme, threat model, and trust analysis.
 
 ---
 
 ## Services module
 
-Beyond the relay kernel, optional services live under `packages/services/builtin/` (`p2p-hiveservices`) and each own an HTTP/WS prefix on top of relay core: `ai-service`, `schema-service`, `zk-service`, `arbitration-service`, `sla-service`, `storage-service`, `identity-service`. A relay that never instantiates a service is byte-zero affected by it.
+Beyond the relay kernel, optional services live under `packages/services/builtin/` (`p2p-hiveservices`) and each own an HTTP/WS or Protomux surface on top of relay core: `ai-service`, `schema-service`, `zk-service`, `arbitration-service`, `sla-service`, `storage-service`, `identity-service`, plus the v0.10.2 `signed-directory` registry primitive. A relay that never instantiates a service is byte-zero affected by it.
 
-### Card-blind signed-log substrate — poker (v0.10.0)
+### SignedDirectory — relay-hosted openly-writable registry (v0.10.2)
 
-`packages/services/builtin/poker/` is the first first-class consumer of the services-module pattern: a generic primitive for turn-based games with hidden information. The relay enforces signatures, per-writer monotonic ordering, a 60s clock-skew bound, and a byte budget; the payload stays opaque and the game rules live in the Pear client. The same `SignedLog` substrate composes for liar's dice, mafia, and sealed-bid auctions.
+Opt-in registry of signed records keyed by author pubkey. Sellers publish, buyers list + verify locally. Trust model identical to a topic-swarm announce: the relay can omit or reorder records but cannot forge them — every record carries a detached Ed25519 signature over `SHA256(authorPubkey || timestamp || payload)`. Generic enough for any "signed record set by author" use case (marketplaces, job boards, file-share directories, signed gossip feeds).
 
-- **HTTP** at `/api/poker/<tableKey>/{state,log,move}`; **WebSocket** fan-out at `ws://<host>/api/poker/<tableKey>/events` (initial-state frame on connect, API-key auth via the existing gate).
-- **HypercorePersistence adapter** mirrors the in-memory log to a hypercore for durability + replay-on-restart; mirrored cores flow through the existing seeder + custody pipeline like any other content.
-- Mental poker's classic disconnection-survival gap is closed by composing three relay primitives — "reliability v2": the custody pipeline blindly holds the players' pre-committed reveal-share entries as opaque bytes, the cancellation contract keeps the relay from lying about holding them, and partial-pin auto-heal recovers from a peer drop with no trusted coordinator. The reveal-share scheme itself lives in the Pear client; the relay stays card-blind. Every future `SignedLogApp` service inherits this at instantiation.
-- **Arbitration** gains `poker/missing-share`, `poker/invalid-share`, `poker/refused-reveal` dispute types and a `setAppEvidenceVerifier(appType, fn)` seam for pluggable per-app evidence verification. The bundled **Chaum-Pedersen share-equality verifier** is **reference quality and not audited** — real-money deployments should swap in their own.
-- Seeding-manifest gains an optional `lifetime` hint (`persistent` | `session` | `ephemeral`). When absent or default, canonical bytes are byte-identical to pre-0.10.0 manifests, so existing signatures verify unchanged.
+- 8 KB per-record cap, 24h TTL, newest-timestamp-wins, ±60s clock-skew tolerance (prevents pubkey squatting)
+- Single-hop NOTIFY replication across the fleet — publish at any relay, the record appears at all enabled peers within milliseconds
+- Per-peer publish rate-limit + global entry cap + TTL-oldest-first eviction
+- Default off; enable with `config.signedDirectory.enabled`
+
+See the [SignedDirectory operator section in PRODUCTION.md](./PRODUCTION.md).
+
+### Card-blind signed-log substrate (v0.10.0)
+
+`packages/services/builtin/poker/` was the first consumer of the services-module pattern: a generic primitive for turn-based games with hidden information. The relay enforces signatures, monotonic ordering, clock-skew bounds, and a byte budget; payloads stay opaque and game rules live in the Pear client. The same substrate composes for liar's dice, mafia, sealed-bid auctions, and other "everyone sees the moves, nobody sees the hidden state" patterns. Includes a HypercorePersistence adapter for restart-replay and an arbitration seam for pluggable evidence verification.
 
 See [docs/SERVICES.md](docs/SERVICES.md) and the [poker substrate README](packages/services/builtin/poker/README.md).
 
@@ -127,42 +175,14 @@ npm install p2p-hiverelay-client
 | `app.recordCustodyExpiryWitness(url, intentId, witness, opts)` | Independent witness tombstone |
 | `app.getCustodyStatus(url, intentId)` | Read-only quorum + commit status |
 
-### Blind key custody — PVSS (v0.9.0)
+### Blind social recovery — PVSS (v0.9.0)
 
-Threshold-custody a secret across a relay quorum where each relay holds only an opaque, publicly-verifiable share. Crypto + signing are Bare-safe and self-contained (no dependency on the relay package).
+The full primitive, code-example, and trust analysis live in the [Blind social recovery section](#blind-social-recovery--the-threshold-custody-primitive) at the top of this README. SDK surface:
 
 | Method | Description |
 |---|---|
 | `app.splitForCustody({ secret?, guardians, threshold, relays, appKey, opts? })` | PVSS-split a secret to the guardians' pubkeys, publish the public share bundle, sign the v2 intent, collect a share-verified receipt from every relay, then sign + publish the quorum commit |
 | `app.reconstructFromCustody({ intentId, guardianSecretKeys, relays?, shareBundleKey?, threshold? })` | Recover the secret from any `t` guardian secret keys, entirely client-side |
-
-```js
-import { HiveRelayClient } from 'p2p-hiverelay-client'
-import { keygen } from 'p2p-hiverelay-client/secret-sharing.js'
-
-const g1 = await keygen(); const g2 = await keygen(); const g3 = await keygen()
-
-// 2-of-3 custody across three relays (each holds one opaque share).
-const res = await app.splitForCustody({
-  guardians: [g1.publicKey, g2.publicKey, g3.publicKey],
-  threshold: 2,
-  relays: [r1, r2, r3],            // { url, pubkey } each
-  appKey,                          // the content drive this custody binds to
-  opts: { apiKey }
-})
-// res.key is dealer-private — never published. Relays only ever hold verified shares.
-
-// Later, any 2 guardians recover it — no relay can:
-const out = await app.reconstructFromCustody({
-  intentId: res.intentId,
-  guardianSecretKeys: [g1.secretKey, g3.secretKey],
-  shareBundleKey: res.shareBundleKey,
-  threshold: 2
-})
-// out.key === res.key
-```
-
-See [PVSS blind key custody](docs/PVSS-BLIND-CUSTODY.md) for the scheme + threat model.
 
 ### Quorum + verification API
 
@@ -321,7 +341,7 @@ npx p2p-hiverelay testnet --nodes 5
 
 ## Test coverage
 
-The core trust stack — custody-signing, registry-custody, anchor- and custody-channel, auto-heal, ws-feed payload, client-custody, seed-revocability, seeding-registry hardening — is covered by a smoke battery that runs in seconds on a clean checkout. The v0.10.0 services-module work adds 7 poker suites (`scripts/test-poker-*.js` + seeding-manifest lifetime), 188/188 green, including an end-to-end flow (sit → DKG commit → pre-committed reveal shares → betting → restart with hypercore replay → WS push fan-out → arbitration with a real Chaum-Pedersen proof).
+The core trust stack — custody-signing, registry-custody, anchor- and custody-channel, auto-heal, ws-feed payload, client-custody, seed-revocability, seeding-registry hardening, PVSS blind key custody (split, verify-without-decrypt, reconstruct, dealer-private witness), SignedDirectory (signature, timestamp, rate-limit, eviction, replication) — is covered by a smoke battery that runs in seconds on a clean checkout. The services-module work adds suites covering arbitration evidence verification and the card-blind signed-log substrate end-to-end.
 
 Two simulation harnesses cover behaviors unit tests can't reach:
 - `scripts/simulate-blind-atomic-custody.js` — Monte Carlo across 7 protocol scenarios, 5,000 trials each. Surfaced the witness tombstone primitive as the highest-leverage post-expiry attestation.
