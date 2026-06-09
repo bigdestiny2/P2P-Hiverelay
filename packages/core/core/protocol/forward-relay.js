@@ -128,22 +128,22 @@ export class ForwardRelay extends EventEmitter {
     const count = this._perPeer.get(peerHex) || 0
     if (count >= this.maxForwardsPerPeer) return msgs.statusMsg.send({ code: ERR_CAPACITY, message: 'forward limit reached' })
 
-    let target_stream
+    let targetStream
     try {
-      target_stream = this.swarm.dht.connect(target)
+      targetStream = this.swarm.dht.connect(target)
     } catch (err) {
       return msgs.statusMsg.send({ code: ERR_TARGET, message: 'dial failed' })
     }
 
-    const state = { channel, peerHex, targetHex, stream: target_stream, bytes: 0, msgs }
+    const state = { channel, peerHex, targetHex, stream: targetStream, bytes: 0, msgs }
     fw.state = state
     this._active.add(state)
     this._perPeer.set(peerHex, count + 1)
 
-    target_stream.on('error', () => this._teardown(state, ERR_TARGET))
-    target_stream.on('close', () => this._teardown(state, OK))
+    targetStream.on('error', () => this._teardown(state, ERR_TARGET))
+    targetStream.on('close', () => this._teardown(state, OK))
     // target → client (chunked to the frame cap)
-    target_stream.on('data', (chunk) => {
+    targetStream.on('data', (chunk) => {
       if (!fw.state) return
       for (let i = 0; i < chunk.length; i += this.maxDataMsgBytes) {
         const slice = chunk.subarray(i, Math.min(i + this.maxDataMsgBytes, chunk.length))

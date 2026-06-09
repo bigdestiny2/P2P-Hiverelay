@@ -273,7 +273,7 @@ export class HypercorePersistence extends EventEmitter {
     // recovers the exact entry and the signature is untouched.
     const blob = Buffer.from(_padBlock(JSON.stringify(entry), this._padBuckets), 'utf8')
     let timer
-    const timeout = new Promise((_, reject) => {
+    const timeout = new Promise((_resolve, reject) => {
       timer = setTimeout(() => reject(new Error('append-timeout')), APPEND_TIMEOUT_MS)
     })
     try {

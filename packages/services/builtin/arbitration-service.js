@@ -711,8 +711,8 @@ export class ArbitrationService extends ServiceProvider {
       const winnerSide = voters[dispute.verdict]
       const loserSide = dispute.verdict === 'claimant' ? voters.respondent : voters.claimant
       try {
-        for (const voter of winnerSide) this.node.reputation.recordChallenge(voter, true, 0)   // +10
-        for (const voter of loserSide)  this.node.reputation.recordChallenge(voter, false, 0)  // -20
+        for (const voter of winnerSide) this.node.reputation.recordChallenge(voter, true, 0) // +10
+        for (const voter of loserSide) this.node.reputation.recordChallenge(voter, false, 0) // -20
       } catch (err) {
         dispute.reputationError = err && err.message ? err.message : 'unknown'
       }

@@ -66,8 +66,7 @@ import { verifyShareEquality, POINT_BYTES, SCALAR_BYTES } from './chaum-pedersen
  *   transcript domain, etc.).
  * @returns {(ae: object) => { verdict: string, reason: string }}
  */
-export function makeInvalidShareVerifier (opts = {}) {
-  void opts
+export function makeInvalidShareVerifier (_opts = {}) {
   return function verifyInvalidShareEvidence (ae) {
     // Defensive decode. Each `hexBuf` call returns null on bad input;
     // we collect failures and short-circuit to inconclusive.
@@ -119,6 +118,5 @@ function hexBuf (s, expectedBytes) {
   if (typeof s !== 'string') return null
   if (s.length !== expectedBytes * 2) return null
   if (!/^[0-9a-f]+$/i.test(s)) return null
-  try { return b4a.from(s, 'hex') }
-  catch { return null }
+  try { return b4a.from(s, 'hex') } catch { return null }
 }

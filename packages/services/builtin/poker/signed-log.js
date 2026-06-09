@@ -201,8 +201,7 @@ export class SignedLog {
     // Emit. Subscriber errors are swallowed — we will not let a buggy
     // listener block the log.
     for (const fn of this._subscribers) {
-      try { fn(frozen, index) }
-      catch (err) { this._log('subscriber-error', { error: err && err.message }) }
+      try { fn(frozen, index) } catch (err) { this._log('subscriber-error', { error: err && err.message }) }
     }
 
     return { ok: true, index, ts: entry.ts }

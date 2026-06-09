@@ -91,8 +91,7 @@ export class PokerWsAdapter {
 
     this._upgradeHandler = (req, socket, head) => {
       let url
-      try { url = new URL(req.url, 'http://localhost') }
-      catch { return /* not ours */ }
+      try { url = new URL(req.url, 'http://localhost') } catch { return /* not ours */ }
       const tableKey = matchTableKey(url.pathname)
       if (!tableKey) return // not our path — let other handlers route it
 

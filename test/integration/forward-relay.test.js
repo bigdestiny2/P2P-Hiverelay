@@ -35,13 +35,13 @@ async function harness (t, { enabled = true } = {}) {
 
   const cDht = new DHT({ bootstrap: boot })
   const conn = cDht.connect(rKp.publicKey)
-  await new Promise((res, rej) => { conn.on('open', res); conn.on('error', rej) })
+  await new Promise((resolve, reject) => { conn.on('open', resolve); conn.on('error', reject) })
   const mux = Protomux.from(conn)
   const ch = mux.createChannel({ protocol: 'hiverelay-forward', id: null })
   const state = { got: '', status: null }
-  const statusMsg = ch.addMessage({ encoding: statusEnc, onmessage: (m) => { state.status = m } })
+  ch.addMessage({ encoding: statusEnc, onmessage: (m) => { state.status = m } })
   const dataMsg = ch.addMessage({ encoding: dataEnc, onmessage: (m) => { state.got += b4a.toString(m.data) } })
-  const closeMsg = ch.addMessage({ encoding: closeEnc })
+  ch.addMessage({ encoding: closeEnc })
   const openMsg = ch.addMessage({ encoding: openEnc })
   ch.open()
 
