@@ -6,6 +6,42 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.10.4] — 2026-06-09
+
+Security patch — two issues from the codebase audit.
+
+### Security
+
+- **Verifier: bind anchor proofs to the requested drive (HIGH).**
+  `fetchAnchorProof` reconstructs the signed payload from `proof.appKey`
+  but never checked it against the drive key it asked for. A relay could
+  answer a query for drive X with a validly-signed proof for a different
+  drive Y it had anchored, and the audit would report X as anchored. It
+  now rejects (`appkey-mismatch`) unless `proof.appKey` equals the
+  requested `driveKeyHex` (case-insensitive), matching the in-tree
+  `anchor-proof-verifier.js` `expectedAppKey` binding. (`packages/verifier/index.js`)
+
+- **Redact transport secrets from unauthenticated `/status` +
+  `/api/overview` (MEDIUM).** Both endpoints are intentionally
+  unauthenticated but returned the holesail `connectionKey`, Tor
+  `onionAddress`, disk `mountPath`, and seeding-registry `key`. Leaking
+  the holesail key is an escalation: an attacker can tunnel to the API
+  (the tunnel terminates on `127.0.0.1`) and ride the localhost auth
+  fallback. `getStats({ includeSecrets })` now redacts these for
+  unauthenticated callers; the handlers pass the request's auth result,
+  so authenticated callers (valid API key, or localhost when no key is
+  set) still see them. Trusted in-process consumers (CLI, metrics, the
+  auth-gated WS feed) are unchanged. `/api/registry` and `/api/manage/*`,
+  which also surface these values, were already behind auth.
+  (`relay-node/index.js`, `relay-node/api.js`)
+
+### Tests
+
+- `test/unit/verifier.test.js` — proof rejected when appKey ≠ requested
+  drive; accepted when it matches (case-insensitive).
+- `test/unit/status-secrets-redaction.test.js` — secrets redacted when
+  `includeSecrets:false`, present by default and when true.
+
 ## [0.10.3] — 2026-06-09
 
 Critical restart-persistence patch. A clean restart — operator Ctrl+C,

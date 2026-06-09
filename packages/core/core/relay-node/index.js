@@ -1458,7 +1458,20 @@ export class RelayNode extends EventEmitter {
     return this.appLifecycle.broadcastUnseed(appKeyHex, publisherPubkeyHex, signatureHex, timestamp)
   }
 
-  getStats () {
+  /**
+   * @param {object} [opts]
+   * @param {boolean} [opts.includeSecrets=true] - when false, redact
+   *   transport credentials and infra identifiers that must not be exposed
+   *   to an unauthenticated caller: the holesail connectionKey (a leak of
+   *   it lets a remote attacker tunnel to the API and ride the localhost
+   *   auth fallback), the Tor onion address (defeats a stealth relay), the
+   *   disk mountPath (server FS layout), and the seeding-registry key.
+   *   Defaults to true so trusted in-process callers (CLI, metrics, the
+   *   auth-gated WS feed) are unchanged; the HTTP /status and /api/overview
+   *   handlers pass the request's auth result.
+   */
+  getStats (opts = {}) {
+    const includeSecrets = opts.includeSecrets !== false
     const accessControlStats = this.accessControl
       ? {
           pairedDevices: this.accessControl.allowedDevices.size,
@@ -1467,7 +1480,7 @@ export class RelayNode extends EventEmitter {
       : null
     const underReplicated = [...this._replicationHealth.values()].filter(v => v.state === 'under-replicated').length
 
-    return {
+    const stats = {
       running: this.running,
       mode: this.mode,
       publicKey: this.swarm ? b4a.toString(this.swarm.keyPair.publicKey, 'hex') : null,
@@ -1539,6 +1552,26 @@ export class RelayNode extends EventEmitter {
             lastError: null
           }
     }
+
+    if (!includeSecrets) {
+      // Strip transport credentials / infra identifiers for unauthenticated
+      // callers. Keep the running/enabled booleans so the dashboard still
+      // shows transport state — only the secret value is removed.
+      if (stats.holesail && stats.holesail.connectionKey != null) {
+        stats.holesail = { ...stats.holesail, connectionKey: null }
+      }
+      if (stats.tor && stats.tor.onionAddress != null) {
+        stats.tor = { ...stats.tor, onionAddress: null }
+      }
+      if (stats.disk && stats.disk.mountPath != null) {
+        stats.disk = { ...stats.disk, mountPath: null }
+      }
+      if (stats.registry && stats.registry.key != null) {
+        stats.registry = { ...stats.registry, key: null }
+      }
+    }
+
+    return stats
   }
 
   listDevices () {

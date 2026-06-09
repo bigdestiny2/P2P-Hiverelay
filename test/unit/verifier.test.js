@@ -1,5 +1,5 @@
 import test from 'brittle'
-import { verifyRelays, compareDrive } from 'p2p-hiverelay-verifier'
+import { verifyRelays, compareDrive, fetchAnchorProof } from 'p2p-hiverelay-verifier'
 
 // We use an injected fetch so we never hit real network. The
 // verifier's contract is "same input bytes → same verdict" — perfect
@@ -173,4 +173,49 @@ test('software-URL divergence is reported with severity=info (different impls al
   const sw = report.divergences.find(d => d.field === 'software')
   t.ok(sw)
   t.is(sw.severity, 'info')
+})
+
+const DRIVE_X = 'a'.repeat(64)
+const DRIVE_Y = 'b'.repeat(64)
+
+test('fetchAnchorProof rejects a proof whose appKey is not the requested drive', async (t) => {
+  // A relay answers a query for DRIVE_X with a proof for DRIVE_Y (which it
+  // genuinely anchored, so the signature would verify). Without the
+  // appKey↔driveKey binding this would pass the audit for DRIVE_X.
+  const fetch = mockFetch({
+    [RELAY_A + '/api/anchors/' + DRIVE_X + '/proof']: {
+      body: {
+        appKey: DRIVE_Y,
+        relayPubkey: 'c'.repeat(64),
+        signature: 'd'.repeat(128),
+        version: 1,
+        attestedAt: Date.now(),
+        anchored: true
+      }
+    }
+  })
+  const res = await fetchAnchorProof(RELAY_A, DRIVE_X, { fetch })
+  t.is(res.ok, false, 'mismatched proof is rejected')
+  t.is(res.error, 'appkey-mismatch', 'rejected for the binding, not signature')
+  t.absent(res.verified, 'never reports verified for the wrong drive')
+})
+
+test('fetchAnchorProof passes the binding when appKey matches the requested drive', async (t) => {
+  // appKey matches, so the binding check passes and we proceed to the
+  // signature step (which fails here on a bogus signature — the point is
+  // it is NOT short-circuited as appkey-mismatch).
+  const fetch = mockFetch({
+    [RELAY_A + '/api/anchors/' + DRIVE_X + '/proof']: {
+      body: {
+        appKey: DRIVE_X.toUpperCase(), // case-insensitive match
+        relayPubkey: 'c'.repeat(64),
+        signature: 'd'.repeat(128),
+        version: 1,
+        attestedAt: Date.now(),
+        anchored: true
+      }
+    }
+  })
+  const res = await fetchAnchorProof(RELAY_A, DRIVE_X, { fetch })
+  t.not(res.error, 'appkey-mismatch', 'matching appKey is not rejected by the binding')
 })

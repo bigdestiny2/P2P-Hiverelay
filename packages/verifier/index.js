@@ -180,6 +180,16 @@ export async function fetchAnchorProof (relayUrl, driveKeyHex, opts = {}) {
     return { relay: relayUrl, ok: false, error: 'malformed proof' }
   }
 
+  // Bind the proof to the drive we actually asked about. The signed
+  // payload below is built from proof.appKey, so without this check a
+  // relay can answer a query for drive X with a validly-signed proof for
+  // a DIFFERENT drive Y it anchored — and it passes the audit for X. This
+  // mirrors the expectedAppKey binding in core/anchor-proof-verifier.js.
+  if (typeof proof.appKey !== 'string' ||
+      proof.appKey.toLowerCase() !== driveKeyHex.toLowerCase()) {
+    return { relay: relayUrl, ok: false, error: 'appkey-mismatch', proof }
+  }
+
   // Reconstruct the signed payload and verify against the relay's pubkey
   let verified = false
   try {

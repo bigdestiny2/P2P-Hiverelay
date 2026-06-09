@@ -500,7 +500,12 @@ export class RelayAPI extends EventEmitter {
         }
 
         if (path === '/status') {
-          return this._json(res, this.node.getStats())
+          // /status is intentionally unauthenticated, so redact transport
+          // secrets unless the caller is authenticated (valid API key, or
+          // localhost when no key is configured). Leaking the holesail
+          // connectionKey here lets a remote attacker tunnel to the API
+          // and ride the localhost auth fallback.
+          return this._json(res, this.node.getStats({ includeSecrets: this._checkAuth(req) }))
         }
 
         if (path === '/metrics') {
@@ -679,7 +684,10 @@ export class RelayAPI extends EventEmitter {
         }
 
         if (path === '/api/overview') {
-          const stats = this.node.getStats()
+          // Unauthenticated like /status — redact transport secrets unless
+          // the caller is authenticated.
+          const authed = this._checkAuth(req)
+          const stats = this.node.getStats({ includeSecrets: authed })
           const mem = process.memoryUsage()
           const uptimeMs = this.node.metrics ? Date.now() - this.node.metrics.startedAt : 0
           const hours = Math.round(uptimeMs / 3600000 * 100) / 100
@@ -733,8 +741,8 @@ export class RelayAPI extends EventEmitter {
             memory: { heapUsed: mem.heapUsed, rss: mem.rss },
             errors: this.node.metrics ? this.node.metrics._errorCount : 0,
             reputation: reputationSummary,
-            tor: this.node.torTransport ? this.node.torTransport.getInfo() : null,
-            holesailKey: this.node.holesailTransport ? this.node.holesailTransport.connectionKey : null,
+            tor: authed && this.node.torTransport ? this.node.torTransport.getInfo() : null,
+            holesailKey: authed && this.node.holesailTransport ? this.node.holesailTransport.connectionKey : null,
             health: this.node.getHealthStatus(),
             bandwidth: bandwidthSummary,
             registry: registrySummary,
