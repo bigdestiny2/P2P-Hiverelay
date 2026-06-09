@@ -2490,7 +2490,13 @@ export class RelayAPI extends EventEmitter {
     }
 
     if (this._gateway) {
-      await this._gateway.close()
+      // Never let a gateway-close failure abort the rest of teardown —
+      // skipping server.close() below would leak the listening socket and
+      // cause EADDRINUSE when start() re-binds the port on a self-heal
+      // restart.
+      try { await this._gateway.close() } catch (err) {
+        this.emit('gateway-close-error', { error: err.message })
+      }
     }
 
     if (this._rateLimitCleanup) {
@@ -2501,6 +2507,11 @@ export class RelayAPI extends EventEmitter {
 
     if (!this.server) return
     return new Promise((resolve) => {
+      // Terminate idle keep-alive connections so close() doesn't stall
+      // waiting for dashboard/WS clients to disconnect (Node 18.2+).
+      if (typeof this.server.closeIdleConnections === 'function') {
+        try { this.server.closeIdleConnections() } catch (_) {}
+      }
       this.server.close(() => {
         this.server = null
         this.emit('stopped')

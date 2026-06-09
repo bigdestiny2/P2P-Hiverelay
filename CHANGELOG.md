@@ -6,6 +6,61 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.10.3] — 2026-06-09
+
+Critical restart-persistence patch. A clean restart — operator Ctrl+C,
+systemd/Fly SIGTERM, or an in-process SelfHeal cycle — silently wiped
+all seeded apps from disk and could fail to come back up. Four coupled
+defects produced it; all are fixed, pinned by a new restart-persistence
+integration test and a gateway-close unit test.
+
+### Fixes
+
+- **Shutdown no longer erases the app registry (data loss).** `stop()`
+  tore down every seeded app via `unseedApp()`, which persisted a
+  registry delete — so each restart emptied `app-registry`. `unseedApp`
+  now takes a `forget` flag; the shutdown loop passes `forget:false`,
+  releasing live drive/swarm handles while keeping the persisted entry
+  for `reseedFromRegistry` to reload. (`relay-node/index.js`,
+  `app-lifecycle.js`)
+
+- **`HyperGateway.close()` no longer throws.** It iterated the
+  `DriveCache` directly (not iterable) and unwrapped the wrong value,
+  throwing `this._drives is not iterable` on every close — which
+  aborted `RelayAPI.stop()` before `server.close()`, leaking the HTTP
+  listener and causing `EADDRINUSE` when the next `start()` re-bound the
+  port. Now iterates `.entries()` and closes `entry.drive`; the gateway
+  close is also wrapped in `api.stop()` so `server.close()` always runs,
+  and idle keep-alive sockets are terminated so close can't stall.
+  (`gateway/hyper-gateway.js`, `relay-node/api.js`)
+
+- **Registry Hyperbee reopens on a recreated store.** On a SelfHeal
+  restart `start()` recreates the corestore, but the registry's bee
+  still pointed at the closed old store, so reseed read a dead core
+  (`SESSION_CLOSED`) and repopulated nothing. New
+  `AppRegistry.detachStore()` is called when the store is recreated so
+  the bee reopens cleanly. (`app-registry.js`, `relay-node/index.js`)
+
+- **Registry writes are serialized; the bee is open before seeding.**
+  Two latent persistence bugs surfaced under test: concurrent
+  `bee.put()` calls raced as a read-modify-write and silently dropped
+  entries (seeding two apps in quick succession could lose one, even
+  without a restart); and `start()` returned before the
+  fire-and-forget reseed opened the bee, so an app seeded in that gap
+  was set in memory but never persisted. Bee writes now run through a
+  serialized write-chain, and reseed is split into an awaited
+  load/hydrate phase (opens the bee) plus a fire-and-forget
+  drive-reseed phase. (`app-registry.js`, `app-lifecycle.js`,
+  `relay-node/index.js`)
+
+### Tests
+
+- `test/integration/restart-persistence.test.js` — asserts seeded apps
+  survive both an in-process `stop()`/`start()` cycle and a
+  fresh-process restart over the same storage.
+- `test/unit/gateway-close.test.js` — pins `HyperGateway.close()`
+  draining the cache without throwing.
+
 ## [0.10.1] — 2026-06-07
 
 Operator-facing observability + dev-experience patch release. Six

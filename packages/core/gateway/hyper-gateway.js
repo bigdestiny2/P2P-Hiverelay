@@ -588,7 +588,14 @@ export class HyperGateway extends EventEmitter {
   }
 
   async close () {
-    for (const [, drive] of this._drives) {
+    // DriveCache is not directly iterable — iterate its entries(), and each
+    // value is a { drive, lastAccess } wrapper, not the drive itself. The
+    // previous `for (const [, drive] of this._drives)` threw
+    // "this._drives is not iterable" on every close(), leaking the HTTP
+    // server (EADDRINUSE on self-heal restart).
+    for (const [, entry] of this._drives.entries()) {
+      const drive = entry && entry.drive
+      if (!drive || drive.closed) continue
       try { await drive.close() } catch (err) {
         this.emit('drive-close-error', { error: err.message })
       }

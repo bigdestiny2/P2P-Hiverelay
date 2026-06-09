@@ -499,6 +499,11 @@ export class RelayNode extends EventEmitter {
       // Re-create store if it was closed (e.g. after self-heal restart)
       if (this.store.closed) {
         this.store = new Corestore(this.config.storage)
+        // The registry's Hyperbee is backed by the OLD (now-closed) store.
+        // Drop it so setStore()/load() below reopen the bee on the fresh
+        // store; otherwise reseedFromRegistry reads a closed core, gets
+        // SESSION_CLOSED, and silently repopulates nothing.
+        this.appRegistry.detachStore()
       }
       await this.store.ready()
 
@@ -506,13 +511,13 @@ export class RelayNode extends EventEmitter {
       // persistence layer uses a Hyperbee sibling-core instead of the
       // JSON-blob file. Must be called BEFORE the first registry load
       // (which happens in _reseedFromRegistry). Safe on self-heal
-      // restart: setStore is idempotent on the same store, but if the
-      // store was re-created above, we re-attach to the fresh one.
+      // restart: setStore is idempotent on the same store, and after a
+      // store re-create we detached above so this re-attaches cleanly.
       try {
         this.appRegistry.setStore(this.store)
       } catch (_) {
-        // Already attached + bee already opened (post-self-heal-restart
-        // path can fall through here). Harmless.
+        // Already attached + bee already opened (same-store restart path
+        // can fall through here). Harmless.
       }
 
       await this.bootstrapCache.load()
@@ -1252,10 +1257,21 @@ export class RelayNode extends EventEmitter {
       this._startCustodyExpiryMonitor()
 
       // Load app registry from disk and reseed all persisted apps.
-      // Tracked so a stop() that fires while reseed is fanning out
-      // (each seedApp cascades into eagerReplicate — see vector A1)
-      // drains every fan-out before tearing down the corestore.
-      this._trackFireAndForget(this._reseedFromRegistry().catch((err) => {
+      // The load/hydrate half is AWAITED here so the registry's Hyperbee
+      // is open before start() returns — otherwise an app seeded in the
+      // gap before the (formerly fire-and-forget) reseed opened the bee
+      // is set in memory but silently never persisted.
+      // The drive re-seeding half is tracked fire-and-forget so a stop()
+      // that fires while it fans out (each seedApp cascades into
+      // eagerReplicate — see vector A1) drains every fan-out before
+      // tearing down the corestore.
+      let reseedEntries = []
+      try {
+        reseedEntries = await this.appLifecycle.loadRegistry()
+      } catch (err) {
+        if (!isAbortError(err)) this.emit('reseed-error', { error: err })
+      }
+      this._trackFireAndForget(this.appLifecycle.reseedDrives(reseedEntries).catch((err) => {
         if (isAbortError(err)) return
         this.emit('reseed-error', { error: err })
       }))
@@ -1430,8 +1446,8 @@ export class RelayNode extends EventEmitter {
     return this.appLifecycle.seedApp(appKeyHex, opts)
   }
 
-  async unseedApp (appKeyHex) {
-    return this.appLifecycle.unseedApp(appKeyHex)
+  async unseedApp (appKeyHex, opts = {}) {
+    return this.appLifecycle.unseedApp(appKeyHex, opts)
   }
 
   verifyUnseedRequest (appKeyHex, publisherPubkeyHex, signatureHex, timestamp) {
@@ -3430,10 +3446,14 @@ export class RelayNode extends EventEmitter {
       try { await this.reputation.save(join(this.config.storage, 'reputation.json')) } catch (_) {}
     }
 
-    // Unseed all apps
+    // Tear down all apps' live resources WITHOUT forgetting them. A clean
+    // shutdown must not erase the registry — the entries are reloaded by
+    // reseedFromRegistry on the next start() (operator restart, SIGTERM,
+    // or in-process self-heal). Using forget:true here was a data-loss bug
+    // that wiped all seeded content on every restart.
     for (const appKeyHex of this.seededApps.keys()) {
       try {
-        await withTimeout(this.unseedApp(appKeyHex), timeout, `unseedApp(${appKeyHex.slice(0, 8)})`)
+        await withTimeout(this.unseedApp(appKeyHex, { forget: false }), timeout, `unseedApp(${appKeyHex.slice(0, 8)})`)
       } catch (_) {}
     }
 

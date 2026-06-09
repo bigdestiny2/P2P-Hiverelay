@@ -51,6 +51,11 @@ export class AppRegistry extends EventEmitter {
     // _persistEntryToBee / _deleteEntryFromBee adds its promise; on
     // settle (success OR error) it's removed.
     this._pendingBeeOps = new Set()
+    // Serialize bee writes. Concurrent bee.put()/del() calls are a
+    // read-modify-write race that silently drops entries (seeding two
+    // apps in quick succession could lose one). Chain every write onto
+    // this tail so they apply strictly in order.
+    this._beeWriteTail = Promise.resolve()
 
     // Primary state: appKey hex → entry
     this.apps = new Map()
@@ -81,6 +86,24 @@ export class AppRegistry extends EventEmitter {
       throw new Error('setStore must be called before load()')
     }
     this._store = store
+  }
+
+  /**
+   * Drop the current Hyperbee handle so a later setStore()/load() can
+   * reopen against a fresh Corestore. Used on self-heal restart, where
+   * stop() closes the corestore and start() recreates it: the old `_bee`
+   * is backed by the now-closed core, so reads (reseedFromRegistry) would
+   * fail with SESSION_CLOSED and silently reseed nothing. We do NOT close
+   * the bee here — its underlying core is already closed with the store.
+   * The in-memory `apps`/`byAppId` maps are left intact; load() re-hydrates
+   * them from the reopened bee.
+   */
+  detachStore () {
+    this._bee = null
+    this._beeReady = false
+    this._store = null
+    this._pendingBeeOps.clear()
+    this._beeWriteTail = Promise.resolve()
   }
 
   // ─── Queries ───────────────────────────────────────────────
@@ -858,41 +881,52 @@ export class AppRegistry extends EventEmitter {
   }
 
   /**
-   * v0.8.25 — single-entry persistence path used by bee mode.
-   * Fires for every set/update/delete/setAnchored/clearAnchored, so each
+   * Enqueue a bee write so it runs after all previously-enqueued writes.
+   * Used by the v0.8.25 single-entry persistence path (bee mode), which
+   * fires for every set/update/delete/setAnchored/clearAnchored — each
    * mutation writes one small block instead of triggering a debounced
-   * rewrite of the whole registry. Errors are surfaced via the 'error'
-   * event but don't block the in-memory mutation (the caller already
-   * has the updated Map state; persistence is best-effort).
+   * rewrite of the whole registry. Serialization prevents the concurrent
+   * read-modify-write race that silently drops entries. The returned
+   * promise resolves when THIS write settles; it's tracked in
+   * _pendingBeeOps so flush() can drain. Errors are caught by `run` and
+   * surfaced via the 'error' event without blocking the in-memory
+   * mutation (the caller already has the updated Map state).
    */
-  async _persistEntryToBee (appKey) {
-    if (!this._beeReady || !this._bee) return
-    const entry = this.apps.get(appKey)
-    if (!entry) return
-    const op = (async () => {
-      try {
-        await this._bee.put(appKey, this._persistShape(appKey, entry))
-      } catch (err) {
-        this.emit('error', { context: 'persist-bee', appKey, error: err })
-      }
-    })()
+  _enqueueBeeWrite (run) {
+    // Snapshot the entry value at enqueue time so a later mutation can't
+    // change what this op writes once it's already in the queue.
+    const op = this._beeWriteTail.then(run, run)
+    this._beeWriteTail = op
     this._pendingBeeOps.add(op)
     op.finally(() => this._pendingBeeOps.delete(op))
     return op
   }
 
+  async _persistEntryToBee (appKey) {
+    if (!this._beeReady || !this._bee) return
+    const entry = this.apps.get(appKey)
+    if (!entry) return
+    const shape = this._persistShape(appKey, entry)
+    return this._enqueueBeeWrite(async () => {
+      if (!this._beeReady || !this._bee) return
+      try {
+        await this._bee.put(appKey, shape)
+      } catch (err) {
+        this.emit('error', { context: 'persist-bee', appKey, error: err })
+      }
+    })
+  }
+
   async _deleteEntryFromBee (appKey) {
     if (!this._beeReady || !this._bee) return
-    const op = (async () => {
+    return this._enqueueBeeWrite(async () => {
+      if (!this._beeReady || !this._bee) return
       try {
         await this._bee.del(appKey)
       } catch (err) {
         this.emit('error', { context: 'delete-bee', appKey, error: err })
       }
-    })()
-    this._pendingBeeOps.add(op)
-    op.finally(() => this._pendingBeeOps.delete(op))
-    return op
+    })
   }
 
   /**

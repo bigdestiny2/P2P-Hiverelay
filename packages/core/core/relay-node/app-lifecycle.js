@@ -38,14 +38,35 @@ export class AppLifecycle extends EventEmitter {
     return this.node.appRegistry.apps
   }
 
-  async reseedFromRegistry () {
+  /**
+   * Open + hydrate the registry from disk and return the entries to
+   * re-seed. This is the FAST half of restart recovery (open the bee,
+   * read entries into the in-memory Map) and MUST be awaited before
+   * start() returns: until the bee is open, appRegistry persistence
+   * no-ops, so any app seeded in the gap between start() and reseed
+   * would be set in memory but never written to disk. The slow half —
+   * re-seeding each drive (swarm joins, replication) — is reseedDrives,
+   * run fire-and-forget.
+   *
+   * @returns {Promise<Array>} entries to pass to reseedDrives
+   */
+  async loadRegistry () {
     const node = this.node
     const entries = await node.appRegistry.load()
     if (!entries.length) {
       await this.migrateOldSeededApps()
-      return
+      return []
     }
+    return entries
+  }
 
+  /**
+   * Re-seed drives for previously-persisted entries. Safe to run
+   * fire-and-forget after start(); each seedApp cascades into
+   * eagerReplicate (tracked by the LifecycleScope so stop() drains it).
+   */
+  async reseedDrives (entries) {
+    if (!Array.isArray(entries) || !entries.length) return
     for (const entry of entries) {
       if (!entry.appKey) continue
       try {
@@ -78,6 +99,15 @@ export class AppLifecycle extends EventEmitter {
         this.emit('reseed-error', { appKey: entry.appKey, error: err })
       }
     }
+  }
+
+  /**
+   * Combined load + reseed. Retained for callers that want the whole
+   * recovery in one await (e.g. the Bare relay entrypoint).
+   */
+  async reseedFromRegistry () {
+    const entries = await this.loadRegistry()
+    await this.reseedDrives(entries)
   }
 
   /**
@@ -1292,7 +1322,23 @@ export class AppLifecycle extends EventEmitter {
     }
   }
 
-  async unseedApp (appKeyHex) {
+  /**
+   * Tear down a seeded app's live resources (drive, swarm topic, download
+   * ranges).
+   *
+   * @param {string} appKeyHex
+   * @param {object} [opts]
+   * @param {boolean} [opts.forget=true] - when true (the default, used by
+   *   operator/P2P unseed, eviction, and custody-retire), the registry
+   *   entry is deleted and the deletion is persisted. When false, used by
+   *   stop()'s shutdown loop, the entry is KEPT on disk and only its live
+   *   in-memory refs (drive/discoveryKey/downloadRanges) are dropped, so a
+   *   subsequent start()/reseedFromRegistry repopulates it. Deleting on a
+   *   clean shutdown was a data-loss bug — every restart erased the
+   *   registry.
+   */
+  async unseedApp (appKeyHex, opts = {}) {
+    const forget = opts.forget !== false
     const node = this.node
     const entry = node.appRegistry.get(appKeyHex)
     if (!entry) return
@@ -1314,9 +1360,19 @@ export class AppLifecycle extends EventEmitter {
 
     try { await node.swarm.leave(entry.discoveryKey) } catch (_) {}
     try { await entry.drive.close() } catch (_) {}
-    node.appRegistry.delete(appKeyHex) // auto-cleans dedup index + persists
 
-    this.emit('unseeded', { appKey: appKeyHex })
+    if (forget) {
+      node.appRegistry.delete(appKeyHex) // auto-cleans dedup index + persists
+    } else {
+      // Keep the persisted entry; just drop the live handles so reseed
+      // can rebuild them. reseedFromRegistry overwrites these via
+      // _hydrateEntry on the next start(), but null them now so nothing
+      // touches the closed drive in the meantime.
+      entry.drive = null
+      entry.discoveryKey = null
+    }
+
+    this.emit('unseeded', { appKey: appKeyHex, forgotten: forget })
   }
 
   /**
