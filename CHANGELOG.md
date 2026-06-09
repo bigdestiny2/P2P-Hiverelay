@@ -6,6 +6,45 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.10.5] — 2026-06-10
+
+Security patch — two more audit findings on the auth boundary and the
+forward-relay transport.
+
+### Security
+
+- **`trustProxy` + no API key auth bypass (MEDIUM).** `_isLocalRequest`
+  — the authority for the API-key-less localhost auth fallback AND the
+  `LOCAL_ONLY_DISPATCH_ROUTES` gate (`identity.sign`) — derived the
+  client IP from `X-Forwarded-For`/`X-Real-IP` when `trustProxy` was on.
+  A remote caller could send `X-Forwarded-For: 127.0.0.1` and pass every
+  localhost-gated check. It now reads the real socket address (never the
+  forwarded headers) and returns false whenever `trustProxy` is set (a
+  co-located proxy's 127.0.0.1 socket is not a trusted admin), so those
+  modes require an API key. A startup warning is emitted for the
+  `trustProxy` + no-key combination. `X-Forwarded-For` is still used for
+  rate-limit keying only. (`relay-node/api.js`)
+
+- **Forward-relay: bound demand-dials (HIGH).** When an operator enables
+  `forwardRelay`, the relay dials DHT peers for clients. The `allowTarget`
+  policy hook was never wired (so an enabled relay would dial ANY 32-byte
+  pubkey on demand), and only a per-peer concurrency cap existed — a peer
+  could churn OPEN/CLOSE to dial in a tight loop (DHT scanning /
+  connection laundering / outbound-dial amplification) without exceeding
+  it. Adds a per-peer dial-rate limiter (`maxDialsPerMinPerPeer`, default
+  30, sliding 60s window) and wires an optional operator allowlist
+  (`config.forwardRelay.allowTargets`) through `allowTarget`. Off by
+  default still; these bound it when on. (`protocol/forward-relay.js`,
+  `relay-node/index.js`)
+
+### Tests
+
+- `test/unit/api-trustproxy-auth.test.js` — XFF spoof and trustProxy
+  localhost fallback are rejected; valid key still authorizes; the
+  no-proxy local case is unchanged.
+- `test/unit/forward-relay-limits.test.js` — dial-rate cap and
+  allowlist enforcement.
+
 ## [0.10.4] — 2026-06-09
 
 Security patch — two issues from the codebase audit.

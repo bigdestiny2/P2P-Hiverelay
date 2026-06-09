@@ -43,6 +43,12 @@ const PROTOCOL_NAME = 'hiverelay-forward'
 const DEFAULT_MAX_FORWARD_BYTES = 64 * 1024 * 1024 // 64 MB per forward
 const DEFAULT_MAX_FORWARDS_PER_PEER = 5
 const DEFAULT_MAX_DATA_MSG_BYTES = 64 * 1024 // 64 KB per frame (DoS guard)
+// Per-peer dial RATE cap (distinct from the concurrency cap above). Without
+// it, a peer can churn OPEN/CLOSE to make the relay dial arbitrary DHT
+// pubkeys in a tight loop — DHT-peer scanning / connection laundering /
+// outbound-dial amplification — while never exceeding the concurrency cap.
+const DEFAULT_MAX_DIALS_PER_MIN_PER_PEER = 30
+const DIAL_WINDOW_MS = 60 * 1000
 
 // STATUS codes
 const OK = 0
@@ -88,9 +94,28 @@ export class ForwardRelay extends EventEmitter {
     this.maxForwardBytes = opts.maxForwardBytes || DEFAULT_MAX_FORWARD_BYTES
     this.maxForwardsPerPeer = opts.maxForwardsPerPeer || DEFAULT_MAX_FORWARDS_PER_PEER
     this.maxDataMsgBytes = opts.maxDataMsgBytes || DEFAULT_MAX_DATA_MSG_BYTES
+    this.maxDialsPerMinPerPeer = opts.maxDialsPerMinPerPeer || DEFAULT_MAX_DIALS_PER_MIN_PER_PEER
     this.allowTarget = typeof opts.allowTarget === 'function' ? opts.allowTarget : null // optional policy hook
     this._perPeer = new Map() // peer hex -> active forward count
+    this._dialWindow = new Map() // peer hex -> { windowStart, count } (dial-rate limiter)
     this._active = new Set() // active forward states (for teardown)
+  }
+
+  /**
+   * Sliding 60s window per-peer dial-rate check. Returns false (and does
+   * NOT consume a slot) when the peer has already hit the cap this window.
+   * Time-bucketed so it's O(1) and self-evicting on the next window.
+   */
+  _allowDial (peerHex) {
+    const now = Date.now()
+    const w = this._dialWindow.get(peerHex)
+    if (!w || (now - w.windowStart) >= DIAL_WINDOW_MS) {
+      this._dialWindow.set(peerHex, { windowStart: now, count: 1 })
+      return true
+    }
+    if (w.count >= this.maxDialsPerMinPerPeer) return false
+    w.count++
+    return true
   }
 
   /** Attach the forward protocol to a Hyperswarm connection. */
@@ -127,6 +152,13 @@ export class ForwardRelay extends EventEmitter {
 
     const count = this._perPeer.get(peerHex) || 0
     if (count >= this.maxForwardsPerPeer) return msgs.statusMsg.send({ code: ERR_CAPACITY, message: 'forward limit reached' })
+
+    // Rate-limit dials per peer (consumes a slot even if the dial below
+    // fails, so churning failed/rapid OPENs can't be used to scan the DHT
+    // or amplify outbound dials).
+    if (!this._allowDial(peerHex)) {
+      return msgs.statusMsg.send({ code: ERR_CAPACITY, message: 'dial rate limit reached' })
+    }
 
     let targetStream
     try {
@@ -185,6 +217,7 @@ export class ForwardRelay extends EventEmitter {
   destroy () {
     for (const st of [...this._active]) this._teardown(st, OK)
     this._perPeer.clear()
+    this._dialWindow.clear()
   }
 }
 

@@ -163,6 +163,21 @@ export class RelayAPI extends EventEmitter {
       console.warn(msg)
     }
 
+    // With trustProxy on and no API key, the localhost auth fallback is
+    // disabled (it can't be trusted — see _isLocalRequest), so management
+    // and local-only routes are unreachable until a key is set. Tell the
+    // operator explicitly rather than letting them hit silent 401s.
+    if (!this._apiKey && this.trustProxy) {
+      const msg = '[SECURITY WARNING] trustProxy is enabled with no API key. ' +
+        'The localhost auth fallback is disabled in this mode (X-Forwarded-For is spoofable), ' +
+        'so management and local-only endpoints will reject all requests. ' +
+        'Set an API key via HIVERELAY_API_KEY or opts.apiKey.'
+      if (this.node && typeof this.node.emit === 'function') {
+        this.node.emit('security-warning', { message: msg })
+      }
+      console.warn(msg)
+    }
+
     // Retry on EADDRINUSE — when self-heal restarts the node, the previous
     // server.close() resolves but the OS socket may still be in TIME_WAIT.
     // Retry with exponential backoff so a fast restart doesn't fail outright.
@@ -283,7 +298,20 @@ export class RelayAPI extends EventEmitter {
   }
 
   _isLocalRequest (req) {
-    const ip = this._getClientIP(req)
+    // Authorization must be based on the REAL socket address, never on
+    // _getClientIP — that honors X-Forwarded-For / X-Real-IP, which are
+    // attacker-controlled, so trusting them here let a remote caller spoof
+    // `X-Forwarded-For: 127.0.0.1` and pass every localhost-gated check
+    // (the API-key-less auth fallback AND the LOCAL_ONLY_DISPATCH_ROUTES
+    // gate for identity.sign).
+    //
+    // And when trustProxy is set the relay sits behind a reverse proxy, so
+    // a 127.0.0.1 socket is the proxy forwarding an arbitrary external
+    // request — not a trusted local admin. We cannot distinguish the two,
+    // so localhost is never sufficient for authorization in that mode;
+    // an API key is required (see the startup warning in start()).
+    if (this.trustProxy) return false
+    const ip = req.socket ? req.socket.remoteAddress || '' : ''
     return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1'
   }
 

@@ -616,9 +616,20 @@ export class RelayNode extends EventEmitter {
       // since it lets peers reach other DHT peers through this node (bounded by
       // per-peer + byte caps + the SwarmFirewall; never an internet proxy).
       if (this.config.forwardRelay && this.config.forwardRelay.enabled) {
+        // Optional operator allowlist: if config.forwardRelay.allowTargets
+        // is a non-empty array of hex pubkeys, the relay will only dial
+        // those targets. Left unset, forward acts as a general transport
+        // (any DHT peer) but is bounded by the per-peer concurrency + dial
+        // rate caps below. Previously allowTarget was never wired, so an
+        // enabled forward-relay would dial ANY 32-byte pubkey on demand.
+        const allowList = Array.isArray(this.config.forwardRelay.allowTargets) && this.config.forwardRelay.allowTargets.length
+          ? new Set(this.config.forwardRelay.allowTargets.map(k => String(k).toLowerCase()))
+          : null
         this._forwardRelay = new ForwardRelay(this.swarm, {
           maxForwardsPerPeer: this.config.forwardRelay.maxForwardsPerPeer,
-          maxForwardBytes: this.config.forwardRelay.maxForwardBytes
+          maxForwardBytes: this.config.forwardRelay.maxForwardBytes,
+          maxDialsPerMinPerPeer: this.config.forwardRelay.maxDialsPerMinPerPeer,
+          allowTarget: allowList ? (targetHex) => allowList.has(String(targetHex).toLowerCase()) : null
         })
       }
 
