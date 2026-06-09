@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from 'fs/promises'
+import { readFile, writeFile, rename, unlink, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
 
 const CACHE_FILENAME = 'bootstrap-cache.json'
@@ -43,15 +43,20 @@ export class BootstrapCache {
     if (!this._enabled) return
 
     const peers = this._collectPeers()
+    const tmpPath = this._filePath + '.tmp'
     try {
       await mkdir(dirname(this._filePath), { recursive: true })
       const data = {
         updatedAt: Date.now(),
         peers: peers.map(p => ({ host: p.host, port: p.port }))
       }
-      await writeFile(this._filePath, JSON.stringify(data, null, 2) + '\n')
+      // Atomic write (tmp + rename) so a crash mid-write can't corrupt the
+      // bootstrap cache.
+      await writeFile(tmpPath, JSON.stringify(data, null, 2) + '\n')
+      await rename(tmpPath, this._filePath)
     } catch {
-      // Best-effort — don't crash if write fails
+      // Best-effort — don't crash if write fails. Clean up any partial tmp.
+      try { await unlink(tmpPath) } catch {}
     }
   }
 

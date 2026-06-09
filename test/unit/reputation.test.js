@@ -1,5 +1,8 @@
 import test from 'brittle'
 import { ReputationSystem } from 'p2p-hiverelay/incentive/reputation/index.js'
+import { mkdtemp, rm, readdir, readFile } from 'fs/promises'
+import { join } from 'path'
+import { tmpdir } from 'os'
 
 test('ReputationSystem - records challenges and computes score', async (t) => {
   const rep = new ReputationSystem()
@@ -78,4 +81,48 @@ test('ReputationSystem - export and import', async (t) => {
 
   t.is(rep2.getScore('relay-x'), rep1.getScore('relay-x'))
   t.is(rep2.getReliability('relay-x'), 1.0)
+})
+
+test('ReputationSystem - save is atomic: round-trips and leaves no .tmp', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'hiverelay-rep-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const filePath = join(dir, 'reputation.json')
+
+  const rep = new ReputationSystem()
+  for (let i = 0; i < 5; i++) rep.recordChallenge('relay-z', true, 120)
+  await rep.save(filePath)
+
+  // The tmp file must have been renamed away, never left behind.
+  const files = await readdir(dir)
+  t.absent(files.some(f => f.endsWith('.tmp')), 'no leftover .tmp after save')
+  t.ok(files.includes('reputation.json'), 'final file present')
+
+  const reloaded = await ReputationSystem.load(filePath)
+  t.is(reloaded.getScore('relay-z'), rep.getScore('relay-z'), 'round-trips through disk')
+})
+
+test('ReputationSystem - failed save preserves the existing file (no corruption)', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'hiverelay-rep-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const filePath = join(dir, 'reputation.json')
+
+  // Seed a known-good file.
+  const good = new ReputationSystem()
+  for (let i = 0; i < 3; i++) good.recordChallenge('relay-g', true, 100)
+  await good.save(filePath)
+  const goodBytes = await readFile(filePath, 'utf8')
+
+  // Force the write to fail: point save at a path whose parent is a FILE,
+  // so writeFile(tmp) throws. The original file must be untouched and no
+  // tmp must be left behind.
+  const rep = new ReputationSystem()
+  rep.recordChallenge('relay-bad', true, 100)
+  let errored = false
+  rep.on('save-error', () => { errored = true })
+  await rep.save(join(filePath, 'nested.json')) // filePath is a file, not a dir
+
+  t.ok(errored, 'save-error emitted on failure')
+  t.is(await readFile(filePath, 'utf8'), goodBytes, 'existing file untouched on failed save')
+  const files = await readdir(dir)
+  t.absent(files.some(f => f.endsWith('.tmp')), 'no leftover .tmp after failed save')
 })

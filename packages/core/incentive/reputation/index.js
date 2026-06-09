@@ -12,7 +12,7 @@
  */
 
 import { EventEmitter } from 'events'
-import { readFile, writeFile } from 'fs/promises'
+import { readFile, writeFile, rename, unlink } from 'fs/promises'
 
 const DECAY_RATE = 0.995 // Daily decay multiplier (~0.5% per day)
 const CHALLENGE_WEIGHT = 10 // Points per passed challenge
@@ -244,10 +244,16 @@ export class ReputationSystem extends EventEmitter {
    * Save reputation data to a JSON file
    */
   async save (filePath) {
+    const tmpPath = filePath + '.tmp'
     try {
       const data = this.export()
-      await writeFile(filePath, JSON.stringify(data, null, 2))
+      // Atomic write: write to .tmp then rename (POSIX rename is atomic), so
+      // a crash mid-write can't leave a truncated reputation.json that
+      // load() would treat as corrupt and silently reset to empty.
+      await writeFile(tmpPath, JSON.stringify(data, null, 2))
+      await rename(tmpPath, filePath)
     } catch (err) {
+      try { await unlink(tmpPath) } catch (_) {}
       this.emit('save-error', { filePath, error: err })
     }
   }

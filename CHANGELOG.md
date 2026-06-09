@@ -6,6 +6,32 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.10.6] — 2026-06-10
+
+Durability patch — make persisted JSON state crash-safe.
+
+### Fixes
+
+- **Atomic writes for persisted JSON state (MEDIUM).** Five stores
+  rewrote their file in place with a single `writeFile`, so a crash or
+  power loss mid-write left a truncated file that the loader then treated
+  as corrupt and silently reset — losing peer reputation, credit/wallet
+  balances, the bootstrap cache, and identity attestations/profiles. All
+  five now write to a `.tmp` sibling and `rename()` into place (POSIX
+  rename is atomic: readers see either the old file or the new one, never
+  a partial), cleaning up the tmp on failure. The identity stores keep
+  their `0o600` mode (rename preserves the mode set on the tmp file).
+  Matches the pattern already used by `federation.js` /
+  `app-registry.js`. Affected:
+  `incentive/reputation/index.js`, `core/bootstrap-cache.js`,
+  `incentive/credits/index.js`, `services/identity/attestation.js`,
+  `services/identity/developer-store.js`.
+
+### Tests
+
+- `test/unit/reputation.test.js` — save round-trips with no leftover
+  `.tmp`; a failed save leaves the existing file untouched.
+
 ## [0.10.5] — 2026-06-10
 
 Security patch — two more audit findings on the auth boundary and the

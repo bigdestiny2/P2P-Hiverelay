@@ -29,7 +29,7 @@
  */
 
 import { EventEmitter } from 'events'
-import { readFile, writeFile, mkdir } from 'fs/promises'
+import { readFile, writeFile, rename, unlink, mkdir } from 'fs/promises'
 import { join } from 'path'
 import {
   schnorrSign,
@@ -276,7 +276,16 @@ export class AttestationService extends EventEmitter {
     }
 
     const filePath = join(this.storagePath, 'attestations.json')
-    await writeFile(filePath, JSON.stringify(data, null, 2), { mode: 0o600 })
+    // Atomic write (tmp + rename) so a crash mid-write can't corrupt the
+    // attestation store. rename preserves the 0o600 mode set on the tmp file.
+    const tmpPath = filePath + '.tmp'
+    try {
+      await writeFile(tmpPath, JSON.stringify(data, null, 2), { mode: 0o600 })
+      await rename(tmpPath, filePath)
+    } catch (err) {
+      try { await unlink(tmpPath) } catch (_) {}
+      throw err
+    }
   }
 
   async load () {

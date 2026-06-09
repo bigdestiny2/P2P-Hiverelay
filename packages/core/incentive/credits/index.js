@@ -23,7 +23,7 @@
  */
 
 import { EventEmitter } from 'events'
-import { readFile, writeFile, mkdir } from 'fs/promises'
+import { readFile, writeFile, rename, unlink, mkdir } from 'fs/promises'
 import { dirname } from 'path'
 
 export class CreditManager extends EventEmitter {
@@ -396,10 +396,15 @@ export class CreditManager extends EventEmitter {
       }
     }
 
+    const tmpPath = this.storagePath + '.tmp'
     try {
       await mkdir(dirname(this.storagePath), { recursive: true })
-      await writeFile(this.storagePath, JSON.stringify(data, null, 2))
+      // Atomic write (tmp + rename) so a crash mid-write can't corrupt the
+      // wallet-balance file and silently zero everyone's credits on reload.
+      await writeFile(tmpPath, JSON.stringify(data, null, 2))
+      await rename(tmpPath, this.storagePath)
     } catch (err) {
+      try { await unlink(tmpPath) } catch (_) {}
       this.emit('save-error', { error: err.message })
     }
   }
