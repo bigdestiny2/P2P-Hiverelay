@@ -6,6 +6,81 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.11.0] — 2026-06-10
+
+Minor: seed denials become visible end-to-end, operators can pin foreign
+keys at archive tier through the authenticated API, and a long-standing
+dependency-resolution fault is closed — `p2p-hiverelay-client` and
+`p2p-hiveservices` were resolving a stale registry copy of core at
+**v0.7.2** instead of the workspace.
+
+### Fixed
+
+- **Client + services depended on core 0.7.2 (exact pin).** npm nested an
+  8-month-old registry copy under each package, shadowing the workspace.
+  Every builtin service extended the v0.7.2 `ServiceProvider`; the client
+  pulled its wire encodings, seeding-manifest, capability-doc, and
+  fork-proof code from v0.7.2. Concretely: v0.7.2's `seedRequestEncoding`
+  predates the revocable/unseedFreezeMs/durability tail, so an
+  archive-tier seed request **silently dropped `durability` on the wire**
+  while the v2 signature still covered it — relay-side signature mismatch
+  → silent drop → publisher timeout. Pins are now caret-ranged to the
+  workspace version. **Deploy note:** purge
+  `packages/*/node_modules/p2p-hiverelay` before `npm install` on
+  existing checkouts — npm does not prune the stale nested copies.
+  **Publish note:** the npm registry's latest is 0.9.2; core MUST be
+  published before (or with) client/services or their dependency ranges
+  are unresolvable for external consumers.
+- **`downloadWithTimeout` crashed on drives without the hyperdrive-11
+  walk surface.** The #28 re-implementation (v0.10.1) called
+  `drive.getBlobs()` unguarded; test doubles and forks without it threw
+  `TypeError`, killing the unit-test runner mid-suite from v0.10.1 on
+  (production unaffected — real hyperdrive 11.x has the surface). Such
+  drives now fall back to racing the bare `download()` Promise against
+  timeout/abort, the pre-#28 semantics.
+- **Blind-custody e2e assertions raced working auto-attestation.** The
+  suite pinned exact proof/witness counts from the era when the sweep
+  silently never fired (pre-v0.9.2 challengeNonce bug); it had been red
+  since the fix landed. Floors + membership are asserted instead.
+
+### Added
+
+- **`seedDeny` wire message — silent denial is gone.** Previously the
+  only wire response was `seedAccept`: a refused publisher saw nothing
+  and timed out. Relays now reply on the requesting channel with a
+  relay-signed, machine-readable reason —
+  `archive-requires-publisher-signature`, `signature-required`,
+  `bad-signature`, `insufficient-storage`, `accept-mode:<mode>`,
+  `delegation:<reason>`, or the non-terminal `queued-for-review`. No
+  reply to rate-limited peers (no response amplification). Old peers
+  drop the unknown message id, so mixed-version fleets degrade to the
+  previous timeout behavior. The client verifies denies (claimed relay
+  pubkey must match the noise-authenticated channel peer), tracks them
+  per request, **fast-fails `seed()` when every connected relay
+  terminally denies**, and carries reasons into the persistent-retry
+  record.
+- **Operator-pinned archive tier.** POLICY: archive (durability ≥ 1,
+  AutoHeal-maintained) remains publisher-signature-only on the anonymous
+  P2P channel — no anonymous conscription of the fleet's disks — but the
+  API-key-authenticated `/seed` endpoint now accepts `durability`: the
+  operator is the authority for their own node's storage and AutoHeal
+  budget, so they may pin any key (including foreign bare keys) at
+  archive tier. The API key is the operator signature; cross-relay,
+  other operators stay in control via accept-mode.
+- **401 observability.** API-key auth failures previously left zero
+  server-side trace (the 401 fires before body parsing). They now
+  increment per-route counters (hex ids collapsed to `:hex`, bounded
+  cardinality), warn-log with the real socket IP (throttled per route),
+  and export as `hiverelay_auth_failures_total{route="..."}` on
+  `/metrics`.
+- **Per-relay API keys in `publish-app.js`** — `--api-keys
+  "url=KEY,url=KEY"` / `HIVERELAY_API_KEYS` for fleets running a
+  distinct key per relay, plus a boxed AUTH FAILURE summary naming each
+  refusing relay and exit code 1 when 0/N relays accept.
+- **QVAC model routes** — model listing/routing endpoints on the API,
+  `qvac` CLI subcommand, ai-service integration, plus a PearBrowser
+  marketplace demo under `examples/`.
+
 ## [0.10.6] — 2026-06-10
 
 Durability patch — make persisted JSON state crash-safe.
