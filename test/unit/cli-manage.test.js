@@ -14,6 +14,11 @@ import {
   formatFederationList,
   runFederationCommand
 } from 'p2p-hiverelay/cli/federation.js'
+import {
+  buildQvacRequest,
+  formatQvacModelList,
+  runQvacCommand
+} from 'p2p-hiverelay/cli/qvac.js'
 
 const HEX64 = 'a'.repeat(64)
 const HEX64_B = 'b'.repeat(64)
@@ -600,4 +605,125 @@ test('federation: runFederationCommand unrepublish — exit 0 even when removed=
   })
   t.is(code, 0)
   t.ok(streams.outLines[0].includes('no-op'))
+})
+
+// ─── qvac request builder + dispatcher ─────────────────────────────
+
+test('qvac: buildQvacRequest register builds manage API payload', (t) => {
+  const r = buildQvacRequest('register', ['local-qvac'], {
+    type: 'llm',
+    'model-src': '/models/tiny.gguf',
+    'model-type': 'llm',
+    'model-config': '{"ctx_size":256}',
+    'completion-options': '{"temperature":0}',
+    'fallback-http': false
+  })
+  t.is(r.method, 'POST')
+  t.is(r.path, '/api/manage/ai/models')
+  t.is(r.body.backend, 'qvac')
+  t.is(r.body.modelId, 'local-qvac')
+  t.is(r.body.modelSrc, '/models/tiny.gguf')
+  t.alike(r.body.modelConfig, { ctx_size: 256 })
+  t.alike(r.body.qvac.completionOptions, { temperature: 0 })
+  t.is(r.body.qvac.fallbackToHttp, false)
+})
+
+test('qvac: buildQvacRequest register requires qvac source or loaded id', (t) => {
+  t.exception(() => buildQvacRequest('register', ['local-qvac'], {}), /model-src/)
+})
+
+test('qvac: buildQvacRequest list/remove aliases', (t) => {
+  t.alike(buildQvacRequest('ls', [], {}), {
+    method: 'GET',
+    path: '/api/manage/ai/models',
+    body: null
+  })
+  const remove = buildQvacRequest('rm', ['local-qvac'], {})
+  t.is(remove.method, 'POST')
+  t.is(remove.path, '/api/manage/ai/models/remove')
+  t.alike(remove.body, { modelId: 'local-qvac' })
+})
+
+test('qvac: formatQvacModelList surfaces model status', (t) => {
+  const printed = formatQvacModelList({
+    qvac: { enabled: true, checked: true, available: true, module: '@qvac/sdk' },
+    models: [{
+      modelId: 'local-qvac',
+      type: 'llm',
+      backend: 'qvac',
+      status: 'loaded',
+      qvac: { loaded: true, delegated: false, hasModelSrc: true },
+      stats: { requests: 2, errors: 0 }
+    }]
+  })
+  t.ok(printed.includes('QVAC SDK: available'))
+  t.ok(printed.includes('local-qvac'))
+  t.ok(printed.includes('status:loaded'))
+  t.ok(printed.includes('requests:2'))
+})
+
+test('qvac: runQvacCommand list sends bearer auth and pretty prints', async (t) => {
+  const { fetchImpl, calls } = makeFakeFetch({
+    body: {
+      ok: true,
+      qvac: { enabled: true, checked: true, available: true, module: '@qvac/sdk' },
+      qvacCount: 1,
+      models: [{
+        modelId: 'local-qvac',
+        type: 'llm',
+        backend: 'qvac',
+        status: 'registered',
+        qvac: { loaded: false, delegated: false, hasModelSrc: true },
+        stats: { requests: 0, errors: 0 }
+      }]
+    }
+  })
+  const streams = captureStreams()
+  const code = await runQvacCommand({
+    argv: { 'api-url': 'http://relay.test', 'api-key': 'secret' },
+    positional: ['list'],
+    env: {},
+    fetchImpl,
+    out: streams.out,
+    err: streams.err
+  })
+  t.is(code, 0)
+  t.is(calls[0].url, 'http://relay.test/api/manage/ai/models')
+  t.is(calls[0].init.method, 'GET')
+  t.is(calls[0].init.headers.Authorization, 'Bearer secret')
+  t.ok(streams.outLines.join('\n').includes('status:registered'))
+})
+
+test('qvac: runQvacCommand register posts to manage API', async (t) => {
+  const { fetchImpl, calls } = makeFakeFetch({
+    body: {
+      ok: true,
+      model: {
+        modelId: 'local-qvac',
+        type: 'llm',
+        backend: 'qvac',
+        status: 'registered',
+        qvac: { loaded: false }
+      }
+    }
+  })
+  const streams = captureStreams()
+  const code = await runQvacCommand({
+    argv: { 'model-src': '/models/tiny.gguf' },
+    positional: ['register', 'local-qvac'],
+    env: {},
+    fetchImpl,
+    out: streams.out,
+    err: streams.err
+  })
+  t.is(code, 0)
+  t.is(calls[0].url, 'http://127.0.0.1:9100/api/manage/ai/models')
+  t.is(calls[0].init.method, 'POST')
+  t.alike(JSON.parse(calls[0].init.body), {
+    modelId: 'local-qvac',
+    type: 'llm',
+    backend: 'qvac',
+    modelSrc: '/models/tiny.gguf'
+  })
+  t.ok(streams.outLines[0].includes('status:registered'))
 })

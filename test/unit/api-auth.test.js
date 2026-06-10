@@ -10,7 +10,10 @@ function mockRelayNode () {
   const node = {
     running: true,
     config: { storage: null, registryAutoAccept: false },
-    metrics: { getSummary () { return { uptime: 100 } } },
+    metrics: {
+      getSummary () { return { uptime: 100 } },
+      toPrometheus () { return '# mock metrics\n' }
+    },
     _catalogEntries: [
       {
         appKey: '1'.repeat(64),
@@ -266,6 +269,57 @@ test('api-auth: POST /api/v1/unseed without API key auth works (developer-signed
   // Should be 400 (missing appKey), NOT 401
   t.is(res.statusCode, 400, 'status is 400 (not 401)')
   t.ok(res.body.error.includes('appKey'), 'error is about missing appKey, not auth')
+})
+
+test('api-auth: POST /seed forwards durability for operator-pinned archive tier', async (t) => {
+  // POLICY: archive tier (durability ≥ 1) requires a publisher signature on
+  // the anonymous P2P channel, but the API-key-authenticated /seed endpoint
+  // is operator authority — an operator may pin any key (incl. foreign
+  // bare keys) at archive tier on their own relay.
+  node._seedCalls.length = 0
+  const res = await request(port, 'POST', '/seed', {
+    appKey: 'e'.repeat(64),
+    durability: 1
+  }, { Authorization: 'Bearer ' + API_KEY })
+  t.is(res.statusCode, 200, 'authenticated archive pin accepted')
+  t.is(node._seedCalls.length, 1, 'seedApp called')
+  t.is(node._seedCalls[0].opts.durability, 1, 'durability forwarded to seedApp')
+})
+
+test('api-auth: POST /seed rejects malformed durability', async (t) => {
+  const res = await request(port, 'POST', '/seed', {
+    appKey: 'e'.repeat(64),
+    durability: 'archive'
+  }, { Authorization: 'Bearer ' + API_KEY })
+  t.is(res.statusCode, 400, 'non-integer durability rejected')
+  t.ok(res.body.error.includes('durability'), 'error names the field')
+})
+
+test('api-auth: 401s are counted per route and surfaced on /metrics', async (t) => {
+  const before = api._authFailureTotal
+  await request(port, 'POST', '/seed', { appKey: 'b'.repeat(64) })
+  await request(port, 'POST', '/seed', { appKey: 'b'.repeat(64) })
+  t.is(api._authFailureTotal, before + 2, 'total auth-failure counter incremented')
+  t.ok(api._authFailures.get('/seed') >= 2, 'per-route counter tracks /seed')
+
+  const res = await request(port, 'GET', '/metrics')
+  t.is(res.statusCode, 200, 'metrics endpoint responds')
+  t.ok(String(res.body).includes('hiverelay_auth_failures_total{route="/seed"}'), 'auth-failure counter exported to Prometheus')
+})
+
+test('api-auth: auth-failure route labels collapse hex ids (bounded cardinality)', async (t) => {
+  const intentId = 'c'.repeat(64)
+  await request(port, 'POST', '/api/custody/' + intentId + '/commit', {})
+  t.ok(api._authFailures.has('/api/custody/:hex/commit'), 'hex id collapsed to :hex in route label')
+  t.absent(api._authFailures.has('/api/custody/' + intentId + '/commit'), 'raw hex id not stored as its own route')
+})
+
+test('api-auth: authed requests do not touch the auth-failure counter', async (t) => {
+  const before = api._authFailureTotal
+  await request(port, 'POST', '/seed', { appKey: 'd'.repeat(64) }, {
+    Authorization: 'Bearer ' + API_KEY
+  })
+  t.is(api._authFailureTotal, before, 'counter unchanged on authorized call')
 })
 
 test('api-auth: teardown server', async (t) => {

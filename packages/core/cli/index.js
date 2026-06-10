@@ -9,6 +9,7 @@
  *   p2p-hiverelay start [options]     Start a relay node
  *   p2p-hiverelay seed <key>          Request seeding for a Pear app
  *   p2p-hiverelay ghostdrive ...      Ghost Drive relay workflows
+ *   p2p-hiverelay qvac ...            Manage qvac-backed AI models
  *   p2p-hiverelay status              Show node status
  *   p2p-hiverelay help                Show this help
  */
@@ -140,6 +141,7 @@ const COMMANDS = {
   ghostdrive,
   catalog,
   federation,
+  qvac,
   status,
   doctor,
   help
@@ -189,6 +191,17 @@ async function catalog () {
 async function federation () {
   const { runFederationCommand } = await import('./federation.js')
   const code = await runFederationCommand({
+    argv: args,
+    positional: args._.slice(1)
+  })
+  process.exit(code)
+}
+
+// ─── qvac (operator AI model control via /api/manage/ai/models) ───
+
+async function qvac () {
+  const { runQvacCommand } = await import('./qvac.js')
+  const code = await runQvacCommand({
     argv: args,
     positional: args._.slice(1)
   })
@@ -283,6 +296,8 @@ async function start () {
   if (args['max-storage']) cliOverrides.maxStorageBytes = parseBytes(args['max-storage'])
   if (args['max-connections']) cliOverrides.maxConnections = parseInt(args['max-connections'])
   if (args['max-bandwidth']) cliOverrides.maxRelayBandwidthMbps = parseInt(args['max-bandwidth'])
+  if (args.bootstrap) cliOverrides.bootstrapNodes = parseBootstrapNodesOrExit(args.bootstrap)
+  if (args['api-host']) cliOverrides.apiHost = String(args['api-host'])
   if (args.relay === false) cliOverrides.enableRelay = false
   if (args.seeding === false) cliOverrides.enableSeeding = false
   if (args.metrics === false) cliOverrides.enableMetrics = false
@@ -1166,6 +1181,28 @@ function parseAvailabilityClassOrExit (value) {
   return availabilityClass
 }
 
+function parseBootstrapNodesOrExit (input) {
+  try {
+    const nodes = []
+    for (const raw of parseCsvValues(input)) {
+      const sep = raw.lastIndexOf(':')
+      if (sep <= 0 || sep === raw.length - 1) throw new Error('expected host:port')
+      const host = raw.slice(0, sep)
+      const port = Number(raw.slice(sep + 1))
+      if (!host || !Number.isInteger(port) || port <= 0 || port > 65535) {
+        throw new Error('invalid host or port')
+      }
+      nodes.push({ host, port })
+    }
+    if (nodes.length === 0) throw new Error('empty bootstrap list')
+    return nodes
+  } catch (err) {
+    console.error('Invalid bootstrap list: ' + input)
+    console.error('Expected comma-separated host:port entries, e.g. 127.0.0.1:49737')
+    process.exit(1)
+  }
+}
+
 function isValidHexKey (value, length = 64) {
   return typeof value === 'string' && new RegExp(`^[0-9a-fA-F]{${length}}$`).test(value)
 }
@@ -1337,6 +1374,7 @@ Usage:
   p2p-hiverelay ghostdrive ...      Ghost Drive pin/publish/discover workflows
   p2p-hiverelay catalog ...         Operator catalog control (mode/allowlist/approve/reject/remove/pending)
   p2p-hiverelay federation ...      Cross-relay federation (list/follow/mirror/unfollow/republish/unrepublish)
+  p2p-hiverelay qvac ...            Manage qvac-backed AI models on a running node
   p2p-hiverelay status              Show node status (queries running node)
   p2p-hiverelay doctor [--fix]      Diagnose config + runtime drift; optionally auto-fix
   p2p-hiverelay help                Show this help
@@ -1352,6 +1390,8 @@ Start Options:
   --max-bandwidth <mbps>        Max relay bandwidth in Mbps (default: 100)
   --region <code>               Region code
   --port <n>                    API port (default: 9100)
+  --api-host <host>             API bind host (default: config/default.js)
+  --bootstrap <host:port,...>   Override DHT bootstrap nodes
   --seed <key>                  Seed a Pear app key on startup
   --distributed-drive           Enable distributed-drive peer bridge (Ghost Drive mode)
   --no-distributed-drive        Disable distributed-drive bridge
@@ -1411,7 +1451,13 @@ Federation Subcommands:
                                                        Republish an upstream app locally
   federation unrepublish <appKey>                      Remove a republish entry
 
-Catalog / Federation Options:
+QVAC Subcommands:
+  qvac list                                            List qvac-backed AI models
+  qvac register <modelId> --model-src <path-or-id>     Register a qvac model
+  qvac register <modelId> --loaded-model-id <id>       Register an already-loaded qvac model
+  qvac remove <modelId>                                Remove a qvac model
+
+Catalog / Federation / QVAC Options:
   --api-url <url>               Relay API base URL (default: http://127.0.0.1:9100)
   --api-key <key>               API key (or use HIVERELAY_API_KEY env)
 

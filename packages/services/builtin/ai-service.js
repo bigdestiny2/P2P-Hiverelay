@@ -11,7 +11,7 @@
  *   - Marketplace: Providers compete on price/latency, earn sats
  *
  * Phase 1: HTTP-compatible inference proxy (wraps local/remote LLM APIs)
- * Phase 2: Native ONNX/GGML runtime for local inference
+ * Phase 2: Optional qvac-backed local inference via @qvac/sdk
  *
  * Capabilities:
  *   - infer: Run inference on a model
@@ -37,15 +37,33 @@ const JOB_STATES = {
 export class AIService extends ServiceProvider {
   constructor (opts = {}) {
     super()
+    const aiOpts = opts.ai && typeof opts.ai === 'object' ? opts.ai : {}
+    const cfg = { ...opts, ...aiOpts }
+    const qvacCfg = cfg.qvac === false ? { enabled: false } : (cfg.qvac || {})
+
     this.models = new Map() // modelId -> ModelEntry
     this.jobs = new Map() // jobId -> InferenceJob
-    this.maxQueue = opts.maxQueue ?? 100
-    this.maxJobsPerCaller = opts.maxJobsPerCaller ?? 20
-    this.maxConcurrent = opts.maxConcurrent ?? 2
-    this.maxInputBytes = opts.maxInputBytes ?? 256 * 1024
-    this.maxOutputBytes = opts.maxOutputBytes ?? 512 * 1024
-    this.allowRemoteModelRegistration = opts.allowRemoteModelRegistration === true
-    this.maxCompletedJobAge = opts.maxCompletedJobAge || 3600_000
+    this.maxQueue = cfg.maxQueue ?? 100
+    this.maxJobsPerCaller = cfg.maxJobsPerCaller ?? 20
+    this.maxConcurrent = cfg.maxConcurrent ?? 2
+    this.maxInputBytes = cfg.maxInputBytes ?? 256 * 1024
+    this.maxOutputBytes = cfg.maxOutputBytes ?? 512 * 1024
+    this.allowRemoteModelRegistration = cfg.allowRemoteModelRegistration === true
+    this.maxCompletedJobAge = cfg.maxCompletedJobAge || 3600_000
+    this.qvac = {
+      enabled: qvacCfg.enabled !== false,
+      moduleName: qvacCfg.moduleName || qvacCfg.module || '@qvac/sdk',
+      importModule: qvacCfg.importModule || null,
+      prefer: qvacCfg.prefer === true || qvacCfg.preferQvac === true || cfg.preferQvac === true,
+      autoUnload: qvacCfg.autoUnload !== false,
+      failOnUnavailable: qvacCfg.failOnUnavailable === true,
+      models: Array.isArray(qvacCfg.models) ? qvacCfg.models : [],
+      checked: !!qvacCfg.sdk,
+      available: !!qvacCfg.sdk,
+      error: null
+    }
+    this._qvacSdk = qvacCfg.sdk || null
+    this._qvacLoadPromise = null
     this._running = 0
     this._queue = []
     this._cleanupTimer = null
@@ -66,6 +84,7 @@ export class AIService extends ServiceProvider {
   async start () {
     this._cleanupTimer = setInterval(() => this._cleanupCompletedJobs(), 60_000)
     if (this._cleanupTimer.unref) this._cleanupTimer.unref()
+    await this._registerConfiguredQvacModels()
   }
 
   /**
@@ -91,11 +110,16 @@ export class AIService extends ServiceProvider {
       await this._assertEndpointSafe(endpoint)
     }
 
+    const qvac = this._buildQvacModelConfig(params)
+    const backend = this._resolveModelBackend(params, qvac)
+
     const entry = {
       modelId,
       type, // 'llm', 'embedding', 'classification', 'image', 'custom'
+      backend,
       endpoint: endpoint || null,
       config: config || {},
+      qvac,
       handler: null, // Set programmatically, not via RPC
       registeredAt: Date.now(),
       stats: { requests: 0, errors: 0, totalTokens: 0, totalLatencyMs: 0 }
@@ -118,6 +142,8 @@ export class AIService extends ServiceProvider {
     if (!this._isAdminContext(context) && !this.allowRemoteModelRegistration) {
       throw new Error('ACCESS_DENIED: model removal requires relay-admin/local context')
     }
+    const entry = this.models.get(params.modelId)
+    if (entry) await this._unloadQvacModel(entry)
     const removed = this.models.delete(params.modelId)
     return { modelId: params.modelId, removed }
   }
@@ -128,8 +154,10 @@ export class AIService extends ServiceProvider {
       list.push({
         modelId: id,
         type: entry.type,
+        backend: this._publicBackend(entry),
         hasEndpoint: !!entry.endpoint,
         hasHandler: !!entry.handler,
+        qvac: entry.qvac ? this._publicQvacModelStatus(entry) : undefined,
         stats: entry.stats
       })
     }
@@ -166,6 +194,7 @@ export class AIService extends ServiceProvider {
       input,
       options: options || {},
       owner,
+      context,
       state: JOB_STATES.PENDING,
       result: null,
       error: null,
@@ -177,7 +206,7 @@ export class AIService extends ServiceProvider {
 
     // If we can run immediately, do it
     if (this._running < this.maxConcurrent) {
-      await this._runJob(job, model)
+      await this._runJob(job, model, context)
     } else {
       this._queue.push(jobId)
     }
@@ -206,20 +235,12 @@ export class AIService extends ServiceProvider {
     }
 
     const startTime = Date.now()
-    let result
-
-    if (model.handler) {
-      result = await model.handler({
-        type: 'embed',
-        input,
-        options: params.options || {},
-        context
-      })
-    } else if (model.endpoint) {
-      result = await this._httpInfer(model, { type: 'embed', input })
-    } else {
-      throw new Error('AI_NO_BACKEND: model has no handler or endpoint')
-    }
+    const result = await this._executeModel(model, {
+      type: 'embed',
+      input,
+      options: params.options || {},
+      context
+    })
 
     this._assertSizeLimit(result, this.maxOutputBytes, 'AI_OUTPUT_TOO_LARGE')
 
@@ -247,24 +268,23 @@ export class AIService extends ServiceProvider {
       running: this._running,
       maxConcurrent: this.maxConcurrent,
       totalJobs: this.jobs.size,
+      qvac: this._qvacStatus(),
       modelStats
     }
   }
 
-  async _runJob (job, model) {
+  async _runJob (job, model, context = {}) {
     this._running++
     job.state = JOB_STATES.RUNNING
     const startTime = Date.now()
 
     try {
-      let result
-      if (model.handler) {
-        result = await model.handler({ type: 'infer', input: job.input, options: job.options })
-      } else if (model.endpoint) {
-        result = await this._httpInfer(model, { type: 'infer', input: job.input })
-      } else {
-        throw new Error('AI_NO_BACKEND: model has no handler or endpoint')
-      }
+      const result = await this._executeModel(model, {
+        type: 'infer',
+        input: job.input,
+        options: job.options,
+        context: context || job.context || {}
+      })
 
       this._assertSizeLimit(result, this.maxOutputBytes, 'AI_OUTPUT_TOO_LARGE')
       job.state = JOB_STATES.COMPLETE
@@ -292,7 +312,410 @@ export class AIService extends ServiceProvider {
       if (!job || job.state !== JOB_STATES.PENDING) continue
       const model = this.models.get(job.modelId)
       if (!model) continue
-      this._runJob(job, model)
+      this._runJob(job, model, job.context || {})
+    }
+  }
+
+  async _executeModel (model, request) {
+    if (model.handler) {
+      return model.handler({
+        type: request.type,
+        input: request.input,
+        options: request.options || {},
+        context: request.context || {}
+      })
+    }
+
+    if (this._shouldUseQvac(model)) {
+      try {
+        return await this._qvacInfer(model, request)
+      } catch (err) {
+        if (this._isQvacUnavailableError(err) && model.endpoint && model.qvac?.fallbackToHttp !== false) {
+          return this._httpInfer(model, { type: request.type, input: request.input })
+        }
+        throw err
+      }
+    }
+
+    if (model.endpoint) {
+      return this._httpInfer(model, { type: request.type, input: request.input })
+    }
+
+    if (model.qvac) {
+      throw this._qvacUnavailableError('qvac backend is configured but @qvac/sdk is not available')
+    }
+
+    throw new Error('AI_NO_BACKEND: model has no handler or endpoint')
+  }
+
+  _resolveModelBackend (params, qvac) {
+    const requested = params.backend || params.config?.backend
+    if (requested) return requested
+    if (qvac) return 'qvac'
+    if (params.endpoint) return 'http'
+    return null
+  }
+
+  _publicBackend (entry) {
+    if (entry.handler) return 'handler'
+    if (entry.backend) return entry.backend
+    if (entry.endpoint) return 'http'
+    if (entry.qvac) return 'qvac'
+    return null
+  }
+
+  _buildQvacModelConfig (params) {
+    const config = params.config || {}
+    const qvac = params.qvac || config.qvac || null
+    const hasQvacFields = params.backend === 'qvac' ||
+      config.backend === 'qvac' ||
+      !!qvac ||
+      params.modelSrc !== undefined ||
+      params.qvacModelId !== undefined ||
+      params.loadedModelId !== undefined ||
+      params.modelConfig !== undefined ||
+      params.delegate !== undefined
+
+    if (!hasQvacFields) return null
+
+    const modelSrc = params.modelSrc ??
+      qvac?.modelSrc ??
+      config.modelSrc ??
+      null
+    const loadedModelId = params.loadedModelId ??
+      params.qvacModelId ??
+      qvac?.loadedModelId ??
+      qvac?.qvacModelId ??
+      null
+    const modelType = params.modelType ??
+      qvac?.modelType ??
+      config.modelType ??
+      this._inferQvacModelType(params.type)
+
+    return {
+      modelSrc: loadedModelId ? modelSrc : (modelSrc ?? params.modelId),
+      modelType,
+      modelConfig: params.modelConfig ?? qvac?.modelConfig ?? config.modelConfig ?? {},
+      loadedModelId,
+      delegate: params.delegate ?? qvac?.delegate ?? config.delegate ?? null,
+      loadOptions: qvac?.loadOptions || {},
+      completionOptions: qvac?.completionOptions || {},
+      embedOptions: qvac?.embedOptions || {},
+      fallbackToHttp: qvac?.fallbackToHttp !== false,
+      unloadOnStop: qvac?.unloadOnStop ?? qvac?.autoUnload ?? this.qvac.autoUnload,
+      loadedByHiveRelay: false,
+      loadedAt: loadedModelId ? Date.now() : null
+    }
+  }
+
+  _inferQvacModelType (type) {
+    if (type === 'embedding') return 'embedding'
+    if (type === 'llm') return 'llm'
+    return type || undefined
+  }
+
+  _shouldUseQvac (model) {
+    if (!model.qvac) return false
+    if (model.backend === 'qvac') return true
+    if (this.qvac.prefer && !model.handler) return true
+    return !model.endpoint
+  }
+
+  async _qvacInfer (model, request) {
+    if (request.type === 'embed') return this._qvacEmbed(model, request)
+    return this._qvacCompletion(model, request)
+  }
+
+  async _loadQvacSdk () {
+    if (this._qvacSdk) return this._qvacSdk
+    if (!this.qvac.enabled) {
+      throw this._qvacUnavailableError('qvac backend is disabled')
+    }
+    if (this._qvacLoadPromise) return this._qvacLoadPromise
+
+    this._qvacLoadPromise = (async () => {
+      try {
+        const loader = this.qvac.importModule || ((name) => import(name))
+        const sdk = await loader(this.qvac.moduleName)
+        if (!sdk || typeof sdk !== 'object') {
+          throw new Error('module did not export an SDK object')
+        }
+        this._qvacSdk = sdk
+        this.qvac.checked = true
+        this.qvac.available = true
+        this.qvac.error = null
+        return sdk
+      } catch (err) {
+        this.qvac.checked = true
+        this.qvac.available = false
+        this.qvac.error = err.message || String(err)
+        this._qvacLoadPromise = null
+        throw this._qvacUnavailableError(`${this.qvac.moduleName} is not installed or could not be loaded (${this.qvac.error})`)
+      }
+    })()
+
+    return this._qvacLoadPromise
+  }
+
+  async _ensureQvacModel (model) {
+    const qvac = model.qvac
+    if (!qvac) throw this._qvacUnavailableError('model is not configured for qvac')
+    if (qvac.loadedModelId) return qvac.loadedModelId
+
+    const sdk = await this._loadQvacSdk()
+    if (typeof sdk.loadModel !== 'function') {
+      throw new Error('AI_QVAC_UNSUPPORTED: @qvac/sdk does not export loadModel')
+    }
+    if (qvac.modelSrc === undefined || qvac.modelSrc === null || qvac.modelSrc === '') {
+      throw new Error('AI_QVAC_MODEL_NOT_CONFIGURED: qvac model needs modelSrc or loadedModelId')
+    }
+
+    const loadParams = {
+      ...qvac.loadOptions,
+      modelSrc: qvac.modelSrc
+    }
+    if (qvac.modelType) loadParams.modelType = qvac.modelType
+    if (qvac.modelConfig && Object.keys(qvac.modelConfig).length > 0) {
+      loadParams.modelConfig = qvac.modelConfig
+    }
+    if (qvac.delegate) loadParams.delegate = qvac.delegate
+
+    const loaded = await sdk.loadModel(loadParams)
+    qvac.loadedModelId = this._extractQvacModelId(loaded)
+    qvac.loadedByHiveRelay = true
+    qvac.loadedAt = Date.now()
+    return qvac.loadedModelId
+  }
+
+  _extractQvacModelId (loaded) {
+    if (typeof loaded === 'string') return loaded
+    if (loaded && typeof loaded === 'object') {
+      if (typeof loaded.modelId === 'string') return loaded.modelId
+      if (typeof loaded.id === 'string') return loaded.id
+      if (typeof loaded.value === 'string') return loaded.value
+    }
+    return String(loaded)
+  }
+
+  async _qvacCompletion (model, request) {
+    const sdk = await this._loadQvacSdk()
+    if (typeof sdk.completion !== 'function') {
+      throw new Error('AI_QVAC_UNSUPPORTED: @qvac/sdk does not export completion')
+    }
+
+    const loadedModelId = await this._ensureQvacModel(model)
+    const qvacOptions = request.options?.qvac || {}
+    const completionParams = {
+      ...model.qvac.completionOptions,
+      ...qvacOptions,
+      modelId: loadedModelId,
+      history: this._toQvacHistory(request.input)
+    }
+    if (completionParams.stream === undefined) completionParams.stream = false
+    if (model.qvac.delegate && completionParams.delegate === undefined) {
+      completionParams.delegate = model.qvac.delegate
+    }
+
+    const run = sdk.completion(completionParams)
+    const final = await this._resolveQvacRun(run)
+    return this._normalizeQvacCompletion(final, model, loadedModelId)
+  }
+
+  async _qvacEmbed (model, request) {
+    const sdk = await this._loadQvacSdk()
+    if (typeof sdk.embed !== 'function') {
+      throw new Error('AI_QVAC_UNSUPPORTED: @qvac/sdk does not export embed')
+    }
+
+    const loadedModelId = await this._ensureQvacModel(model)
+    const qvacOptions = request.options?.qvac || {}
+    const embedParams = {
+      ...model.qvac.embedOptions,
+      ...qvacOptions,
+      modelId: loadedModelId,
+      text: this._toQvacText(request.input)
+    }
+    if (model.qvac.delegate && embedParams.delegate === undefined) {
+      embedParams.delegate = model.qvac.delegate
+    }
+
+    const result = await sdk.embed(embedParams)
+    return this._normalizeQvacEmbed(result, model, loadedModelId)
+  }
+
+  _toQvacHistory (input) {
+    if (Array.isArray(input)) return input.map(msg => this._normalizeQvacMessage(msg))
+    if (input && typeof input === 'object') {
+      if (Array.isArray(input.history)) return input.history.map(msg => this._normalizeQvacMessage(msg))
+      if (Array.isArray(input.messages)) return input.messages.map(msg => this._normalizeQvacMessage(msg))
+      if (input.prompt !== undefined) {
+        return [{ role: 'user', content: String(input.prompt) }]
+      }
+      if (input.text !== undefined) {
+        return [{ role: 'user', content: String(input.text) }]
+      }
+    }
+    return [{ role: 'user', content: String(input) }]
+  }
+
+  _normalizeQvacMessage (msg) {
+    if (typeof msg === 'string') return { role: 'user', content: msg }
+    if (!msg || typeof msg !== 'object') return { role: 'user', content: String(msg) }
+    return {
+      role: msg.role || 'user',
+      content: msg.content !== undefined ? String(msg.content) : String(msg.text ?? '')
+    }
+  }
+
+  _toQvacText (input) {
+    if (typeof input === 'string') return input
+    if (input && typeof input === 'object') {
+      if (input.text !== undefined) return String(input.text)
+      if (input.input !== undefined) return String(input.input)
+      if (input.prompt !== undefined) return String(input.prompt)
+    }
+    return String(input)
+  }
+
+  async _resolveQvacRun (run) {
+    let value = run
+    if (value && typeof value.then === 'function') value = await value
+    if (!value) return value
+    if (value.final && typeof value.final.then === 'function') return value.final
+    if (typeof value.final === 'function') return value.final()
+    if (value.text && typeof value.text.then === 'function') {
+      return { text: await value.text, stats: await this._maybeAwait(value.stats) }
+    }
+    if (value.tokenStream && value.tokenStream[Symbol.asyncIterator]) {
+      return { text: await this._collectAsyncText(value.tokenStream), stats: await this._maybeAwait(value.stats) }
+    }
+    if (value.events && value.events[Symbol.asyncIterator]) {
+      return { text: await this._collectQvacEventText(value.events), stats: await this._maybeAwait(value.stats) }
+    }
+    return value
+  }
+
+  async _maybeAwait (value) {
+    if (value && typeof value.then === 'function') return value
+    return value
+  }
+
+  async _collectAsyncText (iterable) {
+    let text = ''
+    for await (const chunk of iterable) text += String(chunk)
+    return text
+  }
+
+  async _collectQvacEventText (events) {
+    let text = ''
+    for await (const event of events) {
+      if (event?.type === 'contentDelta') text += event.text || ''
+      else if (event?.text && event?.type !== 'thinkingDelta') text += event.text
+    }
+    return text
+  }
+
+  _normalizeQvacCompletion (final, model, loadedModelId) {
+    if (typeof final === 'string') {
+      return {
+        text: final,
+        tokens: 0,
+        model: model.modelId,
+        backend: 'qvac',
+        qvac: { modelId: loadedModelId },
+        raw: final
+      }
+    }
+
+    const stats = final?.stats || final?.usage || {}
+    return {
+      text: final?.content ?? final?.text ?? final?.rawText ?? final?.message?.content ?? final?.output ?? final?.response ?? null,
+      tokens: this._qvacTokenCount(final, stats),
+      model: model.modelId,
+      backend: 'qvac',
+      qvac: { modelId: loadedModelId },
+      raw: final
+    }
+  }
+
+  _normalizeQvacEmbed (result, model, loadedModelId) {
+    const embedding = Array.isArray(result) ? result : (result?.embedding || result?.embeddings || null)
+    const stats = result?.stats || result?.usage || {}
+    return {
+      embedding,
+      tokens: this._qvacTokenCount(result, stats),
+      model: model.modelId,
+      backend: 'qvac',
+      qvac: { modelId: loadedModelId },
+      raw: result
+    }
+  }
+
+  _qvacTokenCount (result, stats) {
+    return stats?.totalTokens ??
+      stats?.total_tokens ??
+      stats?.tokens ??
+      stats?.promptTokens ??
+      stats?.prompt_tokens ??
+      result?.tokens ??
+      0
+  }
+
+  _qvacUnavailableError (message) {
+    const err = new Error(`AI_QVAC_UNAVAILABLE: ${message}`)
+    err.qvacUnavailable = true
+    return err
+  }
+
+  _isQvacUnavailableError (err) {
+    return !!err?.qvacUnavailable || String(err?.message || '').startsWith('AI_QVAC_UNAVAILABLE')
+  }
+
+  _publicQvacModelStatus (entry) {
+    return {
+      loaded: !!entry.qvac.loadedModelId,
+      loadedByHiveRelay: entry.qvac.loadedByHiveRelay === true,
+      modelType: entry.qvac.modelType || null,
+      hasModelSrc: entry.qvac.modelSrc !== undefined && entry.qvac.modelSrc !== null,
+      delegated: !!entry.qvac.delegate
+    }
+  }
+
+  _qvacStatus () {
+    return {
+      enabled: this.qvac.enabled,
+      module: this.qvac.moduleName,
+      checked: this.qvac.checked,
+      available: this._qvacSdk ? true : this.qvac.available,
+      error: this.qvac.error
+    }
+  }
+
+  async _registerConfiguredQvacModels () {
+    for (const spec of this.qvac.models) {
+      if (!spec || !spec.modelId || this.models.has(spec.modelId)) continue
+      await this['register-model']({
+        ...spec,
+        backend: spec.backend || 'qvac',
+        qvac: spec.qvac || {
+          modelSrc: spec.modelSrc,
+          modelType: spec.modelType,
+          modelConfig: spec.modelConfig,
+          delegate: spec.delegate,
+          loadedModelId: spec.loadedModelId,
+          completionOptions: spec.completionOptions,
+          embedOptions: spec.embedOptions
+        }
+      }, { role: 'local' })
+
+      if (spec.preload === true) {
+        const model = this.models.get(spec.modelId)
+        try {
+          await this._ensureQvacModel(model)
+        } catch (err) {
+          if (this.qvac.failOnUnavailable) throw err
+        }
+      }
     }
   }
 
@@ -510,6 +933,7 @@ export class AIService extends ServiceProvider {
       clearInterval(this._cleanupTimer)
       this._cleanupTimer = null
     }
+    await this._unloadQvacModels()
     for (const [, job] of this.jobs) {
       if (job.state === JOB_STATES.PENDING) {
         job.state = JOB_STATES.FAILED
@@ -519,6 +943,29 @@ export class AIService extends ServiceProvider {
     }
     this._queue = []
     this.jobs.clear()
+  }
+
+  async _unloadQvacModels () {
+    for (const [, model] of this.models) {
+      await this._unloadQvacModel(model)
+    }
+  }
+
+  async _unloadQvacModel (model) {
+    if (!this._qvacSdk || typeof this._qvacSdk.unloadModel !== 'function') return false
+    const qvac = model.qvac
+    if (!qvac?.loadedModelId || qvac.loadedByHiveRelay !== true || qvac.unloadOnStop === false) return false
+    try {
+      await this._qvacSdk.unloadModel({ modelId: qvac.loadedModelId })
+      qvac.loadedModelId = null
+      qvac.loadedByHiveRelay = false
+      qvac.loadedAt = null
+      return true
+    } catch (_) {
+      // Stop/remove should not make the service registry fail because a
+      // native runtime could not unload a model during shutdown.
+      return false
+    }
   }
 
   _callerKey (context = {}) {
@@ -594,9 +1041,9 @@ export class AIService extends ServiceProvider {
     }
 
     // IPv6
-    if (v === '::1') return true            // loopback
-    if (/^fe[89ab]/.test(v)) return true     // link-local fe80::/10
-    if (/^f[cd]/.test(v)) return true        // unique local fc00::/7
+    if (v === '::1') return true // loopback
+    if (/^fe[89ab]/.test(v)) return true // link-local fe80::/10
+    if (/^f[cd]/.test(v)) return true // unique local fc00::/7
     return false
   }
 

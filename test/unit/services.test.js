@@ -640,3 +640,142 @@ test('AIService - per-caller queue limit', async (t) => {
     t.ok(err.message.includes('AI_CALLER_QUEUE_FULL'))
   }
 })
+
+test('AIService - qvac infer via injected SDK', async (t) => {
+  const calls = []
+  const sdk = {
+    loadModel: async (params) => {
+      calls.push({ op: 'loadModel', params })
+      return 'qvac-loaded-llm'
+    },
+    completion: (params) => {
+      calls.push({ op: 'completion', params })
+      return {
+        final: Promise.resolve({
+          content: `qvac: ${params.history[0].content}`,
+          stats: { totalTokens: 7 }
+        })
+      }
+    },
+    unloadModel: async (params) => {
+      calls.push({ op: 'unloadModel', params })
+    }
+  }
+  const svc = new AIService({ qvac: { sdk } })
+
+  await svc['register-model']({
+    modelId: 'local-qvac',
+    type: 'llm',
+    backend: 'qvac',
+    modelSrc: '/models/tiny.gguf',
+    modelType: 'llm',
+    modelConfig: { ctx_size: 256 }
+  }, { role: 'local' })
+
+  const result = await svc.infer({ modelId: 'local-qvac', input: 'hello' })
+  t.is(result.state, 'complete')
+  t.is(result.result.text, 'qvac: hello')
+  t.is(result.result.backend, 'qvac')
+  t.is(result.result.tokens, 7)
+  t.is(result.result.qvac.modelId, 'qvac-loaded-llm')
+  t.alike(calls[0], {
+    op: 'loadModel',
+    params: {
+      modelSrc: '/models/tiny.gguf',
+      modelType: 'llm',
+      modelConfig: { ctx_size: 256 }
+    }
+  })
+  t.is(calls[1].op, 'completion')
+  t.alike(calls[1].params.history, [{ role: 'user', content: 'hello' }])
+
+  const list = await svc['list-models']()
+  t.is(list[0].backend, 'qvac')
+  t.is(list[0].qvac.loaded, true)
+
+  await svc.stop()
+  t.ok(calls.find(c => c.op === 'unloadModel' && c.params.modelId === 'qvac-loaded-llm'))
+})
+
+test('AIService - remove qvac model unloads HiveRelay-loaded model', async (t) => {
+  const calls = []
+  const sdk = {
+    loadModel: async () => {
+      calls.push({ op: 'loadModel' })
+      return 'qvac-loaded-remove'
+    },
+    completion: async () => ({ text: 'ok', stats: { tokens: 1 } }),
+    unloadModel: async (params) => {
+      calls.push({ op: 'unloadModel', params })
+    }
+  }
+  const svc = new AIService({ qvac: { sdk } })
+
+  await svc['register-model']({
+    modelId: 'remove-qvac',
+    type: 'llm',
+    backend: 'qvac',
+    modelSrc: '/models/remove.gguf'
+  }, { role: 'relay-admin' })
+
+  await svc.infer({ modelId: 'remove-qvac', input: 'hello' })
+  const removed = await svc['remove-model']({ modelId: 'remove-qvac' }, { role: 'relay-admin' })
+  t.is(removed.removed, true)
+  t.ok(calls.find(c => c.op === 'unloadModel' && c.params.modelId === 'qvac-loaded-remove'))
+
+  const list = await svc['list-models']()
+  t.is(list.length, 0)
+})
+
+test('AIService - qvac embed via injected SDK', async (t) => {
+  const sdk = {
+    loadModel: async () => 'qvac-loaded-embed',
+    embed: async (params) => ({
+      embedding: [0.1, 0.2, 0.3],
+      stats: { tokens: params.text.length }
+    })
+  }
+  const svc = new AIService({ qvac: { sdk } })
+
+  await svc['register-model']({
+    modelId: 'local-qvac-embed',
+    type: 'embedding',
+    backend: 'qvac',
+    modelSrc: '/models/embed.gguf',
+    modelType: 'embedding'
+  }, { role: 'local' })
+
+  const result = await svc.embed({ modelId: 'local-qvac-embed', input: 'abc' })
+  t.alike(result.embedding, [0.1, 0.2, 0.3])
+  t.is(result.backend, 'qvac')
+  t.is(result.tokens, 3)
+  t.is(result.qvac.modelId, 'qvac-loaded-embed')
+})
+
+test('AIService - qvac unavailable falls back to HTTP endpoint', async (t) => {
+  const svc = new AIService({
+    qvac: {
+      importModule: async () => {
+        throw new Error('not installed')
+      }
+    }
+  })
+  svc._httpInfer = async () => ({ text: 'http fallback', tokens: 2, model: 'fallback-model' })
+  await svc['register-model']({
+    modelId: 'fallback',
+    type: 'llm',
+    backend: 'qvac',
+    endpoint: 'http://127.0.0.1:11434/api/generate',
+    modelSrc: '/models/missing.gguf'
+  }, { role: 'local' })
+
+  const result = await svc.infer({ modelId: 'fallback', input: 'hello' })
+  t.is(result.state, 'complete')
+  t.is(result.result.text, 'http fallback')
+  t.is(result.result.tokens, 2)
+
+  const status = await svc.status()
+  t.is(status.qvac.checked, true)
+  t.is(status.qvac.available, false)
+  t.ok(status.qvac.error.includes('not installed'))
+})

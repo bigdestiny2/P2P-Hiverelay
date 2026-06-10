@@ -121,6 +121,16 @@ export class RelayAPI extends EventEmitter {
     // Per-IP request counts: ip -> { count, resetAt }
     this._rateLimits = new Map()
     this._rateLimitCleanup = null
+
+    // Auth-failure observability. A 401 from _requireAuth fires before the
+    // request body is parsed, so without these counters a refused publisher
+    // leaves zero server-side trace (surfaced by the 0/5-acceptances
+    // incident where every relay 401'd a /seed pin and nothing was logged).
+    // Counted per normalized route, surfaced on /metrics, warn-logged with
+    // a per-route throttle so a 401 flood can't flood the log.
+    this._authFailures = new Map() // normalized route -> count
+    this._authFailureTotal = 0
+    this._authFailureLogAt = new Map() // normalized route -> last warn ts
     this._dashboardHtml = null
     this._networkHtml = null
     this._docsHtml = null
@@ -317,6 +327,7 @@ export class RelayAPI extends EventEmitter {
 
   _requireAuth (req, res, errorMessage) {
     if (this._checkAuth(req)) return true
+    this._recordAuthFailure(req)
     // `error` is the legacy human-readable string — kept for back-compat so
     // existing clients string-matching on it don't break. `errorCode` is the
     // machine-readable prefix form new clients should branch
@@ -326,6 +337,40 @@ export class RelayAPI extends EventEmitter {
       errorCode: ERR.AUTH_REQUIRED.trim().replace(/:$/, '')
     }, 401)
     return false
+  }
+
+  _recordAuthFailure (req) {
+    // Collapse long hex ids (app keys, custody intent ids) so the per-route
+    // map stays bounded and the Prometheus label set can't explode.
+    const raw = (req.url || '').split('?')[0].slice(0, 200)
+    const route = raw.replace(/[0-9a-fA-F]{16,}/g, ':hex')
+    this._authFailureTotal++
+    if (this._authFailures.has(route) || this._authFailures.size < 64) {
+      this._authFailures.set(route, (this._authFailures.get(route) || 0) + 1)
+    }
+    const now = Date.now()
+    const last = this._authFailureLogAt.get(route) || 0
+    if (now - last >= 10_000) {
+      this._authFailureLogAt.set(route, now)
+      // Real socket address, not _getClientIP — XFF is attacker-controlled
+      // and this line exists precisely to attribute unauthenticated calls.
+      const ip = (req.socket && req.socket.remoteAddress) || 'unknown'
+      const routeCount = this._authFailures.get(route) || this._authFailureTotal
+      console.warn(`[api] 401 auth failure on ${route} from ${ip} (${routeCount} on this route, ${this._authFailureTotal} total)`)
+    }
+  }
+
+  _authFailureMetricsLines () {
+    if (this._authFailureTotal === 0) return ''
+    const lines = [
+      '# HELP hiverelay_auth_failures_total Requests rejected with 401 by API-key auth, by route (hex ids collapsed to :hex)',
+      '# TYPE hiverelay_auth_failures_total counter'
+    ]
+    for (const [route, count] of this._authFailures) {
+      const label = route.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      lines.push(`hiverelay_auth_failures_total{route="${label}"} ${count}`)
+    }
+    return '\n' + lines.join('\n') + '\n'
   }
 
   _readPrivacyTier (value, fallback = 'public') {
@@ -540,7 +585,7 @@ export class RelayAPI extends EventEmitter {
           if (this.node.metrics) {
             res.setHeader('Content-Type', 'text/plain; charset=utf-8')
             res.writeHead(200)
-            res.end(this.node.metrics.toPrometheus())
+            res.end(this.node.metrics.toPrometheus() + this._authFailureMetricsLines())
             return
           }
           return this._json(res, { error: 'Metrics not enabled' }, 503)
@@ -1211,6 +1256,25 @@ export class RelayAPI extends EventEmitter {
             if (!availabilityClass) return this._json(res, { error: AVAILABILITY_CLASS_ERROR }, 400)
             seedOpts.availabilityClass = availabilityClass
           }
+          // Operator-pinned archive tier. POLICY DECISION: durability ≥ 1
+          // (archive, AutoHeal-maintained) normally requires a v2 publisher
+          // signature on the P2P channel — an anonymous actor must not be
+          // able to conscript the fleet's disks. But THIS endpoint is
+          // API-key authenticated: the operator IS the authority for their
+          // own node's storage and AutoHeal budget, so an operator may pin
+          // any key — including a foreign key they don't own — at archive
+          // tier here. The API key is the operator signature; no separate
+          // allowlist is needed on the local node. Cross-relay, other
+          // operators stay in control via accept-mode (AutoHeal._canAccept
+          // refuses recruits their policy wouldn't accept).
+          const requestedDurability = body.durability !== undefined ? body.durability : seedOpts.durability
+          if (requestedDurability !== undefined) {
+            const durability = Number(requestedDurability)
+            if (!Number.isInteger(durability) || durability < 0 || durability > 255) {
+              return this._json(res, { error: 'durability must be an integer 0-255 (0=standard, 1=archive)' }, 400)
+            }
+            seedOpts.durability = durability
+          }
           // Forward appId from request body for deduplication
           if (body.appId && typeof body.appId === 'string') seedOpts.appId = body.appId
           if (body.version && typeof body.version === 'string') seedOpts.version = body.version
@@ -1730,6 +1794,14 @@ export class RelayAPI extends EventEmitter {
           if (!this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return
         }
 
+        if (path === '/api/manage/ai/models') {
+          return this._handleManageAIModelRegister(res, body)
+        }
+
+        if (path === '/api/manage/ai/models/remove') {
+          return this._handleManageAIModelRemove(res, body)
+        }
+
         if (path === '/api/manage/config') {
           return this._handleConfigUpdate(res, body)
         }
@@ -1790,6 +1862,10 @@ export class RelayAPI extends EventEmitter {
             config: this._getSafeConfig(),
             mode: this.node._operatingMode || 'standard'
           })
+        }
+
+        if (path === '/api/manage/ai/models') {
+          return this._handleManageAIModelsList(res)
         }
 
         if (path === '/api/manage/services') {
@@ -2119,6 +2195,181 @@ export class RelayAPI extends EventEmitter {
       return { ok: false, value: null, error: name + ' must be between ' + min + ' and ' + max }
     }
     return { ok: true, value: parsed, error: null }
+  }
+
+  _getAIServiceProvider () {
+    const registry = this.node.serviceRegistry
+    const services = registry && registry.services
+    const entry = services && typeof services.get === 'function' ? services.get('ai') : null
+    if (!entry) {
+      return { ok: false, status: 503, error: 'AI service is not registered on this relay' }
+    }
+
+    if (entry.status && entry.status !== 'running') {
+      return { ok: false, status: 503, error: 'AI service is not running (status=' + entry.status + ')' }
+    }
+
+    const provider = entry.provider || entry
+    if (!provider || typeof provider['list-models'] !== 'function' ||
+        typeof provider['register-model'] !== 'function' ||
+        typeof provider['remove-model'] !== 'function') {
+      return { ok: false, status: 503, error: 'AI service does not expose model management methods' }
+    }
+
+    return { ok: true, provider, entry }
+  }
+
+  async _handleManageAIModelsList (res) {
+    const service = this._getAIServiceProvider()
+    if (!service.ok) return this._json(res, { error: service.error }, service.status)
+    try {
+      return this._json(res, await this._manageAIModelsPayload(service.provider))
+    } catch (err) {
+      return this._json(res, { error: err.message || String(err) }, 500)
+    }
+  }
+
+  async _handleManageAIModelRegister (res, body) {
+    const service = this._getAIServiceProvider()
+    if (!service.ok) return this._json(res, { error: service.error }, service.status)
+
+    const request = this._buildManageAIModelRegistration(body)
+    if (!request.ok) return this._json(res, { error: request.error }, 400)
+
+    try {
+      const result = await service.provider['register-model'](request.params, {
+        role: 'relay-admin',
+        caller: 'manage-api',
+        authenticated: true,
+        node: this.node
+      })
+      const payload = await this._manageAIModelsPayload(service.provider)
+      const model = payload.models.find(m => m.modelId === request.params.modelId) || null
+      return this._json(res, {
+        ok: true,
+        action: 'registered',
+        ...result,
+        model,
+        qvac: payload.qvac
+      })
+    } catch (err) {
+      const message = err.message || String(err)
+      const status = message.startsWith('ACCESS_DENIED') ? 403 : 400
+      return this._json(res, { error: message }, status)
+    }
+  }
+
+  async _handleManageAIModelRemove (res, body) {
+    const service = this._getAIServiceProvider()
+    if (!service.ok) return this._json(res, { error: service.error }, service.status)
+
+    const modelId = body && typeof body.modelId === 'string' ? body.modelId.trim() : ''
+    if (!modelId) return this._json(res, { error: 'modelId required' }, 400)
+
+    try {
+      const result = await service.provider['remove-model']({ modelId }, {
+        role: 'relay-admin',
+        caller: 'manage-api',
+        authenticated: true,
+        node: this.node
+      })
+      const payload = await this._manageAIModelsPayload(service.provider)
+      return this._json(res, {
+        ok: true,
+        action: 'removed',
+        modelId,
+        removed: !!result.removed,
+        qvac: payload.qvac,
+        count: payload.count,
+        qvacCount: payload.qvacCount
+      })
+    } catch (err) {
+      const message = err.message || String(err)
+      const status = message.startsWith('ACCESS_DENIED') ? 403 : 400
+      return this._json(res, { error: message }, status)
+    }
+  }
+
+  _buildManageAIModelRegistration (body) {
+    if (!body || typeof body !== 'object') {
+      return { ok: false, error: 'request body required' }
+    }
+    const modelId = typeof body.modelId === 'string' ? body.modelId.trim() : ''
+    if (!modelId) return { ok: false, error: 'modelId required' }
+
+    const type = typeof body.type === 'string' && body.type.trim() ? body.type.trim() : 'llm'
+    const qvacBody = body.qvac && typeof body.qvac === 'object' ? body.qvac : {}
+    if (body.backend && body.backend !== 'qvac') {
+      return { ok: false, error: 'this endpoint only registers qvac-backed models' }
+    }
+
+    const modelSrc = body.modelSrc !== undefined ? body.modelSrc : qvacBody.modelSrc
+    const loadedModelId = body.loadedModelId !== undefined
+      ? body.loadedModelId
+      : (body.qvacModelId !== undefined ? body.qvacModelId : (qvacBody.loadedModelId ?? qvacBody.qvacModelId))
+    if ((modelSrc === undefined || modelSrc === null || modelSrc === '') &&
+        (loadedModelId === undefined || loadedModelId === null || loadedModelId === '')) {
+      return { ok: false, error: 'modelSrc or loadedModelId required for qvac model registration' }
+    }
+
+    const qvac = {
+      ...qvacBody,
+      modelSrc,
+      loadedModelId,
+      modelType: body.modelType ?? qvacBody.modelType ?? type,
+      modelConfig: body.modelConfig ?? qvacBody.modelConfig ?? {},
+      delegate: body.delegate ?? qvacBody.delegate ?? null
+    }
+
+    const params = {
+      ...body,
+      modelId,
+      type,
+      backend: 'qvac',
+      qvac
+    }
+    delete params.handler
+
+    return { ok: true, params }
+  }
+
+  async _manageAIModelsPayload (provider) {
+    const models = await provider['list-models']({}, {
+      role: 'relay-admin',
+      caller: 'manage-api',
+      authenticated: true
+    })
+    const status = typeof provider.status === 'function'
+      ? await provider.status({}, {
+        role: 'relay-admin',
+        caller: 'manage-api',
+        authenticated: true
+      })
+      : null
+    const qvac = status && status.qvac ? status.qvac : null
+    const decorated = (Array.isArray(models) ? models : []).map(model => ({
+      ...model,
+      status: this._manageAIModelStatus(model, qvac)
+    }))
+    return {
+      ok: true,
+      qvac,
+      count: decorated.length,
+      qvacCount: decorated.filter(model => model.backend === 'qvac' || model.qvac).length,
+      models: decorated
+    }
+  }
+
+  _manageAIModelStatus (model, qvacStatus) {
+    if (model.backend === 'qvac' || model.qvac) {
+      if (model.qvac && model.qvac.loaded) return 'loaded'
+      if (qvacStatus && qvacStatus.enabled === false) return 'disabled'
+      if (qvacStatus && qvacStatus.checked && qvacStatus.available === false) return 'sdk-unavailable'
+      return 'registered'
+    }
+    if (model.hasHandler) return 'handler-ready'
+    if (model.hasEndpoint) return 'http-ready'
+    return 'no-backend'
   }
 
   _handleConfigUpdate (res, body) {
