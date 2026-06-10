@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HiveRelay Marketplace Demo</title>
+    <link rel="stylesheet" href="./style.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar" aria-label="Marketplace summary">
+        <div>
+          <p class="eyebrow">PearBrowser test app</p>
+          <h1>HiveRelay Marketplace Demo</h1>
+        </div>
+        <div class="pulse" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+      </section>
+
+      <section class="status-grid" aria-label="Relay state">
+        <article>
+          <span>Gateway</span>
+          <strong id="gateway-state">loading</strong>
+        </article>
+        <article>
+          <span>Catalog</span>
+          <strong id="catalog-state">loading</strong>
+        </article>
+        <article>
+          <span>App key</span>
+          <strong id="app-key">detecting</strong>
+        </article>
+      </section>
+
+      <section class="market">
+        <div class="market-heading">
+          <h2>Featured Apps</h2>
+          <p id="relay-source">Local relay catalog</p>
+        </div>
+
+        <div class="app-grid">
+          <article class="app-card active">
+            <div class="app-icon">HR</div>
+            <div>
+              <h3>HiveRelay Marketplace Demo</h3>
+              <p>Served from a seeded Hyperdrive through the relay gateway.</p>
+              <div class="tags">
+                <span>public</span>
+                <span>always-on</span>
+                <span>cataloged</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="app-card">
+            <div class="app-icon alt">PB</div>
+            <div>
+              <h3>PearBrowser Catalog Row</h3>
+              <p id="catalog-row">Waiting for catalog data from this relay.</p>
+              <div class="tags">
+                <span id="catalog-count">0 apps</span>
+                <span id="anchor-state">anchor pending</span>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

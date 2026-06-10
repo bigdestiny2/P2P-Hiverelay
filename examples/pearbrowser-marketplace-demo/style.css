@@ -1,0 +1,264 @@
+:root {
+  color-scheme: dark;
+  --ink: #f7f8f3;
+  --muted: #a9b0a9;
+  --panel: rgba(19, 24, 26, 0.84);
+  --panel-strong: rgba(28, 36, 36, 0.94);
+  --line: rgba(255, 255, 255, 0.12);
+  --green: #65d68d;
+  --cyan: #66d4d6;
+  --gold: #e8c56f;
+  --red: #ef786f;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(135deg, #111719 0%, #17201e 46%, #211f1a 100%);
+  background-size: 28px 28px, 28px 28px, auto;
+}
+
+.shell {
+  width: min(1120px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 28px 0;
+}
+
+.topbar {
+  min-height: 34vh;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  color: var(--gold);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  max-width: 760px;
+  margin-bottom: 0;
+  font-size: 4.8rem;
+  line-height: 0.95;
+  letter-spacing: 0;
+}
+
+.pulse {
+  width: min(28vw, 220px);
+  aspect-ratio: 1;
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.pulse span {
+  position: absolute;
+  inset: 16%;
+  border: 1px solid rgba(102, 212, 214, 0.42);
+  border-radius: 50%;
+  animation: ping 2.8s ease-out infinite;
+}
+
+.pulse span:nth-child(2) {
+  inset: 29%;
+  border-color: rgba(101, 214, 141, 0.5);
+  animation-delay: 0.45s;
+}
+
+.pulse span:nth-child(3) {
+  inset: 42%;
+  background: var(--green);
+  border-color: transparent;
+  box-shadow: 0 0 34px rgba(101, 214, 141, 0.72);
+  animation: none;
+}
+
+@keyframes ping {
+  from {
+    transform: scale(0.72);
+    opacity: 1;
+  }
+
+  to {
+    transform: scale(1.18);
+    opacity: 0.18;
+  }
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 18px 0;
+}
+
+.status-grid article,
+.app-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
+}
+
+.status-grid article {
+  min-height: 92px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.status-grid span,
+.market-heading p {
+  color: var(--muted);
+}
+
+.status-grid strong {
+  overflow-wrap: anywhere;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.market {
+  padding: 16px 0 0;
+}
+
+.market-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.market-heading h2 {
+  margin-bottom: 0;
+  font-size: 1.15rem;
+}
+
+.market-heading p {
+  margin-bottom: 0;
+  text-align: right;
+}
+
+.app-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.app-card {
+  min-height: 188px;
+  padding: 18px;
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  gap: 16px;
+  background: var(--panel-strong);
+}
+
+.app-card.active {
+  border-color: rgba(101, 214, 141, 0.36);
+}
+
+.app-icon {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #65d68d;
+  color: #101815;
+  font-weight: 800;
+}
+
+.app-icon.alt {
+  background: #66d4d6;
+}
+
+.app-card h3 {
+  margin-bottom: 8px;
+  font-size: 1rem;
+}
+
+.app-card p {
+  min-height: 48px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tags span {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 10px;
+  color: var(--ink);
+  font-size: 0.78rem;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+@media (max-width: 760px) {
+  .shell {
+    width: min(100vw - 24px, 560px);
+    padding-top: 18px;
+  }
+
+  .topbar {
+    min-height: 28vh;
+  }
+
+  h1 {
+    font-size: 2.6rem;
+  }
+
+  .pulse {
+    display: none;
+  }
+
+  .status-grid,
+  .app-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .market-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .market-heading p {
+    text-align: left;
+  }
+}

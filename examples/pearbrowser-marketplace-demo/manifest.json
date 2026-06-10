@@ -1,0 +1,15 @@
+{
+  "id": "pearbrowser-marketplace-demo",
+  "name": "HiveRelay Marketplace Demo",
+  "version": "1.0.0",
+  "description": "Local PearBrowser marketplace smoke demo served through HiveRelay.",
+  "author": "HiveRelay demo harness",
+  "entry": "/index.html",
+  "main": "/index.html",
+  "contentType": "app",
+  "privacyTier": "public",
+  "storageClass": "persistent",
+  "availabilityClass": "always-on",
+  "categories": ["marketplace", "pearbrowser", "demo"],
+  "permissions": []
+}
