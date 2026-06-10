@@ -47,7 +47,7 @@
     "corestore": "^6.18.0",
     "hyperdrive": "^11.8.0",
     "hyperswarm": "^4.7.0",
-    "p2p-hiverelay": "0.7.2",
+    "p2p-hiverelay": "^0.10.6",
     "sodium-universal": "^4.0.0"
   },
   "engines": {
