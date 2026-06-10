@@ -17,8 +17,14 @@
  *   --relays <urls>      Comma-separated relay API URLs to seed on
  *   --storage <path>     Corestore path (default: .publisher-storage)
  *   --key <hex>          Explicit drive key (overrides appId lookup)
+ *   --bootstrap <nodes>  Comma-separated DHT bootstrap nodes (host:port)
+ *   --api-key <key>      Shared operator API key sent to every relay
+ *                        (fallback: HIVERELAY_API_KEY env var)
+ *   --api-keys <map>     Per-relay keys as url=key,url=key — needed when each
+ *                        relay runs its own key (fallback: HIVERELAY_API_KEYS)
  *   --blind              Encrypt content (relay can't read it, P2P only)
  *   --no-stay            Exit after publishing (don't stay online)
+ *   --hold-seconds <n>   Seconds to stay online with --no-stay (default: 30)
  *
  * Examples:
  *   # First publish — creates new drive, saves key mapping
@@ -45,6 +51,7 @@ sodium.crypto_generichash(RELAY_DISCOVERY_TOPIC, b4a.from('hiverelay-discovery-v
 const DEFAULT_RELAYS = process.env.HIVERELAY_RELAYS
   ? process.env.HIVERELAY_RELAYS.split(',').map(s => s.trim())
   : ['http://127.0.0.1:9100']
+const DEFAULT_BOOTSTRAP = parseBootstrapNodes(process.env.HIVERELAY_BOOTSTRAP)
 
 function parseArgs (argv) {
   const args = argv.slice(2)
@@ -57,8 +64,12 @@ function parseArgs (argv) {
     relays: DEFAULT_RELAYS,
     storage: '.publisher-storage',
     key: null,
+    bootstrap: DEFAULT_BOOTSTRAP,
+    apiKey: process.env.HIVERELAY_API_KEY || null,
+    apiKeys: parseApiKeyMap(process.env.HIVERELAY_API_KEYS),
     blind: false,
-    stay: true
+    stay: true,
+    holdSeconds: 30
   }
 
   for (let i = 0; i < args.length; i++) {
@@ -70,6 +81,25 @@ function parseArgs (argv) {
     if (arg === '--relays') { opts.relays = args[++i].split(',').map(s => s.trim()); continue }
     if (arg === '--storage') { opts.storage = args[++i]; continue }
     if (arg === '--key') { opts.key = args[++i]; continue }
+    if (arg === '--bootstrap') {
+      try {
+        opts.bootstrap = parseBootstrapNodes(args[++i])
+      } catch (err) {
+        console.error('Error: ' + err.message)
+        process.exit(1)
+      }
+      continue
+    }
+    if (arg === '--api-key') { opts.apiKey = args[++i]; continue }
+    if (arg === '--api-keys') {
+      try {
+        opts.apiKeys = parseApiKeyMap(args[++i])
+      } catch (err) {
+        console.error('Error: ' + err.message)
+        process.exit(1)
+      }
+      continue
+    }
     if (arg === '--blind') { opts.blind = true; continue }
     if (arg === '--encryption-key') {
       const keyVal = args[++i]
@@ -81,6 +111,15 @@ function parseArgs (argv) {
       continue
     }
     if (arg === '--no-stay') { opts.stay = false; continue }
+    if (arg === '--hold-seconds') {
+      const seconds = Number(args[++i])
+      if (!Number.isFinite(seconds) || seconds < 0) {
+        console.error('Error: --hold-seconds must be a non-negative number')
+        process.exit(1)
+      }
+      opts.holdSeconds = seconds
+      continue
+    }
     if (!arg.startsWith('-') && !opts.directory) { opts.directory = arg; continue }
   }
 
@@ -93,8 +132,57 @@ function parseArgs (argv) {
   return opts
 }
 
+/**
+ * Parse a per-relay API key map: "http://host1:9100=KEY1,http://host2:9100=KEY2".
+ * Split on the FIRST '=' so keys containing '=' (base64 padding) survive.
+ * URLs are normalized (trailing slash stripped) for lookup.
+ */
+function parseApiKeyMap (input) {
+  if (!input) return null
+  const map = new Map()
+  for (const pair of String(input).split(',').map(s => s.trim()).filter(Boolean)) {
+    const sep = pair.indexOf('=')
+    if (sep <= 0 || sep === pair.length - 1) {
+      throw new Error('--api-keys entries must be url=key, got: ' + pair)
+    }
+    map.set(pair.slice(0, sep).replace(/\/+$/, ''), pair.slice(sep + 1))
+  }
+  return map.size > 0 ? map : null
+}
+
+/**
+ * Resolve the API key for one relay URL: per-relay map first (the fleet runs
+ * a distinct key per relay), then the shared key as fallback.
+ */
+function resolveApiKey (relayUrl, opts) {
+  const normalized = relayUrl.replace(/\/+$/, '')
+  if (opts.apiKeys && opts.apiKeys.has(normalized)) return opts.apiKeys.get(normalized)
+  return opts.apiKey || null
+}
+
 function deriveAppId (name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+}
+
+function parseBootstrapNodes (input) {
+  if (!input) return null
+  const nodes = String(input)
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map((value) => {
+      const sep = value.lastIndexOf(':')
+      if (sep <= 0 || sep === value.length - 1) {
+        throw new Error('--bootstrap entries must be host:port')
+      }
+      const host = value.slice(0, sep)
+      const port = Number(value.slice(sep + 1))
+      if (!host || !Number.isInteger(port) || port <= 0 || port > 65535) {
+        throw new Error('--bootstrap entries must be host:port with a valid port')
+      }
+      return { host, port }
+    })
+  return nodes.length ? nodes : null
 }
 
 async function loadDriveMap (storagePath) {
@@ -180,31 +268,35 @@ async function resolveFromRelay (relays, appId) {
   return null
 }
 
-async function seedOnRelay (relayUrl, appKey, appId, version, blind) {
+async function seedOnRelay (relayUrl, appKey, appId, version, blind, apiKey) {
   try {
     const body = { appKey }
     if (appId) body.appId = appId
     if (version) body.version = version
     if (blind) body.blind = true
     const headers = { 'Content-Type': 'application/json' }
-    // Support API key auth via env var or --api-key flag
-    const apiKey = process.env.HIVERELAY_API_KEY
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`
     const res = await fetch(relayUrl + '/seed', {
       method: 'POST',
       headers,
       body: JSON.stringify(body)
     })
-    const data = await res.json()
+    let data
+    try { data = await res.json() } catch (_) { data = {} }
     return {
       url: relayUrl,
       ok: data.ok || false,
+      status: res.status,
       replaced: data.alreadySeeded ? 'same-key' : null,
       canonicalKey: data.canonicalKey || null,
-      error: data.error || null
+      error: data.error || (res.ok ? null : 'HTTP ' + res.status),
+      // 'auth-required' → the relay wants its operator API key; keyed
+      // separately so the summary can print an actionable fix.
+      authFailure: res.status === 401 || (data.errorCode === 'auth-required'),
+      keySent: Boolean(apiKey)
     }
   } catch (err) {
-    return { url: relayUrl, ok: false, error: err.message }
+    return { url: relayUrl, ok: false, status: 0, error: err.message, authFailure: false, keySent: Boolean(apiKey) }
   }
 }
 
@@ -221,6 +313,8 @@ async function run () {
     console.error('  --version <version>  App version (default: 1.0.0)')
     console.error('  --storage <path>     Publisher storage path')
     console.error('  --key <hex>          Explicit drive key')
+    console.error('  --api-key <key>      Shared operator API key (env: HIVERELAY_API_KEY)')
+    console.error('  --api-keys <map>     Per-relay keys url=key,url=key (env: HIVERELAY_API_KEYS)')
     console.error('  --blind              Encrypt content (relay can\'t read, P2P only)')
     console.error('  --encryption-key <h> Use explicit encryption key (hex, for recovery)')
     console.error('  --no-stay            Exit after publishing')
@@ -241,6 +335,7 @@ async function run () {
   console.log('  Directory:', dir)
   console.log('  Storage:  ', opts.storage)
   console.log('  Relays:   ', opts.relays.length)
+  if (opts.bootstrap) console.log('  Bootstrap:', opts.bootstrap.map(n => `${n.host}:${n.port}`).join(', '))
   if (appId) console.log('  App ID:   ', appId)
   if (opts.version !== '1.0.0') console.log('  Version:  ', opts.version)
   if (opts.blind) console.log('  Mode:      BLIND (encrypted, P2P only)')
@@ -258,7 +353,7 @@ async function run () {
   const store = new Corestore(opts.storage)
   await store.ready()
 
-  const swarm = new Hyperswarm()
+  const swarm = opts.bootstrap ? new Hyperswarm({ bootstrap: opts.bootstrap }) : new Hyperswarm()
   swarm.on('connection', (conn) => store.replicate(conn))
 
   // For blind mode: use explicit key, load saved key, or generate new one
@@ -391,20 +486,43 @@ async function run () {
   // Seed on relays (pass appId + version for deduplication)
   console.log('  Seeding on relays...')
   const seedResults = await Promise.all(
-    opts.relays.map(url => seedOnRelay(url, driveKey, manifest.id, manifest.version, opts.blind))
+    opts.relays.map(url => seedOnRelay(url, driveKey, manifest.id, manifest.version, opts.blind, resolveApiKey(url, opts)))
   )
 
   let seeded = 0
+  const authFailures = []
   for (const result of seedResults) {
     let status = result.ok ? 'OK' : 'FAIL: ' + result.error
     if (result.replaced) status += ' (already seeded)'
     if (result.canonicalKey) status += ' [canonical: ' + result.canonicalKey.slice(0, 16) + '...]'
     console.log('    ' + result.url + ' — ' + status)
     if (result.ok) seeded++
+    if (result.authFailure) authFailures.push(result)
   }
   console.log()
   console.log('  Seeded on', seeded + '/' + opts.relays.length, 'relays')
   console.log()
+
+  if (authFailures.length > 0) {
+    console.error('  ┌─────────────────────────────────────────────────────────────────┐')
+    console.error('  │  AUTH FAILURE: ' + authFailures.length + '/' + opts.relays.length + ' relay(s) returned 401 Unauthorized.            │')
+    console.error('  └─────────────────────────────────────────────────────────────────┘')
+    console.error('  /seed requires each relay\'s operator API key. Refused by:')
+    for (const f of authFailures) {
+      console.error('    ' + f.url + (f.keySent ? '  (a key WAS sent — wrong key for this relay?)' : '  (no key sent)'))
+    }
+    console.error()
+    console.error('  Fix — per-relay keys (fleets run a distinct key per relay):')
+    console.error('    --api-keys "http://relay1:9100=KEY1,http://relay2:9100=KEY2"')
+    console.error('    or env HIVERELAY_API_KEYS in the same url=key,url=key format.')
+    console.error('  Or a single shared key: --api-key KEY / env HIVERELAY_API_KEY.')
+    console.error()
+  }
+  if (seeded === 0 && opts.relays.length > 0) {
+    console.error('  WARNING: no relay accepted this publish — the app is NOT seeded anywhere.')
+    console.error()
+    process.exitCode = 1
+  }
 
   // Print access info
   if (opts.blind) {
@@ -464,8 +582,8 @@ async function run () {
       process.exit(0)
     })
   } else {
-    console.log('  Waiting 30s for initial replication...')
-    await new Promise(resolve => setTimeout(resolve, 30000))
+    console.log('  Waiting ' + opts.holdSeconds + 's for initial replication...')
+    await new Promise(resolve => setTimeout(resolve, opts.holdSeconds * 1000))
     await swarm.destroy()
     await store.close()
   }
