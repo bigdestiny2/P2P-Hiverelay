@@ -155,12 +155,14 @@ export async function downloadWithTimeout (drive, path = '/', opts = {}) {
   // that bubble up — the caller sees the same error path it would have
   // without the timeout wrapper.
   let oldTrackerProbe = null
+  let promiseProbe = null
   const probe = drive.download(path)
   if (probe && typeof probe.done === 'function' && typeof probe.destroy === 'function') {
     oldTrackerProbe = probe
   } else if (probe && typeof probe.then === 'function') {
     // New API — we re-do the work below. Detach the orphan Promise so
     // unhandled rejection warnings don't surface.
+    promiseProbe = probe
     probe.catch(() => {})
   }
 
@@ -168,7 +170,52 @@ export async function downloadWithTimeout (drive, path = '/', opts = {}) {
     return _runOldTrackerDownload(oldTrackerProbe, timeoutMs, signal)
   }
 
+  // The #28 re-implementation walks the drive itself (entry/getBlobs/list)
+  // so it can destroy per-blob trackers on abort. A drive that lacks that
+  // surface (hyperdrive fork, test double) can't be walked — fall back to
+  // racing the download() Promise against the timeout/abort, the pre-#28
+  // semantics. Same guarded-getBlobs posture as AppLifecycle._isDriveFullyReplicated.
+  const hasWalkSurface = typeof drive.getBlobs === 'function' &&
+    typeof drive.entry === 'function' && typeof drive.list === 'function'
+  if (!hasWalkSurface) {
+    if (promiseProbe) return _awaitPromiseDownload(promiseProbe, timeoutMs, signal)
+    return // download() returned nothing awaitable; nothing to wait on
+  }
+
   return _runNewPromiseDownload(drive, path, timeoutMs, signal)
+}
+
+// ─── Fallback: race the bare download() Promise ─────────────────────
+// Used when the drive can't be walked for per-blob trackers. Resolution,
+// rejection, and timeout semantics match the walk path; only inner-tracker
+// cancellation is unavailable (the orphan settles on its own, bounded by
+// the file's blob extent).
+async function _awaitPromiseDownload (promise, timeoutMs, signal) {
+  let timer = null
+  let abortHandler = null
+  try {
+    return await new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('download timeout')), timeoutMs)
+      if (signal) {
+        if (signal.aborted) {
+          const err = new Error('Aborted')
+          err.name = 'AbortError'
+          reject(err)
+          return
+        }
+        abortHandler = () => {
+          const err = new Error('Aborted')
+          err.name = 'AbortError'
+          reject(err)
+        }
+        signal.addEventListener('abort', abortHandler)
+      }
+      promise.then(resolve, reject)
+    })
+  } finally {
+    if (timer) clearTimeout(timer)
+    if (signal && abortHandler) signal.removeEventListener('abort', abortHandler)
+  }
 }
 
 // ─── Old tracker API (hyperdrive 10.x) ──────────────────────────────
