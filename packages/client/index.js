@@ -51,6 +51,7 @@ import {
   seedRequestEncoding,
   seedAcceptEncoding,
   unseedRequestEncoding,
+  seedDenyEncoding,
   relayReserveEncoding
 } from 'p2p-hiverelay/core/protocol/messages.js'
 import { SeedingRegistry } from 'p2p-hiverelay/core/registry/index.js'
@@ -739,6 +740,7 @@ export class HiveRelayClient extends EventEmitter {
     const entry = {
       request,
       acceptances: [],
+      denials: [], // { relay, reasonCode, detail, terminal } per seedDeny received
       target: targetForEntry,
       floor: floorForEntry,
       lastSeedAt: Date.now()
@@ -787,12 +789,23 @@ export class HiveRelayClient extends EventEmitter {
       const done = () => {
         if (timer) clearTimeout(timer)
         this.removeListener('seed-accepted', check)
+        this.removeListener('seed-denied', checkDenied)
         resolve()
       }
       const check = () => {
         if (entry.acceptances.length >= targetReplicas) done()
       }
+      // Fast-fail: once every connected relay has terminally denied and
+      // nothing accepted, waiting out the timeout buys nothing — resolve
+      // now so the caller sees the denial reasons immediately instead of
+      // an indistinguishable-from-network-down hang.
+      const checkDenied = (evt) => {
+        if (evt.appKey !== keyHex) return
+        const terminalDenials = entry.denials.filter(d => d.terminal).length
+        if (entry.acceptances.length === 0 && this.relays.size > 0 && terminalDenials >= this.relays.size) done()
+      }
       this.on('seed-accepted', check)
+      this.on('seed-denied', checkDenied)
       timer = setTimeout(done, timeout)
     })
 
@@ -801,7 +814,12 @@ export class HiveRelayClient extends EventEmitter {
     // Persistent retry: if we didn't get enough acceptances and the caller
     // didn't explicitly disable persistence, enqueue for retry across restarts.
     if (opts.retryPersistent !== false && entry.acceptances.length < targetReplicas) {
-      this._enqueuePendingSeed(keyHex, opts, `insufficient-acceptances:${entry.acceptances.length}/${targetReplicas}`)
+      // Carry any wire-level deny reasons into the retry record so the
+      // shortfall is attributable (vs. an anonymous timeout).
+      const denySummary = entry.denials.length > 0
+        ? ';denied:' + entry.denials.map(d => d.reasonCode).join(',')
+        : ''
+      this._enqueuePendingSeed(keyHex, opts, `insufficient-acceptances:${entry.acceptances.length}/${targetReplicas}${denySummary}`)
     } else if (opts.retryPersistent !== false && entry.acceptances.length >= targetReplicas) {
       // Success — clear any existing pending retry for this key
       this._clearPendingSeed(keyHex, 'success')
@@ -2990,8 +3008,16 @@ export class HiveRelayClient extends EventEmitter {
         onmessage: () => {} // Client doesn't handle incoming unseed requests
       })
 
-      seedChannel._hiverelay = { requestMsg, acceptMsg, unseedMsg }
-      channels.seed = { channel: seedChannel, requestMsg, acceptMsg, unseedMsg }
+      // 4th message — relay-side deny with a machine-readable reason.
+      // Relays that predate it never send one; protomux drops unknown ids
+      // on their side, so registration order stays compatible.
+      const denyMsg = seedChannel.addMessage({
+        encoding: seedDenyEncoding,
+        onmessage: (msg) => this._onSeedDeny(pubkeyHex, msg)
+      })
+
+      seedChannel._hiverelay = { requestMsg, acceptMsg, unseedMsg, denyMsg }
+      channels.seed = { channel: seedChannel, requestMsg, acceptMsg, unseedMsg, denyMsg }
       seedChannel.open(b4a.from(JSON.stringify({ major: 1, minor: 0 })))
     } catch (err) {
       this.emit('protocol-error', { relay: pubkeyHex, protocol: 'seed', error: err })
@@ -3361,6 +3387,41 @@ export class HiveRelayClient extends EventEmitter {
       relay: b4a.toString(msg.relayPubkey, 'hex'),
       region: msg.region
     })
+  }
+
+  _onSeedDeny (relayPubkeyHex, msg) {
+    const relay = this.relays.get(relayPubkeyHex)
+    if (relay) relay.lastSeen = Date.now()
+
+    const claimedRelayHex = b4a.toString(msg.relayPubkey, 'hex')
+    // Anti-spoof: a relay may only deny on its own behalf. The noise
+    // stream authenticates the peer, so the claimed pubkey must match the
+    // channel it arrived on.
+    if (claimedRelayHex !== relayPubkeyHex) {
+      this.emit('invalid-deny', { appKey: b4a.toString(msg.appKey, 'hex'), reason: 'relayPubkey mismatch' })
+      return
+    }
+
+    const appKeyHex = b4a.toString(msg.appKey, 'hex')
+    const denial = {
+      relay: claimedRelayHex,
+      reasonCode: msg.reasonCode,
+      detail: msg.detail || '',
+      // 'queued-for-review' means "stop waiting for an accept from me, but
+      // an operator may approve later" — not a terminal refusal.
+      terminal: msg.reasonCode !== 'queued-for-review'
+    }
+
+    const entry = this.seedRequests.get(appKeyHex)
+    if (entry) {
+      if (!Array.isArray(entry.denials)) entry.denials = []
+      // One denial per relay — a re-broadcast retry can produce duplicates.
+      if (!entry.denials.some(d => d.relay === claimedRelayHex)) {
+        entry.denials.push(denial)
+      }
+    }
+
+    this.emit('seed-denied', { appKey: appKeyHex, ...denial })
   }
 
   _onServiceMessage (relayPubkey, msg) {

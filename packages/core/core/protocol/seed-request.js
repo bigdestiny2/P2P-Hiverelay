@@ -14,7 +14,8 @@ import { EventEmitter } from 'events'
 import {
   seedRequestEncoding,
   seedAcceptEncoding,
-  unseedRequestEncoding
+  unseedRequestEncoding,
+  seedDenyEncoding
 } from './messages.js'
 import { TokenBucketRateLimiter } from './rate-limiter.js'
 
@@ -24,6 +25,16 @@ const PROTOCOL_VERSION = { major: 1, minor: 0 }
 // Rate limit: 100 requests per minute, burst of 20
 const RATE_LIMIT_TOKENS_PER_MIN = 100
 const RATE_LIMIT_BURST = 20
+
+// All-zero buffer check — fixed-width wire fields use zero-fill to mean
+// "absent" (e.g. an unsigned relaySignature from a keyPair-less node).
+function isZeroBuf (buf) {
+  if (!buf || !b4a.isBuffer(buf)) return true
+  for (let i = 0; i < buf.length; i++) {
+    if (buf[i] !== 0) return false
+  }
+  return true
+}
 
 export class SeedProtocol extends EventEmitter {
   constructor (swarm, opts = {}) {
@@ -73,7 +84,16 @@ export class SeedProtocol extends EventEmitter {
       onmessage: (msg) => this._onUnseedRequest(channel, msg)
     })
 
-    channel._hiverelay = { seedRequestMsg, seedAcceptMsg, unseedRequestMsg }
+    // 4th message — added after unseedRequest so the wire ids of the first
+    // three stay stable. Peers that predate seedDeny drop unknown ids
+    // (protomux _recv ignores type >= messages.length), degrading to the
+    // old behavior: timeout.
+    const seedDenyMsg = channel.addMessage({
+      encoding: seedDenyEncoding,
+      onmessage: (msg) => this._onSeedDeny(channel, msg)
+    })
+
+    channel._hiverelay = { seedRequestMsg, seedAcceptMsg, unseedRequestMsg, seedDenyMsg }
     channel.open(b4a.from(JSON.stringify(PROTOCOL_VERSION)))
 
     this.channels.add(channel)
@@ -225,7 +245,8 @@ export class SeedProtocol extends EventEmitter {
       ? b4a.toString(channel.stream.remotePublicKey, 'hex')
       : 'unknown'
 
-    // Check rate limit
+    // Check rate limit. Deliberately NO deny reply here — answering
+    // rate-limited peers would hand them response amplification.
     const rateCheck = this.rateLimiter.check(peerKey)
     if (!rateCheck.allowed) {
       if (rateCheck.banned) {
@@ -234,13 +255,102 @@ export class SeedProtocol extends EventEmitter {
       return
     }
 
-    // Verify publisher signature
+    // Verify publisher signature. Silent denial is hostile — the publisher
+    // would just time out — so tell them WHY, with the archive-tier case
+    // called out specifically (durability ≥ 1 is only committable via a v2
+    // publisher signature; see verifySeedRequestSignature's v1 rejection).
     if (!this._verifyRequestSignature(msg)) {
-      this.emit('invalid-request', { appKey: b4a.toString(msg.appKey, 'hex'), reason: 'bad signature' })
+      const isArchive = Number.isFinite(msg.durability) && msg.durability > 0
+      const missingSig = !msg.publisherPubkey || !msg.publisherSignature ||
+        !b4a.isBuffer(msg.publisherSignature) || isZeroBuf(msg.publisherSignature)
+      let reasonCode
+      let detail
+      if (isArchive && missingSig) {
+        reasonCode = 'archive-requires-publisher-signature'
+        detail = 'durability ' + msg.durability + ' (archive tier) requires a v2 publisher-signed seed request; bare-key requests can only be pinned by the relay operator via the authenticated /seed API'
+      } else if (missingSig) {
+        reasonCode = 'signature-required'
+        detail = 'seed requests over this channel must be publisher-signed'
+      } else {
+        reasonCode = 'bad-signature'
+        detail = isArchive
+          ? 'signature did not verify; note archive tier (durability ≥ 1) requires the v2 signing layout'
+          : 'publisher signature did not verify'
+      }
+      this.emit('invalid-request', { appKey: b4a.toString(msg.appKey, 'hex'), reason: 'bad signature', reasonCode })
+      this.denySeedRequest(channel, msg.appKey, reasonCode, detail)
       return
     }
 
-    this.emit('seed-request', msg)
+    // Pass the channel along so the node-level handler (capacity,
+    // accept-mode, delegation checks) can reply with a deny reason too.
+    this.emit('seed-request', msg, channel)
+  }
+
+  /**
+   * Send a signed deny (or queued-for-review notice) back on the channel a
+   * seed request arrived on. Best-effort: never throws, never broadcasts.
+   */
+  denySeedRequest (channel, appKey, reasonCode, detail = '') {
+    try {
+      if (!channel || !channel.opened || !channel._hiverelay || !channel._hiverelay.seedDenyMsg) return false
+      const relayPubkey = this.keyPair ? this.keyPair.publicKey : b4a.alloc(32)
+      const deny = {
+        appKey,
+        relayPubkey,
+        reasonCode: String(reasonCode).slice(0, 128),
+        detail: String(detail || '').slice(0, 512),
+        relaySignature: b4a.alloc(64)
+      }
+      if (this.keyPair) {
+        const payload = b4a.concat([appKey, relayPubkey, b4a.from(deny.reasonCode)])
+        sodium.crypto_sign_detached(deny.relaySignature, payload, this.keyPair.secretKey)
+      }
+      channel._hiverelay.seedDenyMsg.send(deny)
+      this.emit('request-denied', {
+        appKey: b4a.toString(appKey, 'hex'),
+        reasonCode: deny.reasonCode
+      })
+      return true
+    } catch (_) {
+      return false
+    }
+  }
+
+  _onSeedDeny (channel, msg) {
+    const peerKey = channel.stream && channel.stream.remotePublicKey
+      ? b4a.toString(channel.stream.remotePublicKey, 'hex')
+      : 'unknown'
+
+    const rateCheck = this.rateLimiter.check(peerKey)
+    if (!rateCheck.allowed) return
+
+    // Anti-spoof: the deny must claim the pubkey of the peer that sent it.
+    // The noise stream authenticates the remote key, so a relay can only
+    // deny on its own behalf — never forge denials from other relays.
+    if (channel.stream && channel.stream.remotePublicKey &&
+        !b4a.equals(msg.relayPubkey, channel.stream.remotePublicKey)) {
+      this.emit('invalid-deny', { appKey: b4a.toString(msg.appKey, 'hex'), reason: 'relayPubkey mismatch' })
+      return
+    }
+
+    // Verify the relay signature when one is present (all-zero = unsigned,
+    // allowed only so keyPair-less test relays still interoperate).
+    if (!isZeroBuf(msg.relaySignature)) {
+      const payload = b4a.concat([msg.appKey, msg.relayPubkey, b4a.from(msg.reasonCode)])
+      if (!sodium.crypto_sign_verify_detached(msg.relaySignature, payload, msg.relayPubkey)) {
+        this.emit('invalid-deny', { appKey: b4a.toString(msg.appKey, 'hex'), reason: 'bad signature' })
+        return
+      }
+    }
+
+    this.emit('seed-denied', {
+      appKey: b4a.toString(msg.appKey, 'hex'),
+      relay: b4a.toString(msg.relayPubkey, 'hex'),
+      reasonCode: msg.reasonCode,
+      detail: msg.detail || '',
+      terminal: msg.reasonCode !== 'queued-for-review'
+    })
   }
 
   _onSeedAccept (channel, msg) {

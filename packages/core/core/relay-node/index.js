@@ -601,7 +601,7 @@ export class RelayNode extends EventEmitter {
       this._seedProtocol = new SeedProtocol(this.swarm, {
         keyPair: this.swarm.keyPair
       })
-      this._seedProtocol.on('seed-request', (msg) => this._onSeedRequest(msg))
+      this._seedProtocol.on('seed-request', (msg, channel) => this._onSeedRequest(msg, channel))
       this._seedProtocol.on('unseed-request', (msg) => this._onUnseedRequest(msg))
 
       if (this.relay) {
@@ -2291,15 +2291,24 @@ export class RelayNode extends EventEmitter {
     })
   }
 
-  _onSeedRequest (msg) {
+  _onSeedRequest (msg, channel = null) {
     if (!this.seeder) return
 
     const appKeyHex = b4a.toString(msg.appKey, 'hex')
     const availableBytes = this.config.maxStorageBytes - this.seeder.totalBytesStored
 
+    // Reply with a wire-level deny so the publisher sees WHY instead of
+    // timing out. Best-effort: channel may be null for in-process callers.
+    const deny = (reasonCode, detail) => {
+      if (channel && this._seedProtocol) {
+        this._seedProtocol.denySeedRequest(channel, msg.appKey, reasonCode, detail)
+      }
+    }
+
     // Check capacity
     if (availableBytes < msg.maxStorageBytes) {
       this.emit('seed-rejected', { appKey: appKeyHex, reason: 'insufficient storage' })
+      deny('insufficient-storage', 'relay has ' + Math.max(0, availableBytes) + ' bytes available, request asked for ' + msg.maxStorageBytes)
       return
     }
 
@@ -2307,6 +2316,9 @@ export class RelayNode extends EventEmitter {
     const decision = this._decideAcceptance(msg, acceptMode)
     if (decision === 'reject') {
       this.emit('seed-rejected', { appKey: appKeyHex, reason: 'acceptMode:' + acceptMode })
+      deny('accept-mode:' + acceptMode, acceptMode === 'allowlist'
+        ? 'publisher is not on this relay\'s accept allowlist'
+        : 'relay is not accepting inbound seed requests')
       return
     }
 
@@ -2345,6 +2357,9 @@ export class RelayNode extends EventEmitter {
             : null
         })
       }
+      // Non-terminal notice: tells the publisher to stop waiting for an
+      // accept from this relay — the request is parked for the operator.
+      deny('queued-for-review', 'request queued for operator approval; an accept may follow later')
       return
     }
 
@@ -2369,6 +2384,7 @@ export class RelayNode extends EventEmitter {
           reason: delegationCheck.reason
         })
         this.emit('seed-rejected', { appKey: appKeyHex, reason: 'delegation:' + delegationCheck.reason })
+        deny('delegation:' + delegationCheck.reason, 'delegation certificate chain failed verification')
         return
       }
       effectivePublisher = delegationCheck.primaryPubkey

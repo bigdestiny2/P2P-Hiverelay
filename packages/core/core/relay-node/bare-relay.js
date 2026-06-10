@@ -205,7 +205,7 @@ export class BareRelay extends EventEmitter {
     // 6. Protocol handlers — these attach to every incoming connection.
     // SeedProtocol has signature (swarm, opts); event-driven API.
     this._seedProtocol = new SeedProtocol(this.swarm, { keyPair: this.swarm.keyPair })
-    this._seedProtocol.on('seed-request', (msg) => this._onSeedRequest(msg))
+    this._seedProtocol.on('seed-request', (msg, channel) => this._onSeedRequest(msg, channel))
     this._seedProtocol.on('unseed-request', (msg) => this._onUnseedRequest(msg))
 
     this._circuitRelay = this.relay
@@ -525,14 +525,23 @@ export class BareRelay extends EventEmitter {
     return { ok: true, primaryPubkey: result.primaryPubkey }
   }
 
-  _onSeedRequest (msg) {
+  _onSeedRequest (msg, channel = null) {
     if (!this.config.enableSeeding || !this.seeder) return
     const appKeyHex = b4a.toString(msg.appKey, 'hex')
     const availableBytes = this.config.maxStorageBytes - (this.seeder.totalBytesStored || 0)
 
+    // Wire-level deny so the publisher sees why instead of timing out —
+    // same contract as the Node RelayNode handler.
+    const deny = (reasonCode, detail) => {
+      if (channel && this._seedProtocol) {
+        this._seedProtocol.denySeedRequest(channel, msg.appKey, reasonCode, detail)
+      }
+    }
+
     if (availableBytes < (msg.maxStorageBytes || 0)) {
       log.warn('  seed rejected (insufficient storage):', appKeyHex.slice(0, 16))
       this.emit('seed-rejected', { appKey: appKeyHex, reason: 'insufficient storage' })
+      deny('insufficient-storage', 'relay has ' + Math.max(0, availableBytes) + ' bytes available, request asked for ' + (msg.maxStorageBytes || 0))
       return
     }
 
@@ -546,6 +555,9 @@ export class BareRelay extends EventEmitter {
     if (decision === 'reject') {
       log.warn('  seed rejected (acceptMode=' + mode + '):', appKeyHex.slice(0, 16))
       this.emit('seed-rejected', { appKey: appKeyHex, reason: 'acceptMode:' + mode })
+      deny('accept-mode:' + mode, mode === 'allowlist'
+        ? 'publisher is not on this relay\'s accept allowlist'
+        : 'relay is not accepting inbound seed requests')
       return
     }
 
@@ -563,6 +575,7 @@ export class BareRelay extends EventEmitter {
           reason: delegationCheck.reason
         })
         this.emit('seed-rejected', { appKey: appKeyHex, reason: 'delegation:' + delegationCheck.reason })
+        deny('delegation:' + delegationCheck.reason, 'delegation certificate chain failed verification')
         return
       }
       effectivePublisher = delegationCheck.primaryPubkey

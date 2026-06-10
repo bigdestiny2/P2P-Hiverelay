@@ -185,6 +185,51 @@ export const seedAcceptEncoding = {
 }
 
 /**
+ * Seed deny: relay tells the requesting publisher WHY a seed request was
+ * refused (or queued), instead of going silent and letting the publisher
+ * time out. Reason codes are stable machine-readable strings:
+ *
+ *   'signature-required'                    — no publisher signature at all
+ *   'archive-requires-publisher-signature'  — durability ≥ 1 without a valid
+ *                                             v2 publisher signature
+ *   'bad-signature'                         — signature present but invalid
+ *   'insufficient-storage'                  — relay capacity exhausted
+ *   'accept-mode:<mode>'                    — relay policy refused (allowlist/closed)
+ *   'delegation:<reason>'                   — delegation cert chain failed
+ *   'queued-for-review'                     — NOT terminal: pending operator approval
+ *
+ * Sent only on the requesting channel (never broadcast), signed by the
+ * relay's keyPair when available. Old peers that predate this message
+ * ignore it (protomux drops unknown message ids), so the worst case
+ * degrades to today's behavior: timeout.
+ */
+export const seedDenyEncoding = {
+  preencode (state, msg) {
+    c.fixed32.preencode(state, msg.appKey)
+    c.fixed32.preencode(state, msg.relayPubkey)
+    c.string.preencode(state, msg.reasonCode)
+    c.string.preencode(state, msg.detail || '')
+    c.fixed64.preencode(state, msg.relaySignature)
+  },
+  encode (state, msg) {
+    c.fixed32.encode(state, msg.appKey)
+    c.fixed32.encode(state, msg.relayPubkey)
+    c.string.encode(state, msg.reasonCode)
+    c.string.encode(state, msg.detail || '')
+    c.fixed64.encode(state, msg.relaySignature)
+  },
+  decode (state) {
+    return {
+      appKey: c.fixed32.decode(state),
+      relayPubkey: c.fixed32.decode(state),
+      reasonCode: c.string.decode(state),
+      detail: c.string.decode(state),
+      relaySignature: c.fixed64.decode(state)
+    }
+  }
+}
+
+/**
  * Unseed request: developer requests relay to stop seeding their app.
  * Signed by the publisher's key to prove ownership.
  * { appKey: Buffer(32), timestamp: uint, publisherPubkey: Buffer(32), publisherSignature: Buffer(64) }
