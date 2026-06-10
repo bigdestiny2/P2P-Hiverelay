@@ -188,7 +188,10 @@ test('e2e blind custody: intent → quorum → commit → retired → proof → 
   await relays[0].seedingRegistry.recordCustodyNonServingProof(nonServingProof)
 
   const finalStatus = relays[0].seedingRegistry.getCustodyStatus(intent.intentId)
-  t.is(finalStatus.nonServingProofCount, 1, 'non-serving-proof recorded')
+  // ≥ 1, not exactly 1: the v0.9.2-fixed expiry sweep auto-signs
+  // non-serving-proofs on its own schedule during the run, racing the
+  // manual one recorded above. Only the floor is deterministic.
+  t.ok(finalStatus.nonServingProofCount >= 1, 'non-serving-proof recorded (' + finalStatus.nonServingProofCount + ' total incl. auto-sweep)')
 
   // ─── Step 8: Witness Tombstone — independent attestation ───
   // A separate witness key (would be a different operator in production)
@@ -204,8 +207,15 @@ test('e2e blind custody: intent → quorum → commit → retired → proof → 
   }, witnessKeyPair)
   t.ok(tombstone.signature, 'witness tombstone signed')
 
+  // ≥ 1, not exactly 1: since v0.9.2 fixed the sweep's challengeNonce, the
+  // automatic cross-relay witness pass (initial fire 5s after start) also
+  // produces witnesses during this test's ~15s run. Threshold-many
+  // independent witnesses is the designed behavior (v0.8.20) — assert ours
+  // is among them rather than pinning the count.
   const witnesses = relays[0].seedingRegistry.getCustodyExpiryWitnesses(intent.intentId)
-  t.is(witnesses.length, 1, 'witness tombstone indexed')
+  t.ok(witnesses.length >= 1, 'witness tombstone indexed (' + witnesses.length + ' total incl. auto-witness pass)')
+  const witnessPubHex = b4a.toString(witnessKeyPair.publicKey, 'hex')
+  t.ok(witnesses.some(w => w.witnessPubkey === witnessPubHex), 'manually recorded witness present')
 
   // ─── Step 9: Aggregate snapshot reflects everything ───
   const snap = relays[0].seedingRegistry.custodySnapshot()
@@ -216,5 +226,7 @@ test('e2e blind custody: intent → quorum → commit → retired → proof → 
   t.is(snap.withNonServingProof, 1)
   t.is(snap.withWitnessTombstone, 1)
   t.is(snap.totalReceipts, 3)
-  t.is(snap.totalWitnessTombstones, 1)
+  // Same auto-witness-pass caveat as Step 8: the total grows with however
+  // many auto-witnesses fired during the run; only the floor is stable.
+  t.ok(snap.totalWitnessTombstones >= 1, 'witness tombstones counted (' + snap.totalWitnessTombstones + ')')
 })
