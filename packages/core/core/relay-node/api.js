@@ -779,6 +779,18 @@ export class RelayAPI extends EventEmitter {
           return this._json(res, wizard.snapshot())
         }
 
+        // Largest measured drives — operator visibility for storage
+        // triage and the input for manual purges. Management auth.
+        if (path === '/api/storage/top') {
+          if (!this._checkAuth(req)) {
+            return this._json(res, { error: formatErr('NOT_ALLOWED', 'storage top requires API key or localhost') }, 403)
+          }
+          if (!this.node.storageAccounting) return this._json(res, { entries: [] })
+          const n = Math.min(100, Math.max(1, parseInt(url.searchParams.get('n'), 10) || 30))
+          const summary = this.node.storageAccounting.getSummary()
+          return this._json(res, { ...summary, entries: this.node.storageAccounting.getTop(n) })
+        }
+
         // Operator subsidy status (Phase 1). Accrued ESTIMATE + payout
         // destination — operator-private, so management auth (bearer or
         // localhost), same gate as the wizard. {enabled:false} when the
@@ -1243,6 +1255,42 @@ export class RelayAPI extends EventEmitter {
         // gate when no key is configured (fleet/default), and accepts the
         // embedded token in exposeToken mode. The dashboard front-end
         // calls these in sequence as the operator clicks through the flow.
+        // Operator-initiated purge (option-A disk recovery): unseed +
+        // purge cores from disk + tombstone for each listed appKey,
+        // bypassing the sweep's replica-census gates — the authenticated
+        // operator is the authorization. Archive-tier and custody-bound
+        // entries are refused per-key (durability promises hold even
+        // here); results are reported per key, not all-or-nothing.
+        if (path === '/api/eviction/purge') {
+          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/eviction/purge')) return
+          if (!body || !Array.isArray(body.appKeys) || body.appKeys.length === 0) {
+            return this._json(res, { error: formatErr('BAD_REQUEST', 'appKeys (non-empty array) required') }, 400)
+          }
+          if (body.appKeys.length > 50) {
+            return this._json(res, { error: formatErr('BAD_REQUEST', 'max 50 appKeys per request') }, 400)
+          }
+          const results = []
+          for (const appKey of body.appKeys) {
+            if (!isValidHexKey(appKey, 64)) {
+              results.push({ appKey, ok: false, error: 'invalid appKey' })
+              continue
+            }
+            try {
+              const out = await this.node.manualPurge(appKey)
+              results.push({ appKey, ok: true, bytes: out.bytes })
+            } catch (err) {
+              results.push({ appKey, ok: false, error: err.code || err.message })
+            }
+          }
+          const purged = results.filter(r => r.ok)
+          return this._json(res, {
+            ok: true,
+            purged: purged.length,
+            freedBytes: purged.reduce((a, r) => a + (r.bytes || 0), 0),
+            results
+          })
+        }
+
         // Set/replace the subsidy payout destination (operator's own
         // lightning address / BOLT12 offer / on-chain address — the relay
         // never holds funds). Management auth, same gate as the wizard.

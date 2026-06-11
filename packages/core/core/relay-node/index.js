@@ -36,8 +36,9 @@ import { ReputationSystem } from '../../incentive/reputation/index.js'
 import { NetworkDiscovery } from '../network-discovery.js'
 import { HealthMonitor } from './health-monitor.js'
 import { DiskMonitor } from './disk-monitor.js'
+import Hyperdrive from 'hyperdrive'
 import { StorageAccounting } from './storage-accounting.js'
-import { EvictionManager } from './eviction.js'
+import { EvictionManager, assertPurgable } from './eviction.js'
 import { SubsidyAccrual } from '../../incentive/subsidy/index.js'
 import { AlertManager } from './alert-manager.js'
 import { SelfHeal } from './self-heal.js'
@@ -2556,6 +2557,31 @@ export class RelayNode extends EventEmitter {
     } catch {
       return false
     }
+  }
+
+  /**
+   * Operator-initiated purge of a single entry (option-A disk recovery,
+   * 2026-06-11): unseed + purge the drive's cores from disk + tombstone,
+   * WITHOUT the sweep's replica-census checks — the operator is the
+   * authorization. The sacred guard still applies: archive-tier and
+   * custody-bound entries are refused even here (durability promises are
+   * not housekeeping). Works regardless of eviction.enabled.
+   */
+  async manualPurge (appKeyHex) {
+    if (!this.appRegistry) throw new Error('registry not ready')
+    const entry = this.appRegistry.get(appKeyHex)
+    assertPurgable(entry)
+    let bytes = this.storageAccounting ? this.storageAccounting.getBytes(appKeyHex) : null
+    if (bytes == null && this.storageAccounting) {
+      try { bytes = await this.storageAccounting.measure(appKeyHex) } catch { bytes = null }
+    }
+    await this.unseedApp(appKeyHex)
+    const drive = new Hyperdrive(this.store.session(), b4a.from(appKeyHex, 'hex'))
+    await drive.ready()
+    await drive.purge()
+    this.appRegistry.markEvicted(appKeyHex, Date.now())
+    this.emit('eviction', { appKey: appKeyHex, bytes: bytes || 0, manual: true })
+    return { appKey: appKeyHex, bytes: bytes || 0 }
   }
 
   /**
