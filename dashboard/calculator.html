@@ -8,14 +8,14 @@
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#1a1a2e;--card:#16213e;--card-border:#1e2d50;
-  --green:#0f0;--orange:#f90;--cyan:#0af;--red:#f44;--purple:#bc8cff;--yellow:#ffd700;
-  --text:#e0e0e0;--text-dim:#7a8ba0;--text-bright:#fff;
+  --bg:#0e1118;--card:#151a26;--card-border:#222b3e;
+  --green:#3fb950;--orange:#f0a64a;--cyan:#58a6ff;--red:#f47067;--purple:#bc8cff;--yellow:#ffd700;
+  --text:#d6dde8;--text-dim:#8493a8;--text-bright:#fff;
   --mono:'SF Mono','Cascadia Code','Fira Code','Consolas',monospace;
   --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
 }
 html{font-size:14px}
-body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;padding:1rem}
+body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,transparent);color:var(--text);font-family:var(--sans);min-height:100vh;padding:1rem}
 
 .topbar{
   background:var(--card);border-bottom:1px solid var(--card-border);
@@ -33,7 +33,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
   padding:.35rem .75rem;border-radius:6px;transition:color .2s,background .2s;
 }
 .topbar-nav a:hover{color:var(--text-bright);background:rgba(255,255,255,.05)}
-.topbar-nav a.active{color:var(--orange);background:rgba(255,153,0,.1)}
+.topbar-nav a.active{color:#10131b;background:#f5c842;font-weight:600}
 
 .section-title{
   font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);
@@ -80,8 +80,8 @@ input[type="number"]:focus{border-color:var(--cyan)}
   color:var(--text);font-size:.75rem;padding:.5rem 1rem;cursor:pointer;
   transition:all .2s;font-family:var(--sans);
 }
-.preset-btn:hover{border-color:var(--cyan);color:var(--cyan);background:rgba(0,170,255,.05)}
-.preset-btn.active{border-color:var(--orange);color:var(--orange);background:rgba(255,153,0,.08)}
+.preset-btn:hover{border-color:var(--cyan);color:var(--cyan);background:rgba(88,166,255,.05)}
+.preset-btn.active{border-color:var(--orange);color:var(--orange);background:rgba(240,166,74,.08)}
 .preset-label{font-size:.72rem;color:var(--text-dim);display:block;margin-top:.2rem}
 
 /* Results */
@@ -114,7 +114,7 @@ input[type="number"]:focus{border-color:var(--cyan)}
 
 /* Big number hero */
 .hero-result{
-  background:linear-gradient(135deg,rgba(255,215,0,.06),rgba(0,255,0,.04));
+  background:linear-gradient(135deg,rgba(255,215,0,.06),rgba(63,185,80,.04));
   border:1px solid rgba(255,215,0,.2);border-radius:12px;
   padding:2rem;text-align:center;margin-bottom:1.5rem;
 }
@@ -125,7 +125,7 @@ input[type="number"]:focus{border-color:var(--cyan)}
 
 /* Cost section */
 .cost-card{
-  background:rgba(255,68,68,.03);border:1px solid rgba(255,68,68,.15);border-radius:10px;
+  background:rgba(244,112,103,.03);border:1px solid rgba(244,112,103,.15);border-radius:10px;
   padding:1.2rem;
 }
 .cost-row{display:flex;justify-content:space-between;padding:.4rem 0;font-size:.82rem}
@@ -365,7 +365,7 @@ input[type="number"]:focus{border-color:var(--cyan)}
         <span class="cost-label">GPU Rental</span>
         <span class="cost-value" id="plGpu">--</span>
       </div>
-      <div class="cost-row" style="border-top:1px solid rgba(255,68,68,.15);padding-top:.6rem;margin-top:.3rem">
+      <div class="cost-row" style="border-top:1px solid rgba(244,112,103,.15);padding-top:.6rem;margin-top:.3rem">
         <span style="font-weight:600;color:var(--text)">Total Costs</span>
         <span style="font-family:var(--mono);color:var(--red);font-weight:600" id="plTotalCost">--</span>
       </div>
