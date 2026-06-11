@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "blindspark-dashboard",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["HOME=/tmp/blindspark-preview", "node", "packages/core/cli/index.js", "start"],
+      "port": 9151
+    },
+    {
       "name": "Relay Node",
       "runtimeExecutable": "node",
       "runtimeArgs": ["cli/index.js", "start", "--region", "NA", "--max-storage", "50GB"],

@@ -463,6 +463,16 @@ async function start () {
     log.info({ appKey: appKey.slice(0, 12), discoveryKey: discoveryKey.slice(0, 12) }, 'seeding app')
   })
 
+  // Eviction audit trail (Phase A): every shed entry is operator-visible
+  // with the replica math that justified it.
+  node.on('eviction', ({ appKey, bytes, remainingReplicas, target, usedPct }) => {
+    log.info({ appKey: (appKey || '').slice(0, 12), freedBytes: bytes, remainingReplicas, target, diskUsedPct: usedPct }, 'evicted over-replicated app')
+  })
+
+  node.on('eviction-failed', ({ appKey, error }) => {
+    log.warn({ appKey: (appKey || '').slice(0, 12), error }, 'eviction failed')
+  })
+
   node.on('settlement-error', ({ error }) => {
     log.error({ err: error }, 'settlement error')
   })

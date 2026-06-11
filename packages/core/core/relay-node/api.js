@@ -844,7 +844,12 @@ export class RelayAPI extends EventEmitter {
 
           const config = this.node.config || {}
           const maxStorage = config.maxStorageBytes || 5368709120
-          const bytesStored = stats.seeder ? stats.seeder.totalBytesStored : 0
+          // Honest bytes (Phase 0): prefer the measured corestore total —
+          // seeder.totalBytesStored only counts Seeder.seedCore traffic,
+          // which reads "0 B" on relays whose content lives in registry
+          // drives (the bug that hid the 2026-06-11 disk fill).
+          const measuredStored = stats.storage && stats.storage.totalBytes > 0 ? stats.storage.totalBytes : null
+          const bytesStored = measuredStored != null ? measuredStored : (stats.seeder ? stats.seeder.totalBytesStored : 0)
           const reputationSummary = this.node.reputation
             ? {
                 trackedRelays: Object.keys(this.node.reputation.export()).length,

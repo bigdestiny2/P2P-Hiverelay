@@ -12,7 +12,7 @@
  *   - Version deduplication (only keep latest version per appId)
  */
 
-import { readFile, writeFile, rename } from 'fs/promises'
+import { readFile, writeFile, rename, unlink } from 'fs/promises'
 import { join } from 'path'
 import { EventEmitter } from 'events'
 import Hyperbee from 'hyperbee'
@@ -25,6 +25,8 @@ import {
 
 const REGISTRY_FILE = 'app-registry.json'
 const BEE_CORE_NAME = 'app-registry-v1'
+const EVICTED_FILE = 'evicted.json'
+const MAX_TOMBSTONES = 5000
 
 export class AppRegistry extends EventEmitter {
   /**
@@ -67,6 +69,71 @@ export class AppRegistry extends EventEmitter {
     this._saving = false
     this._savePending = false
     this._saveDebounceTimer = null
+
+    // Eviction tombstones (Phase A, 2026-06-11): appKey hex -> evictedAt.
+    // Lives in a JSON sidecar (atomic tmp+rename), deliberately OUTSIDE
+    // the bee — the bee's rows hydrate as apps on load, and a tombstone
+    // must do the opposite: prevent boot-replay and replication-repair
+    // from resurrecting an entry this relay deliberately shed, unless the
+    // network later falls under the replica floor (the repair gate calls
+    // clearEvicted then).
+    this.evicted = new Map()
+    this._evictedPath = storagePath ? join(storagePath, EVICTED_FILE) : null
+    this._evictedPersistTail = Promise.resolve()
+  }
+
+  // ─── Eviction tombstones ──────────────────────────────────────────
+
+  markEvicted (appKeyHex, at = Date.now()) {
+    this.evicted.set(appKeyHex, at)
+    // Bound the set: oldest tombstones fall off — by then the entry is
+    // either long gone network-wide or legitimately re-adoptable.
+    if (this.evicted.size > MAX_TOMBSTONES) {
+      const oldest = [...this.evicted.entries()].sort((a, b) => a[1] - b[1])
+      for (let i = 0; i < oldest.length - MAX_TOMBSTONES; i++) this.evicted.delete(oldest[i][0])
+    }
+    this._persistEvicted()
+  }
+
+  isEvicted (appKeyHex) {
+    return this.evicted.has(appKeyHex)
+  }
+
+  clearEvicted (appKeyHex) {
+    if (!this.evicted.delete(appKeyHex)) return
+    this._persistEvicted()
+  }
+
+  _persistEvicted () {
+    if (!this._evictedPath) return
+    this._evictedPersistTail = this._evictedPersistTail
+      .then(() => this._writeEvicted())
+      .catch(() => {})
+    return this._evictedPersistTail
+  }
+
+  async _writeEvicted () {
+    const tmp = this._evictedPath + '.tmp'
+    try {
+      await writeFile(tmp, JSON.stringify(Object.fromEntries(this.evicted)))
+      await rename(tmp, this._evictedPath)
+    } catch (err) {
+      try { await unlink(tmp) } catch {}
+      this.emit('error', { context: 'persist-evicted', error: err })
+    }
+  }
+
+  async _loadEvicted () {
+    if (!this._evictedPath) return
+    try {
+      const data = JSON.parse(await readFile(this._evictedPath, 'utf8'))
+      for (const [k, v] of Object.entries(data)) {
+        if (typeof v === 'number') this.evicted.set(k, v)
+      }
+    } catch {
+      // Missing/corrupt sidecar -> no tombstones. Worst case the relay
+      // re-adopts and a later sweep re-evicts.
+    }
   }
 
   /**
@@ -641,6 +708,8 @@ export class AppRegistry extends EventEmitter {
    * Falls back to legacy JSON-blob mode if no store is configured.
    */
   async load () {
+    // Tombstones first: boot-replay must know what was deliberately shed.
+    await this._loadEvicted()
     // v0.8.25 — try bee first
     const bee = await this._openBee()
     if (bee) {

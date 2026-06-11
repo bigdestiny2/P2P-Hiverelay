@@ -792,8 +792,11 @@ function updateDashboard(overview, history, apps) {
   // skip the made-up ratio bar (was rss / heapTotal*2).
   document.getElementById('sysRss').textContent = formatBytes(rss);
 
-  var stUsed = overview.storageUsed || 0;
-  var stMax = overview.storageMax;
+  // HTTP /api/overview nests storage as {used,max}; the WS mapping
+  // flattens to storageUsed/storageMax. Accept both — the flat-only read
+  // was why Storage showed 0 B on the polling path.
+  var stUsed = overview.storageUsed != null ? overview.storageUsed : (overview.storage && overview.storage.used) || 0;
+  var stMax = overview.storageMax != null ? overview.storageMax : (overview.storage && overview.storage.max);
   var stBar = document.getElementById('sysStorageBar');
   if (stMax && stMax > 1) {
     var stPct = Math.min(100, Math.round((stUsed / stMax) * 100));

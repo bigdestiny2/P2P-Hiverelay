@@ -6,6 +6,57 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.15.0] — 2026-06-11
+
+Minor: storage truth + over-replication eviction. Root cause shipped
+against: every fleet restart let replication-repair adopt entries from
+the shared registry until each relay converged toward the UNION of all
+catalogs (5/5 replicas of everything at `targetReplicaFloor: 2`), while
+the adoption storage guard compared against the always-zero
+`seeder.totalBytesStored`. utah and sing-1 hit 100% disk on 2026-06-11.
+
+### Added
+
+- **`StorageAccounting` (always on).** Paced background measurement of
+  real per-drive on-disk bytes via `core.info({ storage: true })` (file
+  stats of oplog/tree/blocks/bitfield for meta + blob cores; default 25
+  drives per 5s ≈ a 1,200-drive pass in ~4 min). Feeds the repair
+  storage guard, eviction ranking, `/status` (`storage` block),
+  `/api/overview`, the WS feed, and the dashboard Storage panel.
+- **`EvictionManager` (Phase A, default OFF — `eviction.enabled`).**
+  Under disk pressure (≥ `diskPressurePct`, default 80) sheds entries
+  the network holds above target + `floorMargin` replicas, biggest
+  first, until projected usage clears `resumePct` or
+  `maxEvictionsPerSweep` binds. Hard exclusions: archive tier
+  (`durability ≥ 1` / operator pin), custody-bound entries, entries
+  younger than `minAgeMs` (3d), and anything without a fresh replica
+  census. Deterministic stagger — only the K farthest holders by
+  XOR(relayPubkey, appKey) may shed a given entry, K = the network's
+  replica surplus — so pressured relays can never race the same entry
+  below the floor. Eviction = unseed + `drive.purge()` (bytes actually
+  return to the OS) + tombstone. Every eviction logs an audit line with
+  the replica math.
+- **Eviction tombstones (app-registry sidecar).** `evicted.json`
+  (atomic tmp+rename, bounded 5,000) stops boot-replay and
+  replication-repair from resurrecting deliberately-shed entries —
+  unless the network later falls under the floor, in which case the
+  repair gate clears the tombstone and re-adopts (availability first).
+
+### Fixed
+
+- **Replication-repair storage guard now binds.** Uses measured bytes,
+  and rejects adoption outright when the storage budget is exhausted
+  (previously only requests that declared a size were ever checked).
+- **`/api/overview` + WS feed report measured storage**, and the
+  dashboard accepts both the nested (`storage.used`) and flat
+  (`storageUsed`) shapes — the flat-only read was an extra reason the
+  Storage panel always showed 0 B on the polling path.
+
+Pinned by `test/unit/eviction.test.js` (10 tests / 32 asserts):
+accounting math + batch pacing + cache pruning, pressure gate, archive/
+custody/young/census-less exclusions, floor math, deterministic stagger,
+biggest-first + cap + resumePct early-stop, tombstone reload semantics.
+
 ## [0.14.0] — 2026-06-11
 
 Minor: dashboard UI/UX redesign — the node-runner dashboard was built
