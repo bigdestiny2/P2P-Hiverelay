@@ -1419,7 +1419,7 @@ export class RelayNode extends EventEmitter {
           myPubkeyHex: b4a.toString(this.swarm.keyPair.publicKey, 'hex'),
           unseed: (appKeyHex) => this.unseedApp(appKeyHex),
           store: this.store
-        }, this.config.eviction)
+        }, { targetFloor: Math.max(1, Number(this.config.targetReplicaFloor) || 1), ...this.config.eviction })
         this.eviction.on('evicted', (e) => this.emit('eviction', e))
         this.eviction.on('evict-failed', (e) => this.emit('eviction-failed', e))
         this.eviction.start()

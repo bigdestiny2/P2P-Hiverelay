@@ -6,6 +6,18 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.15.2] — 2026-06-11
+
+Patch: eviction census fallback. Boot-replayed entries with no active
+registry request have no replication-health row and were permanently
+un-evictable (417 of 961 on the utah canary). When the health row is
+missing, the sweep now uses the registry acceptance records as the
+census (`current` = acceptances — the same source the health map
+computes from — with `target` = `targetReplicaFloor`). Entries with no
+acceptance records at all remain untouchable: never evict blind. Floor,
+margin, and stagger guards unchanged. Fallback usage is counted in
+`lastSweep.skips.censusFallback`.
+
 ## [0.15.1] — 2026-06-11
 
 Patch: eviction sweep observability. The utah canary reported

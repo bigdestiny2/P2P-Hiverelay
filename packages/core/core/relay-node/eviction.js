@@ -43,7 +43,11 @@ const DEFAULTS = {
   floorMargin: 1,
   minAgeMs: 3 * 24 * 60 * 60 * 1000, // 3 days
   sweepIntervalMs: 10 * 60 * 1000,
-  maxEvictionsPerSweep: 20
+  maxEvictionsPerSweep: 20,
+  // Replica target when an entry has no replication-health row (boot-
+  // replayed entries without an active registry request). Wired from
+  // config.targetReplicaFloor by relay-node.
+  targetFloor: 2
 }
 
 /** Lexicographic compare of XOR(a, b) buffers — bigger = farther. */
@@ -155,9 +159,6 @@ export class EvictionManager extends EventEmitter {
         if (!bornAt) { skips.noBirth++; continue }
         if (now - bornAt < this.config.minAgeMs) { skips.young++; continue }
 
-        const h = health.get(appKey)
-        if (!h || !Number.isFinite(h.current) || !Number.isFinite(h.target)) { skips.noCensus++; continue } // no census -> never evict blind
-
         let relays
         try {
           relays = await this.deps.seedingRegistry.getRelaysForApp(appKey)
@@ -166,6 +167,23 @@ export class EvictionManager extends EventEmitter {
           continue
         }
         const holders = (relays || []).map(r => r.relayPubkey).filter(Boolean)
+
+        // Census: the replication-health row when present (it knows the
+        // per-request replicationFactor), else fall back to the registry
+        // acceptance list with target = the configured replica floor.
+        // The health map computes `current` from the SAME acceptance
+        // records (getRelaysForApp), so the fallback is exactly as
+        // trustworthy — it only lacks a per-request target. Without
+        // this, boot-replayed entries with no active request (417 of
+        // utah's 961 on the 2026-06-11 canary) are permanently
+        // un-evictable. Entries with NO acceptance records at all stay
+        // untouchable — never evict blind.
+        let h = health.get(appKey)
+        if (!h || !Number.isFinite(h.current) || !Number.isFinite(h.target)) {
+          if (!holders.length) { skips.noCensus++; continue }
+          h = { current: holders.length, target: Math.max(1, this.config.targetFloor) }
+          skips.censusFallback = (skips.censusFallback || 0) + 1 // informational: counted AND still considered
+        }
         const weAreCounted = holders.includes(my)
         // Replicas remaining if we leave. When the census doesn't count
         // us, leaving changes nothing — but then our copy is also not
