@@ -2,7 +2,7 @@ manifestVersion: 1
 id: blindspark
 category: networking
 name: Blindspark by HiveRelay
-version: "0.12.0"
+version: "0.13.1"
 tagline: A blind relay that keeps peer-to-peer apps online
 description: >-
   Blindspark turns your Umbrel into a blind relay for the Pear / Holepunch
