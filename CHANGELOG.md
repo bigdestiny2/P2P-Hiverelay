@@ -6,6 +6,15 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.15.1] — 2026-06-11
+
+Patch: eviction sweep observability. The utah canary reported
+`candidates: 0` at 100% disk with nothing explaining why — sweeps now
+count skip reasons (`archive`, `custody`, `young`, `noBirth`,
+`noCensus`, `floor`, `rank`, `registryError`) in the sweep summary
+(`/status` → `eviction.lastSweep.skips`). Also accepts `seededAt` as an
+entry birth timestamp.
+
 ## [0.15.0] — 2026-06-11
 
 Minor: storage truth + over-replication eviction. Root cause shipped
