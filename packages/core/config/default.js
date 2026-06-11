@@ -99,6 +99,33 @@ export default {
   custodyExpiryInterval: 60_000,
   custodyExpiryGraceMs: 0,
 
+  // Storage accounting — always-on paced measurement of real per-drive
+  // on-disk bytes (the input for the repair storage guard, eviction
+  // ranking, and the dashboard Storage panel). ~batchSize drives are
+  // stat()ed every tickMs; defaults walk ~1,200 drives in ~4 minutes.
+  storageAccounting: {
+    tickMs: 5000,
+    batchSize: 25
+  },
+
+  // Over-replication eviction (Phase A). OFF by default. Under disk
+  // pressure, sheds entries the network holds ≥ floorMargin replicas
+  // above their target — never archive-tier (durability ≥ 1), never
+  // custody-bound, never younger than minAgeMs, never below the floor
+  // (deterministic stagger prevents simultaneous shedding). Bytes are
+  // actually reclaimed via drive purge; tombstones stop boot-replay and
+  // repair from resurrecting shed entries unless the network falls under
+  // floor. See core/relay-node/eviction.js.
+  eviction: {
+    enabled: false,
+    diskPressurePct: 80,
+    resumePct: 70,
+    floorMargin: 1,
+    minAgeMs: 3 * 24 * 60 * 60 * 1000,
+    sweepIntervalMs: 10 * 60 * 1000,
+    maxEvictionsPerSweep: 20
+  },
+
   // Seeding registry
   registryKey: null, // null = create new autobase
   registryScanInterval: 60_000, // 1 minute

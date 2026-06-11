@@ -36,6 +36,8 @@ import { ReputationSystem } from '../../incentive/reputation/index.js'
 import { NetworkDiscovery } from '../network-discovery.js'
 import { HealthMonitor } from './health-monitor.js'
 import { DiskMonitor } from './disk-monitor.js'
+import { StorageAccounting } from './storage-accounting.js'
+import { EvictionManager } from './eviction.js'
 import { SubsidyAccrual } from '../../incentive/subsidy/index.js'
 import { AlertManager } from './alert-manager.js'
 import { SelfHeal } from './self-heal.js'
@@ -340,6 +342,8 @@ export class RelayNode extends EventEmitter {
     this.networkDiscovery = null
     this.healthMonitor = null
     this.diskMonitor = null
+    this.storageAccounting = null
+    this.eviction = null
     this.subsidyAccrual = null
     this.alertManager = null
     this.selfHeal = null
@@ -1392,6 +1396,35 @@ export class RelayNode extends EventEmitter {
       })
       this.diskMonitor.start()
 
+      // Honest per-drive storage accounting (always on — it is the input
+      // for the repair storage guard, the eviction ranking, and the
+      // dashboard's Storage panel; the paced sweep keeps IO negligible).
+      this.storageAccounting = new StorageAccounting({
+        appRegistry: this.appRegistry,
+        tickMs: this.config.storageAccounting?.tickMs,
+        batchSize: this.config.storageAccounting?.batchSize
+      })
+      this.storageAccounting.start()
+
+      // Over-replication eviction (Phase A). Off by default — sheds
+      // surplus replicas under disk pressure. See eviction.js for the
+      // policy contract.
+      if (this.config.eviction?.enabled) {
+        this.eviction = new EvictionManager({
+          appRegistry: this.appRegistry,
+          seedingRegistry: this.seedingRegistry,
+          storageAccounting: this.storageAccounting,
+          diskMonitor: this.diskMonitor,
+          getReplicationHealth: () => this._replicationHealth,
+          myPubkeyHex: b4a.toString(this.swarm.keyPair.publicKey, 'hex'),
+          unseed: (appKeyHex) => this.unseedApp(appKeyHex),
+          store: this.store
+        }, this.config.eviction)
+        this.eviction.on('evicted', (e) => this.emit('eviction', e))
+        this.eviction.on('evict-failed', (e) => this.emit('eviction-failed', e))
+        this.eviction.start()
+      }
+
       // Operator subsidy accrual (Phase 1, relay side). Off by default;
       // accrues a capped sats ESTIMATE for blind-peer work and exports a
       // signed claim the Phase-2 coordinator verifies + pays. Moves no
@@ -1544,6 +1577,8 @@ export class RelayNode extends EventEmitter {
       },
       accessControl: accessControlStats,
       disk: this.diskMonitor ? this.diskMonitor.getInfo() : null,
+      storage: this.storageAccounting ? this.storageAccounting.getSummary() : null,
+      eviction: this.eviction ? this.eviction.getSummary() : null,
       subsidy: this.subsidyAccrual ? this.subsidyAccrual.getSummary() : null,
       signedDirectory: this._signedDirectory ? this._signedDirectory.getStats() : null,
       // v0.8.28 (#29): existing seeder.coresSeeded only counts the
@@ -3343,7 +3378,26 @@ export class RelayNode extends EventEmitter {
     const alreadySeeding = this.seededApps.has(request.appKey)
     if (alreadyAccepted && alreadySeeding) return false
 
-    const availableBytes = this.config.maxStorageBytes - (this.seeder.totalBytesStored || 0)
+    // Eviction tombstone gate (Phase A): an entry this relay deliberately
+    // shed is only re-adopted when the network has actually fallen under
+    // the replica floor — otherwise every sweep would be undone by the
+    // next repair pass and the fleet re-converges on union-of-catalogs.
+    const floor = Math.max(1, Number(this.config.targetReplicaFloor) || 1)
+    if (this.appRegistry && typeof this.appRegistry.isEvicted === 'function' && this.appRegistry.isEvicted(request.appKey)) {
+      if (status.current >= floor) return false
+      this.appRegistry.clearEvicted(request.appKey) // genuinely under floor — we're needed again
+    }
+
+    // Storage guard on REAL bytes (Phase 0). seeder.totalBytesStored only
+    // counts Seeder.seedCore traffic — ~0 on registry-driven relays — so
+    // the old guard never bound and adoption was effectively uncapped
+    // (how the fleet's disks filled, 2026-06-11). Prefer the measured
+    // corestore total; also reject when the budget is simply exhausted
+    // rather than only when the request declares a size.
+    const measured = this.storageAccounting ? this.storageAccounting.getSummary().totalBytes : 0
+    const usedBytes = measured > 0 ? measured : (this.seeder.totalBytesStored || 0)
+    const availableBytes = this.config.maxStorageBytes - usedBytes
+    if (availableBytes <= 0) return false
     if (request.maxStorageBytes > 0 && request.maxStorageBytes > availableBytes) return false
 
     try {
@@ -3430,6 +3484,8 @@ export class RelayNode extends EventEmitter {
     if (this.alertManager) { this.alertManager.stop(); this.alertManager = null }
     if (this.healthMonitor) { this.healthMonitor.stop(); this.healthMonitor = null }
     if (this.diskMonitor) { this.diskMonitor.stop(); this.diskMonitor = null }
+    if (this.eviction) { this.eviction.stop(); this.eviction = null }
+    if (this.storageAccounting) { this.storageAccounting.stop(); this.storageAccounting = null }
     if (this.subsidyAccrual) { await this.subsidyAccrual.destroy(); this.subsidyAccrual = null }
     if (this._healthCheckInterval) { clearInterval(this._healthCheckInterval); this._healthCheckInterval = null }
     if (this.settlementInterval) { clearInterval(this.settlementInterval); this.settlementInterval = null }
