@@ -6,6 +6,48 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.14.0] — 2026-06-11
+
+Minor: dashboard UI/UX redesign — the node-runner dashboard was built
+very early and carried real debt. One design system for both audiences:
+Blindspark home runners (simple: is it up, what am I earning) and
+HiveRelay fleet operators (dense: registry, system, peers).
+
+### Changed
+
+- **Design system pass across all 8 dashboard pages.** Refined dark
+  palette (deep neutral background with a subtle glow, GitHub-dark-range
+  hues replacing the saturated #0f0/#0af/#f90 primaries), shared radii,
+  focus-visible outlines, `prefers-reduced-motion` support, and the
+  spark-yellow accent reserved for identity + earnings. Sub-pages
+  (catalog, payments, calculator, network, leaderboard, docs, wizard)
+  get the same tokens + accent active-nav pill so the product reads as
+  one surface.
+- **Dashboard (index) rebuilt.** Sticky blurred topbar with a
+  copy-to-clipboard pubkey chip; "Apps Kept Alive" framing; Earnings
+  panel redesigned as a spark-accented card with a progress-to-daily-cap
+  bar and a proper payout-destination dialog (replaces `window.prompt`)
+  with inline validation errors; payment/credits row is now adaptive —
+  hidden until the payment stack actually reports activity; charts get
+  legends + friendlier empty states; responsive pass (auto-fit stat
+  grid, horizontally scrollable nav on phones — Umbrel users open this
+  on mobile).
+
+### Fixed
+
+- **"31.7 MB / 1 B" memory + storage readouts.** System bars fell back
+  to `|| 1` denominators when a payload (notably the WS overview) lacked
+  `heapTotal` / `storage.max`, rendering "/ 1 B" with a 100%-red bar on
+  a healthy node. Unknown totals now show the used value alone and hide
+  the ratio bar; the RSS bar (previously ratioed against a made-up
+  `heapTotal*2`) is gone. Bars are threshold-colored (green→amber→red)
+  instead of alarm-red at idle.
+- **"Unknown App" rendered as if it were a real name.** Both the API
+  and catalog.json report the literal placeholder "Unknown App" for
+  metadata-less drives; tables now show the truncated key (dim mono)
+  with a "no metadata" badge instead.
+- **Error counter** reads green at 0 instead of permanent red.
+
 ## [0.13.1] — 2026-06-11
 
 Patch: dashboard brand pass for the Umbrel app.

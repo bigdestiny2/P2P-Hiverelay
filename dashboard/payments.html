@@ -8,14 +8,14 @@
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#1a1a2e;--card:#16213e;--card-border:#1e2d50;
-  --green:#0f0;--orange:#f90;--cyan:#0af;--red:#f44;--purple:#bc8cff;--yellow:#ffd700;
-  --text:#e0e0e0;--text-dim:#7a8ba0;--text-bright:#fff;
+  --bg:#0e1118;--card:#151a26;--card-border:#222b3e;
+  --green:#3fb950;--orange:#f0a64a;--cyan:#58a6ff;--red:#f47067;--purple:#bc8cff;--yellow:#ffd700;
+  --text:#d6dde8;--text-dim:#8493a8;--text-bright:#fff;
   --mono:'SF Mono','Cascadia Code','Fira Code','Consolas',monospace;
   --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
 }
 html{font-size:14px}
-body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;padding:1rem}
+body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,transparent);color:var(--text);font-family:var(--sans);min-height:100vh;padding:1rem}
 
 .topbar{
   background:var(--card);border-bottom:1px solid var(--card-border);
@@ -33,7 +33,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
   padding:.35rem .75rem;border-radius:6px;transition:color .2s,background .2s;
 }
 .topbar-nav a:hover{color:var(--text-bright);background:rgba(255,255,255,.05)}
-.topbar-nav a.active{color:var(--orange);background:rgba(255,153,0,.1)}
+.topbar-nav a.active{color:#10131b;background:#f5c842;font-weight:600}
 .topbar-right{margin-left:auto;display:flex;align-items:center;gap:1rem}
 
 .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem}
@@ -72,7 +72,7 @@ th{
   text-transform:uppercase;letter-spacing:.8px;
 }
 td{padding:.5rem .8rem;border-bottom:1px solid rgba(30,45,80,.5);font-family:var(--mono);font-size:.78rem}
-tr:hover td{background:rgba(0,170,255,.03)}
+tr:hover td{background:rgba(88,166,255,.03)}
 .empty-state{text-align:center;padding:2rem;color:var(--text-dim);font-style:italic}
 
 .rate-row{display:flex;justify-content:space-between;align-items:center;padding:.5rem 0;border-bottom:1px solid rgba(30,45,80,.3)}
@@ -86,12 +86,12 @@ tr:hover td{background:rgba(0,170,255,.03)}
   display:inline-block;padding:.15rem .5rem;border-radius:4px;font-size:.7rem;
   font-family:var(--mono);font-weight:600;
 }
-.badge-settled{background:rgba(0,255,0,.1);color:var(--green);border:1px solid rgba(0,255,0,.25)}
-.badge-pending{background:rgba(255,153,0,.1);color:var(--orange);border:1px solid rgba(255,153,0,.25)}
-.badge-expired{background:rgba(255,68,68,.1);color:var(--red);border:1px solid rgba(255,68,68,.25)}
+.badge-settled{background:rgba(63,185,80,.1);color:var(--green);border:1px solid rgba(63,185,80,.25)}
+.badge-pending{background:rgba(240,166,74,.1);color:var(--orange);border:1px solid rgba(240,166,74,.25)}
+.badge-expired{background:rgba(244,112,103,.1);color:var(--red);border:1px solid rgba(244,112,103,.25)}
 .badge-cancelled{background:rgba(120,120,120,.1);color:var(--text-dim);border:1px solid rgba(120,120,120,.25)}
-.badge-free{background:rgba(0,255,0,.1);color:var(--green);border:1px solid rgba(0,255,0,.25)}
-.badge-standard{background:rgba(0,170,255,.1);color:var(--cyan);border:1px solid rgba(0,170,255,.25)}
+.badge-free{background:rgba(63,185,80,.1);color:var(--green);border:1px solid rgba(63,185,80,.25)}
+.badge-standard{background:rgba(88,166,255,.1);color:var(--cyan);border:1px solid rgba(88,166,255,.25)}
 .badge-unlimited{background:rgba(188,140,255,.1);color:var(--purple);border:1px solid rgba(188,140,255,.25)}
 
 .progress-bar{height:6px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden;margin-top:.3rem}
@@ -103,9 +103,9 @@ tr:hover td{background:rgba(0,170,255,.03)}
 .conn-status{
   position:fixed;bottom:1rem;right:1rem;padding:.35rem .7rem;border-radius:6px;
   font-size:.7rem;font-family:var(--mono);z-index:100;
-  background:rgba(0,255,0,.1);color:var(--green);border:1px solid rgba(0,255,0,.2);
+  background:rgba(63,185,80,.1);color:var(--green);border:1px solid rgba(63,185,80,.2);
 }
-.conn-status.error{background:rgba(255,68,68,.1);color:var(--red);border-color:rgba(255,68,68,.2)}
+.conn-status.error{background:rgba(244,112,103,.1);color:var(--red);border-color:rgba(244,112,103,.2)}
 
 .compare-table td:nth-child(2){color:var(--yellow);font-weight:600}
 .compare-table td:nth-child(3),.compare-table td:nth-child(4){color:var(--text-dim)}
@@ -149,7 +149,7 @@ tr:hover td{background:rgba(0,170,255,.03)}
 </div>
 
 <!-- Free-First Banner -->
-<div class="card" style="margin-bottom:1.5rem;border-color:rgba(0,255,0,.3);background:linear-gradient(135deg,rgba(0,255,0,.03),rgba(0,170,255,.03))">
+<div class="card" style="margin-bottom:1.5rem;border-color:rgba(63,185,80,.3);background:linear-gradient(135deg,rgba(63,185,80,.03),rgba(88,166,255,.03))">
   <div style="display:flex;align-items:flex-start;gap:1rem">
     <div style="font-size:1.8rem;line-height:1;flex-shrink:0;padding-top:.1rem">&#9889;</div>
     <div>
@@ -226,15 +226,15 @@ tr:hover td{background:rgba(0,170,255,.03)}
   <div class="card">
     <h3>Invoice Status</h3>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:.8rem;margin-bottom:1rem">
-      <div style="text-align:center;padding:.8rem;background:rgba(0,255,0,.05);border-radius:8px;border:1px solid rgba(0,255,0,.15)">
+      <div style="text-align:center;padding:.8rem;background:rgba(63,185,80,.05);border-radius:8px;border:1px solid rgba(63,185,80,.15)">
         <div style="font-size:1.5rem;font-weight:700;font-family:var(--mono);color:var(--green)" id="invSettled">0</div>
         <div style="font-size:.68rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">Settled</div>
       </div>
-      <div style="text-align:center;padding:.8rem;background:rgba(255,153,0,.05);border-radius:8px;border:1px solid rgba(255,153,0,.15)">
+      <div style="text-align:center;padding:.8rem;background:rgba(240,166,74,.05);border-radius:8px;border:1px solid rgba(240,166,74,.15)">
         <div style="font-size:1.5rem;font-weight:700;font-family:var(--mono);color:var(--orange)" id="invPending">0</div>
         <div style="font-size:.68rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">Pending</div>
       </div>
-      <div style="text-align:center;padding:.8rem;background:rgba(255,68,68,.05);border-radius:8px;border:1px solid rgba(255,68,68,.15)">
+      <div style="text-align:center;padding:.8rem;background:rgba(244,112,103,.05);border-radius:8px;border:1px solid rgba(244,112,103,.15)">
         <div style="font-size:1.5rem;font-weight:700;font-family:var(--mono);color:var(--red)" id="invExpired">0</div>
         <div style="font-size:.68rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">Expired</div>
       </div>
