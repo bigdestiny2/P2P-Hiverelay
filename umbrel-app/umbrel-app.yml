@@ -1,0 +1,86 @@
+manifestVersion: 1
+id: blindspark
+category: networking
+name: Blindspark by HiveRelay
+version: "0.12.0"
+tagline: A blind relay that keeps peer-to-peer apps online
+description: >-
+  Blindspark turns your Umbrel into a blind relay for the Pear / Holepunch
+  peer-to-peer app ecosystem. It seeds encrypted Hyperdrives — data the
+  relay can verify and serve but cannot read — so the apps people build on
+  Pear stay reachable even when their authors and users are offline.
+
+
+  Why run it:
+
+   - Keep decentralized apps available. A peer-to-peer app is only as
+     reachable as the peers hosting its data. Blindspark is an always-on
+     peer that holds and serves that data on demand, so apps don't vanish
+     the moment their users close their laptops.
+
+   - Power blind social recovery. Blindspark can hold encrypted recovery
+     shares for the Atomic Blind Custody protocol, letting people recover
+     keys and identities through their social graph — without any single
+     party (this relay included) ever seeing the secret.
+
+
+  How it stays blind:
+
+   - Content is end-to-end encrypted between publisher and consumer over
+     Hypercore's Noise transport. The relay holds ciphertext blocks and
+     Merkle proofs, never plaintext. It proves the data is well-formed and
+     serves it to authorized peers; it cannot decrypt what it carries.
+
+   - Operator-untrusted by design. Even you, running the box, cannot read
+     the content your relay stores.
+
+
+  Setup is quick:
+
+   1. Install from the App Store.
+
+   2. Open the dashboard. A short first-run wizard names your relay and
+      lets you choose how it accepts seed requests — review each one, use
+      an allowlist, or run open.
+
+   3. That's it. The relay joins the network and starts holding data.
+
+
+  Notes:
+
+   - The relay is reached only through Umbrel's authenticated app proxy;
+     it does not expose a management port to your network.
+
+   - Persistent state lives in the app's data volume and survives
+     reinstalls — the relay's identity is derived from your Umbrel seed.
+
+   - Open source, Apache-2.0. No account, no telemetry, no payment.
+developer: HiveRelay
+website: https://github.com/bigdestiny2/p2p-hiverelay
+dependencies: []
+repo: https://github.com/bigdestiny2/p2p-hiverelay
+support: https://github.com/bigdestiny2/p2p-hiverelay/issues
+port: 9100
+gallery:
+  - 1.png
+  - 2.png
+  - 3.png
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+releaseNotes: >-
+  First App Store release of Blindspark by HiveRelay — a blind relay for
+  the Pear / Holepunch ecosystem.
+
+   - One-click install; the relay's identity is derived from your Umbrel
+     seed, so it survives reinstalls.
+
+   - Short first-run wizard: name your relay and choose how it accepts
+     seed requests.
+
+   - Dashboard with live status, stored / served bytes, and the
+     seed-request review queue.
+
+   - Genuinely blind: the relay stores encrypted data it cannot read.
+submitter: bigdestiny2
+submission: https://github.com/getumbrel/umbrel-apps/pull/PENDING

@@ -6,6 +6,52 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.12.0] — 2026-06-11
+
+Minor: revives the Umbrel App Store package (as **Blindspark by
+HiveRelay** — a blind relay, no Lightning/earning component) and adds the
+one piece of core machinery it needs: a way for the management UI to
+authenticate behind a trusted reverse proxy. Also fixes a latent
+dashboard-serving path bug that would 500 on a fresh checkout or the
+Docker image.
+
+### Added
+
+- **`ui.exposeToken` — management UI auth behind a reverse proxy.** The
+  dashboard and first-run wizard are localhost-only by default. Behind a
+  proxy (e.g. Umbrel's `app_proxy`) the request arrives from the proxy's
+  address, so that check can't apply — and v0.10.5 correctly removed the
+  spoofable `X-Forwarded-For` trust the old packaging leaned on. When
+  `ui.exposeToken` is enabled (env `HIVERELAY_UI_EXPOSE_TOKEN=1`), the
+  relay derives a stable management token from `$APP_SEED`, embeds it in
+  the HTML it serves, and the bundled UI returns it as
+  `Authorization: Bearer`. `/wizard` and `/api/wizard/*` now accept the
+  bearer token (via `_checkAuth`) instead of being strictly localhost.
+  **Off by default** — direct/localhost and existing fleet deployments
+  are unchanged (no key configured → the localhost-only behaviour is
+  byte-for-byte the same). The token is embedded only when a key exists,
+  attribute-escaped, and served `Cache-Control: no-store`. SECURITY: only
+  enable when the API port is reachable solely through an authenticating
+  proxy and never published to the host/LAN. New
+  `deriveTokenFromSeed()` (domain-separated from the wizard's identity
+  key) and `test/unit/api-ui-token.test.js` (10 tests).
+- **Umbrel App Store package (`umbrel-app/`).** Manifest, compose, icon +
+  gallery placeholders, and a submission checklist for **Blindspark by
+  HiveRelay** (category: networking, no `lnbits` dependency, no earning
+  language). The compose wraps the published multi-arch image, runs as
+  uid/gid 999, persists `/data`, and derives a reinstall-safe identity
+  from `$APP_SEED`. Restores the `umbrel-app-validate` CI workflow.
+
+### Fixed
+
+- **Dashboard/wizard could 500 on fresh installs and the Docker image.**
+  `_serveDashboard` resolved assets only at `packages/core/dashboard`,
+  which is not git-tracked and exists only as a stale leftover on
+  long-lived boxes — a fresh clone or the `COPY . .` Docker image has the
+  dashboard at the repo root, so `/dashboard` and `/wizard` would throw
+  ENOENT. Now probes the repo-root (git-tracked) location first and falls
+  back to the legacy path, caching the resolved dir.
+
 ## [0.11.0] — 2026-06-10
 
 Minor: seed denials become visible end-to-end, operators can pin foreign

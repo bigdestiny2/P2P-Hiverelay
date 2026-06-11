@@ -82,6 +82,18 @@ const CONTENT_TYPE_ERROR = `type must be one of: ${Array.from(CONTENT_TYPES).joi
 const STORAGE_CLASS_ERROR = `storageClass must be one of: ${Array.from(STORAGE_CLASSES).join(', ')}`
 const AVAILABILITY_CLASS_ERROR = `availabilityClass must be one of: ${Array.from(AVAILABILITY_CLASSES).join(', ')}`
 const MANAGEMENT_AUTH_ERROR = 'Unauthorized — management API requires API key or localhost access'
+
+// Minimal escaping for a value placed inside a double-quoted HTML
+// attribute (the exposeToken meta tag). Derived tokens are hex, but a
+// custom operator-supplied key could contain anything.
+function escapeHtmlAttr (s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
 const LOCAL_ONLY_DISPATCH_ROUTES = new Set([
   'identity.sign',
   'identity.verify'
@@ -112,6 +124,10 @@ export class RelayAPI extends EventEmitter {
     this.host = opts.apiHost || '0.0.0.0'
     this.corsOrigins = opts.corsOrigins || []
     this.trustProxy = opts.trustProxy || false
+    // When true, the served dashboard/wizard HTML embeds the management
+    // token so the browser UI can authenticate behind a trusted proxy.
+    // See config/default.js `ui.exposeToken` for the security contract.
+    this._uiExposeToken = opts.uiExposeToken || false
     this.server = null
 
     // API key for authenticated endpoints (manage, seed, unseed)
@@ -186,6 +202,33 @@ export class RelayAPI extends EventEmitter {
         this.node.emit('security-warning', { message: msg })
       }
       console.warn(msg)
+    }
+
+    // exposeToken embeds the management token into served HTML. That is
+    // only safe behind an authenticating proxy with the port unpublished
+    // to the host/LAN — anyone who can load the page can read the token.
+    // Warn loudly, and refuse to expose a token we don't have.
+    if (this._uiExposeToken) {
+      if (!this._apiKey) {
+        // Nothing to embed and management would be unreachable; disable.
+        this._uiExposeToken = false
+        const msg = '[SECURITY WARNING] ui.exposeToken is set but no API key is configured ' +
+          '(no HIVERELAY_API_KEY/apiKey, and $APP_SEED missing or too short to derive one). ' +
+          'Token exposure disabled; the management UI will be localhost-only.'
+        if (this.node && typeof this.node.emit === 'function') {
+          this.node.emit('security-warning', { message: msg })
+        }
+        console.warn(msg)
+      } else {
+        const msg = '[SECURITY NOTICE] ui.exposeToken is enabled — the management token is ' +
+          'embedded in served dashboard/wizard HTML so the UI can authenticate behind a ' +
+          'reverse proxy. Ensure this API port is reachable ONLY through an authenticating ' +
+          'proxy and is NEVER published to the host/LAN.'
+        if (this.node && typeof this.node.emit === 'function') {
+          this.node.emit('security-warning', { message: msg })
+        }
+        console.warn(msg)
+      }
     }
 
     // Retry on EADDRINUSE — when self-heal restarts the node, the previous
@@ -609,11 +652,13 @@ export class RelayAPI extends EventEmitter {
           return this._serveDashboard(res, '_dashboardHtml', 'index.html')
         }
 
-        // First-run setup wizard UI. Localhost-only because the form
-        // collects secrets (LNbits admin key); the JSON endpoints
-        // /api/wizard/* enforce the same restriction.
+        // First-run setup wizard UI. Localhost-only by default. In
+        // exposeToken mode the page is served through the trusted proxy
+        // and carries the embedded token that authorizes the /api/wizard/*
+        // mutations — so the HTML itself is no longer the secret (the
+        // token is, and only reaches authenticated proxy clients).
         if (path === '/wizard') {
-          if (!this._isLocalRequest(req)) {
+          if (!this._isLocalRequest(req) && !this._uiExposeToken) {
             res.setHeader('Content-Type', 'text/plain')
             res.writeHead(403)
             res.end('Wizard is localhost-only.\n')
@@ -723,11 +768,12 @@ export class RelayAPI extends EventEmitter {
 
         // First-run setup wizard — serves the current state machine. The
         // dashboard checks `isComplete` on load and either renders the
-        // wizard or the main UI. Localhost-only by design (the wizard
-        // accepts secrets like LNbits admin keys).
+        // wizard or the main UI. Auth: API key (bearer) or localhost. In
+        // exposeToken mode the UI supplies the embedded token; without a
+        // key configured this reduces to the original localhost-only gate.
         if (path === '/api/wizard') {
-          if (!this._isLocalRequest(req)) {
-            return this._json(res, { error: formatErr('NOT_ALLOWED', 'wizard is localhost-only') }, 403)
+          if (!this._checkAuth(req)) {
+            return this._json(res, { error: formatErr('NOT_ALLOWED', 'wizard requires API key or localhost') }, 403)
           }
           const wizard = await this._getWizard()
           return this._json(res, wizard.snapshot())
@@ -1163,13 +1209,14 @@ export class RelayAPI extends EventEmitter {
         }
 
         // ─── Setup wizard mutations ──────────────────────────────
-        // Five POST endpoints, one per wizard step. All localhost-only —
-        // they accept secrets (LNbits admin key) and configuration
-        // changes. The dashboard front-end calls these in sequence as
-        // the operator clicks through the 5-step flow.
+        // POST endpoints, one per wizard step. Auth: API key (bearer) or
+        // localhost — _checkAuth reduces to the original localhost-only
+        // gate when no key is configured (fleet/default), and accepts the
+        // embedded token in exposeToken mode. The dashboard front-end
+        // calls these in sequence as the operator clicks through the flow.
         if (path.startsWith('/api/wizard/')) {
-          if (!this._isLocalRequest(req)) {
-            return this._json(res, { error: formatErr('NOT_ALLOWED', 'wizard is localhost-only') }, 403)
+          if (!this._checkAuth(req)) {
+            return this._json(res, { error: formatErr('NOT_ALLOWED', 'wizard requires API key or localhost') }, 403)
           }
           const wizard = await this._getWizard()
           const action = path.slice('/api/wizard/'.length)
@@ -2056,14 +2103,53 @@ export class RelayAPI extends EventEmitter {
     return null
   }
 
+  // Resolve a dashboard asset across the two layouts this package ships
+  // in. The git-tracked source lives at the repo root (/dashboard) — that
+  // is what a fresh clone and the Docker image (`COPY . .` → /app) have.
+  // Some long-lived installs also have a legacy copy at
+  // packages/core/dashboard. Probe repo-root first, fall back to legacy,
+  // and cache the working dir so we only probe once.
+  async _readDashboardFile (filename) {
+    if (this._dashboardDir) {
+      return readFile(join(this._dashboardDir, filename), 'utf-8')
+    }
+    const candidates = [
+      join(__dirname, '..', '..', '..', '..', 'dashboard'), // repo root
+      join(__dirname, '..', '..', 'dashboard') // legacy packages/core
+    ]
+    let lastErr
+    for (const dir of candidates) {
+      try {
+        const content = await readFile(join(dir, filename), 'utf-8')
+        this._dashboardDir = dir
+        return content
+      } catch (err) {
+        lastErr = err
+      }
+    }
+    throw lastErr
+  }
+
   async _serveDashboard (res, cacheKey, filename) {
     if (!this[cacheKey]) {
-      const htmlPath = join(__dirname, '..', '..', 'dashboard', filename)
-      this[cacheKey] = await readFile(htmlPath, 'utf-8')
+      this[cacheKey] = await this._readDashboardFile(filename)
+    }
+    let html = this[cacheKey]
+    // In exposeToken mode, embed the management token so the UI's bundled
+    // fetch wrapper can send it as `Authorization: Bearer`. Injected per
+    // response (not cached) and only when a key exists — start() disables
+    // exposeToken otherwise. The page's <head> already ships an inert
+    // reader for this meta; absent the tag it's a no-op (localhost path).
+    if (this._uiExposeToken && this._apiKey) {
+      const tag = `<meta name="hiverelay-ui-token" content="${escapeHtmlAttr(this._apiKey)}">`
+      html = html.includes('<head>') ? html.replace('<head>', '<head>\n' + tag) : tag + html
     }
     res.setHeader('Content-Type', 'text/html')
+    // The token is request-scoped and must never be cached by a shared
+    // proxy/browser cache.
+    if (this._uiExposeToken) res.setHeader('Cache-Control', 'no-store')
     res.writeHead(200)
-    res.end(this[cacheKey])
+    res.end(html)
   }
 
   _json (res, data, status = 200, headers = null) {

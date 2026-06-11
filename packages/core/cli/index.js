@@ -18,7 +18,7 @@ import minimist from 'minimist'
 import goodbye from 'graceful-goodbye'
 import { RelayNode } from '../core/relay-node/index.js'
 import { createLogger } from '../core/logger.js'
-import { loadConfig, saveConfig, ensureDirs, CONFIG_PATH } from '../config/loader.js'
+import { loadConfig, saveConfig, ensureDirs, CONFIG_PATH, deriveTokenFromSeed } from '../config/loader.js'
 import b4a from 'b4a'
 import { existsSync, mkdirSync, cpSync, readFileSync } from 'fs'
 import { join, dirname } from 'path'
@@ -356,6 +356,30 @@ async function start () {
     if (!cliOverrides.dhtRelayWsHost) {
       cliOverrides.dhtRelayWsHost = process.env.HIVERELAY_DHT_RELAY_WS_HOST || '127.0.0.1'
     }
+  }
+
+  // ─── Reverse-proxy / self-hosting-platform UI auth ─────────────────
+  // HIVERELAY_UI_EXPOSE_TOKEN=1 embeds the management token into the
+  // served dashboard/wizard HTML so the browser UI can authenticate when
+  // it reaches the relay through a trusted authenticating proxy (e.g.
+  // Umbrel's app_proxy), where the localhost check can never apply. See
+  // config/default.js `ui.exposeToken` for the security contract.
+  if (process.env.HIVERELAY_UI_EXPOSE_TOKEN === '1' || process.env.HIVERELAY_UI_EXPOSE_TOKEN === 'true') {
+    if (!cliOverrides.ui) cliOverrides.ui = {}
+    cliOverrides.ui.exposeToken = true
+    // Give the UI a working credential without the operator setting one:
+    // derive a stable management key from $APP_SEED (deterministic per
+    // app-id, survives reinstalls). An explicit key always wins.
+    if (!cliOverrides.apiKey && !process.env.HIVERELAY_API_KEY) {
+      const derived = deriveTokenFromSeed(process.env.APP_SEED)
+      if (derived) cliOverrides.apiKey = derived
+    }
+  }
+  // HIVERELAY_TRUST_PROXY=1 — relay is behind a reverse proxy, so the
+  // localhost auth fallback is disabled (a key is required). Independent
+  // of exposeToken for plain reverse-proxy setups.
+  if (process.env.HIVERELAY_TRUST_PROXY === '1' || process.env.HIVERELAY_TRUST_PROXY === 'true') {
+    cliOverrides.trustProxy = true
   }
 
   const config = loadConfig(cliOverrides)

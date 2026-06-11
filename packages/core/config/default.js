@@ -51,6 +51,24 @@ export default {
   strictSeedingPrivacy: true,
   enableDistributedDriveBridge: false,
 
+  // Management UI authentication.
+  //
+  // When `exposeToken` is true, the relay embeds its management token
+  // into the dashboard/wizard HTML it serves, and the browser UI sends
+  // it back as `Authorization: Bearer <token>`. This lets the UI
+  // authenticate when it is reached through a trusted, authenticating
+  // reverse proxy (e.g. Umbrel's app_proxy) — where the localhost check
+  // can never apply, because the proxy connects from its own address.
+  //
+  // SECURITY: only enable this when the API port is reachable *solely*
+  // through such a proxy and is NEVER published to the host/LAN. Any
+  // client that can load the page can read the token. Off by default so
+  // direct/localhost and reverse-proxy-without-this-mode deployments are
+  // entirely unaffected.
+  ui: {
+    exposeToken: false
+  },
+
   // Blind custody is the default relay posture. Relays may mirror public
   // content, but custody receipts/proofs must be for encrypted material unless
   // an operator explicitly enables transparent custody.
