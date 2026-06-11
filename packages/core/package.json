@@ -64,7 +64,7 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/grpc-js": "^1.14.4",
     "@grpc/proto-loader": "^0.7.15",
     "@hyperswarm/dht-relay": "^0.4.3",
     "@inquirer/prompts": "^8.4.1",
