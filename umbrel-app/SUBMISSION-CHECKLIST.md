@@ -5,8 +5,9 @@ your own box; it all blocks the `getumbrel/umbrel-apps` PR.
 
 ## Assets
 
-- [ ] **Icon** — replace `icon.svg` (256×256, no rounded corners, no
-  Lightning/payment imagery). The current file is a labelled placeholder.
+- [x] **Icon** — `icon.svg` is the yellow-spark mark (256×256, no rounded
+  corners, no payment imagery). Optionally refine with a designer before
+  submission, but it is shippable as-is.
 - [ ] **Gallery** — add 3–5 screenshots to `gallery/` at 1440×900 and
   match the filenames in `umbrel-app.yml` (`1.png`, `2.png`, `3.png`).
   See `gallery/PLACEHOLDER.md` for suggested shots.
