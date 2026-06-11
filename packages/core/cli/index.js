@@ -473,6 +473,10 @@ async function start () {
     log.warn({ appKey: (appKey || '').slice(0, 12), error }, 'eviction failed')
   })
 
+  node.on('acceptance-reconciled', ({ backfilled }) => {
+    log.info({ backfilled }, 'backfilled seed-accept records for held entries (census repair)')
+  })
+
   node.on('settlement-error', ({ error }) => {
     log.error({ err: error }, 'settlement error')
   })

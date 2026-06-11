@@ -1254,6 +1254,20 @@ export class RelayNode extends EventEmitter {
           this._startAnchorMonitor()
           this._startRepairMonitor()
 
+          // Acceptance reconciliation (v0.15.3): boot-replay reseeds
+          // never wrote seed-accept records, so the shared census
+          // undercounted true replication — on the 2026-06-11 canary,
+          // 547/961 entries had no census and 252 were floor-blocked
+          // even though copies existed fleet-wide. Backfill "I hold
+          // this" records for every entry we actually hold so eviction
+          // and repair reason over real replica counts. Paced; safe to
+          // re-run (skips entries already recorded).
+          if (this.config.acceptanceReconcile !== false) {
+            setTimeout(() => {
+              this._trackFireAndForget(this._reconcileAcceptances().catch(() => {}))
+            }, 15_000)
+          }
+
           // Cold-start primer — runs once after a brief delay so the
           // swarm has a chance to come up before we start fetching peer
           // catalogs over HTTPS. Fire-and-forget; failures don't block
@@ -2542,6 +2556,34 @@ export class RelayNode extends EventEmitter {
     } catch {
       return false
     }
+  }
+
+  /**
+   * Backfill seed-accept records for entries this relay holds but never
+   * recorded (boot-replay adoption skipped recordAcceptance). Truth
+   * repair, not policy: the census should reflect what is actually held.
+   * Paced (~20/s) to keep autobase append pressure negligible.
+   */
+  async _reconcileAcceptances () {
+    if (!this.seedingRegistry || !this.appRegistry || !this.swarm) return
+    const myPubkey = b4a.toString(this.swarm.keyPair.publicKey, 'hex')
+    const region = (this.config.regions && this.config.regions[0]) || 'unknown'
+    let backfilled = 0
+    for (const appKey of [...this.appRegistry.keys()]) {
+      if (this._scope && this._scope.aborted) return
+      try {
+        const relays = await this.seedingRegistry.getRelaysForApp(appKey)
+        const counted = (relays || []).some(r => r.relayPubkey === myPubkey)
+        if (!counted) {
+          await this.seedingRegistry.recordAcceptance(appKey, myPubkey, region)
+          backfilled++
+          if (backfilled % 20 === 0) await new Promise(resolve => setTimeout(resolve, 1000))
+        }
+      } catch {
+        // registry closing / transient append failure — next boot retries
+      }
+    }
+    if (backfilled > 0) this.emit('acceptance-reconciled', { backfilled })
   }
 
   _scheduleCatalogBroadcast () {
