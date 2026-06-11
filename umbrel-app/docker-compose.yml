@@ -23,10 +23,10 @@ services:
   web:
     # Pinned by digest per Umbrel's reproducibility requirement. After CI
     # publishes this tag, replace the digest:
-    #   docker buildx imagetools inspect ghcr.io/bigdestiny2/p2p-hiverelay:0.13.1
-    # (For a personal sideload before submission, the bare :0.13.1 tag also
+    #   docker buildx imagetools inspect ghcr.io/bigdestiny2/p2p-hiverelay:0.14.0
+    # (For a personal sideload before submission, the bare :0.14.0 tag also
     # works — the digest pin is an App Store review requirement.)
-    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.13.1@sha256:45c66584ca9a6a685cdb9260d377683a2ce96cdb31d0f581ec323b694f3c9dd7
+    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.14.0@sha256:b756da510558fa94a546da9708730f9e0feb64a45d6b53a019fc2e9194593ee8
     init: true
     restart: on-failure
     stop_grace_period: 1m
