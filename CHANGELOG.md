@@ -6,6 +6,18 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.15.3] — 2026-06-11
+
+Patch: acceptance reconciliation (census truth repair). Boot-replay
+reseeds never wrote `seed-accept` records, so the shared registry census
+undercounted true replication — 547/961 entries on the utah canary had
+no census rows and 252 more were floor-blocked despite copies existing
+fleet-wide. On start (15s after registry sync; `acceptanceReconcile:
+false` to disable), each relay backfills "I hold this" records for
+entries it actually holds, paced ~20/s. Eviction and replication-repair
+then reason over real replica counts. Safe to re-run; logs a single
+summary line.
+
 ## [0.15.2] — 2026-06-11
 
 Patch: eviction census fallback. Boot-replayed entries with no active
