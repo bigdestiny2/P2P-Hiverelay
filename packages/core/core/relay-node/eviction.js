@@ -141,22 +141,28 @@ export class EvictionManager extends EventEmitter {
       const my = this.deps.myPubkeyHex
       const candidates = []
       let scanned = 0
+      // Skip-reason counters — without these, "candidates: 0" on a full
+      // disk is undiagnosable from the outside (learned on the utah
+      // canary, 2026-06-11).
+      const skips = { archive: 0, custody: 0, young: 0, noBirth: 0, noCensus: 0, floor: 0, rank: 0, registryError: 0 }
 
       for (const [appKey, entry] of this.deps.appRegistry.entries()) {
         scanned++
         if (!entry) continue
-        if ((entry.durability || 0) >= 1) continue // archive / operator pin
-        if (entry.custodyIntentId) continue // custody contract
-        const bornAt = entry.addedAt || entry.startedAt || entry.firstSeenAt || 0
-        if (!bornAt || now - bornAt < this.config.minAgeMs) continue
+        if ((entry.durability || 0) >= 1) { skips.archive++; continue } // archive / operator pin
+        if (entry.custodyIntentId) { skips.custody++; continue } // custody contract
+        const bornAt = entry.addedAt || entry.startedAt || entry.seededAt || entry.firstSeenAt || 0
+        if (!bornAt) { skips.noBirth++; continue }
+        if (now - bornAt < this.config.minAgeMs) { skips.young++; continue }
 
         const h = health.get(appKey)
-        if (!h || !Number.isFinite(h.current) || !Number.isFinite(h.target)) continue // no census -> never evict blind
+        if (!h || !Number.isFinite(h.current) || !Number.isFinite(h.target)) { skips.noCensus++; continue } // no census -> never evict blind
 
         let relays
         try {
           relays = await this.deps.seedingRegistry.getRelaysForApp(appKey)
         } catch {
+          skips.registryError++
           continue
         }
         const holders = (relays || []).map(r => r.relayPubkey).filter(Boolean)
@@ -165,7 +171,7 @@ export class EvictionManager extends EventEmitter {
         // us, leaving changes nothing — but then our copy is also not
         // load-bearing for the floor, so the same threshold applies.
         const remaining = weAreCounted ? h.current - 1 : h.current
-        if (remaining < h.target + this.config.floorMargin) continue
+        if (remaining < h.target + this.config.floorMargin) { skips.floor++; continue }
 
         // Deterministic stagger: only the K farthest holders may shed
         // this entry, K = how many copies the network can spare.
@@ -175,7 +181,7 @@ export class EvictionManager extends EventEmitter {
             .map(pk => ({ pk, d: xorDistance(pk, appKey) }))
             .sort((a, b) => compareBuffers(b.d, a.d)) // farthest first
           const ourRank = ranked.findIndex(r => r.pk === my)
-          if (ourRank === -1 || ourRank >= surplus) continue
+          if (ourRank === -1 || ourRank >= surplus) { skips.rank++; continue }
         }
 
         let bytes = this.deps.storageAccounting.getBytes(appKey)
@@ -217,7 +223,7 @@ export class EvictionManager extends EventEmitter {
         }
       }
 
-      return this._finish({ at: now, usedPct: disk.usedPct, scanned, candidates: candidates.length, evicted, freedBytes })
+      return this._finish({ at: now, usedPct: disk.usedPct, scanned, candidates: candidates.length, skips, evicted, freedBytes })
     } finally {
       this._sweeping = false
     }
