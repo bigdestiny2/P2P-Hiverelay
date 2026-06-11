@@ -1,0 +1,53 @@
+# Blindspark by HiveRelay — Umbrel App Store packaging.
+#
+# Conformance notes for Umbrel reviewers:
+#   - Multi-arch image (linux/amd64, linux/arm64), pinned by sha256 digest
+#     per Umbrel's reproducibility requirement (fill the digest in below —
+#     see the comment on the `image:` line).
+#   - Runs as a non-root user (uid/gid 999) that the Dockerfile creates and
+#     which owns /data. No `user:` override drift — this matches the image.
+#   - Persistent state lives under ${APP_DATA_DIR}/data and survives
+#     reinstalls. The relay's identity + management token are derived from
+#     Umbrel's $APP_SEED, so a reinstall restores the same relay.
+#   - Only the dashboard port (9100) is fronted by app_proxy. No host ports
+#     are published — the management UI is reachable solely through the
+#     authenticated proxy, which is the security boundary that makes
+#     HIVERELAY_UI_EXPOSE_TOKEN safe (see below).
+
+services:
+  app_proxy:
+    environment:
+      APP_HOST: blindspark_web_1
+      APP_PORT: 9100
+
+  web:
+    # Pinned by digest per Umbrel's reproducibility requirement. After CI
+    # publishes this tag, replace the digest:
+    #   docker buildx imagetools inspect ghcr.io/bigdestiny2/p2p-hiverelay:0.12.0
+    # (For a personal sideload before submission, the bare :0.12.0 tag also
+    # works — the digest pin is an App Store review requirement.)
+    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.12.0@sha256:__REPLACE_WITH_DIGEST_AFTER_CI__
+    init: true
+    restart: on-failure
+    stop_grace_period: 1m
+    user: "999:999"
+    volumes:
+      - ${APP_DATA_DIR}/data:/data
+    environment:
+      # Home for config + storage — everything persists on the data volume
+      # (config.json, the corestore, the relay keypair).
+      HOME: /data
+      HIVERELAY_LOG_LEVEL: info
+
+      # Authenticate the dashboard/wizard behind Umbrel's app_proxy. The
+      # relay embeds a management token (derived from $APP_SEED) into the
+      # HTML it serves; the bundled UI sends it back as a bearer credential.
+      # This is safe ONLY because the API port is reachable solely through
+      # the authenticated app_proxy and is never published to the host/LAN.
+      # See packages/core/config/default.js -> ui.exposeToken.
+      HIVERELAY_UI_EXPOSE_TOKEN: "true"
+
+      # Deterministic, reinstall-safe identity + management token. Umbrel
+      # injects $APP_SEED (derived from the user's Umbrel seed and this app
+      # id); the relay reads it from the container environment.
+      APP_SEED: ${APP_SEED}

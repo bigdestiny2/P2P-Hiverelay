@@ -3,6 +3,28 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+/* HiveRelay UI auth shim. When the relay serves this page through a trusted
+   reverse proxy (ui.exposeToken), it injects <meta name="hiverelay-ui-token">
+   holding a token it will accept as a bearer credential. Attach it to API
+   calls so the wizard works behind a proxy where the localhost check can't
+   apply. No meta -> no-op, so direct/localhost use is unchanged. */
+(function () {
+  try {
+    var m = document.querySelector('meta[name="hiverelay-ui-token"]');
+    var t = m && m.getAttribute('content');
+    if (!t) return;
+    var orig = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      init = init || {};
+      var h = new Headers((init && init.headers) || (input && input.headers) || {});
+      if (!h.has('Authorization')) h.set('Authorization', 'Bearer ' + t);
+      init.headers = h;
+      return orig(input, init);
+    };
+  } catch (e) { /* never block page load on the auth shim */ }
+})();
+</script>
 <title>Blindspark — Setup</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50 10 L30 55 L45 55 L40 90 L70 45 L55 45 Z' fill='%23f5a623'/%3E%3C/svg%3E">
 <style>

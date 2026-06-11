@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  PLACEHOLDER icon for the Blindspark by HiveRelay Umbrel app.
+
+  Per Umbrel App Store spec:
+    - Format: SVG
+    - Size:   256x256
+    - Corners: NO rounded corners (Umbrel rounds them via CSS)
+
+  Before submission this MUST be replaced with a properly-designed icon.
+
+  Brief: a blind relay. Suggested motif — the HiveRelay hexagon mark with
+  a small spark/node at its center, conveying an always-on peer that
+  carries data it cannot see. Solid, full-bleed, no rounded corners.
+  Do NOT use Lightning-bolt / payment imagery — this app has no earning
+  or Lightning component.
+
+  This placeholder is intentionally plain so it can't accidentally ship.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect width="256" height="256" fill="#16213e"/>
+  <polygon points="128,40 196,80 196,160 128,200 60,160 60,80" fill="none" stroke="#58a6ff" stroke-width="8" opacity="0.8"/>
+  <circle cx="128" cy="120" r="14" fill="#3fb950"/>
+  <text x="128" y="232" font-family="Arial, sans-serif" font-size="20" font-weight="bold"
+        text-anchor="middle" fill="#7a8ba0">PLACEHOLDER</text>
+</svg>
