@@ -216,6 +216,38 @@ test('eviction: resumePct stops early once projection clears pressure', async (t
   t.is(unseeded.length, 1, 'stopped after pressure projected below resumePct')
 })
 
+test('eviction: census fallback — acceptance records stand in for missing health rows', async (t) => {
+  // No health row at all; 4 acceptance records; targetFloor 2 + margin 1:
+  // remaining 3 ≥ 3 -> evictable by the farthest holder.
+  const holders = [MID_PK, NEAR_PK, MY_PK, 'bb'.repeat(32)]
+  let { ev, unseeded } = makeEviction({
+    myPubkey: MID_PK,
+    holders,
+    health: new Map(), // <- the 417-of-961 case from the utah canary
+    config: { targetFloor: 2 }
+  })
+  let res = await ev.sweep({ now: NOW })
+  t.is(res.skips.censusFallback, 1, 'fallback census used (and counted)')
+  t.is(unseeded.length, 1, 'evicted via acceptance-record census')
+
+  // Same but only 3 holders: remaining 2 < 3 -> floor blocks it.
+  ;({ ev, unseeded } = makeEviction({
+    myPubkey: MID_PK,
+    holders: [MID_PK, NEAR_PK, MY_PK],
+    health: new Map(),
+    config: { targetFloor: 2 }
+  }))
+  res = await ev.sweep({ now: NOW })
+  t.is(res.skips.floor, 1, 'floor still binds under fallback census')
+  t.is(unseeded.length, 0, 'nothing evicted')
+
+  // No acceptance records either -> never evict blind.
+  ;({ ev, unseeded } = makeEviction({ myPubkey: MID_PK, holders: [], health: new Map(), config: { targetFloor: 2 } }))
+  res = await ev.sweep({ now: NOW })
+  t.is(res.skips.noCensus, 1, 'entries with zero census stay untouchable')
+  t.is(unseeded.length, 0, 'nothing evicted blind')
+})
+
 // ─── xorDistance ───────────────────────────────────────────────────
 
 test('xorDistance: bytewise xor, stable and symmetric', (t) => {
