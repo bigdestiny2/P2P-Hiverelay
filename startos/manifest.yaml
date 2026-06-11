@@ -1,0 +1,140 @@
+# Blindspark — StartOS (Start9) package manifest.
+#
+# Mirrors the Umbrel packaging (umbrel-app/) for the StartOS channel:
+# same multi-arch GHCR image, same data-volume layout (/data), same
+# proxy-UI auth (HIVERELAY_UI_EXPOSE_TOKEN + a seed persisted on the
+# data volume — StartOS has no APP_SEED equivalent, so the entrypoint
+# generates one on first run and reuses it forever; reinstalls keep the
+# same relay identity as long as the data volume survives).
+#
+# Validate with `start-sdk` before submission (see README.md). Field
+# names target the 0.3.5.x manifest schema; re-check against
+# https://github.com/Start9Labs/start-os when packing.
+
+id: blindspark
+title: "Blindspark"
+version: 0.15.4
+release-notes: |
+  First StartOS release. Blind relay node for the Pear/Holepunch
+  ecosystem with the Blindspark dashboard, honest storage accounting,
+  and over-replication eviction (default off).
+license: apache-2.0
+wrapper-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
+upstream-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
+support-site: "https://github.com/bigdestiny2/P2P-Hiverelay/issues"
+marketing-site: "https://github.com/bigdestiny2/P2P-Hiverelay"
+donation-url: ~
+
+build: ["make"]
+
+description:
+  short: Keep P2P apps alive — a blind relay for the Pear ecosystem
+  long: |
+    Blindspark is a blind relay for the Pear/Holepunch decentralized app
+    ecosystem. It seeds end-to-end-encrypted Hyperdrives — content the
+    relay cannot read but can verify and serve — so P2P apps stay
+    available while their users are offline.
+
+    The relay is genuinely "blind": it holds ciphertext blocks and
+    Merkle proofs, never plaintext, and never sees who reads what. By
+    default every incoming seed request waits for your approval
+    ("review" mode); you can switch to auto-accept from the dashboard.
+
+    Includes the Blindspark dashboard: live connections and traffic,
+    honest storage accounting, a seeding registry with per-app
+    approve/reject, and optional over-replication eviction that frees
+    disk without ever breaching the network's replica floor.
+
+assets:
+  license: LICENSE
+  icon: icon.png
+  instructions: instructions.md
+  docker-images: image.tar
+
+main:
+  type: docker
+  image: main
+  entrypoint: "docker_entrypoint.sh"
+  args: []
+  mounts:
+    main: /data
+  gpu-acceleration: false
+
+hardware-requirements:
+  arch:
+    - x86_64
+    - aarch64
+
+health-checks:
+  web-ui:
+    name: Dashboard
+    success-message: The Blindspark dashboard is reachable
+    type: docker
+    image: main
+    entrypoint: check-web.sh
+    args: []
+    io-format: yaml
+    inject: true
+
+config: ~
+properties: ~
+
+volumes:
+  main:
+    type: data
+
+interfaces:
+  main:
+    name: Blindspark Dashboard
+    description: Web dashboard — status, earnings, storage, seeding registry
+    tor-config:
+      port-mapping:
+        80: "9100"
+    lan-config:
+      443:
+        ssl: true
+        internal: 9100
+    ui: true
+    protocols:
+      - tcp
+      - http
+
+dependencies: {}
+
+backup:
+  create:
+    type: docker
+    image: compat
+    system: true
+    entrypoint: compat
+    args:
+      - duplicity
+      - create
+      - /mnt/backup
+      - /root/data
+    mounts:
+      BACKUP: /mnt/backup
+      main: /root/data
+  restore:
+    type: docker
+    image: compat
+    system: true
+    entrypoint: compat
+    args:
+      - duplicity
+      - restore
+      - /mnt/backup
+      - /root/data
+    mounts:
+      BACKUP: /mnt/backup
+      main: /root/data
+
+migrations:
+  from:
+    "*":
+      type: script
+      args: ["from"]
+  to:
+    "*":
+      type: script
+      args: ["to"]
