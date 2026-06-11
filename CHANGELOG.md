@@ -6,6 +6,24 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.15.4] — 2026-06-11
+
+Patch: operator manual-purge surface (option-A disk recovery for boxes
+wedged at 100% — too full for the registry census to even sync).
+
+### Added
+
+- **`RelayNode.manualPurge(appKey)`** — unseed + purge cores from disk +
+  tombstone, bypassing the sweep's replica-census gates (the
+  authenticated operator is the authorization). The sacred guard still
+  applies: archive-tier (`durability ≥ 1`) and custody-bound entries are
+  refused even here. Works regardless of `eviction.enabled`. Emits the
+  standard eviction audit event with `manual: true`.
+- **`GET /api/storage/top?n=30`** — largest measured drives
+  (management-authed), the triage input for manual purges.
+- **`POST /api/eviction/purge { appKeys: [...] }`** — batch manual purge
+  (≤ 50 keys, per-key results, API-key required).
+
 ## [0.15.3] — 2026-06-11
 
 Patch: acceptance reconciliation (census truth repair). Boot-replay

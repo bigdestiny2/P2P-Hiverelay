@@ -248,6 +248,14 @@ test('eviction: census fallback — acceptance records stand in for missing heal
   t.is(unseeded.length, 0, 'nothing evicted blind')
 })
 
+test('assertPurgable: sacred entries refuse even operator-initiated purges', async (t) => {
+  const { assertPurgable } = await import('p2p-hiverelay/core/relay-node/eviction.js')
+  t.exception(() => assertPurgable(null), /not found/, 'missing entry')
+  t.exception(() => assertPurgable({ durability: 1 }), /archive-tier/, 'archive pin refused')
+  t.exception(() => assertPurgable({ durability: 0, custodyIntentId: 'x' }), /custody-bound/, 'custody refused')
+  t.execution(() => assertPurgable({ durability: 0, custodyIntentId: null }), 'plain entry purgable')
+})
+
 // ─── xorDistance ───────────────────────────────────────────────────
 
 test('xorDistance: bytewise xor, stable and symmetric', (t) => {

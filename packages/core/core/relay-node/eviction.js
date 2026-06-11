@@ -50,6 +50,30 @@ const DEFAULTS = {
   targetFloor: 2
 }
 
+/**
+ * Sacred-entry guard shared by the sweep and the operator's manual-purge
+ * path: archive tier and custody contracts are non-evictable even with
+ * explicit operator action — those are durability promises to publishers,
+ * not housekeeping preferences. Throws with a stable code.
+ */
+export function assertPurgable (entry) {
+  if (!entry) {
+    const err = new Error('entry not found')
+    err.code = 'NOT_FOUND'
+    throw err
+  }
+  if ((entry.durability || 0) >= 1) {
+    const err = new Error('archive-tier entry (durability >= 1) is not evictable')
+    err.code = 'ARCHIVE_TIER'
+    throw err
+  }
+  if (entry.custodyIntentId) {
+    const err = new Error('custody-bound entry is not evictable')
+    err.code = 'CUSTODY_BOUND'
+    throw err
+  }
+}
+
 /** Lexicographic compare of XOR(a, b) buffers — bigger = farther. */
 export function xorDistance (aHex, bHex) {
   const a = b4a.from(aHex, 'hex')
