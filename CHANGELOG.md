@@ -6,6 +6,54 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.13.0] — 2026-06-11
+
+Minor: Phase 1 of the operator incentive layer — relay-side subsidy
+accrual with signed claims. **No money moves through the relay**; this
+release is the evidence-and-estimate half. The Phase-2 coordinator
+(treasury side, off-relay) verifies claims and dispatches Lightning
+payouts. Design + economics: docs/OPERATOR-INCENTIVES-Y1.md Prong 2.
+
+### Added
+
+- **`SubsidyAccrual` (`incentive/subsidy/`)** — when `subsidy.enabled`
+  (default **off**), the node samples its stats on an epoch timer
+  (default 10 min), accrues a sats ESTIMATE at `rateSatsPerDay`
+  (default 500 ≈ $180/yr at $100k/BTC) hard-capped per UTC day, and
+  records per-epoch evidence (uptime, connections, seeded/anchored).
+  State persists to `<storage>/subsidy.json` via the v0.10.6 atomic
+  tmp+rename pattern, writers serialized.
+- **Non-custodial payout destination.** No wallet ships in the app —
+  deliberate: a blind relay must not be a fund honeypot, and custody
+  would contradict the operator-untrusted model. The operator assigns a
+  destination they control — lightning address, BOLT12 offer, or
+  on-chain address (light validation relay-side; the coordinator
+  re-validates before paying). Set from the dashboard card, config, or
+  `HIVERELAY_SUBSIDY_DESTINATION`.
+- **Ed25519-signed claims.** `GET /api/subsidy/claim` exports a claim
+  envelope signed by the relay keypair over
+  `SHA256(relayPubkey || canonicalJson(body))` — same
+  digest-then-detached-sign shape as SignedDirectory. Canonical JSON
+  (sorted keys) so signer/verifier derive identical bytes.
+  `verifyClaim()` exported for the coordinator. The relay's accrued
+  figure is explicitly an estimate (`estimate: true`); coordinator
+  verification (Operator Score gates, sybil checks, held schedule)
+  decides actual payout.
+- **API + dashboard.** `GET /api/subsidy` (status),
+  `POST /api/subsidy/destination` — management-authed (bearer or
+  localhost; works behind Umbrel's app_proxy via v0.12.0 exposeToken).
+  Dashboard grows an earnings row (accrued / today vs cap / payout
+  destination), hidden unless the relay reports `enabled`. `/status`
+  exposes a `subsidy` block.
+- **Env wiring** for containerized installs: `HIVERELAY_SUBSIDY_ENABLED`,
+  `HIVERELAY_SUBSIDY_DESTINATION`.
+
+Pinned by `test/unit/subsidy.test.js` (13 tests / 41 asserts): accrual
+pro-rata + daily cap + UTC rollover, destination validation across the
+three rails, claim sign/verify + tamper rejection, canonical-JSON
+key-order independence, atomic persistence round-trip (no `.tmp`
+orphan), corrupt-file recovery.
+
 ## [0.12.0] — 2026-06-11
 
 Minor: revives the Umbrel App Store package (as **Blindspark by

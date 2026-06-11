@@ -223,6 +223,25 @@ tr:hover td{background:rgba(0,170,255,.03)}
   </div>
 </div>
 
+<!-- Subsidy (hidden unless the relay has subsidy.enabled) -->
+<div class="stats-row" id="subsidyStats" style="display:none;margin-bottom:1.5rem">
+  <div class="stat-card">
+    <div class="stat-label">Subsidy Accrued (est.)</div>
+    <div class="stat-value orange" id="statSubsidyTotal">--</div>
+    <div class="stat-sub">sats, pending verification</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Today</div>
+    <div class="stat-value" id="statSubsidyToday">--</div>
+    <div class="stat-sub" id="statSubsidyCap">&nbsp;</div>
+  </div>
+  <div class="stat-card" id="subsidyDestCard" style="cursor:pointer" title="Click to set your payout destination">
+    <div class="stat-label">Payout Destination</div>
+    <div class="stat-value cyan" id="statSubsidyDest" style="font-size:.85rem;word-break:break-all">--</div>
+    <div class="stat-sub">your own lightning address / BOLT12 / bitcoin address</div>
+  </div>
+</div>
+
 <!-- Charts -->
 <div class="charts-row">
   <div class="chart-card">
@@ -769,7 +788,40 @@ async function fetchData() {
     updateConnIndicator();
     if (fetchErrors <= 1) console.warn('Dashboard fetch failed:', e);
   }
+  fetchSubsidy();
 }
+
+/* -- Subsidy card (hidden unless the relay has subsidy.enabled) -- */
+async function fetchSubsidy() {
+  try {
+    var r = await fetch('/api/subsidy');
+    if (!r.ok) return; // 403 (no auth context) or older relay -> stay hidden
+    var s = await r.json();
+    if (!s.enabled) return;
+    document.getElementById('subsidyStats').style.display = '';
+    document.getElementById('statSubsidyTotal').textContent = (s.accruedSatsTotal || 0).toLocaleString();
+    document.getElementById('statSubsidyToday').textContent = (s.accruedSatsToday || 0).toLocaleString();
+    document.getElementById('statSubsidyCap').textContent = 'cap ' + (s.rateSatsPerDay || 0).toLocaleString() + ' sats/day';
+    document.getElementById('statSubsidyDest').textContent = s.payoutDestination
+      ? s.payoutDestination.value
+      : 'not set — click to add';
+  } catch (e) { /* card simply stays hidden */ }
+}
+
+document.getElementById('subsidyDestCard').addEventListener('click', async function() {
+  var current = document.getElementById('statSubsidyDest').textContent;
+  var v = window.prompt('Payout destination (lightning address, BOLT12 offer, or bitcoin address).\nThe network pays this directly — the relay never holds your sats.',
+    current.indexOf('not set') === 0 ? '' : current);
+  if (!v) return;
+  var r = await fetch('/api/subsidy/destination', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ destination: v.trim() })
+  });
+  var out = await r.json();
+  if (!r.ok) { alert(out.error || 'Could not set destination'); return; }
+  fetchSubsidy();
+});
 
 function setPollInterval(ms) {
   if (pollTimer) clearInterval(pollTimer);

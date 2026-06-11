@@ -103,6 +103,40 @@ relay replication means individual-relay restarts lose state but the
 network as a whole stays warm. Hyperbee-backed persistence is tracked
 as a follow-up.
 
+### Operator subsidy (Phase 1 — accrual only, opt-in)
+
+The relay-local half of the bootstrap subsidy from
+`docs/OPERATOR-INCENTIVES-Y1.md` (Prong 2). When enabled, the node
+accrues a **capped sats estimate** for blind-peer work (default
+500 sats/day ≈ $180/yr at $100k/BTC) and records per-epoch evidence
+(uptime, connections, seeded/anchored counts). **No money moves through
+the relay** — there is no wallet in the app. The operator sets a payout
+destination they control (lightning address, BOLT12 offer, or on-chain
+address) from the dashboard, and the subsidy coordinator independently
+verifies the relay's Ed25519-signed claim (`GET /api/subsidy/claim`)
+before paying. The relay's own numbers are an estimate; the
+coordinator's verification (Operator Score gates, sybil checks, held
+schedule) decides the actual payout.
+
+**OFF by default.** Enable per node via `config.json`:
+
+```json
+{
+  "subsidy": {
+    "enabled": true,
+    "rateSatsPerDay": 500,
+    "epochMs": 600000,
+    "payoutDestination": null
+  }
+}
+```
+
+or via env for containerized installs: `HIVERELAY_SUBSIDY_ENABLED=1`
+(optionally `HIVERELAY_SUBSIDY_DESTINATION=you@your-ln-provider.com`).
+State persists to `<storage>/subsidy.json` with atomic writes. Surfaces:
+dashboard earnings cards, `/api/subsidy` (status), `/status` (`subsidy`
+block).
+
 `/status` exposes a `signedDirectory` block when enabled:
 
 ```json
