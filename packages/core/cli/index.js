@@ -382,6 +382,18 @@ async function start () {
     cliOverrides.trustProxy = true
   }
 
+  // ─── Operator subsidy (Phase 1: accrual + signed claims only) ──────
+  // Container-friendly enable for the Blindspark packaging; config.json
+  // `subsidy.*` is the equivalent for bare installs. Destination can be
+  // pre-seeded via env but is normally set from the dashboard.
+  if (process.env.HIVERELAY_SUBSIDY_ENABLED === '1' || process.env.HIVERELAY_SUBSIDY_ENABLED === 'true') {
+    if (!cliOverrides.subsidy) cliOverrides.subsidy = {}
+    cliOverrides.subsidy.enabled = true
+    if (process.env.HIVERELAY_SUBSIDY_DESTINATION && !cliOverrides.subsidy.payoutDestination) {
+      cliOverrides.subsidy.payoutDestination = process.env.HIVERELAY_SUBSIDY_DESTINATION
+    }
+  }
+
   const config = loadConfig(cliOverrides)
 
   console.log(mainBanner(VERSION))

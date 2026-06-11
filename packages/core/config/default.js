@@ -69,6 +69,20 @@ export default {
     exposeToken: false
   },
 
+  // Operator subsidy (Phase 1 — accrual + signed claims only; no money
+  // moves through the relay). When enabled, the node accrues a capped
+  // sats ESTIMATE for blind-peer work and exports an Ed25519-signed
+  // claim the subsidy coordinator independently verifies and pays to
+  // `payoutDestination` (lightning address, BOLT12 offer, or on-chain
+  // address — the operator's own; the relay never holds funds). See
+  // incentive/subsidy/index.js + docs/OPERATOR-INCENTIVES-Y1.md Prong 2.
+  subsidy: {
+    enabled: false,
+    rateSatsPerDay: 500, // cap ≈ $180/yr at $100k/BTC; coordinator-gated
+    epochMs: 10 * 60 * 1000,
+    payoutDestination: null
+  },
+
   // Blind custody is the default relay posture. Relays may mirror public
   // content, but custody receipts/proofs must be for encrypted material unless
   // an operator explicitly enables transparent custody.

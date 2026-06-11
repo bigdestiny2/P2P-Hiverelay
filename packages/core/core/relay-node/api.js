@@ -779,6 +779,30 @@ export class RelayAPI extends EventEmitter {
           return this._json(res, wizard.snapshot())
         }
 
+        // Operator subsidy status (Phase 1). Accrued ESTIMATE + payout
+        // destination — operator-private, so management auth (bearer or
+        // localhost), same gate as the wizard. {enabled:false} when the
+        // subsidy is off so the dashboard card knows to stay hidden.
+        if (path === '/api/subsidy') {
+          if (!this._checkAuth(req)) {
+            return this._json(res, { error: formatErr('NOT_ALLOWED', 'subsidy status requires API key or localhost') }, 403)
+          }
+          if (!this.node.subsidyAccrual) return this._json(res, { enabled: false })
+          return this._json(res, { enabled: true, ...this.node.subsidyAccrual.getSummary() })
+        }
+
+        // Signed subsidy claim export — what the Phase-2 coordinator
+        // fetches (and independently verifies) to dispatch payouts.
+        if (path === '/api/subsidy/claim') {
+          if (!this._checkAuth(req)) {
+            return this._json(res, { error: formatErr('NOT_ALLOWED', 'subsidy claim requires API key or localhost') }, 403)
+          }
+          if (!this.node.subsidyAccrual) {
+            return this._json(res, { error: formatErr('NOT_ENABLED', 'subsidy is not enabled on this relay') }, 409)
+          }
+          return this._json(res, this.node.subsidyAccrual.buildClaim())
+        }
+
         if (path === '/api/alerts') {
           if (!this.node.alertManager) {
             return this._json(res, { enabled: false, total: 0, offset: 0, limit: 0, items: [] })
@@ -1214,6 +1238,27 @@ export class RelayAPI extends EventEmitter {
         // gate when no key is configured (fleet/default), and accepts the
         // embedded token in exposeToken mode. The dashboard front-end
         // calls these in sequence as the operator clicks through the flow.
+        // Set/replace the subsidy payout destination (operator's own
+        // lightning address / BOLT12 offer / on-chain address — the relay
+        // never holds funds). Management auth, same gate as the wizard.
+        if (path === '/api/subsidy/destination') {
+          if (!this._checkAuth(req)) {
+            return this._json(res, { error: formatErr('NOT_ALLOWED', 'subsidy destination requires API key or localhost') }, 403)
+          }
+          if (!this.node.subsidyAccrual) {
+            return this._json(res, { error: formatErr('NOT_ENABLED', 'subsidy is not enabled on this relay') }, 409)
+          }
+          if (!body || typeof body.destination !== 'string') {
+            return this._json(res, { error: formatErr('BAD_REQUEST', 'destination (string) required') }, 400)
+          }
+          try {
+            const dest = await this.node.subsidyAccrual.setPayoutDestination(body.destination)
+            return this._json(res, { ok: true, payoutDestination: dest })
+          } catch (err) {
+            return this._json(res, { error: formatErr('BAD_REQUEST', err.message) }, 400)
+          }
+        }
+
         if (path.startsWith('/api/wizard/')) {
           if (!this._checkAuth(req)) {
             return this._json(res, { error: formatErr('NOT_ALLOWED', 'wizard requires API key or localhost') }, 403)

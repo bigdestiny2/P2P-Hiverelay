@@ -36,6 +36,7 @@ import { ReputationSystem } from '../../incentive/reputation/index.js'
 import { NetworkDiscovery } from '../network-discovery.js'
 import { HealthMonitor } from './health-monitor.js'
 import { DiskMonitor } from './disk-monitor.js'
+import { SubsidyAccrual } from '../../incentive/subsidy/index.js'
 import { AlertManager } from './alert-manager.js'
 import { SelfHeal } from './self-heal.js'
 import { AccessControl } from './access-control.js'
@@ -339,6 +340,7 @@ export class RelayNode extends EventEmitter {
     this.networkDiscovery = null
     this.healthMonitor = null
     this.diskMonitor = null
+    this.subsidyAccrual = null
     this.alertManager = null
     this.selfHeal = null
     this.seedingRegistry = null
@@ -1390,6 +1392,22 @@ export class RelayNode extends EventEmitter {
       })
       this.diskMonitor.start()
 
+      // Operator subsidy accrual (Phase 1, relay side). Off by default;
+      // accrues a capped sats ESTIMATE for blind-peer work and exports a
+      // signed claim the Phase-2 coordinator verifies + pays. Moves no
+      // money. See incentive/subsidy/index.js + OPERATOR-INCENTIVES-Y1.md.
+      if (this.config.subsidy?.enabled) {
+        this.subsidyAccrual = new SubsidyAccrual({
+          keyPair: this.swarm.keyPair,
+          statsFn: () => this.getStats({ includeSecrets: false }),
+          storagePath: join(this.config.storage, 'subsidy.json'),
+          rateSatsPerDay: this.config.subsidy.rateSatsPerDay,
+          epochMs: this.config.subsidy.epochMs,
+          payoutDestination: this.config.subsidy.payoutDestination || undefined
+        })
+        await this.subsidyAccrual.start()
+      }
+
       // Start alert manager (if configured) — wires to health monitor + subsystems
       if (this.config.alerts?.enabled) {
         this.alertManager = new AlertManager(this, this.config.alerts)
@@ -1526,6 +1544,7 @@ export class RelayNode extends EventEmitter {
       },
       accessControl: accessControlStats,
       disk: this.diskMonitor ? this.diskMonitor.getInfo() : null,
+      subsidy: this.subsidyAccrual ? this.subsidyAccrual.getSummary() : null,
       signedDirectory: this._signedDirectory ? this._signedDirectory.getStats() : null,
       // v0.8.28 (#29): existing seeder.coresSeeded only counts the
       // seedingRegistry's local log core (it's the only thing routed
@@ -3411,6 +3430,7 @@ export class RelayNode extends EventEmitter {
     if (this.alertManager) { this.alertManager.stop(); this.alertManager = null }
     if (this.healthMonitor) { this.healthMonitor.stop(); this.healthMonitor = null }
     if (this.diskMonitor) { this.diskMonitor.stop(); this.diskMonitor = null }
+    if (this.subsidyAccrual) { await this.subsidyAccrual.destroy(); this.subsidyAccrual = null }
     if (this._healthCheckInterval) { clearInterval(this._healthCheckInterval); this._healthCheckInterval = null }
     if (this.settlementInterval) { clearInterval(this.settlementInterval); this.settlementInterval = null }
     if (this._replicationCheckInterval) { clearInterval(this._replicationCheckInterval); this._replicationCheckInterval = null }
