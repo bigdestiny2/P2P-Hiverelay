@@ -6,6 +6,18 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.15.5] — 2026-06-11
+
+Patch: eviction rank bypass under critical disk. The deterministic
+stagger defers shedding to the FARTHEST holders of an entry — but
+holders below `diskPressurePct` never sweep, so on an asymmetric fleet
+the deferral never resolves and a critical box starves politely (utah:
+337 entries rank-deferred at 99% disk while bern sat at 8%). Above
+`rankBypassPct` (default 92) the rank check is skipped; the floor +
+`floorMargin` checks — the actual safety mechanism — remain absolute,
+and the margin absorbs the worst case of two pressured relays dropping
+the same entry in the same sweep window.
+
 ## [0.15.4] — 2026-06-11
 
 Patch: operator manual-purge surface (option-A disk recovery for boxes

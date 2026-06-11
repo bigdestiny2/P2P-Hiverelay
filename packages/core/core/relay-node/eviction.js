@@ -47,7 +47,16 @@ const DEFAULTS = {
   // Replica target when an entry has no replication-health row (boot-
   // replayed entries without an active registry request). Wired from
   // config.targetReplicaFloor by relay-node.
-  targetFloor: 2
+  targetFloor: 2,
+  // Above this disk usage the deterministic-stagger rank check is
+  // bypassed (floor + margin still enforced). Rationale: rank defers to
+  // the FARTHEST holders, but holders below diskPressurePct never sweep
+  // — on an asymmetric fleet the deferral never resolves and a critical
+  // box starves politely (utah, 2026-06-11: 337 entries rank-deferred
+  // at 99% disk while bern sat at 8%). The floorMargin absorbs the
+  // worst case of two pressured relays dropping the same entry in the
+  // same sweep window.
+  rankBypassPct: 92
 }
 
 /**
@@ -216,9 +225,12 @@ export class EvictionManager extends EventEmitter {
         if (remaining < h.target + this.config.floorMargin) { skips.floor++; continue }
 
         // Deterministic stagger: only the K farthest holders may shed
-        // this entry, K = how many copies the network can spare.
+        // this entry, K = how many copies the network can spare. Skipped
+        // above rankBypassPct — politeness must not starve a critical
+        // box when the farther holders are unpressured and will never
+        // act (floor + margin remain the real safety).
         const surplus = remaining - (h.target + this.config.floorMargin) + 1
-        if (weAreCounted && holders.length > 1) {
+        if (disk.usedPct < this.config.rankBypassPct && weAreCounted && holders.length > 1) {
           const ranked = holders
             .map(pk => ({ pk, d: xorDistance(pk, appKey) }))
             .sort((a, b) => compareBuffers(b.d, a.d)) // farthest first
