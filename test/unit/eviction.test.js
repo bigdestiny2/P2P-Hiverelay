@@ -68,7 +68,9 @@ function makeEviction (over = {}) {
       measure: async () => 5000,
       getSummary: () => ({ totalBytes: 5000 })
     },
-    diskMonitor: { getInfo: () => (over.disk || { usedPct: 92, totalBytes: 20e9 }) },
+    // Default 85%: above diskPressurePct (80) so sweeps run, below
+    // rankBypassPct (92) so stagger semantics stay testable.
+    diskMonitor: { getInfo: () => (over.disk || { usedPct: 85, totalBytes: 20e9 }) },
     getReplicationHealth: () => health,
     myPubkeyHex: over.myPubkey || MY_PK,
     unseed: async (k) => { unseeded.push(k); registry._map && registry._map.delete(k) },
@@ -214,6 +216,23 @@ test('eviction: resumePct stops early once projection clears pressure', async (t
   })
   await ev.sweep({ now: NOW })
   t.is(unseeded.length, 1, 'stopped after pressure projected below resumePct')
+})
+
+test('eviction: rank bypass under critical disk — politeness must not starve a full box', async (t) => {
+  // Same fixture as the stagger-defer case (we are second-farthest, so
+  // at normal pressure we defer) — but at 95% disk the rank check is
+  // bypassed and the entry sheds. Floor + margin still hold: this same
+  // fixture with current=3 stays blocked (covered by the floor test).
+  const holders = [MY_PK, NEAR_PK, MID_PK]
+  const { ev, unseeded } = makeEviction({
+    myPubkey: MY_PK,
+    holders,
+    health: new Map([[APP, { current: 4, target: 2 }]]),
+    disk: { usedPct: 95, totalBytes: 20e9 }
+  })
+  const res = await ev.sweep({ now: NOW })
+  t.is(unseeded.length, 1, 'second-farthest holder sheds at critical disk')
+  t.is(res.skips.rank, 0, 'no rank deferral above rankBypassPct')
 })
 
 test('eviction: census fallback — acceptance records stand in for missing health rows', async (t) => {
