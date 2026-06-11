@@ -6,6 +6,21 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.13.1] — 2026-06-11
+
+Patch: dashboard brand pass for the Umbrel app.
+
+### Changed
+
+- **Dashboard UI is now Blindspark-branded.** All seven dashboard pages
+  (dashboard, catalog, payments, calculator, network, leaderboard, docs)
+  swap the HiveRelay hexagon mark and titles for the yellow-spark
+  Blindspark mark with a small "powered by HiveRelay" line under the
+  wordmark; favicons updated to the spark. The wizard was already
+  Blindspark-branded. Protocol/package naming (`p2p-hiverelay`, docs
+  content, API) is unchanged — HiveRelay remains the infrastructure
+  brand, Blindspark the operator-facing product.
+
 ## [0.13.0] — 2026-06-11
 
 Minor: Phase 1 of the operator incentive layer — relay-side subsidy
