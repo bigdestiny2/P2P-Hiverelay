@@ -6,6 +6,33 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.15.6] — 2026-06-11
+
+Patch: corruption resilience for accounting + eviction. Running at 0
+bytes free truncates hypercore writes; the resulting corrupt cores (a)
+fail `drive.purge()` with DECODING_ERROR and (b) wedge `core.info()`
+awaits forever — one bad core froze the whole accounting sweep and the
+eviction pass behind a never-clearing in-progress latch (utah + sing-1).
+
+### Fixed
+
+- **`raceTimeout` guards on every per-drive await** — accounting
+  `info()` (8s), sweep census lookups (5s), measure (10s), unseed (30s),
+  purge (60s). A wedged core now costs seconds and is recorded, not
+  fatal. Race timers deliberately not unref'd (an unref'd race against a
+  wedged promise reads as process deadlock).
+- **`purgeDriveCores` fallback** — when the Hyperdrive purge path dies
+  on a corrupt header (blobs core unlocatable), purge the meta core
+  directly via the corestore and report `meta-only`. A corrupt drive
+  serves nobody; freeing what is reachable + tombstoning beats leaving
+  it. Used by both the sweep and `manualPurge`.
+- **Tombstone ordering** — entries are tombstoned as soon as unseed
+  succeeds, before the purge attempt, so a purge failure can no longer
+  let repair re-adopt a just-evicted drive.
+- **Unhandled `'error'` emits** from StorageAccounting/EvictionManager
+  are now routed to logged `accounting-error`/`eviction-error` events
+  (an `'error'` event with no listener crashes the process).
+
 ## [0.15.5] — 2026-06-11
 
 Patch: eviction rank bypass under critical disk. The deterministic

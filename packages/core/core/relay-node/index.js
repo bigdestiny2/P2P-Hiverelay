@@ -36,9 +36,8 @@ import { ReputationSystem } from '../../incentive/reputation/index.js'
 import { NetworkDiscovery } from '../network-discovery.js'
 import { HealthMonitor } from './health-monitor.js'
 import { DiskMonitor } from './disk-monitor.js'
-import Hyperdrive from 'hyperdrive'
 import { StorageAccounting } from './storage-accounting.js'
-import { EvictionManager, assertPurgable } from './eviction.js'
+import { EvictionManager, assertPurgable, purgeDriveCores } from './eviction.js'
 import { SubsidyAccrual } from '../../incentive/subsidy/index.js'
 import { AlertManager } from './alert-manager.js'
 import { SelfHeal } from './self-heal.js'
@@ -1419,6 +1418,9 @@ export class RelayNode extends EventEmitter {
         tickMs: this.config.storageAccounting?.tickMs,
         batchSize: this.config.storageAccounting?.batchSize
       })
+      // An 'error' emit with no listener crashes the process — route to
+      // a logged event instead (v0.15.6).
+      this.storageAccounting.on('error', (err) => this.emit('accounting-error', { error: err && err.message }))
       this.storageAccounting.start()
 
       // Over-replication eviction (Phase A). Off by default — sheds
@@ -1437,6 +1439,7 @@ export class RelayNode extends EventEmitter {
         }, { targetFloor: Math.max(1, Number(this.config.targetReplicaFloor) || 1), ...this.config.eviction })
         this.eviction.on('evicted', (e) => this.emit('eviction', e))
         this.eviction.on('evict-failed', (e) => this.emit('eviction-failed', e))
+        this.eviction.on('error', (err) => this.emit('eviction-error', { error: err && err.message }))
         this.eviction.start()
       }
 
@@ -2576,12 +2579,12 @@ export class RelayNode extends EventEmitter {
       try { bytes = await this.storageAccounting.measure(appKeyHex) } catch { bytes = null }
     }
     await this.unseedApp(appKeyHex)
-    const drive = new Hyperdrive(this.store.session(), b4a.from(appKeyHex, 'hex'))
-    await drive.ready()
-    await drive.purge()
+    // Tombstone before purging — even if the purge fails on a corrupt
+    // core, repair must not re-adopt what the operator just removed.
     this.appRegistry.markEvicted(appKeyHex, Date.now())
-    this.emit('eviction', { appKey: appKeyHex, bytes: bytes || 0, manual: true })
-    return { appKey: appKeyHex, bytes: bytes || 0 }
+    const method = await purgeDriveCores(this.store, appKeyHex)
+    this.emit('eviction', { appKey: appKeyHex, bytes: bytes || 0, manual: true, method })
+    return { appKey: appKeyHex, bytes: bytes || 0, method }
   }
 
   /**

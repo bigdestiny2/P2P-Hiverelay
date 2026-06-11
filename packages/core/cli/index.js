@@ -477,6 +477,14 @@ async function start () {
     log.info({ backfilled }, 'backfilled seed-accept records for held entries (census repair)')
   })
 
+  node.on('eviction-error', ({ error }) => {
+    log.warn({ error }, 'eviction sweep error')
+  })
+
+  node.on('accounting-error', ({ error }) => {
+    log.warn({ error }, 'storage accounting error')
+  })
+
   node.on('settlement-error', ({ error }) => {
     log.error({ err: error }, 'settlement error')
   })

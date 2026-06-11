@@ -275,6 +275,72 @@ test('assertPurgable: sacred entries refuse even operator-initiated purges', asy
   t.execution(() => assertPurgable({ durability: 0, custodyIntentId: null }), 'plain entry purgable')
 })
 
+test('timeouts: a wedged core cannot freeze accounting or the sweep (v0.15.6)', async (t) => {
+  const never = new Promise(() => {}) // a corrupt core's hung await
+  // Accounting: info() never resolves -> measure returns 0 within the timeout.
+  const reg = fakeRegistry([['k1', { drive: { core: { info: () => never }, blobs: null } }]])
+  const acc = new StorageAccounting({ appRegistry: reg, tickMs: 60_000, batchSize: 5, infoTimeoutMs: 60 })
+  const t0 = Date.now()
+  await acc._tick()
+  t.ok(Date.now() - t0 < 2_000, 'tick completed despite hung info()')
+  t.is(acc.getBytes('k1'), 0, 'wedged core measured as 0, not frozen')
+  acc.stop()
+
+  // Sweep: unseed hangs -> evict-failed, sweep completes.
+  const { ev, registry } = makeEviction({
+    myPubkey: MID_PK,
+    holders: [MID_PK],
+    health: new Map([[APP, { current: 5, target: 2 }]]),
+    config: { unseedTimeoutMs: 60 }
+  })
+  // Replace unseed with a hang
+  ev.deps.unseed = () => never
+  const fails = []
+  ev.on('evict-failed', (e) => fails.push(e))
+  const res = await ev.sweep({ now: NOW })
+  t.is(res.candidates, 1, 'candidate found')
+  t.is(res.evicted.length, 0, 'nothing evicted')
+  t.is(fails.length, 1, 'evict-failed emitted on unseed timeout')
+  t.is(fails[0].error, 'unseed timeout', 'reason carried')
+  t.absent(registry.isEvicted(APP), 'no tombstone when unseed never completed')
+})
+
+test('purgeDriveCores: corrupt drive header falls back to meta-core purge', async (t) => {
+  const { purgeDriveCores } = await import('p2p-hiverelay/core/relay-node/eviction.js')
+  // store.session() -> Hyperdrive will be constructed but ready() throws
+  // DECODING_ERROR (we simulate by having store.session return a broken
+  // proxy that Hyperdrive constructor accepts but ready rejects on).
+  // Instead of fighting Hyperdrive internals, simulate via the meta-core
+  // path: a store whose session() drive explodes and whose get() core
+  // purges cleanly.
+  let metaPurged = false
+  const store = {
+    session: () => { throw new Error('DECODING_ERROR: Decoding error') }, // drive path dies immediately
+    get: () => ({
+      ready: async () => {},
+      purge: async () => { metaPurged = true },
+      close: async () => {}
+    })
+  }
+  const method = await purgeDriveCores(store, 'aa'.repeat(32), { purgeTimeoutMs: 500 })
+  t.is(method, 'meta-only', 'fell back to meta-core purge')
+  t.ok(metaPurged, 'meta core actually purged')
+})
+
+test('purgeDriveCores: both paths failing throws PURGE_FAILED', async (t) => {
+  const { purgeDriveCores } = await import('p2p-hiverelay/core/relay-node/eviction.js')
+  const never = new Promise(() => {})
+  const store = {
+    session: () => { throw new Error('DECODING_ERROR') },
+    get: () => ({ ready: () => never, purge: () => never, close: async () => {} })
+  }
+  await t.exception(
+    () => purgeDriveCores(store, 'aa'.repeat(32), { purgeTimeoutMs: 60 }),
+    /purge failed/,
+    'PURGE_FAILED after both paths'
+  )
+})
+
 // ─── xorDistance ───────────────────────────────────────────────────
 
 test('xorDistance: bytewise xor, stable and symmetric', (t) => {
