@@ -35,6 +35,7 @@
 import { EventEmitter } from 'events'
 import b4a from 'b4a'
 import Hyperdrive from 'hyperdrive'
+import { raceTimeout } from './storage-accounting.js'
 
 const DEFAULTS = {
   enabled: false,
@@ -56,7 +57,54 @@ const DEFAULTS = {
   // at 99% disk while bern sat at 8%). The floorMargin absorbs the
   // worst case of two pressured relays dropping the same entry in the
   // same sweep window.
-  rankBypassPct: 92
+  rankBypassPct: 92,
+  // Per-operation timeouts (v0.15.6). Cores damaged by a disk-full
+  // crash can wedge any await forever; one hung candidate must cost the
+  // sweep seconds, not freeze it permanently.
+  registryTimeoutMs: 5_000,
+  measureTimeoutMs: 10_000,
+  unseedTimeoutMs: 30_000,
+  purgeTimeoutMs: 60_000
+}
+
+const TIMEOUT = Symbol('eviction-timeout')
+
+/**
+ * Purge a drive's cores from disk, surviving corruption. The normal
+ * path opens a Hyperdrive and purges meta + blobs together — but a
+ * header truncated by a disk-full crash makes that throw
+ * DECODING_ERROR before the blobs core can even be located. Fallback:
+ * purge the meta core directly via the corestore. The orphaned blob
+ * core (locatable only through the now-unreadable header) stays on
+ * disk — bounded loss, and a corrupt drive serves nobody, so removing
+ * what we can plus tombstoning is strictly better than leaving it.
+ *
+ * Returns 'drive' | 'meta-only'. Throws only if both paths fail.
+ */
+export async function purgeDriveCores (store, appKeyHex, { purgeTimeoutMs = 60_000 } = {}) {
+  const key = b4a.from(appKeyHex, 'hex')
+  try {
+    const drive = new Hyperdrive(store.session(), key)
+    const full = await raceTimeout(
+      (async () => { await drive.ready(); await drive.purge(); return true })(),
+      purgeTimeoutMs,
+      TIMEOUT
+    )
+    if (full === true) return 'drive'
+  } catch {
+    // fall through to meta-only
+  }
+  const core = store.get(key)
+  const meta = await raceTimeout(
+    (async () => { try { await core.ready() } catch {} await core.purge(); return true })(),
+    purgeTimeoutMs,
+    TIMEOUT
+  )
+  if (meta === true) return 'meta-only'
+  try { await core.close() } catch {}
+  const err = new Error('purge failed on both drive and meta-core paths')
+  err.code = 'PURGE_FAILED'
+  throw err
 }
 
 /**
@@ -150,11 +198,7 @@ export class EvictionManager extends EventEmitter {
 
   async _purgeDrive (appKeyHex) {
     if (this.deps.purgeDrive) return this.deps.purgeDrive(appKeyHex)
-    // Fresh main session over the (now unseeded) cores; purge() frees the
-    // meta + blob core files on disk and closes the drive.
-    const drive = new Hyperdrive(this.deps.store.session(), b4a.from(appKeyHex, 'hex'))
-    await drive.ready()
-    await drive.purge()
+    return purgeDriveCores(this.deps.store, appKeyHex, { purgeTimeoutMs: this.config.purgeTimeoutMs })
   }
 
   /**
@@ -194,7 +238,12 @@ export class EvictionManager extends EventEmitter {
 
         let relays
         try {
-          relays = await this.deps.seedingRegistry.getRelaysForApp(appKey)
+          relays = await raceTimeout(
+            Promise.resolve(this.deps.seedingRegistry.getRelaysForApp(appKey)),
+            this.config.registryTimeoutMs,
+            TIMEOUT
+          )
+          if (relays === TIMEOUT) { skips.registryError++; continue }
         } catch {
           skips.registryError++
           continue
@@ -240,7 +289,11 @@ export class EvictionManager extends EventEmitter {
 
         let bytes = this.deps.storageAccounting.getBytes(appKey)
         if (bytes == null) {
-          try { bytes = await this.deps.storageAccounting.measure(appKey) } catch { bytes = 0 }
+          bytes = await raceTimeout(
+            Promise.resolve().then(() => this.deps.storageAccounting.measure(appKey)),
+            this.config.measureTimeoutMs,
+            0
+          )
         }
         candidates.push({ appKey, bytes: bytes || 0, remaining, target: h.target })
       }
@@ -258,9 +311,20 @@ export class EvictionManager extends EventEmitter {
           if (projectedPct <= this.config.resumePct) break
         }
         try {
-          await this.deps.unseed(cand.appKey)
-          await this._purgeDrive(cand.appKey)
+          const unseeded = await raceTimeout(
+            Promise.resolve().then(() => this.deps.unseed(cand.appKey)).then(() => true),
+            this.config.unseedTimeoutMs,
+            TIMEOUT
+          )
+          if (unseeded === TIMEOUT) {
+            this.emit('evict-failed', { appKey: cand.appKey, error: 'unseed timeout' })
+            continue
+          }
+          // Tombstone as soon as the registry entry is gone — even if the
+          // purge below fails (corrupt core), repair must not re-adopt a
+          // drive we just established the network holds in surplus.
           this.deps.appRegistry.markEvicted(cand.appKey, now)
+          await this._purgeDrive(cand.appKey)
           freedBytes += cand.bytes
           this._evictedTotal++
           this._freedBytesTotal += cand.bytes
@@ -273,7 +337,7 @@ export class EvictionManager extends EventEmitter {
             usedPct: disk.usedPct
           })
         } catch (err) {
-          this.emit('evict-failed', { appKey: cand.appKey, error: err.message })
+          this.emit('evict-failed', { appKey: cand.appKey, error: err.code || err.message })
         }
       }
 

@@ -22,17 +22,38 @@ import { EventEmitter } from 'events'
 
 const DEFAULT_TICK_MS = 5_000
 const DEFAULT_BATCH = 25
+const DEFAULT_INFO_TIMEOUT_MS = 8_000
 
-async function coreStorageBytes (core) {
+/**
+ * Race a promise against a timeout, resolving the fallback instead of
+ * rejecting. Cores damaged by a disk-full crash can wedge their await
+ * forever (info()/ready() on a truncated oplog) — without this, one bad
+ * core froze the whole accounting sweep AND the eviction pass behind a
+ * never-clearing in-progress latch (utah + sing-1, 2026-06-11).
+ */
+export function raceTimeout (promise, ms, fallback) {
+  let timer
+  return Promise.race([
+    promise.then(
+      (v) => v,
+      () => fallback // errors collapse to the fallback too
+    ),
+    new Promise((resolve) => {
+      // Deliberately NOT unref'd: an unref'd race against a wedged
+      // promise leaves the event loop with nothing referenced, so the
+      // process (or a test runner) sees a deadlock before the timer can
+      // fire. These timers are short-lived and cleared on resolution.
+      timer = setTimeout(() => resolve(fallback), ms)
+    })
+  ]).finally(() => clearTimeout(timer))
+}
+
+async function coreStorageBytes (core, timeoutMs = DEFAULT_INFO_TIMEOUT_MS) {
   if (!core || typeof core.info !== 'function') return 0
-  try {
-    const info = await core.info({ storage: true })
-    const s = info && info.storage
-    if (!s) return 0
-    return (s.oplog || 0) + (s.tree || 0) + (s.blocks || 0) + (s.bitfield || 0)
-  } catch {
-    return 0 // closed/closing core mid-measure — skip this pass
-  }
+  const info = await raceTimeout(core.info({ storage: true }), timeoutMs, null)
+  const s = info && info.storage
+  if (!s) return 0
+  return (s.oplog || 0) + (s.tree || 0) + (s.blocks || 0) + (s.bitfield || 0)
 }
 
 export class StorageAccounting extends EventEmitter {
@@ -42,6 +63,7 @@ export class StorageAccounting extends EventEmitter {
     this.appRegistry = opts.appRegistry
     this.tickMs = Number.isFinite(opts.tickMs) ? Math.max(500, opts.tickMs) : DEFAULT_TICK_MS
     this.batchSize = Number.isFinite(opts.batchSize) ? Math.max(1, opts.batchSize) : DEFAULT_BATCH
+    this.infoTimeoutMs = Number.isFinite(opts.infoTimeoutMs) ? Math.max(50, opts.infoTimeoutMs) : DEFAULT_INFO_TIMEOUT_MS
 
     this._bytes = new Map() // appKeyHex -> { bytes, measuredAt }
     this._cursor = 0
@@ -73,8 +95,8 @@ export class StorageAccounting extends EventEmitter {
     const entry = this.appRegistry.get(appKeyHex)
     const drive = entry && entry.drive
     if (!drive) return null
-    const meta = await coreStorageBytes(drive.core)
-    const blobs = drive.blobs ? await coreStorageBytes(drive.blobs.core) : 0
+    const meta = await coreStorageBytes(drive.core, this.infoTimeoutMs)
+    const blobs = drive.blobs ? await coreStorageBytes(drive.blobs.core, this.infoTimeoutMs) : 0
     const rec = { bytes: meta + blobs, measuredAt: Date.now() }
     this._bytes.set(appKeyHex, rec)
     return rec.bytes
