@@ -13,7 +13,7 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.15.4
+version: 0.15.6
 release-notes: |
   First StartOS release. Blind relay node for the Pear/Holepunch
   ecosystem with the Blindspark dashboard, honest storage accounting,
@@ -129,12 +129,8 @@ backup:
       BACKUP: /mnt/backup
       main: /root/data
 
+# No prior versions exist — nothing to migrate from/to. (`type: script`
+# migrations need the js-engine SDK feature; not used here.)
 migrations:
-  from:
-    "*":
-      type: script
-      args: ["from"]
-  to:
-    "*":
-      type: script
-      args: ["to"]
+  from: {}
+  to: {}
