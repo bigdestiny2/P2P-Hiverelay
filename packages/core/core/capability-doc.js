@@ -13,11 +13,12 @@
  *
  *   schemaVersion: 1  →  initial shape (v0.5.1)
  *
- * Zero external deps beyond b4a so this helper is safe to import from both
- * Node and Bare runtimes.
+ * Depends only on b4a and which-runtime (both Bare-safe Holepunch modules)
+ * so this helper imports cleanly under both Node and Bare runtimes.
  */
 
 import b4a from 'b4a'
+import { isBare } from 'which-runtime'
 import sodium from 'sodium-universal'
 import { resolveAcceptMode } from './accept-mode.js'
 
@@ -49,7 +50,7 @@ const SIGNATURE_VERSION = 1
 export function buildCapabilityDoc (opts = {}) {
   const relay = opts.relay || null
   const config = (relay && relay.config) || {}
-  const runtime = opts.runtime || (typeof global !== 'undefined' && global.Bare ? 'bare' : 'node')
+  const runtime = opts.runtime || (isBare ? 'bare' : 'node')
 
   // Identity ─ prefer explicit node identity, fall back to swarm keypair.
   const identity = extractIdentity(relay)

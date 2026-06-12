@@ -45,7 +45,7 @@
   "pear": {
     "name": "p2p-hiverelay",
     "type": "terminal",
-    "bin": "p2p-hiverelay"
+    "main": "pear-entry.js"
   },
   "bin": {
     "p2p-hiverelay": "./cli/index.js",
@@ -92,6 +92,7 @@
     "protomux": "^3.6.0",
     "socks": "^2.8.7",
     "sodium-universal": "^4.0.0",
+    "which-runtime": "^1.4.0",
     "ws": "^8.20.0"
   },
   "engines": {
