@@ -46,7 +46,7 @@
     "bare-path": "^2.1.0",
     "corestore": "^6.18.0",
     "hyperdrive": "^11.8.0",
-    "hyperswarm": "^4.7.0",
+    "hyperswarm": "^4.17.0",
     "p2p-hiverelay": "^0.15.6",
     "sodium-universal": "^4.0.0"
   },

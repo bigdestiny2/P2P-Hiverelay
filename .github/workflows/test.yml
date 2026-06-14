@@ -45,6 +45,26 @@ jobs:
         # for the slowest-runner edge case.
         timeout-minutes: 15
 
+  bare-tests:
+    # Executes the test suite under the REAL Bare runtime (not Node), so the
+    # `bare` condition of the imports map resolves to bare-events / bare-fs /
+    # bare-http1 / bare-path instead of Node built-ins. This is the runtime
+    # verification gate the storage-stack upgrade (corestore 7 / hypercore 11)
+    # depends on — nothing else in CI actually loads the Bare module graph.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Put the pinned `bare` devDependency's runtime launcher on PATH so the
+      # brittle-bare runner (shebang `#!/usr/bin/env bare`) can find it. Using
+      # the pinned dep keeps the runtime version reproducible — no global install.
+      - run: echo "$GITHUB_WORKSPACE/node_modules/bare/bin" >> "$GITHUB_PATH"
+      - run: npm run test:bare
+
   audit:
     runs-on: ubuntu-latest
     steps:

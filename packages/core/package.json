@@ -85,7 +85,7 @@
     "hypercore": "^10.36.0",
     "hyperdht": "^6.15.0",
     "hyperdrive": "^11.8.0",
-    "hyperswarm": "^4.7.0",
+    "hyperswarm": "^4.17.0",
     "minimist": "^1.2.8",
     "multicast-dns": "^7.2.5",
     "pino": "^9.0.0",
