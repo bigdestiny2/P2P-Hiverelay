@@ -28,7 +28,7 @@ services:
     #   docker buildx imagetools inspect ghcr.io/bigdestiny2/p2p-hiverelay:0.14.0
     # (For a personal sideload before submission, the bare :0.14.0 tag also
     # works — the digest pin is an App Store review requirement.)
-    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.16.2@sha256:76bf2e1963606c5bffefca66ee7729c8353b99caa280f751f5dd9eb059b51328
+    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.16.3@sha256:af1515076330313eed34a9ee1ae4084a4028c6b948b1a10550ce26a1b79084b7
     init: true
     restart: on-failure
     stop_grace_period: 1m
