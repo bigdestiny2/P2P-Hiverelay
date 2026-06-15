@@ -66,7 +66,14 @@ export default {
   // direct/localhost and reverse-proxy-without-this-mode deployments are
   // entirely unaffected.
   ui: {
-    exposeToken: false
+    exposeToken: false,
+    // Simple mode serves a single-page, appliance-style dashboard
+    // (dashboard/blindspark.html) instead of the full multi-tab operator
+    // UI — no Docs/GitHub, no payments/calculator/leaderboard tabs, just
+    // identity + live status. Enabled for the Blindspark Umbrel packaging
+    // via HIVERELAY_UI_SIMPLE; off by default so PC node operators and
+    // devs get the full dashboard.
+    simple: false
   },
 
   // Operator subsidy (Phase 1 — accrual + signed claims only; no money

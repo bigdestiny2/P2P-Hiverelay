@@ -733,7 +733,8 @@ export class RelayNode extends EventEmitter {
           corsOrigins: this.config.corsOrigins,
           apiKey: this.config.apiKey,
           trustProxy: this.config.trustProxy || false,
-          uiExposeToken: this.config.ui?.exposeToken || false
+          uiExposeToken: this.config.ui?.exposeToken || false,
+          uiSimple: this.config.ui?.simple || false
         })
         startups.push(this.api.start())
 

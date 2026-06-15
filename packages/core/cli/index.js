@@ -375,6 +375,14 @@ async function start () {
       if (derived) cliOverrides.apiKey = derived
     }
   }
+  // HIVERELAY_UI_SIMPLE=1 serves the single-page appliance dashboard
+  // (blindspark.html) instead of the full multi-tab operator UI. Used by
+  // the Blindspark Umbrel packaging; PC operators leave it off and get
+  // the full dashboard. See config/default.js `ui.simple`.
+  if (process.env.HIVERELAY_UI_SIMPLE === '1' || process.env.HIVERELAY_UI_SIMPLE === 'true') {
+    if (!cliOverrides.ui) cliOverrides.ui = {}
+    cliOverrides.ui.simple = true
+  }
   // HIVERELAY_TRUST_PROXY=1 — relay is behind a reverse proxy, so the
   // localhost auth fallback is disabled (a key is required). Independent
   // of exposeToken for plain reverse-proxy setups.

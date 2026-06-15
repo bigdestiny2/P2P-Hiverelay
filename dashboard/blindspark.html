@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+/* HiveRelay UI auth shim. When the relay serves this page through a trusted
+   reverse proxy (ui.exposeToken), it injects <meta name="hiverelay-ui-token">
+   holding a token it will accept as a bearer credential. Attach it to API
+   calls so the dashboard works behind a proxy where the localhost check
+   can't apply. No meta -> no-op, so direct/localhost use is unchanged. */
+(function () {
+  try {
+    var m = document.querySelector('meta[name="hiverelay-ui-token"]');
+    var t = m && m.getAttribute('content');
+    if (!t) return;
+    var orig = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      init = init || {};
+      var h = new Headers((init && init.headers) || (input && input.headers) || {});
+      if (!h.has('Authorization')) h.set('Authorization', 'Bearer ' + t);
+      init.headers = h;
+      return orig(input, init);
+    };
+  } catch (e) { /* never block page load on the auth shim */ }
+})();
+</script>
+<title>Blindspark</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%2316213e'/%3E%3Cpath d='M50 10 C 54 38 60 44 88 50 C 60 56 54 62 50 90 C 46 62 40 56 12 50 C 40 44 46 38 50 10 Z' fill='%23f5c842'/%3E%3C/svg%3E">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0e1118;--bg-glow:#131a2b;
+  --card:#151a26;--card-hi:#1a2132;--card-border:#222b3e;--card-border-hi:#2e3b56;
+  --green:#3fb950;--orange:#f0a64a;--cyan:#58a6ff;--red:#f47067;--accent:#f5c842;
+  --text:#d6dde8;--text-dim:#8493a8;--text-faint:#5c697e;--text-bright:#fff;
+  --mono:'SF Mono','Cascadia Code','Fira Code','Consolas',monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  --radius:14px;--radius-sm:9px;
+}
+html{font-size:15px}
+body{
+  background:var(--bg) radial-gradient(1100px 520px at 50% -160px,var(--bg-glow),transparent);
+  color:var(--text);font-family:var(--sans);min-height:100vh;
+  display:flex;justify-content:center;padding:1.5rem 1.25rem 3rem;
+}
+.wrap{width:100%;max-width:680px}
+a{color:var(--cyan);text-decoration:none}
+button{font-family:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:4px}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
+
+/* ── Header ──────────────────────────────────────────────────────── */
+.hdr{display:flex;align-items:center;gap:1rem;margin-bottom:1.6rem}
+.brand{display:flex;align-items:center;gap:.7rem}
+.spark{width:30px;height:30px;flex-shrink:0;filter:drop-shadow(0 0 8px rgba(245,200,66,.4))}
+.brand-txt{display:flex;flex-direction:column;line-height:1.1}
+.brand-txt h1{font-size:1.2rem;color:var(--text-bright);font-weight:650;letter-spacing:.2px}
+.brand-txt span{font-size:.56rem;color:var(--text-dim);letter-spacing:.9px;text-transform:uppercase}
+.hdr-right{margin-left:auto;display:flex;align-items:center;gap:.7rem}
+.setup-link{
+  font-size:.74rem;color:var(--text-dim);border:1px solid var(--card-border);
+  border-radius:999px;padding:.34rem .8rem;transition:color .15s,border-color .15s;
+}
+.setup-link:hover{color:var(--text-bright);border-color:var(--card-border-hi)}
+.status{
+  display:flex;align-items:center;gap:.45rem;background:rgba(63,185,80,.1);color:var(--green);
+  padding:.34rem .8rem;border-radius:999px;font-size:.74rem;font-family:var(--mono);
+  border:1px solid rgba(63,185,80,.28);white-space:nowrap;
+}
+.status::before{content:'';width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 6px currentColor}
+.status.off{background:rgba(244,112,103,.1);color:var(--red);border-color:rgba(244,112,103,.3)}
+
+/* ── Identity hero ───────────────────────────────────────────────── */
+.hero{
+  background:linear-gradient(180deg,var(--card-hi),var(--card));
+  border:1px solid var(--card-border);border-radius:var(--radius);
+  padding:1.5rem 1.5rem 1.4rem;margin-bottom:1rem;text-align:center;
+}
+.hero-name{font-size:1.7rem;font-weight:700;color:var(--text-bright);letter-spacing:.2px;word-break:break-word}
+.pk{
+  display:inline-flex;align-items:center;gap:.45rem;margin-top:.7rem;
+  background:var(--card);border:1px solid var(--card-border);border-radius:999px;
+  padding:.36rem .85rem;font-size:.74rem;font-family:var(--mono);color:var(--text-dim);
+  transition:border-color .15s,color .15s;
+}
+.pk:hover{border-color:var(--card-border-hi);color:var(--text)}
+.pk .ic{opacity:.6;font-size:.78rem}
+.hero-tag{font-size:.84rem;color:var(--text-faint);margin-top:1rem;line-height:1.5}
+
+/* ── Stats ───────────────────────────────────────────────────────── */
+.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:.85rem;margin-bottom:1rem}
+.stat{
+  background:linear-gradient(180deg,var(--card-hi),var(--card));
+  border:1px solid var(--card-border);border-radius:var(--radius);padding:1.05rem 1.15rem;
+}
+.s-label{font-size:.64rem;text-transform:uppercase;letter-spacing:1.3px;color:var(--text-dim);margin-bottom:.5rem}
+.s-val{font-size:1.7rem;font-weight:700;font-family:var(--mono);color:var(--text-bright);line-height:1.05}
+.s-val.green{color:var(--green)}
+.s-val.cyan{color:var(--cyan)}
+.s-val.orange{color:var(--orange)}
+.s-sub{font-size:.66rem;color:var(--text-faint);margin-top:.35rem;font-family:var(--mono)}
+
+/* ── Info rows ───────────────────────────────────────────────────── */
+.panel{
+  background:var(--card);border:1px solid var(--card-border);border-radius:var(--radius);
+  padding:.4rem 1.25rem;margin-bottom:1rem;
+}
+.row{display:flex;align-items:center;gap:1rem;padding:.95rem 0;border-bottom:1px solid var(--card-border)}
+.row:last-child{border-bottom:none}
+.row-k{font-size:.74rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;flex-shrink:0;width:34%}
+.row-v{font-size:.9rem;color:var(--text);display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;justify-content:flex-end;margin-left:auto;text-align:right}
+.badge{
+  font-size:.72rem;font-weight:600;padding:.25rem .65rem;border-radius:999px;
+  background:rgba(88,166,255,.12);color:var(--cyan);border:1px solid rgba(88,166,255,.25);
+  text-transform:capitalize;
+}
+.badge.review{background:rgba(240,166,74,.12);color:var(--orange);border-color:rgba(240,166,74,.25)}
+.badge.open{background:rgba(63,185,80,.12);color:var(--green);border-color:rgba(63,185,80,.25)}
+.row-note{font-size:.72rem;color:var(--text-faint);width:100%;text-align:right}
+.addr{
+  font-family:var(--mono);font-size:.78rem;color:var(--cyan);
+  background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.2);
+  border-radius:var(--radius-sm);padding:.3rem .6rem;cursor:pointer;word-break:break-all;
+}
+.muted{color:var(--text-faint)}
+
+/* ── Hosted apps ─────────────────────────────────────────────────── */
+.apps-card{
+  background:var(--card);border:1px solid var(--card-border);border-radius:var(--radius);
+  padding:1.1rem 1.25rem 1rem;margin-bottom:1.4rem;
+}
+.apps-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:.5rem}
+.apps-head .t{font-size:.68rem;text-transform:uppercase;letter-spacing:1.3px;color:var(--text-dim)}
+.apps-head .c{font-size:.74rem;color:var(--text-faint);font-family:var(--mono)}
+.apps-list{max-height:280px;overflow-y:auto;scrollbar-width:thin}
+.app{display:flex;align-items:center;gap:.7rem;padding:.6rem 0;border-bottom:1px solid var(--card-border)}
+.app:last-child{border-bottom:none}
+.app-dot{width:7px;height:7px;border-radius:50%;background:var(--green);flex-shrink:0;box-shadow:0 0 5px var(--green)}
+.app-name{font-size:.84rem;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app-key{font-size:.72rem;font-family:var(--mono);color:var(--text-faint);flex-shrink:0}
+.apps-empty{text-align:center;color:var(--text-faint);font-size:.82rem;padding:1.4rem 0}
+
+/* ── Footer ──────────────────────────────────────────────────────── */
+.foot{text-align:center;font-size:.74rem;color:var(--text-faint);line-height:1.6;padding:0 1rem}
+
+.toast{
+  position:fixed;left:50%;bottom:1.5rem;transform:translateX(-50%) translateY(20px);
+  background:var(--card-hi);border:1px solid var(--card-border-hi);color:var(--text-bright);
+  padding:.55rem 1.1rem;border-radius:999px;font-size:.8rem;opacity:0;pointer-events:none;
+  transition:opacity .2s,transform .2s;z-index:200;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+@media(max-width:440px){
+  .stats{grid-template-columns:1fr}
+  .row{flex-direction:column;align-items:flex-start;gap:.4rem}
+  .row-v{justify-content:flex-start;margin-left:0;text-align:left}
+  .row-note{text-align:left}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hdr">
+    <div class="brand">
+      <svg class="spark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M50 6 C 55 40 60 45 94 50 C 60 55 55 60 50 94 C 45 60 40 55 6 50 C 40 45 45 40 50 6 Z" fill="var(--accent)"/>
+      </svg>
+      <div class="brand-txt"><h1>Blindspark</h1><span>Blind Relay</span></div>
+    </div>
+    <div class="hdr-right">
+      <a class="setup-link" href="/wizard">&#9881; Setup</a>
+      <span class="status off" id="status">Connecting</span>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="hero-name" id="relayName">&mdash;</div>
+    <button class="pk" id="pk" type="button" title="Copy public key"><span id="pkText">&mdash;</span><span class="ic">&#10697;</span></button>
+    <p class="hero-tag" id="heroTag">Your relay is starting up&hellip;</p>
+  </section>
+
+  <section class="stats">
+    <div class="stat"><div class="s-label">Apps held</div><div class="s-val green" id="apps">&mdash;</div><div class="s-sub" id="appsSub">encrypted drives</div></div>
+    <div class="stat"><div class="s-label">Connected peers</div><div class="s-val cyan" id="peers">&mdash;</div><div class="s-sub">live connections</div></div>
+    <div class="stat"><div class="s-label">Data stored</div><div class="s-val" id="stored">&mdash;</div><div class="s-sub" id="storedSub">on this node</div></div>
+    <div class="stat"><div class="s-label">Data served</div><div class="s-val orange" id="served">&mdash;</div><div class="s-sub">to the network</div></div>
+  </section>
+
+  <section class="panel">
+    <div class="row">
+      <div class="row-k">Accept mode</div>
+      <div class="row-v">
+        <span class="badge" id="acceptMode">&mdash;</span>
+        <span class="row-note" id="acceptNote"></span>
+      </div>
+    </div>
+    <div class="row">
+      <div class="row-k">Payout wallet</div>
+      <div class="row-v" id="payout"><span class="muted">&mdash;</span></div>
+    </div>
+    <div class="row">
+      <div class="row-k">Uptime</div>
+      <div class="row-v" id="uptime"><span class="muted">&mdash;</span></div>
+    </div>
+  </section>
+
+  <section class="apps-card">
+    <div class="apps-head"><span class="t">Hosted apps</span><span class="c" id="appsCount"></span></div>
+    <div class="apps-list" id="appsList"><div class="apps-empty">Loading&hellip;</div></div>
+  </section>
+
+  <footer class="foot">
+    Blindspark holds encrypted data it can&rsquo;t read.<br>No account &middot; no telemetry &middot; your relay, your keys.
+  </footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+var pubKey = '';
+
+function $(id){ return document.getElementById(id); }
+
+function fmtBytes(n){
+  n = Number(n) || 0;
+  if (n < 1) return '0 B';
+  var u = ['B','KB','MB','GB','TB','PB'], i = Math.floor(Math.log(n)/Math.log(1024));
+  i = Math.min(i, u.length-1);
+  var v = n / Math.pow(1024, i);
+  return (v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)) + ' ' + u[i];
+}
+function shortKey(k){
+  if (!k) return '';
+  return k.length > 16 ? k.slice(0,8) + '…' + k.slice(-6) : k;
+}
+function toast(msg){
+  var t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._t); toast._t = setTimeout(function(){ t.classList.remove('show'); }, 1600);
+}
+
+var ACCEPT = {
+  review:    'New seed requests wait for your approval.',
+  open:      'Accepts every seed request automatically.',
+  allowlist: 'Only peers on your allowlist are accepted.',
+  closed:    'Not accepting new seed requests right now.'
+};
+
+$('pk').addEventListener('click', function(){
+  if (!pubKey) return;
+  navigator.clipboard && navigator.clipboard.writeText(pubKey)
+    .then(function(){ toast('Public key copied'); })
+    .catch(function(){ toast(pubKey); });
+});
+
+function setStatus(online, uptimeHuman){
+  var el = $('status');
+  if (online){
+    el.classList.remove('off');
+    el.textContent = uptimeHuman ? 'Online · ' + uptimeHuman : 'Online';
+  } else {
+    el.classList.add('off');
+    el.textContent = 'Offline';
+  }
+}
+
+function renderOverview(o){
+  var healthy = o && o.health ? o.health.healthy !== false : true;
+  setStatus(!!o && healthy, o && o.uptime ? o.uptime.human : '');
+  if (!o) return;
+  $('apps').textContent = (o.seededApps != null ? o.seededApps : 0);
+  $('peers').textContent = (o.connections != null ? o.connections : 0);
+  var stored = (o.seeder && o.seeder.totalBytesStored) || (o.storage && o.storage.used) || 0;
+  $('stored').textContent = fmtBytes(stored);
+  $('served').textContent = fmtBytes((o.seeder && o.seeder.totalBytesServed) || 0);
+  $('uptime').innerHTML = '';
+  $('uptime').textContent = o.uptime ? o.uptime.human : '—';
+  if (o.publicKey){
+    pubKey = o.publicKey;
+    $('pkText').textContent = shortKey(o.publicKey);
+  }
+}
+
+function renderWizard(w){
+  if (!w) return;
+  if (w.relayName) $('relayName').textContent = w.relayName;
+  var mode = w.acceptMode || 'review';
+  var badge = $('acceptMode');
+  badge.textContent = mode;
+  badge.className = 'badge ' + mode;
+  $('acceptNote').textContent = ACCEPT[mode] || '';
+  $('heroTag').textContent = 'Your relay is online and holding encrypted data for the network.';
+
+  var dest = w.payoutDestination;
+  var addr = !dest ? '' : (typeof dest === 'string' ? dest : (dest.address || ''));
+  var pay = $('payout');
+  if (w.hasPayout && addr){
+    pay.innerHTML = '';
+    var chip = document.createElement('span');
+    chip.className = 'addr';
+    chip.title = 'Copy BTC address';
+    chip.textContent = addr.length > 22 ? addr.slice(0,10) + '…' + addr.slice(-8) : addr;
+    chip.addEventListener('click', function(){
+      navigator.clipboard && navigator.clipboard.writeText(addr);
+      toast('BTC address copied');
+    });
+    pay.appendChild(chip);
+  } else {
+    pay.innerHTML = '<span class="muted">Not set &mdash; <a href="/wizard">add one in Setup</a></span>';
+  }
+}
+
+function renderApps(list){
+  var box = $('appsList');
+  if (!Array.isArray(list) || list.length === 0){
+    box.innerHTML = '<div class="apps-empty">No apps held yet. They appear as peers ask your relay to seed them.</div>';
+    $('appsCount').textContent = '';
+    return;
+  }
+  $('appsCount').textContent = list.length + (list.length === 1 ? ' app' : ' apps');
+  var html = '';
+  for (var i = 0; i < list.length; i++){
+    var a = list[i];
+    var name = a.name && a.name !== 'Unknown App' ? a.name : 'Unnamed app';
+    html += '<div class="app"><span class="app-dot"></span>' +
+            '<span class="app-name" title="' + (a.appKey || '') + '">' + escapeHtml(name) + '</span>' +
+            '<span class="app-key">' + shortKey(a.appKey || a.id || '') + '</span></div>';
+  }
+  box.innerHTML = html;
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, function(c){
+    return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c];
+  });
+}
+
+function jget(path){
+  return fetch(path, { headers: { 'Accept': 'application/json' } })
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .catch(function(){ return null; });
+}
+
+function refresh(){
+  jget('/api/overview').then(renderOverview);
+  jget('/api/apps').then(renderApps);
+}
+
+// Wizard state changes rarely; fetch once on load + occasionally.
+function refreshWizard(){ jget('/api/wizard').then(renderWizard); }
+
+refresh();
+refreshWizard();
+setInterval(refresh, 5000);
+setInterval(refreshWizard, 30000);
+</script>
+</body>
+</html>

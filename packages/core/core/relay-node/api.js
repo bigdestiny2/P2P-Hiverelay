@@ -128,6 +128,11 @@ export class RelayAPI extends EventEmitter {
     // token so the browser UI can authenticate behind a trusted proxy.
     // See config/default.js `ui.exposeToken` for the security contract.
     this._uiExposeToken = opts.uiExposeToken || false
+    // Simple mode (Blindspark appliance packaging): /dashboard serves the
+    // single-page blindspark.html and the full operator tabs (network,
+    // payments, calculator, leaderboard, catalog, docs) redirect back to
+    // it. PC operators leave this off for the full multi-tab dashboard.
+    this._uiSimple = opts.uiSimple || false
     this.server = null
 
     // API key for authenticated endpoints (manage, seed, unseed)
@@ -148,6 +153,7 @@ export class RelayAPI extends EventEmitter {
     this._authFailureTotal = 0
     this._authFailureLogAt = new Map() // normalized route -> last warn ts
     this._dashboardHtml = null
+    this._blindsparkHtml = null
     this._networkHtml = null
     this._docsHtml = null
     this._wizardHtml = null
@@ -649,7 +655,23 @@ export class RelayAPI extends EventEmitter {
         // --- Dashboard endpoints ---
 
         if (path === '/dashboard') {
+          if (this._uiSimple) {
+            return this._serveDashboard(res, '_blindsparkHtml', 'blindspark.html')
+          }
           return this._serveDashboard(res, '_dashboardHtml', 'index.html')
+        }
+
+        // Simple mode (Blindspark appliance): the full operator-only tabs
+        // don't exist in the one-page UI. Bounce any direct hit back to the
+        // single dashboard so a bookmark or stray link never dead-ends.
+        if (this._uiSimple && (
+          path === '/network' || path === '/docs' || path === '/payments' ||
+          path === '/calculator' || path === '/leaderboard' || path === '/catalog'
+        )) {
+          res.setHeader('Location', '/dashboard')
+          res.writeHead(302)
+          res.end()
+          return
         }
 
         // First-run setup wizard UI. Localhost-only by default. In

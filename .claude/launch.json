@@ -4,8 +4,8 @@
     {
       "name": "blindspark-dashboard",
       "runtimeExecutable": "env",
-      "runtimeArgs": ["HOME=/tmp/blindspark-preview", "node", "packages/core/cli/index.js", "start"],
-      "port": 9151
+      "runtimeArgs": ["HOME=/tmp/blindspark-preview", "HIVERELAY_UI_SIMPLE=true", "node", "packages/core/cli/index.js", "start", "--port", "9100", "--host", "127.0.0.1", "--region", "NA", "--max-storage", "50GB"],
+      "port": 9100
     },
     {
       "name": "Relay Node",

@@ -6,6 +6,57 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.16.2] — 2026-06-15
+
+One-page Blindspark dashboard for the Umbrel appliance. The full
+multi-tab operator UI is right for PC node operators and devs, but it
+carries Docs/GitHub links, payment/credit/earnings panels, a
+calculator, a leaderboard, and charts that are noise on a one-click
+home-server appliance. Blindspark now serves a single, simple page
+showing only what's real and live.
+
+### Added
+
+- **`dashboard/blindspark.html`** — single-page appliance UI: relay name
+  + copyable public key + live online/uptime status, four real stats
+  (apps held, connected peers, data stored, data served), accept-mode
+  with a plain-English line, BTC payout wallet, uptime, and the list of
+  hosted apps. A `Setup` link re-opens the wizard. No tabs, no
+  Docs/GitHub, no payments/calculator/leaderboard.
+- **`ui.simple` config + `HIVERELAY_UI_SIMPLE` env** — when enabled,
+  `/dashboard` serves `blindspark.html` and the operator-only tabs
+  (`/network`, `/docs`, `/payments`, `/calculator`, `/leaderboard`,
+  `/catalog`) 302-redirect back to it; `/wizard` stays reachable. The
+  Blindspark Umbrel package sets the flag; PC operators leave it off and
+  get the unchanged full dashboard from the same image.
+
+## [0.16.1] — 2026-06-15
+
+### Fixed
+
+- **Consistent top navigation on the Network and Docs pages** — both
+  previously dead-ended (Network had no nav; Docs hid all but the last
+  link on mobile). They now carry the same multi-tab top bar as the rest
+  of the dashboard.
+
+## [0.16.0] — 2026-06-15
+
+### Changed
+
+- **First-run wizard payout step is now an optional on-chain BTC
+  address** (replaces the LNbits/Lightning step) — no external
+  dependency, no account. The relay never holds funds; the destination
+  is the operator's own wallet for future signed-claim payouts.
+
+### Fixed
+
+- **Self-healing `/data` permissions in the container** — the image
+  entrypoint starts as root, chowns the bind-mounted `/data` to uid 999
+  only when ownership is wrong, then drops to 999 via `gosu` before
+  exec'ing node. Fixes the `EACCES: permission denied, mkdir
+  '/data/.hiverelay'` crash-loop on Umbrel where the bind mount is owned
+  by the host user.
+
 ## [0.15.6] — 2026-06-11
 
 Patch: corruption resilience for accounting + eviction. Running at 0
