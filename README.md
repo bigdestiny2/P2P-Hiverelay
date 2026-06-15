@@ -6,7 +6,7 @@ Drop a Hyperdrive key in front of a HiveRelay node and your Pear app comes onlin
 
 It's the substrate. You build the app; the network handles availability, NAT traversal, browser/mobile ingress, custody, and self-heal.
 
-**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.10.2**
+**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.15.6**
 
 The four packages — `p2p-hiverelay` (core), `p2p-hiveservices` (services), `p2p-hiverelay-client` (SDK), `p2p-hiverelay-verifier` — are versioned in lockstep. Release-by-release notes live in the [CHANGELOG](./CHANGELOG.md).
 
@@ -34,7 +34,7 @@ const drive = await app.publish('./my-app')
 // Close your laptop. Your app stays online via the relay network.
 ```
 
-Runs natively in the **Pear / Bare runtime**. See [docs/PEAR-INTEGRATION.md](docs/PEAR-INTEGRATION.md) for full usage.
+Runs natively in the **Pear / Bare runtime** — `pear run pear://<key>` boots the same relay as a Bare app that peers with the Node fleet on the DHT. It tracks current Holepunch conventions: `which-runtime` detection, hyperswarm `^4.17`, the current `bare-*` generation (`bare-fs 4` / `bare-path 3`), `paparam` arg parsing on the Pear entry, and a CI job that runs the suite **under the real Bare runtime** (`npm run test:bare`), not just Node. See [docs/PEAR-INTEGRATION.md](docs/PEAR-INTEGRATION.md) for full usage and [docs/PEAR-ALIGNMENT.md](docs/PEAR-ALIGNMENT.md) for the conventions roadmap.
 
 ---
 
@@ -331,6 +331,13 @@ docker run -d --name hiverelay \
   ghcr.io/bigdestiny2/p2p-hiverelay:latest
 ```
 
+Or as a Pear/Bare app (always-on, mobile-capable hardware; same wire protocol as the Node fleet):
+
+```bash
+pear run pear://<key>            # or `pear run .` from a checkout
+pear run pear://<key> -- --region EU --port 9200 --no-updates
+```
+
 ### Local testnet
 
 ```bash
@@ -342,6 +349,8 @@ npx p2p-hiverelay testnet --nodes 5
 ## Test coverage
 
 The core trust stack — custody-signing, registry-custody, anchor- and custody-channel, auto-heal, ws-feed payload, client-custody, seed-revocability, seeding-registry hardening, PVSS blind key custody (split, verify-without-decrypt, reconstruct, dealer-private witness), SignedDirectory (signature, timestamp, rate-limit, eviction, replication) — is covered by a smoke battery that runs in seconds on a clean checkout. The services-module work adds suites covering arbitration evidence verification and the card-blind signed-log substrate end-to-end.
+
+A dedicated `bare-tests` CI job runs the suite under the **real Bare runtime** (`npm run test:bare`), so the imports-map `bare` condition resolves to the actual `bare-events` / `bare-fs` / `bare-http1` / `bare-path` implementations rather than the Node fallback — the runtime gate any storage-stack upgrade depends on.
 
 Two simulation harnesses cover behaviors unit tests can't reach:
 - `scripts/simulate-blind-atomic-custody.js` — Monte Carlo across 7 protocol scenarios, 5,000 trials each. Surfaced the witness tombstone primitive as the highest-leverage post-expiry attestation.
