@@ -141,6 +141,31 @@ button{font-family:inherit;cursor:pointer}
 .app-name{font-size:.84rem;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .app-key{font-size:.72rem;font-family:var(--mono);color:var(--text-faint);flex-shrink:0}
 .apps-empty{text-align:center;color:var(--text-faint);font-size:.82rem;padding:1.4rem 0}
+.app-icon{width:22px;height:22px;border-radius:6px;flex-shrink:0;object-fit:cover;background:var(--card-hi)}
+
+/* ── Seed-an-app ─────────────────────────────────────────────────── */
+.seedbtn{
+  font-size:.72rem;color:var(--accent);background:rgba(245,200,66,.1);
+  border:1px solid rgba(245,200,66,.28);border-radius:999px;padding:.22rem .7rem;
+  transition:filter .15s;
+}
+.seedbtn:hover{filter:brightness(1.15)}
+.seedform{display:none;margin:.6rem 0 .2rem;padding:.85rem;background:var(--card-hi);border:1px solid var(--card-border);border-radius:var(--radius-sm)}
+.seedform.show{display:block}
+.seedform label{display:block;font-size:.66rem;text-transform:uppercase;letter-spacing:.8px;color:var(--text-dim);margin:.5rem 0 .25rem}
+.seedform label:first-child{margin-top:0}
+.seedform input[type=text]{
+  width:100%;background:var(--bg);border:1px solid var(--card-border-hi);border-radius:7px;
+  color:var(--text-bright);font-family:var(--mono);font-size:.8rem;padding:.5rem .6rem;
+}
+.seedform input[type=text]:focus{outline:none;border-color:var(--accent)}
+.seedform .chk{display:flex;align-items:center;gap:.5rem;margin-top:.7rem;font-size:.78rem;color:var(--text);text-transform:none;letter-spacing:0}
+.seedform .hint{font-size:.68rem;color:var(--text-faint);margin-top:.5rem;line-height:1.4}
+.seedform .err{font-size:.72rem;color:var(--red);margin-top:.5rem;min-height:1em}
+.seedform .acts{display:flex;justify-content:flex-end;gap:.5rem;margin-top:.8rem}
+.seedform .acts button{border-radius:7px;padding:.42rem .9rem;font-size:.78rem;border:1px solid var(--card-border-hi);background:transparent;color:var(--text-dim)}
+.seedform .acts button.go{background:var(--accent);border-color:var(--accent);color:#10131b;font-weight:600}
+.seedform .acts button[disabled]{opacity:.5;cursor:default}
 
 /* ── Footer ──────────────────────────────────────────────────────── */
 .foot{text-align:center;font-size:.74rem;color:var(--text-faint);line-height:1.6;padding:0 1rem}
@@ -205,10 +230,36 @@ button{font-family:inherit;cursor:pointer}
       <div class="row-k">Uptime</div>
       <div class="row-v" id="uptime"><span class="muted">&mdash;</span></div>
     </div>
+    <div class="row">
+      <div class="row-k">PearBrowser</div>
+      <div class="row-v">
+        <button class="addr" id="subBtn" type="button" title="Copy this relay's subscribe URL">&mdash;</button>
+        <span class="row-note">Add this URL in PearBrowser to browse the apps your relay carries.</span>
+      </div>
+    </div>
   </section>
 
   <section class="apps-card">
-    <div class="apps-head"><span class="t">Hosted apps</span><span class="c" id="appsCount"></span></div>
+    <div class="apps-head">
+      <span class="t">Hosted apps</span>
+      <span style="display:flex;align-items:center;gap:.6rem">
+        <span class="c" id="appsCount"></span>
+        <button class="seedbtn" id="seedToggle" type="button">+ Seed an app</button>
+      </span>
+    </div>
+    <form class="seedform" id="seedForm" autocomplete="off">
+      <label for="seedKey">App drive key</label>
+      <input type="text" id="seedKey" spellcheck="false" placeholder="64-character hex key from `pear` / publish-app">
+      <label for="seedName">Name <span style="text-transform:none;color:var(--text-faint)">(optional)</span></label>
+      <input type="text" id="seedName" maxlength="120" placeholder="Shown in your catalogue">
+      <label class="chk"><input type="checkbox" id="seedPin" checked> Pin permanently (keep it alive, never auto-evicted)</label>
+      <div class="hint">Your relay will replicate this drive and list it in your catalogue, which PearBrowser reads. Paste a key you already published with <code>pear</code> or <code>publish-app</code>.</div>
+      <div class="err" id="seedErr"></div>
+      <div class="acts">
+        <button type="button" id="seedCancel">Cancel</button>
+        <button type="submit" class="go" id="seedGo">Seed it</button>
+      </div>
+    </form>
     <div class="apps-list" id="appsList"><div class="apps-empty">Loading&hellip;</div></div>
   </section>
 
@@ -345,11 +396,24 @@ function renderApps(list){
   for (var i = 0; i < list.length; i++){
     var a = list[i];
     var name = a.name && a.name !== 'Unknown App' ? a.name : 'Unnamed app';
-    html += '<div class="app"><span class="app-dot"></span>' +
+    html += '<div class="app">' + appGlyph(a) +
             '<span class="app-name" title="' + (a.appKey || '') + '">' + escapeHtml(name) + '</span>' +
             '<span class="app-key">' + shortKey(a.appKey || a.id || '') + '</span></div>';
   }
   box.innerHTML = html;
+}
+
+// Icon if the entry carries one (drive-relative path resolved through the
+// gateway, or an absolute https/data URI), else the live dot. Falls back
+// to the dot if the image fails to load.
+function appGlyph(a){
+  var icon = a.icon;
+  if (!icon) return '<span class="app-dot"></span>';
+  var src = /^(https?:|data:)/i.test(icon)
+    ? icon
+    : ('/v1/hyper/' + (a.driveKey || a.appKey || '') + (icon.charAt(0) === '/' ? '' : '/') + icon);
+  return '<img class="app-icon" src="' + escapeHtml(src) + '" alt="" ' +
+         'onerror="this.outerHTML=&quot;<span class=app-dot></span>&quot;">';
 }
 
 function escapeHtml(s){
@@ -371,6 +435,52 @@ function refresh(){
 
 // Wizard state changes rarely; fetch once on load + occasionally.
 function refreshWizard(){ jget('/api/wizard').then(renderWizard); }
+
+// ── Seed an app (operator pastes a drive key; relay seeds + pins it) ──
+var HEX64 = /^[0-9a-f]{64}$/i;
+$('seedToggle').addEventListener('click', function(){
+  var f = $('seedForm');
+  f.classList.toggle('show');
+  if (f.classList.contains('show')) $('seedKey').focus();
+});
+$('seedCancel').addEventListener('click', function(){
+  $('seedForm').classList.remove('show'); $('seedErr').textContent = '';
+});
+$('seedForm').addEventListener('submit', function(e){
+  e.preventDefault();
+  var key = $('seedKey').value.trim().toLowerCase();
+  var err = $('seedErr');
+  if (!HEX64.test(key)){ err.textContent = 'Enter a 64-character hex drive key.'; return; }
+  var nm = $('seedName').value.trim();
+  var body = { appKey: key, durability: $('seedPin').checked ? 1 : 0 };
+  if (nm) body.name = nm;
+  var go = $('seedGo'); go.disabled = true; err.textContent = '';
+  // The auth shim attaches Authorization: Bearer behind the proxy; on a
+  // plain-localhost appliance the same-origin request is trusted.
+  fetch('/seed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, j: j }; }, function(){ return { ok: r.ok, j: {} }; }); })
+    .then(function(res){
+      go.disabled = false;
+      if (!res.ok){ err.textContent = (res.j && res.j.error) || 'Seed failed.'; return; }
+      toast('Seeding ' + (nm || shortKey(key)) + ' — it will appear below');
+      $('seedForm').classList.remove('show');
+      $('seedKey').value = ''; $('seedName').value = '';
+      setTimeout(refresh, 1200);
+    })
+    .catch(function(){ go.disabled = false; err.textContent = 'Request failed — is the relay reachable?'; });
+});
+
+// ── PearBrowser subscribe URL (this relay's own reachable base URL) ──
+(function(){
+  var b = $('subBtn'); if (!b) return;
+  var url = window.location.origin;
+  b.textContent = url.replace(/^https?:\/\//, '');
+  b.addEventListener('click', function(){
+    navigator.clipboard && navigator.clipboard.writeText(url)
+      .then(function(){ toast('Relay URL copied — add it in PearBrowser'); })
+      .catch(function(){ toast(url); });
+  });
+})();
 
 refresh();
 refreshWizard();
