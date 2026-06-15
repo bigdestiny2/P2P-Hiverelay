@@ -9,7 +9,7 @@
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
   --bg:#0d1117;--card:#161b22;--card-border:#21262d;--card-hover:#1c2333;
-  --green:#3fb950;--orange:#d29922;--cyan:#58a6ff;--red:#f85149;--purple:#bc8cff;
+  --green:#3fb950;--orange:#d29922;--cyan:#58a6ff;--red:#f85149;--purple:#bc8cff;--accent:#f5c842;
   --text:#c9d1d9;--text-dim:#8b949e;--text-bright:#f0f6fc;
   --mono:'SF Mono','Cascadia Code','Fira Code','Consolas',monospace;
   --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
@@ -28,6 +28,14 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
 .topbar h1{font-size:1.2rem;color:var(--text-bright);font-weight:600;letter-spacing:.3px}
 .topbar-brand{display:flex;flex-direction:column;line-height:1.15}
 .topbar-sub{font-size:.58rem;color:var(--text-dim);letter-spacing:.6px;text-transform:uppercase}
+.topbar-nav{display:flex;gap:.2rem;margin-left:1rem;overflow-x:auto;scrollbar-width:none}
+.topbar-nav::-webkit-scrollbar{display:none}
+.topbar-nav a{
+  font-size:.8rem;color:var(--text-dim);text-decoration:none;white-space:nowrap;
+  padding:.4rem .8rem;border-radius:999px;transition:color .15s,background .15s;
+}
+.topbar-nav a:hover{color:var(--text-bright);background:rgba(255,255,255,.06)}
+.topbar-nav a.active{color:#10131b;background:var(--accent);font-weight:600}
 .topbar-stats{margin-left:auto;display:flex;gap:1.5rem;font-family:var(--mono);font-size:.8rem}
 .topbar-stat{display:flex;align-items:center;gap:.4rem}
 .topbar-stat .dot{width:8px;height:8px;border-radius:50%}
@@ -185,6 +193,7 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
   .summary-row{grid-template-columns:repeat(2,1fr)}
   .relay-grid{grid-template-columns:1fr}
   .topbar{padding:1rem}
+  .topbar-nav{order:3;width:100%;margin-left:0}
   .container{padding:1rem}
 }
 @media(max-width:500px){
@@ -205,6 +214,15 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
     </svg>
     <div class="topbar-brand"><h1>Blindspark Network</h1><div class="topbar-sub">powered by HiveRelay</div></div>
   </div>
+  <nav class="topbar-nav">
+    <a href="/dashboard">Dashboard</a>
+    <a href="/catalog">Catalog</a>
+    <a href="/payments">Payments</a>
+    <a href="/calculator">Calculator</a>
+    <a href="/network" class="active">Network</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/docs">Docs</a>
+  </nav>
   <div class="topbar-stats">
     <div class="topbar-stat"><div class="dot green"></div><span id="topOnline">0 online</span></div>
     <div class="topbar-stat"><div class="dot orange"></div><span id="topTotal">0 relays</span></div>
