@@ -57,5 +57,8 @@
   "dependencies": {
     "ip-address": "^10.2.0",
     "socks": "^2.8.9"
+  },
+  "overrides": {
+    "protobufjs": "^7.6.4"
   }
 }
