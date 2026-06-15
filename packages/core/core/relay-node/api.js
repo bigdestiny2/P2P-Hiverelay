@@ -60,7 +60,7 @@ const RATE_LIMIT_MAX = 60
 // endpoint at up to 60 attempts/min under the general limit. These
 // override the general limit for sensitive paths.
 const ENDPOINT_RATE_LIMITS = {
-  '/api/wizard/lnbits': 5, // operator should never need >5 attempts/min
+  '/api/wizard/payout': 10, // optional on-chain BTC payout address
   '/api/wizard/complete': 10,
   '/api/wizard/relay-name': 30,
   '/api/wizard/accept-mode': 30,
@@ -1326,23 +1326,21 @@ export class RelayAPI extends EventEmitter {
             case 'relay-name':
               result = wizard.setRelayName({ relayName: body && body.relayName })
               break
-            case 'lnbits':
-              // setLNbitsCredentials is async — it encrypts the admin key
-              // before storing. Failures here are reported as bad-request
-              // since the most likely cause is a bad input (missing key)
-              // rather than internal failure.
-              result = await wizard.setLNbitsCredentials({ url: body && body.url, adminKey: body && body.adminKey })
+            case 'payout':
+              // Optional on-chain BTC payout address. Pass an empty/null
+              // address to skip. Validation failures are bad-request (the
+              // likely cause is a malformed address).
+              result = wizard.setPayoutDestination({ address: body && body.address })
               break
             case 'accept-mode':
               result = wizard.setAcceptMode({ acceptMode: body && body.acceptMode })
               break
             case 'complete':
               result = wizard.complete()
-              // Apply wizard answers to the live config. toConfig() is
-              // async because it decrypts the LNbits admin key.
+              // Apply wizard answers to the live config.
               if (result.ok && this.node._applyWizardConfig) {
                 try {
-                  const cfg = await wizard.toConfig()
+                  const cfg = wizard.toConfig()
                   this.node._applyWizardConfig(cfg)
                 } catch (err) {
                   return this._json(res, { error: formatErr('UNSUPPORTED', 'failed to apply wizard config: ' + err.message) }, 500)

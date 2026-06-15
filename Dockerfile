@@ -84,7 +84,7 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 # wget for HEALTHCHECK without bringing curl/openssl bloat.
 # ca-certificates so HTTPS to public registries / payment providers works.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends tini wget ca-certificates && \
+    apt-get install -y --no-install-recommends tini wget ca-certificates gosu && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -114,7 +114,31 @@ RUN ln -s /app/packages/core/cli/index.js /usr/local/bin/p2p-hiverelay && \
     ln -s /app/packages/core/cli/index.js /usr/local/bin/hiverelay && \
     chmod +x /app/packages/core/cli/index.js
 
-USER hiverelay
+# Entrypoint: self-heal /data ownership then drop privileges.
+#
+# Self-hosting platforms (Umbrel, StartOS) bind-mount a host directory over
+# /data whose owner is the host user, NOT the image's build-time uid 999. A
+# non-root container then can't create its store -> EACCES on startup. So we
+# start as root, fix ownership only when it's wrong (cheap on restarts), and
+# drop to the unprivileged `hiverelay` user via gosu before exec'ing node.
+RUN cat > /usr/local/bin/docker-entrypoint.sh <<'EOS' && chmod +x /usr/local/bin/docker-entrypoint.sh
+#!/bin/sh
+set -e
+if [ "$(id -u)" = "0" ]; then
+  if [ "$(stat -c %u /data 2>/dev/null)" != "999" ]; then
+    chown -R hiverelay:hiverelay /data 2>/dev/null || true
+  fi
+  if [ "$(stat -c %u /config 2>/dev/null)" != "999" ]; then
+    chown -R hiverelay:hiverelay /config 2>/dev/null || true
+  fi
+  exec gosu hiverelay "$@"
+fi
+exec "$@"
+EOS
+
+# NOTE: no `USER` directive — the entrypoint starts as root to fix the
+# bind-mount ownership, then gosu-drops to uid 999. The relay process itself
+# runs unprivileged.
 
 VOLUME ["/data", "/config"]
 
@@ -138,7 +162,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 
 # tini as PID 1 → graceful SIGTERM handling so shutdown actually runs.
 # Debian installs tini at /usr/bin/tini (vs Alpine's /sbin/tini).
-ENTRYPOINT ["/usr/bin/tini", "--", "node", "/app/packages/core/cli/index.js"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh", "node", "/app/packages/core/cli/index.js"]
 
 # Default: start a relay node. Override to run other subcommands, e.g.:
 #   docker run ... p2p-hiverelay:latest help

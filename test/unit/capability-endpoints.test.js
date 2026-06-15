@@ -343,25 +343,25 @@ test('POST /api/forks/proof rejects tampered signed proof', async (t) => {
 
 // ─── Per-endpoint rate limit ────────────────────────────────────
 
-test('per-endpoint rate limit triggers on /api/wizard/lnbits brute force', async (t) => {
+test('per-endpoint rate limit triggers on /api/wizard/payout brute force', async (t) => {
   const { port } = await setupApi(t)
 
-  // Send 7 POSTs to /api/wizard/lnbits — limit is 5/min/IP
+  // Send 14 POSTs to /api/wizard/payout — limit is 10/min/IP
   let blockedCount = 0
-  for (let i = 0; i < 7; i++) {
-    const res = await request(port, 'POST', '/api/wizard/lnbits', { adminKey: 'attempt-' + i })
+  for (let i = 0; i < 14; i++) {
+    const res = await request(port, 'POST', '/api/wizard/payout', { address: 'attempt-' + i })
     if (res.statusCode === 429) blockedCount++
   }
-  t.ok(blockedCount >= 2, 'at least 2 of 7 requests were rate-limited (5/min cap)')
+  t.ok(blockedCount >= 2, 'at least 2 of 14 requests were rate-limited (10/min cap)')
 })
 
 test('429 response includes machine-readable errorCode', async (t) => {
   const { port } = await setupApi(t)
-  // Burst past the /api/wizard/lnbits limit
-  for (let i = 0; i < 5; i++) {
-    await request(port, 'POST', '/api/wizard/lnbits', { adminKey: 'x' })
+  // Burst past the /api/wizard/payout limit (10/min)
+  for (let i = 0; i < 10; i++) {
+    await request(port, 'POST', '/api/wizard/payout', { address: 'x' })
   }
-  const res = await request(port, 'POST', '/api/wizard/lnbits', { adminKey: 'x' })
+  const res = await request(port, 'POST', '/api/wizard/payout', { address: 'x' })
   t.is(res.statusCode, 429)
   t.is(res.body.errorCode, 'rate-limited')
   t.ok(res.body.error?.startsWith('rate-limited: '))

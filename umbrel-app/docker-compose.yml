@@ -4,8 +4,10 @@
 #   - Multi-arch image (linux/amd64, linux/arm64), pinned by sha256 digest
 #     per Umbrel's reproducibility requirement (fill the digest in below —
 #     see the comment on the `image:` line).
-#   - Runs as a non-root user (uid/gid 999) that the Dockerfile creates and
-#     which owns /data. No `user:` override drift — this matches the image.
+#   - The relay process runs non-root (uid/gid 999). The image entrypoint
+#     starts as root only to chown the bind-mounted /data, then drops to 999
+#     via gosu before exec'ing node — so no `user:` pin is set here (pinning
+#     one would block the chown and crash on first start with EACCES).
 #   - Persistent state lives under ${APP_DATA_DIR}/data and survives
 #     reinstalls. The relay's identity + management token are derived from
 #     Umbrel's $APP_SEED, so a reinstall restores the same relay.
@@ -30,7 +32,10 @@ services:
     init: true
     restart: on-failure
     stop_grace_period: 1m
-    user: "999:999"
+    # No user: pin — the image entrypoint starts as root, fixes the
+    # bind-mounted /data ownership, then drops to uid 999 (gosu). Pinning a
+    # user here would prevent that chown and reintroduce an EACCES crash on
+    # first start.
     volumes:
       - ${APP_DATA_DIR}/data:/data
     environment:

@@ -1,42 +1,41 @@
 /**
  * First-run setup wizard — state machine + persistence.
  *
- * Guides a fresh operator from "I just installed this" to "my relay
- * is online and earning sats" in 5 steps:
+ * Guides a fresh operator from "I just installed this" to "my relay is
+ * online" in 5 steps:
  *
- *   1. welcome         — user clicks "Let's go"
- *   2. relay_name      — operator picks a name (or accepts default)
- *   3. lnbits_connect  — paste LNbits admin key (URL auto-detected)
- *   4. accept_mode     — choose review/open/allowlist/closed (default: review)
- *   5. complete        — wizard done; main dashboard takes over
+ *   1. welcome      — user clicks "Let's go"
+ *   2. relay_name   — operator picks a name (or accepts the default)
+ *   3. payout       — OPTIONAL on-chain BTC payout address (skippable)
+ *   4. accept_mode  — choose review/open/allowlist/closed (default: review)
+ *   5. complete     — wizard done; main dashboard takes over
  *
- * State persists to a small JSON file in the storage dir so that:
- *   - Container restarts don't reset wizard progress
- *   - Operators returning mid-wizard pick up where they left off
- *   - Docker volume preservation survives reinstalls
+ * The payout address feeds `subsidy.payoutDestination`. The relay NEVER
+ * holds funds — it accrues a capped sats estimate for blind-peer work and
+ * signs claims that a subsidy coordinator independently verifies and pays
+ * out to the operator's own address. Because the address is public, it is
+ * stored in plaintext (no encryption needed) — unlike the old
+ * `lnbits_connect` step, which stored a secret admin key and is now gone.
  *
- * The wizard is OPTIONAL — relays started via CLI or env-only configs
- * skip it entirely. The HTTP layer checks `wizard.isComplete()` and
- * redirects to /wizard only when the answer is false.
+ * State persists to a small JSON file in the storage dir so container
+ * restarts and reinstalls don't reset wizard progress.
+ *
+ * The wizard is OPTIONAL — relays started via CLI or env-only configs skip
+ * it entirely. The HTTP layer checks `wizard.isComplete()` and redirects to
+ * /wizard only when the answer is false.
  */
 
 import { EventEmitter } from 'events'
 import { readFile, writeFile, rename, mkdir, chmod } from 'fs/promises'
 import { dirname, basename, join } from 'path'
-import { randomBytes, createHmac, createCipheriv, createDecipheriv } from 'crypto'
+import { validatePayoutDestination } from '../incentive/subsidy/index.js'
 
-const VALID_STEPS = ['welcome', 'relay_name', 'lnbits_connect', 'accept_mode', 'complete']
+const VALID_STEPS = ['welcome', 'relay_name', 'payout', 'accept_mode', 'complete']
 const VALID_ACCEPT_MODES = ['open', 'review', 'allowlist', 'closed']
-const SCHEMA_VERSION = 2 // bump from 1 → 2: adminKey is now encrypted at rest
-
-// Encryption: AES-256-GCM. We use Node built-ins (crypto module) rather
-// than sodium because the wizard is the one place in the codebase
-// that's purely a Node-only path (Bare/Pear runtimes don't run the
-// setup wizard). One fewer cross-runtime concern.
-const ENCRYPTION_ALGO = 'aes-256-gcm'
-const KEY_LENGTH = 32 // 256 bits
-const IV_LENGTH = 12 // GCM standard
-const AUTH_TAG_LENGTH = 16
+// v3: replaced the encrypted-lnbits-adminKey model (v2) with a plaintext
+// on-chain BTC payout address. Older files are loaded forward-compatibly —
+// the legacy `lnbits` block is discarded on load.
+const SCHEMA_VERSION = 3
 
 export class SetupWizard extends EventEmitter {
   /**
@@ -49,20 +48,12 @@ export class SetupWizard extends EventEmitter {
     if (!opts.storagePath) throw new Error('SetupWizard requires storagePath')
     this.storagePath = opts.storagePath
     this.defaults = opts.defaults || {}
-    // Encryption key source — caller can override for tests, otherwise
-    // we derive from the host-provided $APP_SEED env var or fall back
-    // to a local key file. See _resolveEncryptionKey().
-    this._appSeed = opts.appSeed || process.env.APP_SEED || null
-    this._encryptionKey = null // lazily derived on first encrypt/decrypt
     this.state = {
       schemaVersion: SCHEMA_VERSION,
       step: 'welcome',
       relayName: this.defaults.relayName || generateDefaultName(),
-      // adminKey is stored encrypted; the property holds the ciphertext
-      // envelope { iv, ciphertext, authTag } when set, or null when
-      // unset. The plaintext is reconstructed only when toConfig() is
-      // called by the relay node consumer.
-      lnbits: { url: this.defaults.lnbitsUrl || 'http://lnbits_web_1:5000', adminKey: null },
+      // Public on-chain BTC address (e.g. bc1…), or null if skipped.
+      payoutDestination: this.defaults.payoutDestination || null,
       acceptMode: 'review',
       startedAt: null,
       completedAt: null
@@ -71,12 +62,9 @@ export class SetupWizard extends EventEmitter {
 
   /**
    * Load existing wizard state from disk. Silently no-ops if the file
-   * doesn't exist (first run). Bad files are reset to defaults rather
-   * than crashing the relay startup.
-   *
-   * Migration: if we read a v1 file with a plaintext adminKey, we
-   * encrypt it and re-save on next save(). The plaintext is held in
-   * memory until then.
+   * doesn't exist (first run). Bad files are reset to defaults rather than
+   * crashing relay startup. Loads forward-compatibly: only known fields are
+   * adopted, and the legacy v2 `lnbits` block is intentionally dropped.
    */
   async load () {
     let raw
@@ -88,24 +76,19 @@ export class SetupWizard extends EventEmitter {
     }
     try {
       const parsed = JSON.parse(raw)
-      if (!parsed) return
-      if (parsed.schemaVersion === SCHEMA_VERSION) {
-        // Current schema — adminKey is already encrypted on disk.
-        this.state = { ...this.state, ...parsed }
-      } else if (parsed.schemaVersion === 1) {
-        // v1 → v2 migration: plaintext adminKey on disk needs encryption.
-        // We accept the data, mark it for re-save, and emit a migration
-        // event so operators see this happened.
-        this.state = { ...this.state, ...parsed, schemaVersion: SCHEMA_VERSION }
-        if (parsed.lnbits && typeof parsed.lnbits.adminKey === 'string' && parsed.lnbits.adminKey.length > 0) {
-          // Re-wrap the plaintext as an encrypted envelope. We must do
-          // this before save(), but the caller drives save() — so just
-          // mark the in-memory state as "needs re-encryption" by
-          // putting plaintext in a tagged shape we recognize.
-          this._pendingPlaintextAdminKey = parsed.lnbits.adminKey
-          this.state.lnbits.adminKey = null // hide plaintext from snapshot()
-        }
-        this.emit('schema-migrated', { from: 1, to: SCHEMA_VERSION })
+      if (!parsed || typeof parsed !== 'object') return
+      // A file saved mid-wizard on the removed 'lnbits_connect' step maps
+      // forward to the new 'payout' step.
+      const step = parsed.step === 'lnbits_connect' ? 'payout' : parsed.step
+      this.state = {
+        ...this.state,
+        schemaVersion: SCHEMA_VERSION,
+        step: VALID_STEPS.includes(step) ? step : this.state.step,
+        relayName: typeof parsed.relayName === 'string' ? parsed.relayName : this.state.relayName,
+        payoutDestination: typeof parsed.payoutDestination === 'string' ? parsed.payoutDestination : null,
+        acceptMode: VALID_ACCEPT_MODES.includes(parsed.acceptMode) ? parsed.acceptMode : this.state.acceptMode,
+        startedAt: parsed.startedAt ?? this.state.startedAt,
+        completedAt: parsed.completedAt ?? this.state.completedAt
       }
     } catch (err) {
       this.emit('load-error', { message: 'bad wizard.json, resetting', error: err })
@@ -113,28 +96,14 @@ export class SetupWizard extends EventEmitter {
   }
 
   /**
-   * Persist current state. Atomic — write to .tmp then rename. Same
-   * pattern federation.js / manifest-store.js use, so a power cut
-   * never leaves a half-written wizard file.
-   *
-   * If a pending plaintext adminKey is held in memory (from a v1
-   * migration), encrypt it now before writing.
+   * Persist current state. Atomic — write to .tmp then rename — so a power
+   * cut never leaves a half-written wizard file.
    */
   async save () {
     const dir = dirname(this.storagePath)
     try { await mkdir(dir, { recursive: true }) } catch (_) {}
-
-    // Handle v1→v2 migration of plaintext adminKey.
-    if (this._pendingPlaintextAdminKey) {
-      this.state.lnbits.adminKey = await this._encrypt(this._pendingPlaintextAdminKey)
-      this._pendingPlaintextAdminKey = null
-    }
-
     const tmp = join(dir, basename(this.storagePath) + '.tmp')
     await writeFile(tmp, JSON.stringify(this.state, null, 2), 'utf8')
-    // Restrictive perms — wizard.json contains the encrypted LNbits
-    // admin key. Even with encryption, defense in depth says the file
-    // shouldn't be world-readable. 600 = owner read/write only.
     try { await chmod(tmp, 0o600) } catch (_) {}
     await rename(tmp, this.storagePath)
   }
@@ -148,21 +117,15 @@ export class SetupWizard extends EventEmitter {
   }
 
   /**
-   * Snapshot of current state for the UI to render. Sensitive fields
-   * (LNbits admin key) are redacted — the UI never needs to display them
-   * back to the user.
+   * Snapshot of current state for the UI. The payout address is public, so
+   * it's returned as-is (no redaction needed).
    */
   snapshot () {
-    // `connected` reflects whether the wizard knows of an admin key,
-    // whether it's encrypted at rest OR pending plaintext (mid-migration).
-    const hasKey = !!(this.state.lnbits.adminKey || this._pendingPlaintextAdminKey)
     return {
       step: this.state.step,
       relayName: this.state.relayName,
-      lnbits: {
-        url: this.state.lnbits.url,
-        connected: hasKey
-      },
+      payoutDestination: this.state.payoutDestination,
+      hasPayout: !!this.state.payoutDestination,
       acceptMode: this.state.acceptMode,
       startedAt: this.state.startedAt,
       completedAt: this.state.completedAt,
@@ -171,13 +134,8 @@ export class SetupWizard extends EventEmitter {
   }
 
   /**
-   * Advance to the next step or jump to a specific one. The wizard is
-   * permissive about jumping back — operators can revisit prior steps to
-   * change their mind without losing state.
-   *
-   * @param {object} args
-   * @param {string} args.step - next step name (must be in VALID_STEPS)
-   * @returns {{ok: true, state: object} | {ok: false, reason: string}}
+   * Advance to (or jump to) a step. Jumping back is allowed so operators
+   * can revisit prior steps without losing state.
    */
   goToStep ({ step }) {
     if (!VALID_STEPS.includes(step)) {
@@ -190,9 +148,8 @@ export class SetupWizard extends EventEmitter {
   }
 
   /**
-   * Set the relay's display name. Used in the dashboard, in /api/info,
-   * and as a hint for federation peers. Length-bounded so it doesn't
-   * cause UI-layout problems.
+   * Set the relay's display name (used in the dashboard, /api/info, and as
+   * a hint to federation peers). Length-bounded to avoid UI-layout issues.
    */
   setRelayName ({ relayName }) {
     if (typeof relayName !== 'string') return { ok: false, reason: 'relayName must be a string' }
@@ -204,32 +161,24 @@ export class SetupWizard extends EventEmitter {
   }
 
   /**
-   * Configure LNbits connection. URL is usually auto-detected via the
-   * host's internal Docker DNS; admin key is what the operator pastes.
-   *
-   * The adminKey is ENCRYPTED at rest using AES-256-GCM with a key
-   * derived from the host-provided $APP_SEED — see
-   * _resolveEncryptionKey. The plaintext lives in memory only between
-   * this call and the next save(); after save(), the plaintext is
-   * gone and only ciphertext remains.
-   *
-   * Does NOT test the connection here — the HTTP handler should do a
-   * live ping before persisting, so the wizard only ever stores credentials
-   * we know work.
+   * Set the operator's on-chain BTC payout address. OPTIONAL — pass null or
+   * an empty string to clear/skip. The relay never holds funds; this feeds
+   * `subsidy.payoutDestination`, which a coordinator pays out signed work
+   * claims to. Validates as an on-chain BTC address (bc1…, 1…, or 3…).
    */
-  async setLNbitsCredentials ({ url, adminKey }) {
-    if (url !== undefined && typeof url !== 'string') {
-      return { ok: false, reason: 'lnbits.url must be a string' }
+  setPayoutDestination ({ address } = {}) {
+    if (address === null || address === undefined || (typeof address === 'string' && address.trim() === '')) {
+      this.state.payoutDestination = null
+      return { ok: true, state: this.snapshot() }
     }
-    if (typeof adminKey !== 'string' || adminKey.length === 0) {
-      return { ok: false, reason: 'lnbits.adminKey required' }
+    if (typeof address !== 'string') {
+      return { ok: false, reason: 'address must be a string' }
     }
-    if (url) this.state.lnbits.url = url.replace(/\/+$/, '')
-    try {
-      this.state.lnbits.adminKey = await this._encrypt(adminKey)
-    } catch (err) {
-      return { ok: false, reason: 'failed to encrypt admin key: ' + err.message }
+    const parsed = validatePayoutDestination(address)
+    if (!parsed || parsed.type !== 'onchain') {
+      return { ok: false, reason: 'enter a valid on-chain BTC address (bc1…, 1…, or 3…)' }
     }
+    this.state.payoutDestination = parsed.value
     return { ok: true, state: this.snapshot() }
   }
 
@@ -246,8 +195,6 @@ export class SetupWizard extends EventEmitter {
 
   /**
    * Mark the wizard complete. Caller should also call save() to persist.
-   * This is what the dashboard's /api/wizard/complete handler invokes
-   * after the operator has finished step 5.
    */
   complete () {
     this.state.step = 'complete'
@@ -257,40 +204,15 @@ export class SetupWizard extends EventEmitter {
   }
 
   /**
-   * Returns the wizard's current settings as a config object the relay
-   * node can consume on next start. The HTTP layer calls this after
-   * complete() to merge wizard answers into the live config.
-   *
-   * Decrypts the adminKey ciphertext envelope before returning.
-   * Caller becomes responsible for the plaintext value after this
-   * point — should pass directly to the LNbits client and never log.
+   * Returns the wizard's settings as a config object the relay node merges
+   * into its live config (see RelayNode._applyWizardConfig). The payout
+   * address is public, so no decryption is involved — this is synchronous.
    */
-  async toConfig () {
-    let adminKey = null
-    // If we're holding a pending plaintext (mid-migration from v1),
-    // use it directly — the encrypted form hasn't been written yet.
-    // This MUST be checked before the encrypted-envelope path because
-    // during migration the in-memory state.lnbits.adminKey is null
-    // (we cleared it from snapshots).
-    if (this._pendingPlaintextAdminKey) {
-      adminKey = this._pendingPlaintextAdminKey
-    } else if (this.state.lnbits.adminKey) {
-      try {
-        adminKey = await this._decrypt(this.state.lnbits.adminKey)
-      } catch (err) {
-        this.emit('decrypt-error', { context: 'toConfig', error: err })
-        // Don't throw — the relay can still function without LNbits;
-        // the caller will see adminKey=null and prompt the operator
-        // to re-enter the credential.
-      }
-    }
+  toConfig () {
     return {
       name: this.state.relayName,
       acceptMode: this.state.acceptMode,
-      lnbits: {
-        url: this.state.lnbits.url,
-        adminKey
-      }
+      subsidy: { payoutDestination: this.state.payoutDestination }
     }
   }
 
@@ -302,93 +224,17 @@ export class SetupWizard extends EventEmitter {
       schemaVersion: SCHEMA_VERSION,
       step: 'welcome',
       relayName: generateDefaultName(),
-      lnbits: { url: 'http://lnbits_web_1:5000', adminKey: null },
+      payoutDestination: null,
       acceptMode: 'review',
       startedAt: null,
       completedAt: null
     }
   }
-
-  // ─── Encryption helpers (private) ────────────────────────────────
-  //
-  // Two-tier key resolution:
-  //   1. If $APP_SEED is available (a deterministic-per-app-id env var
-  //      typically supplied by self-hosting platforms), derive the
-  //      encryption key from it via HKDF-SHA256. Reinstalls of the
-  //      app on the same host restore the same key — operator's saved
-  //      adminKey survives reinstall.
-  //   2. Otherwise (dev/test/bare deploy without an APP_SEED), generate
-  //      a random key and persist it to <storage>/wizard.key with 0600
-  //      perms. Less secure than $APP_SEED-derived (key-on-disk vs
-  //      key-from-env) but better than nothing.
-
-  async _resolveEncryptionKey () {
-    if (this._encryptionKey) return this._encryptionKey
-    if (this._appSeed && this._appSeed.length >= 32) {
-      // HKDF-extract style: HMAC-SHA256( salt='hiverelay/wizard/v1', input=appSeed )
-      // Outputs a 32-byte key suitable for AES-256-GCM.
-      this._encryptionKey = createHmac('sha256', 'hiverelay/wizard/v1')
-        .update(Buffer.from(this._appSeed, 'utf8'))
-        .digest()
-      return this._encryptionKey
-    }
-    // Fallback: per-storage random key file with restrictive perms.
-    const keyPath = join(dirname(this.storagePath), 'wizard.key')
-    try {
-      const existing = await readFile(keyPath)
-      if (existing.length === KEY_LENGTH) {
-        this._encryptionKey = existing
-        return this._encryptionKey
-      }
-    } catch (err) {
-      if (err.code !== 'ENOENT') throw err
-    }
-    this._encryptionKey = randomBytes(KEY_LENGTH)
-    try { await mkdir(dirname(keyPath), { recursive: true }) } catch (_) {}
-    await writeFile(keyPath, this._encryptionKey)
-    try { await chmod(keyPath, 0o600) } catch (_) {}
-    this.emit('key-generated', { keyPath })
-    return this._encryptionKey
-  }
-
-  async _encrypt (plaintext) {
-    const key = await this._resolveEncryptionKey()
-    const iv = randomBytes(IV_LENGTH)
-    const cipher = createCipheriv(ENCRYPTION_ALGO, key, iv)
-    const ct = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()])
-    const authTag = cipher.getAuthTag()
-    return {
-      v: 1, // envelope format version (independent of schemaVersion)
-      iv: iv.toString('base64'),
-      ciphertext: ct.toString('base64'),
-      authTag: authTag.toString('base64')
-    }
-  }
-
-  async _decrypt (envelope) {
-    if (!envelope || typeof envelope !== 'object') {
-      throw new Error('decrypt: envelope must be an object')
-    }
-    if (envelope.v !== 1) {
-      throw new Error('decrypt: unsupported envelope version: ' + envelope.v)
-    }
-    const key = await this._resolveEncryptionKey()
-    const iv = Buffer.from(envelope.iv, 'base64')
-    const ct = Buffer.from(envelope.ciphertext, 'base64')
-    const tag = Buffer.from(envelope.authTag, 'base64')
-    if (iv.length !== IV_LENGTH) throw new Error('decrypt: bad iv length')
-    if (tag.length !== AUTH_TAG_LENGTH) throw new Error('decrypt: bad auth tag length')
-    const decipher = createDecipheriv(ENCRYPTION_ALGO, key, iv)
-    decipher.setAuthTag(tag)
-    const pt = Buffer.concat([decipher.update(ct), decipher.final()])
-    return pt.toString('utf8')
-  }
 }
 
 /**
- * Picks a friendly default name. Combines a region-flavored adjective
- * with a noun + a 4-digit suffix, so operators get something like
- * `silent-ember-4291` they can keep or change.
+ * Picks a friendly default name, e.g. `silent-ember-4291`, that operators
+ * can keep or change.
  */
 function generateDefaultName () {
   const adjectives = ['silent', 'sturdy', 'glowing', 'patient', 'humble', 'eager', 'crisp', 'steady']

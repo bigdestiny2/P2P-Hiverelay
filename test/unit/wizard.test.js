@@ -1,8 +1,11 @@
 import test from 'brittle'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { mkdtemp, rm, readFile } from 'fs/promises'
+import { mkdtemp, rm, readFile, writeFile, stat } from 'fs/promises'
 import { SetupWizard, WIZARD_SCHEMA_VERSION } from 'p2p-hiverelay/core/wizard.js'
+
+const VALID_BTC = 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq'
+const VALID_BTC_LEGACY = '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2'
 
 async function makeWizard (t) {
   const dir = await mkdtemp(join(tmpdir(), 'bs-wizard-'))
@@ -27,16 +30,8 @@ test('initial state starts at welcome with sane defaults', async (t) => {
   t.absent(snap.isComplete)
   t.is(snap.acceptMode, 'review')
   t.ok(snap.relayName.length > 0, 'relayName has a generated default')
-  t.absent(snap.lnbits.connected, 'no admin key yet → not connected')
-})
-
-test('snapshot redacts the LNbits admin key', async (t) => {
-  const w = await makeWizard(t)
-  await w.setLNbitsCredentials({ adminKey: 'super-secret-key-shhh' })
-  const snap = w.snapshot()
-  t.is(snap.lnbits.connected, true)
-  // The snapshot must NOT contain the actual admin key — only a boolean.
-  t.absent('adminKey' in snap.lnbits, 'admin key never leaked through snapshot')
+  t.is(snap.payoutDestination, null, 'no payout address yet')
+  t.absent(snap.hasPayout, 'hasPayout false by default')
 })
 
 test('goToStep validates step name', async (t) => {
@@ -44,9 +39,9 @@ test('goToStep validates step name', async (t) => {
   const bad = w.goToStep({ step: 'made-up-step' })
   t.absent(bad.ok)
   t.ok(bad.reason.includes('unknown step'))
-  const good = w.goToStep({ step: 'lnbits_connect' })
+  const good = w.goToStep({ step: 'payout' })
   t.ok(good.ok)
-  t.is(good.state.step, 'lnbits_connect')
+  t.is(good.state.step, 'payout')
 })
 
 test('first goToStep stamps startedAt', async (t) => {
@@ -66,20 +61,33 @@ test('setRelayName validates length and emptiness', async (t) => {
   t.is(ok.state.relayName, 'Tokyo Relay 01', 'whitespace trimmed')
 })
 
-test('setLNbitsCredentials requires adminKey', async (t) => {
+test('setPayoutDestination accepts a valid on-chain BTC address', async (t) => {
   const w = await makeWizard(t)
-  t.absent((await w.setLNbitsCredentials({})).ok)
-  t.absent((await w.setLNbitsCredentials({ adminKey: '' })).ok)
-  const ok = await w.setLNbitsCredentials({ adminKey: 'k' })
+  const ok = w.setPayoutDestination({ address: VALID_BTC })
   t.ok(ok.ok)
-  t.is(ok.state.lnbits.connected, true)
+  t.is(ok.state.payoutDestination, VALID_BTC)
+  t.ok(ok.state.hasPayout)
+  // legacy base58 also accepted
+  t.ok(w.setPayoutDestination({ address: VALID_BTC_LEGACY }).ok)
 })
 
-test('setLNbitsCredentials trims trailing slash from URL', async (t) => {
+test('setPayoutDestination rejects non-onchain and malformed input', async (t) => {
   const w = await makeWizard(t)
-  await w.setLNbitsCredentials({ url: 'http://lnbits/////', adminKey: 'k' })
-  // URL is in state but redacted out of snapshot — read raw state.
-  t.is(w.state.lnbits.url, 'http://lnbits')
+  t.absent(w.setPayoutDestination({ address: 'not-an-address' }).ok, 'garbage rejected')
+  t.absent(w.setPayoutDestination({ address: 'user@example.com' }).ok, 'lightning address rejected (on-chain only)')
+  t.absent(w.setPayoutDestination({ address: 42 }).ok, 'non-string rejected')
+})
+
+test('setPayoutDestination with empty/null clears (skip)', async (t) => {
+  const w = await makeWizard(t)
+  w.setPayoutDestination({ address: VALID_BTC })
+  t.ok(w.snapshot().hasPayout)
+  const skip = w.setPayoutDestination({ address: '' })
+  t.ok(skip.ok, 'empty string is a valid skip')
+  t.is(skip.state.payoutDestination, null)
+  t.absent(skip.state.hasPayout)
+  t.ok(w.setPayoutDestination({ address: null }).ok, 'null is a valid skip')
+  t.ok(w.setPayoutDestination({}).ok, 'missing address is a valid skip')
 })
 
 test('setAcceptMode validates against the four allowed values', async (t) => {
@@ -99,19 +107,25 @@ test('complete() sets step to complete and stamps completedAt', async (t) => {
   t.ok(typeof snap.completedAt === 'number')
 })
 
-test('toConfig returns the four wizard-collected settings (decrypts adminKey)', async (t) => {
+test('toConfig returns name, acceptMode, and subsidy.payoutDestination', async (t) => {
   const w = await makeWizard(t)
   w.setRelayName({ relayName: 'myrelay' })
-  await w.setLNbitsCredentials({ url: 'http://x:5000', adminKey: 'k' })
+  w.setPayoutDestination({ address: VALID_BTC })
   w.setAcceptMode({ acceptMode: 'allowlist' })
-  const cfg = await w.toConfig()
+  const cfg = w.toConfig()
   t.is(cfg.name, 'myrelay')
   t.is(cfg.acceptMode, 'allowlist')
-  t.is(cfg.lnbits.url, 'http://x:5000')
-  t.is(cfg.lnbits.adminKey, 'k', 'plaintext returned to caller')
+  t.is(cfg.subsidy.payoutDestination, VALID_BTC)
 })
 
-test('save + load persists state across instances', async (t) => {
+test('toConfig payoutDestination is null when skipped', async (t) => {
+  const w = await makeWizard(t)
+  w.setRelayName({ relayName: 'norpayout' })
+  const cfg = w.toConfig()
+  t.is(cfg.subsidy.payoutDestination, null)
+})
+
+test('save + load persists state across instances (payout address is plaintext — it is public)', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'bs-wizard-'))
   t.teardown(async () => { try { await rm(dir, { recursive: true, force: true }) } catch (_) {} })
   const path = join(dir, 'wizard.json')
@@ -119,7 +133,7 @@ test('save + load persists state across instances', async (t) => {
   const a = new SetupWizard({ storagePath: path })
   a.setRelayName({ relayName: 'persisted' })
   a.setAcceptMode({ acceptMode: 'open' })
-  await a.setLNbitsCredentials({ adminKey: 'persisted-key' })
+  a.setPayoutDestination({ address: VALID_BTC })
   a.complete()
   await a.save()
 
@@ -128,16 +142,11 @@ test('save + load persists state across instances', async (t) => {
   t.is(b.snapshot().step, 'complete')
   t.is(b.snapshot().relayName, 'persisted')
   t.is(b.snapshot().acceptMode, 'open')
-  t.ok(b.snapshot().lnbits.connected)
-  // Admin key on disk MUST be encrypted (envelope object), NOT plaintext.
+  t.is(b.snapshot().payoutDestination, VALID_BTC)
+  // The address is public — it is stored plaintext on disk (no envelope).
   const raw = JSON.parse(await readFile(path, 'utf8'))
-  t.absent(typeof raw.lnbits.adminKey === 'string' && raw.lnbits.adminKey === 'persisted-key',
-    'plaintext admin key MUST NOT appear on disk')
-  t.ok(typeof raw.lnbits.adminKey === 'object' && raw.lnbits.adminKey.ciphertext,
-    'on-disk adminKey is an encryption envelope')
-  // Decryption round-trip recovers plaintext.
-  const cfg = await b.toConfig()
-  t.is(cfg.lnbits.adminKey, 'persisted-key', 'decrypts to original')
+  t.is(raw.payoutDestination, VALID_BTC)
+  t.absent(raw.lnbits, 'no legacy lnbits block written')
 })
 
 test('load is no-op on missing file (first run)', async (t) => {
@@ -150,7 +159,6 @@ test('load tolerates corrupted JSON without crashing', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'bs-wizard-'))
   t.teardown(async () => { try { await rm(dir, { recursive: true, force: true }) } catch (_) {} })
   const path = join(dir, 'wizard.json')
-  const { writeFile } = await import('fs/promises')
   await writeFile(path, '{this is not json', 'utf8')
 
   const w = new SetupWizard({ storagePath: path })
@@ -161,10 +169,39 @@ test('load tolerates corrupted JSON without crashing', async (t) => {
   t.is(w.snapshot().step, 'welcome', 'fallback to default state')
 })
 
+test('load of a legacy v2 file drops lnbits and maps the old step forward', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'bs-wizard-'))
+  t.teardown(async () => { try { await rm(dir, { recursive: true, force: true }) } catch (_) {} })
+  const path = join(dir, 'wizard.json')
+  // Simulate a v2 wizard.json mid-wizard on the now-removed lnbits step.
+  await writeFile(path, JSON.stringify({
+    schemaVersion: 2,
+    step: 'lnbits_connect',
+    relayName: 'legacy-relay',
+    lnbits: { url: 'http://lnbits', adminKey: { v: 1, iv: 'x', ciphertext: 'y', authTag: 'z' } },
+    acceptMode: 'open',
+    startedAt: 1000,
+    completedAt: null
+  }), 'utf8')
+
+  const w = new SetupWizard({ storagePath: path })
+  await w.load()
+  const snap = w.snapshot()
+  t.is(snap.relayName, 'legacy-relay', 'kept the name')
+  t.is(snap.acceptMode, 'open', 'kept the accept mode')
+  t.is(snap.step, 'payout', 'removed lnbits_connect step maps forward to payout')
+  t.is(snap.payoutDestination, null, 'no payout carried over from v2')
+  // After re-save, the legacy lnbits block is gone.
+  await w.save()
+  const raw = JSON.parse(await readFile(path, 'utf8'))
+  t.is(raw.schemaVersion, WIZARD_SCHEMA_VERSION)
+  t.absent(raw.lnbits, 'legacy lnbits block dropped on save')
+})
+
 test('reset clears state back to welcome', async (t) => {
   const w = await makeWizard(t)
   w.setRelayName({ relayName: 'x' })
-  await w.setLNbitsCredentials({ adminKey: 'y' })
+  w.setPayoutDestination({ address: VALID_BTC })
   w.setAcceptMode({ acceptMode: 'open' })
   w.complete()
   w.reset()
@@ -172,123 +209,18 @@ test('reset clears state back to welcome', async (t) => {
   t.is(snap.step, 'welcome')
   t.is(snap.acceptMode, 'review')
   t.absent(snap.isComplete)
-  t.absent(snap.lnbits.connected)
+  t.is(snap.payoutDestination, null)
 })
 
 test('schema version is exposed for forward compat checks', async (t) => {
-  t.is(WIZARD_SCHEMA_VERSION, 2, 'schemaVersion is 2 after AES-GCM encryption migration')
-})
-
-// ─── Encryption-at-rest tests (Defect 1 fix) ──────────────────────
-
-test('admin key on disk uses AES-GCM envelope, never plaintext', async (t) => {
-  const w = await makeWizard(t)
-  await w.setLNbitsCredentials({ adminKey: 'secret123' })
-  await w.save()
-  const raw = JSON.parse(await readFile(w.storagePath, 'utf8'))
-  // Envelope must be an object with the v=1 envelope shape.
-  t.is(typeof raw.lnbits.adminKey, 'object')
-  t.is(raw.lnbits.adminKey.v, 1, 'envelope version 1')
-  t.ok(raw.lnbits.adminKey.iv, 'has iv')
-  t.ok(raw.lnbits.adminKey.ciphertext, 'has ciphertext')
-  t.ok(raw.lnbits.adminKey.authTag, 'has auth tag')
-  // Plaintext substring must not appear anywhere in the file
-  const fileContents = await readFile(w.storagePath, 'utf8')
-  t.absent(fileContents.includes('secret123'), 'plaintext absent from disk')
-})
-
-test('encryption is deterministic from $APP_SEED (reinstalls keep the same key)', async (t) => {
-  const dir1 = await mkdtemp(join(tmpdir(), 'bs-wizard-'))
-  const dir2 = await mkdtemp(join(tmpdir(), 'bs-wizard-'))
-  t.teardown(async () => {
-    try { await rm(dir1, { recursive: true, force: true }) } catch (_) {}
-    try { await rm(dir2, { recursive: true, force: true }) } catch (_) {}
-  })
-
-  // Same APP_SEED across two different storage paths.
-  const appSeed = 'a'.repeat(64)
-  const a = new SetupWizard({ storagePath: join(dir1, 'wizard.json'), appSeed })
-  await a.setLNbitsCredentials({ adminKey: 'shared-key' })
-  await a.save()
-
-  // The on-disk envelope from instance A is decryptable by a fresh
-  // instance B with the same APP_SEED, even though they never shared
-  // a wizard.key file.
-  const b = new SetupWizard({ storagePath: join(dir2, 'wizard.json'), appSeed })
-  // Manually copy the encrypted envelope from A's disk to B's state.
-  const aRaw = JSON.parse(await readFile(join(dir1, 'wizard.json'), 'utf8'))
-  b.state.lnbits.adminKey = aRaw.lnbits.adminKey
-  const bConfig = await b.toConfig()
-  t.is(bConfig.lnbits.adminKey, 'shared-key', 'same APP_SEED → can decrypt')
-})
-
-test('different $APP_SEED cannot decrypt', async (t) => {
-  const dir1 = await mkdtemp(join(tmpdir(), 'bs-wizard-'))
-  const dir2 = await mkdtemp(join(tmpdir(), 'bs-wizard-'))
-  t.teardown(async () => {
-    try { await rm(dir1, { recursive: true, force: true }) } catch (_) {}
-    try { await rm(dir2, { recursive: true, force: true }) } catch (_) {}
-  })
-
-  const a = new SetupWizard({ storagePath: join(dir1, 'wizard.json'), appSeed: 'a'.repeat(64) })
-  await a.setLNbitsCredentials({ adminKey: 'abc' })
-  await a.save()
-
-  const b = new SetupWizard({ storagePath: join(dir2, 'wizard.json'), appSeed: 'b'.repeat(64) })
-  const aRaw = JSON.parse(await readFile(join(dir1, 'wizard.json'), 'utf8'))
-  b.state.lnbits.adminKey = aRaw.lnbits.adminKey
-
-  let decryptError = null
-  b.on('decrypt-error', (e) => { decryptError = e })
-  const cfg = await b.toConfig()
-  t.is(cfg.lnbits.adminKey, null, 'wrong key returns null, not garbage')
-  t.ok(decryptError, 'decrypt-error event fired')
-})
-
-test('v1 plaintext on disk → v2 encryption on next save (migration)', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'bs-wizard-'))
-  t.teardown(async () => { try { await rm(dir, { recursive: true, force: true }) } catch (_) {} })
-  const path = join(dir, 'wizard.json')
-
-  // Simulate a v1 wizard.json on disk (plaintext adminKey, schemaVersion 1)
-  const { writeFile } = await import('fs/promises')
-  await writeFile(path, JSON.stringify({
-    schemaVersion: 1,
-    step: 'complete',
-    relayName: 'legacy',
-    lnbits: { url: 'http://lnbits', adminKey: 'plaintext-from-v1' },
-    acceptMode: 'review',
-    startedAt: 1000,
-    completedAt: 2000
-  }), 'utf8')
-
-  const w = new SetupWizard({ storagePath: path, appSeed: 'a'.repeat(64) })
-  let migrated = false
-  w.on('schema-migrated', () => { migrated = true })
-  await w.load()
-  t.ok(migrated, 'schema-migrated event fired')
-
-  // Before save(), the on-disk file is still v1 plaintext.
-  // toConfig should still return the right plaintext.
-  const cfg = await w.toConfig()
-  t.is(cfg.lnbits.adminKey, 'plaintext-from-v1')
-
-  // After save(), file is rewritten as v2 encrypted.
-  await w.save()
-  const raw = JSON.parse(await readFile(path, 'utf8'))
-  t.is(raw.schemaVersion, 2)
-  t.is(typeof raw.lnbits.adminKey, 'object')
-  t.absent(JSON.stringify(raw).includes('plaintext-from-v1'),
-    'plaintext from v1 file is gone after migration')
+  t.is(WIZARD_SCHEMA_VERSION, 3, 'schemaVersion is 3 after the lnbits→payout change')
 })
 
 test('storage permissions tightened to 0600 after save', async (t) => {
   const w = await makeWizard(t)
-  await w.setLNbitsCredentials({ adminKey: 'check-perms' })
+  w.setPayoutDestination({ address: VALID_BTC })
   await w.save()
-  const { stat } = await import('fs/promises')
   const st = await stat(w.storagePath)
-  // On macOS/Linux, mode includes file type bits — mask to perms.
   const perms = st.mode & 0o777
   t.is(perms, 0o600, 'wizard.json is owner-read/write only')
 })

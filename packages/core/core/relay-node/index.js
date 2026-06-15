@@ -1976,7 +1976,7 @@ export class RelayNode extends EventEmitter {
    * @param {object} cfg - Output of SetupWizard.toConfig()
    * @param {string} [cfg.name]        - operator-chosen relay name
    * @param {string} [cfg.acceptMode]  - 'open' | 'review' | 'allowlist' | 'closed'
-   * @param {object} [cfg.lnbits]      - { url, adminKey } for the LNbits payment provider
+   * @param {object} [cfg.subsidy]     - { payoutDestination } on-chain BTC payout address
    */
   _applyWizardConfig (cfg) {
     if (!cfg || typeof cfg !== 'object') return
@@ -1986,10 +1986,11 @@ export class RelayNode extends EventEmitter {
     if (typeof cfg.acceptMode === 'string') {
       this.config.acceptMode = cfg.acceptMode
     }
-    if (cfg.lnbits && typeof cfg.lnbits === 'object') {
-      this.config.lnbits = {
-        url: cfg.lnbits.url || null,
-        adminKey: cfg.lnbits.adminKey || null
+    if (cfg.subsidy && typeof cfg.subsidy === 'object' && typeof cfg.subsidy.payoutDestination === 'string' && cfg.subsidy.payoutDestination.length > 0) {
+      this.config.subsidy = { ...this.config.subsidy, payoutDestination: cfg.subsidy.payoutDestination }
+      // If the subsidy accrual is already running, update its destination live.
+      if (this.subsidyAccrual && typeof this.subsidyAccrual.setPayoutDestination === 'function') {
+        Promise.resolve(this.subsidyAccrual.setPayoutDestination(cfg.subsidy.payoutDestination)).catch(() => {})
       }
     }
     this.emit('wizard-applied', { name: this.config.name, acceptMode: this.config.acceptMode })
