@@ -66,6 +66,17 @@ older tag exactly like a forward update (health-gated the same way).
   on GitHub and no fleet-wide simultaneous restart.
 - **Deps only when needed:** `npm ci` runs only if `package-lock.json`
   changed between the old and new tag.
+- **No update bloat:** repeated updates can't grow the box. After a
+  green update the agent packs loose git objects (`git gc`, plain, only
+  when >512M free, never on rollback). `npm` cache is content-addressed
+  and self-limiting (~0.5M); `node_modules` is replaced in place, not
+  accumulated. The real footprint risk is logs, bounded separately:
+  `harden-box.sh` (run by `install-updater.sh`) caps journald at 200M
+  (1G keep-free) and logrotates `/var/log/hiverelay.log`. *Tracked
+  follow-up:* the 5s status-line `process.stdout.write` in
+  `packages/core/cli/index.js` is the log-volume driver — quieting it at
+  the source (TTY-gate + 60s structured log) ships with the next version
+  bump; until then the cap + rotation are the guarantee.
 
 ## Break-glass: Tailscale
 

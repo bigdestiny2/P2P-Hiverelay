@@ -28,6 +28,13 @@ chmod 0644 /etc/hiverelay-updater.conf
 systemctl daemon-reload
 systemctl enable --now hiverelay-updater.timer
 
+# Also bound the log footprint so updates can't bloat the disk (idempotent,
+# does not restart the relay). Safe no-op if already hardened.
+if [ -f "$SRC/harden-box.sh" ]; then
+  echo "Applying log-footprint hardening…"
+  bash "$SRC/harden-box.sh" || echo "WARN harden-box.sh failed (non-fatal)"
+fi
+
 echo "Installed. Channel=$CHANNEL. Timer:"
 systemctl status hiverelay-updater.timer --no-pager | sed -n '1,4p' || true
 echo
