@@ -9,22 +9,22 @@ stores ciphertext and proofs — never plaintext, never who-reads-what.
 1. Open the **Blindspark Dashboard** from the service's UI button.
 2. Walk through the short setup wizard (a couple of minutes): name your
    node and choose how to accept seed requests.
-3. That's it. The dashboard shows live connections, the apps your node
-   keeps alive, and exactly how much disk is used — measured for real.
+3. That's it. The dashboard is a single page showing your relay's name
+   and public key, live status, connected peers, how many apps it keeps
+   alive, and real on-disk storage usage.
 
 ## Accepting content
 
 By default Blindspark runs in **review mode**: every request to store
-data on your node waits in the dashboard's Seeding Registry for your
-approval. Switch to auto-accept from the registry toggle whenever you're
-comfortable.
+data on your node waits for your approval before the relay seeds it. The
+dashboard shows the current mode; you can change it from the setup
+wizard whenever you're comfortable.
 
 ## Storage
 
-The dashboard's System panel shows true on-disk usage. If you enable
-**eviction** (off by default), the node automatically sheds copies the
-network holds in surplus when your disk runs hot — never pinned content,
-never paid-durability content, and never the last copies of anything.
+The **Storage used** stat shows true on-disk usage, measured for real
+(not an estimate). It's a percentage of the storage cap configured for
+the service, so you can see headroom at a glance.
 
 ## Privacy
 

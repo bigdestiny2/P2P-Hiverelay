@@ -23,6 +23,10 @@ export HIVERELAY_API_PORT=9100
 # Umbrel's app_proxy, same solution: embed the seed-derived bearer token
 # in served HTML so the dashboard can authenticate (see v0.12.0 notes).
 export HIVERELAY_UI_EXPOSE_TOKEN=1
+# Serve the single-page Blindspark appliance dashboard (no operator tabs,
+# no Docs/GitHub) — StartOS is a home-server appliance, same as the Umbrel
+# Blindspark package. See packages/core/config/default.js -> ui.simple.
+export HIVERELAY_UI_SIMPLE=1
 # Sovereignty default: the operator reviews every incoming seed request
 # until they explicitly switch modes from the dashboard.
 export HIVERELAY_ACCEPT_MODE=review

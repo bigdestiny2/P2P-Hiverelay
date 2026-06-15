@@ -13,11 +13,13 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.15.6
+version: 0.16.3
 release-notes: |
-  First StartOS release. Blind relay node for the Pear/Holepunch
-  ecosystem with the Blindspark dashboard, honest storage accounting,
-  and over-replication eviction (default off).
+  First StartOS release of Blindspark — a blind relay for the
+  Pear/Holepunch ecosystem. Ships the one-page Blindspark dashboard
+  (identity, live status, connected peers, apps held, and real on-disk
+  storage), a short first-run wizard, and multi-arch images for x86_64
+  and aarch64. The relay stores end-to-end-encrypted data it cannot read.
 license: apache-2.0
 wrapper-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
 upstream-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
@@ -40,16 +42,20 @@ description:
     default every incoming seed request waits for your approval
     ("review" mode); you can switch to auto-accept from the dashboard.
 
-    Includes the Blindspark dashboard: live connections and traffic,
-    honest storage accounting, a seeding registry with per-app
-    approve/reject, and optional over-replication eviction that frees
-    disk without ever breaching the network's replica floor.
+    The Blindspark dashboard is a single, simple page: your relay's name
+    and public key, live online status, connected peers, how many apps it
+    keeps alive, and real measured on-disk usage. No account, no
+    telemetry, no payment.
 
 assets:
   license: LICENSE
   icon: icon.png
   instructions: instructions.md
-  docker-images: image.tar
+  # A directory of per-arch tarballs (x86_64.tar, aarch64.tar). At pack
+  # time start-sdk writes a multiarch.cbor index; on install the device
+  # extracts the tar matching its CPU. See the Makefile (buildx exports a
+  # legacy docker-archive per platform).
+  docker-images: image
 
 main:
   type: docker
@@ -86,7 +92,7 @@ volumes:
 interfaces:
   main:
     name: Blindspark Dashboard
-    description: Web dashboard — status, earnings, storage, seeding registry
+    description: Web dashboard — status, peers, storage, and the apps your relay keeps alive
     tor-config:
       port-mapping:
         80: "9100"

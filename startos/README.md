@@ -12,7 +12,7 @@ the [Umbrel package](../umbrel-app/): same multi-arch GHCR image, same
 | `docker_entrypoint.sh` | Persists a seed on `/data` (StartOS has no `APP_SEED`), exports env, starts the relay |
 | `check-web.sh` | Health check — dashboard reachable |
 | `instructions.md` | Shown to users inside StartOS |
-| `Makefile` | pull image → `start-sdk pack` → `blindspark.s9pk` |
+| `Makefile` | buildx per-arch tar → `start-sdk pack` → `blindspark.s9pk` |
 
 The dashboard works behind StartOS's Tor/LAN proxy via the same
 `HIVERELAY_UI_EXPOSE_TOKEN` mechanism built for Umbrel (v0.12.0): the
@@ -24,12 +24,20 @@ identity and token survive reinstalls with the data volume.
 
 ```bash
 cd startos
-make          # pulls ghcr image, renders icon, start-sdk pack
+make          # buildx per-arch image tars, render icon, start-sdk pack
 make verify   # start-sdk verify s9pk blindspark.s9pk
 ```
 
-Requirements: `docker`, `start-sdk`, `rsvg-convert` (or render
-`icon.png` manually from `../umbrel-app/icon.svg`, 256×256).
+Requirements: `docker` (with `buildx`), `start-sdk`, `rsvg-convert` (or
+render `icon.png` manually from `../umbrel-app/icon.svg`, 256×256).
+
+**Multi-arch:** `docker-images` is a directory (`image/`) of per-arch
+tarballs — `x86_64.tar` and `aarch64.tar`. `make` builds each with
+`docker buildx ... --output type=docker` (a legacy docker-archive with
+`manifest.json`, which the 0.3.5.x reader requires — plain `docker save`
+fails under Docker's containerd image store). At pack time `start-sdk`
+writes a `multiarch.cbor` index (default `aarch64`); on install the
+device extracts the tar for its CPU.
 
 ### Building start-sdk itself (macOS, verified 2026-06-11)
 
@@ -50,8 +58,8 @@ ln -sf ~/.cargo/bin/startbox ~/.cargo/bin/start-sdk
 start-sdk init   # generates ~/.embassy/developer.key.pem (signing key)
 ```
 
-Note: the packed s9pk embeds a single-arch image.tar (linux/amd64).
-For aarch64 devices, repeat `make` with an arm64 pull/tag.
+Note: `make` builds both architectures (x86_64 + aarch64) into the
+`image/` directory, so the one packed s9pk installs on both.
 
 ## Before submitting to the Start9 registry
 
@@ -69,7 +77,10 @@ For aarch64 devices, repeat `make` with an arm64 pull/tag.
 
 ## Status
 
-Scaffold — **not yet packed or device-tested**. The runtime mechanisms
-it relies on (token auth behind a proxy, seed persistence, `/data`
-home) are the same ones verified end-to-end for the Umbrel package in a
-container simulation on 2026-06-11.
+**Packs + verifies** with `start-sdk` 0.3.5.1 (multi-arch image, v0.16.3,
+one-page dashboard via `HIVERELAY_UI_SIMPLE`). Not yet device-tested on
+real StartOS hardware — the remaining checklist above (sideload, Tor/LAN
+auth, reinstall identity, backup/restore) still needs a physical device.
+The runtime mechanisms it relies on (token auth behind a proxy, seed
+persistence, `/data` home) are the same ones verified end-to-end for the
+Umbrel package.
