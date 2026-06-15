@@ -1,7 +1,7 @@
 manifestVersion: 1
 id: blindspark
 category: networking
-name: Blindspark by HiveRelay
+name: Blindspark
 version: "0.14.0"
 tagline: A blind relay that keeps peer-to-peer apps online
 description: >-
@@ -69,8 +69,8 @@ path: ""
 defaultUsername: ""
 defaultPassword: ""
 releaseNotes: >-
-  First App Store release of Blindspark by HiveRelay — a blind relay for
-  the Pear / Holepunch ecosystem.
+  First App Store release of Blindspark — a blind relay for the Pear /
+  Holepunch ecosystem.
 
    - One-click install; the relay's identity is derived from your Umbrel
      seed, so it survives reinstalls.
