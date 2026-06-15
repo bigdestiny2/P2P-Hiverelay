@@ -10,6 +10,9 @@ Type=oneshot
 # refuses to act on a dirty repo and always tries to leave the box on a
 # healthy version (rollback on failed health-gate).
 ExecStart=/usr/local/bin/hiverelay-updater
+# systemd doesn't pass a HOME to oneshot services; the updater needs it to
+# resolve the repo dir ($HOME/hiverelay). Box runs the relay as root.
+Environment=HOME=/root
 # Don't let a hung git/npm wedge the box.
 TimeoutStartSec=900
 Nice=10

@@ -21,6 +21,11 @@
 # Usage:  hiverelay-updater [--dry-run]
 set -euo pipefail
 
+# systemd oneshot units don't export HOME; under `set -u` a bare $HOME
+# reference below would abort the whole run. Default it (boxes run as root)
+# so the script is robust whether launched by systemd or by hand.
+: "${HOME:=/root}"
+
 REPO_DIR="${HIVERELAY_REPO_DIR:-$HOME/hiverelay}"
 CONF="${HIVERELAY_UPDATER_CONF:-/etc/hiverelay-updater.conf}"
 CHANNELS_URL="${HIVERELAY_CHANNELS_URL:-https://raw.githubusercontent.com/bigdestiny2/P2P-Hiverelay/main/fleet/channels.json}"
