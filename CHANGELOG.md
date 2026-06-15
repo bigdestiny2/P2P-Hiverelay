@@ -6,6 +6,36 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.16.3] — 2026-06-15
+
+Correctness + accessibility fixes for the new one-page Blindspark
+dashboard, from an adversarial review of v0.16.2.
+
+### Fixed
+
+- **"Data stored" no longer hides a filling disk** — the page preferred
+  `seeder.totalBytesStored`, which counts only Seeder.seedCore traffic
+  and reads ~0 on registry-drive relays (the blindspot behind the
+  2026-06-11 disk fill). It now trusts the server's honest measured
+  `storage.used`. A new **Storage used %** tile (of the configured cap)
+  replaces the old "Data served" tile, whose only available source
+  (`seeder.totalBytesServed`) under-reported the same way with no honest
+  fallback.
+- **A running relay is no longer mislabeled "Offline"** — the status
+  pill conflated `health.healthy` (a quality flag that flips on benign
+  conditions like no-peers-yet or high disk) with liveness. It now shows
+  **Online** whenever the API responds, **Degraded** (amber, with an
+  explanatory tooltip) when a health check is unhappy, and **Offline**
+  only when the relay doesn't answer.
+
+### Accessibility
+
+- The BTC payout-address copy control is now a real focusable `<button>`
+  (was a mouse-only `<span>`); the copy-confirmation toast is a
+  `role="status" aria-live="polite"` region so screen readers announce
+  it; and `--text-faint` was lightened to meet WCAG AA contrast for
+  secondary text and the app-key column.
+
 ## [0.16.2] — 2026-06-15
 
 One-page Blindspark dashboard for the Umbrel appliance. The full

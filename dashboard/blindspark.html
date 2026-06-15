@@ -33,7 +33,7 @@
   --bg:#0e1118;--bg-glow:#131a2b;
   --card:#151a26;--card-hi:#1a2132;--card-border:#222b3e;--card-border-hi:#2e3b56;
   --green:#3fb950;--orange:#f0a64a;--cyan:#58a6ff;--red:#f47067;--accent:#f5c842;
-  --text:#d6dde8;--text-dim:#8493a8;--text-faint:#5c697e;--text-bright:#fff;
+  --text:#d6dde8;--text-dim:#8493a8;--text-faint:#7c89a0;--text-bright:#fff;
   --mono:'SF Mono','Cascadia Code','Fira Code','Consolas',monospace;
   --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
   --radius:14px;--radius-sm:9px;
@@ -70,6 +70,7 @@ button{font-family:inherit;cursor:pointer}
 }
 .status::before{content:'';width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 6px currentColor}
 .status.off{background:rgba(244,112,103,.1);color:var(--red);border-color:rgba(244,112,103,.3)}
+.status.warn{background:rgba(240,166,74,.1);color:var(--orange);border-color:rgba(240,166,74,.3)}
 
 /* ── Identity hero ───────────────────────────────────────────────── */
 .hero{
@@ -119,7 +120,7 @@ button{font-family:inherit;cursor:pointer}
 .badge.open{background:rgba(63,185,80,.12);color:var(--green);border-color:rgba(63,185,80,.25)}
 .row-note{font-size:.72rem;color:var(--text-faint);width:100%;text-align:right}
 .addr{
-  font-family:var(--mono);font-size:.78rem;color:var(--cyan);
+  font-family:var(--mono);font-size:.78rem;color:var(--cyan);text-align:left;
   background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.2);
   border-radius:var(--radius-sm);padding:.3rem .6rem;cursor:pointer;word-break:break-all;
 }
@@ -185,7 +186,7 @@ button{font-family:inherit;cursor:pointer}
     <div class="stat"><div class="s-label">Apps held</div><div class="s-val green" id="apps">&mdash;</div><div class="s-sub" id="appsSub">encrypted drives</div></div>
     <div class="stat"><div class="s-label">Connected peers</div><div class="s-val cyan" id="peers">&mdash;</div><div class="s-sub">live connections</div></div>
     <div class="stat"><div class="s-label">Data stored</div><div class="s-val" id="stored">&mdash;</div><div class="s-sub" id="storedSub">on this node</div></div>
-    <div class="stat"><div class="s-label">Data served</div><div class="s-val orange" id="served">&mdash;</div><div class="s-sub">to the network</div></div>
+    <div class="stat"><div class="s-label">Storage used</div><div class="s-val orange" id="storagePct">&mdash;</div><div class="s-sub" id="storagePctSub">of capacity</div></div>
   </section>
 
   <section class="panel">
@@ -216,7 +217,7 @@ button{font-family:inherit;cursor:pointer}
   </footer>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <script>
 'use strict';
@@ -255,27 +256,45 @@ $('pk').addEventListener('click', function(){
     .catch(function(){ toast(pubKey); });
 });
 
-function setStatus(online, uptimeHuman){
+// Three states: online (relay answered + healthy), degraded (relay answered
+// but a health check is unhappy — still running), offline (no answer). The
+// relay's health.healthy flag means "all checks pass", NOT "is it up" — it
+// flips false on benign conditions like no peers yet or high disk, so it must
+// never be shown as Offline while the API is responding.
+function setStatus(state, uptimeHuman){
   var el = $('status');
-  if (online){
-    el.classList.remove('off');
+  el.classList.remove('off', 'warn');
+  if (state === 'online'){
     el.textContent = uptimeHuman ? 'Online · ' + uptimeHuman : 'Online';
+    el.removeAttribute('title');
+  } else if (state === 'degraded'){
+    el.classList.add('warn');
+    el.textContent = uptimeHuman ? 'Degraded · ' + uptimeHuman : 'Degraded';
+    el.title = 'The relay is running. A health check is unhappy (e.g. no peers yet, or low disk) — it keeps working.';
   } else {
     el.classList.add('off');
     el.textContent = 'Offline';
+    el.removeAttribute('title');
   }
 }
 
 function renderOverview(o){
-  var healthy = o && o.health ? o.health.healthy !== false : true;
-  setStatus(!!o && healthy, o && o.uptime ? o.uptime.human : '');
-  if (!o) return;
+  if (!o){ setStatus('offline'); return; }
+  var degraded = o.health && o.health.healthy === false;
+  setStatus(degraded ? 'degraded' : 'online', o.uptime ? o.uptime.human : '');
   $('apps').textContent = (o.seededApps != null ? o.seededApps : 0);
   $('peers').textContent = (o.connections != null ? o.connections : 0);
-  var stored = (o.seeder && o.seeder.totalBytesStored) || (o.storage && o.storage.used) || 0;
+  // Trust the server's honest measured value (storage.used): it prefers the
+  // real corestore total over seeder.totalBytesStored, which reads ~0 on
+  // registry-drive relays and once hid a disk fill. Only fall back to the
+  // seeder counter if the server didn't compute a measured value.
+  var st = o.storage || {};
+  var stored = (st.used != null) ? st.used : ((o.seeder && o.seeder.totalBytesStored) || 0);
   $('stored').textContent = fmtBytes(stored);
-  $('served').textContent = fmtBytes((o.seeder && o.seeder.totalBytesServed) || 0);
-  $('uptime').innerHTML = '';
+  // Storage used vs the configured cap — the actionable appliance metric.
+  var frac = (typeof st.pct === 'number') ? st.pct : (st.max ? stored / st.max : 0);
+  $('storagePct').textContent = (Math.round(frac * 1000) / 10) + '%';
+  if (st.max) $('storagePctSub').textContent = 'of ' + fmtBytes(st.max);
   $('uptime').textContent = o.uptime ? o.uptime.human : '—';
   if (o.publicKey){
     pubKey = o.publicKey;
@@ -298,9 +317,11 @@ function renderWizard(w){
   var pay = $('payout');
   if (w.hasPayout && addr){
     pay.innerHTML = '';
-    var chip = document.createElement('span');
+    var chip = document.createElement('button');
+    chip.type = 'button';
     chip.className = 'addr';
     chip.title = 'Copy BTC address';
+    chip.setAttribute('aria-label', 'Copy BTC payout address');
     chip.textContent = addr.length > 22 ? addr.slice(0,10) + '…' + addr.slice(-8) : addr;
     chip.addEventListener('click', function(){
       navigator.clipboard && navigator.clipboard.writeText(addr);
