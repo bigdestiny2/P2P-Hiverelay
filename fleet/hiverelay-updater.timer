@@ -1,0 +1,15 @@
+[Unit]
+Description=Run hiverelay-updater periodically
+Documentation=https://github.com/bigdestiny2/P2P-Hiverelay/blob/main/fleet/README.md
+
+[Timer]
+# First check shortly after boot, then every 15 min.
+OnBootSec=10min
+OnUnitActiveSec=15min
+# Jitter so the fleet never thundering-herds GitHub or restarts in lockstep
+# (each box picks a random offset up to 5 min).
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

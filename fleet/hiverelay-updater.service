@@ -1,0 +1,15 @@
+[Unit]
+Description=HiveRelay self-update agent (pull from GitHub release channel)
+Documentation=https://github.com/bigdestiny2/P2P-Hiverelay/blob/main/fleet/README.md
+After=network-online.target hiverelay.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as root: needs `systemctl restart hiverelay`. The script itself
+# refuses to act on a dirty repo and always tries to leave the box on a
+# healthy version (rollback on failed health-gate).
+ExecStart=/usr/local/bin/hiverelay-updater
+# Don't let a hung git/npm wedge the box.
+TimeoutStartSec=900
+Nice=10
