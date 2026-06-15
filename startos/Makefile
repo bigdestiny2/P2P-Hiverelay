@@ -5,7 +5,7 @@
 # start-sdk (https://github.com/Start9Labs/start-os, `cargo install` or
 # release binary). Run `make` from this directory.
 
-VERSION := 0.16.3
+VERSION := 0.17.0
 IMAGE := ghcr.io/bigdestiny2/p2p-hiverelay:$(VERSION)
 S9PK := blindspark.s9pk
 TAG := start9/blindspark/main:$(VERSION)

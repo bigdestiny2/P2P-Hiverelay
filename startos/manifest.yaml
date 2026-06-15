@@ -13,7 +13,7 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.16.3
+version: 0.17.0
 release-notes: |
   First StartOS release of Blindspark — a blind relay for the
   Pear/Holepunch ecosystem. Ships the one-page Blindspark dashboard
