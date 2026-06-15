@@ -1,10 +1,53 @@
-# Blindspark — StartOS package
+# Blindspark for StartOS
 
-StartOS (Start9) packaging for **Blindspark by HiveRelay**, mirroring
-the [Umbrel package](../umbrel-app/): same multi-arch GHCR image, same
-`/data` volume layout, same proxy-UI auth mechanism.
+A **blind relay** for the Pear / Holepunch peer-to-peer app ecosystem,
+packaged for [StartOS](https://start9.com) (Start9). Blindspark seeds
+end-to-end-encrypted Hyperdrives — content it can verify and serve but
+**cannot read** — so P2P apps stay reachable while their authors and
+users are offline.
 
-## How the pieces fit
+- **Repo:** https://github.com/bigdestiny2/P2P-Hiverelay
+- **Releases (.s9pk downloads):** https://github.com/bigdestiny2/P2P-Hiverelay/releases
+- **License:** Apache-2.0 · no account, no telemetry, no payment
+
+---
+
+## Install on StartOS
+
+### Option A — Sideload (works today)
+
+1. Download `blindspark.s9pk` from the
+   [latest release](https://github.com/bigdestiny2/P2P-Hiverelay/releases/latest).
+2. In your StartOS dashboard, go to **System → Sideload Service** and
+   drop the `.s9pk` file in.
+3. Open **Services → Blindspark → Start**.
+
+The package is multi-arch — the same `.s9pk` installs on both x86_64 and
+aarch64 (ARM) devices; StartOS picks the right image automatically.
+
+### Option B — Custom registry
+
+If you host the package in a registry, users add it once via
+**Marketplace → Change → Add custom registry** and then install/update
+Blindspark like any other service. See
+[Managing Service Registries](https://docs.start9.com/0.3.5.x/user-manual/alt-registries).
+
+### First run
+
+1. Open the **Blindspark Dashboard** from the service's UI button.
+2. A short wizard names your relay and lets you choose how it accepts
+   seed requests (review each one, or auto-accept).
+3. That's it — the one-page dashboard shows your relay's name and public
+   key, live status, connected peers, how many apps it keeps alive, and
+   real on-disk storage usage.
+
+Your relay identity and dashboard token derive from a seed stored on the
+service's data volume, so the node comes back as itself across reinstalls
+and a backup/restore round-trip.
+
+---
+
+## How the package fits together
 
 | Piece | Role |
 |---|---|
@@ -15,12 +58,15 @@ the [Umbrel package](../umbrel-app/): same multi-arch GHCR image, same
 | `Makefile` | buildx per-arch tar → `start-sdk pack` → `blindspark.s9pk` |
 
 The dashboard works behind StartOS's Tor/LAN proxy via the same
-`HIVERELAY_UI_EXPOSE_TOKEN` mechanism built for Umbrel (v0.12.0): the
-relay embeds a seed-derived bearer token in served HTML, so no
-localhost assumption is needed. The seed lives at `/data/.app-seed` —
-identity and token survive reinstalls with the data volume.
+`HIVERELAY_UI_EXPOSE_TOKEN` mechanism built for Umbrel: the relay embeds
+a seed-derived bearer token in served HTML, so no localhost assumption is
+needed. The seed lives at `/data/.app-seed`. The entrypoint also sets
+`HIVERELAY_UI_SIMPLE` so StartOS serves the single-page appliance
+dashboard (no operator-only tabs, no Docs/GitHub).
 
-## Building
+---
+
+## Build from source
 
 ```bash
 cd startos
@@ -38,6 +84,11 @@ tarballs — `x86_64.tar` and `aarch64.tar`. `make` builds each with
 fails under Docker's containerd image store). At pack time `start-sdk`
 writes a `multiarch.cbor` index (default `aarch64`); on install the
 device extracts the tar for its CPU.
+
+The build reuses the published multi-arch GHCR image
+(`ghcr.io/bigdestiny2/p2p-hiverelay`, the same one the Umbrel app pins)
+rather than rebuilding — bump `VERSION` in the `Makefile` and `version`
+in `manifest.yaml` together on each release.
 
 ### Building start-sdk itself (macOS, verified 2026-06-11)
 
@@ -58,29 +109,42 @@ ln -sf ~/.cargo/bin/startbox ~/.cargo/bin/start-sdk
 start-sdk init   # generates ~/.embassy/developer.key.pem (signing key)
 ```
 
-Note: `make` builds both architectures (x86_64 + aarch64) into the
-`image/` directory, so the one packed s9pk installs on both.
+---
+
+## Distributing it
+
+Three paths, smallest to widest reach:
+
+1. **Sideload** — host `blindspark.s9pk` on a GitHub Release and have
+   people sideload it (Option A above). Best for testing and early users.
+2. **Your own registry** — host the `.s9pk` yourself (even on a Start9
+   server over Tor), or run a full registry
+   ([Start9Labs/registry](https://github.com/start9labs/registry)) and
+   publish with `start-sdk publish <registry> blindspark.s9pk`. Users add
+   your registry URL.
+3. **Official Start9 marketplace / Community Registry** — email
+   **submissions@start9.com** with a link to this public repo. Start9
+   snapshots it, reviews code + security, builds from these `make`
+   scripts, and tests on their hardware (including a low-resource Pi)
+   before publishing to the Community Beta Registry, then production on
+   request. See the
+   [submission docs](https://docs.start9.com/0.3.5.x/developer-docs/submission).
 
 ## Before submitting to the Start9 registry
 
-- [ ] Validate `manifest.yaml` against the current start-os schema
-      (`start-sdk verify`) — field names here target 0.3.5.x and may
-      need updates as StartOS evolves.
-- [ ] `make verify` passes.
+- [ ] `make verify` passes. *(done — start-sdk 0.3.5.1)*
 - [ ] Sideload `blindspark.s9pk` on a real StartOS device: wizard
       completes, dashboard authenticates over Tor and LAN, identity
       survives a reinstall, backup/restore round-trips.
 - [ ] Health check goes green after first sync.
 - [ ] Screenshots for the registry listing.
-- [ ] Submit per https://docs.start9.com/ packaging guide
-      (community registry PR or marketplace submission).
+- [ ] Submit per the docs above.
 
 ## Status
 
-**Packs + verifies** with `start-sdk` 0.3.5.1 (multi-arch image, v0.16.3,
-one-page dashboard via `HIVERELAY_UI_SIMPLE`). Not yet device-tested on
-real StartOS hardware — the remaining checklist above (sideload, Tor/LAN
-auth, reinstall identity, backup/restore) still needs a physical device.
-The runtime mechanisms it relies on (token auth behind a proxy, seed
-persistence, `/data` home) are the same ones verified end-to-end for the
-Umbrel package.
+**Packs + verifies** with `start-sdk` 0.3.5.1 — multi-arch image (x86_64
++ aarch64), v0.16.3, one-page dashboard via `HIVERELAY_UI_SIMPLE`. Not
+yet device-tested on real StartOS hardware; the checklist above is the
+remaining work. The runtime mechanisms it relies on (token auth behind a
+proxy, seed persistence, `/data` home) are the same ones verified
+end-to-end for the Umbrel package.
