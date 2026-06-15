@@ -108,6 +108,21 @@ systemctl restart "$SERVICE"
 
 if healthy; then
   log "OK updated $CUR_VER -> $TARGET — health green"
+  # Pack loose objects accrued by fetch/checkout so repeated updates don't
+  # grow .git. Plain gc only (NEVER --aggressive). Post-success ONLY —
+  # never on the rollback path (it would lengthen recovery). Space-gated:
+  # a repack needs transient ~2x scratch, so skip on a near-full box.
+  # Foreground + timeout so gc can't wedge or race the next tick's
+  # checkout, and its failure is non-fatal (must not change our exit).
+  # Reachable history + all tags + the prior SHA are preserved (only
+  # unreachable objects past gc.pruneExpire are dropped) — rollback-safe.
+  FREE_KB=$(df -Pk "$REPO_DIR" 2>/dev/null | awk 'NR==2{print $4}')
+  if [ "${FREE_KB:-0}" -gt 524288 ] && [ ! -f .git/gc.pid ]; then
+    timeout 90 git gc --quiet --no-detach 2>&1 | tail -2 \
+      || log "WARN git gc skipped/failed (non-fatal)"
+  else
+    log "skip gc: low disk (${FREE_KB:-?}KB free) or gc already running"
+  fi
   exit 0
 fi
 
