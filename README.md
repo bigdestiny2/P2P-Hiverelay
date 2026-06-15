@@ -6,7 +6,7 @@ Drop a Hyperdrive key in front of a HiveRelay node and your Pear app comes onlin
 
 It's the substrate. You build the app; the network handles availability, NAT traversal, browser/mobile ingress, custody, and self-heal.
 
-**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.16.0**
+**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.16.1**
 
 The four packages — `p2p-hiverelay` (core), `p2p-hiveservices` (services), `p2p-hiverelay-client` (SDK), `p2p-hiverelay-verifier` — are versioned in lockstep. Release-by-release notes live in the [CHANGELOG](./CHANGELOG.md).
 
