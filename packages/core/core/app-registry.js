@@ -235,6 +235,14 @@ export class AppRegistry extends EventEmitter {
       ? Math.floor(entry.maxStorage)
       : null
 
+    // v0.17.0: optional display icon for catalog/PearBrowser rendering.
+    // A string the client resolves — a drive-relative path ('/icon.png'),
+    // an https URL, or a small data: URI. Capped to keep catalog rows
+    // bounded; blind drives strip it in _redactCatalogEntry.
+    const icon = typeof entry.icon === 'string' && entry.icon.trim()
+      ? entry.icon.trim().slice(0, 512)
+      : null
+
     return {
       ...entry,
       type,
@@ -244,6 +252,7 @@ export class AppRegistry extends EventEmitter {
       parentKey,
       mountPath,
       categories,
+      icon,
       anchored,
       anchoredAt,
       anchoredLength,
@@ -431,6 +440,11 @@ export class AppRegistry extends EventEmitter {
       driveKey: null,
       discoveryKey: null,
       categories: ['private'],
+      // v0.17.0: strip the display icon for blind/redacted drives — a
+      // drive-relative icon path would leak the addressKey, an external
+      // URL could beacon, and either reveals "this blind drive looks
+      // like app X." Cascades with the name/description redaction above.
+      icon: null,
       redacted: true,
       addressKeyRedacted: true,
       metadataVisibility: 'redacted',
@@ -487,6 +501,9 @@ export class AppRegistry extends EventEmitter {
         storageClass: normalizeStorageClass(entry.storageClass, entry.blind ? 'temporary' : 'persistent'),
         availabilityClass: normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on'),
         categories: entry.categories || ['uncategorized'],
+        // v0.17.0: display icon for catalog/PearBrowser app tiles (null if
+        // unset). Redacted for blind drives in _redactCatalogEntry.
+        icon: entry.icon || null,
         privacyTier: entry.privacyTier || 'public',
         seededAt: entry.startedAt || entry.seededAt || now,
         // Anchor signal — clients can prefer relays whose entries are
@@ -792,6 +809,7 @@ export class AppRegistry extends EventEmitter {
       name: entry.name || entry.appId || null,
       description: entry.description || '',
       author: entry.author || null,
+      icon: entry.icon || null,
       blind: entry.blind || false,
       storageClass: normalizeStorageClass(entry.storageClass, entry.blind ? 'temporary' : 'persistent'),
       availabilityClass: normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on'),
@@ -871,6 +889,7 @@ export class AppRegistry extends EventEmitter {
       name: entry.name || entry.appId || null,
       description: entry.description || '',
       author: entry.author || null,
+      icon: entry.icon || null,
       blind: entry.blind || false,
       storageClass: normalizeStorageClass(entry.storageClass, entry.blind ? 'temporary' : 'persistent'),
       availabilityClass: normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on'),

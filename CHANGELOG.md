@@ -6,6 +6,44 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.17.0] — 2026-06-16
+
+Minor: operators can seed their own app and list it — from the appliance
+dashboard — plus app icons in the catalogue. Surfaces capability that
+already existed at the API layer (`POST /seed`); no new seed/pin logic.
+
+### Added
+
+- **"Seed an app" in the Blindspark appliance dashboard** (`blindspark.html`,
+  served on both Umbrel and StartOS via `ui.simple`). The operator pastes
+  a drive key they published (with `pear` / publish-app), optionally names
+  it, and ticks "Pin permanently" → the relay replicates + archive-pins it
+  (`durability:1`, non-evictable, AutoHeal-maintained) and it auto-lists in
+  the relay's `/catalog.json`, which PearBrowser reads. POSTs to the
+  existing `/seed`; authenticates via the existing token shim behind the
+  proxy. (Authoring a brand-new app from the box is a deferred follow-on.)
+- **PearBrowser subscribe URL** — a copy-to-clipboard control showing the
+  relay's own reachable base URL, for PearBrowser's "subscribe to this
+  relay" quick-add. (PearBrowser is a client that subscribes to relay URLs
+  and reads each `/catalog.json`; there is no central index to register.)
+- **App `icon` field** end-to-end: parsed from the app's `manifest.json`
+  (`icon` or `icons[0]`), normalized (string, trimmed, ≤512 chars) in the
+  registry, surfaced in `catalog()` / `/catalog.json` / `/api/apps`, and
+  rendered as a tile in the dashboard's hosted-apps list (drive-relative
+  paths resolve through the gateway; falls back to the live dot on load
+  error).
+
+### Security
+
+- **`icon` is stripped for blind/redacted catalogue entries** in
+  `_redactCatalogEntry` — a drive-relative icon path would leak the
+  addressKey and an external URL could beacon, so it's nulled alongside
+  name/description for blind drives.
+
+Pinned by `test/unit/app-registry-icon.test.js`: icon surfaces for
+non-blind entries, normalizes junk/whitespace to null, length-caps to
+512, survives a persistence reload, and is stripped for blind drives.
+
 ## [0.16.3] — 2026-06-15
 
 Correctness + accessibility fixes for the new one-page Blindspark

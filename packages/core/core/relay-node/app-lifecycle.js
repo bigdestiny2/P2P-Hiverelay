@@ -861,7 +861,10 @@ export class AppLifecycle extends EventEmitter {
         name: manifest.name || appId,
         description: manifest.description || '',
         author: manifest.author || null,
-        categories: manifest.categories || null
+        categories: manifest.categories || null,
+        // v0.17.0: optional display icon from the app's manifest, for
+        // catalog/PearBrowser tiles. Accept manifest.icon or icons[0].
+        icon: manifest.icon || (Array.isArray(manifest.icons) ? manifest.icons[0] : null) || null
       })
 
       if (contentType !== 'app') return
