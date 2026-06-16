@@ -1365,8 +1365,15 @@ export class RelayAPI extends EventEmitter {
             return this._json(res, { error: 'dedup reclaim not available (eviction manager not enabled)' }, 503)
           }
           const dryRun = body?.execute !== true
-          const retainVersions = Number.isFinite(body?.retainVersions) ? body.retainVersions : 0
-          const max = Number.isFinite(body?.max) ? body.max : undefined
+          const retainVersions = Math.max(0, Math.floor(Number(body?.retainVersions) || 0))
+          let max
+          if (body?.max !== undefined) {
+            const m = Number(body.max)
+            if (!Number.isFinite(m) || m <= 0) {
+              return this._json(res, { error: formatErr('BAD_REQUEST', 'max must be a positive integer') }, 400)
+            }
+            max = Math.floor(m)
+          }
           try {
             const out = await this.node.eviction.reclaimSuperseded({ dryRun, retainVersions, max })
             return this._json(res, { ok: true, ...out })

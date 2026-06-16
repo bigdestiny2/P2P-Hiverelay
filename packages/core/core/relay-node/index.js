@@ -1889,6 +1889,12 @@ export class RelayNode extends EventEmitter {
       if (stats.registry && stats.registry.key != null) {
         stats.registry = { ...stats.registry, key: null }
       }
+      // The dedup report is operator-triage detail (per-version appKeys an
+      // appId's catalog row deliberately hides). Keep the aggregate
+      // storage.totalBytes on the unauthenticated /status, drop the breakdown.
+      if (stats.storage && stats.storage.dedup != null) {
+        stats.storage = { ...stats.storage, dedup: null }
+      }
     }
 
     return stats

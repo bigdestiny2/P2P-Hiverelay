@@ -242,18 +242,35 @@ export class EvictionManager extends EventEmitter {
     let freedBytes = 0
 
     for (const group of report.supersededVersions.groups) {
+      const current = this.deps.appRegistry.get(group.current)
       let candidates = group.superseded
       if (retainVersions > 0) {
-        // keep the retainVersions newest superseded versions; reclaim the rest
+        // Keep the retainVersions newest superseded versions; reclaim the rest.
+        // Deterministic order: version desc, then born-time desc, then appKey —
+        // so versionless/equal-version ties don't reclaim on iteration order.
         candidates = [...group.superseded]
-          .map(s => ({ ...s, version: (this.deps.appRegistry.get(s.appKey) || {}).version || '0.0.0' }))
-          .sort((a, b) => compareVersions(b.version, a.version))
+          .map(s => {
+            const e = this.deps.appRegistry.get(s.appKey) || {}
+            return { ...s, version: e.version || '0.0.0', bornAt: e.seededAt || e.startedAt || 0 }
+          })
+          .sort((a, b) => compareVersions(b.version, a.version) || (b.bornAt - a.bornAt) || (a.appKey < b.appKey ? -1 : a.appKey > b.appKey ? 1 : 0))
           .slice(retainVersions)
       }
       for (const s of candidates) {
         if (reclaimed.length >= max) break
         const entry = this.deps.appRegistry.get(s.appKey)
         if (!entry) continue
+        // Belt-and-suspenders: re-verify (independently of the report) that this
+        // entry is provably an OLDER version of the SAME publisher's current —
+        // a stale index or appId collision must never delete a live/unrelated
+        // drive. The report already enforces this; this is defense-in-depth
+        // against drift between report-build and now.
+        if (!current ||
+            !entry.publisherPubkey || entry.publisherPubkey !== current.publisherPubkey ||
+            compareVersions(entry.version || '0.0.0', current.version || '0.0.0') >= 0) {
+          skipped.push({ appKey: s.appKey, reason: 'supersession-unverified' })
+          continue
+        }
         // Never reclaim a sacred entry, even if superseded.
         try {
           assertPurgable(entry, now)
@@ -266,8 +283,19 @@ export class EvictionManager extends EventEmitter {
           freedBytes += (s.bytes || 0)
           continue
         }
+        // Bound a wedged unseed (a disk-full-corrupt core can hang the await
+        // forever) — same guard the sweep uses. Bail BEFORE markEvicted/purge
+        // so the tombstone-before-purge ordering is preserved.
+        const unseeded = await raceTimeout(
+          Promise.resolve().then(() => this.deps.unseed(s.appKey)).then(() => true),
+          this.config.unseedTimeoutMs,
+          TIMEOUT
+        )
+        if (unseeded === TIMEOUT) {
+          skipped.push({ appKey: s.appKey, reason: 'unseed-timeout' })
+          continue
+        }
         try {
-          await this.deps.unseed(s.appKey)
           this.deps.appRegistry.markEvicted(s.appKey, now)
           await this._purgeDrive(s.appKey)
           reclaimed.push({ appKey: s.appKey, bytes: s.bytes, appId: group.appId })
@@ -280,7 +308,15 @@ export class EvictionManager extends EventEmitter {
       }
     }
 
-    const result = { dryRun, reclaimed, skipped, freedBytes, candidates: report.supersededVersions.count }
+    const result = {
+      dryRun,
+      reclaimed,
+      skipped,
+      freedBytes,
+      candidates: report.supersededVersions.count,
+      unmeasured: report.supersededVersions.unmeasured,
+      note: report.note
+    }
     this.emit('reclaim-sweep', result)
     return result
   }
