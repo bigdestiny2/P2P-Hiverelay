@@ -28,6 +28,9 @@ const BUILTIN_MAP = {
   vrf: { module: 'p2p-hiveservices/builtin/vrf-service.js', className: 'VRFService' }
 }
 
+// Names operators can add as services (the Services tab's "available" list).
+export const BUILTIN_SERVICE_NAMES = Object.keys(BUILTIN_MAP)
+
 export class PluginLoader {
   constructor (opts = {}) {
     this.plugins = []

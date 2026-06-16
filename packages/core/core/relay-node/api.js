@@ -33,6 +33,7 @@ import {
 import { buildCapabilityDoc } from '../capability-doc.js'
 import { verifySeedingManifest } from '../seeding-manifest.js'
 import { ERR, formatErr } from '../error-prefixes.js'
+import { BUILTIN_SERVICE_NAMES } from '../plugin-loader.js'
 import { SetupWizard } from '../wizard.js'
 import { verifyForkProof } from '../fork-proof-signing.js'
 import { isTransientCoreError, TRANSIENT_RETRY_AFTER_SECONDS } from '../transient-core-errors.js'
@@ -2078,6 +2079,20 @@ export class RelayAPI extends EventEmitter {
           return this._handleServiceManagement(res, body)
         }
 
+        // Persist the Services-layer opt-in (enable + which builtins). Applied
+        // on restart (the registry is constructed at boot). config + restart,
+        // same posture as subsidy/lease — keeps services off by default.
+        if (path === '/api/manage/services/config') {
+          if (!this.node.setServicesConfig) {
+            return this._json(res, { error: formatErr('UNSUPPORTED', 'services config not supported') }, 503)
+          }
+          const saved = await this.node.setServicesConfig({
+            enabled: body && body.enabled === true,
+            plugins: body && Array.isArray(body.plugins) ? body.plugins : []
+          })
+          return this._json(res, { ok: true, ...saved, restartRequired: true })
+        }
+
         if (path === '/api/manage/mode') {
           return this._handleModeSwitch(res, body)
         }
@@ -2138,22 +2153,37 @@ export class RelayAPI extends EventEmitter {
 
         if (path === '/api/manage/services') {
           if (!this.node.serviceRegistry) {
-            return this._json(res, { services: [], count: 0 })
+            return this._json(res, { enabled: false, services: [], count: 0 })
           }
+          // serviceRegistry.services is name -> ServiceEntry (NOT a provider):
+          // read entry.status/capabilities/stats, not provider.running/methods.
           const services = []
-          for (const [name, provider] of this.node.serviceRegistry.services) {
+          for (const [name, entry] of this.node.serviceRegistry.services) {
             services.push({
               name,
-              running: provider.running || false,
-              methods: provider.methods
-                ? Object.keys(provider.methods)
-                : [],
-              stats: provider.stats
-                ? provider.stats()
-                : null
+              version: entry.version || null,
+              running: entry.status === 'running',
+              status: entry.status,
+              capabilities: Array.isArray(entry.capabilities) ? entry.capabilities : [],
+              description: entry.description || '',
+              stats: entry.stats || null,
+              restartCount: entry.restartCount || 0,
+              lastError: entry.lastError || null
             })
           }
-          return this._json(res, { services, count: services.length })
+          return this._json(res, { enabled: true, services, count: services.length })
+        }
+
+        // What the operator can host + what's running + the persisted opt-in
+        // (drives the Services tab: enable toggle + add-a-service picker).
+        if (path === '/api/manage/services/available') {
+          const reg = this.node.serviceRegistry
+          return this._json(res, {
+            enabled: !!reg,
+            available: BUILTIN_SERVICE_NAMES,
+            active: reg ? Array.from(reg.services.keys()) : [],
+            plugins: Array.isArray(this.node.config.plugins) ? this.node.config.plugins : []
+          })
         }
 
         if (path === '/api/manage/transports') {
@@ -2806,14 +2836,14 @@ export class RelayAPI extends EventEmitter {
     }
 
     if (action === 'restart') {
-      const provider = registry.services.get(service)
-      if (!provider) {
+      if (!registry.services.has(service)) {
         return this._json(res, { error: `Service '${service}' not found` }, 404)
       }
-      const ctx = { node: this.node, store: this.node.store, config: this.node.config }
+      // registry.services holds ServiceEntries (no .stop/.start). Use the
+      // registry's own restart, which drives entry.provider + tracks state.
+      const ctx = this.node._serviceContext || { node: this.node, store: this.node.store, config: this.node.config }
       try {
-        await provider.stop()
-        await provider.start(ctx)
+        await registry.restart(service, ctx)
         this._json(res, { ok: true, action: 'restarted', service })
       } catch (err) {
         this._json(res, { error: err.message }, 500)

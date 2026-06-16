@@ -50,7 +50,7 @@ import { ServiceRegistry, ServiceProtocol } from '../services/index.js'
 // Builtin services live in the p2p-hiveservices package and are loaded at
 // runtime via PluginLoader when an operator opts in (config.plugins).
 // Core no longer hardcodes Services constructors.
-import { PluginLoader } from '../plugin-loader.js'
+import { PluginLoader, BUILTIN_SERVICE_NAMES } from '../plugin-loader.js'
 import { Router } from '../router/index.js'
 import { AppRegistry } from '../app-registry.js'
 import {
@@ -503,6 +503,53 @@ export class RelayNode extends EventEmitter {
     return this.config
   }
 
+  // ─── Services-layer opt-in (Services tab; config + restart) ────────
+  _servicesOverridePath () {
+    return this.config.storage ? join(this.config.storage, 'services.json') : null
+  }
+
+  async _loadServicesOverride () {
+    const path = this._servicesOverridePath()
+    if (!path) return
+    try {
+      const data = JSON.parse(await readFile(path, 'utf8'))
+      if (data && data.enabled === true && Array.isArray(data.plugins)) {
+        this.config.enableServices = true
+        this.config.plugins = data.plugins.filter(p => BUILTIN_SERVICE_NAMES.includes(p))
+      }
+    } catch {
+      // Missing/corrupt -> leave config as-is (services stay off by default).
+    }
+  }
+
+  /**
+   * Persist the operator's Services-layer choice (the Services tab toggle).
+   * Takes full effect on the next restart — _loadServicesOverride reads it
+   * before the services-init block. Validates plugin names against builtins.
+   */
+  async setServicesConfig ({ enabled, plugins } = {}) {
+    const list = Array.isArray(plugins)
+      ? [...new Set(plugins.map(String))].filter(p => BUILTIN_SERVICE_NAMES.includes(p))
+      : []
+    const payload = { enabled: enabled === true, plugins: list, updatedAt: Date.now() }
+    const path = this._servicesOverridePath()
+    if (path) {
+      const tmp = path + '.tmp'
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(tmp, JSON.stringify(payload))
+        await rename(tmp, path)
+      } catch (err) {
+        try { await unlink(tmp) } catch (_) {}
+        this.emit('services-config-persist-error', err)
+      }
+    }
+    // Reflect in live config; the registry itself (re)starts on restart.
+    this.config.enableServices = payload.enabled
+    this.config.plugins = payload.plugins
+    return payload
+  }
+
   _catalogBeePath () {
     return this.config.storage ? join(this.config.storage, 'catalog-bee.json') : null
   }
@@ -918,6 +965,9 @@ export class RelayNode extends EventEmitter {
       // Default: Core-only (no services). To enable Services, install
       // p2p-hiveservices and set config.plugins, e.g.:
       //   plugins: ['storage', 'identity', 'ai', 'zk', 'sla', 'schema', 'arbitration']
+      // Operator opt-in persists in <storage>/services.json (set via the
+      // Services tab; applied on this restart). Overrides config when present.
+      await this._loadServicesOverride()
       if (this.config.enableServices !== false && this.config.plugins) {
         this.serviceRegistry = new ServiceRegistry()
         this.serviceProtocol = new ServiceProtocol(this.serviceRegistry, {
