@@ -789,6 +789,18 @@ mirror of the `ForwardRelay` opt-in transport posture.
 
 ### Added
 
+- **`POST /seed-core`** — pin a BARE Hypercore by public key via
+  `Seeder.seedCore` (operator-authed). `POST /seed` opens a Hyperdrive; a
+  Hyperbee (e.g. a replicable catalog) is a plain Hypercore and had no HTTP
+  pin path. The relay replicates the core's blocks; it does not interpret it.
+- **`scripts/publish-catalog-bee.js`** — builds a replicable, signed Hyperbee
+  catalog from a relay's `/catalog.json` (paginated) keyed by appKey → entry,
+  authored + signed by a persisted Ed25519 keypair (the bee key IS the trust
+  anchor; a `\x00meta` record carries an Ed25519-signed manifest), and pins
+  its core on that relay via `/seed-core`. Unblocks moving relays off
+  HTTP-polled catalogs onto a P2P-replicable, offline-verifiable catalog bee.
+  E2E-verified: build → pin → consumer reads + verifies the signature.
+
 - **Forward Relay** (`hiverelay-forward`) — a demand-dialled relay transport
   (`packages/core/core/protocol/forward-relay.js`, wired into `RelayNode`).
   A client sends `OPEN(targetPubkey)`; the relay dials that target over the
