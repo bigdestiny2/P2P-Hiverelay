@@ -6,6 +6,38 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [Unreleased]
+
+**Tier-2 index layer (schema-sheets) — relay advertise/proxy + out-of-process
+sidecar.** A relay's catalogue, pins, relay-directory and verifications are
+mirrored into a signed, JMESPath-queryable `schema-sheets` room that clients
+blind-replicate read-only. Additive and off by default — a relay without a
+sidecar simply omits `indexRoom` and clients fall back to `catalogBeeKey` /
+`/catalog.json`. See [`docs/INDEX-LAYER.md`](docs/INDEX-LAYER.md).
+
+The index runs as a dependency-isolated **sidecar** because schema-sheets is
+built on corestore-7/hypercore-11/ajv-8, which collide with the relay's
+corestore-6/hypercore-10/ajv-6 (a spike confirmed an in-process load crashes).
+It bridges until the relay's own hypercore-11 migration lands.
+
+### Added
+
+- **Relay (Tier-0):** additive `indexRoom` field in the signed capability doc
+  (schemaVersion stays 1; the canonical signer covers it, so old verifiers still
+  validate) + in the `/catalog.json` envelope. `RelayNode.setIndexRoom` /
+  `_loadIndexRoom` persist the pointer in `index-room.json`. Loopback
+  `POST /api/manage/index-room` (operator-authed) for the sidecar to publish its
+  room key. Optional reverse-proxy of `GET /index/*` + `/api/index/room` to
+  `indexSidecarUrl` (env `HIVERELAY_INDEX_SIDECAR_URL`) so clients use one
+  gatewayUrl — forwards method+path+query only, no client headers/IP.
+- **`services/index-sidecar/`** (`p2p-hiverelay-index`): four schemas
+  (pin-registry, relay-directory, app-manifest, verification), pure registry→row
+  mappers with a redaction gate, a primary-keyed room manager, a
+  content-debounced projector (write-amp guard — Autobase rows measured at
+  ~18KB), the §2 query server (JMESPath + page/pageSize), and a swarm announce
+  for blind read-only replication. Node `node:test` suite (25 tests) incl. an
+  e2e blind-replication check.
+
 ## [0.18.0] — 2026-06-16
 
 Two features, both off/inert by default:

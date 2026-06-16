@@ -173,6 +173,20 @@ export function buildCapabilityDoc (opts = {}) {
     federation,
     catalog,
     fees,
+    // gatewayUrl — the relay's public HTTP base URL, advertised so a directory
+    // index (and clients) can reach this relay without a hardcoded address.
+    // Additive (schemaVersion stays 1). null when the operator hasn't set a
+    // public URL — such relays simply won't appear in /index/relays.
+    gatewayUrl: (typeof opts.gatewayUrl === 'string' && opts.gatewayUrl) ||
+      (typeof config.gatewayUrl === 'string' && config.gatewayUrl) ||
+      (typeof config.publicUrl === 'string' && config.publicUrl) || null,
+    // indexRoom — z32 link to this relay's schema-sheets index room, if a
+    // sidecar has published one. Additive: clients that don't understand it
+    // ignore it and fall back to catalogBeeKey / /catalog.json. schemaVersion
+    // stays 1 — the canonical signer covers whatever keys are present, so old
+    // verifiers still validate (see canonicalSignablePayload).
+    indexRoom: (relay && typeof relay.indexRoom === 'string' && relay.indexRoom) ||
+      (typeof opts.indexRoom === 'string' && opts.indexRoom) || null,
     // attestedAt — closes the stale-doc replay attack stub. The
     // signed payload covers this timestamp, so a relay's old doc
     // can't be replayed (clients can detect it's stale via the field).

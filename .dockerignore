@@ -6,6 +6,7 @@ test
 scripts
 examples
 docs
+services
 storage
 .planning
 .publisher-storage
