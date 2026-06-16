@@ -39,6 +39,8 @@ import { DiskMonitor } from './disk-monitor.js'
 import { StorageAccounting } from './storage-accounting.js'
 import { EvictionManager, assertPurgable, purgeDriveCores } from './eviction.js'
 import { SubsidyAccrual } from '../../incentive/subsidy/index.js'
+import { LeaseManager } from '../../incentive/lease/index.js'
+import { MockProvider } from '../../incentive/payment/mock-provider.js'
 import { AlertManager } from './alert-manager.js'
 import { SelfHeal } from './self-heal.js'
 import { AccessControl } from './access-control.js'
@@ -345,6 +347,7 @@ export class RelayNode extends EventEmitter {
     this.storageAccounting = null
     this.eviction = null
     this.subsidyAccrual = null
+    this.leaseManager = null
     this.alertManager = null
     this.selfHeal = null
     this.seedingRegistry = null
@@ -1458,6 +1461,37 @@ export class RelayNode extends EventEmitter {
           payoutDestination: this.config.subsidy.payoutDestination || undefined
         })
         await this.subsidyAccrual.start()
+      }
+
+      // Paid pin-lease (demand side). Off by default. When enabled, the
+      // publisher-signed seed path charges a byte-days lease; funds settle to
+      // the operator's OWN LN node (zero-custody) and the lease is enforced by
+      // the custody-expiry sweep. Operator self-seeds (POST /seed) are free.
+      // See incentive/lease/index.js + the payment-for-seeding design.
+      if (this.config.lease?.enabled) {
+        let provider = this.config.leaseProvider || null
+        if (!provider) {
+          // 'mock' (in-memory, for test/demo) is the default; 'lightning'
+          // expects the operator to supply a connected provider via
+          // config.leaseProvider (the LND gRPC proto is not bundled here).
+          provider = new MockProvider()
+        }
+        const payTo = (this.subsidyAccrual && this.subsidyAccrual.payoutDestination
+          ? this.subsidyAccrual.payoutDestination.value
+          : null) ||
+          (this.config.subsidy && this.config.subsidy.payoutDestination) ||
+          this.config.lease.payTo || null
+        this.leaseManager = new LeaseManager({
+          keyPair: this.swarm.keyPair,
+          provider,
+          storagePath: join(this.config.storage, 'lease.json'),
+          satsPerGiBDay: this.config.lease.satsPerGiBDay,
+          quoteTtlMs: this.config.lease.quoteTtlMs,
+          minDays: this.config.lease.minLeaseDays,
+          maxDays: this.config.lease.maxLeaseDays,
+          payTo
+        })
+        await this.leaseManager.start()
       }
 
       // Start alert manager (if configured) — wires to health monitor + subsystems
@@ -2837,7 +2871,11 @@ export class RelayNode extends EventEmitter {
     const availabilityClass = normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on')
     return storageClass === 'temporary' ||
       availabilityClass === 'atomic-handoff' ||
-      (entry.blind === true && Number.isFinite(entry.retainUntil))
+      (entry.blind === true && Number.isFinite(entry.retainUntil)) ||
+      // Paid pin-lease: retainUntil is an enforced lease deadline. Gated
+      // STRICTLY on leaseManaged so operator self-pins and custody intents
+      // (which set retainUntil for other reasons) are never swept here.
+      (entry.leaseManaged === true && Number.isFinite(entry.retainUntil))
   }
 
   /**
@@ -3560,6 +3598,7 @@ export class RelayNode extends EventEmitter {
     if (this.eviction) { this.eviction.stop(); this.eviction = null }
     if (this.storageAccounting) { this.storageAccounting.stop(); this.storageAccounting = null }
     if (this.subsidyAccrual) { await this.subsidyAccrual.destroy(); this.subsidyAccrual = null }
+    if (this.leaseManager) { await this.leaseManager.destroy(); this.leaseManager = null }
     if (this._healthCheckInterval) { clearInterval(this._healthCheckInterval); this._healthCheckInterval = null }
     if (this.settlementInterval) { clearInterval(this.settlementInterval); this.settlementInterval = null }
     if (this._replicationCheckInterval) { clearInterval(this._replicationCheckInterval); this._replicationCheckInterval = null }

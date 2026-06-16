@@ -90,6 +90,21 @@ export default {
     payoutDestination: null
   },
 
+  // Paid pin-lease (demand side). Off by default — self-host never charges.
+  // When enabled, publisher-signed seeds (POST /api/v1/seed, NOT operator
+  // POST /seed) must pay a byte-days lease; funds settle to the operator's
+  // OWN LN node (zero-custody) and the lease is enforced by the existing
+  // custody-expiry sweep. Custody/social-recovery seeds are exempt. See
+  // incentive/lease/index.js + the payment-for-seeding design.
+  lease: {
+    enabled: false,
+    satsPerGiBDay: 10, // price = ceil(maxStorageBytes/GiB) * leaseDays * this
+    quoteTtlMs: 60 * 60 * 1000, // 1h to pay; aligned with invoice expiry
+    minLeaseDays: 1,
+    maxLeaseDays: 3650,
+    provider: 'mock' // 'mock' (test/demo) | 'lightning' (operator's own node)
+  },
+
   // Blind custody is the default relay posture. Relays may mirror public
   // content, but custody receipts/proofs must be for encrypted material unless
   // an operator explicitly enables transparent custody.
