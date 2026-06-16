@@ -3562,6 +3562,20 @@ export class RelayNode extends EventEmitter {
     if (availableBytes <= 0) return false
     if (request.maxStorageBytes > 0 && request.maxStorageBytes > availableBytes) return false
 
+    // Paid pin-lease: don't auto-adopt a non-exempt publisher's registry
+    // request for free here. The MVP charges each relay individually (no
+    // free cross-relay mirroring), so a chargeable drive we're not already
+    // seeding must come through the gated HTTP/publish path, not the
+    // replication-repair monitor. Verified custody intents stay exempt; this
+    // never fires for drives we already seed (caught by alreadySeeding above).
+    if (this.leaseManager && !isLeaseExempt(
+      { custodyIntentId: request.custodyIntentId || null, publisherPubkey: effectivePublisher },
+      { seedingRegistry: this.seedingRegistry }
+    )) {
+      this.emit('replication-repair-skipped', { appKey: request.appKey, reason: 'payment-required' })
+      return false
+    }
+
     try {
       await this.seedApp(request.appKey, {
         publisherPubkey: effectivePublisher,

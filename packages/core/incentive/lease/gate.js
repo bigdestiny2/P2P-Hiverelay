@@ -78,7 +78,9 @@ export async function evaluateSeedLease ({ leaseManager, seedingRegistry, appKey
   }
 
   try {
-    const v = await leaseManager.verifyLease({ appKey, quoteId: proof.quoteId })
+    // Pass the resubmitted maxStorage so verifyLease can reject a seed that
+    // asks for MORE storage than the (cheaper) quote was priced for.
+    const v = await leaseManager.verifyLease({ appKey, quoteId: proof.quoteId, maxStorageBytes: opts.maxStorage })
     if (!v.ok) return { outcome: 'error', error: v.error || 'LEASE_UNVERIFIED', status: v.status || 402 }
     return { outcome: 'paid', retainUntil: v.paidUntil }
   } catch (err) {

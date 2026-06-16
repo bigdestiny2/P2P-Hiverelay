@@ -223,6 +223,21 @@ test('evaluateSeedLease: outcomes the transports map on', async (t) => {
   await lm.destroy()
 })
 
+test('verifyLease binds maxStorage: cannot quote-cheap then seed-big', async (t) => {
+  const { lm, provider } = await makeManager({ satsPerGiBDay: 10 })
+  // Quote priced for 1 GiB.
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 1 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+  // Resubmit asking for 10 GiB → rejected.
+  const big = await lm.verifyLease({ appKey: APPKEY, quoteId: quote.quoteId, maxStorageBytes: 10 * GIB }, T0 + 1000)
+  t.is(big.ok, false)
+  t.is(big.error.split(':')[0], 'LEASE_STORAGE_EXCEEDS_QUOTE')
+  // Equal storage is fine (fresh quote since the prior attempt didn't consume).
+  const ok = await lm.verifyLease({ appKey: APPKEY, quoteId: quote.quoteId, maxStorageBytes: GIB }, T0 + 1000)
+  t.is(ok.ok, true)
+  await lm.destroy()
+})
+
 // ── Eviction must not shed a paid pin before its lease expires (finding #5) ──
 test('assertPurgable: a live paid lease is LEASE_BOUND; expired is purgable', (t) => {
   const now = 1_000_000

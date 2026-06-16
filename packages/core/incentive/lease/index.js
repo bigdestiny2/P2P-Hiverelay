@@ -154,11 +154,16 @@ export class LeaseManager extends EventEmitter {
    * Verify a paid lease for a resubmitted seed request.
    * @returns {{ ok: true, paidUntil, amountSats, leaseDays } | { ok: false, error, status }}
    */
-  async verifyLease ({ appKey, quoteId }, now = Date.now()) {
+  async verifyLease ({ appKey, quoteId, maxStorageBytes }, now = Date.now()) {
     const body = this._decodeQuote(quoteId)
     if (!body) return { ok: false, error: 'LEASE_BAD_QUOTE: quote missing or signature invalid', status: 402 }
     if (String(appKey).toLowerCase() !== body.appKey) {
       return { ok: false, error: 'LEASE_QUOTE_APPKEY_MISMATCH: quote is for a different appKey', status: 402 }
+    }
+    // Bind storage: the seed can't ask for MORE than the quote was priced for
+    // (else quote-cheap-at-1GiB, then seed-big). Equal/less is fine.
+    if (Number.isFinite(maxStorageBytes) && Math.floor(maxStorageBytes) > body.maxStorageBytes) {
+      return { ok: false, error: 'LEASE_STORAGE_EXCEEDS_QUOTE: requested maxStorage exceeds the quoted amount', status: 402 }
     }
     if (!Number.isFinite(body.expiresAt) || body.expiresAt <= now) {
       return { ok: false, error: 'LEASE_QUOTE_EXPIRED: request a fresh quote', status: 402 }
