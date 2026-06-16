@@ -5,7 +5,7 @@
 # start-sdk (https://github.com/Start9Labs/start-os, `cargo install` or
 # release binary). Run `make` from this directory.
 
-VERSION := 0.18.0
+VERSION := 0.18.1
 IMAGE := ghcr.io/bigdestiny2/p2p-hiverelay:$(VERSION)
 # Optional immutable pin for the retag FROM: `make IMAGE_DIGEST=sha256:...`.
 # Default empty -> FROM the :$(VERSION) tag (resolves to the current multi-arch
