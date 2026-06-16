@@ -28,6 +28,30 @@ const BEE_CORE_NAME = 'app-registry-v1'
 const EVICTED_FILE = 'evicted.json'
 const MAX_TOMBSTONES = 5000
 
+/**
+ * Collapse already-built catalog rows: for `app`-type rows sharing an appId,
+ * keep only the highest version. The same latest-version-wins rule catalog()
+ * applies inline (see ~`if (type === 'app')` below); factored here so the P2P
+ * broadcast can't drift from the HTTP view. Rows that are non-`app` or carry a
+ * null id (redacted/blind) are never collapsed — they pass through untouched.
+ */
+function dedupLatestByAppId (rows, idField = 'appId') {
+  const out = []
+  const seen = new Map() // id -> index in out
+  for (const r of rows) {
+    const id = r[idField]
+    if (r.type !== 'app' || id == null) { out.push(r); continue }
+    const idx = seen.get(id)
+    if (idx === undefined) {
+      seen.set(id, out.length)
+      out.push(r)
+    } else if (compareVersions(r.version || '0.0.0', out[idx].version || '0.0.0') > 0) {
+      out[idx] = r
+    }
+  }
+  return out
+}
+
 export class AppRegistry extends EventEmitter {
   /**
    * @param {string|null} storagePath - directory containing app-registry.json
@@ -612,7 +636,11 @@ export class AppRegistry extends EventEmitter {
         retainUntil: redacted ? null : (entry.retainUntil || null)
       })
     }
-    return apps
+    // Dedup app-type rows by appId (keep highest version) — catalog() already
+    // does this for the HTTP view, but the P2P broadcast previously emitted one
+    // row per registry entry, leaking superseded versions to peers. Redacted
+    // rows (appId null) + non-'app' types pass through untouched.
+    return dedupLatestByAppId(apps)
   }
 
   // ─── Deduplication ─────────────────────────────────────────

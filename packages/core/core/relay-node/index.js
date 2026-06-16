@@ -66,6 +66,7 @@ import { PolicyGuard } from '../policy-guard.js'
 import { AppLifecycle } from './app-lifecycle.js'
 import { GatewayServer } from './gateway-server.js'
 import { LifecycleScope, isAbortError } from './lifecycle-scope.js'
+import { buildDedupReport } from './dedup-report.js'
 import { hashHex } from '../custody-signing.js'
 
 // z32-encoded 32-byte key (the Hypercore/Autobase z-base-32 alphabet), 52 chars.
@@ -1828,7 +1829,9 @@ export class RelayNode extends EventEmitter {
       },
       accessControl: accessControlStats,
       disk: this.diskMonitor ? this.diskMonitor.getInfo() : null,
-      storage: this.storageAccounting ? this.storageAccounting.getSummary() : null,
+      storage: this.storageAccounting
+        ? { ...this.storageAccounting.getSummary(), dedup: buildDedupReport(this.appRegistry, this.storageAccounting) }
+        : null,
       eviction: this.eviction ? this.eviction.getSummary() : null,
       subsidy: this.subsidyAccrual ? this.subsidyAccrual.getSummary() : null,
       signedDirectory: this._signedDirectory ? this._signedDirectory.getStats() : null,
