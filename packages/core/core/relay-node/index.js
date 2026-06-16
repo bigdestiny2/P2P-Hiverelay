@@ -584,7 +584,10 @@ export class RelayNode extends EventEmitter {
       if (this.config.enableSeeding) {
         this.seeder = new Seeder(this.store, this.swarm, {
           maxStorageBytes: this.config.maxStorageBytes,
-          announceInterval: this.config.announceInterval
+          announceInterval: this.config.announceInterval,
+          // Persist bare-core pins (catalog bees + any /seed-core) so they
+          // survive a restart. Null storage (tests) -> persistence is a no-op.
+          storagePath: this.config.storage ? join(this.config.storage, 'seeded-cores.json') : null
         })
         startups.push(this.seeder.start())
 

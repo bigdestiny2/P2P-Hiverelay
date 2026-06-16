@@ -793,6 +793,11 @@ mirror of the `ForwardRelay` opt-in transport posture.
   `Seeder.seedCore` (operator-authed). `POST /seed` opens a Hyperdrive; a
   Hyperbee (e.g. a replicable catalog) is a plain Hypercore and had no HTTP
   pin path. The relay replicates the core's blocks; it does not interpret it.
+  **Durable across restart**: the Seeder now persists its bare-core pin set to
+  `<storage>/seeded-cores.json` (atomic tmp+rename) and re-seeds them on
+  start. Teardown (`stop()`) releases resources but keeps the list; only an
+  operator `unseedCore` removes a pin. (Blocks already live in the corestore,
+  so a restart just re-opens + re-announces them.)
 - **`scripts/publish-catalog-bee.js`** — builds a replicable, signed Hyperbee
   catalog from a relay's `/catalog.json` (paginated) keyed by appKey → entry,
   authored + signed by a persisted Ed25519 keypair (the bee key IS the trust
