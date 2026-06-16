@@ -1,5 +1,5 @@
 {
   "_doc": "Declarative release channels for the raw systemd fleet. Each box runs hiverelay-updater on a timer; it reads its channel here and checks out the matching tag (health-gated, auto-rollback). Promote a release by editing the target tag and committing — canary boxes pick it up first, stable boxes when you bump stable. Holding a box = point its channel at the version it already runs.",
   "stable": "v0.17.0",
-  "canary": "v0.17.0"
+  "canary": "v0.18.0"
 }
