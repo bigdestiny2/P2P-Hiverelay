@@ -66,6 +66,7 @@ import { PolicyGuard } from '../policy-guard.js'
 import { AppLifecycle } from './app-lifecycle.js'
 import { GatewayServer } from './gateway-server.js'
 import { LifecycleScope, isAbortError } from './lifecycle-scope.js'
+import { encodeRelayRecord, relayRecordHasContent } from './relay-record.js'
 import { hashHex } from '../custody-signing.js'
 
 // z32-encoded 32-byte key (the Hypercore/Autobase z-base-32 alphabet), 52 chars.
@@ -652,7 +653,32 @@ export class RelayNode extends EventEmitter {
       }
     }
     this.emit('index-room', { room: this.indexRoom })
+    // A newly-published index room should propagate to the DHT record promptly
+    // so key-only clients resolve it without waiting for the next republish.
+    this.publishRelayRecord()
     return this.indexRoom
+  }
+
+  /**
+   * Publish this relay's self-description (gatewayUrl + indexRoom) as a hyperdht
+   * MUTABLE record keyed by the relay's identity key, so a client that knows
+   * only the relay's pubkey can resolve its current address + index room over
+   * the DHT (hyperdht verifies the signature on get). Phase 1 of the iroh
+   * adoption — see docs/IROH-ADOPTION-ROADMAP.md. Best-effort: failures log and
+   * retry on the next republish tick; never throws into the caller.
+   */
+  async publishRelayRecord () {
+    const dht = this.swarm && this.swarm.dht
+    if (!dht || typeof dht.mutablePut !== 'function' || !this.keyPair) return false
+    const record = { gatewayUrl: this.config.gatewayUrl || null, indexRoom: this.indexRoom || null }
+    if (!relayRecordHasContent(record)) return false // nothing to advertise yet
+    try {
+      await dht.mutablePut(this.keyPair, encodeRelayRecord(record))
+      return true
+    } catch (err) {
+      this.emit('relay-record-error', err)
+      return false
+    }
   }
 
   async start () {
@@ -1582,6 +1608,13 @@ export class RelayNode extends EventEmitter {
       this.manifestStore.on('load-rejected', (info) => this.emit('manifest-store-error', info))
 
       this.running = true
+
+      // Publish this relay's DHT-resolvable record (gatewayUrl + indexRoom) so
+      // key-only clients can discover it, and republish periodically since DHT
+      // mutable records expire. Best-effort; never blocks startup.
+      this.publishRelayRecord()
+      this._relayRecordTimer = setInterval(() => { this.publishRelayRecord() }, 30 * 60 * 1000)
+      if (this._relayRecordTimer.unref) this._relayRecordTimer.unref()
 
       // Start health monitoring and self-healing
       this.healthMonitor = new HealthMonitor(this, this.config.healthMonitor)
@@ -3807,6 +3840,12 @@ export class RelayNode extends EventEmitter {
     this._scope = null
     if (scope) {
       try { await scope.drain() } catch (_) {}
+    }
+
+    // Stop the relay-record republish timer.
+    if (this._relayRecordTimer) {
+      clearInterval(this._relayRecordTimer)
+      this._relayRecordTimer = null
     }
 
     // Clean up catalog broadcast debounce timer and peer throttle map

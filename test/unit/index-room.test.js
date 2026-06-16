@@ -63,7 +63,10 @@ test('setIndexRoom persists + _loadIndexRoom restores; rejects bad z32', async (
   await rm(dir, { recursive: true, force: true })
   const events = []
   const _indexRoomPath = RelayNode.prototype._indexRoomPath
-  const stub = { config: { storage: dir }, indexRoom: null, _indexRoomPath, emit (e) { events.push(e) } }
+  // setIndexRoom now best-effort republishes the DHT relay record; provide the
+  // sibling method (no swarm on the stub → it no-ops and returns false).
+  const publishRelayRecord = RelayNode.prototype.publishRelayRecord
+  const stub = { config: { storage: dir }, indexRoom: null, _indexRoomPath, publishRelayRecord, emit (e) { events.push(e) } }
 
   await RelayNode.prototype.setIndexRoom.call(stub, ROOM)
   t.is(stub.indexRoom, ROOM)
