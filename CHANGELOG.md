@@ -8,12 +8,18 @@ The packages are versioned in lockstep.
 
 ## [0.18.0] — 2026-06-16
 
-Minor: **paid pin-lease** — a relay can charge a publisher (the network case)
-to keep their Hyperdrive seeded for a window. Off by default; self-host stays
-free. Zero-custody — funds settle to the operator's own Lightning node and the
-only durable artifact a payment creates is the lease deadline. Blind model
-untouched: pricing keys on (appKey, declared maxStorage, leaseDays), never on
-content.
+Two features, both off/inert by default:
+
+**Paid pin-lease** — a relay can charge a publisher (the network case) to keep
+their Hyperdrive seeded for a window. Off by default; self-host stays free.
+Zero-custody — funds settle to the operator's own Lightning node and the only
+durable artifact a payment creates is the lease deadline. Blind model untouched:
+pricing keys on (appKey, declared maxStorage, leaseDays), never on content.
+
+**Replicable signed catalog bee** — a relay's catalog can be published as a
+Hyperbee whose core is pinned + advertised (`catalogBeeKey` in `/catalog.json`),
+so consumers replicate + verify it over P2P instead of polling HTTP. Inert until
+an operator publishes one.
 
 ### Added
 
@@ -37,11 +43,30 @@ content.
 - `config.lease` (default **off**). MockProvider for test/demo; a real LN
   provider is operator-supplied (a boot-guard refuses to enable paid seeding
   without a provider that can verify settlement).
+- **`POST /seed-core`** — pin a BARE Hypercore by public key via
+  `Seeder.seedCore` (operator-authed); `/seed` opens a Hyperdrive, so a Hyperbee
+  catalog had no pin path. Durable across restart: the Seeder persists its
+  bare-core pin set (`<storage>/seeded-cores.json`) and re-seeds on start;
+  teardown keeps the list, only `unseedCore` removes a pin.
+- **`scripts/publish-catalog-bee.js`** — builds a replicable, signed Hyperbee
+  catalog from a relay's `/catalog.json` (appKey → entry), authored by a
+  persisted Ed25519 keypair. The signed `\x00meta` names `beeKey` (subscribe
+  anchor) and `signerPubkey` (signer == core block authenticator) separately,
+  so a consumer verifies against `signerPubkey` bound to
+  `core.manifest?.signers[0].publicKey ?? core.key` — correct for both compat
+  and manifest cores. Pins via `/seed-core`.
+- **Catalog-bee discovery (read-side):** the relay advertises `catalogBeeKey` in
+  `/catalog.json`; `POST /seed-core { catalog: true }` (and the script by
+  default) pins the bee AND registers the pointer (persisted, survives restart),
+  so consumers replicate + verify the catalog over P2P instead of polling HTTP.
 
 ### Notes
 
 - MVP charges each relay individually (no free cross-relay mirroring); a full
   payer-facing GUI and the real LND `lookupInvoice` provider are fast-follows.
+- Catalog-bee read-side consumer (PearBrowser replicating `catalogBeeKey`) is
+  app-side, separate. Durable bare-core pinning persists for relay uptime + is
+  re-seeded on restart.
 
 ## [0.17.0] — 2026-06-16
 
@@ -824,34 +849,11 @@ mirror of the `ForwardRelay` opt-in transport posture.
 
 ## [Unreleased]
 
-### Added
+<!-- NOTE: stale entries below predate v0.11.0 and were never folded into a
+     release section as 0.11–0.18 were cut. Needs a separate changelog-hygiene
+     pass to attribute each to the version it actually shipped in. -->
 
-- **`POST /seed-core`** — pin a BARE Hypercore by public key via
-  `Seeder.seedCore` (operator-authed). `POST /seed` opens a Hyperdrive; a
-  Hyperbee (e.g. a replicable catalog) is a plain Hypercore and had no HTTP
-  pin path. The relay replicates the core's blocks; it does not interpret it.
-  **Durable across restart**: the Seeder now persists its bare-core pin set to
-  `<storage>/seeded-cores.json` (atomic tmp+rename) and re-seeds them on
-  start. Teardown (`stop()`) releases resources but keeps the list; only an
-  operator `unseedCore` removes a pin. (Blocks already live in the corestore,
-  so a restart just re-opens + re-announces them.)
-- **`scripts/publish-catalog-bee.js`** — builds a replicable, signed Hyperbee
-  catalog from a relay's `/catalog.json` (paginated) keyed by appKey → entry,
-  authored + signed by a persisted Ed25519 keypair. The signed `\x00meta`
-  record names `beeKey` (core.key — the subscribe/replication anchor) and
-  `signerPubkey` (the Ed25519 signer == the core's block authenticator)
-  separately, so a consumer verifies the signature against `signerPubkey` and
-  binds it to the core's real signer (`core.manifest?.signers[0].publicKey ??
-  core.key`) — correct for BOTH compat (hypercore 10.x today) and manifest
-  cores. Pins its core on that relay via `/seed-core`. Unblocks moving relays off
-  HTTP-polled catalogs onto a P2P-replicable, offline-verifiable catalog bee.
-  E2E-verified: build → pin → consumer reads + verifies the signature.
-- **Catalog-bee discovery (read-side):** the relay advertises its catalog-bee
-  key as `catalogBeeKey` in `/catalog.json` so a consumer can replicate the
-  catalog over P2P + verify its signed `\x00meta` instead of polling HTTP.
-  `POST /seed-core { catalog: true }` (and `publish-catalog-bee.js` by default)
-  pins the bee AND registers it as the relay's catalog pointer; the pointer is
-  persisted (`<storage>/catalog-bee.json`) and survives restart.
+### Added
 
 - **Forward Relay** (`hiverelay-forward`) — a demand-dialled relay transport
   (`packages/core/core/protocol/forward-relay.js`, wired into `RelayNode`).
