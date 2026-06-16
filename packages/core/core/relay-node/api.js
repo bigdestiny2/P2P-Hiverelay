@@ -500,6 +500,15 @@ export class RelayAPI extends EventEmitter {
         return this._json(res, this._gateway.getStats())
       }
 
+      // Index-layer query routes (§2 of the schema-sheets contract). The index
+      // is hosted out-of-process by the sidecar; the relay reverse-proxies the
+      // read-only GET routes so the desktop hits a single gatewayUrl. Disabled
+      // (501) until config.indexSidecarUrl points at a running sidecar. Only
+      // GET passthrough of method+path+query — no client headers/IP forwarded.
+      if (req.method === 'GET' && (path === '/api/index/room' || path.startsWith('/index/'))) {
+        return this._proxyIndex(req, res, url)
+      }
+
       // Catalog endpoint — typed content catalog (apps, drives, resources, datasets, media)
       if (req.method === 'GET' && path === '/catalog.json') {
         const page = Math.max(parseInt(url.searchParams.get('page')) || 1, 1)
@@ -546,6 +555,12 @@ export class RelayAPI extends EventEmitter {
           // signed \x00meta instead of polling this HTTP endpoint. null until
           // the operator publishes one (scripts/publish-catalog-bee.js).
           catalogBeeKey: this.node.catalogBeeKey || null,
+          // Replicable schema-sheets index room (the richer Tier-2 index hosted
+          // by the index sidecar: pins, relay-directory, manifests, verifications,
+          // JMESPath-queryable). z32 link, public read-only. null until a sidecar
+          // publishes one. Clients without the schema-sheets stack fall back to
+          // catalogBeeKey / this endpoint.
+          indexRoom: this.node.indexRoom || null,
           // Surface region + operator so peer relays' AutoHeal can score
           // diversity correctly. operator is optional — when absent, peers
           // fall back to treating each pubkey as its own operator (less
@@ -1608,6 +1623,26 @@ export class RelayAPI extends EventEmitter {
           }
         }
 
+        // Publish this relay's index-room pointer. Called by the index sidecar
+        // (loopback) once its schema-sheets room is ready, so the relay can
+        // advertise it in the capability doc + /catalog.json. Operator-authed.
+        if (path === '/api/manage/index-room') {
+          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/index-room')) return
+          if (typeof this.node.setIndexRoom !== 'function') {
+            return this._json(res, { error: 'index room not supported' }, 503)
+          }
+          const room = typeof body.room === 'string' ? body.room.trim() : null
+          if (!room || !/^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/.test(room)) {
+            return this._json(res, { error: 'room must be a 52-char z32 key' }, 400)
+          }
+          try {
+            await this.node.setIndexRoom(room)
+            return this._json(res, { ok: true, indexRoom: room })
+          } catch (err) {
+            return this._json(res, { error: err.message }, 400)
+          }
+        }
+
         if (path === '/registry/publish') {
           if (!this._requireAuth(req, res, 'Unauthorized — API key required for /registry/publish')) return
           if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
@@ -2381,6 +2416,67 @@ export class RelayAPI extends EventEmitter {
     }
     res.writeHead(status)
     res.end(JSON.stringify(data) + '\n')
+  }
+
+  /**
+   * Reverse-proxy a read-only index query to the sidecar. The schema-sheets
+   * index lives out-of-process (corestore-7/hc11, dependency-isolated); the
+   * relay forwards only the method + path + query string so the desktop can
+   * use a single gatewayUrl (contract §2.2). No client headers, cookies, or
+   * IP are forwarded — the sidecar sees only the relay (loopback). Returns
+   * 501 when no sidecar is configured. 8s timeout; the 5MB cap is enforced
+   * INCREMENTALLY (Content-Length precheck + streamed byte budget) so a buggy
+   * or compromised sidecar can't OOM the relay by sending a huge body.
+   */
+  async _proxyIndex (req, res, url) {
+    const base = this.node.indexSidecarUrl
+    if (!base) {
+      return this._json(res, { error: 'index sidecar not configured', errorCode: 'index-disabled' }, 501)
+    }
+    const CAP = 5 * 1024 * 1024
+    const target = base + url.pathname + (url.search || '')
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 8000)
+    try {
+      const upstream = await fetch(target, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        signal: controller.signal
+      })
+      // Reject up front if the upstream declares an over-cap body.
+      const declared = parseInt(upstream.headers.get('content-length') || '', 10)
+      if (Number.isFinite(declared) && declared > CAP) {
+        controller.abort()
+        return this._json(res, { error: 'index response too large' }, 502)
+      }
+      // Stream and enforce the cap as bytes arrive — never buffer past CAP.
+      const reader = upstream.body && upstream.body.getReader ? upstream.body.getReader() : null
+      if (!reader) {
+        const text = await upstream.text()
+        if (text.length > CAP) return this._json(res, { error: 'index response too large' }, 502)
+        res.writeHead(upstream.status, { 'Content-Type': 'application/json' })
+        return res.end(text)
+      }
+      const chunks = []
+      let total = 0
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        total += value.length
+        if (total > CAP) {
+          controller.abort()
+          return this._json(res, { error: 'index response too large' }, 502)
+        }
+        chunks.push(Buffer.from(value))
+      }
+      res.writeHead(upstream.status, { 'Content-Type': 'application/json' })
+      res.end(Buffer.concat(chunks))
+    } catch (err) {
+      const code = err.name === 'AbortError' ? 504 : 502
+      return this._json(res, { error: 'index sidecar unreachable', detail: err.message }, code)
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /**

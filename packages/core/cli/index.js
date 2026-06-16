@@ -390,6 +390,21 @@ async function start () {
     cliOverrides.trustProxy = true
   }
 
+  // HIVERELAY_INDEX_SIDECAR_URL — point the relay at a running index sidecar
+  // (services/index-sidecar). When set, GET /index/* + /api/index/room are
+  // reverse-proxied there so the desktop hits a single gatewayUrl. Off by
+  // default; the relay advertises indexRoom once the sidecar publishes it.
+  if (process.env.HIVERELAY_INDEX_SIDECAR_URL) {
+    cliOverrides.indexSidecarUrl = process.env.HIVERELAY_INDEX_SIDECAR_URL
+  }
+
+  // HIVERELAY_GATEWAY_URL — the relay's public HTTP base URL, advertised in the
+  // capability doc so the index sidecar can build relay-directory rows (and
+  // clients can reach the relay without a hardcoded address).
+  if (process.env.HIVERELAY_GATEWAY_URL) {
+    cliOverrides.gatewayUrl = process.env.HIVERELAY_GATEWAY_URL
+  }
+
   // ─── Operator subsidy (Phase 1: accrual + signed claims only) ──────
   // Container-friendly enable for the Blindspark packaging; config.json
   // `subsidy.*` is the equivalent for bare installs. Destination can be

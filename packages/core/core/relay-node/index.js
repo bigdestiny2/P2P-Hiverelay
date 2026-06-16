@@ -68,6 +68,10 @@ import { GatewayServer } from './gateway-server.js'
 import { LifecycleScope, isAbortError } from './lifecycle-scope.js'
 import { hashHex } from '../custody-signing.js'
 
+// z32-encoded 32-byte key (the Hypercore/Autobase z-base-32 alphabet), 52 chars.
+// Used to validate the index-room pointer published by the sidecar.
+const Z32_KEY_RE = /^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/
+
 const DEFAULT_CONFIG = {
   productProfile: 'relay-core',
   storage: './storage',
@@ -332,6 +336,17 @@ export class RelayNode extends EventEmitter {
     this.catalogBeeKey = (typeof this.config.catalogBeeKey === 'string' && /^[0-9a-f]{64}$/i.test(this.config.catalogBeeKey))
       ? this.config.catalogBeeKey.toLowerCase()
       : null
+    // Pointer (z32) to this relay's schema-sheets index room, published by the
+    // index sidecar. Surfaced in the capability doc + /catalog.json so clients
+    // can blind-replicate the richer signed index. Persisted in index-room.json.
+    // The room itself is hosted out-of-process (corestore-7/hc11), so the relay
+    // only advertises the pointer + optionally proxies the sidecar's query API.
+    this.indexRoom = (typeof this.config.indexRoom === 'string' && Z32_KEY_RE.test(this.config.indexRoom))
+      ? this.config.indexRoom
+      : null
+    this.indexSidecarUrl = (typeof this.config.indexSidecarUrl === 'string' && this.config.indexSidecarUrl)
+      ? this.config.indexSidecarUrl.replace(/\/+$/, '')
+      : null
     this.appRegistry = new AppRegistry(this.config.storage)
     this.appLifecycle = new AppLifecycle(this)
     // Forward lifecycle events so existing listeners on RelayNode keep working
@@ -547,6 +562,52 @@ export class RelayNode extends EventEmitter {
     return this.catalogBeeKey
   }
 
+  _indexRoomPath () {
+    return this.config.storage ? join(this.config.storage, 'index-room.json') : null
+  }
+
+  async _loadIndexRoom () {
+    const path = this._indexRoomPath()
+    if (!path) return
+    try {
+      const data = JSON.parse(await readFile(path, 'utf8'))
+      if (typeof data.room === 'string' && Z32_KEY_RE.test(data.room)) {
+        this.indexRoom = data.room
+      }
+    } catch {
+      // Missing/corrupt -> keep whatever the constructor set from config (or null).
+    }
+  }
+
+  /**
+   * Set + persist this relay's advertised index-room pointer. The value is the
+   * z32 room link of the schema-sheets index hosted by the index sidecar; it is
+   * surfaced in the capability doc + /catalog.json so clients can blind-replicate
+   * the richer signed index. Called by the sidecar (loopback) once its room is
+   * ready. Atomic tmp+rename. Idempotent on an unchanged value.
+   */
+  async setIndexRoom (z32) {
+    if (typeof z32 !== 'string' || !Z32_KEY_RE.test(z32)) {
+      throw new Error('indexRoom must be a 52-char z32 key')
+    }
+    if (this.indexRoom === z32) return this.indexRoom
+    this.indexRoom = z32
+    const path = this._indexRoomPath()
+    if (path) {
+      const tmp = path + '.tmp'
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(tmp, JSON.stringify({ room: this.indexRoom, updatedAt: Date.now() }))
+        await rename(tmp, path)
+      } catch (err) {
+        try { await unlink(tmp) } catch (_) {}
+        this.emit('index-room-persist-error', err)
+      }
+    }
+    this.emit('index-room', { room: this.indexRoom })
+    return this.indexRoom
+  }
+
   async start () {
     if (this.running) return
 
@@ -585,6 +646,7 @@ export class RelayNode extends EventEmitter {
       // the bee's core itself is re-seeded by the Seeder). config value, if
       // valid, was set in the constructor and is the fallback.
       await this._loadCatalogBeeKey()
+      await this._loadIndexRoom()
 
       await this.bootstrapCache.load()
       const bootstrap = this.bootstrapCache.merge(this.config.bootstrapNodes)
