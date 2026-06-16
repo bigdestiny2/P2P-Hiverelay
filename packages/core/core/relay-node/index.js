@@ -672,8 +672,17 @@ export class RelayNode extends EventEmitter {
     if (!dht || typeof dht.mutablePut !== 'function' || !this.keyPair) return false
     const record = { gatewayUrl: this.config.gatewayUrl || null, indexRoom: this.indexRoom || null }
     if (!relayRecordHasContent(record)) return false // nothing to advertise yet
+    // Monotonic seq is REQUIRED: hyperdht rejects a *changed* value at an equal
+    // or lower seq (SEQ_REUSED / SEQ_TOO_LOW), so the default seq=0 would pin us
+    // to the first value forever — the gateway-only boot record could never gain
+    // its indexRoom, and the 30-min republish could never correct a changed
+    // value. Seed from the wall clock (so a fresh process after restart is still
+    // ahead of the last published seq) and bump per publish (so two republishes
+    // in the same second still differ).
+    if (this._recordSeq === undefined) this._recordSeq = Math.floor(Date.now() / 1000)
+    const seq = this._recordSeq++
     try {
-      await dht.mutablePut(this.keyPair, encodeRelayRecord(record))
+      await dht.mutablePut(this.keyPair, encodeRelayRecord(record), { seq })
       return true
     } catch (err) {
       this.emit('relay-record-error', err)

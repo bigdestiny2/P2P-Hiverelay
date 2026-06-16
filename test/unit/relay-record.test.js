@@ -79,7 +79,7 @@ function stubNode ({ gatewayUrl = GW, indexRoom = ROOM, dht = true } = {}) {
     keyPair,
     indexRoom,
     config: { gatewayUrl },
-    swarm: dht ? { dht: { async mutablePut (kp, value) { puts.push({ kp, value }) } } } : null,
+    swarm: dht ? { dht: { async mutablePut (kp, value, opts) { puts.push({ kp, value, opts }) } } } : null,
     emit () {}
   }
 }
@@ -93,6 +93,20 @@ test('publishRelayRecord mutablePuts the encoded record on the relay keyPair', a
   const decoded = decodeRelayRecord(node.puts[0].value)
   t.is(decoded.gatewayUrl, GW)
   t.is(decoded.indexRoom, ROOM)
+})
+
+test('publishRelayRecord uses a strictly increasing seq so changed values are not SEQ_REUSED', async (t) => {
+  // Regression: the boot publish is gateway-only; setIndexRoom() republishes a
+  // CHANGED value once the sidecar's room is ready. Both must NOT collide on
+  // seq=0, or hyperdht rejects the second put and the indexRoom never propagates.
+  const node = stubNode({ indexRoom: null }) // 1st publish: gateway-only
+  t.is(await RelayNode.prototype.publishRelayRecord.call(node), true)
+  node.indexRoom = ROOM // value changes — indexRoom now present
+  t.is(await RelayNode.prototype.publishRelayRecord.call(node), true)
+  t.is(node.puts.length, 2)
+  t.ok(Number.isInteger(node.puts[0].opts.seq), 'seq is passed as an integer')
+  t.ok(node.puts[1].opts.seq > node.puts[0].opts.seq, 'seq strictly increases across value changes')
+  t.is(decodeRelayRecord(node.puts[1].value).indexRoom, ROOM, 'the second record carries the new indexRoom')
 })
 
 test('publishRelayRecord no-ops when there is nothing to advertise or no dht', async (t) => {
