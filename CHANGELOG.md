@@ -6,7 +6,14 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
-## [Unreleased]
+## [0.18.1] — 2026-06-16
+
+**Services tab — host an AI model on your relay.** The Blindspark dashboard
+gains a Services card: toggle the on-device AI service on (persisted; applied on
+restart), add a QVAC model, and see hosted-service status. Default OFF — enabling
+only loads the services layer; it does nothing until a model is added. Also fixes
+two bugs that made the existing services endpoint render empty (it read a stale
+provider shape; restart poked the wrong methods).
 
 **Tier-2 index layer (schema-sheets) — relay advertise/proxy + out-of-process
 sidecar.** A relay's catalogue, pins, relay-directory and verifications are
@@ -22,6 +29,11 @@ It bridges until the relay's own hypercore-11 migration lands.
 
 ### Added
 
+- **Services tab** in the Blindspark dashboard: enable/disable the AI service
+  (persisted to `<storage>/services.json`, applied on restart), add a QVAC model,
+  hosted-service status. New `GET /api/manage/services/available`,
+  `POST /api/manage/services/config`; fixed `GET /api/manage/services` (read the
+  registry's `ServiceEntry`) and the restart path (`registry.restart`).
 - **Relay (Tier-0):** additive `indexRoom` field in the signed capability doc
   (schemaVersion stays 1; the canonical signer covers it, so old verifiers still
   validate) + in the `/catalog.json` envelope. `RelayNode.setIndexRoom` /

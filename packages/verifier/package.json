@@ -1,7 +1,7 @@
 {
   "name": "p2p-hiverelay-verifier",
-  "version": "0.18.0",
-  "description": "Independent reference verifier for HiveRelay \u2014 reads raw hypercores from multiple relays and reports divergence. Ships separately from the main client SDK so cross-client verification is meaningful (see docs/THREAT-MODEL.md action item #3).",
+  "version": "0.18.1",
+  "description": "Independent reference verifier for HiveRelay — reads raw hypercores from multiple relays and reports divergence. Ships separately from the main client SDK so cross-client verification is meaningful (see docs/THREAT-MODEL.md action item #3).",
   "type": "module",
   "main": "index.js",
   "bin": {
