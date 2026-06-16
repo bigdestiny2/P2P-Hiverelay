@@ -7,6 +7,10 @@
 
 VERSION := 0.18.0
 IMAGE := ghcr.io/bigdestiny2/p2p-hiverelay:$(VERSION)
+# Optional immutable pin for the retag FROM: `make IMAGE_DIGEST=sha256:...`.
+# Default empty -> FROM the :$(VERSION) tag (resolves to the current multi-arch
+# image). The image is bundled into the s9pk at build time either way.
+IMAGE_DIGEST ?=
 S9PK := blindspark.s9pk
 TAG := start9/blindspark/main:$(VERSION)
 
@@ -38,8 +42,11 @@ image: Dockerfile.retag
 	  --output type=docker,dest=image/aarch64.tar .
 	@touch image
 
-Dockerfile.retag:
-	printf 'FROM $(IMAGE)\n' > Dockerfile.retag
+# Generated (gitignored) — regenerated whenever VERSION/IMAGE_DIGEST change,
+# since it depends on this Makefile. Without the prerequisite a stale retag
+# from a previous version's build would silently FROM the wrong image.
+Dockerfile.retag: Makefile
+	printf 'FROM $(IMAGE)$(if $(IMAGE_DIGEST),@$(IMAGE_DIGEST),)\n' > Dockerfile.retag
 
 $(S9PK): manifest.yaml instructions.md icon.png image docker_entrypoint.sh check-web.sh ../LICENSE
 	cp ../LICENSE LICENSE
