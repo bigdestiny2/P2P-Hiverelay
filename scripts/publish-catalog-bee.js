@@ -36,6 +36,8 @@
  *   --bootstrap <nodes>  Comma-separated DHT bootstrap nodes (host:port)
  *   --no-stay            Exit after pinning (don't stay online to serve blocks)
  *   --hold-seconds <n>   With --no-stay, seconds to stay online first (default: 30)
+ *   --no-advertise       Pin only; don't set this bee as the relay's catalog
+ *                        pointer (skips catalog:true on /seed-core)
  *
  * Example:
  *   HIVERELAY_API_KEY=... node scripts/publish-catalog-bee.js --relay http://127.0.0.1:9100
@@ -53,7 +55,7 @@ import { existsSync } from 'fs'
 const META_KEY = '\x00meta' // sorts before any 64-hex appKey; read by exact key
 
 function parseArgs (argv) {
-  const args = { storage: '.catalog-bee-storage', pageSize: 500, stay: true, holdSeconds: 30 }
+  const args = { storage: '.catalog-bee-storage', pageSize: 500, stay: true, holdSeconds: 30, advertise: true }
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i]
     const next = () => argv[++i]
@@ -64,6 +66,7 @@ function parseArgs (argv) {
     else if (a === '--bootstrap') args.bootstrap = next()
     else if (a === '--no-stay') args.stay = false
     else if (a === '--hold-seconds') args.holdSeconds = Math.max(parseInt(next()) || 30, 0)
+    else if (a === '--no-advertise') args.advertise = false
     else if (a === '--help' || a === '-h') args.help = true
   }
   args.apiKey = args.apiKey || process.env.HIVERELAY_API_KEY || null
@@ -133,14 +136,16 @@ async function fetchCatalog (relayUrl, pageSize) {
   return { entries, relayKey }
 }
 
-async function pinOnRelay (relayUrl, coreKeyHex, apiKey) {
+async function pinOnRelay (relayUrl, coreKeyHex, apiKey, advertise) {
   const base = relayUrl.replace(/\/+$/, '')
   const headers = { 'Content-Type': 'application/json' }
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`
   const r = await fetch(`${base}/seed-core`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ coreKey: coreKeyHex })
+    // catalog:true advertises this bee as the relay's catalog pointer
+    // (surfaced in /catalog.json) so consumers can replicate it over P2P.
+    body: JSON.stringify({ coreKey: coreKeyHex, catalog: advertise === true })
   })
   const j = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error(`seed-core failed: HTTP ${r.status} ${j && j.error ? '— ' + j.error : ''}`)
@@ -218,8 +223,9 @@ async function main () {
   // Pin on the relay (bare-core seed).
   console.log(`[catalog-bee] pinning on ${args.relay} via POST /seed-core …`)
   try {
-    const res = await pinOnRelay(args.relay, coreKeyHex, args.apiKey)
-    console.log(`[catalog-bee] pinned ✓ (relay reports core length ${res.length ?? '?'})`)
+    const res = await pinOnRelay(args.relay, coreKeyHex, args.apiKey, args.advertise)
+    console.log(`[catalog-bee] pinned ✓ (relay reports core length ${res.length ?? '?'})` +
+      (res.catalogBee ? ' — advertised as the relay catalog bee (in /catalog.json)' : ''))
   } catch (err) {
     console.error(`[catalog-bee] pin failed: ${err.message}`)
     console.error('  The bee is built + announced; you can retry the pin, or the relay')

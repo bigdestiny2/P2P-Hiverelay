@@ -3,8 +3,8 @@ import Corestore from 'corestore'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import { EventEmitter } from 'events'
-import { readFile, writeFile, mkdir, chmod } from 'fs/promises'
-import { join } from 'path'
+import { readFile, writeFile, rename, unlink, mkdir, chmod } from 'fs/promises'
+import { join, dirname } from 'path'
 import { Seeder } from './seeder.js'
 import { Relay } from './relay.js'
 import { Metrics } from './metrics.js'
@@ -322,6 +322,13 @@ export class RelayNode extends EventEmitter {
     this.torTransport = null
     this.paymentManager = null
     this.settlementInterval = null
+    // Pointer to this relay's replicable catalog bee (a Hyperbee whose core is
+    // pinned via /seed-core). Surfaced in /catalog.json so consumers (e.g.
+    // PearBrowser) can replicate the catalog over P2P instead of polling HTTP.
+    // Set by /seed-core { catalog: true } or config; persisted in catalog-bee.json.
+    this.catalogBeeKey = (typeof this.config.catalogBeeKey === 'string' && /^[0-9a-f]{64}$/i.test(this.config.catalogBeeKey))
+      ? this.config.catalogBeeKey.toLowerCase()
+      : null
     this.appRegistry = new AppRegistry(this.config.storage)
     this.appLifecycle = new AppLifecycle(this)
     // Forward lifecycle events so existing listeners on RelayNode keep working
@@ -492,6 +499,50 @@ export class RelayNode extends EventEmitter {
     return this.config
   }
 
+  _catalogBeePath () {
+    return this.config.storage ? join(this.config.storage, 'catalog-bee.json') : null
+  }
+
+  async _loadCatalogBeeKey () {
+    const path = this._catalogBeePath()
+    if (!path) return
+    try {
+      const data = JSON.parse(await readFile(path, 'utf8'))
+      if (typeof data.key === 'string' && /^[0-9a-f]{64}$/i.test(data.key)) {
+        this.catalogBeeKey = data.key.toLowerCase()
+      }
+    } catch {
+      // Missing/corrupt -> keep whatever the constructor set from config (or null).
+    }
+  }
+
+  /**
+   * Set + persist this relay's advertised catalog-bee pointer. The key is the
+   * core key of a Hyperbee catalog pinned via /seed-core; it is surfaced in
+   * /catalog.json so consumers (e.g. PearBrowser) can replicate the catalog
+   * over P2P instead of polling HTTP. Atomic tmp+rename.
+   */
+  async setCatalogBeeKey (hex) {
+    if (typeof hex !== 'string' || !/^[0-9a-f]{64}$/i.test(hex)) {
+      throw new Error('catalogBeeKey must be 64 hex characters')
+    }
+    this.catalogBeeKey = hex.toLowerCase()
+    const path = this._catalogBeePath()
+    if (path) {
+      const tmp = path + '.tmp'
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(tmp, JSON.stringify({ key: this.catalogBeeKey, updatedAt: Date.now() }))
+        await rename(tmp, path)
+      } catch (err) {
+        try { await unlink(tmp) } catch (_) {}
+        this.emit('catalog-bee-persist-error', err)
+      }
+    }
+    this.emit('catalog-bee-key', { key: this.catalogBeeKey })
+    return this.catalogBeeKey
+  }
+
   async start () {
     if (this.running) return
 
@@ -525,6 +576,11 @@ export class RelayNode extends EventEmitter {
         // Already attached + bee already opened (same-store restart path
         // can fall through here). Harmless.
       }
+
+      // Restore the advertised catalog-bee pointer (persisted across restart;
+      // the bee's core itself is re-seeded by the Seeder). config value, if
+      // valid, was set in the constructor and is the fallback.
+      await this._loadCatalogBeeKey()
 
       await this.bootstrapCache.load()
       const bootstrap = this.bootstrapCache.merge(this.config.bootstrapNodes)

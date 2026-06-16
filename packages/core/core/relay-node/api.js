@@ -540,6 +540,11 @@ export class RelayAPI extends EventEmitter {
           relayKey: this.node.swarm
             ? Buffer.from(this.node.swarm.keyPair.publicKey).toString('hex')
             : null,
+          // Replicable catalog bee (a Hyperbee whose core is pinned here).
+          // When set, a consumer can replicate this key over P2P + verify its
+          // signed \x00meta instead of polling this HTTP endpoint. null until
+          // the operator publishes one (scripts/publish-catalog-bee.js).
+          catalogBeeKey: this.node.catalogBeeKey || null,
           // Surface region + operator so peer relays' AutoHeal can score
           // diversity correctly. operator is optional — when absent, peers
           // fall back to treating each pubkey as its own operator (less
@@ -1550,7 +1555,14 @@ export class RelayAPI extends EventEmitter {
           }
           try {
             const entry = await this.node.seeder.seedCore(coreKey)
-            return this._json(res, { ok: true, coreKey, length: entry && entry.core ? entry.core.length : 0 })
+            // Optionally advertise this core as THE relay's catalog bee, so
+            // /catalog.json surfaces it for consumers to replicate.
+            let catalogBee = false
+            if (body.catalog === true && typeof this.node.setCatalogBeeKey === 'function') {
+              await this.node.setCatalogBeeKey(coreKey)
+              catalogBee = true
+            }
+            return this._json(res, { ok: true, coreKey, length: entry && entry.core ? entry.core.length : 0, catalogBee })
           } catch (err) {
             return this._custodyErrorResponse(res, err)
           }

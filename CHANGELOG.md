@@ -805,6 +805,12 @@ mirror of the `ForwardRelay` opt-in transport posture.
   its core on that relay via `/seed-core`. Unblocks moving relays off
   HTTP-polled catalogs onto a P2P-replicable, offline-verifiable catalog bee.
   E2E-verified: build → pin → consumer reads + verifies the signature.
+- **Catalog-bee discovery (read-side):** the relay advertises its catalog-bee
+  key as `catalogBeeKey` in `/catalog.json` so a consumer can replicate the
+  catalog over P2P + verify its signed `\x00meta` instead of polling HTTP.
+  `POST /seed-core { catalog: true }` (and `publish-catalog-bee.js` by default)
+  pins the bee AND registers it as the relay's catalog pointer; the pointer is
+  persisted (`<storage>/catalog-bee.json`) and survives restart.
 
 - **Forward Relay** (`hiverelay-forward`) — a demand-dialled relay transport
   (`packages/core/core/protocol/forward-relay.js`, wired into `RelayNode`).

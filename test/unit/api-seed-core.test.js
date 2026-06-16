@@ -11,7 +11,7 @@ import { RelayAPI } from 'p2p-hiverelay/core/relay-node/api.js'
 const API_KEY = 'seed-core-test-key'
 const HEX64 = 'a'.repeat(64)
 
-function mockRelayNode (seeder) {
+function mockRelayNode (seeder, opts = {}) {
   return {
     running: true,
     config: { storage: null },
@@ -26,6 +26,11 @@ function mockRelayNode (seeder) {
     async unseedApp () {},
     seeder,
     swarm: null,
+    federation: null,
+    _resolveAcceptMode () { return 'open' },
+    catalogBeeKey: opts.catalogBeeKey || null,
+    _catalogSet: [],
+    async setCatalogBeeKey (k) { this._catalogSet.push(k); this.catalogBeeKey = k; return k },
     on () {},
     emit () {}
   }
@@ -48,8 +53,8 @@ function request (port, method, path, body, headers = {}) {
   })
 }
 
-async function makeServer (t, seeder) {
-  const node = mockRelayNode(seeder)
+async function makeServer (t, seeder, nodeOpts) {
+  const node = mockRelayNode(seeder, nodeOpts)
   const api = new RelayAPI(node, { apiPort: 0, apiHost: '127.0.0.1', apiKey: API_KEY })
   await api.start()
   const port = api.server.address().port
@@ -99,4 +104,35 @@ test('seed-core: 503 when seeder is unavailable', async (t) => {
   const { port } = await makeServer(t, null)
   const res = await request(port, 'POST', '/seed-core', { coreKey: HEX64 }, { Authorization: 'Bearer ' + API_KEY })
   t.is(res.statusCode, 503)
+})
+
+test('seed-core: catalog:true registers the catalog-bee pointer', async (t) => {
+  const seeder = { async seedCore () { return { core: { length: 2 } } } }
+  const { port, node } = await makeServer(t, seeder)
+  const res = await request(port, 'POST', '/seed-core', { coreKey: HEX64, catalog: true }, { Authorization: 'Bearer ' + API_KEY })
+  t.is(res.statusCode, 200)
+  t.is(res.body.catalogBee, true)
+  t.alike(node._catalogSet, [HEX64], 'setCatalogBeeKey called with the core key')
+  t.is(node.catalogBeeKey, HEX64)
+})
+
+test('seed-core: without catalog flag, no pointer is set', async (t) => {
+  const seeder = { async seedCore () { return { core: { length: 2 } } } }
+  const { port, node } = await makeServer(t, seeder)
+  const res = await request(port, 'POST', '/seed-core', { coreKey: HEX64 }, { Authorization: 'Bearer ' + API_KEY })
+  t.is(res.body.catalogBee, false)
+  t.alike(node._catalogSet, [], 'setCatalogBeeKey not called')
+})
+
+test('catalog.json surfaces catalogBeeKey', async (t) => {
+  const { port } = await makeServer(t, null, { catalogBeeKey: HEX64 })
+  const res = await request(port, 'GET', '/catalog.json')
+  t.is(res.statusCode, 200)
+  t.is(res.body.catalogBeeKey, HEX64, 'catalog pointer surfaced for consumers')
+})
+
+test('catalog.json: catalogBeeKey is null until a catalog bee is published', async (t) => {
+  const { port } = await makeServer(t, null)
+  const res = await request(port, 'GET', '/catalog.json')
+  t.is(res.body.catalogBeeKey, null)
 })
