@@ -257,7 +257,10 @@ export class AppRegistry extends EventEmitter {
       anchoredAt,
       anchoredLength,
       lastAnchorCheck,
-      maxStorage
+      maxStorage,
+      // Paid pin-lease marker. When true, retainUntil is an enforced lease
+      // deadline (the custody-expiry sweep unseeds past it). See incentive/lease.
+      leaseManaged: entry.leaseManaged === true
     }
   }
 
@@ -832,6 +835,7 @@ export class AppRegistry extends EventEmitter {
       maxStorage: Number.isFinite(entry.maxStorage) && entry.maxStorage > 0
         ? Math.floor(entry.maxStorage)
         : null,
+      leaseManaged: entry.leaseManaged === true,
       // drive and discoveryKey are set during reseeding
       drive: null,
       discoveryKey: null
@@ -869,7 +873,8 @@ export class AppRegistry extends EventEmitter {
       revocable: e.revocable !== false,
       maxStorage: Number.isFinite(e.maxStorage) && e.maxStorage > 0
         ? Math.floor(e.maxStorage)
-        : null
+        : null,
+      leaseManaged: e.leaseManaged === true
     }
   }
 
@@ -914,7 +919,8 @@ export class AppRegistry extends EventEmitter {
       lastAnchorCheck: entry.lastAnchorCheck || null,
       maxStorage: Number.isFinite(entry.maxStorage) && entry.maxStorage > 0
         ? Math.floor(entry.maxStorage)
-        : null
+        : null,
+      leaseManaged: entry.leaseManaged === true
     }
   }
 

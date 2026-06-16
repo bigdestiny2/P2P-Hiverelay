@@ -113,7 +113,7 @@ export async function purgeDriveCores (store, appKeyHex, { purgeTimeoutMs = 60_0
  * explicit operator action — those are durability promises to publishers,
  * not housekeeping preferences. Throws with a stable code.
  */
-export function assertPurgable (entry) {
+export function assertPurgable (entry, now = Date.now()) {
   if (!entry) {
     const err = new Error('entry not found')
     err.code = 'NOT_FOUND'
@@ -127,6 +127,15 @@ export function assertPurgable (entry) {
   if (entry.custodyIntentId) {
     const err = new Error('custody-bound entry is not evictable')
     err.code = 'CUSTODY_BOUND'
+    throw err
+  }
+  // A paid pin-lease is sacred until its window lapses — shedding it early
+  // would be taking payment and not delivering (a refund/trust problem the
+  // MVP has no settlement layer to resolve). Once expired, the custody-expiry
+  // sweep unseeds it normally.
+  if (entry.leaseManaged === true && Number.isFinite(entry.retainUntil) && entry.retainUntil > now) {
+    const err = new Error('paid-lease entry is not evictable until its lease expires')
+    err.code = 'LEASE_BOUND'
     throw err
   }
 }
@@ -225,13 +234,16 @@ export class EvictionManager extends EventEmitter {
       // Skip-reason counters — without these, "candidates: 0" on a full
       // disk is undiagnosable from the outside (learned on the utah
       // canary, 2026-06-11).
-      const skips = { archive: 0, custody: 0, young: 0, noBirth: 0, noCensus: 0, floor: 0, rank: 0, registryError: 0 }
+      const skips = { archive: 0, custody: 0, lease: 0, young: 0, noBirth: 0, noCensus: 0, floor: 0, rank: 0, registryError: 0 }
 
       for (const [appKey, entry] of this.deps.appRegistry.entries()) {
         scanned++
         if (!entry) continue
         if ((entry.durability || 0) >= 1) { skips.archive++; continue } // archive / operator pin
         if (entry.custodyIntentId) { skips.custody++; continue } // custody contract
+        // Paid pin-lease — sacred until its window lapses (don't take payment
+        // then shed early). After expiry the custody-expiry sweep unseeds it.
+        if (entry.leaseManaged === true && Number.isFinite(entry.retainUntil) && entry.retainUntil > now) { skips.lease++; continue }
         const bornAt = entry.addedAt || entry.startedAt || entry.seededAt || entry.firstSeenAt || 0
         if (!bornAt) { skips.noBirth++; continue }
         if (now - bornAt < this.config.minAgeMs) { skips.young++; continue }

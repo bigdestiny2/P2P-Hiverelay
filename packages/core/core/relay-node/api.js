@@ -37,6 +37,7 @@ import { SetupWizard } from '../wizard.js'
 import { verifyForkProof } from '../fork-proof-signing.js'
 import { isTransientCoreError, TRANSIENT_RETRY_AFTER_SECONDS } from '../transient-core-errors.js'
 import { buildPublisherSignedSeedOpts } from '../seed-request-builder.js'
+import { evaluateSeedLease } from '../../incentive/lease/gate.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -830,6 +831,24 @@ export class RelayAPI extends EventEmitter {
           return this._json(res, { enabled: true, ...this.node.subsidyAccrual.getSummary() })
         }
 
+        // Paid pin-lease status (operator-facing). {enabled:false} when off so
+        // the dashboard card stays hidden. activeLeases is counted live from
+        // the registry (entries currently under a paid, unexpired lease).
+        if (path === '/api/lease') {
+          if (!this._checkAuth(req)) {
+            return this._json(res, { error: formatErr('NOT_ALLOWED', 'lease status requires API key or localhost') }, 403)
+          }
+          if (!this.node.leaseManager) return this._json(res, { enabled: false })
+          let activeLeases = 0
+          const now = Date.now()
+          if (this.node.appRegistry && this.node.appRegistry.apps) {
+            for (const [, entry] of this.node.appRegistry.apps) {
+              if (entry && entry.leaseManaged === true && Number.isFinite(entry.retainUntil) && entry.retainUntil > now) activeLeases++
+            }
+          }
+          return this._json(res, { ...this.node.leaseManager.getSummary(), activeLeases })
+        }
+
         // Signed subsidy claim export — what the Phase-2 coordinator
         // fetches (and independently verifies) to dispatch payouts.
         if (path === '/api/subsidy/claim') {
@@ -1334,6 +1353,27 @@ export class RelayAPI extends EventEmitter {
           try {
             const dest = await this.node.subsidyAccrual.setPayoutDestination(body.destination)
             return this._json(res, { ok: true, payoutDestination: dest })
+          } catch (err) {
+            return this._json(res, { error: formatErr('BAD_REQUEST', err.message) }, 400)
+          }
+        }
+
+        // Set the paid-seeding rate at runtime. Enabling/disabling the lease
+        // requires the config flag + restart (the manager + LN provider are
+        // wired at boot); the per-GiB-day rate is live-settable here.
+        if (path === '/api/lease/config') {
+          if (!this._checkAuth(req)) {
+            return this._json(res, { error: formatErr('NOT_ALLOWED', 'lease config requires API key or localhost') }, 403)
+          }
+          if (!this.node.leaseManager) {
+            return this._json(res, { error: formatErr('NOT_ENABLED', 'paid seeding is off — set lease.enabled in config and restart') }, 409)
+          }
+          if (!body || !Number.isFinite(body.satsPerGiBDay)) {
+            return this._json(res, { error: formatErr('BAD_REQUEST', 'satsPerGiBDay (number) required') }, 400)
+          }
+          try {
+            const rate = this.node.leaseManager.setRate(body.satsPerGiBDay)
+            return this._json(res, { ok: true, satsPerGiBDay: rate })
           } catch (err) {
             return this._json(res, { error: formatErr('BAD_REQUEST', err.message) }, 400)
           }
@@ -1933,6 +1973,32 @@ export class RelayAPI extends EventEmitter {
           })
           if (!built.ok) {
             return this._json(res, { error: built.error }, built.status)
+          }
+
+          // Paid pin-lease gate, via the SHARED module also used by the
+          // publish-channel + legacy seed-protocol paths (so it can't be wired
+          // on one transport and bypassed on another). Operator POST /seed
+          // (API-key) never reaches here → self-host stays free; a verified
+          // custody intent is exempt.
+          {
+            const gate = await evaluateSeedLease({
+              leaseManager: this.node.leaseManager,
+              seedingRegistry: this.node.seedingRegistry,
+              appKey: built.appKey,
+              opts: built.opts,
+              body
+            })
+            if (gate.outcome === 'quote') {
+              return this._json(res, { error: gate.error, leaseRequired: true, ...(gate.quote || {}) }, gate.status)
+            }
+            if (gate.outcome === 'error') {
+              return this._json(res, { error: gate.error, leaseRequired: true }, gate.status)
+            }
+            if (gate.outcome === 'paid') {
+              built.opts.retainUntil = gate.retainUntil
+              built.opts.leaseManaged = true
+            }
+            // 'exempt' → proceed unchanged
           }
 
           try {

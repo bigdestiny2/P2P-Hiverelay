@@ -39,6 +39,9 @@ import { DiskMonitor } from './disk-monitor.js'
 import { StorageAccounting } from './storage-accounting.js'
 import { EvictionManager, assertPurgable, purgeDriveCores } from './eviction.js'
 import { SubsidyAccrual } from '../../incentive/subsidy/index.js'
+import { LeaseManager } from '../../incentive/lease/index.js'
+import { evaluateSeedLease, isLeaseExempt } from '../../incentive/lease/gate.js'
+import { MockProvider } from '../../incentive/payment/mock-provider.js'
 import { AlertManager } from './alert-manager.js'
 import { SelfHeal } from './self-heal.js'
 import { AccessControl } from './access-control.js'
@@ -352,6 +355,7 @@ export class RelayNode extends EventEmitter {
     this.storageAccounting = null
     this.eviction = null
     this.subsidyAccrual = null
+    this.leaseManager = null
     this.alertManager = null
     this.selfHeal = null
     this.seedingRegistry = null
@@ -1250,6 +1254,25 @@ export class RelayNode extends EventEmitter {
               if (!built.ok) {
                 return { ok: false, error: built.error }
               }
+              // Paid pin-lease gate — SAME shared module as the HTTP route, so
+              // this publisher-signed transport can't be a free back door.
+              const gate = await evaluateSeedLease({
+                leaseManager: this.leaseManager,
+                seedingRegistry: this.seedingRegistry,
+                appKey: built.appKey,
+                opts: built.opts,
+                body
+              })
+              if (gate.outcome === 'quote') {
+                return { ok: false, error: gate.error, leaseRequired: true, ...(gate.quote || {}) }
+              }
+              if (gate.outcome === 'error') {
+                return { ok: false, error: gate.error, leaseRequired: true }
+              }
+              if (gate.outcome === 'paid') {
+                built.opts.retainUntil = gate.retainUntil
+                built.opts.leaseManaged = true
+              }
               try {
                 const result = await this.seedApp(built.appKey, built.opts)
                 return { ok: true, result }
@@ -1517,6 +1540,44 @@ export class RelayNode extends EventEmitter {
           payoutDestination: this.config.subsidy.payoutDestination || undefined
         })
         await this.subsidyAccrual.start()
+      }
+
+      // Paid pin-lease (demand side). Off by default. When enabled, the
+      // publisher-signed seed path charges a byte-days lease; funds settle to
+      // the operator's OWN LN node (zero-custody) and the lease is enforced by
+      // the custody-expiry sweep. Operator self-seeds (POST /seed) are free.
+      // See incentive/lease/index.js + the payment-for-seeding design.
+      if (this.config.lease?.enabled) {
+        let provider = this.config.leaseProvider || null
+        if (!provider) {
+          // 'mock' (in-memory, for test/demo) is the default; 'lightning'
+          // expects the operator to supply a connected provider via
+          // config.leaseProvider (the LND gRPC proto is not bundled here).
+          provider = new MockProvider()
+        }
+        // Fail loud if the wired provider can't VERIFY settlement — otherwise
+        // every redemption would 503 and no lease could ever be granted.
+        if (typeof provider.lookupInvoice !== 'function') {
+          throw new Error('lease.enabled requires a payment provider with lookupInvoice() (got ' +
+            ((provider.constructor && provider.constructor.name) || 'unknown') +
+            '); supply one via config.leaseProvider or set lease.enabled=false')
+        }
+        const payTo = (this.subsidyAccrual && this.subsidyAccrual.payoutDestination
+          ? this.subsidyAccrual.payoutDestination.value
+          : null) ||
+          (this.config.subsidy && this.config.subsidy.payoutDestination) ||
+          this.config.lease.payTo || null
+        this.leaseManager = new LeaseManager({
+          keyPair: this.swarm.keyPair,
+          provider,
+          storagePath: join(this.config.storage, 'lease.json'),
+          satsPerGiBDay: this.config.lease.satsPerGiBDay,
+          quoteTtlMs: this.config.lease.quoteTtlMs,
+          minDays: this.config.lease.minLeaseDays,
+          maxDays: this.config.lease.maxLeaseDays,
+          payTo
+        })
+        await this.leaseManager.start()
       }
 
       // Start alert manager (if configured) — wires to health monitor + subsystems
@@ -2307,11 +2368,21 @@ export class RelayNode extends EventEmitter {
       }
 
       if (decision === 'accept') {
+        const publisherHex = typeof req.publisherPubkey === 'string'
+          ? req.publisherPubkey
+          : (req.publisherPubkey ? b4a.toString(req.publisherPubkey, 'hex') : null)
+        // Paid pin-lease: this registry auto-accept path carries no payment
+        // proof, so a chargeable seed cannot settle here. Skip + route payers
+        // to the gated HTTP / publish-channel path. Verified custody is exempt.
+        if (this.leaseManager && !isLeaseExempt(
+          { custodyIntentId: req.custodyIntentId || null, publisherPubkey: publisherHex },
+          { seedingRegistry: this.seedingRegistry }
+        )) {
+          this.emit('registry-rejected', { appKey: req.appKey, publisher: req.publisherPubkey, mode: acceptMode, reason: 'payment-required' })
+          continue
+        }
         // Auto-accept: seed immediately ('open' or 'allowlist' hit)
         try {
-          const publisherHex = typeof req.publisherPubkey === 'string'
-            ? req.publisherPubkey
-            : (req.publisherPubkey ? b4a.toString(req.publisherPubkey, 'hex') : null)
           await this.seedApp(req.appKey, {
             publisherPubkey: publisherHex,
             type: req.contentType || req.type || 'app',
@@ -2524,6 +2595,20 @@ export class RelayNode extends EventEmitter {
       effectivePublisher = delegationCheck.primaryPubkey
     }
 
+    // Paid pin-lease: the binary seed-protocol carries no payment-proof field,
+    // so a chargeable seed cannot be settled over this transport. Deny + route
+    // paying publishers to the gated HTTP / publish-channel path rather than
+    // seeding for free. A verified custody intent stays exempt.
+    const custodyOpts = extractCustodySeedOpts(msg)
+    if (this.leaseManager && !isLeaseExempt(
+      { custodyIntentId: custodyOpts.custodyIntentId || null, publisherPubkey: effectivePublisher },
+      { seedingRegistry: this.seedingRegistry }
+    )) {
+      this.emit('seed-rejected', { appKey: appKeyHex, reason: 'payment-required' })
+      deny('payment-required', 'this relay charges to seed; submit via the publish channel or HTTPS /api/v1/seed with a paid lease')
+      return
+    }
+
     // Accept and start seeding
     this._seedProtocol.acceptSeedRequest(
       msg.appKey,
@@ -2561,7 +2646,7 @@ export class RelayNode extends EventEmitter {
       blind: msg.blind === true,
       storageClass: msg.storageClass || null,
       availabilityClass: msg.availabilityClass || null,
-      ...extractCustodySeedOpts(msg)
+      ...custodyOpts
     }).catch((err) => {
       this.emit('seed-error', { appKey: appKeyHex, error: err })
     })
@@ -2896,7 +2981,11 @@ export class RelayNode extends EventEmitter {
     const availabilityClass = normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on')
     return storageClass === 'temporary' ||
       availabilityClass === 'atomic-handoff' ||
-      (entry.blind === true && Number.isFinite(entry.retainUntil))
+      (entry.blind === true && Number.isFinite(entry.retainUntil)) ||
+      // Paid pin-lease: retainUntil is an enforced lease deadline. Gated
+      // STRICTLY on leaseManaged so operator self-pins and custody intents
+      // (which set retainUntil for other reasons) are never swept here.
+      (entry.leaseManaged === true && Number.isFinite(entry.retainUntil))
   }
 
   /**
@@ -3532,6 +3621,20 @@ export class RelayNode extends EventEmitter {
     if (availableBytes <= 0) return false
     if (request.maxStorageBytes > 0 && request.maxStorageBytes > availableBytes) return false
 
+    // Paid pin-lease: don't auto-adopt a non-exempt publisher's registry
+    // request for free here. The MVP charges each relay individually (no
+    // free cross-relay mirroring), so a chargeable drive we're not already
+    // seeding must come through the gated HTTP/publish path, not the
+    // replication-repair monitor. Verified custody intents stay exempt; this
+    // never fires for drives we already seed (caught by alreadySeeding above).
+    if (this.leaseManager && !isLeaseExempt(
+      { custodyIntentId: request.custodyIntentId || null, publisherPubkey: effectivePublisher },
+      { seedingRegistry: this.seedingRegistry }
+    )) {
+      this.emit('replication-repair-skipped', { appKey: request.appKey, reason: 'payment-required' })
+      return false
+    }
+
     try {
       await this.seedApp(request.appKey, {
         publisherPubkey: effectivePublisher,
@@ -3619,6 +3722,7 @@ export class RelayNode extends EventEmitter {
     if (this.eviction) { this.eviction.stop(); this.eviction = null }
     if (this.storageAccounting) { this.storageAccounting.stop(); this.storageAccounting = null }
     if (this.subsidyAccrual) { await this.subsidyAccrual.destroy(); this.subsidyAccrual = null }
+    if (this.leaseManager) { await this.leaseManager.destroy(); this.leaseManager = null }
     if (this._healthCheckInterval) { clearInterval(this._healthCheckInterval); this._healthCheckInterval = null }
     if (this.settlementInterval) { clearInterval(this.settlementInterval); this.settlementInterval = null }
     if (this._replicationCheckInterval) { clearInterval(this._replicationCheckInterval); this._replicationCheckInterval = null }

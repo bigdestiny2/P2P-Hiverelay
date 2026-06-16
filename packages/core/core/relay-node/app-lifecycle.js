@@ -92,7 +92,10 @@ export class AppLifecycle extends EventEmitter {
           // that case (matches v0.8.11 reseed behavior).
           maxStorage: Number.isFinite(entry.maxStorage) && entry.maxStorage > 0
             ? entry.maxStorage
-            : undefined
+            : undefined,
+          // Preserve the paid-lease marker across restart so retainUntil stays
+          // an enforced lease (sweep acts on it; eviction protects it).
+          leaseManaged: entry.leaseManaged === true
         })
         this.emit('reseeded', { appKey: entry.appKey })
       } catch (err) {
@@ -403,7 +406,11 @@ export class AppLifecycle extends EventEmitter {
         revocable,
         unseedFreezeMs,
         durability,
-        maxStorage
+        maxStorage,
+        // Paid pin-lease marker (incentive/lease). When true, retainUntil is an
+        // enforced lease deadline that the custody-expiry sweep acts on and
+        // eviction must not shed early. Set by the lease gate on a verified seed.
+        leaseManaged: opts.leaseManaged === true
       })
 
       // 2026-05-23: register persistent download ranges on the drive's
