@@ -540,6 +540,11 @@ export class RelayAPI extends EventEmitter {
           relayKey: this.node.swarm
             ? Buffer.from(this.node.swarm.keyPair.publicKey).toString('hex')
             : null,
+          // Replicable catalog bee (a Hyperbee whose core is pinned here).
+          // When set, a consumer can replicate this key over P2P + verify its
+          // signed \x00meta instead of polling this HTTP endpoint. null until
+          // the operator publishes one (scripts/publish-catalog-bee.js).
+          catalogBeeKey: this.node.catalogBeeKey || null,
           // Surface region + operator so peer relays' AutoHeal can score
           // diversity correctly. operator is optional — when absent, peers
           // fall back to treating each pubkey as its own operator (less
@@ -1529,6 +1534,38 @@ export class RelayAPI extends EventEmitter {
           }
           const result = await this.node.seedApp(body.appKey, seedOpts)
           return this._json(res, { ok: true, ...result })
+        }
+
+        // Pin a BARE Hypercore by public key (no Hyperdrive wrapper). seedApp
+        // above opens a Hyperdrive; a Hyperbee — e.g. a replicable catalog bee
+        // (scripts/publish-catalog-bee.js) — is a plain Hypercore and must be
+        // seeded via Seeder.seedCore instead. Operator-authed: the operator
+        // pins their own catalog/index cores. Content stays opaque (the relay
+        // replicates blocks; it does not interpret the bee).
+        if (path === '/seed-core') {
+          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /seed-core')) return
+          if (!this.node.seeder || typeof this.node.seeder.seedCore !== 'function') {
+            return this._json(res, { error: 'seeder not available' }, 503)
+          }
+          const coreKey = typeof body.coreKey === 'string'
+            ? body.coreKey.trim().toLowerCase()
+            : (typeof body.appKey === 'string' ? body.appKey.trim().toLowerCase() : null)
+          if (!coreKey || !isValidHexKey(coreKey, 64)) {
+            return this._json(res, { error: 'coreKey must be 64 hex characters' }, 400)
+          }
+          try {
+            const entry = await this.node.seeder.seedCore(coreKey)
+            // Optionally advertise this core as THE relay's catalog bee, so
+            // /catalog.json surfaces it for consumers to replicate.
+            let catalogBee = false
+            if (body.catalog === true && typeof this.node.setCatalogBeeKey === 'function') {
+              await this.node.setCatalogBeeKey(coreKey)
+              catalogBee = true
+            }
+            return this._json(res, { ok: true, coreKey, length: entry && entry.core ? entry.core.length : 0, catalogBee })
+          } catch (err) {
+            return this._custodyErrorResponse(res, err)
+          }
         }
 
         if (path === '/registry/publish') {

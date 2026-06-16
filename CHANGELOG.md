@@ -789,6 +789,33 @@ mirror of the `ForwardRelay` opt-in transport posture.
 
 ### Added
 
+- **`POST /seed-core`** — pin a BARE Hypercore by public key via
+  `Seeder.seedCore` (operator-authed). `POST /seed` opens a Hyperdrive; a
+  Hyperbee (e.g. a replicable catalog) is a plain Hypercore and had no HTTP
+  pin path. The relay replicates the core's blocks; it does not interpret it.
+  **Durable across restart**: the Seeder now persists its bare-core pin set to
+  `<storage>/seeded-cores.json` (atomic tmp+rename) and re-seeds them on
+  start. Teardown (`stop()`) releases resources but keeps the list; only an
+  operator `unseedCore` removes a pin. (Blocks already live in the corestore,
+  so a restart just re-opens + re-announces them.)
+- **`scripts/publish-catalog-bee.js`** — builds a replicable, signed Hyperbee
+  catalog from a relay's `/catalog.json` (paginated) keyed by appKey → entry,
+  authored + signed by a persisted Ed25519 keypair. The signed `\x00meta`
+  record names `beeKey` (core.key — the subscribe/replication anchor) and
+  `signerPubkey` (the Ed25519 signer == the core's block authenticator)
+  separately, so a consumer verifies the signature against `signerPubkey` and
+  binds it to the core's real signer (`core.manifest?.signers[0].publicKey ??
+  core.key`) — correct for BOTH compat (hypercore 10.x today) and manifest
+  cores. Pins its core on that relay via `/seed-core`. Unblocks moving relays off
+  HTTP-polled catalogs onto a P2P-replicable, offline-verifiable catalog bee.
+  E2E-verified: build → pin → consumer reads + verifies the signature.
+- **Catalog-bee discovery (read-side):** the relay advertises its catalog-bee
+  key as `catalogBeeKey` in `/catalog.json` so a consumer can replicate the
+  catalog over P2P + verify its signed `\x00meta` instead of polling HTTP.
+  `POST /seed-core { catalog: true }` (and `publish-catalog-bee.js` by default)
+  pins the bee AND registers it as the relay's catalog pointer; the pointer is
+  persisted (`<storage>/catalog-bee.json`) and survives restart.
+
 - **Forward Relay** (`hiverelay-forward`) — a demand-dialled relay transport
   (`packages/core/core/protocol/forward-relay.js`, wired into `RelayNode`).
   A client sends `OPEN(targetPubkey)`; the relay dials that target over the
