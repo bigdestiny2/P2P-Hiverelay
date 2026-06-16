@@ -40,6 +40,7 @@ import { StorageAccounting } from './storage-accounting.js'
 import { EvictionManager, assertPurgable, purgeDriveCores } from './eviction.js'
 import { SubsidyAccrual } from '../../incentive/subsidy/index.js'
 import { LeaseManager } from '../../incentive/lease/index.js'
+import { evaluateSeedLease, isLeaseExempt } from '../../incentive/lease/gate.js'
 import { MockProvider } from '../../incentive/payment/mock-provider.js'
 import { AlertManager } from './alert-manager.js'
 import { SelfHeal } from './self-heal.js'
@@ -1194,6 +1195,25 @@ export class RelayNode extends EventEmitter {
               if (!built.ok) {
                 return { ok: false, error: built.error }
               }
+              // Paid pin-lease gate — SAME shared module as the HTTP route, so
+              // this publisher-signed transport can't be a free back door.
+              const gate = await evaluateSeedLease({
+                leaseManager: this.leaseManager,
+                seedingRegistry: this.seedingRegistry,
+                appKey: built.appKey,
+                opts: built.opts,
+                body
+              })
+              if (gate.outcome === 'quote') {
+                return { ok: false, error: gate.error, leaseRequired: true, ...(gate.quote || {}) }
+              }
+              if (gate.outcome === 'error') {
+                return { ok: false, error: gate.error, leaseRequired: true }
+              }
+              if (gate.outcome === 'paid') {
+                built.opts.retainUntil = gate.retainUntil
+                built.opts.leaseManaged = true
+              }
               try {
                 const result = await this.seedApp(built.appKey, built.opts)
                 return { ok: true, result }
@@ -1475,6 +1495,13 @@ export class RelayNode extends EventEmitter {
           // expects the operator to supply a connected provider via
           // config.leaseProvider (the LND gRPC proto is not bundled here).
           provider = new MockProvider()
+        }
+        // Fail loud if the wired provider can't VERIFY settlement — otherwise
+        // every redemption would 503 and no lease could ever be granted.
+        if (typeof provider.lookupInvoice !== 'function') {
+          throw new Error('lease.enabled requires a payment provider with lookupInvoice() (got ' +
+            ((provider.constructor && provider.constructor.name) || 'unknown') +
+            '); supply one via config.leaseProvider or set lease.enabled=false')
         }
         const payTo = (this.subsidyAccrual && this.subsidyAccrual.payoutDestination
           ? this.subsidyAccrual.payoutDestination.value
@@ -2282,11 +2309,21 @@ export class RelayNode extends EventEmitter {
       }
 
       if (decision === 'accept') {
+        const publisherHex = typeof req.publisherPubkey === 'string'
+          ? req.publisherPubkey
+          : (req.publisherPubkey ? b4a.toString(req.publisherPubkey, 'hex') : null)
+        // Paid pin-lease: this registry auto-accept path carries no payment
+        // proof, so a chargeable seed cannot settle here. Skip + route payers
+        // to the gated HTTP / publish-channel path. Verified custody is exempt.
+        if (this.leaseManager && !isLeaseExempt(
+          { custodyIntentId: req.custodyIntentId || null, publisherPubkey: publisherHex },
+          { seedingRegistry: this.seedingRegistry }
+        )) {
+          this.emit('registry-rejected', { appKey: req.appKey, publisher: req.publisherPubkey, mode: acceptMode, reason: 'payment-required' })
+          continue
+        }
         // Auto-accept: seed immediately ('open' or 'allowlist' hit)
         try {
-          const publisherHex = typeof req.publisherPubkey === 'string'
-            ? req.publisherPubkey
-            : (req.publisherPubkey ? b4a.toString(req.publisherPubkey, 'hex') : null)
           await this.seedApp(req.appKey, {
             publisherPubkey: publisherHex,
             type: req.contentType || req.type || 'app',
@@ -2499,6 +2536,20 @@ export class RelayNode extends EventEmitter {
       effectivePublisher = delegationCheck.primaryPubkey
     }
 
+    // Paid pin-lease: the binary seed-protocol carries no payment-proof field,
+    // so a chargeable seed cannot be settled over this transport. Deny + route
+    // paying publishers to the gated HTTP / publish-channel path rather than
+    // seeding for free. A verified custody intent stays exempt.
+    const custodyOpts = extractCustodySeedOpts(msg)
+    if (this.leaseManager && !isLeaseExempt(
+      { custodyIntentId: custodyOpts.custodyIntentId || null, publisherPubkey: effectivePublisher },
+      { seedingRegistry: this.seedingRegistry }
+    )) {
+      this.emit('seed-rejected', { appKey: appKeyHex, reason: 'payment-required' })
+      deny('payment-required', 'this relay charges to seed; submit via the publish channel or HTTPS /api/v1/seed with a paid lease')
+      return
+    }
+
     // Accept and start seeding
     this._seedProtocol.acceptSeedRequest(
       msg.appKey,
@@ -2536,7 +2587,7 @@ export class RelayNode extends EventEmitter {
       blind: msg.blind === true,
       storageClass: msg.storageClass || null,
       availabilityClass: msg.availabilityClass || null,
-      ...extractCustodySeedOpts(msg)
+      ...custodyOpts
     }).catch((err) => {
       this.emit('seed-error', { appKey: appKeyHex, error: err })
     })

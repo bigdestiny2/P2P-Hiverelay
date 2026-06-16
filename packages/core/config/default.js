@@ -99,6 +99,7 @@ export default {
   lease: {
     enabled: false,
     satsPerGiBDay: 10, // price = ceil(maxStorageBytes/GiB) * leaseDays * this
+    maxSatsPerGiBDay: 1_000_000, // ceiling for the runtime-settable rate
     quoteTtlMs: 60 * 60 * 1000, // 1h to pay; aligned with invoice expiry
     minLeaseDays: 1,
     maxLeaseDays: 3650,

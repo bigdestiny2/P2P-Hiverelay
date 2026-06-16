@@ -37,6 +37,7 @@ import { SetupWizard } from '../wizard.js'
 import { verifyForkProof } from '../fork-proof-signing.js'
 import { isTransientCoreError, TRANSIENT_RETRY_AFTER_SECONDS } from '../transient-core-errors.js'
 import { buildPublisherSignedSeedOpts } from '../seed-request-builder.js'
+import { evaluateSeedLease } from '../../incentive/lease/gate.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -1937,13 +1938,30 @@ export class RelayAPI extends EventEmitter {
             return this._json(res, { error: built.error }, built.status)
           }
 
-          // Paid pin-lease gate. Publisher-signed seeds only — the operator's
-          // own POST /seed (API-key) never reaches here, so self-host is free.
-          // Custody / social-recovery seeds are exempt (founder-subsidized).
-          if (this.node.leaseManager && !this._isLeaseExempt(built.opts)) {
-            const gate = await this._applySeedLease(res, body, built)
-            if (gate.handled) return // 402 quote, or a verification error, already sent
-            // else gate merged retainUntil + leaseManaged into built.opts
+          // Paid pin-lease gate, via the SHARED module also used by the
+          // publish-channel + legacy seed-protocol paths (so it can't be wired
+          // on one transport and bypassed on another). Operator POST /seed
+          // (API-key) never reaches here → self-host stays free; a verified
+          // custody intent is exempt.
+          {
+            const gate = await evaluateSeedLease({
+              leaseManager: this.node.leaseManager,
+              seedingRegistry: this.node.seedingRegistry,
+              appKey: built.appKey,
+              opts: built.opts,
+              body
+            })
+            if (gate.outcome === 'quote') {
+              return this._json(res, { error: gate.error, leaseRequired: true, ...(gate.quote || {}) }, gate.status)
+            }
+            if (gate.outcome === 'error') {
+              return this._json(res, { error: gate.error, leaseRequired: true }, gate.status)
+            }
+            if (gate.outcome === 'paid') {
+              built.opts.retainUntil = gate.retainUntil
+              built.opts.leaseManaged = true
+            }
+            // 'exempt' → proceed unchanged
           }
 
           try {
@@ -2350,67 +2368,6 @@ export class RelayAPI extends EventEmitter {
       }, 503, { 'Retry-After': String(TRANSIENT_RETRY_AFTER_SECONDS) })
     }
     return this._json(res, { error: message }, 400)
-  }
-
-  /**
-   * Paid-seeding exemptions. Custody / social-recovery seeds (atomic-handoff,
-   * temporary, or custody-intent-bound) are the founder-subsidized flow, not
-   * commercial hosting — they are never charged. Everything else (standard /
-   * archive pins, blind or not) is gated when lease.enabled.
-   */
-  _isLeaseExempt (opts) {
-    if (!opts) return true
-    return !!opts.custodyIntentId ||
-      opts.storageClass === 'temporary' ||
-      opts.availabilityClass === 'atomic-handoff'
-  }
-
-  /**
-   * Apply the paid pin-lease to a publisher-signed seed. Two-phase HTTP 402
-   * handshake:
-   *   - No payment proof → mint an invoice on the operator's own node and
-   *     return the relay-signed quote (402).
-   *   - Proof present → verify it settled on the operator's node, then merge
-   *     retainUntil + leaseManaged into built.opts so the seed lands as a lease.
-   * @returns {{ handled: boolean }} handled=true means a response was already sent.
-   */
-  async _applySeedLease (res, body, built) {
-    const lm = this.node.leaseManager
-    const proof = body && body.paymentProof && typeof body.paymentProof === 'object' ? body.paymentProof : null
-
-    if (!proof || typeof proof.quoteId !== 'string') {
-      // Quote phase. leaseDays is required to price the lease.
-      const leaseDays = Number.isFinite(body && body.leaseDays) ? Math.floor(body.leaseDays) : null
-      if (!leaseDays || leaseDays < 1) {
-        this._json(res, {
-          error: 'PAYMENT_REQUIRED: this relay charges to seed; include leaseDays to get a quote',
-          leaseRequired: true
-        }, 402)
-        return { handled: true }
-      }
-      try {
-        const quote = await lm.createQuote({ appKey: built.appKey, maxStorageBytes: built.opts.maxStorage, leaseDays })
-        this._json(res, { error: 'PAYMENT_REQUIRED', leaseRequired: true, ...quote }, 402)
-      } catch (err) {
-        this._json(res, { error: 'LEASE_QUOTE_FAILED: ' + (err.message || String(err)) }, 503)
-      }
-      return { handled: true }
-    }
-
-    // Redeem phase.
-    try {
-      const v = await lm.verifyLease({ appKey: built.appKey, quoteId: proof.quoteId })
-      if (!v.ok) {
-        this._json(res, { error: v.error || 'LEASE_UNVERIFIED', leaseRequired: true }, v.status || 402)
-        return { handled: true }
-      }
-      built.opts.retainUntil = v.paidUntil
-      built.opts.leaseManaged = true
-      return { handled: false }
-    } catch (err) {
-      this._json(res, { error: 'LEASE_VERIFY_FAILED: ' + (err.message || String(err)) }, 503)
-      return { handled: true }
-    }
   }
 
   /**

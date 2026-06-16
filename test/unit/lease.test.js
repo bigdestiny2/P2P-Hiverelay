@@ -17,6 +17,8 @@ import { mkdtemp } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { LeaseManager } from 'p2p-hiverelay/incentive/lease/index.js'
+import { isLeaseExempt, evaluateSeedLease } from 'p2p-hiverelay/incentive/lease/gate.js'
+import { assertPurgable } from 'p2p-hiverelay/core/relay-node/eviction.js'
 import { MockProvider } from 'p2p-hiverelay/incentive/payment/mock-provider.js'
 
 function makeKeyPair () {
@@ -154,11 +156,77 @@ test('replay-guard survives restart (persisted consumed set)', async (t) => {
   // New manager, same storage + key + (re-shared) provider state. The
   // consumed paymentHash must have persisted → replay still blocked.
   const lm2 = new LeaseManager({ keyPair, provider, storagePath, satsPerGiBDay: 10 })
-  await lm2.start()
+  // Reload at a time within the quote window (T0 + 1500); the consumed entry
+  // must survive so the replay is still blocked.
+  await lm2.start({ now: T0 + 1500 })
   t.is(lm2.getSummary().totalLeasedSats, 30, 'lease totals persisted across restart (1 GiB * 3d * 10)')
   t.is(lm2.getSummary().leaseCount, 1)
   const replay = await lm2.verifyLease({ appKey: APPKEY, quoteId: quote.quoteId }, T0 + 2000)
   t.is(replay.ok, false)
   t.is(replay.error.split(':')[0], 'LEASE_REPLAY')
   await lm2.destroy()
+})
+
+test('replay-guard drops consumed entries once their quote has expired (finding #6)', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'lease-'))
+  const storagePath = join(dir, 'lease.json')
+  const keyPair = makeKeyPair()
+  const provider = new MockProvider()
+  const { lm } = await makeManager({ keyPair, provider, storagePath, quoteTtlMs: 1000 })
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 1 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+  await lm.verifyLease({ appKey: APPKEY, quoteId: quote.quoteId }, T0 + 100) // consumed; quote expiresAt = T0 + 1000
+  await lm.destroy()
+
+  const lm2 = new LeaseManager({ keyPair, provider, storagePath, satsPerGiBDay: 10 })
+  await lm2.start({ now: T0 + 5000 }) // load PAST the quote window → entry pruned
+  t.is(lm2._consumed.size, 0, 'expired consumed hash pruned on load (bounded memory, no replay risk)')
+  await lm2.destroy()
+})
+
+// ── Shared gate: exemption can't be forged (review finding #3) ──
+test('isLeaseExempt: only a VERIFIED custody intent exempts', (t) => {
+  const reg = { getCustodyIntent: (id) => id === 'good' ? { publisherPubkey: 'PUB' } : null }
+  // No custodyIntentId → charged.
+  t.is(isLeaseExempt({ publisherPubkey: 'PUB' }, { seedingRegistry: reg }), false)
+  // Forged storageClass alone → NOT exempt (the fix: declared class is untrusted).
+  t.is(isLeaseExempt({ storageClass: 'temporary', publisherPubkey: 'PUB' }, { seedingRegistry: reg }), false)
+  t.is(isLeaseExempt({ availabilityClass: 'atomic-handoff', publisherPubkey: 'PUB' }, { seedingRegistry: reg }), false)
+  // custodyIntentId that doesn't resolve → NOT exempt.
+  t.is(isLeaseExempt({ custodyIntentId: 'bogus', publisherPubkey: 'PUB' }, { seedingRegistry: reg }), false)
+  // Resolves but publisher mismatch → NOT exempt.
+  t.is(isLeaseExempt({ custodyIntentId: 'good', publisherPubkey: 'OTHER' }, { seedingRegistry: reg }), false)
+  // Resolves + publisher matches → exempt.
+  t.is(isLeaseExempt({ custodyIntentId: 'good', publisherPubkey: 'PUB' }, { seedingRegistry: reg }), true)
+  // No registry → can't verify → NOT exempt.
+  t.is(isLeaseExempt({ custodyIntentId: 'good', publisherPubkey: 'PUB' }, {}), false)
+})
+
+test('evaluateSeedLease: outcomes the transports map on', async (t) => {
+  // No leaseManager → exempt (lease off / self-host).
+  t.is((await evaluateSeedLease({ leaseManager: null, appKey: APPKEY, opts: {}, body: {} })).outcome, 'exempt')
+
+  const { lm, provider } = await makeManager({ satsPerGiBDay: 10 })
+  // Non-exempt, no proof, no leaseDays → quote (payment required), no quote body.
+  const q0 = await evaluateSeedLease({ leaseManager: lm, appKey: APPKEY, opts: { maxStorage: GIB }, body: {} })
+  t.is(q0.outcome, 'quote'); t.is(q0.status, 402); t.absent(q0.quote)
+  // With leaseDays → a real quote.
+  const q1 = await evaluateSeedLease({ leaseManager: lm, appKey: APPKEY, opts: { maxStorage: 2 * GIB }, body: { leaseDays: 5 } })
+  t.is(q1.outcome, 'quote'); t.is(q1.quote.amountSats, 100); t.ok(q1.quote.quoteId)
+  // Pay it, then resubmit the quoteId as proof → paid.
+  provider.settleInvoice(provider.invoices[provider.invoices.length - 1].rHash)
+  const paid = await evaluateSeedLease({ leaseManager: lm, appKey: APPKEY, opts: { maxStorage: 2 * GIB }, body: { paymentProof: { quoteId: q1.quote.quoteId } } })
+  t.is(paid.outcome, 'paid'); t.ok(paid.retainUntil > Date.now())
+  // Bad proof → error.
+  const bad = await evaluateSeedLease({ leaseManager: lm, appKey: APPKEY, opts: { maxStorage: GIB }, body: { paymentProof: { quoteId: 'garbage' } } })
+  t.is(bad.outcome, 'error'); t.is(bad.status, 402)
+  await lm.destroy()
+})
+
+// ── Eviction must not shed a paid pin before its lease expires (finding #5) ──
+test('assertPurgable: a live paid lease is LEASE_BOUND; expired is purgable', (t) => {
+  const now = 1_000_000
+  t.exception(() => assertPurgable({ durability: 0, leaseManaged: true, retainUntil: now + 10_000 }, now), /not evictable until/, 'live lease refused')
+  t.execution(() => assertPurgable({ durability: 0, leaseManaged: true, retainUntil: now - 1 }, now), 'expired lease purgable')
+  t.execution(() => assertPurgable({ durability: 0, leaseManaged: false, retainUntil: now + 10_000 }, now), 'non-lease entry unaffected')
 })

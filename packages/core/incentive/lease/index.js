@@ -39,6 +39,7 @@ const DEFAULT_SATS_PER_GIB_DAY = 10
 const DEFAULT_QUOTE_TTL_MS = 60 * 60 * 1000 // 1h to pay; aligned with invoice expiry
 const DEFAULT_MIN_DAYS = 1
 const DEFAULT_MAX_DAYS = 3650
+const DEFAULT_MAX_SATS_PER_GIB_DAY = 1_000_000
 const MAX_CONSUMED_RETAINED = 50_000
 
 const num = (x) => (Number.isFinite(x) ? x : 0)
@@ -62,18 +63,25 @@ export class LeaseManager extends EventEmitter {
       : DEFAULT_QUOTE_TTL_MS
     this.minDays = Number.isFinite(opts.minDays) && opts.minDays >= 1 ? Math.floor(opts.minDays) : DEFAULT_MIN_DAYS
     this.maxDays = Number.isFinite(opts.maxDays) && opts.maxDays >= 1 ? Math.floor(opts.maxDays) : DEFAULT_MAX_DAYS
+    this.maxSatsPerGiBDay = Number.isFinite(opts.maxSatsPerGiBDay) && opts.maxSatsPerGiBDay > 0
+      ? Math.floor(opts.maxSatsPerGiBDay)
+      : DEFAULT_MAX_SATS_PER_GIB_DAY
     // Operator's own payout destination, informational only — the actual
     // payment instruction is the per-quote bolt11 minted on their node.
     this.payTo = typeof opts.payTo === 'string' ? opts.payTo : null
 
-    this._consumed = new Set() // consumed paymentHash (rHash) — replay-guard
+    // Replay-guard: consumed paymentHash (rHash) -> the quote's expiresAt. A
+    // consumed hash can never pass the expiresAt gate again, so once its quote
+    // has expired it is safe to drop; we ONLY ever evict already-expired
+    // entries, never a still-live one (which would re-open a replay).
+    this._consumed = new Map()
     this.totalLeasedSats = 0
     this.leaseCount = 0
     this._persisting = Promise.resolve()
   }
 
-  async start () {
-    await this._load()
+  async start (opts = {}) {
+    await this._load(opts.now)
     if (this.provider && !this.provider.connected && typeof this.provider.connect === 'function') {
       try { await this.provider.connect() } catch (err) { this.emit('provider-error', err) }
     }
@@ -174,18 +182,34 @@ export class LeaseManager extends EventEmitter {
       return { ok: false, error: 'LEASE_UNDERPAID: settled amount below quote', status: 402 }
     }
 
-    // Consume + record. Replay-guard must persist before we admit the lease.
-    this._consumed.add(body.paymentHash)
-    if (this._consumed.size > MAX_CONSUMED_RETAINED) {
-      // Drop oldest insertion-order entries; a redeemed hash older than the
-      // longest quote TTL can never be replayed against a live quote anyway.
-      const overflow = this._consumed.size - MAX_CONSUMED_RETAINED
-      let i = 0
-      for (const h of this._consumed) { if (i++ >= overflow) break; this._consumed.delete(h) }
+    // Overflow trim: drop ONLY entries whose quote already expired (those can
+    // never pass the expiresAt gate again, so dropping them cannot re-open a
+    // replay). If still at cap with every entry live, refuse rather than evict
+    // a still-redeemable hash.
+    if (this._consumed.size >= MAX_CONSUMED_RETAINED) {
+      for (const [h, exp] of this._consumed) {
+        if (!Number.isFinite(exp) || exp <= now) this._consumed.delete(h)
+      }
+      if (this._consumed.size >= MAX_CONSUMED_RETAINED) {
+        return { ok: false, error: 'LEASE_GUARD_FULL: replay-guard saturated; retry shortly', status: 503 }
+      }
     }
+
+    // Consume + record. The replay-guard MUST be durable before we admit the
+    // lease — if the write fails, roll back so we never admit an un-guarded
+    // (replayable) lease.
+    this._consumed.set(body.paymentHash, body.expiresAt)
     this.totalLeasedSats += body.amountSats
     this.leaseCount += 1
-    await this._persist()
+    try {
+      await this._persist()
+    } catch (err) {
+      this._consumed.delete(body.paymentHash)
+      this.totalLeasedSats -= body.amountSats
+      this.leaseCount -= 1
+      this.emit('persist-error', err)
+      return { ok: false, error: 'LEASE_PERSIST_FAILED: could not durably record payment; retry', status: 503 }
+    }
 
     const paidUntil = now + body.leaseDays * DAY_MS
     this.emit('lease-paid', { appKey: body.appKey, amountSats: body.amountSats, leaseDays: body.leaseDays, paidUntil })
@@ -208,6 +232,7 @@ export class LeaseManager extends EventEmitter {
 
   setRate (satsPerGiBDay) {
     if (!Number.isFinite(satsPerGiBDay) || satsPerGiBDay < 0) throw new Error('satsPerGiBDay must be a non-negative number')
+    if (satsPerGiBDay > this.maxSatsPerGiBDay) throw new Error('satsPerGiBDay exceeds maximum (' + this.maxSatsPerGiBDay + ')')
     this.satsPerGiBDay = Math.floor(satsPerGiBDay)
     this._persist().catch(() => {})
     this.emit('rate', this.satsPerGiBDay)
@@ -216,12 +241,17 @@ export class LeaseManager extends EventEmitter {
 
   // ─── Persistence (atomic tmp+rename) ───────────────────────────────
 
-  async _load () {
+  async _load (now = Date.now()) {
     if (!this.storagePath) return
     try {
       const data = JSON.parse(await readFile(this.storagePath, 'utf8'))
       if (data.schemaVersion !== LEASE_SCHEMA_VERSION) return
-      this._consumed = new Set(Array.isArray(data.consumed) ? data.consumed.slice(-MAX_CONSUMED_RETAINED) : [])
+      // consumed is [ [paymentHash, expiresAt], ... ]. Drop already-expired on
+      // load (they can never be replayed) and cap the retained set.
+      const pairs = (Array.isArray(data.consumed) ? data.consumed : [])
+        .filter(p => Array.isArray(p) && typeof p[0] === 'string' && Number.isFinite(p[1]) && p[1] > now)
+        .slice(-MAX_CONSUMED_RETAINED)
+      this._consumed = new Map(pairs)
       this.totalLeasedSats = num(data.totalLeasedSats)
       this.leaseCount = num(data.leaseCount)
       if (Number.isFinite(data.satsPerGiBDay) && data.satsPerGiBDay >= 0) this.satsPerGiBDay = data.satsPerGiBDay
@@ -233,15 +263,18 @@ export class LeaseManager extends EventEmitter {
 
   async _persist () {
     if (!this.storagePath) return
-    this._persisting = this._persisting.then(() => this._write()).catch(() => {})
-    return this._persisting
+    // Propagate write failures to awaiting callers (verifyLease rolls back on
+    // failure) WITHOUT poisoning the serialized chain for later writes.
+    const next = this._persisting.then(() => this._write(), () => this._write())
+    this._persisting = next.catch(() => {})
+    return next
   }
 
   async _write () {
     const tmp = this.storagePath + '.tmp'
     const data = JSON.stringify({
       schemaVersion: LEASE_SCHEMA_VERSION,
-      consumed: Array.from(this._consumed),
+      consumed: Array.from(this._consumed.entries()),
       totalLeasedSats: this.totalLeasedSats,
       leaseCount: this.leaseCount,
       satsPerGiBDay: this.satsPerGiBDay
@@ -253,6 +286,7 @@ export class LeaseManager extends EventEmitter {
     } catch (err) {
       try { await unlink(tmp) } catch {}
       this.emit('persist-error', err)
+      throw err
     }
   }
 }
