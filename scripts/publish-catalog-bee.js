@@ -13,12 +13,19 @@
  *
  * Trust model: the bee's Hypercore is authored by a persisted Ed25519 keypair
  * (saved in <storage>/catalog-bee-key.json and REUSED across runs, so updates
- * are appends to the same key, not a new catalog). The core key == the
- * publisher pubkey == the trust anchor a consumer subscribes to. A signed
- * `\x00meta` record (Ed25519 detached over sha256(pubkey || canonicalJson),
- * the same shape as the relay's subsidy/signed-directory claims) attests the
- * snapshot (source relay, entry count, appKeys hash, timestamp) so a consumer
- * has an explicit integrity manifest.
+ * are appends to the same key, not a new catalog). The signed `\x00meta`
+ * record (Ed25519 detached over sha256(signerPubkey || canonicalJson(meta)),
+ * same shape as the relay's subsidy/signed-directory claims) names two keys:
+ *   - beeKey       — core.key; the discovery/replication anchor a consumer
+ *                    subscribes to (== catalogBeeKey in the relay's /catalog.json).
+ *   - signerPubkey — the Ed25519 key that signed the meta AND authenticates
+ *                    every block of the core (Hypercore block-auth).
+ * On a COMPAT core (hypercore 10.x today) these are EQUAL. On a MANIFEST core
+ * core.key is the manifest hash and signerPubkey == core.manifest.signers[0]
+ * .publicKey (≠ beeKey). Recording them separately keeps a consumer correct in
+ * BOTH cases: subscribe to beeKey, verify the meta signature against
+ * signerPubkey, and bind signerPubkey to the core's real signer
+ * (core.manifest?.signers[0].publicKey ?? core.key) so it can't be spoofed.
  *
  * "Pinned" = the relay seeds the bee's bare Hypercore via POST /seed-core
  * (NOT /seed — that opens a Hyperdrive). The script stays online so the relay
@@ -190,11 +197,18 @@ async function main () {
     type: 'hiverelay-catalog-bee',
     sourceRelay: args.relay.replace(/\/+$/, ''),
     relayKey: relayKey || null,
-    publisherPubkey: coreKeyHex, // == core.key — the trust anchor
+    beeKey: coreKeyHex, // core.key — discovery/replication anchor
+    // The Ed25519 signer of this meta + the core's block authenticator. On a
+    // compat core this equals beeKey; on a manifest core it is
+    // core.manifest.signers[0].publicKey (≠ beeKey). The consumer verifies the
+    // signature against THIS and binds it to the core's real signer.
+    signerPubkey: b4a.toString(keyPair.publicKey, 'hex'),
     entryCount: appKeys.length,
     appKeysHash: b4a.toString(sha256(b4a.from(appKeys.join(''), 'hex')), 'hex'),
     generatedAt: Date.now()
   }
+  // Digest prefix is the SIGNER pubkey (keyPair.publicKey == meta.signerPubkey),
+  // so the consumer recomputes sha256(signerPubkey || canonicalJson(meta)).
   const signedMeta = { ...meta, signature: signBody(keyPair, meta) }
   await batch.put(META_KEY, signedMeta)
   await batch.flush()

@@ -800,9 +800,13 @@ mirror of the `ForwardRelay` opt-in transport posture.
   so a restart just re-opens + re-announces them.)
 - **`scripts/publish-catalog-bee.js`** — builds a replicable, signed Hyperbee
   catalog from a relay's `/catalog.json` (paginated) keyed by appKey → entry,
-  authored + signed by a persisted Ed25519 keypair (the bee key IS the trust
-  anchor; a `\x00meta` record carries an Ed25519-signed manifest), and pins
-  its core on that relay via `/seed-core`. Unblocks moving relays off
+  authored + signed by a persisted Ed25519 keypair. The signed `\x00meta`
+  record names `beeKey` (core.key — the subscribe/replication anchor) and
+  `signerPubkey` (the Ed25519 signer == the core's block authenticator)
+  separately, so a consumer verifies the signature against `signerPubkey` and
+  binds it to the core's real signer (`core.manifest?.signers[0].publicKey ??
+  core.key`) — correct for BOTH compat (hypercore 10.x today) and manifest
+  cores. Pins its core on that relay via `/seed-core`. Unblocks moving relays off
   HTTP-polled catalogs onto a P2P-replicable, offline-verifiable catalog bee.
   E2E-verified: build → pin → consumer reads + verifies the signature.
 - **Catalog-bee discovery (read-side):** the relay advertises its catalog-bee
