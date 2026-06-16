@@ -6,7 +6,7 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
-## [Unreleased]
+## [0.19.0] — 2026-06-17
 
 ### Added
 
