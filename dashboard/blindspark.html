@@ -267,6 +267,14 @@ button{font-family:inherit;cursor:pointer}
     <div class="apps-list" id="appsList"><div class="apps-empty">Loading&hellip;</div></div>
   </section>
 
+  <section class="apps-card" id="servicesCard">
+    <div class="apps-head">
+      <span class="t">Services</span>
+      <span class="c" id="svcStatus">&mdash;</span>
+    </div>
+    <div id="svcBody"><div class="apps-empty">Loading&hellip;</div></div>
+  </section>
+
   <footer class="foot">
     Blindspark holds encrypted data it can&rsquo;t read.<br>No account &middot; no telemetry &middot; your relay, your keys.
   </footer>
@@ -421,6 +429,76 @@ function renderLease(s){
 }
 function fetchLease(){ jget('/api/lease').then(renderLease); }
 
+// ── Services (host services the relay runs: e.g. an AI model) ──────────
+function svcPost(path, body){
+  return fetch(path, { method:'POST', headers:{ 'Content-Type':'application/json', 'Accept':'application/json' }, body: JSON.stringify(body||{}) })
+    .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return { ok:r.ok, j:j }; }); });
+}
+function svcSetConfig(enabled, plugins){
+  svcPost('/api/manage/services/config', { enabled: enabled, plugins: plugins }).then(function(res){
+    if (res.ok){ toast('Saved — restart Blindspark to apply'); fetchServices(); }
+    else { toast((res.j && res.j.error) || 'Update failed'); }
+  });
+}
+function svcAddModel(){
+  var id = ($('svcModelId') || {}).value, src = ($('svcModelSrc') || {}).value;
+  id = (id || '').trim(); src = (src || '').trim();
+  if (!id || !src){ toast('Model id + source required'); return; }
+  svcPost('/api/manage/ai/models', { modelId: id, qvac: { modelSrc: src } }).then(function(res){
+    if (res.ok){ toast('Model added: ' + id); fetchServices(); }
+    else { toast((res.j && res.j.error) || 'Add failed'); }
+  });
+}
+function renderServices(avail, svcs){
+  var enabled = !!(avail && avail.enabled);
+  $('svcStatus').textContent = enabled ? 'On' : 'Off';
+  var body = $('svcBody'); body.innerHTML = '';
+  if (!enabled){
+    var p = document.createElement('div'); p.className = 'apps-empty';
+    p.innerHTML = 'Host services on your relay — e.g. run an AI model peers can use. ' +
+      'Enabling adds the services layer (it does nothing until you add a model).';
+    var btn = document.createElement('button'); btn.type='button'; btn.className='seedbtn'; btn.textContent='Enable AI service';
+    btn.style.marginTop = '.6rem';
+    btn.addEventListener('click', function(){ svcSetConfig(true, ['ai']); });
+    body.appendChild(p); body.appendChild(btn);
+    return;
+  }
+  // Hosted services + status
+  var list = (svcs && Array.isArray(svcs.services)) ? svcs.services : [];
+  if (!list.length){
+    var e = document.createElement('div'); e.className='apps-empty'; e.textContent='Services layer on, no providers loaded yet.';
+    body.appendChild(e);
+  } else {
+    list.forEach(function(s){
+      var row = document.createElement('div'); row.className='app';
+      row.innerHTML = '<span class="app-dot" style="background:' + (s.running ? 'var(--green)' : 'var(--orange)') + '"></span>' +
+        '<span class="app-name">' + escapeHtml(s.name) + '</span>' +
+        '<span class="app-key">' + escapeHtml(s.status || '') + '</span>';
+      body.appendChild(row);
+    });
+  }
+  var active = (avail && Array.isArray(avail.active)) ? avail.active : [];
+  if (active.indexOf('ai') !== -1){
+    var form = document.createElement('div'); form.style.cssText='margin-top:.7rem;display:flex;flex-wrap:wrap;gap:.4rem;align-items:center';
+    form.innerHTML = '<input id="svcModelId" placeholder="model id" style="flex:1;min-width:8rem">' +
+      '<input id="svcModelSrc" placeholder="QVAC model source / path" style="flex:2;min-width:10rem">';
+    var add = document.createElement('button'); add.type='button'; add.className='seedbtn'; add.textContent='Add model';
+    add.addEventListener('click', svcAddModel);
+    form.appendChild(add); body.appendChild(form);
+    var mk = document.createElement('div'); mk.className='row-note'; mk.style.marginTop='.5rem';
+    mk.textContent = 'On-device QVAC inference. Marketplace discovery (browse services other relays publish) is coming.';
+    body.appendChild(mk);
+  }
+  var off = document.createElement('button'); off.type='button'; off.textContent='Disable services'; off.style.marginTop='.7rem';
+  off.addEventListener('click', function(){ svcSetConfig(false, []); });
+  body.appendChild(off);
+}
+function fetchServices(){
+  Promise.all([ jget('/api/manage/services/available'), jget('/api/manage/services') ])
+    .then(function(r){ renderServices(r[0], r[1]); })
+    .catch(function(){ /* leave last render */ });
+}
+
 function renderApps(list){
   var box = $('appsList');
   if (!Array.isArray(list) || list.length === 0){
@@ -522,9 +600,11 @@ $('seedForm').addEventListener('submit', function(e){
 refresh();
 refreshWizard();
 fetchLease();
+fetchServices();
 setInterval(refresh, 5000);
 setInterval(refreshWizard, 30000);
 setInterval(fetchLease, 30000);
+setInterval(fetchServices, 30000);
 </script>
 </body>
 </html>
