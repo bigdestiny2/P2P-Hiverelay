@@ -6,6 +6,43 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.18.0] — 2026-06-16
+
+Minor: **paid pin-lease** — a relay can charge a publisher (the network case)
+to keep their Hyperdrive seeded for a window. Off by default; self-host stays
+free. Zero-custody — funds settle to the operator's own Lightning node and the
+only durable artifact a payment creates is the lease deadline. Blind model
+untouched: pricing keys on (appKey, declared maxStorage, leaseDays), never on
+content.
+
+### Added
+
+- **`LeaseManager`** (`incentive/lease/`) — byte-days pricing
+  (`ceil(maxStorageBytes/GiB) × leaseDays × satsPerGiBDay`), a relay-signed
+  stateless quote (reuses the subsidy Ed25519 claim crypto), settlement
+  verified via the operator's own LN node (`lookupInvoice`), and a persisted,
+  time-aware replay-guard.
+- **Shared gate** (`incentive/lease/gate.js`) applied at EVERY publisher seed
+  entry point — HTTP `POST /api/v1/seed`, the Protomux publish-channel, the
+  legacy seed-protocol, the seedingRegistry auto-accept, and the
+  replication-repair monitor — so the charge can't be bypassed on any one
+  transport. Operator `POST /seed` (API key) and a **verified** custody intent
+  are exempt, so self-host and social-recovery stay free.
+- HTTP `402` quote → pay → resubmit-proof handshake; the lease is enforced by
+  reusing the custody-expiry sweep (`leaseManaged` + `retainUntil`) and is
+  protected from eviction until it expires.
+- API: `GET /api/lease` (status + live active-lease count) and `POST
+  /api/lease/config` (runtime rate). Blindspark dashboard: an operator
+  "Paid seeding" card (set sats/GiB/day, watch active leases + sats earned).
+- `config.lease` (default **off**). MockProvider for test/demo; a real LN
+  provider is operator-supplied (a boot-guard refuses to enable paid seeding
+  without a provider that can verify settlement).
+
+### Notes
+
+- MVP charges each relay individually (no free cross-relay mirroring); a full
+  payer-facing GUI and the real LND `lookupInvoice` provider are fast-follows.
+
 ## [0.17.0] — 2026-06-16
 
 Minor: operators can seed their own app and list it — from the appliance
