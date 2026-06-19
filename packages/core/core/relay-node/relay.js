@@ -49,6 +49,7 @@ export class Relay extends EventEmitter {
     this._bandwidthBuckets = new Map() // second-timestamp -> bytes
     this._bandwidthTotal = 0
     this._bandwidthWindowSec = 60 // 60-second sliding window
+    this._bandwidthLastPruneSec = -1 // last wall-clock second we pruned; amortizes the prune to once/sec on the data hot path
     this.maxBandwidthBytes = Math.floor((this.maxBandwidthMbps * 1_000_000 / 8) * this._bandwidthWindowSec)
   }
 
@@ -153,31 +154,42 @@ export class Relay extends EventEmitter {
   }
 
   /**
-   * Check if current throughput exceeds the configured bandwidth cap.
+   * Drop bandwidth buckets older than the sliding window. Idempotent within
+   * a single wall-clock second: on a saturated circuit this is called on
+   * every data frame, but the loop body only runs once per second — every
+   * other call early-returns on the guard. (Previously the prune loop ran
+   * twice per frame: once in _isOverBandwidthLimit and once in
+   * _recordBandwidth. Same result, a fraction of the work.)
    */
-  _isOverBandwidthLimit () {
-    const cutoff = Math.floor(Date.now() / 1000) - this._bandwidthWindowSec
-    for (const [ts] of this._bandwidthBuckets) {
+  _pruneBandwidth (nowSec) {
+    if (nowSec === this._bandwidthLastPruneSec) return
+    this._bandwidthLastPruneSec = nowSec
+    const cutoff = nowSec - this._bandwidthWindowSec
+    for (const [ts, bytes] of this._bandwidthBuckets) {
       if (ts < cutoff) {
-        this._bandwidthTotal -= this._bandwidthBuckets.get(ts)
+        this._bandwidthTotal -= bytes
         this._bandwidthBuckets.delete(ts)
       } else break // Map preserves insertion order
     }
+  }
+
+  _addBandwidth (bytes, nowSec) {
+    this._bandwidthBuckets.set(nowSec, (this._bandwidthBuckets.get(nowSec) || 0) + bytes)
+    this._bandwidthTotal += bytes
+  }
+
+  /**
+   * Check if current throughput exceeds the configured bandwidth cap.
+   */
+  _isOverBandwidthLimit () {
+    this._pruneBandwidth(Math.floor(Date.now() / 1000))
     return this._bandwidthTotal > this.maxBandwidthBytes
   }
 
   _recordBandwidth (bytes) {
     const now = Math.floor(Date.now() / 1000)
-    this._bandwidthBuckets.set(now, (this._bandwidthBuckets.get(now) || 0) + bytes)
-    this._bandwidthTotal += bytes
-    // Prune old buckets
-    const cutoff = now - this._bandwidthWindowSec
-    for (const [ts] of this._bandwidthBuckets) {
-      if (ts < cutoff) {
-        this._bandwidthTotal -= this._bandwidthBuckets.get(ts)
-        this._bandwidthBuckets.delete(ts)
-      } else break // Map preserves insertion order
-    }
+    this._pruneBandwidth(now)
+    this._addBandwidth(bytes, now)
   }
 
   // ─── v0.8.19: protomux-channel-based circuit accounting ──────────
@@ -247,11 +259,18 @@ export class Relay extends EventEmitter {
     if (!circuit) return false
 
     if (circuit.bytesRelayed + bytes > circuit.maxBytes) return false
-    if (this._isOverBandwidthLimit()) return false
+
+    // Single timestamp + single (amortized) prune for the whole admit:
+    // the previous code called _isOverBandwidthLimit() and _recordBandwidth()
+    // back to back, each taking its own Date.now() and pruning the bucket
+    // Map — duplicated work on the per-frame data hot path.
+    const now = Math.floor(Date.now() / 1000)
+    this._pruneBandwidth(now)
+    if (this._bandwidthTotal > this.maxBandwidthBytes) return false
 
     circuit.bytesRelayed += bytes
     this.totalBytesRelayed += bytes
-    this._recordBandwidth(bytes)
+    this._addBandwidth(bytes, now)
     return true
   }
 
