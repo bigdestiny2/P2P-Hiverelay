@@ -17,3 +17,8 @@ ghost-seed-demo.mjs
 *.png
 packages/core/node_modules
 tmp-audit2/
+
+# Legacy dashboard symlink (some long-lived boxes have packages/core/dashboard ->
+# /dashboard; relay serves from repo-root /dashboard regardless). Ignore so the
+# orphan never trips the fleet updater's dirty-tree guard.
+packages/core/dashboard
