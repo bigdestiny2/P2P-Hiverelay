@@ -5,6 +5,15 @@ FROM node:20-bookworm-slim
 
 WORKDIR /app
 
+# System prerequisite: corestore-7's storage engine (rocksdb-native) dynamically
+# links libatomic.so.1, which the bookworm-slim base does NOT ship. Without it
+# the rocksdb-native prebuild fails to dlopen and require-addon masks the real
+# error as a misleading "Cannot find addon '.'". sodium-native is unaffected.
+# Idempotent: a no-op if a future base image already includes it.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install deps first for layer caching. The lockfile IS committed (this is a
 # dependency-isolation-critical service — pin the corestore-7/hc11 generation
 # exactly), so build reproducibly with npm ci.

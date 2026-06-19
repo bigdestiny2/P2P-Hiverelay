@@ -89,6 +89,52 @@ mandatory. The sidecar's mappers/schemas are written against **public shapes**
 - **Bootstrap relay (§6.1):** operator config (`indexSidecarUrl` + a well-known
   relay), intentionally not recorded in this repo doc.
 
+## System prerequisites
+
+The sidecar's storage generation (corestore-7 / hypercore-11) uses
+**`rocksdb-native`**, whose prebuilt binding dynamically links
+**`libatomic.so.1`**. On a minimal Ubuntu/Debian host that shared library is
+**not installed by default**, so on **bare metal** the host needs:
+
+```sh
+sudo apt-get install -y libatomic1   # Debian/Ubuntu
+```
+
+`sodium-native` (the other native dep) is unaffected — only `rocksdb-native`
+links libatomic.
+
+**The crash is misleading.** With libatomic missing, the sidecar dies inside
+`require-addon` reporting that it *cannot find the addon at all*:
+
+```
+Error: Cannot find addon '.' imported from .../rocksdb-native/binding.js
+  (tried: .../prebuilds/linux-x64/rocksdb-native.node, ...)
+```
+
+— even though that `.node` file is present. `require-addon` catches the failing
+`dlopen` and re-throws it as a "not found", hiding the real reason. Diagnose the
+true cause directly:
+
+```sh
+# 1. The prebuild's unmet shared-lib dependency:
+ldd node_modules/rocksdb-native/prebuilds/linux-x64/rocksdb-native.node
+#   libatomic.so.1 => not found            ← the real problem
+
+# 2. Or load it explicitly to surface the dlopen error require-addon swallowed:
+node -e "process.dlopen({exports:{}}, 'node_modules/rocksdb-native/prebuilds/linux-x64/rocksdb-native.node')"
+#   Error: libatomic.so.1: cannot open shared object file: No such file or directory
+```
+
+Where this is already handled:
+
+- **Docker** — `services/index-sidecar/Dockerfile` installs `libatomic1`
+  (`node:20-bookworm-slim` does not ship it).
+- **Fleet host provisioning** — `scripts/deploy-vps.sh` installs `libatomic1`
+  when provisioning a relay box that will co-host the sidecar.
+
+The remaining manual case is an ad-hoc `node index.mjs` on a freshly-provisioned
+box. Hit while deploying the sidecar to the bern relay (Ubuntu 24.04, glibc 2.39).
+
 ## Deployment (not yet flipped live)
 
 Two containers on the appliance — the relay (unchanged image) + the sidecar:
