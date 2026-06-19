@@ -86,6 +86,18 @@ deploy_server() {
             echo "  ✓ Swap enabled"
         fi
 
+        # ─── 2c. System prerequisite for a co-hosted index sidecar ───
+        # corestore-7's storage engine (rocksdb-native, used by
+        # services/index-sidecar) dynamically links libatomic.so.1, which
+        # minimal Ubuntu/Debian images omit. The relay itself (corestore-6)
+        # does not need it, but provision the box here so a co-located sidecar
+        # starts cleanly instead of failing with a misleading require-addon
+        # "Cannot find addon" crash. Idempotent — only installs when missing.
+        if ! dpkg -s libatomic1 >/dev/null 2>&1; then
+            echo "  Installing libatomic1 (index-sidecar prereq)..."
+            apt-get update -qq && apt-get install -y libatomic1
+        fi
+
         # ─── 3. Clear stale lock files ───
         find /root/.hiverelay -name "*.lock" -delete 2>/dev/null || true
 
