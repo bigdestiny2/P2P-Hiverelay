@@ -31,6 +31,39 @@ the spike that established this, and the tier model.
    operator-authed loopback) so the relay advertises `indexRoom` in its
    capability doc + `/catalog.json`.
 
+## System prerequisites
+
+On **bare metal** (running directly with Node, not the Docker image), the host
+needs **`libatomic1`**:
+
+```sh
+sudo apt-get install -y libatomic1   # Debian/Ubuntu
+```
+
+corestore-7's storage engine, `rocksdb-native`, dynamically links
+`libatomic.so.1`, which is **not** installed by default on minimal Ubuntu/Debian
+(e.g. a fresh Ubuntu 24.04 box). `sodium-native` is unaffected — only
+`rocksdb-native` needs it.
+
+The failure is **very misleading**: the sidecar crashes inside `require-addon`
+with `Error: Cannot find addon '.' imported from .../rocksdb-native/binding.js`,
+listing candidate `.node` paths — *even though* the prebuild
+(`prebuilds/linux-x64/rocksdb-native.node`) exists. `require-addon` swallows the
+real `dlopen` error. Confirm the actual cause with:
+
+```sh
+ldd node_modules/rocksdb-native/prebuilds/linux-x64/rocksdb-native.node
+#   libatomic.so.1 => not found        ← the real problem
+node -e "process.dlopen({exports:{}}, 'node_modules/rocksdb-native/prebuilds/linux-x64/rocksdb-native.node')"
+#   Error: libatomic.so.1: cannot open shared object file: No such file or directory
+```
+
+The Docker image (`Dockerfile`) and the fleet host provisioning
+(`../../scripts/deploy-vps.sh`) already install `libatomic1`; you only need this
+step for an ad-hoc bare-metal run. See
+[`../../docs/INDEX-LAYER.md`](../../docs/INDEX-LAYER.md#system-prerequisites) for
+the full diagnostic.
+
 ## Run
 
 ```sh
