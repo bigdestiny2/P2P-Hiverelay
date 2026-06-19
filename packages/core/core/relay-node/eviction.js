@@ -36,6 +36,8 @@ import { EventEmitter } from 'events'
 import b4a from 'b4a'
 import Hyperdrive from 'hyperdrive'
 import { raceTimeout } from './storage-accounting.js'
+import { buildDedupReport } from './dedup-report.js'
+import { compareVersions } from '../constants.js'
 
 const DEFAULTS = {
   enabled: false,
@@ -208,6 +210,115 @@ export class EvictionManager extends EventEmitter {
   async _purgeDrive (appKeyHex) {
     if (this.deps.purgeDrive) return this.deps.purgeDrive(appKeyHex)
     return purgeDriveCores(this.deps.store, appKeyHex, { purgeTimeoutMs: this.config.purgeTimeoutMs })
+  }
+
+  /**
+   * Reclaim disk held by SUPERSEDED app versions — entries whose appId is
+   * indexed to a newer appKey, i.e. stale versions the catalog already hides
+   * but whose cores still occupy disk. This is single-relay dedup, NOT fleet
+   * eviction: it ignores the cross-relay census entirely (a stale version is
+   * dead regardless of how many relays hold the CURRENT one) and is gated only
+   * by assertPurgable — archive/custody/lease entries are never reclaimed even
+   * when superseded.
+   *
+   * Distinct from sweep(): no disk-pressure gate, no replica-floor check. Uses
+   * the same proven teardown (unseed → markEvicted tombstone → purge cores).
+   *
+   * @param {object} [opts]
+   * @param {boolean} [opts.dryRun=true]  report-only (no deletes) by default
+   * @param {number}  [opts.retainVersions=0] keep the N newest superseded versions per appId
+   * @param {number}  [opts.max=Infinity]  cap reclaims this pass
+   * @returns {{dryRun, reclaimed:[], skipped:[], freedBytes, candidates}}
+   */
+  async reclaimSuperseded (opts = {}) {
+    const dryRun = opts.dryRun !== false
+    const retainVersions = Number.isFinite(opts.retainVersions) ? Math.max(0, opts.retainVersions) : 0
+    const max = Number.isFinite(opts.max) ? opts.max : Infinity
+    const now = Date.now()
+
+    const report = buildDedupReport(this.deps.appRegistry, this.deps.storageAccounting)
+    const reclaimed = []
+    const skipped = []
+    let freedBytes = 0
+
+    for (const group of report.supersededVersions.groups) {
+      const current = this.deps.appRegistry.get(group.current)
+      let candidates = group.superseded
+      if (retainVersions > 0) {
+        // Keep the retainVersions newest superseded versions; reclaim the rest.
+        // Deterministic order: version desc, then born-time desc, then appKey —
+        // so versionless/equal-version ties don't reclaim on iteration order.
+        candidates = [...group.superseded]
+          .map(s => {
+            const e = this.deps.appRegistry.get(s.appKey) || {}
+            return { ...s, version: e.version || '0.0.0', bornAt: e.seededAt || e.startedAt || 0 }
+          })
+          .sort((a, b) => compareVersions(b.version, a.version) || (b.bornAt - a.bornAt) || (a.appKey < b.appKey ? -1 : a.appKey > b.appKey ? 1 : 0))
+          .slice(retainVersions)
+      }
+      for (const s of candidates) {
+        if (reclaimed.length >= max) break
+        const entry = this.deps.appRegistry.get(s.appKey)
+        if (!entry) continue
+        // Belt-and-suspenders: re-verify (independently of the report) that this
+        // entry is provably an OLDER version of the SAME publisher's current —
+        // a stale index or appId collision must never delete a live/unrelated
+        // drive. The report already enforces this; this is defense-in-depth
+        // against drift between report-build and now.
+        if (!current ||
+            !entry.publisherPubkey || entry.publisherPubkey !== current.publisherPubkey ||
+            compareVersions(entry.version || '0.0.0', current.version || '0.0.0') >= 0) {
+          skipped.push({ appKey: s.appKey, reason: 'supersession-unverified' })
+          continue
+        }
+        // Never reclaim a sacred entry, even if superseded.
+        try {
+          assertPurgable(entry, now)
+        } catch (err) {
+          skipped.push({ appKey: s.appKey, reason: err.code || 'not-purgable' })
+          continue
+        }
+        if (dryRun) {
+          reclaimed.push({ appKey: s.appKey, bytes: s.bytes, appId: group.appId })
+          freedBytes += (s.bytes || 0)
+          continue
+        }
+        // Bound a wedged unseed (a disk-full-corrupt core can hang the await
+        // forever) — same guard the sweep uses. Bail BEFORE markEvicted/purge
+        // so the tombstone-before-purge ordering is preserved.
+        const unseeded = await raceTimeout(
+          Promise.resolve().then(() => this.deps.unseed(s.appKey)).then(() => true),
+          this.config.unseedTimeoutMs,
+          TIMEOUT
+        )
+        if (unseeded === TIMEOUT) {
+          skipped.push({ appKey: s.appKey, reason: 'unseed-timeout' })
+          continue
+        }
+        try {
+          this.deps.appRegistry.markEvicted(s.appKey, now)
+          await this._purgeDrive(s.appKey)
+          reclaimed.push({ appKey: s.appKey, bytes: s.bytes, appId: group.appId })
+          freedBytes += (s.bytes || 0)
+          this._freedBytesTotal += (s.bytes || 0)
+          this.emit('reclaimed', { appKey: s.appKey, bytes: s.bytes || 0, appId: group.appId, reason: 'superseded' })
+        } catch (err) {
+          skipped.push({ appKey: s.appKey, reason: err.code || err.message })
+        }
+      }
+    }
+
+    const result = {
+      dryRun,
+      reclaimed,
+      skipped,
+      freedBytes,
+      candidates: report.supersededVersions.count,
+      unmeasured: report.supersededVersions.unmeasured,
+      note: report.note
+    }
+    this.emit('reclaim-sweep', result)
+    return result
   }
 
   /**

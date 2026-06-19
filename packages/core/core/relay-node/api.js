@@ -1353,6 +1353,35 @@ export class RelayAPI extends EventEmitter {
           })
         }
 
+        // Single-relay dedup: reclaim disk held by SUPERSEDED app versions
+        // (stale versions the catalog already hides). DRY-RUN by default —
+        // pass { execute: true } to actually unseed+tombstone+purge. Gated by
+        // assertPurgable (archive/custody/lease are never reclaimed even when
+        // superseded). Distinct from /api/eviction/purge (operator names keys)
+        // and from the disk-pressure sweep (fleet over-replication).
+        if (path === '/api/dedup/reclaim') {
+          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/dedup/reclaim')) return
+          if (!this.node.eviction || typeof this.node.eviction.reclaimSuperseded !== 'function') {
+            return this._json(res, { error: 'dedup reclaim not available (eviction manager not enabled)' }, 503)
+          }
+          const dryRun = body?.execute !== true
+          const retainVersions = Math.max(0, Math.floor(Number(body?.retainVersions) || 0))
+          let max
+          if (body?.max !== undefined) {
+            const m = Number(body.max)
+            if (!Number.isFinite(m) || m <= 0) {
+              return this._json(res, { error: formatErr('BAD_REQUEST', 'max must be a positive integer') }, 400)
+            }
+            max = Math.floor(m)
+          }
+          try {
+            const out = await this.node.eviction.reclaimSuperseded({ dryRun, retainVersions, max })
+            return this._json(res, { ok: true, ...out })
+          } catch (err) {
+            return this._json(res, { error: err.code || err.message }, 500)
+          }
+        }
+
         // Set/replace the subsidy payout destination (operator's own
         // lightning address / BOLT12 offer / on-chain address — the relay
         // never holds funds). Management auth, same gate as the wizard.

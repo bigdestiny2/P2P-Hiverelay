@@ -6,6 +6,34 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [Unreleased]
+
+**Storage + catalogue dedup (blind-safe).** Identical content is already
+deduped (Corestore content-addresses by appKey == driveKey); cross-publisher
+content dedup is intentionally NOT done — it would break the blind model. These
+are the blind-safe gaps:
+
+### Added
+
+- **Duplication report** — `getStats().storage.dedup` estimates reclaimable
+  bytes from superseded versions still resident on disk (an `app`-type entry
+  whose appId is indexed to a newer appKey), summed from StorageAccounting.
+  Read-only; never buckets by ciphertextRoot/blindContentId; blind entries never
+  appear.
+- **`EvictionManager.reclaimSuperseded()`** + **`POST /api/dedup/reclaim`** —
+  reclaim disk held by superseded app versions. Dry-run by default
+  (`{ execute: true }` to perform); reuses the proven unseed → tombstone → purge
+  teardown; gated by `assertPurgable` (archive/custody/lease are never reclaimed
+  even when superseded); `retainVersions` knob. Single-relay dedup — ignores the
+  fleet census, distinct from the disk-pressure eviction sweep.
+
+### Changed
+
+- **`catalogForBroadcast()`** now collapses `app`-type rows by appId (keep
+  latest version), matching the HTTP `catalog()` view — the P2P broadcast
+  previously leaked superseded versions to peers. (Redacted/blind rows + non-app
+  types pass through.)
+
 ## [0.19.0] — 2026-06-17
 
 ### Added
