@@ -34,6 +34,20 @@ are the blind-safe gaps:
   previously leaked superseded versions to peers. (Redacted/blind rows + non-app
   types pass through.)
 
+## [0.19.0] — 2026-06-17
+
+### Added
+
+- **DHT-resolvable relay discovery** (iroh adoption Phase 1, see
+  `docs/IROH-ADOPTION-ROADMAP.md`). The relay publishes a signed self-description
+  `pubkey → { gatewayUrl, indexRoom }` as a hyperdht MUTABLE record keyed by its
+  identity key (`RelayNode.publishRelayRecord` — on boot, on indexRoom change,
+  and a 30-min republish). A client that knows only a relay's pubkey can resolve
+  its current gateway + index room over the DHT, signature-verified by hyperdht,
+  with no trusted directory and no Mainline/pkarr dependency — the pkarr
+  property native to Holepunch. `relay-record.js` codec + `resolveRelayRecord`.
+  Carries only already-public relay self-description (blind-safe).
+
 ## [0.18.1] — 2026-06-16
 
 **Services tab — host an AI model on your relay.** The Blindspark dashboard
