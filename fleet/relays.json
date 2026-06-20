@@ -5,6 +5,7 @@
     { "name": "utah-us", "publicIp": "144.172.91.26",    "tailnet": null, "sshKey": "default",                       "channel": "stable", "region": "NA",   "diskGB": 58,  "role": "seed" },
     { "name": "sing-1",  "publicIp": "104.194.153.179",  "tailnet": null, "sshKey": "default",                       "channel": "stable", "region": "APAC", "diskGB": 24,  "role": "seed" },
     { "name": "sing-2",  "publicIp": "104.194.152.121",  "tailnet": null, "sshKey": "~/.ssh/cloudzy_hiverelay",      "channel": "stable", "region": "APAC", "diskGB": 62,  "role": "seed" },
-    { "name": "bern",    "publicIp": "45.59.123.112",    "tailnet": null, "sshKey": "~/.ssh/cloudzy_hiverelay",      "channel": "canary", "region": "EU",   "diskGB": 484, "role": "seed" }
+    { "name": "bern",    "publicIp": "45.59.123.112",    "tailnet": null, "sshKey": "~/.ssh/cloudzy_hiverelay",      "channel": "canary", "region": "EU",   "diskGB": 484, "role": "seed" },
+    { "name": "dubai",   "publicIp": "172.86.76.209",  "tailnet": null, "sshKey": "default",                       "channel": "stable", "region": "ME",   "diskGB": 120, "role": "seed" }
   ]
 }
