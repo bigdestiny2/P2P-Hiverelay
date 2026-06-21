@@ -525,6 +525,35 @@ export class RelayAPI extends EventEmitter {
         return this._proxyIndex(req, res, url)
       }
 
+      // Poker honest-usage measure (operator earnings/activity view) — derived
+      // from the PLAYER-signed log, so the relay cannot forge the count. This is
+      // poker's payout-relevant signal: a per-table append + writer-seat tally,
+      // counts ONLY — never card/hole/payload data. Sits ahead of the generic
+      // /api/poker/* mount so "usage" isn't routed as a table key. Auth-gated.
+      if (path === '/api/poker/usage' && req.method === 'GET') {
+        if (!this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return
+        const pk = this._getPokerServiceProvider()
+        if (!pk.ok) return this._json(res, { error: pk.error }, pk.status)
+        const tables = typeof pk.provider.listTables === 'function' ? pk.provider.listTables() : []
+        let appends = 0
+        let seats = 0
+        const perTable = tables.map((t) => {
+          const a = t.length || 0
+          const w = t.writers || 0
+          appends += a
+          seats += w
+          return { tableKey: t.tableKey, appends: a, writers: w, lastTs: t.lastTs || null }
+        })
+        return this._json(res, {
+          service: 'poker',
+          tables: tables.length,
+          appends, // total player-signed log entries (relay-unforgeable)
+          seats,
+          perTable,
+          note: 'appends = player-signed log entries (the relay cannot forge them). Counts only — no card/hole/payload data.'
+        })
+      }
+
       // Poker substrate (card-blind SignedLog) — served only when the 'poker'
       // service is enabled + running. handlePokerRoute does its own CORS + body
       // parsing, so it sits here ahead of any JSON/body guard. Table CREATE is

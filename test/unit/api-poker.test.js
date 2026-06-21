@@ -27,7 +27,9 @@ test('poker is a builtin + the bundle expands to its support services', (t) => {
 function fakePokerApp () {
   const tables = new Map()
   return {
-    listTables () { return Array.from(tables.keys()).map((k) => ({ tableKey: k })) },
+    listTables () {
+      return Array.from(tables.entries()).map(([k, t]) => ({ tableKey: k, length: t.entries.length, writers: t.writers.length, lastTs: 0 }))
+    },
     createTable (args) {
       if (tables.has(args.tableKey)) throw new Error('createTable: table already exists')
       tables.set(args.tableKey, { entries: [], writers: args.writers || [] })
@@ -123,6 +125,23 @@ test('POST /api/poker/tables (create) is auth-gated', async (t) => {
   const ok = await request(port, 'POST', '/api/poker/tables', { tableKey: 'bb', writers: ['w1'] }, AUTH)
   t.ok(ok.statusCode === 200 || ok.statusCode === 201, 'create succeeds with auth')
   t.ok(app.getState('bb'), 'table actually created')
+})
+
+test('GET /api/poker/usage — auth-gated, blind-safe append/seat tally', async (t) => {
+  const app = fakePokerApp()
+  app.createTable({ tableKey: 'dd', writers: ['w1', 'w2'] })
+  app.submitEntry('dd', { sig: 'x' }); app.submitEntry('dd', { sig: 'y' }); app.submitEntry('dd', { sig: 'z' })
+  const port = await server(t, mockNode({ registry: pokerRegistry(app) }))
+  t.is((await request(port, 'GET', '/api/poker/usage')).statusCode, 401, 'operator view requires auth')
+  const res = await request(port, 'GET', '/api/poker/usage', null, AUTH)
+  t.is(res.statusCode, 200)
+  t.is(res.body.tables, 1)
+  t.is(res.body.appends, 3, 'counts player-signed appends')
+  t.is(res.body.seats, 2, 'counts writer seats')
+  t.is(res.body.perTable[0].tableKey, 'dd')
+  const { note, ...data } = res.body // note is human-readable docs, not leaked data
+  const blob = JSON.stringify(data).toLowerCase()
+  for (const bad of ['card', 'hole', 'payload']) t.absent(blob.includes(bad), 'no "' + bad + '" leaked')
 })
 
 test('GET /api/poker/:table/state — 200 known, 404 unknown (open reads)', async (t) => {
