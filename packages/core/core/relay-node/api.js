@@ -510,6 +510,27 @@ export class RelayAPI extends EventEmitter {
         return this._proxyIndex(req, res, url)
       }
 
+      // Poker substrate (card-blind SignedLog) — served only when the 'poker'
+      // service is enabled + running. handlePokerRoute does its own CORS + body
+      // parsing, so it sits here ahead of any JSON/body guard. Table CREATE is
+      // gated (anti-DoS on the maxTables cap); GET reads + signed /move stay open
+      // (the signed log entry is itself the authorization). The adapter lives in
+      // the optional p2p-hiveservices package, so it is dynamic-imported — core
+      // stays decoupled when services aren't installed.
+      if (path === '/api/poker' || path.startsWith('/api/poker/')) {
+        const pk = this._getPokerServiceProvider()
+        if (!pk.ok) return this._json(res, { error: pk.error }, pk.status)
+        if (req.method === 'POST' && path === '/api/poker/tables') {
+          if (!this._requireAuth(req, res, 'Unauthorized — API key required to create a poker table')) return
+        }
+        if (!this._handlePokerRoute) {
+          this._handlePokerRoute = (await import('p2p-hiveservices/builtin/poker/http-adapter.js')).handlePokerRoute
+        }
+        const handled = await this._handlePokerRoute(req, res, { pokerApp: pk.provider })
+        if (handled) return
+        return this._json(res, { error: 'not found' }, 404)
+      }
+
       // Catalog endpoint — typed content catalog (apps, drives, resources, datasets, media)
       if (req.method === 'GET' && path === '/catalog.json') {
         const page = Math.max(parseInt(url.searchParams.get('page')) || 1, 1)
@@ -2679,6 +2700,25 @@ export class RelayAPI extends EventEmitter {
       return { ok: false, status: 503, error: 'AI service does not expose model management methods' }
     }
 
+    return { ok: true, provider, entry }
+  }
+
+  // Resolve the running PokerApp provider from the registry (mirror of
+  // _getAIServiceProvider). Used by the /api/poker/* gateway mount.
+  _getPokerServiceProvider () {
+    const registry = this.node.serviceRegistry
+    const services = registry && registry.services
+    const entry = services && typeof services.get === 'function' ? services.get('poker') : null
+    if (!entry) {
+      return { ok: false, status: 503, error: 'Poker service is not enabled on this relay' }
+    }
+    if (entry.status && entry.status !== 'running') {
+      return { ok: false, status: 503, error: 'Poker service is not running (status=' + entry.status + ')' }
+    }
+    const provider = entry.provider || entry
+    if (!provider || typeof provider.listTables !== 'function' || typeof provider.submitEntry !== 'function') {
+      return { ok: false, status: 503, error: 'Poker service does not expose the substrate methods' }
+    }
     return { ok: true, provider, entry }
   }
 
