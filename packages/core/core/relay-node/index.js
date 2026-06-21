@@ -32,6 +32,7 @@ import { ForwardRelay } from '../protocol/forward-relay.js'
 import { SignedDirectory } from '../services/signed-directory.js'
 import { ProofOfRelay } from '../protocol/proof-of-relay.js'
 import { BandwidthReceipt } from '../protocol/bandwidth-receipt.js'
+import { UsageLedger } from '../protocol/usage-receipt.js'
 import { ReputationSystem } from '../../incentive/reputation/index.js'
 import { NetworkDiscovery } from '../network-discovery.js'
 import { HealthMonitor } from './health-monitor.js'
@@ -364,6 +365,10 @@ export class RelayNode extends EventEmitter {
     this.reputation = new ReputationSystem()
     this._proofOfRelay = null
     this._bandwidthReceipt = null
+    // Honest metering: collects consumer-signed UsageReceipts (payout-eligible).
+    // Lightweight + in-memory; available before start() so the API can record
+    // submitted receipts whether or not the services layer is enabled.
+    this.usageLedger = new UsageLedger()
     this._reputationDecayInterval = null
     this._reputationSaveInterval = null
     this.networkDiscovery = null

@@ -546,6 +546,32 @@ export class RelayAPI extends EventEmitter {
         return this._json(res, { error: 'not found' }, 404)
       }
 
+      // Honest metering — counterparty-signed usage receipts. A consumer submits
+      // a receipt IT signed ("relay R provided <service>.<cap>, N units"); the
+      // relay verifies the signature + dedups replays, then aggregates. Only
+      // verified receipts are payout-eligible — the registry's own per-service
+      // call counters are self-reported (statsVerified:false). POST is open: the
+      // receipt's own signature IS the authorization (rejected unless it
+      // verifies + is non-replayed); it carries no payload/content/IP. The
+      // digest view is auth-gated (operator earnings evidence).
+      if (path === '/api/usage/receipt' && req.method === 'POST') {
+        if (!this.node.usageLedger) return this._json(res, { error: 'metering unavailable' }, 503)
+        let body
+        try { body = await this._readBody(req) } catch { return this._json(res, { error: 'invalid body' }, 400) }
+        const result = this.node.usageLedger.record(body)
+        return this._json(res, result, result.ok ? 200 : 400)
+      }
+      if (path === '/api/usage' && req.method === 'GET') {
+        if (!this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return
+        const verified = this.node.usageLedger
+          ? this.node.usageLedger.digest()
+          : { count: 0, totals: {}, receiptRoot: null }
+        return this._json(res, {
+          verified, // counterparty-signed, payout-eligible
+          note: 'verified = counterparty-signed receipts (payout-eligible). Per-service registry stats are self-reported (statsVerified:false) and are NOT payout-eligible.'
+        })
+      }
+
       // Catalog endpoint — typed content catalog (apps, drives, resources, datasets, media)
       if (req.method === 'GET' && path === '/catalog.json') {
         const page = Math.max(parseInt(url.searchParams.get('page')) || 1, 1)
@@ -2267,11 +2293,17 @@ export class RelayAPI extends EventEmitter {
               capabilities: Array.isArray(entry.capabilities) ? entry.capabilities : [],
               description: entry.description || '',
               stats: entry.stats || null,
+              // The registry's per-service counters are SELF-REPORTED — the relay
+              // increments them itself, so they're forgeable and must never drive
+              // payment. Counterparty-signed UsageReceipts (GET /api/usage) are
+              // the payout-eligible measure. The GUI shows these as "usage
+              // (unverified)" vs the verified earnings evidence.
+              statsVerified: false,
               restartCount: entry.restartCount || 0,
               lastError: entry.lastError || null
             })
           }
-          return this._json(res, { enabled: true, services, count: services.length })
+          return this._json(res, { enabled: true, services, count: services.length, statsVerified: false })
         }
 
         // What the operator can host + what's running + the persisted opt-in
