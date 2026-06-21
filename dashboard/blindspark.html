@@ -511,6 +511,14 @@ function renderServices(avail, svcs){
     });
   }
 
+  // Usage & earnings evidence — only the honest (counterparty-signed) measures.
+  // Filled async so the services list paints immediately.
+  if (enabled){
+    var meterBox = document.createElement('div'); meterBox.id = 'svcMeterBox'; meterBox.style.marginTop = '.7rem';
+    body.appendChild(meterBox);
+    renderMetering(active);
+  }
+
   // AI model form (when the AI service is active) — unchanged behaviour.
   if (active.indexOf('ai') !== -1){
     var form = document.createElement('div'); form.style.cssText = 'margin-top:.7rem;display:flex;flex-wrap:wrap;gap:.4rem;align-items:center';
@@ -531,6 +539,35 @@ function fetchServices(){
   Promise.all([ jget('/api/manage/services/available'), jget('/api/manage/services') ])
     .then(function(r){ renderServices(r[0], r[1]); })
     .catch(function(){ /* leave last render */ });
+}
+
+// Honest-metering readout: counterparty-signed usage receipts (payout-eligible)
+// + poker's player-signed activity. Self-reported per-service counts are NOT
+// shown here as earnings — they're forgeable (statsVerified:false).
+function renderMetering(active){
+  var box = $('svcMeterBox'); if (!box) return;
+  var jobs = [ jget('/api/usage').catch(function(){ return null; }) ];
+  var hasPoker = active && active.indexOf('poker') !== -1;
+  jobs.push(hasPoker ? jget('/api/poker/usage').catch(function(){ return null; }) : Promise.resolve(null));
+  Promise.all(jobs).then(function(r){
+    var usage = r[0], poker = r[1];
+    var rows = [];
+    var v = usage && usage.verified ? usage.verified : null;
+    rows.push('<div class="row-note">Earnings evidence <span class="app-key">verified-only</span></div>');
+    if (v){
+      var totals = v.totals || {}; var keys = Object.keys(totals);
+      rows.push('<div class="app"><span class="app-name">Signed receipts</span><span class="app-key">' + (v.count || 0) + '</span></div>');
+      keys.forEach(function(k){
+        rows.push('<div class="app"><span class="app-name">' + escapeHtml(k) + '</span><span class="app-key">' + totals[k] + '</span></div>');
+      });
+    }
+    if (poker && typeof poker.appends === 'number'){
+      rows.push('<div class="app"><span class="app-name">poker appends (player-signed)</span><span class="app-key">' + poker.appends + '</span></div>');
+      rows.push('<div class="app"><span class="app-name">poker seats</span><span class="app-key">' + (poker.seats || 0) + '</span></div>');
+    }
+    rows.push('<div class="row-note" style="opacity:.7">Per-service call counts shown above are self-reported and not payout-eligible.</div>');
+    box.innerHTML = rows.join('');
+  }).catch(function(){ /* leave blank */ });
 }
 
 function renderApps(list){
