@@ -33,7 +33,7 @@ import {
 import { buildCapabilityDoc } from '../capability-doc.js'
 import { verifySeedingManifest } from '../seeding-manifest.js'
 import { ERR, formatErr } from '../error-prefixes.js'
-import { BUILTIN_SERVICE_NAMES } from '../plugin-loader.js'
+import { BUILTIN_SERVICE_NAMES, SERVICE_BUNDLES } from '../plugin-loader.js'
 import { SetupWizard } from '../wizard.js'
 import { verifyForkProof } from '../fork-proof-signing.js'
 import { isTransientCoreError, TRANSIENT_RETRY_AFTER_SECONDS } from '../transient-core-errors.js'
@@ -2245,6 +2245,7 @@ export class RelayAPI extends EventEmitter {
           return this._json(res, {
             enabled: !!reg,
             available: BUILTIN_SERVICE_NAMES,
+            bundles: SERVICE_BUNDLES, // one-click sets (e.g. poker -> [poker,vrf,arbitration,zk])
             active: reg ? Array.from(reg.services.keys()) : [],
             plugins: Array.isArray(this.node.config.plugins) ? this.node.config.plugins : []
           })

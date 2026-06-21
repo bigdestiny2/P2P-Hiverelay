@@ -453,45 +453,79 @@ function renderServices(avail, svcs){
   var enabled = !!(avail && avail.enabled);
   $('svcStatus').textContent = enabled ? 'On' : 'Off';
   var body = $('svcBody'); body.innerHTML = '';
-  if (!enabled){
-    var p = document.createElement('div'); p.className = 'apps-empty';
-    p.innerHTML = 'Host services on your relay — e.g. run an AI model peers can use. ' +
-      'Enabling adds the services layer (it does nothing until you add a model).';
-    var btn = document.createElement('button'); btn.type='button'; btn.className='seedbtn'; btn.textContent='Enable AI service';
-    btn.style.marginTop = '.6rem';
-    btn.addEventListener('click', function(){ svcSetConfig(true, ['ai']); });
-    body.appendChild(p); body.appendChild(btn);
-    return;
+  var available = (avail && Array.isArray(avail.available)) ? avail.available : [];
+  var configured = (avail && Array.isArray(avail.plugins)) ? avail.plugins : [];
+  var active = (avail && Array.isArray(avail.active)) ? avail.active : [];
+  var bundles = (avail && avail.bundles && typeof avail.bundles === 'object') ? avail.bundles : {};
+
+  var intro = document.createElement('div'); intro.className = 'apps-empty';
+  intro.innerHTML = 'Opt in to <b>provide services</b> peers can use — pick services below, or one-click a bundle. ' +
+    'Changes apply on the next Blindspark restart.';
+  body.appendChild(intro);
+
+  // One-click Poker bundle — unions with your current selection (never drops
+  // your other services, e.g. an enabled AI). The backend also auto-unions
+  // poker's support services, so this just makes the intent visible up-front.
+  if (bundles.poker && bundles.poker.length){
+    var pk = document.createElement('button'); pk.type='button'; pk.className='seedbtn'; pk.textContent='Enable Poker services';
+    pk.style.marginTop = '.6rem';
+    pk.title = 'Enables ' + bundles.poker.join(', ');
+    pk.addEventListener('click', function(){
+      var set = {}; configured.forEach(function(p){ set[p] = 1; }); bundles.poker.forEach(function(p){ set[p] = 1; });
+      svcSetConfig(true, Object.keys(set));
+    });
+    body.appendChild(pk);
   }
-  // Hosted services + status
+
+  // Per-service checklist — current config pre-checked, running ones flagged.
+  var checklist = document.createElement('div'); checklist.style.cssText = 'margin-top:.7rem;display:flex;flex-direction:column;gap:.35rem';
+  available.forEach(function(name){
+    var lbl = document.createElement('label'); lbl.style.cssText = 'display:flex;align-items:center;gap:.45rem;font-size:.9rem';
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'svc-check'; cb.value = name;
+    cb.checked = configured.indexOf(name) !== -1;
+    lbl.appendChild(cb);
+    var tag = active.indexOf(name) !== -1 ? ' <span class="app-key" style="color:var(--green)">running</span>' : '';
+    var span = document.createElement('span'); span.innerHTML = escapeHtml(name) + tag; lbl.appendChild(span);
+    checklist.appendChild(lbl);
+  });
+  body.appendChild(checklist);
+
+  var save = document.createElement('button'); save.type='button'; save.className='seedbtn'; save.textContent='Save services'; save.style.marginTop = '.6rem';
+  save.addEventListener('click', function(){
+    var sel = Array.prototype.map.call(document.querySelectorAll('.svc-check:checked'), function(c){ return c.value; });
+    svcSetConfig(sel.length > 0, sel); // backend auto-unions bundle deps (poker -> vrf+arbitration+zk)
+  });
+  body.appendChild(save);
+
+  // Live status of running providers.
   var list = (svcs && Array.isArray(svcs.services)) ? svcs.services : [];
-  if (!list.length){
-    var e = document.createElement('div'); e.className='apps-empty'; e.textContent='Services layer on, no providers loaded yet.';
-    body.appendChild(e);
-  } else {
+  if (list.length){
+    var hd = document.createElement('div'); hd.className = 'row-note'; hd.style.marginTop = '.7rem'; hd.textContent = 'Running providers';
+    body.appendChild(hd);
     list.forEach(function(s){
-      var row = document.createElement('div'); row.className='app';
+      var row = document.createElement('div'); row.className = 'app';
       row.innerHTML = '<span class="app-dot" style="background:' + (s.running ? 'var(--green)' : 'var(--orange)') + '"></span>' +
         '<span class="app-name">' + escapeHtml(s.name) + '</span>' +
         '<span class="app-key">' + escapeHtml(s.status || '') + '</span>';
       body.appendChild(row);
     });
   }
-  var active = (avail && Array.isArray(avail.active)) ? avail.active : [];
+
+  // AI model form (when the AI service is active) — unchanged behaviour.
   if (active.indexOf('ai') !== -1){
-    var form = document.createElement('div'); form.style.cssText='margin-top:.7rem;display:flex;flex-wrap:wrap;gap:.4rem;align-items:center';
+    var form = document.createElement('div'); form.style.cssText = 'margin-top:.7rem;display:flex;flex-wrap:wrap;gap:.4rem;align-items:center';
     form.innerHTML = '<input id="svcModelId" placeholder="model id" style="flex:1;min-width:8rem">' +
       '<input id="svcModelSrc" placeholder="QVAC model source / path" style="flex:2;min-width:10rem">';
     var add = document.createElement('button'); add.type='button'; add.className='seedbtn'; add.textContent='Add model';
     add.addEventListener('click', svcAddModel);
     form.appendChild(add); body.appendChild(form);
-    var mk = document.createElement('div'); mk.className='row-note'; mk.style.marginTop='.5rem';
-    mk.textContent = 'On-device QVAC inference. Marketplace discovery (browse services other relays publish) is coming.';
-    body.appendChild(mk);
   }
-  var off = document.createElement('button'); off.type='button'; off.textContent='Disable services'; off.style.marginTop='.7rem';
-  off.addEventListener('click', function(){ svcSetConfig(false, []); });
-  body.appendChild(off);
+
+  if (enabled){
+    var off = document.createElement('button'); off.type='button'; off.textContent='Disable all services'; off.style.marginTop = '.7rem';
+    off.addEventListener('click', function(){ svcSetConfig(false, []); });
+    body.appendChild(off);
+  }
 }
 function fetchServices(){
   Promise.all([ jget('/api/manage/services/available'), jget('/api/manage/services') ])
