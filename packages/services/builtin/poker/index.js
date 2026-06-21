@@ -169,8 +169,18 @@ export class PokerApp extends ServiceProvider {
   /**
    * Try to append a signed entry to a table's log.
    * Returns the SignedLog.append result verbatim.
+   *
+   * Dual-convention: the P2P service RPC dispatches every capability as
+   * `method(params, context)` — a single params object — whereas the HTTP
+   * adapter (and direct callers) pass positional args. When the first arg is
+   * a params object we read the fields from it; otherwise we treat it as the
+   * positional tableKey. This keeps poker reachable over BOTH transports.
    */
   submitEntry (tableKey, signedEntry) {
+    if (tableKey && typeof tableKey === 'object') {
+      signedEntry = tableKey.entry ?? tableKey.signedEntry ?? signedEntry
+      tableKey = tableKey.tableKey
+    }
     const record = this._get(tableKey)
     if (!record) return { ok: false, reason: 'no-such-table' }
     return record.log.append(signedEntry)
@@ -178,14 +188,24 @@ export class PokerApp extends ServiceProvider {
 
   /**
    * Read entries from `fromIdx`. Returns `{ from, to, entries }`.
+   * Dual-convention (see submitEntry): accepts `{ tableKey, from, limit }`
+   * from the service RPC as well as positional `(tableKey, from, limit)`.
    */
   getLog (tableKey, fromIdx = 0, limit = Infinity) {
+    if (tableKey && typeof tableKey === 'object') {
+      const p = tableKey
+      tableKey = p.tableKey
+      fromIdx = p.from ?? p.fromIdx ?? 0
+      limit = p.limit ?? Infinity
+    }
     const record = this._get(tableKey)
     if (!record) return null
     return record.log.slice(fromIdx, limit)
   }
 
+  // Dual-convention (see submitEntry): accepts `{ tableKey }` or positional.
   getState (tableKey) {
+    if (tableKey && typeof tableKey === 'object') tableKey = tableKey.tableKey
     const record = this._get(tableKey)
     if (!record) return null
     return {
