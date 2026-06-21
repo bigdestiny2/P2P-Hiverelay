@@ -19,6 +19,7 @@ import { fileURLToPath } from 'url'
 import { createRequire } from 'module'
 import { EventEmitter } from 'events'
 import { DashboardFeed } from './ws-feed.js'
+import { PokerFeed } from './ws-feed-poker.js'
 import { HyperGateway } from '../../gateway/hyper-gateway.js'
 import {
   AVAILABILITY_CLASSES,
@@ -160,6 +161,7 @@ export class RelayAPI extends EventEmitter {
     this._docsHtml = null
     this._wizardHtml = null
     this._dashboardFeed = null
+    this._pokerFeed = null
     this._wizard = null // lazily constructed by _getWizard() on first /api/wizard hit
     this._gateway = new HyperGateway(relayNode, { store: relayNode.store })
   }
@@ -261,6 +263,19 @@ export class RelayAPI extends EventEmitter {
           apiKey: this._apiKey
         })
         this._dashboardFeed.start()
+
+        // Poker table live feed (/api/poker/:table/events). Coexists with the
+        // dashboard feed on the same upgrade event; resolves the running
+        // PokerApp lazily so it serves whether poker is enabled at boot or
+        // toggled on later.
+        this._pokerFeed = new PokerFeed({
+          server: this.server,
+          getPokerApp: () => {
+            const pk = this._getPokerServiceProvider()
+            return pk.ok ? pk.provider : null
+          }
+        })
+        this._pokerFeed.start()
 
         this.emit('started', { port: this.port })
         resolve()
@@ -3277,6 +3292,11 @@ export class RelayAPI extends EventEmitter {
     if (this._dashboardFeed) {
       this._dashboardFeed.stop()
       this._dashboardFeed = null
+    }
+
+    if (this._pokerFeed) {
+      this._pokerFeed.stop()
+      this._pokerFeed = null
     }
 
     if (this._gateway) {
