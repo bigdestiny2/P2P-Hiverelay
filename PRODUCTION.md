@@ -181,6 +181,57 @@ per-frame (64 KB) caps, and honours the node's `SwarmFirewall`. Enable it
 deliberately: it lets peers reach other DHT peers through your node. Verify
 with `npx brittle test/integration/forward-relay.test.js`.
 
+### Storage-proof service (opt-in trustless verification)
+
+The `storage-proof` builtin service lets a user **trustlessly verify your
+relay actually holds their app** — not just claims to in the catalog. On
+request it produces a signed Hypercore Merkle proof for a randomly-sampled
+block of a seeded drive's metadata core; the client verifies each proof
+against the drive key alone (forged content is rejected) plus your relay's
+swarm-identity signature (attribution + a fresh nonce, so proofs can't be
+replayed). It backs `client.proveSeeded(driveKey, { relay, samples })`.
+
+It is **OFF by default.** Enable it per node:
+
+- **Node runtime** — add `storage-proof` to `config.plugins` (or the
+  **Services** tab / `services.json`):
+
+  ```json
+  {
+    "plugins": ["storage-proof"]
+  }
+  ```
+
+- **Bare / appliance runtime** — add `storage-proof` to `config.services`,
+  or set the env var:
+
+  ```bash
+  HIVERELAY_STORAGE_PROOF=1
+  ```
+
+Once enabled it is reachable over the existing service RPC by anyone
+(route policy `storage-proof.prove` = `public`) — that is intentional:
+trustless verification is only useful if any user can run it. The safety
+properties that make this safe to expose:
+
+- **Privacy gate** — blind / privacy-redacted drives return `NOT_SEEDED`,
+  the *same* error as a key the relay doesn't hold. A signed proof is
+  cryptographic, relay-attributable evidence of possession, so serving one
+  for a blind drive would defeat the catalog's deliberate redaction. The
+  gate reuses the catalog's own `AppRegistry._shouldRedactEntry` predicate,
+  so `prove()` can never become a possession oracle.
+- **Rate limits** — a sybil-resistant **global** proof-work token bucket
+  caps total proof work regardless of how many ephemeral identities
+  connect, with a bounded per-caller bucket on top. Tokens are spent only
+  for real proof work; cheap rejects (bad input / not-seeded / blind) never
+  spend them, so a not-seeded flood can't starve honest callers.
+- **Never reads attacker keys** — the service only proves keys present in
+  `appRegistry` and never calls `store.get()` on caller-supplied input, so
+  it can't be coerced into allocating unbounded phantom Hypercores.
+
+v1 proves the drive **metadata** core; blobs-core proofs are a follow-up.
+Verify with `npx brittle test/unit/storage-proof-service.test.js`.
+
 ### Install systemd service
 
 ```bash

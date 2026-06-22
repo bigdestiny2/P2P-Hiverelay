@@ -78,6 +78,108 @@ and `await client.destroy()` when done.
 | `await client.list(driveKey, dir)` | `string[]` | List entries under a directory. |
 | `await client.seed(appKey, opts)` | — | Ask relays to seed an existing drive. |
 
+## Service RPC
+
+Relays expose named services over a P2P service channel. `callService` is the
+request/response primitive; `subscribeService` is its streaming counterpart.
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `await client.callService(service, method, params?, opts?)` | service result | RPC to a relay service. `opts`: `relay` (pubkey hex; defaults to best service relay), `timeout` (ms, default `30000`). Throws `NO_RELAY` / `NO_SERVICE_CHANNEL` / `SERVICE_TIMEOUT`. |
+| `client.subscribeService(service, event, onEvent, opts?)` | unsubscribe `fn` | Live service events. Topic is `<service>/<event>`, matched exactly (lowercase hex keys). `opts.relay` selects the relay. |
+
+```js
+const result = await client.callService('identity', 'whoami')
+
+const off = client.subscribeService('arbitration', 'resolved', (data) => {
+  console.log('resolved:', data)
+})
+off() // unsubscribe
+```
+
+`subscribeService` sends one `MSG_SUBSCRIBE` for the first local listener on a
+`(relay, topic)` pair and `MSG_UNSUBSCRIBE` when the last detaches; pass hex keys
+(e.g. a poker `tableKey`) in **lowercase**, or the subscription is silently dead.
+`onEvent` must be a function; the topic string must be ≤ 256 chars.
+
+### Trustless seed verification
+
+Two methods let you confirm a relay genuinely holds and serves an app
+(Hyperdrive), with no trust in its self-reported catalog.
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `await client.verifySeeded(driveKey, opts)` | verdict object | Replication-based check. `opts.relay` (pubkey hex, **required**), `opts.timeout` (ms, default `30000`). |
+| `await client.proveSeeded(driveKey, opts)` | proof report | Tier-2 signed proof-of-storage sampling. `opts.relay` (pubkey hex, **required**), `opts.samples` (default `3`, clamped to `1..16`), `opts.timeout` (ms, default `30000`). |
+
+#### `verifySeeded(driveKey, { relay, timeout })`
+
+Opens the drive, confirms the relay is a live peer advertising the full length,
+and downloads **both** cores (metadata + blobs) to completion. Hypercore verifies
+every block against the drive key's signed Merkle root on arrival, so a relay
+cannot fake content it does not hold.
+
+```js
+const v = await client.verifySeeded(driveKey, { relay: relayPubkeyHex })
+// { complete, relayIsPeer, relayHasFullLength, contentVerified,
+//   metaLength, blobsLength, relayRemoteLength, driveKey, relay }
+if (v.complete) console.log('relay is serving the full app')
+```
+
+Returns:
+
+```js
+{
+  complete,            // relayHasFullLength && contentVerified
+  relayIsPeer,         // relay is a live peer on the drive's core
+  relayHasFullLength,  // relay's advertised remoteLength covers the meta head
+  contentVerified,     // both cores downloaded + Merkle-verified
+  metaLength,          // metadata core length
+  blobsLength,         // blobs core length
+  relayRemoteLength,   // relay's advertised metadata length
+  driveKey,            // 64-hex
+  relay                // relay pubkey hex
+}
+```
+
+**Caveat:** replication rides the shared swarm, so `contentVerified` proves the
+content is genuine and served, and `relayHasFullLength` is the relay's own
+advertised state — it is **not** a per-block, relay-attributable,
+third-party-portable proof. For that, use `proveSeeded`.
+
+#### `proveSeeded(driveKey, { relay, samples })`
+
+Opens the drive to learn the metadata head, samples up to 16 random block indices,
+calls the relay's `storage-proof.prove` service per sample, and verifies each
+**signed** proof against an isolated temp-Corestore verifier (length pinned to the
+head). Each proof is signed by the relay over a fresh nonce, so a passing result
+is per-block, relay-attributable, and non-replayable.
+
+```js
+const r = await client.proveSeeded(driveKey, { relay: relayPubkeyHex, samples: 5 })
+// r.ok === true only if EVERY sampled block verified at the current head
+```
+
+Returns:
+
+```js
+{
+  ok,        // true iff every sample verified (and total > 0)
+  driveKey,  // 64-hex
+  relay,     // relay pubkey hex
+  head,      // metadata head length proofs were pinned to
+  passed,    // number of samples that verified
+  total,     // number of samples taken
+  samples    // [{ index, valid, reason }]
+}
+```
+
+The relay must run the opt-in `storage-proof` service (default OFF). This is a
+challenge-response proof-of-*retrievability*, not sealed proof-of-replication: a
+relay could fetch a block on demand rather than store it; random sampling plus the
+latency bound make that expensive, not cryptographically precluded. v1 proves the
+drive **metadata** core.
+
 ## Blind custody for a secret (PVSS)
 
 `splitForCustody` / `reconstructFromCustody` place a **secret key** into *blind*

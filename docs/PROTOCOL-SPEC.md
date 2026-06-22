@@ -18,6 +18,7 @@
 5. [Seed Request Protocol](#5-seed-request-protocol)
 6. [Circuit Relay Protocol](#6-circuit-relay-protocol)
 7. [Proof-of-Relay Protocol](#7-proof-of-relay-protocol)
+7A. [Proof-of-Storage Protocol (Trustless Seed Verification)](#7a-proof-of-storage-protocol-trustless-seed-verification)
 8. [Bandwidth Receipt Protocol](#8-bandwidth-receipt-protocol)
 9. [Seeding Registry](#9-seeding-registry)
 10. [Peer Discovery](#10-peer-discovery)
@@ -385,6 +386,121 @@ Per-relay scores are maintained locally by each verifier:
 ### 7.5 Challenge Interval
 
 The default challenge interval is 5 minutes. Verifiers SHOULD randomize the exact timing and the block index selected to prevent relays from predicting and caching only challenged blocks.
+
+---
+
+## 7A. Proof-of-Storage Protocol (Trustless Seed Verification)
+
+**Shipped in v0.20.0.** Where Section 7's proof-of-relay rides the dedicated `hiverelay-proof` protomux channel, proof-of-storage is a **signed, third-party-portable** challenge-response carried over the existing **service RPC** (the same transport as `client.callService`). A passing proof is per-block, relay-attributable, and non-replayable: the relay signs the proof over a fresh nonce with its swarm identity key, and the block is verified against the drive key's signed Merkle root alone — the relay is trusted for nothing.
+
+This is the second of two tiers of seed verification:
+
+| Tier | Method | What it proves |
+|---|---|---|
+| Tier 1 | `client.verifySeeded(driveKey, { relay })` | The content is genuine and served, and the relay advertises the full length. Replication-based; **not** a per-block, relay-attributable, portable proof. |
+| Tier 2 | `client.proveSeeded(driveKey, { relay, samples })` | A specific relay produced a valid, signed Merkle proof for randomly-sampled blocks at the current head. Per-block, attributable, non-replayable. |
+
+> [!NOTE]
+> **Honest limitation.** This is a challenge-response proof-of-**retrievability**, not a sealed proof-of-**replication**. A relay could fetch a block on demand rather than store it; random-index sampling across the full core plus a latency bound make that expensive and detectable, but it is **not** cryptographically precluded.
+
+### 7A.1 Service and Method
+
+The relay exposes the proof primitive as a builtin service over the service RPC.
+
+| Property | Value |
+|---|---|
+| Service name | `storage-proof` |
+| Method | `prove` |
+| Route access policy | `storage-proof.prove` = `public` (anonymous-callable) |
+| Default state | **Opt-in, OFF by default** |
+
+**Enabling the service (opt-in):**
+
+- **Node runtime:** via `config.plugins` / `services.json` (Services tab).
+- **Bare / appliance runtime:** via `config.services`, or the env var `HIVERELAY_STORAGE_PROOF=1`.
+
+> **v1 scope:** the proof targets the drive's **metadata** core (the head a client learns from `open()`, so the `minLength` pin lines up). Blobs-core proofs are a follow-up.
+
+### 7A.2 `prove` Request
+
+The verifier calls `storage-proof.prove` with a JSON params object:
+
+| Field | Type | Description |
+|---|---|---|
+| `coreKey` | `string` (64-char hex) | Public key of the drive's metadata core to challenge |
+| `index` | `number` (uint) | Block index the relay must produce a proof for |
+| `nonce` | `string` (64-char hex) | 32-byte random challenge nonce (prevents replay) |
+
+### 7A.3 `prove` Response (proof-of-storage wire shape)
+
+On success, the relay returns the `buildStorageProof` response object (all buffers hex-encoded):
+
+| Field | Type | Description |
+|---|---|---|
+| `coreKey` | `string` (hex) | Echo of the challenged core key |
+| `index` | `number` | Echo of the challenged block index |
+| `nonce` | `string` (hex) | Echo of the challenge nonce |
+| `proof` | `string` (hex) | The block proof, encoded as a Hypercore `data` wire message (`hypercore/lib/messages.js` `wire.data`) — the same structure replication carries: `{ fork, block: { index, nodes, value }, upgrade: { start, length } }` |
+| `blockHash` | `string` (hex) | `blake2b` (`crypto_generichash`) of the block value |
+| `relayPubkey` | `string` (hex) | The relay's swarm identity public key (attribution) |
+| `signature` | `string` (hex) | 64-byte Ed25519 signature over the preimage in 7A.4 |
+
+The proof is read from **local storage only**. If the relay does not actually hold the block, `buildStorageProof` throws `BLOCK_NOT_LOCAL`; an out-of-range index throws `BLOCK_OUT_OF_RANGE` (it never fetches on demand to answer a proof).
+
+### 7A.4 Signature Preimage
+
+The relay signs (Ed25519, `crypto_sign_detached`) the concatenation:
+
+```
+coreKey (32 bytes)
+|| index (4 bytes, uint32 little-endian)
+|| nonce (32 bytes)
+|| blake2b(blockValue) (32 bytes)
+```
+
+Total signed payload: 100 bytes. The signing key is the relay's swarm identity key, so the proof is attributable to that specific relay and bound to that specific challenge nonce.
+
+### 7A.5 Client Verification Model
+
+The verifier checks two independent things, **neither trusting the relay**, using a **key-only** verifier Hypercore opened on the drive key (no prior content needed):
+
+1. **Challenge binding (cheap rejects first):** `coreKey`, `index`, `nonce`, and `relayPubkey` in the response must match the challenge that was issued. Mismatches yield `CORE_MISMATCH` / `INDEX_MISMATCH` / `NONCE_MISMATCH` / `RELAY_MISMATCH`.
+2. **Content (Hypercore intrinsic):** the `proof` is decoded and fed to `verifierCore.core.verify()`. Hypercore checks that the block hashes into the drive key's **signed Merkle root** — a forged or substituted block is rejected (`CONTENT_INVALID`). The relay cannot fabricate content for a key it is not the author of.
+3. **Optional `minLength` pin:** the proof's `upgrade.length` is author-signed (covered by the same signature `core.verify` validated), so it is trustworthy. If the caller passes `expect.minLength`, a relay proving an **old, shorter** signed version is rejected (`LENGTH_TOO_SHORT`) — holding an old block is not holding the current app.
+4. **Attribution + freshness (relay signature):** the response's `blockHash` must match the content actually verified (`BLOCKHASH_MISMATCH`), then the `signature` is checked against `relayPubkey` over the 7A.4 preimage (`SIG_INVALID`).
+
+`verifyStorageProof` returns a detailed verdict — `{ valid, contentValid, sigValid, coreValid, indexValid, nonceValid, relayValid, lengthValid, provenLength, reason }` — where `valid` is `true` only if both the content proof and the relay signature check out for the exact challenge issued.
+
+### 7A.6 `client.proveSeeded` (sampling driver)
+
+`client.proveSeeded(driveKey, { relay, samples })` opens the drive to learn the metadata head, samples up to **16** random block indices (`samples` defaults to 3, clamped to `[1, 16]`), calls `storage-proof.prove` per sample over the service RPC, and verifies each signed proof against an isolated temp-Corestore verifier with `minLength` pinned to the head.
+
+Returns:
+
+```json
+{
+  "ok": true,
+  "driveKey": "<hex>",
+  "relay": "<relay pubkey hex>",
+  "head": 128,
+  "passed": 3,
+  "total": 3,
+  "samples": [ { "index": 42, "valid": true, "reason": null } ]
+}
+```
+
+`ok === true` only if **every** sampled block verified at the current head.
+
+```js
+const r = await client.proveSeeded(driveKey, { relay: relayPubkeyHex, samples: 5 })
+if (r.ok) console.log(`relay proved all ${r.total} sampled blocks at head ${r.head}`)
+```
+
+### 7A.7 Security Properties
+
+- **Privacy gate (possession-oracle resistance):** a blind / privacy-redacted drive returns `NOT_SEEDED`, **indistinguishable** from a key the relay does not hold. A signed proof is cryptographic, relay-attributable evidence of possession, so serving it for a blind drive would defeat the catalog's deliberate redaction. The gate reuses the catalog's own redaction predicate.
+- **Phantom-core DoS guard:** the relay only serves keys present in `node.appRegistry`; it never calls `store.get()` on a caller-supplied key (which would create an unbounded phantom Hypercore per request).
+- **Sybil-resistant rate limiting:** a **global** token bucket caps total proof work regardless of how many ephemeral swarm identities connect, plus a bounded, idle-evicted per-caller bucket. Cheap rejects (bad input / not-seeded / blind) never spend the global budget, so a not-seeded flood cannot starve honest callers.
 
 ---
 

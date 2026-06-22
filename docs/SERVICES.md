@@ -192,6 +192,31 @@ A card-blind, append-only signed-log substrate for turn-based games with hidden 
 
 See the [poker substrate README](../packages/services/builtin/poker/README.md).
 
+### Storage-Proof Service (v0.20.0 — Trustless Seed Verification, Tier 2)
+
+Signed challenge-response proof that this relay genuinely holds a seeded app. A caller picks a random block of a drive's metadata core; the relay reads it from **local storage only** and returns a Hypercore Merkle proof signed with its swarm identity key. The caller verifies the proof against the **drive key alone** (Hypercore hashes the block into the drive's signed Merkle root, so forged content is rejected) plus the relay signature (attribution + nonce freshness, no replay) — the relay is trusted for nothing.
+
+**Capabilities:** `prove`
+
+- `prove({ coreKey, index, nonce })` -- returns a `buildStorageProof` response object (a signed block proof for block `index` of the drive's metadata core). Reachable over the existing service RPC (`client.callService` / `proveSeeded`).
+
+**Access:** route `storage-proof.prove` is policy `public` (anonymous-callable) in `packages/core/core/router/index.js`.
+
+**Opt-in (default OFF):** a stock node does not run it.
+- Node runtime: select `storage-proof` via `config.plugins` / `services.json` (Services tab; persisted under `<storage>/services.json`).
+- Bare/appliance runtime: select `storage-proof` via `config.services` (or `config.plugins`), or set env `HIVERELAY_STORAGE_PROOF=1`.
+
+**What it proves (v1):** the drive **metadata** core only — the head the client learns from `open()`, so the `minLength` pin lines up. Blobs-core proofs are a follow-up.
+
+**Security guards:**
+- **Privacy gate** -- blind / privacy-redacted drives return `NOT_SEEDED`, indistinguishable from a key the relay does not hold, so `prove` cannot become a possession oracle that defeats catalog redaction.
+- **Rate limit** -- a sybil-resistant **global** proof-work token bucket (caps total proof work across all identities) plus a bounded per-caller bucket; cheap rejects (bad input / not-seeded / blind) never spend the budget.
+- **Phantom-core DoS guard** -- only serves keys present in `node.appRegistry`; never calls `store.get()` on a caller-supplied key.
+
+**Honest limitation:** this is a challenge-response proof of *retrievability*, not a sealed proof of *replication* — a relay could fetch a block on demand rather than store it; random-index sampling plus a latency bound make that expensive, not cryptographically precluded.
+
+Pairs with the client probes `client.proveSeeded(driveKey, { relay, samples })` (samples up to 16 random blocks, verifies each signed proof against an isolated temp-Corestore verifier pinned to the head; returns `{ ok, driveKey, relay, head, passed, total, samples: [{ index, valid, reason }] }`, with `ok === true` only if every sample verified) and the replication-based `client.verifySeeded(driveKey, { relay, timeout })`. See `packages/services/builtin/storage-proof-service.js` and the Tier-1 primitive `packages/core/core/protocol/proof-of-storage.js`.
+
 ## Creating Custom Services
 
 ```javascript

@@ -6,7 +6,7 @@ Drop a Hyperdrive key in front of a HiveRelay node and your Pear app comes onlin
 
 It's the substrate. You build the app; the network handles availability, NAT traversal, browser/mobile ingress, custody, and self-heal.
 
-**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.16.1**
+**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.20.0**
 
 The four packages — `p2p-hiverelay` (core), `p2p-hiveservices` (services), `p2p-hiverelay-client` (SDK), `p2p-hiverelay-verifier` — are versioned in lockstep. Release-by-release notes live in the [CHANGELOG](./CHANGELOG.md).
 
@@ -16,13 +16,14 @@ The four packages — `p2p-hiverelay` (core), `p2p-hiveservices` (services), `p2
 
 P2P apps built on Hyperswarm work beautifully — until the developer closes their laptop. Users see "offline." Mobile users behind carrier NATs can't connect. Browser users can't use UDP. There is no durable availability layer and no shared discovery surface.
 
-HiveRelay solves all of that, then keeps going. A HiveRelay node is a Hyperswarm peer that joins the same DHT, speaks the same protocols, and replicates the same Hypercores — application-agnostic — plus five capabilities purpose-built for being a versatile blind substrate:
+HiveRelay solves all of that, then keeps going. A HiveRelay node is a Hyperswarm peer that joins the same DHT, speaks the same protocols, and replicates the same Hypercores — application-agnostic — plus six capabilities purpose-built for being a versatile blind substrate:
 
 1. **Bootstrap any Pear application.** Hand the relay a Hyperdrive key + your accept-mode policy; it keeps the app online and discoverable from the DHT. No application-specific code, no opinionated metadata schema, no privileged knowledge of what you're hosting. One relay can carry a binary mirror, a chat backend, an app store, and a notes app simultaneously.
 2. **Blind by default for encrypted workloads.** The Atomic Blind Custody plane processes ciphertext only — the validator hard-blocks ten plaintext field names so leakage is structurally impossible. Operators can't see what you encrypted, and can prove they stopped storing it at expiry without ever decrypting.
 3. **Cryptographically verified replica durability.** Peers count toward archive replication only when they produce a fresh signed Ed25519 anchor proof. AutoHeal recruits diverse replicas across regions and operators automatically; self-heal pulls missing blocks peer-to-peer between relays once a publisher has been online once.
 4. **Cross-NAT + browser/mobile ingress.** Circuit-relay protocol for hole-punching fallback (cellular ↔ home Wi-Fi). `dht-relay-ws` transport lets browsers and Android WebView clients participate in the DHT over WSS. No application code changes for any of it.
 5. **Real-time P2P trust pipeline + live telemetry.** Custody, anchor, and publish messages flow over Protomux channels on the existing Hyperswarm connection — no HTTPS dependency. A WebSocket dashboard feed surfaces per-drive diversity, custody pipeline health, and event push for every state change.
+6. **Trustless seed verification.** Confirm a relay genuinely holds + serves your app without trusting its self-reported catalog. `client.verifySeeded` does a replication-based check (downloads both drive cores so Hypercore validates every block against the signed Merkle root); `client.proveSeeded` is stronger — it samples random blocks and the opt-in `storage-proof` service returns a signed, relay-attributable, non-replayable per-block proof for each.
 
 ```js
 import { HiveRelayClient } from 'p2p-hiverelay-client'
@@ -111,7 +112,7 @@ See the [PVSS blind key custody whitepaper](docs/PVSS-BLIND-CUSTODY.md) for the 
 
 ## Services module
 
-Beyond the relay kernel, optional services live under `packages/services/builtin/` (`p2p-hiveservices`) and each own an HTTP/WS or Protomux surface on top of relay core: `ai-service`, `schema-service`, `zk-service`, `arbitration-service`, `sla-service`, `storage-service`, `identity-service`, plus the v0.10.2 `signed-directory` registry primitive. A relay that never instantiates a service is byte-zero affected by it.
+Beyond the relay kernel, optional services live under `packages/services/builtin/` (`p2p-hiveservices`) and each own an HTTP/WS or Protomux surface on top of relay core: `ai-service`, `schema-service`, `zk-service`, `arbitration-service`, `sla-service`, `storage-service`, `identity-service`, the v0.10.2 `signed-directory` registry primitive, and the v0.20.0 `storage-proof` service. A relay that never instantiates a service is byte-zero affected by it.
 
 ### SignedDirectory — relay-hosted openly-writable registry (v0.10.2)
 
@@ -193,6 +194,15 @@ The full primitive, code-example, and trust analysis live in the [Blind social r
 | `app.queryQuorumWithComparison(path, quorum, opts)` | Parallel query + auto fork detection |
 | `app.fetchCapabilities(url, opts)` | Get a relay's signed capability doc |
 | `app.publishSeedingManifest(url, manifest)` | Publish author's preferred-relay manifest |
+
+### Trustless seed verification (v0.20.0)
+
+Confirm a relay actually holds + serves an app — no trust in its catalog. `verifySeeded` is replication-based; `proveSeeded` adds signed, relay-attributable, non-replayable per-block proofs via the opt-in `storage-proof` service (default off; enable per the [Services module](#services-module)).
+
+| Method | Description |
+|---|---|
+| `client.verifySeeded(driveKey, { relay, timeout })` | Download both drive cores so Hypercore verifies every block against the signed Merkle root → `{ complete, relayIsPeer, relayHasFullLength, contentVerified, metaLength, blobsLength, relayRemoteLength }` |
+| `client.proveSeeded(driveKey, { relay, samples })` | Sample up to 16 random metadata blocks, calling `storage-proof.prove` per sample and verifying each signed proof in an isolated verifier core → `{ ok, driveKey, relay, head, passed, total, samples }`; `ok` only if every sample verifies at the current head |
 
 ---
 

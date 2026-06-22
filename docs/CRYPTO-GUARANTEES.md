@@ -121,6 +121,83 @@ proofs of bytes actually transferred to a counterparty) for a richer
 "this relay is serving" signal. See `core/protocol/proof-of-relay.js` and
 `bandwidth-receipt.js`.
 
+## Trustless seed verification
+
+How a client confirms that a *specific* relay genuinely holds and serves an
+app — without trusting the relay's self-reported catalog. There are two
+tiers, layered, each anchoring its trust in the drive key's signed Merkle
+root rather than in the relay's word.
+
+### Tier 1 — replication check (`client.verifySeeded`)
+
+```js
+const v = await client.verifySeeded(driveKey, { relay: relayPubkeyHex })
+//   { complete, relayIsPeer, relayHasFullLength, contentVerified,
+//     metaLength, blobsLength, relayRemoteLength }
+```
+
+The client opens the drive, confirms the relay is a live peer advertising the
+full length, and downloads **both** of the drive's Hypercores (metadata +
+blobs) to completion. Hypercore verifies every block against the drive key's
+signed Merkle root *on arrival* — a forged or substituted block fails
+verification, so the relay cannot fake content it isn't the author of.
+
+| Field | Means |
+|---|---|
+| `contentVerified` | The genuine, complete content downloaded and verified against the drive key |
+| `relayIsPeer` | The relay is a live peer of the drive |
+| `relayHasFullLength` | The relay *advertises* the full metadata length |
+| `complete` | `relayHasFullLength && contentVerified` |
+
+**What this does *not* prove.** Replication rides the shared swarm, so
+`contentVerified` proves the content is genuine and served *by the swarm*,
+and `relayHasFullLength` is the relay's own advertised state. It is **not** a
+per-block, relay-attributable, third-party-portable proof. For that, Tier 2.
+
+### Tier 2 — signed proof-of-storage (`client.proveSeeded`)
+
+```js
+const r = await client.proveSeeded(driveKey, { relay: relayPubkeyHex, samples: 5 })
+//   { ok, driveKey, relay, head, passed, total,
+//     samples: [{ index, valid, reason }, …] }
+//   r.ok === true only if EVERY sampled block verified at the current head
+```
+
+The client opens the drive (learning the metadata head), samples up to 16
+random block indices, and for each one challenges the relay with a fresh
+32-byte nonce over the existing service RPC (`storage-proof.prove`). Each
+signed proof is verified against an isolated, key-only verifier core. Two
+independent checks, neither trusting the relay:
+
+| Check | Crypto |
+|---|---|
+| Content | A real Hypercore block proof; the key-only verifier confirms the block hashes into the drive key's **signed Merkle root** — forged content is rejected |
+| Attribution + freshness | The relay signs `coreKey \|\| u32le(index) \|\| nonce \|\| blake2b(block)` with its swarm identity key — the proof is attributable to *this* relay and bound to *this* nonce, so a recorded proof can't be replayed |
+| Length pin | The proof's author-signed `upgrade.length` is checked against the current head (`minLength`), rejecting a relay stuck on an old, shorter signed version |
+
+Relay-side, `buildStorageProof` reads **local storage only** — it throws
+`BLOCK_NOT_LOCAL` / `BLOCK_OUT_OF_RANGE` rather than fetch-on-demand to answer
+a challenge.
+
+**Honest limitation.** This is a challenge-response **proof-of-retrievability**,
+not a sealed **proof-of-replication**. A relay could in principle fetch a
+block on demand rather than store it. Random-index sampling across the full
+core plus a latency bound make that expensive and detectable — but it is *not*
+cryptographically precluded. Sealed PoRep is out of scope. (v1 proves the
+drive's **metadata** core; blobs-core proofs are a follow-up.)
+
+**Privacy gate (blind drives).** The relay-side service is opt-in and **off
+by default** (Node: `config.plugins` / Services tab; Bare/appliance:
+`config.services` or `HIVERELAY_STORAGE_PROOF=1`). Critically, a blind or
+privacy-redacted drive returns `NOT_SEEDED` — **indistinguishable** from a key
+the relay genuinely doesn't hold. A signed proof is cryptographic,
+relay-attributable evidence of possession; serving it for a blind drive would
+turn `prove()` into a possession oracle that defeats the catalog's deliberate
+redaction (see "Blind-mode apps" above). The service also carries a
+sybil-resistant global proof-work rate cap and a phantom-core DoS guard
+(it only proves keys already in the relay's app registry — never `store.get`
+on a caller-supplied key).
+
 ## Threat model — what a malicious operator can do
 
 | Attack | What happens |
@@ -131,6 +208,7 @@ proofs of bytes actually transferred to a counterparty) for a richer
 | Modify blocks they're storing | Detectable — Merkle root mismatch |
 | Refuse to serve content | Possible — but other relays / peers will serve it (this is why replication-factor matters) |
 | Lie about serving in proof-of-relay | **Impossible** — they have to produce real Merkle proofs against real bytes |
+| Fake holding a seeded app under proof-of-storage | **Cannot forge content** — signed block proofs must hash into the drive key's signed root; can't fake attribution either (relay signature over a fresh nonce). Can only fetch-on-demand instead of storing (proof-of-retrievability limit) |
 | Surveil who connects | Possible — they see counterparty pubkeys (this is the network-metadata threat). Mitigations: Tor transport, ephemeral keys per session |
 | Censor specific apps from their catalog | Possible — that's the whole *point* of accept-modes. The operator chooses what they carry. Other relays may still carry it. |
 
@@ -177,6 +255,9 @@ the *trust surface is genuinely smaller* for apps that fit the model.
 - `packages/core/core/protocol/seed-request.js` — signature scheme
 - `packages/core/core/protocol/proof-of-relay.js` — challenge/response math
 - `packages/core/core/protocol/bandwidth-receipt.js` — signed transfer proofs
+- `packages/core/core/protocol/proof-of-storage.js` — Tier-2 signed proof-of-storage (build/verify)
+- `packages/services/builtin/storage-proof-service.js` — Tier-2 relay service (`storage-proof.prove`, privacy gate, rate caps)
+- `packages/client/index.js` — `client.verifySeeded` (Tier 1) and `client.proveSeeded` (Tier 2)
 - `packages/services/identity/attestation.js` — Schnorr attestations for dev-key → app-key bindings
 - [hypercore docs](https://docs.holepunch.to/) — upstream cryptography
 - [Noise Protocol XK pattern](http://www.noiseprotocol.org/noise.html#interactive-handshake-patterns) — wire encryption
