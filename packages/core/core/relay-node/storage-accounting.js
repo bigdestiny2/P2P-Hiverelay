@@ -48,8 +48,18 @@ export async function dirBytes (dir) {
   for (const e of entries) {
     const p = join(dir, e.name)
     try {
-      if (e.isDirectory()) total += await dirBytes(p)
-      else if (e.isFile()) total += (await stat(p)).size
+      if (e.isDirectory()) {
+        total += await dirBytes(p)
+      } else if (e.isFile()) {
+        // ALLOCATED disk bytes (st.blocks is in 512-byte units) — what df/du
+        // see and what actually fills the disk. st.size is the APPARENT length,
+        // which massively overcounts sparse Hypercore block files: a partial
+        // replica's blocks file has holes for unfetched blocks, so its size can
+        // far exceed the bytes on disk. Using st.size would make the adoption
+        // guard refuse far too early. Fall back to size only if blocks is absent.
+        const st = await stat(p)
+        total += (st.blocks != null ? st.blocks * 512 : st.size)
+      }
     } catch {
       // racing deletes (eviction/purge), perms, broken links — skip
     }
