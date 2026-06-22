@@ -8,6 +8,17 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+## [0.19.4] — 2026-06-22
+
+### Fixed
+
+- **Storage accounting now counts ALLOCATED disk blocks (`st.blocks`), not
+  apparent file size.** Relay block files are sparse — a partial replica's blocks
+  file has holes for unfetched blocks — so `st.size` (apparent length) overcounts
+  real disk usage badly (bern measured 51.5 GB by size vs 38 GB actual `du`).
+  `dirBytes` now sums `st.blocks * 512`, matching `df`/`du`, so the adoption
+  guard binds on true usage instead of refusing far too early. (Refines v0.19.3.)
+
 ## [0.19.3] — 2026-06-22
 
 **Fix: storage accounting read ~0 on registry-driven relays → adoption never capped → disks filled to 100%.**
