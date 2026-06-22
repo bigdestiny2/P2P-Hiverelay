@@ -97,7 +97,8 @@ const ALL_SERVICES = [
   { name: 'ai        — experimental plugin: AI/ML inference', value: 'ai' },
   { name: 'zk        — experimental plugin: zero-knowledge proofs', value: 'zk' },
   { name: 'sla       — experimental plugin: service-level agreements', value: 'sla' },
-  { name: 'arbitration — experimental plugin: dispute resolution', value: 'arbitration' }
+  { name: 'arbitration — experimental plugin: dispute resolution', value: 'arbitration' },
+  { name: 'poker     — app plugin: card-blind signed-log substrate for turn-based games', value: 'poker' }
 ]
 
 // ─── Helpers ────────────────────────────────────────────────────────

@@ -234,6 +234,22 @@ export class BareRelay extends EventEmitter {
         { name: 'vrf', module: 'p2p-hiveservices/builtin/vrf-service.js', className: 'VRFService', opts: { keyPair: this.swarm.keyPair, beacon: this.config.vrfBeacon } }
       ]
 
+      // Poker is an APP-level service (card-blind signed-log substrate for
+      // turn-based games), not relay infrastructure — so it is opt-in only:
+      // register it when the operator selected it (setup checkbox → config.services
+      // / config.plugins, or HIVERELAY_POKER=1). The module ships in
+      // p2p-hiveservices but no relay registered it before, so poker tables were
+      // unreachable on a stock node. PokerApp fits the generic registration loop
+      // below (it reads context.node in start()). Tables are in-memory with a 24h
+      // idle TTL; the durable hypercore mirror (persistence-hypercore.js) is a
+      // follow-up that routes service-created tables through createPersistentTable.
+      const _appServices = this.config.services || this.config.plugins || []
+      const _pokerSelected = (Array.isArray(_appServices) && _appServices.includes('poker')) ||
+        process.env.HIVERELAY_POKER === '1'
+      if (_pokerSelected) {
+        bareSafeServices.push({ name: 'poker', module: 'p2p-hiveservices/builtin/poker/index.js', className: 'PokerApp' })
+      }
+
       let registered = 0
       let servicesPackageMissing = false
       for (const spec of bareSafeServices) {
