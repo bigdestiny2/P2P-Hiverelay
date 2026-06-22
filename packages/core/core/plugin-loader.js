@@ -25,11 +25,34 @@ const BUILTIN_MAP = {
   sla: { module: 'p2p-hiveservices/builtin/sla-service.js', className: 'SLAService' },
   schema: { module: 'p2p-hiveservices/builtin/schema-service.js', className: 'SchemaService' },
   arbitration: { module: 'p2p-hiveservices/builtin/arbitration-service.js', className: 'ArbitrationService' },
-  vrf: { module: 'p2p-hiveservices/builtin/vrf-service.js', className: 'VRFService' }
+  vrf: { module: 'p2p-hiveservices/builtin/vrf-service.js', className: 'VRFService' },
+  // Card-blind poker substrate (SignedLog). Useful only with its crypto
+  // support services — see SERVICE_BUNDLES below.
+  poker: { module: 'p2p-hiveservices/builtin/poker/index.js', className: 'PokerApp' }
 }
 
 // Names operators can add as services (the Services tab's "available" list).
 export const BUILTIN_SERVICE_NAMES = Object.keys(BUILTIN_MAP)
+
+// One-click service bundles surfaced in the dashboard. Enabling a bundle key
+// implies its support services are enabled too (a poker substrate is useless
+// without verifiable randomness, dispute arbitration, and ZK proofs). Defined
+// ONCE here so the UI ("Enable Poker services" button) and the backend
+// (setServicesConfig auto-union) share a single source of truth — no drift.
+export const SERVICE_BUNDLES = {
+  poker: ['poker', 'vrf', 'arbitration', 'zk']
+}
+
+// Expand a plugins list so every bundle member pulls in its support services.
+// Idempotent, deduped, builtins-only. An operator can't half-enable poker
+// without the services it depends on.
+export function expandServiceDeps (plugins) {
+  const set = new Set((Array.isArray(plugins) ? plugins : []).map(String))
+  for (const [key, members] of Object.entries(SERVICE_BUNDLES)) {
+    if (set.has(key)) for (const m of members) set.add(m)
+  }
+  return [...set].filter((p) => BUILTIN_SERVICE_NAMES.includes(p))
+}
 
 export class PluginLoader {
   constructor (opts = {}) {

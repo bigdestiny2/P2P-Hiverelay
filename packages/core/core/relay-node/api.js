@@ -19,6 +19,7 @@ import { fileURLToPath } from 'url'
 import { createRequire } from 'module'
 import { EventEmitter } from 'events'
 import { DashboardFeed } from './ws-feed.js'
+import { PokerFeed } from './ws-feed-poker.js'
 import { HyperGateway } from '../../gateway/hyper-gateway.js'
 import {
   AVAILABILITY_CLASSES,
@@ -33,7 +34,7 @@ import {
 import { buildCapabilityDoc } from '../capability-doc.js'
 import { verifySeedingManifest } from '../seeding-manifest.js'
 import { ERR, formatErr } from '../error-prefixes.js'
-import { BUILTIN_SERVICE_NAMES } from '../plugin-loader.js'
+import { BUILTIN_SERVICE_NAMES, SERVICE_BUNDLES } from '../plugin-loader.js'
 import { SetupWizard } from '../wizard.js'
 import { verifyForkProof } from '../fork-proof-signing.js'
 import { isTransientCoreError, TRANSIENT_RETRY_AFTER_SECONDS } from '../transient-core-errors.js'
@@ -160,6 +161,7 @@ export class RelayAPI extends EventEmitter {
     this._docsHtml = null
     this._wizardHtml = null
     this._dashboardFeed = null
+    this._pokerFeed = null
     this._wizard = null // lazily constructed by _getWizard() on first /api/wizard hit
     this._gateway = new HyperGateway(relayNode, { store: relayNode.store })
   }
@@ -261,6 +263,19 @@ export class RelayAPI extends EventEmitter {
           apiKey: this._apiKey
         })
         this._dashboardFeed.start()
+
+        // Poker table live feed (/api/poker/:table/events). Coexists with the
+        // dashboard feed on the same upgrade event; resolves the running
+        // PokerApp lazily so it serves whether poker is enabled at boot or
+        // toggled on later.
+        this._pokerFeed = new PokerFeed({
+          server: this.server,
+          getPokerApp: () => {
+            const pk = this._getPokerServiceProvider()
+            return pk.ok ? pk.provider : null
+          }
+        })
+        this._pokerFeed.start()
 
         this.emit('started', { port: this.port })
         resolve()
@@ -508,6 +523,82 @@ export class RelayAPI extends EventEmitter {
       // GET passthrough of method+path+query — no client headers/IP forwarded.
       if (req.method === 'GET' && (path === '/api/index/room' || path.startsWith('/index/'))) {
         return this._proxyIndex(req, res, url)
+      }
+
+      // Poker honest-usage measure (operator earnings/activity view) — derived
+      // from the PLAYER-signed log, so the relay cannot forge the count. This is
+      // poker's payout-relevant signal: a per-table append + writer-seat tally,
+      // counts ONLY — never card/hole/payload data. Sits ahead of the generic
+      // /api/poker/* mount so "usage" isn't routed as a table key. Auth-gated.
+      if (path === '/api/poker/usage' && req.method === 'GET') {
+        if (!this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return
+        const pk = this._getPokerServiceProvider()
+        if (!pk.ok) return this._json(res, { error: pk.error }, pk.status)
+        const tables = typeof pk.provider.listTables === 'function' ? pk.provider.listTables() : []
+        let appends = 0
+        let seats = 0
+        const perTable = tables.map((t) => {
+          const a = t.length || 0
+          const w = t.writers || 0
+          appends += a
+          seats += w
+          return { tableKey: t.tableKey, appends: a, writers: w, lastTs: t.lastTs || null }
+        })
+        return this._json(res, {
+          service: 'poker',
+          tables: tables.length,
+          appends, // total player-signed log entries (relay-unforgeable)
+          seats,
+          perTable,
+          note: 'appends = player-signed log entries (the relay cannot forge them). Counts only — no card/hole/payload data.'
+        })
+      }
+
+      // Poker substrate (card-blind SignedLog) — served only when the 'poker'
+      // service is enabled + running. handlePokerRoute does its own CORS + body
+      // parsing, so it sits here ahead of any JSON/body guard. Table CREATE is
+      // gated (anti-DoS on the maxTables cap); GET reads + signed /move stay open
+      // (the signed log entry is itself the authorization). The adapter lives in
+      // the optional p2p-hiveservices package, so it is dynamic-imported — core
+      // stays decoupled when services aren't installed.
+      if (path === '/api/poker' || path.startsWith('/api/poker/')) {
+        const pk = this._getPokerServiceProvider()
+        if (!pk.ok) return this._json(res, { error: pk.error }, pk.status)
+        if (req.method === 'POST' && path === '/api/poker/tables') {
+          if (!this._requireAuth(req, res, 'Unauthorized — API key required to create a poker table')) return
+        }
+        if (!this._handlePokerRoute) {
+          this._handlePokerRoute = (await import('p2p-hiveservices/builtin/poker/http-adapter.js')).handlePokerRoute
+        }
+        const handled = await this._handlePokerRoute(req, res, { pokerApp: pk.provider })
+        if (handled) return
+        return this._json(res, { error: 'not found' }, 404)
+      }
+
+      // Honest metering — counterparty-signed usage receipts. A consumer submits
+      // a receipt IT signed ("relay R provided <service>.<cap>, N units"); the
+      // relay verifies the signature + dedups replays, then aggregates. Only
+      // verified receipts are payout-eligible — the registry's own per-service
+      // call counters are self-reported (statsVerified:false). POST is open: the
+      // receipt's own signature IS the authorization (rejected unless it
+      // verifies + is non-replayed); it carries no payload/content/IP. The
+      // digest view is auth-gated (operator earnings evidence).
+      if (path === '/api/usage/receipt' && req.method === 'POST') {
+        if (!this.node.usageLedger) return this._json(res, { error: 'metering unavailable' }, 503)
+        let body
+        try { body = await this._readBody(req) } catch { return this._json(res, { error: 'invalid body' }, 400) }
+        const result = this.node.usageLedger.record(body)
+        return this._json(res, result, result.ok ? 200 : 400)
+      }
+      if (path === '/api/usage' && req.method === 'GET') {
+        if (!this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return
+        const verified = this.node.usageLedger
+          ? this.node.usageLedger.digest()
+          : { count: 0, totals: {}, receiptRoot: null }
+        return this._json(res, {
+          verified, // counterparty-signed, payout-eligible
+          note: 'verified = counterparty-signed receipts (payout-eligible). Per-service registry stats are self-reported (statsVerified:false) and are NOT payout-eligible.'
+        })
       }
 
       // Catalog endpoint — typed content catalog (apps, drives, resources, datasets, media)
@@ -2231,11 +2322,17 @@ export class RelayAPI extends EventEmitter {
               capabilities: Array.isArray(entry.capabilities) ? entry.capabilities : [],
               description: entry.description || '',
               stats: entry.stats || null,
+              // The registry's per-service counters are SELF-REPORTED — the relay
+              // increments them itself, so they're forgeable and must never drive
+              // payment. Counterparty-signed UsageReceipts (GET /api/usage) are
+              // the payout-eligible measure. The GUI shows these as "usage
+              // (unverified)" vs the verified earnings evidence.
+              statsVerified: false,
               restartCount: entry.restartCount || 0,
               lastError: entry.lastError || null
             })
           }
-          return this._json(res, { enabled: true, services, count: services.length })
+          return this._json(res, { enabled: true, services, count: services.length, statsVerified: false })
         }
 
         // What the operator can host + what's running + the persisted opt-in
@@ -2245,6 +2342,7 @@ export class RelayAPI extends EventEmitter {
           return this._json(res, {
             enabled: !!reg,
             available: BUILTIN_SERVICE_NAMES,
+            bundles: SERVICE_BUNDLES, // one-click sets (e.g. poker -> [poker,vrf,arbitration,zk])
             active: reg ? Array.from(reg.services.keys()) : [],
             plugins: Array.isArray(this.node.config.plugins) ? this.node.config.plugins : []
           })
@@ -2678,6 +2776,25 @@ export class RelayAPI extends EventEmitter {
       return { ok: false, status: 503, error: 'AI service does not expose model management methods' }
     }
 
+    return { ok: true, provider, entry }
+  }
+
+  // Resolve the running PokerApp provider from the registry (mirror of
+  // _getAIServiceProvider). Used by the /api/poker/* gateway mount.
+  _getPokerServiceProvider () {
+    const registry = this.node.serviceRegistry
+    const services = registry && registry.services
+    const entry = services && typeof services.get === 'function' ? services.get('poker') : null
+    if (!entry) {
+      return { ok: false, status: 503, error: 'Poker service is not enabled on this relay' }
+    }
+    if (entry.status && entry.status !== 'running') {
+      return { ok: false, status: 503, error: 'Poker service is not running (status=' + entry.status + ')' }
+    }
+    const provider = entry.provider || entry
+    if (!provider || typeof provider.listTables !== 'function' || typeof provider.submitEntry !== 'function') {
+      return { ok: false, status: 503, error: 'Poker service does not expose the substrate methods' }
+    }
     return { ok: true, provider, entry }
   }
 
@@ -3236,6 +3353,11 @@ export class RelayAPI extends EventEmitter {
     if (this._dashboardFeed) {
       this._dashboardFeed.stop()
       this._dashboardFeed = null
+    }
+
+    if (this._pokerFeed) {
+      this._pokerFeed.stop()
+      this._pokerFeed = null
     }
 
     if (this._gateway) {

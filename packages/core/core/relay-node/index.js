@@ -32,6 +32,7 @@ import { ForwardRelay } from '../protocol/forward-relay.js'
 import { SignedDirectory } from '../services/signed-directory.js'
 import { ProofOfRelay } from '../protocol/proof-of-relay.js'
 import { BandwidthReceipt } from '../protocol/bandwidth-receipt.js'
+import { UsageLedger } from '../protocol/usage-receipt.js'
 import { ReputationSystem } from '../../incentive/reputation/index.js'
 import { NetworkDiscovery } from '../network-discovery.js'
 import { HealthMonitor } from './health-monitor.js'
@@ -50,7 +51,7 @@ import { ServiceRegistry, ServiceProtocol } from '../services/index.js'
 // Builtin services live in the p2p-hiveservices package and are loaded at
 // runtime via PluginLoader when an operator opts in (config.plugins).
 // Core no longer hardcodes Services constructors.
-import { PluginLoader, BUILTIN_SERVICE_NAMES } from '../plugin-loader.js'
+import { PluginLoader, expandServiceDeps } from '../plugin-loader.js'
 import { Router } from '../router/index.js'
 import { AppRegistry } from '../app-registry.js'
 import {
@@ -371,6 +372,10 @@ export class RelayNode extends EventEmitter {
     this.reputation = new ReputationSystem()
     this._proofOfRelay = null
     this._bandwidthReceipt = null
+    // Honest metering: collects consumer-signed UsageReceipts (payout-eligible).
+    // Lightweight + in-memory; available before start() so the API can record
+    // submitted receipts whether or not the services layer is enabled.
+    this.usageLedger = new UsageLedger()
     this._reputationDecayInterval = null
     this._reputationSaveInterval = null
     this.networkDiscovery = null
@@ -539,7 +544,10 @@ export class RelayNode extends EventEmitter {
       const data = JSON.parse(await readFile(path, 'utf8'))
       if (data && data.enabled === true && Array.isArray(data.plugins)) {
         this.config.enableServices = true
-        this.config.plugins = data.plugins.filter(p => BUILTIN_SERVICE_NAMES.includes(p))
+        // expandServiceDeps pulls in bundle support services (e.g. poker -> vrf+
+        // arbitration+zk) and filters to builtins, in case services.json was
+        // hand-edited to list a bundle key without its deps.
+        this.config.plugins = expandServiceDeps(data.plugins)
       }
     } catch {
       // Missing/corrupt -> leave config as-is (services stay off by default).
@@ -552,9 +560,9 @@ export class RelayNode extends EventEmitter {
    * before the services-init block. Validates plugin names against builtins.
    */
   async setServicesConfig ({ enabled, plugins } = {}) {
-    const list = Array.isArray(plugins)
-      ? [...new Set(plugins.map(String))].filter(p => BUILTIN_SERVICE_NAMES.includes(p))
-      : []
+    // expandServiceDeps dedups, filters to builtins, AND auto-unions bundle
+    // support services so enabling 'poker' also enables vrf+arbitration+zk.
+    const list = Array.isArray(plugins) ? expandServiceDeps(plugins) : []
     const payload = { enabled: enabled === true, plugins: list, updatedAt: Date.now() }
     const path = this._servicesOverridePath()
     if (path) {
