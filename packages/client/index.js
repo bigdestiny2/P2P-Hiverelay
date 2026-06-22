@@ -3058,16 +3058,11 @@ export class HiveRelayClient extends EventEmitter {
     const metaCore = drive.core
     const metaLength = metaCore.length || 0
 
-    // Locate the relay among the drive's peers (attribution) + its advertised length.
-    const relayBuf = b4a.from(relayPubkey, 'hex')
-    const relayPeer = (metaCore.peers || []).find((p) => {
-      const rk = p && (p.remotePublicKey || (p.stream && p.stream.remotePublicKey))
-      return rk && b4a.equals(rk, relayBuf)
-    }) || null
-    const relayRemoteLength = relayPeer ? (relayPeer.remoteLength || 0) : 0
-
     // Download the FULL drive — meta + blobs. Hypercore verifies every block
     // against the drive key on arrival; a bad block throws / quarantines.
+    // We do this BEFORE inspecting peers: the download forces the connection to
+    // the relay to fully establish + replicate, so its peer entry + advertised
+    // remoteLength are reliably populated afterwards (reading them first races).
     let contentVerified = false
     let blobsLength = 0
     try {
@@ -3079,6 +3074,15 @@ export class HiveRelayClient extends EventEmitter {
     } catch (err) {
       this.emit('verify-seeded-error', { driveKey: keyHex, error: err })
     }
+
+    // Now locate the relay among the drive's peers (attribution) + its
+    // advertised length — reliable only after replication has happened.
+    const relayBuf = b4a.from(relayPubkey, 'hex')
+    const relayPeer = (metaCore.peers || []).find((p) => {
+      const rk = p && (p.remotePublicKey || (p.stream && p.stream.remotePublicKey))
+      return rk && b4a.equals(rk, relayBuf)
+    }) || null
+    const relayRemoteLength = relayPeer ? (relayPeer.remoteLength || 0) : 0
 
     return this._seededVerdict({
       driveKey: keyHex,
