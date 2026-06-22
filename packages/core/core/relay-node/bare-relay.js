@@ -147,6 +147,11 @@ export class BareRelay extends EventEmitter {
 
   get publicKey () { return this.swarm ? this.swarm.keyPair.publicKey : null }
 
+  // The Node RelayNode sets this.keyPair; Bare only has this.swarm.keyPair.
+  // Alias it so services that sign with the relay identity (e.g. storage-proof)
+  // work identically on both runtimes.
+  get keyPair () { return this.swarm ? this.swarm.keyPair : null }
+
   async start () {
     if (this.running) throw new Error('already running')
 
@@ -248,6 +253,16 @@ export class BareRelay extends EventEmitter {
         process.env.HIVERELAY_POKER === '1'
       if (_pokerSelected) {
         bareSafeServices.push({ name: 'poker', module: 'p2p-hiveservices/builtin/poker/index.js', className: 'PokerApp' })
+      }
+
+      // Storage-proof — Tier-2 trustless seed verification (signed proof that
+      // this relay holds a seeded block). Opt-in like poker so a stock node
+      // stays minimal; uses node.appRegistry + the relay identity (node.keyPair
+      // aliased above). Self-guards blind/private drives + rate-limits.
+      const _storageProofSelected = (Array.isArray(_appServices) && _appServices.includes('storage-proof')) ||
+        process.env.HIVERELAY_STORAGE_PROOF === '1'
+      if (_storageProofSelected) {
+        bareSafeServices.push({ name: 'storage-proof', module: 'p2p-hiveservices/builtin/storage-proof-service.js', className: 'StorageProofService' })
       }
 
       let registered = 0

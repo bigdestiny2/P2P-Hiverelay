@@ -10,6 +10,22 @@ The packages are versioned in lockstep.
 
 ### Added
 
+- **Proof-of-Storage live wiring — `StorageProofService` + `client.proveSeeded()`.**
+  Drives the proof-of-storage primitive over the wire. Relay side: a builtin
+  `storage-proof` service (opt-in via `config.plugins` / services.json on the
+  Node runtime, or `config.services`/`HIVERELAY_STORAGE_PROOF=1` on the Bare
+  appliance runtime) exposing `prove({ coreKey, index, nonce })` over the
+  existing service RPC. Client side: `proveSeeded(driveKey, { relay, samples })`
+  opens the drive to learn the metadata head, samples random block indices, and
+  verifies each signed proof against an isolated temp-Corestore verifier
+  (minLength-pinned to the head). Security hardening from adversarial review:
+  (1) PRIVACY GATE — blind / privacy-redacted drives return `NOT_SEEDED`,
+  indistinguishable from not-held, so prove() can't be used as a possession
+  oracle that defeats catalog redaction; (2) a sybil-resistant GLOBAL proof-work
+  rate cap (rotating identities can't bypass it) plus a bounded, idle-evicted
+  per-caller bucket; (3) phantom-core DoS guard (only `appRegistry` keys; never
+  `store.get` on attacker input). v1 proves the metadata core; blobs-core proofs
+  are a follow-up.
 - **Proof-of-Storage primitive (`core/protocol/proof-of-storage.js`)** — the
   trustless heart of Tier-2 seed verification. `buildStorageProof` (relay side)
   produces a real Hypercore block proof for a challenged index, read from LOCAL

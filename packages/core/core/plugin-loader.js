@@ -28,7 +28,10 @@ const BUILTIN_MAP = {
   vrf: { module: 'p2p-hiveservices/builtin/vrf-service.js', className: 'VRFService' },
   // Card-blind poker substrate (SignedLog). Useful only with its crypto
   // support services — see SERVICE_BUNDLES below.
-  poker: { module: 'p2p-hiveservices/builtin/poker/index.js', className: 'PokerApp' }
+  poker: { module: 'p2p-hiveservices/builtin/poker/index.js', className: 'PokerApp' },
+  // Tier-2 trustless seed verification: signed challenge-response proof that
+  // this relay holds a seeded block. Independent — NOT part of any bundle.
+  'storage-proof': { module: 'p2p-hiveservices/builtin/storage-proof-service.js', className: 'StorageProofService' }
 }
 
 // Names operators can add as services (the Services tab's "available" list).
