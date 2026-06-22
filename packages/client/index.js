@@ -2979,6 +2979,11 @@ export class HiveRelayClient extends EventEmitter {
    *   const off = client.subscribeService('arbitration', 'resolved', (data) => {…})
    *   off() // unsubscribe
    *
+   * Topics are matched EXACTLY (no normalization). Pass hex keys in lowercase —
+   * e.g. a poker tableKey: `subscribeService('poker', tableKey.toLowerCase(), …)`
+   * — since the relay canonicalizes and publishes to the lowercase form; an
+   * upper/mixed-case key yields a silently dead subscription.
+   *
    * One MSG_SUBSCRIBE is sent for the first local listener on a (relay, topic)
    * pair; MSG_UNSUBSCRIBE when the last one detaches. Returns an unsubscribe fn.
    */

@@ -303,11 +303,19 @@ export class PokerApp extends ServiceProvider {
   /**
    * Fan a successful append out via the relay's pubsub if one exists.
    * Best-effort — failure to publish does not affect log state.
+   *
+   * Topic is PER-TABLE (`poker/<tableKey>`) so a subscriber receives only the
+   * table it asked for via `client.subscribeService('poker', tableKey, …)` —
+   * never a cross-table firehose. No new exposure: the same entries are already
+   * readable from the open `GET /api/poker/<table>/log`, and card-blindness
+   * holds because the payload stays whatever the players signed (the relay
+   * neither reads nor adds to it). Only live appends are published — `_replay`
+   * (hydration) does not notify subscribers, so restarts don't re-emit history.
    */
   _emit (tableKey, entry, index) {
     if (!this.node || !this.node.router || !this.node.router.pubsub) return
     try {
-      this.node.router.pubsub.publish('poker/entry', { tableKey, index, entry })
+      this.node.router.pubsub.publish('poker/' + tableKey, { tableKey, index, entry })
     } catch (err) {
       this._log('emit-error', { error: err && err.message })
     }

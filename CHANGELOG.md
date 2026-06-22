@@ -20,6 +20,13 @@ The packages are versioned in lockstep.
   The server side (MSG_SUBSCRIBE/MSG_EVENT + pubsub) already existed — this adds
   the missing client half so apps get live fan-out without the HTTP/WS gateway.
   (#89 follow-up.)
+- **Poker live events over P2P** — `PokerApp` now fans accepted appends out on a
+  PER-TABLE pubsub topic `poker/<tableKey>` (was a single global `poker/entry`,
+  a cross-table firehose), consumable via
+  `client.subscribeService('poker', tableKey, …)`. Per-table = a subscriber only
+  sees the table it holds the key for; card-blind (payload forwarded verbatim,
+  same data as the open `/log`); only live appends publish — hydration is silent.
+  Pass the tableKey lowercase (the relay's canonical form).
 
 ## [0.19.4] — 2026-06-22
 
