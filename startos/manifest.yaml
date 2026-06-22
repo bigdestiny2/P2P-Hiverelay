@@ -13,15 +13,19 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.19.0
+version: 0.19.4
 release-notes: |
-  v0.19.0 — DHT-resolvable discovery. Your relay now publishes a signed
-  record to the DHT, so clients can resolve its current address from its
-  public key alone — no hardcoded address and no directory. Also lands
-  (since 0.18.x): a queryable catalogue index, an optional operator-hosted
-  AI service, and honest storage accounting with safe reclaim of superseded
-  app versions. The relay still stores only end-to-end-encrypted data it
-  cannot read. Image pinned by immutable digest.
+  v0.19.4 — Reliability + new opt-in services (since 0.19.0):
+  • Storage accounting now measures real on-disk usage, so the relay caps
+    adoption correctly and won't overfill its disk (fixes a disk-full bug).
+  • Opt-in poker services: provide the card-blind poker substrate
+    (+ vrf/zk/arbitration) over HTTP, WebSocket, and pure P2P, with honest
+    blind-safe usage metering.
+  • catalogBeeKey: advertise a curated, signed P2P catalogue clients prefer
+    over the HTTP firehose.
+  Plus v0.19.0's DHT-resolvable discovery (clients resolve your relay from
+  its public key alone). The relay still stores only end-to-end-encrypted
+  data it cannot read. Image pinned by immutable digest.
 license: apache-2.0
 wrapper-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
 upstream-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
