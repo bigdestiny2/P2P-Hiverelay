@@ -10,6 +10,21 @@ The packages are versioned in lockstep.
 
 ### Added
 
+- **Proof-of-Storage primitive (`core/protocol/proof-of-storage.js`)** — the
+  trustless heart of Tier-2 seed verification. `buildStorageProof` (relay side)
+  produces a real Hypercore block proof for a challenged index, read from LOCAL
+  storage only, signed by the relay over `coreKey || index || nonce ||
+  blake2b(block)`. `verifyStorageProof` (client side) feeds the proof to a
+  key-only verifier core — Hypercore checks the block hashes into the drive
+  key's SIGNED Merkle root, so forged content is rejected — then checks the
+  relay signature for attribution + nonce-freshness (no replay). Fully
+  adversarial-tested with real cores (forged content, wrong index, wrong core,
+  forged/relabelled signature, replayed nonce, blockhash lie, and a relay that
+  doesn't hold the block — all rejected). This is the verification primitive;
+  the relay-side `StorageProofService` RPC + `client.proveSeeded()` that drive
+  it over the wire land in a follow-up (gated, canaried). Complements Tier-1
+  `verifySeeded` with a per-block, relay-attributable proof.
+
 - **`HiveRelayClient.subscribeService(service, event, onEvent, opts?)`** — live
   service-event subscriptions over the pure-P2P service RPC, the streaming
   counterpart to `callService`. Sends `MSG_SUBSCRIBE` for the first local listener
