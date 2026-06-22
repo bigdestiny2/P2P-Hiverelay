@@ -117,7 +117,9 @@ export async function verifyStorageProof ({ verifierCore, response, expect }) {
     nonceValid: false,
     relayValid: false,
     contentValid: false,
+    lengthValid: true,
     sigValid: false,
+    provenLength: 0,
     reason: null
   }
   try {
@@ -148,6 +150,17 @@ export async function verifyStorageProof ({ verifierCore, response, expect }) {
     } catch (e) {
       r.reason = 'CONTENT_INVALID:' + (e.code || e.message)
       return r
+    }
+
+    // Length-pin (optional): the proof's upgrade.length is author-signed (the
+    // signature core.verify just validated covers the root at that length), so
+    // it's trustworthy. If the caller pins a minimum (e.g. the current head
+    // learned from Tier-1 open), reject a relay that proves an OLD, shorter
+    // version — holding an old block isn't holding the current app.
+    r.provenLength = (decoded.upgrade && decoded.upgrade.length) || 0
+    if (expect.minLength != null) {
+      r.lengthValid = r.provenLength >= expect.minLength
+      if (!r.lengthValid) { r.reason = 'LENGTH_TOO_SHORT'; return r }
     }
 
     // (2) ATTRIBUTION + FRESHNESS — the relay signature over the verified block.

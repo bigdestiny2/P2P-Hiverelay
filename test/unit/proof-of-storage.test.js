@@ -157,6 +157,24 @@ test('BLOCKHASH mismatch: relay lies about the content hash it signed => rejecte
   await core.close(); await verifierCore.close()
 })
 
+test('LENGTH PIN: a proof against an old/short signed version is rejected when a min length is required', async (t) => {
+  const core = await seededCore([b4a.from('a'), b4a.from('b'), b4a.from('c')]) // length 3
+  const relay = relayKeyPair(); const nonce = freshNonce()
+  const response = await buildStorageProof({ core, index: 1, nonce, keyPair: relay })
+  const verifierCore = await verifierFor(core.key)
+  const exp = { driveKey: core.key, index: 1, nonce, relayPubkey: relay.publicKey }
+
+  // Client knows the current head is 5 blocks — an old length-3 proof is stale.
+  const stale = await verifyStorageProof({ verifierCore, response, expect: { ...exp, minLength: 5 } })
+  t.absent(stale.valid, 'stale (short) proof rejected'); t.is(stale.reason, 'LENGTH_TOO_SHORT')
+  t.is(stale.provenLength, 3, 'reports the author-signed length it proved')
+
+  // Same proof passes when the pin matches what it actually proved.
+  const ok = await verifyStorageProof({ verifierCore: await verifierFor(core.key), response, expect: { ...exp, minLength: 3 } })
+  t.ok(ok.valid, 'accepted when minLength is satisfied'); t.ok(ok.lengthValid)
+  await core.close(); await verifierCore.close()
+})
+
 test('relay does NOT hold the block: buildStorageProof fails honestly (no fetch-on-demand)', async (t) => {
   // A key-only core that has never downloaded block 0.
   const author = await seededCore([b4a.from('a'), b4a.from('b')])
