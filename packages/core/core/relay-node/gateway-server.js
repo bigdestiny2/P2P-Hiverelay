@@ -192,6 +192,14 @@ export class GatewayServer extends EventEmitter {
     const start = (page - 1) * pageSize
     const paginated = items.slice(start, start + pageSize)
 
+    // Advertise a curated signed Hyperbee catalog (config.catalogBeeKey) so
+    // clients that can replicate + verify it prefer it over this HTTP firehose.
+    // Only emitted when set to a valid bare 64-hex key, so the default response
+    // shape is unchanged for operators who don't configure one. Mirrors the
+    // same field already surfaced by the relay's own /catalog.json.
+    const catalogBeeKey = this.node.config?.catalogBeeKey
+    const advertiseBee = typeof catalogBeeKey === 'string' && /^[0-9a-f]{64}$/i.test(catalogBeeKey)
+
     res.setHeader('Content-Type', 'application/json')
     res.setHeader('Cache-Control', 'public, max-age=30')
     res.writeHead(200)
@@ -200,7 +208,8 @@ export class GatewayServer extends EventEmitter {
       page,
       pageSize,
       total: items.length,
-      hasMore: start + pageSize < items.length
+      hasMore: start + pageSize < items.length,
+      ...(advertiseBee ? { catalogBeeKey } : {})
     }) + '\n')
   }
 }

@@ -8,12 +8,25 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+## [0.19.1] — 2026-06-22
+
+**Curated catalog-bee advertising + storage/catalogue dedup (blind-safe).**
+
+### Added
+
+- **`catalogBeeKey` advertising** — an operator can set `catalogBeeKey` (a bare
+  64-hex key of a signed Hyperbee catalog) in config; the relay advertises it in
+  both `/catalog.json` and the gateway catalog firehose so clients that can
+  replicate + verify a signed P2P catalog (e.g. PearBrowser) PREFER it over the
+  HTTP firehose. Only emitted for a valid 64-hex key — the default response shape
+  is unchanged for operators who don't configure one. (`/catalog.json` already
+  surfaced it since v0.19.0; this adds the gateway firehose surface + the
+  documented `catalogBeeKey` config default.)
+
 **Storage + catalogue dedup (blind-safe).** Identical content is already
 deduped (Corestore content-addresses by appKey == driveKey); cross-publisher
 content dedup is intentionally NOT done — it would break the blind model. These
 are the blind-safe gaps:
-
-### Added
 
 - **Duplication report** — `getStats().storage.dedup` estimates reclaimable
   bytes from superseded versions still resident on disk (an `app`-type entry
