@@ -3026,6 +3026,91 @@ export class HiveRelayClient extends EventEmitter {
     }
   }
 
+  /**
+   * Trustlessly verify a relay holds + serves a specific app (Hyperdrive).
+   *
+   * The trust comes from Hypercore itself: every block replicated here is
+   * verified against the drive key's signed Merkle root, so a relay CANNOT
+   * fake content it doesn't hold — a forged/substituted block fails (and trips
+   * the fork/verification hooks). We open the drive, confirm the relay is a
+   * live peer advertising the full length, and download BOTH cores (metadata
+   * and blobs) to completion — proving the genuine, complete content is present
+   * and served, with zero trust in the relay's self-reported catalog.
+   *
+   * Caveat: replication rides the shared swarm, so `contentVerified` proves the
+   * content is genuine + served by the swarm, and `relayHasFullLength` is R's
+   * own advertised state — this is NOT a per-block, R-attributable, third-party
+   * -portable proof. For that, use the signed proof-of-storage challenge (Tier 2).
+   *
+   *   const v = await client.verifySeeded(driveKey, { relay: relayPubkeyHex })
+   *   //   { complete: true, relayHasFullLength: true, contentVerified: true, … }
+   */
+  async verifySeeded (driveKey, opts = {}) {
+    this._ensureStarted()
+    const keyHex = typeof driveKey === 'string' ? driveKey : b4a.toString(driveKey, 'hex')
+    const relayPubkey = opts.relay
+    if (!relayPubkey) throw new Error('verifySeeded: opts.relay (relay pubkey hex) is required')
+    if (!this.relays.has(relayPubkey)) throw new Error('NO_RELAY: not connected to relay ' + relayPubkey)
+
+    const timeout = opts.timeout || 30_000
+    const drive = await this.open(keyHex, { wait: true, timeout })
+    await drive.ready()
+    const metaCore = drive.core
+    const metaLength = metaCore.length || 0
+
+    // Download the FULL drive — meta + blobs. Hypercore verifies every block
+    // against the drive key on arrival; a bad block throws / quarantines.
+    // We do this BEFORE inspecting peers: the download forces the connection to
+    // the relay to fully establish + replicate, so its peer entry + advertised
+    // remoteLength are reliably populated afterwards (reading them first races).
+    let contentVerified = false
+    let blobsLength = 0
+    try {
+      if (metaLength > 0) await metaCore.download({ start: 0, end: metaLength }).done()
+      const blobs = await drive.getBlobs()
+      blobsLength = (blobs && blobs.core && blobs.core.length) || 0
+      if (blobsLength > 0) await blobs.core.download({ start: 0, end: blobsLength }).done()
+      contentVerified = true
+    } catch (err) {
+      this.emit('verify-seeded-error', { driveKey: keyHex, error: err })
+    }
+
+    // Now locate the relay among the drive's peers (attribution) + its
+    // advertised length — reliable only after replication has happened.
+    const relayBuf = b4a.from(relayPubkey, 'hex')
+    const relayPeer = (metaCore.peers || []).find((p) => {
+      const rk = p && (p.remotePublicKey || (p.stream && p.stream.remotePublicKey))
+      return rk && b4a.equals(rk, relayBuf)
+    }) || null
+    const relayRemoteLength = relayPeer ? (relayPeer.remoteLength || 0) : 0
+
+    return this._seededVerdict({
+      driveKey: keyHex,
+      relay: relayPubkey,
+      metaLength,
+      blobsLength,
+      relayIsPeer: !!relayPeer,
+      relayRemoteLength,
+      contentVerified
+    })
+  }
+
+  /** Pure verdict from a verifySeeded probe — separated so it's unit-testable. */
+  _seededVerdict ({ driveKey, relay, metaLength, blobsLength, relayIsPeer, relayRemoteLength, contentVerified }) {
+    const relayHasFullLength = !!relayIsPeer && metaLength > 0 && relayRemoteLength >= metaLength
+    return {
+      driveKey,
+      relay,
+      relayIsPeer: !!relayIsPeer,
+      relayHasFullLength,
+      contentVerified: !!contentVerified,
+      complete: relayHasFullLength && !!contentVerified,
+      metaLength,
+      blobsLength,
+      relayRemoteLength
+    }
+  }
+
   /** Drop all local subscription state for a relay (its channel closed). */
   _dropRelaySubscriptions (relayPubkey) {
     const prefix = relayPubkey + '|'
