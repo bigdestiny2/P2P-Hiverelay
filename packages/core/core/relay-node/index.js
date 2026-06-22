@@ -107,6 +107,13 @@ const DEFAULT_CONFIG = {
   requireSignedCatalog: false,
   catalogSignatureMaxAgeMs: 5 * 60 * 1000,
   catalogMaxAppAgeMs: 30 * 24 * 60 * 60 * 1000,
+  // Optional bare 64-hex key of a signed Hyperbee catalog to advertise (in
+  // /catalog.json and the gateway firehose) as `catalogBeeKey`. Clients that
+  // can replicate + verify a signed P2P catalog (e.g. PearBrowser) PREFER it
+  // over the HTTP firehose, so an operator can pin a curated, queryable
+  // catalogue. Empty = don't advertise (each operator sets their own key; it's
+  // intentionally NOT a product default). Read at boot + by /seed-core.
+  catalogBeeKey: '',
   // Catalog accept-mode controls how inbound seed requests are handled.
   //   'open'      — auto-accept every signed seed request (legacy behaviour)
   //   'review'    — queue seed requests for operator approval (default)
