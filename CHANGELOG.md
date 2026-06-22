@@ -8,6 +8,31 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+## [0.19.2] — 2026-06-22
+
+**Operator poker-services — opt-in, reachable over HTTP, WS, and pure-P2P service RPC.**
+
+### Added
+
+- **Poker as an opt-in operator service.** Registered as a builtin on both runtime
+  paths — `RelayNode` (plugin-loader `BUILTIN_MAP` + a `poker → vrf,arbitration,zk`
+  service bundle, auto-unioned by `expandServiceDeps`) and `BareRelay`
+  (`HIVERELAY_POKER=1` / `config.services|plugins` includes `poker`); added to the
+  `cli/setup.js` picker. App-level substrate, off by default. (#88, #89)
+- **Reachable over three transports:** `/api/poker/*` HTTP gateway mount (table
+  CREATE auth-gated; signed reads/moves open), a `PokerFeed` WebSocket fan-out for
+  `/api/poker/:table/events`, and the P2P **service RPC**. The poker capabilities
+  now accept the registry's `method(params, context)` params-object convention as
+  well as the positional HTTP form (dual-convention on `submitEntry`/`getLog`/
+  `getState`), so `callService('poker', …)` works. Card-blindness preserved —
+  `options` stay opaque/deep-frozen; the signed log only checks sig/writer/seq/ts. (#89)
+- **Honest, blind-safe metering.** Content-free, counterparty-signed `UsageReceipt`
+  + `UsageLedger` (verify, replay-guard, aggregate, order-independent `receiptRoot`);
+  `POST /api/usage/receipt` (open, verified-only) + `GET /api/usage` (auth digest);
+  `GET /api/poker/usage` derives poker's payout signal from the player-signed log.
+  Self-reported registry counters are labeled `statsVerified:false` — only
+  counterparty-signed receipts are payout-eligible. Surfaced in the services GUI. (#88)
+
 ## [0.19.1] — 2026-06-22
 
 **Curated catalog-bee advertising + storage/catalogue dedup (blind-safe).**
