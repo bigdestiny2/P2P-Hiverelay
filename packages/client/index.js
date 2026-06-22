@@ -145,6 +145,10 @@ export class HiveRelayClient extends EventEmitter {
     // Service RPC state
     this._pendingServiceRequests = new Map() // requestId -> { resolve, reject, timer }
     this._serviceRequestId = 1
+    // Live service-event subscriptions: `${relayPubkey}|${topic}` -> Set<onEvent>.
+    // One MSG_SUBSCRIBE per (relay,topic) is sent for the first local listener;
+    // MSG_UNSUBSCRIBE when the last one detaches.
+    this._serviceSubscriptions = new Map()
 
     // Persistent seed retry queue
     // Stored at {storagePath}/pending-seeds.json; survives process restart.
@@ -2966,6 +2970,65 @@ export class HiveRelayClient extends EventEmitter {
     })
   }
 
+  /**
+   * Subscribe to a relay's live service events over the P2P service RPC — the
+   * streaming counterpart to callService(). Topics follow the producer
+   * convention `<service>/<event>` (e.g. arbitration/resolved, sla/created,
+   * events/<relay-event>); a service emits via node.router.pubsub.publish().
+   *
+   *   const off = client.subscribeService('arbitration', 'resolved', (data) => {…})
+   *   off() // unsubscribe
+   *
+   * One MSG_SUBSCRIBE is sent for the first local listener on a (relay, topic)
+   * pair; MSG_UNSUBSCRIBE when the last one detaches. Returns an unsubscribe fn.
+   */
+  subscribeService (service, event, onEvent, opts = {}) {
+    this._ensureStarted()
+    if (typeof onEvent !== 'function') throw new Error('subscribeService: onEvent must be a function')
+    const topic = `${service}/${event}`
+    if (topic.length > 256) throw new Error('subscribeService: topic too long (max 256)')
+
+    const relayPubkey = opts.relay || this._selectBestRelay('service')
+    if (!relayPubkey) throw new Error('NO_RELAY: no relay with service channel')
+    const relay = this.relays.get(relayPubkey)
+    if (!relay?.channels?.service) {
+      throw new Error('NO_SERVICE_CHANNEL: relay ' + relayPubkey + ' has no service protocol')
+    }
+
+    const key = relayPubkey + '|' + topic
+    let set = this._serviceSubscriptions.get(key)
+    const firstForTopic = !set
+    if (!set) { set = new Set(); this._serviceSubscriptions.set(key, set) }
+    set.add(onEvent)
+    if (firstForTopic) {
+      relay.channels.service.msg.send({ type: 4, topics: [topic] }) // MSG_SUBSCRIBE
+    }
+
+    let active = true
+    return () => {
+      if (!active) return
+      active = false
+      const s = this._serviceSubscriptions.get(key)
+      if (!s) return
+      s.delete(onEvent)
+      if (s.size === 0) {
+        this._serviceSubscriptions.delete(key)
+        const r = this.relays.get(relayPubkey)
+        if (r?.channels?.service) {
+          r.channels.service.msg.send({ type: 5, topics: [topic] }) // MSG_UNSUBSCRIBE
+        }
+      }
+    }
+  }
+
+  /** Drop all local subscription state for a relay (its channel closed). */
+  _dropRelaySubscriptions (relayPubkey) {
+    const prefix = relayPubkey + '|'
+    for (const key of this._serviceSubscriptions.keys()) {
+      if (key.startsWith(prefix)) this._serviceSubscriptions.delete(key)
+    }
+  }
+
   // ─── Internal ────────────────────────────────────────────────────
 
   _onConnection (conn, info) {
@@ -3206,7 +3269,7 @@ export class HiveRelayClient extends EventEmitter {
         onopen: () => {
           this.emit('service-channel-open', { relay: pubkeyHex })
         },
-        onclose: () => { channels.service = null }
+        onclose: () => { channels.service = null; this._dropRelaySubscriptions(pubkeyHex) }
       })
 
       const serviceMsg = serviceChannel.addMessage({
@@ -3455,6 +3518,15 @@ export class HiveRelayClient extends EventEmitter {
       const relay2 = this.relays.get(relayPubkey)
       if (relay2) relay2.seededApps = msg.apps || []
       this.emit('app-catalog', { relay: relayPubkey, apps: msg.apps || [] })
+    } else if (msg.type === 6) { // MSG_EVENT (live service-event fan-out)
+      if (typeof msg.topic !== 'string') return
+      const set = this._serviceSubscriptions.get(relayPubkey + '|' + msg.topic)
+      if (set) {
+        for (const cb of set) {
+          try { cb(msg.data, msg.topic, relayPubkey) } catch { /* a subscriber's error must not kill the message loop */ }
+        }
+      }
+      this.emit('service-event', { relay: relayPubkey, topic: msg.topic, data: msg.data })
     }
   }
 
@@ -3657,6 +3729,7 @@ export class HiveRelayClient extends EventEmitter {
       pending.reject(new Error('CLIENT_DESTROYED'))
     }
     this._pendingServiceRequests.clear()
+    this._serviceSubscriptions.clear()
 
     // Stop registry
     if (this._registry) {

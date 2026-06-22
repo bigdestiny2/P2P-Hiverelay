@@ -8,6 +8,19 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+### Added
+
+- **`HiveRelayClient.subscribeService(service, event, onEvent, opts?)`** — live
+  service-event subscriptions over the pure-P2P service RPC, the streaming
+  counterpart to `callService`. Sends `MSG_SUBSCRIBE` for the first local listener
+  on a `(relay, topic)` pair, routes `MSG_EVENT` to the callback, and
+  `MSG_UNSUBSCRIBE` on last detach; returns an unsubscribe fn. Topics follow the
+  producer convention `<service>/<event>` (e.g. `arbitration/resolved`,
+  `sla/created`, `events/<relay-event>`), published via `node.router.pubsub`.
+  The server side (MSG_SUBSCRIBE/MSG_EVENT + pubsub) already existed — this adds
+  the missing client half so apps get live fan-out without the HTTP/WS gateway.
+  (#89 follow-up.)
+
 ## [0.19.4] — 2026-06-22
 
 ### Fixed
