@@ -27,6 +27,17 @@ The packages are versioned in lockstep.
   sees the table it holds the key for; card-blind (payload forwarded verbatim,
   same data as the open `/log`); only live appends publish — hydration is silent.
   Pass the tableKey lowercase (the relay's canonical form).
+- **`HiveRelayClient.verifySeeded(driveKey, { relay })`** — trustless Tier-1
+  seed verification: confirm a relay actually holds + serves a specific app
+  (Hyperdrive) without trusting its self-reported catalog. Dials the relay,
+  opens the drive, and downloads BOTH cores (metadata + blobs) to completion —
+  Hypercore verifies every block against the drive key's signed Merkle root on
+  arrival, so a relay cannot fake content it doesn't hold. Returns
+  `{ complete, relayIsPeer, relayHasFullLength, contentVerified, metaLength,
+  blobsLength, relayRemoteLength }`. Caveat: replication rides the shared swarm,
+  so this proves the content is genuine + served and that the relay advertises
+  the full length — it is NOT a per-block, relay-attributable, third-party
+  -portable proof. (Tier 2, a signed proof-of-storage challenge, follows.)
 
 ## [0.19.4] — 2026-06-22
 
