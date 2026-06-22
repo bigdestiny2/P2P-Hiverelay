@@ -8,6 +8,8 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-06-22
+
 ### Added
 
 - **Proof-of-Storage live wiring — `StorageProofService` + `client.proveSeeded()`.**
