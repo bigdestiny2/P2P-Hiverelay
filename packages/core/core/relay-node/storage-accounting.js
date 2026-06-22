@@ -19,10 +19,43 @@
 // totals converge quickly after boot and stay fresh without IO spikes.
 
 import { EventEmitter } from 'events'
+import { readdir, stat } from 'fs/promises'
+import { join } from 'path'
 
 const DEFAULT_TICK_MS = 5_000
 const DEFAULT_BATCH = 25
 const DEFAULT_INFO_TIMEOUT_MS = 8_000
+const DEFAULT_DISK_INTERVAL_MS = 60_000
+
+/**
+ * Ground-truth on-disk footprint: recursively sum the file bytes under `dir`.
+ * This is what `du` sees and what actually fills the disk — unlike the
+ * per-entry drive walk it CANNOT be fooled by bare seeded cores or lazily-
+ * unloaded Hyperdrives with no live `entry.drive` (the reason accounting read
+ * ~0 on registry-driven relays while the disk held 19 GB, so the adoption
+ * guard never bound). Robust: unreadable dirs/files are skipped; symlinks are
+ * not followed (only regular files count).
+ */
+export async function dirBytes (dir) {
+  if (!dir) return 0
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return 0
+  }
+  let total = 0
+  for (const e of entries) {
+    const p = join(dir, e.name)
+    try {
+      if (e.isDirectory()) total += await dirBytes(p)
+      else if (e.isFile()) total += (await stat(p)).size
+    } catch {
+      // racing deletes (eviction/purge), perms, broken links — skip
+    }
+  }
+  return total
+}
 
 /**
  * Race a promise against a timeout, resolving the fallback instead of
@@ -61,9 +94,15 @@ export class StorageAccounting extends EventEmitter {
     super()
     if (!opts.appRegistry) throw new Error('StorageAccounting: appRegistry is required')
     this.appRegistry = opts.appRegistry
+    // Real on-disk corestore path (config.storage). When set, getSummary()
+    // reports the measured disk footprint as the authoritative total — the
+    // per-entry drive walk alone undercounts whenever entries are bare cores
+    // or unhydrated drives, which is most of them on a busy relay.
+    this.storagePath = opts.storagePath || null
     this.tickMs = Number.isFinite(opts.tickMs) ? Math.max(500, opts.tickMs) : DEFAULT_TICK_MS
     this.batchSize = Number.isFinite(opts.batchSize) ? Math.max(1, opts.batchSize) : DEFAULT_BATCH
     this.infoTimeoutMs = Number.isFinite(opts.infoTimeoutMs) ? Math.max(50, opts.infoTimeoutMs) : DEFAULT_INFO_TIMEOUT_MS
+    this.diskIntervalMs = Number.isFinite(opts.diskIntervalMs) ? Math.max(1000, opts.diskIntervalMs) : DEFAULT_DISK_INTERVAL_MS
 
     this._bytes = new Map() // appKeyHex -> { bytes, measuredAt }
     this._cursor = 0
@@ -71,6 +110,9 @@ export class StorageAccounting extends EventEmitter {
     this._sweeping = false
     this._fullSweeps = 0
     this._lastFullSweepAt = null
+    this._diskBytes = null // measured du(storagePath); null until first measure
+    this._diskMeasuring = false
+    this._lastDiskMeasureAt = 0
   }
 
   start () {
@@ -102,7 +144,32 @@ export class StorageAccounting extends EventEmitter {
     return rec.bytes
   }
 
+  /**
+   * Measure the real on-disk corestore footprint (du of storagePath). Cheap
+   * enough at the default once-a-minute cadence; latched so a slow walk never
+   * piles up. This is the number the adoption guard must trust.
+   */
+  async measureDisk () {
+    if (this._diskMeasuring || !this.storagePath) return this._diskBytes
+    this._diskMeasuring = true
+    try {
+      this._diskBytes = await dirBytes(this.storagePath)
+      this._lastDiskMeasureAt = Date.now()
+      return this._diskBytes
+    } finally {
+      this._diskMeasuring = false
+    }
+  }
+
   async _tick () {
+    // Real-disk measurement runs on its own (throttled) cadence, independent
+    // of the per-entry sweep — so the total is correct even when the registry
+    // is empty but bare cores still occupy the disk. Fire-and-forget; never
+    // blocks the per-entry batch behind a du walk.
+    if (this.storagePath && !this._diskMeasuring &&
+        (Date.now() - this._lastDiskMeasureAt) >= this.diskIntervalMs) {
+      this.measureDisk().catch(err => this.emit('error', err))
+    }
     if (this._sweeping) return // a slow batch must not pile up behind itself
     this._sweeping = true
     try {
@@ -146,10 +213,16 @@ export class StorageAccounting extends EventEmitter {
   }
 
   getSummary () {
-    let total = 0
-    for (const rec of this._bytes.values()) total += rec.bytes
+    let perEntry = 0
+    for (const rec of this._bytes.values()) perEntry += rec.bytes
+    // Authoritative total = the measured on-disk footprint when available
+    // (catches bare/lazy cores the per-entry walk misses); the per-entry sum
+    // is only ever a subset, so max() is a safe floor before the first du.
+    const totalBytes = this._diskBytes != null ? Math.max(this._diskBytes, perEntry) : perEntry
     return {
-      totalBytes: total,
+      totalBytes,
+      diskBytes: this._diskBytes,
+      perEntryBytes: perEntry,
       measuredEntries: this._bytes.size,
       fullSweeps: this._fullSweeps,
       lastFullSweepAt: this._lastFullSweepAt

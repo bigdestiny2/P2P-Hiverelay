@@ -1207,8 +1207,8 @@ export class RelayNode extends EventEmitter {
             const peerScoreOk = peerScore === null
               ? true
               : peerScore >= (this.config.followAnchoredMinReputation ?? 0)
-            const storagePctUsed = (this.seeder && this.config.maxStorageBytes > 0)
-              ? (this.seeder.totalBytesStored / this.config.maxStorageBytes)
+            const storagePctUsed = (this.config.maxStorageBytes > 0)
+              ? (this._storageUsedBytes() / this.config.maxStorageBytes)
               : 0
             const hasHeadroom = storagePctUsed < (this.config.followAnchoredStorageCeiling ?? 0.8)
 
@@ -1668,8 +1668,13 @@ export class RelayNode extends EventEmitter {
       // dashboard's Storage panel; the paced sweep keeps IO negligible).
       this.storageAccounting = new StorageAccounting({
         appRegistry: this.appRegistry,
+        // Real on-disk corestore path — the authoritative footprint, immune to
+        // bare/lazy cores the per-entry drive walk can't see (the miss that let
+        // the adoption guard read ~0 and overfill, 2026-06).
+        storagePath: this.config.storage,
         tickMs: this.config.storageAccounting?.tickMs,
-        batchSize: this.config.storageAccounting?.batchSize
+        batchSize: this.config.storageAccounting?.batchSize,
+        diskIntervalMs: this.config.storageAccounting?.diskIntervalMs
       })
       // An 'error' emit with no listener crashes the process — route to
       // a logged event instead (v0.15.6).
@@ -2450,11 +2455,24 @@ export class RelayNode extends EventEmitter {
     return { ok: true, primaryPubkey: result.primaryPubkey }
   }
 
+  /**
+   * Bytes this relay currently stores, for ALL adoption guards. Prefers the
+   * measured on-disk corestore footprint (StorageAccounting) — `seeder.
+   * totalBytesStored` only counts Seeder.seedCore traffic (~0 on a registry-
+   * driven relay), which is how the guard failed to bind and disks filled to
+   * 100% (2026-06). Falls back to the seeder counter only before the first
+   * disk measurement lands.
+   */
+  _storageUsedBytes () {
+    const measured = this.storageAccounting ? this.storageAccounting.getSummary().totalBytes : 0
+    return measured > 0 ? measured : ((this.seeder && this.seeder.totalBytesStored) || 0)
+  }
+
   async _scanRegistry () {
     if (!this.seedingRegistry || !this.seeder) return
 
     const region = (this.config.regions && this.config.regions[0]) || null
-    let availableBytes = this.config.maxStorageBytes - (this.seeder.totalBytesStored || 0)
+    let availableBytes = this.config.maxStorageBytes - this._storageUsedBytes()
     const acceptMode = this._resolveAcceptMode()
 
     const requests = await this.seedingRegistry.getActiveRequests({
@@ -2465,7 +2483,7 @@ export class RelayNode extends EventEmitter {
     const myPubkey = this.swarm ? b4a.toString(this.swarm.keyPair.publicKey, 'hex') : null
 
     for (const req of requests) {
-      availableBytes = this.config.maxStorageBytes - (this.seeder.totalBytesStored || 0)
+      availableBytes = this.config.maxStorageBytes - this._storageUsedBytes()
       const reqTier = normalizePrivacyTier(req.privacyTier, 'public')
 
       // If a delegation cert is attached, verify the chain before accepting.
@@ -2678,7 +2696,7 @@ export class RelayNode extends EventEmitter {
     if (!this.seeder) return
 
     const appKeyHex = b4a.toString(msg.appKey, 'hex')
-    const availableBytes = this.config.maxStorageBytes - this.seeder.totalBytesStored
+    const availableBytes = this.config.maxStorageBytes - this._storageUsedBytes()
 
     // Reply with a wire-level deny so the publisher sees WHY instead of
     // timing out. Best-effort: channel may be null for in-process callers.
@@ -3787,15 +3805,13 @@ export class RelayNode extends EventEmitter {
       this.appRegistry.clearEvicted(request.appKey) // genuinely under floor — we're needed again
     }
 
-    // Storage guard on REAL bytes (Phase 0). seeder.totalBytesStored only
-    // counts Seeder.seedCore traffic — ~0 on registry-driven relays — so
-    // the old guard never bound and adoption was effectively uncapped
-    // (how the fleet's disks filled, 2026-06-11). Prefer the measured
-    // corestore total; also reject when the budget is simply exhausted
-    // rather than only when the request declares a size.
-    const measured = this.storageAccounting ? this.storageAccounting.getSummary().totalBytes : 0
-    const usedBytes = measured > 0 ? measured : (this.seeder.totalBytesStored || 0)
-    const availableBytes = this.config.maxStorageBytes - usedBytes
+    // Storage guard on REAL bytes (Phase 0), via _storageUsedBytes() — the
+    // measured on-disk corestore footprint. seeder.totalBytesStored only counts
+    // Seeder.seedCore traffic (~0 on registry-driven relays), so the old guard
+    // never bound and adoption was effectively uncapped (how the fleet's disks
+    // filled, 2026-06). Also reject when the budget is simply exhausted, not
+    // only when the request declares a size.
+    const availableBytes = this.config.maxStorageBytes - this._storageUsedBytes()
     if (availableBytes <= 0) return false
     if (request.maxStorageBytes > 0 && request.maxStorageBytes > availableBytes) return false
 
