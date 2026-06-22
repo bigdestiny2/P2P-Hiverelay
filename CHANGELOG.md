@@ -8,6 +8,27 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+## [0.19.3] — 2026-06-22
+
+**Fix: storage accounting read ~0 on registry-driven relays → adoption never capped → disks filled to 100%.**
+
+### Fixed
+
+- **StorageAccounting now measures the REAL on-disk corestore footprint** (`du`
+  of `config.storage`), not just the per-entry drive walk. Most registry entries
+  on a busy relay are bare seeded cores or lazily-unloaded Hyperdrives with no
+  live `entry.drive`, so the per-entry walk reported ~132 KB while the disk held
+  19 GB (sing-1, 2026-06). `getSummary()` now reports the measured disk total
+  (throttled `dirBytes` walk, default once/min, latched); adds `diskBytes` +
+  `perEntryBytes`; new `measureDisk()`.
+- **All four adoption guards now gate on the real measured bytes** via a shared
+  `RelayNode._storageUsedBytes()` — `_scanRegistry`, `_onSeedRequest`, the
+  replication-repair `_shouldAdopt`, and the follow-anchored headroom check
+  previously computed `maxStorageBytes − seeder.totalBytesStored`, and
+  `totalBytesStored` only counts `Seeder.seedCore` traffic (~0 on a
+  registry-driven relay), so the cap never bound and adoption was effectively
+  uncapped. Root cause of the fleet disk-full incidents.
+
 ## [0.19.2] — 2026-06-22
 
 **Operator poker-services — opt-in, reachable over HTTP, WS, and pure-P2P service RPC.**
