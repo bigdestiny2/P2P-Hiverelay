@@ -44,9 +44,11 @@ import { ForkDetector } from 'p2p-hiverelay/core/fork-detector.js'
 import { verifyCapabilityDoc } from 'p2p-hiverelay/core/capability-doc.js'
 import { signForkProof } from 'p2p-hiverelay/core/fork-proof-signing.js'
 import { EventEmitter } from 'events'
-import { readdir, readFile, writeFile, lstat, mkdir, rename } from 'fs/promises'
+import os from 'os'
+import { readdir, readFile, writeFile, lstat, mkdir, rename, rm } from 'fs/promises'
 import { join, relative, resolve, dirname } from 'path'
 import { BootstrapCache } from 'p2p-hiverelay/core/bootstrap-cache.js'
+import { verifyStorageProof } from 'p2p-hiverelay/core/protocol/proof-of-storage.js'
 import {
   seedRequestEncoding,
   seedAcceptEncoding,
@@ -3109,6 +3111,98 @@ export class HiveRelayClient extends EventEmitter {
       blobsLength,
       relayRemoteLength
     }
+  }
+
+  /**
+   * Tier-2 proof-of-storage probe — trustlessly confirm a relay HOLDS an app by
+   * making it produce signed Hypercore Merkle proofs for randomly-sampled blocks
+   * of the drive's metadata core, each verified against the drive key alone.
+   *
+   * Stronger than `verifySeeded` in one dimension: every proof is signed by the
+   * relay over a fresh nonce, so a passing result is per-block, relay-attributable,
+   * and non-replayable. (Caveat — like all challenge-response storage proofs, a
+   * relay could fetch-on-demand rather than store; random sampling + the latency
+   * bound make that expensive, not impossible.)
+   *
+   *   const r = await client.proveSeeded(driveKey, { relay: relayPubkeyHex, samples: 5 })
+   *   // r.ok === true only if EVERY sampled proof verified at the current head
+   */
+  async proveSeeded (driveKey, opts = {}) {
+    this._ensureStarted()
+    const keyHex = typeof driveKey === 'string' ? driveKey : b4a.toString(driveKey, 'hex')
+    const relayPubkey = opts.relay
+    if (!relayPubkey) throw new Error('proveSeeded: opts.relay (relay pubkey hex) is required')
+    if (!this.relays.has(relayPubkey)) throw new Error('NO_RELAY: not connected to relay ' + relayPubkey)
+
+    // Cap samples below the relay's default per-caller proof burst (32) so a
+    // single honest audit never self-throttles. 16 random blocks is a strong
+    // sample; for small drives _sampleIndices clamps to the head anyway.
+    const samples = Math.max(1, Math.min(opts.samples || 3, 16))
+    const timeout = opts.timeout || 30_000
+
+    // Open + update so drive.core.length is the metadata head we pin proofs to.
+    const drive = await this.open(keyHex, { wait: true, timeout })
+    await drive.ready()
+    const head = drive.core.length || 0
+    if (head <= 0) {
+      return { ok: false, driveKey: keyHex, relay: relayPubkey, head: 0, passed: 0, total: 0, samples: [], reason: 'EMPTY_DRIVE' }
+    }
+
+    // Isolated verifier sandbox: a SEPARATE corestore (never swarm-joined) so
+    // feeding it the relay's proofs can't race the live replication of the open
+    // drive's core (corestore sessions share the same inner core by key). One
+    // key-only core validates every sample — the author-signed root anchors all
+    // of them, so a forged proof can't poison later samples.
+    const sandboxDir = join(os.tmpdir(), 'hiverelay-verify-' + keyHex.slice(0, 16) + '-' + (this._serviceRequestId++) + '-' + this.relays.size)
+    const sandbox = new Corestore(sandboxDir)
+    const verifierCore = sandbox.get({ key: b4a.from(keyHex, 'hex') })
+    await verifierCore.ready()
+
+    const results = []
+    try {
+      for (const index of this._sampleIndices(head, samples)) {
+        const nonce = b4a.alloc(32)
+        sodium.randombytes_buf(nonce)
+        let verdict
+        try {
+          const response = await this.callService(
+            'storage-proof', 'prove',
+            { coreKey: keyHex, index, nonce: b4a.toString(nonce, 'hex') },
+            { relay: relayPubkey, timeout }
+          )
+          verdict = await verifyStorageProof({
+            verifierCore,
+            response,
+            expect: { driveKey: keyHex, index, nonce, relayPubkey, minLength: head }
+          })
+        } catch (err) {
+          verdict = { valid: false, reason: 'CALL_FAILED:' + (err.code || err.message) }
+        }
+        results.push({ index, valid: !!(verdict && verdict.valid), reason: verdict && verdict.reason })
+      }
+    } finally {
+      try { await sandbox.close() } catch {}
+      try { await rm(sandboxDir, { recursive: true, force: true }) } catch {}
+    }
+
+    const passed = results.filter((r) => r.valid).length
+    return {
+      ok: passed === results.length && results.length > 0,
+      driveKey: keyHex,
+      relay: relayPubkey,
+      head,
+      passed,
+      total: results.length,
+      samples: results
+    }
+  }
+
+  /** Distinct random block indices in [0, head). */
+  _sampleIndices (head, n) {
+    const count = Math.min(n, head)
+    const set = new Set()
+    while (set.size < count) set.add(Math.floor(Math.random() * head))
+    return [...set]
   }
 
   /** Drop all local subscription state for a relay (its channel closed). */

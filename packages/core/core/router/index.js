@@ -62,7 +62,13 @@ const ROUTE_ACCESS_POLICIES = {
   'arbitration.vote': 'authenticated-user',
   'arbitration.get': 'authenticated-user',
   'arbitration.list': 'relay-admin',
-  'arbitration.evidence': 'relay-admin'
+  'arbitration.evidence': 'relay-admin',
+
+  // Storage-proof — public so ANY client can trustlessly audit whether a relay
+  // holds a seeded block, with no auth. The proof is verified client-side
+  // against the drive key + the relay's signature, so it only ever reveals
+  // data the relay already serves (no new disclosure to gate).
+  'storage-proof.prove': 'public'
 }
 
 const SERVICE_DEFAULT_ACCESS = {
