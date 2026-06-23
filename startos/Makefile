@@ -5,12 +5,12 @@
 # start-sdk (https://github.com/Start9Labs/start-os, `cargo install` or
 # release binary). Run `make` from this directory.
 
-VERSION := 0.19.4
+VERSION := 0.20.0
 IMAGE := ghcr.io/bigdestiny2/p2p-hiverelay:$(VERSION)
 # Optional immutable pin for the retag FROM: `make IMAGE_DIGEST=sha256:...`.
 # Default empty -> FROM the :$(VERSION) tag (resolves to the current multi-arch
 # image). The image is bundled into the s9pk at build time either way.
-IMAGE_DIGEST ?= sha256:559d1983af4a4e6b40d97cf20043cb9f15f90384ac9b1c2f32466d61712373e8
+IMAGE_DIGEST ?= sha256:0b8857cda2d0e399031a135a0c5f9c8a2ec6fa77cf64ed1c59aba58351c9eae1
 S9PK := blindspark.s9pk
 TAG := start9/blindspark/main:$(VERSION)
 
