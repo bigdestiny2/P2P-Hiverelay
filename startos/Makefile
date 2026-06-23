@@ -10,7 +10,7 @@ IMAGE := ghcr.io/bigdestiny2/p2p-hiverelay:$(VERSION)
 # Optional immutable pin for the retag FROM: `make IMAGE_DIGEST=sha256:...`.
 # Default empty -> FROM the :$(VERSION) tag (resolves to the current multi-arch
 # image). The image is bundled into the s9pk at build time either way.
-IMAGE_DIGEST ?= sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+IMAGE_DIGEST ?= sha256:0b8857cda2d0e399031a135a0c5f9c8a2ec6fa77cf64ed1c59aba58351c9eae1
 S9PK := blindspark.s9pk
 TAG := start9/blindspark/main:$(VERSION)
 
