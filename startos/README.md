@@ -70,12 +70,24 @@ dashboard (no operator-only tabs, no Docs/GitHub).
 
 ```bash
 cd startos
+make digest   # print the multi-arch manifest digest for the current VERSION
 make          # buildx per-arch image tars, render icon, start-sdk pack
 make verify   # start-sdk verify s9pk blindspark.s9pk
 ```
 
 Requirements: `docker` (with `buildx`), `start-sdk`, `rsvg-convert` (or
 render `icon.png` manually from `../umbrel-app/icon.svg`, 256×256).
+
+**Pinning the image (`IMAGE_DIGEST`):** the retag `FROM` is pinned to the
+`:$(VERSION)` tag's **multi-arch manifest (OCI image-index) digest** — NOT a
+per-arch layer/blob digest. Get the right one with `make digest` (it runs
+`docker buildx imagetools inspect` and prints the top-level `Digest:`). Do
+**not** grab the first `sha256:` out of a CI log — that's usually a blob, and
+the `FROM` then fails to resolve (`not found`). `make` runs `check-digest`
+before building: it fails fast if the pinned `IMAGE_DIGEST` doesn't match the
+tag's manifest — catching both a wrong digest and a **stale** one left over
+from a previous `VERSION` (which would otherwise silently build the wrong
+image). To skip the pin entirely, build with `make IMAGE_DIGEST=`.
 
 **Multi-arch:** `docker-images` is a directory (`image/`) of per-arch
 tarballs — `x86_64.tar` and `aarch64.tar`. `make` builds each with
@@ -87,8 +99,11 @@ device extracts the tar for its CPU.
 
 The build reuses the published multi-arch GHCR image
 (`ghcr.io/bigdestiny2/p2p-hiverelay`, the same one the Umbrel app pins)
-rather than rebuilding — bump `VERSION` in the `Makefile` and `version`
-in `manifest.yaml` together on each release.
+rather than rebuilding. On each release, bump together: `VERSION` +
+`IMAGE_DIGEST` in the `Makefile` (`make digest` for the value), `version`
+in `manifest.yaml`, the `image:` digest in `../umbrel-app/docker-compose.yml`,
+and the community store (`blindspark-umbrel-store`). `check-digest` keeps the
+Makefile pin honest at build time.
 
 ### Building start-sdk itself (macOS, verified 2026-06-11)
 
