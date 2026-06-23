@@ -13,6 +13,7 @@ import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import os from 'os'
 import path from 'path'
+import { readFile } from 'fs/promises'
 import { HiveRelayClient } from 'p2p-hiverelay-client'
 import { StorageProofService } from 'p2p-hiveservices/builtin/storage-proof-service.js'
 
@@ -109,4 +110,11 @@ test('proveSeeded: empty drive (head 0) => ok false, EMPTY_DRIVE', async (t) => 
   const r = await client.proveSeeded(b4a.toString(empty.key, 'hex'), { relay: relayHex, samples: 3 })
   t.absent(r.ok); t.is(r.reason, 'EMPTY_DRIVE'); t.is(r.total, 0)
   await empty.close()
+})
+
+test('proveSeeded: client source does not import Node os builtin', async (t) => {
+  const source = await readFile(new URL('../../packages/client/index.js', import.meta.url), 'utf8')
+  t.absent(source.includes("import os from 'os'"), 'client source avoids Node os import')
+  t.absent(source.includes('os.tmpdir()'), 'client source avoids os.tmpdir')
+  t.ok(source.includes('function portableTmpdir'), 'client source has portable temp-dir helper')
 })

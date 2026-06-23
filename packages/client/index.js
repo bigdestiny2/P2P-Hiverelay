@@ -44,7 +44,6 @@ import { ForkDetector } from 'p2p-hiverelay/core/fork-detector.js'
 import { verifyCapabilityDoc } from 'p2p-hiverelay/core/capability-doc.js'
 import { signForkProof } from 'p2p-hiverelay/core/fork-proof-signing.js'
 import { EventEmitter } from 'events'
-import os from 'os'
 import { readdir, readFile, writeFile, lstat, mkdir, rename, rm } from 'fs/promises'
 import { join, relative, resolve, dirname } from 'path'
 import { BootstrapCache } from 'p2p-hiverelay/core/bootstrap-cache.js'
@@ -74,6 +73,13 @@ import {
   decryptShare as _pvssDecryptShare,
   reconstruct as _pvssReconstruct
 } from './secret-sharing.js'
+
+function portableTmpdir () {
+  const env = (typeof globalThis.process !== 'undefined' && globalThis.process.env) ||
+    (typeof globalThis.Bare !== 'undefined' && globalThis.Bare.env) ||
+    {}
+  return env.TMPDIR || env.TMP || env.TEMP || '/tmp'
+}
 
 // Re-exports for test/inspection use. Not part of the stable public surface.
 export const _pairing = {
@@ -3153,7 +3159,7 @@ export class HiveRelayClient extends EventEmitter {
     // drive's core (corestore sessions share the same inner core by key). One
     // key-only core validates every sample — the author-signed root anchors all
     // of them, so a forged proof can't poison later samples.
-    const sandboxDir = join(os.tmpdir(), 'hiverelay-verify-' + keyHex.slice(0, 16) + '-' + (this._serviceRequestId++) + '-' + this.relays.size)
+    const sandboxDir = join(portableTmpdir(), 'hiverelay-verify-' + keyHex.slice(0, 16) + '-' + (this._serviceRequestId++) + '-' + this.relays.size)
     const sandbox = new Corestore(sandboxDir)
     const verifierCore = sandbox.get({ key: b4a.from(keyHex, 'hex') })
     await verifierCore.ready()
