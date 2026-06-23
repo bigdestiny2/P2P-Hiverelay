@@ -26,6 +26,10 @@
     "crypto": {
       "bare": "bare-crypto",
       "default": "crypto"
+    },
+    "os": {
+      "bare": "bare-os",
+      "default": "os"
     }
   },
   "files": [
@@ -43,6 +47,7 @@
     "bare-crypto": "^1.15.3",
     "bare-events": "^2.9.1",
     "bare-fs": "^4.7.2",
+    "bare-os": "^3.9.1",
     "bare-path": "^3.0.1",
     "corestore": "^6.18.0",
     "hyperdrive": "^11.8.0",
