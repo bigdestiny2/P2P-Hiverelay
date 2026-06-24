@@ -29,8 +29,8 @@ D=$(df -h / | awk 'NR==2{print $5}')
 echo "$V|$R|$D"
 REMOTE_EOF
 
-printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' RELAY VERSION RUNNING APPS CONNS DISK TARGET
-printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' ───── ─────── ─────── ──── ───── ──── ──────
+printf '%-11s %-9s %-8s %-6s %-6s %-6s %s\n' RELAY VERSION RUNNING APPS CONNS DISK TARGET
+printf '%-11s %-9s %-8s %-6s %-6s %-6s %s\n' ───── ─────── ─────── ──── ───── ──── ──────
 
 while IFS='|' read -r name host keyspec channel; do
   ssh_args=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes)
@@ -38,12 +38,12 @@ while IFS='|' read -r name host keyspec channel; do
   target="$(printf '%s' "$CH" | python3 -c "import sys,json;print(json.load(sys.stdin).get('$channel',''))" 2>/dev/null || echo '?')"
   out="$(ssh "${ssh_args[@]}" "root@$host" bash -s <<<"$REMOTE" 2>/dev/null || true)"
   if [ -z "$out" ]; then
-    printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' "$name" UNREACH - - - - "$target"
+    printf '%-11s %-9s %-8s %-6s %-6s %-6s %s\n' "$name" UNREACH - - - - "$target"
     continue
   fi
   IFS='|' read -r ver rest disk <<<"$out"
   read -r run apps conns <<<"${rest:-? ? ?}"
-  printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' "$name" "${ver:-?}" "${run:-?}" "${apps:-?}" "${conns:-?}" "${disk:-?}" "$target"
+  printf '%-11s %-9s %-8s %-6s %-6s %-6s %s\n' "$name" "${ver:-?}" "${run:-?}" "${apps:-?}" "${conns:-?}" "${disk:-?}" "$target"
 done < <(python3 -c '
 import json,sys
 for r in json.load(open(sys.argv[1]))["relays"]:
