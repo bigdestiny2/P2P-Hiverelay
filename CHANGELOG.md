@@ -8,6 +8,17 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+## [0.20.1] — 2026-06-24
+
+### Fixed
+
+- **Pear/Bare client importability** — removed the Node-only `os` builtin import
+  from `p2p-hiverelay-client` and replaced the proof verifier sandbox temp-dir
+  path with a portable runtime helper. This keeps `client.proveSeeded()` working
+  under Node while allowing Bare/Pear consumers, including PearBrowser worker
+  bundles, to load the client without an `os` shim. A source-level regression
+  guard prevents the import from returning.
+
 ## [0.20.0] — 2026-06-22
 
 ### Added
