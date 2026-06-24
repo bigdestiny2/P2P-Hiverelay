@@ -30,6 +30,9 @@ export HIVERELAY_UI_SIMPLE=1
 # Sovereignty default: the operator reviews every incoming seed request
 # until they explicitly switch modes from the dashboard.
 export HIVERELAY_ACCEPT_MODE=review
+# Conservative home-server storage default. The CLI only applies this before
+# a saved operator config exists, so dashboard/config changes win later.
+export HIVERELAY_MAX_STORAGE=10GB
 export HIVERELAY_LOG_LEVEL=info
 
 exec node /app/packages/core/cli/index.js start

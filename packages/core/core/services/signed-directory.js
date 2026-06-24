@@ -65,6 +65,9 @@ const DEFAULT_MAX_ENTRIES_PER_AUTHOR = 1
 const DEFAULT_PUBLISH_RATE_PER_MINUTE = 5
 const DEFAULT_MAX_TOTAL_ENTRIES = 10_000
 const DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS = 60
+export const MAX_SIGNED_DIRECTORY_WIRE_ENTRY_BYTES = 64 * 1024
+export const MAX_SIGNED_DIRECTORY_LIST_RESPONSE_ENTRIES = 512
+export const MAX_SIGNED_DIRECTORY_STATUS_MESSAGE_BYTES = 512
 
 // STATUS codes
 const OK = 0
@@ -79,53 +82,214 @@ const ERR_OLDER_THAN_EXISTING = 8
 
 // ── encodings ──────────────────────────────────────────────────────
 
-const entryEncoding = {
+function validDecodeState (state) {
+  const buffer = state && state.buffer
+  if (!buffer || !Number.isSafeInteger(state.start) || !Number.isSafeInteger(state.end)) return false
+  return state.start >= 0 && state.end >= state.start && state.end <= buffer.length
+}
+
+function malformed (state, error) {
+  if (state && Number.isSafeInteger(state.end)) {
+    const buffer = state.buffer
+    state.start = Math.min(Math.max(state.end, 0), buffer ? buffer.length : state.end)
+  }
+  return { error }
+}
+
+function encodeUintValue (value, field) {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${field} must be a non-negative integer`)
+  return value
+}
+
+function assertFixedBytes (value, size, field) {
+  if (!value || value.byteLength !== size) throw new Error(`${field} must be ${size} bytes`)
+  return value
+}
+
+function assertBufferWithin (value, maxBytes, field) {
+  if (!value || !b4a.isBuffer(value)) throw new Error(`${field} must be a buffer`)
+  if (value.byteLength > maxBytes) throw new Error(`${field} too large`)
+  return value
+}
+
+function encodeStringValue (value, field, maxBytes) {
+  const text = value == null ? '' : String(value)
+  if (b4a.byteLength(text) > maxBytes) throw new Error(`${field} too large`)
+  return text
+}
+
+function normalizeEntry (entry) {
+  return {
+    authorPubkey: assertFixedBytes(entry.authorPubkey, 32, 'authorPubkey'),
+    timestamp: encodeUintValue(entry.timestamp, 'timestamp'),
+    payload: assertBufferWithin(entry.payload, MAX_SIGNED_DIRECTORY_WIRE_ENTRY_BYTES, 'payload'),
+    signature: assertFixedBytes(entry.signature, 64, 'signature')
+  }
+}
+
+function normalizeEntryList (entries) {
+  const list = Array.isArray(entries) ? entries : []
+  if (list.length > MAX_SIGNED_DIRECTORY_LIST_RESPONSE_ENTRIES) throw new Error('too many entries')
+  return list.map(normalizeEntry)
+}
+
+function entryError (error, authorPubkey = null) {
+  return {
+    authorPubkey,
+    timestamp: 0,
+    payload: null,
+    signature: null,
+    error
+  }
+}
+
+function decodeUint (state, error = 'malformed uint') {
+  if (!validDecodeState(state)) return malformed(state, error)
+  let value
+  try {
+    value = c.uint.decode(state)
+  } catch (_) {
+    return malformed(state, error)
+  }
+  if (!Number.isSafeInteger(value) || value < 0) return malformed(state, error)
+  return { value }
+}
+
+function decodeFixedBytes (state, size, error) {
+  if (!validDecodeState(state)) return malformed(state, error)
+  const end = state.start + size
+  if (end > state.end) return malformed(state, error)
+  const value = state.buffer.subarray(state.start, end)
+  state.start = end
+  return { value }
+}
+
+function decodeBytes (state, maxBytes, tooLargeError, malformedError) {
+  if (!validDecodeState(state)) return malformed(state, malformedError)
+  let len
+  const lenState = { buffer: state.buffer, start: state.start, end: state.end }
+  try {
+    len = c.uint.decode(lenState)
+  } catch (_) {
+    return malformed(state, malformedError)
+  }
+  if (!Number.isSafeInteger(len) || len < 0) return malformed(state, malformedError)
+  if (len > maxBytes) {
+    state.start = Math.min(state.end, lenState.start + len)
+    return { error: tooLargeError }
+  }
+  const end = lenState.start + len
+  if (end > state.end) return malformed(state, malformedError)
+  const value = state.buffer.subarray(lenState.start, end)
+  state.start = end
+  return { value }
+}
+
+function decodeString (state, maxBytes, tooLargeError, malformedError) {
+  const decoded = decodeBytes(state, maxBytes, tooLargeError, malformedError)
+  if (decoded.error) return decoded
+  return { value: b4a.toString(decoded.value, 'utf8') }
+}
+
+export const entryEncoding = {
   preencode (state, m) {
-    c.fixed32.preencode(state, m.authorPubkey)
-    c.uint.preencode(state, m.timestamp)
-    c.buffer.preencode(state, m.payload)
-    c.fixed64.preencode(state, m.signature)
+    const entry = normalizeEntry(m)
+    c.fixed32.preencode(state, entry.authorPubkey)
+    c.uint.preencode(state, entry.timestamp)
+    c.buffer.preencode(state, entry.payload)
+    c.fixed64.preencode(state, entry.signature)
   },
   encode (state, m) {
-    c.fixed32.encode(state, m.authorPubkey)
-    c.uint.encode(state, m.timestamp)
-    c.buffer.encode(state, m.payload)
-    c.fixed64.encode(state, m.signature)
+    const entry = normalizeEntry(m)
+    c.fixed32.encode(state, entry.authorPubkey)
+    c.uint.encode(state, entry.timestamp)
+    c.buffer.encode(state, entry.payload)
+    c.fixed64.encode(state, entry.signature)
   },
   decode (state) {
+    const authorPubkey = decodeFixedBytes(state, 32, 'malformed entry')
+    if (authorPubkey.error) return entryError(authorPubkey.error)
+    const timestamp = decodeUint(state, 'malformed entry')
+    if (timestamp.error) return entryError(timestamp.error, authorPubkey.value)
+    const payload = decodeBytes(state, MAX_SIGNED_DIRECTORY_WIRE_ENTRY_BYTES, 'payload too large', 'malformed entry')
+    if (payload.error) return entryError(payload.error, authorPubkey.value)
+    const signature = decodeFixedBytes(state, 64, 'malformed entry')
+    if (signature.error) return entryError(signature.error, authorPubkey.value)
     return {
-      authorPubkey: c.fixed32.decode(state),
-      timestamp: c.uint.decode(state),
-      payload: c.buffer.decode(state),
-      signature: c.fixed64.decode(state)
+      authorPubkey: authorPubkey.value,
+      timestamp: timestamp.value,
+      payload: payload.value,
+      signature: signature.value
     }
   }
 }
 
-const listReqEncoding = {
-  preencode (state, m) { c.uint.preencode(state, m.since || 0) },
-  encode (state, m) { c.uint.encode(state, m.since || 0) },
-  decode (state) { return { since: c.uint.decode(state) } }
+export const listReqEncoding = {
+  preencode (state, m) { c.uint.preencode(state, encodeUintValue((m && m.since) || 0, 'since')) },
+  encode (state, m) { c.uint.encode(state, encodeUintValue((m && m.since) || 0, 'since')) },
+  decode (state) {
+    const since = decodeUint(state, 'malformed list request')
+    return since.error ? { since: 0, error: since.error } : { since: since.value }
+  }
 }
 
-const listResEncoding = {
-  preencode (state, m) { c.array(entryEncoding).preencode(state, m.entries) },
-  encode (state, m) { c.array(entryEncoding).encode(state, m.entries) },
-  decode (state) { return { entries: c.array(entryEncoding).decode(state) } }
-}
-
-const statusEncoding = {
+export const listResEncoding = {
   preencode (state, m) {
-    c.uint.preencode(state, m.code)
-    c.string.preencode(state, m.message || '')
+    const entries = normalizeEntryList(m && m.entries)
+    c.uint.preencode(state, entries.length)
+    for (const entry of entries) entryEncoding.preencode(state, entry)
   },
   encode (state, m) {
-    c.uint.encode(state, m.code)
-    c.string.encode(state, m.message || '')
+    const entries = normalizeEntryList(m && m.entries)
+    c.uint.encode(state, entries.length)
+    for (const entry of entries) entryEncoding.encode(state, entry)
   },
   decode (state) {
-    return { code: c.uint.decode(state), message: c.string.decode(state) }
+    const len = decodeUint(state, 'malformed list response')
+    if (len.error) return { entries: [], error: len.error }
+    if (len.value > MAX_SIGNED_DIRECTORY_LIST_RESPONSE_ENTRIES) return { entries: [], error: 'too many entries' }
+    const entries = []
+    for (let i = 0; i < len.value; i++) {
+      const entry = entryEncoding.decode(state)
+      if (entry.error) return { entries, error: entry.error }
+      entries.push(entry)
+    }
+    return { entries }
   }
+}
+
+export const statusEncoding = {
+  preencode (state, m) {
+    const code = encodeUintValue(m.code, 'code')
+    const message = encodeStringValue(m.message || '', 'message', MAX_SIGNED_DIRECTORY_STATUS_MESSAGE_BYTES)
+    c.uint.preencode(state, code)
+    c.string.preencode(state, message)
+  },
+  encode (state, m) {
+    const code = encodeUintValue(m.code, 'code')
+    const message = encodeStringValue(m.message || '', 'message', MAX_SIGNED_DIRECTORY_STATUS_MESSAGE_BYTES)
+    c.uint.encode(state, code)
+    c.string.encode(state, message)
+  },
+  decode (state) {
+    const code = decodeUint(state, 'malformed status')
+    if (code.error) return { code: ERR_BADREQ, message: '', error: code.error }
+    const message = decodeString(state, MAX_SIGNED_DIRECTORY_STATUS_MESSAGE_BYTES, 'message too large', 'malformed status')
+    if (message.error) return { code: code.value, message: '', error: message.error }
+    return { code: code.value, message: message.value }
+  }
+}
+
+function positiveIntegerOption (value, fallback, max = Infinity) {
+  if (!Number.isFinite(value) || value <= 0) return fallback
+  return Math.min(Math.floor(value), max)
+}
+
+function decodedEntryStatus (entry) {
+  if (!entry || !entry.error) return null
+  return entry.error === 'payload too large'
+    ? { code: ERR_TOO_LARGE, message: 'entry exceeds wire payload cap' }
+    : { code: ERR_BADREQ, message: entry.error }
 }
 
 // ── signing helpers ────────────────────────────────────────────────
@@ -188,12 +352,13 @@ export class SignedDirectory extends EventEmitter {
     super()
     this.swarm = swarm
     this.enabled = opts.enabled !== false
-    this.maxEntryBytes = Number.isFinite(opts.maxEntryBytes) ? opts.maxEntryBytes : DEFAULT_MAX_ENTRY_BYTES
-    this.ttlSeconds = Number.isFinite(opts.ttlSeconds) ? opts.ttlSeconds : DEFAULT_TTL_SECONDS
-    this.maxEntriesPerAuthor = Number.isFinite(opts.maxEntriesPerAuthor) ? opts.maxEntriesPerAuthor : DEFAULT_MAX_ENTRIES_PER_AUTHOR
-    this.publishRatePerMinute = Number.isFinite(opts.publishRatePerMinute) ? opts.publishRatePerMinute : DEFAULT_PUBLISH_RATE_PER_MINUTE
-    this.maxTotalEntries = Number.isFinite(opts.maxTotalEntries) ? opts.maxTotalEntries : DEFAULT_MAX_TOTAL_ENTRIES
-    this.clockSkewToleranceSeconds = Number.isFinite(opts.clockSkewToleranceSeconds) ? opts.clockSkewToleranceSeconds : DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS
+    this.maxEntryBytes = positiveIntegerOption(opts.maxEntryBytes, DEFAULT_MAX_ENTRY_BYTES, MAX_SIGNED_DIRECTORY_WIRE_ENTRY_BYTES)
+    this.ttlSeconds = positiveIntegerOption(opts.ttlSeconds, DEFAULT_TTL_SECONDS)
+    this.maxEntriesPerAuthor = positiveIntegerOption(opts.maxEntriesPerAuthor, DEFAULT_MAX_ENTRIES_PER_AUTHOR)
+    this.publishRatePerMinute = positiveIntegerOption(opts.publishRatePerMinute, DEFAULT_PUBLISH_RATE_PER_MINUTE)
+    this.maxTotalEntries = positiveIntegerOption(opts.maxTotalEntries, DEFAULT_MAX_TOTAL_ENTRIES)
+    this.clockSkewToleranceSeconds = positiveIntegerOption(opts.clockSkewToleranceSeconds, DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS)
+    this.maxListResponseEntries = positiveIntegerOption(opts.maxListResponseEntries, MAX_SIGNED_DIRECTORY_LIST_RESPONSE_ENTRIES, MAX_SIGNED_DIRECTORY_LIST_RESPONSE_ENTRIES)
 
     // Storage: authorPubkeyHex -> { authorPubkey, timestamp, payload, signature, receivedAt }
     // v1 is in-memory only. Short TTL + cross-relay replication makes
@@ -255,6 +420,11 @@ export class SignedDirectory extends EventEmitter {
       this._reject(channel, ERR_DISABLED, 'directory disabled')
       return
     }
+    const decodedError = decodedEntryStatus(entry)
+    if (decodedError) {
+      this._reject(channel, decodedError.code, decodedError.message)
+      return
+    }
     const peer = remotePubOf(channel)
     const peerHex = peer ? b4a.toString(peer, 'hex') : null
     const result = this._tryStore(entry, { peerHex, source: 'publish' })
@@ -269,6 +439,11 @@ export class SignedDirectory extends EventEmitter {
 
   _onNotify (channel, entry) {
     if (!this.enabled) return
+    const decodedError = decodedEntryStatus(entry)
+    if (decodedError) {
+      this._countReject(decodedError.code === ERR_TOO_LARGE ? 'TOO_LARGE' : 'BADREQ')
+      return
+    }
     // NOTIFY is the relay-to-relay replication path. Same validation as
     // PUBLISH, but we don't re-broadcast (single-hop only) and we don't
     // apply the per-peer rate limit (peer relays legitimately push many
@@ -290,6 +465,10 @@ export class SignedDirectory extends EventEmitter {
   _onListReq (channel, msg) {
     if (!this.enabled) {
       this._respondStatus(channel, ERR_DISABLED, 'directory disabled')
+      return
+    }
+    if (msg && msg.error) {
+      this._respondStatus(channel, ERR_BADREQ, msg.error)
       return
     }
     const since = (msg && msg.since) || 0
@@ -472,7 +651,10 @@ export class SignedDirectory extends EventEmitter {
 
   _respondListRes (channel, entries) {
     if (channel.opened && channel._directory) {
-      try { channel._directory.listResMsg.send({ entries }) } catch (_) {}
+      const limited = entries.length > this.maxListResponseEntries
+        ? entries.slice(0, this.maxListResponseEntries)
+        : entries
+      try { channel._directory.listResMsg.send({ entries: limited }) } catch (_) {}
     }
   }
 

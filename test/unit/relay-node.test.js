@@ -5,6 +5,7 @@ import path from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
 import { EventEmitter } from 'events'
+import { rm, stat } from 'fs/promises'
 
 function tmpStorage () {
   return path.join(tmpdir(), 'hiverelay-test-' + randomBytes(8).toString('hex'))
@@ -19,6 +20,44 @@ test('RelayNode - defaults custody to blind mode', (t) => {
   t.is(node.config.custody.requireEncryptedPayload, true, 'custody requires encrypted payloads')
   t.is(node.config.custody.metadataVisibility, 'redacted', 'blind custody redacts metadata by default')
   t.is(node.config.custody.proofTarget, 'ciphertext', 'proofs target ciphertext')
+})
+
+test('RelayNode - startup DHT flush is bounded', async (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false, dhtFlushTimeoutMs: 5 })
+  t.teardown(async () => {
+    try { await node.store.close() } catch (_) {}
+  })
+
+  node.swarm = { flush: () => new Promise(() => {}) }
+  let timeoutEvent = null
+  node.on('dht-flush-timeout', (event) => { timeoutEvent = event })
+
+  const started = Date.now()
+  const ok = await node._flushDhtForStartup()
+  const elapsed = Date.now() - started
+
+  t.is(ok, false, 'timed-out flush is not treated as successful')
+  t.ok(timeoutEvent, 'timeout event emitted')
+  t.is(timeoutEvent.timeoutMs, 5)
+  t.ok(elapsed < 250, 'startup flush returned without waiting on a stuck DHT flush')
+})
+
+test('RelayNode - identity file is created owner-only and reloads', async (t) => {
+  const storage = tmpStorage()
+  const node = new RelayNode({ storage, enableAPI: false })
+  t.teardown(async () => {
+    try { await node.store.close() } catch (_) {}
+    await rm(storage, { recursive: true, force: true })
+  })
+
+  const first = await node._loadOrCreateKeyPair()
+  const keyPath = path.join(storage, 'relay-identity.json')
+  const mode = (await stat(keyPath)).mode & 0o777
+  const second = await node._loadOrCreateKeyPair()
+
+  t.is(mode, 0o600, 'relay identity is owner-read/write only')
+  t.alike(second.publicKey, first.publicKey, 'public key reloads from disk')
+  t.alike(second.secretKey, first.secretKey, 'secret key reloads from disk')
 })
 
 test('RelayNode - creates and starts', async (t) => {

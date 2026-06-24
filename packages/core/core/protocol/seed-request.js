@@ -18,9 +18,10 @@ import {
   seedDenyEncoding
 } from './messages.js'
 import { TokenBucketRateLimiter } from './rate-limiter.js'
+import { SEED_PROTOCOL_NAME } from '../constants.js'
 
-const PROTOCOL_NAME = 'hiverelay-seed'
 const PROTOCOL_VERSION = { major: 1, minor: 0 }
+const MAX_PROTOCOL_HANDSHAKE_BYTES = 256
 
 // Rate limit: 100 requests per minute, burst of 20
 const RATE_LIMIT_TOKENS_PER_MIN = 100
@@ -34,6 +35,40 @@ function isZeroBuf (buf) {
     if (buf[i] !== 0) return false
   }
   return true
+}
+
+function keyHex (key) {
+  return key && key.byteLength === 32 ? b4a.toString(key, 'hex') : null
+}
+
+function parseProtocolHandshake (handshake) {
+  if (!handshake) return { remote: null }
+  const size = typeof handshake === 'string'
+    ? b4a.byteLength(handshake)
+    : (handshake && Number.isSafeInteger(handshake.byteLength) ? handshake.byteLength : 0)
+  if (size <= 0) return { error: 'malformed handshake' }
+  if (size > MAX_PROTOCOL_HANDSHAKE_BYTES) return { error: 'handshake too large' }
+
+  let remote
+  try {
+    const text = typeof handshake === 'string' ? handshake : b4a.toString(handshake)
+    remote = JSON.parse(text)
+  } catch {
+    return { error: 'malformed handshake' }
+  }
+
+  if (!remote || typeof remote !== 'object' || Array.isArray(remote) ||
+      !Number.isSafeInteger(remote.major) || remote.major < 0 ||
+      !Number.isSafeInteger(remote.minor) || remote.minor < 0) {
+    return { error: 'malformed handshake' }
+  }
+
+  return {
+    remote: {
+      major: remote.major,
+      minor: remote.minor
+    }
+  }
 }
 
 export class SeedProtocol extends EventEmitter {
@@ -62,7 +97,7 @@ export class SeedProtocol extends EventEmitter {
     const mux = Protomux.from(conn)
 
     const channel = mux.createChannel({
-      protocol: PROTOCOL_NAME,
+      protocol: SEED_PROTOCOL_NAME,
       id: null,
       handshake: c.raw,
       onopen: () => this._onOpen(channel),
@@ -191,6 +226,11 @@ export class SeedProtocol extends EventEmitter {
   }
 
   _onUnseedRequest (channel, msg) {
+    if (!msg || msg.error) {
+      this.emit('invalid-unseed', { appKey: keyHex(msg && msg.appKey), reason: msg && msg.error ? msg.error : 'malformed unseed request' })
+      return
+    }
+
     const peerKey = channel.stream && channel.stream.remotePublicKey
       ? b4a.toString(channel.stream.remotePublicKey, 'hex')
       : 'unknown'
@@ -201,7 +241,7 @@ export class SeedProtocol extends EventEmitter {
 
     // Verify signature: publisher signs (appKey + 'unseed' + timestamp)
     if (!this._verifyUnseedSignature(msg)) {
-      this.emit('invalid-unseed', { appKey: b4a.toString(msg.appKey, 'hex'), reason: 'bad signature' })
+      this.emit('invalid-unseed', { appKey: keyHex(msg.appKey), reason: 'bad signature' })
       return
     }
 
@@ -223,7 +263,10 @@ export class SeedProtocol extends EventEmitter {
   }
 
   _verifyUnseedSignature (msg) {
-    if (!msg.publisherPubkey || !msg.publisherSignature) return false
+    if (!msg || !msg.appKey || msg.appKey.byteLength !== 32 ||
+        !Number.isSafeInteger(msg.timestamp) || msg.timestamp < 0 ||
+        !msg.publisherPubkey || msg.publisherPubkey.byteLength !== 32 ||
+        !msg.publisherSignature || msg.publisherSignature.byteLength !== 64) return false
     const payload = b4a.concat([
       msg.appKey,
       b4a.from('unseed'),
@@ -240,6 +283,15 @@ export class SeedProtocol extends EventEmitter {
   }
 
   _onSeedRequest (channel, msg) {
+    if (!msg || msg.error) {
+      this.emit('invalid-request', {
+        appKey: keyHex(msg && msg.appKey),
+        reason: msg && msg.error ? msg.error : 'malformed seed request',
+        reasonCode: 'malformed-seed-request'
+      })
+      return
+    }
+
     // Get peer key for rate limiting
     const peerKey = channel.stream && channel.stream.remotePublicKey
       ? b4a.toString(channel.stream.remotePublicKey, 'hex')
@@ -318,6 +370,11 @@ export class SeedProtocol extends EventEmitter {
   }
 
   _onSeedDeny (channel, msg) {
+    if (!msg || msg.error) {
+      this.emit('invalid-deny', { appKey: keyHex(msg && msg.appKey), reason: msg && msg.error ? msg.error : 'malformed seed deny' })
+      return
+    }
+
     const peerKey = channel.stream && channel.stream.remotePublicKey
       ? b4a.toString(channel.stream.remotePublicKey, 'hex')
       : 'unknown'
@@ -330,7 +387,7 @@ export class SeedProtocol extends EventEmitter {
     // deny on its own behalf — never forge denials from other relays.
     if (channel.stream && channel.stream.remotePublicKey &&
         !b4a.equals(msg.relayPubkey, channel.stream.remotePublicKey)) {
-      this.emit('invalid-deny', { appKey: b4a.toString(msg.appKey, 'hex'), reason: 'relayPubkey mismatch' })
+      this.emit('invalid-deny', { appKey: keyHex(msg.appKey), reason: 'relayPubkey mismatch' })
       return
     }
 
@@ -339,7 +396,7 @@ export class SeedProtocol extends EventEmitter {
     if (!isZeroBuf(msg.relaySignature)) {
       const payload = b4a.concat([msg.appKey, msg.relayPubkey, b4a.from(msg.reasonCode)])
       if (!sodium.crypto_sign_verify_detached(msg.relaySignature, payload, msg.relayPubkey)) {
-        this.emit('invalid-deny', { appKey: b4a.toString(msg.appKey, 'hex'), reason: 'bad signature' })
+        this.emit('invalid-deny', { appKey: keyHex(msg.appKey), reason: 'bad signature' })
         return
       }
     }
@@ -354,6 +411,11 @@ export class SeedProtocol extends EventEmitter {
   }
 
   _onSeedAccept (channel, msg) {
+    if (!msg || msg.error) {
+      this.emit('invalid-accept', { appKey: keyHex(msg && msg.appKey), reason: msg && msg.error ? msg.error : 'malformed seed accept' })
+      return
+    }
+
     // Get peer key for rate limiting
     const peerKey = channel.stream && channel.stream.remotePublicKey
       ? b4a.toString(channel.stream.remotePublicKey, 'hex')
@@ -370,7 +432,7 @@ export class SeedProtocol extends EventEmitter {
 
     // Verify relay signature before processing acceptance
     if (!this._verifyAcceptSignature(msg)) {
-      this.emit('invalid-accept', { appKey: b4a.toString(msg.appKey, 'hex'), reason: 'bad signature' })
+      this.emit('invalid-accept', { appKey: keyHex(msg.appKey), reason: 'bad signature' })
       return
     }
 
@@ -387,14 +449,17 @@ export class SeedProtocol extends EventEmitter {
   _onOpen (channel) {
     // Validate protocol version from handshake
     if (channel.handshake) {
-      try {
-        const remote = JSON.parse(b4a.toString(channel.handshake))
-        if (remote.major !== PROTOCOL_VERSION.major) {
-          this.emit('version-mismatch', { local: PROTOCOL_VERSION, remote })
-          channel.close()
-          return
-        }
-      } catch {}
+      const parsed = parseProtocolHandshake(channel.handshake)
+      if (parsed.error) {
+        this.emit('invalid-handshake', { reason: parsed.error })
+        channel.close()
+        return
+      }
+      if (parsed.remote && parsed.remote.major !== PROTOCOL_VERSION.major) {
+        this.emit('version-mismatch', { local: PROTOCOL_VERSION, remote: parsed.remote })
+        channel.close()
+        return
+      }
     }
 
     this.emit('channel-open', channel)
@@ -417,7 +482,10 @@ export class SeedProtocol extends EventEmitter {
   }
 
   _verifyAcceptSignature (msg) {
-    if (!msg.relayPubkey || !msg.relaySignature) return false
+    if (!msg || !msg.appKey || msg.appKey.byteLength !== 32 ||
+        !msg.relayPubkey || msg.relayPubkey.byteLength !== 32 ||
+        typeof msg.region !== 'string' ||
+        !msg.relaySignature || msg.relaySignature.byteLength !== 64) return false
     const payload = b4a.concat([msg.appKey, msg.relayPubkey, b4a.from(msg.region)])
     return sodium.crypto_sign_verify_detached(msg.relaySignature, payload, msg.relayPubkey)
   }

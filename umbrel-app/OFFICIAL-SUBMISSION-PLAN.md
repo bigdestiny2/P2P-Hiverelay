@@ -1,9 +1,11 @@
 # Blindspark — Official Umbrel App Store Submission Plan
 
 Target repo: `getumbrel/umbrel-apps` (the **official** store, not a community store).
-Single CI gate: the `Lint apps` GitHub Action (`sharknoon/umbrel-app-linter-action`).
-`error`-severity rules block merge; `warning`/`info` do not block but maintainers
-will request changes for them.
+The repo's current `README.md` points package authors to `AGENTS.md`, which routes
+new app packages through its repo-local `umbrel-package-app` and `umbrel-test-app`
+skills. This plan mirrors those rules: useful web UI, multi-arch tag+digest image
+pin, app data under `${APP_DATA_DIR}`, app_proxy auth by default, no broad host
+access, and real Umbrel lifecycle testing before PR.
 
 This is an ordered, do-this-then-that guide. Work top to bottom.
 
@@ -24,56 +26,31 @@ currently gets wrong:
 3. **`submission:` must equal the exact URL of your PR** — a placeholder is a hard
    CI **error**.
 
-The Docker image is already correct: `ghcr.io/bigdestiny2/p2p-hiverelay:0.14.0`
-is multi-arch (amd64 + arm64) and its `@sha256:` digest pin in `docker-compose.yml`
-is verified correct. **Do not touch the image unless you choose to bump the version
-(see Step 2, optional).**
+The Docker image reference is structurally correct but not submission-ready:
+`ghcr.io/bigdestiny2/p2p-hiverelay:0.20.0@sha256:0b8857cda2d0e399031a135a0c5f9c8a2ec6fa77cf64ed1c59aba58351c9eae1`
+is multi-arch (amd64 + arm64) and digest-pinned in `docker-compose.yml`.
+However, `docs/RELEASE_IMAGE_SMOKE_2026-06-24.md` records that this published
+digest is smoke-red because it predates the dashboard WebSocket same-origin fix.
+Before opening the official PR, publish a fixed GHCR digest through the release
+workflow (or an explicitly approved manual release path), rerun the manifest and
+image-smoke evidence checks, and update the package pin.
 
 ---
 
-## 1. Fix the manifest (`umbrel-app.yml`) — required before opening the PR
+## 1. Manifest state (`umbrel-app.yml`)
 
-Apply these edits. Every one except `submission:` can be done now; `submission:`
-is filled after the PR exists (Step 4).
+Already aligned for a first official submission:
 
-### 1a. Empty the gallery (warning → fix now)
-```yaml
-# BEFORE
-gallery:
-  - 1.png
-  - 2.png
-  - 3.png
-# AFTER
-gallery: []
-```
-Reason: `filled_out_icon_or_gallery_on_first_submission` (warning). The team
-creates the gallery in the gallery repo.
+- `manifestVersion: 1.1`
+- `gallery: []` — Umbrel commits official gallery assets separately.
+- `releaseNotes: ""` — first submissions leave release notes empty.
+- no `icon:` field — official icons live outside the package repo.
 
-### 1b. Empty releaseNotes (ERROR → must fix)
-```yaml
-# BEFORE
-releaseNotes: >-
-  First App Store release of Blindspark ...
-# AFTER
-releaseNotes: ""
-```
-Reason: `filled_out_release_notes_on_first_submission` (**error**, blocks merge).
-`releaseNotes` is only populated on later version-bump update PRs.
+Still required after opening the PR:
 
-### 1c. Bump manifestVersion to 1.1 (polish)
-```yaml
-# BEFORE
-manifestVersion: 1
-# AFTER
-manifestVersion: 1.1
-```
-Reason: schema accepts `1`, `1.1`, or `1.2`; all current real apps use `1.1` and
-it is required for lifecycle hooks. `1` will not fail CI, but `1.1` is the norm.
-
-### 1d. `submission:` — placeholder is an ERROR (fixed in Step 4)
-Leave it as-is for now; you cannot know the PR URL until the PR exists. It will be
-set to the real URL in Step 4. The current `.../pull/PENDING` value WILL fail CI if
-left in, so do not forget Step 4.
+- Replace `submission: https://github.com/getumbrel/umbrel-apps/pull/PENDING`
+  with the exact PR URL. The placeholder is expected in this repo, but it will
+  fail official CI if copied unchanged into the final PR.
 
 ### Already-correct fields (do not change)
 - `id: blindspark` — kebab-case, no `umbrel-app-store` prefix, not in its own deps. OK.
@@ -81,40 +58,26 @@ left in, so do not forget Step 4.
 - `tagline: A blind relay that keeps peer-to-peer apps online` — no trailing period, ≤100 chars. OK.
 - `name`, `developer`, `submitter: bigdestiny2` — within length limits. OK.
 - `website` / `repo` / `support` — valid URLs. OK.
-- `version: "0.14.0"` — matches the pinned image tag. OK (unless you bump, Step 2).
+- `version: "0.20.0"` — matches the pinned image tag. OK.
 - `port: 9100` — valid range. **Verify it is unused store-wide** (see Step 3).
 - `path: ""`, `defaultUsername: ""`, `defaultPassword: ""`, `dependencies: []` — OK.
 - No `icon:` field present — correct for the official store. Do **not** add one.
 
 ---
 
-## 2. (Optional) Version decision — pin 0.14.0 or rebuild 0.15.6
+## 2. Version and image
 
-The repo is at `0.15.6` but this package pins image `0.14.0`. Both are *valid*:
-the linter only requires `name:tag@sha256:digest`, multi-arch, and that
-`version:` is a non-empty string. It does NOT require the version to match the repo.
+The package currently pins
+`ghcr.io/bigdestiny2/p2p-hiverelay:0.20.0@sha256:0b8857cda2d0e399031a135a0c5f9c8a2ec6fa77cf64ed1c59aba58351c9eae1`,
+and `umbrel-app.yml` uses `version: "0.20.0"`. Keep the manifest version, image
+tag, and multi-arch manifest digest together, but do not submit this exact
+digest until a fixed public image smoke is green.
 
-- **Acceptable as-is:** ship `version: "0.14.0"` + the verified `0.14.0` digest.
-  The package is internally consistent and will pass CI.
-- **Recommended:** publish a fresh `0.15.6` multi-arch image and pin that, so the
-  store launches with current code (corruption-resilience + eviction fixes from
-  `0.15.x`). Implication: shipping `0.14.0` means users install old code on day one,
-  then you immediately need an update PR to reach parity — extra round-trip.
-
-If you bump, do all of:
-```bash
-# Build + publish multi-arch 0.15.6 to ghcr (from the image repo, not this dir)
-docker buildx build \
-  --platform linux/amd64,linux/arm64 \
-  -t ghcr.io/bigdestiny2/p2p-hiverelay:0.15.6 \
-  --output type=registry .
-
-# Grab the MULTI-ARCH MANIFEST digest (the top-level one, not an arch-specific one)
-docker buildx imagetools inspect ghcr.io/bigdestiny2/p2p-hiverelay:0.15.6
-```
-Then update `umbrel-app.yml` → `version: "0.15.6"` and `docker-compose.yml` →
-`image: ghcr.io/bigdestiny2/p2p-hiverelay:0.15.6@sha256:<new-multiarch-digest>`.
-Keep `version` and the image tag identical (the immich convention).
+For a newer release, let `release-surfaces.yml` publish the image, smoke the exact
+digest, and run `npm run release:prepare -- vX.Y.Z --image-digest sha256:...`.
+For a same-version repair, treat the tag overwrite as a release action requiring
+explicit operator approval, then capture fresh `release-image-manifest-evidence`
+and `release-image-smoke-evidence` for the new digest.
 
 ---
 
@@ -133,27 +96,25 @@ reassign anyway, but starting clean avoids a round-trip.
 
 ---
 
-## 4. docker-compose.yml — already conformant; one optional add
+## 4. docker-compose.yml — structurally conformant; refresh image proof
 
-Verified against the linter rules — all green:
+Verified against the linter rules — structurally green:
 - `app_proxy` present with `APP_HOST: blindspark_web_1` (= `<app-id>_<service>_1`)
   and `APP_PORT: 9100`. OK.
-- Image is `name:tag@sha256:digest`, multi-arch, no `latest`. OK.
+- Image is `name:tag@sha256:digest`, multi-arch, no `latest`. Shape OK; current
+  digest is not runtime-green and must be replaced before official submission.
 - `restart: on-failure`, `stop_grace_period: 1m`. OK.
-- `user: "999:999"` — non-root. OK (linter only flags root/unset at info level).
+- No `user:` pin — intentional. The image entrypoint starts as root only to fix
+  bind-mounted `/data` ownership, then drops to uid 999 with `gosu`.
 - No `ports:` host mappings, no `network_mode: host`, no docker socket. OK.
 - Volume `${APP_DATA_DIR}/data:/data` — under a subdirectory, not the root. OK.
 - Boolean `HIVERELAY_UI_EXPOSE_TOKEN: "true"` is quoted. OK.
+- `HIVERELAY_ACCEPT_MODE: review` is set so a fresh home-server install queues
+  new seed requests until the owner chooses otherwise. OK.
 - `${APP_SEED}` used for deterministic identity. OK.
 
-**Optional (silences an info-level `missing_file_or_directory`):** the bind-mount
-target subdir should exist as a committed placeholder.
-```bash
-mkdir -p blindspark/data
-touch blindspark/data/.gitkeep
-```
-This matches the canonical clean 3-file pattern (`umbrel-app.yml`,
-`docker-compose.yml`, `data/.gitkeep`).
+`data/.gitkeep` is committed, matching the canonical clean package pattern
+(`umbrel-app.yml`, `docker-compose.yml`, `data/.gitkeep`).
 
 ---
 
@@ -205,6 +166,8 @@ description containing:
 - Device(s) tested on: e.g. Raspberry Pi 5 / Umbrel Home / Linux VM (state which).
 - Confirmation that **data persists across restart/reinstall** (identity derived
   from `$APP_SEED`).
+- Confirmation that the live dashboard feed works through Umbrel's `app_proxy`
+  without `/ws?token=` or `/ws?api_key=` URL credentials.
 
 ```bash
 gh pr create \
@@ -252,13 +215,42 @@ your manifest and merge. Until then the listing renders blank — this is normal
 
 On a real Umbrel box (or local sideload), confirm:
 - App installs and the dashboard loads through `app_proxy`.
+- The live dashboard feed updates through WebSocket after in-band auth, and no
+  `/ws?token=` or `/ws?api_key=` URL appears in browser devtools.
 - First-run wizard completes (names relay, picks accept-mode) — exercises the
   `HIVERELAY_UI_EXPOSE_TOKEN` bearer path behind the proxy.
 - Management actions (approve/reject seed request, change accept-mode) work.
+- Fresh install starts in review mode before the operator changes it.
 - `/data` is writable by uid 999 (no permission errors on first boot).
 - Uninstall + reinstall preserves the relay's public key (identity from `$APP_SEED`).
 
-State the device you tested on in the PR description.
+After the pass, write a public-safe evidence sidecar from the repo root:
+
+```sh
+npm run umbrel:write-runtime-review -- \
+  --out umbrel-runtime-review-evidence.json \
+  --release v0.20.0 \
+  --device "<public device label>" \
+  --umbrel-version <version> \
+  --tested-by <public reviewer> \
+  --public-key-before <hex> \
+  --public-key-after <hex> \
+  --checks installedThroughUmbrel,dashboardProxyLoads,liveFeedInBandAuth,noWebSocketUrlTokens,wizardCompletes,setupActionLockObserved,addWalletPersists,walletBusyStateObserved,managementActionsPersist,serviceActionStateObserved,serviceRestartPendingObserved,aiModelAddStateObserved,reviewModeDefault,dataWritableUid999,reinstallPreservesPublicKey
+```
+
+Then verify the artifact:
+
+```sh
+npm run umbrel:verify-runtime-review -- \
+  --evidence umbrel-runtime-review-evidence.json \
+  --release v0.20.0
+```
+
+The writer stores only public-safe facts and a SHA-256 of the relay public key.
+The verifier catches release/PR drift, missing/duplicate/failed checks, raw
+public-key fields, local URLs, LAN IP addresses, APP_SEED, bearer tokens, and
+API keys. State the device you tested on in the PR description and attach the
+evidence sidecar if the reviewer asks for runtime proof.
 
 ---
 
@@ -280,11 +272,15 @@ Updates after launch are trivial: a PR bumping `version`, the image digest, and
 - [ ] `releaseNotes: ""` (Step 1b) — **CI error if not**
 - [ ] `manifestVersion: 1.1` (Step 1c)
 - [ ] No `icon:` field in manifest (already absent — keep it absent)
-- [ ] (Optional) bump to `0.15.6` image + version (Step 2)
+- [x] Package uses a digest-pinned `name:tag@sha256:digest` image ref (Step 2)
+- [ ] Package points at a fixed public digest whose manifest and image smoke
+  evidence are green (Step 2)
+- [x] Fresh installs default to review-mode seed acceptance (Step 4)
 - [ ] `port: 9100` confirmed unused store-wide (Step 3)
 - [ ] `blindspark/data/.gitkeep` committed (Step 4)
 - [ ] PR contains ONLY `umbrel-app.yml` + `docker-compose.yml` (+ `data/.gitkeep`) (Step 5)
 - [ ] PR opened against `getumbrel/umbrel-apps:master` (Step 6)
 - [ ] `submission:` set to the real PR URL (Step 6a) — **CI error if not**
 - [ ] Real 1440×900 screenshots captured, ready for the team (Step 7)
-- [ ] Self-tested on a real box; persistence-across-restart confirmed (Step 8)
+- [ ] Self-tested on a real box; persistence-across-restart confirmed and
+  `umbrel-runtime-review-evidence.json` written (Step 8)

@@ -57,6 +57,17 @@ test('ReputationSystem - leaderboard ranking', async (t) => {
   t.is(board[0].relay, 'relay-a', 'highest score first')
 })
 
+test('ReputationSystem - leaderboard ties are deterministic', async (t) => {
+  const rep = new ReputationSystem()
+  rep.import({
+    'relay-b': reputationRecord({ score: 100, avgLatencyMs: 250 }),
+    'relay-a': reputationRecord({ score: 100, avgLatencyMs: 250 }),
+    'relay-c': reputationRecord({ score: 100, avgLatencyMs: 250 })
+  })
+
+  t.alike(rep.getLeaderboard().map(r => r.relay), ['relay-a', 'relay-b', 'relay-c'])
+})
+
 test('ReputationSystem - selectRelays picks best', async (t) => {
   const rep = new ReputationSystem()
 
@@ -70,6 +81,17 @@ test('ReputationSystem - selectRelays picks best', async (t) => {
   t.is(selected[0], 'good', 'best relay selected first')
 })
 
+test('ReputationSystem - selectRelays ties are deterministic', async (t) => {
+  const rep = new ReputationSystem()
+  rep.import({
+    'relay-b': reputationRecord({ score: 100, avgLatencyMs: 100 }),
+    'relay-a': reputationRecord({ score: 100, avgLatencyMs: 100 }),
+    'relay-c': reputationRecord({ score: 100, avgLatencyMs: 100 })
+  })
+
+  t.alike(rep.selectRelays(3), ['relay-a', 'relay-b', 'relay-c'])
+})
+
 test('ReputationSystem - export and import', async (t) => {
   const rep1 = new ReputationSystem()
   for (let i = 0; i < 10; i++) rep1.recordChallenge('relay-x', true, 150)
@@ -81,6 +103,57 @@ test('ReputationSystem - export and import', async (t) => {
 
   t.is(rep2.getScore('relay-x'), rep1.getScore('relay-x'))
   t.is(rep2.getReliability('relay-x'), 1.0)
+})
+
+test('ReputationSystem - export order is deterministic and skips forbidden keys', async (t) => {
+  const rep = new ReputationSystem()
+  const poisoned = JSON.parse(JSON.stringify({
+    'relay-c': reputationRecord({ score: 3 }),
+    'relay-a': reputationRecord({ score: 1 }),
+    constructor: reputationRecord({ score: 99 }),
+    'relay-b': reputationRecord({ score: 2 })
+  }))
+  Object.defineProperty(poisoned, '__proto__', {
+    value: reputationRecord({ score: 99 }),
+    enumerable: true
+  })
+  rep.import(poisoned)
+
+  const exported = rep.export()
+  t.alike(Object.keys(exported), ['relay-a', 'relay-b', 'relay-c'])
+  t.absent(Object.prototype.hasOwnProperty.call(exported, '__proto__'))
+  t.absent(Object.prototype.hasOwnProperty.call(exported, 'constructor'))
+})
+
+test('ReputationSystem - import sanitizes malformed persisted records', async (t) => {
+  const rep = new ReputationSystem()
+  rep.import({
+    relay: {
+      score: -10,
+      totalChallenges: 10.9,
+      passedChallenges: 50,
+      failedChallenges: 50,
+      avgLatencyMs: -1,
+      totalBytesServed: '2048',
+      totalUptimeHours: Number.POSITIVE_INFINITY,
+      region: '<region>',
+      geoBonus: 'yes',
+      firstSeen: 123,
+      lastActivity: 456
+    },
+    bad: null
+  })
+
+  const record = rep.getRecord('relay')
+  t.is(record.score, 0)
+  t.is(record.totalChallenges, 10)
+  t.is(record.passedChallenges, 10)
+  t.is(record.failedChallenges, 0)
+  t.is(record.avgLatencyMs, 0)
+  t.is(record.totalBytesServed, 2048)
+  t.is(record.totalUptimeHours, 0)
+  t.is(record.geoBonus, false)
+  t.is(rep.getRecord('bad'), null)
 })
 
 test('ReputationSystem - save is atomic: round-trips and leaves no .tmp', async (t) => {
@@ -126,3 +199,20 @@ test('ReputationSystem - failed save preserves the existing file (no corruption)
   const files = await readdir(dir)
   t.absent(files.some(f => f.endsWith('.tmp')), 'no leftover .tmp after failed save')
 })
+
+function reputationRecord (overrides = {}) {
+  return {
+    score: 100,
+    totalChallenges: 10,
+    passedChallenges: 10,
+    failedChallenges: 0,
+    avgLatencyMs: 100,
+    totalBytesServed: 0,
+    totalUptimeHours: 0,
+    region: 'test',
+    geoBonus: false,
+    firstSeen: 1,
+    lastActivity: 2,
+    ...overrides
+  }
+}

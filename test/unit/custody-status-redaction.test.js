@@ -154,15 +154,36 @@ test('custody-redaction: ?detailed=1 without auth is 401', async (t) => {
   t.is(res.statusCode, 401, 'detailed view requires auth')
 })
 
-test('custody-redaction: ?detailed=1 with Bearer returns full status', async (t) => {
+test('custody-redaction: ?detailed=1 with Bearer returns shaped diagnostics', async (t) => {
   const res = await request(port, 'GET', `/api/custody/${INTENT_ID}/status?detailed=1`, {
     Authorization: 'Bearer ' + API_KEY
   })
   t.is(res.statusCode, 200, 'authed detailed status returns 200')
-  t.ok(res.body.intent, 'full intent present under auth')
-  t.ok(res.body.intent.shareBundleKey, 'shareBundleKey present under auth')
-  t.is(res.body.receipts[0].signature, '7'.repeat(128), 'full receipt (with signature) present under auth')
-  t.is(res.body.receipts[0].addressKey, '9'.repeat(64), 'addressKey present under auth')
+  t.alike(res.body.pvss, {
+    shareScheme: 'pvss-secp256k1-v1',
+    shareThreshold: 1,
+    commitmentRoot: 'e'.repeat(64),
+    shareIndices: [1]
+  })
+  t.alike(res.body.receipts[0], {
+    relayPubkey: RELAY_PUBKEY,
+    shareIndex: 1,
+    shareVerified: true,
+    anchored: true,
+    relayRegion: 'us-test',
+    receivedAt: null,
+    attestedAt: null
+  })
+  t.absent(res.body.intent, 'full intent absent even under detailed API status')
+  t.absent(res.body.commit, 'raw commit absent from detailed API status')
+  t.absent(res.body.proofs, 'raw proofs absent from detailed API status')
+  t.absent(res.body.nonServingProofs, 'raw non-serving proofs absent from detailed API status')
+  t.absent(res.body.expiryWitnesses, 'raw expiry witnesses absent from detailed API status')
+  const json = JSON.stringify(res.body)
+  t.absent(json.includes('shareBundleKey'), 'shareBundleKey omitted under auth')
+  t.absent(json.includes('7'.repeat(128)), 'receipt signature omitted under auth')
+  t.absent(json.includes('9'.repeat(64)), 'addressKey omitted under auth')
+  t.absent(json.includes('8'.repeat(64)), 'ciphertextRoot omitted under auth')
 })
 
 test('custody-redaction: teardown server', async (t) => {

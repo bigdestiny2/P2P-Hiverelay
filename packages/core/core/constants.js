@@ -67,6 +67,13 @@ function regionTopic (region) {
  */
 const FOUNDATION_TOPIC = _topicOf('hiverelay-foundation-v1')
 
+// ─── Protomux protocol names ─────────────────────────────────
+
+const SEED_PROTOCOL_NAME = 'hiverelay-seed'
+const CIRCUIT_PROTOCOL_NAME = 'hiverelay-circuit'
+const FORWARD_PROTOCOL_NAME = 'hiverelay-forward'
+const SERVICES_PROTOCOL_NAME = 'hiverelay-services'
+
 // ─── Privacy tiers ───────────────────────────────────────────
 
 /**
@@ -183,6 +190,10 @@ export {
   RELAY_DISCOVERY_TOPIC,
   FOUNDATION_TOPIC,
   regionTopic,
+  SEED_PROTOCOL_NAME,
+  CIRCUIT_PROTOCOL_NAME,
+  FORWARD_PROTOCOL_NAME,
+  SERVICES_PROTOCOL_NAME,
   PRIVACY_TIERS,
   CONTENT_TYPES,
   STORAGE_CLASSES,

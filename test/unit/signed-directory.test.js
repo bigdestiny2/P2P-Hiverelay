@@ -6,10 +6,18 @@
 
 import test from 'brittle'
 import b4a from 'b4a'
+import c from 'compact-encoding'
 import sodium from 'sodium-universal'
 import {
+  MAX_SIGNED_DIRECTORY_LIST_RESPONSE_ENTRIES,
+  MAX_SIGNED_DIRECTORY_STATUS_MESSAGE_BYTES,
+  MAX_SIGNED_DIRECTORY_WIRE_ENTRY_BYTES,
   SignedDirectory,
+  entryEncoding,
+  listReqEncoding,
+  listResEncoding,
   signEntry,
+  statusEncoding,
   verifyEntry,
   entryDigest,
   STATUS
@@ -33,6 +41,183 @@ function makeEntry (keyPair, payloadStr = 'hello', ts = null) {
     signature
   }
 }
+
+function encodeFrame (encoding, msg) {
+  const state = { start: 0, end: 0, buffer: null }
+  encoding.preencode(state, msg)
+  state.buffer = b4a.alloc(state.end)
+  state.start = 0
+  encoding.encode(state, msg)
+  return state.buffer
+}
+
+function declaredEntryFrame ({ payloadLen, payload = null }) {
+  const kp = makeKeyPair()
+  const timestamp = Math.floor(Date.now() / 1000)
+  const signature = b4a.alloc(64, 0x44)
+  const state = { start: 0, end: 0, buffer: null }
+  c.fixed32.preencode(state, kp.publicKey)
+  c.uint.preencode(state, timestamp)
+  c.uint.preencode(state, payloadLen)
+  state.end += payload ? payload.byteLength : 0
+  c.fixed64.preencode(state, signature)
+  state.buffer = b4a.alloc(state.end)
+  c.fixed32.encode(state, kp.publicKey)
+  c.uint.encode(state, timestamp)
+  c.uint.encode(state, payloadLen)
+  if (payload) {
+    payload.copy(state.buffer, state.start)
+    state.start += payload.byteLength
+  }
+  c.fixed64.encode(state, signature)
+  return state.buffer
+}
+
+function declaredListResponseCountFrame (count) {
+  const state = { start: 0, end: 0, buffer: null }
+  c.uint.preencode(state, count)
+  state.buffer = b4a.alloc(state.end)
+  c.uint.encode(state, count)
+  return state.buffer
+}
+
+function declaredStatusFrame (messageLen, payload = null) {
+  const state = { start: 0, end: 0, buffer: null }
+  c.uint.preencode(state, STATUS.ERR_BADREQ)
+  c.uint.preencode(state, messageLen)
+  state.end += payload ? payload.byteLength : 0
+  state.buffer = b4a.alloc(state.end)
+  c.uint.encode(state, STATUS.ERR_BADREQ)
+  c.uint.encode(state, messageLen)
+  if (payload) payload.copy(state.buffer, state.start)
+  return state.buffer
+}
+
+function fakeDirectoryChannel () {
+  const channel = {
+    opened: true,
+    statuses: [],
+    listResponses: [],
+    _directory: {
+      statusMsg: { send: (msg) => channel.statuses.push(msg) },
+      listResMsg: { send: (msg) => channel.listResponses.push(msg) },
+      notifyMsg: { send: () => {} }
+    },
+    _mux: { stream: { remotePublicKey: b4a.alloc(32, 0xab) } }
+  }
+  return channel
+}
+
+// ── wire encoding hardening ───────────────────────────────────────
+
+test('signed-directory encodings: round-trip valid entry, list request, list response, and status', (t) => {
+  const kp = makeKeyPair()
+  const entry = makeEntry(kp, 'wire-ok')
+  const entryFrame = encodeFrame(entryEncoding, entry)
+  const reqFrame = encodeFrame(listReqEncoding, { since: 123 })
+  const resFrame = encodeFrame(listResEncoding, { entries: [entry] })
+  const statusFrame = encodeFrame(statusEncoding, { code: STATUS.OK, message: 'stored' })
+
+  t.alike(entryEncoding.decode({ buffer: entryFrame, start: 0, end: entryFrame.length }), entry)
+  t.alike(listReqEncoding.decode({ buffer: reqFrame, start: 0, end: reqFrame.length }), { since: 123 })
+  t.alike(listResEncoding.decode({ buffer: resFrame, start: 0, end: resFrame.length }), { entries: [entry] })
+  t.alike(statusEncoding.decode({ buffer: statusFrame, start: 0, end: statusFrame.length }), { code: STATUS.OK, message: 'stored' })
+})
+
+test('signed-directory encodings: reject bad outbound frames before allocation growth', (t) => {
+  const kp = makeKeyPair()
+  const entry = makeEntry(kp, 'ok')
+
+  const badAuthor = { start: 0, end: 0, buffer: null }
+  t.exception(() => {
+    entryEncoding.preencode(badAuthor, { ...entry, authorPubkey: b4a.alloc(31) })
+  }, /authorPubkey/, 'bad author key rejected')
+  t.is(badAuthor.end, 0, 'bad author key does not grow state.end')
+
+  const hugePayload = { start: 0, end: 0, buffer: null }
+  t.exception(() => {
+    entryEncoding.preencode(hugePayload, { ...entry, payload: b4a.alloc(MAX_SIGNED_DIRECTORY_WIRE_ENTRY_BYTES + 1) })
+  }, /payload too large/, 'oversized payload rejected')
+  t.is(hugePayload.end, 0, 'oversized payload does not grow state.end')
+
+  const manyEntries = { start: 0, end: 0, buffer: null }
+  t.exception(() => {
+    listResEncoding.preencode(manyEntries, {
+      entries: Array.from({ length: MAX_SIGNED_DIRECTORY_LIST_RESPONSE_ENTRIES + 1 }, () => entry)
+    })
+  }, /too many entries/, 'oversized list response rejected')
+  t.is(manyEntries.end, 0, 'oversized list response does not grow state.end')
+
+  const hugeStatus = { start: 0, end: 0, buffer: null }
+  t.exception(() => {
+    statusEncoding.preencode(hugeStatus, { code: STATUS.OK, message: 'x'.repeat(MAX_SIGNED_DIRECTORY_STATUS_MESSAGE_BYTES + 1) })
+  }, /message too large/, 'oversized status rejected')
+  t.is(hugeStatus.end, 0, 'oversized status does not grow state.end')
+})
+
+test('signed-directory encodings: reject oversized declared inbound frames before materializing them', (t) => {
+  const hugeEntry = declaredEntryFrame({ payloadLen: MAX_SIGNED_DIRECTORY_WIRE_ENTRY_BYTES + 1 })
+  const entryOut = entryEncoding.decode({ buffer: hugeEntry, start: 0, end: hugeEntry.length })
+  t.is(entryOut.error, 'payload too large')
+  t.absent(entryOut.payload)
+
+  const hugeList = declaredListResponseCountFrame(MAX_SIGNED_DIRECTORY_LIST_RESPONSE_ENTRIES + 1)
+  const listOut = listResEncoding.decode({ buffer: hugeList, start: 0, end: hugeList.length })
+  t.is(listOut.error, 'too many entries')
+  t.alike(listOut.entries, [])
+
+  const hugeStatus = declaredStatusFrame(MAX_SIGNED_DIRECTORY_STATUS_MESSAGE_BYTES + 1)
+  const statusOut = statusEncoding.decode({ buffer: hugeStatus, start: 0, end: hugeStatus.length })
+  t.is(statusOut.error, 'message too large')
+})
+
+test('signed-directory encodings: reject malformed and truncated frames without throwing', (t) => {
+  let entryOut = null
+  t.execution(() => {
+    entryOut = entryEncoding.decode({ buffer: b4a.alloc(31), start: 0, end: 31 })
+  }, 'truncated entry does not throw')
+  t.is(entryOut.error, 'malformed entry')
+
+  let listReqOut = null
+  t.execution(() => {
+    listReqOut = listReqEncoding.decode({ buffer: b4a.alloc(0), start: 0, end: 0 })
+  }, 'truncated list request does not throw')
+  t.is(listReqOut.error, 'malformed list request')
+
+  let statusOut = null
+  t.execution(() => {
+    statusOut = statusEncoding.decode({ buffer: declaredStatusFrame(12), start: 0, end: declaredStatusFrame(12).length })
+  }, 'truncated status message does not throw')
+  t.is(statusOut.error, 'malformed status')
+})
+
+test('signed-directory handlers reject decoded protocol errors without storing', (t) => {
+  const dir = new SignedDirectory(null)
+  t.teardown(() => dir.destroy())
+  const channel = fakeDirectoryChannel()
+
+  dir._onPublish(channel, { error: 'payload too large' })
+  dir._onNotify(channel, { error: 'malformed entry' })
+  dir._onListReq(channel, { error: 'malformed list request' })
+
+  t.is(channel.statuses[0].code, STATUS.ERR_TOO_LARGE)
+  t.is(channel.statuses[1].code, STATUS.ERR_BADREQ)
+  t.is(dir.list().length, 0)
+  t.is(dir.stats.rejectedReasons.BADREQ, 1)
+})
+
+test('signed-directory list responses are sliced to the wire response cap', (t) => {
+  const dir = new SignedDirectory(null)
+  t.teardown(() => dir.destroy())
+  const channel = fakeDirectoryChannel()
+  const entry = makeEntry(makeKeyPair(), 'page')
+  const entries = Array.from({ length: MAX_SIGNED_DIRECTORY_LIST_RESPONSE_ENTRIES + 1 }, () => entry)
+
+  dir._respondListRes(channel, entries)
+
+  t.is(channel.listResponses.length, 1)
+  t.is(channel.listResponses[0].entries.length, MAX_SIGNED_DIRECTORY_LIST_RESPONSE_ENTRIES)
+})
 
 // ── trust-model primitives ─────────────────────────────────────────
 

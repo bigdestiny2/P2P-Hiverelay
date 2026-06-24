@@ -6,6 +6,8 @@ import { SetupWizard, WIZARD_SCHEMA_VERSION } from 'p2p-hiverelay/core/wizard.js
 
 const VALID_BTC = 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq'
 const VALID_BTC_LEGACY = '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2'
+const VALID_LIGHTNING_ADDRESS = 'operator@getalby.com'
+const VALID_BOLT12 = 'lno1pqpz35xjueqd9ejqcfqw3gq'
 
 async function makeWizard (t) {
   const dir = await mkdtemp(join(tmpdir(), 'bs-wizard-'))
@@ -61,7 +63,7 @@ test('setRelayName validates length and emptiness', async (t) => {
   t.is(ok.state.relayName, 'Tokyo Relay 01', 'whitespace trimmed')
 })
 
-test('setPayoutDestination accepts a valid on-chain BTC address', async (t) => {
+test('setPayoutDestination accepts supported payout destinations', async (t) => {
   const w = await makeWizard(t)
   const ok = w.setPayoutDestination({ address: VALID_BTC })
   t.ok(ok.ok)
@@ -69,12 +71,15 @@ test('setPayoutDestination accepts a valid on-chain BTC address', async (t) => {
   t.ok(ok.state.hasPayout)
   // legacy base58 also accepted
   t.ok(w.setPayoutDestination({ address: VALID_BTC_LEGACY }).ok)
+  t.ok(w.setPayoutDestination({ address: VALID_LIGHTNING_ADDRESS }).ok, 'lightning address accepted')
+  t.is(w.snapshot().payoutDestination, VALID_LIGHTNING_ADDRESS)
+  t.ok(w.setPayoutDestination({ address: VALID_BOLT12 }).ok, 'BOLT12 offer accepted')
+  t.is(w.snapshot().payoutDestination, VALID_BOLT12)
 })
 
-test('setPayoutDestination rejects non-onchain and malformed input', async (t) => {
+test('setPayoutDestination rejects malformed input', async (t) => {
   const w = await makeWizard(t)
   t.absent(w.setPayoutDestination({ address: 'not-an-address' }).ok, 'garbage rejected')
-  t.absent(w.setPayoutDestination({ address: 'user@example.com' }).ok, 'lightning address rejected (on-chain only)')
   t.absent(w.setPayoutDestination({ address: 42 }).ok, 'non-string rejected')
 })
 

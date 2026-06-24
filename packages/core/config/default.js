@@ -14,6 +14,10 @@ export default {
   // new nodes can still join the network if the hardcoded bootstrap
   // nodes are unreachable.
   bootstrapNodes: null,
+  // Bound the initial DHT announcement flush so the local API/dashboard can
+  // come up even when public bootstrap is slow; the joined swarm continues
+  // discovery after startup.
+  dhtFlushTimeoutMs: 1000,
   maxConnections: 256,
 
   // Bootstrap cache — persists DHT peers to disk so nodes can rejoin
@@ -37,6 +41,8 @@ export default {
   // Proof of relay
   proofMaxLatencyMs: 5000,
   proofChallengeInterval: 5 * 60 * 1000, // 5 minutes
+  proofMaxPendingChallenges: 2048,
+  proofMaxBatchSize: 64,
 
   // Reputation
   reputationDecayRate: 0.995, // Daily

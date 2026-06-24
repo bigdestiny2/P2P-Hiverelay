@@ -20,6 +20,8 @@ const PROTOCOL_NAME = 'hiverelay-proof'
 const DEFAULT_MAX_LATENCY_MS = 5000
 const DEFAULT_CHALLENGE_INTERVAL = 5 * 60 * 1000 // 5 minutes
 const MAX_BLOCK_SIZE = 1024 * 1024 // 1MB max for a single block
+const DEFAULT_MAX_PENDING_CHALLENGES = 2048
+const DEFAULT_MAX_BATCH_SIZE = 64
 
 export class ProofOfRelay extends EventEmitter {
   constructor (opts = {}) {
@@ -30,10 +32,13 @@ export class ProofOfRelay extends EventEmitter {
     // Track challenge/response for scoring
     this.scores = new Map() // relay pubkey hex -> { challenges, passes, fails, avgLatencyMs }
     this._maxScores = opts.maxScores || 10000
+    this._maxPendingChallenges = opts.maxPendingChallenges || DEFAULT_MAX_PENDING_CHALLENGES
+    this._maxBatchSize = opts.maxBatchSize || DEFAULT_MAX_BATCH_SIZE
     this.pendingChallenges = new Map() // nonce hex -> { coreKey, blockIndex, sentAt, relayPubkey }
     this.channels = new Set()
     this._batchTimers = new Set() // Track batch timeout timer IDs for cleanup
     this._cleanupInterval = setInterval(() => this._cleanupStale(), 30_000)
+    if (this._cleanupInterval.unref) this._cleanupInterval.unref()
     this._challengeRateLimiter = null
   }
 
@@ -74,6 +79,31 @@ export class ProofOfRelay extends EventEmitter {
    * @returns {string} batchId
    */
   challengeBatch (channel, coreKey, blockIndices, relayPubkey) {
+    if (!Array.isArray(blockIndices) || blockIndices.length === 0) {
+      this.emit('batch-challenge-rejected', { reason: 'empty-batch' })
+      return null
+    }
+
+    if (blockIndices.length > this._maxBatchSize) {
+      this.emit('batch-challenge-rejected', {
+        reason: 'batch-too-large',
+        requested: blockIndices.length,
+        maxBatchSize: this._maxBatchSize
+      })
+      return null
+    }
+
+    const requiredSlots = blockIndices.length + 1
+    if (!this._reservePendingCapacity(requiredSlots)) {
+      this.emit('batch-challenge-rejected', {
+        reason: 'pending-capacity-exceeded',
+        requestedSlots: requiredSlots,
+        pending: this.pendingChallenges.size,
+        maxPendingChallenges: this._maxPendingChallenges
+      })
+      return null
+    }
+
     const nonce = b4a.alloc(32)
     sodium.randombytes_buf(nonce)
 
@@ -187,6 +217,15 @@ export class ProofOfRelay extends EventEmitter {
    * @param {Buffer} [blockData] - if the challenger has the block data, pass it to enable hash verification
    */
   challenge (channel, coreKey, blockIndex, relayPubkey, blockData) {
+    if (!this._reservePendingCapacity(1)) {
+      this.emit('challenge-rejected', {
+        reason: 'pending-capacity-exceeded',
+        pending: this.pendingChallenges.size,
+        maxPendingChallenges: this._maxPendingChallenges
+      })
+      return false
+    }
+
     const nonce = b4a.alloc(32)
     sodium.randombytes_buf(nonce)
 
@@ -221,6 +260,8 @@ export class ProofOfRelay extends EventEmitter {
       blockIndex,
       nonce: b4a.toString(nonce, 'hex')
     })
+
+    return true
   }
 
   /**
@@ -234,6 +275,11 @@ export class ProofOfRelay extends EventEmitter {
   }
 
   async _onChallenge (channel, msg) {
+    if (!msg || msg.error) {
+      this.emit('invalid-challenge', { reason: msg && msg.error ? msg.error : 'malformed proof challenge' })
+      return
+    }
+
     if (!this._blockProvider) {
       this.emit('challenge-skipped', { reason: 'no block provider' })
       return
@@ -280,6 +326,11 @@ export class ProofOfRelay extends EventEmitter {
   }
 
   _onResponse (channel, msg) {
+    if (!msg || msg.error) {
+      this.emit('invalid-response', { reason: msg && msg.error ? msg.error : 'malformed proof response' })
+      return
+    }
+
     const nonceHex = b4a.toString(msg.nonce, 'hex')
 
     // Check if this response belongs to a batch challenge (keyed by nonce:index)
@@ -353,6 +404,14 @@ export class ProofOfRelay extends EventEmitter {
     const hash = b4a.alloc(32)
     sodium.crypto_generichash(hash, b4a.concat([data, nonce]))
     return hash
+  }
+
+  _reservePendingCapacity (slots) {
+    const needed = Math.max(1, Number(slots) || 1)
+    if (this.pendingChallenges.size + needed <= this._maxPendingChallenges) return true
+
+    this._cleanupStale()
+    return this.pendingChallenges.size + needed <= this._maxPendingChallenges
   }
 
   _updateScore (relayPubkeyHex, passed, latencyMs) {

@@ -5,12 +5,9 @@
  * interactive management of all node settings, services, transports,
  * seeded apps, operating mode, and software updates.
  *
- * Usage:  hiverelay manage [--port 9100] [--host 127.0.0.1]
+ * Usage:  hiverelay manage [--port 9100] [--host 127.0.0.1] [--api-key <key>]
  */
 
-import {
-  select, confirm, input, number
-} from '@inquirer/prompts'
 import { readFileSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
@@ -25,15 +22,38 @@ const MANAGE_VERSION = (() => {
   }
 })()
 
+let select
+let confirm
+let input
+let number
+
+async function loadPrompts () {
+  if (select) return
+  ({ select, confirm, input, number } = await import('@inquirer/prompts'))
+}
+
 // ─── API Client ─────────────────────────────────────────────────────
 
-class RelayClient {
-  constructor (host, port) {
+export class RelayClient {
+  constructor (host, port, opts = {}) {
     this.base = `http://${host}:${port}`
+    this.apiKey = typeof opts.apiKey === 'string' && opts.apiKey.trim()
+      ? opts.apiKey.trim()
+      : null
+  }
+
+  _headers (headers = {}) {
+    if (!this.apiKey) return headers
+    return {
+      ...headers,
+      Authorization: 'Bearer ' + this.apiKey
+    }
   }
 
   async get (path) {
-    const res = await fetch(`${this.base}${path}`)
+    const res = await fetch(`${this.base}${path}`, {
+      headers: this._headers()
+    })
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
     return res.json()
   }
@@ -41,7 +61,7 @@ class RelayClient {
   async post (path, body = {}) {
     const res = await fetch(`${this.base}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this._headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(body)
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
@@ -85,8 +105,10 @@ function header (title, subtitle = '') {
 
 // ─── Main Menu ──────────────────────────────────────────────────────
 
-export async function runManage (host = '127.0.0.1', port = 9100) {
-  const api = new RelayClient(host, port)
+export async function runManage (host = '127.0.0.1', port = 9100, opts = {}) {
+  await loadPrompts()
+
+  const api = new RelayClient(host, port, opts)
 
   // Verify connection
   try {
@@ -180,7 +202,7 @@ async function showDashboard (api) {
     console.log(`  Storage:      ${formatBytes(overview.storage?.used || 0)} / ${formatBytes(overview.storage?.max || 0)}`)
     console.log(`  Memory:       ${formatBytes(overview.memory?.heapUsed || 0)} heap, ${formatBytes(overview.memory?.rss || 0)} RSS`)
     console.log(`  Relay:        ${overview.relay?.activeCircuits || 0} active circuits, ${formatBytes(overview.relay?.totalBytesRelayed || 0)} relayed`)
-    console.log(`  Seeder:       ${overview.seeder?.coresSeeded || 0} cores, ${formatBytes(overview.seeder?.totalBytesServed || 0)} served`)
+    console.log(`  Seeder:       ${overview.seeder?.coresSeeded || 0} cores, ${formatBytes(overview.served?.bytes ?? overview.seeder?.totalBytesServed ?? 0)} served`)
     console.log(`  Errors:       ${overview.errors || 0}`)
     if (overview.holesailKey) {
       console.log(`  Holesail:     ${overview.holesailKey}`)
@@ -274,6 +296,10 @@ async function manageServices (api) {
       service: serviceName
     })
     console.log(`  ${result.ok ? '\u2705' : '\u274c'} ${action}: ${serviceName}`)
+    if (action === 'disable' && result.ok) {
+      console.log(`  ${result.persistent ? 'Saved to service config' : 'Runtime-only service stop'}`)
+    }
+    if (result.hint) console.log(`  ${result.hint}`)
   }
 }
 

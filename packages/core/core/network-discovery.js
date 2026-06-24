@@ -21,9 +21,20 @@ import { RELAY_DISCOVERY_TOPIC } from './constants.js'
 const POLL_INTERVAL = 30_000 // poll each relay every 30s
 const STALE_THRESHOLD = 5 * 60_000 // remove relays not seen for 5 min
 const API_TIMEOUT = 8000
+const MAX_API_OVERVIEW_BYTES = 256 * 1024
+const MAX_META_BYTES = 2048
 const HOLESAIL_CLIENT_MAX = 20
 const HOLESAIL_CLIENT_TTL = 5 * 60_000 // destroy clients unused for 5 min
 const META_PROTOCOL = 'hiverelay-meta'
+const HOLESAIL_Z32_KEY = /^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/
+
+function normalizeHolesailKey (key) {
+  if (typeof key !== 'string') return null
+  let value = key.trim()
+  if (value.startsWith('hs://0000')) value = value.slice('hs://0000'.length)
+  if (!HOLESAIL_Z32_KEY.test(value)) return null
+  return value
+}
 
 export class NetworkDiscovery extends EventEmitter {
   constructor (opts = {}) {
@@ -42,7 +53,7 @@ export class NetworkDiscovery extends EventEmitter {
   }
 
   setLocalHolesailKey (key) {
-    this._localHolesailKey = key
+    this._localHolesailKey = normalizeHolesailKey(key)
   }
 
   async start () {
@@ -160,22 +171,32 @@ export class NetworkDiscovery extends EventEmitter {
 
       const metaMsg = channel.addMessage({
         encoding: c.raw,
-        onmessage: (buf) => {
-          try {
-            const meta = JSON.parse(b4a.toString(buf))
-            if (meta.holesailKey) {
-              const relay = this._relays.get(pubkey)
-              if (relay) {
-                relay.holesailKey = meta.holesailKey
-                this.emit('relay-holesail-key', { publicKey: pubkey, holesailKey: meta.holesailKey })
-              }
-            }
-          } catch {}
-        }
+        onmessage: (buf) => this._handleMetadataFrame(pubkey, buf)
       })
 
       channel.open(b4a.alloc(0))
     } catch {}
+  }
+
+  _handleMetadataFrame (pubkey, buf) {
+    if (!buf || buf.byteLength > MAX_META_BYTES) return
+
+    let meta
+    try {
+      meta = JSON.parse(b4a.toString(buf))
+    } catch {
+      return
+    }
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return
+
+    const holesailKey = normalizeHolesailKey(meta.holesailKey)
+    if (!holesailKey) return
+
+    const relay = this._relays.get(pubkey)
+    if (!relay) return
+
+    relay.holesailKey = holesailKey
+    this.emit('relay-holesail-key', { publicKey: pubkey, holesailKey })
   }
 
   /**
@@ -239,8 +260,9 @@ export class NetworkDiscovery extends EventEmitter {
           relay.holesailConnected = true
           relay.lastSeen = Date.now()
           // Capture holesail key from overview if not already set
-          if (data.holesailKey && !relay.holesailKey) {
-            relay.holesailKey = data.holesailKey
+          const holesailKey = normalizeHolesailKey(data.holesailKey)
+          if (holesailKey && !relay.holesailKey) {
+            relay.holesailKey = holesailKey
           }
           this.emit('relay-api-found', { publicKey: pubkey, holesailKey: relay.holesailKey })
         }
@@ -253,28 +275,62 @@ export class NetworkDiscovery extends EventEmitter {
    */
   _fetchApi (host, port) {
     return new Promise((resolve, reject) => {
+      let settled = false
+      const finish = (fn, value) => {
+        if (settled) return
+        settled = true
+        fn(value)
+      }
       const req = http.get(
         `http://${host}:${port}/api/overview`,
         { timeout: API_TIMEOUT },
         (res) => {
+          if (res.statusCode !== 200) {
+            res.resume()
+            return finish(reject, new Error('Unexpected status: ' + res.statusCode))
+          }
+          const contentLength = Number(res.headers['content-length'])
+          if (Number.isFinite(contentLength) && contentLength > MAX_API_OVERVIEW_BYTES) {
+            res.resume()
+            return finish(reject, new Error('Response too large'))
+          }
           let data = ''
-          res.on('data', (chunk) => { data += chunk })
-          res.on('end', () => {
-            try {
-              resolve(JSON.parse(data))
-            } catch {
-              reject(new Error('Invalid JSON'))
+          let bytes = 0
+          res.setEncoding('utf8')
+          res.on('data', (chunk) => {
+            bytes += Buffer.byteLength(chunk, 'utf8')
+            if (bytes > MAX_API_OVERVIEW_BYTES) {
+              res.destroy()
+              req.destroy()
+              finish(reject, new Error('Response too large'))
+              return
             }
+            data += chunk
+          })
+          res.on('end', () => {
+            if (settled) return
+            let parsed
+            try {
+              parsed = JSON.parse(data)
+            } catch {
+              finish(reject, new Error('Invalid JSON'))
+              return
+            }
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+              finish(reject, new Error('Invalid JSON'))
+              return
+            }
+            finish(resolve, parsed)
           })
         }
       )
 
       req.on('timeout', () => {
         req.destroy()
-        reject(new Error('Timeout'))
+        finish(reject, new Error('Timeout'))
       })
 
-      req.on('error', reject)
+      req.on('error', err => finish(reject, err))
     })
   }
 
@@ -283,6 +339,9 @@ export class NetworkDiscovery extends EventEmitter {
    * Creates a local proxy client if one doesn't exist for this key
    */
   async _fetchViaHolesail (holesailKey) {
+    holesailKey = normalizeHolesailKey(holesailKey)
+    if (!holesailKey) throw new Error('Invalid holesail key')
+
     let entry = this._holesailClients.get(holesailKey)
 
     if (!entry || !entry.client || entry.client.state === 'destroyed') {
@@ -364,8 +423,9 @@ export class NetworkDiscovery extends EventEmitter {
           relay.lastSeen = Date.now()
           relay.online = true
           // Pick up holesail key from overview response
-          if (data.holesailKey && !relay.holesailKey) {
-            relay.holesailKey = data.holesailKey
+          const holesailKey = normalizeHolesailKey(data.holesailKey)
+          if (holesailKey && !relay.holesailKey) {
+            relay.holesailKey = holesailKey
           }
         })
         .catch(() => {

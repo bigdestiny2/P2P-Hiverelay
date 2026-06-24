@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Blindspark — Network</title>
+<title>HiveRelay Network</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%2316213e'/%3E%3Cpath d='M50 10 C 54 38 60 44 88 50 C 60 56 54 62 50 90 C 46 62 40 56 12 50 C 40 44 46 38 50 10 Z' fill='%23f5c842'/%3E%3C/svg%3E">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -212,7 +212,7 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
       <path d="M50 6 C 54.5 36, 61 42.5, 92 50 C 61 57.5, 54.5 64, 50 94 C 45.5 64, 39 57.5, 8 50 C 39 42.5, 45.5 36, 50 6 Z" fill="url(#sparkg)"/>
       <path d="M79 10 C 80.5 19, 82.5 21, 91 23 C 82.5 25, 80.5 27, 79 36 C 77.5 27, 75.5 25, 67 23 C 75.5 21, 77.5 19, 79 10 Z" fill="#ffe066" opacity=".9"/>
     </svg>
-    <div class="topbar-brand"><h1>Blindspark Network</h1><div class="topbar-sub">powered by HiveRelay</div></div>
+    <div class="topbar-brand"><h1>HiveRelay Network</h1><div class="topbar-sub">relay discovery and bootstrap</div></div>
   </div>
   <nav class="topbar-nav">
     <a href="/dashboard">Dashboard</a>
@@ -276,28 +276,28 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
 <!-- Connect Modal -->
 <div class="modal-overlay" id="connectModal">
   <div class="modal">
-    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <button type="button" class="modal-close" id="modalClose">&times;</button>
     <h3 id="modalTitle">Connect to Relay</h3>
     <label>Public Key</label>
-    <div class="code-block" id="modalPubkey" onclick="copyText(this)">
+    <div class="code-block" id="modalPubkey">
       <span class="copy-label">click to copy</span>
     </div>
     <label>API Endpoint</label>
-    <div class="code-block" id="modalEndpoint" onclick="copyText(this)">
+    <div class="code-block" id="modalEndpoint">
       <span class="copy-label">click to copy</span>
     </div>
     <label>Connect via SDK</label>
-    <div class="code-block" id="modalCode" onclick="copyText(this)">
+    <div class="code-block" id="modalCode">
       <span class="copy-label">click to copy</span>
     </div>
     <div id="modalOnionRow" style="display:none">
       <label>Tor Hidden Service</label>
-      <div class="code-block" id="modalOnion" onclick="copyText(this)" style="color:var(--green)">
+      <div class="code-block" id="modalOnion" style="color:var(--green)">
         <span class="copy-label">click to copy</span>
       </div>
     </div>
     <label>Dashboard</label>
-    <div class="code-block" id="modalDashboard" onclick="copyText(this)">
+    <div class="code-block" id="modalDashboard">
       <span class="copy-label">click to copy</span>
     </div>
   </div>
@@ -308,10 +308,10 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
 
 <!-- Footer -->
 <div class="footer">
-  HiveRelay Network &mdash; P2P relay backbone for the <a href="https://holepunch.to" target="_blank">Holepunch</a> ecosystem
+  HiveRelay Network &mdash; P2P relay backbone for the <a href="https://holepunch.to" target="_blank" rel="noopener noreferrer">Holepunch</a> ecosystem
   &mdash; <a href="/docs">Docs</a>
   &mdash; <a href="/dashboard">Node Dashboard</a>
-  &mdash; <a href="https://github.com/bigdestiny2/P2P-Hiveswarm" target="_blank">GitHub</a>
+  &mdash; <a href="https://github.com/bigdestiny2/P2P-Hiveswarm" target="_blank" rel="noopener noreferrer">GitHub</a>
 </div>
 
 <script>
@@ -339,6 +339,11 @@ function formatUptime(ms) {
   return m + 'm';
 }
 
+function metricCount(value) {
+  var n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+}
+
 function truncKey(hex, n) {
   if (!hex) return '--';
   n = n || 8;
@@ -352,44 +357,111 @@ function showToast(msg) {
   setTimeout(function() { t.classList.remove('show'); }, 1500);
 }
 
+function writeClipboard(text, successMessage, onSuccess) {
+  if (typeof navigator === 'undefined' || !navigator.clipboard || !navigator.clipboard.writeText) {
+    showToast('Clipboard unavailable');
+    return;
+  }
+  navigator.clipboard.writeText(text).then(function() {
+    if (onSuccess) onSuccess();
+    showToast(successMessage || 'Copied!');
+  }).catch(function() {
+    showToast('Copy failed');
+  });
+}
+
 function copyText(el) {
   var text = el.getAttribute('data-copy') || el.textContent.replace('click to copy', '').trim();
-  navigator.clipboard.writeText(text).then(function() { showToast('Copied!'); });
+  writeClipboard(text, 'Copied!');
 }
 
 function escapeHtml(s) {
-  var d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/[&<>"']/g, function(ch) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+  });
+}
+
+function clearNode(node) {
+  while (node.firstChild) node.removeChild(node.firstChild);
+}
+
+function makeEl(tag, className, text) {
+  var el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+function appendEl(parent, tag, className, text) {
+  var el = makeEl(tag, className, text);
+  parent.appendChild(el);
+  return el;
 }
 
 function copyPubkey(el, key) {
-  navigator.clipboard.writeText(key).then(function() {
+  writeClipboard(key, 'Public key copied!', function() {
+    var hint = el.querySelector('.copy-hint');
     el.classList.add('copied');
-    el.querySelector('.copy-hint').textContent = 'copied!';
-    showToast('Public key copied!');
+    if (hint) hint.textContent = 'copied!';
     setTimeout(function() {
       el.classList.remove('copied');
-      el.querySelector('.copy-hint').textContent = 'click to copy';
+      if (hint) hint.textContent = 'click to copy';
     }, 2000);
+  });
+}
+
+function safeHttpUrl(raw, suffix) {
+  if (!raw) return null;
+  try {
+    var url = new URL(String(raw));
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    if (suffix) {
+      url.pathname = url.pathname.replace(/\/+$/, '') + suffix;
+      url.search = '';
+      url.hash = '';
+    }
+    return url.href;
+  } catch (e) {
+    return null;
+  }
+}
+
+function bindRelayGridActions(grid) {
+  if (grid.dataset.networkActionsBound) return;
+  grid.dataset.networkActionsBound = '1';
+  grid.addEventListener('click', function(e) {
+    var el = e.target.closest('[data-network-action]');
+    if (!el || !grid.contains(el)) return;
+    if (el.dataset.networkAction === 'copy-pubkey') {
+      copyPubkey(el, el.dataset.publicKey || '');
+    } else if (el.dataset.networkAction === 'connect') {
+      openConnectModal({
+        name: el.dataset.relayName || 'Relay',
+        url: el.dataset.relayUrl || ''
+      }, {
+        publicKey: el.dataset.publicKey || '--'
+      }, el.dataset.onion || '');
+    }
   });
 }
 
 /* ===== Modal ===== */
 function openConnectModal(relay, data, onion) {
   var pk = data.publicKey || '--';
-  document.getElementById('modalTitle').textContent = 'Connect to ' + relay.name;
+  var endpoint = relay.url || '--';
+  document.getElementById('modalTitle').textContent = 'Connect to ' + (relay.name || 'Relay');
   var pkEl = document.getElementById('modalPubkey');
   pkEl.textContent = pk;
   pkEl.setAttribute('data-copy', pk);
 
   var epEl = document.getElementById('modalEndpoint');
-  epEl.textContent = relay.url;
-  epEl.setAttribute('data-copy', relay.url);
+  epEl.textContent = endpoint;
+  epEl.setAttribute('data-copy', endpoint);
 
-  var code = "import { HiveRelayClient } from 'p2p-hiverelay/client'\n\n" +
+  var code = "import { HiveRelayClient } from 'p2p-hiverelay-client'\n\n" +
     "const client = new HiveRelayClient({\n" +
-    "  bootstrap: ['" + pk + "']\n" +
+    "  bootstrap: [" + JSON.stringify(pk) + "]\n" +
     "})\n" +
     "await client.start()";
   var codeEl = document.getElementById('modalCode');
@@ -397,8 +469,9 @@ function openConnectModal(relay, data, onion) {
   codeEl.setAttribute('data-copy', code);
 
   var dashEl = document.getElementById('modalDashboard');
-  dashEl.textContent = relay.url + '/dashboard';
-  dashEl.setAttribute('data-copy', relay.url + '/dashboard');
+  var dashboardUrl = relay.url ? safeHttpUrl(relay.url, '/dashboard') : null;
+  dashEl.textContent = dashboardUrl || '--';
+  dashEl.setAttribute('data-copy', dashboardUrl || '--');
 
   // Onion address section
   var onionRow = document.getElementById('modalOnionRow');
@@ -421,6 +494,10 @@ function closeModal() {
 document.getElementById('connectModal').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
+document.getElementById('modalClose').addEventListener('click', closeModal);
+document.querySelectorAll('#connectModal .code-block').forEach(function(el) {
+  el.addEventListener('click', function() { copyText(el); });
+});
 
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') closeModal();
@@ -430,55 +507,110 @@ document.addEventListener('keydown', function(e) {
 
 function renderRelayCard(data) {
   var online = data._online;
-  var pk = data.publicKey || '--';
+  var pk = String(data.publicKey || '--');
   var uptime = data.uptime ? data.uptime.ms : 0;
-  var conns = data.connections || 0;
-  var apps = data.seededApps || 0;
+  var conns = metricCount(data.connections);
+  var apps = metricCount(data.seededApps);
   var stored = data.storage ? data.storage.used : 0;
   var storageMax = data.storage ? data.storage.max : 0;
   var relayed = data.relay ? data.relay.totalBytesRelayed : 0;
-  var circuits = data.relay ? data.relay.totalCircuitsServed : 0;
+  var circuits = data.relay ? metricCount(data.relay.totalCircuitsServed) : 0;
   var heapMB = data.memory ? Math.round(data.memory.heapUsed / 1048576) : 0;
   var rssMB = data.memory ? Math.round(data.memory.rss / 1048576) : 0;
   var torInfo = data.tor;
   var hasTor = torInfo && torInfo.running;
   var onionAddr = torInfo ? torInfo.onionAddress : null;
+  var relayName = String(data._name || 'Relay');
+  var relayUrl = safeHttpUrl(data._url, '');
+  var dashboardUrl = safeHttpUrl(data._url, '/dashboard');
+  var apiUrl = safeHttpUrl(data._url, '/api/overview');
 
-  return '<div class="relay-card ' + (online ? '' : 'offline') + '">' +
-    '<div class="relay-header">' +
-      '<div class="relay-status ' + (online ? 'online' : 'offline') + '"></div>' +
-      '<div class="relay-name">' + escapeHtml(data._name) + '</div>' +
-      '<div class="relay-region">' + escapeHtml(data._region) + '</div>' +
-      (hasTor ? '<div class="relay-region" style="background:rgba(63,185,80,.1);color:var(--green)">TOR</div>' : '') +
-      (data._holesailKey ? '<div class="relay-region" style="background:rgba(56,132,244,.1);color:var(--blue,#3884f4)">HS</div>' : '') +
-    '</div>' +
-    '<div class="relay-pubkey" onclick="copyPubkey(this,\'' + pk + '\')">' +
-      truncKey(pk, 12) +
-      '<span class="copy-hint">click to copy</span>' +
-    '</div>' +
-    '<div class="relay-stats">' +
-      '<div class="relay-stat"><div class="relay-stat-val">' + conns + '</div><div class="relay-stat-label">Connections</div></div>' +
-      '<div class="relay-stat"><div class="relay-stat-val">' + apps + '</div><div class="relay-stat-label">Seeded Apps</div></div>' +
-      '<div class="relay-stat"><div class="relay-stat-val">' + formatUptime(uptime) + '</div><div class="relay-stat-label">Uptime</div></div>' +
-    '</div>' +
-    '<div class="relay-meta">' +
-      '<span>Storage: ' + formatBytes(stored) + ' / ' + formatBytes(storageMax) + '</span>' +
-      '<span>Relayed: ' + formatBytes(relayed) + '</span>' +
-      '<span>Circuits: ' + circuits + '</span>' +
-      '<span>Mem: ' + rssMB + ' MB</span>' +
-      (onionAddr ? '<span style="color:var(--green)">.onion: ' + escapeHtml(onionAddr.slice(0,16)) + '...</span>' : '') +
-    '</div>' +
-    '<div class="relay-actions">' +
-      '<button class="btn primary" onclick=\'openConnectModal(' + JSON.stringify({ name: data._name, url: data._url }) + ',' + JSON.stringify({ publicKey: pk }) + ',' + JSON.stringify(onionAddr) + ')\'>Connect</button>' +
-      '<a class="btn" href="' + escapeHtml(data._url) + '/dashboard" target="_blank">Dashboard</a>' +
-      '<a class="btn" href="' + escapeHtml(data._url) + '/api/overview" target="_blank">API</a>' +
-    '</div>' +
-  '</div>';
+  var card = makeEl('div', 'relay-card' + (online ? '' : ' offline'));
+  var header = appendEl(card, 'div', 'relay-header');
+  appendEl(header, 'div', 'relay-status ' + (online ? 'online' : 'offline'));
+  appendEl(header, 'div', 'relay-name', relayName);
+  appendEl(header, 'div', 'relay-region', data._region || '--');
+  if (hasTor) {
+    var torBadge = appendEl(header, 'div', 'relay-region', 'TOR');
+    torBadge.style.background = 'rgba(63,185,80,.1)';
+    torBadge.style.color = 'var(--green)';
+  }
+  if (data._holesailKey) {
+    var hsBadge = appendEl(header, 'div', 'relay-region', 'HS');
+    hsBadge.style.background = 'rgba(56,132,244,.1)';
+    hsBadge.style.color = 'var(--blue,#3884f4)';
+  }
+
+  var pubkey = appendEl(card, 'div', 'relay-pubkey', truncKey(pk, 12));
+  pubkey.dataset.networkAction = 'copy-pubkey';
+  pubkey.dataset.publicKey = pk;
+  appendEl(pubkey, 'span', 'copy-hint', 'click to copy');
+
+  var stats = appendEl(card, 'div', 'relay-stats');
+  var statConns = appendEl(stats, 'div', 'relay-stat');
+  appendEl(statConns, 'div', 'relay-stat-val', conns);
+  appendEl(statConns, 'div', 'relay-stat-label', 'Connections');
+  var statApps = appendEl(stats, 'div', 'relay-stat');
+  appendEl(statApps, 'div', 'relay-stat-val', apps);
+  appendEl(statApps, 'div', 'relay-stat-label', 'Seeded Apps');
+  var statUptime = appendEl(stats, 'div', 'relay-stat');
+  appendEl(statUptime, 'div', 'relay-stat-val', formatUptime(uptime));
+  appendEl(statUptime, 'div', 'relay-stat-label', 'Uptime');
+
+  var meta = appendEl(card, 'div', 'relay-meta');
+  appendEl(meta, 'span', null, 'Storage: ' + formatBytes(stored) + ' / ' + formatBytes(storageMax));
+  appendEl(meta, 'span', null, 'Relayed: ' + formatBytes(relayed));
+  appendEl(meta, 'span', null, 'Circuits: ' + circuits);
+  appendEl(meta, 'span', null, 'Mem: ' + rssMB + ' MB');
+  if (onionAddr) {
+    var onion = appendEl(meta, 'span', null, '.onion: ' + String(onionAddr).slice(0, 16) + '...');
+    onion.style.color = 'var(--green)';
+  }
+
+  var actions = appendEl(card, 'div', 'relay-actions');
+  var connect = appendEl(actions, 'button', 'btn primary', 'Connect');
+  connect.type = 'button';
+  connect.dataset.networkAction = 'connect';
+  connect.dataset.relayName = relayName;
+  connect.dataset.relayUrl = relayUrl || '';
+  connect.dataset.publicKey = pk;
+  connect.dataset.onion = onionAddr || '';
+  if (dashboardUrl) {
+    var dashboard = appendEl(actions, 'a', 'btn', 'Dashboard');
+    dashboard.href = dashboardUrl;
+    dashboard.target = '_blank';
+    dashboard.rel = 'noopener noreferrer';
+  } else {
+    var dashboardDisabled = appendEl(actions, 'button', 'btn', 'Dashboard');
+    dashboardDisabled.type = 'button';
+    dashboardDisabled.disabled = true;
+  }
+  if (apiUrl) {
+    var api = appendEl(actions, 'a', 'btn', 'API');
+    api.href = apiUrl;
+    api.target = '_blank';
+    api.rel = 'noopener noreferrer';
+  } else {
+    var apiDisabled = appendEl(actions, 'button', 'btn', 'API');
+    apiDisabled.type = 'button';
+    apiDisabled.disabled = true;
+  }
+
+  return card;
 }
 
 async function refresh() {
   try {
-    var res = await fetch('/api/network', { signal: AbortSignal.timeout(10000) });
+    var token = getUiToken();
+    var detailedHeaders = {};
+    if (token) detailedHeaders.Authorization = 'Bearer ' + token;
+    var res = await fetch('/api/network?detailed=1', {
+      signal: AbortSignal.timeout(10000),
+      headers: detailedHeaders
+    });
+    if (res.status === 401 || res.status === 403) {
+      res = await fetch('/api/network', { signal: AbortSignal.timeout(10000) });
+    }
     var network = await res.json();
   } catch (e) {
     document.getElementById('lastUpdated').textContent = 'fetch failed \u2014 retrying...';
@@ -500,6 +632,15 @@ function setPollInterval(ms) {
   pollTimer = setInterval(refresh, ms);
 }
 
+function getUiToken() {
+  var m = document.querySelector('meta[name="hiverelay-ui-token"]');
+  return (m && m.getAttribute('content')) || '';
+}
+function sendWsAuth(sock) {
+  var t = getUiToken();
+  if (!t) return;
+  try { sock.send(JSON.stringify({ type: 'auth', token: t })); } catch (e) {}
+}
 function connectWS() {
   var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   var url = proto + '//' + location.host + '/ws';
@@ -507,6 +648,7 @@ function connectWS() {
   try { ws = new WebSocket(url); } catch (e) { return; }
 
   ws.onopen = function() {
+    sendWsAuth(ws);
     wsConnected = true;
     // Reduce polling to backup interval
     setPollInterval(POLL_INTERVAL_WS);
@@ -552,7 +694,7 @@ function renderNetwork(network) {
 
   // Filter out relays without API if toggle is on
   if (hideNoApi) {
-    relays = relays.filter(function(r) { return r.apiPort != null; });
+    relays = relays.filter(function(r) { return r.apiPort != null || r.apiReachable === true; });
   }
 
   // Normalize relay data for renderRelayCard
@@ -582,7 +724,7 @@ function renderNetwork(network) {
   var onlineCount = 0, totalConns = 0, totalStored = 0, totalStorageMax = 0;
   results.forEach(function(r) {
     if (r._online) onlineCount++;
-    totalConns += r.connections || 0;
+    totalConns += metricCount(r.connections);
     if (r.storage) {
       totalStored += r.storage.used || 0;
       totalStorageMax += r.storage.max || 0;
@@ -616,10 +758,20 @@ function renderNetwork(network) {
 
   // Relay cards
   var grid = document.getElementById('relayGrid');
+  bindRelayGridActions(grid);
+  clearNode(grid);
   if (results.length === 0) {
-    grid.innerHTML = '<div class="loading" style="animation:none">Discovering relays on the DHT...<br><span style="font-size:.75rem;color:var(--text-dim)">New relays appear automatically as they join the network</span></div>';
+    var loading = appendEl(grid, 'div', 'loading');
+    loading.style.animation = 'none';
+    loading.appendChild(document.createTextNode('Discovering relays on the DHT...'));
+    loading.appendChild(document.createElement('br'));
+    var hint = appendEl(loading, 'span', null, 'New relays appear automatically as they join the network');
+    hint.style.fontSize = '.75rem';
+    hint.style.color = 'var(--text-dim)';
   } else {
-    grid.innerHTML = results.map(renderRelayCard).join('');
+    results.forEach(function(result) {
+      grid.appendChild(renderRelayCard(result));
+    });
   }
 
   // Timestamp

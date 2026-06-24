@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>App Catalog — Blindspark</title>
+<title>HiveRelay Catalog</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%2316213e'/%3E%3Cpath d='M50 10 C 54 38 60 44 88 50 C 60 56 54 62 50 90 C 46 62 40 56 12 50 C 40 44 46 38 50 10 Z' fill='%23f5c842'/%3E%3C/svg%3E">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -134,7 +134,7 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
       <path d="M50 6 C 54.5 36, 61 42.5, 92 50 C 61 57.5, 54.5 64, 50 94 C 45.5 64, 39 57.5, 8 50 C 39 42.5, 45.5 36, 50 6 Z" fill="url(#sparkg)"/>
       <path d="M79 10 C 80.5 19, 82.5 21, 91 23 C 82.5 25, 80.5 27, 79 36 C 77.5 27, 75.5 25, 67 23 C 75.5 21, 77.5 19, 79 10 Z" fill="#ffe066" opacity=".9"/>
     </svg>
-    <div class="topbar-brand"><h1>Blindspark</h1><div class="topbar-sub">powered by HiveRelay</div></div>
+    <div class="topbar-brand"><h1>HiveRelay Catalog</h1><div class="topbar-sub">browser-ready seeded content</div></div>
   </a>
   <nav class="topbar-nav">
     <a href="/dashboard">Dashboard</a>
@@ -161,20 +161,20 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
 
   <div class="toolbar">
     <input type="text" class="search-input" id="search" placeholder="Search by name, description, key, or category...">
-    <button class="filter-chip active" data-filter="all">All</button>
-    <button class="filter-chip" data-filter="app">Apps</button>
-    <button class="filter-chip" data-filter="drive">Drives</button>
-    <button class="filter-chip" data-filter="dataset">Datasets</button>
-    <button class="filter-chip" data-filter="media">Media</button>
-    <button class="filter-chip" data-filter="resource">Resources</button>
+    <button type="button" class="filter-chip active" data-filter="all">All</button>
+    <button type="button" class="filter-chip" data-filter="app">Apps</button>
+    <button type="button" class="filter-chip" data-filter="drive">Drives</button>
+    <button type="button" class="filter-chip" data-filter="dataset">Datasets</button>
+    <button type="button" class="filter-chip" data-filter="media">Media</button>
+    <button type="button" class="filter-chip" data-filter="resource">Resources</button>
   </div>
 
   <div class="catalog-grid" id="catalog-grid"></div>
 
   <div class="pagination" id="pagination" style="display:none">
-    <button class="btn btn-secondary" id="prev-page">← Previous</button>
+    <button type="button" class="btn btn-secondary" id="prev-page">← Previous</button>
     <span class="page-info" id="page-info">Page 1</span>
-    <button class="btn btn-secondary" id="next-page">Next →</button>
+    <button type="button" class="btn btn-secondary" id="next-page">Next →</button>
   </div>
 </div>
 
@@ -212,8 +212,7 @@ async function loadCatalog () {
     countStats()
     applyFilter()
   } catch (err) {
-    document.getElementById('catalog-grid').innerHTML =
-      `<div class="empty-state"><h3>Could not load catalog</h3><p>${err.message}</p></div>`
+    renderEmptyState(document.getElementById('catalog-grid'), 'Could not load catalog', err && err.message ? err.message : 'unknown')
   }
 }
 
@@ -239,7 +238,7 @@ function applyFilter () {
     if (!search) return true
     const haystack = [
       item.name, item.description, item.appKey, item.key,
-      ...(item.categories || []), item.author
+      ...catalogCategories(item.categories), item.author
     ].filter(Boolean).join(' ').toLowerCase()
     return haystack.includes(search)
   })
@@ -249,8 +248,9 @@ function applyFilter () {
 
 function renderGrid () {
   const grid = document.getElementById('catalog-grid')
+  clearNode(grid)
   if (state.filtered.length === 0) {
-    grid.innerHTML = '<div class="empty-state"><h3>No items found</h3><p>Try a different filter or search.</p></div>'
+    renderEmptyState(grid, 'No items found', 'Try a different filter or search.')
     document.getElementById('pagination').style.display = 'none'
     return
   }
@@ -258,7 +258,7 @@ function renderGrid () {
   const start = (state.page - 1) * state.pageSize
   const pageItems = state.filtered.slice(start, start + state.pageSize)
 
-  grid.innerHTML = pageItems.map(renderCard).join('')
+  for (const item of pageItems) grid.appendChild(renderCard(item))
 
   // Pagination
   const totalPages = Math.ceil(state.filtered.length / state.pageSize)
@@ -271,55 +271,97 @@ function renderGrid () {
   } else {
     pag.style.display = 'none'
   }
-
-  // Attach key-copy listeners
-  grid.querySelectorAll('.card-key').forEach(el => {
-    el.addEventListener('click', () => copyToClipboard(el.dataset.key))
-  })
 }
 
 function renderCard (item) {
-  const type = item.type || 'app'
-  const key = item.appKey || item.key || ''
-  const name = escapeHtml(item.name || 'Unnamed')
-  const desc = escapeHtml(item.description || 'No description available.')
-  const author = item.author ? escapeHtml(item.author) : ''
-  const cats = (item.categories || []).slice(0, 3).map(c =>
-    `<span>${escapeHtml(c)}</span>`).join('')
-  const version = item.version ? `<span>v${escapeHtml(item.version)}</span>` : ''
-  const gatewayUrl = `/v1/hyper/${key}/`
+  const type = normalizeCatalogType(item.type)
+  const key = String(item.appKey || item.key || '')
+  const gatewayUrl = key ? `/v1/hyper/${encodeURIComponent(key)}/` : '#'
 
-  return `
-    <div class="catalog-card">
-      <div class="card-header">
-        <div class="card-title">${name}</div>
-        <span class="card-type-badge type-${type}">${type}</span>
-      </div>
-      <div class="card-description">${desc}</div>
-      ${(version || author || cats) ? `<div class="card-meta">${version}${author ? `<span>by ${author}</span>` : ''}${cats}</div>` : ''}
-      <div class="card-key" data-key="${escapeHtml(key)}" title="Click to copy">${key || '(no key)'}</div>
-      <div class="card-actions">
-        <a href="${gatewayUrl}" target="_blank" class="btn">Browse Files</a>
-        <button class="btn btn-secondary" onclick="copyToClipboard('${escapeHtml(key)}')">Copy Key</button>
-      </div>
-    </div>
-  `
+  const card = makeEl('div', 'catalog-card')
+  const header = appendEl(card, 'div', 'card-header')
+  appendEl(header, 'div', 'card-title', item.name || 'Unnamed')
+  appendEl(header, 'span', `card-type-badge type-${type}`, type)
+  appendEl(card, 'div', 'card-description', item.description || 'No description available.')
+
+  const categories = catalogCategories(item.categories).slice(0, 3)
+  if (item.version || item.author || categories.length) {
+    const meta = appendEl(card, 'div', 'card-meta')
+    if (item.version) appendEl(meta, 'span', '', 'v' + String(item.version))
+    if (item.author) appendEl(meta, 'span', '', 'by ' + String(item.author))
+    categories.forEach(c => appendEl(meta, 'span', '', c))
+  }
+
+  const keyEl = appendEl(card, 'div', 'card-key', key || '(no key)')
+  keyEl.dataset.key = key
+  keyEl.title = 'Click to copy'
+  keyEl.addEventListener('click', () => copyToClipboard(key))
+
+  const actions = appendEl(card, 'div', 'card-actions')
+  const browse = appendEl(actions, 'a', 'btn', 'Browse Files')
+  browse.href = gatewayUrl
+  browse.target = '_blank'
+  browse.rel = 'noopener noreferrer'
+  const copy = appendEl(actions, 'button', 'btn btn-secondary copy-key-btn', 'Copy Key')
+  copy.type = 'button'
+  copy.dataset.key = key
+  copy.addEventListener('click', () => copyToClipboard(key))
+
+  return card
 }
 
-function escapeHtml (s) {
-  if (s === null || s === undefined) return ''
-  return String(s).replace(/[&<>"']/g, ch => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[ch]))
+function normalizeCatalogType (type) {
+  const t = String(type || 'app').toLowerCase()
+  return ['app', 'drive', 'dataset', 'media', 'resource'].includes(t) ? t : 'resource'
+}
+
+function catalogCategories (categories) {
+  if (!Array.isArray(categories)) return []
+  return categories.filter(c => c !== null && c !== undefined).map(c => String(c))
+}
+
+function clearNode (node) {
+  while (node.firstChild) node.removeChild(node.firstChild)
+  node.textContent = ''
+}
+
+function makeEl (tag, className, text) {
+  const el = document.createElement(tag)
+  if (className) el.className = className
+  if (text !== undefined) el.textContent = String(text)
+  return el
+}
+
+function appendEl (parent, tag, className, text) {
+  const el = makeEl(tag, className, text)
+  parent.appendChild(el)
+  return el
+}
+
+function renderEmptyState (parent, title, message) {
+  clearNode(parent)
+  const empty = appendEl(parent, 'div', 'empty-state')
+  appendEl(empty, 'h3', '', title)
+  appendEl(empty, 'p', '', message)
+  return empty
+}
+
+function showCopyToast (message) {
+  const toast = document.getElementById('toast')
+  toast.textContent = message || 'Copied to clipboard!'
+  toast.classList.add('show')
+  setTimeout(() => toast.classList.remove('show'), 1500)
 }
 
 function copyToClipboard (text) {
   if (!text) return
-  navigator.clipboard?.writeText(text).then(() => {
-    const toast = document.getElementById('toast')
-    toast.classList.add('show')
-    setTimeout(() => toast.classList.remove('show'), 1500)
-  }).catch(() => {})
+  if (typeof navigator === 'undefined' || !navigator.clipboard || !navigator.clipboard.writeText) {
+    showCopyToast('Clipboard unavailable')
+    return
+  }
+  navigator.clipboard.writeText(text)
+    .then(() => showCopyToast('Copied to clipboard!'))
+    .catch(() => showCopyToast('Copy failed'))
 }
 
 // Event listeners

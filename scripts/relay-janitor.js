@@ -36,7 +36,8 @@
 //               anonymous + never served) → KEEP, list for a human.
 //
 // The operator API key is only needed to ACT; it's read per-relay from
-// that relay's own systemd unit over SSH, never stored locally.
+// that relay's own root-only env file or legacy systemd unit over SSH,
+// never stored locally.
 //
 // Usage:
 //   node scripts/relay-janitor.js                         # dry-run, all relays, classify only
@@ -47,10 +48,11 @@
 //
 // --apply with no tier flag is rejected (you must opt into what to sweep).
 
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
 
 const exec = promisify(execFile)
+const MAX_SSH_OUTPUT = 64 * 1024 * 1024
 
 const CLOUDZY_KEY = ['-i', `${process.env.HOME}/.ssh/cloudzy_hiverelay`]
 const RELAYS = {
@@ -160,8 +162,8 @@ async function main () {
     }
 
     if (APPLY) {
-      const key = await readApiKey(sshBase).catch(() => null)
-      if (!key) { console.log(`      ✗ could not read API key for ${id} — skipping sweep`); continue }
+      const hasKey = await remoteHasApiKey(sshBase).catch(() => false)
+      if (!hasKey) { console.log(`      ✗ could not read API key for ${id} — skipping sweep`); continue }
       if (!versionGE(version, '0.8.14')) {
         console.log(`      ✗ ${id} is v${version} (<0.8.14) — refusing to sweep (pre-fix unseed cascades). Deploy v0.8.14 first.`)
         continue
@@ -180,7 +182,7 @@ async function main () {
         const ak = a.appKey
         if (!ak || ak.length !== 64) continue
         try {
-          const out = await sshText(sshBase, `curl -s --max-time 8 -X POST http://127.0.0.1:9100/unseed -H 'authorization: Bearer ${key}' -H 'content-type: application/json' -d '{"appKey":"${ak}"}'`)
+          const out = await remoteUnseed(sshBase, ak)
           if (out.includes('"ok":true')) {
             totals.swept++; process.stdout.write('.')
           } else {
@@ -254,20 +256,105 @@ function classify (a, now) {
 // ── ssh / api helpers ───────────────────────────────────────────────────
 
 async function sshText (sshBase, remoteCmd) {
-  const { stdout } = await exec('ssh', [...sshBase, remoteCmd], { maxBuffer: 64 * 1024 * 1024 })
+  const { stdout } = await exec('ssh', [...sshBase, remoteCmd], { maxBuffer: MAX_SSH_OUTPUT })
   return stdout
 }
 async function sshJson (sshBase, remoteCmd) {
   const out = await sshText(sshBase, remoteCmd)
   return JSON.parse(out)
 }
-async function readApiKey (sshBase) {
-  // Read HIVERELAY_API_KEY from the relay's own systemd unit. Never
-  // printed, never stored locally.
-  const out = await sshText(sshBase, "grep -oE 'HIVERELAY_API_KEY=[A-Za-z0-9._-]+' /etc/systemd/system/hiverelay.service | head -1 | cut -d= -f2")
-  const key = out.trim()
-  if (!key) throw new Error('no API key in systemd unit')
-  return key
+const REMOTE_API_KEY_SNIPPET = String.raw`
+# Read HIVERELAY_API_KEY from the relay's own root-only env file first,
+# falling back to legacy Environment= units. Never print or return it.
+key="$(systemctl show hiverelay -p Environment 2>/dev/null | awk 'BEGIN{RS=" "} /^HIVERELAY_API_KEY=/{sub(/^HIVERELAY_API_KEY=/,""); print; exit}' || true)"
+if [ -z "$key" ] && [ -r /etc/hiverelay/hiverelay.env ]; then
+  key="$(awk -F= '/^[[:space:]]*HIVERELAY_API_KEY[[:space:]]*=/ { sub(/^[^=]*=/,""); sub(/^[[:space:]]*/,""); print; exit }' /etc/hiverelay/hiverelay.env 2>/dev/null || true)"
+fi
+key="\${key%\"}"
+key="\${key#\"}"
+key="\${key%\'}"
+key="\${key#\'}"
+`
+
+async function remoteHasApiKey (sshBase) {
+  const out = await sshScript(sshBase, REMOTE_API_KEY_SNIPPET + String.raw`
+if [ -n "$key" ]; then printf '1\n'; else printf '0\n'; fi
+`)
+  return out.trim() === '1'
+}
+
+async function remoteUnseed (sshBase, appKey) {
+  return sshScript(sshBase, REMOTE_API_KEY_SNIPPET + String.raw`
+app_key="\${1:-}"
+case "$app_key" in
+  ''|*[!0123456789abcdef]*) printf '{"ok":false,"error":"invalid-app-key"}\n'; exit 2 ;;
+esac
+if [ "\${#app_key}" -ne 64 ]; then
+  printf '{"ok":false,"error":"invalid-app-key"}\n'
+  exit 2
+fi
+if [ -z "$key" ]; then
+  printf '{"ok":false,"error":"no-api-key"}\n'
+  exit 3
+fi
+if printf '%s' "$key" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+  printf '{"ok":false,"error":"invalid-api-key"}\n'
+  exit 3
+fi
+header_file="$(mktemp)"
+trap 'rm -f "$header_file"' EXIT
+chmod 600 "$header_file" 2>/dev/null || true
+printf 'authorization: Bearer %s\n' "$key" > "$header_file"
+curl -s --max-time 8 -X POST http://127.0.0.1:9100/unseed \
+  -H "@$header_file" \
+  -H 'content-type: application/json' \
+  --data-binary "{\"appKey\":\"$app_key\"}"
+`, [appKey])
+}
+
+async function sshScript (sshBase, script, args = []) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('ssh', [...sshBase, 'bash', '-s', '--', ...args], {
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    let timer = null
+    const finish = (err, value = null) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      if (err) reject(err)
+      else resolve(value)
+    }
+
+    timer = setTimeout(() => {
+      finish(new Error('ssh script timed out after 30000ms'))
+      try { child.kill('SIGTERM') } catch (_) {}
+    }, 30_000)
+    if (timer.unref) timer.unref()
+
+    const append = (which, chunk) => {
+      const text = chunk.toString()
+      if (stdout.length + stderr.length + text.length > MAX_SSH_OUTPUT) {
+        finish(new Error('ssh output exceeded limit'))
+        try { child.kill('SIGTERM') } catch (_) {}
+        return
+      }
+      if (which === 'stdout') stdout += text
+      else stderr += text
+    }
+
+    child.stdout.on('data', chunk => append('stdout', chunk))
+    child.stderr.on('data', chunk => append('stderr', chunk))
+    child.on('error', finish)
+    child.on('close', code => {
+      if (code === 0) finish(null, stdout)
+      else finish(new Error(stderr.trim() || `ssh exited ${code}`))
+    })
+    child.stdin.end(script)
+  })
 }
 
 function versionGE (v, min) {

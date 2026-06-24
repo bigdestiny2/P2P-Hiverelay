@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Blindspark — Leaderboard</title>
+<title>HiveRelay Leaderboard</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%2316213e'/%3E%3Cpath d='M50 10 C 54 38 60 44 88 50 C 60 56 54 62 50 90 C 46 62 40 56 12 50 C 40 44 46 38 50 10 Z' fill='%23f5c842'/%3E%3C/svg%3E">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -179,7 +179,7 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
       <path d="M50 6 C 54.5 36, 61 42.5, 92 50 C 61 57.5, 54.5 64, 50 94 C 45.5 64, 39 57.5, 8 50 C 39 42.5, 45.5 36, 50 6 Z" fill="url(#sparkg)"/>
       <path d="M79 10 C 80.5 19, 82.5 21, 91 23 C 82.5 25, 80.5 27, 79 36 C 77.5 27, 75.5 25, 67 23 C 75.5 21, 77.5 19, 79 10 Z" fill="#ffe066" opacity=".9"/>
     </svg>
-    <div class="topbar-brand"><h1>Blindspark Leaderboard</h1><div class="topbar-sub">powered by HiveRelay</div></div>
+    <div class="topbar-brand"><h1>HiveRelay Leaderboard</h1><div class="topbar-sub">operator standing and performance</div></div>
   </a>
   <nav class="topbar-nav">
     <a href="/dashboard">Dashboard</a>
@@ -316,6 +316,20 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
     return pk.slice(0, 8) + '...' + pk.slice(-8);
   }
 
+  function metricNumber(value) {
+    if (typeof value === 'string') {
+      var trimmed = value.trim();
+      if (trimmed.endsWith('%')) trimmed = trimmed.slice(0, -1);
+      value = trimmed;
+    }
+    var n = Number(value);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  }
+
+  function clampPercent(value) {
+    return Math.min(100, metricNumber(value));
+  }
+
   var regionFlags = {
     'NA': '\u{1F1FA}\u{1F1F8}', 'EU': '\u{1F1EA}\u{1F1FA}',
     'AS': '\u{1F30F}', 'SA': '\u{1F30E}', 'AF': '\u{1F30D}', 'OC': '\u{1F30F}'
@@ -350,16 +364,69 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
     setTimeout(function() { t.classList.remove('show'); }, 2000);
   }
 
+  function writeClipboard(text, successMessage) {
+    if (typeof navigator === 'undefined' || !navigator.clipboard || !navigator.clipboard.writeText) {
+      showToast('Clipboard unavailable');
+      return;
+    }
+    navigator.clipboard.writeText(text).then(function() {
+      showToast(successMessage || 'Copied!');
+    }).catch(function() {
+      showToast('Copy failed');
+    });
+  }
+
   function escapeHtml(s) {
-    var d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, function(ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+    });
+  }
+
+  function clearNode(node) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+  }
+
+  function makeEl(tag, className, text) {
+    var el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text !== undefined && text !== null) el.textContent = String(text);
+    return el;
+  }
+
+  function appendEl(parent, tag, className, text) {
+    var el = makeEl(tag, className, text);
+    parent.appendChild(el);
+    return el;
   }
 
   function copyText(text) {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(text).then(function() { showToast('Copied!'); });
-    }
+    writeClipboard(text, 'Copied!');
+  }
+
+  function bindLeaderboardActions(tbody) {
+    if (tbody.dataset.leaderboardActionsBound) return;
+    tbody.dataset.leaderboardActionsBound = '1';
+    tbody.addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-copy-pubkey]');
+      if (!btn || !tbody.contains(btn)) return;
+      e.stopPropagation();
+      copyText(btn.dataset.copyPubkey || '');
+    });
+  }
+
+  function normalizeRelay(r) {
+    return {
+      pubkey: String(r.relay || r.pubkey || ''),
+      score: metricNumber(r.score),
+      reliability: clampPercent(r.reliability),
+      avgLatency: metricNumber(r.avgLatencyMs || r.avg_latency || r.avgLatency),
+      uptimeHours: metricNumber(r.uptimeHours || r.uptime_hours),
+      bytesServed: metricNumber(r.bytesServed || r.bytes_served),
+      region: String(r.region || 'unknown'),
+      lastActive: r.lastActivity || r.last_active || r.lastActive || null,
+      challenges: metricNumber(r.totalChallenges || r.challenges || r.challenge_count)
+    };
   }
 
   // --- Connection Status ---
@@ -397,9 +464,58 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
     });
   }
 
+  function renderRelayRow(r) {
+    var isMe = myPubkey && r.pubkey === myPubkey;
+    var score = r.score || 0;
+    var rel = r.reliability || 0;
+    var lat = r.avgLatency || 0;
+    var up = r.uptimeHours || 0;
+    var bytes = r.bytesServed || 0;
+    var region = String(r.region || '--');
+    var lastActive = r.lastActive || null;
+    var pubkey = String(r.pubkey || '');
+    var rankCls = r._rank === 1 ? 'rank rank-1' : (r._rank === 2 ? 'rank rank-2' : (r._rank === 3 ? 'rank rank-3' : 'rank'));
+
+    var row = makeEl('tr', isMe ? 'this-node' : null);
+    appendEl(row, 'td', 'mono ' + rankCls, r._rank);
+
+    var pubCell = appendEl(row, 'td');
+    var pubWrap = appendEl(pubCell, 'div', 'pubkey-cell');
+    appendEl(pubWrap, 'span', 'pubkey', truncatePubkey(pubkey));
+    var copy = appendEl(pubWrap, 'button', 'copy-btn', '\u2398');
+    copy.type = 'button';
+    copy.dataset.copyPubkey = pubkey;
+    if (isMe) appendEl(pubWrap, 'span', 'you-badge', 'YOU');
+
+    appendEl(row, 'td', 'mono ' + scoreClass(score), score.toFixed(1));
+
+    var relCell = appendEl(row, 'td');
+    var relWrap = appendEl(relCell, 'div', 'reliability-cell');
+    var relBar = appendEl(relWrap, 'div', 'reliability-bar');
+    var relFill = appendEl(relBar, 'div', 'reliability-fill');
+    relFill.style.width = rel + '%';
+    relFill.style.background = reliabilityColor(rel);
+    var relPct = appendEl(relWrap, 'span', 'reliability-pct mono', rel.toFixed(1) + '%');
+    relPct.style.color = reliabilityColor(rel);
+
+    appendEl(row, 'td', 'mono ' + latencyClass(lat), Math.round(lat) + ' ms');
+    appendEl(row, 'td', 'mono', formatUptime(up));
+    appendEl(row, 'td', 'mono', formatBytes(bytes));
+
+    var regionCell = appendEl(row, 'td');
+    var regionWrap = appendEl(regionCell, 'div', 'region-cell');
+    appendEl(regionWrap, 'span', 'region-flag', regionFlag(region));
+    appendEl(regionWrap, 'span', 'region-code', region);
+
+    var activeCell = appendEl(row, 'td', 'mono', formatRelativeTime(lastActive));
+    activeCell.style.color = 'var(--text-dim)';
+    return row;
+  }
+
   // --- Render ---
   function render() {
     var tbody = document.getElementById('leaderboardBody');
+    bindLeaderboardActions(tbody);
     var empty = document.getElementById('emptyState');
     var table = document.querySelector('#tableContainer table');
 
@@ -419,35 +535,10 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
 
     sortRelays();
 
-    var html = '';
+    clearNode(tbody);
     for (var j = 0; j < relays.length; j++) {
-      var r = relays[j];
-      var isMe = myPubkey && r.pubkey === myPubkey;
-      var score = r.score || 0;
-      var rel = r.reliability || 0;
-      var lat = r.avgLatency || 0;
-      var up = r.uptimeHours || 0;
-      var bytes = r.bytesServed || 0;
-      var region = r.region || '--';
-      var lastActive = r.lastActive || null;
-      var rankCls = r._rank === 1 ? 'rank rank-1' : (r._rank === 2 ? 'rank rank-2' : (r._rank === 3 ? 'rank rank-3' : 'rank'));
-
-      html += '<tr class="' + (isMe ? 'this-node' : '') + '">';
-      html += '<td class="mono ' + rankCls + '">' + r._rank + '</td>';
-      html += '<td><div class="pubkey-cell"><span class="pubkey">' + truncatePubkey(r.pubkey) + '</span>';
-      html += '<button class="copy-btn" onclick="event.stopPropagation();(function(){if(navigator.clipboard)navigator.clipboard.writeText(' + JSON.stringify(r.pubkey || '') + ').then(function(){var t=document.getElementById(\'toast\');t.textContent=\'Copied!\';t.classList.add(\'show\');setTimeout(function(){t.classList.remove(\'show\')},2000)})})()">&#x2398;</button>';
-      if (isMe) html += '<span class="you-badge">YOU</span>';
-      html += '</div></td>';
-      html += '<td class="mono ' + scoreClass(score) + '">' + score.toFixed(1) + '</td>';
-      html += '<td><div class="reliability-cell"><div class="reliability-bar"><div class="reliability-fill" style="width:' + rel + '%;background:' + reliabilityColor(rel) + '"></div></div><span class="reliability-pct mono" style="color:' + reliabilityColor(rel) + '">' + rel.toFixed(1) + '%</span></div></td>';
-      html += '<td class="mono ' + latencyClass(lat) + '">' + Math.round(lat) + ' ms</td>';
-      html += '<td class="mono">' + formatUptime(up) + '</td>';
-      html += '<td class="mono">' + formatBytes(bytes) + '</td>';
-      html += '<td><div class="region-cell"><span class="region-flag">' + regionFlag(region) + '</span><span class="region-code">' + escapeHtml(region) + '</span></div></td>';
-      html += '<td class="mono" style="color:var(--text-dim)">' + formatRelativeTime(lastActive) + '</td>';
-      html += '</tr>';
+      tbody.appendChild(renderRelayRow(relays[j]));
     }
-    tbody.innerHTML = html;
 
     // Update sort indicators
     var ths = document.querySelectorAll('thead th');
@@ -455,10 +546,10 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
       var th = ths[k];
       if (th.dataset.col === sortCol) {
         th.classList.add('sorted');
-        th.querySelector('.sort-arrow').innerHTML = sortAsc ? '&#9650;' : '&#9660;';
+        th.querySelector('.sort-arrow').textContent = sortAsc ? '\u25B2' : '\u25BC';
       } else {
         th.classList.remove('sorted');
-        th.querySelector('.sort-arrow').innerHTML = '&#9650;';
+        th.querySelector('.sort-arrow').textContent = '\u25B2';
       }
     }
   }
@@ -487,21 +578,7 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
       .then(function(res) { return res.json(); })
       .then(function(data) {
         var list = Array.isArray(data) ? data : (data.relays || data.leaderboard || []);
-        // Normalize API response shape to internal format
-        relays = list.map(function(r) {
-          var relPct = typeof r.reliability === 'string' ? parseFloat(r.reliability) : (r.reliability || 0);
-          return {
-            pubkey: r.relay || r.pubkey || '',
-            score: r.score || 0,
-            reliability: relPct,
-            avgLatency: r.avgLatencyMs || r.avg_latency || r.avgLatency || 0,
-            uptimeHours: r.uptimeHours || r.uptime_hours || 0,
-            bytesServed: r.bytesServed || r.bytes_served || 0,
-            region: r.region || 'unknown',
-            lastActive: r.lastActivity || r.last_active || r.lastActive || null,
-            challenges: r.totalChallenges || r.challenges || r.challenge_count || 0
-          };
-        });
+        relays = list.map(normalizeRelay);
         updateSummary();
         render();
         setConnStatus('polling', 'POLLING');
@@ -522,11 +599,21 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
   }
 
   // --- WebSocket ---
+  function getUiToken() {
+    var m = document.querySelector('meta[name="hiverelay-ui-token"]');
+    return (m && m.getAttribute('content')) || '';
+  }
+  function sendWsAuth(sock) {
+    var t = getUiToken();
+    if (!t) return;
+    try { sock.send(JSON.stringify({ type: 'auth', token: t })); } catch (e) {}
+  }
   function connectWS() {
     try {
       var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       ws = new WebSocket(proto + '//' + location.host + '/ws');
       ws.onopen = function() {
+        sendWsAuth(ws);
         setConnStatus('live', 'WS LIVE');
       };
       ws.onmessage = function(evt) {
@@ -534,20 +621,7 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
           var msg = JSON.parse(evt.data);
           if (msg.type === 'reputation' || msg.type === 'leaderboard') {
             var list = Array.isArray(msg.data) ? msg.data : (msg.data.relays || msg.data.leaderboard || []);
-            relays = list.map(function(r) {
-              var relPct = typeof r.reliability === 'string' ? parseFloat(r.reliability) : (r.reliability || 0);
-              return {
-                pubkey: r.relay || r.pubkey || '',
-                score: r.score || 0,
-                reliability: relPct,
-                avgLatency: r.avgLatencyMs || r.avgLatency || 0,
-                uptimeHours: r.uptimeHours || 0,
-                bytesServed: r.bytesServed || 0,
-                region: r.region || 'unknown',
-                lastActive: r.lastActivity || r.lastActive || null,
-                challenges: r.totalChallenges || r.challenges || 0
-              };
-            });
+            relays = list.map(normalizeRelay);
             updateSummary();
             render();
           }

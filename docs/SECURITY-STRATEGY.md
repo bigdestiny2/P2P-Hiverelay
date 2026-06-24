@@ -4,22 +4,24 @@
 `THREAT-MODEL.md` and the post-v0.6.0 network attack analysis to a
 specific mitigation, with status, owner, and timeline.*
 
-This document is the authoritative tracker. When attack-vector status
-or mitigation owner changes, update here.
+This document is the strategy tracker. It is not a release proof artifact by
+itself; when attack-vector status or mitigation owner changes, update this file
+and keep evidence in the audit/release sidecars that verify the current build.
 
 ## Strategy at a glance
 
-10 attack categories. Within each, mitigations are classified:
+10 attack categories. Within each, mitigations are classified as of
+2026-06-24:
 
-- **🟢 In place** — implemented, tested, verified (will cite the commit)
-- **🟡 Improving in this commit** — being addressed in the immediate
-  next push along with this strategy
+- **🟢 In place** — implemented and covered by current tests or release checks
+- **🟡 Partial** — a shipped guardrail exists, but the full mitigation is not
+  complete
 - **🟠 Specced for M2** — design complete, implementation in M2 sprint
   (3-4 months elapsed)
 - **🔴 Open** — known vulnerable, no fix planned yet, accept risk for now
 
-Honest distribution: of the 32 vectors enumerated below, **17 are 🟢,
-8 are 🟡, 6 are 🟠, 1 is 🔴**.
+Statuses may be combined, for example `🟡 partial; 🟠 full` when the current
+tree has a useful defense but the stronger design remains future work.
 
 ---
 
@@ -45,11 +47,18 @@ Honest distribution: of the 32 vectors enumerated below, **17 are 🟢,
 | 2.3 | Operator serves stale data | `compareDrive` + take-longest-valid-history rule | 🟢 |
 | 2.4 | Withholding (relay knows N+1 but only serves up to N) | Multi-relay reads expose; future M2 latency-difference detection in Operator Score | 🟢 partial; 🟠 full |
 
-**This commit's improvements:**
+**Current shipped controls:**
 
-- **Sign fork proofs by their observer.** The newly-introduced `/api/forks/proof` endpoint currently accepts ANY proof. That's a new attack surface (fake proofs to quarantine legitimate drives). Close it: every proof must include `observer.pubkey + observer.signature + attestedAt`. The signature commits the observer to the report, and gives Operator Score (M2) something to weight against. **Implemented this commit.**
+- **Network-accepted fork proofs are signed by their observer.** The
+  `/api/forks/proof` endpoint and federation pull path require an envelope with
+  `observer.pubkey`, `observer.signature`, and `attestedAt` before a proof can
+  cross the network. The signature commits the observer to the report and gives
+  Operator Score (M2) something to weight against. Local fork observations can
+  still be recorded by the detecting node itself.
 
-- **Capability doc gets an `attestedAt` timestamp** inside the signed payload. Prevents replay of an old (stale) capability doc as if it were fresh. **Implemented this commit.**
+- **Capability docs include `attestedAt` inside the signed payload.** Clients
+  can flag stale capability docs instead of treating a replayed old policy as
+  fresh.
 
 ---
 
@@ -61,8 +70,8 @@ Honest distribution: of the 32 vectors enumerated below, **17 are 🟢,
 | 3.2 | Bandwidth exhaustion | maxConnections + maxRelayBandwidthMbps; M2: bandwidth-receipt-based throttling | 🟢 partial; 🟠 full |
 | 3.3 | Manifest store flooding | maxAuthors cap (10k) with oldest-first eviction | 🟢 |
 | 3.4 | Federation poisoning | Operator chose to follow; per-relay catalog goes through accept-mode; pubkey pinning catches "followed relay turned malicious" | 🟢 |
-| 3.5 | Wizard endpoint brute force | Localhost gate + per-endpoint rate limit (5/min on /api/wizard/lnbits) | 🟡 in this commit |
-| 3.6 | Fork-proof gossip flooding | maxForks cap; signed-observer requirement (this commit) means each fake proof costs the attacker a real keypair + identity exposure | 🟡 in this commit |
+| 3.5 | Wizard endpoint brute force | Localhost/API-token gate + per-endpoint rate limits on wizard actions such as payout, complete, reset, relay-name, accept-mode, and navigation | 🟢 |
+| 3.6 | Fork-proof gossip flooding | maxForks cap; signed-observer requirement means each network proof is attributable to a real keypair; endpoint cap limits flood rate | 🟡 partial |
 
 ---
 
@@ -120,8 +129,8 @@ Honest accounting of what we ourselves added:
 
 | ID | Surface | Mitigation | Status |
 |---|---|---|---|
-| 8.1 | `/api/wizard/*` localhost endpoints | Localhost gate + per-endpoint rate limit | 🟡 (this commit adds the rate limit) |
-| 8.2 | `/api/forks/proof` POST | Signed observer attestation required (this commit) | 🟡 (this commit) |
+| 8.1 | `/api/wizard/*` localhost endpoints | Localhost/API-token gate + per-endpoint rate limits | 🟢 |
+| 8.2 | `/api/forks/proof` POST | Signed observer attestation and endpoint rate limit required for network-submitted proofs | 🟢 |
 | 8.3 | `/api/forks/proofs` GET | Public-good info; no defense needed | 🟢 |
 | 8.4 | drive.core.on('truncate') auto-quarantine | Truncate event requires real conflicting blocks; bounded by 4.x prerequisites | 🟢 |
 | 8.5 | Wizard collecting LNbits admin key | Localhost-only; reverse-proxy hardening up to operator | 🟢 |
@@ -155,9 +164,11 @@ Honest accounting of what we ourselves added:
 
 ---
 
-## Implementation work this commit closes
+## Shipped Controls From The v0.6 Hardening Track
 
-Three concrete code additions that move 🟡 → 🟢:
+These controls were originally described as immediate v0.6 hardening work. They are now
+part of the current source tree and covered by the focused security slice named
+in `SECURITY-BOUNDARY-ALIGNMENT-2026-06-23.md`.
 
 ### 1. Signed fork proofs (closes 8.2)
 
@@ -172,17 +183,22 @@ Three concrete code additions that move 🟡 → 🟢:
 - Federation `_pullForkProofs` verifies observer signature before merging
 - Client `publishForkProof` signs with `client.keyPair` automatically before broadcasting
 
-**Future M2 hook:** Operator Score will weight observer reports — high-score observers' reports propagate fast; low-score observers' reports are scored but not propagated.
+**Future M2 hook:** Operator Score should weight observer reports — high-score
+observers' reports propagate fast; low-score observers' reports are scored but
+not propagated.
 
 ### 2. Per-endpoint rate limit (closes 8.1)
 
-**Problem:** General 60/min/IP rate limit is fine for casual API but lets an attacker hammer `/api/wizard/lnbits` with 60 attempts per minute trying to inject malicious credentials.
+**Problem:** General 60/min/IP rate limiting is fine for casual API traffic but
+lets an attacker hammer sensitive setup actions such as wallet payout changes
+or wizard reset/complete flows.
 
 **Fix:**
 - New `_endpointRateLimits` Map in `RelayAPI` keyed by `<endpoint>:<ip>`
-- `/api/wizard/lnbits`: 5/min/IP (operator should not need >5 attempts/min)
-- `/api/wizard/complete`: 10/min/IP
-- All other wizard endpoints: 30/min/IP
+- `/api/wizard/reset`: 5/min/IP
+- `/api/wizard/payout` and `/api/wizard/complete`: 10/min/IP
+- `/api/wizard/relay-name`, `/api/wizard/accept-mode`, and
+  `/api/wizard/goto`: 30/min/IP
 - Returns 429 with `Retry-After` on overrun, like the general limit
 
 ### 3. Capability doc `attestedAt` (closes 1.x replay attack stub)
@@ -196,7 +212,7 @@ Three concrete code additions that move 🟡 → 🟢:
 
 ---
 
-## Items NOT addressed in this commit (M2)
+## Future Or Not Fully Addressed Items (M2 And External Gates)
 
 Listed here so we have a single source of truth on what's outstanding:
 
@@ -219,7 +235,10 @@ Estimated total M2 elapsed: **3-4 months engineering** + ongoing outreach.
 
 - **No bootstrap subsidy disbursement before Sybil defense ships.** Hard requirement, documented in `OPERATOR-INCENTIVES-Y1.md`.
 - **No widespread operator-recruitment marketing before sigstore release signing ships.** The supply-chain attack risk grows with adoption.
-- **No "we are blind" marketing claim until blind-review mode ships.** Today operators see publisher pubkeys in review mode.
+- **No unqualified "blind to everything" marketing claim.** Accurate wording:
+  blind-mode content remains ciphertext and the custody plane rejects plaintext
+  fields, but operators in review mode still see publisher pubkeys and public
+  or non-blind app content may be readable by the relay.
 
 These preconditions are non-negotiable. They protect us from shipping security claims that the implementation can't back.
 

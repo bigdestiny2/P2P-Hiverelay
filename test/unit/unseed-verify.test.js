@@ -216,14 +216,14 @@ test('unseed-verify: empty / null signature returns MALFORMED_REQUEST (no throw)
   }
 })
 
-test('unseed-verify: non-finite timestamp returns MALFORMED_REQUEST (no throw)', async (t) => {
+test('unseed-verify: malformed timestamp returns MALFORMED_REQUEST (no throw)', async (t) => {
   const { pk, sk } = keygen()
   const appKeyHex = b4a.toString(b4a.alloc(32, 0x64), 'hex')
   const publisherHex = b4a.toString(pk, 'hex')
   const node = mockNode([[appKeyHex, { publisherPubkey: publisherHex }]])
   const sigHex = signUnseed(appKeyHex, Date.now(), sk)
 
-  for (const badTs of [NaN, Infinity, 'not-a-number', null]) {
+  for (const badTs of [NaN, Infinity, 'not-a-number', null, Date.now() + 0.5, -1]) {
     let result
     t.execution(() => { result = verify(node, appKeyHex, publisherHex, sigHex, badTs) }, `does not throw for ${String(badTs)}`)
     t.is(result.error, 'MALFORMED_REQUEST', `${String(badTs)} timestamp is MALFORMED_REQUEST`)

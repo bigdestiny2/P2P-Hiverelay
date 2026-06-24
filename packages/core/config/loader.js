@@ -90,17 +90,29 @@ export function ensureDirs () {
  * Recursively merge source into target, preserving sibling keys in nested objects.
  */
 function deepMerge (target, source) {
-  const result = { ...target }
+  const result = cloneConfigValue(target)
   for (const key of Object.keys(source)) {
     if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue
     if (
       source[key] && typeof source[key] === 'object' && !Array.isArray(source[key]) &&
-      target[key] && typeof target[key] === 'object' && !Array.isArray(target[key])
+      result[key] && typeof result[key] === 'object' && !Array.isArray(result[key])
     ) {
-      result[key] = deepMerge(target[key], source[key])
+      result[key] = deepMerge(result[key], source[key])
     } else {
-      result[key] = source[key]
+      result[key] = cloneConfigValue(source[key])
     }
   }
   return result
+}
+
+function cloneConfigValue (value) {
+  if (Array.isArray(value)) return value.map(cloneConfigValue)
+  if (!value || typeof value !== 'object') return value
+
+  const out = {}
+  for (const key of Object.keys(value)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue
+    out[key] = cloneConfigValue(value[key])
+  }
+  return out
 }

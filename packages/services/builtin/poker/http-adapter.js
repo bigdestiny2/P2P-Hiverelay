@@ -59,7 +59,12 @@
  * `arbitration-service.js` at build time.
  */
 
+import { readJsonBody } from 'p2p-hiverelay/core/relay-node/api-body.js'
+import { getPostJsonContentTypeProblem } from 'p2p-hiverelay/core/relay-node/api-request.js'
+import { writeJson } from 'p2p-hiverelay/core/relay-node/api-response.js'
+
 const PREFIX = '/api/poker'
+const MAX_JSON_BODY_BYTES = 128 * 1024
 
 /**
  * Top-level dispatcher. Returns:
@@ -99,7 +104,7 @@ export async function handlePokerRoute (req, res, ctx) {
 
   // /api/poker/tables — list / create
   if (path === PREFIX + '/tables') {
-    if (req.method === 'GET') return _respond(res, 200, { tables: ctx.pokerApp.listTables() })
+    if (req.method === 'GET') return _listTables(res, ctx)
     if (req.method === 'POST') return _createTable(req, res, ctx)
     return _respond(res, 405, { error: 'method not allowed' })
   }
@@ -112,17 +117,13 @@ export async function handlePokerRoute (req, res, ctx) {
   }
 
   if (verb === 'state' && req.method === 'GET') {
-    const s = ctx.pokerApp.getState(tableKey)
-    if (!s) return _respond(res, 404, { error: 'no such table' })
-    return _respond(res, 200, s)
+    return _getState(res, ctx, tableKey)
   }
 
   if (verb === 'log' && req.method === 'GET') {
     const from = clampInt(parsed.searchParams.get('from'), 0, 0)
     const limit = clampInt(parsed.searchParams.get('limit'), 1, Infinity)
-    const slice = ctx.pokerApp.getLog(tableKey, from, limit)
-    if (!slice) return _respond(res, 404, { error: 'no such table' })
-    return _respond(res, 200, slice)
+    return _getLog(res, ctx, tableKey, from, limit)
   }
 
   if (verb === 'move' && req.method === 'POST') {
@@ -134,9 +135,25 @@ export async function handlePokerRoute (req, res, ctx) {
 
 // ─── Per-route handlers ─────────────────────────────────────────────────────
 
+function _listTables (res, ctx) {
+  try {
+    return _respond(res, 200, { tables: ctx.pokerApp.listTables() })
+  } catch {
+    return _respond(res, 500, { error: 'Poker table list failed' })
+  }
+}
+
 async function _createTable (req, res, ctx) {
-  const body = await _readJson(req)
-  if (!body) return _respond(res, 400, { error: 'bad json body' })
+  const bodyResult = await _readJson(req)
+  if (!bodyResult.ok) {
+    return _respond(
+      res,
+      bodyResult.status,
+      { error: bodyResult.error },
+      bodyResult.close ? { Connection: 'close' } : null
+    )
+  }
+  const body = bodyResult.body
 
   try {
     const desc = ctx.pokerApp.createTable({
@@ -146,21 +163,49 @@ async function _createTable (req, res, ctx) {
     })
     return _respond(res, 201, desc)
   } catch (err) {
-    // createTable rejects on: duplicate table key, max-tables cap, bad
-    // pubkeys. We can't tell them apart from the Error message without
-    // brittle parsing; signal both shapes so clients can react.
-    const msg = err && err.message ? err.message : 'error'
-    if (msg.includes('already exists')) return _respond(res, 409, { error: msg })
-    if (msg.includes('max tables')) return _respond(res, 503, { error: msg })
-    return _respond(res, 400, { error: msg })
+    const failure = _createTableFailure(err)
+    return _respond(res, failure.status, { error: failure.error })
+  }
+}
+
+function _getState (res, ctx, tableKey) {
+  try {
+    const s = ctx.pokerApp.getState(tableKey)
+    if (!s) return _respond(res, 404, { error: 'no such table' })
+    return _respond(res, 200, s)
+  } catch {
+    return _respond(res, 500, { error: 'Poker table state failed' })
+  }
+}
+
+function _getLog (res, ctx, tableKey, from, limit) {
+  try {
+    const slice = ctx.pokerApp.getLog(tableKey, from, limit)
+    if (!slice) return _respond(res, 404, { error: 'no such table' })
+    return _respond(res, 200, slice)
+  } catch {
+    return _respond(res, 500, { error: 'Poker table log failed' })
   }
 }
 
 async function _submitMove (req, res, ctx, tableKey) {
-  const body = await _readJson(req)
-  if (!body) return _respond(res, 400, { error: 'bad json body' })
+  const bodyResult = await _readJson(req)
+  if (!bodyResult.ok) {
+    return _respond(
+      res,
+      bodyResult.status,
+      { error: bodyResult.error },
+      bodyResult.close ? { Connection: 'close' } : null
+    )
+  }
+  const body = bodyResult.body
 
-  const result = ctx.pokerApp.submitEntry(tableKey, body)
+  let result
+  try {
+    result = ctx.pokerApp.submitEntry(tableKey, body)
+  } catch {
+    return _respond(res, 500, { error: 'Poker move failed' })
+  }
   if (result.ok) {
     // Mirror hiveworm-style success envelope so clients can be uniform.
     return _respond(res, 200, { ok: true, index: result.index, tick: result.ts })
@@ -179,46 +224,57 @@ async function _submitMove (req, res, ctx, tableKey) {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function _respond (res, status, body) {
-  res.setHeader('Content-Type', 'application/json')
-  res.writeHead(status)
-  res.end(JSON.stringify(body) + '\n')
+function _respond (res, status, body, headers = null) {
+  writeJson(res, body, status, headers)
   return true
+}
+
+function _createTableFailure (err) {
+  const msg = err && err.message ? err.message : ''
+  if (msg.includes('already exists')) {
+    return { status: 409, error: 'createTable: table already exists' }
+  }
+  if (msg.includes('max tables')) {
+    return { status: 503, error: 'createTable: max tables reached' }
+  }
+  if (msg === 'createTable: bad args') {
+    return { status: 400, error: msg }
+  }
+  if (msg === 'SignedLog: bad tableKey') {
+    return { status: 400, error: msg }
+  }
+  if (msg === 'SignedLog: writers must be a non-empty array') {
+    return { status: 400, error: msg }
+  }
+  if (msg.startsWith('SignedLog: bad writer pubkey')) {
+    return { status: 400, error: 'SignedLog: bad writer pubkey' }
+  }
+  return { status: 500, error: 'Poker table create failed' }
 }
 
 /**
  * Read a JSON request body with a hard byte cap so a malformed POST can't
- * exhaust memory. Returns the parsed body or null on parse failure / oversize.
+ * exhaust memory.
  */
-async function _readJson (req, maxBytes = 128 * 1024) {
-  return new Promise((resolve) => {
-    let received = 0
-    const chunks = []
-    let aborted = false
-    req.on('data', (chunk) => {
-      if (aborted) return
-      received += chunk.length
-      if (received > maxBytes) {
-        aborted = true
-        // Drain rest of body to avoid leaving the socket half-open.
-        req.removeAllListeners('data')
-        req.on('data', () => {})
-        resolve(null)
-        return
-      }
-      chunks.push(chunk)
-    })
-    req.on('end', () => {
-      if (aborted) return
-      try {
-        const buf = Buffer.concat(chunks).toString('utf8')
-        resolve(buf.length === 0 ? null : JSON.parse(buf))
-      } catch {
-        resolve(null)
-      }
-    })
-    req.on('error', () => resolve(null))
-  })
+async function _readJson (req, maxBytes = MAX_JSON_BODY_BYTES) {
+  const contentTypeProblem = getPostJsonContentTypeProblem(req)
+  if (contentTypeProblem) {
+    return {
+      ok: false,
+      status: 400,
+      error: contentTypeProblem.error,
+      close: contentTypeProblem.close
+    }
+  }
+
+  try {
+    return { ok: true, body: await readJsonBody(req, maxBytes) }
+  } catch (err) {
+    if (err && err.message === 'Request body too large') {
+      return { ok: false, status: 413, error: 'Request body too large', close: true }
+    }
+    return { ok: false, status: 400, error: 'bad json body', close: false }
+  }
 }
 
 function clampInt (raw, lo, hi) {

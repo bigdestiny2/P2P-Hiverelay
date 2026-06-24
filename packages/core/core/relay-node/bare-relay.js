@@ -45,7 +45,7 @@ import sodium from 'sodium-universal'
 // Under Node they resolve to the built-ins. This lets the same source file
 // import cleanly in both runtimes.
 import { EventEmitter } from 'events'
-import { readFile, writeFile, mkdir } from 'fs/promises'
+import { readFile, writeFile, mkdir, chmod, rename, unlink } from 'fs/promises'
 import { join } from 'path'
 
 import { Seeder } from './seeder.js'
@@ -88,6 +88,13 @@ import { BareHttpServer } from './bare-http-server.js'
 const env = (typeof globalThis.process !== 'undefined' && globalThis.process.env) ||
             (typeof globalThis.Bare !== 'undefined' && globalThis.Bare.env) ||
             {}
+
+function identityTempPath (keyPath) {
+  const suffix = b4a.alloc(8)
+  sodium.randombytes_buf(suffix)
+  return keyPath + '.tmp-' + Date.now() + '-' + b4a.toString(suffix, 'hex')
+}
+
 const log = {
   info: (...a) => console.log('[info]', ...a),
   warn: (...a) => console.warn('[warn]', ...a),
@@ -248,10 +255,10 @@ export class BareRelay extends EventEmitter {
       // below (it reads context.node in start()). Tables are in-memory with a 24h
       // idle TTL; the durable hypercore mirror (persistence-hypercore.js) is a
       // follow-up that routes service-created tables through createPersistentTable.
-      const _appServices = this.config.services || this.config.plugins || []
-      const _pokerSelected = (Array.isArray(_appServices) && _appServices.includes('poker')) ||
-        process.env.HIVERELAY_POKER === '1'
-      if (_pokerSelected) {
+      const appServices = this.config.services || this.config.plugins || []
+      const pokerSelected = (Array.isArray(appServices) && appServices.includes('poker')) ||
+        env.HIVERELAY_POKER === '1'
+      if (pokerSelected) {
         bareSafeServices.push({ name: 'poker', module: 'p2p-hiveservices/builtin/poker/index.js', className: 'PokerApp' })
       }
 
@@ -259,10 +266,14 @@ export class BareRelay extends EventEmitter {
       // this relay holds a seeded block). Opt-in like poker so a stock node
       // stays minimal; uses node.appRegistry + the relay identity (node.keyPair
       // aliased above). Self-guards blind/private drives + rate-limits.
-      const _storageProofSelected = (Array.isArray(_appServices) && _appServices.includes('storage-proof')) ||
-        process.env.HIVERELAY_STORAGE_PROOF === '1'
-      if (_storageProofSelected) {
-        bareSafeServices.push({ name: 'storage-proof', module: 'p2p-hiveservices/builtin/storage-proof-service.js', className: 'StorageProofService' })
+      const storageProofSelected = (Array.isArray(appServices) && appServices.includes('storage-proof')) ||
+        env.HIVERELAY_STORAGE_PROOF === '1'
+      if (storageProofSelected) {
+        bareSafeServices.push({
+          name: 'storage-proof',
+          module: 'p2p-hiveservices/builtin/storage-proof-service.js',
+          className: 'StorageProofService'
+        })
       }
 
       let registered = 0
@@ -411,7 +422,15 @@ export class BareRelay extends EventEmitter {
       const sk = b4a.alloc(sodium.crypto_sign_SECRETKEYBYTES)
       sodium.crypto_sign_seed_keypair(pk, sk, seed)
       await mkdir(this.config.storage, { recursive: true }).catch(() => {})
-      await writeFile(keyPath, b4a.toString(seed, 'hex'))
+      const tmpPath = identityTempPath(keyPath)
+      try {
+        await writeFile(tmpPath, b4a.toString(seed, 'hex'), { mode: 0o600 })
+        await chmod(tmpPath, 0o600)
+        await rename(tmpPath, keyPath)
+      } catch (err) {
+        try { await unlink(tmpPath) } catch (_) {}
+        throw err
+      }
       return { publicKey: pk, secretKey: sk }
     }
   }

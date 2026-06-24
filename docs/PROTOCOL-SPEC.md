@@ -143,7 +143,7 @@ Messages are grouped into four functional ranges:
 | Code | Name | Direction | Description |
 |---|---|---|---|
 | `0x20` | `PROOF_CHALLENGE` | Verifier -> Relay | Challenge relay to prove block storage |
-| `0x21` | `PROOF_RESPONSE` | Relay -> Verifier | Response with block data and Merkle proof |
+| `0x21` | `PROOF_RESPONSE` | Relay -> Verifier | Response with block data and nonce echo |
 | `0x22` | `BANDWIDTH_RECEIPT` | Peer -> Relay | Signed proof of data transfer |
 | `0x23` | `RECEIPT_ACK` | Relay -> Peer | Acknowledgment of receipt |
 
@@ -354,7 +354,7 @@ Sent by the relay in response to a challenge.
 | `coreKey` | `fixed32` | 32 bytes | Public key of the challenged Hypercore |
 | `blockIndex` | `uint` | variable | Index of the block being proven |
 | `blockData` | `buffer` | variable | The actual block data |
-| `merkleProof` | `buffer` | variable | Hypercore Merkle tree proof for this block |
+| `merkleProof` | `buffer` | variable | Legacy/reserved field; current verification relies on Hypercore transport integrity and optional nonce-keyed block hash checks |
 | `nonce` | `fixed32` | 32 bytes | Echo of the challenge nonce |
 
 ### 7.3 Verification Procedure
@@ -366,8 +366,15 @@ The verifier checks all of the following conditions:
 3. **Data present:** `response.blockData.byteLength > 0`
 4. **Nonce match:** `response.nonce` matches the challenge nonce (correlates request to response)
 5. **Latency bound:** Response arrived within `maxLatencyMs` of the challenge being sent
+6. **Known-data hash:** If the verifier already has the challenged block, it compares a nonce-keyed hash of the response with the expected hash.
 
-A proof passes only if all five conditions are met. The result is recorded in the verifier's local score table for the challenged relay.
+A proof passes only if the required conditions are met. When the verifier does
+not already have the block data, proof-of-relay is a freshness/data-presence
+challenge and Hypercore's replication layer remains responsible for flat-tree
+Merkle integrity. The implementation intentionally does not run a custom Merkle
+verifier because Hypercore's flat-tree proof layout is part of Hypercore
+transport semantics. The result is recorded in the verifier's local score table
+for the challenged relay.
 
 ### 7.4 Scoring
 
@@ -735,8 +742,9 @@ Relays cannot fake proof-of-relay challenges because:
 
 1. The verifier selects a random block index and random nonce.
 2. The relay must produce the actual block data within the latency bound.
-3. The Merkle proof (from Hypercore's Merkle tree) cryptographically binds the block data to the Hypercore's public key.
-4. Pre-fetching all possible challenge blocks is equivalent to actually storing the data, which is the desired behavior.
+3. If the verifier already has the block, the response must match the nonce-keyed expected hash.
+4. Hypercore replication independently validates block integrity against the signed Hypercore tree.
+5. Pre-fetching all possible challenge blocks is equivalent to actually storing the data, which is the desired behavior.
 
 ### 13.6 Bandwidth Receipt Non-Repudiation
 
@@ -847,6 +855,8 @@ Data stored via `platform/storage.js` is encrypted with XChaCha20-Poly1305 (AEAD
 | `reservationTTL` | 1 hour | Reservation expiration time |
 | `proofMaxLatencyMs` | 5000 | Maximum proof-of-relay response time |
 | `proofChallengeInterval` | 5 minutes | Interval between proof challenges |
+| `proofMaxPendingChallenges` | 2048 | Maximum locally pending proof challenges before new challenges are rejected |
+| `proofMaxBatchSize` | 64 | Maximum block indices in one proof challenge batch |
 | `reputationDecayRate` | 0.995 | Daily score decay multiplier |
 | `minChallengesForRanking` | 10 | Minimum challenges before ranking eligibility |
 | `enableMetrics` | `true` | Enable Prometheus metrics export |

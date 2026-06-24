@@ -197,6 +197,41 @@ test('_onServiceMessage - emits service-catalog on MSG_CATALOG', (t) => {
   t.is(received.services[0].name, 'identity')
 })
 
+test('_onServiceMessage - applies app catalog deltas to relay cache', (t) => {
+  const client = makeClient()
+  const pubkey = randomBytes(32).toString('hex')
+  client.relays.set(pubkey, {
+    conn: {},
+    channels: {},
+    connectedAt: Date.now(),
+    lastSeen: Date.now(),
+    seededApps: [
+      { appKey: 'a'.repeat(64), version: '1.0.0' },
+      { appKey: 'b'.repeat(64), version: '1.0.0' }
+    ]
+  })
+
+  const catalogEvents = []
+  const deltaEvents = []
+  client.on('app-catalog', (data) => catalogEvents.push(data))
+  client.on('app-catalog-delta', (data) => deltaEvents.push(data))
+
+  client._onServiceMessage(pubkey, {
+    type: 8,
+    added: [{ appKey: 'c'.repeat(64), version: '1.0.0' }],
+    removed: ['a'.repeat(64)]
+  })
+
+  const relay = client.relays.get(pubkey)
+  t.alike(relay.seededApps.map(app => app.appKey), ['b'.repeat(64), 'c'.repeat(64)])
+  t.is(deltaEvents.length, 1, 'delta event emitted')
+  t.alike(deltaEvents[0].added.map(app => app.appKey), ['c'.repeat(64)])
+  t.alike(deltaEvents[0].removed, ['a'.repeat(64)])
+  t.is(catalogEvents.length, 1, 'app-catalog compatibility event emitted')
+  t.is(catalogEvents[0].delta, true)
+  t.alike(catalogEvents[0].apps.map(app => app.appKey), ['b'.repeat(64), 'c'.repeat(64)])
+})
+
 test('_onServiceMessage - updates relay lastSeen', (t) => {
   const client = makeClient()
   const pubkey = randomBytes(32).toString('hex')

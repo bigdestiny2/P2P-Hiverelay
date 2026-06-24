@@ -1,8 +1,10 @@
 /**
  * getStats() must redact transport credentials / infra identifiers for
- * unauthenticated callers. The unauthenticated HTTP /status and
- * /api/overview handlers pass includeSecrets:false; trusted in-process
- * callers (CLI, metrics, auth-gated WS feed) keep the default (true).
+ * unauthenticated callers. The unauthenticated HTTP /api/overview handlers
+ * pass includeSecrets:false; trusted in-process callers (CLI, metrics) keep
+ * the default (true). Public HTTP /status now uses
+ * a bounded helper that also calls getStats({ includeSecrets:false }) and
+ * shapes the public response field-by-field.
  *
  * Leaking the holesail connectionKey from an unauthenticated /status is a
  * privilege escalation: a remote attacker can use it to tunnel to the API
@@ -11,6 +13,7 @@
 
 import test from 'brittle'
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
+import { buildStatusPayload } from 'p2p-hiverelay/core/relay-node/api-status-read.js'
 import { mkdtemp, rm } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -53,4 +56,47 @@ test('getStats() includes secrets by default and when includeSecrets is true', a
   t.is(explicit.holesail.connectionKey, 'HOLESAIL_SECRET', 'explicit true includes connectionKey')
   t.is(explicit.disk.mountPath, '/var/lib/hiverelay', 'explicit true includes mountPath')
   t.is(explicit.registry.key, Buffer.alloc(32, 7).toString('hex'), 'explicit true includes registry key')
+})
+
+test('buildStatusPayload() shapes public status without secret fields', (t) => {
+  const calls = []
+  const result = buildStatusPayload({
+    node: {
+      config: { regions: ['NA'] },
+      getHealthStatus () {
+        return { healthy: true }
+      },
+      getStats (opts) {
+        calls.push(opts)
+        return {
+          running: true,
+          publicKey: 'c'.repeat(64),
+          seededApps: 1,
+          connections: 2,
+          holesail: { running: true, connectionKey: 'HOLESAIL_SECRET', apiPort: 9100 },
+          tor: { running: true, onionAddress: 'secret.onion', socksProxy: '127.0.0.1:9050' },
+          disk: { mountPath: '/var/lib/hiverelay', usedPct: 12, status: 'ok' },
+          registry: { running: true, key: Buffer.alloc(32, 7).toString('hex') },
+          subsidy: { payoutDestination: 'operator@example.com' },
+          accessControl: { pairedDevices: 1 }
+        }
+      }
+    }
+  })
+
+  t.alike(calls, [{ includeSecrets: false }])
+  t.is(result.payload.publicKey, 'c'.repeat(64))
+  const json = JSON.stringify(result.payload)
+  for (const secret of [
+    'HOLESAIL_SECRET',
+    'secret.onion',
+    '127.0.0.1:9050',
+    '/var/lib/hiverelay',
+    Buffer.alloc(32, 7).toString('hex'),
+    'operator@example.com',
+    'accessControl',
+    'apiPort'
+  ]) {
+    t.absent(json.includes(secret), secret + ' omitted from bounded status')
+  }
 })

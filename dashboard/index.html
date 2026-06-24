@@ -17,15 +17,17 @@
     var orig = window.fetch.bind(window);
     window.fetch = function (input, init) {
       init = init || {};
+      var raw = (typeof input === 'string') ? input : (input && (input.url || input.href)) || String(input || '');
+      var u = new URL(raw, window.location.href);
       var h = new Headers((init && init.headers) || (input && input.headers) || {});
-      if (!h.has('Authorization')) h.set('Authorization', 'Bearer ' + t);
+      if (u.origin === window.location.origin && !h.has('Authorization')) h.set('Authorization', 'Bearer ' + t);
       init.headers = h;
       return orig(input, init);
     };
   } catch (e) { /* never block page load on the auth shim */ }
 })();
 </script>
-<title>Blindspark — Dashboard</title>
+<title>HiveRelay Dashboard</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%2316213e'/%3E%3Cpath d='M50 10 C 54 38 60 44 88 50 C 60 56 54 62 50 90 C 46 62 40 56 12 50 C 40 44 46 38 50 10 Z' fill='%23f5c842'/%3E%3C/svg%3E">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -262,7 +264,7 @@ dialog#destDialog::backdrop{background:rgba(5,8,14,.7);backdrop-filter:blur(2px)
       <path d="M50 6 C 54.5 36, 61 42.5, 92 50 C 61 57.5, 54.5 64, 50 94 C 45.5 64, 39 57.5, 8 50 C 39 42.5, 45.5 36, 50 6 Z" fill="url(#sparkg)"/>
       <path d="M79 10 C 80.5 19, 82.5 21, 91 23 C 82.5 25, 80.5 27, 79 36 C 77.5 27, 75.5 25, 67 23 C 75.5 21, 77.5 19, 79 10 Z" fill="#ffe066" opacity=".9"/>
     </svg>
-    <div class="topbar-brand"><h1>Blindspark</h1><div class="topbar-sub">powered by HiveRelay</div></div>
+    <div class="topbar-brand"><h1>HiveRelay</h1><div class="topbar-sub">relay dashboard</div></div>
   </a>
   <nav class="topbar-nav">
     <a href="/dashboard" class="active">Dashboard</a>
@@ -274,7 +276,7 @@ dialog#destDialog::backdrop{background:rgba(5,8,14,.7);backdrop-filter:blur(2px)
     <a href="/docs">Docs</a>
   </nav>
   <div class="topbar-right">
-    <button class="pk-chip" id="headerMeta" title="Copy node public key" aria-label="Copy node public key">Loading...</button>
+    <button type="button" class="pk-chip" id="headerMeta" title="Copy node public key" aria-label="Copy node public key">Loading...</button>
     <div class="uptime-badge" id="uptimeBadge">--</div>
   </div>
 </div>
@@ -454,7 +456,7 @@ dialog#destDialog::backdrop{background:rgba(5,8,14,.7);backdrop-filter:blur(2px)
   </div>
 </div>
 
-<div class="foot">&#10022; Blindspark &middot; powered by HiveRelay</div>
+<div class="foot">&#10022; HiveRelay &middot; relay dashboard</div>
 
 <!-- Payout destination dialog -->
 <dialog id="destDialog">
@@ -494,28 +496,75 @@ function fetchCatalogNames() {
 }
 
 function escapeHtml(s) {
-  var d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/[&<>"']/g, function(ch) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+  });
 }
-function renderDev(appKey) {
-  var dev = catalogDevs[appKey];
-  if (!dev) return '<span class="badge">unlinked</span>';
-  var name = escapeHtml(dev.displayName || dev.pubkey.slice(0, 8) + '...');
-  var avatar = '';
-  if (dev.avatar && /^https?:\/\//.test(dev.avatar)) {
-    avatar = '<img src="' + escapeHtml(dev.avatar) + '" style="width:16px;height:16px;border-radius:50%;vertical-align:middle;margin-right:4px" onerror="this.style.display=\'none\'">';
+function clearNode(node) {
+  while (node.firstChild) node.removeChild(node.firstChild);
+  node.textContent = '';
+}
+function appendEl(parent, tag, className, text) {
+  var el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = String(text);
+  parent.appendChild(el);
+  return el;
+}
+function safeHttpUrl(value) {
+  var raw = String(value || '').trim();
+  if (!/^https?:\/\//i.test(raw)) return '';
+  try {
+    var url = new URL(raw);
+    if (url.username || url.password) return '';
+    return url.href;
+  } catch (e) {
+    return '';
   }
-  return avatar + '<span style="color:var(--cyan);font-size:.8rem">' + name + '</span>';
 }
+
+function renderDevNode(parent, appKey) {
+  var dev = catalogDevs[appKey];
+  if (!dev) {
+    appendEl(parent, 'span', 'badge', 'unlinked');
+    return;
+  }
+  var fallback = dev.pubkey ? String(dev.pubkey).slice(0, 8) + '...' : 'linked';
+  var avatarUrl = safeHttpUrl(dev.avatar);
+  if (avatarUrl) {
+    var avatar = appendEl(parent, 'img');
+    avatar.src = avatarUrl;
+    avatar.alt = '';
+    avatar.referrerPolicy = 'no-referrer';
+    avatar.style.width = '16px';
+    avatar.style.height = '16px';
+    avatar.style.borderRadius = '50%';
+    avatar.style.verticalAlign = 'middle';
+    avatar.style.marginRight = '4px';
+  }
+  var name = appendEl(parent, 'span', '', dev.displayName || fallback);
+  name.style.color = 'var(--cyan)';
+  name.style.fontSize = '.8rem';
+}
+
 /* App display name with an honest fallback: when no catalog metadata
    exists, show the truncated key as a dim mono identifier rather than
    pretending "Unknown App" is a name. The API itself reports
    appId "Unknown App" for metadata-less drives — treat that as no name. */
-function renderAppName(appKey, appId) {
+function renderAppNameNode(parent, appKey, appId) {
   var known = catalogNames[appKey] || (appId && appId !== 'Unknown App' ? appId : null);
-  if (known) return '<span style="color:var(--text-bright);font-weight:500">' + escapeHtml(known) + '</span>';
-  return '<span style="color:var(--text-dim);font-family:var(--mono)">' + escapeHtml((appKey || '').slice(0, 12)) + '&hellip;</span> <span class="badge">no metadata</span>';
+  if (known) {
+    var knownEl = appendEl(parent, 'span', '', known);
+    knownEl.style.color = 'var(--text-bright)';
+    knownEl.style.fontWeight = '500';
+    return;
+  }
+  var keyEl = appendEl(parent, 'span', '', (appKey || '').slice(0, 12) + '...');
+  keyEl.style.color = 'var(--text-dim)';
+  keyEl.style.fontFamily = 'var(--mono)';
+  parent.appendChild(document.createTextNode(' '));
+  appendEl(parent, 'span', 'badge', 'no metadata');
 }
 
 /* ===== Helpers ===== */
@@ -545,6 +594,56 @@ function truncateKey(hex, len) {
   len = len || 12;
   if (!hex) return '--';
   return hex.length > len ? hex.slice(0, len) + '...' : hex;
+}
+
+function renderHeaderMeta(chip, pk, region) {
+  pk = String(pk || '');
+  region = String(region || '');
+  chip.dataset.pk = pk;
+  chip.dataset.region = region;
+  clearNode(chip);
+  appendEl(chip, 'span', '', truncateKey(pk) + (region ? ' · ' + region : ''));
+  appendEl(chip, 'span', 'copy-ic', '⧉');
+}
+
+function renderHeaderCopyMessage(chip, message) {
+  clearNode(chip);
+  chip.textContent = message;
+  setTimeout(function() {
+    renderHeaderMeta(chip, chip.dataset.pk || '', chip.dataset.region || '');
+  }, 1200);
+}
+
+function renderHeaderCopied(chip) {
+  renderHeaderCopyMessage(chip, 'copied ✓');
+}
+
+function copyHeaderPubkey(chip) {
+  var pk = chip && chip.dataset ? chip.dataset.pk : '';
+  if (!pk) return;
+  if (typeof navigator === 'undefined' || !navigator.clipboard || !navigator.clipboard.writeText) {
+    renderHeaderCopyMessage(chip, 'Clipboard unavailable');
+    return;
+  }
+  navigator.clipboard.writeText(pk).then(function() {
+    renderHeaderCopied(chip);
+  }).catch(function() {
+    renderHeaderCopyMessage(chip, 'Copy failed');
+  });
+}
+
+function renderPeersList(pl, peers) {
+  clearNode(pl);
+  if (!peers.length) {
+    var empty = appendEl(pl, 'div', 'empty-state', 'No peers right now — the node keeps dialing');
+    empty.style.padding = '1rem';
+    empty.style.fontSize = '.78rem';
+    return;
+  }
+  peers.forEach(function(p) {
+    var key = typeof p === 'string' ? p : (p && (p.publicKey || p.key)) || '';
+    appendEl(pl, 'div', 'peer-item', truncateKey(String(key), 16));
+  });
 }
 
 function formatTime(ts) {
@@ -698,22 +797,26 @@ function sortApps(col) {
 
 function renderAppsTable() {
   var tbody = document.getElementById('appsBody');
+  clearNode(tbody);
   if (!currentApps.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Nothing seeded yet — apps appear here as the network places data on your node</td></tr>';
+    var emptyRow = appendEl(tbody, 'tr');
+    var emptyCell = appendEl(emptyRow, 'td', 'empty-state', 'Nothing seeded yet — apps appear here as the network places data on your node');
+    emptyCell.colSpan = 6;
     return;
   }
-  tbody.innerHTML = currentApps.map(function(app) {
-    var uptime = app.started ? Date.now() - new Date(app.started).getTime() : app.uptime || 0;
-    var appKey = app.appKey || app.key || '';
-    return '<tr>' +
-      '<td>' + renderAppName(appKey, app.appId) + '</td>' +
-      '<td>' + renderDev(appKey) + '</td>' +
-      '<td>' + truncateKey(appKey) + '</td>' +
-      '<td>' + (app.started ? formatTime(app.started) : '--') + '</td>' +
-      '<td>' + formatUptime(uptime) + '</td>' +
-      '<td>' + formatBytes(app.bytesServed || 0) + '</td>' +
-      '</tr>';
-  }).join('');
+  currentApps.forEach(function(app) {
+    var appKey = String(app.appKey || app.key || '');
+    var startedAt = app.started ? new Date(app.started).getTime() : NaN;
+    var hasStartedAt = !isNaN(startedAt);
+    var uptime = hasStartedAt ? Date.now() - startedAt : app.uptime || 0;
+    var row = appendEl(tbody, 'tr');
+    renderAppNameNode(appendEl(row, 'td'), appKey, app.appId);
+    renderDevNode(appendEl(row, 'td'), appKey);
+    appendEl(row, 'td', '', truncateKey(appKey));
+    appendEl(row, 'td', '', hasStartedAt ? formatTime(app.started) : '--');
+    appendEl(row, 'td', '', formatUptime(uptime));
+    appendEl(row, 'td', '', formatBytes(app.bytesServed || 0));
+  });
 }
 
 document.querySelectorAll('#appsTable th').forEach(function(th) {
@@ -741,8 +844,7 @@ function updateDashboard(overview, history, apps) {
   var pk = overview.publicKey || overview.pubKey || '';
   var region = overview.region || '';
   var chip = document.getElementById('headerMeta');
-  if (pk) chip.dataset.pk = pk;
-  chip.innerHTML = escapeHtml(truncateKey(pk)) + (region ? ' · ' + escapeHtml(region) : '') + ' <span class="copy-ic">⧉</span>';
+  renderHeaderMeta(chip, pk, region);
 
   // Uptime badge
   var badge = document.getElementById('uptimeBadge');
@@ -850,27 +952,12 @@ function updateDashboard(overview, history, apps) {
   // Peers
   var peers = overview.peers || [];
   document.getElementById('peerCount').textContent = peers.length + ' connected';
-  var pl = document.getElementById('peersList');
-  if (peers.length) {
-    pl.innerHTML = peers.map(function(p) {
-      var key = typeof p === 'string' ? p : (p.publicKey || p.key || '');
-      return '<div class="peer-item">' + truncateKey(key, 16) + '</div>';
-    }).join('');
-  } else {
-    pl.innerHTML = '<div class="empty-state" style="padding:1rem;font-size:.78rem">No peers right now — the node keeps dialing</div>';
-  }
+  renderPeersList(document.getElementById('peersList'), peers);
 }
 
 /* Copy-pubkey chip */
 document.getElementById('headerMeta').addEventListener('click', function() {
-  var pk = this.dataset.pk;
-  if (!pk || !navigator.clipboard) return;
-  var chip = this;
-  navigator.clipboard.writeText(pk).then(function() {
-    var prev = chip.innerHTML;
-    chip.innerHTML = 'copied ✓';
-    setTimeout(function() { chip.innerHTML = prev; }, 1200);
-  }).catch(function() {});
+  copyHeaderPubkey(this);
 });
 
 /* ===== Chart Rendering ===== */
@@ -1018,6 +1105,15 @@ function setPollInterval(ms) {
 }
 
 /* -- WebSocket connection -- */
+function getUiToken() {
+  var m = document.querySelector('meta[name="hiverelay-ui-token"]');
+  return (m && m.getAttribute('content')) || '';
+}
+function sendWsAuth(sock) {
+  var t = getUiToken();
+  if (!t) return;
+  try { sock.send(JSON.stringify({ type: 'auth', token: t })); } catch (e) {}
+}
 function connectWS() {
   var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   var url = proto + '//' + location.host + '/ws';
@@ -1025,6 +1121,7 @@ function connectWS() {
   try { ws = new WebSocket(url); } catch (e) { return; }
 
   ws.onopen = function() {
+    sendWsAuth(ws);
     wsConnected = true;
     updateConnIndicator();
     // Reduce polling to backup interval
@@ -1151,44 +1248,86 @@ function rejectRequest(appKey) {
   }).then(function() { fetchPending(); }).catch(function(e) { console.warn('Reject failed:', e); });
 }
 
+function bindRegistryActionTable(tbody) {
+  if (tbody.dataset.registryActionsBound) return;
+  tbody.dataset.registryActionsBound = '1';
+  tbody.addEventListener('click', function(e) {
+    var btn = e.target.closest('[data-registry-action]');
+    if (!btn || !tbody.contains(btn)) return;
+    var appKey = btn.dataset.appKey || '';
+    if (btn.dataset.registryAction === 'unseed') unseedApp(appKey);
+    else if (btn.dataset.registryAction === 'approve') approveRequest(appKey);
+    else if (btn.dataset.registryAction === 'reject') rejectRequest(appKey);
+  });
+}
+
+function appendRegistryButton(parent, action, appKey, className, label) {
+  var btn = appendEl(parent, 'button', className, label);
+  btn.type = 'button';
+  btn.dataset.registryAction = action;
+  btn.dataset.appKey = String(appKey || '');
+  return btn;
+}
+
 function renderSeeds(apps) {
   window._lastSeedApps = apps;
   var tbody = document.getElementById('seedsBody');
+  bindRegistryActionTable(tbody);
+  clearNode(tbody);
   if (!apps || !apps.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No apps seeded</td></tr>';
+    var emptyRow = appendEl(tbody, 'tr');
+    var emptyCell = appendEl(emptyRow, 'td', 'empty-state', 'No apps seeded');
+    emptyCell.colSpan = 6;
     return;
   }
-  tbody.innerHTML = apps.map(function(app) {
+  apps.forEach(function(app) {
     var uptime = app.startedAt ? Date.now() - app.startedAt : 0;
-    return '<tr>' +
-      '<td>' + renderAppName(app.appKey, app.appId) + '</td>' +
-      '<td>' + renderDev(app.appKey) + '</td>' +
-      '<td>' + truncateKey(app.appKey) + '</td>' +
-      '<td>' + formatUptime(uptime) + '</td>' +
-      '<td>' + formatBytes(app.bytesServed || 0) + '</td>' +
-      '<td><button onclick="unseedApp(\'' + app.appKey + '\')" class="btn btn-red">UNSEED</button></td>' +
-      '</tr>';
-  }).join('');
+    var appKey = String(app.appKey || '');
+    var row = appendEl(tbody, 'tr');
+    renderAppNameNode(appendEl(row, 'td'), appKey, app.appId);
+    renderDevNode(appendEl(row, 'td'), appKey);
+    appendEl(row, 'td', '', truncateKey(appKey));
+    appendEl(row, 'td', '', formatUptime(uptime));
+    appendEl(row, 'td', '', formatBytes(app.bytesServed || 0));
+    var actions = appendEl(row, 'td');
+    appendRegistryButton(actions, 'unseed', appKey, 'btn btn-red', 'UNSEED');
+  });
+}
+
+function renderPendingRequests(requests) {
+  var tbody = document.getElementById('pendingBody');
+  bindRegistryActionTable(tbody);
+  clearNode(tbody);
+  if (!requests || !requests.length) {
+    var emptyRow = appendEl(tbody, 'tr');
+    var emptyCell = appendEl(emptyRow, 'td', 'empty-state', 'No pending requests');
+    emptyCell.colSpan = 5;
+    return;
+  }
+  requests.forEach(function(req) {
+    var appKey = String(req.appKey || '');
+    var publisher = String(req.publisherPubkey || '');
+    var replication = Number(req.replicationFactor);
+    var replicationText = Number.isFinite(replication) && replication > 0 ? String(Math.floor(replication)) : '3';
+    var geoPreference = Array.isArray(req.geoPreference) && req.geoPreference.length
+      ? req.geoPreference.map(function(region) { return String(region); }).join(', ')
+      : 'any';
+    var row = appendEl(tbody, 'tr');
+    appendEl(row, 'td', '', truncateKey(appKey));
+    appendEl(row, 'td', '', truncateKey(publisher));
+    appendEl(row, 'td', '', replicationText);
+    appendEl(row, 'td', '', geoPreference);
+    var actions = appendEl(row, 'td');
+    actions.style.display = 'flex';
+    actions.style.gap = '4px';
+    appendRegistryButton(actions, 'approve', appKey, 'btn btn-green', 'APPROVE');
+    appendRegistryButton(actions, 'reject', appKey, 'btn btn-red', 'REJECT');
+  });
 }
 
 function fetchPending() {
   fetch('/api/registry/pending').then(function(r) { return r.json(); }).then(function(data) {
-    var tbody = document.getElementById('pendingBody');
-    if (!data.requests || !data.requests.length) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No pending requests</td></tr>';
-      return;
-    }
-    tbody.innerHTML = data.requests.map(function(req) {
-      return '<tr>' +
-        '<td>' + truncateKey(req.appKey) + '</td>' +
-        '<td>' + truncateKey(req.publisherPubkey) + '</td>' +
-        '<td>' + (req.replicationFactor || 3) + '</td>' +
-        '<td>' + (req.geoPreference && req.geoPreference.length ? req.geoPreference.join(', ') : 'any') + '</td>' +
-        '<td style="display:flex;gap:4px">' +
-        '<button onclick="approveRequest(\'' + req.appKey + '\')" class="btn btn-green">APPROVE</button>' +
-        '<button onclick="rejectRequest(\'' + req.appKey + '\')" class="btn btn-red">REJECT</button>' +
-        '</td></tr>';
-    }).join('');
+    renderPendingRequests(data.requests || []);
   }).catch(function() {});
 }
 

@@ -738,7 +738,7 @@ import { MSG, ERR, REGIONS } from 'p2p-hiverelay'
 | Code | Name | Direction | Description |
 |------|------|-----------|-------------|
 | `0x20` | `PROOF_CHALLENGE` | Verifier → Relay | Challenge: prove you have block N |
-| `0x21` | `PROOF_RESPONSE` | Relay → Verifier | Response: block data + Merkle proof |
+| `0x21` | `PROOF_RESPONSE` | Relay → Verifier | Response: block data + nonce echo |
 | `0x22` | `BANDWIDTH_RECEIPT` | Peer → Relay | Signed acknowledgment of data served |
 | `0x23` | `RECEIPT_ACK` | Relay → Peer | Receipt received and verified |
 
@@ -812,7 +812,7 @@ maxLatencyMs: uint
 coreKey:     fixed32
 blockIndex:  uint
 blockData:   buffer (variable length)
-merkleProof: buffer (variable length)
+merkleProof: buffer (legacy/reserved; Hypercore owns flat-tree integrity)
 nonce:       fixed32 (echoed from challenge)
 ```
 
@@ -915,7 +915,9 @@ import { ProofOfRelay } from 'p2p-hiverelay'
 
 const proof = new ProofOfRelay({
   maxLatencyMs: 5000,             // 5-second response deadline
-  challengeInterval: 5 * 60 * 1000 // Challenge every 5 minutes
+  challengeInterval: 5 * 60 * 1000, // Challenge every 5 minutes
+  maxPendingChallenges: 2048,     // Bound local verifier memory
+  maxBatchSize: 64                // Bound batch fan-out
 })
 
 // Attach to a connection
@@ -934,11 +936,19 @@ proof.on('proof-result', ({ relayPubkey, passed, latencyMs }) => {
 1. Verifier generates 32-byte random nonce (`sodium.randombytes_buf`)
 2. Sends `PROOF_CHALLENGE` with `{ coreKey, blockIndex, nonce, maxLatencyMs }`
 3. Relay fetches block from local Hypercore via `blockProvider` callback
-4. Relay sends `PROOF_RESPONSE` with `{ blockData, merkleProof, nonce }`
-5. Verifier checks: nonce match, correct core/block, non-empty data, within latency bound
+4. Relay sends `PROOF_RESPONSE` with `{ blockData, nonce }` plus the legacy/reserved `merkleProof` field
+5. Verifier checks: nonce match, correct core/block, non-empty data, bounded block size, within latency bound, and nonce-keyed hash when it already knows the challenged block
 6. Updates relay score: **+10 pass, -20 fail** (asymmetric penalty)
 
-**Anti-replay:** Each challenge includes a unique random nonce. Stale challenges are auto-cleaned every 30 seconds (removing pending entries older than 2× max latency).
+**Integrity model:** Proof-of-relay does not run a custom Merkle verifier.
+Hypercore replication owns flat-tree integrity; proof-of-relay is a
+freshness/data-presence challenge, upgraded to a direct hash check when the
+verifier has the original block bytes.
+
+**Anti-replay / bounds:** Each challenge includes a unique random nonce. Stale
+challenges are auto-cleaned every 30 seconds (removing pending entries older
+than 2x max latency). New challenges are rejected once
+`maxPendingChallenges` is full, and batches are rejected above `maxBatchSize`.
 
 **On the relay side:**
 
@@ -1217,6 +1227,7 @@ const ws = new WebSocketTransport({
 
 ws.on('connection', (stream, info) => {
   // stream is a WebSocketStream (Duplex)
+  // info.remoteAddressHash is a per-process salted hash, not the raw IP.
   store.replicate(stream)
 })
 
@@ -1313,7 +1324,10 @@ curl http://localhost:9100/health
 
 ### `GET /status`
 
-Full node statistics.
+Public bounded status summary. This endpoint always returns the public shape,
+even when called with an API key. Use management endpoints such as
+`GET /api/overview`, `GET /api/manage/services`, and `GET /api/manage/transports`
+for richer authenticated operator views.
 
 ```bash
 curl http://localhost:9100/status
@@ -1322,9 +1336,16 @@ curl http://localhost:9100/status
 ```json
 {
   "running": true,
+  "mode": "relay-core",
   "publicKey": "a1b2c3d4e5f6...",
+  "region": "EU",
+  "uptimeMs": 3600000,
   "seededApps": 3,
   "connections": 47,
+  "health": {
+    "healthy": true,
+    "reason": null
+  },
   "relay": {
     "activeCircuits": 2,
     "totalCircuitsServed": 158,
@@ -1336,6 +1357,42 @@ curl http://localhost:9100/status
     "totalBytesStored": 1073741824,
     "totalBytesServed": 536870912,
     "capacityUsedPct": 2
+  },
+  "disk": {
+    "usedPct": 12,
+    "status": "ok",
+    "checkedAt": 1710000000000
+  },
+  "registry": {
+    "running": true
+  },
+  "transports": {
+    "tor": {
+      "running": true,
+      "activeConnections": 0
+    },
+    "holesail": {
+      "running": true
+    },
+    "dhtRelayWs": {
+      "running": true,
+      "activeConnections": 1,
+      "totalConnectionsServed": 12,
+      "totalRateLimited": 0
+    }
+  },
+  "services": {
+    "count": 2,
+    "total": 2,
+    "truncated": false,
+    "services": [
+      {
+        "name": "identity",
+        "version": "1.0.0",
+        "capabilities": ["verify"],
+        "description": "Identity verification"
+      }
+    ]
   }
 }
 ```
@@ -1445,7 +1502,7 @@ Live management endpoints used by `p2p-hiverelay manage` TUI. All changes are ho
 | `/api/manage/config` | GET | Current config + operating mode |
 | `/api/manage/config` | POST | Update config values (maxStorageBytes, maxConnections, maxRelayBandwidthMbps, regions, etc.) |
 | `/api/manage/services` | GET | All services with running status, methods, and stats |
-| `/api/manage/services` | POST | `{ action: "disable"|"restart", service: "name" }` |
+| `/api/manage/services` | POST | `{ action: "disable"|"restart", service: "name" }`; configured disables persist before unregistering, bundle dependencies are changed through `/api/manage/services/config` |
 | `/api/manage/transports` | GET | Transport status (holesail, tor, websocket) |
 | `/api/manage/transport` | POST | `{ transport: "holesail"|"tor"|"websocket", enabled: true|false }` |
 | `/api/manage/modes` | GET | Available operating modes with descriptions |
@@ -1548,13 +1605,14 @@ Saves to `~/.hiverelay/config.json` and optionally starts the node immediately.
 Live management console (TUI). Connects to a running node's HTTP API for interactive control.
 
 ```bash
-p2p-hiverelay manage [--host <ip>] [--port <n>]
+p2p-hiverelay manage [--host <ip>] [--port <n>] [--api-key <key>]
 ```
 
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--host <ip>` | Relay host address | `127.0.0.1` |
 | `--port <n>` | Relay API port | `9100` |
+| `--api-key <key>` | Management API bearer token; can also use `HIVERELAY_API_KEY` | unset |
 
 **Management menus:**
 
@@ -1617,7 +1675,9 @@ p2p-hiverelay start [options]
 
 **Config precedence:** CLI flags > `~/.hiverelay/config.json` > built-in defaults.
 
-**Status line:** Unless `--quiet`, prints a status bar every 5 seconds:
+**Status output:** Unless `--quiet`, interactive terminals print a status bar
+every 5 seconds. Service/non-TTY runs emit one structured `relay status` log
+per minute, which keeps systemd journals bounded on unattended fleet boxes.
 
 ```
 [status] Apps: 3 | Conns: 47 | Stored: 4.2 GB | Served: 891.0 MB | Circuits: 2
@@ -1689,6 +1749,8 @@ The CLI supports human-readable byte sizes: `B`, `KB`, `MB`, `GB`, `TB` (case-in
   // Proof-of-Relay
   proofMaxLatencyMs: 5000,
   proofChallengeInterval: 300000,     // 5 minutes
+  proofMaxPendingChallenges: 2048,
+  proofMaxBatchSize: 64,
 
   // Reputation
   reputationDecayRate: 0.995,         // Daily
@@ -1912,7 +1974,7 @@ Each node gets isolated storage and a unique API port (9100, 9101, 9102, ...). S
 
 **Transport encryption:** All connections use Noise_XX via HyperDHT. Data is encrypted end-to-end between peers. The relay node sees only opaque ciphertext when forwarding circuit relay traffic.
 
-**Replay prevention:** Every proof-of-relay challenge includes a 32-byte random nonce generated via `sodium.randombytes_buf()` (not timestamps). The relay must echo the nonce in its response. Stale challenges are auto-cleaned every 30 seconds. Bandwidth receipts include replay detection with a circular buffer of 50,000 seen nonces.
+**Replay prevention:** Every proof-of-relay challenge includes a 32-byte random nonce generated via `sodium.randombytes_buf()` (not timestamps). The relay must echo the nonce in its response. Stale challenges are auto-cleaned every 30 seconds, and pending challenges/batches are bounded before new verifier state is allocated. Bandwidth receipts include replay detection with a circular buffer of 50,000 seen nonces.
 
 **Circuit privacy:** The relay forwards opaque bytes. It cannot decrypt, inspect, or modify circuit traffic. E2E encryption is maintained between the source and destination peers.
 

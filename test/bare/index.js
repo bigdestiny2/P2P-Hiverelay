@@ -1,7 +1,7 @@
 /**
  * Bare-runtime test suite — runs under the ACTUAL Bare runtime (not Node).
  *
- * Run with:  npm run test:bare   (→ brittle-bare test/bare/index.js)
+ * Run with:  npm run test:bare   (→ adds ./node_modules/bare/bin, then brittle-bare)
  *
  * Unlike test/unit/bare-relay-surface.test.js — which runs under Node and so
  * exercises the `default` condition of the imports map (Node built-ins) — this

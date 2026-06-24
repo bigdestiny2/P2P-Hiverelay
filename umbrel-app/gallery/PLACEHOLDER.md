@@ -19,9 +19,10 @@ is a blind availability node):
 
 ## Filenames
 
-`umbrel-app.yml` references `1.png`, `2.png`, `3.png`. Keep the filenames
-in sync with whatever you capture (PNG is the spec; some store apps use
-JPG — reviewers accept either).
+Keep `umbrel-app.yml` at `gallery: []` for the first official submission unless
+you are ready to submit screenshots in-repo. Once you list gallery filenames,
+keep them in sync with whatever you capture (PNG is the spec; some store apps
+use JPG — reviewers accept either).
 
 ## Capturing them
 

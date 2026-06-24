@@ -1,0 +1,923 @@
+name: Release surfaces
+
+on:
+  push:
+    tags:
+      - 'v*'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag/version, for example v0.16.4
+        required: true
+      channel:
+        description: Fleet channel to promote
+        required: true
+        default: both
+        type: choice
+        options:
+          - canary
+          - stable
+          - both
+          - none
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-surfaces
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/bigdestiny2/p2p-hiverelay
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      UMBREL_STORE_TOKEN: ${{ secrets.UMBREL_STORE_TOKEN }}
+      UMBREL_OFFICIAL_PR_TOKEN: ${{ secrets.UMBREL_OFFICIAL_PR_TOKEN }}
+      UMBREL_OFFICIAL_FORK: ${{ secrets.UMBREL_OFFICIAL_FORK }}
+      STARTOS_DEVELOPER_KEY_PEM: ${{ secrets.STARTOS_DEVELOPER_KEY_PEM }}
+      STARTOS_REGISTRY_URL: ${{ secrets.STARTOS_REGISTRY_URL }}
+      FLEET_SSH_PRIVATE_KEY: ${{ secrets.FLEET_SSH_PRIVATE_KEY }}
+      FLEET_ROLLOUT_TIMEOUT_MS: ${{ vars.FLEET_ROLLOUT_TIMEOUT_MS }}
+
+    steps:
+      - name: Resolve release inputs
+        id: rel
+        shell: bash
+        env:
+          RELEASE_EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
+          RELEASE_IS_PRERELEASE: ${{ github.event.release.prerelease }}
+          PUSH_REF_NAME: ${{ github.ref_name }}
+          DISPATCH_VERSION: ${{ inputs.version }}
+          DISPATCH_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          if [ "$RELEASE_EVENT_NAME" = "release" ]; then
+            version="$RELEASE_TAG_NAME"
+            requested_channel="${HIVERELAY_RELEASE_CHANNEL:-}"
+            release_prerelease="$RELEASE_IS_PRERELEASE"
+          elif [ "$RELEASE_EVENT_NAME" = "push" ]; then
+            version="$PUSH_REF_NAME"
+            requested_channel="${HIVERELAY_RELEASE_CHANNEL:-}"
+            release_prerelease="false"
+          else
+            version="$DISPATCH_VERSION"
+            requested_channel="$DISPATCH_CHANNEL"
+            release_prerelease="false"
+          fi
+          if [[ ! "$version" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
+            echo "Invalid release version: $version" >&2
+            exit 1
+          fi
+          semver="${BASH_REMATCH[1]}"
+          version="v$semver"
+          is_prerelease=false
+          if [[ "$semver" == *-* || "$release_prerelease" = "true" ]]; then
+            is_prerelease=true
+          fi
+          if [ -z "$requested_channel" ]; then
+            if [ "$is_prerelease" = "true" ]; then
+              channel=none
+            else
+              channel=both
+            fi
+          else
+            channel="$requested_channel"
+          fi
+          case "$channel" in
+            canary|stable|both|none) ;;
+            *)
+              echo "Invalid release channel: $channel" >&2
+              exit 1
+              ;;
+          esac
+          if [ "$is_prerelease" = "true" ] && [ "$channel" != "none" ]; then
+            echo "Pre-release $version cannot promote fleet/app-store channel '$channel'; use channel=none." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "semver=$semver" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
+
+      - name: Initialize release evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_surfaces_status=pending
+          release_distribution_status=pending
+          if [ "${{ steps.rel.outputs.is_prerelease }}" = "true" ]; then
+            release_surfaces_status=skipped
+            release_distribution_status=skipped
+          fi
+          {
+            echo "HIVERELAY_RELEASE_VERSION=${{ steps.rel.outputs.version }}"
+            echo "HIVERELAY_RELEASE_SEMVER=${{ steps.rel.outputs.semver }}"
+            echo "HIVERELAY_RELEASE_CHANNEL=${{ steps.rel.outputs.channel }}"
+            echo "HIVERELAY_RELEASE_PRERELEASE=${{ steps.rel.outputs.is_prerelease }}"
+            echo "HIVERELAY_IMAGE_NAME=$IMAGE_NAME"
+            echo "HIVERELAY_RELEASE_GATE_STATUS=pending"
+            echo "HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS=$release_distribution_status"
+            echo "HIVERELAY_RELEASE_IMAGE_SMOKE_STATUS=pending"
+            echo "HIVERELAY_RELEASE_IMAGE_SMOKE_EVIDENCE="
+            echo "HIVERELAY_RELEASE_IMAGE_SMOKE_EVIDENCE_SHA256="
+            echo "HIVERELAY_UMBREL_SMOKE_STATUS=pending"
+            echo "HIVERELAY_UMBREL_SMOKE_EVIDENCE="
+            echo "HIVERELAY_UMBREL_SMOKE_EVIDENCE_SHA256="
+            echo "HIVERELAY_STARTOS_VERIFY_STATUS=pending"
+            echo "HIVERELAY_STARTOS_PACKAGE_SHA256="
+            echo "HIVERELAY_STARTOS_RELEASE_ASSET_STATUS=pending"
+            echo "HIVERELAY_RELEASE_SURFACES_STATUS=$release_surfaces_status"
+            echo "HIVERELAY_FLEET_ROLLOUT_STATUS=skipped"
+            echo "HIVERELAY_FLEET_ROLLOUT_CHANNEL="
+            echo "HIVERELAY_FLEET_ROLLOUT_EVIDENCE="
+            echo "HIVERELAY_FLEET_ROLLOUT_EVIDENCE_SHA256="
+            echo "HIVERELAY_STARTOS_REGISTRY_STATUS=skipped"
+            echo "HIVERELAY_STARTOS_REGISTRY_URL="
+            echo "HIVERELAY_STARTOS_REGISTRY_PACKAGE_URL="
+            echo "HIVERELAY_STARTOS_REGISTRY_EVIDENCE="
+            echo "HIVERELAY_STARTOS_REGISTRY_EVIDENCE_SHA256="
+            echo "HIVERELAY_STARTOS_PACKAGE_ID="
+            echo "HIVERELAY_UMBREL_OFFICIAL_PR_STATUS=skipped"
+            echo "HIVERELAY_UMBREL_OFFICIAL_PR_URL="
+            echo "HIVERELAY_UMBREL_OFFICIAL_PR_HEAD="
+            echo "HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_SHA="
+            echo "HIVERELAY_UMBREL_OFFICIAL_PR_STATE="
+            echo "HIVERELAY_UMBREL_OFFICIAL_PR_DRAFT="
+            echo "HIVERELAY_UMBREL_OFFICIAL_PR_BASE="
+            echo "HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_OWNER="
+            echo "HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_REF="
+            echo "HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_OID="
+            echo "HIVERELAY_UMBREL_COMMUNITY_STORE_VALIDATE_STATUS=skipped"
+            echo "HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS=skipped"
+            echo "HIVERELAY_UMBREL_COMMUNITY_STORE_COMMIT="
+            echo "HIVERELAY_UMBREL_COMMUNITY_STORE_COMMIT_URL="
+          } >> "$GITHUB_ENV"
+
+      - name: Checkout HiveRelay
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          path: hiverelay
+
+      - name: Verify release ref
+        working-directory: hiverelay
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          tag_sha="$(git rev-parse "${{ steps.rel.outputs.version }}^{commit}")"
+          main_sha="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$tag_sha" "$main_sha"; then
+            echo "${{ steps.rel.outputs.version }} is not an ancestor of main." >&2
+            echo "Main: $main_sha" >&2
+            echo "Tag:  $tag_sha" >&2
+            exit 1
+          fi
+          echo "HIVERELAY_RELEASE_SHA=$tag_sha" >> "$GITHUB_ENV"
+
+      - name: Ensure GitHub Release exists
+        if: ${{ github.event_name != 'release' }}
+        working-directory: hiverelay
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${{ steps.rel.outputs.version }}"
+          if gh release view "$version" >/dev/null 2>&1; then
+            echo "GitHub Release $version already exists."
+            exit 0
+          fi
+          notes="Automated HiveRelay release surface sync for $version."
+          args=(release create "$version" --verify-tag --title "$version" --notes "$notes")
+          if [ "${{ steps.rel.outputs.is_prerelease }}" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh "${args[@]}"
+
+      - name: Verify stable release distribution credentials
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          npm run release:check-distribution-env -- \
+            --channel "${{ steps.rel.outputs.channel }}" \
+            --prerelease "${{ steps.rel.outputs.is_prerelease }}" \
+            --github-env "$GITHUB_ENV"
+
+      - name: Checkout released source
+        working-directory: hiverelay
+        run: git checkout --detach "$HIVERELAY_RELEASE_SHA"
+
+      - name: Checkout Umbrel community store
+        if: ${{ env.UMBREL_STORE_TOKEN != '' && steps.rel.outputs.is_prerelease != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          repository: bigdestiny2/blindspark-umbrel-store
+          token: ${{ env.UMBREL_STORE_TOKEN }}
+          path: blindspark-umbrel-store
+
+      - name: Checkout official Umbrel fork
+        if: ${{ env.UMBREL_OFFICIAL_PR_TOKEN != '' && env.UMBREL_OFFICIAL_FORK != '' && steps.rel.outputs.is_prerelease != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UMBREL_OFFICIAL_FORK }}
+          token: ${{ env.UMBREL_OFFICIAL_PR_TOKEN }}
+          path: umbrel-official-apps
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: hiverelay/package-lock.json
+
+      - name: Install dependencies
+        working-directory: hiverelay
+        run: npm ci
+
+      - name: Audit and test release gate
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          npm audit
+          npm run lint
+          npm run audit:workspace
+          npm run test:unit
+          echo "HIVERELAY_RELEASE_GATE_STATUS=passed" >> "$GITHUB_ENV"
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch image
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          tags=(--tag "$IMAGE_NAME:${{ steps.rel.outputs.semver }}")
+          if [ "${{ steps.rel.outputs.is_prerelease }}" != "true" ]; then
+            tags+=(--tag "$IMAGE_NAME:latest")
+          fi
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            "${tags[@]}" \
+            --metadata-file /tmp/hiverelay-image.json \
+            --push .
+          digest="$(node -e "const m=require('/tmp/hiverelay-image.json'); console.log(m['containerimage.digest'])")"
+          if ! printf '%s' "$digest" | grep -Eq '^sha256:[a-f0-9]{64}$'; then
+            echo "Could not resolve pushed image digest: $digest" >&2
+            exit 1
+          fi
+          echo "HIVERELAY_IMAGE_DIGEST=$digest" >> "$GITHUB_ENV"
+
+      - name: Verify release image manifest platforms
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          npm run release:check-image-manifest -- \
+            --image "$IMAGE_NAME:${{ steps.rel.outputs.semver }}@$HIVERELAY_IMAGE_DIGEST" \
+            --out release-image-manifest-evidence.json
+          image_manifest_sha="$(sha256sum release-image-manifest-evidence.json | cut -d ' ' -f 1)"
+          if ! [[ "$image_manifest_sha" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "Release image manifest evidence SHA-256 is malformed." >&2
+            exit 1
+          fi
+          echo "HIVERELAY_RELEASE_IMAGE_MANIFEST_STATUS=passed" >> "$GITHUB_ENV"
+          echo "HIVERELAY_RELEASE_IMAGE_MANIFEST_EVIDENCE=release-image-manifest-evidence.json" >> "$GITHUB_ENV"
+          echo "HIVERELAY_RELEASE_IMAGE_MANIFEST_EVIDENCE_SHA256=$image_manifest_sha" >> "$GITHUB_ENV"
+
+      - name: Smoke pushed release image
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          npm run release:smoke-image -- \
+            "$IMAGE_NAME:${{ steps.rel.outputs.semver }}@$HIVERELAY_IMAGE_DIGEST" \
+            --evidence release-image-smoke-evidence.json
+          image_smoke_sha="$(sha256sum release-image-smoke-evidence.json | cut -d ' ' -f 1)"
+          if ! [[ "$image_smoke_sha" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "Release image smoke evidence SHA-256 is malformed." >&2
+            exit 1
+          fi
+          echo "HIVERELAY_RELEASE_IMAGE_SMOKE_EVIDENCE=release-image-smoke-evidence.json" >> "$GITHUB_ENV"
+          echo "HIVERELAY_RELEASE_IMAGE_SMOKE_EVIDENCE_SHA256=$image_smoke_sha" >> "$GITHUB_ENV"
+          echo "HIVERELAY_RELEASE_IMAGE_SMOKE_STATUS=passed" >> "$GITHUB_ENV"
+
+      - name: Return to main for metadata sync
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout -B main origin/main
+
+      - name: Sync release metadata
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "${{ steps.rel.outputs.is_prerelease }}" = "true" ]; then
+            args+=(--no-umbrel-store)
+          fi
+          npm run release:prepare -- "${{ steps.rel.outputs.version }}" \
+            --channel "${{ steps.rel.outputs.channel }}" \
+            --image-digest "$HIVERELAY_IMAGE_DIGEST" \
+            "${args[@]}"
+
+      - name: Smoke Umbrel package
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          npm run umbrel:smoke-package -- \
+            --image-ref "$IMAGE_NAME:${{ steps.rel.outputs.semver }}@$HIVERELAY_IMAGE_DIGEST" \
+            --evidence umbrel-package-smoke-evidence.json
+          umbrel_smoke_sha="$(sha256sum umbrel-package-smoke-evidence.json | cut -d ' ' -f 1)"
+          if ! [[ "$umbrel_smoke_sha" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "Umbrel package smoke evidence SHA-256 is malformed." >&2
+            exit 1
+          fi
+          echo "HIVERELAY_UMBREL_SMOKE_EVIDENCE=umbrel-package-smoke-evidence.json" >> "$GITHUB_ENV"
+          echo "HIVERELAY_UMBREL_SMOKE_EVIDENCE_SHA256=$umbrel_smoke_sha" >> "$GITHUB_ENV"
+          echo "HIVERELAY_UMBREL_SMOKE_STATUS=passed" >> "$GITHUB_ENV"
+
+      - name: Install StartOS packaging tools
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y librsvg2-bin
+          git clone --depth 1 --branch v0.3.5.1 --recurse-submodules \
+            https://github.com/Start9Labs/start-os.git /tmp/start-os
+          cd /tmp/start-os
+          mkdir -p web/dist/static
+          touch web/dist/static/.keep
+          git rev-parse HEAD > GIT_HASH.txt
+          rustup toolchain install 1.78.0
+          cd core/startos
+          cargo +1.78.0 install --path . --bin startbox \
+            --no-default-features --features cli,sdk --locked
+          ln -sf "$HOME/.cargo/bin/startbox" "$HOME/.cargo/bin/start-sdk"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          start-sdk --version
+
+      - name: Configure StartOS developer key
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.embassy"
+          if [ -n "${STARTOS_DEVELOPER_KEY_PEM:-}" ]; then
+            printf '%s\n' "$STARTOS_DEVELOPER_KEY_PEM" > "$HOME/.embassy/developer.key.pem"
+            echo "Using StartOS developer key from STARTOS_DEVELOPER_KEY_PEM."
+          else
+            start-sdk init
+            echo "::warning::STARTOS_DEVELOPER_KEY_PEM is not configured; generated an ephemeral key for the sideloadable GitHub Release artifact."
+          fi
+          chmod 600 "$HOME/.embassy/developer.key.pem"
+
+      - name: Build and verify StartOS package
+        working-directory: hiverelay/startos
+        run: |
+          set -euo pipefail
+          make verify IMAGE_DIGEST="$HIVERELAY_IMAGE_DIGEST"
+          s9pk_sha="$(sha256sum blindspark.s9pk | cut -d ' ' -f 1)"
+          package_id="$(sed -n 's/^id:[[:space:]]*//p' manifest.yaml | head -n 1)"
+          if ! [[ "$s9pk_sha" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "StartOS package SHA-256 is malformed." >&2
+            exit 1
+          fi
+          if [ -z "$package_id" ]; then
+            echo "Could not resolve StartOS package id from startos/manifest.yaml" >&2
+            exit 1
+          fi
+          if ! [[ "$package_id" =~ ^[a-z0-9][a-z0-9-]{1,63}$ ]]; then
+            echo "StartOS package id from startos/manifest.yaml is malformed." >&2
+            exit 1
+          fi
+          echo "HIVERELAY_STARTOS_PACKAGE_SHA256=$s9pk_sha" >> "$GITHUB_ENV"
+          echo "HIVERELAY_STARTOS_PACKAGE_ID=$package_id" >> "$GITHUB_ENV"
+          echo "HIVERELAY_STARTOS_VERIFY_STATUS=passed" >> "$GITHUB_ENV"
+
+      - name: Upload StartOS package to GitHub Release
+        working-directory: hiverelay
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ steps.rel.outputs.version }}" startos/blindspark.s9pk --clobber
+          echo "HIVERELAY_STARTOS_RELEASE_ASSET_STATUS=uploaded" >> "$GITHUB_ENV"
+
+      - name: Validate Umbrel community store
+        if: ${{ env.UMBREL_STORE_TOKEN != '' && steps.rel.outputs.is_prerelease != 'true' }}
+        working-directory: blindspark-umbrel-store
+        run: |
+          set -euo pipefail
+          npm run validate
+          echo "HIVERELAY_UMBREL_COMMUNITY_STORE_VALIDATE_STATUS=passed" >> "$GITHUB_ENV"
+
+      - name: Commit HiveRelay release surfaces
+        if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "HiveRelay release surfaces already current."
+            release_surfaces_sha="$(git rev-parse HEAD)"
+            if ! [[ "$release_surfaces_sha" =~ ^[a-f0-9]{40}$ ]]; then
+              echo "HiveRelay release surfaces commit SHA is malformed." >&2
+              exit 1
+            fi
+            echo "HIVERELAY_RELEASE_SURFACES_STATUS=current" >> "$GITHUB_ENV"
+            echo "HIVERELAY_RELEASE_SURFACES_SHA=$release_surfaces_sha" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          git config user.name "hiverelay-release-bot"
+          git config user.email "hiverelay-release-bot@users.noreply.github.com"
+          git add package.json package-lock.json README.md \
+            packages/core/package.json \
+            packages/client/package.json \
+            packages/verifier/package.json \
+            packages/services/package.json \
+            fleet/channels.json \
+            umbrel-app/docker-compose.yml umbrel-app/umbrel-app.yml \
+            startos/manifest.yaml startos/Makefile startos/README.md
+          git commit -m "chore: sync release surfaces ${{ steps.rel.outputs.version }}"
+          git push origin HEAD:main
+          release_surfaces_sha="$(git rev-parse HEAD)"
+          if ! [[ "$release_surfaces_sha" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "HiveRelay release surfaces commit SHA is malformed." >&2
+            exit 1
+          fi
+          echo "HIVERELAY_RELEASE_SURFACES_STATUS=committed" >> "$GITHUB_ENV"
+          echo "HIVERELAY_RELEASE_SURFACES_SHA=$release_surfaces_sha" >> "$GITHUB_ENV"
+
+      - name: Configure fleet rollout SSH key
+        if: ${{ env.FLEET_SSH_PRIVATE_KEY != '' && steps.rel.outputs.channel != 'none' && steps.rel.outputs.is_prerelease != 'true' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$FLEET_SSH_PRIVATE_KEY" > "$HOME/.ssh/hiverelay_fleet"
+          chmod 600 "$HOME/.ssh/hiverelay_fleet"
+
+      - name: Verify raw fleet rollout
+        if: ${{ env.FLEET_SSH_PRIVATE_KEY != '' && steps.rel.outputs.channel != 'none' && steps.rel.outputs.is_prerelease != 'true' }}
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          echo "HIVERELAY_FLEET_ROLLOUT_CHANNEL=${{ steps.rel.outputs.channel }}" >> "$GITHUB_ENV"
+          npm run fleet:check-rollout -- \
+            --target "${{ steps.rel.outputs.version }}" \
+            --channel "${{ steps.rel.outputs.channel }}" \
+            --ssh-key "$HOME/.ssh/hiverelay_fleet" \
+            --evidence fleet-rollout-evidence.json \
+            --timeout-ms "${FLEET_ROLLOUT_TIMEOUT_MS:-1800000}"
+          rollout_sha="$(sha256sum fleet-rollout-evidence.json | cut -d ' ' -f 1)"
+          if ! [[ "$rollout_sha" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "Fleet rollout evidence SHA-256 is malformed." >&2
+            exit 1
+          fi
+          echo "HIVERELAY_FLEET_ROLLOUT_EVIDENCE=fleet-rollout-evidence.json" >> "$GITHUB_ENV"
+          echo "HIVERELAY_FLEET_ROLLOUT_EVIDENCE_SHA256=$rollout_sha" >> "$GITHUB_ENV"
+          echo "HIVERELAY_FLEET_ROLLOUT_STATUS=verified" >> "$GITHUB_ENV"
+
+      - name: Publish StartOS registry package
+        if: ${{ env.STARTOS_REGISTRY_URL != '' && env.STARTOS_DEVELOPER_KEY_PEM != '' && steps.rel.outputs.is_prerelease != 'true' }}
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          start-sdk publish "$STARTOS_REGISTRY_URL" startos/blindspark.s9pk
+          registry_package_url="${STARTOS_REGISTRY_URL%/}/${HIVERELAY_STARTOS_PACKAGE_ID}"
+          export HIVERELAY_STARTOS_REGISTRY_STATUS=published
+          export HIVERELAY_STARTOS_REGISTRY_URL="$STARTOS_REGISTRY_URL"
+          export HIVERELAY_STARTOS_REGISTRY_PACKAGE_URL="$registry_package_url"
+          npm run release:write-startos-registry-evidence -- --out startos-registry-evidence.json
+          startos_registry_evidence_sha="$(sha256sum startos-registry-evidence.json | cut -d ' ' -f 1)"
+          if ! [[ "$startos_registry_evidence_sha" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "StartOS registry evidence SHA-256 is malformed." >&2
+            exit 1
+          fi
+          node scripts/write-github-env.mjs HIVERELAY_STARTOS_REGISTRY_STATUS published
+          node scripts/write-github-env.mjs HIVERELAY_STARTOS_REGISTRY_URL "$STARTOS_REGISTRY_URL"
+          node scripts/write-github-env.mjs HIVERELAY_STARTOS_REGISTRY_PACKAGE_URL "$registry_package_url"
+          node scripts/write-github-env.mjs HIVERELAY_STARTOS_REGISTRY_EVIDENCE startos-registry-evidence.json
+          node scripts/write-github-env.mjs HIVERELAY_STARTOS_REGISTRY_EVIDENCE_SHA256 "$startos_registry_evidence_sha"
+
+      - name: Open or update official Umbrel draft PR
+        if: ${{ env.UMBREL_OFFICIAL_PR_TOKEN != '' && env.UMBREL_OFFICIAL_FORK != '' && steps.rel.outputs.is_prerelease != 'true' }}
+        env:
+          GH_TOKEN: ${{ env.UMBREL_OFFICIAL_PR_TOKEN }}
+        run: |
+          set -euo pipefail
+          branch="blindspark-${{ steps.rel.outputs.version }}"
+          fork_owner="${UMBREL_OFFICIAL_FORK%%/*}"
+
+          cd umbrel-official-apps
+          git remote add upstream https://github.com/getumbrel/umbrel-apps.git 2>/dev/null || true
+          git fetch upstream master
+          git checkout -B "$branch" upstream/master
+          cd ../hiverelay
+
+          npm run umbrel:export-official -- \
+            --target ../umbrel-official-apps/blindspark \
+            --allow-placeholder
+
+          cd ../umbrel-official-apps
+          git config user.name "hiverelay-release-bot"
+          git config user.email "hiverelay-release-bot@users.noreply.github.com"
+          git add blindspark
+          if ! git diff --cached --quiet; then
+            git commit -m "Add Blindspark ${{ steps.rel.outputs.version }}"
+          fi
+          git push --force-with-lease origin "$branch"
+
+          pr_url="$(gh pr list \
+            --repo getumbrel/umbrel-apps \
+            --head "$fork_owner:$branch" \
+            --state open \
+            --json url \
+            --jq '.[0].url // ""')"
+          if [ -z "$pr_url" ]; then
+            pr_url="$(gh pr create \
+              --repo getumbrel/umbrel-apps \
+              --base master \
+              --head "$fork_owner:$branch" \
+              --draft \
+              --title "Add Blindspark — blind relay for the Pear/Holepunch P2P ecosystem" \
+              --body "Automated Blindspark official Umbrel package sync for ${{ steps.rel.outputs.version }}. Evidence details will be refreshed by the release workflow before this draft is handed to reviewers.")"
+          fi
+          if ! [[ "$pr_url" =~ ^https://github\.com/getumbrel/umbrel-apps/pull/[1-9][0-9]*$ ]]; then
+            echo "Official Umbrel PR URL from gh must point to getumbrel/umbrel-apps/pull/<number>." >&2
+            exit 1
+          fi
+
+          cd ../hiverelay
+          npm run umbrel:export-official -- \
+            --target ../umbrel-official-apps/blindspark \
+            --submission-url "$pr_url"
+          npm run umbrel:export-official -- \
+            --target ../umbrel-official-apps/blindspark \
+            --submission-url "$pr_url" \
+            --check
+
+          cd ../umbrel-official-apps
+          git add blindspark/umbrel-app.yml
+          if ! git diff --cached --quiet; then
+            git commit -m "Set Blindspark submission URL"
+            git push --force-with-lease origin "$branch"
+          fi
+          official_head_sha="$(git rev-parse HEAD)"
+          if ! [[ "$official_head_sha" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Official Umbrel PR head SHA is malformed." >&2
+            exit 1
+          fi
+
+          pr_state="$(gh pr view "$pr_url" --json state --jq '.state')"
+          pr_is_draft="$(gh pr view "$pr_url" --json isDraft --jq '.isDraft')"
+          pr_base="$(gh pr view "$pr_url" --json baseRefName --jq '.baseRefName')"
+          pr_head_owner="$(gh pr view "$pr_url" --json headRepositoryOwner --jq '.headRepositoryOwner.login')"
+          pr_head_ref="$(gh pr view "$pr_url" --json headRefName --jq '.headRefName')"
+          pr_head_oid="$(gh pr view "$pr_url" --json headRefOid --jq '.headRefOid')"
+          if [ "$pr_state" != "OPEN" ]; then
+            echo "Official Umbrel PR must be OPEN before recording release evidence; got '$pr_state'." >&2
+            exit 1
+          fi
+          if [ "$pr_is_draft" != "true" ]; then
+            echo "Official Umbrel PR must remain a draft before reviewer handoff; got '$pr_is_draft'." >&2
+            exit 1
+          fi
+          if [ "$pr_base" != "master" ]; then
+            echo "Official Umbrel PR base must be master; got '$pr_base'." >&2
+            exit 1
+          fi
+          if [ "$pr_head_owner" != "$fork_owner" ]; then
+            echo "Official Umbrel PR head owner must be $fork_owner; got '$pr_head_owner'." >&2
+            exit 1
+          fi
+          if [ "$pr_head_ref" != "$branch" ]; then
+            echo "Official Umbrel PR head ref must be $branch; got '$pr_head_ref'." >&2
+            exit 1
+          fi
+          if [ "$pr_head_oid" != "$official_head_sha" ]; then
+            echo "Official Umbrel PR head OID must match pushed branch SHA $official_head_sha; got '$pr_head_oid'." >&2
+            exit 1
+          fi
+
+          cd ../hiverelay
+          node scripts/write-github-env.mjs HIVERELAY_UMBREL_OFFICIAL_PR_STATUS draft-pr-ready
+          node scripts/write-github-env.mjs HIVERELAY_UMBREL_OFFICIAL_PR_URL "$pr_url"
+          node scripts/write-github-env.mjs HIVERELAY_UMBREL_OFFICIAL_PR_HEAD "$fork_owner:$branch"
+          node scripts/write-github-env.mjs HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_SHA "$official_head_sha"
+          node scripts/write-github-env.mjs HIVERELAY_UMBREL_OFFICIAL_PR_STATE "$pr_state"
+          node scripts/write-github-env.mjs HIVERELAY_UMBREL_OFFICIAL_PR_DRAFT "$pr_is_draft"
+          node scripts/write-github-env.mjs HIVERELAY_UMBREL_OFFICIAL_PR_BASE "$pr_base"
+          node scripts/write-github-env.mjs HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_OWNER "$pr_head_owner"
+          node scripts/write-github-env.mjs HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_REF "$pr_head_ref"
+          node scripts/write-github-env.mjs HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_OID "$pr_head_oid"
+          echo "Official Umbrel draft PR: $pr_url"
+
+      - name: Commit Umbrel community store
+        if: ${{ env.UMBREL_STORE_TOKEN != '' && steps.rel.outputs.is_prerelease != 'true' }}
+        working-directory: blindspark-umbrel-store
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "Umbrel community store already current."
+            community_sha="$(git rev-parse HEAD)"
+            if ! [[ "$community_sha" =~ ^[a-f0-9]{40}$ ]]; then
+              echo "Umbrel community-store commit SHA is malformed." >&2
+              exit 1
+            fi
+            echo "HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS=current" >> "$GITHUB_ENV"
+            echo "HIVERELAY_UMBREL_COMMUNITY_STORE_COMMIT=$community_sha" >> "$GITHUB_ENV"
+            echo "HIVERELAY_UMBREL_COMMUNITY_STORE_COMMIT_URL=https://github.com/bigdestiny2/blindspark-umbrel-store/commit/$community_sha" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          git config user.name "hiverelay-release-bot"
+          git config user.email "hiverelay-release-bot@users.noreply.github.com"
+          git add package.json README.md index.html \
+            hiverelay-blindspark/docker-compose.yml \
+            hiverelay-blindspark/umbrel-app.yml
+          git commit -m "chore: publish Blindspark ${{ steps.rel.outputs.version }}"
+          git push
+          community_sha="$(git rev-parse HEAD)"
+          if ! [[ "$community_sha" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Umbrel community-store commit SHA is malformed." >&2
+            exit 1
+          fi
+          echo "HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS=pushed" >> "$GITHUB_ENV"
+          echo "HIVERELAY_UMBREL_COMMUNITY_STORE_COMMIT=$community_sha" >> "$GITHUB_ENV"
+          echo "HIVERELAY_UMBREL_COMMUNITY_STORE_COMMIT_URL=https://github.com/bigdestiny2/blindspark-umbrel-store/commit/$community_sha" >> "$GITHUB_ENV"
+
+      - name: Write release evidence
+        if: ${{ always() && !cancelled() && hashFiles('hiverelay/scripts/write-release-evidence.mjs') != '' }}
+        working-directory: hiverelay
+        env:
+          HIVERELAY_WORKFLOW_STATUS: ${{ job.status }}
+        run: npm run release:write-evidence -- --out release-evidence.json
+
+      - name: Verify release evidence
+        if: ${{ success() && hashFiles('hiverelay/release-evidence.json') != '' }}
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          args=(--release release-evidence.json --startos-package startos/blindspark.s9pk)
+          if [ -f release-image-manifest-evidence.json ]; then
+            args+=(--release-image-manifest release-image-manifest-evidence.json)
+          fi
+          if [ -f release-image-smoke-evidence.json ]; then
+            args+=(--release-image-smoke release-image-smoke-evidence.json)
+          fi
+          if [ -f umbrel-package-smoke-evidence.json ]; then
+            args+=(--umbrel-package-smoke umbrel-package-smoke-evidence.json)
+          fi
+          if [ -f fleet-rollout-evidence.json ]; then
+            args+=(--fleet-rollout fleet-rollout-evidence.json)
+          fi
+          if [ -f startos-registry-evidence.json ]; then
+            args+=(--startos-registry startos-registry-evidence.json)
+          fi
+          npm run release:verify-evidence -- "${args[@]}"
+
+      - name: Upload release evidence artifact
+        if: ${{ always() && !cancelled() && hashFiles('hiverelay/release-evidence.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence-${{ steps.rel.outputs.version }}
+          path: |
+            hiverelay/release-evidence.json
+            hiverelay/release-image-manifest-evidence.json
+            hiverelay/release-image-smoke-evidence.json
+            hiverelay/umbrel-package-smoke-evidence.json
+            hiverelay/fleet-rollout-evidence.json
+            hiverelay/startos-registry-evidence.json
+          retention-days: 90
+
+      - name: Upload release evidence to GitHub Release
+        if: ${{ success() }}
+        working-directory: hiverelay
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          evidence=(release-evidence.json)
+          if [ -f release-image-manifest-evidence.json ]; then
+            evidence+=(release-image-manifest-evidence.json)
+          fi
+          if [ -f release-image-smoke-evidence.json ]; then
+            evidence+=(release-image-smoke-evidence.json)
+          fi
+          if [ -f umbrel-package-smoke-evidence.json ]; then
+            evidence+=(umbrel-package-smoke-evidence.json)
+          fi
+          if [ -f fleet-rollout-evidence.json ]; then
+            evidence+=(fleet-rollout-evidence.json)
+          fi
+          if [ -f startos-registry-evidence.json ]; then
+            evidence+=(startos-registry-evidence.json)
+          fi
+          gh release upload "${{ steps.rel.outputs.version }}" "${evidence[@]}" --clobber
+
+      - name: Verify published release evidence assets
+        if: ${{ success() }}
+        working-directory: hiverelay
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          bundle_dir="$(mktemp -d)"
+          mkdir -p "$bundle_dir/startos"
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'release-evidence.json' \
+            --dir "$bundle_dir" \
+            --clobber
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'release-image-manifest-evidence.json' \
+            --dir "$bundle_dir" \
+            --clobber
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'release-image-smoke-evidence.json' \
+            --dir "$bundle_dir" \
+            --clobber
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'umbrel-package-smoke-evidence.json' \
+            --dir "$bundle_dir" \
+            --clobber
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'blindspark.s9pk' \
+            --dir "$bundle_dir/startos" \
+            --clobber
+          if [ "${{ steps.rel.outputs.is_prerelease }}" != "true" ]; then
+            gh release download "${{ steps.rel.outputs.version }}" \
+              --pattern 'fleet-rollout-evidence.json' \
+              --dir "$bundle_dir" \
+              --clobber
+            gh release download "${{ steps.rel.outputs.version }}" \
+              --pattern 'startos-registry-evidence.json' \
+              --dir "$bundle_dir" \
+              --clobber
+          fi
+          npm run release:verify-evidence -- --bundle-dir "$bundle_dir"
+
+      - name: Upload StartOS registry evidence
+        if: ${{ success() && hashFiles('hiverelay/startos-registry-evidence.json') != '' }}
+        working-directory: hiverelay
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ steps.rel.outputs.version }}" startos-registry-evidence.json --clobber
+          startos_registry_dir="$(mktemp -d)"
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'startos-registry-evidence.json' \
+            --dir "$startos_registry_dir" \
+            --clobber
+          cmp startos-registry-evidence.json "$startos_registry_dir/startos-registry-evidence.json"
+
+      - name: Refresh official Umbrel PR evidence links
+        if: ${{ success() && env.UMBREL_OFFICIAL_PR_TOKEN != '' && steps.rel.outputs.is_prerelease != 'true' }}
+        working-directory: hiverelay
+        env:
+          GH_TOKEN: ${{ env.UMBREL_OFFICIAL_PR_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HIVERELAY_UMBREL_OFFICIAL_PR_URL:-}" ]; then
+            echo "No official Umbrel PR URL was recorded; skipping PR body refresh."
+            exit 0
+          fi
+          release_base_url="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/releases/download/${{ steps.rel.outputs.version }}"
+          workflow_url="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          pr_body="$RUNNER_TEMP/blindspark-official-pr-body.md"
+          cat > "$pr_body" <<BODY
+          Automated Blindspark official Umbrel package sync for ${{ steps.rel.outputs.version }}.
+
+          Runtime evidence generated by the HiveRelay release workflow:
+
+          - Release evidence: ${release_base_url}/release-evidence.json
+          - Release image manifest: ${release_base_url}/release-image-manifest-evidence.json
+          - Release image smoke: ${release_base_url}/release-image-smoke-evidence.json
+          - Umbrel package smoke: ${release_base_url}/umbrel-package-smoke-evidence.json
+          - Fleet rollout evidence: ${release_base_url}/fleet-rollout-evidence.json
+          - StartOS package: ${release_base_url}/blindspark.s9pk
+          - StartOS registry package: ${HIVERELAY_STARTOS_REGISTRY_PACKAGE_URL}
+          - StartOS registry evidence: ${release_base_url}/startos-registry-evidence.json
+          - Release workflow: ${workflow_url}
+
+          Smoke and release checks cover the Umbrel app_proxy path, setup page, add-wallet write, service catalog/save, restart, stable identity, wallet persistence, service-selection persistence, dashboard WebSocket URL-token rejection, dashboard WebSocket in-band auth, pinned multi-arch image manifests, raw fleet convergence, and StartOS registry publication.
+
+          Manual Umbrel runtime review status: pending real-device review. After the real Umbrel UI pass, generate `umbrel-runtime-review-evidence.json` with `npm run umbrel:write-runtime-review` and verify it with `npm run umbrel:verify-runtime-review`.
+
+          This PR remains a draft until runtime installation through a real Umbrel UI is reviewed and any reviewer asset requests are resolved.
+          BODY
+          gh pr edit "$HIVERELAY_UMBREL_OFFICIAL_PR_URL" --body-file "$pr_body"
+          pr_state="$(gh pr view "$HIVERELAY_UMBREL_OFFICIAL_PR_URL" --json state --jq '.state')"
+          pr_is_draft="$(gh pr view "$HIVERELAY_UMBREL_OFFICIAL_PR_URL" --json isDraft --jq '.isDraft')"
+          pr_base="$(gh pr view "$HIVERELAY_UMBREL_OFFICIAL_PR_URL" --json baseRefName --jq '.baseRefName')"
+          pr_head_owner="$(gh pr view "$HIVERELAY_UMBREL_OFFICIAL_PR_URL" --json headRepositoryOwner --jq '.headRepositoryOwner.login')"
+          pr_head_ref="$(gh pr view "$HIVERELAY_UMBREL_OFFICIAL_PR_URL" --json headRefName --jq '.headRefName')"
+          pr_head_oid="$(gh pr view "$HIVERELAY_UMBREL_OFFICIAL_PR_URL" --json headRefOid --jq '.headRefOid')"
+          if [ "$pr_state" != "OPEN" ]; then
+            echo "Official Umbrel PR must still be OPEN before reviewer handoff; got '$pr_state'." >&2
+            exit 1
+          fi
+          if [ "$pr_is_draft" != "true" ]; then
+            echo "Official Umbrel PR must still be draft before reviewer handoff; got '$pr_is_draft'." >&2
+            exit 1
+          fi
+          if [ "$pr_base" != "master" ]; then
+            echo "Official Umbrel PR base drifted before reviewer handoff; got '$pr_base'." >&2
+            exit 1
+          fi
+          if [ "$pr_head_owner" != "${HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_OWNER:-}" ]; then
+            echo "Official Umbrel PR head owner drifted before reviewer handoff; got '$pr_head_owner'." >&2
+            exit 1
+          fi
+          if [ "$pr_head_ref" != "${HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_REF:-}" ]; then
+            echo "Official Umbrel PR head ref drifted before reviewer handoff; got '$pr_head_ref'." >&2
+            exit 1
+          fi
+          if [ "$pr_head_oid" != "${HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_OID:-}" ]; then
+            echo "Official Umbrel PR head OID drifted before reviewer handoff; got '$pr_head_oid'." >&2
+            exit 1
+          fi
+          export HIVERELAY_UMBREL_OFFICIAL_PR_STATE="$pr_state"
+          export HIVERELAY_UMBREL_OFFICIAL_PR_DRAFT="$pr_is_draft"
+          export HIVERELAY_UMBREL_OFFICIAL_PR_BASE="$pr_base"
+          export HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_OWNER="$pr_head_owner"
+          export HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_REF="$pr_head_ref"
+          export HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_OID="$pr_head_oid"
+          npm run release:write-official-umbrel-pr-evidence -- --out official-umbrel-pr-evidence.json
+          official_pr_evidence_sha="$(sha256sum official-umbrel-pr-evidence.json | cut -d ' ' -f 1)"
+          if ! [[ "$official_pr_evidence_sha" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "Official Umbrel PR evidence SHA-256 is malformed." >&2
+            exit 1
+          fi
+          echo "HIVERELAY_UMBREL_OFFICIAL_PR_BODY_EVIDENCE=official-umbrel-pr-evidence.json" >> "$GITHUB_ENV"
+          echo "HIVERELAY_UMBREL_OFFICIAL_PR_BODY_EVIDENCE_SHA256=$official_pr_evidence_sha" >> "$GITHUB_ENV"
+
+      - name: Upload official Umbrel PR evidence
+        if: ${{ success() && hashFiles('hiverelay/official-umbrel-pr-evidence.json') != '' }}
+        working-directory: hiverelay
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ steps.rel.outputs.version }}" official-umbrel-pr-evidence.json --clobber
+          official_pr_dir="$(mktemp -d)"
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'official-umbrel-pr-evidence.json' \
+            --dir "$official_pr_dir" \
+            --clobber
+          cmp official-umbrel-pr-evidence.json "$official_pr_dir/official-umbrel-pr-evidence.json"
+
+      - name: Verify published handoff evidence assets
+        if: ${{ success() && steps.rel.outputs.is_prerelease != 'true' }}
+        working-directory: hiverelay
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          handoff_dir="$(mktemp -d)"
+          mkdir -p "$handoff_dir/startos"
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'release-evidence.json' \
+            --dir "$handoff_dir" \
+            --clobber
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'release-image-smoke-evidence.json' \
+            --dir "$handoff_dir" \
+            --clobber
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'release-image-manifest-evidence.json' \
+            --dir "$handoff_dir" \
+            --clobber
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'umbrel-package-smoke-evidence.json' \
+            --dir "$handoff_dir" \
+            --clobber
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'fleet-rollout-evidence.json' \
+            --dir "$handoff_dir" \
+            --clobber
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'official-umbrel-pr-evidence.json' \
+            --dir "$handoff_dir" \
+            --clobber
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'startos-registry-evidence.json' \
+            --dir "$handoff_dir" \
+            --clobber
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'blindspark.s9pk' \
+            --dir "$handoff_dir/startos" \
+            --clobber
+          npm run release:verify-handoff-evidence -- --bundle-dir "$handoff_dir"

@@ -29,7 +29,11 @@ function makeNode (opts = {}) {
   const acceptMode = opts.acceptMode || 'open'
   const seededApps = []
 
-  const config = { regions: [region], autoHeal: { enabled: true } }
+  const config = {
+    regions: [region],
+    autoHeal: { enabled: true },
+    maxStorageBytes: opts.maxStorageBytes === undefined ? 50 * 1024 * 1024 * 1024 : opts.maxStorageBytes
+  }
   if (operator) config.operator = operator
 
   const node = {
@@ -42,6 +46,7 @@ function makeNode (opts = {}) {
     federation: {
       snapshot: () => ({ peerCatalogs })
     },
+    seeder: Object.hasOwn(opts, 'seeder') ? opts.seeder : { totalBytesStored: opts.totalBytesStored || 0 },
     seedApp: async (appKey, options) => {
       if (opts.seedApp) await opts.seedApp(appKey, options)
       seededApps.push(appKey)
@@ -349,6 +354,60 @@ test('AutoHeal: refuses to recruit when storage cap reached', async (t) => {
 
   t.is(recruited.length, 0, 'declined recruit')
   t.ok(skipped.find(s => s.reason === 'storage-full'), 'emitted storage-full skip event')
+})
+
+test('AutoHeal: refuses to recruit when storage capacity state is unavailable', async (t) => {
+  const recruited = []
+  const node = makeNode({
+    region: 'AS',
+    seeder: null,
+    peerCatalogs: [{
+      pubkey: 'peerA',
+      region: 'NA',
+      apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }]
+    }],
+    seedApp: async (k, o) => recruited.push({ k, o })
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: false,
+    thresholds: { minReplicas: 3, minRegions: 2, minOperators: 2 },
+    random: () => 0
+  })
+  heal._running = true
+  const skipped = []
+  heal.on('recruit-skipped', (info) => skipped.push(info))
+  await heal._tick()
+
+  t.is(recruited.length, 0, 'declined recruit without seeder accounting')
+  t.ok(skipped.find(s => s.reason === 'storage-capacity-unavailable'), 'emitted unavailable-capacity skip event')
+})
+
+test('AutoHeal: refuses to recruit when maxStorageBytes is missing or invalid', async (t) => {
+  const recruited = []
+  const node = makeNode({
+    region: 'AS',
+    maxStorageBytes: 0,
+    peerCatalogs: [{
+      pubkey: 'peerA',
+      region: 'NA',
+      apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }]
+    }],
+    seedApp: async (k, o) => recruited.push({ k, o })
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: false,
+    thresholds: { minReplicas: 3, minRegions: 2, minOperators: 2 },
+    random: () => 0
+  })
+  heal._running = true
+  const skipped = []
+  heal.on('recruit-skipped', (info) => skipped.push(info))
+  await heal._tick()
+
+  t.is(recruited.length, 0, 'declined recruit without a positive maxStorageBytes cap')
+  t.ok(skipped.find(s => s.reason === 'storage-capacity-unavailable'), 'emitted unavailable-capacity skip event')
 })
 
 test('AutoHeal: backs off retrying a drive after a recruit error', async (t) => {

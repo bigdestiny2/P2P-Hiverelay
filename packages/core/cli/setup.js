@@ -12,12 +12,20 @@
  * Writes to ~/.hiverelay/config.json and prints a summary.
  */
 
-import {
-  select, confirm, input, checkbox, number
-} from '@inquirer/prompts'
 import { saveConfig, ensureDirs } from '../config/loader.js'
 import { homedir } from 'os'
 import { join } from 'path'
+
+let select
+let confirm
+let input
+let checkbox
+let number
+
+async function loadPrompts () {
+  if (select) return
+  ({ select, confirm, input, checkbox, number } = await import('@inquirer/prompts'))
+}
 
 // ─── Node Profiles ──────────────────────────────────────────────────
 
@@ -121,6 +129,8 @@ function parseStorageInput (val) {
 // ─── Main Setup Flow ────────────────────────────────────────────────
 
 export async function runSetup () {
+  await loadPrompts()
+
   console.log()
   console.log('  ╔════════════════════════════════════════╗')
   console.log('  ║     HiveRelay Node Setup Wizard        ║')

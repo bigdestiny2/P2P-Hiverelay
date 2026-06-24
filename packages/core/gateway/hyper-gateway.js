@@ -64,12 +64,14 @@ function guessType (filePath) {
  *
  * Returns:
  *   { start, end }  — inclusive byte offsets, both within [0, totalSize-1]
- *   null            — header absent / unparseable / not a `bytes=` unit (treat as full body)
- *   'invalid'       — well-formed but unsatisfiable (caller should send 416)
+ *   null            — header absent / unsupported unit or multi-range (treat as full body)
+ *   'invalid'       — malformed/unsatisfiable byte range (caller should send 416)
  *
  * Only single-range requests are supported (no multipart/byteranges).
  * Multi-range and unknown units fall back to a full 200 response, which is
  * RFC 9110 §14.2 compliant ("a server MAY ignore the Range header field").
+ * Malformed byte-range syntax is rejected instead of being parsed with
+ * JavaScript's permissive Number() rules (`1e3`, `+1`, decimals, etc.).
  */
 function parseRange (rangeHeader, totalSize) {
   if (!rangeHeader || typeof rangeHeader !== 'string') return null
@@ -88,18 +90,18 @@ function parseRange (rangeHeader, totalSize) {
   if (startStr === '') {
     // Suffix range: bytes=-N (last N bytes)
     if (endStr === '') return 'invalid'
-    const suffix = Number(endStr)
-    if (!Number.isFinite(suffix) || suffix <= 0) return 'invalid'
+    const suffix = parseByteCount(endStr, totalSize)
+    if (suffix === null || suffix <= 0) return 'invalid'
     start = Math.max(0, totalSize - suffix)
     end = totalSize - 1
   } else {
-    start = Number(startStr)
-    if (!Number.isInteger(start) || start < 0) return 'invalid'
+    start = parseBytePosition(startStr)
+    if (start === null) return 'invalid'
     if (endStr === '') {
       end = totalSize - 1
     } else {
-      end = Number(endStr)
-      if (!Number.isInteger(end) || end < 0) return 'invalid'
+      end = parseBytePosition(endStr)
+      if (end === null) return 'invalid'
     }
   }
 
@@ -108,6 +110,47 @@ function parseRange (rangeHeader, totalSize) {
   if (end >= totalSize) end = totalSize - 1
 
   return { start, end }
+}
+
+function parseBytePosition (value) {
+  const text = String(value).trim()
+  if (!/^\d+$/.test(text)) return null
+  const n = Number(text)
+  if (!Number.isSafeInteger(n)) return null
+  return n
+}
+
+function parseByteCount (value, maxUsefulCount) {
+  const text = String(value).trim()
+  if (!/^\d+$/.test(text)) return null
+  const n = Number(text)
+  if (Number.isSafeInteger(n)) return n
+  // Suffix ranges larger than the resource are equivalent to "the whole
+  // resource"; avoid unsafe precision while preserving that common behavior.
+  return maxUsefulCount
+}
+
+function decodePathComponent (value) {
+  try {
+    return { ok: true, value: decodeURIComponent(value) }
+  } catch {
+    return { ok: false, value: null }
+  }
+}
+
+function writeGatewayJson (res, body, status = 200, headers = null) {
+  let explicitCacheControl = false
+  if (headers) {
+    for (const [name, value] of Object.entries(headers)) {
+      if (name.toLowerCase() === 'cache-control') explicitCacheControl = true
+      res.setHeader(name, value)
+    }
+  }
+  res.setHeader('Content-Type', 'application/json; charset=utf-8')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  if (!explicitCacheControl) res.setHeader('Cache-Control', 'no-store, max-age=0')
+  res.writeHead(status)
+  res.end(JSON.stringify(body) + '\n')
 }
 
 /**
@@ -195,12 +238,26 @@ export class HyperGateway extends EventEmitter {
    * Wrap a promise with a timeout
    */
   _withTimeout (promise, ms, context) {
-    return Promise.race([
-      promise,
-      new Promise((_resolve, reject) =>
-        setTimeout(() => reject(new Error(`${context} timed out after ${ms}ms`)), ms)
+    let timer = null
+    return new Promise((resolve, reject) => {
+      const done = (fn, value) => {
+        if (timer) {
+          clearTimeout(timer)
+          timer = null
+        }
+        fn(value)
+      }
+      timer = setTimeout(() => {
+        timer = null
+        reject(new Error(`${context} timed out after ${ms}ms`))
+      }, ms)
+      if (timer.unref) timer.unref()
+
+      Promise.resolve(promise).then(
+        value => done(resolve, value),
+        err => done(reject, err)
       )
-    ])
+    })
   }
 
   /**
@@ -241,11 +298,16 @@ export class HyperGateway extends EventEmitter {
     const url = new URL(req.url, 'http://localhost')
     const path = url.pathname
 
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.setHeader('Allow', 'GET, HEAD')
+      writeGatewayJson(res, { error: 'Method Not Allowed' }, 405)
+      return
+    }
+
     // Parse: /v1/hyper/KEY/path
     const prefix = '/v1/hyper/'
     if (!path.startsWith(prefix)) {
-      res.writeHead(400)
-      res.end(JSON.stringify({ error: 'Invalid path' }))
+      writeGatewayJson(res, { error: 'Invalid path' }, 400)
       return
     }
 
@@ -256,8 +318,18 @@ export class HyperGateway extends EventEmitter {
 
     // Reject path traversal attempts
     // Block: .. (parent dir), null bytes, absolute paths, URL-encoded variants
-    const decodedPath = decodeURIComponent(filePath)
-    const doubleDecodedPath = decodeURIComponent(decodedPath)
+    const decoded = decodePathComponent(filePath)
+    if (!decoded.ok) {
+      writeGatewayJson(res, { error: 'Malformed path encoding' }, 400)
+      return
+    }
+    const decodedPath = decoded.value
+    const doubleDecoded = decodePathComponent(decodedPath)
+    if (!doubleDecoded.ok) {
+      writeGatewayJson(res, { error: 'Malformed path encoding' }, 400)
+      return
+    }
+    const doubleDecodedPath = doubleDecoded.value
 
     if (
       decodedPath.includes('..') ||
@@ -266,56 +338,50 @@ export class HyperGateway extends EventEmitter {
       decodedPath.includes('\x00') ||
       /^[a-zA-Z]:/.test(decodedPath) // Windows absolute paths
     ) {
-      res.writeHead(403)
-      res.end(JSON.stringify({ error: 'Forbidden: path traversal rejected' }))
+      writeGatewayJson(res, { error: 'Forbidden: path traversal rejected' }, 403)
       return
     }
 
     if (!keyHex || keyHex.length !== 64 || !/^[0-9a-f]+$/i.test(keyHex)) {
-      res.writeHead(400)
-      res.end(JSON.stringify({ error: 'Invalid drive key' }))
+      writeGatewayJson(res, { error: 'Invalid drive key' }, 400)
       return
     }
 
     // Check if this drive is seeded on the relay
     if (this.node.seededApps && !this.node.seededApps.has(keyHex)) {
-      res.writeHead(404)
-      res.end(JSON.stringify({ error: 'Drive not seeded on this relay' }))
+      writeGatewayJson(res, { error: 'Drive not seeded on this relay' }, 404)
       return
     }
 
     // Blind apps: relay has encrypted ciphertext, can't serve over HTTP
     const appEntry = this.node.seededApps && this.node.seededApps.get(keyHex)
     if (appEntry && appEntry.blind) {
-      res.writeHead(403)
-      res.end(JSON.stringify({
+      writeGatewayJson(res, {
         error: 'Private app — encrypted content, P2P access only',
         blind: true,
         hint: 'Use PearBrowser or Hyperswarm to access this app with the encryption key'
-      }))
+      }, 403)
       return
     }
 
     const privacyTier = String(appEntry?.privacyTier || 'public').toLowerCase()
     if (this.node.config?.gatewayPublicOnlyPrivacyTier !== false && privacyTier !== 'public') {
-      res.writeHead(403)
-      res.end(JSON.stringify({
+      writeGatewayJson(res, {
         error: 'Gateway access blocked by privacy tier policy',
         privacyTier,
         hint: 'Use direct P2P access for non-public apps'
-      }))
+      }, 403)
       return
     }
 
     if (this.node.policyGuard && appEntry) {
       const policy = this.node.policyGuard.check(keyHex, privacyTier, 'serve-code')
       if (!policy.allowed) {
-        res.writeHead(403)
-        res.end(JSON.stringify({
+        writeGatewayJson(res, {
           error: 'PolicyGuard blocked this app',
           privacyTier,
           reason: policy.reason
-        }))
+        }, 403)
         return
       }
     }
@@ -325,8 +391,7 @@ export class HyperGateway extends EventEmitter {
     try {
       const drive = await this._getDrive(keyHex)
       if (!drive) {
-        res.writeHead(404)
-        res.end(JSON.stringify({ error: 'Drive not available yet — still replicating' }))
+        writeGatewayJson(res, { error: 'Drive not available yet — still replicating' }, 404)
         return
       }
 
@@ -352,8 +417,7 @@ export class HyperGateway extends EventEmitter {
         'drive.entry()'
       )
       if (!entry || !entry.value.blob) {
-        res.writeHead(404)
-        res.end(JSON.stringify({ error: 'File not found', path: filePath }))
+        writeGatewayJson(res, { error: 'File not found', path: filePath }, 404)
         return
       }
 
@@ -364,6 +428,7 @@ export class HyperGateway extends EventEmitter {
       res.setHeader('X-Hyper-Key', keyHex)
       res.setHeader('X-Served-By', 'hiverelay-gateway')
       res.setHeader('Cache-Control', 'public, max-age=60')
+      res.setHeader('X-Content-Type-Options', 'nosniff')
       res.setHeader('Accept-Ranges', 'bytes')
 
       // HTML needs base-URL rewriting so Vite-built apps resolve assets
@@ -377,8 +442,7 @@ export class HyperGateway extends EventEmitter {
           'drive.get()'
         )
         if (!content) {
-          res.writeHead(404)
-          res.end(JSON.stringify({ error: 'File not found', path: filePath }))
+          writeGatewayJson(res, { error: 'File not found', path: filePath }, 404)
           return
         }
         let html = content.toString('utf-8')
@@ -408,8 +472,7 @@ export class HyperGateway extends EventEmitter {
         const parsed = parseRange(rangeHeader, byteLength)
         if (parsed === 'invalid') {
           res.setHeader('Content-Range', `bytes */${byteLength}`)
-          res.writeHead(416)
-          res.end(JSON.stringify({ error: 'Range Not Satisfiable' }))
+          writeGatewayJson(res, { error: 'Range Not Satisfiable' }, 416)
           return
         }
         if (parsed) {
@@ -448,8 +511,7 @@ export class HyperGateway extends EventEmitter {
         // instead of a hung socket.
         if (!res.headersSent) {
           try {
-            res.writeHead(502)
-            res.end(JSON.stringify({ error: err.message }))
+            writeGatewayJson(res, { error: 'Gateway stream failed' }, 502)
           } catch {}
         } else {
           try { res.destroy(err) } catch {}
@@ -467,8 +529,8 @@ export class HyperGateway extends EventEmitter {
 
       stream.pipe(res)
     } catch (err) {
-      res.writeHead(502)
-      res.end(JSON.stringify({ error: err.message }))
+      this.emit('drive-error', { context: 'handle', key: keyHex, path: filePath, error: err.message })
+      writeGatewayJson(res, { error: 'Gateway read failed' }, 502)
     }
   }
 
@@ -572,11 +634,11 @@ export class HyperGateway extends EventEmitter {
       this.emit('drive-error', { context: 'directoryListing', key: keyHex, path: dirPath, error: err.message })
     }
 
-    res.setHeader('Content-Type', 'application/json')
-    res.setHeader('X-Hyper-Key', keyHex)
-    res.setHeader('X-Served-By', 'hiverelay-gateway')
-    res.writeHead(200)
-    res.end(JSON.stringify({ key: keyHex, path: dirPath, entries }))
+    writeGatewayJson(res, { key: keyHex, path: dirPath, entries }, 200, {
+      'X-Hyper-Key': keyHex,
+      'X-Served-By': 'hiverelay-gateway',
+      'Cache-Control': 'public, max-age=60'
+    })
   }
 
   getStats () {

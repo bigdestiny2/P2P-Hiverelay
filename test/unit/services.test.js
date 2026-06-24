@@ -1,6 +1,10 @@
 import test from 'brittle'
 import { ServiceRegistry } from 'p2p-hiverelay/core/services/registry.js'
 import { ServiceProvider } from 'p2p-hiverelay/core/services/provider.js'
+import {
+  MAX_SERVICE_CATALOG_ENTRIES,
+  MAX_SERVICE_DESCRIPTION_BYTES
+} from 'p2p-hiverelay/core/services/service-catalog.js'
 import { ZKService } from 'p2p-hiveservices/builtin/zk-service.js'
 import { AIService } from 'p2p-hiveservices/builtin/ai-service.js'
 
@@ -180,6 +184,37 @@ test('ServiceRegistry - find providers (remote)', async (t) => {
 
   const missing = registry.findProviders('identity')
   t.is(missing.length, 0)
+})
+
+test('ServiceRegistry - sanitizes remote service catalogs before storing', async (t) => {
+  const registry = new ServiceRegistry()
+  let update = null
+  registry.on('remote-services-updated', (event) => { update = event })
+
+  registry.addRemoteServices('abc123', [
+    {
+      name: 'storage',
+      version: '1.0.0',
+      description: 'x'.repeat(MAX_SERVICE_DESCRIPTION_BYTES + 20),
+      capabilities: ['get', 'put', 'get'],
+      provider: { secret: true }
+    },
+    { name: 'bad\nname', version: '1.0.0' },
+    ...Array.from({ length: MAX_SERVICE_CATALOG_ENTRIES + 5 }, (_, i) => ({
+      name: 'svc-' + i,
+      version: '1.0.0',
+      secretToken: 'nope'
+    }))
+  ])
+
+  const stored = registry.remoteServices.get('abc123')
+  t.ok(stored)
+  t.is(stored.services.length, MAX_SERVICE_CATALOG_ENTRIES)
+  t.alike(stored.services[0].capabilities, ['get', 'put'])
+  t.is(Buffer.byteLength(stored.services[0].description, 'utf8'), MAX_SERVICE_DESCRIPTION_BYTES)
+  t.absent(JSON.stringify(stored.services).includes('secretToken'))
+  t.absent(JSON.stringify(stored.services).includes('provider'))
+  t.alike(update, { relay: 'abc123', count: MAX_SERVICE_CATALOG_ENTRIES })
 })
 
 test('ServiceRegistry - version filter in findProviders', async (t) => {

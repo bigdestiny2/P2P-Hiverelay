@@ -5,7 +5,7 @@ import { MDNSDiscovery } from 'p2p-hiverelay/core/relay-node/mdns-discovery.js'
 import path from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
-import { mkdir } from 'fs/promises'
+import { mkdir, readFile } from 'fs/promises'
 import { EventEmitter } from 'events'
 import b4a from 'b4a'
 
@@ -109,6 +109,60 @@ test('AccessControl - accepts Buffer pubkeys', async (t) => {
   ac.destroy()
 })
 
+test('AccessControl - addDevice rolls back when save fails', async (t) => {
+  const storage = tmpStorage()
+  await mkdir(storage, { recursive: true })
+  const ac = new AccessControl(storage)
+  await ac.load()
+
+  const pubkey = randomBytes(32).toString('hex')
+  let addedEvents = 0
+  ac.on('device-added', () => { addedEvents++ })
+  ac.save = async () => { throw new Error('disk full') }
+
+  try {
+    await ac.addDevice(pubkey, 'unsaved-phone')
+    t.fail('should throw when allowlist save fails')
+  } catch (err) {
+    t.is(err.message, 'disk full')
+  }
+
+  t.is(ac.isAllowed(pubkey), false, 'failed add is not allowed in memory')
+  t.is(ac.listDevices().length, 0, 'failed add leaves allowlist unchanged')
+  t.is(addedEvents, 0, 'failed add does not emit device-added')
+
+  ac.destroy()
+})
+
+test('AccessControl - removeDevice rolls back when save fails', async (t) => {
+  const storage = tmpStorage()
+  await mkdir(storage, { recursive: true })
+  const ac = new AccessControl(storage)
+  await ac.load()
+
+  const pubkey = randomBytes(32).toString('hex')
+  await ac.addDevice(pubkey, 'phone')
+
+  let removedEvents = 0
+  ac.on('device-removed', () => { removedEvents++ })
+  ac.save = async () => { throw new Error('readonly filesystem') }
+
+  try {
+    await ac.removeDevice(pubkey)
+    t.fail('should throw when allowlist save fails')
+  } catch (err) {
+    t.is(err.message, 'readonly filesystem')
+  }
+
+  t.is(ac.isAllowed(pubkey), true, 'failed remove keeps device allowed in memory')
+  const devices = ac.listDevices()
+  t.is(devices.length, 1, 'failed remove leaves allowlist entry present')
+  t.is(devices[0].name, 'phone', 'failed remove restores device metadata')
+  t.is(removedEvents, 0, 'failed remove does not emit device-removed')
+
+  ac.destroy()
+})
+
 // ─── Pairing Tests ──────────────────────────────────────────────
 
 test('AccessControl - pairing flow', async (t) => {
@@ -136,6 +190,34 @@ test('AccessControl - pairing flow', async (t) => {
   t.is(goodResult, true, 'correct token accepted')
   t.is(ac.isAllowed(newDevice), true, 'device added to allowlist')
   t.is(ac.isPairing, false, 'pairing disabled after success (one-shot)')
+
+  ac.destroy()
+})
+
+test('AccessControl - pairing tokens use timing-safe comparison', async (t) => {
+  const source = await readFile('packages/core/core/relay-node/access-control.js', 'utf8')
+  t.ok(source.includes('timingSafeEqual'), 'pairing token compare uses timingSafeEqual')
+  t.ok(source.includes('safePairingTokenEqual'), 'pairing token compare is centralized')
+  t.absent(source.includes('token !== this._pairingState.token'), 'raw token inequality is not used')
+
+  const storage = tmpStorage()
+  await mkdir(storage, { recursive: true })
+  const ac = new AccessControl(storage)
+  await ac.load()
+
+  const { token } = ac.enablePairing({ timeoutMs: 10_000 })
+  const devicePub = randomBytes(32).toString('hex')
+  const oversized = token + '0'.repeat(1024)
+
+  const badResult = await ac.attemptPair(oversized, devicePub, 'oversized-token')
+  t.is(badResult, false, 'oversized token rejected')
+  t.is(ac.isAllowed(devicePub), false, 'oversized token does not pair device')
+  t.is(ac.isPairing, true, 'failed token comparison keeps pairing active')
+
+  const goodDevice = randomBytes(32).toString('hex')
+  const goodResult = await ac.attemptPair(token, goodDevice, 'phone')
+  t.is(goodResult, true, 'valid token still pairs')
+  t.is(ac.isAllowed(goodDevice), true, 'valid token adds device')
 
   ac.destroy()
 })
@@ -184,6 +266,69 @@ test('AccessControl - pairing payload generation', async (t) => {
   t.is(payload.port, 49737)
   t.is(payload.pairingToken, token)
   t.ok(payload.expiresAt)
+
+  ac.destroy()
+})
+
+test('AccessControl - pairing save failure keeps pairing active and device unpaired', async (t) => {
+  const storage = tmpStorage()
+  await mkdir(storage, { recursive: true })
+  const ac = new AccessControl(storage)
+  await ac.load()
+
+  const { token } = ac.enablePairing({ timeoutMs: 10_000 })
+  const pubkey = randomBytes(32).toString('hex')
+  let successEvents = 0
+  ac.on('pairing-success', () => { successEvents++ })
+  ac.save = async () => { throw new Error('allowlist unavailable') }
+
+  try {
+    await ac.attemptPair(token, pubkey, 'phone')
+    t.fail('should throw when pairing cannot persist device')
+  } catch (err) {
+    t.is(err.message, 'allowlist unavailable')
+  }
+
+  t.is(ac.isAllowed(pubkey), false, 'failed pair does not leave device allowed')
+  t.is(ac.isPairing, true, 'failed pair keeps pairing session active for retry')
+  t.is(successEvents, 0, 'failed pair does not emit pairing-success')
+
+  ac.destroy()
+})
+
+test('AccessControl - restoreBackup rolls back when save fails', async (t) => {
+  const storage = tmpStorage()
+  await mkdir(storage, { recursive: true })
+  const ac = new AccessControl(storage)
+  await ac.load()
+
+  const secretKey = randomBytes(32)
+  const originalPubkey = randomBytes(32).toString('hex')
+  const restoredPubkey = randomBytes(32).toString('hex')
+
+  await ac.addDevice(originalPubkey, 'laptop')
+
+  const backupSource = new AccessControl(storage)
+  await backupSource.load()
+  await backupSource.addDevice(restoredPubkey, 'tablet')
+  const backup = await backupSource.createBackup(secretKey)
+  backupSource.destroy()
+
+  let restoredEvents = 0
+  ac.on('backup-restored', () => { restoredEvents++ })
+  ac.save = async () => { throw new Error('backup save failed') }
+
+  try {
+    await ac.restoreBackup(backup, secretKey)
+    t.fail('should throw when backup restore cannot persist allowlist')
+  } catch (err) {
+    t.is(err.message, 'backup save failed')
+  }
+
+  t.is(ac.isAllowed(originalPubkey), true, 'failed restore keeps original device')
+  t.is(ac.isAllowed(restoredPubkey), false, 'failed restore removes unsaved restored device')
+  t.is(ac.listDevices().length, 1, 'failed restore leaves original allowlist size')
+  t.is(restoredEvents, 0, 'failed restore does not emit backup-restored')
 
   ac.destroy()
 })

@@ -1,0 +1,300 @@
+#!/usr/bin/env node
+
+import fs from 'node:fs'
+
+const FLEET_ROLLOUT_TIMEOUT_MIN_MS = 10 * 60 * 1000
+const FLEET_ROLLOUT_TIMEOUT_MAX_MS = 4 * 60 * 60 * 1000
+
+const usage = `
+Usage:
+  node scripts/check-release-distribution-env.mjs --channel <canary|stable|both|none> --prerelease <true|false> [--github-env <path>]
+
+Defaults:
+  --channel defaults to both for full releases and none for prereleases when HIVERELAY_RELEASE_CHANNEL is unset.
+`
+
+const args = parseArgs(process.argv.slice(2))
+const prerelease = readBoolean(args.prerelease ?? process.env.HIVERELAY_RELEASE_PRERELEASE)
+const channel = args.channel || process.env.HIVERELAY_RELEASE_CHANNEL || (prerelease ? 'none' : 'both')
+const githubEnv = args.githubEnv || process.env.GITHUB_ENV || ''
+const result = checkReleaseDistributionEnv({ channel, prerelease, env: process.env })
+
+appendGithubEnv(githubEnv, result.envUpdates)
+
+if (!result.ok) {
+  console.error('Release distribution preflight failed:')
+  for (const item of result.missing) console.error(`- ${item}`)
+  process.exit(1)
+}
+
+if (result.skipped) {
+  console.log('Distribution credential preflight skipped for prerelease.')
+} else {
+  console.log('Stable release distribution preflight passed.')
+}
+
+function checkReleaseDistributionEnv ({ channel, prerelease, env }) {
+  if (!['canary', 'stable', 'both', 'none'].includes(channel)) {
+    return {
+      ok: false,
+      skipped: false,
+      missing: [`invalid channel "${channel}"`],
+      envUpdates: {
+        HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS: 'failed',
+        HIVERELAY_RELEASE_SURFACES_STATUS: 'blocked'
+      }
+    }
+  }
+
+  if (prerelease) {
+    if (channel !== 'none') {
+      return {
+        ok: false,
+        skipped: false,
+        missing: [`pre-release channel must be none; got "${channel}"`],
+        envUpdates: {
+          HIVERELAY_RELEASE_EFFECTIVE_CHANNEL: channel,
+          HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS: 'failed',
+          HIVERELAY_RELEASE_SURFACES_STATUS: 'blocked',
+          HIVERELAY_FLEET_ROLLOUT_STATUS: 'blocked-prerelease-promotion'
+        }
+      }
+    }
+    return {
+      ok: true,
+      skipped: true,
+      missing: [],
+      envUpdates: {
+        HIVERELAY_RELEASE_EFFECTIVE_CHANNEL: channel,
+        HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS: 'skipped'
+      }
+    }
+  }
+
+  const missing = []
+  const envUpdates = {
+    HIVERELAY_RELEASE_EFFECTIVE_CHANNEL: channel,
+    HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS: 'passed'
+  }
+
+  const requireSecret = (name, statusNames, opts = {}) => {
+    const value = String(env[name] || '')
+    if (!value.trim()) {
+      missing.push(name)
+      for (const statusName of statusNames) envUpdates[statusName] = 'missing-secret'
+      return
+    }
+    if (!opts.validate || opts.validate(value)) return
+    missing.push(`${name} ${opts.message}`)
+    for (const statusName of statusNames) envUpdates[statusName] = opts.status || 'invalid-secret'
+  }
+
+  const requireGitHubToken = (name, statusNames) => requireSecret(name, statusNames, {
+    validate: isGitHubToken,
+    status: 'invalid-token',
+    message: 'must be a GitHub token without whitespace or control characters'
+  })
+
+  const requirePrivateKey = (name, statusNames) => requireSecret(name, statusNames, {
+    validate: isPrivateKeyBlock,
+    status: 'invalid-secret',
+    message: 'must be a private key block'
+  })
+
+  const requireOptionalFleetTimeout = () => {
+    const value = String(env.FLEET_ROLLOUT_TIMEOUT_MS || '')
+    if (!value) return
+    if (!isIntegerInRange(value, FLEET_ROLLOUT_TIMEOUT_MIN_MS, FLEET_ROLLOUT_TIMEOUT_MAX_MS)) {
+      missing.push(`FLEET_ROLLOUT_TIMEOUT_MS must be an integer between ${FLEET_ROLLOUT_TIMEOUT_MIN_MS} and ${FLEET_ROLLOUT_TIMEOUT_MAX_MS} milliseconds without whitespace or control characters`)
+      envUpdates.HIVERELAY_FLEET_ROLLOUT_STATUS = 'invalid-timeout'
+    }
+  }
+
+  if (channel === 'none') {
+    missing.push('release channel must be canary, stable, or both')
+    envUpdates.HIVERELAY_FLEET_ROLLOUT_STATUS = 'missing-channel'
+  } else {
+    requirePrivateKey('FLEET_SSH_PRIVATE_KEY', ['HIVERELAY_FLEET_ROLLOUT_STATUS'])
+    requireOptionalFleetTimeout()
+  }
+
+  requireGitHubToken('UMBREL_STORE_TOKEN', [
+    'HIVERELAY_UMBREL_COMMUNITY_STORE_VALIDATE_STATUS',
+    'HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS'
+  ])
+  requireGitHubToken('UMBREL_OFFICIAL_PR_TOKEN', ['HIVERELAY_UMBREL_OFFICIAL_PR_STATUS'])
+  requireSecret('UMBREL_OFFICIAL_FORK', ['HIVERELAY_UMBREL_OFFICIAL_PR_STATUS'])
+  if (String(env.UMBREL_OFFICIAL_FORK || '').trim() && !isOfficialUmbrelForkSlug(env.UMBREL_OFFICIAL_FORK)) {
+    missing.push('UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps')
+    envUpdates.HIVERELAY_UMBREL_OFFICIAL_PR_STATUS = 'invalid-fork'
+  }
+  requirePrivateKey('STARTOS_DEVELOPER_KEY_PEM', ['HIVERELAY_STARTOS_REGISTRY_STATUS'])
+  requireSecret('STARTOS_REGISTRY_URL', ['HIVERELAY_STARTOS_REGISTRY_STATUS'])
+  if (String(env.STARTOS_REGISTRY_URL || '').trim() && !isPublicHttpsUrl(env.STARTOS_REGISTRY_URL)) {
+    missing.push('STARTOS_REGISTRY_URL must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames')
+    envUpdates.HIVERELAY_STARTOS_REGISTRY_STATUS = 'invalid-registry-url'
+  }
+
+  if (missing.length > 0) {
+    envUpdates.HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS = 'failed'
+    envUpdates.HIVERELAY_RELEASE_SURFACES_STATUS = 'blocked'
+  }
+
+  return {
+    ok: missing.length === 0,
+    skipped: false,
+    missing,
+    envUpdates
+  }
+}
+
+function isGitHubToken (value) {
+  return typeof value === 'string' &&
+    value.trim() === value &&
+    !hasControlChars(value) &&
+    /^(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})$/.test(value)
+}
+
+function isPrivateKeyBlock (value) {
+  if (typeof value !== 'string' || value.trim() !== value) return false
+  if (hasPrivateKeyControlChars(value)) return false
+  const normalized = value.replace(/\r\n/g, '\n')
+  const match = /^-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----\n[\s\S]+\n-----END \1-----$/.exec(normalized)
+  return Boolean(match)
+}
+
+function isIntegerInRange (value, min, max) {
+  if (typeof value !== 'string' || value.trim() !== value) return false
+  if (hasControlChars(value)) return false
+  if (!/^[1-9][0-9]*$/.test(value)) return false
+  const n = Number(value)
+  return Number.isSafeInteger(n) && n >= min && n <= max
+}
+
+function hasPrivateKeyControlChars (value) {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i)
+    if (code === 10 || code === 13) continue
+    if (code <= 31 || code === 127) return true
+  }
+  return false
+}
+
+function parseArgs (argv) {
+  const out = {}
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]
+    if (arg === '--help' || arg === '-h') {
+      console.log(usage.trim())
+      process.exit(0)
+    }
+    if (arg === '--channel') {
+      out.channel = readValue(argv, ++i, arg)
+      continue
+    }
+    if (arg === '--prerelease') {
+      out.prerelease = readValue(argv, ++i, arg)
+      continue
+    }
+    if (arg === '--github-env') {
+      out.githubEnv = readValue(argv, ++i, arg)
+      continue
+    }
+    die(`Unknown argument: ${arg}`)
+  }
+  return out
+}
+
+function readValue (argv, index, flag) {
+  const value = argv[index]
+  if (!value || value.startsWith('--')) die(`Missing value for ${flag}`)
+  return value
+}
+
+function readBoolean (value) {
+  const normalized = String(value || 'false').trim().toLowerCase()
+  if (normalized === 'true') return true
+  if (normalized === 'false') return false
+  die(`Invalid --prerelease "${value}". Expected true or false.`)
+}
+
+function isPublicHttpsUrl (value) {
+  if (typeof value !== 'string' || !value || value.trim() !== value) return false
+  if (hasControlChars(value)) return false
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      isPublicHostname(url.hostname)
+  } catch (_) {
+    return false
+  }
+}
+
+function isPublicHostname (hostname) {
+  const host = String(hostname || '').toLowerCase()
+  if (!/^[a-z0-9.-]+$/.test(host)) return false
+  if (!host.includes('.')) return false
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return false
+
+  const labels = host.split('.')
+  if (labels.some(label => !label || label.length > 63 || label.startsWith('-') || label.endsWith('-'))) return false
+  const tld = labels[labels.length - 1]
+  if (!/^[a-z]{2,63}$/.test(tld)) return false
+
+  const reservedHosts = new Set(['localhost', 'example.com', 'example.net', 'example.org'])
+  if (reservedHosts.has(host)) return false
+  const reservedSuffixes = ['.localhost', '.local', '.internal', '.test', '.example', '.invalid', '.example.com', '.example.net', '.example.org']
+  return !reservedSuffixes.some(suffix => host.endsWith(suffix))
+}
+
+function hasControlChars (value) {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i)
+    if (code <= 31 || code === 127) return true
+  }
+  return false
+}
+
+function isOfficialUmbrelForkSlug (value) {
+  if (typeof value !== 'string' || value.trim() !== value) return false
+  if (hasControlChars(value)) return false
+  const parts = value.split('/')
+  if (parts.length !== 2) return false
+  const [owner, repo] = parts
+  return isGitHubOwnerName(owner) &&
+    owner.toLowerCase() !== 'getumbrel' &&
+    repo === 'umbrel-apps'
+}
+
+function isGitHubOwnerName (value) {
+  return /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(value)
+}
+
+function appendGithubEnv (file, updates) {
+  if (!file) return
+  const lines = []
+  for (const [name, value] of Object.entries(updates)) {
+    lines.push(formatGithubEnvLine(name, value))
+  }
+  fs.appendFileSync(file, lines.join('\n') + '\n')
+}
+
+function formatGithubEnvLine (name, value) {
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
+    die(`Refusing to write malformed GitHub environment variable name: ${JSON.stringify(name)}`)
+  }
+  const stringValue = String(value)
+  if (hasControlChars(stringValue)) {
+    die(`Refusing to write multi-line or control-character value for ${name} to GitHub environment file`)
+  }
+  return `${name}=${stringValue}`
+}
+
+function die (message) {
+  console.error(message)
+  process.exit(1)
+}

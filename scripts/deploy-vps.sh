@@ -5,7 +5,7 @@
 # Creates a systemd service with auto-restart, memory limits, and proper region tagging.
 # Kills any old processes from /opt/hiverelay or nohup before enabling the systemd service.
 
-set -e
+set -euo pipefail
 
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/cloudzy_hiverelay}"
 API_KEY="${HIVERELAY_API_KEY:?Set HIVERELAY_API_KEY environment variable}"
@@ -41,10 +41,23 @@ deploy_server() {
     local MAX_MEM=$4  # systemd MemoryMax (e.g., 384M, 1G)
     local HEAP=$5     # Node --max-old-space-size in MB
     local OPERATOR=${6:-hive-foundation}  # operator identifier for AutoHeal v2 sybil resistance
-    local API_KEY_OVERRIDE=$7  # optional per-relay API key override
+    local API_KEY_OVERRIDE=${7:-}  # optional per-relay API key override
 
     # Resolve effective API key (per-relay override beats env var)
     local EFFECTIVE_KEY="${API_KEY_OVERRIDE:-${API_KEY}}"
+    validate_deploy_value "relay name" "$NAME" '^[A-Za-z0-9._-]{1,64}$'
+    validate_deploy_value "relay IP/host" "$IP" '^[A-Za-z0-9:._-]{1,255}$'
+    validate_deploy_value "relay region" "$REGION" '^[A-Za-z0-9._-]{1,32}$'
+    validate_deploy_value "relay operator" "$OPERATOR" '^[A-Za-z0-9._-]{1,64}$'
+    validate_deploy_value "heap size" "$HEAP" '^[0-9]{2,6}$'
+    validate_deploy_value "memory limit" "$MAX_MEM" '^[0-9]+[MG]$'
+    validate_api_key "$EFFECTIVE_KEY"
+
+    local MEMORY_HIGH
+    MEMORY_HIGH="$(memory_high_limit "$MAX_MEM")"
+
+    local API_KEY_B64
+    API_KEY_B64="$(printf '%s' "$EFFECTIVE_KEY" | base64 | tr -d '\n')"
 
     echo "═══════════════════════════════════════════════════"
     echo "  Deploying to $NAME ($IP) [region=$REGION, operator=$OPERATOR, mem=$MAX_MEM, heap=${HEAP}M]"
@@ -52,6 +65,9 @@ deploy_server() {
 
     ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new root@"$IP" << REMOTE_SCRIPT
         set -e
+        API_KEY_B64='${API_KEY_B64}'
+        API_KEY_VALUE="\$(printf '%s' "\$API_KEY_B64" | base64 -d)"
+
         cd /root
 
         # ─── 1. Pull latest code ───
@@ -102,6 +118,12 @@ deploy_server() {
         find /root/.hiverelay -name "*.lock" -delete 2>/dev/null || true
 
         # ─── 4. Create systemd service ───
+        install -d -m 0700 /etc/hiverelay
+        umask 077
+        printf 'HIVERELAY_API_KEY=%s\n' "\$API_KEY_VALUE" > /etc/hiverelay/hiverelay.env
+        chmod 0600 /etc/hiverelay/hiverelay.env
+        unset API_KEY_VALUE API_KEY_B64
+
         cat > /etc/systemd/system/hiverelay.service << 'SYSTEMD_UNIT'
 [Unit]
 Description=HiveRelay P2P Relay Node
@@ -116,7 +138,7 @@ Restart=always
 RestartSec=15
 KillSignal=SIGTERM
 TimeoutStopSec=10
-Environment=HIVERELAY_API_KEY=API_KEY_PLACEHOLDER
+EnvironmentFile=/etc/hiverelay/hiverelay.env
 Environment=NODE_ENV=production
 MemoryMax=MEM_PLACEHOLDER
 MemoryHigh=MEMHIGH_PLACEHOLDER
@@ -136,14 +158,8 @@ SYSTEMD_UNIT
         sed -i "s/HEAP_PLACEHOLDER/${HEAP}/" /etc/systemd/system/hiverelay.service
         sed -i "s/REGION_PLACEHOLDER/${REGION}/" /etc/systemd/system/hiverelay.service
         sed -i "s/OPERATOR_PLACEHOLDER/${OPERATOR}/" /etc/systemd/system/hiverelay.service
-        sed -i "s/API_KEY_PLACEHOLDER/${EFFECTIVE_KEY}/" /etc/systemd/system/hiverelay.service
         sed -i "s/MEM_PLACEHOLDER/${MAX_MEM}/" /etc/systemd/system/hiverelay.service
-        sed -i "s/MEMHIGH_PLACEHOLDER/${MAX_MEM%M}/" /etc/systemd/system/hiverelay.service
-
-        # Calculate MemoryHigh as 80% of MemoryMax
-        MEM_NUM=\$(echo "${MAX_MEM}" | grep -oP '[0-9]+')
-        MEM_HIGH=\$(( MEM_NUM * 80 / 100 ))
-        sed -i "s|MemoryHigh=.*|MemoryHigh=\${MEM_HIGH}M|" /etc/systemd/system/hiverelay.service
+        sed -i "s/MEMHIGH_PLACEHOLDER/${MEMORY_HIGH}/" /etc/systemd/system/hiverelay.service
 
         # ─── 5. Enable and start ───
         systemctl daemon-reload
@@ -164,6 +180,39 @@ REMOTE_SCRIPT
 
     echo "  Done: $NAME"
     echo
+}
+
+validate_deploy_value() {
+    local LABEL=$1
+    local VALUE=$2
+    local PATTERN=$3
+    if [[ ! "$VALUE" =~ $PATTERN ]]; then
+        echo "Invalid $LABEL: $VALUE" >&2
+        exit 1
+    fi
+}
+
+validate_api_key() {
+    local VALUE=$1
+    if [ -z "$VALUE" ]; then
+        echo "HiveRelay API key must not be empty" >&2
+        exit 1
+    fi
+    if printf '%s' "$VALUE" | LC_ALL=C grep -q '[[:cntrl:][:space:]]'; then
+        echo "HiveRelay API key must not contain whitespace or control characters" >&2
+        exit 1
+    fi
+}
+
+memory_high_limit() {
+    local VALUE=$1
+    local NUM="${VALUE%[MG]}"
+    local UNIT="${VALUE: -1}"
+    if [ "$UNIT" = "G" ]; then
+        echo "$(( NUM * 1024 * 80 / 100 ))M"
+    else
+        echo "$(( NUM * 80 / 100 ))M"
+    fi
 }
 
 TARGET=${1:-all}

@@ -14,6 +14,11 @@ CHANNEL="${1:-stable}"
 REPO_DIR="${HIVERELAY_REPO_DIR:-$HOME/hiverelay}"
 SRC="$REPO_DIR/fleet"
 
+if [[ ! "$CHANNEL" =~ ^[A-Za-z0-9._-]{1,32}$ ]]; then
+  echo "Invalid channel '$CHANNEL' — use a key from fleet/channels.json (for example stable or canary)" >&2
+  exit 1
+fi
+
 [ -d "$SRC" ] || { echo "fleet/ not found in $REPO_DIR — clone/pull the repo first"; exit 1; }
 
 echo "Installing hiverelay-updater (channel=$CHANNEL)…"

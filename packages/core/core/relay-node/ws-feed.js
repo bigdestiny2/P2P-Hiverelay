@@ -9,10 +9,31 @@
  * updates on relay node events (debounced to max 1/sec).
  */
 
+import { timingSafeEqual } from 'node:crypto'
 import { WebSocketServer } from 'ws'
+import { detailedNetworkState, publicNetworkState } from './api-network-state.js'
+import { buildOperatorAutoHealPayload } from './api-operator-telemetry.js'
+import { buildReputationLeaderboardPayload } from './api-reputation-read.js'
 
 const BROADCAST_INTERVAL_MS = 2000
 const EVENT_DEBOUNCE_MS = 1000
+const DEFAULT_AUTH_TIMEOUT_MS = 5000
+const MAX_AUTH_MESSAGE_BYTES = 2048
+const MAX_DASHBOARD_AUTO_HEAL_DRIVES = 50
+const MAX_DASHBOARD_PAYMENT_ACCOUNTS = 25
+const DASHBOARD_CUSTODY_COUNTERS = [
+  'intents',
+  'withQuorum',
+  'committed',
+  'retired',
+  'withProof',
+  'withNonServingProof',
+  'withWitnessTombstone',
+  'totalReceipts',
+  'totalProofs',
+  'totalNonServingProofs',
+  'totalWitnessTombstones'
+]
 
 export class DashboardFeed {
   constructor (opts = {}) {
@@ -20,6 +41,7 @@ export class DashboardFeed {
     this.node = opts.node
     this.corsOrigins = opts.corsOrigins || '*'
     this._apiKey = opts.apiKey || null
+    this._authTimeoutMs = opts.authTimeoutMs || DEFAULT_AUTH_TIMEOUT_MS
     this.wss = null
     this._broadcastTimer = null
     this._eventDebounceTimer = null
@@ -37,27 +59,25 @@ export class DashboardFeed {
       const url = new URL(req.url, 'http://localhost')
       if (url.pathname !== '/ws') return
 
-      // Validate Origin header when CORS is restricted
+      // Validate Origin header when CORS is restricted. Same-origin browser
+      // dashboard sockets are allowed even with the default empty CORS list;
+      // cross-origin dashboards still need an explicit allowlist entry.
       if (this.corsOrigins !== '*') {
-        const origin = req.headers.origin
-        const allowed = Array.isArray(this.corsOrigins)
-          ? this.corsOrigins
-          : [this.corsOrigins]
-        if (!origin || !allowed.includes(origin)) {
+        if (!isAllowedDashboardOrigin(req, this.corsOrigins)) {
           socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
           socket.destroy()
           return
         }
       }
 
-      // Validate API key token when configured
-      if (this._apiKey) {
-        const token = url.searchParams.get('token')
-        if (token !== this._apiKey) {
-          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
-          socket.destroy()
-          return
-        }
+      // Never accept management credentials in the WebSocket URL. URLs are
+      // easy to leak through logs, browser history, and proxy diagnostics; the
+      // browser client authenticates with an immediate in-band auth frame.
+      if (url.searchParams.has('token') || url.searchParams.has('api_key')) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
+        socket.destroy()
+        this._emitAuthFailure('query-token')
+        return
       }
 
       this.wss.handleUpgrade(req, socket, head, (ws) => {
@@ -67,20 +87,14 @@ export class DashboardFeed {
     this.server.on('upgrade', this._upgradeHandler)
 
     this.wss.on('connection', (ws) => {
-      this.clientCount++
-
-      ws.on('close', () => {
-        this.clientCount--
-      })
-
       ws.on('error', () => {
         // Swallow client errors — the close event will clean up
       })
 
-      // Send an immediate snapshot to new clients
-      const snapshot = this._buildPayload()
-      if (snapshot) {
-        try { ws.send(JSON.stringify(snapshot)) } catch {}
+      if (this._apiKey) {
+        this._awaitClientAuth(ws)
+      } else {
+        this._acceptClient(ws)
       }
     })
 
@@ -120,7 +134,7 @@ export class DashboardFeed {
     }
   }
 
-  stop () {
+  async stop () {
     // Clear timers
     if (this._broadcastTimer) {
       clearInterval(this._broadcastTimer)
@@ -134,7 +148,7 @@ export class DashboardFeed {
     // Remove event listeners
     for (const { emitter, event, handler } of this._eventListeners) {
       const target = emitter || this.node
-      target.removeListener(event, handler)
+      removeEventListener(target, event, handler)
     }
     this._eventListeners = []
 
@@ -146,11 +160,14 @@ export class DashboardFeed {
 
     // Close all connected clients
     if (this.wss) {
+      const wss = this.wss
       for (const ws of this.wss.clients) {
-        try { ws.close() } catch {}
+        try { ws.terminate() } catch {}
       }
-      this.wss.close()
       this.wss = null
+      await new Promise((resolve) => {
+        try { wss.close(resolve) } catch (_) { resolve() }
+      })
     }
 
     this.clientCount = 0
@@ -160,9 +177,66 @@ export class DashboardFeed {
     if (!this.wss) return
     const msg = JSON.stringify(data)
     for (const ws of this.wss.clients) {
-      if (ws.readyState === 1) { // WebSocket.OPEN
+      if (ws._hiverelayReady === true && ws.readyState === 1) { // WebSocket.OPEN
         try { ws.send(msg) } catch {}
       }
+    }
+  }
+
+  _awaitClientAuth (ws) {
+    let finished = false
+    const timer = setTimeout(() => {
+      if (finished) return
+      finished = true
+      this._emitAuthFailure('timeout')
+      try { ws.close(1008, 'auth-required') } catch {}
+    }, this._authTimeoutMs)
+    if (timer.unref) timer.unref()
+
+    const finish = () => {
+      if (finished) return false
+      finished = true
+      clearTimeout(timer)
+      return true
+    }
+
+    ws.once('message', (data) => {
+      if (!finish()) return
+      const token = parseAuthToken(data)
+      if (!safeTokenEqual(token, this._apiKey)) {
+        this._emitAuthFailure('invalid')
+        try { ws.close(1008, 'auth-failed') } catch {}
+        return
+      }
+      this._acceptClient(ws)
+    })
+
+    ws.once('close', () => {
+      finish()
+    })
+  }
+
+  _acceptClient (ws) {
+    if (ws._hiverelayReady === true) return
+    ws._hiverelayReady = true
+    this.clientCount++
+
+    ws.on('close', () => {
+      if (ws._hiverelayReady !== true) return
+      ws._hiverelayReady = false
+      this.clientCount = Math.max(0, this.clientCount - 1)
+    })
+
+    // Send an immediate snapshot to newly authenticated clients.
+    const snapshot = this._buildPayload()
+    if (snapshot) {
+      try { ws.send(JSON.stringify(snapshot)) } catch {}
+    }
+  }
+
+  _emitAuthFailure (reason) {
+    if (this.node && typeof this.node.emit === 'function') {
+      this.node.emit('dashboard-ws-auth-failed', { reason })
     }
   }
 
@@ -181,7 +255,7 @@ export class DashboardFeed {
     const node = this.node
     if (!node || !node.running) return null
 
-    const stats = node.getStats()
+    const stats = node.getStats({ includeSecrets: false })
     const mem = process.memoryUsage()
     const uptimeMs = node.metrics ? Date.now() - node.metrics.startedAt : 0
     const days = Math.floor(uptimeMs / 86400000)
@@ -200,6 +274,10 @@ export class DashboardFeed {
     const bytesStored = measuredStored != null
       ? measuredStored
       : (node._cachedStorageUsed || (stats.seeder ? stats.seeder.totalBytesStored : 0))
+    // Honest served bytes — measured across every replicated core, with the
+    // legacy seeder counter as the fallback (see api.js /api/overview).
+    const measuredServed = stats.served ? stats.served.totalBytesServed : null
+    const bytesServed = measuredServed != null ? measuredServed : (stats.seeder ? stats.seeder.totalBytesServed : 0)
 
     const payload = {
       type: 'update',
@@ -215,39 +293,23 @@ export class DashboardFeed {
           max: maxStorage,
           pct: maxStorage > 0 ? Math.round(bytesStored / maxStorage * 10000) / 10000 : 0
         },
-        relay: stats.relay || { activeCircuits: 0, totalCircuitsServed: 0, totalBytesRelayed: 0 },
-        seeder: stats.seeder || { coresSeeded: 0, totalBytesStored: 0, totalBytesServed: 0 },
+        served: {
+          bytes: bytesServed,
+          blocks: stats.served ? stats.served.totalBlocksServed : null,
+          measured: measuredServed != null
+        },
+        relay: sanitizeDashboardRelayStats(stats.relay),
+        seeder: sanitizeDashboardSeederStats(stats.seeder, measuredServed),
         memory: { heapUsed: mem.heapUsed, rss: mem.rss },
         errors: node.metrics ? node.metrics._errorCount : 0,
-        reputation: node.reputation
-          ? {
-              trackedRelays: Object.keys(node.reputation.export()).length,
-              topRelay: (() => {
-                const lb = node.reputation.getLeaderboard(1)
-                return lb.length ? lb[0] : null
-              })()
-            }
-          : null,
-        tor: node.torTransport ? node.torTransport.getInfo() : null,
-        bandwidth: node._bandwidthReceipt
-          ? {
-              totalProvenBytes: node._bandwidthReceipt.getTotalProvenBandwidth(),
-              receiptsIssued: node._bandwidthReceipt._issuedReceipts ? node._bandwidthReceipt._issuedReceipts.length : 0
-            }
-          : null,
-        credits: node.creditManager ? node.creditManager.stats() : null,
-        metering: node.serviceMeter ? node.serviceMeter.stats() : null,
-        invoices: node.invoiceManager ? node.invoiceManager.stats() : null,
-        payment: node.paymentManager
-          ? (() => {
-              const accounts = []
-              for (const [pubkey] of node.paymentManager.accounts) {
-                accounts.push(node.paymentManager.getAccountSummary(pubkey))
-              }
-              return { accounts, provider: node.paymentManager.paymentProvider?.constructor.name || 'none' }
-            })()
-          : null,
-        holesail: node.holesailTransport ? node.holesailTransport.getInfo() : null
+        reputation: sanitizeDashboardReputationOverview(node.reputation),
+        tor: sanitizeDashboardTransportInfo(stats.tor),
+        bandwidth: sanitizeDashboardBandwidthOverview(node._bandwidthReceipt),
+        credits: sanitizeDashboardCreditStats(readDashboardStats(node.creditManager)),
+        metering: sanitizeDashboardMeteringStats(readDashboardStats(node.serviceMeter)),
+        invoices: sanitizeDashboardInvoiceStats(readDashboardStats(node.invoiceManager)),
+        payment: sanitizeDashboardPaymentOverview(node.paymentManager, stats.payment),
+        holesail: sanitizeDashboardTransportInfo(stats.holesail)
       },
       dashboardClients: this.clientCount
     }
@@ -255,7 +317,8 @@ export class DashboardFeed {
     // Include network discovery state if available
     if (node.networkDiscovery) {
       try {
-        payload.network = node.networkDiscovery.getNetworkState()
+        const state = node.networkDiscovery.getNetworkState()
+        payload.network = this._apiKey ? detailedNetworkState(state) : publicNetworkState(state)
       } catch {}
     }
 
@@ -265,7 +328,7 @@ export class DashboardFeed {
     // alert on archive-tier drives that have fallen below the SLO floor.
     if (node.autoHeal && typeof node.autoHeal.snapshot === 'function') {
       try {
-        const snap = node.autoHeal.snapshot()
+        const snap = buildOperatorAutoHealPayload(node.autoHeal.snapshot())
         payload.autoHeal = {
           enabled: snap.enabled,
           running: snap.running,
@@ -278,8 +341,8 @@ export class DashboardFeed {
           proofCacheSize: snap.proofCacheSize,
           // Drive list capped to keep payload bounded — relays seeding 10K+
           // archive drives shouldn't blow up every WS frame. Dashboards
-          // requesting full detail can hit GET /api/health-detail.
-          drives: snap.drives.slice(0, 50)
+          // requesting full detail can hit GET /api/auto-heal.
+          drives: snap.drives.slice(0, MAX_DASHBOARD_AUTO_HEAL_DRIVES)
         }
       } catch {}
     }
@@ -291,10 +354,296 @@ export class DashboardFeed {
     const registry = node.seedingRegistry || node.registry
     if (registry && typeof registry.custodySnapshot === 'function') {
       try {
-        payload.custody = registry.custodySnapshot()
+        payload.custody = sanitizeDashboardCustodySnapshot(registry.custodySnapshot())
       } catch {}
     }
 
     return payload
   }
+}
+
+function isAllowedDashboardOrigin (req, corsOrigins) {
+  const origin = req.headers.origin
+  if (!origin) return false
+
+  const allowed = Array.isArray(corsOrigins)
+    ? corsOrigins
+    : [corsOrigins]
+  if (allowed.includes(origin)) return true
+
+  return isSameOriginHost(origin, req.headers.host)
+}
+
+function isSameOriginHost (origin, host) {
+  if (!host || typeof origin !== 'string') return false
+  try {
+    const url = new URL(origin)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.host === host
+  } catch {
+    return false
+  }
+}
+
+function removeEventListener (target, event, handler) {
+  if (target && typeof target.removeListener === 'function') {
+    target.removeListener(event, handler)
+    return
+  }
+  if (target && typeof target.off === 'function') {
+    target.off(event, handler)
+  }
+}
+
+function sanitizeDashboardCustodySnapshot (snapshot) {
+  const payload = {}
+  const source = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+    ? snapshot
+    : {}
+
+  for (const field of DASHBOARD_CUSTODY_COUNTERS) {
+    payload[field] = safeDashboardCounter(source[field])
+  }
+  payload.commitRate = safeDashboardRatio(source.commitRate)
+
+  return payload
+}
+
+function sanitizeDashboardTransportInfo (info) {
+  const source = info && typeof info === 'object' && !Array.isArray(info)
+    ? info
+    : null
+  if (!source) return null
+
+  const payload = {}
+  if (typeof source.running === 'boolean') payload.running = source.running
+  if (typeof source.enabled === 'boolean') payload.enabled = source.enabled
+  if (typeof source.connected === 'boolean') payload.connected = source.connected
+  if (Number.isFinite(source.activeConnections)) {
+    payload.activeConnections = safeDashboardCounter(source.activeConnections)
+  }
+  if (Number.isFinite(source.connections)) {
+    payload.connections = safeDashboardCounter(source.connections)
+  }
+
+  return Object.keys(payload).length > 0 ? payload : null
+}
+
+function sanitizeDashboardRelayStats (stats) {
+  const source = safeDashboardObject(stats) || {}
+  return {
+    activeCircuits: safeDashboardCounter(source.activeCircuits),
+    totalCircuitsServed: safeDashboardCounter(source.totalCircuitsServed),
+    totalBytesRelayed: safeDashboardCounter(source.totalBytesRelayed),
+    capacityUsedPct: safeDashboardPercent(source.capacityUsedPct),
+    peersWithCircuits: safeDashboardCounter(source.peersWithCircuits)
+  }
+}
+
+function sanitizeDashboardSeederStats (stats, measuredServed) {
+  const source = safeDashboardObject(stats) || {}
+  return {
+    coresSeeded: safeDashboardCounter(source.coresSeeded),
+    totalBytesStored: safeDashboardCounter(source.totalBytesStored),
+    totalBytesServed: safeDashboardCounter(source.totalBytesServed),
+    capacityUsedPct: safeDashboardPercent(source.capacityUsedPct),
+    totalBytesServedMeasured: measuredServed == null ? null : safeDashboardCounter(measuredServed)
+  }
+}
+
+function sanitizeDashboardReputationOverview (reputation) {
+  if (!reputation || typeof reputation !== 'object') return null
+  let trackedRelays = 0
+  try {
+    const exported = typeof reputation.export === 'function' ? reputation.export() : null
+    trackedRelays = exported && typeof exported === 'object' && !Array.isArray(exported)
+      ? Object.keys(exported).length
+      : 0
+  } catch {}
+
+  let topRelay = null
+  try {
+    const result = buildReputationLeaderboardPayload({ reputation, maxEntries: 1 })
+    topRelay = Array.isArray(result.payload) && result.payload.length > 0
+      ? result.payload[0]
+      : null
+  } catch {}
+
+  return {
+    trackedRelays: safeDashboardCounter(trackedRelays),
+    topRelay
+  }
+}
+
+function sanitizeDashboardBandwidthOverview (tracker) {
+  if (!tracker) return null
+  let totalProvenBytes = 0
+  try {
+    totalProvenBytes = typeof tracker.getTotalProvenBandwidth === 'function'
+      ? tracker.getTotalProvenBandwidth()
+      : 0
+  } catch {}
+
+  return {
+    totalProvenBytes: safeDashboardCounter(totalProvenBytes),
+    receiptsIssued: Array.isArray(tracker._issuedReceipts)
+      ? safeDashboardCounter(tracker._issuedReceipts.length)
+      : 0
+  }
+}
+
+function sanitizeDashboardCreditStats (stats) {
+  const source = safeDashboardObject(stats)
+  if (!source) return null
+  return {
+    totalWallets: safeDashboardCounter(source.totalWallets),
+    totalBalance: safeDashboardCounter(source.totalBalance),
+    totalDeposited: safeDashboardCounter(source.totalDeposited),
+    totalSpent: safeDashboardCounter(source.totalSpent),
+    totalWelcomeCredits: safeDashboardCounter(source.totalWelcomeCredits),
+    welcomeCreditsPerWallet: safeDashboardCounter(source.welcomeCreditsPerWallet),
+    frozenWallets: safeDashboardCounter(source.frozenWallets),
+    avgBalance: safeDashboardCounter(source.avgBalance)
+  }
+}
+
+function sanitizeDashboardMeteringStats (stats) {
+  const source = safeDashboardObject(stats)
+  if (!source) return null
+  return {
+    totalApps: safeDashboardCounter(source.totalApps),
+    totalCalls: safeDashboardCounter(source.totalCalls),
+    totalRevenue: safeDashboardCounter(source.totalRevenue),
+    windowStart: safeDashboardTimestamp(source.windowStart)
+  }
+}
+
+function sanitizeDashboardInvoiceStats (stats) {
+  const source = safeDashboardObject(stats)
+  if (!source) return null
+  return {
+    total: safeDashboardCounter(source.total),
+    pending: safeDashboardCounter(source.pending),
+    settled: safeDashboardCounter(source.settled),
+    expired: safeDashboardCounter(source.expired),
+    cancelled: safeDashboardCounter(source.cancelled),
+    totalSettledSats: safeDashboardCounter(source.totalSettledSats)
+  }
+}
+
+function sanitizeDashboardPaymentOverview (paymentManager, paymentStats) {
+  const stats = safeDashboardObject(paymentStats)
+  if (!paymentManager && !stats) return null
+
+  return {
+    enabled: stats ? stats.enabled === true : !!paymentManager,
+    active: stats ? stats.active === true : !!paymentManager,
+    experimental: stats ? stats.experimental === true : true,
+    settlementIntervalMs: stats ? safeDashboardTimestamp(stats.settlementIntervalMs) : null,
+    provider: safeDashboardLabel(paymentManager && paymentManager.paymentProvider && paymentManager.paymentProvider.constructor
+      ? paymentManager.paymentProvider.constructor.name
+      : null, 'none'),
+    accounts: sanitizeDashboardPaymentAccounts(paymentManager)
+  }
+}
+
+function sanitizeDashboardPaymentAccounts (paymentManager) {
+  if (!paymentManager || !paymentManager.accounts || typeof paymentManager.accounts[Symbol.iterator] !== 'function') return []
+
+  const accounts = []
+  for (const [pubkey] of paymentManager.accounts) {
+    let raw = null
+    try {
+      raw = typeof paymentManager.getAccountSummary === 'function'
+        ? paymentManager.getAccountSummary(pubkey)
+        : null
+    } catch {}
+    const clean = sanitizeDashboardPaymentAccount(raw)
+    if (clean) accounts.push(clean)
+    if (accounts.length >= MAX_DASHBOARD_PAYMENT_ACCOUNTS) break
+  }
+  return accounts
+}
+
+function sanitizeDashboardPaymentAccount (account) {
+  const source = safeDashboardObject(account)
+  if (!source) return null
+  return {
+    monthsActive: safeDashboardCounter(source.monthsActive),
+    heldPercentage: safeDashboardPercent(source.heldPercentage),
+    totalEarned: safeDashboardCounter(source.totalEarned),
+    totalPaid: safeDashboardCounter(source.totalPaid),
+    currentlyHeld: safeDashboardCounter(source.currentlyHeld),
+    pendingPayout: safeDashboardCounter(source.pendingPayout),
+    lastSettlement: safeDashboardTimestamp(source.lastSettlement)
+  }
+}
+
+function readDashboardStats (manager) {
+  if (!manager || typeof manager.stats !== 'function') return null
+  try {
+    return manager.stats()
+  } catch {
+    return null
+  }
+}
+
+function safeDashboardObject (value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null
+}
+
+function safeDashboardLabel (value, fallback = null) {
+  if (typeof value !== 'string') return fallback
+  const trimmed = value.trim()
+  if (!trimmed || Buffer.byteLength(trimmed, 'utf8') > 64) return fallback
+  for (let i = 0; i < trimmed.length; i++) {
+    const code = trimmed.charCodeAt(i)
+    if (code < 32 || code === 127) return fallback
+  }
+  return trimmed
+}
+
+function safeDashboardCounter (value) {
+  if (!Number.isFinite(value) || value < 0) return 0
+  return Math.min(Math.floor(value), Number.MAX_SAFE_INTEGER)
+}
+
+function safeDashboardPercent (value) {
+  if (!Number.isFinite(value)) return 0
+  return Math.min(100, Math.max(0, Math.floor(value)))
+}
+
+function safeDashboardTimestamp (value) {
+  if (!Number.isFinite(value) || value < 0) return null
+  return Math.min(Math.floor(value), Number.MAX_SAFE_INTEGER)
+}
+
+function safeDashboardRatio (value) {
+  if (value === null || value === undefined) return null
+  if (!Number.isFinite(value) || value < 0 || value > 1) return null
+  return value
+}
+
+function parseAuthToken (data) {
+  const size = typeof data === 'string'
+    ? Buffer.byteLength(data)
+    : (Buffer.isBuffer(data) ? data.length : (data && data.byteLength) || 0)
+  if (size <= 0 || size > MAX_AUTH_MESSAGE_BYTES) return null
+
+  let msg
+  try {
+    const text = typeof data === 'string' ? data : Buffer.from(data).toString('utf8')
+    msg = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (!msg || msg.type !== 'auth' || typeof msg.token !== 'string') return null
+  return msg.token
+}
+
+function safeTokenEqual (actual, expected) {
+  if (typeof actual !== 'string' || typeof expected !== 'string') return false
+  const actualBuf = Buffer.from(actual)
+  const expectedBuf = Buffer.from(expected)
+  if (actualBuf.length !== expectedBuf.length) return false
+  return timingSafeEqual(actualBuf, expectedBuf)
 }

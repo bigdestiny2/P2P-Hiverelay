@@ -4,7 +4,8 @@ import {
   describeQuorum,
   VALID_STRATEGIES,
   DEFAULT_QUORUM_SIZE,
-  DEFAULT_MIN_REGIONS
+  DEFAULT_MIN_REGIONS,
+  DEFAULT_MIN_OPERATORS
 } from 'p2p-hiverelay/core/quorum-selector.js'
 
 // Helper — build a synthetic candidate list
@@ -33,6 +34,7 @@ test('exports expected strategies and defaults', async (t) => {
   t.alike([...VALID_STRATEGIES].sort(), ['diverse', 'foundation', 'pinned', 'wide'])
   t.is(DEFAULT_QUORUM_SIZE, 5)
   t.is(DEFAULT_MIN_REGIONS, 3)
+  t.is(DEFAULT_MIN_OPERATORS, 3)
 })
 
 test('throws on unknown strategy', async (t) => {
@@ -77,6 +79,31 @@ test('diverse strategy ranks by score then latency then pubkey for stability', a
   const ranked = selectQuorum(sampleCandidates, { strategy: 'diverse', size: 7 })
   // Highest scorer (aa @ 0.9) should appear first
   t.is(ranked[0].pubkey, 'aa')
+})
+
+test('diverse strategy prefers a new operator over a same-operator region-only pick', async (t) => {
+  const selected = selectQuorum(sampleCandidates, { strategy: 'diverse', size: 5 })
+  t.ok(selected.find(s => s.pubkey === 'gg'), 'lower-score relay adds a fifth operator')
+  t.absent(selected.find(s => s.pubkey === 'ff'), 'same-operator region-only relay waits for fill phase')
+  t.is(new Set(selected.map(s => s.operator)).size, 5)
+})
+
+test('diverse strategy warns when operator diversity is below the floor', async (t) => {
+  const oneOperator = [
+    r('aa', 'us-east-1', 'opA', { score: 0.9 }),
+    r('bb', 'eu-west', 'opA', { score: 0.85 }),
+    r('cc', 'asia-tokyo', 'opA', { score: 0.8 })
+  ]
+  const selected = selectQuorum(oneOperator, {
+    strategy: 'diverse',
+    size: 3,
+    minRegions: 3,
+    minOperators: 3
+  })
+  t.ok(selected.diversityWarning, 'warning should be attached')
+  t.is(selected.diversityWarning.reason, 'insufficient-operator-diversity')
+  t.is(selected.diversityWarning.observedOperators, 1)
+  t.is(selected.diversityWarning.requiredOperators, 3)
 })
 
 test('foundation strategy restricts to specified pubkeys', async (t) => {
@@ -163,7 +190,7 @@ test('describeQuorum surfaces diversity warning', async (t) => {
     r('aa', 'us-east-1', 'opA', { score: 0.9 }),
     r('bb', 'us-east-1', 'opB', { score: 0.85 })
   ]
-  const selected = selectQuorum(monoRegion, { strategy: 'diverse', size: 2, minRegions: 3 })
+  const selected = selectQuorum(monoRegion, { strategy: 'diverse', size: 2, minRegions: 3, minOperators: 1 })
   const desc = describeQuorum(selected)
   t.ok(desc.warning)
   t.is(desc.warning.reason, 'insufficient-region-diversity')

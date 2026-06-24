@@ -224,12 +224,12 @@ test('integration: connection events fire when peers meet', async (t) => {
     await testnet.destroy()
   })
 
-  await nodeA.start()
-  await nodeB.start()
-
   // Listen on the RelayNode event emitter
   let gotConnectionEvent = false
   nodeA.on('connection', () => { gotConnectionEvent = true })
+
+  await nodeA.start()
+  await nodeB.start()
 
   // Use a Hypercore to force a real connection (more reliable than raw topic join)
   const core = nodeA.store.get({ name: 'conn-test' })
@@ -246,7 +246,7 @@ test('integration: connection events fire when peers meet', async (t) => {
   await coreB.ready()
   await coreB.update({ wait: true })
 
-  // By the time replication succeeds, the connection event must have fired
+  await waitFor(() => gotConnectionEvent, 1000, 25)
   t.ok(gotConnectionEvent, 'node A emitted connection event')
   t.ok(nodeA.getStats().connections >= 1, 'node A has at least 1 connection')
 })

@@ -8,7 +8,7 @@
  * Features:
  *   - Deduplication: same (type, key) fires at most once per cooldown window
  *   - Severity threshold filtering (info < warn < error < critical)
- *   - In-memory alert log (last 100 entries) for /api/alerts
+ *   - In-memory alert log (last 100 entries) for authenticated /api/alerts
  *   - Channels are independent; a failure in one does not block others
  */
 

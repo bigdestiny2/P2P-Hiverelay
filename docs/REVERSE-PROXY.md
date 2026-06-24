@@ -58,16 +58,20 @@ be world-reachable.
 The relay's management endpoints (`/api/manage/...`, `/seed`, `/unseed`,
 config writes) are protected one of two ways:
 
-- **API key** via `HIVERELAY_API_KEY` env var, sent as `Authorization:
-  Bearer <key>` or `?api_key=<key>`
+- **API key** via `HIVERELAY_API_KEY` env var, sent only as
+  `Authorization: Bearer <key>`. Query-string API keys are intentionally not
+  accepted because URLs are commonly copied into logs, browser history, proxy
+  access logs, and metrics.
 - **Localhost-only fallback** — if the API binds to `127.0.0.1`/`::1` and no
-  key is set, requests from loopback are allowed
+  key is set, requests from loopback are allowed only when the socket,
+  `Host`, and browser `Origin` are loopback values. That DNS-rebinding guard is
+  for local development, not a substitute for a real key.
 
-The localhost fallback is **broken once a reverse proxy is in front**: every
-request appears to come from `127.0.0.1` (the nginx upstream connection),
-so the host check passes for the entire internet. The relay knows this and
-prints a startup warning when the API binds to a non-loopback address with
-no key set:
+The localhost fallback is **not a public reverse-proxy security boundary**:
+the proxy can make external requests look socket-local, and a misconfigured
+proxy can rewrite `Host` to the upstream loopback address. The relay disables
+localhost auth when `trustProxy` is enabled and prints a startup warning when
+the API binds to a non-loopback address with no key set:
 
 ```
 [SECURITY WARNING] API binding to 0.0.0.0:9100 without an API key.

@@ -37,9 +37,11 @@ const PREFIXES = Object.freeze({
   DELEGATION_REVOKED: 'delegation-revoked: ',
   DELEGATION_EXPIRED: 'delegation-expired: ',
   RATE_LIMITED: 'rate-limited: ',
+  NOT_ENABLED: 'not-enabled: ',
   NOT_ALLOWED: 'not-allowed: ',
   NOT_FOUND: 'not-found: ',
   BAD_REQUEST: 'bad-request: ',
+  PERSIST_FAILED: 'persist-failed: ',
   UNSUPPORTED: 'unsupported: '
 })
 

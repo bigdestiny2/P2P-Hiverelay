@@ -18,6 +18,7 @@ import {
   normalizePrivacyTier,
   normalizeStorageClass
 } from '../constants.js'
+import { createLengthPrefixedJsonEncoding } from '../protocol/json-message-encoding.js'
 import { isAbortError } from '../relay-node/lifecycle-scope.js'
 import {
   computeReceiptRoot,
@@ -42,36 +43,14 @@ const REGISTRY_META_PROTOCOL = 'hiverelay-registry-meta'
 const REGISTRY_META_ID = b4a.from('registry-meta-v1')
 const MAX_DISCOVERY_KEYS = 128
 const MAX_REGISTRY_ENTRY_BYTES = 64 * 1024
+export const MAX_REGISTRY_META_MESSAGE_BYTES = 64 * 1024
 const MAX_ENTRY_FUTURE_SKEW_MS = 10 * 60 * 1000
 const MAX_ENTRY_AGE_MS = 180 * 24 * 60 * 60 * 1000
 
-const META_ENCODING = {
-  preencode (state, msg) {
-    const json = JSON.stringify(msg)
-    state.end += 4 + b4a.byteLength(json)
-  },
-  encode (state, msg) {
-    const json = JSON.stringify(msg)
-    const buf = b4a.from(json)
-    state.buffer.writeUInt32BE(buf.length, state.start)
-    buf.copy(state.buffer, state.start + 4)
-    state.start += 4 + buf.length
-  },
-  decode (state) {
-    const len = state.buffer.readUInt32BE(state.start)
-    if (len > 64 * 1024) {
-      state.start += 4 + len
-      return { type: -1, error: 'message too large' }
-    }
-    const json = state.buffer.subarray(state.start + 4, state.start + 4 + len).toString()
-    state.start += 4 + len
-    try {
-      return JSON.parse(json)
-    } catch (_) {
-      return { type: -1, error: 'malformed JSON' }
-    }
-  }
-}
+export const registryMetaMessageEncoding = createLengthPrefixedJsonEncoding({
+  maxBytes: MAX_REGISTRY_META_MESSAGE_BYTES,
+  malformedError: 'malformed JSON'
+})
 
 export class SeedingRegistry extends EventEmitter {
   constructor (store, swarm, opts = {}) {
@@ -236,7 +215,7 @@ export class SeedingRegistry extends EventEmitter {
     if (!channel) return
 
     const msgHandler = channel.addMessage({
-      encoding: META_ENCODING,
+      encoding: registryMetaMessageEncoding,
       onmessage: (msg) => this._onMetaMessage(conn, info, msg)
     })
 

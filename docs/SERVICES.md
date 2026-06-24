@@ -302,6 +302,12 @@ curl -X POST http://localhost:9100/api/manage/services \
   -d '{"action": "restart", "service": "ai"}'
 ```
 
+Disabling a configured built-in service removes it from `config.plugins` and
+persists that change before the provider is unregistered, so it does not
+silently come back after restart. Services supplied by an enabled bundle, such
+as `vrf` under the `poker` preset, are rejected on this endpoint; change the
+selected bundle through `/api/manage/services/config` instead.
+
 ### Service Selection During Setup
 
 The `p2p-hiverelay setup` wizard selects services by node profile. The relay-only profiles run no app services at all (`enableServices: false`); services are opt-in:

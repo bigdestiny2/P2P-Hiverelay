@@ -335,19 +335,6 @@ export class AppLifecycle extends EventEmitter {
 
       const discoveryKey = drive.discoveryKey
 
-      // Signal that we're looking for peers for this drive's cores
-      const done = drive.findingPeers ? drive.findingPeers() : null
-      node.swarm.join(discoveryKey, { server: true, client: true })
-      node.swarm.flush().then(() => { if (done) done() }).catch(() => { if (done) done() })
-
-      // Eagerly replicate drive content. Extracted to a method in v0.8.12
-      // so the alreadySeeded re-pin path can call it too — see
-      // _reconcileSeedOptsOnRepin.
-      //
-      // Tracked in the LifecycleScope so stop() drains the loop before
-      // tearing down the corestore (vector A1 in STALE-REF-INVENTORY.md).
-      this._trackEagerReplicate(appKeyHex, drive, opts, { source: 'fresh-seed' })
-
       // Revocability commitments — recorded at seed time, derived from the
       // signed seed-request payload (committed by publisher signature, so
       // the publisher cannot later claim a different value).
@@ -378,6 +365,9 @@ export class AppLifecycle extends EventEmitter {
         ? Math.floor(opts.maxStorage)
         : null
 
+      const registrySnapshot = typeof node.appRegistry.snapshot === 'function'
+        ? node.appRegistry.snapshot()
+        : null
       node.appRegistry.set(appKeyHex, {
         drive,
         discoveryKey,
@@ -411,7 +401,41 @@ export class AppLifecycle extends EventEmitter {
         // enforced lease deadline that the custody-expiry sweep acts on and
         // eviction must not shed early. Set by the lease gate on a verified seed.
         leaseManaged: opts.leaseManaged === true
-      })
+      }, { persist: false })
+
+      try {
+        if (typeof node.appRegistry.persistEntry === 'function') {
+          await node.appRegistry.persistEntry(appKeyHex, { throwOnError: true })
+        } else {
+          await node.appRegistry.flush({ throwOnError: true })
+        }
+      } catch (err) {
+        if (registrySnapshot && typeof node.appRegistry.restoreSnapshot === 'function') {
+          try {
+            node.appRegistry.restoreSnapshot(registrySnapshot)
+          } catch (rollbackErr) {
+            this.emit('registry-rollback-error', {
+              appKey: appKeyHex,
+              error: (rollbackErr && rollbackErr.message) || String(rollbackErr)
+            })
+          }
+        }
+        throw err
+      }
+
+      // Signal that we're looking for peers for this drive's cores only
+      // after the accepted seed is durably recorded.
+      const done = drive.findingPeers ? drive.findingPeers() : null
+      node.swarm.join(discoveryKey, { server: true, client: true })
+      node.swarm.flush().then(() => { if (done) done() }).catch(() => { if (done) done() })
+
+      // Eagerly replicate drive content. Extracted to a method in v0.8.12
+      // so the alreadySeeded re-pin path can call it too — see
+      // _reconcileSeedOptsOnRepin.
+      //
+      // Tracked in the LifecycleScope so stop() drains the loop before
+      // tearing down the corestore (vector A1 in STALE-REF-INVENTORY.md).
+      this._trackEagerReplicate(appKeyHex, drive, opts, { source: 'fresh-seed' })
 
       // 2026-05-23: register persistent download ranges on the drive's
       // cores so they actively pull missing blocks from any peer that
@@ -1353,6 +1377,32 @@ export class AppLifecycle extends EventEmitter {
     const entry = node.appRegistry.get(appKeyHex)
     if (!entry) return
 
+    if (forget) {
+      const registrySnapshot = typeof node.appRegistry.snapshot === 'function'
+        ? node.appRegistry.snapshot()
+        : null
+      node.appRegistry.delete(appKeyHex, { persist: false })
+      try {
+        if (typeof node.appRegistry.persistDelete === 'function') {
+          await node.appRegistry.persistDelete(appKeyHex, { throwOnError: true })
+        } else {
+          await node.appRegistry.flush({ throwOnError: true })
+        }
+      } catch (err) {
+        if (registrySnapshot && typeof node.appRegistry.restoreSnapshot === 'function') {
+          try {
+            node.appRegistry.restoreSnapshot(registrySnapshot)
+          } catch (rollbackErr) {
+            this.emit('registry-rollback-error', {
+              appKey: appKeyHex,
+              error: (rollbackErr && rollbackErr.message) || String(rollbackErr)
+            })
+          }
+        }
+        throw err
+      }
+    }
+
     // Destroy persistent download ranges before tearing down the drive
     // so their replicator refs don't leak into the closing core's
     // session pool. Same defensive pattern as _trackEagerReplicate +
@@ -1371,9 +1421,7 @@ export class AppLifecycle extends EventEmitter {
     try { await node.swarm.leave(entry.discoveryKey) } catch (_) {}
     try { await entry.drive.close() } catch (_) {}
 
-    if (forget) {
-      node.appRegistry.delete(appKeyHex) // auto-cleans dedup index + persists
-    } else {
+    if (!forget) {
       // Keep the persisted entry; just drop the live handles so reseed
       // can rebuild them. reseedFromRegistry overwrites these via
       // _hydrateEntry on the next start(), but null them now so nothing
@@ -1459,7 +1507,7 @@ export class AppLifecycle extends EventEmitter {
     // BigInt() throw. The HTTP API validates these at its boundary already, so
     // this changes behaviour only for inputs that previously threw.
     if (!isValidHexKey(appKeyHex, 64) || !isValidHexKey(publisherPubkeyHex, 64) ||
-        !isValidHexKey(signatureHex, 128) || !Number.isFinite(timestamp)) {
+        !isValidHexKey(signatureHex, 128) || !Number.isSafeInteger(timestamp) || timestamp < 0) {
       return { ok: false, error: 'MALFORMED_REQUEST' }
     }
 

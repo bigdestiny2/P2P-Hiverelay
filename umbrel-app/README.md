@@ -15,8 +15,9 @@ node, full stop.
 |------|---------|
 | `umbrel-app.yml` | App Store manifest (id, category, description, gallery). |
 | `docker-compose.yml` | Service definition Umbrel runs. Wraps the published multi-arch image. |
-| `icon.svg` | App icon — **placeholder**, replace before submission. |
-| `gallery/` | Screenshots for the store listing — **placeholders**, replace before submission. |
+| `data/.gitkeep` | Empty app-data bind mount source for the official package. |
+| `icon.svg` | App icon kept here for handoff; official store assets are committed by Umbrel. |
+| `gallery/` | Screenshot shot list for handoff; official gallery assets are committed by Umbrel. |
 | `SUBMISSION-CHECKLIST.md` | Pre-submission gate for the `getumbrel/umbrel-apps` PR. |
 
 ## How auth works behind Umbrel's proxy
@@ -33,16 +34,22 @@ app proxy plus the fact that the relay's port is **never published to the
 host/LAN** — only the proxy can reach it. See
 `packages/core/config/default.js` → `ui.exposeToken` for the full contract.
 
+The package also sets `HIVERELAY_ACCEPT_MODE=review` and
+`HIVERELAY_MAX_STORAGE=10GB` for first boot. That keeps home-server installs
+operator-reviewed and capped conservatively, while any saved operator config
+wins on later restarts. PC/VPS operators can keep the core 50 GB default or
+pass `--max-storage` directly.
+
 ## Run it on your own Umbrel today (before the App Store listing)
 
 You don't have to wait for the store. On the box:
 
 ```bash
 # 1. Pull the published image (multi-arch; works on Pi/arm64 and x86/amd64)
-docker pull ghcr.io/bigdestiny2/p2p-hiverelay:0.12.0
+docker pull ghcr.io/bigdestiny2/p2p-hiverelay:0.20.0
 
 # 2. Install as a local/community app via umbreld, or run the compose
-#    directly with APP_DATA_DIR + APP_SEED set. The bare :0.12.0 tag is
+#    directly with APP_DATA_DIR + APP_SEED set. The bare :0.20.0 tag is
 #    fine for a personal install (the sha256 digest pin is only an App
 #    Store review requirement).
 ```
@@ -53,12 +60,16 @@ The first-run wizard is at the app's dashboard once it's running.
 
 Work `SUBMISSION-CHECKLIST.md` top to bottom. The short version:
 
-1. Replace `icon.svg` and the `gallery/` screenshots with real assets.
-2. Pin the image by sha256 digest in `docker-compose.yml` (instructions
-   are inline on the `image:` line).
+1. Capture real gallery screenshots and keep the icon ready for reviewer handoff.
+2. Keep the image tag and sha256 digest pin in `docker-compose.yml` aligned with
+   the release you are submitting.
 3. Fork `getumbrel/umbrel-apps`, drop this directory in as `blindspark/`,
-   open the PR, and record its URL in `umbrel-app.yml` (`submission:`).
+   including only `umbrel-app.yml`, `docker-compose.yml`, and
+   `data/.gitkeep`. Open the PR and record its URL in `umbrel-app.yml`
+   (`submission:`).
 
 The `.github/workflows/umbrel-app-validate.yml` workflow checks the
-manifest, compose, and asset presence on every change here, so breakage
-is caught before it reaches the upstream PR.
+manifest and compose on every change here. It permits the documented
+first-submission `gallery: []` handoff, and once gallery filenames are listed it
+requires safe numbered PNG/JPEG filenames, existing files, and 1440x900
+dimensions so broken or wrongly sized screenshots do not reach the upstream PR.

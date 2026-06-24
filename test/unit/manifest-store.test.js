@@ -171,6 +171,34 @@ test('delete removes a manifest', async (t) => {
   t.absent(store.get(hex))
 })
 
+test('snapshot + restore rolls back replacements and cap evictions', async (t) => {
+  const store = await setup(t, { maxAuthors: 2 })
+  const kpA = makeKeyPair()
+  const kpB = makeKeyPair()
+  const kpC = makeKeyPair()
+  const olderA = mkManifest(kpA, { timestamp: 1000 })
+  const newerA = mkManifest(kpA, { timestamp: 2000 })
+  const manifestB = mkManifest(kpB)
+  const manifestC = mkManifest(kpC)
+  const keyA = b4a.toString(kpA.publicKey, 'hex')
+  const keyB = b4a.toString(kpB.publicKey, 'hex')
+  const keyC = b4a.toString(kpC.publicKey, 'hex')
+
+  store.put(olderA)
+  store.put(manifestB)
+  const snapshot = store.snapshot()
+  store.put(newerA)
+  store.put(manifestC)
+  t.is(store.size(), 2)
+  t.ok(store.get(keyC), 'new manifest changed live store before rollback')
+
+  store.restoreSnapshot(snapshot)
+  t.is(store.size(), 2)
+  t.is(store.get(keyA).timestamp, 1000, 'replacement rolled back')
+  t.ok(store.get(keyB), 'evicted manifest restored')
+  t.absent(store.get(keyC), 'new manifest removed')
+})
+
 test('list returns snapshot of all manifests', async (t) => {
   const store = await setup(t)
   const kpA = makeKeyPair()

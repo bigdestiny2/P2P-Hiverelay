@@ -13,19 +13,10 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.20.0
+version: 0.20.1
 release-notes: |
-  v0.19.4 — Reliability + new opt-in services (since 0.19.0):
-  • Storage accounting now measures real on-disk usage, so the relay caps
-    adoption correctly and won't overfill its disk (fixes a disk-full bug).
-  • Opt-in poker services: provide the card-blind poker substrate
-    (+ vrf/zk/arbitration) over HTTP, WebSocket, and pure P2P, with honest
-    blind-safe usage metering.
-  • catalogBeeKey: advertise a curated, signed P2P catalogue clients prefer
-    over the HTTP firehose.
-  Plus v0.19.0's DHT-resolvable discovery (clients resolve your relay from
-  its public key alone). The relay still stores only end-to-end-encrypted
-  data it cannot read. Image pinned by immutable digest.
+  Blindspark v0.20.1: synchronized HiveRelay release for the fleet, Umbrel
+  packages, and StartOS metadata.
 license: apache-2.0
 wrapper-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
 upstream-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
@@ -50,8 +41,10 @@ description:
 
     The Blindspark dashboard is a single, simple page: your relay's name
     and public key, live online status, connected peers, how many apps it
-    keeps alive, and real measured on-disk usage. No account, no
-    telemetry, no payment.
+    keeps alive, and real measured on-disk usage. Fresh installs start
+    with review-mode seed acceptance and a conservative 10 GB storage cap;
+    saved operator config wins on later restarts. No account, no telemetry,
+    no payment.
 
 assets:
   license: LICENSE

@@ -121,6 +121,7 @@ test('encoding: defaults are revocable=true, freeze=0 when fields omitted', (t) 
 
 test('signing: revocable flag changes the signed payload', (t) => {
   const proto = new SeedProtocol(null, { keyPair: null })
+  t.teardown(() => proto.destroy())
   const base = {
     appKey: b4a.alloc(32, 0x01),
     discoveryKeys: [b4a.alloc(32, 0x02)],
@@ -142,6 +143,7 @@ test('signing: revocable flag changes the signed payload', (t) => {
 
 test('signing: unseedFreezeMs is committed in signed bytes', (t) => {
   const proto = new SeedProtocol(null, { keyPair: null })
+  t.teardown(() => proto.destroy())
   const base = {
     appKey: b4a.alloc(32, 0x01),
     discoveryKeys: [b4a.alloc(32, 0x02)],
@@ -162,6 +164,7 @@ test('signing: unseedFreezeMs is committed in signed bytes', (t) => {
 
 test('signing: legacy v1 layout produces 28-byte meta block (unchanged from v0.7)', (t) => {
   const proto = new SeedProtocol(null, { keyPair: null })
+  t.teardown(() => proto.destroy())
   const msg = {
     appKey: b4a.alloc(32, 0x01),
     discoveryKeys: [b4a.alloc(32, 0x02)],

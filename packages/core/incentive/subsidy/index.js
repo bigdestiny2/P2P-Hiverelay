@@ -195,14 +195,32 @@ export class SubsidyAccrual extends EventEmitter {
   }
 
   /**
-   * Set/replace the payout destination. Returns the normalized
-   * { type, value } or throws on an unrecognizable destination.
+   * Set/replace/clear the payout destination. Returns the normalized
+   * { type, value }, null when cleared, or throws on an unrecognizable
+   * destination.
    */
   async setPayoutDestination (value) {
+    const previous = this.payoutDestination
+    if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
+      this.payoutDestination = null
+      try {
+        await this._persist({ throwOnError: true })
+      } catch (err) {
+        this.payoutDestination = previous
+        throw err
+      }
+      this.emit('destination', null)
+      return null
+    }
     const dest = validatePayoutDestination(value)
     if (!dest) throw new Error('Unrecognized payout destination (expected lightning address, BOLT12 offer, or bitcoin address)')
     this.payoutDestination = dest
-    await this._persist()
+    try {
+      await this._persist({ throwOnError: true })
+    } catch (err) {
+      this.payoutDestination = previous
+      throw err
+    }
     this.emit('destination', dest)
     return dest
   }
@@ -278,11 +296,17 @@ export class SubsidyAccrual extends EventEmitter {
     }
   }
 
-  async _persist () {
+  async _persist ({ throwOnError = false } = {}) {
     if (!this.storagePath) return
     // Serialize writers: a tick and a destination change can race.
-    this._persisting = this._persisting.then(() => this._write()).catch(() => {})
-    return this._persisting
+    const write = this._persisting.then(() => this._write())
+    this._persisting = write.catch(err => {
+      this.emit('persist-error', {
+        message: err && err.message ? err.message : String(err || 'unknown error'),
+        error: err
+      })
+    })
+    return throwOnError ? write : this._persisting
   }
 
   async _write () {

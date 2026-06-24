@@ -31,6 +31,7 @@ import { verifyForkProof } from './fork-proof-signing.js'
 const DEFAULT_FOLLOW_INTERVAL = 5 * 60 * 1000 // 5 minutes
 const FETCH_TIMEOUT = 10_000
 const MAX_URL_LENGTH = 2048
+const MAX_FEDERATION_JSON_BYTES = 2 * 1024 * 1024
 
 // Validate a federation source URL. Returns the validated URL string or throws.
 // Caller-supplied URLs (follow/mirror/republish) get the throwing variant; the
@@ -62,6 +63,49 @@ function validateUrlSafe (url) {
   } catch {
     return false
   }
+}
+
+function utf8ByteLength (text) {
+  if (typeof Buffer !== 'undefined' && typeof Buffer.byteLength === 'function') {
+    return Buffer.byteLength(text, 'utf8')
+  }
+  if (typeof TextEncoder !== 'undefined') {
+    return new TextEncoder().encode(text).byteLength
+  }
+  return String(text).length
+}
+
+async function readBoundedFetchText (res) {
+  const contentLength = Number(res.headers?.get?.('content-length'))
+  if (Number.isFinite(contentLength) && contentLength > MAX_FEDERATION_JSON_BYTES) return null
+
+  if (res.body && typeof res.body.getReader === 'function') {
+    const reader = res.body.getReader()
+    const decoder = typeof TextDecoder !== 'undefined' ? new TextDecoder() : null
+    let body = ''
+    let bytes = 0
+    while (true) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      const value = chunk.value
+      bytes += value?.byteLength || value?.length || 0
+      if (bytes > MAX_FEDERATION_JSON_BYTES) {
+        if (typeof reader.cancel === 'function') {
+          try { await reader.cancel() } catch (_) {}
+        }
+        return null
+      }
+      if (decoder) body += decoder.decode(value, { stream: true })
+      else body += String(value)
+    }
+    if (decoder) body += decoder.decode()
+    return body
+  }
+
+  if (typeof res.text !== 'function') return null
+  const text = await res.text()
+  if (utf8ByteLength(text) > MAX_FEDERATION_JSON_BYTES) return null
+  return text
 }
 
 export class Federation extends EventEmitter {
@@ -165,15 +209,14 @@ export class Federation extends EventEmitter {
    * Persist follow/mirror state. Coalesces concurrent calls so a burst of
    * follow()/unfollow() doesn't trigger overlapping writes.
    */
-  async save () {
+  async save ({ throwOnError = false } = {}) {
     if (!this.storagePath) return
-    if (this._saveInFlight) return this._saveInFlight
-    this._saveInFlight = (async () => {
+    if (!this._saveInFlight) {
       // Atomic write: writeFile(.tmp) then rename — POSIX rename is atomic,
       // so SIGKILL mid-write leaves either the old file intact or the new one
       // in place, never a partial. Cleans up .tmp on any error.
-      const tmpPath = join(dirname(this.storagePath), basename(this.storagePath) + '.tmp')
-      try {
+      this._saveInFlight = (async () => {
+        const tmpPath = join(dirname(this.storagePath), basename(this.storagePath) + '.tmp')
         await mkdir(dirname(this.storagePath), { recursive: true })
         const payload = JSON.stringify({
           followed: Array.from(this.followed.values()),
@@ -183,15 +226,46 @@ export class Federation extends EventEmitter {
         }, null, 2)
         await writeFile(tmpPath, payload, 'utf8')
         await rename(tmpPath, this.storagePath)
-      } catch (err) {
+      })().catch(async (err) => {
         // Best-effort cleanup of any leftover .tmp on failure.
+        const tmpPath = join(dirname(this.storagePath), basename(this.storagePath) + '.tmp')
         try { await unlink(tmpPath) } catch (_) {}
-        this.emit('persistence-error', { phase: 'save', error: err })
-      } finally {
+        throw err
+      }).finally(() => {
         this._saveInFlight = null
-      }
-    })()
-    return this._saveInFlight
+      })
+    }
+    try {
+      return await this._saveInFlight
+    } catch (err) {
+      this.emit('persistence-error', { phase: 'save', error: err })
+      if (throwOnError) throw err
+    }
+  }
+
+  restoreSnapshot (snapshot = {}) {
+    this.followed = new Map()
+    this.mirrored = new Map()
+    this.republished = new Map()
+    this._mirroredPubkeys = new Set()
+
+    for (const entry of snapshot.followed || []) this._addFollowed(entry.url, entry.pubkey, entry.addedAt)
+    for (const entry of snapshot.mirrored || []) this._addMirrored(entry.url, entry.pubkey, entry.addedAt)
+    for (const entry of snapshot.republished || []) this._addRepublished(entry)
+
+    this._syncPollTimer()
+  }
+
+  _syncPollTimer () {
+    if (!this.running) return
+    if (this.followed.size > 0) {
+      if (!this._timer) this._scheduleNextPoll()
+      return
+    }
+    if (this._timer) {
+      clearTimeout(this._timer)
+      this._timer = null
+    }
   }
 
   // Internal: add to map without emitting, used by load() so persisted state
@@ -240,29 +314,30 @@ export class Federation extends EventEmitter {
 
   // ─── Subscription management ────────────────────────────────────────
 
-  follow (url, { pubkey = null } = {}) {
+  follow (url, { pubkey = null, persist = true } = {}) {
     validateUrl(url)
     this._addFollowed(url, pubkey, Date.now())
     this.emit('followed', { url, pubkey })
-    this.save() // fire-and-forget; errors emit 'persistence-error'
-    if (this.running && !this._timer) this._scheduleNextPoll()
+    if (persist) this.save() // fire-and-forget; errors emit 'persistence-error'
+    this._syncPollTimer()
   }
 
-  mirror (url, { pubkey = null } = {}) {
+  mirror (url, { pubkey = null, persist = true } = {}) {
     validateUrl(url)
     this._addMirrored(url, pubkey, Date.now())
     this.emit('mirrored', { url, pubkey })
-    this.save()
+    if (persist) this.save()
   }
 
-  unfollow (url) {
+  unfollow (url, { persist = true } = {}) {
     const removedFollow = this.followed.delete(url)
     const mirrorEntry = this.mirrored.get(url)
     const removedMirror = this.mirrored.delete(url)
     if (mirrorEntry?.pubkey) this._mirroredPubkeys.delete(mirrorEntry.pubkey)
     if (removedFollow || removedMirror) {
       this.emit('unfollowed', { url })
-      this.save()
+      if (persist) this.save()
+      this._syncPollTimer()
     }
     return removedFollow || removedMirror
   }
@@ -274,19 +349,19 @@ export class Federation extends EventEmitter {
    * operator also wants to seed the app locally, they accept it via the
    * normal seed-request queue.
    */
-  republish (appKey, { sourceUrl = null, sourcePubkey = null, channel = null, note = null } = {}) {
+  republish (appKey, { sourceUrl = null, sourcePubkey = null, channel = null, note = null, persist = true } = {}) {
     if (!appKey || typeof appKey !== 'string') throw new Error('Federation: republish(appKey) requires a string appKey')
     if (sourceUrl != null) validateUrl(sourceUrl)
     this._addRepublished({ appKey, sourceUrl, sourcePubkey, channel, note, addedAt: Date.now() })
     this.emit('republished', { appKey, sourceUrl, channel })
-    this.save()
+    if (persist) this.save()
   }
 
-  unrepublish (appKey) {
+  unrepublish (appKey, { persist = true } = {}) {
     const removed = this.republished.delete(appKey)
     if (removed) {
       this.emit('unrepublished', { appKey })
-      this.save()
+      if (persist) this.save()
     }
     return removed
   }
@@ -410,14 +485,19 @@ export class Federation extends EventEmitter {
       }
 
       // 'review' — queue for operator approval.
-      this.node._pendingRequests.set(appKey, {
+      const pendingEntry = {
         ...synthRequest,
         discoveredAt: Date.now(),
         mode
-      })
-      this.node.emit('registry-pending', { appKey, publisher: synthRequest.publisherPubkey, source: 'federation' })
-      this.emit('federation-queued', { appKey, source: entry.url })
-      queued++
+      }
+      const inserted = typeof this.node._addPendingRequest === 'function'
+        ? this.node._addPendingRequest(appKey, pendingEntry)
+        : this._addPendingRequestFallback(appKey, pendingEntry)
+      if (inserted) {
+        this.node.emit('registry-pending', { appKey, publisher: synthRequest.publisherPubkey, source: 'federation' })
+        this.emit('federation-queued', { appKey, source: entry.url })
+        queued++
+      }
     }
 
     // Pull fork-proof gossip from this followed peer too. Bounded
@@ -427,6 +507,13 @@ export class Federation extends EventEmitter {
     try { await this._pullForkProofs(entry.url) } catch (_) { /* non-fatal */ }
 
     return queued
+  }
+
+  _addPendingRequestFallback (appKey, entry) {
+    if (!this.node?._pendingRequests || typeof this.node._pendingRequests.has !== 'function' || typeof this.node._pendingRequests.set !== 'function') return false
+    if (this.node._pendingRequests.has(appKey)) return false
+    this.node._pendingRequests.set(appKey, entry)
+    return true
   }
 
   /**
@@ -489,19 +576,76 @@ export class Federation extends EventEmitter {
   }
 
   _fetchCatalog (url) {
+    const target = url.endsWith('/catalog.json') ? url : url.replace(/\/+$/, '') + '/catalog.json'
+    return this._fetchJsonTarget(target)
+  }
+
+  async _fetchJsonTarget (target) {
+    let parsed
+    try {
+      parsed = new URL(target)
+    } catch {
+      return null
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+
+    if (typeof globalThis.fetch === 'function') return this._fetchJsonTargetWithFetch(parsed)
+    if (parsed.protocol === 'http:') return this._fetchJsonTargetWithHttp(parsed)
+    return null
+  }
+
+  async _fetchJsonTargetWithFetch (parsed) {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null
+    const timeout = controller ? setTimeout(() => controller.abort(), FETCH_TIMEOUT) : null
+    if (timeout && typeof timeout.unref === 'function') timeout.unref()
+    try {
+      const res = await globalThis.fetch(parsed.href, controller ? { signal: controller.signal } : {})
+      if (!res || res.status !== 200) return null
+      const body = await readBoundedFetchText(res)
+      if (body == null) return null
+      try { return JSON.parse(body) } catch { return null }
+    } catch {
+      return null
+    } finally {
+      if (timeout) clearTimeout(timeout)
+    }
+  }
+
+  _fetchJsonTargetWithHttp (parsed) {
     return new Promise((resolve) => {
-      const target = url.endsWith('/catalog.json') ? url : url.replace(/\/+$/, '') + '/catalog.json'
-      const req = http.get(target, { timeout: FETCH_TIMEOUT }, (res) => {
-        if (res.statusCode !== 200) { res.resume(); return resolve(null) }
+      let settled = false
+      const finish = (value) => {
+        if (settled) return
+        settled = true
+        resolve(value)
+      }
+
+      const req = http.get(parsed, { timeout: FETCH_TIMEOUT }, (res) => {
+        if (res.statusCode !== 200) { res.resume(); return finish(null) }
+        const contentLength = Number(res.headers['content-length'])
+        if (Number.isFinite(contentLength) && contentLength > MAX_FEDERATION_JSON_BYTES) {
+          res.resume()
+          return finish(null)
+        }
         let body = ''
+        let bytes = 0
         res.setEncoding('utf8')
-        res.on('data', (chunk) => { body += chunk })
+        res.on('data', (chunk) => {
+          bytes += utf8ByteLength(chunk)
+          if (bytes > MAX_FEDERATION_JSON_BYTES) {
+            res.destroy()
+            req.destroy()
+            return finish(null)
+          }
+          body += chunk
+        })
         res.on('end', () => {
-          try { resolve(JSON.parse(body)) } catch { resolve(null) }
+          if (settled) return
+          try { finish(JSON.parse(body)) } catch { finish(null) }
         })
       })
-      req.on('error', () => resolve(null))
-      req.on('timeout', () => { req.destroy(); resolve(null) })
+      req.on('error', () => finish(null))
+      req.on('timeout', () => { req.destroy(); finish(null) })
     })
   }
 
@@ -511,19 +655,7 @@ export class Federation extends EventEmitter {
    * failure so callers can short-circuit cleanly.
    */
   _fetchJson (baseUrl, path) {
-    return new Promise((resolve) => {
-      const target = baseUrl.replace(/\/+$/, '') + path
-      const req = http.get(target, { timeout: FETCH_TIMEOUT }, (res) => {
-        if (res.statusCode !== 200) { res.resume(); return resolve(null) }
-        let body = ''
-        res.setEncoding('utf8')
-        res.on('data', (chunk) => { body += chunk })
-        res.on('end', () => {
-          try { resolve(JSON.parse(body)) } catch { resolve(null) }
-        })
-      })
-      req.on('error', () => resolve(null))
-      req.on('timeout', () => { req.destroy(); resolve(null) })
-    })
+    const target = baseUrl.replace(/\/+$/, '') + path
+    return this._fetchJsonTarget(target)
   }
 }

@@ -9,7 +9,6 @@
  * PearBrowser handoff URLs, keys, and relay capabilities.
  */
 
-import createTestnet from '@hyperswarm/testnet'
 import { spawn } from 'child_process'
 import { createServer } from 'net'
 import { mkdir, rm } from 'fs/promises'
@@ -54,6 +53,8 @@ async function main () {
   }
 
   installShutdownHandlers(state)
+
+  const { default: createTestnet } = await import('@hyperswarm/testnet')
 
   await mkdir(storageRoot, { recursive: true })
   await mkdir(join(storageRoot, 'home'), { recursive: true })
@@ -228,6 +229,7 @@ async function waitForPearBrowserReady ({ gatewayUrl, catalogUrl, appKey, timeou
       const gateway = await fetchText(gatewayUrl, { timeoutMs: 4000 })
       const catalog = await fetchJson(catalogUrl + '?pageSize=500', { timeoutMs: 4000 })
       const entries = [
+        ...(Array.isArray(catalog.items) ? catalog.items : []),
         ...(Array.isArray(catalog.apps) ? catalog.apps : []),
         ...(Array.isArray(catalog.entries) ? catalog.entries : [])
       ]

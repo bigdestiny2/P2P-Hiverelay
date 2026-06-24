@@ -1,4 +1,5 @@
 import test from 'brittle'
+import http from 'http'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { mkdtemp, rm, writeFile, readFile, stat, readdir } from 'fs/promises'
@@ -14,6 +15,14 @@ import { Federation } from 'p2p-hiverelay/core/federation.js'
 
 function makeNode (overrides = {}) {
   return new RelayNode({ storage: '/tmp/hr-fed-hardening-' + Date.now() + '-' + Math.random(), ...overrides })
+}
+
+function listen (server) {
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+}
+
+function closeServer (server) {
+  return new Promise((resolve) => server.close(resolve))
 }
 
 // ─── URL scheme validation ────────────────────────────────────────────
@@ -227,4 +236,35 @@ test('Federation.save round-trips through load() (atomic write produces valid JS
   t.is(snap.mirrored.length, 1)
   t.is(snap.republished.length, 1)
   t.is(snap.republished[0].sourceUrl, 'https://up.example')
+})
+
+test('Federation JSON fetch rejects oversized peer catalogs before parsing', async (t) => {
+  const oversizedCatalog = JSON.stringify({ apps: ['x'.repeat(2 * 1024 * 1024)] })
+  const server = http.createServer((req, res) => {
+    t.is(req.url, '/catalog.json')
+    res.statusCode = 200
+    res.setHeader('Content-Type', 'application/json')
+    res.end(oversizedCatalog)
+  })
+  await listen(server)
+  t.teardown(() => closeServer(server))
+
+  const fed = new Federation({ node: makeNode() })
+  const data = await fed._fetchCatalog(`http://127.0.0.1:${server.address().port}`)
+  t.is(data, null, 'oversized catalog body is rejected')
+})
+
+test('Federation JSON fetch rejects oversized content-length on generic pulls', async (t) => {
+  const server = http.createServer((_req, res) => {
+    res.statusCode = 200
+    res.setHeader('Content-Type', 'application/json')
+    res.setHeader('Content-Length', String(2 * 1024 * 1024 + 1))
+    res.end('{}')
+  })
+  await listen(server)
+  t.teardown(() => closeServer(server))
+
+  const fed = new Federation({ node: makeNode() })
+  const data = await fed._fetchJson(`http://127.0.0.1:${server.address().port}`, '/api/forks/proofs')
+  t.is(data, null, 'oversized generic JSON response is rejected from headers')
 })

@@ -18,7 +18,8 @@
 import { createServer } from 'http'
 import { EventEmitter } from 'events'
 import { HyperGateway } from '../../gateway/hyper-gateway.js'
-import { normalizeContentType } from '../constants.js'
+import { buildGatewayCatalogPayload } from './api-catalog-read.js'
+import { writeJson } from './api-response.js'
 
 const DEFAULT_GATEWAY_PORT = 9200
 
@@ -30,7 +31,7 @@ export class GatewayServer extends EventEmitter {
   constructor (relayNode, opts = {}) {
     super()
     this.node = relayNode
-    this.port = opts.gatewayPort || DEFAULT_GATEWAY_PORT
+    this.port = opts.gatewayPort ?? DEFAULT_GATEWAY_PORT
     this.host = opts.gatewayHost || '0.0.0.0'
     this.corsOrigins = opts.corsOrigins || []
     this.trustProxy = opts.trustProxy || false
@@ -39,6 +40,7 @@ export class GatewayServer extends EventEmitter {
     this._ownsGateway = !opts.gateway
     this._rateLimits = new Map()
     this._rateLimitCleanup = null
+    this._activeSockets = new Set()
   }
 
   get gateway () {
@@ -47,6 +49,10 @@ export class GatewayServer extends EventEmitter {
 
   async start () {
     this.server = createServer((req, res) => this._handle(req, res))
+    this.server.on('connection', (socket) => {
+      this._activeSockets.add(socket)
+      socket.on('close', () => this._activeSockets.delete(socket))
+    })
 
     this._rateLimitCleanup = setInterval(() => {
       const now = Date.now()
@@ -66,14 +72,37 @@ export class GatewayServer extends EventEmitter {
   }
 
   async stop () {
+    if (this._ownsGateway && this._gateway && typeof this._gateway.close === 'function') {
+      try { await this._gateway.close() } catch (err) {
+        this.emit('gateway-close-error', { error: err && err.message ? err.message : String(err) })
+      }
+    }
+
     if (this._rateLimitCleanup) {
       clearInterval(this._rateLimitCleanup)
       this._rateLimitCleanup = null
     }
+    this._rateLimits.clear()
+
     if (this.server) {
-      await new Promise(resolve => this.server.close(resolve))
+      await new Promise(resolve => {
+        if (typeof this.server.closeIdleConnections === 'function') {
+          try { this.server.closeIdleConnections() } catch (_) {}
+        }
+        if (typeof this.server.closeAllConnections === 'function') {
+          try { this.server.closeAllConnections() } catch (_) {}
+          setImmediate(() => {
+            try { this.server?.closeAllConnections() } catch (_) {}
+          })
+        }
+        for (const socket of this._activeSockets) {
+          try { socket.destroy() } catch (_) {}
+        }
+        this.server.close(() => resolve())
+      })
       this.server = null
     }
+    this._activeSockets.clear()
   }
 
   _getClientIP (req) {
@@ -123,10 +152,7 @@ export class GatewayServer extends EventEmitter {
     }
 
     if (!this._checkRateLimit(ip)) {
-      res.setHeader('Content-Type', 'application/json')
-      res.setHeader('Retry-After', '60')
-      res.writeHead(429)
-      res.end(JSON.stringify({ error: 'Too many requests' }) + '\n')
+      writeJson(res, { error: 'Too many requests' }, 429, { 'Retry-After': '60' })
       return
     }
 
@@ -134,8 +160,7 @@ export class GatewayServer extends EventEmitter {
     try {
       path = new URL(req.url, `http://0.0.0.0:${this.port}`).pathname
     } catch {
-      res.writeHead(400)
-      res.end()
+      writeJson(res, { error: 'Invalid URL' }, 400)
       return
     }
 
@@ -152,64 +177,25 @@ export class GatewayServer extends EventEmitter {
 
       // Simple liveness check for load balancers
       if (req.method === 'GET' && (path === '/health' || path === '/')) {
-        res.setHeader('Content-Type', 'application/json')
-        res.writeHead(200)
-        res.end(JSON.stringify({ ok: true, service: 'gateway' }) + '\n')
+        writeJson(res, { ok: true, service: 'gateway' })
         return
       }
 
-      res.setHeader('Content-Type', 'application/json')
-      res.writeHead(404)
-      res.end(JSON.stringify({ error: 'Not found' }) + '\n')
+      writeJson(res, { error: 'Not found' }, 404)
     } catch (err) {
       this.emit('error', err)
-      res.setHeader('Content-Type', 'application/json')
-      res.writeHead(500)
-      res.end(JSON.stringify({ error: 'Internal error' }) + '\n')
+      writeJson(res, { error: 'Internal error' }, 500)
     }
   }
 
   _serveCatalog (req, res) {
     const url = new URL(req.url, `http://0.0.0.0:${this.port}`)
-    const page = Math.max(parseInt(url.searchParams.get('page')) || 1, 1)
-    const pageSize = Math.min(
-      Math.max(parseInt(url.searchParams.get('pageSize')) || 50, 1),
-      200
-    )
-    const typeFilter = normalizeContentType(url.searchParams.get('type'), null)
+    const result = buildGatewayCatalogPayload({ node: this.node, url })
+    if (!result.ok) {
+      writeJson(res, result.payload, result.status || 400)
+      return
+    }
 
-    const registry = this.node.appRegistry
-    const catalog = registry
-      ? registry.catalog({
-        redactPrivate: this.node.config?.custody?.redactedCatalog !== false
-      })
-      : []
-
-    const items = typeFilter
-      ? catalog.filter(item => item.type === typeFilter)
-      : catalog
-
-    const start = (page - 1) * pageSize
-    const paginated = items.slice(start, start + pageSize)
-
-    // Advertise a curated signed Hyperbee catalog (config.catalogBeeKey) so
-    // clients that can replicate + verify it prefer it over this HTTP firehose.
-    // Only emitted when set to a valid bare 64-hex key, so the default response
-    // shape is unchanged for operators who don't configure one. Mirrors the
-    // same field already surfaced by the relay's own /catalog.json.
-    const catalogBeeKey = this.node.config?.catalogBeeKey
-    const advertiseBee = typeof catalogBeeKey === 'string' && /^[0-9a-f]{64}$/i.test(catalogBeeKey)
-
-    res.setHeader('Content-Type', 'application/json')
-    res.setHeader('Cache-Control', 'public, max-age=30')
-    res.writeHead(200)
-    res.end(JSON.stringify({
-      items: paginated,
-      page,
-      pageSize,
-      total: items.length,
-      hasMore: start + pageSize < items.length,
-      ...(advertiseBee ? { catalogBeeKey } : {})
-    }) + '\n')
+    writeJson(res, result.payload, 200, { 'Cache-Control': 'public, max-age=30' })
   }
 }

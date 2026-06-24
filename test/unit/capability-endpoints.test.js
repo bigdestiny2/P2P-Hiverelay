@@ -54,6 +54,7 @@ function mockRelayNode ({ manifestStore, forkDetector } = {}) {
     getStats () { return { publicKey: 'deadbeef', connections: 0, seededApps: 0 } },
     getHealthStatus () { return { healthy: true } },
     on () {},
+    removeListener () {},
     emit () {},
     async seedApp () { return { ok: true } },
     async unseedApp () {},
@@ -99,6 +100,32 @@ function request (port, method, path, body, headers = {}) {
     })
     req.on('error', reject)
     if (body) req.write(typeof body === 'string' ? body : JSON.stringify(body))
+    req.end()
+  })
+}
+
+function requestRaw (port, method, path, body, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const opts = {
+      hostname: '127.0.0.1',
+      port,
+      method,
+      path,
+      agent: false,
+      headers: { Connection: 'close', ...headers }
+    }
+    const req = http.request(opts, (res) => {
+      let data = ''
+      res.on('data', (chunk) => { data += chunk })
+      res.on('end', () => {
+        let parsed
+        try { parsed = JSON.parse(data) } catch (_) { parsed = data }
+        resolve({ statusCode: res.statusCode, body: parsed, headers: res.headers })
+        req.destroy()
+      })
+    })
+    req.on('error', reject)
+    if (body) req.write(body)
     req.end()
   })
 }
@@ -152,6 +179,8 @@ test('GET /.well-known/hiverelay.json returns a valid capability doc', async (t)
   t.is(res.body.catalog.total, 3)
   // Cache-Control header hint for CDNs / browsers.
   t.ok(res.headers['cache-control']?.includes('max-age=60'))
+  t.ok(res.headers['content-type']?.includes('application/json; charset=utf-8'), 'capability docs are typed as JSON')
+  t.is(res.headers['x-content-type-options'], 'nosniff', 'JSON responses disable content sniffing')
 })
 
 test('GET /api/capabilities mirrors /.well-known/hiverelay.json', async (t) => {
@@ -180,6 +209,9 @@ test('GET /api/authors/<unknown>/seeding.json returns 404 with machine code', as
   t.is(res.statusCode, 404)
   t.ok(res.body.error?.startsWith('not-found: '),
     'error string carries machine-readable prefix')
+  t.ok(res.headers['content-type']?.includes('application/json; charset=utf-8'), 'error response is typed as JSON')
+  t.is(res.headers['x-content-type-options'], 'nosniff', 'error response disables content sniffing')
+  t.is(res.headers['cache-control'], 'no-store, max-age=0', 'error response is not cached by default')
 })
 
 test('POST /api/authors/seeding.json stores a signed manifest, GET returns it', async (t) => {
@@ -203,6 +235,29 @@ test('POST /api/authors/seeding.json stores a signed manifest, GET returns it', 
   t.is(got.statusCode, 200)
   t.is(got.body.signature, manifest.signature)
   t.is(got.body.pubkey, pubkeyHex)
+})
+
+test('POST /api/authors/seeding.json rolls back memory when manifest save fails', async (t) => {
+  const store = new ManifestStore({})
+  store.save = async () => { throw new Error('readonly manifest store') }
+  const { port } = await setupApi(t, { manifestStore: store })
+
+  const kp = makeKeyPair()
+  const manifest = createSeedingManifest({
+    keyPair: kp,
+    relays: [{ url: 'hyperswarm://test', role: 'primary' }],
+    drives: [{ driveKey: validHex() }]
+  })
+
+  const put = await request(port, 'POST', '/api/authors/seeding.json', manifest)
+  t.is(put.statusCode, 500)
+  t.is(put.body.errorCode, 'persist-failed')
+  t.ok(put.body.error?.startsWith('persist-failed: '))
+
+  const pubkeyHex = b4a.toString(kp.publicKey, 'hex')
+  t.absent(store.get(pubkeyHex), 'failed save did not leave runtime manifest')
+  const got = await request(port, 'GET', '/api/authors/' + pubkeyHex + '/seeding.json')
+  t.is(got.statusCode, 404)
 })
 
 test('POST with invalid signature is rejected with BAD_REQUEST prefix', async (t) => {
@@ -315,6 +370,34 @@ test('POST /api/forks/proof accepts properly signed envelope', async (t) => {
   t.is(res.body.observer, b4a.toString(publicKey, 'hex'))
 })
 
+test('POST /api/forks/proof rolls back memory when fork save fails', async (t) => {
+  const { ForkDetector } = await import('p2p-hiverelay/core/fork-detector.js')
+  const { signForkProof } = await import('p2p-hiverelay/core/fork-proof-signing.js')
+  const sodium = (await import('sodium-universal')).default
+  const b4a = (await import('b4a')).default
+
+  const fd = new ForkDetector({})
+  fd.save = async () => { throw new Error('readonly fork store') }
+  const { port } = await setupApi(t, { forkDetector: fd })
+
+  const publicKey = b4a.alloc(32)
+  const secretKey = b4a.alloc(64)
+  sodium.crypto_sign_keypair(publicKey, secretKey)
+
+  const signed = signForkProof({
+    hypercoreKey: 'd'.repeat(64),
+    blockIndex: 7,
+    evidence: [{ fromRelay: 'r1', block: 'b1', signature: 's1' }, { fromRelay: 'r2', block: 'b2', signature: 's2' }]
+  }, { publicKey, secretKey })
+
+  const res = await request(port, 'POST', '/api/forks/proof', signed)
+  t.is(res.statusCode, 500)
+  t.is(res.body.errorCode, 'persist-failed')
+  t.ok(res.body.error?.startsWith('persist-failed: '))
+  t.is(fd.list().length, 0, 'failed save did not leave runtime fork proof')
+  t.absent(fd.isQuarantined('d'.repeat(64)), 'failed save did not quarantine the key')
+})
+
 test('POST /api/forks/proof rejects tampered signed proof', async (t) => {
   const { ForkDetector } = await import('p2p-hiverelay/core/fork-detector.js')
   const { signForkProof } = await import('p2p-hiverelay/core/fork-proof-signing.js')
@@ -365,6 +448,10 @@ test('429 response includes machine-readable errorCode', async (t) => {
   t.is(res.statusCode, 429)
   t.is(res.body.errorCode, 'rate-limited')
   t.ok(res.body.error?.startsWith('rate-limited: '))
+  t.is(res.headers['retry-after'], '60')
+  t.ok(res.headers['content-type']?.includes('application/json; charset=utf-8'), 'rate-limit response is typed as JSON')
+  t.is(res.headers['x-content-type-options'], 'nosniff', 'rate-limit response disables content sniffing')
+  t.is(res.headers['cache-control'], 'no-store, max-age=0', 'rate-limit response is not cached by default')
 })
 
 test('non-rate-limited endpoints unaffected', async (t) => {
@@ -391,6 +478,36 @@ test('POST with non-JSON Content-Type is rejected with 400', async (t) => {
   t.is(res.statusCode, 400, 'non-JSON Content-Type rejected')
   t.ok(/Content-Type must be application\/json/.test(res.body.error || ''),
     'error explains the JSON requirement')
+})
+
+test('POST Content-Type requires exact application/json media type', async (t) => {
+  const { port } = await setupApi(t)
+
+  const parameterSmuggle = await request(port, 'POST', '/api/v1/dispatch', { route: 'ai.infer' }, {
+    'Content-Type': 'text/plain; application/json'
+  })
+  t.is(parameterSmuggle.statusCode, 400, 'JSON-looking parameter rejected')
+
+  const jsonp = await request(port, 'POST', '/api/v1/dispatch', { route: 'ai.infer' }, {
+    'Content-Type': 'application/jsonp'
+  })
+  t.is(jsonp.statusCode, 400, 'JSON-looking subtype rejected')
+
+  const jsonWithCharset = await request(port, 'POST', '/api/v1/dispatch', { route: 'ai.infer' }, {
+    'Content-Type': 'application/json; charset=utf-8'
+  })
+  t.not(jsonWithCharset.statusCode, 400, 'application/json parameters still accepted')
+})
+
+test('POST with chunked body and no Content-Type is rejected with 400', async (t) => {
+  const { port } = await setupApi(t)
+  // No Content-Length and no Content-Type makes Node send a chunked request.
+  // The content-type gate must still reject it before auth or body parsing.
+  const res = await requestRaw(port, 'POST', '/api/v1/dispatch', JSON.stringify({ route: 'ai.infer' }))
+  t.is(res.statusCode, 400, 'chunked body without Content-Type rejected')
+  t.ok(/Content-Type must be application\/json/.test(res.body.error || ''),
+    'error explains the JSON requirement')
+  t.is(res.headers.connection, 'close', 'early body rejection closes the connection')
 })
 
 test('POST with application/json Content-Type passes the gate', async (t) => {

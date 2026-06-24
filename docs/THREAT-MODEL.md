@@ -212,7 +212,7 @@ framing loses to any adversary who knows the literature.
 |---|---|---|
 | Authored state immutability | `packages/core/core/delegation.js` (signed certs), Hyperdrive append-only | ✅ shipped |
 | Hypercore append-only Merkle | upstream `hypercore` v10 | ✅ shipped |
-| Replica diversity at infrastructure | `packages/core/core/federation.js` (per-relay catalog mirroring) | ✅ shipped (primitive); ⚠️ not yet wired into client quorum selection |
+| Replica diversity at infrastructure | `packages/core/core/federation.js` (per-relay catalog mirroring) + `packages/core/core/quorum-selector.js` | ✅ shipped; client `selectQuorum` now diversity-ranks by region and operator, and warns when either floor is not met |
 | Quorum selection UX | `packages/client/index.js` (`HiveRelayClient`) | ✅ shipped v0.6.0 (`selectQuorum`, `queryQuorumWithComparison`) |
 | Fork-detection during local replication | `client.open()` attaches listeners to `drive.core.on('truncate' / 'verification-error')`; auto-reports to `ForkDetector` | ✅ shipped v0.6.0 (catches local fork-detected events, NOT silent multi-replica equivocation) |
 | Fork-proof gossip across federation | `packages/core/core/federation.js` (pulls `/api/forks/proofs` per cycle) | ✅ shipped v0.6.0 |
@@ -226,10 +226,10 @@ framing loses to any adversary who knows the literature.
 | Pure-P2P trust pipeline (no HTTPS dep) | `hiverelay-anchor` + `hiverelay-custody` Protomux channels | ✅ shipped v0.8.0 |
 | Per-operator sybil bound | AutoHeal fairshare cap (`ceil(target / minOperators)`) | ✅ shipped v0.8.0 |
 | Capability advertisement | `/.well-known/hiverelay.json` (v0.5.1, extended in v0.8.0 with operator field) | ✅ shipped |
-| Operator Score module | brief §6.5 spec, partial inputs collected | ⚠️ partial — operator field wired through diversity scoring; full module pending |
+| Operator Score module | brief §6.5 spec, partial inputs collected | ⚠️ partial — operator identity is wired through quorum diversity scoring; full score/attestation module pending |
 | Sybil defense additional layers (ASN/Nostr/LN/bonds) | brief §6.4 spec | ❌ to build (see [M2-ROADMAP.md](M2-ROADMAP.md)) |
 | Cryptographic geographic attestation | brief §6.5 spec, no code | ❌ to build (see [M2-ROADMAP.md](M2-ROADMAP.md)) |
-| Reputation system | `packages/core/incentive/reputation/` | ⚠️ basic, needs deterministic-aggregation rewrite |
+| Reputation system | `packages/core/incentive/reputation/` | ✅ deterministic local ranking/import/export shipped; ⚠️ federated aggregation still pending |
 | TEE/HSM-attested deletion | future optional mode | ❌ scoped, pending platform selection |
 
 ## Action items

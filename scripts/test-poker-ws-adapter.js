@@ -13,7 +13,7 @@
  *   5. A client on a different table does NOT receive the entry.
  *   6. Connecting to a non-existent table is rejected at handshake with 404.
  *   7. stop() detaches subscriptions and closes connections cleanly.
- *   8. API-key gate rejects bad tokens with 401.
+ *   8. API-key gate rejects URL tokens, waits for in-band auth, and rejects bad frames.
  */
 
 import http from 'http'
@@ -113,7 +113,7 @@ async function integration () {
   app.createTable({ tableKey: OTHER_TABLE, writers: [a.pubHex] })
 
   const server = http.createServer()
-  await new Promise((resolve) => server.listen(0, resolve))
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const port = server.address().port
   const adapter = new PokerWsAdapter({ pokerApp: app, server })
   adapter.start()
@@ -192,28 +192,48 @@ async function testApiKeyGate () {
   app.createTable({ tableKey: TABLE, writers: [a.pubHex] })
 
   const server = http.createServer()
-  await new Promise((r) => server.listen(0, r))
+  await new Promise((r) => server.listen(0, '127.0.0.1', r))
   const port = server.address().port
-  const adapter = new PokerWsAdapter({ pokerApp: app, server, apiKey: 'sekrit' })
+  const adapter = new PokerWsAdapter({ pokerApp: app, server, apiKey: 'sekrit', authTimeoutMs: 100 })
   adapter.start()
 
-  // No token → 401
-  let ws = new WebSocket('ws://127.0.0.1:' + port + '/api/poker/' + TABLE + '/events')
+  // URL token → 401. Credentials must not ride in URLs.
+  let ws = new WebSocket('ws://127.0.0.1:' + port + '/api/poker/' + TABLE + '/events?token=sekrit')
   let status = await new Promise((r) => {
     ws.on('unexpected-response', (_req, res) => r(res.statusCode))
     ws.on('error', () => r('error-event'))
     setTimeout(() => r('timeout'), 1000)
   })
-  assert(status === 401, 'no token → 401 (' + status + ')')
+  assert(status === 401, 'URL token → 401 (' + status + ')')
 
-  // Right token → opens
-  ws = new WebSocket('ws://127.0.0.1:' + port + '/api/poker/' + TABLE + '/events?token=sekrit')
-  const opened = await new Promise((r) => {
-    ws.once('open', () => r(true))
-    ws.once('error', () => r(false))
-    setTimeout(() => r('timeout'), 1000)
+  // No auth frame → closes before state is sent.
+  ws = new WebSocket('ws://127.0.0.1:' + port + '/api/poker/' + TABLE + '/events')
+  const capNoAuth = startCapture(ws)
+  await new Promise((r) => ws.once('open', r))
+  const noAuthClose = await new Promise((r) => {
+    ws.once('close', (code, reason) => r({ code, reason: reason.toString() }))
+    setTimeout(() => r({ code: 'timeout', reason: '' }), 1000)
   })
-  assert(opened === true, 'good token → connection opens')
+  assert(noAuthClose.code === 1008 && noAuthClose.reason === 'auth-required', 'no auth frame → policy close')
+  assert(capNoAuth.frames.length === 0, 'no state frame before auth')
+
+  // Wrong auth frame → closes.
+  ws = new WebSocket('ws://127.0.0.1:' + port + '/api/poker/' + TABLE + '/events')
+  await new Promise((r) => ws.once('open', r))
+  ws.send(JSON.stringify({ type: 'auth', token: 'wrong' }))
+  const badAuthClose = await new Promise((r) => {
+    ws.once('close', (code, reason) => r({ code, reason: reason.toString() }))
+    setTimeout(() => r({ code: 'timeout', reason: '' }), 1000)
+  })
+  assert(badAuthClose.code === 1008 && badAuthClose.reason === 'auth-failed', 'bad auth frame → policy close')
+
+  // Right in-band auth → opens and receives state.
+  ws = new WebSocket('ws://127.0.0.1:' + port + '/api/poker/' + TABLE + '/events')
+  const capGood = startCapture(ws)
+  await new Promise((r) => ws.once('open', r))
+  ws.send(JSON.stringify({ type: 'auth', token: 'sekrit' }))
+  const state = await capGood.next((m) => m.type === 'state')
+  assert(state && state.state.tableKey === TABLE, 'good in-band auth → state frame')
 
   ws.close()
   await new Promise(r => setTimeout(r, 50))
