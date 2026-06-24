@@ -74,6 +74,59 @@ raw fleet, push the Umbrel community store, open or update the official Umbrel
 draft PR, and publish the StartOS registry package. A missing credential fails
 the run and records `distributionPreflight: failed` in release evidence.
 
+## Repository Secret Setup
+
+Configure the release secrets before cutting a full release. Use stdin or local
+environment variables so secret values do not appear in shell history. The
+workflow reads these values as repository secrets, including
+`UMBREL_OFFICIAL_FORK` even though it is a fork slug rather than a token.
+
+```sh
+repo=bigdestiny2/P2P-Hiverelay
+
+gh secret set FLEET_SSH_PRIVATE_KEY --repo "$repo" < ~/.ssh/hiverelay_fleet_release
+
+printf '%s' "$UMBREL_STORE_TOKEN" |
+  gh secret set UMBREL_STORE_TOKEN --repo "$repo"
+
+printf '%s' "$UMBREL_OFFICIAL_PR_TOKEN" |
+  gh secret set UMBREL_OFFICIAL_PR_TOKEN --repo "$repo"
+
+printf '%s' "$UMBREL_OFFICIAL_FORK" |
+  gh secret set UMBREL_OFFICIAL_FORK --repo "$repo"
+
+gh secret set STARTOS_DEVELOPER_KEY_PEM --repo "$repo" < ~/.embassy/developer.key.pem
+
+printf '%s' "$STARTOS_REGISTRY_URL" |
+  gh secret set STARTOS_REGISTRY_URL --repo "$repo"
+
+gh variable set FLEET_ROLLOUT_TIMEOUT_MS --repo "$repo" --body 1800000
+```
+
+Expected shapes:
+
+| Name | Shape |
+| --- | --- |
+| `FLEET_SSH_PRIVATE_KEY` | PEM/OpenSSH private key block without surrounding whitespace |
+| `UMBREL_STORE_TOKEN` | GitHub token with push access to `bigdestiny2/blindspark-umbrel-store` |
+| `UMBREL_OFFICIAL_PR_TOKEN` | GitHub token able to push the official-package fork and open/update `getumbrel/umbrel-apps` PRs |
+| `UMBREL_OFFICIAL_FORK` | Fork slug such as `owner/umbrel-apps`; it must not be `getumbrel/umbrel-apps` |
+| `STARTOS_DEVELOPER_KEY_PEM` | StartOS developer private key block without surrounding whitespace |
+| `STARTOS_REGISTRY_URL` | Public HTTPS registry base URL without credentials, query string, or fragment |
+| `FLEET_ROLLOUT_TIMEOUT_MS` | Optional integer from 600000 to 14400000 milliseconds |
+
+After configuration, confirm the names are visible:
+
+```sh
+gh secret list --repo bigdestiny2/P2P-Hiverelay
+gh variable list --repo bigdestiny2/P2P-Hiverelay
+```
+
+Never reuse an existing release tag for newly merged code. Prepare and tag a
+fresh version, then let `release-surfaces.yml` build the digest, update
+metadata, roll the selected fleet channels, and attach evidence. A full release
+with no channel override defaults to `both`; a prerelease defaults to `none`.
+
 `release-surfaces.yml` is the only workflow that publishes release image tags.
 The older `docker-publish.yml` workflow is snapshot-only: pushes to `main`
 publish `latest` and `main-<sha>` for canary testing, but `vX.Y.Z` tags are
