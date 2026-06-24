@@ -33,9 +33,10 @@ printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' RELAY VERSION RUNNING APPS CONNS DIS
 printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' ───── ─────── ─────── ──── ───── ──── ──────
 
 while IFS='|' read -r name host keyspec channel; do
-  keyarg=(); [ -n "$keyspec" ] && keyarg=(-i "${keyspec/#\~/$HOME}")
+  ssh_args=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes)
+  [ -n "$keyspec" ] && ssh_args=(-i "${keyspec/#\~/$HOME}" "${ssh_args[@]}")
   target="$(printf '%s' "$CH" | python3 -c "import sys,json;print(json.load(sys.stdin).get('$channel',''))" 2>/dev/null || echo '?')"
-  out="$(ssh "${keyarg[@]}" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes "root@$host" bash -s <<<"$REMOTE" 2>/dev/null || true)"
+  out="$(ssh "${ssh_args[@]}" "root@$host" bash -s <<<"$REMOTE" 2>/dev/null || true)"
   if [ -z "$out" ]; then
     printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' "$name" UNREACH - - - - "$target"
     continue
@@ -48,5 +49,5 @@ import json,sys
 for r in json.load(open(sys.argv[1]))["relays"]:
     host = r["tailnet"] or r["publicIp"]
     key  = "" if r.get("sshKey") in (None,"default") else r["sshKey"]
-    print(f"{r[\"name\"]}|{host}|{key}|{r.get(\"channel\",\"stable\")}")
+    print("{}|{}|{}|{}".format(r["name"], host, key, r.get("channel", "stable")))
 ' "$RELAYS")
