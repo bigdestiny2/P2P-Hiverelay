@@ -1,4 +1,5 @@
 node_modules
+**/node_modules
 .git
 .github
 .gitignore
@@ -8,6 +9,9 @@ examples
 docs
 services
 storage
+startos/image
+startos/*.s9pk
+startos/*.tar
 .planning
 .publisher-storage
 .pos-publisher-storage

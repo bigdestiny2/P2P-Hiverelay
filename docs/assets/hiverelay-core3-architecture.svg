@@ -1,0 +1,234 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1080" viewBox="0 0 1600 1080" role="img" aria-labelledby="title desc">
+  <title id="title">HiveRelay Core3 architecture graph</title>
+  <desc id="desc">A technical architecture graph showing actors, ingress, Core3 relay kernel, protocol channels, services, schemas, security boundaries, and live release distribution.</desc>
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; }
+      .title { fill: #0f172a; font: 800 34px Inter, ui-sans-serif, system-ui, sans-serif; }
+      .subtitle { fill: #475569; font: 500 16px Inter, ui-sans-serif, system-ui, sans-serif; }
+      .section-title { fill: #0f172a; font: 800 18px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .8px; }
+      .node-title { fill: #0f172a; font: 800 15px Inter, ui-sans-serif, system-ui, sans-serif; }
+      .node-text { fill: #334155; font: 500 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+      .tiny { fill: #475569; font: 700 11px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .4px; }
+      .label { fill: #334155; font: 700 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .actor { fill: #eef7ff; stroke: #2563eb; }
+      .ingress { fill: #f0fdf4; stroke: #16a34a; }
+      .core { fill: #fff7ed; stroke: #ea580c; }
+      .protocol { fill: #fefce8; stroke: #ca8a04; }
+      .service { fill: #f5f3ff; stroke: #7c3aed; }
+      .contract { fill: #f8fafc; stroke: #64748b; }
+      .guard { fill: #ecfeff; stroke: #0891b2; }
+      .distro { fill: #fdf2f8; stroke: #db2777; }
+      .node { stroke-width: 1.6; rx: 10; }
+      .wire { fill: none; stroke: #64748b; stroke-width: 2; marker-end: url(#arrow); }
+      .wire-strong { fill: none; stroke: #0f766e; stroke-width: 2.4; marker-end: url(#arrow-strong); }
+      .wire-dotted { fill: none; stroke: #64748b; stroke-width: 2; stroke-dasharray: 6 7; marker-end: url(#arrow); }
+      .guard-line { fill: none; stroke: #0891b2; stroke-width: 2; stroke-dasharray: 5 6; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#64748b"/>
+    </marker>
+    <marker id="arrow-strong" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#0f766e"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1600" height="1080"/>
+  <text class="title" x="48" y="58">HiveRelay Core3 Architecture</text>
+  <text class="subtitle" x="48" y="84">P2P relay backbone, blind custody plane, service bus, evidence contracts, and live release distribution.</text>
+
+  <rect class="panel" x="36" y="112" width="250" height="648" rx="18"/>
+  <text class="section-title" x="58" y="145">ACTORS</text>
+  <rect class="node actor" x="58" y="170" width="206" height="76"/>
+  <text class="node-title" x="76" y="198">Publisher</text>
+  <text class="node-text" x="76" y="220">signed seed requests</text>
+  <text class="node-text" x="76" y="238">custody intents</text>
+  <rect class="node actor" x="58" y="268" width="206" height="76"/>
+  <text class="node-title" x="76" y="296">Pear / Bare apps</text>
+  <text class="node-text" x="76" y="318">Hypercore replication</text>
+  <text class="node-text" x="76" y="336">Hyperswarm peers</text>
+  <rect class="node actor" x="58" y="366" width="206" height="76"/>
+  <text class="node-title" x="76" y="394">Browser / mobile</text>
+  <text class="node-text" x="76" y="416">HTTP gateway</text>
+  <text class="node-text" x="76" y="434">WebSocket bridges</text>
+  <rect class="node actor" x="58" y="464" width="206" height="76"/>
+  <text class="node-title" x="76" y="492">Operator</text>
+  <text class="node-text" x="76" y="514">dashboard, wizard</text>
+  <text class="node-text" x="76" y="532">wallet, services</text>
+  <rect class="node actor" x="58" y="562" width="206" height="76"/>
+  <text class="node-title" x="76" y="590">Store reviewer</text>
+  <text class="node-text" x="76" y="612">Umbrel runtime review</text>
+  <text class="node-text" x="76" y="630">StartOS package proof</text>
+
+  <rect class="panel" x="320" y="112" width="270" height="648" rx="18"/>
+  <text class="section-title" x="342" y="145">INGRESS AND DISCOVERY</text>
+  <rect class="node ingress" x="342" y="170" width="226" height="80"/>
+  <text class="node-title" x="360" y="198">HyperDHT / Hyperswarm</text>
+  <text class="node-text" x="360" y="220">peer discovery</text>
+  <text class="node-text" x="360" y="238">Noise encrypted transport</text>
+  <rect class="node ingress" x="342" y="274" width="226" height="82"/>
+  <text class="node-title" x="360" y="302">HTTP gateway</text>
+  <text class="node-text" x="360" y="324">/catalog.json</text>
+  <text class="node-text" x="360" y="342">/v1/hyper/:key/*</text>
+  <rect class="node ingress" x="342" y="380" width="226" height="82"/>
+  <text class="node-title" x="360" y="408">WebSocket ingress</text>
+  <text class="node-text" x="360" y="430">/ws, /ws/replicate</text>
+  <text class="node-text" x="360" y="448">/ws/dht browser bridge</text>
+  <rect class="node ingress" x="342" y="486" width="226" height="82"/>
+  <text class="node-title" x="360" y="514">Signed catalog surfaces</text>
+  <text class="node-text" x="360" y="536">catalogBeeKey, indexRoom</text>
+  <text class="node-text" x="360" y="554">DHT relay records</text>
+  <rect class="node ingress" x="342" y="592" width="226" height="82"/>
+  <text class="node-title" x="360" y="620">Gateway contract</text>
+  <text class="node-text" x="360" y="642">Range streaming</text>
+  <text class="node-text" x="360" y="660">bounded JSON errors</text>
+
+  <rect class="panel" x="624" y="112" width="310" height="648" rx="18"/>
+  <text class="section-title" x="646" y="145">Core3 Relay Kernel</text>
+  <rect class="node core" x="646" y="170" width="122" height="72"/>
+  <text class="node-title" x="662" y="198">AppRegistry</text>
+  <text class="node-text" x="662" y="220">pins, manifests</text>
+  <rect class="node core" x="790" y="170" width="122" height="72"/>
+  <text class="node-title" x="806" y="198">Seeder</text>
+  <text class="node-text" x="806" y="220">core/drive repl</text>
+  <rect class="node core" x="646" y="266" width="122" height="72"/>
+  <text class="node-title" x="662" y="294">Gateway</text>
+  <text class="node-text" x="662" y="316">HTTP data plane</text>
+  <rect class="node core" x="790" y="266" width="122" height="72"/>
+  <text class="node-title" x="806" y="294">Dashboard</text>
+  <text class="node-text" x="806" y="316">bounded feed</text>
+  <rect class="node core" x="646" y="362" width="266" height="86"/>
+  <text class="node-title" x="666" y="390">Atomic blind custody</text>
+  <text class="node-text" x="666" y="412">intent -&gt; receipt -&gt; commit -&gt; proof</text>
+  <text class="node-text" x="666" y="430">ciphertext only, no private keys</text>
+  <rect class="node core" x="646" y="472" width="122" height="76"/>
+  <text class="node-title" x="662" y="500">AutoHeal</text>
+  <text class="node-text" x="662" y="522">anchor proofs</text>
+  <text class="node-text" x="662" y="540">repair, eviction</text>
+  <rect class="node core" x="790" y="472" width="122" height="76"/>
+  <text class="node-title" x="806" y="500">Accounting</text>
+  <text class="node-text" x="806" y="522">stored bytes</text>
+  <text class="node-text" x="806" y="540">served receipts</text>
+  <rect class="node core" x="646" y="574" width="266" height="82"/>
+  <text class="node-title" x="666" y="602">Service router</text>
+  <text class="node-text" x="666" y="624">provider registry, RPC</text>
+  <text class="node-text" x="666" y="642">exact-topic subscriptions</text>
+
+  <rect class="panel" x="968" y="112" width="270" height="648" rx="18"/>
+  <text class="section-title" x="990" y="145">P2P CHANNELS</text>
+  <rect class="node protocol" x="990" y="170" width="226" height="52"/>
+  <text class="node-title" x="1008" y="200">Hypercore replication</text>
+  <rect class="node protocol" x="990" y="238" width="226" height="52"/>
+  <text class="node-title" x="1008" y="268">hiverelay-seed</text>
+  <rect class="node protocol" x="990" y="306" width="226" height="52"/>
+  <text class="node-title" x="1008" y="336">hiverelay-publish / custody</text>
+  <rect class="node protocol" x="990" y="374" width="226" height="52"/>
+  <text class="node-title" x="1008" y="404">hiverelay-proof / anchor</text>
+  <rect class="node protocol" x="990" y="442" width="226" height="52"/>
+  <text class="node-title" x="1008" y="472">hiverelay-circuit / forward</text>
+  <rect class="node protocol" x="990" y="510" width="226" height="52"/>
+  <text class="node-title" x="1008" y="540">hiverelay-services</text>
+  <rect class="node protocol" x="990" y="578" width="226" height="52"/>
+  <text class="node-title" x="1008" y="608">hiverelay-meta</text>
+  <text class="tiny" x="990" y="670">Protomux + compact-encoding frames</text>
+  <text class="tiny" x="990" y="690">bounded decoders and protocol errors</text>
+
+  <rect class="panel" x="1272" y="112" width="292" height="648" rx="18"/>
+  <text class="section-title" x="1294" y="145">SERVICES AND CONTRACTS</text>
+  <rect class="node service" x="1294" y="170" width="112" height="58"/>
+  <text class="node-title" x="1310" y="200">identity</text>
+  <rect class="node service" x="1424" y="170" width="112" height="58"/>
+  <text class="node-title" x="1440" y="200">storage</text>
+  <rect class="node service" x="1294" y="246" width="112" height="58"/>
+  <text class="node-title" x="1310" y="276">schema</text>
+  <rect class="node service" x="1424" y="246" width="112" height="58"/>
+  <text class="node-title" x="1440" y="276">VRF</text>
+  <rect class="node service" x="1294" y="322" width="112" height="58"/>
+  <text class="node-title" x="1310" y="352">AI/QVAC</text>
+  <rect class="node service" x="1424" y="322" width="112" height="58"/>
+  <text class="node-title" x="1440" y="352">ZK</text>
+  <rect class="node service" x="1294" y="398" width="112" height="58"/>
+  <text class="node-title" x="1310" y="428">SLA</text>
+  <rect class="node service" x="1424" y="398" width="112" height="58"/>
+  <text class="node-title" x="1440" y="428">arbitration</text>
+  <rect class="node service" x="1294" y="474" width="112" height="58"/>
+  <text class="node-title" x="1310" y="504">storage-proof</text>
+  <rect class="node service" x="1424" y="474" width="112" height="58"/>
+  <text class="node-title" x="1440" y="504">Poker</text>
+  <rect class="node contract" x="1294" y="558" width="242" height="90"/>
+  <text class="node-title" x="1312" y="586">Schemas and evidence</text>
+  <text class="node-text" x="1312" y="608">manifest, catalog, capability doc</text>
+  <text class="node-text" x="1312" y="626">anchor proof, usage receipt</text>
+  <text class="node-text" x="1312" y="644">release evidence sidecars</text>
+
+  <rect class="panel" x="36" y="796" width="744" height="230" rx="18"/>
+  <text class="section-title" x="58" y="829">SECURITY BOUNDARIES</text>
+  <rect class="node guard" x="58" y="852" width="214" height="64"/>
+  <text class="node-title" x="76" y="880">Operator auth</text>
+  <text class="node-text" x="76" y="900">bearer, app proxy, in-band WS</text>
+  <rect class="node guard" x="292" y="852" width="214" height="64"/>
+  <text class="node-title" x="310" y="880">Bounded public state</text>
+  <text class="node-text" x="310" y="900">caps, pagination, redaction</text>
+  <rect class="node guard" x="526" y="852" width="214" height="64"/>
+  <text class="node-title" x="544" y="880">Privacy policy guard</text>
+  <text class="node-text" x="544" y="900">public, local-first, p2p-only</text>
+  <rect class="node guard" x="58" y="936" width="214" height="64"/>
+  <text class="node-title" x="76" y="964">Blind custody gate</text>
+  <text class="node-text" x="76" y="984">ciphertext only</text>
+  <rect class="node guard" x="292" y="936" width="214" height="64"/>
+  <text class="node-title" x="310" y="964">Atomic persistence</text>
+  <text class="node-text" x="310" y="984">tmp-file + rename</text>
+  <rect class="node guard" x="526" y="936" width="214" height="64"/>
+  <text class="node-title" x="544" y="964">Release verifiers</text>
+  <text class="node-text" x="544" y="984">image, smoke, fleet, stores</text>
+
+  <rect class="panel" x="820" y="796" width="744" height="230" rx="18"/>
+  <text class="section-title" x="842" y="829">LIVE RELEASE DISTRIBUTION</text>
+  <rect class="node distro" x="842" y="852" width="154" height="64"/>
+  <text class="node-title" x="860" y="880">GitHub Release</text>
+  <text class="node-text" x="860" y="900">tagged source</text>
+  <rect class="node distro" x="1022" y="852" width="154" height="64"/>
+  <text class="node-title" x="1040" y="880">GHCR digest</text>
+  <text class="node-text" x="1040" y="900">amd64 + arm64</text>
+  <rect class="node distro" x="1202" y="852" width="154" height="64"/>
+  <text class="node-title" x="1220" y="880">fleet/channels</text>
+  <text class="node-text" x="1220" y="900">canary + stable</text>
+  <rect class="node distro" x="1382" y="852" width="154" height="64"/>
+  <text class="node-title" x="1400" y="880">release evidence</text>
+  <text class="node-text" x="1400" y="900">hash-linked sidecars</text>
+  <rect class="node distro" x="842" y="936" width="154" height="64"/>
+  <text class="node-title" x="860" y="964">Umbrel package</text>
+  <text class="node-text" x="860" y="984">app_proxy + /data</text>
+  <rect class="node distro" x="1022" y="936" width="154" height="64"/>
+  <text class="node-title" x="1040" y="964">Official PR</text>
+  <text class="node-text" x="1040" y="984">real-device review</text>
+  <rect class="node distro" x="1202" y="936" width="154" height="64"/>
+  <text class="node-title" x="1220" y="964">StartOS .s9pk</text>
+  <text class="node-text" x="1220" y="984">digest pinned</text>
+  <rect class="node distro" x="1382" y="936" width="154" height="64"/>
+  <text class="node-title" x="1400" y="964">registry proof</text>
+  <text class="node-text" x="1400" y="984">startos evidence</text>
+
+  <path class="wire-strong" d="M264 208 C290 208 306 210 342 210"/>
+  <path class="wire-strong" d="M264 306 C294 286 306 234 342 214"/>
+  <path class="wire" d="M264 404 C296 386 308 326 342 316"/>
+  <path class="wire" d="M264 502 C294 462 306 392 342 420"/>
+  <path class="wire-dotted" d="M264 600 C302 624 312 642 342 636"/>
+  <path class="wire-strong" d="M568 210 C596 210 614 206 646 206"/>
+  <path class="wire" d="M568 315 C596 315 614 302 646 302"/>
+  <path class="wire" d="M568 421 C596 420 614 302 790 302"/>
+  <path class="wire-dotted" d="M568 527 C602 504 618 208 646 206"/>
+  <path class="wire-strong" d="M912 206 C934 206 956 196 990 196"/>
+  <path class="wire" d="M912 404 C944 360 960 332 990 332"/>
+  <path class="wire" d="M912 510 C944 505 960 536 990 536"/>
+  <path class="wire-strong" d="M1216 536 C1244 536 1264 504 1294 504"/>
+  <path class="wire" d="M1216 400 C1246 400 1264 604 1294 604"/>
+  <path class="wire" d="M779 656 C864 732 920 806 920 852"/>
+  <path class="wire" d="M996 884 L1022 884"/>
+  <path class="wire" d="M1176 884 L1202 884"/>
+  <path class="wire" d="M1356 884 L1382 884"/>
+  <path class="wire" d="M996 968 L1022 968"/>
+  <path class="wire" d="M1176 968 L1202 968"/>
+  <path class="wire" d="M1356 968 L1382 968"/>
+</svg>

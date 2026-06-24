@@ -31,13 +31,17 @@
 import b4a from 'b4a'
 import Protomux from 'protomux'
 import { EventEmitter } from 'events'
+import { createLengthPrefixedJsonEncoding } from './json-message-encoding.js'
 
 export const CUSTODY_PROTOCOL = 'hiverelay-custody'
 export const CUSTODY_CHANNEL_ID = b4a.from('custody-v1')
 
 const MSG_PUSH = 1
 const MSG_ACK = 2
-const MAX_MESSAGE_BYTES = 256 * 1024 // 256 KB — custody entries are small (<2 KB typical)
+export const MAX_CUSTODY_MESSAGE_BYTES = 256 * 1024 // 256 KB — custody entries are small (<2 KB typical)
+export const custodyMessageEncoding = createLengthPrefixedJsonEncoding({
+  maxBytes: MAX_CUSTODY_MESSAGE_BYTES
+})
 
 const ALLOWED_TYPES = new Set([
   'custody-intent',
@@ -77,29 +81,7 @@ export class CustodyProtocol extends EventEmitter {
     if (!channel) return false
 
     const msgHandler = channel.addMessage({
-      encoding: {
-        preencode (state, msg) {
-          const json = JSON.stringify(msg)
-          state.end += 4 + b4a.byteLength(json)
-        },
-        encode (state, msg) {
-          const json = JSON.stringify(msg)
-          const buf = b4a.from(json)
-          state.buffer.writeUInt32BE(buf.length, state.start)
-          buf.copy(state.buffer, state.start + 4)
-          state.start += 4 + buf.length
-        },
-        decode (state) {
-          const len = state.buffer.readUInt32BE(state.start)
-          if (len > MAX_MESSAGE_BYTES) {
-            state.start += 4 + len
-            return { type: -1, error: 'message too large' }
-          }
-          const json = state.buffer.subarray(state.start + 4, state.start + 4 + len).toString()
-          state.start += 4 + len
-          try { return JSON.parse(json) } catch { return { type: -1, error: 'bad json' } }
-        }
-      },
+      encoding: custodyMessageEncoding,
       onmessage: (msg) => this._onMessage(remotePubkey, msg)
     })
 

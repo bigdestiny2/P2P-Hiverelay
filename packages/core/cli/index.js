@@ -18,6 +18,7 @@ import minimist from 'minimist'
 import goodbye from 'graceful-goodbye'
 import { RelayNode } from '../core/relay-node/index.js'
 import { createLogger } from '../core/logger.js'
+import { isValidHexKey } from '../core/constants.js'
 import { loadConfig, saveConfig, ensureDirs, CONFIG_PATH, deriveTokenFromSeed } from '../config/loader.js'
 import b4a from 'b4a'
 import { existsSync, mkdirSync, cpSync, readFileSync } from 'fs'
@@ -33,6 +34,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'))
 const VERSION = pkg.version
 const SKILL_SRC = join(__dirname, '..', 'skills', 'SKILL.md')
+const VALID_ACCEPT_MODES = ['open', 'review', 'allowlist', 'closed']
 
 const args = minimist(process.argv.slice(2), { boolean: ['version', 'auto-heal', 'autoheal'] })
 const command = args._[0]
@@ -172,7 +174,7 @@ async function manage () {
   const { runManage } = await import('./manage.js')
   const host = args.host || '127.0.0.1'
   const port = args.port ? parseInt(args.port) : 9100
-  await runManage(host, port)
+  await runManage(host, port, { apiKey: getApiKey(args) })
 }
 
 // ─── catalog (operator catalog control via /api/manage/catalog/*) ──
@@ -217,7 +219,7 @@ async function init () {
   ensureDirs()
   const config = loadConfig({
     region: args.region || undefined,
-    maxStorageBytes: args['max-storage'] ? parseBytes(args['max-storage']) : undefined
+    maxStorageBytes: args['max-storage'] ? parseBytesOrExit(args['max-storage'], '--max-storage') : undefined
   })
   const configPath = saveConfig(config)
   console.log(`  [ok] Config:  ${configPath}`)
@@ -293,7 +295,11 @@ async function init () {
 async function start () {
   const cliOverrides = {}
   if (args.storage) cliOverrides.storage = args.storage
-  if (args['max-storage']) cliOverrides.maxStorageBytes = parseBytes(args['max-storage'])
+  if (args['max-storage']) cliOverrides.maxStorageBytes = parseBytesOrExit(args['max-storage'], '--max-storage')
+  else if (process.env.HIVERELAY_MAX_STORAGE) {
+    const maxStorageBytes = parseBytesOrExit(process.env.HIVERELAY_MAX_STORAGE, 'HIVERELAY_MAX_STORAGE')
+    if (!hasPersistedConfig()) cliOverrides.maxStorageBytes = maxStorageBytes
+  }
   if (args['max-connections']) cliOverrides.maxConnections = parseInt(args['max-connections'])
   if (args['max-bandwidth']) cliOverrides.maxRelayBandwidthMbps = parseInt(args['max-bandwidth'])
   if (args.bootstrap) cliOverrides.bootstrapNodes = parseBootstrapNodesOrExit(args.bootstrap)
@@ -388,6 +394,21 @@ async function start () {
   // of exposeToken for plain reverse-proxy setups.
   if (process.env.HIVERELAY_TRUST_PROXY === '1' || process.env.HIVERELAY_TRUST_PROXY === 'true') {
     cliOverrides.trustProxy = true
+  }
+  // HIVERELAY_ACCEPT_MODE=<open|review|allowlist|closed> gives packaged
+  // home-server installs a declarative sovereignty default. It is a default,
+  // not a permanent override: once the operator has saved acceptMode (or the
+  // legacy registryAutoAccept) in config.json, their persisted choice wins.
+  if (process.env.HIVERELAY_ACCEPT_MODE) {
+    const mode = String(process.env.HIVERELAY_ACCEPT_MODE).trim().toLowerCase()
+    if (!VALID_ACCEPT_MODES.includes(mode)) {
+      console.error('Invalid HIVERELAY_ACCEPT_MODE: must be one of ' + VALID_ACCEPT_MODES.join(', '))
+      process.exit(1)
+    }
+    if (!hasPersistedAcceptMode()) {
+      cliOverrides.acceptMode = mode
+      delete cliOverrides.registryAutoAccept
+    }
   }
 
   // HIVERELAY_INDEX_SIDECAR_URL — point the relay at a running index sidecar
@@ -575,20 +596,25 @@ async function start () {
     await node.seedApp(key)
   }
 
-  // Print status periodically
+  // Print status periodically. Keep the live carriage-return status bar for
+  // terminals, but avoid writing it into systemd logs every five seconds.
   if (!args.quiet) {
+    const interactiveStatus = process.stdout.isTTY === true
+    const statusIntervalMs = interactiveStatus ? 5000 : 60000
     statusInterval = setInterval(() => {
-      const stats = node.getStats()
-      const seeder = stats.seeder || {}
-      const relay = stats.relay || {}
-      process.stdout.write(
-        `\r  [status] Apps: ${stats.seededApps} | Conns: ${stats.connections}` +
-        ` | Stored: ${formatBytes(seeder.totalBytesStored || 0)}` +
-        ` | Served: ${formatBytes(seeder.totalBytesServed || 0)}` +
-        ` | Circuits: ${relay.activeCircuits || 0}` +
-        '   '
-      )
-    }, 5000)
+      const status = statusSnapshot(node)
+      if (interactiveStatus) {
+        process.stdout.write(
+          `\r  [status] Apps: ${status.seededApps} | Conns: ${status.connections}` +
+          ` | Stored: ${formatBytes(status.storedBytes)}` +
+          ` | Served: ${formatBytes(status.servedBytes)}` +
+          ` | Circuits: ${status.activeCircuits}` +
+          '   '
+        )
+      } else {
+        log.info(status, 'relay status')
+      }
+    }, statusIntervalMs)
   }
 }
 
@@ -1284,10 +1310,6 @@ function parseBootstrapNodesOrExit (input) {
   }
 }
 
-function isValidHexKey (value, length = 64) {
-  return typeof value === 'string' && new RegExp(`^[0-9a-fA-F]{${length}}$`).test(value)
-}
-
 // ─── status ─────────────────────────────────────────────────────────
 
 async function status () {
@@ -1303,8 +1325,11 @@ async function status () {
     console.log(row('Seeded Apps:', stats.seededApps))
     console.log(row('Connections:', stats.connections))
     if (stats.seeder) {
+      // Honest measured served total (every replicated core) when the relay
+      // exposes it; legacy seeder counter otherwise.
+      const served = stats.served ? stats.served.totalBytesServed : (stats.seeder.totalBytesServed || 0)
       console.log(row('Stored:', formatBytes(stats.seeder.totalBytesStored || 0)))
-      console.log(row('Served:', formatBytes(stats.seeder.totalBytesServed || 0)))
+      console.log(row('Served:', formatBytes(served)))
     }
     if (stats.relay) {
       console.log(row('Circuits:', `${stats.relay.activeCircuits} active (${stats.relay.totalCircuitsServed} total)`))
@@ -1488,6 +1513,7 @@ Start Options:
 Manage Options:
   --host <ip>                   Relay host (default: 127.0.0.1)
   --port <n>                    Relay API port (default: 9100)
+  --api-key <key>               API key (or use HIVERELAY_API_KEY env)
 
 Seed / Ghost Drive Options:
   --relay <url>                 Relay URL (default: http://127.0.0.1:9100)
@@ -1538,18 +1564,20 @@ QVAC Subcommands:
   qvac register <modelId> --loaded-model-id <id>       Register an already-loaded qvac model
   qvac remove <modelId>                                Remove a qvac model
 
-Catalog / Federation / QVAC Options:
+Management / Catalog / Federation / QVAC Options:
   --api-url <url>               Relay API base URL (default: http://127.0.0.1:9100)
   --api-key <key>               API key (or use HIVERELAY_API_KEY env)
 
 Environment:
   HIVERELAY_LOG_LEVEL           Log level: fatal, error, warn, info, debug, trace
+  HIVERELAY_ACCEPT_MODE         Catalog mode: open, review, allowlist, or closed
+  HIVERELAY_MAX_STORAGE         First-boot storage cap, e.g. 10GB or 500MB
 
 Examples:
   npx p2p-hiverelay setup                              # Interactive setup wizard
   p2p-hiverelay start --region NA --max-storage 100GB   # Start relay
   p2p-hiverelay tui                                     # Live management TUI
-  p2p-hiverelay tui --port 9200                         # Manage node on custom port
+  p2p-hiverelay tui --port 9200 --api-key $HIVERELAY_API_KEY
   p2p-hiverelay testnet                                 # Local testnet (3 relays + client)
   p2p-hiverelay seed <key> --publish --replicas 3       # Seed + publish registry request
   p2p-hiverelay ghostdrive pin <driveKey>               # Pin Ghost Drive key on relay
@@ -1563,11 +1591,20 @@ Examples:
 
 function parseBytes (str) {
   const units = { B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 }
-  const match = str.match(/^(\d+(?:\.\d+)?)\s*(TB|GB|MB|KB|B)?$/i)
-  if (!match) return parseInt(str)
+  const match = String(str || '').trim().match(/^(\d+(?:\.\d+)?)\s*(TB|GB|MB|KB|B)?$/i)
+  if (!match) return NaN
   const num = parseFloat(match[1])
   const unit = (match[2] || 'B').toUpperCase()
   return Math.floor(num * (units[unit] || 1))
+}
+
+function parseBytesOrExit (value, label) {
+  const bytes = parseBytes(value)
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    console.error(`Invalid ${label}: expected a positive size such as 10GB, 500MB, or 1TB`)
+    process.exit(1)
+  }
+  return bytes
 }
 
 function formatBytes (bytes) {
@@ -1575,6 +1612,45 @@ function formatBytes (bytes) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   const i = Math.floor(Math.log(bytes) / Math.log(1024))
   return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i]
+}
+
+function statusSnapshot (node) {
+  const stats = node.getStats()
+  const seeder = stats.seeder || {}
+  const relay = stats.relay || {}
+  // Prefer the honest measured served total (every replicated core) over
+  // seeder.totalBytesServed, which reads ~0 on registry-drive relays.
+  const served = stats.served ? stats.served.totalBytesServed : (seeder.totalBytesServed || 0)
+  return {
+    seededApps: stats.seededApps || 0,
+    connections: stats.connections || 0,
+    storedBytes: seeder.totalBytesStored || 0,
+    servedBytes: served || 0,
+    activeCircuits: relay.activeCircuits || 0
+  }
+}
+
+function hasPersistedAcceptMode () {
+  if (!existsSync(CONFIG_PATH)) return false
+  try {
+    const parsed = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
+    return !!(parsed && typeof parsed === 'object' && (
+      Object.prototype.hasOwnProperty.call(parsed, 'acceptMode') ||
+      Object.prototype.hasOwnProperty.call(parsed, 'registryAutoAccept')
+    ))
+  } catch (_) {
+    return false
+  }
+}
+
+function hasPersistedConfig () {
+  if (!existsSync(CONFIG_PATH)) return false
+  try {
+    const parsed = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
+    return !!(parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+  } catch (_) {
+    return false
+  }
 }
 
 main().catch((err) => {

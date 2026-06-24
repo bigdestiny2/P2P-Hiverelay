@@ -6,7 +6,7 @@
  *
  *   1. welcome      — user clicks "Let's go"
  *   2. relay_name   — operator picks a name (or accepts the default)
- *   3. payout       — OPTIONAL on-chain BTC payout address (skippable)
+ *   3. payout       — OPTIONAL payout destination (skippable)
  *   4. accept_mode  — choose review/open/allowlist/closed (default: review)
  *   5. complete     — wizard done; main dashboard takes over
  *
@@ -33,7 +33,7 @@ import { validatePayoutDestination } from '../incentive/subsidy/index.js'
 const VALID_STEPS = ['welcome', 'relay_name', 'payout', 'accept_mode', 'complete']
 const VALID_ACCEPT_MODES = ['open', 'review', 'allowlist', 'closed']
 // v3: replaced the encrypted-lnbits-adminKey model (v2) with a plaintext
-// on-chain BTC payout address. Older files are loaded forward-compatibly —
+// payout destination. Older files are loaded forward-compatibly —
 // the legacy `lnbits` block is discarded on load.
 const SCHEMA_VERSION = 3
 
@@ -52,7 +52,7 @@ export class SetupWizard extends EventEmitter {
       schemaVersion: SCHEMA_VERSION,
       step: 'welcome',
       relayName: this.defaults.relayName || generateDefaultName(),
-      // Public on-chain BTC address (e.g. bc1…), or null if skipped.
+      // Public payout destination, or null if skipped.
       payoutDestination: this.defaults.payoutDestination || null,
       acceptMode: 'review',
       startedAt: null,
@@ -161,10 +161,11 @@ export class SetupWizard extends EventEmitter {
   }
 
   /**
-   * Set the operator's on-chain BTC payout address. OPTIONAL — pass null or
+   * Set the operator's payout destination. OPTIONAL — pass null or
    * an empty string to clear/skip. The relay never holds funds; this feeds
    * `subsidy.payoutDestination`, which a coordinator pays out signed work
-   * claims to. Validates as an on-chain BTC address (bc1…, 1…, or 3…).
+   * claims to. Validates as a lightning address, BOLT12 offer, or bitcoin
+   * address.
    */
   setPayoutDestination ({ address } = {}) {
     if (address === null || address === undefined || (typeof address === 'string' && address.trim() === '')) {
@@ -175,8 +176,8 @@ export class SetupWizard extends EventEmitter {
       return { ok: false, reason: 'address must be a string' }
     }
     const parsed = validatePayoutDestination(address)
-    if (!parsed || parsed.type !== 'onchain') {
-      return { ok: false, reason: 'enter a valid on-chain BTC address (bc1…, 1…, or 3…)' }
+    if (!parsed) {
+      return { ok: false, reason: 'enter a valid lightning address, BOLT12 offer, or bitcoin address' }
     }
     this.state.payoutDestination = parsed.value
     return { ok: true, state: this.snapshot() }

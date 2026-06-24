@@ -1,175 +1,220 @@
-> [!WARNING]
-> **Doc may be partially out of date.** This file was written before the Compute removal, Core/Services split, and Catalog auto-sync removal. See the [CHANGELOG](../CHANGELOG.md) for current architecture.
+# HiveRelay for Pear and Bare Apps
 
-# HiveRelay for Pear Developers
+This guide replaces the older pre-split notes. It is scoped to the current
+workspace:
 
-HiveRelay gives your Pear app always-on content persistence, NAT traversal relay, and service infrastructure -- without running your own servers.
+- [`../`](../) for HiveRelay itself
+- [`../../../01-browser/PearBrowser`](../../../01-browser/PearBrowser) for the mobile browser
+- [`../../../01-browser/pearbrowser-desktop`](../../../01-browser/pearbrowser-desktop) for the desktop browser
 
-## Quick Start (Pear App)
+The main distinction is simple:
+
+- **Your app** runs the `p2p-hiverelay-client` SDK inside Pear/Bare.
+- **The relay** runs as a Node service or as the Bare-native relay app.
+- **Browsers** consume the relay's HTTP and capability surfaces for fast-load,
+  catalog, and publish flows.
+
+## What is current
+
+- `HiveRelayClient` is the client entry point for Pear/Bare apps.
+- The relay advertises capabilities at `/.well-known/hiverelay.json`.
+- Public browser-facing content comes from `GET /catalog.json` and
+  `GET /v1/hyper/:key/*path`.
+- Authenticated publisher/operator writes use `POST /seed`.
+- Publisher-signed seed requests also exist at `POST /api/v1/seed`.
+- The services layer is optional. In this tree the built-in examples under
+  `packages/services/builtin/` are `poker` and `vrf`; do not assume the older
+  identity/storage/compute examples are present everywhere.
+
+## Quick start inside a Pear app
 
 ```js
-import Hyperswarm from 'hyperswarm'
 import Corestore from 'corestore'
+import Hyperswarm from 'hyperswarm'
 import { HiveRelayClient } from 'p2p-hiverelay-client'
 
-// Use Pear's storage -- NOT a filesystem path
 const store = new Corestore(Pear.config.storage)
-const swarm = new Hyperswarm()
+await store.ready()
 
-const relay = new HiveRelayClient({ swarm, store })
-await relay.start()
+const swarm = new Hyperswarm()
+const client = new HiveRelayClient({ store, swarm })
+await client.start()
 ```
 
-That's it. The client discovers public HiveRelay nodes via the DHT and connects automatically.
+Why this shape matters:
 
-## Publish Your App
+- Pear apps should use `Pear.config.storage`, not an ad hoc filesystem path.
+- Passing your own `swarm` lets the rest of the app share DHT state cleanly.
+- `await client.start()` is required before publish/open/seed/custody calls.
+
+If you are writing a plain Node script instead of a Pear app, the simple path
+form still works:
 
 ```js
-// Publish files to a Hyperdrive and seed across relay nodes
-const drive = await relay.publish([
-  { path: '/index.html', content: '<h1>My Pear App</h1>' },
-  { path: '/app.js', content: 'console.log("running")' }
+const client = new HiveRelayClient('./my-storage')
+await client.start()
+```
+
+## Publish flow for Pear apps
+
+The practical path is:
+
+1. Build a Hyperdrive.
+2. Include a root `manifest.json`.
+3. Publish with `HiveRelayClient.publish(...)` or
+   [`../scripts/publish-app.js`](../scripts/publish-app.js).
+4. Seed the resulting drive on one or more relays.
+5. Verify that the drive is reachable through both P2P and relay HTTP.
+
+Minimal publish example:
+
+```js
+const drive = await client.publish([
+  {
+    path: '/index.html',
+    content: '<!doctype html><h1>Hello from Pear</h1>'
+  },
+  {
+    path: '/manifest.json',
+    content: JSON.stringify({
+      name: 'Hello Pear',
+      version: '1.0.0',
+      description: 'Minimal Pear app',
+      author: 'you',
+      entry: '/index.html',
+      categories: ['utilities']
+    }, null, 2)
+  }
 ])
 
-console.log('App key:', drive.key.toString('hex'))
+await client.seed(drive.key, { replicas: 3 })
 ```
 
-Your app is now replicated across relay nodes. Users can access it even when your device is offline.
+### Manifest expectations
 
-## Open and Read Content
+For browser and catalog consumers, the useful minimum is:
+
+```json
+{
+  "name": "My App",
+  "version": "1.0.0",
+  "description": "What the app does",
+  "author": "your-name",
+  "entry": "/index.html",
+  "categories": ["utilities"]
+}
+```
+
+Without a manifest, browsers can still fetch the drive by key, but catalog UIs
+have poor metadata and often fall back to generic labels.
+
+## Relay contracts Pear apps should rely on
+
+### Capability discovery
+
+Fetch and verify the relay's capability document before treating a relay as
+trusted infrastructure:
 
 ```js
-// On another device -- open content by key
-const drive = await relay.open(appKey)
-const html = await relay.get(appKey, '/index.html')
+const doc = await client.fetchCapabilities('https://relay.example.com')
+console.log(doc.pubkey, doc.version, doc.features)
 ```
 
-## Seed an Existing Pear App
+Use this for:
 
-If you've already staged a Pear app with `pear stage`, seed it on the relay network:
+- relay identity pinning
+- transport selection
+- feature discovery such as `capability-doc`, `seed-revocability`,
+  `auto-heal`, `publish-channel-v1`, or `dht-relay-ws`
 
-```js
-// appKey is the hex key from `pear stage` or `pear info`
-await relay.seed(appKey, {
-  replicationFactor: 3,   // How many relays should host it
-  maxStorageBytes: 50e6   // 50 MB cap
-})
-```
+Do not hardcode service availability from old docs.
 
-## Why Pear Apps Need Relay Infrastructure
+### Public browser-facing surfaces
 
-| Problem | How HiveRelay Solves It |
-|---------|------------------------|
-| **Peer goes offline, content disappears** | Relay nodes persist and serve your Hyperdrives 24/7 |
-| **NAT traversal fails (~5% of connections)** | Circuit relay bridges peers behind symmetric NATs |
-| **Mobile networks block UDP** | WebSocket transport provides fallback connectivity |
-| **No one seeds your app overnight** | Relay operators run always-on nodes for the network |
-| **Bootstrap nodes go down** | Bootstrap cache ensures your app reconnects |
+- `GET /catalog.json`
+  - public catalog snapshot
+  - may include a `catalogBeeKey` for a signed Hyperbee catalog
+- `GET /v1/hyper/:key/*path`
+  - HTTP gateway for seeded Hyperdrive content
+- `GET /health`
+  - load balancer/liveness probe
+- `GET /status`
+  - unauthenticated status summary
+- `POST /seed`
+  - authenticated operator/publisher seed write
 
-## Architecture: What Runs Where
+## Service RPC guidance
 
-```
-Your Pear App (Bare runtime)          Relay Node (Node.js on VPS)
---------------------------------      --------------------------------
-HiveRelayClient (client SDK)    <-->  RelayNode (full relay)
-  - publish / open / get                - seeds your Hyperdrives
-  - seed requests                       - circuit relay for NAT traversal
-  - service RPC                         - HTTP API + dashboard
-  - lightweight, no server deps         - requires Node.js (http, worker_threads)
-```
+The older "all relays expose identity/storage/compute" story is no longer a
+safe assumption.
 
-The client SDK runs in Bare/Pear. The relay node runs on Node.js (VPS operators). You don't need to run a relay -- you just connect to the network.
+Treat services as optional and relay-specific:
 
-## Storage: Pear vs Node.js
+1. Read the capability doc.
+2. Check the operator's service manifest.
+3. Only then call `client.callService(...)`.
 
-The key difference for Pear apps is storage. Don't pass a string path:
+That keeps Pear apps from coupling themselves to services that exist only on a
+subset of Node relays or on older branches.
 
-```js
-// Node.js -- filesystem path
-const relay = new HiveRelayClient('./my-storage')
+## Pear-native relay versus Node relay
 
-// Pear -- use Pear's storage API
-const store = new Corestore(Pear.config.storage)
-const relay = new HiveRelayClient({ store })
-```
+See [`PEAR-DEPLOYMENT.md`](./PEAR-DEPLOYMENT.md)
+for the full matrix. The short version:
 
-If you want to bring your own Hyperswarm (recommended for Pear apps that already have one):
+- **Bare relay** is the always-on data plane: DHT peering, seeding, circuit
+  relay, read-only HTTP surfaces.
+- **Node relay** is the full operator/control plane: management APIs,
+  auth-gated publish flows, optional services, extra transports.
 
-```js
-const relay = new HiveRelayClient({ swarm: myExistingSwarm, store })
-```
+If your app depends on the browser-facing HTTP gateway or catalog, either relay
+runtime is fine as long as those public routes are enabled.
 
-## Service RPC
+## How this plugs into the browser anchors
 
-Call services on relay nodes from your Pear app:
+### PearBrowser mobile
 
-```js
-// Check relay identity
-const info = await relay.callService('identity', 'whoami')
+[`PearBrowser`](../../../01-browser/PearBrowser)
+uses HiveRelay for:
 
-// Verify a signature
-const result = await relay.callService('identity', 'verify', {
-  message: 'hello',
-  signature: sigHex,
-  pubkey: pubkeyHex
-})
+- relay-backed app discovery via `/catalog.json`
+- fast first paint via `/v1/hyper/:key/*path`
+- relay configuration and health checks
+- optional signed Hyperbee catalogs when `catalogBeeKey` is advertised
 
-// Look up a developer
-const dev = await relay.callService('identity', 'developer', {
-  key: developerPubkeyHex
-})
-```
+### PearBrowser desktop
 
-## Available Services
+[`pearbrowser-desktop`](../../../01-browser/pearbrowser-desktop)
+adds stronger catalog tooling:
 
-| Service | Methods | Description |
-|---------|---------|-------------|
-| **identity** | whoami, verify, sign, resolve, peers, developer | Keypair identity and developer resolution |
-| **storage** | drive-create, drive-read, drive-write, core-create, core-append | Hyperdrive and Hypercore operations |
-| **compute** | submit, status, result, cancel | Task execution (sandboxed) |
-| **schema** | register, get, validate, list | Schema registry for data validation |
-| **sla** | create, status, terminate | Service level agreements |
-| **arbitration** | submit, vote, get, list | Dispute resolution |
+- `scripts/publish-catalog-bee.js` publishes a signed Hyperbee catalog
+- browser clients can prefer a signed bee when the relay advertises
+  `catalogBeeKey`
+- desktop release/publish scripts already use `p2p-hiverelay-client`
 
-## Developer Identity (LNURL-Auth)
+## Compatibility note for this workspace
 
-Link your Lightning wallet to your developer identity:
+There is active version skew across the ecosystem:
 
-1. Your Pear app calls the relay's LNURL-auth endpoint
-2. You scan a QR code with your Lightning wallet
-3. Your wallet signs a challenge, proving you own a secp256k1 key
-4. The relay creates an attestation linking your Ed25519 app key to your developer identity
-5. Your Nostr profile (if you have one) automatically resolves as your developer profile
+- `hiverelay` monorepo root is `0.16.3`
+- `pearbrowser-desktop` still depends on `^0.8.12`
 
-No passwords, no accounts, no email -- just your Lightning key.
+That is the main integration risk to watch. Prefer documenting and testing
+stable wire contracts (`/.well-known/hiverelay.json`, `/catalog.json`,
+`/v1/hyper/...`, signed catalog bees) instead of relying on package-version
+parity alone.
 
-## Configuration
+## Practical validation checklist
 
-```js
-const relay = new HiveRelayClient({
-  // Required for Pear (one of these)
-  store: myCorestore,              // Corestore instance
-  // OR
-  swarm: mySwarm,                  // Existing Hyperswarm
+For any Pear/Bare app you want browsers to consume:
 
-  // Optional
-  keyPair: myKeyPair,              // Ed25519 keypair for signing
-  maxRelays: 5,                    // Max relay connections
-  seedTimeout: 15000,              // Seed request timeout (ms)
-  bootstrapCache: true             // Cache DHT bootstrap peers
-})
-```
+1. `await client.publish(...)` succeeds.
+2. `await client.seed(...)` gets at least one acceptance.
+3. `curl http://127.0.0.1:9100/catalog.json` shows the drive with usable
+   metadata.
+4. `curl http://127.0.0.1:9100/v1/hyper/<driveKey>/index.html` returns HTML.
+5. The app loads in PearBrowser or pearbrowser-desktop without a manual key
+   paste fallback.
 
-## FAQ
-
-**Can I run a relay node inside a Pear app?**
-No. The relay node requires Node.js-specific APIs (http server, worker threads). Relay operators run standard Node.js on VPS servers. Your Pear app uses the lightweight client SDK.
-
-**Do I need to pay for relay services?**
-Relay operators can offer free tiers. The credit system supports Lightning payments for premium capacity, but many operators provide free seeding for the ecosystem.
-
-**What if all relays go down?**
-Your Pear app still works peer-to-peer. Relays enhance availability but aren't required for basic P2P functionality. The client automatically reconnects when relays come back.
-
-**How do I find relays?**
-The client discovers relays automatically via the HyperDHT. No configuration needed. You can also connect to specific relays by key if preferred.
+If you need relay-side pin diagnostics, also read
+[`PUBLISHING.md`](./PUBLISHING.md).

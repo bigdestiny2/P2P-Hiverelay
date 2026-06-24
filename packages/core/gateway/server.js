@@ -17,9 +17,58 @@ import Hyperswarm from 'hyperswarm'
 import Corestore from 'corestore'
 import Hyperdrive from 'hyperdrive'
 import { HyperGateway } from './hyper-gateway.js'
-import { RELAY_DISCOVERY_TOPIC } from '../../core/constants.js'
+import { RELAY_DISCOVERY_TOPIC } from '../core/constants.js'
+import { readJsonBody } from '../core/relay-node/api-body.js'
+import { sanitizeGatewayStats } from '../core/relay-node/api-gateway-stats.js'
+import { getPostJsonContentTypeProblem } from '../core/relay-node/api-request.js'
+import { writeJson } from '../core/relay-node/api-response.js'
 
 const DEFAULT_PORT = 9100
+const MAX_GATEWAY_SEED_BODY_BYTES = 4096
+
+function httpError (message, statusCode = 400, close = false) {
+  const err = new Error(message)
+  err.statusCode = statusCode
+  err.close = close
+  err.expose = true
+  return err
+}
+
+export function buildGatewaySeedErrorResponse (err) {
+  if (err?.expose) {
+    return {
+      status: err.statusCode || 400,
+      payload: { error: err.message },
+      close: Boolean(err.close)
+    }
+  }
+  return {
+    status: 500,
+    payload: { error: 'Gateway seed failed' },
+    close: false
+  }
+}
+
+export function validateGatewaySeedKey (key) {
+  if (typeof key !== 'string' || !/^[0-9a-f]{64}$/i.test(key)) {
+    throw httpError('key must be 64 hex characters')
+  }
+  return key.toLowerCase()
+}
+
+export async function readGatewaySeedBody (req) {
+  const contentTypeProblem = getPostJsonContentTypeProblem(req)
+  if (contentTypeProblem) {
+    throw httpError(contentTypeProblem.error, 400, contentTypeProblem.close)
+  }
+  let body
+  try {
+    body = await readJsonBody(req, MAX_GATEWAY_SEED_BODY_BYTES)
+  } catch (err) {
+    throw httpError(err.message, err.message === 'Request body too large' ? 413 : 400)
+  }
+  return { key: validateGatewaySeedKey(body.key) }
+}
 
 export async function startGateway (opts = {}) {
   const port = opts.port || DEFAULT_PORT
@@ -74,14 +123,12 @@ export async function startGateway (opts = {}) {
     const url = new URL(req.url, `http://localhost:${port}`)
 
     if (url.pathname === '/health') {
-      res.setHeader('Content-Type', 'application/json')
-      res.writeHead(200)
-      res.end(JSON.stringify({
+      writeJson(res, {
         ok: true,
         type: 'hiverelay-gateway',
         drives: seededDrives.size,
-        ...gateway.getStats()
-      }))
+        ...sanitizeGatewayStats(gateway.getStats())
+      })
       return
     }
 
@@ -91,30 +138,23 @@ export async function startGateway (opts = {}) {
 
     // Seed a new drive via POST
     if (req.method === 'POST' && url.pathname === '/v1/seed') {
-      let body = ''
-      req.on('data', c => { body += c })
-      req.on('end', async () => {
-        try {
-          const { key } = JSON.parse(body)
-          if (!key || key.length < 52) throw new Error('Invalid key')
-          // Per-drive session — see Seed-loop comment above.
-          const drive = new Hyperdrive(store.session(), Buffer.from(key, 'hex'))
-          await drive.ready()
-          swarm.join(drive.discoveryKey, { server: true, client: true })
-          seededDrives.set(key, drive)
-          res.setHeader('Content-Type', 'application/json')
-          res.writeHead(200)
-          res.end(JSON.stringify({ ok: true, seeding: key }))
-        } catch (err) {
-          res.writeHead(400)
-          res.end(JSON.stringify({ error: err.message }))
-        }
-      })
+      try {
+        const { key } = await readGatewaySeedBody(req)
+        // Per-drive session — see Seed-loop comment above.
+        const drive = new Hyperdrive(store.session(), Buffer.from(key, 'hex'))
+        await drive.ready()
+        swarm.join(drive.discoveryKey, { server: true, client: true })
+        seededDrives.set(key, drive)
+        writeJson(res, { ok: true, seeding: key })
+      } catch (err) {
+        const result = buildGatewaySeedErrorResponse(err)
+        if (result.close) res.shouldKeepAlive = false
+        writeJson(res, result.payload, result.status, result.close ? { Connection: 'close' } : null)
+      }
       return
     }
 
-    res.writeHead(404)
-    res.end(JSON.stringify({ error: 'Not found' }))
+    writeJson(res, { error: 'Not found' }, 404)
   })
 
   await new Promise((resolve, reject) => {
@@ -150,7 +190,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const port = args.includes('--port') ? parseInt(args[args.indexOf('--port') + 1]) : DEFAULT_PORT
   const storage = args.includes('--storage') ? args[args.indexOf('--storage') + 1] : './gateway-storage'
   const corsOrigin = args.includes('--cors') ? args[args.indexOf('--cors') + 1] : '*'
-  const seedKeys = args.filter(a => /^[a-f0-9]{52,64}$/i.test(a))
+  const seedKeys = args.filter(a => /^[a-f0-9]{64}$/i.test(a))
 
   startGateway({ port, storage, seedKeys, corsOrigin }).then((gw) => {
     process.on('SIGINT', async () => {

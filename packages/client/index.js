@@ -56,7 +56,28 @@ import {
   relayReserveEncoding
 } from 'p2p-hiverelay/core/protocol/messages.js'
 import { SeedingRegistry } from 'p2p-hiverelay/core/registry/index.js'
-import { RELAY_DISCOVERY_TOPIC } from 'p2p-hiverelay/core/constants.js'
+import { serviceMessageEncoding } from 'p2p-hiverelay/core/services/protocol.js'
+import {
+  MAX_FORWARD_DATA_MSG_BYTES,
+  forwardOpenEncoding,
+  forwardDataEncoding,
+  forwardStatusEncoding,
+  forwardCloseEncoding
+} from 'p2p-hiverelay/core/protocol/forward-relay.js'
+import {
+  circuitConnectEncoding,
+  circuitDataEncoding,
+  circuitStatusEncoding,
+  circuitReadyEncoding,
+  circuitCloseEncoding
+} from 'p2p-hiverelay/core/protocol/relay-circuit.js'
+import {
+  RELAY_DISCOVERY_TOPIC,
+  SEED_PROTOCOL_NAME,
+  CIRCUIT_PROTOCOL_NAME,
+  FORWARD_PROTOCOL_NAME,
+  SERVICES_PROTOCOL_NAME
+} from 'p2p-hiverelay/core/constants.js'
 import { attachPairing, deriveTopic as _deriveTopic, generateCode as _generateCode, proofFor as _proofFor } from './pairing.js'
 // PVSS blind-custody orchestration composes the SELF-CONTAINED client modules
 // (Bare-safe; @noble + sodium + b4a) — never core's custody-signing/pvss, which
@@ -88,10 +109,7 @@ export const _pairing = {
   proofFor: _proofFor
 }
 
-const SEED_PROTOCOL = 'hiverelay-seed'
-const CIRCUIT_PROTOCOL = 'hiverelay-circuit'
-const FORWARD_PROTOCOL = 'hiverelay-forward'
-const FORWARD_MAX_FRAME = 64 * 1024 // match relay maxDataMsgBytes
+const FORWARD_MAX_FRAME = MAX_FORWARD_DATA_MSG_BYTES
 
 export class HiveRelayClient extends EventEmitter {
   /**
@@ -3233,7 +3251,7 @@ export class HiveRelayClient extends EventEmitter {
 
     try {
       const seedChannel = mux.createChannel({
-        protocol: SEED_PROTOCOL,
+        protocol: SEED_PROTOCOL_NAME,
         id: null,
         handshake: c.raw,
         onopen: () => {
@@ -3278,7 +3296,7 @@ export class HiveRelayClient extends EventEmitter {
 
     try {
       const circuitChannel = mux.createChannel({
-        protocol: CIRCUIT_PROTOCOL,
+        protocol: CIRCUIT_PROTOCOL_NAME,
         id: null,
         onopen: () => {},
         onclose: () => { channels.circuit = null }
@@ -3290,42 +3308,12 @@ export class HiveRelayClient extends EventEmitter {
       })
 
       const connectMsg = circuitChannel.addMessage({
-        encoding: {
-          preencode (state, msg) {
-            c.fixed32.preencode(state, msg.targetPubkey)
-            c.fixed32.preencode(state, msg.sourcePubkey)
-          },
-          encode (state, msg) {
-            c.fixed32.encode(state, msg.targetPubkey)
-            c.fixed32.encode(state, msg.sourcePubkey)
-          },
-          decode (state) {
-            return {
-              targetPubkey: c.fixed32.decode(state),
-              sourcePubkey: c.fixed32.decode(state)
-            }
-          }
-        },
+        encoding: circuitConnectEncoding,
         onmessage: () => {}
       })
 
       const statusMsg = circuitChannel.addMessage({
-        encoding: {
-          preencode (state, msg) {
-            c.uint.preencode(state, msg.code)
-            c.string.preencode(state, msg.message)
-          },
-          encode (state, msg) {
-            c.uint.encode(state, msg.code)
-            c.string.encode(state, msg.message)
-          },
-          decode (state) {
-            return {
-              code: c.uint.decode(state),
-              message: c.string.decode(state)
-            }
-          }
-        },
+        encoding: circuitStatusEncoding,
         onmessage: (msg) => {
           const relay = this.relays.get(pubkeyHex)
           if (relay) relay.lastSeen = Date.now()
@@ -3338,23 +3326,9 @@ export class HiveRelayClient extends EventEmitter {
       // exchange opaque bytes through this. Server validates ownership,
       // applies byte/bandwidth caps, then forwards.
       const dataMsg = circuitChannel.addMessage({
-        encoding: {
-          preencode (state, msg) {
-            c.fixed(16).preencode(state, msg.circuitId)
-            c.buffer.preencode(state, msg.data)
-          },
-          encode (state, msg) {
-            c.fixed(16).encode(state, msg.circuitId)
-            c.buffer.encode(state, msg.data)
-          },
-          decode (state) {
-            return {
-              circuitId: c.fixed(16).decode(state),
-              data: c.buffer.decode(state)
-            }
-          }
-        },
+        encoding: circuitDataEncoding,
         onmessage: (msg) => {
+          if (!msg || msg.error || !msg.circuitId || !msg.data) return
           const relay = this.relays.get(pubkeyHex)
           if (relay) relay.lastSeen = Date.now()
           this.emit('circuit-data', {
@@ -3370,23 +3344,9 @@ export class HiveRelayClient extends EventEmitter {
       // subsequent dataMsg sends + the identity to verify in their own
       // Noise handshake on top.
       const readyMsg = circuitChannel.addMessage({
-        encoding: {
-          preencode (state, msg) {
-            c.fixed(16).preencode(state, msg.circuitId)
-            c.fixed32.preencode(state, msg.remotePubkey)
-          },
-          encode (state, msg) {
-            c.fixed(16).encode(state, msg.circuitId)
-            c.fixed32.encode(state, msg.remotePubkey)
-          },
-          decode (state) {
-            return {
-              circuitId: c.fixed(16).decode(state),
-              remotePubkey: c.fixed32.decode(state)
-            }
-          }
-        },
+        encoding: circuitReadyEncoding,
         onmessage: (msg) => {
+          if (!msg || msg.error || !msg.circuitId || !msg.remotePubkey) return
           const circuitIdHex = b4a.toString(msg.circuitId, 'hex')
           const remoteHex = b4a.toString(msg.remotePubkey, 'hex')
           this.emit('circuit-ready', {
@@ -3399,23 +3359,9 @@ export class HiveRelayClient extends EventEmitter {
 
       // v0.8.19: explicit close notification from the server side.
       const closeMsgClient = circuitChannel.addMessage({
-        encoding: {
-          preencode (state, msg) {
-            c.fixed(16).preencode(state, msg.circuitId)
-            c.uint.preencode(state, msg.reason)
-          },
-          encode (state, msg) {
-            c.fixed(16).encode(state, msg.circuitId)
-            c.uint.encode(state, msg.reason)
-          },
-          decode (state) {
-            return {
-              circuitId: c.fixed(16).decode(state),
-              reason: c.uint.decode(state)
-            }
-          }
-        },
+        encoding: circuitCloseEncoding,
         onmessage: (msg) => {
+          if (!msg || msg.error || !msg.circuitId) return
           const circuitIdHex = b4a.toString(msg.circuitId, 'hex')
           this.emit('circuit-closed', {
             relay: pubkeyHex,
@@ -3431,20 +3377,20 @@ export class HiveRelayClient extends EventEmitter {
       // Forward transport channel (hiverelay-forward): demand-dialled relay
       // hop. One forward per relay connection (v1). connectViaForward() drives
       // openMsg/dataMsg and wraps them in a Duplex.
-      const forwardChannel = mux.createChannel({ protocol: FORWARD_PROTOCOL, id: null, onclose: () => { this.emit('_forward-closed-' + pubkeyHex, { reason: 0 }) } })
+      const forwardChannel = mux.createChannel({ protocol: FORWARD_PROTOCOL_NAME, id: null, onclose: () => { this.emit('_forward-closed-' + pubkeyHex, { reason: 0 }) } })
       const fStatusMsg = forwardChannel.addMessage({
-        encoding: { preencode (s, m) { c.uint.preencode(s, m.code); c.string.preencode(s, m.message || '') }, encode (s, m) { c.uint.encode(s, m.code); c.string.encode(s, m.message || '') }, decode (s) { return { code: c.uint.decode(s), message: c.string.decode(s) } } },
+        encoding: forwardStatusEncoding,
         onmessage: (msg) => this.emit('_forward-status-' + pubkeyHex, msg)
       })
       const fDataMsg = forwardChannel.addMessage({
-        encoding: { preencode (s, m) { c.buffer.preencode(s, m.data) }, encode (s, m) { c.buffer.encode(s, m.data) }, decode (s) { return { data: c.buffer.decode(s) } } },
+        encoding: forwardDataEncoding,
         onmessage: (msg) => this.emit('_forward-data-' + pubkeyHex, msg)
       })
       const fCloseMsg = forwardChannel.addMessage({
-        encoding: { preencode (s, m) { c.uint.preencode(s, m.reason || 0) }, encode (s, m) { c.uint.encode(s, m.reason || 0) }, decode (s) { return { reason: c.uint.decode(s) } } },
+        encoding: forwardCloseEncoding,
         onmessage: (msg) => this.emit('_forward-closed-' + pubkeyHex, msg)
       })
-      const fOpenMsg = forwardChannel.addMessage({ encoding: { preencode (s, m) { c.fixed32.preencode(s, m.target) }, encode (s, m) { c.fixed32.encode(s, m.target) }, decode (s) { return { target: c.fixed32.decode(s) } } } })
+      const fOpenMsg = forwardChannel.addMessage({ encoding: forwardOpenEncoding })
       channels.forward = { channel: forwardChannel, openMsg: fOpenMsg, dataMsg: fDataMsg, statusMsg: fStatusMsg, closeMsg: fCloseMsg, busy: false }
       forwardChannel.open()
     } catch (err) {
@@ -3454,7 +3400,7 @@ export class HiveRelayClient extends EventEmitter {
     // ─── Service Protocol Channel ───
     try {
       const serviceChannel = mux.createChannel({
-        protocol: 'hiverelay-services',
+        protocol: SERVICES_PROTOCOL_NAME,
         id: b4a.from('services-v1'),
         onopen: () => {
           this.emit('service-channel-open', { relay: pubkeyHex })
@@ -3463,29 +3409,7 @@ export class HiveRelayClient extends EventEmitter {
       })
 
       const serviceMsg = serviceChannel.addMessage({
-        encoding: {
-          preencode (state, msg) {
-            const json = JSON.stringify(msg)
-            state.end += 4 + b4a.byteLength(json)
-          },
-          encode (state, msg) {
-            const json = JSON.stringify(msg)
-            const buf = b4a.from(json)
-            state.buffer.writeUInt32BE(buf.length, state.start)
-            buf.copy(state.buffer, state.start + 4)
-            state.start += 4 + buf.length
-          },
-          decode (state) {
-            const len = state.buffer.readUInt32BE(state.start)
-            const json = state.buffer.subarray(state.start + 4, state.start + 4 + len).toString()
-            state.start += 4 + len
-            try {
-              return JSON.parse(json)
-            } catch {
-              return { type: -1, error: 'malformed JSON' }
-            }
-          }
-        },
+        encoding: serviceMessageEncoding,
         onmessage: (msg) => this._onServiceMessage(pubkeyHex, msg)
       })
 
@@ -3597,6 +3521,12 @@ export class HiveRelayClient extends EventEmitter {
   }
 
   _onSeedAccept (relayPubkeyHex, msg) {
+    if (!msg || msg.error) {
+      const appKeyHex = msg && msg.appKey && msg.appKey.byteLength === 32 ? b4a.toString(msg.appKey, 'hex') : null
+      this.emit('invalid-accept', { appKey: appKeyHex, reason: msg && msg.error ? msg.error : 'malformed seed accept' })
+      return
+    }
+
     const now = Date.now()
     const relay = this.relays.get(relayPubkeyHex)
     if (relay) relay.lastSeen = now
@@ -3643,6 +3573,12 @@ export class HiveRelayClient extends EventEmitter {
   }
 
   _onSeedDeny (relayPubkeyHex, msg) {
+    if (!msg || msg.error) {
+      const appKeyHex = msg && msg.appKey && msg.appKey.byteLength === 32 ? b4a.toString(msg.appKey, 'hex') : null
+      this.emit('invalid-deny', { appKey: appKeyHex, reason: msg && msg.error ? msg.error : 'malformed seed deny' })
+      return
+    }
+
     const relay = this.relays.get(relayPubkeyHex)
     if (relay) relay.lastSeen = Date.now()
 
@@ -3675,6 +3611,32 @@ export class HiveRelayClient extends EventEmitter {
     }
 
     this.emit('seed-denied', { appKey: appKeyHex, ...denial })
+  }
+
+  _catalogEntryKey (entry) {
+    if (!entry || typeof entry !== 'object') return null
+    const key = entry.appKey || entry.key || entry.driveKey || entry.id
+    return typeof key === 'string' && key.length > 0 ? key : null
+  }
+
+  _applyAppCatalogDelta (currentApps, added, removed) {
+    const next = new Map()
+
+    for (const app of Array.isArray(currentApps) ? currentApps : []) {
+      const key = this._catalogEntryKey(app)
+      if (key) next.set(key, app)
+    }
+
+    for (const key of Array.isArray(removed) ? removed : []) {
+      if (typeof key === 'string') next.delete(key)
+    }
+
+    for (const app of Array.isArray(added) ? added : []) {
+      const key = this._catalogEntryKey(app)
+      if (key) next.set(key, app)
+    }
+
+    return [...next.values()]
   }
 
   _onServiceMessage (relayPubkey, msg) {
@@ -3717,6 +3679,14 @@ export class HiveRelayClient extends EventEmitter {
         }
       }
       this.emit('service-event', { relay: relayPubkey, topic: msg.topic, data: msg.data })
+    } else if (msg.type === 8) { // MSG_APP_CATALOG_DELTA
+      const relay2 = this.relays.get(relayPubkey)
+      const added = Array.isArray(msg.added) ? msg.added : (Array.isArray(msg.apps) ? msg.apps : [])
+      const removed = Array.isArray(msg.removed) ? msg.removed : []
+      const apps = this._applyAppCatalogDelta(relay2 ? relay2.seededApps : [], added, removed)
+      if (relay2) relay2.seededApps = apps
+      this.emit('app-catalog-delta', { relay: relayPubkey, added, removed, apps })
+      this.emit('app-catalog', { relay: relayPubkey, apps, added, removed, delta: true })
     }
   }
 

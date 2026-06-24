@@ -222,7 +222,7 @@ test('selectQuorum surfaces quorum-warning on insufficient diversity', async (t)
   ])
   client.selectQuorum({ size: 2, minRegions: 3 })
   t.ok(warning)
-  t.is(warning.reason, 'insufficient-region-diversity')
+  t.is(warning.reason, 'insufficient-quorum-diversity')
 })
 
 test('selectQuorum honors foundation strategy + foundationPubkeys constructor option', async (t) => {

@@ -17,8 +17,10 @@
     var orig = window.fetch.bind(window);
     window.fetch = function (input, init) {
       init = init || {};
+      var raw = (typeof input === 'string') ? input : (input && (input.url || input.href)) || String(input || '');
+      var u = new URL(raw, window.location.href);
       var h = new Headers((init && init.headers) || (input && input.headers) || {});
-      if (!h.has('Authorization')) h.set('Authorization', 'Bearer ' + t);
+      if (u.origin === window.location.origin && !h.has('Authorization')) h.set('Authorization', 'Bearer ' + t);
       init.headers = h;
       return orig(input, init);
     };
@@ -124,6 +126,12 @@ button{font-family:inherit;cursor:pointer}
   background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.2);
   border-radius:var(--radius-sm);padding:.3rem .6rem;cursor:pointer;word-break:break-all;
 }
+.row-btn{
+  font-size:.74rem;color:var(--text);background:var(--card-hi);border:1px solid var(--card-border-hi);
+  border-radius:var(--radius-sm);padding:.32rem .65rem;transition:border-color .15s,color .15s,opacity .15s;
+}
+.row-btn:hover{border-color:var(--cyan);color:var(--text-bright)}
+.row-btn:disabled{opacity:.55;cursor:default}
 .muted{color:var(--text-faint)}
 
 /* ── Hosted apps ─────────────────────────────────────────────────── */
@@ -131,6 +139,11 @@ button{font-family:inherit;cursor:pointer}
   background:var(--card);border:1px solid var(--card-border);border-radius:var(--radius);
   padding:1.1rem 1.25rem 1rem;margin-bottom:1.4rem;
 }
+.services-card{
+  background:transparent;border:0;border-radius:0;padding:0;margin:1.25rem 0 1.35rem;
+}
+.services-card .apps-head{padding:0 .15rem;margin-bottom:.65rem}
+.services-card .apps-head .t{font-size:.72rem;color:var(--text-bright);letter-spacing:1.1px}
 .apps-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:.5rem}
 .apps-head .t{font-size:.68rem;text-transform:uppercase;letter-spacing:1.3px;color:var(--text-dim)}
 .apps-head .c{font-size:.74rem;color:var(--text-faint);font-family:var(--mono)}
@@ -167,6 +180,130 @@ button{font-family:inherit;cursor:pointer}
 .seedform .acts button.go{background:var(--accent);border-color:var(--accent);color:#10131b;font-weight:600}
 .seedform .acts button[disabled]{opacity:.5;cursor:default}
 
+.svc-hero{
+  padding:.15rem .15rem .25rem;margin:.1rem 0 .8rem;
+}
+.svc-hero-top{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem}
+.svc-title{font-size:1rem;font-weight:700;color:var(--text-bright);line-height:1.25}
+.svc-copy{font-size:.78rem;color:var(--text-faint);line-height:1.45;margin-top:.35rem;max-width:44rem}
+.svc-pill{
+  display:inline-flex;align-items:center;gap:.35rem;border-radius:999px;padding:.25rem .6rem;
+  font-size:.68rem;font-family:var(--mono);white-space:nowrap;border:1px solid var(--card-border-hi);
+  color:var(--text-dim);background:var(--card);
+}
+.svc-pill.on{color:var(--green);border-color:rgba(63,185,80,.28);background:rgba(63,185,80,.1)}
+.svc-pill.warn{color:var(--orange);border-color:rgba(240,166,74,.28);background:rgba(240,166,74,.1)}
+.svc-progress{
+  display:flex;align-items:center;justify-content:space-between;gap:.75rem;
+  margin:.75rem 0 0;padding:.68rem .78rem;border:1px solid rgba(88,166,255,.26);
+  border-radius:var(--radius-sm);background:rgba(88,166,255,.08);
+}
+.svc-progress strong{font-size:.78rem;color:var(--text-bright)}
+.svc-progress span{font-size:.68rem;color:var(--text-faint);font-family:var(--mono);text-align:right}
+.svc-section{margin-top:.9rem}
+.svc-section-title{
+  font-size:.64rem;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-dim);
+  margin-bottom:.55rem;display:flex;justify-content:space-between;gap:.8rem;
+}
+.svc-bundles{display:grid;grid-template-columns:1fr;gap:.65rem}
+.svc-bundle{
+  display:flex;align-items:center;justify-content:space-between;gap:.9rem;padding:.85rem;
+  border:1px solid rgba(245,200,66,.24);border-radius:var(--radius-sm);
+  background:rgba(245,200,66,.07);
+}
+.svc-bundle strong{display:block;color:var(--text-bright);font-size:.88rem;margin-bottom:.18rem}
+.svc-bundle span{display:block;color:var(--text-faint);font-size:.72rem;line-height:1.4}
+.svc-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem}
+.svc-card{
+  position:relative;display:flex;gap:.65rem;align-items:flex-start;min-height:86px;
+  padding:.85rem;border:1px solid var(--card-border);border-radius:var(--radius-sm);
+  background:var(--card-hi);cursor:pointer;transition:border-color .15s,background .15s,transform .15s;
+}
+.svc-card:hover{border-color:var(--card-border-hi);transform:translateY(-1px)}
+.svc-card:focus-within{outline:2px solid var(--cyan);outline-offset:2px}
+.svc-card.selected{border-color:rgba(88,166,255,.45);background:rgba(88,166,255,.08)}
+.svc-card.running{border-color:rgba(63,185,80,.34)}
+.svc-card.disabled{cursor:default;opacity:.72}
+.svc-card.disabled:hover{transform:none;border-color:var(--card-border)}
+.svc-card input{position:absolute;opacity:0;pointer-events:none}
+.svc-checkmark{
+  width:18px;height:18px;border-radius:5px;border:1px solid var(--card-border-hi);
+  background:var(--card);flex-shrink:0;margin-top:.05rem;display:flex;align-items:center;justify-content:center;
+  color:#10131b;font-size:.76rem;font-weight:800;
+}
+.svc-card.selected .svc-checkmark{background:var(--cyan);border-color:var(--cyan)}
+.svc-card.selected .svc-checkmark::after{content:'✓'}
+.svc-name{font-size:.86rem;font-weight:650;color:var(--text-bright);line-height:1.25}
+.svc-desc{font-size:.7rem;color:var(--text-faint);line-height:1.35;margin-top:.25rem}
+.svc-tags{display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.45rem}
+.svc-tag{
+  font-size:.62rem;color:var(--text-faint);border:1px solid var(--card-border);
+  border-radius:999px;padding:.13rem .42rem;background:rgba(255,255,255,.02)
+}
+.svc-tag.running{color:var(--green);border-color:rgba(63,185,80,.25);background:rgba(63,185,80,.08)}
+.svc-actions-bar{
+  display:flex;align-items:center;justify-content:space-between;gap:.75rem;margin-top:.85rem;
+  border-top:1px solid var(--card-border);padding-top:.85rem;
+}
+.svc-actions-bar .hint{font-size:.7rem;color:var(--text-faint);line-height:1.35}
+.svc-actions-bar .buttons{display:flex;gap:.5rem;flex-wrap:wrap;justify-content:flex-end}
+.svc-btn{
+  border:1px solid var(--card-border-hi);border-radius:999px;background:var(--card-hi);
+  color:var(--text);padding:.38rem .85rem;font-size:.74rem;transition:border-color .15s,color .15s,filter .15s;
+}
+.svc-btn:hover{border-color:var(--cyan);color:var(--text-bright)}
+.svc-btn.primary{background:var(--accent);border-color:var(--accent);color:#10131b;font-weight:700}
+.svc-btn.danger{color:var(--red);border-color:rgba(244,112,103,.28);background:rgba(244,112,103,.08)}
+.svc-btn:disabled{opacity:.55;cursor:default;filter:saturate(.75)}
+.svc-btn:disabled:hover{border-color:var(--card-border-hi);color:var(--text)}
+.svc-live-list{display:flex;flex-direction:column;border:1px solid var(--card-border);border-radius:var(--radius-sm);overflow:hidden}
+.svc-live-row{display:flex;align-items:center;gap:.65rem;padding:.68rem .78rem;border-bottom:1px solid var(--card-border)}
+.svc-live-row:last-child{border-bottom:none}
+.svc-dot{width:8px;height:8px;border-radius:50%;background:var(--orange);box-shadow:0 0 5px currentColor;flex-shrink:0}
+.svc-dot.running{background:var(--green)}
+.svc-live-main{min-width:0;flex:1}
+.svc-live-main strong{display:block;font-size:.82rem;color:var(--text)}
+.svc-live-main span{display:block;font-size:.67rem;color:var(--text-faint);margin-top:.12rem}
+.svc-live-status{font-family:var(--mono);font-size:.68rem;color:var(--text-faint)}
+.svc-model-card{
+  display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr) auto;gap:.5rem;
+  align-items:end;border:1px solid var(--card-border);border-radius:var(--radius-sm);
+  padding:.85rem;background:var(--card-hi);
+}
+.svc-model-message{
+  grid-column:1 / -1;min-height:1rem;font-size:.72rem;color:var(--text-faint);line-height:1.35;
+}
+.svc-model-message.error{color:var(--red)}
+.svc-model-message.ok{color:var(--green)}
+.svc-model-field label{display:block;font-size:.62rem;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:.25rem}
+.svc-model-field input{
+  width:100%;background:var(--bg);border:1px solid var(--card-border-hi);border-radius:7px;
+  color:var(--text-bright);font-family:var(--mono);font-size:.78rem;padding:.5rem .6rem;
+}
+.svc-meter{
+  border:1px solid var(--card-border);border-radius:var(--radius-sm);overflow:hidden;background:var(--card-hi)
+}
+.svc-meter-row{display:flex;justify-content:space-between;gap:.8rem;padding:.62rem .75rem;border-bottom:1px solid var(--card-border)}
+.svc-meter-row:last-child{border-bottom:none}
+.svc-meter-note{font-size:.66rem;color:var(--text-faint);line-height:1.35;padding:.58rem .75rem;border-top:1px solid var(--card-border)}
+
+dialog{
+  width:min(92vw,460px);border:1px solid var(--card-border-hi);border-radius:var(--radius);
+  background:var(--card);color:var(--text);padding:1.1rem;box-shadow:0 24px 80px rgba(0,0,0,.45);
+}
+dialog::backdrop{background:rgba(4,7,14,.68)}
+.dlg-title{font-size:1rem;color:var(--text-bright);font-weight:700;margin-bottom:.45rem}
+.dlg-copy{font-size:.82rem;color:var(--text-faint);line-height:1.45;margin-bottom:.85rem}
+.dlg-field{display:flex;flex-direction:column;gap:.4rem}
+.dlg-field label{font-size:.68rem;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim)}
+.dlg-field input{
+  width:100%;background:var(--bg);color:var(--text-bright);border:1px solid var(--card-border-hi);
+  border-radius:var(--radius-sm);padding:.65rem .75rem;font-family:var(--mono);font-size:.82rem;
+}
+.dlg-error{min-height:1.1rem;color:var(--red);font-size:.78rem;margin-top:.5rem}
+.dlg-actions{display:flex;justify-content:space-between;gap:.55rem;margin-top:1rem}
+.dlg-actions span{display:flex;gap:.55rem}
+
 /* ── Footer ──────────────────────────────────────────────────────── */
 .foot{text-align:center;font-size:.74rem;color:var(--text-faint);line-height:1.6;padding:0 1rem}
 
@@ -179,10 +316,20 @@ button{font-family:inherit;cursor:pointer}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
 @media(max-width:440px){
+  .hdr{align-items:flex-start;flex-wrap:wrap}
+  .hdr-right{width:100%;margin-left:0;justify-content:space-between}
   .stats{grid-template-columns:1fr}
   .row{flex-direction:column;align-items:flex-start;gap:.4rem}
   .row-v{justify-content:flex-start;margin-left:0;text-align:left}
   .row-note{text-align:left}
+  .svc-hero-top,.svc-bundle,.svc-actions-bar,.svc-live-row{align-items:flex-start;flex-direction:column}
+  .svc-grid,.svc-model-card{grid-template-columns:1fr}
+  .svc-actions-bar .buttons{justify-content:flex-start}
+  .svc-btn,.row-btn,.setup-link,.status,.pk,.addr{min-height:34px}
+  .svc-model-field input,.dlg-field input{min-height:38px}
+  dialog{width:calc(100vw - 2rem);max-width:calc(100vw - 2rem)}
+  .dlg-actions{flex-direction:column-reverse}
+  .dlg-actions span{justify-content:flex-end}
 }
 </style>
 </head>
@@ -196,7 +343,7 @@ button{font-family:inherit;cursor:pointer}
       <div class="brand-txt"><h1>Blindspark</h1><span>Blind Relay</span></div>
     </div>
     <div class="hdr-right">
-      <a class="setup-link" href="/wizard">&#9881; Setup</a>
+      <a class="setup-link" id="setupLink" href="wizard?edit=1">&#9881; Setup</a>
       <span class="status off" id="status">Connecting</span>
     </div>
   </header>
@@ -210,7 +357,7 @@ button{font-family:inherit;cursor:pointer}
   <section class="stats">
     <div class="stat"><div class="s-label">Apps held</div><div class="s-val green" id="apps">&mdash;</div><div class="s-sub" id="appsSub">encrypted drives</div></div>
     <div class="stat"><div class="s-label">Connected peers</div><div class="s-val cyan" id="peers">&mdash;</div><div class="s-sub">live connections</div></div>
-    <div class="stat"><div class="s-label">Data stored</div><div class="s-val" id="stored">&mdash;</div><div class="s-sub" id="storedSub">on this node</div></div>
+    <div class="stat"><div class="s-label">Data served</div><div class="s-val" id="served">&mdash;</div><div class="s-sub" id="servedSub">sent to peers</div></div>
     <div class="stat"><div class="s-label">Storage used</div><div class="s-val orange" id="storagePct">&mdash;</div><div class="s-sub" id="storagePctSub">of capacity</div></div>
   </section>
 
@@ -243,6 +390,11 @@ button{font-family:inherit;cursor:pointer}
     </div>
   </section>
 
+  <section class="apps-card services-card" id="servicesCard">
+    <div class="apps-head"><span class="t">Services</span><span class="c" id="svcStatus" role="status" aria-live="polite" aria-atomic="true">Loading</span></div>
+    <div id="svcBody"><div class="apps-empty">Loading&hellip;</div></div>
+  </section>
+
   <section class="apps-card">
     <div class="apps-head">
       <span class="t">Hosted apps</span>
@@ -261,7 +413,7 @@ button{font-family:inherit;cursor:pointer}
       <div class="err" id="seedErr"></div>
       <div class="acts">
         <button type="button" id="seedCancel">Cancel</button>
-        <button type="submit" class="go" id="seedGo">Seed it</button>
+        <button type="button" class="go" id="seedGo">Seed it</button>
       </div>
     </form>
     <div class="apps-list" id="appsList"><div class="apps-empty">Loading&hellip;</div></div>
@@ -280,13 +432,59 @@ button{font-family:inherit;cursor:pointer}
   </footer>
 </div>
 
+<dialog id="walletDialog" aria-labelledby="walletDialogTitle">
+  <div class="dlg-title" id="walletDialogTitle">Payout wallet</div>
+  <div class="dlg-copy" id="walletHelp">Use a lightning address, BOLT12 offer, or bitcoin address you control.</div>
+  <div class="dlg-field">
+    <label for="walletInput">Destination</label>
+    <input id="walletInput" type="text" placeholder="you@example.com, lno1..., or bc1..." autocomplete="off" spellcheck="false" aria-describedby="walletHelp walletError">
+  </div>
+  <div class="dlg-error" id="walletError" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div class="dlg-actions">
+    <button class="row-btn" id="walletClear" type="button">Clear</button>
+    <span>
+      <button class="row-btn" id="walletCancel" type="button">Cancel</button>
+      <button class="row-btn" id="walletSave" type="button">Save</button>
+    </span>
+  </div>
+</dialog>
+
 <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <script>
 'use strict';
 var pubKey = '';
+var payoutDestination = '';
+var payoutLoaded = false;
+var svcDraftDirty = false;
+var svcConfigBusy = false;
+var svcRestartPending = false;
+var svcRestartExpected = [];
+var svcRestartTimer = null;
+var svcRestartAttempts = 0;
+var svcRestartStartedAt = 0;
+var svcLastConfiguredPlugins = [];
+var svcModelBusy = false;
+var svcModelMessageText = '';
+var svcModelMessageKind = '';
 
 function $(id){ return document.getElementById(id); }
+function appBasePath(){
+  var p = window.location.pathname.replace(/\/+$/, '') || '/';
+  var routes = ['/dashboard', '/wizard'];
+  for (var i = 0; i < routes.length; i++){
+    var r = routes[i];
+    if (p === r) return '';
+    if (p.slice(-r.length) === r) return p.slice(0, -r.length);
+  }
+  return p === '/' ? '' : p;
+}
+var APP_BASE = appBasePath();
+function appPath(path){
+  if (!path) return APP_BASE || '/';
+  return (APP_BASE || '') + (path.charAt(0) === '/' ? path : '/' + path);
+}
+$('setupLink').setAttribute('href', appPath('/wizard?edit=1'));
 
 function fmtBytes(n){
   n = Number(n) || 0;
@@ -304,6 +502,35 @@ function toast(msg){
   var t = $('toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(toast._t); toast._t = setTimeout(function(){ t.classList.remove('show'); }, 1600);
 }
+function writeClipboard(text, successMessage){
+  if (!text) return;
+  if (typeof navigator === 'undefined' || !navigator.clipboard || !navigator.clipboard.writeText){
+    toast('Clipboard unavailable');
+    return;
+  }
+  navigator.clipboard.writeText(text)
+    .then(function(){ toast(successMessage || 'Copied'); })
+    .catch(function(){ toast('Copy failed'); });
+}
+function apiError(out, fallback){
+  var msg = (out && out.error) || fallback || 'Request failed';
+  return String(msg).replace(/^[A-Z_]+: /, '');
+}
+
+var REQUEST_TIMEOUT_MS = 10000;
+
+function fetchWithTimeout(path, opts){
+  var options = opts || {};
+  var timeout = null;
+  if (typeof AbortController === 'function'){
+    var controller = new AbortController();
+    options.signal = controller.signal;
+    timeout = setTimeout(function(){ controller.abort(); }, REQUEST_TIMEOUT_MS);
+  }
+  return fetch(appPath(path), options).finally(function(){
+    if (timeout) clearTimeout(timeout);
+  });
+}
 
 var ACCEPT = {
   review:    'New seed requests wait for your approval.',
@@ -313,10 +540,7 @@ var ACCEPT = {
 };
 
 $('pk').addEventListener('click', function(){
-  if (!pubKey) return;
-  navigator.clipboard && navigator.clipboard.writeText(pubKey)
-    .then(function(){ toast('Public key copied'); })
-    .catch(function(){ toast(pubKey); });
+  writeClipboard(pubKey, 'Public key copied');
 });
 
 // Three states: online (relay answered + healthy), degraded (relay answered
@@ -347,17 +571,27 @@ function renderOverview(o){
   setStatus(degraded ? 'degraded' : 'online', o.uptime ? o.uptime.human : '');
   $('apps').textContent = (o.seededApps != null ? o.seededApps : 0);
   $('peers').textContent = (o.connections != null ? o.connections : 0);
+  // Honest outbound total. served.bytes sums uploads across every replicated
+  // core, not just Seeder.seedCore-routed ones — so it no longer reads ~0 on
+  // a registry-drive relay that's actively serving blocks (the gap that got
+  // the old "Data served" tile pulled in v0.16.3). Fall back to the measured
+  // seeder field, then the legacy counter, for older relays.
+  var served = (o.served && o.served.bytes != null) ? o.served.bytes
+    : (o.seeder && o.seeder.totalBytesServedMeasured != null) ? o.seeder.totalBytesServedMeasured
+    : (o.seeder && o.seeder.totalBytesServed) || 0;
+  $('served').textContent = fmtBytes(served);
   // Trust the server's honest measured value (storage.used): it prefers the
   // real corestore total over seeder.totalBytesStored, which reads ~0 on
   // registry-drive relays and once hid a disk fill. Only fall back to the
   // seeder counter if the server didn't compute a measured value.
   var st = o.storage || {};
   var stored = (st.used != null) ? st.used : ((o.seeder && o.seeder.totalBytesStored) || 0);
-  $('stored').textContent = fmtBytes(stored);
   // Storage used vs the configured cap — the actionable appliance metric.
+  // The absolute on-disk total now rides in the sublabel so dropping the
+  // standalone "Data stored" tile loses no information.
   var frac = (typeof st.pct === 'number') ? st.pct : (st.max ? stored / st.max : 0);
   $('storagePct').textContent = (Math.round(frac * 1000) / 10) + '%';
-  if (st.max) $('storagePctSub').textContent = 'of ' + fmtBytes(st.max);
+  $('storagePctSub').textContent = fmtBytes(stored) + (st.max ? ' of ' + fmtBytes(st.max) : ' stored');
   $('uptime').textContent = o.uptime ? o.uptime.human : '—';
   if (o.publicKey){
     pubKey = o.publicKey;
@@ -375,25 +609,631 @@ function renderWizard(w){
   $('acceptNote').textContent = ACCEPT[mode] || '';
   $('heroTag').textContent = 'Your relay is online and holding encrypted data for the network.';
 
-  var dest = w.payoutDestination;
-  var addr = !dest ? '' : (typeof dest === 'string' ? dest : (dest.address || ''));
+  if (!payoutLoaded) renderPayout(w.payoutDestination);
+}
+
+function payoutValue(dest){
+  if (!dest) return '';
+  if (typeof dest === 'string') return dest;
+  return dest.value || dest.address || '';
+}
+
+function renderPayout(dest){
+  var addr = payoutValue(dest);
   var pay = $('payout');
-  if (w.hasPayout && addr){
-    pay.innerHTML = '';
+  payoutDestination = addr || '';
+  clearNode(pay);
+  if (addr){
     var chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'addr';
-    chip.title = 'Copy BTC address';
-    chip.setAttribute('aria-label', 'Copy BTC payout address');
+    chip.title = 'Copy payout destination';
+    chip.setAttribute('aria-label', 'Copy payout destination');
     chip.textContent = addr.length > 22 ? addr.slice(0,10) + '…' + addr.slice(-8) : addr;
     chip.addEventListener('click', function(){
-      navigator.clipboard && navigator.clipboard.writeText(addr);
-      toast('BTC address copied');
+      writeClipboard(addr, 'Payout destination copied');
     });
     pay.appendChild(chip);
   } else {
-    pay.innerHTML = '<span class="muted">Not set &mdash; <a href="/wizard">add one in Setup</a></span>';
+    var muted = document.createElement('span');
+    muted.className = 'muted';
+    muted.textContent = 'Not set';
+    pay.appendChild(muted);
   }
+  var edit = document.createElement('button');
+  edit.type = 'button';
+  edit.className = 'row-btn';
+  edit.textContent = addr ? 'Change' : 'Add';
+  edit.addEventListener('click', openWalletDialog);
+  pay.appendChild(edit);
+}
+
+function renderSubsidy(s){
+  if (!s) return;
+  if (Object.prototype.hasOwnProperty.call(s, 'payoutDestination')) {
+    payoutLoaded = true;
+    renderPayout(s.payoutDestination);
+  }
+}
+
+function openWalletDialog(){
+  $('walletInput').value = payoutDestination || '';
+  $('walletError').textContent = '';
+  $('walletClear').style.visibility = payoutDestination ? 'visible' : 'hidden';
+  if (typeof $('walletDialog').showModal === 'function') $('walletDialog').showModal();
+  else $('walletDialog').setAttribute('open', 'open');
+  $('walletInput').focus();
+}
+
+function closeWalletDialog(){
+  if (typeof $('walletDialog').close === 'function') $('walletDialog').close();
+  else $('walletDialog').removeAttribute('open');
+}
+
+function setWalletBusy(busy){
+  $('walletSave').disabled = busy;
+  $('walletClear').disabled = busy;
+  $('walletCancel').disabled = busy;
+  $('walletSave').textContent = busy ? 'Saving...' : 'Save';
+  $('walletDialog').setAttribute('aria-busy', busy ? 'true' : 'false');
+}
+
+function saveWallet(clear){
+  var value = clear ? null : $('walletInput').value.trim();
+  if (!clear && !value){
+    $('walletError').textContent = 'Enter a destination or clear the wallet.';
+    return;
+  }
+  setWalletBusy(true);
+  fetchWithTimeout('/api/subsidy/destination', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ destination: value })
+  }).then(function(r){
+    return r.json().catch(function(){ return {}; }).then(function(out){ return { ok: r.ok, out: out }; });
+  }).then(function(result){
+    if (!result.ok){
+      $('walletError').textContent = apiError(result.out, 'Could not save wallet');
+      return;
+    }
+    renderPayout(result.out.payoutDestination);
+    closeWalletDialog();
+    toast(value ? 'Payout wallet saved' : 'Payout wallet cleared');
+    refreshWizard();
+  }).catch(function(){
+    $('walletError').textContent = 'Node is not reachable.';
+  }).finally(function(){
+    setWalletBusy(false);
+  });
+}
+
+function handleWalletInputKey(event){
+  if (!event || event.key !== 'Enter' || event.isComposing) return;
+  event.preventDefault();
+  if ($('walletSave').disabled) return;
+  saveWallet(false);
+}
+
+$('walletCancel').addEventListener('click', closeWalletDialog);
+$('walletSave').addEventListener('click', function(){ saveWallet(false); });
+$('walletClear').addEventListener('click', function(){ saveWallet(true); });
+$('walletInput').addEventListener('keydown', handleWalletInputKey);
+
+function svcPost(path, body){
+  return fetchWithTimeout(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify(body || {})
+  }).then(function(r){
+    return r.json().catch(function(){ return {}; }).then(function(out){ return { ok: r.ok, out: out }; });
+  });
+}
+
+function setSvcConfigBusy(busy){
+  svcConfigBusy = !!busy;
+  var status = $('svcStatus');
+  if (status && svcConfigBusy) status.textContent = 'Saving';
+  document.querySelectorAll('.svc-check,.svc-btn').forEach(function(control){
+    control.disabled = svcConfigBusy || svcRestartPending;
+  });
+  var hint = $('svcActionHint');
+  if (hint) {
+    hint.textContent = svcConfigBusy
+      ? 'Saving service selection...'
+      : (svcDraftDirty ? 'Unsaved changes - save selection before restarting.' : 'Saved selections apply after restart. Running services stay unchanged until then.');
+  }
+}
+
+function svcSetConfig(enabled, plugins){
+  if (svcConfigBusy) return;
+  setSvcConfigBusy(true);
+  svcPost('/api/manage/services/config', { enabled: enabled, plugins: plugins }).then(function(res){
+    if (!res.ok){
+      toast(apiError(res.out, 'Update failed'));
+      return;
+    }
+    svcDraftDirty = false;
+    svcLastConfiguredPlugins = (res.out && res.out.config && Array.isArray(res.out.config.plugins)) ? res.out.config.plugins.slice() : plugins.slice();
+    toast('Saved; restart to apply');
+    refreshServices(true);
+  }).catch(function(){
+    toast('Node is not reachable');
+  }).finally(function(){
+    setSvcConfigBusy(false);
+    updateSvcCards();
+  });
+}
+
+function svcSelectedOrConfigured(){
+  var selected = svcSelection();
+  return selected.length ? selected : svcLastConfiguredPlugins.slice();
+}
+
+function svcRestartNode(){
+  if (svcRestartPending || svcConfigBusy) return;
+  if (svcDraftDirty){
+    toast('Save selection before restart');
+    return;
+  }
+  var expected = svcSelectedOrConfigured();
+  svcPost('/api/manage/restart', {}).then(function(res){
+    if (!res.ok){
+      toast(apiError(res.out, 'Restart failed'));
+      return;
+    }
+    toast('Restarting Blindspark');
+    beginSvcRestartWatch(expected);
+  }).catch(function(){
+    toast('Node is not reachable');
+  });
+}
+
+function beginSvcRestartWatch(expected){
+  svcRestartPending = true;
+  svcRestartExpected = Array.isArray(expected) ? expected.slice() : [];
+  svcRestartAttempts = 0;
+  svcRestartStartedAt = Date.now();
+  if (svcRestartTimer) clearTimeout(svcRestartTimer);
+  refreshServices(true);
+  scheduleSvcRestartPoll(1200);
+}
+
+function scheduleSvcRestartPoll(delay){
+  if (svcRestartTimer) clearTimeout(svcRestartTimer);
+  svcRestartTimer = setTimeout(checkSvcRestart, delay);
+}
+
+function checkSvcRestart(){
+  svcRestartAttempts++;
+  Promise.all([
+    jget('/api/manage/services/available'),
+    jget('/api/manage/services')
+  ]).then(function(results){
+    var avail = results[0];
+    var svcs = results[1];
+    if (avail) renderServices(avail, svcs);
+    if (svcRestartReady(avail)){
+      svcRestartPending = false;
+      svcRestartTimer = null;
+      renderServices(avail, svcs);
+      toast(svcRestartExpected.length ? 'Services are running' : 'Services are off');
+      refresh();
+      return;
+    }
+    if (svcRestartAttempts >= 60){
+      svcRestartPending = false;
+      svcRestartTimer = null;
+      if (avail) renderServices(avail, svcs);
+      toast('Restart still pending');
+      return;
+    }
+    scheduleSvcRestartPoll(Math.min(5000, 1200 + svcRestartAttempts * 250));
+  });
+}
+
+function svcRestartReady(avail){
+  if (!avail) return false;
+  if (Date.now() - svcRestartStartedAt < 2500) return false;
+  var active = (avail && Array.isArray(avail.active)) ? avail.active : [];
+  var available = (avail && Array.isArray(avail.available)) ? avail.available : [];
+  var managedActive = active.filter(function(name){ return available.indexOf(name) !== -1; });
+  var expected = svcRestartExpected.length
+    ? svcRestartExpected
+    : ((avail && Array.isArray(avail.plugins)) ? avail.plugins : []);
+  if (!expected.length) return managedActive.length === 0;
+  for (var i = 0; i < expected.length; i++){
+    if (managedActive.indexOf(expected[i]) === -1) return false;
+  }
+  for (var j = 0; j < managedActive.length; j++){
+    if (expected.indexOf(managedActive[j]) === -1) return false;
+  }
+  return true;
+}
+
+function setSvcModelMessage(message, kind){
+  svcModelMessageText = message || '';
+  svcModelMessageKind = kind || '';
+  var msg = $('svcModelMessage');
+  if (!msg) return;
+  msg.textContent = svcModelMessageText;
+  msg.className = 'svc-model-message' + (svcModelMessageKind ? ' ' + svcModelMessageKind : '');
+}
+
+function setSvcModelBusy(busy){
+  svcModelBusy = !!busy;
+  var disabled = svcModelBusy || svcConfigBusy || svcRestartPending;
+  document.querySelectorAll('.svc-model-field input,#svcModelAdd').forEach(function(control){
+    control.disabled = disabled;
+    if (control.id === 'svcModelAdd') control.textContent = svcModelBusy ? 'Adding...' : 'Add model';
+  });
+  if (svcModelBusy) setSvcModelMessage('Adding model...', '');
+}
+
+function svcAddModel(){
+  if (svcModelBusy) return;
+  var idEl = $('svcModelId');
+  var srcEl = $('svcModelSrc');
+  var id = (idEl && idEl.value ? idEl.value : '').trim();
+  var src = (srcEl && srcEl.value ? srcEl.value : '').trim();
+  if (!id || !src){
+    setSvcModelMessage('Model ID and source required.', 'error');
+    if (!id && idEl) idEl.focus();
+    else if (!src && srcEl) srcEl.focus();
+    return;
+  }
+  setSvcModelBusy(true);
+  svcPost('/api/manage/ai/models', { modelId: id, qvac: { modelSrc: src } }).then(function(res){
+    if (!res.ok){
+      setSvcModelMessage(apiError(res.out, 'Add failed'), 'error');
+      return;
+    }
+    setSvcModelMessage('Model added. Refreshing service state...', 'ok');
+    toast('Model added: ' + id);
+    if (idEl) idEl.value = '';
+    if (srcEl) srcEl.value = '';
+    refreshServices(true);
+  }).catch(function(){
+    setSvcModelMessage('Node is not reachable.', 'error');
+  }).finally(function(){
+    setSvcModelBusy(false);
+  });
+}
+
+function handleSvcModelInputKey(event){
+  if (!event || event.key !== 'Enter' || event.isComposing) return;
+  event.preventDefault();
+  if (svcModelBusy) return;
+  svcAddModel();
+}
+
+var SERVICE_META = {
+  storage: { label: 'Storage', desc: 'Durable storage APIs for apps that need server-side state.', tags: ['data'] },
+  identity: { label: 'Identity', desc: 'Attestation and identity tools for app developers.', tags: ['trust'] },
+  ai: { label: 'AI models', desc: 'Host local or QVAC-backed model calls for peers.', tags: ['optional', 'models'] },
+  zk: { label: 'Zero-knowledge', desc: 'Proof primitives used by private games and custody flows.', tags: ['privacy'] },
+  sla: { label: 'SLA receipts', desc: 'Service-level receipts and availability commitments.', tags: ['receipts'] },
+  schema: { label: 'Schemas', desc: 'Shared schemas for structured app records.', tags: ['developer'] },
+  arbitration: { label: 'Arbitration', desc: 'Dispute hooks for games and paid service flows.', tags: ['games'] },
+  vrf: { label: 'Randomness', desc: 'Verifiable randomness for games and fair selection.', tags: ['games'] },
+  poker: { label: 'Poker table API', desc: 'Card-blind signed-log tables for poker and sealed-action clients.', tags: ['games', 'api'] }
+};
+
+function svcMeta(name){
+  return SERVICE_META[name] || {
+    label: name ? name.charAt(0).toUpperCase() + name.slice(1) : 'Service',
+    desc: 'Optional service plugin exposed by this relay.',
+    tags: ['service']
+  };
+}
+
+function svcSelection(){
+  return Array.prototype.map.call(document.querySelectorAll('.svc-check:checked'), function(c){ return c.value; });
+}
+
+function updateSvcCards(){
+  document.querySelectorAll('.svc-card').forEach(function(card){
+    var input = card.querySelector('input');
+    card.classList.toggle('selected', !!(input && input.checked));
+  });
+  var selected = svcSelection();
+  var count = $('svcSelectedCount');
+  if (count) count.textContent = selected.length + ' selected';
+  var hint = $('svcActionHint');
+  if (hint) {
+    hint.textContent = svcConfigBusy
+      ? 'Saving service selection...'
+      : (svcDraftDirty ? 'Unsaved changes - save selection before restarting.' : 'Saved selections apply after restart. Running services stay unchanged until then.');
+  }
+}
+
+function metricCount(value){
+  var n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return '0';
+  return String(Math.floor(n));
+}
+
+function clearNode(node){
+  while (node.firstChild) node.removeChild(node.firstChild);
+  node.textContent = '';
+}
+
+function makeEl(tag, className, text){
+  var el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+function appendEl(parent, tag, className, text){
+  var el = makeEl(tag, className, text);
+  parent.appendChild(el);
+  return el;
+}
+
+function appendSectionTitle(parent, label, detail, detailId){
+  var title = appendEl(parent, 'div', 'svc-section-title');
+  appendEl(title, 'span', '', label);
+  if (detail !== undefined){
+    var detailEl = appendEl(title, 'span', '', detail);
+    if (detailId) detailEl.id = detailId;
+  }
+  return title;
+}
+
+function appendModelField(parent, id, label, placeholder){
+  var field = appendEl(parent, 'div', 'svc-model-field');
+  var labelEl = appendEl(field, 'label', '', label);
+  labelEl.setAttribute('for', id);
+  var input = appendEl(field, 'input');
+  input.id = id;
+  input.placeholder = placeholder;
+  return input;
+}
+
+function renderServices(avail, svcs){
+  var enabled = !!(avail && avail.enabled);
+  var available = (avail && Array.isArray(avail.available)) ? avail.available : [];
+  var configured = (avail && Array.isArray(avail.plugins)) ? avail.plugins : [];
+  var active = (avail && Array.isArray(avail.active)) ? avail.active : [];
+  var bundles = (avail && avail.bundles && typeof avail.bundles === 'object') ? avail.bundles : {};
+  var list = (svcs && Array.isArray(svcs.services)) ? svcs.services : [];
+  var controlsDisabled = svcRestartPending || svcConfigBusy;
+  svcLastConfiguredPlugins = configured.slice();
+  $('svcStatus').textContent = svcConfigBusy ? 'Saving' : (svcRestartPending ? 'Restarting' : (enabled ? (active.length ? active.length + ' running' : 'Configured') : 'Off'));
+  $('servicesCard').setAttribute('aria-busy', controlsDisabled ? 'true' : 'false');
+
+  var body = $('svcBody');
+  clearNode(body);
+  if (!avail){
+    appendEl(body, 'div', 'apps-empty', 'Service management is unavailable.');
+    return;
+  }
+
+  var hero = document.createElement('div');
+  hero.className = 'svc-hero';
+  var heroTop = appendEl(hero, 'div', 'svc-hero-top');
+  var heroCopy = appendEl(heroTop, 'div');
+  appendEl(heroCopy, 'div', 'svc-title', 'Optional service hosting');
+  appendEl(heroCopy, 'div', 'svc-copy', 'Choose the capabilities this relay should offer to apps. Saving stores the next-start selection; restart Blindspark when you want the change live.');
+  appendEl(heroTop, 'span', 'svc-pill ' + (enabled ? 'on' : 'warn'), svcRestartPending ? 'restarting' : (enabled ? 'configured' : 'not configured'));
+  body.appendChild(hero);
+  if (svcRestartPending){
+    var expected = svcRestartExpected.length ? svcRestartExpected : configured;
+    var ready = expected.filter(function(name){ return active.indexOf(name) !== -1; }).length;
+    var progress = document.createElement('div');
+    progress.className = 'svc-progress';
+    progress.setAttribute('role', 'status');
+    progress.setAttribute('aria-live', 'polite');
+    progress.setAttribute('aria-atomic', 'true');
+    appendEl(progress, 'strong', '', 'Restarting Blindspark');
+    appendEl(progress, 'span', '', expected.length ? ready + '/' + expected.length + ' selected running' : 'waiting for services to stop');
+    body.appendChild(progress);
+  }
+
+  if (bundles.poker && bundles.poker.length){
+    var bundleSection = document.createElement('div');
+    bundleSection.className = 'svc-section';
+    appendSectionTitle(bundleSection, 'Presets');
+    var bundlesWrap = document.createElement('div');
+    bundlesWrap.className = 'svc-bundles';
+    var bundle = document.createElement('div');
+    bundle.className = 'svc-bundle';
+    var bundleCopy = appendEl(bundle, 'div');
+    appendEl(bundleCopy, 'strong', '', 'Poker services');
+    appendEl(bundleCopy, 'span', '', 'Starts the poker table API plus randomness, arbitration, and proof services for compatible clients.');
+    var preset = document.createElement('button');
+    preset.type = 'button';
+    preset.className = 'svc-btn primary';
+    preset.textContent = 'Select preset';
+    preset.title = 'Selects ' + bundles.poker.join(', ');
+    preset.disabled = controlsDisabled;
+    preset.addEventListener('click', function(){
+      var set = {};
+      svcSelection().forEach(function(p){ set[p] = true; });
+      bundles.poker.forEach(function(p){ set[p] = true; });
+      document.querySelectorAll('.svc-check').forEach(function(cb){ cb.checked = !!set[cb.value]; });
+      svcDraftDirty = true;
+      updateSvcCards();
+      toast('Poker preset selected; save to apply');
+    });
+    bundle.appendChild(preset);
+    bundlesWrap.appendChild(bundle);
+    bundleSection.appendChild(bundlesWrap);
+    body.appendChild(bundleSection);
+  }
+
+  var catalog = document.createElement('div');
+  catalog.className = 'svc-section';
+  appendSectionTitle(catalog, 'Available services', configured.length + ' selected', 'svcSelectedCount');
+  var checklist = document.createElement('div');
+  checklist.className = 'svc-grid';
+  available.forEach(function(name){
+    var meta = svcMeta(name);
+    var running = active.indexOf(name) !== -1;
+    var label = document.createElement('label');
+    label.className = 'svc-card' + (configured.indexOf(name) !== -1 ? ' selected' : '') + (running ? ' running' : '') + (controlsDisabled ? ' disabled' : '');
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'svc-check';
+    cb.value = name;
+    cb.checked = configured.indexOf(name) !== -1;
+    cb.disabled = controlsDisabled;
+    cb.addEventListener('change', function(){
+      svcDraftDirty = true;
+      updateSvcCards();
+    });
+    label.appendChild(cb);
+    var mark = document.createElement('span');
+    mark.className = 'svc-checkmark';
+    label.appendChild(mark);
+    var content = document.createElement('span');
+    appendEl(content, 'span', 'svc-name', meta.label);
+    appendEl(content, 'span', 'svc-desc', meta.desc);
+    var tags = appendEl(content, 'span', 'svc-tags');
+    (meta.tags || []).forEach(function(tag){
+      appendEl(tags, 'span', 'svc-tag', tag);
+    });
+    if (running) appendEl(tags, 'span', 'svc-tag running', 'running');
+    label.appendChild(content);
+    checklist.appendChild(label);
+  });
+  catalog.appendChild(checklist);
+  body.appendChild(catalog);
+
+  var actions = document.createElement('div');
+  actions.className = 'svc-actions-bar';
+  var hint = appendEl(actions, 'div', 'hint', svcConfigBusy ? 'Saving service selection...' : (svcDraftDirty ? 'Unsaved changes - save selection before restarting.' : 'Saved selections apply after restart. Running services stay unchanged until then.'));
+  hint.id = 'svcActionHint';
+  hint.setAttribute('role', 'status');
+  hint.setAttribute('aria-live', 'polite');
+  hint.setAttribute('aria-atomic', 'true');
+  var buttons = appendEl(actions, 'div', 'buttons');
+  if (enabled){
+    var off = document.createElement('button');
+    off.type = 'button';
+    off.className = 'svc-btn danger';
+    off.textContent = 'Turn off services';
+    off.disabled = controlsDisabled;
+    off.addEventListener('click', function(){ svcSetConfig(false, []); });
+    buttons.appendChild(off);
+  }
+  var restart = document.createElement('button');
+  restart.type = 'button';
+  restart.className = 'svc-btn';
+  restart.textContent = 'Restart now';
+  restart.disabled = controlsDisabled;
+  restart.addEventListener('click', svcRestartNode);
+  buttons.appendChild(restart);
+  var save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'svc-btn primary';
+  save.textContent = 'Save selection';
+  save.disabled = controlsDisabled;
+  save.addEventListener('click', function(){
+    var selected = svcSelection();
+    svcSetConfig(selected.length > 0, selected);
+  });
+  buttons.appendChild(save);
+  body.appendChild(actions);
+
+  if (list.length){
+    var live = document.createElement('div');
+    live.className = 'svc-section';
+    appendSectionTitle(live, 'Running now', list.length + ' provider' + (list.length === 1 ? '' : 's'));
+    var liveList = document.createElement('div');
+    liveList.className = 'svc-live-list';
+    list.forEach(function(s){
+      var meta = svcMeta(s.name || '');
+      var status = s.status || (s.running ? 'running' : 'stopped');
+      var row = document.createElement('div');
+      row.className = 'svc-live-row';
+      appendEl(row, 'span', 'svc-dot ' + (s.running ? 'running' : ''));
+      var main = appendEl(row, 'span', 'svc-live-main');
+      appendEl(main, 'strong', '', meta.label);
+      appendEl(main, 'span', '', meta.desc);
+      appendEl(row, 'span', 'svc-live-status', status);
+      liveList.appendChild(row);
+    });
+    live.appendChild(liveList);
+    body.appendChild(live);
+  }
+
+  if (enabled){
+    var meterBox = document.createElement('div');
+    meterBox.id = 'svcMeterBox';
+    meterBox.style.marginTop = '.7rem';
+    body.appendChild(meterBox);
+    renderMetering(active);
+  }
+
+  if (active.indexOf('ai') !== -1){
+    var modelControlsDisabled = controlsDisabled || svcModelBusy;
+    var ai = document.createElement('div');
+    ai.className = 'svc-section';
+    appendSectionTitle(ai, 'AI model');
+    var form = document.createElement('div');
+    form.className = 'svc-model-card';
+    var modelId = appendModelField(form, 'svcModelId', 'Model ID', 'qvac-small');
+    var modelSrc = appendModelField(form, 'svcModelSrc', 'QVAC source or path', '/data/models/qvac-small');
+    modelId.disabled = modelControlsDisabled;
+    modelSrc.disabled = modelControlsDisabled;
+    modelId.addEventListener('keydown', handleSvcModelInputKey);
+    modelSrc.addEventListener('keydown', handleSvcModelInputKey);
+    var add = document.createElement('button');
+    add.type = 'button';
+    add.id = 'svcModelAdd';
+    add.className = 'svc-btn primary';
+    add.textContent = svcModelBusy ? 'Adding...' : 'Add model';
+    add.disabled = modelControlsDisabled;
+    add.addEventListener('click', svcAddModel);
+    form.appendChild(add);
+    var msg = appendEl(form, 'div', 'svc-model-message');
+    msg.id = 'svcModelMessage';
+    msg.setAttribute('role', 'status');
+    msg.setAttribute('aria-live', 'polite');
+    msg.textContent = svcModelMessageText;
+    msg.className = 'svc-model-message' + (svcModelMessageKind ? ' ' + svcModelMessageKind : '');
+    ai.appendChild(form);
+    body.appendChild(ai);
+  }
+}
+
+function renderMetering(active){
+  var box = $('svcMeterBox');
+  if (!box) return;
+  var jobs = [jget('/api/usage').catch(function(){ return null; })];
+  var hasPoker = active && active.indexOf('vrf') !== -1 && active.indexOf('arbitration') !== -1;
+  jobs.push(hasPoker ? jget('/api/poker/usage').catch(function(){ return null; }) : Promise.resolve(null));
+  Promise.all(jobs).then(function(results){
+    clearNode(box);
+    var usage = results[0];
+    var poker = results[1];
+    var verified = usage && usage.verified ? usage.verified : null;
+    appendSectionTitle(box, 'Verified usage', 'signed only');
+    var meter = appendEl(box, 'div', 'svc-meter');
+    if (verified){
+      var totals = verified.totals || {};
+      var keys = Object.keys(totals);
+      appendMeterRow(meter, 'Signed receipts', metricCount(verified.count));
+      keys.forEach(function(key){
+        appendMeterRow(meter, key, totals[key]);
+      });
+    } else {
+      appendMeterRow(meter, 'Signed receipts', '0');
+    }
+    if (poker && typeof poker.appends === 'number'){
+      appendMeterRow(meter, 'Poker appends', metricCount(poker.appends));
+      appendMeterRow(meter, 'Poker seats', metricCount(poker.seats));
+    }
+    appendEl(meter, 'div', 'svc-meter-note', 'Only counterparty-signed receipts are payout-eligible. Local call counters are intentionally not shown as earnings.');
+  }).catch(function(){});
+}
+
+function appendMeterRow(parent, label, value){
+  var row = appendEl(parent, 'div', 'svc-meter-row');
+  appendEl(row, 'span', '', label);
+  appendEl(row, 'span', '', value);
+  return row;
 }
 
 // ── Paid seeding (operator-facing) — set the per-GiB/day rate, watch
@@ -429,164 +1269,26 @@ function renderLease(s){
 }
 function fetchLease(){ jget('/api/lease').then(renderLease); }
 
-// ── Services (host services the relay runs: e.g. an AI model) ──────────
-function svcPost(path, body){
-  return fetch(path, { method:'POST', headers:{ 'Content-Type':'application/json', 'Accept':'application/json' }, body: JSON.stringify(body||{}) })
-    .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return { ok:r.ok, j:j }; }); });
-}
-function svcSetConfig(enabled, plugins){
-  svcPost('/api/manage/services/config', { enabled: enabled, plugins: plugins }).then(function(res){
-    if (res.ok){ toast('Saved — restart Blindspark to apply'); fetchServices(); }
-    else { toast((res.j && res.j.error) || 'Update failed'); }
-  });
-}
-function svcAddModel(){
-  var id = ($('svcModelId') || {}).value, src = ($('svcModelSrc') || {}).value;
-  id = (id || '').trim(); src = (src || '').trim();
-  if (!id || !src){ toast('Model id + source required'); return; }
-  svcPost('/api/manage/ai/models', { modelId: id, qvac: { modelSrc: src } }).then(function(res){
-    if (res.ok){ toast('Model added: ' + id); fetchServices(); }
-    else { toast((res.j && res.j.error) || 'Add failed'); }
-  });
-}
-function renderServices(avail, svcs){
-  var enabled = !!(avail && avail.enabled);
-  $('svcStatus').textContent = enabled ? 'On' : 'Off';
-  var body = $('svcBody'); body.innerHTML = '';
-  var available = (avail && Array.isArray(avail.available)) ? avail.available : [];
-  var configured = (avail && Array.isArray(avail.plugins)) ? avail.plugins : [];
-  var active = (avail && Array.isArray(avail.active)) ? avail.active : [];
-  var bundles = (avail && avail.bundles && typeof avail.bundles === 'object') ? avail.bundles : {};
-
-  var intro = document.createElement('div'); intro.className = 'apps-empty';
-  intro.innerHTML = 'Opt in to <b>provide services</b> peers can use — pick services below, or one-click a bundle. ' +
-    'Changes apply on the next Blindspark restart.';
-  body.appendChild(intro);
-
-  // One-click Poker bundle — unions with your current selection (never drops
-  // your other services, e.g. an enabled AI). The backend also auto-unions
-  // poker's support services, so this just makes the intent visible up-front.
-  if (bundles.poker && bundles.poker.length){
-    var pk = document.createElement('button'); pk.type='button'; pk.className='seedbtn'; pk.textContent='Enable Poker services';
-    pk.style.marginTop = '.6rem';
-    pk.title = 'Enables ' + bundles.poker.join(', ');
-    pk.addEventListener('click', function(){
-      var set = {}; configured.forEach(function(p){ set[p] = 1; }); bundles.poker.forEach(function(p){ set[p] = 1; });
-      svcSetConfig(true, Object.keys(set));
-    });
-    body.appendChild(pk);
-  }
-
-  // Per-service checklist — current config pre-checked, running ones flagged.
-  var checklist = document.createElement('div'); checklist.style.cssText = 'margin-top:.7rem;display:flex;flex-direction:column;gap:.35rem';
-  available.forEach(function(name){
-    var lbl = document.createElement('label'); lbl.style.cssText = 'display:flex;align-items:center;gap:.45rem;font-size:.9rem';
-    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'svc-check'; cb.value = name;
-    cb.checked = configured.indexOf(name) !== -1;
-    lbl.appendChild(cb);
-    var tag = active.indexOf(name) !== -1 ? ' <span class="app-key" style="color:var(--green)">running</span>' : '';
-    var span = document.createElement('span'); span.innerHTML = escapeHtml(name) + tag; lbl.appendChild(span);
-    checklist.appendChild(lbl);
-  });
-  body.appendChild(checklist);
-
-  var save = document.createElement('button'); save.type='button'; save.className='seedbtn'; save.textContent='Save services'; save.style.marginTop = '.6rem';
-  save.addEventListener('click', function(){
-    var sel = Array.prototype.map.call(document.querySelectorAll('.svc-check:checked'), function(c){ return c.value; });
-    svcSetConfig(sel.length > 0, sel); // backend auto-unions bundle deps (poker -> vrf+arbitration+zk)
-  });
-  body.appendChild(save);
-
-  // Live status of running providers.
-  var list = (svcs && Array.isArray(svcs.services)) ? svcs.services : [];
-  if (list.length){
-    var hd = document.createElement('div'); hd.className = 'row-note'; hd.style.marginTop = '.7rem'; hd.textContent = 'Running providers';
-    body.appendChild(hd);
-    list.forEach(function(s){
-      var row = document.createElement('div'); row.className = 'app';
-      row.innerHTML = '<span class="app-dot" style="background:' + (s.running ? 'var(--green)' : 'var(--orange)') + '"></span>' +
-        '<span class="app-name">' + escapeHtml(s.name) + '</span>' +
-        '<span class="app-key">' + escapeHtml(s.status || '') + '</span>';
-      body.appendChild(row);
-    });
-  }
-
-  // Usage & earnings evidence — only the honest (counterparty-signed) measures.
-  // Filled async so the services list paints immediately.
-  if (enabled){
-    var meterBox = document.createElement('div'); meterBox.id = 'svcMeterBox'; meterBox.style.marginTop = '.7rem';
-    body.appendChild(meterBox);
-    renderMetering(active);
-  }
-
-  // AI model form (when the AI service is active) — unchanged behaviour.
-  if (active.indexOf('ai') !== -1){
-    var form = document.createElement('div'); form.style.cssText = 'margin-top:.7rem;display:flex;flex-wrap:wrap;gap:.4rem;align-items:center';
-    form.innerHTML = '<input id="svcModelId" placeholder="model id" style="flex:1;min-width:8rem">' +
-      '<input id="svcModelSrc" placeholder="QVAC model source / path" style="flex:2;min-width:10rem">';
-    var add = document.createElement('button'); add.type='button'; add.className='seedbtn'; add.textContent='Add model';
-    add.addEventListener('click', svcAddModel);
-    form.appendChild(add); body.appendChild(form);
-  }
-
-  if (enabled){
-    var off = document.createElement('button'); off.type='button'; off.textContent='Disable all services'; off.style.marginTop = '.7rem';
-    off.addEventListener('click', function(){ svcSetConfig(false, []); });
-    body.appendChild(off);
-  }
-}
-function fetchServices(){
-  Promise.all([ jget('/api/manage/services/available'), jget('/api/manage/services') ])
-    .then(function(r){ renderServices(r[0], r[1]); })
-    .catch(function(){ /* leave last render */ });
-}
-
-// Honest-metering readout: counterparty-signed usage receipts (payout-eligible)
-// + poker's player-signed activity. Self-reported per-service counts are NOT
-// shown here as earnings — they're forgeable (statsVerified:false).
-function renderMetering(active){
-  var box = $('svcMeterBox'); if (!box) return;
-  var jobs = [ jget('/api/usage').catch(function(){ return null; }) ];
-  var hasPoker = active && active.indexOf('poker') !== -1;
-  jobs.push(hasPoker ? jget('/api/poker/usage').catch(function(){ return null; }) : Promise.resolve(null));
-  Promise.all(jobs).then(function(r){
-    var usage = r[0], poker = r[1];
-    var rows = [];
-    var v = usage && usage.verified ? usage.verified : null;
-    rows.push('<div class="row-note">Earnings evidence <span class="app-key">verified-only</span></div>');
-    if (v){
-      var totals = v.totals || {}; var keys = Object.keys(totals);
-      rows.push('<div class="app"><span class="app-name">Signed receipts</span><span class="app-key">' + (v.count || 0) + '</span></div>');
-      keys.forEach(function(k){
-        rows.push('<div class="app"><span class="app-name">' + escapeHtml(k) + '</span><span class="app-key">' + totals[k] + '</span></div>');
-      });
-    }
-    if (poker && typeof poker.appends === 'number'){
-      rows.push('<div class="app"><span class="app-name">poker appends (player-signed)</span><span class="app-key">' + poker.appends + '</span></div>');
-      rows.push('<div class="app"><span class="app-name">poker seats</span><span class="app-key">' + (poker.seats || 0) + '</span></div>');
-    }
-    rows.push('<div class="row-note" style="opacity:.7">Per-service call counts shown above are self-reported and not payout-eligible.</div>');
-    box.innerHTML = rows.join('');
-  }).catch(function(){ /* leave blank */ });
-}
-
 function renderApps(list){
   var box = $('appsList');
+  clearNode(box);
   if (!Array.isArray(list) || list.length === 0){
-    box.innerHTML = '<div class="apps-empty">No apps held yet. They appear as peers ask your relay to seed them.</div>';
+    appendEl(box, 'div', 'apps-empty', 'No apps held yet. They appear as peers ask your relay to seed them.');
     $('appsCount').textContent = '';
     return;
   }
   $('appsCount').textContent = list.length + (list.length === 1 ? ' app' : ' apps');
-  var html = '';
   for (var i = 0; i < list.length; i++){
     var a = list[i];
     var name = a.name && a.name !== 'Unknown App' ? a.name : 'Unnamed app';
-    html += '<div class="app">' + appGlyph(a) +
-            '<span class="app-name" title="' + (a.appKey || '') + '">' + escapeHtml(name) + '</span>' +
-            '<span class="app-key">' + shortKey(a.appKey || a.id || '') + '</span></div>';
+    var appKey = String(a.appKey || '');
+    var idKey = String(a.appKey || a.id || '');
+    var row = appendEl(box, 'div', 'app');
+    appendEl(row, 'span', 'app-dot');
+    var nameEl = appendEl(row, 'span', 'app-name', name);
+    nameEl.title = appKey;
+    appendEl(row, 'span', 'app-key', shortKey(idKey));
   }
-  box.innerHTML = html;
 }
 
 // Icon if the entry carries one (drive-relative path resolved through the
@@ -609,18 +1311,45 @@ function escapeHtml(s){
 }
 
 function jget(path){
-  return fetch(path, { headers: { 'Accept': 'application/json' } })
+  return fetchWithTimeout(path, { headers: { 'Accept': 'application/json' } })
     .then(function(r){ return r.ok ? r.json() : null; })
     .catch(function(){ return null; });
 }
 
-function refresh(){
-  jget('/api/overview').then(renderOverview);
-  jget('/api/apps').then(renderApps);
+var overviewRefreshBusy = false;
+var wizardRefreshBusy = false;
+var servicesRefreshBusy = false;
+var servicesRefreshPendingForce = false;
+
+function canPoll(force, busy){
+  if (busy) return false;
+  return force === true || !(typeof document !== 'undefined' && document.hidden === true);
+}
+
+function refresh(force){
+  if (!canPoll(force, overviewRefreshBusy)) return;
+  overviewRefreshBusy = true;
+  Promise.all([
+    jget('/api/overview'),
+    jget('/api/apps'),
+    jget('/api/subsidy')
+  ]).then(function(results){
+    renderOverview(results[0]);
+    renderApps(results[1]);
+    renderSubsidy(results[2]);
+  }).finally(function(){
+    overviewRefreshBusy = false;
+  });
 }
 
 // Wizard state changes rarely; fetch once on load + occasionally.
-function refreshWizard(){ jget('/api/wizard').then(renderWizard); }
+function refreshWizard(force){
+  if (!canPoll(force, wizardRefreshBusy)) return;
+  wizardRefreshBusy = true;
+  jget('/api/wizard').then(renderWizard).finally(function(){
+    wizardRefreshBusy = false;
+  });
+}
 
 // ── Seed an app (operator pastes a drive key; relay seeds + pins it) ──
 var HEX64 = /^[0-9a-f]{64}$/i;
@@ -631,6 +1360,11 @@ $('seedToggle').addEventListener('click', function(){
 });
 $('seedCancel').addEventListener('click', function(){
   $('seedForm').classList.remove('show'); $('seedErr').textContent = '';
+});
+$('seedGo').addEventListener('click', function(){
+  var form = $('seedForm');
+  if (typeof form.requestSubmit === 'function') form.requestSubmit();
+  else form.dispatchEvent(new Event('submit', { cancelable: true }));
 });
 $('seedForm').addEventListener('submit', function(e){
   e.preventDefault();
@@ -668,14 +1402,46 @@ $('seedForm').addEventListener('submit', function(e){
   });
 })();
 
-refresh();
-refreshWizard();
-fetchLease();
-fetchServices();
-setInterval(refresh, 5000);
-setInterval(refreshWizard, 30000);
-setInterval(fetchLease, 30000);
-setInterval(fetchServices, 30000);
+function refreshServices(force){
+  if (servicesRefreshBusy) {
+    if (force === true) servicesRefreshPendingForce = true;
+    return;
+  }
+  if (!canPoll(force, false)) return;
+  servicesRefreshBusy = true;
+  Promise.all([
+    jget('/api/manage/services/available'),
+    jget('/api/manage/services')
+  ]).then(function(results){
+    if (svcDraftDirty && force !== true) return;
+    renderServices(results[0], results[1]);
+  }).catch(function(){
+    if (svcDraftDirty && force !== true) return;
+    renderServices(null, null);
+  }).finally(function(){
+    servicesRefreshBusy = false;
+    if (servicesRefreshPendingForce) {
+      servicesRefreshPendingForce = false;
+      refreshServices(true);
+    }
+  });
+}
+
+function refreshVisible(force){
+  refresh(force);
+  refreshWizard(force);
+  refreshServices(force);
+  fetchLease();
+}
+
+refreshVisible(true);
+setInterval(function(){ refresh(false); }, 5000);
+setInterval(function(){ refreshWizard(false); }, 30000);
+setInterval(function(){ fetchLease(); }, 30000);
+setInterval(function(){ refreshServices(false); }, 15000);
+document.addEventListener('visibilitychange', function(){
+  if (document.hidden !== true) refreshVisible(true);
+});
 </script>
 </body>
 </html>

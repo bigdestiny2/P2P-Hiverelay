@@ -3,7 +3,11 @@ import b4a from 'b4a'
 import {
   RELAY_DISCOVERY_TOPIC,
   FOUNDATION_TOPIC,
-  regionTopic
+  regionTopic,
+  SEED_PROTOCOL_NAME,
+  CIRCUIT_PROTOCOL_NAME,
+  FORWARD_PROTOCOL_NAME,
+  SERVICES_PROTOCOL_NAME
 } from 'p2p-hiverelay/core/constants.js'
 
 test('discovery topics — global topic is 32 bytes and stable', (t) => {
@@ -63,4 +67,11 @@ test('regionTopic — deterministic across calls', (t) => {
   const a = regionTopic('NA')
   const b = regionTopic('NA')
   t.is(b4a.toString(a, 'hex'), b4a.toString(b, 'hex'), 'same input → same topic')
+})
+
+test('protocol constants — stable Protomux channel names', (t) => {
+  t.is(SEED_PROTOCOL_NAME, 'hiverelay-seed', 'seed protocol name is stable')
+  t.is(CIRCUIT_PROTOCOL_NAME, 'hiverelay-circuit', 'circuit protocol name is stable')
+  t.is(FORWARD_PROTOCOL_NAME, 'hiverelay-forward', 'forward protocol name is stable')
+  t.is(SERVICES_PROTOCOL_NAME, 'hiverelay-services', 'services protocol name is stable')
 })

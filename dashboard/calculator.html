@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Blindspark — Earnings Calculator</title>
+<title>HiveRelay Earnings Calculator</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%2316213e'/%3E%3Cpath d='M50 10 C 54 38 60 44 88 50 C 60 56 54 62 50 90 C 46 62 40 56 12 50 C 40 44 46 38 50 10 Z' fill='%23f5c842'/%3E%3C/svg%3E">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -161,7 +161,7 @@ input[type="number"]:focus{border-color:var(--cyan)}
       <path d="M50 6 C 54.5 36, 61 42.5, 92 50 C 61 57.5, 54.5 64, 50 94 C 45.5 64, 39 57.5, 8 50 C 39 42.5, 45.5 36, 50 6 Z" fill="url(#sparkg)"/>
       <path d="M79 10 C 80.5 19, 82.5 21, 91 23 C 82.5 25, 80.5 27, 79 36 C 77.5 27, 75.5 25, 67 23 C 75.5 21, 77.5 19, 79 10 Z" fill="#ffe066" opacity=".9"/>
     </svg>
-    <div class="topbar-brand"><h1>Node Earnings Calculator</h1><div class="topbar-sub">powered by HiveRelay</div></div>
+    <div class="topbar-brand"><h1>HiveRelay Earnings Calculator</h1><div class="topbar-sub">subsidy planning and capacity</div></div>
   </a>
   <nav class="topbar-nav">
     <a href="/dashboard">Dashboard</a>
@@ -176,19 +176,19 @@ input[type="number"]:focus{border-color:var(--cyan)}
 <!-- Presets -->
 <div style="margin-bottom:.5rem;font-size:.72rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">Quick Presets</div>
 <div class="presets">
-  <button class="preset-btn" onclick="applyPreset('hobby')">
+  <button class="preset-btn" type="button" data-calculator-preset="hobby">
     Hobby Node<span class="preset-label">Raspberry Pi, 2 apps</span>
   </button>
-  <button class="preset-btn" onclick="applyPreset('small')">
+  <button class="preset-btn" type="button" data-calculator-preset="small">
     Small Relay<span class="preset-label">VPS, 10 apps, local AI</span>
   </button>
-  <button class="preset-btn" onclick="applyPreset('medium')">
+  <button class="preset-btn" type="button" data-calculator-preset="medium">
     Medium Relay<span class="preset-label">Dedicated, 50 apps, GPU</span>
   </button>
-  <button class="preset-btn" onclick="applyPreset('large')">
+  <button class="preset-btn" type="button" data-calculator-preset="large">
     Large Relay<span class="preset-label">Multi-GPU, 200+ apps</span>
   </button>
-  <button class="preset-btn" onclick="applyPreset('enterprise')">
+  <button class="preset-btn" type="button" data-calculator-preset="enterprise">
     Enterprise<span class="preset-label">Data center, 1000+ apps</span>
   </button>
 </div>
@@ -230,7 +230,7 @@ input[type="number"]:focus{border-color:var(--cyan)}
       <div class="input-group">
         <label>Connected Apps</label>
         <div class="input-row">
-          <input type="range" id="apps" min="1" max="2000" value="10" oninput="onSlider(this,'appsVal')">
+          <input type="range" id="apps" min="1" max="2000" value="10" data-slider-display="appsVal">
           <span class="slider-value" id="appsVal">10</span>
         </div>
         <div class="hint">Apps connected to your relay via P2P or HTTP</div>
@@ -239,7 +239,7 @@ input[type="number"]:focus{border-color:var(--cyan)}
       <div class="input-group">
         <label>AI Inference Calls / Day</label>
         <div class="input-row">
-          <input type="range" id="aiCalls" min="0" max="100000" value="500" step="100" oninput="onSlider(this,'aiCallsVal')">
+          <input type="range" id="aiCalls" min="0" max="100000" value="500" step="100" data-slider-display="aiCallsVal">
           <span class="slider-value" id="aiCallsVal">500</span>
         </div>
         <div class="hint">LLM inference requests routed through your node</div>
@@ -248,7 +248,7 @@ input[type="number"]:focus{border-color:var(--cyan)}
       <div class="input-group">
         <label>Avg Tokens per AI Call</label>
         <div class="input-row">
-          <input type="range" id="avgTokens" min="100" max="8000" value="1000" step="100" oninput="onSlider(this,'avgTokensVal')">
+          <input type="range" id="avgTokens" min="100" max="8000" value="1000" step="100" data-slider-display="avgTokensVal">
           <span class="slider-value" id="avgTokensVal">1,000</span>
         </div>
         <div class="hint">Input + output tokens combined</div>
@@ -257,7 +257,7 @@ input[type="number"]:focus{border-color:var(--cyan)}
       <div class="input-group">
         <label>Embedding Calls / Day</label>
         <div class="input-row">
-          <input type="range" id="embedCalls" min="0" max="200000" value="2000" step="500" oninput="onSlider(this,'embedCallsVal')">
+          <input type="range" id="embedCalls" min="0" max="200000" value="2000" step="500" data-slider-display="embedCallsVal">
           <span class="slider-value" id="embedCallsVal">2,000</span>
         </div>
       </div>
@@ -265,7 +265,7 @@ input[type="number"]:focus{border-color:var(--cyan)}
       <div class="input-group">
         <label>Storage Writes / Day</label>
         <div class="input-row">
-          <input type="range" id="storageWrites" min="0" max="50000" value="200" step="50" oninput="onSlider(this,'storageWritesVal')">
+          <input type="range" id="storageWrites" min="0" max="50000" value="200" step="50" data-slider-display="storageWritesVal">
           <span class="slider-value" id="storageWritesVal">200</span>
         </div>
       </div>
@@ -273,7 +273,7 @@ input[type="number"]:focus{border-color:var(--cyan)}
       <div class="input-group">
         <label>Identity Signs / Day</label>
         <div class="input-row">
-          <input type="range" id="signCalls" min="0" max="10000" value="100" step="10" oninput="onSlider(this,'signCallsVal')">
+          <input type="range" id="signCalls" min="0" max="10000" value="100" step="10" data-slider-display="signCallsVal">
           <span class="slider-value" id="signCallsVal">100</span>
         </div>
       </div>
@@ -285,7 +285,7 @@ input[type="number"]:focus{border-color:var(--cyan)}
       <div class="input-group">
         <label>Pricing Margin</label>
         <div class="input-row">
-          <input type="range" id="margin" min="0.5" max="3.0" value="1.0" step="0.1" oninput="onSlider(this,'marginVal', 'x')">
+          <input type="range" id="margin" min="0.5" max="3.0" value="1.0" step="0.1" data-slider-display="marginVal" data-slider-suffix="x">
           <span class="slider-value" id="marginVal">1.0x</span>
         </div>
         <div class="hint">1.0x = default rates. 1.5x = 50% markup. Lower margins attract more apps.</div>
@@ -294,7 +294,7 @@ input[type="number"]:focus{border-color:var(--cyan)}
       <div class="input-group">
         <label>BTC Price (USD)</label>
         <div class="input-row">
-          <input type="number" id="btcPrice" value="100000" min="1000" max="10000000" step="1000" oninput="recalculate()">
+          <input type="number" id="btcPrice" value="100000" min="1000" max="10000000" step="1000" data-calculator-recalculate>
         </div>
       </div>
     </div>
@@ -305,21 +305,21 @@ input[type="number"]:focus{border-color:var(--cyan)}
       <div class="input-group">
         <label>Server / VPS (USD/mo)</label>
         <div class="input-row">
-          <input type="number" id="costServer" value="20" min="0" max="10000" step="5" oninput="recalculate()">
+          <input type="number" id="costServer" value="20" min="0" max="10000" step="5" data-calculator-recalculate>
         </div>
       </div>
 
       <div class="input-group">
         <label>Electricity (USD/mo)</label>
         <div class="input-row">
-          <input type="number" id="costElectricity" value="10" min="0" max="5000" step="5" oninput="recalculate()">
+          <input type="number" id="costElectricity" value="10" min="0" max="5000" step="5" data-calculator-recalculate>
         </div>
       </div>
 
       <div class="input-group">
         <label>Bandwidth (USD/mo)</label>
         <div class="input-row">
-          <input type="number" id="costBandwidth" value="0" min="0" max="5000" step="5" oninput="recalculate()">
+          <input type="number" id="costBandwidth" value="0" min="0" max="5000" step="5" data-calculator-recalculate>
         </div>
         <div class="hint">Often included with VPS. Set 0 if bundled.</div>
       </div>
@@ -327,7 +327,7 @@ input[type="number"]:focus{border-color:var(--cyan)}
       <div class="input-group">
         <label>GPU Rental (USD/mo)</label>
         <div class="input-row">
-          <input type="number" id="costGpu" value="0" min="0" max="10000" step="10" oninput="recalculate()">
+          <input type="number" id="costGpu" value="0" min="0" max="10000" step="10" data-calculator-recalculate>
         </div>
         <div class="hint">Only if running local AI models on rented GPU</div>
       </div>
@@ -443,11 +443,11 @@ var PRESETS = {
   enterprise: { apps:1000, aiCalls:100000, avgTokens:2500, embedCalls:200000, storageWrites:50000, signCalls:10000, margin:0.8, costServer:500, costElectricity:200, costBandwidth:100, costGpu:800 }
 };
 
-function applyPreset(name) {
+function applyPreset(name, button) {
   var p = PRESETS[name];
   if (!p) return;
   document.querySelectorAll('.preset-btn').forEach(function(b) { b.classList.remove('active'); });
-  event.target.closest('.preset-btn').classList.add('active');
+  if (button) button.classList.add('active');
 
   setInput('apps', p.apps);
   setInput('aiCalls', p.aiCalls);
@@ -478,10 +478,40 @@ function setInput(id, val) {
   el.value = val;
 }
 
+function clearNode(node) {
+  while (node.firstChild) node.removeChild(node.firstChild);
+}
+
+function makeEl(tag, className, text) {
+  var el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+function appendEl(parent, tag, className, text) {
+  var el = makeEl(tag, className, text);
+  parent.appendChild(el);
+  return el;
+}
+
+function numberOrZero(value) {
+  var n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function pctWidth(value) {
+  var n = numberOrZero(value);
+  if (n < 0) n = 0;
+  if (n > 1) n = 1;
+  return (n * 100).toFixed(2).replace(/\.?0+$/, '') + '%';
+}
+
 /* ===== Formatting ===== */
-function fmt(n) { return n.toLocaleString(); }
+function fmt(n) { return numberOrZero(n).toLocaleString(); }
 
 function formatSats(s) {
+  s = numberOrZero(s);
   if (s >= 100000000) return (s / 100000000).toFixed(4) + ' BTC';
   if (s >= 1000000) return (s / 1000000).toFixed(1) + 'M sats';
   if (s >= 1000) return Math.round(s).toLocaleString() + ' sats';
@@ -489,6 +519,8 @@ function formatSats(s) {
 }
 
 function formatUsd(sats, btcPrice) {
+  sats = numberOrZero(sats);
+  btcPrice = numberOrZero(btcPrice) || 100000;
   var usd = (sats / 100000000) * btcPrice;
   if (usd >= 1000) return '$' + usd.toLocaleString(undefined, {maximumFractionDigits:0});
   if (usd >= 1) return '$' + usd.toFixed(2);
@@ -504,6 +536,44 @@ function onSlider(el, displayId, suffix) {
   // Clear active preset
   document.querySelectorAll('.preset-btn').forEach(function(b) { b.classList.remove('active'); });
   recalculate();
+}
+
+function bindCalculatorControls() {
+  document.querySelectorAll('[data-calculator-preset]').forEach(function(button) {
+    button.addEventListener('click', function() {
+      applyPreset(button.dataset.calculatorPreset, button);
+    });
+  });
+  document.querySelectorAll('[data-slider-display]').forEach(function(input) {
+    input.addEventListener('input', function() {
+      onSlider(input, input.dataset.sliderDisplay, input.dataset.sliderSuffix);
+    });
+  });
+  document.querySelectorAll('[data-calculator-recalculate]').forEach(function(input) {
+    input.addEventListener('input', recalculate);
+  });
+}
+
+function renderBreakdown(breakdown, dailySats, btcPrice) {
+  var list = document.getElementById('breakdownList');
+  clearNode(list);
+  for (var i = 0; i < breakdown.length; i++) {
+    var b = breakdown[i];
+    var sats = numberOrZero(b.sats);
+    var pct = numberOrZero(b.pct);
+    var row = appendEl(list, 'div', 'breakdown-row');
+    var left = appendEl(row, 'div');
+    appendEl(left, 'div', 'breakdown-name', b.name);
+    appendEl(left, 'div', 'breakdown-detail', b.detail);
+    var right = appendEl(row, 'div');
+    right.style.textAlign = 'right';
+    appendEl(right, 'div', 'breakdown-sats', formatSats(sats));
+    appendEl(right, 'div', 'breakdown-usd', formatUsd(sats, btcPrice) + ' (' + (Math.max(0, Math.min(1, pct)) * 100).toFixed(0) + '%)');
+    var bar = appendEl(list, 'div', 'breakdown-bar');
+    var fill = appendEl(bar, 'div', 'breakdown-fill');
+    fill.style.width = pctWidth(pct);
+  }
+  document.getElementById('breakdownTotal').textContent = formatSats(dailySats) + ' (' + formatUsd(dailySats, btcPrice) + ')';
 }
 
 /* ===== Main Calculation ===== */
@@ -581,20 +651,7 @@ function recalculate() {
     { name: 'Identity Signs', detail: fmt(signCalls) + ' signs/day', sats: signRevenue, pct: dailySats > 0 ? signRevenue / dailySats : 0 }
   ];
 
-  var bHtml = '';
-  for (var i = 0; i < breakdown.length; i++) {
-    var b = breakdown[i];
-    bHtml += '<div class="breakdown-row"><div>' +
-      '<div class="breakdown-name">' + b.name + '</div>' +
-      '<div class="breakdown-detail">' + b.detail + '</div>' +
-      '</div><div style="text-align:right">' +
-      '<div class="breakdown-sats">' + formatSats(b.sats) + '</div>' +
-      '<div class="breakdown-usd">' + formatUsd(b.sats, btcPrice) + ' (' + (b.pct * 100).toFixed(0) + '%)</div>' +
-      '</div></div>' +
-      '<div class="breakdown-bar"><div class="breakdown-fill" style="width:' + (b.pct * 100) + '%"></div></div>';
-  }
-  document.getElementById('breakdownList').innerHTML = bHtml;
-  document.getElementById('breakdownTotal').textContent = formatSats(dailySats) + ' (' + formatUsd(dailySats, btcPrice) + ')';
+  renderBreakdown(breakdown, dailySats, btcPrice);
 
   // ===== P&L =====
   document.getElementById('plServer').textContent = '-$' + costServer;
@@ -625,6 +682,7 @@ function recalculate() {
 }
 
 /* ===== Init ===== */
+bindCalculatorControls();
 recalculate();
 </script>
 </body>

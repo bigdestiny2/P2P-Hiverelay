@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Blindspark — Docs</title>
+<title>HiveRelay Docs</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%2316213e'/%3E%3Cpath d='M50 10 C 54 38 60 44 88 50 C 60 56 54 62 50 90 C 46 62 40 56 12 50 C 40 44 46 38 50 10 Z' fill='%23f5c842'/%3E%3C/svg%3E">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -201,14 +201,14 @@ pre code{background:none;padding:0;color:var(--text)}
 
 <!-- Top Bar -->
 <header class="topbar">
-  <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">&#9776;</button>
+  <button type="button" class="hamburger" id="hamburger" aria-label="Toggle sidebar">&#9776;</button>
   <a href="/docs" class="topbar-logo">
     <svg class="hive-logo" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
       <defs><linearGradient id="sparkg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffe066"/><stop offset="100%" stop-color="#f5a623"/></linearGradient></defs>
       <path d="M50 6 C 54.5 36, 61 42.5, 92 50 C 61 57.5, 54.5 64, 50 94 C 45.5 64, 39 57.5, 8 50 C 39 42.5, 45.5 36, 50 6 Z" fill="url(#sparkg)"/>
       <path d="M79 10 C 80.5 19, 82.5 21, 91 23 C 82.5 25, 80.5 27, 79 36 C 77.5 27, 75.5 25, 67 23 C 75.5 21, 77.5 19, 79 10 Z" fill="#ffe066" opacity=".9"/>
     </svg>
-    <div class="topbar-brand"><h1>Blindspark Docs</h1><div class="topbar-sub">powered by HiveRelay</div></div>
+    <div class="topbar-brand"><h1>HiveRelay Docs</h1><div class="topbar-sub">operators, publishers, browsers</div></div>
   </a>
   <nav class="topbar-nav">
     <a href="/dashboard">Dashboard</a>
@@ -218,7 +218,7 @@ pre code{background:none;padding:0;color:var(--text)}
     <a href="/network">Network</a>
     <a href="/leaderboard">Leaderboard</a>
     <a href="/docs" class="active">Docs</a>
-    <a href="https://github.com/bigdestiny2/p2p-hiverelay" target="_blank">GitHub</a>
+    <a href="https://github.com/bigdestiny2/p2p-hiverelay" target="_blank" rel="noopener noreferrer">GitHub</a>
   </nav>
 </header>
 
@@ -295,7 +295,7 @@ pre code{background:none;padding:0;color:var(--text)}
 
 <h3 id="install">Installation</h3>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="kw"># Install globally (recommended)</span>
 npm install -g p2p-hiverelay
 
@@ -304,7 +304,7 @@ npm install p2p-hiverelay</code></pre></div>
 
 <h3>Run a Relay Node</h3>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="kw"># Quick start (global install)</span>
 p2p-hiverelay start --region NA --port 9100
 
@@ -323,7 +323,7 @@ p2p-hiverelay start \
 
 <h3 id="cli">Production HTTPS Setup (Caddy)</h3>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="kw"># Install Caddy</span>
 sudo apt install -y caddy
 
@@ -340,7 +340,7 @@ sudo systemctl restart caddy
 
 <h3 id="upgrade-node">Upgrading Node.js (Ubuntu)</h3>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="kw"># Ubuntu 24.04 ships with Node 18 — upgrade to 20+</span>
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
@@ -358,7 +358,7 @@ node --version  <span class="kw"># Should show v20.x.x</span></code></pre></div>
 
 <p>Spin up an isolated local network — private DHT, relay nodes, and a test client — in one command. Nothing touches the production network.</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="kw"># 3 relay nodes + test client (publishes, seeds, reads back)</span>
 npx p2p-hiverelay testnet
 
@@ -370,9 +370,9 @@ npx p2p-hiverelay testnet --no-client</code></pre></div>
 
 <p>The testnet creates its own DHT bootstrap nodes. When it's ready, it prints a copy-paste SDK snippet with the local bootstrap addresses so you can connect your own client code:</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">js</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">js</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="kw">import</span> Hyperswarm <span class="kw">from</span> <span class="str">'hyperswarm'</span>
-<span class="kw">import</span> { HiveRelayClient } <span class="kw">from</span> <span class="str">'p2p-hiverelay/client'</span>
+<span class="kw">import</span> { HiveRelayClient } <span class="kw">from</span> <span class="str">'p2p-hiverelay-client'</span>
 
 <span class="kw">const</span> swarm = <span class="kw">new</span> Hyperswarm({
   bootstrap: [{ host: <span class="str">'127.0.0.1'</span>, port: <span class="num">49736</span> }, ...] <span class="kw">// printed by testnet</span>
@@ -411,7 +411,7 @@ npx p2p-hiverelay testnet --no-client</code></pre></div>
 <h3 id="dashboards">Dashboard Access</h3>
 <ul>
   <li><strong>Node Operator Dashboard:</strong> <code>http://YOUR_IP:PORT/dashboard</code> &mdash; Local node stats, seeded apps, health monitor</li>
-  <li><strong>Network Overview:</strong> <code>http://YOUR_IP:PORT/network</code> &mdash; All discovered relays across the DHT</li>
+  <li><strong>Network Overview:</strong> <code>http://YOUR_IP:PORT/network</code> &mdash; Public-safe discovered relay overview across the DHT</li>
   <li><strong>Docs:</strong> <code>http://YOUR_IP:PORT/docs</code> &mdash; This page</li>
 </ul>
 
@@ -421,10 +421,10 @@ npx p2p-hiverelay testnet --no-client</code></pre></div>
 <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
 <tbody>
 <tr><td><span class="method get">GET</span></td><td><code>/api/overview</code></td><td>Node stats (uptime, connections, storage, memory)</td></tr>
-<tr><td><span class="method get">GET</span></td><td><code>/api/network</code></td><td>All discovered relays across the DHT</td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/network</code></td><td>Public-safe discovered relay state; <code>?detailed=1</code> requires management auth</td></tr>
 <tr><td><span class="method get">GET</span></td><td><code>/api/apps</code></td><td>Currently seeded applications</td></tr>
 <tr><td><span class="method get">GET</span></td><td><code>/api/peers</code></td><td>Connected peers</td></tr>
-<tr><td><span class="method get">GET</span></td><td><code>/api/health-detail</code></td><td>Health check results</td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/health-detail</code></td><td>Authenticated health diagnostics</td></tr>
 <tr><td><span class="method get">GET</span></td><td><code>/api/registry</code></td><td>Seeding registry state</td></tr>
 <tr><td><span class="method get">GET</span></td><td><code>/api/registry/pending</code></td><td>Pending approval requests</td></tr>
 <tr><td><span class="method post">POST</span></td><td><code>/registry/publish</code></td><td>Publish a seed request to the registry</td></tr>
@@ -438,7 +438,7 @@ npx p2p-hiverelay testnet --no-client</code></pre></div>
 
 <p>For production Linux deployments, use a systemd unit file:</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">ini</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">ini</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="punct">[Unit]</span>
 <span class="prop">Description</span><span class="punct">=</span>HiveRelay P2P Relay Node
 <span class="prop">After</span><span class="punct">=</span>network-online.target
@@ -455,7 +455,7 @@ npx p2p-hiverelay testnet --no-client</code></pre></div>
 <span class="punct">[Install]</span>
 <span class="prop">WantedBy</span><span class="punct">=</span>multi-user.target</code></pre></div>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="cm"># Install and enable the service</span>
 sudo cp hiverelay.service /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -465,7 +465,7 @@ sudo systemctl enable --now hiverelay</code></pre></div>
 
 <p>Run multiple relay instances on the same machine with separate ports and storage directories:</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="cm"># Instance 1 - North America</span>
 p2p-hiverelay start --region NA --port <span class="num">9100</span> --storage ./relay-na
 
@@ -495,15 +495,15 @@ p2p-hiverelay start --region AP --port <span class="num">9102</span> --storage .
 
 <h3 id="sdk-install">Installation</h3>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code>npm install p2p-hiverelay</code></pre></div>
 
 <h3>Basic Usage</h3>
 
 <p>Create a client, connect to the relay network, and publish content that will be seeded automatically:</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">javascript</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
-<pre><code><span class="kw">import</span> <span class="punct">{</span> <span class="fn">HiveRelayClient</span> <span class="punct">}</span> <span class="kw">from</span> <span class="str">'p2p-hiverelay/client'</span>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">javascript</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
+<pre><code><span class="kw">import</span> <span class="punct">{</span> <span class="fn">HiveRelayClient</span> <span class="punct">}</span> <span class="kw">from</span> <span class="str">'p2p-hiverelay-client'</span>
 
 <span class="kw">const</span> client <span class="punct">=</span> <span class="kw">new</span> <span class="fn">HiveRelayClient</span><span class="punct">(</span><span class="str">'./app-storage'</span><span class="punct">,</span> <span class="punct">{</span>
   <span class="prop">maxRelays</span><span class="punct">:</span> <span class="num">5</span><span class="punct">,</span>
@@ -520,14 +520,14 @@ client<span class="punct">.</span><span class="fn">on</span><span class="punct">
 
 <p>Publish an entire directory (reads all files recursively, skips node_modules/.git):</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">javascript</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">javascript</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="cmt">// Publish a directory — the simple way</span>
 <span class="kw">const</span> drive <span class="punct">=</span> <span class="kw">await</span> client<span class="punct">.</span><span class="fn">publish</span><span class="punct">(</span><span class="str">'./my-app'</span><span class="punct">)</span>
 console<span class="punct">.</span><span class="fn">log</span><span class="punct">(</span><span class="str">'Your app is live! Key:'</span><span class="punct">,</span> drive<span class="punct">.</span>key<span class="punct">.</span><span class="fn">toString</span><span class="punct">(</span><span class="str">'hex'</span><span class="punct">))</span></code></pre></div>
 
 <p>Or publish individual files with explicit content:</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">javascript</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">javascript</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="kw">const</span> drive <span class="punct">=</span> <span class="kw">await</span> client<span class="punct">.</span><span class="fn">publish</span><span class="punct">([</span>
   <span class="punct">{</span> <span class="prop">path</span><span class="punct">:</span> <span class="str">'/index.html'</span><span class="punct">,</span> <span class="prop">content</span><span class="punct">:</span> <span class="str">'&lt;h1&gt;Hello World&lt;/h1&gt;'</span> <span class="punct">},</span>
   <span class="punct">{</span> <span class="prop">path</span><span class="punct">:</span> <span class="str">'/app.js'</span><span class="punct">,</span> <span class="prop">content</span><span class="punct">:</span> <span class="str">'console.log("running")'</span> <span class="punct">}</span>
@@ -535,7 +535,7 @@ console<span class="punct">.</span><span class="fn">log</span><span class="punct
 
 <h3 id="sdk-read">Read Back</h3>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">javascript</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">javascript</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="kw">const</span> data <span class="punct">=</span> <span class="kw">await</span> client<span class="punct">.</span><span class="fn">get</span><span class="punct">(</span>driveKey<span class="punct">,</span> <span class="str">'/index.html'</span><span class="punct">)</span>
 <span class="kw">const</span> files <span class="punct">=</span> <span class="kw">await</span> client<span class="punct">.</span><span class="fn">list</span><span class="punct">(</span>driveKey<span class="punct">,</span> <span class="str">'/'</span><span class="punct">)</span></code></pre></div>
 
@@ -543,7 +543,7 @@ console<span class="punct">.</span><span class="fn">log</span><span class="punct
 
 <p>Request relays to persist your app across the network:</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">javascript</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">javascript</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="kw">await</span> client<span class="punct">.</span><span class="fn">seed</span><span class="punct">(</span>driveKey<span class="punct">,</span> <span class="punct">{</span> <span class="prop">replicas</span><span class="punct">:</span> <span class="num">3</span> <span class="punct">})</span></code></pre></div>
 
 <div class="callout">
@@ -572,7 +572,7 @@ console<span class="punct">.</span><span class="fn">log</span><span class="punct
 
 <p>The client tracks relay performance and prefers the best-performing relays:</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">javascript</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">javascript</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="kw">const</span> scores <span class="punct">=</span> client<span class="punct">.</span><span class="fn">getRelayScores</span><span class="punct">()</span>
 
 <span class="cm">// Returns an array of relay score objects:</span>
@@ -671,7 +671,7 @@ console<span class="punct">.</span><span class="fn">log</span><span class="punct
   <li><strong>No manual peer configuration</strong> &mdash; relays announce, clients discover automatically</li>
   <li><strong>No central server</strong> &mdash; the DHT is fully distributed across all participants</li>
   <li><strong>NAT traversal</strong> &mdash; Hyperswarm handles UDP hole-punching for peers behind NATs</li>
-  <li><strong>Real-time network view</strong> &mdash; the <a href="/network">network dashboard</a> shows all discovered relays live</li>
+  <li><strong>Real-time network view</strong> &mdash; the <a href="/network">network dashboard</a> shows public-safe discovered relays live</li>
 </ul>
 
 <div class="callout warn">
@@ -687,7 +687,7 @@ console<span class="punct">.</span><span class="fn">log</span><span class="punct
 
 <h3>Fetching Files</h3>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="kw"># Fetch a file from a seeded Hyperdrive</span>
 curl https://relay-us.p2phiverelay.xyz/v1/hyper/DRIVE_KEY/index.html
 
@@ -711,12 +711,12 @@ curl https://relay-us.p2phiverelay.xyz/api/gateway</code></pre></div>
 
 <p>Each relay exposes a <code>/catalog.json</code> endpoint that lists all seeded apps with metadata. PearBrowser and other app stores can use this as a catalog source.</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">bash</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code>curl https://relay-us.p2phiverelay.xyz/catalog.json</code></pre></div>
 
 <p>Response:</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code>{
   <span class="str">"version"</span>: <span class="num">1</span>,
   <span class="str">"name"</span>: <span class="str">"HiveRelay App Catalog"</span>,
@@ -741,8 +741,8 @@ curl https://relay-us.p2phiverelay.xyz/api/gateway</code></pre></div>
 
 <h3>Full Flow: Publish to Gateway</h3>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">js</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
-<pre><code><span class="kw">import</span> { HiveRelayClient } <span class="kw">from</span> <span class="str">'p2p-hiverelay/client'</span>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">js</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
+<pre><code><span class="kw">import</span> { HiveRelayClient } <span class="kw">from</span> <span class="str">'p2p-hiverelay-client'</span>
 
 <span class="kw">const</span> client = <span class="kw">new</span> HiveRelayClient(<span class="str">'./app-storage'</span>)
 <span class="kw">await</span> client.start()
@@ -772,7 +772,7 @@ curl https://relay-us.p2phiverelay.xyz/api/gateway</code></pre></div>
 <h4><span class="method get">GET</span> <code>/api/overview</code></h4>
 <p>Returns node stats including uptime, connections, storage, and memory.</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="cm">// Response</span>
 <span class="punct">{</span>
   <span class="str">"uptime"</span><span class="punct">:</span> <span class="num">86420</span><span class="punct">,</span>
@@ -787,23 +787,30 @@ curl https://relay-us.p2phiverelay.xyz/api/gateway</code></pre></div>
 <hr>
 
 <h4><span class="method get">GET</span> <code>/api/network</code></h4>
-<p>Returns all discovered relays across the DHT.</p>
+<p>Returns public-safe discovered relay state across the DHT. Host/API/Tor/Holesail connection details are available from <code>/api/network?detailed=1</code> with management auth.</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="cm">// Response</span>
 <span class="punct">{</span>
+  <span class="str">"summary"</span><span class="punct">:</span> <span class="punct">{</span>
+    <span class="str">"totalRelays"</span><span class="punct">:</span> <span class="num">8</span><span class="punct">,</span>
+    <span class="str">"onlineRelays"</span><span class="punct">:</span> <span class="num">6</span><span class="punct">,</span>
+    <span class="str">"totalConnections"</span><span class="punct">:</span> <span class="num">120</span><span class="punct">,</span>
+    <span class="str">"totalStorage"</span><span class="punct">:</span> <span class="num">536870912000</span><span class="punct">,</span>
+    <span class="str">"totalStorageMax"</span><span class="punct">:</span> <span class="num">1099511627776</span>
+  <span class="punct">},</span>
   <span class="str">"relays"</span><span class="punct">:</span> <span class="punct">[</span>
     <span class="punct">{</span>
       <span class="str">"publicKey"</span><span class="punct">:</span> <span class="str">"a1b2c3d4..."</span><span class="punct">,</span>
-      <span class="str">"regions"</span><span class="punct">:</span> <span class="punct">[</span><span class="str">"NA"</span><span class="punct">],</span>
+      <span class="str">"region"</span><span class="punct">:</span> <span class="str">"NA"</span><span class="punct">,</span>
+      <span class="str">"online"</span><span class="punct">:</span> <span class="kw">true</span><span class="punct">,</span>
       <span class="str">"connections"</span><span class="punct">:</span> <span class="num">15</span><span class="punct">,</span>
-      <span class="str">"uptime"</span><span class="punct">:</span> <span class="num">172800</span><span class="punct">,</span>
       <span class="str">"seededApps"</span><span class="punct">:</span> <span class="num">42</span><span class="punct">,</span>
-      <span class="str">"status"</span><span class="punct">:</span> <span class="str">"online"</span>
+      <span class="str">"apiReachable"</span><span class="punct">:</span> <span class="kw">true</span><span class="punct">,</span>
+      <span class="str">"torAvailable"</span><span class="punct">:</span> <span class="kw">false</span><span class="punct">,</span>
+      <span class="str">"holesailAvailable"</span><span class="punct">:</span> <span class="kw">true</span>
     <span class="punct">}</span>
-  <span class="punct">],</span>
-  <span class="str">"totalRelays"</span><span class="punct">:</span> <span class="num">8</span><span class="punct">,</span>
-  <span class="str">"onlineRelays"</span><span class="punct">:</span> <span class="num">6</span>
+  <span class="punct">]</span>
 <span class="punct">}</span></code></pre></div>
 
 <hr>
@@ -811,7 +818,7 @@ curl https://relay-us.p2phiverelay.xyz/api/gateway</code></pre></div>
 <h4><span class="method get">GET</span> <code>/api/apps</code></h4>
 <p>Returns the list of currently seeded applications.</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="cm">// Response</span>
 <span class="punct">{</span>
   <span class="str">"apps"</span><span class="punct">:</span> <span class="punct">[</span>
@@ -829,7 +836,7 @@ curl https://relay-us.p2phiverelay.xyz/api/gateway</code></pre></div>
 <h4><span class="method get">GET</span> <code>/api/peers</code></h4>
 <p>Returns currently connected peers.</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="cm">// Response</span>
 <span class="punct">{</span>
   <span class="str">"peers"</span><span class="punct">:</span> <span class="punct">[</span>
@@ -845,9 +852,9 @@ curl https://relay-us.p2phiverelay.xyz/api/gateway</code></pre></div>
 <hr>
 
 <h4><span class="method get">GET</span> <code>/api/health-detail</code></h4>
-<p>Returns detailed health check results from the self-healing monitor.</p>
+<p>Returns authenticated health check results from the self-healing monitor.</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="cm">// Response</span>
 <span class="punct">{</span>
   <span class="str">"status"</span><span class="punct">:</span> <span class="str">"healthy"</span><span class="punct">,</span>
@@ -864,7 +871,7 @@ curl https://relay-us.p2phiverelay.xyz/api/gateway</code></pre></div>
 <h4><span class="method get">GET</span> <code>/api/registry</code></h4>
 <p>Returns the current seeding registry state.</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="cm">// Response</span>
 <span class="punct">{</span>
   <span class="str">"autoAccept"</span><span class="punct">:</span> <span class="bool">true</span><span class="punct">,</span>
@@ -879,7 +886,7 @@ curl https://relay-us.p2phiverelay.xyz/api/gateway</code></pre></div>
 <h4><span class="method get">GET</span> <code>/api/registry/pending</code></h4>
 <p>Returns pending seed requests awaiting approval (only relevant in approval mode).</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="cm">// Response</span>
 <span class="punct">{</span>
   <span class="str">"pending"</span><span class="punct">:</span> <span class="punct">[</span>
@@ -897,7 +904,7 @@ curl https://relay-us.p2phiverelay.xyz/api/gateway</code></pre></div>
 <h4><span class="method post">POST</span> <code>/registry/publish</code></h4>
 <p>Publish a seed request to the registry.</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="cm">// Request body</span>
 <span class="punct">{</span>
   <span class="str">"driveKey"</span><span class="punct">:</span> <span class="str">"f9e8d7c6..."</span><span class="punct">,</span>
@@ -912,7 +919,7 @@ curl https://relay-us.p2phiverelay.xyz/api/gateway</code></pre></div>
 <h4><span class="method post">POST</span> <code>/registry/approve</code></h4>
 <p>Approve a pending seed request.</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="cm">// Request body</span>
 <span class="punct">{</span> <span class="str">"id"</span><span class="punct">:</span> <span class="str">"req_abc123"</span> <span class="punct">}</span>
 
@@ -924,7 +931,7 @@ curl https://relay-us.p2phiverelay.xyz/api/gateway</code></pre></div>
 <h4><span class="method post">POST</span> <code>/registry/reject</code></h4>
 <p>Reject a pending seed request.</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="cm">// Request body</span>
 <span class="punct">{</span> <span class="str">"id"</span><span class="punct">:</span> <span class="str">"req_abc123"</span> <span class="punct">}</span>
 
@@ -936,7 +943,7 @@ curl https://relay-us.p2phiverelay.xyz/api/gateway</code></pre></div>
 <h4><span class="method post">POST</span> <code>/registry/auto-accept</code></h4>
 <p>Toggle auto-accept mode on or off.</p>
 
-<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+<div class="code-wrap"><div class="code-header"><span class="code-lang">json</span><button type="button" class="copy-btn" data-docs-action="copy-code">Copy</button></div>
 <pre><code><span class="cm">// Request body</span>
 <span class="punct">{</span> <span class="str">"enabled"</span><span class="punct">:</span> <span class="bool">false</span> <span class="punct">}</span>
 
@@ -947,7 +954,7 @@ curl https://relay-us.p2phiverelay.xyz/api/gateway</code></pre></div>
 
 <p style="text-align:center;color:var(--text-dim);margin-top:3rem;font-size:.8rem;font-family:var(--mono)">
   HiveRelay &mdash; Decentralized P2P Relay Network &mdash;
-  <a href="https://github.com/bigdestiny2/p2p-hiverelay" target="_blank">GitHub</a>
+  <a href="https://github.com/bigdestiny2/p2p-hiverelay" target="_blank" rel="noopener noreferrer">GitHub</a>
 </p>
 
 </main>
@@ -955,15 +962,67 @@ curl https://relay-us.p2phiverelay.xyz/api/gateway</code></pre></div>
 
 <script>
 // ── Copy to clipboard ──
-function copyCode(btn){
-  const pre = btn.closest('.code-wrap').querySelector('pre');
-  const text = pre.textContent;
-  navigator.clipboard.writeText(text).then(() => {
-    btn.textContent = 'Copied!';
-    btn.classList.add('copied');
-    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
-  });
+function getCodeText(btn){
+  const wrap = btn.closest('.code-wrap');
+  const pre = wrap && wrap.querySelector('pre');
+  return pre ? pre.textContent : '';
 }
+
+async function writeClipboard(text){
+  if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  if (typeof document === 'undefined' || !document.body || !document.createElement || !document.execCommand) {
+    const err = new Error('clipboard-unavailable');
+    err.code = 'clipboard-unavailable';
+    throw err;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) {
+    const err = new Error('copy-failed');
+    err.code = 'copy-failed';
+    throw err;
+  }
+}
+
+function markCopied(btn){
+  btn.textContent = 'Copied!';
+  btn.classList.add('copied');
+  setTimeout(() => {
+    btn.textContent = 'Copy';
+    btn.classList.remove('copied');
+  }, 2000);
+}
+
+function markCopyFailed(btn, message){
+  btn.textContent = message || 'Copy failed';
+  setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+}
+
+async function copyCode(btn){
+  const text = getCodeText(btn);
+  if (!text) return;
+  await writeClipboard(text);
+  markCopied(btn);
+}
+
+document.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-docs-action="copy-code"]');
+  if (!btn) return;
+  copyCode(btn).catch((err) => {
+    markCopyFailed(btn, err && err.code === 'clipboard-unavailable' ? 'Clipboard unavailable' : 'Copy failed');
+  });
+});
 
 // ── Mobile sidebar toggle ──
 const hamburger = document.getElementById('hamburger');

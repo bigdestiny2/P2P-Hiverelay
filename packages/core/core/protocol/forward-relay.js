@@ -38,11 +38,12 @@ import Protomux from 'protomux'
 import c from 'compact-encoding'
 import b4a from 'b4a'
 import { EventEmitter } from 'events'
+import { FORWARD_PROTOCOL_NAME } from '../constants.js'
 
-const PROTOCOL_NAME = 'hiverelay-forward'
 const DEFAULT_MAX_FORWARD_BYTES = 64 * 1024 * 1024 // 64 MB per forward
 const DEFAULT_MAX_FORWARDS_PER_PEER = 5
-const DEFAULT_MAX_DATA_MSG_BYTES = 64 * 1024 // 64 KB per frame (DoS guard)
+export const MAX_FORWARD_DATA_MSG_BYTES = 64 * 1024 // 64 KB per frame (DoS guard)
+export const MAX_FORWARD_STATUS_MESSAGE_BYTES = 1024
 // Per-peer dial RATE cap (distinct from the concurrency cap above). Without
 // it, a peer can churn OPEN/CLOSE to make the relay dial arbitrary DHT
 // pubkeys in a tight loop — DHT-peer scanning / connection laundering /
@@ -57,25 +58,128 @@ const ERR_CAPACITY = 2
 const ERR_TARGET = 3
 const ERR_BADREQ = 4
 
-const openEncoding = {
-  preencode (state, m) { c.fixed32.preencode(state, m.target) },
-  encode (state, m) { c.fixed32.encode(state, m.target) },
-  decode (state) { return { target: c.fixed32.decode(state) } }
+function validDecodeState (state) {
+  const buffer = state && state.buffer
+  if (!buffer || !Number.isSafeInteger(state.start) || !Number.isSafeInteger(state.end)) return false
+  return state.start >= 0 && state.end >= state.start && state.end <= buffer.length
 }
-const dataEncoding = {
-  preencode (state, m) { c.buffer.preencode(state, m.data) },
-  encode (state, m) { c.buffer.encode(state, m.data) },
-  decode (state) { return { data: c.buffer.decode(state) } }
+
+function malformed (state, error) {
+  if (state && Number.isSafeInteger(state.end)) {
+    const buffer = state.buffer
+    state.start = Math.min(Math.max(state.end, 0), buffer ? buffer.length : state.end)
+  }
+  return { error }
 }
-const statusEncoding = {
-  preencode (state, m) { c.uint.preencode(state, m.code); c.string.preencode(state, m.message || '') },
-  encode (state, m) { c.uint.encode(state, m.code); c.string.encode(state, m.message || '') },
-  decode (state) { return { code: c.uint.decode(state), message: c.string.decode(state) } }
+
+function assertFixedBytes (value, size, field) {
+  if (!value || value.byteLength !== size) throw new Error(`${field} must be ${size} bytes`)
+  return value
 }
-const closeEncoding = {
-  preencode (state, m) { c.uint.preencode(state, m.reason || 0) },
-  encode (state, m) { c.uint.encode(state, m.reason || 0) },
-  decode (state) { return { reason: c.uint.decode(state) } }
+
+function encodeStatusMessage (m) {
+  const message = m.message || ''
+  if (b4a.byteLength(message) > MAX_FORWARD_STATUS_MESSAGE_BYTES) throw new Error('status message too large')
+  return message
+}
+
+function encodeUintValue (value, field) {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${field} must be a non-negative integer`)
+  return value
+}
+
+function decodeUint (state, error = 'malformed uint') {
+  if (!validDecodeState(state)) return malformed(state, error)
+  let value
+  try {
+    value = c.uint.decode(state)
+  } catch (_) {
+    return malformed(state, error)
+  }
+  if (!Number.isSafeInteger(value) || value < 0) return malformed(state, error)
+  return { value }
+}
+
+function decodeFixedBytes (state, size, error) {
+  if (!validDecodeState(state)) return malformed(state, error)
+  const end = state.start + size
+  if (end > state.end) return malformed(state, error)
+  const value = state.buffer.subarray(state.start, end)
+  state.start = end
+  return { value }
+}
+
+function decodeBytes (state, maxBytes, tooLargeError, malformedError) {
+  if (!validDecodeState(state)) return malformed(state, malformedError)
+  let len
+  const lenState = { buffer: state.buffer, start: state.start, end: state.end }
+  try {
+    len = c.uint.decode(lenState)
+  } catch (_) {
+    return malformed(state, malformedError)
+  }
+  if (!Number.isSafeInteger(len) || len < 0) return malformed(state, malformedError)
+  if (len > maxBytes) {
+    state.start = Math.min(state.end, lenState.start + len)
+    return { error: tooLargeError }
+  }
+  const end = lenState.start + len
+  if (end > state.end) return malformed(state, malformedError)
+  const value = state.buffer.subarray(lenState.start, end)
+  state.start = end
+  return { value }
+}
+
+export const forwardOpenEncoding = {
+  preencode (state, m) { c.fixed32.preencode(state, assertFixedBytes(m.target, 32, 'target')) },
+  encode (state, m) { c.fixed32.encode(state, assertFixedBytes(m.target, 32, 'target')) },
+  decode (state) {
+    const decoded = decodeFixedBytes(state, 32, 'malformed target')
+    return decoded.error ? { target: null, error: decoded.error } : { target: decoded.value }
+  }
+}
+export const forwardDataEncoding = {
+  preencode (state, m) {
+    if (!m.data || m.data.byteLength > MAX_FORWARD_DATA_MSG_BYTES) throw new Error('frame too large')
+    c.buffer.preencode(state, m.data)
+  },
+  encode (state, m) {
+    if (!m.data || m.data.byteLength > MAX_FORWARD_DATA_MSG_BYTES) throw new Error('frame too large')
+    c.buffer.encode(state, m.data)
+  },
+  decode (state) {
+    const decoded = decodeBytes(state, MAX_FORWARD_DATA_MSG_BYTES, 'frame too large', 'malformed data')
+    return decoded.error ? { data: null, error: decoded.error } : { data: decoded.value }
+  }
+}
+export const forwardStatusEncoding = {
+  preencode (state, m) {
+    const code = encodeUintValue(m.code, 'status code')
+    const message = encodeStatusMessage(m)
+    c.uint.preencode(state, code)
+    c.string.preencode(state, message)
+  },
+  encode (state, m) {
+    const code = encodeUintValue(m.code, 'status code')
+    const message = encodeStatusMessage(m)
+    c.uint.encode(state, code)
+    c.string.encode(state, message)
+  },
+  decode (state) {
+    const code = decodeUint(state, 'malformed status')
+    if (code.error) return { code: ERR_BADREQ, message: code.error, error: code.error }
+    const message = decodeBytes(state, MAX_FORWARD_STATUS_MESSAGE_BYTES, 'status message too large', 'malformed status')
+    if (message.error) return { code: ERR_BADREQ, message: message.error, error: message.error }
+    return { code: code.value, message: b4a.toString(message.value, 'utf8') }
+  }
+}
+export const forwardCloseEncoding = {
+  preencode (state, m) { c.uint.preencode(state, encodeUintValue(m.reason || 0, 'close reason')) },
+  encode (state, m) { c.uint.encode(state, encodeUintValue(m.reason || 0, 'close reason')) },
+  decode (state) {
+    const reason = decodeUint(state, 'malformed close')
+    return reason.error ? { reason: ERR_BADREQ, error: reason.error } : { reason: reason.value }
+  }
 }
 
 // Authenticated remote pubkey off the underlying noise stream (modern
@@ -93,7 +197,7 @@ export class ForwardRelay extends EventEmitter {
     this.enabled = opts.enabled !== false // default ON when constructed; RelayNode gates construction by config
     this.maxForwardBytes = opts.maxForwardBytes || DEFAULT_MAX_FORWARD_BYTES
     this.maxForwardsPerPeer = opts.maxForwardsPerPeer || DEFAULT_MAX_FORWARDS_PER_PEER
-    this.maxDataMsgBytes = opts.maxDataMsgBytes || DEFAULT_MAX_DATA_MSG_BYTES
+    this.maxDataMsgBytes = Math.min(opts.maxDataMsgBytes || MAX_FORWARD_DATA_MSG_BYTES, MAX_FORWARD_DATA_MSG_BYTES)
     this.maxDialsPerMinPerPeer = opts.maxDialsPerMinPerPeer || DEFAULT_MAX_DIALS_PER_MIN_PER_PEER
     this.allowTarget = typeof opts.allowTarget === 'function' ? opts.allowTarget : null // optional policy hook
     this._perPeer = new Map() // peer hex -> active forward count
@@ -122,14 +226,14 @@ export class ForwardRelay extends EventEmitter {
   attach (conn) {
     const mux = Protomux.from(conn)
     const channel = mux.createChannel({
-      protocol: PROTOCOL_NAME,
+      protocol: FORWARD_PROTOCOL_NAME,
       id: null,
       onclose: () => this._teardownChannel(channel)
     })
-    const statusMsg = channel.addMessage({ encoding: statusEncoding })
-    const dataMsg = channel.addMessage({ encoding: dataEncoding, onmessage: (m) => this._onData(channel, m) })
-    const closeMsg = channel.addMessage({ encoding: closeEncoding, onmessage: () => this._teardownChannel(channel) })
-    const openMsg = channel.addMessage({ encoding: openEncoding, onmessage: (m) => this._onOpen(channel, m, { statusMsg, dataMsg, closeMsg }) })
+    const statusMsg = channel.addMessage({ encoding: forwardStatusEncoding })
+    const dataMsg = channel.addMessage({ encoding: forwardDataEncoding, onmessage: (m) => this._onData(channel, m) })
+    const closeMsg = channel.addMessage({ encoding: forwardCloseEncoding, onmessage: () => this._teardownChannel(channel) })
+    const openMsg = channel.addMessage({ encoding: forwardOpenEncoding, onmessage: (m) => this._onOpen(channel, m, { statusMsg, dataMsg, closeMsg }) })
     channel._forward = { statusMsg, dataMsg, closeMsg, openMsg, state: null }
     channel.open()
     return channel
@@ -191,7 +295,8 @@ export class ForwardRelay extends EventEmitter {
 
   _onData (channel, msg) {
     const st = channel._forward && channel._forward.state
-    if (!st || !msg || !msg.data) return
+    if (!st || !msg) return
+    if (msg.error || !msg.data) return this._teardown(st, ERR_BADREQ)
     if (msg.data.byteLength > this.maxDataMsgBytes) return this._teardown(st, ERR_BADREQ)
     st.bytes += msg.data.byteLength
     if (st.bytes > this.maxForwardBytes) return this._teardown(st, ERR_CAPACITY)

@@ -36,6 +36,7 @@
 const VALID_STRATEGIES = ['diverse', 'foundation', 'pinned', 'wide']
 const DEFAULT_QUORUM_SIZE = 5
 const DEFAULT_MIN_REGIONS = 3
+const DEFAULT_MIN_OPERATORS = 3
 
 /**
  * @typedef {object} RelayInfo
@@ -56,6 +57,7 @@ const DEFAULT_MIN_REGIONS = 3
  * @param {string}   [opts.strategy='diverse']
  * @param {number}   [opts.size=5]                    target quorum size
  * @param {number}   [opts.minRegions=3]              minimum distinct regions
+ * @param {number}   [opts.minOperators=3]            minimum distinct operators
  * @param {string[]} [opts.foundationPubkeys=[]]      hardcoded foundation-network pubkeys
  * @param {string[]} [opts.pinnedPubkeys=[]]          explicit relay list (for 'pinned' strategy)
  * @param {string[]} [opts.requireFeatures=[]]        only consider relays advertising these
@@ -90,62 +92,68 @@ export function selectQuorum (candidates, opts = {}) {
       return selectWide(pool, size)
     case 'diverse':
     default:
-      return selectDiverse(pool, size, opts.minRegions || DEFAULT_MIN_REGIONS)
+      return selectDiverse(pool, size, opts.minRegions || DEFAULT_MIN_REGIONS, opts.minOperators || DEFAULT_MIN_OPERATORS)
   }
 }
 
 /**
  * Diverse strategy — maximize distinct (region, operator) tuples.
  *
- * Greedy: walk the candidate pool sorted by score (descending) and
- * include a candidate only if it adds a new region OR a new operator
- * the current selection doesn't already have. Once we have at least
- * `minRegions` distinct regions AND `size` relays, stop.
+ * Greedy, but diversity-first: at each step choose the highest-ranked
+ * candidate that adds the most missing dimensions. A relay that adds a
+ * new region AND a new operator beats one that adds only a region or
+ * only an operator, even if its score is slightly lower. This keeps the
+ * default quorum from filling with one operator's many regions while a
+ * separate operator is still available.
  *
- * If we exhaust diverse options before hitting `size`, fall back to
- * the highest-scoring remaining candidates regardless of diversity —
- * we want SOMETHING served over nothing.
+ * If all remaining candidates add no new dimensions, continue filling
+ * with highest-scoring candidates — we want SOMETHING served over
+ * nothing when the pool is small or concentrated.
  */
-function selectDiverse (pool, size, minRegions) {
+function selectDiverse (pool, size, minRegions, minOperators) {
   const ranked = [...pool].sort(byScoreDesc)
   const selected = []
+  const taken = new Set()
   const seenRegions = new Set()
   const seenOperators = new Set()
 
-  // Pass 1 — diverse picks
-  for (const r of ranked) {
-    if (selected.length >= size) break
-    const region = r.region || '__unknown__'
-    const op = r.operator || r.pubkey
-    const newRegion = !seenRegions.has(region)
-    const newOperator = !seenOperators.has(op)
-    if (newRegion || newOperator) {
-      selected.push(r)
-      seenRegions.add(region)
-      seenOperators.add(op)
-    }
-  }
-
-  // Pass 2 — fill remaining slots with highest-scoring candidates we
-  // haven't already taken, even if not diverse.
-  if (selected.length < size) {
-    const taken = new Set(selected.map(r => r.pubkey))
+  while (selected.length < size) {
+    let best = null
+    let bestGain = -1
     for (const r of ranked) {
-      if (selected.length >= size) break
       if (taken.has(r.pubkey)) continue
-      selected.push(r)
+      const region = r.region || '__unknown__'
+      const op = r.operator || r.pubkey
+      const gain = (seenRegions.has(region) ? 0 : 1) + (seenOperators.has(op) ? 0 : 1)
+      if (!best || gain > bestGain || (gain === bestGain && byScoreDesc(r, best) < 0)) {
+        best = r
+        bestGain = gain
+      }
     }
+    if (!best) break
+    selected.push(best)
+    taken.add(best.pubkey)
+    seenRegions.add(best.region || '__unknown__')
+    seenOperators.add(best.operator || best.pubkey)
   }
 
   // If we couldn't reach minRegions, the caller should know — emit a
   // diversity_warning by attaching it to the result. The HiveRelayClient
   // surfaces this as a 'quorum-warning' event so apps can decide whether
   // to wait for more candidates or proceed.
-  if (seenRegions.size < minRegions && selected.length > 0) {
+  if (selected.length > 0 && (seenRegions.size < minRegions || seenOperators.size < minOperators)) {
+    const missingRegions = seenRegions.size < minRegions
+    const missingOperators = seenOperators.size < minOperators
     selected.diversityWarning = {
-      reason: 'insufficient-region-diversity',
+      reason: missingRegions && missingOperators
+        ? 'insufficient-quorum-diversity'
+        : missingRegions
+          ? 'insufficient-region-diversity'
+          : 'insufficient-operator-diversity',
       observedRegions: seenRegions.size,
-      requiredRegions: minRegions
+      requiredRegions: minRegions,
+      observedOperators: seenOperators.size,
+      requiredOperators: minOperators
     }
   }
 
@@ -222,5 +230,6 @@ export function describeQuorum (selected) {
 export {
   VALID_STRATEGIES,
   DEFAULT_QUORUM_SIZE,
-  DEFAULT_MIN_REGIONS
+  DEFAULT_MIN_REGIONS,
+  DEFAULT_MIN_OPERATORS
 }

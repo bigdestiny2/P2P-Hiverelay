@@ -79,8 +79,32 @@ jobs:
               print(f"::error::port must be 1-65535, got {data['port']}", file=sys.stderr)
               sys.exit(1)
 
-          if not isinstance(data['gallery'], list) or len(data['gallery']) < 3:
-              print(f"::error::gallery must list at least 3 images, got {len(data.get('gallery', []))}", file=sys.stderr)
+          submission = data.get('submission', '')
+          pending_submission = 'https://github.com/getumbrel/umbrel-apps/pull/PENDING'
+          official_pr_re = r'^https://github\.com/getumbrel/umbrel-apps/pull/[1-9][0-9]*$'
+          if not isinstance(submission, str) or not submission:
+              print("::error::submission must be set for the official Umbrel package", file=sys.stderr)
+              sys.exit(1)
+          if submission != pending_submission and not re.match(official_pr_re, submission):
+              print("::error::submission must be a getumbrel/umbrel-apps pull request URL or the PENDING placeholder", file=sys.stderr)
+              sys.exit(1)
+          if submission == pending_submission:
+              print("::notice::submission is still PENDING; replace it with the real getumbrel/umbrel-apps PR URL before reviewer handoff")
+              if data.get('releaseNotes', '') != '':
+                  print("::error::releaseNotes must stay empty while submission is PENDING for a first official submission", file=sys.stderr)
+                  sys.exit(1)
+
+          if not isinstance(data['gallery'], list):
+              print("::error::gallery must be a list", file=sys.stderr)
+              sys.exit(1)
+          # Official first submissions keep gallery empty; Umbrel reviewers
+          # commit final store-gallery assets separately. If we do list images,
+          # the list must already be a complete App Store gallery.
+          if data['gallery'] and len(data['gallery']) < 3:
+              print(f"::error::populated gallery must list at least 3 images, got {len(data['gallery'])}", file=sys.stderr)
+              sys.exit(1)
+          if len(data['gallery']) > 5:
+              print(f"::error::gallery must list at most 5 images, got {len(data['gallery'])}", file=sys.stderr)
               sys.exit(1)
 
           print(f"umbrel-app.yml validates: id={data['id']} version={data['version']}")
@@ -121,20 +145,10 @@ jobs:
           print(f"docker-compose.yml validates: image={web['image']}")
           PY
 
-      - name: Verify gallery images are present (or warn if placeholders)
+      - name: Verify gallery image names and dimensions when listed
         run: |
           set -euo pipefail
-          # Read the actual filenames from umbrel-app.yml — operators may
-          # use .png or .jpg depending on what they captured.
-          mapfile -t gallery < <(python3 -c "import yaml; print('\n'.join(yaml.safe_load(open('umbrel-app/umbrel-app.yml'))['gallery']))")
-          missing=0
-          for name in "${gallery[@]}"; do
-            f="umbrel-app/gallery/$name"
-            if [[ ! -f "$f" ]]; then
-              echo "::warning::Gallery image missing: $f (required before App Store submission)"
-              missing=$((missing + 1))
-            fi
-          done
+          node scripts/check-umbrel-gallery.mjs
           if [[ ! -f umbrel-app/icon.svg ]]; then
             echo "::warning::Icon missing: umbrel-app/icon.svg (required before App Store submission)"
           else
@@ -144,9 +158,6 @@ jobs:
             if ! grep -qE 'viewBox="0 0 256 256"|width="256"' umbrel-app/icon.svg; then
               echo "::warning::umbrel-app/icon.svg may not be 256x256 as Umbrel requires (viewBox check failed)"
             fi
-          fi
-          if [[ "$missing" -gt 0 ]]; then
-            echo "::warning::$missing gallery images missing — OK during dev, MUST be present before submission."
           fi
 
       - name: Verify SUBMISSION-CHECKLIST.md exists

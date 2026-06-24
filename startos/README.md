@@ -43,7 +43,9 @@ Blindspark like any other service. See
 
 Your relay identity and dashboard token derive from a seed stored on the
 service's data volume, so the node comes back as itself across reinstalls
-and a backup/restore round-trip.
+and a backup/restore round-trip. Fresh installs start in review mode and
+use a conservative 10 GB storage cap; saved operator config wins on later
+restarts.
 
 ---
 
@@ -62,7 +64,9 @@ The dashboard works behind StartOS's Tor/LAN proxy via the same
 a seed-derived bearer token in served HTML, so no localhost assumption is
 needed. The seed lives at `/data/.app-seed`. The entrypoint also sets
 `HIVERELAY_UI_SIMPLE` so StartOS serves the single-page appliance
-dashboard (no operator-only tabs, no Docs/GitHub).
+dashboard (no operator-only tabs, no Docs/GitHub), plus
+`HIVERELAY_ACCEPT_MODE=review` and `HIVERELAY_MAX_STORAGE=10GB` as
+first-boot home-server defaults.
 
 ---
 
@@ -158,8 +162,9 @@ Three paths, smallest to widest reach:
 ## Status
 
 **Packs + verifies** with `start-sdk` 0.3.5.1 — multi-arch image (x86_64
-+ aarch64), v0.16.3, one-page dashboard via `HIVERELAY_UI_SIMPLE`. Not
-yet device-tested on real StartOS hardware; the checklist above is the
++ aarch64), v0.20.1, one-page dashboard via `HIVERELAY_UI_SIMPLE`,
+review-mode first boot, and a first-boot-only 10 GB storage cap. Not yet
+device-tested on real StartOS hardware; the checklist above is the
 remaining work. The runtime mechanisms it relies on (token auth behind a
 proxy, seed persistence, `/data` home) are the same ones verified
 end-to-end for the Umbrel package.

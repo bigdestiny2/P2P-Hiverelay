@@ -159,7 +159,8 @@ without WS, persistence without the verifier, etc.
 - ✅ Seeding manifest: `lifetime` hint
 - ✅ WS fan-out: `PokerWsAdapter`, `/api/poker/<tableKey>/events` with
      initial-state snapshot, per-table fan-out, backpressure disconnect,
-     optional API-key gate, 404 at handshake for unknown tables
+     optional in-band API-key auth frame, URL-token rejection, 404 at
+     handshake for unknown public tables
 - ✅ Hypercore persistence: `HypercorePersistence` — one core per table,
      mirrors successful appends, rehydrates on restart, 'mirror-error'
      event on append failure (in-memory log stays source of truth)

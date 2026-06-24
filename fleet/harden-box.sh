@@ -7,32 +7,33 @@
 #   sudo bash fleet/harden-box.sh
 #
 # What it sets (sizes verified for the smallest fleet box, 19-24G, by an
-# adversarial review on 2026-06-16):
-#   - journald SystemMaxUse=200M (~1% of disk), SystemKeepFree=1G so
+# adversarial review on 2026-06-16; tightened 200M->100M same day after
+# the cap was seen overshooting to ~210M on the 24G boxes):
+#   - journald SystemMaxUse=100M (~0.5% of disk), SystemKeepFree=1G so
 #     journald yields disk to the corestore on a near-full box before it
-#     becomes the problem, SystemMaxFileSize=50M (≥4 segments so a vacuum
-#     never drops the whole journal at once). No MaxRetentionSec — let
-#     SystemMaxUse be the only bound (time caps throw away free history).
+#     becomes the problem, SystemMaxFileSize=25M (≥4 segments so a vacuum
+#     never drops the whole journal at once — halved with the cap to keep
+#     that property). No MaxRetentionSec — let SystemMaxUse be the only
+#     bound (time caps throw away free history).
 #   - logrotate for /var/log/hiverelay.log (the deployed unit's stdout
 #     sink): copytruncate (relay holds the fd open), maxsize 20M, 7 days.
 #
-# NOT addressed here (needs a source change + version bump, tracked
-# separately): the 5s `process.stdout.write` status line that drives the
-# volume. Capping bounds the disk; the TTY-gated structured-log fix in
-# packages/core/cli/index.js quiets the source. Until that ships, the
-# cap + rotation are the guarantee.
+# The source side is also quieted: packages/core/cli/index.js keeps the 5s
+# carriage-return status bar for interactive terminals only. Service runs emit
+# one structured status log per minute, while this script bounds the fallback
+# disk footprint.
 set -euo pipefail
 
 echo "Bounding journald…"
 mkdir -p /etc/systemd/journald.conf.d
 cat > /etc/systemd/journald.conf.d/10-hiverelay-cap.conf <<'EOF'
 [Journal]
-SystemMaxUse=200M
+SystemMaxUse=100M
 SystemKeepFree=1G
-SystemMaxFileSize=50M
+SystemMaxFileSize=25M
 EOF
 systemctl restart systemd-journald
-journalctl --vacuum-size=200M >/dev/null 2>&1 || true
+journalctl --vacuum-size=100M >/dev/null 2>&1 || true
 
 echo "Installing logrotate for /var/log/hiverelay.log…"
 cat > /etc/logrotate.d/hiverelay <<'EOF'

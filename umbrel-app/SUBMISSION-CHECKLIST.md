@@ -8,52 +8,90 @@ your own box; it all blocks the `getumbrel/umbrel-apps` PR.
 - [x] **Icon** — `icon.svg` is the yellow-spark mark (256×256, no rounded
   corners, no payment imagery). Optionally refine with a designer before
   submission, but it is shippable as-is.
-- [ ] **Gallery** — add 3–5 screenshots to `gallery/` at 1440×900 and
-  match the filenames in `umbrel-app.yml` (`1.png`, `2.png`, `3.png`).
-  See `gallery/PLACEHOLDER.md` for suggested shots.
+- [x] **First-submission gallery manifest** — keep `gallery: []` in
+  `umbrel-app.yml`; `npm run umbrel:check-gallery` accepts this empty list
+  because the Umbrel team commits official gallery assets separately.
+- [ ] **Reviewer handoff screenshots** — capture 3–5 real screenshots at
+  1440×900 and attach them to the official PR/comment when requested. If the
+  screenshots are ever listed in this repo, run `npm run umbrel:check-gallery`;
+  listed files must be regular PNG/JPEG files, the gallery directory and listed
+  files must not be symlinks, and assets must stay below the bounded
+  asset-size gate.
 
 ## Image
 
-- [ ] **Digest pin** — in `docker-compose.yml`, replace
-  `@sha256:__REPLACE_WITH_DIGEST_AFTER_CI__` with the real digest once CI
-  has published the tag:
+- [x] **Digest pin shape** — `docker-compose.yml` uses an image tag plus
+  sha256 digest instead of `latest`.
+- [ ] **Fixed public digest** — the currently pinned `0.20.0` digest is
+  structurally pinned but smoke-red; publish a fixed digest from the source
+  containing the dashboard WebSocket same-origin fix before official
+  submission.
+- [ ] **Multi-arch** — confirm the fixed published tag has both `linux/amd64`
+  and `linux/arm64` manifests. Full releases run
+  `npm run release:check-image-manifest` and publish
+  `release-image-manifest-evidence.json`; for a manual re-check, pass the
+  tag+digest image ref with `--out release-image-manifest-evidence.json`.
+- [ ] **Release image smoke** — run `npm run release:smoke-image` against the
+  exact fixed `ghcr.io/...:<semver>@sha256:<digest>` ref and publish
+  `release-image-smoke-evidence.json`.
+
+For the stale pinned image only, a manual inspection command is:
+
   ```bash
-  docker buildx imagetools inspect ghcr.io/bigdestiny2/p2p-hiverelay:0.12.0
+  docker buildx imagetools inspect ghcr.io/bigdestiny2/p2p-hiverelay:0.20.0
   ```
-- [ ] **Multi-arch** — confirm the published tag has both `linux/amd64`
-  and `linux/arm64` manifests (the `docker-publish.yml` workflow builds
-  both; the inspect command above lists them).
 
 ## Verify on a real Umbrel box
 
-- [ ] App installs and starts; the dashboard loads through the app proxy.
+- [ ] App installs and starts; the dashboard loads through the app proxy and
+  the live status/feed updates without URL-token WebSocket auth.
 - [ ] First-run wizard loads, names the relay, sets accept-mode, and
   completes — i.e. the `HIVERELAY_UI_EXPOSE_TOKEN` bearer path works end
   to end behind `app_proxy` (this is the mechanism this package adds).
+- [ ] Wizard/setup actions show a visible in-flight/status state and cannot be
+  double-submitted while a save is pending.
+- [ ] Add-wallet shows a visible busy/status state, persists the destination,
+  and does not look like a silent page refresh/no-op.
 - [ ] Management actions from the dashboard (approve/reject a seed
   request, change accept-mode) succeed — confirms the bearer token is
   accepted on `/api/wizard/*` and the management routes.
+- [ ] Service manager save/restart actions show visible in-flight or restart
+  pending state until the selected providers are running.
+- [ ] AI model add shows inline status, disables duplicate submits while
+  pending, and preserves provider errors in the service manager UI.
+- [ ] Browser/devtools check: dashboard WebSocket clients send an in-band
+  auth frame and no `/ws?token=` or `/ws?api_key=` URL appears.
 - [ ] `/data` is writable by uid 999. If the relay logs storage/permission
   errors on first boot, the app data dir needs to be owned by 999 (or the
   service run with an init that chowns it) — resolve before submission.
 - [ ] Reinstall test: uninstall + reinstall preserves the relay's public
   key (identity derived from `$APP_SEED`).
+- [ ] Write the public-safe manual review artifact after the real-device pass:
+  `npm run umbrel:write-runtime-review -- --out umbrel-runtime-review-evidence.json
+  --release v0.20.0 --device "<public device label>" --umbrel-version <version>
+  --tested-by <public reviewer> --public-key-before <hex> --public-key-after
+  <hex> --checks installedThroughUmbrel,dashboardProxyLoads,liveFeedInBandAuth,noWebSocketUrlTokens,wizardCompletes,setupActionLockObserved,addWalletPersists,walletBusyStateObserved,managementActionsPersist,serviceActionStateObserved,serviceRestartPendingObserved,aiModelAddStateObserved,reviewModeDefault,dataWritableUid999,reinstallPreservesPublicKey`.
+  Then verify it with `npm run umbrel:verify-runtime-review -- --evidence
+  umbrel-runtime-review-evidence.json --release v0.20.0`.
+  Do not include local URLs, LAN IPs, APP_SEED, bearer tokens, or API keys.
 
 ## Decisions to confirm before submission
 
-- [ ] **Default accept-mode.** The relay's built-in default is
-  auto-accept. For a home box, consider defaulting the wizard to "review"
-  (operator approves each seed request) so a fresh install doesn't fill
-  the disk unattended. If we want review-as-default at the package level
-  (not just a wizard choice), wire it via config/env — currently the
-  wizard is where the operator picks it.
-- [ ] **Storage cap.** Image default is 50 GB. Decide whether to surface a
-  smaller default for typical home boxes.
+- [x] **Default accept-mode.** Umbrel now sets `HIVERELAY_ACCEPT_MODE=review`
+  at the package level, and the CLI honors it. Fresh installs queue seed
+  requests for operator approval until the owner switches modes from setup or
+  the dashboard, which avoids unattended disk fill on home boxes.
+- [x] **Storage cap.** Core/VPS default stays 50 GB, but the Umbrel package sets
+  `HIVERELAY_MAX_STORAGE=10GB` for a conservative home-box first install.
+  Saved operator config wins on later restarts.
 
 ## Open the PR
 
 - [ ] Fork `getumbrel/umbrel-apps`, add this directory as `blindspark/`.
 - [ ] Open the PR; paste its URL into `umbrel-app.yml` → `submission:`
   (replace the `PENDING` placeholder).
+- [ ] Copy only `umbrel-app.yml`, `docker-compose.yml`, and `data/.gitkeep`
+  into the official PR. Keep this README, checklist, icon, and gallery notes
+  in the HiveRelay repo unless an Umbrel reviewer asks for them separately.
 - [ ] Respond to reviewer feedback (gallery design help is offered by the
   Umbrel team if screenshots aren't pixel-perfect).

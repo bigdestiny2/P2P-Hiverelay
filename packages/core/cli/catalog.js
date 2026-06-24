@@ -12,6 +12,8 @@
  * globalThis.fetch.
  */
 
+import { isValidHexKey as isSharedValidHexKey } from '../core/constants.js'
+
 const VALID_MODES = ['open', 'review', 'allowlist', 'closed']
 
 export const CATALOG_HELP = `Usage:
@@ -28,7 +30,7 @@ Options:
 `
 
 export function isValidHexKey (value, length = 64) {
-  return typeof value === 'string' && new RegExp(`^[0-9a-fA-F]{${length}}$`).test(value)
+  return isSharedValidHexKey(value, length)
 }
 
 export function normalizeApiUrl (value) {

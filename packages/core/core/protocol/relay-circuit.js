@@ -37,67 +37,198 @@ import c from 'compact-encoding'
 import b4a from 'b4a'
 import { EventEmitter } from 'events'
 import { ERR, relayReserveEncoding } from './messages.js'
+import { CIRCUIT_PROTOCOL_NAME } from '../constants.js'
 
-const PROTOCOL_NAME = 'hiverelay-circuit'
 const DEFAULT_RESERVATION_TTL = 60 * 60 * 1000 // 1 hour
 const DEFAULT_MAX_CIRCUIT_BYTES = 64 * 1024 * 1024 // 64 MB
 const DEFAULT_MAX_CIRCUITS_PER_PEER = 5
-const CIRCUIT_ID_BYTES = 16
-const DEFAULT_MAX_DATA_MSG_BYTES = 64 * 1024 // 64 KB per data frame (protects against giant single-frame DoS)
+export const CIRCUIT_ID_BYTES = 16
+export const MAX_CIRCUIT_DATA_MSG_BYTES = 64 * 1024 // 64 KB per data frame (protects against giant single-frame DoS)
+export const MAX_CIRCUIT_STATUS_MESSAGE_BYTES = 1024
+
+function validDecodeState (state) {
+  const buffer = state && state.buffer
+  if (!buffer || !Number.isSafeInteger(state.start) || !Number.isSafeInteger(state.end)) return false
+  return state.start >= 0 && state.end >= state.start && state.end <= buffer.length
+}
+
+function malformed (state, error) {
+  if (state && Number.isSafeInteger(state.end)) {
+    const buffer = state.buffer
+    state.start = Math.min(Math.max(state.end, 0), buffer ? buffer.length : state.end)
+  }
+  return { error }
+}
+
+function assertFixedBytes (value, size, field) {
+  if (!value || value.byteLength !== size) throw new Error(`${field} must be ${size} bytes`)
+  return value
+}
+
+function encodeUintValue (value, field) {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${field} must be a non-negative integer`)
+  return value
+}
+
+function encodeStatusMessage (msg) {
+  const message = msg.message || ''
+  if (b4a.byteLength(message) > MAX_CIRCUIT_STATUS_MESSAGE_BYTES) throw new Error('status message too large')
+  return message
+}
+
+function decodeUint (state, error = 'malformed uint') {
+  if (!validDecodeState(state)) return malformed(state, error)
+  let value
+  try {
+    value = c.uint.decode(state)
+  } catch (_) {
+    return malformed(state, error)
+  }
+  if (!Number.isSafeInteger(value) || value < 0) return malformed(state, error)
+  return { value }
+}
+
+function decodeFixedBytes (state, size, error) {
+  if (!validDecodeState(state)) return malformed(state, error)
+  const end = state.start + size
+  if (end > state.end) return malformed(state, error)
+  const value = state.buffer.subarray(state.start, end)
+  state.start = end
+  return { value }
+}
+
+function decodeBytes (state, maxBytes, tooLargeError, malformedError) {
+  if (!validDecodeState(state)) return malformed(state, malformedError)
+  let len
+  const lenState = { buffer: state.buffer, start: state.start, end: state.end }
+  try {
+    len = c.uint.decode(lenState)
+  } catch (_) {
+    return malformed(state, malformedError)
+  }
+  if (!Number.isSafeInteger(len) || len < 0) return malformed(state, malformedError)
+  if (len > maxBytes) {
+    state.start = Math.min(state.end, lenState.start + len)
+    return { error: tooLargeError }
+  }
+  const end = lenState.start + len
+  if (end > state.end) return malformed(state, malformedError)
+  const value = state.buffer.subarray(lenState.start, end)
+  state.start = end
+  return { value }
+}
+
+export const circuitConnectEncoding = {
+  preencode (state, msg) {
+    const targetPubkey = assertFixedBytes(msg.targetPubkey, 32, 'targetPubkey')
+    const sourcePubkey = assertFixedBytes(msg.sourcePubkey, 32, 'sourcePubkey')
+    c.fixed32.preencode(state, targetPubkey)
+    c.fixed32.preencode(state, sourcePubkey)
+  },
+  encode (state, msg) {
+    const targetPubkey = assertFixedBytes(msg.targetPubkey, 32, 'targetPubkey')
+    const sourcePubkey = assertFixedBytes(msg.sourcePubkey, 32, 'sourcePubkey')
+    c.fixed32.encode(state, targetPubkey)
+    c.fixed32.encode(state, sourcePubkey)
+  },
+  decode (state) {
+    const target = decodeFixedBytes(state, 32, 'malformed connect')
+    if (target.error) return { targetPubkey: null, sourcePubkey: null, error: target.error }
+    const source = decodeFixedBytes(state, 32, 'malformed connect')
+    if (source.error) return { targetPubkey: target.value, sourcePubkey: null, error: source.error }
+    return { targetPubkey: target.value, sourcePubkey: source.value }
+  }
+}
+
+export const circuitStatusEncoding = {
+  preencode (state, msg) {
+    const code = encodeUintValue(msg.code, 'status code')
+    const message = encodeStatusMessage(msg)
+    c.uint.preencode(state, code)
+    c.string.preencode(state, message)
+  },
+  encode (state, msg) {
+    const code = encodeUintValue(msg.code, 'status code')
+    const message = encodeStatusMessage(msg)
+    c.uint.encode(state, code)
+    c.string.encode(state, message)
+  },
+  decode (state) {
+    const code = decodeUint(state, 'malformed status')
+    if (code.error) return { code: ERR.INVALID_REQUEST, message: code.error, error: code.error }
+    const message = decodeBytes(state, MAX_CIRCUIT_STATUS_MESSAGE_BYTES, 'status message too large', 'malformed status')
+    if (message.error) return { code: ERR.INVALID_REQUEST, message: message.error, error: message.error }
+    return { code: code.value, message: b4a.toString(message.value, 'utf8') }
+  }
+}
 
 // circuitId (16 bytes) + data (variable)
-const circuitDataEncoding = {
+export const circuitDataEncoding = {
   preencode (state, msg) {
-    c.fixed(CIRCUIT_ID_BYTES).preencode(state, msg.circuitId)
+    const circuitId = assertFixedBytes(msg.circuitId, CIRCUIT_ID_BYTES, 'circuitId')
+    if (!msg.data || msg.data.byteLength > MAX_CIRCUIT_DATA_MSG_BYTES) throw new Error('frame too large')
+    c.fixed(CIRCUIT_ID_BYTES).preencode(state, circuitId)
     c.buffer.preencode(state, msg.data)
   },
   encode (state, msg) {
-    c.fixed(CIRCUIT_ID_BYTES).encode(state, msg.circuitId)
+    const circuitId = assertFixedBytes(msg.circuitId, CIRCUIT_ID_BYTES, 'circuitId')
+    if (!msg.data || msg.data.byteLength > MAX_CIRCUIT_DATA_MSG_BYTES) throw new Error('frame too large')
+    c.fixed(CIRCUIT_ID_BYTES).encode(state, circuitId)
     c.buffer.encode(state, msg.data)
   },
   decode (state) {
-    return {
-      circuitId: c.fixed(CIRCUIT_ID_BYTES).decode(state),
-      data: c.buffer.decode(state)
-    }
+    const circuitId = decodeFixedBytes(state, CIRCUIT_ID_BYTES, 'malformed data')
+    if (circuitId.error) return { circuitId: null, data: null, error: circuitId.error }
+    const data = decodeBytes(state, MAX_CIRCUIT_DATA_MSG_BYTES, 'frame too large', 'malformed data')
+    return data.error ? { circuitId: circuitId.value, data: null, error: data.error } : { circuitId: circuitId.value, data: data.value }
   }
 }
 
 // circuitId (16 bytes) + remotePubkey (32 bytes) — tells the peer what
 // the other end's identity is, so they can run a verified Noise handshake
 // on top of the byte channel.
-const circuitReadyEncoding = {
+export const circuitReadyEncoding = {
   preencode (state, msg) {
-    c.fixed(CIRCUIT_ID_BYTES).preencode(state, msg.circuitId)
-    c.fixed32.preencode(state, msg.remotePubkey)
+    const circuitId = assertFixedBytes(msg.circuitId, CIRCUIT_ID_BYTES, 'circuitId')
+    const remotePubkey = assertFixedBytes(msg.remotePubkey, 32, 'remotePubkey')
+    c.fixed(CIRCUIT_ID_BYTES).preencode(state, circuitId)
+    c.fixed32.preencode(state, remotePubkey)
   },
   encode (state, msg) {
-    c.fixed(CIRCUIT_ID_BYTES).encode(state, msg.circuitId)
-    c.fixed32.encode(state, msg.remotePubkey)
+    const circuitId = assertFixedBytes(msg.circuitId, CIRCUIT_ID_BYTES, 'circuitId')
+    const remotePubkey = assertFixedBytes(msg.remotePubkey, 32, 'remotePubkey')
+    c.fixed(CIRCUIT_ID_BYTES).encode(state, circuitId)
+    c.fixed32.encode(state, remotePubkey)
   },
   decode (state) {
-    return {
-      circuitId: c.fixed(CIRCUIT_ID_BYTES).decode(state),
-      remotePubkey: c.fixed32.decode(state)
-    }
+    const circuitId = decodeFixedBytes(state, CIRCUIT_ID_BYTES, 'malformed ready')
+    if (circuitId.error) return { circuitId: null, remotePubkey: null, error: circuitId.error }
+    const remotePubkey = decodeFixedBytes(state, 32, 'malformed ready')
+    if (remotePubkey.error) return { circuitId: circuitId.value, remotePubkey: null, error: remotePubkey.error }
+    return { circuitId: circuitId.value, remotePubkey: remotePubkey.value }
   }
 }
 
 // circuitId (16 bytes) + reason code (uint)
-const circuitCloseEncoding = {
+export const circuitCloseEncoding = {
   preencode (state, msg) {
-    c.fixed(CIRCUIT_ID_BYTES).preencode(state, msg.circuitId)
-    c.uint.preencode(state, msg.reason)
+    const circuitId = assertFixedBytes(msg.circuitId, CIRCUIT_ID_BYTES, 'circuitId')
+    const reason = encodeUintValue(msg.reason, 'close reason')
+    c.fixed(CIRCUIT_ID_BYTES).preencode(state, circuitId)
+    c.uint.preencode(state, reason)
   },
   encode (state, msg) {
-    c.fixed(CIRCUIT_ID_BYTES).encode(state, msg.circuitId)
-    c.uint.encode(state, msg.reason)
+    const circuitId = assertFixedBytes(msg.circuitId, CIRCUIT_ID_BYTES, 'circuitId')
+    const reason = encodeUintValue(msg.reason, 'close reason')
+    c.fixed(CIRCUIT_ID_BYTES).encode(state, circuitId)
+    c.uint.encode(state, reason)
   },
   decode (state) {
-    return {
-      circuitId: c.fixed(CIRCUIT_ID_BYTES).decode(state),
-      reason: c.uint.decode(state)
-    }
+    const circuitId = decodeFixedBytes(state, CIRCUIT_ID_BYTES, 'malformed close')
+    if (circuitId.error) return { circuitId: null, reason: ERR.INVALID_REQUEST, error: circuitId.error }
+    const reason = decodeUint(state, 'malformed close')
+    if (reason.error) return { circuitId: circuitId.value, reason: ERR.INVALID_REQUEST, error: reason.error }
+    return { circuitId: circuitId.value, reason: reason.value }
   }
 }
 
@@ -127,7 +258,7 @@ export class CircuitRelay extends EventEmitter {
     this.reservationTTL = opts.reservationTTL || DEFAULT_RESERVATION_TTL
     this.maxCircuitBytes = opts.maxCircuitBytes || DEFAULT_MAX_CIRCUIT_BYTES
     this.maxCircuitsPerPeer = opts.maxCircuitsPerPeer || DEFAULT_MAX_CIRCUITS_PER_PEER
-    this.maxDataMsgBytes = opts.maxDataMsgBytes || DEFAULT_MAX_DATA_MSG_BYTES
+    this.maxDataMsgBytes = Math.min(opts.maxDataMsgBytes || MAX_CIRCUIT_DATA_MSG_BYTES, MAX_CIRCUIT_DATA_MSG_BYTES)
 
     // Reservations: peer pubkey hex -> { channel, peerPubkey, expiresAt, circuitCount, maxBytes }
     this.reservations = new Map()
@@ -150,7 +281,7 @@ export class CircuitRelay extends EventEmitter {
     const mux = Protomux.from(conn)
 
     const channel = mux.createChannel({
-      protocol: PROTOCOL_NAME,
+      protocol: CIRCUIT_PROTOCOL_NAME,
       id: null,
       onopen: () => this.emit('channel-open', channel),
       onclose: () => this._onChannelClose(channel)
@@ -162,42 +293,12 @@ export class CircuitRelay extends EventEmitter {
     })
 
     const connectMsg = channel.addMessage({
-      encoding: {
-        preencode (state, msg) {
-          c.fixed32.preencode(state, msg.targetPubkey)
-          c.fixed32.preencode(state, msg.sourcePubkey)
-        },
-        encode (state, msg) {
-          c.fixed32.encode(state, msg.targetPubkey)
-          c.fixed32.encode(state, msg.sourcePubkey)
-        },
-        decode (state) {
-          return {
-            targetPubkey: c.fixed32.decode(state),
-            sourcePubkey: c.fixed32.decode(state)
-          }
-        }
-      },
+      encoding: circuitConnectEncoding,
       onmessage: (msg) => this._onConnect(channel, msg)
     })
 
     const statusMsg = channel.addMessage({
-      encoding: {
-        preencode (state, msg) {
-          c.uint.preencode(state, msg.code)
-          c.string.preencode(state, msg.message)
-        },
-        encode (state, msg) {
-          c.uint.encode(state, msg.code)
-          c.string.encode(state, msg.message)
-        },
-        decode (state) {
-          return {
-            code: c.uint.decode(state),
-            message: c.string.decode(state)
-          }
-        }
-      },
+      encoding: circuitStatusEncoding,
       onmessage: (msg) => this.emit('status', msg)
     })
 
@@ -291,6 +392,11 @@ export class CircuitRelay extends EventEmitter {
   }
 
   _onConnect (channel, msg) {
+    if (!msg || msg.error || !msg.targetPubkey || !msg.sourcePubkey) {
+      this._sendStatus(channel, ERR.INVALID_REQUEST, msg && msg.error ? msg.error : 'Malformed connect')
+      return
+    }
+
     // v0.8.19 (security): same auth fix as _onReserve. See note there.
     const authenticatedKey = authenticatedKeyFor(channel)
     if (authenticatedKey && msg.sourcePubkey && !b4a.equals(authenticatedKey, msg.sourcePubkey)) {
@@ -381,6 +487,11 @@ export class CircuitRelay extends EventEmitter {
   }
 
   _onCircuitData (channel, msg) {
+    if (!msg || msg.error || !msg.circuitId || !msg.data) {
+      if (msg && msg.circuitId) this._closeCircuit(b4a.toString(msg.circuitId, 'hex'), 'FRAME_TOO_LARGE')
+      return
+    }
+
     const circuitIdHex = b4a.toString(msg.circuitId, 'hex')
     const circuit = this.activeCircuits.get(circuitIdHex)
     if (!circuit) {

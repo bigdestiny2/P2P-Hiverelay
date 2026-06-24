@@ -289,8 +289,15 @@ export class AutoHeal extends EventEmitter {
       // storage cap. seedApp() would error or evict; better to decline up
       // front and let a relay with capacity take it. We use a soft margin
       // (default 90%) so we don't keep recruiting until literally full.
-      if (!this._hasStorageCapacity()) {
-        this.emit('recruit-skipped', { appKey, reason: 'storage-full' })
+      const storage = this._storageCapacity()
+      if (!storage.ok) {
+        this.emit('recruit-skipped', {
+          appKey,
+          reason: storage.reason,
+          usedBytes: storage.usedBytes,
+          maxStorageBytes: storage.maxStorageBytes,
+          storageMargin: storage.storageMargin
+        })
         continue
       }
 
@@ -342,12 +349,41 @@ export class AutoHeal extends EventEmitter {
   // ─── Internal: capacity, backoff, jitter ───────────────────────────
 
   _hasStorageCapacity () {
+    return this._storageCapacity().ok
+  }
+
+  _storageCapacity () {
     const seeder = this.node.seeder
     const cap = this.node.config?.maxStorageBytes
-    if (!seeder || !cap) return true // unbounded — let it through
-    const used = seeder.totalBytesStored || 0
-    const margin = this.storageMargin || 0.90
-    return used < (cap * margin)
+    if (!seeder || !Number.isFinite(cap) || cap <= 0) {
+      return {
+        ok: false,
+        reason: 'storage-capacity-unavailable',
+        usedBytes: null,
+        maxStorageBytes: Number.isFinite(cap) ? cap : null,
+        storageMargin: null
+      }
+    }
+    const rawUsed = seeder.totalBytesStored
+    const used = Number.isFinite(rawUsed) && rawUsed > 0 ? rawUsed : 0
+    const rawMargin = this.storageMargin
+    const margin = Number.isFinite(rawMargin) && rawMargin > 0 ? Math.min(rawMargin, 1) : 0.90
+    if (used >= cap * margin) {
+      return {
+        ok: false,
+        reason: 'storage-full',
+        usedBytes: used,
+        maxStorageBytes: cap,
+        storageMargin: margin
+      }
+    }
+    return {
+      ok: true,
+      reason: null,
+      usedBytes: used,
+      maxStorageBytes: cap,
+      storageMargin: margin
+    }
   }
 
   _isInBackoff (appKey) {

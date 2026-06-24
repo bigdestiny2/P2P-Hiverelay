@@ -78,7 +78,8 @@ const SERVICE_DEFAULT_ACCESS = {
   sla: 'authenticated-user',
   arbitration: 'authenticated-user',
   zk: 'authenticated-user',
-  identity: 'authenticated-user'
+  identity: 'authenticated-user',
+  'storage-proof': 'public'
 }
 
 export class Router extends EventEmitter {

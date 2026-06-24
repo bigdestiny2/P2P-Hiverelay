@@ -77,6 +77,13 @@ test('exposeToken OFF: no token injected (default / fleet path)', async (t) => {
   // injected <meta ... content=> tag specifically, not the bare string.
   t.absent(res.body.includes('<meta name="hiverelay-ui-token" content='), 'no injected token meta')
   t.absent(res.headers['cache-control'], 'no no-store header when not exposing')
+  t.is(res.headers['content-type'], 'text/html; charset=utf-8', 'dashboard HTML is explicitly typed')
+  t.is(res.headers['x-content-type-options'], 'nosniff', 'dashboard responses disable content sniffing')
+  t.is(res.headers['referrer-policy'], 'no-referrer', 'dashboard responses do not leak referrers')
+  t.ok(res.headers['permissions-policy'].includes('camera=()'), 'dashboard disables browser device permissions')
+  t.ok(res.headers['content-security-policy'].includes("default-src 'self'"), 'dashboard sets a same-origin CSP')
+  t.ok(res.headers['content-security-policy'].includes("object-src 'none'"), 'dashboard blocks plugin/object loads')
+  t.ok(res.headers['content-security-policy'].includes("connect-src 'self' ws: wss:"), 'dashboard CSP keeps live API/WebSocket connects explicit')
 })
 
 test('exposeToken ON + key: token meta embedded + no-store', async (t) => {
@@ -84,7 +91,7 @@ test('exposeToken ON + key: token meta embedded + no-store', async (t) => {
   const res = fakeRes()
   await api._serveDashboard(res, '_t_on', 'index.html')
   t.ok(res.body.includes('<meta name="hiverelay-ui-token" content="deadbeefcafe">'), 'token meta injected into head')
-  t.is(res.headers['cache-control'], 'no-store', 'token response is not cacheable')
+  t.is(res.headers['cache-control'], 'no-store, max-age=0', 'token response is not cacheable')
 })
 
 test('exposeToken ON but no key: nothing injected (start() would disable)', async (t) => {

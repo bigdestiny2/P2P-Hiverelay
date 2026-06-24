@@ -18,8 +18,8 @@ test('WebSocketTransport - starts and listens on configured port', async (t) => 
   t.is(transport.port, port, 'correct port')
 })
 
-test('WebSocketTransport - client connects and emits connection event', async (t) => {
-  t.plan(2)
+test('WebSocketTransport - client connects and emits privacy-safe connection event', async (t) => {
+  t.plan(5)
 
   const port = getPort()
   const transport = new WebSocketTransport({ port })
@@ -33,11 +33,30 @@ test('WebSocketTransport - client connects and emits connection event', async (t
   transport.on('connection', (stream, info) => {
     t.ok(stream, 'received stream on connection')
     t.is(info.type, 'websocket', 'info.type is websocket')
+    t.is(typeof info.remoteAddressHash, 'string', 'remote address hash is present')
+    t.absent(info.remoteAddress, 'raw remote address is not emitted')
+    t.absent(JSON.stringify(info).includes('127.0.0.1'), 'serialized info does not include raw loopback IP')
   })
 
   const ws = new WebSocket(`ws://127.0.0.1:${port}`)
   await new Promise((resolve) => { ws.on('open', resolve) })
   ws.close()
+})
+
+test('WebSocketTransport - IP hash is stable per transport and rotated across transports', (t) => {
+  const a = new WebSocketTransport({ port: 0 })
+  const b = new WebSocketTransport({ port: 0 })
+
+  const h1 = a._hashIp('192.0.2.42')
+  const h2 = a._hashIp('192.0.2.42')
+  const h3 = a._hashIp('192.0.2.43')
+
+  t.is(typeof h1, 'string', 'hash is a string')
+  t.is(h1.length, 16, 'hash is a short prefix')
+  t.is(h1, h2, 'same IP is stable within a transport')
+  t.unlike(h1, h3, 'different IPs produce different hashes')
+  t.unlike(h1, b._hashIp('192.0.2.42'), 'salt rotates across transport instances')
+  t.absent(a._safeInfo('192.0.2.42', 1234).remoteAddress, 'safe info omits raw address')
 })
 
 test('WebSocketTransport - bidirectional data flow', async (t) => {

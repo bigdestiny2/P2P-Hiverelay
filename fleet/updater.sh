@@ -10,7 +10,7 @@
 #   3. If already on the target -> no-op.
 #   4. Otherwise: snapshot current SHA, fetch + checkout the target tag,
 #      reinstall deps only if package-lock changed, restart the relay.
-#   5. HEALTH-GATE: poll /health for running:true (up to 120s).
+#   5. HEALTH-GATE: poll /health for running:true + target version (up to 120s).
 #         green  -> done.
 #         red    -> ROLL BACK to the snapshot, restart, re-verify, alert.
 #
@@ -31,6 +31,7 @@ CONF="${HIVERELAY_UPDATER_CONF:-/etc/hiverelay-updater.conf}"
 CHANNELS_URL="${HIVERELAY_CHANNELS_URL:-https://raw.githubusercontent.com/bigdestiny2/P2P-Hiverelay/main/fleet/channels.json}"
 SERVICE="${HIVERELAY_SERVICE:-hiverelay}"
 API="${HIVERELAY_API:-http://127.0.0.1:9100}"
+ENV_FILE="${HIVERELAY_ENV_FILE:-/etc/hiverelay/hiverelay.env}"
 HEALTH_TIMEOUT="${HIVERELAY_HEALTH_TIMEOUT:-120}"
 LOCK="/run/hiverelay-updater.lock"
 
@@ -54,14 +55,28 @@ fi
 
 # ── channel ────────────────────────────────────────────────────────
 CHANNEL="stable"
-# shellcheck disable=SC1090
-[ -f "$CONF" ] && . "$CONF"
+if [ -r "$CONF" ]; then
+  # Treat config as data, not shell. The installer writes CHANNEL=<name>;
+  # sourcing this file would make a writable config path code-executable.
+  CONF_CHANNEL="$(sed -n 's/^[[:space:]]*CHANNEL[[:space:]]*=[[:space:]]*//p' "$CONF" | head -n 1)"
+  CONF_CHANNEL="${CONF_CHANNEL%\"}"
+  CONF_CHANNEL="${CONF_CHANNEL#\"}"
+  CONF_CHANNEL="${CONF_CHANNEL%\'}"
+  CONF_CHANNEL="${CONF_CHANNEL#\'}"
+  [ -n "$CONF_CHANNEL" ] && CHANNEL="$CONF_CHANNEL"
+fi
+if [[ ! "$CHANNEL" =~ ^[A-Za-z0-9._-]{1,32}$ ]]; then
+  die "invalid channel '$CHANNEL' in $CONF"
+fi
 
 # ── resolve target tag ─────────────────────────────────────────────
 JSON="$(curl -fsS --max-time 20 "$CHANNELS_URL")" || die "cannot fetch channels.json"
-TARGET="$(printf '%s' "$JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('$CHANNEL',''))")" \
+TARGET="$(printf '%s' "$JSON" | CHANNEL="$CHANNEL" python3 -c 'import os,sys,json; print(json.load(sys.stdin).get(os.environ["CHANNEL"], ""))')" \
   || die "cannot parse channels.json"
 [ -n "$TARGET" ] || die "no target tag for channel '$CHANNEL'"
+if [[ ! "$TARGET" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+  die "invalid target tag '$TARGET' for channel '$CHANNEL'"
+fi
 
 cd "$REPO_DIR" || die "repo dir $REPO_DIR not found"
 
@@ -73,22 +88,61 @@ fi
 CUR_VER="v$(grep -m1 '"version"' package.json | tr -dc '0-9.')"
 CUR_SHA="$(git rev-parse HEAD)"
 
-if [ "$TARGET" = "$CUR_VER" ]; then
-  log "channel=$CHANNEL up-to-date at $CUR_VER"; exit 0
+git fetch --tags --quiet origin || die "git fetch failed"
+TARGET_SHA="$(git rev-parse -q --verify "refs/tags/$TARGET^{}")" || die "target tag $TARGET not found after fetch"
+
+if [ "$CUR_SHA" = "$TARGET_SHA" ]; then
+  log "channel=$CHANNEL up-to-date at $TARGET ($TARGET_SHA)"; exit 0
 fi
-log "channel=$CHANNEL current=$CUR_VER target=$TARGET (from $CUR_SHA)"
-if [ "$DRY_RUN" = 1 ]; then log "dry-run: would update $CUR_VER -> $TARGET"; exit 0; fi
+log "channel=$CHANNEL current=$CUR_VER/$CUR_SHA target=$TARGET/$TARGET_SHA"
+if [ "$DRY_RUN" = 1 ]; then log "dry-run: would update $CUR_SHA -> $TARGET_SHA"; exit 0; fi
 
 # ── helpers ────────────────────────────────────────────────────────
-apikey() { systemctl show "$SERVICE" -p Environment 2>/dev/null | grep -o 'HIVERELAY_API_KEY=[^ ]*' | cut -d= -f2; }
+apikey() {
+  local key
+  key="$(systemctl show "$SERVICE" -p Environment 2>/dev/null \
+    | awk 'BEGIN{RS=" "} /^HIVERELAY_API_KEY=/{sub(/^HIVERELAY_API_KEY=/,""); print; exit}' || true)"
+  if [ -z "$key" ] && [ -r "$ENV_FILE" ]; then
+    key="$(awk -F= '/^[[:space:]]*HIVERELAY_API_KEY[[:space:]]*=/ { sub(/^[^=]*=/,""); sub(/^[[:space:]]*/,""); print; exit }' "$ENV_FILE" 2>/dev/null || true)"
+  fi
+  key="${key%\"}"
+  key="${key#\"}"
+  key="${key%\'}"
+  key="${key#\'}"
+  if [ -n "$key" ]; then printf '%s\n' "$key"; fi
+  return 0
+}
+
+curl_with_optional_key() {
+  local key="$1"
+  shift
+  if [ -z "$key" ]; then
+    curl "$@" || return $?
+    return 0
+  fi
+  if printf '%s' "$key" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+    return 2
+  fi
+  local header_file status
+  header_file="$(mktemp)"
+  chmod 600 "$header_file" 2>/dev/null || true
+  printf 'Authorization: Bearer %s\n' "$key" > "$header_file"
+  status=0
+  curl -H "@$header_file" "$@" || status=$?
+  rm -f "$header_file"
+  return "$status"
+}
 
 healthy() {
-  local key hdr end
+  local expected_version="${1:-}"
+  local key end body version
   key="$(apikey)"
-  hdr=(); [ -n "$key" ] && hdr=(-H "Authorization: Bearer $key")
   end=$((SECONDS + HEALTH_TIMEOUT))
   while [ $SECONDS -lt $end ]; do
-    if curl -fsS --max-time 8 "${hdr[@]}" "$API/health" 2>/dev/null | grep -q '"running":true'; then
+    body="$(curl_with_optional_key "$key" -fsS --max-time 8 "$API/health" 2>/dev/null || true)"
+    version="$(printf '%s' "$body" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+    if printf '%s' "$body" | grep -q '"running":true' &&
+      { [ -z "$expected_version" ] || [ "$version" = "$expected_version" ]; }; then
       return 0
     fi
     sleep 5
@@ -104,14 +158,32 @@ deps_if_changed() { # $1=from-ref $2=to-ref
   fi
 }
 
+rollback_to_previous() {
+  local reason="$1"
+  log "FAIL $reason — ROLLING BACK to $CUR_VER ($CUR_SHA)"
+  if ! git checkout --quiet "$CUR_SHA"; then
+    log "CRITICAL could not checkout previous SHA"
+    exit 1
+  fi
+  if ! deps_if_changed "$TARGET_SHA" "$CUR_SHA"; then
+    log "CRITICAL rollback dependency reinstall failed — manual attention needed on $(hostname)"
+    exit 1
+  fi
+  systemctl restart "$SERVICE"
+  if healthy "${CUR_VER#v}"; then
+    log "rollback OK — back on $CUR_VER"
+  else
+    log "CRITICAL rollback unhealthy — manual attention needed on $(hostname)"
+  fi
+  exit 1
+}
+
 # ── update ─────────────────────────────────────────────────────────
-git fetch --tags --quiet origin || die "git fetch failed"
-git rev-parse -q --verify "refs/tags/$TARGET" >/dev/null || die "target tag $TARGET not found after fetch"
 git checkout --quiet "$TARGET" || die "checkout $TARGET failed"
-deps_if_changed "$CUR_SHA" "$TARGET"
+deps_if_changed "$CUR_SHA" "$TARGET_SHA" || rollback_to_previous "dependency install failed on $TARGET"
 systemctl restart "$SERVICE"
 
-if healthy; then
+if healthy "${TARGET#v}"; then
   log "OK updated $CUR_VER -> $TARGET — health green"
   # Pack loose objects accrued by fetch/checkout so repeated updates don't
   # grow .git. Plain gc only (NEVER --aggressive). Post-success ONLY —
@@ -132,13 +204,4 @@ if healthy; then
 fi
 
 # ── rollback ───────────────────────────────────────────────────────
-log "FAIL health not green on $TARGET within ${HEALTH_TIMEOUT}s — ROLLING BACK to $CUR_VER ($CUR_SHA)"
-git checkout --quiet "$CUR_SHA" || log "CRITICAL could not checkout previous SHA"
-deps_if_changed "$TARGET" "$CUR_SHA"
-systemctl restart "$SERVICE"
-if healthy; then
-  log "rollback OK — back on $CUR_VER"
-else
-  log "CRITICAL rollback unhealthy — manual attention needed on $(hostname)"
-fi
-exit 1
+rollback_to_previous "health not green on $TARGET ${TARGET#v} within ${HEALTH_TIMEOUT}s"

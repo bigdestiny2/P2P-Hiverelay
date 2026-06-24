@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events'
 
 const MAX_SNAPSHOTS = 1440 // 24 hours of minutely snapshots
+const MAX_PROMETHEUS_VALUE = Number.MAX_SAFE_INTEGER
 
 export class Metrics extends EventEmitter {
   constructor (relayNode) {
@@ -24,13 +25,11 @@ export class Metrics extends EventEmitter {
   _startSnapshots () {
     // Take a snapshot every 60 seconds
     this.snapshotInterval = setInterval(() => {
-      this._buf[this._head] = {
-        timestamp: Date.now(),
-        ...this.node.getStats()
-      }
+      this._buf[this._head] = this._snapshot()
       this._head = (this._head + 1) % MAX_SNAPSHOTS
       if (this._size < MAX_SNAPSHOTS) this._size++
     }, 60_000)
+    if (typeof this.snapshotInterval.unref === 'function') this.snapshotInterval.unref()
   }
 
   get snapshots () {
@@ -43,7 +42,7 @@ export class Metrics extends EventEmitter {
   }
 
   getSummary () {
-    const stats = this.node.getStats()
+    const stats = this._stats()
     const uptimeMs = Date.now() - this.startedAt
 
     return {
@@ -59,34 +58,31 @@ export class Metrics extends EventEmitter {
 
   // Prometheus-compatible metrics output
   toPrometheus () {
-    const stats = this.node.getStats()
+    const stats = this._stats()
     const uptimeMs = Date.now() - this.startedAt
     const lines = []
 
-    lines.push('# HELP hiverelay_uptime_seconds Relay node uptime in seconds')
-    lines.push('# TYPE hiverelay_uptime_seconds gauge')
-    lines.push(`hiverelay_uptime_seconds ${Math.round(uptimeMs / 1000)}`)
+    pushMetric(lines, 'hiverelay_uptime_seconds', 'Relay node uptime in seconds', 'gauge', Math.round(uptimeMs / 1000))
 
-    lines.push('# HELP hiverelay_seeded_apps Number of apps being seeded')
-    lines.push('# TYPE hiverelay_seeded_apps gauge')
-    lines.push(`hiverelay_seeded_apps ${stats.seededApps}`)
+    pushMetric(lines, 'hiverelay_seeded_apps', 'Number of apps being seeded', 'gauge', stats.seededApps)
 
-    lines.push('# HELP hiverelay_connections Active peer connections')
-    lines.push('# TYPE hiverelay_connections gauge')
-    lines.push(`hiverelay_connections ${stats.connections}`)
+    pushMetric(lines, 'hiverelay_connections', 'Active peer connections', 'gauge', stats.connections)
 
     if (stats.seeder) {
-      lines.push('# HELP hiverelay_cores_seeded Number of Hypercores being seeded via Seeder.seedCore (registry log + standalone cores). Does NOT count appRegistry-managed Hyperdrive cores — see hiverelay_app_registry_cores.')
-      lines.push('# TYPE hiverelay_cores_seeded gauge')
-      lines.push(`hiverelay_cores_seeded ${stats.seeder.coresSeeded}`)
+      pushMetric(lines, 'hiverelay_cores_seeded', 'Number of Hypercores being seeded via Seeder.seedCore (registry log + standalone cores). Does NOT count appRegistry-managed Hyperdrive cores — see hiverelay_app_registry_cores.', 'gauge', stats.seeder.coresSeeded)
 
-      lines.push('# HELP hiverelay_bytes_stored Total bytes stored on disk')
-      lines.push('# TYPE hiverelay_bytes_stored gauge')
-      lines.push(`hiverelay_bytes_stored ${stats.seeder.totalBytesStored}`)
+      pushMetric(lines, 'hiverelay_bytes_stored', 'Total bytes stored on disk', 'gauge', stats.seeder.totalBytesStored)
 
-      lines.push('# HELP hiverelay_bytes_served Total bytes served to peers')
-      lines.push('# TYPE hiverelay_bytes_served counter')
-      lines.push(`hiverelay_bytes_served ${stats.seeder.totalBytesServed}`)
+      pushMetric(lines, 'hiverelay_bytes_served', 'Bytes served from Seeder.seedCore-routed cores only (registry log + standalone cores). Reads ~0 on registry-drive relays — use hiverelay_bytes_served_measured for the honest total.', 'counter', stats.seeder.totalBytesServed)
+    }
+
+    if (stats.served) {
+      // Honest served total: 'upload' bytes summed across EVERY replicated
+      // core (registry log + appRegistry drive meta/blob cores), not just
+      // the Seeder.seedCore-routed cores hiverelay_bytes_served counts.
+      pushMetric(lines, 'hiverelay_bytes_served_measured', 'Total bytes served to peers across all replicated cores (replication-layer measured)', 'counter', stats.served.totalBytesServed)
+
+      pushMetric(lines, 'hiverelay_blocks_served_measured', 'Total blocks uploaded to peers across all replicated cores', 'counter', stats.served.totalBlocksServed)
     }
 
     if (stats.appRegistry) {
@@ -96,53 +92,45 @@ export class Metrics extends EventEmitter {
       // through Seeder.seedCore), so a relay with 555 seeded apps
       // reported coresSeeded=1. These four counters give Prometheus
       // the actual operational state.
-      lines.push('# HELP hiverelay_app_registry_entries Number of appRegistry entries (one per published app/drive)')
-      lines.push('# TYPE hiverelay_app_registry_entries gauge')
-      lines.push(`hiverelay_app_registry_entries ${stats.appRegistry.entries}`)
+      pushMetric(lines, 'hiverelay_app_registry_entries', 'Number of appRegistry entries (one per published app/drive)', 'gauge', stats.appRegistry.entries)
 
-      lines.push('# HELP hiverelay_app_registry_anchored Number of entries with blob blocks fully replicated locally')
-      lines.push('# TYPE hiverelay_app_registry_anchored gauge')
-      lines.push(`hiverelay_app_registry_anchored ${stats.appRegistry.anchored}`)
+      pushMetric(lines, 'hiverelay_app_registry_anchored', 'Number of entries with blob blocks fully replicated locally', 'gauge', stats.appRegistry.anchored)
 
-      lines.push('# HELP hiverelay_app_registry_unanchored Number of entries waiting on the repair pass to pull blocks')
-      lines.push('# TYPE hiverelay_app_registry_unanchored gauge')
-      lines.push(`hiverelay_app_registry_unanchored ${stats.appRegistry.unanchored}`)
+      pushMetric(lines, 'hiverelay_app_registry_unanchored', 'Number of entries waiting on the repair pass to pull blocks', 'gauge', stats.appRegistry.unanchored)
 
-      lines.push('# HELP hiverelay_app_registry_cores Total underlying Hypercores managed via appRegistry (2 per Hyperdrive: meta + blob)')
-      lines.push('# TYPE hiverelay_app_registry_cores gauge')
-      lines.push(`hiverelay_app_registry_cores ${stats.appRegistry.cores}`)
+      pushMetric(lines, 'hiverelay_app_registry_cores', 'Total underlying Hypercores managed via appRegistry (2 per Hyperdrive: meta + blob)', 'gauge', stats.appRegistry.cores)
     }
 
     if (stats.relay) {
-      lines.push('# HELP hiverelay_active_circuits Active relay circuits')
-      lines.push('# TYPE hiverelay_active_circuits gauge')
-      lines.push(`hiverelay_active_circuits ${stats.relay.activeCircuits}`)
+      pushMetric(lines, 'hiverelay_active_circuits', 'Active relay circuits', 'gauge', stats.relay.activeCircuits)
 
-      lines.push('# HELP hiverelay_total_circuits_served Total circuits served')
-      lines.push('# TYPE hiverelay_total_circuits_served counter')
-      lines.push(`hiverelay_total_circuits_served ${stats.relay.totalCircuitsServed}`)
+      pushMetric(lines, 'hiverelay_total_circuits_served', 'Total circuits served', 'counter', stats.relay.totalCircuitsServed)
 
-      lines.push('# HELP hiverelay_bytes_relayed Total bytes relayed')
-      lines.push('# TYPE hiverelay_bytes_relayed counter')
-      lines.push(`hiverelay_bytes_relayed ${stats.relay.totalBytesRelayed}`)
+      pushMetric(lines, 'hiverelay_bytes_relayed', 'Total bytes relayed', 'counter', stats.relay.totalBytesRelayed)
     }
 
     // Process metrics
     const mem = process.memoryUsage()
-    lines.push('# HELP hiverelay_process_heap_bytes Process heap memory in bytes')
-    lines.push('# TYPE hiverelay_process_heap_bytes gauge')
-    lines.push(`hiverelay_process_heap_bytes ${mem.heapUsed}`)
+    pushMetric(lines, 'hiverelay_process_heap_bytes', 'Process heap memory in bytes', 'gauge', mem.heapUsed)
 
-    lines.push('# HELP hiverelay_process_rss_bytes Process resident set size in bytes')
-    lines.push('# TYPE hiverelay_process_rss_bytes gauge')
-    lines.push(`hiverelay_process_rss_bytes ${mem.rss}`)
+    pushMetric(lines, 'hiverelay_process_rss_bytes', 'Process resident set size in bytes', 'gauge', mem.rss)
 
     // Error counter
-    lines.push('# HELP hiverelay_errors_total Total connection errors')
-    lines.push('# TYPE hiverelay_errors_total counter')
-    lines.push(`hiverelay_errors_total ${this._errorCount}`)
+    pushMetric(lines, 'hiverelay_errors_total', 'Total connection errors', 'counter', this._errorCount)
 
     return lines.join('\n') + '\n'
+  }
+
+  _stats () {
+    if (!this.node || typeof this.node.getStats !== 'function') return {}
+    return this.node.getStats({ includeSecrets: false }) || {}
+  }
+
+  _snapshot () {
+    return {
+      timestamp: Date.now(),
+      ...this._stats()
+    }
   }
 
   _formatUptime (ms) {
@@ -162,4 +150,16 @@ export class Metrics extends EventEmitter {
       this.snapshotInterval = null
     }
   }
+}
+
+function pushMetric (lines, name, help, type, value) {
+  lines.push(`# HELP ${name} ${help}`)
+  lines.push(`# TYPE ${name} ${type}`)
+  lines.push(`${name} ${prometheusNumber(value)}`)
+}
+
+export function prometheusNumber (value) {
+  const number = Number(value)
+  if (!Number.isFinite(number) || number < 0) return 0
+  return Math.min(number, MAX_PROMETHEUS_VALUE)
 }

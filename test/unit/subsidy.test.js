@@ -191,6 +191,33 @@ test('setPayoutDestination: rejects junk, keeps previous value', async (t) => {
   await sub.destroy()
 })
 
+test('setPayoutDestination: clears destination with blank or null', async (t) => {
+  const sub = makeAccrual()
+  await sub.setPayoutDestination('op@getalby.com')
+  t.is(sub.getSummary().payoutDestination.value, 'op@getalby.com', 'destination set')
+  t.is(await sub.setPayoutDestination(''), null, 'blank clears')
+  t.is(sub.getSummary().payoutDestination, null, 'destination cleared')
+  await sub.setPayoutDestination('op@getalby.com')
+  t.is(await sub.setPayoutDestination(null), null, 'null clears')
+  t.is(sub.getSummary().payoutDestination, null, 'destination cleared again')
+  await sub.destroy()
+})
+
+test('setPayoutDestination: persistence failure rejects and keeps previous value', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'subsidy-'))
+  const path = join(dir, 'subsidy.json')
+  const sub = makeAccrual({ storagePath: path })
+  await sub.setPayoutDestination('old@example.com')
+
+  const errors = []
+  sub.on('persist-error', (err) => { errors.push(err) })
+  sub._write = async () => { throw new Error('disk full') }
+
+  await t.exception(() => sub.setPayoutDestination('new@example.com'), /disk full/)
+  t.is(sub.getSummary().payoutDestination.value, 'old@example.com', 'previous destination intact after failed write')
+  t.is(errors.length, 1, 'background persistence error event emitted')
+})
+
 // ─── claim digest stability (cross-version pin) ────────────────────
 
 test('claimDigest is stable for a fixed input', (t) => {

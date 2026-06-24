@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Blindspark — Payments & Credits</title>
+<title>HiveRelay Payments & Credits</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%2316213e'/%3E%3Cpath d='M50 10 C 54 38 60 44 88 50 C 60 56 54 62 50 90 C 46 62 40 56 12 50 C 40 44 46 38 50 10 Z' fill='%23f5c842'/%3E%3C/svg%3E">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -133,7 +133,7 @@ tr:hover td{background:rgba(88,166,255,.03)}
       <path d="M50 6 C 54.5 36, 61 42.5, 92 50 C 61 57.5, 54.5 64, 50 94 C 45.5 64, 39 57.5, 8 50 C 39 42.5, 45.5 36, 50 6 Z" fill="url(#sparkg)"/>
       <path d="M79 10 C 80.5 19, 82.5 21, 91 23 C 82.5 25, 80.5 27, 79 36 C 77.5 27, 75.5 25, 67 23 C 75.5 21, 77.5 19, 79 10 Z" fill="#ffe066" opacity=".9"/>
     </svg>
-    <div class="topbar-brand"><h1>Payments & Credits</h1><div class="topbar-sub">powered by HiveRelay</div></div>
+    <div class="topbar-brand"><h1>HiveRelay Payments</h1><div class="topbar-sub">credits, pricing, settlement</div></div>
   </a>
   <nav class="topbar-nav">
     <a href="/dashboard">Dashboard</a>
@@ -295,16 +295,66 @@ tr:hover td{background:rgba(88,166,255,.03)}
 
 <script>
 /* ===== Helpers ===== */
+function escapeHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/[&<>"']/g, function(ch) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+  });
+}
+
+function clearNode(node) {
+  while (node.firstChild) node.removeChild(node.firstChild);
+}
+
+function makeEl(tag, className, text) {
+  var el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+function appendEl(parent, tag, className, text) {
+  var el = makeEl(tag, className, text);
+  parent.appendChild(el);
+  return el;
+}
+
+function appendCell(row, text, className) {
+  return appendEl(row, 'td', className || null, text);
+}
+
+function metricNumber(value) {
+  var n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function metricCount(value) {
+  var n = metricNumber(value);
+  return n === null ? 0 : Math.floor(n);
+}
+
+function clampPercent(value) {
+  var n = metricNumber(value);
+  return n === null ? 0 : Math.min(100, n);
+}
+
+function formatUsd(value) {
+  var n = metricNumber(value);
+  return n === null ? '0.0000' : n.toFixed(4);
+}
+
 function formatSats(s) {
-  if (s == null || isNaN(s)) return '--';
-  if (s >= 100000000) return (s / 100000000).toFixed(4) + ' BTC';
-  if (s >= 1000000) return (s / 1000000).toFixed(1) + 'M sats';
-  if (s >= 1000) return (s / 1000).toFixed(1) + 'k sats';
-  return s + ' sats';
+  var n = metricNumber(s);
+  if (n === null) return '--';
+  if (n >= 100000000) return (n / 100000000).toFixed(4) + ' BTC';
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M sats';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k sats';
+  return n + ' sats';
 }
 
 function formatCount(n) {
-  if (n == null || isNaN(n)) return '--';
+  n = metricNumber(n);
+  if (n === null) return '--';
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
   if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
   return n.toString();
@@ -331,6 +381,98 @@ function tierBadge(tier) {
   return '<span class="badge badge-free">FREE</span>';
 }
 
+function pricingParts(rate) {
+  rate = rate || {};
+  var parts = [];
+  var perCall = metricNumber(rate.perCall);
+  var perInputToken = metricNumber(rate.perInputToken);
+  var perOutputToken = metricNumber(rate.perOutputToken);
+  var perKB = metricNumber(rate.perKB);
+  var perMs = metricNumber(rate.perMs);
+  if (perCall) parts.push(perCall + ' sat/call');
+  if (perInputToken) parts.push((perInputToken * 1000).toFixed(1) + ' sat/1K input');
+  if (perOutputToken) parts.push((perOutputToken * 1000).toFixed(1) + ' sat/1K output');
+  if (perKB) parts.push(perKB + ' sat/KB');
+  if (perMs) parts.push((perMs * 1000).toFixed(1) + ' sat/sec');
+  return parts;
+}
+
+function hasPositivePricePart(value) {
+  var n = metricNumber(value);
+  return n !== null && n > 0;
+}
+
+function isFreeRate(rate) {
+  rate = rate || {};
+  return metricNumber(rate.perCall) === 0 &&
+    !hasPositivePricePart(rate.perInputToken) &&
+    !hasPositivePricePart(rate.perOutputToken) &&
+    !hasPositivePricePart(rate.perKB) &&
+    !hasPositivePricePart(rate.perMs);
+}
+
+function renderRateCard(rateCard, rates) {
+  clearNode(rateCard);
+  rates = rates && typeof rates === 'object' ? rates : {};
+  var routes = Object.keys(rates).sort();
+  if (routes.length === 0) {
+    appendEl(rateCard, 'div', 'empty-state', 'No pricing routes advertised yet.');
+    return;
+  }
+
+  for (var i = 0; i < routes.length; i++) {
+    var route = routes[i];
+    var rate = rates[route] || {};
+    var row = appendEl(rateCard, 'div', 'rate-row');
+    var meta = appendEl(row, 'div');
+    appendEl(meta, 'div', 'rate-name', route);
+    appendEl(meta, 'div', 'rate-desc', rate.description || '');
+    var price = appendEl(row, 'div', 'rate-price');
+    var parts = pricingParts(rate);
+    if (isFreeRate(rate)) {
+      appendEl(price, 'span', 'rate-free', 'FREE');
+    } else {
+      price.textContent = parts.length > 0 ? parts.join(' + ') : '--';
+    }
+  }
+}
+
+function appendCompareRow(tbody, label, hive, claude, openai) {
+  var row = appendEl(tbody, 'tr');
+  appendCell(row, label);
+  appendCell(row, hive);
+  appendCell(row, claude);
+  appendCell(row, openai);
+}
+
+function renderPricingComparison(tbody, compare) {
+  if (!compare || !compare.services || typeof compare.services !== 'object') return;
+  var ai = compare.services['ai.infer'];
+  if (!ai) return;
+
+  var hive = ai.hiverelay || {};
+  var claude = ai.claude || {};
+  var openai = ai.openai || {};
+  clearNode(tbody);
+  appendCompareRow(
+    tbody,
+    'AI Input (1K tokens)',
+    (metricNumber(hive.per1kInput) || 1) + ' sats ($' + formatUsd(hive.per1kInputUsd) + ')',
+    '$' + formatUsd(claude.per1kInputUsd),
+    '$' + formatUsd(openai.per1kInputUsd)
+  );
+  appendCompareRow(
+    tbody,
+    'AI Output (1K tokens)',
+    (metricNumber(hive.per1kOutput) || 2) + ' sats ($' + formatUsd(hive.per1kOutputUsd) + ')',
+    '$' + formatUsd(claude.per1kOutputUsd),
+    '$' + formatUsd(openai.per1kOutputUsd)
+  );
+  var savingsRow = appendEl(tbody, 'tr');
+  var savings = appendCell(savingsRow, ai.savingsVsClaude || '', 'savings');
+  savings.colSpan = 4;
+}
+
 /* ===== Update Functions ===== */
 function updatePayments(data) {
   var o = data.overview || data;
@@ -341,26 +483,26 @@ function updatePayments(data) {
 
   // Provider badge
   if (payment) {
-    document.getElementById('providerBadge').textContent = 'Provider: ' + (payment.provider || 'none');
+    document.getElementById('providerBadge').textContent = 'Provider: ' + String(payment.provider || 'none');
   }
 
   // Top stats
   if (metering) {
     document.getElementById('totalRevenue').textContent = formatSats(metering.totalRevenue || 0);
     document.getElementById('totalCalls').textContent = formatCount(metering.totalCalls || 0);
-    document.getElementById('totalApps').textContent = (metering.totalApps || 0) + ' apps';
+    document.getElementById('totalApps').textContent = metricCount(metering.totalApps) + ' apps';
   }
   if (credits) {
-    document.getElementById('totalWallets').textContent = credits.totalWallets || 0;
+    document.getElementById('totalWallets').textContent = metricCount(credits.totalWallets);
     document.getElementById('walletBalance').textContent = formatSats(credits.totalBalance || 0) + ' total balance';
   }
   if (invoices) {
-    document.getElementById('invoicesSettled').textContent = invoices.settled || 0;
-    document.getElementById('invoicePending').textContent = (invoices.pending || 0) + ' pending';
-    document.getElementById('invSettled').textContent = invoices.settled || 0;
-    document.getElementById('invPending').textContent = invoices.pending || 0;
-    document.getElementById('invExpired').textContent = invoices.expired || 0;
-    document.getElementById('invCancelled').textContent = invoices.cancelled || 0;
+    document.getElementById('invoicesSettled').textContent = metricCount(invoices.settled);
+    document.getElementById('invoicePending').textContent = metricCount(invoices.pending) + ' pending';
+    document.getElementById('invSettled').textContent = metricCount(invoices.settled);
+    document.getElementById('invPending').textContent = metricCount(invoices.pending);
+    document.getElementById('invExpired').textContent = metricCount(invoices.expired);
+    document.getElementById('invCancelled').textContent = metricCount(invoices.cancelled);
     document.getElementById('invTotalSats').textContent = formatSats(invoices.totalSettledSats || 0);
   }
 
@@ -371,9 +513,10 @@ function updatePayments(data) {
     document.getElementById('accPaid').textContent = formatSats(acc.totalPaid || 0);
     document.getElementById('accHeld').textContent = formatSats(acc.currentlyHeld || 0);
     document.getElementById('accPending').textContent = formatSats(acc.pendingPayout || 0);
-    document.getElementById('accHeldPct').textContent = (acc.heldPercentage || 0) + '%';
-    document.getElementById('heldBar').style.width = (acc.heldPercentage || 0) + '%';
-    document.getElementById('accTenure').textContent = 'Active ' + (acc.monthsActive || 0) + ' months (held % decreases over time)';
+    var heldPct = clampPercent(acc.heldPercentage);
+    document.getElementById('accHeldPct').textContent = heldPct + '%';
+    document.getElementById('heldBar').style.width = heldPct + '%';
+    document.getElementById('accTenure').textContent = 'Active ' + metricCount(acc.monthsActive) + ' months (held % decreases over time)';
   }
 }
 
@@ -388,43 +531,9 @@ async function fetchPricing() {
     var rates = results[0];
     var compare = results[1];
 
-    // Rate card
-    var rateHtml = '';
-    var routes = Object.keys(rates).sort();
-    for (var i = 0; i < routes.length; i++) {
-      var route = routes[i];
-      var rate = rates[route];
-      var priceStr = '';
-      if (rate.perCall === 0 && !rate.perInputToken && !rate.perOutputToken && !rate.perKB && !rate.perMs) {
-        priceStr = '<span class="rate-free">FREE</span>';
-      } else {
-        var parts = [];
-        if (rate.perCall) parts.push(rate.perCall + ' sat/call');
-        if (rate.perInputToken) parts.push((rate.perInputToken * 1000).toFixed(1) + ' sat/1K input');
-        if (rate.perOutputToken) parts.push((rate.perOutputToken * 1000).toFixed(1) + ' sat/1K output');
-        if (rate.perKB) parts.push(rate.perKB + ' sat/KB');
-        if (rate.perMs) parts.push((rate.perMs * 1000).toFixed(1) + ' sat/sec');
-        priceStr = parts.join(' + ');
-      }
-      rateHtml += '<div class="rate-row">' +
-        '<div><div class="rate-name">' + route + '</div><div class="rate-desc">' + (rate.description || '') + '</div></div>' +
-        '<div class="rate-price">' + priceStr + '</div></div>';
-    }
-    document.getElementById('rateCard').innerHTML = rateHtml;
+    renderRateCard(document.getElementById('rateCard'), rates);
 
-    // Comparison
-    if (compare && compare.services) {
-      var ai = compare.services['ai.infer'];
-      if (ai) {
-        var tbody = document.getElementById('compareBody');
-        tbody.innerHTML =
-          '<tr><td>AI Input (1K tokens)</td><td>' + (ai.hiverelay.per1kInput || 1) + ' sats ($' + (ai.hiverelay.per1kInputUsd || 0).toFixed(4) + ')</td>' +
-          '<td>$' + ai.claude.per1kInputUsd + '</td><td>$' + ai.openai.per1kInputUsd + '</td></tr>' +
-          '<tr><td>AI Output (1K tokens)</td><td>' + (ai.hiverelay.per1kOutput || 2) + ' sats ($' + (ai.hiverelay.per1kOutputUsd || 0).toFixed(4) + ')</td>' +
-          '<td>$' + ai.claude.per1kOutputUsd + '</td><td>$' + ai.openai.per1kOutputUsd + '</td></tr>' +
-          '<tr><td colspan="4" class="savings">' + (ai.savingsVsClaude || '') + '</td></tr>';
-      }
-    }
+    renderPricingComparison(document.getElementById('compareBody'), compare);
   } catch (e) {
     console.warn('Pricing fetch failed:', e);
   }
@@ -439,7 +548,7 @@ async function fetchWallets() {
     var stats = await res.json();
     if (stats.credits) {
       document.getElementById('walletSummary').textContent =
-        stats.credits.totalWallets + ' wallets, ' + formatSats(stats.credits.totalDeposited) + ' deposited, ' +
+        metricCount(stats.credits.totalWallets) + ' wallets, ' + formatSats(stats.credits.totalDeposited) + ' deposited, ' +
         formatSats(stats.credits.totalSpent) + ' spent';
     }
   } catch (e) {
@@ -479,12 +588,22 @@ async function fetchOverview() {
   }
 }
 
+function getUiToken() {
+  var m = document.querySelector('meta[name="hiverelay-ui-token"]');
+  return (m && m.getAttribute('content')) || '';
+}
+function sendWsAuth(sock) {
+  var t = getUiToken();
+  if (!t) return;
+  try { sock.send(JSON.stringify({ type: 'auth', token: t })); } catch (e) {}
+}
 function connectWS() {
   var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   var url = proto + '//' + location.host + '/ws';
   try { ws = new WebSocket(url); } catch (e) { return; }
 
   ws.onopen = function() {
+    sendWsAuth(ws);
     wsConnected = true;
     updateConnIndicator();
   };

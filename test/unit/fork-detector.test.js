@@ -231,3 +231,22 @@ test('list() returns all records in a snapshot-friendly shape', async (t) => {
   t.ok(typeof list[0].discoveredAt === 'number')
   t.is(list[0].evidence.length, 2)
 })
+
+test('snapshot + restore rolls back fork evidence and bypass log changes', async (t) => {
+  const fd = await setup(t)
+  const key = validHex()
+  fd.report({ hypercoreKey: key, blockIndex: 0, evidenceA: evidence('a', '1'), evidenceB: evidence('b', '2') })
+  fd.recordBypass({ hypercoreKey: key, caller: 'before' })
+  const snapshot = fd.snapshot()
+
+  fd.report({ hypercoreKey: key, blockIndex: 0, evidenceA: evidence('a', '1'), evidenceB: evidence('c', '3') })
+  fd.recordBypass({ hypercoreKey: key, caller: 'after' })
+  t.is(fd.list()[0].evidence.length, 3)
+  t.is(fd.bypassLog().length, 2)
+
+  fd.restoreSnapshot(snapshot)
+  t.is(fd.list().length, 1)
+  t.is(fd.list()[0].evidence.length, 2, 'additional evidence removed')
+  t.is(fd.bypassLog().length, 1, 'bypass log restored')
+  t.is(fd.bypassLog()[0].caller, 'before')
+})

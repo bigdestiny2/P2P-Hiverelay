@@ -38,6 +38,7 @@ import { NetworkDiscovery } from '../network-discovery.js'
 import { HealthMonitor } from './health-monitor.js'
 import { DiskMonitor } from './disk-monitor.js'
 import { StorageAccounting } from './storage-accounting.js'
+import { ServedAccounting } from './served-accounting.js'
 import { EvictionManager, assertPurgable, purgeDriveCores } from './eviction.js'
 import { SubsidyAccrual } from '../../incentive/subsidy/index.js'
 import { LeaseManager } from '../../incentive/lease/index.js'
@@ -164,6 +165,7 @@ const DEFAULT_CONFIG = {
   replicationRepairEnabled: true,
   targetReplicaFloor: 2,
   bootstrapNodes: null, // null = use HyperDHT defaults
+  dhtFlushTimeoutMs: 1000,
   shutdownTimeoutMs: 10_000,
   enableEviction: true,
   // Bound the in-memory pending-approval queue. With `acceptMode: 'review'` an
@@ -320,6 +322,12 @@ function withTimeout (promise, ms, label) {
   ])
 }
 
+function identityTempPath (keyPath) {
+  const suffix = b4a.alloc(8)
+  sodium.randombytes_buf(suffix)
+  return keyPath + '.tmp-' + Date.now() + '-' + b4a.toString(suffix, 'hex')
+}
+
 export class RelayNode extends EventEmitter {
   constructor (opts = {}) {
     super()
@@ -382,6 +390,7 @@ export class RelayNode extends EventEmitter {
     this.healthMonitor = null
     this.diskMonitor = null
     this.storageAccounting = null
+    this.servedAccounting = null
     this.eviction = null
     this.subsidyAccrual = null
     this.leaseManager = null
@@ -746,6 +755,17 @@ export class RelayNode extends EventEmitter {
       await this._loadCatalogBeeKey()
       await this._loadIndexRoom()
 
+      // Honest outbound (served) byte counting. Attached to the corestore
+      // here — before the swarm exists, so no served block can slip past —
+      // it sums uploads across EVERY core (registry log + every drive's
+      // meta/blob cores), unlike seeder.totalBytesServed which only sees
+      // Seeder.seedCore-routed cores and reads ~0 on registry-drive relays.
+      // Re-created per start(); a self-heal restart recreates the store
+      // above, so stop the old tracker first to drop its stale listener.
+      if (this.servedAccounting) this.servedAccounting.stop()
+      this.servedAccounting = new ServedAccounting({ store: this.store })
+      this.servedAccounting.start()
+
       await this.bootstrapCache.load()
       const bootstrap = this.bootstrapCache.merge(this.config.bootstrapNodes)
 
@@ -884,7 +904,9 @@ export class RelayNode extends EventEmitter {
       // Initialize proof-of-relay challenge system
       this._proofOfRelay = new ProofOfRelay({
         maxLatencyMs: this.config.proofMaxLatencyMs || 5000,
-        challengeInterval: this.config.proofChallengeInterval || 300000
+        challengeInterval: this.config.proofChallengeInterval || 300000,
+        maxPendingChallenges: this.config.proofMaxPendingChallenges || 2048,
+        maxBatchSize: this.config.proofMaxBatchSize || 64
       })
 
       // Anchor proof channel — lets peers request our signed anchor proofs
@@ -979,8 +1001,10 @@ export class RelayNode extends EventEmitter {
         }
       }
 
-      // Flush DHT + start subsystems concurrently
-      startups.push(this.swarm.flush())
+      // Flush DHT + start subsystems concurrently. The flush is bounded so
+      // local API/dashboard startup is not blocked for seconds by a slow DHT
+      // bootstrap; the joined swarm continues discovering peers afterwards.
+      startups.push(this._flushDhtForStartup())
       await Promise.all(startups)
 
       if (this.config.transports && this.config.transports.websocket) {
@@ -1110,8 +1134,10 @@ export class RelayNode extends EventEmitter {
 
         // Set up seeded apps callback for catalog broadcast
         this.serviceProtocol._getSeededApps = () => this.appRegistry.catalogForBroadcast()
-        this.serviceProtocol._getCatalogEnvelope = () => {
-          const apps = this.appRegistry.catalogForBroadcast()
+        this.serviceProtocol._getCatalogEnvelope = (opts = {}) => {
+          const apps = Array.isArray(opts.apps)
+            ? opts.apps
+            : this.appRegistry.catalogForBroadcast()
           const relayPubkey = this.swarm
             ? b4a.toString(this.swarm.keyPair.publicKey, 'hex')
             : null
@@ -1843,9 +1869,9 @@ export class RelayNode extends EventEmitter {
    *   it lets a remote attacker tunnel to the API and ride the localhost
    *   auth fallback), the Tor onion address (defeats a stealth relay), the
    *   disk mountPath (server FS layout), and the seeding-registry key.
-   *   Defaults to true so trusted in-process callers (CLI, metrics, the
-   *   auth-gated WS feed) are unchanged; the HTTP /status and /api/overview
-   *   handlers pass the request's auth result.
+   *   Defaults to true so trusted in-process callers (CLI, metrics) are
+   *   unchanged; HTTP /status, HTTP /api/overview, and the live dashboard
+   *   WebSocket feed request the redacted shape at their own boundaries.
    */
   getStats (opts = {}) {
     const includeSecrets = opts.includeSecrets !== false
@@ -1894,6 +1920,11 @@ export class RelayNode extends EventEmitter {
       storage: this.storageAccounting
         ? { ...this.storageAccounting.getSummary(), dedup: buildDedupReport(this.appRegistry, this.storageAccounting) }
         : null,
+      // Honest served total measured at the replication layer (every core,
+      // not just Seeder.seedCore-routed ones). The served-bytes twin of
+      // `storage` above — see api.js /api/overview for how it's preferred
+      // over the misleading seeder.totalBytesServed counter.
+      served: this.servedAccounting ? this.servedAccounting.getSummary() : null,
       eviction: this.eviction ? this.eviction.getSummary() : null,
       subsidy: this.subsidyAccrual ? this.subsidyAccrual.getSummary() : null,
       signedDirectory: this._signedDirectory ? this._signedDirectory.getStats() : null,
@@ -2112,11 +2143,18 @@ export class RelayNode extends EventEmitter {
       const secretKey = b4a.alloc(64)
       sodium.crypto_sign_keypair(publicKey, secretKey)
       await mkdir(this.config.storage, { recursive: true })
-      await writeFile(keyPath, JSON.stringify({
-        publicKey: b4a.toString(publicKey, 'hex'),
-        secretKey: b4a.toString(secretKey, 'hex')
-      }, null, 2))
-      await chmod(keyPath, 0o600)
+      const tmpPath = identityTempPath(keyPath)
+      try {
+        await writeFile(tmpPath, JSON.stringify({
+          publicKey: b4a.toString(publicKey, 'hex'),
+          secretKey: b4a.toString(secretKey, 'hex')
+        }, null, 2), { mode: 0o600 })
+        await chmod(tmpPath, 0o600)
+        await rename(tmpPath, keyPath)
+      } catch (err) {
+        try { await unlink(tmpPath) } catch (_) {}
+        throw err
+      }
       return { publicKey, secretKey }
     }
   }
@@ -2280,7 +2318,7 @@ export class RelayNode extends EventEmitter {
    * @param {object} cfg - Output of SetupWizard.toConfig()
    * @param {string} [cfg.name]        - operator-chosen relay name
    * @param {string} [cfg.acceptMode]  - 'open' | 'review' | 'allowlist' | 'closed'
-   * @param {object} [cfg.subsidy]     - { payoutDestination } on-chain BTC payout address
+   * @param {object} [cfg.subsidy]     - { payoutDestination } payout destination
    */
   _applyWizardConfig (cfg) {
     if (!cfg || typeof cfg !== 'object') return
@@ -2289,12 +2327,16 @@ export class RelayNode extends EventEmitter {
     }
     if (typeof cfg.acceptMode === 'string') {
       this.config.acceptMode = cfg.acceptMode
+      delete this.config.registryAutoAccept
     }
-    if (cfg.subsidy && typeof cfg.subsidy === 'object' && typeof cfg.subsidy.payoutDestination === 'string' && cfg.subsidy.payoutDestination.length > 0) {
-      this.config.subsidy = { ...this.config.subsidy, payoutDestination: cfg.subsidy.payoutDestination }
-      // If the subsidy accrual is already running, update its destination live.
+    if (cfg.subsidy && typeof cfg.subsidy === 'object' && Object.prototype.hasOwnProperty.call(cfg.subsidy, 'payoutDestination')) {
+      const payoutDestination = typeof cfg.subsidy.payoutDestination === 'string' && cfg.subsidy.payoutDestination.length > 0
+        ? cfg.subsidy.payoutDestination
+        : null
+      this.config.subsidy = { ...this.config.subsidy, payoutDestination }
+      // If subsidy accrual is already running, update its destination live.
       if (this.subsidyAccrual && typeof this.subsidyAccrual.setPayoutDestination === 'function') {
-        Promise.resolve(this.subsidyAccrual.setPayoutDestination(cfg.subsidy.payoutDestination)).catch(() => {})
+        Promise.resolve(this.subsidyAccrual.setPayoutDestination(payoutDestination)).catch(() => {})
       }
     }
     this.emit('wizard-applied', { name: this.config.name, acceptMode: this.config.acceptMode })
@@ -3871,6 +3913,42 @@ export class RelayNode extends EventEmitter {
     if (this._healthCheckInterval.unref) this._healthCheckInterval.unref()
   }
 
+  async _flushDhtForStartup () {
+    if (!this.swarm || typeof this.swarm.flush !== 'function') return false
+    const timeoutMs = Number.isFinite(this.config.dhtFlushTimeoutMs)
+      ? Math.max(0, Math.floor(this.config.dhtFlushTimeoutMs))
+      : DEFAULT_CONFIG.dhtFlushTimeoutMs
+
+    const flush = this.swarm.flush().then(
+      () => ({ ok: true }),
+      (err) => ({ ok: false, error: err })
+    )
+
+    if (timeoutMs === 0) {
+      flush.then((result) => {
+        if (!result.ok) this.emit('dht-flush-error', { error: result.error?.message || String(result.error) })
+      })
+      return false
+    }
+
+    let timer
+    const timeout = new Promise(resolve => {
+      timer = setTimeout(() => resolve({ ok: false, timedOut: true }), timeoutMs)
+    })
+    const result = await Promise.race([flush, timeout])
+    clearTimeout(timer)
+
+    if (result.timedOut) {
+      this.emit('dht-flush-timeout', { timeoutMs })
+      return false
+    }
+    if (!result.ok) {
+      this.emit('dht-flush-error', { error: result.error?.message || String(result.error) })
+      return false
+    }
+    return true
+  }
+
   async stop () {
     if (!this.running) return
 
@@ -3921,6 +3999,7 @@ export class RelayNode extends EventEmitter {
     if (this.diskMonitor) { this.diskMonitor.stop(); this.diskMonitor = null }
     if (this.eviction) { this.eviction.stop(); this.eviction = null }
     if (this.storageAccounting) { this.storageAccounting.stop(); this.storageAccounting = null }
+    if (this.servedAccounting) { this.servedAccounting.stop(); this.servedAccounting = null }
     if (this.subsidyAccrual) { await this.subsidyAccrual.destroy(); this.subsidyAccrual = null }
     if (this.leaseManager) { await this.leaseManager.destroy(); this.leaseManager = null }
     if (this._healthCheckInterval) { clearInterval(this._healthCheckInterval); this._healthCheckInterval = null }

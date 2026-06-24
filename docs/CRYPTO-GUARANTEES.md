@@ -6,13 +6,22 @@ developer choosing relays, this is the document to point at.
 
 ## TL;DR
 
-A relay sees encrypted bytes, sees who connected, and can drop connections.
-That is the entire trust surface. The relay cannot:
+A relay's trust surface depends on the content mode.
 
-- Read app contents (Noise + hypercore-protocol encryption end-to-end)
+- For **public/non-blind apps**, a relay may store readable public Hypercore
+  blocks and catalog metadata. Do not use public mode for data that must remain
+  confidential from the operator.
+- For **blind-mode apps and atomic custody payloads**, the relay stores
+  ciphertext and does not receive the decryption key. The operator can still
+  see network metadata such as peer pubkeys and timing.
+
+Across those modes, the relay cannot:
+
 - Forge an app or its updates (publisher signature required, verified by every reader)
-- Lie about whether it served the bytes (proof-of-relay challenges with cryptographic responses)
-- Decrypt a blind-mode app even if it stores the ciphertext forever (encryption key is never sent to relays)
+- Pass proof-of-relay/storage-proof challenges without the challenged bytes and
+  matching cryptographic proof material
+- Decrypt a blind-mode app or custody payload even if it stores the ciphertext
+  forever (the encryption key is never sent to relays)
 
 This isn't a promise from the relay operator. It's enforced by the protocol;
 a malicious operator who tried to violate any of the above would either fail
@@ -36,7 +45,17 @@ flows. The handshake provides:
 
 This applies to the Hypercore *replication* protocol and to every Protomux
 sub-channel layered on top (seed-request, circuit-relay, proof-of-relay,
-service-RPC, app-catalog). A relay sees Noise frames, period.
+service-RPC, app-catalog). Passive observers and relays that only forward
+opaque circuit traffic see Noise frames. A relay that is the replication
+endpoint decrypts its own transport session and may store the resulting public
+blocks unless the app content is encrypted before replication.
+
+Wire encryption protects data in transit from passive observers and from relays
+that are merely forwarding opaque circuit traffic. A relay that intentionally
+seeds a public/non-blind app also stores the app's public blocks, so wire
+encryption is not a confidentiality guarantee against that relay's local disk.
+Use blind mode or application-level encryption when the relay operator must not
+read content.
 
 **Source:** [hypercore-protocol README](https://github.com/holepunchto/hypercore-protocol),
 [Noise Protocol Framework spec](http://www.noiseprotocol.org/noise.html).
@@ -55,9 +74,11 @@ forged blocks would simply fail signature verification on the reader side
 | Position integrity | Every block references the previous Merkle root — blocks cannot be reordered or omitted without detection |
 | Write authority | Only the holder of the publisher private key can append |
 
-**Implication for relays:** a relay cannot inject content into an app's
-feed. The worst it can do is refuse to serve some blocks, which the reader
-will route around by querying other peers.
+**Implication for relays:** a relay cannot inject content into an app's feed.
+For non-blind/public apps, it may be able to read the public blocks it stores;
+for blind-mode apps, it stores ciphertext. In both cases, the worst integrity
+failure it can cause is refusal or selective service, which readers route
+around by querying other peers.
 
 ### 3. Blind-mode apps
 
@@ -116,10 +137,12 @@ What this does *not* prove:
 - That the relay holds the bytes *in memory* — it could fetch on demand
   from another peer and proxy
 
-That's why proof-of-relay is paired with **bandwidth receipts** (signed
-proofs of bytes actually transferred to a counterparty) for a richer
-"this relay is serving" signal. See `core/protocol/proof-of-relay.js` and
-`bandwidth-receipt.js`.
+That's why proof-of-relay is paired with **bandwidth receipts** (signed proofs
+of bytes actually transferred to a counterparty) and, where enabled, sampled
+`storage-proof` service challenges for a richer "this relay is serving" signal.
+See `core/protocol/proof-of-relay.js`,
+`core/protocol/bandwidth-receipt.js`, and
+`services/builtin/storage-proof-service.js`.
 
 ## Trustless seed verification
 
@@ -218,7 +241,7 @@ on a caller-supplied key).
 |---|---|
 | Submit floods of seed requests | Mitigated by accept-modes (Review queues, Closed rejects) and per-relay rate limits |
 | Try to push forged content under someone else's appKey | Fails — signature check |
-| Try to use a relay as an open DDoS amplifier via DHT-relay-WS | Mitigated by `maxConnections` per transport; future: per-IP rate limit |
+| Try to use a relay as an open DDoS amplifier via DHT-relay-WS | Mitigated by `maxConnections` per transport plus API and endpoint rate limits; transport-specific abuse controls still remain an operational tuning surface |
 | Try to read another app's blind content | Fails — they don't have the encryption key |
 
 ## How this compares to running on a centralized cloud

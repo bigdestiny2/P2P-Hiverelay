@@ -11,6 +11,7 @@
  */
 
 import { EventEmitter } from 'events'
+import { createHash, randomBytes } from 'crypto'
 import { WebSocketServer } from 'ws'
 import { WebSocketStream } from './stream.js'
 
@@ -25,6 +26,20 @@ export class WebSocketTransport extends EventEmitter {
     this.server = null
     this.connections = new Set()
     this.running = false
+    this._ipHashSalt = randomBytes(32)
+  }
+
+  _hashIp (ip) {
+    if (!ip) return null
+    return createHash('sha256').update(this._ipHashSalt).update(String(ip)).digest('hex').slice(0, 16)
+  }
+
+  _safeInfo (ip, remotePort) {
+    return {
+      type: 'websocket',
+      remoteAddressHash: this._hashIp(ip),
+      remotePort
+    }
   }
 
   async start () {
@@ -51,11 +66,7 @@ export class WebSocketTransport extends EventEmitter {
       const stream = new WebSocketStream(ws)
       this.connections.add(stream)
 
-      const info = {
-        type: 'websocket',
-        remoteAddress: req.socket.remoteAddress,
-        remotePort: req.socket.remotePort
-      }
+      const info = this._safeInfo(req.socket.remoteAddress, req.socket.remotePort)
 
       stream.on('close', () => {
         this.connections.delete(stream)

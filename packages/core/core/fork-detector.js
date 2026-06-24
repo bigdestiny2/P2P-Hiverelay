@@ -268,6 +268,27 @@ export class ForkDetector extends EventEmitter {
     return [...this._bypassLog]
   }
 
+  snapshot () {
+    return {
+      forks: [...this._forks.entries()].map(([key, record]) => [key, cloneJson(record)]),
+      bypassLog: cloneJson(this._bypassLog)
+    }
+  }
+
+  restoreSnapshot (snapshot = {}) {
+    this._forks = new Map()
+    const forks = Array.isArray(snapshot.forks) ? snapshot.forks : []
+    for (const entry of forks) {
+      if (!Array.isArray(entry) || entry.length !== 2) continue
+      const [key, record] = entry
+      if (typeof key !== 'string' || !record || typeof record !== 'object') continue
+      this._forks.set(key.toLowerCase(), cloneJson(record))
+    }
+    this._bypassLog = Array.isArray(snapshot.bypassLog)
+      ? cloneJson(snapshot.bypassLog).slice(-this.maxBypassLog)
+      : []
+  }
+
   /**
    * Drop the oldest fork records when we hit the cap. Operators with
    * extremely active networks may want to bump maxForks.
@@ -290,6 +311,11 @@ function isWellFormedEvidence (e) {
     typeof e.fromRelay === 'string' && e.fromRelay.length > 0 &&
     typeof e.block === 'string' && e.block.length > 0 &&
     typeof e.signature === 'string' && e.signature.length > 0
+}
+
+function cloneJson (value) {
+  if (value === undefined) return undefined
+  return JSON.parse(JSON.stringify(value))
 }
 
 export { SCHEMA_VERSION as FORK_DETECTOR_SCHEMA_VERSION }

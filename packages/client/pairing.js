@@ -97,21 +97,62 @@ export function generateCode (digits = CODE_DIGITS) {
   return String(n % max).padStart(digits, '0')
 }
 
-// JSON-over-bytes Protomux message encoding. Protomux already length-
-// prefixes each message, so we wrap a UTF-8 JSON blob in c.string. The
-// payload is small (<300 bytes for our protocol) so double-serializing
-// in preencode/encode is cheap.
-const jsonEncoding = {
+function encodePairJson (msg) {
+  const json = JSON.stringify(msg)
+  if (b4a.byteLength(json) > MAX_FRAME_BYTES) throw new Error('frame too large')
+  return json
+}
+
+// JSON-over-bytes Protomux message encoding. Protomux already length-prefixes
+// each message, so we wrap a UTF-8 JSON blob in c.string. Decode peeks the
+// declared compact string length before materializing it so oversized frames
+// fail with a small protocol error instead of a large string allocation.
+export const pairMessageEncoding = {
   preencode (state, msg) {
-    c.string.preencode(state, JSON.stringify(msg))
+    c.string.preencode(state, encodePairJson(msg))
   },
   encode (state, msg) {
-    c.string.encode(state, JSON.stringify(msg))
+    c.string.encode(state, encodePairJson(msg))
   },
   decode (state) {
-    const s = c.string.decode(state)
-    if (s.length > MAX_FRAME_BYTES) throw new Error('frame too large')
-    return JSON.parse(s)
+    const buffer = state && state.buffer
+    if (!buffer || !Number.isSafeInteger(state.start) || !Number.isSafeInteger(state.end) || state.start < 0 || state.end < state.start || state.end > buffer.length) {
+      if (state && Number.isSafeInteger(state.end)) state.start = Math.min(Math.max(state.end, 0), buffer ? buffer.length : state.end)
+      return { type: -1, error: 'malformed JSON' }
+    }
+
+    let len
+    const lenState = { buffer, start: state.start, end: state.end }
+    try {
+      len = c.uint.decode(lenState)
+    } catch (_) {
+      state.start = state.end
+      return { type: -1, error: 'malformed JSON' }
+    }
+
+    if (!Number.isSafeInteger(len) || len < 0) {
+      state.start = state.end
+      return { type: -1, error: 'malformed JSON' }
+    }
+
+    if (len > MAX_FRAME_BYTES) {
+      state.start = Math.min(state.end, lenState.start + len)
+      return { type: -1, error: 'frame too large' }
+    }
+
+    const end = lenState.start + len
+    if (end > state.end) {
+      state.start = state.end
+      return { type: -1, error: 'malformed JSON' }
+    }
+
+    const s = b4a.toString(buffer, 'utf8', lenState.start, end)
+    state.start = end
+    try {
+      return JSON.parse(s)
+    } catch (_) {
+      return { type: -1, error: 'malformed JSON' }
+    }
   }
 }
 
@@ -159,7 +200,7 @@ function openPairChannel (conn) {
   if (!channel) return null
 
   const msg = channel.addMessage({
-    encoding: jsonEncoding,
+    encoding: pairMessageEncoding,
     onmessage: (m) => deliver(m)
   })
 

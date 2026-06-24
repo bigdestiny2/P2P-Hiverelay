@@ -92,6 +92,7 @@ export class AppRegistry extends EventEmitter {
     // Legacy JSON debouncer state — used only when no store is configured.
     this._saving = false
     this._savePending = false
+    this._saveIdleWaiters = []
     this._saveDebounceTimer = null
 
     // Eviction tombstones (Phase A, 2026-06-11): appKey hex -> evictedAt.
@@ -218,6 +219,23 @@ export class AppRegistry extends EventEmitter {
 
   [Symbol.iterator] () { return this.apps[Symbol.iterator]() }
 
+  snapshot () {
+    return {
+      apps: new Map(this.apps),
+      byAppId: new Map(this.byAppId),
+      evicted: new Map(this.evicted)
+    }
+  }
+
+  restoreSnapshot (snapshot = {}) {
+    this.apps.clear()
+    this.byAppId.clear()
+    this.evicted.clear()
+    for (const [key, value] of snapshot.apps || []) this.apps.set(key, value)
+    for (const [key, value] of snapshot.byAppId || []) this.byAppId.set(key, value)
+    for (const [key, value] of snapshot.evicted || []) this.evicted.set(key, value)
+  }
+
   // ─── Mutations ─────────────────────────────────────────────
 
   _isAppType (entry) {
@@ -291,7 +309,7 @@ export class AppRegistry extends EventEmitter {
   /**
    * Register a seeded app. Automatically persists and emits change event.
    */
-  set (appKey, entry) {
+  set (appKey, entry, opts = {}) {
     const normalized = this._normalizeEntry(entry)
     this.apps.set(appKey, normalized)
 
@@ -300,14 +318,14 @@ export class AppRegistry extends EventEmitter {
       this.byAppId.set(normalized.appId, appKey)
     }
 
-    this._scheduleSave(appKey)
+    if (opts.persist !== false) this._scheduleSave(appKey)
     this.emit('change', { type: 'set', appKey, entry: normalized })
   }
 
   /**
    * Update metadata on an existing entry without replacing it.
    */
-  update (appKey, updates) {
+  update (appKey, updates, opts = {}) {
     const entry = this.apps.get(appKey)
     if (!entry) return false
 
@@ -323,7 +341,7 @@ export class AppRegistry extends EventEmitter {
       this.byAppId.set(entry.appId, appKey)
     }
 
-    this._scheduleSave(appKey)
+    if (opts.persist !== false) this._scheduleSave(appKey)
     this.emit('change', { type: 'update', appKey, entry })
     return true
   }
@@ -331,7 +349,7 @@ export class AppRegistry extends EventEmitter {
   /**
    * Remove a seeded app. Automatically persists and emits change event.
    */
-  delete (appKey) {
+  delete (appKey, opts = {}) {
     const entry = this.apps.get(appKey)
     if (!entry) return false
 
@@ -341,7 +359,7 @@ export class AppRegistry extends EventEmitter {
     }
 
     this.apps.delete(appKey)
-    this._scheduleSave(appKey, { deleted: true })
+    if (opts.persist !== false) this._scheduleSave(appKey, { deleted: true })
     this.emit('change', { type: 'delete', appKey })
     return true
   }
@@ -956,7 +974,9 @@ export class AppRegistry extends EventEmitter {
    * Save registry to disk. Uses atomic write (write temp, rename).
    * Coalesces rapid writes — only one save happens at a time.
    */
-  async save () {
+  async save (opts = {}) {
+    const throwOnError = opts.throwOnError === true
+
     // v0.8.25 — Bee mode: each mutation already wrote its own block via
     // _persistEntryToBee / _deleteEntryFromBee. save() is effectively a
     // no-op except for flushing the bee's internal write buffer.
@@ -969,6 +989,7 @@ export class AppRegistry extends EventEmitter {
         return
       } catch (err) {
         this.emit('error', { context: 'save-bee', error: err })
+        if (throwOnError) throw err
         return
       }
     }
@@ -978,28 +999,40 @@ export class AppRegistry extends EventEmitter {
 
     if (this._saving) {
       this._savePending = true
+      if (throwOnError) {
+        const err = await new Promise(resolve => this._saveIdleWaiters.push(resolve))
+        if (err) throw err
+      }
       return
     }
 
     this._saving = true
+    let lastError = null
     try {
-      const entries = []
-      for (const [appKey, entry] of this.apps) {
-        entries.push(this._persistShape(appKey, entry))
-      }
+      do {
+        this._savePending = false
+        const entries = []
+        for (const [appKey, entry] of this.apps) {
+          entries.push(this._persistShape(appKey, entry))
+        }
 
-      const tmpPath = this._filePath + '.tmp'
-      await writeFile(tmpPath, JSON.stringify(entries, null, 2))
-      await rename(tmpPath, this._filePath)
-    } catch (err) {
-      this.emit('error', { context: 'save', error: err })
+        const tmpPath = this._filePath + '.tmp'
+        try {
+          await writeFile(tmpPath, JSON.stringify(entries, null, 2))
+          await rename(tmpPath, this._filePath)
+          lastError = null
+        } catch (err) {
+          lastError = err
+          this.emit('error', { context: 'save', error: err })
+        }
+      } while (this._savePending)
     } finally {
       this._saving = false
-      if (this._savePending) {
-        this._savePending = false
-        this.save().catch(() => {})
-      }
+      const waiters = this._saveIdleWaiters.splice(0)
+      for (const resolve of waiters) resolve(lastError)
     }
+
+    if (lastError && throwOnError) throw lastError
   }
 
   /**
@@ -1010,17 +1043,20 @@ export class AppRegistry extends EventEmitter {
    * rewrite of the whole registry. Serialization prevents the concurrent
    * read-modify-write race that silently drops entries. The returned
    * promise resolves when THIS write settles; it's tracked in
-   * _pendingBeeOps so flush() can drain. Errors are caught by `run` and
-   * surfaced via the 'error' event without blocking the in-memory
-   * mutation (the caller already has the updated Map state).
+   * _pendingBeeOps so flush() can drain. Errors are surfaced via the
+   * 'error' event and reject the returned promise so explicit persistence
+   * callers can fail closed; background callers attach a catch.
    */
   _enqueueBeeWrite (run) {
     // Snapshot the entry value at enqueue time so a later mutation can't
     // change what this op writes once it's already in the queue.
     const op = this._beeWriteTail.then(run, run)
-    this._beeWriteTail = op
+    this._beeWriteTail = op.catch(() => {})
     this._pendingBeeOps.add(op)
-    op.finally(() => this._pendingBeeOps.delete(op))
+    op.then(
+      () => this._pendingBeeOps.delete(op),
+      () => this._pendingBeeOps.delete(op)
+    )
     return op
   }
 
@@ -1035,6 +1071,7 @@ export class AppRegistry extends EventEmitter {
         await this._bee.put(appKey, shape)
       } catch (err) {
         this.emit('error', { context: 'persist-bee', appKey, error: err })
+        throw err
       }
     })
   }
@@ -1047,8 +1084,43 @@ export class AppRegistry extends EventEmitter {
         await this._bee.del(appKey)
       } catch (err) {
         this.emit('error', { context: 'delete-bee', appKey, error: err })
+        throw err
       }
     })
+  }
+
+  _clearSaveDebounce () {
+    if (!this._saveDebounceTimer) return
+    clearTimeout(this._saveDebounceTimer)
+    this._saveDebounceTimer = null
+  }
+
+  async persistEntry (appKey, opts = {}) {
+    const throwOnError = opts.throwOnError === true
+    try {
+      if (this._beeReady) {
+        await this._persistEntryToBee(appKey)
+        return
+      }
+      this._clearSaveDebounce()
+      await this.save({ throwOnError: true })
+    } catch (err) {
+      if (throwOnError) throw err
+    }
+  }
+
+  async persistDelete (appKey, opts = {}) {
+    const throwOnError = opts.throwOnError === true
+    try {
+      if (this._beeReady) {
+        await this._deleteEntryFromBee(appKey)
+        return
+      }
+      this._clearSaveDebounce()
+      await this.save({ throwOnError: true })
+    } catch (err) {
+      if (throwOnError) throw err
+    }
   }
 
   /**
@@ -1083,17 +1155,23 @@ export class AppRegistry extends EventEmitter {
    * Force an immediate save, bypassing the debounce timer.
    * Call during shutdown to ensure state is persisted.
    */
-  async flush () {
-    if (this._saveDebounceTimer) {
-      clearTimeout(this._saveDebounceTimer)
-      this._saveDebounceTimer = null
-    }
+  async flush (opts = {}) {
+    const throwOnError = opts.throwOnError === true
+    this._clearSaveDebounce()
     // v0.8.25 — drain any fire-and-forget bee writes before returning.
     // Without this, shutdown can race the bee.put for a final
     // setAnchored() that we want to persist before close.
+    let firstError = null
     if (this._pendingBeeOps && this._pendingBeeOps.size > 0) {
-      await Promise.allSettled([...this._pendingBeeOps])
+      const results = await Promise.allSettled([...this._pendingBeeOps])
+      const failed = results.find(result => result.status === 'rejected')
+      if (failed) firstError = failed.reason
     }
-    await this.save()
+    try {
+      await this.save({ throwOnError })
+    } catch (err) {
+      if (!firstError) firstError = err
+    }
+    if (firstError && throwOnError) throw firstError
   }
 }

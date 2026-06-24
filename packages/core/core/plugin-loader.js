@@ -73,7 +73,7 @@ export class PluginLoader {
   async load (pluginConfigs, context = {}) {
     const providers = []
 
-    for (const entry of pluginConfigs) {
+    for (const entry of expandPluginConfigs(pluginConfigs)) {
       let provider
 
       if (typeof entry === 'string') {
@@ -215,4 +215,36 @@ export class PluginLoader {
     }
     this.plugins = []
   }
+}
+
+export function expandPluginConfigs (pluginConfigs) {
+  const out = []
+  const seenBuiltins = new Set()
+
+  const pushBuiltin = (entry) => {
+    if (seenBuiltins.has(entry)) return
+    seenBuiltins.add(entry)
+    out.push(entry)
+  }
+
+  const push = (entry) => {
+    if (typeof entry === 'string') {
+      const bundle = SERVICE_BUNDLES[entry]
+      if (bundle) {
+        for (const bundled of bundle) {
+          if (bundled === entry && BUILTIN_MAP[bundled]) pushBuiltin(bundled)
+          else push(bundled)
+        }
+        return
+      }
+      if (BUILTIN_MAP[entry]) {
+        pushBuiltin(entry)
+        return
+      }
+    }
+    out.push(entry)
+  }
+
+  for (const entry of pluginConfigs || []) push(entry)
+  return out
 }

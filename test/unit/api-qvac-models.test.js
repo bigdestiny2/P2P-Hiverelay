@@ -65,7 +65,7 @@ function request (port, method, path, body, headers = {}) {
   })
 }
 
-async function makeServer (t) {
+async function makeServer (t, opts = {}) {
   const calls = []
   const sdk = {
     loadModel: async (params) => {
@@ -81,7 +81,7 @@ async function makeServer (t) {
     }
   }
   const registry = new ServiceRegistry({ metering: false })
-  const ai = new AIService({ qvac: { sdk } })
+  const ai = opts.provider || new AIService({ qvac: { sdk } })
   registry.register(ai)
   await registry.startAll({})
 
@@ -153,4 +153,76 @@ test('manage api qvac models: rejects non-qvac registration', async (t) => {
   }, { Authorization: 'Bearer ' + API_KEY })
   t.is(res.statusCode, 400)
   t.ok(res.body.error.includes('qvac-backed'))
+})
+
+test('manage api qvac models: redacts unexpected provider errors', async (t) => {
+  const secretPath = '/data/models/private/qvac-secret'
+  const provider = {
+    manifest () {
+      return { name: 'ai', version: '1.0.0', capabilities: ['list-models', 'register-model', 'remove-model'] }
+    },
+    async 'list-models' () {
+      throw new Error('list failed at ' + secretPath)
+    },
+    async 'register-model' () {
+      throw new Error('register failed at ' + secretPath)
+    },
+    async 'remove-model' () {
+      throw new Error('remove failed at ' + secretPath)
+    }
+  }
+  const { port } = await makeServer(t, { provider })
+  const auth = { Authorization: 'Bearer ' + API_KEY }
+
+  const listed = await request(port, 'GET', '/api/manage/ai/models', null, auth)
+  t.is(listed.statusCode, 500)
+  t.alike(listed.body, { error: 'AI model list failed' })
+  t.absent(JSON.stringify(listed.body).includes(secretPath))
+
+  const registered = await request(port, 'POST', '/api/manage/ai/models', {
+    modelId: 'operator-qvac',
+    modelSrc: '/models/operator.gguf'
+  }, auth)
+  t.is(registered.statusCode, 500)
+  t.alike(registered.body, { error: 'AI model registration failed' })
+  t.absent(JSON.stringify(registered.body).includes(secretPath))
+
+  const removed = await request(port, 'POST', '/api/manage/ai/models/remove', {
+    modelId: 'operator-qvac'
+  }, auth)
+  t.is(removed.statusCode, 500)
+  t.alike(removed.body, { error: 'AI model removal failed' })
+  t.absent(JSON.stringify(removed.body).includes(secretPath))
+})
+
+test('manage api qvac models: preserves known AI model errors', async (t) => {
+  const provider = {
+    manifest () {
+      return { name: 'ai', version: '1.0.0', capabilities: ['list-models', 'register-model', 'remove-model'] }
+    },
+    async 'list-models' () {
+      return []
+    },
+    async 'register-model' () {
+      throw new Error('AI_MODEL_EXISTS: operator-qvac')
+    },
+    async 'remove-model' () {
+      throw new Error('AI_MODEL_NOT_FOUND: operator-qvac')
+    }
+  }
+  const { port } = await makeServer(t, { provider })
+  const auth = { Authorization: 'Bearer ' + API_KEY }
+
+  const registered = await request(port, 'POST', '/api/manage/ai/models', {
+    modelId: 'operator-qvac',
+    modelSrc: '/models/operator.gguf'
+  }, auth)
+  t.is(registered.statusCode, 400)
+  t.alike(registered.body, { error: 'AI_MODEL_EXISTS: operator-qvac' })
+
+  const removed = await request(port, 'POST', '/api/manage/ai/models/remove', {
+    modelId: 'operator-qvac'
+  }, auth)
+  t.is(removed.statusCode, 400)
+  t.alike(removed.body, { error: 'AI_MODEL_NOT_FOUND: operator-qvac' })
 })

@@ -8,6 +8,30 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+### Added
+
+- **Honest "Data served" metric** — a new replication-layer counter
+  (`ServedAccounting`) attaches an `upload` listener to *every* core the
+  corestore opens (registry log + every appRegistry drive's meta/blob
+  cores) and sums the bytes. `seeder.totalBytesServed` only saw
+  Seeder.seedCore-routed cores, so it read ~0 on a registry-drive relay
+  that was actively serving app blocks — the served-bytes twin of the
+  "Stored: 0 B" blind spot that `StorageAccounting` fixed. Surfaced as a
+  top-level `served` block (`{ bytes, blocks, measured }`) and
+  `seeder.totalBytesServedMeasured` on `/api/overview` (and the WS feed),
+  as `hiverelay_bytes_served_measured` / `hiverelay_blocks_served_measured`
+  in the Prometheus output, and preferred over the legacy counter in the
+  `status`/`manage` CLI views.
+
+### Changed
+
+- **Blindspark dashboard restores a real "Data served" tile** — v0.16.3
+  had swapped it for a "Storage used %" stopgap because no honest served
+  source existed. The tile now reads the measured `served.bytes`; the
+  absolute on-disk total moved into the "Storage used" sublabel
+  (`<used> of <cap>`), so the 2x2 layout keeps every figure with nothing
+  dropped.
+
 ## [0.20.1] — 2026-06-24
 
 ### Fixed

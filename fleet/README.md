@@ -20,8 +20,8 @@ for boxes we don't control.
 
 ```
 fleet/channels.json   ──(raw.githubusercontent)──▶  each box's updater
-   stable: v0.15.6                                   reads its channel,
-   canary: v0.16.3                                   checks out the tag,
+   stable: v0.20.1                                   reads its channel,
+   canary: v0.20.1                                   checks out the tag,
                                                       health-gates, and
                                                       rolls back on failure
 ```
@@ -35,6 +35,7 @@ fleet/channels.json   ──(raw.githubusercontent)──▶  each box's updater
 | `install-updater.sh` | Install the agent on a box, set its channel. |
 | `tailscale-enroll.sh` | Put a box on the tailnet (break-glass plane). |
 | `fleet-status.sh` | One-shot health table from your workstation. |
+| `scripts/check-fleet-rollout.mjs` | Retry until a channel has checked out the release tag SHA and `/health` is green. |
 
 `updater.sh` is the **automated, fleet-wide** layer. `hiverelay manage`
 (the per-node interactive TUI in `packages/core/cli/manage.js`) is the
@@ -46,10 +47,17 @@ their channel; `manage` is for hands-on tweaks to one node.
 1. Cut a release as usual (tag `vX.Y.Z`, CI publishes the image).
 2. **Canary:** bump `canary` in `channels.json`, commit. The canary box
    (utah) self-updates within ~15 min, health-gates, rolls back if bad.
-3. **Verify:** `bash fleet/fleet-status.sh` — confirm the canary is on
-   the new version and green.
+3. **Verify:** `npm run fleet:check-rollout -- --target vX.Y.Z --channel canary`
+   from a workstation with SSH access. This checks the exact release tag SHA,
+   not just the package version, and requires `/health` `running:true`.
 4. **Promote:** bump `stable` to the same tag, commit. The stable boxes
    follow on their next tick.
+
+For a quick table without waiting for convergence, run:
+
+```bash
+bash fleet/fleet-status.sh
+```
 
 To **hold** a box, point its channel at the version it already runs. To
 **roll the whole channel back**, set the tag back — boxes check out the
@@ -58,12 +66,20 @@ older tag exactly like a forward update (health-gated the same way).
 ## Safety properties
 
 - **Health-gated:** after restart the agent polls `/health` for
-  `running:true` (120s). No green → automatic rollback to the prior SHA.
+  `running:true` and a runtime `version` matching the target tag (120s). No
+  green -> automatic rollback to the prior SHA.
 - **Dirty-tree guard:** the agent refuses to act if the repo has
   uncommitted changes — it never clobbers a hand-edit.
+- **Config treated as data:** `/etc/hiverelay-updater.conf` is parsed for a
+  single validated `CHANNEL=` value; the updater does not source it as shell.
 - **Single-flight:** `flock`; overlapping ticks can't collide.
 - **Jittered:** boxes update on randomized offsets — no thundering herd
   on GitHub and no fleet-wide simultaneous restart.
+- **Release proof:** when `FLEET_SSH_PRIVATE_KEY` is configured in CI, the
+  release workflow waits after channel promotion until every target-channel
+  relay has checked out the release tag commit, reports the release package
+  version, and reports healthy. It also writes `fleet-rollout-evidence.json`,
+  a public-safe per-relay summary that omits SSH hosts and keys.
 - **Deps only when needed:** `npm ci` runs only if `package-lock.json`
   changed between the old and new tag.
 - **No update bloat:** repeated updates can't grow the box. After a
@@ -71,12 +87,10 @@ older tag exactly like a forward update (health-gated the same way).
   when >512M free, never on rollback). `npm` cache is content-addressed
   and self-limiting (~0.5M); `node_modules` is replaced in place, not
   accumulated. The real footprint risk is logs, bounded separately:
-  `harden-box.sh` (run by `install-updater.sh`) caps journald at 200M
-  (1G keep-free) and logrotates `/var/log/hiverelay.log`. *Tracked
-  follow-up:* the 5s status-line `process.stdout.write` in
-  `packages/core/cli/index.js` is the log-volume driver — quieting it at
-  the source (TTY-gate + 60s structured log) ships with the next version
-  bump; until then the cap + rotation are the guarantee.
+  `harden-box.sh` (run by `install-updater.sh`) caps journald at 100M
+  (1G keep-free) and logrotates `/var/log/hiverelay.log`. The interactive
+  5s status bar is TTY-gated in `packages/core/cli/index.js`; service
+  runs emit one structured `relay status` log per minute instead.
 
 ## Break-glass: Tailscale
 
@@ -101,7 +115,6 @@ sudo bash fleet/install-updater.sh stable   # the other four
 hiverelay-updater --dry-run                  # confirm the decision, no changes
 ```
 
-`channels.json` ships with `stable: v0.15.6` (the fleet's current
-version) so installing the agent on a stable box is a **no-op** until you
-promote — installation is safe. Set `canary: v0.16.3` lets utah move
-first.
+`channels.json` ships with `stable: v0.20.1` and `canary: v0.20.1`, so
+installing the agent on a box already at the current release is a
+**no-op** until you promote the channel to a newer tag.

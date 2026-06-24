@@ -1,220 +1,219 @@
-> [!WARNING]
-> **Doc may be partially out of date.** This file was written before the Compute removal, Core/Services split, and Catalog auto-sync removal. See the [CHANGELOG](../CHANGELOG.md) for current architecture.
+# HiveRelay and Pear Browser Projects
 
-# HiveRelay + PearBrowser — App Store Infrastructure
+This document describes the current contracts between HiveRelay and the two
+browser anchors in this workspace:
 
-HiveRelay is the backbone infrastructure that powers PearBrowser's decentralized App Store. Without it, P2P apps on mobile are slow, unreliable, and undiscoverable. With it, apps load instantly, stay available 24/7, and users never need to touch a Hyperdrive key.
+- [`../../../01-browser/PearBrowser`](../../../01-browser/PearBrowser)
+- [`../../../01-browser/pearbrowser-desktop`](../../../01-browser/pearbrowser-desktop)
 
-## Why HiveRelay Is Essential
+It intentionally focuses on the surfaces that need to stay stable even while
+package versions drift.
 
-### Problem 1: Apps need to be available 24/7
+## The contract browsers expect from HiveRelay
 
-A developer publishes a POS app from their laptop. They close the laptop and go to sleep. A user in another timezone opens PearBrowser and wants to install the POS app.
+### 1. Public catalog
 
-**Without HiveRelay:** App unavailable. No peers online serving that Hyperdrive.
+Browsers need a browsable index. Today that means:
 
-**With HiveRelay:** App loads instantly. Relay seeded the drive and serves it via HTTP gateway.
+- `GET /catalog.json`
+- optional `catalogBeeKey` in that response for a signed Hyperbee catalog
 
-### Problem 2: Mobile P2P is slow for first load
+Current behavior in this repo:
 
-Finding peers on the DHT takes 5-15 seconds. Downloading a 1.3MB app bundle over P2P takes more time on top of that. Users expect pages to load in under 2 seconds.
+- the gateway route paginates into `items`
+- older consumers may still expect `apps`
+- mobile code already tolerates both shapes
 
-**Without HiveRelay:** User stares at "Connecting..." for 15+ seconds.
+If a relay has no usable catalog, app-store UX falls back to raw drive keys and
+manual workflows.
 
-**With HiveRelay:** Relay serves the app via HTTP in under 2 seconds.
+### 2. Public content gateway
 
-### Problem 3: The catalog needs a home
+Browsers need a fast path for first load:
 
-The App Store catalog (`/catalog.json`) lists all available apps with names, descriptions, and categories. Someone needs to host it reliably so users can discover apps.
+- `GET /v1/hyper/:key/*path`
 
-**Without HiveRelay:** Every user needs to manually enter 64-character Hyperdrive keys. No discovery. No browsing.
+That is what turns "wait for the DHT and a peer" into "open the app/site now,
+keep P2P syncing in the background."
 
-**With HiveRelay:** Relay auto-builds the catalog from seeded drives that contain a `manifest.json`. Users just open the App Store tab and browse.
+### 3. Capability advertisement
 
-### Problem 4: Data availability for sync
+Browsers and tooling need machine-readable relay metadata:
 
-POS transactions and inventory sync via Autobase across multiple devices. If all devices are offline, new devices joining the sync group can't catch up on missed data.
+- `GET /.well-known/hiverelay.json`
 
-**Without HiveRelay:** Data only syncs when peers happen to be online at the same time.
+This is the stable place to advertise:
 
-**With HiveRelay:** Relay seeds the Autobase cores, ensuring data is always available for new peers to replicate from.
+- relay pubkey
+- runtime (`node` or `bare`)
+- version
+- supported transports
+- feature flags
+- region/operator-facing limits
 
-## The Architecture
+### 4. Publish and seed entry points
 
-```
-HiveRelay Node
-├── Hyperswarm (P2P networking)         ← peers connect here
-├── Seeder (replicates Hyperdrives)     ← stores app files permanently
-├── HTTP Gateway (/v1/hyper/KEY/*)      ← serves apps to PearBrowser instantly
-├── Catalog (/catalog.json)             ← auto-built app directory
-├── Circuit Relay (NAT traversal)       ← helps mobile peers behind firewalls
-├── Reputation + Proof-of-Relay         ← trust and verification
-└── HiveCompute (future)               ← AI inference for P2P apps
+At minimum the browser ecosystem needs:
 
-PearBrowser (iOS)
-├── App Store → loads /catalog.json from relay
-├── App Launch → fetches from /v1/hyper/KEY/ (instant HTTP)
-├── P2P sync → Autobase over Hyperswarm (relay provides availability)
-├── Site Builder → publishes to relay for 24/7 seeding
-└── Browser → browses hyper:// via hybrid fetch (relay + P2P)
-```
+- `POST /seed` for authenticated pinning
+- publisher-signed `POST /api/v1/seed` where that flow is used
 
-HiveRelay is to PearBrowser what CDN + App Store infrastructure + sync servers are to a traditional mobile app — except it's decentralized. Anyone can run a relay.
+Desktop tooling already uses `p2p-hiverelay-client` directly for this.
 
-## How It Works End-to-End
+### 5. Liveness and diagnostics
 
-### Developer Publishes an App
+- `GET /health`
+- `GET /status`
 
-```
-Developer                          HiveRelay                        PearBrowser User
-─────────                          ─────────                        ────────────────
+These are the low-friction checks every browser-side tool and operator script
+ends up using first.
 
-1. Build app (HTML/JS/CSS)
-   + manifest.json
+## What each browser currently does
 
-2. Publish as Hyperdrive
-   → node publish-app.js ./dist
-   → Key: abc123...
+### PearBrowser mobile
 
-3. Seed on relay                 → Relay joins swarm for abc123
-   POST /seed {"appKey":"abc123"}  → Replicates Hyperdrive files
-                                   → Reads manifest.json
-                                   → Adds to /catalog.json
+The mobile browser treats HiveRelay as:
 
-                                                                    4. Opens App Store tab
-                                                                       → Fetches /catalog.json
-                                                                       → Sees "My App" listed
+- an HTTP app-store source
+- a fast-start gateway for `hyper://` and app content
+- a relay configuration target the user can swap at runtime
 
-                                                                    5. Taps "Get" → "Open"
-                                                                       → Loads from /v1/hyper/abc123/
-                                                                       → Renders instantly (HTTP)
+Relevant implementation seams:
 
-                                                                    6. App data syncs via Autobase
-                                                                       → P2P through Hyperswarm
-                                                                       → Relay ensures availability
-```
+- `backend/relay-client.js`
+- `backend/catalog-manager.js`
+- `backend/index.js`
 
-### User Browses hyper:// Content
+The mobile app can also prefer a signed catalog bee when the relay advertises a
+`catalogBeeKey` in `/catalog.json`.
 
-PearBrowser uses a hybrid fetch architecture — two paths race simultaneously:
+### PearBrowser desktop
 
-```
-Phone navigates to hyper://KEY/path
-  │
-  ├── Fast path: HTTP GET relay:9100/v1/hyper/KEY/path
-  │   └── If relay has it seeded → response in 1-2 seconds
-  │
-  └── P2P path: Hyperswarm DHT → find peers → download
-      └── Direct peer connection → response in 5-15 seconds
+The desktop browser does the same HTTP/gateway work, but it also has ecosystem
+publishing scripts that already depend on HiveRelay:
 
-Whichever responds first wins. Both paths run concurrently.
-```
+- `scripts/publish-and-pin.js`
+- `scripts/pin-self-on-hiverelay.js`
+- `scripts/publish-catalog-bee.js`
+- `scripts/check-relays.js`
 
-After first load, content is cached locally on the phone. Subsequent visits are instant.
+The most important desktop-specific contract is the signed Hyperbee catalog:
 
-## Relay API Endpoints for PearBrowser
+- the browser can consume a `hyperbee://` catalog directly
+- the relay can advertise that catalog through `catalogBeeKey`
+- `scripts/publish-catalog-bee.js` already emits the exact signed `\x00meta`
+  format the browser expects
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/catalog.json` | GET | App catalog — auto-built from seeded drives with manifest.json |
-| `/v1/hyper/:key/*path` | GET | Serve Hyperdrive content over HTTP (gateway) |
-| `/api/gateway` | GET | Gateway stats (cached drives, requests, bytes served) |
-| `/seed` | POST | Seed a new Hyperdrive (accepts `{"appKey": "hex"}`) |
-| `/health` | GET | Relay health check |
-| `/status` | GET | Full relay status (connections, seeded apps, bandwidth) |
+## Content requirements for browser-friendly drives
 
-### App Manifest Format
+For a drive to feel native inside the browsers, it should provide:
 
-Every app Hyperdrive must contain `/manifest.json` for the catalog to index it:
+1. `manifest.json` at the root
+2. a valid entry file such as `/index.html`
+3. relative asset loading that survives gateway paths
+4. enough metadata for catalog display
+
+Recommended `manifest.json` fields:
 
 ```json
 {
-  "name": "Pear POS",
+  "name": "My App",
   "version": "1.0.0",
-  "description": "P2P point-of-sale with receipt scanning & payments",
-  "author": "developer-name",
+  "description": "Short one-line description",
+  "author": "your-name",
   "entry": "/index.html",
-  "categories": ["business"],
-  "permissions": ["camera"]
+  "categories": ["utilities"]
 }
 ```
 
-### HTML Path Rewriting
+Without this, relay catalogs degrade and browser discovery gets worse fast.
 
-The gateway automatically rewrites absolute asset paths in HTML responses so Vite-built apps work correctly:
+## Signed catalog bees versus plain HTTP catalogs
 
-```
-Original:  <script src="/assets/index-abc123.js">
-Rewritten: <script src="./assets/index-abc123.js">
-```
+There are now two useful catalog layers:
 
-This ensures relative resolution through the gateway path (`/v1/hyper/KEY/assets/...`).
+### Plain HTTP catalog
 
-## What the Relay Provides vs. What's P2P
+- easiest interoperability path
+- served from `/catalog.json`
+- ideal for app-store bootstrap and non-P2P consumers
 
-| Function | Relay (HTTP) | P2P (Hyperswarm) |
-|----------|-------------|------------------|
-| App frontend delivery | Primary (instant) | Fallback (slow first load) |
-| App catalog / discovery | Primary | N/A |
-| Data sync (Autobase) | Availability backup | Primary (real-time) |
-| NAT traversal | Circuit relay | UDP hole-punching |
-| Content availability | 24/7 (always-on) | Only when peers online |
-| Site publishing | Seeds for availability | Direct peer serving |
+### Signed Hyperbee catalog
 
-## Running a Relay for PearBrowser
+- better long-term Pear-native format
+- relay advertises the bee with `catalogBeeKey`
+- browser replicates and verifies the catalog instead of trusting a raw HTTP
+  JSON payload
 
-Any HiveRelay node with the gateway module enabled automatically supports PearBrowser:
+The two should coexist. The HTTP catalog remains the bootstrap/discovery path;
+the signed bee is the stronger in-network catalog once the client can replicate
+it.
+
+## Local workspace flows
+
+### Publish an app/site and make it browser-visible
+
+Use HiveRelay-side publishing helpers:
+
+- [`../scripts/publish-app.js`](../scripts/publish-app.js)
+- [`./PUBLISHING.md`](./PUBLISHING.md)
+
+Then verify:
 
 ```bash
-# Start a relay node
-node cli/index.js start --port 9100
-
-# The relay automatically:
-# - Joins the DHT for peer discovery
-# - Serves /catalog.json from seeded drives
-# - Serves /v1/hyper/KEY/* for seeded content
-# - Provides circuit relay for NAT traversal
-
-# Seed an app so it appears in the catalog
-curl -X POST http://localhost:9100/seed \
-  -H 'Content-Type: application/json' \
-  -d '{"appKey": "abc123..."}'
-
-# Verify the catalog
-curl http://localhost:9100/catalog.json
+curl http://127.0.0.1:9100/catalog.json
+curl http://127.0.0.1:9100/v1/hyper/<driveKey>/index.html
+curl http://127.0.0.1:9100/.well-known/hiverelay.json
 ```
 
-## Multiple Relays
+### Publish a browser-consumable catalog bee
 
-PearBrowser can connect to multiple relays. Each relay maintains its own catalog based on what it seeds. Users can add relay URLs in Settings.
+From desktop:
 
-Relay operators choose what to seed — they can run:
-- **General catalogs** — seed everything, like a public app store
-- **Curated catalogs** — only seed vetted apps
-- **Private catalogs** — company-internal apps
-- **Regional catalogs** — apps relevant to a specific geography
-
-The decentralization comes from the fact that anyone can run a relay, and PearBrowser aggregates across multiple catalogs.
-
-## Future: HiveCompute Integration
-
-HiveRelay nodes that also run HiveCompute can provide AI inference to P2P apps through the `window.pear.compute` bridge:
-
-```javascript
-// Inside a P2P app running in PearBrowser
-const stream = window.pear.compute.inference({
-  model: 'llama3.2',
-  messages: [{ role: 'user', content: 'Summarize this receipt' }]
-})
-for await (const chunk of stream) {
-  console.log(chunk.text)
-}
+```bash
+node scripts/publish-catalog-bee.js <catalog.json> --storage <dir> --serve
 ```
 
-The relay discovers HiveCompute nodes on the DHT and routes inference requests to the nearest available GPU.
+That gives you a stable `hyperbee://` catalog plus relay pinning.
 
-## Links
+## Risks to keep in mind
 
-- **[PearBrowser](https://github.com/bigdestiny2/PearBrowser)** — The iOS P2P app platform
-- **[HiveRelay](https://github.com/bigdestiny2/p2p-hiverelay)** — The relay backbone
-- **[Holepunch](https://holepunch.to)** — The underlying P2P stack
+### Version skew
+
+This workspace is not pinned to one HiveRelay version line:
+
+- `hiverelay` is `0.16.3`
+- `pearbrowser-desktop` still depends on `^0.8.12`
+
+That means compatibility work should bias toward:
+
+- wire-level HTTP contracts
+- capability-doc verification
+- signed catalog formats
+- focused browser smoke tests
+
+### Catalog shape drift
+
+Catalog responses have evolved. Keep consumers tolerant:
+
+- `items` versus `apps`
+- presence or absence of `catalogBeeKey`
+- relay-managed pagination
+
+### Service assumptions
+
+Browser projects should not assume every relay runs the same service set. Relay
+services are optional and runtime-dependent.
+
+## Recommended shared smoke test
+
+Every ecosystem project that wants browser visibility should prove these five
+steps locally:
+
+1. Publish a drive with `manifest.json`.
+2. Seed it on a local or reachable relay.
+3. Confirm it appears in `GET /catalog.json`.
+4. Confirm `GET /v1/hyper/<driveKey>/index.html` serves.
+5. Open it from PearBrowser or pearbrowser-desktop without hand-editing code.
+
+That smoke test is the right place to standardize next across the workspace.

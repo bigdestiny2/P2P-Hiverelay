@@ -17,15 +17,17 @@
     var orig = window.fetch.bind(window);
     window.fetch = function (input, init) {
       init = init || {};
+      var raw = (typeof input === 'string') ? input : (input && (input.url || input.href)) || String(input || '');
+      var u = new URL(raw, window.location.href);
       var h = new Headers((init && init.headers) || (input && input.headers) || {});
-      if (!h.has('Authorization')) h.set('Authorization', 'Bearer ' + t);
+      if (u.origin === window.location.origin && !h.has('Authorization')) h.set('Authorization', 'Bearer ' + t);
       init.headers = h;
       return orig(input, init);
     };
   } catch (e) { /* never block page load on the auth shim */ }
 })();
 </script>
-<title>Blindspark — Setup</title>
+<title>HiveRelay Setup</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50 10 L30 55 L45 55 L40 90 L70 45 L55 45 Z' fill='%23f5a623'/%3E%3C/svg%3E">
 <style>
   *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0 }
@@ -37,7 +39,7 @@
     --text: #d6dde8;
     --text-dim: #8493a8;
     --text-hi: #ffffff;
-    --accent: #f5a623;       /* Blindspark orange — the "spark" */
+    --accent: #f5a623;       /* HiveRelay amber */
     --accent-dim: #b8771a;
     --good: #4ade80;
     --bad: #f87171;
@@ -289,6 +291,16 @@
   }
   .error:empty { display: none }
 
+  .wizard-status {
+    min-height: 1.15rem;
+    color: var(--text-dim);
+    font-size: .86rem;
+    margin-bottom: 1rem;
+  }
+  .wizard-status.busy { color: var(--accent) }
+  .wizard-status.error { color: var(--bad) }
+  .wizard-status:empty { display: none }
+
   /* Honesty box — explicit "this is new, manage expectations" */
   .honesty {
     margin-top: 1rem;
@@ -348,11 +360,11 @@
 <body>
 
 <div class="top">
-  <a class="logo" href="#" onclick="return false">
+  <a class="logo" href="/dashboard" data-wizard-action="dashboard">
     <svg viewBox="0 0 100 100" aria-hidden="true">
       <path d="M50 10 L30 55 L45 55 L40 90 L70 45 L55 45 Z" fill="#f5a623"/>
     </svg>
-    Blindspark
+    HiveRelay
   </a>
   <div class="progress" id="progress">
     <div class="dot active"></div>
@@ -366,9 +378,11 @@
 
 <div class="card">
 
+  <div class="wizard-status" id="wizard-status" role="status" aria-live="polite" aria-atomic="true"></div>
+
   <!-- Step 1: Welcome -->
   <section class="step active" data-step="welcome">
-    <h1>Welcome to Blindspark.</h1>
+    <h1>Welcome to HiveRelay.</h1>
     <p class="lead">Earn sats for blind seeding P2P apps.</p>
     <p>
       Your Umbrel is about to become a paid relay for the Pear/Holepunch
@@ -378,18 +392,18 @@
     </p>
     <p>
       Setup takes a couple of minutes. We'll name your relay, optionally
-      add a BTC payout address, and pick a default policy for incoming
+      add a payout destination, and pick a default policy for incoming
       requests. You can change everything later.
     </p>
     <div class="honesty">
-      <strong>Honest expectations:</strong> Blindspark is a new
+      <strong>Honest expectations:</strong> HiveRelay is a new
       network. Early relays may earn very little while the demand-side
       market is being built. The pitch is "you already paid for the
       box; this is the switch to make it earn."
     </div>
     <div class="actions">
       <span></span>
-      <button onclick="goNext('relay_name')">Let's go →</button>
+      <button type="button" data-wizard-action="goto" data-step-target="relay_name">Let's go →</button>
     </div>
   </section>
 
@@ -404,31 +418,31 @@
     </div>
     <div class="error" id="err-relay-name"></div>
     <div class="actions">
-      <button class="secondary" onclick="goNext('welcome')">← Back</button>
-      <button id="btn-relay-name" onclick="submitRelayName()">Continue</button>
+      <button type="button" class="secondary" data-wizard-action="goto" data-step-target="welcome">← Back</button>
+      <button type="button" id="btn-relay-name" data-wizard-action="relay-name">Continue</button>
     </div>
   </section>
 
-  <!-- Step 3: BTC wallet (optional) -->
+  <!-- Step 3: Payout wallet (optional) -->
   <section class="step" data-step="payout">
     <h2>Your BTC wallet</h2>
     <p class="lead">Where payments land. Optional — add it now or later.</p>
     <div class="field">
-      <label for="payout-input">BTC address (on-chain)</label>
-      <input type="text" id="payout-input" placeholder="bc1… — or leave blank to skip" autocomplete="off" spellcheck="false">
+      <label for="payout-input">Payout destination</label>
+      <input type="text" id="payout-input" placeholder="you@example.com, lno1…, or bc1…" autocomplete="off" spellcheck="false">
       <div class="field-help">
-        Paste a receive address from your own BTC wallet. Payments go straight
-        there — the relay never holds funds, and there's no external service or
-        node to run. On-chain BTC only (bc1…, 1…, or 3…). You can change it
-        anytime from the dashboard.
+        Paste a lightning address, BOLT12 offer, or receive address from your
+        own BTC wallet. Payments go straight there — the relay never holds
+        funds, and there's no external service or node to run. You can change
+        it anytime from the dashboard.
       </div>
     </div>
     <div class="error" id="err-payout"></div>
     <div class="actions">
-      <button class="secondary" onclick="goNext('relay_name')">← Back</button>
+      <button type="button" class="secondary" data-wizard-action="goto" data-step-target="relay_name">← Back</button>
       <span>
-        <button class="secondary" onclick="skipPayout()">Skip</button>
-        <button id="btn-payout" onclick="submitPayout()">Continue</button>
+        <button type="button" class="secondary" data-wizard-action="skip-payout">Skip</button>
+        <button type="button" id="btn-payout" data-wizard-action="payout">Continue</button>
       </span>
     </div>
   </section>
@@ -438,7 +452,7 @@
     <h2>Choose your default policy</h2>
     <p class="lead">How should the relay handle incoming seed requests?</p>
     <div class="choices">
-      <button class="choice" data-mode="review" onclick="selectMode('review')">
+      <button type="button" class="choice" data-wizard-action="select-mode" data-mode="review">
         <div class="choice-title">
           Review
           <span class="recommended">recommended</span>
@@ -448,14 +462,14 @@
           The safe default while you learn how the network behaves.
         </div>
       </button>
-      <button class="choice" data-mode="allowlist" onclick="selectMode('allowlist')">
+      <button type="button" class="choice" data-wizard-action="select-mode" data-mode="allowlist">
         <div class="choice-title">Allowlist</div>
         <div class="choice-desc">
           Auto-accept requests from publishers you've explicitly trusted.
           Add publishers from the dashboard after install.
         </div>
       </button>
-      <button class="choice" data-mode="open" onclick="selectMode('open')">
+      <button type="button" class="choice" data-wizard-action="select-mode" data-mode="open">
         <div class="choice-title">Open</div>
         <div class="choice-desc">
           Auto-accept any signed request. Pair with payment-required
@@ -465,8 +479,8 @@
     </div>
     <div class="error" id="err-accept-mode"></div>
     <div class="actions">
-      <button class="secondary" onclick="goNext('payout')">← Back</button>
-      <button id="btn-accept-mode" onclick="submitAcceptMode()" disabled>Continue</button>
+      <button type="button" class="secondary" data-wizard-action="goto" data-step-target="payout">← Back</button>
+      <button type="button" id="btn-accept-mode" data-wizard-action="accept-mode" disabled>Continue</button>
     </div>
   </section>
 
@@ -475,7 +489,7 @@
     <div class="complete-icon">⚡</div>
     <h1 style="text-align:center">You're online.</h1>
     <p class="lead" style="text-align:center">
-      Your relay is now discoverable on the Blindspark network.
+      Your relay is now discoverable on the HiveRelay network.
     </p>
     <div class="complete-stat">0 sats</div>
     <div class="complete-stat-label">earned this month</div>
@@ -485,7 +499,7 @@
       phase.
     </p>
     <div class="actions" style="justify-content:center">
-      <button onclick="goToDashboard()">Open dashboard →</button>
+      <button type="button" data-wizard-action="dashboard">Open dashboard →</button>
     </div>
   </section>
 
@@ -501,11 +515,47 @@
   const STEPS = ['welcome', 'relay_name', 'payout', 'accept_mode', 'complete']
   let state = null
   let selectedMode = null
+  let wizardActionBusy = false
+  const editMode = new URLSearchParams(window.location.search).get('edit') === '1'
+
+  function appBasePath () {
+    const p = window.location.pathname.replace(/\/+$/, '') || '/'
+    const routes = ['/dashboard', '/wizard']
+    for (const r of routes) {
+      if (p === r) return ''
+      if (p.endsWith(r)) return p.slice(0, -r.length)
+    }
+    return p === '/' ? '' : p
+  }
+
+  const APP_BASE = appBasePath()
+
+  function appPath (path) {
+    if (!path) return APP_BASE || '/'
+    return (APP_BASE || '') + (path.charAt(0) === '/' ? path : '/' + path)
+  }
 
   // ─── API helpers ────────────────────────────────────────────
 
+  const REQUEST_TIMEOUT_MS = 10000
+
+  async function fetchWithTimeout (path, opts = {}) {
+    const options = { ...opts }
+    let timeout = null
+    if (typeof AbortController === 'function') {
+      const controller = new AbortController()
+      options.signal = controller.signal
+      timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    }
+    try {
+      return await fetch(appPath(path), options)
+    } finally {
+      if (timeout) clearTimeout(timeout)
+    }
+  }
+
   async function api (path, opts = {}) {
-    const res = await fetch(path, {
+    const res = await fetchWithTimeout(path, {
       method: opts.method || 'GET',
       headers: opts.body ? { 'Content-Type': 'application/json' } : {},
       body: opts.body ? JSON.stringify(opts.body) : undefined
@@ -649,7 +699,71 @@
   // ─── Step 5 — done ──────────────────────────────────────────
 
   function goToDashboard () {
-    window.location.href = '/dashboard'
+    window.location.href = appPath('/dashboard')
+  }
+
+  function wizardActionLabel (action) {
+    if (action === 'goto') return 'Loading setup step...'
+    if (action === 'relay-name') return 'Saving relay name...'
+    if (action === 'payout') return 'Saving payout destination...'
+    if (action === 'skip-payout') return 'Skipping payout destination...'
+    if (action === 'accept-mode') return 'Applying setup...'
+    if (action === 'dashboard') return 'Opening dashboard...'
+    return 'Working...'
+  }
+
+  function setWizardStatus (message, kind) {
+    const status = document.getElementById('wizard-status')
+    if (!status) return
+    status.textContent = message || ''
+    status.className = 'wizard-status' + (kind ? ' ' + kind : '')
+  }
+
+  function setWizardActionBusy (busy, action) {
+    wizardActionBusy = !!busy
+    document.querySelectorAll('[data-wizard-action]').forEach(control => {
+      if ('disabled' in control) {
+        control.disabled = wizardActionBusy
+      } else if (wizardActionBusy) {
+        control.setAttribute('aria-disabled', 'true')
+      } else {
+        control.removeAttribute('aria-disabled')
+      }
+    })
+    if (!wizardActionBusy) {
+      const accept = document.getElementById('btn-accept-mode')
+      if (accept) accept.disabled = !selectedMode
+    }
+    setWizardStatus(wizardActionBusy ? wizardActionLabel(action) : '', wizardActionBusy ? 'busy' : '')
+  }
+
+  function bindWizardActions () {
+    document.addEventListener('click', event => {
+      const el = event.target.closest('[data-wizard-action]')
+      if (!el) return
+      event.preventDefault()
+
+      const action = el.dataset.wizardAction
+      if (wizardActionBusy && action !== 'select-mode') return
+      let result
+      if (action === 'goto') result = goNext(el.dataset.stepTarget || 'welcome')
+      else if (action === 'relay-name') result = submitRelayName()
+      else if (action === 'payout') result = submitPayout()
+      else if (action === 'skip-payout') result = skipPayout()
+      else if (action === 'select-mode') result = selectMode(el.dataset.mode)
+      else if (action === 'accept-mode') result = submitAcceptMode()
+      else if (action === 'dashboard') result = goToDashboard()
+
+      if (result && typeof result.catch === 'function') {
+        setWizardActionBusy(true, action)
+        result
+          .catch(err => {
+            setWizardStatus((err && err.message) || 'Wizard action failed', 'error')
+            console.error('Wizard action failed:', err)
+          })
+          .finally(() => { setWizardActionBusy(false, action) })
+      }
+    })
   }
 
   // ─── Utility ────────────────────────────────────────────────
@@ -669,32 +783,47 @@
     btn.disabled = busy
     if (busy) {
       btn.dataset.label = btn.textContent
-      btn.innerHTML = '<span class="loading"></span>Working…'
+      const spinner = document.createElement('span')
+      spinner.className = 'loading'
+      btn.replaceChildren(spinner, document.createTextNode('Working...'))
     } else if (btn.dataset.label) {
       btn.textContent = btn.dataset.label
     }
+  }
+
+  function renderLoadError (err) {
+    const card = document.querySelector('.card')
+    const title = document.createElement('h2')
+    const body = document.createElement('p')
+    const code = document.createElement('code')
+    const help = document.createElement('p')
+
+    title.textContent = "Couldn't load setup"
+    body.append('The wizard endpoint returned an error: ')
+    code.textContent = (err && err.message) || 'unknown'
+    body.append(code)
+    help.className = 'small'
+    help.textContent = "If you're not on the same machine as the relay, the wizard is locked to localhost for security. Open this URL from the Umbrel device itself."
+
+    card.replaceChildren(title, body, help)
   }
 
   // ─── Bootstrap ──────────────────────────────────────────────
 
   // On page load: fetch current state from server and resume at the
   // right step. If wizard is already complete, redirect to dashboard
-  // — this prevents accidental re-runs.
+  // unless the dashboard opened us in edit mode.
+
+  bindWizardActions()
 
   loadState().then(s => {
-    if (s.isComplete) {
-      window.location.href = '/dashboard'
+    if (s.isComplete && !editMode) {
+      window.location.href = appPath('/dashboard')
       return
     }
-    showStep(s.step || 'welcome')
-  }).catch(err => {
-    document.querySelector('.card').innerHTML =
-      '<h2>Couldn\'t load setup</h2>' +
-      '<p>The wizard endpoint returned an error: ' +
-      '<code>' + (err.message || 'unknown') + '</code></p>' +
-      '<p class="small">If you\'re not on the same machine as the relay, the wizard is locked to localhost for security. ' +
-      'Open this URL from the Umbrel device itself.</p>'
-  })
+    const requested = window.location.hash === '#payout' ? 'payout' : 'relay_name'
+    showStep(editMode && s.isComplete ? requested : (s.step || 'welcome'))
+  }).catch(renderLoadError)
 </script>
 
 </body>

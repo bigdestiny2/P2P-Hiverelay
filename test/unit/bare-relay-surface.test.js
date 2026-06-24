@@ -19,7 +19,15 @@
  */
 
 import test from 'brittle'
+import { readFile, rm, stat } from 'fs/promises'
+import { randomBytes } from 'crypto'
+import { join } from 'path'
+import { tmpdir } from 'os'
 import { BareRelay } from 'p2p-hiverelay/core/relay-node/bare-relay.js'
+
+function tmpStorage () {
+  return join(tmpdir(), 'hiverelay-bare-identity-' + randomBytes(8).toString('hex'))
+}
 
 test('bare smoke: BareRelay module imports cleanly under Node via the imports map', (t) => {
   t.ok(BareRelay, 'BareRelay class is exported')
@@ -44,6 +52,29 @@ test('bare smoke: default config matches Bare-appropriate defaults', (t) => {
   t.is(relay.config.enableSeeding, true)
   t.is(relay.config.enableRelay, true)
   t.is(relay.config.catalogSync, true)
+})
+
+test('bare smoke: identity seed file is created owner-only and reloads', async (t) => {
+  const storage = tmpStorage()
+  const relay = new BareRelay({ storage })
+  t.teardown(async () => {
+    try { await relay.store.close() } catch (_) {}
+    await rm(storage, { recursive: true, force: true })
+  })
+
+  const first = await relay._deriveKeypair()
+  const mode = (await stat(join(storage, 'identity.key'))).mode & 0o777
+  const second = await relay._deriveKeypair()
+
+  t.is(mode, 0o600, 'Bare identity seed is owner-read/write only')
+  t.alike(second.publicKey, first.publicKey, 'public key reloads from disk')
+  t.alike(second.secretKey, first.secretKey, 'secret key reloads from disk')
+})
+
+test('bare smoke: identity temp path avoids Node-only process globals', async (t) => {
+  const source = await readFile(new URL('../../packages/core/core/relay-node/bare-relay.js', import.meta.url), 'utf8')
+  t.ok(source.includes('function identityTempPath (keyPath)'), 'uses a portable temp-path helper')
+  t.absent(source.includes('process.pid'), 'Bare identity path does not depend on Node process.pid')
 })
 
 test('bare smoke: accept-mode resolver gives same answer as RelayNode for same config', async (t) => {

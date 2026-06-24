@@ -143,6 +143,28 @@ export class ManifestStore extends EventEmitter {
     return out
   }
 
+  snapshot () {
+    return {
+      entries: this.list().map(entry => ({
+        pubkey: entry.pubkey,
+        manifest: cloneJson(entry.manifest),
+        storedAt: entry.storedAt
+      }))
+    }
+  }
+
+  restoreSnapshot (snapshot = {}) {
+    this._manifests = new Map()
+    const entries = Array.isArray(snapshot.entries) ? snapshot.entries : []
+    for (const entry of entries) {
+      if (!entry || typeof entry.pubkey !== 'string' || !entry.manifest) continue
+      this._manifests.set(entry.pubkey.toLowerCase(), {
+        manifest: cloneJson(entry.manifest),
+        storedAt: typeof entry.storedAt === 'number' ? entry.storedAt : Date.now()
+      })
+    }
+  }
+
   /**
    * Remove an author's manifest. Used by operators who want to evict
    * misbehaving authors.
@@ -163,4 +185,9 @@ export class ManifestStore extends EventEmitter {
       this.emit('evicted', { pubkey: key })
     }
   }
+}
+
+function cloneJson (value) {
+  if (value === undefined) return undefined
+  return JSON.parse(JSON.stringify(value))
 }

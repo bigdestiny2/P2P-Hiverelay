@@ -20,6 +20,7 @@ const BANDWIDTH_WEIGHT = 0.001 // Points per MB served
 const UPTIME_WEIGHT = 1 // Points per hour of uptime
 const GEO_BONUS = 50 // Bonus for underserved region
 const MIN_CHALLENGES_FOR_RANKING = 10 // Minimum challenges to be ranked
+const FORBIDDEN_RECORD_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 
 export class ReputationSystem extends EventEmitter {
   constructor (opts = {}) {
@@ -163,7 +164,7 @@ export class ReputationSystem extends EventEmitter {
   getLeaderboard (limit = 50) {
     return [...this.records.entries()]
       .filter(([, r]) => r.totalChallenges >= MIN_CHALLENGES_FOR_RANKING)
-      .sort((a, b) => b[1].score - a[1].score)
+      .sort(byLeaderboardRank)
       .slice(0, limit)
       .map(([pubkey, record]) => ({
         relay: pubkey,
@@ -199,12 +200,10 @@ export class ReputationSystem extends EventEmitter {
       // If not enough in preferred region, use all candidates
     }
 
-    // Sort by composite score: reliability * score * (1 / latency)
-    candidates.sort((a, b) => {
-      const scoreA = this._compositeScore(a[1])
-      const scoreB = this._compositeScore(b[1])
-      return scoreB - scoreA
-    })
+    // Sort by composite score: reliability * score * (1 / latency).
+    // Ties are fully deterministic so selection does not depend on Map
+    // insertion order after import, restart, or federation merge.
+    candidates.sort((a, b) => byCompositeRank(a, b, this))
 
     return candidates.slice(0, count).map(([pubkey]) => pubkey)
   }
@@ -284,8 +283,9 @@ export class ReputationSystem extends EventEmitter {
    * Export all records (for persistence)
    */
   export () {
-    const data = {}
-    for (const [key, record] of this.records) {
+    const data = Object.create(null)
+    for (const [key, record] of [...this.records.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      if (FORBIDDEN_RECORD_KEYS.has(key)) continue
       data[key] = { ...record }
     }
     return data
@@ -295,8 +295,85 @@ export class ReputationSystem extends EventEmitter {
    * Import records (from persistence)
    */
   import (data) {
+    if (!data || typeof data !== 'object') return
     for (const [key, record] of Object.entries(data)) {
-      this.records.set(key, record)
+      if (FORBIDDEN_RECORD_KEYS.has(key) || typeof key !== 'string' || key.length === 0) continue
+      const normalized = normalizeRecord(record)
+      if (!normalized) continue
+      this.records.set(key, normalized)
     }
   }
+}
+
+function byLeaderboardRank (a, b) {
+  const ar = a[1]
+  const br = b[1]
+  return compareNumberDesc(ar.score, br.score) ||
+    compareNumberDesc(reliabilityOf(ar), reliabilityOf(br)) ||
+    compareNumberAsc(ar.avgLatencyMs, br.avgLatencyMs, true) ||
+    compareNumberDesc(ar.totalBytesServed, br.totalBytesServed) ||
+    compareNumberDesc(ar.totalUptimeHours, br.totalUptimeHours) ||
+    a[0].localeCompare(b[0])
+}
+
+function byCompositeRank (a, b, system) {
+  return compareNumberDesc(system._compositeScore(a[1]), system._compositeScore(b[1])) ||
+    compareNumberDesc(reliabilityOf(a[1]), reliabilityOf(b[1])) ||
+    compareNumberAsc(a[1].avgLatencyMs, b[1].avgLatencyMs, true) ||
+    compareNumberDesc(a[1].score, b[1].score) ||
+    a[0].localeCompare(b[0])
+}
+
+function reliabilityOf (record) {
+  return record.totalChallenges > 0 ? record.passedChallenges / record.totalChallenges : 0
+}
+
+function compareNumberDesc (a, b) {
+  const aa = finiteOr(a, 0)
+  const bb = finiteOr(b, 0)
+  return bb - aa
+}
+
+function compareNumberAsc (a, b, zeroLast = false) {
+  const aa = zeroLast && !finiteOr(a, 0) ? Infinity : finiteOr(a, Infinity)
+  const bb = zeroLast && !finiteOr(b, 0) ? Infinity : finiteOr(b, Infinity)
+  return aa - bb
+}
+
+function normalizeRecord (record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return null
+  const totalChallenges = nonNegativeInt(record.totalChallenges)
+  const passedChallenges = Math.min(nonNegativeInt(record.passedChallenges), totalChallenges)
+  const failedChallenges = Math.min(nonNegativeInt(record.failedChallenges), Math.max(0, totalChallenges - passedChallenges))
+  return {
+    score: nonNegativeNumber(record.score),
+    totalChallenges,
+    passedChallenges,
+    failedChallenges,
+    avgLatencyMs: nonNegativeNumber(record.avgLatencyMs),
+    totalBytesServed: nonNegativeNumber(record.totalBytesServed),
+    totalUptimeHours: nonNegativeNumber(record.totalUptimeHours),
+    region: typeof record.region === 'string' && record.region ? record.region : null,
+    geoBonus: record.geoBonus === true,
+    firstSeen: positiveTimestamp(record.firstSeen),
+    lastActivity: positiveTimestamp(record.lastActivity)
+  }
+}
+
+function finiteOr (value, fallback) {
+  return Number.isFinite(value) ? value : fallback
+}
+
+function nonNegativeNumber (value) {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+function nonNegativeInt (value) {
+  return Math.floor(nonNegativeNumber(value))
+}
+
+function positiveTimestamp (value) {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : Date.now()
 }

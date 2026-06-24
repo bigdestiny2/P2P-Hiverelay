@@ -12,7 +12,7 @@
  *   5. Pairing mode auto-disables after timeout or successful pair
  */
 
-import { randomBytes } from 'crypto'
+import { randomBytes, timingSafeEqual } from 'crypto'
 import { readFile, writeFile, rename, chmod } from 'fs/promises'
 import { join } from 'path'
 import b4a from 'b4a'
@@ -20,6 +20,7 @@ import { EventEmitter } from 'events'
 
 const PAIRING_TOKEN_BYTES = 16
 const DEFAULT_PAIRING_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
+const MAX_PAIRING_TOKEN_CHARS = PAIRING_TOKEN_BYTES * 2
 
 export class AccessControl extends EventEmitter {
   constructor (storagePath, opts = {}) {
@@ -94,12 +95,22 @@ export class AccessControl extends EventEmitter {
     if (this.allowedDevices.size >= this.maxDevices) {
       throw new Error(`Maximum devices reached (${this.maxDevices})`)
     }
+    const hadPrevious = this.allowedDevices.has(pubkeyHex)
+    const previous = this.allowedDevices.get(pubkeyHex)
     this.allowedDevices.set(pubkeyHex, {
       name,
       pairedAt: Date.now(),
       lastSeen: null
     })
-    await this.save()
+
+    try {
+      await this.save()
+    } catch (err) {
+      if (hadPrevious) this.allowedDevices.set(pubkeyHex, previous)
+      else this.allowedDevices.delete(pubkeyHex)
+      throw err
+    }
+
     this.emit('device-added', { pubkey: pubkeyHex, name })
   }
 
@@ -110,8 +121,16 @@ export class AccessControl extends EventEmitter {
     if (!this.allowedDevices.has(pubkeyHex)) {
       throw new Error('Device not in allowlist')
     }
+    const previous = this.allowedDevices.get(pubkeyHex)
     this.allowedDevices.delete(pubkeyHex)
-    await this.save()
+
+    try {
+      await this.save()
+    } catch (err) {
+      this.allowedDevices.set(pubkeyHex, previous)
+      throw err
+    }
+
     this.emit('device-removed', { pubkey: pubkeyHex })
   }
 
@@ -187,7 +206,7 @@ export class AccessControl extends EventEmitter {
       return false
     }
 
-    if (token !== this._pairingState.token) {
+    if (!safePairingTokenEqual(token, this._pairingState.token)) {
       this.emit('pairing-rejected', { reason: 'invalid token', pubkey: devicePubkeyHex })
       return false
     }
@@ -278,6 +297,7 @@ export class AccessControl extends EventEmitter {
     }
 
     const entries = JSON.parse(b4a.toString(plaintext))
+    const previousDevices = this._cloneAllowedDevices()
     let restored = 0
 
     for (const entry of entries) {
@@ -292,9 +312,23 @@ export class AccessControl extends EventEmitter {
       }
     }
 
-    await this.save()
+    try {
+      await this.save()
+    } catch (err) {
+      this.allowedDevices = previousDevices
+      throw err
+    }
+
     this.emit('backup-restored', { restored, total: entries.length })
     return { restored, total: entries.length }
+  }
+
+  _cloneAllowedDevices () {
+    const clone = new Map()
+    for (const [pubkey, meta] of this.allowedDevices) {
+      clone.set(pubkey, { ...meta })
+    }
+    return clone
   }
 
   async _getSodium () {
@@ -307,4 +341,15 @@ export class AccessControl extends EventEmitter {
     this.disablePairing()
     this.allowedDevices.clear()
   }
+}
+
+function safePairingTokenEqual (actual, expected) {
+  if (typeof actual !== 'string' || typeof expected !== 'string') return false
+  if (actual.length > MAX_PAIRING_TOKEN_CHARS || expected.length > MAX_PAIRING_TOKEN_CHARS) return false
+
+  const expectedBuf = Buffer.from(expected)
+  const actualBuf = Buffer.alloc(expectedBuf.length)
+  Buffer.from(actual).copy(actualBuf, 0, 0, Math.min(actual.length, expectedBuf.length))
+  const same = timingSafeEqual(actualBuf, expectedBuf)
+  return same && actual.length === expected.length
 }

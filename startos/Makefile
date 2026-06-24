@@ -5,20 +5,16 @@
 # start-sdk (https://github.com/Start9Labs/start-os, `cargo install` or
 # release binary). Run `make` from this directory.
 
-VERSION := 0.20.0
-IMAGE := ghcr.io/bigdestiny2/p2p-hiverelay:$(VERSION)
-# Immutable pin for the retag FROM. This MUST be the multi-arch MANIFEST (OCI
-# image-index) digest of the :$(VERSION) tag — NOT a per-arch layer/blob digest.
-# Get the right value with `make digest` (don't grep CI logs for the first
-# sha256 — that's usually a blob and the build fails to resolve it). `make`
-# guards the pin via check-digest below: a wrong digest fails to resolve and a
-# stale one (left from a previous VERSION) would silently FROM the wrong image.
-# Set empty (`make IMAGE_DIGEST=`) to FROM the bare :$(VERSION) tag instead.
-IMAGE_DIGEST ?= sha256:0b8857cda2d0e399031a135a0c5f9c8a2ec6fa77cf64ed1c59aba58351c9eae1
+VERSION ?= $(shell sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' ../package.json | head -n 1)
+IMAGE_NAME := ghcr.io/bigdestiny2/p2p-hiverelay
+IMAGE_DIGEST ?=
+ALLOW_TAG_ONLY_IMAGE ?=
+IMAGE := $(IMAGE_NAME):$(VERSION)
+IMAGE_REF := $(IMAGE)$(if $(IMAGE_DIGEST),@$(IMAGE_DIGEST),)
 S9PK := blindspark.s9pk
 TAG := start9/blindspark/main:$(VERSION)
 
-.PHONY: all clean verify digest check-digest
+.PHONY: all clean verify digest check-digest image validate-image-ref Dockerfile.retag
 
 all: $(S9PK)
 
@@ -62,7 +58,8 @@ icon.png: ../umbrel-app/icon.svg
 # exporter writes a legacy docker-archive (with manifest.json) that the
 # 0.3.5.x reader requires — plain `docker save` fails under Docker's
 # containerd image store. buildx pulls the right platform automatically.
-image: check-digest Dockerfile.retag
+image: validate-image-ref check-digest Dockerfile.retag
+	rm -rf image
 	mkdir -p image
 	docker buildx build --platform linux/amd64 -f Dockerfile.retag -t $(TAG) \
 	  --output type=docker,dest=image/x86_64.tar .
@@ -70,11 +67,21 @@ image: check-digest Dockerfile.retag
 	  --output type=docker,dest=image/aarch64.tar .
 	@touch image
 
+validate-image-ref:
+	@if [ -z "$(IMAGE_DIGEST)" ] && [ "$(ALLOW_TAG_ONLY_IMAGE)" != "1" ]; then \
+	  echo "IMAGE_DIGEST=sha256:<multi-arch-digest> is required for StartOS packaging. Use ALLOW_TAG_ONLY_IMAGE=1 only for local mechanics checks."; \
+	  exit 1; \
+	fi
+	@if [ -n "$(IMAGE_DIGEST)" ] && ! printf '%s' "$(IMAGE_DIGEST)" | grep -Eq '^sha256:[a-f0-9]{64}$$'; then \
+	  echo "IMAGE_DIGEST must be sha256:<64 lowercase hex chars>."; \
+	  exit 1; \
+	fi
+
 # Generated (gitignored) — regenerated whenever VERSION/IMAGE_DIGEST change,
 # since it depends on this Makefile. Without the prerequisite a stale retag
 # from a previous version's build would silently FROM the wrong image.
 Dockerfile.retag: Makefile
-	printf 'FROM $(IMAGE)$(if $(IMAGE_DIGEST),@$(IMAGE_DIGEST),)\n' > Dockerfile.retag
+	printf 'FROM $(IMAGE_REF)\n' > Dockerfile.retag
 
 $(S9PK): manifest.yaml instructions.md icon.png image docker_entrypoint.sh check-web.sh ../LICENSE
 	cp ../LICENSE LICENSE

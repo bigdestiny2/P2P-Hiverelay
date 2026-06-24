@@ -1,6 +1,41 @@
 import test from 'brittle'
 import { AppRegistry } from 'p2p-hiverelay/core/app-registry.js'
 
+test('AppRegistry: snapshot restore preserves map identity and indexes', (t) => {
+  const registry = new AppRegistry(null)
+  const appsRef = registry.apps
+  const byAppIdRef = registry.byAppId
+  const keyA = 'a'.repeat(64)
+  const keyB = 'b'.repeat(64)
+
+  registry.set(keyA, { type: 'app', appId: 'keep-me' }, { persist: false })
+  const snapshot = registry.snapshot()
+  registry.set(keyB, { type: 'app', appId: 'new-entry' }, { persist: false })
+  registry.delete(keyA, { persist: false })
+
+  registry.restoreSnapshot(snapshot)
+
+  t.is(registry.apps, appsRef, 'apps map identity is stable')
+  t.is(registry.byAppId, byAppIdRef, 'dedup index map identity is stable')
+  t.ok(registry.has(keyA), 'original entry restored')
+  t.absent(registry.has(keyB), 'new entry rolled back')
+  t.is(registry.byAppId.get('keep-me'), keyA, 'dedup index restored')
+  t.absent(registry.byAppId.get('new-entry'), 'dedup index rollback removed new appId')
+})
+
+test('AppRegistry: explicit JSON persistence rejects write failures', async (t) => {
+  const registry = new AppRegistry('/dev/null')
+  const key = 'c'.repeat(64)
+  registry.on('error', () => {})
+  registry.set(key, { type: 'app', appId: 'cannot-write' }, { persist: false })
+
+  await t.exception(
+    registry.persistEntry(key, { throwOnError: true }),
+    /ENOTDIR|not a directory/,
+    'explicit persist surfaces the write failure'
+  )
+})
+
 test('AppRegistry: catalog keeps drive entries while deduplicating apps by appId', (t) => {
   const registry = new AppRegistry(null)
 

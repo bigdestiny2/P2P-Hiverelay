@@ -15,6 +15,7 @@
 
 import { EventEmitter } from 'events'
 import { compareVersions } from '../constants.js'
+import { sanitizeServiceCatalogEntries } from './service-catalog.js'
 
 const BLOCKED_METHODS = new Set([
   'constructor', 'start', 'stop', 'manifest',
@@ -154,11 +155,12 @@ export class ServiceRegistry extends EventEmitter {
    * Record a remote relay's advertised services.
    */
   addRemoteServices (relayPubkey, services) {
+    const sanitized = sanitizeServiceCatalogEntries(services)
     this.remoteServices.set(relayPubkey, {
-      services,
+      services: sanitized,
       lastSeen: Date.now()
     })
-    this.emit('remote-services-updated', { relay: relayPubkey, count: services.length })
+    this.emit('remote-services-updated', { relay: relayPubkey, count: sanitized.length })
   }
 
   /**

@@ -27,6 +27,7 @@
 import b4a from 'b4a'
 import Protomux from 'protomux'
 import { EventEmitter } from 'events'
+import { createLengthPrefixedJsonEncoding } from './json-message-encoding.js'
 
 export const ANCHOR_PROTOCOL = 'hiverelay-anchor'
 export const ANCHOR_CHANNEL_ID = b4a.from('anchor-v1')
@@ -36,7 +37,10 @@ const MSG_RESPONSE = 2
 const MSG_ERROR = 3
 
 const DEFAULT_TIMEOUT_MS = 5000
-const MAX_MESSAGE_BYTES = 64 * 1024 // 64 KB — proofs are <2 KB; cap protects against abuse
+export const MAX_ANCHOR_MESSAGE_BYTES = 64 * 1024 // 64 KB — proofs are <2 KB; cap protects against abuse
+export const anchorMessageEncoding = createLengthPrefixedJsonEncoding({
+  maxBytes: MAX_ANCHOR_MESSAGE_BYTES
+})
 
 export class AnchorProtocol extends EventEmitter {
   /**
@@ -73,29 +77,7 @@ export class AnchorProtocol extends EventEmitter {
     if (!channel) return false
 
     const msgHandler = channel.addMessage({
-      encoding: {
-        preencode (state, msg) {
-          const json = JSON.stringify(msg)
-          state.end += 4 + b4a.byteLength(json)
-        },
-        encode (state, msg) {
-          const json = JSON.stringify(msg)
-          const buf = b4a.from(json)
-          state.buffer.writeUInt32BE(buf.length, state.start)
-          buf.copy(state.buffer, state.start + 4)
-          state.start += 4 + buf.length
-        },
-        decode (state) {
-          const len = state.buffer.readUInt32BE(state.start)
-          if (len > MAX_MESSAGE_BYTES) {
-            state.start += 4 + len
-            return { type: -1, error: 'message too large' }
-          }
-          const json = state.buffer.subarray(state.start + 4, state.start + 4 + len).toString()
-          state.start += 4 + len
-          try { return JSON.parse(json) } catch { return { type: -1, error: 'bad json' } }
-        }
-      },
+      encoding: anchorMessageEncoding,
       onmessage: (msg) => this._onMessage(remotePubkey, msg)
     })
 

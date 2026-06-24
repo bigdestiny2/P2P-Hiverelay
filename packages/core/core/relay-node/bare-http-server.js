@@ -23,6 +23,10 @@
 import http from 'http'
 import b4a from 'b4a'
 import { buildCapabilityDoc } from '../capability-doc.js'
+import { buildAnchorStatusPayload } from './api-anchor-status.js'
+import { buildRelayCatalogPayload } from './api-catalog-read.js'
+import { buildPeerListPayload } from './api-peer-state.js'
+import { writeJson } from './api-response.js'
 
 export class BareHttpServer {
   constructor (relay, opts = {}) {
@@ -52,11 +56,11 @@ export class BareHttpServer {
     })
   }
 
-  _json (res, body, status = 200) {
-    res.setHeader('Content-Type', 'application/json')
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    res.writeHead(status)
-    res.end(JSON.stringify(body) + '\n')
+  _json (res, body, status = 200, headers = null) {
+    return writeJson(res, body, status, {
+      'Access-Control-Allow-Origin': '*',
+      ...(headers || {})
+    })
   }
 
   _handle (req, res) {
@@ -72,7 +76,8 @@ export class BareHttpServer {
     }
 
     if (path === '/catalog.json') {
-      return this._json(res, this._catalog())
+      const result = this._catalog(url)
+      return this._json(res, result.payload, result.status || 200)
     }
 
     if (path === '/api/peers') {
@@ -80,13 +85,11 @@ export class BareHttpServer {
     }
 
     if (path === '/api/anchors') {
-      if (!this.relay.appRegistry || typeof this.relay.appRegistry.anchorStats !== 'function') {
-        return this._json(res, { error: 'anchor stats unavailable' }, 503)
-      }
-      return this._json(res, {
-        ...this.relay.appRegistry.anchorStats(),
+      const result = buildAnchorStatusPayload({
+        appRegistry: this.relay.appRegistry,
         lastCheckedAt: this.relay._lastAnchorCheckAt || null
       })
+      return this._json(res, result.payload, result.status || 200)
     }
 
     // Capability advertisement. Same shape as the Node version so clients
@@ -97,15 +100,10 @@ export class BareHttpServer {
         version: this.version,
         runtime: 'bare'
       })
-      res.setHeader('Cache-Control', 'public, max-age=60')
-      return this._json(res, doc)
+      return this._json(res, doc, 200, { 'Cache-Control': 'public, max-age=60' })
     }
 
-    // 404
-    res.setHeader('Content-Type', 'application/json')
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    res.writeHead(404)
-    res.end(JSON.stringify({ error: 'Not found', path }) + '\n')
+    return this._json(res, { error: 'Not found', path }, 404)
   }
 
   _uptime () {
@@ -138,25 +136,22 @@ export class BareHttpServer {
     }
   }
 
-  _catalog () {
-    const buckets = { apps: [], drives: [], resources: [], datasets: [], media: [] }
-    if (!this.relay.appRegistry) return buckets
-    const items = this.relay.appRegistry.catalog({
-      redactPrivate: this.relay.config?.custody?.redactedCatalog !== false
+  _catalog (url) {
+    const relayKey = this.relay.publicKey ? b4a.toString(this.relay.publicKey, 'hex') : null
+    return buildRelayCatalogPayload({
+      node: this.relay,
+      url,
+      relayKey
     })
-    for (const item of items) {
-      const bucket = buckets[item.type + 's'] || buckets.resources
-      bucket.push(item)
-    }
-    return buckets
   }
 
   _peers () {
-    const peers = []
-    for (const [conn, entry] of this.relay.connections) {
-      const pk = conn.remotePublicKey ? b4a.toString(conn.remotePublicKey, 'hex') : null
-      peers.push({ publicKey: pk, lastActivity: entry.lastActivity })
-    }
-    return { count: peers.length, peers }
+    const connections = this.relay.connections
+    return buildPeerListPayload({
+      swarm: { connections: connections && typeof connections.keys === 'function' ? connections.keys() : [] },
+      connections,
+      publicKeyAlias: true,
+      includeLastActivity: true
+    })
   }
 }

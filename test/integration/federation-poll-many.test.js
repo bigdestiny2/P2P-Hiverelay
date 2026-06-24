@@ -31,8 +31,9 @@ function pickPort () {
 }
 
 // Minimal RelayNode stand-in. Federation only reaches into this surface.
-function makeFakeNode (acceptMode = 'review') {
+function makeFakeNode (acceptMode = 'review', { maxPendingRequests = Infinity } = {}) {
   const node = new EventEmitter()
+  node.config = { maxPendingRequests }
   node.appRegistry = new Map()
   node.seededApps = new Set()
   node._pendingRequests = new Map()
@@ -44,6 +45,27 @@ function makeFakeNode (acceptMode = 'review') {
     return 'queue'
   }
   node.seedApp = async () => { /* no-op for these tests */ }
+  node._addPendingRequest = (appKey, entry) => {
+    if (node._pendingRequests.has(appKey)) return false
+    const cap = node.config.maxPendingRequests
+    if (typeof cap === 'number' && Number.isFinite(cap) && cap > 0 && node._pendingRequests.size >= cap) {
+      let oldestKey = null
+      let oldestAt = Infinity
+      for (const [key, value] of node._pendingRequests) {
+        const ts = value && typeof value.discoveredAt === 'number' ? value.discoveredAt : 0
+        if (ts < oldestAt) {
+          oldestAt = ts
+          oldestKey = key
+        }
+      }
+      if (oldestKey !== null) {
+        node._pendingRequests.delete(oldestKey)
+        node.emit('pending-evicted', { appKey: oldestKey, reason: 'queue-full' })
+      }
+    }
+    node._pendingRequests.set(appKey, entry)
+    return true
+  }
   return node
 }
 
@@ -248,6 +270,33 @@ test('federation poll: poll-complete payload accurate when some follows have not
   t.is(pollComplete.polled, 2, 'poll-complete.polled = follows polled, not queue events')
   t.is(pollComplete.queued, APPS_PER, 'queued counts only newly queued apps (skips seeded ones)')
   t.is(node._pendingRequests.size, APPS_PER, 'pending queue confirms')
+})
+
+test('federation poll: review queue uses RelayNode bounded pending helper', async (t) => {
+  const APPS = 5
+  const server = await startSingleBigCatalogServer(APPS)
+  t.teardown(() => server.close())
+
+  const node = makeFakeNode('review', { maxPendingRequests: 2 })
+  const fed = new Federation({ node })
+  fed.follow(`http://127.0.0.1:${server.port}`)
+
+  const evicted = []
+  const registryPending = []
+  node.on('pending-evicted', info => evicted.push(info))
+  node.on('registry-pending', info => registryPending.push(info))
+
+  let pollComplete = null
+  fed.on('poll-complete', (info) => { pollComplete = info })
+
+  await fed._pollAll()
+
+  t.is(pollComplete.polled, 1, 'one follow polled')
+  t.is(pollComplete.queued, APPS, 'queued count reports inserted discoveries')
+  t.is(node._pendingRequests.size, 2, 'pending queue respects RelayNode cap')
+  t.is(evicted.length, APPS - 2, 'old entries evicted through bounded helper')
+  t.alike(evicted.map(e => e.reason), ['queue-full', 'queue-full', 'queue-full'], 'evictions keep queue-full reason')
+  t.is(registryPending.length, APPS, 'registry-pending emits only for inserted entries')
 })
 
 test('federation poll: single follow with 500-app catalog processes without choking', async (t) => {
