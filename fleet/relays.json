@@ -22,6 +22,16 @@
       "role": "seed"
     },
     {
+      "name": "utah-8gb",
+      "publicIp": "144.172.97.68",
+      "tailnet": null,
+      "sshKey": "~/.ssh/cloudzy_hiverelay",
+      "channel": "stable",
+      "region": "NA",
+      "diskGB": 960,
+      "role": "seed"
+    },
+    {
       "name": "sing-1",
       "publicIp": "104.194.153.179",
       "tailnet": null,
