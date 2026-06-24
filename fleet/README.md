@@ -1,7 +1,7 @@
 # Fleet management
 
 Tooling for the **raw systemd fleet** — the relay boxes we operate
-directly (utah, utah-us, utah-8gb, sing-1, sing-2, bern, dubai). The Umbrel and StartOS
+directly (utah, utah-us, utah-0.5gb, utah-8gb, sing-1, sing-2, bern, dubai). The Umbrel and StartOS
 packaged relays auto-update through their own registries and are *not*
 managed here.
 
