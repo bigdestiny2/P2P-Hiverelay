@@ -1,7 +1,9 @@
 # HiveRelay Core3 Architecture Graph
 
 This page is the graph-first technical map of HiveRelay/Core3. It complements
-the prose specs in [PROTOCOL-SPEC.md](PROTOCOL-SPEC.md),
+the detailed runtime map in
+[HIVERELAY-DETAILED-ARCHITECTURE-DIAGRAM.md](HIVERELAY-DETAILED-ARCHITECTURE-DIAGRAM.md)
+and the prose specs in [PROTOCOL-SPEC.md](PROTOCOL-SPEC.md),
 [HIVERELAY_OVERVIEW.md](HIVERELAY_OVERVIEW.md), and
 [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md).
 
