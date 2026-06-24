@@ -139,7 +139,10 @@ HiveRelay is four connected layers:
 For the graph-first technical map of the relay, protocol channels, APIs,
 security boundaries, and live distribution path, see
 [docs/HIVERELAY-ARCHITECTURE-GRAPH.md](docs/HIVERELAY-ARCHITECTURE-GRAPH.md).
-The same page includes a static SVG asset for release notes and offline review:
+For the full runtime, protocol, storage, services, trust-boundary, and fleet
+deployment diagram, see
+[docs/HIVERELAY-DETAILED-ARCHITECTURE-DIAGRAM.md](docs/HIVERELAY-DETAILED-ARCHITECTURE-DIAGRAM.md).
+The graph page also includes a static SVG asset for release notes and offline review:
 [docs/assets/hiverelay-core3-architecture.svg](docs/assets/hiverelay-core3-architecture.svg).
 
 ```mermaid
@@ -1081,6 +1084,8 @@ npm run fleet:check-rollout -- --target v<version> --channel canary
 - [docs/HIVERELAY_OVERVIEW.md](docs/HIVERELAY_OVERVIEW.md) - mental model
 - [docs/HIVERELAY-ARCHITECTURE-GRAPH.md](docs/HIVERELAY-ARCHITECTURE-GRAPH.md) -
   graph-first relay, protocol, API, security, and release/fleet map
+- [docs/HIVERELAY-DETAILED-ARCHITECTURE-DIAGRAM.md](docs/HIVERELAY-DETAILED-ARCHITECTURE-DIAGRAM.md) -
+  detailed runtime, storage, services, trust-boundary, and fleet deployment map
 - [docs/PEAR-INTEGRATION.md](docs/PEAR-INTEGRATION.md) - Pear/Bare integration
 - [docs/PEARBROWSER-INTEGRATION.md](docs/PEARBROWSER-INTEGRATION.md) - browser contracts
 - [docs/DEVELOPER.md](docs/DEVELOPER.md) - broad developer reference; this
