@@ -8,6 +8,8 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+## [0.20.2] — 2026-06-24
+
 ### Added
 
 - **Honest "Data served" metric** — a new replication-layer counter
