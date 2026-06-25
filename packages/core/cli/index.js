@@ -295,6 +295,7 @@ async function init () {
 async function start () {
   const cliOverrides = {}
   if (args.storage) cliOverrides.storage = args.storage
+  else if (process.env.HIVERELAY_STORAGE) cliOverrides.storage = process.env.HIVERELAY_STORAGE
   if (args['max-storage']) cliOverrides.maxStorageBytes = parseBytesOrExit(args['max-storage'], '--max-storage')
   else if (process.env.HIVERELAY_MAX_STORAGE) {
     const maxStorageBytes = parseBytesOrExit(process.env.HIVERELAY_MAX_STORAGE, 'HIVERELAY_MAX_STORAGE')
