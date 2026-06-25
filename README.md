@@ -460,10 +460,12 @@ proof-work rate limits, per-caller buckets, and a phantom-core guard.
 ### Paid Pinning And Reclaim
 
 Paid pin leases are off by default. When enabled by an operator, publishers can
-quote/pay for time-bounded seed windows through `/api/lease`; self-hosted
-operator pins and verified custody intents remain exempt. Bare Hypercores can
-be pinned durably through `POST /seed-core`, which is what signed Hyperbee
-catalogs need. Superseded app versions can be reclaimed through
+quote/pay for time-bounded seed windows through `/api/lease`. The lease manager
+supports direct payment proofs, bearer vouchers, and Cashu NUT-00/01/02 blind
+tokens so issue/redeem can be unlinkable while replay guards survive restarts.
+Self-hosted operator pins and verified custody intents remain exempt. Bare
+Hypercores can be pinned durably through `POST /seed-core`, which is what
+signed Hyperbee catalogs need. Superseded app versions can be reclaimed through
 `/api/dedup/reclaim`; blind entries, archive pins, custody entries, and active
 leases stay protected.
 
@@ -697,7 +699,7 @@ management bearer auth.
 | Browser transports | WSS `/ws/replicate`, WSS `/ws/dht` via reverse proxy | public WS with operator rate limits |
 | Gateway stats | `GET /api/gateway` | public |
 | Dashboard overview | `GET /api/overview` | public bounded relay/seeder/storage/reputation summary; management auth only adds shaped Tor/Holesail operator details |
-| Peer state | `GET /api/peers`, legacy `GET /peers` | public bounded list with total/truncated metadata and malformed peer metadata redacted |
+| Peer state | `GET /api/peers`, legacy `GET /peers` | public bounded list with total/truncated metadata, malformed peer metadata redacted, and salted peer-key digests by default |
 | Capabilities | `GET /.well-known/hiverelay.json`, `GET /api/capabilities` | public |
 | Reputation/fork proof reads | `GET /api/reputation`, `GET /api/reputation/:pubkey`, `GET /api/forks/proofs` | public |
 | Anchor status | `GET /api/anchors`, `GET /api/anchors?detailed=1`, `GET /api/anchors/:appKey/proof` | public bounded aggregate/proof on Node and Bare, management auth for detailed diagnostics |
@@ -716,7 +718,7 @@ management bearer auth.
 | Service RPC | `GET /api/v1/services`, `GET /api/v1/router`, `POST /api/v1/dispatch` | public bounded discovery; dispatch requires management auth for HTTP |
 | AI/QVAC models | `/api/manage/ai/models`, `/api/manage/ai/models/remove` | management auth; preserves fixed `AI_*` operator errors and redacts unexpected provider failures |
 | Poker/SignedLog | `/api/poker/*`, `/api/poker/:table/events`, P2P `poker/<tableKey>` events | route-specific; public Poker table routes use hardened JSON responses, an exact JSON POST body gate, in-band WS auth, and redacted unexpected HTTP/WS provider errors |
-| Paid leases | `GET /api/lease`, `POST /api/lease/config` | public status / management config |
+| Paid leases | `GET /api/lease`, `POST /api/lease/config`, seed-request payment proof bodies | public status / management config; direct proofs, bearer vouchers, and Cashu blind-token redemption |
 | Dedup/reclaim | `POST /api/dedup/reclaim` | management auth |
 | Service/accounting telemetry | `POST /api/usage/receipt`, `GET /api/usage`, `GET /api/poker/usage` | signed receipt / management reads |
 | Wallet destination | `GET /api/subsidy`, `POST /api/subsidy/destination` | management auth |
@@ -789,7 +791,7 @@ catalogs, and optional drive state without importing the main SDK.
 | Home relay appliance | Blindspark on Umbrel/StartOS with setup, wallet, services, dashboard |
 | Service operator | VRF, schema, identity, storage, AI/QVAC, ZK, SLA, arbitration, storage-proof |
 | Card-blind games | Poker/SignedLog substrate with VRF hand seeds, per-table P2P events, and opaque payloads |
-| Paid publisher pins | Off-by-default lease quotes and paid seed windows via `/api/lease` |
+| Paid publisher pins | Off-by-default lease quotes and paid seed windows via direct proofs, bearer vouchers, or Cashu blind tokens |
 | Raw fleet relay | systemd updater, health-gated release channels, rollback |
 
 ---
