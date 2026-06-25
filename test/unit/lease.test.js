@@ -45,7 +45,7 @@ async function makeManager (opts = {}) {
     maxDays: opts.maxDays,
     blindDenomination: opts.blindDenomination
   })
-  await lm.start()
+  await lm.start({ now: opts.now })
   return { lm, provider }
 }
 
@@ -263,6 +263,16 @@ test('cashu interop: issue → unblind → cashuA token → redeem through the g
   const token = encodeToken({ mint: 'hiverelay', proofs: [proof], unit: 'sat' })
   t.ok(token.startsWith('cashuA'))
 
+  const tooLarge = await evaluateSeedLease({
+    leaseManager: lm,
+    seedingRegistry: null,
+    appKey: 'f'.repeat(64),
+    opts: { maxStorage: 2 * GIB },
+    body: { paymentProof: { cashuToken: token } }
+  })
+  t.is(tooLarge.outcome, 'error', 'cashu token cannot buy more storage than its denomination')
+  t.is(tooLarge.error.split(':')[0], 'LEASE_STORAGE_EXCEEDS_VOUCHER')
+
   // Redeem the token through the gate.
   const outcome = await evaluateSeedLease({
     leaseManager: lm,
@@ -278,6 +288,39 @@ test('cashu interop: issue → unblind → cashuA token → redeem through the g
   t.is(again.ok, false)
   t.is(again.error.split(':')[0], 'LEASE_REPLAY')
   await lm.destroy()
+})
+
+test('blind token: replay guard survives restart past maxDays', async (t) => {
+  const { blind, unblind } = await import('p2p-hiverelay/incentive/payment/blind-mint.js')
+  const dir = await mkdtemp(join(tmpdir(), 'hiverelay-lease-'))
+  const storagePath = join(dir, 'lease.json')
+  const keyPair = makeKeyPair()
+  const denom = { maxStorageBytes: GIB, leaseDays: 1 }
+  const { lm, provider } = await makeManager({ keyPair, storagePath, blindDenomination: denom, maxDays: 1, now: T0 })
+
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 1 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+  const secret = '33'.repeat(32)
+  const { blinded, blindingFactor } = blind(secret)
+  const issued = await lm.issueBlindVoucher({ quoteId: quote.quoteId, blinded }, T0 + 1000)
+  t.is(issued.ok, true)
+  const C = unblind(issued.blindSignature, blindingFactor, issued.mintPubkey)
+
+  const first = await lm.redeemBlindVoucher({ secret, C, maxStorageBytes: GIB }, T0 + 2000)
+  t.is(first.ok, true)
+  await lm.destroy()
+
+  const { lm: restarted } = await makeManager({
+    keyPair,
+    storagePath,
+    blindDenomination: denom,
+    maxDays: 1,
+    now: T0 + 2 * DAY_MS
+  })
+  const again = await restarted.redeemBlindVoucher({ secret, C, maxStorageBytes: GIB }, T0 + 2 * DAY_MS)
+  t.is(again.ok, false)
+  t.is(again.error.split(':')[0], 'LEASE_REPLAY')
+  await restarted.destroy()
 })
 
 test('blind token: denomination mismatch is rejected at issuance', async (t) => {

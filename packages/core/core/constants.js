@@ -106,6 +106,60 @@ function epochDiscoveryTopics (now = null, periodMs = DISCOVERY_EPOCH_MS) {
   return [epochDiscoveryTopic(bucket), epochDiscoveryTopic(bucket + 1)]
 }
 
+function destroyDiscoveryHandle (handle) {
+  if (!handle || typeof handle.destroy !== 'function') return
+  try {
+    const done = handle.destroy()
+    if (done && typeof done.catch === 'function') done.catch(() => {})
+  } catch (_) {}
+}
+
+/**
+ * Keep a swarm joined to exactly the current and next epoch discovery topics.
+ * `joined` is a Map keyed by topic hex with Hyperswarm discovery handles as
+ * values. Old buckets are destroyed as soon as they roll out of the active
+ * current+next window.
+ *
+ * @param {Map<string, *>} joined
+ * @param {*} swarm
+ * @param {{ server: boolean, client: boolean }} joinOpts
+ * @param {number|null} [now=Date.now()]
+ * @param {number} [periodMs=DISCOVERY_EPOCH_MS]
+ * @returns {Map<string, *>} the same joined map
+ */
+function syncEpochDiscoveryTopics (joined, swarm, joinOpts, now = null, periodMs = DISCOVERY_EPOCH_MS) {
+  const handles = joined instanceof Map ? joined : new Map()
+  if (!swarm || typeof swarm.join !== 'function') return handles
+
+  const active = new Set()
+  for (const topic of epochDiscoveryTopics(now, periodMs)) {
+    const key = b4a.toString(topic, 'hex')
+    active.add(key)
+    if (!handles.has(key)) {
+      handles.set(key, swarm.join(topic, joinOpts))
+    }
+  }
+
+  for (const [key, handle] of handles) {
+    if (!active.has(key)) {
+      handles.delete(key)
+      destroyDiscoveryHandle(handle)
+    }
+  }
+
+  return handles
+}
+
+/**
+ * Destroy every tracked epoch discovery handle and empty the map.
+ * @param {Map<string, *>} joined
+ */
+function clearEpochDiscoveryTopics (joined) {
+  if (!(joined instanceof Map)) return
+  for (const handle of joined.values()) destroyDiscoveryHandle(handle)
+  joined.clear()
+}
+
 // ─── Protomux protocol names ─────────────────────────────────
 
 const SEED_PROTOCOL_NAME = 'hiverelay-seed'
@@ -231,6 +285,8 @@ export {
   DISCOVERY_EPOCH_MS,
   epochDiscoveryTopic,
   epochDiscoveryTopics,
+  syncEpochDiscoveryTopics,
+  clearEpochDiscoveryTopics,
   regionTopic,
   SEED_PROTOCOL_NAME,
   CIRCUIT_PROTOCOL_NAME,

@@ -71,7 +71,7 @@ export async function evaluateSeedLease ({ leaseManager, seedingRegistry, appKey
       return { outcome: 'error', error: 'LEASE_BLIND_UNSUPPORTED', status: 400 }
     }
     try {
-      const v = await leaseManager.redeemCashuToken(proof.cashuToken)
+      const v = await leaseManager.redeemCashuToken(proof.cashuToken, { maxStorageBytes: opts.maxStorage })
       if (!v.ok) return { outcome: 'error', error: v.error || 'LEASE_UNVERIFIED', status: v.status || 402 }
       return { outcome: 'paid', retainUntil: v.paidUntil }
     } catch (err) {

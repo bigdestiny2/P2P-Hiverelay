@@ -8,7 +8,7 @@
  *
  * Design:
  *   - A per-PROCESS random salt. Identifiers are therefore unlinkable across
- *     restarts and across relays, and the truncated SHA-256 is not reversible
+ *     restarts and across relays, and the truncated digest is not reversible
  *     to the original IP/pubkey. The salt never leaves memory.
  *   - Hashing preserves equality within a single process lifetime, so
  *     rate-limit buckets / reputation lookups that key on the digest still
@@ -18,10 +18,12 @@
  * pass the raw value through); the public-facing surfaces default to redacted.
  */
 
-import { createHash, randomBytes } from 'crypto'
+import b4a from 'b4a'
+import sodium from 'sodium-universal'
 
 // Per-process salt. Module-level so every caller shares one unlinkable basis.
-const IDENT_SALT = randomBytes(32)
+const IDENT_SALT = b4a.alloc(32)
+sodium.randombytes_buf(IDENT_SALT)
 
 const DEFAULT_LEN = 16
 
@@ -36,9 +38,11 @@ const DEFAULT_LEN = 16
  */
 function hashIdent (value, opts = {}) {
   if (value === null || value === undefined || value === '') return null
-  const salt = opts.salt || IDENT_SALT
+  const salt = opts.salt ? b4a.from(opts.salt) : IDENT_SALT
   const len = Number.isInteger(opts.len) && opts.len > 0 ? opts.len : DEFAULT_LEN
-  return createHash('sha256').update(salt).update(String(value)).digest('hex').slice(0, len)
+  const out = b4a.alloc(32)
+  sodium.crypto_hash_sha256(out, b4a.concat([salt, b4a.from(String(value), 'utf8')]))
+  return b4a.toString(out, 'hex').slice(0, len)
 }
 
 /**

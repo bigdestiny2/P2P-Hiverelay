@@ -496,9 +496,17 @@ export class LeaseManager extends EventEmitter {
   /**
    * Convenience: redeem a `cashuA` token string (decodes the proof, checks the
    * keyset id + amount match this mint's denomination, then redeems it).
+   * Backwards-compatible call shapes:
+   *   redeemCashuToken(token, now)
+   *   redeemCashuToken(token, { maxStorageBytes }, now)
    * @returns {{ ok:true, paidUntil, leaseDays } | { ok:false, error, status }}
    */
-  async redeemCashuToken (token, now = Date.now()) {
+  async redeemCashuToken (token, opts = {}, now = Date.now()) {
+    if (Number.isFinite(opts)) {
+      now = opts
+      opts = {}
+    }
+    if (!opts || typeof opts !== 'object') opts = {}
     if (!this.blindMint || !this.blindDenomination) {
       return { ok: false, error: 'LEASE_BLIND_DISABLED', status: 400 }
     }
@@ -519,7 +527,8 @@ export class LeaseManager extends EventEmitter {
     if (Number.isFinite(proof.amount) && proof.amount !== this._denomSats()) {
       return { ok: false, error: 'LEASE_BLIND_WRONG_AMOUNT: token amount != denomination', status: 402 }
     }
-    return this.redeemBlindVoucher({ secret: proof.secret, C: proof.C }, now)
+    const maxStorageBytes = Number.isFinite(opts.maxStorageBytes) ? opts.maxStorageBytes : opts.maxStorage
+    return this.redeemBlindVoucher({ secret: proof.secret, C: proof.C, maxStorageBytes }, now)
   }
 
   /**
@@ -541,10 +550,10 @@ export class LeaseManager extends EventEmitter {
     if (!this.blindMint.verifyToken(secret, C)) {
       return { ok: false, error: 'LEASE_BLIND_INVALID: token does not verify against the mint', status: 402 }
     }
-    // Double-spend guard keyed on a hash of the secret. Retained for the full
-    // maxDays window (blind tokens carry no expiry of their own).
+    // Double-spend guard keyed on a hash of the secret. Blind tokens carry no
+    // expiry of their own, so the spent marker must not expire either.
     const guardKey = 'blind:' + createHash('sha256').update(secret).digest('hex').slice(0, 32)
-    const guardExpiry = now + this.maxDays * DAY_MS
+    const guardExpiry = Number.MAX_SAFE_INTEGER
     if (this._consumed.has(guardKey)) {
       return { ok: false, error: 'LEASE_REPLAY: blind token already redeemed', status: 402 }
     }

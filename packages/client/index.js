@@ -74,7 +74,8 @@ import {
 import {
   RELAY_DISCOVERY_TOPIC,
   DISCOVERY_EPOCH_MS,
-  epochDiscoveryTopics,
+  syncEpochDiscoveryTopics,
+  clearEpochDiscoveryTopics,
   SEED_PROTOCOL_NAME,
   CIRCUIT_PROTOCOL_NAME,
   FORWARD_PROTOCOL_NAME,
@@ -173,6 +174,7 @@ export class HiveRelayClient extends EventEmitter {
     // client can force it with { discoverEpochTopics: true }.
     this._discoverEpochTopics = config.discoverEpochTopics === true || this.ephemeral
     this._epochDiscoveryTimer = null
+    this._epochDiscoveryTopics = new Map()
     this.autoDiscover = config.autoDiscover !== false
     this.maxRelays = config.maxRelays || 10
     this.connectionTimeout = config.connectionTimeout || 10_000
@@ -261,9 +263,11 @@ export class HiveRelayClient extends EventEmitter {
    */
   _joinEpochDiscovery () {
     if (!this.swarm) return
-    for (const topic of epochDiscoveryTopics()) {
-      this.swarm.join(topic, { server: false, client: true })
-    }
+    this._epochDiscoveryTopics = syncEpochDiscoveryTopics(
+      this._epochDiscoveryTopics,
+      this.swarm,
+      { server: false, client: true }
+    )
   }
 
   /**
@@ -4062,9 +4066,7 @@ export class HiveRelayClient extends EventEmitter {
       clearInterval(this._epochDiscoveryTimer)
       this._epochDiscoveryTimer = null
     }
-    for (const topic of epochDiscoveryTopics()) {
-      try { await this.swarm.leave(topic) } catch (_) {}
-    }
+    clearEpochDiscoveryTopics(this._epochDiscoveryTopics)
 
     // Leave discovery topic
     if (this._discoveryTopic) {

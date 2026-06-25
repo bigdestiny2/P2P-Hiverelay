@@ -1,6 +1,13 @@
 import test from 'brittle'
+import b4a from 'b4a'
 import { hashIdent, redactPubkeyHex, redactIp } from '../../packages/core/core/privacy.js'
-import { epochDiscoveryTopic, epochDiscoveryTopics, RELAY_DISCOVERY_TOPIC } from '../../packages/core/core/constants.js'
+import {
+  epochDiscoveryTopic,
+  epochDiscoveryTopics,
+  syncEpochDiscoveryTopics,
+  clearEpochDiscoveryTopics,
+  RELAY_DISCOVERY_TOPIC
+} from '../../packages/core/core/constants.js'
 
 test('privacy: hashIdent is stable, salted, truncated, non-empty-guarded', (t) => {
   const a = hashIdent('1.2.3.4')
@@ -39,4 +46,35 @@ test('discovery: epoch topics are deterministic per bucket and roll forward', (t
   // A time later in the same bucket yields the same pair.
   const [cur2] = epochDiscoveryTopics(now + 1000, periodMs)
   t.alike(cur2, cur, 'same bucket -> same topic')
+})
+
+test('discovery: epoch topic sync destroys rolled-off buckets', (t) => {
+  const periodMs = 3_600_000
+  const joined = new Map()
+  const destroyed = []
+  const joins = []
+  const swarm = {
+    join (topic, opts) {
+      const key = b4a.toString(topic, 'hex')
+      joins.push({ key, opts })
+      return { destroy: () => destroyed.push(key) }
+    }
+  }
+
+  syncEpochDiscoveryTopics(joined, swarm, { server: true, client: false }, 100 * periodMs + 1, periodMs)
+  t.is(joined.size, 2, 'current and next buckets joined')
+  t.is(joins.length, 2, 'two joins on first sync')
+
+  syncEpochDiscoveryTopics(joined, swarm, { server: true, client: false }, 100 * periodMs + 2, periodMs)
+  t.is(joins.length, 2, 'same bucket does not rejoin')
+  t.is(destroyed.length, 0, 'same bucket destroys nothing')
+
+  syncEpochDiscoveryTopics(joined, swarm, { server: true, client: false }, 101 * periodMs + 1, periodMs)
+  t.is(joined.size, 2, 'still only tracks current and next')
+  t.is(joins.length, 3, 'one new bucket joined after rollover')
+  t.is(destroyed.length, 1, 'old bucket destroyed after rollover')
+
+  clearEpochDiscoveryTopics(joined)
+  t.is(joined.size, 0, 'clear empties the tracked joins')
+  t.is(destroyed.length, 3, 'clear destroys remaining buckets')
 })

@@ -59,7 +59,8 @@ import {
   RELAY_DISCOVERY_TOPIC,
   FOUNDATION_TOPIC,
   DISCOVERY_EPOCH_MS,
-  epochDiscoveryTopics,
+  syncEpochDiscoveryTopics,
+  clearEpochDiscoveryTopics,
   isValidHexKey,
   normalizeAvailabilityClass,
   normalizePrivacyTier,
@@ -438,6 +439,7 @@ export class RelayNode extends EventEmitter {
     // first action is `await this._scope.drain()` so no closure outlives
     // the corestore.
     this._scope = null
+    this._epochDiscoveryTopics = new Map()
     this.running = false
   }
 
@@ -1825,6 +1827,7 @@ export class RelayNode extends EventEmitter {
       }
       this.bootstrapCache.stop()
       if (this._epochDiscoveryTimer) { clearInterval(this._epochDiscoveryTimer); this._epochDiscoveryTimer = null }
+      clearEpochDiscoveryTopics(this._epochDiscoveryTopics)
       if (this._catalogThrottleCleanup) { clearInterval(this._catalogThrottleCleanup); this._catalogThrottleCleanup = null }
       if (this._reputationSaveInterval) { clearInterval(this._reputationSaveInterval); this._reputationSaveInterval = null }
       if (this._reputationDecayInterval) { clearInterval(this._reputationDecayInterval); this._reputationDecayInterval = null }
@@ -3978,9 +3981,11 @@ export class RelayNode extends EventEmitter {
    */
   _joinEpochDiscoveryTopics () {
     if (!this.swarm) return
-    for (const topic of epochDiscoveryTopics()) {
-      this.swarm.join(topic, { server: true, client: false })
-    }
+    this._epochDiscoveryTopics = syncEpochDiscoveryTopics(
+      this._epochDiscoveryTopics,
+      this.swarm,
+      { server: true, client: false }
+    )
   }
 
   async stop () {
