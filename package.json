@@ -15,6 +15,7 @@
     "audit:workspace": "node scripts/audit-workspace-alignment.mjs",
     "release:prepare": "node scripts/prepare-release.mjs",
     "release:check-distribution-env": "node scripts/check-release-distribution-env.mjs",
+    "release:check-github-setup": "node scripts/check-github-release-setup.mjs",
     "release:write-evidence": "node scripts/write-release-evidence.mjs",
     "release:write-official-umbrel-pr-evidence": "node scripts/write-official-umbrel-pr-evidence.mjs",
     "release:write-startos-registry-evidence": "node scripts/write-startos-registry-evidence.mjs",
