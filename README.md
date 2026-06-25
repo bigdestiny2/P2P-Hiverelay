@@ -998,7 +998,7 @@ Important release commands:
 |---|---|
 | `npm run release:prepare` | Sync package versions, fleet channels, Umbrel, StartOS |
 | `npm run release:check-distribution-env` | Fail stable releases missing fleet/Umbrel/StartOS credentials |
-| `npm run release:check-github-setup` | Verify the repo exposes the release secret/variable names before tagging |
+| `npm run release:check-github-setup` | Verify the repo exposes release secret/variable names before tagging; values are validated by the Actions preflight |
 | `npm run release:check-image-manifest` | Verify the pinned GHCR digest exposes `linux/amd64` and `linux/arm64` manifests |
 | `npm run release:smoke-image` | Boot exact GHCR digest and test dashboard/API writes, in-band dashboard WebSocket auth, and usage telemetry |
 | `npm run umbrel:smoke-package` | Boot package compose and verify WebSocket auth, telemetry, and persistence |

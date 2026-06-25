@@ -62,6 +62,7 @@ const startOsMakefile = readText(hiverelayRoot, 'startos', 'Makefile')
 const startOsReadme = readText(hiverelayRoot, 'startos', 'README.md')
 const startOsEntrypoint = readText(hiverelayRoot, 'startos', 'docker_entrypoint.sh')
 const releaseWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'release-surfaces.yml')
+const releasePreflightWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'release-distribution-preflight.yml')
 const dockerPublishWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'docker-publish.yml')
 const umbrelAppValidateWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'umbrel-app-validate.yml')
 const dockerignore = readText(hiverelayRoot, '.dockerignore')
@@ -4194,10 +4195,19 @@ if (
   githubReleaseSetupCheck.includes("'STARTOS_REGISTRY_URL'") &&
   githubReleaseSetupCheck.includes("['secret', 'list', '--repo', repo, '--json', 'name']") &&
   githubReleaseSetupCheck.includes("['variable', 'list', '--repo', repo, '--json', 'name,value']") &&
+  githubReleaseSetupCheck.includes('Secret values are not readable through gh') &&
+  githubReleaseSetupCheck.includes('Release distribution preflight') &&
   githubReleaseSetupCheck.includes('is configured as a repository variable; move it to GitHub Secrets') &&
   githubReleaseSetupCheck.includes('Repository variable FLEET_ROLLOUT_TIMEOUT_MS must be an integer') &&
   githubReleaseSetupCheck.includes('sanitizeGhError') &&
   githubReleaseSetupCheck.includes('isRepoFullName') &&
+  releasePreflightWorkflow.includes('name: Release distribution preflight') &&
+  releasePreflightWorkflow.includes('workflow_dispatch') &&
+  releasePreflightWorkflow.includes('node scripts/check-release-distribution-env.mjs') &&
+  releasePreflightWorkflow.includes('secrets.UMBREL_STORE_TOKEN') &&
+  releasePreflightWorkflow.includes('secrets.UMBREL_OFFICIAL_PR_TOKEN') &&
+  releasePreflightWorkflow.includes('secrets.STARTOS_REGISTRY_URL') &&
+  releasePreflightWorkflow.includes('vars.FLEET_ROLLOUT_TIMEOUT_MS') &&
   githubReleaseSetupCheckTest.includes('passes with all required secrets') &&
   githubReleaseSetupCheckTest.includes('reports missing release secrets') &&
   githubReleaseSetupCheckTest.includes('rejects required secrets configured as variables') &&
@@ -4206,6 +4216,8 @@ if (
   githubReleaseSetupCheckTest.includes('rejects malformed repo names before gh calls') &&
   releaseAutomationDocs.includes('npm run release:check-github-setup') &&
   releaseAutomationDocs.includes('not print secret values') &&
+  releaseAutomationDocs.includes('release-distribution-preflight.yml') &&
+  releaseAutomationDocs.includes('side-effect-free masked-value') &&
   readme.includes('npm run release:check-github-setup')
 ) {
   pass('release readiness includes a repo-level GitHub secret and variable setup audit')
