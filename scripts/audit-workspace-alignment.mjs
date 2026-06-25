@@ -71,6 +71,7 @@ const officialUmbrelGalleryCheck = readText(hiverelayRoot, 'scripts', 'check-umb
 const umbrelRuntimeReviewEvidence = readText(hiverelayRoot, 'scripts', 'write-umbrel-runtime-review-evidence.mjs')
 const umbrelRuntimeReviewEvidenceVerify = readText(hiverelayRoot, 'scripts', 'verify-umbrel-runtime-review-evidence.mjs')
 const releaseDistributionEnvCheck = readText(hiverelayRoot, 'scripts', 'check-release-distribution-env.mjs')
+const githubReleaseSetupCheck = readText(hiverelayRoot, 'scripts', 'check-github-release-setup.mjs')
 const releaseImageManifestCheck = readText(hiverelayRoot, 'scripts', 'check-release-image-manifest.mjs')
 const githubEnvWriter = readText(hiverelayRoot, 'scripts', 'write-github-env.mjs')
 const releaseEvidence = readText(hiverelayRoot, 'scripts', 'write-release-evidence.mjs')
@@ -291,6 +292,7 @@ const officialUmbrelGalleryCheckTest = readText(hiverelayRoot, 'test', 'unit', '
 const umbrelRuntimeReviewEvidenceTest = readText(hiverelayRoot, 'test', 'unit', 'umbrel-runtime-review-evidence.test.js')
 const umbrelRuntimeReviewEvidenceVerifyTest = readText(hiverelayRoot, 'test', 'unit', 'umbrel-runtime-review-verify.test.js')
 const releaseDistributionEnvCheckTest = readText(hiverelayRoot, 'test', 'unit', 'release-distribution-env.test.js')
+const githubReleaseSetupCheckTest = readText(hiverelayRoot, 'test', 'unit', 'github-release-setup.test.js')
 const releaseEvidenceTest = readText(hiverelayRoot, 'test', 'unit', 'release-evidence.test.js')
 const releaseEvidenceVerifyTest = readText(hiverelayRoot, 'test', 'unit', 'release-evidence-verify.test.js')
 const releaseHandoffEvidenceVerifyTest = readText(hiverelayRoot, 'test', 'unit', 'release-handoff-evidence-verify.test.js')
@@ -4159,6 +4161,37 @@ if (
   pass('release workflow blocks stable releases before silently skipping fleet, Umbrel, or StartOS distribution credentials')
 } else {
   fail('release workflow can still silently skip required stable-release distribution credentials')
+}
+
+if (
+  monorepoPkg.scripts &&
+  monorepoPkg.scripts['release:check-github-setup'] === 'node scripts/check-github-release-setup.mjs' &&
+  githubReleaseSetupCheck.includes('REQUIRED_SECRETS') &&
+  githubReleaseSetupCheck.includes("'FLEET_SSH_PRIVATE_KEY'") &&
+  githubReleaseSetupCheck.includes("'UMBREL_STORE_TOKEN'") &&
+  githubReleaseSetupCheck.includes("'UMBREL_OFFICIAL_PR_TOKEN'") &&
+  githubReleaseSetupCheck.includes("'UMBREL_OFFICIAL_FORK'") &&
+  githubReleaseSetupCheck.includes("'STARTOS_DEVELOPER_KEY_PEM'") &&
+  githubReleaseSetupCheck.includes("'STARTOS_REGISTRY_URL'") &&
+  githubReleaseSetupCheck.includes("['secret', 'list', '--repo', repo, '--json', 'name']") &&
+  githubReleaseSetupCheck.includes("['variable', 'list', '--repo', repo, '--json', 'name,value']") &&
+  githubReleaseSetupCheck.includes('is configured as a repository variable; move it to GitHub Secrets') &&
+  githubReleaseSetupCheck.includes('Repository variable FLEET_ROLLOUT_TIMEOUT_MS must be an integer') &&
+  githubReleaseSetupCheck.includes('sanitizeGhError') &&
+  githubReleaseSetupCheck.includes('isRepoFullName') &&
+  githubReleaseSetupCheckTest.includes('passes with all required secrets') &&
+  githubReleaseSetupCheckTest.includes('reports missing release secrets') &&
+  githubReleaseSetupCheckTest.includes('rejects required secrets configured as variables') &&
+  githubReleaseSetupCheckTest.includes('rejects invalid optional fleet timeout variable') &&
+  githubReleaseSetupCheckTest.includes('reports gh JSON failures') &&
+  githubReleaseSetupCheckTest.includes('rejects malformed repo names before gh calls') &&
+  releaseAutomationDocs.includes('npm run release:check-github-setup') &&
+  releaseAutomationDocs.includes('not print secret values') &&
+  readme.includes('npm run release:check-github-setup')
+) {
+  pass('release readiness includes a repo-level GitHub secret and variable setup audit')
+} else {
+  fail('release readiness can still rely on manual GitHub secret and variable inspection')
 }
 
 const releasePackageManifests = [

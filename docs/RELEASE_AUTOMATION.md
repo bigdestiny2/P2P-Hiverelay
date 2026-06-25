@@ -118,9 +118,13 @@ Expected shapes:
 After configuration, confirm the names are visible:
 
 ```sh
-gh secret list --repo bigdestiny2/P2P-Hiverelay
-gh variable list --repo bigdestiny2/P2P-Hiverelay
+npm run release:check-github-setup
 ```
+
+This check reads the repository secret and variable names through `gh`; it does
+not print secret values. It fails if any required release secret is missing, if
+a required secret name was accidentally configured as a public repository
+variable, or if the optional `FLEET_ROLLOUT_TIMEOUT_MS` variable is malformed.
 
 Never reuse an existing release tag for newly merged code. Prepare and tag a
 fresh version, then let `release-surfaces.yml` build the digest, update
