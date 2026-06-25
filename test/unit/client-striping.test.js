@@ -75,6 +75,72 @@ test('getStriped: falls back to a single full GET when Range is unsupported', as
   t.ok(b4a.equals(out.buffer, payload), 'still returns the correct bytes')
 })
 
+test('getStriped: a relay that ignores Range is rejected and the range is refetched elsewhere', async (t) => {
+  const payload = b4a.alloc(600)
+  for (let i = 0; i < payload.length; i++) payload[i] = (i * 7) % 256
+  const orig = globalThis.fetch
+  // r1 ignores Range entirely (always returns the FULL body, status 200, no
+  // content-range). r2 honours Range. Reassembly must still be byte-correct.
+  globalThis.fetch = async (url, opts = {}) => {
+    const range = opts.headers && opts.headers.Range
+    const ignoresRange = url.includes('://r1')
+    if (ignoresRange || !range) {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        arrayBuffer: async () => payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength)
+      }
+    }
+    const m = /bytes=(\d+)-(\d+)/.exec(range)
+    const s = Number(m[1]); const e = Number(m[2])
+    const slice = payload.subarray(s, e + 1)
+    return {
+      ok: true,
+      status: 206,
+      headers: { get: (h) => (h && h.toLowerCase() === 'content-range') ? `bytes ${s}-${e}/${payload.length}` : null },
+      arrayBuffer: async () => slice.buffer.slice(slice.byteOffset, slice.byteOffset + slice.byteLength)
+    }
+  }
+  t.teardown(() => { globalThis.fetch = orig })
+
+  const client = makeClient()
+  const out = await client.getStriped(DRIVE, '/f', {
+    quorum: [{ url: 'http://r1', pubkey: 'r1' }, { url: 'http://r2', pubkey: 'r2' }],
+    stripes: 2
+  })
+  t.is(out.striped, true)
+  t.ok(b4a.equals(out.buffer, payload), 'bytes are correct despite a Range-ignoring relay')
+  t.absent(out.relaysUsed.includes('r1'), 'the misbehaving relay served no accepted stripe')
+})
+
+test('getStriped: a throwing relay is failed over to a healthy one', async (t) => {
+  const payload = b4a.from('the quick brown fox jumps over the lazy dog')
+  const orig = globalThis.fetch
+  globalThis.fetch = async (url, opts = {}) => {
+    if (url.includes('://bad')) throw new Error('connection refused')
+    const range = opts.headers && opts.headers.Range
+    const m = range && /bytes=(\d+)-(\d+)/.exec(range)
+    const s = m ? Number(m[1]) : 0
+    const e = m ? Number(m[2]) : payload.length - 1
+    const slice = payload.subarray(s, e + 1)
+    return {
+      ok: true,
+      status: range ? 206 : 200,
+      headers: { get: (h) => (h && h.toLowerCase() === 'content-range') ? `bytes ${s}-${e}/${payload.length}` : null },
+      arrayBuffer: async () => slice.buffer.slice(slice.byteOffset, slice.byteOffset + slice.byteLength)
+    }
+  }
+  t.teardown(() => { globalThis.fetch = orig })
+
+  const client = makeClient()
+  const out = await client.getStriped(DRIVE, '/f', {
+    quorum: [{ url: 'http://bad', pubkey: 'bad' }, { url: 'http://good', pubkey: 'good' }]
+  })
+  t.ok(out.ok)
+  t.ok(b4a.equals(out.buffer, payload), 'reassembled correctly after failover')
+})
+
 test('getStriped: validates inputs', async (t) => {
   const client = makeClient()
   await t.exception(() => client.getStriped('nothex', '/x', { quorum: [{ url: 'http://r1' }] }), /64 hex/)

@@ -172,6 +172,41 @@ test('bearer voucher: gate accepts paymentProof.voucherId', async (t) => {
   await lm.destroy()
 })
 
+test('concurrency: two parallel verifyLease of one payment grant exactly ONE lease', async (t) => {
+  const provider = new MockProvider()
+  // Make settlement lookup yield, so both calls are genuinely in flight at once
+  // (this is the window the in-flight lock must close — without it both pass).
+  const origLookup = provider.lookupInvoice.bind(provider)
+  provider.lookupInvoice = async (h) => { await new Promise(resolve => setTimeout(resolve, 5)); return origLookup(h) }
+  const { lm } = await makeManager({ provider })
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 5 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+
+  const [a, b] = await Promise.all([
+    lm.verifyLease({ appKey: APPKEY, quoteId: quote.quoteId, maxStorageBytes: GIB }, T0 + 1000),
+    lm.verifyLease({ appKey: APPKEY, quoteId: quote.quoteId, maxStorageBytes: GIB }, T0 + 1000)
+  ])
+  t.is([a, b].filter(r => r.ok).length, 1, 'exactly one concurrent redemption succeeds')
+  t.is(lm.leaseCount, 1, 'only one lease recorded (no double-spend)')
+  await lm.destroy()
+})
+
+test('concurrency: two parallel issueBearerVoucher of one payment issue exactly ONE', async (t) => {
+  const provider = new MockProvider()
+  const origLookup = provider.lookupInvoice.bind(provider)
+  provider.lookupInvoice = async (h) => { await new Promise(resolve => setTimeout(resolve, 5)); return origLookup(h) }
+  const { lm } = await makeManager({ provider })
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 5 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+
+  const [a, b] = await Promise.all([
+    lm.issueBearerVoucher({ quoteId: quote.quoteId }, T0 + 1000),
+    lm.issueBearerVoucher({ quoteId: quote.quoteId }, T0 + 1000)
+  ])
+  t.is([a, b].filter(r => r.ok).length, 1, 'exactly one voucher issued from one payment')
+  await lm.destroy()
+})
+
 test('blind token: pay → blind-sign → unblind → redeem (fully unlinkable, denominated)', async (t) => {
   const { blind, unblind } = await import('p2p-hiverelay/incentive/payment/blind-mint.js')
   const denom = { maxStorageBytes: GIB, leaseDays: 30 }

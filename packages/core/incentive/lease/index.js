@@ -77,6 +77,11 @@ export class LeaseManager extends EventEmitter {
     // has expired it is safe to drop; we ONLY ever evict already-expired
     // entries, never a still-live one (which would re-open a replay).
     this._consumed = new Map()
+    // Payment hashes (and voucher serials) with a settlement check IN FLIGHT.
+    // Claimed synchronously before the async lookupInvoice so two concurrent
+    // redemptions of the same payment can't both pass the consumed-check, both
+    // settle, and both grant a lease (TOCTOU double-spend). Released in finally.
+    this._inflight = new Set()
     this.totalLeasedSats = 0
     this.leaseCount = 0
     this._persisting = Promise.resolve()
@@ -169,6 +174,25 @@ export class LeaseManager extends EventEmitter {
   }
 
   /**
+   * Run `fn` under a single-use lock on `key`, so a CONCURRENT redemption of
+   * the same payment/voucher can't slip through the (async) settlement window.
+   * Returns the REPLAY error if the key is already consumed or in flight.
+   * @param {string} key  paymentHash or voucher serial guard key
+   * @param {() => Promise<object>} fn
+   */
+  async _withRedemptionLock (key, fn) {
+    if (this._consumed.has(key) || this._inflight.has(key)) {
+      return { ok: false, error: 'LEASE_REPLAY: this payment was already redeemed', status: 402 }
+    }
+    this._inflight.add(key)
+    try {
+      return await fn()
+    } finally {
+      this._inflight.delete(key)
+    }
+  }
+
+  /**
    * Verify a paid lease for a resubmitted seed request.
    * @returns {{ ok: true, paidUntil, amountSats, leaseDays } | { ok: false, error, status }}
    */
@@ -186,57 +210,56 @@ export class LeaseManager extends EventEmitter {
     if (!Number.isFinite(body.expiresAt) || body.expiresAt <= now) {
       return { ok: false, error: 'LEASE_QUOTE_EXPIRED: request a fresh quote', status: 402 }
     }
-    if (this._consumed.has(body.paymentHash)) {
-      return { ok: false, error: 'LEASE_REPLAY: this payment was already redeemed', status: 402 }
-    }
     if (!this.provider || typeof this.provider.lookupInvoice !== 'function') {
       return { ok: false, error: 'LEASE_NO_PROVIDER: cannot verify payment', status: 503 }
     }
-    let status
-    try {
-      status = await this.provider.lookupInvoice(body.paymentHash)
-    } catch (err) {
-      return { ok: false, error: 'LEASE_LOOKUP_FAILED: ' + (err.message || String(err)), status: 503 }
-    }
-    if (!status || !status.settled) {
-      return { ok: false, error: 'LEASE_UNPAID: invoice not settled yet', status: 402 }
-    }
-    if (num(status.amount) < body.amountSats) {
-      return { ok: false, error: 'LEASE_UNDERPAID: settled amount below quote', status: 402 }
-    }
-
-    // Overflow trim: drop ONLY entries whose quote already expired (those can
-    // never pass the expiresAt gate again, so dropping them cannot re-open a
-    // replay). If still at cap with every entry live, refuse rather than evict
-    // a still-redeemable hash.
-    if (this._consumed.size >= MAX_CONSUMED_RETAINED) {
-      for (const [h, exp] of this._consumed) {
-        if (!Number.isFinite(exp) || exp <= now) this._consumed.delete(h)
+    return this._withRedemptionLock(body.paymentHash, async () => {
+      let status
+      try {
+        status = await this.provider.lookupInvoice(body.paymentHash)
+      } catch (err) {
+        return { ok: false, error: 'LEASE_LOOKUP_FAILED: ' + (err.message || String(err)), status: 503 }
       }
+      if (!status || !status.settled) {
+        return { ok: false, error: 'LEASE_UNPAID: invoice not settled yet', status: 402 }
+      }
+      if (num(status.amount) < body.amountSats) {
+        return { ok: false, error: 'LEASE_UNDERPAID: settled amount below quote', status: 402 }
+      }
+
+      // Overflow trim: drop ONLY entries whose quote already expired (those can
+      // never pass the expiresAt gate again, so dropping them cannot re-open a
+      // replay). If still at cap with every entry live, refuse rather than evict
+      // a still-redeemable hash.
       if (this._consumed.size >= MAX_CONSUMED_RETAINED) {
-        return { ok: false, error: 'LEASE_GUARD_FULL: replay-guard saturated; retry shortly', status: 503 }
+        for (const [h, exp] of this._consumed) {
+          if (!Number.isFinite(exp) || exp <= now) this._consumed.delete(h)
+        }
+        if (this._consumed.size >= MAX_CONSUMED_RETAINED) {
+          return { ok: false, error: 'LEASE_GUARD_FULL: replay-guard saturated; retry shortly', status: 503 }
+        }
       }
-    }
 
-    // Consume + record. The replay-guard MUST be durable before we admit the
-    // lease — if the write fails, roll back so we never admit an un-guarded
-    // (replayable) lease.
-    this._consumed.set(body.paymentHash, body.expiresAt)
-    this.totalLeasedSats += body.amountSats
-    this.leaseCount += 1
-    try {
-      await this._persist()
-    } catch (err) {
-      this._consumed.delete(body.paymentHash)
-      this.totalLeasedSats -= body.amountSats
-      this.leaseCount -= 1
-      this.emit('persist-error', err)
-      return { ok: false, error: 'LEASE_PERSIST_FAILED: could not durably record payment; retry', status: 503 }
-    }
+      // Consume + record. The replay-guard MUST be durable before we admit the
+      // lease — if the write fails, roll back so we never admit an un-guarded
+      // (replayable) lease.
+      this._consumed.set(body.paymentHash, body.expiresAt)
+      this.totalLeasedSats += body.amountSats
+      this.leaseCount += 1
+      try {
+        await this._persist()
+      } catch (err) {
+        this._consumed.delete(body.paymentHash)
+        this.totalLeasedSats -= body.amountSats
+        this.leaseCount -= 1
+        this.emit('persist-error', err)
+        return { ok: false, error: 'LEASE_PERSIST_FAILED: could not durably record payment; retry', status: 503 }
+      }
 
-    const paidUntil = now + body.leaseDays * DAY_MS
-    this.emit('lease-paid', { appKey: body.appKey, amountSats: body.amountSats, leaseDays: body.leaseDays, paidUntil })
-    return { ok: true, paidUntil, amountSats: body.amountSats, leaseDays: body.leaseDays }
+      const paidUntil = now + body.leaseDays * DAY_MS
+      this.emit('lease-paid', { appKey: body.appKey, amountSats: body.amountSats, leaseDays: body.leaseDays, paidUntil })
+      return { ok: true, paidUntil, amountSats: body.amountSats, leaseDays: body.leaseDays }
+    })
   }
 
   // ─── Bearer vouchers (opt-in, payer-unlinkable to content) ─────────
@@ -273,46 +296,45 @@ export class LeaseManager extends EventEmitter {
     if (!Number.isFinite(body.expiresAt) || body.expiresAt <= now) {
       return { ok: false, error: 'LEASE_QUOTE_EXPIRED: request a fresh quote', status: 402 }
     }
-    if (this._consumed.has(body.paymentHash)) {
-      return { ok: false, error: 'LEASE_REPLAY: this payment was already redeemed', status: 402 }
-    }
     if (!this.provider || typeof this.provider.lookupInvoice !== 'function') {
       return { ok: false, error: 'LEASE_NO_PROVIDER: cannot verify payment', status: 503 }
     }
-    let status
-    try {
-      status = await this.provider.lookupInvoice(body.paymentHash)
-    } catch (err) {
-      return { ok: false, error: 'LEASE_LOOKUP_FAILED: ' + (err.message || String(err)), status: 503 }
-    }
-    if (!status || !status.settled) return { ok: false, error: 'LEASE_UNPAID: invoice not settled yet', status: 402 }
-    if (num(status.amount) < body.amountSats) return { ok: false, error: 'LEASE_UNDERPAID: settled amount below quote', status: 402 }
+    return this._withRedemptionLock(body.paymentHash, async () => {
+      let status
+      try {
+        status = await this.provider.lookupInvoice(body.paymentHash)
+      } catch (err) {
+        return { ok: false, error: 'LEASE_LOOKUP_FAILED: ' + (err.message || String(err)), status: 503 }
+      }
+      if (!status || !status.settled) return { ok: false, error: 'LEASE_UNPAID: invoice not settled yet', status: 402 }
+      if (num(status.amount) < body.amountSats) return { ok: false, error: 'LEASE_UNDERPAID: settled amount below quote', status: 402 }
 
-    // Consume the paymentHash so it can't be redeemed twice (as a lease or a
-    // second voucher). The voucher's own replay-guard is its serial.
-    this._consumed.set(body.paymentHash, body.expiresAt)
-    // Voucher lives for the lease window (generous): payer may seed later.
-    const voucherExpiresAt = now + Math.max(this.maxDays, body.leaseDays) * DAY_MS
-    const voucherBody = {
-      v: LEASE_SCHEMA_VERSION,
-      kind: 'bearer',
-      serial: b4a.toString(randomBytes(32), 'hex'),
-      maxStorageBytes: body.maxStorageBytes,
-      leaseDays: body.leaseDays,
-      amountSats: body.amountSats,
-      expiresAt: voucherExpiresAt
-    }
-    const signature = b4a.toString(signClaim(this.keyPair, voucherBody), 'hex')
-    const voucherId = b4a.toString(b4a.from(canonicalJson({ body: voucherBody, signature }), 'utf8'), 'base64url')
-    try {
-      await this._persist()
-    } catch (err) {
-      this._consumed.delete(body.paymentHash)
-      this.emit('persist-error', err)
-      return { ok: false, error: 'LEASE_PERSIST_FAILED: could not durably record issuance; retry', status: 503 }
-    }
-    this.emit('bearer-issued', { amountSats: body.amountSats, leaseDays: body.leaseDays })
-    return { ok: true, voucherId, amountSats: body.amountSats, leaseDays: body.leaseDays, expiresAt: voucherExpiresAt }
+      // Consume the paymentHash so it can't be redeemed twice (as a lease or a
+      // second voucher). The voucher's own replay-guard is its serial.
+      this._consumed.set(body.paymentHash, body.expiresAt)
+      // Voucher lives for the lease window (generous): payer may seed later.
+      const voucherExpiresAt = now + Math.max(this.maxDays, body.leaseDays) * DAY_MS
+      const voucherBody = {
+        v: LEASE_SCHEMA_VERSION,
+        kind: 'bearer',
+        serial: b4a.toString(randomBytes(32), 'hex'),
+        maxStorageBytes: body.maxStorageBytes,
+        leaseDays: body.leaseDays,
+        amountSats: body.amountSats,
+        expiresAt: voucherExpiresAt
+      }
+      const signature = b4a.toString(signClaim(this.keyPair, voucherBody), 'hex')
+      const voucherId = b4a.toString(b4a.from(canonicalJson({ body: voucherBody, signature }), 'utf8'), 'base64url')
+      try {
+        await this._persist()
+      } catch (err) {
+        this._consumed.delete(body.paymentHash)
+        this.emit('persist-error', err)
+        return { ok: false, error: 'LEASE_PERSIST_FAILED: could not durably record issuance; retry', status: 503 }
+      }
+      this.emit('bearer-issued', { amountSats: body.amountSats, leaseDays: body.leaseDays })
+      return { ok: true, voucherId, amountSats: body.amountSats, leaseDays: body.leaseDays, expiresAt: voucherExpiresAt }
+    })
   }
 
   /** Decode + verify the relay's own signature over a bearer voucherId. */
@@ -407,38 +429,37 @@ export class LeaseManager extends EventEmitter {
     if (!Number.isFinite(body.expiresAt) || body.expiresAt <= now) {
       return { ok: false, error: 'LEASE_QUOTE_EXPIRED: request a fresh quote', status: 402 }
     }
-    if (this._consumed.has(body.paymentHash)) {
-      return { ok: false, error: 'LEASE_REPLAY: this payment was already redeemed', status: 402 }
-    }
     if (!this.provider || typeof this.provider.lookupInvoice !== 'function') {
       return { ok: false, error: 'LEASE_NO_PROVIDER: cannot verify payment', status: 503 }
     }
-    let status
-    try {
-      status = await this.provider.lookupInvoice(body.paymentHash)
-    } catch (err) {
-      return { ok: false, error: 'LEASE_LOOKUP_FAILED: ' + (err.message || String(err)), status: 503 }
-    }
-    if (!status || !status.settled) return { ok: false, error: 'LEASE_UNPAID: invoice not settled yet', status: 402 }
-    if (num(status.amount) < body.amountSats) return { ok: false, error: 'LEASE_UNDERPAID: settled amount below quote', status: 402 }
+    return this._withRedemptionLock(body.paymentHash, async () => {
+      let status
+      try {
+        status = await this.provider.lookupInvoice(body.paymentHash)
+      } catch (err) {
+        return { ok: false, error: 'LEASE_LOOKUP_FAILED: ' + (err.message || String(err)), status: 503 }
+      }
+      if (!status || !status.settled) return { ok: false, error: 'LEASE_UNPAID: invoice not settled yet', status: 402 }
+      if (num(status.amount) < body.amountSats) return { ok: false, error: 'LEASE_UNDERPAID: settled amount below quote', status: 402 }
 
-    let blindSignature
-    try {
-      blindSignature = this.blindMint.blindSign(blinded)
-    } catch (err) {
-      return { ok: false, error: 'LEASE_BLIND_SIGN_FAILED: ' + (err.message || String(err)), status: 400 }
-    }
-    // Consume the funding payment so it can't also be spent elsewhere.
-    this._consumed.set(body.paymentHash, body.expiresAt)
-    try {
-      await this._persist()
-    } catch (err) {
-      this._consumed.delete(body.paymentHash)
-      this.emit('persist-error', err)
-      return { ok: false, error: 'LEASE_PERSIST_FAILED: could not durably record issuance; retry', status: 503 }
-    }
-    this.emit('blind-issued', { amountSats: body.amountSats, leaseDays: body.leaseDays })
-    return { ok: true, blindSignature, mintPubkey: this.blindMint.publicKey, leaseDays: body.leaseDays, maxStorageBytes: body.maxStorageBytes }
+      let blindSignature
+      try {
+        blindSignature = this.blindMint.blindSign(blinded)
+      } catch (err) {
+        return { ok: false, error: 'LEASE_BLIND_SIGN_FAILED: ' + (err.message || String(err)), status: 400 }
+      }
+      // Consume the funding payment so it can't also be spent elsewhere.
+      this._consumed.set(body.paymentHash, body.expiresAt)
+      try {
+        await this._persist()
+      } catch (err) {
+        this._consumed.delete(body.paymentHash)
+        this.emit('persist-error', err)
+        return { ok: false, error: 'LEASE_PERSIST_FAILED: could not durably record issuance; retry', status: 503 }
+      }
+      this.emit('blind-issued', { amountSats: body.amountSats, leaseDays: body.leaseDays })
+      return { ok: true, blindSignature, mintPubkey: this.blindMint.publicKey, leaseDays: body.leaseDays, maxStorageBytes: body.maxStorageBytes }
+    })
   }
 
   /**

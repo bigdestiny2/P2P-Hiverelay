@@ -2885,13 +2885,22 @@ export class HiveRelayClient extends EventEmitter {
    * Range support (RFC 9110) that every relay already serves; relays need no
    * changes and are unaware they're serving a stripe.
    *
+   * INTEGRITY CAVEAT: stripes are reassembled by byte offset. getStriped does
+   * NOT cryptographically verify that the relays served consistent bytes — the
+   * HTTP gateway path carries no per-block Merkle proof, so a malicious relay
+   * can corrupt its stripe. The returned `ok` flag confirms total LENGTH only,
+   * not content integrity. Use for public/non-sensitive content, or verify the
+   * result against a known drive hash. Each stripe IS checked to be the exact
+   * length requested, so a relay that ignores Range (returns the full body) is
+   * rejected and the range is retried on another relay.
+   *
    * @param {string} driveKey  64-hex drive key
    * @param {string} path      file path within the drive (e.g. '/index.html')
    * @param {object} [opts]
    * @param {Array}  [opts.quorum]    [{url,pubkey}] relays to stripe across (default: selectQuorum())
    * @param {number} [opts.stripes]   number of ranges to split into (default: quorum length)
    * @param {number} [opts.timeoutMs] per-stripe timeout (default 15000)
-   * @returns {Promise<{ ok, bytes, buffer, stripes, relaysUsed }>}
+   * @returns {Promise<{ ok, bytes, buffer, stripes, relaysUsed, striped }>}
    */
   async getStriped (driveKey, path, opts = {}) {
     if (typeof driveKey !== 'string' || !/^[0-9a-f]{64}$/i.test(driveKey)) {
@@ -2916,7 +2925,7 @@ export class HiveRelayClient extends EventEmitter {
         const headers = (start === null) ? {} : { Range: `bytes=${start}-${end}` }
         const res = await globalThis.fetch(url, { signal: controller.signal, headers })
         if (!res.ok) throw new Error('status ' + res.status)
-        const buf = Buffer.from(await res.arrayBuffer())
+        const buf = b4a.from(new Uint8Array(await res.arrayBuffer()))
         const total = parseContentRangeTotal(res.headers && res.headers.get && res.headers.get('content-range'))
         return { buf, total }
       } finally {
@@ -2924,15 +2933,45 @@ export class HiveRelayClient extends EventEmitter {
       }
     }
 
-    // Probe total size from the first relay (1 byte) so we can plan stripes.
-    const probe = await fetchRange(relays[0], 0, 0)
-    const totalBytes = Number.isFinite(probe.total) && probe.total > 0 ? probe.total : null
+    // Fetch a range, trying the preferred relay first then the others — so a
+    // bad/slow relay can't sink the whole read. Reject a response that isn't
+    // the exact requested length (a relay that ignored Range and returned the
+    // full body would otherwise be mis-concatenated into corrupt output).
+    const fetchStripe = async (start, end, preferredIdx) => {
+      const want = end - start + 1
+      let lastErr = null
+      for (let k = 0; k < relays.length; k++) {
+        const relay = relays[(preferredIdx + k) % relays.length]
+        try {
+          const r = await fetchRange(relay, start, end)
+          if (r.buf.length !== want) {
+            lastErr = new Error('range not honored by ' + (relay.pubkey || relay.url))
+            continue
+          }
+          return { start, buf: r.buf, relay: relay.pubkey || relay.url }
+        } catch (err) {
+          lastErr = err
+        }
+      }
+      throw new Error('getStriped: no relay served range ' + start + '-' + end + (lastErr ? ' (' + lastErr.message + ')' : ''))
+    }
+
+    // Probe total size via a 1-byte ranged request; try relays until one
+    // reports a Content-Range total. If none support Range, fall back to a
+    // single full GET (reusing the body we already pulled when possible).
+    let totalBytes = null
+    let probeFullBuf = null
+    let probeRelay = relays[0]
+    for (const relay of relays) {
+      try {
+        const r = await fetchRange(relay, 0, 0)
+        if (Number.isFinite(r.total) && r.total > 0) { totalBytes = r.total; probeRelay = relay; break }
+        if (!probeFullBuf) probeFullBuf = r.buf // server ignored Range → full body
+      } catch (_) { /* try next relay */ }
+    }
     if (totalBytes === null) {
-      // Server didn't honor Range (no content-range). Fall back to a single
-      // full GET from one relay — correctness over striping. Caller still gets
-      // the bytes; we just couldn't spread them.
-      const full = await fetchRange(relays[0], null, null)
-      return { ok: true, bytes: full.buf.length, buffer: full.buf, stripes: 1, relaysUsed: [relays[0].pubkey || relays[0].url], striped: false }
+      const buf = probeFullBuf || (await fetchRange(probeRelay, null, null)).buf
+      return { ok: true, bytes: buf.length, buffer: buf, stripes: 1, relaysUsed: [probeRelay.pubkey || probeRelay.url], striped: false }
     }
 
     const stripeCount = Math.max(1, Math.min(opts.stripes || relays.length, relays.length, totalBytes))
@@ -2942,15 +2981,12 @@ export class HiveRelayClient extends EventEmitter {
       const start = i * size
       if (start >= totalBytes) break
       const end = Math.min(start + size, totalBytes) - 1
-      plan.push({ start, end, relay: relays[i % relays.length] })
+      plan.push({ start, end, preferredIdx: i % relays.length })
     }
 
-    const parts = await Promise.all(plan.map(async (p) => {
-      const r = await fetchRange(p.relay, p.start, p.end)
-      return { start: p.start, buf: r.buf, relay: p.relay.pubkey || p.relay.url }
-    }))
+    const parts = await Promise.all(plan.map(p => fetchStripe(p.start, p.end, p.preferredIdx)))
     parts.sort((a, b) => a.start - b.start)
-    const buffer = Buffer.concat(parts.map(p => p.buf))
+    const buffer = b4a.concat(parts.map(p => p.buf))
     return {
       ok: buffer.length === totalBytes,
       bytes: buffer.length,
