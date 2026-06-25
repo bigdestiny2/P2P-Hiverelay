@@ -64,9 +64,24 @@ export async function evaluateSeedLease ({ leaseManager, seedingRegistry, appKey
 
   const proof = body && body.paymentProof && typeof body.paymentProof === 'object' ? body.paymentProof : null
 
+  // Cashu token path: a standard `cashuA` token string (NUT-00). Decoded and
+  // redeemed against the relay's keyset. Same unlinkable guarantee.
+  if (proof && typeof proof.cashuToken === 'string') {
+    if (typeof leaseManager.redeemCashuToken !== 'function') {
+      return { outcome: 'error', error: 'LEASE_BLIND_UNSUPPORTED', status: 400 }
+    }
+    try {
+      const v = await leaseManager.redeemCashuToken(proof.cashuToken)
+      if (!v.ok) return { outcome: 'error', error: v.error || 'LEASE_UNVERIFIED', status: v.status || 402 }
+      return { outcome: 'paid', retainUntil: v.paidUntil }
+    } catch (err) {
+      return { outcome: 'error', error: 'LEASE_VERIFY_FAILED: ' + (err.message || String(err)), status: 503 }
+    }
+  }
+
   // Blind token path (strongest privacy): a Chaumian-blind, fully unlinkable
-  // token. The relay can't tie the redeemed token to the invoice that funded
-  // it. Highest precedence.
+  // token expressed as a raw { secret, C } proof. The relay can't tie the
+  // redeemed token to the invoice that funded it. Highest precedence.
   if (proof && proof.blindToken && typeof proof.blindToken === 'object') {
     if (typeof leaseManager.redeemBlindVoucher !== 'function') {
       return { outcome: 'error', error: 'LEASE_BLIND_UNSUPPORTED', status: 400 }

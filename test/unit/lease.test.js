@@ -243,6 +243,43 @@ test('blind token: pay → blind-sign → unblind → redeem (fully unlinkable, 
   await lm.destroy()
 })
 
+test('cashu interop: issue → unblind → cashuA token → redeem through the gate', async (t) => {
+  const { blind, unblind } = await import('p2p-hiverelay/incentive/payment/blind-mint.js')
+  const { makeProof, encodeToken } = await import('p2p-hiverelay/incentive/payment/cashu.js')
+  const { lm, provider } = await makeManager({ blindDenomination: { maxStorageBytes: GIB, leaseDays: 30 } })
+  const info = lm.blindMintInfo()
+  t.ok(/^00[0-9a-f]{14}$/.test(info.keyset.id), 'mint advertises a NUT-02 keyset id')
+
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 30 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+  const secret = '22'.repeat(32)
+  const { blinded, blindingFactor } = blind(secret)
+  const issued = await lm.issueBlindVoucher({ quoteId: quote.quoteId, blinded }, T0 + 1000)
+  t.is(issued.keysetId, info.keyset.id, 'issuance returns the keyset id')
+
+  // Payer assembles a standard Cashu proof + cashuA token.
+  const C = unblind(issued.blindSignature, blindingFactor, issued.mintPubkey)
+  const proof = makeProof(issued.amount, issued.keysetId, secret, C)
+  const token = encodeToken({ mint: 'hiverelay', proofs: [proof], unit: 'sat' })
+  t.ok(token.startsWith('cashuA'))
+
+  // Redeem the token through the gate.
+  const outcome = await evaluateSeedLease({
+    leaseManager: lm,
+    seedingRegistry: null,
+    appKey: 'f'.repeat(64),
+    opts: { maxStorage: GIB },
+    body: { paymentProof: { cashuToken: token } }
+  })
+  t.is(outcome.outcome, 'paid', 'cashuA token redeemed through the gate')
+
+  // Double-spend of the same token is rejected.
+  const again = await lm.redeemCashuToken(token, T0 + 2000)
+  t.is(again.ok, false)
+  t.is(again.error.split(':')[0], 'LEASE_REPLAY')
+  await lm.destroy()
+})
+
 test('blind token: denomination mismatch is rejected at issuance', async (t) => {
   const { blind } = await import('p2p-hiverelay/incentive/payment/blind-mint.js')
   const { lm, provider } = await makeManager({ blindDenomination: { maxStorageBytes: GIB, leaseDays: 30 } })

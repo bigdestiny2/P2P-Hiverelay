@@ -33,6 +33,7 @@ import { dirname } from 'path'
 import b4a from 'b4a'
 import { canonicalJson, signClaim, verifyClaim } from '../subsidy/index.js'
 import { BlindMint } from '../payment/blind-mint.js'
+import { buildKeyset, decodeToken } from '../payment/cashu.js'
 
 const GIB = 1024 * 1024 * 1024
 const DAY_MS = 86_400_000
@@ -397,16 +398,35 @@ export class LeaseManager extends EventEmitter {
     return { ok: true, paidUntil, amountSats: body.amountSats, leaseDays: body.leaseDays }
   }
 
-  // ─── Blind tokens (Chaumian, fully unlinkable — opt-in) ────────────
+  // ─── Blind tokens (Cashu NUT-00, fully unlinkable — opt-in) ────────
   //
   // Strongest tier: the payer blinds their own secret, so the mint cannot link
-  // the settled invoice to the redeemed token. See incentive/payment/blind-mint.js
-  // (AUDIT BEFORE PRODUCTION). Enabled only when blindDenomination is set.
+  // the settled invoice to the redeemed token. Backed by a real secp256k1 Cashu
+  // mint (incentive/payment/blind-mint.js + cashu.js), so a token IS a standard
+  // Cashu Proof / `cashuA` token. Enabled only when blindDenomination is set.
 
-  /** Mint advertisement for the capability doc, or null when disabled. */
+  /** Sats price of the configured blind denomination (the Cashu amount). */
+  _denomSats () {
+    return this.quoteSats(this.blindDenomination.maxStorageBytes, this.blindDenomination.leaseDays).amountSats
+  }
+
+  /** The relay's NUT-01/02 keyset for the blind denomination (memoized). */
+  _blindKeyset () {
+    if (!this._keyset) this._keyset = buildKeyset(this.blindMint, this._denomSats(), 'sat')
+    return this._keyset
+  }
+
+  /**
+   * Mint advertisement for the capability doc, or null when disabled. Includes
+   * a real Cashu keyset (id + amount->pubkey) so wallets can recognise it.
+   */
   blindMintInfo () {
     if (!this.blindMint || !this.blindDenomination) return null
-    return { pubkey: this.blindMint.publicKey, denomination: { ...this.blindDenomination } }
+    return {
+      pubkey: this.blindMint.publicKey,
+      denomination: { ...this.blindDenomination },
+      keyset: this._blindKeyset() // { id, unit, keys: { [sats]: pubkey } }
+    }
   }
 
   /**
@@ -458,8 +478,48 @@ export class LeaseManager extends EventEmitter {
         return { ok: false, error: 'LEASE_PERSIST_FAILED: could not durably record issuance; retry', status: 503 }
       }
       this.emit('blind-issued', { amountSats: body.amountSats, leaseDays: body.leaseDays })
-      return { ok: true, blindSignature, mintPubkey: this.blindMint.publicKey, leaseDays: body.leaseDays, maxStorageBytes: body.maxStorageBytes }
+      const keyset = this._blindKeyset()
+      // blindSignature is the NUT-00 C_; the payer unblinds it and assembles a
+      // Proof { amount, id, secret, C }. amount/keysetId let them build a token.
+      return {
+        ok: true,
+        blindSignature,
+        mintPubkey: this.blindMint.publicKey,
+        keysetId: keyset.id,
+        amount: this._denomSats(),
+        leaseDays: body.leaseDays,
+        maxStorageBytes: body.maxStorageBytes
+      }
     })
+  }
+
+  /**
+   * Convenience: redeem a `cashuA` token string (decodes the proof, checks the
+   * keyset id + amount match this mint's denomination, then redeems it).
+   * @returns {{ ok:true, paidUntil, leaseDays } | { ok:false, error, status }}
+   */
+  async redeemCashuToken (token, now = Date.now()) {
+    if (!this.blindMint || !this.blindDenomination) {
+      return { ok: false, error: 'LEASE_BLIND_DISABLED', status: 400 }
+    }
+    let proof
+    try {
+      const decoded = decodeToken(token)
+      proof = decoded.proofs && decoded.proofs[0]
+    } catch (err) {
+      return { ok: false, error: 'LEASE_BLIND_BAD_TOKEN: ' + (err.message || String(err)), status: 400 }
+    }
+    if (!proof || typeof proof.secret !== 'string' || typeof proof.C !== 'string') {
+      return { ok: false, error: 'LEASE_BLIND_BAD_TOKEN: token has no usable proof', status: 400 }
+    }
+    const keyset = this._blindKeyset()
+    if (proof.id && proof.id !== keyset.id) {
+      return { ok: false, error: 'LEASE_BLIND_WRONG_KEYSET: token is for a different keyset', status: 402 }
+    }
+    if (Number.isFinite(proof.amount) && proof.amount !== this._denomSats()) {
+      return { ok: false, error: 'LEASE_BLIND_WRONG_AMOUNT: token amount != denomination', status: 402 }
+    }
+    return this.redeemBlindVoucher({ secret: proof.secret, C: proof.C }, now)
   }
 
   /**
