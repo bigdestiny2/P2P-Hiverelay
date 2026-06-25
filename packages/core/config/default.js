@@ -192,6 +192,23 @@ export default {
     maxRestarts: 3
   },
 
+  // Metadata-privacy controls. The relay is already blind to CONTENT; these
+  // shrink the remaining CONNECTION-metadata surface. All default to the
+  // privacy-preserving-but-non-degrading setting.
+  privacy: {
+    // Redact peer pubkeys in the public /api/peers payload to a per-process
+    // salted digest. Authenticated operator views can still request raw keys.
+    redactPeerIdentifiers: true,
+    // Epoch-rotating discovery topics so a passive DHT observer can't
+    // enumerate the relay set indefinitely from one vantage point.
+    //   false      — static topic only (unchanged behaviour)
+    //   'additive' — announce on BOTH static + rotating topics (back-compat +
+    //                partial privacy; recommended transitional setting)
+    //   'strict'   — rotating topics only (max unlinkability; legacy peers that
+    //                only know the static topic won't discover this relay)
+    rotateDiscoveryTopic: false
+  },
+
   // Regions
   regions: [], // Empty = accept from all regions
 

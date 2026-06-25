@@ -183,6 +183,7 @@ import {
   snapshotWizardConfig
 } from './api-safe-config.js'
 import { buildPeerListPayload } from './api-peer-state.js'
+import { redactIp } from '../privacy.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -474,10 +475,19 @@ export class RelayAPI extends EventEmitter {
       this._authFailureLogAt.set(route, now)
       // Real socket address, not _getClientIP — XFF is attacker-controlled
       // and this line exists precisely to attribute unauthenticated calls.
-      const ip = (req.socket && req.socket.remoteAddress) || 'unknown'
+      // Redacted to a per-process salted digest: still distinguishes/ correlates
+      // a 401 burst by source, without writing raw IPs to the log.
+      const ip = redactIp((req.socket && req.socket.remoteAddress) || null)
       const routeCount = this._authFailures.get(route) || this._authFailureTotal
       console.warn(`[api] 401 auth failure on ${route} from ${ip} (${routeCount} on this route, ${this._authFailureTotal} total)`)
     }
+  }
+
+  // Peer-identifier redaction posture for public payloads. Defaults ON; an
+  // operator can expose raw pubkeys via config.privacy.redactPeerIdentifiers=false.
+  _redactPeers () {
+    const privacy = this.node && this.node.config && this.node.config.privacy
+    return !(privacy && privacy.redactPeerIdentifiers === false)
   }
 
   _authFailureRoute (req) {
@@ -677,7 +687,10 @@ export class RelayAPI extends EventEmitter {
         }
 
         if (path === '/peers') {
-          return this._json(res, buildPeerListPayload({ swarm: this.node.swarm }))
+          return this._json(res, buildPeerListPayload({
+            swarm: this.node.swarm,
+            redact: this._redactPeers()
+          }))
         }
 
         // --- Dashboard endpoints ---
@@ -898,7 +911,8 @@ export class RelayAPI extends EventEmitter {
           return this._json(res, buildPeerListPayload({
             swarm: this.node.swarm,
             connections: this.node.connections,
-            reputation: this.node.reputation
+            reputation: this.node.reputation,
+            redact: this._redactPeers()
           }))
         }
 

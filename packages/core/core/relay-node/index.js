@@ -58,6 +58,9 @@ import { AppRegistry } from '../app-registry.js'
 import {
   RELAY_DISCOVERY_TOPIC,
   FOUNDATION_TOPIC,
+  DISCOVERY_EPOCH_MS,
+  syncEpochDiscoveryTopics,
+  clearEpochDiscoveryTopics,
   isValidHexKey,
   normalizeAvailabilityClass,
   normalizePrivacyTier,
@@ -436,6 +439,7 @@ export class RelayNode extends EventEmitter {
     // first action is `await this._scope.drain()` so no closure outlives
     // the corestore.
     this._scope = null
+    this._epochDiscoveryTopics = new Map()
     this.running = false
   }
 
@@ -809,7 +813,26 @@ export class RelayNode extends EventEmitter {
       // available via regionTopic(code) but not auto-joined at current scale —
       // splitting <10 relays across regions reduces discovery, not load.
       // Will revisit when N grows.)
-      this.swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: false })
+      //
+      // Epoch-rotated discovery (opt-in via config.privacy.rotateDiscoveryTopic):
+      //   - 'additive' keeps the static topic (full back-compat) AND announces
+      //     on the rotating epoch topics for privacy-aware peers.
+      //   - 'strict' drops the static topic for maximum unlinkability.
+      // Default (off) leaves behaviour identical to before.
+      const rotateMode = this.config.privacy && this.config.privacy.rotateDiscoveryTopic
+      if (rotateMode !== 'strict') {
+        this.swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: false })
+      }
+      if (rotateMode === 'additive' || rotateMode === 'strict') {
+        this._joinEpochDiscoveryTopics()
+        // Re-join current+next every half-epoch so the node is always announced
+        // on the bucket clients are looking up, across the rollover boundary.
+        this._epochDiscoveryTimer = setInterval(
+          () => { try { this._joinEpochDiscoveryTopics() } catch (_) {} },
+          Math.max(60_000, Math.floor(DISCOVERY_EPOCH_MS / 2))
+        )
+        if (this._epochDiscoveryTimer.unref) this._epochDiscoveryTimer.unref()
+      }
 
       // Foundation relays (operator-of-last-resort) opt-in by setting
       // config.foundation = true — gives quorum-pinned clients a stable
@@ -1803,6 +1826,8 @@ export class RelayNode extends EventEmitter {
         this._scope = null
       }
       this.bootstrapCache.stop()
+      if (this._epochDiscoveryTimer) { clearInterval(this._epochDiscoveryTimer); this._epochDiscoveryTimer = null }
+      clearEpochDiscoveryTopics(this._epochDiscoveryTopics)
       if (this._catalogThrottleCleanup) { clearInterval(this._catalogThrottleCleanup); this._catalogThrottleCleanup = null }
       if (this._reputationSaveInterval) { clearInterval(this._reputationSaveInterval); this._reputationSaveInterval = null }
       if (this._reputationDecayInterval) { clearInterval(this._reputationDecayInterval); this._reputationDecayInterval = null }
@@ -3947,6 +3972,20 @@ export class RelayNode extends EventEmitter {
       return false
     }
     return true
+  }
+
+  /**
+   * Announce on the current + next epoch discovery buckets. Idempotent:
+   * swarm.join() on an already-joined topic is a no-op, so calling this on a
+   * timer simply rolls the announcement forward across epoch boundaries.
+   */
+  _joinEpochDiscoveryTopics () {
+    if (!this.swarm) return
+    this._epochDiscoveryTopics = syncEpochDiscoveryTopics(
+      this._epochDiscoveryTopics,
+      this.swarm,
+      { server: true, client: false }
+    )
   }
 
   async stop () {

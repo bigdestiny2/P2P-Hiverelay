@@ -67,6 +67,99 @@ function regionTopic (region) {
  */
 const FOUNDATION_TOPIC = _topicOf('hiverelay-foundation-v1')
 
+// ─── Epoch-rotating discovery (opt-in privacy) ───────────────
+//
+// The static RELAY_DISCOVERY_TOPIC lets a passive DHT observer enumerate the
+// entire relay set indefinitely from a single vantage point. An epoch-rotated
+// topic — blake2b('…-epoch-<bucket>') where bucket = floor(now / period) —
+// changes every period, so a snapshot only reveals the CURRENT window's
+// participants. This mirrors Tor v3 onion services' time-rotated blinded
+// descriptors. Nodes that opt in join the current AND next bucket (an overlap
+// window that absorbs clock skew and covers the rollover boundary) so there is
+// no discovery gap. In 'additive' mode they ALSO keep the static topic (full
+// backward-compat, partial privacy); in 'strict' mode they drop the static
+// topic for maximum unlinkability at the cost of discoverability by legacy peers.
+
+const DISCOVERY_EPOCH_MS = 60 * 60 * 1000 // 1 hour
+
+/**
+ * Topic for a specific epoch bucket.
+ * @param {number} bucket
+ * @returns {Buffer} 32-byte topic
+ */
+function epochDiscoveryTopic (bucket) {
+  return _topicOf('hiverelay-discovery-v1-epoch-' + bucket)
+}
+
+/**
+ * The epoch topics a node should currently be joined to: the current bucket
+ * plus the next one (overlap window). Pure — pass `now`/`periodMs` for tests.
+ *
+ * @param {number|null} [now=Date.now()]
+ * @param {number} [periodMs=DISCOVERY_EPOCH_MS]
+ * @returns {Buffer[]} [currentTopic, nextTopic]
+ */
+function epochDiscoveryTopics (now = null, periodMs = DISCOVERY_EPOCH_MS) {
+  const t = Number.isFinite(now) ? now : Date.now()
+  const period = Number.isFinite(periodMs) && periodMs > 0 ? periodMs : DISCOVERY_EPOCH_MS
+  const bucket = Math.floor(t / period)
+  return [epochDiscoveryTopic(bucket), epochDiscoveryTopic(bucket + 1)]
+}
+
+function destroyDiscoveryHandle (handle) {
+  if (!handle || typeof handle.destroy !== 'function') return
+  try {
+    const done = handle.destroy()
+    if (done && typeof done.catch === 'function') done.catch(() => {})
+  } catch (_) {}
+}
+
+/**
+ * Keep a swarm joined to exactly the current and next epoch discovery topics.
+ * `joined` is a Map keyed by topic hex with Hyperswarm discovery handles as
+ * values. Old buckets are destroyed as soon as they roll out of the active
+ * current+next window.
+ *
+ * @param {Map<string, *>} joined
+ * @param {*} swarm
+ * @param {{ server: boolean, client: boolean }} joinOpts
+ * @param {number|null} [now=Date.now()]
+ * @param {number} [periodMs=DISCOVERY_EPOCH_MS]
+ * @returns {Map<string, *>} the same joined map
+ */
+function syncEpochDiscoveryTopics (joined, swarm, joinOpts, now = null, periodMs = DISCOVERY_EPOCH_MS) {
+  const handles = joined instanceof Map ? joined : new Map()
+  if (!swarm || typeof swarm.join !== 'function') return handles
+
+  const active = new Set()
+  for (const topic of epochDiscoveryTopics(now, periodMs)) {
+    const key = b4a.toString(topic, 'hex')
+    active.add(key)
+    if (!handles.has(key)) {
+      handles.set(key, swarm.join(topic, joinOpts))
+    }
+  }
+
+  for (const [key, handle] of handles) {
+    if (!active.has(key)) {
+      handles.delete(key)
+      destroyDiscoveryHandle(handle)
+    }
+  }
+
+  return handles
+}
+
+/**
+ * Destroy every tracked epoch discovery handle and empty the map.
+ * @param {Map<string, *>} joined
+ */
+function clearEpochDiscoveryTopics (joined) {
+  if (!(joined instanceof Map)) return
+  for (const handle of joined.values()) destroyDiscoveryHandle(handle)
+  joined.clear()
+}
+
 // ─── Protomux protocol names ─────────────────────────────────
 
 const SEED_PROTOCOL_NAME = 'hiverelay-seed'
@@ -189,6 +282,11 @@ function uint64ToBuffer (n) {
 export {
   RELAY_DISCOVERY_TOPIC,
   FOUNDATION_TOPIC,
+  DISCOVERY_EPOCH_MS,
+  epochDiscoveryTopic,
+  epochDiscoveryTopics,
+  syncEpochDiscoveryTopics,
+  clearEpochDiscoveryTopics,
   regionTopic,
   SEED_PROTOCOL_NAME,
   CIRCUIT_PROTOCOL_NAME,

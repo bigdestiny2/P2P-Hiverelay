@@ -190,6 +190,8 @@ const errorPrefixes = readText(hiverelayRoot, 'packages', 'core', 'core', 'error
 const subsidyCore = readText(hiverelayRoot, 'packages', 'core', 'incentive', 'subsidy', 'index.js')
 const reputationCore = readText(hiverelayRoot, 'packages', 'core', 'incentive', 'reputation', 'index.js')
 const lightningProvider = readText(hiverelayRoot, 'packages', 'core', 'incentive', 'payment', 'lightning-provider.js')
+const blindMintCore = readText(hiverelayRoot, 'packages', 'core', 'incentive', 'payment', 'blind-mint.js')
+const cashuCore = readText(hiverelayRoot, 'packages', 'core', 'incentive', 'payment', 'cashu.js')
 const pvssCore = readText(hiverelayRoot, 'packages', 'core', 'core', 'pvss.js')
 const clientSecretSharing = readText(hiverelayRoot, 'packages', 'client', 'secret-sharing.js')
 const servicesIdentityCrypto = readText(hiverelayRoot, 'packages', 'services', 'identity', 'crypto.js')
@@ -278,6 +280,8 @@ const custodyStatusRedactionTest = readText(hiverelayRoot, 'test', 'unit', 'cust
 const statusSecretsRedactionTest = readText(hiverelayRoot, 'test', 'unit', 'status-secrets-redaction.test.js')
 const quorumSelectorTest = readText(hiverelayRoot, 'test', 'unit', 'quorum-selector.test.js')
 const reputationTest = readText(hiverelayRoot, 'test', 'unit', 'reputation.test.js')
+const blindMintTest = readText(hiverelayRoot, 'test', 'unit', 'blind-mint.test.js')
+const cashuTest = readText(hiverelayRoot, 'test', 'unit', 'cashu.test.js')
 const appRegistryTest = readText(hiverelayRoot, 'test', 'unit', 'app-registry.test.js')
 const signedDirectoryTest = readText(hiverelayRoot, 'test', 'unit', 'signed-directory.test.js')
 const appLifecyclePersistenceTest = readText(hiverelayRoot, 'test', 'unit', 'app-lifecycle-persistence.test.js')
@@ -1898,15 +1902,21 @@ if (
   relayApi.includes("import { buildPeerListPayload } from './api-peer-state.js'") &&
   relayApi.includes('return this._json(res, buildPeerListPayload({') &&
   relayApi.includes("if (path === '/peers')") &&
-  relayApi.includes('return this._json(res, buildPeerListPayload({ swarm: this.node.swarm }))') &&
+  relayApi.includes('redact: this._redactPeers()') &&
   bareHttpServer.includes("import { buildPeerListPayload } from './api-peer-state.js'") &&
   bareHttpServer.includes('publicKeyAlias: true') &&
   bareHttpServer.includes('includeLastActivity: true') &&
+  relayApiPeerState.includes("import { redactPubkeyHex } from '../privacy.js'") &&
   relayApiPeerState.includes('export const MAX_PEER_LIST_ENTRIES = 1000') &&
   relayApiPeerState.includes('export function buildPeerListPayload') &&
   relayApiPeerState.includes('maxPeers = MAX_PEER_LIST_ENTRIES') &&
+  relayApiPeerState.includes('redact = true') &&
+  relayApiPeerState.includes('const realPubkey = publicKeyHex(conn && conn.remotePublicKey)') &&
+  relayApiPeerState.includes('const shownPubkey = redact ? redactPubkeyHex(realPubkey) : realPubkey') &&
+  relayApiPeerState.includes('reputation.getRecord(realPubkey)') &&
   relayApiPeerState.includes('if (peers.length >= limit) continue') &&
   relayApiPeerState.includes('truncated: total > peers.length') &&
+  relayApiPeerState.includes('redacted: !!redact') &&
   relayApiPeerState.includes('value.length !== 32') &&
   relayApiPeerState.includes('Buffer.from(value).toString(\'hex\')') &&
   relayApiPeerState.includes('Math.max(0, Math.floor(now - lastActivity))') &&
@@ -1915,12 +1925,14 @@ if (
   apiPeerStateTest.includes('builds stable public peer list payload') &&
   apiPeerStateTest.includes('redacts malformed peer metadata into JSON-safe fields') &&
   apiPeerStateTest.includes('tolerates absent swarm and connection maps') &&
+  apiPeerStateTest.includes('redacts peer pubkeys by default (metadata minimization)') &&
+  apiPeerStateTest.includes('reputation still keyed on the REAL pubkey') &&
   apiPeerStateTest.includes('supports Bare compatibility aliases without raw future timestamps') &&
   apiPeerStateTest.includes('caps public peer arrays while preserving total count') &&
   apiAuthTest.includes('legacy /peers uses capped sanitized public peer payload') &&
   auditRoadmap.includes('Public peer list bounds')
 ) {
-  pass('public Node/Bare peer-state payload is extracted, bounded, and sanitizes malformed peer metadata')
+  pass('public Node/Bare peer-state payload is extracted, bounded, redacted by default, and sanitizes malformed peer metadata')
 } else {
   fail('public peer payloads can drift, grow unbounded, or expose malformed peer metadata across runtimes')
 }
@@ -2374,15 +2386,16 @@ if (
   relayApiReputationRead.includes('secretToken') === false &&
   relayApiReputationRead.includes('...record') === false &&
   relayApiPeerState.includes("import { sanitizeReputationRecord } from './api-reputation-read.js'") &&
-  relayApiPeerState.includes('peer.reputation = sanitizeReputationRecord(reputation.getRecord(peerPubkey))') &&
+  relayApiPeerState.includes('peer.reputation = sanitizeReputationRecord(reputation.getRecord(realPubkey))') &&
   apiReputationReadTest.includes('sanitizes direct records without raw store fields') &&
   apiReputationReadTest.includes('caps and sanitizes leaderboard rows') &&
   apiPeerStateTest.includes('raw reputation fields are omitted') &&
+  apiPeerStateTest.includes('reputation still keyed on the REAL pubkey') &&
   apiAuthTest.includes('GET /api/reputation returns bounded sanitized public leaderboard') &&
   apiAuthTest.includes('GET /api/reputation/:pubkey returns sanitized public record') &&
   auditRoadmap.includes('Reputation read boundary')
 ) {
-  pass('public reputation reads and peer decorations are extracted with capped sanitized payloads')
+  pass('public reputation reads and peer decorations are extracted with capped sanitized payloads and real-key lookups behind redacted public IDs')
 } else {
   fail('public reputation reads can regress to raw records or unbounded leaderboard output')
 }
@@ -3403,7 +3416,7 @@ if (
 }
 
 if (
-  !corePkg.dependencies['@noble/curves'] &&
+  corePkg.dependencies['@noble/curves'] &&
   corePkg.dependencies['@noble/secp256k1'] &&
   corePkg.dependencies['@noble/hashes'] &&
   servicesPkg.dependencies['@noble/curves'] &&
@@ -3411,15 +3424,21 @@ if (
   servicesPkg.dependencies['@noble/hashes'] &&
   pvssCore.includes("import * as secp from '@noble/secp256k1'") &&
   pvssCore.includes("import { sha256 } from '@noble/hashes/sha2.js'") &&
+  blindMintCore.includes("import { secp256k1 } from '@noble/curves/secp256k1.js'") &&
+  blindMintCore.includes('Cashu NUT-00 BDHKE blind-signature mint') &&
+  cashuCore.includes('cashuA') &&
   clientSecretSharing.includes("import * as secp from '@noble/secp256k1'") &&
   servicesIdentityCrypto.includes("import * as secp from '@noble/secp256k1'") &&
   servicesVrfEcv.includes("import { ed25519 } from '@noble/curves/ed25519.js'") &&
   pokerChaumPedersen.includes("import { ed25519 as nobleEd25519 } from '@noble/curves/ed25519.js'") &&
-  auditRoadmap.includes('remove unused core-level `@noble/curves`') &&
-  auditDoc.includes('Core did not import') &&
-  auditDoc.includes('remains owned by `p2p-hiveservices`')
+  blindMintTest.includes('Official Cashu NUT-00 test vectors') &&
+  blindMintTest.includes('BDHKE: full blind') &&
+  cashuTest.includes('cashuA token: encode') &&
+  auditRoadmap.includes('retain `@noble/curves` in core for Cashu NUT-00 BDHKE') &&
+  auditDoc.includes('`@noble/curves` for Cashu NUT-00 BDHKE blind-mint field/point arithmetic') &&
+  auditDoc.includes('`p2p-hiveservices` for VRF and poker logic')
 ) {
-  pass('Noble crypto dependencies are scoped to core PVSS and service-owned curve usage')
+  pass('Noble crypto dependencies are scoped to core PVSS/Cashu and service-owned curve usage')
 } else {
   fail('Noble crypto dependency scope or audit notes are stale')
 }

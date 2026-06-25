@@ -1,4 +1,5 @@
 import { sanitizeReputationRecord } from './api-reputation-read.js'
+import { redactPubkeyHex } from '../privacy.js'
 
 export const MAX_PEER_LIST_ENTRIES = 1000
 
@@ -9,7 +10,13 @@ export function buildPeerListPayload ({
   now = Date.now(),
   publicKeyAlias = false,
   includeLastActivity = false,
-  maxPeers = MAX_PEER_LIST_ENTRIES
+  maxPeers = MAX_PEER_LIST_ENTRIES,
+  // Metadata minimization: by default the bounded peer list returns a
+  // non-reversible salted digest of each peer pubkey instead of the raw
+  // 64-char key, so the public-facing surface can't be used to reconstruct
+  // who-connected-when. An authenticated operator view passes redact:false
+  // to get the real keys (e.g. for allow/blocklist management).
+  redact = true
 } = {}) {
   const peers = []
   const items = swarm && swarm.connections && typeof swarm.connections[Symbol.iterator] === 'function'
@@ -21,17 +28,19 @@ export function buildPeerListPayload ({
   for (const conn of items) {
     total++
     if (peers.length >= limit) continue
-    const peerPubkey = publicKeyHex(conn && conn.remotePublicKey)
+    // Reputation is keyed on the REAL pubkey; redaction only affects output.
+    const realPubkey = publicKeyHex(conn && conn.remotePublicKey)
+    const shownPubkey = redact ? redactPubkeyHex(realPubkey) : realPubkey
     const entry = connections && typeof connections.get === 'function' ? connections.get(conn) : null
     const peer = {
-      remotePublicKey: peerPubkey,
+      remotePublicKey: shownPubkey,
       type: connectionType(conn && conn.type),
       connectedFor: connectedFor(entry, now)
     }
-    if (publicKeyAlias) peer.publicKey = peerPubkey
+    if (publicKeyAlias) peer.publicKey = shownPubkey
     if (includeLastActivity) peer.lastActivity = lastActivity(entry, now)
-    if (peerPubkey && reputation && typeof reputation.getRecord === 'function') {
-      peer.reputation = sanitizeReputationRecord(reputation.getRecord(peerPubkey))
+    if (realPubkey && reputation && typeof reputation.getRecord === 'function') {
+      peer.reputation = sanitizeReputationRecord(reputation.getRecord(realPubkey))
     }
     peers.push(peer)
   }
@@ -40,6 +49,7 @@ export function buildPeerListPayload ({
     count: peers.length,
     total,
     truncated: total > peers.length,
+    redacted: !!redact,
     peers
   }
 }

@@ -56,7 +56,7 @@ import { extractCustodySeedOpts } from '../seed-request-builder.js'
 import { CircuitRelay } from '../protocol/relay-circuit.js'
 import { ProofOfRelay } from '../protocol/proof-of-relay.js'
 import { AppRegistry } from '../app-registry.js'
-import { RELAY_DISCOVERY_TOPIC, FOUNDATION_TOPIC } from '../constants.js'
+import { RELAY_DISCOVERY_TOPIC, FOUNDATION_TOPIC, DISCOVERY_EPOCH_MS, syncEpochDiscoveryTopics, clearEpochDiscoveryTopics } from '../constants.js'
 import { SwarmFirewall } from './swarm-firewall.js'
 
 // Services framework lives in Core (p2p-hiverelay). Builtin service
@@ -134,6 +134,8 @@ export class BareRelay extends EventEmitter {
     this._circuitRelay = null
     this._proofOfRelay = null
     this._discovery = null
+    this._epochDiscoveryTimer = null
+    this._epochDiscoveryTopics = new Map()
     this.federation = null
     // BareRelay has no operator TUI for the review queue; we still expose
     // the same `_pendingRequests` map for symmetry with RelayNode so any
@@ -149,6 +151,15 @@ export class BareRelay extends EventEmitter {
   }
 
   // Symmetry with RelayNode so Federation can call it.
+  _joinEpochDiscoveryTopics () {
+    if (!this.swarm) return
+    this._epochDiscoveryTopics = syncEpochDiscoveryTopics(
+      this._epochDiscoveryTopics,
+      this.swarm,
+      { server: true, client: false }
+    )
+  }
+
   _resolveAcceptMode () { return resolveAcceptMode(this.config) }
   _decideAcceptance (req, mode) { return decideAcceptance(req, mode, this.config.acceptAllowlist || []) }
 
@@ -332,7 +343,21 @@ export class BareRelay extends EventEmitter {
     // 10. Announce on the global discovery topic. Foundation relays opt-in
     //    via config.foundation = true. Region-sharded topics are available
     //    via regionTopic(code) but not auto-joined — premature at <10 relays.
-    this._discovery = this.swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: true })
+    // Epoch-rotated discovery (opt-in via config.privacy.rotateDiscoveryTopic):
+    // mirrors the Node relay (relay-node/index.js). 'additive' keeps the static
+    // topic; 'strict' drops it. Default (off) is unchanged behaviour.
+    const rotateMode = this.config.privacy && this.config.privacy.rotateDiscoveryTopic
+    if (rotateMode !== 'strict') {
+      this._discovery = this.swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: true })
+    }
+    if (rotateMode === 'additive' || rotateMode === 'strict') {
+      this._joinEpochDiscoveryTopics()
+      this._epochDiscoveryTimer = setInterval(
+        () => { try { this._joinEpochDiscoveryTopics() } catch (_) {} },
+        Math.max(60_000, Math.floor(DISCOVERY_EPOCH_MS / 2))
+      )
+      if (this._epochDiscoveryTimer.unref) this._epochDiscoveryTimer.unref()
+    }
     if (this.config.foundation === true) {
       this._foundationDiscovery = this.swarm.join(FOUNDATION_TOPIC, { server: true, client: false })
     }
@@ -385,6 +410,8 @@ export class BareRelay extends EventEmitter {
     if (!this.running) return
     log.info('BareRelay stopping…')
 
+    if (this._epochDiscoveryTimer) { clearInterval(this._epochDiscoveryTimer); this._epochDiscoveryTimer = null }
+    clearEpochDiscoveryTopics(this._epochDiscoveryTopics)
     if (this._discovery) { try { await this._discovery.destroy() } catch (_) {} this._discovery = null }
     if (this._regionDiscovery) { try { await this._regionDiscovery.destroy() } catch (_) {} this._regionDiscovery = null }
     if (this._foundationDiscovery) { try { await this._foundationDiscovery.destroy() } catch (_) {} this._foundationDiscovery = null }

@@ -42,9 +42,10 @@ async function makeManager (opts = {}) {
     satsPerGiBDay: opts.satsPerGiBDay != null ? opts.satsPerGiBDay : 10,
     quoteTtlMs: opts.quoteTtlMs != null ? opts.quoteTtlMs : 60 * 60 * 1000,
     minDays: opts.minDays,
-    maxDays: opts.maxDays
+    maxDays: opts.maxDays,
+    blindDenomination: opts.blindDenomination
   })
-  await lm.start()
+  await lm.start({ now: opts.now })
   return { lm, provider }
 }
 
@@ -111,6 +112,236 @@ test('expired quote is rejected even if paid', async (t) => {
   const late = await lm.verifyLease({ appKey: APPKEY, quoteId: quote.quoteId }, T0 + 5000)
   t.is(late.ok, false)
   t.is(late.error.split(':')[0], 'LEASE_QUOTE_EXPIRED')
+  await lm.destroy()
+})
+
+test('bearer voucher: pay → issue → redeem for ANY appKey (payment unlinked to content)', async (t) => {
+  const { lm, provider } = await makeManager({ satsPerGiBDay: 10 })
+  // Buy via a normal quote, settle it, then convert to a bearer voucher.
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: 2 * GIB, leaseDays: 5 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+  const issued = await lm.issueBearerVoucher({ quoteId: quote.quoteId }, T0 + 1000)
+  t.is(issued.ok, true, 'voucher issued from a settled quote')
+  t.ok(typeof issued.voucherId === 'string' && issued.voucherId.length > 0)
+
+  // The voucher body carries NO appKey — decode and confirm.
+  const decoded = JSON.parse(Buffer.from(issued.voucherId, 'base64url').toString('utf8'))
+  t.is(decoded.body.kind, 'bearer')
+  t.absent('appKey' in decoded.body, 'voucher is not bound to any appKey')
+
+  // Redeem it for a COMPLETELY DIFFERENT appKey — succeeds (decoupled).
+  const otherApp = 'c'.repeat(64)
+  const redeemed = await lm.verifyBearer({ voucherId: issued.voucherId, maxStorageBytes: 2 * GIB }, T0 + 2000)
+  t.is(redeemed.ok, true, 'redeemable for an unrelated appKey')
+  t.is(redeemed.paidUntil, T0 + 2000 + 5 * DAY_MS)
+  t.is(otherApp.length, 64) // (appKey never even passed to verifyBearer)
+
+  // Single-use: second redemption is a replay.
+  const again = await lm.verifyBearer({ voucherId: issued.voucherId, maxStorageBytes: 2 * GIB }, T0 + 3000)
+  t.is(again.ok, false)
+  t.is(again.error.split(':')[0], 'LEASE_REPLAY')
+  await lm.destroy()
+})
+
+test('bearer voucher: the funding quote cannot ALSO be spent as a direct lease', async (t) => {
+  const { lm, provider } = await makeManager()
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 2 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+  const issued = await lm.issueBearerVoucher({ quoteId: quote.quoteId }, T0 + 1000)
+  t.is(issued.ok, true)
+  // The paymentHash was consumed at issuance → quote path now replays.
+  const dbl = await lm.verifyLease({ appKey: APPKEY, quoteId: quote.quoteId }, T0 + 2000)
+  t.is(dbl.ok, false)
+  t.is(dbl.error.split(':')[0], 'LEASE_REPLAY')
+  await lm.destroy()
+})
+
+test('bearer voucher: gate accepts paymentProof.voucherId', async (t) => {
+  const { lm, provider } = await makeManager()
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 1 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+  const issued = await lm.issueBearerVoucher({ quoteId: quote.quoteId }, T0 + 1000)
+  const outcome = await evaluateSeedLease({
+    leaseManager: lm,
+    seedingRegistry: null,
+    appKey: 'd'.repeat(64),
+    opts: { maxStorage: GIB },
+    body: { paymentProof: { voucherId: issued.voucherId } }
+  })
+  t.is(outcome.outcome, 'paid', 'voucher redeemed through the gate for an unrelated app')
+  await lm.destroy()
+})
+
+test('concurrency: two parallel verifyLease of one payment grant exactly ONE lease', async (t) => {
+  const provider = new MockProvider()
+  // Make settlement lookup yield, so both calls are genuinely in flight at once
+  // (this is the window the in-flight lock must close — without it both pass).
+  const origLookup = provider.lookupInvoice.bind(provider)
+  provider.lookupInvoice = async (h) => { await new Promise(resolve => setTimeout(resolve, 5)); return origLookup(h) }
+  const { lm } = await makeManager({ provider })
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 5 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+
+  const [a, b] = await Promise.all([
+    lm.verifyLease({ appKey: APPKEY, quoteId: quote.quoteId, maxStorageBytes: GIB }, T0 + 1000),
+    lm.verifyLease({ appKey: APPKEY, quoteId: quote.quoteId, maxStorageBytes: GIB }, T0 + 1000)
+  ])
+  t.is([a, b].filter(r => r.ok).length, 1, 'exactly one concurrent redemption succeeds')
+  t.is(lm.leaseCount, 1, 'only one lease recorded (no double-spend)')
+  await lm.destroy()
+})
+
+test('concurrency: two parallel issueBearerVoucher of one payment issue exactly ONE', async (t) => {
+  const provider = new MockProvider()
+  const origLookup = provider.lookupInvoice.bind(provider)
+  provider.lookupInvoice = async (h) => { await new Promise(resolve => setTimeout(resolve, 5)); return origLookup(h) }
+  const { lm } = await makeManager({ provider })
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 5 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+
+  const [a, b] = await Promise.all([
+    lm.issueBearerVoucher({ quoteId: quote.quoteId }, T0 + 1000),
+    lm.issueBearerVoucher({ quoteId: quote.quoteId }, T0 + 1000)
+  ])
+  t.is([a, b].filter(r => r.ok).length, 1, 'exactly one voucher issued from one payment')
+  await lm.destroy()
+})
+
+test('blind token: pay → blind-sign → unblind → redeem (fully unlinkable, denominated)', async (t) => {
+  const { blind, unblind } = await import('p2p-hiverelay/incentive/payment/blind-mint.js')
+  const denom = { maxStorageBytes: GIB, leaseDays: 30 }
+  const { lm, provider } = await makeManager({ blindDenomination: denom })
+  t.ok(lm.blindMintInfo(), 'mint advertised when denomination configured')
+
+  // 1. Buy a quote priced for exactly the denomination, settle it.
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 30 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+
+  // 2. Payer blinds their own secret; relay blind-signs (never sees the secret).
+  const secret = '11'.repeat(32)
+  const { blinded, blindingFactor } = blind(secret)
+  const issued = await lm.issueBlindVoucher({ quoteId: quote.quoteId, blinded }, T0 + 1000)
+  t.is(issued.ok, true, 'blind signature issued from settled denominated quote')
+
+  // 3. Payer unblinds → token (secret, C).
+  const C = unblind(issued.blindSignature, blindingFactor, issued.mintPubkey)
+
+  // 4. Redeem through the gate for an unrelated app.
+  const outcome = await evaluateSeedLease({
+    leaseManager: lm,
+    seedingRegistry: null,
+    appKey: 'e'.repeat(64),
+    opts: { maxStorage: GIB },
+    body: { paymentProof: { blindToken: { secret, C } } }
+  })
+  t.is(outcome.outcome, 'paid', 'blind token redeemed for an unrelated app')
+
+  // 5. Double-spend rejected.
+  const again = await lm.redeemBlindVoucher({ secret, C, maxStorageBytes: GIB }, T0 + 2000)
+  t.is(again.ok, false)
+  t.is(again.error.split(':')[0], 'LEASE_REPLAY')
+  await lm.destroy()
+})
+
+test('cashu interop: issue → unblind → cashuA token → redeem through the gate', async (t) => {
+  const { blind, unblind } = await import('p2p-hiverelay/incentive/payment/blind-mint.js')
+  const { makeProof, encodeToken } = await import('p2p-hiverelay/incentive/payment/cashu.js')
+  const { lm, provider } = await makeManager({ blindDenomination: { maxStorageBytes: GIB, leaseDays: 30 } })
+  const info = lm.blindMintInfo()
+  t.ok(/^00[0-9a-f]{14}$/.test(info.keyset.id), 'mint advertises a NUT-02 keyset id')
+
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 30 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+  const secret = '22'.repeat(32)
+  const { blinded, blindingFactor } = blind(secret)
+  const issued = await lm.issueBlindVoucher({ quoteId: quote.quoteId, blinded }, T0 + 1000)
+  t.is(issued.keysetId, info.keyset.id, 'issuance returns the keyset id')
+
+  // Payer assembles a standard Cashu proof + cashuA token.
+  const C = unblind(issued.blindSignature, blindingFactor, issued.mintPubkey)
+  const proof = makeProof(issued.amount, issued.keysetId, secret, C)
+  const token = encodeToken({ mint: 'hiverelay', proofs: [proof], unit: 'sat' })
+  t.ok(token.startsWith('cashuA'))
+
+  const tooLarge = await evaluateSeedLease({
+    leaseManager: lm,
+    seedingRegistry: null,
+    appKey: 'f'.repeat(64),
+    opts: { maxStorage: 2 * GIB },
+    body: { paymentProof: { cashuToken: token } }
+  })
+  t.is(tooLarge.outcome, 'error', 'cashu token cannot buy more storage than its denomination')
+  t.is(tooLarge.error.split(':')[0], 'LEASE_STORAGE_EXCEEDS_VOUCHER')
+
+  // Redeem the token through the gate.
+  const outcome = await evaluateSeedLease({
+    leaseManager: lm,
+    seedingRegistry: null,
+    appKey: 'f'.repeat(64),
+    opts: { maxStorage: GIB },
+    body: { paymentProof: { cashuToken: token } }
+  })
+  t.is(outcome.outcome, 'paid', 'cashuA token redeemed through the gate')
+
+  // Double-spend of the same token is rejected.
+  const again = await lm.redeemCashuToken(token, T0 + 2000)
+  t.is(again.ok, false)
+  t.is(again.error.split(':')[0], 'LEASE_REPLAY')
+  await lm.destroy()
+})
+
+test('blind token: replay guard survives restart past maxDays', async (t) => {
+  const { blind, unblind } = await import('p2p-hiverelay/incentive/payment/blind-mint.js')
+  const dir = await mkdtemp(join(tmpdir(), 'hiverelay-lease-'))
+  const storagePath = join(dir, 'lease.json')
+  const keyPair = makeKeyPair()
+  const denom = { maxStorageBytes: GIB, leaseDays: 1 }
+  const { lm, provider } = await makeManager({ keyPair, storagePath, blindDenomination: denom, maxDays: 1, now: T0 })
+
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 1 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+  const secret = '33'.repeat(32)
+  const { blinded, blindingFactor } = blind(secret)
+  const issued = await lm.issueBlindVoucher({ quoteId: quote.quoteId, blinded }, T0 + 1000)
+  t.is(issued.ok, true)
+  const C = unblind(issued.blindSignature, blindingFactor, issued.mintPubkey)
+
+  const first = await lm.redeemBlindVoucher({ secret, C, maxStorageBytes: GIB }, T0 + 2000)
+  t.is(first.ok, true)
+  await lm.destroy()
+
+  const { lm: restarted } = await makeManager({
+    keyPair,
+    storagePath,
+    blindDenomination: denom,
+    maxDays: 1,
+    now: T0 + 2 * DAY_MS
+  })
+  const again = await restarted.redeemBlindVoucher({ secret, C, maxStorageBytes: GIB }, T0 + 2 * DAY_MS)
+  t.is(again.ok, false)
+  t.is(again.error.split(':')[0], 'LEASE_REPLAY')
+  await restarted.destroy()
+})
+
+test('blind token: denomination mismatch is rejected at issuance', async (t) => {
+  const { blind } = await import('p2p-hiverelay/incentive/payment/blind-mint.js')
+  const { lm, provider } = await makeManager({ blindDenomination: { maxStorageBytes: GIB, leaseDays: 30 } })
+  // Quote for a DIFFERENT denomination (2 GiB) than configured (1 GiB).
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: 2 * GIB, leaseDays: 30 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+  const { blinded } = blind('22'.repeat(32))
+  const issued = await lm.issueBlindVoucher({ quoteId: quote.quoteId, blinded }, T0 + 1000)
+  t.is(issued.ok, false)
+  t.is(issued.error.split(':')[0], 'LEASE_BLIND_DENOMINATION_MISMATCH')
+  await lm.destroy()
+})
+
+test('blind token: disabled by default (no denomination)', async (t) => {
+  const { lm } = await makeManager()
+  t.is(lm.blindMintInfo(), null, 'not advertised unless operator opts in')
+  const res = await lm.redeemBlindVoucher({ secret: 'aa', C: 'bb', maxStorageBytes: GIB })
+  t.is(res.ok, false)
+  t.is(res.error.split(':')[0], 'LEASE_BLIND_DISABLED')
   await lm.destroy()
 })
 

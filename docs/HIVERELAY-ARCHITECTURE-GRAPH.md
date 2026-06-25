@@ -48,6 +48,7 @@ flowchart LR
     Custody["Atomic blind custody<br/>intent -> receipt -> commit -> proof"]:::core
     AutoHeal["AutoHeal<br/>replica diversity + anchor proof checks"]:::core
     Accounting["Accounting<br/>stored bytes, served bytes, signed usage"]:::core
+    LeaseMint["Lease + Cashu mint<br/>paid pins, NUT-00 blind tokens"]:::core
     Dashboard["Dashboard feed<br/>bounded redacted operator state"]:::core
     ServiceRouter["Service router<br/>providers + exact-topic subscriptions"]:::core
   end
@@ -84,6 +85,7 @@ flowchart LR
     CustodyEnvelope["Custody envelope<br/>field allowlists + plaintext denylist"]:::contract
     AnchorProof["Anchor proof<br/>signed appKey, anchored, attestedAt"]:::contract
     UsageReceipt["Usage receipt<br/>content-free signed metering"]:::contract
+    CashuToken["Cashu lease token<br/>NUT-00 proof, NUT-01 key, NUT-02 keyset"]:::contract
     ReleaseEvidence["Release evidence<br/>hash-linked JSON sidecars"]:::contract
   end
 
@@ -92,6 +94,7 @@ flowchart LR
     Bounds["Bounded reads<br/>caps, pagination, redaction"]:::guard
     Policy["Privacy policy guard<br/>public, local-first, p2p-only"]:::guard
     Blind["Blind custody gate<br/>ciphertext only, no plaintext payloads"]:::guard
+    Minimize["Metadata minimization<br/>epoch topics + salted public peer IDs"]:::guard
     AtomicWrite["Atomic persistence<br/>tmp-file + rename"]:::guard
     ReleaseGate["Release verifiers<br/>manifest, smoke, fleet, stores"]:::guard
   end
@@ -135,6 +138,7 @@ flowchart LR
   Seeder --> Gateway
   Gateway --> HTTP
   Proof --> Accounting
+  Accounting --> LeaseMint
   Anchor --> AutoHeal
   AutoHeal --> Registry
   ServiceRouter --> Services
@@ -156,6 +160,7 @@ flowchart LR
   Custody --> CustodyEnvelope
   AutoHeal --> AnchorProof
   Accounting --> UsageReceipt
+  LeaseMint --> CashuToken
   GitHubRelease --> ReleaseEvidence
 
   Auth --> Operator
@@ -164,6 +169,8 @@ flowchart LR
   Bounds --> Dashboard
   Policy --> Registry
   Blind --> Custody
+  Minimize --> DHT
+  Minimize --> Dashboard
   AtomicWrite --> Registry
   AtomicWrite --> Custody
   ReleaseGate --> GitHubRelease
@@ -253,7 +260,9 @@ flowchart TB
 | Data integrity | Hypercore Merkle trees | Replicated app drives, registry logs, gateway reads, proof responses |
 | HTTP integrity path | Range-aware streaming | `/v1/hyper/:key/*path` serves public app content without buffering whole files |
 | Identity and signatures | Ed25519 | Relay identity, signed seed/custody/usage/anchor artifacts |
+| Discovery privacy | Epoch-rotating topics and salted public peer-key digests | Metadata-minimized discovery and `/api/peers` output |
 | Hashing/KDF | BLAKE2b and HKDF-style derivation | Storage proofs, local encrypted storage key derivation |
+| Blind lease tokens | Cashu NUT-00/01/02 BDHKE over secp256k1 | Optional paid pin leases with unlinkable token issue/redeem flow |
 | Local encryption | XChaCha20-Poly1305 | Platform local storage encryption |
 | Randomness | RFC 9381 VRF | Sortition, shuffle, poker and service randomness |
 | Web ingress | HTTP JSON + WebSocket | Dashboards, management APIs, replication bridge, DHT bridge |
@@ -267,13 +276,14 @@ flowchart TB
 | `GET /health`, `GET /status`, `GET /metrics` | Public bounded status | Redacted health, version, counters, and metrics |
 | `GET /catalog.json` | Public catalog | Sanitized app catalog with manifest fields and optional signed catalog references |
 | `GET /v1/hyper/:key/*path` | Public gateway for public apps | Streaming Hyperdrive reads, `Range`, bounded error shaping |
-| `GET /api/overview`, `/api/apps`, `/api/peers`, `/api/network` | Public by default, detailed views require auth | Operator and network state with caps and redaction |
+| `GET /api/overview`, `/api/apps`, `/api/peers`, `/api/network` | Public by default, detailed views require auth | Operator and network state with caps, redaction, and default peer-key digests |
 | `/api/manage/*` | Management auth | Catalog, service, AI model, restart, and configuration actions |
 | `/api/wizard/*` | Management auth or app proxy path | First-run relay setup, relay name, payout wallet, accept mode |
 | `POST /api/subsidy/destination` | Management auth | Payout destination save/clear with guarded dashboard state |
 | `/ws` | Dashboard WebSocket | In-band auth, no URL-token exposure |
 | `/ws/replicate`, `/ws/dht` | Browser/Pear bridge | Hypercore replication and optional browser DHT over WebSocket |
 | `hiverelay-services` | P2P service channel | Service catalog, RPC, and exact-topic subscriptions |
+| Paid leases | Seed-request gate and `/api/lease` management surfaces | Quotes, bearer vouchers, Cashu blind tokens, persistent replay guards |
 | Evidence sidecars | Release-controlled | JSON proof files hash-linked into `release-evidence.json` |
 
 ## Security Boundaries
@@ -285,6 +295,7 @@ flowchart TB
 | Operator controls | Wallet, wizard, service, restart, and AI model actions require management auth or protected app-proxy context. |
 | Dashboard WebSocket | Tokens are not accepted in URLs; dashboard auth is in-band. |
 | Public state | Catalogs, peer lists, federation rows, diagnostics, and metrics are bounded and redacted before exposure. |
+| Lease privacy | Cashu blind-token issuance sees blinded points; redemption sees only the final proof and persistent spent marker. |
 | P2P frames | Decoders cap declared lengths before allocating large buffers and degrade malformed messages to protocol errors. |
 | Persistence | Critical state uses atomic tmp-file plus rename writes. |
 | Release claims | A release is live only when evidence proves the exact digest, stores/packages, and selected fleet channels. |
@@ -298,5 +309,6 @@ flowchart TB
 | Private encrypted availability | Publisher submits blind custody intent -> relay accepts ciphertext only -> receipts and anchor proofs account for durability. |
 | NAT fallback | Peers reserve/connect through `hiverelay-circuit` or `hiverelay-forward`; relay forwards opaque bounded bytes. |
 | Service marketplace | Clients discover service manifests over `hiverelay-services`, call opt-in providers, and receive signed usage receipts. |
+| Paid publisher pins | Operators enable leases; publishers buy byte-day windows through direct proofs, bearer vouchers, or Cashu blind tokens without linking issue and redeem. |
 | Home-server install | Umbrel or StartOS consumes the digest-pinned package, persists data under `/data`, and exposes guarded dashboard/setup flows. |
 | Live fleet promotion | Full release defaults to both canary and stable, updates `fleet/channels.json`, and waits for relay health/version convergence. |

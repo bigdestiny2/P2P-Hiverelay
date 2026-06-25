@@ -73,6 +73,9 @@ import {
 } from 'p2p-hiverelay/core/protocol/relay-circuit.js'
 import {
   RELAY_DISCOVERY_TOPIC,
+  DISCOVERY_EPOCH_MS,
+  syncEpochDiscoveryTopics,
+  clearEpochDiscoveryTopics,
   SEED_PROTOCOL_NAME,
   CIRCUIT_PROTOCOL_NAME,
   FORWARD_PROTOCOL_NAME,
@@ -111,6 +114,20 @@ export const _pairing = {
 
 const FORWARD_MAX_FRAME = MAX_FORWARD_DATA_MSG_BYTES
 
+/**
+ * Parse the total object size out of an HTTP Content-Range header
+ * ("bytes 0-0/12345" → 12345). Returns null when absent/unparseable.
+ * @param {string|null} value
+ * @returns {number|null}
+ */
+function parseContentRangeTotal (value) {
+  if (typeof value !== 'string') return null
+  const m = value.match(/\/(\d+)\s*$/)
+  if (!m) return null
+  const n = Number(m[1])
+  return Number.isFinite(n) ? n : null
+}
+
 export class HiveRelayClient extends EventEmitter {
   /**
    * @param {string|object} storageOrOpts - Storage path string, or options object
@@ -142,6 +159,22 @@ export class HiveRelayClient extends EventEmitter {
     this.store = config.store || null
     this.swarm = config.swarm || null
     this.keyPair = config.keyPair || (this.swarm && this.swarm.keyPair) || null
+    // Ephemeral read identity: when true, the swarm (the identity a relay
+    // actually sees on the wire) gets a FRESH random keypair every session,
+    // decoupled from any stable signing keyPair above. A read-only consumer
+    // therefore presents an unlinkable identity per session, so a relay
+    // operator can't stitch a consumer's fetches together over time. Off by
+    // default to preserve existing stable-identity callers (allowlists,
+    // reputation); read clients that want unlinkability set { ephemeral: true }.
+    // Note: a client that supplies its OWN swarm controls that swarm's keypair,
+    // so this flag only applies when the client owns the swarm.
+    this.ephemeral = config.ephemeral === true
+    // Look up epoch-rotated discovery buckets in addition to the static topic.
+    // Defaults on for ephemeral read clients (they already want privacy); any
+    // client can force it with { discoverEpochTopics: true }.
+    this._discoverEpochTopics = config.discoverEpochTopics === true || this.ephemeral
+    this._epochDiscoveryTimer = null
+    this._epochDiscoveryTopics = new Map()
     this.autoDiscover = config.autoDiscover !== false
     this.maxRelays = config.maxRelays || 10
     this.connectionTimeout = config.connectionTimeout || 10_000
@@ -225,6 +258,19 @@ export class HiveRelayClient extends EventEmitter {
   }
 
   /**
+   * Join the current + next epoch discovery buckets as a client (lookup only).
+   * Idempotent; safe to call on a timer to roll across epoch boundaries.
+   */
+  _joinEpochDiscovery () {
+    if (!this.swarm) return
+    this._epochDiscoveryTopics = syncEpochDiscoveryTopics(
+      this._epochDiscoveryTopics,
+      this.swarm,
+      { server: false, client: true }
+    )
+  }
+
+  /**
    * Initialize everything and start discovering relay nodes.
    */
   async start () {
@@ -244,14 +290,20 @@ export class HiveRelayClient extends EventEmitter {
         await this._bootstrapCache.load()
         bootstrap = this._bootstrapCache.merge(bootstrap)
       }
-      this.swarm = new Hyperswarm({
-        bootstrap
-      })
+      const swarmOpts = { bootstrap }
+      // Fresh, unlinkable per-session network identity for read clients.
+      if (this.ephemeral) swarmOpts.keyPair = hypercoreCrypto.keyPair()
+      this.swarm = new Hyperswarm(swarmOpts)
       if (this._bootstrapCache) {
         this._bootstrapCache.start(this.swarm)
       }
     }
 
+    // Adopt the swarm identity as the signing identity ONLY when the caller
+    // gave us no explicit keyPair. Under { ephemeral: true } this means the
+    // signing identity is itself fresh per session (a read client signs
+    // nothing load-bearing); a publisher that needs a stable identity passes
+    // an explicit keyPair and should leave ephemeral off.
     if (!this.keyPair && this.swarm.keyPair) {
       this.keyPair = this.swarm.keyPair
     }
@@ -269,6 +321,18 @@ export class HiveRelayClient extends EventEmitter {
         server: false,
         client: true
       })
+      // Also look up the epoch-rotated discovery buckets so we can find relays
+      // that announce there (privacy-aware operators in additive/strict mode).
+      // Client-only lookups — strictly additive, only widens relay coverage.
+      // Enabled for ephemeral read clients, or explicitly via discoverEpochTopics.
+      if (this._discoverEpochTopics) {
+        this._joinEpochDiscovery()
+        this._epochDiscoveryTimer = setInterval(
+          () => { try { this._joinEpochDiscovery() } catch (_) {} },
+          Math.max(60_000, Math.floor(DISCOVERY_EPOCH_MS / 2))
+        )
+        if (this._epochDiscoveryTimer.unref) this._epochDiscoveryTimer.unref()
+      }
       // Bound the flush — in test environments or offline startup there may
       // be no peers to flush to. Proceed after a short wait; the reconnect
       // loop will keep trying to connect in the background.
@@ -2814,6 +2878,130 @@ export class HiveRelayClient extends EventEmitter {
   }
 
   /**
+   * Striped multi-relay read. Splits a drive file into contiguous byte
+   * ranges and fetches each range from a DIFFERENT relay's HTTP gateway
+   * (via Range requests), then concatenates in order. No single relay sees
+   * the whole object or the full access pattern — the read-side analogue of
+   * the threat model's "replica diversity": metadata visibility is spread
+   * across mutually-distrusting operators instead of concentrated in one.
+   *
+   * This is purely client-side and additive — it uses the public gateway
+   * Range support (RFC 9110) that every relay already serves; relays need no
+   * changes and are unaware they're serving a stripe.
+   *
+   * INTEGRITY CAVEAT: stripes are reassembled by byte offset. getStriped does
+   * NOT cryptographically verify that the relays served consistent bytes — the
+   * HTTP gateway path carries no per-block Merkle proof, so a malicious relay
+   * can corrupt its stripe. The returned `ok` flag confirms total LENGTH only,
+   * not content integrity. Use for public/non-sensitive content, or verify the
+   * result against a known drive hash. Each stripe IS checked to be the exact
+   * length requested, so a relay that ignores Range (returns the full body) is
+   * rejected and the range is retried on another relay.
+   *
+   * @param {string} driveKey  64-hex drive key
+   * @param {string} path      file path within the drive (e.g. '/index.html')
+   * @param {object} [opts]
+   * @param {Array}  [opts.quorum]    [{url,pubkey}] relays to stripe across (default: selectQuorum())
+   * @param {number} [opts.stripes]   number of ranges to split into (default: quorum length)
+   * @param {number} [opts.timeoutMs] per-stripe timeout (default 15000)
+   * @returns {Promise<{ ok, bytes, buffer, stripes, relaysUsed, striped }>}
+   */
+  async getStriped (driveKey, path, opts = {}) {
+    if (typeof driveKey !== 'string' || !/^[0-9a-f]{64}$/i.test(driveKey)) {
+      throw new Error('getStriped: driveKey must be 64 hex chars')
+    }
+    if (typeof path !== 'string' || !path.startsWith('/')) {
+      throw new Error('getStriped: path must start with /')
+    }
+    const quorum = (Array.isArray(opts.quorum) && opts.quorum.length)
+      ? opts.quorum
+      : this.selectQuorum(opts)
+    const relays = quorum.filter(r => r && r.url)
+    if (relays.length === 0) throw new Error('getStriped: no relays with URLs available')
+    const timeoutMs = opts.timeoutMs || 15_000
+    const relPath = '/v1/hyper/' + driveKey.toLowerCase() + path
+
+    const fetchRange = async (relay, start, end) => {
+      const url = relay.url.replace(/\/+$/, '') + relPath
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), timeoutMs)
+      try {
+        const headers = (start === null) ? {} : { Range: `bytes=${start}-${end}` }
+        const res = await globalThis.fetch(url, { signal: controller.signal, headers })
+        if (!res.ok) throw new Error('status ' + res.status)
+        const buf = b4a.from(new Uint8Array(await res.arrayBuffer()))
+        const total = parseContentRangeTotal(res.headers && res.headers.get && res.headers.get('content-range'))
+        return { buf, total }
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+
+    // Fetch a range, trying the preferred relay first then the others — so a
+    // bad/slow relay can't sink the whole read. Reject a response that isn't
+    // the exact requested length (a relay that ignored Range and returned the
+    // full body would otherwise be mis-concatenated into corrupt output).
+    const fetchStripe = async (start, end, preferredIdx) => {
+      const want = end - start + 1
+      let lastErr = null
+      for (let k = 0; k < relays.length; k++) {
+        const relay = relays[(preferredIdx + k) % relays.length]
+        try {
+          const r = await fetchRange(relay, start, end)
+          if (r.buf.length !== want) {
+            lastErr = new Error('range not honored by ' + (relay.pubkey || relay.url))
+            continue
+          }
+          return { start, buf: r.buf, relay: relay.pubkey || relay.url }
+        } catch (err) {
+          lastErr = err
+        }
+      }
+      throw new Error('getStriped: no relay served range ' + start + '-' + end + (lastErr ? ' (' + lastErr.message + ')' : ''))
+    }
+
+    // Probe total size via a 1-byte ranged request; try relays until one
+    // reports a Content-Range total. If none support Range, fall back to a
+    // single full GET (reusing the body we already pulled when possible).
+    let totalBytes = null
+    let probeFullBuf = null
+    let probeRelay = relays[0]
+    for (const relay of relays) {
+      try {
+        const r = await fetchRange(relay, 0, 0)
+        if (Number.isFinite(r.total) && r.total > 0) { totalBytes = r.total; probeRelay = relay; break }
+        if (!probeFullBuf) probeFullBuf = r.buf // server ignored Range → full body
+      } catch (_) { /* try next relay */ }
+    }
+    if (totalBytes === null) {
+      const buf = probeFullBuf || (await fetchRange(probeRelay, null, null)).buf
+      return { ok: true, bytes: buf.length, buffer: buf, stripes: 1, relaysUsed: [probeRelay.pubkey || probeRelay.url], striped: false }
+    }
+
+    const stripeCount = Math.max(1, Math.min(opts.stripes || relays.length, relays.length, totalBytes))
+    const size = Math.ceil(totalBytes / stripeCount)
+    const plan = []
+    for (let i = 0; i < stripeCount; i++) {
+      const start = i * size
+      if (start >= totalBytes) break
+      const end = Math.min(start + size, totalBytes) - 1
+      plan.push({ start, end, preferredIdx: i % relays.length })
+    }
+
+    const parts = await Promise.all(plan.map(p => fetchStripe(p.start, p.end, p.preferredIdx)))
+    parts.sort((a, b) => a.start - b.start)
+    const buffer = b4a.concat(parts.map(p => p.buf))
+    return {
+      ok: buffer.length === totalBytes,
+      bytes: buffer.length,
+      buffer,
+      stripes: parts.length,
+      relaysUsed: [...new Set(parts.map(p => p.relay))],
+      striped: true
+    }
+  }
+
+  /**
    * Pin a known relay's identity pubkey. Future fetchCapabilities()
    * calls against this URL will fail if the served capability doc's
    * pubkey doesn't match. Use for out-of-band trust (e.g. operator
@@ -3872,6 +4060,13 @@ export class HiveRelayClient extends EventEmitter {
       try { await drive.close() } catch (_) {}
       this.drives.delete(keyHex)
     }
+
+    // Stop epoch-discovery refresh + leave the epoch buckets
+    if (this._epochDiscoveryTimer) {
+      clearInterval(this._epochDiscoveryTimer)
+      this._epochDiscoveryTimer = null
+    }
+    clearEpochDiscoveryTopics(this._epochDiscoveryTopics)
 
     // Leave discovery topic
     if (this._discoveryTopic) {

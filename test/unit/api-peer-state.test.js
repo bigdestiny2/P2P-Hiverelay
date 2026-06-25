@@ -19,13 +19,15 @@ test('api peer state: builds stable public peer list payload', (t) => {
         return { score: 7, secretToken: 'do-not-leak' }
       }
     },
-    now: 1000
+    now: 1000,
+    redact: false
   })
 
   t.alike(payload, {
     count: 1,
     total: 1,
     truncated: false,
+    redacted: false,
     peers: [{
       remotePublicKey: 'ab'.repeat(32),
       type: 'tcp',
@@ -64,7 +66,8 @@ test('api peer state: redacts malformed peer metadata into JSON-safe fields', (t
   const payload = buildPeerListPayload({
     swarm: { connections: [goodConn, malformedKeyConn, nonStringTypeConn, futureConn] },
     connections,
-    now: 1000
+    now: 1000,
+    redact: false
   })
 
   t.is(payload.count, 4)
@@ -93,8 +96,33 @@ test('api peer state: redacts malformed peer metadata into JSON-safe fields', (t
 })
 
 test('api peer state: tolerates absent swarm and connection maps', (t) => {
-  t.alike(buildPeerListPayload(), { count: 0, total: 0, truncated: false, peers: [] })
-  t.alike(buildPeerListPayload({ swarm: { connections: null } }), { count: 0, total: 0, truncated: false, peers: [] })
+  t.alike(buildPeerListPayload(), { count: 0, total: 0, truncated: false, redacted: true, peers: [] })
+  t.alike(buildPeerListPayload({ swarm: { connections: null } }), { count: 0, total: 0, truncated: false, redacted: true, peers: [] })
+})
+
+test('api peer state: redacts peer pubkeys by default (metadata minimization)', (t) => {
+  const peerKey = Buffer.alloc(32, 0xab)
+  const conn = { remotePublicKey: peerKey, type: 'tcp' }
+  const connections = new Map([[conn, { lastActivity: 900 }]])
+  const seen = []
+
+  const payload = buildPeerListPayload({
+    swarm: { connections: [conn] },
+    connections,
+    reputation: {
+      getRecord (pubkey) {
+        seen.push(pubkey)
+        return { score: 7 }
+      }
+    },
+    now: 1000
+  })
+
+  t.is(payload.redacted, true, 'payload flags redaction')
+  const shown = payload.peers[0].remotePublicKey
+  t.ok(/^anon:[0-9a-f]{16}$/.test(shown), 'pubkey is a salted digest, not the raw key')
+  t.absent(shown.includes('ab'.repeat(32)), 'raw pubkey never appears')
+  t.alike(seen, ['ab'.repeat(32)], 'reputation still keyed on the REAL pubkey')
 })
 
 test('api peer state: supports Bare compatibility aliases without raw future timestamps', (t) => {
@@ -112,7 +140,8 @@ test('api peer state: supports Bare compatibility aliases without raw future tim
     connections,
     publicKeyAlias: true,
     includeLastActivity: true,
-    now: 1000
+    now: 1000,
+    redact: false
   })
 
   t.is(payload.count, 3)
