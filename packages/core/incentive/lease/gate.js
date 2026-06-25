@@ -64,6 +64,22 @@ export async function evaluateSeedLease ({ leaseManager, seedingRegistry, appKey
 
   const proof = body && body.paymentProof && typeof body.paymentProof === 'object' ? body.paymentProof : null
 
+  // Blind token path (strongest privacy): a Chaumian-blind, fully unlinkable
+  // token. The relay can't tie the redeemed token to the invoice that funded
+  // it. Highest precedence.
+  if (proof && proof.blindToken && typeof proof.blindToken === 'object') {
+    if (typeof leaseManager.redeemBlindVoucher !== 'function') {
+      return { outcome: 'error', error: 'LEASE_BLIND_UNSUPPORTED', status: 400 }
+    }
+    try {
+      const v = await leaseManager.redeemBlindVoucher({ secret: proof.blindToken.secret, C: proof.blindToken.C, maxStorageBytes: opts.maxStorage })
+      if (!v.ok) return { outcome: 'error', error: v.error || 'LEASE_UNVERIFIED', status: v.status || 402 }
+      return { outcome: 'paid', retainUntil: v.paidUntil }
+    } catch (err) {
+      return { outcome: 'error', error: 'LEASE_VERIFY_FAILED: ' + (err.message || String(err)), status: 503 }
+    }
+  }
+
   // Bearer voucher path (opt-in privacy): a pre-purchased, payer-unlinkable
   // voucher that carries no appKey. Redeeming it grants the lease without the
   // relay learning which payment funded this content. Takes precedence over

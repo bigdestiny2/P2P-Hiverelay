@@ -203,6 +203,27 @@ test('verifyCapabilityDoc rejects unsigned doc', async (t) => {
   t.ok(check.reason.includes('no signature'))
 })
 
+test('onionGatewayUrl is advertised when Tor hidden service is up, and the doc still verifies', async (t) => {
+  const kp = makeKeyPair()
+  const relay = {
+    config: { apiPort: 9100 },
+    swarm: { keyPair: kp },
+    torTransport: { running: true, onionAddress: 'abcdefghijklmnop.onion' }
+  }
+  const doc = buildCapabilityDoc({ relay })
+  t.is(doc.onionGatewayUrl, 'http://abcdefghijklmnop.onion:9100', 'onion read-plane URL advertised')
+  t.ok(doc.supported_transports.includes('tor'))
+  // The new field must not break signing/verification (it is covered by the
+  // canonical signer, so an old verifier running the same logic still validates).
+  t.ok(verifyCapabilityDoc(doc).valid, 'signed doc with onion field verifies')
+})
+
+test('onionGatewayUrl is null when Tor is not running', async (t) => {
+  const doc = buildCapabilityDoc({ relay: { config: { apiPort: 9100 }, swarm: { keyPair: makeKeyPair() } } })
+  t.is(doc.onionGatewayUrl, null)
+  t.ok(verifyCapabilityDoc(doc).valid)
+})
+
 test('verifyCapabilityDoc detects field tampering', async (t) => {
   const kp = makeKeyPair()
   const doc = buildCapabilityDoc({ relay: { config: { acceptMode: 'review' }, swarm: { keyPair: kp } } })

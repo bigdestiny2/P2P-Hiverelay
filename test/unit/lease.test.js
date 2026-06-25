@@ -42,7 +42,8 @@ async function makeManager (opts = {}) {
     satsPerGiBDay: opts.satsPerGiBDay != null ? opts.satsPerGiBDay : 10,
     quoteTtlMs: opts.quoteTtlMs != null ? opts.quoteTtlMs : 60 * 60 * 1000,
     minDays: opts.minDays,
-    maxDays: opts.maxDays
+    maxDays: opts.maxDays,
+    blindDenomination: opts.blindDenomination
   })
   await lm.start()
   return { lm, provider }
@@ -168,6 +169,64 @@ test('bearer voucher: gate accepts paymentProof.voucherId', async (t) => {
     body: { paymentProof: { voucherId: issued.voucherId } }
   })
   t.is(outcome.outcome, 'paid', 'voucher redeemed through the gate for an unrelated app')
+  await lm.destroy()
+})
+
+test('blind token: pay → blind-sign → unblind → redeem (fully unlinkable, denominated)', async (t) => {
+  const { blind, unblind } = await import('p2p-hiverelay/incentive/payment/blind-mint.js')
+  const denom = { maxStorageBytes: GIB, leaseDays: 30 }
+  const { lm, provider } = await makeManager({ blindDenomination: denom })
+  t.ok(lm.blindMintInfo(), 'mint advertised when denomination configured')
+
+  // 1. Buy a quote priced for exactly the denomination, settle it.
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 30 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+
+  // 2. Payer blinds their own secret; relay blind-signs (never sees the secret).
+  const secret = '11'.repeat(32)
+  const { blinded, blindingFactor } = blind(secret)
+  const issued = await lm.issueBlindVoucher({ quoteId: quote.quoteId, blinded }, T0 + 1000)
+  t.is(issued.ok, true, 'blind signature issued from settled denominated quote')
+
+  // 3. Payer unblinds → token (secret, C).
+  const C = unblind(issued.blindSignature, blindingFactor, issued.mintPubkey)
+
+  // 4. Redeem through the gate for an unrelated app.
+  const outcome = await evaluateSeedLease({
+    leaseManager: lm,
+    seedingRegistry: null,
+    appKey: 'e'.repeat(64),
+    opts: { maxStorage: GIB },
+    body: { paymentProof: { blindToken: { secret, C } } }
+  })
+  t.is(outcome.outcome, 'paid', 'blind token redeemed for an unrelated app')
+
+  // 5. Double-spend rejected.
+  const again = await lm.redeemBlindVoucher({ secret, C, maxStorageBytes: GIB }, T0 + 2000)
+  t.is(again.ok, false)
+  t.is(again.error.split(':')[0], 'LEASE_REPLAY')
+  await lm.destroy()
+})
+
+test('blind token: denomination mismatch is rejected at issuance', async (t) => {
+  const { blind } = await import('p2p-hiverelay/incentive/payment/blind-mint.js')
+  const { lm, provider } = await makeManager({ blindDenomination: { maxStorageBytes: GIB, leaseDays: 30 } })
+  // Quote for a DIFFERENT denomination (2 GiB) than configured (1 GiB).
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: 2 * GIB, leaseDays: 30 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+  const { blinded } = blind('22'.repeat(32))
+  const issued = await lm.issueBlindVoucher({ quoteId: quote.quoteId, blinded }, T0 + 1000)
+  t.is(issued.ok, false)
+  t.is(issued.error.split(':')[0], 'LEASE_BLIND_DENOMINATION_MISMATCH')
+  await lm.destroy()
+})
+
+test('blind token: disabled by default (no denomination)', async (t) => {
+  const { lm } = await makeManager()
+  t.is(lm.blindMintInfo(), null, 'not advertised unless operator opts in')
+  const res = await lm.redeemBlindVoucher({ secret: 'aa', C: 'bb', maxStorageBytes: GIB })
+  t.is(res.ok, false)
+  t.is(res.error.split(':')[0], 'LEASE_BLIND_DISABLED')
   await lm.destroy()
 })
 

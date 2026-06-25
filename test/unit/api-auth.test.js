@@ -389,7 +389,11 @@ test('api-auth: legacy /peers uses capped sanitized public peer payload', async 
   t.is(res.body.total, 1005, 'legacy peers response reports total seen')
   t.is(res.body.truncated, true, 'legacy peers response reports truncation')
   t.is(res.body.peers.length, 1000, 'legacy peers payload array is capped')
-  t.is(res.body.peers[0].remotePublicKey, '00'.repeat(32))
+  // Peer pubkeys are redacted by default (metadata minimization): a per-process
+  // salted digest, never the raw key. The salt is random so assert the shape.
+  t.is(res.body.redacted, true, 'public peer payload is redacted by default')
+  t.ok(/^anon:[0-9a-f]{16}$/.test(res.body.peers[0].remotePublicKey), 'pubkey is a salted digest')
+  t.absent(res.body.peers[0].remotePublicKey.includes('00'.repeat(32)), 'raw pubkey is not exposed')
   t.is(res.body.peers[0].type, 'tcp')
 })
 

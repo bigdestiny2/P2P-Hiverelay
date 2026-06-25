@@ -27,11 +27,12 @@
 // Persistence: <storage>/lease.json via the atomic tmp+rename pattern.
 
 import { EventEmitter } from 'events'
-import { randomBytes } from 'crypto'
+import { randomBytes, createHash } from 'crypto'
 import { readFile, writeFile, rename, unlink, mkdir } from 'fs/promises'
 import { dirname } from 'path'
 import b4a from 'b4a'
 import { canonicalJson, signClaim, verifyClaim } from '../subsidy/index.js'
+import { BlindMint } from '../payment/blind-mint.js'
 
 const GIB = 1024 * 1024 * 1024
 const DAY_MS = 86_400_000
@@ -79,6 +80,22 @@ export class LeaseManager extends EventEmitter {
     this.totalLeasedSats = 0
     this.leaseCount = 0
     this._persisting = Promise.resolve()
+
+    // Optional Chaumian-blind mint (full payer↔content unlinkability). The mint
+    // key is derived deterministically from this relay's keyPair, so it is
+    // stable across restarts with no extra persistence. Blind tokens are
+    // single-DENOMINATION: an operator enables them by setting
+    // blindDenomination = { maxStorageBytes, leaseDays }; a paid quote for
+    // exactly that denomination can be converted to an unlinkable token.
+    // (Production: per-denomination keysets + a dedicated spent-secret store.)
+    try {
+      this.blindMint = opts.blindMint || new BlindMint({ keyPair: this.keyPair })
+    } catch (_) {
+      this.blindMint = null
+    }
+    this.blindDenomination = (opts.blindDenomination && Number.isFinite(opts.blindDenomination.maxStorageBytes) && Number.isFinite(opts.blindDenomination.leaseDays))
+      ? { maxStorageBytes: Math.floor(opts.blindDenomination.maxStorageBytes), leaseDays: Math.floor(opts.blindDenomination.leaseDays) }
+      : null
   }
 
   async start (opts = {}) {
@@ -356,6 +373,124 @@ export class LeaseManager extends EventEmitter {
     const paidUntil = now + body.leaseDays * DAY_MS
     this.emit('lease-paid', { bearer: true, amountSats: body.amountSats, leaseDays: body.leaseDays, paidUntil })
     return { ok: true, paidUntil, amountSats: body.amountSats, leaseDays: body.leaseDays }
+  }
+
+  // ─── Blind tokens (Chaumian, fully unlinkable — opt-in) ────────────
+  //
+  // Strongest tier: the payer blinds their own secret, so the mint cannot link
+  // the settled invoice to the redeemed token. See incentive/payment/blind-mint.js
+  // (AUDIT BEFORE PRODUCTION). Enabled only when blindDenomination is set.
+
+  /** Mint advertisement for the capability doc, or null when disabled. */
+  blindMintInfo () {
+    if (!this.blindMint || !this.blindDenomination) return null
+    return { pubkey: this.blindMint.publicKey, denomination: { ...this.blindDenomination } }
+  }
+
+  /**
+   * Convert a settled quote (priced for exactly the configured denomination)
+   * into a blind signature over the payer's blinded message. The relay never
+   * sees the token secret.
+   * @returns {{ ok:true, blindSignature, mintPubkey, leaseDays, maxStorageBytes } | { ok:false, error, status }}
+   */
+  async issueBlindVoucher ({ quoteId, blinded }, now = Date.now()) {
+    if (!this.blindMint || !this.blindDenomination) {
+      return { ok: false, error: 'LEASE_BLIND_DISABLED: operator has not enabled blind tokens', status: 400 }
+    }
+    const body = this._decodeQuote(quoteId)
+    if (!body) return { ok: false, error: 'LEASE_BAD_QUOTE: quote missing or signature invalid', status: 402 }
+    // Denomination must match exactly — a single-denomination mint can't sign
+    // for an arbitrary (storage, days) without leaking it into the token.
+    if (body.maxStorageBytes !== this.blindDenomination.maxStorageBytes || body.leaseDays !== this.blindDenomination.leaseDays) {
+      return { ok: false, error: 'LEASE_BLIND_DENOMINATION_MISMATCH: quote does not match the blind denomination', status: 402 }
+    }
+    if (!Number.isFinite(body.expiresAt) || body.expiresAt <= now) {
+      return { ok: false, error: 'LEASE_QUOTE_EXPIRED: request a fresh quote', status: 402 }
+    }
+    if (this._consumed.has(body.paymentHash)) {
+      return { ok: false, error: 'LEASE_REPLAY: this payment was already redeemed', status: 402 }
+    }
+    if (!this.provider || typeof this.provider.lookupInvoice !== 'function') {
+      return { ok: false, error: 'LEASE_NO_PROVIDER: cannot verify payment', status: 503 }
+    }
+    let status
+    try {
+      status = await this.provider.lookupInvoice(body.paymentHash)
+    } catch (err) {
+      return { ok: false, error: 'LEASE_LOOKUP_FAILED: ' + (err.message || String(err)), status: 503 }
+    }
+    if (!status || !status.settled) return { ok: false, error: 'LEASE_UNPAID: invoice not settled yet', status: 402 }
+    if (num(status.amount) < body.amountSats) return { ok: false, error: 'LEASE_UNDERPAID: settled amount below quote', status: 402 }
+
+    let blindSignature
+    try {
+      blindSignature = this.blindMint.blindSign(blinded)
+    } catch (err) {
+      return { ok: false, error: 'LEASE_BLIND_SIGN_FAILED: ' + (err.message || String(err)), status: 400 }
+    }
+    // Consume the funding payment so it can't also be spent elsewhere.
+    this._consumed.set(body.paymentHash, body.expiresAt)
+    try {
+      await this._persist()
+    } catch (err) {
+      this._consumed.delete(body.paymentHash)
+      this.emit('persist-error', err)
+      return { ok: false, error: 'LEASE_PERSIST_FAILED: could not durably record issuance; retry', status: 503 }
+    }
+    this.emit('blind-issued', { amountSats: body.amountSats, leaseDays: body.leaseDays })
+    return { ok: true, blindSignature, mintPubkey: this.blindMint.publicKey, leaseDays: body.leaseDays, maxStorageBytes: body.maxStorageBytes }
+  }
+
+  /**
+   * Redeem a blind token (secret, C) for a lease at the configured
+   * denomination. Single-use via a spent-secret guard. The relay learns
+   * nothing tying this token to which payment funded it.
+   * @returns {{ ok:true, paidUntil, leaseDays } | { ok:false, error, status }}
+   */
+  async redeemBlindVoucher ({ secret, C, maxStorageBytes }, now = Date.now()) {
+    if (!this.blindMint || !this.blindDenomination) {
+      return { ok: false, error: 'LEASE_BLIND_DISABLED', status: 400 }
+    }
+    if (typeof secret !== 'string' || typeof C !== 'string') {
+      return { ok: false, error: 'LEASE_BLIND_BAD_TOKEN: secret and C required', status: 400 }
+    }
+    if (Number.isFinite(maxStorageBytes) && Math.floor(maxStorageBytes) > this.blindDenomination.maxStorageBytes) {
+      return { ok: false, error: 'LEASE_STORAGE_EXCEEDS_VOUCHER: exceeds the blind denomination', status: 402 }
+    }
+    if (!this.blindMint.verifyToken(secret, C)) {
+      return { ok: false, error: 'LEASE_BLIND_INVALID: token does not verify against the mint', status: 402 }
+    }
+    // Double-spend guard keyed on a hash of the secret. Retained for the full
+    // maxDays window (blind tokens carry no expiry of their own).
+    const guardKey = 'blind:' + createHash('sha256').update(secret).digest('hex').slice(0, 32)
+    const guardExpiry = now + this.maxDays * DAY_MS
+    if (this._consumed.has(guardKey)) {
+      return { ok: false, error: 'LEASE_REPLAY: blind token already redeemed', status: 402 }
+    }
+    if (this._consumed.size >= MAX_CONSUMED_RETAINED) {
+      for (const [h, exp] of this._consumed) {
+        if (!Number.isFinite(exp) || exp <= now) this._consumed.delete(h)
+      }
+      if (this._consumed.size >= MAX_CONSUMED_RETAINED) {
+        return { ok: false, error: 'LEASE_GUARD_FULL: replay-guard saturated; retry shortly', status: 503 }
+      }
+    }
+    const denomSats = this.quoteSats(this.blindDenomination.maxStorageBytes, this.blindDenomination.leaseDays).amountSats
+    this._consumed.set(guardKey, guardExpiry)
+    this.totalLeasedSats += denomSats
+    this.leaseCount += 1
+    try {
+      await this._persist()
+    } catch (err) {
+      this._consumed.delete(guardKey)
+      this.totalLeasedSats -= denomSats
+      this.leaseCount -= 1
+      this.emit('persist-error', err)
+      return { ok: false, error: 'LEASE_PERSIST_FAILED: could not durably record redemption; retry', status: 503 }
+    }
+    const paidUntil = now + this.blindDenomination.leaseDays * DAY_MS
+    this.emit('lease-paid', { blind: true, leaseDays: this.blindDenomination.leaseDays, paidUntil })
+    return { ok: true, paidUntil, leaseDays: this.blindDenomination.leaseDays }
   }
 
   getSummary () {
