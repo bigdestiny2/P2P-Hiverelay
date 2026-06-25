@@ -38,6 +38,20 @@ function missingTerms (text, terms) {
   return terms.filter(term => !text.includes(term))
 }
 
+function htmlIds (text) {
+  return Array.from(text.matchAll(/\bid\s*=\s*["']([^"']+)["']/gi), match => match[1])
+}
+
+function duplicateHtmlIds (text) {
+  const seen = new Set()
+  const duplicates = new Set()
+  for (const id of htmlIds(text)) {
+    if (seen.has(id)) duplicates.add(id)
+    else seen.add(id)
+  }
+  return [...duplicates].sort()
+}
+
 const monorepoPkg = readJson(hiverelayRoot, 'package.json')
 const corePkg = readJson(hiverelayRoot, 'packages', 'core', 'package.json')
 const clientPkg = readJson(hiverelayRoot, 'packages', 'client', 'package.json')
@@ -361,6 +375,16 @@ for (const file of dashboardFiles) {
 
   if (html.includes('p2p-hiverelay/client')) fail(`dashboard/${file} still documents the legacy p2p-hiverelay/client import path`)
   else pass(`dashboard/${file} uses current SDK import paths`)
+}
+
+if (
+  duplicateHtmlIds(blindsparkDashboard).length === 0 &&
+  umbrelUiControlsTest.includes('umbrel dashboard has unique element ids for interactive controls') &&
+  umbrelUiControlsTest.includes("countId(dashboard, 'servicesCard'), 1")
+) {
+  pass('Umbrel dashboard has unique interactive element ids')
+} else {
+  fail(`Umbrel dashboard has duplicate interactive element ids: ${duplicateHtmlIds(blindsparkDashboard).join(', ') || 'test coverage missing'}`)
 }
 
 if (
