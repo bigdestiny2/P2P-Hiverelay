@@ -13,10 +13,20 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.20.1
+version: 0.20.2
 release-notes: |
-  Blindspark v0.20.1: synchronized HiveRelay release for the fleet, Umbrel
-  packages, and StartOS metadata.
+  Blindspark v0.20.2 — honest "Data served" metric. Adds a replication-layer
+  ServedAccounting counter that measures the bytes a relay actually serves
+  across every core it opens (registry log + every app drive's meta/blob cores),
+  not just seedCore-routed ones. A registry-drive relay that was actively
+  serving app blocks previously read ~0 served bytes — the served-bytes twin of
+  the "Stored: 0 B" blind spot fixed earlier. Surfaced on /api/overview and the
+  WS feed (served { bytes, blocks, measured }), as
+  hiverelay_bytes_served_measured / hiverelay_blocks_served_measured in
+  Prometheus, and in the status/manage CLI views. The Blindspark dashboard
+  restores a real "Data served" tile (the absolute on-disk total moves into the
+  "Storage used" sublabel). Plus appliance UX hardening and release-surface
+  automation.
 license: apache-2.0
 wrapper-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
 upstream-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"

@@ -162,7 +162,7 @@ Three paths, smallest to widest reach:
 ## Status
 
 **Packs + verifies** with `start-sdk` 0.3.5.1 — multi-arch image (x86_64
-+ aarch64), v0.20.1, one-page dashboard via `HIVERELAY_UI_SIMPLE`,
++ aarch64), v0.20.2, one-page dashboard via `HIVERELAY_UI_SIMPLE`,
 review-mode first boot, and a first-boot-only 10 GB storage cap. Not yet
 device-tested on real StartOS hardware; the checklist above is the
 remaining work. The runtime mechanisms it relies on (token auth behind a
