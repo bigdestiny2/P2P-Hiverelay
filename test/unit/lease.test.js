@@ -114,6 +114,63 @@ test('expired quote is rejected even if paid', async (t) => {
   await lm.destroy()
 })
 
+test('bearer voucher: pay → issue → redeem for ANY appKey (payment unlinked to content)', async (t) => {
+  const { lm, provider } = await makeManager({ satsPerGiBDay: 10 })
+  // Buy via a normal quote, settle it, then convert to a bearer voucher.
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: 2 * GIB, leaseDays: 5 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+  const issued = await lm.issueBearerVoucher({ quoteId: quote.quoteId }, T0 + 1000)
+  t.is(issued.ok, true, 'voucher issued from a settled quote')
+  t.ok(typeof issued.voucherId === 'string' && issued.voucherId.length > 0)
+
+  // The voucher body carries NO appKey — decode and confirm.
+  const decoded = JSON.parse(Buffer.from(issued.voucherId, 'base64url').toString('utf8'))
+  t.is(decoded.body.kind, 'bearer')
+  t.absent('appKey' in decoded.body, 'voucher is not bound to any appKey')
+
+  // Redeem it for a COMPLETELY DIFFERENT appKey — succeeds (decoupled).
+  const otherApp = 'c'.repeat(64)
+  const redeemed = await lm.verifyBearer({ voucherId: issued.voucherId, maxStorageBytes: 2 * GIB }, T0 + 2000)
+  t.is(redeemed.ok, true, 'redeemable for an unrelated appKey')
+  t.is(redeemed.paidUntil, T0 + 2000 + 5 * DAY_MS)
+  t.is(otherApp.length, 64) // (appKey never even passed to verifyBearer)
+
+  // Single-use: second redemption is a replay.
+  const again = await lm.verifyBearer({ voucherId: issued.voucherId, maxStorageBytes: 2 * GIB }, T0 + 3000)
+  t.is(again.ok, false)
+  t.is(again.error.split(':')[0], 'LEASE_REPLAY')
+  await lm.destroy()
+})
+
+test('bearer voucher: the funding quote cannot ALSO be spent as a direct lease', async (t) => {
+  const { lm, provider } = await makeManager()
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 2 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+  const issued = await lm.issueBearerVoucher({ quoteId: quote.quoteId }, T0 + 1000)
+  t.is(issued.ok, true)
+  // The paymentHash was consumed at issuance → quote path now replays.
+  const dbl = await lm.verifyLease({ appKey: APPKEY, quoteId: quote.quoteId }, T0 + 2000)
+  t.is(dbl.ok, false)
+  t.is(dbl.error.split(':')[0], 'LEASE_REPLAY')
+  await lm.destroy()
+})
+
+test('bearer voucher: gate accepts paymentProof.voucherId', async (t) => {
+  const { lm, provider } = await makeManager()
+  const quote = await lm.createQuote({ appKey: APPKEY, maxStorageBytes: GIB, leaseDays: 1 }, T0)
+  provider.settleInvoice(provider.invoices[0].rHash)
+  const issued = await lm.issueBearerVoucher({ quoteId: quote.quoteId }, T0 + 1000)
+  const outcome = await evaluateSeedLease({
+    leaseManager: lm,
+    seedingRegistry: null,
+    appKey: 'd'.repeat(64),
+    opts: { maxStorage: GIB },
+    body: { paymentProof: { voucherId: issued.voucherId } }
+  })
+  t.is(outcome.outcome, 'paid', 'voucher redeemed through the gate for an unrelated app')
+  await lm.destroy()
+})
+
 test('underpaid settlement is rejected', async (t) => {
   // Provider whose lookupInvoice reports a lower settled amount than quoted.
   const provider = new MockProvider()

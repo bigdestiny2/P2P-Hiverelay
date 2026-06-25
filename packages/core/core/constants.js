@@ -67,6 +67,45 @@ function regionTopic (region) {
  */
 const FOUNDATION_TOPIC = _topicOf('hiverelay-foundation-v1')
 
+// ─── Epoch-rotating discovery (opt-in privacy) ───────────────
+//
+// The static RELAY_DISCOVERY_TOPIC lets a passive DHT observer enumerate the
+// entire relay set indefinitely from a single vantage point. An epoch-rotated
+// topic — blake2b('…-epoch-<bucket>') where bucket = floor(now / period) —
+// changes every period, so a snapshot only reveals the CURRENT window's
+// participants. This mirrors Tor v3 onion services' time-rotated blinded
+// descriptors. Nodes that opt in join the current AND next bucket (an overlap
+// window that absorbs clock skew and covers the rollover boundary) so there is
+// no discovery gap. In 'additive' mode they ALSO keep the static topic (full
+// backward-compat, partial privacy); in 'strict' mode they drop the static
+// topic for maximum unlinkability at the cost of discoverability by legacy peers.
+
+const DISCOVERY_EPOCH_MS = 60 * 60 * 1000 // 1 hour
+
+/**
+ * Topic for a specific epoch bucket.
+ * @param {number} bucket
+ * @returns {Buffer} 32-byte topic
+ */
+function epochDiscoveryTopic (bucket) {
+  return _topicOf('hiverelay-discovery-v1-epoch-' + bucket)
+}
+
+/**
+ * The epoch topics a node should currently be joined to: the current bucket
+ * plus the next one (overlap window). Pure — pass `now`/`periodMs` for tests.
+ *
+ * @param {number|null} [now=Date.now()]
+ * @param {number} [periodMs=DISCOVERY_EPOCH_MS]
+ * @returns {Buffer[]} [currentTopic, nextTopic]
+ */
+function epochDiscoveryTopics (now = null, periodMs = DISCOVERY_EPOCH_MS) {
+  const t = Number.isFinite(now) ? now : Date.now()
+  const period = Number.isFinite(periodMs) && periodMs > 0 ? periodMs : DISCOVERY_EPOCH_MS
+  const bucket = Math.floor(t / period)
+  return [epochDiscoveryTopic(bucket), epochDiscoveryTopic(bucket + 1)]
+}
+
 // ─── Protomux protocol names ─────────────────────────────────
 
 const SEED_PROTOCOL_NAME = 'hiverelay-seed'
@@ -189,6 +228,9 @@ function uint64ToBuffer (n) {
 export {
   RELAY_DISCOVERY_TOPIC,
   FOUNDATION_TOPIC,
+  DISCOVERY_EPOCH_MS,
+  epochDiscoveryTopic,
+  epochDiscoveryTopics,
   regionTopic,
   SEED_PROTOCOL_NAME,
   CIRCUIT_PROTOCOL_NAME,

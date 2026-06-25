@@ -155,6 +155,18 @@ export function buildCapabilityDoc (opts = {}) {
   // Region — operators configure via regions[]. First entry is canonical.
   const region = (Array.isArray(config.regions) && config.regions[0]) || null
 
+  // onionGatewayUrl — when the Tor transport is running with a hidden service,
+  // the .onion forwards to the relay's HTTP API/gateway port, so the read plane
+  // (/catalog.json, /v1/hyper/:key, /.well-known/hiverelay.json) is reachable
+  // over Tor. Advertising it lets a privacy-seeking consumer fetch content
+  // WITHOUT revealing its IP to the relay — a genuine Tor-grade property on the
+  // HTTP read path, additive to (not a replacement for) the fast UDX path.
+  let onionGatewayUrl = null
+  if (relay && relay.torTransport && relay.torTransport.running && relay.torTransport.onionAddress) {
+    const onionPort = numberOr(config.apiPort, 9100)
+    onionGatewayUrl = 'http://' + relay.torTransport.onionAddress + ':' + onionPort
+  }
+
   const doc = {
     schemaVersion: SCHEMA_VERSION,
     name: opts.name || config.name || null,
@@ -180,6 +192,9 @@ export function buildCapabilityDoc (opts = {}) {
     gatewayUrl: (typeof opts.gatewayUrl === 'string' && opts.gatewayUrl) ||
       (typeof config.gatewayUrl === 'string' && config.gatewayUrl) ||
       (typeof config.publicUrl === 'string' && config.publicUrl) || null,
+    // onionGatewayUrl — Tor read-plane ingress (.onion → HTTP API/gateway port).
+    // Additive; null unless the Tor hidden service is up. See note above.
+    onionGatewayUrl,
     // indexRoom — z32 link to this relay's schema-sheets index room, if a
     // sidecar has published one. Additive: clients that don't understand it
     // ignore it and fall back to catalogBeeKey / /catalog.json. schemaVersion

@@ -64,6 +64,23 @@ export async function evaluateSeedLease ({ leaseManager, seedingRegistry, appKey
 
   const proof = body && body.paymentProof && typeof body.paymentProof === 'object' ? body.paymentProof : null
 
+  // Bearer voucher path (opt-in privacy): a pre-purchased, payer-unlinkable
+  // voucher that carries no appKey. Redeeming it grants the lease without the
+  // relay learning which payment funded this content. Takes precedence over
+  // quoteId when both are present.
+  if (proof && typeof proof.voucherId === 'string') {
+    if (typeof leaseManager.verifyBearer !== 'function') {
+      return { outcome: 'error', error: 'LEASE_BEARER_UNSUPPORTED', status: 400 }
+    }
+    try {
+      const v = await leaseManager.verifyBearer({ voucherId: proof.voucherId, maxStorageBytes: opts.maxStorage })
+      if (!v.ok) return { outcome: 'error', error: v.error || 'LEASE_UNVERIFIED', status: v.status || 402 }
+      return { outcome: 'paid', retainUntil: v.paidUntil }
+    } catch (err) {
+      return { outcome: 'error', error: 'LEASE_VERIFY_FAILED: ' + (err.message || String(err)), status: 503 }
+    }
+  }
+
   if (!proof || typeof proof.quoteId !== 'string') {
     const leaseDays = Number.isFinite(body && body.leaseDays) ? Math.floor(body.leaseDays) : null
     if (!leaseDays || leaseDays < 1) {

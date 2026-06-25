@@ -27,6 +27,7 @@
 // Persistence: <storage>/lease.json via the atomic tmp+rename pattern.
 
 import { EventEmitter } from 'events'
+import { randomBytes } from 'crypto'
 import { readFile, writeFile, rename, unlink, mkdir } from 'fs/promises'
 import { dirname } from 'path'
 import b4a from 'b4a'
@@ -218,6 +219,142 @@ export class LeaseManager extends EventEmitter {
 
     const paidUntil = now + body.leaseDays * DAY_MS
     this.emit('lease-paid', { appKey: body.appKey, amountSats: body.amountSats, leaseDays: body.leaseDays, paidUntil })
+    return { ok: true, paidUntil, amountSats: body.amountSats, leaseDays: body.leaseDays }
+  }
+
+  // ─── Bearer vouchers (opt-in, payer-unlinkable to content) ─────────
+  //
+  // The standard quote BINDS the payment to a specific appKey (body.appKey,
+  // checked in verifyLease). That binding lets the operator link "who paid"
+  // to "what content" — the one linkage the rest of the blind design avoids.
+  //
+  // A bearer voucher breaks it: the payer buys a voucher (priced for
+  // maxStorageBytes × leaseDays) that carries a RANDOM serial and NO appKey.
+  // Later they redeem it to seed ANY appKey. verifyBearer never learns which
+  // payment funded which content. Replay is guarded by serial, exactly like
+  // paymentHash for quotes.
+  //
+  // Honesty bound: this decouples payment↔appKey (the primary leak). It does
+  // NOT by itself blind issuance — an operator could still correlate the
+  // invoice it settled at issue() time with the serial it signed. Full
+  // issue↔redeem unlinkability requires a blind-signature/ecash provider
+  // (e.g. Cashu) issuing the serial; such a provider can be plugged in by
+  // having it mint the voucher body and this relay simply honor its
+  // signatures. The seam is intentional and documented.
+
+  /**
+   * Issue a bearer voucher from an ALREADY-PAID quote. The quote proves
+   * settlement (and is consumed here so it can't also be spent as a direct
+   * lease); the returned voucher carries only a random serial + the byte-days
+   * envelope — never the appKey, never the paymentHash.
+   *
+   * @returns {{ ok:true, voucherId, amountSats, leaseDays, expiresAt } | { ok:false, error, status }}
+   */
+  async issueBearerVoucher ({ quoteId }, now = Date.now()) {
+    const body = this._decodeQuote(quoteId)
+    if (!body) return { ok: false, error: 'LEASE_BAD_QUOTE: quote missing or signature invalid', status: 402 }
+    if (!Number.isFinite(body.expiresAt) || body.expiresAt <= now) {
+      return { ok: false, error: 'LEASE_QUOTE_EXPIRED: request a fresh quote', status: 402 }
+    }
+    if (this._consumed.has(body.paymentHash)) {
+      return { ok: false, error: 'LEASE_REPLAY: this payment was already redeemed', status: 402 }
+    }
+    if (!this.provider || typeof this.provider.lookupInvoice !== 'function') {
+      return { ok: false, error: 'LEASE_NO_PROVIDER: cannot verify payment', status: 503 }
+    }
+    let status
+    try {
+      status = await this.provider.lookupInvoice(body.paymentHash)
+    } catch (err) {
+      return { ok: false, error: 'LEASE_LOOKUP_FAILED: ' + (err.message || String(err)), status: 503 }
+    }
+    if (!status || !status.settled) return { ok: false, error: 'LEASE_UNPAID: invoice not settled yet', status: 402 }
+    if (num(status.amount) < body.amountSats) return { ok: false, error: 'LEASE_UNDERPAID: settled amount below quote', status: 402 }
+
+    // Consume the paymentHash so it can't be redeemed twice (as a lease or a
+    // second voucher). The voucher's own replay-guard is its serial.
+    this._consumed.set(body.paymentHash, body.expiresAt)
+    // Voucher lives for the lease window (generous): payer may seed later.
+    const voucherExpiresAt = now + Math.max(this.maxDays, body.leaseDays) * DAY_MS
+    const voucherBody = {
+      v: LEASE_SCHEMA_VERSION,
+      kind: 'bearer',
+      serial: b4a.toString(randomBytes(32), 'hex'),
+      maxStorageBytes: body.maxStorageBytes,
+      leaseDays: body.leaseDays,
+      amountSats: body.amountSats,
+      expiresAt: voucherExpiresAt
+    }
+    const signature = b4a.toString(signClaim(this.keyPair, voucherBody), 'hex')
+    const voucherId = b4a.toString(b4a.from(canonicalJson({ body: voucherBody, signature }), 'utf8'), 'base64url')
+    try {
+      await this._persist()
+    } catch (err) {
+      this._consumed.delete(body.paymentHash)
+      this.emit('persist-error', err)
+      return { ok: false, error: 'LEASE_PERSIST_FAILED: could not durably record issuance; retry', status: 503 }
+    }
+    this.emit('bearer-issued', { amountSats: body.amountSats, leaseDays: body.leaseDays })
+    return { ok: true, voucherId, amountSats: body.amountSats, leaseDays: body.leaseDays, expiresAt: voucherExpiresAt }
+  }
+
+  /** Decode + verify the relay's own signature over a bearer voucherId. */
+  _decodeVoucher (voucherId) {
+    if (typeof voucherId !== 'string' || voucherId.length < 1 || voucherId.length > 8192) return null
+    let parsed
+    try {
+      parsed = JSON.parse(b4a.toString(b4a.from(voucherId, 'base64url'), 'utf8'))
+    } catch { return null }
+    if (!parsed || typeof parsed !== 'object' || !parsed.body || typeof parsed.signature !== 'string') return null
+    if (parsed.body.kind !== 'bearer' || typeof parsed.body.serial !== 'string') return null
+    const ok = verifyClaim({
+      body: parsed.body,
+      relayPubkey: this.keyPair.publicKey,
+      signature: b4a.from(parsed.signature, 'hex')
+    })
+    return ok ? parsed.body : null
+  }
+
+  /**
+   * Redeem a bearer voucher for a lease. Grants the lease WITHOUT inspecting
+   * the appKey — payment and content stay unlinked. Single-use via serial.
+   * @returns {{ ok:true, paidUntil, amountSats, leaseDays } | { ok:false, error, status }}
+   */
+  async verifyBearer ({ voucherId, maxStorageBytes }, now = Date.now()) {
+    const body = this._decodeVoucher(voucherId)
+    if (!body) return { ok: false, error: 'LEASE_BAD_VOUCHER: voucher missing or signature invalid', status: 402 }
+    if (Number.isFinite(maxStorageBytes) && Math.floor(maxStorageBytes) > body.maxStorageBytes) {
+      return { ok: false, error: 'LEASE_STORAGE_EXCEEDS_VOUCHER: requested maxStorage exceeds the voucher', status: 402 }
+    }
+    if (!Number.isFinite(body.expiresAt) || body.expiresAt <= now) {
+      return { ok: false, error: 'LEASE_VOUCHER_EXPIRED', status: 402 }
+    }
+    const guardKey = 'bearer:' + body.serial
+    if (this._consumed.has(guardKey)) {
+      return { ok: false, error: 'LEASE_REPLAY: voucher already redeemed', status: 402 }
+    }
+    if (this._consumed.size >= MAX_CONSUMED_RETAINED) {
+      for (const [h, exp] of this._consumed) {
+        if (!Number.isFinite(exp) || exp <= now) this._consumed.delete(h)
+      }
+      if (this._consumed.size >= MAX_CONSUMED_RETAINED) {
+        return { ok: false, error: 'LEASE_GUARD_FULL: replay-guard saturated; retry shortly', status: 503 }
+      }
+    }
+    this._consumed.set(guardKey, body.expiresAt)
+    this.totalLeasedSats += body.amountSats
+    this.leaseCount += 1
+    try {
+      await this._persist()
+    } catch (err) {
+      this._consumed.delete(guardKey)
+      this.totalLeasedSats -= body.amountSats
+      this.leaseCount -= 1
+      this.emit('persist-error', err)
+      return { ok: false, error: 'LEASE_PERSIST_FAILED: could not durably record redemption; retry', status: 503 }
+    }
+    const paidUntil = now + body.leaseDays * DAY_MS
+    this.emit('lease-paid', { bearer: true, amountSats: body.amountSats, leaseDays: body.leaseDays, paidUntil })
     return { ok: true, paidUntil, amountSats: body.amountSats, leaseDays: body.leaseDays }
   }
 
