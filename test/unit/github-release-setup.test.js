@@ -81,9 +81,11 @@ test('GitHub release setup check passes with all required secrets', async (t) =>
   }))
 
   t.is(res.status, 0)
-  t.ok(res.stdout.includes('GitHub release setup check passed'))
-  t.ok(res.stdout.includes('Required release secrets: 6/6'))
+  t.ok(res.stdout.includes('GitHub release setup presence check passed'))
+  t.ok(res.stdout.includes('Required release secret names: 6/6'))
   t.ok(res.stdout.includes('FLEET_ROLLOUT_TIMEOUT_MS'))
+  t.ok(res.stdout.includes('Secret values are not readable through gh'))
+  t.ok(res.stdout.includes('Release distribution preflight'))
 })
 
 test('GitHub release setup check reports missing release secrets', async (t) => {

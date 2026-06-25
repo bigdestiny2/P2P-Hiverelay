@@ -25,6 +25,11 @@ Usage:
 Checks that the GitHub repository exposes the secret and variable names needed
 before a full HiveRelay release can update the raw fleet, Umbrel stores, and
 StartOS registry.
+
+GitHub does not expose repository secret values through gh, so this command
+checks secret presence and placement only. Run the manual
+"Release distribution preflight" workflow after setting or rotating secrets to
+validate the masked secret values without publishing release surfaces.
 `
 
 const args = parseArgs(process.argv.slice(2))
@@ -43,11 +48,13 @@ if (!result.ok) {
   process.exit(1)
 }
 
-console.log(`GitHub release setup check passed for ${repo}.`)
-console.log(`Required release secrets: ${REQUIRED_SECRETS.length}/${REQUIRED_SECRETS.length}`)
+console.log(`GitHub release setup presence check passed for ${repo}.`)
+console.log(`Required release secret names: ${REQUIRED_SECRETS.length}/${REQUIRED_SECRETS.length}`)
 if (result.optionalVariables.length > 0) {
   console.log(`Optional release variables: ${result.optionalVariables.join(', ')}`)
 }
+console.log('Secret values are not readable through gh; this is not a live-release proof.')
+console.log('Run the "Release distribution preflight" GitHub Actions workflow to validate masked secret values before tagging.')
 
 function checkGithubReleaseSetup ({ gh, repo }) {
   const errors = []

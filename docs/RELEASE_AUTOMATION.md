@@ -125,6 +125,34 @@ This check reads the repository secret and variable names through `gh`; it does
 not print secret values. It fails if any required release secret is missing, if
 a required secret name was accidentally configured as a public repository
 variable, or if the optional `FLEET_ROLLOUT_TIMEOUT_MS` variable is malformed.
+GitHub does not expose repository secret values through the API, so a green
+local setup check is a presence/placement audit, not proof that the stored
+values are valid or that a release is live.
+
+After setting or rotating release secrets, run the side-effect-free masked-value
+preflight in GitHub Actions:
+
+```sh
+gh workflow run release-distribution-preflight.yml \
+  --repo "$repo" \
+  -f channel=both \
+  -f prerelease=false
+
+run_id="$(gh run list \
+  --repo "$repo" \
+  --workflow release-distribution-preflight.yml \
+  --limit 1 \
+  --json databaseId \
+  --jq '.[0].databaseId')"
+
+gh run watch "$run_id" --repo "$repo" --exit-status
+```
+
+That workflow runs `release:check-distribution-env` against the actual masked
+repository secrets without building images, updating fleet channels, opening
+Umbrel PRs, or publishing to StartOS. A full release is considered live only
+after `release-surfaces.yml` succeeds and attaches `release-evidence.json` plus
+the required sidecars to the GitHub Release.
 
 Never reuse an existing release tag for newly merged code. Prepare and tag a
 fresh version, then let `release-surfaces.yml` build the digest, update

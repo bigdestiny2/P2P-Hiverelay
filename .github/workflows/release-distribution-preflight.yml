@@ -1,0 +1,76 @@
+name: Release distribution preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Fleet/app-store channel value to validate
+        required: true
+        default: both
+        type: choice
+        options:
+          - canary
+          - stable
+          - both
+          - none
+      prerelease:
+        description: Treat this as a prerelease credential check
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-distribution-preflight
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    env:
+      UMBREL_STORE_TOKEN: ${{ secrets.UMBREL_STORE_TOKEN }}
+      UMBREL_OFFICIAL_PR_TOKEN: ${{ secrets.UMBREL_OFFICIAL_PR_TOKEN }}
+      UMBREL_OFFICIAL_FORK: ${{ secrets.UMBREL_OFFICIAL_FORK }}
+      STARTOS_DEVELOPER_KEY_PEM: ${{ secrets.STARTOS_DEVELOPER_KEY_PEM }}
+      STARTOS_REGISTRY_URL: ${{ secrets.STARTOS_REGISTRY_URL }}
+      FLEET_SSH_PRIVATE_KEY: ${{ secrets.FLEET_SSH_PRIVATE_KEY }}
+      FLEET_ROLLOUT_TIMEOUT_MS: ${{ vars.FLEET_ROLLOUT_TIMEOUT_MS }}
+
+    steps:
+      - name: Checkout HiveRelay
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate masked release distribution values
+        run: |
+          set -euo pipefail
+          node scripts/check-release-distribution-env.mjs \
+            --channel "${{ inputs.channel }}" \
+            --prerelease "${{ inputs.prerelease }}" \
+            --github-env "$GITHUB_ENV"
+
+      - name: Summarize preflight
+        if: ${{ always() }}
+        run: |
+          {
+            echo "### Release distribution preflight"
+            echo
+            echo "- Channel: \`${{ inputs.channel }}\`"
+            echo "- Prerelease: \`${{ inputs.prerelease }}\`"
+            echo "- Effective channel: \`${HIVERELAY_RELEASE_EFFECTIVE_CHANNEL:-unknown}\`"
+            echo "- Distribution preflight: \`${HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS:-unknown}\`"
+            echo "- Release surfaces: \`${HIVERELAY_RELEASE_SURFACES_STATUS:-not-started}\`"
+            echo "- Fleet rollout: \`${HIVERELAY_FLEET_ROLLOUT_STATUS:-not-checked}\`"
+            echo "- Umbrel community store: \`${HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS:-not-checked}\`"
+            echo "- Official Umbrel PR: \`${HIVERELAY_UMBREL_OFFICIAL_PR_STATUS:-not-checked}\`"
+            echo "- StartOS registry: \`${HIVERELAY_STARTOS_REGISTRY_STATUS:-not-checked}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
