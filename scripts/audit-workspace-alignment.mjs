@@ -3849,7 +3849,8 @@ const roadmapRequiredTerms = [
   'release-image-manifest-evidence.json',
   'docs/SHIP-HANDOFF-2026-06-26.md',
   'Validated GitHub secret rotation helper',
-  'GitHub secret apply failure redaction'
+  'GitHub secret apply failure redaction',
+  'Hermetic release env-file validation'
 ]
 const roadmapForbiddenTerms = [
   'Doc may be partially out of date',
@@ -4207,6 +4208,8 @@ if (
   releaseDistributionEnvCheck.includes('function isGitHubToken') &&
   releaseDistributionEnvCheck.includes('function isPrivateKeyBlock') &&
   releaseDistributionEnvCheck.includes('--env-file') &&
+  releaseDistributionEnvCheck.includes('const sourceEnv = args.envFile ? safeReadEnvFile(args.envFile) : process.env') &&
+  releaseDistributionEnvCheck.includes('does not fall back to ambient shell secrets') &&
   releaseDistributionEnvCheck.includes("import { readEnvFile } from './lib/release-env-file.mjs'") &&
   releaseEnvFileLib.includes('export function readEnvFile') &&
   releaseEnvFileLib.includes('export function parseEnvFile') &&
@@ -4215,8 +4218,11 @@ if (
   releaseDistributionEnvCheck.includes('must be a private key block') &&
   releaseDistributionEnvCheck.includes('without whitespace or control characters') &&
   releaseDistributionEnvCheckTest.includes('validates local candidate env files before setting GitHub secrets') &&
+  releaseDistributionEnvCheckTest.includes('does not satisfy env-file candidates from ambient secrets') &&
   releaseDistributionEnvCheckTest.includes('rejects malformed local candidate env files without echoing values') &&
   releaseAutomationDocs.includes('--env-file /private/tmp/hiverelay-release-secrets.env') &&
+  releaseAutomationDocs.includes('ambient shell') &&
+  releaseAutomationDocs.includes('secrets do not satisfy missing file entries') &&
   releaseAutomationDocs.includes('NAME<<DELIM') &&
   releaseDistributionEnvCheckTest.includes('accepts sane explicit fleet rollout timeout') &&
   releaseDistributionEnvCheckTest.includes('rejects unsafe fleet rollout timeout before SSH') &&

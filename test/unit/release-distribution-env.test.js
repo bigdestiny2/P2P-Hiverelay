@@ -190,6 +190,23 @@ test('release distribution env check validates local candidate env files before 
   t.absent(body.includes('invalid-secret'))
 })
 
+test('release distribution env check does not satisfy env-file candidates from ambient secrets', async (t) => {
+  const candidateBody = validCandidateEnvBody()
+    .split('\n')
+    .filter(line => !line.startsWith('STARTOS_REGISTRY_URL='))
+    .join('\n')
+  const candidate = await candidateEnvFile(t, candidateBody)
+  const res = await runCheck([
+    '--env-file', candidate,
+    '--channel', 'both',
+    '--prerelease', 'false'
+  ], validDistributionEnv())
+
+  t.is(res.status, 1)
+  t.ok(res.stderr.includes('STARTOS_REGISTRY_URL'))
+  t.absent(res.stderr.includes('registry.start9.com'))
+})
+
 test('release distribution env check rejects malformed local candidate env files without echoing values', async (t) => {
   const secretValue = `ghp_${'s'.repeat(36)}`
   const candidate = await candidateEnvFile(t, [

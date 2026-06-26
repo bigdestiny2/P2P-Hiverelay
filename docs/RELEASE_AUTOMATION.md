@@ -112,9 +112,11 @@ npm run release:check-distribution-env -- \
 The local `--env-file` parser accepts simple `NAME=value` entries and
 `NAME<<DELIM` heredocs for multiline private keys. It performs shape checks
 only; it does not contact the fleet, Umbrel, StartOS, or GitHub, and it does
-not print secret values. After the candidate file passes, apply the exact same
-file to GitHub Secrets. Run the helper once with `--dry-run` so the operator can
-confirm the target repository and names without changing GitHub state.
+not print secret values. Candidate-file validation is hermetic: ambient shell
+secrets do not satisfy missing file entries. After the candidate file passes,
+apply the exact same file to GitHub Secrets. Run the helper once with
+`--dry-run` so the operator can confirm the target repository and names without
+changing GitHub state.
 
 ```sh
 repo=bigdestiny2/P2P-Hiverelay
