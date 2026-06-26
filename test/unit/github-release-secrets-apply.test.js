@@ -81,6 +81,10 @@ if (process.env.HIVERELAY_FAKE_GH_FAIL) {
   process.stderr.write(process.env.HIVERELAY_FAKE_GH_FAIL)
   process.exit(1)
 }
+if (process.env.HIVERELAY_FAKE_GH_FAIL_WITH_INPUT) {
+  process.stderr.write(process.env.HIVERELAY_FAKE_GH_FAIL_WITH_INPUT + input)
+  process.exit(1)
+}
 if (args[0] === 'secret' && args[1] === 'set') process.exit(0)
 if (args[0] === 'variable' && args[1] === 'set') process.exit(0)
 process.stderr.write('unexpected fake gh args: ' + args.join(' '))
@@ -220,4 +224,25 @@ test('GitHub release secret apply rejects prerelease validation mode before gh c
     logMissing = err && err.code === 'ENOENT'
   }
   t.ok(logMissing, 'fake gh was not called')
+})
+
+test('GitHub release secret apply redacts gh failure output before printing', async (t) => {
+  const candidate = await candidateEnvFile(t, validCandidateEnvBody())
+  const gh = await fakeGh(t)
+  const res = await runApply([
+    '--repo', 'bigdestiny2/P2P-Hiverelay',
+    '--env-file', candidate,
+    '--gh', gh.file
+  ], {
+    HIVERELAY_FAKE_GH_LOG: gh.log,
+    HIVERELAY_FAKE_GH_FAIL_WITH_INPUT: `gh echoed token ${TEST_GITHUB_TOKEN_ALT} and stdin `
+  })
+
+  t.is(res.status, 1)
+  t.ok(res.stderr.includes('gh secret set failed for secret FLEET_SSH_PRIVATE_KEY'))
+  t.ok(res.stderr.includes('[redacted-github-token]'))
+  t.ok(res.stderr.includes('[redacted-secret]'))
+  t.absent(res.stderr.includes(TEST_GITHUB_TOKEN_ALT))
+  t.absent(res.stderr.includes(TEST_PRIVATE_KEY))
+  t.absent(res.stdout.includes(TEST_PRIVATE_KEY))
 })

@@ -3848,7 +3848,8 @@ const roadmapRequiredTerms = [
   'fleet-rollout-evidence.json',
   'release-image-manifest-evidence.json',
   'docs/SHIP-HANDOFF-2026-06-26.md',
-  'Validated GitHub secret rotation helper'
+  'Validated GitHub secret rotation helper',
+  'GitHub secret apply failure redaction'
 ]
 const roadmapForbiddenTerms = [
   'Doc may be partially out of date',
@@ -4290,6 +4291,8 @@ if (
   githubReleaseSecretsApply.includes('input') &&
   githubReleaseSecretsApply.includes('--dry-run') &&
   githubReleaseSecretsApply.includes('only validates full-release secret values') &&
+  githubReleaseSecretsApply.includes('redactSecretLikeValues') &&
+  githubReleaseSecretsApply.includes('[redacted-github-token]') &&
   githubReleaseSecretsApply.includes('PATH: process.env.PATH') &&
   githubReleaseSetupCheckTest.includes('passes with all required secrets') &&
   githubReleaseSetupCheckTest.includes('reports missing release secrets') &&
@@ -4300,6 +4303,7 @@ if (
   githubReleaseSecretsApplyTest.includes('sends validated values to gh secret set via stdin') &&
   githubReleaseSecretsApplyTest.includes('rejects malformed candidate without calling gh or echoing values') &&
   githubReleaseSecretsApplyTest.includes('rejects prerelease validation mode before gh calls') &&
+  githubReleaseSecretsApplyTest.includes('redacts gh failure output before printing') &&
   releaseAutomationDocs.includes('npm run release:check-github-setup') &&
   releaseAutomationDocs.includes('npm run release:apply-github-secrets') &&
   releaseAutomationDocs.includes('--dry-run') &&

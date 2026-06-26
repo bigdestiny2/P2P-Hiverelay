@@ -110,7 +110,7 @@ function runGh (gh, argv, input, label) {
 
   if (result.error) die(`Failed to run ${gh} for ${label}: ${result.error.message}`)
   if (result.status !== 0) {
-    const details = sanitizeGhError(result.stderr || result.stdout || `exit ${result.status}`)
+    const details = sanitizeGhError(result.stderr || result.stdout || `exit ${result.status}`, [input])
     die(`gh ${argv.slice(0, 2).join(' ')} failed for ${label}: ${details}`)
   }
 }
@@ -171,12 +171,23 @@ function isGitHubName (value) {
   return /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/.test(value)
 }
 
-function sanitizeGhError (value) {
-  return String(value)
+function sanitizeGhError (value, redactions = []) {
+  return redactSecretLikeValues(String(value), redactions)
     .replace(/[\r\n\t]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 500)
+}
+
+function redactSecretLikeValues (value, redactions = []) {
+  let out = value
+  for (const item of redactions) {
+    if (!item) continue
+    out = out.split(String(item)).join('[redacted-secret]')
+  }
+  return out
+    .replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g, '[redacted-private-key]')
+    .replace(/(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})/g, '[redacted-github-token]')
 }
 
 function hasControlChars (value) {
