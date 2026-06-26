@@ -1,6 +1,6 @@
 import test from 'brittle'
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -46,6 +46,36 @@ async function envFile (t) {
     await rm(dir, { recursive: true, force: true })
   })
   return path.join(dir, 'github-env')
+}
+
+async function candidateEnvFile (t, body) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-candidate-env-'))
+  t.teardown(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+  const file = path.join(dir, 'hiverelay-release-secrets.env')
+  await writeFile(file, body)
+  return file
+}
+
+function validCandidateEnvBody (overrides = {}) {
+  const env = validDistributionEnv(overrides)
+  const lines = [
+    'FLEET_SSH_PRIVATE_KEY<<FLEET_KEY',
+    env.FLEET_SSH_PRIVATE_KEY,
+    'FLEET_KEY',
+    `UMBREL_STORE_TOKEN=${env.UMBREL_STORE_TOKEN}`,
+    `UMBREL_OFFICIAL_PR_TOKEN=${env.UMBREL_OFFICIAL_PR_TOKEN}`,
+    `UMBREL_OFFICIAL_FORK=${env.UMBREL_OFFICIAL_FORK}`,
+    'STARTOS_DEVELOPER_KEY_PEM<<STARTOS_KEY',
+    env.STARTOS_DEVELOPER_KEY_PEM,
+    'STARTOS_KEY',
+    `STARTOS_REGISTRY_URL=${env.STARTOS_REGISTRY_URL}`
+  ]
+  if (env.FLEET_ROLLOUT_TIMEOUT_MS) lines.push(`FLEET_ROLLOUT_TIMEOUT_MS=${env.FLEET_ROLLOUT_TIMEOUT_MS}`)
+  if (env.HIVERELAY_RELEASE_CHANNEL) lines.push(`HIVERELAY_RELEASE_CHANNEL=${env.HIVERELAY_RELEASE_CHANNEL}`)
+  if (env.HIVERELAY_RELEASE_PRERELEASE) lines.push(`HIVERELAY_RELEASE_PRERELEASE=${env.HIVERELAY_RELEASE_PRERELEASE}`)
+  return lines.join('\n') + '\n'
 }
 
 test('release distribution env check skips prereleases', async (t) => {
@@ -136,6 +166,46 @@ test('release distribution env check passes stable releases with every external 
   t.ok(body.includes('HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS=passed'))
   t.absent(body.includes('blocked'))
   t.absent(body.includes('missing-secret'))
+})
+
+test('release distribution env check validates local candidate env files before setting GitHub secrets', async (t) => {
+  const out = await envFile(t)
+  const candidate = await candidateEnvFile(t, validCandidateEnvBody({
+    FLEET_ROLLOUT_TIMEOUT_MS: '1800000',
+    HIVERELAY_RELEASE_CHANNEL: 'stable',
+    HIVERELAY_RELEASE_PRERELEASE: 'false'
+  }))
+  const res = await runCheck([
+    '--env-file', candidate,
+    '--github-env', out
+  ])
+
+  t.is(res.status, 0)
+  t.ok(res.stdout.includes('preflight passed'))
+
+  const body = await readFile(out, 'utf8')
+  t.ok(body.includes('HIVERELAY_RELEASE_EFFECTIVE_CHANNEL=stable'))
+  t.ok(body.includes('HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS=passed'))
+  t.absent(body.includes('missing-secret'))
+  t.absent(body.includes('invalid-secret'))
+})
+
+test('release distribution env check rejects malformed local candidate env files without echoing values', async (t) => {
+  const secretValue = `ghp_${'s'.repeat(36)}`
+  const candidate = await candidateEnvFile(t, [
+    `UMBREL_STORE_TOKEN=${secretValue}`,
+    `UMBREL_STORE_TOKEN=${TEST_GITHUB_TOKEN}`
+  ].join('\n'))
+  const res = await runCheck([
+    '--env-file', candidate,
+    '--channel', 'both',
+    '--prerelease', 'false'
+  ])
+
+  t.is(res.status, 1)
+  t.ok(res.stderr.includes('Duplicate env-file variable: UMBREL_STORE_TOKEN'))
+  t.absent(res.stderr.includes(secretValue))
+  t.absent(res.stdout.includes(secretValue))
 })
 
 test('release distribution env check accepts sane explicit fleet rollout timeout', async (t) => {

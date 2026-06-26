@@ -4178,9 +4178,17 @@ if (
   releaseDistributionEnvCheck.includes('if (!value.trim())') &&
   releaseDistributionEnvCheck.includes('function isGitHubToken') &&
   releaseDistributionEnvCheck.includes('function isPrivateKeyBlock') &&
+  releaseDistributionEnvCheck.includes('--env-file') &&
+  releaseDistributionEnvCheck.includes('function readEnvFile') &&
+  releaseDistributionEnvCheck.includes('function parseEnvFile') &&
+  releaseDistributionEnvCheck.includes('Refusing to read symlinked env file') &&
   releaseDistributionEnvCheck.includes('must be a GitHub token without whitespace or control characters') &&
   releaseDistributionEnvCheck.includes('must be a private key block') &&
   releaseDistributionEnvCheck.includes('without whitespace or control characters') &&
+  releaseDistributionEnvCheckTest.includes('validates local candidate env files before setting GitHub secrets') &&
+  releaseDistributionEnvCheckTest.includes('rejects malformed local candidate env files without echoing values') &&
+  releaseAutomationDocs.includes('--env-file /private/tmp/hiverelay-release-secrets.env') &&
+  releaseAutomationDocs.includes('NAME<<DELIM') &&
   releaseDistributionEnvCheckTest.includes('accepts sane explicit fleet rollout timeout') &&
   releaseDistributionEnvCheckTest.includes('rejects unsafe fleet rollout timeout before SSH') &&
   releaseDistributionEnvCheckTest.includes('rejects placeholder GitHub tokens before checkout or gh calls') &&

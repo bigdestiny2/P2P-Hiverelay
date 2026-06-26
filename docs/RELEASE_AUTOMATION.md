@@ -80,6 +80,39 @@ Configure the release secrets before cutting a full release. Use stdin or local
 environment variables so secret values do not appear in shell history. The
 workflow reads these values as repository secrets, including
 `UMBREL_OFFICIAL_FORK` even though it is a fork slug rather than a token.
+Before setting or rotating GitHub Secrets, validate the exact candidate values
+with the same distribution checker used by the release workflow. Keep the
+candidate file outside the repo and delete it after the secrets are set.
+
+```sh
+cat > /private/tmp/hiverelay-release-secrets.env <<'EOF'
+FLEET_SSH_PRIVATE_KEY<<FLEET_KEY
+-----BEGIN OPENSSH PRIVATE KEY-----
+...
+-----END OPENSSH PRIVATE KEY-----
+FLEET_KEY
+UMBREL_STORE_TOKEN=ghp_...
+UMBREL_OFFICIAL_PR_TOKEN=github_pat_...
+UMBREL_OFFICIAL_FORK=owner/umbrel-apps
+STARTOS_DEVELOPER_KEY_PEM<<STARTOS_KEY
+-----BEGIN PRIVATE KEY-----
+...
+-----END PRIVATE KEY-----
+STARTOS_KEY
+STARTOS_REGISTRY_URL=https://registry.example.tld
+FLEET_ROLLOUT_TIMEOUT_MS=1800000
+EOF
+
+npm run release:check-distribution-env -- \
+  --env-file /private/tmp/hiverelay-release-secrets.env \
+  --channel both \
+  --prerelease false
+```
+
+The local `--env-file` parser accepts simple `NAME=value` entries and
+`NAME<<DELIM` heredocs for multiline private keys. It performs shape checks
+only; it does not contact the fleet, Umbrel, StartOS, or GitHub, and it does
+not print secret values.
 
 ```sh
 repo=bigdestiny2/P2P-Hiverelay
