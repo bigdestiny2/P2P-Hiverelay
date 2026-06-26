@@ -180,6 +180,7 @@ const relayApiValidation = readText(hiverelayRoot, 'packages', 'core', 'core', '
 const relayApiWizardActions = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-wizard-actions.js')
 const relayNode = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'index.js')
 const bareRelay = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'bare-relay.js')
+const routerCore = readText(hiverelayRoot, 'packages', 'core', 'core', 'router', 'index.js')
 const serviceRegistryCore = readText(hiverelayRoot, 'packages', 'core', 'core', 'services', 'registry.js')
 const serviceCatalogCore = readText(hiverelayRoot, 'packages', 'core', 'core', 'services', 'service-catalog.js')
 const serviceProtocol = readText(hiverelayRoot, 'packages', 'core', 'core', 'services', 'protocol.js')
@@ -280,6 +281,7 @@ const apiRequestTest = readText(hiverelayRoot, 'test', 'unit', 'api-request.test
 const apiRateLimitTest = readText(hiverelayRoot, 'test', 'unit', 'api-rate-limit.test.js')
 const apiResponseTest = readText(hiverelayRoot, 'test', 'unit', 'api-response.test.js')
 const apiRouterReadTest = readText(hiverelayRoot, 'test', 'unit', 'api-router-read.test.js')
+const routerTest = readText(hiverelayRoot, 'test', 'unit', 'router.test.js')
 const apiSafeConfigTest = readText(hiverelayRoot, 'test', 'unit', 'api-safe-config.test.js')
 const apiSeedPublishTest = readText(hiverelayRoot, 'test', 'unit', 'api-seed-publish.test.js')
 const apiSignedIngressTest = readText(hiverelayRoot, 'test', 'unit', 'api-signed-ingress.test.js')
@@ -1368,6 +1370,23 @@ if (
   pass('router discovery reads are extracted with bounded sanitized public pubsub metadata')
 } else {
   fail('router discovery reads can regress to raw routes() or unbounded pubsub topic exposure')
+}
+
+if (
+  routerCore.includes('const DEFAULT_MAX_RATE_LIMIT_BUCKETS = 50_000') &&
+  routerCore.includes('this._maxRateLimitBuckets = positiveInteger(opts.maxRateLimitBuckets, DEFAULT_MAX_RATE_LIMIT_BUCKETS)') &&
+  routerCore.includes('this._rateLimitBucketTtlMs = positiveInteger(opts.rateLimitBucketTtlMs, DEFAULT_RATE_LIMIT_BUCKET_TTL_MS)') &&
+  routerCore.includes('this._pruneRateLimitBuckets(now)') &&
+  routerCore.includes('if (this._rateLimiters.size >= this._maxRateLimitBuckets) return false') &&
+  routerCore.includes('rateLimitBuckets: this._rateLimiters.size') &&
+  routerCore.includes('maxRateLimitBuckets: this._maxRateLimitBuckets') &&
+  routerTest.includes('Router - rate limit bucket map rejects new peers at cap') &&
+  routerTest.includes('Router - rate limit bucket cap prunes stale buckets before rejecting new peers') &&
+  auditRoadmap.includes('Router rate-limit bucket cap')
+) {
+  pass('router service RPC rate-limit buckets are capped and stale-pruned')
+} else {
+  fail('router service RPC rate-limit buckets can regress to unbounded per-peer memory growth')
 }
 
 if (

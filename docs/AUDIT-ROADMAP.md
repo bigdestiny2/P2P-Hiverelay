@@ -156,6 +156,7 @@
 - [x] **4.109** GitHub secret apply failure redaction — `release:apply-github-secrets` now redacts exact stdin secrets, private-key blocks, and GitHub token-shaped values from `gh` failure output before printing, so the emergency release-secret repair path cannot leak credentials through wrapper or CLI error text.
 - [x] **4.110** Hermetic release env-file validation — `release:check-distribution-env --env-file` now validates only the candidate file plus explicit CLI release flags, so ambient shell secrets cannot mask a missing env-file entry before operators apply release credentials to GitHub.
 - [x] **4.111** Quorum ranking signal hardening — client quorum selection now treats `score` as valid only when it is finite and normalized to `[0, 1]`, and treats `latencyMs` as valid only when it is finite and non-negative. Malformed capability docs cannot win selector ranking with `Infinity`, huge scores, negative latency, or other out-of-contract ranking values.
+- [x] **4.112** Router rate-limit bucket cap — service RPC per-route/per-peer token buckets now have a bounded map with stale-bucket pruning before new peer buckets are accepted. A rotating-peer flood cannot grow router memory without bound, and existing buckets remain observable through router stats.
 
 ---
 
