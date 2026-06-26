@@ -157,6 +157,7 @@
 - [x] **4.110** Hermetic release env-file validation — `release:check-distribution-env --env-file` now validates only the candidate file plus explicit CLI release flags, so ambient shell secrets cannot mask a missing env-file entry before operators apply release credentials to GitHub.
 - [x] **4.111** Quorum ranking signal hardening — client quorum selection now treats `score` as valid only when it is finite and normalized to `[0, 1]`, and treats `latencyMs` as valid only when it is finite and non-negative. Malformed capability docs cannot win selector ranking with `Infinity`, huge scores, negative latency, or other out-of-contract ranking values.
 - [x] **4.112** Router rate-limit bucket cap — service RPC per-route/per-peer token buckets now have a bounded map with stale-bucket pruning before new peer buckets are accepted. A rotating-peer flood cannot grow router memory without bound, and existing buckets remain observable through router stats.
+- [x] **4.113** Data-plane gateway rate-limit bucket cap — the dedicated public `GatewayServer` now caps per-IP fixed-window buckets and prunes stale/malformed buckets before admitting a new IP bucket. Reverse-proxy or rotating-IP floods cannot turn the file-serving rate limiter into an unbounded memory sink.
 
 ---
 

@@ -26,6 +26,7 @@ const DEFAULT_GATEWAY_PORT = 9200
 // Gateway rate limit — higher than the control plane (file serving is bursty).
 const RATE_LIMIT_WINDOW_MS = 60_000
 const RATE_LIMIT_MAX = 600 // 10 req/sec sustained per IP
+const RATE_LIMIT_MAX_BUCKETS = 50_000
 
 export class GatewayServer extends EventEmitter {
   constructor (relayNode, opts = {}) {
@@ -39,6 +40,7 @@ export class GatewayServer extends EventEmitter {
     this._gateway = opts.gateway || new HyperGateway(relayNode, { store: relayNode.store })
     this._ownsGateway = !opts.gateway
     this._rateLimits = new Map()
+    this._maxRateLimitBuckets = positiveInteger(opts.maxRateLimitBuckets, RATE_LIMIT_MAX_BUCKETS)
     this._rateLimitCleanup = null
     this._activeSockets = new Set()
   }
@@ -55,10 +57,7 @@ export class GatewayServer extends EventEmitter {
     })
 
     this._rateLimitCleanup = setInterval(() => {
-      const now = Date.now()
-      for (const [ip, entry] of this._rateLimits) {
-        if (now > entry.resetAt) this._rateLimits.delete(ip)
-      }
+      this._sweepRateLimits()
     }, 120_000)
     if (this._rateLimitCleanup.unref) this._rateLimitCleanup.unref()
 
@@ -121,12 +120,29 @@ export class GatewayServer extends EventEmitter {
   _checkRateLimit (ip) {
     const now = Date.now()
     let entry = this._rateLimits.get(ip)
-    if (!entry || now > entry.resetAt) {
+    if (!entry || !Number.isFinite(entry.count) || !Number.isFinite(entry.resetAt) || now > entry.resetAt) {
+      if (!entry && this._rateLimits.size >= this._maxRateLimitBuckets) {
+        this._sweepRateLimits(now)
+        if (this._rateLimits.size >= this._maxRateLimitBuckets) return false
+      }
       entry = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS }
       this._rateLimits.set(ip, entry)
     }
     entry.count++
     return entry.count <= RATE_LIMIT_MAX
+  }
+
+  _sweepRateLimits (now = Date.now()) {
+    let removed = 0
+
+    for (const [ip, entry] of this._rateLimits) {
+      if (!entry || !Number.isFinite(entry.count) || !Number.isFinite(entry.resetAt) || now > entry.resetAt) {
+        this._rateLimits.delete(ip)
+        removed++
+      }
+    }
+
+    return removed
   }
 
   _getAllowedOrigin (origin) {
@@ -198,4 +214,10 @@ export class GatewayServer extends EventEmitter {
 
     writeJson(res, result.payload, 200, { 'Cache-Control': 'public, max-age=30' })
   }
+}
+
+function positiveInteger (value, fallback) {
+  if (value === undefined || value === null) return fallback
+  const number = Number(value)
+  return Number.isSafeInteger(number) && number > 0 ? number : fallback
 }
