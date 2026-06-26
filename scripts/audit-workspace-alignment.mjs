@@ -94,7 +94,9 @@ const officialUmbrelGalleryCheck = readText(hiverelayRoot, 'scripts', 'check-umb
 const umbrelRuntimeReviewEvidence = readText(hiverelayRoot, 'scripts', 'write-umbrel-runtime-review-evidence.mjs')
 const umbrelRuntimeReviewEvidenceVerify = readText(hiverelayRoot, 'scripts', 'verify-umbrel-runtime-review-evidence.mjs')
 const releaseDistributionEnvCheck = readText(hiverelayRoot, 'scripts', 'check-release-distribution-env.mjs')
+const releaseEnvFileLib = readText(hiverelayRoot, 'scripts', 'lib', 'release-env-file.mjs')
 const githubReleaseSetupCheck = readText(hiverelayRoot, 'scripts', 'check-github-release-setup.mjs')
+const githubReleaseSecretsApply = readText(hiverelayRoot, 'scripts', 'apply-github-release-secrets.mjs')
 const releaseImageManifestCheck = readText(hiverelayRoot, 'scripts', 'check-release-image-manifest.mjs')
 const githubEnvWriter = readText(hiverelayRoot, 'scripts', 'write-github-env.mjs')
 const releaseEvidence = readText(hiverelayRoot, 'scripts', 'write-release-evidence.mjs')
@@ -320,6 +322,7 @@ const umbrelRuntimeReviewEvidenceTest = readText(hiverelayRoot, 'test', 'unit', 
 const umbrelRuntimeReviewEvidenceVerifyTest = readText(hiverelayRoot, 'test', 'unit', 'umbrel-runtime-review-verify.test.js')
 const releaseDistributionEnvCheckTest = readText(hiverelayRoot, 'test', 'unit', 'release-distribution-env.test.js')
 const githubReleaseSetupCheckTest = readText(hiverelayRoot, 'test', 'unit', 'github-release-setup.test.js')
+const githubReleaseSecretsApplyTest = readText(hiverelayRoot, 'test', 'unit', 'github-release-secrets-apply.test.js')
 const releaseEvidenceTest = readText(hiverelayRoot, 'test', 'unit', 'release-evidence.test.js')
 const releaseEvidenceVerifyTest = readText(hiverelayRoot, 'test', 'unit', 'release-evidence-verify.test.js')
 const releaseHandoffEvidenceVerifyTest = readText(hiverelayRoot, 'test', 'unit', 'release-handoff-evidence-verify.test.js')
@@ -4179,9 +4182,10 @@ if (
   releaseDistributionEnvCheck.includes('function isGitHubToken') &&
   releaseDistributionEnvCheck.includes('function isPrivateKeyBlock') &&
   releaseDistributionEnvCheck.includes('--env-file') &&
-  releaseDistributionEnvCheck.includes('function readEnvFile') &&
-  releaseDistributionEnvCheck.includes('function parseEnvFile') &&
-  releaseDistributionEnvCheck.includes('Refusing to read symlinked env file') &&
+  releaseDistributionEnvCheck.includes("import { readEnvFile } from './lib/release-env-file.mjs'") &&
+  releaseEnvFileLib.includes('export function readEnvFile') &&
+  releaseEnvFileLib.includes('export function parseEnvFile') &&
+  releaseEnvFileLib.includes('Refusing to read symlinked env file') &&
   releaseDistributionEnvCheck.includes('must be a GitHub token without whitespace or control characters') &&
   releaseDistributionEnvCheck.includes('must be a private key block') &&
   releaseDistributionEnvCheck.includes('without whitespace or control characters') &&
@@ -4226,6 +4230,7 @@ if (
 if (
   monorepoPkg.scripts &&
   monorepoPkg.scripts['release:check-github-setup'] === 'node scripts/check-github-release-setup.mjs' &&
+  monorepoPkg.scripts['release:apply-github-secrets'] === 'node scripts/apply-github-release-secrets.mjs' &&
   githubReleaseSetupCheck.includes('REQUIRED_SECRETS') &&
   githubReleaseSetupCheck.includes("'FLEET_SSH_PRIVATE_KEY'") &&
   githubReleaseSetupCheck.includes("'UMBREL_STORE_TOKEN'") &&
@@ -4250,20 +4255,37 @@ if (
   releasePreflightWorkflow.includes('vars.FLEET_ROLLOUT_TIMEOUT_MS') &&
   releasePreflightWorkflow.includes('#### Repair path') &&
   releasePreflightWorkflow.includes('--env-file /private/tmp/hiverelay-release-secrets.env --channel both --prerelease false') &&
+  releasePreflightWorkflow.includes('release:apply-github-secrets') &&
   releasePreflightWorkflow.includes('docs/RELEASE_AUTOMATION.md#repository-secret-setup') &&
+  releaseDistributionEnvCheck.includes("import { readEnvFile } from './lib/release-env-file.mjs'") &&
+  releaseEnvFileLib.includes('export function readEnvFile') &&
+  releaseEnvFileLib.includes('export function parseEnvFile') &&
+  githubReleaseSecretsApply.includes('validateCandidateFile') &&
+  githubReleaseSecretsApply.includes("['secret', 'set', name, '--repo', repo]") &&
+  githubReleaseSecretsApply.includes("['variable', 'set', name, '--repo', repo, '--body', values[name]]") &&
+  githubReleaseSecretsApply.includes('input') &&
+  githubReleaseSecretsApply.includes('--dry-run') &&
+  githubReleaseSecretsApply.includes('only validates full-release secret values') &&
+  githubReleaseSecretsApply.includes('PATH: process.env.PATH') &&
   githubReleaseSetupCheckTest.includes('passes with all required secrets') &&
   githubReleaseSetupCheckTest.includes('reports missing release secrets') &&
   githubReleaseSetupCheckTest.includes('rejects required secrets configured as variables') &&
   githubReleaseSetupCheckTest.includes('rejects invalid optional fleet timeout variable') &&
   githubReleaseSetupCheckTest.includes('reports gh JSON failures') &&
   githubReleaseSetupCheckTest.includes('rejects malformed repo names before gh calls') &&
+  githubReleaseSecretsApplyTest.includes('sends validated values to gh secret set via stdin') &&
+  githubReleaseSecretsApplyTest.includes('rejects malformed candidate without calling gh or echoing values') &&
+  githubReleaseSecretsApplyTest.includes('rejects prerelease validation mode before gh calls') &&
   releaseAutomationDocs.includes('npm run release:check-github-setup') &&
+  releaseAutomationDocs.includes('npm run release:apply-github-secrets') &&
+  releaseAutomationDocs.includes('--dry-run') &&
   releaseAutomationDocs.includes('not print secret values') &&
   releaseAutomationDocs.includes('release-distribution-preflight.yml') &&
   releaseAutomationDocs.includes('side-effect-free masked-value') &&
-  readme.includes('npm run release:check-github-setup')
+  readme.includes('npm run release:check-github-setup') &&
+  readme.includes('npm run release:apply-github-secrets')
 ) {
-  pass('release readiness includes a repo-level GitHub secret and variable setup audit')
+  pass('release readiness includes validated GitHub secret setup, apply, and repair-path audits')
 } else {
   fail('release readiness can still rely on manual GitHub secret and variable inspection')
 }

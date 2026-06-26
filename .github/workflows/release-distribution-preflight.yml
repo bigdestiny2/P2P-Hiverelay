@@ -79,7 +79,8 @@ jobs:
               echo
               echo "1. Build a local candidate file outside the repo, such as \`/private/tmp/hiverelay-release-secrets.env\`."
               echo "2. Run \`npm run release:check-distribution-env -- --env-file /private/tmp/hiverelay-release-secrets.env --channel both --prerelease false\`."
-              echo "3. Rotate the failing GitHub Secrets with \`gh secret set\`, then rerun this workflow."
+              echo "3. Dry-run rotation with \`npm run release:apply-github-secrets -- --repo ${GITHUB_REPOSITORY} --env-file /private/tmp/hiverelay-release-secrets.env --dry-run\`."
+              echo "4. Apply rotation with \`npm run release:apply-github-secrets -- --repo ${GITHUB_REPOSITORY} --env-file /private/tmp/hiverelay-release-secrets.env\`, then rerun this workflow."
               echo
               echo "See \`docs/RELEASE_AUTOMATION.md#repository-secret-setup\`."
             fi
