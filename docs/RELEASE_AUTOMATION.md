@@ -112,29 +112,27 @@ npm run release:check-distribution-env -- \
 The local `--env-file` parser accepts simple `NAME=value` entries and
 `NAME<<DELIM` heredocs for multiline private keys. It performs shape checks
 only; it does not contact the fleet, Umbrel, StartOS, or GitHub, and it does
-not print secret values.
+not print secret values. After the candidate file passes, apply the exact same
+file to GitHub Secrets. Run the helper once with `--dry-run` so the operator can
+confirm the target repository and names without changing GitHub state.
 
 ```sh
 repo=bigdestiny2/P2P-Hiverelay
 
-gh secret set FLEET_SSH_PRIVATE_KEY --repo "$repo" < ~/.ssh/hiverelay_fleet_release
+npm run release:apply-github-secrets -- \
+  --repo "$repo" \
+  --env-file /private/tmp/hiverelay-release-secrets.env \
+  --dry-run
 
-printf '%s' "$UMBREL_STORE_TOKEN" |
-  gh secret set UMBREL_STORE_TOKEN --repo "$repo"
-
-printf '%s' "$UMBREL_OFFICIAL_PR_TOKEN" |
-  gh secret set UMBREL_OFFICIAL_PR_TOKEN --repo "$repo"
-
-printf '%s' "$UMBREL_OFFICIAL_FORK" |
-  gh secret set UMBREL_OFFICIAL_FORK --repo "$repo"
-
-gh secret set STARTOS_DEVELOPER_KEY_PEM --repo "$repo" < ~/.embassy/developer.key.pem
-
-printf '%s' "$STARTOS_REGISTRY_URL" |
-  gh secret set STARTOS_REGISTRY_URL --repo "$repo"
-
-gh variable set FLEET_ROLLOUT_TIMEOUT_MS --repo "$repo" --body 1800000
+npm run release:apply-github-secrets -- \
+  --repo "$repo" \
+  --env-file /private/tmp/hiverelay-release-secrets.env
 ```
+
+The helper validates the candidate file again before any write, sends secret
+values to `gh secret set` through stdin, stores
+`FLEET_ROLLOUT_TIMEOUT_MS` as an optional repository variable when present, and
+does not print secret values.
 
 Expected shapes:
 
