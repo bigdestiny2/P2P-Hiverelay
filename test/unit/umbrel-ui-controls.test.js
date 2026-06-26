@@ -11,6 +11,17 @@ test('umbrel ui controls do not rely on submit-default buttons', (t) => {
   t.alike(buttonsMissingType(wizard), [])
 })
 
+test('umbrel dashboard has unique element ids for interactive controls', (t) => {
+  const ids = htmlIds(dashboard)
+  const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index)
+
+  t.alike(duplicates, [])
+  t.is(countId(dashboard, 'servicesCard'), 1)
+  t.is(countId(dashboard, 'svcStatus'), 1)
+  t.is(countId(dashboard, 'svcBody'), 1)
+  t.is(countId(dashboard, 'walletDialog'), 1)
+})
+
 test('umbrel dashboard critical click handlers stay wired', (t) => {
   t.ok(dashboard.includes("$('setupLink').setAttribute('href', appPath('/wizard?edit=1'));"))
   t.ok(dashboard.includes("edit.addEventListener('click', openWalletDialog);"))
@@ -774,6 +785,14 @@ function buttonsMissingType (html) {
     missing.push(match[0])
   }
   return missing
+}
+
+function htmlIds (html) {
+  return Array.from(html.matchAll(/\bid\s*=\s*["']([^"']+)["']/gi), match => match[1])
+}
+
+function countId (html, id) {
+  return htmlIds(html).filter(value => value === id).length
 }
 
 function runSvcRestartReady ({ now = 3000, startedAt = 0, expected = [], avail }) {
