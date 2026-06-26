@@ -73,4 +73,14 @@ jobs:
             echo "- Umbrel community store: \`${HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS:-not-checked}\`"
             echo "- Official Umbrel PR: \`${HIVERELAY_UMBREL_OFFICIAL_PR_STATUS:-not-checked}\`"
             echo "- StartOS registry: \`${HIVERELAY_STARTOS_REGISTRY_STATUS:-not-checked}\`"
+            if [ "${HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS:-unknown}" = "failed" ]; then
+              echo
+              echo "#### Repair path"
+              echo
+              echo "1. Build a local candidate file outside the repo, such as \`/private/tmp/hiverelay-release-secrets.env\`."
+              echo "2. Run \`npm run release:check-distribution-env -- --env-file /private/tmp/hiverelay-release-secrets.env --channel both --prerelease false\`."
+              echo "3. Rotate the failing GitHub Secrets with \`gh secret set\`, then rerun this workflow."
+              echo
+              echo "See \`docs/RELEASE_AUTOMATION.md#repository-secret-setup\`."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

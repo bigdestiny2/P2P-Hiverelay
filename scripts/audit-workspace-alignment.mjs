@@ -4248,6 +4248,9 @@ if (
   releasePreflightWorkflow.includes('secrets.UMBREL_OFFICIAL_PR_TOKEN') &&
   releasePreflightWorkflow.includes('secrets.STARTOS_REGISTRY_URL') &&
   releasePreflightWorkflow.includes('vars.FLEET_ROLLOUT_TIMEOUT_MS') &&
+  releasePreflightWorkflow.includes('#### Repair path') &&
+  releasePreflightWorkflow.includes('--env-file /private/tmp/hiverelay-release-secrets.env --channel both --prerelease false') &&
+  releasePreflightWorkflow.includes('docs/RELEASE_AUTOMATION.md#repository-secret-setup') &&
   githubReleaseSetupCheckTest.includes('passes with all required secrets') &&
   githubReleaseSetupCheckTest.includes('reports missing release secrets') &&
   githubReleaseSetupCheckTest.includes('rejects required secrets configured as variables') &&
