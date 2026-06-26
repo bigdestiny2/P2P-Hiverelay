@@ -153,6 +153,7 @@
 - [x] **4.106** Prerelease distribution-boundary proof — `release:verify-evidence` and `release:verify-handoff-evidence` now require `release.prerelease` to be a boolean and reject prerelease certificates that carry fleet rollout, official Umbrel PR, community-store, StartOS registry, package id, or registry-evidence facts, so preview releases cannot look partially promoted.
 - [x] **4.107** Full-release whole-fleet default proof — `release:prepare` and `release-surfaces.yml` already default normal releases to `channel=both`; `test/unit/prepare-release.test.js` now proves that an implicit full release bumps both `canary` and `stable`, and `npm run audit:workspace` guards the regression test plus the main README's high-fidelity Core3 graph.
 - [x] **4.108** Validated GitHub secret rotation helper — `release:apply-github-secrets` validates a local env file with the same full-release preflight before writing values to GitHub Secrets through `gh` stdin, rejects prerelease validation mode, and the failed preflight repair path now points operators at helper dry-run/apply steps.
+- [x] **4.109** GitHub secret apply failure redaction — `release:apply-github-secrets` now redacts exact stdin secrets, private-key blocks, and GitHub token-shaped values from `gh` failure output before printing, so the emergency release-secret repair path cannot leak credentials through wrapper or CLI error text.
 
 ---
 
