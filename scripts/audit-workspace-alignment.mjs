@@ -79,6 +79,14 @@ const releaseWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'release
 const releasePreflightWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'release-distribution-preflight.yml')
 const dockerPublishWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'docker-publish.yml')
 const umbrelAppValidateWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'umbrel-app-validate.yml')
+const testWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'test.yml')
+const workflowTexts = [
+  releaseWorkflow,
+  releasePreflightWorkflow,
+  dockerPublishWorkflow,
+  umbrelAppValidateWorkflow,
+  testWorkflow
+].join('\n')
 const dockerignore = readText(hiverelayRoot, '.dockerignore')
 const prepareRelease = readText(hiverelayRoot, 'scripts', 'prepare-release.mjs')
 const officialUmbrelExport = readText(hiverelayRoot, 'scripts', 'export-official-umbrel-app.mjs')
@@ -5249,7 +5257,7 @@ if (
   releaseWorkflow.indexOf('Verify release evidence') < releaseWorkflow.indexOf('Upload release evidence artifact') &&
   releaseWorkflow.includes("always() && !cancelled() && hashFiles('hiverelay/scripts/write-release-evidence.mjs') != ''") &&
   releaseWorkflow.includes("always() && !cancelled() && hashFiles('hiverelay/release-evidence.json') != ''") &&
-  releaseWorkflow.includes('actions/upload-artifact@v4') &&
+  releaseWorkflow.includes('actions/upload-artifact@v7') &&
   releaseWorkflow.includes('release-evidence.json') &&
   releaseWorkflow.includes('release-image-smoke-evidence.json') &&
   releaseWorkflow.includes('umbrel-package-smoke-evidence.json') &&
@@ -5286,6 +5294,34 @@ if (
   pass('release workflow emits and validates durable release evidence for image, fleet, Umbrel, and StartOS surfaces')
 } else {
   fail('release workflow is missing validated durable release evidence output')
+}
+
+const deprecatedNode20ActionRefs = [
+  'actions/checkout@v4',
+  'actions/setup-node@v4',
+  'actions/upload-artifact@v4',
+  'actions/upload-artifact@v5',
+  'docker/setup-qemu-action@v3',
+  'docker/setup-buildx-action@v3',
+  'docker/login-action@v3',
+  'docker/metadata-action@v5',
+  'docker/build-push-action@v5'
+]
+
+if (
+  deprecatedNode20ActionRefs.every(ref => !workflowTexts.includes(ref)) &&
+  workflowTexts.includes('actions/checkout@v7') &&
+  workflowTexts.includes('actions/setup-node@v6') &&
+  workflowTexts.includes('actions/upload-artifact@v7') &&
+  dockerPublishWorkflow.includes('docker/setup-qemu-action@v4') &&
+  workflowTexts.includes('docker/setup-buildx-action@v4') &&
+  workflowTexts.includes('docker/login-action@v4') &&
+  dockerPublishWorkflow.includes('docker/metadata-action@v6') &&
+  dockerPublishWorkflow.includes('docker/build-push-action@v7')
+) {
+  pass('GitHub workflows use Node 24-compatible action wrappers')
+} else {
+  fail('GitHub workflows still reference deprecated Node 20 action wrappers')
 }
 
 if (
