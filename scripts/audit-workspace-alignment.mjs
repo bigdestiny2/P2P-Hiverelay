@@ -2187,6 +2187,14 @@ if (
   relayApiValidation.includes('!Number.isSafeInteger(parsed)') &&
   gatewayServer.includes('closeAllConnections') &&
   gatewayServer.includes('socket.destroy()') &&
+  gatewayServer.includes('const RATE_LIMIT_MAX_BUCKETS = 50_000') &&
+  gatewayServer.includes('this._maxRateLimitBuckets = positiveInteger(opts.maxRateLimitBuckets, RATE_LIMIT_MAX_BUCKETS)') &&
+  gatewayServer.includes('if (!entry && this._rateLimits.size >= this._maxRateLimitBuckets)') &&
+  gatewayServer.includes('this._sweepRateLimits(now)') &&
+  gatewayServer.includes('if (this._rateLimits.size >= this._maxRateLimitBuckets) return false') &&
+  gatewayServer.includes('!Number.isFinite(entry.count)') &&
+  gatewayServer.includes('!Number.isFinite(entry.resetAt)') &&
+  gatewayServer.includes('function positiveInteger') &&
   apiCatalogReadTest.includes('relay catalog filters, counts, and paginates in one bounded helper') &&
   apiCatalogReadTest.includes('relay catalog sanitizes top-level public metadata') &&
   apiCatalogReadTest.includes('invalid types are rejected instead of widening public catalog reads') &&
@@ -2199,6 +2207,9 @@ if (
   gatewayServerTest.includes('catalog pagination uses strict bounded integer parsing') &&
   gatewayServerTest.includes('invalid catalog type filter returns 400 instead of broadening response') &&
   gatewayServerTest.includes('JSON responses use hardened headers and explicit catalog cache') &&
+  gatewayServerTest.includes('rate limit buckets reject new IPs at cap') &&
+  gatewayServerTest.includes('rate limit bucket cap prunes stale buckets before rejecting new IPs') &&
+  gatewayServerTest.includes('malformed rate limit buckets reset instead of poisoning an IP') &&
   gatewayServerTest.includes('stop force-closes held client sockets') &&
   bareHttpServerTest.includes('bare http server: catalog route reuses bounded relay catalog helper') &&
   bareHttpServerTest.includes('bare http server: catalog route rejects invalid type filters') &&
@@ -2208,11 +2219,12 @@ if (
   auditRoadmap.includes('Legacy catalog type-route bounds') &&
   auditRoadmap.includes('Public catalog federation snapshot sanitization') &&
   auditRoadmap.includes('Public catalog metadata sanitization') &&
-  auditRoadmap.includes('Data-plane gateway JSON response hygiene')
+  auditRoadmap.includes('Data-plane gateway JSON response hygiene') &&
+  auditRoadmap.includes('Data-plane gateway rate-limit bucket cap')
 ) {
-  pass('public catalog reads share bounded Node/Bare/legacy pagination, fail-closed type filters, hardened data-plane JSON, and gateway force-close shutdown')
+  pass('public catalog reads share bounded Node/Bare/legacy pagination, fail-closed type filters, hardened data-plane JSON, capped rate-limit buckets, and gateway force-close shutdown')
 } else {
-  fail('public catalog reads can drift to duplicated permissive parsing, unbounded pagination, weak data-plane JSON headers, or hanging gateway shutdown')
+  fail('public catalog reads can drift to duplicated permissive parsing, unbounded pagination, weak data-plane JSON headers, unbounded gateway rate-limit buckets, or hanging gateway shutdown')
 }
 
 const gatewayStatsRouteStart = relayApi.indexOf("path === '/api/gateway'")

@@ -30,13 +30,14 @@ function mockGateway () {
   }
 }
 
-function request (port, path) {
+function request (port, path, opts = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request({
       hostname: '127.0.0.1',
       port,
       method: 'GET',
-      path
+      path,
+      headers: opts.headers || {}
     }, (res) => {
       let data = ''
       res.on('data', chunk => { data += chunk })
@@ -51,11 +52,12 @@ function request (port, path) {
   })
 }
 
-async function startGateway (t) {
+async function startGateway (t, opts = {}) {
   const server = new GatewayServer(mockNode(), {
     gatewayPort: 0,
     gatewayHost: '127.0.0.1',
-    gateway: mockGateway()
+    gateway: mockGateway(),
+    ...opts
   })
   await server.start()
   t.teardown(async () => {
@@ -128,6 +130,72 @@ test('GatewayServer - JSON responses use hardened headers and explicit catalog c
   t.is(missing.headers['content-type'], 'application/json; charset=utf-8')
   t.is(missing.headers['x-content-type-options'], 'nosniff')
   t.is(missing.headers['cache-control'], 'no-store, max-age=0', '404 is not cached')
+})
+
+test('GatewayServer - rate limit buckets reject new IPs at cap', async (t) => {
+  const server = await startGateway(t, {
+    trustProxy: true,
+    maxRateLimitBuckets: 1
+  })
+  const port = server.server.address().port
+
+  const first = await request(port, '/health', {
+    headers: { 'x-forwarded-for': '203.0.113.1' }
+  })
+  t.is(first.statusCode, 200, 'first IP bucket is accepted')
+
+  const same = await request(port, '/health', {
+    headers: { 'x-forwarded-for': '203.0.113.1' }
+  })
+  t.is(same.statusCode, 200, 'existing IP bucket remains usable')
+
+  const second = await request(port, '/health', {
+    headers: { 'x-forwarded-for': '203.0.113.2' }
+  })
+  t.is(second.statusCode, 429, 'new IP bucket is rejected once the map is capped')
+  t.is(second.body.error, 'Too many requests')
+  t.is(server._rateLimits.size, 1, 'map remains capped')
+})
+
+test('GatewayServer - rate limit bucket cap prunes stale buckets before rejecting new IPs', async (t) => {
+  const server = await startGateway(t, {
+    trustProxy: true,
+    maxRateLimitBuckets: 1
+  })
+  const port = server.server.address().port
+
+  server._rateLimits.set('203.0.113.7', {
+    count: 1,
+    resetAt: Date.now() - 1
+  })
+
+  const fresh = await request(port, '/health', {
+    headers: { 'x-forwarded-for': '203.0.113.8' }
+  })
+  t.is(fresh.statusCode, 200, 'fresh IP is accepted after stale bucket pruning')
+  t.absent(server._rateLimits.has('203.0.113.7'))
+  t.ok(server._rateLimits.has('203.0.113.8'))
+  t.is(server._rateLimits.size, 1, 'map remains capped after pruning')
+})
+
+test('GatewayServer - malformed rate limit buckets reset instead of poisoning an IP', async (t) => {
+  const server = await startGateway(t, {
+    trustProxy: true,
+    maxRateLimitBuckets: 1
+  })
+  const port = server.server.address().port
+
+  server._rateLimits.set('203.0.113.9', {
+    count: 'bad',
+    resetAt: Date.now() + 60_000
+  })
+
+  const repaired = await request(port, '/health', {
+    headers: { 'x-forwarded-for': '203.0.113.9' }
+  })
+  t.is(repaired.statusCode, 200, 'request from existing malformed bucket is accepted after reset')
+  t.is(server._rateLimits.size, 1, 'malformed bucket did not grow the map')
+  t.is(server._rateLimits.get('203.0.113.9').count, 1, 'malformed counter was reset')
 })
 
 test('GatewayServer - stop force-closes held client sockets', async (t) => {
