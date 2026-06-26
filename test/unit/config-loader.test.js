@@ -99,6 +99,42 @@ test('cli start uses HIVERELAY_MAX_STORAGE only before saved operator config exi
   t.ok(saved.stdout.includes('Max Store:  50.0 GB'))
 })
 
+test('cli start uses HIVERELAY_STORAGE when --storage is absent', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-cli-storage-env-'))
+  const storage = path.join(home, 'env-storage')
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const res = await execCliUntil(['start', '--no-api', '--no-relay', '--no-seeding', '--quiet'], {
+    ...process.env,
+    HOME: home,
+    HIVERELAY_STORAGE: storage
+  }, 'Storage:')
+
+  t.ok(res.sawNeedle)
+  t.ok(res.stdout.includes(`Storage:    ${storage}`))
+})
+
+test('cli start --storage overrides HIVERELAY_STORAGE', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-cli-storage-flag-'))
+  const envStorage = path.join(home, 'env-storage')
+  const flagStorage = path.join(home, 'flag-storage')
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const res = await execCliUntil(['start', '--storage', flagStorage, '--no-api', '--no-relay', '--no-seeding', '--quiet'], {
+    ...process.env,
+    HOME: home,
+    HIVERELAY_STORAGE: envStorage
+  }, 'Storage:')
+
+  t.ok(res.sawNeedle)
+  t.ok(res.stdout.includes(`Storage:    ${flagStorage}`))
+  t.absent(res.stdout.includes(`Storage:    ${envStorage}`))
+})
+
 function execCli (argv, env) {
   return new Promise((resolve, reject) => {
     execFile(process.execPath, ['packages/core/cli/index.js', ...argv], {

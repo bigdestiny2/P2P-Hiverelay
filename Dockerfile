@@ -121,20 +121,11 @@ RUN ln -s /app/packages/core/cli/index.js /usr/local/bin/p2p-hiverelay && \
 # non-root container then can't create its store -> EACCES on startup. So we
 # start as root, fix ownership only when it's wrong (cheap on restarts), and
 # drop to the unprivileged `hiverelay` user via gosu before exec'ing node.
-RUN cat > /usr/local/bin/docker-entrypoint.sh <<'EOS' && chmod +x /usr/local/bin/docker-entrypoint.sh
-#!/bin/sh
-set -e
-if [ "$(id -u)" = "0" ]; then
-  if [ "$(stat -c %u /data 2>/dev/null)" != "999" ]; then
-    chown -R hiverelay:hiverelay /data 2>/dev/null || true
-  fi
-  if [ "$(stat -c %u /config 2>/dev/null)" != "999" ]; then
-    chown -R hiverelay:hiverelay /config 2>/dev/null || true
-  fi
-  exec gosu hiverelay "$@"
-fi
-exec "$@"
-EOS
+# COPY the entrypoint from a committed file rather than generating it inline.
+# Some remote builders can lose heredoc-generated files, which leaves the
+# image without /usr/local/bin/docker-entrypoint.sh and exits 127 on boot.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # NOTE: no `USER` directive — the entrypoint starts as root to fix the
 # bind-mount ownership, then gosu-drops to uid 999. The relay process itself

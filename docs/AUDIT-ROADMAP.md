@@ -652,6 +652,7 @@ full release.
 | Lazy-load `@inquirer/prompts` for interactive setup/manage TUI modules | Audited | Faster non-interactive CLI imports/startup |
 | Keep `@noble/secp256k1` + `@noble/hashes` in core for PVSS blind custody; retain `@noble/curves` in core for Cashu NUT-00 BDHKE blind-mint secp256k1 field/point arithmetic; leave Ed25519 VRF/poker curve usage in `p2p-hiveservices` | Audited | Preserves PVSS, Cashu interop, and service-curve ownership without carrying unaccounted crypto dependencies |
 | Read StartOS package build version from root `package.json` instead of hardcoding it in `startos/Makefile` | Audited | Fewer release-version drift surfaces |
+| Copy a committed LF-pinned Docker entrypoint and honor `HIVERELAY_STORAGE=/data` by default | Audited | Prevents remote builders from dropping the entrypoint and keeps container stores on the mounted data volume |
 
 ---
 
