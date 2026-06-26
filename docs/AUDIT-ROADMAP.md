@@ -5,8 +5,9 @@
 > the external proof gaps section as authoritative until real upstream evidence
 > files exist.
 >
-> Current agent-facing snapshots: `docs/CURRENT_STATUS_AUDIT_2026-06-24.md`
-> and `docs/TEST-COMMAND-MATRIX-2026-06-24.md`.
+> Current agent-facing snapshots: `docs/SHIP-HANDOFF-2026-06-26.md`,
+> `docs/CURRENT_STATUS_AUDIT_2026-06-24.md`, and
+> `docs/TEST-COMMAND-MATRIX-2026-06-24.md`.
 
 # HiveRelay Audit Roadmap
 
@@ -151,6 +152,7 @@
 - [x] **4.105** Release certificate raw metadata proof — `release:write-evidence` now validates raw workflow, release, image, surface, and sidecar metadata without trim-normalizing env values, so whitespace-padded run ids, tag SHAs, server URLs, image digests, registry URLs, PR URLs, or evidence paths fail before the final public release certificate is written.
 - [x] **4.106** Prerelease distribution-boundary proof — `release:verify-evidence` and `release:verify-handoff-evidence` now require `release.prerelease` to be a boolean and reject prerelease certificates that carry fleet rollout, official Umbrel PR, community-store, StartOS registry, package id, or registry-evidence facts, so preview releases cannot look partially promoted.
 - [x] **4.107** Full-release whole-fleet default proof — `release:prepare` and `release-surfaces.yml` already default normal releases to `channel=both`; `test/unit/prepare-release.test.js` now proves that an implicit full release bumps both `canary` and `stable`, and `npm run audit:workspace` guards the regression test plus the main README's high-fidelity Core3 graph.
+- [x] **4.108** Validated GitHub secret rotation helper — `release:apply-github-secrets` validates a local env file with the same full-release preflight before writing values to GitHub Secrets through `gh` stdin, rejects prerelease validation mode, and the failed preflight repair path now points operators at helper dry-run/apply steps.
 
 ---
 
@@ -159,6 +161,13 @@
 These are not code-only tasks. They require evidence from live infrastructure or
 external review-controlled stores before the full project goal can be marked
 done.
+
+Current masked-value preflight evidence: GitHub Actions run `28244297762` fails
+on malformed `UMBREL_STORE_TOKEN`, `UMBREL_OFFICIAL_PR_TOKEN`,
+`UMBREL_OFFICIAL_FORK`, and `STARTOS_REGISTRY_URL`. Secret names are present,
+but GitHub does not expose values through `gh`; rotate with
+`npm run release:apply-github-secrets` and rerun the preflight before cutting a
+full release.
 
 - **Official Umbrel App Store:** the workflow can export the `blindspark/`
   package and open/update a draft `getumbrel/umbrel-apps` PR, but a real

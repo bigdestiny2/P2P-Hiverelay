@@ -71,6 +71,7 @@ const reverseProxyDocs = readText(hiverelayRoot, 'docs', 'REVERSE-PROXY.md')
 const protocolSpecDocs = readText(hiverelayRoot, 'docs', 'PROTOCOL-SPEC.md')
 const developerDocs = readText(hiverelayRoot, 'docs', 'DEVELOPER.md')
 const readmeMainUpdateAudit = readText(hiverelayRoot, 'docs', 'README-MAIN-UPDATE-AUDIT.md')
+const shipHandoff20260626 = readText(hiverelayRoot, 'docs', 'SHIP-HANDOFF-2026-06-26.md')
 const startOsManifest = readText(hiverelayRoot, 'startos', 'manifest.yaml')
 const startOsMakefile = readText(hiverelayRoot, 'startos', 'Makefile')
 const startOsReadme = readText(hiverelayRoot, 'startos', 'README.md')
@@ -3845,7 +3846,9 @@ const roadmapRequiredTerms = [
   'test/unit/umbrel-ui-controls.test.js',
   'test/unit/release-evidence.test.js',
   'fleet-rollout-evidence.json',
-  'release-image-manifest-evidence.json'
+  'release-image-manifest-evidence.json',
+  'docs/SHIP-HANDOFF-2026-06-26.md',
+  'Validated GitHub secret rotation helper'
 ]
 const roadmapForbiddenTerms = [
   'Doc may be partially out of date',
@@ -3860,6 +3863,27 @@ if (missingRoadmapTerms.length === 0 && staleRoadmapTerms.length === 0) {
   pass('audit roadmap names current external proof gaps and no longer advertises stale zero-coverage claims')
 } else {
   fail(`audit roadmap drifted: missing ${missingRoadmapTerms.map(term => JSON.stringify(term)).join(', ') || 'none'}; stale ${staleRoadmapTerms.map(term => JSON.stringify(term)).join(', ') || 'none'}`)
+}
+
+const currentShipHandoffRequiredTerms = [
+  'HEAD inspected: `a8eb77d`',
+  'Post-merge main Test run: `28244061863`',
+  'Post-merge Docker snapshot publish: `28244061909`',
+  'Release distribution preflight run: `28244297762`',
+  'UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters',
+  'UMBREL_OFFICIAL_PR_TOKEN must be a GitHub token without whitespace or control characters',
+  'UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps',
+  'STARTOS_REGISTRY_URL must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames',
+  'Full releases with no explicit channel resolve to `both`',
+  'Prereleases with no explicit channel resolve to `none`',
+  'npm run release:apply-github-secrets',
+  'docs/assets/hiverelay-core3-architecture.svg'
+]
+const missingShipHandoffTerms = missingTerms(shipHandoff20260626, currentShipHandoffRequiredTerms)
+if (missingShipHandoffTerms.length === 0) {
+  pass('current ship handoff captures release-helper state, release defaults, architecture graph, and external blockers')
+} else {
+  fail(`current ship handoff drifted from release state: missing ${missingShipHandoffTerms.map(term => JSON.stringify(term)).join(', ')}`)
 }
 
 if (
