@@ -196,17 +196,27 @@ function selectWide (pool, size) {
 
 /**
  * Default ranking: higher operator-score first; tiebreak by lower
- * latency. Both fields are optional — relays advertising neither rank
- * deterministically by pubkey for stability across runs.
+ * latency. Both fields are optional and only trusted inside their documented
+ * bounds — relays advertising malformed or unnormalized values rank as if the
+ * signal was absent. This keeps a self-reported capability doc from winning a
+ * quorum by claiming Infinity, a negative RTT, or a score outside [0, 1].
  */
 function byScoreDesc (a, b) {
-  const sa = typeof a.score === 'number' ? a.score : 0
-  const sb = typeof b.score === 'number' ? b.score : 0
+  const sa = normalizedScore(a.score)
+  const sb = normalizedScore(b.score)
   if (sb !== sa) return sb - sa
-  const la = typeof a.latencyMs === 'number' ? a.latencyMs : Infinity
-  const lb = typeof b.latencyMs === 'number' ? b.latencyMs : Infinity
+  const la = normalizedLatency(a.latencyMs)
+  const lb = normalizedLatency(b.latencyMs)
   if (la !== lb) return la - lb
   return a.pubkey.localeCompare(b.pubkey)
+}
+
+function normalizedScore (score) {
+  return typeof score === 'number' && Number.isFinite(score) && score >= 0 && score <= 1 ? score : 0
+}
+
+function normalizedLatency (latencyMs) {
+  return typeof latencyMs === 'number' && Number.isFinite(latencyMs) && latencyMs >= 0 ? latencyMs : Infinity
 }
 
 /**
