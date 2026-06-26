@@ -15,11 +15,12 @@ Defaults:
 
 Local candidate validation:
   --env-file reads NAME=value and NAME<<DELIM blocks so operators can validate
-  multiline release secrets before writing them to GitHub Secrets.
+  multiline release secrets before writing them to GitHub Secrets. Candidate
+  validation is hermetic and does not fall back to ambient shell secrets.
 `
 
 const args = parseArgs(process.argv.slice(2))
-const sourceEnv = args.envFile ? { ...process.env, ...safeReadEnvFile(args.envFile) } : process.env
+const sourceEnv = args.envFile ? safeReadEnvFile(args.envFile) : process.env
 const prerelease = readBoolean(args.prerelease ?? sourceEnv.HIVERELAY_RELEASE_PRERELEASE)
 const channel = args.channel || sourceEnv.HIVERELAY_RELEASE_CHANNEL || (prerelease ? 'none' : 'both')
 const githubEnv = args.githubEnv || process.env.GITHUB_ENV || ''
