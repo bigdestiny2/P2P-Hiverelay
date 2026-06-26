@@ -3908,9 +3908,13 @@ if (missingRoadmapTerms.length === 0 && staleRoadmapTerms.length === 0) {
 }
 
 const currentShipHandoffRequiredTerms = [
-  'HEAD inspected: `a8eb77d`',
-  'Post-merge main Test run: `28244061863`',
-  'Post-merge Docker snapshot publish: `28244061909`',
+  'HEAD inspected: `70e0d8b`',
+  'PR #139 CI finished green',
+  'Post-merge main Test run: `28254705847`',
+  'Post-merge Docker snapshot publish: `28254705840`',
+  'PR #137 `c5314da`: hardened quorum ranking signals',
+  'PR #138 `a2e159a`: capped service-router rate-limit buckets',
+  'PR #139 `70e0d8b`: capped public gateway rate-limit buckets',
   'Release distribution preflight run: `28244297762`',
   'UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters',
   'UMBREL_OFFICIAL_PR_TOKEN must be a GitHub token without whitespace or control characters',
@@ -3919,11 +3923,12 @@ const currentShipHandoffRequiredTerms = [
   'Full releases with no explicit channel resolve to `both`',
   'Prereleases with no explicit channel resolve to `none`',
   'npm run release:apply-github-secrets',
+  'Docker build/run smoke',
   'docs/assets/hiverelay-core3-architecture.svg'
 ]
 const missingShipHandoffTerms = missingTerms(shipHandoff20260626, currentShipHandoffRequiredTerms)
 if (missingShipHandoffTerms.length === 0) {
-  pass('current ship handoff captures release-helper state, release defaults, architecture graph, and external blockers')
+  pass('current ship handoff captures latest hardening state, release defaults, architecture graph, and external blockers')
 } else {
   fail(`current ship handoff drifted from release state: missing ${missingShipHandoffTerms.map(term => JSON.stringify(term)).join(', ')}`)
 }

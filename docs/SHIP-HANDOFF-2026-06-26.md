@@ -1,13 +1,13 @@
 # HiveRelay Ship Handoff - 2026-06-26
 
-This is the current ship boundary after the Core3/HiveRelay release-distribution
-repair work through PR #132.
+This is the current ship boundary after the Core3/HiveRelay release-distribution,
+security, and data-plane hardening work through PR #139.
 
 ## Current Source State
 
 - Branch: `main`
-- HEAD inspected: `a8eb77d`
-- Commit subject: `release: add validated GitHub secret apply helper (#132)`
+- HEAD inspected: `70e0d8b`
+- Commit subject: `security: cap gateway rate-limit buckets (#139)`
 - Worktree: clean (`main...origin/main`)
 - Package version: `p2p-hiverelay-monorepo@0.20.2`
 - Architecture graph: `docs/HIVERELAY-ARCHITECTURE-GRAPH.md` and
@@ -15,14 +15,19 @@ repair work through PR #132.
 
 ## Verified Green
 
-- PR #132 CI finished green after rerunning a flaky unit job:
+- PR #139 CI finished green:
   audit, lint, unit, integration, and Bare tests passed.
-- Post-merge main Test run: `28244061863` passed.
-- Post-merge Docker snapshot publish: `28244061909` passed.
-- Local verification during the #132 loop passed:
+- Post-merge main Test run: `28254705847` passed.
+- Post-merge Docker snapshot publish: `28254705840` passed.
+- Recent security hardening merged after the release-helper work:
+  - PR #137 `c5314da`: hardened quorum ranking signals.
+  - PR #138 `a2e159a`: capped service-router rate-limit buckets.
+  - PR #139 `70e0d8b`: capped public gateway rate-limit buckets.
+- Local verification during the #139 loop passed:
   `npm test`, `npm run test:unit`, `npm run test:bare`, `npm run lint`,
-  `npm run audit:workspace`, `npm audit --audit-level=moderate`, focused
-  release-distribution tests, and `git diff --check`.
+  `npm run audit:workspace`, `npm audit`, focused gateway and
+  release-distribution tests, Docker build/run smoke, SVG XML validation, and
+  `git diff --check`.
 - Release default probes confirmed:
   - Full releases with no explicit channel resolve to `both`.
   - Prereleases with no explicit channel resolve to `none`.
