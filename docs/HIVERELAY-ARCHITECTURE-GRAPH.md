@@ -1,7 +1,10 @@
 # HiveRelay Core3 Architecture Graph
 
-This page is the graph-first technical map of HiveRelay/Core3. It complements
-the detailed runtime map in
+This page is the graph-first technical map of HiveRelay/Core3. The static SVG
+is the high-fidelity review asset for release notes, store handoff, and
+offline technical review; it includes the standards rail, API surfaces,
+protocol channels, schemas, trust boundaries, and live fleet/store release
+path in one printable graph. It complements the detailed runtime map in
 [HIVERELAY-DETAILED-ARCHITECTURE-DIAGRAM.md](HIVERELAY-DETAILED-ARCHITECTURE-DIAGRAM.md)
 and the prose specs in [PROTOCOL-SPEC.md](PROTOCOL-SPEC.md),
 [HIVERELAY_OVERVIEW.md](HIVERELAY_OVERVIEW.md), and
@@ -9,9 +12,7 @@ and the prose specs in [PROTOCOL-SPEC.md](PROTOCOL-SPEC.md),
 
 ![HiveRelay Core3 architecture static SVG](assets/hiverelay-core3-architecture.svg)
 
-The SVG above is a static review asset for release notes, store handoff, and
-offline review. The Mermaid diagrams below keep the same model editable in
-Markdown.
+The Mermaid diagrams below keep the same model editable in Markdown.
 
 ## System Graph
 
