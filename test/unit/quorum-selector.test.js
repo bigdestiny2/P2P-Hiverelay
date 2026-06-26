@@ -149,6 +149,28 @@ test('wide strategy returns top-N by score regardless of diversity', async (t) =
   t.alike(selected.map(s => s.pubkey), ['aa', 'bb', 'cc', 'dd'])
 })
 
+test('wide strategy ignores malformed or unnormalized score claims', async (t) => {
+  const candidates = [
+    r('aa', 'moon-1', 'opA', { score: Infinity, latencyMs: 1 }),
+    r('bb', 'moon-2', 'opB', { score: 99, latencyMs: 1 }),
+    r('cc', 'moon-3', 'opC', { score: -1, latencyMs: 1 }),
+    r('dd', 'eu-west', 'opD', { score: 0.4, latencyMs: 100 }),
+    r('ee', 'us-east', 'opE', { score: 0.7, latencyMs: 200 })
+  ]
+  const selected = selectQuorum(candidates, { strategy: 'wide', size: 2 })
+  t.alike(selected.map(s => s.pubkey), ['ee', 'dd'])
+})
+
+test('wide strategy ignores malformed latency claims when scores tie', async (t) => {
+  const candidates = [
+    r('aa', 'us-east', 'opA', { score: 0.5, latencyMs: -1 }),
+    r('bb', 'eu-west', 'opB', { score: 0.5, latencyMs: Infinity }),
+    r('cc', 'asia-tokyo', 'opC', { score: 0.5, latencyMs: 25 })
+  ]
+  const selected = selectQuorum(candidates, { strategy: 'wide', size: 3 })
+  t.is(selected[0].pubkey, 'cc')
+})
+
 test('requireFeatures filters out relays missing required capabilities', async (t) => {
   const candidates = [
     r('aa', 'us-east-1', 'opA', { score: 0.9, features: ['payment-required', 'ai-inference'] }),

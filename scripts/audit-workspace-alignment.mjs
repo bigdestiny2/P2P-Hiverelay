@@ -3391,16 +3391,22 @@ if (
   quorumSelector.includes('const DEFAULT_MIN_OPERATORS = 3') &&
   quorumSelector.includes('adds the most missing dimensions') &&
   quorumSelector.includes('gain = (seenRegions.has(region) ? 0 : 1) + (seenOperators.has(op) ? 0 : 1)') &&
+  quorumSelector.includes('function normalizedScore') &&
+  quorumSelector.includes('Number.isFinite(score) && score >= 0 && score <= 1') &&
+  quorumSelector.includes('function normalizedLatency') &&
+  quorumSelector.includes('Number.isFinite(latencyMs) && latencyMs >= 0') &&
   quorumSelector.includes('insufficient-operator-diversity') &&
   quorumSelector.includes('observedOperators') &&
   quorumSelector.includes('requiredOperators') &&
   quorumSelectorTest.includes('prefers a new operator over a same-operator region-only pick') &&
   quorumSelectorTest.includes('warns when operator diversity is below the floor') &&
+  quorumSelectorTest.includes('ignores malformed or unnormalized score claims') &&
+  quorumSelectorTest.includes('ignores malformed latency claims when scores tie') &&
   threatModelDoc.includes('client `selectQuorum` now diversity-ranks by region and operator')
 ) {
-  pass('client quorum selection prioritizes operator and region diversity before score-only fill')
+  pass('client quorum selection prioritizes operator/region diversity and ignores malformed ranking signals')
 } else {
-  fail('client quorum selection can still over-prefer same-operator relays or miss operator-diversity warnings')
+  fail('client quorum selection can still over-prefer same-operator relays or malformed score/latency claims')
 }
 
 if (
