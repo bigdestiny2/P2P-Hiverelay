@@ -295,6 +295,7 @@ async function init () {
 async function start () {
   const cliOverrides = {}
   if (args.storage) cliOverrides.storage = args.storage
+  else if (process.env.HIVERELAY_STORAGE) cliOverrides.storage = process.env.HIVERELAY_STORAGE
   if (args['max-storage']) cliOverrides.maxStorageBytes = parseBytesOrExit(args['max-storage'], '--max-storage')
   else if (process.env.HIVERELAY_MAX_STORAGE) {
     const maxStorageBytes = parseBytesOrExit(process.env.HIVERELAY_MAX_STORAGE, 'HIVERELAY_MAX_STORAGE')
@@ -1571,6 +1572,7 @@ Management / Catalog / Federation / QVAC Options:
 Environment:
   HIVERELAY_LOG_LEVEL           Log level: fatal, error, warn, info, debug, trace
   HIVERELAY_ACCEPT_MODE         Catalog mode: open, review, allowlist, or closed
+  HIVERELAY_STORAGE             Storage path used when --storage is absent
   HIVERELAY_MAX_STORAGE         First-boot storage cap, e.g. 10GB or 500MB
 
 Examples:

@@ -89,6 +89,9 @@ const workflowTexts = [
   testWorkflow
 ].join('\n')
 const dockerignore = readText(hiverelayRoot, '.dockerignore')
+const dockerfile = readText(hiverelayRoot, 'Dockerfile')
+const dockerEntrypoint = readText(hiverelayRoot, 'docker-entrypoint.sh')
+const gitattributes = readText(hiverelayRoot, '.gitattributes')
 const prepareRelease = readText(hiverelayRoot, 'scripts', 'prepare-release.mjs')
 const officialUmbrelExport = readText(hiverelayRoot, 'scripts', 'export-official-umbrel-app.mjs')
 const officialUmbrelGalleryCheck = readText(hiverelayRoot, 'scripts', 'check-umbrel-gallery.mjs')
@@ -4077,6 +4080,8 @@ if (
   umbrelCompose.includes('APP_SEED: ' + umbrelAppSeedExpression) &&
   cliIndex.includes('HIVERELAY_ACCEPT_MODE') &&
   cliIndex.includes('cliOverrides.acceptMode = mode') &&
+  cliIndex.includes('HIVERELAY_STORAGE') &&
+  cliIndex.includes('else if (process.env.HIVERELAY_STORAGE) cliOverrides.storage = process.env.HIVERELAY_STORAGE') &&
   cliIndex.includes('HIVERELAY_MAX_STORAGE') &&
   cliIndex.includes("parseBytesOrExit(process.env.HIVERELAY_MAX_STORAGE, 'HIVERELAY_MAX_STORAGE')") &&
   cliIndex.includes('!hasPersistedConfig()') &&
@@ -4084,6 +4089,8 @@ if (
   cliIndex.includes('Invalid $' + '{label}: expected a positive size') &&
   configLoaderTest.includes('cli start rejects invalid HIVERELAY_MAX_STORAGE before boot') &&
   configLoaderTest.includes('cli start uses HIVERELAY_MAX_STORAGE only before saved operator config exists') &&
+  configLoaderTest.includes('cli start uses HIVERELAY_STORAGE when --storage is absent') &&
+  configLoaderTest.includes('cli start --storage overrides HIVERELAY_STORAGE') &&
   configLoaderTest.includes('Max Store:  50.0 GB') &&
   umbrelReadme.includes('HIVERELAY_MAX_STORAGE=10GB') &&
   umbrelReadme.includes('saved operator config') &&
@@ -4363,11 +4370,29 @@ if (
   dockerignore.includes('**/node_modules') &&
   dockerignore.includes('startos/image') &&
   dockerignore.includes('startos/*.s9pk') &&
-  dockerignore.includes('startos/*.tar')
+  dockerignore.includes('startos/*.tar') &&
+  !dockerignore.includes('docker-entrypoint.sh')
 ) {
   pass('Docker build context excludes nested dependencies and generated StartOS package artifacts')
 } else {
   fail('Docker build context can still include nested dependencies or generated StartOS package artifacts')
+}
+
+if (
+  dockerfile.includes('COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh') &&
+  dockerfile.includes('RUN chmod +x /usr/local/bin/docker-entrypoint.sh') &&
+  dockerfile.includes('HIVERELAY_STORAGE=/data') &&
+  dockerfile.includes('ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh", "node", "/app/packages/core/cli/index.js"]') &&
+  dockerEntrypoint.startsWith('#!/bin/sh\nset -e\n') &&
+  dockerEntrypoint.includes('exec gosu hiverelay "$@"') &&
+  dockerEntrypoint.includes('exec "$@"') &&
+  gitattributes.includes('docker-entrypoint.sh text eol=lf') &&
+  configLoaderTest.includes('cli start uses HIVERELAY_STORAGE when --storage is absent') &&
+  configLoaderTest.includes('cli start --storage overrides HIVERELAY_STORAGE')
+) {
+  pass('Docker runtime copies LF-pinned entrypoint and routes default container storage to /data')
+} else {
+  fail('Docker runtime can lose its entrypoint or ignore the /data storage volume')
 }
 
 if (new RegExp(`^version:\\s*${escapeRegExp(expectedVersion)}\\s*$`, 'm').test(startOsManifest)) {
