@@ -13,6 +13,15 @@ import { EventEmitter } from 'events'
 import { PubSub } from './pubsub.js'
 import { WorkerPool } from './worker-pool.js'
 
+const DEFAULT_MAX_RATE_LIMIT_BUCKETS = 50_000
+const DEFAULT_RATE_LIMIT_BUCKET_TTL_MS = 5 * 60_000
+
+function positiveInteger (value, fallback) {
+  if (value === undefined || value === null) return fallback
+  const number = Number(value)
+  return Number.isSafeInteger(number) && number > 0 ? number : fallback
+}
+
 const ROUTE_ACCESS_POLICIES = {
   // Identity
   'identity.whoami': 'public',
@@ -96,6 +105,8 @@ export class Router extends EventEmitter {
     }
     this._workerScript = opts.workerScript ?? new URL('./worker.js', import.meta.url)
     this._rateLimiters = new Map() // "route:peerKey" -> { tokens, lastRefill }
+    this._maxRateLimitBuckets = positiveInteger(opts.maxRateLimitBuckets, DEFAULT_MAX_RATE_LIMIT_BUCKETS)
+    this._rateLimitBucketTtlMs = positiveInteger(opts.rateLimitBucketTtlMs, DEFAULT_RATE_LIMIT_BUCKET_TTL_MS)
     this.pubsub = new PubSub(opts.pubsub)
     this._started = false
   }
@@ -309,6 +320,8 @@ export class Router extends EventEmitter {
         topics: this.pubsub.topicCount(),
         subscribers: this.pubsub.subscriberCount()
       },
+      rateLimitBuckets: this._rateLimiters.size,
+      maxRateLimitBuckets: this._maxRateLimitBuckets,
       workerPools: Object.fromEntries(
         [...this._workerPools.entries()].map(([name, pool]) => [name, pool.getStats()])
       )
@@ -324,6 +337,10 @@ export class Router extends EventEmitter {
     let bucket = this._rateLimiters.get(key)
 
     if (!bucket) {
+      if (this._rateLimiters.size >= this._maxRateLimitBuckets) {
+        this._pruneRateLimitBuckets(now)
+        if (this._rateLimiters.size >= this._maxRateLimitBuckets) return false
+      }
       bucket = { tokens: config.burst || config.tokensPerMin, lastRefill: now }
       this._rateLimiters.set(key, bucket)
     }
@@ -339,6 +356,20 @@ export class Router extends EventEmitter {
     if (bucket.tokens < 1) return false
     bucket.tokens--
     return true
+  }
+
+  _pruneRateLimitBuckets (now = Date.now()) {
+    const cutoff = now - this._rateLimitBucketTtlMs
+    let removed = 0
+
+    for (const [key, bucket] of this._rateLimiters) {
+      if (!bucket || typeof bucket.lastRefill !== 'number' || bucket.lastRefill < cutoff) {
+        this._rateLimiters.delete(key)
+        removed++
+      }
+    }
+
+    return removed
   }
 
   async start () {
@@ -357,13 +388,10 @@ export class Router extends EventEmitter {
       }
     }
 
-    // Periodic cleanup of stale rate limit buckets (every 5 min)
+    // Periodic cleanup of stale rate limit buckets.
     this._rateLimitCleanup = setInterval(() => {
-      const cutoff = Date.now() - 5 * 60_000
-      for (const [key, bucket] of this._rateLimiters) {
-        if (bucket.lastRefill < cutoff) this._rateLimiters.delete(key)
-      }
-    }, 5 * 60_000)
+      this._pruneRateLimitBuckets()
+    }, this._rateLimitBucketTtlMs)
     if (this._rateLimitCleanup.unref) this._rateLimitCleanup.unref()
 
     this._started = true

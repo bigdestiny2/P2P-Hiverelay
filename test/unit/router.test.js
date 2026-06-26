@@ -398,6 +398,43 @@ test('Router - per-route rate limiting', async (t) => {
   await router.stop()
 })
 
+test('Router - rate limit bucket map rejects new peers at cap', async (t) => {
+  const router = new Router({ maxRateLimitBuckets: 2 })
+  router.addRoute('test.limited', async () => 'ok', { rateLimit: { tokensPerMin: 5, burst: 5 } })
+  await router.start()
+
+  t.is(await router.dispatch('test.limited', {}, { remotePubkey: 'peer1' }), 'ok')
+  t.is(await router.dispatch('test.limited', {}, { remotePubkey: 'peer2' }), 'ok')
+
+  try {
+    await router.dispatch('test.limited', {}, { remotePubkey: 'peer3' })
+    t.fail('should reject a new bucket once the map is capped')
+  } catch (err) {
+    t.ok(err.message.includes('RATE_LIMITED'))
+  }
+
+  t.is(router._rateLimiters.size, 2)
+  t.is(await router.dispatch('test.limited', {}, { remotePubkey: 'peer1' }), 'ok')
+
+  await router.stop()
+})
+
+test('Router - rate limit bucket cap prunes stale buckets before rejecting new peers', async (t) => {
+  const router = new Router({ maxRateLimitBuckets: 1, rateLimitBucketTtlMs: 1_000 })
+  router.addRoute('test.limited', async () => 'ok', { rateLimit: { tokensPerMin: 5, burst: 5 } })
+  await router.start()
+
+  t.is(await router.dispatch('test.limited', {}, { remotePubkey: 'old-peer' }), 'ok')
+  const oldBucket = router._rateLimiters.get('test.limited:old-peer')
+  oldBucket.lastRefill = Date.now() - 2_000
+
+  t.is(await router.dispatch('test.limited', {}, { remotePubkey: 'new-peer' }), 'ok')
+  t.absent(router._rateLimiters.has('test.limited:old-peer'))
+  t.ok(router._rateLimiters.has('test.limited:new-peer'))
+
+  await router.stop()
+})
+
 test('Router - rate limit does not apply without remotePubkey', async (t) => {
   const router = new Router()
   router.addRoute('test.limited', async () => 'ok', { rateLimit: { tokensPerMin: 1, burst: 1 } })
