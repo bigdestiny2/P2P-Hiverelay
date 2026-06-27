@@ -315,7 +315,19 @@ export const EXPECTED_CURRENT_CONSUMERS = [
     role: 'customer relay/onion AI app',
     deps: {
       'p2p-hiverelay': 'file:../../00-core/hiverelay/packages/core'
-    }
+    },
+    sourceChecks: [
+      {
+        file: '04-experiments/anongpt-native/docs/ARCHITECTURE.md',
+        label: 'anonGPT architecture documents HiveRelay relay/onion transport',
+        term: 'Network privacy (hide your IP) rides on **HiveRelay**\nrelays — relay (1 hop) or onion (2 hops).'
+      },
+      {
+        file: '04-experiments/anongpt-native/backend/forward-transport.js',
+        label: 'anonGPT forward transport targets production HiveRelay forward service',
+        term: "routes inference through the production HiveRelay relays' forward service"
+      }
+    ]
   },
   {
     path: '04-experiments/hiverelay-test/package.json',

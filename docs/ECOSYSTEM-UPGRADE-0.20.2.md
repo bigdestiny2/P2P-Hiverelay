@@ -64,12 +64,13 @@ optional HiveRelay bridge, anonGPT, and the local smoke app are all tracked
 consumers. New
 `p2p-hiverelay*` pins fail the audit until they are classified. The same audit
 renders PearBrowser's bundled
-HiveRelay catalog entry plus customer-app source notes for PearPaste and Pear
-POS from the current Hiverelay version, so users and operators do not see stale
-release guidance while the runtime pulls current packages. The same audit also
-checks the local `00-core/hr-acct`, `00-core/hr-fleet`, and `00-core/hr-release`
-snapshot manifests and root lockfiles so their default package versions stay on
-the current Hiverelay line.
+HiveRelay catalog entry plus customer-app source notes for PearPaste, anonGPT
+relay/onion architecture, anonGPT's production HiveRelay forward-service client
+contract, and Pear POS from the current Hiverelay version, so users and
+operators do not see stale release guidance while the runtime pulls current
+packages. The same audit also checks the local `00-core/hr-acct`,
+`00-core/hr-fleet`, and `00-core/hr-release` snapshot manifests and root
+lockfiles so their default package versions stay on the current Hiverelay line.
 
 ## Current Baseline
 
@@ -144,10 +145,12 @@ package surface:
   until npm `latest` resolves to `0.20.2`; release automation now publishes npm
   before app-consumer metadata sync so a normal full release can clear that
   block without downgrading apps. The
-  ecosystem audit reports lockfile migration checks as `ok` for all eight current direct consumers and
-  source-level checks for PearBrowser catalog metadata, PearPaste customer docs/probes,
-  and Pear POS bridge docs/comments so package defaults cannot quietly drift back
-  to old client guidance. It also reports snapshot/default version checks as `ok` for
+  ecosystem audit reports lockfile migration checks as `ok` for all eight
+  current direct consumers and source-level checks for PearBrowser catalog
+  metadata, PearPaste customer docs/probes, anonGPT relay/onion architecture,
+  anonGPT's production HiveRelay forward-service client contract, and Pear POS bridge docs/comments
+  so package defaults cannot quietly drift back to old client guidance.
+  It also reports snapshot/default version checks as `ok` for
   `hr-acct`, `hr-fleet`, and `hr-release`.
 - PearPaste: `npm test`, `npm run lint`, `npm audit --audit-level=high`,
   `npm run preflight:linux`, `npm run preflight:mac`, `npm run preflight:win`,

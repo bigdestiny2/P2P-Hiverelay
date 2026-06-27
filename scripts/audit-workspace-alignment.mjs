@@ -4051,6 +4051,8 @@ if (
   ecosystemConsumersAudit.includes('Opengit integration note names current package defaults') &&
   ecosystemConsumersAudit.includes('04-experiments/anongpt-native/package.json') &&
   ecosystemConsumersAudit.includes('customer relay/onion AI app') &&
+  ecosystemConsumersAudit.includes('anonGPT architecture documents HiveRelay relay/onion transport') &&
+  ecosystemConsumersAudit.includes('anonGPT forward transport targets production HiveRelay forward service') &&
   ecosystemConsumersAudit.includes('04-experiments/hiverelay-test/package.json') &&
   ecosystemConsumersAudit.includes('PearBrowser catalog advertises the current Hiverelay app release') &&
   ecosystemConsumersAudit.includes('PearBrowser backbone handover names the current Hiverelay package line') &&
@@ -4093,6 +4095,7 @@ if (
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit reports source-level migration markers') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit guards PearPaste current Hiverelay docs') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit guards PearBrowser and POS current Hiverelay source defaults') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer audit guards anonGPT live relay consumer source contract') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit fails when source-level migration markers move') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit verifies lockfile local package metadata') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit rejects stale lockfile Hiverelay entries') &&
@@ -4127,6 +4130,8 @@ if (
   ecosystemUpgradeDoc.includes('HIVERELAY_NPM_LATEST_JSON') &&
   ecosystemUpgradeDoc.includes('PearBrowser catalog') &&
   ecosystemUpgradeDoc.includes('PearPaste customer docs/probes') &&
+  ecosystemUpgradeDoc.includes('anonGPT relay/onion architecture') &&
+  ecosystemUpgradeDoc.includes('production HiveRelay forward-service client contract') &&
   ecosystemUpgradeDoc.includes('Pear POS bridge docs/comments') &&
   ecosystemUpgradeDoc.includes('cannot quietly drift back') &&
   ecosystemUpgradeDoc.includes('to old client guidance') &&
@@ -4135,7 +4140,7 @@ if (
   pearBrowserIntegrationDoc.includes('npm run ecosystem:sync') &&
   pearIntegrationDoc.includes('npm run ecosystem:sync')
 ) {
-  pass('ecosystem consumer sync/audit commands guard PearBrowser bundle pins, known stale consumers, snapshot exclusions, and app-level migration notes')
+  pass('ecosystem consumer sync/audit commands guard PearBrowser bundle pins, known stale consumers, snapshot exclusions, and app-level migration notes including anonGPT relay contracts')
 } else {
   fail('ecosystem consumer sync/audit commands, docs, or tests are missing current/stale consumer drift or app-level migration coverage')
 }

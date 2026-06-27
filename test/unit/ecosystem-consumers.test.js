@@ -255,6 +255,49 @@ test('ecosystem consumer audit guards PearBrowser and POS current Hiverelay sour
   t.ok(failedSummary.errors.some(error => error.includes('PearBrowser bundled catalog seed')))
 })
 
+test('ecosystem consumer audit guards anonGPT live relay consumer source contract', (t) => {
+  const root = fixtureWorkspace()
+  const anongpt = EXPECTED_CURRENT_CONSUMERS.find(consumer => consumer.path === '04-experiments/anongpt-native/package.json')
+  writeExpectedConsumerPackages(root, [anongpt])
+  writeFile(root, '04-experiments/anongpt-native/docs/ARCHITECTURE.md', 'Network privacy (hide your IP) rides on **HiveRelay**\nrelays — relay (1 hop) or onion (2 hops).\n')
+  writeFile(root, '04-experiments/anongpt-native/backend/forward-transport.js', `
+    // routes inference through the production HiveRelay relays' forward service
+  `)
+
+  const rows = scanHiverelayConsumers({ workspaceRoot: root })
+  const sourceChecks = scanConsumerSourceChecks({
+    workspaceRoot: root,
+    expectedCurrent: [anongpt],
+    expectedStale: []
+  })
+  const summary = checkConsumerState(rows, {
+    expectedVersion: '0.20.2',
+    expectedCurrent: [anongpt],
+    expectedStale: [],
+    sourceChecks
+  })
+
+  t.ok(summary.ok)
+
+  writeFile(root, '04-experiments/anongpt-native/backend/forward-transport.js', `
+    // local standalone forwarder only
+  `)
+  const failedChecks = scanConsumerSourceChecks({
+    workspaceRoot: root,
+    expectedCurrent: [anongpt],
+    expectedStale: []
+  })
+  const failedSummary = checkConsumerState(rows, {
+    expectedVersion: '0.20.2',
+    expectedCurrent: [anongpt],
+    expectedStale: [],
+    sourceChecks: failedChecks
+  })
+
+  t.absent(failedSummary.ok)
+  t.ok(failedSummary.errors.some(error => error.includes('anonGPT forward transport targets production HiveRelay forward service')))
+})
+
 test('ecosystem consumer audit fails when source-level migration markers move', (t) => {
   const root = fixtureWorkspace()
   writePackage(root, '04-experiments/Opengit/packages/opengit-relay/package.json', {
@@ -520,6 +563,7 @@ test('ecosystem sync updates app defaults and linked package lock metadata', (t)
 test('ecosystem consumer helpers default published apps to npm latest', (t) => {
   const consumers = getExpectedCurrentConsumers()
   const pearpaste = consumers.find(consumer => consumer.path === '02-apps/pearpaste/package.json')
+  const anongpt = consumers.find(consumer => consumer.path === '04-experiments/anongpt-native/package.json')
 
   t.is(DEFAULT_DEPENDENCY_MODE, 'npm-latest')
   t.ok(pearpaste)
@@ -528,6 +572,11 @@ test('ecosystem consumer helpers default published apps to npm latest', (t) => {
   t.is(pearpaste.deps['p2p-hiverelay-client'], 'latest')
   t.ok(pearpaste.sourceChecks.some(check => check.termTemplate === 'HiveRelay `{version}` packages through npm `latest` by default'))
   t.ok(pearpaste.sourceChecks.some(check => check.term === '"p2p-hiverelay": "latest"'))
+  t.ok(anongpt)
+  t.is(anongpt.dependencyMode, 'npm-latest')
+  t.is(anongpt.deps['p2p-hiverelay'], 'latest')
+  t.ok(anongpt.sourceChecks.some(check => check.label === 'anonGPT architecture documents HiveRelay relay/onion transport'))
+  t.ok(anongpt.sourceChecks.some(check => check.label === 'anonGPT forward transport targets production HiveRelay forward service'))
 
   const local = getExpectedCurrentConsumers({ dependencyMode: 'local' })
     .find(consumer => consumer.path === '02-apps/pearpaste/package.json')
