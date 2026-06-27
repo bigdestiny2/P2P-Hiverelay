@@ -172,6 +172,7 @@
 - [x] **4.125** Poker HTTP adapter load redaction — public `/api/poker/*` mount failures now return stable `unsupported: poker HTTP adapter unavailable` payloads with `poker-http-adapter-unavailable` codes instead of reflecting dynamic import or export exception text, while raw adapter-load diagnostics stay on the internal `poker-http-adapter-error` event.
 - [x] **4.126** anonGPT consumer release-contract coverage — ecosystem consumer audits now treat anonGPT as a first-class customer relay/onion app beyond its package manifest by requiring its architecture docs to preserve the HiveRelay relay/onion transport contract and its forward transport source to preserve the production HiveRelay forward-service client contract.
 - [x] **4.127** Stable release app-consumer fail-closed guard — `release:prepare` now rejects stable app-default sync when the full sibling Pear ecosystem workspace is absent instead of silently skipping every app consumer, while tests require sparse release fixtures to use the explicit `--no-ecosystem-consumers` opt-out.
+- [x] **4.128** Stable release ecosystem workspace preflight — `release-surfaces.yml` now runs `npm run ecosystem:check-workspace -- --required --workspace-root ..` before Docker image or npm publication side effects, and `release:prepare` accepts `--ecosystem-workspace-root ..` so the same assembled app workspace is used when PearBrowser, PearPaste, anonGPT, and the other current consumers move to npm `latest` defaults.
 
 ---
 

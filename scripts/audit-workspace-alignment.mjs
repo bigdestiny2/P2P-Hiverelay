@@ -106,6 +106,7 @@ const githubReleaseSecretsApply = readText(hiverelayRoot, 'scripts', 'apply-gith
 const releaseSecretsTemplate = readText(hiverelayRoot, 'scripts', 'write-release-secrets-template.mjs')
 const ecosystemConsumersAudit = readText(hiverelayRoot, 'scripts', 'audit-ecosystem-consumers.mjs')
 const ecosystemConsumersSync = readText(hiverelayRoot, 'scripts', 'sync-ecosystem-consumers.mjs')
+const ecosystemWorkspaceCheck = readText(hiverelayRoot, 'scripts', 'check-ecosystem-workspace.mjs')
 const publicArtifactSecretsAudit = readText(hiverelayRoot, 'scripts', 'check-public-artifact-secrets.mjs')
 const shipHandoffUpdate = readText(hiverelayRoot, 'scripts', 'update-ship-handoff.mjs')
 const shipHandoffIssue120Log = readText(hiverelayRoot, 'docs', 'ship-handoff', 'issue-120-release-distribution-preflight.txt')
@@ -5195,6 +5196,8 @@ const releasePackageManifests = [
 
 if (
   releaseWorkflow.includes('Publish npm packages') &&
+  releaseWorkflow.includes('Verify stable ecosystem app workspace') &&
+  releaseWorkflow.includes('npm run ecosystem:check-workspace -- --required --workspace-root ..') &&
   releaseWorkflow.includes('NODE_AUTH_TOKEN: $' + '{{ secrets.NPM_TOKEN }}') &&
   releaseWorkflow.includes('registry-url: https://registry.npmjs.org') &&
   releaseWorkflow.includes('for pkg in packages/core packages/client packages/verifier packages/services') &&
@@ -5203,7 +5206,13 @@ if (
   releaseWorkflow.includes('npm view "$name" dist-tags.latest') &&
   releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=published') &&
   releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=current') &&
+  monorepoPkg.scripts['ecosystem:check-workspace'] === 'node scripts/check-ecosystem-workspace.mjs' &&
   releaseWorkflow.includes('--ecosystem-dependency-mode npm-latest') &&
+  releaseWorkflow.includes('--ecosystem-workspace-root ..') &&
+  releaseWorkflow.indexOf('Verify stable ecosystem app workspace') > releaseWorkflow.indexOf('Audit and test release gate') &&
+  releaseWorkflow.indexOf('Verify stable ecosystem app workspace') < releaseWorkflow.indexOf('Build and push multi-arch image') &&
+  releaseWorkflow.indexOf('Verify stable ecosystem app workspace') < releaseWorkflow.indexOf('Publish npm packages') &&
+  releaseWorkflow.indexOf('Verify stable ecosystem app workspace') < releaseWorkflow.indexOf('Sync release metadata') &&
   releaseWorkflow.indexOf('Publish npm packages') > releaseWorkflow.indexOf('Smoke pushed release image') &&
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Return to main for metadata sync') &&
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Sync release metadata') &&
@@ -5215,19 +5224,27 @@ if (
   releaseAutomationDocs.includes('verifies every `latest`') &&
   releaseAutomationDocs.includes('app consumers safely move') &&
   releaseAutomationDocs.includes('from local workspace links') &&
+  releaseAutomationDocs.includes('before Docker or npm publication') &&
   releaseAutomationDocs.includes('Stable release prep now fails if the full sibling app workspace is') &&
+  releaseAutomationDocs.includes('--ecosystem-workspace-root ..') &&
   releaseAutomationDocs.includes('--ecosystem-dependency-mode npm-latest') &&
   prepareRelease.includes('DEFAULT_DEPENDENCY_MODE') &&
-  prepareRelease.includes('full sibling workspace not found') &&
+  prepareRelease.includes('--ecosystem-workspace-root <path>') &&
+  prepareRelease.includes('checkEcosystemWorkspace') &&
   prepareRelease.includes('Use --no-ecosystem-consumers only for sparse local checks') &&
+  ecosystemWorkspaceCheck.includes('export function checkEcosystemWorkspace') &&
+  ecosystemWorkspaceCheck.includes('full sibling workspace not found') &&
+  ecosystemConsumersAuditTest.includes('ecosystem workspace check accepts all release-critical app consumers') &&
+  ecosystemConsumersAuditTest.includes('ecosystem workspace check fails when full sibling workspace is absent') &&
   prepareReleaseTest.includes('prepare-release defaults sibling ecosystem consumer checks to npm latest') &&
   prepareReleaseTest.includes('prepare-release requires sibling ecosystem workspace for stable app-default sync') &&
   auditRoadmap.includes('Ecosystem latest-default release ordering') &&
-  auditRoadmap.includes('Stable release app-consumer fail-closed guard')
+  auditRoadmap.includes('Stable release app-consumer fail-closed guard') &&
+  auditRoadmap.includes('Stable release ecosystem workspace preflight')
 ) {
-  pass('release workflow publishes npm packages and verifies latest dist-tags before downstream app-store packaging')
+  pass('release workflow preflights app workspace, then publishes npm packages and verifies latest dist-tags before downstream app consumers update')
 } else {
-  fail('release workflow is missing npm package publication or latest dist-tag verification before downstream app consumers update')
+  fail('release workflow is missing app-workspace preflight, npm publication, or latest dist-tag verification before downstream app consumers update')
 }
 
 const releaseSurfaceCommitStep = releaseWorkflow.slice(

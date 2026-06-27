@@ -239,6 +239,7 @@ test('prepare-release removes local-only README status suffix for public release
 async function writeMinimalReleaseFixture (repo) {
   await writeText(path.join(repo, 'scripts', 'prepare-release.mjs'), await readFile('scripts/prepare-release.mjs', 'utf8'))
   await writeText(path.join(repo, 'scripts', 'audit-ecosystem-consumers.mjs'), await readFile('scripts/audit-ecosystem-consumers.mjs', 'utf8'))
+  await writeText(path.join(repo, 'scripts', 'check-ecosystem-workspace.mjs'), await readFile('scripts/check-ecosystem-workspace.mjs', 'utf8'))
   await writeText(path.join(repo, 'scripts', 'sync-ecosystem-consumers.mjs'), await readFile('scripts/sync-ecosystem-consumers.mjs', 'utf8'))
   await writeJson(path.join(repo, 'package.json'), { name: 'p2p-hiverelay-monorepo', version: '0.16.3' })
   await writeJson(path.join(repo, 'packages', 'core', 'package.json'), { name: 'p2p-hiverelay', version: '0.16.3' })

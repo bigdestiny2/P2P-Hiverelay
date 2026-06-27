@@ -7,12 +7,13 @@ import {
   DEFAULT_DEPENDENCY_MODE,
   EXPECTED_CURRENT_CONSUMERS
 } from './audit-ecosystem-consumers.mjs'
+import { checkEcosystemWorkspace } from './check-ecosystem-workspace.mjs'
 import { syncEcosystemConsumers } from './sync-ecosystem-consumers.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, '..')
 const workspaceRoot = path.resolve(repoRoot, '..')
-const ecosystemWorkspaceRoot = path.resolve(repoRoot, '..', '..')
+const ecosystemWorkspaceRootDefault = path.resolve(repoRoot, '..', '..')
 const imageName = 'ghcr.io/bigdestiny2/p2p-hiverelay'
 const README_STATUS_REGEX = /Status:\s*v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:[^\n*|]*)?/
 
@@ -40,6 +41,7 @@ Options:
   --umbrel-store <path>                Community Umbrel store checkout to sync
   --no-umbrel-store                    Skip the sibling community-store checkout
   --no-ecosystem-consumers             Skip sibling app consumer default sync
+  --ecosystem-workspace-root <path>     Sibling app workspace root (default: ../../)
   --ecosystem-dependency-mode <mode>    Consumer defaults: local or npm-latest (default: npm-latest)
   --allow-unpinned-image               Permit tag-only app-store image refs (not for review)
   --check                              Report drift without writing files
@@ -63,6 +65,9 @@ assertPublicReleaseNotes(releaseNotes)
 const syncUmbrelStore = !args.noUmbrelStore && !isPrerelease
 const syncEcosystemDefaults = !args.noEcosystemConsumers && !isPrerelease
 const ecosystemDependencyMode = args.ecosystemDependencyMode || process.env.HIVERELAY_ECOSYSTEM_DEPENDENCY_MODE || DEFAULT_DEPENDENCY_MODE
+const ecosystemWorkspaceRoot = args.ecosystemWorkspaceRoot
+  ? path.resolve(args.ecosystemWorkspaceRoot)
+  : ecosystemWorkspaceRootDefault
 const umbrelStoreRoot = args.umbrelStore
   ? path.resolve(args.umbrelStore)
   : path.resolve(workspaceRoot, 'blindspark-umbrel-store')
@@ -234,16 +239,12 @@ function syncEcosystemConsumerDefaults () {
     return
   }
 
-  const missingConsumers = EXPECTED_CURRENT_CONSUMERS
-    .filter(consumer => !fs.existsSync(path.join(ecosystemWorkspaceRoot, consumer.path)))
-    .map(consumer => consumer.path)
-
-  if (missingConsumers.length === EXPECTED_CURRENT_CONSUMERS.length) {
-    die(`Cannot sync ecosystem consumer defaults from ${ecosystemWorkspaceRoot}; full sibling workspace not found. Use --no-ecosystem-consumers only for sparse local checks or intentional release-candidate skips.`)
-  }
-
-  if (missingConsumers.length > 0) {
-    die(`Cannot sync ecosystem consumer defaults from ${ecosystemWorkspaceRoot}; missing ${missingConsumers.join(', ')}`)
+  const workspaceCheck = checkEcosystemWorkspace({
+    workspaceRoot: ecosystemWorkspaceRoot,
+    expectedCurrent: EXPECTED_CURRENT_CONSUMERS
+  })
+  if (!workspaceCheck.ok) {
+    die(`Cannot sync ecosystem consumer defaults from ${workspaceCheck.workspaceRoot}; ${workspaceCheck.errors.join('; ')}. Use --no-ecosystem-consumers only for sparse local checks or intentional release-candidate skips.`)
   }
 
   const result = syncEcosystemConsumers({

@@ -14,6 +14,7 @@ import {
   scanSnapshotVersionChecks,
   scanStaleConsumerSourceChecks
 } from '../../scripts/audit-ecosystem-consumers.mjs'
+import { checkEcosystemWorkspace } from '../../scripts/check-ecosystem-workspace.mjs'
 import { syncEcosystemConsumers } from '../../scripts/sync-ecosystem-consumers.mjs'
 
 test('ecosystem consumer audit classifies current, stale, and ignored consumers', (t) => {
@@ -584,6 +585,50 @@ test('ecosystem consumer helpers default published apps to npm latest', (t) => {
   t.ok(local.deps['p2p-hiverelay'].startsWith('file:'))
   t.ok(local.sourceChecks.some(check => check.termTemplate === 'HiveRelay `{version}` local workspace packages by default'))
   t.ok(local.sourceChecks.some(check => check.term === '"p2p-hiverelay": "file:../../00-core/hiverelay/packages/core"'))
+})
+
+test('ecosystem workspace check accepts all release-critical app consumers', (t) => {
+  const root = fixtureWorkspace()
+  writeExpectedConsumerPackages(root, EXPECTED_CURRENT_CONSUMERS)
+
+  const result = checkEcosystemWorkspace({
+    workspaceRoot: root,
+    expectedCurrent: EXPECTED_CURRENT_CONSUMERS
+  })
+
+  t.ok(result.ok)
+  t.is(result.present.length, EXPECTED_CURRENT_CONSUMERS.length)
+  t.is(result.missing.length, 0)
+})
+
+test('ecosystem workspace check fails when full sibling workspace is absent', (t) => {
+  const root = fixtureWorkspace()
+
+  const result = checkEcosystemWorkspace({
+    workspaceRoot: root,
+    expectedCurrent: EXPECTED_CURRENT_CONSUMERS
+  })
+
+  t.absent(result.ok)
+  t.is(result.present.length, 0)
+  t.is(result.missing.length, EXPECTED_CURRENT_CONSUMERS.length)
+  t.ok(result.errors.some(error => error.includes('full sibling workspace not found')))
+})
+
+test('ecosystem workspace check reports partial app workspaces', (t) => {
+  const root = fixtureWorkspace()
+  const [present, missing] = EXPECTED_CURRENT_CONSUMERS
+  writeExpectedConsumerPackages(root, [present])
+
+  const result = checkEcosystemWorkspace({
+    workspaceRoot: root,
+    expectedCurrent: [present, missing]
+  })
+
+  t.absent(result.ok)
+  t.is(result.present.length, 1)
+  t.is(result.missing.length, 1)
+  t.ok(result.errors.some(error => error.includes(missing.path)))
 })
 
 test('ecosystem sync default npm-latest path refuses stale registry latest', (t) => {

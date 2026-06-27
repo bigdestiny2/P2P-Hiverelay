@@ -286,6 +286,13 @@ jobs:
           npm run test:unit
           echo "HIVERELAY_RELEASE_GATE_STATUS=passed" >> "$GITHUB_ENV"
 
+      - name: Verify stable ecosystem app workspace
+        if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          npm run ecosystem:check-workspace -- --required --workspace-root ..
+
       - name: Stamp branch candidate package version
         if: ${{ steps.rel.outputs.is_branch_candidate == 'true' }}
         working-directory: hiverelay
@@ -444,6 +451,7 @@ jobs:
           npm run release:prepare -- "${{ steps.rel.outputs.version }}" \
             --channel "${{ steps.rel.outputs.channel }}" \
             --image-digest "$HIVERELAY_IMAGE_DIGEST" \
+            --ecosystem-workspace-root .. \
             --ecosystem-dependency-mode npm-latest \
             "${args[@]}"
 
