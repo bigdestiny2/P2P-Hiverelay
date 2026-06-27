@@ -278,6 +278,9 @@ check proves PearBrowser, PearPaste, anonGPT, and the other direct consumers can
 still follow the current checkout's package links, linked lockfile metadata, and
 versioned source markers before npm publish. Full `release:prepare` runs default
 to npm `latest` mode after the release workflow has promoted the npm packages.
+For the pushable app repos only, `npm run ecosystem:sync:release -- --check`
+and `npm run audit:ecosystem-consumers:release` run the same published-default
+contract with `--consumer-scope release`.
 The stable workflow checks out the release-managed app consumer repos
 (`pearbrowser-desktop`, `pearpaste`, `p2pbuilders`, `Opengit`, and `anongpt`),
 runs `npm run ecosystem:check-workspace -- --required --workspace-root .. --consumer-scope release`

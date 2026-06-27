@@ -1412,7 +1412,9 @@ if (
   relayApiServiceConfig.includes("poker: Object.freeze(['poker', 'vrf', 'arbitration', 'zk'])") &&
   relayApiServiceConfig.includes('export function normalizeManageServicePlugins') &&
   relayApiServiceConfig.includes('export function serviceConfigPayload') &&
-  relayApi.includes('_handlePokerHttpRoute') &&
+  countOccurrences(relayApi, "path === '/api/poker' || path.startsWith('/api/poker/')") === 1 &&
+  !relayApi.includes("path.startsWith('/api/poker/') && path !== '/api/poker/usage'") &&
+  !relayApi.includes('async _handlePokerHttpRoute') &&
   relayApiCors.includes('isPublicPokerCorsRoute') &&
   relayApiCors.includes("path.startsWith('/api/poker/')") &&
   relayApiCors.includes("path !== '/api/poker/usage'") &&
@@ -1470,11 +1472,12 @@ if (
   apiPokerTest.includes("t.absent(JSON.stringify(res.body).includes('/data/hiverelay/private')") &&
   auditRoadmap.includes('4.125') &&
   auditRoadmap.includes('Poker HTTP adapter load redaction') &&
+  auditRoadmap.includes('Poker duplicate-route cleanup') &&
   pluginLoaderTest.includes('plugin loader resolves poker as a builtin service provider')
 ) {
   pass('management API exposes validated built-in service configuration, poker runtime wiring, hardened poker HTTP API, adapter-load redaction, and usage telemetry endpoints')
 } else {
-  fail('management API is missing validated service configuration, poker runtime wiring, hardened poker HTTP API, adapter-load redaction, or usage telemetry endpoints')
+  fail('management API is missing validated service configuration, poker runtime wiring, hardened poker HTTP API, adapter-load redaction, duplicate-route cleanup, or usage telemetry endpoints')
 }
 
 if (
@@ -2622,7 +2625,9 @@ if (
   errorPrefixesTest.includes("formatErr('NOT_ENABLED', 'service disabled')") &&
   errorPrefixesTest.includes("classifyErr('not-enabled: service disabled')") &&
   relayApi.includes("formatErr('PERSIST_FAILED'") &&
-  relayApi.includes("formatErr('NOT_ENABLED', 'poker service is not enabled on this relay')") &&
+  relayApi.includes('_getPokerServiceProvider ()') &&
+  relayApi.includes("error: 'Poker service is not enabled on this relay'") &&
+  relayApi.includes("error: 'Poker service does not expose the substrate methods'") &&
   relayApiSubsidy.includes("formatErr('NOT_ENABLED', 'subsidy is not enabled on this relay')") &&
   relayApi.includes("errorCode: 'persist-failed'") &&
   relayApi.includes("this.emit('config-persist-error'") &&
@@ -5236,6 +5241,8 @@ if (
   releaseWorkflow.includes('npm view "$name" dist-tags.latest') &&
   releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=published') &&
   releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=current') &&
+  monorepoPkg.scripts['audit:ecosystem-consumers:release'] === 'node scripts/audit-ecosystem-consumers.mjs --check --dependency-mode npm-latest --consumer-scope release' &&
+  monorepoPkg.scripts['ecosystem:sync:release'] === 'node scripts/sync-ecosystem-consumers.mjs --dependency-mode npm-latest --consumer-scope release' &&
   monorepoPkg.scripts['ecosystem:check-workspace'] === 'node scripts/check-ecosystem-workspace.mjs' &&
   monorepoPkg.scripts['ecosystem:commit-consumers'] === 'node scripts/commit-ecosystem-consumers.mjs' &&
   releaseWorkflow.includes('--ecosystem-dependency-mode npm-latest') &&
@@ -5265,6 +5272,8 @@ if (
   releaseAutomationDocs.includes('ECOSYSTEM_CONSUMER_TOKEN') &&
   releaseAutomationDocs.includes('ecosystem:commit-consumers') &&
   releaseAutomationDocs.includes('Stable release prep still') &&
+  releaseAutomationDocs.includes('ecosystem:sync:release') &&
+  releaseAutomationDocs.includes('audit:ecosystem-consumers:release') &&
   releaseAutomationDocs.includes('--ecosystem-workspace-root ..') &&
   releaseAutomationDocs.includes('--ecosystem-consumer-scope release') &&
   releaseAutomationDocs.includes('--ecosystem-dependency-mode npm-latest') &&
@@ -5279,6 +5288,8 @@ if (
   ecosystemConsumersAudit.includes("repository: 'bigdestiny2/Opengit'") &&
   ecosystemConsumersAudit.includes("repository: 'bigdestiny2/anongpt'") &&
   ecosystemConsumersAudit.includes('export function normalizeConsumerScope') &&
+  ecosystemConsumersAudit.includes('--consumer-scope <all|release>') &&
+  ecosystemConsumersAudit.includes('expectedClassifiedCurrent') &&
   ecosystemConsumersSync.includes('--consumer-scope <all|release>') &&
   ecosystemWorkspaceCheck.includes('export function checkEcosystemWorkspace') &&
   ecosystemWorkspaceCheck.includes('--consumer-scope <all|release>') &&
@@ -5289,13 +5300,15 @@ if (
   ecosystemConsumersAuditTest.includes('ecosystem workspace check accepts all release-critical app consumers') &&
   ecosystemConsumersAuditTest.includes('ecosystem workspace check fails when full sibling workspace is absent') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer release scope includes only remotely managed app repos') &&
+  ecosystemConsumersAuditTest.includes('scope release') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer commit helper commits changed release repos') &&
   prepareReleaseTest.includes('prepare-release defaults sibling ecosystem consumer checks to npm latest') &&
   prepareReleaseTest.includes('prepare-release requires sibling ecosystem workspace for stable app-default sync') &&
   auditRoadmap.includes('Ecosystem latest-default release ordering') &&
   auditRoadmap.includes('Stable release app-consumer fail-closed guard') &&
   auditRoadmap.includes('Stable release ecosystem workspace preflight') &&
-  auditRoadmap.includes('Release-managed app consumer promotion')
+  auditRoadmap.includes('Release-managed app consumer promotion') &&
+  auditRoadmap.includes('Ecosystem release-scope latest audit')
 ) {
   pass('release workflow preflights app workspace, then publishes npm packages and verifies latest dist-tags before downstream app consumers update')
 } else {

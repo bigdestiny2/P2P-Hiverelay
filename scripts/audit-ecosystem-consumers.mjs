@@ -427,15 +427,17 @@ function resolveSourceChecksForMode (sourceChecks = [], dependencyMode) {
 
 const usage = `
 Usage:
-  node scripts/audit-ecosystem-consumers.mjs [--workspace-root <path>] [--expected-version <semver>] [--dependency-mode <local|npm-latest>] [--json] [--check]
+  node scripts/audit-ecosystem-consumers.mjs [--workspace-root <path>] [--expected-version <semver>] [--dependency-mode <local|npm-latest>] [--consumer-scope <all|release>] [--json] [--check]
 
 Scans package.json files outside the Hiverelay source tree and verifies the
 known direct p2p-hiverelay consumers plus local release snapshot defaults. The
 default dependency mode is npm-latest, which verifies the published-app contract
 where app manifests request the npm latest dist-tag and lockfiles resolve that
 tag to the expected Hiverelay version. Use --dependency-mode local for
-development workspace links. The command fails on new unclassified pins, stale
-package metadata, or inventory/source-plan drift.
+development workspace links. Use --consumer-scope release to check only app
+repos the release workflow can checkout, while still classifying local-only
+consumers so new pins cannot hide. The command fails on new unclassified pins,
+stale package metadata, or inventory/source-plan drift.
 `
 
 if (isMain()) main()
@@ -531,6 +533,7 @@ export function checkConsumerState (rows, opts = {}) {
     ok: errors.length === 0,
     expectedVersion,
     dependencyMode: expectedCurrent[0]?.dependencyMode || opts.dependencyMode || 'local',
+    consumerScope: expectedCurrent[0]?.consumerScope || opts.consumerScope || 'all',
     errors,
     warnings,
     current: expectedCurrent.map(expected => decorateExpectedRow(byPath.get(expected.path), expected)).filter(Boolean),
@@ -794,7 +797,7 @@ function uniqueStrings (values) {
 
 export function formatConsumerReport (summary) {
   const lines = [
-    `HiveRelay ecosystem consumer audit (expected ${summary.expectedVersion}, mode ${summary.dependencyMode || 'local'})`,
+    `HiveRelay ecosystem consumer audit (expected ${summary.expectedVersion}, mode ${summary.dependencyMode || 'local'}, scope ${summary.consumerScope || 'all'})`,
     ''
   ]
 
@@ -1149,6 +1152,10 @@ function parseArgs (argv) {
       out.dependencyMode = readValue(argv, ++i, arg)
       continue
     }
+    if (arg === '--consumer-scope') {
+      out.consumerScope = readValue(argv, ++i, arg)
+      continue
+    }
     if (arg === '--npm-latest') {
       out.dependencyMode = 'npm-latest'
       continue
@@ -1177,7 +1184,9 @@ function main () {
   const expectedVersion = args.expectedVersion || rootPackage.version
   const workspaceRoot = args.workspaceRoot || workspaceRootDefault
   const dependencyMode = normalizeDependencyMode(args.dependencyMode || 'local')
-  const expectedCurrent = getExpectedCurrentConsumers({ dependencyMode })
+  const consumerScope = normalizeConsumerScope(args.consumerScope || 'all')
+  const expectedCurrent = getExpectedCurrentConsumers({ dependencyMode, consumerScope })
+  const expectedClassifiedCurrent = getExpectedCurrentConsumers({ dependencyMode, consumerScope: 'all' })
   const rows = scanHiverelayConsumers({ workspaceRoot })
   const sourceChecks = scanConsumerSourceChecks({
     workspaceRoot,
@@ -1187,7 +1196,15 @@ function main () {
   })
   const lockChecks = scanCurrentConsumerLockChecks({ workspaceRoot, expectedVersion, expectedCurrent })
   const snapshotChecks = scanSnapshotVersionChecks({ workspaceRoot, expectedVersion })
-  const summary = checkConsumerState(rows, { expectedVersion, expectedCurrent, sourceChecks, lockChecks, snapshotChecks })
+  const summary = checkConsumerState(rows, {
+    expectedVersion,
+    expectedCurrent,
+    expectedClassifiedCurrent,
+    consumerScope,
+    sourceChecks,
+    lockChecks,
+    snapshotChecks
+  })
 
   if (args.json) {
     console.log(JSON.stringify({ rows, summary }, null, 2))

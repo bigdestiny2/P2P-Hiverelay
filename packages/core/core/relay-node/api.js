@@ -986,10 +986,6 @@ export class RelayAPI extends EventEmitter {
         return this._json(res, { error: contentTypeProblem.error }, 400, contentTypeProblem.close ? { Connection: 'close' } : null)
       }
 
-      if (path.startsWith('/api/poker/') && path !== '/api/poker/usage') {
-        return this._handlePokerHttpRoute(req, res)
-      }
-
       if (req.method === 'POST' && path === '/api/v1/dispatch') {
         if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/v1/dispatch')) return
         const body = await this._readBody(req)
@@ -2032,20 +2028,6 @@ export class RelayAPI extends EventEmitter {
     if (entry.provider && typeof entry.provider.listTables === 'function') return entry.provider
     if (typeof entry.listTables === 'function') return entry
     return null
-  }
-
-  async _handlePokerHttpRoute (req, res) {
-    const pokerApp = this._getPokerApp()
-    if (!pokerApp) {
-      return this._json(res, { error: formatErr('NOT_ENABLED', 'poker service is not enabled on this relay') }, 503)
-    }
-    try {
-      const handlePokerRoute = await this._getPokerHttpRouteHandler()
-      const handled = await handlePokerRoute(req, res, { pokerApp })
-      if (!handled) return this._json(res, { error: formatErr('NOT_FOUND', 'poker route not found') }, 404)
-    } catch (err) {
-      return this._pokerHttpAdapterUnavailable(res, err)
-    }
   }
 
   async _getPokerHttpRouteHandler () {

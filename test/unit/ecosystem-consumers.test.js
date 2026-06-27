@@ -617,12 +617,14 @@ test('ecosystem consumer release scope still classifies local-only app consumers
     expectedVersion: '0.20.2',
     expectedCurrent: releaseConsumers,
     expectedClassifiedCurrent: allConsumers,
+    consumerScope: 'release',
     expectedStale: []
   })
 
   t.ok(summary.ok)
   t.is(summary.current.length, releaseConsumers.length)
   t.absent(summary.current.some(row => row.path === '02-apps/pear-pos/package.json'))
+  t.ok(formatConsumerReport(summary).includes('scope release'))
 })
 
 test('ecosystem workspace check accepts all release-critical app consumers', (t) => {

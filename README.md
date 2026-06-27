@@ -1071,7 +1071,9 @@ npm audit
 npm run lint
 npm run audit:workspace
 npm run ecosystem:sync -- --check
+npm run ecosystem:sync:release -- --check
 npm run audit:ecosystem-consumers
+npm run audit:ecosystem-consumers:release
 npm run ecosystem:sync:local -- --check
 npm run test:unit
 npm run test:bare
@@ -1081,7 +1083,10 @@ npm test
 `ecosystem:sync` is the published-app default gate: it refuses to switch
 PearBrowser, PearPaste, anonGPT, or other tracked app consumers to npm `latest`
 unless every HiveRelay npm dist-tag already resolves to the release version.
-Use `ecosystem:sync:local` for checkout-to-checkout development links.
+Use `ecosystem:sync:release` and `audit:ecosystem-consumers:release` for the
+remotely managed app repos the release workflow can checkout and push. Use
+`ecosystem:sync:local` for checkout-to-checkout development links across every
+tracked local app.
 
 The current local ship-loop evidence is tracked in
 [docs/TEST-COMMAND-MATRIX-2026-06-27.md](docs/TEST-COMMAND-MATRIX-2026-06-27.md).

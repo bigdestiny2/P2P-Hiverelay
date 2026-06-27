@@ -10,8 +10,10 @@ Run this from the Hiverelay repo before and after each app upgrade:
 
 ```bash
 npm run ecosystem:sync
+npm run ecosystem:sync:release -- --check
 npm run ecosystem:sync -- --check
 npm run audit:ecosystem-consumers
+npm run audit:ecosystem-consumers:release
 npm run ecosystem:sync:local -- --check
 npm run audit:ecosystem-consumers:local
 ```
@@ -36,16 +38,22 @@ npm run audit:ecosystem-consumers:local
 Local mode points the same consumers at this checkout's workspace packages,
 refreshes linked package metadata in the nearest app lockfile, including
 split-client `p2p-hiverelay` ranges such as `^0.20.2`, and preserves the same
-source-marker checks. As of 2026-06-27, the default npm-latest guard is
+source-marker checks. As of 2026-06-28, the default npm-latest guard is
 important: npm `latest` is still `0.9.2` for the published packages, so
 switching PearBrowser, PearPaste, anonGPT, or other customer apps to raw
 `latest` before the release workflow publishes 0.20.2+ would downgrade installs.
-Direct npm checks on 2026-06-27 returned `0.9.2` for `p2p-hiverelay`,
+Direct npm checks on 2026-06-28 returned `0.9.2` for `p2p-hiverelay`,
 `p2p-hiverelay-client`, `p2p-hiverelay-verifier`, and `p2p-hiveservices`.
 The full release workflow now publishes or promotes those npm packages before
 running `release:prepare`, and `release:prepare` defaults sibling app consumer
 sync to npm `latest` mode; use `--ecosystem-dependency-mode local` only for
 checkout-to-checkout development.
+
+Use the `:release` scripts for the remotely managed repos that CI can checkout
+and push (`pearbrowser-desktop`, `pearpaste`, `p2pbuilders`, `Opengit`, and
+`anongpt`). The default all-scope scripts still track Pear POS, Pear Tickets,
+and `hiverelay-test` locally so their manifests and lockfiles can move to npm
+`latest` immediately after the registry tag is correct.
 
 If a release review environment cannot resolve the npm registry from inside
 Node, feed the already-collected shell preflight evidence to the guard:
