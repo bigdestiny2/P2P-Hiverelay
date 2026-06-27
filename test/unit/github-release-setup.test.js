@@ -106,6 +106,12 @@ test('GitHub release setup check reports missing release secrets', async (t) => 
   t.ok(res.stderr.includes('Missing repository secret ECOSYSTEM_CONSUMER_TOKEN'))
   t.ok(res.stderr.includes('Missing repository secret NPM_TOKEN'))
   t.ok(res.stderr.includes('Missing repository secret STARTOS_REGISTRY_URL'))
+  t.ok(res.stderr.includes('Repair path:'))
+  t.ok(res.stderr.includes('npm run release:write-secret-template -- --out /private/tmp/hiverelay-release-secrets.env'))
+  t.ok(res.stderr.includes('npm run release:check-distribution-env -- --env-file /private/tmp/hiverelay-release-secrets.env --channel both --prerelease false'))
+  t.ok(res.stderr.includes('npm run release:apply-github-secrets -- --repo bigdestiny2/P2P-Hiverelay --env-file /private/tmp/hiverelay-release-secrets.env'))
+  t.ok(res.stderr.includes('npm run release:check-github-setup -- --repo bigdestiny2/P2P-Hiverelay'))
+  t.ok(res.stderr.includes('gh workflow run release-distribution-preflight.yml --repo bigdestiny2/P2P-Hiverelay --ref main -f channel=both -f prerelease=false'))
   t.absent(res.stderr.includes('Missing repository secret FLEET_SSH_PRIVATE_KEY'))
 })
 

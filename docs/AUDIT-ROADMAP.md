@@ -187,14 +187,16 @@ These are not code-only tasks. They require evidence from live infrastructure or
 external review-controlled stores before the full project goal can be marked
 done.
 
-Current masked-value preflight evidence: GitHub Actions run `28297002418` fails
-on malformed `UMBREL_STORE_TOKEN`, `UMBREL_OFFICIAL_PR_TOKEN`,
-`UMBREL_OFFICIAL_FORK`, missing `NPM_TOKEN`, and malformed
-`STARTOS_REGISTRY_URL`. Secret names are present except `NPM_TOKEN`, but GitHub
-does not expose values through `gh`; generate a local candidate with
-`npm run release:write-secret-template`, validate it, rotate with
-`npm run release:apply-github-secrets`, and rerun the preflight before cutting
-a full release.
+Current release setup evidence: `npm run release:check-github-setup -- --repo
+bigdestiny2/P2P-Hiverelay` fails because the live repository is missing
+`ECOSYSTEM_CONSUMER_TOKEN` and `NPM_TOKEN` as GitHub Secrets. The older
+masked-value preflight run `28297002418` also failed on malformed
+`UMBREL_STORE_TOKEN`, `UMBREL_OFFICIAL_PR_TOKEN`, `UMBREL_OFFICIAL_FORK`, and
+`STARTOS_REGISTRY_URL` values. GitHub does not expose secret values through
+`gh`, so generate a local candidate with `npm run release:write-secret-template`,
+validate it, rotate with `npm run release:apply-github-secrets`, rerun
+`npm run release:check-github-setup`, and then rerun the side-effect-free
+`release-distribution-preflight.yml` before cutting a full release.
 
 - **Official Umbrel App Store:** the workflow can export the `blindspark/`
   package and open/update a draft `getumbrel/umbrel-apps` PR, but a real

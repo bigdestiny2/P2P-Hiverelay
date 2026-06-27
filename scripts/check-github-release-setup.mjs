@@ -47,6 +47,8 @@ const result = checkGithubReleaseSetup({ gh, repo })
 if (!result.ok) {
   console.error('GitHub release setup check failed:')
   for (const item of result.errors) console.error(`- ${item}`)
+  console.error('')
+  console.error(formatRepairPath({ repo }))
   process.exit(1)
 }
 
@@ -177,6 +179,18 @@ function isRepoFullName (value) {
 
 function isGitHubName (value) {
   return /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/.test(value)
+}
+
+function formatRepairPath ({ repo }) {
+  return [
+    'Repair path:',
+    '- Generate a local candidate file outside the repo: npm run release:write-secret-template -- --out /private/tmp/hiverelay-release-secrets.env',
+    '- Replace every REPLACE_* placeholder with corrected release values.',
+    '- Validate candidate values locally: npm run release:check-distribution-env -- --env-file /private/tmp/hiverelay-release-secrets.env --channel both --prerelease false',
+    `- Apply through stdin after validation: npm run release:apply-github-secrets -- --repo ${repo} --env-file /private/tmp/hiverelay-release-secrets.env`,
+    `- Re-run this presence check: npm run release:check-github-setup -- --repo ${repo}`,
+    `- Re-run masked-value preflight: gh workflow run release-distribution-preflight.yml --repo ${repo} --ref main -f channel=both -f prerelease=false`
+  ].join('\n')
 }
 
 function die (message) {

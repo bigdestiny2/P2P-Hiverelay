@@ -4606,7 +4606,7 @@ const roadmapRequiredTerms = [
   'Hermetic release env-file validation',
   'Full-release npm latest proof',
   '28297002418',
-  'missing `NPM_TOKEN`'
+  '`ECOSYSTEM_CONSUMER_TOKEN` and `NPM_TOKEN`'
 ]
 const roadmapForbiddenTerms = [
   'Doc may be partially out of date',
@@ -5143,6 +5143,12 @@ if (
   githubReleaseSetupCheck.includes("['variable', 'list', '--repo', repo, '--json', 'name,value']") &&
   githubReleaseSetupCheck.includes('Secret values are not readable through gh') &&
   githubReleaseSetupCheck.includes('Release distribution preflight') &&
+  githubReleaseSetupCheck.includes('function formatRepairPath') &&
+  githubReleaseSetupCheck.includes('release:write-secret-template -- --out /private/tmp/hiverelay-release-secrets.env') &&
+  githubReleaseSetupCheck.includes('release:check-distribution-env -- --env-file /private/tmp/hiverelay-release-secrets.env --channel both --prerelease false') &&
+  githubReleaseSetupCheck.includes('release:apply-github-secrets -- --repo $' + '{repo} --env-file /private/tmp/hiverelay-release-secrets.env') &&
+  githubReleaseSetupCheck.includes('release:check-github-setup -- --repo $' + '{repo}') &&
+  githubReleaseSetupCheck.includes('gh workflow run release-distribution-preflight.yml --repo $' + '{repo} --ref main -f channel=both -f prerelease=false') &&
   githubReleaseSetupCheck.includes('is configured as a repository variable; move it to GitHub Secrets') &&
   githubReleaseSetupCheck.includes('Repository variable FLEET_ROLLOUT_TIMEOUT_MS must be an integer') &&
   githubReleaseSetupCheck.includes('sanitizeGhError') &&
@@ -5189,6 +5195,7 @@ if (
   githubReleaseSecretsApply.includes('PATH: process.env.PATH') &&
   githubReleaseSetupCheckTest.includes('passes with all required secrets') &&
   githubReleaseSetupCheckTest.includes('reports missing release secrets') &&
+  githubReleaseSetupCheckTest.includes('gh workflow run release-distribution-preflight.yml --repo bigdestiny2/P2P-Hiverelay --ref main -f channel=both -f prerelease=false') &&
   githubReleaseSetupCheckTest.includes('rejects required secrets configured as variables') &&
   githubReleaseSetupCheckTest.includes('rejects invalid optional fleet timeout variable') &&
   githubReleaseSetupCheckTest.includes('reports gh JSON failures') &&

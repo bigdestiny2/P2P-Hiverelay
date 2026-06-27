@@ -189,7 +189,10 @@ a required secret name was accidentally configured as a public repository
 variable, or if the optional `FLEET_ROLLOUT_TIMEOUT_MS` variable is malformed.
 GitHub does not expose repository secret values through the API, so a green
 local setup check is a presence/placement audit, not proof that the stored
-values are valid or that a release is live.
+values are valid or that a release is live. When this setup check fails, it
+prints the same safe repair path: generate `/private/tmp/hiverelay-release-secrets.env`,
+validate it locally, apply the values through stdin, rerun the setup check, and
+then rerun the side-effect-free masked-value preflight.
 
 After setting or rotating release secrets, run the side-effect-free masked-value
 preflight in GitHub Actions:
