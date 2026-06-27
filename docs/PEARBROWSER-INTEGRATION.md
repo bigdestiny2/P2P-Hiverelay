@@ -266,8 +266,9 @@ live customer-facing relay consumers and should block whole-ecosystem package
 parity claims if they drift.
 
 `npm run ecosystem:sync` updates those known app consumers to the current local
-Hiverelay workspace package links and refreshes linked lockfile metadata. Run it
-with `-- --check` when you want a no-write release gate.
+Hiverelay workspace package links, refreshes linked lockfile metadata, and
+rewrites versioned source markers such as the bundled HiveRelay catalog entry.
+Run it with `-- --check` when you want a no-write release gate.
 
 `npm run audit:ecosystem-consumers` keeps this inventory honest. It scans the
 workspace package manifests and lockfiles, treats PearBrowser desktop as the

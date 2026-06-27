@@ -234,8 +234,9 @@ per-app import/API migration notes.
 
 Run `npm run ecosystem:sync` from this repo to update the known app consumers to
 the current local Hiverelay workspace package links and refresh their linked
-lockfile metadata. Run `npm run ecosystem:sync -- --check` when you want the
-same contract as a no-write release gate.
+lockfile metadata plus versioned source markers such as bundled catalog entries.
+Run `npm run ecosystem:sync -- --check` when you want the same contract as a
+no-write release gate.
 
 Run `npm run audit:ecosystem-consumers` to verify that consumer inventory. The
 command fails if a new unclassified `p2p-hiverelay*` dependency appears or if

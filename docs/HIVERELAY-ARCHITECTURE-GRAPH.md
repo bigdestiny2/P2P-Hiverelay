@@ -285,7 +285,7 @@ flowchart TB
 | Web ingress | HTTP JSON + WebSocket | Dashboards, management APIs, replication bridge, DHT bridge |
 | Release artifact | OCI/Docker image index | GHCR multi-arch image for `linux/amd64` and `linux/arm64` |
 | Store packages | Umbrel app metadata, StartOS `.s9pk` | Home-server distribution and reviewer handoff |
-| Ecosystem pins | Local `file:` workspace links plus lockfile metadata | PearBrowser desktop, PearPaste, anonGPT, and other direct consumers default to the current HiveRelay line |
+| Ecosystem pins | Local `file:` workspace links, lockfile metadata, and versioned source markers | PearBrowser desktop, PearPaste, anonGPT, and other direct consumers default to the current HiveRelay line |
 
 ## API And Contract Map
 

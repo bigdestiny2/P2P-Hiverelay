@@ -74,6 +74,7 @@ test('ship handoff updater renders git and preflight-derived facts', (t) => {
   t.ok(doc.includes('npm run ecosystem:sync -- --check'))
   t.ok(doc.includes('npm run audit:ecosystem-consumers'))
   t.ok(doc.includes('known app defaults and linked'))
+  t.ok(doc.includes('lockfile metadata plus versioned source markers'))
   t.ok(doc.includes('StartOS package proof is also release-image gated'))
   t.ok(doc.includes('ghcr.io/bigdestiny2/p2p-hiverelay:0.20.2'))
   t.ok(doc.includes('HIVERELAY_IMAGE_DIGEST=sha256:<digest> npm run startos:verify'))
