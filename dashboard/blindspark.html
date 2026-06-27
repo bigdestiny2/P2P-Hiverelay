@@ -253,6 +253,7 @@ button{font-family:inherit;cursor:pointer}
 .svc-state.live{color:var(--green);border-color:rgba(63,185,80,.28);background:rgba(63,185,80,.08)}
 .svc-state.pending{color:var(--cyan);border-color:rgba(88,166,255,.28);background:rgba(88,166,255,.08)}
 .svc-state.stopping{color:var(--orange);border-color:rgba(240,166,74,.28);background:rgba(240,166,74,.08)}
+.svc-state.draft{color:var(--accent);border-color:rgba(245,200,66,.3);background:rgba(245,200,66,.08)}
 .svc-tags{display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.45rem}
 .svc-tag{
   font-size:.62rem;color:var(--text-faint);border:1px solid var(--card-border);
@@ -476,6 +477,8 @@ var svcRestartExpected = [];
 var svcRestartTimer = null;
 var svcRestartAttempts = 0;
 var svcRestartStartedAt = 0;
+var svcLastAvailablePlugins = [];
+var svcLastActivePlugins = [];
 var svcLastConfiguredPlugins = [];
 var svcModelBusy = false;
 var svcModelMessageText = '';
@@ -951,13 +954,22 @@ function svcMeta(name){
   };
 }
 
-function svcVisualState(name, configured, active){
-  var selected = configured.indexOf(name) !== -1;
+function svcCardVisualState(name, selected, configured, active, draftDirty){
+  var selectedNow = selected.indexOf(name) !== -1;
+  var saved = configured.indexOf(name) !== -1;
   var running = active.indexOf(name) !== -1;
-  if (selected && running) return { label: 'Live', className: 'live' };
-  if (selected) return { label: 'Starts after restart', className: 'pending' };
+  if (draftDirty && selectedNow !== saved){
+    if (selectedNow) return { label: running ? 'Unsaved keep' : 'Unsaved start', className: 'draft' };
+    return { label: running ? 'Unsaved stop' : 'Unsaved off', className: 'draft' };
+  }
+  if (saved && running) return { label: 'Live', className: 'live' };
+  if (saved) return { label: 'Starts after restart', className: 'pending' };
   if (running) return { label: 'Stops after restart', className: 'stopping' };
   return { label: 'Available', className: 'idle' };
+}
+
+function svcVisualState(name, configured, active){
+  return svcCardVisualState(name, configured, configured, active, false);
 }
 
 function svcSelection(){
@@ -965,17 +977,29 @@ function svcSelection(){
 }
 
 function updateSvcCards(){
+  var selected = svcSelection();
   document.querySelectorAll('.svc-card').forEach(function(card){
     var input = card.querySelector('input');
-    card.classList.toggle('selected', !!(input && input.checked));
+    var checked = !!(input && input.checked);
+    card.classList.toggle('selected', checked);
+    var state = card.querySelector('.svc-state');
+    if (input && state){
+      var visualState = svcCardVisualState(input.value, selected, svcLastConfiguredPlugins, svcLastActivePlugins, svcDraftDirty);
+      state.className = 'svc-state ' + visualState.className;
+      state.textContent = visualState.label;
+    }
   });
-  var selected = svcSelection();
   var count = $('svcSelectedCount');
   if (count) count.textContent = selected.length + ' selected';
   var selectedSummary = $('svcSummarySelected');
   if (selectedSummary) selectedSummary.textContent = metricCount(selected.length);
   var pendingSummary = $('svcSummaryPending');
-  if (pendingSummary && svcDraftDirty) pendingSummary.textContent = 'Draft';
+  if (pendingSummary){
+    var managedActive = svcLastActivePlugins.filter(function(name){ return svcLastAvailablePlugins.indexOf(name) !== -1; });
+    var startsAfterRestart = selected.filter(function(name){ return managedActive.indexOf(name) === -1; });
+    var stopsAfterRestart = managedActive.filter(function(name){ return selected.indexOf(name) === -1; });
+    pendingSummary.textContent = metricCount(startsAfterRestart.length + stopsAfterRestart.length);
+  }
   var hint = $('svcActionHint');
   if (hint) {
     hint.textContent = svcConfigBusy
@@ -1044,6 +1068,8 @@ function renderServices(avail, svcs){
   var bundles = (avail && avail.bundles && typeof avail.bundles === 'object') ? avail.bundles : {};
   var list = (svcs && Array.isArray(svcs.services)) ? svcs.services : [];
   var controlsDisabled = svcRestartPending || svcConfigBusy;
+  svcLastAvailablePlugins = available.slice();
+  svcLastActivePlugins = active.slice();
   svcLastConfiguredPlugins = configured.slice();
   $('svcStatus').textContent = svcConfigBusy ? 'Saving' : (svcRestartPending ? 'Restarting' : (enabled ? (active.length ? active.length + ' running' : 'Configured') : 'Off'));
   $('servicesCard').setAttribute('aria-busy', controlsDisabled ? 'true' : 'false');
@@ -1126,7 +1152,7 @@ function renderServices(avail, svcs){
   available.forEach(function(name){
     var meta = svcMeta(name);
     var running = active.indexOf(name) !== -1;
-    var visualState = svcVisualState(name, configured, active);
+    var visualState = svcCardVisualState(name, configured, configured, active, false);
     var label = document.createElement('label');
     label.className = 'svc-card' + (configured.indexOf(name) !== -1 ? ' selected' : '') + (running ? ' running' : '') + (controlsDisabled ? ' disabled' : '');
     var cb = document.createElement('input');

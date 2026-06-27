@@ -448,6 +448,8 @@ if (
   blindsparkDashboard.includes('background:transparent;border:0;border-radius:0;padding:0') &&
   blindsparkDashboard.includes('.svc-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.55rem') &&
   blindsparkDashboard.includes('.svc-card:focus-within{outline:2px solid var(--cyan);outline-offset:2px}') &&
+  blindsparkDashboard.includes('.svc-state.draft') &&
+  blindsparkDashboard.includes('function svcCardVisualState(name, selected, configured, active, draftDirty)') &&
   blindsparkDashboard.includes('function svcVisualState(name, configured, active)') &&
   blindsparkDashboard.includes("appendServiceSummary(summary, 'Selected', metricCount(configured.length)") &&
   blindsparkDashboard.includes("appendEl(content, 'span', 'svc-state ' + visualState.className, visualState.label)") &&
@@ -461,6 +463,9 @@ if (
   blindsparkDashboard.includes("hint.setAttribute('role', 'status');") &&
   umbrelUiControlsTest.includes('umbrel wallet and service controls expose accessible busy/error state') &&
   umbrelUiControlsTest.includes('umbrel service manager shows saved-vs-live service state') &&
+  umbrelUiControlsTest.includes('umbrel service manager shows unsaved service draft state immediately') &&
+  umbrelUiControlsTest.includes('Unsaved start') &&
+  umbrelUiControlsTest.includes('Unsaved stop') &&
   !blindsparkDashboard.includes('fetchServices();') &&
   !blindsparkDashboard.includes('id="servicesList"') &&
   !blindsparkDashboard.includes('meterBox.style.marginTop')
@@ -912,6 +917,8 @@ if (
 
 if (
   blindsparkDashboard.includes('var svcDraftDirty = false;') &&
+  blindsparkDashboard.includes('var svcLastAvailablePlugins = [];') &&
+  blindsparkDashboard.includes('var svcLastActivePlugins = [];') &&
   blindsparkDashboard.includes('svcDraftDirty = true;') &&
   blindsparkDashboard.includes('svcDraftDirty = false;') &&
   blindsparkDashboard.includes('var REQUEST_TIMEOUT_MS = 10000;') &&

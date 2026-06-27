@@ -50,6 +50,8 @@ test('umbrel service manager keeps the section unframed around service cards', (
   t.ok(dashboard.includes('.svc-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.55rem'))
   t.ok(dashboard.includes('.svc-card:focus-within{outline:2px solid var(--cyan);outline-offset:2px}'))
   t.ok(dashboard.includes('.svc-state.pending'))
+  t.ok(dashboard.includes('.svc-state.draft'))
+  t.ok(dashboard.includes('function svcCardVisualState(name, selected, configured, active, draftDirty)'))
   t.ok(dashboard.includes('function svcVisualState(name, configured, active)'))
   t.ok(dashboard.includes("appendServiceSummary(summary, 'Selected', metricCount(configured.length)"))
   t.ok(dashboard.includes("appendEl(content, 'span', 'svc-state ' + visualState.className, visualState.label)"))
@@ -274,7 +276,7 @@ test('umbrel service manager builds service UI without HTML-string metadata inje
   t.absent(renderServices.includes('row.innerHTML'))
   t.absent(renderServices.includes('form.innerHTML'))
   t.ok(renderServices.includes('var summary = appendEl(body, \'div\', \'svc-summary\')'))
-  t.ok(renderServices.includes('var visualState = svcVisualState(name, configured, active);'))
+  t.ok(renderServices.includes('var visualState = svcCardVisualState(name, configured, configured, active, false);'))
   t.ok(renderServices.includes("appendEl(content, 'span', 'svc-name', meta.label)"))
   t.ok(renderServices.includes("appendEl(content, 'span', 'svc-state ' + visualState.className, visualState.label)"))
   t.ok(renderServices.includes("appendEl(row, 'span', 'svc-live-status', status)"))
@@ -352,6 +354,8 @@ test('umbrel service manager renders untrusted service metadata as text', (t) =>
   const serviceName = '<img src=x onerror=alert(1)>'
   const serviceStatus = '<svg onload=alert(2)>'
   const script = [
+    'var svcLastAvailablePlugins = []',
+    'var svcLastActivePlugins = []',
     'var svcLastConfiguredPlugins = []',
     'var svcRestartPending = false',
     'var svcRestartExpected = []',
@@ -376,6 +380,7 @@ test('umbrel service manager renders untrusted service metadata as text', (t) =>
     extractFunction('appendModelField'),
     extractFunction('metricCount'),
     extractFunction('svcMeta'),
+    extractFunction('svcCardVisualState'),
     extractFunction('svcVisualState'),
     extractFunction('appendServiceSummary'),
     extractFunction('renderServices'),
@@ -423,6 +428,8 @@ test('umbrel service manager shows saved-vs-live service state', (t) => {
   const servicesCard = new FakeElement('section')
   const renderedMetering = []
   const script = [
+    'var svcLastAvailablePlugins = []',
+    'var svcLastActivePlugins = []',
     'var svcLastConfiguredPlugins = []',
     'var svcRestartPending = false',
     'var svcRestartExpected = []',
@@ -442,6 +449,7 @@ test('umbrel service manager shows saved-vs-live service state', (t) => {
     extractFunction('appendModelField'),
     extractFunction('metricCount'),
     extractFunction('svcMeta'),
+    extractFunction('svcCardVisualState'),
     extractFunction('svcVisualState'),
     extractFunction('appendServiceSummary'),
     extractFunction('renderServices'),
@@ -477,6 +485,86 @@ test('umbrel service manager shows saved-vs-live service state', (t) => {
   t.ok(html.includes('class="svc-meter-box" id="svcMeterBox"'))
   t.alike(JSON.parse(JSON.stringify(renderedMetering)), [['storage', 'vrf']])
   t.alike(svcBody.innerHTMLAssignments, [])
+})
+
+test('umbrel service manager shows unsaved service draft state immediately', (t) => {
+  const svcBody = new FakeElement('div')
+  const svcStatus = new FakeElement('span')
+  const servicesCard = new FakeElement('section')
+  const script = [
+    'var svcDraftDirty = false',
+    'var svcConfigBusy = false',
+    'var svcRestartPending = false',
+    'var svcRestartExpected = []',
+    'var svcLastAvailablePlugins = []',
+    'var svcLastActivePlugins = []',
+    'var svcLastConfiguredPlugins = []',
+    'var svcModelBusy = false',
+    "var svcModelMessageText = ''",
+    "var svcModelMessageKind = ''",
+    'function svcSetConfig () {}',
+    'function svcRestartNode () {}',
+    'function renderMetering () {}',
+    'var SERVICE_META = {}',
+    extractFunction('clearNode'),
+    extractFunction('makeEl'),
+    extractFunction('appendEl'),
+    extractFunction('appendSectionTitle'),
+    extractFunction('appendModelField'),
+    extractFunction('metricCount'),
+    extractFunction('svcMeta'),
+    extractFunction('svcCardVisualState'),
+    extractFunction('svcVisualState'),
+    extractFunction('svcSelection'),
+    extractFunction('updateSvcCards'),
+    extractFunction('appendServiceSummary'),
+    extractFunction('renderServices'),
+    'renderServices(' + JSON.stringify({
+      enabled: true,
+      available: ['storage', 'ai'],
+      plugins: ['storage'],
+      active: ['storage'],
+      bundles: {}
+    }) + ', { services: [] })',
+    "var checks = document.querySelectorAll('.svc-check')",
+    "var ai = checks.find(function(input){ return input.value === 'ai' })",
+    "var storage = checks.find(function(input){ return input.value === 'storage' })",
+    'ai.checked = true',
+    'ai.listeners.change[0]({ target: ai })',
+    "var afterStart = $('svcBody').innerHTML",
+    'storage.checked = false',
+    'storage.listeners.change[0]({ target: storage })',
+    "var afterStop = $('svcBody').innerHTML",
+    'JSON.stringify({ afterStart: afterStart, afterStop: afterStop })'
+  ].join('\n')
+
+  const out = JSON.parse(vm.runInNewContext(script, {
+    JSON,
+    document: {
+      createElement: (tag) => new FakeElement(tag),
+      querySelectorAll: (selector) => {
+        if (selector === '.svc-check:checked') {
+          return svcBody.querySelectorAll('.svc-check').filter((el) => el.checked)
+        }
+        return svcBody.querySelectorAll(selector)
+      }
+    },
+    $: (id) => {
+      if (id === 'svcBody') return svcBody
+      if (id === 'svcStatus') return svcStatus
+      if (id === 'servicesCard') return servicesCard
+      return svcBody.querySelector('#' + id)
+    }
+  }))
+
+  t.ok(out.afterStart.includes('Unsaved start'))
+  t.ok(out.afterStart.includes('<strong id="svcSummarySelected">2</strong>'))
+  t.ok(out.afterStart.includes('<strong id="svcSummaryPending">1</strong>'))
+  t.ok(out.afterStart.includes('Unsaved changes - save selection before restarting.'))
+  t.ok(out.afterStop.includes('Unsaved start'))
+  t.ok(out.afterStop.includes('Unsaved stop'))
+  t.ok(out.afterStop.includes('<strong id="svcSummarySelected">1</strong>'))
+  t.ok(out.afterStop.includes('<strong id="svcSummaryPending">2</strong>'))
 })
 
 test('umbrel appliance copy controls report missing or rejected clipboard writes', async (t) => {
@@ -1012,6 +1100,26 @@ class FakeElement {
     this.listeners = {}
     this.innerHTMLAssignments = []
     this._text = ''
+    this.classList = {
+      add: (...names) => {
+        const set = new Set(this._classNames())
+        for (const name of names) if (name) set.add(name)
+        this.className = Array.from(set).join(' ')
+      },
+      remove: (...names) => {
+        const remove = new Set(names)
+        this.className = this._classNames().filter((name) => !remove.has(name)).join(' ')
+      },
+      toggle: (name, force) => {
+        const set = new Set(this._classNames())
+        const enabled = force === undefined ? !set.has(name) : !!force
+        if (enabled) set.add(name)
+        else set.delete(name)
+        this.className = Array.from(set).join(' ')
+        return enabled
+      },
+      contains: (name) => this._classNames().includes(name)
+    }
   }
 
   appendChild (child) {
@@ -1034,6 +1142,26 @@ class FakeElement {
 
   setAttribute (name, value) {
     this.attributes[name] = String(value)
+  }
+
+  getAttribute (name) {
+    return this.attributes[name] || null
+  }
+
+  querySelector (selector) {
+    return this.querySelectorAll(selector)[0] || null
+  }
+
+  querySelectorAll (selector) {
+    const out = []
+    const visit = (node) => {
+      for (const child of node.children) {
+        if (child._matches(selector)) out.push(child)
+        visit(child)
+      }
+    }
+    visit(this)
+    return out
   }
 
   get firstChild () {
@@ -1075,6 +1203,22 @@ class FakeElement {
       : ' ' + name + '="' + escapeFixtureHtml(value) + '"'
     ).join('')
     return '<' + this.tag + attrText + '>' + escapeFixtureHtml(this._text) + this.innerHTML + '</' + this.tag + '>'
+  }
+
+  _classNames () {
+    return String(this.className || '').split(/\s+/).filter(Boolean)
+  }
+
+  _matches (selector) {
+    if (selector === 'input') return this.tag === 'input'
+    if (selector.startsWith('#')) return this.id === selector.slice(1)
+    if (selector.startsWith('.')) {
+      const className = selector.slice(1).split(':')[0]
+      if (!this._classNames().includes(className)) return false
+      if (selector.endsWith(':checked')) return !!this.checked
+      return true
+    }
+    return this.tag === selector
   }
 }
 
