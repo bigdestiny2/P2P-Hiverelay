@@ -5215,10 +5215,15 @@ if (
   releaseAutomationDocs.includes('verifies every `latest`') &&
   releaseAutomationDocs.includes('app consumers safely move') &&
   releaseAutomationDocs.includes('from local workspace links') &&
+  releaseAutomationDocs.includes('Stable release prep now fails if the full sibling app workspace is') &&
   releaseAutomationDocs.includes('--ecosystem-dependency-mode npm-latest') &&
   prepareRelease.includes('DEFAULT_DEPENDENCY_MODE') &&
+  prepareRelease.includes('full sibling workspace not found') &&
+  prepareRelease.includes('Use --no-ecosystem-consumers only for sparse local checks') &&
   prepareReleaseTest.includes('prepare-release defaults sibling ecosystem consumer checks to npm latest') &&
-  auditRoadmap.includes('Ecosystem latest-default release ordering')
+  prepareReleaseTest.includes('prepare-release requires sibling ecosystem workspace for stable app-default sync') &&
+  auditRoadmap.includes('Ecosystem latest-default release ordering') &&
+  auditRoadmap.includes('Stable release app-consumer fail-closed guard')
 ) {
   pass('release workflow publishes npm packages and verifies latest dist-tags before downstream app-store packaging')
 } else {

@@ -47,7 +47,8 @@ test('prepare-release defaults full release channel to both', async (t) => {
   const res = await runPrepare([
     'v9.9.9',
     '--image-digest', DIGEST,
-    '--no-umbrel-store'
+    '--no-umbrel-store',
+    '--no-ecosystem-consumers'
   ], path.join(repo, 'scripts', 'prepare-release.mjs'))
 
   t.is(res.status, 0, res.stderr)
@@ -58,6 +59,25 @@ test('prepare-release defaults full release channel to both', async (t) => {
   const startosManifest = await readFile(path.join(repo, 'startos', 'manifest.yaml'), 'utf8')
   t.absent(startosManifest.includes('metadata.license'), 'StartOS release-notes block keeps the following key on a new line')
   t.ok(startosManifest.includes('metadata.\nlicense: apache-2.0'), 'StartOS release-notes block is newline-terminated')
+})
+
+test('prepare-release requires sibling ecosystem workspace for stable app-default sync', async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-missing-ecosystem-fixture-'))
+  t.teardown(async () => {
+    await rm(repo, { recursive: true, force: true })
+  })
+  await writeMinimalReleaseFixture(repo)
+
+  const res = await runPrepare([
+    'v9.9.9',
+    '--image-digest', DIGEST,
+    '--no-umbrel-store'
+  ], path.join(repo, 'scripts', 'prepare-release.mjs'))
+
+  t.is(res.status, 1)
+  t.ok(res.stderr.includes('Cannot sync ecosystem consumer defaults'))
+  t.ok(res.stderr.includes('full sibling workspace not found'))
+  t.ok(res.stderr.includes('--no-ecosystem-consumers'))
 })
 
 test('prepare-release syncs sibling ecosystem consumer defaults', async (t) => {
@@ -206,7 +226,8 @@ test('prepare-release removes local-only README status suffix for public release
     'v9.9.9',
     '--channel', 'none',
     '--image-digest', DIGEST,
-    '--no-umbrel-store'
+    '--no-umbrel-store',
+    '--no-ecosystem-consumers'
   ], path.join(repo, 'scripts', 'prepare-release.mjs'))
 
   t.is(res.status, 0, res.stderr)

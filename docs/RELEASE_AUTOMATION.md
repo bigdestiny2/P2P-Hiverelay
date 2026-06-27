@@ -273,8 +273,10 @@ still follow the current checkout's package links, linked lockfile metadata, and
 versioned source markers before npm publish. Full `release:prepare` runs default
 to npm `latest` mode after the release workflow has promoted the npm packages;
 explicit `--ecosystem-dependency-mode local` is for checkout-to-checkout
-development. HiveRelay-only CI checkouts record a skip note instead. The audit
-proves there are no new unclassified `p2p-hiverelay*` app pins.
+development. Stable release prep now fails if the full sibling app workspace is
+missing; use `--no-ecosystem-consumers` only for sparse local checks or
+intentional release-candidate skips. The audit proves there are no new
+unclassified `p2p-hiverelay*` app pins.
 7. Boots the exact pushed image reference (`<version>@sha256:...`) in Docker,
    waits for `/health`, verifies the Blindspark appliance dashboard and setup
    page, proves the home-server `HIVERELAY_ACCEPT_MODE=review` default,

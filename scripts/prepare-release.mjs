@@ -239,8 +239,7 @@ function syncEcosystemConsumerDefaults () {
     .map(consumer => consumer.path)
 
   if (missingConsumers.length === EXPECTED_CURRENT_CONSUMERS.length) {
-    notes.push(`ecosystem consumer defaults skipped; full sibling workspace not found at ${ecosystemWorkspaceRoot}`)
-    return
+    die(`Cannot sync ecosystem consumer defaults from ${ecosystemWorkspaceRoot}; full sibling workspace not found. Use --no-ecosystem-consumers only for sparse local checks or intentional release-candidate skips.`)
   }
 
   if (missingConsumers.length > 0) {
