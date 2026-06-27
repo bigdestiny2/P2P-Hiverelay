@@ -994,7 +994,10 @@ if (
 if (
   literalButtonsHaveTypeButton(blindsparkDashboard) &&
   literalButtonsHaveTypeButton(wizardDashboard) &&
+  blindsparkDashboard.includes('var walletBusy = false;') &&
   blindsparkDashboard.includes("$('walletSave').addEventListener('click', function(){ saveWallet(false); });") &&
+  blindsparkDashboard.includes('if (walletBusy) return;') &&
+  blindsparkDashboard.includes("headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }") &&
   blindsparkDashboard.includes('function handleWalletInputKey(event)') &&
   blindsparkDashboard.includes("$('walletInput').addEventListener('keydown', handleWalletInputKey);") &&
   blindsparkDashboard.includes('id="walletHelp"') &&
@@ -1043,6 +1046,7 @@ if (
   dashboardWizardUiTest.includes('wizard API helper bounds setup requests and clears timeout handles') &&
   dashboardWizardUiTest.includes('wizard load errors render untrusted messages as text') &&
   umbrelUiControlsTest.includes('umbrel wallet destination saves on Enter without form navigation') &&
+  umbrelUiControlsTest.includes('umbrel wallet save blocks duplicate in-flight writes') &&
   umbrelUiControlsTest.includes("walletDialog.attributes['aria-busy']")
 ) {
   pass('Umbrel setup and wallet controls avoid submit-default refresh regressions, duplicate wizard writes, unbounded wizard requests, inline handlers, and wizard HTML assignment')
@@ -1097,7 +1101,8 @@ if (
   apiSubsidyTest.includes('api subsidy: live accrual failures restore persisted config and emit rollback drift') &&
   apiAuthTest.includes('api-auth: wizard and wallet auth failures are counted like management routes') &&
   apiAuthTest.includes('api-auth: subsidy status and claim routes are auth-gated and shaped') &&
-  umbrelUiControlsTest.includes('umbrel wallet save posts through app proxy without navigation')
+  umbrelUiControlsTest.includes('umbrel wallet save posts through app proxy without navigation') &&
+  umbrelUiControlsTest.includes('umbrel wallet save blocks duplicate in-flight writes')
 ) {
   pass('Umbrel wallet payout reads and updates are extracted with validation, rollback, and UI route coverage')
 } else {
@@ -5740,6 +5745,7 @@ if (
   releaseImageSmoke.includes('assertDashboardUiHardening') &&
   releaseImageSmoke.includes('assertSetupWizardUiHardening') &&
   releaseImageSmoke.includes('walletBusyState') &&
+  releaseImageSmoke.includes('dashboard wallet duplicate-write guard') &&
   releaseImageSmoke.includes('serviceActionState') &&
   releaseImageSmoke.includes('aiModelAddState') &&
   releaseImageSmoke.includes('appProxyWrites') &&
@@ -6510,6 +6516,7 @@ if (
   umbrelSmokePackage.includes('assertSetupWizardUiHardening') &&
   umbrelSmokePackage.includes('dashboardUiHardening') &&
   umbrelSmokePackage.includes('setupUiHardening') &&
+  umbrelSmokePackage.includes('dashboard wallet duplicate-write guard') &&
   umbrelSmokePackage.includes('appProxyWrites') &&
   umbrelSmokePackage.includes('leasePollingBounded') &&
   umbrelSmokePackage.includes('dashboardStaticMarkupSafe') &&

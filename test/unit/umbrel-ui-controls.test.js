@@ -686,6 +686,7 @@ test('umbrel wallet save posts through app proxy without navigation', async (t) 
 
   const script = [
     'var payoutDestination = ""',
+    'var walletBusy = false',
     'function openWalletDialog () {}',
     extractFunction('appBasePath'),
     'var APP_BASE = appBasePath()',
@@ -741,6 +742,7 @@ test('umbrel wallet save posts through app proxy without navigation', async (t) 
   t.is(fetchCalls[0].url, '/apps/blindspark/api/subsidy/destination')
   t.is(fetchCalls[0].init.method, 'POST')
   t.is(fetchCalls[0].init.headers['Content-Type'], 'application/json')
+  t.is(fetchCalls[0].init.headers.Accept, 'application/json')
   t.alike(JSON.parse(fetchCalls[0].init.body), { destination: 'operator@example.com' })
   t.is(walletError.textContent, '')
   t.is(walletSave.disabled, false)
@@ -751,6 +753,96 @@ test('umbrel wallet save posts through app proxy without navigation', async (t) 
   t.is(closed, true)
   t.alike(toasts, ['Payout wallet saved'])
   t.ok(payout.innerHTML.includes('operator@example.com'))
+})
+
+test('umbrel wallet save blocks duplicate in-flight writes', async (t) => {
+  const walletInput = new FakeElement('input')
+  const walletError = new FakeElement('div')
+  const walletSave = new FakeElement('button')
+  const walletClear = new FakeElement('button')
+  const walletCancel = new FakeElement('button')
+  const walletDialog = new FakeElement('dialog')
+  const requests = []
+  const toasts = []
+  const refreshes = []
+  let resolver = null
+  walletInput.value = 'operator@example.com'
+
+  const script = [
+    'var walletBusy = false',
+    'var payoutDestination = ""',
+    'function fetchWithTimeout (path, opts) { requests.push({ path: path, opts: opts }); return new Promise(function(resolve){ resolver = resolve }) }',
+    'function renderPayout (dest) { payoutDestination = dest || "" }',
+    'function closeWalletDialog () {}',
+    'function toast (msg) { toasts.push(msg) }',
+    'function refreshWizard () { refreshes.push(true) }',
+    extractFunction('apiError'),
+    extractFunction('setWalletBusy'),
+    extractFunction('saveWallet'),
+    `
+    (async function () {
+      saveWallet(false)
+      saveWallet(false)
+      var before = {
+        requests: requests.length,
+        disabled: [$('walletSave').disabled, $('walletClear').disabled, $('walletCancel').disabled],
+        button: $('walletSave').textContent,
+        busy: walletBusy
+      }
+      resolver({
+        ok: true,
+        json: function () { return Promise.resolve({ payoutDestination: 'operator@example.com' }) }
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      return JSON.stringify({
+        before: before,
+        after: {
+          requests: requests,
+          disabled: [$('walletSave').disabled, $('walletClear').disabled, $('walletCancel').disabled],
+          button: $('walletSave').textContent,
+          busy: walletBusy,
+          destination: payoutDestination,
+          toasts: toasts,
+          refreshes: refreshes
+        }
+      })
+    })()
+    `
+  ].join('\n')
+
+  const out = JSON.parse(await vm.runInNewContext(script, {
+    Promise,
+    JSON,
+    requests,
+    toasts,
+    refreshes,
+    get resolver () { return resolver },
+    set resolver (value) { resolver = value },
+    $: (id) => {
+      if (id === 'walletInput') return walletInput
+      if (id === 'walletError') return walletError
+      if (id === 'walletSave') return walletSave
+      if (id === 'walletClear') return walletClear
+      if (id === 'walletCancel') return walletCancel
+      if (id === 'walletDialog') return walletDialog
+      throw new Error('unexpected id ' + id)
+    }
+  }))
+
+  t.is(out.before.requests, 1)
+  t.alike(out.before.disabled, [true, true, true])
+  t.is(out.before.button, 'Saving...')
+  t.is(out.before.busy, true)
+  t.is(out.after.requests.length, 1)
+  t.is(out.after.requests[0].path, '/api/subsidy/destination')
+  t.alike(out.after.disabled, [false, false, false])
+  t.is(out.after.button, 'Save')
+  t.is(out.after.busy, false)
+  t.is(out.after.destination, 'operator@example.com')
+  t.alike(out.after.toasts, ['Payout wallet saved'])
+  t.alike(out.after.refreshes, [true])
 })
 
 test('umbrel wallet destination saves on Enter without form navigation', (t) => {

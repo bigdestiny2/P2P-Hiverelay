@@ -716,7 +716,9 @@ function assertIncludes (text, needle, label) {
 }
 
 function assertDashboardUiHardening (html) {
+  assertIncludes(html, 'var walletBusy = false;', 'dashboard wallet busy-state storage')
   assertIncludes(html, 'function setWalletBusy(busy)', 'dashboard wallet busy-state guard')
+  assertIncludes(html, 'if (walletBusy) return;', 'dashboard wallet duplicate-write guard')
   assertIncludes(html, "if ($('walletSave').disabled) return;", 'dashboard wallet enter duplicate guard')
   assertIncludes(html, 'function setSvcConfigBusy(busy)', 'dashboard service save busy-state guard')
   assertIncludes(html, 'var svcRestartPending = false;', 'dashboard service restart pending state')

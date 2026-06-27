@@ -470,6 +470,7 @@ dialog::backdrop{background:rgba(4,7,14,.68)}
 var pubKey = '';
 var payoutDestination = '';
 var payoutLoaded = false;
+var walletBusy = false;
 var svcDraftDirty = false;
 var svcConfigBusy = false;
 var svcRestartPending = false;
@@ -689,6 +690,7 @@ function closeWalletDialog(){
 }
 
 function setWalletBusy(busy){
+  walletBusy = !!busy;
   $('walletSave').disabled = busy;
   $('walletClear').disabled = busy;
   $('walletCancel').disabled = busy;
@@ -697,6 +699,7 @@ function setWalletBusy(busy){
 }
 
 function saveWallet(clear){
+  if (walletBusy) return;
   var value = clear ? null : $('walletInput').value.trim();
   if (!clear && !value){
     $('walletError').textContent = 'Enter a destination or clear the wallet.';
@@ -705,7 +708,7 @@ function saveWallet(clear){
   setWalletBusy(true);
   fetchWithTimeout('/api/subsidy/destination', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
     body: JSON.stringify({ destination: value })
   }).then(function(r){
     return r.json().catch(function(){ return {}; }).then(function(out){ return { ok: r.ok, out: out }; });
