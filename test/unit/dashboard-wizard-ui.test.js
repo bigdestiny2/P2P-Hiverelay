@@ -13,7 +13,7 @@ test('wizard controls use delegated actions instead of inline handlers', (t) => 
   t.ok(wizard.includes('data-wizard-action="dashboard"'))
   t.ok(wizard.includes('id="wizard-status" role="status" aria-live="polite"'))
   t.ok(wizard.includes("const el = event.target.closest('[data-wizard-action]')"))
-  t.ok(wizard.includes("if (wizardActionBusy && action !== 'select-mode') return"))
+  t.ok(wizard.includes('if (wizardActionBusy) return'))
   t.ok(wizard.includes("if (action === 'goto') result = goNext(el.dataset.stepTarget || 'welcome')"))
   t.absent(wizard.includes('onclick='))
   t.absent(wizard.includes('href="#"'))
@@ -160,6 +160,14 @@ test('wizard delegated action router blocks duplicate pending setup writes', asy
 
   listener(event)
   listener(event)
+  listener({
+    preventDefault () {},
+    target: {
+      closest () {
+        return { dataset: { wizardAction: 'select-mode', mode: 'open' } }
+      }
+    }
+  })
 
   t.alike(calls, ['relay-name'])
   t.is(status.textContent, 'Saving relay name...')

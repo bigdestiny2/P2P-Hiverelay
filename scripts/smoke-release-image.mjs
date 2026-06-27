@@ -222,7 +222,7 @@ function assertDashboardUiHardening (html) {
 function assertSetupWizardUiHardening (html) {
   assertIncludes(html, 'id="wizard-status" role="status" aria-live="polite"', 'setup wizard status region')
   assertIncludes(html, 'let wizardActionBusy = false', 'setup wizard action lock state')
-  assertIncludes(html, "if (wizardActionBusy && action !== 'select-mode') return", 'setup wizard duplicate action guard')
+  assertIncludes(html, 'if (wizardActionBusy) return', 'setup wizard duplicate action guard')
   assertIncludes(html, 'setWizardActionBusy(true, action)', 'setup wizard busy action start')
   assertIncludes(html, '.finally(() => { setWizardActionBusy(false, action) })', 'setup wizard busy action cleanup')
   assertIncludes(html, 'href="dashboard" data-wizard-action="dashboard"', 'setup wizard app-relative dashboard link')

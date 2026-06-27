@@ -1027,7 +1027,7 @@ if (
   wizardDashboard.includes('let wizardActionBusy = false') &&
   wizardDashboard.includes('function setWizardStatus (message, kind)') &&
   wizardDashboard.includes('function setWizardActionBusy (busy, action)') &&
-  wizardDashboard.includes("if (wizardActionBusy && action !== 'select-mode') return") &&
+  wizardDashboard.includes('if (wizardActionBusy) return') &&
   wizardDashboard.includes('setWizardActionBusy(true, action)') &&
   wizardDashboard.includes('.finally(() => { setWizardActionBusy(false, action) })') &&
   wizardDashboard.includes('function renderLoadError') &&

@@ -751,7 +751,7 @@
       event.preventDefault()
 
       const action = el.dataset.wizardAction
-      if (wizardActionBusy && action !== 'select-mode') return
+      if (wizardActionBusy) return
       let result
       if (action === 'goto') result = goNext(el.dataset.stepTarget || 'welcome')
       else if (action === 'relay-name') result = submitRelayName()
