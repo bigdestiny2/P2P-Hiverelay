@@ -156,6 +156,7 @@ const relayApiDevicePairing = readText(hiverelayRoot, 'packages', 'core', 'core'
 const relayApiDelegationManagement = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-delegation-management.js')
 const relayApiDispatch = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-dispatch.js')
 const relayApiEvictionPurge = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-eviction-purge.js')
+const relayApiDedupReclaim = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-dedup-reclaim.js')
 const relayApiFederationManagement = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-federation-management.js')
 const relayApiForkProofs = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-fork-proofs.js')
 const relayApiGatewayStats = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-gateway-stats.js')
@@ -271,6 +272,7 @@ const apiDevicePairingTest = readText(hiverelayRoot, 'test', 'unit', 'api-device
 const apiDelegationManagementTest = readText(hiverelayRoot, 'test', 'unit', 'api-delegation-management.test.js')
 const apiDispatchTest = readText(hiverelayRoot, 'test', 'unit', 'api-dispatch.test.js')
 const apiEvictionPurgeTest = readText(hiverelayRoot, 'test', 'unit', 'api-eviction-purge.test.js')
+const apiDedupReclaimTest = readText(hiverelayRoot, 'test', 'unit', 'api-dedup-reclaim.test.js')
 const apiFederationManagementTest = readText(hiverelayRoot, 'test', 'unit', 'api-federation-management.test.js')
 const apiGatewayStatsTest = readText(hiverelayRoot, 'test', 'unit', 'api-gateway-stats.test.js')
 const federationHardeningTest = readText(hiverelayRoot, 'test', 'unit', 'federation-hardening.test.js')
@@ -2086,6 +2088,33 @@ if (
   pass('operator eviction purge route is extracted with auth, batch cap, per-key error, and byte aggregation coverage')
 } else {
   fail('operator eviction purge route can drift from auth, batch cap, per-key error, or byte aggregation coverage')
+}
+
+if (
+  relayApi.includes("import { runDedupReclaimAction } from './api-dedup-reclaim.js'") &&
+  relayApi.includes("this._requireAuth(req, res, 'Unauthorized — API key required for /api/dedup/reclaim')") &&
+  relayApi.includes('const result = await runDedupReclaimAction({') &&
+  relayApi.includes('emit: (...args) => this.emit(...args)') &&
+  relayApiDedupReclaim.includes('export function parseDedupReclaimOptions') &&
+  relayApiDedupReclaim.includes('body.execute !== true') &&
+  relayApiDedupReclaim.includes('Number.isSafeInteger') &&
+  relayApiDedupReclaim.includes("formatErr('RECLAIM_FAILED', 'dedup reclaim failed')") &&
+  relayApiDedupReclaim.includes("emit('dedup-reclaim-error', { error: err })") &&
+  errorPrefixes.includes("RECLAIM_FAILED: 'reclaim-failed: '") &&
+  errorPrefixesTest.includes("formatErr('RECLAIM_FAILED', 'dedup reclaim failed')") &&
+  errorPrefixesTest.includes("classifyErr('reclaim-failed: dedup reclaim failed')") &&
+  apiDedupReclaimTest.includes('api dedup reclaim: defaults to dry-run with zero retained superseded versions') &&
+  apiDedupReclaimTest.includes('api dedup reclaim: parses execute, retainVersions, and max without numeric coercion') &&
+  apiDedupReclaimTest.includes('api dedup reclaim: rejects malformed body and integer options before reclaiming') &&
+  apiDedupReclaimTest.includes('api dedup reclaim: reports unavailable eviction manager') &&
+  apiDedupReclaimTest.includes('api dedup reclaim: redacts unexpected reclaim failures and emits raw error internally') &&
+  apiAuthTest.includes('POST /api/dedup/reclaim requires auth and dispatches strict options') &&
+  auditRoadmap.includes('4.121') &&
+  auditRoadmap.includes('api-dedup-reclaim.js')
+) {
+  pass('dedup reclaim route is extracted with strict integer parsing, auth coverage, and redacted failure handling')
+} else {
+  fail('dedup reclaim route can drift from strict input parsing, auth coverage, or redacted error handling')
 }
 
 if (

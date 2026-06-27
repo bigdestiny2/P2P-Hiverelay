@@ -773,6 +773,31 @@ test('api-auth: POST /api/eviction/purge requires auth and reports mixed batch r
   ])
 })
 
+test('api-auth: POST /api/dedup/reclaim requires auth and dispatches strict options', async (t) => {
+  const originalEviction = node.eviction
+  const calls = []
+  node.eviction = {
+    async reclaimSuperseded (opts) {
+      calls.push(opts)
+      return { dryRun: opts.dryRun, reclaimed: [], skipped: [], freedBytes: 0, candidates: 0 }
+    }
+  }
+  t.teardown(() => { node.eviction = originalEviction })
+
+  const body = { execute: true, retainVersions: 1, max: 2 }
+  const unauthorized = await request(port, 'POST', '/api/dedup/reclaim', body)
+  t.is(unauthorized.statusCode, 401, 'dedup reclaim requires auth')
+  t.alike(calls, [], 'unauthorized dedup reclaim does not call eviction manager')
+
+  const authorized = await request(port, 'POST', '/api/dedup/reclaim', body, {
+    Authorization: 'Bearer ' + API_KEY
+  })
+  t.is(authorized.statusCode, 200, 'authorized dedup reclaim succeeds')
+  t.is(authorized.body.ok, true)
+  t.is(authorized.body.dryRun, false)
+  t.alike(calls, [{ dryRun: false, retainVersions: 1, max: 2 }])
+})
+
 test('api-auth: POST /seed forwards metadata fields with auth', async (t) => {
   const res = await request(port, 'POST', '/seed', {
     appKey: 'c'.repeat(64),

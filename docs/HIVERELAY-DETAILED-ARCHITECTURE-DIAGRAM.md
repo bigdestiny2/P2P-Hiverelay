@@ -554,7 +554,7 @@ checks them for direct `p2p-hiverelay*` drift.
 | Relay transport | `relay.js`, `bare-relay.js`, `relay-tunnel.js`, `distributed-drive-bridge.js`, `protocol/relay-circuit.js`, `protocol/forward-relay.js` |
 | Services | `core/services/protocol.js`, `core/services/registry.js`, `core/services/provider.js`, `api-service-config.js`, `api-service-management.js`, `api-service-read.js` |
 | Policy and auth | `access-control.js`, `swarm-firewall.js`, `api-auth-helpers.js`, `api-auth-failures.js`, `api-cors.js`, `api-rate-limit.js` |
-| Accounting and eviction | `storage-accounting.js`, `served-accounting.js`, `eviction.js`, `api-usage-telemetry.js`, `api-eviction-purge.js` |
+| Accounting and eviction | `storage-accounting.js`, `served-accounting.js`, `eviction.js`, `api-usage-telemetry.js`, `api-eviction-purge.js`, `api-dedup-reclaim.js` |
 | Repair and operations | `auto-heal.js`, `self-heal.js`, `alert-manager.js`, `api-alert-management.js`, `api-lifecycle-actions.js` |
 | Client SDK | `packages/client/index.js`, `custody.js`, `pairing.js`, `secret-sharing.js` |
 | Services package | `packages/services/builtin/*`, including poker provider code |

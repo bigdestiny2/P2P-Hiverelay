@@ -165,6 +165,7 @@ import {
   runAlertTestAction
 } from './api-alert-management.js'
 import { runEvictionPurgeAction } from './api-eviction-purge.js'
+import { runDedupReclaimAction } from './api-dedup-reclaim.js'
 import { runLifecycleAction } from './api-lifecycle-actions.js'
 import {
   buildGatewayStatsPayload,
@@ -1053,25 +1054,12 @@ export class RelayAPI extends EventEmitter {
         // and from the disk-pressure sweep (fleet over-replication).
         if (path === '/api/dedup/reclaim') {
           if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/dedup/reclaim')) return
-          if (!this.node.eviction || typeof this.node.eviction.reclaimSuperseded !== 'function') {
-            return this._json(res, { error: 'dedup reclaim not available (eviction manager not enabled)' }, 503)
-          }
-          const dryRun = body?.execute !== true
-          const retainVersions = Math.max(0, Math.floor(Number(body?.retainVersions) || 0))
-          let max
-          if (body?.max !== undefined) {
-            const m = Number(body.max)
-            if (!Number.isFinite(m) || m <= 0) {
-              return this._json(res, { error: formatErr('BAD_REQUEST', 'max must be a positive integer') }, 400)
-            }
-            max = Math.floor(m)
-          }
-          try {
-            const out = await this.node.eviction.reclaimSuperseded({ dryRun, retainVersions, max })
-            return this._json(res, { ok: true, ...out })
-          } catch (err) {
-            return this._json(res, { error: err.code || err.message }, 500)
-          }
+          const result = await runDedupReclaimAction({
+            body,
+            node: this.node,
+            emit: (...args) => this.emit(...args)
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // Set/replace the subsidy payout destination (operator's own

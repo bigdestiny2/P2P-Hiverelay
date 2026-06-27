@@ -165,6 +165,7 @@
 - [x] **4.118** PearBrowser public ecosystem metadata sync — `pearbrowser.com` has been refreshed to the bundled desktop release metadata (`v0.5.0`, production length `33841`), and `npm run audit:workspace` now guards the public-site hero/spec/manifest values against the desktop README plus the browser relay-transport dependency contract.
 - [x] **4.119** Release secret template hardening — `release:write-secret-template` now writes an owner-only local candidate env file outside the repo, refuses repo paths/symlink overwrites/accidental overwrites, and emits placeholders that fail validation until real GitHub, fleet, Umbrel, and StartOS values are pasted. The local validator, GitHub preflight summary, release docs, and ship handoff all point operators at this generated-template repair path before `release:apply-github-secrets`.
 - [x] **4.120** Full-release npm latest proof — full `release-surfaces.yml` runs now require `NPM_TOKEN`, publish or confirm immutable tarballs for `p2p-hiverelay`, `p2p-hiverelay-client`, `p2p-hiverelay-verifier`, and `p2p-hiveservices`, verify every npm `latest` dist-tag equals the release semver, and record `surfaces.npmPackages` in release and handoff evidence. This prevents PearBrowser, PearPaste, anonGPT, and other app consumers from following a stale npm `latest` line.
+- [x] **4.121** Dedup reclaim API boundary — `/api/dedup/reclaim` now routes through `api-dedup-reclaim.js`, which keeps destructive reclaim dry-run by default, accepts only strict safe integer `retainVersions`/`max` inputs, preserves the boolean-only `execute: true` destructive gate, reports unavailable eviction managers without mutation, and collapses unexpected eviction failures to `RECLAIM_FAILED` while emitting the raw error internally.
 
 ---
 
@@ -212,7 +213,7 @@ a full release.
   `api-alert-management.js`, `api-auth-helpers.js`, `api-auth-failures.js`, `api-validation.js`,
   `api-request.js`, `api-cors.js`, `api-dashboard-html.js`, `api-body.js`,
   `api-config-update.js`, `api-response.js`, `api-rate-limit.js`,
-  `api-health.js`, `api-eviction-purge.js`, `api-lifecycle-actions.js`,
+  `api-health.js`, `api-eviction-purge.js`, `api-dedup-reclaim.js`, `api-lifecycle-actions.js`,
   `api-management-snapshots.js`, `api-safe-config.js`,
   `api-service-config.js`, and
   `api-service-management.js`, `api-mode-transport.js`, `api-usage-telemetry.js`,
@@ -293,7 +294,9 @@ a full release.
   health helper owns `/health` runtime version, uptime/running payload, disk
   summaries, and disk-critical drain status for fleet rollout probes; the
   eviction-purge helper owns authenticated operator purge request validation,
-  50-key batch caps, per-key errors, and freed-byte aggregation while the
+  50-key batch caps, per-key errors, and freed-byte aggregation; the
+  dedup-reclaim helper owns strict dry-run/execute parsing and redacted
+  eviction-manager failure payloads while the
   lower-level eviction manager keeps archive/custody entries sacred; the
   lifecycle-actions helper owns restart/shutdown response payloads, deferred
   stop/start scheduling, restart error events, and clean/unclean
@@ -465,6 +468,7 @@ a full release.
   `packages/core/core/relay-node/api-rate-limit.js`, and
   `packages/core/core/relay-node/api-health.js`, and
   `packages/core/core/relay-node/api-eviction-purge.js`, and
+  `packages/core/core/relay-node/api-dedup-reclaim.js`, and
   `packages/core/core/relay-node/api-lifecycle-actions.js`, and
   `packages/core/core/relay-node/api-management-snapshots.js`, and
   `packages/core/core/relay-node/api-safe-config.js`, and
@@ -502,6 +506,7 @@ a full release.
   `test/unit/api-response.test.js`, `test/unit/api-rate-limit.test.js`, and
   `test/unit/api-health.test.js`, and
   `test/unit/api-eviction-purge.test.js`, and
+  `test/unit/api-dedup-reclaim.test.js`, and
   `test/unit/api-lifecycle-actions.test.js`, and
   `test/unit/api-management-snapshots.test.js`, and
   `test/unit/api-safe-config.test.js`, and

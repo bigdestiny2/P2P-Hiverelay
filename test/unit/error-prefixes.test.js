@@ -14,6 +14,7 @@ test('formatErr combines prefix + message', async (t) => {
   t.is(formatErr('PAYMENT_REQUIRED', 'topup needed'), 'payment-required: topup needed')
   t.is(formatErr('ACCEPT_QUEUED', 'operator will review'), 'accept-mode-queued: operator will review')
   t.is(formatErr('NOT_ENABLED', 'service disabled'), 'not-enabled: service disabled')
+  t.is(formatErr('RECLAIM_FAILED', 'dedup reclaim failed'), 'reclaim-failed: dedup reclaim failed')
 })
 
 test('formatErr with empty message still gives a usable prefix line', async (t) => {
@@ -36,6 +37,7 @@ test('classifyErr identifies known prefixes', async (t) => {
   t.is(classifyErr('accept-mode-queued: awaiting operator'), 'ACCEPT_QUEUED')
   t.is(classifyErr('delegation-revoked: cert was burned'), 'DELEGATION_REVOKED')
   t.is(classifyErr('not-enabled: service disabled'), 'NOT_ENABLED')
+  t.is(classifyErr('reclaim-failed: dedup reclaim failed'), 'RECLAIM_FAILED')
 })
 
 test('classifyErr returns null for unknown prefixes', async (t) => {

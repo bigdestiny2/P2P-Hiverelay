@@ -42,6 +42,7 @@ const PREFIXES = Object.freeze({
   NOT_FOUND: 'not-found: ',
   BAD_REQUEST: 'bad-request: ',
   PERSIST_FAILED: 'persist-failed: ',
+  RECLAIM_FAILED: 'reclaim-failed: ',
   UNSUPPORTED: 'unsupported: '
 })
 
