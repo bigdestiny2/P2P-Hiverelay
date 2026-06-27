@@ -1082,7 +1082,9 @@ npm test
 
 `ecosystem:sync` is the published-app default gate: it refuses to switch
 PearBrowser, PearPaste, anonGPT, or other tracked app consumers to npm `latest`
-unless every HiveRelay npm dist-tag already resolves to the release version.
+unless the full HiveRelay npm package line (`p2p-hiverelay`,
+`p2p-hiverelay-client`, `p2p-hiverelay-verifier`, and `p2p-hiveservices`)
+already resolves to the release version.
 Use `ecosystem:sync:release` and `audit:ecosystem-consumers:release` for the
 remotely managed app repos the release workflow can checkout and push. Use
 `ecosystem:sync:local` for checkout-to-checkout development links across every

@@ -178,6 +178,7 @@
 - [x] **4.131** Poker duplicate-route cleanup — `/api/poker` and `/api/poker/*` now flow through one service-registry-backed route branch ahead of generic JSON guards, and the stale post-guard `_getPokerApp()` fallback branch has been removed so public Poker reads/writes cannot drift away from the hardened adapter-load redaction path.
 - [x] **4.132** Ecosystem release-scope latest audit — the standalone ecosystem audit now accepts `--consumer-scope release`, package scripts expose release-scope sync/audit commands, and docs record that all local consumers stay tracked while only remote app repos are pushed to npm `latest` after the registry dist-tags prove the new HiveRelay version.
 - [x] **4.133** Umbrel AI model draft persistence — the Blindspark service manager now preserves partially typed QVAC model id/source fields across automatic service refresh re-renders, keeps duplicate-write and inline-error guards, clears drafts only after successful registration, and carries the check into release-image and Umbrel-package smoke hardening.
+- [x] **4.134** Ecosystem full package-line latest gate — standalone `ecosystem:sync` now verifies the complete published HiveRelay npm package line, including `p2p-hiveservices`, before moving PearBrowser, PearPaste, anonGPT, or other tracked app consumers to `latest`. This keeps app defaults aligned with the same four-package publish proof enforced by the release workflow.
 
 ---
 

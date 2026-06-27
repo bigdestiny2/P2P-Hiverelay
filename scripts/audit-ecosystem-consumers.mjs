@@ -9,7 +9,7 @@ const hiverelayRoot = path.resolve(here, '..')
 const workspaceRootDefault = path.resolve(hiverelayRoot, '..', '..')
 export const CURRENT_HIVERELAY_VERSION = readJson(path.join(hiverelayRoot, 'package.json')).version
 
-const HIVERELAY_DEPS = [
+export const HIVERELAY_DEPS = [
   'p2p-hiverelay',
   'p2p-hiverelay-client',
   'p2p-hiverelay-verifier',

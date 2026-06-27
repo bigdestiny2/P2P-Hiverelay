@@ -6,6 +6,7 @@ import path from 'node:path'
 import {
   DEFAULT_DEPENDENCY_MODE,
   EXPECTED_CURRENT_CONSUMERS,
+  HIVERELAY_DEPS,
   checkConsumerState,
   formatConsumerReport,
   getExpectedCurrentConsumers,
@@ -18,6 +19,13 @@ import {
 import { checkEcosystemWorkspace } from '../../scripts/check-ecosystem-workspace.mjs'
 import { commitEcosystemConsumers } from '../../scripts/commit-ecosystem-consumers.mjs'
 import { syncEcosystemConsumers } from '../../scripts/sync-ecosystem-consumers.mjs'
+
+function npmLatestVersions (version, overrides = {}) {
+  return {
+    ...Object.fromEntries(HIVERELAY_DEPS.map(dep => [dep, version])),
+    ...overrides
+  }
+}
 
 test('ecosystem consumer audit classifies current, stale, and ignored consumers', (t) => {
   const root = fixtureWorkspace()
@@ -744,10 +752,9 @@ test('ecosystem sync default npm-latest path refuses stale registry latest', (t)
     workspaceRoot: root,
     expectedVersion: '0.20.2',
     expectedCurrent: [consumer],
-    npmLatestVersions: {
-      'p2p-hiverelay': '0.9.2',
-      'p2p-hiverelay-client': '0.20.2'
-    },
+    npmLatestVersions: npmLatestVersions('0.20.2', {
+      'p2p-hiverelay': '0.9.2'
+    }),
     snapshotChecks: false
   })
 
@@ -755,6 +762,28 @@ test('ecosystem sync default npm-latest path refuses stale registry latest', (t)
   t.is(result.dependencyMode, 'npm-latest')
   t.ok(result.errors.some(error => error.includes('p2p-hiverelay npm latest dist-tag is 0.9.2; expected 0.20.2')))
   t.is(result.changes.length, 0, 'default npm latest mode blocks before writing app files')
+})
+
+test('ecosystem sync default npm-latest path verifies the full package line', (t) => {
+  const root = fixtureWorkspace()
+  const consumer = {
+    ...getExpectedCurrentConsumers().find(consumer => consumer.path === '02-apps/pearpaste/package.json'),
+    sourceChecks: []
+  }
+
+  const result = syncEcosystemConsumers({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer],
+    npmLatestVersions: npmLatestVersions('0.20.2', {
+      'p2p-hiveservices': '0.9.2'
+    }),
+    snapshotChecks: false
+  })
+
+  t.absent(result.ok)
+  t.ok(result.errors.some(error => error.includes('p2p-hiveservices npm latest dist-tag is 0.9.2; expected 0.20.2')))
+  t.is(result.changes.length, 0, 'stale services package blocks app default writes even when the app does not list it directly')
 })
 
 test('ecosystem sync refuses npm-latest defaults when npm latest would downgrade', (t) => {
@@ -773,10 +802,9 @@ test('ecosystem sync refuses npm-latest defaults when npm latest would downgrade
     expectedVersion: '0.20.2',
     expectedCurrent: [consumer],
     dependencyMode: 'npm-latest',
-    npmLatestVersions: {
-      'p2p-hiverelay': '0.9.2',
-      'p2p-hiverelay-client': '0.20.2'
-    },
+    npmLatestVersions: npmLatestVersions('0.20.2', {
+      'p2p-hiverelay': '0.9.2'
+    }),
     snapshotChecks: false
   })
 
@@ -838,10 +866,7 @@ test('ecosystem consumer audit accepts npm-latest manifests with current npm loc
     expectedVersion: '0.20.2',
     expectedCurrent: [consumer],
     dependencyMode: 'npm-latest',
-    npmLatestVersions: {
-      'p2p-hiverelay': '0.20.2',
-      'p2p-hiverelay-client': '0.20.2'
-    },
+    npmLatestVersions: npmLatestVersions('0.20.2'),
     snapshotChecks: false,
     check: true
   })
@@ -850,7 +875,7 @@ test('ecosystem consumer audit accepts npm-latest manifests with current npm loc
   t.ok(lockChecks.every(check => check.ok))
   t.ok(syncCheck.ok)
   t.is(syncCheck.changes.length, 0)
-  t.ok(syncCheck.warnings.some(warning => warning.includes('npm latest dist-tags verified')))
+  t.ok(syncCheck.warnings.some(warning => warning.includes('p2p-hiveservices')))
 })
 
 test('ecosystem sync updates versioned app source markers', (t) => {

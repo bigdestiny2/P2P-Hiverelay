@@ -4059,6 +4059,7 @@ if (
   ecosystemConsumersAudit.includes('EXPECTED_CURRENT_CONSUMERS') &&
   ecosystemConsumersAudit.includes('EXPECTED_STALE_CONSUMERS') &&
   ecosystemConsumersAudit.includes('CURRENT_HIVERELAY_VERSION') &&
+  ecosystemConsumersAudit.includes('export const HIVERELAY_DEPS') &&
   ecosystemConsumersAudit.includes("DEFAULT_DEPENDENCY_MODE = 'npm-latest'") &&
   ecosystemConsumersAudit.includes('getExpectedCurrentConsumers') &&
   ecosystemConsumersAudit.includes('normalizeDependencyMode') &&
@@ -4106,6 +4107,8 @@ if (
   ecosystemConsumersSync.includes('syncEcosystemConsumers') &&
   ecosystemConsumersSync.includes('getExpectedCurrentConsumers') &&
   ecosystemConsumersSync.includes('verifyNpmLatestDistTags') &&
+  ecosystemConsumersSync.includes('HIVERELAY_DEPS') &&
+  ecosystemConsumersSync.includes('...HIVERELAY_DEPS') &&
   ecosystemConsumersSync.includes('HIVERELAY_NPM_LATEST_JSON') &&
   ecosystemConsumersSync.includes('npm package-lock refresh failed') &&
   ecosystemConsumersSync.includes('--dependency-mode') &&
@@ -4130,6 +4133,8 @@ if (
   ecosystemConsumersAuditTest.includes('ecosystem sync updates app defaults and linked package lock metadata') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer helpers default published apps to npm latest') &&
   ecosystemConsumersAuditTest.includes('ecosystem sync default npm-latest path refuses stale registry latest') &&
+  ecosystemConsumersAuditTest.includes('ecosystem sync default npm-latest path verifies the full package line') &&
+  ecosystemConsumersAuditTest.includes('p2p-hiveservices npm latest dist-tag is 0.9.2; expected 0.20.2') &&
   ecosystemConsumersAuditTest.includes('ecosystem sync refuses npm-latest defaults when npm latest would downgrade') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit accepts npm-latest manifests with current npm lock metadata') &&
   ecosystemConsumersAuditTest.includes('ecosystem sync updates versioned app source markers') &&
@@ -4155,6 +4160,9 @@ if (
   ecosystemUpgradeDoc.includes('Local workspace development uses the explicit local mode') &&
   ecosystemUpgradeDoc.includes('npm `latest` is still `0.9.2`') &&
   ecosystemUpgradeDoc.includes('HIVERELAY_NPM_LATEST_JSON') &&
+  ecosystemUpgradeDoc.includes('"p2p-hiveservices":"0.20.2"') &&
+  ecosystemUpgradeDoc.includes('full HiveRelay package line') &&
+  testCommandMatrix20260627.includes('"p2p-hiveservices":"0.9.2"') &&
   ecosystemUpgradeDoc.includes('PearBrowser catalog') &&
   ecosystemUpgradeDoc.includes('PearPaste customer docs/probes') &&
   ecosystemUpgradeDoc.includes('anonGPT relay/onion architecture') &&
@@ -4164,6 +4172,7 @@ if (
   ecosystemUpgradeDoc.includes('to old client guidance') &&
   ecosystemUpgradeDoc.includes('versioned source markers') &&
   ecosystemUpgradeDoc.includes('npm run ecosystem:sync') &&
+  auditRoadmap.includes('Ecosystem full package-line latest gate') &&
   pearBrowserIntegrationDoc.includes('npm run ecosystem:sync') &&
   pearIntegrationDoc.includes('npm run ecosystem:sync')
 ) {

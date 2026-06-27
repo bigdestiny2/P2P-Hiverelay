@@ -59,13 +59,14 @@ If a release review environment cannot resolve the npm registry from inside
 Node, feed the already-collected shell preflight evidence to the guard:
 
 ```bash
-HIVERELAY_NPM_LATEST_JSON='{"p2p-hiverelay":"0.20.2","p2p-hiverelay-client":"0.20.2","p2p-hiverelay-verifier":"0.20.2"}' \
+HIVERELAY_NPM_LATEST_JSON='{"p2p-hiverelay":"0.20.2","p2p-hiverelay-client":"0.20.2","p2p-hiverelay-verifier":"0.20.2","p2p-hiveservices":"0.20.2"}' \
   npm run ecosystem:sync -- --check
 ```
 
 The audit checks package manifests and lockfile metadata across the workspace
 and requires every direct app consumer to point at the current published npm
-`latest` dist-tag with a lockfile resolved to the same version. The explicit
+`latest` dist-tag after the full HiveRelay package line, including
+`p2p-hiveservices`, resolves to the same version. The explicit
 local mode accepts current Hiverelay workspace package links for development.
 PearBrowser desktop, PearPaste, pear-pos, pear-tickets, p2pbuilders, Opengit's
 optional HiveRelay bridge, anonGPT, and the local smoke app are all tracked

@@ -126,7 +126,8 @@ test('prepare-release defaults sibling ecosystem consumer checks to npm latest',
   const npmLatest = JSON.stringify({
     'p2p-hiverelay': '9.9.9',
     'p2p-hiverelay-client': '9.9.9',
-    'p2p-hiverelay-verifier': '9.9.9'
+    'p2p-hiverelay-verifier': '9.9.9',
+    'p2p-hiveservices': '9.9.9'
   })
   const res = await runPrepare([
     'v9.9.9',

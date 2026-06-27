@@ -8,6 +8,7 @@ import {
   CURRENT_HIVERELAY_VERSION,
   DEFAULT_DEPENDENCY_MODE,
   EXPECTED_STALE_CONSUMERS,
+  HIVERELAY_DEPS,
   checkConsumerState,
   getExpectedCurrentConsumers,
   normalizeConsumerScope,
@@ -35,8 +36,8 @@ Usage:
 
 Updates the known direct ecosystem app consumers so their default
 p2p-hiverelay* package defaults point at the npm latest dist-tag by default.
-npm-latest mode first verifies every relevant npm latest dist-tag equals the
-expected Hiverelay version, then requires npm to refresh package-lock metadata.
+npm-latest mode first verifies the full published HiveRelay package line equals
+the expected Hiverelay version, then requires npm to refresh package-lock metadata.
 Use --dependency-mode local for development workspace links. Use --check in CI
 to fail if a consumer would be changed.
 `
@@ -314,7 +315,10 @@ function replaceSourceMarker (text, spec, expectedVersion, nextTerm) {
 function verifyNpmLatestDistTags ({ expectedCurrent, expectedVersion, npmLatestVersions } = {}) {
   const errors = []
   const warnings = []
-  const names = Array.from(new Set(expectedCurrent.flatMap(consumer => Object.keys(consumer.deps)))).sort()
+  const names = Array.from(new Set([
+    ...HIVERELAY_DEPS,
+    ...expectedCurrent.flatMap(consumer => Object.keys(consumer.deps))
+  ])).sort()
   const envVersions = npmLatestVersions || npmLatestVersionsFromEnv(process.env)
 
   for (const name of names) {
