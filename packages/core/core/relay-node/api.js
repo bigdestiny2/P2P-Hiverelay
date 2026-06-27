@@ -1643,7 +1643,11 @@ export class RelayAPI extends EventEmitter {
       res.end(Buffer.concat(chunks))
     } catch (err) {
       const code = err.name === 'AbortError' ? 504 : 502
-      return this._json(res, { error: 'index sidecar unreachable', detail: err.message }, code)
+      this.emit('index-proxy-error', { error: err, status: code })
+      return this._json(res, {
+        error: formatErr('UNSUPPORTED', 'index sidecar unreachable'),
+        errorCode: 'index-unreachable'
+      }, code)
     } finally {
       clearTimeout(timer)
     }

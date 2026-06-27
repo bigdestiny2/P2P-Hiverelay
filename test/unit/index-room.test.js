@@ -120,8 +120,9 @@ function request (port, method, path, body, headers = {}) {
   })
 }
 
-async function server (t, node) {
+async function server (t, node, events = null) {
   const api = new RelayAPI(node, { apiPort: 0, apiHost: '127.0.0.1', apiKey: API_KEY })
+  if (events) api.on('index-proxy-error', event => events.push(event))
   await api.start()
   const port = api.server.address().port
   t.teardown(async () => {
@@ -164,6 +165,20 @@ test('GET /index/* reverse-proxies to the configured sidecar (path+query only)',
   t.is(res.statusCode, 200)
   t.is(res.body.via, 'sidecar')
   t.is(seenUrl, '/index/relays?region=eu', 'forwarded path + query verbatim')
+})
+
+test('GET /index/* redacts sidecar connection failures and emits internals', async (t) => {
+  const events = []
+  const port = await server(t, mockNode({ indexSidecarUrl: 'http://127.0.0.1:9' }), events)
+  const res = await request(port, 'GET', '/index/relays')
+
+  t.is(res.statusCode, 502)
+  t.is(res.body.error, 'unsupported: index sidecar unreachable')
+  t.is(res.body.errorCode, 'index-unreachable')
+  t.absent(Object.prototype.hasOwnProperty.call(res.body, 'detail'))
+  t.is(events.length, 1)
+  t.is(events[0].status, 502)
+  t.ok(events[0].error, 'raw error emitted internally')
 })
 
 test('POST /api/manage/index-room: auth + z32 validation + publish', async (t) => {

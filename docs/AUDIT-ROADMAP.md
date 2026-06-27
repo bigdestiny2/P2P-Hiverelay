@@ -168,6 +168,7 @@
 - [x] **4.121** Dedup reclaim API boundary — `/api/dedup/reclaim` now routes through `api-dedup-reclaim.js`, which keeps destructive reclaim dry-run by default, accepts only strict safe integer `retainVersions`/`max` inputs, preserves the boolean-only `execute: true` destructive gate, reports unavailable eviction managers without mutation, and collapses unexpected eviction failures to `RECLAIM_FAILED` while emitting the raw error internally.
 - [x] **4.122** Ecosystem latest-default release ordering — `prepare-release` now defaults sibling app consumer sync to npm `latest` mode, while `release-surfaces.yml` publishes/verifies the Hiverelay npm packages before metadata/app-consumer sync. This keeps PearBrowser, PearPaste, anonGPT, and other direct consumers on the newest published line by default without allowing a stale npm dist-tag downgrade; explicit `--ecosystem-dependency-mode local` remains available for checkout-to-checkout development.
 - [x] **4.123** Index-room management API boundary — `/api/manage/index-room` now routes through `api-index-room.js`, which validates object bodies, trims and enforces 52-character z32 room keys, reports unsupported relay nodes without mutation, and collapses setter/persistence failures to a stable `persist-failed` response while emitting the raw error internally.
+- [x] **4.124** Index sidecar proxy error redaction — public `/index/*` proxy failures now return stable `unsupported: index sidecar unreachable` payloads with `index-unreachable` codes instead of echoing upstream exception details, while the raw failure remains available on the internal `index-proxy-error` event for diagnostics.
 
 ---
 
@@ -299,7 +300,8 @@ a full release.
   50-key batch caps, per-key errors, and freed-byte aggregation; the
   dedup-reclaim helper owns strict dry-run/execute parsing and redacted
   eviction-manager failure payloads; the index-room helper owns z32 pointer
-  validation and redacted setter-failure handling while the
+  validation and redacted setter-failure handling; the index proxy redacts
+  sidecar connection details while emitting raw internal diagnostics; the
   lower-level eviction manager keeps archive/custody entries sacred; the
   lifecycle-actions helper owns restart/shutdown response payloads, deferred
   stop/start scheduling, restart error events, and clean/unclean

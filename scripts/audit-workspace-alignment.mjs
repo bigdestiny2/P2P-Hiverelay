@@ -2149,6 +2149,21 @@ if (
 }
 
 if (
+  relayApi.includes("this.emit('index-proxy-error', { error: err, status: code })") &&
+  relayApi.includes("formatErr('UNSUPPORTED', 'index sidecar unreachable')") &&
+  relayApi.includes("errorCode: 'index-unreachable'") &&
+  !relayApi.includes('detail: err.message') &&
+  indexRoomTest.includes('GET /index/* redacts sidecar connection failures and emits internals') &&
+  indexRoomTest.includes("t.absent(Object.prototype.hasOwnProperty.call(res.body, 'detail'))") &&
+  auditRoadmap.includes('4.124') &&
+  auditRoadmap.includes('Index sidecar proxy error redaction')
+) {
+  pass('index sidecar proxy redacts upstream failures while retaining internal diagnostics')
+} else {
+  fail('index sidecar proxy can leak upstream failure details or lose fault coverage')
+}
+
+if (
   relayApi.includes("import { runLifecycleAction } from './api-lifecycle-actions.js'") &&
   relayApi.includes("action: 'restart'") &&
   relayApi.includes('emit: (...args) => this.emit(...args)') &&
