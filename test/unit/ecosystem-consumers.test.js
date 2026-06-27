@@ -565,6 +565,12 @@ test('ecosystem sync refuses npm-latest defaults when npm latest would downgrade
   const root = fixtureWorkspace()
   const consumer = getExpectedCurrentConsumers({ dependencyMode: 'npm-latest' })
     .find(consumer => consumer.path === '02-apps/pearpaste/package.json')
+  writePackage(root, consumer.path, {
+    optionalDependencies: {
+      'p2p-hiverelay': 'file:../../00-core/hiverelay/packages/core',
+      'p2p-hiverelay-client': 'file:../../00-core/hiverelay/packages/client'
+    }
+  })
 
   const result = syncEcosystemConsumers({
     workspaceRoot: root,
@@ -580,7 +586,11 @@ test('ecosystem sync refuses npm-latest defaults when npm latest would downgrade
 
   t.absent(result.ok)
   t.ok(result.errors.some(error => error.includes('p2p-hiverelay npm latest dist-tag is 0.9.2; expected 0.20.2')))
-  t.is(result.changes.length, 0, 'stale npm latest blocks before writing app files')
+  t.ok(result.changes.some(change => change.includes('02-apps/pearpaste/package.json: p2p-hiverelay -> latest')))
+  t.ok(result.warnings.some(warning => warning.includes('pending manifest/source changes are shown for release planning only')))
+  const pkg = readPackage(root, consumer.path)
+  t.is(pkg.optionalDependencies['p2p-hiverelay'], 'file:../../00-core/hiverelay/packages/core', 'stale npm latest still blocks writes')
+  t.is(pkg.optionalDependencies['p2p-hiverelay-client'], 'file:../../00-core/hiverelay/packages/client')
 })
 
 test('ecosystem consumer audit accepts npm-latest manifests with current npm lock metadata', (t) => {

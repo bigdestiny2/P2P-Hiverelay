@@ -61,6 +61,14 @@ export function syncEcosystemConsumers (opts = {}) {
     errors.push(...latestCheck.errors)
     warnings.push(...latestCheck.warnings)
     if (errors.length > 0) {
+      changes.push(...previewNpmLatestConsumerChanges({
+        workspaceRoot,
+        expectedCurrent,
+        expectedVersion
+      }))
+      if (changes.length > 0) {
+        warnings.push('npm latest verification failed; pending manifest/source changes are shown for release planning only and no app files were written')
+      }
       return {
         ok: false,
         check: Boolean(opts.check),
@@ -162,6 +170,33 @@ export function syncEcosystemConsumers (opts = {}) {
   }
 }
 
+function previewNpmLatestConsumerChanges ({ workspaceRoot, expectedCurrent, expectedVersion }) {
+  const changes = []
+  for (const consumer of expectedCurrent) {
+    const packageFile = path.join(workspaceRoot, consumer.path)
+    if (!fs.existsSync(packageFile)) continue
+    try {
+      changes.push(...syncConsumerManifest({
+        workspaceRoot,
+        consumer,
+        dryRun: true
+      }))
+      changes.push(...syncConsumerSourceMarkers({
+        workspaceRoot,
+        consumer,
+        expectedVersion,
+        dryRun: true,
+        skipMissing: true
+      }))
+    } catch {
+      // The blocking error is the stale/unverified npm latest tag. Keep this
+      // preview best-effort so partial fixtures and sparse worktrees can still
+      // report the registry gate cleanly.
+    }
+  }
+  return changes
+}
+
 function syncConsumerManifest ({ workspaceRoot, consumer, dryRun }) {
   const file = path.join(workspaceRoot, consumer.path)
   const pkg = readJson(file)
@@ -227,12 +262,13 @@ function syncConsumerLockfile ({ workspaceRoot, consumer, expectedVersion, dryRu
   return changes
 }
 
-function syncConsumerSourceMarkers ({ workspaceRoot, consumer, expectedVersion, dryRun }) {
+function syncConsumerSourceMarkers ({ workspaceRoot, consumer, expectedVersion, dryRun, skipMissing = false }) {
   const changes = []
   for (const spec of consumer.sourceChecks || []) {
     const nextTerm = renderSourceTerm(spec, expectedVersion)
     if (!nextTerm) continue
     const file = path.join(workspaceRoot, spec.file)
+    if (skipMissing && !fs.existsSync(file)) continue
     const text = fs.readFileSync(file, 'utf8')
     const next = replaceSourceMarker(text, spec, expectedVersion, nextTerm)
     if (next === text) continue
