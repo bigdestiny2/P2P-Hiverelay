@@ -175,9 +175,25 @@ test('POST /api/manage/index-room: auth + z32 validation + publish', async (t) =
   // bad z32
   const bad = await request(port, 'POST', '/api/manage/index-room', { room: 'nope' }, { Authorization: 'Bearer ' + API_KEY })
   t.is(bad.statusCode, 400)
+  t.ok(bad.body.error.startsWith('bad-request: '))
   // valid
   const ok = await request(port, 'POST', '/api/manage/index-room', { room: ROOM }, { Authorization: 'Bearer ' + API_KEY })
   t.is(ok.statusCode, 200)
   t.is(ok.body.indexRoom, ROOM)
   t.alike(node._setRooms, [ROOM], 'setIndexRoom called once')
+})
+
+test('POST /api/manage/index-room redacts setter failures', async (t) => {
+  const node = mockNode()
+  node.setIndexRoom = async () => {
+    throw new Error('internal path /data/private/index-room.json leaked')
+  }
+  const port = await server(t, node)
+
+  const res = await request(port, 'POST', '/api/manage/index-room', { room: ROOM }, { Authorization: 'Bearer ' + API_KEY })
+
+  t.is(res.statusCode, 503)
+  t.is(res.body.error, 'persist-failed: failed to set index room')
+  t.absent(res.body.error.includes('/data/private'))
+  t.alike(node._setRooms, [], 'failed setter did not publish a room')
 })

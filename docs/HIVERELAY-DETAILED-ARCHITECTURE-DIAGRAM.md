@@ -551,7 +551,7 @@ can pick up the new line. The explicit local-development guard is
 | Health and status | `api-health.js`, `api-status-read.js`, `api-overview.js`, `health-monitor.js`, `disk-monitor.js` |
 | Gateway | `gateway-server.js`, `api-catalog-read.js`, `api-gateway-stats.js` |
 | Dashboard and WebSocket feeds | `api-dashboard-routes.js`, `api-dashboard-html.js`, `ws-feed.js`, `ws-feed-poker.js` |
-| Seed and app registry | `seeder.js`, `app-registry.js`, `api-seed-publish.js`, `api-catalog-management.js` |
+| Seed and app registry | `seeder.js`, `app-registry.js`, `api-seed-publish.js`, `api-catalog-management.js`, `api-index-room.js` |
 | Custody | `api-custody-status.js`, `api-custody-management.js`, `protocol/custody-channel.js`, `protocol/publish-channel.js` |
 | Proofs and anchors | `api-anchor-status.js`, `api-fork-proofs.js`, `protocol/anchor-channel.js`, `protocol/proof-of-storage.js`, `protocol/proof-of-relay.js` |
 | Relay transport | `relay.js`, `bare-relay.js`, `relay-tunnel.js`, `distributed-drive-bridge.js`, `protocol/relay-circuit.js`, `protocol/forward-relay.js` |

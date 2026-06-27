@@ -166,6 +166,7 @@ import {
 } from './api-alert-management.js'
 import { runEvictionPurgeAction } from './api-eviction-purge.js'
 import { runDedupReclaimAction } from './api-dedup-reclaim.js'
+import { runIndexRoomAction } from './api-index-room.js'
 import { runLifecycleAction } from './api-lifecycle-actions.js'
 import {
   buildGatewayStatsPayload,
@@ -1173,19 +1174,12 @@ export class RelayAPI extends EventEmitter {
         // advertise it in the capability doc + /catalog.json. Operator-authed.
         if (path === '/api/manage/index-room') {
           if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/index-room')) return
-          if (typeof this.node.setIndexRoom !== 'function') {
-            return this._json(res, { error: 'index room not supported' }, 503)
-          }
-          const room = typeof body.room === 'string' ? body.room.trim() : null
-          if (!room || !/^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/.test(room)) {
-            return this._json(res, { error: 'room must be a 52-char z32 key' }, 400)
-          }
-          try {
-            await this.node.setIndexRoom(room)
-            return this._json(res, { ok: true, indexRoom: room })
-          } catch (err) {
-            return this._json(res, { error: err.message }, 400)
-          }
+          const result = await runIndexRoomAction({
+            body,
+            node: this.node,
+            emit: (...args) => this.emit(...args)
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         if (path === '/registry/publish') {

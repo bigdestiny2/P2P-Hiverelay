@@ -270,37 +270,36 @@ Before cutting a release from a full sibling workspace, run
 `npm run audit:ecosystem-consumers:local` from the Hiverelay repo. That local
 check proves PearBrowser, PearPaste, anonGPT, and the other direct consumers can
 still follow the current checkout's package links, linked lockfile metadata, and
-versioned source markers before npm publish. Full `release:prepare` runs attempt
-the same local ecosystem sync automatically when the sibling workspace is
-present; HiveRelay-only CI checkouts record a skip note instead. The audit
+versioned source markers before npm publish. Full `release:prepare` runs default
+to npm `latest` mode after the release workflow has promoted the npm packages;
+explicit `--ecosystem-dependency-mode local` is for checkout-to-checkout
+development. HiveRelay-only CI checkouts record a skip note instead. The audit
 proves there are no new unclassified `p2p-hiverelay*` app pins.
 7. Boots the exact pushed image reference (`<version>@sha256:...`) in Docker,
    waits for `/health`, verifies the Blindspark appliance dashboard and setup
    page, proves the home-server `HIVERELAY_ACCEPT_MODE=review` default,
    proves dashboard WebSocket URL-token rejection plus in-band auth, and checks
    the authenticated service-management and usage telemetry APIs.
-8. Returns to `main`, then runs `npm run release:prepare -- vX.Y.Z --channel both
-   --image-digest sha256:...`.
-9. Boots the synchronized `umbrel-app/docker-compose.yml` package with the
+8. Publishes `p2p-hiverelay`, `p2p-hiverelay-client`,
+   `p2p-hiverelay-verifier`, and `p2p-hiveservices` to npm from the tagged
+   source, or leaves an already-published immutable tarball in place, then
+   verifies every `latest` dist-tag equals the release semver. This is the gate
+   that lets PearBrowser, PearPaste, anonGPT, and other app consumers safely move
+   from local workspace links to the published release line.
+9. Returns to `main`, then runs `npm run release:prepare -- vX.Y.Z --channel both
+   --image-digest sha256:... --ecosystem-dependency-mode npm-latest`. In a full
+   sibling workspace this switches tracked app manifests to npm `latest` and
+   refreshes lockfiles from real registry metadata; before the npm gate is green,
+   the default `ecosystem:sync` intentionally refuses to edit app defaults.
+10. Boots the synchronized `umbrel-app/docker-compose.yml` package with the
    release image override, verifies the dashboard/setup pages, review-mode
    default, authenticated wallet save flow, service catalog, service-selection
    save flow, dashboard WebSocket in-band auth, usage telemetry, and data
    persistence across restart.
-10. Configures a StartOS developer key, builds `startos/blindspark.s9pk` from
+11. Configures a StartOS developer key, builds `startos/blindspark.s9pk` from
    the resolved GHCR digest, and verifies it with `start-sdk verify`. Full
    releases require `STARTOS_DEVELOPER_KEY_PEM`; prereleases may still use an
    ephemeral key for a sideload-only test artifact.
-11. Publishes `p2p-hiverelay`, `p2p-hiverelay-client`,
-   `p2p-hiverelay-verifier`, and `p2p-hiveservices` to npm, or leaves an
-   already-published immutable tarball in place, then verifies every `latest`
-   dist-tag equals the release semver. This runs after image, Umbrel, and
-   StartOS package smoke/verify gates but before the release asset upload,
-   fleet promotion, Umbrel store updates, and StartOS registry publication.
-   This is the gate that lets PearBrowser, PearPaste, anonGPT, and other app consumers safely move from local workspace links to the published release line.
-   After this gate is green, run `npm run ecosystem:sync` from a full sibling
-   workspace to switch tracked app manifests to npm `latest` and refresh
-   lockfiles from real registry metadata. Before this gate is green, the default
-   `ecosystem:sync` intentionally refuses to edit app defaults.
 12. Uploads the verified `.s9pk` to the GitHub Release as a sideloadable
    StartOS package.
 13. Commits the synchronized release surfaces back to `main`:

@@ -166,6 +166,8 @@
 - [x] **4.119** Release secret template hardening — `release:write-secret-template` now writes an owner-only local candidate env file outside the repo, refuses repo paths/symlink overwrites/accidental overwrites, and emits placeholders that fail validation until real GitHub, fleet, Umbrel, and StartOS values are pasted. The local validator, GitHub preflight summary, release docs, and ship handoff all point operators at this generated-template repair path before `release:apply-github-secrets`.
 - [x] **4.120** Full-release npm latest proof — full `release-surfaces.yml` runs now require `NPM_TOKEN`, publish or confirm immutable tarballs for `p2p-hiverelay`, `p2p-hiverelay-client`, `p2p-hiverelay-verifier`, and `p2p-hiveservices`, verify every npm `latest` dist-tag equals the release semver, and record `surfaces.npmPackages` in release and handoff evidence. This prevents PearBrowser, PearPaste, anonGPT, and other app consumers from following a stale npm `latest` line.
 - [x] **4.121** Dedup reclaim API boundary — `/api/dedup/reclaim` now routes through `api-dedup-reclaim.js`, which keeps destructive reclaim dry-run by default, accepts only strict safe integer `retainVersions`/`max` inputs, preserves the boolean-only `execute: true` destructive gate, reports unavailable eviction managers without mutation, and collapses unexpected eviction failures to `RECLAIM_FAILED` while emitting the raw error internally.
+- [x] **4.122** Ecosystem latest-default release ordering — `prepare-release` now defaults sibling app consumer sync to npm `latest` mode, while `release-surfaces.yml` publishes/verifies the Hiverelay npm packages before metadata/app-consumer sync. This keeps PearBrowser, PearPaste, anonGPT, and other direct consumers on the newest published line by default without allowing a stale npm dist-tag downgrade; explicit `--ecosystem-dependency-mode local` remains available for checkout-to-checkout development.
+- [x] **4.123** Index-room management API boundary — `/api/manage/index-room` now routes through `api-index-room.js`, which validates object bodies, trims and enforces 52-character z32 room keys, reports unsupported relay nodes without mutation, and collapses setter/persistence failures to a stable `persist-failed` response while emitting the raw error internally.
 
 ---
 
@@ -213,7 +215,7 @@ a full release.
   `api-alert-management.js`, `api-auth-helpers.js`, `api-auth-failures.js`, `api-validation.js`,
   `api-request.js`, `api-cors.js`, `api-dashboard-html.js`, `api-body.js`,
   `api-config-update.js`, `api-response.js`, `api-rate-limit.js`,
-  `api-health.js`, `api-eviction-purge.js`, `api-dedup-reclaim.js`, `api-lifecycle-actions.js`,
+  `api-health.js`, `api-eviction-purge.js`, `api-dedup-reclaim.js`, `api-index-room.js`, `api-lifecycle-actions.js`,
   `api-management-snapshots.js`, `api-safe-config.js`,
   `api-service-config.js`, and
   `api-service-management.js`, `api-mode-transport.js`, `api-usage-telemetry.js`,
@@ -296,7 +298,8 @@ a full release.
   eviction-purge helper owns authenticated operator purge request validation,
   50-key batch caps, per-key errors, and freed-byte aggregation; the
   dedup-reclaim helper owns strict dry-run/execute parsing and redacted
-  eviction-manager failure payloads while the
+  eviction-manager failure payloads; the index-room helper owns z32 pointer
+  validation and redacted setter-failure handling while the
   lower-level eviction manager keeps archive/custody entries sacred; the
   lifecycle-actions helper owns restart/shutdown response payloads, deferred
   stop/start scheduling, restart error events, and clean/unclean

@@ -387,6 +387,44 @@ jobs:
           echo "HIVERELAY_RELEASE_IMAGE_SMOKE_EVIDENCE_SHA256=$image_smoke_sha" >> "$GITHUB_ENV"
           echo "HIVERELAY_RELEASE_IMAGE_SMOKE_STATUS=passed" >> "$GITHUB_ENV"
 
+      - name: Publish npm packages
+        if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
+        working-directory: hiverelay
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          expected="${{ steps.rel.outputs.semver }}"
+          published=0
+          for pkg in packages/core packages/client packages/verifier packages/services; do
+            name="$(node -p "require('./${pkg}/package.json').name")"
+            version="$(node -p "require('./${pkg}/package.json').version")"
+            if [ "$version" != "$expected" ]; then
+              echo "$name package.json version is $version; expected $expected" >&2
+              exit 1
+            fi
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version already exists on npm; leaving tarball immutable."
+            else
+              npm publish "$pkg" --access public --tag latest
+              published=1
+            fi
+            latest="$(npm view "$name" dist-tags.latest 2>/dev/null || true)"
+            if [ "$latest" != "$version" ]; then
+              npm dist-tag add "$name@$version" latest
+            fi
+            latest="$(npm view "$name" dist-tags.latest)"
+            if [ "$latest" != "$version" ]; then
+              echo "$name latest dist-tag is $latest; expected $version" >&2
+              exit 1
+            fi
+          done
+          if [ "$published" = "1" ]; then
+            echo "HIVERELAY_NPM_PUBLISH_STATUS=published" >> "$GITHUB_ENV"
+          else
+            echo "HIVERELAY_NPM_PUBLISH_STATUS=current" >> "$GITHUB_ENV"
+          fi
+
       - name: Return to main for metadata sync
         if: ${{ steps.rel.outputs.is_branch_candidate != 'true' }}
         working-directory: hiverelay
@@ -406,6 +444,7 @@ jobs:
           npm run release:prepare -- "${{ steps.rel.outputs.version }}" \
             --channel "${{ steps.rel.outputs.channel }}" \
             --image-digest "$HIVERELAY_IMAGE_DIGEST" \
+            --ecosystem-dependency-mode npm-latest \
             "${args[@]}"
 
       - name: Smoke Umbrel package
@@ -482,44 +521,6 @@ jobs:
             echo "HIVERELAY_STARTOS_PACKAGE_ID=$package_id" >> "$GITHUB_ENV"
           fi
           echo "HIVERELAY_STARTOS_VERIFY_STATUS=passed" >> "$GITHUB_ENV"
-
-      - name: Publish npm packages
-        if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
-        working-directory: hiverelay
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          expected="${{ steps.rel.outputs.semver }}"
-          published=0
-          for pkg in packages/core packages/client packages/verifier packages/services; do
-            name="$(node -p "require('./${pkg}/package.json').name")"
-            version="$(node -p "require('./${pkg}/package.json').version")"
-            if [ "$version" != "$expected" ]; then
-              echo "$name package.json version is $version; expected $expected" >&2
-              exit 1
-            fi
-            if npm view "$name@$version" version >/dev/null 2>&1; then
-              echo "$name@$version already exists on npm; leaving tarball immutable."
-            else
-              npm publish "$pkg" --access public --tag latest
-              published=1
-            fi
-            latest="$(npm view "$name" dist-tags.latest 2>/dev/null || true)"
-            if [ "$latest" != "$version" ]; then
-              npm dist-tag add "$name@$version" latest
-            fi
-            latest="$(npm view "$name" dist-tags.latest)"
-            if [ "$latest" != "$version" ]; then
-              echo "$name latest dist-tag is $latest; expected $version" >&2
-              exit 1
-            fi
-          done
-          if [ "$published" = "1" ]; then
-            echo "HIVERELAY_NPM_PUBLISH_STATUS=published" >> "$GITHUB_ENV"
-          else
-            echo "HIVERELAY_NPM_PUBLISH_STATUS=current" >> "$GITHUB_ENV"
-          fi
 
       - name: Upload StartOS package to GitHub Release
         if: ${{ steps.rel.outputs.is_branch_candidate != 'true' }}

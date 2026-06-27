@@ -7,11 +7,11 @@ import { EXPECTED_CURRENT_CONSUMERS } from '../../scripts/audit-ecosystem-consum
 
 const DIGEST = 'sha256:' + 'a'.repeat(64)
 
-function runPrepare (argv, script = 'scripts/prepare-release.mjs') {
+function runPrepare (argv, script = 'scripts/prepare-release.mjs', extraEnv = {}) {
   return new Promise((resolve) => {
     execFile(process.execPath, [script, ...argv], {
       cwd: process.cwd(),
-      env: { PATH: process.env.PATH || '' },
+      env: { PATH: process.env.PATH || '', ...extraEnv },
       timeout: 10000
     }, (err, stdout, stderr) => {
       resolve({
@@ -72,7 +72,8 @@ test('prepare-release syncs sibling ecosystem consumer defaults', async (t) => {
   const res = await runPrepare([
     'v9.9.9',
     '--image-digest', DIGEST,
-    '--no-umbrel-store'
+    '--no-umbrel-store',
+    '--ecosystem-dependency-mode', 'local'
   ], path.join(repo, 'scripts', 'prepare-release.mjs'))
 
   t.is(res.status, 0, res.stderr)
@@ -91,6 +92,35 @@ test('prepare-release syncs sibling ecosystem consumer defaults', async (t) => {
   const handover = await readFile(path.join(root, '01-browser', 'pearbrowser-desktop', 'docs', 'HIVERELAY-BACKBONE-HANDOVER.md'), 'utf8')
   t.ok(catalog.includes('"version": "9.9.9"'))
   t.ok(handover.includes('`p2p-hiverelay` `9.9.9`'))
+})
+
+test('prepare-release defaults sibling ecosystem consumer checks to npm latest', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-ecosystem-latest-fixture-'))
+  t.teardown(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+  const repo = path.join(root, '00-core', 'hiverelay')
+  await writeMinimalReleaseFixture(repo)
+  await writeEcosystemConsumerFixture(root, '0.16.3')
+
+  const npmLatest = JSON.stringify({
+    'p2p-hiverelay': '9.9.9',
+    'p2p-hiverelay-client': '9.9.9',
+    'p2p-hiverelay-verifier': '9.9.9'
+  })
+  const res = await runPrepare([
+    'v9.9.9',
+    '--image-digest', DIGEST,
+    '--no-umbrel-store',
+    '--check'
+  ], path.join(repo, 'scripts', 'prepare-release.mjs'), {
+    HIVERELAY_NPM_LATEST_JSON: npmLatest
+  })
+
+  t.is(res.status, 1, 'check mode reports app default drift')
+  t.ok(res.stderr.includes('Ecosystem consumer default sync failed:'))
+  t.ok(res.stderr.includes('ecosystem consumer file(s) need default-version sync'))
+  t.ok(res.stderr.includes('expected "latest"'))
 })
 
 test('prepare-release rejects explicit prerelease channel promotion', async (t) => {

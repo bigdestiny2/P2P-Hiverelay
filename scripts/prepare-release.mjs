@@ -3,7 +3,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { EXPECTED_CURRENT_CONSUMERS } from './audit-ecosystem-consumers.mjs'
+import {
+  DEFAULT_DEPENDENCY_MODE,
+  EXPECTED_CURRENT_CONSUMERS
+} from './audit-ecosystem-consumers.mjs'
 import { syncEcosystemConsumers } from './sync-ecosystem-consumers.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -37,7 +40,7 @@ Options:
   --umbrel-store <path>                Community Umbrel store checkout to sync
   --no-umbrel-store                    Skip the sibling community-store checkout
   --no-ecosystem-consumers             Skip sibling app consumer default sync
-  --ecosystem-dependency-mode <mode>    Consumer defaults: local or npm-latest (default: local)
+  --ecosystem-dependency-mode <mode>    Consumer defaults: local or npm-latest (default: npm-latest)
   --allow-unpinned-image               Permit tag-only app-store image refs (not for review)
   --check                              Report drift without writing files
 `
@@ -59,7 +62,7 @@ const releaseNotes = loadReleaseNotes(releaseNotesInline, releaseNotesPath) ||
 assertPublicReleaseNotes(releaseNotes)
 const syncUmbrelStore = !args.noUmbrelStore && !isPrerelease
 const syncEcosystemDefaults = !args.noEcosystemConsumers && !isPrerelease
-const ecosystemDependencyMode = args.ecosystemDependencyMode || process.env.HIVERELAY_ECOSYSTEM_DEPENDENCY_MODE || 'local'
+const ecosystemDependencyMode = args.ecosystemDependencyMode || process.env.HIVERELAY_ECOSYSTEM_DEPENDENCY_MODE || DEFAULT_DEPENDENCY_MODE
 const umbrelStoreRoot = args.umbrelStore
   ? path.resolve(args.umbrelStore)
   : path.resolve(workspaceRoot, 'blindspark-umbrel-store')

@@ -63,6 +63,7 @@ const pearBrowserDemoHtml = readText(hiverelayRoot, 'examples', 'pearbrowser-mar
 const releaseAutomationDocs = readText(hiverelayRoot, 'docs', 'RELEASE_AUTOMATION.md')
 const architectureGraphDoc = readText(hiverelayRoot, 'docs', 'HIVERELAY-ARCHITECTURE-GRAPH.md')
 const architectureGraphSvg = readText(hiverelayRoot, 'docs', 'assets', 'hiverelay-core3-architecture.svg')
+const detailedArchitectureDoc = readText(hiverelayRoot, 'docs', 'HIVERELAY-DETAILED-ARCHITECTURE-DIAGRAM.md')
 const readme = readText(hiverelayRoot, 'README.md')
 const auditDoc = readText(hiverelayRoot, 'docs', 'AUDIT-2026-06-22.md')
 const auditRoadmap = readText(hiverelayRoot, 'docs', 'AUDIT-ROADMAP.md')
@@ -157,6 +158,7 @@ const relayApiDelegationManagement = readText(hiverelayRoot, 'packages', 'core',
 const relayApiDispatch = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-dispatch.js')
 const relayApiEvictionPurge = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-eviction-purge.js')
 const relayApiDedupReclaim = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-dedup-reclaim.js')
+const relayApiIndexRoom = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-index-room.js')
 const relayApiFederationManagement = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-federation-management.js')
 const relayApiForkProofs = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-fork-proofs.js')
 const relayApiGatewayStats = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-gateway-stats.js')
@@ -273,6 +275,7 @@ const apiDelegationManagementTest = readText(hiverelayRoot, 'test', 'unit', 'api
 const apiDispatchTest = readText(hiverelayRoot, 'test', 'unit', 'api-dispatch.test.js')
 const apiEvictionPurgeTest = readText(hiverelayRoot, 'test', 'unit', 'api-eviction-purge.test.js')
 const apiDedupReclaimTest = readText(hiverelayRoot, 'test', 'unit', 'api-dedup-reclaim.test.js')
+const apiIndexRoomTest = readText(hiverelayRoot, 'test', 'unit', 'api-index-room.test.js')
 const apiFederationManagementTest = readText(hiverelayRoot, 'test', 'unit', 'api-federation-management.test.js')
 const apiGatewayStatsTest = readText(hiverelayRoot, 'test', 'unit', 'api-gateway-stats.test.js')
 const federationHardeningTest = readText(hiverelayRoot, 'test', 'unit', 'federation-hardening.test.js')
@@ -308,6 +311,7 @@ const apiUiTokenTest = readText(hiverelayRoot, 'test', 'unit', 'api-ui-token.tes
 const manageCliClientTest = readText(hiverelayRoot, 'test', 'unit', 'manage-cli-client.test.js')
 const configLoaderTest = readText(hiverelayRoot, 'test', 'unit', 'config-loader.test.js')
 const relayNodeTest = readText(hiverelayRoot, 'test', 'unit', 'relay-node.test.js')
+const indexRoomTest = readText(hiverelayRoot, 'test', 'unit', 'index-room.test.js')
 const bareRelaySurfaceTest = readText(hiverelayRoot, 'test', 'unit', 'bare-relay-surface.test.js')
 const bareRuntimeTest = readText(hiverelayRoot, 'test', 'bare', 'index.js')
 const bareHttpServerTest = readText(hiverelayRoot, 'test', 'unit', 'bare-http-server.test.js')
@@ -2115,6 +2119,33 @@ if (
   pass('dedup reclaim route is extracted with strict integer parsing, auth coverage, and redacted failure handling')
 } else {
   fail('dedup reclaim route can drift from strict input parsing, auth coverage, or redacted error handling')
+}
+
+if (
+  relayApi.includes("import { runIndexRoomAction } from './api-index-room.js'") &&
+  relayApi.includes("this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/index-room')") &&
+  relayApi.includes('const result = await runIndexRoomAction({') &&
+  relayApi.includes('emit: (...args) => this.emit(...args)') &&
+  relayApiIndexRoom.includes('export const INDEX_ROOM_KEY_RE') &&
+  relayApiIndexRoom.includes('export function parseIndexRoomRequest') &&
+  relayApiIndexRoom.includes("return { ok: false, message: 'JSON body object required' }") &&
+  relayApiIndexRoom.includes("return { ok: false, message: 'room must be a 52-char z32 key' }") &&
+  relayApiIndexRoom.includes("formatErr('BAD_REQUEST'") &&
+  relayApiIndexRoom.includes("formatErr('UNSUPPORTED', 'index room not supported')") &&
+  relayApiIndexRoom.includes("formatErr('PERSIST_FAILED', 'failed to set index room')") &&
+  relayApiIndexRoom.includes("emit('index-room-error', { error: err })") &&
+  apiIndexRoomTest.includes('api index room: validates and trims z32 room requests') &&
+  apiIndexRoomTest.includes('api index room: rejects malformed body and room before mutation') &&
+  apiIndexRoomTest.includes('api index room: reports unsupported relay node without mutation') &&
+  apiIndexRoomTest.includes('api index room: redacts unexpected setter failures and emits raw error internally') &&
+  indexRoomTest.includes('POST /api/manage/index-room redacts setter failures') &&
+  auditRoadmap.includes('4.123') &&
+  auditRoadmap.includes('api-index-room.js') &&
+  detailedArchitectureDoc.includes('api-index-room.js')
+) {
+  pass('index-room management route is extracted with z32 validation, auth coverage, and redacted setter failure handling')
+} else {
+  fail('index-room management route can drift from z32 validation, auth coverage, or redacted setter failure handling')
 }
 
 if (
@@ -5142,14 +5173,22 @@ if (
   releaseWorkflow.includes('npm view "$name" dist-tags.latest') &&
   releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=published') &&
   releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=current') &&
-  releaseWorkflow.indexOf('Publish npm packages') > releaseWorkflow.indexOf('Sync release metadata') &&
-  releaseWorkflow.indexOf('Publish npm packages') > releaseWorkflow.indexOf('Smoke Umbrel package') &&
-  releaseWorkflow.indexOf('Publish npm packages') > releaseWorkflow.indexOf('Build and verify StartOS package') &&
+  releaseWorkflow.includes('--ecosystem-dependency-mode npm-latest') &&
+  releaseWorkflow.indexOf('Publish npm packages') > releaseWorkflow.indexOf('Smoke pushed release image') &&
+  releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Return to main for metadata sync') &&
+  releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Sync release metadata') &&
+  releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Smoke Umbrel package') &&
+  releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Build and verify StartOS package') &&
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Upload StartOS package to GitHub Release') &&
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Commit HiveRelay release surfaces') &&
   releaseAutomationDocs.includes('Publishes `p2p-hiverelay`, `p2p-hiverelay-client`') &&
   releaseAutomationDocs.includes('verifies every `latest`') &&
-  releaseAutomationDocs.includes('app consumers safely move from local workspace')
+  releaseAutomationDocs.includes('app consumers safely move') &&
+  releaseAutomationDocs.includes('from local workspace links') &&
+  releaseAutomationDocs.includes('--ecosystem-dependency-mode npm-latest') &&
+  prepareRelease.includes('DEFAULT_DEPENDENCY_MODE') &&
+  prepareReleaseTest.includes('prepare-release defaults sibling ecosystem consumer checks to npm latest') &&
+  auditRoadmap.includes('Ecosystem latest-default release ordering')
 ) {
   pass('release workflow publishes npm packages and verifies latest dist-tags before downstream app-store packaging')
 } else {

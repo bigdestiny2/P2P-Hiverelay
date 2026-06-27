@@ -40,6 +40,12 @@ source-marker checks. As of 2026-06-27, the default npm-latest guard is
 important: npm `latest` is still `0.9.2` for the published packages, so
 switching PearBrowser, PearPaste, anonGPT, or other customer apps to raw
 `latest` before the release workflow publishes 0.20.2+ would downgrade installs.
+Direct npm checks on 2026-06-27 returned `0.9.2` for `p2p-hiverelay`,
+`p2p-hiverelay-client`, `p2p-hiverelay-verifier`, and `p2p-hiveservices`.
+The full release workflow now publishes or promotes those npm packages before
+running `release:prepare`, and `release:prepare` defaults sibling app consumer
+sync to npm `latest` mode; use `--ecosystem-dependency-mode local` only for
+checkout-to-checkout development.
 
 If a release review environment cannot resolve the npm registry from inside
 Node, feed the already-collected shell preflight evidence to the guard:
@@ -135,7 +141,9 @@ package surface:
   `npm run audit:ecosystem-consumers:local` pass. The local ecosystem sync
   reports no pending app package, lockfile, or versioned source-marker writes.
   The default published-app `npm run ecosystem:sync -- --check` remains blocked
-  until npm `latest` resolves to `0.20.2`. The
+  until npm `latest` resolves to `0.20.2`; release automation now publishes npm
+  before app-consumer metadata sync so a normal full release can clear that
+  block without downgrading apps. The
   ecosystem audit reports lockfile migration checks as `ok` for all eight current direct consumers and
   source-level checks for PearBrowser catalog metadata, PearPaste customer docs/probes,
   and Pear POS bridge docs/comments so package defaults cannot quietly drift back
