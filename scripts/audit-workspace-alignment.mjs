@@ -38,6 +38,17 @@ function missingTerms (text, terms) {
   return terms.filter(term => !text.includes(term))
 }
 
+function countOccurrences (text, term) {
+  if (!term) return 0
+  let count = 0
+  let index = 0
+  while ((index = text.indexOf(term, index)) !== -1) {
+    count++
+    index += term.length
+  }
+  return count
+}
+
 function htmlIds (text) {
   return Array.from(text.matchAll(/\bid\s*=\s*["']([^"']+)["']/gi), match => match[1])
 }
@@ -1507,6 +1518,7 @@ if (
   relayApi.includes('persistConfig: () => this._persistConfig()') &&
   relayApi.includes('serviceConfigPayload: () => this._getServiceConfigPayload()') &&
   relayApi.includes("if (!result.ok && result.kind === 'config-persist') return this._configPersistErrorResponse(res)") &&
+  countOccurrences(relayApi, "if (path === '/api/manage/services/config')") === 1 &&
   relayApiServiceManagement.includes('export async function runServiceManagementAction') &&
   relayApiServiceManagement.includes('const configuredPlugins = configuredServicePlugins(config)') &&
   relayApiServiceManagement.includes('const bundleParents = bundleParentsForService(service, configuredPlugins)') &&
@@ -1530,11 +1542,12 @@ if (
   cliManage.includes('Runtime-only service stop') &&
   developerDocs.includes('configured disables persist before unregistering') &&
   auditRoadmap.includes('Durable live service disable') &&
+  auditRoadmap.includes('Service config duplicate-route cleanup') &&
   auditDoc.includes('Hardened live service disable semantics')
 ) {
   pass('service management disable persists configured plugin removal before unregistering live providers')
 } else {
-  fail('service management disable can still look successful without durable plugin removal')
+  fail('service management disable can still look successful without durable plugin removal or duplicated service-config dispatcher branches')
 }
 
 if (

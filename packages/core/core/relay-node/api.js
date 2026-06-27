@@ -1382,20 +1382,6 @@ export class RelayAPI extends EventEmitter {
           return this._handleServiceManagement(res, body)
         }
 
-        // Persist the Services-layer opt-in (enable + which builtins). Applied
-        // on restart (the registry is constructed at boot). config + restart,
-        // same posture as subsidy/lease — keeps services off by default.
-        if (path === '/api/manage/services/config') {
-          if (!this.node.setServicesConfig) {
-            return this._json(res, { error: formatErr('UNSUPPORTED', 'services config not supported') }, 503)
-          }
-          const saved = await this.node.setServicesConfig({
-            enabled: body && body.enabled === true,
-            plugins: body && Array.isArray(body.plugins) ? body.plugins : []
-          })
-          return this._json(res, { ok: true, ...saved, restartRequired: true })
-        }
-
         if (path === '/api/manage/mode') {
           return this._handleModeSwitch(res, body)
         }
