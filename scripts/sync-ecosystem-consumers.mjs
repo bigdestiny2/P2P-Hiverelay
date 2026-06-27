@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import {
   CURRENT_HIVERELAY_VERSION,
+  DEFAULT_DEPENDENCY_MODE,
   EXPECTED_STALE_CONSUMERS,
   checkConsumerState,
   getExpectedCurrentConsumers,
@@ -32,10 +33,10 @@ Usage:
   node scripts/sync-ecosystem-consumers.mjs [--workspace-root <path>] [--expected-version <semver>] [--dependency-mode <local|npm-latest>] [--check] [--dry-run]
 
 Updates the known direct ecosystem app consumers so their default
-p2p-hiverelay* package defaults point at either the current local Hiverelay
-workspace packages (default) or the npm latest dist-tag. npm-latest mode first
-verifies every relevant npm latest dist-tag equals the expected Hiverelay
-version, then requires npm to refresh package-lock metadata. Use --check in CI
+p2p-hiverelay* package defaults point at the npm latest dist-tag by default.
+npm-latest mode first verifies every relevant npm latest dist-tag equals the
+expected Hiverelay version, then requires npm to refresh package-lock metadata.
+Use --dependency-mode local for development workspace links. Use --check in CI
 to fail if a consumer would be changed.
 `
 
@@ -44,7 +45,7 @@ if (isMain()) main()
 export function syncEcosystemConsumers (opts = {}) {
   const workspaceRoot = path.resolve(opts.workspaceRoot || workspaceRootDefault)
   const expectedVersion = opts.expectedVersion || CURRENT_HIVERELAY_VERSION
-  const dependencyMode = normalizeDependencyMode(opts.dependencyMode || 'local')
+  const dependencyMode = normalizeDependencyMode(opts.dependencyMode || DEFAULT_DEPENDENCY_MODE)
   const expectedCurrent = opts.expectedCurrent || getExpectedCurrentConsumers({ dependencyMode })
   const dryRun = Boolean(opts.dryRun || opts.check)
   const changes = []
@@ -229,18 +230,43 @@ function syncConsumerLockfile ({ workspaceRoot, consumer, expectedVersion, dryRu
 function syncConsumerSourceMarkers ({ workspaceRoot, consumer, expectedVersion, dryRun }) {
   const changes = []
   for (const spec of consumer.sourceChecks || []) {
-    if (typeof spec.termTemplate !== 'string') continue
+    const nextTerm = renderSourceTerm(spec, expectedVersion)
+    if (!nextTerm) continue
     const file = path.join(workspaceRoot, spec.file)
     const text = fs.readFileSync(file, 'utf8')
-    const nextTerm = spec.termTemplate.replaceAll('{version}', expectedVersion)
-    const marker = termTemplateRegex(spec.termTemplate)
-    const next = text.replace(marker, nextTerm)
+    const next = replaceSourceMarker(text, spec, expectedVersion, nextTerm)
     if (next === text) continue
     const rel = slash(path.relative(workspaceRoot, file))
     changes.push(`${rel}: ${spec.label} -> ${expectedVersion}`)
     if (!dryRun) fs.writeFileSync(file, next)
   }
   return changes
+}
+
+function renderSourceTerm (spec, expectedVersion) {
+  if (typeof spec.termTemplate === 'string') return spec.termTemplate.replaceAll('{version}', expectedVersion)
+  if (typeof spec.term === 'string') return spec.term
+  return null
+}
+
+function replaceSourceMarker (text, spec, expectedVersion, nextTerm) {
+  let next = text
+  const templates = uniqueStrings([
+    spec.termTemplate,
+    ...(spec.replaceTermTemplates || [])
+  ])
+  for (const template of templates) {
+    next = next.replace(termTemplateRegex(template), nextTerm)
+  }
+  const terms = uniqueStrings([
+    spec.term,
+    ...(spec.replaceTerms || [])
+  ])
+  for (const term of terms) {
+    const rendered = term.replaceAll('{version}', expectedVersion)
+    next = next.split(rendered).join(nextTerm)
+  }
+  return next
 }
 
 function verifyNpmLatestDistTags ({ expectedCurrent, expectedVersion, npmLatestVersions } = {}) {
@@ -397,6 +423,10 @@ function slash (value) {
 
 function escapeRegExp (value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function uniqueStrings (values) {
+  return Array.from(new Set(values.filter(value => typeof value === 'string' && value.length > 0)))
 }
 
 function parseArgs (argv) {

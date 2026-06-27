@@ -525,18 +525,21 @@ need to know which transport path succeeded.
 ## 12. Live Consumer Integration Paths
 
 These are the current ecosystem consumers that must keep pulling the newest
-HiveRelay line by default. The local guard is
+HiveRelay line by default. The published-app guard is
 `npm run ecosystem:sync` followed by `npm run audit:ecosystem-consumers`, which
-updates package manifests, nearest lockfiles, and versioned source markers, then
-checks them for direct `p2p-hiverelay*` drift.
+updates package manifests to npm `latest`, refreshes nearest lockfiles from
+registry metadata, and verifies the resolved package version before customers
+can pick up the new line. The explicit local-development guard is
+`npm run ecosystem:sync:local` followed by
+`npm run audit:ecosystem-consumers:local`.
 
 | Consumer | HiveRelay surface | Current default |
 |---|---|---|
-| PearBrowser desktop | Bundled `p2p-hiverelay`, client, and verifier packages; HTTP catalog/gateway bridge | Local `file:` workspace links to the `0.20.2` packages |
+| PearBrowser desktop | Bundled `p2p-hiverelay`, client, and verifier packages; HTTP catalog/gateway bridge | npm `latest`, guarded to resolve to `0.20.2` after publish |
 | PearBrowser mobile | HTTP catalog, capability-doc, and gateway contracts over HTTPS relay transport | Wire-contract consumer; not a direct package pin |
-| PearPaste | Encrypted availability through split core/client packages and custody-safe relay paths | Local `file:` links to core/client `0.20.2` |
-| anonGPT native | Relay/onion AI app importing current core services subpaths | Local `file:` link to core `0.20.2` |
-| POS, Tickets, p2pbuilders, Opengit bridge, hiverelay-test | Direct app/site/experiment consumers | Local `file:` links checked with lockfile metadata and source markers |
+| PearPaste | Encrypted availability through split core/client packages and custody-safe relay paths | npm `latest`, guarded to resolve to core/client `0.20.2` after publish |
+| anonGPT native | Relay/onion AI app importing current core services subpaths | npm `latest`, guarded to resolve to core `0.20.2` after publish |
+| POS, Tickets, p2pbuilders, Opengit bridge, hiverelay-test | Direct app/site/experiment consumers | npm `latest`, guarded with lockfile metadata and source markers |
 
 ## 13. Module Inventory
 

@@ -216,6 +216,7 @@ async function writeMinimalReleaseFixture (repo) {
 }
 
 async function writeEcosystemConsumerFixture (root, oldVersion) {
+  const sourceTermsByFile = new Map()
   for (const consumer of EXPECTED_CURRENT_CONSUMERS) {
     const packageFile = path.join(root, consumer.path)
     const packageDir = path.dirname(packageFile)
@@ -261,8 +262,16 @@ async function writeEcosystemConsumerFixture (root, oldVersion) {
       const term = typeof spec.termTemplate === 'string'
         ? spec.termTemplate.replaceAll('{version}', oldVersion)
         : spec.term
-      await writeText(path.join(root, spec.file), `${term}\n`)
+      if (typeof term === 'string') {
+        const terms = sourceTermsByFile.get(spec.file) || []
+        terms.push(term)
+        sourceTermsByFile.set(spec.file, terms)
+      }
     }
+  }
+
+  for (const [file, terms] of sourceTermsByFile) {
+    await writeText(path.join(root, file), `${terms.join('\n')}\n`)
   }
 }
 

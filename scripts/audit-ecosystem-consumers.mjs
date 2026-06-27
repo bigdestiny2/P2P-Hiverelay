@@ -17,6 +17,7 @@ const HIVERELAY_DEPS = [
 ]
 
 const DEPENDENCY_MODES = new Set(['local', 'npm-latest'])
+export const DEFAULT_DEPENDENCY_MODE = 'npm-latest'
 const NPM_LATEST_SPEC = 'latest'
 
 const DEP_SECTIONS = [
@@ -119,8 +120,11 @@ export const EXPECTED_CURRENT_CONSUMERS = [
       },
       {
         file: '01-browser/pearbrowser-desktop/docs/HIVERELAY-BACKBONE-HANDOVER.md',
-        label: 'PearBrowser backbone handover names the current Hiverelay workspace line',
+        label: 'PearBrowser backbone handover names the current Hiverelay package line',
         termTemplate: '`p2p-hiverelay` `{version}` from the local HiveRelay workspace',
+        termTemplateByDependencyMode: {
+          'npm-latest': '`p2p-hiverelay` `{version}` from the npm latest release line'
+        },
         rejectTerms: [
           'npm v0.8.12',
           '^0.8.12'
@@ -138,8 +142,36 @@ export const EXPECTED_CURRENT_CONSUMERS = [
     sourceChecks: [
       {
         file: '02-apps/pearpaste/docs/RECOVERY_DESIGN.md',
-        label: 'recovery design uses local workspace package guidance',
+        label: 'recovery design uses current core package default guidance',
         term: '"p2p-hiverelay": "file:../../00-core/hiverelay/packages/core"',
+        termByDependencyMode: {
+          'npm-latest': '"p2p-hiverelay": "latest"'
+        },
+        rejectTermsByDependencyMode: {
+          'npm-latest': [
+            '"p2p-hiverelay": "file:../../00-core/hiverelay/packages/core"',
+            '"p2p-hiverelay-client": "file:../../00-core/hiverelay/packages/client"'
+          ]
+        },
+        rejectTerms: [
+          '"p2p-hiverelay-client": "^0.9.2"',
+          'Blocked on upstream npm publish',
+          'Other 0.8.x',
+          'changes we\'d pick up'
+        ]
+      },
+      {
+        file: '02-apps/pearpaste/docs/RECOVERY_DESIGN.md',
+        label: 'recovery design uses current client package default guidance',
+        term: '"p2p-hiverelay-client": "file:../../00-core/hiverelay/packages/client"',
+        termByDependencyMode: {
+          'npm-latest': '"p2p-hiverelay-client": "latest"'
+        },
+        rejectTermsByDependencyMode: {
+          'npm-latest': [
+            '"p2p-hiverelay-client": "file:../../00-core/hiverelay/packages/client"'
+          ]
+        },
         rejectTerms: [
           '"p2p-hiverelay-client": "^0.9.2"',
           'Blocked on upstream npm publish',
@@ -151,6 +183,9 @@ export const EXPECTED_CURRENT_CONSUMERS = [
         file: '02-apps/pearpaste/docs/PEARPASTE_TECHNICAL_SPEC.md',
         label: 'technical spec names current Hiverelay package integration',
         termTemplate: 'HiveRelay `{version}` local workspace packages by default',
+        termTemplateByDependencyMode: {
+          'npm-latest': 'HiveRelay `{version}` packages through npm `latest` by default'
+        },
         rejectTerms: [
           'Integrate `p2p-hiverelay-client` `0.8.13`'
         ]
@@ -253,8 +288,16 @@ export const EXPECTED_CURRENT_CONSUMERS = [
     sourceChecks: [
       {
         file: '04-experiments/Opengit/HIVERELAY-INTEGRATION.md',
-        label: 'Opengit integration note names current workspace defaults',
-        term: 'Current package default',
+        label: 'Opengit integration note names current package defaults',
+        termTemplate: 'Current package default:** `packages/opengit-relay` uses local workspace links to `p2p-hiverelay` and `p2p-hiverelay-client` from `../../../../00-core/hiverelay/packages/*`. Release builds should move to the matching `^{version}` semver range only after the HiveRelay release is promoted.',
+        termTemplateByDependencyMode: {
+          'npm-latest': 'Current package default:** `packages/opengit-relay` uses npm `latest` for `p2p-hiverelay` and `p2p-hiverelay-client`, guarded to resolve `{version}` after the HiveRelay release is promoted.'
+        },
+        rejectTermsByDependencyMode: {
+          'npm-latest': [
+            'uses local workspace links'
+          ]
+        },
         rejectTerms: [
           'npm-publish lag',
           '0.7.3',
@@ -287,7 +330,7 @@ export const EXPECTED_CURRENT_CONSUMERS = [
 export const EXPECTED_STALE_CONSUMERS = [
 ]
 
-export function normalizeDependencyMode (value = 'local') {
+export function normalizeDependencyMode (value = DEFAULT_DEPENDENCY_MODE) {
   if (!DEPENDENCY_MODES.has(value)) {
     throw new Error(`Invalid dependency mode ${JSON.stringify(value)}. Expected local or npm-latest.`)
   }
@@ -295,14 +338,42 @@ export function normalizeDependencyMode (value = 'local') {
 }
 
 export function getExpectedCurrentConsumers (opts = {}) {
-  const dependencyMode = normalizeDependencyMode(opts.dependencyMode || 'local')
+  const dependencyMode = normalizeDependencyMode(opts.dependencyMode)
   return EXPECTED_CURRENT_CONSUMERS.map(consumer => ({
     ...consumer,
     deps: dependencyMode === 'npm-latest'
       ? Object.fromEntries(Object.keys(consumer.deps).map(dep => [dep, NPM_LATEST_SPEC]))
       : { ...consumer.deps },
+    sourceChecks: resolveSourceChecksForMode(consumer.sourceChecks, dependencyMode),
     dependencyMode
   }))
+}
+
+function resolveSourceChecksForMode (sourceChecks = [], dependencyMode) {
+  return sourceChecks.map(spec => {
+    const resolved = { ...spec }
+    const termByMode = spec.termByDependencyMode || {}
+    const termTemplateByMode = spec.termTemplateByDependencyMode || {}
+    const rejectTermsByMode = spec.rejectTermsByDependencyMode || {}
+
+    if (typeof termByMode[dependencyMode] === 'string') resolved.term = termByMode[dependencyMode]
+    if (typeof termTemplateByMode[dependencyMode] === 'string') resolved.termTemplate = termTemplateByMode[dependencyMode]
+    resolved.rejectTerms = uniqueStrings([
+      ...(spec.rejectTerms || []),
+      ...(rejectTermsByMode[dependencyMode] || [])
+    ])
+    resolved.replaceTerms = uniqueStrings([
+      spec.term,
+      ...Object.values(termByMode),
+      resolved.term
+    ])
+    resolved.replaceTermTemplates = uniqueStrings([
+      spec.termTemplate,
+      ...Object.values(termTemplateByMode),
+      resolved.termTemplate
+    ])
+    return resolved
+  })
 }
 
 const usage = `
@@ -311,10 +382,11 @@ Usage:
 
 Scans package.json files outside the Hiverelay source tree and verifies the
 known direct p2p-hiverelay consumers plus local release snapshot defaults. The
-default dependency mode is local workspace links. npm-latest mode verifies the
-published-app contract where app manifests request the npm latest dist-tag and
-lockfiles resolve that tag to the expected Hiverelay version. The command fails
-on new unclassified pins, stale package metadata, or inventory/source-plan drift.
+default dependency mode is npm-latest, which verifies the published-app contract
+where app manifests request the npm latest dist-tag and lockfiles resolve that
+tag to the expected Hiverelay version. Use --dependency-mode local for
+development workspace links. The command fails on new unclassified pins, stale
+package metadata, or inventory/source-plan drift.
 `
 
 if (isMain()) main()
@@ -664,6 +736,10 @@ function renderSourceTerm (spec, version) {
     return spec.termTemplate.replaceAll('{version}', version)
   }
   return spec.term
+}
+
+function uniqueStrings (values) {
+  return Array.from(new Set(values.filter(value => typeof value === 'string' && value.length > 0)))
 }
 
 export function formatConsumerReport (summary) {

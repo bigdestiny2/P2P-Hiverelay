@@ -265,15 +265,15 @@ manually dispatched, the workflow:
    runnable platform duplicates, then writes
    `release-image-manifest-evidence.json`.
 
-Before cutting a release from a full sibling workspace, also run
-`npm run ecosystem:sync -- --check` and `npm run audit:ecosystem-consumers` from
-the Hiverelay repo. The sync check proves PearBrowser, PearPaste, anonGPT, and
-the other direct consumers already default to the latest local Hiverelay package
-links, linked lockfile metadata, and versioned source markers. Full
-`release:prepare` runs now attempt the same ecosystem sync automatically when
-the sibling workspace is present; HiveRelay-only CI checkouts record a skip note
-instead. The audit proves there are no new unclassified `p2p-hiverelay*` app
-pins.
+Before cutting a release from a full sibling workspace, run
+`npm run ecosystem:sync:local -- --check` and
+`npm run audit:ecosystem-consumers:local` from the Hiverelay repo. That local
+check proves PearBrowser, PearPaste, anonGPT, and the other direct consumers can
+still follow the current checkout's package links, linked lockfile metadata, and
+versioned source markers before npm publish. Full `release:prepare` runs attempt
+the same local ecosystem sync automatically when the sibling workspace is
+present; HiveRelay-only CI checkouts record a skip note instead. The audit
+proves there are no new unclassified `p2p-hiverelay*` app pins.
 7. Boots the exact pushed image reference (`<version>@sha256:...`) in Docker,
    waits for `/health`, verifies the Blindspark appliance dashboard and setup
    page, proves the home-server `HIVERELAY_ACCEPT_MODE=review` default,
@@ -297,10 +297,10 @@ pins.
    StartOS package smoke/verify gates but before the release asset upload,
    fleet promotion, Umbrel store updates, and StartOS registry publication.
    This is the gate that lets PearBrowser, PearPaste, anonGPT, and other app consumers safely move from local workspace links to the published release line.
-   After this gate is green, run `npm run ecosystem:sync:latest` from a
-   full sibling workspace to switch tracked app manifests to npm `latest` and
-   refresh lockfiles from real registry metadata. Before this gate is green,
-   `ecosystem:sync:latest` intentionally refuses to edit app defaults.
+   After this gate is green, run `npm run ecosystem:sync` from a full sibling
+   workspace to switch tracked app manifests to npm `latest` and refresh
+   lockfiles from real registry metadata. Before this gate is green, the default
+   `ecosystem:sync` intentionally refuses to edit app defaults.
 12. Uploads the verified `.s9pk` to the GitHub Release as a sideloadable
    StartOS package.
 13. Commits the synchronized release surfaces back to `main`:

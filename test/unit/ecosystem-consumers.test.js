@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import {
+  DEFAULT_DEPENDENCY_MODE,
   EXPECTED_CURRENT_CONSUMERS,
   checkConsumerState,
   formatConsumerReport,
@@ -485,6 +486,7 @@ test('ecosystem sync updates app defaults and linked package lock metadata', (t)
     workspaceRoot: root,
     expectedVersion: '0.20.2',
     expectedCurrent,
+    dependencyMode: 'local',
     snapshotChecks: false
   })
 
@@ -507,11 +509,56 @@ test('ecosystem sync updates app defaults and linked package lock metadata', (t)
     workspaceRoot: root,
     expectedVersion: '0.20.2',
     expectedCurrent,
+    dependencyMode: 'local',
     snapshotChecks: false,
     check: true
   })
   t.ok(check.ok)
   t.is(check.changes.length, 0)
+})
+
+test('ecosystem consumer helpers default published apps to npm latest', (t) => {
+  const consumers = getExpectedCurrentConsumers()
+  const pearpaste = consumers.find(consumer => consumer.path === '02-apps/pearpaste/package.json')
+
+  t.is(DEFAULT_DEPENDENCY_MODE, 'npm-latest')
+  t.ok(pearpaste)
+  t.is(pearpaste.dependencyMode, 'npm-latest')
+  t.is(pearpaste.deps['p2p-hiverelay'], 'latest')
+  t.is(pearpaste.deps['p2p-hiverelay-client'], 'latest')
+  t.ok(pearpaste.sourceChecks.some(check => check.termTemplate === 'HiveRelay `{version}` packages through npm `latest` by default'))
+  t.ok(pearpaste.sourceChecks.some(check => check.term === '"p2p-hiverelay": "latest"'))
+
+  const local = getExpectedCurrentConsumers({ dependencyMode: 'local' })
+    .find(consumer => consumer.path === '02-apps/pearpaste/package.json')
+  t.is(local.dependencyMode, 'local')
+  t.ok(local.deps['p2p-hiverelay'].startsWith('file:'))
+  t.ok(local.sourceChecks.some(check => check.termTemplate === 'HiveRelay `{version}` local workspace packages by default'))
+  t.ok(local.sourceChecks.some(check => check.term === '"p2p-hiverelay": "file:../../00-core/hiverelay/packages/core"'))
+})
+
+test('ecosystem sync default npm-latest path refuses stale registry latest', (t) => {
+  const root = fixtureWorkspace()
+  const consumer = {
+    ...getExpectedCurrentConsumers().find(consumer => consumer.path === '02-apps/pearpaste/package.json'),
+    sourceChecks: []
+  }
+
+  const result = syncEcosystemConsumers({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer],
+    npmLatestVersions: {
+      'p2p-hiverelay': '0.9.2',
+      'p2p-hiverelay-client': '0.20.2'
+    },
+    snapshotChecks: false
+  })
+
+  t.absent(result.ok)
+  t.is(result.dependencyMode, 'npm-latest')
+  t.ok(result.errors.some(error => error.includes('p2p-hiverelay npm latest dist-tag is 0.9.2; expected 0.20.2')))
+  t.is(result.changes.length, 0, 'default npm latest mode blocks before writing app files')
 })
 
 test('ecosystem sync refuses npm-latest defaults when npm latest would downgrade', (t) => {
@@ -632,6 +679,7 @@ test('ecosystem sync updates versioned app source markers', (t) => {
     workspaceRoot: root,
     expectedVersion: '0.20.2',
     expectedCurrent: [consumer],
+    dependencyMode: 'local',
     snapshotChecks: false
   })
 
