@@ -202,16 +202,9 @@ test('ecosystem consumer audit guards PearBrowser and POS current Hiverelay sour
     '01-browser/pearbrowser-desktop/package.json',
     '02-apps/pear-pos/package.json'
   ].includes(consumer.path))
+  const pearbrowser = expectedCurrent.find(consumer => consumer.path === '01-browser/pearbrowser-desktop/package.json')
   writeExpectedConsumerPackages(root, expectedCurrent)
-  writeFile(root, '01-browser/pearbrowser-desktop/catalog-source/pearbrowser-network.catalog.json', `
-    { "id": "hiverelay", "version": "0.20.2" }
-  `)
-  writeFile(root, '01-browser/pearbrowser-desktop/backend/catalogue-seed.js', `
-    module.exports = [{ "name": "HiveRelay", "version": "0.20.2" }]
-  `)
-  writeFile(root, '01-browser/pearbrowser-desktop/docs/HIVERELAY-BACKBONE-HANDOVER.md', `
-    Relay core: \`p2p-hiverelay\` \`0.20.2\` from the local HiveRelay workspace
-  `)
+  writeSourceCheckTerms(root, pearbrowser, '0.20.2')
   writeFile(root, '02-apps/pear-pos/app/backend/hiverelay-client.js', `
     // ESM -> CJS bridge for p2p-hiverelay-client@0.20.2
   `)
@@ -243,9 +236,7 @@ test('ecosystem consumer audit guards PearBrowser and POS current Hiverelay sour
 
   t.ok(summary.ok)
 
-  writeFile(root, '01-browser/pearbrowser-desktop/backend/catalogue-seed.js', `
-    module.exports = [{ "name": "HiveRelay", "version": "0.16.3" }]
-  `)
+  writeSourceCheckTerms(root, pearbrowser, '0.16.3')
   const failedChecks = scanConsumerSourceChecks({
     workspaceRoot: root,
     expectedCurrent,
@@ -522,6 +513,59 @@ test('ecosystem sync updates app defaults and linked package lock metadata', (t)
   t.is(check.changes.length, 0)
 })
 
+test('ecosystem sync updates versioned app source markers', (t) => {
+  const root = fixtureWorkspace()
+  const consumer = EXPECTED_CURRENT_CONSUMERS.find(consumer => consumer.path === '01-browser/pearbrowser-desktop/package.json')
+  writeExpectedConsumerPackages(root, [consumer])
+  writePackageLock(root, '01-browser/pearbrowser-desktop/package-lock.json', {
+    packages: {
+      '': {
+        dependencies: consumer.deps
+      },
+      '../../00-core/hiverelay/packages/client': {
+        name: 'p2p-hiverelay-client',
+        version: '0.16.3',
+        dependencies: {
+          'p2p-hiverelay': '^0.16.3'
+        }
+      },
+      '../../00-core/hiverelay/packages/core': {
+        name: 'p2p-hiverelay',
+        version: '0.16.3'
+      },
+      '../../00-core/hiverelay/packages/verifier': {
+        name: 'p2p-hiverelay-verifier',
+        version: '0.16.3'
+      }
+    }
+  })
+  writeSourceCheckTerms(root, consumer, '0.16.3')
+
+  const result = syncEcosystemConsumers({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer],
+    snapshotChecks: false
+  })
+
+  t.ok(result.ok)
+  t.ok(result.changes.some(change => change.includes('catalog-source/pearbrowser-network.catalog.json')))
+  t.ok(result.changes.some(change => change.includes('backend/catalogue-seed.js')))
+  t.ok(result.changes.some(change => change.includes('docs/HIVERELAY-BACKBONE-HANDOVER.md')))
+  t.ok(fs.readFileSync(path.join(root, '01-browser/pearbrowser-desktop/catalog-source/pearbrowser-network.catalog.json'), 'utf8').includes('"version": "0.20.2"'))
+  t.ok(fs.readFileSync(path.join(root, '01-browser/pearbrowser-desktop/backend/catalogue-seed.js'), 'utf8').includes('"version": "0.20.2"'))
+  t.ok(fs.readFileSync(path.join(root, '01-browser/pearbrowser-desktop/docs/HIVERELAY-BACKBONE-HANDOVER.md'), 'utf8').includes('`p2p-hiverelay` `0.20.2`'))
+
+  const sourceChecks = scanConsumerSourceChecks({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer],
+    expectedStale: []
+  })
+  t.ok(sourceChecks.every(check => check.present))
+  t.ok(sourceChecks.every(check => check.rejectedTermsFound.length === 0))
+})
+
 test('ecosystem consumer audit guards local release snapshot defaults', (t) => {
   const root = fixtureWorkspace()
   writeSnapshot(root, '00-core/hr-fleet', '0.20.2')
@@ -590,6 +634,15 @@ function writeFile (root, relPath, body) {
   const file = path.join(root, relPath)
   fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.writeFileSync(file, body)
+}
+
+function writeSourceCheckTerms (root, consumer, version) {
+  for (const spec of consumer.sourceChecks || []) {
+    const term = typeof spec.termTemplate === 'string'
+      ? spec.termTemplate.replaceAll('{version}', version)
+      : spec.term
+    writeFile(root, spec.file, `${term}\n`)
+  }
 }
 
 function writePackageLock (root, relPath, body) {

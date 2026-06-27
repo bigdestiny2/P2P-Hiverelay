@@ -3,10 +3,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { EXPECTED_CURRENT_CONSUMERS } from './audit-ecosystem-consumers.mjs'
+import { syncEcosystemConsumers } from './sync-ecosystem-consumers.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, '..')
 const workspaceRoot = path.resolve(repoRoot, '..')
+const ecosystemWorkspaceRoot = path.resolve(repoRoot, '..', '..')
 const imageName = 'ghcr.io/bigdestiny2/p2p-hiverelay'
 const README_STATUS_REGEX = /Status:\s*v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:[^\n*|]*)?/
 
@@ -33,6 +36,7 @@ Options:
   --release-notes-file <path>          Read release notes from a file
   --umbrel-store <path>                Community Umbrel store checkout to sync
   --no-umbrel-store                    Skip the sibling community-store checkout
+  --no-ecosystem-consumers             Skip sibling app consumer default sync
   --allow-unpinned-image               Permit tag-only app-store image refs (not for review)
   --check                              Report drift without writing files
 `
@@ -53,6 +57,7 @@ const releaseNotes = loadReleaseNotes(releaseNotesInline, releaseNotesPath) ||
   `Blindspark ${tag}: synchronized HiveRelay release for the fleet, Umbrel packages, and StartOS metadata.`
 assertPublicReleaseNotes(releaseNotes)
 const syncUmbrelStore = !args.noUmbrelStore && !isPrerelease
+const syncEcosystemDefaults = !args.noEcosystemConsumers && !isPrerelease
 const umbrelStoreRoot = args.umbrelStore
   ? path.resolve(args.umbrelStore)
   : path.resolve(workspaceRoot, 'blindspark-umbrel-store')
@@ -71,6 +76,7 @@ if (isPrerelease && args.umbrelStore) {
 }
 
 syncPackageVersions()
+syncEcosystemConsumerDefaults()
 syncFleetChannel()
 syncDockerAndPackageMetadata()
 syncStartOs()
@@ -106,7 +112,7 @@ function parseArgs (argv) {
       continue
     }
     const key = camel(arg.slice(2))
-    if (['check', 'noUmbrelStore', 'allowUnpinnedImage'].includes(key)) {
+    if (['check', 'noUmbrelStore', 'noEcosystemConsumers', 'allowUnpinnedImage'].includes(key)) {
       out[key] = true
       continue
     }
@@ -211,6 +217,50 @@ function syncFleetChannel () {
       json[channel] = tag
     }
   })
+}
+
+function syncEcosystemConsumerDefaults () {
+  if (!syncEcosystemDefaults) {
+    if (isPrerelease) notes.push('ecosystem consumer defaults skipped for pre-release')
+    else notes.push('ecosystem consumer defaults skipped by --no-ecosystem-consumers')
+    return
+  }
+
+  const missingConsumers = EXPECTED_CURRENT_CONSUMERS
+    .filter(consumer => !fs.existsSync(path.join(ecosystemWorkspaceRoot, consumer.path)))
+    .map(consumer => consumer.path)
+
+  if (missingConsumers.length === EXPECTED_CURRENT_CONSUMERS.length) {
+    notes.push(`ecosystem consumer defaults skipped; full sibling workspace not found at ${ecosystemWorkspaceRoot}`)
+    return
+  }
+
+  if (missingConsumers.length > 0) {
+    die(`Cannot sync ecosystem consumer defaults from ${ecosystemWorkspaceRoot}; missing ${missingConsumers.join(', ')}`)
+  }
+
+  const result = syncEcosystemConsumers({
+    workspaceRoot: ecosystemWorkspaceRoot,
+    expectedVersion: version,
+    snapshotChecks: false,
+    check: checkOnly
+  })
+
+  for (const change of result.changes) {
+    const rel = `ecosystem/${change}`
+    if (!changes.includes(rel)) changes.push(rel)
+  }
+
+  if (!result.ok) {
+    die([
+      'Ecosystem consumer default sync failed:',
+      ...result.errors.map(error => `- ${error}`)
+    ].join('\n'))
+  }
+
+  if (result.changes.length === 0) {
+    notes.push('ecosystem consumer defaults already point at the release version')
+  }
 }
 
 function syncDockerAndPackageMetadata () {

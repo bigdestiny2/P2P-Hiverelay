@@ -100,7 +100,7 @@ export const EXPECTED_CURRENT_CONSUMERS = [
       {
         file: '01-browser/pearbrowser-desktop/catalog-source/pearbrowser-network.catalog.json',
         label: 'PearBrowser catalog advertises the current Hiverelay app release',
-        termTemplate: '"version": "{version}"',
+        termTemplate: '"id": "hiverelay",\n      "name": "HiveRelay",\n      "description": "Always-on relay infrastructure for the Pear and Hyperswarm ecosystem. Blind peering, NAT traversal, HTTP gateway. Apache-2.0.",\n      "author": "bigdestiny2",\n      "version": "{version}"',
         rejectTerms: [
           '"version": "0.16.3"'
         ]
@@ -108,7 +108,7 @@ export const EXPECTED_CURRENT_CONSUMERS = [
       {
         file: '01-browser/pearbrowser-desktop/backend/catalogue-seed.js',
         label: 'PearBrowser bundled catalog seed advertises the current Hiverelay app release',
-        termTemplate: '"version": "{version}"',
+        termTemplate: '"name": "HiveRelay",\n      "type": "hypersite",\n      "driveKey": "9f2b34aad8cd1a681d5f07d8a76768f0dc92a5008251d02a8600eb0751ad6b5f",\n      "author": "bigdestiny2",\n      "categories": [\n        "infrastructure",\n        "site"\n      ],\n      "description": "Always-on relay infrastructure for the Pear and Hyperswarm ecosystem. Blind peering, NAT traversal, HTTP gateway. Apache-2.0.",\n      "version": "{version}"',
         rejectTerms: [
           '"version": "0.16.3"'
         ]
@@ -134,7 +134,7 @@ export const EXPECTED_CURRENT_CONSUMERS = [
     sourceChecks: [
       {
         file: '02-apps/pearpaste/docs/RECOVERY_DESIGN.md',
-        label: 'recovery design uses local 0.20.2 workspace package guidance',
+        label: 'recovery design uses local workspace package guidance',
         term: '"p2p-hiverelay": "file:../../00-core/hiverelay/packages/core"',
         rejectTerms: [
           '"p2p-hiverelay-client": "^0.9.2"',

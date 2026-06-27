@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { EXPECTED_CURRENT_CONSUMERS } from '../../scripts/audit-ecosystem-consumers.mjs'
 
 const DIGEST = 'sha256:' + 'a'.repeat(64)
 
@@ -57,6 +58,39 @@ test('prepare-release defaults full release channel to both', async (t) => {
   const startosManifest = await readFile(path.join(repo, 'startos', 'manifest.yaml'), 'utf8')
   t.absent(startosManifest.includes('metadata.license'), 'StartOS release-notes block keeps the following key on a new line')
   t.ok(startosManifest.includes('metadata.\nlicense: apache-2.0'), 'StartOS release-notes block is newline-terminated')
+})
+
+test('prepare-release syncs sibling ecosystem consumer defaults', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-ecosystem-fixture-'))
+  t.teardown(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+  const repo = path.join(root, '00-core', 'hiverelay')
+  await writeMinimalReleaseFixture(repo)
+  await writeEcosystemConsumerFixture(root, '0.16.3')
+
+  const res = await runPrepare([
+    'v9.9.9',
+    '--image-digest', DIGEST,
+    '--no-umbrel-store'
+  ], path.join(repo, 'scripts', 'prepare-release.mjs'))
+
+  t.is(res.status, 0, res.stderr)
+  t.ok(res.stdout.includes('ecosystem/01-browser/pearbrowser-desktop/package.json'))
+
+  const pearbrowser = JSON.parse(await readFile(path.join(root, '01-browser', 'pearbrowser-desktop', 'package.json'), 'utf8'))
+  t.is(pearbrowser.dependencies['p2p-hiverelay'], 'file:../../00-core/hiverelay/packages/core')
+  t.is(pearbrowser.dependencies['p2p-hiverelay-client'], 'file:../../00-core/hiverelay/packages/client')
+  t.is(pearbrowser.dependencies['p2p-hiverelay-verifier'], 'file:../../00-core/hiverelay/packages/verifier')
+
+  const lock = JSON.parse(await readFile(path.join(root, '01-browser', 'pearbrowser-desktop', 'package-lock.json'), 'utf8'))
+  t.is(lock.packages['../../00-core/hiverelay/packages/core'].version, '9.9.9')
+  t.is(lock.packages['../../00-core/hiverelay/packages/client'].dependencies['p2p-hiverelay'], '^9.9.9')
+
+  const catalog = await readFile(path.join(root, '01-browser', 'pearbrowser-desktop', 'catalog-source', 'pearbrowser-network.catalog.json'), 'utf8')
+  const handover = await readFile(path.join(root, '01-browser', 'pearbrowser-desktop', 'docs', 'HIVERELAY-BACKBONE-HANDOVER.md'), 'utf8')
+  t.ok(catalog.includes('"version": "9.9.9"'))
+  t.ok(handover.includes('`p2p-hiverelay` `9.9.9`'))
 })
 
 test('prepare-release rejects explicit prerelease channel promotion', async (t) => {
@@ -141,6 +175,8 @@ test('prepare-release removes local-only README status suffix for public release
 
 async function writeMinimalReleaseFixture (repo) {
   await writeText(path.join(repo, 'scripts', 'prepare-release.mjs'), await readFile('scripts/prepare-release.mjs', 'utf8'))
+  await writeText(path.join(repo, 'scripts', 'audit-ecosystem-consumers.mjs'), await readFile('scripts/audit-ecosystem-consumers.mjs', 'utf8'))
+  await writeText(path.join(repo, 'scripts', 'sync-ecosystem-consumers.mjs'), await readFile('scripts/sync-ecosystem-consumers.mjs', 'utf8'))
   await writeJson(path.join(repo, 'package.json'), { name: 'p2p-hiverelay-monorepo', version: '0.16.3' })
   await writeJson(path.join(repo, 'packages', 'core', 'package.json'), { name: 'p2p-hiverelay', version: '0.16.3' })
   await writeJson(path.join(repo, 'packages', 'services', 'package.json'), { name: 'p2p-hiveservices', version: '0.16.3' })
@@ -165,6 +201,57 @@ async function writeMinimalReleaseFixture (repo) {
   await writeText(path.join(repo, 'startos', 'manifest.yaml'), 'id: blindspark\nversion: 0.16.3\nrelease-notes: |\n  old\nlicense: apache-2.0\n')
   await writeText(path.join(repo, 'startos', 'Makefile'), 'VERSION ?= $(shell sed -n \'s/.*"version"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p\' ../package.json | head -n 1)\n')
   await writeText(path.join(repo, 'startos', 'README.md'), 'Status: v0.16.3, one-page dashboard\n')
+}
+
+async function writeEcosystemConsumerFixture (root, oldVersion) {
+  for (const consumer of EXPECTED_CURRENT_CONSUMERS) {
+    const packageFile = path.join(root, consumer.path)
+    const packageDir = path.dirname(packageFile)
+    const lockRoot = consumer.path.includes('/packages/opengit-relay/')
+      ? path.join(root, '04-experiments', 'Opengit')
+      : packageDir
+    const packageEntryKey = path.relative(lockRoot, packageDir).split(path.sep).join('/')
+    const oldDeps = Object.fromEntries(Object.keys(consumer.deps).map(dep => [dep, `^${oldVersion}`]))
+    await writeJson(packageFile, {
+      name: path.basename(packageDir),
+      version: '0.0.0',
+      dependencies: oldDeps
+    })
+
+    const packages = {
+      [packageEntryKey === '' ? '' : packageEntryKey]: {
+        dependencies: oldDeps
+      }
+    }
+    for (const dep of Object.keys(consumer.deps)) {
+      const target = path.resolve(packageDir, consumer.deps[dep].slice('file:'.length))
+      const targetKey = path.relative(lockRoot, target).split(path.sep).join('/')
+      packages[targetKey] = {
+        name: dep,
+        version: oldVersion
+      }
+      if (dep === 'p2p-hiverelay-client') {
+        packages[targetKey].dependencies = {
+          'p2p-hiverelay': `^${oldVersion}`
+        }
+      }
+    }
+
+    await writeJson(path.join(lockRoot, 'package-lock.json'), {
+      name: path.basename(lockRoot),
+      version: '0.0.0',
+      lockfileVersion: 3,
+      requires: true,
+      packages
+    })
+
+    for (const spec of consumer.sourceChecks || []) {
+      const term = typeof spec.termTemplate === 'string'
+        ? spec.termTemplate.replaceAll('{version}', oldVersion)
+        : spec.term
+      await writeText(path.join(root, spec.file), `${term}\n`)
+    }
+  }
 }
 
 async function writeJson (file, value) {

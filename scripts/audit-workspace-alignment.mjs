@@ -3968,6 +3968,8 @@ if (
   ecosystemConsumersSync.includes('syncEcosystemConsumers') &&
   ecosystemConsumersSync.includes('EXPECTED_CURRENT_CONSUMERS') &&
   ecosystemConsumersSync.includes('setDependency') &&
+  ecosystemConsumersSync.includes('syncConsumerSourceMarkers') &&
+  ecosystemConsumersSync.includes('termTemplateRegex') &&
   ecosystemConsumersSync.includes('scanCurrentConsumerLockChecks') &&
   ecosystemConsumersSync.includes('linked package metadata') &&
   ecosystemConsumersSync.includes('--check') &&
@@ -3982,6 +3984,7 @@ if (
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit rejects stale lockfile Hiverelay entries') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit finds monorepo package lockfiles') &&
   ecosystemConsumersAuditTest.includes('ecosystem sync updates app defaults and linked package lock metadata') &&
+  ecosystemConsumersAuditTest.includes('ecosystem sync updates versioned app source markers') &&
   readme.includes('ECOSYSTEM-UPGRADE-0.20.2.md') &&
   readme.includes('npm run ecosystem:sync -- --check') &&
   ecosystemUpgradeDoc.includes('p2p-hiverelay/client') &&
@@ -4005,6 +4008,7 @@ if (
   ecosystemUpgradeDoc.includes('Pear POS bridge docs/comments') &&
   ecosystemUpgradeDoc.includes('cannot quietly drift back') &&
   ecosystemUpgradeDoc.includes('to old client guidance') &&
+  ecosystemUpgradeDoc.includes('versioned source markers') &&
   ecosystemUpgradeDoc.includes('npm run ecosystem:sync') &&
   pearBrowserIntegrationDoc.includes('npm run ecosystem:sync') &&
   pearIntegrationDoc.includes('npm run ecosystem:sync')
@@ -4323,8 +4327,8 @@ const currentTestMatrixRequiredTerms = [
   '`npm run audit:public-artifacts`',
   '`node --test test/unit/ecosystem-consumers.test.js`',
   '`git diff --check`',
-  '12/12',
-  '55/55',
+  '13/13',
+  '64/64',
   'PearPaste recovery/spec doc regressions',
   'public-artifact-secret-scan.test.js',
   'release-secret-template.test.js',
@@ -4803,6 +4807,12 @@ if (
   fleetRolloutCheckTest.includes('defaults to both fleet channels') &&
   readme.includes('npm run fleet:check-rollout -- --target v<version> --channel both') &&
   prepareRelease.includes('!args.noUmbrelStore && !isPrerelease') &&
+  prepareRelease.includes('!args.noEcosystemConsumers && !isPrerelease') &&
+  prepareRelease.includes('syncEcosystemConsumerDefaults()') &&
+  prepareRelease.includes('syncEcosystemConsumers({') &&
+  prepareRelease.includes('snapshotChecks: false') &&
+  prepareRelease.includes('ecosystem consumer defaults skipped for pre-release') &&
+  prepareReleaseTest.includes('prepare-release syncs sibling ecosystem consumer defaults') &&
   prepareRelease.includes("semver.includes('-') ? 'none' : 'both'") &&
   prepareReleaseTest.includes('defaults full release channel to both') &&
   prepareRelease.includes('cannot promote fleet/app-store channel') &&

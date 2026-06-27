@@ -32,7 +32,8 @@ Usage:
 Updates the known direct ecosystem app consumers so their default
 p2p-hiverelay* package links point at the current local Hiverelay workspace
 packages, then refreshes package-lock linked-package metadata to the current
-Hiverelay version. Use --check in CI to fail if a consumer would be changed.
+Hiverelay version and versioned source markers such as bundled catalog entries.
+Use --check in CI to fail if a consumer would be changed.
 `
 
 if (isMain()) main()
@@ -53,6 +54,12 @@ export function syncEcosystemConsumers (opts = {}) {
         dryRun
       }))
       changes.push(...syncConsumerLockfile({
+        workspaceRoot,
+        consumer,
+        expectedVersion,
+        dryRun
+      }))
+      changes.push(...syncConsumerSourceMarkers({
         workspaceRoot,
         consumer,
         expectedVersion,
@@ -174,6 +181,29 @@ function syncConsumerLockfile ({ workspaceRoot, consumer, expectedVersion, dryRu
   return changes
 }
 
+function syncConsumerSourceMarkers ({ workspaceRoot, consumer, expectedVersion, dryRun }) {
+  const changes = []
+  for (const spec of consumer.sourceChecks || []) {
+    if (typeof spec.termTemplate !== 'string') continue
+    const file = path.join(workspaceRoot, spec.file)
+    const text = fs.readFileSync(file, 'utf8')
+    const nextTerm = spec.termTemplate.replaceAll('{version}', expectedVersion)
+    const marker = termTemplateRegex(spec.termTemplate)
+    const next = text.replace(marker, nextTerm)
+    if (next === text) continue
+    const rel = slash(path.relative(workspaceRoot, file))
+    changes.push(`${rel}: ${spec.label} -> ${expectedVersion}`)
+    if (!dryRun) fs.writeFileSync(file, next)
+  }
+  return changes
+}
+
+function termTemplateRegex (template) {
+  const semver = String.raw`v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?`
+  const parts = template.split('{version}').map(escapeRegExp)
+  return new RegExp(parts.join(semver), 'g')
+}
+
 function setDependency (target, dep, value, preferredSection) {
   const section = findDepSection(target, dep) || preferredSection
   let changed = false
@@ -234,6 +264,10 @@ function writeJson (file, body) {
 
 function slash (value) {
   return value.split(path.sep).join('/')
+}
+
+function escapeRegExp (value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function parseArgs (argv) {

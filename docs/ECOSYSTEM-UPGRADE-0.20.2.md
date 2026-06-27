@@ -18,8 +18,9 @@ npm run audit:ecosystem-consumers
 the known direct app consumers so their default `p2p-hiverelay*` package links
 point at this local workspace. It also refreshes the linked package metadata in
 the nearest app lockfile, including split-client `p2p-hiverelay` ranges such as
-`^0.20.2`. Use `--check` in a release review to fail if any app would still
-need a default-version write.
+`^0.20.2`, and rewrites versioned source markers such as the PearBrowser
+bundled catalog and app handover notes. Use `--check` in a release review to
+fail if any app would still need a default-version write.
 
 The audit checks package manifests and lockfile metadata across the workspace
 and requires every direct app consumer to point at the current local Hiverelay
@@ -98,8 +99,8 @@ package surface:
 - Hiverelay: `npm test`, `npm run lint`, `npm audit --audit-level=high`,
   `npm run audit:workspace`, `npm run ecosystem:sync -- --check`, and
   `npm run audit:ecosystem-consumers` pass. The ecosystem sync reports no
-  pending app package or lockfile writes. The ecosystem audit reports lockfile
-  migration checks as `ok` for all eight current direct consumers and
+  pending app package, lockfile, or versioned source-marker writes. The
+  ecosystem audit reports lockfile migration checks as `ok` for all eight current direct consumers and
   source-level checks for PearBrowser catalog metadata, PearPaste customer docs/probes,
   and Pear POS bridge docs/comments so package defaults cannot quietly drift back
   to old client guidance. It also reports snapshot/default version checks as `ok` for

@@ -66,7 +66,8 @@ or the community store. The workflow rejects prereleases if a channel other
 than `none` is requested. `release:prepare` follows the same rule locally:
 pre-release versions default to `channel=none` and reject explicit fleet/app
 store channel promotion. They also skip the community Umbrel store by default
-and reject an explicit pre-release `--umbrel-store` target.
+and reject an explicit pre-release `--umbrel-store` target. They do not move
+sibling ecosystem app defaults.
 
 Full releases are distribution-complete by default. Before any public GitHub
 Release is looked up, created, reused, or written to, the workflow requires the
@@ -265,8 +266,11 @@ Before cutting a release from a full sibling workspace, also run
 `npm run ecosystem:sync -- --check` and `npm run audit:ecosystem-consumers` from
 the Hiverelay repo. The sync check proves PearBrowser, PearPaste, anonGPT, and
 the other direct consumers already default to the latest local Hiverelay package
-links and linked lockfile metadata; the audit proves there are no new
-unclassified `p2p-hiverelay*` app pins.
+links, linked lockfile metadata, and versioned source markers. Full
+`release:prepare` runs now attempt the same ecosystem sync automatically when
+the sibling workspace is present; HiveRelay-only CI checkouts record a skip note
+instead. The audit proves there are no new unclassified `p2p-hiverelay*` app
+pins.
 7. Boots the exact pushed image reference (`<version>@sha256:...`) in Docker,
    waits for `/health`, verifies the Blindspark appliance dashboard and setup
    page, proves the home-server `HIVERELAY_ACCEPT_MODE=review` default,
