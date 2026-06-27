@@ -26,8 +26,17 @@ import { Federation } from 'p2p-hiverelay/core/federation.js'
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-function pickPort () {
-  return 50000 + Math.floor(Math.random() * 10000)
+async function pickUnusedPort () {
+  const server = http.createServer()
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const { port } = server.address()
+  await new Promise((resolve, reject) => {
+    server.close((err) => err ? reject(err) : resolve())
+  })
+  return port
 }
 
 // Minimal RelayNode stand-in. Federation only reaches into this surface.
@@ -96,7 +105,6 @@ function fakeAppKey (i, salt = '') {
 // and federation would dedupe the second one's apps).
 // Returns { port, close, requests } where `requests` counts hits.
 async function startMultiPathServer ({ count, appsPerCatalog, delayMs = 0, keyNamespace = 'srv' } = {}) {
-  const port = pickPort()
   let requests = 0
   const server = http.createServer((req, res) => {
     requests++
@@ -124,7 +132,11 @@ async function startMultiPathServer ({ count, appsPerCatalog, delayMs = 0, keyNa
     if (delayMs > 0) setTimeout(send, delayMs)
     else send()
   })
-  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve))
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const { port } = server.address()
   return {
     port,
     close: () => new Promise((resolve) => server.close(resolve)),
@@ -134,7 +146,6 @@ async function startMultiPathServer ({ count, appsPerCatalog, delayMs = 0, keyNa
 
 // Server that serves a single catalog with N apps at /catalog.json.
 async function startSingleBigCatalogServer (numApps) {
-  const port = pickPort()
   const apps = []
   for (let i = 0; i < numApps; i++) {
     apps.push({
@@ -154,7 +165,11 @@ async function startSingleBigCatalogServer (numApps) {
     res.setHeader('Content-Type', 'application/json')
     res.end(body)
   })
-  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve))
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const { port } = server.address()
   return { port, close: () => new Promise((resolve) => server.close(resolve)) }
 }
 
@@ -200,7 +215,7 @@ test('federation poll: slow + dead follows do not starve fast follows', async (t
   // Pick a port and don't bind anything to it. _fetchCatalog with timeout
   // 10s will eventually settle with null — Promise.allSettled means it doesn't
   // block the others.
-  const deadPort = pickPort()
+  const deadPort = await pickUnusedPort()
 
   const node = makeFakeNode('review')
   const fed = new Federation({ node })
