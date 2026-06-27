@@ -13,6 +13,7 @@ const DEFAULT_REPO = 'bigdestiny2/P2P-Hiverelay'
 const DEFAULT_BLOCKER_LOG = path.join(root, 'docs', 'ship-handoff', 'issue-120-release-distribution-preflight.txt')
 const VALID_GITHUB_TOKEN = `ghp_${'a'.repeat(36)}`
 const VALID_GITHUB_TOKEN_ALT = `gho_${'b'.repeat(36)}`
+const VALID_NPM_TOKEN = `npm_${'c'.repeat(36)}`
 const VALID_FLEET_KEY = fakePrivateKeyBlock('OPENSSH PRIVATE KEY', 'fake-fleet-key')
 const VALID_STARTOS_KEY = fakePrivateKeyBlock('PRIVATE KEY', 'fake-startos-key')
 
@@ -407,6 +408,7 @@ function validDistributionEnv () {
     UMBREL_STORE_TOKEN: VALID_GITHUB_TOKEN,
     UMBREL_OFFICIAL_PR_TOKEN: VALID_GITHUB_TOKEN_ALT,
     UMBREL_OFFICIAL_FORK: 'bigdestiny2/umbrel-apps',
+    NPM_TOKEN: VALID_NPM_TOKEN,
     STARTOS_DEVELOPER_KEY_PEM: VALID_STARTOS_KEY,
     STARTOS_REGISTRY_URL: 'https://registry.start9.com'
   }

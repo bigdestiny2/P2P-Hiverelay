@@ -8,9 +8,9 @@ Docker/runtime, and env-file hardening work through the inspected commit.
 ## Current Source State
 
 - Branch: `main`
-- HEAD inspected: `94580c6`
-- Commit subject: `release: sync ecosystem consumer defaults`
-- Worktree: clean snapshot (`main@94580c6`)
+- HEAD inspected: `c399b5f`
+- Commit subject: `release: gate ecosystem latest on npm publish`
+- Worktree: clean snapshot (`main@c399b5f`)
 - Package version: `p2p-hiverelay-monorepo@0.20.2`
 - Architecture graph: `docs/HIVERELAY-ARCHITECTURE-GRAPH.md` and
   `docs/assets/hiverelay-core3-architecture.svg`
@@ -19,8 +19,8 @@ Docker/runtime, and env-file hardening work through the inspected commit.
 
 - Inspected commit CI finished green:
   audit, lint, unit, integration, and Bare tests passed.
-- Post-merge main Test run: `28293344980` passed.
-- Post-merge Docker snapshot publish: `28293344978` passed.
+- Post-merge main Test run: `28295902190` passed.
+- Post-merge Docker snapshot publish: `28295902210` passed.
 - Release default probes were regenerated from
   `scripts/check-release-distribution-env.mjs`:
   - Full releases with no explicit channel resolve to `both`.
@@ -37,9 +37,9 @@ Docker/runtime, and env-file hardening work through the inspected commit.
 
 ## Current Red
 
-Release distribution preflight run: `28293455583` (issue #120).
-- Run URL: https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/28293455583
-- Latest checked preflight: state `completed/failure`, head `main@94580c6`, created `2026-06-27T15:27:01Z`.
+Release distribution preflight run: `28295985241` (issue #120).
+- Run URL: https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/28295985241
+- Latest checked preflight: state `completed/failure`, head `main@c399b5f`, created `2026-06-27T17:07:09Z`.
 - Earlier passing preflight `28238930607` at `1ffffe6` is superseded by this newer failure.
 
 The run is side-effect-free and is failing on malformed GitHub-hosted release
@@ -48,6 +48,7 @@ values, not missing repo code:
 - `UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters`
 - `UMBREL_OFFICIAL_PR_TOKEN must be a GitHub token without whitespace or control characters`
 - `UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps`
+- `NPM_TOKEN`
 - `STARTOS_REGISTRY_URL must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames`
 
 The same preflight did not report malformed `FLEET_SSH_PRIVATE_KEY` or

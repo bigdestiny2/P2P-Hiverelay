@@ -2,8 +2,12 @@ Release distribution preflight failed:
 - UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters
 - UMBREL_OFFICIAL_PR_TOKEN must be a GitHub token without whitespace or control characters
 - UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps
+- NPM_TOKEN
 - STARTOS_REGISTRY_URL must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames
 
 Repair path:
-- Put corrected release values in a local candidate env file outside the repo, for example /private/tmp/hiverelay-release-secrets.env.
+- Generate a local candidate file outside the repo: npm run release:write-secret-template -- --out /private/tmp/hiverelay-release-secrets.env
+- Replace every REPLACE_* placeholder with corrected release values.
 - Validate without publishing: npm run release:check-distribution-env -- --env-file /private/tmp/hiverelay-release-secrets.env --channel both --prerelease false
+- Apply through stdin after validation: npm run release:apply-github-secrets -- --repo bigdestiny2/P2P-Hiverelay --env-file /private/tmp/hiverelay-release-secrets.env
+- Re-run the side-effect-free GitHub Actions workflow release-distribution-preflight.yml with channel=both and prerelease=false before rerunning release-surfaces.yml.

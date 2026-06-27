@@ -158,12 +158,13 @@
 - [x] **4.111** Quorum ranking signal hardening — client quorum selection now treats `score` as valid only when it is finite and normalized to `[0, 1]`, and treats `latencyMs` as valid only when it is finite and non-negative. Malformed capability docs cannot win selector ranking with `Infinity`, huge scores, negative latency, or other out-of-contract ranking values.
 - [x] **4.112** Router rate-limit bucket cap — service RPC per-route/per-peer token buckets now have a bounded map with stale-bucket pruning before new peer buckets are accepted. A rotating-peer flood cannot grow router memory without bound, and existing buckets remain observable through router stats.
 - [x] **4.113** Data-plane gateway rate-limit bucket cap — the dedicated public `GatewayServer` now caps per-IP fixed-window buckets and prunes stale/malformed buckets before admitting a new IP bucket. Reverse-proxy or rotating-IP floods cannot turn the file-serving rate limiter into an unbounded memory sink.
-- [x] **4.114** Current ship handoff evidence refresh — the 2026-06-26 handoff now reflects current `main` at the ecosystem default-sync commit, including fresh Test and Docker workflow IDs, ecosystem-consumer parity gates with source-marker coverage, the StartOS release-image blocker, and the newest current-main release-distribution preflight failure after the appliance release-readiness merge.
+- [x] **4.114** Current ship handoff evidence refresh — the 2026-06-26 handoff now reflects current `main` at the npm-latest release gate commit, including fresh Test and Docker workflow IDs, ecosystem-consumer parity gates with source-marker coverage, the StartOS release-image blocker, and the newest current-main release-distribution preflight failure after the appliance release-readiness merge.
 - [x] **4.115** Lease management API durability boundary — `/api/lease` and `/api/lease/config` now route through `api-lease.js`, which sanitizes paid-lease status payloads, counts only live lease-managed registry entries, and uses durable rate persistence before returning success. Persistence failures now roll the live rate back and return a stable `persist-failed` response instead of letting operator UI flows look successful when the write did not land.
 - [x] **4.116** Usage telemetry route shadow cleanup — `/api/usage` now preserves payout-eligible `usageLedger` receipts while surfacing dashboard bandwidth telemetry when a bandwidth receipt tracker exists, and `/api/poker/usage` resolves either the running poker service provider or a direct `node.pokerApp` before returning the blind-safe append/seat tally. This removes stale duplicate-route behavior that could make authenticated operator telemetry look empty or unavailable.
 - [x] **4.117** PearBrowser HTTPS relay transport alignment — PearBrowser desktop and mobile now declare `bare-https` directly and route relay GET/POST calls through scheme-aware HTTP/HTTPS transports, with mobile unit coverage for default `80`/`443` relay ports. This protects the default public `https://relay-*.p2phiverelay.xyz` gateway paths from silently using plain HTTP defaults.
 - [x] **4.118** PearBrowser public ecosystem metadata sync — `pearbrowser.com` has been refreshed to the bundled desktop release metadata (`v0.5.0`, production length `33841`), and `npm run audit:workspace` now guards the public-site hero/spec/manifest values against the desktop README plus the browser relay-transport dependency contract.
 - [x] **4.119** Release secret template hardening — `release:write-secret-template` now writes an owner-only local candidate env file outside the repo, refuses repo paths/symlink overwrites/accidental overwrites, and emits placeholders that fail validation until real GitHub, fleet, Umbrel, and StartOS values are pasted. The local validator, GitHub preflight summary, release docs, and ship handoff all point operators at this generated-template repair path before `release:apply-github-secrets`.
+- [x] **4.120** Full-release npm latest proof — full `release-surfaces.yml` runs now require `NPM_TOKEN`, publish or confirm immutable tarballs for `p2p-hiverelay`, `p2p-hiverelay-client`, `p2p-hiverelay-verifier`, and `p2p-hiveservices`, verify every npm `latest` dist-tag equals the release semver, and record `surfaces.npmPackages` in release and handoff evidence. This prevents PearBrowser, PearPaste, anonGPT, and other app consumers from following a stale npm `latest` line.
 
 ---
 
@@ -173,10 +174,11 @@ These are not code-only tasks. They require evidence from live infrastructure or
 external review-controlled stores before the full project goal can be marked
 done.
 
-Current masked-value preflight evidence: GitHub Actions run `28293455583` fails
+Current masked-value preflight evidence: GitHub Actions run `28295985241` fails
 on malformed `UMBREL_STORE_TOKEN`, `UMBREL_OFFICIAL_PR_TOKEN`,
-`UMBREL_OFFICIAL_FORK`, and `STARTOS_REGISTRY_URL`. Secret names are present,
-but GitHub does not expose values through `gh`; generate a local candidate with
+`UMBREL_OFFICIAL_FORK`, missing `NPM_TOKEN`, and malformed
+`STARTOS_REGISTRY_URL`. Secret names are present except `NPM_TOKEN`, but GitHub
+does not expose values through `gh`; generate a local candidate with
 `npm run release:write-secret-template`, validate it, rotate with
 `npm run release:apply-github-secrets`, and rerun the preflight before cutting
 a full release.

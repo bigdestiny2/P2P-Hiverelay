@@ -7,6 +7,7 @@ import {
 
 const BLOCKER_STDERR = `Release distribution preflight failed:
 - UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters
+- NPM_TOKEN
 - STARTOS_REGISTRY_URL must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames
 
 Repair path:
@@ -17,6 +18,7 @@ Repair path:
 test('ship handoff updater parses release blocker facts from preflight stderr', (t) => {
   t.alike(parseReleaseBlockers(BLOCKER_STDERR), [
     'UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters',
+    'NPM_TOKEN',
     'STARTOS_REGISTRY_URL must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames'
   ])
 })
@@ -66,6 +68,7 @@ test('ship handoff updater renders git and preflight-derived facts', (t) => {
   t.ok(doc.includes('Latest checked preflight: state `completed/failure`, head `main@a8eb77d`, created `2026-06-26T14:25:04Z`.'))
   t.ok(doc.includes('Earlier passing preflight `28238930607` at `1ffffe6` is superseded by this newer failure.'))
   t.ok(doc.includes('UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters'))
+  t.ok(doc.includes('NPM_TOKEN'))
   t.ok(doc.includes('Full releases with no explicit channel resolve to `both`.'))
   t.ok(doc.includes('Prereleases with no explicit channel resolve to `none`.'))
   t.ok(doc.includes('node --test test/unit/ecosystem-consumers.test.js'))
