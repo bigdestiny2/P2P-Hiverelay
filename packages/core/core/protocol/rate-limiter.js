@@ -15,6 +15,7 @@ export class TokenBucketRateLimiter {
     this.buckets = new Map() // peerKey -> { tokens, lastRefill, violations }
     this.bannedPeers = new Map() // peerKey -> bannedUntil
     this._cleanupInterval = setInterval(() => this._cleanup(), 60_000)
+    if (this._cleanupInterval.unref) this._cleanupInterval.unref()
   }
 
   /**

@@ -22,6 +22,7 @@ export class PubSub extends EventEmitter {
     this._maxSubscribersPerTopic = opts.maxSubscribersPerTopic ?? 1_000
     this._defaultTTL = opts.defaultTTL ?? 60 * 60 * 1000 // 1 hour
     this._cleanupInterval = setInterval(() => this._cleanupExpired(), 60_000)
+    if (this._cleanupInterval.unref) this._cleanupInterval.unref()
   }
 
   /**

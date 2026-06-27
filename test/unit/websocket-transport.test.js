@@ -3,26 +3,28 @@ import { WebSocketTransport } from 'p2p-hiverelay/transports/websocket/index.js'
 import { WebSocketStream } from 'p2p-hiverelay/transports/websocket/stream.js'
 import WebSocket from 'ws'
 
-function getPort () {
-  return 18000 + Math.floor(Math.random() * 2000)
+function makeTransport (opts = {}) {
+  return new WebSocketTransport({ port: 0, host: '127.0.0.1', ...opts })
 }
 
-test('WebSocketTransport - starts and listens on configured port', async (t) => {
-  const port = getPort()
-  const transport = new WebSocketTransport({ port })
+function url (transport) {
+  return `ws://127.0.0.1:${transport.port}`
+}
+
+test('WebSocketTransport - starts and records assigned port', async (t) => {
+  const transport = makeTransport()
 
   t.teardown(async () => { await transport.stop() })
 
   await transport.start()
   t.is(transport.running, true, 'transport is running')
-  t.is(transport.port, port, 'correct port')
+  t.ok(transport.port > 0, 'assigned port recorded')
 })
 
 test('WebSocketTransport - client connects and emits privacy-safe connection event', async (t) => {
   t.plan(5)
 
-  const port = getPort()
-  const transport = new WebSocketTransport({ port })
+  const transport = makeTransport()
 
   t.teardown(async () => {
     await transport.stop()
@@ -38,14 +40,14 @@ test('WebSocketTransport - client connects and emits privacy-safe connection eve
     t.absent(JSON.stringify(info).includes('127.0.0.1'), 'serialized info does not include raw loopback IP')
   })
 
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`)
+  const ws = new WebSocket(url(transport))
   await new Promise((resolve) => { ws.on('open', resolve) })
   ws.close()
 })
 
 test('WebSocketTransport - IP hash is stable per transport and rotated across transports', (t) => {
-  const a = new WebSocketTransport({ port: 0 })
-  const b = new WebSocketTransport({ port: 0 })
+  const a = makeTransport()
+  const b = makeTransport()
 
   const h1 = a._hashIp('192.0.2.42')
   const h2 = a._hashIp('192.0.2.42')
@@ -60,8 +62,7 @@ test('WebSocketTransport - IP hash is stable per transport and rotated across tr
 })
 
 test('WebSocketTransport - bidirectional data flow', async (t) => {
-  const port = getPort()
-  const transport = new WebSocketTransport({ port })
+  const transport = makeTransport()
 
   t.teardown(async () => { await transport.stop() })
 
@@ -76,7 +77,7 @@ test('WebSocketTransport - bidirectional data flow', async (t) => {
     })
   })
 
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`)
+  const ws = new WebSocket(url(transport))
   await new Promise((resolve) => { ws.on('open', resolve) })
 
   const clientReceived = []
@@ -97,8 +98,7 @@ test('WebSocketTransport - bidirectional data flow', async (t) => {
 })
 
 test('WebSocketTransport - binary data passes through correctly', async (t) => {
-  const port = getPort()
-  const transport = new WebSocketTransport({ port })
+  const transport = makeTransport()
 
   t.teardown(async () => { await transport.stop() })
 
@@ -115,7 +115,7 @@ test('WebSocketTransport - binary data passes through correctly', async (t) => {
     })
   })
 
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`)
+  const ws = new WebSocket(url(transport))
   await new Promise((resolve) => { ws.on('open', resolve) })
 
   ws.send(binaryData)
@@ -129,8 +129,7 @@ test('WebSocketTransport - binary data passes through correctly', async (t) => {
 })
 
 test('WebSocketTransport - multiple concurrent connections', async (t) => {
-  const port = getPort()
-  const transport = new WebSocketTransport({ port })
+  const transport = makeTransport()
 
   t.teardown(async () => { await transport.stop() })
 
@@ -141,7 +140,7 @@ test('WebSocketTransport - multiple concurrent connections', async (t) => {
 
   const clients = []
   for (let i = 0; i < 5; i++) {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}`)
+    const ws = new WebSocket(url(transport))
     await new Promise((resolve) => { ws.on('open', resolve) })
     clients.push(ws)
   }
@@ -159,12 +158,11 @@ test('WebSocketTransport - multiple concurrent connections', async (t) => {
 })
 
 test('WebSocketTransport - stop closes all connections and server', async (t) => {
-  const port = getPort()
-  const transport = new WebSocketTransport({ port })
+  const transport = makeTransport()
 
   await transport.start()
 
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`)
+  const ws = new WebSocket(url(transport))
   await new Promise((resolve) => { ws.on('open', resolve) })
 
   t.is(transport.connections.size, 1, 'one connection')
@@ -177,22 +175,21 @@ test('WebSocketTransport - stop closes all connections and server', async (t) =>
 })
 
 test('WebSocketTransport - rejects connections at capacity', async (t) => {
-  const port = getPort()
-  const transport = new WebSocketTransport({ port, maxConnections: 2 })
+  const transport = makeTransport({ maxConnections: 2 })
 
   t.teardown(async () => { await transport.stop() })
 
   await transport.start()
 
-  const ws1 = new WebSocket(`ws://127.0.0.1:${port}`)
+  const ws1 = new WebSocket(url(transport))
   await new Promise((resolve) => { ws1.on('open', resolve) })
-  const ws2 = new WebSocket(`ws://127.0.0.1:${port}`)
+  const ws2 = new WebSocket(url(transport))
   await new Promise((resolve) => { ws2.on('open', resolve) })
 
   t.is(transport.connections.size, 2, 'at capacity')
 
   // Third connection should be rejected
-  const ws3 = new WebSocket(`ws://127.0.0.1:${port}`)
+  const ws3 = new WebSocket(url(transport))
   const closeCode = await new Promise((resolve) => {
     ws3.on('close', (code) => resolve(code))
   })
@@ -203,8 +200,7 @@ test('WebSocketTransport - rejects connections at capacity', async (t) => {
 })
 
 test('WebSocketStream - wraps WebSocket into duplex stream', async (t) => {
-  const port = getPort()
-  const transport = new WebSocketTransport({ port })
+  const transport = makeTransport()
 
   t.teardown(async () => { await transport.stop() })
 
@@ -217,7 +213,7 @@ test('WebSocketStream - wraps WebSocket into duplex stream', async (t) => {
     t.ok(typeof stream.destroy === 'function', 'has destroy method')
   })
 
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`)
+  const ws = new WebSocket(url(transport))
   await new Promise((resolve) => { ws.on('open', resolve) })
 
   await new Promise((resolve) => setTimeout(resolve, 100))

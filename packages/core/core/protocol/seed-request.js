@@ -82,8 +82,10 @@ export class SeedProtocol extends EventEmitter {
     this._maxPendingRequests = opts.maxPendingRequests || 1000
     this._pendingTTL = opts.pendingTTL || 30 * 60 * 1000 // 30 min default
     this._pendingCleanup = setInterval(() => this._evictStalePending(), 60_000)
+    if (this._pendingCleanup.unref) this._pendingCleanup.unref()
     this._seenUnseedNonces = new Map() // dedup key -> timestamp
     this._unseedNonceCleanup = setInterval(() => this._evictStaleNonces(), 60_000)
+    if (this._unseedNonceCleanup.unref) this._unseedNonceCleanup.unref()
     this.rateLimiter = new TokenBucketRateLimiter({
       tokensPerMinute: opts.rateLimitTokens || RATE_LIMIT_TOKENS_PER_MIN,
       burstSize: opts.rateLimitBurst || RATE_LIMIT_BURST

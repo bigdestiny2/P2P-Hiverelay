@@ -20,7 +20,7 @@ const DEFAULT_WS_PORT = 8765
 export class WebSocketTransport extends EventEmitter {
   constructor (opts = {}) {
     super()
-    this.port = opts.port || DEFAULT_WS_PORT
+    this.port = opts.port ?? DEFAULT_WS_PORT
     this.host = opts.host || '0.0.0.0'
     this.maxConnections = opts.maxConnections || 256
     this.server = null
@@ -53,8 +53,20 @@ export class WebSocketTransport extends EventEmitter {
     })
 
     await new Promise((resolve, reject) => {
-      this.server.on('listening', resolve)
-      this.server.on('error', reject)
+      const onListening = () => {
+        this.server.off('error', onError)
+        const address = this.server.address()
+        if (address && typeof address === 'object') this.port = address.port
+        resolve()
+      }
+      const onError = (err) => {
+        this.server.off('listening', onListening)
+        this.server = null
+        reject(err)
+      }
+
+      this.server.once('listening', onListening)
+      this.server.once('error', onError)
     })
 
     this.server.on('connection', (ws, req) => {

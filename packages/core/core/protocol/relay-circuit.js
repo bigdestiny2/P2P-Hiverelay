@@ -272,6 +272,7 @@ export class CircuitRelay extends EventEmitter {
     this._maxPendingConnects = opts.maxPendingConnects || 100
 
     this._cleanupInterval = setInterval(() => this._cleanupExpired(), 60_000)
+    if (this._cleanupInterval.unref) this._cleanupInterval.unref()
   }
 
   /**

@@ -61,6 +61,7 @@ export class Seeder extends EventEmitter {
         this.swarm.join(topic, { server: true, client: true })
       }
     }, this.announceInterval)
+    if (interval.unref) interval.unref()
 
     const entry = {
       core,
