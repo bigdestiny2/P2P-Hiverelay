@@ -202,6 +202,13 @@ button{font-family:inherit;cursor:pointer}
 }
 .svc-progress strong{font-size:.78rem;color:var(--text-bright)}
 .svc-progress span{font-size:.68rem;color:var(--text-faint);font-family:var(--mono);text-align:right}
+.svc-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.55rem;margin:.75rem 0 .15rem}
+.svc-summary-item{
+  border:1px solid var(--card-border);border-radius:var(--radius-sm);
+  background:var(--card-hi);padding:.62rem .7rem;min-width:0;
+}
+.svc-summary-item strong{display:block;font-family:var(--mono);font-size:1rem;color:var(--text-bright);line-height:1.05}
+.svc-summary-item span{display:block;margin-top:.25rem;font-size:.62rem;text-transform:uppercase;letter-spacing:.8px;color:var(--text-faint);line-height:1.25}
 .svc-section{margin-top:.9rem}
 .svc-section-title{
   font-size:.64rem;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-dim);
@@ -235,8 +242,17 @@ button{font-family:inherit;cursor:pointer}
 }
 .svc-card.selected .svc-checkmark{background:var(--cyan);border-color:var(--cyan)}
 .svc-card.selected .svc-checkmark::after{content:'✓'}
-.svc-name{font-size:.86rem;font-weight:650;color:var(--text-bright);line-height:1.25}
-.svc-desc{font-size:.7rem;color:var(--text-faint);line-height:1.35;margin-top:.25rem}
+.svc-card-content{min-width:0;flex:1}
+.svc-name{display:block;font-size:.86rem;font-weight:650;color:var(--text-bright);line-height:1.25}
+.svc-desc{display:block;font-size:.7rem;color:var(--text-faint);line-height:1.35;margin-top:.25rem}
+.svc-state{
+  display:inline-flex;margin-top:.35rem;border-radius:999px;padding:.14rem .45rem;
+  font-size:.6rem;text-transform:uppercase;letter-spacing:.65px;border:1px solid var(--card-border);
+  color:var(--text-faint);background:rgba(255,255,255,.02);
+}
+.svc-state.live{color:var(--green);border-color:rgba(63,185,80,.28);background:rgba(63,185,80,.08)}
+.svc-state.pending{color:var(--cyan);border-color:rgba(88,166,255,.28);background:rgba(88,166,255,.08)}
+.svc-state.stopping{color:var(--orange);border-color:rgba(240,166,74,.28);background:rgba(240,166,74,.08)}
 .svc-tags{display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.45rem}
 .svc-tag{
   font-size:.62rem;color:var(--text-faint);border:1px solid var(--card-border);
@@ -285,6 +301,7 @@ button{font-family:inherit;cursor:pointer}
 .svc-meter{
   border:1px solid var(--card-border);border-radius:var(--radius-sm);overflow:hidden;background:var(--card-hi)
 }
+.svc-meter-box{margin-top:.7rem}
 .svc-meter-row{display:flex;justify-content:space-between;gap:.8rem;padding:.62rem .75rem;border-bottom:1px solid var(--card-border)}
 .svc-meter-row:last-child{border-bottom:none}
 .svc-meter-note{font-size:.66rem;color:var(--text-faint);line-height:1.35;padding:.58rem .75rem;border-top:1px solid var(--card-border)}
@@ -327,7 +344,7 @@ dialog::backdrop{background:rgba(4,7,14,.68)}
   .row-v{justify-content:flex-start;margin-left:0;text-align:left}
   .row-note{text-align:left}
   .svc-hero-top,.svc-bundle,.svc-actions-bar,.svc-live-row{align-items:flex-start;flex-direction:column}
-  .svc-grid,.svc-model-card{grid-template-columns:1fr}
+  .svc-summary,.svc-grid,.svc-model-card{grid-template-columns:1fr}
   .svc-actions-bar .buttons{justify-content:flex-start}
   .svc-btn,.row-btn,.setup-link,.status,.pk,.addr{min-height:34px}
   .svc-model-field input,.dlg-field input{min-height:38px}
@@ -922,6 +939,15 @@ function svcMeta(name){
   };
 }
 
+function svcVisualState(name, configured, active){
+  var selected = configured.indexOf(name) !== -1;
+  var running = active.indexOf(name) !== -1;
+  if (selected && running) return { label: 'Live', className: 'live' };
+  if (selected) return { label: 'Starts after restart', className: 'pending' };
+  if (running) return { label: 'Stops after restart', className: 'stopping' };
+  return { label: 'Available', className: 'idle' };
+}
+
 function svcSelection(){
   return Array.prototype.map.call(document.querySelectorAll('.svc-check:checked'), function(c){ return c.value; });
 }
@@ -934,6 +960,10 @@ function updateSvcCards(){
   var selected = svcSelection();
   var count = $('svcSelectedCount');
   if (count) count.textContent = selected.length + ' selected';
+  var selectedSummary = $('svcSummarySelected');
+  if (selectedSummary) selectedSummary.textContent = metricCount(selected.length);
+  var pendingSummary = $('svcSummaryPending');
+  if (pendingSummary && svcDraftDirty) pendingSummary.textContent = 'Draft';
   var hint = $('svcActionHint');
   if (hint) {
     hint.textContent = svcConfigBusy
@@ -986,6 +1016,14 @@ function appendModelField(parent, id, label, placeholder){
   return input;
 }
 
+function appendServiceSummary(parent, label, value, detail, id){
+  var item = appendEl(parent, 'div', 'svc-summary-item');
+  var strong = appendEl(item, 'strong', '', value);
+  if (id) strong.id = id;
+  appendEl(item, 'span', '', detail ? label + ' - ' + detail : label);
+  return item;
+}
+
 function renderServices(avail, svcs){
   var enabled = !!(avail && avail.enabled);
   var available = (avail && Array.isArray(avail.available)) ? avail.available : [];
@@ -1013,6 +1051,16 @@ function renderServices(avail, svcs){
   appendEl(heroCopy, 'div', 'svc-copy', 'Choose the capabilities this relay should offer to apps. Saving stores the next-start selection; restart Blindspark when you want the change live.');
   appendEl(heroTop, 'span', 'svc-pill ' + (enabled ? 'on' : 'warn'), svcRestartPending ? 'restarting' : (enabled ? 'configured' : 'not configured'));
   body.appendChild(hero);
+
+  var managedActive = active.filter(function(name){ return available.indexOf(name) !== -1; });
+  var startsAfterRestart = configured.filter(function(name){ return active.indexOf(name) === -1; });
+  var stopsAfterRestart = managedActive.filter(function(name){ return configured.indexOf(name) === -1; });
+  var pendingRestartCount = startsAfterRestart.length + stopsAfterRestart.length;
+  var summary = appendEl(body, 'div', 'svc-summary');
+  appendServiceSummary(summary, 'Selected', metricCount(configured.length), enabled ? 'next restart' : 'services off', 'svcSummarySelected');
+  appendServiceSummary(summary, 'Running', metricCount(managedActive.length), 'live now', 'svcSummaryRunning');
+  appendServiceSummary(summary, 'Pending', metricCount(pendingRestartCount), pendingRestartCount ? 'needs restart' : 'in sync', 'svcSummaryPending');
+
   if (svcRestartPending){
     var expected = svcRestartExpected.length ? svcRestartExpected : configured;
     var ready = expected.filter(function(name){ return active.indexOf(name) !== -1; }).length;
@@ -1066,6 +1114,7 @@ function renderServices(avail, svcs){
   available.forEach(function(name){
     var meta = svcMeta(name);
     var running = active.indexOf(name) !== -1;
+    var visualState = svcVisualState(name, configured, active);
     var label = document.createElement('label');
     label.className = 'svc-card' + (configured.indexOf(name) !== -1 ? ' selected' : '') + (running ? ' running' : '') + (controlsDisabled ? ' disabled' : '');
     var cb = document.createElement('input');
@@ -1083,13 +1132,14 @@ function renderServices(avail, svcs){
     mark.className = 'svc-checkmark';
     label.appendChild(mark);
     var content = document.createElement('span');
+    content.className = 'svc-card-content';
     appendEl(content, 'span', 'svc-name', meta.label);
+    appendEl(content, 'span', 'svc-state ' + visualState.className, visualState.label);
     appendEl(content, 'span', 'svc-desc', meta.desc);
     var tags = appendEl(content, 'span', 'svc-tags');
     (meta.tags || []).forEach(function(tag){
       appendEl(tags, 'span', 'svc-tag', tag);
     });
-    if (running) appendEl(tags, 'span', 'svc-tag running', 'running');
     label.appendChild(content);
     checklist.appendChild(label);
   });
@@ -1157,7 +1207,7 @@ function renderServices(avail, svcs){
   if (enabled){
     var meterBox = document.createElement('div');
     meterBox.id = 'svcMeterBox';
-    meterBox.style.marginTop = '.7rem';
+    meterBox.className = 'svc-meter-box';
     body.appendChild(meterBox);
     renderMetering(active);
   }

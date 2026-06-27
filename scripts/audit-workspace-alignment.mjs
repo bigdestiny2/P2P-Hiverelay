@@ -426,7 +426,12 @@ if (
   blindsparkDashboard.includes('Restart now') &&
   blindsparkDashboard.includes('id="svcStatus" role="status" aria-live="polite" aria-atomic="true"') &&
   blindsparkDashboard.includes('background:transparent;border:0;border-radius:0;padding:0') &&
+  blindsparkDashboard.includes('.svc-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.55rem') &&
   blindsparkDashboard.includes('.svc-card:focus-within{outline:2px solid var(--cyan);outline-offset:2px}') &&
+  blindsparkDashboard.includes('function svcVisualState(name, configured, active)') &&
+  blindsparkDashboard.includes("appendServiceSummary(summary, 'Selected', metricCount(configured.length)") &&
+  blindsparkDashboard.includes("appendEl(content, 'span', 'svc-state ' + visualState.className, visualState.label)") &&
+  blindsparkDashboard.includes("meterBox.className = 'svc-meter-box';") &&
   blindsparkDashboard.includes('Poker preset selected; save to apply') &&
   blindsparkDashboard.includes('/api/manage/services/available') &&
   blindsparkDashboard.includes('/api/manage/services/config') &&
@@ -435,8 +440,10 @@ if (
   blindsparkDashboard.includes("progress.setAttribute('role', 'status');") &&
   blindsparkDashboard.includes("hint.setAttribute('role', 'status');") &&
   umbrelUiControlsTest.includes('umbrel wallet and service controls expose accessible busy/error state') &&
+  umbrelUiControlsTest.includes('umbrel service manager shows saved-vs-live service state') &&
   !blindsparkDashboard.includes('fetchServices();') &&
-  !blindsparkDashboard.includes('id="servicesList"')
+  !blindsparkDashboard.includes('id="servicesList"') &&
+  !blindsparkDashboard.includes('meterBox.style.marginTop')
 ) {
   pass('Umbrel dashboard exposes the flattened service manager with save/restart controls')
 } else {

@@ -47,7 +47,14 @@ test('umbrel service manager keeps the section unframed around service cards', (
   t.ok(dashboard.includes('.services-card{'))
   t.ok(dashboard.includes('background:transparent;border:0;border-radius:0;padding:0'))
   t.ok(dashboard.includes('.services-card .apps-head{padding:0 .15rem;margin-bottom:.65rem}'))
+  t.ok(dashboard.includes('.svc-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.55rem'))
   t.ok(dashboard.includes('.svc-card:focus-within{outline:2px solid var(--cyan);outline-offset:2px}'))
+  t.ok(dashboard.includes('.svc-state.pending'))
+  t.ok(dashboard.includes('function svcVisualState(name, configured, active)'))
+  t.ok(dashboard.includes("appendServiceSummary(summary, 'Selected', metricCount(configured.length)"))
+  t.ok(dashboard.includes("appendEl(content, 'span', 'svc-state ' + visualState.className, visualState.label)"))
+  t.ok(dashboard.includes("meterBox.className = 'svc-meter-box';"))
+  t.absent(dashboard.includes('meterBox.style.marginTop'))
   t.ok(dashboard.includes("toast('Poker preset selected; save to apply');"))
 })
 
@@ -266,7 +273,10 @@ test('umbrel service manager builds service UI without HTML-string metadata inje
   t.absent(renderServices.includes('live.innerHTML'))
   t.absent(renderServices.includes('row.innerHTML'))
   t.absent(renderServices.includes('form.innerHTML'))
+  t.ok(renderServices.includes('var summary = appendEl(body, \'div\', \'svc-summary\')'))
+  t.ok(renderServices.includes('var visualState = svcVisualState(name, configured, active);'))
   t.ok(renderServices.includes("appendEl(content, 'span', 'svc-name', meta.label)"))
+  t.ok(renderServices.includes("appendEl(content, 'span', 'svc-state ' + visualState.className, visualState.label)"))
   t.ok(renderServices.includes("appendEl(row, 'span', 'svc-live-status', status)"))
   t.ok(renderServices.includes("appendModelField(form, 'svcModelId', 'Model ID', 'qvac-small')"))
   t.absent(renderMetering.includes('box.innerHTML'))
@@ -361,7 +371,10 @@ test('umbrel service manager renders untrusted service metadata as text', (t) =>
     extractFunction('appendEl'),
     extractFunction('appendSectionTitle'),
     extractFunction('appendModelField'),
+    extractFunction('metricCount'),
     extractFunction('svcMeta'),
+    extractFunction('svcVisualState'),
+    extractFunction('appendServiceSummary'),
     extractFunction('renderServices'),
     'renderServices(' + JSON.stringify({
       enabled: false,
@@ -396,6 +409,68 @@ test('umbrel service manager renders untrusted service metadata as text', (t) =>
   t.absent(html.includes('<img'))
   t.absent(html.includes('<svg'))
   t.absent(html.includes('onerror=alert(1)><'))
+  t.alike(svcBody.innerHTMLAssignments, [])
+})
+
+test('umbrel service manager shows saved-vs-live service state', (t) => {
+  const svcBody = new FakeElement('div')
+  const svcStatus = new FakeElement('span')
+  const servicesCard = new FakeElement('section')
+  const renderedMetering = []
+  const script = [
+    'var svcLastConfiguredPlugins = []',
+    'var svcRestartPending = false',
+    'var svcRestartExpected = []',
+    'var svcDraftDirty = false',
+    'var svcConfigBusy = false',
+    'var svcModelBusy = false',
+    "var svcModelMessageText = ''",
+    "var svcModelMessageKind = ''",
+    'function svcSetConfig () {}',
+    'function svcRestartNode () {}',
+    'function renderMetering (active) { renderedMetering.push(active.slice()) }',
+    'var SERVICE_META = {}',
+    extractFunction('clearNode'),
+    extractFunction('makeEl'),
+    extractFunction('appendEl'),
+    extractFunction('appendSectionTitle'),
+    extractFunction('appendModelField'),
+    extractFunction('metricCount'),
+    extractFunction('svcMeta'),
+    extractFunction('svcVisualState'),
+    extractFunction('appendServiceSummary'),
+    extractFunction('renderServices'),
+    'renderServices(' + JSON.stringify({
+      enabled: true,
+      available: ['storage', 'vrf', 'poker'],
+      plugins: ['vrf', 'poker'],
+      active: ['storage', 'vrf'],
+      bundles: {}
+    }) + ', { services: [] })',
+    "$('svcBody').innerHTML"
+  ].join('\n')
+
+  const html = vm.runInNewContext(script, {
+    document: {
+      createElement: (tag) => new FakeElement(tag)
+    },
+    renderedMetering,
+    $: (id) => {
+      if (id === 'svcBody') return svcBody
+      if (id === 'svcStatus') return svcStatus
+      if (id === 'servicesCard') return servicesCard
+      throw new Error('unexpected id ' + id)
+    }
+  })
+
+  t.ok(html.includes('<strong id="svcSummarySelected">2</strong>'))
+  t.ok(html.includes('<strong id="svcSummaryRunning">2</strong>'))
+  t.ok(html.includes('<strong id="svcSummaryPending">2</strong>'))
+  t.ok(html.includes('class="svc-state live">Live'))
+  t.ok(html.includes('class="svc-state pending">Starts after restart'))
+  t.ok(html.includes('class="svc-state stopping">Stops after restart'))
+  t.ok(html.includes('class="svc-meter-box" id="svcMeterBox"'))
+  t.alike(JSON.parse(JSON.stringify(renderedMetering)), [['storage', 'vrf']])
   t.alike(svcBody.innerHTMLAssignments, [])
 })
 
