@@ -106,6 +106,67 @@ printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\
   t.absent(evidence.relays[0].sshKey, 'ssh key is not written to public rollout evidence')
 })
 
+test('fleet rollout check defaults to both fleet channels', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'hiverelay-fleet-rollout-'))
+  t.teardown(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const relaysPath = path.join(dir, 'relays.json')
+  const sshPath = path.join(dir, 'mock-ssh.sh')
+  const evidencePath = path.join(dir, 'fleet-rollout-evidence.json')
+  const channelsPath = await writeFixtureChannels(dir)
+
+  const relaysJson = JSON.stringify({
+    relays: [
+      {
+        name: 'mock-canary',
+        publicIp: '127.0.0.1',
+        tailnet: null,
+        sshKey: 'default',
+        channel: 'canary'
+      },
+      {
+        name: 'mock-stable',
+        publicIp: '127.0.0.2',
+        tailnet: null,
+        sshKey: 'default',
+        channel: 'stable'
+      }
+    ]
+  })
+  await writeFile(relaysPath, relaysJson)
+
+  await writeFile(sshPath, `#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\n' '${TARGET_SHA}'
+`)
+  await chmod(sshPath, 0o755)
+
+  const { stdout } = await runCheck([
+    '--target', 'v9.9.9',
+    '--target-sha', TARGET_SHA,
+    '--relays', relaysPath,
+    '--channels', channelsPath,
+    '--ssh-command', sshPath,
+    '--evidence', evidencePath,
+    '--timeout-ms', '600000',
+    '--interval-ms', '5000'
+  ])
+
+  t.ok(stdout.includes('Checking 2 relay(s) on channel both: mock-canary, mock-stable'))
+  t.ok(stdout.includes('Fleet rollout verified: 2/2 relay(s) on v9.9.9'))
+
+  const evidence = JSON.parse(await readFile(evidencePath, 'utf8'))
+  t.is(evidence.target.channel, 'both')
+  t.alike(evidence.inventory.relayNames, ['mock-canary', 'mock-stable'])
+  t.alike(evidence.channelConfig.targets, { canary: 'v9.9.9', stable: 'v9.9.9' })
+  t.is(evidence.summary.total, 2)
+  t.is(evidence.summary.updated, 2)
+  t.alike(evidence.relays.map((relay) => relay.channel).sort(), ['canary', 'stable'])
+})
+
 test('fleet rollout check rejects unsafe verified proof timing before writing evidence', async (t) => {
   const dir = await mkdtemp(path.join(tmpdir(), 'hiverelay-fleet-rollout-'))
   t.teardown(async () => {

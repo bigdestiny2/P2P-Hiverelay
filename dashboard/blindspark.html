@@ -147,6 +147,7 @@ button{font-family:inherit;cursor:pointer}
 .apps-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:.5rem}
 .apps-head .t{font-size:.68rem;text-transform:uppercase;letter-spacing:1.3px;color:var(--text-dim)}
 .apps-head .c{font-size:.74rem;color:var(--text-faint);font-family:var(--mono)}
+.apps-head-actions{display:flex;align-items:center;gap:.6rem}
 .apps-list{max-height:280px;overflow-y:auto;scrollbar-width:thin}
 .app{display:flex;align-items:center;gap:.7rem;padding:.6rem 0;border-bottom:1px solid var(--card-border)}
 .app:last-child{border-bottom:none}
@@ -173,6 +174,7 @@ button{font-family:inherit;cursor:pointer}
 }
 .seedform input[type=text]:focus{outline:none;border-color:var(--accent)}
 .seedform .chk{display:flex;align-items:center;gap:.5rem;margin-top:.7rem;font-size:.78rem;color:var(--text);text-transform:none;letter-spacing:0}
+.seed-optional{text-transform:none;color:var(--text-faint)}
 .seedform .hint{font-size:.68rem;color:var(--text-faint);margin-top:.5rem;line-height:1.4}
 .seedform .err{font-size:.72rem;color:var(--red);margin-top:.5rem;min-height:1em}
 .seedform .acts{display:flex;justify-content:flex-end;gap:.5rem;margin-top:.8rem}
@@ -286,6 +288,8 @@ button{font-family:inherit;cursor:pointer}
 .svc-meter-row{display:flex;justify-content:space-between;gap:.8rem;padding:.62rem .75rem;border-bottom:1px solid var(--card-border)}
 .svc-meter-row:last-child{border-bottom:none}
 .svc-meter-note{font-size:.66rem;color:var(--text-faint);line-height:1.35;padding:.58rem .75rem;border-top:1px solid var(--card-border)}
+.lease-controls{display:flex;flex-wrap:wrap;align-items:center;gap:.45rem}
+.lease-rate{width:5rem}
 
 dialog{
   width:min(92vw,460px);border:1px solid var(--card-border-hi);border-radius:var(--radius);
@@ -373,7 +377,7 @@ dialog::backdrop{background:rgba(4,7,14,.68)}
       <div class="row-k">Payout wallet</div>
       <div class="row-v" id="payout"><span class="muted">&mdash;</span></div>
     </div>
-    <div class="row" id="leaseRow" style="display:none">
+    <div class="row" id="leaseRow" hidden>
       <div class="row-k">Paid seeding</div>
       <div class="row-v" id="leaseV"><span class="muted">&mdash;</span></div>
     </div>
@@ -398,7 +402,7 @@ dialog::backdrop{background:rgba(4,7,14,.68)}
   <section class="apps-card">
     <div class="apps-head">
       <span class="t">Hosted apps</span>
-      <span style="display:flex;align-items:center;gap:.6rem">
+      <span class="apps-head-actions">
         <span class="c" id="appsCount"></span>
         <button class="seedbtn" id="seedToggle" type="button">+ Seed an app</button>
       </span>
@@ -406,7 +410,7 @@ dialog::backdrop{background:rgba(4,7,14,.68)}
     <form class="seedform" id="seedForm" autocomplete="off">
       <label for="seedKey">App drive key</label>
       <input type="text" id="seedKey" spellcheck="false" placeholder="64-character hex key from `pear` / publish-app">
-      <label for="seedName">Name <span style="text-transform:none;color:var(--text-faint)">(optional)</span></label>
+      <label for="seedName">Name <span class="seed-optional">(optional)</span></label>
       <input type="text" id="seedName" maxlength="120" placeholder="Shown in your catalogue">
       <label class="chk"><input type="checkbox" id="seedPin" checked> Pin permanently (keep it alive, never auto-evicted)</label>
       <div class="hint">Your relay will replicate this drive and list it in your catalogue, which PearBrowser reads. Paste a key you already published with <code>pear</code> or <code>publish-app</code>.</div>
@@ -651,7 +655,7 @@ function renderSubsidy(s){
 function openWalletDialog(){
   $('walletInput').value = payoutDestination || '';
   $('walletError').textContent = '';
-  $('walletClear').style.visibility = payoutDestination ? 'visible' : 'hidden';
+  $('walletClear').hidden = !payoutDestination;
   if (typeof $('walletDialog').showModal === 'function') $('walletDialog').showModal();
   else $('walletDialog').setAttribute('open', 'open');
   $('walletInput').focus();
@@ -1233,24 +1237,28 @@ function appendMeterRow(parent, label, value){
 // settle to the operator's own LN node; the relay never holds a balance.
 function renderLease(s){
   var row = $('leaseRow'); var v = $('leaseV');
-  if (!s || !s.enabled){ row.style.display = 'none'; return; }
-  row.style.display = '';
-  v.innerHTML = '';
+  if (!s || !s.enabled){ row.hidden = true; return; }
+  row.hidden = false;
+  clearNode(v);
   var ctl = document.createElement('div');
-  ctl.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:.45rem';
+  ctl.className = 'lease-controls';
   var inp = document.createElement('input');
   inp.type = 'number'; inp.min = '0'; inp.step = '1';
   inp.value = (s.satsPerGiBDay != null ? s.satsPerGiBDay : 0);
-  inp.style.cssText = 'width:5rem'; inp.setAttribute('aria-label', 'sats per GiB per day');
+  inp.className = 'lease-rate'; inp.setAttribute('aria-label', 'sats per GiB per day');
   var unit = document.createElement('span'); unit.className = 'row-note'; unit.textContent = 'sats/GiB/day';
   var save = document.createElement('button'); save.type = 'button'; save.className = 'seedbtn'; save.textContent = 'Save';
   save.addEventListener('click', function(){
     var val = Number(inp.value);
     if (!isFinite(val) || val < 0){ toast('Enter a non-negative rate'); return; }
     save.disabled = true;
-    fetch('/api/lease/config', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify({ satsPerGiBDay: val }) })
+    fetchWithTimeout('/api/lease/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ satsPerGiBDay: val })
+    })
       .then(function(r){ return r.json().catch(function(){ return null; }); })
-      .then(function(j){ save.disabled = false; if (j && j.ok){ toast('Rate updated'); fetchLease(); } else { toast((j && j.error) || 'Update failed'); } })
+      .then(function(j){ save.disabled = false; if (j && j.ok){ toast('Rate updated'); fetchLease(true); } else { toast((j && j.error) || 'Update failed'); } })
       .catch(function(){ save.disabled = false; toast('Request failed'); });
   });
   ctl.appendChild(inp); ctl.appendChild(unit); ctl.appendChild(save);
@@ -1259,7 +1267,13 @@ function renderLease(s){
   note.textContent = (s.activeLeases || 0) + ' active · ' + (s.leaseCount || 0) + ' paid · ' + earned + ' sats earned';
   v.appendChild(ctl); v.appendChild(note);
 }
-function fetchLease(){ jget('/api/lease').then(renderLease); }
+function fetchLease(force){
+  if (!canPoll(force, leaseRefreshBusy)) return Promise.resolve(null);
+  leaseRefreshBusy = true;
+  return jget('/api/lease').then(renderLease).finally(function(){
+    leaseRefreshBusy = false;
+  });
+}
 
 function renderApps(list){
   var box = $('appsList');
@@ -1283,25 +1297,6 @@ function renderApps(list){
   }
 }
 
-// Icon if the entry carries one (drive-relative path resolved through the
-// gateway, or an absolute https/data URI), else the live dot. Falls back
-// to the dot if the image fails to load.
-function appGlyph(a){
-  var icon = a.icon;
-  if (!icon) return '<span class="app-dot"></span>';
-  var src = /^(https?:|data:)/i.test(icon)
-    ? icon
-    : ('/v1/hyper/' + (a.driveKey || a.appKey || '') + (icon.charAt(0) === '/' ? '' : '/') + icon);
-  return '<img class="app-icon" src="' + escapeHtml(src) + '" alt="" ' +
-         'onerror="this.outerHTML=&quot;<span class=app-dot></span>&quot;">';
-}
-
-function escapeHtml(s){
-  return String(s).replace(/[&<>"']/g, function(c){
-    return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c];
-  });
-}
-
 function jget(path){
   return fetchWithTimeout(path, { headers: { 'Accept': 'application/json' } })
     .then(function(r){ return r.ok ? r.json() : null; })
@@ -1312,6 +1307,7 @@ var overviewRefreshBusy = false;
 var wizardRefreshBusy = false;
 var servicesRefreshBusy = false;
 var servicesRefreshPendingForce = false;
+var leaseRefreshBusy = false;
 
 function canPoll(force, busy){
   if (busy) return false;
@@ -1369,7 +1365,7 @@ $('seedForm').addEventListener('submit', function(e){
   var go = $('seedGo'); go.disabled = true; err.textContent = '';
   // The auth shim attaches Authorization: Bearer behind the proxy; on a
   // plain-localhost appliance the same-origin request is trusted.
-  fetch('/seed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  fetchWithTimeout('/seed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, j: j }; }, function(){ return { ok: r.ok, j: {} }; }); })
     .then(function(res){
       go.disabled = false;
@@ -1377,7 +1373,7 @@ $('seedForm').addEventListener('submit', function(e){
       toast('Seeding ' + (nm || shortKey(key)) + ' — it will appear below');
       $('seedForm').classList.remove('show');
       $('seedKey').value = ''; $('seedName').value = '';
-      setTimeout(refresh, 1200);
+      setTimeout(function(){ refresh(true); }, 1200);
     })
     .catch(function(){ go.disabled = false; err.textContent = 'Request failed — is the relay reachable?'; });
 });
@@ -1423,13 +1419,13 @@ function refreshVisible(force){
   refresh(force);
   refreshWizard(force);
   refreshServices(force);
-  fetchLease();
+  fetchLease(force);
 }
 
 refreshVisible(true);
 setInterval(function(){ refresh(false); }, 5000);
 setInterval(function(){ refreshWizard(false); }, 30000);
-setInterval(function(){ fetchLease(); }, 30000);
+setInterval(function(){ fetchLease(false); }, 30000);
 setInterval(function(){ refreshServices(false); }, 15000);
 document.addEventListener('visibilitychange', function(){
   if (document.hidden !== true) refreshVisible(true);

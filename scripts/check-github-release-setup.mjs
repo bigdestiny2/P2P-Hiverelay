@@ -22,9 +22,9 @@ const usage = `
 Usage:
   node scripts/check-github-release-setup.mjs [--repo owner/name] [--gh gh]
 
-Checks that the GitHub repository exposes the secret and variable names needed
-before a full HiveRelay release can update the raw fleet, Umbrel stores, and
-StartOS registry.
+Checks that the GitHub repository exposes the masked release-value Secret names
+and optional variable names needed before a full HiveRelay release can update
+the raw fleet, Umbrel stores, and StartOS registry.
 
 GitHub does not expose repository secret values through gh, so this command
 checks secret presence and placement only. Run the manual
@@ -49,7 +49,7 @@ if (!result.ok) {
 }
 
 console.log(`GitHub release setup presence check passed for ${repo}.`)
-console.log(`Required release secret names: ${REQUIRED_SECRETS.length}/${REQUIRED_SECRETS.length}`)
+console.log(`Required masked release values stored as GitHub Secrets: ${REQUIRED_SECRETS.length}/${REQUIRED_SECRETS.length}`)
 if (result.optionalVariables.length > 0) {
   console.log(`Optional release variables: ${result.optionalVariables.join(', ')}`)
 }

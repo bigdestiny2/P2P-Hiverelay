@@ -182,6 +182,12 @@ uses HiveRelay for:
 - relay configuration and health checks
 - optional signed Hyperbee catalogs when `catalogBeeKey` is advertised
 
+Mobile is currently an HTTP/catalog consumer rather than a direct
+`p2p-hiverelay*` package consumer. It should keep tolerating plain
+`/catalog.json` gateway relays, but parity with the newest desktop integration
+requires porting signed capability-doc verification, DHT relay-record
+bootstrap, and `indexRoom` hydration.
+
 ### PearBrowser desktop
 
 [`pearbrowser-desktop`](../../../01-browser/pearbrowser-desktop)
@@ -191,18 +197,50 @@ adds stronger catalog tooling:
 - browser clients can prefer a signed bee when the relay advertises
   `catalogBeeKey`
 - desktop release/publish scripts already use `p2p-hiverelay-client`
+- desktop bootstraps signed DHT relay records and optional index rooms
 
 ## Compatibility note for this workspace
 
-There is active version skew across the ecosystem:
+There can be active version skew across the ecosystem. On 2026-06-26, the
+current Hiverelay workspace packages are:
 
-- `hiverelay` monorepo root is `0.16.3`
-- `pearbrowser-desktop` still depends on `^0.8.12`
+- `p2p-hiverelay` `0.20.2`
+- `p2p-hiverelay-client` `0.20.2`
+- `p2p-hiverelay-verifier` `0.20.2`
 
-That is the main integration risk to watch. Prefer documenting and testing
-stable wire contracts (`/.well-known/hiverelay.json`, `/catalog.json`,
-`/v1/hyper/...`, signed catalog bees) instead of relying on package-version
-parity alone.
+PearBrowser desktop is the bundled consumer that must be kept in lockstep:
+`scripts/check-hiverelay-layout.mjs`, `package-lock.json`, and desktop CI must
+all point at the same Hiverelay package line before local tests prove the new
+client. Both PearBrowser desktop and mobile now declare `bare-https` and use
+scheme-aware HTTP/HTTPS relay transport so public `https://relay-*.p2phiverelay.xyz`
+gateway URLs do not silently run through the wrong transport path. Prefer
+documenting and testing stable wire contracts
+(`/.well-known/hiverelay.json`, `/api/capabilities`, `/catalog.json`,
+`/v1/hyper/...`, signed catalog bees, signed DHT relay records, and `indexRoom`)
+instead of relying on package-version parity alone.
+
+p2pbuilders now points at the local Hiverelay `0.20.2` workspace packages and
+uses the split `p2p-hiverelay-client` SDK, with a local migration guard that
+rejects the removed `p2p-hiverelay/client` subpath. Opengit's optional
+`--use-hiverelay` bridge also points at the local `0.20.2` core/client packages
+and dynamically imports the split ESM client while preserving the native relay
+default. PearPaste and anonGPT now also point at the local `0.20.2` Hiverelay
+workspace packages by default, because they are live customer-facing relay
+consumers. The main PearBrowser bundle is still the release-critical bundled
+consumer, but whole-ecosystem package-parity claims require these
+non-bundled direct consumers to stay on the same Hiverelay line too.
+See [`ECOSYSTEM-UPGRADE-0.20.2.md`](./ECOSYSTEM-UPGRADE-0.20.2.md) for the
+per-app import/API migration notes.
+
+Run `npm run ecosystem:sync` from this repo to update the known app consumers to
+the current local Hiverelay workspace package links and refresh their linked
+lockfile metadata. Run `npm run ecosystem:sync -- --check` when you want the
+same contract as a no-write release gate.
+
+Run `npm run audit:ecosystem-consumers` to verify that consumer inventory. The
+command fails if a new unclassified `p2p-hiverelay*` dependency appears or if
+one of the current customer app pins drifts away from the local Hiverelay
+workspace line before the docs and upgrade plan are updated.
 
 ## Practical validation checklist
 

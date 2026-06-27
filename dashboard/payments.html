@@ -524,8 +524,8 @@ function updatePayments(data) {
 async function fetchPricing() {
   try {
     var results = await Promise.all([
-      fetch('/api/v1/credits/pricing').then(function(r) { return r.json(); }),
-      fetch('/api/v1/credits/pricing/compare').then(function(r) { return r.json(); })
+      fetchWithTimeout('/api/v1/credits/pricing').then(function(r) { return r.json(); }),
+      fetchWithTimeout('/api/v1/credits/pricing/compare').then(function(r) { return r.json(); })
     ]);
 
     var rates = results[0];
@@ -542,7 +542,7 @@ async function fetchPricing() {
 /* ===== Fetch wallets ===== */
 async function fetchWallets() {
   try {
-    var res = await fetch('/api/v1/credits/stats', { headers: { 'x-api-key': '' } });
+    var res = await fetchWithTimeout('/api/v1/credits/stats', { headers: { 'x-api-key': '' } });
     // Stats endpoint may require auth - fall back gracefully
     if (!res.ok) return;
     var stats = await res.json();
@@ -561,6 +561,24 @@ var connStatusEl = document.getElementById('connStatus');
 var wsConnected = false;
 var ws = null;
 var fetchErrors = 0;
+var overviewRefreshBusy = false;
+var walletsRefreshBusy = false;
+var REQUEST_TIMEOUT_MS = 10000;
+
+function canPoll(force) {
+  return force === true || document.hidden !== true;
+}
+
+function fetchWithTimeout(path, opts) {
+  var options = Object.assign({}, opts || {});
+  if (typeof AbortController !== 'function') return fetch(path, options);
+  var controller = new AbortController();
+  var timeout = setTimeout(function() { controller.abort(); }, REQUEST_TIMEOUT_MS);
+  options.signal = controller.signal;
+  return fetch(path, options).finally(function() {
+    clearTimeout(timeout);
+  });
+}
 
 function updateConnIndicator() {
   if (wsConnected) {
@@ -577,7 +595,7 @@ function updateConnIndicator() {
 
 async function fetchOverview() {
   try {
-    var res = await fetch('/api/overview');
+    var res = await fetchWithTimeout('/api/overview');
     var data = await res.json();
     fetchErrors = 0;
     updateConnIndicator();
@@ -586,6 +604,24 @@ async function fetchOverview() {
     fetchErrors++;
     updateConnIndicator();
   }
+}
+
+function refreshOverview(force) {
+  if (overviewRefreshBusy) return;
+  if (!canPoll(force)) return;
+  overviewRefreshBusy = true;
+  fetchOverview().finally(function() {
+    overviewRefreshBusy = false;
+  });
+}
+
+function refreshWallets(force) {
+  if (walletsRefreshBusy) return;
+  if (!canPoll(force)) return;
+  walletsRefreshBusy = true;
+  fetchWallets().finally(function() {
+    walletsRefreshBusy = false;
+  });
 }
 
 function getUiToken() {
@@ -598,6 +634,7 @@ function sendWsAuth(sock) {
   try { sock.send(JSON.stringify({ type: 'auth', token: t })); } catch (e) {}
 }
 function connectWS() {
+  if (document.hidden === true) return;
   var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   var url = proto + '//' + location.host + '/ws';
   try { ws = new WebSocket(url); } catch (e) { return; }
@@ -621,19 +658,26 @@ function connectWS() {
     wsConnected = false;
     ws = null;
     updateConnIndicator();
-    setTimeout(connectWS, 3000);
+    if (document.hidden !== true) setTimeout(connectWS, 3000);
   };
 
   ws.onerror = function() {};
 }
 
+document.addEventListener('visibilitychange', function() {
+  if (document.hidden === true) return;
+  refreshOverview(true);
+  refreshWallets(true);
+  if (!ws) connectWS();
+});
+
 /* ===== Init ===== */
-fetchOverview();
+refreshOverview(true);
 fetchPricing();
-fetchWallets();
+refreshWallets(true);
 connectWS();
-setInterval(fetchOverview, 10000);
-setInterval(fetchWallets, 30000);
+setInterval(function() { refreshOverview(false); }, 10000);
+setInterval(function() { refreshWallets(false); }, 30000);
 </script>
 </body>
 </html>

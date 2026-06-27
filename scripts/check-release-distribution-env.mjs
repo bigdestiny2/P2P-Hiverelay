@@ -15,8 +15,8 @@ Defaults:
 
 Local candidate validation:
   --env-file reads NAME=value and NAME<<DELIM blocks so operators can validate
-  multiline release secrets before writing them to GitHub Secrets. Candidate
-  validation is hermetic and does not fall back to ambient shell secrets.
+  multiline release values before writing them to masked GitHub Secrets.
+  Candidate validation is hermetic and does not fall back to ambient shell secrets.
 `
 
 const args = parseArgs(process.argv.slice(2))
@@ -31,6 +31,8 @@ appendGithubEnv(githubEnv, result.envUpdates)
 if (!result.ok) {
   console.error('Release distribution preflight failed:')
   for (const item of result.missing) console.error(`- ${item}`)
+  console.error('')
+  console.error(formatRepairPath({ channel, prerelease }))
   process.exit(1)
 }
 
@@ -291,6 +293,18 @@ function isOfficialUmbrelForkSlug (value) {
 
 function isGitHubOwnerName (value) {
   return /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(value)
+}
+
+function formatRepairPath ({ channel, prerelease }) {
+  const repairChannel = prerelease ? 'both' : (['canary', 'stable', 'both'].includes(channel) ? channel : 'both')
+  return [
+    'Repair path:',
+    '- Generate a local candidate file outside the repo: npm run release:write-secret-template -- --out /private/tmp/hiverelay-release-secrets.env',
+    '- Replace every REPLACE_* placeholder with corrected release values.',
+    `- Validate without publishing: npm run release:check-distribution-env -- --env-file /private/tmp/hiverelay-release-secrets.env --channel ${repairChannel} --prerelease false`,
+    '- Apply through stdin after validation: npm run release:apply-github-secrets -- --repo bigdestiny2/P2P-Hiverelay --env-file /private/tmp/hiverelay-release-secrets.env',
+    '- Re-run the side-effect-free GitHub Actions workflow release-distribution-preflight.yml with channel=both and prerelease=false before rerunning release-surfaces.yml.'
+  ].join('\n')
 }
 
 function appendGithubEnv (file, updates) {

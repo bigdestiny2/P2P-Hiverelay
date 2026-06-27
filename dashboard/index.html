@@ -479,7 +479,7 @@ var catalogNames = {}; // appKey -> display name
 var catalogDevs = {}; // appKey -> { pubkey, displayName, avatar }
 
 function fetchCatalogNames() {
-  fetch('/catalog.json').then(function(r) { return r.json(); }).then(function(data) {
+  fetchWithTimeout('/catalog.json').then(function(r) { return r.json(); }).then(function(data) {
     if (data.apps && Array.isArray(data.apps)) {
       data.apps.forEach(function(app) {
         // Catalog entries for metadata-less drives carry the literal
@@ -1004,8 +1004,26 @@ var fetchErrors = 0;
 var wsConnected = false;
 var ws = null;
 var pollTimer = null;
+var dataRefreshBusy = false;
+var pendingRefreshBusy = false;
 var POLL_INTERVAL_WS = 30000;   // 30s backup when WS is live
 var POLL_INTERVAL_HTTP = 5000;  // 5s fallback when WS is down
+var REQUEST_TIMEOUT_MS = 10000;
+
+function canPoll(force) {
+  return force === true || document.hidden !== true;
+}
+
+function fetchWithTimeout(path, opts) {
+  var options = Object.assign({}, opts || {});
+  if (typeof AbortController !== 'function') return fetch(path, options);
+  var controller = new AbortController();
+  var timeout = setTimeout(function() { controller.abort(); }, REQUEST_TIMEOUT_MS);
+  options.signal = controller.signal;
+  return fetch(path, options).finally(function() {
+    clearTimeout(timeout);
+  });
+}
 
 function updateConnIndicator() {
   if (wsConnected) {
@@ -1024,9 +1042,9 @@ function updateConnIndicator() {
 async function fetchData() {
   try {
     var results = await Promise.all([
-      fetch('/api/overview').then(function(r) { return r.json(); }),
-      fetch('/api/history?minutes=60').then(function(r) { return r.json(); }),
-      fetch('/api/apps').then(function(r) { return r.json(); })
+      fetchWithTimeout('/api/overview').then(function(r) { return r.json(); }),
+      fetchWithTimeout('/api/history?minutes=60').then(function(r) { return r.json(); }),
+      fetchWithTimeout('/api/apps').then(function(r) { return r.json(); })
     ]);
     fetchErrors = 0;
     updateConnIndicator();
@@ -1039,10 +1057,19 @@ async function fetchData() {
   fetchSubsidy();
 }
 
+function refreshData(force) {
+  if (dataRefreshBusy) return;
+  if (!canPoll(force)) return;
+  dataRefreshBusy = true;
+  fetchData().finally(function() {
+    dataRefreshBusy = false;
+  });
+}
+
 /* -- Earnings card (hidden unless the relay has subsidy.enabled) -- */
 async function fetchSubsidy() {
   try {
-    var r = await fetch('/api/subsidy');
+    var r = await fetchWithTimeout('/api/subsidy');
     if (!r.ok) return; // 403 (no auth context) or older relay -> stay hidden
     var s = await r.json();
     if (!s.enabled) return;
@@ -1069,6 +1096,7 @@ async function fetchSubsidy() {
 var destDialog = document.getElementById('destDialog');
 var destInput = document.getElementById('destInput');
 var destError = document.getElementById('destError');
+var destSaveBusy = false;
 
 function openDestDialog() {
   destInput.value = window._destCurrent || '';
@@ -1082,10 +1110,15 @@ document.getElementById('subsidyDestCard').addEventListener('keydown', function(
 });
 document.getElementById('destCancel').addEventListener('click', function() { destDialog.close(); });
 document.getElementById('destSave').addEventListener('click', async function() {
+  if (destSaveBusy) return;
   var v = destInput.value.trim();
   if (!v) { destError.textContent = 'Enter a destination.'; return; }
+  var saveBtn = document.getElementById('destSave');
+  destSaveBusy = true;
+  saveBtn.disabled = true;
+  destDialog.setAttribute('aria-busy', 'true');
   try {
-    var r = await fetch('/api/subsidy/destination', {
+    var r = await fetchWithTimeout('/api/subsidy/destination', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ destination: v })
@@ -1096,12 +1129,16 @@ document.getElementById('destSave').addEventListener('click', async function() {
     fetchSubsidy();
   } catch (e) {
     destError.textContent = 'Request failed — is the node reachable?';
+  } finally {
+    destSaveBusy = false;
+    saveBtn.disabled = false;
+    destDialog.setAttribute('aria-busy', 'false');
   }
 });
 
 function setPollInterval(ms) {
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(fetchData, ms);
+  pollTimer = setInterval(function() { refreshData(false); }, ms);
 }
 
 /* -- WebSocket connection -- */
@@ -1115,6 +1152,7 @@ function sendWsAuth(sock) {
   try { sock.send(JSON.stringify({ type: 'auth', token: t })); } catch (e) {}
 }
 function connectWS() {
+  if (document.hidden === true) return;
   var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   var url = proto + '//' + location.host + '/ws';
 
@@ -1169,7 +1207,7 @@ function connectWS() {
     // Fall back to fast HTTP polling
     setPollInterval(POLL_INTERVAL_HTTP);
     // Attempt reconnect after 3s
-    setTimeout(connectWS, 3000);
+    if (document.hidden !== true) setTimeout(connectWS, 3000);
   };
 
   ws.onerror = function() {
@@ -1195,6 +1233,14 @@ var toggleTrack = document.getElementById('toggleTrack');
 var toggleDot = document.getElementById('toggleDot');
 var pendingSection = document.getElementById('pendingSection');
 
+function postJson(path, body) {
+  return fetchWithTimeout(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+}
+
 function updateToggleUI(on) {
   if (on) {
     registryModeEl.textContent = 'AUTO-ACCEPT';
@@ -1215,37 +1261,59 @@ function updateToggleUI(on) {
 
 autoAcceptToggle.addEventListener('change', function() {
   var enabled = autoAcceptToggle.checked;
+  var previous = !enabled;
+  autoAcceptToggle.disabled = true;
   updateToggleUI(enabled);
-  fetch('/registry/auto-accept', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled: enabled })
-  }).catch(function(e) { console.warn('Toggle failed:', e); });
+  postJson('/registry/auto-accept', { enabled: enabled })
+    .catch(function(e) {
+      autoAcceptToggle.checked = previous;
+      updateToggleUI(previous);
+      console.warn('Toggle failed:', e);
+    })
+    .finally(function() {
+      autoAcceptToggle.disabled = false;
+    });
 });
 
-function unseedApp(appKey) {
+function setRegistryActionBusy(btn, busy) {
+  if (!btn) return;
+  btn.disabled = busy;
+  btn.setAttribute('aria-busy', busy ? 'true' : 'false');
+}
+
+function runRegistryAction(btn, path, body, onSuccess, label) {
+  if (btn && btn.disabled) return Promise.resolve();
+  setRegistryActionBusy(btn, true);
+  return postJson(path, body)
+    .then(function() {
+      if (onSuccess) onSuccess();
+    })
+    .catch(function(e) {
+      console.warn(label + ' failed:', e);
+    })
+    .finally(function() {
+      setRegistryActionBusy(btn, false);
+    });
+}
+
+function unseedApp(appKey, btn) {
   if (!confirm('Stop seeding ' + appKey.slice(0, 12) + '...?')) return;
-  fetch('/unseed', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ appKey: appKey })
-  }).then(function() { fetchData(); }).catch(function(e) { console.warn('Unseed failed:', e); });
+  return runRegistryAction(btn, '/unseed', { appKey: appKey }, function() {
+    refreshData(true);
+  }, 'Unseed');
 }
 
-function approveRequest(appKey) {
-  fetch('/registry/approve', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ appKey: appKey })
-  }).then(function() { fetchPending(); fetchData(); }).catch(function(e) { console.warn('Approve failed:', e); });
+function approveRequest(appKey, btn) {
+  return runRegistryAction(btn, '/registry/approve', { appKey: appKey }, function() {
+    fetchPending();
+    refreshData(true);
+  }, 'Approve');
 }
 
-function rejectRequest(appKey) {
-  fetch('/registry/reject', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ appKey: appKey })
-  }).then(function() { fetchPending(); }).catch(function(e) { console.warn('Reject failed:', e); });
+function rejectRequest(appKey, btn) {
+  return runRegistryAction(btn, '/registry/reject', { appKey: appKey }, function() {
+    fetchPending();
+  }, 'Reject');
 }
 
 function bindRegistryActionTable(tbody) {
@@ -1254,10 +1322,11 @@ function bindRegistryActionTable(tbody) {
   tbody.addEventListener('click', function(e) {
     var btn = e.target.closest('[data-registry-action]');
     if (!btn || !tbody.contains(btn)) return;
+    if (btn.disabled) return;
     var appKey = btn.dataset.appKey || '';
-    if (btn.dataset.registryAction === 'unseed') unseedApp(appKey);
-    else if (btn.dataset.registryAction === 'approve') approveRequest(appKey);
-    else if (btn.dataset.registryAction === 'reject') rejectRequest(appKey);
+    if (btn.dataset.registryAction === 'unseed') unseedApp(appKey, btn);
+    else if (btn.dataset.registryAction === 'approve') approveRequest(appKey, btn);
+    else if (btn.dataset.registryAction === 'reject') rejectRequest(appKey, btn);
   });
 }
 
@@ -1326,21 +1395,31 @@ function renderPendingRequests(requests) {
 }
 
 function fetchPending() {
-  fetch('/api/registry/pending').then(function(r) { return r.json(); }).then(function(data) {
+  return fetchWithTimeout('/api/registry/pending').then(function(r) { return r.json(); }).then(function(data) {
     renderPendingRequests(data.requests || []);
   }).catch(function() {});
 }
 
+function refreshPending(force) {
+  if (pendingRefreshBusy) return;
+  if (!canPoll(force)) return;
+  if (autoAcceptToggle.checked) return;
+  pendingRefreshBusy = true;
+  fetchPending().finally(function() {
+    pendingRefreshBusy = false;
+  });
+}
+
 // Fetch registry state on load and periodically
 function fetchRegistryState() {
-  fetch('/api/overview').then(function(r) { return r.json(); }).then(function(data) {
+  fetchWithTimeout('/api/overview').then(function(r) { return r.json(); }).then(function(data) {
     if (data.registry) {
       var isAuto = data.registry.autoAccept !== false;
       autoAcceptToggle.checked = isAuto;
       updateToggleUI(isAuto);
     }
   }).catch(function() {});
-  fetch('/api/apps').then(function(r) { return r.json(); }).then(function(apps) {
+  fetchWithTimeout('/api/apps').then(function(r) { return r.json(); }).then(function(apps) {
     renderSeeds(apps);
   }).catch(function() {});
   if (!autoAcceptToggle.checked) fetchPending();
@@ -1358,11 +1437,18 @@ updateDashboard = function(overview, history, apps) {
   }
 };
 
-setInterval(function() { if (!autoAcceptToggle.checked) fetchPending(); }, 10000);
+document.addEventListener('visibilitychange', function() {
+  if (document.hidden === true) return;
+  refreshData(true);
+  fetchRegistryState();
+  if (!ws) connectWS();
+});
+
+setInterval(function() { refreshPending(false); }, 10000);
 fetchRegistryState();
 
 // Boot: start HTTP fetch immediately, then try WS
-fetchData();
+refreshData(true);
 fetchCatalogNames();
 setPollInterval(POLL_INTERVAL_HTTP);
 connectWS();

@@ -110,9 +110,12 @@ test('GitHub release secret apply dry-run validates candidate without printing v
   ])
 
   t.is(res.status, 0)
-  t.ok(res.stdout.includes('Release secret candidate file is valid'))
-  t.ok(res.stdout.includes('Would set GitHub Secrets: FLEET_SSH_PRIVATE_KEY'))
+  t.ok(res.stdout.includes('Release value candidate file is valid'))
+  t.ok(res.stdout.includes('Would set masked GitHub release values as Secrets: FLEET_SSH_PRIVATE_KEY'))
   t.ok(res.stdout.includes('Would set GitHub Variables: FLEET_ROLLOUT_TIMEOUT_MS'))
+  t.ok(res.stdout.includes('After applying the candidate file, run:'))
+  t.ok(res.stdout.includes('npm run release:check-github-setup -- --repo bigdestiny2/P2P-Hiverelay'))
+  t.ok(res.stdout.includes('gh workflow run release-distribution-preflight.yml --repo bigdestiny2/P2P-Hiverelay -f channel=both -f prerelease=false'))
   t.absent(res.stdout.includes(TEST_GITHUB_TOKEN))
   t.absent(res.stdout.includes(TEST_PRIVATE_KEY))
   t.absent(res.stderr.includes(TEST_GITHUB_TOKEN))
@@ -132,8 +135,12 @@ test('GitHub release secret apply sends validated values to gh secret set via st
   })
 
   t.is(res.status, 0)
-  t.ok(res.stdout.includes('Set GitHub Secret UMBREL_STORE_TOKEN'))
+  t.ok(res.stdout.includes('Set masked GitHub release value UMBREL_STORE_TOKEN as a Secret'))
   t.ok(res.stdout.includes('Set GitHub Variable FLEET_ROLLOUT_TIMEOUT_MS'))
+  t.ok(res.stdout.includes('GitHub release values applied.'))
+  t.ok(res.stdout.includes('Next steps:'))
+  t.ok(res.stdout.includes('npm run release:check-github-setup -- --repo bigdestiny2/P2P-Hiverelay'))
+  t.ok(res.stdout.includes('gh workflow run release-distribution-preflight.yml --repo bigdestiny2/P2P-Hiverelay -f channel=both -f prerelease=false'))
   t.absent(res.stdout.includes(TEST_GITHUB_TOKEN))
   t.absent(res.stdout.includes(TEST_PRIVATE_KEY))
 

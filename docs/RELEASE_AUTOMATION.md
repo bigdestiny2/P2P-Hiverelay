@@ -68,40 +68,34 @@ pre-release versions default to `channel=none` and reject explicit fleet/app
 store channel promotion. They also skip the community Umbrel store by default
 and reject an explicit pre-release `--umbrel-store` target.
 
-Full releases are distribution-complete by default. Before any external
-checkout can be skipped, the workflow requires the secrets needed to verify the
-raw fleet, push the Umbrel community store, open or update the official Umbrel
-draft PR, and publish the StartOS registry package. A missing credential fails
-the run and records `distributionPreflight: failed` in release evidence.
+Full releases are distribution-complete by default. Before any public GitHub
+Release is looked up, created, reused, or written to, the workflow requires the
+masked repository values needed to verify the raw fleet, push the Umbrel
+community store, open or update the official Umbrel draft PR, and publish the
+StartOS registry package to pass the same full-release preflight as
+`release-distribution-preflight.yml`. Missing or malformed credentials fail the
+run and record `distributionPreflight: failed` in release evidence.
 
 ## Repository Secret Setup
 
 Configure the release secrets before cutting a full release. Use stdin or local
 environment variables so secret values do not appear in shell history. The
 workflow reads these values as repository secrets, including
-`UMBREL_OFFICIAL_FORK` even though it is a fork slug rather than a token.
-Before setting or rotating GitHub Secrets, validate the exact candidate values
-with the same distribution checker used by the release workflow. Keep the
-candidate file outside the repo and delete it after the secrets are set.
+`UMBREL_OFFICIAL_FORK` even though it is a fork slug rather than a token and
+`STARTOS_REGISTRY_URL` even though it is a public HTTPS URL. That keeps all
+release-distribution values masked in GitHub Actions logs. The
+`release:write-secret-template` and `release:apply-github-secrets` script names
+are historical; they validate and apply the whole masked release-value set.
+Before setting or rotating GitHub Secrets, generate a local candidate template,
+replace the placeholders, then validate the exact candidate values with the
+same distribution checker used by the release workflow. Keep the candidate file
+outside the repo and delete it after the secrets are set.
 
 ```sh
-cat > /private/tmp/hiverelay-release-secrets.env <<'EOF'
-FLEET_SSH_PRIVATE_KEY<<FLEET_KEY
------BEGIN OPENSSH PRIVATE KEY-----
-...
------END OPENSSH PRIVATE KEY-----
-FLEET_KEY
-UMBREL_STORE_TOKEN=ghp_...
-UMBREL_OFFICIAL_PR_TOKEN=github_pat_...
-UMBREL_OFFICIAL_FORK=owner/umbrel-apps
-STARTOS_DEVELOPER_KEY_PEM<<STARTOS_KEY
------BEGIN PRIVATE KEY-----
-...
------END PRIVATE KEY-----
-STARTOS_KEY
-STARTOS_REGISTRY_URL=https://registry.example.tld
-FLEET_ROLLOUT_TIMEOUT_MS=1800000
-EOF
+npm run release:write-secret-template -- \
+  --out /private/tmp/hiverelay-release-secrets.env
+
+$EDITOR /private/tmp/hiverelay-release-secrets.env
 
 npm run release:check-distribution-env -- \
   --env-file /private/tmp/hiverelay-release-secrets.env \
@@ -109,14 +103,41 @@ npm run release:check-distribution-env -- \
   --prerelease false
 ```
 
+The generated template is written with owner-only permissions and refuses to
+overwrite an existing file unless `--force` is passed. The final edited file
+should have this shape:
+
+```sh
+FLEET_SSH_PRIVATE_KEY<<FLEET_KEY
+PASTE_THE_FULL_FLEET_PRIVATE_KEY_BLOCK_HERE
+FLEET_KEY
+UMBREL_STORE_TOKEN=PASTE_COMMUNITY_STORE_GITHUB_TOKEN_HERE
+UMBREL_OFFICIAL_PR_TOKEN=PASTE_OFFICIAL_PR_GITHUB_TOKEN_HERE
+UMBREL_OFFICIAL_FORK=owner/umbrel-apps
+STARTOS_DEVELOPER_KEY_PEM<<STARTOS_KEY
+PASTE_THE_FULL_STARTOS_DEVELOPER_PRIVATE_KEY_BLOCK_HERE
+STARTOS_KEY
+STARTOS_REGISTRY_URL=https://registry.example.tld
+FLEET_ROLLOUT_TIMEOUT_MS=1800000
+```
+
+The edited private-key values must include their normal begin/end delimiter
+lines in the local file; the documentation intentionally avoids spelling those
+delimiters or token prefixes out so public docs stay friendly to secret
+scanners.
+
 The local `--env-file` parser accepts simple `NAME=value` entries and
 `NAME<<DELIM` heredocs for multiline private keys. It performs shape checks
 only; it does not contact the fleet, Umbrel, StartOS, or GitHub, and it does
 not print secret values. Candidate-file validation is hermetic: ambient shell
-secrets do not satisfy missing file entries. After the candidate file passes,
-apply the exact same file to GitHub Secrets. Run the helper once with
-`--dry-run` so the operator can confirm the target repository and names without
-changing GitHub state.
+secrets do not satisfy missing file entries. When this check fails, its stderr
+prints a safe repair path with the template command, the candidate-env
+validation command, the `release:apply-github-secrets` command, and the
+side-effect-free `release-distribution-preflight.yml` rerun. The repair block never includes
+the candidate secret values. After the candidate file passes, apply the exact
+same file to GitHub Secrets. Run the helper once with `--dry-run` so the
+operator can confirm the target repository and names without changing GitHub
+state.
 
 ```sh
 repo=bigdestiny2/P2P-Hiverelay
@@ -131,10 +152,12 @@ npm run release:apply-github-secrets -- \
   --env-file /private/tmp/hiverelay-release-secrets.env
 ```
 
-The helper validates the candidate file again before any write, sends secret
-values to `gh secret set` through stdin, stores
+The helper validates the candidate file again before any write, sends masked
+release values to `gh secret set` through stdin, stores
 `FLEET_ROLLOUT_TIMEOUT_MS` as an optional repository variable when present, and
-does not print secret values.
+does not print the candidate values. Both dry-run and apply output print the exact
+`release:check-github-setup` and `gh workflow run
+release-distribution-preflight.yml` commands to run next.
 
 Expected shapes:
 
@@ -187,6 +210,17 @@ Umbrel PRs, or publishing to StartOS. A full release is considered live only
 after `release-surfaces.yml` succeeds and attaches `release-evidence.json` plus
 the required sidecars to the GitHub Release.
 
+The same masked-value check also gates `release-surfaces.yml` before public
+GitHub Release continuation. For tag-push and manual runs, the workflow now
+verifies the full-release distribution values before it even checks whether the
+GitHub Release exists or creates one. For an already-tagged release such as a
+rerun after a failed attempt, a bad value shape stops the run before release
+assets are uploaded or clobbered and before fleet, Umbrel, or StartOS work
+continues. After correcting the repository secrets, run
+`release-distribution-preflight.yml` for `channel=both` and
+`prerelease=false`; only then rerun the already-tagged `release-surfaces.yml`
+workflow.
+
 Never reuse an existing release tag for newly merged code. Prepare and tag a
 fresh version, then let `release-surfaces.yml` build the digest, update
 metadata, roll the selected fleet channels, and attach evidence. A full release
@@ -206,10 +240,17 @@ manually dispatched, the workflow:
 1. Validates the release version/channel, verifies the release tag is already
    contained in `main`, and runs the stable-release distribution credential
    preflight.
-2. Creates or reuses the GitHub Release object for tag-push/manual runs so
-   later asset uploads and download verification target the same release.
+2. Creates or reuses the public GitHub Release object only after the
+   distribution preflight passes for tag-push/manual runs so later asset
+   uploads and download verification target the same release.
 3. Installs dependencies and runs `npm audit`, `npm run lint`,
-   `npm run audit:workspace`, and `npm run test:unit`.
+   `npm run audit:workspace`, `npm run audit:public-artifacts`,
+   `node --test test/unit/ecosystem-consumers.test.js`, and
+   `npm run test:unit`. The public-artifact audit keeps release docs and
+   workflows free of scanner-sensitive secret examples, while the explicit
+   ecosystem inventory guard keeps the release log tied to the PearBrowser,
+   PearPaste, anonGPT, and other direct consumer default-pinning contract before
+   any image is published.
 4. Builds and pushes the multi-arch GHCR image from the tagged source:
    `ghcr.io/bigdestiny2/p2p-hiverelay:<version>`. Full releases also update
    `latest`; prereleases do not.
@@ -219,6 +260,13 @@ manually dispatched, the workflow:
    manifests, tolerating OCI attestation sidecars without counting them as
    runnable platform duplicates, then writes
    `release-image-manifest-evidence.json`.
+
+Before cutting a release from a full sibling workspace, also run
+`npm run ecosystem:sync -- --check` and `npm run audit:ecosystem-consumers` from
+the Hiverelay repo. The sync check proves PearBrowser, PearPaste, anonGPT, and
+the other direct consumers already default to the latest local Hiverelay package
+links and linked lockfile metadata; the audit proves there are no new
+unclassified `p2p-hiverelay*` app pins.
 7. Boots the exact pushed image reference (`<version>@sha256:...`) in Docker,
    waits for `/health`, verifies the Blindspark appliance dashboard and setup
    page, proves the home-server `HIVERELAY_ACCEPT_MODE=review` default,

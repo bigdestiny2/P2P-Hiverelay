@@ -128,6 +128,8 @@ async function renderPricing (responses) {
     extractFunction('renderRateCard'),
     extractFunction('appendCompareRow'),
     extractFunction('renderPricingComparison'),
+    'var REQUEST_TIMEOUT_MS = 10000',
+    extractFunction('fetchWithTimeout'),
     extractFunction('fetchPricing'),
     'fetchPricing().then(function(){ return { rateCard: document.getElementById("rateCard").outerHTML, compareBody: document.getElementById("compareBody").outerHTML, innerHTMLAssignments: document._innerHTMLAssignments() } })'
   ].join('\n')

@@ -2,6 +2,8 @@ name: Release surfaces
 
 on:
   push:
+    branches:
+      - ship/core3-release-readiness-2026-06-24
     tags:
       - 'v*'
   release:
@@ -46,6 +48,12 @@ jobs:
       FLEET_ROLLOUT_TIMEOUT_MS: ${{ vars.FLEET_ROLLOUT_TIMEOUT_MS }}
 
     steps:
+      - name: Checkout HiveRelay
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          path: hiverelay
+
       - name: Resolve release inputs
         id: rel
         shell: bash
@@ -54,14 +62,23 @@ jobs:
           RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
           RELEASE_IS_PRERELEASE: ${{ github.event.release.prerelease }}
           PUSH_REF_NAME: ${{ github.ref_name }}
+          PUSH_SHA: ${{ github.sha }}
           DISPATCH_VERSION: ${{ inputs.version }}
           DISPATCH_CHANNEL: ${{ inputs.channel }}
         run: |
           set -euo pipefail
+          is_branch_candidate=false
           if [ "$RELEASE_EVENT_NAME" = "release" ]; then
             version="$RELEASE_TAG_NAME"
             requested_channel="${HIVERELAY_RELEASE_CHANNEL:-}"
             release_prerelease="$RELEASE_IS_PRERELEASE"
+          elif [ "$RELEASE_EVENT_NAME" = "push" ] && [ "$PUSH_REF_NAME" = "ship/core3-release-readiness-2026-06-24" ]; then
+            base_version="$(node -p "require('./hiverelay/package.json').version")"
+            short_sha="${PUSH_SHA:0:12}"
+            version="v${base_version}-ship.20260624.${short_sha}"
+            requested_channel="none"
+            release_prerelease="true"
+            is_branch_candidate=true
           elif [ "$RELEASE_EVENT_NAME" = "push" ]; then
             version="$PUSH_REF_NAME"
             requested_channel="${HIVERELAY_RELEASE_CHANNEL:-}"
@@ -105,6 +122,7 @@ jobs:
           echo "semver=$semver" >> "$GITHUB_OUTPUT"
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
           echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
+          echo "is_branch_candidate=$is_branch_candidate" >> "$GITHUB_OUTPUT"
 
       - name: Initialize release evidence
         shell: bash
@@ -112,15 +130,20 @@ jobs:
           set -euo pipefail
           release_surfaces_status=pending
           release_distribution_status=pending
+          startos_release_asset_status=pending
           if [ "${{ steps.rel.outputs.is_prerelease }}" = "true" ]; then
             release_surfaces_status=skipped
             release_distribution_status=skipped
+          fi
+          if [ "${{ steps.rel.outputs.is_branch_candidate }}" = "true" ]; then
+            startos_release_asset_status=skipped
           fi
           {
             echo "HIVERELAY_RELEASE_VERSION=${{ steps.rel.outputs.version }}"
             echo "HIVERELAY_RELEASE_SEMVER=${{ steps.rel.outputs.semver }}"
             echo "HIVERELAY_RELEASE_CHANNEL=${{ steps.rel.outputs.channel }}"
             echo "HIVERELAY_RELEASE_PRERELEASE=${{ steps.rel.outputs.is_prerelease }}"
+            echo "HIVERELAY_RELEASE_CANDIDATE=${{ steps.rel.outputs.is_branch_candidate }}"
             echo "HIVERELAY_IMAGE_NAME=$IMAGE_NAME"
             echo "HIVERELAY_RELEASE_GATE_STATUS=pending"
             echo "HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS=$release_distribution_status"
@@ -132,7 +155,7 @@ jobs:
             echo "HIVERELAY_UMBREL_SMOKE_EVIDENCE_SHA256="
             echo "HIVERELAY_STARTOS_VERIFY_STATUS=pending"
             echo "HIVERELAY_STARTOS_PACKAGE_SHA256="
-            echo "HIVERELAY_STARTOS_RELEASE_ASSET_STATUS=pending"
+            echo "HIVERELAY_STARTOS_RELEASE_ASSET_STATUS=$startos_release_asset_status"
             echo "HIVERELAY_RELEASE_SURFACES_STATUS=$release_surfaces_status"
             echo "HIVERELAY_FLEET_ROLLOUT_STATUS=skipped"
             echo "HIVERELAY_FLEET_ROLLOUT_CHANNEL="
@@ -160,21 +183,21 @@ jobs:
             echo "HIVERELAY_UMBREL_COMMUNITY_STORE_COMMIT_URL="
           } >> "$GITHUB_ENV"
 
-      - name: Checkout HiveRelay
-        uses: actions/checkout@v7
-        with:
-          ref: main
-          fetch-depth: 0
-          path: hiverelay
-
       - name: Verify release ref
         working-directory: hiverelay
         shell: bash
         run: |
           set -euo pipefail
           git fetch --force --tags origin
+          git fetch --force origin main
+          if [ "${{ steps.rel.outputs.is_branch_candidate }}" = "true" ]; then
+            tag_sha="${{ github.sha }}"
+            git cat-file -e "$tag_sha^{commit}"
+            echo "HIVERELAY_RELEASE_SHA=$tag_sha" >> "$GITHUB_ENV"
+            exit 0
+          fi
           tag_sha="$(git rev-parse "${{ steps.rel.outputs.version }}^{commit}")"
-          main_sha="$(git rev-parse HEAD)"
+          main_sha="$(git rev-parse origin/main)"
           if ! git merge-base --is-ancestor "$tag_sha" "$main_sha"; then
             echo "${{ steps.rel.outputs.version }} is not an ancestor of main." >&2
             echo "Main: $main_sha" >&2
@@ -183,8 +206,20 @@ jobs:
           fi
           echo "HIVERELAY_RELEASE_SHA=$tag_sha" >> "$GITHUB_ENV"
 
+      # Keep this before any public GitHub Release lookup/create or asset upload.
+      # The standalone release-distribution-preflight.yml workflow runs the same
+      # checker against masked GitHub Actions values without release side effects.
+      - name: Verify stable release distribution credentials
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          npm run release:check-distribution-env -- \
+            --channel "${{ steps.rel.outputs.channel }}" \
+            --prerelease "${{ steps.rel.outputs.is_prerelease }}" \
+            --github-env "$GITHUB_ENV"
+
       - name: Ensure GitHub Release exists
-        if: ${{ github.event_name != 'release' }}
+        if: ${{ github.event_name != 'release' && steps.rel.outputs.is_branch_candidate != 'true' }}
         working-directory: hiverelay
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -201,15 +236,6 @@ jobs:
             args+=(--prerelease)
           fi
           gh "${args[@]}"
-
-      - name: Verify stable release distribution credentials
-        working-directory: hiverelay
-        run: |
-          set -euo pipefail
-          npm run release:check-distribution-env -- \
-            --channel "${{ steps.rel.outputs.channel }}" \
-            --prerelease "${{ steps.rel.outputs.is_prerelease }}" \
-            --github-env "$GITHUB_ENV"
 
       - name: Checkout released source
         working-directory: hiverelay
@@ -250,8 +276,49 @@ jobs:
           npm audit
           npm run lint
           npm run audit:workspace
+          npm run audit:public-artifacts
+          node --test test/unit/ecosystem-consumers.test.js
           npm run test:unit
           echo "HIVERELAY_RELEASE_GATE_STATUS=passed" >> "$GITHUB_ENV"
+
+      - name: Stamp branch candidate package version
+        if: ${{ steps.rel.outputs.is_branch_candidate == 'true' }}
+        working-directory: hiverelay
+        env:
+          CANDIDATE_SEMVER: ${{ steps.rel.outputs.semver }}
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('fs')
+          const version = process.env.CANDIDATE_SEMVER
+          const packageFiles = [
+            'package.json',
+            'packages/core/package.json',
+            'packages/services/package.json',
+            'packages/client/package.json',
+            'packages/verifier/package.json'
+          ]
+
+          for (const file of packageFiles) {
+            const json = JSON.parse(fs.readFileSync(file, 'utf8'))
+            json.version = version
+            if (json.dependencies && json.dependencies['p2p-hiverelay']) {
+              json.dependencies['p2p-hiverelay'] = `^${version}`
+            }
+            fs.writeFileSync(file, JSON.stringify(json, null, 2) + '\n')
+          }
+
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'))
+          lock.version = version
+          if (lock.packages && lock.packages['']) lock.packages[''].version = version
+          for (const rel of ['packages/core', 'packages/services', 'packages/client', 'packages/verifier']) {
+            if (!lock.packages || !lock.packages[rel]) continue
+            lock.packages[rel].version = version
+            const deps = lock.packages[rel].dependencies
+            if (deps && deps['p2p-hiverelay']) deps['p2p-hiverelay'] = `^${version}`
+          }
+          fs.writeFileSync('package-lock.json', JSON.stringify(lock, null, 2) + '\n')
+          NODE
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -316,6 +383,7 @@ jobs:
           echo "HIVERELAY_RELEASE_IMAGE_SMOKE_STATUS=passed" >> "$GITHUB_ENV"
 
       - name: Return to main for metadata sync
+        if: ${{ steps.rel.outputs.is_branch_candidate != 'true' }}
         working-directory: hiverelay
         run: |
           set -euo pipefail
@@ -405,10 +473,13 @@ jobs:
             exit 1
           fi
           echo "HIVERELAY_STARTOS_PACKAGE_SHA256=$s9pk_sha" >> "$GITHUB_ENV"
-          echo "HIVERELAY_STARTOS_PACKAGE_ID=$package_id" >> "$GITHUB_ENV"
+          if [ "${{ steps.rel.outputs.is_prerelease }}" != "true" ]; then
+            echo "HIVERELAY_STARTOS_PACKAGE_ID=$package_id" >> "$GITHUB_ENV"
+          fi
           echo "HIVERELAY_STARTOS_VERIFY_STATUS=passed" >> "$GITHUB_ENV"
 
       - name: Upload StartOS package to GitHub Release
+        if: ${{ steps.rel.outputs.is_branch_candidate != 'true' }}
         working-directory: hiverelay
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -703,7 +774,7 @@ jobs:
           retention-days: 90
 
       - name: Upload release evidence to GitHub Release
-        if: ${{ success() }}
+        if: ${{ success() && steps.rel.outputs.is_branch_candidate != 'true' }}
         working-directory: hiverelay
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -728,7 +799,7 @@ jobs:
           gh release upload "${{ steps.rel.outputs.version }}" "${evidence[@]}" --clobber
 
       - name: Verify published release evidence assets
-        if: ${{ success() }}
+        if: ${{ success() && steps.rel.outputs.is_branch_candidate != 'true' }}
         working-directory: hiverelay
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -769,7 +840,7 @@ jobs:
           npm run release:verify-evidence -- --bundle-dir "$bundle_dir"
 
       - name: Upload StartOS registry evidence
-        if: ${{ success() && hashFiles('hiverelay/startos-registry-evidence.json') != '' }}
+        if: ${{ success() && steps.rel.outputs.is_branch_candidate != 'true' && hashFiles('hiverelay/startos-registry-evidence.json') != '' }}
         working-directory: hiverelay
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -865,7 +936,7 @@ jobs:
           echo "HIVERELAY_UMBREL_OFFICIAL_PR_BODY_EVIDENCE_SHA256=$official_pr_evidence_sha" >> "$GITHUB_ENV"
 
       - name: Upload official Umbrel PR evidence
-        if: ${{ success() && hashFiles('hiverelay/official-umbrel-pr-evidence.json') != '' }}
+        if: ${{ success() && steps.rel.outputs.is_branch_candidate != 'true' && hashFiles('hiverelay/official-umbrel-pr-evidence.json') != '' }}
         working-directory: hiverelay
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

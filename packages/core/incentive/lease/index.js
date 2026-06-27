@@ -598,12 +598,35 @@ export class LeaseManager extends EventEmitter {
   }
 
   setRate (satsPerGiBDay) {
-    if (!Number.isFinite(satsPerGiBDay) || satsPerGiBDay < 0) throw new Error('satsPerGiBDay must be a non-negative number')
-    if (satsPerGiBDay > this.maxSatsPerGiBDay) throw new Error('satsPerGiBDay exceeds maximum (' + this.maxSatsPerGiBDay + ')')
-    this.satsPerGiBDay = Math.floor(satsPerGiBDay)
-    this._persist().catch(() => {})
+    const rate = this._normalizeRate(satsPerGiBDay)
+    this.satsPerGiBDay = rate
+    this._persist().catch((err) => { this.emit('persist-error', err) })
     this.emit('rate', this.satsPerGiBDay)
     return this.satsPerGiBDay
+  }
+
+  async setRateDurable (satsPerGiBDay) {
+    const rate = this._normalizeRate(satsPerGiBDay)
+    const previous = this.satsPerGiBDay
+    this.satsPerGiBDay = rate
+    try {
+      await this._persist()
+    } catch (err) {
+      this.satsPerGiBDay = previous
+      this.emit('persist-error', err)
+      const wrapped = new Error('failed to persist lease rate')
+      wrapped.code = 'LEASE_RATE_PERSIST_FAILED'
+      wrapped.cause = err
+      throw wrapped
+    }
+    this.emit('rate', this.satsPerGiBDay)
+    return this.satsPerGiBDay
+  }
+
+  _normalizeRate (satsPerGiBDay) {
+    if (!Number.isFinite(satsPerGiBDay) || satsPerGiBDay < 0) throw new Error('satsPerGiBDay must be a non-negative number')
+    if (satsPerGiBDay > this.maxSatsPerGiBDay) throw new Error('satsPerGiBDay exceeds maximum (' + this.maxSatsPerGiBDay + ')')
+    return Math.floor(satsPerGiBDay)
   }
 
   // ─── Persistence (atomic tmp+rename) ───────────────────────────────

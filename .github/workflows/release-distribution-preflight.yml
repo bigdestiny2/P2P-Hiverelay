@@ -1,6 +1,9 @@
 name: Release distribution preflight
 
 on:
+  push:
+    branches:
+      - ship/core3-release-readiness-2026-06-24
   workflow_dispatch:
     inputs:
       channel:
@@ -45,6 +48,25 @@ jobs:
       - name: Checkout HiveRelay
         uses: actions/checkout@v7
 
+      - name: Resolve preflight inputs
+        id: rel
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_CHANNEL: ${{ inputs.channel }}
+          DISPATCH_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            channel="$DISPATCH_CHANNEL"
+            prerelease="$DISPATCH_PRERELEASE"
+          else
+            channel=none
+            prerelease=true
+          fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
@@ -54,8 +76,8 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/check-release-distribution-env.mjs \
-            --channel "${{ inputs.channel }}" \
-            --prerelease "${{ inputs.prerelease }}" \
+            --channel "${{ steps.rel.outputs.channel }}" \
+            --prerelease "${{ steps.rel.outputs.prerelease }}" \
             --github-env "$GITHUB_ENV"
 
       - name: Summarize preflight
@@ -64,8 +86,8 @@ jobs:
           {
             echo "### Release distribution preflight"
             echo
-            echo "- Channel: \`${{ inputs.channel }}\`"
-            echo "- Prerelease: \`${{ inputs.prerelease }}\`"
+            echo "- Channel: \`${{ steps.rel.outputs.channel }}\`"
+            echo "- Prerelease: \`${{ steps.rel.outputs.prerelease }}\`"
             echo "- Effective channel: \`${HIVERELAY_RELEASE_EFFECTIVE_CHANNEL:-unknown}\`"
             echo "- Distribution preflight: \`${HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS:-unknown}\`"
             echo "- Release surfaces: \`${HIVERELAY_RELEASE_SURFACES_STATUS:-not-started}\`"
@@ -74,11 +96,16 @@ jobs:
             echo "- Official Umbrel PR: \`${HIVERELAY_UMBREL_OFFICIAL_PR_STATUS:-not-checked}\`"
             echo "- StartOS registry: \`${HIVERELAY_STARTOS_REGISTRY_STATUS:-not-checked}\`"
             if [ "${HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS:-unknown}" = "failed" ]; then
+              repair_channel="${HIVERELAY_RELEASE_EFFECTIVE_CHANNEL:-${{ steps.rel.outputs.channel }}}"
+              case "$repair_channel" in
+                canary|stable|both) ;;
+                *) repair_channel=both ;;
+              esac
               echo
               echo "#### Repair path"
               echo
-              echo "1. Build a local candidate file outside the repo, such as \`/private/tmp/hiverelay-release-secrets.env\`."
-              echo "2. Run \`npm run release:check-distribution-env -- --env-file /private/tmp/hiverelay-release-secrets.env --channel both --prerelease false\`."
+              echo "1. Generate a local candidate file outside the repo with \`npm run release:write-secret-template -- --out /private/tmp/hiverelay-release-secrets.env\`."
+              echo "2. Replace every \`REPLACE_*\` placeholder, then run \`npm run release:check-distribution-env -- --env-file /private/tmp/hiverelay-release-secrets.env --channel ${repair_channel} --prerelease false\`."
               echo "3. Dry-run rotation with \`npm run release:apply-github-secrets -- --repo ${GITHUB_REPOSITORY} --env-file /private/tmp/hiverelay-release-secrets.env --dry-run\`."
               echo "4. Apply rotation with \`npm run release:apply-github-secrets -- --repo ${GITHUB_REPOSITORY} --env-file /private/tmp/hiverelay-release-secrets.env\`, then rerun this workflow."
               echo

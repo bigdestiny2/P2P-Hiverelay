@@ -36,7 +36,7 @@ and StartOS metadata so the published release surfaces agree.
 |---|---|---|
 | Core3 packages | Monorepo and package manifests are aligned at `v0.20.2` | A tag/release must run `npm run release:prepare` so versions, fleet channels, Umbrel, and StartOS metadata move together |
 | Blindspark on Umbrel | In-repo package uses app proxy, persistent `/data`, review-mode default, and guarded setup/add-wallet/service-manager smoke paths with visible in-flight state | Official App Store inclusion still needs the upstream `getumbrel/umbrel-apps` PR/review plus real-device `umbrel-runtime-review-evidence.json` |
-| StartOS | Source can build and verify a digest-pinned `.s9pk` and publish to a configured registry | Registry proof requires `startos-registry-evidence.json`; marketplace/community inclusion remains Start9 review-controlled |
+| StartOS | Source can build and verify a digest-pinned `.s9pk` from a published GHCR release image and publish to a configured registry | Current `v0.20.2` package proof is blocked until `ghcr.io/bigdestiny2/p2p-hiverelay:0.20.2` resolves to a multi-arch digest; registry proof requires `startos-registry-evidence.json`; marketplace/community inclusion remains Start9 review-controlled |
 | Raw fleet | Pull updater, channel metadata, health gate, rollback, and rollout verifier are in-repo | A release is live on the selected fleet only when `fleet-rollout-evidence.json` proves target SHA, package version, `/health.version`, and relay health |
 | Release evidence | Image-manifest, image-smoke, Umbrel-smoke, fleet, official-Umbrel, StartOS-registry, and final handoff verifiers are wired | Sidecars must hash-match `release-evidence.json`; smoke sidecars must not predate the multi-arch image-manifest proof |
 
@@ -139,6 +139,8 @@ HiveRelay is four connected layers:
 For the graph-first technical map of the relay, protocol channels, APIs,
 security boundaries, and live distribution path, see
 [docs/HIVERELAY-ARCHITECTURE-GRAPH.md](docs/HIVERELAY-ARCHITECTURE-GRAPH.md).
+That graph now calls out PearBrowser, PearPaste, and anonGPT as live ecosystem
+consumers that must stay on the newest HiveRelay line by default.
 For the full runtime, protocol, storage, services, trust-boundary, and fleet
 deployment diagram, see
 [docs/HIVERELAY-DETAILED-ARCHITECTURE-DIAGRAM.md](docs/HIVERELAY-DETAILED-ARCHITECTURE-DIAGRAM.md).
@@ -654,8 +656,8 @@ sidecar hashes together.
 | Evidence file | What it proves |
 |---|---|
 | `release-image-manifest-evidence.json` | The pinned GHCR digest is an OCI/Docker image index with `linux/amd64` and `linux/arm64` platform manifests before smoke evidence or package metadata is accepted |
-| `release-image-smoke-evidence.json` | The exact release image boots and passes `/health.version`, dashboard, setup, review-mode default, wallet, services, in-band dashboard WebSocket auth, usage telemetry, wallet/service/AI action-state, and setup wizard status/action-lock smoke checks after image-manifest proof |
-| `umbrel-package-smoke-evidence.json` | The in-repo Umbrel package boots through `app_proxy` and preserves setup, wallet, service config, selected providers, dashboard WebSocket auth, health version, telemetry, dashboard UI-hardening, and setup wizard UI-hardening across restart after image-manifest proof |
+| `release-image-smoke-evidence.json` | The exact release image boots and passes `/health.version`, dashboard, setup, review-mode default, wallet, services, in-band dashboard WebSocket auth, usage telemetry, wallet/service/AI action-state, app-proxy-safe seed/lease writes, bounded lease polling, and setup wizard status/action-link smoke checks after image-manifest proof |
+| `umbrel-package-smoke-evidence.json` | The in-repo Umbrel package boots through `app_proxy` and preserves setup, wallet, service config, selected providers, dashboard WebSocket auth, health version, telemetry, app-proxy-safe dashboard writes, bounded lease polling, dashboard UI-hardening, and setup wizard link/UI-hardening across restart after image-manifest proof |
 | `fleet-rollout-evidence.json` | The selected raw fleet channel converges on the target tag SHA and expected `/health.version` with bounded `timeoutMs`, `intervalMs`, and `sshTimeoutMs` probe timing; `release-evidence.json` stores its SHA-256 |
 | `official-umbrel-pr-evidence.json` | The official Umbrel draft PR was refreshed with release, fleet, StartOS package, StartOS registry, and smoke links, plus `runtimeReview.status: pending-real-device-review` |
 | `umbrel-runtime-review-evidence.json` | A separate real-device Umbrel lifecycle pass verified install, app-proxy dashboard loading, in-band WebSocket auth, setup, add-wallet, management actions, setup/wallet/service/restart/AI action-state behavior, review-mode default, `/data` writability, and reinstall-preserves-key behavior |
@@ -1010,7 +1012,7 @@ Important release commands:
 | `npm run release:verify-handoff-evidence` | Verify Umbrel PR, fleet rollout, StartOS registry, and optional real Umbrel runtime-review handoff sidecars; add `--require-umbrel-runtime-review` for review-ready Umbrel handoff |
 | `npm run release:verify-review-ready-handoff` | Verify the final Umbrel reviewer handoff and require real runtime-review evidence |
 | `HIVERELAY_IMAGE_DIGEST=sha256:<digest> npm run startos:verify` | Build and verify the release `.s9pk` from an exact GHCR digest |
-| `npm run startos:verify:local` | Local StartOS mechanics check that explicitly allows the tag-only image path |
+| `npm run startos:verify:local` | Local StartOS mechanics check that explicitly allows the tag-only image path; still requires the current GHCR `:VERSION` tag to resolve and is not release evidence |
 
 Stable releases are distribution-complete by default in the release workflow:
 if the fleet SSH key, Umbrel community-store token, official Umbrel PR
@@ -1068,16 +1070,22 @@ regressions.
 npm audit
 npm run lint
 npm run audit:workspace
+npm run ecosystem:sync -- --check
+npm run audit:ecosystem-consumers
 npm run test:unit
 npm run test:bare
+npm test
 ```
+
+The current local ship-loop evidence is tracked in
+[docs/TEST-COMMAND-MATRIX-2026-06-27.md](docs/TEST-COMMAND-MATRIX-2026-06-27.md).
 
 Release/package smoke tests:
 
 ```bash
 npm run release:smoke-image -- ghcr.io/bigdestiny2/p2p-hiverelay:<version>@sha256:<digest>
 npm run umbrel:smoke-package -- --image-ref ghcr.io/bigdestiny2/p2p-hiverelay:<version>@sha256:<digest>
-npm run fleet:check-rollout -- --target v<version> --channel canary
+npm run fleet:check-rollout -- --target v<version> --channel both
 ```
 
 ---
@@ -1093,6 +1101,8 @@ npm run fleet:check-rollout -- --target v<version> --channel canary
   detailed runtime, storage, services, trust-boundary, and fleet deployment map
 - [docs/PEAR-INTEGRATION.md](docs/PEAR-INTEGRATION.md) - Pear/Bare integration
 - [docs/PEARBROWSER-INTEGRATION.md](docs/PEARBROWSER-INTEGRATION.md) - browser contracts
+- [docs/ECOSYSTEM-UPGRADE-0.20.2.md](docs/ECOSYSTEM-UPGRADE-0.20.2.md) -
+  app-by-app upgrade notes for stale non-bundled Hiverelay consumers
 - [docs/DEVELOPER.md](docs/DEVELOPER.md) - broad developer reference; this
   README, the changelog, and current source are authoritative for newer
   Core/Services and release-evidence surfaces

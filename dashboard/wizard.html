@@ -334,6 +334,9 @@
     text-transform: uppercase;
     letter-spacing: .05em;
   }
+  .center-text { text-align: center }
+  .complete-note { margin-top: 1.5rem }
+  .complete-actions { justify-content: center }
 
   /* Loading state */
   .loading {
@@ -360,7 +363,7 @@
 <body>
 
 <div class="top">
-  <a class="logo" href="/dashboard" data-wizard-action="dashboard">
+  <a class="logo" href="dashboard" data-wizard-action="dashboard">
     <svg viewBox="0 0 100 100" aria-hidden="true">
       <path d="M50 10 L30 55 L45 55 L40 90 L70 45 L55 45 Z" fill="#f5a623"/>
     </svg>
@@ -487,18 +490,18 @@
   <!-- Step 5: Complete -->
   <section class="step" data-step="complete">
     <div class="complete-icon">⚡</div>
-    <h1 style="text-align:center">You're online.</h1>
-    <p class="lead" style="text-align:center">
+    <h1 class="center-text">You're online.</h1>
+    <p class="lead center-text">
       Your relay is now discoverable on the HiveRelay network.
     </p>
     <div class="complete-stat">0 sats</div>
     <div class="complete-stat-label">earned this month</div>
-    <p style="text-align:center; margin-top: 1.5rem;">
+    <p class="complete-note center-text">
       Earnings will appear here as the network discovers and uses your
       relay. Don't expect overnight numbers — be patient with the early
       phase.
     </p>
-    <div class="actions" style="justify-content:center">
+    <div class="actions complete-actions">
       <button type="button" data-wizard-action="dashboard">Open dashboard →</button>
     </div>
   </section>
@@ -534,6 +537,10 @@
     if (!path) return APP_BASE || '/'
     return (APP_BASE || '') + (path.charAt(0) === '/' ? path : '/' + path)
   }
+
+  document.querySelectorAll('[data-wizard-action="dashboard"][href]').forEach(el => {
+    el.setAttribute('href', appPath('/dashboard'))
+  })
 
   // ─── API helpers ────────────────────────────────────────────
 

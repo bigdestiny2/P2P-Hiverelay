@@ -72,6 +72,7 @@ const protocolSpecDocs = readText(hiverelayRoot, 'docs', 'PROTOCOL-SPEC.md')
 const developerDocs = readText(hiverelayRoot, 'docs', 'DEVELOPER.md')
 const readmeMainUpdateAudit = readText(hiverelayRoot, 'docs', 'README-MAIN-UPDATE-AUDIT.md')
 const shipHandoff20260626 = readText(hiverelayRoot, 'docs', 'SHIP-HANDOFF-2026-06-26.md')
+const testCommandMatrix20260627 = readText(hiverelayRoot, 'docs', 'TEST-COMMAND-MATRIX-2026-06-27.md')
 const startOsManifest = readText(hiverelayRoot, 'startos', 'manifest.yaml')
 const startOsMakefile = readText(hiverelayRoot, 'startos', 'Makefile')
 const startOsReadme = readText(hiverelayRoot, 'startos', 'README.md')
@@ -101,6 +102,12 @@ const releaseDistributionEnvCheck = readText(hiverelayRoot, 'scripts', 'check-re
 const releaseEnvFileLib = readText(hiverelayRoot, 'scripts', 'lib', 'release-env-file.mjs')
 const githubReleaseSetupCheck = readText(hiverelayRoot, 'scripts', 'check-github-release-setup.mjs')
 const githubReleaseSecretsApply = readText(hiverelayRoot, 'scripts', 'apply-github-release-secrets.mjs')
+const releaseSecretsTemplate = readText(hiverelayRoot, 'scripts', 'write-release-secrets-template.mjs')
+const ecosystemConsumersAudit = readText(hiverelayRoot, 'scripts', 'audit-ecosystem-consumers.mjs')
+const ecosystemConsumersSync = readText(hiverelayRoot, 'scripts', 'sync-ecosystem-consumers.mjs')
+const publicArtifactSecretsAudit = readText(hiverelayRoot, 'scripts', 'check-public-artifact-secrets.mjs')
+const shipHandoffUpdate = readText(hiverelayRoot, 'scripts', 'update-ship-handoff.mjs')
+const shipHandoffIssue120Log = readText(hiverelayRoot, 'docs', 'ship-handoff', 'issue-120-release-distribution-preflight.txt')
 const releaseImageManifestCheck = readText(hiverelayRoot, 'scripts', 'check-release-image-manifest.mjs')
 const githubEnvWriter = readText(hiverelayRoot, 'scripts', 'write-github-env.mjs')
 const releaseEvidence = readText(hiverelayRoot, 'scripts', 'write-release-evidence.mjs')
@@ -174,10 +181,12 @@ const relayApiServiceRead = readText(hiverelayRoot, 'packages', 'core', 'core', 
 const relayApiStatusRead = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-status-read.js')
 const relayApiModeTransport = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-mode-transport.js')
 const relayApiSubsidy = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-subsidy.js')
+const relayApiLease = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-lease.js')
 const relayApiUnseedActions = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-unseed-actions.js')
 const relayApiUsageTelemetry = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-usage-telemetry.js')
 const relayApiValidation = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-validation.js')
 const relayApiWizardActions = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-wizard-actions.js')
+const leaseManager = readText(hiverelayRoot, 'packages', 'core', 'incentive', 'lease', 'index.js')
 const relayNode = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'index.js')
 const bareRelay = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'bare-relay.js')
 const routerCore = readText(hiverelayRoot, 'packages', 'core', 'core', 'router', 'index.js')
@@ -287,6 +296,7 @@ const apiSeedPublishTest = readText(hiverelayRoot, 'test', 'unit', 'api-seed-pub
 const apiSignedIngressTest = readText(hiverelayRoot, 'test', 'unit', 'api-signed-ingress.test.js')
 const apiStatusReadTest = readText(hiverelayRoot, 'test', 'unit', 'api-status-read.test.js')
 const apiSubsidyTest = readText(hiverelayRoot, 'test', 'unit', 'api-subsidy.test.js')
+const apiLeaseTest = readText(hiverelayRoot, 'test', 'unit', 'api-lease.test.js')
 const apiUnseedActionsTest = readText(hiverelayRoot, 'test', 'unit', 'api-unseed-actions.test.js')
 const apiValidationTest = readText(hiverelayRoot, 'test', 'unit', 'api-validation.test.js')
 const apiWizardActionsTest = readText(hiverelayRoot, 'test', 'unit', 'api-wizard-actions.test.js')
@@ -329,10 +339,14 @@ const umbrelRuntimeReviewEvidenceVerifyTest = readText(hiverelayRoot, 'test', 'u
 const releaseDistributionEnvCheckTest = readText(hiverelayRoot, 'test', 'unit', 'release-distribution-env.test.js')
 const githubReleaseSetupCheckTest = readText(hiverelayRoot, 'test', 'unit', 'github-release-setup.test.js')
 const githubReleaseSecretsApplyTest = readText(hiverelayRoot, 'test', 'unit', 'github-release-secrets-apply.test.js')
+const releaseSecretsTemplateTest = readText(hiverelayRoot, 'test', 'unit', 'release-secret-template.test.js')
+const ecosystemConsumersAuditTest = readText(hiverelayRoot, 'test', 'unit', 'ecosystem-consumers.test.js')
+const publicArtifactSecretsAuditTest = readText(hiverelayRoot, 'test', 'unit', 'public-artifact-secret-scan.test.js')
 const releaseEvidenceTest = readText(hiverelayRoot, 'test', 'unit', 'release-evidence.test.js')
 const releaseEvidenceVerifyTest = readText(hiverelayRoot, 'test', 'unit', 'release-evidence-verify.test.js')
 const releaseHandoffEvidenceVerifyTest = readText(hiverelayRoot, 'test', 'unit', 'release-handoff-evidence-verify.test.js')
 const releaseImageManifestCheckTest = readText(hiverelayRoot, 'test', 'unit', 'release-image-manifest-check.test.js')
+const packageEntryPointsTest = readText(hiverelayRoot, 'test', 'unit', 'package-entrypoints.test.js')
 const officialUmbrelPrEvidenceTest = readText(hiverelayRoot, 'test', 'unit', 'official-umbrel-pr-evidence.test.js')
 const startosRegistryEvidenceTest = readText(hiverelayRoot, 'test', 'unit', 'startos-registry-evidence.test.js')
 const startosPackageGuardTest = readText(hiverelayRoot, 'test', 'unit', 'startos-package-guard.test.js')
@@ -345,6 +359,7 @@ const dashboardCatalogUiTest = readText(hiverelayRoot, 'test', 'unit', 'dashboar
 const dashboardNetworkUiTest = readText(hiverelayRoot, 'test', 'unit', 'dashboard-network-ui.test.js')
 const dashboardLeaderboardUiTest = readText(hiverelayRoot, 'test', 'unit', 'dashboard-leaderboard-ui.test.js')
 const dashboardPaymentsUiTest = readText(hiverelayRoot, 'test', 'unit', 'dashboard-payments-ui.test.js')
+const dashboardPollingVisibilityTest = readText(hiverelayRoot, 'test', 'unit', 'dashboard-polling-visibility.test.js')
 const dashboardCalculatorUiTest = readText(hiverelayRoot, 'test', 'unit', 'dashboard-calculator-ui.test.js')
 const metricsTest = readText(hiverelayRoot, 'test', 'unit', 'metrics.test.js')
 const wsFeedPayloadTest = readText(hiverelayRoot, 'test', 'unit', 'ws-feed-payload.test.js')
@@ -458,6 +473,7 @@ if (
   blindsparkDashboard.includes('function appendMeterRow(parent, label, value)') &&
   blindsparkDashboard.includes('clearNode(pay)') &&
   blindsparkDashboard.includes('clearNode(box)') &&
+  blindsparkDashboard.includes('clearNode(v)') &&
   blindsparkDashboard.includes("appendMeterRow(meter, 'Signed receipts', metricCount(verified.count))") &&
   blindsparkDashboard.includes("var row = appendEl(box, 'div', 'app')") &&
   blindsparkDashboard.includes("var nameEl = appendEl(row, 'span', 'app-name', name)") &&
@@ -469,8 +485,18 @@ if (
   blindsparkDashboard.includes('function handleSvcModelInputKey(event)') &&
   blindsparkDashboard.includes("modelId.addEventListener('keydown', handleSvcModelInputKey);") &&
   blindsparkDashboard.includes("modelSrc.addEventListener('keydown', handleSvcModelInputKey);") &&
+  blindsparkDashboard.includes('class="row" id="leaseRow" hidden') &&
+  blindsparkDashboard.includes('class="apps-head-actions"') &&
+  blindsparkDashboard.includes('class="seed-optional"') &&
+  blindsparkDashboard.includes("$('walletClear').hidden = !payoutDestination;") &&
+  !blindsparkDashboard.includes(' style=') &&
+  !blindsparkDashboard.includes('.style.cssText') &&
+  !blindsparkDashboard.includes('onerror=') &&
+  !blindsparkDashboard.includes('function appGlyph') &&
+  !blindsparkDashboard.includes('function escapeHtml') &&
   !blindsparkDashboard.includes('pay.innerHTML') &&
   !blindsparkDashboard.includes('box.innerHTML') &&
+  !blindsparkDashboard.includes('v.innerHTML') &&
   !blindsparkDashboard.includes('content.innerHTML =') &&
   !blindsparkDashboard.includes('row.innerHTML =') &&
   !blindsparkDashboard.includes('form.innerHTML =') &&
@@ -556,13 +582,42 @@ if (
   fullDashboard.includes("appendRegistryButton(actions, 'reject', appKey, 'btn btn-red', 'REJECT')") &&
   fullDashboard.includes("appendEl(row, 'td', '', truncateKey(publisher))") &&
   fullDashboard.includes("appendEl(row, 'td', '', geoPreference)") &&
+  fullDashboard.includes('var destSaveBusy = false;') &&
+  fullDashboard.includes('if (destSaveBusy) return;') &&
+  fullDashboard.includes("fetchWithTimeout('/api/subsidy/destination'") &&
+  fullDashboard.includes("destDialog.setAttribute('aria-busy', 'true');") &&
+  fullDashboard.includes("destDialog.setAttribute('aria-busy', 'false');") &&
+  fullDashboard.includes('function postJson(path, body)') &&
+  fullDashboard.includes('return fetchWithTimeout(path, {') &&
+  fullDashboard.includes("postJson('/registry/auto-accept', { enabled: enabled })") &&
+  fullDashboard.includes('autoAcceptToggle.disabled = true;') &&
+  fullDashboard.includes('autoAcceptToggle.checked = previous;') &&
+  fullDashboard.includes('autoAcceptToggle.disabled = false;') &&
+  fullDashboard.includes('function setRegistryActionBusy(btn, busy)') &&
+  fullDashboard.includes('function runRegistryAction(btn, path, body, onSuccess, label)') &&
+  fullDashboard.includes('if (btn && btn.disabled) return Promise.resolve();') &&
+  fullDashboard.includes('setRegistryActionBusy(btn, true);') &&
+  fullDashboard.includes("btn.setAttribute('aria-busy', busy ? 'true' : 'false');") &&
+  fullDashboard.includes('return postJson(path, body)') &&
+  fullDashboard.includes("runRegistryAction(btn, '/unseed'") &&
+  fullDashboard.includes("runRegistryAction(btn, '/registry/approve'") &&
+  fullDashboard.includes("runRegistryAction(btn, '/registry/reject'") &&
+  fullDashboard.includes('if (btn.disabled) return;') &&
+  fullDashboard.includes('unseedApp(appKey, btn);') &&
+  fullDashboard.includes('approveRequest(appKey, btn);') &&
+  fullDashboard.includes('rejectRequest(appKey, btn);') &&
   !fullDashboard.includes('data-registry-action="unseed" data-app-key="\' + keyAttr + \'"') &&
   !fullDashboard.includes('data-registry-action="approve" data-app-key="\' + keyAttr + \'"') &&
   !fullDashboard.includes('data-registry-action="reject" data-app-key="\' + keyAttr + \'"') &&
+  !fullDashboard.includes("fetch('/registry/auto-accept'") &&
+  !fullDashboard.includes("fetch('/unseed'") &&
+  !fullDashboard.includes("fetch('/registry/approve'") &&
+  !fullDashboard.includes("fetch('/registry/reject'") &&
   !fullDashboard.includes('onclick="unseedApp') &&
   !fullDashboard.includes('onclick="approveRequest') &&
   !fullDashboard.includes('onclick="rejectRequest') &&
   dashboardIndexUiTest.includes('operator registry tables escape untrusted app keys and avoid inline action handlers') &&
+  dashboardIndexUiTest.includes('operator registry and payout writes are timeout bounded and block duplicate submits') &&
   dashboardIndexUiTest.includes('renderRegistryDomWith') &&
   dashboardIndexUiTest.includes('seeded.assignments') &&
   dashboardIndexUiTest.includes('pending.assignments')
@@ -700,6 +755,91 @@ if (
 }
 
 if (
+  [fullDashboard, networkDashboard, paymentsDashboard, leaderboardDashboard, catalogDashboard].every(html =>
+    html.includes('document.hidden === true') &&
+    html.includes("document.addEventListener('visibilitychange'") &&
+    html.includes('REQUEST_TIMEOUT_MS = 10000') &&
+    html.includes('fetchWithTimeout') &&
+    html.includes('AbortController') &&
+    html.includes('clearTimeout(timeout)')
+  ) &&
+  fullDashboard.includes('function refreshData(force)') &&
+  fullDashboard.includes('function refreshPending(force)') &&
+  fullDashboard.includes('function fetchWithTimeout(path, opts)') &&
+  fullDashboard.includes("fetchWithTimeout('/api/overview')") &&
+  fullDashboard.includes("fetchWithTimeout('/api/history?minutes=60')") &&
+  fullDashboard.includes("fetchWithTimeout('/api/apps')") &&
+  fullDashboard.includes("fetchWithTimeout('/catalog.json')") &&
+  fullDashboard.includes('var dataRefreshBusy = false;') &&
+  fullDashboard.includes('var pendingRefreshBusy = false;') &&
+  fullDashboard.includes('if (dataRefreshBusy) return;') &&
+  fullDashboard.includes('fetchData().finally(function()') &&
+  fullDashboard.includes('if (pendingRefreshBusy) return;') &&
+  fullDashboard.includes('if (autoAcceptToggle.checked) return;') &&
+  fullDashboard.includes("return fetchWithTimeout('/api/registry/pending')") &&
+  fullDashboard.includes('fetchPending().finally(function()') &&
+  fullDashboard.includes('setInterval(function() { refreshData(false); }, ms);') &&
+  fullDashboard.includes('setInterval(function() { refreshPending(false); }, 10000);') &&
+  fullDashboard.includes('if (document.hidden !== true) setTimeout(connectWS, 3000);') &&
+  !fullDashboard.includes('setInterval(fetchData, ms);') &&
+  !fullDashboard.includes('setInterval(function() { if (!autoAcceptToggle.checked) fetchPending(); }, 10000);') &&
+  networkDashboard.includes('function refreshNetwork(force)') &&
+  networkDashboard.includes('function fetchWithTimeout(path, opts)') &&
+  networkDashboard.includes("fetchWithTimeout('/api/network?detailed=1'") &&
+  networkDashboard.includes("fetchWithTimeout('/api/network')") &&
+  !networkDashboard.includes('AbortSignal.timeout') &&
+  networkDashboard.includes('var networkRefreshBusy = false;') &&
+  networkDashboard.includes('if (networkRefreshBusy) return;') &&
+  networkDashboard.includes('refresh().finally(function()') &&
+  networkDashboard.includes('setInterval(function() { refreshNetwork(false); }, ms);') &&
+  !networkDashboard.includes('setInterval(refresh, ms);') &&
+  paymentsDashboard.includes('function refreshOverview(force)') &&
+  paymentsDashboard.includes('function refreshWallets(force)') &&
+  paymentsDashboard.includes('function fetchWithTimeout(path, opts)') &&
+  paymentsDashboard.includes("fetchWithTimeout('/api/v1/credits/pricing')") &&
+  paymentsDashboard.includes("fetchWithTimeout('/api/v1/credits/pricing/compare')") &&
+  paymentsDashboard.includes("fetchWithTimeout('/api/v1/credits/stats'") &&
+  paymentsDashboard.includes("fetchWithTimeout('/api/overview')") &&
+  paymentsDashboard.includes('var overviewRefreshBusy = false;') &&
+  paymentsDashboard.includes('var walletsRefreshBusy = false;') &&
+  paymentsDashboard.includes('if (overviewRefreshBusy) return;') &&
+  paymentsDashboard.includes('if (walletsRefreshBusy) return;') &&
+  paymentsDashboard.includes('fetchOverview().finally(function()') &&
+  paymentsDashboard.includes('fetchWallets().finally(function()') &&
+  paymentsDashboard.includes('setInterval(function() { refreshOverview(false); }, 10000);') &&
+  paymentsDashboard.includes('setInterval(function() { refreshWallets(false); }, 30000);') &&
+  !paymentsDashboard.includes('setInterval(fetchOverview, 10000);') &&
+  !paymentsDashboard.includes('setInterval(fetchWallets, 30000);') &&
+  leaderboardDashboard.includes('function refreshLeaderboardState(force)') &&
+  leaderboardDashboard.includes('function fetchWithTimeout(path, opts)') &&
+  leaderboardDashboard.includes('var leaderboardRefreshBusy = false;') &&
+  leaderboardDashboard.includes('if (leaderboardRefreshBusy) return;') &&
+  leaderboardDashboard.includes("return fetchWithTimeout('/api/reputation')") &&
+  leaderboardDashboard.includes("return fetchWithTimeout('/api/overview')") &&
+  leaderboardDashboard.includes('Promise.all([fetchLeaderboard(), fetchMyPubkey()]).finally(function()') &&
+  leaderboardDashboard.includes('refreshLeaderboardState(false);') &&
+  leaderboardDashboard.includes('if (document.hidden !== true) setTimeout(connectWS, 5000);') &&
+  catalogDashboard.includes('function refreshCatalog (force)') &&
+  catalogDashboard.includes('function fetchWithTimeout (path, opts = {})') &&
+  catalogDashboard.includes("fetchWithTimeout('/catalog.json?pageSize=200'") &&
+  catalogDashboard.includes('let catalogRefreshBusy = false') &&
+  catalogDashboard.includes('if (catalogRefreshBusy) return') &&
+  catalogDashboard.includes('loadCatalog().finally(() =>') &&
+  catalogDashboard.includes('setInterval(() => { refreshCatalog(false) }, 30_000)') &&
+  !catalogDashboard.includes('setInterval(loadCatalog, 30_000)') &&
+  dashboardPollingVisibilityTest.includes('operator dashboards pause automatic polling while hidden') &&
+  dashboardPollingVisibilityTest.includes('operator dashboards avoid overlapping automatic refreshes') &&
+  dashboardPollingVisibilityTest.includes('operator dashboards bound automatic HTTP refresh latency') &&
+  dashboardPollingVisibilityTest.includes('setInterval(fetchData, ms);') &&
+  dashboardPollingVisibilityTest.includes('setInterval(fetchOverview, 10000);') &&
+  dashboardPollingVisibilityTest.includes('setInterval(loadCatalog, 30_000)')
+) {
+  pass('operator dashboards pause hidden-tab polling and avoid overlapping automatic refreshes')
+} else {
+  fail('operator dashboards can still run hidden-tab polling, reconnect loops, or overlapping automatic refreshes')
+}
+
+if (
   calculatorDashboard.includes('data-calculator-preset="hobby"') &&
   calculatorDashboard.includes('data-slider-display="appsVal"') &&
   calculatorDashboard.includes('data-calculator-recalculate') &&
@@ -747,6 +887,8 @@ if (
   blindsparkDashboard.includes('if (timeout) clearTimeout(timeout);') &&
   blindsparkDashboard.includes("fetchWithTimeout(path, { headers: { 'Accept': 'application/json' } })") &&
   blindsparkDashboard.includes("fetchWithTimeout('/api/subsidy/destination'") &&
+  blindsparkDashboard.includes("fetchWithTimeout('/seed'") &&
+  blindsparkDashboard.includes("fetchWithTimeout('/api/lease/config'") &&
   blindsparkDashboard.includes('return fetchWithTimeout(path, {') &&
   blindsparkDashboard.includes('function refreshServices(force)') &&
   blindsparkDashboard.includes('if (svcDraftDirty && force !== true) return;') &&
@@ -754,13 +896,22 @@ if (
   blindsparkDashboard.includes('var wizardRefreshBusy = false;') &&
   blindsparkDashboard.includes('var servicesRefreshBusy = false;') &&
   blindsparkDashboard.includes('var servicesRefreshPendingForce = false;') &&
+  blindsparkDashboard.includes('var leaseRefreshBusy = false;') &&
   blindsparkDashboard.includes('function canPoll(force, busy)') &&
   blindsparkDashboard.includes('document.hidden === true') &&
+  blindsparkDashboard.includes('function fetchLease(force)') &&
+  blindsparkDashboard.includes('if (!canPoll(force, leaseRefreshBusy)) return Promise.resolve(null);') &&
+  blindsparkDashboard.includes('fetchLease(force);') &&
+  blindsparkDashboard.includes('setInterval(function(){ fetchLease(false); }, 30000);') &&
+  !blindsparkDashboard.includes("fetch('/seed'") &&
+  !blindsparkDashboard.includes("fetch('/api/lease/config'") &&
+  !blindsparkDashboard.includes('setInterval(function(){ fetchLease(); }, 30000);') &&
   blindsparkDashboard.includes('if (force === true) servicesRefreshPendingForce = true;') &&
   blindsparkDashboard.includes('refreshVisible(true);') &&
   blindsparkDashboard.includes("document.addEventListener('visibilitychange'") &&
   !blindsparkDashboard.includes('setInterval(refresh, 5000);') &&
-  umbrelUiControlsTest.includes('umbrel dashboard polling avoids hidden-tab and overlapping refresh churn')
+  umbrelUiControlsTest.includes('umbrel dashboard polling avoids hidden-tab and overlapping refresh churn') &&
+  umbrelUiControlsTest.includes('umbrel seed and lease writes use app-proxy-aware fetch helpers')
 ) {
   pass('Umbrel service auto refresh preserves drafts and keeps appliance API polling/writes bounded')
 } else {
@@ -821,6 +972,12 @@ if (
   wizardDashboard.includes('data-wizard-action="goto" data-step-target="relay_name"') &&
   wizardDashboard.includes('data-wizard-action="payout"') &&
   wizardDashboard.includes('data-wizard-action="accept-mode"') &&
+  wizardDashboard.includes('href="dashboard" data-wizard-action="dashboard"') &&
+  wizardDashboard.includes('document.querySelectorAll(\'[data-wizard-action="dashboard"][href]\').forEach(el => {') &&
+  wizardDashboard.includes("el.setAttribute('href', appPath('/dashboard'))") &&
+  wizardDashboard.includes('<h1 class="center-text">You\'re online.</h1>') &&
+  wizardDashboard.includes('<p class="complete-note center-text">') &&
+  wizardDashboard.includes('<div class="actions complete-actions">') &&
   wizardDashboard.includes("const el = event.target.closest('[data-wizard-action]')") &&
   wizardDashboard.includes('id="wizard-status" role="status" aria-live="polite"') &&
   wizardDashboard.includes('let wizardActionBusy = false') &&
@@ -835,6 +992,8 @@ if (
   wizardDashboard.includes("btn.replaceChildren(spinner, document.createTextNode('Working...'))") &&
   wizardDashboard.includes('card.replaceChildren(title, body, help)') &&
   !wizardDashboard.includes('onclick=') &&
+  !wizardDashboard.includes('href="/dashboard"') &&
+  !wizardDashboard.includes(' style=') &&
   !wizardDashboard.includes('innerHTML') &&
   dashboardWizardUiTest.includes('wizard controls use delegated actions instead of inline handlers') &&
   dashboardWizardUiTest.includes('wizard delegated action router preserves setup behavior') &&
@@ -902,6 +1061,35 @@ if (
   pass('Umbrel wallet payout reads and updates are extracted with validation, rollback, and UI route coverage')
 } else {
   fail('Umbrel wallet payout read/update flow can drift from route/UI behavior or rollback coverage')
+}
+
+if (
+  relayApi.includes('} from \'./api-lease.js\'') &&
+  relayApi.includes('buildLeaseStatusPayload({') &&
+  relayApi.includes('const result = await runLeaseConfigAction({') &&
+  relayApiLease.includes('export function buildLeaseStatusPayload') &&
+  relayApiLease.includes('export function parseLeaseRateUpdate') &&
+  relayApiLease.includes('export async function runLeaseConfigAction') &&
+  relayApiLease.includes('sanitizeLeaseSummary') &&
+  relayApiLease.includes("formatErr('PERSIST_FAILED', PERSIST_FAILED)") &&
+  relayApiLease.includes("const RATE_MAX_PREFIX = 'satsPerGiBDay exceeds maximum'") &&
+  relayApiLease.includes("if (!message || hasControlChars(message)) return 'invalid lease config'") &&
+  relayApiLease.includes('message.startsWith(RATE_MAX_PREFIX)') &&
+  leaseManager.includes('async setRateDurable') &&
+  leaseManager.includes('this.satsPerGiBDay = previous') &&
+  leaseManager.includes("wrapped.code = 'LEASE_RATE_PERSIST_FAILED'") &&
+  leaseManager.includes("this._persist().catch((err) => { this.emit('persist-error', err) })") &&
+  apiLeaseTest.includes('api lease: status payload shapes summary and counts active paid leases') &&
+  apiLeaseTest.includes('api lease: config update uses durable setter before returning success') &&
+  apiLeaseTest.includes('api lease: config update reports persistence failure without pretending success') &&
+  apiLeaseTest.includes('api lease: disabled and malformed runtime states stay stable') &&
+  apiLeaseTest.includes('/data/hiverelay/lease.json: permission denied') &&
+  apiLeaseTest.includes('bad-request: invalid lease config') &&
+  auditRoadmap.includes('Lease management API durability boundary')
+) {
+  pass('paid lease management API is extracted with sanitized status payloads and durable rate-update coverage')
+} else {
+  fail('paid lease management API can drift from sanitized status or durable persistence behavior')
 }
 
 if (
@@ -1209,6 +1397,11 @@ if (
   relayApi.includes("} from './api-usage-telemetry.js'") &&
   relayApi.includes('_getUsageTelemetryPayload') &&
   relayApi.includes('_getPokerUsageTelemetryPayload') &&
+  relayApi.includes("if (path === '/api/usage' && req.method === 'GET')") &&
+  relayApi.includes('if (this.node._bandwidthReceipt) return this._json(res, this._getUsageTelemetryPayload())') &&
+  relayApi.includes("if (path === '/api/poker/usage' && req.method === 'GET')") &&
+  relayApi.includes('const provider = pk.ok ? pk.provider : this._getPokerApp()') &&
+  relayApi.includes('enabled: true') &&
   relayApi.includes('return usageTelemetryPayload(this.node._bandwidthReceipt, stats)') &&
   relayApi.includes('return pokerUsageTelemetryPayload(this._getPokerApp())') &&
   pokerHttpAdapter.includes("from 'p2p-hiverelay/core/relay-node/api-body.js'") &&
@@ -1234,6 +1427,7 @@ if (
   apiServiceConfigHelpersTest.includes('api service config helpers: payload reports configured builtins and active providers') &&
   apiUsageTelemetryTest.includes('api usage telemetry: builds dashboard payload from verified and measured counters') &&
   apiUsageTelemetryTest.includes('api usage telemetry: poker usage counts tables, appends, and seats defensively') &&
+  apiAuthTest.includes('api-auth: operator usage telemetry requires auth and returns aggregate proof counters') &&
   apiServiceConfigTest.includes('poker service http api is delegated when poker provider is running') &&
   apiServiceConfigTest.includes('poker table api keeps app-facing CORS separate from management usage telemetry') &&
   pokerHttpAdapterTest.includes('poker http adapter uses hardened JSON response headers') &&
@@ -1657,8 +1851,9 @@ if (
     relayApi.includes("this._requireAuth(req, res, 'Unauthorized — API key required for /api/alerts')") &&
     relayApi.includes("this._requireAuth(req, res, 'Unauthorized — API key required for /api/health-detail')") &&
     relayApi.includes("this._requireAuth(req, res, 'Unauthorized — API key required for /api/auto-heal')") &&
-    relayApi.includes("this._requireAuth(req, res, 'Unauthorized — API key required for /api/usage')") &&
-    relayApi.includes("this._requireAuth(req, res, 'Unauthorized — API key required for /api/poker/usage')") &&
+    relayApi.includes("if (path === '/api/usage' && req.method === 'GET')") &&
+    relayApi.includes("if (path === '/api/poker/usage' && req.method === 'GET')") &&
+    relayApi.includes('if (!this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return') &&
     relayApi.includes("this._requireAuth(req, res, 'Unauthorized — API key required for /api/history')")
 ) {
   pass('wizard, wallet, alerts, diagnostics, usage, history, and operator telemetry auth failures use central auth metrics')
@@ -2821,9 +3016,10 @@ if (
   !relayApiNetworkState.includes('holesailKey: relay.holesailKey') &&
   wsFeed.includes("import { detailedNetworkState, publicNetworkState } from './api-network-state.js'") &&
   wsFeed.includes('payload.network = this._apiKey ? detailedNetworkState(state) : publicNetworkState(state)') &&
-  networkDashboard.includes("fetch('/api/network?detailed=1'") &&
+  networkDashboard.includes("fetchWithTimeout('/api/network?detailed=1'") &&
   networkDashboard.includes("detailedHeaders.Authorization = 'Bearer ' + token") &&
-  networkDashboard.includes("fetch('/api/network'") &&
+  networkDashboard.includes("fetchWithTimeout('/api/network'") &&
+  !networkDashboard.includes('AbortSignal.timeout') &&
   networkDashboard.includes('r.apiPort != null || r.apiReachable === true') &&
   networkDiscoveryCore.includes('MAX_API_OVERVIEW_BYTES = 256 * 1024') &&
   networkDiscoveryCore.includes('MAX_META_BYTES = 2048') &&
@@ -3493,6 +3689,23 @@ if (
 }
 
 if (
+  cliIndex.includes("import { HiveRelayClient } from 'p2p-hiverelay-client'") &&
+  !cliIndex.includes('p2p-hiverelay/client') &&
+  developerDocs.includes("export { Router } from './router/index.js'") &&
+  developerDocs.includes("export { PubSub } from './router/pubsub.js'") &&
+  developerDocs.includes("export { WorkerPool } from './router/worker-pool.js'") &&
+  !developerDocs.includes("export { HiveRelayClient } from '../client/index.js'") &&
+  packageEntryPointsTest.includes("const installedCore = await import('p2p-hiverelay')") &&
+  packageEntryPointsTest.includes("const installedClient = await import('p2p-hiverelay-client')") &&
+  packageEntryPointsTest.includes("await import('p2p-hiverelay/client')") &&
+  packageEntryPointsTest.includes('legacy bundled client subpath is not part of the 0.20 package contract')
+) {
+  pass('package entrypoint docs and CLI examples preserve the split client/core contract')
+} else {
+  fail('package entrypoint docs, CLI examples, or tests can drift back to the legacy bundled client path')
+}
+
+if (
   corePkg.dependencies['@noble/curves'] &&
   corePkg.dependencies['@noble/secp256k1'] &&
   corePkg.dependencies['@noble/hashes'] &&
@@ -3521,6 +3734,22 @@ if (
 }
 
 const desktopPkg = readJson(workspaceRoot, '01-browser', 'pearbrowser-desktop', 'package.json')
+const desktopLock = readJson(workspaceRoot, '01-browser', 'pearbrowser-desktop', 'package-lock.json')
+const desktopLayoutGuard = readText(workspaceRoot, '01-browser', 'pearbrowser-desktop', 'scripts', 'check-hiverelay-layout.mjs')
+const desktopCi = readText(workspaceRoot, '01-browser', 'pearbrowser-desktop', '.github', 'workflows', 'desktop-ci.yml')
+const desktopReadme = readText(workspaceRoot, '01-browser', 'pearbrowser-desktop', 'README.md')
+const desktopRelayClient = readText(workspaceRoot, '01-browser', 'pearbrowser-desktop', 'backend', 'relay-client.js')
+const desktopReleasePackagingTest = readText(workspaceRoot, '01-browser', 'pearbrowser-desktop', 'test', 'release-packaging.test.js')
+const desktopRelayClientHttpTest = readText(workspaceRoot, '01-browser', 'pearbrowser-desktop', 'test', 'relay-client-http.test.js')
+const mobilePkg = readJson(workspaceRoot, '01-browser', 'PearBrowser', 'package.json')
+const mobileLock = readJson(workspaceRoot, '01-browser', 'PearBrowser', 'package-lock.json')
+const mobileRelayClient = readText(workspaceRoot, '01-browser', 'PearBrowser', 'backend', 'relay-client.js')
+const mobileRelayClientTest = readText(workspaceRoot, '01-browser', 'PearBrowser', 'test', 'relay-client.test.js')
+const pearBrowserComIndex = readText(workspaceRoot, '03-sites', 'pearbrowser-com', 'index.html')
+const pearBrowserComManifest = readJson(workspaceRoot, '03-sites', 'pearbrowser-com', 'site-manifest.json')
+const pearBrowserIntegrationDoc = readText(hiverelayRoot, 'docs', 'PEARBROWSER-INTEGRATION.md')
+const pearIntegrationDoc = readText(hiverelayRoot, 'docs', 'PEAR-INTEGRATION.md')
+const ecosystemUpgradeDoc = readText(hiverelayRoot, 'docs', 'ECOSYSTEM-UPGRADE-0.20.2.md')
 const desktopDeps = desktopPkg.dependencies || {}
 const expectedDesktopDeps = {
   'p2p-hiverelay': 'file:../../00-core/hiverelay/packages/core',
@@ -3531,6 +3760,258 @@ for (const [dep, expected] of Object.entries(expectedDesktopDeps)) {
   const actual = desktopDeps[dep]
   if (actual === expected) pass(`pearbrowser-desktop pins ${dep} to the local HiveRelay anchor`)
   else fail(`pearbrowser-desktop ${dep} is ${JSON.stringify(actual)}; expected ${JSON.stringify(expected)}`)
+}
+
+const desktopHiveRelayLockEntries = {
+  'p2p-hiverelay': '../../00-core/hiverelay/packages/core',
+  'p2p-hiverelay-client': '../../00-core/hiverelay/packages/client',
+  'p2p-hiverelay-verifier': '../../00-core/hiverelay/packages/verifier'
+}
+const desktopHiveRelayDrift = []
+for (const [dep, lockPath] of Object.entries(desktopHiveRelayLockEntries)) {
+  const entry = desktopLock.packages?.[lockPath]
+  if (entry?.name === dep && entry?.version === expectedVersion) {
+    pass(`pearbrowser-desktop lockfile records ${dep}@${expectedVersion}`)
+  } else {
+    desktopHiveRelayDrift.push(`package-lock ${lockPath} records ${entry?.name || dep}@${entry?.version || '(missing)'} instead of ${dep}@${expectedVersion}`)
+  }
+}
+
+const desktopClientLockEntry = desktopLock.packages?.['../../00-core/hiverelay/packages/client']
+const expectedCoreRange = `^${expectedVersion}`
+if (desktopClientLockEntry?.dependencies?.['p2p-hiverelay'] === expectedCoreRange) {
+  pass(`pearbrowser-desktop client lockfile depends on p2p-hiverelay ${expectedCoreRange}`)
+} else {
+  desktopHiveRelayDrift.push(`package-lock client dependency p2p-hiverelay is ${JSON.stringify(desktopClientLockEntry?.dependencies?.['p2p-hiverelay'])}; expected ${expectedCoreRange}`)
+}
+
+const expectedDesktopLayoutGuardTerms = [
+  `['p2p-hiverelay', '${expectedVersion}', '../../00-core/hiverelay/packages/core/package.json']`,
+  `['p2p-hiverelay-client', '${expectedVersion}', '../../00-core/hiverelay/packages/client/package.json']`,
+  `['p2p-hiverelay-verifier', '${expectedVersion}', '../../00-core/hiverelay/packages/verifier/package.json']`,
+  `HiveRelay ${expectedVersion} packages`
+]
+const missingDesktopLayoutGuardTerms = missingTerms(desktopLayoutGuard, expectedDesktopLayoutGuardTerms)
+if (missingDesktopLayoutGuardTerms.length === 0) {
+  pass(`pearbrowser-desktop install guard expects HiveRelay ${expectedVersion}`)
+} else {
+  desktopHiveRelayDrift.push(`scripts/check-hiverelay-layout.mjs missing ${missingDesktopLayoutGuardTerms.map(term => JSON.stringify(term)).join(', ')}`)
+}
+
+const expectedDesktopCiTerms = [
+  `ref: v${expectedVersion}`,
+  `Guard HiveRelay ${expectedVersion} workspace layout`,
+  `['p2p-hiverelay', '${expectedVersion}', 'pear-ecosystem/00-core/hiverelay/packages/core/package.json']`,
+  `['p2p-hiverelay-client', '${expectedVersion}', 'pear-ecosystem/00-core/hiverelay/packages/client/package.json']`,
+  `['p2p-hiverelay-verifier', '${expectedVersion}', 'pear-ecosystem/00-core/hiverelay/packages/verifier/package.json']`
+]
+const missingDesktopCiTerms = missingTerms(desktopCi, expectedDesktopCiTerms)
+if (missingDesktopCiTerms.length === 0) {
+  pass(`pearbrowser-desktop CI checks out and guards HiveRelay ${expectedVersion}`)
+} else {
+  desktopHiveRelayDrift.push(`desktop-ci.yml missing ${missingDesktopCiTerms.map(term => JSON.stringify(term)).join(', ')}`)
+}
+
+const expectedDesktopReadmeTerms = [
+  `packages at \`${expectedVersion}\``,
+  `Those \`${expectedVersion}\` packages are not published to npm yet`,
+  `local \`${expectedVersion}\` workspace packages`
+]
+const missingDesktopReadmeTerms = missingTerms(desktopReadme, expectedDesktopReadmeTerms)
+if (missingDesktopReadmeTerms.length === 0) {
+  pass(`pearbrowser-desktop README names the bundled HiveRelay ${expectedVersion} packages`)
+} else {
+  desktopHiveRelayDrift.push(`README.md missing ${missingDesktopReadmeTerms.map(term => JSON.stringify(term)).join(', ')}`)
+}
+
+if (desktopHiveRelayDrift.length === 0) {
+  pass(`pearbrowser-desktop bundle metadata is aligned with HiveRelay ${expectedVersion}`)
+} else {
+  warn(`pearbrowser-desktop is not yet aligned with HiveRelay ${expectedVersion}: ${desktopHiveRelayDrift.join('; ')}`)
+}
+
+const expectedBrowserHttpsDep = '^2.1.3'
+const desktopRootLock = desktopLock.packages?.['']
+const mobileRootLock = mobileLock.packages?.['']
+if (
+  desktopPkg.dependencies?.['bare-https'] === expectedBrowserHttpsDep &&
+  desktopRootLock?.dependencies?.['bare-https'] === expectedBrowserHttpsDep &&
+  mobilePkg.dependencies?.['bare-https'] === expectedBrowserHttpsDep &&
+  mobileRootLock?.dependencies?.['bare-https'] === expectedBrowserHttpsDep
+) {
+  pass('PearBrowser desktop and mobile declare bare-https for public HTTPS relay gateways')
+} else {
+  fail('PearBrowser desktop/mobile package metadata is missing the direct bare-https relay transport dependency')
+}
+
+if (
+  desktopRelayClient.includes("const https = require('bare-https')") &&
+  desktopRelayClient.includes('function relayTransportForUrl') &&
+  desktopRelayClient.includes("parsed.protocol === 'https:'") &&
+  desktopRelayClient.includes('transport.get(relayRequestOptions(parsed)') &&
+  desktopRelayClient.includes('transport.request({') &&
+  desktopRelayClient.includes("parsed.protocol === 'https:' ? 443 : 80") &&
+  desktopRelayClient.includes('DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024') &&
+  desktopRelayClient.includes('DEFAULT_MAX_CONTROL_RESPONSE_BYTES = 1024 * 1024') &&
+  desktopRelayClient.includes('positiveIntegerOption') &&
+  desktopRelayClient.includes('relay response exceeded ' + '$' + '{maxBytes}' + ' bytes') &&
+  desktopRelayClient.includes('req?.destroy?.()') &&
+  desktopRelayClient.includes('module.exports = { RelayClient, relayRequestOptions }') &&
+  desktopReleasePackagingTest.includes('RelayClient uses scheme-aware transport for public HTTPS gateways') &&
+  desktopReleasePackagingTest.includes('DEFAULT_MAX_RESPONSE_BYTES') &&
+  desktopRelayClientHttpTest.includes('RelayClient GET rejects oversized relay bodies and destroys the request') &&
+  desktopRelayClientHttpTest.includes('RelayClient POST rejects oversized control responses and destroys the request') &&
+  desktopRelayClientHttpTest.includes('RelayClient timeout actively destroys hanging relay requests')
+) {
+  pass('pearbrowser-desktop relay client uses tested scheme-aware HTTP/HTTPS transport with bounded relay responses')
+} else {
+  fail('pearbrowser-desktop relay client can regress to untested plain HTTP transport, wrong HTTPS defaults, or unbounded relay responses')
+}
+
+if (
+  mobileRelayClient.includes("const https = require('bare-https')") &&
+  mobileRelayClient.includes('function relayTransportForUrl') &&
+  mobileRelayClient.includes("parsed.protocol === 'https:'") &&
+  mobileRelayClient.includes('transport.get(relayRequestOptions(parsed)') &&
+  mobileRelayClient.includes('transport.request({') &&
+  mobileRelayClient.includes("parsed.protocol === 'https:' ? 443 : 80") &&
+  mobileRelayClient.includes('module.exports = { RelayClient, relayRequestOptions }') &&
+  mobileRelayClientTest.includes('relayRequestOptions uses scheme-aware default ports')
+) {
+  pass('PearBrowser mobile relay client uses tested scheme-aware HTTP/HTTPS transport for gateway fetches')
+} else {
+  fail('PearBrowser mobile relay client is missing tested HTTPS relay transport/default-port handling')
+}
+
+const desktopRelease = desktopReadme.match(/\*\*Current release:\*\*\s*`(v[^`]+)` · production length `(\d+)`/)
+if (!desktopRelease) {
+  fail('pearbrowser-desktop README is missing current release metadata for ecosystem sync checks')
+} else {
+  const [, desktopVersion, desktopLength] = desktopRelease
+  const expectedHero = `Desktop ${desktopVersion} · production length ${desktopLength} · installer artifacts pending · macOS · Windows · Linux`
+  const expectedSpec = `${desktopVersion} · production length ${desktopLength} · pinned on the HiveRelay backbone`
+  if (
+    pearBrowserComIndex.includes(expectedHero) &&
+    pearBrowserComIndex.includes(expectedSpec) &&
+    pearBrowserComManifest.desktopRelease?.version === desktopVersion &&
+    pearBrowserComManifest.desktopRelease?.productionLength === Number(desktopLength)
+  ) {
+    pass('pearbrowser.com release metadata is synced to the bundled PearBrowser desktop README')
+  } else {
+    fail('pearbrowser.com release metadata is stale relative to the bundled PearBrowser desktop README')
+  }
+}
+
+if (
+  pearBrowserIntegrationDoc.includes(`## Current ${expectedVersion} ecosystem alignment`) &&
+  pearBrowserIntegrationDoc.includes('Pear Browser desktop') &&
+  pearBrowserIntegrationDoc.includes('main bundled consumer') &&
+  pearBrowserIntegrationDoc.includes(`bigdestiny2/P2P-Hiverelay@v${expectedVersion}`) &&
+  pearBrowserIntegrationDoc.includes('HTTPS relay transport') &&
+  pearBrowserIntegrationDoc.includes('signed capability-doc verification') &&
+  pearBrowserIntegrationDoc.includes('DHT relay-record bootstrap') &&
+  pearBrowserIntegrationDoc.includes('indexRoom') &&
+  pearBrowserIntegrationDoc.includes('npm run audit:ecosystem-consumers') &&
+  pearBrowserIntegrationDoc.includes('ECOSYSTEM-UPGRADE-0.20.2.md') &&
+  pearBrowserIntegrationDoc.includes('live customer-facing relay consumers') &&
+  pearBrowserIntegrationDoc.includes('workspace package manifests and lockfiles') &&
+  pearBrowserIntegrationDoc.includes('stale lockfile') &&
+  pearBrowserIntegrationDoc.includes('metadata such as old monorepo-root') &&
+  pearIntegrationDoc.includes(`current Hiverelay workspace packages are:\n\n- \`p2p-hiverelay\` \`${expectedVersion}\``) &&
+  pearIntegrationDoc.includes('Mobile is currently an HTTP/catalog consumer rather than a direct') &&
+  pearIntegrationDoc.includes('non-bundled direct consumers') &&
+  pearIntegrationDoc.includes('signed DHT relay records, and `indexRoom`') &&
+  pearIntegrationDoc.includes('npm run audit:ecosystem-consumers') &&
+  pearIntegrationDoc.includes('ECOSYSTEM-UPGRADE-0.20.2.md') &&
+  pearIntegrationDoc.includes('live customer-facing relay')
+) {
+  pass(`HiveRelay docs track Pear Browser ${expectedVersion} bundle, API, and mobile parity updates`)
+} else {
+  fail('HiveRelay Pear Browser integration docs are missing the current bundle, API, or mobile parity update notes')
+}
+
+if (
+  monorepoPkg.scripts['audit:ecosystem-consumers'] === 'node scripts/audit-ecosystem-consumers.mjs --check' &&
+  monorepoPkg.scripts['ecosystem:sync'] === 'node scripts/sync-ecosystem-consumers.mjs' &&
+  ecosystemConsumersAudit.includes('EXPECTED_CURRENT_CONSUMERS') &&
+  ecosystemConsumersAudit.includes('EXPECTED_STALE_CONSUMERS') &&
+  ecosystemConsumersAudit.includes('CURRENT_HIVERELAY_VERSION') &&
+  ecosystemConsumersAudit.includes('termTemplate') &&
+  ecosystemConsumersAudit.includes('01-browser/pearbrowser-desktop/package.json') &&
+  ecosystemConsumersAudit.includes('02-apps/pearpaste/package.json') &&
+  ecosystemConsumersAudit.includes('customer encrypted-availability app') &&
+  ecosystemConsumersAudit.includes('02-apps/pear-pos/package.json') &&
+  ecosystemConsumersAudit.includes('02-apps/pear-tickets/package.json') &&
+  ecosystemConsumersAudit.includes('03-sites/pearbrowser-publishers/src/p2pbuilders/package.json') &&
+  ecosystemConsumersAudit.includes('publisher-site consumer') &&
+  ecosystemConsumersAudit.includes('file:../../../../00-core/hiverelay/packages/client') &&
+  ecosystemConsumersAudit.includes('04-experiments/Opengit/packages/opengit-relay/package.json') &&
+  ecosystemConsumersAudit.includes('optional Opengit blind-relay bridge') &&
+  ecosystemConsumersAudit.includes('Opengit integration note names current workspace defaults') &&
+  ecosystemConsumersAudit.includes('04-experiments/anongpt-native/package.json') &&
+  ecosystemConsumersAudit.includes('customer relay/onion AI app') &&
+  ecosystemConsumersAudit.includes('04-experiments/hiverelay-test/package.json') &&
+  ecosystemConsumersAudit.includes('PearBrowser catalog advertises the current Hiverelay app release') &&
+  ecosystemConsumersAudit.includes('PearBrowser backbone handover names the current Hiverelay workspace line') &&
+  ecosystemConsumersAudit.includes('POS CJS bridge comment names the current split-client package line') &&
+  ecosystemConsumersAudit.includes('00-core/hr-fleet/') &&
+  ecosystemConsumersAudit.includes('scanCurrentConsumerLockChecks') &&
+  ecosystemConsumersAudit.includes('Lockfile migration checks') &&
+  ecosystemConsumersAudit.includes('stale monorepo-root Hiverelay lock entry') &&
+  ecosystemConsumersAudit.includes('sourceChecks') &&
+  ecosystemConsumersAudit.includes('scanConsumerSourceChecks') &&
+  ecosystemConsumersAudit.includes('scanStaleConsumerSourceChecks') &&
+  ecosystemConsumersAudit.includes('rejectTerms') &&
+  ecosystemConsumersAudit.includes('Disallowed source-level migration marker found') &&
+  ecosystemConsumersAudit.includes('Source-level migration checks') &&
+  ecosystemConsumersAudit.includes('row.action') &&
+  ecosystemConsumersSync.includes('syncEcosystemConsumers') &&
+  ecosystemConsumersSync.includes('EXPECTED_CURRENT_CONSUMERS') &&
+  ecosystemConsumersSync.includes('setDependency') &&
+  ecosystemConsumersSync.includes('scanCurrentConsumerLockChecks') &&
+  ecosystemConsumersSync.includes('linked package metadata') &&
+  ecosystemConsumersSync.includes('--check') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer audit classifies current, stale, and ignored consumers') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer audit fails on unclassified Hiverelay pins') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer audit fails when the known stale inventory changes') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer audit reports source-level migration markers') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer audit guards PearPaste current Hiverelay docs') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer audit guards PearBrowser and POS current Hiverelay source defaults') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer audit fails when source-level migration markers move') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer audit verifies lockfile local package metadata') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer audit rejects stale lockfile Hiverelay entries') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer audit finds monorepo package lockfiles') &&
+  ecosystemConsumersAuditTest.includes('ecosystem sync updates app defaults and linked package lock metadata') &&
+  readme.includes('ECOSYSTEM-UPGRADE-0.20.2.md') &&
+  readme.includes('npm run ecosystem:sync -- --check') &&
+  ecosystemUpgradeDoc.includes('p2p-hiverelay/client') &&
+  ecosystemUpgradeDoc.includes('p2p-hiverelay-client') &&
+  ecosystemUpgradeDoc.includes('01-browser/pearbrowser-desktop') &&
+  ecosystemUpgradeDoc.includes('02-apps/pearpaste') &&
+  ecosystemUpgradeDoc.includes('02-apps/pear-pos') &&
+  ecosystemUpgradeDoc.includes('02-apps/pear-tickets') &&
+  ecosystemUpgradeDoc.includes('03-sites/pearbrowser-publishers/src/p2pbuilders') &&
+  ecosystemUpgradeDoc.includes('test/m12-hiverelay-client-migration.js') &&
+  ecosystemUpgradeDoc.includes('Opengit') &&
+  ecosystemUpgradeDoc.includes('dynamically imports the split client') &&
+  ecosystemUpgradeDoc.includes('04-experiments/anongpt-native') &&
+  ecosystemUpgradeDoc.includes('test/hiverelay-upgrade.test.cjs') &&
+  ecosystemUpgradeDoc.includes('04-experiments/hiverelay-test') &&
+  ecosystemUpgradeDoc.includes('Lockfiles do not retain stale monorepo-root HiveRelay records') &&
+  ecosystemUpgradeDoc.includes('Security tests still prove that app plaintext is not exported to relays') &&
+  ecosystemUpgradeDoc.includes('every direct app consumer to point at the current local') &&
+  ecosystemUpgradeDoc.includes('PearBrowser catalog') &&
+  ecosystemUpgradeDoc.includes('PearPaste customer docs/probes') &&
+  ecosystemUpgradeDoc.includes('Pear POS bridge docs/comments') &&
+  ecosystemUpgradeDoc.includes('cannot quietly drift back') &&
+  ecosystemUpgradeDoc.includes('to old client guidance') &&
+  ecosystemUpgradeDoc.includes('npm run ecosystem:sync') &&
+  pearBrowserIntegrationDoc.includes('npm run ecosystem:sync') &&
+  pearIntegrationDoc.includes('npm run ecosystem:sync')
+) {
+  pass('ecosystem consumer sync/audit commands guard PearBrowser bundle pins, known stale consumers, snapshot exclusions, and app-level migration notes')
+} else {
+  fail('ecosystem consumer sync/audit commands, docs, or tests are missing current/stale consumer drift or app-level migration coverage')
 }
 
 const mobileReadme = readText(workspaceRoot, '01-browser', 'PearBrowser', 'README.md')
@@ -3742,6 +4223,10 @@ const architectureGraphRequiredTerms = [
   'flowchart LR',
   'sequenceDiagram',
   'flowchart TB',
+  'Live Ecosystem Consumers',
+  'PearBrowser desktop/mobile',
+  'PearPaste',
+  'anonGPT native',
   'Core3 Relay Kernel',
   'HyperDHT / Hyperswarm',
   'HTTP gateway',
@@ -3761,14 +4246,25 @@ const architectureGraphRequiredTerms = [
   'fleet-rollout-evidence.json',
   'umbrel-package-smoke-evidence.json',
   'startos-registry-evidence.json',
+  'app-proxy writes + setup links',
+  'bounded lease polling + static markup',
+  'Ecosystem consumer audit',
   'Privacy policy guard',
   'Dashboard WebSocket',
   'Operator controls',
+  'App-proxy UI writes',
+  'PearBrowser bundle delivery',
+  'PearPaste private availability',
+  'anonGPT relay/onion AI',
   'Full release defaults to both canary and stable'
 ]
 const architectureGraphMissingTerms = missingTerms(architectureGraphDoc, architectureGraphRequiredTerms)
 const architectureGraphSvgRequiredTerms = [
   '<title id="title">HiveRelay Core3 architecture graph</title>',
+  'PearBrowser',
+  'PearPaste',
+  'anonGPT',
+  'Consumer audit keeps PearBrowser desktop',
   'Core3 Relay Kernel',
   'HyperDHT / Hyperswarm',
   'HTTP gateway',
@@ -3786,9 +4282,13 @@ const architectureGraphSvgRequiredTerms = [
   'fleet/channels',
   'release evidence',
   'Umbrel package',
+  'app_proxy proof',
   'Official PR',
   'StartOS .s9pk',
-  'registry proof'
+  'registry proof',
+  'PearBrowser bundle',
+  'PearPaste availability',
+  'anonGPT / AI services'
 ]
 const architectureGraphSvgMissingTerms = missingTerms(architectureGraphSvg, architectureGraphSvgRequiredTerms)
 const architectureGraphMermaidBlocks = (architectureGraphDoc.match(/^```mermaid$/gm) || []).length
@@ -3811,6 +4311,57 @@ if (
     architectureGraphDoc.includes('![HiveRelay Core3 architecture static SVG](assets/hiverelay-core3-architecture.svg)') ? null : 'architecture graph doc SVG embed'
   ].filter(Boolean)
   fail(`architecture graph doc or SVG is missing release-ready coverage: ${missing.join(', ')}`)
+}
+
+const currentTestMatrixRequiredTerms = [
+  'Hiverelay Test Command Matrix - 2026-06-27',
+  '`npm test`',
+  '`npm run lint`',
+  '`npm run audit:workspace`',
+  '`npm run ecosystem:sync -- --check`',
+  '`npm run audit:ecosystem-consumers`',
+  '`npm run audit:public-artifacts`',
+  '`node --test test/unit/ecosystem-consumers.test.js`',
+  '`git diff --check`',
+  '12/12',
+  '55/55',
+  'PearPaste recovery/spec doc regressions',
+  'public-artifact-secret-scan.test.js',
+  'release-secret-template.test.js',
+  '312/312',
+  'public-artifact secret-pattern scanning',
+  'exact post-apply setup/preflight command output',
+  'fleet-rollout-check.test.js',
+  'PearBrowser desktop',
+  'PearPaste',
+  'anonGPT native',
+  'Full releases with no explicit channel resolve to `both`.',
+  'Standalone `fleet:check-rollout` also defaults to `both`',
+  'Prereleases with no explicit channel resolve to `none`.',
+  'npm run release:write-secret-template',
+  'release-distribution-preflight.yml',
+  'fleet-rollout-evidence.json',
+  'Official Umbrel PR evidence',
+  'startos-registry-evidence.json',
+  '28284482503',
+  '`channel=both` and `prerelease=false`'
+]
+const currentTestMatrixMissingTerms = missingTerms(testCommandMatrix20260627, currentTestMatrixRequiredTerms)
+if (
+  rootReadme.includes('[docs/TEST-COMMAND-MATRIX-2026-06-27.md](docs/TEST-COMMAND-MATRIX-2026-06-27.md)') &&
+  rootReadme.includes('npm run audit:ecosystem-consumers') &&
+  rootReadme.includes('npm test') &&
+  currentTestMatrixMissingTerms.length === 0
+) {
+  pass('README links the current 2026-06-27 command matrix with ecosystem-consumer, release-secret-template, full-suite, and external-gate evidence')
+} else {
+  const missing = [
+    ...currentTestMatrixMissingTerms.map(term => `term ${JSON.stringify(term)}`),
+    rootReadme.includes('[docs/TEST-COMMAND-MATRIX-2026-06-27.md](docs/TEST-COMMAND-MATRIX-2026-06-27.md)') ? null : 'README current command-matrix link',
+    rootReadme.includes('npm run audit:ecosystem-consumers') ? null : 'README ecosystem audit command',
+    rootReadme.includes('npm test') ? null : 'README full test command'
+  ].filter(Boolean)
+  fail(`current 2026-06-27 command matrix is missing ship-readiness coverage: ${missing.join(', ')}`)
 }
 
 const readmeMainUpdateRequiredTerms = [
@@ -3908,29 +4459,58 @@ if (missingRoadmapTerms.length === 0 && staleRoadmapTerms.length === 0) {
 }
 
 const currentShipHandoffRequiredTerms = [
-  'HEAD inspected: `70e0d8b`',
-  'PR #139 CI finished green',
-  'Post-merge main Test run: `28254705847`',
-  'Post-merge Docker snapshot publish: `28254705840`',
-  'PR #137 `c5314da`: hardened quorum ranking signals',
-  'PR #138 `a2e159a`: capped service-router rate-limit buckets',
-  'PR #139 `70e0d8b`: capped public gateway rate-limit buckets',
-  'Release distribution preflight run: `28244297762`',
+  'Generated by `npm run docs:update-ship-handoff`',
+  'HEAD inspected: `72d0297`',
+  'Commit subject: `docs: refresh ship handoff evidence (#140)`',
+  'Worktree: clean snapshot (`main@72d0297`)',
+  'PR #140 CI finished green',
+  'Post-merge main Test run: `28256445868`',
+  'Post-merge Docker snapshot publish: `28256445870`',
+  'Release distribution preflight run: `28284482503` (issue #120)',
+  'Run URL: https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/28284482503',
+  'Latest checked preflight: state `completed/failure`, head `main@72d0297`, created `2026-06-27T08:56:09Z`',
+  'Earlier passing preflight `28238930607` at `1ffffe6` is superseded by this newer failure',
   'UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters',
   'UMBREL_OFFICIAL_PR_TOKEN must be a GitHub token without whitespace or control characters',
   'UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps',
   'STARTOS_REGISTRY_URL must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames',
+  'Release default probes were regenerated from',
   'Full releases with no explicit channel resolve to `both`',
   'Prereleases with no explicit channel resolve to `none`',
+  'node --test test/unit/ecosystem-consumers.test.js',
+  'direct-consumer default-pinning',
+  'before any image is published',
+  'npm run release:check-distribution-env',
+  '--env-file /private/tmp/hiverelay-release-secrets.env',
+  '--channel both',
+  '--prerelease false',
   'npm run release:apply-github-secrets',
-  'Docker build/run smoke',
+  'Docker runtime hardening',
   'docs/assets/hiverelay-core3-architecture.svg'
 ]
 const missingShipHandoffTerms = missingTerms(shipHandoff20260626, currentShipHandoffRequiredTerms)
-if (missingShipHandoffTerms.length === 0) {
-  pass('current ship handoff captures latest hardening state, release defaults, architecture graph, and external blockers')
+const shipHandoffUpdaterOk =
+  monorepoPkg.scripts['docs:update-ship-handoff'] === 'node scripts/update-ship-handoff.mjs' &&
+  shipHandoffUpdate.includes("git(['rev-parse', opts.ref])") &&
+  shipHandoffUpdate.includes('preflightDetailLines') &&
+  shipHandoffUpdate.includes('--preflight-head') &&
+  shipHandoffUpdate.includes('--superseded-preflight-success') &&
+  shipHandoffUpdate.includes('check-release-distribution-env.mjs') &&
+  shipHandoffUpdate.includes('node --test test/unit/ecosystem-consumers.test.js') &&
+  shipHandoffUpdate.includes('direct-consumer default-pinning') &&
+  shipHandoffUpdate.includes('release:check-distribution-env') &&
+  shipHandoffUpdate.includes('parseReleaseBlockers') &&
+  shipHandoffUpdate.includes('--blocker-log') &&
+  shipHandoffIssue120Log.includes('Release distribution preflight failed:') &&
+  shipHandoffIssue120Log.includes('UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters') &&
+  shipHandoffIssue120Log.includes('UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug') &&
+  shipHandoffIssue120Log.includes('STARTOS_REGISTRY_URL must be a public https URL') &&
+  !shipHandoffIssue120Log.includes('-----BEGIN') &&
+  !shipHandoffIssue120Log.includes('ghp_')
+if (missingShipHandoffTerms.length === 0 && shipHandoffUpdaterOk) {
+  pass('current ship handoff is generated from git metadata, release defaults, architecture graph, and issue #120 blocker inputs')
 } else {
-  fail(`current ship handoff drifted from release state: missing ${missingShipHandoffTerms.map(term => JSON.stringify(term)).join(', ')}`)
+  fail(`current ship handoff drifted from release state: missing ${missingShipHandoffTerms.map(term => JSON.stringify(term)).join(', ') || 'none'}; updater ok ${shipHandoffUpdaterOk}`)
 }
 
 if (
@@ -4186,22 +4766,26 @@ if (
 }
 
 if (
-  releaseWorkflow.includes("on:\n  push:\n    tags:\n      - 'v*'\n  release:") &&
+  releaseWorkflow.includes("on:\n  push:\n    branches:\n      - ship/core3-release-readiness-2026-06-24\n    tags:\n      - 'v*'\n  release:") &&
+  releasePreflightWorkflow.includes('on:\n  push:\n    branches:\n      - ship/core3-release-readiness-2026-06-24\n  workflow_dispatch:') &&
   releaseWorkflow.includes('Ensure GitHub Release exists') &&
-  releaseWorkflow.includes('if: $' + '{{ github.event_name != \'release\' }}') &&
+  releaseWorkflow.includes('if: $' + '{{ github.event_name != \'release\' && steps.rel.outputs.is_branch_candidate != \'true\' }}') &&
+  releaseWorkflow.includes('HIVERELAY_RELEASE_CANDIDATE=') &&
+  releaseWorkflow.includes('Stamp branch candidate package version') &&
   releaseWorkflow.includes('gh release view "$version"') &&
   releaseWorkflow.includes('args=(release create "$version" --verify-tag --title "$version" --notes "$notes")') &&
   releaseWorkflow.includes('args+=(--prerelease)') &&
   releaseWorkflow.includes('gh "$' + '{args[@]}"') &&
   releaseWorkflow.indexOf('Ensure GitHub Release exists') > releaseWorkflow.indexOf('Verify release ref') &&
-  releaseWorkflow.indexOf('Ensure GitHub Release exists') < releaseWorkflow.indexOf('Verify stable release distribution credentials') &&
+  releaseWorkflow.indexOf('Ensure GitHub Release exists') > releaseWorkflow.indexOf('Verify stable release distribution credentials') &&
   releaseAutomationDocs.includes('Published releases, pushed') &&
   releaseAutomationDocs.includes('`v*` tags, and manual promotions') &&
-  releaseAutomationDocs.includes('Creates or reuses the GitHub Release object for tag-push/manual runs')
+  releaseAutomationDocs.includes('Creates or reuses the public GitHub Release object only after the') &&
+  releaseAutomationDocs.includes('distribution preflight passes')
 ) {
-  pass('release workflow runs the full release-surface path for pushed v* tags and ensures the GitHub Release asset target exists')
+  pass('release workflow runs the full release-surface path for pushed v* tags, while branch candidates produce artifact evidence without release publication')
 } else {
-  fail('release workflow is missing pushed v* tag release-surface triggering or GitHub Release asset-target creation')
+  fail('release workflow is missing pushed v* tag/candidate release-surface triggering or preflight-gated GitHub Release asset-target creation')
 }
 
 if (
@@ -4214,6 +4798,10 @@ if (
   releaseDistributionEnvCheck.includes("prerelease ? 'none' : 'both'") &&
   releaseDistributionEnvCheck.includes('--channel defaults to both for full releases and none for prereleases') &&
   releaseDistributionEnvCheck.includes('pre-release channel must be none') &&
+  fleetRolloutCheck.includes('Relay channel to check (default: both)') &&
+  fleetRolloutCheck.includes("process.env.HIVERELAY_FLEET_CHANNEL || 'both'") &&
+  fleetRolloutCheckTest.includes('defaults to both fleet channels') &&
+  readme.includes('npm run fleet:check-rollout -- --target v<version> --channel both') &&
   prepareRelease.includes('!args.noUmbrelStore && !isPrerelease') &&
   prepareRelease.includes("semver.includes('-') ? 'none' : 'both'") &&
   prepareReleaseTest.includes('defaults full release channel to both') &&
@@ -4232,6 +4820,28 @@ if (
   fail('release workflow, release prep, or distribution preflight is missing pre-release guardrails or the full-release whole-fleet default')
 }
 
+const releaseEcosystemGateCommand = 'node --test test/unit/ecosystem-consumers.test.js'
+const publicArtifactAuditCommand = 'npm run audit:public-artifacts'
+if (
+  releaseWorkflow.includes('npm run audit:workspace') &&
+  releaseWorkflow.includes(publicArtifactAuditCommand) &&
+  releaseWorkflow.includes(releaseEcosystemGateCommand) &&
+  releaseWorkflow.includes('npm run test:unit') &&
+  releaseWorkflow.indexOf(publicArtifactAuditCommand) > releaseWorkflow.indexOf('npm run audit:workspace') &&
+  releaseWorkflow.indexOf(publicArtifactAuditCommand) < releaseWorkflow.indexOf(releaseEcosystemGateCommand) &&
+  releaseWorkflow.indexOf(releaseEcosystemGateCommand) > releaseWorkflow.indexOf('npm run audit:workspace') &&
+  releaseWorkflow.indexOf(releaseEcosystemGateCommand) < releaseWorkflow.indexOf('Build and push multi-arch image') &&
+  releaseAutomationDocs.includes(publicArtifactAuditCommand) &&
+  releaseAutomationDocs.includes('scanner-sensitive secret examples') &&
+  releaseAutomationDocs.includes(releaseEcosystemGateCommand) &&
+  releaseAutomationDocs.includes('ecosystem inventory guard') &&
+  releaseAutomationDocs.includes('consumer default-pinning contract')
+) {
+  pass('release workflow explicitly gates release images on public-artifact and ecosystem consumer inventory coverage')
+} else {
+  fail('release workflow is missing the explicit public-artifact or ecosystem consumer inventory gate before image publish')
+}
+
 if (
   monorepoPkg.scripts &&
   monorepoPkg.scripts['release:check-distribution-env'] === 'node scripts/check-release-distribution-env.mjs' &&
@@ -4239,7 +4849,9 @@ if (
   releaseWorkflow.includes('npm run release:check-distribution-env --') &&
   releaseWorkflow.includes('--github-env "$GITHUB_ENV"') &&
   releaseWorkflow.indexOf('Verify stable release distribution credentials') > releaseWorkflow.indexOf('Verify release ref') &&
+  releaseWorkflow.indexOf('Verify stable release distribution credentials') < releaseWorkflow.indexOf('Ensure GitHub Release exists') &&
   releaseWorkflow.indexOf('Verify stable release distribution credentials') < releaseWorkflow.indexOf('Checkout Umbrel community store') &&
+  releaseWorkflow.includes('Keep this before any public GitHub Release lookup/create or asset upload') &&
   releaseDistributionEnvCheck.includes("HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS: 'failed'") &&
   releaseDistributionEnvCheck.includes("HIVERELAY_RELEASE_SURFACES_STATUS: 'blocked'") &&
   releaseDistributionEnvCheck.includes("requirePrivateKey('FLEET_SSH_PRIVATE_KEY'") &&
@@ -4266,17 +4878,41 @@ if (
   releaseDistributionEnvCheck.includes('must be a GitHub token without whitespace or control characters') &&
   releaseDistributionEnvCheck.includes('must be a private key block') &&
   releaseDistributionEnvCheck.includes('without whitespace or control characters') &&
+  releaseDistributionEnvCheck.includes('function formatRepairPath') &&
+  releaseDistributionEnvCheck.includes('Repair path:') &&
+  releaseDistributionEnvCheck.includes('release:apply-github-secrets') &&
+  releaseDistributionEnvCheck.includes('release-distribution-preflight.yml') &&
   releaseDistributionEnvCheckTest.includes('validates local candidate env files before setting GitHub secrets') &&
   releaseDistributionEnvCheckTest.includes('does not satisfy env-file candidates from ambient secrets') &&
   releaseDistributionEnvCheckTest.includes('rejects malformed local candidate env files without echoing values') &&
   releaseAutomationDocs.includes('--env-file /private/tmp/hiverelay-release-secrets.env') &&
   releaseAutomationDocs.includes('ambient shell') &&
   releaseAutomationDocs.includes('secrets do not satisfy missing file entries') &&
+  releaseAutomationDocs.includes('prints a safe repair path') &&
+  releaseAutomationDocs.includes('The repair block never includes') &&
   releaseAutomationDocs.includes('NAME<<DELIM') &&
+  releaseAutomationDocs.includes('public docs stay friendly to secret') &&
+  !releaseAutomationDocs.includes('ghp_') &&
+  !releaseAutomationDocs.includes('github_pat_') &&
+  !releaseAutomationDocs.includes('-----BEGIN OPENSSH PRIVATE KEY-----') &&
+  !releaseAutomationDocs.includes('-----BEGIN PRIVATE KEY-----') &&
+  monorepoPkg.scripts['audit:public-artifacts'] === 'node scripts/check-public-artifact-secrets.mjs' &&
+  publicArtifactSecretsAudit.includes('export function scanPublicArtifacts') &&
+  publicArtifactSecretsAudit.includes("'README.md'") &&
+  publicArtifactSecretsAudit.includes("'docs'") &&
+  publicArtifactSecretsAudit.includes("'.github'") &&
+  publicArtifactSecretsAudit.includes('GitHub token prefix example') &&
+  publicArtifactSecretsAudit.includes('private key delimiter example') &&
+  publicArtifactSecretsAudit.includes('Bearer authorization example') &&
+  publicArtifactSecretsAudit.includes("'.svg'") &&
+  publicArtifactSecretsAuditTest.includes('public artifact secret scan passes scanner-safe docs and workflows') &&
+  publicArtifactSecretsAuditTest.includes('public artifact secret scan reports token, bearer, and key examples') &&
   releaseDistributionEnvCheckTest.includes('accepts sane explicit fleet rollout timeout') &&
   releaseDistributionEnvCheckTest.includes('rejects unsafe fleet rollout timeout before SSH') &&
   releaseDistributionEnvCheckTest.includes('rejects placeholder GitHub tokens before checkout or gh calls') &&
   releaseDistributionEnvCheckTest.includes('rejects whitespace-padded GitHub tokens before checkout or gh calls') &&
+  releaseDistributionEnvCheckTest.includes('Repair path:') &&
+  releaseDistributionEnvCheckTest.includes('release:apply-github-secrets') &&
   releaseDistributionEnvCheckTest.includes('rejects placeholder private-key secrets before SSH or StartOS publish') &&
   releaseDistributionEnvCheckTest.includes('rejects whitespace-padded private-key secrets before SSH or StartOS publish') &&
   releaseDistributionEnvCheck.includes('UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps') &&
@@ -4310,6 +4946,7 @@ if (
 if (
   monorepoPkg.scripts &&
   monorepoPkg.scripts['release:check-github-setup'] === 'node scripts/check-github-release-setup.mjs' &&
+  monorepoPkg.scripts['release:write-secret-template'] === 'node scripts/write-release-secrets-template.mjs' &&
   monorepoPkg.scripts['release:apply-github-secrets'] === 'node scripts/apply-github-release-secrets.mjs' &&
   githubReleaseSetupCheck.includes('REQUIRED_SECRETS') &&
   githubReleaseSetupCheck.includes("'FLEET_SSH_PRIVATE_KEY'") &&
@@ -4334,18 +4971,30 @@ if (
   releasePreflightWorkflow.includes('secrets.STARTOS_REGISTRY_URL') &&
   releasePreflightWorkflow.includes('vars.FLEET_ROLLOUT_TIMEOUT_MS') &&
   releasePreflightWorkflow.includes('#### Repair path') &&
-  releasePreflightWorkflow.includes('--env-file /private/tmp/hiverelay-release-secrets.env --channel both --prerelease false') &&
+  releasePreflightWorkflow.includes('repair_channel="' + '$' + '{HIVERELAY_RELEASE_EFFECTIVE_CHANNEL:-' + '$' + '{{ steps.rel.outputs.channel }}}"') &&
+  releasePreflightWorkflow.includes('*) repair_channel=both ;;') &&
+  releasePreflightWorkflow.includes('release:write-secret-template') &&
+  releasePreflightWorkflow.includes('--env-file /private/tmp/hiverelay-release-secrets.env --channel ' + '$' + '{repair_channel} --prerelease false') &&
   releasePreflightWorkflow.includes('release:apply-github-secrets') &&
   releasePreflightWorkflow.includes('docs/RELEASE_AUTOMATION.md#repository-secret-setup') &&
   releaseDistributionEnvCheck.includes("import { readEnvFile } from './lib/release-env-file.mjs'") &&
   releaseEnvFileLib.includes('export function readEnvFile') &&
   releaseEnvFileLib.includes('export function parseEnvFile') &&
+  releaseSecretsTemplate.includes('REPLACE_WITH_GITHUB_TOKEN_FOR_COMMUNITY_STORE') &&
+  releaseSecretsTemplate.includes('REPLACE_WITH_PUBLIC_HTTPS_REGISTRY_URL') &&
+  releaseSecretsTemplate.includes('Refusing to write release secret template inside the repository') &&
+  releaseSecretsTemplate.includes('mode: 0o600') &&
+  releaseSecretsTemplate.includes('Refusing to overwrite symlinked output file') &&
+  releaseDistributionEnvCheck.includes('release:write-secret-template') &&
   githubReleaseSecretsApply.includes('validateCandidateFile') &&
   githubReleaseSecretsApply.includes("['secret', 'set', name, '--repo', repo]") &&
   githubReleaseSecretsApply.includes("['variable', 'set', name, '--repo', repo, '--body', values[name]]") &&
   githubReleaseSecretsApply.includes('input') &&
   githubReleaseSecretsApply.includes('--dry-run') &&
   githubReleaseSecretsApply.includes('only validates full-release secret values') &&
+  githubReleaseSecretsApply.includes('function printNextSteps') &&
+  githubReleaseSecretsApply.includes('npm run release:check-github-setup -- --repo') &&
+  githubReleaseSecretsApply.includes('gh workflow run release-distribution-preflight.yml --repo') &&
   githubReleaseSecretsApply.includes('redactSecretLikeValues') &&
   githubReleaseSecretsApply.includes('[redacted-github-token]') &&
   githubReleaseSecretsApply.includes('PATH: process.env.PATH') &&
@@ -4356,10 +5005,17 @@ if (
   githubReleaseSetupCheckTest.includes('reports gh JSON failures') &&
   githubReleaseSetupCheckTest.includes('rejects malformed repo names before gh calls') &&
   githubReleaseSecretsApplyTest.includes('sends validated values to gh secret set via stdin') &&
+  githubReleaseSecretsApplyTest.includes('gh workflow run release-distribution-preflight.yml --repo bigdestiny2/P2P-Hiverelay -f channel=both -f prerelease=false') &&
   githubReleaseSecretsApplyTest.includes('rejects malformed candidate without calling gh or echoing values') &&
   githubReleaseSecretsApplyTest.includes('rejects prerelease validation mode before gh calls') &&
   githubReleaseSecretsApplyTest.includes('redacts gh failure output before printing') &&
+  releaseSecretsTemplateTest.includes('creates private placeholder candidate outside repo') &&
+  releaseSecretsTemplateTest.includes('refuses repo output paths') &&
+  releaseSecretsTemplateTest.includes('refuses accidental overwrite unless forced') &&
+  releaseSecretsTemplateTest.includes('refuses symlink output even with force') &&
   releaseAutomationDocs.includes('npm run release:check-github-setup') &&
+  releaseAutomationDocs.includes('npm run release:write-secret-template') &&
+  releaseAutomationDocs.includes('owner-only permissions') &&
   releaseAutomationDocs.includes('npm run release:apply-github-secrets') &&
   releaseAutomationDocs.includes('--dry-run') &&
   releaseAutomationDocs.includes('not print secret values') &&
@@ -4379,12 +5035,16 @@ const releasePackageManifests = [
   'packages/client/package.json',
   'packages/verifier/package.json'
 ]
+const releaseSurfaceCommitStep = releaseWorkflow.slice(
+  releaseWorkflow.indexOf('Commit HiveRelay release surfaces'),
+  releaseWorkflow.indexOf('Configure fleet rollout SSH key')
+)
 
 if (
   releasePackageManifests.every(file => prepareRelease.includes(`'${file}'`)) &&
-  releasePackageManifests.every(file => releaseWorkflow.includes(file)) &&
+  releasePackageManifests.every(file => releaseSurfaceCommitStep.includes(file)) &&
   releasePackageManifests.every(file =>
-    releaseWorkflow.indexOf(file) > releaseWorkflow.indexOf('git add package.json package-lock.json README.md')
+    releaseSurfaceCommitStep.indexOf(file) > releaseSurfaceCommitStep.indexOf('git add package.json package-lock.json README.md')
   ) &&
   releaseWorkflow.includes('HiveRelay release surfaces commit SHA is malformed.')
 ) {
@@ -4772,8 +5432,12 @@ if (
   releaseImageSmoke.includes('walletBusyState') &&
   releaseImageSmoke.includes('serviceActionState') &&
   releaseImageSmoke.includes('aiModelAddState') &&
+  releaseImageSmoke.includes('appProxyWrites') &&
+  releaseImageSmoke.includes('leasePollingBounded') &&
+  releaseImageSmoke.includes('staticMarkupSafe') &&
   releaseImageSmoke.includes('statusRegion') &&
   releaseImageSmoke.includes('actionLock') &&
+  releaseImageSmoke.includes('dashboardLinkAppPath') &&
   releaseImageSmoke.includes("recordCheck('dashboardWebSocket'") &&
   releaseImageSmoke.includes("recordCheck('usageTelemetry'") &&
   releaseImageSmoke.includes('HIVERELAY_ACCEPT_MODE=review') &&
@@ -4800,8 +5464,12 @@ if (
   releaseEvidenceVerify.includes('walletBusyState') &&
   releaseEvidenceVerify.includes('serviceActionState') &&
   releaseEvidenceVerify.includes('aiModelAddState') &&
+  releaseEvidenceVerify.includes('appProxyWrites') &&
+  releaseEvidenceVerify.includes('leasePollingBounded') &&
+  releaseEvidenceVerify.includes('staticMarkupSafe') &&
   releaseEvidenceVerify.includes('statusRegion') &&
   releaseEvidenceVerify.includes('actionLock') &&
+  releaseEvidenceVerify.includes('dashboardLinkAppPath') &&
   releaseHandoffEvidenceVerify.includes('release generatedAt') &&
   releaseHandoffEvidenceVerify.includes('`$' + '{kind} generatedAt`') &&
   releaseHandoffEvidenceVerify.includes('generatedAt must not be after release generatedAt') &&
@@ -4811,14 +5479,22 @@ if (
   releaseHandoffEvidenceVerify.includes('walletBusyState') &&
   releaseHandoffEvidenceVerify.includes('serviceActionState') &&
   releaseHandoffEvidenceVerify.includes('aiModelAddState') &&
+  releaseHandoffEvidenceVerify.includes('appProxyWrites') &&
+  releaseHandoffEvidenceVerify.includes('leasePollingBounded') &&
+  releaseHandoffEvidenceVerify.includes('staticMarkupSafe') &&
   releaseHandoffEvidenceVerify.includes('statusRegion') &&
   releaseHandoffEvidenceVerify.includes('actionLock') &&
+  releaseHandoffEvidenceVerify.includes('dashboardLinkAppPath') &&
   releaseEvidenceVerifyTest.includes('rejects smoke image provenance drift') &&
   releaseEvidenceVerifyTest.includes('rejects stale smoke evidence timestamps') &&
   releaseEvidenceVerifyTest.includes('release-image-smoke dashboard walletBusyState') &&
+  releaseEvidenceVerifyTest.includes('release-image-smoke dashboard appProxyWrites') &&
   releaseEvidenceVerifyTest.includes('release-image-smoke setupWizard actionLock') &&
+  releaseEvidenceVerifyTest.includes('release-image-smoke setupWizard dashboardLinkAppPath') &&
   releaseHandoffEvidenceVerifyTest.includes('release-image-smoke dashboard walletBusyState') &&
+  releaseHandoffEvidenceVerifyTest.includes('release-image-smoke dashboard appProxyWrites') &&
   releaseHandoffEvidenceVerifyTest.includes('release-image-smoke setupWizard actionLock') &&
+  releaseHandoffEvidenceVerifyTest.includes('release-image-smoke setupWizard dashboardLinkAppPath') &&
   releaseHandoffEvidenceVerifyTest.includes('rejects stale smoke evidence timestamps')
 ) {
   pass('release workflow boots the pushed image digest and checks authenticated wallet/services writes before metadata promotion')
@@ -5513,6 +6189,11 @@ if (
   umbrelSmokePackage.includes('assertSetupWizardUiHardening') &&
   umbrelSmokePackage.includes('dashboardUiHardening') &&
   umbrelSmokePackage.includes('setupUiHardening') &&
+  umbrelSmokePackage.includes('appProxyWrites') &&
+  umbrelSmokePackage.includes('leasePollingBounded') &&
+  umbrelSmokePackage.includes('dashboardStaticMarkupSafe') &&
+  umbrelSmokePackage.includes('dashboardLinkAppPath') &&
+  umbrelSmokePackage.includes('setupStaticMarkupSafe') &&
   umbrelSmokePackage.includes("recordCheck('dashboardWebSocket'") &&
   umbrelSmokePackage.includes("recordCheck('usageTelemetry'") &&
   umbrelSmokePackage.includes('HIVERELAY_ACCEPT_MODE=review') &&
@@ -5535,6 +6216,8 @@ if (
   releaseEvidenceVerify.includes('`$' + '{kind} imageDigest`') &&
   releaseEvidenceVerify.includes('dashboardUiHardening') &&
   releaseEvidenceVerify.includes('setupUiHardening') &&
+  releaseEvidenceVerify.includes('dashboardStaticMarkupSafe') &&
+  releaseEvidenceVerify.includes('setupStaticMarkupSafe') &&
   releaseHandoffEvidenceVerify.includes('release generatedAt') &&
   releaseHandoffEvidenceVerify.includes('`$' + '{kind} generatedAt`') &&
   releaseHandoffEvidenceVerify.includes('generatedAt must not be after release generatedAt') &&
@@ -5543,12 +6226,18 @@ if (
   releaseHandoffEvidenceVerify.includes('`$' + '{kind} imageDigest`') &&
   releaseHandoffEvidenceVerify.includes('dashboardUiHardening') &&
   releaseHandoffEvidenceVerify.includes('setupUiHardening') &&
+  releaseHandoffEvidenceVerify.includes('dashboardStaticMarkupSafe') &&
+  releaseHandoffEvidenceVerify.includes('setupStaticMarkupSafe') &&
   releaseHandoffEvidenceVerifyTest.includes('rejects smoke image provenance drift') &&
   releaseEvidenceVerifyTest.includes('rejects stale smoke evidence timestamps') &&
   releaseEvidenceVerifyTest.includes('umbrel-package-smoke firstBoot dashboardUiHardening') &&
+  releaseEvidenceVerifyTest.includes('umbrel-package-smoke firstBoot appProxyWrites') &&
   releaseEvidenceVerifyTest.includes('umbrel-package-smoke secondBoot setupUiHardening') &&
+  releaseEvidenceVerifyTest.includes('umbrel-package-smoke secondBoot setupStaticMarkupSafe') &&
   releaseHandoffEvidenceVerifyTest.includes('umbrel-package-smoke firstBoot dashboardUiHardening') &&
+  releaseHandoffEvidenceVerifyTest.includes('umbrel-package-smoke firstBoot appProxyWrites') &&
   releaseHandoffEvidenceVerifyTest.includes('umbrel-package-smoke secondBoot setupUiHardening') &&
+  releaseHandoffEvidenceVerifyTest.includes('umbrel-package-smoke secondBoot setupStaticMarkupSafe') &&
   releaseHandoffEvidenceVerifyTest.includes('rejects stale smoke evidence timestamps')
 ) {
   pass('release workflow boots the synchronized Umbrel package and checks setup/wallet/services persistence before StartOS packaging')

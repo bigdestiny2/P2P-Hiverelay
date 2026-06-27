@@ -74,9 +74,9 @@ first-boot home-server defaults.
 
 ```bash
 cd startos
-make digest   # print the multi-arch manifest digest for the current VERSION
-make          # buildx per-arch image tars, render icon, start-sdk pack
-make verify   # start-sdk verify s9pk blindspark.s9pk
+make digest                                      # print the published multi-arch manifest digest for the current VERSION
+make IMAGE_DIGEST=sha256:<multi-arch-digest>    # buildx per-arch image tars, render icon, start-sdk pack
+make verify IMAGE_DIGEST=sha256:<multi-arch-digest>
 ```
 
 Requirements: `docker` (with `buildx`), `start-sdk`, `rsvg-convert` (or
@@ -91,7 +91,10 @@ the `FROM` then fails to resolve (`not found`). `make` runs `check-digest`
 before building: it fails fast if the pinned `IMAGE_DIGEST` doesn't match the
 tag's manifest — catching both a wrong digest and a **stale** one left over
 from a previous `VERSION` (which would otherwise silently build the wrong
-image). To skip the pin entirely, build with `make IMAGE_DIGEST=`.
+image). To skip the pin for a local mechanics check only, build with
+`make ALLOW_TAG_ONLY_IMAGE=1 IMAGE_DIGEST=`. That path still pulls the
+published `ghcr.io/bigdestiny2/p2p-hiverelay:$(VERSION)` tag, so it fails
+until the current release image exists and is not release evidence.
 
 **Multi-arch:** `docker-images` is a directory (`image/`) of per-arch
 tarballs — `x86_64.tar` and `aarch64.tar`. `make` builds each with
@@ -103,11 +106,11 @@ device extracts the tar for its CPU.
 
 The build reuses the published multi-arch GHCR image
 (`ghcr.io/bigdestiny2/p2p-hiverelay`, the same one the Umbrel app pins)
-rather than rebuilding. On each release, bump together: `VERSION` +
-`IMAGE_DIGEST` in the `Makefile` (`make digest` for the value), `version`
-in `manifest.yaml`, the `image:` digest in `../umbrel-app/docker-compose.yml`,
-and the community store (`blindspark-umbrel-store`). `check-digest` keeps the
-Makefile pin honest at build time.
+rather than rebuilding. On each release, `npm run release:prepare` keeps the
+root package version, `manifest.yaml`, Umbrel image pin, fleet metadata, and
+store metadata aligned. Set `IMAGE_DIGEST` to the published top-level manifest
+digest when building the StartOS package; `check-digest` keeps that pin honest
+at build time.
 
 ### Building start-sdk itself (macOS, verified 2026-06-11)
 
@@ -151,7 +154,9 @@ Three paths, smallest to widest reach:
 
 ## Before submitting to the Start9 registry
 
-- [ ] `make verify` passes. *(done — start-sdk 0.3.5.1)*
+- [ ] `make verify IMAGE_DIGEST=sha256:<multi-arch-digest>` passes against the
+      published release image. Current `v0.20.2` verification is blocked until
+      `ghcr.io/bigdestiny2/p2p-hiverelay:0.20.2` resolves.
 - [ ] Sideload `blindspark.s9pk` on a real StartOS device: wizard
       completes, dashboard authenticates over Tor and LAN, identity
       survives a reinstall, backup/restore round-trips.
@@ -161,10 +166,12 @@ Three paths, smallest to widest reach:
 
 ## Status
 
-**Packs + verifies** with `start-sdk` 0.3.5.1 — multi-arch image (x86_64
-+ aarch64), v0.20.2, one-page dashboard via `HIVERELAY_UI_SIMPLE`,
-review-mode first boot, and a first-boot-only 10 GB storage cap. Not yet
-device-tested on real StartOS hardware; the checklist above is the
-remaining work. The runtime mechanisms it relies on (token auth behind a
-proxy, seed persistence, `/data` home) are the same ones verified
-end-to-end for the Umbrel package.
+Package source targets multi-arch image tarballs (x86_64 + aarch64),
+v0.20.2, one-page dashboard via `HIVERELAY_UI_SIMPLE`, review-mode first boot,
+and a first-boot-only 10 GB storage cap. Current `v0.20.2` package verification
+is externally gated on the published GHCR image/tag and digest; once that image
+exists, `make verify IMAGE_DIGEST=sha256:<multi-arch-digest>` is the release
+gate. Not yet device-tested on real StartOS hardware; the checklist above is
+the remaining work. The runtime mechanisms it relies on (token auth behind a
+proxy, seed persistence, `/data` home) are the same ones verified end-to-end for
+the Umbrel package.
