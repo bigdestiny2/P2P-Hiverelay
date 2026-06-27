@@ -360,10 +360,13 @@ test('umbrel service manager renders untrusted service metadata as text', (t) =>
     'var svcModelBusy = false',
     "var svcModelMessageText = 'Persisted model error'",
     "var svcModelMessageKind = 'error'",
+    "var svcModelDraftId = 'draft-model'",
+    "var svcModelDraftSrc = '/models/draft'",
     'function svcSetConfig () {}',
     'function svcRestartNode () {}',
     'function svcAddModel () {}',
     'function handleSvcModelInputKey () {}',
+    'function syncSvcModelDraft () {}',
     'function renderMetering () {}',
     'var SERVICE_META = {}',
     extractFunction('clearNode'),
@@ -406,6 +409,8 @@ test('umbrel service manager renders untrusted service metadata as text', (t) =>
   t.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'))
   t.ok(html.includes('&lt;svg onload=alert(2)&gt;'))
   t.ok(html.includes('Persisted model error'))
+  t.ok(html.includes('value="draft-model"'))
+  t.ok(html.includes('value="/models/draft"'))
   t.absent(html.includes('<img'))
   t.absent(html.includes('<svg'))
   t.absent(html.includes('onerror=alert(1)><'))
@@ -729,9 +734,12 @@ test('umbrel AI model add blocks duplicate writes and reports inline status', as
     'var svcRestartPending = false',
     "var svcModelMessageText = ''",
     "var svcModelMessageKind = ''",
+    "var svcModelDraftId = ''",
+    "var svcModelDraftSrc = ''",
     extractFunction('apiError'),
     extractFunction('setSvcModelMessage'),
     extractFunction('setSvcModelBusy'),
+    extractFunction('syncSvcModelDraft'),
     extractFunction('svcAddModel'),
     `
     (async function () {
@@ -759,7 +767,8 @@ test('umbrel AI model add blocks duplicate writes and reports inline status', as
         disabled: [$('svcModelId').disabled, $('svcModelSrc').disabled, $('svcModelAdd').disabled],
         button: $('svcModelAdd').textContent,
         message: $('svcModelMessage').textContent,
-        className: $('svcModelMessage').className
+        className: $('svcModelMessage').className,
+        drafts: [svcModelDraftId, svcModelDraftSrc]
       }
 
       $('svcModelId').value = 'qvac-b'
@@ -774,6 +783,7 @@ test('umbrel AI model add blocks duplicate writes and reports inline status', as
         message: $('svcModelMessage').textContent,
         className: $('svcModelMessage').className,
         values: [$('svcModelId').value, $('svcModelSrc').value],
+        drafts: [svcModelDraftId, svcModelDraftSrc],
         posts: posts.slice(),
         toasts: toasts.slice(),
         refreshes: refreshes.slice()
@@ -832,11 +842,13 @@ test('umbrel AI model add blocks duplicate writes and reports inline status', as
   t.is(clean.failed.button, 'Add model')
   t.is(clean.failed.message, 'qvac-a')
   t.is(clean.failed.className, 'svc-model-message error')
+  t.alike(clean.failed.drafts, ['qvac-a', '/models/qvac-a'])
   t.alike(clean.success.disabled, [false, false, false])
   t.is(clean.success.button, 'Add model')
   t.is(clean.success.message, 'Model added. Refreshing service state...')
   t.is(clean.success.className, 'svc-model-message ok')
   t.alike(clean.success.values, ['', ''])
+  t.alike(clean.success.drafts, ['', ''])
   t.is(clean.success.posts.length, 2)
   t.alike(clean.success.toasts, ['Model added: qvac-b'])
   t.alike(clean.success.refreshes, [true])

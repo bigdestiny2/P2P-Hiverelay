@@ -473,20 +473,27 @@ if (
 if (
   blindsparkDashboard.includes('var svcModelBusy = false;') &&
   blindsparkDashboard.includes("var svcModelMessageText = '';") &&
+  blindsparkDashboard.includes("var svcModelDraftId = '';") &&
+  blindsparkDashboard.includes("var svcModelDraftSrc = '';") &&
   blindsparkDashboard.includes('function setSvcModelMessage(message, kind)') &&
   blindsparkDashboard.includes('svcModelMessageText = message ||') &&
   blindsparkDashboard.includes('function setSvcModelBusy(busy)') &&
+  blindsparkDashboard.includes('function syncSvcModelDraft()') &&
+  blindsparkDashboard.includes("modelId.addEventListener('input', syncSvcModelDraft);") &&
   blindsparkDashboard.includes("msg.setAttribute('aria-live', 'polite');") &&
   blindsparkDashboard.includes('msg.textContent = svcModelMessageText;') &&
   blindsparkDashboard.includes("add.id = 'svcModelAdd';") &&
   blindsparkDashboard.includes('if (svcModelBusy) return;') &&
   blindsparkDashboard.includes("setSvcModelMessage('Model ID and source required.', 'error');") &&
   blindsparkDashboard.includes('refreshServices(true);') &&
-  umbrelUiControlsTest.includes('umbrel AI model add blocks duplicate writes and reports inline status')
+  umbrelUiControlsTest.includes('umbrel AI model add blocks duplicate writes and reports inline status') &&
+  umbrelUiControlsTest.includes('value="draft-model"') &&
+  umbrelUiControlsTest.includes('clean.failed.drafts') &&
+  auditRoadmap.includes('Umbrel AI model draft persistence')
 ) {
-  pass('Umbrel AI model add flow shows inline status and blocks duplicate writes')
+  pass('Umbrel AI model add flow shows inline status, preserves drafts across refresh, and blocks duplicate writes')
 } else {
-  fail('Umbrel AI model add flow can still duplicate writes or hide field-level errors')
+  fail('Umbrel AI model add flow can still duplicate writes, drop drafts, or hide field-level errors')
 }
 
 if (

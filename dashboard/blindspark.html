@@ -480,6 +480,8 @@ var svcLastConfiguredPlugins = [];
 var svcModelBusy = false;
 var svcModelMessageText = '';
 var svcModelMessageKind = '';
+var svcModelDraftId = '';
+var svcModelDraftSrc = '';
 
 function $(id){ return document.getElementById(id); }
 function appBasePath(){
@@ -882,8 +884,16 @@ function setSvcModelBusy(busy){
   if (svcModelBusy) setSvcModelMessage('Adding model...', '');
 }
 
+function syncSvcModelDraft(){
+  var idEl = $('svcModelId');
+  var srcEl = $('svcModelSrc');
+  svcModelDraftId = idEl && typeof idEl.value === 'string' ? idEl.value : '';
+  svcModelDraftSrc = srcEl && typeof srcEl.value === 'string' ? srcEl.value : '';
+}
+
 function svcAddModel(){
   if (svcModelBusy) return;
+  syncSvcModelDraft();
   var idEl = $('svcModelId');
   var srcEl = $('svcModelSrc');
   var id = (idEl && idEl.value ? idEl.value : '').trim();
@@ -902,6 +912,8 @@ function svcAddModel(){
     }
     setSvcModelMessage('Model added. Refreshing service state...', 'ok');
     toast('Model added: ' + id);
+    svcModelDraftId = '';
+    svcModelDraftSrc = '';
     if (idEl) idEl.value = '';
     if (srcEl) srcEl.value = '';
     refreshServices(true);
@@ -1221,8 +1233,12 @@ function renderServices(avail, svcs){
     form.className = 'svc-model-card';
     var modelId = appendModelField(form, 'svcModelId', 'Model ID', 'qvac-small');
     var modelSrc = appendModelField(form, 'svcModelSrc', 'QVAC source or path', '/data/models/qvac-small');
+    modelId.value = svcModelDraftId;
+    modelSrc.value = svcModelDraftSrc;
     modelId.disabled = modelControlsDisabled;
     modelSrc.disabled = modelControlsDisabled;
+    modelId.addEventListener('input', syncSvcModelDraft);
+    modelSrc.addEventListener('input', syncSvcModelDraft);
     modelId.addEventListener('keydown', handleSvcModelInputKey);
     modelSrc.addEventListener('keydown', handleSvcModelInputKey);
     var add = document.createElement('button');

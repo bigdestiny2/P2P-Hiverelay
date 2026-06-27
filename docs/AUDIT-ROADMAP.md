@@ -177,6 +177,7 @@
 - [x] **4.130** Service config duplicate-route cleanup — the management API dispatcher now has a single `/api/manage/services/config` POST branch, keeping service selection writes on the extracted rollback-aware config path and preventing stale inline persistence branches from drifting back into the route table.
 - [x] **4.131** Poker duplicate-route cleanup — `/api/poker` and `/api/poker/*` now flow through one service-registry-backed route branch ahead of generic JSON guards, and the stale post-guard `_getPokerApp()` fallback branch has been removed so public Poker reads/writes cannot drift away from the hardened adapter-load redaction path.
 - [x] **4.132** Ecosystem release-scope latest audit — the standalone ecosystem audit now accepts `--consumer-scope release`, package scripts expose release-scope sync/audit commands, and docs record that all local consumers stay tracked while only remote app repos are pushed to npm `latest` after the registry dist-tags prove the new HiveRelay version.
+- [x] **4.133** Umbrel AI model draft persistence — the Blindspark service manager now preserves partially typed QVAC model id/source fields across automatic service refresh re-renders, keeps duplicate-write and inline-error guards, clears drafts only after successful registration, and carries the check into release-image and Umbrel-package smoke hardening.
 
 ---
 

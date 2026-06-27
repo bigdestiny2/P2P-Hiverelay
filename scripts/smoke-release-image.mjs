@@ -190,6 +190,8 @@ function assertDashboardUiHardening (html) {
   assertIncludes(html, "meterBox.className = 'svc-meter-box';", 'dashboard service meter layout class')
   assertIncludes(html, 'function setSvcModelBusy(busy)', 'dashboard AI model busy-state guard')
   assertIncludes(html, 'if (svcModelBusy) return;', 'dashboard AI model duplicate-write guard')
+  assertIncludes(html, 'function syncSvcModelDraft()', 'dashboard AI model draft preservation guard')
+  assertIncludes(html, "modelId.addEventListener('input', syncSvcModelDraft);", 'dashboard AI model draft input listener')
   assertIncludes(html, "msg.setAttribute('aria-live', 'polite');", 'dashboard AI model inline status')
   assertIncludes(html, "fetchWithTimeout('/seed'", 'dashboard seed write app-proxy fetch')
   assertIncludes(html, "fetchWithTimeout('/api/lease/config'", 'dashboard lease write app-proxy fetch')
