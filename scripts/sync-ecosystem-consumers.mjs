@@ -10,6 +10,7 @@ import {
   EXPECTED_STALE_CONSUMERS,
   checkConsumerState,
   getExpectedCurrentConsumers,
+  normalizeConsumerScope,
   normalizeDependencyMode,
   scanConsumerSourceChecks,
   scanCurrentConsumerLockChecks,
@@ -30,7 +31,7 @@ const DEP_SECTIONS = [
 
 const usage = `
 Usage:
-  node scripts/sync-ecosystem-consumers.mjs [--workspace-root <path>] [--expected-version <semver>] [--dependency-mode <local|npm-latest>] [--check] [--dry-run]
+  node scripts/sync-ecosystem-consumers.mjs [--workspace-root <path>] [--expected-version <semver>] [--dependency-mode <local|npm-latest>] [--consumer-scope <all|release>] [--check] [--dry-run]
 
 Updates the known direct ecosystem app consumers so their default
 p2p-hiverelay* package defaults point at the npm latest dist-tag by default.
@@ -46,7 +47,9 @@ export function syncEcosystemConsumers (opts = {}) {
   const workspaceRoot = path.resolve(opts.workspaceRoot || workspaceRootDefault)
   const expectedVersion = opts.expectedVersion || CURRENT_HIVERELAY_VERSION
   const dependencyMode = normalizeDependencyMode(opts.dependencyMode || DEFAULT_DEPENDENCY_MODE)
-  const expectedCurrent = opts.expectedCurrent || getExpectedCurrentConsumers({ dependencyMode })
+  const consumerScope = normalizeConsumerScope(opts.consumerScope || 'all')
+  const expectedCurrent = opts.expectedCurrent || getExpectedCurrentConsumers({ dependencyMode, consumerScope })
+  const expectedClassifiedCurrent = opts.expectedClassifiedCurrent || getExpectedCurrentConsumers({ dependencyMode, consumerScope: 'all' })
   const dryRun = Boolean(opts.dryRun || opts.check)
   const changes = []
   const errors = []
@@ -74,6 +77,7 @@ export function syncEcosystemConsumers (opts = {}) {
         check: Boolean(opts.check),
         dryRun,
         dependencyMode,
+        consumerScope,
         workspaceRoot,
         expectedVersion,
         changes,
@@ -144,6 +148,7 @@ export function syncEcosystemConsumers (opts = {}) {
   const summary = checkConsumerState(rows, {
     expectedVersion,
     expectedCurrent,
+    expectedClassifiedCurrent,
     expectedStale: EXPECTED_STALE_CONSUMERS,
     sourceChecks,
     lockChecks,
@@ -161,6 +166,7 @@ export function syncEcosystemConsumers (opts = {}) {
     check: Boolean(opts.check),
     dryRun,
     dependencyMode,
+    consumerScope,
     workspaceRoot,
     expectedVersion,
     changes,
@@ -493,6 +499,10 @@ function parseArgs (argv) {
       out.dependencyMode = readValue(argv, ++i, arg)
       continue
     }
+    if (arg === '--consumer-scope') {
+      out.consumerScope = readValue(argv, ++i, arg)
+      continue
+    }
     if (arg === '--npm-latest') {
       out.dependencyMode = 'npm-latest'
       continue
@@ -519,7 +529,7 @@ function main () {
 
   const result = syncEcosystemConsumers(args)
   const mode = result.check ? 'check' : result.dryRun ? 'dry run' : 'sync'
-  console.log(`HiveRelay ecosystem consumer ${mode} (target ${result.expectedVersion}, mode ${result.dependencyMode})`)
+  console.log(`HiveRelay ecosystem consumer ${mode} (target ${result.expectedVersion}, mode ${result.dependencyMode}, scope ${result.consumerScope})`)
   if (result.changes.length === 0) {
     console.log('- no consumer package or lockfile changes needed')
   } else {

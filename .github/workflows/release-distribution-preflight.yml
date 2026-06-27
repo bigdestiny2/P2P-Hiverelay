@@ -39,6 +39,7 @@ jobs:
       UMBREL_STORE_TOKEN: ${{ secrets.UMBREL_STORE_TOKEN }}
       UMBREL_OFFICIAL_PR_TOKEN: ${{ secrets.UMBREL_OFFICIAL_PR_TOKEN }}
       UMBREL_OFFICIAL_FORK: ${{ secrets.UMBREL_OFFICIAL_FORK }}
+      ECOSYSTEM_CONSUMER_TOKEN: ${{ secrets.ECOSYSTEM_CONSUMER_TOKEN }}
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       STARTOS_DEVELOPER_KEY_PEM: ${{ secrets.STARTOS_DEVELOPER_KEY_PEM }}
       STARTOS_REGISTRY_URL: ${{ secrets.STARTOS_REGISTRY_URL }}
@@ -96,6 +97,7 @@ jobs:
             echo "- Fleet rollout: \`${HIVERELAY_FLEET_ROLLOUT_STATUS:-not-checked}\`"
             echo "- Umbrel community store: \`${HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS:-not-checked}\`"
             echo "- Official Umbrel PR: \`${HIVERELAY_UMBREL_OFFICIAL_PR_STATUS:-not-checked}\`"
+            echo "- Ecosystem app consumers: \`${HIVERELAY_ECOSYSTEM_CONSUMER_STATUS:-not-checked}\`"
             echo "- StartOS registry: \`${HIVERELAY_STARTOS_REGISTRY_STATUS:-not-checked}\`"
             if [ "${HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS:-unknown}" = "failed" ]; then
               repair_channel="${HIVERELAY_RELEASE_EFFECTIVE_CHANNEL:-${{ steps.rel.outputs.channel }}}"

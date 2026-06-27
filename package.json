@@ -21,6 +21,7 @@
     "ecosystem:sync:latest": "node scripts/sync-ecosystem-consumers.mjs --dependency-mode npm-latest",
     "ecosystem:sync:local": "node scripts/sync-ecosystem-consumers.mjs --dependency-mode local",
     "ecosystem:check-workspace": "node scripts/check-ecosystem-workspace.mjs",
+    "ecosystem:commit-consumers": "node scripts/commit-ecosystem-consumers.mjs",
     "docs:update-ship-handoff": "node scripts/update-ship-handoff.mjs",
     "release:prepare": "node scripts/prepare-release.mjs",
     "release:check-distribution-env": "node scripts/check-release-distribution-env.mjs",

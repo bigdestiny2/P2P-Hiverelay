@@ -1,5 +1,6 @@
 import test from 'brittle'
 import fs from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import {
@@ -15,6 +16,7 @@ import {
   scanStaleConsumerSourceChecks
 } from '../../scripts/audit-ecosystem-consumers.mjs'
 import { checkEcosystemWorkspace } from '../../scripts/check-ecosystem-workspace.mjs'
+import { commitEcosystemConsumers } from '../../scripts/commit-ecosystem-consumers.mjs'
 import { syncEcosystemConsumers } from '../../scripts/sync-ecosystem-consumers.mjs'
 
 test('ecosystem consumer audit classifies current, stale, and ignored consumers', (t) => {
@@ -587,6 +589,42 @@ test('ecosystem consumer helpers default published apps to npm latest', (t) => {
   t.ok(local.sourceChecks.some(check => check.term === '"p2p-hiverelay": "file:../../00-core/hiverelay/packages/core"'))
 })
 
+test('ecosystem consumer release scope includes only remotely managed app repos', (t) => {
+  const consumers = getExpectedCurrentConsumers({ consumerScope: 'release' })
+  const paths = consumers.map(consumer => consumer.path).sort()
+
+  t.alike(paths, [
+    '01-browser/pearbrowser-desktop/package.json',
+    '02-apps/pearpaste/package.json',
+    '03-sites/pearbrowser-publishers/src/p2pbuilders/package.json',
+    '04-experiments/Opengit/packages/opengit-relay/package.json',
+    '04-experiments/anongpt-native/package.json'
+  ].sort())
+  t.ok(consumers.every(consumer => consumer.release?.repository))
+  t.absent(paths.includes('02-apps/pear-pos/package.json'))
+  t.absent(paths.includes('02-apps/pear-tickets/package.json'))
+  t.absent(paths.includes('04-experiments/hiverelay-test/package.json'))
+})
+
+test('ecosystem consumer release scope still classifies local-only app consumers', (t) => {
+  const root = fixtureWorkspace()
+  const releaseConsumers = getExpectedCurrentConsumers({ dependencyMode: 'local', consumerScope: 'release' })
+  const allConsumers = getExpectedCurrentConsumers({ dependencyMode: 'local', consumerScope: 'all' })
+  writeExpectedConsumerPackages(root, allConsumers)
+
+  const rows = scanHiverelayConsumers({ workspaceRoot: root })
+  const summary = checkConsumerState(rows, {
+    expectedVersion: '0.20.2',
+    expectedCurrent: releaseConsumers,
+    expectedClassifiedCurrent: allConsumers,
+    expectedStale: []
+  })
+
+  t.ok(summary.ok)
+  t.is(summary.current.length, releaseConsumers.length)
+  t.absent(summary.current.some(row => row.path === '02-apps/pear-pos/package.json'))
+})
+
 test('ecosystem workspace check accepts all release-critical app consumers', (t) => {
   const root = fixtureWorkspace()
   writeExpectedConsumerPackages(root, EXPECTED_CURRENT_CONSUMERS)
@@ -629,6 +667,68 @@ test('ecosystem workspace check reports partial app workspaces', (t) => {
   t.is(result.present.length, 1)
   t.is(result.missing.length, 1)
   t.ok(result.errors.some(error => error.includes(missing.path)))
+})
+
+test('ecosystem workspace check accepts release-managed consumer scope', (t) => {
+  const root = fixtureWorkspace()
+  const consumers = getExpectedCurrentConsumers({ dependencyMode: 'local', consumerScope: 'release' })
+  writeExpectedConsumerPackages(root, consumers)
+
+  const result = checkEcosystemWorkspace({
+    workspaceRoot: root,
+    consumerScope: 'release'
+  })
+
+  t.ok(result.ok)
+  t.is(result.consumerScope, 'release')
+  t.is(result.present.length, consumers.length)
+})
+
+test('ecosystem consumer commit helper commits changed release repos', (t) => {
+  const root = fixtureWorkspace()
+  const checkoutPath = '01-browser/pearbrowser-desktop'
+  const repo = path.join(root, checkoutPath)
+  fs.mkdirSync(repo, { recursive: true })
+  git(repo, ['init'])
+  git(repo, ['config', 'user.name', 'test'])
+  git(repo, ['config', 'user.email', 'test@example.invalid'])
+  writePackage(root, `${checkoutPath}/package.json`, {
+    dependencies: {
+      'p2p-hiverelay': 'latest'
+    }
+  })
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '-m', 'initial'])
+
+  writePackage(root, `${checkoutPath}/package.json`, {
+    dependencies: {
+      'p2p-hiverelay': 'latest',
+      'p2p-hiverelay-client': 'latest'
+    }
+  })
+
+  const result = commitEcosystemConsumers({
+    workspaceRoot: root,
+    version: 'v0.20.2',
+    push: false,
+    expectedCurrent: [{
+      path: `${checkoutPath}/package.json`,
+      release: {
+        repository: 'bigdestiny2/pearbrowser-desktop',
+        ref: 'main',
+        checkoutPath
+      },
+      deps: {
+        'p2p-hiverelay': 'latest',
+        'p2p-hiverelay-client': 'latest'
+      }
+    }]
+  })
+
+  t.ok(result.ok)
+  t.is(result.rows[0].status, 'committed')
+  t.ok(git(repo, ['status', '--porcelain']).stdout.trim() === '')
+  t.ok(git(repo, ['log', '-1', '--pretty=%s']).stdout.includes('chore: sync HiveRelay defaults v0.20.2'))
 })
 
 test('ecosystem sync default npm-latest path refuses stale registry latest', (t) => {
@@ -898,6 +998,17 @@ function writePackageLock (root, relPath, body) {
 
 function readPackage (root, relPath) {
   return JSON.parse(fs.readFileSync(path.join(root, relPath), 'utf8'))
+}
+
+function git (cwd, argv) {
+  const result = spawnSync('git', argv, {
+    cwd,
+    encoding: 'utf8'
+  })
+  if (result.status !== 0) {
+    throw new Error(result.stderr || result.stdout || `git ${argv.join(' ')} failed`)
+  }
+  return result
 }
 
 function writeSnapshot (root, snapshotRoot, version) {

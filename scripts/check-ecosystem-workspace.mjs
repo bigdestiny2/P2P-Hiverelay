@@ -3,7 +3,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { EXPECTED_CURRENT_CONSUMERS } from './audit-ecosystem-consumers.mjs'
+import {
+  getExpectedCurrentConsumers,
+  normalizeConsumerScope
+} from './audit-ecosystem-consumers.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const hiverelayRoot = path.resolve(here, '..')
@@ -11,7 +14,7 @@ const workspaceRootDefault = path.resolve(hiverelayRoot, '..', '..')
 
 const usage = `
 Usage:
-  node scripts/check-ecosystem-workspace.mjs [--workspace-root <path>] [--required] [--optional]
+  node scripts/check-ecosystem-workspace.mjs [--workspace-root <path>] [--consumer-scope <all|release>] [--required] [--optional]
 
 Verifies that the full sibling Pear ecosystem app workspace is present before a
 stable release attempts to move PearBrowser, PearPaste, anonGPT, and the other
@@ -22,7 +25,11 @@ if (isMain()) main()
 
 export function checkEcosystemWorkspace (opts = {}) {
   const workspaceRoot = path.resolve(opts.workspaceRoot || workspaceRootDefault)
-  const expectedCurrent = opts.expectedCurrent || EXPECTED_CURRENT_CONSUMERS
+  const consumerScope = normalizeConsumerScope(opts.consumerScope || 'all')
+  const expectedCurrent = opts.expectedCurrent || getExpectedCurrentConsumers({
+    dependencyMode: 'local',
+    consumerScope
+  })
   const present = []
   const missing = []
 
@@ -49,6 +56,7 @@ export function checkEcosystemWorkspace (opts = {}) {
   return {
     ok: errors.length === 0,
     workspaceRoot,
+    consumerScope,
     expected: expectedCurrent.length,
     present,
     missing,
@@ -76,6 +84,10 @@ function parseArgs (argv) {
       out.workspaceRoot = readValue(argv, ++i, arg)
       continue
     }
+    if (arg === '--consumer-scope') {
+      out.consumerScope = readValue(argv, ++i, arg)
+      continue
+    }
     throw new Error(`Unknown argument: ${arg}`)
   }
   return out
@@ -97,7 +109,7 @@ function main () {
   }
 
   const result = checkEcosystemWorkspace(args)
-  console.log(`HiveRelay ecosystem workspace check (${result.workspaceRoot})`)
+  console.log(`HiveRelay ecosystem workspace check (${result.workspaceRoot}, scope ${result.consumerScope})`)
   console.log(`- present ${result.present.length}/${result.expected} expected app consumers`)
   for (const row of result.present) {
     const role = row.role ? ` [${row.role}]` : ''

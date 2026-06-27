@@ -173,6 +173,7 @@
 - [x] **4.126** anonGPT consumer release-contract coverage — ecosystem consumer audits now treat anonGPT as a first-class customer relay/onion app beyond its package manifest by requiring its architecture docs to preserve the HiveRelay relay/onion transport contract and its forward transport source to preserve the production HiveRelay forward-service client contract.
 - [x] **4.127** Stable release app-consumer fail-closed guard — `release:prepare` now rejects stable app-default sync when the full sibling Pear ecosystem workspace is absent instead of silently skipping every app consumer, while tests require sparse release fixtures to use the explicit `--no-ecosystem-consumers` opt-out.
 - [x] **4.128** Stable release ecosystem workspace preflight — `release-surfaces.yml` now runs `npm run ecosystem:check-workspace -- --required --workspace-root ..` before Docker image or npm publication side effects, and `release:prepare` accepts `--ecosystem-workspace-root ..` so the same assembled app workspace is used when PearBrowser, PearPaste, anonGPT, and the other current consumers move to npm `latest` defaults.
+- [x] **4.129** Release-managed app consumer promotion — ecosystem consumers now carry release checkout metadata, CI checks out PearBrowser desktop, PearPaste, p2pbuilders, Opengit, and anonGPT with `ECOSYSTEM_CONSUMER_TOKEN`, syncs only that release-managed scope after npm `latest` is verified, and commits/pushes those app defaults so customer apps pull the newest HiveRelay line by default.
 
 ---
 

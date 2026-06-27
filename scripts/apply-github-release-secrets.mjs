@@ -12,6 +12,7 @@ const REQUIRED_SECRETS = [
   'FLEET_SSH_PRIVATE_KEY',
   'UMBREL_STORE_TOKEN',
   'UMBREL_OFFICIAL_PR_TOKEN',
+  'ECOSYSTEM_CONSUMER_TOKEN',
   'UMBREL_OFFICIAL_FORK',
   'NPM_TOKEN',
   'STARTOS_DEVELOPER_KEY_PEM',
@@ -29,8 +30,10 @@ Usage:
 Validates a local release-value candidate file with
 scripts/check-release-distribution-env.mjs, then writes the exact same masked
 release values to GitHub Secrets using gh. Values are sent through stdin and
-are never printed. NPM_TOKEN is required so full releases can publish the
-workspace packages before app consumers follow npm latest.
+are never printed. ECOSYSTEM_CONSUMER_TOKEN is required so full releases can
+push app consumer default updates after npm latest is promoted. NPM_TOKEN is
+required so full releases can publish the workspace packages before app
+consumers follow npm latest.
 FLEET_ROLLOUT_TIMEOUT_MS, when present, is the only GitHub Variable.
 `
 

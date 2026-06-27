@@ -132,6 +132,7 @@ function checkReleaseDistributionEnv ({ channel, prerelease, env }) {
     'HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS'
   ])
   requireGitHubToken('UMBREL_OFFICIAL_PR_TOKEN', ['HIVERELAY_UMBREL_OFFICIAL_PR_STATUS'])
+  requireGitHubToken('ECOSYSTEM_CONSUMER_TOKEN', ['HIVERELAY_ECOSYSTEM_CONSUMER_STATUS'])
   requireSecret('UMBREL_OFFICIAL_FORK', ['HIVERELAY_UMBREL_OFFICIAL_PR_STATUS'])
   if (String(env.UMBREL_OFFICIAL_FORK || '').trim() && !isOfficialUmbrelForkSlug(env.UMBREL_OFFICIAL_FORK)) {
     missing.push('UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps')

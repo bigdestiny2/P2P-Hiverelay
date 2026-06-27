@@ -115,6 +115,7 @@ PASTE_THE_FULL_FLEET_PRIVATE_KEY_BLOCK_HERE
 FLEET_KEY
 UMBREL_STORE_TOKEN=PASTE_COMMUNITY_STORE_GITHUB_TOKEN_HERE
 UMBREL_OFFICIAL_PR_TOKEN=PASTE_OFFICIAL_PR_GITHUB_TOKEN_HERE
+ECOSYSTEM_CONSUMER_TOKEN=PASTE_ECOSYSTEM_APP_REPO_GITHUB_TOKEN_HERE
 UMBREL_OFFICIAL_FORK=owner/umbrel-apps
 NPM_TOKEN=PASTE_NPM_AUTOMATION_TOKEN_HERE
 STARTOS_DEVELOPER_KEY_PEM<<STARTOS_KEY
@@ -169,6 +170,7 @@ Expected shapes:
 | `FLEET_SSH_PRIVATE_KEY` | PEM/OpenSSH private key block without surrounding whitespace |
 | `UMBREL_STORE_TOKEN` | GitHub token with push access to `bigdestiny2/blindspark-umbrel-store` |
 | `UMBREL_OFFICIAL_PR_TOKEN` | GitHub token able to push the official-package fork and open/update `getumbrel/umbrel-apps` PRs |
+| `ECOSYSTEM_CONSUMER_TOKEN` | GitHub token with push access to release-managed app consumer repos: PearBrowser desktop, PearPaste, p2pbuilders, Opengit, and anonGPT |
 | `UMBREL_OFFICIAL_FORK` | Fork slug such as `owner/umbrel-apps`; it must not be `getumbrel/umbrel-apps` |
 | `NPM_TOKEN` | npm automation token able to publish `p2p-hiverelay`, `p2p-hiverelay-client`, `p2p-hiverelay-verifier`, and `p2p-hiveservices` |
 | `STARTOS_DEVELOPER_KEY_PEM` | StartOS developer private key block without surrounding whitespace |
@@ -275,17 +277,20 @@ Before cutting a release from a full sibling workspace, run
 check proves PearBrowser, PearPaste, anonGPT, and the other direct consumers can
 still follow the current checkout's package links, linked lockfile metadata, and
 versioned source markers before npm publish. Full `release:prepare` runs default
-to npm `latest` mode after the release workflow has promoted the npm packages;
-the stable workflow also runs `npm run ecosystem:check-workspace -- --required`
-before Docker or npm publication to fail early when the app checkout set is
-incomplete. In GitHub Actions the release job passes
-`--ecosystem-workspace-root ..` so consumer checkouts live beside the
-`hiverelay` checkout at the workflow workspace root.
-explicit `--ecosystem-dependency-mode local` is for checkout-to-checkout
-development. Stable release prep now fails if the full sibling app workspace is
-missing; use `--no-ecosystem-consumers` only for sparse local checks or
-intentional release-candidate skips. The audit proves there are no new
-unclassified `p2p-hiverelay*` app pins.
+to npm `latest` mode after the release workflow has promoted the npm packages.
+The stable workflow checks out the release-managed app consumer repos
+(`pearbrowser-desktop`, `pearpaste`, `p2pbuilders`, `Opengit`, and `anongpt`),
+runs `npm run ecosystem:check-workspace -- --required --workspace-root .. --consumer-scope release`
+before Docker or npm publication, then passes `--ecosystem-workspace-root ..`
+and `--ecosystem-consumer-scope release` to release prep. After npm `latest` is
+verified, it commits and pushes those app repo manifest, lockfile, and source
+marker updates with `npm run ecosystem:commit-consumers`. Local-only POS,
+Tickets, and test consumers remain covered by the local `all` scope audits but
+do not block the remote customer release workflow. Stable release prep still
+fails if the selected sibling app workspace is missing; use
+`--no-ecosystem-consumers` only for sparse local checks or intentional
+release-candidate skips. The audit proves there are no new unclassified
+`p2p-hiverelay*` app pins.
 8. Boots the exact pushed image reference (`<version>@sha256:...`) in Docker,
    waits for `/health`, verifies the Blindspark appliance dashboard and setup
    page, proves the home-server `HIVERELAY_ACCEPT_MODE=review` default,
@@ -298,33 +303,36 @@ unclassified `p2p-hiverelay*` app pins.
    that lets PearBrowser, PearPaste, anonGPT, and other app consumers safely move
    from local workspace links to the published release line.
 10. Returns to `main`, then runs `npm run release:prepare -- vX.Y.Z --channel both
-   --image-digest sha256:... --ecosystem-workspace-root .. --ecosystem-dependency-mode npm-latest`.
+   --image-digest sha256:... --ecosystem-workspace-root .. --ecosystem-consumer-scope release --ecosystem-dependency-mode npm-latest`.
    In a full sibling workspace this switches tracked app manifests to npm
    `latest` and refreshes lockfiles from real registry metadata; before the npm
    gate is green, the default `ecosystem:sync` intentionally refuses to edit app
    defaults.
-11. Boots the synchronized `umbrel-app/docker-compose.yml` package with the
+11. Commits and pushes changed release-managed app consumer repos with
+   `ECOSYSTEM_CONSUMER_TOKEN`, so PearBrowser, PearPaste, p2pbuilders, Opengit,
+   and anonGPT pull the newest Hiverelay npm line by default.
+12. Boots the synchronized `umbrel-app/docker-compose.yml` package with the
    release image override, verifies the dashboard/setup pages, review-mode
    default, authenticated wallet save flow, service catalog, service-selection
    save flow, dashboard WebSocket in-band auth, usage telemetry, and data
    persistence across restart.
-12. Configures a StartOS developer key, builds `startos/blindspark.s9pk` from
+13. Configures a StartOS developer key, builds `startos/blindspark.s9pk` from
    the resolved GHCR digest, and verifies it with `start-sdk verify`. Full
    releases require `STARTOS_DEVELOPER_KEY_PEM`; prereleases may still use an
    ephemeral key for a sideload-only test artifact.
-13. Uploads the verified `.s9pk` to the GitHub Release as a sideloadable
+14. Uploads the verified `.s9pk` to the GitHub Release as a sideloadable
    StartOS package.
-14. Commits the synchronized release surfaces back to `main`:
+15. Commits the synchronized release surfaces back to `main`:
    workspace package versions, `package-lock.json`, README status, fleet
    channel, Umbrel metadata, and StartOS metadata.
-15. Waits for the raw systemd relays on the promoted channel to converge on
+16. Waits for the raw systemd relays on the promoted channel to converge on
     the release tag SHA, checked-out package version, and `/health`
     `running:true` with the release version.
-16. Publishes the verified `.s9pk` to the configured StartOS registry with
+17. Publishes the verified `.s9pk` to the configured StartOS registry with
     `start-sdk publish` and writes `startos-registry-evidence.json`.
-17. Exports the official Umbrel package shape and opens or updates a draft PR
+18. Exports the official Umbrel package shape and opens or updates a draft PR
     against `getumbrel/umbrel-apps`.
-18. Writes and uploads `release-evidence.json` plus public-safe image-manifest
+19. Writes and uploads `release-evidence.json` plus public-safe image-manifest
     and smoke sidecars as durable proof of the image digest, StartOS package
     hash, checked gates, rollout channel, and every external release surface
     that was published, verified, or skipped.

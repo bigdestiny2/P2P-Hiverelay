@@ -107,6 +107,7 @@ const releaseSecretsTemplate = readText(hiverelayRoot, 'scripts', 'write-release
 const ecosystemConsumersAudit = readText(hiverelayRoot, 'scripts', 'audit-ecosystem-consumers.mjs')
 const ecosystemConsumersSync = readText(hiverelayRoot, 'scripts', 'sync-ecosystem-consumers.mjs')
 const ecosystemWorkspaceCheck = readText(hiverelayRoot, 'scripts', 'check-ecosystem-workspace.mjs')
+const ecosystemConsumersCommit = readText(hiverelayRoot, 'scripts', 'commit-ecosystem-consumers.mjs')
 const publicArtifactSecretsAudit = readText(hiverelayRoot, 'scripts', 'check-public-artifact-secrets.mjs')
 const shipHandoffUpdate = readText(hiverelayRoot, 'scripts', 'update-ship-handoff.mjs')
 const shipHandoffIssue120Log = readText(hiverelayRoot, 'docs', 'ship-handoff', 'issue-120-release-distribution-preflight.txt')
@@ -5011,6 +5012,7 @@ if (
   releaseDistributionEnvCheck.includes("HIVERELAY_FLEET_ROLLOUT_STATUS = 'invalid-timeout'") &&
   releaseDistributionEnvCheck.includes("requireGitHubToken('UMBREL_STORE_TOKEN'") &&
   releaseDistributionEnvCheck.includes("requireGitHubToken('UMBREL_OFFICIAL_PR_TOKEN'") &&
+  releaseDistributionEnvCheck.includes("requireGitHubToken('ECOSYSTEM_CONSUMER_TOKEN'") &&
   releaseDistributionEnvCheck.includes("requireSecret('UMBREL_OFFICIAL_FORK'") &&
   releaseDistributionEnvCheck.includes("requireSecret('NPM_TOKEN'") &&
   releaseDistributionEnvCheck.includes("requirePrivateKey('STARTOS_DEVELOPER_KEY_PEM'") &&
@@ -5063,6 +5065,7 @@ if (
   releaseDistributionEnvCheckTest.includes('accepts sane explicit fleet rollout timeout') &&
   releaseDistributionEnvCheckTest.includes('rejects unsafe fleet rollout timeout before SSH') &&
   releaseDistributionEnvCheckTest.includes('rejects placeholder GitHub tokens before checkout or gh calls') &&
+  releaseDistributionEnvCheckTest.includes('ECOSYSTEM_CONSUMER_TOKEN') &&
   releaseDistributionEnvCheckTest.includes('rejects malformed npm tokens before package publish') &&
   releaseDistributionEnvCheckTest.includes('rejects whitespace-padded GitHub tokens before checkout or gh calls') &&
   releaseDistributionEnvCheckTest.includes('Repair path:') &&
@@ -5106,6 +5109,7 @@ if (
   githubReleaseSetupCheck.includes("'FLEET_SSH_PRIVATE_KEY'") &&
   githubReleaseSetupCheck.includes("'UMBREL_STORE_TOKEN'") &&
   githubReleaseSetupCheck.includes("'UMBREL_OFFICIAL_PR_TOKEN'") &&
+  githubReleaseSetupCheck.includes("'ECOSYSTEM_CONSUMER_TOKEN'") &&
   githubReleaseSetupCheck.includes("'UMBREL_OFFICIAL_FORK'") &&
   githubReleaseSetupCheck.includes("'NPM_TOKEN'") &&
   githubReleaseSetupCheck.includes("'STARTOS_DEVELOPER_KEY_PEM'") &&
@@ -5123,6 +5127,7 @@ if (
   releasePreflightWorkflow.includes('node scripts/check-release-distribution-env.mjs') &&
   releasePreflightWorkflow.includes('secrets.UMBREL_STORE_TOKEN') &&
   releasePreflightWorkflow.includes('secrets.UMBREL_OFFICIAL_PR_TOKEN') &&
+  releasePreflightWorkflow.includes('secrets.ECOSYSTEM_CONSUMER_TOKEN') &&
   releasePreflightWorkflow.includes('secrets.NPM_TOKEN') &&
   releasePreflightWorkflow.includes('secrets.STARTOS_REGISTRY_URL') &&
   releasePreflightWorkflow.includes('vars.FLEET_ROLLOUT_TIMEOUT_MS') &&
@@ -5137,6 +5142,7 @@ if (
   releaseEnvFileLib.includes('export function readEnvFile') &&
   releaseEnvFileLib.includes('export function parseEnvFile') &&
   releaseSecretsTemplate.includes('REPLACE_WITH_GITHUB_TOKEN_FOR_COMMUNITY_STORE') &&
+  releaseSecretsTemplate.includes('REPLACE_WITH_GITHUB_TOKEN_FOR_ECOSYSTEM_APP_REPOS') &&
   releaseSecretsTemplate.includes('REPLACE_WITH_NPM_AUTOMATION_TOKEN') &&
   releaseSecretsTemplate.includes('REPLACE_WITH_PUBLIC_HTTPS_REGISTRY_URL') &&
   releaseSecretsTemplate.includes('Refusing to write release secret template inside the repository') &&
@@ -5163,6 +5169,7 @@ if (
   githubReleaseSetupCheckTest.includes('reports gh JSON failures') &&
   githubReleaseSetupCheckTest.includes('rejects malformed repo names before gh calls') &&
   githubReleaseSecretsApplyTest.includes('sends validated values to gh secret set via stdin') &&
+  githubReleaseSecretsApplyTest.includes('ECOSYSTEM_CONSUMER_TOKEN') &&
   githubReleaseSecretsApplyTest.includes('gh workflow run release-distribution-preflight.yml --repo bigdestiny2/P2P-Hiverelay -f channel=both -f prerelease=false') &&
   githubReleaseSecretsApplyTest.includes('rejects malformed candidate without calling gh or echoing values') &&
   githubReleaseSecretsApplyTest.includes('rejects prerelease validation mode before gh calls') &&
@@ -5197,7 +5204,17 @@ const releasePackageManifests = [
 if (
   releaseWorkflow.includes('Publish npm packages') &&
   releaseWorkflow.includes('Verify stable ecosystem app workspace') &&
+  releaseWorkflow.includes('Checkout PearBrowser ecosystem consumer') &&
+  releaseWorkflow.includes('repository: bigdestiny2/pearbrowser-desktop') &&
+  releaseWorkflow.includes('ref: feat/p2p-infra-naming') &&
+  releaseWorkflow.includes('repository: bigdestiny2/pearpaste') &&
+  releaseWorkflow.includes('ref: feat/pear-runtime-electron-forge') &&
+  releaseWorkflow.includes('repository: bigdestiny2/p2pbuilders') &&
+  releaseWorkflow.includes('repository: bigdestiny2/Opengit') &&
+  releaseWorkflow.includes('repository: bigdestiny2/anongpt') &&
+  releaseWorkflow.includes('token: $' + '{{ env.ECOSYSTEM_CONSUMER_TOKEN }}') &&
   releaseWorkflow.includes('npm run ecosystem:check-workspace -- --required --workspace-root ..') &&
+  releaseWorkflow.includes('--consumer-scope release') &&
   releaseWorkflow.includes('NODE_AUTH_TOKEN: $' + '{{ secrets.NPM_TOKEN }}') &&
   releaseWorkflow.includes('registry-url: https://registry.npmjs.org') &&
   releaseWorkflow.includes('for pkg in packages/core packages/client packages/verifier packages/services') &&
@@ -5207,12 +5224,19 @@ if (
   releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=published') &&
   releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=current') &&
   monorepoPkg.scripts['ecosystem:check-workspace'] === 'node scripts/check-ecosystem-workspace.mjs' &&
+  monorepoPkg.scripts['ecosystem:commit-consumers'] === 'node scripts/commit-ecosystem-consumers.mjs' &&
   releaseWorkflow.includes('--ecosystem-dependency-mode npm-latest') &&
   releaseWorkflow.includes('--ecosystem-workspace-root ..') &&
+  releaseWorkflow.includes('--ecosystem-consumer-scope release') &&
+  releaseWorkflow.includes('Commit ecosystem app consumer defaults') &&
+  releaseWorkflow.includes('npm run ecosystem:commit-consumers') &&
+  releaseWorkflow.includes('--github-env "$GITHUB_ENV"') &&
   releaseWorkflow.indexOf('Verify stable ecosystem app workspace') > releaseWorkflow.indexOf('Audit and test release gate') &&
   releaseWorkflow.indexOf('Verify stable ecosystem app workspace') < releaseWorkflow.indexOf('Build and push multi-arch image') &&
   releaseWorkflow.indexOf('Verify stable ecosystem app workspace') < releaseWorkflow.indexOf('Publish npm packages') &&
   releaseWorkflow.indexOf('Verify stable ecosystem app workspace') < releaseWorkflow.indexOf('Sync release metadata') &&
+  releaseWorkflow.indexOf('Commit ecosystem app consumer defaults') > releaseWorkflow.indexOf('Sync release metadata') &&
+  releaseWorkflow.indexOf('Commit ecosystem app consumer defaults') < releaseWorkflow.indexOf('Smoke Umbrel package') &&
   releaseWorkflow.indexOf('Publish npm packages') > releaseWorkflow.indexOf('Smoke pushed release image') &&
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Return to main for metadata sync') &&
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Sync release metadata') &&
@@ -5225,22 +5249,40 @@ if (
   releaseAutomationDocs.includes('app consumers safely move') &&
   releaseAutomationDocs.includes('from local workspace links') &&
   releaseAutomationDocs.includes('before Docker or npm publication') &&
-  releaseAutomationDocs.includes('Stable release prep now fails if the full sibling app workspace is') &&
+  releaseAutomationDocs.includes('ECOSYSTEM_CONSUMER_TOKEN') &&
+  releaseAutomationDocs.includes('ecosystem:commit-consumers') &&
+  releaseAutomationDocs.includes('Stable release prep still') &&
   releaseAutomationDocs.includes('--ecosystem-workspace-root ..') &&
+  releaseAutomationDocs.includes('--ecosystem-consumer-scope release') &&
   releaseAutomationDocs.includes('--ecosystem-dependency-mode npm-latest') &&
   prepareRelease.includes('DEFAULT_DEPENDENCY_MODE') &&
   prepareRelease.includes('--ecosystem-workspace-root <path>') &&
+  prepareRelease.includes('--ecosystem-consumer-scope <scope>') &&
   prepareRelease.includes('checkEcosystemWorkspace') &&
   prepareRelease.includes('Use --no-ecosystem-consumers only for sparse local checks') &&
+  ecosystemConsumersAudit.includes("repository: 'bigdestiny2/pearbrowser-desktop'") &&
+  ecosystemConsumersAudit.includes("repository: 'bigdestiny2/pearpaste'") &&
+  ecosystemConsumersAudit.includes("repository: 'bigdestiny2/p2pbuilders'") &&
+  ecosystemConsumersAudit.includes("repository: 'bigdestiny2/Opengit'") &&
+  ecosystemConsumersAudit.includes("repository: 'bigdestiny2/anongpt'") &&
+  ecosystemConsumersAudit.includes('export function normalizeConsumerScope') &&
+  ecosystemConsumersSync.includes('--consumer-scope <all|release>') &&
   ecosystemWorkspaceCheck.includes('export function checkEcosystemWorkspace') &&
+  ecosystemWorkspaceCheck.includes('--consumer-scope <all|release>') &&
   ecosystemWorkspaceCheck.includes('full sibling workspace not found') &&
+  ecosystemConsumersCommit.includes('export function commitEcosystemConsumers') &&
+  ecosystemConsumersCommit.includes("['push', 'origin'") &&
+  ecosystemConsumersCommit.includes('HEAD:') &&
   ecosystemConsumersAuditTest.includes('ecosystem workspace check accepts all release-critical app consumers') &&
   ecosystemConsumersAuditTest.includes('ecosystem workspace check fails when full sibling workspace is absent') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer release scope includes only remotely managed app repos') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer commit helper commits changed release repos') &&
   prepareReleaseTest.includes('prepare-release defaults sibling ecosystem consumer checks to npm latest') &&
   prepareReleaseTest.includes('prepare-release requires sibling ecosystem workspace for stable app-default sync') &&
   auditRoadmap.includes('Ecosystem latest-default release ordering') &&
   auditRoadmap.includes('Stable release app-consumer fail-closed guard') &&
-  auditRoadmap.includes('Stable release ecosystem workspace preflight')
+  auditRoadmap.includes('Stable release ecosystem workspace preflight') &&
+  auditRoadmap.includes('Release-managed app consumer promotion')
 ) {
   pass('release workflow preflights app workspace, then publishes npm packages and verifies latest dist-tags before downstream app consumers update')
 } else {

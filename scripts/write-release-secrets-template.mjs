@@ -15,9 +15,9 @@ Usage:
 Writes a local candidate env-file template for release distribution values.
 Most values are secrets; the Umbrel fork slug and StartOS registry URL are
 also stored as GitHub Secrets so Actions masks them in logs. NPM_TOKEN is used
-to publish the workspace packages before app consumers follow npm latest. The
-template
-contains placeholders only and is intended to live outside the repository. It
+to publish the workspace packages before app consumers follow npm latest, and
+ECOSYSTEM_CONSUMER_TOKEN is used to push those app consumer updates. The
+template contains placeholders only and is intended to live outside the repository. It
 is written with owner-only permissions and refuses to overwrite an existing
 file unless --force is passed.
 `
@@ -67,6 +67,7 @@ function templateBody () {
     'FLEET_KEY',
     'UMBREL_STORE_TOKEN=REPLACE_WITH_GITHUB_TOKEN_FOR_COMMUNITY_STORE',
     'UMBREL_OFFICIAL_PR_TOKEN=REPLACE_WITH_GITHUB_TOKEN_FOR_OFFICIAL_UMBREL_PR',
+    'ECOSYSTEM_CONSUMER_TOKEN=REPLACE_WITH_GITHUB_TOKEN_FOR_ECOSYSTEM_APP_REPOS',
     'UMBREL_OFFICIAL_FORK=REPLACE_OWNER/umbrel-apps',
     'NPM_TOKEN=REPLACE_WITH_NPM_AUTOMATION_TOKEN',
     'STARTOS_DEVELOPER_KEY_PEM<<STARTOS_KEY',

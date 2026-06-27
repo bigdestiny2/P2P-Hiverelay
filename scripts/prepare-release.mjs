@@ -4,8 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  DEFAULT_DEPENDENCY_MODE,
-  EXPECTED_CURRENT_CONSUMERS
+  DEFAULT_DEPENDENCY_MODE
 } from './audit-ecosystem-consumers.mjs'
 import { checkEcosystemWorkspace } from './check-ecosystem-workspace.mjs'
 import { syncEcosystemConsumers } from './sync-ecosystem-consumers.mjs'
@@ -42,6 +41,7 @@ Options:
   --no-umbrel-store                    Skip the sibling community-store checkout
   --no-ecosystem-consumers             Skip sibling app consumer default sync
   --ecosystem-workspace-root <path>     Sibling app workspace root (default: ../../)
+  --ecosystem-consumer-scope <scope>    Consumer sync scope: all or release (default: all)
   --ecosystem-dependency-mode <mode>    Consumer defaults: local or npm-latest (default: npm-latest)
   --allow-unpinned-image               Permit tag-only app-store image refs (not for review)
   --check                              Report drift without writing files
@@ -65,6 +65,7 @@ assertPublicReleaseNotes(releaseNotes)
 const syncUmbrelStore = !args.noUmbrelStore && !isPrerelease
 const syncEcosystemDefaults = !args.noEcosystemConsumers && !isPrerelease
 const ecosystemDependencyMode = args.ecosystemDependencyMode || process.env.HIVERELAY_ECOSYSTEM_DEPENDENCY_MODE || DEFAULT_DEPENDENCY_MODE
+const ecosystemConsumerScope = args.ecosystemConsumerScope || process.env.HIVERELAY_ECOSYSTEM_CONSUMER_SCOPE || 'all'
 const ecosystemWorkspaceRoot = args.ecosystemWorkspaceRoot
   ? path.resolve(args.ecosystemWorkspaceRoot)
   : ecosystemWorkspaceRootDefault
@@ -241,7 +242,7 @@ function syncEcosystemConsumerDefaults () {
 
   const workspaceCheck = checkEcosystemWorkspace({
     workspaceRoot: ecosystemWorkspaceRoot,
-    expectedCurrent: EXPECTED_CURRENT_CONSUMERS
+    consumerScope: ecosystemConsumerScope
   })
   if (!workspaceCheck.ok) {
     die(`Cannot sync ecosystem consumer defaults from ${workspaceCheck.workspaceRoot}; ${workspaceCheck.errors.join('; ')}. Use --no-ecosystem-consumers only for sparse local checks or intentional release-candidate skips.`)
@@ -251,6 +252,7 @@ function syncEcosystemConsumerDefaults () {
     workspaceRoot: ecosystemWorkspaceRoot,
     expectedVersion: version,
     dependencyMode: ecosystemDependencyMode,
+    consumerScope: ecosystemConsumerScope,
     snapshotChecks: false,
     check: checkOnly
   })

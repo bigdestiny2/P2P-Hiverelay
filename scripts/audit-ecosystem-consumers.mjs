@@ -18,6 +18,7 @@ const HIVERELAY_DEPS = [
 
 const DEPENDENCY_MODES = new Set(['local', 'npm-latest'])
 export const DEFAULT_DEPENDENCY_MODE = 'npm-latest'
+const CONSUMER_SCOPES = new Set(['all', 'release'])
 const NPM_LATEST_SPEC = 'latest'
 
 const DEP_SECTIONS = [
@@ -96,6 +97,11 @@ export const EXPECTED_CURRENT_CONSUMERS = [
   {
     path: '01-browser/pearbrowser-desktop/package.json',
     role: 'release-critical bundled PearBrowser desktop',
+    release: {
+      repository: 'bigdestiny2/pearbrowser-desktop',
+      ref: 'feat/p2p-infra-naming',
+      checkoutPath: '01-browser/pearbrowser-desktop'
+    },
     deps: {
       'p2p-hiverelay': 'file:../../00-core/hiverelay/packages/core',
       'p2p-hiverelay-client': 'file:../../00-core/hiverelay/packages/client',
@@ -135,6 +141,11 @@ export const EXPECTED_CURRENT_CONSUMERS = [
   {
     path: '02-apps/pearpaste/package.json',
     role: 'customer encrypted-availability app',
+    release: {
+      repository: 'bigdestiny2/pearpaste',
+      ref: 'feat/pear-runtime-electron-forge',
+      checkoutPath: '02-apps/pearpaste'
+    },
     deps: {
       'p2p-hiverelay': 'file:../../00-core/hiverelay/packages/core',
       'p2p-hiverelay-client': 'file:../../00-core/hiverelay/packages/client'
@@ -273,6 +284,11 @@ export const EXPECTED_CURRENT_CONSUMERS = [
   {
     path: '03-sites/pearbrowser-publishers/src/p2pbuilders/package.json',
     role: 'publisher-site consumer',
+    release: {
+      repository: 'bigdestiny2/p2pbuilders',
+      ref: 'main',
+      checkoutPath: '03-sites/pearbrowser-publishers/src/p2pbuilders'
+    },
     deps: {
       'p2p-hiverelay': 'file:../../../../00-core/hiverelay/packages/core',
       'p2p-hiverelay-client': 'file:../../../../00-core/hiverelay/packages/client'
@@ -281,6 +297,11 @@ export const EXPECTED_CURRENT_CONSUMERS = [
   {
     path: '04-experiments/Opengit/packages/opengit-relay/package.json',
     role: 'optional Opengit blind-relay bridge',
+    release: {
+      repository: 'bigdestiny2/Opengit',
+      ref: 'main',
+      checkoutPath: '04-experiments/Opengit'
+    },
     deps: {
       'p2p-hiverelay': 'file:../../../../00-core/hiverelay/packages/core',
       'p2p-hiverelay-client': 'file:../../../../00-core/hiverelay/packages/client'
@@ -313,6 +334,11 @@ export const EXPECTED_CURRENT_CONSUMERS = [
   {
     path: '04-experiments/anongpt-native/package.json',
     role: 'customer relay/onion AI app',
+    release: {
+      repository: 'bigdestiny2/anongpt',
+      ref: 'main',
+      checkoutPath: '04-experiments/anongpt-native'
+    },
     deps: {
       'p2p-hiverelay': 'file:../../00-core/hiverelay/packages/core'
     },
@@ -349,16 +375,27 @@ export function normalizeDependencyMode (value = DEFAULT_DEPENDENCY_MODE) {
   return value
 }
 
+export function normalizeConsumerScope (value = 'all') {
+  if (!CONSUMER_SCOPES.has(value)) {
+    throw new Error(`Invalid consumer scope ${JSON.stringify(value)}. Expected all or release.`)
+  }
+  return value
+}
+
 export function getExpectedCurrentConsumers (opts = {}) {
   const dependencyMode = normalizeDependencyMode(opts.dependencyMode)
-  return EXPECTED_CURRENT_CONSUMERS.map(consumer => ({
-    ...consumer,
-    deps: dependencyMode === 'npm-latest'
-      ? Object.fromEntries(Object.keys(consumer.deps).map(dep => [dep, NPM_LATEST_SPEC]))
-      : { ...consumer.deps },
-    sourceChecks: resolveSourceChecksForMode(consumer.sourceChecks, dependencyMode),
-    dependencyMode
-  }))
+  const consumerScope = normalizeConsumerScope(opts.consumerScope)
+  return EXPECTED_CURRENT_CONSUMERS
+    .filter(consumer => consumerScope === 'all' || consumer.release)
+    .map(consumer => ({
+      ...consumer,
+      deps: dependencyMode === 'npm-latest'
+        ? Object.fromEntries(Object.keys(consumer.deps).map(dep => [dep, NPM_LATEST_SPEC]))
+        : { ...consumer.deps },
+      sourceChecks: resolveSourceChecksForMode(consumer.sourceChecks, dependencyMode),
+      dependencyMode,
+      consumerScope
+    }))
 }
 
 function resolveSourceChecksForMode (sourceChecks = [], dependencyMode) {
@@ -429,6 +466,7 @@ export function scanHiverelayConsumers (opts = {}) {
 export function checkConsumerState (rows, opts = {}) {
   const expectedVersion = opts.expectedVersion || '0.0.0'
   const expectedCurrent = opts.expectedCurrent || getExpectedCurrentConsumers(opts)
+  const expectedClassifiedCurrent = opts.expectedClassifiedCurrent || expectedCurrent
   const expectedStale = opts.expectedStale || EXPECTED_STALE_CONSUMERS
   const sourceChecks = opts.sourceChecks || []
   const lockChecks = opts.lockChecks || []
@@ -437,7 +475,7 @@ export function checkConsumerState (rows, opts = {}) {
   const warnings = []
   const byPath = new Map(rows.map(row => [row.path, row]))
   const expectedPaths = new Set([
-    ...expectedCurrent.map(row => row.path),
+    ...expectedClassifiedCurrent.map(row => row.path),
     ...expectedStale.map(row => row.path)
   ])
 

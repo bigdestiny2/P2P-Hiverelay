@@ -6,6 +6,7 @@ import path from 'node:path'
 
 const TEST_GITHUB_TOKEN = `ghp_${'a'.repeat(36)}`
 const TEST_GITHUB_TOKEN_ALT = `gho_${'b'.repeat(36)}`
+const TEST_GITHUB_TOKEN_ECOSYSTEM = `ghu_${'e'.repeat(36)}`
 const TEST_NPM_TOKEN = `npm_${'c'.repeat(36)}`
 const TEST_PRIVATE_KEY = '-----BEGIN OPENSSH PRIVATE KEY-----\nfake-fleet-key\n-----END OPENSSH PRIVATE KEY-----'
 const TEST_STARTOS_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\nfake-startos-key\n-----END PRIVATE KEY-----'
@@ -15,6 +16,7 @@ function validDistributionEnv (overrides = {}) {
     FLEET_SSH_PRIVATE_KEY: TEST_PRIVATE_KEY,
     UMBREL_STORE_TOKEN: TEST_GITHUB_TOKEN,
     UMBREL_OFFICIAL_PR_TOKEN: TEST_GITHUB_TOKEN_ALT,
+    ECOSYSTEM_CONSUMER_TOKEN: TEST_GITHUB_TOKEN_ECOSYSTEM,
     UMBREL_OFFICIAL_FORK: 'bigdestiny2/umbrel-apps',
     NPM_TOKEN: TEST_NPM_TOKEN,
     STARTOS_DEVELOPER_KEY_PEM: TEST_STARTOS_PRIVATE_KEY,
@@ -68,6 +70,7 @@ function validCandidateEnvBody (overrides = {}) {
     'FLEET_KEY',
     `UMBREL_STORE_TOKEN=${env.UMBREL_STORE_TOKEN}`,
     `UMBREL_OFFICIAL_PR_TOKEN=${env.UMBREL_OFFICIAL_PR_TOKEN}`,
+    `ECOSYSTEM_CONSUMER_TOKEN=${env.ECOSYSTEM_CONSUMER_TOKEN}`,
     `UMBREL_OFFICIAL_FORK=${env.UMBREL_OFFICIAL_FORK}`,
     `NPM_TOKEN=${env.NPM_TOKEN}`,
     'STARTOS_DEVELOPER_KEY_PEM<<STARTOS_KEY',
@@ -126,6 +129,7 @@ test('release distribution env check fails stable releases without every externa
   t.ok(res.stderr.includes('FLEET_SSH_PRIVATE_KEY'))
   t.ok(res.stderr.includes('UMBREL_STORE_TOKEN'))
   t.ok(res.stderr.includes('UMBREL_OFFICIAL_PR_TOKEN'))
+  t.ok(res.stderr.includes('ECOSYSTEM_CONSUMER_TOKEN'))
   t.ok(res.stderr.includes('UMBREL_OFFICIAL_FORK'))
   t.ok(res.stderr.includes('NPM_TOKEN'))
   t.ok(res.stderr.includes('STARTOS_DEVELOPER_KEY_PEM'))
@@ -144,6 +148,7 @@ test('release distribution env check fails stable releases without every externa
   t.ok(body.includes('HIVERELAY_NPM_PUBLISH_STATUS=missing-secret'))
   t.ok(body.includes('HIVERELAY_UMBREL_OFFICIAL_PR_STATUS=missing-secret'))
   t.ok(body.includes('HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS=missing-secret'))
+  t.ok(body.includes('HIVERELAY_ECOSYSTEM_CONSUMER_STATUS=missing-secret'))
 })
 
 test('release distribution env check requires stable releases to promote a fleet channel', async (t) => {

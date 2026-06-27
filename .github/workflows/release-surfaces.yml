@@ -42,6 +42,7 @@ jobs:
       UMBREL_STORE_TOKEN: ${{ secrets.UMBREL_STORE_TOKEN }}
       UMBREL_OFFICIAL_PR_TOKEN: ${{ secrets.UMBREL_OFFICIAL_PR_TOKEN }}
       UMBREL_OFFICIAL_FORK: ${{ secrets.UMBREL_OFFICIAL_FORK }}
+      ECOSYSTEM_CONSUMER_TOKEN: ${{ secrets.ECOSYSTEM_CONSUMER_TOKEN }}
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       STARTOS_DEVELOPER_KEY_PEM: ${{ secrets.STARTOS_DEVELOPER_KEY_PEM }}
       STARTOS_REGISTRY_URL: ${{ secrets.STARTOS_REGISTRY_URL }}
@@ -185,6 +186,8 @@ jobs:
             echo "HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS=skipped"
             echo "HIVERELAY_UMBREL_COMMUNITY_STORE_COMMIT="
             echo "HIVERELAY_UMBREL_COMMUNITY_STORE_COMMIT_URL="
+            echo "HIVERELAY_ECOSYSTEM_CONSUMER_STATUS=$release_surfaces_status"
+            echo "HIVERELAY_ECOSYSTEM_CONSUMER_COMMITS="
           } >> "$GITHUB_ENV"
 
       - name: Verify release ref
@@ -262,6 +265,56 @@ jobs:
           path: umbrel-official-apps
           fetch-depth: 0
 
+      - name: Checkout PearBrowser ecosystem consumer
+        if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
+        uses: actions/checkout@v7
+        with:
+          repository: bigdestiny2/pearbrowser-desktop
+          ref: feat/p2p-infra-naming
+          token: ${{ env.ECOSYSTEM_CONSUMER_TOKEN }}
+          path: 01-browser/pearbrowser-desktop
+          fetch-depth: 0
+
+      - name: Checkout PearPaste ecosystem consumer
+        if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
+        uses: actions/checkout@v7
+        with:
+          repository: bigdestiny2/pearpaste
+          ref: feat/pear-runtime-electron-forge
+          token: ${{ env.ECOSYSTEM_CONSUMER_TOKEN }}
+          path: 02-apps/pearpaste
+          fetch-depth: 0
+
+      - name: Checkout p2pbuilders ecosystem consumer
+        if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
+        uses: actions/checkout@v7
+        with:
+          repository: bigdestiny2/p2pbuilders
+          ref: main
+          token: ${{ env.ECOSYSTEM_CONSUMER_TOKEN }}
+          path: 03-sites/pearbrowser-publishers/src/p2pbuilders
+          fetch-depth: 0
+
+      - name: Checkout Opengit ecosystem consumer
+        if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
+        uses: actions/checkout@v7
+        with:
+          repository: bigdestiny2/Opengit
+          ref: main
+          token: ${{ env.ECOSYSTEM_CONSUMER_TOKEN }}
+          path: 04-experiments/Opengit
+          fetch-depth: 0
+
+      - name: Checkout anonGPT ecosystem consumer
+        if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
+        uses: actions/checkout@v7
+        with:
+          repository: bigdestiny2/anongpt
+          ref: main
+          token: ${{ env.ECOSYSTEM_CONSUMER_TOKEN }}
+          path: 04-experiments/anongpt-native
+          fetch-depth: 0
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
@@ -291,7 +344,7 @@ jobs:
         working-directory: hiverelay
         run: |
           set -euo pipefail
-          npm run ecosystem:check-workspace -- --required --workspace-root ..
+          npm run ecosystem:check-workspace -- --required --workspace-root .. --consumer-scope release
 
       - name: Stamp branch candidate package version
         if: ${{ steps.rel.outputs.is_branch_candidate == 'true' }}
@@ -452,8 +505,20 @@ jobs:
             --channel "${{ steps.rel.outputs.channel }}" \
             --image-digest "$HIVERELAY_IMAGE_DIGEST" \
             --ecosystem-workspace-root .. \
+            --ecosystem-consumer-scope release \
             --ecosystem-dependency-mode npm-latest \
             "${args[@]}"
+
+      - name: Commit ecosystem app consumer defaults
+        if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          npm run ecosystem:commit-consumers -- \
+            --workspace-root .. \
+            --version "${{ steps.rel.outputs.version }}" \
+            --consumer-scope release \
+            --github-env "$GITHUB_ENV"
 
       - name: Smoke Umbrel package
         working-directory: hiverelay
