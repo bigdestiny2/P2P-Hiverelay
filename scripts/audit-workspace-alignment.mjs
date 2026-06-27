@@ -318,6 +318,7 @@ const bareHttpServerTest = readText(hiverelayRoot, 'test', 'unit', 'bare-http-se
 const apiServiceConfigHelpersTest = readText(hiverelayRoot, 'test', 'unit', 'api-service-config-helpers.test.js')
 const apiServiceManagementTest = readText(hiverelayRoot, 'test', 'unit', 'api-service-management.test.js')
 const apiServiceConfigTest = readText(hiverelayRoot, 'test', 'unit', 'api-service-config.test.js')
+const apiPokerTest = readText(hiverelayRoot, 'test', 'unit', 'api-poker.test.js')
 const serviceCatalogSanitizerTest = readText(hiverelayRoot, 'test', 'unit', 'service-catalog-sanitizer.test.js')
 const apiPublisherSignedTest = readText(hiverelayRoot, 'test', 'unit', 'api-publisher-signed.test.js')
 const apiTransientErrorsTest = readText(hiverelayRoot, 'test', 'unit', 'api-transient-errors.test.js')
@@ -1428,6 +1429,11 @@ if (
   pokerHttpAdapter.includes("error: 'Poker move failed'") &&
   pokerHttpAdapter.includes("error: 'Poker table list failed'") &&
   !pokerHttpAdapter.includes('res.end(JSON.stringify(body)') &&
+  relayApi.includes('async _loadPokerHttpAdapter ()') &&
+  relayApi.includes("this.emit('poker-http-adapter-error', { error: err })") &&
+  relayApi.includes("formatErr('UNSUPPORTED', 'poker HTTP adapter unavailable')") &&
+  relayApi.includes("errorCode: 'poker-http-adapter-unavailable'") &&
+  !relayApi.includes("poker HTTP adapter unavailable: ' + err.message") &&
   relayApiUsageTelemetry.includes('export function usageTelemetryPayload') &&
   relayApiUsageTelemetry.includes('export function pokerUsageTelemetryPayload') &&
   relayApiUsageTelemetry.includes('export function sumReceiptBytes') &&
@@ -1447,11 +1453,15 @@ if (
   pokerHttpAdapterTest.includes('poker http adapter rejects body-bearing non-json posts before parsing') &&
   pokerHttpAdapterTest.includes('poker http adapter redacts unexpected create table errors') &&
   pokerHttpAdapterTest.includes('poker http adapter normalizes invalid writer errors without reflecting input') &&
+  apiPokerTest.includes('/api/poker/* redacts adapter load failures and emits internals') &&
+  apiPokerTest.includes("t.absent(JSON.stringify(res.body).includes('/data/hiverelay/private')") &&
+  auditRoadmap.includes('4.125') &&
+  auditRoadmap.includes('Poker HTTP adapter load redaction') &&
   pluginLoaderTest.includes('plugin loader resolves poker as a builtin service provider')
 ) {
-  pass('management API exposes validated built-in service configuration, poker runtime wiring, hardened poker HTTP API, and usage telemetry endpoints')
+  pass('management API exposes validated built-in service configuration, poker runtime wiring, hardened poker HTTP API, adapter-load redaction, and usage telemetry endpoints')
 } else {
-  fail('management API is missing validated service configuration, poker runtime wiring, hardened poker HTTP API, or usage telemetry endpoints')
+  fail('management API is missing validated service configuration, poker runtime wiring, hardened poker HTTP API, adapter-load redaction, or usage telemetry endpoints')
 }
 
 if (

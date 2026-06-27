@@ -82,7 +82,7 @@ function request (port, method, path, body, headers = {}) {
     req.end()
   })
 }
-async function server (t, node) {
+async function serverWithApi (t, node) {
   const api = new RelayAPI(node, { apiPort: 0, apiHost: '127.0.0.1', apiKey: API_KEY })
   await api.start()
   const port = api.server.address().port
@@ -92,6 +92,10 @@ async function server (t, node) {
     if (api._pokerFeed) { try { api._pokerFeed.stop() } catch (_) {} }
     await new Promise((resolve) => api.server.close(resolve))
   })
+  return { api, port }
+}
+async function server (t, node) {
+  const { port } = await serverWithApi(t, node)
   return port
 }
 
@@ -107,6 +111,24 @@ test('/api/poker/* → 503 when poker is not enabled', async (t) => {
   const port = await server(t, mockNode({ registry: null }))
   const res = await request(port, 'GET', '/api/poker/tables')
   t.is(res.statusCode, 503)
+})
+
+test('/api/poker/* redacts adapter load failures and emits internals', async (t) => {
+  const app = fakePokerApp()
+  const { api, port } = await serverWithApi(t, mockNode({ registry: pokerRegistry(app) }))
+  const events = []
+  api.on('poker-http-adapter-error', (event) => events.push(event))
+  api._loadPokerHttpAdapter = async function () {
+    throw new Error('internal adapter path /data/hiverelay/private/poker/http-adapter.js failed')
+  }
+
+  const res = await request(port, 'GET', '/api/poker/tables')
+  t.is(res.statusCode, 503)
+  t.is(res.body.error, 'unsupported: poker HTTP adapter unavailable')
+  t.is(res.body.errorCode, 'poker-http-adapter-unavailable')
+  t.absent(JSON.stringify(res.body).includes('/data/hiverelay/private'), 'public payload omits internal adapter failure')
+  t.is(events.length, 1)
+  t.ok(events[0].error.message.includes('/data/hiverelay/private'), 'internal event keeps operator diagnostics')
 })
 
 test('GET /api/poker/tables is open + lists tables', async (t) => {

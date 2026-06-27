@@ -627,10 +627,13 @@ export class RelayAPI extends EventEmitter {
         if (req.method === 'POST' && path === '/api/poker/tables') {
           if (!this._requireAuth(req, res, 'Unauthorized — API key required to create a poker table')) return
         }
-        if (!this._handlePokerRoute) {
-          this._handlePokerRoute = (await import('p2p-hiveservices/builtin/poker/http-adapter.js')).handlePokerRoute
+        let handlePokerRoute
+        try {
+          handlePokerRoute = await this._getPokerHttpRouteHandler()
+        } catch (err) {
+          return this._pokerHttpAdapterUnavailable(res, err)
         }
-        const handled = await this._handlePokerRoute(req, res, { pokerApp: pk.provider })
+        const handled = await handlePokerRoute(req, res, { pokerApp: pk.provider })
         if (handled) return
         return this._json(res, { error: 'not found' }, 404)
       }
@@ -2050,15 +2053,34 @@ export class RelayAPI extends EventEmitter {
     if (!pokerApp) {
       return this._json(res, { error: formatErr('NOT_ENABLED', 'poker service is not enabled on this relay') }, 503)
     }
-    let handlePokerRoute
     try {
-      const mod = await import('p2p-hiveservices/builtin/poker/http-adapter.js')
-      handlePokerRoute = mod.handlePokerRoute
+      const handlePokerRoute = await this._getPokerHttpRouteHandler()
+      const handled = await handlePokerRoute(req, res, { pokerApp })
+      if (!handled) return this._json(res, { error: formatErr('NOT_FOUND', 'poker route not found') }, 404)
     } catch (err) {
-      return this._json(res, { error: formatErr('UNSUPPORTED', 'poker HTTP adapter unavailable: ' + err.message) }, 503)
+      return this._pokerHttpAdapterUnavailable(res, err)
     }
-    const handled = await handlePokerRoute(req, res, { pokerApp })
-    if (!handled) return this._json(res, { error: formatErr('NOT_FOUND', 'poker route not found') }, 404)
+  }
+
+  async _getPokerHttpRouteHandler () {
+    if (this._handlePokerRoute) return this._handlePokerRoute
+    const mod = await this._loadPokerHttpAdapter()
+    const handlePokerRoute = mod.handlePokerRoute
+    if (typeof handlePokerRoute !== 'function') throw new Error('missing handlePokerRoute export')
+    this._handlePokerRoute = handlePokerRoute
+    return handlePokerRoute
+  }
+
+  _pokerHttpAdapterUnavailable (res, err) {
+    this.emit('poker-http-adapter-error', { error: err })
+    return this._json(res, {
+      error: formatErr('UNSUPPORTED', 'poker HTTP adapter unavailable'),
+      errorCode: 'poker-http-adapter-unavailable'
+    }, 503)
+  }
+
+  async _loadPokerHttpAdapter () {
+    return import('p2p-hiveservices/builtin/poker/http-adapter.js')
   }
 
   _tableWriterCount (writers) {
