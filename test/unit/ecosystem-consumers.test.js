@@ -6,6 +6,7 @@ import {
   EXPECTED_CURRENT_CONSUMERS,
   checkConsumerState,
   formatConsumerReport,
+  getExpectedCurrentConsumers,
   scanConsumerSourceChecks,
   scanCurrentConsumerLockChecks,
   scanHiverelayConsumers,
@@ -511,6 +512,92 @@ test('ecosystem sync updates app defaults and linked package lock metadata', (t)
   })
   t.ok(check.ok)
   t.is(check.changes.length, 0)
+})
+
+test('ecosystem sync refuses npm-latest defaults when npm latest would downgrade', (t) => {
+  const root = fixtureWorkspace()
+  const consumer = getExpectedCurrentConsumers({ dependencyMode: 'npm-latest' })
+    .find(consumer => consumer.path === '02-apps/pearpaste/package.json')
+
+  const result = syncEcosystemConsumers({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer],
+    dependencyMode: 'npm-latest',
+    npmLatestVersions: {
+      'p2p-hiverelay': '0.9.2',
+      'p2p-hiverelay-client': '0.20.2'
+    },
+    snapshotChecks: false
+  })
+
+  t.absent(result.ok)
+  t.ok(result.errors.some(error => error.includes('p2p-hiverelay npm latest dist-tag is 0.9.2; expected 0.20.2')))
+  t.is(result.changes.length, 0, 'stale npm latest blocks before writing app files')
+})
+
+test('ecosystem consumer audit accepts npm-latest manifests with current npm lock metadata', (t) => {
+  const root = fixtureWorkspace()
+  const consumer = {
+    ...getExpectedCurrentConsumers({ dependencyMode: 'npm-latest' })
+      .find(consumer => consumer.path === '02-apps/pearpaste/package.json'),
+    sourceChecks: []
+  }
+
+  writePackage(root, consumer.path, {
+    optionalDependencies: consumer.deps
+  })
+  writePackageLock(root, '02-apps/pearpaste/package-lock.json', {
+    packages: {
+      '': {
+        optionalDependencies: consumer.deps
+      },
+      'node_modules/p2p-hiverelay': {
+        version: '0.20.2',
+        resolved: 'https://registry.npmjs.org/p2p-hiverelay/-/p2p-hiverelay-0.20.2.tgz',
+        integrity: 'sha512-test'
+      },
+      'node_modules/p2p-hiverelay-client': {
+        version: '0.20.2',
+        resolved: 'https://registry.npmjs.org/p2p-hiverelay-client/-/p2p-hiverelay-client-0.20.2.tgz',
+        integrity: 'sha512-test',
+        dependencies: {
+          'p2p-hiverelay': '^0.20.2'
+        }
+      }
+    }
+  })
+
+  const rows = scanHiverelayConsumers({ workspaceRoot: root })
+  const lockChecks = scanCurrentConsumerLockChecks({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer]
+  })
+  const summary = checkConsumerState(rows, {
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer],
+    expectedStale: [],
+    lockChecks
+  })
+  const syncCheck = syncEcosystemConsumers({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer],
+    dependencyMode: 'npm-latest',
+    npmLatestVersions: {
+      'p2p-hiverelay': '0.20.2',
+      'p2p-hiverelay-client': '0.20.2'
+    },
+    snapshotChecks: false,
+    check: true
+  })
+
+  t.ok(summary.ok)
+  t.ok(lockChecks.every(check => check.ok))
+  t.ok(syncCheck.ok)
+  t.is(syncCheck.changes.length, 0)
+  t.ok(syncCheck.warnings.some(warning => warning.includes('npm latest dist-tags verified')))
 })
 
 test('ecosystem sync updates versioned app source markers', (t) => {

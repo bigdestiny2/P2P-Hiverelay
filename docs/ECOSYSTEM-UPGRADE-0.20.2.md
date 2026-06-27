@@ -12,6 +12,7 @@ Run this from the Hiverelay repo before and after each app upgrade:
 npm run ecosystem:sync
 npm run ecosystem:sync -- --check
 npm run audit:ecosystem-consumers
+npm run ecosystem:sync:latest -- --check
 ```
 
 `npm run ecosystem:sync` reads the current Hiverelay package version and updates
@@ -22,12 +23,40 @@ the nearest app lockfile, including split-client `p2p-hiverelay` ranges such as
 bundled catalog and app handover notes. Use `--check` in a release review to
 fail if any app would still need a default-version write.
 
+Published app releases use the explicit npm-latest mode:
+
+```bash
+npm run ecosystem:sync:latest
+npm run audit:ecosystem-consumers:latest
+```
+
+That mode refuses to edit app defaults unless every relevant npm `latest`
+dist-tag (`p2p-hiverelay`, `p2p-hiverelay-client`,
+`p2p-hiverelay-verifier`, and any direct `p2p-hiveservices` consumer) already
+equals the current Hiverelay version. As of 2026-06-27, that guard is important:
+npm `latest` is still `0.9.2` for the published packages, so switching PearBrowser,
+PearPaste, anonGPT, or other customer apps to raw `latest` before the release
+workflow publishes 0.20.2+ would downgrade installs. Once npm latest is current,
+the sync delegates lockfile refreshes to `npm install --package-lock-only` in
+each affected app root so package-locks carry real registry tarball metadata
+instead of stale local `file:` links.
+
+If a release review environment cannot resolve the npm registry from inside
+Node, feed the already-collected shell preflight evidence to the guard:
+
+```bash
+HIVERELAY_NPM_LATEST_JSON='{"p2p-hiverelay":"0.20.2","p2p-hiverelay-client":"0.20.2","p2p-hiverelay-verifier":"0.20.2"}' \
+  npm run ecosystem:sync:latest -- --check
+```
+
 The audit checks package manifests and lockfile metadata across the workspace
-and requires every direct app consumer to point at the current local Hiverelay
-workspace packages. PearBrowser desktop, PearPaste, pear-pos, pear-tickets,
-p2pbuilders, Opengit's optional HiveRelay bridge, anonGPT, and the local smoke
-app are all current local consumers. New `p2p-hiverelay*` pins fail the audit
-until they are classified. The same audit renders PearBrowser's bundled
+and requires every direct app consumer to point at either the current local
+Hiverelay workspace packages or, in npm-latest mode, the current published npm
+dist-tag with a lockfile resolved to the same version. PearBrowser desktop,
+PearPaste, pear-pos, pear-tickets, p2pbuilders, Opengit's optional HiveRelay
+bridge, anonGPT, and the local smoke app are all tracked consumers. New
+`p2p-hiverelay*` pins fail the audit until they are classified. The same audit
+renders PearBrowser's bundled
 HiveRelay catalog entry plus customer-app source notes for PearPaste and Pear
 POS from the current Hiverelay version, so users and operators do not see stale
 release guidance while the runtime pulls current packages. The same audit also
@@ -86,9 +115,11 @@ For every app migration:
    smoke test.
 5. Security tests still prove that app plaintext is not exported to relays.
 6. `npm run ecosystem:sync -- --check` reports no pending app default writes.
-7. `npm run audit:ecosystem-consumers` is updated in the same change when a new
+7. `npm run ecosystem:sync:latest -- --check` is either green after npm publish
+   or blocked only by a clearly stale npm `latest` dist-tag.
+8. `npm run audit:ecosystem-consumers` is updated in the same change when a new
    direct consumer is added or a package path legitimately moves.
-8. Lockfiles do not retain stale monorepo-root HiveRelay records or old
+9. Lockfiles do not retain stale monorepo-root HiveRelay records or old
    split-package ranges.
 
 ## Current Verification Snapshot

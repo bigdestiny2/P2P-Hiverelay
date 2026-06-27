@@ -297,6 +297,10 @@ pins.
    StartOS package smoke/verify gates but before the release asset upload,
    fleet promotion, Umbrel store updates, and StartOS registry publication.
    This is the gate that lets PearBrowser, PearPaste, anonGPT, and other app consumers safely move from local workspace links to the published release line.
+   After this gate is green, run `npm run ecosystem:sync:latest` from a
+   full sibling workspace to switch tracked app manifests to npm `latest` and
+   refresh lockfiles from real registry metadata. Before this gate is green,
+   `ecosystem:sync:latest` intentionally refuses to edit app defaults.
 12. Uploads the verified `.s9pk` to the GitHub Release as a sideloadable
    StartOS package.
 13. Commits the synchronized release surfaces back to `main`:

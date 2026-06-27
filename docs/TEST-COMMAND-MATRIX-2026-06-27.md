@@ -28,13 +28,14 @@ release environment.
 | `npm run audit:workspace` | Pass with warning | Workspace alignment passed. Expected warning remains: official Umbrel package still needs its real `getumbrel/umbrel-apps` PR URL. |
 | `npm run ecosystem:sync -- --check` | Pass | Known direct app consumers already resolve to the latest local Hiverelay workspace package links, linked lockfile metadata, and versioned source markers. |
 | `npm run audit:ecosystem-consumers` | Pass | Active direct consumers resolve to the local Hiverelay `0.20.2` line; lockfile metadata and source markers are checked for drift. |
+| `HIVERELAY_NPM_LATEST_JSON='{"p2p-hiverelay":"0.9.2","p2p-hiverelay-client":"0.9.2","p2p-hiverelay-verifier":"0.9.2"}' npm run ecosystem:sync:latest -- --check` | Expected fail | Published-app defaults are blocked because npm `latest` still resolves to `0.9.2`, which would downgrade PearBrowser, PearPaste, anonGPT, and other tracked consumers from the local `0.20.2` line. |
 | `npm run audit:public-artifacts` | Pass | Public docs and GitHub workflow files are scanned for scanner-sensitive token-prefix, bearer-header, and private-key delimiter examples. |
 | `npm run umbrel:export-official -- --target /private/tmp/hiverelay-official-umbrel-check/blindspark --allow-placeholder --check` | Pass | Official Umbrel export is in sync when written to the required `blindspark/` package directory name. |
 | `npm run release:check-github-setup -- --repo bigdestiny2/P2P-Hiverelay` | Pass | Required GitHub release secret names are present (`7/7`); this confirms setup shape only because GitHub Secrets values are intentionally not readable. |
 | `npm run release:check-distribution-env -- --channel both --prerelease false` | Blocked locally | This shell does not contain the required live-release values: fleet SSH key, Umbrel community token, official Umbrel PR token/fork, npm automation token, StartOS developer key, and StartOS registry URL. Validate a generated env file and rerun the GitHub Actions preflight before tagging. |
 | `cd startos && make digest` | Blocked externally | `ghcr.io/bigdestiny2/p2p-hiverelay:0.20.2` does not resolve yet, so the current StartOS `.s9pk` verify path cannot prove the package until the release image is published. |
 | `npm run docs:update-ship-handoff -- --date 2026-06-26 --ref c399b5f033af9c56f368110a4a8df448d2670106 --branch main --test-run 28295902190 --docker-run 28295902210 --preflight-run 28295985241 --preflight-url https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/28295985241 --preflight-head c399b5f033af9c56f368110a4a8df448d2670106 --preflight-branch main --preflight-created-at 2026-06-27T17:07:09Z --preflight-state completed/failure --superseded-preflight-success 28238930607 --superseded-preflight-success-head 1ffffe6 --check` | Pass | Generated ship handoff is in sync with the npm-latest release gate commit and now records the ecosystem parity gate, source-marker coverage, fresh current-main preflight blockers including `NPM_TOKEN`, and StartOS GHCR image/digest blocker. |
-| `node --test test/unit/ecosystem-consumers.test.js` | Pass | `13/13` tests and `64/64` assertions. The unit fixture explicitly keeps PearBrowser desktop, PearPaste, Pear POS, Pear Tickets, p2pbuilders, Opengit's optional bridge, anonGPT native, and `hiverelay-test` in the current-consumer inventory, rejects PearPaste recovery/spec doc regressions back to the old `0.9.x` client guidance, and proves stale app package, lock, and versioned source-marker defaults can be synced forward. |
+| `node --test test/unit/ecosystem-consumers.test.js` | Pass | `15/15` tests and `72/72` assertions. The unit fixture explicitly keeps PearBrowser desktop, PearPaste, Pear POS, Pear Tickets, p2pbuilders, Opengit's optional bridge, anonGPT native, and `hiverelay-test` in the current-consumer inventory, rejects PearPaste recovery/spec doc regressions back to the old `0.9.x` client guidance, proves stale app package, lock, and versioned source-marker defaults can be synced forward, and blocks npm-latest app defaults when npm would downgrade from `0.20.2`. |
 | `npm audit --audit-level=high` | Pass | npm reported `found 0 vulnerabilities` for the HiveRelay workspace. |
 | `git diff --check` | Pass | No whitespace errors in the current HiveRelay diff. |
 | `./node_modules/.bin/brittle test/unit/umbrel-ui-controls.test.js` | Pass | `24/24` tests and `253/253` assertions. Covers setup/wallet no-navigation writes, app-proxy wallet/seed/lease writes, app-proxy-safe wizard dashboard fallback links, bounded hidden-tab lease polling, service-card manager UX, restart convergence, AI model busy state, DOM-only rendering, no inline appliance/setup styles, no inline `onerror`, and no production `innerHTML =` dashboard writes. |
@@ -44,8 +45,9 @@ release environment.
 
 ## Ecosystem Consumer Boundary
 
-`npm run ecosystem:sync -- --check` is the no-write default-version gate for the
-known direct app consumers, and `npm run audit:ecosystem-consumers` is the
+`npm run ecosystem:sync -- --check` is the no-write local default-version gate for the
+known direct app consumers, `npm run ecosystem:sync:latest -- --check` is the
+published npm-latest default gate, and `npm run audit:ecosystem-consumers` is the
 package-parity inventory gate for the workspace outside the HiveRelay source
 tree. They treat these as active direct consumers that should default to the
 newest local Hiverelay line:

@@ -123,6 +123,18 @@ test('prepare-release rejects explicit prerelease community-store sync', async (
   t.ok(res.stderr.includes('Pre-release v9.9.9-beta.1 cannot sync the community Umbrel store'))
 })
 
+test('prepare-release rejects invalid ecosystem dependency mode', async (t) => {
+  const res = await runPrepare([
+    'v9.9.9',
+    '--image-digest', DIGEST,
+    '--no-umbrel-store',
+    '--ecosystem-dependency-mode', 'floating'
+  ])
+
+  t.is(res.status, 1)
+  t.ok(res.stderr.includes('Invalid --ecosystem-dependency-mode "floating"'))
+})
+
 test('prepare-release rejects secret-looking release notes before metadata sync', async (t) => {
   const res = await runPrepare([
     'v0.16.3',

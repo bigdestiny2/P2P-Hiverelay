@@ -1072,10 +1072,15 @@ npm run lint
 npm run audit:workspace
 npm run ecosystem:sync -- --check
 npm run audit:ecosystem-consumers
+npm run ecosystem:sync:latest -- --check
 npm run test:unit
 npm run test:bare
 npm test
 ```
+
+`ecosystem:sync:latest` is the published-app default gate: it refuses to switch
+PearBrowser, PearPaste, anonGPT, or other tracked app consumers to npm `latest`
+unless every HiveRelay npm dist-tag already resolves to the release version.
 
 The current local ship-loop evidence is tracked in
 [docs/TEST-COMMAND-MATRIX-2026-06-27.md](docs/TEST-COMMAND-MATRIX-2026-06-27.md).

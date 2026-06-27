@@ -12,8 +12,12 @@ export const CURRENT_HIVERELAY_VERSION = readJson(path.join(hiverelayRoot, 'pack
 const HIVERELAY_DEPS = [
   'p2p-hiverelay',
   'p2p-hiverelay-client',
-  'p2p-hiverelay-verifier'
+  'p2p-hiverelay-verifier',
+  'p2p-hiveservices'
 ]
+
+const DEPENDENCY_MODES = new Set(['local', 'npm-latest'])
+const NPM_LATEST_SPEC = 'latest'
 
 const DEP_SECTIONS = [
   'dependencies',
@@ -283,14 +287,34 @@ export const EXPECTED_CURRENT_CONSUMERS = [
 export const EXPECTED_STALE_CONSUMERS = [
 ]
 
+export function normalizeDependencyMode (value = 'local') {
+  if (!DEPENDENCY_MODES.has(value)) {
+    throw new Error(`Invalid dependency mode ${JSON.stringify(value)}. Expected local or npm-latest.`)
+  }
+  return value
+}
+
+export function getExpectedCurrentConsumers (opts = {}) {
+  const dependencyMode = normalizeDependencyMode(opts.dependencyMode || 'local')
+  return EXPECTED_CURRENT_CONSUMERS.map(consumer => ({
+    ...consumer,
+    deps: dependencyMode === 'npm-latest'
+      ? Object.fromEntries(Object.keys(consumer.deps).map(dep => [dep, NPM_LATEST_SPEC]))
+      : { ...consumer.deps },
+    dependencyMode
+  }))
+}
+
 const usage = `
 Usage:
-  node scripts/audit-ecosystem-consumers.mjs [--workspace-root <path>] [--expected-version <semver>] [--json] [--check]
+  node scripts/audit-ecosystem-consumers.mjs [--workspace-root <path>] [--expected-version <semver>] [--dependency-mode <local|npm-latest>] [--json] [--check]
 
 Scans package.json files outside the Hiverelay source tree and verifies the
 known direct p2p-hiverelay consumers plus local release snapshot defaults. The
-command fails on new unclassified pins, stale local package metadata, or
-inventory/source-plan drift.
+default dependency mode is local workspace links. npm-latest mode verifies the
+published-app contract where app manifests request the npm latest dist-tag and
+lockfiles resolve that tag to the expected Hiverelay version. The command fails
+on new unclassified pins, stale package metadata, or inventory/source-plan drift.
 `
 
 if (isMain()) main()
@@ -320,7 +344,7 @@ export function scanHiverelayConsumers (opts = {}) {
 
 export function checkConsumerState (rows, opts = {}) {
   const expectedVersion = opts.expectedVersion || '0.0.0'
-  const expectedCurrent = opts.expectedCurrent || EXPECTED_CURRENT_CONSUMERS
+  const expectedCurrent = opts.expectedCurrent || getExpectedCurrentConsumers(opts)
   const expectedStale = opts.expectedStale || EXPECTED_STALE_CONSUMERS
   const sourceChecks = opts.sourceChecks || []
   const lockChecks = opts.lockChecks || []
@@ -384,6 +408,7 @@ export function checkConsumerState (rows, opts = {}) {
   return {
     ok: errors.length === 0,
     expectedVersion,
+    dependencyMode: expectedCurrent[0]?.dependencyMode || opts.dependencyMode || 'local',
     errors,
     warnings,
     current: expectedCurrent.map(expected => decorateExpectedRow(byPath.get(expected.path), expected)).filter(Boolean),
@@ -397,7 +422,7 @@ export function checkConsumerState (rows, opts = {}) {
 
 export function scanCurrentConsumerLockChecks (opts = {}) {
   const workspaceRoot = path.resolve(opts.workspaceRoot || workspaceRootDefault)
-  const expectedCurrent = opts.expectedCurrent || EXPECTED_CURRENT_CONSUMERS
+  const expectedCurrent = opts.expectedCurrent || getExpectedCurrentConsumers(opts)
   const expectedVersion = opts.expectedVersion || '0.0.0'
   const checks = []
 
@@ -463,6 +488,50 @@ export function scanCurrentConsumerLockChecks (opts = {}) {
           lockFile: relLockFile,
           label: `${dep} lock dependency`
         })
+      }
+
+      if (expectedValue === NPM_LATEST_SPEC) {
+        const targetKey = `node_modules/${dep}`
+        const targetEntry = lock.packages?.[targetKey]
+        if (!targetEntry) {
+          checks.push({
+            ok: false,
+            consumerPath: consumer.path,
+            lockFile: relLockFile,
+            label: `${dep} npm package entry`,
+            error: `${relLockFile} is missing npm package metadata for ${dep} at ${targetKey}`
+          })
+          continue
+        }
+
+        if (lockPackageName(targetKey, targetEntry) !== dep) {
+          checks.push({
+            ok: false,
+            consumerPath: consumer.path,
+            lockFile: relLockFile,
+            label: `${dep} npm package name`,
+            error: `${relLockFile} npm package ${targetKey} is named ${JSON.stringify(lockPackageName(targetKey, targetEntry))}; expected ${JSON.stringify(dep)}`
+          })
+          continue
+        }
+
+        if (targetEntry.version !== expectedVersion) {
+          checks.push({
+            ok: false,
+            consumerPath: consumer.path,
+            lockFile: relLockFile,
+            label: `${dep} npm package version`,
+            error: `${relLockFile} npm package ${targetKey} has ${dep}@${targetEntry.version}; expected ${expectedVersion}`
+          })
+        } else {
+          checks.push({
+            ok: true,
+            consumerPath: consumer.path,
+            lockFile: relLockFile,
+            label: `${dep} npm package version`
+          })
+        }
+        continue
       }
 
       if (!expectedValue.startsWith('file:')) continue
@@ -599,11 +668,11 @@ function renderSourceTerm (spec, version) {
 
 export function formatConsumerReport (summary) {
   const lines = [
-    `HiveRelay ecosystem consumer audit (expected ${summary.expectedVersion})`,
+    `HiveRelay ecosystem consumer audit (expected ${summary.expectedVersion}, mode ${summary.dependencyMode || 'local'})`,
     ''
   ]
 
-  lines.push('Current local consumers:')
+  lines.push(summary.dependencyMode === 'npm-latest' ? 'Current npm-latest consumers:' : 'Current local consumers:')
   for (const row of summary.current) {
     const role = row.role ? ` [${row.role}]` : ''
     lines.push(`- ${row.path}${role}: ${formatDeps(row.deps)}`)
@@ -728,29 +797,42 @@ function findStaleLockEntries (lock, relLockFile, expectedVersion) {
   const issues = []
   for (const [entryPath, entry] of Object.entries(lock.packages || {})) {
     if (!entry || typeof entry !== 'object') continue
+    const packageName = lockPackageName(entryPath, entry)
     const isHiverelayPath = entryPath.includes('00-core/hiverelay')
-    const isHiverelayPackage = HIVERELAY_DEPS.includes(entry.name)
-    const isOldRootPackage = entry.name === 'p2p-hiverelay-monorepo' && isHiverelayPath
+    const isHiverelayPackage = HIVERELAY_DEPS.includes(packageName)
+    const isOldRootPackage = packageName === 'p2p-hiverelay-monorepo' && isHiverelayPath
 
     if (isOldRootPackage) {
       issues.push(`${relLockFile} contains stale monorepo-root Hiverelay lock entry ${entryPath}@${entry.version}; current apps must link packages/core, packages/client, or packages/verifier directly`)
       continue
     }
 
+    if (isHiverelayPackage && entry.link === true && entry.version == null) {
+      continue
+    }
+
     if (isHiverelayPackage && entry.version !== expectedVersion) {
-      issues.push(`${relLockFile} contains ${entry.name}@${entry.version} at ${entryPath}; expected ${expectedVersion}`)
+      issues.push(`${relLockFile} contains ${packageName}@${entry.version} at ${entryPath}; expected ${expectedVersion}`)
     }
 
     const deps = collectHiverelayDeps(entry)
     for (const [dep, value] of Object.entries(deps)) {
       if (value.startsWith('file:')) continue
       const expectedRange = `^${expectedVersion}`
-      if (value !== expectedRange) {
-        issues.push(`${relLockFile} contains ${entryPath} dependency ${dep}=${JSON.stringify(value)}; expected ${JSON.stringify(expectedRange)} or a local file: link`)
+      if (value !== expectedRange && value !== NPM_LATEST_SPEC) {
+        issues.push(`${relLockFile} contains ${entryPath} dependency ${dep}=${JSON.stringify(value)}; expected ${JSON.stringify(expectedRange)}, ${JSON.stringify(NPM_LATEST_SPEC)}, or a local file: link`)
       }
     }
   }
   return issues
+}
+
+function lockPackageName (entryPath, entry) {
+  if (typeof entry.name === 'string' && entry.name) return entry.name
+  const marker = 'node_modules/'
+  const index = entryPath.lastIndexOf(marker)
+  if (index === -1) return ''
+  return entryPath.slice(index + marker.length).split('/')[0]
 }
 
 function checkSnapshotPackage ({ workspaceRoot, rootPath, role, spec, expectedVersion }) {
@@ -937,6 +1019,14 @@ function parseArgs (argv) {
       out.expectedVersion = readValue(argv, ++i, arg)
       continue
     }
+    if (arg === '--dependency-mode') {
+      out.dependencyMode = readValue(argv, ++i, arg)
+      continue
+    }
+    if (arg === '--npm-latest') {
+      out.dependencyMode = 'npm-latest'
+      continue
+    }
     throw new Error(`Unknown argument: ${arg}`)
   }
   return out
@@ -960,16 +1050,18 @@ function main () {
   const rootPackage = readJson(path.join(hiverelayRoot, 'package.json'))
   const expectedVersion = args.expectedVersion || rootPackage.version
   const workspaceRoot = args.workspaceRoot || workspaceRootDefault
+  const dependencyMode = normalizeDependencyMode(args.dependencyMode || 'local')
+  const expectedCurrent = getExpectedCurrentConsumers({ dependencyMode })
   const rows = scanHiverelayConsumers({ workspaceRoot })
   const sourceChecks = scanConsumerSourceChecks({
     workspaceRoot,
     expectedVersion,
-    expectedCurrent: EXPECTED_CURRENT_CONSUMERS,
+    expectedCurrent,
     expectedStale: EXPECTED_STALE_CONSUMERS
   })
-  const lockChecks = scanCurrentConsumerLockChecks({ workspaceRoot, expectedVersion })
+  const lockChecks = scanCurrentConsumerLockChecks({ workspaceRoot, expectedVersion, expectedCurrent })
   const snapshotChecks = scanSnapshotVersionChecks({ workspaceRoot, expectedVersion })
-  const summary = checkConsumerState(rows, { expectedVersion, sourceChecks, lockChecks, snapshotChecks })
+  const summary = checkConsumerState(rows, { expectedVersion, expectedCurrent, sourceChecks, lockChecks, snapshotChecks })
 
   if (args.json) {
     console.log(JSON.stringify({ rows, summary }, null, 2))

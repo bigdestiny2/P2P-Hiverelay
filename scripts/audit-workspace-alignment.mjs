@@ -3939,10 +3939,16 @@ if (
 
 if (
   monorepoPkg.scripts['audit:ecosystem-consumers'] === 'node scripts/audit-ecosystem-consumers.mjs --check' &&
+  monorepoPkg.scripts['audit:ecosystem-consumers:latest'] === 'node scripts/audit-ecosystem-consumers.mjs --check --dependency-mode npm-latest' &&
   monorepoPkg.scripts['ecosystem:sync'] === 'node scripts/sync-ecosystem-consumers.mjs' &&
+  monorepoPkg.scripts['ecosystem:sync:latest'] === 'node scripts/sync-ecosystem-consumers.mjs --dependency-mode npm-latest' &&
   ecosystemConsumersAudit.includes('EXPECTED_CURRENT_CONSUMERS') &&
   ecosystemConsumersAudit.includes('EXPECTED_STALE_CONSUMERS') &&
   ecosystemConsumersAudit.includes('CURRENT_HIVERELAY_VERSION') &&
+  ecosystemConsumersAudit.includes('getExpectedCurrentConsumers') &&
+  ecosystemConsumersAudit.includes('normalizeDependencyMode') &&
+  ecosystemConsumersAudit.includes("'p2p-hiveservices'") &&
+  ecosystemConsumersAudit.includes("DEPENDENCY_MODES = new Set(['local', 'npm-latest'])") &&
   ecosystemConsumersAudit.includes('termTemplate') &&
   ecosystemConsumersAudit.includes('01-browser/pearbrowser-desktop/package.json') &&
   ecosystemConsumersAudit.includes('02-apps/pearpaste/package.json') &&
@@ -3964,7 +3970,10 @@ if (
   ecosystemConsumersAudit.includes('00-core/hr-fleet/') &&
   ecosystemConsumersAudit.includes('scanCurrentConsumerLockChecks') &&
   ecosystemConsumersAudit.includes('Lockfile migration checks') &&
+  ecosystemConsumersAudit.includes('npm package metadata') &&
+  ecosystemConsumersAudit.includes('npm package version') &&
   ecosystemConsumersAudit.includes('stale monorepo-root Hiverelay lock entry') &&
+  ecosystemConsumersAudit.includes('lockPackageName') &&
   ecosystemConsumersAudit.includes('sourceChecks') &&
   ecosystemConsumersAudit.includes('scanConsumerSourceChecks') &&
   ecosystemConsumersAudit.includes('scanStaleConsumerSourceChecks') &&
@@ -3973,7 +3982,11 @@ if (
   ecosystemConsumersAudit.includes('Source-level migration checks') &&
   ecosystemConsumersAudit.includes('row.action') &&
   ecosystemConsumersSync.includes('syncEcosystemConsumers') &&
-  ecosystemConsumersSync.includes('EXPECTED_CURRENT_CONSUMERS') &&
+  ecosystemConsumersSync.includes('getExpectedCurrentConsumers') &&
+  ecosystemConsumersSync.includes('verifyNpmLatestDistTags') &&
+  ecosystemConsumersSync.includes('HIVERELAY_NPM_LATEST_JSON') &&
+  ecosystemConsumersSync.includes('npm package-lock refresh failed') &&
+  ecosystemConsumersSync.includes('--dependency-mode') &&
   ecosystemConsumersSync.includes('setDependency') &&
   ecosystemConsumersSync.includes('syncConsumerSourceMarkers') &&
   ecosystemConsumersSync.includes('termTemplateRegex') &&
@@ -3991,9 +4004,12 @@ if (
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit rejects stale lockfile Hiverelay entries') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit finds monorepo package lockfiles') &&
   ecosystemConsumersAuditTest.includes('ecosystem sync updates app defaults and linked package lock metadata') &&
+  ecosystemConsumersAuditTest.includes('ecosystem sync refuses npm-latest defaults when npm latest would downgrade') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer audit accepts npm-latest manifests with current npm lock metadata') &&
   ecosystemConsumersAuditTest.includes('ecosystem sync updates versioned app source markers') &&
   readme.includes('ECOSYSTEM-UPGRADE-0.20.2.md') &&
   readme.includes('npm run ecosystem:sync -- --check') &&
+  readme.includes('npm run ecosystem:sync:latest -- --check') &&
   ecosystemUpgradeDoc.includes('p2p-hiverelay/client') &&
   ecosystemUpgradeDoc.includes('p2p-hiverelay-client') &&
   ecosystemUpgradeDoc.includes('01-browser/pearbrowser-desktop') &&
@@ -4009,7 +4025,10 @@ if (
   ecosystemUpgradeDoc.includes('04-experiments/hiverelay-test') &&
   ecosystemUpgradeDoc.includes('Lockfiles do not retain stale monorepo-root HiveRelay records') &&
   ecosystemUpgradeDoc.includes('Security tests still prove that app plaintext is not exported to relays') &&
-  ecosystemUpgradeDoc.includes('every direct app consumer to point at the current local') &&
+  ecosystemUpgradeDoc.includes('every direct app consumer to point at either the current local') &&
+  ecosystemUpgradeDoc.includes('npm-latest mode') &&
+  ecosystemUpgradeDoc.includes('npm `latest` is still `0.9.2`') &&
+  ecosystemUpgradeDoc.includes('HIVERELAY_NPM_LATEST_JSON') &&
   ecosystemUpgradeDoc.includes('PearBrowser catalog') &&
   ecosystemUpgradeDoc.includes('PearPaste customer docs/probes') &&
   ecosystemUpgradeDoc.includes('Pear POS bridge docs/comments') &&
@@ -4330,12 +4349,14 @@ const currentTestMatrixRequiredTerms = [
   '`npm run lint`',
   '`npm run audit:workspace`',
   '`npm run ecosystem:sync -- --check`',
+  '`npm run ecosystem:sync:latest -- --check`',
   '`npm run audit:ecosystem-consumers`',
   '`npm run audit:public-artifacts`',
   '`node --test test/unit/ecosystem-consumers.test.js`',
   '`git diff --check`',
-  '13/13',
-  '64/64',
+  '15/15',
+  '72/72',
+  'npm-latest app defaults',
   'PearPaste recovery/spec doc regressions',
   'public-artifact-secret-scan.test.js',
   'release-secret-template.test.js',

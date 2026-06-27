@@ -37,6 +37,7 @@ Options:
   --umbrel-store <path>                Community Umbrel store checkout to sync
   --no-umbrel-store                    Skip the sibling community-store checkout
   --no-ecosystem-consumers             Skip sibling app consumer default sync
+  --ecosystem-dependency-mode <mode>    Consumer defaults: local or npm-latest (default: local)
   --allow-unpinned-image               Permit tag-only app-store image refs (not for review)
   --check                              Report drift without writing files
 `
@@ -58,6 +59,7 @@ const releaseNotes = loadReleaseNotes(releaseNotesInline, releaseNotesPath) ||
 assertPublicReleaseNotes(releaseNotes)
 const syncUmbrelStore = !args.noUmbrelStore && !isPrerelease
 const syncEcosystemDefaults = !args.noEcosystemConsumers && !isPrerelease
+const ecosystemDependencyMode = args.ecosystemDependencyMode || process.env.HIVERELAY_ECOSYSTEM_DEPENDENCY_MODE || 'local'
 const umbrelStoreRoot = args.umbrelStore
   ? path.resolve(args.umbrelStore)
   : path.resolve(workspaceRoot, 'blindspark-umbrel-store')
@@ -73,6 +75,9 @@ if (isPrerelease && channel !== 'none') {
 }
 if (isPrerelease && args.umbrelStore) {
   die(`Pre-release ${tag} cannot sync the community Umbrel store; use --no-umbrel-store.`)
+}
+if (!['local', 'npm-latest'].includes(ecosystemDependencyMode)) {
+  die(`Invalid --ecosystem-dependency-mode "${ecosystemDependencyMode}". Expected local or npm-latest.`)
 }
 
 syncPackageVersions()
@@ -242,6 +247,7 @@ function syncEcosystemConsumerDefaults () {
   const result = syncEcosystemConsumers({
     workspaceRoot: ecosystemWorkspaceRoot,
     expectedVersion: version,
+    dependencyMode: ecosystemDependencyMode,
     snapshotChecks: false,
     check: checkOnly
   })
