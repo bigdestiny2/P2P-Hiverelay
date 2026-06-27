@@ -70,6 +70,39 @@ test('operator registry tables escape untrusted app keys and avoid inline action
   t.alike(pending.assignments, [])
 })
 
+test('operator registry and payout writes are timeout bounded and block duplicate submits', (t) => {
+  t.ok(dashboard.includes('var destSaveBusy = false;'), 'payout save has a busy guard')
+  t.ok(dashboard.includes('if (destSaveBusy) return;'), 'payout save blocks duplicate clicks')
+  t.ok(dashboard.includes("destDialog.setAttribute('aria-busy', 'true');"), 'payout dialog exposes busy state')
+  t.ok(dashboard.includes("fetchWithTimeout('/api/subsidy/destination'"), 'payout save is timeout-bounded')
+  t.ok(dashboard.includes("destDialog.setAttribute('aria-busy', 'false');"), 'payout dialog clears busy state')
+
+  t.ok(dashboard.includes('function postJson(path, body)'), 'operator writes share timeout helper')
+  t.ok(dashboard.includes('return fetchWithTimeout(path, {'), 'operator write helper is timeout-bounded')
+  t.ok(dashboard.includes("postJson('/registry/auto-accept', { enabled: enabled })"), 'auto-accept toggle uses timeout-bounded write')
+  t.ok(dashboard.includes('autoAcceptToggle.disabled = true;'), 'auto-accept toggle blocks duplicate writes')
+  t.ok(dashboard.includes('autoAcceptToggle.checked = previous;'), 'auto-accept toggle rolls back failed optimistic state')
+  t.ok(dashboard.includes('autoAcceptToggle.disabled = false;'), 'auto-accept toggle re-enables after settlement')
+
+  t.ok(dashboard.includes('function runRegistryAction(btn, path, body, onSuccess, label)'), 'registry actions share guarded write helper')
+  t.ok(dashboard.includes('if (btn && btn.disabled) return Promise.resolve();'), 'registry actions ignore duplicate clicks')
+  t.ok(dashboard.includes('setRegistryActionBusy(btn, true);'), 'registry action buttons enter busy state')
+  t.ok(dashboard.includes("btn.setAttribute('aria-busy', busy ? 'true' : 'false');"), 'registry action buttons expose busy state')
+  t.ok(dashboard.includes('return postJson(path, body)'), 'registry actions use timeout-bounded writes')
+  t.ok(dashboard.includes("runRegistryAction(btn, '/unseed'"), 'unseed action uses guarded helper')
+  t.ok(dashboard.includes("runRegistryAction(btn, '/registry/approve'"), 'approve action uses guarded helper')
+  t.ok(dashboard.includes("runRegistryAction(btn, '/registry/reject'"), 'reject action uses guarded helper')
+  t.ok(dashboard.includes('if (btn.disabled) return;'), 'delegated registry handler ignores already-busy buttons')
+  t.ok(dashboard.includes('unseedApp(appKey, btn);'), 'delegated unseed passes clicked button')
+  t.ok(dashboard.includes('approveRequest(appKey, btn);'), 'delegated approve passes clicked button')
+  t.ok(dashboard.includes('rejectRequest(appKey, btn);'), 'delegated reject passes clicked button')
+
+  t.absent(dashboard.includes("fetch('/registry/auto-accept'"), 'auto-accept no longer uses raw fetch')
+  t.absent(dashboard.includes("fetch('/unseed'"), 'unseed no longer uses raw fetch')
+  t.absent(dashboard.includes("fetch('/registry/approve'"), 'approve no longer uses raw fetch')
+  t.absent(dashboard.includes("fetch('/registry/reject'"), 'reject no longer uses raw fetch')
+})
+
 test('operator apps table and developer metadata render untrusted values as DOM text', (t) => {
   const apps = JSON.parse(renderRegistryDomWith([
     'var appKey = \'abc" onclick="alert(1)"><script>alert(2)</script>\'',

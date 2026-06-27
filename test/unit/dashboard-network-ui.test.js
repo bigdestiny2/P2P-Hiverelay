@@ -65,9 +65,10 @@ test('network dashboard requests detailed state with token and falls back to pub
   const refreshBody = extractFunction('refresh')
   const renderNetworkBody = extractFunction('renderNetwork')
 
-  t.ok(refreshBody.includes("fetch('/api/network?detailed=1'"), 'tries detailed network state first')
+  t.ok(refreshBody.includes("fetchWithTimeout('/api/network?detailed=1'"), 'tries detailed network state first')
   t.ok(refreshBody.includes("detailedHeaders.Authorization = 'Bearer ' + token"), 'attaches dashboard token when present')
-  t.ok(refreshBody.includes("fetch('/api/network'"), 'falls back to public network state')
+  t.ok(refreshBody.includes("fetchWithTimeout('/api/network'"), 'falls back to public network state')
+  t.absent(refreshBody.includes('AbortSignal.timeout'), 'does not require AbortSignal.timeout support')
   t.ok(renderNetworkBody.includes('r.apiPort != null || r.apiReachable === true'), 'filter tolerates redacted public API availability')
 })
 

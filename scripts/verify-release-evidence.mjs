@@ -210,6 +210,12 @@ async function verifyReleaseEvidence (body, opts) {
   requirePattern('release.semver', body.release?.semver, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
   requireEqual('release semver matches version', body.release.semver, body.release.version.slice(1))
   requireBoolean('release.prerelease', body.release?.prerelease)
+  if (body.release?.candidate != null) {
+    requireBoolean('release.candidate', body.release.candidate)
+  }
+  if (body.release?.candidate === true && body.release.prerelease !== true) {
+    die('release.candidate requires release.prerelease=true')
+  }
   requirePattern('release.tagSha', body.release?.tagSha, /^[a-f0-9]{40}$/i)
 
   if (body.release.workflow?.status !== 'success') {
@@ -246,7 +252,7 @@ async function verifyReleaseEvidence (body, opts) {
   requireEqual('Umbrel package smoke evidence path', body.gates?.umbrelPackageSmokeEvidence?.path, 'umbrel-package-smoke-evidence.json')
   requirePattern('Umbrel package smoke evidence SHA-256', body.gates?.umbrelPackageSmokeEvidence?.sha256, /^[a-f0-9]{64}$/i)
   requireOneOf('release gate StartOS verify', body.gates?.startosVerify, ['passed'])
-  requireOneOf('StartOS GitHub Release asset', body.surfaces?.startosReleaseAsset, ['uploaded'])
+  requireOneOf('StartOS GitHub Release asset', body.surfaces?.startosReleaseAsset, body.release.candidate === true ? ['skipped'] : ['uploaded'])
 
   const imageManifestGeneratedAtMs = verifyImageManifestSidecar(
     body,
@@ -327,6 +333,7 @@ function assertReleaseEvidenceSchema (body) {
     'semver',
     'channel',
     'prerelease',
+    'candidate',
     'tagSha',
     'metadataSha',
     'workflow'
@@ -820,8 +827,8 @@ function assertSmokeSidecarSchema (smoke, kind, allowedChecks) {
 function smokeCheckKeys (name) {
   switch (name) {
     case 'health': return ['name', 'status', 'version']
-    case 'dashboard': return ['name', 'status', 'serviceManager', 'walletControls', 'tokenMeta', 'walletBusyState', 'serviceActionState', 'aiModelAddState']
-    case 'setupWizard': return ['name', 'status', 'editMode', 'statusRegion', 'actionLock']
+    case 'dashboard': return ['name', 'status', 'serviceManager', 'walletControls', 'tokenMeta', 'walletBusyState', 'serviceActionState', 'aiModelAddState', 'appProxyWrites', 'leasePollingBounded', 'staticMarkupSafe']
+    case 'setupWizard': return ['name', 'status', 'editMode', 'statusRegion', 'actionLock', 'dashboardLinkAppPath', 'staticMarkupSafe']
     case 'dashboardToken': return ['name', 'status', 'exposedViaMeta']
     case 'dashboardWebSocket': return ['name', 'status', 'queryTokenRejected', 'inBandAuth', 'updateReceived']
     case 'usageTelemetry': return ['name', 'status', 'bandwidth', 'poker']
@@ -830,8 +837,8 @@ function smokeCheckKeys (name) {
     case 'walletWrite': return ['name', 'status', 'destinationSaved']
     case 'servicesSave': return ['name', 'status', 'plugins', 'restartRequired']
     case 'composeSafety': return ['name', 'status', 'composePath']
-    case 'firstBoot': return ['name', 'status', 'dashboard', 'setup', 'serviceCatalog', 'dashboardUiHardening', 'setupUiHardening', 'acceptMode', 'healthVersion']
-    case 'secondBoot': return ['name', 'status', 'dashboard', 'setup', 'serviceCatalog', 'dashboardUiHardening', 'setupUiHardening', 'acceptMode', 'healthVersion']
+    case 'firstBoot': return ['name', 'status', 'dashboard', 'setup', 'serviceCatalog', 'dashboardUiHardening', 'appProxyWrites', 'leasePollingBounded', 'dashboardStaticMarkupSafe', 'setupUiHardening', 'dashboardLinkAppPath', 'setupStaticMarkupSafe', 'acceptMode', 'healthVersion']
+    case 'secondBoot': return ['name', 'status', 'dashboard', 'setup', 'serviceCatalog', 'dashboardUiHardening', 'appProxyWrites', 'leasePollingBounded', 'dashboardStaticMarkupSafe', 'setupUiHardening', 'dashboardLinkAppPath', 'setupStaticMarkupSafe', 'acceptMode', 'healthVersion']
     case 'identityPersistence': return ['name', 'status', 'publicKeyStable']
     case 'walletPersistence': return ['name', 'status', 'destinationPersisted']
     case 'servicesPersistence': return ['name', 'status', 'selectedServicesActive', 'plugins', 'active']
@@ -854,9 +861,14 @@ function verifySmokeCriticalChecks (kind, byName, expectedVersion) {
     requireSmokeBoolean(kind, byName, 'dashboard', 'walletBusyState')
     requireSmokeBoolean(kind, byName, 'dashboard', 'serviceActionState')
     requireSmokeBoolean(kind, byName, 'dashboard', 'aiModelAddState')
+    requireSmokeBoolean(kind, byName, 'dashboard', 'appProxyWrites')
+    requireSmokeBoolean(kind, byName, 'dashboard', 'leasePollingBounded')
+    requireSmokeBoolean(kind, byName, 'dashboard', 'staticMarkupSafe')
     requireSmokeBoolean(kind, byName, 'setupWizard', 'editMode')
     requireSmokeBoolean(kind, byName, 'setupWizard', 'statusRegion')
     requireSmokeBoolean(kind, byName, 'setupWizard', 'actionLock')
+    requireSmokeBoolean(kind, byName, 'setupWizard', 'dashboardLinkAppPath')
+    requireSmokeBoolean(kind, byName, 'setupWizard', 'staticMarkupSafe')
     requireSmokeBoolean(kind, byName, 'dashboardToken', 'exposedViaMeta')
     requireSmokeValue(kind, byName, 'health', 'version', expectedVersion)
     return
@@ -868,14 +880,24 @@ function verifySmokeCriticalChecks (kind, byName, expectedVersion) {
   requireSmokeBoolean(kind, byName, 'firstBoot', 'setup')
   requireSmokeBoolean(kind, byName, 'firstBoot', 'serviceCatalog')
   requireSmokeBoolean(kind, byName, 'firstBoot', 'dashboardUiHardening')
+  requireSmokeBoolean(kind, byName, 'firstBoot', 'appProxyWrites')
+  requireSmokeBoolean(kind, byName, 'firstBoot', 'leasePollingBounded')
+  requireSmokeBoolean(kind, byName, 'firstBoot', 'dashboardStaticMarkupSafe')
   requireSmokeBoolean(kind, byName, 'firstBoot', 'setupUiHardening')
+  requireSmokeBoolean(kind, byName, 'firstBoot', 'dashboardLinkAppPath')
+  requireSmokeBoolean(kind, byName, 'firstBoot', 'setupStaticMarkupSafe')
   requireSmokeValue(kind, byName, 'firstBoot', 'acceptMode', 'review')
   requireSmokeValue(kind, byName, 'firstBoot', 'healthVersion', expectedVersion)
   requireSmokeBoolean(kind, byName, 'secondBoot', 'dashboard')
   requireSmokeBoolean(kind, byName, 'secondBoot', 'setup')
   requireSmokeBoolean(kind, byName, 'secondBoot', 'serviceCatalog')
   requireSmokeBoolean(kind, byName, 'secondBoot', 'dashboardUiHardening')
+  requireSmokeBoolean(kind, byName, 'secondBoot', 'appProxyWrites')
+  requireSmokeBoolean(kind, byName, 'secondBoot', 'leasePollingBounded')
+  requireSmokeBoolean(kind, byName, 'secondBoot', 'dashboardStaticMarkupSafe')
   requireSmokeBoolean(kind, byName, 'secondBoot', 'setupUiHardening')
+  requireSmokeBoolean(kind, byName, 'secondBoot', 'dashboardLinkAppPath')
+  requireSmokeBoolean(kind, byName, 'secondBoot', 'setupStaticMarkupSafe')
   requireSmokeValue(kind, byName, 'secondBoot', 'acceptMode', 'review')
   requireSmokeValue(kind, byName, 'secondBoot', 'healthVersion', expectedVersion)
   requireSmokeBoolean(kind, byName, 'identityPersistence', 'publicKeyStable')

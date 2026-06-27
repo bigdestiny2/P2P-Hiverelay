@@ -42,6 +42,7 @@ const releaseSha = env('HIVERELAY_RELEASE_SHA')
 const metadataSha = env('HIVERELAY_RELEASE_SURFACES_SHA') || gitRevParse('HEAD')
 const repository = env('GITHUB_REPOSITORY')
 const runId = env('GITHUB_RUN_ID')
+const startosRegistryStatus = status('HIVERELAY_STARTOS_REGISTRY_STATUS')
 const fleetChannelConfigPath = env('HIVERELAY_FLEET_CHANNEL_CONFIG') ||
   (env('HIVERELAY_RELEASE_CHANNEL') && env('HIVERELAY_RELEASE_CHANNEL') !== 'none' ? 'fleet/channels.json' : '')
 
@@ -53,6 +54,7 @@ const evidence = {
     semver,
     channel: env('HIVERELAY_RELEASE_CHANNEL'),
     prerelease: env('HIVERELAY_RELEASE_PRERELEASE') === 'true',
+    candidate: env('HIVERELAY_RELEASE_CANDIDATE') === 'true',
     tagSha: releaseSha,
     metadataSha,
     workflow: {
@@ -109,9 +111,9 @@ const evidence = {
       path: fleetChannelConfigPath,
       sha256: env('HIVERELAY_FLEET_CHANNEL_CONFIG_SHA256') || sha256FileIfPresent(fleetChannelConfigPath)
     },
-    startosRegistry: status('HIVERELAY_STARTOS_REGISTRY_STATUS'),
-    startosRegistryUrl: env('HIVERELAY_STARTOS_REGISTRY_URL') || env('STARTOS_REGISTRY_URL'),
-    startosRegistryPackageUrl: env('HIVERELAY_STARTOS_REGISTRY_PACKAGE_URL') || env('STARTOS_REGISTRY_PACKAGE_URL'),
+    startosRegistry: startosRegistryStatus,
+    startosRegistryUrl: startosRegistryStatus === 'skipped' ? '' : env('HIVERELAY_STARTOS_REGISTRY_URL') || env('STARTOS_REGISTRY_URL'),
+    startosRegistryPackageUrl: startosRegistryStatus === 'skipped' ? '' : env('HIVERELAY_STARTOS_REGISTRY_PACKAGE_URL') || env('STARTOS_REGISTRY_PACKAGE_URL'),
     startosPackageId: env('HIVERELAY_STARTOS_PACKAGE_ID'),
     startosRegistryEvidence: {
       path: env('HIVERELAY_STARTOS_REGISTRY_EVIDENCE'),
@@ -197,6 +199,12 @@ async function validateEvidence (body) {
     die('HIVERELAY_RELEASE_SEMVER must be semver')
   }
   requireEqual('release semver matches version', body.release.semver, body.release.version.slice(1))
+  if (typeof body.release.candidate !== 'boolean') {
+    die('HIVERELAY_RELEASE_CANDIDATE must be true or false')
+  }
+  if (body.release.candidate && body.release.prerelease !== true) {
+    die('HIVERELAY_RELEASE_CANDIDATE requires HIVERELAY_RELEASE_PRERELEASE=true')
+  }
   if (body.release.tagSha && !/^[a-f0-9]{40}$/i.test(body.release.tagSha)) {
     die('HIVERELAY_RELEASE_SHA must be a 40-character commit SHA')
   }
@@ -270,7 +278,7 @@ async function validateSuccessfulRun (body) {
   requireOneOf('successful release Umbrel package smoke evidence path', body.gates.umbrelPackageSmokeEvidence.path, ['umbrel-package-smoke-evidence.json'])
   requirePattern('successful release Umbrel package smoke evidence SHA-256', body.gates.umbrelPackageSmokeEvidence.sha256, /^[a-f0-9]{64}$/i)
   requireOneOf('successful release StartOS verify gate', body.gates.startosVerify, ['passed'])
-  requireOneOf('successful release StartOS GitHub Release asset', body.surfaces.startosReleaseAsset, ['uploaded'])
+  requireOneOf('successful release StartOS GitHub Release asset', body.surfaces.startosReleaseAsset, body.release.candidate ? ['skipped'] : ['uploaded'])
 
   if (body.release.prerelease) {
     requireOneOf('successful prerelease channel', body.release.channel, ['none'])

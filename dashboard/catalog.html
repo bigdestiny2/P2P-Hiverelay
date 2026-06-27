@@ -190,10 +190,23 @@ const state = {
   pageSize: 24,
   stats: { app: 0, drive: 0, dataset: 0, media: 0, resource: 0, total: 0 }
 }
+const REQUEST_TIMEOUT_MS = 10000
+let catalogRefreshBusy = false
+
+function fetchWithTimeout (path, opts = {}) {
+  const options = { ...opts }
+  if (typeof AbortController !== 'function') return fetch(path, options)
+  const controller = new AbortController()
+  const timeout = setTimeout(() => { controller.abort() }, REQUEST_TIMEOUT_MS)
+  options.signal = controller.signal
+  return fetch(path, options).finally(() => {
+    clearTimeout(timeout)
+  })
+}
 
 async function loadCatalog () {
   try {
-    const res = await fetch('/catalog.json?pageSize=200', { cache: 'no-store' })
+    const res = await fetchWithTimeout('/catalog.json?pageSize=200', { cache: 'no-store' })
     const data = await res.json()
     // Support both v2 ({apps:[],drives:[]...}) and paginated ({items:[]}) shapes
     let items = []
@@ -214,6 +227,15 @@ async function loadCatalog () {
   } catch (err) {
     renderEmptyState(document.getElementById('catalog-grid'), 'Could not load catalog', err && err.message ? err.message : 'unknown')
   }
+}
+
+function refreshCatalog (force) {
+  if (catalogRefreshBusy) return
+  if (force !== true && document.hidden === true) return
+  catalogRefreshBusy = true
+  loadCatalog().finally(() => {
+    catalogRefreshBusy = false
+  })
 }
 
 function countStats () {
@@ -388,8 +410,12 @@ document.getElementById('next-page').addEventListener('click', () => {
 })
 
 // Auto-refresh every 30s
-loadCatalog()
-setInterval(loadCatalog, 30_000)
+refreshCatalog(true)
+setInterval(() => { refreshCatalog(false) }, 30_000)
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden === true) return
+  refreshCatalog(true)
+})
 </script>
 </body>
 </html>

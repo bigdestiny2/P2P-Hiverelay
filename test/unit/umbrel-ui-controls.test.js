@@ -85,18 +85,24 @@ test('umbrel dashboard polling avoids hidden-tab and overlapping refresh churn',
   t.ok(dashboard.includes('var wizardRefreshBusy = false;'))
   t.ok(dashboard.includes('var servicesRefreshBusy = false;'))
   t.ok(dashboard.includes('var servicesRefreshPendingForce = false;'))
+  t.ok(dashboard.includes('var leaseRefreshBusy = false;'))
   t.ok(dashboard.includes('function canPoll(force, busy)'))
   t.ok(dashboard.includes('document.hidden === true'))
   t.ok(dashboard.includes('if (force === true) servicesRefreshPendingForce = true;'))
+  t.ok(dashboard.includes('function fetchLease(force)'))
+  t.ok(dashboard.includes('if (!canPoll(force, leaseRefreshBusy)) return Promise.resolve(null);'))
   t.ok(dashboard.includes('refreshServices(true);'))
   t.ok(dashboard.includes('refreshVisible(true);'))
+  t.ok(dashboard.includes('fetchLease(force);'))
   t.ok(dashboard.includes('setInterval(function(){ refresh(false); }, 5000);'))
   t.ok(dashboard.includes('setInterval(function(){ refreshWizard(false); }, 30000);'))
+  t.ok(dashboard.includes('setInterval(function(){ fetchLease(false); }, 30000);'))
   t.ok(dashboard.includes('setInterval(function(){ refreshServices(false); }, 15000);'))
   t.ok(dashboard.includes('document.addEventListener(\'visibilitychange\''))
   t.ok(dashboard.includes('if (document.hidden !== true) refreshVisible(true);'))
   t.absent(dashboard.includes('setInterval(refresh, 5000);'))
   t.absent(dashboard.includes('setInterval(refreshWizard, 30000);'))
+  t.absent(dashboard.includes('setInterval(function(){ fetchLease(); }, 30000);'))
   t.absent(dashboard.includes('setInterval(refreshServices, 15000);'))
 })
 
@@ -241,7 +247,18 @@ test('umbrel service manager builds service UI without HTML-string metadata inje
   const renderServices = extractFunction('renderServices')
   const renderMetering = extractFunction('renderMetering')
   const renderApps = extractFunction('renderApps')
+  const renderLease = extractFunction('renderLease')
 
+  t.absent(dashboard.includes(' style='))
+  t.absent(dashboard.includes('.style.cssText'))
+  t.absent(dashboard.includes('.innerHTML ='))
+  t.absent(dashboard.includes('onerror='))
+  t.absent(dashboard.includes('function appGlyph'))
+  t.absent(dashboard.includes('function escapeHtml'))
+  t.ok(dashboard.includes('class="row" id="leaseRow" hidden'))
+  t.ok(dashboard.includes('class="apps-head-actions"'))
+  t.ok(dashboard.includes('class="seed-optional"'))
+  t.ok(dashboard.includes("$('walletClear').hidden = !payoutDestination;"))
   t.absent(renderServices.includes('hero.innerHTML'))
   t.absent(renderServices.includes('catalog.innerHTML'))
   t.absent(renderServices.includes('content.innerHTML'))
@@ -253,9 +270,69 @@ test('umbrel service manager builds service UI without HTML-string metadata inje
   t.ok(renderServices.includes("appendEl(row, 'span', 'svc-live-status', status)"))
   t.ok(renderServices.includes("appendModelField(form, 'svcModelId', 'Model ID', 'qvac-small')"))
   t.absent(renderMetering.includes('box.innerHTML'))
+  t.absent(renderLease.includes('v.innerHTML'))
+  t.ok(renderLease.includes('clearNode(v)'))
+  t.ok(renderLease.includes("ctl.className = 'lease-controls'"))
+  t.ok(renderLease.includes("inp.className = 'lease-rate'"))
+  t.ok(renderLease.includes("fetchWithTimeout('/api/lease/config'"))
+  t.ok(renderLease.includes('fetchLease(true);'))
+  t.ok(dashboard.includes("fetchWithTimeout('/seed'"))
+  t.absent(dashboard.includes("fetch('/seed'"))
+  t.absent(dashboard.includes("fetch('/api/lease/config'"))
   t.ok(renderMetering.includes("appendMeterRow(meter, 'Signed receipts', metricCount(verified.count))"))
   t.absent(renderApps.includes('box.innerHTML'))
   t.ok(renderApps.includes("var row = appendEl(box, 'div', 'app')"))
+})
+
+test('umbrel seed and lease writes use app-proxy-aware fetch helpers', async (t) => {
+  const leaseRow = new FakeElement('div')
+  const leaseV = new FakeElement('div')
+  const calls = []
+  const refreshes = []
+  const toasts = []
+  const script = [
+    'var leaseRefreshBusy = false',
+    'function canPoll (force, busy) { if (busy) return false; return force === true || !(typeof document !== "undefined" && document.hidden === true) }',
+    'function fetchWithTimeout (path, opts) { calls.push({ path: path, opts: opts }); return Promise.resolve({ json: function () { return Promise.resolve({ ok: true }) } }) }',
+    'function jget (path) { refreshes.push(path); return Promise.resolve(null) }',
+    'function toast (msg) { toasts.push(msg) }',
+    extractFunction('clearNode'),
+    extractFunction('makeEl'),
+    extractFunction('appendEl'),
+    extractFunction('renderLease'),
+    extractFunction('fetchLease'),
+    'renderLease({ enabled: true, satsPerGiBDay: 7, activeLeases: 1, leaseCount: 2, totalLeasedSats: 3 })',
+    'var button = leaseV.children[0].children[2]',
+    'button.listeners.click[0]()',
+    'Promise.resolve().then(function(){ return Promise.resolve() }).then(function(){ return JSON.stringify({ calls: calls, refreshes: refreshes, toasts: toasts, disabled: button.disabled }) })'
+  ].join('\n')
+
+  const out = JSON.parse(await vm.runInNewContext(script, {
+    Promise,
+    JSON,
+    calls,
+    refreshes,
+    toasts,
+    leaseV,
+    document: {
+      hidden: false,
+      createElement: (tag) => new FakeElement(tag)
+    },
+    $: (id) => {
+      if (id === 'leaseRow') return leaseRow
+      if (id === 'leaseV') return leaseV
+      throw new Error('unexpected id ' + id)
+    }
+  }))
+
+  t.is(out.calls.length, 1)
+  t.is(out.calls[0].path, '/api/lease/config')
+  t.is(out.calls[0].opts.method, 'POST')
+  t.alike(out.calls[0].opts.headers, { 'Content-Type': 'application/json', Accept: 'application/json' })
+  t.alike(JSON.parse(out.calls[0].opts.body), { satsPerGiBDay: 7 })
+  t.alike(out.refreshes, ['/api/lease'])
+  t.alike(out.toasts, ['Rate updated'])
+  t.is(out.disabled, false)
 })
 
 test('umbrel service manager renders untrusted service metadata as text', (t) => {
@@ -399,6 +476,13 @@ test('ui auth shim only attaches bearer tokens to same-origin fetches', (t) => {
 })
 
 test('umbrel wizard setup actions post to the server instead of refreshing', (t) => {
+  t.ok(wizard.includes('href="dashboard" data-wizard-action="dashboard"'))
+  t.ok(wizard.includes('document.querySelectorAll(\'[data-wizard-action="dashboard"][href]\').forEach(el => {'))
+  t.ok(wizard.includes("el.setAttribute('href', appPath('/dashboard'))"))
+  t.ok(wizard.includes('<h1 class="center-text">You\'re online.</h1>'))
+  t.ok(wizard.includes('<p class="lead center-text">'))
+  t.ok(wizard.includes('<p class="complete-note center-text">'))
+  t.ok(wizard.includes('<div class="actions complete-actions">'))
   t.ok(wizard.includes('data-wizard-action="goto" data-step-target="relay_name"'))
   t.ok(wizard.includes('data-wizard-action="payout"'))
   t.ok(wizard.includes('data-wizard-action="accept-mode"'))
@@ -414,6 +498,8 @@ test('umbrel wizard setup actions post to the server instead of refreshing', (t)
   t.ok(wizard.includes('timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)'))
   t.ok(wizard.includes('const res = await fetchWithTimeout(path, {'))
   t.absent(wizard.includes('onclick='))
+  t.absent(wizard.includes('href="/dashboard"'))
+  t.absent(wizard.includes(' style='))
 })
 
 test('umbrel wallet save posts through app proxy without navigation', async (t) => {
@@ -689,7 +775,6 @@ test('umbrel apps list escapes app names and app-key attributes', (t) => {
     extractFunction('makeEl'),
     extractFunction('appendEl'),
     extractFunction('shortKey'),
-    extractFunction('escapeHtml'),
     extractFunction('renderApps'),
     'renderApps([{ name: "<img src=x onerror=alert(1)>", appKey: "abc\\" onmouseover=\\"alert(1)<script>" }])',
     'JSON.stringify({ html: appsList.innerHTML, assignments: appsList.innerHTMLAssignments })'
@@ -718,7 +803,6 @@ test('umbrel apps list escapes app names and app-key attributes', (t) => {
 test('umbrel service usage meter normalizes untrusted metric values', async (t) => {
   const svcMeterBox = new FakeElement('div')
   const script = [
-    extractFunction('escapeHtml'),
     extractFunction('metricCount'),
     extractFunction('clearNode'),
     extractFunction('makeEl'),
@@ -838,6 +922,7 @@ class FakeElement {
     this.checked = false
     this.disabled = false
     this.attributes = {}
+    this.listeners = {}
     this.innerHTMLAssignments = []
     this._text = ''
   }
@@ -855,7 +940,10 @@ class FakeElement {
     return child
   }
 
-  addEventListener () {}
+  addEventListener (type, handler) {
+    if (!this.listeners[type]) this.listeners[type] = []
+    this.listeners[type].push(handler)
+  }
 
   setAttribute (name, value) {
     this.attributes[name] = String(value)

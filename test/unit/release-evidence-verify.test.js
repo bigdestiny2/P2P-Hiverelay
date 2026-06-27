@@ -112,6 +112,7 @@ function ensureStartosRegistrySidecar (argv) {
 
 function releaseEvidence (opts) {
   const prerelease = Boolean(opts.prerelease)
+  const candidate = Boolean(opts.candidate)
   const version = prerelease ? 'v9.9.9-beta.1' : 'v9.9.9'
   const semver = version.slice(1)
   let startosRegistryEvidenceSha = ''
@@ -137,6 +138,7 @@ function releaseEvidence (opts) {
       semver,
       channel: prerelease ? 'none' : 'both',
       prerelease,
+      candidate,
       tagSha: TAG_SHA,
       metadataSha: TAG_SHA,
       workflow: {
@@ -189,7 +191,7 @@ function releaseEvidence (opts) {
     },
     surfaces: {
       metadataCommit: prerelease ? 'skipped' : 'committed',
-      startosReleaseAsset: 'uploaded',
+      startosReleaseAsset: candidate ? 'skipped' : 'uploaded',
       fleetRollout: prerelease ? 'skipped' : 'verified',
       fleetRolloutChannel: prerelease ? '' : 'both',
       fleetRolloutEvidence: {
@@ -304,8 +306,8 @@ function releaseImageSmokeEvidence (opts = {}) {
     imageDigest: IMAGE_DIGEST,
     checks: [
       { name: 'health', status: 'passed', version: semver },
-      { name: 'dashboard', status: 'passed', serviceManager: true, walletControls: true, tokenMeta: true, walletBusyState: true, serviceActionState: true, aiModelAddState: true },
-      { name: 'setupWizard', status: 'passed', editMode: true, statusRegion: true, actionLock: true },
+      { name: 'dashboard', status: 'passed', serviceManager: true, walletControls: true, tokenMeta: true, walletBusyState: true, serviceActionState: true, aiModelAddState: true, appProxyWrites: true, leasePollingBounded: true, staticMarkupSafe: true },
+      { name: 'setupWizard', status: 'passed', editMode: true, statusRegion: true, actionLock: true, dashboardLinkAppPath: true, staticMarkupSafe: true },
       { name: 'dashboardToken', status: 'passed', exposedViaMeta: true },
       { name: 'dashboardWebSocket', status: 'passed', queryTokenRejected: true, inBandAuth: true, updateReceived: true },
       { name: 'usageTelemetry', status: 'passed', bandwidth: { enabled: true, count: 0, bytes: 0, bandwidthBytes: 0 }, poker: { enabled: false, tables: 0, appends: 0, seats: 0 } },
@@ -331,13 +333,13 @@ function umbrelSmokeEvidence (opts = {}) {
     composePath: 'umbrel-app/docker-compose.yml',
     checks: [
       { name: 'composeSafety', status: 'passed', composePath: 'umbrel-app/docker-compose.yml' },
-      { name: 'firstBoot', status: 'passed', dashboard: true, setup: true, serviceCatalog: true, dashboardUiHardening: true, setupUiHardening: true, acceptMode: 'review', healthVersion: semver },
+      { name: 'firstBoot', status: 'passed', dashboard: true, setup: true, serviceCatalog: true, dashboardUiHardening: true, appProxyWrites: true, leasePollingBounded: true, dashboardStaticMarkupSafe: true, setupUiHardening: true, dashboardLinkAppPath: true, setupStaticMarkupSafe: true, acceptMode: 'review', healthVersion: semver },
       { name: 'dashboardWebSocket', status: 'passed', queryTokenRejected: true, inBandAuth: true, updateReceived: true },
       { name: 'acceptModeDefault', status: 'passed', mode: 'review' },
       { name: 'usageTelemetry', status: 'passed', bandwidth: { enabled: true, count: 0, bytes: 0, bandwidthBytes: 0 }, poker: { enabled: false, tables: 0, appends: 0, seats: 0 } },
       { name: 'walletWrite', status: 'passed', destinationSaved: true },
       { name: 'servicesSave', status: 'passed', plugins: EXPECTED_SMOKE_SERVICE_PLUGINS, restartRequired: true },
-      { name: 'secondBoot', status: 'passed', dashboard: true, setup: true, serviceCatalog: true, dashboardUiHardening: true, setupUiHardening: true, acceptMode: 'review', healthVersion: semver },
+      { name: 'secondBoot', status: 'passed', dashboard: true, setup: true, serviceCatalog: true, dashboardUiHardening: true, appProxyWrites: true, leasePollingBounded: true, dashboardStaticMarkupSafe: true, setupUiHardening: true, dashboardLinkAppPath: true, setupStaticMarkupSafe: true, acceptMode: 'review', healthVersion: semver },
       { name: 'identityPersistence', status: 'passed', publicKeyStable: true },
       { name: 'walletPersistence', status: 'passed', destinationPersisted: true },
       {
@@ -2598,9 +2600,39 @@ test('release evidence verifier accepts successful prereleases without fleet sid
   t.ok(res.stdout.includes('Release evidence verified: v9.9.9-beta.1'))
 })
 
+test('release evidence verifier accepts successful branch candidates without release assets', async (t) => {
+  const dir = await fixtureDir(t)
+  const releaseFile = path.join(dir, 'release-evidence.json')
+  const releaseImageSmokeFile = path.join(dir, 'release-image-smoke-evidence.json')
+  const umbrelSmokeFile = path.join(dir, 'umbrel-package-smoke-evidence.json')
+  const s9pkFile = path.join(dir, 'blindspark.s9pk')
+
+  await writeFile(s9pkFile, 'fake-s9pk')
+  await writeJson(releaseImageSmokeFile, releaseImageSmokeEvidence({ prerelease: true }))
+  await writeJson(umbrelSmokeFile, umbrelSmokeEvidence({ prerelease: true }))
+  await writeJson(releaseFile, releaseEvidence({
+    prerelease: true,
+    candidate: true,
+    startosSha: await sha256File(s9pkFile),
+    imageSmokeSha: await sha256File(releaseImageSmokeFile),
+    umbrelSmokeSha: await sha256File(umbrelSmokeFile),
+    rolloutSha: ''
+  }))
+
+  const res = await runVerify([
+    '--release', releaseFile,
+    '--release-image-smoke', releaseImageSmokeFile,
+    '--umbrel-package-smoke', umbrelSmokeFile,
+    '--startos-package', s9pkFile
+  ])
+
+  t.ok(res.stdout.includes('Release evidence verified: v9.9.9-beta.1'))
+})
+
 test('release evidence verifier rejects malformed prerelease boundary facts', async (t) => {
   const cases = [
     ['non-boolean prerelease flag', release => { release.release.prerelease = 'true' }, 'release.prerelease must be a boolean'],
+    ['non-prerelease candidate flag', release => { release.release.prerelease = false; release.release.candidate = true }, 'release.candidate requires release.prerelease=true'],
     ['registry URL', release => { release.surfaces.startosRegistryUrl = STARTOS_REGISTRY_URL }, 'prerelease StartOS registry URL'],
     ['package id', release => { release.surfaces.startosPackageId = 'blindspark' }, 'prerelease StartOS package id'],
     ['official PR URL', release => { release.surfaces.umbrelOfficial.prUrl = 'https://github.com/getumbrel/umbrel-apps/pull/123' }, 'prerelease official Umbrel PR URL'],
@@ -2872,9 +2904,21 @@ test('release evidence verifier rejects stale critical smoke proof details', asy
       }
     },
     {
+      label: 'release-image-smoke dashboard appProxyWrites',
+      mutate: (imageSmoke) => {
+        imageSmoke.checks.find(check => check.name === 'dashboard').appProxyWrites = false
+      }
+    },
+    {
       label: 'release-image-smoke setupWizard actionLock',
       mutate: (imageSmoke) => {
         imageSmoke.checks.find(check => check.name === 'setupWizard').actionLock = false
+      }
+    },
+    {
+      label: 'release-image-smoke setupWizard dashboardLinkAppPath',
+      mutate: (imageSmoke) => {
+        imageSmoke.checks.find(check => check.name === 'setupWizard').dashboardLinkAppPath = false
       }
     },
     {
@@ -2902,9 +2946,21 @@ test('release evidence verifier rejects stale critical smoke proof details', asy
       }
     },
     {
+      label: 'umbrel-package-smoke firstBoot appProxyWrites',
+      mutate: (_imageSmoke, umbrelSmoke) => {
+        umbrelSmoke.checks.find(check => check.name === 'firstBoot').appProxyWrites = false
+      }
+    },
+    {
       label: 'umbrel-package-smoke secondBoot setupUiHardening',
       mutate: (_imageSmoke, umbrelSmoke) => {
         umbrelSmoke.checks.find(check => check.name === 'secondBoot').setupUiHardening = false
+      }
+    },
+    {
+      label: 'umbrel-package-smoke secondBoot setupStaticMarkupSafe',
+      mutate: (_imageSmoke, umbrelSmoke) => {
+        umbrelSmoke.checks.find(check => check.name === 'secondBoot').setupStaticMarkupSafe = false
       }
     },
     {

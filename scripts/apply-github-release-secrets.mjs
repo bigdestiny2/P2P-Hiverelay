@@ -25,10 +25,11 @@ const usage = `
 Usage:
   node scripts/apply-github-release-secrets.mjs --repo owner/name --env-file <path> [--gh gh] [--channel both] [--prerelease false] [--dry-run]
 
-Validates a local release secret candidate file with
-scripts/check-release-distribution-env.mjs, then writes the exact same values
-to GitHub Secrets using gh. Secret values are sent through stdin and are never
-printed.
+Validates a local release-value candidate file with
+scripts/check-release-distribution-env.mjs, then writes the exact same masked
+release values to GitHub Secrets using gh. Values are sent through stdin and
+are never printed. FLEET_ROLLOUT_TIMEOUT_MS, when present, is the only GitHub
+Variable.
 `
 
 const args = parseArgs(process.argv.slice(2))
@@ -45,18 +46,19 @@ const values = safeReadEnvFile(args.envFile)
 validateCandidateFile(args.envFile, channel, prerelease)
 
 if (args.dryRun) {
-  console.log(`Release secret candidate file is valid for ${repo}.`)
-  console.log(`Would set GitHub Secrets: ${REQUIRED_SECRETS.join(', ')}`)
+  console.log(`Release value candidate file is valid for ${repo}.`)
+  console.log(`Would set masked GitHub release values as Secrets: ${REQUIRED_SECRETS.join(', ')}`)
   const variables = OPTIONAL_VARIABLES.filter(name => values[name])
   if (variables.length > 0) console.log(`Would set GitHub Variables: ${variables.join(', ')}`)
   else console.log('No optional GitHub Variables present in candidate file.')
-  console.log('Dry run only; no GitHub Secrets or Variables were changed.')
+  console.log('Dry run only; no GitHub release values or Variables were changed.')
+  printNextSteps(repo, channel, { afterApply: true })
   process.exit(0)
 }
 
 for (const name of REQUIRED_SECRETS) {
   runGh(gh, ['secret', 'set', name, '--repo', repo], values[name], `secret ${name}`)
-  console.log(`Set GitHub Secret ${name}.`)
+  console.log(`Set masked GitHub release value ${name} as a Secret.`)
 }
 
 for (const name of OPTIONAL_VARIABLES) {
@@ -65,7 +67,8 @@ for (const name of OPTIONAL_VARIABLES) {
   console.log(`Set GitHub Variable ${name}.`)
 }
 
-console.log('GitHub release secrets applied. Run release:check-github-setup and the Release distribution preflight workflow next.')
+console.log('GitHub release values applied.')
+printNextSteps(repo, channel)
 
 function validateCandidateFile (envFile, channel, prerelease) {
   const result = spawnSync(process.execPath, [
@@ -113,6 +116,12 @@ function runGh (gh, argv, input, label) {
     const details = sanitizeGhError(result.stderr || result.stdout || `exit ${result.status}`, [input])
     die(`gh ${argv.slice(0, 2).join(' ')} failed for ${label}: ${details}`)
   }
+}
+
+function printNextSteps (repo, channel, opts = {}) {
+  console.log(opts.afterApply ? 'After applying the candidate file, run:' : 'Next steps:')
+  console.log(`npm run release:check-github-setup -- --repo ${repo}`)
+  console.log(`gh workflow run release-distribution-preflight.yml --repo ${repo} -f channel=${channel} -f prerelease=false`)
 }
 
 function parseArgs (argv) {

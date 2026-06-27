@@ -1,6 +1,6 @@
 # HiveRelay Detailed Architecture Diagram
 
-Last updated: 2026-06-24
+Last updated: 2026-06-27
 
 This document maps the current HiveRelay implementation as a detailed runtime
 architecture reference. It complements the graph-first overview in
@@ -522,7 +522,22 @@ drives, discovers relay peers through Hyperswarm, signs protocol messages,
 replicates with accepting relays, and tracks relay state so app code does not
 need to know which transport path succeeded.
 
-## 12. Module Inventory
+## 12. Live Consumer Integration Paths
+
+These are the current ecosystem consumers that must keep pulling the newest
+HiveRelay line by default. The local guard is
+`npm run audit:ecosystem-consumers`, which checks package manifests and nearest
+lockfiles for direct `p2p-hiverelay*` drift.
+
+| Consumer | HiveRelay surface | Current default |
+|---|---|---|
+| PearBrowser desktop | Bundled `p2p-hiverelay`, client, and verifier packages; HTTP catalog/gateway bridge | Local `file:` workspace links to the `0.20.2` packages |
+| PearBrowser mobile | HTTP catalog, capability-doc, and gateway contracts over HTTPS relay transport | Wire-contract consumer; not a direct package pin |
+| PearPaste | Encrypted availability through split core/client packages and custody-safe relay paths | Local `file:` links to core/client `0.20.2` |
+| anonGPT native | Relay/onion AI app importing current core services subpaths | Local `file:` link to core `0.20.2` |
+| POS, Tickets, p2pbuilders, Opengit bridge, hiverelay-test | Direct app/site/experiment consumers | Local `file:` links checked with lockfile metadata |
+
+## 13. Module Inventory
 
 | Subsystem | Key files |
 |---|---|
@@ -544,7 +559,7 @@ need to know which transport path succeeded.
 | Services package | `packages/services/builtin/*`, including poker provider code |
 | Release and fleet | `fleet/`, `scripts/`, `umbrel-app/`, `startos/`, release evidence docs |
 
-## 13. Trust Boundaries
+## 14. Trust Boundaries
 
 ```mermaid
 flowchart TD
@@ -581,7 +596,7 @@ Boundary summary:
 - Dashboard and fleet outputs are operational projections. Signed protocol
   entries and release evidence are the audit roots.
 
-## 14. End-To-End Mental Model
+## 15. End-To-End Mental Model
 
 ```mermaid
 flowchart LR

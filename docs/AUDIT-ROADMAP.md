@@ -93,7 +93,7 @@
 - [x] **4.46** Router discovery read boundary — public `/api/v1/router` now delegates through `api-router-read.js`, prefers `router.getStats()` for route counts, and exposes bounded/sanitized pubsub topic metadata instead of raw `routes()` or unbounded topic arrays.
 - [x] **4.47** Public status read boundary — public `/status` now delegates through `api-status-read.js`, always calls `getStats({ includeSecrets: false })`, and exposes shaped liveness, transport, service, disk, storage, and accounting aggregates instead of raw node stats or auth-expanded transport/registry fields.
 - [x] **4.48** Smoke evidence duplicate-check rejection — release and final handoff verifiers now reject duplicate release-image and Umbrel-package smoke check names instead of silently letting later rows overwrite earlier rows in the verifier map.
-- [x] **4.49** Smoke evidence critical-detail validation — release and final handoff verifiers now require the release-image and Umbrel-package smoke sidecars to prove the UI details that matter for Blindspark handoff: in-band dashboard WebSocket auth, review-mode defaults, setup/dashboard token controls, wallet save, first/second Umbrel boot review mode, stable identity, and wallet persistence.
+- [x] **4.49** Smoke evidence critical-detail validation — release and final handoff verifiers now require the release-image and Umbrel-package smoke sidecars to prove the UI details that matter for Blindspark handoff: in-band dashboard WebSocket auth, review-mode defaults, setup/dashboard token controls, wallet save, app-proxy-safe dashboard writes, bounded lease polling, setup dashboard-link behavior, first/second Umbrel boot review mode, stable identity, and wallet persistence.
 - [x] **4.50** Usage telemetry smoke proof validation — release and final handoff verifiers now require the usage telemetry smoke row to carry boolean bandwidth/poker enabled flags and non-negative numeric bandwidth and Poker counters, so release evidence cannot satisfy the telemetry gate with an empty, stringified, or negative-counter row.
 - [x] **4.51** Smoke runtime-version proof — release-image smoke now has its `/health.version` checked against the release semver, Umbrel package smoke records first/second boot health versions, and release/final handoff verifiers reject stale runtime-version proof rows before accepting package or reviewer evidence.
 - [x] **4.52** Image-manifest-before-smoke chronology — release and final handoff verifiers now return the image-manifest proof timestamp and reject release-image or Umbrel-package smoke sidecars generated before that manifest proof, matching the workflow order where the pinned multi-arch digest is proven before any package smoke can count.
@@ -151,7 +151,7 @@
 - [x] **4.104** StartOS registry raw metadata proof — `release:write-startos-registry-evidence` now validates raw workflow, registry, package, hash, and linked image-evidence metadata without trim-normalizing env values, so whitespace-padded registry URLs, package ids, package hashes, run ids, server URLs, or evidence paths fail before the public registry sidecar is written.
 - [x] **4.105** Release certificate raw metadata proof — `release:write-evidence` now validates raw workflow, release, image, surface, and sidecar metadata without trim-normalizing env values, so whitespace-padded run ids, tag SHAs, server URLs, image digests, registry URLs, PR URLs, or evidence paths fail before the final public release certificate is written.
 - [x] **4.106** Prerelease distribution-boundary proof — `release:verify-evidence` and `release:verify-handoff-evidence` now require `release.prerelease` to be a boolean and reject prerelease certificates that carry fleet rollout, official Umbrel PR, community-store, StartOS registry, package id, or registry-evidence facts, so preview releases cannot look partially promoted.
-- [x] **4.107** Full-release whole-fleet default proof — `release:prepare` and `release-surfaces.yml` already default normal releases to `channel=both`; `test/unit/prepare-release.test.js` now proves that an implicit full release bumps both `canary` and `stable`, and `npm run audit:workspace` guards the regression test plus the main README's high-fidelity Core3 graph.
+- [x] **4.107** Full-release whole-fleet default proof — `release:prepare`, `release-surfaces.yml`, and standalone `fleet:check-rollout` now default normal release evidence to `channel=both`; `test/unit/prepare-release.test.js` proves an implicit full release bumps both `canary` and `stable`, `test/unit/fleet-rollout-check.test.js` proves an implicit rollout check selects both channels, and `npm run audit:workspace` guards the regression tests plus the main README's high-fidelity Core3 graph.
 - [x] **4.108** Validated GitHub secret rotation helper — `release:apply-github-secrets` validates a local env file with the same full-release preflight before writing values to GitHub Secrets through `gh` stdin, rejects prerelease validation mode, and the failed preflight repair path now points operators at helper dry-run/apply steps.
 - [x] **4.109** GitHub secret apply failure redaction — `release:apply-github-secrets` now redacts exact stdin secrets, private-key blocks, and GitHub token-shaped values from `gh` failure output before printing, so the emergency release-secret repair path cannot leak credentials through wrapper or CLI error text.
 - [x] **4.110** Hermetic release env-file validation — `release:check-distribution-env --env-file` now validates only the candidate file plus explicit CLI release flags, so ambient shell secrets cannot mask a missing env-file entry before operators apply release credentials to GitHub.
@@ -159,6 +159,11 @@
 - [x] **4.112** Router rate-limit bucket cap — service RPC per-route/per-peer token buckets now have a bounded map with stale-bucket pruning before new peer buckets are accepted. A rotating-peer flood cannot grow router memory without bound, and existing buckets remain observable through router stats.
 - [x] **4.113** Data-plane gateway rate-limit bucket cap — the dedicated public `GatewayServer` now caps per-IP fixed-window buckets and prunes stale/malformed buckets before admitting a new IP bucket. Reverse-proxy or rotating-IP floods cannot turn the file-serving rate limiter into an unbounded memory sink.
 - [x] **4.114** Current ship handoff evidence refresh — the 2026-06-26 handoff now reflects current `main` at PR #139, including fresh post-merge Test and Docker workflow IDs plus the quorum-ranking, router-bucket, and gateway-bucket hardening sequence after the release-helper work.
+- [x] **4.115** Lease management API durability boundary — `/api/lease` and `/api/lease/config` now route through `api-lease.js`, which sanitizes paid-lease status payloads, counts only live lease-managed registry entries, and uses durable rate persistence before returning success. Persistence failures now roll the live rate back and return a stable `persist-failed` response instead of letting operator UI flows look successful when the write did not land.
+- [x] **4.116** Usage telemetry route shadow cleanup — `/api/usage` now preserves payout-eligible `usageLedger` receipts while surfacing dashboard bandwidth telemetry when a bandwidth receipt tracker exists, and `/api/poker/usage` resolves either the running poker service provider or a direct `node.pokerApp` before returning the blind-safe append/seat tally. This removes stale duplicate-route behavior that could make authenticated operator telemetry look empty or unavailable.
+- [x] **4.117** PearBrowser HTTPS relay transport alignment — PearBrowser desktop and mobile now declare `bare-https` directly and route relay GET/POST calls through scheme-aware HTTP/HTTPS transports, with mobile unit coverage for default `80`/`443` relay ports. This protects the default public `https://relay-*.p2phiverelay.xyz` gateway paths from silently using plain HTTP defaults.
+- [x] **4.118** PearBrowser public ecosystem metadata sync — `pearbrowser.com` has been refreshed to the bundled desktop release metadata (`v0.5.0`, production length `33841`), and `npm run audit:workspace` now guards the public-site hero/spec/manifest values against the desktop README plus the browser relay-transport dependency contract.
+- [x] **4.119** Release secret template hardening — `release:write-secret-template` now writes an owner-only local candidate env file outside the repo, refuses repo paths/symlink overwrites/accidental overwrites, and emits placeholders that fail validation until real GitHub, fleet, Umbrel, and StartOS values are pasted. The local validator, GitHub preflight summary, release docs, and ship handoff all point operators at this generated-template repair path before `release:apply-github-secrets`.
 
 ---
 
@@ -168,12 +173,13 @@ These are not code-only tasks. They require evidence from live infrastructure or
 external review-controlled stores before the full project goal can be marked
 done.
 
-Current masked-value preflight evidence: GitHub Actions run `28244297762` fails
+Current masked-value preflight evidence: GitHub Actions run `28284482503` fails
 on malformed `UMBREL_STORE_TOKEN`, `UMBREL_OFFICIAL_PR_TOKEN`,
 `UMBREL_OFFICIAL_FORK`, and `STARTOS_REGISTRY_URL`. Secret names are present,
-but GitHub does not expose values through `gh`; rotate with
-`npm run release:apply-github-secrets` and rerun the preflight before cutting a
-full release.
+but GitHub does not expose values through `gh`; generate a local candidate with
+`npm run release:write-secret-template`, validate it, rotate with
+`npm run release:apply-github-secrets`, and rerun the preflight before cutting
+a full release.
 
 - **Official Umbrel App Store:** the workflow can export the `blindspark/`
   package and open/update a draft `getumbrel/umbrel-apps` PR, but a real
@@ -217,7 +223,7 @@ full release.
   `api-service-read.js`,
   `api-router-read.js`,
   `api-reputation-read.js`,
-  `api-seed-publish.js`, `api-unseed-actions.js`, `api-ai-models.js`, and `api-subsidy.js`, and
+  `api-seed-publish.js`, `api-unseed-actions.js`, `api-ai-models.js`, `api-subsidy.js`, and `api-lease.js`, and
   `api-wizard-actions.js`, and `api-dashboard-routes.js`. The
   validation helper is shared by the management API plus dedicated gateway
   public catalog pagination, bucket/count calculation, content-type filter
@@ -483,6 +489,7 @@ full release.
   `packages/core/core/relay-node/api-overview.js`, and
   `packages/core/core/relay-node/api-ai-models.js`, and
   `packages/core/core/relay-node/api-subsidy.js`, and
+  `packages/core/core/relay-node/api-lease.js`, and
   `packages/core/core/relay-node/api-wizard-actions.js` with direct unit coverage in
   `test/unit/api-auth-helpers.test.js`,
   `test/unit/api-auth-failures.test.js`, `test/unit/api-alert-management.test.js`,
@@ -518,7 +525,7 @@ full release.
   `test/unit/api-unseed-actions.test.js`, and
   `test/unit/api-usage-telemetry.test.js`, and
   `test/unit/api-overview.test.js`, and `test/unit/api-ai-models.test.js`,
-  and `test/unit/api-subsidy.test.js`, and
+  and `test/unit/api-subsidy.test.js`, and `test/unit/api-lease.test.js`, and
   `test/unit/api-wizard-actions.test.js`.
   The management API and dedicated gateway catalog wrappers share the same
   catalog-read and query-clamp helpers, while route behavior remains covered by `api-auth`,

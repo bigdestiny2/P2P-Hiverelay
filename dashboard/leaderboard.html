@@ -280,6 +280,8 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
   var sortAsc = true;
   var ws = null;
   var refreshTimer = null;
+  var leaderboardRefreshBusy = false;
+  var REQUEST_TIMEOUT_MS = 10000;
 
   // --- Helpers ---
   function formatBytes(b) {
@@ -574,7 +576,7 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
 
   // --- Data Fetching ---
   function fetchLeaderboard() {
-    fetch('/api/reputation')
+    return fetchWithTimeout('/api/reputation')
       .then(function(res) { return res.json(); })
       .then(function(data) {
         var list = Array.isArray(data) ? data : (data.relays || data.leaderboard || []);
@@ -590,12 +592,36 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
   }
 
   function fetchMyPubkey() {
-    fetch('/api/overview')
+    return fetchWithTimeout('/api/overview')
       .then(function(res) { return res.json(); })
       .then(function(data) {
         myPubkey = data.pubkey || data.public_key || data.publicKey || null;
       })
       .catch(function() {});
+  }
+
+  function canPoll(force) {
+    return force === true || document.hidden !== true;
+  }
+
+  function fetchWithTimeout(path, opts) {
+    var options = Object.assign({}, opts || {});
+    if (typeof AbortController !== 'function') return fetch(path, options);
+    var controller = new AbortController();
+    var timeout = setTimeout(function() { controller.abort(); }, REQUEST_TIMEOUT_MS);
+    options.signal = controller.signal;
+    return fetch(path, options).finally(function() {
+      clearTimeout(timeout);
+    });
+  }
+
+  function refreshLeaderboardState(force) {
+    if (leaderboardRefreshBusy) return;
+    if (!canPoll(force)) return;
+    leaderboardRefreshBusy = true;
+    Promise.all([fetchLeaderboard(), fetchMyPubkey()]).finally(function() {
+      leaderboardRefreshBusy = false;
+    });
   }
 
   // --- WebSocket ---
@@ -609,6 +635,7 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
     try { sock.send(JSON.stringify({ type: 'auth', token: t })); } catch (e) {}
   }
   function connectWS() {
+    if (document.hidden === true) return;
     try {
       var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       ws = new WebSocket(proto + '//' + location.host + '/ws');
@@ -629,7 +656,8 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
       };
       ws.onclose = function() {
         setConnStatus('polling', 'POLLING');
-        setTimeout(connectWS, 5000);
+        ws = null;
+        if (document.hidden !== true) setTimeout(connectWS, 5000);
       };
       ws.onerror = function() {
         ws.close();
@@ -638,6 +666,12 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
       setConnStatus('polling', 'POLLING');
     }
   }
+
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden === true) return;
+    refreshLeaderboardState(true);
+    if (!ws) connectWS();
+  });
 
   // --- Sort Click Handlers ---
   document.querySelectorAll('thead th').forEach(function(th) {
@@ -655,12 +689,10 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
   });
 
   // --- Init ---
-  fetchMyPubkey();
-  fetchLeaderboard();
+  refreshLeaderboardState(true);
   connectWS();
   refreshTimer = setInterval(function() {
-    fetchLeaderboard();
-    fetchMyPubkey();
+    refreshLeaderboardState(false);
   }, 10000);
 
 })();

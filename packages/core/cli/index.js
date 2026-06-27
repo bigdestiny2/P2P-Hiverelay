@@ -787,7 +787,7 @@ async function startTestnet () {
   console.log('  SDK connect example:')
   console.log()
   console.log("    import Hyperswarm from 'hyperswarm'")
-  console.log("    import { HiveRelayClient } from 'p2p-hiverelay/client'")
+  console.log("    import { HiveRelayClient } from 'p2p-hiverelay-client'")
   console.log()
   console.log(`    const swarm = new Hyperswarm({ bootstrap: [${testnet.bootstrap.map(b => `{ host: '${b.host}', port: ${b.port} }`).join(', ')}] })`)
   console.log("    const client = new HiveRelayClient('./my-storage', { swarm })")

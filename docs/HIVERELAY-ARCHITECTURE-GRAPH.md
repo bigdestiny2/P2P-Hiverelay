@@ -35,6 +35,12 @@ flowchart LR
     StoreReviewer["Store reviewer<br/>Umbrel / StartOS"]:::actor
   end
 
+  subgraph LiveConsumers["Live Ecosystem Consumers"]
+    PearBrowser["PearBrowser desktop/mobile<br/>bundled relay client + HTTP catalog"]:::actor
+    PearPaste["PearPaste<br/>customer encrypted availability"]:::actor
+    AnonGPT["anonGPT native<br/>relay/onion AI consumer"]:::actor
+  end
+
   subgraph Ingress["Ingress And Discovery"]
     DHT["HyperDHT / Hyperswarm<br/>peer discovery + Noise transport"]:::ingress
     HTTP["HTTP gateway<br/>/catalog.json, /v1/hyper/:key/*"]:::ingress
@@ -98,6 +104,7 @@ flowchart LR
     Minimize["Metadata minimization<br/>epoch topics + salted public peer IDs"]:::guard
     AtomicWrite["Atomic persistence<br/>tmp-file + rename"]:::guard
     ReleaseGate["Release verifiers<br/>manifest, smoke, fleet, stores"]:::guard
+    ConsumerAudit["Ecosystem consumer audit<br/>local 0.20.2 pins + lockfile drift"]:::guard
   end
 
   subgraph Distribution["Live Distribution"]
@@ -119,6 +126,12 @@ flowchart LR
   Operator --> HTTP
   Operator --> Dashboard
   StoreReviewer --> Handoff
+  PearBrowser --> Browser
+  PearBrowser --> PearApp
+  PearPaste --> PearApp
+  PearPaste --> Custody
+  AnonGPT --> Services
+  AnonGPT --> AI
 
   DHT --> Seed
   DHT --> Proof
@@ -176,6 +189,9 @@ flowchart LR
   AtomicWrite --> Custody
   ReleaseGate --> GitHubRelease
   ReleaseGate --> ReleaseEvidence
+  ConsumerAudit --> PearBrowser
+  ConsumerAudit --> PearPaste
+  ConsumerAudit --> AnonGPT
 
   GitHubRelease --> GHCR
   GHCR --> Umbrel
@@ -226,9 +242,9 @@ flowchart TB
   Tests["npm audit, lint, workspace audit, unit tests"]:::step
   Image["build and push GHCR image<br/>version tag + multi-arch digest"]:::step
   ManifestProof["release-image-manifest-evidence.json<br/>linux/amd64 + linux/arm64"]:::proof
-  SmokeProof["release-image-smoke-evidence.json<br/>health, dashboard, setup, wallet, services"]:::proof
+  SmokeProof["release-image-smoke-evidence.json<br/>health, dashboard, setup, wallet, services<br/>app-proxy writes + setup links"]:::proof
   Prepare["release:prepare<br/>versions, fleet channels, Umbrel, StartOS"]:::step
-  UmbrelSmoke["umbrel-package-smoke-evidence.json<br/>app_proxy, /data, wallet/services persistence"]:::proof
+  UmbrelSmoke["umbrel-package-smoke-evidence.json<br/>app_proxy, /data, wallet/services persistence<br/>bounded lease polling + static markup"]:::proof
   StartOSBuild["startos/blindspark.s9pk<br/>start-sdk verify"]:::proof
   Commit["commit synchronized release surfaces to main"]:::step
   Fleet["raw fleet rollout<br/>canary + stable unless overridden"]:::live
@@ -269,6 +285,7 @@ flowchart TB
 | Web ingress | HTTP JSON + WebSocket | Dashboards, management APIs, replication bridge, DHT bridge |
 | Release artifact | OCI/Docker image index | GHCR multi-arch image for `linux/amd64` and `linux/arm64` |
 | Store packages | Umbrel app metadata, StartOS `.s9pk` | Home-server distribution and reviewer handoff |
+| Ecosystem pins | Local `file:` workspace links plus lockfile metadata | PearBrowser desktop, PearPaste, anonGPT, and other direct consumers default to the current HiveRelay line |
 
 ## API And Contract Map
 
@@ -286,6 +303,7 @@ flowchart TB
 | `hiverelay-services` | P2P service channel | Service catalog, RPC, and exact-topic subscriptions |
 | Paid leases | Seed-request gate and `/api/lease` management surfaces | Quotes, bearer vouchers, Cashu blind tokens, persistent replay guards |
 | Evidence sidecars | Release-controlled | JSON proof files hash-linked into `release-evidence.json` |
+| Ecosystem consumer audit | Local workspace-controlled | Rejects stale direct `p2p-hiverelay*` pins, stale monorepo-root lock entries, and unclassified consumers |
 
 ## Security Boundaries
 
@@ -295,6 +313,7 @@ flowchart TB
 | Privacy tiers | `public` can use relay storage/gateway; `local-first` and `p2p-only` block relay exposure through PolicyGuard. |
 | Operator controls | Wallet, wizard, service, restart, and AI model actions require management auth or protected app-proxy context. |
 | Dashboard WebSocket | Tokens are not accepted in URLs; dashboard auth is in-band. |
+| App-proxy UI writes | Umbrel smoke requires setup dashboard links, seed writes, lease writes, wallet writes, and service writes to stay app-proxy aware. |
 | Public state | Catalogs, peer lists, federation rows, diagnostics, and metrics are bounded and redacted before exposure. |
 | Lease privacy | Cashu blind-token issuance sees blinded points; redemption sees only the final proof and persistent spent marker. |
 | P2P frames | Decoders cap declared lengths before allocating large buffers and degrade malformed messages to protocol errors. |
@@ -305,8 +324,11 @@ flowchart TB
 
 | Use case | Path through the graph |
 |---|---|
-| Keep a Pear app online | Publisher signs seed request -> relay replicates Hypercore/Hyperdrive -> catalog/gateway exposes public app -> proof checks verify storage. |
+| PearBrowser bundle delivery | PearBrowser desktop uses local `p2p-hiverelay*` packages; PearBrowser mobile consumes HTTP catalog/gateway contracts with HTTPS relay transport. |
 | Browser/mobile app delivery | Browser reads `/catalog.json` then streams `/v1/hyper/:key/*path`; WebSocket bridges can replicate or perform DHT lookups. |
+| PearPaste private availability | PearPaste signs encrypted-availability requests through the split client/core packages; relay custody stores ciphertext only and emits receipts. |
+| anonGPT relay/onion AI | anonGPT imports the current local core services path, then routes AI/QVAC service access through the relay/onion service surface. |
+| Keep a Pear app online | Publisher signs seed request -> relay replicates Hypercore/Hyperdrive -> catalog/gateway exposes public app -> proof checks verify storage. |
 | Private encrypted availability | Publisher submits blind custody intent -> relay accepts ciphertext only -> receipts and anchor proofs account for durability. |
 | NAT fallback | Peers reserve/connect through `hiverelay-circuit` or `hiverelay-forward`; relay forwards opaque bounded bytes. |
 | Service marketplace | Clients discover service manifests over `hiverelay-services`, call opt-in providers, and receive signed usage receipts. |

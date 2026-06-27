@@ -192,6 +192,7 @@ test('release evidence writer records digest, gates, and external surfaces', asy
   t.ok(ISO_TIMESTAMP_PATTERN.test(body.generatedAt), 'release evidence generatedAt is an ISO timestamp')
   t.is(body.release.version, 'v9.9.9')
   t.is(body.release.channel, 'canary')
+  t.is(body.release.candidate, false)
   t.is(body.release.workflow.runUrl, `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/12345`)
   t.is(body.image.ref, `${EXPECTED_IMAGE_NAME}:9.9.9@${DIGEST}`)
   t.is(body.artifacts.startosPackage.sha256, S9PK_SHA)
@@ -1159,6 +1160,8 @@ test('release evidence writer allows successful prereleases to skip distribution
     HIVERELAY_STARTOS_REGISTRY_EVIDENCE: '',
     HIVERELAY_STARTOS_REGISTRY_EVIDENCE_SHA256: '',
     HIVERELAY_STARTOS_PACKAGE_ID: '',
+    STARTOS_REGISTRY_URL,
+    STARTOS_REGISTRY_PACKAGE_URL,
     HIVERELAY_UMBREL_OFFICIAL_PR_STATUS: 'skipped',
     HIVERELAY_UMBREL_OFFICIAL_PR_URL: '',
     HIVERELAY_UMBREL_OFFICIAL_PR_HEAD: '',
@@ -1179,6 +1182,57 @@ test('release evidence writer allows successful prereleases to skip distribution
   t.is(body.release.prerelease, true)
   t.is(body.gates.distributionPreflight, 'skipped')
   t.is(body.surfaces.startosReleaseAsset, 'uploaded')
+  t.is(body.surfaces.fleetRollout, 'skipped')
+})
+
+test('release evidence writer allows branch candidates to skip release asset publication', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-evidence-'))
+  t.teardown(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const outFile = path.join(dir, 'release-evidence.json')
+  await runEvidence(outFile, completeFullReleaseEnv({
+    HIVERELAY_RELEASE_VERSION: 'v9.9.9-ship.20260624.abcdef123456',
+    HIVERELAY_RELEASE_SEMVER: '9.9.9-ship.20260624.abcdef123456',
+    HIVERELAY_RELEASE_CHANNEL: 'none',
+    HIVERELAY_RELEASE_PRERELEASE: 'true',
+    HIVERELAY_RELEASE_CANDIDATE: 'true',
+    HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS: 'skipped',
+    HIVERELAY_RELEASE_SURFACES_STATUS: 'skipped',
+    HIVERELAY_STARTOS_RELEASE_ASSET_STATUS: 'skipped',
+    HIVERELAY_FLEET_ROLLOUT_STATUS: 'skipped',
+    HIVERELAY_FLEET_ROLLOUT_CHANNEL: '',
+    HIVERELAY_FLEET_ROLLOUT_EVIDENCE: '',
+    HIVERELAY_FLEET_ROLLOUT_EVIDENCE_SHA256: '',
+    HIVERELAY_STARTOS_REGISTRY_STATUS: 'skipped',
+    HIVERELAY_STARTOS_REGISTRY_URL: '',
+    HIVERELAY_STARTOS_REGISTRY_PACKAGE_URL: '',
+    HIVERELAY_STARTOS_REGISTRY_EVIDENCE: '',
+    HIVERELAY_STARTOS_REGISTRY_EVIDENCE_SHA256: '',
+    HIVERELAY_STARTOS_PACKAGE_ID: '',
+    HIVERELAY_UMBREL_OFFICIAL_PR_STATUS: 'skipped',
+    HIVERELAY_UMBREL_OFFICIAL_PR_URL: '',
+    HIVERELAY_UMBREL_OFFICIAL_PR_HEAD: '',
+    HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_SHA: '',
+    HIVERELAY_UMBREL_OFFICIAL_PR_STATE: '',
+    HIVERELAY_UMBREL_OFFICIAL_PR_DRAFT: '',
+    HIVERELAY_UMBREL_OFFICIAL_PR_BASE: '',
+    HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_OWNER: '',
+    HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_REF: '',
+    HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_OID: '',
+    HIVERELAY_UMBREL_COMMUNITY_STORE_VALIDATE_STATUS: 'skipped',
+    HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS: 'skipped',
+    HIVERELAY_UMBREL_COMMUNITY_STORE_COMMIT: '',
+    HIVERELAY_UMBREL_COMMUNITY_STORE_COMMIT_URL: ''
+  }))
+
+  const body = JSON.parse(await readFile(outFile, 'utf8'))
+  t.is(body.release.prerelease, true)
+  t.is(body.release.candidate, true)
+  t.is(body.surfaces.startosReleaseAsset, 'skipped')
+  t.is(body.surfaces.startosRegistryUrl, '')
+  t.is(body.surfaces.startosRegistryPackageUrl, '')
   t.is(body.surfaces.fleetRollout, 'skipped')
 })
 

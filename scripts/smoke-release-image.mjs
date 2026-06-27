@@ -187,10 +187,26 @@ function assertDashboardUiHardening (html) {
   assertIncludes(html, 'function setSvcModelBusy(busy)', 'dashboard AI model busy-state guard')
   assertIncludes(html, 'if (svcModelBusy) return;', 'dashboard AI model duplicate-write guard')
   assertIncludes(html, "msg.setAttribute('aria-live', 'polite');", 'dashboard AI model inline status')
+  assertIncludes(html, "fetchWithTimeout('/seed'", 'dashboard seed write app-proxy fetch')
+  assertIncludes(html, "fetchWithTimeout('/api/lease/config'", 'dashboard lease write app-proxy fetch')
+  assertNotIncludes(html, "fetch('/seed'", 'dashboard raw seed fetch')
+  assertNotIncludes(html, "fetch('/api/lease/config'", 'dashboard raw lease fetch')
+  assertIncludes(html, 'var leaseRefreshBusy = false;', 'dashboard lease polling busy state')
+  assertIncludes(html, 'function fetchLease(force)', 'dashboard force-aware lease polling')
+  assertIncludes(html, 'if (!canPoll(force, leaseRefreshBusy)) return Promise.resolve(null);', 'dashboard bounded lease polling guard')
+  assertIncludes(html, 'setInterval(function(){ fetchLease(false); }, 30000);', 'dashboard bounded lease polling interval')
+  assertNotIncludes(html, 'setInterval(function(){ fetchLease(); }, 30000);', 'dashboard unbounded lease polling interval')
+  assertNotIncludes(html, ' style=', 'dashboard inline styles')
+  assertNotIncludes(html, '.style.cssText', 'dashboard runtime style injection')
+  assertNotIncludes(html, '.innerHTML =', 'dashboard runtime HTML string injection')
+  assertNotIncludes(html, 'onerror=', 'dashboard inline error handlers')
   return {
     walletBusyState: true,
     serviceActionState: true,
-    aiModelAddState: true
+    aiModelAddState: true,
+    appProxyWrites: true,
+    leasePollingBounded: true,
+    staticMarkupSafe: true
   }
 }
 
@@ -200,10 +216,21 @@ function assertSetupWizardUiHardening (html) {
   assertIncludes(html, "if (wizardActionBusy && action !== 'select-mode') return", 'setup wizard duplicate action guard')
   assertIncludes(html, 'setWizardActionBusy(true, action)', 'setup wizard busy action start')
   assertIncludes(html, '.finally(() => { setWizardActionBusy(false, action) })', 'setup wizard busy action cleanup')
+  assertIncludes(html, 'href="dashboard" data-wizard-action="dashboard"', 'setup wizard app-relative dashboard link')
+  assertIncludes(html, 'document.querySelectorAll(\'[data-wizard-action="dashboard"][href]\').forEach(el => {', 'setup wizard dashboard link rewrite')
+  assertIncludes(html, "el.setAttribute('href', appPath('/dashboard'))", 'setup wizard app-proxy dashboard link')
+  assertNotIncludes(html, 'href="/dashboard"', 'setup wizard root dashboard link')
+  assertNotIncludes(html, ' style=', 'setup wizard inline styles')
   return {
     statusRegion: true,
-    actionLock: true
+    actionLock: true,
+    dashboardLinkAppPath: true,
+    staticMarkupSafe: true
   }
+}
+
+function assertNotIncludes (text, needle, label) {
+  if (text.includes(needle)) throw new Error(`${label} unexpectedly included ${needle}`)
 }
 
 async function waitForHealth (baseUrl, timeout) {

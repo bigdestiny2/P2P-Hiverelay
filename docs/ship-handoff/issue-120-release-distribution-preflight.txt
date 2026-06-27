@@ -1,0 +1,9 @@
+Release distribution preflight failed:
+- UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters
+- UMBREL_OFFICIAL_PR_TOKEN must be a GitHub token without whitespace or control characters
+- UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps
+- STARTOS_REGISTRY_URL must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames
+
+Repair path:
+- Put corrected release values in a local candidate env file outside the repo, for example /private/tmp/hiverelay-release-secrets.env.
+- Validate without publishing: npm run release:check-distribution-env -- --env-file /private/tmp/hiverelay-release-secrets.env --channel both --prerelease false

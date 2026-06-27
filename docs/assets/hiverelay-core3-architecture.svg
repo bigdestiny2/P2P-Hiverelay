@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="2200" height="1500" viewBox="0 0 2200 1500" role="img" aria-labelledby="title desc">
   <title id="title">HiveRelay Core3 architecture graph</title>
-  <desc id="desc">A detailed graph of HiveRelay Core3 actors, ingress APIs, HyperDHT and Hyperswarm transports, Protomux channels, compact-encoding schemas, relay kernel modules, opt-in services, evidence contracts, security boundaries, and live release distribution to fleet, Umbrel, and StartOS.</desc>
+  <desc id="desc">A detailed graph of HiveRelay Core3 actors, live consumers including PearBrowser, PearPaste, and anonGPT, ingress APIs, HyperDHT and Hyperswarm transports, Protomux channels, compact-encoding schemas, relay kernel modules, opt-in services, evidence contracts, security boundaries, and live release distribution to fleet, Umbrel, and StartOS.</desc>
   <defs>
     <style>
       .bg { fill: #f8fafc; }
@@ -46,7 +46,7 @@
   <path class="hairline" d="M0 126 H2200 M0 1242 H2200"/>
 
   <text class="title" x="52" y="58">HiveRelay Core3 Architecture</text>
-  <text class="subtitle" x="52" y="88">P2P relay backbone, browser gateway, blind custody plane, service bus, verifiable schemas, and full-release distribution to the live fleet and app stores.</text>
+  <text class="subtitle" x="52" y="88">P2P relay backbone for PearBrowser, PearPaste, anonGPT, browser gateways, blind custody, service RPC, verifiable schemas, and live fleet/app-store releases.</text>
 
   <rect class="panel" x="52" y="142" width="2096" height="110" rx="18"/>
   <text class="panel-title" x="76" y="176">TECHNICAL STANDARDS RAIL</text>
@@ -70,6 +70,7 @@
   <text class="chip-text" x="1688" y="217">Cashu NUT-00/01/02</text>
   <rect class="chip spec" x="1900" y="194" width="224" height="36"/>
   <text class="chip-text" x="1920" y="217">OCI multi-arch image</text>
+  <text class="micro" x="76" y="244">Consumer audit keeps PearBrowser desktop, PearPaste, anonGPT, and other direct p2p-hiverelay* packages on the current local release line.</text>
 
   <rect class="panel" x="52" y="286" width="270" height="690" rx="18"/>
   <text class="panel-title" x="76" y="320">ACTORS</text>
@@ -79,11 +80,11 @@
   <text class="node-text" x="96" y="416">signed seed and custody intents</text>
   <rect class="node actor" x="76" y="448" width="222" height="78"/>
   <text class="node-title" x="96" y="477">Pear / Bare app</text>
-  <text class="node-text" x="96" y="498">Hypercore, Hyperdrive</text>
-  <text class="node-text" x="96" y="516">direct P2P replication</text>
+  <text class="node-text" x="96" y="498">PearBrowser, PearPaste</text>
+  <text class="node-text" x="96" y="516">direct Hypercore replication</text>
   <rect class="node actor" x="76" y="548" width="222" height="78"/>
   <text class="node-title" x="96" y="577">Browser / mobile</text>
-  <text class="node-text" x="96" y="598">HTTP gateway reads</text>
+  <text class="node-text" x="96" y="598">PearBrowser mobile catalog</text>
   <text class="node-text" x="96" y="616">WebSocket bridge ingress</text>
   <rect class="node actor" x="76" y="648" width="222" height="78"/>
   <text class="node-title" x="96" y="677">Operator</text>
@@ -104,7 +105,7 @@
   <text class="node-title" x="398" y="377">HyperDHT / Hyperswarm</text>
   <text class="node-text" x="398" y="398">peer discovery, encrypted transport</text>
   <rect class="node ingress" x="378" y="440" width="282" height="86"/>
-  <text class="node-title" x="398" y="469">HTTP public gateway</text>
+  <text class="node-title" x="398" y="469">HTTP gateway</text>
   <text class="node-text" x="398" y="490">GET /catalog.json</text>
   <text class="node-text" x="398" y="508">GET /v1/hyper/:key/*path</text>
   <rect class="node ingress" x="378" y="544" width="282" height="86"/>
@@ -203,6 +204,7 @@
   <text class="node-title" x="1748" y="459">VRF</text>
   <rect class="node service" x="1866" y="424" width="120" height="58"/>
   <text class="node-title" x="1886" y="459">AI/QVAC</text>
+  <text class="node-text" x="1886" y="474">anonGPT</text>
   <rect class="node service" x="2004" y="424" width="120" height="58"/>
   <text class="node-title" x="2024" y="459">ZK</text>
   <rect class="node service" x="1728" y="500" width="120" height="58"/>
@@ -279,7 +281,7 @@
   <text class="node-text" x="1926" y="1128">verified sidecars</text>
   <rect class="node distro" x="1404" y="1156" width="148" height="58"/>
   <text class="node-title" x="1422" y="1186">Umbrel package</text>
-  <text class="node-text" x="1422" y="1204">app_proxy + /data</text>
+  <text class="node-text" x="1422" y="1204">app_proxy proof</text>
   <rect class="node distro" x="1572" y="1156" width="148" height="58"/>
   <text class="node-title" x="1590" y="1186">Official PR</text>
   <text class="node-text" x="1590" y="1204">review handoff</text>
@@ -293,22 +295,22 @@
   <rect class="panel" x="52" y="1266" width="2096" height="180" rx="18"/>
   <text class="panel-title" x="76" y="1300">PRIMARY USE-CASE FLOWS</text>
   <rect class="node contract" x="76" y="1324" width="380" height="82"/>
-  <text class="node-title" x="96" y="1353">Keep a Pear app online</text>
+  <text class="node-title" x="96" y="1353">PearBrowser bundle</text>
   <text class="node-text" x="96" y="1374">
-    <tspan x="96" y="1374">signed seed request -> Hypercore replication</tspan>
-    <tspan x="96" y="1392">catalog/gateway -> proof challenge</tspan>
+    <tspan x="96" y="1374">local p2p-hiverelay* packages</tspan>
+    <tspan x="96" y="1392">catalog/gateway -> HTTPS transport</tspan>
   </text>
   <rect class="node contract" x="484" y="1324" width="380" height="82"/>
-  <text class="node-title" x="504" y="1353">Private encrypted availability</text>
+  <text class="node-title" x="504" y="1353">PearPaste availability</text>
   <text class="node-text" x="504" y="1374">
-    <tspan x="504" y="1374">custody intent -> ciphertext receipt</tspan>
+    <tspan x="504" y="1374">encrypted customer paste custody</tspan>
     <tspan x="504" y="1392">anchor proof -> verifier audit</tspan>
   </text>
   <rect class="node contract" x="892" y="1324" width="380" height="82"/>
-  <text class="node-title" x="912" y="1353">Service marketplace</text>
+  <text class="node-title" x="912" y="1353">anonGPT / AI services</text>
   <text class="node-text" x="912" y="1374">
-    <tspan x="912" y="1374">hiverelay-services catalog -> provider RPC</tspan>
-    <tspan x="912" y="1392">signed usage receipt</tspan>
+    <tspan x="912" y="1374">relay/onion service discovery</tspan>
+    <tspan x="912" y="1392">QVAC or provider RPC + receipts</tspan>
   </text>
   <rect class="node contract" x="1300" y="1324" width="380" height="82"/>
   <text class="node-title" x="1320" y="1353">Browser and mobile delivery</text>

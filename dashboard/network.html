@@ -599,17 +599,29 @@ function renderRelayCard(data) {
   return card;
 }
 
+var REQUEST_TIMEOUT_MS = 10000;
+
+function fetchWithTimeout(path, opts) {
+  var options = Object.assign({}, opts || {});
+  if (typeof AbortController !== 'function') return fetch(path, options);
+  var controller = new AbortController();
+  var timeout = setTimeout(function() { controller.abort(); }, REQUEST_TIMEOUT_MS);
+  options.signal = controller.signal;
+  return fetch(path, options).finally(function() {
+    clearTimeout(timeout);
+  });
+}
+
 async function refresh() {
   try {
     var token = getUiToken();
     var detailedHeaders = {};
     if (token) detailedHeaders.Authorization = 'Bearer ' + token;
-    var res = await fetch('/api/network?detailed=1', {
-      signal: AbortSignal.timeout(10000),
+    var res = await fetchWithTimeout('/api/network?detailed=1', {
       headers: detailedHeaders
     });
     if (res.status === 401 || res.status === 403) {
-      res = await fetch('/api/network', { signal: AbortSignal.timeout(10000) });
+      res = await fetchWithTimeout('/api/network');
     }
     var network = await res.json();
   } catch (e) {
@@ -624,12 +636,26 @@ async function refresh() {
 var wsConnected = false;
 var ws = null;
 var pollTimer = null;
+var networkRefreshBusy = false;
 var POLL_INTERVAL_WS = 30000;   // 30s backup when WS is live
 var POLL_INTERVAL_HTTP = 10000; // 10s fallback when WS is down
 
+function canPoll(force) {
+  return force === true || document.hidden !== true;
+}
+
+function refreshNetwork(force) {
+  if (networkRefreshBusy) return;
+  if (!canPoll(force)) return;
+  networkRefreshBusy = true;
+  refresh().finally(function() {
+    networkRefreshBusy = false;
+  });
+}
+
 function setPollInterval(ms) {
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(refresh, ms);
+  pollTimer = setInterval(function() { refreshNetwork(false); }, ms);
 }
 
 function getUiToken() {
@@ -642,6 +668,7 @@ function sendWsAuth(sock) {
   try { sock.send(JSON.stringify({ type: 'auth', token: t })); } catch (e) {}
 }
 function connectWS() {
+  if (document.hidden === true) return;
   var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   var url = proto + '//' + location.host + '/ws';
 
@@ -672,13 +699,19 @@ function connectWS() {
     // Fall back to fast HTTP polling
     setPollInterval(POLL_INTERVAL_HTTP);
     // Attempt reconnect after 3s
-    setTimeout(connectWS, 3000);
+    if (document.hidden !== true) setTimeout(connectWS, 3000);
   };
 
   ws.onerror = function() {
     // onclose will fire after this — reconnect handled there
   };
 }
+
+document.addEventListener('visibilitychange', function() {
+  if (document.hidden === true) return;
+  refreshNetwork(true);
+  if (!ws) connectWS();
+});
 
 var _lastNetwork = null;
 
@@ -785,7 +818,7 @@ function renderNetwork(network) {
 }
 
 // Initial load + start polling + try WS
-refresh();
+refreshNetwork(true);
 setPollInterval(POLL_INTERVAL_HTTP);
 connectWS();
 </script>

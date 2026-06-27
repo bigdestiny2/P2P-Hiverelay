@@ -16,7 +16,7 @@ Usage:
 Options:
   --target <tag>              Release tag expected on each relay
   --target-sha <sha>          Expected commit SHA (defaults to git rev-parse tag)
-  --channel <name|both|all>   Relay channel to check (default: canary)
+  --channel <name|both|all>   Relay channel to check (default: both)
   --relays <path>             Fleet inventory JSON (default: fleet/relays.json)
   --channels <path>           Fleet channel targets JSON (default: fleet/channels.json)
   --ssh-command <path>        SSH executable/fixture command (default: ssh)
@@ -60,7 +60,7 @@ if (!/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(target)) {
   die(`Invalid --target "${target}". Expected vX.Y.Z.`)
 }
 
-const channel = args.channel || process.env.HIVERELAY_FLEET_CHANNEL || 'canary'
+const channel = args.channel || process.env.HIVERELAY_FLEET_CHANNEL || 'both'
 const relaysPath = path.resolve(args.relays || path.join(repoRoot, 'fleet', 'relays.json'))
 const channelsPath = path.resolve(args.channels || path.join(repoRoot, 'fleet', 'channels.json'))
 const sshCommand = validateLocalCommand(args.sshCommand || process.env.HIVERELAY_FLEET_SSH_COMMAND || 'ssh')

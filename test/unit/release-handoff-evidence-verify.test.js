@@ -287,8 +287,8 @@ function releaseImageSmokeEvidence (opts = {}) {
     imageDigest: IMAGE_DIGEST,
     checks: [
       { name: 'health', status: 'passed', version: semver },
-      { name: 'dashboard', status: 'passed', serviceManager: true, walletControls: true, tokenMeta: true, walletBusyState: true, serviceActionState: true, aiModelAddState: true },
-      { name: 'setupWizard', status: 'passed', editMode: true, statusRegion: true, actionLock: true },
+      { name: 'dashboard', status: 'passed', serviceManager: true, walletControls: true, tokenMeta: true, walletBusyState: true, serviceActionState: true, aiModelAddState: true, appProxyWrites: true, leasePollingBounded: true, staticMarkupSafe: true },
+      { name: 'setupWizard', status: 'passed', editMode: true, statusRegion: true, actionLock: true, dashboardLinkAppPath: true, staticMarkupSafe: true },
       { name: 'dashboardToken', status: 'passed', exposedViaMeta: true },
       { name: 'dashboardWebSocket', status: 'passed', queryTokenRejected: true, inBandAuth: true, updateReceived: true },
       { name: 'usageTelemetry', status: 'passed', bandwidth: { enabled: true, count: 0, bytes: 0, bandwidthBytes: 0 }, poker: { enabled: false, tables: 0, appends: 0, seats: 0 } },
@@ -314,13 +314,13 @@ function umbrelSmokeEvidence (opts = {}) {
     composePath: 'umbrel-app/docker-compose.yml',
     checks: [
       { name: 'composeSafety', status: 'passed', composePath: 'umbrel-app/docker-compose.yml' },
-      { name: 'firstBoot', status: 'passed', dashboard: true, setup: true, serviceCatalog: true, dashboardUiHardening: true, setupUiHardening: true, acceptMode: 'review', healthVersion: semver },
+      { name: 'firstBoot', status: 'passed', dashboard: true, setup: true, serviceCatalog: true, dashboardUiHardening: true, appProxyWrites: true, leasePollingBounded: true, dashboardStaticMarkupSafe: true, setupUiHardening: true, dashboardLinkAppPath: true, setupStaticMarkupSafe: true, acceptMode: 'review', healthVersion: semver },
       { name: 'dashboardWebSocket', status: 'passed', queryTokenRejected: true, inBandAuth: true, updateReceived: true },
       { name: 'acceptModeDefault', status: 'passed', mode: 'review' },
       { name: 'usageTelemetry', status: 'passed', bandwidth: { enabled: true, count: 0, bytes: 0, bandwidthBytes: 0 }, poker: { enabled: false, tables: 0, appends: 0, seats: 0 } },
       { name: 'walletWrite', status: 'passed', destinationSaved: true },
       { name: 'servicesSave', status: 'passed', plugins: EXPECTED_SMOKE_SERVICE_PLUGINS, restartRequired: true },
-      { name: 'secondBoot', status: 'passed', dashboard: true, setup: true, serviceCatalog: true, dashboardUiHardening: true, setupUiHardening: true, acceptMode: 'review', healthVersion: semver },
+      { name: 'secondBoot', status: 'passed', dashboard: true, setup: true, serviceCatalog: true, dashboardUiHardening: true, appProxyWrites: true, leasePollingBounded: true, dashboardStaticMarkupSafe: true, setupUiHardening: true, dashboardLinkAppPath: true, setupStaticMarkupSafe: true, acceptMode: 'review', healthVersion: semver },
       { name: 'identityPersistence', status: 'passed', publicKeyStable: true },
       { name: 'walletPersistence', status: 'passed', destinationPersisted: true },
       {
@@ -1236,11 +1236,27 @@ test('release handoff verifier rejects stale critical smoke proof details', asyn
       }
     },
     {
+      label: 'release-image-smoke dashboard appProxyWrites',
+      smokePath: 'release-image-smoke-evidence.json',
+      releaseShaKey: 'imageSmokeSha',
+      mutate: (smoke) => {
+        smoke.checks.find(check => check.name === 'dashboard').appProxyWrites = false
+      }
+    },
+    {
       label: 'release-image-smoke setupWizard actionLock',
       smokePath: 'release-image-smoke-evidence.json',
       releaseShaKey: 'imageSmokeSha',
       mutate: (smoke) => {
         smoke.checks.find(check => check.name === 'setupWizard').actionLock = false
+      }
+    },
+    {
+      label: 'release-image-smoke setupWizard dashboardLinkAppPath',
+      smokePath: 'release-image-smoke-evidence.json',
+      releaseShaKey: 'imageSmokeSha',
+      mutate: (smoke) => {
+        smoke.checks.find(check => check.name === 'setupWizard').dashboardLinkAppPath = false
       }
     },
     {
@@ -1276,11 +1292,27 @@ test('release handoff verifier rejects stale critical smoke proof details', asyn
       }
     },
     {
+      label: 'umbrel-package-smoke firstBoot appProxyWrites',
+      smokePath: 'umbrel-package-smoke-evidence.json',
+      releaseShaKey: 'umbrelSmokeSha',
+      mutate: (smoke) => {
+        smoke.checks.find(check => check.name === 'firstBoot').appProxyWrites = false
+      }
+    },
+    {
       label: 'umbrel-package-smoke secondBoot setupUiHardening',
       smokePath: 'umbrel-package-smoke-evidence.json',
       releaseShaKey: 'umbrelSmokeSha',
       mutate: (smoke) => {
         smoke.checks.find(check => check.name === 'secondBoot').setupUiHardening = false
+      }
+    },
+    {
+      label: 'umbrel-package-smoke secondBoot setupStaticMarkupSafe',
+      smokePath: 'umbrel-package-smoke-evidence.json',
+      releaseShaKey: 'umbrelSmokeSha',
+      mutate: (smoke) => {
+        smoke.checks.find(check => check.name === 'secondBoot').setupStaticMarkupSafe = false
       }
     },
     {

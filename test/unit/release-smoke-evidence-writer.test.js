@@ -66,13 +66,22 @@ function assertSmokeWriterPublicSafety (t, source, label) {
     t.ok(source.includes('walletBusyState'), `${label} records wallet busy-state proof`)
     t.ok(source.includes('serviceActionState'), `${label} records service action-state proof`)
     t.ok(source.includes('aiModelAddState'), `${label} records AI model action-state proof`)
+    t.ok(source.includes('appProxyWrites'), `${label} records app-proxy write proof`)
+    t.ok(source.includes('leasePollingBounded'), `${label} records bounded lease polling proof`)
+    t.ok(source.includes('staticMarkupSafe'), `${label} records static-markup safety proof`)
     t.ok(source.includes('statusRegion'), `${label} records setup status-region proof`)
     t.ok(source.includes('actionLock'), `${label} records setup action-lock proof`)
+    t.ok(source.includes('dashboardLinkAppPath'), `${label} records setup dashboard-link proof`)
   }
 
   if (label === 'Umbrel package smoke') {
     t.ok(source.includes('dashboardUiHardening'), `${label} records dashboard UI-hardening proof`)
     t.ok(source.includes('setupUiHardening'), `${label} records setup UI-hardening proof`)
+    t.ok(source.includes('appProxyWrites'), `${label} records app-proxy write proof`)
+    t.ok(source.includes('leasePollingBounded'), `${label} records bounded lease polling proof`)
+    t.ok(source.includes('dashboardStaticMarkupSafe'), `${label} records dashboard static-markup proof`)
+    t.ok(source.includes('dashboardLinkAppPath'), `${label} records setup dashboard-link proof`)
+    t.ok(source.includes('setupStaticMarkupSafe'), `${label} records setup static-markup proof`)
   }
 
   const checkIndex = source.indexOf('assertPublicSafeSmoke(body')

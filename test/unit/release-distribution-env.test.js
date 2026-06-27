@@ -126,6 +126,11 @@ test('release distribution env check fails stable releases without every externa
   t.ok(res.stderr.includes('UMBREL_OFFICIAL_FORK'))
   t.ok(res.stderr.includes('STARTOS_DEVELOPER_KEY_PEM'))
   t.ok(res.stderr.includes('STARTOS_REGISTRY_URL'))
+  t.ok(res.stderr.includes('Repair path:'))
+  t.ok(res.stderr.includes('npm run release:write-secret-template -- --out /private/tmp/hiverelay-release-secrets.env'))
+  t.ok(res.stderr.includes('npm run release:check-distribution-env -- --env-file /private/tmp/hiverelay-release-secrets.env --channel canary --prerelease false'))
+  t.ok(res.stderr.includes('npm run release:apply-github-secrets -- --repo bigdestiny2/P2P-Hiverelay --env-file /private/tmp/hiverelay-release-secrets.env'))
+  t.ok(res.stderr.includes('release-distribution-preflight.yml'))
 
   const body = await readFile(out, 'utf8')
   t.ok(body.includes('HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS=failed'))
@@ -287,6 +292,9 @@ test('release distribution env check rejects placeholder GitHub tokens before ch
   t.is(res.status, 1)
   t.ok(res.stderr.includes('UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters'))
   t.ok(res.stderr.includes('UMBREL_OFFICIAL_PR_TOKEN must be a GitHub token without whitespace or control characters'))
+  t.ok(res.stderr.includes('Repair path:'))
+  t.absent(res.stderr.includes(TEST_GITHUB_TOKEN))
+  t.absent(res.stderr.includes(TEST_GITHUB_TOKEN_ALT))
 
   const body = await readFile(out, 'utf8')
   t.ok(body.includes('HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS=failed'))

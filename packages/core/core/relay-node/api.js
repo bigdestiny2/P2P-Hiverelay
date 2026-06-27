@@ -104,6 +104,10 @@ import {
   buildSubsidyStatusPayload,
   updateSubsidyDestination
 } from './api-subsidy.js'
+import {
+  buildLeaseStatusPayload,
+  runLeaseConfigAction
+} from './api-lease.js'
 import { runWizardAction } from './api-wizard-actions.js'
 import {
   runModeSwitchAction,
@@ -584,18 +588,21 @@ export class RelayAPI extends EventEmitter {
       if (path === '/api/poker/usage' && req.method === 'GET') {
         if (!this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return
         const pk = this._getPokerServiceProvider()
-        if (!pk.ok) return this._json(res, { error: pk.error }, pk.status)
-        const tables = typeof pk.provider.listTables === 'function' ? pk.provider.listTables() : []
+        const provider = pk.ok ? pk.provider : this._getPokerApp()
+        if (!provider) return this._json(res, { error: pk.error }, pk.status)
+        const tables = typeof provider.listTables === 'function' ? provider.listTables() : []
         let appends = 0
         let seats = 0
         const perTable = tables.map((t) => {
-          const a = t.length || 0
-          const w = t.writers || 0
+          const rawAppends = Number(t && t.length)
+          const a = Number.isFinite(rawAppends) && rawAppends > 0 ? rawAppends : 0
+          const w = tableWriterCount(t && t.writers)
           appends += a
           seats += w
           return { tableKey: t.tableKey, appends: a, writers: w, lastTs: t.lastTs || null }
         })
         return this._json(res, {
+          enabled: true,
           service: 'poker',
           tables: tables.length,
           appends, // total player-signed log entries (relay-unforgeable)
@@ -643,6 +650,7 @@ export class RelayAPI extends EventEmitter {
       }
       if (path === '/api/usage' && req.method === 'GET') {
         if (!this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return
+        if (this.node._bandwidthReceipt) return this._json(res, this._getUsageTelemetryPayload())
         const verified = this.node.usageLedger
           ? this.node.usageLedger.digest()
           : { count: 0, totals: {}, receiptRoot: null }
@@ -775,15 +783,11 @@ export class RelayAPI extends EventEmitter {
           if (!this._checkAuth(req)) {
             return this._json(res, { error: formatErr('NOT_ALLOWED', 'lease status requires API key or localhost') }, 403)
           }
-          if (!this.node.leaseManager) return this._json(res, { enabled: false })
-          let activeLeases = 0
-          const now = Date.now()
-          if (this.node.appRegistry && this.node.appRegistry.apps) {
-            for (const [, entry] of this.node.appRegistry.apps) {
-              if (entry && entry.leaseManaged === true && Number.isFinite(entry.retainUntil) && entry.retainUntil > now) activeLeases++
-            }
-          }
-          return this._json(res, { ...this.node.leaseManager.getSummary(), activeLeases })
+          const result = buildLeaseStatusPayload({
+            leaseManager: this.node.leaseManager,
+            appRegistry: this.node.appRegistry
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // Signed subsidy claim export — what the Phase-2 coordinator
@@ -792,16 +796,6 @@ export class RelayAPI extends EventEmitter {
           if (!this._requireAuth(req, res, 'Unauthorized — subsidy claim requires API key or localhost')) return
           const result = buildSubsidyClaimPayload({ subsidyAccrual: this.node.subsidyAccrual })
           return this._json(res, result.payload, result.status || 200)
-        }
-
-        if (path === '/api/usage') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/usage')) return
-          return this._json(res, this._getUsageTelemetryPayload())
-        }
-
-        if (path === '/api/poker/usage') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/poker/usage')) return
-          return this._json(res, this._getPokerUsageTelemetryPayload())
         }
 
         if (path === '/api/alerts') {
@@ -1109,18 +1103,11 @@ export class RelayAPI extends EventEmitter {
           if (!this._checkAuth(req)) {
             return this._json(res, { error: formatErr('NOT_ALLOWED', 'lease config requires API key or localhost') }, 403)
           }
-          if (!this.node.leaseManager) {
-            return this._json(res, { error: formatErr('NOT_ENABLED', 'paid seeding is off — set lease.enabled in config and restart') }, 409)
-          }
-          if (!body || !Number.isFinite(body.satsPerGiBDay)) {
-            return this._json(res, { error: formatErr('BAD_REQUEST', 'satsPerGiBDay (number) required') }, 400)
-          }
-          try {
-            const rate = this.node.leaseManager.setRate(body.satsPerGiBDay)
-            return this._json(res, { ok: true, satsPerGiBDay: rate })
-          } catch (err) {
-            return this._json(res, { error: formatErr('BAD_REQUEST', err.message) }, 400)
-          }
+          const result = await runLeaseConfigAction({
+            body,
+            leaseManager: this.node.leaseManager
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         if (path.startsWith('/api/wizard/')) {
