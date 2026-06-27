@@ -33,7 +33,7 @@ release environment.
 | `npm run release:check-github-setup -- --repo bigdestiny2/P2P-Hiverelay` | Pass | Required GitHub release secret names are present (`6/6`); this confirms setup shape only because GitHub Secrets values are intentionally not readable. |
 | `npm run release:check-distribution-env -- --channel both --prerelease false` | Blocked locally | This shell does not contain the required live-release values: fleet SSH key, Umbrel community token, official Umbrel PR token/fork, StartOS developer key, and StartOS registry URL. Validate a generated env file and rerun the GitHub Actions preflight before tagging. |
 | `cd startos && make digest` | Blocked externally | `ghcr.io/bigdestiny2/p2p-hiverelay:0.20.2` does not resolve yet, so the current StartOS `.s9pk` verify path cannot prove the package until the release image is published. |
-| `npm run docs:update-ship-handoff -- --date 2026-06-26 --ref 72d0297 --branch main --pr 140 --test-run 28256445868 --docker-run 28256445870 --preflight-run 28284482503 --preflight-url https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/28284482503 --preflight-head 72d0297 --preflight-branch main --preflight-created-at 2026-06-27T08:56:09Z --preflight-state completed/failure --superseded-preflight-success 28238930607 --superseded-preflight-success-head 1ffffe6 --check` | Pass | Generated ship handoff is in sync and now records the ecosystem parity gate plus the StartOS GHCR image/digest blocker. |
+| `npm run docs:update-ship-handoff -- --date 2026-06-26 --ref 5934dbc522f891c193017f550a95d4edfa0fafa6 --branch main --pr 141 --test-run 28292603571 --docker-run 28292603573 --preflight-run 28292692235 --preflight-url https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/28292692235 --preflight-head 5934dbc522f891c193017f550a95d4edfa0fafa6 --preflight-branch main --preflight-created-at 2026-06-27T14:55:58Z --preflight-state completed/failure --superseded-preflight-success 28238930607 --superseded-preflight-success-head 1ffffe6 --check` | Pass | Generated ship handoff is in sync with merged PR #141 and now records the ecosystem parity gate, fresh current-main preflight blocker, and StartOS GHCR image/digest blocker. |
 | `node --test test/unit/ecosystem-consumers.test.js` | Pass | `12/12` tests and `55/55` assertions. The unit fixture explicitly keeps PearBrowser desktop, PearPaste, Pear POS, Pear Tickets, p2pbuilders, Opengit's optional bridge, anonGPT native, and `hiverelay-test` in the current-consumer inventory, rejects PearPaste recovery/spec doc regressions back to the old `0.9.x` client guidance, and proves stale app package/lock defaults can be synced forward. |
 | `npm audit --audit-level=high` | Pass | npm reported `found 0 vulnerabilities` for the HiveRelay workspace. |
 | `git diff --check` | Pass | No whitespace errors in the current HiveRelay diff. |
@@ -148,8 +148,8 @@ These are still not proven by local tests:
 
 ## Current Blockers
 
-The latest recorded side-effect-free distribution preflight is run `28284482503`
-at `main@72d0297`, created `2026-06-27T08:56:09Z`, and it failed because
+The latest recorded side-effect-free distribution preflight is run `28292692235`
+at `main@5934dbc`, created `2026-06-27T14:55:58Z`, and it failed because
 GitHub-hosted release values are malformed:
 
 This was rechecked with `gh run list` / `gh run view` on 2026-06-27; no newer
