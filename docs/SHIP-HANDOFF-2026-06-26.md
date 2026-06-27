@@ -8,9 +8,9 @@ Docker/runtime, and env-file hardening work through the inspected commit.
 ## Current Source State
 
 - Branch: `main`
-- HEAD inspected: `c399b5f`
-- Commit subject: `release: gate ecosystem latest on npm publish`
-- Worktree: clean snapshot (`main@c399b5f`)
+- HEAD inspected: `5e56e95`
+- Commit subject: `release: guard ecosystem consumers on npm latest`
+- Worktree: clean snapshot (`main@5e56e95`)
 - Package version: `p2p-hiverelay-monorepo@0.20.2`
 - Architecture graph: `docs/HIVERELAY-ARCHITECTURE-GRAPH.md` and
   `docs/assets/hiverelay-core3-architecture.svg`
@@ -19,8 +19,8 @@ Docker/runtime, and env-file hardening work through the inspected commit.
 
 - Inspected commit CI finished green:
   audit, lint, unit, integration, and Bare tests passed.
-- Post-merge main Test run: `28295902190` passed.
-- Post-merge Docker snapshot publish: `28295902210` passed.
+- Post-merge main Test run: `28296869625` passed.
+- Post-merge Docker snapshot publish: `28296869614` passed.
 - Release default probes were regenerated from
   `scripts/check-release-distribution-env.mjs`:
   - Full releases with no explicit channel resolve to `both`.
@@ -37,9 +37,9 @@ Docker/runtime, and env-file hardening work through the inspected commit.
 
 ## Current Red
 
-Release distribution preflight run: `28295985241` (issue #120).
-- Run URL: https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/28295985241
-- Latest checked preflight: state `completed/failure`, head `main@c399b5f`, created `2026-06-27T17:07:09Z`.
+Release distribution preflight run: `28297002418` (issue #120).
+- Run URL: https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/28297002418
+- Latest checked preflight: state `completed/failure`, head `main@5e56e95`, created `2026-06-27T17:48:24Z`.
 - Earlier passing preflight `28238930607` at `1ffffe6` is superseded by this newer failure.
 
 The run is side-effect-free and is failing on malformed GitHub-hosted release
