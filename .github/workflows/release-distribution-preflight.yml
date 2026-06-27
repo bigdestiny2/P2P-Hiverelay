@@ -39,6 +39,7 @@ jobs:
       UMBREL_STORE_TOKEN: ${{ secrets.UMBREL_STORE_TOKEN }}
       UMBREL_OFFICIAL_PR_TOKEN: ${{ secrets.UMBREL_OFFICIAL_PR_TOKEN }}
       UMBREL_OFFICIAL_FORK: ${{ secrets.UMBREL_OFFICIAL_FORK }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       STARTOS_DEVELOPER_KEY_PEM: ${{ secrets.STARTOS_DEVELOPER_KEY_PEM }}
       STARTOS_REGISTRY_URL: ${{ secrets.STARTOS_REGISTRY_URL }}
       FLEET_SSH_PRIVATE_KEY: ${{ secrets.FLEET_SSH_PRIVATE_KEY }}
@@ -91,6 +92,7 @@ jobs:
             echo "- Effective channel: \`${HIVERELAY_RELEASE_EFFECTIVE_CHANNEL:-unknown}\`"
             echo "- Distribution preflight: \`${HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS:-unknown}\`"
             echo "- Release surfaces: \`${HIVERELAY_RELEASE_SURFACES_STATUS:-not-started}\`"
+            echo "- npm publish: \`${HIVERELAY_NPM_PUBLISH_STATUS:-not-checked}\`"
             echo "- Fleet rollout: \`${HIVERELAY_FLEET_ROLLOUT_STATUS:-not-checked}\`"
             echo "- Umbrel community store: \`${HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS:-not-checked}\`"
             echo "- Official Umbrel PR: \`${HIVERELAY_UMBREL_OFFICIAL_PR_STATUS:-not-checked}\`"

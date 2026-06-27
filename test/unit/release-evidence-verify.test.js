@@ -191,6 +191,7 @@ function releaseEvidence (opts) {
     },
     surfaces: {
       metadataCommit: prerelease ? 'skipped' : 'committed',
+      npmPackages: prerelease ? 'skipped' : (opts.npmPackages || 'published'),
       startosReleaseAsset: candidate ? 'skipped' : 'uploaded',
       fleetRollout: prerelease ? 'skipped' : 'verified',
       fleetRolloutChannel: prerelease ? '' : 'both',
@@ -2633,6 +2634,7 @@ test('release evidence verifier rejects malformed prerelease boundary facts', as
   const cases = [
     ['non-boolean prerelease flag', release => { release.release.prerelease = 'true' }, 'release.prerelease must be a boolean'],
     ['non-prerelease candidate flag', release => { release.release.prerelease = false; release.release.candidate = true }, 'release.candidate requires release.prerelease=true'],
+    ['npm packages', release => { release.surfaces.npmPackages = 'published' }, 'prerelease npm packages'],
     ['registry URL', release => { release.surfaces.startosRegistryUrl = STARTOS_REGISTRY_URL }, 'prerelease StartOS registry URL'],
     ['package id', release => { release.surfaces.startosPackageId = 'blindspark' }, 'prerelease StartOS package id'],
     ['official PR URL', release => { release.surfaces.umbrelOfficial.prUrl = 'https://github.com/getumbrel/umbrel-apps/pull/123' }, 'prerelease official Umbrel PR URL'],

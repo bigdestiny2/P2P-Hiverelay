@@ -66,6 +66,7 @@ test('release secret template writer creates private placeholder candidate outsi
   t.ok(body.includes('UMBREL_STORE_TOKEN=REPLACE_WITH_GITHUB_TOKEN_FOR_COMMUNITY_STORE'))
   t.ok(body.includes('UMBREL_OFFICIAL_PR_TOKEN=REPLACE_WITH_GITHUB_TOKEN_FOR_OFFICIAL_UMBREL_PR'))
   t.ok(body.includes('UMBREL_OFFICIAL_FORK=REPLACE_OWNER/umbrel-apps'))
+  t.ok(body.includes('NPM_TOKEN=REPLACE_WITH_NPM_AUTOMATION_TOKEN'))
   t.ok(body.includes('STARTOS_DEVELOPER_KEY_PEM<<STARTOS_KEY'))
   t.ok(body.includes('STARTOS_REGISTRY_URL=REPLACE_WITH_PUBLIC_HTTPS_REGISTRY_URL'))
   t.absent(/gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}/.test(body))
@@ -78,6 +79,7 @@ test('release secret template writer creates private placeholder candidate outsi
   t.is(check.status, 1)
   t.ok(check.stderr.includes('FLEET_SSH_PRIVATE_KEY must be a private key block'))
   t.ok(check.stderr.includes('UMBREL_STORE_TOKEN must be a GitHub token'))
+  t.ok(check.stderr.includes('NPM_TOKEN must be an npm automation token'))
   t.ok(check.stderr.includes('STARTOS_REGISTRY_URL must be a public https URL'))
 })
 

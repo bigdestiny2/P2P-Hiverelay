@@ -306,6 +306,7 @@ function assertReleaseEvidenceSchema (body) {
   requireOnlyKeys('release evidence Umbrel smoke ref', body.gates.umbrelPackageSmokeEvidence, ['path', 'sha256'])
   requireOnlyKeys('release evidence surfaces', body.surfaces, [
     'metadataCommit',
+    'npmPackages',
     'startosReleaseAsset',
     'fleetRollout',
     'fleetRolloutChannel',
@@ -352,6 +353,7 @@ async function verifyReleaseHandoffs (release, inputs) {
   }
 
   requireOneOf('release.channel', release.release.channel, ['canary', 'stable', 'both'])
+  requireOneOf('npm packages', release.surfaces?.npmPackages, ['published', 'current'])
   requireOneOf('official Umbrel PR status', release.surfaces?.umbrelOfficial?.status, ['draft-pr-ready'])
   requirePattern('official Umbrel PR URL', release.surfaces.umbrelOfficial.prUrl, OFFICIAL_UMBREL_PR_URL_PATTERN)
   requirePattern('official Umbrel PR head', release.surfaces.umbrelOfficial.head, /^[A-Za-z0-9_.-]+:[A-Za-z0-9._/-]{1,128}$/)
@@ -417,6 +419,7 @@ function verifyPrereleaseSkips (release) {
   requireOneOf('prerelease release channel', release.release?.channel, ['none'])
   requireOneOf('prerelease distribution preflight', release.gates?.distributionPreflight, ['skipped'])
   requireOneOf('prerelease metadata surfaces', release.surfaces?.metadataCommit, ['skipped'])
+  requireOneOf('prerelease npm packages', release.surfaces?.npmPackages, ['skipped'])
   requireOneOf('prerelease fleet rollout', release.surfaces?.fleetRollout, ['skipped'])
   requireOneOf('prerelease fleet rollout channel', release.surfaces?.fleetRolloutChannel || 'skipped', ['skipped'])
   requireOneOf('prerelease fleet rollout evidence path', release.surfaces?.fleetRolloutEvidence?.path || 'skipped', ['skipped'])

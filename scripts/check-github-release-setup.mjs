@@ -7,6 +7,7 @@ const REQUIRED_SECRETS = [
   'UMBREL_STORE_TOKEN',
   'UMBREL_OFFICIAL_PR_TOKEN',
   'UMBREL_OFFICIAL_FORK',
+  'NPM_TOKEN',
   'STARTOS_DEVELOPER_KEY_PEM',
   'STARTOS_REGISTRY_URL'
 ]
@@ -23,8 +24,8 @@ Usage:
   node scripts/check-github-release-setup.mjs [--repo owner/name] [--gh gh]
 
 Checks that the GitHub repository exposes the masked release-value Secret names
-and optional variable names needed before a full HiveRelay release can update
-the raw fleet, Umbrel stores, and StartOS registry.
+and optional variable names needed before a full HiveRelay release can publish
+the npm packages, update the raw fleet, Umbrel stores, and StartOS registry.
 
 GitHub does not expose repository secret values through gh, so this command
 checks secret presence and placement only. Run the manual

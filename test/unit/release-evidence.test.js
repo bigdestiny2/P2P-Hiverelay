@@ -56,6 +56,7 @@ function completeFullReleaseEnv (overrides = {}) {
     HIVERELAY_STARTOS_VERIFY_STATUS: 'passed',
     HIVERELAY_STARTOS_PACKAGE_SHA256: S9PK_SHA,
     HIVERELAY_RELEASE_SURFACES_STATUS: 'committed',
+    HIVERELAY_NPM_PUBLISH_STATUS: 'published',
     HIVERELAY_STARTOS_RELEASE_ASSET_STATUS: 'uploaded',
     HIVERELAY_FLEET_ROLLOUT_STATUS: 'verified',
     HIVERELAY_FLEET_ROLLOUT_CHANNEL: 'both',
@@ -91,6 +92,9 @@ function completeFullReleaseEnv (overrides = {}) {
       : env.HIVERELAY_RELEASE_CHANNEL
   }
   if (env.HIVERELAY_RELEASE_PRERELEASE === 'true') {
+    if (!Object.prototype.hasOwnProperty.call(overrides, 'HIVERELAY_NPM_PUBLISH_STATUS')) {
+      env.HIVERELAY_NPM_PUBLISH_STATUS = 'skipped'
+    }
     if (!Object.prototype.hasOwnProperty.call(overrides, 'HIVERELAY_FLEET_CHANNEL_CONFIG')) {
       env.HIVERELAY_FLEET_CHANNEL_CONFIG = ''
     }
@@ -116,6 +120,7 @@ function partialFailedReleaseEnv (overrides = {}) {
     HIVERELAY_UMBREL_SMOKE_STATUS: 'pending',
     HIVERELAY_STARTOS_VERIFY_STATUS: 'pending',
     HIVERELAY_RELEASE_SURFACES_STATUS: 'pending',
+    HIVERELAY_NPM_PUBLISH_STATUS: 'pending',
     HIVERELAY_STARTOS_RELEASE_ASSET_STATUS: 'pending',
     HIVERELAY_FLEET_ROLLOUT_STATUS: 'skipped',
     HIVERELAY_STARTOS_REGISTRY_STATUS: 'skipped',
@@ -205,6 +210,7 @@ test('release evidence writer records digest, gates, and external surfaces', asy
   t.is(body.gates.pushedImageSmokeEvidence.sha256, IMAGE_SMOKE_SHA)
   t.is(body.gates.umbrelPackageSmokeEvidence.path, 'umbrel-package-smoke-evidence.json')
   t.is(body.gates.umbrelPackageSmokeEvidence.sha256, UMBREL_SMOKE_SHA)
+  t.is(body.surfaces.npmPackages, 'published')
   t.is(body.surfaces.fleetRollout, 'verified')
   t.is(body.surfaces.fleetRolloutChannel, 'canary')
   t.is(body.surfaces.fleetRolloutEvidence.path, 'fleet-rollout-evidence.json')
@@ -1181,6 +1187,7 @@ test('release evidence writer allows successful prereleases to skip distribution
   const body = JSON.parse(await readFile(outFile, 'utf8'))
   t.is(body.release.prerelease, true)
   t.is(body.gates.distributionPreflight, 'skipped')
+  t.is(body.surfaces.npmPackages, 'skipped')
   t.is(body.surfaces.startosReleaseAsset, 'uploaded')
   t.is(body.surfaces.fleetRollout, 'skipped')
 })
@@ -1230,6 +1237,7 @@ test('release evidence writer allows branch candidates to skip release asset pub
   const body = JSON.parse(await readFile(outFile, 'utf8'))
   t.is(body.release.prerelease, true)
   t.is(body.release.candidate, true)
+  t.is(body.surfaces.npmPackages, 'skipped')
   t.is(body.surfaces.startosReleaseAsset, 'skipped')
   t.is(body.surfaces.startosRegistryUrl, '')
   t.is(body.surfaces.startosRegistryPackageUrl, '')

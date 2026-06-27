@@ -4882,11 +4882,13 @@ if (
   releaseDistributionEnvCheck.includes("requireGitHubToken('UMBREL_STORE_TOKEN'") &&
   releaseDistributionEnvCheck.includes("requireGitHubToken('UMBREL_OFFICIAL_PR_TOKEN'") &&
   releaseDistributionEnvCheck.includes("requireSecret('UMBREL_OFFICIAL_FORK'") &&
+  releaseDistributionEnvCheck.includes("requireSecret('NPM_TOKEN'") &&
   releaseDistributionEnvCheck.includes("requirePrivateKey('STARTOS_DEVELOPER_KEY_PEM'") &&
   releaseDistributionEnvCheck.includes("requireSecret('STARTOS_REGISTRY_URL'") &&
   releaseDistributionEnvCheck.includes("const value = String(env[name] || '')") &&
   releaseDistributionEnvCheck.includes('if (!value.trim())') &&
   releaseDistributionEnvCheck.includes('function isGitHubToken') &&
+  releaseDistributionEnvCheck.includes('function isNpmToken') &&
   releaseDistributionEnvCheck.includes('function isPrivateKeyBlock') &&
   releaseDistributionEnvCheck.includes('--env-file') &&
   releaseDistributionEnvCheck.includes('const sourceEnv = args.envFile ? safeReadEnvFile(args.envFile) : process.env') &&
@@ -4896,6 +4898,7 @@ if (
   releaseEnvFileLib.includes('export function parseEnvFile') &&
   releaseEnvFileLib.includes('Refusing to read symlinked env file') &&
   releaseDistributionEnvCheck.includes('must be a GitHub token without whitespace or control characters') &&
+  releaseDistributionEnvCheck.includes('must be an npm automation token without whitespace or control characters') &&
   releaseDistributionEnvCheck.includes('must be a private key block') &&
   releaseDistributionEnvCheck.includes('without whitespace or control characters') &&
   releaseDistributionEnvCheck.includes('function formatRepairPath') &&
@@ -4930,6 +4933,7 @@ if (
   releaseDistributionEnvCheckTest.includes('accepts sane explicit fleet rollout timeout') &&
   releaseDistributionEnvCheckTest.includes('rejects unsafe fleet rollout timeout before SSH') &&
   releaseDistributionEnvCheckTest.includes('rejects placeholder GitHub tokens before checkout or gh calls') &&
+  releaseDistributionEnvCheckTest.includes('rejects malformed npm tokens before package publish') &&
   releaseDistributionEnvCheckTest.includes('rejects whitespace-padded GitHub tokens before checkout or gh calls') &&
   releaseDistributionEnvCheckTest.includes('Repair path:') &&
   releaseDistributionEnvCheckTest.includes('release:apply-github-secrets') &&
@@ -4958,7 +4962,7 @@ if (
   releaseDistributionEnvCheck.includes("'.example.com'") &&
   releaseDistributionEnvCheckTest.includes('rejects placeholder StartOS registry hosts before publish')
 ) {
-  pass('release workflow blocks stable releases before silently skipping fleet, Umbrel, or StartOS distribution credentials')
+  pass('release workflow blocks stable releases before silently skipping npm, fleet, Umbrel, or StartOS distribution credentials')
 } else {
   fail('release workflow can still silently skip required stable-release distribution credentials')
 }
@@ -4973,6 +4977,7 @@ if (
   githubReleaseSetupCheck.includes("'UMBREL_STORE_TOKEN'") &&
   githubReleaseSetupCheck.includes("'UMBREL_OFFICIAL_PR_TOKEN'") &&
   githubReleaseSetupCheck.includes("'UMBREL_OFFICIAL_FORK'") &&
+  githubReleaseSetupCheck.includes("'NPM_TOKEN'") &&
   githubReleaseSetupCheck.includes("'STARTOS_DEVELOPER_KEY_PEM'") &&
   githubReleaseSetupCheck.includes("'STARTOS_REGISTRY_URL'") &&
   githubReleaseSetupCheck.includes("['secret', 'list', '--repo', repo, '--json', 'name']") &&
@@ -4988,6 +4993,7 @@ if (
   releasePreflightWorkflow.includes('node scripts/check-release-distribution-env.mjs') &&
   releasePreflightWorkflow.includes('secrets.UMBREL_STORE_TOKEN') &&
   releasePreflightWorkflow.includes('secrets.UMBREL_OFFICIAL_PR_TOKEN') &&
+  releasePreflightWorkflow.includes('secrets.NPM_TOKEN') &&
   releasePreflightWorkflow.includes('secrets.STARTOS_REGISTRY_URL') &&
   releasePreflightWorkflow.includes('vars.FLEET_ROLLOUT_TIMEOUT_MS') &&
   releasePreflightWorkflow.includes('#### Repair path') &&
@@ -5001,6 +5007,7 @@ if (
   releaseEnvFileLib.includes('export function readEnvFile') &&
   releaseEnvFileLib.includes('export function parseEnvFile') &&
   releaseSecretsTemplate.includes('REPLACE_WITH_GITHUB_TOKEN_FOR_COMMUNITY_STORE') &&
+  releaseSecretsTemplate.includes('REPLACE_WITH_NPM_AUTOMATION_TOKEN') &&
   releaseSecretsTemplate.includes('REPLACE_WITH_PUBLIC_HTTPS_REGISTRY_URL') &&
   releaseSecretsTemplate.includes('Refusing to write release secret template inside the repository') &&
   releaseSecretsTemplate.includes('mode: 0o600') &&
@@ -5017,6 +5024,7 @@ if (
   githubReleaseSecretsApply.includes('gh workflow run release-distribution-preflight.yml --repo') &&
   githubReleaseSecretsApply.includes('redactSecretLikeValues') &&
   githubReleaseSecretsApply.includes('[redacted-github-token]') &&
+  githubReleaseSecretsApply.includes('[redacted-npm-token]') &&
   githubReleaseSecretsApply.includes('PATH: process.env.PATH') &&
   githubReleaseSetupCheckTest.includes('passes with all required secrets') &&
   githubReleaseSetupCheckTest.includes('reports missing release secrets') &&
@@ -5055,6 +5063,31 @@ const releasePackageManifests = [
   'packages/client/package.json',
   'packages/verifier/package.json'
 ]
+
+if (
+  releaseWorkflow.includes('Publish npm packages') &&
+  releaseWorkflow.includes('NODE_AUTH_TOKEN: $' + '{{ secrets.NPM_TOKEN }}') &&
+  releaseWorkflow.includes('registry-url: https://registry.npmjs.org') &&
+  releaseWorkflow.includes('for pkg in packages/core packages/client packages/verifier packages/services') &&
+  releaseWorkflow.includes('npm publish "$pkg" --access public --tag latest') &&
+  releaseWorkflow.includes('npm dist-tag add "$name@$version" latest') &&
+  releaseWorkflow.includes('npm view "$name" dist-tags.latest') &&
+  releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=published') &&
+  releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=current') &&
+  releaseWorkflow.indexOf('Publish npm packages') > releaseWorkflow.indexOf('Sync release metadata') &&
+  releaseWorkflow.indexOf('Publish npm packages') > releaseWorkflow.indexOf('Smoke Umbrel package') &&
+  releaseWorkflow.indexOf('Publish npm packages') > releaseWorkflow.indexOf('Build and verify StartOS package') &&
+  releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Upload StartOS package to GitHub Release') &&
+  releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Commit HiveRelay release surfaces') &&
+  releaseAutomationDocs.includes('Publishes `p2p-hiverelay`, `p2p-hiverelay-client`') &&
+  releaseAutomationDocs.includes('verifies every `latest`') &&
+  releaseAutomationDocs.includes('app consumers safely move from local workspace')
+) {
+  pass('release workflow publishes npm packages and verifies latest dist-tags before downstream app-store packaging')
+} else {
+  fail('release workflow is missing npm package publication or latest dist-tag verification before downstream app consumers update')
+}
+
 const releaseSurfaceCommitStep = releaseWorkflow.slice(
   releaseWorkflow.indexOf('Commit HiveRelay release surfaces'),
   releaseWorkflow.indexOf('Configure fleet rollout SSH key')
@@ -5546,6 +5579,10 @@ if (
   releaseEvidence.includes('fleetRolloutChannel') &&
   releaseEvidence.includes('fleetRolloutEvidence') &&
   releaseEvidence.includes('HIVERELAY_FLEET_ROLLOUT_EVIDENCE_SHA256') &&
+  releaseEvidence.includes('npmPackages') &&
+  releaseEvidence.includes('HIVERELAY_NPM_PUBLISH_STATUS') &&
+  releaseEvidence.includes('successful prerelease npm packages') &&
+  releaseEvidence.includes('successful full release npm packages') &&
   releaseEvidence.includes('startosRegistry') &&
   releaseEvidence.includes('startosRegistryUrl') &&
   releaseEvidence.includes('startosRegistryPackageUrl') &&
@@ -5745,6 +5782,7 @@ if (
   releaseEvidenceVerify.includes('duplicate relay name') &&
   releaseEvidenceVerify.includes('channel both must include canary and stable relays') &&
   releaseEvidenceVerify.includes('StartOS registry URL') &&
+  releaseEvidenceVerify.includes('npm packages') &&
   releaseEvidenceVerify.includes('StartOS registry package URL') &&
   releaseEvidenceVerify.includes('StartOS registry evidence path') &&
   releaseEvidenceVerify.includes('StartOS registry evidence SHA-256') &&
@@ -5761,6 +5799,7 @@ if (
   releaseEvidenceVerify.includes('official Umbrel PR head SHA') &&
   releaseEvidenceVerify.includes('official Umbrel PR draft') &&
   releaseEvidenceVerify.includes("requireBoolean('release.prerelease'") &&
+  releaseEvidenceVerify.includes('prerelease npm packages') &&
   releaseEvidenceVerify.includes('prerelease StartOS registry URL') &&
   releaseEvidenceVerify.includes('prerelease StartOS package id') &&
   releaseEvidenceVerify.includes('prerelease official Umbrel PR URL') &&
@@ -5932,6 +5971,7 @@ if (
   releaseHandoffEvidenceVerify.includes('GITHUB_ACTIONS_RUN_URL_PATTERN') &&
   releaseHandoffEvidenceVerify.includes('OFFICIAL_UMBREL_PR_URL_PATTERN') &&
   releaseHandoffEvidenceVerify.includes('release workflow canonical URL') &&
+  releaseHandoffEvidenceVerify.includes('npm packages') &&
   releaseHandoffEvidenceVerify.includes('official Umbrel PR workflow run attempt') &&
   releaseHandoffEvidenceVerify.includes('StartOS registry workflow run attempt') &&
   releaseHandoffEvidenceVerify.includes('verifyStartosRegistrySidecarShape') &&
@@ -5963,6 +6003,7 @@ if (
   releaseHandoffEvidenceVerify.includes("forbidPresent('fleet rollout handoff evidence'") &&
   releaseHandoffEvidenceVerify.includes('prerelease release channel') &&
   releaseHandoffEvidenceVerify.includes("requireBoolean('release.prerelease'") &&
+  releaseHandoffEvidenceVerify.includes('prerelease npm packages') &&
   releaseHandoffEvidenceVerify.includes('prerelease StartOS registry URL') &&
   releaseHandoffEvidenceVerify.includes('prerelease StartOS package id') &&
   releaseHandoffEvidenceVerify.includes('prerelease StartOS registry evidence path') &&
@@ -6004,6 +6045,8 @@ if (
   releaseHandoffEvidenceVerifyTest.includes('rejects non-canonical release workflow URL even when sidecars agree') &&
   releaseHandoffEvidenceVerifyTest.includes('rejects release evidence without metadata SHA') &&
   releaseHandoffEvidenceVerifyTest.includes('rejects promoted prerelease bundles') &&
+  releaseEvidenceVerifyTest.includes('prerelease npm packages') &&
+  releaseHandoffEvidenceVerifyTest.includes('prerelease npm packages') &&
   releaseHandoffEvidenceVerifyTest.includes('rejects malformed prerelease boundary facts') &&
   releaseHandoffEvidenceVerifyTest.includes('rejects StartOS registry workflow attempt drift') &&
   releaseHandoffEvidenceVerifyTest.includes('rejects future StartOS registry handoff timestamps') &&
@@ -6034,6 +6077,7 @@ if (
   releaseWorkflow.includes('Umbrel package smoke evidence SHA-256 is malformed.') &&
   releaseWorkflow.includes('HIVERELAY_STARTOS_PACKAGE_SHA256=') &&
   releaseWorkflow.includes('HIVERELAY_STARTOS_PACKAGE_ID=') &&
+  releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=') &&
   releaseWorkflow.includes('HIVERELAY_UMBREL_OFFICIAL_PR_STATE=') &&
   releaseWorkflow.includes('HIVERELAY_UMBREL_OFFICIAL_PR_DRAFT=') &&
   releaseWorkflow.includes('HIVERELAY_UMBREL_OFFICIAL_PR_BASE=') &&
@@ -6121,7 +6165,7 @@ if (
   releaseWorkflow.includes('npm run release:verify-handoff-evidence -- --bundle-dir "$handoff_dir"') &&
   releaseWorkflow.indexOf('Verify published handoff evidence assets') > releaseWorkflow.indexOf('Upload official Umbrel PR evidence')
 ) {
-  pass('release workflow emits and validates durable release evidence for image, fleet, Umbrel, and StartOS surfaces')
+  pass('release workflow emits and validates durable release evidence for image, npm, fleet, Umbrel, and StartOS surfaces')
 } else {
   fail('release workflow is missing validated durable release evidence output')
 }

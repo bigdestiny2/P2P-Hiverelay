@@ -6,6 +6,7 @@ import path from 'node:path'
 
 const TEST_GITHUB_TOKEN = `ghp_${'a'.repeat(36)}`
 const TEST_GITHUB_TOKEN_ALT = `gho_${'b'.repeat(36)}`
+const TEST_NPM_TOKEN = `npm_${'c'.repeat(36)}`
 const TEST_PRIVATE_KEY = '-----BEGIN OPENSSH PRIVATE KEY-----\nfake-fleet-key\n-----END OPENSSH PRIVATE KEY-----'
 const TEST_STARTOS_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\nfake-startos-key\n-----END PRIVATE KEY-----'
 
@@ -44,6 +45,7 @@ function validCandidateEnvBody (overrides = {}) {
     UMBREL_STORE_TOKEN: TEST_GITHUB_TOKEN,
     UMBREL_OFFICIAL_PR_TOKEN: TEST_GITHUB_TOKEN_ALT,
     UMBREL_OFFICIAL_FORK: 'bigdestiny2/umbrel-apps',
+    NPM_TOKEN: TEST_NPM_TOKEN,
     STARTOS_DEVELOPER_KEY_PEM: TEST_STARTOS_PRIVATE_KEY,
     STARTOS_REGISTRY_URL: 'https://registry.start9.com',
     ...overrides
@@ -55,6 +57,7 @@ function validCandidateEnvBody (overrides = {}) {
     `UMBREL_STORE_TOKEN=${env.UMBREL_STORE_TOKEN}`,
     `UMBREL_OFFICIAL_PR_TOKEN=${env.UMBREL_OFFICIAL_PR_TOKEN}`,
     `UMBREL_OFFICIAL_FORK=${env.UMBREL_OFFICIAL_FORK}`,
+    `NPM_TOKEN=${env.NPM_TOKEN}`,
     'STARTOS_DEVELOPER_KEY_PEM<<STARTOS_KEY',
     env.STARTOS_DEVELOPER_KEY_PEM,
     'STARTOS_KEY',
@@ -145,13 +148,14 @@ test('GitHub release secret apply sends validated values to gh secret set via st
   t.absent(res.stdout.includes(TEST_PRIVATE_KEY))
 
   const rows = await readGhLog(gh.log)
-  t.is(rows.length, 7)
+  t.is(rows.length, 8)
   const secretRows = rows.filter(row => row.args[0] === 'secret')
   const variableRows = rows.filter(row => row.args[0] === 'variable')
-  t.is(secretRows.length, 6)
+  t.is(secretRows.length, 7)
   t.is(variableRows.length, 1)
   t.ok(secretRows.some(row => row.args.join(' ') === 'secret set FLEET_SSH_PRIVATE_KEY --repo bigdestiny2/P2P-Hiverelay' && row.input === TEST_PRIVATE_KEY))
   t.ok(secretRows.some(row => row.args.join(' ') === 'secret set UMBREL_STORE_TOKEN --repo bigdestiny2/P2P-Hiverelay' && row.input === TEST_GITHUB_TOKEN))
+  t.ok(secretRows.some(row => row.args.join(' ') === 'secret set NPM_TOKEN --repo bigdestiny2/P2P-Hiverelay' && row.input === TEST_NPM_TOKEN))
   t.ok(variableRows.some(row => row.args.join(' ') === 'variable set FLEET_ROLLOUT_TIMEOUT_MS --repo bigdestiny2/P2P-Hiverelay --body 1800000' && row.input === ''))
 })
 

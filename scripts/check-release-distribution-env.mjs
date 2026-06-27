@@ -137,6 +137,11 @@ function checkReleaseDistributionEnv ({ channel, prerelease, env }) {
     missing.push('UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps')
     envUpdates.HIVERELAY_UMBREL_OFFICIAL_PR_STATUS = 'invalid-fork'
   }
+  requireSecret('NPM_TOKEN', ['HIVERELAY_NPM_PUBLISH_STATUS'], {
+    validate: isNpmToken,
+    status: 'invalid-token',
+    message: 'must be an npm automation token without whitespace or control characters'
+  })
   requirePrivateKey('STARTOS_DEVELOPER_KEY_PEM', ['HIVERELAY_STARTOS_REGISTRY_STATUS'])
   requireSecret('STARTOS_REGISTRY_URL', ['HIVERELAY_STARTOS_REGISTRY_STATUS'])
   if (String(env.STARTOS_REGISTRY_URL || '').trim() && !isPublicHttpsUrl(env.STARTOS_REGISTRY_URL)) {
@@ -162,6 +167,13 @@ function isGitHubToken (value) {
     value.trim() === value &&
     !hasControlChars(value) &&
     /^(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})$/.test(value)
+}
+
+function isNpmToken (value) {
+  return typeof value === 'string' &&
+    value.trim() === value &&
+    !hasControlChars(value) &&
+    /^npm_[A-Za-z0-9._~-]{20,}$/.test(value)
 }
 
 function isPrivateKeyBlock (value) {

@@ -282,6 +282,7 @@ async function verifyReleaseEvidence (body, opts) {
 
   requireOneOf('distribution preflight', body.gates?.distributionPreflight, ['passed'])
   requireOneOf('metadata surfaces', body.surfaces?.metadataCommit, ['committed', 'current'])
+  requireOneOf('npm packages', body.surfaces?.npmPackages, ['published', 'current'])
   requireOneOf('fleet rollout status', body.surfaces?.fleetRollout, ['verified'])
   requireEqual('fleet rollout channel', body.surfaces.fleetRolloutChannel, body.release.channel)
   requireEqual('fleet rollout evidence path', body.surfaces.fleetRolloutEvidence?.path, 'fleet-rollout-evidence.json')
@@ -364,6 +365,7 @@ function assertReleaseEvidenceSchema (body) {
   requireOnlyKeys('release evidence Umbrel smoke ref', body.gates.umbrelPackageSmokeEvidence, ['path', 'sha256'])
   requireOnlyKeys('release evidence surfaces', body.surfaces, [
     'metadataCommit',
+    'npmPackages',
     'startosReleaseAsset',
     'fleetRollout',
     'fleetRolloutChannel',
@@ -421,6 +423,7 @@ function verifyOptionalFleetRollout (body, opts) {
 function verifyPrereleaseSkips (body) {
   requireOneOf('prerelease distribution preflight', body.gates?.distributionPreflight, ['skipped'])
   requireOneOf('prerelease metadata surfaces', body.surfaces?.metadataCommit, ['skipped'])
+  requireOneOf('prerelease npm packages', body.surfaces?.npmPackages, ['skipped'])
   requireOneOf('prerelease fleet rollout', body.surfaces?.fleetRollout, ['skipped'])
   requireOneOf('prerelease fleet rollout channel', body.surfaces?.fleetRolloutChannel || 'skipped', ['skipped'])
   requireOneOf('prerelease fleet rollout evidence path', body.surfaces?.fleetRolloutEvidence?.path || 'skipped', ['skipped'])

@@ -100,6 +100,7 @@ const evidence = {
   },
   surfaces: {
     metadataCommit: status('HIVERELAY_RELEASE_SURFACES_STATUS'),
+    npmPackages: status('HIVERELAY_NPM_PUBLISH_STATUS'),
     startosReleaseAsset: status('HIVERELAY_STARTOS_RELEASE_ASSET_STATUS'),
     fleetRollout: status('HIVERELAY_FLEET_ROLLOUT_STATUS'),
     fleetRolloutChannel: env('HIVERELAY_FLEET_ROLLOUT_CHANNEL'),
@@ -284,6 +285,7 @@ async function validateSuccessfulRun (body) {
     requireOneOf('successful prerelease channel', body.release.channel, ['none'])
     requireOneOf('successful prerelease distribution preflight', body.gates.distributionPreflight, ['skipped'])
     requireOneOf('successful prerelease metadata surfaces', body.surfaces.metadataCommit, ['skipped'])
+    requireOneOf('successful prerelease npm packages', body.surfaces.npmPackages, ['skipped'])
     requireOneOf('successful prerelease fleet rollout', body.surfaces.fleetRollout, ['skipped'])
     requireOneOf('successful prerelease fleet rollout channel', body.surfaces.fleetRolloutChannel || 'skipped', ['skipped'])
     requireOneOf('successful prerelease fleet rollout evidence path', body.surfaces.fleetRolloutEvidence.path || 'skipped', ['skipped'])
@@ -317,6 +319,7 @@ async function validateSuccessfulRun (body) {
   requireOneOf('successful full release channel', body.release.channel, ['canary', 'stable', 'both'])
   requireOneOf('successful full release distribution preflight', body.gates.distributionPreflight, ['passed'])
   requireOneOf('successful full release metadata surfaces', body.surfaces.metadataCommit, ['committed', 'current'])
+  requireOneOf('successful full release npm packages', body.surfaces.npmPackages, ['published', 'current'])
   requireOneOf('successful full release fleet rollout', body.surfaces.fleetRollout, ['verified'])
   requireOneOf('successful full release fleet rollout channel', body.surfaces.fleetRolloutChannel, [body.release.channel])
   requireOneOf('successful full release fleet rollout evidence path', body.surfaces.fleetRolloutEvidence.path, ['fleet-rollout-evidence.json'])

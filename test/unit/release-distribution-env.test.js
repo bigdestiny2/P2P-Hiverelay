@@ -6,6 +6,7 @@ import path from 'node:path'
 
 const TEST_GITHUB_TOKEN = `ghp_${'a'.repeat(36)}`
 const TEST_GITHUB_TOKEN_ALT = `gho_${'b'.repeat(36)}`
+const TEST_NPM_TOKEN = `npm_${'c'.repeat(36)}`
 const TEST_PRIVATE_KEY = '-----BEGIN OPENSSH PRIVATE KEY-----\nfake-fleet-key\n-----END OPENSSH PRIVATE KEY-----'
 const TEST_STARTOS_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\nfake-startos-key\n-----END PRIVATE KEY-----'
 
@@ -15,6 +16,7 @@ function validDistributionEnv (overrides = {}) {
     UMBREL_STORE_TOKEN: TEST_GITHUB_TOKEN,
     UMBREL_OFFICIAL_PR_TOKEN: TEST_GITHUB_TOKEN_ALT,
     UMBREL_OFFICIAL_FORK: 'bigdestiny2/umbrel-apps',
+    NPM_TOKEN: TEST_NPM_TOKEN,
     STARTOS_DEVELOPER_KEY_PEM: TEST_STARTOS_PRIVATE_KEY,
     STARTOS_REGISTRY_URL: 'https://registry.start9.com',
     ...overrides
@@ -67,6 +69,7 @@ function validCandidateEnvBody (overrides = {}) {
     `UMBREL_STORE_TOKEN=${env.UMBREL_STORE_TOKEN}`,
     `UMBREL_OFFICIAL_PR_TOKEN=${env.UMBREL_OFFICIAL_PR_TOKEN}`,
     `UMBREL_OFFICIAL_FORK=${env.UMBREL_OFFICIAL_FORK}`,
+    `NPM_TOKEN=${env.NPM_TOKEN}`,
     'STARTOS_DEVELOPER_KEY_PEM<<STARTOS_KEY',
     env.STARTOS_DEVELOPER_KEY_PEM,
     'STARTOS_KEY',
@@ -124,6 +127,7 @@ test('release distribution env check fails stable releases without every externa
   t.ok(res.stderr.includes('UMBREL_STORE_TOKEN'))
   t.ok(res.stderr.includes('UMBREL_OFFICIAL_PR_TOKEN'))
   t.ok(res.stderr.includes('UMBREL_OFFICIAL_FORK'))
+  t.ok(res.stderr.includes('NPM_TOKEN'))
   t.ok(res.stderr.includes('STARTOS_DEVELOPER_KEY_PEM'))
   t.ok(res.stderr.includes('STARTOS_REGISTRY_URL'))
   t.ok(res.stderr.includes('Repair path:'))
@@ -137,6 +141,7 @@ test('release distribution env check fails stable releases without every externa
   t.ok(body.includes('HIVERELAY_RELEASE_SURFACES_STATUS=blocked'))
   t.ok(body.includes('HIVERELAY_FLEET_ROLLOUT_STATUS=missing-secret'))
   t.ok(body.includes('HIVERELAY_STARTOS_REGISTRY_STATUS=missing-secret'))
+  t.ok(body.includes('HIVERELAY_NPM_PUBLISH_STATUS=missing-secret'))
   t.ok(body.includes('HIVERELAY_UMBREL_OFFICIAL_PR_STATUS=missing-secret'))
   t.ok(body.includes('HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS=missing-secret'))
 })
@@ -301,6 +306,25 @@ test('release distribution env check rejects placeholder GitHub tokens before ch
   t.ok(body.includes('HIVERELAY_RELEASE_SURFACES_STATUS=blocked'))
   t.ok(body.includes('HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS=invalid-token'))
   t.ok(body.includes('HIVERELAY_UMBREL_OFFICIAL_PR_STATUS=invalid-token'))
+})
+
+test('release distribution env check rejects malformed npm tokens before package publish', async (t) => {
+  const out = await envFile(t)
+  const res = await runCheck([
+    '--channel', 'both',
+    '--prerelease', 'false',
+    '--github-env', out
+  ], validDistributionEnv({
+    NPM_TOKEN: 'not a token'
+  }))
+
+  t.is(res.status, 1)
+  t.ok(res.stderr.includes('NPM_TOKEN must be an npm automation token without whitespace or control characters'))
+
+  const body = await readFile(out, 'utf8')
+  t.ok(body.includes('HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS=failed'))
+  t.ok(body.includes('HIVERELAY_RELEASE_SURFACES_STATUS=blocked'))
+  t.ok(body.includes('HIVERELAY_NPM_PUBLISH_STATUS=invalid-token'))
 })
 
 test('release distribution env check rejects whitespace-padded GitHub tokens before checkout or gh calls', async (t) => {

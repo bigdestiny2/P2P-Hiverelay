@@ -13,6 +13,7 @@ const REQUIRED_SECRETS = [
   'UMBREL_STORE_TOKEN',
   'UMBREL_OFFICIAL_PR_TOKEN',
   'UMBREL_OFFICIAL_FORK',
+  'NPM_TOKEN',
   'STARTOS_DEVELOPER_KEY_PEM',
   'STARTOS_REGISTRY_URL'
 ]
@@ -28,8 +29,9 @@ Usage:
 Validates a local release-value candidate file with
 scripts/check-release-distribution-env.mjs, then writes the exact same masked
 release values to GitHub Secrets using gh. Values are sent through stdin and
-are never printed. FLEET_ROLLOUT_TIMEOUT_MS, when present, is the only GitHub
-Variable.
+are never printed. NPM_TOKEN is required so full releases can publish the
+workspace packages before app consumers follow npm latest.
+FLEET_ROLLOUT_TIMEOUT_MS, when present, is the only GitHub Variable.
 `
 
 const args = parseArgs(process.argv.slice(2))
@@ -197,6 +199,7 @@ function redactSecretLikeValues (value, redactions = []) {
   return out
     .replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g, '[redacted-private-key]')
     .replace(/(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})/g, '[redacted-github-token]')
+    .replace(/npm_[A-Za-z0-9]{20,}/g, '[redacted-npm-token]')
 }
 
 function hasControlChars (value) {

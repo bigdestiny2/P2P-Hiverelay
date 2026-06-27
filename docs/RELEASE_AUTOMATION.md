@@ -71,9 +71,10 @@ sibling ecosystem app defaults.
 
 Full releases are distribution-complete by default. Before any public GitHub
 Release is looked up, created, reused, or written to, the workflow requires the
-masked repository values needed to verify the raw fleet, push the Umbrel
-community store, open or update the official Umbrel draft PR, and publish the
-StartOS registry package to pass the same full-release preflight as
+masked repository values needed to publish the npm packages, verify the raw
+fleet, push the Umbrel community store, open or update the official Umbrel draft
+PR, and publish the StartOS registry package to pass the same full-release
+preflight as
 `release-distribution-preflight.yml`. Missing or malformed credentials fail the
 run and record `distributionPreflight: failed` in release evidence.
 
@@ -115,6 +116,7 @@ FLEET_KEY
 UMBREL_STORE_TOKEN=PASTE_COMMUNITY_STORE_GITHUB_TOKEN_HERE
 UMBREL_OFFICIAL_PR_TOKEN=PASTE_OFFICIAL_PR_GITHUB_TOKEN_HERE
 UMBREL_OFFICIAL_FORK=owner/umbrel-apps
+NPM_TOKEN=PASTE_NPM_AUTOMATION_TOKEN_HERE
 STARTOS_DEVELOPER_KEY_PEM<<STARTOS_KEY
 PASTE_THE_FULL_STARTOS_DEVELOPER_PRIVATE_KEY_BLOCK_HERE
 STARTOS_KEY
@@ -168,6 +170,7 @@ Expected shapes:
 | `UMBREL_STORE_TOKEN` | GitHub token with push access to `bigdestiny2/blindspark-umbrel-store` |
 | `UMBREL_OFFICIAL_PR_TOKEN` | GitHub token able to push the official-package fork and open/update `getumbrel/umbrel-apps` PRs |
 | `UMBREL_OFFICIAL_FORK` | Fork slug such as `owner/umbrel-apps`; it must not be `getumbrel/umbrel-apps` |
+| `NPM_TOKEN` | npm automation token able to publish `p2p-hiverelay`, `p2p-hiverelay-client`, `p2p-hiverelay-verifier`, and `p2p-hiveservices` |
 | `STARTOS_DEVELOPER_KEY_PEM` | StartOS developer private key block without surrounding whitespace |
 | `STARTOS_REGISTRY_URL` | Public HTTPS registry base URL without credentials, query string, or fragment |
 | `FLEET_ROLLOUT_TIMEOUT_MS` | Optional integer from 600000 to 14400000 milliseconds |
@@ -284,21 +287,29 @@ pins.
    save flow, dashboard WebSocket in-band auth, usage telemetry, and data
    persistence across restart.
 10. Configures a StartOS developer key, builds `startos/blindspark.s9pk` from
-   the resolved GHCR digest, verifies it with `start-sdk verify`, and uploads
-   it to the GitHub Release as a sideloadable StartOS package. Full releases
-   require `STARTOS_DEVELOPER_KEY_PEM`; prereleases may still use an ephemeral
-   key for a sideload-only test artifact.
-11. Commits the synchronized release surfaces back to `main`:
+   the resolved GHCR digest, and verifies it with `start-sdk verify`. Full
+   releases require `STARTOS_DEVELOPER_KEY_PEM`; prereleases may still use an
+   ephemeral key for a sideload-only test artifact.
+11. Publishes `p2p-hiverelay`, `p2p-hiverelay-client`,
+   `p2p-hiverelay-verifier`, and `p2p-hiveservices` to npm, or leaves an
+   already-published immutable tarball in place, then verifies every `latest`
+   dist-tag equals the release semver. This runs after image, Umbrel, and
+   StartOS package smoke/verify gates but before the release asset upload,
+   fleet promotion, Umbrel store updates, and StartOS registry publication.
+   This is the gate that lets PearBrowser, PearPaste, anonGPT, and other app consumers safely move from local workspace links to the published release line.
+12. Uploads the verified `.s9pk` to the GitHub Release as a sideloadable
+   StartOS package.
+13. Commits the synchronized release surfaces back to `main`:
    workspace package versions, `package-lock.json`, README status, fleet
    channel, Umbrel metadata, and StartOS metadata.
-12. Waits for the raw systemd relays on the promoted channel to converge on
+14. Waits for the raw systemd relays on the promoted channel to converge on
     the release tag SHA, checked-out package version, and `/health`
     `running:true` with the release version.
-13. Publishes the verified `.s9pk` to the configured StartOS registry with
+15. Publishes the verified `.s9pk` to the configured StartOS registry with
     `start-sdk publish` and writes `startos-registry-evidence.json`.
-14. Exports the official Umbrel package shape and opens or updates a draft PR
+16. Exports the official Umbrel package shape and opens or updates a draft PR
     against `getumbrel/umbrel-apps`.
-15. Writes and uploads `release-evidence.json` plus public-safe image-manifest
+17. Writes and uploads `release-evidence.json` plus public-safe image-manifest
     and smoke sidecars as durable proof of the image digest, StartOS package
     hash, checked gates, rollout channel, and every external release surface
     that was published, verified, or skipped.

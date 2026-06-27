@@ -145,7 +145,8 @@ function releaseEvidence (opts = {}) {
     },
     surfaces: {
       metadataCommit: prerelease ? 'skipped' : 'committed',
-      startosReleaseAsset: 'uploaded',
+      npmPackages: prerelease ? 'skipped' : (opts.npmPackages || 'published'),
+      startosReleaseAsset: prerelease ? 'skipped' : 'uploaded',
       fleetRollout: prerelease ? 'skipped' : 'verified',
       fleetRolloutChannel: prerelease ? '' : 'both',
       fleetRolloutEvidence: {
@@ -2745,6 +2746,7 @@ test('release handoff verifier rejects promoted prerelease bundles', async (t) =
 test('release handoff verifier rejects malformed prerelease boundary facts', async (t) => {
   const cases = [
     ['non-boolean prerelease flag', release => { release.release.prerelease = 'true' }, 'release.prerelease must be a boolean'],
+    ['npm packages', release => { release.surfaces.npmPackages = 'published' }, 'prerelease npm packages'],
     ['registry URL', release => { release.surfaces.startosRegistryUrl = REGISTRY_URL }, 'prerelease StartOS registry URL'],
     ['package id', release => { release.surfaces.startosPackageId = 'blindspark' }, 'prerelease StartOS package id'],
     ['registry evidence path', release => { release.surfaces.startosRegistryEvidence.path = 'startos-registry-evidence.json' }, 'prerelease StartOS registry evidence path'],
