@@ -67,6 +67,7 @@ test('umbrel wallet and service controls expose accessible busy/error state', (t
   t.ok(dashboard.includes('id="walletError" role="status" aria-live="polite" aria-atomic="true"'))
   t.ok(dashboard.includes("$('walletSave').textContent = busy ? 'Saving...' : 'Save';"))
   t.ok(dashboard.includes("$('walletDialog').setAttribute('aria-busy', busy ? 'true' : 'false');"))
+  t.ok(dashboard.includes("$('walletDialog').addEventListener('cancel', handleWalletDialogCancel);"))
   t.ok(dashboard.includes("$('servicesCard').setAttribute('aria-busy', controlsDisabled ? 'true' : 'false');"))
   t.ok(dashboard.includes("progress.setAttribute('role', 'status');"))
   t.ok(dashboard.includes("hint.setAttribute('role', 'status');"))
@@ -845,8 +846,28 @@ test('umbrel wallet save blocks duplicate in-flight writes', async (t) => {
   t.alike(out.after.refreshes, [true])
 })
 
+test('umbrel wallet dialog cannot be cancelled while save is pending', (t) => {
+  const script = [
+    'var walletBusy = false',
+    extractFunction('handleWalletDialogCancel'),
+    `
+    var prevented = 0
+    handleWalletDialogCancel({ preventDefault: function () { prevented++ } })
+    walletBusy = true
+    handleWalletDialogCancel({ preventDefault: function () { prevented++ } })
+    handleWalletDialogCancel({})
+    JSON.stringify({ prevented: prevented })
+    `
+  ].join('\n')
+
+  const result = JSON.parse(vm.runInNewContext(script, { JSON }))
+
+  t.alike(result, { prevented: 1 })
+})
+
 test('umbrel wallet destination saves on Enter without form navigation', (t) => {
   t.ok(dashboard.includes("$('walletInput').addEventListener('keydown', handleWalletInputKey);"))
+  t.ok(dashboard.includes("$('walletDialog').addEventListener('cancel', handleWalletDialogCancel);"))
 
   const result = vm.runInNewContext([
     'var calls = []',

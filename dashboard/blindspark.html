@@ -735,10 +735,16 @@ function handleWalletInputKey(event){
   saveWallet(false);
 }
 
+function handleWalletDialogCancel(event){
+  if (!walletBusy) return;
+  if (event && typeof event.preventDefault === 'function') event.preventDefault();
+}
+
 $('walletCancel').addEventListener('click', closeWalletDialog);
 $('walletSave').addEventListener('click', function(){ saveWallet(false); });
 $('walletClear').addEventListener('click', function(){ saveWallet(true); });
 $('walletInput').addEventListener('keydown', handleWalletInputKey);
+$('walletDialog').addEventListener('cancel', handleWalletDialogCancel);
 
 function svcPost(path, body){
   return fetchWithTimeout(path, {

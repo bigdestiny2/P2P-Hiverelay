@@ -184,6 +184,7 @@
 - [x] **4.137** Umbrel setup wizard busy selection lock — setup wizard clicks are now fully ignored while a prior setup action is pending, including accept-mode card clicks, so the UI cannot show a newly selected policy while the server is still applying the previous one.
 - [x] **4.138** Ecosystem audit CLI latest default — the standalone ecosystem consumer audit now uses the same npm `latest` default as the sync tool and release docs, with a process-level regression proving direct CLI runs audit the published-app default instead of silently falling back to local workspace links.
 - [x] **4.139** Ecosystem audit npm latest proof — npm-latest ecosystem audits now verify the full published HiveRelay package line, including `p2p-hiveservices`, and include dist-tag proof in the report so app defaults cannot be considered current unless npm `latest` would install the intended release.
+- [x] **4.140** Umbrel wallet pending-cancel guard — the payout wallet dialog now blocks native dialog cancel events while a wallet save is in flight, so Escape/backdrop dismissal cannot make a pending write look like it disappeared before the API response returns.
 
 ---
 

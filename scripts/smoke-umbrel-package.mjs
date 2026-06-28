@@ -720,6 +720,8 @@ function assertDashboardUiHardening (html) {
   assertIncludes(html, 'function setWalletBusy(busy)', 'dashboard wallet busy-state guard')
   assertIncludes(html, 'if (walletBusy) return;', 'dashboard wallet duplicate-write guard')
   assertIncludes(html, "if ($('walletSave').disabled) return;", 'dashboard wallet enter duplicate guard')
+  assertIncludes(html, 'function handleWalletDialogCancel(event)', 'dashboard wallet pending-cancel guard')
+  assertIncludes(html, "$('walletDialog').addEventListener('cancel', handleWalletDialogCancel);", 'dashboard wallet dialog cancel guard listener')
   assertIncludes(html, 'function setSvcConfigBusy(busy)', 'dashboard service save busy-state guard')
   assertIncludes(html, 'var svcRestartPending = false;', 'dashboard service restart pending state')
   assertIncludes(html, 'function svcVisualState(name, configured, active)', 'dashboard service live-vs-saved state labels')

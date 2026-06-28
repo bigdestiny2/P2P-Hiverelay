@@ -1000,6 +1000,8 @@ if (
   blindsparkDashboard.includes("headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }") &&
   blindsparkDashboard.includes('function handleWalletInputKey(event)') &&
   blindsparkDashboard.includes("$('walletInput').addEventListener('keydown', handleWalletInputKey);") &&
+  blindsparkDashboard.includes('function handleWalletDialogCancel(event)') &&
+  blindsparkDashboard.includes("$('walletDialog').addEventListener('cancel', handleWalletDialogCancel);") &&
   blindsparkDashboard.includes('id="walletHelp"') &&
   blindsparkDashboard.includes('aria-describedby="walletHelp walletError"') &&
   blindsparkDashboard.includes('id="walletError" role="status" aria-live="polite" aria-atomic="true"') &&
