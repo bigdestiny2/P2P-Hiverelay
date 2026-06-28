@@ -182,6 +182,7 @@
 - [x] **4.135** Umbrel service draft-state UX — the Blindspark service manager now relabels service cards immediately when operators make unsaved checkbox changes, showing unsaved start/stop state and recalculating selected/pending counts before the next API refresh. This makes the save-then-restart flow visible instead of making service clicks look inert.
 - [x] **4.136** Umbrel wallet duplicate-write guard — the Blindspark payout wallet dialog now keeps an explicit in-flight save flag, refuses duplicate wallet writes before the first request settles, sends a JSON `Accept` header, and carries the guard into release-image and Umbrel-package smoke checks.
 - [x] **4.137** Umbrel setup wizard busy selection lock — setup wizard clicks are now fully ignored while a prior setup action is pending, including accept-mode card clicks, so the UI cannot show a newly selected policy while the server is still applying the previous one.
+- [x] **4.138** Ecosystem audit CLI latest default — the standalone ecosystem consumer audit now uses the same npm `latest` default as the sync tool and release docs, with a process-level regression proving direct CLI runs audit the published-app default instead of silently falling back to local workspace links.
 
 ---
 

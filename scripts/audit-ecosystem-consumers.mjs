@@ -1183,7 +1183,7 @@ function main () {
   const rootPackage = readJson(path.join(hiverelayRoot, 'package.json'))
   const expectedVersion = args.expectedVersion || rootPackage.version
   const workspaceRoot = args.workspaceRoot || workspaceRootDefault
-  const dependencyMode = normalizeDependencyMode(args.dependencyMode || 'local')
+  const dependencyMode = normalizeDependencyMode(args.dependencyMode || DEFAULT_DEPENDENCY_MODE)
   const consumerScope = normalizeConsumerScope(args.consumerScope || 'all')
   const expectedCurrent = getExpectedCurrentConsumers({ dependencyMode, consumerScope })
   const expectedClassifiedCurrent = getExpectedCurrentConsumers({ dependencyMode, consumerScope: 'all' })

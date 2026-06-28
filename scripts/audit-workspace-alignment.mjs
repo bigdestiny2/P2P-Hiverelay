@@ -4073,6 +4073,7 @@ if (
   ecosystemConsumersAudit.includes('CURRENT_HIVERELAY_VERSION') &&
   ecosystemConsumersAudit.includes('export const HIVERELAY_DEPS') &&
   ecosystemConsumersAudit.includes("DEFAULT_DEPENDENCY_MODE = 'npm-latest'") &&
+  ecosystemConsumersAudit.includes('normalizeDependencyMode(args.dependencyMode || DEFAULT_DEPENDENCY_MODE)') &&
   ecosystemConsumersAudit.includes('getExpectedCurrentConsumers') &&
   ecosystemConsumersAudit.includes('normalizeDependencyMode') &&
   ecosystemConsumersAudit.includes("'p2p-hiveservices'") &&
@@ -4145,6 +4146,7 @@ if (
   ecosystemConsumersAuditTest.includes('ecosystem sync updates app defaults and linked package lock metadata') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer helpers default published apps to npm latest') &&
   ecosystemConsumersAuditTest.includes('ecosystem sync default npm-latest path refuses stale registry latest') &&
+  ecosystemConsumersAuditTest.includes('ecosystem audit CLI defaults to npm-latest mode') &&
   ecosystemConsumersAuditTest.includes('ecosystem sync default npm-latest path verifies the full package line') &&
   ecosystemConsumersAuditTest.includes('p2p-hiveservices npm latest dist-tag is 0.9.2; expected 0.20.2') &&
   ecosystemConsumersAuditTest.includes('ecosystem sync refuses npm-latest defaults when npm latest would downgrade') &&

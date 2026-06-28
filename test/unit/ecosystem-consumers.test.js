@@ -764,6 +764,25 @@ test('ecosystem sync default npm-latest path refuses stale registry latest', (t)
   t.is(result.changes.length, 0, 'default npm latest mode blocks before writing app files')
 })
 
+test('ecosystem audit CLI defaults to npm-latest mode', (t) => {
+  const root = fixtureWorkspace()
+  const result = spawnSync(process.execPath, [
+    'scripts/audit-ecosystem-consumers.mjs',
+    '--workspace-root', root,
+    '--expected-version', '0.20.2',
+    '--consumer-scope', 'release',
+    '--check'
+  ], {
+    cwd: process.cwd(),
+    encoding: 'utf8'
+  })
+
+  t.is(result.status, 1)
+  t.ok(result.stdout.includes('mode npm-latest'), 'direct CLI uses the published-app default')
+  t.ok(result.stdout.includes('Current npm-latest consumers:'))
+  t.absent(result.stdout.includes('mode local'))
+})
+
 test('ecosystem sync default npm-latest path verifies the full package line', (t) => {
   const root = fixtureWorkspace()
   const consumer = {
