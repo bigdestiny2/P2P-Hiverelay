@@ -73,6 +73,39 @@ test('umbrel wallet and service controls expose accessible busy/error state', (t
   t.ok(dashboard.includes("hint.setAttribute('role', 'status');"))
 })
 
+test('umbrel dashboard API error text is bounded and normalized', (t) => {
+  t.ok(dashboard.includes('var API_ERROR_MAX = 180;'))
+  t.ok(dashboard.includes(".replace(/[\\x00-\\x1f\\x7f]+/g, ' ')"))
+  t.ok(dashboard.includes("msg = msg.slice(0, API_ERROR_MAX - 3) + '...';"))
+
+  const result = vm.runInNewContext([
+    'var API_ERROR_MAX = 180',
+    extractFunction('apiError'),
+    "var messyError = 'AI_MODEL_EXISTS: qvac-a' + String.fromCharCode(10) + String.fromCharCode(9) + String.fromCharCode(0) + 'next   chunk'",
+    "var blankError = 'AI_MODEL_EXISTS: ' + String.fromCharCode(10) + String.fromCharCode(9)",
+    "var longError = 'AI_MODEL_EXISTS: ' + Array(501).join('x')",
+    `JSON.stringify({
+      prefixed: apiError({ error: 'AI_MODEL_EXISTS: qvac-a' }, 'Fallback'),
+      messy: apiError({ error: messyError }, 'Fallback'),
+      blank: apiError({ error: blankError }, 'Fallback'),
+      fallback: apiError({}, 'Fallback message'),
+      huge: apiError({ error: longError }, 'Fallback')
+    })`
+  ].join('\n'), { JSON })
+  const out = JSON.parse(result)
+
+  t.is(out.prefixed, 'qvac-a')
+  t.is(out.messy, 'qvac-a next chunk')
+  t.is(out.blank, 'Fallback')
+  t.is(out.fallback, 'Fallback message')
+  t.is(out.huge.length, 180)
+  t.ok(out.huge.endsWith('...'))
+  t.absent(Array.from(out.huge).some((ch) => {
+    const code = ch.charCodeAt(0)
+    return code < 32 || code === 127
+  }))
+})
+
 test('umbrel service auto refresh preserves unsaved selection drafts', (t) => {
   t.ok(dashboard.includes('var svcDraftDirty = false;'))
   t.ok(dashboard.includes('svcDraftDirty = true;'))
@@ -692,6 +725,7 @@ test('umbrel wallet save posts through app proxy without navigation', async (t) 
     extractFunction('appBasePath'),
     'var APP_BASE = appBasePath()',
     extractFunction('appPath'),
+    'var API_ERROR_MAX = 180',
     extractFunction('apiError'),
     'var REQUEST_TIMEOUT_MS = 10000',
     extractFunction('fetchWithTimeout'),
@@ -777,6 +811,7 @@ test('umbrel wallet save blocks duplicate in-flight writes', async (t) => {
     'function closeWalletDialog () {}',
     'function toast (msg) { toasts.push(msg) }',
     'function refreshWizard () { refreshes.push(true) }',
+    'var API_ERROR_MAX = 180',
     extractFunction('apiError'),
     extractFunction('setWalletBusy'),
     extractFunction('saveWallet'),
@@ -937,6 +972,7 @@ test('umbrel AI model add blocks duplicate writes and reports inline status', as
     "var svcModelMessageKind = ''",
     "var svcModelDraftId = ''",
     "var svcModelDraftSrc = ''",
+    'var API_ERROR_MAX = 180',
     extractFunction('apiError'),
     extractFunction('setSvcModelMessage'),
     extractFunction('setSvcModelBusy'),

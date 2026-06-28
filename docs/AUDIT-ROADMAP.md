@@ -185,6 +185,7 @@
 - [x] **4.138** Ecosystem audit CLI latest default — the standalone ecosystem consumer audit now uses the same npm `latest` default as the sync tool and release docs, with a process-level regression proving direct CLI runs audit the published-app default instead of silently falling back to local workspace links.
 - [x] **4.139** Ecosystem audit npm latest proof — npm-latest ecosystem audits now verify the full published HiveRelay package line, including `p2p-hiveservices`, and include dist-tag proof in the report so app defaults cannot be considered current unless npm `latest` would install the intended release.
 - [x] **4.140** Umbrel wallet pending-cancel guard — the payout wallet dialog now blocks native dialog cancel events while a wallet save is in flight, so Escape/backdrop dismissal cannot make a pending write look like it disappeared before the API response returns.
+- [x] **4.141** Umbrel API error text bounds — Blindspark dashboard API errors now strip fixed prefixes, remove control characters, collapse whitespace, fall back on blank messages, and cap text before rendering into wallet, service, or AI-model status regions; unit tests plus release-image and Umbrel-package smoke guards keep packaged appliance UI from accepting unbounded backend error text.
 
 ---
 

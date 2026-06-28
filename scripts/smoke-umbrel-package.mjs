@@ -716,6 +716,9 @@ function assertIncludes (text, needle, label) {
 }
 
 function assertDashboardUiHardening (html) {
+  assertIncludes(html, 'var API_ERROR_MAX = 180;', 'dashboard bounded API error max')
+  assertIncludes(html, ".replace(/[\\x00-\\x1f\\x7f]+/g, ' ')", 'dashboard API error control-char normalization')
+  assertIncludes(html, "msg = msg.slice(0, API_ERROR_MAX - 3) + '...';", 'dashboard API error length cap')
   assertIncludes(html, 'var walletBusy = false;', 'dashboard wallet busy-state storage')
   assertIncludes(html, 'function setWalletBusy(busy)', 'dashboard wallet busy-state guard')
   assertIncludes(html, 'if (walletBusy) return;', 'dashboard wallet duplicate-write guard')

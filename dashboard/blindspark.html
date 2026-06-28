@@ -531,9 +531,17 @@ function writeClipboard(text, successMessage){
     .then(function(){ toast(successMessage || 'Copied'); })
     .catch(function(){ toast('Copy failed'); });
 }
+var API_ERROR_MAX = 180;
 function apiError(out, fallback){
   var msg = (out && out.error) || fallback || 'Request failed';
-  return String(msg).replace(/^[A-Z_]+: /, '');
+  msg = String(msg)
+    .replace(/^[A-Z_]+: /, '')
+    .replace(/[\x00-\x1f\x7f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!msg) msg = fallback || 'Request failed';
+  if (msg.length > API_ERROR_MAX) msg = msg.slice(0, API_ERROR_MAX - 3) + '...';
+  return msg;
 }
 
 var REQUEST_TIMEOUT_MS = 10000;

@@ -994,6 +994,9 @@ if (
 if (
   literalButtonsHaveTypeButton(blindsparkDashboard) &&
   literalButtonsHaveTypeButton(wizardDashboard) &&
+  blindsparkDashboard.includes('var API_ERROR_MAX = 180;') &&
+  blindsparkDashboard.includes(".replace(/[\\x00-\\x1f\\x7f]+/g, ' ')") &&
+  blindsparkDashboard.includes("msg = msg.slice(0, API_ERROR_MAX - 3) + '...';") &&
   blindsparkDashboard.includes('var walletBusy = false;') &&
   blindsparkDashboard.includes("$('walletSave').addEventListener('click', function(){ saveWallet(false); });") &&
   blindsparkDashboard.includes('if (walletBusy) return;') &&
@@ -1047,13 +1050,14 @@ if (
   dashboardWizardUiTest.includes('wizard busy state renders spinner without assigning HTML') &&
   dashboardWizardUiTest.includes('wizard API helper bounds setup requests and clears timeout handles') &&
   dashboardWizardUiTest.includes('wizard load errors render untrusted messages as text') &&
+  umbrelUiControlsTest.includes('umbrel dashboard API error text is bounded and normalized') &&
   umbrelUiControlsTest.includes('umbrel wallet destination saves on Enter without form navigation') &&
   umbrelUiControlsTest.includes('umbrel wallet save blocks duplicate in-flight writes') &&
   umbrelUiControlsTest.includes("walletDialog.attributes['aria-busy']")
 ) {
-  pass('Umbrel setup and wallet controls avoid submit-default refresh regressions, duplicate wizard writes, unbounded wizard requests, inline handlers, and wizard HTML assignment')
+  pass('Umbrel setup and wallet controls avoid submit-default refresh regressions, duplicate wizard writes, unbounded wizard requests, unbounded API error text, inline handlers, and wizard HTML assignment')
 } else {
-  fail('Umbrel setup or wallet controls can still regress to submit-default refresh/no-op behavior, duplicate wizard writes, unbounded wizard requests, or inline wizard handlers')
+  fail('Umbrel setup or wallet controls can still regress to submit-default refresh/no-op behavior, duplicate wizard writes, unbounded wizard requests, unbounded API error text, or inline wizard handlers')
 }
 
 if (
@@ -5751,6 +5755,9 @@ if (
   releaseImageSmoke.includes('assertDashboardUiHardening') &&
   releaseImageSmoke.includes('assertSetupWizardUiHardening') &&
   releaseImageSmoke.includes('walletBusyState') &&
+  releaseImageSmoke.includes('dashboard bounded API error max') &&
+  releaseImageSmoke.includes('dashboard API error control-char normalization') &&
+  releaseImageSmoke.includes('dashboard API error length cap') &&
   releaseImageSmoke.includes('dashboard wallet duplicate-write guard') &&
   releaseImageSmoke.includes('serviceActionState') &&
   releaseImageSmoke.includes('aiModelAddState') &&
@@ -6522,6 +6529,9 @@ if (
   umbrelSmokePackage.includes('assertSetupWizardUiHardening') &&
   umbrelSmokePackage.includes('dashboardUiHardening') &&
   umbrelSmokePackage.includes('setupUiHardening') &&
+  umbrelSmokePackage.includes('dashboard bounded API error max') &&
+  umbrelSmokePackage.includes('dashboard API error control-char normalization') &&
+  umbrelSmokePackage.includes('dashboard API error length cap') &&
   umbrelSmokePackage.includes('dashboard wallet duplicate-write guard') &&
   umbrelSmokePackage.includes('appProxyWrites') &&
   umbrelSmokePackage.includes('leasePollingBounded') &&
