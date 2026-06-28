@@ -14,7 +14,8 @@ import {
   scanCurrentConsumerLockChecks,
   scanHiverelayConsumers,
   scanSnapshotVersionChecks,
-  scanStaleConsumerSourceChecks
+  scanStaleConsumerSourceChecks,
+  verifyNpmLatestDistTags
 } from '../../scripts/audit-ecosystem-consumers.mjs'
 import { checkEcosystemWorkspace } from '../../scripts/check-ecosystem-workspace.mjs'
 import { commitEcosystemConsumers } from '../../scripts/commit-ecosystem-consumers.mjs'
@@ -774,7 +775,11 @@ test('ecosystem audit CLI defaults to npm-latest mode', (t) => {
     '--check'
   ], {
     cwd: process.cwd(),
-    encoding: 'utf8'
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HIVERELAY_NPM_LATEST_JSON: JSON.stringify(npmLatestVersions('0.20.2'))
+    }
   })
 
   t.is(result.status, 1)
@@ -895,6 +900,26 @@ test('ecosystem consumer audit accepts npm-latest manifests with current npm loc
   t.ok(syncCheck.ok)
   t.is(syncCheck.changes.length, 0)
   t.ok(syncCheck.warnings.some(warning => warning.includes('p2p-hiveservices')))
+
+  const staleLatest = verifyNpmLatestDistTags({
+    expectedCurrent: [consumer],
+    expectedVersion: '0.20.2',
+    npmLatestVersions: npmLatestVersions('0.20.2', {
+      'p2p-hiveservices': '0.9.2'
+    })
+  })
+  const latestSummary = checkConsumerState(rows, {
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer],
+    expectedStale: [],
+    lockChecks,
+    npmLatestChecks: staleLatest.checks,
+    npmLatestWarnings: staleLatest.warnings
+  })
+
+  t.absent(latestSummary.ok)
+  t.ok(latestSummary.errors.some(error => error.includes('p2p-hiveservices npm latest dist-tag is 0.9.2; expected 0.20.2')))
+  t.ok(formatConsumerReport(latestSummary).includes('NPM latest dist-tag checks:'))
 })
 
 test('ecosystem sync updates versioned app source markers', (t) => {

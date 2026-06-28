@@ -8,7 +8,6 @@ import {
   CURRENT_HIVERELAY_VERSION,
   DEFAULT_DEPENDENCY_MODE,
   EXPECTED_STALE_CONSUMERS,
-  HIVERELAY_DEPS,
   checkConsumerState,
   getExpectedCurrentConsumers,
   normalizeConsumerScope,
@@ -16,7 +15,8 @@ import {
   scanConsumerSourceChecks,
   scanCurrentConsumerLockChecks,
   scanHiverelayConsumers,
-  scanSnapshotVersionChecks
+  scanSnapshotVersionChecks,
+  verifyNpmLatestDistTags
 } from './audit-ecosystem-consumers.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -310,54 +310,6 @@ function replaceSourceMarker (text, spec, expectedVersion, nextTerm) {
     next = next.split(rendered).join(nextTerm)
   }
   return next
-}
-
-function verifyNpmLatestDistTags ({ expectedCurrent, expectedVersion, npmLatestVersions } = {}) {
-  const errors = []
-  const warnings = []
-  const names = Array.from(new Set([
-    ...HIVERELAY_DEPS,
-    ...expectedCurrent.flatMap(consumer => Object.keys(consumer.deps))
-  ])).sort()
-  const envVersions = npmLatestVersions || npmLatestVersionsFromEnv(process.env)
-
-  for (const name of names) {
-    let latest = envVersions?.[name]
-    if (latest == null) {
-      try {
-        latest = execFileSync('npm', ['view', name, 'dist-tags.latest'], {
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: 20000
-        }).trim()
-      } catch (err) {
-        errors.push(`Could not verify npm latest dist-tag for ${name}: ${stderrMessage(err) || err.message}. Set HIVERELAY_NPM_LATEST_JSON to trusted npm view results when running in an offline or DNS-restricted environment.`)
-        continue
-      }
-    }
-
-    if (latest !== expectedVersion) {
-      errors.push(`${name} npm latest dist-tag is ${latest || '(missing)'}; expected ${expectedVersion}. Refusing to switch app defaults to npm latest because that would not install the current HiveRelay release.`)
-    }
-  }
-
-  if (names.length > 0 && errors.length === 0) {
-    warnings.push(`npm latest dist-tags verified for ${names.join(', ')}`)
-  }
-
-  return { errors, warnings }
-}
-
-function npmLatestVersionsFromEnv (env) {
-  if (env.HIVERELAY_NPM_LATEST_JSON) {
-    try {
-      const parsed = JSON.parse(env.HIVERELAY_NPM_LATEST_JSON)
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed
-    } catch {
-      return {}
-    }
-  }
-  return {}
 }
 
 function refreshNpmLatestLockfiles ({ workspaceRoot, expectedCurrent, skipNpmInstall }) {

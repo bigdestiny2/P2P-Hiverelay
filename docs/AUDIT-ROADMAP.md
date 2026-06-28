@@ -183,6 +183,7 @@
 - [x] **4.136** Umbrel wallet duplicate-write guard — the Blindspark payout wallet dialog now keeps an explicit in-flight save flag, refuses duplicate wallet writes before the first request settles, sends a JSON `Accept` header, and carries the guard into release-image and Umbrel-package smoke checks.
 - [x] **4.137** Umbrel setup wizard busy selection lock — setup wizard clicks are now fully ignored while a prior setup action is pending, including accept-mode card clicks, so the UI cannot show a newly selected policy while the server is still applying the previous one.
 - [x] **4.138** Ecosystem audit CLI latest default — the standalone ecosystem consumer audit now uses the same npm `latest` default as the sync tool and release docs, with a process-level regression proving direct CLI runs audit the published-app default instead of silently falling back to local workspace links.
+- [x] **4.139** Ecosystem audit npm latest proof — npm-latest ecosystem audits now verify the full published HiveRelay package line, including `p2p-hiveservices`, and include dist-tag proof in the report so app defaults cannot be considered current unless npm `latest` would install the intended release.
 
 ---
 

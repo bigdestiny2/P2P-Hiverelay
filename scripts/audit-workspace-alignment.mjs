@@ -4074,6 +4074,10 @@ if (
   ecosystemConsumersAudit.includes('export const HIVERELAY_DEPS') &&
   ecosystemConsumersAudit.includes("DEFAULT_DEPENDENCY_MODE = 'npm-latest'") &&
   ecosystemConsumersAudit.includes('normalizeDependencyMode(args.dependencyMode || DEFAULT_DEPENDENCY_MODE)') &&
+  ecosystemConsumersAudit.includes('export function verifyNpmLatestDistTags') &&
+  ecosystemConsumersAudit.includes('HIVERELAY_NPM_LATEST_JSON') &&
+  ecosystemConsumersAudit.includes('npmLatestChecks') &&
+  ecosystemConsumersAudit.includes('NPM latest dist-tag checks:') &&
   ecosystemConsumersAudit.includes('getExpectedCurrentConsumers') &&
   ecosystemConsumersAudit.includes('normalizeDependencyMode') &&
   ecosystemConsumersAudit.includes("'p2p-hiveservices'") &&
@@ -4120,9 +4124,6 @@ if (
   ecosystemConsumersSync.includes('syncEcosystemConsumers') &&
   ecosystemConsumersSync.includes('getExpectedCurrentConsumers') &&
   ecosystemConsumersSync.includes('verifyNpmLatestDistTags') &&
-  ecosystemConsumersSync.includes('HIVERELAY_DEPS') &&
-  ecosystemConsumersSync.includes('...HIVERELAY_DEPS') &&
-  ecosystemConsumersSync.includes('HIVERELAY_NPM_LATEST_JSON') &&
   ecosystemConsumersSync.includes('npm package-lock refresh failed') &&
   ecosystemConsumersSync.includes('--dependency-mode') &&
   ecosystemConsumersSync.includes('setDependency') &&
@@ -4151,6 +4152,7 @@ if (
   ecosystemConsumersAuditTest.includes('p2p-hiveservices npm latest dist-tag is 0.9.2; expected 0.20.2') &&
   ecosystemConsumersAuditTest.includes('ecosystem sync refuses npm-latest defaults when npm latest would downgrade') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit accepts npm-latest manifests with current npm lock metadata') &&
+  ecosystemConsumersAuditTest.includes('NPM latest dist-tag checks:') &&
   ecosystemConsumersAuditTest.includes('ecosystem sync updates versioned app source markers') &&
   readme.includes('ECOSYSTEM-UPGRADE-0.20.2.md') &&
   readme.includes('npm run ecosystem:sync -- --check') &&

@@ -2,6 +2,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -473,8 +474,10 @@ export function checkConsumerState (rows, opts = {}) {
   const sourceChecks = opts.sourceChecks || []
   const lockChecks = opts.lockChecks || []
   const snapshotChecks = opts.snapshotChecks || []
+  const npmLatestChecks = opts.npmLatestChecks || []
+  const npmLatestWarnings = opts.npmLatestWarnings || []
   const errors = []
-  const warnings = []
+  const warnings = [...npmLatestWarnings]
   const byPath = new Map(rows.map(row => [row.path, row]))
   const expectedPaths = new Set([
     ...expectedClassifiedCurrent.map(row => row.path),
@@ -529,6 +532,10 @@ export function checkConsumerState (rows, opts = {}) {
     if (!check.ok) errors.push(check.error)
   }
 
+  for (const check of npmLatestChecks) {
+    if (!check.ok) errors.push(check.error)
+  }
+
   return {
     ok: errors.length === 0,
     expectedVersion,
@@ -541,8 +548,64 @@ export function checkConsumerState (rows, opts = {}) {
     sourceChecks,
     lockChecks,
     snapshotChecks,
+    npmLatestChecks,
     ignored: rows.filter(row => row.ignored)
   }
+}
+
+export function verifyNpmLatestDistTags ({ expectedCurrent, expectedVersion, npmLatestVersions } = {}) {
+  const errors = []
+  const warnings = []
+  const checks = []
+  const names = Array.from(new Set([
+    ...HIVERELAY_DEPS,
+    ...(expectedCurrent || []).flatMap(consumer => Object.keys(consumer.deps || {}))
+  ])).sort()
+  const envVersions = npmLatestVersions || npmLatestVersionsFromEnv(process.env)
+
+  for (const name of names) {
+    let latest = envVersions?.[name]
+    if (latest == null) {
+      try {
+        latest = execFileSync('npm', ['view', name, 'dist-tags.latest'], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 20000
+        }).trim()
+      } catch (err) {
+        const error = `Could not verify npm latest dist-tag for ${name}: ${stderrMessage(err) || err.message}. Set HIVERELAY_NPM_LATEST_JSON to trusted npm view results when running in an offline or DNS-restricted environment.`
+        errors.push(error)
+        checks.push({ ok: false, name, latest: null, expectedVersion, error })
+        continue
+      }
+    }
+
+    if (latest !== expectedVersion) {
+      const error = `${name} npm latest dist-tag is ${latest || '(missing)'}; expected ${expectedVersion}. Refusing to treat app defaults as current npm latest because that would not install the current HiveRelay release.`
+      errors.push(error)
+      checks.push({ ok: false, name, latest: latest || '', expectedVersion, error })
+    } else {
+      checks.push({ ok: true, name, latest, expectedVersion })
+    }
+  }
+
+  if (names.length > 0 && errors.length === 0) {
+    warnings.push(`npm latest dist-tags verified for ${names.join(', ')}`)
+  }
+
+  return { ok: errors.length === 0, errors, warnings, checks }
+}
+
+function npmLatestVersionsFromEnv (env) {
+  if (env.HIVERELAY_NPM_LATEST_JSON) {
+    try {
+      const parsed = JSON.parse(env.HIVERELAY_NPM_LATEST_JSON)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed
+    } catch {
+      return {}
+    }
+  }
+  return {}
 }
 
 export function scanCurrentConsumerLockChecks (opts = {}) {
@@ -861,6 +924,16 @@ export function formatConsumerReport (summary) {
     }
   }
 
+  if (summary.npmLatestChecks.length > 0) {
+    lines.push('', 'NPM latest dist-tag checks:')
+    const failed = summary.npmLatestChecks.filter(check => !check.ok)
+    if (failed.length === 0) {
+      for (const check of summary.npmLatestChecks) lines.push(`- ${check.name}: ${check.latest}`)
+    } else {
+      for (const check of failed) lines.push(`- ${check.name}: ${check.latest || '(unverified)'} (failed)`)
+    }
+  }
+
   if (summary.errors.length > 0) {
     lines.push('', 'Errors:')
     for (const error of summary.errors) lines.push(`- ${error}`)
@@ -892,6 +965,10 @@ function compareDeps (errors, row, expectedDeps, label) {
       errors.push(`${row.path} ${label} has ${key}=${JSON.stringify(actual[key])}; expected ${JSON.stringify(expectedDeps[key])}`)
     }
   }
+}
+
+function stderrMessage (err) {
+  return Buffer.isBuffer(err?.stderr) ? err.stderr.toString().trim() : String(err?.stderr || '').trim()
 }
 
 function collectHiverelayDeps (pkg) {
@@ -1187,6 +1264,9 @@ function main () {
   const consumerScope = normalizeConsumerScope(args.consumerScope || 'all')
   const expectedCurrent = getExpectedCurrentConsumers({ dependencyMode, consumerScope })
   const expectedClassifiedCurrent = getExpectedCurrentConsumers({ dependencyMode, consumerScope: 'all' })
+  const npmLatestCheck = dependencyMode === 'npm-latest'
+    ? verifyNpmLatestDistTags({ expectedCurrent, expectedVersion })
+    : { checks: [], warnings: [] }
   const rows = scanHiverelayConsumers({ workspaceRoot })
   const sourceChecks = scanConsumerSourceChecks({
     workspaceRoot,
@@ -1203,7 +1283,9 @@ function main () {
     consumerScope,
     sourceChecks,
     lockChecks,
-    snapshotChecks
+    snapshotChecks,
+    npmLatestChecks: npmLatestCheck.checks,
+    npmLatestWarnings: npmLatestCheck.warnings
   })
 
   if (args.json) {
