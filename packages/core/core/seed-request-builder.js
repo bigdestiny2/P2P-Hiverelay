@@ -34,17 +34,118 @@ import {
   STORAGE_CLASSES,
   AVAILABILITY_CLASSES
 } from './constants.js'
-import { verifySeedRequestSignature } from './protocol/seed-request.js'
+import {
+  SEED_REQUEST_REPLAY_SIGNATURE_DOMAIN,
+  verifySeedRequestSignatureDetails
+} from './protocol/seed-request.js'
 
 export const MAX_DISCOVERY_KEYS = 100
+export const PUBLISHER_SEED_REPLAY_WINDOW_MS = 60 * 60 * 1000
+export const PUBLISHER_SEED_REPLAY_FUTURE_SKEW_MS = 60 * 1000
+export const PUBLISHER_SEED_REPLAY_CACHE_MAX = 50_000
 
 const PRIVACY_TIER_ERROR = 'privacyTier must be one of: public, local-first, p2p-only'
 const CONTENT_TYPE_ERROR = `type must be one of: ${Array.from(CONTENT_TYPES).join(', ')}`
 const STORAGE_CLASS_ERROR = `storageClass must be one of: ${Array.from(STORAGE_CLASSES).join(', ')}`
 const AVAILABILITY_CLASS_ERROR = `availabilityClass must be one of: ${Array.from(AVAILABILITY_CLASSES).join(', ')}`
+const PUBLISHER_SEED_FIELDS = new Set([
+  'appKey',
+  'discoveryKeys',
+  'replicationFactor',
+  'maxStorageBytes',
+  'ttlSeconds',
+  'bountyRate',
+  'revocable',
+  'unseedFreezeMs',
+  'durability',
+  'publisherPubkey',
+  'publisherSignature',
+  'issuedAt',
+  'requestNonce',
+  'type',
+  'storageClass',
+  'availabilityClass',
+  'privacyTier',
+  'blind',
+  'custodyIntentId',
+  'blindContentId',
+  'ciphertextRoot',
+  'commitmentRoot',
+  'contentVersion',
+  'retainUntil',
+  'shardIds',
+  'shareScheme',
+  'shareThreshold',
+  'leaseDays',
+  'paymentProof'
+])
+const PAYMENT_PROOF_FIELDS = new Set(['quoteId', 'voucherId', 'blindToken', 'cashuToken'])
+const BLIND_TOKEN_FIELDS = new Set(['secret', 'C'])
 
 function reject (error, status = 400) {
   return { ok: false, error, status }
+}
+
+function rejectUnknownObjectFields (obj, allowed, label) {
+  for (const key of Object.keys(obj)) {
+    if (!allowed.has(key)) return reject(`unknown ${label} field: ${key}`)
+  }
+  return null
+}
+
+function validateAuxiliaryPublisherFields (body) {
+  const unknown = rejectUnknownObjectFields(body, PUBLISHER_SEED_FIELDS, 'publisher seed')
+  if (unknown) return unknown
+
+  if (body.leaseDays !== undefined && (!Number.isFinite(body.leaseDays) || body.leaseDays < 1)) {
+    return reject('leaseDays must be a positive number')
+  }
+
+  if (body.paymentProof !== undefined) {
+    if (!body.paymentProof || typeof body.paymentProof !== 'object' || Array.isArray(body.paymentProof)) {
+      return reject('paymentProof must be an object')
+    }
+    const paymentUnknown = rejectUnknownObjectFields(body.paymentProof, PAYMENT_PROOF_FIELDS, 'paymentProof')
+    if (paymentUnknown) return paymentUnknown
+    if (body.paymentProof.blindToken !== undefined) {
+      const token = body.paymentProof.blindToken
+      if (!token || typeof token !== 'object' || Array.isArray(token)) return reject('paymentProof.blindToken must be an object')
+      const tokenUnknown = rejectUnknownObjectFields(token, BLIND_TOKEN_FIELDS, 'paymentProof.blindToken')
+      if (tokenUnknown) return tokenUnknown
+    }
+  }
+
+  return null
+}
+
+export function consumePublisherSeedReplayNonce (replay, cache, opts = {}) {
+  if (!replay) return { ok: true }
+  if (!cache || typeof cache.has !== 'function' || typeof cache.set !== 'function') return { ok: true }
+
+  const now = Number.isSafeInteger(opts.now) ? opts.now : Date.now()
+  const windowMs = replayWindowMs(opts)
+  evictPublisherSeedReplayCache(cache, now, windowMs)
+
+  if (cache.has(replay.cacheKey)) {
+    return reject('SEED_REQUEST_REPLAY: requestNonce already seen for publisher', 409)
+  }
+  cache.set(replay.cacheKey, now)
+  if (cache.size > PUBLISHER_SEED_REPLAY_CACHE_MAX) {
+    const overflow = cache.size - PUBLISHER_SEED_REPLAY_CACHE_MAX
+    let removed = 0
+    for (const key of cache.keys()) {
+      cache.delete(key)
+      removed++
+      if (removed >= overflow) break
+    }
+  }
+  return { ok: true }
+}
+
+function evictPublisherSeedReplayCache (cache, now, windowMs) {
+  for (const [key, seenAt] of cache) {
+    if (!Number.isSafeInteger(seenAt) || now - seenAt > windowMs) cache.delete(key)
+  }
 }
 
 /**
@@ -66,6 +167,8 @@ export function buildPublisherSignedSeedOpts (body, opts = {}) {
   if (!isValidHexKey(body.publisherPubkey, 64)) return reject('publisherPubkey must be 64 hex characters')
   if (!body.publisherSignature) return reject('publisherSignature required')
   if (!isValidHexKey(body.publisherSignature, 128)) return reject('publisherSignature must be 128 hex characters')
+  const auxiliaryProblem = validateAuxiliaryPublisherFields(body)
+  if (auxiliaryProblem) return auxiliaryProblem
 
   // ── Discovery keys (optional) ──
   let discoveryKeys = []
@@ -105,6 +208,8 @@ export function buildPublisherSignedSeedOpts (body, opts = {}) {
   const durability = Number.isFinite(body.durability) && body.durability > 0
     ? Math.floor(body.durability)
     : 0
+  const replayEnvelope = validatePublisherSeedReplayEnvelope(body, opts)
+  if (!replayEnvelope.ok) return replayEnvelope
 
   // ── Signature verification ──
   const sigMsg = {
@@ -120,11 +225,19 @@ export function buildPublisherSignedSeedOpts (body, opts = {}) {
     publisherPubkey: b4a.from(body.publisherPubkey, 'hex'),
     publisherSignature: b4a.from(body.publisherSignature, 'hex')
   }
-  if (!verifySeedRequestSignature(sigMsg)) {
+  if (replayEnvelope.replay) {
+    sigMsg.issuedAt = replayEnvelope.replay.issuedAt
+    sigMsg.requestNonce = b4a.from(replayEnvelope.replay.requestNonce, 'hex')
+  }
+  const sigDetails = verifySeedRequestSignatureDetails(sigMsg)
+  if (!sigDetails.ok) {
     return reject(
-      'INVALID_SIGNATURE: publisher signature does not match canonical seed-request payload (v2 layout)',
+      'INVALID_SIGNATURE: publisher signature does not match canonical seed-request payload',
       403
     )
+  }
+  if (replayEnvelope.replay && sigDetails.domain !== SEED_REQUEST_REPLAY_SIGNATURE_DOMAIN) {
+    return reject('INVALID_SIGNATURE: seed replay envelope must use replay-v1 signature profile', 403)
   }
 
   // ── Assemble core seedOpts ──
@@ -137,7 +250,12 @@ export function buildPublisherSignedSeedOpts (body, opts = {}) {
     unseedFreezeMs,
     durability,
     publisherPubkey: body.publisherPubkey.toLowerCase(),
-    publisherSignature: body.publisherSignature.toLowerCase()
+    publisherSignature: body.publisherSignature.toLowerCase(),
+    seedSignatureProfile: sigDetails.layout
+  }
+  if (replayEnvelope.replay) {
+    seedOpts.issuedAt = replayEnvelope.replay.issuedAt
+    seedOpts.requestNonce = replayEnvelope.replay.requestNonce
   }
 
   // ── Optional content metadata ──
@@ -239,7 +357,51 @@ export function buildPublisherSignedSeedOpts (body, opts = {}) {
     }
   }
 
-  return { ok: true, appKey: body.appKey, opts: seedOpts }
+  return { ok: true, appKey: body.appKey, opts: seedOpts, replay: replayEnvelope.replay }
+}
+
+function validatePublisherSeedReplayEnvelope (body, opts) {
+  const hasIssuedAt = body.issuedAt !== undefined
+  const hasNonce = body.requestNonce !== undefined
+  if (!hasIssuedAt && !hasNonce) return { ok: true, replay: null }
+  if (!hasIssuedAt) return reject('issuedAt required when requestNonce is present')
+  if (!hasNonce) return reject('requestNonce required when issuedAt is present')
+  if (!Number.isSafeInteger(body.issuedAt) || body.issuedAt < 0) {
+    return reject('issuedAt must be a non-negative safe integer')
+  }
+  if (typeof body.requestNonce !== 'string' || !/^[0-9a-f]{32}$/i.test(body.requestNonce)) {
+    return reject('requestNonce must be 32 hex characters')
+  }
+
+  const now = Number.isSafeInteger(opts.now) ? opts.now : Date.now()
+  const windowMs = replayWindowMs(opts)
+  const futureSkewMs = replayFutureSkewMs(opts)
+  if (body.issuedAt > now + futureSkewMs) return reject('issuedAt is too far in the future')
+  if (now - body.issuedAt > windowMs) return reject('issuedAt is outside the replay window')
+
+  const publisherPubkey = body.publisherPubkey.toLowerCase()
+  const requestNonce = body.requestNonce.toLowerCase()
+  return {
+    ok: true,
+    replay: {
+      publisherPubkey,
+      requestNonce,
+      issuedAt: body.issuedAt,
+      cacheKey: publisherPubkey + ':' + requestNonce
+    }
+  }
+}
+
+function replayWindowMs (opts) {
+  return Number.isSafeInteger(opts.seedReplayWindowMs) && opts.seedReplayWindowMs >= 0
+    ? opts.seedReplayWindowMs
+    : PUBLISHER_SEED_REPLAY_WINDOW_MS
+}
+
+function replayFutureSkewMs (opts) {
+  return Number.isSafeInteger(opts.seedReplayFutureSkewMs) && opts.seedReplayFutureSkewMs >= 0
+    ? opts.seedReplayFutureSkewMs
+    : PUBLISHER_SEED_REPLAY_FUTURE_SKEW_MS
 }
 
 /**

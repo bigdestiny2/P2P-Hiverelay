@@ -13,6 +13,7 @@ const CHECKS = [
   'wizardCompletes',
   'setupActionLockObserved',
   'addWalletPersists',
+  'dynamicPayoutControlsObserved',
   'walletBusyStateObserved',
   'managementActionsPersist',
   'serviceActionStateObserved',

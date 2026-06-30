@@ -1,0 +1,98 @@
+{
+  "name": "relaykernel-profile-v1-minimal-compat",
+  "input": {
+    "capabilityDoc": {
+      "schemaVersion": 1,
+      "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "runtime": "node",
+      "features": [
+        "capability-doc",
+        "seed-revocability",
+        "seeding-registry"
+      ],
+      "supported_transports": [
+        "hyperswarm"
+      ],
+      "signature": {
+        "v": 1,
+        "sig": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    "circuitRelay": true,
+    "proofSignatureProfile": "retrievability-proof-v1",
+    "accountingReceiptKind": "hiverelay-accounting-receipt"
+  },
+  "profile": {
+    "kind": "hiverelay-relaykernel-profile",
+    "version": 1,
+    "relayPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "runtime": "node",
+    "source": {
+      "capabilitySchemaVersion": 1,
+      "capabilitySigned": true
+    },
+    "contracts": [
+      {
+        "name": "seed-control",
+        "status": "present",
+        "channel": "seed-request-v1",
+        "evidence": [
+          "seed-revocability",
+          "seeding-registry"
+        ]
+      },
+      {
+        "name": "circuit-relay",
+        "status": "present",
+        "channel": "relay-circuit-v1",
+        "evidence": []
+      },
+      {
+        "name": "proof-of-retrievability",
+        "status": "present",
+        "channel": "hiverelay-proof",
+        "signatureProfile": "retrievability-proof-v1"
+      },
+      {
+        "name": "capability-meta",
+        "status": "present",
+        "surface": "/.well-known/hiverelay.json",
+        "signed": true
+      },
+      {
+        "name": "os-accounting",
+        "status": "present",
+        "receiptKind": "hiverelay-accounting-receipt"
+      }
+    ],
+    "compatibility": {
+      "blindsparkHttpGateway": {
+        "present": true,
+        "surfaces": [
+          "/.well-known/hiverelay.json",
+          "/catalog.json",
+          "/v1/hyper/:driveKey/*path"
+        ]
+      }
+    },
+    "security": {
+      "proofSignatureProfile": "retrievability-proof-v1",
+      "accountingReceiptKind": "hiverelay-accounting-receipt",
+      "appModulesExcludedFromKernel": true
+    },
+    "transports": [
+      "hyperswarm"
+    ],
+    "features": [
+      "capability-doc",
+      "seed-revocability",
+      "seeding-registry"
+    ],
+    "appModules": []
+  },
+  "verdict": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  }
+}

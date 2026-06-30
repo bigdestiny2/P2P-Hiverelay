@@ -307,7 +307,7 @@ function releaseImageSmokeEvidence (opts = {}) {
     imageDigest: IMAGE_DIGEST,
     checks: [
       { name: 'health', status: 'passed', version: semver },
-      { name: 'dashboard', status: 'passed', serviceManager: true, walletControls: true, tokenMeta: true, walletBusyState: true, serviceActionState: true, aiModelAddState: true, appProxyWrites: true, leasePollingBounded: true, staticMarkupSafe: true },
+      { name: 'dashboard', status: 'passed', serviceManager: true, walletControls: true, tokenMeta: true, walletBusyState: true, dynamicPayoutControls: true, serviceActionState: true, serviceInlinePlanState: true, aiModelAddState: true, appProxyWrites: true, leasePollingBounded: true, staticMarkupSafe: true },
       { name: 'setupWizard', status: 'passed', editMode: true, statusRegion: true, actionLock: true, dashboardLinkAppPath: true, staticMarkupSafe: true },
       { name: 'dashboardToken', status: 'passed', exposedViaMeta: true },
       { name: 'dashboardWebSocket', status: 'passed', queryTokenRejected: true, inBandAuth: true, updateReceived: true },
@@ -334,13 +334,13 @@ function umbrelSmokeEvidence (opts = {}) {
     composePath: 'umbrel-app/docker-compose.yml',
     checks: [
       { name: 'composeSafety', status: 'passed', composePath: 'umbrel-app/docker-compose.yml' },
-      { name: 'firstBoot', status: 'passed', dashboard: true, setup: true, serviceCatalog: true, dashboardUiHardening: true, appProxyWrites: true, leasePollingBounded: true, dashboardStaticMarkupSafe: true, setupUiHardening: true, dashboardLinkAppPath: true, setupStaticMarkupSafe: true, acceptMode: 'review', healthVersion: semver },
+      { name: 'firstBoot', status: 'passed', dashboard: true, setup: true, serviceCatalog: true, dashboardUiHardening: true, dynamicPayoutControls: true, serviceInlinePlanState: true, appProxyWrites: true, leasePollingBounded: true, dashboardStaticMarkupSafe: true, setupUiHardening: true, dashboardLinkAppPath: true, setupStaticMarkupSafe: true, acceptMode: 'review', healthVersion: semver },
       { name: 'dashboardWebSocket', status: 'passed', queryTokenRejected: true, inBandAuth: true, updateReceived: true },
       { name: 'acceptModeDefault', status: 'passed', mode: 'review' },
       { name: 'usageTelemetry', status: 'passed', bandwidth: { enabled: true, count: 0, bytes: 0, bandwidthBytes: 0 }, poker: { enabled: false, tables: 0, appends: 0, seats: 0 } },
       { name: 'walletWrite', status: 'passed', destinationSaved: true },
       { name: 'servicesSave', status: 'passed', plugins: EXPECTED_SMOKE_SERVICE_PLUGINS, restartRequired: true },
-      { name: 'secondBoot', status: 'passed', dashboard: true, setup: true, serviceCatalog: true, dashboardUiHardening: true, appProxyWrites: true, leasePollingBounded: true, dashboardStaticMarkupSafe: true, setupUiHardening: true, dashboardLinkAppPath: true, setupStaticMarkupSafe: true, acceptMode: 'review', healthVersion: semver },
+      { name: 'secondBoot', status: 'passed', dashboard: true, setup: true, serviceCatalog: true, dashboardUiHardening: true, dynamicPayoutControls: true, serviceInlinePlanState: true, appProxyWrites: true, leasePollingBounded: true, dashboardStaticMarkupSafe: true, setupUiHardening: true, dashboardLinkAppPath: true, setupStaticMarkupSafe: true, acceptMode: 'review', healthVersion: semver },
       { name: 'identityPersistence', status: 'passed', publicKeyStable: true },
       { name: 'walletPersistence', status: 'passed', destinationPersisted: true },
       {
@@ -2906,9 +2906,21 @@ test('release evidence verifier rejects stale critical smoke proof details', asy
       }
     },
     {
+      label: 'release-image-smoke dashboard dynamicPayoutControls',
+      mutate: (imageSmoke) => {
+        imageSmoke.checks.find(check => check.name === 'dashboard').dynamicPayoutControls = false
+      }
+    },
+    {
       label: 'release-image-smoke dashboard appProxyWrites',
       mutate: (imageSmoke) => {
         imageSmoke.checks.find(check => check.name === 'dashboard').appProxyWrites = false
+      }
+    },
+    {
+      label: 'release-image-smoke dashboard serviceInlinePlanState',
+      mutate: (imageSmoke) => {
+        imageSmoke.checks.find(check => check.name === 'dashboard').serviceInlinePlanState = false
       }
     },
     {
@@ -2951,6 +2963,18 @@ test('release evidence verifier rejects stale critical smoke proof details', asy
       label: 'umbrel-package-smoke firstBoot appProxyWrites',
       mutate: (_imageSmoke, umbrelSmoke) => {
         umbrelSmoke.checks.find(check => check.name === 'firstBoot').appProxyWrites = false
+      }
+    },
+    {
+      label: 'umbrel-package-smoke firstBoot serviceInlinePlanState',
+      mutate: (_imageSmoke, umbrelSmoke) => {
+        umbrelSmoke.checks.find(check => check.name === 'firstBoot').serviceInlinePlanState = false
+      }
+    },
+    {
+      label: 'umbrel-package-smoke firstBoot dynamicPayoutControls',
+      mutate: (_imageSmoke, umbrelSmoke) => {
+        umbrelSmoke.checks.find(check => check.name === 'firstBoot').dynamicPayoutControls = false
       }
     },
     {

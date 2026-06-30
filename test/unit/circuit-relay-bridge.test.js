@@ -228,6 +228,61 @@ test('per-circuit byte cap closes the circuit when reached', (t) => {
   t.is(relayMock._calls.close[0].reason, 'BYTES_EXCEEDED')
 })
 
+test('per-circuit rate cap closes the circuit when exceeded', (t) => {
+  const relayMock = makeMockRelay()
+  const cr = new CircuitRelay(null, relayMock, { maxCircuitRateBytesPerSecond: 50 })
+  t.teardown(() => cr.destroy())
+  const alice = pub(0xAA)
+  const bob = pub(0xBB)
+
+  const aliceChannel = makeMockChannel({ remotePubkey: alice })
+  const bobChannel = makeMockChannel({ remotePubkey: bob })
+
+  cr._onReserve(aliceChannel, { peerPubkey: alice })
+  cr._onConnect(bobChannel, { targetPubkey: alice, sourcePubkey: bob })
+  const circuitId = aliceChannel.sends.readyMsg[0].circuitId
+
+  cr._onCircuitData(aliceChannel, { circuitId, data: b4a.alloc(30, 0x01) })
+  t.is(bobChannel.sends.dataMsg.length, 1, 'first frame forwarded')
+
+  cr._onCircuitData(aliceChannel, { circuitId, data: b4a.alloc(30, 0x02) })
+  t.is(bobChannel.sends.dataMsg.length, 1, 'second frame not forwarded')
+  t.is(cr.activeCircuits.size, 0, 'circuit torn down')
+  t.is(relayMock._calls.close[0].reason, 'RATE_EXCEEDED')
+})
+
+test('circuit duration cap closes stale active circuits in the bridge layer', (t) => {
+  const relayMock = makeMockRelay()
+  const cr = new CircuitRelay(null, relayMock, { maxCircuitDuration: 50 })
+  t.teardown(() => cr.destroy())
+  const alice = pub(0xAA)
+  const bob = pub(0xBB)
+
+  const aliceChannel = makeMockChannel({ remotePubkey: alice })
+  const bobChannel = makeMockChannel({ remotePubkey: bob })
+
+  cr._onReserve(aliceChannel, { peerPubkey: alice })
+  cr._onConnect(bobChannel, { targetPubkey: alice, sourcePubkey: bob })
+  const circuitId = aliceChannel.sends.readyMsg[0].circuitId
+  const circuit = cr.activeCircuits.get(b4a.toString(circuitId, 'hex'))
+  circuit.startedAt = Date.now() - 51
+
+  cr._onCircuitData(aliceChannel, { circuitId, data: b4a.alloc(1, 0x01) })
+
+  t.is(bobChannel.sends.dataMsg.length, 0, 'stale circuit data not forwarded')
+  t.is(cr.activeCircuits.size, 0, 'circuit torn down')
+  t.is(relayMock._calls.close[0].reason, 'DURATION_EXCEEDED')
+})
+
+test('single-argument CircuitRelay constructor keeps Bare relay compatibility', (t) => {
+  const relayMock = makeMockRelay()
+  const cr = new CircuitRelay(relayMock)
+  t.teardown(() => cr.destroy())
+
+  t.is(cr.relay, relayMock)
+  t.is(cr.swarm, null)
+})
+
 test('reserve with mismatched pubkey is REJECTED (auth bypass closed)', (t) => {
   const cr = new CircuitRelay(null, makeMockRelay())
   t.teardown(() => cr.destroy())

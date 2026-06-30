@@ -1,7 +1,9 @@
 import { EventEmitter } from 'events'
 
-const MAX_CIRCUIT_DURATION_MS = 10 * 60 * 1000 // 10 minutes default
-const MAX_CIRCUIT_BYTES = 64 * 1024 * 1024 // 64 MB per circuit
+export const MAX_CIRCUIT_DURATION_MS = 10 * 60 * 1000 // 10 minutes default
+export const MAX_CIRCUIT_BYTES = 64 * 1024 * 1024 // 64 MB per circuit
+export const MAX_CIRCUITS_PER_PEER = 5
+export const MAX_CIRCUIT_RATE_BYTES_PER_SECOND = 1024 * 1024 // 1 MiB/s per circuit
 
 function forward (from, to, circuit, circuitId, relay) {
   const canPause = typeof from.pause === 'function'
@@ -10,6 +12,10 @@ function forward (from, to, circuit, circuitId, relay) {
   from.on('data', (chunk) => {
     if (circuit.bytesRelayed + chunk.byteLength > relay.maxCircuitBytes) {
       relay._closeCircuit(circuitId, 'BYTES_EXCEEDED')
+      return
+    }
+    if (!relay._admitCircuitRate(circuit, chunk.byteLength)) {
+      relay._closeCircuit(circuitId, 'RATE_EXCEEDED')
       return
     }
     if (relay._isOverBandwidthLimit()) {
@@ -33,14 +39,19 @@ export class Relay extends EventEmitter {
     this.swarm = swarm
     this.maxBandwidthMbps = opts.maxBandwidthMbps || 100
     this.maxConnections = opts.maxConnections || 256
-    this.maxCircuitDuration = opts.maxCircuitDuration || MAX_CIRCUIT_DURATION_MS
-    this.maxCircuitBytes = opts.maxCircuitBytes || MAX_CIRCUIT_BYTES
+    this.maxCircuitDuration = hardCappedPositiveInteger(opts.maxCircuitDuration, MAX_CIRCUIT_DURATION_MS, MAX_CIRCUIT_DURATION_MS)
+    this.maxCircuitBytes = hardCappedPositiveInteger(opts.maxCircuitBytes, MAX_CIRCUIT_BYTES, MAX_CIRCUIT_BYTES)
 
     // Active circuits: circuitId -> { source, dest, bytesRelayed, startedAt, timer, sourcePeerKey }
     this.circuits = new Map()
     // Per-peer circuit tracking: peer pubkey hex -> count
     this.circuitsPerPeer = new Map()
-    this.maxCircuitsPerPeer = opts.maxCircuitsPerPeer || 5
+    this.maxCircuitsPerPeer = hardCappedPositiveInteger(opts.maxCircuitsPerPeer, MAX_CIRCUITS_PER_PEER, MAX_CIRCUITS_PER_PEER)
+    this.maxCircuitRateBytesPerSecond = hardCappedPositiveInteger(
+      opts.maxCircuitRateBytesPerSecond,
+      MAX_CIRCUIT_RATE_BYTES_PER_SECOND,
+      MAX_CIRCUIT_RATE_BYTES_PER_SECOND
+    )
     this.totalBytesRelayed = 0
     this.totalCircuitsServed = 0
     this.running = false
@@ -87,6 +98,8 @@ export class Relay extends EventEmitter {
       sourcePeerKey: sourcePeerKey || null,
       bytesRelayed: 0,
       startedAt: Date.now(),
+      rateWindowStartedAt: 0,
+      rateWindowBytes: 0,
       timer: null
     }
 
@@ -227,7 +240,9 @@ export class Relay extends EventEmitter {
       sourcePeerKey: sourcePeerKey || null,
       bytesRelayed: 0,
       startedAt: Date.now(),
-      maxBytes: maxBytes || this.maxCircuitBytes,
+      maxBytes: hardCappedPositiveInteger(maxBytes, this.maxCircuitBytes, this.maxCircuitBytes),
+      rateWindowStartedAt: 0,
+      rateWindowBytes: 0,
       timer: null
     }
 
@@ -259,6 +274,7 @@ export class Relay extends EventEmitter {
     if (!circuit) return false
 
     if (circuit.bytesRelayed + bytes > circuit.maxBytes) return false
+    if (!this._admitCircuitRate(circuit, bytes)) return false
 
     // Single timestamp + single (amortized) prune for the whole admit:
     // the previous code called _isOverBandwidthLimit() and _recordBandwidth()
@@ -271,6 +287,18 @@ export class Relay extends EventEmitter {
     circuit.bytesRelayed += bytes
     this.totalBytesRelayed += bytes
     this._addBandwidth(bytes, now)
+    return true
+  }
+
+  _admitCircuitRate (circuit, bytes, now = Date.now()) {
+    if (!Number.isSafeInteger(this.maxCircuitRateBytesPerSecond) || this.maxCircuitRateBytesPerSecond <= 0) return true
+    if (!circuit || !Number.isSafeInteger(bytes) || bytes < 0) return false
+    if (!Number.isFinite(circuit.rateWindowStartedAt) || now - circuit.rateWindowStartedAt >= 1000) {
+      circuit.rateWindowStartedAt = now
+      circuit.rateWindowBytes = 0
+    }
+    if (circuit.rateWindowBytes + bytes > this.maxCircuitRateBytesPerSecond) return false
+    circuit.rateWindowBytes += bytes
     return true
   }
 
@@ -329,4 +357,9 @@ export class Relay extends EventEmitter {
     this.circuitsPerPeer.clear()
     this.emit('stopped')
   }
+}
+
+function hardCappedPositiveInteger (value, fallback, hardCap) {
+  const candidate = Number.isSafeInteger(value) && value > 0 ? value : fallback
+  return Math.min(candidate, hardCap)
 }

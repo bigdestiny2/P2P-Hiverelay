@@ -1,0 +1,290 @@
+{
+  "name": "capability-doc-signature-v1",
+  "description": "Pins signed capability-doc canonicalization for RelayKernel-compatible meta claims and downgrade-sensitive protocol profile fields.",
+  "seedHex": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+  "pubkey": "d9bf2148748a85c89da5aad8ee0b0fc2d105fd39d41a4c796536354f0ae2900c",
+  "input": {
+    "mode": "relaykernel",
+    "runtime": "node",
+    "version": "0.21.0-vector",
+    "software": "https://github.com/bigdestiny2/p2p-hiverelay",
+    "name": "RelayKernel Vector Node",
+    "gatewayUrl": "https://relay.example",
+    "attestedAt": 1782753600000,
+    "config": {
+      "productProfile": "relaykernel",
+      "enableAPI": true,
+      "enableRelay": true,
+      "enableSeeding": true,
+      "enableServices": false,
+      "discovery": {
+        "dht": true
+      },
+      "regions": [
+        "eu-west"
+      ],
+      "maxPendingRequests": 32,
+      "maxConnections": 128,
+      "maxStorageBytes": 2147483648,
+      "maxRelayBandwidthMbps": 100,
+      "delegationRequired": false,
+      "authRequired": false,
+      "custody": {
+        "enabled": false
+      },
+      "federation": {
+        "enabled": false
+      },
+      "signedDirectory": {
+        "enabled": false
+      },
+      "lease": {
+        "enabled": false
+      },
+      "subsidy": {
+        "enabled": false
+      },
+      "payment": {
+        "enabled": false
+      },
+      "maxCircuitDuration": 600000,
+      "maxCircuitBytes": 67108864,
+      "maxCircuitsPerPeer": 5,
+      "maxCircuitRateBytesPerSecond": 1048576
+    },
+    "appRegistry": {
+      "catalog": []
+    },
+    "accountingReceipts": true,
+    "relayCore": {
+      "maxCircuitDuration": 600000,
+      "maxCircuitBytes": 67108864,
+      "maxCircuitsPerPeer": 5,
+      "maxCircuitRateBytesPerSecond": 1048576,
+      "recordCircuitBytes": true
+    },
+    "circuitRelay": {
+      "maxCircuitDuration": 600000,
+      "maxCircuitBytes": 67108864,
+      "maxCircuitsPerPeer": 5,
+      "maxCircuitRateBytesPerSecond": 1048576,
+      "maxDataMsgBytes": 65536,
+      "maxPendingConnects": 100,
+      "maxReservesPerMin": 5
+    }
+  },
+  "doc": {
+    "schemaVersion": 1,
+    "name": "RelayKernel Vector Node",
+    "description": null,
+    "icon": null,
+    "pubkey": "d9bf2148748a85c89da5aad8ee0b0fc2d105fd39d41a4c796536354f0ae2900c",
+    "software": "https://github.com/bigdestiny2/p2p-hiverelay",
+    "version": "0.21.0-vector",
+    "runtime": "node",
+    "region": "eu-west",
+    "contact": null,
+    "terms_of_service": null,
+    "supported_transports": [
+      "hyperswarm"
+    ],
+    "features": [
+      "accounting-receipts",
+      "capability-doc",
+      "circuit-limits-profile-v1",
+      "circuit-relay",
+      "retrievability-proof-domain-v1",
+      "retrievability-proof-http",
+      "seed-request-replay-v1",
+      "seed-revocability",
+      "seed-signature-domain-v3"
+    ],
+    "protocol_profile": {
+      "name": "relaykernel",
+      "relaykernel_compatible": true,
+      "kernel_surfaces": [
+        "accounting-receipts",
+        "capability-doc",
+        "catalog",
+        "circuit-relay",
+        "http-gateway",
+        "proof-of-retrievability",
+        "seed-control"
+      ],
+      "app_surfaces": [],
+      "circuit_limits": {
+        "kind": "relaykernel-circuit-limits-profile",
+        "version": 1,
+        "hardCaps": {
+          "maxSessionMs": 600000,
+          "maxBytes": 67108864,
+          "maxCircuitsPerPeer": 5,
+          "maxFrameBytes": 65536,
+          "recommendedRateBytesPerSecond": 1048576
+        },
+        "channels": {
+          "kernel": false,
+          "hivemeshT1": false,
+          "hiverelayCompat": true,
+          "advertised": [
+            "hiverelay-circuit"
+          ]
+        },
+        "limits": {
+          "maxSessionMs": 600000,
+          "maxBytes": 67108864,
+          "maxCircuitsPerPeer": 5,
+          "maxFrameBytes": 65536,
+          "maxPendingConnects": 100,
+          "maxReservePerMinute": 5,
+          "rateCapBytesPerSecond": 1048576
+        },
+        "runtime": {
+          "reserveAuthBindsRemoteKey": true,
+          "connectAuthBindsRemoteKey": true,
+          "endpointOnlyData": true,
+          "closeOnFrameTooLarge": true,
+          "closeOnByteCap": true,
+          "silentDropUnknownCircuit": true,
+          "relayAccountingEnabled": true,
+          "relayMaxCircuitDurationMs": 600000,
+          "circuitRelayCleanupMs": 600000,
+          "perCircuitRateCapBytesPerSecond": 1048576
+        },
+        "limitChecks": {
+          "sessionHardCap": true,
+          "byteHardCap": true,
+          "concurrentHardCap": true,
+          "frameHardCap": true,
+          "reserveRateLimited": true,
+          "pendingConnectsBounded": true,
+          "perCircuitRateCapped": true,
+          "relayAccountingDurationCap": true
+        },
+        "securityChecks": {
+          "reserveAuthBindsRemoteKey": true,
+          "connectAuthBindsRemoteKey": true,
+          "endpointOnlyData": true,
+          "closeOnFrameTooLarge": true,
+          "closeOnByteCap": true,
+          "silentDropUnknownCircuit": true
+        },
+        "decisions": [],
+        "verdict": {
+          "valid": true,
+          "errors": [],
+          "warnings": [
+            "using HiveRelay compatibility channel until rk-circuit is introduced"
+          ]
+        }
+      },
+      "signature_domains": {
+        "seed_request": {
+          "preferred": "hiverelay.seed-request.v3",
+          "accepted": [
+            "hiverelay.seed-request.v3",
+            "hiverelay.seed-request.replay-v1",
+            "legacy-v2",
+            "legacy-v1"
+          ],
+          "legacy_accepted": true,
+          "replay_protection": {
+            "domain": "hiverelay.seed-request.replay-v1",
+            "nonce_bytes": 16,
+            "replay_window_ms": 3600000,
+            "future_skew_ms": 60000,
+            "transports": [
+              "https-api-v1-seed",
+              "hiverelay-publish"
+            ]
+          }
+        },
+        "retrievability_proof": {
+          "preferred": "hiverelay.retrievability-proof.v1",
+          "accepted": [
+            "hiverelay.retrievability-proof.v1",
+            "storage-proof-legacy-v1"
+          ],
+          "signature_profiles": [
+            "retrievability-proof-v1",
+            "storage-proof-legacy-v1"
+          ],
+          "legacy_accepted": true,
+          "http_opt_in": true
+        }
+      }
+    },
+    "directory_privacy": {
+      "mode": "relaykernel-private",
+      "relaykernel_private_by_default": true,
+      "global_enumerable": false,
+      "global_enumerable_reason": null,
+      "signed_directory_enabled": false,
+      "catalog_public": true,
+      "gateway_url_advertised": true,
+      "index_room_advertised": false
+    },
+    "limitation": {
+      "accept_mode": "review",
+      "max_pending_requests": 32,
+      "max_connections": 128,
+      "max_storage_bytes": 2147483648,
+      "max_relay_bandwidth_mbps": 100,
+      "delegation_required": false,
+      "payment_required": false,
+      "auth_required": false
+    },
+    "federation": null,
+    "catalog": {
+      "total": 0,
+      "anchored": 0,
+      "accepted": 0,
+      "apps": 0,
+      "drives": 0,
+      "resources": 0,
+      "datasets": 0,
+      "media": 0
+    },
+    "fees": null,
+    "gatewayUrl": "https://relay.example",
+    "onionGatewayUrl": null,
+    "indexRoom": null,
+    "attestedAt": 1782753600000,
+    "signature": {
+      "v": 1,
+      "sig": "53bc63ff27443025eabf3b4489445ea35fb9537cda964fe142abdba75b7b6c67e483b828c2d144346865c9b1e5707540cf3ae30610a38ab661f420fe20fb1702"
+    }
+  },
+  "signableHash": "1451425f03a1b8f3c88d46422c6580221122d94bdb1a1aa32bd4f065981104e1",
+  "verdict": {
+    "valid": true
+  },
+  "freshness": [
+    {
+      "id": "within-window",
+      "opts": {
+        "now": 1782753660000,
+        "maxAgeMs": 300000
+      },
+      "verdict": {
+        "valid": true
+      }
+    },
+    {
+      "id": "expired-window",
+      "opts": {
+        "now": 1782753960001,
+        "maxAgeMs": 300000
+      },
+      "verdict": {
+        "valid": false,
+        "reason": "capability doc attestation expired"
+      }
+    }
+  ],
+  "tamper": {
+    "field": "protocol_profile.signature_domains.seed_request.preferred",
+    "value": "legacy-v2",
+    "expectedReason": "signature verification failed"
+  }
+}

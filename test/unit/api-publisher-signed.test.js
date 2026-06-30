@@ -16,7 +16,10 @@ import {
   computeReceiptRoot,
   hashHex
 } from 'p2p-hiverelay/core/custody-signing.js'
-import { serializeSeedRequestForSigning } from 'p2p-hiverelay/core/protocol/seed-request.js'
+import {
+  serializeSeedRequestForReplaySigning,
+  serializeSeedRequestForSigning
+} from 'p2p-hiverelay/core/protocol/seed-request.js'
 
 const API_KEY = 'test-secret-key-12345'
 
@@ -119,12 +122,16 @@ function signSeedRequest (publisherKp, fields = {}) {
     revocable: fields.revocable !== false,
     unseedFreezeMs: fields.unseedFreezeMs || 0,
     durability: fields.durability || 0,
+    issuedAt: fields.issuedAt,
+    requestNonce: fields.requestNonce ? b4a.from(fields.requestNonce, 'hex') : undefined,
     publisherPubkey: publisherKp.publicKey,
     publisherSignature: b4a.alloc(64)
   }
-  const payload = serializeSeedRequestForSigning(msg)
+  const payload = fields.issuedAt !== undefined || fields.requestNonce !== undefined
+    ? serializeSeedRequestForReplaySigning(msg)
+    : serializeSeedRequestForSigning(msg)
   sodium.crypto_sign_detached(msg.publisherSignature, payload, publisherKp.secretKey)
-  return {
+  const body = {
     appKey: b4a.toString(appKey, 'hex'),
     discoveryKeys: discoveryKeys.map(dk => b4a.toString(dk, 'hex')),
     replicationFactor: msg.replicationFactor,
@@ -137,6 +144,9 @@ function signSeedRequest (publisherKp, fields = {}) {
     publisherPubkey: b4a.toString(publisherKp.publicKey, 'hex'),
     publisherSignature: b4a.toString(msg.publisherSignature, 'hex')
   }
+  if (fields.issuedAt !== undefined) body.issuedAt = fields.issuedAt
+  if (fields.requestNonce !== undefined) body.requestNonce = fields.requestNonce
+  return body
 }
 
 let api = null
@@ -203,6 +213,38 @@ test('/api/v1/seed: accepts valid publisher signature and forwards to seedApp', 
   t.is(last.opts.ttlDays, 7, 'ttlSeconds converted to ttlDays')
   t.is(last.opts.publisherPubkey, b4a.toString(publisher.publicKey, 'hex'))
   t.is(last.opts.publisherSignature, body.publisherSignature)
+})
+
+test('/api/v1/seed: rejects replayed replay-v1 publisher seed nonce', async (t) => {
+  const publisher = keyPair()
+  const callsBefore = fixture.seedCalls.length
+  const body = signSeedRequest(publisher, {
+    appKey: 'de'.repeat(32),
+    issuedAt: Date.now(),
+    requestNonce: '06'.repeat(16)
+  })
+
+  const first = await request(port, 'POST', '/api/v1/seed', body)
+  t.is(first.statusCode, 200, JSON.stringify(first.body))
+  t.is(fixture.seedCalls.length, callsBefore + 1, 'first replay-v1 request seeded')
+  t.is(fixture.seedCalls[fixture.seedCalls.length - 1].opts.seedSignatureProfile, 'replay-v1')
+
+  const second = await request(port, 'POST', '/api/v1/seed', body)
+  t.is(second.statusCode, 409, JSON.stringify(second.body))
+  t.ok(second.body.error.includes('SEED_REQUEST_REPLAY'))
+  t.is(fixture.seedCalls.length, callsBefore + 1, 'replayed request did not seed')
+})
+
+test('/api/v1/seed: rejects unknown publisher-signed ingress fields', async (t) => {
+  const publisher = keyPair()
+  const callsBefore = fixture.seedCalls.length
+  const body = signSeedRequest(publisher, { appKey: 'ce'.repeat(32) })
+  body.caption = 'private docs'
+
+  const res = await request(port, 'POST', '/api/v1/seed', body)
+  t.is(res.statusCode, 400)
+  t.is(res.body.error, 'unknown publisher seed field: caption')
+  t.is(fixture.seedCalls.length, callsBefore, 'seedApp was not called')
 })
 
 test('/api/v1/seed: forwards atomic-custody binding fields', async (t) => {

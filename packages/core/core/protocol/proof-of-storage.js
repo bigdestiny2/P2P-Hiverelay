@@ -32,6 +32,12 @@ import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import { wire } from 'hypercore/lib/messages.js'
 
+export const STORAGE_PROOF_LEGACY_SIGNATURE_PROFILE = 'storage-proof-legacy-v1'
+export const RETRIEVABILITY_PROOF_SIGNATURE_PROFILE = 'retrievability-proof-v1'
+export const RETRIEVABILITY_PROOF_DOMAIN = 'hiverelay.retrievability-proof.v1'
+export const PROOF_KIND_RETRIEVABILITY = 'proof-of-retrievability'
+export const RETRIEVABILITY_PROOF_LIMITATION = 'challenge-response proof; not proof-of-replication'
+
 /**
  * The bytes a relay signs / a client verifies. Binds the proof to a specific
  * core, block index, challenge nonce, and the block's content hash.
@@ -45,6 +51,40 @@ export function storageProofSignable (coreKey, index, nonce, blockValue) {
 }
 
 /**
+ * Additive RelayKernel-profile signature bytes for proof-of-retrievability.
+ *
+ * The live HiveRelay proof remains byte-compatible through storageProofSignable.
+ * This profile is opt-in and domain-separated so future role/channel-specific
+ * keys cannot accidentally sign reusable raw byte strings.
+ */
+export function retrievabilityProofSignable (coreKey, index, nonce, blockValue) {
+  const blockHash = b4a.alloc(32)
+  sodium.crypto_generichash(blockHash, blockValue)
+  const payload = [
+    RETRIEVABILITY_PROOF_DOMAIN,
+    'relay',
+    'hiverelay-proof',
+    'prove-retrievable',
+    1,
+    hex(coreKey),
+    index,
+    hex(nonce),
+    hex(blockHash)
+  ]
+  return { signable: b4a.from(JSON.stringify(payload), 'utf8'), blockHash }
+}
+
+export function storageProofSignableForProfile (profile, coreKey, index, nonce, blockValue) {
+  if (profile === RETRIEVABILITY_PROOF_SIGNATURE_PROFILE) {
+    return retrievabilityProofSignable(coreKey, index, nonce, blockValue)
+  }
+  if (profile === STORAGE_PROOF_LEGACY_SIGNATURE_PROFILE || profile == null) {
+    return storageProofSignable(coreKey, index, nonce, blockValue)
+  }
+  throw new Error('UNSUPPORTED_SIGNATURE_PROFILE')
+}
+
+/**
  * RELAY SIDE — build a signed proof for block `index` of `core`.
  * Reads LOCAL storage only: if the relay doesn't hold the block it throws
  * (it must never fetch-on-demand to answer a proof — that would defeat it).
@@ -53,9 +93,10 @@ export function storageProofSignable (coreKey, index, nonce, blockValue) {
  * @param {number} index - block index being challenged
  * @param {Buffer} nonce - 32-byte challenge nonce from the verifier
  * @param {{publicKey:Buffer, secretKey:Buffer}} keyPair - the relay's identity key
+ * @param {string} [signatureProfile] - optional future signature profile
  * @returns {Promise<Object>} wire-ready proof response (all buffers hex-encoded)
  */
-export async function buildStorageProof ({ core, index, nonce, keyPair }) {
+export async function buildStorageProof ({ core, index, nonce, keyPair, signatureProfile = STORAGE_PROOF_LEGACY_SIGNATURE_PROFILE }) {
   if (!Number.isInteger(index) || index < 0 || index >= core.length) {
     throw new Error('BLOCK_OUT_OF_RANGE')
   }
@@ -84,11 +125,19 @@ export async function buildStorageProof ({ core, index, nonce, keyPair }) {
     upgrade: proof.upgrade || null
   })
 
-  const { signable, blockHash } = storageProofSignable(core.key, index, nonce, proof.block.value)
+  const { signable, blockHash } = storageProofSignableForProfile(
+    signatureProfile,
+    core.key,
+    index,
+    nonce,
+    proof.block.value
+  )
   const signature = b4a.alloc(sodium.crypto_sign_BYTES)
   sodium.crypto_sign_detached(signature, signable, keyPair.secretKey)
 
-  return {
+  const response = {
+    proofKind: PROOF_KIND_RETRIEVABILITY,
+    proofLimit: RETRIEVABILITY_PROOF_LIMITATION,
     coreKey: b4a.toString(core.key, 'hex'),
     index,
     nonce: b4a.toString(nonce, 'hex'),
@@ -97,6 +146,10 @@ export async function buildStorageProof ({ core, index, nonce, keyPair }) {
     relayPubkey: b4a.toString(keyPair.publicKey, 'hex'),
     signature: b4a.toString(signature, 'hex')
   }
+  if (signatureProfile !== STORAGE_PROOF_LEGACY_SIGNATURE_PROFILE) {
+    response.signatureProfile = signatureProfile
+  }
+  return response
 }
 
 /**
@@ -120,6 +173,9 @@ export async function verifyStorageProof ({ verifierCore, response, expect }) {
     lengthValid: true,
     sigValid: false,
     provenLength: 0,
+    proofKind: PROOF_KIND_RETRIEVABILITY,
+    proofLimit: RETRIEVABILITY_PROOF_LIMITATION,
+    signatureProfile: null,
     reason: null
   }
   try {
@@ -137,6 +193,19 @@ export async function verifyStorageProof ({ verifierCore, response, expect }) {
     if (!r.nonceValid) { r.reason = 'NONCE_MISMATCH'; return r }
     r.relayValid = response.relayPubkey === relayHex
     if (!r.relayValid) { r.reason = 'RELAY_MISMATCH'; return r }
+    if (response.proofKind != null && response.proofKind !== PROOF_KIND_RETRIEVABILITY) {
+      r.reason = 'PROOF_KIND_UNSUPPORTED'
+      return r
+    }
+    const signatureProfile = response.signatureProfile || STORAGE_PROOF_LEGACY_SIGNATURE_PROFILE
+    r.signatureProfile = signatureProfile
+    if (
+      signatureProfile !== STORAGE_PROOF_LEGACY_SIGNATURE_PROFILE &&
+      signatureProfile !== RETRIEVABILITY_PROOF_SIGNATURE_PROFILE
+    ) {
+      r.reason = 'SIGNATURE_PROFILE_UNSUPPORTED'
+      return r
+    }
 
     // (1) CONTENT — decode the proof and verify it against the drive key alone.
     const decoded = c.decode(wire.data, b4a.from(response.proof, 'hex'))
@@ -164,8 +233,12 @@ export async function verifyStorageProof ({ verifierCore, response, expect }) {
     }
 
     // (2) ATTRIBUTION + FRESHNESS — the relay signature over the verified block.
-    const { signable, blockHash } = storageProofSignable(
-      b4a.from(driveKeyHex, 'hex'), expect.index, b4a.from(nonceHex, 'hex'), blockValue
+    const { signable, blockHash } = storageProofSignableForProfile(
+      signatureProfile,
+      b4a.from(driveKeyHex, 'hex'),
+      expect.index,
+      b4a.from(nonceHex, 'hex'),
+      blockValue
     )
     // The relay's claimed blockHash must match the content we actually verified.
     if (response.blockHash !== b4a.toString(blockHash, 'hex')) { r.reason = 'BLOCKHASH_MISMATCH'; return r }

@@ -59,7 +59,8 @@ import {
   activeServiceNames,
   configuredBuiltinServicePlugins,
   normalizeManageServicePlugins,
-  serviceConfigPayload
+  serviceConfigPayload,
+  servicesLockedByProfile
 } from './api-service-config.js'
 import { runServiceManagementAction } from './api-service-management.js'
 import { buildServiceCatalogPayload } from './api-service-read.js'
@@ -104,6 +105,10 @@ import {
   buildSubsidyStatusPayload,
   updateSubsidyDestination
 } from './api-subsidy.js'
+import {
+  RetrievabilityProofProvider,
+  runRetrievabilityProofAction
+} from './retrievability-proof.js'
 import {
   buildLeaseStatusPayload,
   runLeaseConfigAction
@@ -212,6 +217,13 @@ const WIZARD_PERSIST_FAILED_MESSAGE = 'failed to persist wizard state; check sto
 const SUBSIDY_PERSIST_FAILED_MESSAGE = 'failed to persist subsidy state; check storage permissions and disk space'
 const MANIFEST_PERSIST_FAILED_MESSAGE = 'failed to persist seeding manifest; check storage permissions and disk space'
 const FORK_PERSIST_FAILED_MESSAGE = 'failed to persist fork proof; check storage permissions and disk space'
+const CUSTODY_SEED_FIELDS = ['custodyIntentId', 'blindContentId', 'ciphertextRoot']
+
+function hasCustodySeedFields (body) {
+  if (!body || typeof body !== 'object') return false
+  return CUSTODY_SEED_FIELDS.some(field => body[field] !== undefined)
+}
+
 export class RelayAPI extends EventEmitter {
   constructor (relayNode, opts = {}) {
     super()
@@ -260,9 +272,11 @@ export class RelayAPI extends EventEmitter {
     this._pokerFeed = null
     this._wizard = null // lazily constructed by _getWizard() on first /api/wizard hit
     this._gateway = new HyperGateway(relayNode, { store: relayNode.store })
+    this._retrievabilityProofProvider = new RetrievabilityProofProvider()
   }
 
   async start () {
+    this._retrievabilityProofProvider.start({ node: this.node })
     this.server = createServer((req, res) => this._handle(req, res))
 
     // Clean stale rate limit entries every 2 minutes. unref so it never
@@ -768,6 +782,21 @@ export class RelayAPI extends EventEmitter {
           return this._json(res, result.payload, result.status || 200)
         }
 
+        if (path === '/api/accounting/receipt') {
+          if (!this._requireAuth(req, res, 'Unauthorized — accounting receipt requires API key or localhost')) return
+          if (!this.node || typeof this.node.createAccountingReceipt !== 'function') {
+            return this._json(res, { error: 'accounting receipts unavailable' }, 503)
+          }
+          try {
+            const receipt = await this.node.createAccountingReceipt({
+              refresh: url.searchParams.get('refresh') !== '0'
+            })
+            return this._json(res, { receipt })
+          } catch (err) {
+            return this._json(res, { error: err && err.message ? err.message : 'accounting receipt unavailable' }, 503)
+          }
+        }
+
         // Operator subsidy status (Phase 1). Accrued ESTIMATE + payout
         // destination — operator-private, so management auth (bearer or
         // localhost), same gate as the wizard. {enabled:false} when the
@@ -859,6 +888,7 @@ export class RelayAPI extends EventEmitter {
         }
 
         if (req.method === 'GET' && path.startsWith('/api/custody/') && path.endsWith('/status')) {
+          if (this._custodyApiDisabled()) return this._custodyDisabledResponse(res)
           if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
           const intentId = path.slice('/api/custody/'.length, -'/status'.length)
           if (!isValidHexKey(intentId, 64)) return this._json(res, { error: 'intentId must be 64 hex characters' }, 400)
@@ -937,6 +967,7 @@ export class RelayAPI extends EventEmitter {
 
         if (path === '/api/manage/federation') {
           if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/federation')) return
+          if (this._federationApiDisabled()) return this._federationDisabledResponse(res)
           const result = buildFederationSnapshotPayload({ federation: this.node.federation })
           return this._json(res, result.payload, result.status || 200)
         }
@@ -1023,6 +1054,20 @@ export class RelayAPI extends EventEmitter {
           })
           if (!result.ok && result.kind === 'fork-persist') return this._forkPersistErrorResponse(res, result.error)
           return this._json(res, result.payload, result.status || 200)
+        }
+
+        // Core proof-of-retrievability endpoint. This mirrors the
+        // storage-proof service request shape but does not require the optional
+        // services runtime, which lets the RelayKernel profile expose proof as
+        // a kernel-compatible surface while legacy service clients continue to
+        // work unchanged.
+        if (path === '/api/proof/retrievability') {
+          const result = await runRetrievabilityProofAction({
+            body,
+            provider: this._retrievabilityProofProvider,
+            context: { caller: ip }
+          })
+          return this._json(res, result.payload, result.status || 200, result.headers || null)
         }
 
         // ─── Setup wizard mutations ──────────────────────────────
@@ -1573,6 +1618,34 @@ export class RelayAPI extends EventEmitter {
     return writeJson(res, data, status, headers)
   }
 
+  _relayKernelProfileActive () {
+    return this.node && (
+      this.node.mode === 'relaykernel' ||
+      (this.node.config && this.node.config.productProfile === 'relaykernel')
+    )
+  }
+
+  _custodyApiDisabled () {
+    return this._relayKernelProfileActive() ||
+      !!(this.node && this.node.config && this.node.config.custody && this.node.config.custody.enabled === false)
+  }
+
+  _federationApiDisabled () {
+    return this._relayKernelProfileActive()
+  }
+
+  _custodyDisabledResponse (res) {
+    return this._json(res, {
+      error: formatErr('NOT_ENABLED', 'custody pipeline is disabled for this relay profile')
+    }, 409)
+  }
+
+  _federationDisabledResponse (res) {
+    return this._json(res, {
+      error: formatErr('NOT_ENABLED', 'federation is disabled for this relay profile')
+    }, 409)
+  }
+
   /**
    * Reverse-proxy a read-only index query to the sidecar. The schema-sheets
    * index lives out-of-process (corestore-7/hc11, dependency-isolated); the
@@ -1918,6 +1991,7 @@ export class RelayAPI extends EventEmitter {
   }
 
   async _handleOperatorSeed (res, body) {
+    if (this._custodyApiDisabled() && hasCustodySeedFields(body)) return this._custodyDisabledResponse(res)
     const result = await runOperatorSeedAction({
       body,
       node: this.node
@@ -1934,6 +2008,7 @@ export class RelayAPI extends EventEmitter {
   }
 
   async _handlePublisherSeed (res, body) {
+    if (this._custodyApiDisabled() && hasCustodySeedFields(body)) return this._custodyDisabledResponse(res)
     const result = await runPublisherSeedAction({
       body,
       node: this.node
@@ -1943,6 +2018,7 @@ export class RelayAPI extends EventEmitter {
   }
 
   async _handleOperatorCustodyAction (res, action, body, intentId = null) {
+    if (this._custodyApiDisabled()) return this._custodyDisabledResponse(res)
     const result = await runOperatorCustodyAction({
       action,
       body,
@@ -1953,6 +2029,7 @@ export class RelayAPI extends EventEmitter {
   }
 
   async _handlePublisherCustodyAction (res, action, body, intentId = null) {
+    if (this._custodyApiDisabled()) return this._custodyDisabledResponse(res)
     const result = await runPublisherCustodyAction({
       action,
       body,
@@ -1964,6 +2041,7 @@ export class RelayAPI extends EventEmitter {
   }
 
   async _handleFederationManagement (res, action, body) {
+    if (this._federationApiDisabled()) return this._federationDisabledResponse(res)
     const result = await runFederationManagementAction({
       action,
       body,
@@ -2059,6 +2137,14 @@ export class RelayAPI extends EventEmitter {
     if (!body || typeof body !== 'object') {
       return this._json(res, { error: 'request body required' }, 400)
     }
+    if (servicesLockedByProfile(this.node.config)) {
+      return this._json(res, {
+        error: 'Services are locked off by the RelayKernel profile',
+        errorCode: 'relaykernel-services-locked',
+        config: this._getServiceConfigPayload()
+      }, 409)
+    }
+
     const normalized = this._normalizeManageServicePlugins(body.plugins)
     if (!normalized.ok) {
       return this._json(res, {
@@ -2087,6 +2173,14 @@ export class RelayAPI extends EventEmitter {
   }
 
   async _handleServiceManagement (res, body) {
+    if (servicesLockedByProfile(this.node.config)) {
+      return this._json(res, {
+        error: 'Services are locked off by the RelayKernel profile',
+        errorCode: 'relaykernel-services-locked',
+        config: this._getServiceConfigPayload()
+      }, 409)
+    }
+
     const result = await runServiceManagementAction({
       body,
       registry: this.node.serviceRegistry,
@@ -2261,6 +2355,10 @@ export class RelayAPI extends EventEmitter {
   }
 
   async stop () {
+    if (this._retrievabilityProofProvider) {
+      try { await this._retrievabilityProofProvider.stop() } catch (_) {}
+    }
+
     if (this._dashboardFeed) {
       try { await this._dashboardFeed.stop() } catch (_) {}
       this._dashboardFeed = null

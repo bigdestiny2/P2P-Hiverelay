@@ -335,6 +335,7 @@ jobs:
           npm run lint
           npm run audit:workspace
           npm run audit:public-artifacts
+          npm run release:check-npm-packages
           node --test test/unit/ecosystem-consumers.test.js
           npm run test:unit
           echo "HIVERELAY_RELEASE_GATE_STATUS=passed" >> "$GITHUB_ENV"
@@ -479,6 +480,7 @@ jobs:
               exit 1
             fi
           done
+          npm run release:check-npm-latest -- --expected-version "$expected"
           if [ "$published" = "1" ]; then
             echo "HIVERELAY_NPM_PUBLISH_STATUS=published" >> "$GITHUB_ENV"
           else

@@ -1,0 +1,193 @@
+{
+  "name": "relaykernel-meta-profile-v1-opt-in-directory",
+  "description": "Pins rk-meta separation of kernel channels, layer-2 capabilities, and opt-in public directory records.",
+  "input": {
+    "capabilityDoc": {
+      "schemaVersion": 1,
+      "pubkey": "abababababababababababababababababababababababababababababababab",
+      "signature": {
+        "v": 1,
+        "sig": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "gatewayUrl": "https://relay.example",
+      "region": "eu-west",
+      "features": [
+        "capability-doc",
+        "seed-revocability",
+        "seeding-registry",
+        "circuit-relay",
+        "custody"
+      ]
+    },
+    "protocolVersion": {
+      "major": 1,
+      "minor": 1,
+      "patch": 0
+    },
+    "capLimits": {
+      "maxConcurrentLeases": 128,
+      "maxStorageCap": 2147483648,
+      "maxRetainHorizonSeconds": 2592000,
+      "heartbeatIntervalSeconds": 180
+    },
+    "directoryOptIn": true,
+    "directoryRateLimitSeconds": 600,
+    "appCapabilities": [
+      {
+        "name": "custody-v1",
+        "channel": "custody-v1",
+        "version": 1,
+        "owner": "custody-app",
+        "discovery": "per-app"
+      },
+      {
+        "name": "publish-v1",
+        "channel": "publish-v1",
+        "version": 1,
+        "owner": "publish-app",
+        "discovery": "per-app"
+      }
+    ],
+    "directoryRecord": {
+      "endpoint": "relay.example:49737",
+      "feeSchedule": {
+        "perGiBPerDay": 1200
+      },
+      "uptime": 12345
+    }
+  },
+  "profile": {
+    "kind": "relaykernel-meta-profile",
+    "version": 1,
+    "protocolVersion": {
+      "major": 1,
+      "minor": 1,
+      "patch": 0
+    },
+    "relayPubkey": "abababababababababababababababababababababababababababababababab",
+    "source": {
+      "capabilityDocSigned": true,
+      "capabilitySchemaVersion": 1
+    },
+    "meta": {
+      "kernelChannels": [
+        "rk-seed",
+        "rk-proof",
+        "rk-circuit",
+        "rk-meta",
+        "rk-accounting"
+      ],
+      "appCapabilities": [
+        {
+          "name": "custody-v1",
+          "channel": "custody-v1",
+          "version": 1,
+          "owner": "custody-app",
+          "discovery": "per-app"
+        },
+        {
+          "name": "publish-v1",
+          "channel": "publish-v1",
+          "version": 1,
+          "owner": "publish-app",
+          "discovery": "per-app"
+        }
+      ],
+      "advertisedCapabilities": [
+        "rk-seed",
+        "rk-proof",
+        "rk-circuit",
+        "rk-meta",
+        "rk-accounting",
+        "custody-v1",
+        "publish-v1"
+      ],
+      "reservedAppCapabilityPrefixes": [
+        "rk",
+        "rk1",
+        "rk2",
+        "rk3",
+        "rkp",
+        "rkv",
+        "rkc",
+        "t1",
+        "t2",
+        "t3",
+        "hiverelay",
+        "relaykernel"
+      ],
+      "reservedAppCapabilities": [
+        "rk-seed",
+        "rk-proof",
+        "rk-circuit",
+        "rk-meta",
+        "rk-accounting",
+        "seed-request-v1",
+        "relay-circuit-v1",
+        "hiverelay-proof",
+        "hiverelay-forward",
+        "hiverelay-publish",
+        "hiverelay-custody",
+        "hiverelay-accounting",
+        "circuit-relay",
+        "proof-of-retrievability",
+        "capability-meta",
+        "os-accounting"
+      ],
+      "layer2CapabilitiesSeparated": true,
+      "capLimits": {
+        "maxConcurrentLeases": 128,
+        "maxStorageCap": 2147483648,
+        "maxRetainHorizonSeconds": 2592000,
+        "heartbeatIntervalSeconds": 180,
+        "nonceWindowSeconds": 3600
+      }
+    },
+    "directory": {
+      "optIn": true,
+      "topic": "rk-directory-v1",
+      "publicEnumerable": true,
+      "rateLimitSeconds": 600,
+      "record": {
+        "relayPubkey": "abababababababababababababababababababababababababababababababab",
+        "endpoint": "relay.example:49737",
+        "capabilities": [
+          "rk-seed",
+          "rk-proof",
+          "rk-circuit",
+          "rk-meta",
+          "rk-accounting",
+          "custody-v1",
+          "publish-v1"
+        ],
+        "capLimits": {
+          "maxConcurrentLeases": 128,
+          "maxStorageCap": 2147483648,
+          "maxRetainHorizonSeconds": 2592000,
+          "heartbeatIntervalSeconds": 180,
+          "nonceWindowSeconds": 3600
+        },
+        "feeSchedule": {
+          "perGiBPerDay": 1200
+        },
+        "region": "eu-west",
+        "uptime": 12345,
+        "payloadHash": "281ddd71b13cdcfcc543289d2334ce23c673281558b7a84271ceb92bdade899e",
+        "domain": {
+          "protocol": "relaykernel",
+          "rolePrefix": "rk1",
+          "channel": "rk-meta",
+          "messageType": "directory-record",
+          "messageVersion": 1,
+          "signableHex": "5b226869766572656c61792d726f6c652d646f6d61696e2d7369676e61747572652d7631222c2272656c61796b65726e656c222c22726b31222c22726b2d6d657461222c226469726563746f72792d7265636f7264222c312c2232383164646437316231336364636663633534333238396432333334636532336336373332383135353862376138343237316365623932626461646538393965225d"
+        }
+      },
+      "providedRecordIgnored": false
+    }
+  },
+  "verdict": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  }
+}

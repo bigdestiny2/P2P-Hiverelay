@@ -24,7 +24,15 @@ import { SeedProtocol } from '../protocol/seed-request.js'
 import { AnchorProtocol } from '../protocol/anchor-channel.js'
 import { CustodyProtocol } from '../protocol/custody-channel.js'
 import { PublishProtocol } from '../protocol/publish-channel.js'
-import { buildPublisherSignedSeedOpts, extractCustodySeedOpts } from '../seed-request-builder.js'
+import {
+  accountingFieldsFromStorageSummary,
+  createAccountingReceipt
+} from '../protocol/accounting-receipt.js'
+import {
+  buildPublisherSignedSeedOpts,
+  consumePublisherSeedReplayNonce,
+  extractCustodySeedOpts
+} from '../seed-request-builder.js'
 import { isTransientCoreError } from '../transient-core-errors.js'
 import { verifyDelegationCert, verifyRevocation } from '../delegation.js'
 import { CircuitRelay } from '../protocol/relay-circuit.js'
@@ -85,6 +93,11 @@ const DEFAULT_CONFIG = {
   maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
   maxConnections: 256,
   maxRelayBandwidthMbps: 100,
+  maxCircuitDuration: 10 * 60 * 1000,
+  maxCircuitBytes: 64 * 1024 * 1024,
+  maxCircuitsPerPeer: 5,
+  maxCircuitRateBytesPerSecond: 1024 * 1024,
+  reservationTTL: 60 * 60 * 1000,
   announceInterval: 15 * 60 * 1000, // 15 minutes
   regions: [],
   enableRelay: true,
@@ -144,6 +157,35 @@ const DEFAULT_CONFIG = {
     intervalMs: 30_000,
     maxRestarts: 3
   },
+  subsidy: {
+    enabled: false,
+    rateSatsPerDay: 500,
+    epochMs: 10 * 60 * 1000,
+    payoutDestination: null
+  },
+  lease: {
+    enabled: false,
+    satsPerGiBDay: 10,
+    maxSatsPerGiBDay: 1_000_000,
+    quoteTtlMs: 60 * 60 * 1000,
+    minLeaseDays: 1,
+    maxLeaseDays: 3650,
+    provider: 'mock'
+  },
+  payment: {
+    enabled: false,
+    settlementInterval: 24 * 60 * 60 * 1000,
+    minSettlementSats: 1000
+  },
+  signedDirectory: {
+    enabled: false,
+    maxEntryBytes: 8 * 1024,
+    ttlSeconds: 24 * 60 * 60,
+    maxEntriesPerAuthor: 1,
+    publishRatePerMinute: 5,
+    maxTotalEntries: 10_000,
+    clockSkewToleranceSeconds: 60
+  },
   // Federation: opt-in cross-relay catalog sharing. No automatic sync.
   // Operators explicitly follow / mirror / unfollow other relays at runtime.
   federation: {
@@ -188,6 +230,48 @@ const MODE_PRESETS = {
     plugins: [],
     maxConnections: 256,
     maxRelayBandwidthMbps: 100
+  },
+  relaykernel: {
+    productProfile: 'relaykernel',
+    enableRelay: true,
+    enableSeeding: true,
+    enableMetrics: true,
+    enableAPI: true,
+    enableServices: false,
+    plugins: [],
+    acceptMode: 'review',
+    registryAutoAccept: false,
+    strictSeedingPrivacy: true,
+    gatewayPublicOnlyPrivacyTier: true,
+    requireSignedCatalog: true,
+    custody: {
+      enabled: false,
+      defaultMode: 'blind',
+      allowTransparent: false,
+      requireEncryptedPayload: true,
+      metadataVisibility: 'redacted',
+      redactedCatalog: true,
+      proofTarget: 'ciphertext',
+      defaultRetainMs: 0
+    },
+    signedDirectory: {
+      enabled: false
+    },
+    federation: {
+      enabled: false,
+      followed: [],
+      mirrored: []
+    },
+    lease: {
+      enabled: false
+    },
+    payment: {
+      enabled: false
+    },
+    subsidy: {
+      enabled: false,
+      payoutDestination: null
+    }
   },
   'custody-relay': {
     productProfile: 'custody-relay',
@@ -288,7 +372,7 @@ function buildConfig (mode, opts) {
     throw new Error('Invalid mode: ' + mode + ' (expected one of: ' + Object.keys(MODE_PRESETS).join(', ') + ')')
   }
 
-  return {
+  const config = {
     ...DEFAULT_CONFIG,
     ...preset,
     ...opts,
@@ -311,8 +395,84 @@ function buildConfig (mode, opts) {
       ...DEFAULT_CONFIG.custody,
       ...(preset.custody || {}),
       ...(opts.custody || {})
+    },
+    signedDirectory: {
+      ...DEFAULT_CONFIG.signedDirectory,
+      ...(preset.signedDirectory || {}),
+      ...(opts.signedDirectory || {})
+    },
+    federation: {
+      ...DEFAULT_CONFIG.federation,
+      ...(preset.federation || {}),
+      ...(opts.federation || {})
+    },
+    lease: {
+      ...(DEFAULT_CONFIG.lease || {}),
+      ...(preset.lease || {}),
+      ...(opts.lease || {})
+    },
+    payment: {
+      ...(DEFAULT_CONFIG.payment || {}),
+      ...(preset.payment || {}),
+      ...(opts.payment || {})
+    },
+    subsidy: {
+      ...(DEFAULT_CONFIG.subsidy || {}),
+      ...(preset.subsidy || {}),
+      ...(opts.subsidy || {})
     }
   }
+
+  return mode === 'relaykernel' ? enforceRelayKernelProfile(config) : config
+}
+
+function enforceRelayKernelProfile (config) {
+  return {
+    ...config,
+    productProfile: 'relaykernel',
+    enableServices: false,
+    plugins: [],
+    custody: {
+      ...(config.custody || {}),
+      enabled: false,
+      allowTransparent: false,
+      requireEncryptedPayload: true,
+      metadataVisibility: 'redacted',
+      redactedCatalog: true,
+      proofTarget: 'ciphertext'
+    },
+    signedDirectory: {
+      ...(config.signedDirectory || {}),
+      enabled: false
+    },
+    federation: {
+      ...(config.federation || {}),
+      enabled: false,
+      followed: [],
+      mirrored: []
+    },
+    lease: {
+      ...(config.lease || {}),
+      enabled: false
+    },
+    payment: {
+      ...(config.payment || {}),
+      enabled: false
+    },
+    subsidy: {
+      ...(config.subsidy || {}),
+      enabled: false,
+      payoutDestination: null
+    }
+  }
+}
+
+function isRelayKernelProfile (node) {
+  return !!node && (
+    node.mode === 'relaykernel' ||
+    node._operatingMode === 'relaykernel' ||
+    (node.config && node.config.productProfile === 'relaykernel')
+  )
 }
 
 function withTimeout (promise, ms, label) {
@@ -323,6 +483,13 @@ function withTimeout (promise, ms, label) {
       timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
     })
   ])
+}
+
+function receiptCounter (value, fallback = 0, name = 'counter') {
+  const n = value == null ? fallback : value
+  if (Number.isSafeInteger(n) && n >= 0) return n
+  if (value != null) throw new Error('ACCOUNTING_RECEIPT_INVALID: bad ' + name)
+  return 0
 }
 
 function identityTempPath (keyPath) {
@@ -523,7 +690,14 @@ export class RelayNode extends EventEmitter {
       'federation',
       'discovery',
       'access',
-      'pairing'
+      'pairing',
+      'custody',
+      'custodyExpiryInterval',
+      'custodyExpiryGraceMs',
+      'signedDirectory',
+      'lease',
+      'payment',
+      'subsidy'
     ]) {
       delete carry[key]
     }
@@ -551,6 +725,12 @@ export class RelayNode extends EventEmitter {
   }
 
   async _loadServicesOverride () {
+    if (isRelayKernelProfile(this)) {
+      this.config.enableServices = false
+      this.config.plugins = []
+      return
+    }
+
     const path = this._servicesOverridePath()
     if (!path) return
     try {
@@ -575,8 +755,17 @@ export class RelayNode extends EventEmitter {
   async setServicesConfig ({ enabled, plugins } = {}) {
     // expandServiceDeps dedups, filters to builtins, AND auto-unions bundle
     // support services so enabling 'poker' also enables vrf+arbitration+zk.
-    const list = Array.isArray(plugins) ? expandServiceDeps(plugins) : []
-    const payload = { enabled: enabled === true, plugins: list, updatedAt: Date.now() }
+    const locked = isRelayKernelProfile(this)
+    const list = locked ? [] : (Array.isArray(plugins) ? expandServiceDeps(plugins) : [])
+    const payload = {
+      enabled: locked ? false : enabled === true,
+      plugins: list,
+      updatedAt: Date.now()
+    }
+    if (locked) {
+      payload.locked = true
+      payload.lockReason = 'relaykernel-profile'
+    }
     const path = this._servicesOverridePath()
     if (path) {
       const tmp = path + '.tmp'
@@ -864,7 +1053,11 @@ export class RelayNode extends EventEmitter {
       if (this.config.enableRelay) {
         this.relay = new Relay(this.swarm, {
           maxBandwidthMbps: this.config.maxRelayBandwidthMbps,
-          maxConnections: this.config.maxConnections
+          maxConnections: this.config.maxConnections,
+          maxCircuitDuration: this.config.maxCircuitDuration,
+          maxCircuitBytes: this.config.maxCircuitBytes,
+          maxCircuitsPerPeer: this.config.maxCircuitsPerPeer,
+          maxCircuitRateBytesPerSecond: this.config.maxCircuitRateBytesPerSecond
         })
         startups.push(this.relay.start())
       }
@@ -878,7 +1071,11 @@ export class RelayNode extends EventEmitter {
 
       if (this.relay) {
         this._circuitRelay = new CircuitRelay(this.swarm, this.relay, {
-          maxCircuitsPerPeer: this.config.maxCircuitsPerPeer || 5
+          reservationTTL: this.config.reservationTTL,
+          maxCircuitDuration: this.config.maxCircuitDuration,
+          maxCircuitBytes: this.config.maxCircuitBytes,
+          maxCircuitsPerPeer: this.config.maxCircuitsPerPeer,
+          maxCircuitRateBytesPerSecond: this.config.maxCircuitRateBytesPerSecond
         })
       }
 
@@ -1485,6 +1682,11 @@ export class RelayNode extends EventEmitter {
                 built.opts.retainUntil = gate.retainUntil
                 built.opts.leaseManaged = true
               }
+              if (!this._publisherSeedReplayCache) this._publisherSeedReplayCache = new Map()
+              const replay = consumePublisherSeedReplayNonce(built.replay, this._publisherSeedReplayCache)
+              if (!replay.ok) {
+                return { ok: false, error: replay.error }
+              }
               try {
                 const result = await this.seedApp(built.appKey, built.opts)
                 return { ok: true, result }
@@ -2016,6 +2218,47 @@ export class RelayNode extends EventEmitter {
     }
 
     return stats
+  }
+
+  async createAccountingReceipt (opts = {}) {
+    const keyPair = this.keyPair || (this.swarm && this.swarm.keyPair)
+    if (!keyPair || !keyPair.publicKey || !keyPair.secretKey) {
+      throw new Error('ACCOUNTING_RECEIPT_UNAVAILABLE: relay identity unavailable')
+    }
+    if (!this.storageAccounting || typeof this.storageAccounting.getSummary !== 'function') {
+      throw new Error('ACCOUNTING_RECEIPT_UNAVAILABLE: storage accounting unavailable')
+    }
+
+    if (opts.refresh !== false && typeof this.storageAccounting.measureDisk === 'function') {
+      await this.storageAccounting.measureDisk()
+    }
+
+    const summary = this.storageAccounting.getSummary()
+    if (!Number.isSafeInteger(summary.diskBytes) || summary.diskBytes < 0) {
+      throw new Error('ACCOUNTING_RECEIPT_UNAVAILABLE: OS disk measurement unavailable')
+    }
+
+    const served = this.servedAccounting && typeof this.servedAccounting.getSummary === 'function'
+      ? this.servedAccounting.getSummary()
+      : null
+    const seeder = this.seeder && typeof this.seeder.getStats === 'function'
+      ? this.seeder.getStats()
+      : null
+    const lease = this.leaseManager && typeof this.leaseManager.getSummary === 'function'
+      ? this.leaseManager.getSummary()
+      : null
+
+    const fields = accountingFieldsFromStorageSummary(summary, {
+      periodStart: opts.periodStart,
+      periodEnd: opts.periodEnd,
+      measuredAt: opts.measuredAt,
+      bytesServed: receiptCounter(opts.bytesServed, served?.totalBytesServed ?? seeder?.totalBytesServed ?? 0, 'bytesServed'),
+      bytesReceived: receiptCounter(opts.bytesReceived, 0, 'bytesReceived'),
+      leaseCount: receiptCounter(opts.leaseCount, lease?.leaseCount ?? 0, 'leaseCount'),
+      seededCount: receiptCounter(opts.seededCount, summary.measuredEntries || 0, 'seededCount')
+    })
+
+    return createAccountingReceipt(keyPair, { ...fields, nonce: opts.nonce })
   }
 
   listDevices () {
@@ -4024,6 +4267,7 @@ export class RelayNode extends EventEmitter {
       this._catalogThrottleCleanup = null
     }
     this._catalogPeerThrottle.clear()
+    if (this._publisherSeedReplayCache) this._publisherSeedReplayCache.clear()
 
     const timeout = this.config.shutdownTimeoutMs
 

@@ -70,7 +70,7 @@
   <text class="chip-text" x="1688" y="217">Cashu NUT-00/01/02</text>
   <rect class="chip spec" x="1900" y="194" width="224" height="36"/>
   <text class="chip-text" x="1920" y="217">OCI multi-arch image</text>
-  <text class="micro" x="76" y="244">Consumer audit keeps PearBrowser desktop, PearPaste, anonGPT, and other direct p2p-hiverelay* packages on the current local release line.</text>
+  <text class="micro" x="76" y="244">Consumer audit keeps PearBrowser desktop, PearPaste, anonGPT, and other direct p2p-hiverelay* packages on npm latest after registry proof.</text>
 
   <rect class="panel" x="52" y="286" width="270" height="690" rx="18"/>
   <text class="panel-title" x="76" y="320">ACTORS</text>
@@ -297,7 +297,7 @@
   <rect class="node contract" x="76" y="1324" width="380" height="82"/>
   <text class="node-title" x="96" y="1353">PearBrowser bundle</text>
   <text class="node-text" x="96" y="1374">
-    <tspan x="96" y="1374">local p2p-hiverelay* packages</tspan>
+    <tspan x="96" y="1374">npm latest after registry proof</tspan>
     <tspan x="96" y="1392">catalog/gateway -> HTTPS transport</tspan>
   </text>
   <rect class="node contract" x="484" y="1324" width="380" height="82"/>

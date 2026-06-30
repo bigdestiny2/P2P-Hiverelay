@@ -104,7 +104,7 @@ flowchart LR
     Minimize["Metadata minimization<br/>epoch topics + salted public peer IDs"]:::guard
     AtomicWrite["Atomic persistence<br/>tmp-file + rename"]:::guard
     ReleaseGate["Release verifiers<br/>manifest, smoke, fleet, stores"]:::guard
-    ConsumerAudit["Ecosystem consumer audit<br/>local 0.20.2 pins + lockfile drift"]:::guard
+    ConsumerAudit["Ecosystem consumer audit<br/>npm latest defaults + lockfile drift"]:::guard
   end
 
   subgraph Distribution["Live Distribution"]
@@ -285,7 +285,7 @@ flowchart TB
 | Web ingress | HTTP JSON + WebSocket | Dashboards, management APIs, replication bridge, DHT bridge |
 | Release artifact | OCI/Docker image index | GHCR multi-arch image for `linux/amd64` and `linux/arm64` |
 | Store packages | Umbrel app metadata, StartOS `.s9pk` | Home-server distribution and reviewer handoff |
-| Ecosystem pins | Local `file:` workspace links, lockfile metadata, and versioned source markers | PearBrowser desktop, PearPaste, anonGPT, and other direct consumers default to the current HiveRelay line |
+| Ecosystem package defaults | npm `latest` dist-tags, registry proof, lockfile metadata, and versioned source markers | PearBrowser desktop, PearPaste, anonGPT, and other direct consumers default to npm `latest` after full package-line proof; local `file:` links remain explicit development mode |
 
 ## API And Contract Map
 
@@ -313,7 +313,7 @@ flowchart TB
 | Privacy tiers | `public` can use relay storage/gateway; `local-first` and `p2p-only` block relay exposure through PolicyGuard. |
 | Operator controls | Wallet, wizard, service, restart, and AI model actions require management auth or protected app-proxy context. |
 | Dashboard WebSocket | Tokens are not accepted in URLs; dashboard auth is in-band. |
-| App-proxy UI writes | Umbrel smoke requires setup dashboard links, seed writes, lease writes, wallet writes, and service writes to stay app-proxy aware. |
+| App-proxy UI writes | Umbrel smoke requires setup dashboard links, seed writes, lease writes, wallet writes, service writes, and non-submit setup/wallet/service controls to stay app-proxy aware. |
 | Public state | Catalogs, peer lists, federation rows, diagnostics, and metrics are bounded and redacted before exposure. |
 | Lease privacy | Cashu blind-token issuance sees blinded points; redemption sees only the final proof and persistent spent marker. |
 | P2P frames | Decoders cap declared lengths before allocating large buffers and degrade malformed messages to protocol errors. |
@@ -324,14 +324,14 @@ flowchart TB
 
 | Use case | Path through the graph |
 |---|---|
-| PearBrowser bundle delivery | PearBrowser desktop uses local `p2p-hiverelay*` packages; PearBrowser mobile consumes HTTP catalog/gateway contracts with HTTPS relay transport. |
+| PearBrowser bundle delivery | PearBrowser desktop defaults `p2p-hiverelay*` packages to npm `latest` after registry proof; PearBrowser mobile consumes HTTP catalog/gateway contracts with HTTPS relay transport. |
 | Browser/mobile app delivery | Browser reads `/catalog.json` then streams `/v1/hyper/:key/*path`; WebSocket bridges can replicate or perform DHT lookups. |
 | PearPaste private availability | PearPaste signs encrypted-availability requests through the split client/core packages; relay custody stores ciphertext only and emits receipts. |
-| anonGPT relay/onion AI | anonGPT imports the current local core services path, then routes AI/QVAC service access through the relay/onion service surface. |
+| anonGPT relay/onion AI | anonGPT pulls the current `p2p-hiverelay` package through npm `latest` by default, then routes AI/QVAC service access through the relay/onion service surface. |
 | Keep a Pear app online | Publisher signs seed request -> relay replicates Hypercore/Hyperdrive -> catalog/gateway exposes public app -> proof checks verify storage. |
 | Private encrypted availability | Publisher submits blind custody intent -> relay accepts ciphertext only -> receipts and anchor proofs account for durability. |
 | NAT fallback | Peers reserve/connect through `hiverelay-circuit` or `hiverelay-forward`; relay forwards opaque bounded bytes. |
 | Service marketplace | Clients discover service manifests over `hiverelay-services`, call opt-in providers, and receive signed usage receipts. |
 | Paid publisher pins | Operators enable leases; publishers buy byte-day windows through direct proofs, bearer vouchers, or Cashu blind tokens without linking issue and redeem. |
-| Home-server install | Umbrel or StartOS consumes the digest-pinned package, persists data under `/data`, and exposes guarded dashboard/setup flows. |
+| Home-server install | Umbrel or StartOS consumes the digest-pinned package, persists data under `/data`, and exposes guarded setup, payout-wallet, service, and restart flows. |
 | Live fleet promotion | Full release defaults to both canary and stable, updates `fleet/channels.json`, and waits for relay health/version convergence. |

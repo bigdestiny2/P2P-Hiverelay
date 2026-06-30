@@ -20,6 +20,7 @@ const REQUIRED_CHECKS = Object.freeze([
   'wizardCompletes',
   'setupActionLockObserved',
   'addWalletPersists',
+  'dynamicPayoutControlsObserved',
   'walletBusyStateObserved',
   'managementActionsPersist',
   'serviceActionStateObserved',

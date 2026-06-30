@@ -1,0 +1,241 @@
+{
+  "name": "role-domain-signature-profile-v1-prefix-domain",
+  "description": "Pins role/channel/message domain bytes so prefixed-key signatures cannot replay across RelayKernel and HiveMesh roles.",
+  "input": {
+    "seedHex": "1111111111111111111111111111111111111111111111111111111111111111",
+    "messages": [
+      {
+        "id": "rkp-rk-seed",
+        "protocol": "relaykernel",
+        "rolePrefix": "rkp",
+        "channel": "rk-seed",
+        "messageType": "seed",
+        "messageVersion": 1,
+        "payloadHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "id": "rk1-rk-seed-ack",
+        "protocol": "relaykernel",
+        "rolePrefix": "rk1",
+        "channel": "rk-seed",
+        "messageType": "seed-ack",
+        "messageVersion": 1,
+        "payloadHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "id": "rk1-t1-dir-record",
+        "protocol": "hivemesh",
+        "rolePrefix": "rk1",
+        "channel": "t1-dir",
+        "messageType": "directory-record",
+        "messageVersion": 1,
+        "payloadHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "id": "rk3-t3-tombstone",
+        "protocol": "hivemesh",
+        "rolePrefix": "rk3",
+        "channel": "t3-witness",
+        "messageType": "tombstone",
+        "messageVersion": 1,
+        "payloadHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "id": "rk1-t3-tombstone-forbidden",
+        "protocol": "hivemesh",
+        "rolePrefix": "rk1",
+        "channel": "t3-witness",
+        "messageType": "tombstone",
+        "messageVersion": 1,
+        "payloadHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "id": "rkp-rk-accounting-forbidden",
+        "protocol": "relaykernel",
+        "rolePrefix": "rkp",
+        "channel": "rk-accounting",
+        "messageType": "accounting-receipt",
+        "messageVersion": 1,
+        "payloadHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    ],
+    "replayChecks": [
+      {
+        "name": "relaykernel seed signature does not replay as hivemesh tombstone",
+        "signatureFrom": "rkp-rk-seed",
+        "target": {
+          "protocol": "hivemesh",
+          "rolePrefix": "rk3",
+          "channel": "t3-witness",
+          "messageType": "tombstone",
+          "messageVersion": 1,
+          "payloadHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      {
+        "name": "relaykernel seed-ack signature does not replay as publisher seed",
+        "signatureFrom": "rk1-rk-seed-ack",
+        "targetId": "rkp-rk-seed"
+      },
+      {
+        "name": "hivemesh tombstone cannot be verified under t1 role",
+        "signatureFrom": "rk3-t3-tombstone",
+        "targetId": "rk1-t3-tombstone-forbidden"
+      }
+    ]
+  },
+  "profile": {
+    "kind": "role-domain-signature-profile",
+    "version": 1,
+    "domain": "hiverelay-role-domain-signature-v1",
+    "publicKey": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+    "messages": [
+      {
+        "id": "rkp-rk-seed",
+        "validShape": true,
+        "allowed": true,
+        "message": {
+          "protocol": "relaykernel",
+          "rolePrefix": "rkp",
+          "channel": "rk-seed",
+          "messageType": "seed",
+          "messageVersion": 1,
+          "payloadHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "signableHex": "5b226869766572656c61792d726f6c652d646f6d61696e2d7369676e61747572652d7631222c2272656c61796b65726e656c222c22726b70222c22726b2d73656564222c2273656564222c312c2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161225d",
+        "signature": "37dde0570dc179ffe12391273ac8316769732aa35d6134a3bdf8a80595214478da5fc971d7691f57b475cc84e358818207dec50ff651fade40630394747a6c0b",
+        "verify": {
+          "valid": true,
+          "code": null,
+          "reason": null
+        },
+        "publicKey": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
+      },
+      {
+        "id": "rk1-rk-seed-ack",
+        "validShape": true,
+        "allowed": true,
+        "message": {
+          "protocol": "relaykernel",
+          "rolePrefix": "rk1",
+          "channel": "rk-seed",
+          "messageType": "seed-ack",
+          "messageVersion": 1,
+          "payloadHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "signableHex": "5b226869766572656c61792d726f6c652d646f6d61696e2d7369676e61747572652d7631222c2272656c61796b65726e656c222c22726b31222c22726b2d73656564222c22736565642d61636b222c312c2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161225d",
+        "signature": "d5316fda77ef520edeb1ad0961efb5ab1be7fd9ba615ae60c2aff1b23032f9aba88b716e8c159f5ff1a0015f7d5127d14841bb05b7be8306be061582b8946205",
+        "verify": {
+          "valid": true,
+          "code": null,
+          "reason": null
+        },
+        "publicKey": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
+      },
+      {
+        "id": "rk1-t1-dir-record",
+        "validShape": true,
+        "allowed": true,
+        "message": {
+          "protocol": "hivemesh",
+          "rolePrefix": "rk1",
+          "channel": "t1-dir",
+          "messageType": "directory-record",
+          "messageVersion": 1,
+          "payloadHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "signableHex": "5b226869766572656c61792d726f6c652d646f6d61696e2d7369676e61747572652d7631222c22686976656d657368222c22726b31222c2274312d646972222c226469726563746f72792d7265636f7264222c312c2262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262225d",
+        "signature": "bc968f4e13d256dc508feda542a44eb2e504dc04a8ed7eaf8a71a161662bbfa91d9ee6793ce65e9d86aa535486e74765e9ca2fa543838c149353d88fc0a1c204",
+        "verify": {
+          "valid": true,
+          "code": null,
+          "reason": null
+        },
+        "publicKey": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
+      },
+      {
+        "id": "rk3-t3-tombstone",
+        "validShape": true,
+        "allowed": true,
+        "message": {
+          "protocol": "hivemesh",
+          "rolePrefix": "rk3",
+          "channel": "t3-witness",
+          "messageType": "tombstone",
+          "messageVersion": 1,
+          "payloadHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "signableHex": "5b226869766572656c61792d726f6c652d646f6d61696e2d7369676e61747572652d7631222c22686976656d657368222c22726b33222c2274332d7769746e657373222c22746f6d6273746f6e65222c312c2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161225d",
+        "signature": "ef6817554dee929f6b15625d9fb86db3a2cd2cdd5576e910c63dd55a99084152ab6280f81c285de52d1c3c2182051a409d16806d30cb39b61f8df104104e7804",
+        "verify": {
+          "valid": true,
+          "code": null,
+          "reason": null
+        },
+        "publicKey": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
+      },
+      {
+        "id": "rk1-t3-tombstone-forbidden",
+        "validShape": true,
+        "allowed": false,
+        "message": {
+          "protocol": "hivemesh",
+          "rolePrefix": "rk1",
+          "channel": "t3-witness",
+          "messageType": "tombstone",
+          "messageVersion": 1,
+          "payloadHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "signableHex": "5b226869766572656c61792d726f6c652d646f6d61696e2d7369676e61747572652d7631222c22686976656d657368222c22726b31222c2274332d7769746e657373222c22746f6d6273746f6e65222c312c2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161225d",
+        "error": {
+          "code": "E_KEY_TIER",
+          "reason": "rk1 cannot sign channel t3-witness"
+        }
+      },
+      {
+        "id": "rkp-rk-accounting-forbidden",
+        "validShape": true,
+        "allowed": false,
+        "message": {
+          "protocol": "relaykernel",
+          "rolePrefix": "rkp",
+          "channel": "rk-accounting",
+          "messageType": "accounting-receipt",
+          "messageVersion": 1,
+          "payloadHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "signableHex": "5b226869766572656c61792d726f6c652d646f6d61696e2d7369676e61747572652d7631222c2272656c61796b65726e656c222c22726b70222c22726b2d6163636f756e74696e67222c226163636f756e74696e672d72656365697074222c312c2263636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363225d",
+        "error": {
+          "code": "E_KEY_ROLE",
+          "reason": "rkp cannot sign channel rk-accounting"
+        }
+      }
+    ],
+    "replayChecks": [
+      {
+        "name": "relaykernel seed signature does not replay as hivemesh tombstone",
+        "signatureFrom": "rkp-rk-seed",
+        "targetId": null,
+        "valid": false,
+        "code": "E_BAD_SIGNATURE",
+        "reason": "signature does not verify for role domain"
+      },
+      {
+        "name": "relaykernel seed-ack signature does not replay as publisher seed",
+        "signatureFrom": "rk1-rk-seed-ack",
+        "targetId": "rkp-rk-seed",
+        "valid": false,
+        "code": "E_BAD_SIGNATURE",
+        "reason": "signature does not verify for role domain"
+      },
+      {
+        "name": "hivemesh tombstone cannot be verified under t1 role",
+        "signatureFrom": "rk3-t3-tombstone",
+        "targetId": "rk1-t3-tombstone-forbidden",
+        "valid": false,
+        "code": "E_KEY_TIER",
+        "reason": "rk1 cannot sign channel t3-witness"
+      }
+    ]
+  }
+}

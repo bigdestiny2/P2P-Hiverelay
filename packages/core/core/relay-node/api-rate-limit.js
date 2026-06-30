@@ -9,6 +9,7 @@ export const API_ENDPOINT_RATE_LIMITS = Object.freeze({
   '/api/wizard/goto': 30,
   '/api/wizard/reset': 5,
   '/api/forks/proof': 20,
+  '/api/proof/retrievability': 30,
   '/api/v1/seed': 30,
   '/api/v1/custody/intent': 30
 })

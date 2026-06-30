@@ -7,18 +7,20 @@ import {
 
 const BLOCKER_STDERR = `Release distribution preflight failed:
 - UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters
-- NPM_TOKEN
+- UMBREL_OFFICIAL_PR_TOKEN must be a GitHub token without whitespace or control characters
+- UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps
 - STARTOS_REGISTRY_URL must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames
 
 Repair path:
-- Put corrected release values in a local candidate env file outside the repo, for example /private/tmp/hiverelay-release-secrets.env.
-- Validate without publishing: npm run release:check-distribution-env -- --env-file /private/tmp/hiverelay-release-secrets.env --channel both --prerelease false
+- Generate the targeted issue #120 repair file outside the repo: npm run release:write-secret-template -- --issue-120-repair --out /private/tmp/hiverelay-release-secrets.env
+- Validate without publishing: npm run release:check-distribution-env -- --issue-120-repair --env-file /private/tmp/hiverelay-release-secrets.env
 `
 
 test('ship handoff updater parses release blocker facts from preflight stderr', (t) => {
   t.alike(parseReleaseBlockers(BLOCKER_STDERR), [
     'UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters',
-    'NPM_TOKEN',
+    'UMBREL_OFFICIAL_PR_TOKEN must be a GitHub token without whitespace or control characters',
+    'UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps',
     'STARTOS_REGISTRY_URL must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames'
   ])
 })
@@ -68,7 +70,8 @@ test('ship handoff updater renders git and preflight-derived facts', (t) => {
   t.ok(doc.includes('Latest checked preflight: state `completed/failure`, head `main@a8eb77d`, created `2026-06-26T14:25:04Z`.'))
   t.ok(doc.includes('Earlier passing preflight `28238930607` at `1ffffe6` is superseded by this newer failure.'))
   t.ok(doc.includes('UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters'))
-  t.ok(doc.includes('NPM_TOKEN'))
+  t.ok(doc.includes('UMBREL_OFFICIAL_PR_TOKEN must be a GitHub token without whitespace or control characters'))
+  t.ok(doc.includes('UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug'))
   t.ok(doc.includes('Full releases with no explicit channel resolve to `both`.'))
   t.ok(doc.includes('Prereleases with no explicit channel resolve to `none`.'))
   t.ok(doc.includes('node --test test/unit/ecosystem-consumers.test.js'))
@@ -83,16 +86,19 @@ test('ship handoff updater renders git and preflight-derived facts', (t) => {
   t.ok(doc.includes('HIVERELAY_IMAGE_DIGEST=sha256:<digest> npm run startos:verify'))
   t.ok(doc.includes('Confirm the release GHCR tag resolves to a multi-arch digest'))
   t.ok(doc.includes('npm run release:write-secret-template -- \\'))
+  t.ok(doc.includes('--issue-120-repair \\'))
   t.ok(doc.includes('npm run release:check-distribution-env -- \\'))
+  t.ok(doc.includes('npm run release:apply-github-secrets -- \\'))
   t.ok(doc.includes('--env-file /private/tmp/hiverelay-release-secrets.env \\'))
-  t.ok(doc.includes('--channel both \\'))
-  t.ok(doc.includes('--prerelease false'))
-  t.ok(doc.includes('The template command writes placeholders only and keeps the file outside the repo.'))
+  t.absent(doc.includes('--channel both \\'))
+  t.ok(doc.includes('The template command writes placeholders only for the four current issue #120'))
   t.ok(doc.includes('The check command validates the candidate file locally without publishing.'))
-  t.ok(doc.includes('Masked release values are sent through `gh secret set` stdin and are not printed.'))
+  t.ok(doc.includes('writing only those four'))
+  t.ok(doc.includes('Masked release values are sent through `gh secret set` stdin'))
   t.ok(doc.includes('The same preflight did not report malformed `FLEET_SSH_PRIVATE_KEY`'))
   t.absent(doc.includes('Put corrected release values in a local candidate env file outside the repo'))
   t.absent(doc.includes('malformed GitHub secret/variable values'))
+  t.absent(doc.includes('`NPM_TOKEN`'))
 })
 
 test('ship handoff updater reports actual generator checkout when snapshot ref differs', (t) => {

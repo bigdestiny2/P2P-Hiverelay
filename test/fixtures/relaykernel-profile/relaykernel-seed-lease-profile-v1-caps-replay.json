@@ -1,0 +1,187 @@
+{
+  "name": "relaykernel-seed-lease-profile-v1-caps-replay",
+  "description": "RelayKernel seed lease profile vector covering cap-applied acks, nonce replay, expired nonce history, and heartbeat degradation.",
+  "input": {
+    "now": 1800000000,
+    "capLimits": {
+      "maxConcurrentLeases": 3,
+      "maxStorageCap": 4294967296,
+      "maxRetainHorizonSeconds": 7776000,
+      "heartbeatIntervalSeconds": 300
+    },
+    "activeLeases": [
+      {
+        "leaseId": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+        "discoveryKey": "2222222222222222222222222222222222222222222222222222222222222222",
+        "publisherPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+        "lastHeartbeatAt": 1799999699
+      }
+    ],
+    "nonceHistory": [
+      {
+        "publisherPubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "nonce": "99999999999999999999999999999999",
+        "seenAt": 1799999900
+      },
+      {
+        "publisherPubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "nonce": "88888888888888888888888888888888",
+        "seenAt": 1799996300
+      }
+    ],
+    "requests": [
+      {
+        "discoveryKey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "publisherPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "retainUntil": 1800003600,
+        "storageCap": 8589934592,
+        "proofTier": 2,
+        "nonce": "01010101010101010101010101010101"
+      },
+      {
+        "discoveryKey": "1212121212121212121212121212121212121212121212121212121212121212",
+        "publisherPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "retainUntil": 1800003600,
+        "storageCap": 1073741824,
+        "proofTier": 1,
+        "nonce": "01010101010101010101010101010101"
+      },
+      {
+        "discoveryKey": "1313131313131313131313131313131313131313131313131313131313131313",
+        "publisherPubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "retainUntil": 1800003600,
+        "storageCap": 1073741824,
+        "proofTier": 1,
+        "nonce": "99999999999999999999999999999999"
+      },
+      {
+        "discoveryKey": "1414141414141414141414141414141414141414141414141414141414141414",
+        "publisherPubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "retainUntil": 1800003600,
+        "storageCap": 1073741824,
+        "proofTier": 1,
+        "nonce": "88888888888888888888888888888888"
+      },
+      {
+        "discoveryKey": "1515151515151515151515151515151515151515151515151515151515151515",
+        "publisherPubkey": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "retainUntil": 1800003600,
+        "storageCap": 1073741824,
+        "proofTier": 1,
+        "nonce": "03030303030303030303030303030303"
+      }
+    ]
+  },
+  "profile": {
+    "kind": "relaykernel-seed-lease-profile",
+    "version": 1,
+    "now": 1800000000,
+    "capLimits": {
+      "maxConcurrentLeases": 3,
+      "maxStorageCap": 4294967296,
+      "maxRetainHorizonSeconds": 7776000,
+      "heartbeatIntervalSeconds": 300,
+      "nonceWindowSeconds": 3600
+    },
+    "activeLeaseCount": 3,
+    "heartbeat": [
+      {
+        "leaseId": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+        "discoveryKey": "2222222222222222222222222222222222222222222222222222222222222222",
+        "publisherPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+        "serving": true,
+        "degraded": true,
+        "heartbeatAgeSeconds": 301,
+        "reason": "heartbeat-timeout"
+      }
+    ],
+    "requests": [
+      {
+        "accepted": true,
+        "request": {
+          "discoveryKey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "publisherPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "retainUntil": 1800003600,
+          "storageCap": 8589934592,
+          "proofTier": 2,
+          "nonce": "01010101010101010101010101010101"
+        },
+        "ack": {
+          "discoveryKey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "leaseId": "7fa7137d9482445da841a6b5fea2129c",
+          "acceptedAt": 1800000000,
+          "actualCap": 4294967296
+        },
+        "appliedCaps": [
+          "storageCap"
+        ]
+      },
+      {
+        "accepted": false,
+        "request": {
+          "discoveryKey": "1212121212121212121212121212121212121212121212121212121212121212",
+          "publisherPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "retainUntil": 1800003600,
+          "storageCap": 1073741824,
+          "proofTier": 1,
+          "nonce": "01010101010101010101010101010101"
+        },
+        "error": {
+          "code": "E_NONCE_REPLAY",
+          "reason": "nonce already used for publisher in sliding window",
+          "field": null
+        }
+      },
+      {
+        "accepted": false,
+        "request": {
+          "discoveryKey": "1313131313131313131313131313131313131313131313131313131313131313",
+          "publisherPubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "retainUntil": 1800003600,
+          "storageCap": 1073741824,
+          "proofTier": 1,
+          "nonce": "99999999999999999999999999999999"
+        },
+        "error": {
+          "code": "E_NONCE_REPLAY",
+          "reason": "nonce already used for publisher in sliding window",
+          "field": null
+        }
+      },
+      {
+        "accepted": true,
+        "request": {
+          "discoveryKey": "1414141414141414141414141414141414141414141414141414141414141414",
+          "publisherPubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "retainUntil": 1800003600,
+          "storageCap": 1073741824,
+          "proofTier": 1,
+          "nonce": "88888888888888888888888888888888"
+        },
+        "ack": {
+          "discoveryKey": "1414141414141414141414141414141414141414141414141414141414141414",
+          "leaseId": "d0845b2d6cbd7e25cb21f9f91de152bf",
+          "acceptedAt": 1800000000,
+          "actualCap": 1073741824
+        },
+        "appliedCaps": []
+      },
+      {
+        "accepted": false,
+        "request": {
+          "discoveryKey": "1515151515151515151515151515151515151515151515151515151515151515",
+          "publisherPubkey": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "retainUntil": 1800003600,
+          "storageCap": 1073741824,
+          "proofTier": 1,
+          "nonce": "03030303030303030303030303030303"
+        },
+        "error": {
+          "code": "E_CAP_EXCEEDED",
+          "reason": "concurrent lease cap reached",
+          "field": "maxConcurrentLeases"
+        }
+      }
+    ]
+  }
+}

@@ -125,7 +125,7 @@ test('custody signing: tampering and forbidden plaintext metadata are rejected',
     deadline: now + 60_000,
     retainUntil: now + 120_000,
     dataKey: 'never-send-this'
-  }, publisher, { timestamp: now }), /forbidden/, 'dataKey is rejected')
+  }, publisher, { timestamp: now }), /unknown custody field: dataKey/, 'dataKey is rejected by the custody allowlist')
 
   t.exception(() => createCustodyIntent({
     blindContentId: hashHex('blind-content'),
@@ -135,7 +135,7 @@ test('custody signing: tampering and forbidden plaintext metadata are rejected',
     deadline: now + 60_000,
     retainUntil: now + 120_000,
     name: 'private docs'
-  }, publisher, { timestamp: now }), /forbidden/, 'plaintext metadata is rejected')
+  }, publisher, { timestamp: now }), /unknown custody field: name/, 'plaintext metadata is rejected by the custody allowlist')
 
   t.exception(() => createCustodyIntent({
     blindContentId: hashHex('blind-content'),
@@ -148,9 +148,10 @@ test('custody signing: tampering and forbidden plaintext metadata are rejected',
   }, publisher, { timestamp: now }), /unknown custody field/, 'unknown fields are rejected')
 })
 
-test('custody signing: every forbidden field name is blocked at create time', (t) => {
-  // The 10 forbidden plaintext fields should all be rejected by the
-  // validator before signing — no leak path possible.
+test('custody signing: every forbidden field name is rejected by the per-type allowlist', (t) => {
+  // Plaintext/key field names should be rejected by the positive allowlist
+  // before signing. The recursive forbidden scan remains for nested content
+  // inside fields that are otherwise allowed.
   const publisher = keyPair()
   const now = Date.now()
   const baseIntent = {
@@ -166,10 +167,19 @@ test('custody signing: every forbidden field name is blocked at create time', (t
   for (const field of forbidden) {
     t.exception(
       () => createCustodyIntent({ ...baseIntent, [field]: 'value' }, publisher, { timestamp: now }),
-      /forbidden/,
+      new RegExp('unknown custody field: ' + field),
       `field "${field}" rejected`
     )
   }
+
+  t.exception(
+    () => createCustodyIntent({
+      ...baseIntent,
+      candidateRelays: [{ dataKey: 'nested-secret' }]
+    }, publisher, { timestamp: now }),
+    /forbidden/,
+    'nested secret field inside an allowed container is still rejected'
+  )
 })
 
 test('custody signing: future-skew tolerance — entry from clock-skewed peer is rejected', (t) => {

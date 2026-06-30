@@ -13,7 +13,12 @@ import sodium from 'sodium-universal'
 import os from 'os'
 import path from 'path'
 import { StorageProofService } from 'p2p-hiveservices/builtin/storage-proof-service.js'
-import { verifyStorageProof } from 'p2p-hiverelay/core/protocol/proof-of-storage.js'
+import {
+  PROOF_KIND_RETRIEVABILITY,
+  RETRIEVABILITY_PROOF_SIGNATURE_PROFILE,
+  STORAGE_PROOF_LEGACY_SIGNATURE_PROFILE,
+  verifyStorageProof
+} from 'p2p-hiverelay/core/protocol/proof-of-storage.js'
 
 let _n = 0
 const tmp = () => path.join(os.tmpdir(), 'hr-sp-' + process.pid + '-' + (_n++))
@@ -58,6 +63,18 @@ async function svcFor (core, keyPair, opts = {}) {
   return svc
 }
 
+test('manifest labels storage-proof as proof-of-retrievability', (t) => {
+  const manifest = new StorageProofService().manifest()
+  t.is(manifest.name, 'storage-proof')
+  t.is(manifest.proofKind, PROOF_KIND_RETRIEVABILITY)
+  t.alike(manifest.signatureProfiles, [
+    STORAGE_PROOF_LEGACY_SIGNATURE_PROFILE,
+    RETRIEVABILITY_PROOF_SIGNATURE_PROFILE
+  ])
+  t.is(manifest.preferredSignatureProfile, RETRIEVABILITY_PROOF_SIGNATURE_PROFILE)
+  t.ok(/retrievability/.test(manifest.description))
+})
+
 test('prove: valid proof verifies against the drive key', async (t) => {
   const core = await seededCore([b4a.from('a'), b4a.from('bb'), b4a.from('ccc')])
   const relay = relayKeyPair()
@@ -99,13 +116,30 @@ test('prove: seeded entry without an open drive (placeholder) => NOT_SEEDED', as
 })
 
 test('prove: malformed inputs rejected before any core access', async (t) => {
-  const core = await seededCore([b4a.from('x')])
-  const svc = await svcFor(core, relayKeyPair())
-  const k = b4a.toString(core.key, 'hex')
+  const svc = new StorageProofService()
+  await svc.start({
+    node: {
+      keyPair: relayKeyPair(),
+      appRegistry: {
+        has () { throw new Error('REGISTRY_TOUCHED') },
+        get () { throw new Error('REGISTRY_TOUCHED') },
+        _shouldRedactEntry () { throw new Error('REGISTRY_TOUCHED') }
+      }
+    }
+  })
+  const k = 'aa'.repeat(32)
   await t.exception(svc.prove({ coreKey: 'zz', index: 0, nonce: hexNonce() }, {}), /BAD_CORE_KEY/)
   await t.exception(svc.prove({ coreKey: k, index: -1, nonce: hexNonce() }, {}), /BAD_INDEX/)
+  await t.exception(svc.prove({ coreKey: k, index: 2 ** 32, nonce: hexNonce() }, {}), /BAD_INDEX/)
+  await t.exception(svc.prove({ coreKey: k, index: 1.25, nonce: hexNonce() }, {}), /BAD_INDEX/)
   await t.exception(svc.prove({ coreKey: k, index: 0, nonce: 'nothex' }, {}), /BAD_NONCE/)
-  await core.close()
+  await t.exception(svc.prove({
+    coreKey: k,
+    index: 0,
+    nonce: hexNonce(),
+    signatureProfile: 'unknown-proof-profile'
+  }, {}), /UNSUPPORTED_SIGNATURE_PROFILE/)
+  await svc.stop()
 })
 
 test('prove: BLOCK_OUT_OF_RANGE surfaced honestly from the helper', async (t) => {

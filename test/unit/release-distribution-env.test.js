@@ -205,6 +205,69 @@ test('release distribution env check validates local candidate env files before 
   t.absent(body.includes('invalid-secret'))
 })
 
+test('release distribution env check canonicalizes issue 120 fork and registry values', async (t) => {
+  const out = await envFile(t)
+  const res = await runCheck([
+    '--channel', 'both',
+    '--prerelease', 'false',
+    '--github-env', out
+  ], validDistributionEnv({
+    UMBREL_OFFICIAL_FORK: 'https://github.com/bigdestiny2/umbrel-apps.git',
+    STARTOS_REGISTRY_URL: ' https://registry.start9.com/startos/ '
+  }))
+
+  t.is(res.status, 0)
+  t.ok(res.stdout.includes('preflight passed'))
+
+  const body = await readFile(out, 'utf8')
+  t.ok(body.includes('UMBREL_OFFICIAL_FORK=bigdestiny2/umbrel-apps'))
+  t.ok(body.includes('STARTOS_REGISTRY_URL=https://registry.start9.com/startos'))
+  t.ok(body.includes('HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS=passed'))
+})
+
+test('release distribution env check validates targeted issue 120 repair candidates', async (t) => {
+  const out = await envFile(t)
+  const candidate = await candidateEnvFile(t, [
+    `UMBREL_STORE_TOKEN=${TEST_GITHUB_TOKEN}`,
+    `UMBREL_OFFICIAL_PR_TOKEN=${TEST_GITHUB_TOKEN_ALT}`,
+    'UMBREL_OFFICIAL_FORK=https://github.com/bigdestiny2/umbrel-apps.git',
+    'STARTOS_REGISTRY_URL= https://registry.start9.com/startos/ '
+  ].join('\n') + '\n')
+  const res = await runCheck([
+    '--issue-120-repair',
+    '--env-file', candidate,
+    '--github-env', out
+  ])
+
+  t.is(res.status, 0)
+  t.ok(res.stdout.includes('Issue #120 masked-value repair candidate passed.'))
+
+  const body = await readFile(out, 'utf8')
+  t.ok(body.includes('HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS=issue-120-repair-candidate-passed'))
+  t.ok(body.includes('UMBREL_OFFICIAL_FORK=bigdestiny2/umbrel-apps'))
+  t.ok(body.includes('STARTOS_REGISTRY_URL=https://registry.start9.com/startos'))
+  t.absent(body.includes('NPM_TOKEN'))
+  t.absent(body.includes('FLEET_SSH_PRIVATE_KEY'))
+})
+
+test('release distribution env check rejects incomplete issue 120 repair candidates', async (t) => {
+  const candidate = await candidateEnvFile(t, [
+    `UMBREL_STORE_TOKEN=${TEST_GITHUB_TOKEN}`,
+    `UMBREL_OFFICIAL_PR_TOKEN=${TEST_GITHUB_TOKEN_ALT}`
+  ].join('\n') + '\n')
+  const res = await runCheck([
+    '--issue-120-repair',
+    '--env-file', candidate
+  ], validDistributionEnv())
+
+  t.is(res.status, 1)
+  t.ok(res.stderr.includes('Issue #120 masked-value repair candidate failed:'))
+  t.ok(res.stderr.includes('UMBREL_OFFICIAL_FORK'))
+  t.ok(res.stderr.includes('STARTOS_REGISTRY_URL'))
+  t.absent(res.stderr.includes('FLEET_SSH_PRIVATE_KEY'))
+  t.absent(res.stderr.includes('NPM_TOKEN'))
+})
+
 test('release distribution env check does not satisfy env-file candidates from ambient secrets', async (t) => {
   const candidateBody = validCandidateEnvBody()
     .split('\n')

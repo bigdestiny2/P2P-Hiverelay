@@ -20,6 +20,7 @@ import test from 'brittle'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import { HiveRelayClient } from 'p2p-hiverelay-client'
+import { buildCapabilityDoc } from 'p2p-hiverelay/core/capability-doc.js'
 import { ForkDetector } from 'p2p-hiverelay/core/fork-detector.js'
 
 // Generate a default keypair for tests that need signed operations
@@ -841,6 +842,38 @@ test('fetchCapabilities maxAgeMs override is honored', async (t) => {
   // 5-minute threshold with a 10-minute-old doc → should fire
   await client.fetchCapabilities('https://x.test', { maxAgeMs: 5 * 60 * 1000 })
   t.ok(staleEvent, 'stale fires under tighter threshold')
+})
+
+test('fetchCapabilities can reject stale signed capability docs when strict freshness is requested', async (t) => {
+  const now = 1782753600000
+  const doc = buildCapabilityDoc({
+    relay: {
+      config: {},
+      swarm: { keyPair: defaultKeyPair() }
+    },
+    attestedAt: now - 10 * 60 * 1000
+  })
+  installMockFetch({
+    'https://strict-stale.test/.well-known/hiverelay.json': { body: doc }
+  })
+  t.teardown(restoreFetch)
+
+  const client = makeClient()
+  let verifyEvent = null
+  client.on('capability-verify-error', (event) => { verifyEvent = event })
+
+  try {
+    await client.fetchCapabilities('https://strict-stale.test', {
+      requireFreshCapabilityDoc: true,
+      maxAgeMs: 5 * 60 * 1000,
+      now
+    })
+    t.fail('should reject stale signed capability doc')
+  } catch (err) {
+    t.ok(err.message.includes('capability doc attestation expired'))
+    t.ok(verifyEvent, 'verification event emitted')
+    t.is(verifyEvent.reason, 'capability doc attestation expired')
+  }
 })
 
 test('closeDrive removes fork listeners (no leak)', async (t) => {

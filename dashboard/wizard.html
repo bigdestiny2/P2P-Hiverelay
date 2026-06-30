@@ -545,6 +545,22 @@
   // ─── API helpers ────────────────────────────────────────────
 
   const REQUEST_TIMEOUT_MS = 10000
+  const WIZARD_ERROR_MAX = 180
+
+  function wizardErrorText (err, fallback) {
+    let msg = ''
+    if (err && typeof err.message === 'string') msg = err.message
+    else if (typeof err === 'string') msg = err
+    else msg = fallback || 'Request failed'
+    msg = String(msg)
+      .replace(/^[A-Z_]+: /, '')
+      .replace(/[\x00-\x1f\x7f]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!msg) msg = fallback || 'Request failed'
+    if (msg.length > WIZARD_ERROR_MAX) msg = msg.slice(0, WIZARD_ERROR_MAX - 3) + '...'
+    return msg
+  }
 
   async function fetchWithTimeout (path, opts = {}) {
     const options = { ...opts }
@@ -571,7 +587,7 @@
     try { data = await res.json() } catch (_) {}
     if (!res.ok) {
       const msg = (data && data.error) || ('HTTP ' + res.status)
-      throw new Error(msg)
+      throw new Error(wizardErrorText(msg, 'Request failed'))
     }
     return data
   }
@@ -765,7 +781,7 @@
         setWizardActionBusy(true, action)
         result
           .catch(err => {
-            setWizardStatus((err && err.message) || 'Wizard action failed', 'error')
+            setWizardStatus(wizardErrorText(err, 'Wizard action failed'), 'error')
             console.error('Wizard action failed:', err)
           })
           .finally(() => { setWizardActionBusy(false, action) })
@@ -777,7 +793,7 @@
 
   function showError (id, msg) {
     const el = document.getElementById(id)
-    if (el) el.textContent = msg
+    if (el) el.textContent = wizardErrorText(msg, '')
   }
 
   function clearErrors () {
@@ -807,7 +823,7 @@
 
     title.textContent = "Couldn't load setup"
     body.append('The wizard endpoint returned an error: ')
-    code.textContent = (err && err.message) || 'unknown'
+    code.textContent = wizardErrorText(err, 'unknown')
     body.append(code)
     help.className = 'small'
     help.textContent = "If you're not on the same machine as the relay, the wizard is locked to localhost for security. Open this URL from the Umbrel device itself."

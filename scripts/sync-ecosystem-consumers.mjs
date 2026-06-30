@@ -8,6 +8,7 @@ import {
   CURRENT_HIVERELAY_VERSION,
   DEFAULT_DEPENDENCY_MODE,
   EXPECTED_STALE_CONSUMERS,
+  HIVERELAY_DEPS,
   checkConsumerState,
   getExpectedCurrentConsumers,
   normalizeConsumerScope,
@@ -32,14 +33,18 @@ const DEP_SECTIONS = [
 
 const usage = `
 Usage:
-  node scripts/sync-ecosystem-consumers.mjs [--workspace-root <path>] [--expected-version <semver>] [--dependency-mode <local|npm-latest>] [--consumer-scope <all|release>] [--check] [--dry-run]
+  node scripts/sync-ecosystem-consumers.mjs [--workspace-root <path>] [--expected-version <semver>] [--dependency-mode <local|npm-latest>] [--consumer-scope <all|release>] [--check] [--dry-run] [--prepare-latest-defaults]
 
 Updates the known direct ecosystem app consumers so their default
 p2p-hiverelay* package defaults point at the npm latest dist-tag by default.
 npm-latest mode first verifies the full published HiveRelay package line equals
 the expected Hiverelay version, then requires npm to refresh package-lock metadata.
 Use --dependency-mode local for development workspace links. Use --check in CI
-to fail if a consumer would be changed.
+to fail if a consumer would be changed. Use --prepare-latest-defaults only before
+npm latest is promoted; it writes manifests/source markers to latest, skips
+lockfile refresh, and leaves strict release/audit checks for the post-publish gate.
+Combine --prepare-latest-defaults with --check to verify the staged latest
+defaults without writing app files or refreshing lockfiles.
 `
 
 if (isMain()) main()
@@ -52,9 +57,30 @@ export function syncEcosystemConsumers (opts = {}) {
   const expectedCurrent = opts.expectedCurrent || getExpectedCurrentConsumers({ dependencyMode, consumerScope })
   const expectedClassifiedCurrent = opts.expectedClassifiedCurrent || getExpectedCurrentConsumers({ dependencyMode, consumerScope: 'all' })
   const dryRun = Boolean(opts.dryRun || opts.check)
+  const prepareLatestDefaults = Boolean(opts.prepareLatestDefaults)
   const changes = []
   const errors = []
   const warnings = []
+
+  if (prepareLatestDefaults && dependencyMode !== 'npm-latest') {
+    errors.push('--prepare-latest-defaults requires --dependency-mode npm-latest')
+  }
+  if (errors.length > 0) {
+    return {
+      ok: false,
+      check: Boolean(opts.check),
+      dryRun,
+      prepareLatestDefaults,
+      dependencyMode,
+      consumerScope,
+      workspaceRoot,
+      expectedVersion,
+      changes,
+      errors,
+      warnings,
+      summary: null
+    }
+  }
 
   if (dependencyMode === 'npm-latest') {
     const latestCheck = verifyNpmLatestDistTags({
@@ -62,9 +88,9 @@ export function syncEcosystemConsumers (opts = {}) {
       expectedVersion,
       npmLatestVersions: opts.npmLatestVersions
     })
-    errors.push(...latestCheck.errors)
     warnings.push(...latestCheck.warnings)
-    if (errors.length > 0) {
+    if (latestCheck.errors.length > 0 && !prepareLatestDefaults) {
+      errors.push(...latestCheck.errors)
       changes.push(...previewNpmLatestConsumerChanges({
         workspaceRoot,
         expectedCurrent,
@@ -86,6 +112,10 @@ export function syncEcosystemConsumers (opts = {}) {
         warnings,
         summary: null
       }
+    }
+    if (latestCheck.errors.length > 0) {
+      for (const error of latestCheck.errors) warnings.push(`prepare-latest-defaults skipped registry proof: ${error}`)
+      warnings.push('prepare-latest-defaults wrote npm latest app defaults without lockfile refresh; rerun strict ecosystem sync/audit after npm latest is promoted')
     }
   }
 
@@ -115,7 +145,7 @@ export function syncEcosystemConsumers (opts = {}) {
     }
   }
 
-  if (dependencyMode === 'npm-latest' && !dryRun) {
+  if (dependencyMode === 'npm-latest' && !dryRun && !prepareLatestDefaults) {
     try {
       changes.push(...refreshNpmLatestLockfiles({
         workspaceRoot,
@@ -152,7 +182,7 @@ export function syncEcosystemConsumers (opts = {}) {
     expectedClassifiedCurrent,
     expectedStale: EXPECTED_STALE_CONSUMERS,
     sourceChecks,
-    lockChecks,
+    lockChecks: prepareLatestDefaults ? [] : lockChecks,
     snapshotChecks
   })
 
@@ -166,6 +196,7 @@ export function syncEcosystemConsumers (opts = {}) {
     ok: errors.length === 0,
     check: Boolean(opts.check),
     dryRun,
+    prepareLatestDefaults,
     dependencyMode,
     consumerScope,
     workspaceRoot,
@@ -208,6 +239,7 @@ function syncConsumerManifest ({ workspaceRoot, consumer, dryRun }) {
   const file = path.join(workspaceRoot, consumer.path)
   const pkg = readJson(file)
   const changes = []
+  const expectedDeps = new Set(Object.keys(consumer.deps || {}))
 
   for (const [dep, value] of Object.entries(consumer.deps).sort(([a], [b]) => a.localeCompare(b))) {
     const preferredSection = findDepSection(pkg, dep) || 'dependencies'
@@ -216,11 +248,25 @@ function syncConsumerManifest ({ workspaceRoot, consumer, dryRun }) {
     }
   }
 
+  if (expectedDeps.size === 0) {
+    for (const section of DEP_SECTIONS) {
+      const deps = pkg[section]
+      if (!deps || typeof deps !== 'object' || Array.isArray(deps)) continue
+      for (const dep of HIVERELAY_DEPS) {
+        if (!Object.hasOwn(deps, dep)) continue
+        delete deps[dep]
+        changes.push(`${slash(path.relative(workspaceRoot, file))}: ${dep} removed`)
+      }
+      if (Object.keys(deps).length === 0) delete pkg[section]
+    }
+  }
+
   if (changes.length > 0 && !dryRun) writeJson(file, pkg)
   return changes
 }
 
 function syncConsumerLockfile ({ workspaceRoot, consumer, expectedVersion, dryRun }) {
+  if (Object.keys(consumer.deps || {}).length === 0) return []
   const packageFile = path.join(workspaceRoot, consumer.path)
   const packageDir = path.dirname(packageFile)
   const lockFile = findNearestLockfile(packageDir, workspaceRoot)
@@ -338,6 +384,7 @@ function refreshNpmLatestLockfiles ({ workspaceRoot, expectedCurrent, skipNpmIns
 function collectConsumerLockRoots ({ workspaceRoot, expectedCurrent }) {
   const roots = new Set()
   for (const consumer of expectedCurrent) {
+    if (Object.keys(consumer.deps || {}).length === 0) continue
     const packageFile = path.join(workspaceRoot, consumer.path)
     const packageDir = path.dirname(packageFile)
     const lockFile = findNearestLockfile(packageDir, workspaceRoot)
@@ -443,6 +490,11 @@ function parseArgs (argv) {
       out.dryRun = true
       continue
     }
+    if (arg === '--prepare-latest-defaults') {
+      out.prepareLatestDefaults = true
+      out.skipNpmInstall = true
+      continue
+    }
     if (arg === '--workspace-root') {
       out.workspaceRoot = readValue(argv, ++i, arg)
       continue
@@ -484,7 +536,7 @@ function main () {
   }
 
   const result = syncEcosystemConsumers(args)
-  const mode = result.check ? 'check' : result.dryRun ? 'dry run' : 'sync'
+  const mode = result.check ? 'check' : result.dryRun ? 'dry run' : result.prepareLatestDefaults ? 'prepare latest defaults' : 'sync'
   console.log(`HiveRelay ecosystem consumer ${mode} (target ${result.expectedVersion}, mode ${result.dependencyMode}, scope ${result.consumerScope})`)
   if (result.changes.length === 0) {
     console.log('- no consumer package or lockfile changes needed')

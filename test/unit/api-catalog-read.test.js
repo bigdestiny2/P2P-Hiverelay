@@ -239,6 +239,29 @@ test('api catalog read: relay catalog sanitizes federation snapshot before publi
   t.absent(text.includes('secret'))
 })
 
+test('api catalog read: relaykernel profile omits federation snapshot', (t) => {
+  const node = nodeWithCatalog([], {
+    productProfile: 'relaykernel',
+    federation: { enabled: false }
+  })
+
+  const result = buildRelayCatalogPayload({
+    node,
+    url: new URL('http://relay.local/catalog.json')
+  })
+
+  t.is(result.ok, true)
+  t.is(result.payload.federation, null)
+
+  node.config = {}
+  node.mode = 'relaykernel'
+  const modeResult = buildRelayCatalogPayload({
+    node,
+    url: new URL('http://relay.local/catalog.json')
+  })
+  t.is(modeResult.payload.federation, null)
+})
+
 test('api catalog read: gateway catalog keeps its legacy shape and valid catalogBeeKey advertisement', (t) => {
   const entries = [
     { appKey: '1'.repeat(64), type: 'app', name: 'App One' },

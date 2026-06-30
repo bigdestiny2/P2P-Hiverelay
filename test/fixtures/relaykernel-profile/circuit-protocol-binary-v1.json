@@ -1,0 +1,107 @@
+{
+  "name": "circuit-protocol-binary-v1",
+  "description": "Pins HiveRelay circuit protocol compact-encoding frames, decoded objects, and reject codes for the RelayKernel circuit surface.",
+  "kind": "protocol-binary-conformance",
+  "protocol": "hiverelay-circuit",
+  "version": 1,
+  "messages": [
+    {
+      "id": "reserve-hard-capped-request",
+      "type": "reserve",
+      "value": {
+        "peerPubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "maxDurationMs": 600000,
+        "maxBytes": 67108864
+      },
+      "frameHex": "1111111111111111111111111111111111111111111111111111111111111111fec0270900fe00000004"
+    },
+    {
+      "id": "connect-target-source",
+      "type": "connect",
+      "value": {
+        "targetPubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+        "sourcePubkey": "3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      "frameHex": "22222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333"
+    },
+    {
+      "id": "status-capacity-full",
+      "type": "status",
+      "value": {
+        "code": 1,
+        "message": "capacity full"
+      },
+      "frameHex": "010d63617061636974792066756c6c"
+    },
+    {
+      "id": "data-hello",
+      "type": "data",
+      "value": {
+        "circuitId": "44444444444444444444444444444444",
+        "data": "68656c6c6f"
+      },
+      "frameHex": "444444444444444444444444444444440568656c6c6f"
+    },
+    {
+      "id": "ready-remote",
+      "type": "ready",
+      "value": {
+        "circuitId": "44444444444444444444444444444444",
+        "remotePubkey": "5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "frameHex": "444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555"
+    },
+    {
+      "id": "close-bytes-exceeded",
+      "type": "close",
+      "value": {
+        "circuitId": "44444444444444444444444444444444",
+        "reason": 2
+      },
+      "frameHex": "4444444444444444444444444444444402"
+    }
+  ],
+  "malformed": [
+    {
+      "id": "connect-truncated-source",
+      "type": "connect",
+      "frameHex": "2222222222222222222222222222222222222222222222222222222222222222",
+      "expectedError": "malformed connect"
+    },
+    {
+      "id": "status-message-too-large",
+      "type": "status",
+      "frameHex": "02fd0104",
+      "expectedError": "status message too large"
+    },
+    {
+      "id": "data-frame-too-large",
+      "type": "data",
+      "frameHex": "44444444444444444444444444444444fe01000100",
+      "expectedError": "frame too large"
+    },
+    {
+      "id": "ready-truncated-remote",
+      "type": "ready",
+      "frameHex": "44444444444444444444444444444444",
+      "expectedError": "malformed ready"
+    },
+    {
+      "id": "close-truncated-reason",
+      "type": "close",
+      "frameHex": "44444444444444444444444444444444",
+      "expectedError": "malformed close"
+    }
+  ],
+  "encodeFailures": [
+    {
+      "id": "close-negative-reason-outbound",
+      "type": "close",
+      "value": {
+        "circuitId": "44444444444444444444444444444444",
+        "reason": -1
+      },
+      "expectedError": "reason must be a non-negative integer"
+    }
+  ]
+}

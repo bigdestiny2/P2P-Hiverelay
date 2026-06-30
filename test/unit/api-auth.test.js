@@ -645,6 +645,109 @@ test('api-auth: GET /api/manage/federation returns bounded sanitized management 
   }
 })
 
+test('api-auth: relaykernel profile rejects custody APIs but keeps plain operator seeding', async (t) => {
+  const originalMode = node.mode
+  const originalConfig = node.config
+  const originalRegistry = node.seedingRegistry
+  const beforeSeeds = node._seedCalls.length
+  let custodyCalls = 0
+
+  t.teardown(() => {
+    node.mode = originalMode
+    node.config = originalConfig
+    node.seedingRegistry = originalRegistry
+  })
+
+  node.mode = 'relaykernel'
+  node.config = {
+    ...node.config,
+    productProfile: 'relaykernel',
+    custody: { enabled: false },
+    federation: { enabled: false }
+  }
+  node.seedingRegistry = {
+    getCustodyStatus () {
+      custodyCalls++
+      return null
+    },
+    async publishCustodyIntent () {
+      custodyCalls++
+      return { type: 'custody-intent' }
+    }
+  }
+
+  const intentId = 'c'.repeat(64)
+  const status = await request(port, 'GET', `/api/custody/${intentId}/status`)
+  t.is(status.statusCode, 409)
+  t.ok(status.body.error.startsWith('not-enabled: '), 'custody status reports disabled profile')
+
+  const publisherIntent = await request(port, 'POST', '/api/v1/custody/intent', { signature: 'publisher-signed' })
+  t.is(publisherIntent.statusCode, 409)
+
+  const operatorIntent = await request(port, 'POST', '/api/custody/intent', { signature: 'operator-signed' }, {
+    Authorization: 'Bearer ' + API_KEY
+  })
+  t.is(operatorIntent.statusCode, 409)
+
+  const custodySeed = await request(port, 'POST', '/seed', {
+    appKey: 'a'.repeat(64),
+    custodyIntentId: intentId
+  }, {
+    Authorization: 'Bearer ' + API_KEY
+  })
+  t.is(custodySeed.statusCode, 409)
+  t.is(node._seedCalls.length, beforeSeeds, 'custody-linked seed does not reach seedApp')
+  t.is(custodyCalls, 0, 'disabled custody routes do not reach registry methods')
+
+  const plainSeed = await request(port, 'POST', '/seed', { appKey: 'a'.repeat(64) }, {
+    Authorization: 'Bearer ' + API_KEY
+  })
+  t.is(plainSeed.statusCode, 200)
+  t.is(node._seedCalls.length, beforeSeeds + 1, 'plain seed remains available in relaykernel mode')
+})
+
+test('api-auth: relaykernel profile rejects federation management even when runtime object exists', async (t) => {
+  const originalMode = node.mode
+  const originalConfig = node.config
+  const originalFederation = node.federation
+  let calls = 0
+
+  t.teardown(() => {
+    node.mode = originalMode
+    node.config = originalConfig
+    node.federation = originalFederation
+  })
+
+  node.mode = 'relaykernel'
+  node.config = { ...node.config, productProfile: 'relaykernel', federation: { enabled: false } }
+  node.federation = {
+    snapshot () {
+      calls++
+      return { followed: [{ url: 'https://relay.example' }] }
+    },
+    follow () {
+      calls++
+    },
+    async save () {
+      calls++
+    }
+  }
+
+  const status = await request(port, 'GET', '/api/manage/federation', null, {
+    Authorization: 'Bearer ' + API_KEY
+  })
+  t.is(status.statusCode, 409)
+  t.ok(status.body.error.startsWith('not-enabled: '), 'federation status reports disabled profile')
+
+  const follow = await request(port, 'POST', '/api/manage/federation/follow', {
+    url: 'https://relay.example'
+  }, {
+    Authorization: 'Bearer ' + API_KEY
+  })
+  t.is(follow.statusCode, 409)
+  t.is(calls, 0, 'disabled federation routes do not reach runtime object')
+})
+
 test('api-auth: public overview requests use redacted stats and authenticated requests may include transport secrets', async (t) => {
   const originalGetStats = node.getStats
   const originalConfig = node.config

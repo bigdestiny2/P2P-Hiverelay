@@ -277,6 +277,40 @@ test('wizard API helper bounds setup requests and clears timeout handles', async
   t.is(aborted, 1)
 })
 
+test('wizard error text is bounded and normalized', (t) => {
+  t.ok(wizard.includes('const WIZARD_ERROR_MAX = 180'))
+  t.ok(wizard.includes('function wizardErrorText'))
+  t.ok(wizard.includes(".replace(/[\\x00-\\x1f\\x7f]+/g, ' ')"))
+  t.ok(wizard.includes("msg = msg.slice(0, WIZARD_ERROR_MAX - 3) + '...'"))
+
+  const result = vm.runInNewContext([
+    'const WIZARD_ERROR_MAX = 180',
+    extractFunction('wizardErrorText'),
+    "const messyError = 'WIZARD_FAILED: relay' + String.fromCharCode(10) + String.fromCharCode(9) + String.fromCharCode(0) + 'next   chunk'",
+    "const blankError = 'WIZARD_FAILED: ' + String.fromCharCode(10) + String.fromCharCode(9)",
+    "const longError = 'WIZARD_FAILED: ' + Array(501).join('x')",
+    `JSON.stringify({
+      prefixed: wizardErrorText({ message: 'WIZARD_FAILED: relay name' }, 'Fallback'),
+      messy: wizardErrorText(messyError, 'Fallback'),
+      blank: wizardErrorText(blankError, 'Fallback'),
+      fallback: wizardErrorText(null, 'Fallback message'),
+      huge: wizardErrorText(longError, 'Fallback')
+    })`
+  ].join('\n'), { JSON })
+  const out = JSON.parse(result)
+
+  t.is(out.prefixed, 'relay name')
+  t.is(out.messy, 'relay next chunk')
+  t.is(out.blank, 'Fallback')
+  t.is(out.fallback, 'Fallback message')
+  t.is(out.huge.length, 180)
+  t.ok(out.huge.endsWith('...'))
+  t.absent(Array.from(out.huge).some((ch) => {
+    const code = ch.charCodeAt(0)
+    return code < 32 || code === 127
+  }))
+})
+
 test('wizard load errors render untrusted messages as text', (t) => {
   const card = {
     children: [],
@@ -286,6 +320,8 @@ test('wizard load errors render untrusted messages as text', (t) => {
   }
   const created = []
   const source = [
+    'const WIZARD_ERROR_MAX = 180',
+    extractFunction('wizardErrorText'),
     extractFunction('renderLoadError'),
     'renderLoadError({ message: "<img src=x onerror=alert(1)>" })'
   ].join('\n')

@@ -163,6 +163,60 @@ test('GitHub release secret apply sends validated values to gh secret set via st
   t.ok(variableRows.some(row => row.args.join(' ') === 'variable set FLEET_ROLLOUT_TIMEOUT_MS --repo bigdestiny2/P2P-Hiverelay --body 1800000' && row.input === ''))
 })
 
+test('GitHub release secret apply repairs only issue 120 masked values', async (t) => {
+  const candidate = await candidateEnvFile(t, [
+    `UMBREL_STORE_TOKEN=${TEST_GITHUB_TOKEN}`,
+    `UMBREL_OFFICIAL_PR_TOKEN=${TEST_GITHUB_TOKEN_ALT}`,
+    'UMBREL_OFFICIAL_FORK=https://github.com/bigdestiny2/umbrel-apps.git',
+    'STARTOS_REGISTRY_URL= https://registry.start9.com/startos/ '
+  ].join('\n') + '\n')
+  const gh = await fakeGh(t)
+  const res = await runApply([
+    '--issue-120-repair',
+    '--repo', 'bigdestiny2/P2P-Hiverelay',
+    '--env-file', candidate,
+    '--gh', gh.file
+  ], {
+    HIVERELAY_FAKE_GH_LOG: gh.log
+  })
+
+  t.is(res.status, 0)
+  t.ok(res.stdout.includes('Set masked GitHub release value UMBREL_STORE_TOKEN as a Secret'))
+  t.ok(res.stdout.includes('Set masked GitHub release value STARTOS_REGISTRY_URL as a Secret'))
+  t.absent(res.stdout.includes('NPM_TOKEN'))
+  t.absent(res.stdout.includes(TEST_GITHUB_TOKEN))
+
+  const rows = await readGhLog(gh.log)
+  t.is(rows.length, 4)
+  t.ok(rows.every(row => row.args[0] === 'secret'))
+  t.ok(rows.some(row => row.args.join(' ') === 'secret set UMBREL_STORE_TOKEN --repo bigdestiny2/P2P-Hiverelay' && row.input === TEST_GITHUB_TOKEN))
+  t.ok(rows.some(row => row.args.join(' ') === 'secret set UMBREL_OFFICIAL_PR_TOKEN --repo bigdestiny2/P2P-Hiverelay' && row.input === TEST_GITHUB_TOKEN_ALT))
+  t.ok(rows.some(row => row.args.join(' ') === 'secret set UMBREL_OFFICIAL_FORK --repo bigdestiny2/P2P-Hiverelay' && row.input === 'bigdestiny2/umbrel-apps'))
+  t.ok(rows.some(row => row.args.join(' ') === 'secret set STARTOS_REGISTRY_URL --repo bigdestiny2/P2P-Hiverelay' && row.input === 'https://registry.start9.com/startos'))
+})
+
+test('GitHub release secret apply dry-runs only issue 120 masked values', async (t) => {
+  const candidate = await candidateEnvFile(t, [
+    `UMBREL_STORE_TOKEN=${TEST_GITHUB_TOKEN}`,
+    `UMBREL_OFFICIAL_PR_TOKEN=${TEST_GITHUB_TOKEN_ALT}`,
+    'UMBREL_OFFICIAL_FORK=bigdestiny2/umbrel-apps',
+    'STARTOS_REGISTRY_URL=https://registry.start9.com'
+  ].join('\n') + '\n')
+  const res = await runApply([
+    '--issue-120-repair',
+    '--repo', 'bigdestiny2/P2P-Hiverelay',
+    '--env-file', candidate,
+    '--dry-run'
+  ])
+
+  t.is(res.status, 0)
+  t.ok(res.stdout.includes('Would set masked GitHub release values as Secrets: UMBREL_STORE_TOKEN, UMBREL_OFFICIAL_PR_TOKEN, UMBREL_OFFICIAL_FORK, STARTOS_REGISTRY_URL'))
+  t.ok(res.stdout.includes('Issue #120 repair mode; no GitHub Variables would be changed.'))
+  t.absent(res.stdout.includes('FLEET_SSH_PRIVATE_KEY'))
+  t.absent(res.stdout.includes('NPM_TOKEN'))
+  t.absent(res.stdout.includes(TEST_GITHUB_TOKEN))
+})
+
 test('GitHub release secret apply rejects malformed candidate without calling gh or echoing values', async (t) => {
   const secretValue = `ghp_${'s'.repeat(36)}`
   const candidate = await candidateEnvFile(t, validCandidateEnvBody({

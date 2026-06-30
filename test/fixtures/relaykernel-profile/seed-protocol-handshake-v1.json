@@ -1,0 +1,131 @@
+{
+  "name": "seed-protocol-handshake-v1",
+  "kind": "protocol-version-negotiation",
+  "protocol": "hiverelay-seed",
+  "version": 1,
+  "description": "Pins seed-channel handshake parsing and major-version negotiation before pending seed requests are replayed.",
+  "localVersion": {
+    "major": 1,
+    "minor": 0
+  },
+  "maxHandshakeBytes": 256,
+  "cases": [
+    {
+      "id": "absent-handshake",
+      "handshake": null,
+      "verdict": {
+        "valid": true,
+        "action": "accept",
+        "local": {
+          "major": 1,
+          "minor": 0
+        },
+        "remote": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "current-version",
+      "handshakeJson": {
+        "major": 1,
+        "minor": 0
+      },
+      "verdict": {
+        "valid": true,
+        "action": "accept",
+        "local": {
+          "major": 1,
+          "minor": 0
+        },
+        "remote": {
+          "major": 1,
+          "minor": 0
+        },
+        "reason": null
+      }
+    },
+    {
+      "id": "future-minor-same-major",
+      "handshakeJson": {
+        "major": 1,
+        "minor": 7
+      },
+      "verdict": {
+        "valid": true,
+        "action": "accept",
+        "local": {
+          "major": 1,
+          "minor": 0
+        },
+        "remote": {
+          "major": 1,
+          "minor": 7
+        },
+        "reason": null
+      }
+    },
+    {
+      "id": "major-mismatch",
+      "handshakeJson": {
+        "major": 2,
+        "minor": 0
+      },
+      "verdict": {
+        "valid": false,
+        "action": "close",
+        "local": {
+          "major": 1,
+          "minor": 0
+        },
+        "remote": {
+          "major": 2,
+          "minor": 0
+        },
+        "reason": "major version mismatch"
+      }
+    },
+    {
+      "id": "malformed-json-array",
+      "handshakeText": "[]",
+      "verdict": {
+        "valid": false,
+        "action": "close",
+        "local": {
+          "major": 1,
+          "minor": 0
+        },
+        "remote": null,
+        "reason": "malformed handshake"
+      }
+    },
+    {
+      "id": "missing-minor",
+      "handshakeText": "{\"major\":1}",
+      "verdict": {
+        "valid": false,
+        "action": "close",
+        "local": {
+          "major": 1,
+          "minor": 0
+        },
+        "remote": null,
+        "reason": "malformed handshake"
+      }
+    },
+    {
+      "id": "oversized-handshake",
+      "handshakeFillBytes": 257,
+      "handshakeFillByte": 32,
+      "verdict": {
+        "valid": false,
+        "action": "close",
+        "local": {
+          "major": 1,
+          "minor": 0
+        },
+        "remote": null,
+        "reason": "handshake too large"
+      }
+    }
+  ]
+}

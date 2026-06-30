@@ -15,6 +15,7 @@ test('api mode transport: validates mode action before applying', async (t) => {
   }
 
   t.ok(AVAILABLE_MODES.includes('homehive'))
+  t.ok(AVAILABLE_MODES.includes('relaykernel'))
 
   const missing = await runModeSwitchAction({ body: {}, node })
   t.is(missing.status, 400)
@@ -96,6 +97,29 @@ test('api mode transport: applies mode overrides and persists before success', a
   t.is(node.config.registryAutoAccept, false)
   t.is(persisted.length, 1)
   t.is(persisted[0].mode, 'homehive')
+})
+
+test('api mode transport: applies relaykernel mode', async (t) => {
+  const node = {
+    config: { mode: 'relay-core' },
+    mode: 'relay-core',
+    _operatingMode: 'relay-core',
+    async applyMode (mode, overrides) {
+      this.mode = mode
+      this._operatingMode = mode
+      this.config = { ...this.config, mode, ...overrides }
+    }
+  }
+
+  const result = await runModeSwitchAction({
+    body: { mode: 'relaykernel' },
+    node
+  })
+
+  t.is(result.ok, true)
+  t.is(result.payload.mode, 'relaykernel')
+  t.is(result.payload.note, 'RelayKernel profile active — seed/proof/circuit/meta/accounting only')
+  t.is(node.mode, 'relaykernel')
 })
 
 test('api mode transport: rolls back mode when persistence fails', async (t) => {

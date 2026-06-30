@@ -8,7 +8,10 @@ import {
   normalizePrivacyTier,
   normalizeStorageClass
 } from '../constants.js'
-import { buildPublisherSignedSeedOpts } from '../seed-request-builder.js'
+import {
+  buildPublisherSignedSeedOpts,
+  consumePublisherSeedReplayNonce
+} from '../seed-request-builder.js'
 import { evaluateSeedLease } from '../../incentive/lease/gate.js'
 import { validatePositiveInt } from './api-validation.js'
 
@@ -25,6 +28,12 @@ export const AVAILABILITY_CLASS_ERROR = `availabilityClass must be one of: ${Arr
 
 function errorPayload (message) {
   return { error: message }
+}
+
+function publisherSeedReplayCache (node) {
+  if (!node) return null
+  if (!node._publisherSeedReplayCache) node._publisherSeedReplayCache = new Map()
+  return node._publisherSeedReplayCache
 }
 
 function badRequest (message) {
@@ -363,6 +372,11 @@ export async function runPublisherSeedAction ({
   if (gate.outcome === 'paid') {
     built.opts.retainUntil = gate.retainUntil
     built.opts.leaseManaged = true
+  }
+
+  const replay = consumePublisherSeedReplayNonce(built.replay, publisherSeedReplayCache(node))
+  if (!replay.ok) {
+    return { ok: false, kind: 'bad-request', status: replay.status || 400, payload: errorPayload(replay.error) }
   }
 
   try {

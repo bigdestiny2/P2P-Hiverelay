@@ -1,0 +1,70 @@
+{
+  "name": "hivemesh-tier-profile-v1-t2-custody-vault",
+  "input": {
+    "tier": "t2",
+    "keyPrefix": "rk2",
+    "capabilities": [
+      "custody-receipt",
+      "non-serving-proof",
+      "prove-held"
+    ],
+    "storesCiphertext": true,
+    "storesPlaintext": false,
+    "storesContent": true,
+    "httpGateway": false,
+    "circuit": false,
+    "publicDht": false,
+    "publicDirectory": false
+  },
+  "profile": {
+    "kind": "hivemesh-tier-profile",
+    "version": 1,
+    "tier": "t2",
+    "role": "custody-vault",
+    "keyPrefix": "rk2",
+    "capabilities": [
+      "custody-receipt",
+      "non-serving-proof",
+      "prove-held"
+    ],
+    "network": {
+      "gateway": false,
+      "circuit": false,
+      "publicDht": false,
+      "publicDirectory": false,
+      "httpSurfaces": []
+    },
+    "storage": {
+      "storesContent": true,
+      "storesCiphertext": true,
+      "storesPlaintext": false
+    },
+    "compatibility": {
+      "blindsparkHttpGateway": {
+        "present": false,
+        "surfaces": []
+      }
+    },
+    "ruleSummary": {
+      "required": [
+        "custody-receipt",
+        "prove-held",
+        "non-serving-proof"
+      ],
+      "forbidden": [
+        "gateway",
+        "circuit",
+        "public-dht",
+        "public-directory",
+        "tombstone-signing"
+      ],
+      "missingRequired": [],
+      "forbiddenPresent": []
+    }
+  },
+  "verdict": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  }
+}

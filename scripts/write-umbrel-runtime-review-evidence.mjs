@@ -7,9 +7,9 @@ import path from 'node:path'
 const usage = `
 Usage:
   node scripts/write-umbrel-runtime-review-evidence.mjs --out umbrel-runtime-review-evidence.json \\
-    --release v0.16.3 --device "Umbrel Home" --umbrel-version 1.3.0 \\
+    --release v0.20.2 --device "Umbrel Home" --umbrel-version 1.3.0 \\
     --tested-by <public-name> --public-key-before <hex> --public-key-after <hex> \\
-    --checks installedThroughUmbrel,dashboardProxyLoads,liveFeedInBandAuth,noWebSocketUrlTokens,wizardCompletes,setupActionLockObserved,addWalletPersists,walletBusyStateObserved,managementActionsPersist,serviceActionStateObserved,serviceRestartPendingObserved,aiModelAddStateObserved,reviewModeDefault,dataWritableUid999,reinstallPreservesPublicKey \\
+    --checks installedThroughUmbrel,dashboardProxyLoads,liveFeedInBandAuth,noWebSocketUrlTokens,wizardCompletes,setupActionLockObserved,addWalletPersists,dynamicPayoutControlsObserved,walletBusyStateObserved,managementActionsPersist,serviceActionStateObserved,serviceRestartPendingObserved,aiModelAddStateObserved,reviewModeDefault,dataWritableUid999,reinstallPreservesPublicKey \\
     --official-pr-url https://github.com/getumbrel/umbrel-apps/pull/<number>
 
 Writes a public-safe manual evidence artifact after real Umbrel UI/lifecycle
@@ -26,6 +26,7 @@ const REQUIRED_CHECKS = [
   'wizardCompletes',
   'setupActionLockObserved',
   'addWalletPersists',
+  'dynamicPayoutControlsObserved',
   'walletBusyStateObserved',
   'managementActionsPersist',
   'serviceActionStateObserved',

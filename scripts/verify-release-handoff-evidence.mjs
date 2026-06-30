@@ -71,6 +71,7 @@ const UMBREL_RUNTIME_REVIEW_CHECKS = Object.freeze([
   'wizardCompletes',
   'setupActionLockObserved',
   'addWalletPersists',
+  'dynamicPayoutControlsObserved',
   'walletBusyStateObserved',
   'managementActionsPersist',
   'serviceActionStateObserved',
@@ -1008,7 +1009,7 @@ function assertSmokeSidecarSchema (smoke, kind, allowedChecks) {
 function smokeCheckKeys (name) {
   switch (name) {
     case 'health': return ['name', 'status', 'version']
-    case 'dashboard': return ['name', 'status', 'serviceManager', 'walletControls', 'tokenMeta', 'walletBusyState', 'serviceActionState', 'aiModelAddState', 'appProxyWrites', 'leasePollingBounded', 'staticMarkupSafe']
+    case 'dashboard': return ['name', 'status', 'serviceManager', 'walletControls', 'tokenMeta', 'walletBusyState', 'dynamicPayoutControls', 'serviceActionState', 'serviceInlinePlanState', 'aiModelAddState', 'appProxyWrites', 'leasePollingBounded', 'staticMarkupSafe']
     case 'setupWizard': return ['name', 'status', 'editMode', 'statusRegion', 'actionLock', 'dashboardLinkAppPath', 'staticMarkupSafe']
     case 'dashboardToken': return ['name', 'status', 'exposedViaMeta']
     case 'dashboardWebSocket': return ['name', 'status', 'queryTokenRejected', 'inBandAuth', 'updateReceived']
@@ -1018,8 +1019,8 @@ function smokeCheckKeys (name) {
     case 'walletWrite': return ['name', 'status', 'destinationSaved']
     case 'servicesSave': return ['name', 'status', 'plugins', 'restartRequired']
     case 'composeSafety': return ['name', 'status', 'composePath']
-    case 'firstBoot': return ['name', 'status', 'dashboard', 'setup', 'serviceCatalog', 'dashboardUiHardening', 'appProxyWrites', 'leasePollingBounded', 'dashboardStaticMarkupSafe', 'setupUiHardening', 'dashboardLinkAppPath', 'setupStaticMarkupSafe', 'acceptMode', 'healthVersion']
-    case 'secondBoot': return ['name', 'status', 'dashboard', 'setup', 'serviceCatalog', 'dashboardUiHardening', 'appProxyWrites', 'leasePollingBounded', 'dashboardStaticMarkupSafe', 'setupUiHardening', 'dashboardLinkAppPath', 'setupStaticMarkupSafe', 'acceptMode', 'healthVersion']
+    case 'firstBoot': return ['name', 'status', 'dashboard', 'setup', 'serviceCatalog', 'dashboardUiHardening', 'dynamicPayoutControls', 'serviceInlinePlanState', 'appProxyWrites', 'leasePollingBounded', 'dashboardStaticMarkupSafe', 'setupUiHardening', 'dashboardLinkAppPath', 'setupStaticMarkupSafe', 'acceptMode', 'healthVersion']
+    case 'secondBoot': return ['name', 'status', 'dashboard', 'setup', 'serviceCatalog', 'dashboardUiHardening', 'dynamicPayoutControls', 'serviceInlinePlanState', 'appProxyWrites', 'leasePollingBounded', 'dashboardStaticMarkupSafe', 'setupUiHardening', 'dashboardLinkAppPath', 'setupStaticMarkupSafe', 'acceptMode', 'healthVersion']
     case 'identityPersistence': return ['name', 'status', 'publicKeyStable']
     case 'walletPersistence': return ['name', 'status', 'destinationPersisted']
     case 'servicesPersistence': return ['name', 'status', 'selectedServicesActive', 'plugins', 'active']
@@ -1040,7 +1041,9 @@ function verifySmokeCriticalChecks (kind, byName, expectedVersion) {
     requireSmokeBoolean(kind, byName, 'dashboard', 'walletControls')
     requireSmokeBoolean(kind, byName, 'dashboard', 'tokenMeta')
     requireSmokeBoolean(kind, byName, 'dashboard', 'walletBusyState')
+    requireSmokeBoolean(kind, byName, 'dashboard', 'dynamicPayoutControls')
     requireSmokeBoolean(kind, byName, 'dashboard', 'serviceActionState')
+    requireSmokeBoolean(kind, byName, 'dashboard', 'serviceInlinePlanState')
     requireSmokeBoolean(kind, byName, 'dashboard', 'aiModelAddState')
     requireSmokeBoolean(kind, byName, 'dashboard', 'appProxyWrites')
     requireSmokeBoolean(kind, byName, 'dashboard', 'leasePollingBounded')
@@ -1061,6 +1064,8 @@ function verifySmokeCriticalChecks (kind, byName, expectedVersion) {
   requireSmokeBoolean(kind, byName, 'firstBoot', 'setup')
   requireSmokeBoolean(kind, byName, 'firstBoot', 'serviceCatalog')
   requireSmokeBoolean(kind, byName, 'firstBoot', 'dashboardUiHardening')
+  requireSmokeBoolean(kind, byName, 'firstBoot', 'dynamicPayoutControls')
+  requireSmokeBoolean(kind, byName, 'firstBoot', 'serviceInlinePlanState')
   requireSmokeBoolean(kind, byName, 'firstBoot', 'appProxyWrites')
   requireSmokeBoolean(kind, byName, 'firstBoot', 'leasePollingBounded')
   requireSmokeBoolean(kind, byName, 'firstBoot', 'dashboardStaticMarkupSafe')
@@ -1073,6 +1078,8 @@ function verifySmokeCriticalChecks (kind, byName, expectedVersion) {
   requireSmokeBoolean(kind, byName, 'secondBoot', 'setup')
   requireSmokeBoolean(kind, byName, 'secondBoot', 'serviceCatalog')
   requireSmokeBoolean(kind, byName, 'secondBoot', 'dashboardUiHardening')
+  requireSmokeBoolean(kind, byName, 'secondBoot', 'dynamicPayoutControls')
+  requireSmokeBoolean(kind, byName, 'secondBoot', 'serviceInlinePlanState')
   requireSmokeBoolean(kind, byName, 'secondBoot', 'appProxyWrites')
   requireSmokeBoolean(kind, byName, 'secondBoot', 'leasePollingBounded')
   requireSmokeBoolean(kind, byName, 'secondBoot', 'dashboardStaticMarkupSafe')

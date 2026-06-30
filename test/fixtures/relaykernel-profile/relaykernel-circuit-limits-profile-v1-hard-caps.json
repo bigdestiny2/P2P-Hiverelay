@@ -1,0 +1,284 @@
+{
+  "name": "relaykernel-circuit-limits-profile-v1-hard-caps",
+  "description": "Pins RelayKernel/HiveMesh T1 circuit limits while allowing the current HiveRelay compatibility channel until rk-circuit is introduced.",
+  "input": {
+    "channels": [
+      "hiverelay-circuit"
+    ],
+    "limits": {
+      "maxSessionMs": 600000,
+      "maxBytes": 67108864,
+      "maxCircuitsPerPeer": 5,
+      "maxFrameBytes": 65536,
+      "maxPendingConnects": 100,
+      "maxReservePerMinute": 5,
+      "rateCapBytesPerSecond": 1048576
+    },
+    "runtime": {
+      "reserveAuthBindsRemoteKey": true,
+      "connectAuthBindsRemoteKey": true,
+      "endpointOnlyData": true,
+      "closeOnFrameTooLarge": true,
+      "closeOnByteCap": true,
+      "silentDropUnknownCircuit": true,
+      "relayAccountingEnabled": true,
+      "relayMaxCircuitDurationMs": 600000,
+      "circuitRelayCleanupMs": 600000,
+      "perCircuitRateCapBytesPerSecond": 1048576
+    },
+    "decisions": [
+      {
+        "id": "compat-rkc-open",
+        "type": "open-channel",
+        "channel": "hiverelay-circuit",
+        "rolePrefix": "rkc",
+        "expectedAccepted": true
+      },
+      {
+        "id": "t2-cannot-open-circuit",
+        "type": "open-channel",
+        "channel": "hiverelay-circuit",
+        "rolePrefix": "rk2",
+        "expectedAccepted": false
+      },
+      {
+        "id": "reserve-auth-mismatch",
+        "type": "reserve",
+        "remoteKeyMatches": false,
+        "expectedAccepted": false
+      },
+      {
+        "id": "connect-auth-match",
+        "type": "connect",
+        "remoteKeyMatches": true,
+        "expectedAccepted": true
+      },
+      {
+        "id": "fifth-circuit-allowed",
+        "type": "circuit-count",
+        "activeCircuitsForPeer": 4,
+        "expectedAccepted": true
+      },
+      {
+        "id": "sixth-circuit-rejected",
+        "type": "circuit-count",
+        "activeCircuitsForPeer": 5,
+        "expectedAccepted": false
+      },
+      {
+        "id": "max-frame-allowed",
+        "type": "frame",
+        "bytes": 65536,
+        "expectedAccepted": true
+      },
+      {
+        "id": "oversized-frame-rejected",
+        "type": "frame",
+        "bytes": 65537,
+        "expectedAccepted": false
+      },
+      {
+        "id": "byte-cap-allowed",
+        "type": "session-bytes",
+        "bytesRelayed": 67108863,
+        "nextBytes": 1,
+        "expectedAccepted": true
+      },
+      {
+        "id": "byte-cap-rejected",
+        "type": "session-bytes",
+        "bytesRelayed": 67108864,
+        "nextBytes": 1,
+        "expectedAccepted": false
+      },
+      {
+        "id": "duration-cap-allowed",
+        "type": "session-duration",
+        "durationMs": 600000,
+        "expectedAccepted": true
+      },
+      {
+        "id": "duration-cap-rejected",
+        "type": "session-duration",
+        "durationMs": 600001,
+        "expectedAccepted": false
+      },
+      {
+        "id": "unknown-circuit-drops-silent",
+        "type": "unknown-circuit-data",
+        "expectedAccepted": true
+      }
+    ]
+  },
+  "profile": {
+    "kind": "relaykernel-circuit-limits-profile",
+    "version": 1,
+    "hardCaps": {
+      "maxSessionMs": 600000,
+      "maxBytes": 67108864,
+      "maxCircuitsPerPeer": 5,
+      "maxFrameBytes": 65536,
+      "recommendedRateBytesPerSecond": 1048576
+    },
+    "channels": {
+      "kernel": false,
+      "hivemeshT1": false,
+      "hiverelayCompat": true,
+      "advertised": [
+        "hiverelay-circuit"
+      ]
+    },
+    "limits": {
+      "maxSessionMs": 600000,
+      "maxBytes": 67108864,
+      "maxCircuitsPerPeer": 5,
+      "maxFrameBytes": 65536,
+      "maxPendingConnects": 100,
+      "maxReservePerMinute": 5,
+      "rateCapBytesPerSecond": 1048576
+    },
+    "runtime": {
+      "reserveAuthBindsRemoteKey": true,
+      "connectAuthBindsRemoteKey": true,
+      "endpointOnlyData": true,
+      "closeOnFrameTooLarge": true,
+      "closeOnByteCap": true,
+      "silentDropUnknownCircuit": true,
+      "relayAccountingEnabled": true,
+      "relayMaxCircuitDurationMs": 600000,
+      "circuitRelayCleanupMs": 600000,
+      "perCircuitRateCapBytesPerSecond": 1048576
+    },
+    "limitChecks": {
+      "sessionHardCap": true,
+      "byteHardCap": true,
+      "concurrentHardCap": true,
+      "frameHardCap": true,
+      "reserveRateLimited": true,
+      "pendingConnectsBounded": true,
+      "perCircuitRateCapped": true,
+      "relayAccountingDurationCap": true
+    },
+    "securityChecks": {
+      "reserveAuthBindsRemoteKey": true,
+      "connectAuthBindsRemoteKey": true,
+      "endpointOnlyData": true,
+      "closeOnFrameTooLarge": true,
+      "closeOnByteCap": true,
+      "silentDropUnknownCircuit": true
+    },
+    "decisions": [
+      {
+        "id": "byte-cap-allowed",
+        "type": "session-bytes",
+        "accepted": true,
+        "expectedAccepted": true,
+        "reason": null,
+        "matchesExpectation": true
+      },
+      {
+        "id": "byte-cap-rejected",
+        "type": "session-bytes",
+        "accepted": false,
+        "expectedAccepted": false,
+        "reason": "E_CIRCUIT_LIMIT",
+        "matchesExpectation": true
+      },
+      {
+        "id": "compat-rkc-open",
+        "type": "open-channel",
+        "accepted": true,
+        "expectedAccepted": true,
+        "reason": null,
+        "matchesExpectation": true
+      },
+      {
+        "id": "connect-auth-match",
+        "type": "connect",
+        "accepted": true,
+        "expectedAccepted": true,
+        "reason": null,
+        "matchesExpectation": true
+      },
+      {
+        "id": "duration-cap-allowed",
+        "type": "session-duration",
+        "accepted": true,
+        "expectedAccepted": true,
+        "reason": null,
+        "matchesExpectation": true
+      },
+      {
+        "id": "duration-cap-rejected",
+        "type": "session-duration",
+        "accepted": false,
+        "expectedAccepted": false,
+        "reason": "E_CIRCUIT_LIMIT",
+        "matchesExpectation": true
+      },
+      {
+        "id": "fifth-circuit-allowed",
+        "type": "circuit-count",
+        "accepted": true,
+        "expectedAccepted": true,
+        "reason": null,
+        "matchesExpectation": true
+      },
+      {
+        "id": "max-frame-allowed",
+        "type": "frame",
+        "accepted": true,
+        "expectedAccepted": true,
+        "reason": null,
+        "matchesExpectation": true
+      },
+      {
+        "id": "oversized-frame-rejected",
+        "type": "frame",
+        "accepted": false,
+        "expectedAccepted": false,
+        "reason": "E_CIRCUIT_LIMIT",
+        "matchesExpectation": true
+      },
+      {
+        "id": "reserve-auth-mismatch",
+        "type": "reserve",
+        "accepted": false,
+        "expectedAccepted": false,
+        "reason": "E_KEY_ROLE",
+        "matchesExpectation": true
+      },
+      {
+        "id": "sixth-circuit-rejected",
+        "type": "circuit-count",
+        "accepted": false,
+        "expectedAccepted": false,
+        "reason": "E_CIRCUIT_LIMIT",
+        "matchesExpectation": true
+      },
+      {
+        "id": "t2-cannot-open-circuit",
+        "type": "open-channel",
+        "accepted": false,
+        "expectedAccepted": false,
+        "reason": "E_KEY_ROLE",
+        "matchesExpectation": true
+      },
+      {
+        "id": "unknown-circuit-drops-silent",
+        "type": "unknown-circuit-data",
+        "accepted": true,
+        "expectedAccepted": true,
+        "reason": "DROP_SILENT",
+        "matchesExpectation": true
+      }
+    ],
+    "verdict": {
+      "valid": true,
+      "errors": [],
+      "warnings": [
+        "using HiveRelay compatibility channel until rk-circuit is introduced"
+      ]
+    }
+  }
+}

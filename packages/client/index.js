@@ -47,7 +47,18 @@ import { EventEmitter } from 'events'
 import { readdir, readFile, writeFile, lstat, mkdir, rename, rm } from 'fs/promises'
 import { join, relative, resolve, dirname } from 'path'
 import { BootstrapCache } from 'p2p-hiverelay/core/bootstrap-cache.js'
-import { verifyStorageProof } from 'p2p-hiverelay/core/protocol/proof-of-storage.js'
+import { verifyAccountingReceipt } from 'p2p-hiverelay/core/protocol/accounting-receipt.js'
+import {
+  PROOF_KIND_RETRIEVABILITY,
+  RETRIEVABILITY_PROOF_LIMITATION,
+  RETRIEVABILITY_PROOF_SIGNATURE_PROFILE,
+  STORAGE_PROOF_LEGACY_SIGNATURE_PROFILE,
+  verifyStorageProof
+} from 'p2p-hiverelay/core/protocol/proof-of-storage.js'
+import {
+  SEED_REQUEST_SIGNATURE_DOMAIN,
+  serializeSeedRequestForDomainSigning
+} from 'p2p-hiverelay/core/protocol/seed-request.js'
 import {
   seedRequestEncoding,
   seedAcceptEncoding,
@@ -113,6 +124,7 @@ export const _pairing = {
 }
 
 const FORWARD_MAX_FRAME = MAX_FORWARD_DATA_MSG_BYTES
+const CORE_RETRIEVABILITY_HTTP_FEATURE = 'retrievability-proof-http'
 
 /**
  * Parse the total object size out of an HTTP Content-Range header
@@ -451,7 +463,7 @@ export class HiveRelayClient extends EventEmitter {
     // No existing drive found — create new with unique namespace
     // (avoids Corestore contention under active replication in Pear/Bare runtime)
     if (!drive) {
-      const ns = this.store.namespace('drive-' + Date.now() + '-' + Math.random().toString(36).slice(2))
+      const ns = this.store.namespace('drive-' + Date.now() + '-' + randomNameSuffix())
       drive = new Hyperdrive(ns, null, driveOpts)
     }
 
@@ -751,6 +763,10 @@ export class HiveRelayClient extends EventEmitter {
     //                         ≥5 distinct operators) by recruiting fresh
     //                         replicas as old ones drop out. Or pass the
     //                         string 'archive' for clarity.
+    //   opts.seedSignatureDomain
+    //                         default legacy v2 for mixed-version fleets.
+    //                         Pass 'v3' or 'hiverelay.seed-request.v3' to
+    //                         sign the preferred domain-separated preimage.
     //
     // All three fields are ignored by older relays, which behave as if
     // they were the permissive defaults.
@@ -825,7 +841,9 @@ export class HiveRelayClient extends EventEmitter {
 
     if (this.keyPair && this.keyPair.secretKey) {
       request.publisherPubkey = this.keyPair.publicKey
-      const payload = this._serializeForSigning(request)
+      const payload = this._useSeedSignatureDomainV3(opts)
+        ? this._serializeForDomainSigning(request)
+        : this._serializeForSigning(request)
       sodium.crypto_sign_detached(request.publisherSignature, payload, this.keyPair.secretKey)
     }
 
@@ -2541,7 +2559,7 @@ export class HiveRelayClient extends EventEmitter {
    */
   async _writeShareBundle (bundle) {
     if (!this.store) throw new Error('_writeShareBundle: client store not ready (call start() first)')
-    const name = 'share-bundle-' + Date.now() + '-' + Math.random().toString(36).slice(2)
+    const name = 'share-bundle-' + Date.now() + '-' + randomNameSuffix()
     const core = this.store.get({ name })
     await core.ready()
     await core.append(b4a.from(JSON.stringify(bundle)))
@@ -2620,6 +2638,54 @@ export class HiveRelayClient extends EventEmitter {
   }
 
   /**
+   * Fetch and verify a relay's signed, OS-grounded accounting receipt.
+   *
+   * The relay endpoint is management-authenticated because receipts expose
+   * operator/storage counters. Verification is local: the receipt signature is
+   * checked against its relayPubkey and callers may additionally pin
+   * opts.expectedPubkey to reject a valid receipt from the wrong relay.
+   *
+   * @param {string} relayUrl
+   * @param {object} [opts]
+   * @param {string} [opts.apiKey]           management bearer token
+   * @param {boolean} [opts.refresh=true]    set false to avoid a fresh disk scan
+   * @param {string} [opts.expectedPubkey]   optional 64-hex relay pubkey pin
+   * @returns {Promise<{ok: true, verified: true, receipt: object}>}
+   */
+  async fetchAccountingReceipt (relayUrl, opts = {}) {
+    if (typeof relayUrl !== 'string' || !relayUrl.length) {
+      throw new Error('fetchAccountingReceipt: relayUrl required')
+    }
+    const base = relayUrl.replace(/\/+$/, '')
+    const endpoint = base + '/api/accounting/receipt' + (opts.refresh === false ? '?refresh=0' : '')
+    const headers = { Accept: 'application/json' }
+    if (opts.apiKey) headers.Authorization = 'Bearer ' + opts.apiKey
+
+    const res = await _fetchJson(endpoint, { method: 'GET', headers })
+    if (!res.ok) {
+      const err = new Error('fetchAccountingReceipt failed: ' + (res.body?.error || res.status))
+      err.status = res.status
+      err.body = res.body
+      throw err
+    }
+    if (!res.body || !res.body.receipt || typeof res.body.receipt !== 'object') {
+      throw new Error('fetchAccountingReceipt: malformed response')
+    }
+
+    const check = verifyAccountingReceipt(res.body.receipt)
+    if (!check.valid) {
+      throw new Error('fetchAccountingReceipt: receipt verification failed: ' + check.reason)
+    }
+
+    if (opts.expectedPubkey &&
+        check.receipt.relayPubkey.toLowerCase() !== String(opts.expectedPubkey).toLowerCase()) {
+      throw new Error('fetchAccountingReceipt: pubkey mismatch (expected ' + opts.expectedPubkey + ', got ' + check.receipt.relayPubkey + ')')
+    }
+
+    return { ok: true, verified: true, receipt: check.receipt }
+  }
+
+  /**
    * Fetch a relay's capability document. Useful for relay-shopping:
    * pick relays by version, accept_mode, features without opening a
    * swarm connection.
@@ -2633,6 +2699,9 @@ export class HiveRelayClient extends EventEmitter {
    * @param {string} relayUrl
    * @param {object} [opts]
    * @param {boolean} [opts.requireSignature=false]   throw if doc is unsigned
+   * @param {boolean} [opts.requireFreshCapabilityDoc=false] throw if signed attestedAt is stale or missing
+   * @param {number}  [opts.maxAgeMs]                  freshness window for stale warnings/strict verification
+   * @param {number}  [opts.maxFutureSkewMs]           allowed future clock skew for strict verification
    * @param {string}  [opts.expectedPubkey]           pin pubkey (out-of-band trust)
    * @returns {Promise<object>}
    */
@@ -2644,7 +2713,7 @@ export class HiveRelayClient extends EventEmitter {
     // Auto-populate expectedPubkey from the known-relays registry.
     // Caller-provided opts.expectedPubkey wins; the registry only
     // fills in when the caller didn't pin explicitly.
-    if (!opts.expectedPubkey && this._knownRelays.has(base)) {
+    if (!opts.expectedPubkey && this._knownRelays && this._knownRelays.has(base)) {
       opts = { ...opts, expectedPubkey: this._knownRelays.get(base) }
     }
     let doc
@@ -2662,14 +2731,25 @@ export class HiveRelayClient extends EventEmitter {
     // but we ALWAYS check when a signature is present and emit an
     // event on mismatch. A future revision could elevate signature
     // failures to throw by default.
+    const requireFreshCapabilityDoc = opts.requireFreshCapabilityDoc === true || opts.requireFresh === true
     if (doc && doc.signature) {
-      const check = verifyCapabilityDoc(doc)
+      const verifyOpts = {}
+      if (requireFreshCapabilityDoc) {
+        verifyOpts.requireFresh = true
+        if (typeof opts.maxAgeMs === 'number') verifyOpts.maxAgeMs = opts.maxAgeMs
+        if (typeof opts.maxFutureSkewMs === 'number') verifyOpts.maxFutureSkewMs = opts.maxFutureSkewMs
+        if (typeof opts.now === 'number') verifyOpts.now = opts.now
+      }
+      const check = verifyCapabilityDoc(doc, verifyOpts)
       if (!check.valid) {
         this.emit('capability-verify-error', { url: relayUrl, reason: check.reason })
         throw new Error('fetchCapabilities: signature verification failed: ' + check.reason)
       }
-    } else if (opts.requireSignature) {
-      throw new Error('fetchCapabilities: doc is unsigned and requireSignature was set')
+    } else if (opts.requireSignature || requireFreshCapabilityDoc) {
+      const reason = requireFreshCapabilityDoc
+        ? 'requireFreshCapabilityDoc was set'
+        : 'requireSignature was set'
+      throw new Error('fetchCapabilities: doc is unsigned and ' + reason)
     }
 
     // Pinned-pubkey check (out-of-band trust): if the caller knows
@@ -2690,7 +2770,8 @@ export class HiveRelayClient extends EventEmitter {
     // a stale doc is still a known-good doc, just out of date.
     const maxAge = typeof opts.maxAgeMs === 'number' ? opts.maxAgeMs : 24 * 60 * 60 * 1000
     if (typeof doc.attestedAt === 'number' && doc.attestedAt > 0) {
-      const ageMs = Date.now() - doc.attestedAt
+      const now = typeof opts.now === 'number' ? opts.now : Date.now()
+      const ageMs = now - doc.attestedAt
       if (ageMs > maxAge) {
         this.emit('capability-doc-stale', {
           url: relayUrl,
@@ -3254,7 +3335,7 @@ export class HiveRelayClient extends EventEmitter {
    * Caveat: replication rides the shared swarm, so `contentVerified` proves the
    * content is genuine + served by the swarm, and `relayHasFullLength` is R's
    * own advertised state — this is NOT a per-block, R-attributable, third-party
-   * -portable proof. For that, use the signed proof-of-storage challenge (Tier 2).
+   * -portable proof. For that, use the signed proof-of-retrievability challenge (Tier 2).
    *
    *   const v = await client.verifySeeded(driveKey, { relay: relayPubkeyHex })
    *   //   { complete: true, relayHasFullLength: true, contentVerified: true, … }
@@ -3326,7 +3407,7 @@ export class HiveRelayClient extends EventEmitter {
   }
 
   /**
-   * Tier-2 proof-of-storage probe — trustlessly confirm a relay HOLDS an app by
+   * Tier-2 proof-of-retrievability probe — confirm a relay can produce an app by
    * making it produce signed Hypercore Merkle proofs for randomly-sampled blocks
    * of the drive's metadata core, each verified against the drive key alone.
    *
@@ -3345,6 +3426,9 @@ export class HiveRelayClient extends EventEmitter {
     const relayPubkey = opts.relay
     if (!relayPubkey) throw new Error('proveSeeded: opts.relay (relay pubkey hex) is required')
     if (!this.relays.has(relayPubkey)) throw new Error('NO_RELAY: not connected to relay ' + relayPubkey)
+    const proofSignatureProfile = normalizeProofSignatureProfile(opts.proofSignatureProfile)
+    const proofEndpoint = await this._resolveRetrievabilityProofEndpoint(relayPubkey, opts)
+    const proofTransport = proofEndpoint ? 'http' : 'service'
 
     // Cap samples below the relay's default per-caller proof burst (32) so a
     // single honest audit never self-throttles. 16 random blocks is a strong
@@ -3357,7 +3441,19 @@ export class HiveRelayClient extends EventEmitter {
     await drive.ready()
     const head = drive.core.length || 0
     if (head <= 0) {
-      return { ok: false, driveKey: keyHex, relay: relayPubkey, head: 0, passed: 0, total: 0, samples: [], reason: 'EMPTY_DRIVE' }
+      return {
+        ok: false,
+        proofKind: PROOF_KIND_RETRIEVABILITY,
+        proofLimit: RETRIEVABILITY_PROOF_LIMITATION,
+        proofTransport,
+        driveKey: keyHex,
+        relay: relayPubkey,
+        head: 0,
+        passed: 0,
+        total: 0,
+        samples: [],
+        reason: 'EMPTY_DRIVE'
+      }
     }
 
     // Isolated verifier sandbox: a SEPARATE corestore (never swarm-joined) so
@@ -3377,20 +3473,31 @@ export class HiveRelayClient extends EventEmitter {
         sodium.randombytes_buf(nonce)
         let verdict
         try {
-          const response = await this.callService(
-            'storage-proof', 'prove',
-            { coreKey: keyHex, index, nonce: b4a.toString(nonce, 'hex') },
-            { relay: relayPubkey, timeout }
-          )
+          const params = { coreKey: keyHex, index, nonce: b4a.toString(nonce, 'hex') }
+          if (proofSignatureProfile) params.signatureProfile = proofSignatureProfile
+          const response = proofEndpoint
+            ? await this._postRetrievabilityProof(proofEndpoint, params, timeout)
+            : await this.callService(
+              'storage-proof', 'prove',
+              params,
+              { relay: relayPubkey, timeout }
+            )
           verdict = await verifyStorageProof({
             verifierCore,
             response,
             expect: { driveKey: keyHex, index, nonce, relayPubkey, minLength: head }
           })
         } catch (err) {
-          verdict = { valid: false, reason: 'CALL_FAILED:' + (err.code || err.message) }
+          verdict = { valid: false, reason: (proofEndpoint ? 'HTTP_FAILED:' : 'CALL_FAILED:') + (err.code || err.message) }
         }
-        results.push({ index, valid: !!(verdict && verdict.valid), reason: verdict && verdict.reason })
+        results.push({
+          index,
+          transport: proofTransport,
+          valid: !!(verdict && verdict.valid),
+          proofKind: (verdict && verdict.proofKind) || PROOF_KIND_RETRIEVABILITY,
+          signatureProfile: verdict && verdict.signatureProfile,
+          reason: verdict && verdict.reason
+        })
       }
     } finally {
       try { await sandbox.close() } catch {}
@@ -3400,6 +3507,9 @@ export class HiveRelayClient extends EventEmitter {
     const passed = results.filter((r) => r.valid).length
     return {
       ok: passed === results.length && results.length > 0,
+      proofKind: PROOF_KIND_RETRIEVABILITY,
+      proofLimit: RETRIEVABILITY_PROOF_LIMITATION,
+      proofTransport,
       driveKey: keyHex,
       relay: relayPubkey,
       head,
@@ -3409,11 +3519,90 @@ export class HiveRelayClient extends EventEmitter {
     }
   }
 
+  async _resolveRetrievabilityProofEndpoint (relayPubkey, opts = {}) {
+    const mode = opts.proofTransport || 'auto'
+    if (mode !== 'auto' && mode !== 'http' && mode !== 'service') {
+      throw new Error('proveSeeded: opts.proofTransport must be auto, http, or service')
+    }
+    if (mode === 'service') return null
+
+    const relayUrl = normalizeRelayUrl(opts.relayUrl)
+    const cached = this._cachedRetrievabilityProofEndpoint(relayPubkey)
+    if (cached) return cached
+    if (!relayUrl) {
+      if (mode === 'http') {
+        throw new Error('proveSeeded: opts.relayUrl or cached capabilities required for proofTransport=http')
+      }
+      return null
+    }
+
+    let doc = null
+    try {
+      doc = await this.fetchCapabilities(relayUrl, {
+        expectedPubkey: relayPubkey,
+        maxAgeMs: opts.capabilityMaxAgeMs
+      })
+    } catch (err) {
+      if (mode === 'http') throw err
+      this.emit('proof-http-capability-error', { relay: relayPubkey, url: relayUrl, error: err })
+      return null
+    }
+
+    const relayInfo = capabilityDocToRelayInfo(relayUrl, doc)
+    if (this._capabilityCache && typeof this._capabilityCache.set === 'function') {
+      this._capabilityCache.set(relayUrl, { relayInfo, fetchedAt: Date.now() })
+    }
+    if (relayInfoSupportsRetrievabilityHttp(relayInfo)) return relayUrl
+    if (mode === 'http') {
+      throw new Error('proveSeeded: relay capabilities do not advertise ' + CORE_RETRIEVABILITY_HTTP_FEATURE)
+    }
+    return null
+  }
+
+  _cachedRetrievabilityProofEndpoint (relayPubkey) {
+    const target = String(relayPubkey || '').toLowerCase()
+    const cache = this._capabilityCache
+    if (!cache || typeof cache[Symbol.iterator] !== 'function') return null
+    for (const [url, entry] of cache) {
+      const relayInfo = entry && entry.relayInfo
+      if (!relayInfo || typeof relayInfo.pubkey !== 'string') continue
+      if (relayInfo.pubkey.toLowerCase() !== target) continue
+      if (relayInfoSupportsRetrievabilityHttp(relayInfo)) return normalizeRelayUrl(url)
+    }
+    return null
+  }
+
+  async _postRetrievabilityProof (relayUrl, params, timeout) {
+    const endpoint = normalizeRelayUrl(relayUrl) + '/api/proof/retrievability'
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeout)
+    try {
+      const res = await _fetchJson(endpoint, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+      })
+      if (!res.ok) {
+        const code = res.body && res.body.error ? res.body.error : 'status ' + res.status
+        const err = new Error('HTTP_PROOF_' + res.status + ':' + code)
+        err.status = res.status
+        err.body = res.body
+        throw err
+      }
+      if (!res.body || typeof res.body !== 'object') throw new Error('HTTP_PROOF_BAD_RESPONSE')
+      return res.body
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   /** Distinct random block indices in [0, head). */
   _sampleIndices (head, n) {
-    const count = Math.min(n, head)
+    const maxHead = Math.min(Math.floor(head), 0xffffffff)
+    const count = Math.min(Math.floor(n), maxHead)
     const set = new Set()
-    while (set.size < count) set.add(Math.floor(Math.random() * head))
+    while (set.size < count) set.add(sodium.randombytes_uniform(maxHead))
     return [...set]
   }
 
@@ -3906,6 +4095,16 @@ export class HiveRelayClient extends EventEmitter {
     return b4a.concat(parts)
   }
 
+  _serializeForDomainSigning (msg) {
+    return serializeSeedRequestForDomainSigning(msg)
+  }
+
+  _useSeedSignatureDomainV3 (opts) {
+    return opts &&
+      (opts.seedSignatureDomain === 'v3' ||
+        opts.seedSignatureDomain === SEED_REQUEST_SIGNATURE_DOMAIN)
+  }
+
   _selectBestRelay (requireProtocol = 'circuit') {
     let best = null
     let bestScore = -1
@@ -4118,6 +4317,12 @@ export class HiveRelayClient extends EventEmitter {
   }
 }
 
+function randomNameSuffix (bytes = 8) {
+  const out = b4a.alloc(bytes)
+  sodium.randombytes_buf(out)
+  return b4a.toString(out, 'hex')
+}
+
 /**
  * Minimal JSON fetch helper used by the seeding-manifest and capabilities
  * methods. Uses globalThis.fetch (Node 18+, Bare via bare-fetch polyfill,
@@ -4141,6 +4346,28 @@ async function _fetchJson (url, opts = {}) {
     body = null
   }
   return { ok: response.ok, status: response.status, body }
+}
+
+function normalizeRelayUrl (url) {
+  if (typeof url !== 'string' || !url.length) return null
+  return url.replace(/\/+$/, '')
+}
+
+function relayInfoSupportsRetrievabilityHttp (relayInfo) {
+  return !!(relayInfo &&
+    Array.isArray(relayInfo.features) &&
+    relayInfo.features.includes(CORE_RETRIEVABILITY_HTTP_FEATURE))
+}
+
+function normalizeProofSignatureProfile (profile) {
+  if (profile == null || profile === '') return null
+  if (
+    profile === STORAGE_PROOF_LEGACY_SIGNATURE_PROFILE ||
+    profile === RETRIEVABILITY_PROOF_SIGNATURE_PROFILE
+  ) {
+    return profile
+  }
+  throw new Error('proveSeeded: opts.proofSignatureProfile must be storage-proof-legacy-v1 or retrievability-proof-v1')
 }
 
 /**

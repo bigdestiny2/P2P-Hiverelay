@@ -1,0 +1,325 @@
+{
+  "name": "hivemesh-tier-reputation-profile-v1-no-global-score",
+  "description": "Pins HiveMesh tier-scoped reputation so T1/T2/T3 evidence cannot inflate another tier and cross-tier operator reuse is visible.",
+  "input": {
+    "now": 1800000000000,
+    "windowMs": 604800000,
+    "verifierDisagreementThreshold": 5,
+    "nodes": [
+      {
+        "nodePubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tier": "t1",
+        "operator": "op-shared",
+        "region": "us-east"
+      },
+      {
+        "nodePubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "tier": "t2",
+        "operator": "op-shared",
+        "region": "eu-west"
+      },
+      {
+        "nodePubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "tier": "t3",
+        "operator": "op-witness",
+        "region": "ap-south"
+      },
+      {
+        "nodePubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "tier": "t3",
+        "operator": "op-shared",
+        "region": "sa-east"
+      }
+    ],
+    "selfAttestations": [
+      {
+        "nodePubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "score": 999,
+        "uptimeHours": 500,
+        "bandwidthBytes": 10737418240
+      }
+    ],
+    "t1AnchorProofs": [
+      {
+        "nodePubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "verifierPubkey": "0101010101010101010101010101010101010101010101010101010101010101",
+        "blockIndex": 1,
+        "at": 1800000000000,
+        "passed": true
+      },
+      {
+        "nodePubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "verifierPubkey": "0202020202020202020202020202020202020202020202020202020202020202",
+        "blockIndex": 2,
+        "at": 1799913600000,
+        "passed": true
+      },
+      {
+        "nodePubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "verifierPubkey": "0303030303030303030303030303030303030303030303030303030303030303",
+        "blockIndex": 3,
+        "at": 1800000000000,
+        "passed": true
+      }
+    ],
+    "t1BandwidthReceipts": [
+      {
+        "nodePubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bytes": 104857600,
+        "witnessCosigCount": 2,
+        "at": 1800000000000
+      },
+      {
+        "nodePubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bytes": 52428800,
+        "witnessCosigCount": 0,
+        "at": 1800000000000
+      }
+    ],
+    "t1CircuitUptime": [
+      {
+        "nodePubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "seconds": 3600,
+        "at": 1800000000000
+      }
+    ],
+    "t2CustodyReceipts": [
+      {
+        "nodePubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "at": 1800000000000
+      }
+    ],
+    "t2ProveHeld": [
+      {
+        "nodePubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "verifierPubkey": "0404040404040404040404040404040404040404040404040404040404040404",
+        "windowSeconds": 5,
+        "at": 1800000000000,
+        "passed": true
+      },
+      {
+        "nodePubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "verifierPubkey": "0505050505050505050505050505050505050505050505050505050505050505",
+        "windowSeconds": 5,
+        "at": 1800000000000,
+        "passed": false
+      },
+      {
+        "nodePubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "verifierPubkey": "0606060606060606060606060606060606060606060606060606060606060606",
+        "windowSeconds": 5,
+        "at": 1800000000000,
+        "passed": true
+      }
+    ],
+    "t2FalseNonServingClaims": [
+      {
+        "nodePubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "at": 1800000000000
+      }
+    ],
+    "t3Tombstones": [
+      {
+        "nodePubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "at": 1800000000000
+      },
+      {
+        "nodePubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "at": 1800000000000
+      }
+    ],
+    "t3BandwidthCosigs": [
+      {
+        "nodePubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "at": 1800000000000
+      }
+    ],
+    "t3FalseTombstoneSlashes": [
+      {
+        "nodePubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "at": 1800000000000
+      }
+    ],
+    "t3LatencyMisses": [
+      {
+        "nodePubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "at": 1800000000000
+      }
+    ],
+    "verifierReports": [
+      {
+        "tier": "t2",
+        "nodePubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "verifierPubkey": "0707070707070707070707070707070707070707070707070707070707070707",
+        "score": 10
+      },
+      {
+        "tier": "t2",
+        "nodePubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "verifierPubkey": "0808080808080808080808080808080808080808080808080808080808080808",
+        "score": 30
+      },
+      {
+        "tier": "t1",
+        "nodePubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "verifierPubkey": "0909090909090909090909090909090909090909090909090909090909090909",
+        "score": 1
+      },
+      {
+        "tier": "t1",
+        "nodePubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "verifierPubkey": "1010101010101010101010101010101010101010101010101010101010101010",
+        "score": 2
+      }
+    ]
+  },
+  "profile": {
+    "kind": "hivemesh-tier-reputation-profile",
+    "version": 1,
+    "now": 1800000000000,
+    "windowMs": 604800000,
+    "globalScore": null,
+    "tiers": {
+      "t1": [
+        {
+          "nodePubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "tier": "t1",
+          "keyPrefix": "rk1",
+          "operator": "op-shared",
+          "region": "us-east",
+          "score": 1.440055,
+          "anchorProofScore": 0.880055,
+          "witnessedBandwidthScore": 0.2,
+          "circuitUptimeScore": 0.36,
+          "anchorProofs": 2,
+          "distinctVerifiers": 2,
+          "distinctBlockIndices": 2,
+          "proofDiversityMultiplier": 0.471405,
+          "witnessedBandwidthBytes": 104857600,
+          "witnessCosigCount": 2,
+          "circuitUptimeSeconds": 3600,
+          "ignored": {
+            "selfAttestedScore": 999,
+            "selfAttestedUptimeHours": 500,
+            "selfAttestedBandwidthBytes": 10737418240,
+            "unwitnessedBandwidthBytes": 52428800,
+            "crossTierEvidence": 1
+          }
+        }
+      ],
+      "t2": [
+        {
+          "nodePubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tier": "t2",
+          "keyPrefix": "rk2",
+          "operator": "op-shared",
+          "region": "eu-west",
+          "score": -53.933333,
+          "custodyReceiptScore": 1,
+          "proveHeldScore": 0.066667,
+          "proveHeldPenalty": 5,
+          "falseNonServingPenalty": 50,
+          "custodyReceipts": 1,
+          "proveHeldPasses": 1,
+          "proveHeldMisses": 1,
+          "falseNonServingClaims": 1,
+          "distinctVerifiers": 1,
+          "proveHeldDiversityMultiplier": 0.333333,
+          "ignored": {
+            "selfAttestedScore": 0,
+            "selfAttestedUptimeHours": 0,
+            "selfAttestedBandwidthBytes": 0,
+            "unwitnessedBandwidthBytes": 0,
+            "crossTierEvidence": 1
+          }
+        }
+      ],
+      "t3": [
+        {
+          "nodePubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "tier": "t3",
+          "keyPrefix": "rk3",
+          "operator": "op-shared",
+          "region": "sa-east",
+          "score": 0,
+          "tombstoneScore": 0,
+          "bandwidthCosigScore": 0,
+          "falseTombstonePenalty": 0,
+          "latencyMissPenalty": 0,
+          "tombstones": 0,
+          "bandwidthCosigs": 0,
+          "falseTombstones": 0,
+          "latencyMisses": 0,
+          "ignored": {
+            "selfAttestedScore": 0,
+            "selfAttestedUptimeHours": 0,
+            "selfAttestedBandwidthBytes": 0,
+            "unwitnessedBandwidthBytes": 0,
+            "crossTierEvidence": 1
+          }
+        },
+        {
+          "nodePubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "tier": "t3",
+          "keyPrefix": "rk3",
+          "operator": "op-witness",
+          "region": "ap-south",
+          "score": -100.99,
+          "tombstoneScore": 1,
+          "bandwidthCosigScore": 0.01,
+          "falseTombstonePenalty": 100,
+          "latencyMissPenalty": 2,
+          "tombstones": 1,
+          "bandwidthCosigs": 1,
+          "falseTombstones": 1,
+          "latencyMisses": 1,
+          "ignored": {
+            "selfAttestedScore": 0,
+            "selfAttestedUptimeHours": 0,
+            "selfAttestedBandwidthBytes": 0,
+            "unwitnessedBandwidthBytes": 0,
+            "crossTierEvidence": 0
+          }
+        }
+      ]
+    },
+    "warnings": {
+      "crossTierOperators": [
+        {
+          "operator": "op-shared",
+          "tiers": [
+            "t1",
+            "t2",
+            "t3"
+          ],
+          "nodePubkeys": [
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          ]
+        }
+      ],
+      "verifierDisagreements": [
+        {
+          "tier": "t2",
+          "nodePubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "delta": 20,
+          "reports": [
+            {
+              "verifierPubkey": "0707070707070707070707070707070707070707070707070707070707070707",
+              "score": 10
+            },
+            {
+              "verifierPubkey": "0808080808080808080808080808080808080808080808080808080808080808",
+              "score": 30
+            }
+          ]
+        }
+      ]
+    },
+    "ignored": {
+      "unknownNodeEvidence": 0,
+      "crossTierEvidence": 3
+    }
+  }
+}

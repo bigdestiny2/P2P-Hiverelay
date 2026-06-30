@@ -17,6 +17,28 @@ function readJson (...parts) {
   return JSON.parse(readText(...parts))
 }
 
+function readExternalText (label, ...parts) {
+  const file = path.join(...parts)
+  try {
+    return fs.readFileSync(file, 'utf8')
+  } catch (err) {
+    fail(`${label} cannot be read at ${path.relative(workspaceRoot, file)}: ${err.code || err.message}`)
+    return ''
+  }
+}
+
+function readExternalJson (label, ...parts) {
+  const file = path.join(...parts)
+  const text = readExternalText(label, ...parts)
+  if (!text) return {}
+  try {
+    return JSON.parse(text)
+  } catch (err) {
+    fail(`${label} is not valid JSON at ${path.relative(workspaceRoot, file)}: ${err.message}`)
+    return {}
+  }
+}
+
 function literalButtonsHaveTypeButton (html) {
   return (html.match(/<button\b[^>]*>/gi) || [])
     .every(tag => /\btype\s*=\s*["']button["']/i.test(tag))
@@ -107,6 +129,7 @@ const dockerEntrypoint = readText(hiverelayRoot, 'docker-entrypoint.sh')
 const gitattributes = readText(hiverelayRoot, '.gitattributes')
 const prepareRelease = readText(hiverelayRoot, 'scripts', 'prepare-release.mjs')
 const officialUmbrelExport = readText(hiverelayRoot, 'scripts', 'export-official-umbrel-app.mjs')
+const officialUmbrelPrCheck = readText(hiverelayRoot, 'scripts', 'check-official-umbrel-pr.mjs')
 const officialUmbrelGalleryCheck = readText(hiverelayRoot, 'scripts', 'check-umbrel-gallery.mjs')
 const umbrelRuntimeReviewEvidence = readText(hiverelayRoot, 'scripts', 'write-umbrel-runtime-review-evidence.mjs')
 const umbrelRuntimeReviewEvidenceVerify = readText(hiverelayRoot, 'scripts', 'verify-umbrel-runtime-review-evidence.mjs')
@@ -117,6 +140,8 @@ const githubReleaseSecretsApply = readText(hiverelayRoot, 'scripts', 'apply-gith
 const releaseSecretsTemplate = readText(hiverelayRoot, 'scripts', 'write-release-secrets-template.mjs')
 const ecosystemConsumersAudit = readText(hiverelayRoot, 'scripts', 'audit-ecosystem-consumers.mjs')
 const ecosystemConsumersSync = readText(hiverelayRoot, 'scripts', 'sync-ecosystem-consumers.mjs')
+const npmLatestCheck = readText(hiverelayRoot, 'scripts', 'check-npm-latest.mjs')
+const npmPackagePackCheck = readText(hiverelayRoot, 'scripts', 'check-npm-package-pack.mjs')
 const ecosystemWorkspaceCheck = readText(hiverelayRoot, 'scripts', 'check-ecosystem-workspace.mjs')
 const ecosystemConsumersCommit = readText(hiverelayRoot, 'scripts', 'commit-ecosystem-consumers.mjs')
 const publicArtifactSecretsAudit = readText(hiverelayRoot, 'scripts', 'check-public-artifact-secrets.mjs')
@@ -353,6 +378,7 @@ const prepareReleaseTest = readText(hiverelayRoot, 'test', 'unit', 'prepare-rele
 const fleetRolloutCheckTest = readText(hiverelayRoot, 'test', 'unit', 'fleet-rollout-check.test.js')
 const fleetShellSafetyTest = readText(hiverelayRoot, 'test', 'unit', 'fleet-shell-safety.test.js')
 const officialUmbrelExportTest = readText(hiverelayRoot, 'test', 'unit', 'official-umbrel-export.test.js')
+const officialUmbrelPrCheckTest = readText(hiverelayRoot, 'test', 'unit', 'official-umbrel-pr-check.test.js')
 const officialUmbrelGalleryCheckTest = readText(hiverelayRoot, 'test', 'unit', 'umbrel-gallery-check.test.js')
 const umbrelRuntimeReviewEvidenceTest = readText(hiverelayRoot, 'test', 'unit', 'umbrel-runtime-review-evidence.test.js')
 const umbrelRuntimeReviewEvidenceVerifyTest = readText(hiverelayRoot, 'test', 'unit', 'umbrel-runtime-review-verify.test.js')
@@ -361,6 +387,8 @@ const githubReleaseSetupCheckTest = readText(hiverelayRoot, 'test', 'unit', 'git
 const githubReleaseSecretsApplyTest = readText(hiverelayRoot, 'test', 'unit', 'github-release-secrets-apply.test.js')
 const releaseSecretsTemplateTest = readText(hiverelayRoot, 'test', 'unit', 'release-secret-template.test.js')
 const ecosystemConsumersAuditTest = readText(hiverelayRoot, 'test', 'unit', 'ecosystem-consumers.test.js')
+const npmLatestCheckTest = readText(hiverelayRoot, 'test', 'unit', 'npm-latest-check.test.js')
+const npmPackagePackCheckTest = readText(hiverelayRoot, 'test', 'unit', 'npm-package-pack-check.test.js')
 const publicArtifactSecretsAuditTest = readText(hiverelayRoot, 'test', 'unit', 'public-artifact-secret-scan.test.js')
 const releaseEvidenceTest = readText(hiverelayRoot, 'test', 'unit', 'release-evidence.test.js')
 const releaseEvidenceVerifyTest = readText(hiverelayRoot, 'test', 'unit', 'release-evidence-verify.test.js')
@@ -406,6 +434,54 @@ for (const pkg of [
   const [name, version] = pkg
   if (version === expectedVersion) pass(`${name} version matches monorepo (${version})`)
   else fail(`${name} version ${version} does not match monorepo ${expectedVersion}`)
+}
+
+for (const [pkgName, pkgDir, pkg] of [
+  ['p2p-hiverelay', 'packages/core', corePkg],
+  ['p2p-hiverelay-client', 'packages/client', clientPkg],
+  ['p2p-hiverelay-verifier', 'packages/verifier', verifierPkg],
+  ['p2p-hiveservices', 'packages/services', servicesPkg]
+]) {
+  const files = Array.isArray(pkg.files) ? pkg.files : []
+  const readmePath = path.join(hiverelayRoot, pkgDir, 'README.md')
+  const licensePath = path.join(hiverelayRoot, pkgDir, 'LICENSE')
+  const readme = fs.existsSync(readmePath) ? readText(readmePath) : ''
+  const license = fs.existsSync(licensePath) ? readText(licensePath) : ''
+  if (
+    files.includes('README.md') &&
+    files.includes('LICENSE') &&
+    readme.includes(pkgName) &&
+    readme.includes('npm install') &&
+    license.includes('Apache License') &&
+    license.includes('Version 2.0')
+  ) {
+    pass(`${pkgDir} npm publish metadata includes README.md and LICENSE`)
+  } else {
+    fail(`${pkgDir} npm publish metadata is missing README.md/LICENSE allowlist entries, package README identity, install guidance, or Apache license text`)
+  }
+}
+
+if (
+  monorepoPkg.scripts['release:check-npm-packages'] === 'node scripts/check-npm-package-pack.mjs' &&
+  npmPackagePackCheck.includes('npm pack') &&
+  npmPackagePackCheck.includes('--dry-run') &&
+  npmPackagePackCheck.includes('--workspace') &&
+  npmPackagePackCheck.includes('README.md') &&
+  npmPackagePackCheck.includes('LICENSE') &&
+  npmPackagePackCheck.includes('findUnsafePackPaths') &&
+  npmPackagePackCheck.includes('npm_config_cache') &&
+  npmPackagePackCheck.includes('hiverelay-npm-pack-cache') &&
+  npmPackagePackCheckTest.includes('npm package pack checker accepts clean workspace pack metadata') &&
+  npmPackagePackCheckTest.includes('npm package pack checker rejects missing README/license and unsafe paths') &&
+  npmPackagePackCheckTest.includes('npm package pack checker CLI emits JSON evidence') &&
+  releaseWorkflow.includes('npm run release:check-npm-packages') &&
+  releaseAutomationDocs.includes('npm run release:check-npm-packages') &&
+  releaseAutomationDocs.includes('before this publish step') &&
+  readme.includes('npm run release:check-npm-packages')
+) {
+  pass('npm package pack checker guards publish dry-run metadata and unsafe paths before release publish')
+} else {
+  fail('npm package pack checker is missing from scripts, tests, release workflow, docs, or publish metadata guards')
 }
 
 const dashboardFiles = [
@@ -972,7 +1048,11 @@ if (
   blindsparkDashboard.includes('if (svcDraftDirty){') &&
   blindsparkDashboard.includes('toast(\'Save selection before restart\');') &&
   blindsparkDashboard.includes('Saving service selection...') &&
-  blindsparkDashboard.includes('Unsaved changes - save selection before restarting.') &&
+  blindsparkDashboard.includes('function svcActionMessage(selected)') &&
+  blindsparkDashboard.includes("return 'Unsaved: ' + svcPlanSentence(delta) + '. Save selection before restarting.';") &&
+  blindsparkDashboard.includes("return 'Saved change pending: ' + svcPlanSentence(delta) + '. Restart Blindspark to apply.';") &&
+  blindsparkDashboard.includes('function renderSvcPlan(selected)') &&
+  blindsparkDashboard.includes('renderSvcPlan(configured);') &&
   blindsparkDashboard.includes('Date.now() - svcRestartStartedAt < 2500') &&
   blindsparkDashboard.includes('var managedActive = active.filter') &&
   blindsparkDashboard.includes('if (!expected.length) return managedActive.length === 0;') &&
@@ -984,9 +1064,11 @@ if (
   blindsparkDashboard.includes('Services are running') &&
   blindsparkDashboard.includes('Restart still pending') &&
   umbrelUiControlsTest.includes('umbrel service save disables duplicate in-flight config writes') &&
-  umbrelUiControlsTest.includes('umbrel service restart refuses unsaved service drafts')
+  umbrelUiControlsTest.includes('umbrel service restart refuses unsaved service drafts') &&
+  umbrelUiControlsTest.includes('umbrel service manager shows saved-vs-live service state') &&
+  umbrelUiControlsTest.includes('umbrel service manager shows unsaved service draft state immediately')
 ) {
-  pass('Umbrel service restart controls show pending state and poll until selected providers are running')
+  pass('Umbrel service restart controls show pending state, inline change plans, and poll until selected providers are running')
 } else {
   fail('Umbrel service restart controls can still look like a toast-only no-op')
 }
@@ -1014,6 +1096,10 @@ if (
   blindsparkDashboard.includes("if ($('walletSave').disabled) return;") &&
   wizardDashboard.includes("await api('/api/wizard/payout', { method: 'POST', body: { address } })") &&
   wizardDashboard.includes('const REQUEST_TIMEOUT_MS = 10000') &&
+  wizardDashboard.includes('const WIZARD_ERROR_MAX = 180') &&
+  wizardDashboard.includes('function wizardErrorText') &&
+  wizardDashboard.includes(".replace(/[\\x00-\\x1f\\x7f]+/g, ' ')") &&
+  wizardDashboard.includes("msg = msg.slice(0, WIZARD_ERROR_MAX - 3) + '...'") &&
   wizardDashboard.includes('async function fetchWithTimeout (path, opts = {})') &&
   wizardDashboard.includes("typeof AbortController === 'function'") &&
   wizardDashboard.includes('timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)') &&
@@ -1049,15 +1135,17 @@ if (
   dashboardWizardUiTest.includes('wizard delegated action router blocks duplicate pending setup writes') &&
   dashboardWizardUiTest.includes('wizard busy state renders spinner without assigning HTML') &&
   dashboardWizardUiTest.includes('wizard API helper bounds setup requests and clears timeout handles') &&
+  dashboardWizardUiTest.includes('wizard error text is bounded and normalized') &&
   dashboardWizardUiTest.includes('wizard load errors render untrusted messages as text') &&
   umbrelUiControlsTest.includes('umbrel dashboard API error text is bounded and normalized') &&
   umbrelUiControlsTest.includes('umbrel wallet destination saves on Enter without form navigation') &&
+  umbrelUiControlsTest.includes('umbrel dynamic payout controls stay non-submit and open the wallet dialog') &&
   umbrelUiControlsTest.includes('umbrel wallet save blocks duplicate in-flight writes') &&
   umbrelUiControlsTest.includes("walletDialog.attributes['aria-busy']")
 ) {
-  pass('Umbrel setup and wallet controls avoid submit-default refresh regressions, duplicate wizard writes, unbounded wizard requests, unbounded API error text, inline handlers, and wizard HTML assignment')
+  pass('Umbrel setup and wallet controls avoid submit-default refresh regressions, dynamic payout no-ops, duplicate wizard writes, unbounded wizard requests, unbounded API error text, inline handlers, and wizard HTML assignment')
 } else {
-  fail('Umbrel setup or wallet controls can still regress to submit-default refresh/no-op behavior, duplicate wizard writes, unbounded wizard requests, unbounded API error text, or inline wizard handlers')
+  fail('Umbrel setup or wallet controls can still regress to submit-default refresh/no-op behavior, dynamic payout no-ops, duplicate wizard writes, unbounded wizard requests, unbounded API error text, or inline wizard handlers')
 }
 
 if (
@@ -3870,32 +3958,32 @@ if (
   fail('Noble crypto dependency scope or audit notes are stale')
 }
 
-const desktopPkg = readJson(workspaceRoot, '01-browser', 'pearbrowser-desktop', 'package.json')
-const desktopLock = readJson(workspaceRoot, '01-browser', 'pearbrowser-desktop', 'package-lock.json')
-const desktopLayoutGuard = readText(workspaceRoot, '01-browser', 'pearbrowser-desktop', 'scripts', 'check-hiverelay-layout.mjs')
-const desktopCi = readText(workspaceRoot, '01-browser', 'pearbrowser-desktop', '.github', 'workflows', 'desktop-ci.yml')
-const desktopReadme = readText(workspaceRoot, '01-browser', 'pearbrowser-desktop', 'README.md')
-const desktopRelayClient = readText(workspaceRoot, '01-browser', 'pearbrowser-desktop', 'backend', 'relay-client.js')
-const desktopReleasePackagingTest = readText(workspaceRoot, '01-browser', 'pearbrowser-desktop', 'test', 'release-packaging.test.js')
-const desktopRelayClientHttpTest = readText(workspaceRoot, '01-browser', 'pearbrowser-desktop', 'test', 'relay-client-http.test.js')
-const mobilePkg = readJson(workspaceRoot, '01-browser', 'PearBrowser', 'package.json')
-const mobileLock = readJson(workspaceRoot, '01-browser', 'PearBrowser', 'package-lock.json')
-const mobileRelayClient = readText(workspaceRoot, '01-browser', 'PearBrowser', 'backend', 'relay-client.js')
-const mobileRelayClientTest = readText(workspaceRoot, '01-browser', 'PearBrowser', 'test', 'relay-client.test.js')
-const pearBrowserComIndex = readText(workspaceRoot, '03-sites', 'pearbrowser-com', 'index.html')
-const pearBrowserComManifest = readJson(workspaceRoot, '03-sites', 'pearbrowser-com', 'site-manifest.json')
+const desktopPkg = readExternalJson('pearbrowser-desktop package manifest', workspaceRoot, '01-browser', 'pearbrowser-desktop', 'package.json')
+const desktopLock = readExternalJson('pearbrowser-desktop package lock', workspaceRoot, '01-browser', 'pearbrowser-desktop', 'package-lock.json')
+const desktopLayoutGuard = readExternalText('pearbrowser-desktop HiveRelay layout guard', workspaceRoot, '01-browser', 'pearbrowser-desktop', 'scripts', 'check-hiverelay-layout.mjs')
+const desktopCi = readExternalText('pearbrowser-desktop CI workflow', workspaceRoot, '01-browser', 'pearbrowser-desktop', '.github', 'workflows', 'desktop-ci.yml')
+const desktopReadme = readExternalText('pearbrowser-desktop README', workspaceRoot, '01-browser', 'pearbrowser-desktop', 'README.md')
+const desktopRelayClient = readExternalText('pearbrowser-desktop relay client', workspaceRoot, '01-browser', 'pearbrowser-desktop', 'backend', 'relay-client.js')
+const desktopReleasePackagingTest = readExternalText('pearbrowser-desktop release packaging test', workspaceRoot, '01-browser', 'pearbrowser-desktop', 'test', 'release-packaging.test.js')
+const desktopRelayClientHttpTest = readExternalText('pearbrowser-desktop relay HTTP test', workspaceRoot, '01-browser', 'pearbrowser-desktop', 'test', 'relay-client-http.test.js')
+const mobilePkg = readExternalJson('PearBrowser mobile package manifest', workspaceRoot, '01-browser', 'PearBrowser', 'package.json')
+const mobileLock = readExternalJson('PearBrowser mobile package lock', workspaceRoot, '01-browser', 'PearBrowser', 'package-lock.json')
+const mobileRelayClient = readExternalText('PearBrowser mobile relay client', workspaceRoot, '01-browser', 'PearBrowser', 'backend', 'relay-client.js')
+const mobileRelayClientTest = readExternalText('PearBrowser mobile relay client test', workspaceRoot, '01-browser', 'PearBrowser', 'test', 'relay-client.test.js')
+const pearBrowserComIndex = readExternalText('pearbrowser.com index', workspaceRoot, '03-sites', 'pearbrowser-com', 'index.html')
+const pearBrowserComManifest = readExternalJson('pearbrowser.com site manifest', workspaceRoot, '03-sites', 'pearbrowser-com', 'site-manifest.json')
 const pearBrowserIntegrationDoc = readText(hiverelayRoot, 'docs', 'PEARBROWSER-INTEGRATION.md')
 const pearIntegrationDoc = readText(hiverelayRoot, 'docs', 'PEAR-INTEGRATION.md')
 const ecosystemUpgradeDoc = readText(hiverelayRoot, 'docs', 'ECOSYSTEM-UPGRADE-0.20.2.md')
 const desktopDeps = desktopPkg.dependencies || {}
 const expectedDesktopDeps = {
-  'p2p-hiverelay': 'file:../../00-core/hiverelay/packages/core',
-  'p2p-hiverelay-client': 'file:../../00-core/hiverelay/packages/client',
-  'p2p-hiverelay-verifier': 'file:../../00-core/hiverelay/packages/verifier'
+  'p2p-hiverelay': 'latest',
+  'p2p-hiverelay-client': 'latest',
+  'p2p-hiverelay-verifier': 'latest'
 }
 for (const [dep, expected] of Object.entries(expectedDesktopDeps)) {
   const actual = desktopDeps[dep]
-  if (actual === expected) pass(`pearbrowser-desktop pins ${dep} to the local HiveRelay anchor`)
+  if (actual === expected) pass(`pearbrowser-desktop defaults ${dep} to npm latest`)
   else fail(`pearbrowser-desktop ${dep} is ${JSON.stringify(actual)}; expected ${JSON.stringify(expected)}`)
 }
 
@@ -3926,7 +4014,8 @@ const expectedDesktopLayoutGuardTerms = [
   `['p2p-hiverelay', '${expectedVersion}', '../../00-core/hiverelay/packages/core/package.json']`,
   `['p2p-hiverelay-client', '${expectedVersion}', '../../00-core/hiverelay/packages/client/package.json']`,
   `['p2p-hiverelay-verifier', '${expectedVersion}', '../../00-core/hiverelay/packages/verifier/package.json']`,
-  `HiveRelay ${expectedVersion} packages`
+  'usesNpmLatestDefaults',
+  `verify npm latest resolves to HiveRelay ${expectedVersion}`
 ]
 const missingDesktopLayoutGuardTerms = missingTerms(desktopLayoutGuard, expectedDesktopLayoutGuardTerms)
 if (missingDesktopLayoutGuardTerms.length === 0) {
@@ -3950,13 +4039,13 @@ if (missingDesktopCiTerms.length === 0) {
 }
 
 const expectedDesktopReadmeTerms = [
-  `packages at \`${expectedVersion}\``,
-  `Those \`${expectedVersion}\` packages are not published to npm yet`,
-  `local \`${expectedVersion}\` workspace packages`
+  'desktop packages default to npm `latest` for HiveRelay',
+  `dist-tag resolving to \`${expectedVersion}\``,
+  'defaults to npm `latest` for `p2p-hiverelay`'
 ]
 const missingDesktopReadmeTerms = missingTerms(desktopReadme, expectedDesktopReadmeTerms)
 if (missingDesktopReadmeTerms.length === 0) {
-  pass(`pearbrowser-desktop README names the bundled HiveRelay ${expectedVersion} packages`)
+  pass(`pearbrowser-desktop README names npm latest HiveRelay ${expectedVersion} release gate`)
 } else {
   desktopHiveRelayDrift.push(`README.md missing ${missingDesktopReadmeTerms.map(term => JSON.stringify(term)).join(', ')}`)
 }
@@ -4073,8 +4162,11 @@ if (
   monorepoPkg.scripts['audit:ecosystem-consumers:local'] === 'node scripts/audit-ecosystem-consumers.mjs --check --dependency-mode local' &&
   monorepoPkg.scripts['ecosystem:sync'] === 'node scripts/sync-ecosystem-consumers.mjs --dependency-mode npm-latest' &&
   monorepoPkg.scripts['ecosystem:sync:latest'] === 'node scripts/sync-ecosystem-consumers.mjs --dependency-mode npm-latest' &&
-  monorepoPkg.scripts['ecosystem:sync:local'] === 'node scripts/sync-ecosystem-consumers.mjs --dependency-mode local' &&
-  ecosystemConsumersAudit.includes('EXPECTED_CURRENT_CONSUMERS') &&
+    monorepoPkg.scripts['ecosystem:sync:local'] === 'node scripts/sync-ecosystem-consumers.mjs --dependency-mode local' &&
+    monorepoPkg.scripts['ecosystem:prepare-latest'] === 'node scripts/sync-ecosystem-consumers.mjs --dependency-mode npm-latest --prepare-latest-defaults' &&
+    monorepoPkg.scripts['ecosystem:prepare-latest:release'] === 'node scripts/sync-ecosystem-consumers.mjs --dependency-mode npm-latest --consumer-scope release --prepare-latest-defaults' &&
+    monorepoPkg.scripts['release:check-npm-latest'] === 'node scripts/check-npm-latest.mjs' &&
+    ecosystemConsumersAudit.includes('EXPECTED_CURRENT_CONSUMERS') &&
   ecosystemConsumersAudit.includes('EXPECTED_STALE_CONSUMERS') &&
   ecosystemConsumersAudit.includes('CURRENT_HIVERELAY_VERSION') &&
   ecosystemConsumersAudit.includes('export const HIVERELAY_DEPS') &&
@@ -4094,6 +4186,10 @@ if (
   ecosystemConsumersAudit.includes('customer encrypted-availability app') &&
   ecosystemConsumersAudit.includes('02-apps/pear-pos/package.json') &&
   ecosystemConsumersAudit.includes('02-apps/pear-tickets/package.json') &&
+  ecosystemConsumersAudit.includes('02-apps/peerit/package.json') &&
+  ecosystemConsumersAudit.includes('local-only Peerit publish client compatibility') &&
+  ecosystemConsumersAudit.includes('sourceOnly: true') &&
+  ecosystemConsumersAudit.includes('Peerit publish path loads the split HiveRelay client package') &&
   ecosystemConsumersAudit.includes('03-sites/pearbrowser-publishers/src/p2pbuilders/package.json') &&
   ecosystemConsumersAudit.includes('publisher-site consumer') &&
   ecosystemConsumersAudit.includes('file:../../../../00-core/hiverelay/packages/client') &&
@@ -4131,15 +4227,25 @@ if (
   ecosystemConsumersSync.includes('getExpectedCurrentConsumers') &&
   ecosystemConsumersSync.includes('verifyNpmLatestDistTags') &&
   ecosystemConsumersSync.includes('npm package-lock refresh failed') &&
+  ecosystemConsumersSync.includes('--prepare-latest-defaults') &&
+  ecosystemConsumersSync.includes('prepareLatestDefaults') &&
+  ecosystemConsumersSync.includes('prepare latest defaults') &&
+  ecosystemConsumersSync.includes('without lockfile refresh') &&
   ecosystemConsumersSync.includes('--dependency-mode') &&
   ecosystemConsumersSync.includes('setDependency') &&
   ecosystemConsumersSync.includes('syncConsumerSourceMarkers') &&
   ecosystemConsumersSync.includes('replaceSourceMarker') &&
-  ecosystemConsumersSync.includes('termTemplateRegex') &&
-  ecosystemConsumersSync.includes('scanCurrentConsumerLockChecks') &&
-  ecosystemConsumersSync.includes('linked package metadata') &&
-  ecosystemConsumersSync.includes('--check') &&
-  ecosystemConsumersAuditTest.includes('ecosystem consumer audit classifies current, stale, and ignored consumers') &&
+    ecosystemConsumersSync.includes('termTemplateRegex') &&
+    ecosystemConsumersSync.includes('scanCurrentConsumerLockChecks') &&
+    ecosystemConsumersSync.includes('linked package metadata') &&
+    ecosystemConsumersSync.includes('--check') &&
+    ecosystemConsumersSync.includes('Combine --prepare-latest-defaults with --check') &&
+    npmLatestCheck.includes('verifyNpmLatestDistTags') &&
+    npmLatestCheck.includes('HiveRelay npm latest dist-tag check') &&
+    npmLatestCheck.includes('latest=unverified') &&
+    npmLatestCheck.includes('Blocked: app lockfiles and live consumer promotion must wait until npm latest points at this release.') &&
+    npmLatestCheck.includes('--json') &&
+    ecosystemConsumersAuditTest.includes('ecosystem consumer audit classifies current, stale, and ignored consumers') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit fails on unclassified Hiverelay pins') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit fails when the known stale inventory changes') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit reports source-level migration markers') &&
@@ -4157,10 +4263,17 @@ if (
   ecosystemConsumersAuditTest.includes('ecosystem sync default npm-latest path verifies the full package line') &&
   ecosystemConsumersAuditTest.includes('p2p-hiveservices npm latest dist-tag is 0.9.2; expected 0.20.2') &&
   ecosystemConsumersAuditTest.includes('ecosystem sync refuses npm-latest defaults when npm latest would downgrade') &&
+  ecosystemConsumersAuditTest.includes('ecosystem sync can prepare latest app defaults before npm latest is promoted') &&
+  ecosystemConsumersAuditTest.includes('ecosystem prepare-latest check verifies staged defaults without writing') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit accepts npm-latest manifests with current npm lock metadata') &&
   ecosystemConsumersAuditTest.includes('NPM latest dist-tag checks:') &&
-  ecosystemConsumersAuditTest.includes('ecosystem sync updates versioned app source markers') &&
-  readme.includes('ECOSYSTEM-UPGRADE-0.20.2.md') &&
+    ecosystemConsumersAuditTest.includes('ecosystem sync updates versioned app source markers') &&
+    npmLatestCheckTest.includes('npm latest check fails while registry latest would downgrade app consumers') &&
+    npmLatestCheckTest.includes('npm latest check passes once every package latest tag matches the release') &&
+    npmLatestCheckTest.includes('npm latest check emits machine-readable release evidence') &&
+    npmLatestCheckTest.includes('npm latest check distinguishes unverified registry proof from missing latest tags') &&
+    npmLatestCheckTest.includes('p2p-hiveservices') &&
+    readme.includes('ECOSYSTEM-UPGRADE-0.20.2.md') &&
   readme.includes('npm run ecosystem:sync -- --check') &&
   readme.includes('npm run ecosystem:sync:local -- --check') &&
   ecosystemUpgradeDoc.includes('p2p-hiverelay/client') &&
@@ -4169,6 +4282,8 @@ if (
   ecosystemUpgradeDoc.includes('02-apps/pearpaste') &&
   ecosystemUpgradeDoc.includes('02-apps/pear-pos') &&
   ecosystemUpgradeDoc.includes('02-apps/pear-tickets') &&
+  ecosystemUpgradeDoc.includes('02-apps/peerit') &&
+  ecosystemUpgradeDoc.includes('source-only publish') &&
   ecosystemUpgradeDoc.includes('03-sites/pearbrowser-publishers/src/p2pbuilders') &&
   ecosystemUpgradeDoc.includes('test/m12-hiverelay-client-migration.js') &&
   ecosystemUpgradeDoc.includes('Opengit') &&
@@ -4180,6 +4295,10 @@ if (
   ecosystemUpgradeDoc.includes('Security tests still prove that app plaintext is not exported to relays') &&
   ecosystemUpgradeDoc.includes('every direct app consumer to point at the current published npm') &&
   ecosystemUpgradeDoc.includes('Local workspace development uses the explicit local mode') &&
+  ecosystemUpgradeDoc.includes('npm run ecosystem:prepare-latest') &&
+  ecosystemUpgradeDoc.includes('writes app manifests') &&
+  ecosystemUpgradeDoc.includes('source markers to npm `latest` before the npm dist-tags are promoted') &&
+  ecosystemUpgradeDoc.includes('Lockfile refresh and strict audit still wait for the post-publish') &&
   ecosystemUpgradeDoc.includes('npm `latest` is still `0.9.2`') &&
   ecosystemUpgradeDoc.includes('HIVERELAY_NPM_LATEST_JSON') &&
   ecosystemUpgradeDoc.includes('"p2p-hiveservices":"0.20.2"') &&
@@ -4192,10 +4311,18 @@ if (
   ecosystemUpgradeDoc.includes('Pear POS bridge docs/comments') &&
   ecosystemUpgradeDoc.includes('cannot quietly drift back') &&
   ecosystemUpgradeDoc.includes('to old client guidance') &&
-  ecosystemUpgradeDoc.includes('versioned source markers') &&
-  ecosystemUpgradeDoc.includes('npm run ecosystem:sync') &&
-  auditRoadmap.includes('Ecosystem full package-line latest gate') &&
-  pearBrowserIntegrationDoc.includes('npm run ecosystem:sync') &&
+    ecosystemUpgradeDoc.includes('versioned source markers') &&
+    ecosystemUpgradeDoc.includes('npm run ecosystem:sync') &&
+    releaseAutomationDocs.includes('npm run release:check-npm-latest') &&
+    releaseAutomationDocs.includes('all four package `latest`') &&
+    testCommandMatrix20260627.includes('npm run release:check-npm-latest') &&
+    testCommandMatrix20260627.includes('latest=0.9.2') &&
+    testCommandMatrix20260627.includes('npm run ecosystem:prepare-latest -- --check') &&
+    testCommandMatrix20260627.includes('npm run release:check-npm-packages') &&
+    auditRoadmap.includes('Ecosystem full package-line latest gate') &&
+    auditRoadmap.includes('Ecosystem explicit npm latest release gate') &&
+    auditRoadmap.includes('Ecosystem prepared-latest check mode') &&
+    pearBrowserIntegrationDoc.includes('npm run ecosystem:sync') &&
   pearIntegrationDoc.includes('npm run ecosystem:sync')
 ) {
   pass('ecosystem consumer sync/audit commands guard PearBrowser bundle pins, known stale consumers, snapshot exclusions, and app-level migration notes including anonGPT relay contracts')
@@ -4438,6 +4565,11 @@ const architectureGraphRequiredTerms = [
   'app-proxy writes + setup links',
   'bounded lease polling + static markup',
   'Ecosystem consumer audit',
+  'npm latest defaults + lockfile drift',
+  'Ecosystem package defaults',
+  'npm `latest` dist-tags',
+  'full package-line proof',
+  'non-submit setup/wallet/service controls',
   'Privacy policy guard',
   'Dashboard WebSocket',
   'Operator controls',
@@ -4448,12 +4580,19 @@ const architectureGraphRequiredTerms = [
   'Full release defaults to both canary and stable'
 ]
 const architectureGraphMissingTerms = missingTerms(architectureGraphDoc, architectureGraphRequiredTerms)
+const architectureGraphStaleTerms = [
+  'local 0.20.2 pins + lockfile drift',
+  'Local `file:` workspace links, lockfile metadata, and versioned source markers',
+  'PearBrowser desktop uses local `p2p-hiverelay*` packages',
+  'anonGPT imports the current local core services path'
+].filter(term => architectureGraphDoc.includes(term))
 const architectureGraphSvgRequiredTerms = [
   '<title id="title">HiveRelay Core3 architecture graph</title>',
   'PearBrowser',
   'PearPaste',
   'anonGPT',
   'Consumer audit keeps PearBrowser desktop',
+  'npm latest after registry proof',
   'Core3 Relay Kernel',
   'HyperDHT / Hyperswarm',
   'HTTP gateway',
@@ -4480,6 +4619,10 @@ const architectureGraphSvgRequiredTerms = [
   'anonGPT / AI services'
 ]
 const architectureGraphSvgMissingTerms = missingTerms(architectureGraphSvg, architectureGraphSvgRequiredTerms)
+const architectureGraphSvgStaleTerms = [
+  'current local release line',
+  'local p2p-hiverelay* packages'
+].filter(term => architectureGraphSvg.includes(term))
 const architectureGraphMermaidBlocks = (architectureGraphDoc.match(/^```mermaid$/gm) || []).length
 if (
   rootReadme.includes('[docs/HIVERELAY-ARCHITECTURE-GRAPH.md](docs/HIVERELAY-ARCHITECTURE-GRAPH.md)') &&
@@ -4487,6 +4630,8 @@ if (
   architectureGraphDoc.includes('![HiveRelay Core3 architecture static SVG](assets/hiverelay-core3-architecture.svg)') &&
   architectureGraphMissingTerms.length === 0 &&
   architectureGraphSvgMissingTerms.length === 0 &&
+  architectureGraphStaleTerms.length === 0 &&
+  architectureGraphSvgStaleTerms.length === 0 &&
   architectureGraphMermaidBlocks >= 3
 ) {
   pass('architecture graph doc and SVG are linked from README and cover relay, protocol, API, security, use-case, and release/fleet surfaces')
@@ -4494,6 +4639,8 @@ if (
   const missing = [
     ...architectureGraphMissingTerms.map(term => `term ${JSON.stringify(term)}`),
     ...architectureGraphSvgMissingTerms.map(term => `SVG term ${JSON.stringify(term)}`),
+    ...architectureGraphStaleTerms.map(term => `stale term ${JSON.stringify(term)}`),
+    ...architectureGraphSvgStaleTerms.map(term => `stale SVG term ${JSON.stringify(term)}`),
     architectureGraphMermaidBlocks >= 3 ? null : `at least 3 mermaid blocks (found ${architectureGraphMermaidBlocks})`,
     rootReadme.includes('[docs/HIVERELAY-ARCHITECTURE-GRAPH.md](docs/HIVERELAY-ARCHITECTURE-GRAPH.md)') ? null : 'README graph doc link',
     rootReadme.includes('[docs/assets/hiverelay-core3-architecture.svg](docs/assets/hiverelay-core3-architecture.svg)') ? null : 'README graph SVG link',
@@ -4507,16 +4654,23 @@ const currentTestMatrixRequiredTerms = [
   '`npm test`',
   '`npm run lint`',
   '`npm run audit:workspace`',
+  '`npm run ecosystem:prepare-latest -- --check`',
+  '`npm run ecosystem:check-workspace -- --required --workspace-root ../..`',
   '`npm run ecosystem:sync -- --check`',
   '`npm run ecosystem:sync:local -- --check`',
   '`npm run audit:ecosystem-consumers`',
   '`npm run audit:ecosystem-consumers:local`',
+  '`npm run release:check-npm-packages`',
+  'README.md` and `LICENSE`',
+  'unsafe=none',
+  'p2p-hiveservices` 30 entries',
   '`npm run audit:public-artifacts`',
   '`node --test test/unit/ecosystem-consumers.test.js`',
   '`git diff --check`',
-  '17/17',
-  '87/87',
+  '29/29',
+  '157/157',
   'npm-latest app defaults',
+  'ecosystem:prepare-latest -- --check',
   'PearPaste recovery/spec doc regressions',
   'public-artifact-secret-scan.test.js',
   'release-secret-template.test.js',
@@ -4662,14 +4816,13 @@ const currentShipHandoffRequiredTerms = [
   'Inspected commit CI finished green',
   'Post-merge main Test run: `28296869625`',
   'Post-merge Docker snapshot publish: `28296869614`',
-  'Release distribution preflight run: `28297002418` (issue #120)',
-  'Run URL: https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/28297002418',
-  'Latest checked preflight: state `completed/failure`, head `main@5e56e95`, created `2026-06-27T17:48:24Z`',
+  'Release distribution preflight run: `28293455583` (issue #120)',
+  'Run URL: https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/28293455583',
+  'Latest checked preflight: state `completed/failure`, head `main@94580c6`, created `2026-06-27T15:27:01Z`',
   'Earlier passing preflight `28238930607` at `1ffffe6` is superseded by this newer failure',
   'UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters',
   'UMBREL_OFFICIAL_PR_TOKEN must be a GitHub token without whitespace or control characters',
   'UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps',
-  'NPM_TOKEN',
   'STARTOS_REGISTRY_URL must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames',
   'Release default probes were regenerated from',
   'Full releases with no explicit channel resolve to `both`',
@@ -4679,9 +4832,8 @@ const currentShipHandoffRequiredTerms = [
   'before any image is published',
   'lockfile metadata plus versioned source markers',
   'npm run release:check-distribution-env',
+  '--issue-120-repair',
   '--env-file /private/tmp/hiverelay-release-secrets.env',
-  '--channel both',
-  '--prerelease false',
   'npm run release:apply-github-secrets',
   'Docker runtime hardening',
   'docs/assets/hiverelay-core3-architecture.svg'
@@ -4697,14 +4849,15 @@ const shipHandoffUpdaterOk =
   shipHandoffUpdate.includes('node --test test/unit/ecosystem-consumers.test.js') &&
   shipHandoffUpdate.includes('direct-consumer default-pinning') &&
   shipHandoffUpdate.includes('versioned source markers') &&
-  shipHandoffUpdate.includes('NPM_TOKEN') &&
+  shipHandoffUpdate.includes('--issue-120-repair') &&
   shipHandoffUpdate.includes('release:check-distribution-env') &&
   shipHandoffUpdate.includes('parseReleaseBlockers') &&
   shipHandoffUpdate.includes('--blocker-log') &&
   shipHandoffIssue120Log.includes('Release distribution preflight failed:') &&
   shipHandoffIssue120Log.includes('UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters') &&
   shipHandoffIssue120Log.includes('UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug') &&
-  shipHandoffIssue120Log.includes('NPM_TOKEN') &&
+  shipHandoffIssue120Log.includes('--issue-120-repair') &&
+  !shipHandoffIssue120Log.includes('NPM_TOKEN') &&
   shipHandoffIssue120Log.includes('STARTOS_REGISTRY_URL must be a public https URL') &&
   !shipHandoffIssue120Log.includes('-----BEGIN') &&
   !shipHandoffIssue120Log.includes('ghp_')
@@ -4771,6 +4924,8 @@ if (
   fs.existsSync(path.join(hiverelayRoot, 'scripts', 'write-umbrel-runtime-review-evidence.mjs')) &&
   fs.existsSync(path.join(hiverelayRoot, 'scripts', 'verify-umbrel-runtime-review-evidence.mjs')) &&
   umbrelRuntimeReviewEvidence.includes('umbrel-runtime-review') &&
+  umbrelRuntimeReviewEvidence.includes('--release v0.20.2') &&
+  !umbrelRuntimeReviewEvidence.includes('--release v0.16.3') &&
   umbrelRuntimeReviewEvidence.includes('installedThroughUmbrel') &&
   umbrelRuntimeReviewEvidence.includes('dashboardProxyLoads') &&
   umbrelRuntimeReviewEvidence.includes('liveFeedInBandAuth') &&
@@ -4778,6 +4933,7 @@ if (
   umbrelRuntimeReviewEvidence.includes('wizardCompletes') &&
   umbrelRuntimeReviewEvidence.includes('setupActionLockObserved') &&
   umbrelRuntimeReviewEvidence.includes('addWalletPersists') &&
+  umbrelRuntimeReviewEvidence.includes('dynamicPayoutControlsObserved') &&
   umbrelRuntimeReviewEvidence.includes('walletBusyStateObserved') &&
   umbrelRuntimeReviewEvidence.includes('managementActionsPersist') &&
   umbrelRuntimeReviewEvidence.includes('serviceActionStateObserved') &&
@@ -4808,6 +4964,7 @@ if (
   umbrelRuntimeReviewEvidenceVerify.includes('publicKeyAfterSha256') &&
   umbrelRuntimeReviewEvidenceVerify.includes('verifyChecks') &&
   umbrelRuntimeReviewEvidenceVerify.includes('setupActionLockObserved') &&
+  umbrelRuntimeReviewEvidenceVerify.includes('dynamicPayoutControlsObserved') &&
   umbrelRuntimeReviewEvidenceVerify.includes('walletBusyStateObserved') &&
   umbrelRuntimeReviewEvidenceVerify.includes('serviceActionStateObserved') &&
   umbrelRuntimeReviewEvidenceVerify.includes('serviceRestartPendingObserved') &&
@@ -4839,6 +4996,7 @@ if (
   umbrelRuntimeReviewEvidenceTest.includes('requires upstream PR binding') &&
   umbrelRuntimeReviewEvidenceVerifyTest.includes('accepts writer-produced evidence') &&
   umbrelRuntimeReviewEvidenceVerifyTest.includes('rejects missing, duplicate, and failed checks') &&
+  umbrelRuntimeReviewEvidenceVerifyTest.includes('dynamicPayoutControlsObserved') &&
   umbrelRuntimeReviewEvidenceVerifyTest.includes('walletBusyStateObserved') &&
   umbrelRuntimeReviewEvidenceVerifyTest.includes('rejects release and PR drift') &&
   umbrelRuntimeReviewEvidenceVerifyTest.includes('rejects future evidence timestamps') &&
@@ -4850,14 +5008,20 @@ if (
   umbrelRuntimeReviewEvidenceVerifyTest.includes('requires upstream PR binding') &&
   umbrelSubmissionChecklist.includes('umbrel-runtime-review-evidence.json') &&
   umbrelSubmissionChecklist.includes('umbrel:verify-runtime-review') &&
+  umbrelSubmissionChecklist.includes('--release v0.20.2') &&
+  !umbrelSubmissionChecklist.includes('--release v0.20.0') &&
   umbrelSubmissionChecklist.includes('setupActionLockObserved') &&
+  umbrelSubmissionChecklist.includes('dynamicPayoutControlsObserved') &&
   umbrelSubmissionChecklist.includes('walletBusyStateObserved') &&
   umbrelSubmissionChecklist.includes('serviceActionStateObserved') &&
   umbrelSubmissionChecklist.includes('serviceRestartPendingObserved') &&
   umbrelSubmissionChecklist.includes('aiModelAddStateObserved') &&
   releaseAutomationDocs.includes('umbrel-runtime-review-evidence.json') &&
+  releaseAutomationDocs.includes('--release v0.20.2') &&
+  !releaseAutomationDocs.includes('--release v0.16.3') &&
   releaseAutomationDocs.includes('must be bound') &&
   releaseAutomationDocs.includes('setupActionLockObserved') &&
+  releaseAutomationDocs.includes('dynamicPayoutControlsObserved') &&
   releaseAutomationDocs.includes('walletBusyStateObserved') &&
   releaseAutomationDocs.includes('serviceActionStateObserved') &&
   releaseAutomationDocs.includes('serviceRestartPendingObserved') &&
@@ -5133,7 +5297,7 @@ if (
   releaseDistributionEnvCheck.includes('function isOfficialUmbrelForkSlug') &&
   releaseDistributionEnvCheck.includes('function isGitHubOwnerName') &&
   releaseDistributionEnvCheck.includes("owner.toLowerCase() !== 'getumbrel'") &&
-  releaseDistributionEnvCheck.includes("repo === 'umbrel-apps'") &&
+  releaseDistributionEnvCheck.includes("repo.toLowerCase() === 'umbrel-apps'") &&
   releaseDistributionEnvCheckTest.includes('rejects renamed or option-like official Umbrel forks before checkout') &&
   releaseDistributionEnvCheckTest.includes('getumbrel/umbrel-apps') &&
   releaseAutomationDocs.includes('not the upstream') &&
@@ -5284,6 +5448,7 @@ if (
   releaseWorkflow.includes('npm publish "$pkg" --access public --tag latest') &&
   releaseWorkflow.includes('npm dist-tag add "$name@$version" latest') &&
   releaseWorkflow.includes('npm view "$name" dist-tags.latest') &&
+  releaseWorkflow.includes('npm run release:check-npm-latest -- --expected-version "$expected"') &&
   releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=published') &&
   releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=current') &&
   monorepoPkg.scripts['audit:ecosystem-consumers:release'] === 'node scripts/audit-ecosystem-consumers.mjs --check --dependency-mode npm-latest --consumer-scope release' &&
@@ -5304,6 +5469,8 @@ if (
   releaseWorkflow.indexOf('Commit ecosystem app consumer defaults') < releaseWorkflow.indexOf('Smoke Umbrel package') &&
   releaseWorkflow.indexOf('Publish npm packages') > releaseWorkflow.indexOf('Smoke pushed release image') &&
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Return to main for metadata sync') &&
+  releaseWorkflow.indexOf('npm run release:check-npm-latest -- --expected-version "$expected"') > releaseWorkflow.indexOf('Publish npm packages') &&
+  releaseWorkflow.indexOf('npm run release:check-npm-latest -- --expected-version "$expected"') < releaseWorkflow.indexOf('Return to main for metadata sync') &&
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Sync release metadata') &&
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Smoke Umbrel package') &&
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Build and verify StartOS package') &&
@@ -5311,8 +5478,10 @@ if (
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Commit HiveRelay release surfaces') &&
   releaseAutomationDocs.includes('Publishes `p2p-hiverelay`, `p2p-hiverelay-client`') &&
   releaseAutomationDocs.includes('verifies every `latest`') &&
+  releaseAutomationDocs.includes('through\n   `npm run release:check-npm-latest`') &&
   releaseAutomationDocs.includes('app consumers safely move') &&
-  releaseAutomationDocs.includes('from local workspace links') &&
+  releaseAutomationDocs.includes('local workspace') &&
+  releaseAutomationDocs.includes('published release line') &&
   releaseAutomationDocs.includes('before Docker or npm publication') &&
   releaseAutomationDocs.includes('ECOSYSTEM_CONSUMER_TOKEN') &&
   releaseAutomationDocs.includes('ecosystem:commit-consumers') &&
@@ -5344,7 +5513,8 @@ if (
   ecosystemConsumersCommit.includes('HEAD:') &&
   ecosystemConsumersAuditTest.includes('ecosystem workspace check accepts all release-critical app consumers') &&
   ecosystemConsumersAuditTest.includes('ecosystem workspace check fails when full sibling workspace is absent') &&
-  ecosystemConsumersAuditTest.includes('ecosystem consumer release scope includes only remotely managed app repos') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer release scope includes only package-default release repos') &&
+  ecosystemConsumersAuditTest.includes('ecosystem consumer audit guards Peerit source-only publish client compatibility') &&
   ecosystemConsumersAuditTest.includes('scope release') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer commit helper commits changed release repos') &&
   prepareReleaseTest.includes('prepare-release defaults sibling ecosystem consumer checks to npm latest') &&
@@ -5353,7 +5523,8 @@ if (
   auditRoadmap.includes('Stable release app-consumer fail-closed guard') &&
   auditRoadmap.includes('Stable release ecosystem workspace preflight') &&
   auditRoadmap.includes('Release-managed app consumer promotion') &&
-  auditRoadmap.includes('Ecosystem release-scope latest audit')
+  auditRoadmap.includes('Ecosystem release-scope latest audit') &&
+  auditRoadmap.includes('Release workflow npm-latest checker reuse')
 ) {
   pass('release workflow preflights app workspace, then publishes npm packages and verifies latest dist-tags before downstream app consumers update')
 } else {
@@ -5754,12 +5925,22 @@ if (
   releaseImageSmoke.includes('queryTokenRejected') &&
   releaseImageSmoke.includes('assertDashboardUiHardening') &&
   releaseImageSmoke.includes('assertSetupWizardUiHardening') &&
+  releaseImageSmoke.includes('setup wizard bounded API error max') &&
+  releaseImageSmoke.includes('setup wizard API error control-char normalization') &&
+  releaseImageSmoke.includes('setup wizard API error length cap') &&
   releaseImageSmoke.includes('walletBusyState') &&
   releaseImageSmoke.includes('dashboard bounded API error max') &&
   releaseImageSmoke.includes('dashboard API error control-char normalization') &&
   releaseImageSmoke.includes('dashboard API error length cap') &&
   releaseImageSmoke.includes('dashboard wallet duplicate-write guard') &&
+  releaseImageSmoke.includes('dashboard payout copy non-submit button') &&
+  releaseImageSmoke.includes('dashboard payout edit non-submit button') &&
+  releaseImageSmoke.includes('dashboard payout controls use DOM append') &&
+  releaseImageSmoke.includes('dynamicPayoutControls') &&
   releaseImageSmoke.includes('serviceActionState') &&
+  releaseImageSmoke.includes('serviceInlinePlanState') &&
+  releaseImageSmoke.includes('dashboard service inline change plan') &&
+  releaseImageSmoke.includes('dashboard service saved change guidance') &&
   releaseImageSmoke.includes('aiModelAddState') &&
   releaseImageSmoke.includes('appProxyWrites') &&
   releaseImageSmoke.includes('leasePollingBounded') &&
@@ -5784,6 +5965,7 @@ if (
   releaseSmokeEvidenceWriterTest.includes('redact failed docker logs and command output') &&
   releaseSmokeEvidenceWriterTest.includes('verifies packaged dashboard UI-hardening contracts') &&
   releaseSmokeEvidenceWriterTest.includes('verifies packaged setup wizard UI-hardening contracts') &&
+  releaseSmokeEvidenceWriterTest.includes('records dynamic payout controls proof') &&
   releaseEvidenceVerify.includes('release generatedAt') &&
   releaseEvidenceVerify.includes('`$' + '{kind} generatedAt`') &&
   releaseEvidenceVerify.includes('generatedAt must not be after release generatedAt') &&
@@ -5791,7 +5973,9 @@ if (
   releaseEvidenceVerify.includes('`$' + '{kind} imageTag`') &&
   releaseEvidenceVerify.includes('`$' + '{kind} imageDigest`') &&
   releaseEvidenceVerify.includes('walletBusyState') &&
+  releaseEvidenceVerify.includes('dynamicPayoutControls') &&
   releaseEvidenceVerify.includes('serviceActionState') &&
+  releaseEvidenceVerify.includes('serviceInlinePlanState') &&
   releaseEvidenceVerify.includes('aiModelAddState') &&
   releaseEvidenceVerify.includes('appProxyWrites') &&
   releaseEvidenceVerify.includes('leasePollingBounded') &&
@@ -5806,6 +5990,7 @@ if (
   releaseHandoffEvidenceVerify.includes('`$' + '{kind} imageTag`') &&
   releaseHandoffEvidenceVerify.includes('`$' + '{kind} imageDigest`') &&
   releaseHandoffEvidenceVerify.includes('walletBusyState') &&
+  releaseHandoffEvidenceVerify.includes('dynamicPayoutControls') &&
   releaseHandoffEvidenceVerify.includes('serviceActionState') &&
   releaseHandoffEvidenceVerify.includes('aiModelAddState') &&
   releaseHandoffEvidenceVerify.includes('appProxyWrites') &&
@@ -6527,12 +6712,22 @@ if (
   umbrelSmokePackage.includes('queryTokenRejected') &&
   umbrelSmokePackage.includes('assertDashboardUiHardening') &&
   umbrelSmokePackage.includes('assertSetupWizardUiHardening') &&
+  umbrelSmokePackage.includes('setup wizard bounded API error max') &&
+  umbrelSmokePackage.includes('setup wizard API error control-char normalization') &&
+  umbrelSmokePackage.includes('setup wizard API error length cap') &&
   umbrelSmokePackage.includes('dashboardUiHardening') &&
   umbrelSmokePackage.includes('setupUiHardening') &&
   umbrelSmokePackage.includes('dashboard bounded API error max') &&
   umbrelSmokePackage.includes('dashboard API error control-char normalization') &&
   umbrelSmokePackage.includes('dashboard API error length cap') &&
   umbrelSmokePackage.includes('dashboard wallet duplicate-write guard') &&
+  umbrelSmokePackage.includes('dashboard payout copy non-submit button') &&
+  umbrelSmokePackage.includes('dashboard payout edit non-submit button') &&
+  umbrelSmokePackage.includes('dashboard payout controls use DOM append') &&
+  umbrelSmokePackage.includes('dynamicPayoutControls') &&
+  umbrelSmokePackage.includes('serviceInlinePlanState') &&
+  umbrelSmokePackage.includes('dashboard service inline change plan') &&
+  umbrelSmokePackage.includes('dashboard service saved change guidance') &&
   umbrelSmokePackage.includes('appProxyWrites') &&
   umbrelSmokePackage.includes('leasePollingBounded') &&
   umbrelSmokePackage.includes('dashboardStaticMarkupSafe') &&
@@ -6559,6 +6754,8 @@ if (
   releaseEvidenceVerify.includes('`$' + '{kind} imageTag`') &&
   releaseEvidenceVerify.includes('`$' + '{kind} imageDigest`') &&
   releaseEvidenceVerify.includes('dashboardUiHardening') &&
+  releaseEvidenceVerify.includes('dynamicPayoutControls') &&
+  releaseEvidenceVerify.includes('serviceInlinePlanState') &&
   releaseEvidenceVerify.includes('setupUiHardening') &&
   releaseEvidenceVerify.includes('dashboardStaticMarkupSafe') &&
   releaseEvidenceVerify.includes('setupStaticMarkupSafe') &&
@@ -6569,16 +6766,23 @@ if (
   releaseHandoffEvidenceVerify.includes('`$' + '{kind} imageTag`') &&
   releaseHandoffEvidenceVerify.includes('`$' + '{kind} imageDigest`') &&
   releaseHandoffEvidenceVerify.includes('dashboardUiHardening') &&
+  releaseHandoffEvidenceVerify.includes('dynamicPayoutControls') &&
+  releaseHandoffEvidenceVerify.includes('serviceInlinePlanState') &&
   releaseHandoffEvidenceVerify.includes('setupUiHardening') &&
   releaseHandoffEvidenceVerify.includes('dashboardStaticMarkupSafe') &&
   releaseHandoffEvidenceVerify.includes('setupStaticMarkupSafe') &&
   releaseHandoffEvidenceVerifyTest.includes('rejects smoke image provenance drift') &&
   releaseEvidenceVerifyTest.includes('rejects stale smoke evidence timestamps') &&
+  releaseEvidenceVerifyTest.includes('release-image-smoke dashboard dynamicPayoutControls') &&
   releaseEvidenceVerifyTest.includes('umbrel-package-smoke firstBoot dashboardUiHardening') &&
+  releaseEvidenceVerifyTest.includes('umbrel-package-smoke firstBoot dynamicPayoutControls') &&
+  releaseEvidenceVerifyTest.includes('umbrel-package-smoke firstBoot serviceInlinePlanState') &&
   releaseEvidenceVerifyTest.includes('umbrel-package-smoke firstBoot appProxyWrites') &&
   releaseEvidenceVerifyTest.includes('umbrel-package-smoke secondBoot setupUiHardening') &&
   releaseEvidenceVerifyTest.includes('umbrel-package-smoke secondBoot setupStaticMarkupSafe') &&
   releaseHandoffEvidenceVerifyTest.includes('umbrel-package-smoke firstBoot dashboardUiHardening') &&
+  releaseHandoffEvidenceVerifyTest.includes('umbrel-package-smoke firstBoot dynamicPayoutControls') &&
+  releaseHandoffEvidenceVerifyTest.includes('umbrel-package-smoke firstBoot serviceInlinePlanState') &&
   releaseHandoffEvidenceVerifyTest.includes('umbrel-package-smoke firstBoot appProxyWrites') &&
   releaseHandoffEvidenceVerifyTest.includes('umbrel-package-smoke secondBoot setupUiHardening') &&
   releaseHandoffEvidenceVerifyTest.includes('umbrel-package-smoke secondBoot setupStaticMarkupSafe') &&
@@ -6956,11 +7160,22 @@ if (
   releaseHandoffEvidenceVerify.includes('assertNoRawPublicKeyFields') &&
   releaseHandoffEvidenceVerify.includes('UMBREL_RUNTIME_REVIEW_CHECKS') &&
   releaseHandoffEvidenceVerify.includes('setupActionLockObserved') &&
+  releaseHandoffEvidenceVerify.includes('dynamicPayoutControlsObserved') &&
   releaseHandoffEvidenceVerify.includes('walletBusyStateObserved') &&
   releaseHandoffEvidenceVerify.includes('serviceActionStateObserved') &&
   releaseHandoffEvidenceVerify.includes('serviceRestartPendingObserved') &&
   releaseHandoffEvidenceVerify.includes('aiModelAddStateObserved') &&
   officialUmbrelPrEvidence.includes('number: prNumberFromUrl(prUrl)') &&
+  monorepoPkg.scripts['release:check-official-umbrel-pr'] === 'node scripts/check-official-umbrel-pr.mjs' &&
+  officialUmbrelPrCheck.includes('PENDING_SUBMISSION_URL') &&
+  officialUmbrelPrCheck.includes('reviewer handoff') &&
+  officialUmbrelPrCheck.includes('releaseNotes must stay empty while submission is PENDING') &&
+  officialUmbrelPrCheck.includes('manifest must not be a symlink') &&
+  officialUmbrelPrCheckTest.includes('fails the current PENDING source manifest for handoff') &&
+  officialUmbrelPrCheckTest.includes('allows placeholder only for pre-PR export') &&
+  officialUmbrelPrCheckTest.includes('passes a real upstream PR URL') &&
+  officialUmbrelPrCheckTest.includes('rejects invalid PR URLs and non-empty pending notes') &&
+  officialUmbrelPrCheckTest.includes('rejects symlinked manifests') &&
   officialUmbrelPrEvidence.includes("EXPECTED_RELEASE_REPOSITORY = 'bigdestiny2/P2P-Hiverelay'") &&
   officialUmbrelPrEvidence.includes('body.workflow.repository, EXPECTED_RELEASE_REPOSITORY') &&
   officialUmbrelPrEvidence.includes('HIVERELAY_UMBREL_OFFICIAL_PR_HEAD') &&
@@ -7041,6 +7256,7 @@ if (
   releaseHandoffEvidenceVerifyTest.includes('Umbrel runtime review generatedAt must not be before official Umbrel PR handoff generatedAt') &&
   releaseHandoffEvidenceVerifyTest.includes('Umbrel runtime review generatedAt must not be in the future') &&
   releaseHandoffEvidenceVerifyTest.includes('Umbrel runtime review public key hash after reinstall') &&
+  releaseHandoffEvidenceVerifyTest.includes('Missing Umbrel runtime review checks: dynamicPayoutControlsObserved') &&
   releaseHandoffEvidenceVerifyTest.includes('Missing Umbrel runtime review checks: aiModelAddStateObserved') &&
   releaseAutomationDocs.includes('umbrel-runtime-review-evidence.json') &&
   releaseAutomationDocs.includes('release:verify-handoff-evidence') &&
@@ -7056,6 +7272,7 @@ if (
   releaseWorkflow.lastIndexOf('--check') > releaseWorkflow.indexOf('--submission-url "$pr_url"') &&
   releaseWorkflow.lastIndexOf('--check') < releaseWorkflow.lastIndexOf('node scripts/write-github-env.mjs HIVERELAY_UMBREL_OFFICIAL_PR_STATUS draft-pr-ready') &&
   releaseAutomationDocs.includes('workflow refreshes the draft') &&
+  releaseAutomationDocs.includes('npm run release:check-official-umbrel-pr') &&
   releaseAutomationDocs.includes('PR body with deterministic links') &&
   releaseAutomationDocs.includes('validates those raw metadata values without trimming') &&
   releaseAutomationDocs.includes('whitespace before writing public evidence') &&
@@ -7064,7 +7281,9 @@ if (
   releaseAutomationDocs.includes('umbrel-package-smoke-evidence.json') &&
   releaseAutomationDocs.includes('fleet-rollout-evidence.json') &&
   releaseAutomationDocs.includes('startos-registry-evidence.json') &&
-  auditRoadmap.includes('Official Umbrel raw metadata proof')
+  auditRoadmap.includes('Official Umbrel raw metadata proof') &&
+  auditRoadmap.includes('Official Umbrel PR handoff gate') &&
+  testCommandMatrix20260627.includes('npm run release:check-official-umbrel-pr')
 ) {
   pass('release workflow opens, evidence-links, and verifies a draft official Umbrel App Store PR for stable releases')
 } else {

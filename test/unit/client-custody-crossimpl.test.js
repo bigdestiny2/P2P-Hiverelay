@@ -23,7 +23,8 @@ import {
   createCustodyIntent as clientIntent,
   createCustodyCommit as clientCommit,
   createSourceRetired as clientRetired,
-  hashHex as clientHashHex
+  hashHex as clientHashHex,
+  summarizeCustodyStatus as clientSummary
 } from 'p2p-hiverelay-client/custody.js'
 import {
   createCustodyIntent as coreIntent,
@@ -31,7 +32,8 @@ import {
   computeReceiptRoot,
   verifyCustodyEntry,
   validateCustodyTransition,
-  hashHex
+  hashHex,
+  summarizeCustodyStatus as coreSummary
 } from 'p2p-hiverelay/core/custody-signing.js'
 import { shareCommitmentAt } from 'p2p-hiverelay/core/pvss.js'
 
@@ -56,6 +58,93 @@ function assignmentsFor (relays) {
 
 test('cross-impl: client + core hashHex agree', (t) => {
   t.is(clientHashHex('hiverelay-cross-impl'), hashHex('hiverelay-cross-impl'), 'identical BLAKE2b digest')
+})
+
+test('cross-impl: expiry witness quorum summaries agree and require publisher-selected policy', (t) => {
+  const now = Date.now()
+  const publisher = keyPair()
+  const relay = keyPair()
+  const witnessA = keyPair()
+  const witnessB = keyPair()
+  const witnessC = keyPair()
+  const outsider = keyPair()
+  const relayPubkey = b4a.toString(relay.publicKey, 'hex')
+  const publisherPubkey = b4a.toString(publisher.publicKey, 'hex')
+  const intent = {
+    intentId: hashHex('witness-policy-intent'),
+    custodyMode: 'blind',
+    blindContentId: hashHex('witness-policy-blind'),
+    requiredReplicas: 1,
+    retainUntil: now
+  }
+  const proof = {
+    intentId: intent.intentId,
+    blindContentId: intent.blindContentId,
+    relayPubkey,
+    retainUntil: intent.retainUntil,
+    timestamp: now + 1,
+    notServing: true,
+    catalogPresent: false,
+    activeSwarmServing: false
+  }
+  const witnessEntry = (kp, overrides = {}) => ({
+    type: 'custody-expiry-witness',
+    intentId: intent.intentId,
+    blindContentId: intent.blindContentId,
+    relayPubkey,
+    witnessPubkey: b4a.toString(kp.publicKey, 'hex'),
+    timestamp: now + 2,
+    nonServingProofHash: hashHex(proof),
+    catalogPresent: false,
+    gatewayServing: false,
+    activeSwarmObserved: false,
+    ...overrides
+  })
+  const policy = {
+    kind: 'hivemesh-witness-quorum-policy',
+    version: 1,
+    intentId: intent.intentId,
+    subjectRelayPubkey: relayPubkey,
+    publisherPubkey,
+    selectedBy: 'publisher',
+    witnessCount: 3,
+    requiredWitnesses: 2,
+    minOperators: 2,
+    minRegions: 2,
+    witnesses: [
+      { witnessPubkey: b4a.toString(witnessA.publicKey, 'hex'), operator: 'op-a', region: 'us-east' },
+      { witnessPubkey: b4a.toString(witnessB.publicKey, 'hex'), operator: 'op-b', region: 'eu-west' },
+      { witnessPubkey: b4a.toString(witnessC.publicKey, 'hex'), operator: 'op-c', region: 'ap-south' }
+    ]
+  }
+  const entries = [
+    witnessEntry(witnessA),
+    witnessEntry(witnessB),
+    witnessEntry(witnessB),
+    witnessEntry(outsider),
+    witnessEntry(witnessC, { gatewayServing: true })
+  ]
+
+  const client = clientSummary(intent, [], null, null, [], [proof], entries, policy)
+  const core = coreSummary(intent, [], null, null, [], [proof], entries, policy)
+  t.alike(client, core, 'client and core summary agree')
+  t.is(client.expiryWitnessCount, 5)
+  t.is(client.validExpiryWitnessCount, 4, 'active-serving witness is excluded before quorum evaluation')
+  t.is(client.expiryWitnessQuorum.valid, true)
+  t.is(client.expiryWitnessQuorum.count, 2)
+  t.is(client.expiryWitnessQuorum.required, 2)
+  t.alike(client.expiryWitnessQuorum.accepted, [
+    b4a.toString(witnessA.publicKey, 'hex'),
+    b4a.toString(witnessB.publicKey, 'hex')
+  ])
+  t.ok(client.expiryWitnessQuorum.rejected.find(row => row.reason === 'duplicate witness'))
+  t.ok(client.expiryWitnessQuorum.rejected.find(row => row.reason === 'witness not publisher-selected'))
+
+  const invalidPolicy = { ...policy, selectedBy: 'relay' }
+  const invalid = coreSummary(intent, [], null, null, [], [proof], entries, invalidPolicy)
+  t.absent(invalid.expiryWitnessQuorum.valid)
+  t.is(invalid.expiryWitnessQuorum.reason, 'invalid-policy')
+  t.ok(invalid.expiryWitnessQuorum.errors.includes('witness set must be publisher-selected'))
 })
 
 test('cross-impl: a client-signed v1 intent is byte-identical to core and verifies in core', (t) => {
@@ -199,6 +288,72 @@ test('cross-impl: core rejects a tampered client-signed intent', (t) => {
 
   t.ok(verifyCustodyEntry(intent, { now }).valid, 'pristine client intent verifies')
   t.is(verifyCustodyEntry({ ...intent, requiredReplicas: 99 }, { now }).valid, false, 'mutated field breaks the signature')
+})
+
+test('cross-impl: custody allowlist rejects top-level and nested smuggling fields', (t) => {
+  const now = Date.now()
+  const publisher = keyPair()
+  const relays = Array.from({ length: 3 }, () => keyPair())
+  const fields = {
+    version: 2,
+    blindContentId: hashHex('allowlist-blind'),
+    ciphertextRoot: hashHex('allowlist-cipher'),
+    contentVersion: 1,
+    requiredReplicas: 3,
+    deadline: now + 60_000,
+    retainUntil: now + 120_000,
+    shareScheme: 'pvss-secp256k1-v1',
+    shareThreshold: 2,
+    commitmentRoot: hashHex('allowlist-commitment'),
+    shareBundleKey: hashHex('allowlist-bundle'),
+    shareAssignments: assignmentsFor(relays)
+  }
+  const intent = clientIntent({ ...fields }, publisher, { timestamp: now })
+
+  const topLevel = verifyCustodyEntry({ ...intent, caption: 'plaintext should not ride along' }, { now })
+  t.absent(topLevel.valid, 'unknown top-level field rejected')
+  t.is(topLevel.reason, 'unknown custody field: caption')
+
+  const topLevelSecret = verifyCustodyEntry({ ...intent, dataKey: 'plaintext should not ride along' }, { now })
+  t.absent(topLevelSecret.valid, 'secret-looking top-level field rejected by allowlist')
+  t.is(topLevelSecret.reason, 'unknown custody field: dataKey')
+
+  const nestedIntent = {
+    ...intent,
+    shareAssignments: intent.shareAssignments.map((assignment, index) => index === 0
+      ? { ...assignment, caption: 'plaintext should not ride along' }
+      : assignment)
+  }
+  const nested = verifyCustodyEntry(nestedIntent, { now })
+  t.absent(nested.valid, 'unknown nested assignment field rejected')
+  t.is(nested.reason, 'unknown shareAssignment field: caption')
+
+  t.exception(
+    () => coreIntent({
+      ...fields,
+      shareAssignments: [{ ...fields.shareAssignments[0], caption: 'plaintext' }, ...fields.shareAssignments.slice(1)]
+    }, publisher, { timestamp: now }),
+    /unknown shareAssignment field: caption/,
+    'core signer refuses to create a smuggled assignment'
+  )
+  t.exception(
+    () => coreIntent({ ...fields, dataKey: 'plaintext' }, publisher, { timestamp: now }),
+    /unknown custody field: dataKey/,
+    'core signer refuses secret-looking top-level fields via the allowlist'
+  )
+  t.exception(
+    () => clientIntent({
+      ...fields,
+      shareAssignments: [{ ...fields.shareAssignments[0], caption: 'plaintext' }, ...fields.shareAssignments.slice(1)]
+    }, publisher, { timestamp: now }),
+    /unknown shareAssignment field: caption/,
+    'client signer refuses to create a smuggled assignment'
+  )
+  t.exception(
+    () => clientIntent({ ...fields, dataKey: 'plaintext' }, publisher, { timestamp: now }),
+    /unknown custody field: dataKey/,
+    'client signer refuses secret-looking top-level fields via the allowlist'
+  )
 })
 
 test('cross-impl: a client-signed source-retired verifies in core', (t) => {

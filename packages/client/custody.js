@@ -259,8 +259,8 @@ export function createCustodyIntent (fields, publisherKeyPair, opts = {}) {
       timestamp: raw.timestamp
     })
   }
-  const intent = normalizeCustodyEntry(raw)
-  return signCustodyEntry(intent, publisherKeyPair)
+  const intent = normalizeCustodyEntry(raw, opts)
+  return signCustodyEntry(intent, publisherKeyPair, opts)
 }
 
 export function createCustodyReceipt (fields, relayKeyPair, opts = {}) {
@@ -288,8 +288,8 @@ export function createCustodyReceipt (fields, relayKeyPair, opts = {}) {
       anchored: raw.anchored
     })
   }
-  const receipt = normalizeCustodyEntry(raw)
-  return signCustodyEntry(receipt, relayKeyPair)
+  const receipt = normalizeCustodyEntry(raw, opts)
+  return signCustodyEntry(receipt, relayKeyPair, opts)
 }
 
 export function createCustodyCommit (fields, publisherKeyPair, opts = {}) {
@@ -305,8 +305,8 @@ export function createCustodyCommit (fields, publisherKeyPair, opts = {}) {
   }
   if (!raw.receiptRoot) raw.receiptRoot = computeReceiptRoot(fields.receipts || [])
   delete raw.receipts
-  const commit = normalizeCustodyEntry(raw)
-  return signCustodyEntry(commit, publisherKeyPair)
+  const commit = normalizeCustodyEntry(raw, opts)
+  return signCustodyEntry(commit, publisherKeyPair, opts)
 }
 
 export function createSourceRetired (fields, publisherKeyPair, opts = {}) {
@@ -318,8 +318,8 @@ export function createSourceRetired (fields, publisherKeyPair, opts = {}) {
     ...fields,
     type: 'source-retired',
     publisherPubkey: b4a.toString(publisherKeyPair.publicKey, 'hex')
-  })
-  return signCustodyEntry(retired, publisherKeyPair)
+  }, opts)
+  return signCustodyEntry(retired, publisherKeyPair, opts)
 }
 
 export function createCustodyProof (fields, observerKeyPair, opts = {}) {
@@ -337,8 +337,8 @@ export function createCustodyProof (fields, observerKeyPair, opts = {}) {
     ...fields,
     type: 'custody-proof',
     observerPubkey: b4a.toString(observerKeyPair.publicKey, 'hex')
-  })
-  return signCustodyEntry(proof, observerKeyPair)
+  }, opts)
+  return signCustodyEntry(proof, observerKeyPair, opts)
 }
 
 export function createCustodyNonServingProof (fields, relayKeyPair, opts = {}) {
@@ -357,8 +357,8 @@ export function createCustodyNonServingProof (fields, relayKeyPair, opts = {}) {
     ...fields,
     type: 'custody-non-serving-proof',
     relayPubkey: b4a.toString(relayKeyPair.publicKey, 'hex')
-  })
-  return signCustodyEntry(proof, relayKeyPair)
+  }, opts)
+  return signCustodyEntry(proof, relayKeyPair, opts)
 }
 
 /**
@@ -389,13 +389,13 @@ export function createCustodyExpiryWitness (fields, witnessKeyPair, opts = {}) {
     ...fields,
     type: 'custody-expiry-witness',
     witnessPubkey: b4a.toString(witnessKeyPair.publicKey, 'hex')
-  })
-  return signCustodyEntry(witness, witnessKeyPair)
+  }, opts)
+  return signCustodyEntry(witness, witnessKeyPair, opts)
 }
 
-export function signCustodyEntry (entry, keyPair) {
+export function signCustodyEntry (entry, keyPair, opts = {}) {
   requireKeyPair(keyPair, 'keyPair')
-  const normalized = normalizeCustodyEntry(entry)
+  const normalized = normalizeCustodyEntry(entry, opts)
   const signature = b4a.alloc(sodium.crypto_sign_BYTES)
   sodium.crypto_sign_detached(signature, custodySignablePayload(normalized), keyPair.secretKey)
   return {
@@ -428,13 +428,13 @@ export function verifyCustodyEntry (entry, opts = {}) {
 
 export function normalizeCustodyEntry (entry, opts = {}) {
   if (!entry || typeof entry !== 'object') throw new Error('custody entry required')
-  if (containsForbiddenSecret(entry)) throw new Error('custody entry contains forbidden plaintext/key field')
   const type = String(entry.type || '').trim()
   if (!SIGNER_FIELD_BY_TYPE[type]) throw new Error('unsupported custody entry type')
   const version = entry.version || SIGNATURE_VERSION
   if (!SUPPORTED_VERSIONS.has(version)) throw new Error('unsupported custody version')
   if (version === 2 && !SHARE_FIELDS_BY_TYPE[type]) throw new Error('version 2 unsupported for ' + type)
   rejectUnknownFields(entry, type, version)
+  if (containsForbiddenSecret(entry)) throw new Error('custody entry contains forbidden plaintext/key field')
   const now = Number.isFinite(opts.now) ? opts.now : Date.now()
   const timestamp = numberField(entry.timestamp, 'timestamp')
   if (timestamp > now + FUTURE_SKEW_TOLERANCE_MS) throw new Error('timestamp too far in future')
@@ -616,7 +616,7 @@ export function validateCustodyTransition (entry, status = {}) {
   return { valid: true }
 }
 
-export function summarizeCustodyStatus (intent, receipts = [], commit = null, retirement = null, proofs = [], nonServingProofs = [], expiryWitnesses = []) {
+export function summarizeCustodyStatus (intent, receipts = [], commit = null, retirement = null, proofs = [], nonServingProofs = [], expiryWitnesses = [], witnessPolicy = null) {
   const requiredReplicas = intent?.requiredReplicas || 0
   const validReceipts = receipts.filter(r => r.anchored === true)
   const validExpiryWitnesses = expiryWitnesses.filter(w => validateCustodyTransition(w, { intent, nonServingProofs, sourceRetired: retirement }).valid)
@@ -639,6 +639,9 @@ export function summarizeCustodyStatus (intent, receipts = [], commit = null, re
     validExpiryWitnessCount: validExpiryWitnesses.length,
     expiryWitnessRelays: validExpiryWitnesses.map(w => w.relayPubkey).sort()
   }
+  if (witnessPolicy) {
+    summary.expiryWitnessQuorum = evaluateExpiryWitnessQuorum(witnessPolicy, validExpiryWitnesses)
+  }
   // PVSS block added only when the intent declares share custody, so every
   // non-PVSS summary stays byte-identical to before this change.
   if (intent?.shareScheme) {
@@ -650,6 +653,123 @@ export function summarizeCustodyStatus (intent, receipts = [], commit = null, re
     }
   }
   return summary
+}
+
+function evaluateExpiryWitnessQuorum (policy, entries = []) {
+  const validation = validateExpiryWitnessPolicy(policy)
+  const required = nonNegativeIntegerOr(policy?.requiredWitnesses, 0)
+  if (!validation.valid) {
+    return {
+      valid: false,
+      count: 0,
+      required,
+      accepted: [],
+      rejected: [],
+      reason: 'invalid-policy',
+      errors: validation.errors,
+      warnings: validation.warnings
+    }
+  }
+
+  const selected = new Set(policy.witnesses.map(witness => witness.witnessPubkey))
+  const accepted = []
+  const rejected = []
+  const seen = new Set()
+
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const witnessPubkey = typeof entry?.witnessPubkey === 'string' ? entry.witnessPubkey.toLowerCase() : null
+    const reason = rejectExpiryWitnessQuorumEntry(policy, selected, seen, entry, witnessPubkey)
+    if (reason) {
+      rejected.push({ witnessPubkey, reason })
+      continue
+    }
+    seen.add(witnessPubkey)
+    accepted.push(witnessPubkey)
+  }
+
+  return {
+    valid: accepted.length >= policy.requiredWitnesses,
+    count: accepted.length,
+    required: policy.requiredWitnesses,
+    accepted,
+    rejected,
+    reason: accepted.length >= policy.requiredWitnesses ? null : 'witness-quorum-not-reached'
+  }
+}
+
+function validateExpiryWitnessPolicy (policy) {
+  const errors = []
+  const warnings = []
+  if (!policy || typeof policy !== 'object') return { valid: false, errors: ['policy object required'], warnings }
+  if (policy.kind && policy.kind !== 'hivemesh-witness-quorum-policy') errors.push('kind mismatch')
+  if (policy.version != null && policy.version !== 1) errors.push('version mismatch')
+  if (!isHex32(policy.intentId)) errors.push('intentId required')
+  if (!isHex32(policy.subjectRelayPubkey)) errors.push('subjectRelayPubkey required')
+  if (!isHex32(policy.publisherPubkey)) errors.push('publisherPubkey required')
+  if (policy.selectedBy !== 'publisher') errors.push('witness set must be publisher-selected')
+  const witnesses = Array.isArray(policy.witnesses) ? policy.witnesses : []
+  if (nonNegativeIntegerOr(policy.witnessCount, witnesses.length) !== witnesses.length) {
+    errors.push('witnessCount does not match witness list')
+  }
+  if (!Number.isSafeInteger(policy.requiredWitnesses) || policy.requiredWitnesses <= 0) {
+    errors.push('requiredWitnesses must be positive')
+  } else if (policy.requiredWitnesses > witnesses.length) {
+    errors.push('requiredWitnesses exceeds witnessCount')
+  }
+  const minOperators = nonNegativeIntegerOr(policy.minOperators, 0)
+  const minRegions = nonNegativeIntegerOr(policy.minRegions, 0)
+  if (!Number.isSafeInteger(policy.minOperators) || policy.minOperators < 0) errors.push('minOperators must be a non-negative integer')
+  if (!Number.isSafeInteger(policy.minRegions) || policy.minRegions < 0) errors.push('minRegions must be a non-negative integer')
+
+  const seen = new Set()
+  for (const witness of witnesses) {
+    if (!witness || typeof witness !== 'object') {
+      errors.push('witness object required')
+      continue
+    }
+    if (!isHex32(witness.witnessPubkey)) errors.push('bad witnessPubkey')
+    else {
+      const witnessPubkey = witness.witnessPubkey.toLowerCase()
+      if (seen.has(witnessPubkey)) errors.push('duplicate witnessPubkey: ' + witnessPubkey)
+      else seen.add(witnessPubkey)
+      if (witnessPubkey === policy.subjectRelayPubkey) errors.push('subject relay cannot witness itself')
+      if (witnessPubkey === policy.publisherPubkey) warnings.push('publisher is also a witness: ' + witnessPubkey)
+    }
+    if (!witness.operator) errors.push('witness operator required')
+    if (!witness.region) errors.push('witness region required')
+  }
+
+  const summary = summarizeExpiryWitnessPolicy(witnesses)
+  if (summary.operators.length < minOperators) errors.push('insufficient witness operator diversity')
+  if (summary.regions.length < minRegions) errors.push('insufficient witness region diversity')
+  return { valid: errors.length === 0, errors, warnings }
+}
+
+function rejectExpiryWitnessQuorumEntry (policy, selected, seen, entry, witnessPubkey) {
+  if (!entry || typeof entry !== 'object') return 'entry required'
+  if (!isHex32(witnessPubkey)) return 'bad witnessPubkey'
+  if (!selected.has(witnessPubkey)) return 'witness not publisher-selected'
+  if (seen.has(witnessPubkey)) return 'duplicate witness'
+  if (entry.intentId !== policy.intentId) return 'intentId mismatch'
+  if (entry.relayPubkey !== policy.subjectRelayPubkey) return 'subject relay mismatch'
+  if (entry.catalogPresent || entry.gatewayServing || entry.activeSwarmObserved) return 'witness observed active serving'
+  return null
+}
+
+function summarizeExpiryWitnessPolicy (witnesses) {
+  const rows = Array.isArray(witnesses) ? witnesses.filter(witness => witness && typeof witness === 'object') : []
+  return {
+    operators: uniqueSorted(rows.map(witness => witness.operator).filter(Boolean)),
+    regions: uniqueSorted(rows.map(witness => witness.region).filter(Boolean))
+  }
+}
+
+function uniqueSorted (values) {
+  return [...new Set(values)].sort()
+}
+
+function nonNegativeIntegerOr (value, fallback) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : fallback
 }
 
 function normalizeIntent (entry) {
@@ -709,6 +829,7 @@ function normalizeShareAssignments (value, requiredReplicas, shareThreshold) {
   const indices = new Set()
   const out = value.map(a => {
     if (!a || typeof a !== 'object') throw new Error('shareAssignment must be an object')
+    rejectUnknownObjectFields(a, ['relayPubkey', 'shareIndex'], 'shareAssignment')
     const relayPubkey = hexField(a.relayPubkey, 'shareAssignment.relayPubkey')
     const shareIndex = positiveInteger(a.shareIndex, 'shareAssignment.shareIndex')
     if (shareIndex > requiredReplicas) throw new Error('shareAssignment.shareIndex exceeds requiredReplicas')
@@ -847,6 +968,13 @@ function rejectUnknownFields (entry, type, version) {
   const allowed = allowedFieldsFor(type, version)
   for (const key of Object.keys(entry)) {
     if (!allowed.has(key)) throw new Error(`unknown custody field: ${key}`)
+  }
+}
+
+function rejectUnknownObjectFields (entry, fields, label) {
+  const allowed = new Set(fields)
+  for (const key of Object.keys(entry)) {
+    if (!allowed.has(key)) throw new Error(`unknown ${label} field: ${key}`)
   }
 }
 

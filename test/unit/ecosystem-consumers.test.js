@@ -35,6 +35,7 @@ test('ecosystem consumer audit classifies current, stale, and ignored consumers'
     '02-apps/pearpaste/package.json',
     '02-apps/pear-pos/package.json',
     '02-apps/pear-tickets/package.json',
+    '02-apps/peerit/package.json',
     '03-sites/pearbrowser-publishers/src/p2pbuilders/package.json',
     '04-experiments/Opengit/packages/opengit-relay/package.json',
     '04-experiments/anongpt-native/package.json',
@@ -72,6 +73,7 @@ test('ecosystem consumer audit classifies current, stale, and ignored consumers'
   t.is(summary.ignored.length, 2)
   t.ok(report.includes('02-apps/pear-pos/package.json'))
   t.ok(report.includes('02-apps/pear-tickets/package.json'))
+  t.ok(report.includes('02-apps/peerit/package.json'))
   t.ok(report.includes('04-experiments/hiverelay-test/package.json'))
   t.ok(report.includes('Known stale non-bundled consumers:\n- none'))
   t.ok(report.includes('Direct-consumer scan exclusions:'))
@@ -174,6 +176,12 @@ test('ecosystem consumer audit guards PearPaste current Hiverelay docs', (t) => 
   writeFile(root, '02-apps/pearpaste/scripts/probe-circuit.mjs', `
     // current HiveRelay fleet
   `)
+  writeFile(root, '02-apps/pearpaste/test/unit/hiverelay-upgrade.test.js', `
+    test('HiveRelay customer path uses npm latest defaults', async (t) => {
+      t.is(pkg.optionalDependencies['p2p-hiverelay'], 'latest')
+      t.is(pkg.optionalDependencies['p2p-hiverelay-client'], 'latest')
+    })
+  `)
 
   const rows = scanHiverelayConsumers({ workspaceRoot: root })
   const sourceChecks = scanConsumerSourceChecks({
@@ -234,6 +242,10 @@ test('ecosystem consumer audit guards PearBrowser and POS current Hiverelay sour
   writeFile(root, '02-apps/pear-pos/RESEARCH.md', `
     SDK: \`p2p-hiverelay-client@0.20.2\`
   `)
+  writeFile(root, '02-apps/pear-pos/scripts/validate-publish-surface.mjs', `
+    failures.push('package.json optionalDependencies.p2p-hiverelay should default to npm latest')
+    failures.push('package.json optionalDependencies.p2p-hiverelay-client should default to npm latest')
+  `)
 
   const rows = scanHiverelayConsumers({ workspaceRoot: root })
   const sourceChecks = scanConsumerSourceChecks({
@@ -275,6 +287,11 @@ test('ecosystem consumer audit guards anonGPT live relay consumer source contrac
   writeFile(root, '04-experiments/anongpt-native/backend/forward-transport.js', `
     // routes inference through the production HiveRelay relays' forward service
   `)
+  writeFile(root, '04-experiments/anongpt-native/test/hiverelay-upgrade.test.cjs', `
+    test('HiveRelay customer transport path uses npm latest by default', async () => {
+      assert.equal(pkg.dependencies['p2p-hiverelay'], 'latest')
+    })
+  `)
 
   const rows = scanHiverelayConsumers({ workspaceRoot: root })
   const sourceChecks = scanConsumerSourceChecks({
@@ -308,6 +325,122 @@ test('ecosystem consumer audit guards anonGPT live relay consumer source contrac
 
   t.absent(failedSummary.ok)
   t.ok(failedSummary.errors.some(error => error.includes('anonGPT forward transport targets production HiveRelay forward service')))
+})
+
+test('ecosystem consumer audit guards Peerit source-only publish client compatibility', (t) => {
+  const root = fixtureWorkspace()
+  const peerit = EXPECTED_CURRENT_CONSUMERS.find(consumer => consumer.path === '02-apps/peerit/package.json')
+  writeExpectedConsumerPackages(root, [peerit])
+  writeFile(root, '02-apps/peerit/publish.mjs', `
+    const HIVERELAY_CLIENT_PACKAGE = 'p2p-hiverelay-client'
+    const HIVERELAY_CLIENT_PATHS = [
+      ['HIVERELAY_ROOT', process.env.HIVERELAY_ROOT]
+    ]
+    throw new Error(\`\${source} does not export HiveRelayClient\`)
+  `)
+  writeFile(root, '02-apps/peerit/README.md', [
+    'The app itself has no install step and no runtime npm dependencies. Publishing is',
+    'the only workflow that needs the HiveRelay client.',
+    '',
+    'The publisher loads `p2p-hiverelay-client` from an installed package, an explicit',
+    'HiveRelay env path, or a discoverable sibling/workspace checkout.'
+  ].join('\n'))
+
+  const rows = scanHiverelayConsumers({ workspaceRoot: root })
+  const sourceChecks = scanConsumerSourceChecks({
+    workspaceRoot: root,
+    expectedCurrent: [peerit],
+    expectedStale: []
+  })
+  const lockChecks = scanCurrentConsumerLockChecks({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [peerit]
+  })
+  const summary = checkConsumerState(rows, {
+    expectedVersion: '0.20.2',
+    expectedCurrent: [peerit],
+    expectedStale: [],
+    sourceChecks,
+    lockChecks
+  })
+
+  t.ok(summary.ok)
+  t.is(rows.length, 0, 'source-only peerit has no package-dependency scan row')
+  t.is(lockChecks.length, 0, 'source-only peerit does not require a lockfile')
+  t.ok(formatConsumerReport(summary).includes('no package deps; source-only compatibility guard'))
+
+  writePackage(root, '02-apps/peerit/package.json', {
+    dependencies: {
+      'p2p-hiverelay-client': '^0.9.2'
+    }
+  })
+  const pinnedSummary = checkConsumerState(scanHiverelayConsumers({ workspaceRoot: root }), {
+    expectedVersion: '0.20.2',
+    expectedCurrent: [peerit],
+    expectedStale: [],
+    sourceChecks
+  })
+  t.absent(pinnedSummary.ok)
+  t.ok(pinnedSummary.errors.some(error => error.includes('expected (none)')))
+
+  writePackage(root, '02-apps/peerit/package.json', {})
+  writeFile(root, '02-apps/peerit/publish.mjs', `
+    const legacy = 'p2p-hiverelay/client'
+  `)
+  const failedChecks = scanConsumerSourceChecks({
+    workspaceRoot: root,
+    expectedCurrent: [peerit],
+    expectedStale: []
+  })
+  const failedSummary = checkConsumerState(scanHiverelayConsumers({ workspaceRoot: root }), {
+    expectedVersion: '0.20.2',
+    expectedCurrent: [peerit],
+    expectedStale: [],
+    sourceChecks: failedChecks
+  })
+  t.absent(failedSummary.ok)
+  t.ok(failedSummary.errors.some(error => error.includes('Peerit publish path loads the split HiveRelay client package')))
+  t.ok(failedSummary.errors.some(error => error.includes('Disallowed source-level migration marker found')))
+})
+
+test('ecosystem sync keeps Peerit source-only manifest dependency-free', (t) => {
+  const root = fixtureWorkspace()
+  const peerit = getExpectedCurrentConsumers({ dependencyMode: 'npm-latest' })
+    .find(consumer => consumer.path === '02-apps/peerit/package.json')
+  writePackage(root, '02-apps/peerit/package.json', {
+    optionalDependencies: {
+      'p2p-hiverelay-client': '^0.9.2'
+    }
+  })
+  writeFile(root, '02-apps/peerit/publish.mjs', `
+    const HIVERELAY_CLIENT_PACKAGE = 'p2p-hiverelay-client'
+    const HIVERELAY_CLIENT_PATHS = [
+      ['HIVERELAY_ROOT', process.env.HIVERELAY_ROOT]
+    ]
+    throw new Error(\`\${source} does not export HiveRelayClient\`)
+  `)
+  writeFile(root, '02-apps/peerit/README.md', [
+    'The app itself has no install step and no runtime npm dependencies. Publishing is',
+    'the only workflow that needs the HiveRelay client.',
+    '',
+    'The publisher loads `p2p-hiverelay-client` from an installed package, an explicit',
+    'HiveRelay env path, or a discoverable sibling/workspace checkout.'
+  ].join('\n'))
+
+  const result = syncEcosystemConsumers({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [peerit],
+    dependencyMode: 'npm-latest',
+    npmLatestVersions: npmLatestVersions('0.20.2'),
+    snapshotChecks: false
+  })
+
+  t.ok(result.ok)
+  t.ok(result.changes.some(change => change.includes('02-apps/peerit/package.json: p2p-hiverelay-client removed')))
+  t.is(result.summary.lockChecks.length, 0)
+  t.alike(readPackage(root, '02-apps/peerit/package.json').optionalDependencies, undefined)
 })
 
 test('ecosystem consumer audit fails when source-level migration markers move', (t) => {
@@ -576,6 +709,7 @@ test('ecosystem consumer helpers default published apps to npm latest', (t) => {
   const consumers = getExpectedCurrentConsumers()
   const pearpaste = consumers.find(consumer => consumer.path === '02-apps/pearpaste/package.json')
   const anongpt = consumers.find(consumer => consumer.path === '04-experiments/anongpt-native/package.json')
+  const peerit = consumers.find(consumer => consumer.path === '02-apps/peerit/package.json')
 
   t.is(DEFAULT_DEPENDENCY_MODE, 'npm-latest')
   t.ok(pearpaste)
@@ -584,11 +718,17 @@ test('ecosystem consumer helpers default published apps to npm latest', (t) => {
   t.is(pearpaste.deps['p2p-hiverelay-client'], 'latest')
   t.ok(pearpaste.sourceChecks.some(check => check.termTemplate === 'HiveRelay `{version}` packages through npm `latest` by default'))
   t.ok(pearpaste.sourceChecks.some(check => check.term === '"p2p-hiverelay": "latest"'))
+  t.ok(pearpaste.sourceChecks.some(check => check.label === 'PearPaste customer test asserts npm latest Hiverelay defaults'))
   t.ok(anongpt)
   t.is(anongpt.dependencyMode, 'npm-latest')
   t.is(anongpt.deps['p2p-hiverelay'], 'latest')
   t.ok(anongpt.sourceChecks.some(check => check.label === 'anonGPT architecture documents HiveRelay relay/onion transport'))
   t.ok(anongpt.sourceChecks.some(check => check.label === 'anonGPT forward transport targets production HiveRelay forward service'))
+  t.ok(anongpt.sourceChecks.some(check => check.label === 'anonGPT customer test asserts npm latest Hiverelay defaults'))
+  t.ok(peerit)
+  t.ok(peerit.sourceOnly)
+  t.alike(peerit.deps, {})
+  t.ok(peerit.sourceChecks.some(check => check.label === 'Peerit publish path loads the split HiveRelay client package'))
 
   const local = getExpectedCurrentConsumers({ dependencyMode: 'local' })
     .find(consumer => consumer.path === '02-apps/pearpaste/package.json')
@@ -598,7 +738,7 @@ test('ecosystem consumer helpers default published apps to npm latest', (t) => {
   t.ok(local.sourceChecks.some(check => check.term === '"p2p-hiverelay": "file:../../00-core/hiverelay/packages/core"'))
 })
 
-test('ecosystem consumer release scope includes only remotely managed app repos', (t) => {
+test('ecosystem consumer release scope includes only package-default release repos', (t) => {
   const consumers = getExpectedCurrentConsumers({ consumerScope: 'release' })
   const paths = consumers.map(consumer => consumer.path).sort()
 
@@ -612,6 +752,7 @@ test('ecosystem consumer release scope includes only remotely managed app repos'
   t.ok(consumers.every(consumer => consumer.release?.repository))
   t.absent(paths.includes('02-apps/pear-pos/package.json'))
   t.absent(paths.includes('02-apps/pear-tickets/package.json'))
+  t.absent(paths.includes('02-apps/peerit/package.json'))
   t.absent(paths.includes('04-experiments/hiverelay-test/package.json'))
 })
 
@@ -841,6 +982,133 @@ test('ecosystem sync refuses npm-latest defaults when npm latest would downgrade
   t.is(pkg.optionalDependencies['p2p-hiverelay-client'], 'file:../../00-core/hiverelay/packages/client')
 })
 
+test('ecosystem sync can prepare latest app defaults before npm latest is promoted', (t) => {
+  const root = fixtureWorkspace()
+  const consumer = {
+    ...getExpectedCurrentConsumers({ dependencyMode: 'npm-latest' })
+      .find(consumer => consumer.path === '02-apps/pearpaste/package.json'),
+    sourceChecks: []
+  }
+
+  writePackage(root, consumer.path, {
+    optionalDependencies: {
+      'p2p-hiverelay': 'file:../../00-core/hiverelay/packages/core',
+      'p2p-hiverelay-client': 'file:../../00-core/hiverelay/packages/client'
+    }
+  })
+  writePackageLock(root, '02-apps/pearpaste/package-lock.json', {
+    packages: {
+      '': {
+        optionalDependencies: {
+          'p2p-hiverelay': 'file:../../00-core/hiverelay/packages/core',
+          'p2p-hiverelay-client': 'file:../../00-core/hiverelay/packages/client'
+        }
+      },
+      '../../00-core/hiverelay/packages/core': {
+        name: 'p2p-hiverelay',
+        version: '0.20.2'
+      },
+      '../../00-core/hiverelay/packages/client': {
+        name: 'p2p-hiverelay-client',
+        version: '0.20.2'
+      }
+    }
+  })
+
+  const result = syncEcosystemConsumers({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer],
+    dependencyMode: 'npm-latest',
+    npmLatestVersions: npmLatestVersions('0.20.2', {
+      'p2p-hiverelay': '0.9.2'
+    }),
+    prepareLatestDefaults: true,
+    snapshotChecks: false
+  })
+
+  t.ok(result.ok)
+  t.ok(result.prepareLatestDefaults)
+  t.ok(result.changes.some(change => change.includes('02-apps/pearpaste/package.json: p2p-hiverelay -> latest')))
+  t.ok(result.warnings.some(warning => warning.includes('prepare-latest-defaults skipped registry proof')))
+  t.ok(result.warnings.some(warning => warning.includes('without lockfile refresh')))
+
+  const pkg = readPackage(root, consumer.path)
+  const lock = readPackage(root, '02-apps/pearpaste/package-lock.json')
+  t.is(pkg.optionalDependencies['p2p-hiverelay'], 'latest')
+  t.is(pkg.optionalDependencies['p2p-hiverelay-client'], 'latest')
+  t.is(lock.packages[''].optionalDependencies['p2p-hiverelay'], 'file:../../00-core/hiverelay/packages/core')
+  t.is(lock.packages[''].optionalDependencies['p2p-hiverelay-client'], 'file:../../00-core/hiverelay/packages/client')
+})
+
+test('ecosystem prepare-latest check verifies staged defaults without writing', (t) => {
+  const root = fixtureWorkspace()
+  const consumer = {
+    ...getExpectedCurrentConsumers({ dependencyMode: 'npm-latest' })
+      .find(consumer => consumer.path === '02-apps/pearpaste/package.json'),
+    sourceChecks: []
+  }
+
+  writePackage(root, consumer.path, {
+    optionalDependencies: {
+      'p2p-hiverelay': 'file:../../00-core/hiverelay/packages/core',
+      'p2p-hiverelay-client': 'file:../../00-core/hiverelay/packages/client'
+    }
+  })
+  writePackageLock(root, '02-apps/pearpaste/package-lock.json', {
+    packages: {
+      '': {
+        optionalDependencies: {
+          'p2p-hiverelay': 'file:../../00-core/hiverelay/packages/core',
+          'p2p-hiverelay-client': 'file:../../00-core/hiverelay/packages/client'
+        }
+      }
+    }
+  })
+
+  const pending = syncEcosystemConsumers({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer],
+    dependencyMode: 'npm-latest',
+    npmLatestVersions: npmLatestVersions('0.20.2', {
+      'p2p-hiverelay': '0.9.2'
+    }),
+    prepareLatestDefaults: true,
+    snapshotChecks: false,
+    check: true
+  })
+
+  t.absent(pending.ok)
+  t.ok(pending.check)
+  t.ok(pending.prepareLatestDefaults)
+  t.ok(pending.changes.some(change => change.includes('02-apps/pearpaste/package.json: p2p-hiverelay -> latest')))
+  t.ok(pending.errors.some(error => error.includes('ecosystem consumer file(s) need default-version sync')))
+  t.is(readPackage(root, consumer.path).optionalDependencies['p2p-hiverelay'], 'file:../../00-core/hiverelay/packages/core')
+
+  writePackage(root, consumer.path, {
+    optionalDependencies: consumer.deps
+  })
+
+  const ready = syncEcosystemConsumers({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer],
+    dependencyMode: 'npm-latest',
+    npmLatestVersions: npmLatestVersions('0.20.2', {
+      'p2p-hiverelay': '0.9.2'
+    }),
+    prepareLatestDefaults: true,
+    snapshotChecks: false,
+    check: true
+  })
+
+  t.ok(ready.ok)
+  t.ok(ready.check)
+  t.is(ready.changes.length, 0)
+  t.ok(ready.warnings.some(warning => warning.includes('prepare-latest-defaults skipped registry proof')))
+})
+
 test('ecosystem consumer audit accepts npm-latest manifests with current npm lock metadata', (t) => {
   const root = fixtureWorkspace()
   const consumer = {
@@ -949,6 +1217,11 @@ test('ecosystem sync updates versioned app source markers', (t) => {
     }
   })
   writeSourceCheckTerms(root, consumer, '0.16.3')
+  writeFile(
+    root,
+    '01-browser/pearbrowser-desktop/docs/HIVERELAY-BACKBONE-HANDOVER.md',
+    '- Relay core: `p2p-hiverelay` (npm v0.8.12) — `core/index.js`\n'
+  )
 
   const result = syncEcosystemConsumers({
     workspaceRoot: root,
@@ -964,7 +1237,9 @@ test('ecosystem sync updates versioned app source markers', (t) => {
   t.ok(result.changes.some(change => change.includes('docs/HIVERELAY-BACKBONE-HANDOVER.md')))
   t.ok(fs.readFileSync(path.join(root, '01-browser/pearbrowser-desktop/catalog-source/pearbrowser-network.catalog.json'), 'utf8').includes('"version": "0.20.2"'))
   t.ok(fs.readFileSync(path.join(root, '01-browser/pearbrowser-desktop/backend/catalogue-seed.js'), 'utf8').includes('"version": "0.20.2"'))
-  t.ok(fs.readFileSync(path.join(root, '01-browser/pearbrowser-desktop/docs/HIVERELAY-BACKBONE-HANDOVER.md'), 'utf8').includes('`p2p-hiverelay` `0.20.2`'))
+  const handover = fs.readFileSync(path.join(root, '01-browser/pearbrowser-desktop/docs/HIVERELAY-BACKBONE-HANDOVER.md'), 'utf8')
+  t.ok(handover.includes('`p2p-hiverelay` `0.20.2`'))
+  t.absent(handover.includes('npm v0.8.12'))
 
   const sourceChecks = scanConsumerSourceChecks({
     workspaceRoot: root,

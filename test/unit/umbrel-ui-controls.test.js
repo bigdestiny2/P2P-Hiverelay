@@ -48,12 +48,21 @@ test('umbrel service manager keeps the section unframed around service cards', (
   t.ok(dashboard.includes('background:transparent;border:0;border-radius:0;padding:0'))
   t.ok(dashboard.includes('.services-card .apps-head{padding:0 .15rem;margin-bottom:.65rem}'))
   t.ok(dashboard.includes('.svc-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.55rem'))
+  t.ok(dashboard.includes('.svc-plan{'))
+  t.ok(dashboard.includes('.svc-plan.empty{display:none}'))
+  t.ok(dashboard.includes('.svc-plan-chip.stop'))
   t.ok(dashboard.includes('.svc-card:focus-within{outline:2px solid var(--cyan);outline-offset:2px}'))
   t.ok(dashboard.includes('.svc-state.pending'))
   t.ok(dashboard.includes('.svc-state.draft'))
   t.ok(dashboard.includes('function svcCardVisualState(name, selected, configured, active, draftDirty)'))
   t.ok(dashboard.includes('function svcVisualState(name, configured, active)'))
+  t.ok(dashboard.includes('function svcPlanDelta(selected)'))
+  t.ok(dashboard.includes('function renderSvcPlan(selected)'))
+  t.ok(dashboard.includes('function svcActionMessage(selected)'))
   t.ok(dashboard.includes("appendServiceSummary(summary, 'Selected', metricCount(configured.length)"))
+  t.ok(dashboard.includes("var plan = appendEl(body, 'div', 'svc-plan empty');"))
+  t.ok(dashboard.includes("appendSvcPlanLine(lines, 'Start', delta.starts, 'start')"))
+  t.ok(dashboard.includes("appendSvcPlanLine(lines, 'Stop', delta.stops, 'stop')"))
   t.ok(dashboard.includes("appendEl(content, 'span', 'svc-state ' + visualState.className, visualState.label)"))
   t.ok(dashboard.includes("meterBox.className = 'svc-meter-box';"))
   t.absent(dashboard.includes('meterBox.style.marginTop'))
@@ -162,8 +171,9 @@ test('umbrel service restart shows pending state until selected providers run', 
   t.ok(dashboard.includes('Saving service selection...'))
   t.ok(dashboard.includes('if (svcDraftDirty){'))
   t.ok(dashboard.includes('toast(\'Save selection before restart\');'))
-  t.ok(dashboard.includes('? \'Saving service selection...\''))
-  t.ok(dashboard.includes(': (svcDraftDirty ? \'Unsaved changes - save selection before restarting.\''))
+  t.ok(dashboard.includes("if (svcConfigBusy) return 'Saving service selection...';"))
+  t.ok(dashboard.includes("return 'Unsaved: ' + svcPlanSentence(delta) + '. Save selection before restarting.';"))
+  t.ok(dashboard.includes("return 'Saved change pending: ' + svcPlanSentence(delta) + '. Restart Blindspark to apply.';"))
   t.ok(dashboard.includes('Date.now() - svcRestartStartedAt < 2500'))
   t.ok(dashboard.includes('var managedActive = active.filter'))
   t.ok(dashboard.includes('if (!expected.length) return managedActive.length === 0;'))
@@ -416,6 +426,15 @@ test('umbrel service manager renders untrusted service metadata as text', (t) =>
     extractFunction('svcMeta'),
     extractFunction('svcCardVisualState'),
     extractFunction('svcVisualState'),
+    extractFunction('svcLabel'),
+    extractFunction('svcManagedActive'),
+    extractFunction('svcPlanDelta'),
+    extractFunction('svcCompactList'),
+    extractFunction('svcPlanSentence'),
+    extractFunction('appendSvcPlanLine'),
+    extractFunction('renderSvcPlan'),
+    extractFunction('svcActionMessage'),
+    extractFunction('updateSvcActionState'),
     extractFunction('appendServiceSummary'),
     extractFunction('renderServices'),
     'renderServices(' + JSON.stringify({
@@ -441,6 +460,7 @@ test('umbrel service manager renders untrusted service metadata as text', (t) =>
       if (id === 'svcBody') return svcBody
       if (id === 'svcStatus') return svcStatus
       if (id === 'servicesCard') return servicesCard
+      if (id === 'svcPlan') return svcBody.querySelector('#svcPlan')
       throw new Error('unexpected id ' + id)
     }
   })
@@ -475,7 +495,7 @@ test('umbrel service manager shows saved-vs-live service state', (t) => {
     'function svcSetConfig () {}',
     'function svcRestartNode () {}',
     'function renderMetering (active) { renderedMetering.push(active.slice()) }',
-    'var SERVICE_META = {}',
+    "var SERVICE_META = { storage: { label: 'Storage' }, vrf: { label: 'Randomness' }, poker: { label: 'Poker table API' } }",
     extractFunction('clearNode'),
     extractFunction('makeEl'),
     extractFunction('appendEl'),
@@ -485,6 +505,15 @@ test('umbrel service manager shows saved-vs-live service state', (t) => {
     extractFunction('svcMeta'),
     extractFunction('svcCardVisualState'),
     extractFunction('svcVisualState'),
+    extractFunction('svcLabel'),
+    extractFunction('svcManagedActive'),
+    extractFunction('svcPlanDelta'),
+    extractFunction('svcCompactList'),
+    extractFunction('svcPlanSentence'),
+    extractFunction('appendSvcPlanLine'),
+    extractFunction('renderSvcPlan'),
+    extractFunction('svcActionMessage'),
+    extractFunction('updateSvcActionState'),
     extractFunction('appendServiceSummary'),
     extractFunction('renderServices'),
     'renderServices(' + JSON.stringify({
@@ -506,6 +535,7 @@ test('umbrel service manager shows saved-vs-live service state', (t) => {
       if (id === 'svcBody') return svcBody
       if (id === 'svcStatus') return svcStatus
       if (id === 'servicesCard') return servicesCard
+      if (id === 'svcPlan') return svcBody.querySelector('#svcPlan')
       throw new Error('unexpected id ' + id)
     }
   })
@@ -513,6 +543,11 @@ test('umbrel service manager shows saved-vs-live service state', (t) => {
   t.ok(html.includes('<strong id="svcSummarySelected">2</strong>'))
   t.ok(html.includes('<strong id="svcSummaryRunning">2</strong>'))
   t.ok(html.includes('<strong id="svcSummaryPending">2</strong>'))
+  t.ok(html.includes('class="svc-plan pending"'))
+  t.ok(html.includes('Restart needed for saved services'))
+  t.ok(html.includes('<span class="svc-plan-chip start">Poker table API</span>'))
+  t.ok(html.includes('<span class="svc-plan-chip stop">Storage</span>'))
+  t.ok(html.includes('Saved change pending: start Poker table API; stop Storage. Restart Blindspark to apply.'))
   t.ok(html.includes('class="svc-state live">Live'))
   t.ok(html.includes('class="svc-state pending">Starts after restart'))
   t.ok(html.includes('class="svc-state stopping">Stops after restart'))
@@ -539,7 +574,7 @@ test('umbrel service manager shows unsaved service draft state immediately', (t)
     'function svcSetConfig () {}',
     'function svcRestartNode () {}',
     'function renderMetering () {}',
-    'var SERVICE_META = {}',
+    "var SERVICE_META = { storage: { label: 'Storage' }, ai: { label: 'AI models' } }",
     extractFunction('clearNode'),
     extractFunction('makeEl'),
     extractFunction('appendEl'),
@@ -549,6 +584,15 @@ test('umbrel service manager shows unsaved service draft state immediately', (t)
     extractFunction('svcMeta'),
     extractFunction('svcCardVisualState'),
     extractFunction('svcVisualState'),
+    extractFunction('svcLabel'),
+    extractFunction('svcManagedActive'),
+    extractFunction('svcPlanDelta'),
+    extractFunction('svcCompactList'),
+    extractFunction('svcPlanSentence'),
+    extractFunction('appendSvcPlanLine'),
+    extractFunction('renderSvcPlan'),
+    extractFunction('svcActionMessage'),
+    extractFunction('updateSvcActionState'),
     extractFunction('svcSelection'),
     extractFunction('updateSvcCards'),
     extractFunction('appendServiceSummary'),
@@ -594,11 +638,16 @@ test('umbrel service manager shows unsaved service draft state immediately', (t)
   t.ok(out.afterStart.includes('Unsaved start'))
   t.ok(out.afterStart.includes('<strong id="svcSummarySelected">2</strong>'))
   t.ok(out.afterStart.includes('<strong id="svcSummaryPending">1</strong>'))
-  t.ok(out.afterStart.includes('Unsaved changes - save selection before restarting.'))
+  t.ok(out.afterStart.includes('class="svc-plan draft"'))
+  t.ok(out.afterStart.includes('Unsaved service changes'))
+  t.ok(out.afterStart.includes('<span class="svc-plan-chip start">AI models</span>'))
+  t.ok(out.afterStart.includes('Unsaved: start AI models. Save selection before restarting.'))
   t.ok(out.afterStop.includes('Unsaved start'))
   t.ok(out.afterStop.includes('Unsaved stop'))
   t.ok(out.afterStop.includes('<strong id="svcSummarySelected">1</strong>'))
   t.ok(out.afterStop.includes('<strong id="svcSummaryPending">2</strong>'))
+  t.ok(out.afterStop.includes('<span class="svc-plan-chip stop">Storage</span>'))
+  t.ok(out.afterStop.includes('Unsaved: start AI models; stop Storage. Save selection before restarting.'))
 })
 
 test('umbrel appliance copy controls report missing or rejected clipboard writes', async (t) => {
@@ -788,6 +837,69 @@ test('umbrel wallet save posts through app proxy without navigation', async (t) 
   t.is(closed, true)
   t.alike(toasts, ['Payout wallet saved'])
   t.ok(payout.innerHTML.includes('operator@example.com'))
+})
+
+test('umbrel dynamic payout controls stay non-submit and open the wallet dialog', (t) => {
+  const payout = new FakeElement('div')
+  const calls = []
+  const script = [
+    "var payoutDestination = ''",
+    "function openWalletDialog () { calls.push('open:' + payoutDestination) }",
+    "function writeClipboard (text, message) { calls.push('copy:' + text + ':' + message) }",
+    extractFunction('payoutValue'),
+    extractFunction('clearNode'),
+    extractFunction('renderPayout'),
+    "renderPayout('')",
+    "var emptyButton = $('payout').querySelector('button')",
+    'emptyButton.listeners.click[0]()',
+    `var empty = {
+      html: $('payout').innerHTML,
+      type: emptyButton.type,
+      text: emptyButton.textContent,
+      calls: calls.slice()
+    }`,
+    "renderPayout({ value: 'operator@example.com' })",
+    "var buttons = $('payout').querySelectorAll('button')",
+    'buttons[0].listeners.click[0]()',
+    'buttons[1].listeners.click[0]()',
+    `JSON.stringify({
+      empty: empty,
+      filled: {
+        html: $('payout').innerHTML,
+        copyType: buttons[0].type,
+        editType: buttons[1].type,
+        editText: buttons[1].textContent,
+        calls: calls
+      }
+    })`
+  ].join('\n')
+
+  const out = JSON.parse(vm.runInNewContext(script, {
+    JSON,
+    calls,
+    document: {
+      createElement: (tag) => new FakeElement(tag)
+    },
+    $: (id) => {
+      if (id === 'payout') return payout
+      throw new Error('unexpected id ' + id)
+    }
+  }))
+
+  t.is(out.empty.type, 'button')
+  t.is(out.empty.text, 'Add')
+  t.ok(out.empty.html.includes('<span class="muted">Not set</span>'))
+  t.alike(out.empty.calls, ['open:'])
+  t.is(out.filled.copyType, 'button')
+  t.is(out.filled.editType, 'button')
+  t.is(out.filled.editText, 'Change')
+  t.ok(out.filled.html.includes('operator@example.com'))
+  t.alike(out.filled.calls, [
+    'open:',
+    'copy:operator@example.com:Payout destination copied',
+    'open:operator@example.com'
+  ])
+  t.alike(payout.innerHTMLAssignments, [])
 })
 
 test('umbrel wallet save blocks duplicate in-flight writes', async (t) => {

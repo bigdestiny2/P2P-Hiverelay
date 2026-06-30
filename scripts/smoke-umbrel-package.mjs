@@ -725,9 +725,19 @@ function assertDashboardUiHardening (html) {
   assertIncludes(html, "if ($('walletSave').disabled) return;", 'dashboard wallet enter duplicate guard')
   assertIncludes(html, 'function handleWalletDialogCancel(event)', 'dashboard wallet pending-cancel guard')
   assertIncludes(html, "$('walletDialog').addEventListener('cancel', handleWalletDialogCancel);", 'dashboard wallet dialog cancel guard listener')
+  assertIncludes(html, 'function renderPayout(dest)', 'dashboard dynamic payout renderer')
+  assertIncludes(html, "chip.type = 'button';", 'dashboard payout copy non-submit button')
+  assertIncludes(html, "edit.type = 'button';", 'dashboard payout edit non-submit button')
+  assertIncludes(html, 'pay.appendChild(edit);', 'dashboard payout controls use DOM append')
   assertIncludes(html, 'function setSvcConfigBusy(busy)', 'dashboard service save busy-state guard')
   assertIncludes(html, 'var svcRestartPending = false;', 'dashboard service restart pending state')
   assertIncludes(html, 'function svcVisualState(name, configured, active)', 'dashboard service live-vs-saved state labels')
+  assertIncludes(html, 'function svcActionMessage(selected)', 'dashboard service inline action guidance')
+  assertIncludes(html, 'function renderSvcPlan(selected)', 'dashboard service inline change plan')
+  assertIncludes(html, "return 'Unsaved: ' + svcPlanSentence(delta) + '. Save selection before restarting.';", 'dashboard service unsaved change guidance')
+  assertIncludes(html, "return 'Saved change pending: ' + svcPlanSentence(delta) + '. Restart Blindspark to apply.';", 'dashboard service saved change guidance')
+  assertIncludes(html, "appendSvcPlanLine(lines, 'Start', delta.starts, 'start')", 'dashboard service start-plan chips')
+  assertIncludes(html, "appendSvcPlanLine(lines, 'Stop', delta.stops, 'stop')", 'dashboard service stop-plan chips')
   assertIncludes(html, "appendServiceSummary(summary, 'Selected', metricCount(configured.length)", 'dashboard service summary counts')
   assertIncludes(html, "appendEl(content, 'span', 'svc-state ' + visualState.className, visualState.label)", 'dashboard service state pills')
   assertIncludes(html, "meterBox.className = 'svc-meter-box';", 'dashboard service meter layout class')
@@ -749,8 +759,11 @@ function assertDashboardUiHardening (html) {
   assertNotIncludes(html, 'meterBox.style.marginTop', 'dashboard runtime meter inline style')
   assertNotIncludes(html, '.style.cssText', 'dashboard runtime style injection')
   assertNotIncludes(html, '.innerHTML =', 'dashboard runtime HTML string injection')
+  assertNotIncludes(html, 'pay.innerHTML', 'dashboard payout runtime HTML string injection')
   assertNotIncludes(html, 'onerror=', 'dashboard inline error handlers')
   return {
+    serviceInlinePlanState: true,
+    dynamicPayoutControls: true,
     appProxyWrites: true,
     leasePollingBounded: true,
     dashboardStaticMarkupSafe: true
@@ -758,6 +771,10 @@ function assertDashboardUiHardening (html) {
 }
 
 function assertSetupWizardUiHardening (html) {
+  assertIncludes(html, 'const WIZARD_ERROR_MAX = 180', 'setup wizard bounded API error max')
+  assertIncludes(html, 'function wizardErrorText', 'setup wizard API error normalizer')
+  assertIncludes(html, ".replace(/[\\x00-\\x1f\\x7f]+/g, ' ')", 'setup wizard API error control-char normalization')
+  assertIncludes(html, "msg = msg.slice(0, WIZARD_ERROR_MAX - 3) + '...'", 'setup wizard API error length cap')
   assertIncludes(html, 'id="wizard-status" role="status" aria-live="polite"', 'setup wizard status region')
   assertIncludes(html, 'let wizardActionBusy = false', 'setup wizard action lock state')
   assertIncludes(html, 'if (wizardActionBusy) return', 'setup wizard duplicate action guard')

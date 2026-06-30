@@ -20,8 +20,12 @@ import {
 import { TokenBucketRateLimiter } from './rate-limiter.js'
 import { SEED_PROTOCOL_NAME } from '../constants.js'
 
-const PROTOCOL_VERSION = { major: 1, minor: 0 }
-const MAX_PROTOCOL_HANDSHAKE_BYTES = 256
+export const SEED_PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 0 })
+export const SEED_PROTOCOL_HANDSHAKE_MAX_BYTES = 256
+export const SEED_REQUEST_SIGNATURE_DOMAIN = 'hiverelay.seed-request.v3'
+export const SEED_REQUEST_SIGNATURE_VERSION = 3
+export const SEED_REQUEST_REPLAY_SIGNATURE_DOMAIN = 'hiverelay.seed-request.replay-v1'
+export const SEED_REQUEST_REPLAY_NONCE_BYTES = 16
 
 // Rate limit: 100 requests per minute, burst of 20
 const RATE_LIMIT_TOKENS_PER_MIN = 100
@@ -41,13 +45,20 @@ function keyHex (key) {
   return key && key.byteLength === 32 ? b4a.toString(key, 'hex') : null
 }
 
-function parseProtocolHandshake (handshake) {
+function normalizeProtocolVersion (version) {
+  if (!version || typeof version !== 'object') return null
+  if (!Number.isSafeInteger(version.major) || version.major < 0) return null
+  if (!Number.isSafeInteger(version.minor) || version.minor < 0) return null
+  return { major: version.major, minor: version.minor }
+}
+
+export function parseSeedProtocolHandshake (handshake) {
   if (!handshake) return { remote: null }
   const size = typeof handshake === 'string'
     ? b4a.byteLength(handshake)
     : (handshake && Number.isSafeInteger(handshake.byteLength) ? handshake.byteLength : 0)
   if (size <= 0) return { error: 'malformed handshake' }
-  if (size > MAX_PROTOCOL_HANDSHAKE_BYTES) return { error: 'handshake too large' }
+  if (size > SEED_PROTOCOL_HANDSHAKE_MAX_BYTES) return { error: 'handshake too large' }
 
   let remote
   try {
@@ -68,6 +79,36 @@ function parseProtocolHandshake (handshake) {
       major: remote.major,
       minor: remote.minor
     }
+  }
+}
+
+export function evaluateSeedProtocolHandshake (handshake, opts = {}) {
+  const local = normalizeProtocolVersion(opts.localVersion) || SEED_PROTOCOL_VERSION
+  const parsed = parseSeedProtocolHandshake(handshake)
+  if (parsed.error) {
+    return {
+      valid: false,
+      action: 'close',
+      local,
+      remote: null,
+      reason: parsed.error
+    }
+  }
+  if (parsed.remote && parsed.remote.major !== local.major) {
+    return {
+      valid: false,
+      action: 'close',
+      local,
+      remote: parsed.remote,
+      reason: 'major version mismatch'
+    }
+  }
+  return {
+    valid: true,
+    action: 'accept',
+    local,
+    remote: parsed.remote,
+    reason: null
   }
 }
 
@@ -131,7 +172,7 @@ export class SeedProtocol extends EventEmitter {
     })
 
     channel._hiverelay = { seedRequestMsg, seedAcceptMsg, unseedRequestMsg, seedDenyMsg }
-    channel.open(b4a.from(JSON.stringify(PROTOCOL_VERSION)))
+    channel.open(b4a.from(JSON.stringify(SEED_PROTOCOL_VERSION)))
 
     this.channels.add(channel)
     return channel
@@ -451,14 +492,14 @@ export class SeedProtocol extends EventEmitter {
   _onOpen (channel) {
     // Validate protocol version from handshake
     if (channel.handshake) {
-      const parsed = parseProtocolHandshake(channel.handshake)
-      if (parsed.error) {
-        this.emit('invalid-handshake', { reason: parsed.error })
+      const verdict = evaluateSeedProtocolHandshake(channel.handshake)
+      if (!verdict.valid && verdict.reason !== 'major version mismatch') {
+        this.emit('invalid-handshake', { reason: verdict.reason })
         channel.close()
         return
       }
-      if (parsed.remote && parsed.remote.major !== PROTOCOL_VERSION.major) {
-        this.emit('version-mismatch', { local: PROTOCOL_VERSION, remote: parsed.remote })
+      if (!verdict.valid) {
+        this.emit('version-mismatch', { local: verdict.local, remote: verdict.remote })
         channel.close()
         return
       }
@@ -578,9 +619,45 @@ export function serializeSeedRequestForSigning (msg) {
 }
 
 /**
- * Legacy v1 (28-byte) serialization. Kept for backward compatibility — used
- * by verifySeedRequestSignature as a fallback when the v2 verify fails AND
- * the request advertised permissive defaults.
+ * Domain-separated v3 seed-request signature preimage.
+ *
+ * The body remains the stable v2 layout for compatibility and auditability,
+ * but modern publishers should sign this domain-prefixed preimage so the same
+ * Ed25519 key cannot accidentally authorize another message class with a
+ * compatible byte layout.
+ */
+export function serializeSeedRequestForDomainSigning (msg) {
+  return b4a.concat([
+    b4a.from(SEED_REQUEST_SIGNATURE_DOMAIN),
+    b4a.from([0]),
+    serializeSeedRequestForSigning(msg)
+  ])
+}
+
+/**
+ * Replay-hardened seed-request signature preimage for publisher-signed
+ * HTTPS/publish-channel ingress. The legacy Protomux seed-request frame stays
+ * byte-compatible; callers opt in by adding `issuedAt` and `requestNonce`.
+ */
+export function serializeSeedRequestForReplaySigning (msg) {
+  if (!Number.isSafeInteger(msg.issuedAt) || msg.issuedAt < 0) {
+    throw new Error('issuedAt must be a non-negative safe integer')
+  }
+  const nonce = seedRequestReplayNonceBuffer(msg.requestNonce)
+  if (!nonce) throw new Error('requestNonce must be 16 bytes')
+  return b4a.concat([
+    b4a.from(SEED_REQUEST_REPLAY_SIGNATURE_DOMAIN),
+    b4a.from([0]),
+    serializeSeedRequestForSigning(msg),
+    uint64Buf(msg.issuedAt),
+    nonce
+  ])
+}
+
+/**
+ * Legacy v1 (28-byte) serialization. Kept for backward compatibility: used by
+ * verifySeedRequestSignature as a final fallback when domain-v3 and v2 verify
+ * fail AND the request advertised permissive defaults.
  */
 export function serializeSeedRequestForSigningLegacy (msg) {
   const parts = [msg.appKey]
@@ -609,19 +686,94 @@ export function serializeSeedRequestForSigningLegacy (msg) {
  * maxStorageBytes, ttlSeconds, bountyRate, and optionally revocable,
  * unseedFreezeMs, durability).
  *
- * Returns true if the v2 layout verifies, OR if the v1 (legacy) layout
- * verifies AND the request advertised the permissive defaults — same
- * back-compat behavior the Protomux protocol uses.
+ * Returns true if the preferred domain-v3 preimage verifies, if the legacy v2
+ * layout verifies, OR if the v1 layout verifies AND the request advertised the
+ * permissive defaults. That preserves the back-compat behavior the Protomux
+ * protocol uses while allowing modern publishers to sign an explicit domain.
  *
  * Exported so the REST layer (api.js /api/v1/seed) can verify
  * publisher-signed seed requests without instantiating SeedProtocol.
  */
 export function verifySeedRequestSignature (msg) {
-  if (!msg || !msg.publisherPubkey || !msg.publisherSignature) return false
+  return verifySeedRequestSignatureDetails(msg).ok
+}
 
-  const v2 = serializeSeedRequestForSigning(msg)
+export function verifySeedRequestSignatureDetails (msg) {
+  if (!hasPublisherSignatureInputs(msg)) {
+    return {
+      ok: false,
+      layout: null,
+      domain: null,
+      legacy: false,
+      reason: 'malformed publisher signature inputs'
+    }
+  }
+
+  const hasReplayEnvelope = msg.issuedAt !== undefined || msg.requestNonce !== undefined
+  if (hasReplayEnvelope) {
+    let replay
+    try {
+      replay = serializeSeedRequestForReplaySigning(msg)
+    } catch {
+      return {
+        ok: false,
+        layout: null,
+        domain: null,
+        legacy: false,
+        reason: 'malformed seed-request replay envelope'
+      }
+    }
+    if (sodium.crypto_sign_verify_detached(msg.publisherSignature, replay, msg.publisherPubkey)) {
+      return {
+        ok: true,
+        layout: 'replay-v1',
+        domain: SEED_REQUEST_REPLAY_SIGNATURE_DOMAIN,
+        legacy: false,
+        reason: null
+      }
+    }
+    return {
+      ok: false,
+      layout: null,
+      domain: null,
+      legacy: false,
+      reason: 'replay envelope requires replay-v1 signature'
+    }
+  }
+
+  let v3
+  let v2
+  try {
+    v3 = serializeSeedRequestForDomainSigning(msg)
+    v2 = serializeSeedRequestForSigning(msg)
+  } catch {
+    return {
+      ok: false,
+      layout: null,
+      domain: null,
+      legacy: false,
+      reason: 'malformed seed-request payload'
+    }
+  }
+
+  if (sodium.crypto_sign_verify_detached(msg.publisherSignature, v3, msg.publisherPubkey)) {
+    return {
+      ok: true,
+      layout: 'domain-v3',
+      domain: SEED_REQUEST_SIGNATURE_DOMAIN,
+      legacy: false,
+      reason: null
+    }
+  }
+
   if (sodium.crypto_sign_verify_detached(msg.publisherSignature, v2, msg.publisherPubkey)) {
-    return true
+    return {
+      ok: true,
+      layout: 'legacy-v2',
+      domain: null,
+      legacy: true,
+      reason: null
+    }
   }
 
   // v1 fallback: only allowed when the request claims the permissive
@@ -631,8 +783,64 @@ export function verifySeedRequestSignature (msg) {
   if (msg.revocable === false ||
       (msg.unseedFreezeMs && msg.unseedFreezeMs > 0) ||
       (msg.durability && msg.durability > 0)) {
-    return false
+    return {
+      ok: false,
+      layout: null,
+      domain: null,
+      legacy: false,
+      reason: 'signature does not verify for domain-v3 or legacy-v2'
+    }
   }
-  const v1 = serializeSeedRequestForSigningLegacy(msg)
-  return sodium.crypto_sign_verify_detached(msg.publisherSignature, v1, msg.publisherPubkey)
+
+  let v1
+  try {
+    v1 = serializeSeedRequestForSigningLegacy(msg)
+  } catch {
+    return {
+      ok: false,
+      layout: null,
+      domain: null,
+      legacy: false,
+      reason: 'malformed legacy seed-request payload'
+    }
+  }
+
+  if (sodium.crypto_sign_verify_detached(msg.publisherSignature, v1, msg.publisherPubkey)) {
+    return {
+      ok: true,
+      layout: 'legacy-v1',
+      domain: null,
+      legacy: true,
+      reason: null
+    }
+  }
+
+  return {
+    ok: false,
+    layout: null,
+    domain: null,
+    legacy: false,
+    reason: 'signature does not verify'
+  }
+}
+
+function hasPublisherSignatureInputs (msg) {
+  return !!msg &&
+    b4a.isBuffer(msg.publisherPubkey) &&
+    msg.publisherPubkey.byteLength === sodium.crypto_sign_PUBLICKEYBYTES &&
+    b4a.isBuffer(msg.publisherSignature) &&
+    msg.publisherSignature.byteLength === sodium.crypto_sign_BYTES
+}
+
+function seedRequestReplayNonceBuffer (value) {
+  if (b4a.isBuffer(value) && value.byteLength === SEED_REQUEST_REPLAY_NONCE_BYTES) return value
+  if (typeof value === 'string' && /^[0-9a-f]{32}$/i.test(value)) return b4a.from(value, 'hex')
+  return null
+}
+
+function uint64Buf (value) {
+  const buf = b4a.alloc(8)
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
+  view.setBigUint64(0, BigInt(value))
+  return buf
 }

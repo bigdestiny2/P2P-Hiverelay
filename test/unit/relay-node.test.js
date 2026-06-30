@@ -5,7 +5,7 @@ import path from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
 import { EventEmitter } from 'events'
-import { rm, stat } from 'fs/promises'
+import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises'
 
 function tmpStorage () {
   return path.join(tmpdir(), 'hiverelay-test-' + randomBytes(8).toString('hex'))
@@ -20,6 +20,127 @@ test('RelayNode - defaults custody to blind mode', (t) => {
   t.is(node.config.custody.requireEncryptedPayload, true, 'custody requires encrypted payloads')
   t.is(node.config.custody.metadataVisibility, 'redacted', 'blind custody redacts metadata by default')
   t.is(node.config.custody.proofTarget, 'ciphertext', 'proofs target ciphertext')
+})
+
+test('RelayNode - relaykernel mode narrows to seed/proof/circuit core', async (t) => {
+  const node = new RelayNode({ mode: 'relaykernel', storage: tmpStorage() })
+  t.teardown(async () => {
+    try { await node.store.close() } catch (_) {}
+  })
+
+  t.is(node.mode, 'relaykernel')
+  t.is(node.config.productProfile, 'relaykernel')
+  t.is(node.config.enableRelay, true, 'circuit relay stays enabled')
+  t.is(node.config.enableSeeding, true, 'availability seeding stays enabled')
+  t.is(node.config.enableAPI, true, 'HTTP compatibility/API stays enabled')
+  t.is(node.config.enableServices, false, 'service plugins disabled')
+  t.alike(node.config.plugins, [], 'no service plugins selected')
+  t.is(node.config.custody.enabled, false, 'custody is not in the kernel profile')
+  t.is(node.config.signedDirectory.enabled, false, 'global signed directory disabled')
+  t.is(node.config.federation.enabled, false, 'federation disabled')
+  t.alike(node.config.federation.followed, [], 'no followed relays')
+  t.alike(node.config.federation.mirrored, [], 'no mirrored relays')
+  t.is(node.config.lease.enabled, false, 'lease economy disabled')
+  t.is(node.config.payment.enabled, false, 'payment settlement disabled')
+  t.is(node.config.subsidy.enabled, false, 'subsidy claims disabled')
+  t.is(node.config.acceptMode, 'review', 'operator review remains the seed ingress default')
+  t.is(node.config.requireSignedCatalog, true, 'catalog signatures required in the narrowed profile')
+})
+
+test('RelayNode - applyMode resets non-kernel surfaces for relaykernel profile', async (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  t.teardown(async () => {
+    try { await node.store.close() } catch (_) {}
+  })
+
+  node.config.enableServices = true
+  node.config.plugins = ['identity']
+  node.config.custody = { ...node.config.custody, enabled: true }
+  node.config.signedDirectory = { ...node.config.signedDirectory, enabled: true }
+  node.config.federation = { enabled: true, followed: [{ url: 'https://relay.example' }], mirrored: [] }
+  node.config.lease = { ...node.config.lease, enabled: true }
+  node.config.payment = { ...node.config.payment, enabled: true }
+  node.config.subsidy = { ...node.config.subsidy, enabled: true, payoutDestination: 'operator@example.com' }
+
+  await node.applyMode('relaykernel')
+  t.is(node.config.enableServices, false)
+  t.alike(node.config.plugins, [])
+  t.is(node.config.custody.enabled, false)
+  t.is(node.config.signedDirectory.enabled, false)
+  t.is(node.config.federation.enabled, false)
+  t.alike(node.config.federation.followed, [])
+  t.is(node.config.lease.enabled, false)
+  t.is(node.config.payment.enabled, false)
+  t.is(node.config.subsidy.enabled, false)
+  t.is(node.config.subsidy.payoutDestination, null)
+
+  await node.applyMode('relay-core')
+  t.is(node.config.custody.enabled, true, 'switching back restores relay-core custody default')
+  t.is(node.config.enableServices, false, 'relay-core keeps services off')
+  t.is(node.config.lease.enabled, false, 'lease defaults remain present after switching back')
+})
+
+test('RelayNode - relaykernel constructor ignores non-kernel module overrides', async (t) => {
+  const node = new RelayNode({
+    mode: 'relaykernel',
+    storage: tmpStorage(),
+    enableAPI: false,
+    enableServices: true,
+    plugins: ['identity'],
+    custody: { enabled: true, allowTransparent: true, requireEncryptedPayload: false },
+    signedDirectory: { enabled: true },
+    federation: { enabled: true, followed: [{ url: 'https://relay.example' }], mirrored: [{ url: 'https://mirror.example' }] },
+    lease: { enabled: true },
+    payment: { enabled: true },
+    subsidy: { enabled: true, payoutDestination: 'operator@example.com' }
+  })
+  t.teardown(async () => {
+    try { await node.store.close() } catch (_) {}
+  })
+
+  t.is(node.config.productProfile, 'relaykernel')
+  t.is(node.config.enableServices, false, 'services remain excluded')
+  t.alike(node.config.plugins, [], 'plugins remain excluded')
+  t.is(node.config.custody.enabled, false, 'custody remains excluded')
+  t.is(node.config.custody.allowTransparent, false, 'transparent custody cannot be smuggled into kernel mode')
+  t.is(node.config.custody.requireEncryptedPayload, true, 'encrypted-payload posture preserved')
+  t.is(node.config.signedDirectory.enabled, false, 'signed directory remains opt-in outside kernel mode')
+  t.is(node.config.federation.enabled, false, 'federation remains excluded')
+  t.alike(node.config.federation.followed, [], 'followed relays cleared')
+  t.alike(node.config.federation.mirrored, [], 'mirrored relays cleared')
+  t.is(node.config.lease.enabled, false)
+  t.is(node.config.payment.enabled, false)
+  t.is(node.config.subsidy.enabled, false)
+  t.is(node.config.subsidy.payoutDestination, null)
+})
+
+test('RelayNode - relaykernel locks persisted services overrides off', async (t) => {
+  const storage = tmpStorage()
+  await mkdir(storage, { recursive: true })
+  await writeFile(path.join(storage, 'services.json'), JSON.stringify({
+    enabled: true,
+    plugins: ['identity']
+  }))
+
+  const node = new RelayNode({ mode: 'relaykernel', storage, enableAPI: false })
+  t.teardown(async () => {
+    try { await node.store.close() } catch (_) {}
+    await rm(storage, { recursive: true, force: true })
+  })
+
+  await node._loadServicesOverride()
+  t.is(node.config.enableServices, false, 'stored services opt-in is ignored')
+  t.alike(node.config.plugins, [], 'stored service plugins are cleared')
+
+  const payload = await node.setServicesConfig({ enabled: true, plugins: ['identity'] })
+  t.is(payload.enabled, false, 'direct service opt-in remains locked off')
+  t.alike(payload.plugins, [], 'direct service plugin selection is cleared')
+  t.is(payload.locked, true, 'payload reports the profile lock')
+
+  const persisted = JSON.parse(await readFile(path.join(storage, 'services.json'), 'utf8'))
+  t.is(persisted.enabled, false, 'persisted services config is rewritten off')
+  t.alike(persisted.plugins, [], 'persisted service plugins are cleared')
+  t.is(persisted.lockReason, 'relaykernel-profile')
 })
 
 test('RelayNode - startup DHT flush is bounded', async (t) => {

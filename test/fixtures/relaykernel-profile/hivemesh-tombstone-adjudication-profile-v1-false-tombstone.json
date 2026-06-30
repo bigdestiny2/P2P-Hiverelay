@@ -1,0 +1,337 @@
+{
+  "name": "hivemesh-tombstone-adjudication-profile-v1-false-tombstone",
+  "description": "Pins HiveMesh tombstone adjudication so non-serving claims require retry/grace/quorum diversity and false tombstones require same-challenge serving contradiction before slashing witnesses.",
+  "input": {
+    "now": 1800000000000,
+    "intent": {
+      "intentId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "relayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "retainUntil": 1799999940000
+    },
+    "witnessPolicy": {
+      "publisherPubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "selectedBy": "publisher",
+      "witnessCount": 7,
+      "requiredWitnesses": 5,
+      "minOperators": 5,
+      "minRegions": 3,
+      "witnesses": [
+        {
+          "witnessPubkey": "0101010101010101010101010101010101010101010101010101010101010101",
+          "operator": "operator-1",
+          "region": "us-east"
+        },
+        {
+          "witnessPubkey": "0202020202020202020202020202020202020202020202020202020202020202",
+          "operator": "operator-2",
+          "region": "eu-west"
+        },
+        {
+          "witnessPubkey": "0303030303030303030303030303030303030303030303030303030303030303",
+          "operator": "operator-3",
+          "region": "ap-south"
+        },
+        {
+          "witnessPubkey": "0404040404040404040404040404040404040404040404040404040404040404",
+          "operator": "operator-4",
+          "region": "me-central"
+        },
+        {
+          "witnessPubkey": "0505050505050505050505050505050505050505050505050505050505050505",
+          "operator": "operator-5",
+          "region": "sa-east"
+        },
+        {
+          "witnessPubkey": "0606060606060606060606060606060606060606060606060606060606060606",
+          "operator": "operator-6",
+          "region": "af-south"
+        },
+        {
+          "witnessPubkey": "0707070707070707070707070707070707070707070707070707070707070707",
+          "operator": "operator-7",
+          "region": "ca-central"
+        }
+      ]
+    },
+    "adjudicationPolicy": {
+      "requiredWitnesses": 5,
+      "minOperators": 5,
+      "minRegions": 3,
+      "minAttempts": 2,
+      "requireKnownNonServingProof": true,
+      "observationGraceMs": 30000,
+      "maxClockSkewMs": 30000,
+      "contradictionWindowMs": 120000,
+      "minContradictionStrength": 3
+    },
+    "nonServingProofs": [
+      {
+        "proofHash": "2222222222222222222222222222222222222222222222222222222222222222",
+        "intentId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+        "at": 1799999975000,
+        "notServing": true,
+        "catalogPresent": false,
+        "activeSwarmServing": false
+      }
+    ],
+    "tombstones": [
+      {
+        "intentId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "witnessPubkey": "0101010101010101010101010101010101010101010101010101010101010101",
+        "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+        "nonServingProofHash": "2222222222222222222222222222222222222222222222222222222222222222",
+        "at": 1799999980000,
+        "attempts": 2,
+        "catalogPresent": false,
+        "gatewayServing": false,
+        "activeSwarmObserved": false
+      },
+      {
+        "intentId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "witnessPubkey": "0202020202020202020202020202020202020202020202020202020202020202",
+        "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+        "nonServingProofHash": "2222222222222222222222222222222222222222222222222222222222222222",
+        "at": 1799999980000,
+        "attempts": 2,
+        "catalogPresent": false,
+        "gatewayServing": false,
+        "activeSwarmObserved": false
+      },
+      {
+        "intentId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "witnessPubkey": "0303030303030303030303030303030303030303030303030303030303030303",
+        "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+        "nonServingProofHash": "2222222222222222222222222222222222222222222222222222222222222222",
+        "at": 1799999980000,
+        "attempts": 2,
+        "catalogPresent": false,
+        "gatewayServing": false,
+        "activeSwarmObserved": false
+      },
+      {
+        "intentId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "witnessPubkey": "0404040404040404040404040404040404040404040404040404040404040404",
+        "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+        "nonServingProofHash": "2222222222222222222222222222222222222222222222222222222222222222",
+        "at": 1799999980000,
+        "attempts": 2,
+        "catalogPresent": false,
+        "gatewayServing": false,
+        "activeSwarmObserved": false
+      },
+      {
+        "intentId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "witnessPubkey": "0505050505050505050505050505050505050505050505050505050505050505",
+        "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+        "nonServingProofHash": "2222222222222222222222222222222222222222222222222222222222222222",
+        "at": 1799999980000,
+        "attempts": 2,
+        "catalogPresent": false,
+        "gatewayServing": false,
+        "activeSwarmObserved": false
+      },
+      {
+        "intentId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "witnessPubkey": "0505050505050505050505050505050505050505050505050505050505050505",
+        "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+        "nonServingProofHash": "2222222222222222222222222222222222222222222222222222222222222222",
+        "at": 1799999981000,
+        "attempts": 2,
+        "catalogPresent": false,
+        "gatewayServing": false,
+        "activeSwarmObserved": false
+      },
+      {
+        "intentId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "witnessPubkey": "0606060606060606060606060606060606060606060606060606060606060606",
+        "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+        "nonServingProofHash": "2222222222222222222222222222222222222222222222222222222222222222",
+        "at": 1799999980000,
+        "attempts": 2,
+        "catalogPresent": false,
+        "gatewayServing": true,
+        "activeSwarmObserved": false
+      }
+    ],
+    "servingEvidence": [
+      {
+        "type": "retrievability-proof",
+        "intentId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "observerPubkey": "9999999999999999999999999999999999999999999999999999999999999999",
+        "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+        "at": 1799999985000,
+        "success": true
+      }
+    ]
+  },
+  "profile": {
+    "kind": "hivemesh-tombstone-adjudication-profile",
+    "version": 1,
+    "now": 1800000000000,
+    "intent": {
+      "intentId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "relayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "retainUntil": 1799999940000
+    },
+    "adjudicationPolicy": {
+      "requiredWitnesses": 5,
+      "minOperators": 5,
+      "minRegions": 3,
+      "minAttempts": 2,
+      "requireKnownNonServingProof": true,
+      "observationGraceMs": 30000,
+      "maxClockSkewMs": 30000,
+      "contradictionWindowMs": 120000,
+      "minContradictionStrength": 3
+    },
+    "witnessPolicyVerdict": {
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    "tombstoneQuorum": {
+      "valid": true,
+      "count": 5,
+      "required": 5,
+      "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+      "operators": [
+        "operator-1",
+        "operator-2",
+        "operator-3",
+        "operator-4",
+        "operator-5"
+      ],
+      "regions": [
+        "ap-south",
+        "eu-west",
+        "me-central",
+        "sa-east",
+        "us-east"
+      ],
+      "accepted": [
+        {
+          "witnessPubkey": "0101010101010101010101010101010101010101010101010101010101010101",
+          "operator": "operator-1",
+          "region": "us-east",
+          "at": 1799999980000,
+          "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+          "attempts": 2,
+          "nonServingProofHash": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "witnessPubkey": "0202020202020202020202020202020202020202020202020202020202020202",
+          "operator": "operator-2",
+          "region": "eu-west",
+          "at": 1799999980000,
+          "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+          "attempts": 2,
+          "nonServingProofHash": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "witnessPubkey": "0303030303030303030303030303030303030303030303030303030303030303",
+          "operator": "operator-3",
+          "region": "ap-south",
+          "at": 1799999980000,
+          "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+          "attempts": 2,
+          "nonServingProofHash": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "witnessPubkey": "0404040404040404040404040404040404040404040404040404040404040404",
+          "operator": "operator-4",
+          "region": "me-central",
+          "at": 1799999980000,
+          "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+          "attempts": 2,
+          "nonServingProofHash": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "witnessPubkey": "0505050505050505050505050505050505050505050505050505050505050505",
+          "operator": "operator-5",
+          "region": "sa-east",
+          "at": 1799999980000,
+          "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+          "attempts": 2,
+          "nonServingProofHash": "2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      ],
+      "rejected": [
+        {
+          "witnessPubkey": "0505050505050505050505050505050505050505050505050505050505050505",
+          "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+          "reason": "duplicate witness challenge"
+        },
+        {
+          "witnessPubkey": "0606060606060606060606060606060606060606060606060606060606060606",
+          "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+          "reason": "witness observed active serving"
+        }
+      ],
+      "groups": [
+        {
+          "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+          "count": 5,
+          "required": 5,
+          "operators": [
+            "operator-1",
+            "operator-2",
+            "operator-3",
+            "operator-4",
+            "operator-5"
+          ],
+          "regions": [
+            "ap-south",
+            "eu-west",
+            "me-central",
+            "sa-east",
+            "us-east"
+          ],
+          "firstObservedAt": 1799999980000,
+          "lastObservedAt": 1799999980000,
+          "valid": true,
+          "reason": null
+        }
+      ],
+      "reason": null
+    },
+    "contradiction": {
+      "valid": true,
+      "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+      "totalStrength": 3,
+      "distinctObservers": 1,
+      "accepted": [
+        {
+          "observerPubkey": "9999999999999999999999999999999999999999999999999999999999999999",
+          "type": "retrievability-proof",
+          "at": 1799999985000,
+          "challengeNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+          "strength": 3
+        }
+      ],
+      "rejected": [],
+      "reason": null
+    },
+    "verdict": {
+      "status": "false-tombstone",
+      "markRelayExpired": false,
+      "slashWitnesses": [
+        "0101010101010101010101010101010101010101010101010101010101010101",
+        "0202020202020202020202020202020202020202020202020202020202020202",
+        "0303030303030303030303030303030303030303030303030303030303030303",
+        "0404040404040404040404040404040404040404040404040404040404040404",
+        "0505050505050505050505050505050505050505050505050505050505050505"
+      ],
+      "reason": "serving evidence contradicted tombstone quorum"
+    }
+  }
+}

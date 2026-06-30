@@ -12,14 +12,25 @@ import Hypercore from 'hypercore'
 import b4a from 'b4a'
 import os from 'os'
 import path from 'path'
+import { readFile } from 'fs/promises'
 import c from 'compact-encoding'
 import sodium from 'sodium-universal'
 import { wire } from 'hypercore/lib/messages.js'
 import {
   buildStorageProof,
+  PROOF_KIND_RETRIEVABILITY,
+  RETRIEVABILITY_PROOF_DOMAIN,
+  RETRIEVABILITY_PROOF_LIMITATION,
+  RETRIEVABILITY_PROOF_SIGNATURE_PROFILE,
+  retrievabilityProofSignable,
   verifyStorageProof,
   storageProofSignable
 } from 'p2p-hiverelay/core/protocol/proof-of-storage.js'
+
+const RETRIEVABILITY_VECTOR_URL = new URL(
+  '../fixtures/relaykernel-profile/retrievability-proof-signable-v1.json',
+  import.meta.url
+)
 
 let _n = 0
 function tmp () { return path.join(os.tmpdir(), 'hr-pos-' + process.pid + '-' + (_n++)) }
@@ -42,12 +53,55 @@ async function verifierFor (key) {
   await v.ready()
   return v
 }
+async function loadRetrievabilityVector () {
+  return JSON.parse(await readFile(RETRIEVABILITY_VECTOR_URL, 'utf8'))
+}
+function keyPairFromSeed (seedHex) {
+  const publicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
+  const secretKey = b4a.alloc(sodium.crypto_sign_SECRETKEYBYTES)
+  sodium.crypto_sign_seed_keypair(publicKey, secretKey, b4a.from(seedHex, 'hex'))
+  return { publicKey, secretKey }
+}
+
+test('RelayKernel profile: retrievability signature vector is domain-separated', async (t) => {
+  const vector = await loadRetrievabilityVector()
+  const keyPair = keyPairFromSeed(vector.seedHex)
+  const coreKey = b4a.from(vector.coreKey, 'hex')
+  const nonce = b4a.from(vector.nonce, 'hex')
+  const blockValue = b4a.from(vector.blockValueHex, 'hex')
+  const { signable, blockHash } = retrievabilityProofSignable(coreKey, vector.index, nonce, blockValue)
+  const legacy = storageProofSignable(coreKey, vector.index, nonce, blockValue)
+
+  t.is(vector.domain, RETRIEVABILITY_PROOF_DOMAIN)
+  t.is(b4a.toString(keyPair.publicKey, 'hex'), vector.relayPubkey, 'seed derives fixture relay key')
+  t.is(b4a.toString(signable, 'hex'), vector.signableHex, 'domain-separated bytes are stable')
+  t.is(b4a.toString(blockHash, 'hex'), vector.blockHash, 'block hash is stable')
+  t.unlike(b4a.toString(legacy.signable, 'hex'), vector.signableHex, 'legacy bytes remain distinct')
+  t.ok(
+    sodium.crypto_sign_verify_detached(
+      b4a.from(vector.signature, 'hex'),
+      signable,
+      keyPair.publicKey
+    ),
+    'fixture signature verifies against domain-separated bytes'
+  )
+  t.absent(
+    sodium.crypto_sign_verify_detached(
+      b4a.from(vector.signature, 'hex'),
+      legacy.signable,
+      keyPair.publicKey
+    ),
+    'fixture signature cannot be replayed as legacy proof bytes'
+  )
+})
 
 test('VALID proof: genuine block + relay signature over the challenge => valid', async (t) => {
   const core = await seededCore([b4a.from('a'), b4a.from('bb'), b4a.from('ccc'), b4a.from('dddd')])
   const relay = relayKeyPair()
   const nonce = freshNonce()
   const response = await buildStorageProof({ core, index: 2, nonce, keyPair: relay })
+  t.is(response.proofKind, PROOF_KIND_RETRIEVABILITY)
+  t.is(response.proofLimit, RETRIEVABILITY_PROOF_LIMITATION)
   const verifierCore = await verifierFor(core.key)
   const v = await verifyStorageProof({
     verifierCore,
@@ -55,7 +109,78 @@ test('VALID proof: genuine block + relay signature over the challenge => valid',
     expect: { driveKey: core.key, index: 2, nonce, relayPubkey: relay.publicKey }
   })
   t.ok(v.valid, 'valid'); t.ok(v.contentValid, 'content verified vs drive key'); t.ok(v.sigValid, 'relay sig ok')
+  t.is(v.proofKind, PROOF_KIND_RETRIEVABILITY)
+  t.is(v.proofLimit, RETRIEVABILITY_PROOF_LIMITATION)
   await core.close(); await verifierCore.close()
+})
+
+test('RelayKernel profile: opt-in retrievability signature verifies without changing legacy default', async (t) => {
+  const core = await seededCore([b4a.from('aa'), b4a.from('bb'), b4a.from('cc')])
+  const relay = relayKeyPair()
+  const nonce = freshNonce()
+  const response = await buildStorageProof({
+    core,
+    index: 1,
+    nonce,
+    keyPair: relay,
+    signatureProfile: RETRIEVABILITY_PROOF_SIGNATURE_PROFILE
+  })
+  t.is(response.signatureProfile, RETRIEVABILITY_PROOF_SIGNATURE_PROFILE, 'profile is explicit when opted in')
+
+  const expect = { driveKey: core.key, index: 1, nonce, relayPubkey: relay.publicKey }
+  const verifierCore = await verifierFor(core.key)
+  const ok = await verifyStorageProof({ verifierCore, response, expect })
+  t.ok(ok.valid, 'domain-separated profile verifies')
+
+  const downgraded = { ...response }
+  delete downgraded.signatureProfile
+  const legacy = await verifyStorageProof({
+    verifierCore: await verifierFor(core.key),
+    response: downgraded,
+    expect
+  })
+  t.absent(legacy.valid, 'profile signature does not verify as legacy bytes')
+  t.is(legacy.reason, 'SIG_INVALID')
+
+  const unsupported = await verifyStorageProof({
+    verifierCore: await verifierFor(core.key),
+    response: { ...response, signatureProfile: 'unknown-profile' },
+    expect
+  })
+  t.absent(unsupported.valid, 'unsupported profile rejected')
+  t.is(unsupported.reason, 'SIGNATURE_PROFILE_UNSUPPORTED')
+
+  await core.close(); await verifierCore.close()
+})
+
+test('proof kind metadata is additive but rejects explicit wrong claims', async (t) => {
+  const core = await seededCore([b4a.from('aa'), b4a.from('bb')])
+  const relay = relayKeyPair()
+  const nonce = freshNonce()
+  const response = await buildStorageProof({ core, index: 1, nonce, keyPair: relay })
+  const expect = { driveKey: core.key, index: 1, nonce, relayPubkey: relay.publicKey }
+
+  const legacyShape = { ...response }
+  delete legacyShape.proofKind
+  delete legacyShape.proofLimit
+  const legacyVerifier = await verifierFor(core.key)
+  const legacyOk = await verifyStorageProof({
+    verifierCore: legacyVerifier,
+    response: legacyShape,
+    expect
+  })
+  t.ok(legacyOk.valid, 'legacy response without proofKind stays compatible')
+
+  const wrongKindVerifier = await verifierFor(core.key)
+  const wrongKind = await verifyStorageProof({
+    verifierCore: wrongKindVerifier,
+    response: { ...response, proofKind: 'proof-of-replication' },
+    expect
+  })
+  t.absent(wrongKind.valid, 'explicit overclaim is rejected')
+  t.is(wrongKind.reason, 'PROOF_KIND_UNSUPPORTED')
+
+  await legacyVerifier.close(); await wrongKindVerifier.close(); await core.close()
 })
 
 test('one verifier core validates MULTIPLE random samples', async (t) => {

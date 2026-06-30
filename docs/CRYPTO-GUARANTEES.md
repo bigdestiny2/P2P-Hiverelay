@@ -177,7 +177,7 @@ verification, so the relay cannot fake content it isn't the author of.
 and `relayHasFullLength` is the relay's own advertised state. It is **not** a
 per-block, relay-attributable, third-party-portable proof. For that, Tier 2.
 
-### Tier 2 — signed proof-of-storage (`client.proveSeeded`)
+### Tier 2 — signed proof-of-retrievability (`client.proveSeeded`)
 
 ```js
 const r = await client.proveSeeded(driveKey, { relay: relayPubkeyHex, samples: 5 })
@@ -231,7 +231,7 @@ on a caller-supplied key).
 | Modify blocks they're storing | Detectable — Merkle root mismatch |
 | Refuse to serve content | Possible — but other relays / peers will serve it (this is why replication-factor matters) |
 | Lie about serving in proof-of-relay | **Impossible** — they have to produce real Merkle proofs against real bytes |
-| Fake holding a seeded app under proof-of-storage | **Cannot forge content** — signed block proofs must hash into the drive key's signed root; can't fake attribution either (relay signature over a fresh nonce). Can only fetch-on-demand instead of storing (proof-of-retrievability limit) |
+| Fake holding a seeded app under proof-of-retrievability | **Cannot forge content** — signed block proofs must hash into the drive key's signed root; can't fake attribution either (relay signature over a fresh nonce). Can only fetch-on-demand instead of storing (PoR limit) |
 | Surveil who connects | Possible — they see counterparty pubkeys (this is the network-metadata threat). Mitigations: Tor transport, ephemeral keys per session |
 | Censor specific apps from their catalog | Possible — that's the whole *point* of accept-modes. The operator chooses what they carry. Other relays may still carry it. |
 
@@ -278,7 +278,7 @@ the *trust surface is genuinely smaller* for apps that fit the model.
 - `packages/core/core/protocol/seed-request.js` — signature scheme
 - `packages/core/core/protocol/proof-of-relay.js` — challenge/response math
 - `packages/core/core/protocol/bandwidth-receipt.js` — signed transfer proofs
-- `packages/core/core/protocol/proof-of-storage.js` — Tier-2 signed proof-of-storage (build/verify)
+- `packages/core/core/protocol/proof-of-storage.js` — Tier-2 signed proof-of-retrievability (legacy `storage-proof` route, build/verify)
 - `packages/services/builtin/storage-proof-service.js` — Tier-2 relay service (`storage-proof.prove`, privacy gate, rate caps)
 - `packages/client/index.js` — `client.verifySeeded` (Tier 1) and `client.proveSeeded` (Tier 2)
 - `packages/services/identity/attestation.js` — Schnorr attestations for dev-key → app-key bindings

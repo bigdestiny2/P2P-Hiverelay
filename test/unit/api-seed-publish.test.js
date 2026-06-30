@@ -7,7 +7,10 @@ import {
   runPublisherSeedAction,
   runRegistryPublishAction
 } from '../../packages/core/core/relay-node/api-seed-publish.js'
-import { serializeSeedRequestForSigning } from '../../packages/core/core/protocol/seed-request.js'
+import {
+  serializeSeedRequestForReplaySigning,
+  serializeSeedRequestForSigning
+} from '../../packages/core/core/protocol/seed-request.js'
 
 function keyPair () {
   const publicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
@@ -41,10 +44,14 @@ function signedSeedBody (publisherKp, overrides = {}) {
     revocable: body.revocable !== false,
     unseedFreezeMs: body.unseedFreezeMs,
     durability: body.durability,
+    issuedAt: body.issuedAt,
+    requestNonce: body.requestNonce ? b4a.from(body.requestNonce, 'hex') : undefined,
     publisherPubkey: publisherKp.publicKey,
     publisherSignature: b4a.alloc(64)
   }
-  const payload = serializeSeedRequestForSigning(msg)
+  const payload = body.issuedAt !== undefined || body.requestNonce !== undefined
+    ? serializeSeedRequestForReplaySigning(msg)
+    : serializeSeedRequestForSigning(msg)
   sodium.crypto_sign_detached(msg.publisherSignature, payload, publisherKp.secretKey)
   body.publisherSignature = b4a.toString(msg.publisherSignature, 'hex')
   return body
@@ -339,6 +346,56 @@ test('api seed publish: publisher seed forwards signed opts and validation error
   t.is(calls[0].opts.ttlDays, 7)
   t.is(calls[0].opts.publisherPubkey, b4a.toString(publisher.publicKey, 'hex'))
   t.is(calls[0].opts.publisherSignature, body.publisherSignature)
+})
+
+test('api seed publish: publisher seed rejects replayed replay-v1 nonce', async (t) => {
+  const publisher = keyPair()
+  const calls = []
+  const now = Date.now()
+  const node = {
+    seedingRegistry: { getCustodyIntent () { return null } },
+    _publisherSeedReplayCache: new Map(),
+    async seedApp (appKey, opts) {
+      calls.push({ appKey, opts })
+      return { accepted: true }
+    }
+  }
+  const body = signedSeedBody(publisher, {
+    appKey: 'f'.repeat(64),
+    issuedAt: now,
+    requestNonce: '05'.repeat(16)
+  })
+
+  const first = await runPublisherSeedAction({ node, body })
+  t.alike(first.payload, { ok: true, accepted: true })
+  t.is(calls.length, 1)
+  t.is(calls[0].opts.seedSignatureProfile, 'replay-v1')
+
+  const second = await runPublisherSeedAction({ node, body })
+  t.is(second.status, 409)
+  t.ok(second.payload.error.includes('SEED_REQUEST_REPLAY'))
+  t.is(calls.length, 1, 'replayed seed did not reach seedApp')
+})
+
+test('api seed publish: publisher seed rejects unknown signed-ingress fields before seeding', async (t) => {
+  const publisher = keyPair()
+  const calls = []
+  const node = {
+    seedingRegistry: { getCustodyIntent () { return null } },
+    async seedApp (appKey, opts) {
+      calls.push({ appKey, opts })
+      return { accepted: true }
+    }
+  }
+  const body = signedSeedBody(publisher, {
+    appKey: 'c'.repeat(64)
+  })
+  body.caption = 'private docs'
+
+  const out = await runPublisherSeedAction({ node, body })
+  t.is(out.status, 400)
+  t.alike(out.payload, { error: 'unknown publisher seed field: caption' })
+  t.is(calls.length, 0, 'unknown publisher seed field does not reach seedApp')
 })
 
 test('api seed publish: publisher seed preserves custody publisher mismatch and seed error delegation', async (t) => {

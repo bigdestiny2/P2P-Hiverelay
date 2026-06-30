@@ -10,7 +10,7 @@ const defaultOut = '/private/tmp/hiverelay-release-secrets.env'
 
 const usage = `
 Usage:
-  node scripts/write-release-secrets-template.mjs [--out <path>] [--force]
+  node scripts/write-release-secrets-template.mjs [--out <path>] [--force] [--issue-120-repair]
 
 Writes a local candidate env-file template for release distribution values.
 Most values are secrets; the Umbrel fork slug and StartOS registry URL are
@@ -20,6 +20,10 @@ ECOSYSTEM_CONSUMER_TOKEN is used to push those app consumer updates. The
 template contains placeholders only and is intended to live outside the repository. It
 is written with owner-only permissions and refuses to overwrite an existing
 file unless --force is passed.
+
+Use --issue-120-repair to write only the four masked values called out by the
+latest issue #120 preflight comment: UMBREL_STORE_TOKEN,
+UMBREL_OFFICIAL_PR_TOKEN, UMBREL_OFFICIAL_FORK, and STARTOS_REGISTRY_URL.
 `
 
 const args = parseArgs(process.argv.slice(2))
@@ -31,7 +35,14 @@ writeTemplate(outFile, args.force)
 
 console.log(`Wrote release value candidate template: ${outFile}`)
 console.log('Replace every REPLACE_* placeholder, then validate with:')
-console.log(`npm run release:check-distribution-env -- --env-file ${outFile} --channel both --prerelease false`)
+if (args.issue120Repair) {
+  console.log(`npm run release:check-distribution-env -- --issue-120-repair --env-file ${outFile}`)
+  console.log('Then dry-run/apply only the issue #120 repair values with:')
+  console.log(`npm run release:apply-github-secrets -- --issue-120-repair --repo bigdestiny2/P2P-Hiverelay --env-file ${outFile} --dry-run`)
+  console.log(`npm run release:apply-github-secrets -- --issue-120-repair --repo bigdestiny2/P2P-Hiverelay --env-file ${outFile}`)
+} else {
+  console.log(`npm run release:check-distribution-env -- --env-file ${outFile} --channel both --prerelease false`)
+}
 
 function writeTemplate (file, force) {
   const dir = path.dirname(file)
@@ -51,11 +62,26 @@ function writeTemplate (file, force) {
   }
 
   const flags = force ? 'w' : 'wx'
-  fs.writeFileSync(file, templateBody(), { encoding: 'utf8', flag: flags, mode: 0o600 })
+  fs.writeFileSync(file, templateBody(args.issue120Repair), { encoding: 'utf8', flag: flags, mode: 0o600 })
   fs.chmodSync(file, 0o600)
 }
 
-function templateBody () {
+function templateBody (issue120Repair) {
+  if (issue120Repair) {
+    return [
+      '# HiveRelay issue #120 release-value repair candidate.',
+      '# This file is local-only. Do not commit it.',
+      '# Replace only the four still-malformed masked values from the latest issue #120 comment.',
+      '# The helper canonicalizes UMBREL_OFFICIAL_FORK and STARTOS_REGISTRY_URL before applying.',
+      '',
+      'UMBREL_STORE_TOKEN=REPLACE_WITH_GITHUB_TOKEN_FOR_COMMUNITY_STORE',
+      'UMBREL_OFFICIAL_PR_TOKEN=REPLACE_WITH_GITHUB_TOKEN_FOR_OFFICIAL_UMBREL_PR',
+      'UMBREL_OFFICIAL_FORK=REPLACE_OWNER/umbrel-apps',
+      'STARTOS_REGISTRY_URL=REPLACE_WITH_PUBLIC_HTTPS_REGISTRY_URL',
+      ''
+    ].join('\n')
+  }
+
   return [
     '# HiveRelay release distribution values candidate.',
     '# This file is local-only. Do not commit it.',
@@ -96,6 +122,10 @@ function parseArgs (argv) {
     }
     if (arg === '--force') {
       out.force = true
+      continue
+    }
+    if (arg === '--issue-120-repair') {
+      out.issue120Repair = true
       continue
     }
     die(`Unknown argument: ${arg}`)

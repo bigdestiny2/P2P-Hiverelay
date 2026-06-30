@@ -422,6 +422,8 @@ private transfers.
   -> proof -> non-serving-proof, with expiry witnesses layered on top.
 - The validator enforces per-type allowlists and blocks known plaintext/key
   fields such as `plaintext`, `dataKey`, `fileName`, PVSS scalars, and paths.
+- Publisher-signed seed ingress uses a fixed field allowlist too; operator
+  catalog metadata belongs on authenticated operator seed/catalog paths.
 - At `retainUntil`, relays unseed and sign non-serving proofs; independent
   witnesses can sign tombstones.
 
@@ -453,10 +455,15 @@ verification tiers:
 - `verifySeeded(driveKey, { relay })`: replicate both drive cores from the
   relay so Hypercore validates content against the signed Merkle root.
 - `proveSeeded(driveKey, { relay, samples })`: challenge sampled metadata
-  blocks through the opt-in `storage-proof` service and verify signed
-  `StorageProofService` responses with nonce freshness and relay attribution.
+  blocks and verify signed proof-of-retrievability responses with nonce
+  freshness and relay attribution. The SDK sampling driver prefers the
+  kernel-compatible `POST /api/proof/retrievability` route when a cached or
+  fetched capability doc advertises `retrievability-proof-http`, can opt into
+  the RelayKernel `retrievability-proof-v1` domain-separated signature profile,
+  and falls back to the legacy `storage-proof.prove` service RPC for
+  compatibility.
 
-`StorageProofService` is privacy-gated: blind or redacted drives return the same
+The proof provider is privacy-gated: blind or redacted drives return the same
 shape as not-held content, avoiding a possession oracle. It also has global
 proof-work rate limits, per-caller buckets, and a phantom-core guard.
 
@@ -487,8 +494,15 @@ kernel. The built-in service names are:
 | `zk` | experimental | Commitments, membership/range proof helpers |
 | `sla` | experimental | Service-level agreements and violation tracking |
 | `arbitration` | experimental | Evidence-backed dispute resolution |
-| `storage-proof` | opt-in | Signed per-block proof-of-storage challenges |
+| `storage-proof` | opt-in | Signed per-block proof-of-retrievability challenges |
 | `signed-directory` | opt-in | Openly writable signed-record directory with TTL, signature, and rate-limit checks |
+
+For RelayKernel compatibility testing, `mode: "relaykernel"` narrows the
+runtime to seed/proof/circuit/meta/accounting surfaces: service plugins,
+custody, federation, legacy signed-directory discovery, payment settlement,
+leases, and subsidy claims are profile-locked off, including constructor
+overrides and persisted `services.json` toggles. The public gateway/API, core
+proof-of-retrievability route, and review-mode seed ingress stay available.
 
 The Blindspark dashboard exposes a service manager for these plugins. The
 `poker` preset enables the `poker` provider plus `vrf`, `arbitration`, and
@@ -706,6 +720,7 @@ management bearer auth.
 | Capabilities | `GET /.well-known/hiverelay.json`, `GET /api/capabilities` | public |
 | Reputation/fork proof reads | `GET /api/reputation`, `GET /api/reputation/:pubkey`, `GET /api/forks/proofs` | public |
 | Anchor status | `GET /api/anchors`, `GET /api/anchors?detailed=1`, `GET /api/anchors/:appKey/proof` | public bounded aggregate/proof on Node and Bare, management auth for detailed diagnostics |
+| Proof-of-retrievability | `POST /api/proof/retrievability` | public bounded per-block challenge proof; privacy-gated so blind/private/not-held keys are indistinguishable |
 | Network discovery | `GET /api/network`, `GET /api/network?detailed=1` | public redacted state, management auth for bounded host/API/Tor/Holesail details |
 | Dashboard | `/dashboard`, `/wizard`, `/ws` | local/API token/platform proxy; live WebSocket frames use redacted node stats plus bounded relay/seeder, AutoHeal, custody, transport, payment, and reputation summaries |
 | Publisher seed | `POST /api/v1/seed`, `POST /api/v1/unseed` | publisher signature |
@@ -723,6 +738,7 @@ management bearer auth.
 | Poker/SignedLog | `/api/poker/*`, `/api/poker/:table/events`, P2P `poker/<tableKey>` events | route-specific; public Poker table routes use hardened JSON responses, an exact JSON POST body gate, in-band WS auth, and redacted unexpected HTTP/WS provider errors |
 | Paid leases | `GET /api/lease`, `POST /api/lease/config`, seed-request payment proof bodies | public status / management config; direct proofs, bearer vouchers, and Cashu blind-token redemption |
 | Dedup/reclaim | `POST /api/dedup/reclaim` | management auth |
+| Accounting receipt | `GET /api/accounting/receipt` | management auth; returns a signed OS-grounded storage/served-byte receipt |
 | Service/accounting telemetry | `POST /api/usage/receipt`, `GET /api/usage`, `GET /api/poker/usage` | signed receipt / management reads |
 | Wallet destination | `GET /api/subsidy`, `POST /api/subsidy/destination` | management auth |
 | Fleet/ops controls | `/api/manage/restart`, `/api/manage/shutdown`, `/api/eviction/purge` | management auth |
@@ -747,7 +763,7 @@ verified:
 | Replication | Hypercore replication | Registry logs, app drives, catalog Bees, bare pinned cores |
 | Seed requests | `hiverelay-seed` | Publisher/operator seed requests with signed policy metadata |
 | Custody | `hiverelay-publish`, `hiverelay-custody` | Signed blind-custody submissions and relay-to-relay gossip |
-| Proofs | `hiverelay-proof`, `hiverelay-anchor`, `storage-proof.prove` | Relay receipts, anchor proofs, sampled storage challenges |
+| Proofs | `hiverelay-proof`, `hiverelay-anchor`, `storage-proof.prove` | Relay receipts, anchor proofs, sampled retrievability challenges |
 | Services | `hiverelay-services`, `callService`, `subscribeService` | P2P service RPC, bounded catalogs, live exact-topic event subscriptions, and redacted unexpected provider errors |
 | Poker/SignedLog | `client.subscribeService('poker', tableKey, ...)` | Per-table sealed-action events and SignedLog append streams |
 | Discovery | `hiverelay-meta`, `hiverelay-registry-meta`, DHT relay records | Relay metadata, registry summaries, gateway/index-room lookup |
@@ -769,8 +785,23 @@ directly.
 | Relay selection | `fetchCapabilities`, `refreshCapabilityCache`, `selectQuorum` | Choose diverse/pinned relays from signed capability docs |
 | Cross-relay reads | `queryQuorum`, `queryQuorumWithComparison` | Compare relay responses and surface divergence |
 | Identity and devices | `exportIdentity`, `importIdentity`, `createDeviceAttestation`, `verifyDeviceAttestation`, `createCertRevocation`, `createPairingCode`, `claimPairingCode` | Move identities across devices and delegate/revoke device keys |
+| Accounting | `fetchAccountingReceipt(relayUrl, { apiKey, expectedPubkey })` | Fetch and verify signed OS-grounded relay accounting receipts |
 | Services | `callService`, `subscribeService(service, event, onEvent, opts?)` | Call providers and receive live P2P service events |
-| Seed verification | `verifySeeded(driveKey, { relay })`, `proveSeeded(driveKey, { relay, samples })` | Verify relay-held content through replication or signed storage proofs |
+| Seed verification | `verifySeeded(driveKey, { relay })`, `proveSeeded(driveKey, { relay, samples })` | Verify relay-served content through replication or signed proof-of-retrievability challenges |
+
+Capability documents include a signed `directory_privacy` posture. Clients can
+tell whether a relay is merely exposing public catalog/gateway reads
+(`catalog-public`) or has explicitly opted into global enumerability through
+the signed-directory surface (`global-directory-opt-in`). RelayKernel-profile
+relays advertise `relaykernel-private` unless that explicit directory opt-in is
+added.
+
+They also advertise `seed-signature-domain-v3` when publisher seed requests can
+use the preferred `hiverelay.seed-request.v3` domain-separated signature
+preimage; SDK producers keep legacy v2 by default for mixed relay fleets.
+Relays with circuit support advertise `circuit-limits-profile-v1` and sign the
+effective RelayKernel-compatible circuit caps in
+`protocol_profile.circuit_limits`.
 
 For independent HTTP verification, install `p2p-hiverelay-verifier` and run
 `hive-verify` against two or more relays. It compares capability documents,
@@ -1003,6 +1034,7 @@ Important release commands:
 | `npm run release:check-distribution-env` | Fail stable releases missing or malformed npm, fleet, Umbrel, or StartOS credentials; use `--env-file` to validate local candidate secrets before setting GitHub Secrets |
 | `npm run release:check-github-setup` | Verify the repo exposes release secret/variable names before tagging and print the safe secret-rotation repair path when names are missing; values are validated by the Actions preflight |
 | `npm run release:apply-github-secrets` | Validate a local release secret env-file, then apply those exact values to GitHub Secrets through `gh` stdin |
+| `npm run release:check-npm-packages` | Dry-run pack the four publishable npm workspaces and fail missing README/license metadata or unsafe tarball paths before publish |
 | `npm run release:check-image-manifest` | Verify the pinned GHCR digest exposes `linux/amd64` and `linux/arm64` manifests |
 | `npm run release:smoke-image` | Boot exact GHCR digest and test dashboard/API writes, in-band dashboard WebSocket auth, and usage telemetry |
 | `npm run umbrel:smoke-package` | Boot package compose and verify WebSocket auth, telemetry, and persistence |
@@ -1031,10 +1063,13 @@ Key properties:
 - **Blind-by-default private workloads**: non-public data is ciphertext; private
   gateway reads are blocked unless the app explicitly declares public content.
 - **Schema-level privacy enforcement**: custody envelopes reject unknown fields
-  and known plaintext/key-material names.
+  and known plaintext/key-material names; publisher-signed seed ingress rejects
+  unknown top-level fields before seeding.
 - **Signed control planes**: seed requests, custody entries, manifests,
   capability docs, VRF proofs, and signed-directory records are cryptographically
-  verifiable.
+  verifiable. Seed-request verification accepts the preferred
+  `hiverelay.seed-request.v3` domain-separated preimage while retaining legacy
+  v2/v1 compatibility.
 - **Management API hardening**: bearer tokens are timing-safe, JSON media types
   are exact, body limits are bounded, and persistence failures roll back
   in-memory UI changes before returning `persist-failed`.

@@ -132,9 +132,30 @@ export const EXPECTED_CURRENT_CONSUMERS = [
         termTemplateByDependencyMode: {
           'npm-latest': '`p2p-hiverelay` `{version}` from the npm latest release line'
         },
+        replaceTerms: [
+          '`p2p-hiverelay` (npm v0.8.12)'
+        ],
         rejectTerms: [
           'npm v0.8.12',
           '^0.8.12'
+        ]
+      },
+      {
+        file: '01-browser/pearbrowser-desktop/README.md',
+        label: 'PearBrowser README advertises npm latest Hiverelay defaults',
+        term: 'desktop packages default to npm `latest` for HiveRelay',
+        rejectTerms: [
+          'desktop packages pinned to local',
+          'local `0.20.0` workspace packages',
+          'sibling checkout is required for community source installs'
+        ]
+      },
+      {
+        file: '01-browser/pearbrowser-desktop/scripts/check-hiverelay-layout.mjs',
+        label: 'PearBrowser install guard permits npm latest defaults',
+        term: 'usesNpmLatestDefaults',
+        rejectTerms: [
+          'PearBrowser desktop currently uses local HiveRelay workspace packages.'
         ]
       }
     ]
@@ -220,6 +241,16 @@ export const EXPECTED_CURRENT_CONSUMERS = [
           'v0.8.14',
           '0.8.14'
         ]
+      },
+      {
+        file: '02-apps/pearpaste/test/unit/hiverelay-upgrade.test.js',
+        label: 'PearPaste customer test asserts npm latest Hiverelay defaults',
+        term: 'HiveRelay customer path uses npm latest defaults',
+        rejectTerms: [
+          'HiveRelay customer path is pinned to the local',
+          'file:../../00-core/hiverelay/packages/core',
+          'file:../../00-core/hiverelay/packages/client'
+        ]
       }
     ]
   },
@@ -271,6 +302,15 @@ export const EXPECTED_CURRENT_CONSUMERS = [
         rejectTerms: [
           'p2p-hiverelay-client@0.16.3'
         ]
+      },
+      {
+        file: '02-apps/pear-pos/scripts/validate-publish-surface.mjs',
+        label: 'POS publish validator accepts npm latest Hiverelay defaults',
+        term: 'package.json optionalDependencies.p2p-hiverelay should default to npm latest',
+        rejectTerms: [
+          'package.json optionalDependencies.p2p-hiverelay should point at ../../00-core/hiverelay/packages/core',
+          'package.json optionalDependencies.p2p-hiverelay-client should point at ../../00-core/hiverelay/packages/client'
+        ]
       }
     ]
   },
@@ -280,7 +320,66 @@ export const EXPECTED_CURRENT_CONSUMERS = [
     deps: {
       'p2p-hiverelay': 'file:../../00-core/hiverelay/packages/core',
       'p2p-hiverelay-client': 'file:../../00-core/hiverelay/packages/client'
-    }
+    },
+    sourceChecks: [
+      {
+        file: '02-apps/pear-tickets/scripts/validate-publish-surface.mjs',
+        label: 'Pear Tickets publish validator accepts npm latest Hiverelay defaults',
+        term: 'package.json must default p2p-hiverelay to npm latest',
+        rejectTerms: [
+          'package.json must pin p2p-hiverelay to ../../00-core/hiverelay/packages/core',
+          'package.json must pin p2p-hiverelay-client to ../../00-core/hiverelay/packages/client'
+        ]
+      },
+      {
+        file: '02-apps/pear-tickets/README.md',
+        label: 'Pear Tickets README advertises npm latest Hiverelay defaults',
+        term: 'defaults `p2p-hiverelay` and `p2p-hiverelay-client` to npm `latest`',
+        rejectTerms: [
+          'local file dependencies'
+        ]
+      }
+    ]
+  },
+  {
+    path: '02-apps/peerit/package.json',
+    role: 'local-only Peerit publish client compatibility',
+    sourceOnly: true,
+    deps: {},
+    sourceChecks: [
+      {
+        file: '02-apps/peerit/publish.mjs',
+        label: 'Peerit publish path loads the split HiveRelay client package',
+        term: "const HIVERELAY_CLIENT_PACKAGE = 'p2p-hiverelay-client'",
+        rejectTerms: [
+          'p2p-hiverelay/client',
+          "from '/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/packages/client/index.js'"
+        ]
+      },
+      {
+        file: '02-apps/peerit/publish.mjs',
+        label: 'Peerit publish path accepts explicit HiveRelay checkout overrides',
+        term: "['HIVERELAY_ROOT', process.env.HIVERELAY_ROOT]"
+      },
+      {
+        file: '02-apps/peerit/publish.mjs',
+        label: 'Peerit publish path validates the HiveRelayClient export',
+        term: 'does not export HiveRelayClient'
+      },
+      {
+        file: '02-apps/peerit/README.md',
+        label: 'Peerit README preserves dependency-free app runtime and publish-only client scope',
+        term: 'The app itself has no install step and no runtime npm dependencies. Publishing is\nthe only workflow that needs the HiveRelay client.',
+        rejectTerms: [
+          'p2p-hiverelay/client'
+        ]
+      },
+      {
+        file: '02-apps/peerit/README.md',
+        label: 'Peerit README documents installed split-client package plus local checkout fallback',
+        term: 'The publisher loads `p2p-hiverelay-client` from an installed package, an explicit\nHiveRelay env path, or a discoverable sibling/workspace checkout.'
+      }
+    ]
   },
   {
     path: '03-sites/pearbrowser-publishers/src/p2pbuilders/package.json',
@@ -293,7 +392,19 @@ export const EXPECTED_CURRENT_CONSUMERS = [
     deps: {
       'p2p-hiverelay': 'file:../../../../00-core/hiverelay/packages/core',
       'p2p-hiverelay-client': 'file:../../../../00-core/hiverelay/packages/client'
-    }
+    },
+    sourceChecks: [
+      {
+        file: '03-sites/pearbrowser-publishers/src/p2pbuilders/test/m12-hiverelay-client-migration.js',
+        label: 'p2pbuilders migration guard asserts npm latest Hiverelay defaults',
+        term: 'p2pbuilders should default to the npm latest HiveRelay core package',
+        rejectTerms: [
+          'p2pbuilders should use the local HiveRelay',
+          'file:../../../../00-core/hiverelay/packages/core',
+          'file:../../../../00-core/hiverelay/packages/client'
+        ]
+      }
+    ]
   },
   {
     path: '04-experiments/Opengit/packages/opengit-relay/package.json',
@@ -329,6 +440,16 @@ export const EXPECTED_CURRENT_CONSUMERS = [
           '^0.8',
           '^0.7.3'
         ]
+      },
+      {
+        file: '04-experiments/Opengit/packages/opengit-relay/test/relay.test.js',
+        label: 'Opengit relay test asserts npm latest Hiverelay defaults',
+        term: 'optional HiveRelay bridge defaults to npm latest packages',
+        rejectTerms: [
+          'optional HiveRelay bridge is pinned to local ESM packages',
+          'file:../../../../00-core/hiverelay/packages/core',
+          'file:../../../../00-core/hiverelay/packages/client'
+        ]
       }
     ]
   },
@@ -353,6 +474,15 @@ export const EXPECTED_CURRENT_CONSUMERS = [
         file: '04-experiments/anongpt-native/backend/forward-transport.js',
         label: 'anonGPT forward transport targets production HiveRelay forward service',
         term: "routes inference through the production HiveRelay relays' forward service"
+      },
+      {
+        file: '04-experiments/anongpt-native/test/hiverelay-upgrade.test.cjs',
+        label: 'anonGPT customer test asserts npm latest Hiverelay defaults',
+        term: 'HiveRelay customer transport path uses npm latest by default',
+        rejectTerms: [
+          'HiveRelay customer transport path uses the local',
+          'file:../../00-core/hiverelay/packages/core'
+        ]
       }
     ]
   },
@@ -414,11 +544,13 @@ function resolveSourceChecksForMode (sourceChecks = [], dependencyMode) {
     ])
     resolved.replaceTerms = uniqueStrings([
       spec.term,
+      ...(spec.replaceTerms || []),
       ...Object.values(termByMode),
       resolved.term
     ])
     resolved.replaceTermTemplates = uniqueStrings([
       spec.termTemplate,
+      ...(spec.replaceTermTemplates || []),
       ...Object.values(termTemplateByMode),
       resolved.termTemplate
     ])
@@ -487,7 +619,9 @@ export function checkConsumerState (rows, opts = {}) {
   for (const expected of expectedCurrent) {
     const row = byPath.get(expected.path)
     if (!row) {
-      errors.push(`Missing expected current Hiverelay consumer: ${expected.path}`)
+      if (!isSourceOnlyConsumer(expected)) {
+        errors.push(`Missing expected current Hiverelay consumer: ${expected.path}`)
+      }
       continue
     }
     compareDeps(errors, row, expected.deps, 'current local consumer')
@@ -615,6 +749,7 @@ export function scanCurrentConsumerLockChecks (opts = {}) {
   const checks = []
 
   for (const consumer of expectedCurrent) {
+    if (!hasExpectedHiverelayDeps(consumer)) continue
     const packageFile = path.join(workspaceRoot, consumer.path)
     const packageDir = path.dirname(packageFile)
     const lockFile = findNearestLockfile(packageDir, workspaceRoot)
@@ -867,7 +1002,8 @@ export function formatConsumerReport (summary) {
   lines.push(summary.dependencyMode === 'npm-latest' ? 'Current npm-latest consumers:' : 'Current local consumers:')
   for (const row of summary.current) {
     const role = row.role ? ` [${row.role}]` : ''
-    lines.push(`- ${row.path}${role}: ${formatDeps(row.deps)}`)
+    const deps = formatDeps(row.deps) || (row.sourceOnly ? 'no package deps; source-only compatibility guard' : '(none)')
+    lines.push(`- ${row.path}${role}: ${deps}`)
   }
   if (summary.current.length === 0) lines.push('- none')
 
@@ -943,12 +1079,32 @@ export function formatConsumerReport (summary) {
 }
 
 function decorateExpectedRow (row, expected) {
+  if (!row && isSourceOnlyConsumer(expected)) {
+    return {
+      path: expected.path,
+      name: '',
+      deps: { ...(expected.deps || {}) },
+      ignored: false,
+      sourceOnly: true,
+      role: expected.role || null,
+      action: expected.action || null
+    }
+  }
   if (!row) return null
   return {
     ...row,
+    sourceOnly: Boolean(expected.sourceOnly),
     role: expected.role || null,
     action: expected.action || null
   }
+}
+
+function hasExpectedHiverelayDeps (consumer) {
+  return Object.keys(consumer.deps || {}).length > 0
+}
+
+function isSourceOnlyConsumer (consumer) {
+  return consumer.sourceOnly === true || !hasExpectedHiverelayDeps(consumer)
 }
 
 function compareDeps (errors, row, expectedDeps, label) {

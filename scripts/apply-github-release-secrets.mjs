@@ -23,18 +23,29 @@ const OPTIONAL_VARIABLES = [
   'FLEET_ROLLOUT_TIMEOUT_MS'
 ]
 
+const ISSUE_120_REPAIR_SECRETS = [
+  'UMBREL_STORE_TOKEN',
+  'UMBREL_OFFICIAL_PR_TOKEN',
+  'UMBREL_OFFICIAL_FORK',
+  'STARTOS_REGISTRY_URL'
+]
+
 const usage = `
 Usage:
-  node scripts/apply-github-release-secrets.mjs --repo owner/name --env-file <path> [--gh gh] [--channel both] [--prerelease false] [--dry-run]
+  node scripts/apply-github-release-secrets.mjs --repo owner/name --env-file <path> [--gh gh] [--channel both] [--prerelease false] [--dry-run] [--issue-120-repair]
 
 Validates a local release-value candidate file with
-scripts/check-release-distribution-env.mjs, then writes the exact same masked
-release values to GitHub Secrets using gh. Values are sent through stdin and
-are never printed. ECOSYSTEM_CONSUMER_TOKEN is required so full releases can
-push app consumer default updates after npm latest is promoted. NPM_TOKEN is
-required so full releases can publish the workspace packages before app
-consumers follow npm latest.
+scripts/check-release-distribution-env.mjs, then writes the validated masked
+release values to GitHub Secrets using gh. UMBREL_OFFICIAL_FORK and
+STARTOS_REGISTRY_URL are canonicalized before writing. Values are sent through
+stdin and are never printed. ECOSYSTEM_CONSUMER_TOKEN is required so full
+releases can push app consumer default updates after npm latest is promoted.
+NPM_TOKEN is required so full releases can publish the workspace packages
+before app consumers follow npm latest.
 FLEET_ROLLOUT_TIMEOUT_MS, when present, is the only GitHub Variable.
+Use --issue-120-repair to validate and apply only the four malformed masked
+values called out by issue #120: UMBREL_STORE_TOKEN, UMBREL_OFFICIAL_PR_TOKEN,
+UMBREL_OFFICIAL_FORK, and STARTOS_REGISTRY_URL.
 `
 
 const args = parseArgs(process.argv.slice(2))
@@ -47,44 +58,54 @@ if (!args.envFile) die('Missing --env-file')
 if (!isRepoFullName(repo)) die('Invalid --repo. Expected owner/name.')
 if (prerelease !== 'false') die('release:apply-github-secrets only validates full-release secret values; use --prerelease false.')
 
-const values = safeReadEnvFile(args.envFile)
-validateCandidateFile(args.envFile, channel, prerelease)
+const secretNames = args.issue120Repair ? ISSUE_120_REPAIR_SECRETS : REQUIRED_SECRETS
+const values = normalizeApplyValues(safeReadEnvFile(args.envFile))
+validateCandidateFile(args.envFile, channel, prerelease, args.issue120Repair)
 
 if (args.dryRun) {
   console.log(`Release value candidate file is valid for ${repo}.`)
-  console.log(`Would set masked GitHub release values as Secrets: ${REQUIRED_SECRETS.join(', ')}`)
-  const variables = OPTIONAL_VARIABLES.filter(name => values[name])
-  if (variables.length > 0) console.log(`Would set GitHub Variables: ${variables.join(', ')}`)
+  console.log(`Would set masked GitHub release values as Secrets: ${secretNames.join(', ')}`)
+  const variables = args.issue120Repair ? [] : OPTIONAL_VARIABLES.filter(name => values[name])
+  if (args.issue120Repair) console.log('Issue #120 repair mode; no GitHub Variables would be changed.')
+  else if (variables.length > 0) console.log(`Would set GitHub Variables: ${variables.join(', ')}`)
   else console.log('No optional GitHub Variables present in candidate file.')
   console.log('Dry run only; no GitHub release values or Variables were changed.')
   printNextSteps(repo, channel, { afterApply: true })
   process.exit(0)
 }
 
-for (const name of REQUIRED_SECRETS) {
+for (const name of secretNames) {
   runGh(gh, ['secret', 'set', name, '--repo', repo], values[name], `secret ${name}`)
   console.log(`Set masked GitHub release value ${name} as a Secret.`)
 }
 
-for (const name of OPTIONAL_VARIABLES) {
-  if (!values[name]) continue
-  runGh(gh, ['variable', 'set', name, '--repo', repo, '--body', values[name]], '', `variable ${name}`)
-  console.log(`Set GitHub Variable ${name}.`)
+if (!args.issue120Repair) {
+  for (const name of OPTIONAL_VARIABLES) {
+    if (!values[name]) continue
+    runGh(gh, ['variable', 'set', name, '--repo', repo, '--body', values[name]], '', `variable ${name}`)
+    console.log(`Set GitHub Variable ${name}.`)
+  }
 }
 
 console.log('GitHub release values applied.')
 printNextSteps(repo, channel)
 
-function validateCandidateFile (envFile, channel, prerelease) {
-  const result = spawnSync(process.execPath, [
+function validateCandidateFile (envFile, channel, prerelease, issue120Repair) {
+  const argv = [
     path.join(here, 'check-release-distribution-env.mjs'),
     '--env-file',
-    envFile,
-    '--channel',
-    channel,
-    '--prerelease',
-    prerelease
-  ], {
+    envFile
+  ]
+  if (issue120Repair) argv.push('--issue-120-repair')
+  else {
+    argv.push(
+      '--channel',
+      channel,
+      '--prerelease',
+      prerelease
+    )
+  }
+  const result = spawnSync(process.execPath, argv, {
     cwd: root,
     encoding: 'utf8',
     env: {
@@ -163,6 +184,10 @@ function parseArgs (argv) {
       out.dryRun = true
       continue
     }
+    if (arg === '--issue-120-repair') {
+      out.issue120Repair = true
+      continue
+    }
     die(`Unknown argument: ${arg}`)
   }
   return out
@@ -183,6 +208,72 @@ function isRepoFullName (value) {
 
 function isGitHubName (value) {
   return /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/.test(value)
+}
+
+function normalizeApplyValues (values) {
+  const out = { ...values }
+  const fork = normalizeOfficialUmbrelForkSlug(values.UMBREL_OFFICIAL_FORK)
+  if (fork) out.UMBREL_OFFICIAL_FORK = fork
+  const registryUrl = normalizePublicHttpsUrl(values.STARTOS_REGISTRY_URL)
+  if (registryUrl) out.STARTOS_REGISTRY_URL = registryUrl
+  return out
+}
+
+function normalizeOfficialUmbrelForkSlug (value) {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed || hasControlChars(trimmed)) return null
+  let slug = trimmed
+  const httpsUrl = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s?#]+)\/?$/i.exec(slug)
+  if (httpsUrl) slug = `${httpsUrl[1]}/${httpsUrl[2]}`
+  const sshUrl = /^git@github\.com:([^/\s]+)\/([^/\s]+)$/.exec(slug)
+  if (sshUrl) slug = `${sshUrl[1]}/${sshUrl[2]}`
+  slug = slug.replace(/\.git$/i, '').replace(/\/+$/, '')
+  const parts = slug.split('/')
+  if (parts.length !== 2) return null
+  const [owner, repo] = parts
+  if (!isGitHubOwnerName(owner) || owner.toLowerCase() === 'getumbrel' || repo.toLowerCase() !== 'umbrel-apps') return null
+  return `${owner}/umbrel-apps`
+}
+
+function normalizePublicHttpsUrl (value) {
+  if (typeof value !== 'string' || !value) return null
+  const trimmed = value.trim()
+  if (!trimmed || hasControlChars(trimmed)) return null
+  try {
+    const url = new URL(trimmed)
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || !isPublicHostname(url.hostname)) return null
+    return `${url.origin}${normalizeUrlPath(url.pathname)}`
+  } catch (_) {
+    return null
+  }
+}
+
+function normalizeUrlPath (pathname) {
+  const value = String(pathname || '')
+  if (!value || value === '/') return ''
+  return value.replace(/\/+$/, '')
+}
+
+function isPublicHostname (hostname) {
+  const host = String(hostname || '').toLowerCase()
+  if (!/^[a-z0-9.-]+$/.test(host)) return false
+  if (!host.includes('.')) return false
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return false
+
+  const labels = host.split('.')
+  if (labels.some(label => !label || label.length > 63 || label.startsWith('-') || label.endsWith('-'))) return false
+  const tld = labels[labels.length - 1]
+  if (!/^[a-z]{2,63}$/.test(tld)) return false
+
+  const reservedHosts = new Set(['localhost', 'example.com', 'example.net', 'example.org'])
+  if (reservedHosts.has(host)) return false
+  const reservedSuffixes = ['.localhost', '.local', '.internal', '.test', '.example', '.invalid', '.example.com', '.example.net', '.example.org']
+  return !reservedSuffixes.some(suffix => host.endsWith(suffix))
+}
+
+function isGitHubOwnerName (value) {
+  return /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(value)
 }
 
 function sanitizeGhError (value, redactions = []) {

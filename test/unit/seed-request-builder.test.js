@@ -15,8 +15,15 @@
 import test from 'brittle'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
-import { serializeSeedRequestForSigning } from 'p2p-hiverelay/core/protocol/seed-request.js'
-import { buildPublisherSignedSeedOpts, extractCustodySeedOpts } from 'p2p-hiverelay/core/seed-request-builder.js'
+import {
+  serializeSeedRequestForReplaySigning,
+  serializeSeedRequestForSigning
+} from 'p2p-hiverelay/core/protocol/seed-request.js'
+import {
+  buildPublisherSignedSeedOpts,
+  consumePublisherSeedReplayNonce,
+  extractCustodySeedOpts
+} from 'p2p-hiverelay/core/seed-request-builder.js'
 
 function keyPair () {
   const publicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
@@ -39,12 +46,16 @@ function signedBody (kp, overrides = {}) {
     unseedFreezeMs: 0,
     durability: 0,
     publisherPubkey: kp.publicKey,
+    issuedAt: overrides.issuedAt,
+    requestNonce: overrides.requestNonce ? b4a.from(overrides.requestNonce, 'hex') : undefined,
     ...overrides
   }
-  const payload = serializeSeedRequestForSigning(fields)
+  const payload = overrides.issuedAt !== undefined || overrides.requestNonce !== undefined
+    ? serializeSeedRequestForReplaySigning(fields)
+    : serializeSeedRequestForSigning(fields)
   const sig = b4a.alloc(sodium.crypto_sign_BYTES)
   sodium.crypto_sign_detached(sig, payload, kp.secretKey)
-  return {
+  const body = {
     appKey: b4a.toString(fields.appKey, 'hex'),
     discoveryKeys: fields.discoveryKeys.map(dk => b4a.toString(dk, 'hex')),
     replicationFactor: fields.replicationFactor,
@@ -57,6 +68,13 @@ function signedBody (kp, overrides = {}) {
     publisherPubkey: b4a.toString(fields.publisherPubkey, 'hex'),
     publisherSignature: b4a.toString(sig, 'hex')
   }
+  if (fields.issuedAt !== undefined) body.issuedAt = fields.issuedAt
+  if (fields.requestNonce !== undefined) {
+    body.requestNonce = b4a.isBuffer(fields.requestNonce)
+      ? b4a.toString(fields.requestNonce, 'hex')
+      : fields.requestNonce
+  }
+  return body
 }
 
 // ─── Happy path ─────────────────────────────────────────────────────
@@ -76,6 +94,56 @@ test('builder: signed body with defaults returns ok + canonical opts', (t) => {
   t.is(r.opts.durability, 0)
   t.is(r.opts.publisherPubkey, body.publisherPubkey)
   t.is(r.opts.publisherSignature, body.publisherSignature)
+})
+
+test('builder: replay-v1 signed body returns replay metadata and cache rejects duplicates', (t) => {
+  const kp = keyPair()
+  const now = 1782753600000
+  const body = signedBody(kp, {
+    issuedAt: now - 1000,
+    requestNonce: '01'.repeat(16)
+  })
+  const r = buildPublisherSignedSeedOpts(body, { now })
+  t.is(r.ok, true)
+  t.is(r.opts.seedSignatureProfile, 'replay-v1')
+  t.is(r.opts.issuedAt, body.issuedAt)
+  t.is(r.opts.requestNonce, body.requestNonce)
+  t.is(r.replay.requestNonce, body.requestNonce)
+
+  const cache = new Map()
+  t.is(consumePublisherSeedReplayNonce(r.replay, cache, { now }).ok, true)
+  const duplicate = consumePublisherSeedReplayNonce(r.replay, cache, { now })
+  t.is(duplicate.ok, false)
+  t.is(duplicate.status, 409)
+  t.ok(duplicate.error.includes('SEED_REQUEST_REPLAY'))
+})
+
+test('builder: replay fields require replay-v1 signature and fresh issuedAt', (t) => {
+  const kp = keyPair()
+  const now = 1782753600000
+  const legacyWithReplayFields = signedBody(kp)
+  legacyWithReplayFields.issuedAt = now
+  legacyWithReplayFields.requestNonce = '02'.repeat(16)
+  const legacy = buildPublisherSignedSeedOpts(legacyWithReplayFields, { now })
+  t.is(legacy.ok, false)
+  t.is(legacy.status, 403)
+  t.ok(legacy.error.includes('INVALID_SIGNATURE'))
+
+  const stale = signedBody(kp, {
+    issuedAt: now - 60 * 60 * 1000 - 1,
+    requestNonce: '03'.repeat(16)
+  })
+  const staleResult = buildPublisherSignedSeedOpts(stale, { now })
+  t.is(staleResult.ok, false)
+  t.is(staleResult.error, 'issuedAt is outside the replay window')
+
+  const future = signedBody(kp, {
+    issuedAt: now + 60 * 1000 + 1,
+    requestNonce: '04'.repeat(16)
+  })
+  const futureResult = buildPublisherSignedSeedOpts(future, { now })
+  t.is(futureResult.ok, false)
+  t.is(futureResult.error, 'issuedAt is too far in the future')
 })
 
 test('builder: signed body with all optional metadata returns ok', (t) => {
@@ -221,6 +289,39 @@ test('builder: shardIds with negative integer → 400', (t) => {
   const r = buildPublisherSignedSeedOpts(body)
   t.is(r.ok, false)
   t.ok(r.error.includes('non-negative integers'))
+})
+
+test('builder: publisher-signed seed rejects unknown top-level fields', (t) => {
+  const kp = keyPair()
+  const body = signedBody(kp)
+  body.caption = 'private docs'
+
+  const r = buildPublisherSignedSeedOpts(body)
+  t.is(r.ok, false)
+  t.is(r.status, 400)
+  t.is(r.error, 'unknown publisher seed field: caption')
+})
+
+test('builder: publisher-signed seed allowlists lease payment envelope', (t) => {
+  const kp = keyPair()
+  const body = signedBody(kp)
+  body.leaseDays = 7
+  body.paymentProof = { quoteId: 'quote-1' }
+
+  const r = buildPublisherSignedSeedOpts(body)
+  t.is(r.ok, true)
+
+  const extraProof = signedBody(kp)
+  extraProof.paymentProof = { quoteId: 'quote-1', memo: 'secret' }
+  const extraProofResult = buildPublisherSignedSeedOpts(extraProof)
+  t.is(extraProofResult.ok, false)
+  t.is(extraProofResult.error, 'unknown paymentProof field: memo')
+
+  const extraToken = signedBody(kp)
+  extraToken.paymentProof = { blindToken: { secret: 's', C: 'c', note: 'secret' } }
+  const extraTokenResult = buildPublisherSignedSeedOpts(extraToken)
+  t.is(extraTokenResult.ok, false)
+  t.is(extraTokenResult.error, 'unknown paymentProof.blindToken field: note')
 })
 
 // ─── Custody publisher mismatch ─────────────────────────────────────

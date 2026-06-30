@@ -8,7 +8,9 @@ graph refresh, release-secret-template hardening, and Umbrel package-smoke
 evidence hardening for app-proxy writes plus setup dashboard-link behavior.
 It also records the final standalone fleet rollout checker default alignment:
 manual rollout proof now defaults to both canary and stable unless explicitly
-overridden.
+overridden. The local security/readiness sweep was re-run on 2026-06-28 after
+the app manifests were staged to npm `latest` defaults and the npm package
+dry-run proof was promoted into a first-class release gate.
 
 Source root:
 
@@ -23,21 +25,26 @@ release environment.
 
 | Command | Result | Notes |
 | --- | --- | --- |
-| `npm test` | Pass | Full Brittle sweep exited `0`. Includes unit, integration, pairing, custody, AutoHeal, bare smoke, API, release, and protocol slices. |
+| `npm test` | Pass | Re-run on 2026-06-28. Full Brittle sweep exited `0`. Includes unit, integration, pairing, custody, AutoHeal, bare smoke, API, release, and protocol slices. |
 | `npm run lint` | Pass | StandardJS source lint passed after release-template and ecosystem-audit updates. |
-| `npm run audit:workspace` | Pass with warning | Workspace alignment passed. Expected warning remains: official Umbrel package still needs its real `getumbrel/umbrel-apps` PR URL. |
-| `npm run ecosystem:sync:local -- --check` | Pass | Known direct app consumers already resolve to the local Hiverelay workspace package links, linked lockfile metadata, and versioned source markers. |
-| `npm run audit:ecosystem-consumers:local` | Pass | Active direct consumers resolve to the local Hiverelay `0.20.2` line; lockfile metadata and source markers are checked for drift. |
+| `npm run audit:workspace` | Pass with warnings | Workspace alignment passed. Expected warnings remain: PearBrowser's package-lock still carries pre-publish local `0.20.0` Hiverelay metadata, and the official Umbrel package still needs its real `getumbrel/umbrel-apps` PR URL. |
+| `npm run ecosystem:prepare-latest -- --check` | Pass with warnings | No consumer package or lockfile changes are needed, so the app manifests/source markers are already staged for npm `latest`. In the sandboxed local run, registry proof timed out and emitted prepare-mode warnings; the live `release:check-npm-latest` row below confirms the strict post-publish gate is still blocked by stale npm `latest` tags. |
+| `npm run ecosystem:check-workspace -- --required --workspace-root ../..` | Pass | Full sibling ecosystem workspace is present from the Hiverelay checkout root: 8/8 current app consumers found, including PearBrowser desktop, PearPaste, Pear POS, Pear Tickets, p2pbuilders, Opengit relay, anonGPT native, and `hiverelay-test`. |
+| `npm run ecosystem:sync:local -- --check` | Expected fail in release-default state | Current app manifests are staged to npm `latest`, so local mode reports 25 would-change entries back to file links plus stale PearBrowser lock metadata. Use this only when intentionally switching a development checkout back to local file links. |
+| `npm run audit:ecosystem-consumers:local` | Expected fail in release-default state | Current app manifests are staged to npm `latest`, so the local-mode audit rejects the `latest` specs and local-source markers. This proves the release-default state is not silently drifting back to file links. |
 | `HIVERELAY_NPM_LATEST_JSON='{"p2p-hiverelay":"0.9.2","p2p-hiverelay-client":"0.9.2","p2p-hiverelay-verifier":"0.9.2","p2p-hiveservices":"0.9.2"}' npm run ecosystem:sync -- --check` | Expected fail | Published-app defaults are blocked because npm `latest` still resolves to `0.9.2` for the four-package HiveRelay line, which would downgrade PearBrowser, PearPaste, anonGPT, and other tracked consumers from the local `0.20.2` line. |
+| `npm run release:check-npm-latest` | Expected fail until npm publish | Live registry check on 2026-06-28 shows `p2p-hiverelay`, `p2p-hiverelay-client`, `p2p-hiverelay-verifier`, and `p2p-hiveservices` still have `latest=0.9.2`; downstream app lockfiles and live consumer promotion must wait for `latest=0.20.2`. |
+| `npm run release:check-npm-packages` | Pass | First-class dry-run pack gate passed with an isolated npm cache. All four publishable packages include `README.md` and `LICENSE`, report `unsafe=none` for obvious path leaks, and pack as: `p2p-hiverelay` 169 entries / 486923 bytes, `p2p-hiverelay-client` 7 entries / 79104 bytes, `p2p-hiveservices` 30 entries / 98441 bytes, `p2p-hiverelay-verifier` 5 entries / 11330 bytes. |
 | `npm run audit:public-artifacts` | Pass | Public docs and GitHub workflow files are scanned for scanner-sensitive token-prefix, bearer-header, and private-key delimiter examples. |
 | `npm run umbrel:export-official -- --target /private/tmp/hiverelay-official-umbrel-check/blindspark --allow-placeholder --check` | Pass | Official Umbrel export is in sync when written to the required `blindspark/` package directory name. |
-| `npm run release:check-github-setup -- --repo bigdestiny2/P2P-Hiverelay` | Blocked externally | Live setup presence check now fails before masked-value validation: repository secrets `ECOSYSTEM_CONSUMER_TOKEN` and `NPM_TOKEN` are missing. The checker prints the safe repair path: generate `/private/tmp/hiverelay-release-secrets.env`, validate it, apply secrets through stdin, rerun the presence check, then rerun the side-effect-free `release-distribution-preflight.yml`. |
+| `npm run release:check-official-umbrel-pr` | Expected fail until PR opened | Current official manifest still has `submission: https://github.com/getumbrel/umbrel-apps/pull/PENDING`; reviewer handoff must stamp the real upstream PR URL before this gate passes. |
+| `npm run release:check-github-setup -- --repo bigdestiny2/P2P-Hiverelay` | Superseded external blocker | Issue #120 now records that required repository secret names are visible; the remaining blocker is masked value shape for `UMBREL_STORE_TOKEN`, `UMBREL_OFFICIAL_PR_TOKEN`, `UMBREL_OFFICIAL_FORK`, and `STARTOS_REGISTRY_URL`. Use the targeted `--issue-120-repair` flow, rerun the presence check, then rerun the side-effect-free `release-distribution-preflight.yml`. |
 | `npm run release:check-distribution-env -- --channel both --prerelease false` | Blocked locally | This shell does not contain the required live-release values: fleet SSH key, Umbrel community token, official Umbrel PR token/fork, npm automation token, StartOS developer key, and StartOS registry URL. Validate a generated env file and rerun the GitHub Actions preflight before tagging. |
-| `gh workflow run release-distribution-preflight.yml --repo bigdestiny2/P2P-Hiverelay --ref main -f channel=both -f prerelease=false` then `gh run view 28297002418 --repo bigdestiny2/P2P-Hiverelay --json databaseId,status,conclusion,headSha,headBranch,createdAt,url` | Expected fail | Current full-release preflight is tied to `main@5e56e95` and fails only on external release values: malformed Umbrel store token, official PR token/fork, missing `NPM_TOKEN`, and malformed StartOS registry URL. |
+| `gh workflow run release-distribution-preflight.yml --repo bigdestiny2/P2P-Hiverelay --ref main -f channel=both -f prerelease=false` then `gh run view 28293455583 --repo bigdestiny2/P2P-Hiverelay --json databaseId,status,conclusion,headSha,headBranch,createdAt,url` | Expected fail | Current full-release preflight is tied to `main@94580c6` and fails only on four external release values: malformed Umbrel store token, official PR token/fork, and malformed StartOS registry URL. |
 | `cd startos && make digest` | Blocked externally | `ghcr.io/bigdestiny2/p2p-hiverelay:0.20.2` does not resolve yet, so the current StartOS `.s9pk` verify path cannot prove the package until the release image is published. |
-| `npm run docs:update-ship-handoff -- --date 2026-06-26 --ref 5e56e957016d0f4b1cc0a3a1ed66db02994659a1 --branch main --test-run 28296869625 --docker-run 28296869614 --preflight-run 28297002418 --preflight-url https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/28297002418 --preflight-head 5e56e957016d0f4b1cc0a3a1ed66db02994659a1 --preflight-branch main --preflight-created-at 2026-06-27T17:48:24Z --preflight-state completed/failure --superseded-preflight-success 28238930607 --superseded-preflight-success-head 1ffffe6 --check` | Pass | Generated ship handoff is in sync with the guarded npm-latest consumer commit and now records the ecosystem parity gate, source-marker coverage, fresh current-main preflight blockers including `NPM_TOKEN`, and StartOS GHCR image/digest blocker. |
-| `node --test test/unit/ecosystem-consumers.test.js` | Pass | `17/17` tests and `87/87` assertions. The unit fixture explicitly keeps PearBrowser desktop, PearPaste, Pear POS, Pear Tickets, p2pbuilders, Opengit's optional bridge, anonGPT native, and `hiverelay-test` in the current-consumer inventory, rejects PearPaste recovery/spec doc regressions back to the old `0.9.x` client guidance, proves stale app package, lock, and versioned source-marker defaults can be synced forward, makes npm-latest the default app path, and blocks npm-latest app defaults when npm would downgrade from `0.20.2`. |
-| `npm audit --audit-level=high` | Pass | npm reported `found 0 vulnerabilities` for the HiveRelay workspace. |
+| `npm run docs:update-ship-handoff -- --date 2026-06-26 --ref 94580c6c228be4291229b008ffa787278385d6bf --branch main --test-run 28293344980 --docker-run 28293344978 --preflight-run 28293455583 --preflight-url https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/28293455583 --preflight-head 94580c6c228be4291229b008ffa787278385d6bf --preflight-branch main --preflight-created-at 2026-06-27T15:27:01Z --preflight-state completed/failure --superseded-preflight-success 28238930607 --superseded-preflight-success-head 1ffffe6 --check` | Pass | Generated ship handoff is in sync with the guarded npm-latest consumer commit and now records the ecosystem parity gate, source-marker coverage, the four current issue #120 masked-value blockers, and StartOS GHCR image/digest blocker. |
+| `node --test test/unit/ecosystem-consumers.test.js` | Pass | `29/29` tests and `157/157` assertions. The unit fixture explicitly keeps PearBrowser desktop, PearPaste, Pear POS, Pear Tickets, p2pbuilders, Opengit's optional bridge, anonGPT native, and `hiverelay-test` in the current-consumer inventory, rejects PearPaste recovery/spec doc regressions back to the old `0.9.x` client guidance, proves stale app package, lock, and versioned source-marker defaults can be synced forward, makes npm-latest the default app path, blocks npm-latest app defaults when npm would downgrade from `0.20.2`, and verifies `ecosystem:prepare-latest -- --check` can prove staged `latest` defaults without writing app files. |
+| `npm audit` | Pass | Re-run on 2026-06-28. npm reported `found 0 vulnerabilities` for the HiveRelay workspace, including dev dependencies. |
 | `git diff --check` | Pass | No whitespace errors in the current HiveRelay diff. |
 | `./node_modules/.bin/brittle test/unit/umbrel-ui-controls.test.js` | Pass | `24/24` tests and `253/253` assertions. Covers setup/wallet no-navigation writes, app-proxy wallet/seed/lease writes, app-proxy-safe wizard dashboard fallback links, bounded hidden-tab lease polling, service-card manager UX, restart convergence, AI model busy state, DOM-only rendering, no inline appliance/setup styles, no inline `onerror`, and no production `innerHTML =` dashboard writes. |
 | `./node_modules/.bin/brittle test/unit/fleet-rollout-check.test.js` | Pass | `18/18` tests and `133/133` assertions. Covers rollout evidence schema, SSH/probe hardening, stale channel target rejection, package/runtime version convergence, secret redaction, and the no-flag default selecting both canary and stable relays. |
@@ -46,12 +53,19 @@ release environment.
 
 ## Ecosystem Consumer Boundary
 
-`npm run ecosystem:sync -- --check` is the published npm-latest default gate for
-known direct app consumers, `npm run ecosystem:sync:local -- --check` is the
-no-write local checkout gate, and `npm run audit:ecosystem-consumers` is the
-package-parity inventory gate for the workspace outside the HiveRelay source
-tree. They treat these as active direct consumers that should default to npm
-`latest` after the release publish gate:
+`npm run ecosystem:prepare-latest` is the pre-publish staging path for known
+direct app consumers: it writes manifests and source markers to npm `latest`
+without fabricating package-lock registry metadata. `npm run ecosystem:sync`
+is the post-publish npm-latest gate; it refuses to refresh lockfiles until all
+four HiveRelay packages resolve through npm `latest` to `0.20.2`. The no-write
+strict form is `npm run ecosystem:sync -- --check`; the no-write prepared-state
+check is `npm run ecosystem:prepare-latest -- --check`. From this Hiverelay
+checkout, the full sibling workspace guard is `npm run ecosystem:check-workspace
+-- --required --workspace-root ../..`. `npm run
+ecosystem:sync:local -- --check` and `npm run audit:ecosystem-consumers:local`
+remain development-only file-link guards and are expected to fail while the
+workspace is intentionally staged for release-default npm `latest`. The active
+direct consumers are:
 
 - PearBrowser desktop
 - PearPaste
@@ -62,13 +76,14 @@ tree. They treat these as active direct consumers that should default to npm
 - anonGPT native
 - `hiverelay-test`
 
-The sync check updates known package defaults, linked lock metadata, and
-versioned source markers when run without `--check`. The audit scans
-`package.json` files plus the nearest lockfiles, rejects stale split-package
-metadata, rejects stale monorepo-root Hiverelay entries, and fails on any new
-unclassified `p2p-hiverelay*` dependency. It also checks current PearPaste
-recovery/spec docs for the local `0.20.2` workspace package guidance and
-rejects the old `^0.9.2` / publish-blocker text.
+The sync check updates known package defaults and versioned source markers when
+run without `--check`; in strict npm-latest mode it refreshes lockfiles only
+after registry proof is green. The audit scans `package.json` files plus the
+nearest lockfiles, rejects stale split-package metadata, rejects stale
+monorepo-root Hiverelay entries, and fails on any new unclassified
+`p2p-hiverelay*` dependency. It also checks current PearPaste recovery/spec docs
+for the npm `latest` package guidance and rejects the old `^0.9.2` /
+publish-blocker text.
 
 `00-core/hr-acct`, `00-core/hr-fleet`, and `00-core/hr-release` are not active
 app consumer roots, but they are no longer allowed to drift silently: the same
@@ -106,8 +121,9 @@ The release workflow default has been rechecked:
   `node --test test/unit/ecosystem-consumers.test.js` before image publish so
   release logs show both the public-artifact secret-pattern guard and the
   ecosystem consumer inventory guard. The full sibling-checkout
-  `npm run audit:ecosystem-consumers:local` remains a local workspace parity
-  gate for pre-publish checkout testing.
+  `npm run ecosystem:prepare-latest -- --check` path is the safe no-write
+  pre-publish staging gate for npm `latest` app defaults; local file-link audit
+  mode is development-only.
 - `release-distribution-preflight.yml` is the side-effect-free check to run
   before retrying a live release.
 

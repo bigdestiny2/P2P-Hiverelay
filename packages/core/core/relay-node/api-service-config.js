@@ -71,15 +71,22 @@ export function configuredServicePlugins (config) {
   return plugins.filter(name => typeof name === 'string')
 }
 
+export function servicesLockedByProfile (config) {
+  return !!config && config.productProfile === 'relaykernel'
+}
+
 export function serviceConfigPayload (config, registry) {
-  const plugins = configuredBuiltinServicePlugins(config)
-  const active = activeServiceNames(registry)
+  const locked = servicesLockedByProfile(config)
+  const plugins = locked ? [] : configuredBuiltinServicePlugins(config)
+  const active = locked ? [] : activeServiceNames(registry)
   return {
-    enabled: !!config && config.enableServices !== false && plugins.length > 0,
+    enabled: !locked && !!config && config.enableServices !== false && plugins.length > 0,
     available: BUILTIN_SERVICE_PLUGINS,
     plugins,
     active,
-    bundles: SERVICE_PLUGIN_BUNDLES
+    bundles: SERVICE_PLUGIN_BUNDLES,
+    locked,
+    lockReason: locked ? 'relaykernel-profile' : null
   }
 }
 

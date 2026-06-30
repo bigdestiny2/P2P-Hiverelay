@@ -1,5 +1,11 @@
 import test from 'brittle'
-import { Relay } from 'p2p-hiverelay/core/relay-node/relay.js'
+import {
+  MAX_CIRCUIT_BYTES,
+  MAX_CIRCUIT_DURATION_MS,
+  MAX_CIRCUIT_RATE_BYTES_PER_SECOND,
+  MAX_CIRCUITS_PER_PEER,
+  Relay
+} from 'p2p-hiverelay/core/relay-node/relay.js'
 import { EventEmitter } from 'events'
 
 function mockStream () {
@@ -60,6 +66,41 @@ test('Relay - byte limit enforcement', async (t) => {
   src.emit('data', Buffer.alloc(11))
 
   t.is(relay.circuits.size, 0, 'circuit removed')
+  await relay.stop()
+})
+
+test('Relay - hard caps clamp oversized circuit config', (t) => {
+  const relay = new Relay(null, {
+    maxCircuitDuration: MAX_CIRCUIT_DURATION_MS + 1,
+    maxCircuitBytes: MAX_CIRCUIT_BYTES + 1,
+    maxCircuitsPerPeer: MAX_CIRCUITS_PER_PEER + 1,
+    maxCircuitRateBytesPerSecond: MAX_CIRCUIT_RATE_BYTES_PER_SECOND + 1
+  })
+
+  t.is(relay.maxCircuitDuration, MAX_CIRCUIT_DURATION_MS)
+  t.is(relay.maxCircuitBytes, MAX_CIRCUIT_BYTES)
+  t.is(relay.maxCircuitsPerPeer, MAX_CIRCUITS_PER_PEER)
+  t.is(relay.maxCircuitRateBytesPerSecond, MAX_CIRCUIT_RATE_BYTES_PER_SECOND)
+})
+
+test('Relay - per-circuit rate limit enforcement', async (t) => {
+  const relay = new Relay(null, { maxConnections: 10, maxCircuitRateBytesPerSecond: 10 })
+  await relay.start()
+
+  const src = mockStream()
+  const dst = mockStream()
+  let closeReason = null
+  relay.on('circuit-closed', ({ reason }) => {
+    closeReason = reason
+  })
+
+  relay.createCircuit('c1', src, dst)
+  src.emit('data', Buffer.alloc(6))
+  src.emit('data', Buffer.alloc(6))
+
+  t.is(dst._written.length, 1, 'second chunk is not forwarded')
+  t.is(closeReason, 'RATE_EXCEEDED')
+  t.is(relay.circuits.size, 0)
   await relay.stop()
 })
 

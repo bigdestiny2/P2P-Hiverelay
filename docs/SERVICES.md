@@ -198,7 +198,7 @@ Signed challenge-response proof that this relay genuinely holds a seeded app. A 
 
 **Capabilities:** `prove`
 
-- `prove({ coreKey, index, nonce })` -- returns a `buildStorageProof` response object (a signed block proof for block `index` of the drive's metadata core). Reachable over the existing service RPC (`client.callService` / `proveSeeded`).
+- `prove({ coreKey, index, nonce })` -- returns a `buildStorageProof` response object (a signed proof-of-retrievability for block `index` of the drive's metadata core). Reachable over the existing service RPC (`client.callService` / `proveSeeded`).
 
 **Access:** route `storage-proof.prove` is policy `public` (anonymous-callable) in `packages/core/core/router/index.js`.
 
@@ -215,7 +215,7 @@ Signed challenge-response proof that this relay genuinely holds a seeded app. A 
 
 **Honest limitation:** this is a challenge-response proof of *retrievability*, not a sealed proof of *replication* — a relay could fetch a block on demand rather than store it; random-index sampling plus a latency bound make that expensive, not cryptographically precluded.
 
-Pairs with the client probes `client.proveSeeded(driveKey, { relay, samples })` (samples up to 16 random blocks, verifies each signed proof against an isolated temp-Corestore verifier pinned to the head; returns `{ ok, driveKey, relay, head, passed, total, samples: [{ index, valid, reason }] }`, with `ok === true` only if every sample verified) and the replication-based `client.verifySeeded(driveKey, { relay, timeout })`. See `packages/services/builtin/storage-proof-service.js` and the Tier-1 primitive `packages/core/core/protocol/proof-of-storage.js`.
+Pairs with the client probes `client.proveSeeded(driveKey, { relay, samples })` (samples up to 16 random blocks, verifies each signed proof against an isolated temp-Corestore verifier pinned to the head; returns `{ ok, proofKind: 'proof-of-retrievability', driveKey, relay, head, passed, total, samples: [{ index, valid, proofKind, reason }] }`, with `ok === true` only if every sample verified) and the replication-based `client.verifySeeded(driveKey, { relay, timeout })`. See `packages/services/builtin/storage-proof-service.js` and the Tier-1 primitive `packages/core/core/protocol/proof-of-storage.js`.
 
 ## Creating Custom Services
 

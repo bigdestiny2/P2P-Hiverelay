@@ -105,6 +105,42 @@ npm run release:check-distribution-env -- \
   --prerelease false
 ```
 
+For the current `v0.20.2` issue #120 repair, the latest issue comment says the
+repository secret names are present and only four masked values still have bad
+shape: `UMBREL_STORE_TOKEN`, `UMBREL_OFFICIAL_PR_TOKEN`,
+`UMBREL_OFFICIAL_FORK`, and `STARTOS_REGISTRY_URL`. Use the targeted mode so
+the operator does not have to re-enter already-valid fleet, npm, ecosystem, or
+StartOS private-key values:
+
+```sh
+npm run release:write-secret-template -- \
+  --issue-120-repair \
+  --out /private/tmp/hiverelay-release-secrets.env
+
+$EDITOR /private/tmp/hiverelay-release-secrets.env
+
+npm run release:check-distribution-env -- \
+  --issue-120-repair \
+  --env-file /private/tmp/hiverelay-release-secrets.env
+
+npm run release:apply-github-secrets -- \
+  --issue-120-repair \
+  --repo bigdestiny2/P2P-Hiverelay \
+  --env-file /private/tmp/hiverelay-release-secrets.env \
+  --dry-run
+
+npm run release:apply-github-secrets -- \
+  --issue-120-repair \
+  --repo bigdestiny2/P2P-Hiverelay \
+  --env-file /private/tmp/hiverelay-release-secrets.env
+```
+
+In targeted mode the helper writes exactly those four repository Secrets. It
+still refuses malformed GitHub tokens, still rejects `getumbrel/umbrel-apps`,
+and still requires a public HTTPS StartOS registry URL. It canonicalizes
+`UMBREL_OFFICIAL_FORK` to `owner/umbrel-apps` and
+`STARTOS_REGISTRY_URL` to a trimmed public HTTPS base URL before writing.
+
 The generated template is written with owner-only permissions and refuses to
 overwrite an existing file unless `--force` is passed. The final edited file
 should have this shape:
@@ -159,7 +195,10 @@ npm run release:apply-github-secrets -- \
 The helper validates the candidate file again before any write, sends masked
 release values to `gh secret set` through stdin, stores
 `FLEET_ROLLOUT_TIMEOUT_MS` as an optional repository variable when present, and
-does not print the candidate values. Both dry-run and apply output print the exact
+does not print the candidate values. `UMBREL_OFFICIAL_FORK` and
+`STARTOS_REGISTRY_URL` are canonicalized before writing so copied GitHub fork
+URLs or harmless trailing slashes do not cause another repair loop. Both
+dry-run and apply output print the exact
 `release:check-github-setup` and `gh workflow run
 release-distribution-preflight.yml` commands to run next.
 
@@ -254,12 +293,14 @@ manually dispatched, the workflow:
    uploads and download verification target the same release.
 3. Installs dependencies and runs `npm audit`, `npm run lint`,
    `npm run audit:workspace`, `npm run audit:public-artifacts`,
+   `npm run release:check-npm-packages`,
    `node --test test/unit/ecosystem-consumers.test.js`, and
    `npm run test:unit`. The public-artifact audit keeps release docs and
-   workflows free of scanner-sensitive secret examples, while the explicit
-   ecosystem inventory guard keeps the release log tied to the PearBrowser,
-   PearPaste, anonGPT, and other direct consumer default-pinning contract before
-   any image is published.
+   workflows free of scanner-sensitive secret examples, the npm package dry-run
+   gate proves the four publishable tarballs include README/license metadata
+   without obvious unsafe paths, and the explicit ecosystem inventory guard
+   keeps the release log tied to the PearBrowser, PearPaste, anonGPT, and other
+   direct consumer default-pinning contract before any image is published.
 4. For full releases, verifies the full sibling app workspace is present before
    any image or npm side effects, so app defaults cannot be silently skipped
    when PearBrowser, PearPaste, anonGPT, or another current consumer checkout is
@@ -305,15 +346,25 @@ release-candidate skips. The audit proves there are no new unclassified
 9. Publishes `p2p-hiverelay`, `p2p-hiverelay-client`,
    `p2p-hiverelay-verifier`, and `p2p-hiveservices` to npm from the tagged
    source, or leaves an already-published immutable tarball in place, then
-   verifies every `latest` dist-tag equals the release semver. This is the gate
-   that lets PearBrowser, PearPaste, anonGPT, and other app consumers safely move
-   from local workspace links to the published release line.
+   verifies every `latest` dist-tag equals the release semver through
+   `npm run release:check-npm-latest`. This is the gate that lets PearBrowser,
+   PearPaste, anonGPT, and other app consumers safely move from local workspace
+   links to the published release line.
+   `npm run release:check-npm-packages` has already dry-run packed the same
+   four workspaces before this publish step, so README/license metadata and
+   unsafe-path checks fail before npm side effects.
+   Operators can check the live registry gate without publishing by running
+   `npm run release:check-npm-latest`; it fails until all four package `latest`
+   dist-tags equal the monorepo release version and can emit JSON with
+   `-- --json` for release evidence.
 10. Returns to `main`, then runs `npm run release:prepare -- vX.Y.Z --channel both
    --image-digest sha256:... --ecosystem-workspace-root .. --ecosystem-consumer-scope release --ecosystem-dependency-mode npm-latest`.
    In a full sibling workspace this switches tracked app manifests to npm
    `latest` and refreshes lockfiles from real registry metadata; before the npm
    gate is green, the default `ecosystem:sync` intentionally refuses to edit app
-   defaults.
+   defaults. To stage app defaults before the registry catches up, run
+   `npm run ecosystem:prepare-latest`; it writes app manifests/source markers to
+   `latest` and deliberately leaves lockfiles for the strict post-publish sync.
 11. Commits and pushes changed release-managed app consumer repos with
    `ECOSYSTEM_CONSUMER_TOKEN`, so PearBrowser, PearPaste, p2pbuilders, Opengit,
    and anonGPT pull the newest Hiverelay npm line by default.
@@ -433,13 +484,13 @@ sidecar:
 ```sh
 npm run umbrel:write-runtime-review -- \
   --out umbrel-runtime-review-evidence.json \
-  --release v0.16.3 \
+  --release v0.20.2 \
   --device "<public device label>" \
   --umbrel-version <version> \
   --tested-by <public reviewer> \
   --public-key-before <hex> \
   --public-key-after <hex> \
-  --checks installedThroughUmbrel,dashboardProxyLoads,liveFeedInBandAuth,noWebSocketUrlTokens,wizardCompletes,setupActionLockObserved,addWalletPersists,walletBusyStateObserved,managementActionsPersist,serviceActionStateObserved,serviceRestartPendingObserved,aiModelAddStateObserved,reviewModeDefault,dataWritableUid999,reinstallPreservesPublicKey
+  --checks installedThroughUmbrel,dashboardProxyLoads,liveFeedInBandAuth,noWebSocketUrlTokens,wizardCompletes,setupActionLockObserved,addWalletPersists,dynamicPayoutControlsObserved,walletBusyStateObserved,managementActionsPersist,serviceActionStateObserved,serviceRestartPendingObserved,aiModelAddStateObserved,reviewModeDefault,dataWritableUid999,reinstallPreservesPublicKey
 ```
 
 Then verify the sidecar before attaching or citing it:
@@ -447,7 +498,7 @@ Then verify the sidecar before attaching or citing it:
 ```sh
 npm run umbrel:verify-runtime-review -- \
   --evidence umbrel-runtime-review-evidence.json \
-  --release v0.16.3
+  --release v0.20.2
 ```
 
 The writer rejects local URLs, LAN IPs, APP_SEED, bearer tokens, API keys, and
@@ -470,7 +521,7 @@ npm run release:verify-review-ready-handoff -- --bundle-dir <dir>
 
 That stricter mode fails until `umbrel-runtime-review-evidence.json` is present
 and passes the real-device setup/add-wallet/service-management lifecycle plus
-setup/wallet/service/restart/AI action-state checks. It is a convenience alias for
+setup/wallet/dynamic-payout/service/restart/AI action-state checks. It is a convenience alias for
 `release:verify-handoff-evidence -- --require-umbrel-runtime-review`.
 
 The helper command for a local official-store checkout is:
@@ -495,7 +546,11 @@ After stamping the real PR URL, it runs the exporter in `--check` mode so the
 `blindspark/` package is stale or contains extra files. It also queries the PR
 through `gh pr view` and requires the upstream PR to be `OPEN`, still marked as
 draft, based on `master`, and pointed at the generated release branch before it
-records release evidence. The official PR sidecar also records
+records release evidence. For local handoff readiness, run
+`npm run release:check-official-umbrel-pr`; it fails while
+`umbrel-app/umbrel-app.yml` still has the `PENDING` submission URL and passes
+only after a real `getumbrel/umbrel-apps` PR URL is stamped. The official PR
+sidecar also records
 `runtimeReview.status: pending-real-device-review` plus the expected
 `umbrel-runtime-review-evidence.json` filename and
 `npm run umbrel:verify-runtime-review` verifier command. This is intentional:

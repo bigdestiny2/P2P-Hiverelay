@@ -2,6 +2,7 @@ import { validatePositiveInt, validatePositiveNumber } from './api-validation.js
 
 export const AVAILABLE_MODES = [
   'relay-core',
+  'relaykernel',
   'custody-relay',
   'public',
   'standard',
@@ -45,6 +46,7 @@ function modeNote (mode) {
   if (mode === 'homehive') return 'HomeHive mode active — low resource, LAN-priority'
   if (mode === 'custody-relay') return 'Custody relay mode active — blind atomic handoff focused'
   if (mode === 'relay-core') return 'Relay Core active — focused availability/custody kernel'
+  if (mode === 'relaykernel') return 'RelayKernel profile active — seed/proof/circuit/meta/accounting only'
   return null
 }
 

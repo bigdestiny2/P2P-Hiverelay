@@ -2,12 +2,12 @@ Release distribution preflight failed:
 - UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters
 - UMBREL_OFFICIAL_PR_TOKEN must be a GitHub token without whitespace or control characters
 - UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps
-- NPM_TOKEN
 - STARTOS_REGISTRY_URL must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames
 
 Repair path:
-- Generate a local candidate file outside the repo: npm run release:write-secret-template -- --out /private/tmp/hiverelay-release-secrets.env
-- Replace every REPLACE_* placeholder with corrected release values.
-- Validate without publishing: npm run release:check-distribution-env -- --env-file /private/tmp/hiverelay-release-secrets.env --channel both --prerelease false
-- Apply through stdin after validation: npm run release:apply-github-secrets -- --repo bigdestiny2/P2P-Hiverelay --env-file /private/tmp/hiverelay-release-secrets.env
-- Re-run the side-effect-free GitHub Actions workflow release-distribution-preflight.yml with channel=both and prerelease=false before rerunning release-surfaces.yml.
+- Generate the targeted issue #120 repair file outside the repo: npm run release:write-secret-template -- --issue-120-repair --out /private/tmp/hiverelay-release-secrets.env
+- Replace the four REPLACE_* placeholders with corrected release values.
+- Validate without publishing: npm run release:check-distribution-env -- --issue-120-repair --env-file /private/tmp/hiverelay-release-secrets.env
+- Dry-run targeted rotation: npm run release:apply-github-secrets -- --issue-120-repair --repo bigdestiny2/P2P-Hiverelay --env-file /private/tmp/hiverelay-release-secrets.env --dry-run
+- Apply targeted rotation through stdin: npm run release:apply-github-secrets -- --issue-120-repair --repo bigdestiny2/P2P-Hiverelay --env-file /private/tmp/hiverelay-release-secrets.env
+- Re-run the side-effect-free GitHub Actions workflow release-distribution-preflight.yml with channel=both and prerelease=false before rerunning release-surfaces.yml for v0.20.2.

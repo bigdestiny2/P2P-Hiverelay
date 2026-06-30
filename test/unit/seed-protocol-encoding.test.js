@@ -13,7 +13,12 @@ import {
   seedRequestEncoding,
   unseedRequestEncoding
 } from 'p2p-hiverelay/core/protocol/messages.js'
-import { SeedProtocol } from 'p2p-hiverelay/core/protocol/seed-request.js'
+import {
+  SEED_PROTOCOL_HANDSHAKE_MAX_BYTES,
+  SEED_PROTOCOL_VERSION,
+  SeedProtocol,
+  evaluateSeedProtocolHandshake
+} from 'p2p-hiverelay/core/protocol/seed-request.js'
 import { HiveRelayClient } from 'p2p-hiverelay-client'
 
 function encodeFrame (encoding, msg) {
@@ -356,6 +361,46 @@ test('SeedProtocol handlers ignore decoded seed protocol errors without throwing
   t.is(events.accept[0].reason, 'region too large')
   t.is(events.unseed[0].reason, 'malformed unseed request')
   t.is(events.deny[0].reason, 'detail too large')
+})
+
+test('SeedProtocol handshake evaluator pins major-version negotiation policy', (t) => {
+  t.alike(SEED_PROTOCOL_VERSION, { major: 1, minor: 0 })
+  t.is(SEED_PROTOCOL_HANDSHAKE_MAX_BYTES, 256)
+
+  t.alike(
+    evaluateSeedProtocolHandshake(b4a.from(JSON.stringify({ major: 1, minor: 0 }))),
+    {
+      valid: true,
+      action: 'accept',
+      local: { major: 1, minor: 0 },
+      remote: { major: 1, minor: 0 },
+      reason: null
+    }
+  )
+  t.alike(
+    evaluateSeedProtocolHandshake(b4a.from(JSON.stringify({ major: 1, minor: 99 }))),
+    {
+      valid: true,
+      action: 'accept',
+      local: { major: 1, minor: 0 },
+      remote: { major: 1, minor: 99 },
+      reason: null
+    },
+    'future minor version within the same major is compatible'
+  )
+  t.alike(
+    evaluateSeedProtocolHandshake(b4a.from(JSON.stringify({ major: 2, minor: 0 }))),
+    {
+      valid: false,
+      action: 'close',
+      local: { major: 1, minor: 0 },
+      remote: { major: 2, minor: 0 },
+      reason: 'major version mismatch'
+    },
+    'major version mismatch closes before replay'
+  )
+  t.is(evaluateSeedProtocolHandshake(b4a.from('[]')).reason, 'malformed handshake')
+  t.is(evaluateSeedProtocolHandshake(b4a.alloc(257, 0x20)).reason, 'handshake too large')
 })
 
 test('SeedProtocol handshake accepts current version before pending replay', (t) => {

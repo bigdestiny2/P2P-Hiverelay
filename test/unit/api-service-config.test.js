@@ -131,6 +131,29 @@ test('service config api: saves builtins and expands poker bundle', async (t) =>
   t.is(persisted().enableServices, true)
 })
 
+test('service config api: relaykernel profile rejects services opt-in', async (t) => {
+  const { node, port, auth, persisted } = await makeServer(t)
+  node.mode = 'relaykernel'
+  node._operatingMode = 'relaykernel'
+  node.config.productProfile = 'relaykernel'
+  node.config.enableServices = false
+  node.config.plugins = []
+
+  const res = await request(port, 'POST', '/api/manage/services/config', {
+    enabled: true,
+    plugins: ['ai']
+  }, auth)
+
+  t.is(res.statusCode, 409)
+  t.is(res.body.errorCode, 'relaykernel-services-locked')
+  t.is(res.body.config.enabled, false)
+  t.is(res.body.config.locked, true)
+  t.alike(res.body.config.plugins, [])
+  t.is(node.config.enableServices, false)
+  t.alike(node.config.plugins, [])
+  t.is(persisted(), null)
+})
+
 test('poker service http api is delegated when poker provider is running', async (t) => {
   const { node, port } = await makeServer(t)
   node.serviceRegistry.services.set('poker', {

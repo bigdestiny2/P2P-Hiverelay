@@ -39,9 +39,11 @@ import { EventEmitter } from 'events'
 import { ERR, relayReserveEncoding } from './messages.js'
 import { CIRCUIT_PROTOCOL_NAME } from '../constants.js'
 
-const DEFAULT_RESERVATION_TTL = 60 * 60 * 1000 // 1 hour
-const DEFAULT_MAX_CIRCUIT_BYTES = 64 * 1024 * 1024 // 64 MB
-const DEFAULT_MAX_CIRCUITS_PER_PEER = 5
+export const DEFAULT_RESERVATION_TTL = 60 * 60 * 1000 // 1 hour
+export const DEFAULT_MAX_CIRCUIT_DURATION_MS = 10 * 60 * 1000 // 10 minutes
+export const DEFAULT_MAX_CIRCUIT_BYTES = 64 * 1024 * 1024 // 64 MB
+export const DEFAULT_MAX_CIRCUITS_PER_PEER = 5
+export const DEFAULT_MAX_CIRCUIT_RATE_BYTES_PER_SECOND = 1024 * 1024 // 1 MiB/s
 export const CIRCUIT_ID_BYTES = 16
 export const MAX_CIRCUIT_DATA_MSG_BYTES = 64 * 1024 // 64 KB per data frame (protects against giant single-frame DoS)
 export const MAX_CIRCUIT_STATUS_MESSAGE_BYTES = 1024
@@ -253,11 +255,33 @@ function authenticatedKeyFor (channel) {
 export class CircuitRelay extends EventEmitter {
   constructor (swarm, relay, opts = {}) {
     super()
+    if (relay == null && swarm && typeof swarm.registerCircuit === 'function') {
+      relay = swarm
+      swarm = null
+    }
     this.swarm = swarm
     this.relay = relay // The Relay instance from relay.js
-    this.reservationTTL = opts.reservationTTL || DEFAULT_RESERVATION_TTL
-    this.maxCircuitBytes = opts.maxCircuitBytes || DEFAULT_MAX_CIRCUIT_BYTES
-    this.maxCircuitsPerPeer = opts.maxCircuitsPerPeer || DEFAULT_MAX_CIRCUITS_PER_PEER
+    this.reservationTTL = positiveInteger(opts.reservationTTL, DEFAULT_RESERVATION_TTL)
+    this.maxCircuitDuration = hardCappedPositiveInteger(
+      opts.maxCircuitDuration,
+      positiveInteger(relay?.maxCircuitDuration, DEFAULT_MAX_CIRCUIT_DURATION_MS),
+      DEFAULT_MAX_CIRCUIT_DURATION_MS
+    )
+    this.maxCircuitBytes = hardCappedPositiveInteger(
+      opts.maxCircuitBytes,
+      positiveInteger(relay?.maxCircuitBytes, DEFAULT_MAX_CIRCUIT_BYTES),
+      DEFAULT_MAX_CIRCUIT_BYTES
+    )
+    this.maxCircuitsPerPeer = hardCappedPositiveInteger(
+      opts.maxCircuitsPerPeer,
+      positiveInteger(relay?.maxCircuitsPerPeer, DEFAULT_MAX_CIRCUITS_PER_PEER),
+      DEFAULT_MAX_CIRCUITS_PER_PEER
+    )
+    this.maxCircuitRateBytesPerSecond = hardCappedPositiveInteger(
+      opts.maxCircuitRateBytesPerSecond,
+      positiveInteger(relay?.maxCircuitRateBytesPerSecond, DEFAULT_MAX_CIRCUIT_RATE_BYTES_PER_SECOND),
+      DEFAULT_MAX_CIRCUIT_RATE_BYTES_PER_SECOND
+    )
     this.maxDataMsgBytes = Math.min(opts.maxDataMsgBytes || MAX_CIRCUIT_DATA_MSG_BYTES, MAX_CIRCUIT_DATA_MSG_BYTES)
 
     // Reservations: peer pubkey hex -> { channel, peerPubkey, expiresAt, circuitCount, maxBytes }
@@ -371,8 +395,8 @@ export class CircuitRelay extends EventEmitter {
       peerPubkey: msg.peerPubkey,
       expiresAt: Date.now() + this.reservationTTL,
       circuitCount: 0,
-      maxDurationMs: msg.maxDurationMs || this.reservationTTL,
-      maxBytes: msg.maxBytes || this.maxCircuitBytes
+      maxDurationMs: Math.min(positiveInteger(msg.maxDurationMs, this.maxCircuitDuration), this.maxCircuitDuration),
+      maxBytes: Math.min(positiveInteger(msg.maxBytes, this.maxCircuitBytes), this.maxCircuitBytes)
     })
 
     this._sendStatus(channel, ERR.NONE, 'Reservation granted')
@@ -386,7 +410,8 @@ export class CircuitRelay extends EventEmitter {
     const pending = this.pendingConnects.get(peerHex)
     if (pending) {
       for (const req of pending) {
-        this._bridgeCircuit(req.sourceChannel, channel, req.sourcePubkey, msg.peerPubkey)
+        const reservation = this.reservations.get(peerHex)
+        this._bridgeCircuit(req.sourceChannel, channel, req.sourcePubkey, msg.peerPubkey, reservation)
       }
       this.pendingConnects.delete(peerHex)
     }
@@ -433,7 +458,7 @@ export class CircuitRelay extends EventEmitter {
       return
     }
 
-    this._bridgeCircuit(channel, reservation.channel, msg.sourcePubkey, msg.targetPubkey)
+    this._bridgeCircuit(channel, reservation.channel, msg.sourcePubkey, msg.targetPubkey, reservation)
     reservation.circuitCount++
   }
 
@@ -443,18 +468,20 @@ export class CircuitRelay extends EventEmitter {
    * circuit in `activeCircuits` keyed by circuitId; the dataMsg handler
    * uses that table to route DATA frames between the two channels.
    */
-  _bridgeCircuit (sourceChannel, destChannel, sourcePubkey, destPubkey) {
+  _bridgeCircuit (sourceChannel, destChannel, sourcePubkey, destPubkey, reservation = null) {
     const circuitIdBuf = b4a.concat([sourcePubkey, destPubkey]).slice(0, CIRCUIT_ID_BYTES)
     const circuitId = b4a.toString(circuitIdBuf, 'hex')
     const sourcePeerKey = b4a.toString(sourcePubkey, 'hex')
     const destPeerKey = b4a.toString(destPubkey, 'hex')
+    const maxBytes = Math.min(positiveInteger(reservation?.maxBytes, this.maxCircuitBytes), this.maxCircuitBytes)
+    const maxDurationMs = Math.min(positiveInteger(reservation?.maxDurationMs, this.maxCircuitDuration), this.maxCircuitDuration)
 
     // Per-peer circuit-count accounting via the Relay class. Lets the
     // operator's maxConnections + maxCircuitsPerPeer caps apply uniformly,
     // and feeds the existing /status counters (totalCircuitsServed,
     // totalBytesRelayed) which dashboards already read.
     if (this.relay && typeof this.relay.registerCircuit === 'function') {
-      const accepted = this.relay.registerCircuit(circuitId, sourcePeerKey, this.maxCircuitBytes)
+      const accepted = this.relay.registerCircuit(circuitId, sourcePeerKey, maxBytes)
       if (!accepted) {
         this._sendStatus(sourceChannel, ERR.CAPACITY_FULL, 'Relay at capacity')
         return
@@ -470,7 +497,10 @@ export class CircuitRelay extends EventEmitter {
       destPeerKey,
       bytesRelayed: 0,
       startedAt: Date.now(),
-      maxBytes: this.maxCircuitBytes
+      maxBytes,
+      maxDurationMs,
+      rateWindowStartedAt: 0,
+      rateWindowBytes: 0
     })
 
     // Tell BOTH peers the circuit is ready. Each gets the OTHER's pubkey
@@ -518,9 +548,20 @@ export class CircuitRelay extends EventEmitter {
       return
     }
 
+    const now = Date.now()
+    if (now - circuit.startedAt > circuit.maxDurationMs) {
+      this._closeCircuit(circuitIdHex, 'DURATION_EXCEEDED')
+      return
+    }
+
     // Per-circuit byte cap.
     if (circuit.bytesRelayed + dataLen > circuit.maxBytes) {
       this._closeCircuit(circuitIdHex, 'BYTES_EXCEEDED')
+      return
+    }
+
+    if (!this._admitCircuitRate(circuit, dataLen, now)) {
+      this._closeCircuit(circuitIdHex, 'RATE_EXCEEDED')
       return
     }
 
@@ -581,6 +622,18 @@ export class CircuitRelay extends EventEmitter {
     this.emit('circuit-closed', { circuitId: circuitIdHex, reason, bytesRelayed: circuit.bytesRelayed, durationMs: Date.now() - circuit.startedAt })
   }
 
+  _admitCircuitRate (circuit, bytes, now = Date.now()) {
+    if (!Number.isSafeInteger(this.maxCircuitRateBytesPerSecond) || this.maxCircuitRateBytesPerSecond <= 0) return true
+    if (!circuit || !Number.isSafeInteger(bytes) || bytes < 0) return false
+    if (!Number.isFinite(circuit.rateWindowStartedAt) || now - circuit.rateWindowStartedAt >= 1000) {
+      circuit.rateWindowStartedAt = now
+      circuit.rateWindowBytes = 0
+    }
+    if (circuit.rateWindowBytes + bytes > this.maxCircuitRateBytesPerSecond) return false
+    circuit.rateWindowBytes += bytes
+    return true
+  }
+
   _sendStatus (channel, code, message) {
     if (channel.opened && channel._hiverelay) {
       channel._hiverelay.statusMsg.send({ code, message })
@@ -637,7 +690,7 @@ export class CircuitRelay extends EventEmitter {
     // — the Relay class also has a duration timer, but if accounting
     // wasn't called we still want a cleanup here).
     for (const [circuitIdHex, circuit] of this.activeCircuits) {
-      if (now - circuit.startedAt > this.reservationTTL) {
+      if (now - circuit.startedAt > circuit.maxDurationMs) {
         this._closeCircuit(circuitIdHex, 'DURATION_EXCEEDED')
       }
     }
@@ -671,7 +724,16 @@ const REASON_CODES = {
   DURATION_EXCEEDED: 4,
   FRAME_TOO_LARGE: 5,
   FORWARD_FAILED: 6,
-  SHUTDOWN: 7
+  SHUTDOWN: 7,
+  RATE_EXCEEDED: 8
 }
 
 export { REASON_CODES }
+
+function positiveInteger (value, fallback) {
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback
+}
+
+function hardCappedPositiveInteger (value, fallback, hardCap) {
+  return Math.min(positiveInteger(value, fallback), hardCap)
+}

@@ -9,6 +9,7 @@ const FLEET_ROLLOUT_TIMEOUT_MAX_MS = 4 * 60 * 60 * 1000
 const usage = `
 Usage:
   node scripts/check-release-distribution-env.mjs --channel <canary|stable|both|none> --prerelease <true|false> [--env-file <path>] [--github-env <path>]
+  node scripts/check-release-distribution-env.mjs --issue-120-repair --env-file <path>
 
 Defaults:
   --channel defaults to both for full releases and none for prereleases when HIVERELAY_RELEASE_CHANNEL is unset.
@@ -17,27 +18,36 @@ Local candidate validation:
   --env-file reads NAME=value and NAME<<DELIM blocks so operators can validate
   multiline release values before writing them to masked GitHub Secrets.
   Candidate validation is hermetic and does not fall back to ambient shell secrets.
+
+Issue #120 repair validation checks only the four currently malformed masked
+values named in the latest issue comment: UMBREL_STORE_TOKEN,
+UMBREL_OFFICIAL_PR_TOKEN, UMBREL_OFFICIAL_FORK, and STARTOS_REGISTRY_URL.
 `
 
 const args = parseArgs(process.argv.slice(2))
+if (args.issue120Repair && !args.envFile) die('--issue-120-repair requires --env-file so ambient secrets cannot mask the repair candidate.')
 const sourceEnv = args.envFile ? safeReadEnvFile(args.envFile) : process.env
-const prerelease = readBoolean(args.prerelease ?? sourceEnv.HIVERELAY_RELEASE_PRERELEASE)
-const channel = args.channel || sourceEnv.HIVERELAY_RELEASE_CHANNEL || (prerelease ? 'none' : 'both')
+const prerelease = args.issue120Repair ? false : readBoolean(args.prerelease ?? sourceEnv.HIVERELAY_RELEASE_PRERELEASE)
+const channel = args.issue120Repair ? 'both' : (args.channel || sourceEnv.HIVERELAY_RELEASE_CHANNEL || (prerelease ? 'none' : 'both'))
 const githubEnv = args.githubEnv || process.env.GITHUB_ENV || ''
-const result = checkReleaseDistributionEnv({ channel, prerelease, env: sourceEnv })
+const result = args.issue120Repair
+  ? checkIssue120MaskedValueRepair({ env: sourceEnv })
+  : checkReleaseDistributionEnv({ channel, prerelease, env: sourceEnv })
 
 appendGithubEnv(githubEnv, result.envUpdates)
 
 if (!result.ok) {
-  console.error('Release distribution preflight failed:')
+  console.error(result.failureHeading || 'Release distribution preflight failed:')
   for (const item of result.missing) console.error(`- ${item}`)
   console.error('')
-  console.error(formatRepairPath({ channel, prerelease }))
+  console.error(result.repairPath || formatRepairPath({ channel, prerelease }))
   process.exit(1)
 }
 
 if (result.skipped) {
   console.log('Distribution credential preflight skipped for prerelease.')
+} else if (result.successMessage) {
+  console.log(result.successMessage)
 } else {
   console.log('Stable release distribution preflight passed.')
 }
@@ -134,9 +144,13 @@ function checkReleaseDistributionEnv ({ channel, prerelease, env }) {
   requireGitHubToken('UMBREL_OFFICIAL_PR_TOKEN', ['HIVERELAY_UMBREL_OFFICIAL_PR_STATUS'])
   requireGitHubToken('ECOSYSTEM_CONSUMER_TOKEN', ['HIVERELAY_ECOSYSTEM_CONSUMER_STATUS'])
   requireSecret('UMBREL_OFFICIAL_FORK', ['HIVERELAY_UMBREL_OFFICIAL_PR_STATUS'])
-  if (String(env.UMBREL_OFFICIAL_FORK || '').trim() && !isOfficialUmbrelForkSlug(env.UMBREL_OFFICIAL_FORK)) {
-    missing.push('UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps')
-    envUpdates.HIVERELAY_UMBREL_OFFICIAL_PR_STATUS = 'invalid-fork'
+  if (String(env.UMBREL_OFFICIAL_FORK || '').trim()) {
+    const fork = normalizeOfficialUmbrelForkSlug(env.UMBREL_OFFICIAL_FORK)
+    if (fork && isOfficialUmbrelForkSlug(fork)) envUpdates.UMBREL_OFFICIAL_FORK = fork
+    else {
+      missing.push('UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps')
+      envUpdates.HIVERELAY_UMBREL_OFFICIAL_PR_STATUS = 'invalid-fork'
+    }
   }
   requireSecret('NPM_TOKEN', ['HIVERELAY_NPM_PUBLISH_STATUS'], {
     validate: isNpmToken,
@@ -145,9 +159,13 @@ function checkReleaseDistributionEnv ({ channel, prerelease, env }) {
   })
   requirePrivateKey('STARTOS_DEVELOPER_KEY_PEM', ['HIVERELAY_STARTOS_REGISTRY_STATUS'])
   requireSecret('STARTOS_REGISTRY_URL', ['HIVERELAY_STARTOS_REGISTRY_STATUS'])
-  if (String(env.STARTOS_REGISTRY_URL || '').trim() && !isPublicHttpsUrl(env.STARTOS_REGISTRY_URL)) {
-    missing.push('STARTOS_REGISTRY_URL must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames')
-    envUpdates.HIVERELAY_STARTOS_REGISTRY_STATUS = 'invalid-registry-url'
+  if (String(env.STARTOS_REGISTRY_URL || '').trim()) {
+    const registryUrl = normalizePublicHttpsUrl(env.STARTOS_REGISTRY_URL)
+    if (registryUrl && isPublicHttpsUrl(registryUrl)) envUpdates.STARTOS_REGISTRY_URL = registryUrl
+    else {
+      missing.push('STARTOS_REGISTRY_URL must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames')
+      envUpdates.HIVERELAY_STARTOS_REGISTRY_STATUS = 'invalid-registry-url'
+    }
   }
 
   if (missing.length > 0) {
@@ -160,6 +178,70 @@ function checkReleaseDistributionEnv ({ channel, prerelease, env }) {
     skipped: false,
     missing,
     envUpdates
+  }
+}
+
+function checkIssue120MaskedValueRepair ({ env }) {
+  const missing = []
+  const envUpdates = {
+    HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS: 'issue-120-repair-candidate-passed'
+  }
+
+  const requireSecret = (name, statusNames, opts = {}) => {
+    const value = String(env[name] || '')
+    if (!value.trim()) {
+      missing.push(name)
+      for (const statusName of statusNames) envUpdates[statusName] = 'missing-secret'
+      return null
+    }
+    if (!opts.validate) return value
+    const normalized = opts.validate(value)
+    if (normalized) return normalized
+    missing.push(`${name} ${opts.message}`)
+    for (const statusName of statusNames) envUpdates[statusName] = opts.status || 'invalid-secret'
+    return null
+  }
+
+  requireSecret('UMBREL_STORE_TOKEN', [
+    'HIVERELAY_UMBREL_COMMUNITY_STORE_VALIDATE_STATUS',
+    'HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS'
+  ], {
+    validate: value => isGitHubToken(value) ? value : null,
+    status: 'invalid-token',
+    message: 'must be a GitHub token without whitespace or control characters'
+  })
+  requireSecret('UMBREL_OFFICIAL_PR_TOKEN', ['HIVERELAY_UMBREL_OFFICIAL_PR_STATUS'], {
+    validate: value => isGitHubToken(value) ? value : null,
+    status: 'invalid-token',
+    message: 'must be a GitHub token without whitespace or control characters'
+  })
+  const fork = requireSecret('UMBREL_OFFICIAL_FORK', ['HIVERELAY_UMBREL_OFFICIAL_PR_STATUS'], {
+    validate: normalizeOfficialUmbrelForkSlug,
+    status: 'invalid-fork',
+    message: 'must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps'
+  })
+  if (fork && isOfficialUmbrelForkSlug(fork)) envUpdates.UMBREL_OFFICIAL_FORK = fork
+
+  const registryUrl = requireSecret('STARTOS_REGISTRY_URL', ['HIVERELAY_STARTOS_REGISTRY_STATUS'], {
+    validate: normalizePublicHttpsUrl,
+    status: 'invalid-registry-url',
+    message: 'must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames'
+  })
+  if (registryUrl && isPublicHttpsUrl(registryUrl)) envUpdates.STARTOS_REGISTRY_URL = registryUrl
+
+  if (missing.length > 0) {
+    envUpdates.HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS = 'issue-120-repair-candidate-failed'
+    envUpdates.HIVERELAY_RELEASE_SURFACES_STATUS = 'blocked'
+  }
+
+  return {
+    ok: missing.length === 0,
+    skipped: false,
+    missing,
+    envUpdates,
+    failureHeading: 'Issue #120 masked-value repair candidate failed:',
+    successMessage: 'Issue #120 masked-value repair candidate passed.',
+    repairPath: formatIssue120RepairPath()
   }
 }
 
@@ -226,6 +308,10 @@ function parseArgs (argv) {
       out.envFile = readValue(argv, ++i, arg)
       continue
     }
+    if (arg === '--issue-120-repair') {
+      out.issue120Repair = true
+      continue
+    }
     die(`Unknown argument: ${arg}`)
   }
   return out
@@ -253,19 +339,33 @@ function readBoolean (value) {
 }
 
 function isPublicHttpsUrl (value) {
-  if (typeof value !== 'string' || !value || value.trim() !== value) return false
-  if (hasControlChars(value)) return false
+  return Boolean(normalizePublicHttpsUrl(value))
+}
+
+function normalizePublicHttpsUrl (value) {
+  if (typeof value !== 'string' || !value) return null
+  const trimmed = value.trim()
+  if (!trimmed || hasControlChars(trimmed)) return null
   try {
-    const url = new URL(value)
-    return url.protocol === 'https:' &&
+    const url = new URL(trimmed)
+    if (!(url.protocol === 'https:' &&
       !url.username &&
       !url.password &&
       !url.search &&
       !url.hash &&
-      isPublicHostname(url.hostname)
+      isPublicHostname(url.hostname))) {
+      return null
+    }
+    return `${url.origin}${normalizeUrlPath(url.pathname)}`
   } catch (_) {
-    return false
+    return null
   }
+}
+
+function normalizeUrlPath (pathname) {
+  const value = String(pathname || '')
+  if (!value || value === '/') return ''
+  return value.replace(/\/+$/, '')
 }
 
 function isPublicHostname (hostname) {
@@ -294,14 +394,28 @@ function hasControlChars (value) {
 }
 
 function isOfficialUmbrelForkSlug (value) {
-  if (typeof value !== 'string' || value.trim() !== value) return false
-  if (hasControlChars(value)) return false
-  const parts = value.split('/')
+  return Boolean(normalizeOfficialUmbrelForkSlug(value))
+}
+
+function normalizeOfficialUmbrelForkSlug (value) {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed || hasControlChars(trimmed)) return null
+  let slug = trimmed
+  const httpsUrl = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s?#]+)\/?$/i.exec(slug)
+  if (httpsUrl) slug = `${httpsUrl[1]}/${httpsUrl[2]}`
+  const sshUrl = /^git@github\.com:([^/\s]+)\/([^/\s]+)$/.exec(slug)
+  if (sshUrl) slug = `${sshUrl[1]}/${sshUrl[2]}`
+  slug = slug.replace(/\.git$/i, '').replace(/\/+$/, '')
+  const parts = slug.split('/')
   if (parts.length !== 2) return false
   const [owner, repo] = parts
-  return isGitHubOwnerName(owner) &&
+  if (!(isGitHubOwnerName(owner) &&
     owner.toLowerCase() !== 'getumbrel' &&
-    repo === 'umbrel-apps'
+    repo.toLowerCase() === 'umbrel-apps')) {
+    return null
+  }
+  return `${owner}/umbrel-apps`
 }
 
 function isGitHubOwnerName (value) {
@@ -317,6 +431,18 @@ function formatRepairPath ({ channel, prerelease }) {
     `- Validate without publishing: npm run release:check-distribution-env -- --env-file /private/tmp/hiverelay-release-secrets.env --channel ${repairChannel} --prerelease false`,
     '- Apply through stdin after validation: npm run release:apply-github-secrets -- --repo bigdestiny2/P2P-Hiverelay --env-file /private/tmp/hiverelay-release-secrets.env',
     '- Re-run the side-effect-free GitHub Actions workflow release-distribution-preflight.yml with channel=both and prerelease=false before rerunning release-surfaces.yml.'
+  ].join('\n')
+}
+
+function formatIssue120RepairPath () {
+  return [
+    'Repair path:',
+    '- Generate the targeted issue #120 repair file outside the repo: npm run release:write-secret-template -- --issue-120-repair --out /private/tmp/hiverelay-release-secrets.env',
+    '- Replace the four REPLACE_* placeholders with corrected release values.',
+    '- Validate without publishing: npm run release:check-distribution-env -- --issue-120-repair --env-file /private/tmp/hiverelay-release-secrets.env',
+    '- Dry-run targeted rotation: npm run release:apply-github-secrets -- --issue-120-repair --repo bigdestiny2/P2P-Hiverelay --env-file /private/tmp/hiverelay-release-secrets.env --dry-run',
+    '- Apply targeted rotation through stdin: npm run release:apply-github-secrets -- --issue-120-repair --repo bigdestiny2/P2P-Hiverelay --env-file /private/tmp/hiverelay-release-secrets.env',
+    '- Re-run the side-effect-free GitHub Actions workflow release-distribution-preflight.yml with channel=both and prerelease=false before rerunning release-surfaces.yml for v0.20.2.'
   ].join('\n')
 }
 

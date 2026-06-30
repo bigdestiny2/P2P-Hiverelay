@@ -1,0 +1,69 @@
+{
+  "name": "witness-quorum-policy-v1-5-of-7-diverse",
+  "input": {
+    "intentId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "subjectRelayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "publisherPubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "selectedBy": "publisher",
+    "witnessCount": 7,
+    "requiredWitnesses": 5,
+    "minOperators": 5,
+    "minRegions": 5,
+    "witnesses": [
+      {
+        "witnessPubkey": "0101010101010101010101010101010101010101010101010101010101010101",
+        "operator": "operator-1",
+        "region": "us-east"
+      },
+      {
+        "witnessPubkey": "0202020202020202020202020202020202020202020202020202020202020202",
+        "operator": "operator-2",
+        "region": "eu-west"
+      },
+      {
+        "witnessPubkey": "0303030303030303030303030303030303030303030303030303030303030303",
+        "operator": "operator-3",
+        "region": "ap-south"
+      },
+      {
+        "witnessPubkey": "0404040404040404040404040404040404040404040404040404040404040404",
+        "operator": "operator-4",
+        "region": "sa-east"
+      },
+      {
+        "witnessPubkey": "0505050505050505050505050505050505050505050505050505050505050505",
+        "operator": "operator-5",
+        "region": "me-central"
+      },
+      {
+        "witnessPubkey": "0606060606060606060606060606060606060606060606060606060606060606",
+        "operator": "operator-6",
+        "region": "af-south"
+      },
+      {
+        "witnessPubkey": "0707070707070707070707070707070707070707070707070707070707070707",
+        "operator": "operator-7",
+        "region": "ca-central"
+      }
+    ]
+  },
+  "verdict": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  },
+  "quorum": {
+    "valid": true,
+    "count": 5,
+    "required": 5,
+    "accepted": [
+      "0101010101010101010101010101010101010101010101010101010101010101",
+      "0202020202020202020202020202020202020202020202020202020202020202",
+      "0303030303030303030303030303030303030303030303030303030303030303",
+      "0404040404040404040404040404040404040404040404040404040404040404",
+      "0505050505050505050505050505050505050505050505050505050505050505"
+    ],
+    "rejected": [],
+    "reason": null
+  }
+}

@@ -12,6 +12,7 @@ const CHECKS = [
   'wizardCompletes',
   'setupActionLockObserved',
   'addWalletPersists',
+  'dynamicPayoutControlsObserved',
   'walletBusyStateObserved',
   'managementActionsPersist',
   'serviceActionStateObserved',
@@ -94,12 +95,12 @@ test('Umbrel runtime review verifier rejects missing, duplicate, and failed chec
   const file = await writeValidEvidence(dir)
   const body = await readJson(file)
 
-  body.checks = body.checks.filter(check => check.name !== 'walletBusyStateObserved')
+  body.checks = body.checks.filter(check => check.name !== 'dynamicPayoutControlsObserved')
   const missingFile = path.join(dir, 'missing-check.json')
   await writeJson(missingFile, body)
   const missing = await runVerifier(missingFile)
   t.is(missing.status, 1)
-  t.ok(missing.stderr.includes('Missing Umbrel runtime checks: walletBusyStateObserved'))
+  t.ok(missing.stderr.includes('Missing Umbrel runtime checks: dynamicPayoutControlsObserved'))
 
   const duplicateBody = await readJson(file)
   duplicateBody.checks.push({ name: 'addWalletPersists', status: 'passed' })

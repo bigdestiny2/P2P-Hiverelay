@@ -131,9 +131,17 @@ function catalogEntries (node) {
 }
 
 function federationCatalogSnapshot (node) {
+  if (relayKernelProfileActive(node)) return null
   if (!node?.federation) return null
   const result = buildFederationSnapshotPayload({ federation: node.federation })
   return result.ok ? result.payload : null
+}
+
+function relayKernelProfileActive (node) {
+  return !!node && (
+    node.mode === 'relaykernel' ||
+    (node.config && node.config.productProfile === 'relaykernel')
+  )
 }
 
 function safeCatalogHexKey (value) {

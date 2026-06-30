@@ -37,9 +37,9 @@ Docker/runtime, and env-file hardening work through the inspected commit.
 
 ## Current Red
 
-Release distribution preflight run: `28297002418` (issue #120).
-- Run URL: https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/28297002418
-- Latest checked preflight: state `completed/failure`, head `main@5e56e95`, created `2026-06-27T17:48:24Z`.
+Release distribution preflight run: `28293455583` (issue #120).
+- Run URL: https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/28293455583
+- Latest checked preflight: state `completed/failure`, head `main@94580c6`, created `2026-06-27T15:27:01Z`.
 - Earlier passing preflight `28238930607` at `1ffffe6` is superseded by this newer failure.
 
 The run is side-effect-free and is failing on malformed GitHub-hosted release
@@ -48,7 +48,6 @@ values, not missing repo code:
 - `UMBREL_STORE_TOKEN must be a GitHub token without whitespace or control characters`
 - `UMBREL_OFFICIAL_PR_TOKEN must be a GitHub token without whitespace or control characters`
 - `UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug with a normal owner name and must not be getumbrel/umbrel-apps`
-- `NPM_TOKEN`
 - `STARTOS_REGISTRY_URL must be a public https URL without embedded credentials, query strings, fragments, or reserved/local hostnames`
 
 The same preflight did not report malformed `FLEET_SSH_PRIVATE_KEY` or
@@ -62,32 +61,36 @@ multi-arch manifest digest, `make digest` succeeds, and
 
 ## Repair Path
 
-Generate a local candidate env file with the corrected full-release values,
+Generate a targeted local candidate env file with the corrected issue #120 values,
 then run:
 
 ```sh
 npm run release:write-secret-template -- \
+  --issue-120-repair \
   --out /private/tmp/hiverelay-release-secrets.env
 
 npm run release:check-distribution-env -- \
-  --env-file /private/tmp/hiverelay-release-secrets.env \
-  --channel both \
-  --prerelease false
+  --issue-120-repair \
+  --env-file /private/tmp/hiverelay-release-secrets.env
 
 npm run release:apply-github-secrets -- \
+  --issue-120-repair \
   --repo bigdestiny2/P2P-Hiverelay \
   --env-file /private/tmp/hiverelay-release-secrets.env \
   --dry-run
 
 npm run release:apply-github-secrets -- \
+  --issue-120-repair \
   --repo bigdestiny2/P2P-Hiverelay \
   --env-file /private/tmp/hiverelay-release-secrets.env
 ```
 
-The template command writes placeholders only and keeps the file outside the repo.
+The template command writes placeholders only for the four current issue #120
+masked-value blockers and keeps the file outside the repo.
 The check command validates the candidate file locally without publishing.
-The apply helper validates the same file again before writing to GitHub.
-Masked release values are sent through `gh secret set` stdin and are not printed.
+The apply helper validates the same file again before writing only those four
+GitHub Secrets. Masked release values are sent through `gh secret set` stdin
+and are not printed.
 
 After applying the fixed values, rerun:
 
@@ -102,8 +105,8 @@ gh workflow run release-distribution-preflight.yml \
 
 Do not cut a full live release until the distribution preflight passes.
 
-1. Generate `/private/tmp/hiverelay-release-secrets.env` with `release:write-secret-template` and replace every `REPLACE_*` placeholder.
-2. Rotate the malformed GitHub values using `release:apply-github-secrets`.
+1. Generate `/private/tmp/hiverelay-release-secrets.env` with `release:write-secret-template -- --issue-120-repair` and replace every `REPLACE_*` placeholder.
+2. Rotate the four malformed GitHub values using `release:apply-github-secrets -- --issue-120-repair`.
 3. Rerun the full-release preflight with `channel=both` and `prerelease=false`.
 4. Cut a fresh versioned release through `release-surfaces.yml`.
 5. Confirm the release GHCR tag resolves to a multi-arch digest and the

@@ -1,0 +1,108 @@
+import test from 'brittle'
+import { execFile } from 'child_process'
+import { readFile, readdir, writeFile } from 'fs/promises'
+import path from 'path'
+import {
+  verifyProfileVector,
+  verifyProfileVectors
+} from 'p2p-hiverelay/core/protocol/profile-vector-verifier.js'
+
+const FIXTURE_DIR = new URL('../fixtures/relaykernel-profile/', import.meta.url)
+
+async function loadVectors () {
+  const dir = FIXTURE_DIR
+  const names = (await readdir(dir)).filter(name => name.endsWith('.json')).sort()
+  const vectors = []
+  for (const name of names) {
+    vectors.push(JSON.parse(await readFile(new URL(name, dir), 'utf8')))
+  }
+  return vectors
+}
+
+function runScript (args = []) {
+  return new Promise((resolve) => {
+    execFile(process.execPath, ['scripts/verify-profile-vectors.mjs', ...args], {
+      cwd: process.cwd(),
+      env: process.env
+    }, (error, stdout, stderr) => {
+      resolve({
+        code: error && typeof error.code === 'number' ? error.code : 0,
+        stdout,
+        stderr
+      })
+    })
+  })
+}
+
+test('profile vector verifier accepts all checked-in transplant vectors', async (t) => {
+  const vectors = await loadVectors()
+  const summary = verifyProfileVectors(vectors)
+  const names = new Set(vectors.map(vector => vector.name))
+
+  t.ok(vectors.length >= 4, 'fixture set includes all transplant vectors')
+  t.ok(names.has('capability-doc-signature-v1'), 'fixture set includes signed capability-doc conformance vector')
+  t.ok(names.has('seed-protocol-binary-v1'), 'fixture set includes seed protocol binary conformance vector')
+  t.ok(names.has('seed-protocol-handshake-v1'), 'fixture set includes seed protocol version-negotiation vector')
+  t.ok(names.has('circuit-protocol-binary-v1'), 'fixture set includes circuit protocol binary conformance vector')
+  t.ok(summary.valid, 'all vectors pass')
+  t.is(summary.count, vectors.length)
+  t.is(summary.failed, 0)
+  for (const result of summary.results) t.ok(result.valid, result.name + ' verifies')
+})
+
+test('profile vector verifier rejects tampered accounting and unknown vectors', async (t) => {
+  const vectors = await loadVectors()
+  const accounting = vectors.find(vector => vector.name === 'accounting-receipt-v1-os-grounded')
+  const tampered = {
+    ...accounting,
+    receipt: {
+      ...accounting.receipt,
+      diskBytes: accounting.receipt.diskBytes + 1
+    }
+  }
+  const tamperedResult = verifyProfileVector(tampered)
+  t.absent(tamperedResult.valid, 'tampered receipt vector fails')
+  t.ok(tamperedResult.errors.some(error => error.includes('failed verification') || error.includes('signableHex')))
+
+  const unknown = verifyProfileVector({ name: 'future-vector' })
+  t.absent(unknown.valid, 'unknown vector fails closed')
+  t.ok(unknown.errors.includes('unsupported vector: future-vector'))
+
+  const malformed = verifyProfileVector({
+    name: 'retrievability-proof-signable-v1',
+    seedHex: 'not-hex',
+    coreKey: 'not-hex',
+    nonce: 'not-hex',
+    blockValueHex: 'not-hex'
+  })
+  t.absent(malformed.valid, 'malformed vector fails closed')
+  t.ok(malformed.errors.some(error => error.startsWith('vector verification error:')))
+})
+
+test('profile vector CLI verifies fixture directory', async (t) => {
+  const result = await runScript()
+  t.is(result.code, 0)
+  t.ok(result.stdout.includes('profile vectors:'))
+  t.ok(result.stdout.includes('passed'))
+  t.is(result.stderr, '')
+})
+
+test('profile vector CLI emits JSON summary', async (t) => {
+  const result = await runScript(['--json'])
+  t.is(result.code, 0)
+  const summary = JSON.parse(result.stdout)
+  t.ok(summary.valid)
+  t.is(summary.failed, 0)
+})
+
+test('profile vector CLI fails on a tampered fixture file', async (t) => {
+  const file = path.join('/private/tmp', 'tampered-profile-vector-' + process.pid + '.json')
+  const vectors = await loadVectors()
+  const proof = vectors.find(vector => vector.name === 'retrievability-proof-signable-v1')
+  const tampered = { ...proof, signature: '00'.repeat(64) }
+
+  await writeFile(file, JSON.stringify(tampered), 'utf8')
+  const result = await runScript([file])
+  t.is(result.code, 1)
+  t.ok(result.stderr.includes('retrievability-proof-signable-v1'))
+})

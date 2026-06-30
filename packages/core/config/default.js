@@ -36,6 +36,7 @@ export default {
   maxCircuitDuration: 10 * 60 * 1000, // 10 minutes
   maxCircuitBytes: 64 * 1024 * 1024, // 64 MB per circuit
   maxCircuitsPerPeer: 5,
+  maxCircuitRateBytesPerSecond: 1024 * 1024, // 1 MiB/s per circuit
   reservationTTL: 60 * 60 * 1000, // 1 hour
 
   // Proof of relay
@@ -190,6 +191,21 @@ export default {
     enabled: true,
     intervalMs: 30_000,
     maxRestarts: 3
+  },
+  signedDirectory: {
+    enabled: false,
+    maxEntryBytes: 8 * 1024,
+    ttlSeconds: 24 * 60 * 60,
+    maxEntriesPerAuthor: 1,
+    publishRatePerMinute: 5,
+    maxTotalEntries: 10_000,
+    clockSkewToleranceSeconds: 60
+  },
+  federation: {
+    enabled: false,
+    followInterval: 5 * 60 * 1000,
+    followed: [],
+    mirrored: []
   },
 
   // Metadata-privacy controls. The relay is already blind to CONTENT; these

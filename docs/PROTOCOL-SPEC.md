@@ -18,8 +18,9 @@
 5. [Seed Request Protocol](#5-seed-request-protocol)
 6. [Circuit Relay Protocol](#6-circuit-relay-protocol)
 7. [Proof-of-Relay Protocol](#7-proof-of-relay-protocol)
-7A. [Proof-of-Storage Protocol (Trustless Seed Verification)](#7a-proof-of-storage-protocol-trustless-seed-verification)
+7A. [Proof-of-Retrievability Protocol (Trustless Seed Verification)](#7a-proof-of-retrievability-protocol-trustless-seed-verification)
 8. [Bandwidth Receipt Protocol](#8-bandwidth-receipt-protocol)
+8A. [Accounting Receipt Protocol](#8a-accounting-receipt-protocol)
 9. [Seeding Registry](#9-seeding-registry)
 10. [Peer Discovery](#10-peer-discovery)
 11. [Reputation Scoring](#11-reputation-scoring)
@@ -177,21 +178,69 @@ Sent by the publisher to request seeding.
 | `bountyRate` | `uint` | variable | Payment rate in sats/GB/month (0 in Phase 1) |
 | `ttlSeconds` | `uint` | variable | How long the seed request remains valid |
 | `publisherPubkey` | `fixed32` | 32 bytes | Ed25519 public key of the publisher |
-| `publisherSignature` | `fixed64` | 64 bytes | Ed25519 signature over the request fields |
+| `publisherSignature` | `fixed64` | 64 bytes | Ed25519 signature over the request fields; domain-v3 is preferred, legacy v2/v1 accepted as below |
 
 **Signature construction:**
 
-The signature is computed over the concatenation of:
+Current publishers SHOULD sign the domain-separated v3 preimage:
+
 ```
-appKey || discoveryKey[0] || ... || discoveryKey[N] || metadata
+"hiverelay.seed-request.v3" || 0x00 || seedRequestV2
 ```
 
-Where `metadata` is a 24-byte buffer containing:
+Where `seedRequestV2` is:
+
+```
+appKey || discoveryKeysHash || metadata
+```
+
+`discoveryKeysHash` is a 32-byte BLAKE2b/generichash over
+`discoveryKey[0] || ... || discoveryKey[N]`, or 32 zero bytes when no
+discovery keys are present.
+
+`metadata` is a 40-byte buffer:
 - Byte 0: `replicationFactor` (uint8)
+- Byte 1: `revocable` flag (uint8: `1` = revocable, `0` = non-revocable)
+- Byte 2: `durability` tier (uint8)
+- Bytes 3-7: reserved zero bytes
 - Bytes 8-15: `maxStorageBytes` (uint64, big-endian)
 - Bytes 16-23: `ttlSeconds` (uint64, big-endian)
+- Bytes 24-27: `bountyRate` (uint32, big-endian)
+- Bytes 28-35: `unseedFreezeMs` (uint64, big-endian)
+- Bytes 36-39: reserved zero bytes
 
-The signature uses `crypto_sign_detached` from libsodium.
+The signature uses `crypto_sign_detached` from libsodium. Verifiers first try
+the domain-v3 preimage, then legacy v2 (`seedRequestV2` without the domain
+prefix), then the original legacy v1 28-byte metadata layout. The v1 fallback is
+accepted only when the request claims permissive defaults: revocable, no freeze
+window, and durability tier 0.
+
+Relays that accept the domain-v3 preimage advertise the signed capability-doc
+feature `seed-signature-domain-v3` and include
+`protocol_profile.signature_domains.seed_request.preferred =
+"hiverelay.seed-request.v3"`. Publishers can use this to prefer the stronger
+preimage on upgraded relay sets while retaining legacy v2 for mixed fleets.
+
+Publisher-signed HTTP and `hiverelay-publish` seed ingress can opt into
+replay hardening with `hiverelay.seed-request.replay-v1`. That preimage signs
+the same `seedRequestV2` bytes plus:
+
+- `issuedAt`: uint64 milliseconds since epoch,
+- `requestNonce`: 16 random bytes, encoded as 32 hex characters in JSON.
+
+Relays reject replay-profile requests whose `issuedAt` is outside the signed
+replay window or whose `(publisherPubkey, requestNonce)` pair was already
+consumed locally. The legacy Protomux seed-request frame remains unchanged;
+the replay profile is only for publisher-signed JSON ingress.
+
+The JSON publisher-signed seed ingress (`POST /api/v1/seed` and
+`hiverelay-publish` kind `seed`) is intentionally narrower than the
+operator-authenticated `/seed` catalog path. It accepts only the signed seed
+request fields, typed availability/privacy/custody binding fields, PVSS custody
+hints, and the paid-lease envelope (`leaseDays`, `paymentProof`). Unknown
+top-level fields and unknown nested payment-proof fields are rejected before
+`seedApp`, so app catalog metadata such as names, descriptions, authors, or
+arbitrary captions cannot be smuggled through the publisher-signed ingress.
 
 ### 5.2 SEED_ACCEPT Message
 
@@ -316,9 +365,21 @@ Each circuit is subject to the following limits (enforced by the relay):
 | Maximum duration | 10 minutes | Circuit is torn down after this duration |
 | Maximum bytes | 64 MB | Circuit is torn down if this byte count is exceeded |
 | Maximum circuits per peer | 5 | A single peer cannot hold more than 5 simultaneous circuits |
+| Maximum data frame | 64 KiB | Oversized `RELAY_DATA` frames close the circuit |
+| Per-circuit rate | 1 MiB/s | Circuit is closed when a peer exceeds the per-second rate cap |
+| Pending connects | 100 | Unreserved connect attempts are bounded relay-wide |
+| Reserve attempts | 5/minute/peer | Reservation floods are rate-limited per authenticated peer |
 | Reservation TTL | 1 hour | Unused reservations expire after this period |
 
-When a limit is exceeded, the relay destroys both sides of the circuit and emits a `circuit-closed` event with the reason (`BYTES_EXCEEDED`, `DURATION_EXCEEDED`, or `PEER_CLOSED`).
+When a limit is exceeded, the relay destroys both sides of the circuit and emits a `circuit-closed` event with the reason (`BYTES_EXCEEDED`, `DURATION_EXCEEDED`, `FRAME_TOO_LARGE`, `RATE_EXCEEDED`, or `PEER_CLOSED`).
+
+RelayKernel-compatible capability documents advertise
+`circuit-limits-profile-v1` and include a signed
+`protocol_profile.circuit_limits` object. That profile records the effective
+hard caps, reserve/pending queue bounds, authenticated reserve/connect binding,
+endpoint-only data forwarding, silent unknown-circuit drops, and the profile
+verdict. Clients may treat a missing or invalid `circuit_limits` profile as a
+reason not to rely on RelayKernel circuit semantics.
 
 ### 6.6 Reservation Cleanup
 
@@ -396,9 +457,9 @@ The default challenge interval is 5 minutes. Verifiers SHOULD randomize the exac
 
 ---
 
-## 7A. Proof-of-Storage Protocol (Trustless Seed Verification)
+## 7A. Proof-of-Retrievability Protocol (Trustless Seed Verification)
 
-**Shipped in v0.20.0.** Where Section 7's proof-of-relay rides the dedicated `hiverelay-proof` protomux channel, proof-of-storage is a **signed, third-party-portable** challenge-response carried over the existing **service RPC** (the same transport as `client.callService`). A passing proof is per-block, relay-attributable, and non-replayable: the relay signs the proof over a fresh nonce with its swarm identity key, and the block is verified against the drive key's signed Merkle root alone — the relay is trusted for nothing.
+**Shipped in v0.20.0 and expanded for the RelayKernel profile.** Where Section 7's proof-of-relay rides the dedicated `hiverelay-proof` protomux channel, proof-of-retrievability is a **signed, third-party-portable** challenge-response. It is available through the core HTTP route `POST /api/proof/retrievability` and, for legacy service clients, through the existing **service RPC** route named `storage-proof.prove` (the same transport as `client.callService`). A passing proof is per-block, relay-attributable, and non-replayable: the relay signs the proof over a fresh nonce with its swarm identity key, and the block is verified against the drive key's signed Merkle root alone — the relay is trusted for nothing.
 
 This is the second of two tiers of seed verification:
 
@@ -410,18 +471,21 @@ This is the second of two tiers of seed verification:
 > [!NOTE]
 > **Honest limitation.** This is a challenge-response proof-of-**retrievability**, not a sealed proof-of-**replication**. A relay could fetch a block on demand rather than store it; random-index sampling across the full core plus a latency bound make that expensive and detectable, but it is **not** cryptographically precluded.
 
-### 7A.1 Service and Method
+### 7A.1 Core Route, Service, And Method
 
-The relay exposes the proof primitive as a builtin service over the service RPC.
+The relay exposes the proof primitive as a core HTTP API route. The optional builtin service remains available for clients already using service RPC; both call the same relay-side proof provider and enforce the same privacy/rate-limit posture.
 
 | Property | Value |
 |---|---|
-| Service name | `storage-proof` |
-| Method | `prove` |
-| Route access policy | `storage-proof.prove` = `public` (anonymous-callable) |
-| Default state | **Opt-in, OFF by default** |
+| Core HTTP route | `POST /api/proof/retrievability` |
+| Core route access policy | `public` (anonymous-callable, endpoint-rate-limited) |
+| Capability-doc features | `retrievability-proof-http`, `retrievability-proof-domain-v1` |
+| Legacy service name | `storage-proof` |
+| Legacy method | `prove` |
+| Legacy route access policy | `storage-proof.prove` = `public` (anonymous-callable) |
+| Legacy service default state | **Opt-in, OFF by default** |
 
-**Enabling the service (opt-in):**
+**Enabling the legacy service (opt-in):**
 
 - **Node runtime:** via `config.plugins` / `services.json` (Services tab).
 - **Bare / appliance runtime:** via `config.services`, or the env var `HIVERELAY_STORAGE_PROOF=1`.
@@ -430,20 +494,23 @@ The relay exposes the proof primitive as a builtin service over the service RPC.
 
 ### 7A.2 `prove` Request
 
-The verifier calls `storage-proof.prove` with a JSON params object:
+The verifier calls `POST /api/proof/retrievability` or `storage-proof.prove` with the same JSON params object:
 
 | Field | Type | Description |
 |---|---|---|
 | `coreKey` | `string` (64-char hex) | Public key of the drive's metadata core to challenge |
 | `index` | `number` (uint) | Block index the relay must produce a proof for |
 | `nonce` | `string` (64-char hex) | 32-byte random challenge nonce (prevents replay) |
+| `signatureProfile` | `string`, optional | Omit for legacy byte-compatible proofs, or set `retrievability-proof-v1` to request the RelayKernel domain-separated preimage |
 
-### 7A.3 `prove` Response (proof-of-storage wire shape)
+### 7A.3 `prove` Response
 
 On success, the relay returns the `buildStorageProof` response object (all buffers hex-encoded):
 
 | Field | Type | Description |
 |---|---|---|
+| `proofKind` | `string` | `proof-of-retrievability`; additive metadata so clients do not overclaim proof-of-replication |
+| `proofLimit` | `string` | Human-readable limitation string: challenge-response proof, not proof-of-replication |
 | `coreKey` | `string` (hex) | Echo of the challenged core key |
 | `index` | `number` | Echo of the challenged block index |
 | `nonce` | `string` (hex) | Echo of the challenge nonce |
@@ -451,12 +518,13 @@ On success, the relay returns the `buildStorageProof` response object (all buffe
 | `blockHash` | `string` (hex) | `blake2b` (`crypto_generichash`) of the block value |
 | `relayPubkey` | `string` (hex) | The relay's swarm identity public key (attribution) |
 | `signature` | `string` (hex) | 64-byte Ed25519 signature over the preimage in 7A.4 |
+| `signatureProfile` | `string`, optional | Present when the relay used a non-legacy signing profile, currently `retrievability-proof-v1` |
 
 The proof is read from **local storage only**. If the relay does not actually hold the block, `buildStorageProof` throws `BLOCK_NOT_LOCAL`; an out-of-range index throws `BLOCK_OUT_OF_RANGE` (it never fetches on demand to answer a proof).
 
 ### 7A.4 Signature Preimage
 
-The relay signs (Ed25519, `crypto_sign_detached`) the concatenation:
+The legacy/default profile signs (Ed25519, `crypto_sign_detached`) the concatenation:
 
 ```
 coreKey (32 bytes)
@@ -467,6 +535,28 @@ coreKey (32 bytes)
 
 Total signed payload: 100 bytes. The signing key is the relay's swarm identity key, so the proof is attributable to that specific relay and bound to that specific challenge nonce.
 
+For RelayKernel-profile clients, the request may set
+`signatureProfile: 'retrievability-proof-v1'`. That profile signs a
+domain-separated JSON payload under `hiverelay.retrievability-proof.v1`:
+
+```json
+[
+  "hiverelay.retrievability-proof.v1",
+  "relay",
+  "hiverelay-proof",
+  "prove-retrievable",
+  1,
+  "<coreKey hex>",
+  42,
+  "<nonce hex>",
+  "<blockHash hex>"
+]
+```
+
+Verifiers accept both `storage-proof-legacy-v1` and
+`retrievability-proof-v1`; capability documents advertise the preferred profile
+under `protocol_profile.signature_domains.retrievability_proof`.
+
 ### 7A.5 Client Verification Model
 
 The verifier checks two independent things, **neither trusting the relay**, using a **key-only** verifier Hypercore opened on the drive key (no prior content needed):
@@ -474,13 +564,13 @@ The verifier checks two independent things, **neither trusting the relay**, usin
 1. **Challenge binding (cheap rejects first):** `coreKey`, `index`, `nonce`, and `relayPubkey` in the response must match the challenge that was issued. Mismatches yield `CORE_MISMATCH` / `INDEX_MISMATCH` / `NONCE_MISMATCH` / `RELAY_MISMATCH`.
 2. **Content (Hypercore intrinsic):** the `proof` is decoded and fed to `verifierCore.core.verify()`. Hypercore checks that the block hashes into the drive key's **signed Merkle root** — a forged or substituted block is rejected (`CONTENT_INVALID`). The relay cannot fabricate content for a key it is not the author of.
 3. **Optional `minLength` pin:** the proof's `upgrade.length` is author-signed (covered by the same signature `core.verify` validated), so it is trustworthy. If the caller passes `expect.minLength`, a relay proving an **old, shorter** signed version is rejected (`LENGTH_TOO_SHORT`) — holding an old block is not holding the current app.
-4. **Attribution + freshness (relay signature):** the response's `blockHash` must match the content actually verified (`BLOCKHASH_MISMATCH`), then the `signature` is checked against `relayPubkey` over the 7A.4 preimage (`SIG_INVALID`).
+4. **Attribution + freshness (relay signature):** the response's `blockHash` must match the content actually verified (`BLOCKHASH_MISMATCH`), then the `signature` is checked against `relayPubkey` over the 7A.4 preimage selected by `signatureProfile` (`SIG_INVALID`).
 
-`verifyStorageProof` returns a detailed verdict — `{ valid, contentValid, sigValid, coreValid, indexValid, nonceValid, relayValid, lengthValid, provenLength, reason }` — where `valid` is `true` only if both the content proof and the relay signature check out for the exact challenge issued.
+`verifyStorageProof` returns a detailed verdict — `{ valid, contentValid, sigValid, coreValid, indexValid, nonceValid, relayValid, lengthValid, provenLength, signatureProfile, reason }` — where `valid` is `true` only if both the content proof and the relay signature check out for the exact challenge issued.
 
 ### 7A.6 `client.proveSeeded` (sampling driver)
 
-`client.proveSeeded(driveKey, { relay, samples })` opens the drive to learn the metadata head, samples up to **16** random block indices (`samples` defaults to 3, clamped to `[1, 16]`), calls `storage-proof.prove` per sample over the service RPC, and verifies each signed proof against an isolated temp-Corestore verifier with `minLength` pinned to the head.
+`client.proveSeeded(driveKey, { relay, samples })` opens the drive to learn the metadata head, samples up to **16** random block indices (`samples` defaults to 3, clamped to `[1, 16]`), prefers `POST /api/proof/retrievability` when the relay's capability doc advertises `retrievability-proof-http`, falls back to `storage-proof.prove` over service RPC, and verifies each signed proof-of-retrievability against an isolated temp-Corestore verifier with `minLength` pinned to the head. Set `proofSignatureProfile: 'retrievability-proof-v1'` to request the domain-separated proof preimage; omit it for legacy-compatible proofs.
 
 Returns:
 
@@ -492,7 +582,14 @@ Returns:
   "head": 128,
   "passed": 3,
   "total": 3,
-  "samples": [ { "index": 42, "valid": true, "reason": null } ]
+  "samples": [
+    {
+      "index": 42,
+      "valid": true,
+      "signatureProfile": "storage-proof-legacy-v1",
+      "reason": null
+    }
+  ]
 }
 ```
 
@@ -556,6 +653,68 @@ This allows third-party auditors, the reputation system, and future payment syst
 ### 8.4 Receipt Collection
 
 Relays collect receipts by verifying the signature and storing valid receipts. Invalid receipts (bad signature) are rejected. Relays can export collected receipts for submission to the incentive layer.
+
+---
+
+## 8A. Accounting Receipt Protocol
+
+**RelayKernel profile surface.** Accounting receipts are relay-signed,
+content-free attestations over measured storage and traffic counters. Unlike
+bandwidth receipts, which are peer-signed acknowledgements that bytes were
+served to a specific peer, accounting receipts are signed by the relay over its
+current OS-grounded accounting summary.
+
+### 8A.1 HTTP Route And SDK Helper
+
+| Property | Value |
+|---|---|
+| Core HTTP route | `GET /api/accounting/receipt` |
+| Route access policy | `management auth` (API bearer token or localhost fallback) |
+| Capability-doc feature | `accounting-receipts` |
+| SDK helper | `client.fetchAccountingReceipt(relayUrl, { apiKey, expectedPubkey })` |
+
+The route accepts `refresh=0` to request the latest cached measurement rather
+than forcing a fresh disk scan. A default request refreshes the relay's
+storage-accounting measurement before signing.
+
+### 8A.2 Receipt Shape
+
+| Field | Type | Description |
+|---|---|---|
+| `kind` | `string` | `hiverelay-accounting-receipt` |
+| `version` | `number` | `1` |
+| `relayPubkey` | `string` (hex) | Relay identity that signed the receipt |
+| `periodStart` / `periodEnd` | `number` | Accounting window described by the receipt |
+| `measuredAt` | `number` | Timestamp of the storage measurement |
+| `storageBytes` | `number` | Total storage accounting bytes; must be >= `diskBytes` |
+| `diskBytes` | `number` | OS-measured on-disk usage, required |
+| `perEntryBytes` | `number` | Sum of measured per-entry bytes |
+| `bytesServed` / `bytesReceived` | `number` | Content-free traffic counters |
+| `leaseCount` / `seededCount` | `number` | Aggregate operational counters |
+| `source` | `string` | `storage-accounting-summary-v1` |
+| `nonce` | `string` (32-char hex) | Receipt uniqueness |
+| `signature` | `string` (128-char hex) | Ed25519 signature by `relayPubkey` |
+
+### 8A.3 Verification
+
+The signature preimage is the canonical JSON array:
+
+```json
+[
+  "hiverelay.accounting.receipt.v1",
+  "hiverelay-accounting-receipt",
+  1,
+  "<relayPubkey>",
+  "<period/counter fields in fixed order>",
+  "<nonce>"
+]
+```
+
+Verifiers MUST reject unknown fields, missing or malformed signatures, receipts
+whose `source` is not `storage-accounting-summary-v1`, and receipts where
+`storageBytes < diskBytes`. The client helper verifies the signature locally and
+can additionally pin `expectedPubkey` to reject a valid receipt from the wrong
+relay.
 
 ---
 
@@ -633,6 +792,38 @@ Relay nodes discover peers and other relays through the standard Hyperswarm DHT.
 | `PEER_RESPONSE` (0x32) | Response to a query with matching relay information |
 
 Relays join the DHT topics for every Hypercore they seed, with `{ server: true, client: true }`, and re-announce every 15 minutes (configurable).
+
+### 10.1 Capability Directory Privacy
+
+The signed capability document advertises an additive `directory_privacy`
+object so clients can distinguish public read surfaces from global relay
+enumerability:
+
+| Field | Description |
+|---|---|
+| `mode` | `relaykernel-private`, `private`, `catalog-public`, or `global-directory-opt-in` |
+| `global_enumerable` | `true` only when the relay explicitly enables the signed-directory surface |
+| `global_enumerable_reason` | Reason string such as `signed-directory-enabled`, or `null` |
+| `signed_directory_enabled` | Whether the optional signed-directory service is active |
+| `catalog_public` | Whether the relay exposes the bounded public catalog/gateway read plane |
+| `gateway_url_advertised` | Whether a public HTTP gateway URL is included in the document |
+| `index_room_advertised` | Whether an index-room sidecar pointer is included |
+
+RelayKernel-profile capability documents are private-by-default: they may still
+advertise compatibility HTTP/catalog surfaces for Blindspark/PearBrowser, but
+`global_enumerable` remains false unless a future explicit directory opt-in is
+added. The field is covered by the capability-doc signature, so an index or
+client can reject tampered enumerability claims.
+
+### 10.2 Capability Freshness
+
+Capability documents include a signed `attestedAt` millisecond timestamp.
+Default verification checks the signature only for backward compatibility, but
+strict clients can call `verifyCapabilityDoc(doc, { requireFresh: true,
+maxAgeMs })` or `fetchCapabilities(url, { requireFreshCapabilityDoc: true,
+maxAgeMs })` to reject replayed-but-valid old documents. The verifier also
+rejects attestations too far in the future when `maxFutureSkewMs` is set or
+strict freshness is requested.
 
 ---
 

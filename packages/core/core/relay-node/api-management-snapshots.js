@@ -18,6 +18,10 @@ const MODE_DETAILS = Object.freeze({
     name: 'Relay Core',
     description: 'Default focused kernel — availability, registry, gateway, custody, no service plugins'
   }),
+  relaykernel: Object.freeze({
+    name: 'RelayKernel Profile',
+    description: 'Narrow seed/proof/circuit/meta/accounting profile — custody, services, federation, and global directory surfaces off'
+  }),
   'custody-relay': Object.freeze({
     name: 'Custody Relay',
     description: 'Blind atomic custody profile — encrypted temporary handoff and expiry proofs'

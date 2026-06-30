@@ -85,6 +85,39 @@ test('release secret template writer creates private placeholder candidate outsi
   t.ok(check.stderr.includes('STARTOS_REGISTRY_URL must be a public https URL'))
 })
 
+test('release secret template writer creates targeted issue 120 repair candidate', async (t) => {
+  const dir = await tempDir(t)
+  const out = path.join(dir, 'hiverelay-release-secrets.env')
+  const res = await runTemplate(['--issue-120-repair', '--out', out])
+
+  t.is(res.status, 0)
+  t.ok(res.stdout.includes('release:check-distribution-env -- --issue-120-repair'))
+  t.ok(res.stdout.includes('release:apply-github-secrets -- --issue-120-repair'))
+
+  const body = await readFile(out, 'utf8')
+  t.ok(body.includes('HiveRelay issue #120 release-value repair candidate'))
+  t.ok(body.includes('UMBREL_STORE_TOKEN=REPLACE_WITH_GITHUB_TOKEN_FOR_COMMUNITY_STORE'))
+  t.ok(body.includes('UMBREL_OFFICIAL_PR_TOKEN=REPLACE_WITH_GITHUB_TOKEN_FOR_OFFICIAL_UMBREL_PR'))
+  t.ok(body.includes('UMBREL_OFFICIAL_FORK=REPLACE_OWNER/umbrel-apps'))
+  t.ok(body.includes('STARTOS_REGISTRY_URL=REPLACE_WITH_PUBLIC_HTTPS_REGISTRY_URL'))
+  t.absent(body.includes('FLEET_SSH_PRIVATE_KEY'))
+  t.absent(body.includes('ECOSYSTEM_CONSUMER_TOKEN'))
+  t.absent(body.includes('NPM_TOKEN'))
+  t.absent(body.includes('STARTOS_DEVELOPER_KEY_PEM'))
+
+  const check = await runCheck([
+    '--issue-120-repair',
+    '--env-file', out
+  ])
+  t.is(check.status, 1)
+  t.ok(check.stderr.includes('Issue #120 masked-value repair candidate failed:'))
+  t.ok(check.stderr.includes('UMBREL_STORE_TOKEN must be a GitHub token'))
+  t.ok(check.stderr.includes('UMBREL_OFFICIAL_PR_TOKEN must be a GitHub token'))
+  t.ok(check.stderr.includes('UMBREL_OFFICIAL_FORK must be a GitHub owner/umbrel-apps fork slug'))
+  t.ok(check.stderr.includes('STARTOS_REGISTRY_URL must be a public https URL'))
+  t.absent(check.stderr.includes('NPM_TOKEN'))
+})
+
 test('release secret template writer refuses repo output paths', async (t) => {
   const out = path.join(process.cwd(), 'tmp-release-secrets.env')
   const res = await runTemplate(['--out', out])

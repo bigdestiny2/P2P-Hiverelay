@@ -52,6 +52,8 @@ For the stale pinned image only, a manual inspection command is:
   double-submitted while a save is pending.
 - [ ] Add-wallet shows a visible busy/status state, persists the destination,
   and does not look like a silent page refresh/no-op.
+- [ ] Payout Add/Change/copy controls behave as buttons through the app proxy
+  and do not trigger page navigation or refresh.
 - [ ] Management actions from the dashboard (approve/reject a seed
   request, change accept-mode) succeed — confirms the bearer token is
   accepted on `/api/wizard/*` and the management routes.
@@ -68,11 +70,11 @@ For the stale pinned image only, a manual inspection command is:
   key (identity derived from `$APP_SEED`).
 - [ ] Write the public-safe manual review artifact after the real-device pass:
   `npm run umbrel:write-runtime-review -- --out umbrel-runtime-review-evidence.json
-  --release v0.20.0 --device "<public device label>" --umbrel-version <version>
+  --release v0.20.2 --device "<public device label>" --umbrel-version <version>
   --tested-by <public reviewer> --public-key-before <hex> --public-key-after
-  <hex> --checks installedThroughUmbrel,dashboardProxyLoads,liveFeedInBandAuth,noWebSocketUrlTokens,wizardCompletes,setupActionLockObserved,addWalletPersists,walletBusyStateObserved,managementActionsPersist,serviceActionStateObserved,serviceRestartPendingObserved,aiModelAddStateObserved,reviewModeDefault,dataWritableUid999,reinstallPreservesPublicKey`.
+  <hex> --checks installedThroughUmbrel,dashboardProxyLoads,liveFeedInBandAuth,noWebSocketUrlTokens,wizardCompletes,setupActionLockObserved,addWalletPersists,dynamicPayoutControlsObserved,walletBusyStateObserved,managementActionsPersist,serviceActionStateObserved,serviceRestartPendingObserved,aiModelAddStateObserved,reviewModeDefault,dataWritableUid999,reinstallPreservesPublicKey`.
   Then verify it with `npm run umbrel:verify-runtime-review -- --evidence
-  umbrel-runtime-review-evidence.json --release v0.20.0`.
+  umbrel-runtime-review-evidence.json --release v0.20.2`.
   Do not include local URLs, LAN IPs, APP_SEED, bearer tokens, or API keys.
 
 ## Decisions to confirm before submission

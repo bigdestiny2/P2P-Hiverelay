@@ -1,0 +1,132 @@
+{
+  "name": "custody-allowlist-v2-strict",
+  "publisherSeedHex": "1111111111111111111111111111111111111111111111111111111111111111",
+  "publisherPubkey": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+  "now": 1800000000000,
+  "input": {
+    "timestamp": 1800000000000,
+    "version": 2,
+    "addressKey": "ac849af97c34fc30218f8463906240ab04218677743202055840de75b1f2cfdf",
+    "blindContentId": "c22f7f260556301e614da726ba5e4771ffca0438dbb6f8d65e662433fc7ff446",
+    "ciphertextRoot": "cf7d26bc7bbcd1380348b52bac3115e2577782d423434a27db154556f4d892b5",
+    "contentVersion": 1,
+    "requiredReplicas": 3,
+    "deadline": 1800000060000,
+    "retainUntil": 1800000120000,
+    "shareScheme": "pvss-secp256k1-v1",
+    "shareThreshold": 2,
+    "commitmentRoot": "c31ff9e02b04dd07ddf81b56b17c3b346cbd90a4c05fdc16ad5dcd882e64912c",
+    "shareBundleKey": "dddd29ba6c90d5c49c138f6d757a665482689074677c65ef4acf38ab56c45d4f",
+    "shareAssignments": [
+      {
+        "relayPubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+        "shareIndex": 1
+      },
+      {
+        "relayPubkey": "3333333333333333333333333333333333333333333333333333333333333333",
+        "shareIndex": 2
+      },
+      {
+        "relayPubkey": "4444444444444444444444444444444444444444444444444444444444444444",
+        "shareIndex": 3
+      }
+    ]
+  },
+  "validIntent": {
+    "addressKey": "ac849af97c34fc30218f8463906240ab04218677743202055840de75b1f2cfdf",
+    "blindContentId": "c22f7f260556301e614da726ba5e4771ffca0438dbb6f8d65e662433fc7ff446",
+    "candidateRelays": [],
+    "ciphertextRoot": "cf7d26bc7bbcd1380348b52bac3115e2577782d423434a27db154556f4d892b5",
+    "commitmentRoot": "c31ff9e02b04dd07ddf81b56b17c3b346cbd90a4c05fdc16ad5dcd882e64912c",
+    "contentType": "shard-set",
+    "contentVersion": 1,
+    "custodyMode": "blind",
+    "deadline": 1800000060000,
+    "intentId": "5068e74fe4cab70935b70f4ef9cd647217f860d689d86b0de5db2eb0c2b7ff44",
+    "metadataVisibility": "redacted",
+    "policyHash": "909e3380e8c3ca48f0f4993e466e9e71e3d8c17534c5312de93546d80f18ed76",
+    "privacyTier": "p2p-only",
+    "publisherPubkey": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+    "requiredReplicas": 3,
+    "retainUntil": 1800000120000,
+    "shardPolicy": "all",
+    "shareAssignments": [
+      {
+        "relayPubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+        "shareIndex": 1
+      },
+      {
+        "relayPubkey": "3333333333333333333333333333333333333333333333333333333333333333",
+        "shareIndex": 2
+      },
+      {
+        "relayPubkey": "4444444444444444444444444444444444444444444444444444444444444444",
+        "shareIndex": 3
+      }
+    ],
+    "shareBundleKey": "dddd29ba6c90d5c49c138f6d757a665482689074677c65ef4acf38ab56c45d4f",
+    "shareScheme": "pvss-secp256k1-v1",
+    "shareThreshold": 2,
+    "timestamp": 1800000000000,
+    "type": "custody-intent",
+    "version": 2,
+    "signature": "eeea7fc46dc38b9161dfc90a4d2e9692b9718fb84fea8fcf630f08abe748869bcca1d24cda0d3817f70951d49bf605f2ba90cf98fbc02235a15b2c67b30b920f"
+  },
+  "validVerdict": {
+    "valid": true,
+    "entry": {
+      "addressKey": "ac849af97c34fc30218f8463906240ab04218677743202055840de75b1f2cfdf",
+      "blindContentId": "c22f7f260556301e614da726ba5e4771ffca0438dbb6f8d65e662433fc7ff446",
+      "candidateRelays": [],
+      "ciphertextRoot": "cf7d26bc7bbcd1380348b52bac3115e2577782d423434a27db154556f4d892b5",
+      "commitmentRoot": "c31ff9e02b04dd07ddf81b56b17c3b346cbd90a4c05fdc16ad5dcd882e64912c",
+      "contentType": "shard-set",
+      "contentVersion": 1,
+      "custodyMode": "blind",
+      "deadline": 1800000060000,
+      "intentId": "5068e74fe4cab70935b70f4ef9cd647217f860d689d86b0de5db2eb0c2b7ff44",
+      "metadataVisibility": "redacted",
+      "policyHash": "909e3380e8c3ca48f0f4993e466e9e71e3d8c17534c5312de93546d80f18ed76",
+      "privacyTier": "p2p-only",
+      "publisherPubkey": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "requiredReplicas": 3,
+      "retainUntil": 1800000120000,
+      "shardPolicy": "all",
+      "shareAssignments": [
+        {
+          "relayPubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "shareIndex": 1
+        },
+        {
+          "relayPubkey": "3333333333333333333333333333333333333333333333333333333333333333",
+          "shareIndex": 2
+        },
+        {
+          "relayPubkey": "4444444444444444444444444444444444444444444444444444444444444444",
+          "shareIndex": 3
+        }
+      ],
+      "shareBundleKey": "dddd29ba6c90d5c49c138f6d757a665482689074677c65ef4acf38ab56c45d4f",
+      "shareScheme": "pvss-secp256k1-v1",
+      "shareThreshold": 2,
+      "signature": "eeea7fc46dc38b9161dfc90a4d2e9692b9718fb84fea8fcf630f08abe748869bcca1d24cda0d3817f70951d49bf605f2ba90cf98fbc02235a15b2c67b30b920f",
+      "timestamp": 1800000000000,
+      "type": "custody-intent",
+      "version": 2
+    }
+  },
+  "rejections": {
+    "topLevelCaption": {
+      "valid": false,
+      "reason": "unknown custody field: caption"
+    },
+    "topLevelDataKey": {
+      "valid": false,
+      "reason": "unknown custody field: dataKey"
+    },
+    "nestedAssignmentCaption": {
+      "valid": false,
+      "reason": "unknown shareAssignment field: caption"
+    }
+  }
+}

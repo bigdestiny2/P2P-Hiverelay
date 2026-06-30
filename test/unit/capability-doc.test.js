@@ -2,6 +2,14 @@ import test from 'brittle'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import { buildCapabilityDoc, verifyCapabilityDoc, CAPABILITY_DOC_SCHEMA_VERSION } from 'p2p-hiverelay/core/capability-doc.js'
+import {
+  RELAYKERNEL_CIRCUIT_BYTES_HARD_CAP,
+  RELAYKERNEL_CIRCUIT_FRAME_HARD_CAP,
+  RELAYKERNEL_CIRCUIT_LIMITS_PROFILE_KIND,
+  RELAYKERNEL_CIRCUIT_MAX_PER_PEER_HARD_CAP,
+  RELAYKERNEL_CIRCUIT_RECOMMENDED_RATE_CAP_BPS,
+  RELAYKERNEL_CIRCUIT_SESSION_HARD_CAP_MS
+} from 'p2p-hiverelay/core/protocol/relaykernel-circuit-limits-profile.js'
 
 function makeKeyPair () {
   const publicKey = b4a.alloc(32)
@@ -85,6 +93,139 @@ test('features list is sorted and reflects wired subsystems', async (t) => {
   t.ok(doc.features.includes('seeding-registry'))
   t.ok(doc.features.includes('reputation'))
   t.ok(doc.features.includes('capability-doc'))
+  t.ok(doc.features.includes('seed-signature-domain-v3'))
+  t.is(doc.protocol_profile.signature_domains.seed_request.preferred, 'hiverelay.seed-request.v3')
+  t.alike(doc.protocol_profile.signature_domains.seed_request.accepted, [
+    'hiverelay.seed-request.v3',
+    'hiverelay.seed-request.replay-v1',
+    'legacy-v2',
+    'legacy-v1'
+  ])
+  t.is(doc.protocol_profile.signature_domains.seed_request.replay_protection.domain, 'hiverelay.seed-request.replay-v1')
+})
+
+test('relaykernel capability doc advertises only active kernel-compatible surfaces', async (t) => {
+  const kp = makeKeyPair()
+  const relay = {
+    mode: 'relaykernel',
+    config: {
+      productProfile: 'relaykernel',
+      enableRelay: true,
+      enableSeeding: true,
+      enableAPI: true,
+      enableServices: false,
+      custody: { enabled: false },
+      federation: { enabled: false },
+      signedDirectory: { enabled: false },
+      lease: { enabled: false },
+      subsidy: { enabled: false },
+      payment: { enabled: false },
+      fees: { storage: 1 }
+    },
+    swarm: { keyPair: kp },
+    appRegistry: { catalog: () => [] },
+    federation: { snapshot: () => ({ followed: [{ url: 'https://relay.example' }] }) },
+    serviceRegistry: { catalog: () => [{ name: 'identity' }] },
+    paymentManager: { paymentProvider: {} },
+    _signedDirectory: { getStats: () => ({ entries: 1 }) },
+    _publishProtocol: {},
+    relay: {
+      maxCircuitDuration: RELAYKERNEL_CIRCUIT_SESSION_HARD_CAP_MS,
+      maxCircuitBytes: RELAYKERNEL_CIRCUIT_BYTES_HARD_CAP,
+      maxCircuitsPerPeer: RELAYKERNEL_CIRCUIT_MAX_PER_PEER_HARD_CAP,
+      maxCircuitRateBytesPerSecond: RELAYKERNEL_CIRCUIT_RECOMMENDED_RATE_CAP_BPS,
+      recordCircuitBytes () {}
+    },
+    _circuitRelay: {
+      maxCircuitDuration: RELAYKERNEL_CIRCUIT_SESSION_HARD_CAP_MS,
+      maxCircuitBytes: RELAYKERNEL_CIRCUIT_BYTES_HARD_CAP,
+      maxCircuitsPerPeer: RELAYKERNEL_CIRCUIT_MAX_PER_PEER_HARD_CAP,
+      maxCircuitRateBytesPerSecond: RELAYKERNEL_CIRCUIT_RECOMMENDED_RATE_CAP_BPS,
+      maxDataMsgBytes: RELAYKERNEL_CIRCUIT_FRAME_HARD_CAP,
+      _maxPendingConnects: 100,
+      _maxReservesPerMin: 5
+    },
+    createAccountingReceipt () {}
+  }
+
+  const doc = buildCapabilityDoc({ relay, runtime: 'node' })
+  t.ok(verifyCapabilityDoc(doc).valid, 'signed relaykernel doc verifies')
+  t.is(doc.protocol_profile.name, 'relaykernel')
+  t.is(doc.protocol_profile.relaykernel_compatible, true)
+  t.ok(doc.protocol_profile.kernel_surfaces.includes('proof-of-retrievability'))
+  t.ok(doc.protocol_profile.kernel_surfaces.includes('accounting-receipts'))
+  t.alike(doc.protocol_profile.app_surfaces, [])
+  t.ok(doc.features.includes('retrievability-proof-http'))
+  t.ok(doc.features.includes('retrievability-proof-domain-v1'))
+  t.ok(doc.features.includes('accounting-receipts'))
+  t.ok(doc.features.includes('seed-signature-domain-v3'))
+  t.ok(doc.features.includes('circuit-limits-profile-v1'))
+  t.is(doc.protocol_profile.circuit_limits.kind, RELAYKERNEL_CIRCUIT_LIMITS_PROFILE_KIND)
+  t.is(doc.protocol_profile.circuit_limits.verdict.valid, true)
+  t.is(doc.protocol_profile.circuit_limits.limits.maxSessionMs, RELAYKERNEL_CIRCUIT_SESSION_HARD_CAP_MS)
+  t.is(doc.protocol_profile.circuit_limits.limits.maxBytes, RELAYKERNEL_CIRCUIT_BYTES_HARD_CAP)
+  t.is(doc.protocol_profile.circuit_limits.limits.maxCircuitsPerPeer, RELAYKERNEL_CIRCUIT_MAX_PER_PEER_HARD_CAP)
+  t.is(doc.protocol_profile.circuit_limits.limits.maxFrameBytes, RELAYKERNEL_CIRCUIT_FRAME_HARD_CAP)
+  t.is(doc.protocol_profile.circuit_limits.limits.rateCapBytesPerSecond, RELAYKERNEL_CIRCUIT_RECOMMENDED_RATE_CAP_BPS)
+  t.is(doc.protocol_profile.circuit_limits.limitChecks.pendingConnectsBounded, true)
+  t.is(doc.protocol_profile.circuit_limits.securityChecks.silentDropUnknownCircuit, true)
+  t.is(doc.protocol_profile.signature_domains.seed_request.preferred, 'hiverelay.seed-request.v3')
+  t.is(doc.protocol_profile.signature_domains.seed_request.legacy_accepted, true)
+  t.is(doc.protocol_profile.signature_domains.seed_request.replay_protection.nonce_bytes, 16)
+  t.is(doc.protocol_profile.signature_domains.seed_request.replay_protection.replay_window_ms, 60 * 60 * 1000)
+  t.is(doc.protocol_profile.signature_domains.retrievability_proof.preferred, 'hiverelay.retrievability-proof.v1')
+  t.alike(doc.protocol_profile.signature_domains.retrievability_proof.signature_profiles, [
+    'retrievability-proof-v1',
+    'storage-proof-legacy-v1'
+  ])
+  t.is(doc.protocol_profile.signature_domains.retrievability_proof.http_opt_in, true)
+  t.absent(doc.features.includes('federation'))
+  t.absent(doc.features.includes('publish-channel-v1'))
+  t.is(doc.federation, null)
+  t.is(doc.limitation.payment_required, false)
+  t.is(doc.fees, null)
+  t.is(doc.directory_privacy.mode, 'relaykernel-private')
+  t.is(doc.directory_privacy.global_enumerable, false)
+  t.is(doc.directory_privacy.relaykernel_private_by_default, true)
+  t.is(doc.directory_privacy.signed_directory_enabled, false)
+})
+
+test('directory_privacy distinguishes public catalog from global directory opt-in', async (t) => {
+  const doc = buildCapabilityDoc({
+    relay: {
+      config: {},
+      appRegistry: { catalog: () => [] }
+    },
+    gatewayUrl: 'https://relay.example',
+    indexRoom: 'pear://index-room'
+  })
+
+  t.is(doc.directory_privacy.mode, 'catalog-public')
+  t.is(doc.directory_privacy.catalog_public, true)
+  t.is(doc.directory_privacy.gateway_url_advertised, true)
+  t.is(doc.directory_privacy.index_room_advertised, true)
+  t.is(doc.directory_privacy.global_enumerable, false)
+  t.is(doc.directory_privacy.global_enumerable_reason, null)
+})
+
+test('directory_privacy marks signed-directory as explicit global opt-in', async (t) => {
+  const kp = makeKeyPair()
+  const doc = buildCapabilityDoc({
+    relay: {
+      config: {},
+      swarm: { keyPair: kp },
+      _signedDirectory: { getStats: () => ({ entries: 1 }) }
+    }
+  })
+
+  t.is(doc.directory_privacy.mode, 'global-directory-opt-in')
+  t.is(doc.directory_privacy.global_enumerable, true)
+  t.is(doc.directory_privacy.global_enumerable_reason, 'signed-directory-enabled')
+  t.is(doc.directory_privacy.signed_directory_enabled, true)
+  t.ok(verifyCapabilityDoc(doc).valid, 'directory privacy posture is signed')
+
+  doc.directory_privacy.global_enumerable = false
+  t.absent(verifyCapabilityDoc(doc).valid, 'tampering directory posture invalidates signature')
 })
 
 test('federation snapshot is summarized, not leaked', async (t) => {
@@ -234,6 +375,48 @@ test('verifyCapabilityDoc detects field tampering', async (t) => {
   t.is(check.reason, 'signature verification failed')
 })
 
+test('verifyCapabilityDoc detects seed signature domain tampering', async (t) => {
+  const kp = makeKeyPair()
+  const doc = buildCapabilityDoc({ relay: { config: {}, swarm: { keyPair: kp } } })
+  doc.protocol_profile.signature_domains.seed_request.preferred = 'legacy-v2'
+  const check = verifyCapabilityDoc(doc)
+  t.absent(check.valid)
+  t.is(check.reason, 'signature verification failed')
+})
+
+test('verifyCapabilityDoc detects retrievability proof signature profile tampering', async (t) => {
+  const kp = makeKeyPair()
+  const doc = buildCapabilityDoc({
+    relay: {
+      config: {},
+      appRegistry: { catalog: () => [] },
+      swarm: { keyPair: kp }
+    },
+    runtime: 'node'
+  })
+  doc.protocol_profile.signature_domains.retrievability_proof.signature_profiles.push('unsafe-profile')
+  const check = verifyCapabilityDoc(doc)
+  t.absent(check.valid)
+  t.is(check.reason, 'signature verification failed')
+})
+
+test('verifyCapabilityDoc detects circuit limit posture tampering', async (t) => {
+  const kp = makeKeyPair()
+  const doc = buildCapabilityDoc({
+    relay: {
+      config: {},
+      appRegistry: { catalog: () => [] },
+      swarm: { keyPair: kp }
+    },
+    runtime: 'node'
+  })
+  t.is(doc.protocol_profile.circuit_limits.verdict.valid, true, 'fixture starts with a valid circuit limit profile')
+  doc.protocol_profile.circuit_limits.limits.maxBytes = RELAYKERNEL_CIRCUIT_BYTES_HARD_CAP + 1
+  const check = verifyCapabilityDoc(doc)
+  t.absent(check.valid)
+  t.is(check.reason, 'signature verification failed')
+})
+
 test('verifyCapabilityDoc detects pubkey tampering', async (t) => {
   const kp = makeKeyPair()
   const other = makeKeyPair()
@@ -275,6 +458,40 @@ test('attestedAt is covered by the signature', async (t) => {
   doc.attestedAt = doc.attestedAt - 1000
   const check = verifyCapabilityDoc(doc)
   t.absent(check.valid, 'tampering attestedAt invalidates signature')
+})
+
+test('verifyCapabilityDoc freshness window rejects stale signed docs when requested', async (t) => {
+  const kp = makeKeyPair()
+  const now = 1782753600000
+  const doc = buildCapabilityDoc({
+    relay: { config: {}, swarm: { keyPair: kp } },
+    attestedAt: now - 10 * 60 * 1000
+  })
+
+  t.ok(verifyCapabilityDoc(doc).valid, 'default verification remains signature-only')
+  t.ok(verifyCapabilityDoc(doc, { now, maxAgeMs: 15 * 60 * 1000 }).valid, 'fresh enough doc verifies')
+
+  const stale = verifyCapabilityDoc(doc, { now, maxAgeMs: 5 * 60 * 1000 })
+  t.absent(stale.valid, 'stale signed doc fails under strict freshness')
+  t.is(stale.reason, 'capability doc attestation expired')
+})
+
+test('verifyCapabilityDoc freshness window rejects future attestations beyond skew', async (t) => {
+  const kp = makeKeyPair()
+  const now = 1782753600000
+  const doc = buildCapabilityDoc({
+    relay: { config: {}, swarm: { keyPair: kp } },
+    attestedAt: now + 10 * 60 * 1000
+  })
+
+  const future = verifyCapabilityDoc(doc, {
+    now,
+    requireFresh: true,
+    maxAgeMs: 60 * 60 * 1000,
+    maxFutureSkewMs: 5 * 60 * 1000
+  })
+  t.absent(future.valid, 'future signed doc fails beyond skew')
+  t.is(future.reason, 'capability doc attestation too far in future')
 })
 
 test('opts.attestedAt override works for deterministic tests', async (t) => {

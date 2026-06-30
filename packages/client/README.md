@@ -78,6 +78,26 @@ and `await client.destroy()` when done.
 | `await client.list(driveKey, dir)` | `string[]` | List entries under a directory. |
 | `await client.seed(appKey, opts)` | — | Ask relays to seed an existing drive. |
 
+`seed()` keeps the legacy v2 signature preimage by default for mixed-version
+relay fleets. For upgraded relay testing, pass `seedSignatureDomain: 'v3'` to
+sign the preferred `hiverelay.seed-request.v3` domain-separated preimage.
+Upgraded relays advertise `seed-signature-domain-v3` in their signed capability
+document.
+
+Publisher-signed `/api/v1/seed` and `hiverelay-publish` submissions can also
+use the replay-hardened `hiverelay.seed-request.replay-v1` profile by signing
+`issuedAt` plus a 16-byte `requestNonce`. Relays advertising
+`seed-request-replay-v1` reject stale replay-profile submissions and duplicate
+nonces for the same publisher.
+
+### Capability Documents
+
+`fetchCapabilities(relayUrl, opts)` reads `/.well-known/hiverelay.json`, verifies
+the document signature when present, and emits `capability-doc-stale` when
+`attestedAt` is older than `opts.maxAgeMs` (default: 24h). For strict relay
+selection, pass `requireFreshCapabilityDoc: true`; signed but stale or
+future-skewed documents are rejected instead of only warned.
+
 ## Service RPC
 
 Relays expose named services over a P2P service channel. `callService` is the
@@ -110,7 +130,23 @@ Two methods let you confirm a relay genuinely holds and serves an app
 | Method | Returns | Notes |
 | --- | --- | --- |
 | `await client.verifySeeded(driveKey, opts)` | verdict object | Replication-based check. `opts.relay` (pubkey hex, **required**), `opts.timeout` (ms, default `30000`). |
-| `await client.proveSeeded(driveKey, opts)` | proof report | Tier-2 signed proof-of-storage sampling. `opts.relay` (pubkey hex, **required**), `opts.samples` (default `3`, clamped to `1..16`), `opts.timeout` (ms, default `30000`). |
+| `await client.proveSeeded(driveKey, opts)` | proof report | Tier-2 signed proof-of-retrievability sampling. Prefers `POST /api/proof/retrievability` when capabilities advertise it, otherwise falls back to legacy `storage-proof.prove`. `opts.relay` (pubkey hex, **required**), `opts.relayUrl` (optional HTTP capability/proof URL), `opts.proofTransport` (`auto`, `http`, or `service`), `opts.proofSignatureProfile` (`retrievability-proof-v1` opt-in, legacy omitted by default), `opts.samples` (default `3`, clamped to `1..16`), `opts.timeout` (ms, default `30000`). |
+
+### Accounting receipts
+
+`fetchAccountingReceipt(relayUrl, { apiKey, refresh, expectedPubkey })` reads
+`GET /api/accounting/receipt`, verifies the receipt signature locally, and
+optionally rejects receipts whose relay pubkey does not match `expectedPubkey`.
+Set `refresh: false` to ask the relay not to force a fresh disk scan.
+
+```js
+const r = await client.fetchAccountingReceipt('https://relay.example', {
+  apiKey,
+  expectedPubkey: relayPubkeyHex
+})
+
+console.log(r.verified, r.receipt.diskBytes)
+```
 
 #### `verifySeeded(driveKey, { relay, timeout })`
 
@@ -150,10 +186,15 @@ third-party-portable proof. For that, use `proveSeeded`.
 #### `proveSeeded(driveKey, { relay, samples })`
 
 Opens the drive to learn the metadata head, samples up to 16 random block indices,
-calls the relay's `storage-proof.prove` service per sample, and verifies each
-**signed** proof against an isolated temp-Corestore verifier (length pinned to the
-head). Each proof is signed by the relay over a fresh nonce, so a passing result
-is per-block, relay-attributable, and non-replayable.
+prefers the relay's `POST /api/proof/retrievability` route when a cached or
+fetched capability doc advertises `retrievability-proof-http`, falls back to the
+`storage-proof.prove` service per sample, and verifies each **signed** proof
+against an isolated temp-Corestore verifier (length pinned to the head). Each
+proof is signed by the relay over a fresh nonce, so a passing result is
+per-block, relay-attributable, and non-replayable.
+Set `proofSignatureProfile: 'retrievability-proof-v1'` to request the
+RelayKernel domain-separated signature preimage when the relay advertises
+`retrievability-proof-domain-v1`; omit it for legacy-compatible proof bytes.
 
 ```js
 const r = await client.proveSeeded(driveKey, { relay: relayPubkeyHex, samples: 5 })
@@ -164,21 +205,25 @@ Returns:
 
 ```js
 {
-  ok,        // true iff every sample verified (and total > 0)
-  driveKey,  // 64-hex
-  relay,     // relay pubkey hex
-  head,      // metadata head length proofs were pinned to
-  passed,    // number of samples that verified
-  total,     // number of samples taken
-  samples    // [{ index, valid, reason }]
+  ok,          // true iff every sample verified (and total > 0)
+  proofKind,   // "proof-of-retrievability"
+  proofLimit,  // challenge-response proof; not proof-of-replication
+  proofTransport, // "http" or "service"
+  driveKey,    // 64-hex
+  relay,       // relay pubkey hex
+  head,        // metadata head length proofs were pinned to
+  passed,      // number of samples that verified
+  total,       // number of samples taken
+  samples      // [{ index, transport, valid, proofKind, signatureProfile, reason }]
 }
 ```
 
-The relay must run the opt-in `storage-proof` service (default OFF). This is a
+The relay must either advertise `retrievability-proof-http` in its capability doc
+or run the opt-in `storage-proof` service (default OFF). This is a
 challenge-response proof-of-*retrievability*, not sealed proof-of-replication: a
-relay could fetch a block on demand rather than store it; random sampling plus the
-latency bound make that expensive, not cryptographically precluded. v1 proves the
-drive **metadata** core.
+relay could fetch a block on demand rather than store it; random sampling plus
+the latency bound make that expensive, not cryptographically precluded. v1
+proves the drive **metadata** core.
 
 ## Blind custody for a secret (PVSS)
 

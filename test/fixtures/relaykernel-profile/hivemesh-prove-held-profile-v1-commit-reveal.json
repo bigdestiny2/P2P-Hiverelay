@@ -1,0 +1,425 @@
+{
+  "name": "hivemesh-prove-held-profile-v1-commit-reveal",
+  "description": "Pins HiveMesh T2 proveHeld commit-reveal semantics, response windows, role domains, and response block matching.",
+  "input": {
+    "policy": {
+      "minWindowSeconds": 1,
+      "hotWindowSeconds": 5,
+      "coldWindowSeconds": 60,
+      "maxWindowSeconds": 60
+    },
+    "sessions": [
+      {
+        "id": "hot-valid",
+        "commit": {
+          "discoveryKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "commitRoot": "55d79cd8c3a1901a61092939c7fbc3dd2de8479e42a01f6cb0c4be11db33ddfd",
+          "windowSeconds": 5,
+          "deadline": 1800000030,
+          "committedAt": 1800000000
+        },
+        "reveal": {
+          "commitRoot": "55d79cd8c3a1901a61092939c7fbc3dd2de8479e42a01f6cb0c4be11db33ddfd",
+          "blockIndices": [
+            5,
+            2
+          ],
+          "nonce": "01010101010101010101010101010101",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "revealedAt": 1800000010
+        },
+        "response": {
+          "vaultPubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "blockIndices": [
+            5,
+            2
+          ],
+          "blocks": [
+            {
+              "index": 5,
+              "blockHash": "0101010101010101010101010101010101010101010101010101010101010101",
+              "merklePathHash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+              "sigRoot": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            },
+            {
+              "index": 2,
+              "blockHash": "0202020202020202020202020202020202020202020202020202020202020202",
+              "merklePathHash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+              "sigRoot": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }
+          ],
+          "receivedAt": 1800000014
+        }
+      },
+      {
+        "id": "wrong-reveal-nonce",
+        "commit": {
+          "discoveryKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "commitRoot": "55d79cd8c3a1901a61092939c7fbc3dd2de8479e42a01f6cb0c4be11db33ddfd",
+          "windowSeconds": 5,
+          "deadline": 1800000030,
+          "committedAt": 1800000000
+        },
+        "reveal": {
+          "commitRoot": "55d79cd8c3a1901a61092939c7fbc3dd2de8479e42a01f6cb0c4be11db33ddfd",
+          "blockIndices": [
+            2,
+            5
+          ],
+          "nonce": "02020202020202020202020202020202",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "revealedAt": 1800000010
+        },
+        "response": {
+          "vaultPubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "blockIndices": [
+            2,
+            5
+          ],
+          "blocks": [
+            {
+              "index": 2,
+              "blockHash": "0101010101010101010101010101010101010101010101010101010101010101",
+              "merklePathHash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+              "sigRoot": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            },
+            {
+              "index": 5,
+              "blockHash": "0202020202020202020202020202020202020202020202020202020202020202",
+              "merklePathHash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+              "sigRoot": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }
+          ],
+          "receivedAt": 1800000014
+        }
+      },
+      {
+        "id": "late-response",
+        "commit": {
+          "discoveryKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "commitRoot": "8260b308643f167cc12f51e0450735bb0308196166480a548e7a22f1d8bef224",
+          "windowSeconds": 5,
+          "deadline": 1800000030,
+          "committedAt": 1800000000
+        },
+        "reveal": {
+          "commitRoot": "8260b308643f167cc12f51e0450735bb0308196166480a548e7a22f1d8bef224",
+          "blockIndices": [
+            7
+          ],
+          "nonce": "03030303030303030303030303030303",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "revealedAt": 1800000010
+        },
+        "response": {
+          "vaultPubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "blockIndices": [
+            7
+          ],
+          "blocks": [
+            {
+              "index": 7,
+              "blockHash": "0101010101010101010101010101010101010101010101010101010101010101",
+              "merklePathHash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+              "sigRoot": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }
+          ],
+          "receivedAt": 1800000016
+        }
+      },
+      {
+        "id": "missing-block",
+        "commit": {
+          "discoveryKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "commitRoot": "c42c71ff3fe711a9093b83a1fc0565dfac73bd18e01cec97e851ba2a39e2cae5",
+          "windowSeconds": 5,
+          "deadline": 1800000030,
+          "committedAt": 1800000000
+        },
+        "reveal": {
+          "commitRoot": "c42c71ff3fe711a9093b83a1fc0565dfac73bd18e01cec97e851ba2a39e2cae5",
+          "blockIndices": [
+            1,
+            3
+          ],
+          "nonce": "04040404040404040404040404040404",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "revealedAt": 1800000010
+        },
+        "response": {
+          "vaultPubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "blockIndices": [
+            1
+          ],
+          "blocks": [
+            {
+              "index": 1,
+              "blockHash": "0101010101010101010101010101010101010101010101010101010101010101",
+              "merklePathHash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+              "sigRoot": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }
+          ],
+          "receivedAt": 1800000013
+        }
+      }
+    ]
+  },
+  "profile": {
+    "kind": "hivemesh-prove-held-profile",
+    "version": 1,
+    "claim": "t2-commit-reveal-proof-of-held-ciphertext",
+    "limitation": "fast cross-vault fetch can still pass if completed inside the reveal window",
+    "policy": {
+      "minWindowSeconds": 1,
+      "hotWindowSeconds": 5,
+      "coldWindowSeconds": 60,
+      "maxWindowSeconds": 60
+    },
+    "sessions": [
+      {
+        "id": "hot-valid",
+        "valid": true,
+        "commit": {
+          "discoveryKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "commitRoot": "55d79cd8c3a1901a61092939c7fbc3dd2de8479e42a01f6cb0c4be11db33ddfd",
+          "windowSeconds": 5,
+          "deadline": 1800000030,
+          "committedAt": 1800000000
+        },
+        "reveal": {
+          "commitRoot": "55d79cd8c3a1901a61092939c7fbc3dd2de8479e42a01f6cb0c4be11db33ddfd",
+          "blockIndices": [
+            2,
+            5
+          ],
+          "nonce": "01010101010101010101010101010101",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "revealedAt": 1800000010
+        },
+        "response": {
+          "vaultPubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "blockIndices": [
+            2,
+            5
+          ],
+          "blocks": [
+            {
+              "index": 2,
+              "blockHash": "0202020202020202020202020202020202020202020202020202020202020202",
+              "merklePathHash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+              "sigRoot": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            },
+            {
+              "index": 5,
+              "blockHash": "0101010101010101010101010101010101010101010101010101010101010101",
+              "merklePathHash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+              "sigRoot": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }
+          ],
+          "receivedAt": 1800000014
+        },
+        "result": {
+          "expectedCommitRoot": "55d79cd8c3a1901a61092939c7fbc3dd2de8479e42a01f6cb0c4be11db33ddfd",
+          "responseDeadline": 1800000015,
+          "evidenceWeight": {
+            "numerator": 1,
+            "denominator": 5
+          },
+          "strength": "hot"
+        },
+        "domains": [
+          {
+            "name": "commit",
+            "message": {
+              "protocol": "hivemesh",
+              "rolePrefix": "rkv",
+              "channel": "t2-prove-held",
+              "messageType": "commit",
+              "messageVersion": 1,
+              "payloadHash": "64e34ee3a81e586e157b0f58ed0a44852a0d03ddfb0cdb0759e101a9fc786e7e"
+            },
+            "signableHex": "5b226869766572656c61792d726f6c652d646f6d61696e2d7369676e61747572652d7631222c22686976656d657368222c22726b76222c2274322d70726f76652d68656c64222c22636f6d6d6974222c312c2236346533346565336138316535383665313537623066353865643061343438353261306430336464666230636462303735396531303161396663373836653765225d",
+            "verdict": {
+              "valid": true,
+              "code": null,
+              "reason": null
+            }
+          },
+          {
+            "name": "reveal",
+            "message": {
+              "protocol": "hivemesh",
+              "rolePrefix": "rkv",
+              "channel": "t2-prove-held",
+              "messageType": "reveal",
+              "messageVersion": 1,
+              "payloadHash": "0b9dc8933c5b1d4fc596e59b8837a2c4f902e32d434d58e827f3d2c3b11ea50e"
+            },
+            "signableHex": "5b226869766572656c61792d726f6c652d646f6d61696e2d7369676e61747572652d7631222c22686976656d657368222c22726b76222c2274322d70726f76652d68656c64222c2272657665616c222c312c2230623964633839333363356231643466633539366535396238383337613263346639303265333264343334643538653832376633643263336231316561353065225d",
+            "verdict": {
+              "valid": true,
+              "code": null,
+              "reason": null
+            }
+          },
+          {
+            "name": "response",
+            "message": {
+              "protocol": "hivemesh",
+              "rolePrefix": "rk2",
+              "channel": "t2-prove-held",
+              "messageType": "proof-response",
+              "messageVersion": 1,
+              "payloadHash": "40c31053a11dd7204e962db46a1e89bf18868a3a0c265fff984c2b01b3b0fd3d"
+            },
+            "signableHex": "5b226869766572656c61792d726f6c652d646f6d61696e2d7369676e61747572652d7631222c22686976656d657368222c22726b32222c2274322d70726f76652d68656c64222c2270726f6f662d726573706f6e7365222c312c2234306333313035336131316464373230346539363264623436613165383962663138383638613361306332363566666639383463326230316233623066643364225d",
+            "verdict": {
+              "valid": true,
+              "code": null,
+              "reason": null
+            }
+          }
+        ]
+      },
+      {
+        "id": "wrong-reveal-nonce",
+        "valid": false,
+        "commit": {
+          "discoveryKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "commitRoot": "55d79cd8c3a1901a61092939c7fbc3dd2de8479e42a01f6cb0c4be11db33ddfd",
+          "windowSeconds": 5,
+          "deadline": 1800000030,
+          "committedAt": 1800000000
+        },
+        "reveal": {
+          "commitRoot": "55d79cd8c3a1901a61092939c7fbc3dd2de8479e42a01f6cb0c4be11db33ddfd",
+          "blockIndices": [
+            2,
+            5
+          ],
+          "nonce": "02020202020202020202020202020202",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "revealedAt": 1800000010
+        },
+        "response": {
+          "vaultPubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "blockIndices": [
+            2,
+            5
+          ],
+          "blocks": [
+            {
+              "index": 2,
+              "blockHash": "0101010101010101010101010101010101010101010101010101010101010101",
+              "merklePathHash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+              "sigRoot": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            },
+            {
+              "index": 5,
+              "blockHash": "0202020202020202020202020202020202020202020202020202020202020202",
+              "merklePathHash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+              "sigRoot": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }
+          ],
+          "receivedAt": 1800000014
+        },
+        "error": {
+          "code": "E_COMMIT_MISMATCH",
+          "reason": "reveal does not match committed challenge set",
+          "field": "commitRoot"
+        },
+        "expectedCommitRoot": "2d46d4f51e6a990c51726cd7976e60ab62eaf1dc8eda2c8adae332d5dce64e33"
+      },
+      {
+        "id": "late-response",
+        "valid": false,
+        "commit": {
+          "discoveryKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "commitRoot": "8260b308643f167cc12f51e0450735bb0308196166480a548e7a22f1d8bef224",
+          "windowSeconds": 5,
+          "deadline": 1800000030,
+          "committedAt": 1800000000
+        },
+        "reveal": {
+          "commitRoot": "8260b308643f167cc12f51e0450735bb0308196166480a548e7a22f1d8bef224",
+          "blockIndices": [
+            7
+          ],
+          "nonce": "03030303030303030303030303030303",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "revealedAt": 1800000010
+        },
+        "response": {
+          "vaultPubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "blockIndices": [
+            7
+          ],
+          "blocks": [
+            {
+              "index": 7,
+              "blockHash": "0101010101010101010101010101010101010101010101010101010101010101",
+              "merklePathHash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+              "sigRoot": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }
+          ],
+          "receivedAt": 1800000016
+        },
+        "error": {
+          "code": "E_RESPONSE_DEADLINE",
+          "reason": "response arrived after reveal window",
+          "field": "receivedAt"
+        },
+        "responseDeadline": 1800000015
+      },
+      {
+        "id": "missing-block",
+        "valid": false,
+        "commit": {
+          "discoveryKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "commitRoot": "c42c71ff3fe711a9093b83a1fc0565dfac73bd18e01cec97e851ba2a39e2cae5",
+          "windowSeconds": 5,
+          "deadline": 1800000030,
+          "committedAt": 1800000000
+        },
+        "reveal": {
+          "commitRoot": "c42c71ff3fe711a9093b83a1fc0565dfac73bd18e01cec97e851ba2a39e2cae5",
+          "blockIndices": [
+            1,
+            3
+          ],
+          "nonce": "04040404040404040404040404040404",
+          "verifierPubkey": "7777777777777777777777777777777777777777777777777777777777777777",
+          "revealedAt": 1800000010
+        },
+        "response": {
+          "vaultPubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "blockIndices": [
+            1
+          ],
+          "blocks": [
+            {
+              "index": 1,
+              "blockHash": "0101010101010101010101010101010101010101010101010101010101010101",
+              "merklePathHash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+              "sigRoot": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }
+          ],
+          "receivedAt": 1800000013
+        },
+        "error": {
+          "code": "E_RESPONSE_MISMATCH",
+          "reason": "response block indices do not match reveal",
+          "field": "blockIndices"
+        }
+      }
+    ]
+  }
+}

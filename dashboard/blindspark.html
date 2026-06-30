@@ -209,6 +209,25 @@ button{font-family:inherit;cursor:pointer}
 }
 .svc-summary-item strong{display:block;font-family:var(--mono);font-size:1rem;color:var(--text-bright);line-height:1.05}
 .svc-summary-item span{display:block;margin-top:.25rem;font-size:.62rem;text-transform:uppercase;letter-spacing:.8px;color:var(--text-faint);line-height:1.25}
+.svc-plan{
+  margin:.75rem 0 .15rem;padding:.72rem .78rem;border:1px solid rgba(88,166,255,.24);
+  border-radius:var(--radius-sm);background:rgba(88,166,255,.07);
+}
+.svc-plan.empty{display:none}
+.svc-plan.draft{border-color:rgba(245,200,66,.28);background:rgba(245,200,66,.07)}
+.svc-plan strong{display:block;font-size:.78rem;color:var(--text-bright);line-height:1.25}
+.svc-plan-lines{display:flex;flex-direction:column;gap:.38rem;margin-top:.48rem}
+.svc-plan-line{display:flex;align-items:flex-start;gap:.42rem;flex-wrap:wrap}
+.svc-plan-label{
+  font-size:.62rem;text-transform:uppercase;letter-spacing:.8px;color:var(--text-dim);
+  min-width:2.7rem;padding-top:.12rem;
+}
+.svc-plan-chip{
+  border:1px solid rgba(88,166,255,.26);border-radius:999px;padding:.13rem .46rem;
+  color:var(--cyan);background:rgba(88,166,255,.08);font-size:.64rem;line-height:1.25;
+}
+.svc-plan-chip.stop{color:var(--orange);border-color:rgba(240,166,74,.28);background:rgba(240,166,74,.08)}
+.svc-plan-note{font-size:.67rem;color:var(--text-faint);line-height:1.35;margin-top:.48rem}
 .svc-section{margin-top:.9rem}
 .svc-section-title{
   font-size:.64rem;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-dim);
@@ -772,11 +791,7 @@ function setSvcConfigBusy(busy){
     control.disabled = svcConfigBusy || svcRestartPending;
   });
   var hint = $('svcActionHint');
-  if (hint) {
-    hint.textContent = svcConfigBusy
-      ? 'Saving service selection...'
-      : (svcDraftDirty ? 'Unsaved changes - save selection before restarting.' : 'Saved selections apply after restart. Running services stay unchanged until then.');
-  }
+  if (hint) updateSvcActionState();
 }
 
 function svcSetConfig(enabled, plugins){
@@ -1018,11 +1033,7 @@ function updateSvcCards(){
     pendingSummary.textContent = metricCount(startsAfterRestart.length + stopsAfterRestart.length);
   }
   var hint = $('svcActionHint');
-  if (hint) {
-    hint.textContent = svcConfigBusy
-      ? 'Saving service selection...'
-      : (svcDraftDirty ? 'Unsaved changes - save selection before restarting.' : 'Saved selections apply after restart. Running services stay unchanged until then.');
-  }
+  if (hint) updateSvcActionState(selected);
 }
 
 function metricCount(value){
@@ -1077,6 +1088,89 @@ function appendServiceSummary(parent, label, value, detail, id){
   return item;
 }
 
+function svcLabel(name){
+  var label = svcMeta(name).label || name || 'Service';
+  label = String(label)
+    .replace(/[\x00-\x1f\x7f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!label) label = 'Service';
+  if (label.length > 32) label = label.slice(0, 29) + '...';
+  return label;
+}
+
+function svcManagedActive(){
+  return svcLastActivePlugins.filter(function(name){ return svcLastAvailablePlugins.indexOf(name) !== -1; });
+}
+
+function svcPlanDelta(selected){
+  var target = Array.isArray(selected) ? selected.slice() : [];
+  var baseline = svcDraftDirty ? svcLastConfiguredPlugins.slice() : svcManagedActive();
+  var starts = target.filter(function(name){ return baseline.indexOf(name) === -1; });
+  var stops = baseline.filter(function(name){ return target.indexOf(name) === -1; });
+  return { starts: starts, stops: stops };
+}
+
+function svcCompactList(names){
+  var labels = names.slice(0, 3).map(svcLabel);
+  if (names.length > 3) labels.push('+' + metricCount(names.length - 3) + ' more');
+  return labels.join(', ');
+}
+
+function svcPlanSentence(delta){
+  var parts = [];
+  if (delta.starts.length) parts.push('start ' + svcCompactList(delta.starts));
+  if (delta.stops.length) parts.push('stop ' + svcCompactList(delta.stops));
+  return parts.join('; ');
+}
+
+function appendSvcPlanLine(parent, label, names, mode){
+  var line = appendEl(parent, 'div', 'svc-plan-line');
+  appendEl(line, 'span', 'svc-plan-label', label);
+  names.slice(0, 4).forEach(function(name){
+    appendEl(line, 'span', 'svc-plan-chip ' + mode, svcLabel(name));
+  });
+  if (names.length > 4) appendEl(line, 'span', 'svc-plan-chip ' + mode, '+' + metricCount(names.length - 4) + ' more');
+  return line;
+}
+
+function renderSvcPlan(selected){
+  var plan = $('svcPlan');
+  if (!plan) return;
+  clearNode(plan);
+  var delta = svcPlanDelta(selected);
+  if (!delta.starts.length && !delta.stops.length){
+    plan.className = 'svc-plan empty';
+    return;
+  }
+  plan.className = 'svc-plan ' + (svcDraftDirty ? 'draft' : 'pending');
+  appendEl(plan, 'strong', '', svcDraftDirty ? 'Unsaved service changes' : 'Restart needed for saved services');
+  var lines = appendEl(plan, 'div', 'svc-plan-lines');
+  if (delta.starts.length) appendSvcPlanLine(lines, 'Start', delta.starts, 'start');
+  if (delta.stops.length) appendSvcPlanLine(lines, 'Stop', delta.stops, 'stop');
+  appendEl(plan, 'div', 'svc-plan-note', svcDraftDirty ? 'Save this selection, then restart when ready.' : 'Restart Blindspark when you want these saved changes live.');
+}
+
+function svcActionMessage(selected){
+  if (svcConfigBusy) return 'Saving service selection...';
+  if (svcRestartPending) return 'Restarting. Waiting for selected services to converge.';
+  var delta = svcPlanDelta(selected);
+  if (svcDraftDirty && (delta.starts.length || delta.stops.length)) {
+    return 'Unsaved: ' + svcPlanSentence(delta) + '. Save selection before restarting.';
+  }
+  if (delta.starts.length || delta.stops.length) {
+    return 'Saved change pending: ' + svcPlanSentence(delta) + '. Restart Blindspark to apply.';
+  }
+  return 'Saved selections are live. Running services match the selected set.';
+}
+
+function updateSvcActionState(selected){
+  var choice = Array.isArray(selected) ? selected : svcSelection();
+  var hint = $('svcActionHint');
+  if (hint) hint.textContent = svcActionMessage(choice);
+  renderSvcPlan(choice);
+}
+
 function renderServices(avail, svcs){
   var enabled = !!(avail && avail.enabled);
   var available = (avail && Array.isArray(avail.available)) ? avail.available : [];
@@ -1115,6 +1209,8 @@ function renderServices(avail, svcs){
   appendServiceSummary(summary, 'Selected', metricCount(configured.length), enabled ? 'next restart' : 'services off', 'svcSummarySelected');
   appendServiceSummary(summary, 'Running', metricCount(managedActive.length), 'live now', 'svcSummaryRunning');
   appendServiceSummary(summary, 'Pending', metricCount(pendingRestartCount), pendingRestartCount ? 'needs restart' : 'in sync', 'svcSummaryPending');
+  var plan = appendEl(body, 'div', 'svc-plan empty');
+  plan.id = 'svcPlan';
 
   if (svcRestartPending){
     var expected = svcRestartExpected.length ? svcRestartExpected : configured;
@@ -1203,7 +1299,7 @@ function renderServices(avail, svcs){
 
   var actions = document.createElement('div');
   actions.className = 'svc-actions-bar';
-  var hint = appendEl(actions, 'div', 'hint', svcConfigBusy ? 'Saving service selection...' : (svcDraftDirty ? 'Unsaved changes - save selection before restarting.' : 'Saved selections apply after restart. Running services stay unchanged until then.'));
+  var hint = appendEl(actions, 'div', 'hint', svcActionMessage(configured));
   hint.id = 'svcActionHint';
   hint.setAttribute('role', 'status');
   hint.setAttribute('aria-live', 'polite');
@@ -1236,6 +1332,7 @@ function renderServices(avail, svcs){
   });
   buttons.appendChild(save);
   body.appendChild(actions);
+  renderSvcPlan(configured);
 
   if (list.length){
     var live = document.createElement('div');

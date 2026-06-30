@@ -64,7 +64,9 @@ function assertSmokeWriterPublicSafety (t, source, label) {
 
   if (label === 'release image smoke') {
     t.ok(source.includes('walletBusyState'), `${label} records wallet busy-state proof`)
+    t.ok(source.includes('dynamicPayoutControls'), `${label} records dynamic payout controls proof`)
     t.ok(source.includes('serviceActionState'), `${label} records service action-state proof`)
+    t.ok(source.includes('serviceInlinePlanState'), `${label} records service inline-plan proof`)
     t.ok(source.includes('aiModelAddState'), `${label} records AI model action-state proof`)
     t.ok(source.includes('appProxyWrites'), `${label} records app-proxy write proof`)
     t.ok(source.includes('leasePollingBounded'), `${label} records bounded lease polling proof`)
@@ -77,6 +79,8 @@ function assertSmokeWriterPublicSafety (t, source, label) {
   if (label === 'Umbrel package smoke') {
     t.ok(source.includes('dashboardUiHardening'), `${label} records dashboard UI-hardening proof`)
     t.ok(source.includes('setupUiHardening'), `${label} records setup UI-hardening proof`)
+    t.ok(source.includes('dynamicPayoutControls'), `${label} records dynamic payout controls proof`)
+    t.ok(source.includes('serviceInlinePlanState'), `${label} records service inline-plan proof`)
     t.ok(source.includes('appProxyWrites'), `${label} records app-proxy write proof`)
     t.ok(source.includes('leasePollingBounded'), `${label} records bounded lease polling proof`)
     t.ok(source.includes('dashboardStaticMarkupSafe'), `${label} records dashboard static-markup proof`)

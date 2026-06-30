@@ -1,0 +1,147 @@
+{
+  "name": "relaykernel-reputation-profile-v1-no-self-attestation",
+  "input": {
+    "now": 1800000000000,
+    "windowMs": 604800000,
+    "relays": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    ],
+    "proofs": [
+      {
+        "relayPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "verifierPubkey": "0101010101010101010101010101010101010101010101010101010101010101",
+        "blockIndex": 1,
+        "at": 1799913600000,
+        "passed": true
+      },
+      {
+        "relayPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "verifierPubkey": "0202020202020202020202020202020202020202020202020202020202020202",
+        "blockIndex": 2,
+        "at": 1799827200000,
+        "passed": true
+      },
+      {
+        "relayPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "verifierPubkey": "0303030303030303030303030303030303030303030303030303030303030303",
+        "blockIndex": 3,
+        "at": 1799996400000,
+        "passed": false
+      },
+      {
+        "relayPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "verifierPubkey": "0404040404040404040404040404040404040404040404040404040404040404",
+        "blockIndex": 4,
+        "at": 1799395199999,
+        "passed": true
+      },
+      {
+        "relayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "verifierPubkey": "0101010101010101010101010101010101010101010101010101010101010101",
+        "blockIndex": 1,
+        "at": 1799913600000,
+        "passed": true
+      }
+    ],
+    "bandwidthReceipts": [
+      {
+        "relayPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bytes": 10485760,
+        "at": 1799996400000,
+        "witnessCosigs": [
+          {
+            "witnessPubkey": "1010101010101010101010101010101010101010101010101010101010101010"
+          },
+          {
+            "witnessPubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ]
+      },
+      {
+        "relayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bytes": 52428800,
+        "at": 1799996400000,
+        "witnessCosigs": []
+      },
+      {
+        "relayPubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "bytes": 26214400,
+        "at": 1799996400000,
+        "witnessCosigCount": 0
+      }
+    ],
+    "selfAttestations": [
+      {
+        "relayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "uptimeHours": 50,
+        "bandwidthBytes": 12345
+      },
+      {
+        "relayPubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "uptimeHours": 999,
+        "bandwidthBytes": 10737418240
+      }
+    ]
+  },
+  "profile": {
+    "kind": "relaykernel-reputation-profile",
+    "version": 1,
+    "windowMs": 604800000,
+    "now": 1800000000000,
+    "relays": [
+      {
+        "relayPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "score": 0.7829,
+        "proofScore": 0.7629,
+        "witnessedBandwidthScore": 0.02,
+        "passedProofs": 2,
+        "distinctVerifiers": 2,
+        "distinctBlockIndices": 2,
+        "proofDiversityMultiplier": 0.471405,
+        "witnessedBandwidthBytes": 10485760,
+        "witnessCosigCount": 2,
+        "ignored": {
+          "selfAttestedUptimeHours": 0,
+          "selfAttestedBandwidthBytes": 0,
+          "unwitnessedBandwidthBytes": 0
+        }
+      },
+      {
+        "relayPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "score": 0.288959,
+        "proofScore": 0.288959,
+        "witnessedBandwidthScore": 0,
+        "passedProofs": 1,
+        "distinctVerifiers": 1,
+        "distinctBlockIndices": 1,
+        "proofDiversityMultiplier": 0.333333,
+        "witnessedBandwidthBytes": 0,
+        "witnessCosigCount": 0,
+        "ignored": {
+          "selfAttestedUptimeHours": 50,
+          "selfAttestedBandwidthBytes": 12345,
+          "unwitnessedBandwidthBytes": 52428800
+        }
+      },
+      {
+        "relayPubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "score": 0,
+        "proofScore": 0,
+        "witnessedBandwidthScore": 0,
+        "passedProofs": 0,
+        "distinctVerifiers": 0,
+        "distinctBlockIndices": 0,
+        "proofDiversityMultiplier": 0,
+        "witnessedBandwidthBytes": 0,
+        "witnessCosigCount": 0,
+        "ignored": {
+          "selfAttestedUptimeHours": 999,
+          "selfAttestedBandwidthBytes": 10737418240,
+          "unwitnessedBandwidthBytes": 26214400
+        }
+      }
+    ]
+  }
+}
