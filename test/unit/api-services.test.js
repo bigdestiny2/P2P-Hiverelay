@@ -129,16 +129,30 @@ test('GET /api/manage/services/available: builtins + active + plugins', async (t
   t.alike(res.body.plugins, ['ai'])
 })
 
+test('POST /api/manage/services/config: rejects unknown plugins by name', async (t) => {
+  const node = mockNode()
+  const port = await server(t, node)
+  // Unknown plugin names are rejected (not silently dropped) so an operator
+  // sees their typo instead of a service quietly failing to enable.
+  const res = await request(port, 'POST', '/api/manage/services/config', { enabled: true, plugins: ['ai', 'bogus'] }, AUTH)
+  t.is(res.statusCode, 400)
+  t.ok(String(res.body.error || '').includes('bogus'), 'error names the unknown plugin')
+  t.ok(Array.isArray(res.body.available), 'response lists the available plugins')
+  t.is(node._servicesConfigCalls.length, 0, 'nothing persisted on a rejected config')
+})
+
 test('POST /api/manage/services/config: persists opt-in, restartRequired', async (t) => {
   const node = mockNode()
   const port = await server(t, node)
-  const res = await request(port, 'POST', '/api/manage/services/config', { enabled: true, plugins: ['ai', 'bogus'] }, AUTH)
+  const res = await request(port, 'POST', '/api/manage/services/config', { enabled: true, plugins: ['ai'] }, AUTH)
   t.is(res.statusCode, 200)
   t.is(res.body.ok, true)
   t.is(res.body.restartRequired, true)
-  t.is(res.body.enabled, true)
-  t.alike(res.body.plugins, ['ai'], 'bogus plugin filtered out')
-  t.is(node._servicesConfigCalls.length, 1)
+  t.is(res.body.config.enabled, true)
+  t.alike(res.body.config.plugins, ['ai'])
+  // The opt-in is persisted by mutating node.config (then api._persistConfig()).
+  t.is(node.config.enableServices, true)
+  t.alike(node.config.plugins, ['ai'])
 })
 
 test('config endpoint requires auth', async (t) => {
