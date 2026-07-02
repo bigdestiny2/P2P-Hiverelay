@@ -1,5 +1,5 @@
 import assert from 'node:assert'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'brittle'
@@ -623,6 +623,56 @@ test('outboxlog app: default file persistence restores signed opaque rows', asyn
 function parseBlockJson (block) {
   return JSON.parse(block.toString('utf8'))
 }
+
+test('outboxlog: append lands in the journal even when snapshot persistence is configured (#146)', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'outboxlog-both-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+
+  const writer = keyPair(20)
+  const stateFile = join(dir, 'outboxlog-state.json')
+  const journalFile = join(dir, 'outboxlog-ops.jsonl')
+  const log = createOutboxLog({ persistencePath: stateFile, journalPath: journalFile })
+  log.sync.create(writer.publicKeyHex)
+  const rec = signRecord(writer, { id: 'j1', body: { ciphertext: 'x' } })
+  t.alike(log.sync.append(writer.publicKeyHex, { type: 'post', data: rec }), { ok: true, key: 'post!j1' })
+
+  // The journal-first fix: the append-log is written even though snapshot
+  // persistence is also configured (it used to be silently empty).
+  const journalText = await readFile(journalFile, 'utf8')
+  t.ok(journalText.includes('"kind":"append"'), 'append op landed in the journal')
+
+  // ...and the journal alone replays into a fresh instance.
+  const replay = createOutboxLog({ journalPath: journalFile })
+  t.alike(replay.sync.get(writer.publicKeyHex, 'post!j1').body, rec.body)
+})
+
+test('outboxlog: hand-edited state rows are dropped on load (#146)', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'outboxlog-tamper-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+
+  const writer = keyPair(21)
+  const attacker = keyPair(22)
+  const stateFile = join(dir, 'outboxlog-state.json')
+
+  const first = createOutboxLog({ persistencePath: stateFile })
+  first.sync.create(writer.publicKeyHex)
+  const good = signRecord(writer, { id: 'real', body: { ciphertext: 'legit' } })
+  first.sync.append(writer.publicKeyHex, { type: 'post', data: good })
+
+  // The persisted file is not a trust root: hand-edit it to inject a tampered
+  // row (body mutated -> signature no longer matches) and a foreign-writer row
+  // (valid signature but _k != appId).
+  const state = JSON.parse(await readFile(stateFile, 'utf8'))
+  const group = state.groups.find(([appId]) => appId === writer.publicKeyHex)[1]
+  group.rows.push(['post!forged', { ...good, id: 'forged', body: { ciphertext: 'tampered' } }])
+  group.rows.push(['post!foreign', signRecord(attacker, { id: 'foreign', body: { ciphertext: 'evil' } })])
+  await writeFile(stateFile, JSON.stringify(state))
+
+  const second = createOutboxLog({ persistencePath: stateFile })
+  t.alike(second.sync.get(writer.publicKeyHex, 'post!real').body, good.body, 'legit row survives')
+  t.is(second.sync.get(writer.publicKeyHex, 'post!forged'), null, 'tampered row dropped on load')
+  t.is(second.sync.get(writer.publicKeyHex, 'post!foreign'), null, 'foreign-writer row dropped on load')
+})
 
 function keyPair (seedByte) {
   const publicKey = b4a.alloc(32)

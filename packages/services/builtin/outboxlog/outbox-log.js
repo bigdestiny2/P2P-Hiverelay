@@ -486,7 +486,12 @@ export function createOutboxLog ({
   }
 
   function saveState (journalEntry = null) {
-    if (operationJournal && !statePersistence && journalEntry) appendJournalEntry(journalEntry)
+    // Journal-first layering: the append-log is the durable fast path, so land
+    // the entry whenever a journal is configured — even alongside snapshot
+    // persistence, which is a periodic checkpoint, not a replacement. The old
+    // `!statePersistence` guard left the journal silently empty when start()
+    // wired both journalPath + storagePath. (#146)
+    if (operationJournal && journalEntry) appendJournalEntry(journalEntry)
     if (!statePersistence) return
     statePersistence.saveSync(snapshot())
   }
@@ -521,6 +526,26 @@ export function createOutboxLog ({
     }
   }
 
+  // Re-run the same verification the live append path applies (:141-152), but
+  // return a boolean instead of throwing so callers can DROP an unverifiable
+  // row rather than aborting the whole load. The persisted state file / journal
+  // is not a trust root — anyone who can write it must not be able to inject
+  // rows attributed to another writer key. (#146)
+  function restoreVerifies (appId, type, data, namespaceInfo) {
+    if (!shouldVerifyAppend) return true
+    if (typeof type !== 'string' || !type) return false
+    let verified = false
+    try {
+      verified = customVerifyAppend
+        ? customVerifyAppend({ appId, type, data, namespace: namespaceInfo ? namespaceInfo.name : null, namespaceConfig: namespaceInfo })
+        : verifyOutboxRecordSignature({ appId, type, data }, { registry: namespaceRegistry })
+    } catch {
+      return false
+    }
+    if (verified && typeof verified.then === 'function') return false
+    return isVerified(verified)
+  }
+
   function applyState (state) {
     if (!state || typeof state !== 'object') return
     if (state.version !== OUTBOXLOG_STATE_VERSION) throw fail('unsupported outboxlog state version', 500)
@@ -549,6 +574,14 @@ export function createOutboxLog ({
         if (!Array.isArray(row) || row.length !== 2 || typeof row[0] !== 'string') continue
         if (row[0].length > maxIdLength + 65) continue
         const value = clone(row[1])
+        // Reconstruct the record type from the row key (`type!id`, first ':'
+        // mangled to '!') so the signature can be re-verified; drop any row that
+        // fails — before it consumes capacity budget. (#146)
+        const rowId = value && value.id != null ? String(value.id) : null
+        const rowType = rowId != null && row[0].endsWith('!' + rowId)
+          ? row[0].slice(0, row[0].length - rowId.length - 1)
+          : null
+        if (!restoreVerifies(appId, rowType, value, namespaceInfo)) continue
         const size = Buffer.byteLength(JSON.stringify(value))
         if (size > rowMaxBytes) throw fail('persisted outbox row too large', 413)
         if (rows.size >= rowLimit) throw fail('persisted outbox row capacity exceeded', 503)
@@ -670,6 +703,9 @@ export function createOutboxLog ({
     const opNamespace = entryNamespace || recordNamespace(op.data)
     const opNamespaceInfo = opNamespace ? namespaceRegistry.get(opNamespace) : null
     if (opNamespace && !opNamespaceInfo) throw fail('persisted outbox namespace is not registered', 400)
+    // Drop a journal op whose signature does not re-verify: the journal is a
+    // trust root only if every replayed row is re-checked on load. (#146)
+    if (!restoreVerifies(entry.appId, op.type, op.data, opNamespaceInfo)) return
     const id = String(op.data.id)
     if (id.length > maxIdLength) throw fail('persisted outbox id too long', 400)
     const key = op.type.replace(':', '!') + '!' + id
