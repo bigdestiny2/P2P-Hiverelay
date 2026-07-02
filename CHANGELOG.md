@@ -8,6 +8,8 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-07-02
+
 ### Added
 
 - **Custody availability primitives — `witnesslog` + `repairticket`.** Two
