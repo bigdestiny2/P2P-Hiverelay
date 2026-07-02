@@ -22,6 +22,7 @@ export { StorageService } from './builtin/storage-service.js'
 export { ZKService } from './builtin/zk-service.js'
 export { ArbitrationService } from './builtin/arbitration-service.js'
 export { StorageProofService } from './builtin/storage-proof-service.js'
+export { ShardStoreService, ShardEngine, shardHash, normalizeShardAddress } from './builtin/shard-store/index.js'
 export {
   createJsonFileNotifyPersistence,
   createMemoryNotifyPersistence,

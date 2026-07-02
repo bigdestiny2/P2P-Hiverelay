@@ -36,7 +36,10 @@ const BUILTIN_MAP = {
   notify: { module: 'p2p-hiveservices/builtin/notify-service.js', className: 'NotifyService' },
   // Tier-2 trustless seed verification: signed challenge-response proof that
   // this relay holds a seeded block. Independent — NOT part of any bundle.
-  'storage-proof': { module: 'p2p-hiveservices/builtin/storage-proof-service.js', className: 'StorageProofService' }
+  'storage-proof': { module: 'p2p-hiveservices/builtin/storage-proof-service.js', className: 'StorageProofService' },
+  // Content-addressed blind blob store for custody shards (shard:<hash>
+  // PUT/GET). M1: engine + surface. Independent — NOT part of any bundle.
+  'shard-store': { module: 'p2p-hiveservices/builtin/shard-store/index.js', className: 'ShardStoreService' }
 }
 
 // Names operators can add as services (the Services tab's "available" list).
