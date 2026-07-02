@@ -8,6 +8,52 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-07-03
+
+Production-hardens the `dht-relay-ws` transport for the Phase 5 **pure-pipe**
+path — an operator running a content-blind DHT byte-pipe 24/7. Every bound
+added here is **content-neutral** (frame lengths, buffer sizes, timings — never
+the Noise-encrypted payload), preserving the operator's §512(a)
+transitory-conduit posture. The transport stays disabled by default
+(`config.transports.dhtRelayWs`).
+
+### Added
+
+- **Connection supervisor** (one shared timer): WS ping/pong liveness
+  (terminates half-open TCP), first-frame deadline (reaps clients that never
+  speak the protocol — which the upstream heartbeat failsafe never catches, so
+  they otherwise squat a `maxConnections` slot forever), sustained
+  egress-backpressure termination, and an optional absolute session ceiling.
+- **Byte metering**: aggregate `totalBytesIn/Out` in `getStats()` and
+  Prometheus (`hiverelay_dhtrelay_*`), plus `totalReaped` — the signal a
+  pure-pipe operator budgets/bills on. Optional per-connection ingress
+  byte-rate cap (`flow.maxRxBytesPerSec`, default off).
+- **Config surface**: `config.dhtRelayWs.{rateLimit,keepalive,flow,maxConnections,trustProxy}`.
+
+### Fixed
+
+- **`trustProxy`/XFF rate-limit keying** — behind a TLS reverse proxy the
+  limiter keyed on the proxy's socket IP, collapsing per-IP limiting into one
+  global bucket (a live issue on the two relays already running this behind
+  Caddy). Now keys on the first `X-Forwarded-For` hop when `trustProxy` is set.
+- **verifyClient concurrency-slot leak** — an upgrade that passed `verifyClient`
+  but aborted before the `connection` event leaked its slot until restart,
+  eventually locking the IP out; reservations now expire.
+- **`maxPayload`** single-frame cap (default 8 MiB; the `ws` default is 100 MiB).
+- **Distinct connection cap** — no longer forced to reuse the Hyperswarm swarm
+  `maxConnections`; behind a proxy the ws server binds loopback.
+
+### Security / dependency
+
+- **Vendored + patched `@hyperswarm/dht-relay@0.4.3`** (upstream: "do not use in
+  production") under `transports/dht-relay-ws/vendor/dht-relay`, pinned exact.
+  Three marked patches root-fix confirmed prod-blockers that live in the
+  upstream: egress backpressure (a slow reader no longer grows relay heap
+  without bound), **per-connection crash containment** (a throw in a proxied DHT
+  op no longer escapes as an `uncaughtException` that crash-loops the relay —
+  only the faulting connection is torn down), and per-connection resource drain
+  on close. See `vendor/dht-relay/VENDOR.md`.
+
 ## [0.21.1] — 2026-07-02
 
 Hardening patch from the v0.21.0 pre-release expert-panel audit, plus a
