@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import Corestore from 'corestore'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
-import { ShardStoreService, ShardEngine, shardHash, normalizeShardAddress, signShardPin, verifyShardPin, ShardPinRegistry, verifyShardProof , verifyShardTombstone, recoverShards, shardAnnounceTopic } from '../../packages/services/builtin/shard-store/index.js'
+import { ShardStoreService, ShardEngine, shardHash, normalizeShardAddress, signShardPin, verifyShardPin, ShardPinRegistry, verifyShardProof, verifyShardTombstone, recoverShards, shardAnnounceTopic } from '../../packages/services/builtin/shard-store/index.js'
 import { createCustodyIntent, createCustodyReceipt, verifyCustodyEntry, validateCustodyTransition } from '../../packages/core/core/custody-signing.js'
 
 async function tmpStore (t) {
