@@ -197,6 +197,14 @@ export class ShardPinRegistry {
     return out
   }
 
+  /** Drop all fully-expired hashes from the registry. Returns the purged list. */
+  purgeExpired (now = this.clock()) {
+    const purged = this.expiredHashes(now)
+    for (const hash of purged) this.pins.delete(hash)
+    if (purged.length) this._schedulePersist()
+    return purged
+  }
+
   snapshot () {
     const pins = []
     for (const set of this.pins.values()) for (const pin of set.values()) pins.push(pin)

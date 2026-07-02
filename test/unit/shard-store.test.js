@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import Corestore from 'corestore'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
-import { ShardStoreService, ShardEngine, shardHash, normalizeShardAddress, signShardPin, verifyShardPin, ShardPinRegistry, verifyShardProof } from '../../packages/services/builtin/shard-store/index.js'
+import { ShardStoreService, ShardEngine, shardHash, normalizeShardAddress, signShardPin, verifyShardPin, ShardPinRegistry, verifyShardProof , verifyShardTombstone, recoverShards, shardAnnounceTopic } from '../../packages/services/builtin/shard-store/index.js'
 import { createCustodyIntent, createCustodyReceipt, verifyCustodyEntry, validateCustodyTransition } from '../../packages/core/core/custody-signing.js'
 
 async function tmpStore (t) {
@@ -347,3 +347,67 @@ test('shard proofs: Mode A attestation only for held shards; NOT_HELD otherwise 
   // proving an unheld shard is NOT_HELD (indistinguishable from unauthorized)
   await t.exception(svc.prove({ shard: 'shard:' + 'e'.repeat(64), nonce }), /NOT_HELD/)
 })
+
+test('shard-store service: sweep GCs expired pins, signs non-serving tombstones (M4)', async (t) => {
+  const { store } = await tmpStore(t)
+  let now = NOW
+  const relay = keyPair(40)
+  const pinner = keyPair(41)
+  const svc = new ShardStoreService({ putAuth: ['payment'], checkPaymentQuota: () => true, keyPair: relay, clock: () => now })
+  await svc.start({ store })
+  t.teardown(() => svc.stop())
+
+  const sealed = b4a.from('short-lived-share', 'utf8')
+  const hash = shardHash(sealed)
+  // pin with a short retention
+  const shortPin = signShardPin({ reason: 'payment', hash, retainUntil: NOW + 1000, nonce: '7'.repeat(32) }, pinner)
+  await svc.put({ ciphertext: b4a.toString(sealed, 'base64'), pin: shortPin })
+  t.is((await svc.has({ shard: 'shard:' + hash })).present, true)
+
+  // before expiry: sweep is a no-op
+  t.is((await svc.sweep()).swept, 0)
+
+  now = NOW + 2000 // past retainUntil
+  const swept = await svc.sweep()
+  t.is(swept.swept, 1, 'expired shard swept')
+  t.is(swept.tombstones.length, 1)
+  t.is(swept.tombstones[0].mode, 'T')
+  t.ok(verifyShardTombstone(swept.tombstones[0], { hash, relayPubkey: relay.hex }), 'tombstone is relay-signed')
+  t.is((await svc.has({ shard: 'shard:' + hash })).present, false, 'blob GCd')
+
+  const stats = await svc.stats()
+  t.is(stats.shards, 0)
+  t.is(stats.bytes, 0)
+})
+
+test('shard recovery: k-of-n by hash with content-address verification (M4)', async (t) => {
+  // three shares; threshold 2. A byzantine relay returns wrong bytes for one.
+  const shares = [bytes('share-1'), bytes('share-2'), bytes('share-3')]
+  const manifest = shares.map((s, i) => ({ shareIndex: i + 1, shard: 'shard:' + shardHash(s) }))
+
+  const holders = new Map(manifest.map((m, i) => [normalizeShardAddress(m.shard), shares[i]]))
+  const goodFetch = async (addr) => holders.get(normalizeShardAddress(addr)) || null
+
+  const rec = await recoverShards({ manifest, shareThreshold: 2, fetch: goodFetch })
+  t.is(rec.ok, true)
+  t.is(rec.collected.length, 2, 'stops at threshold')
+
+  // a relay that returns garbage for share 1 is caught by re-hash; recovery
+  // still succeeds from the other holders.
+  const byzFetch = async (addr) => {
+    const h = normalizeShardAddress(addr)
+    if (h === shardHash(shares[0])) return bytes('garbage')
+    return holders.get(h) || null
+  }
+  const rec2 = await recoverShards({ manifest, shareThreshold: 2, fetch: byzFetch })
+  t.is(rec2.ok, true, 'threshold met from honest holders')
+  t.absent(rec2.collected.find(c => shardHash(c.bytes) !== normalizeShardAddress(c.shard)), 'every collected share content-verified')
+
+  // announce topic is a deterministic 32-byte topic derived from the hash
+  const topic = shardAnnounceTopicTest(manifest[0].shard)
+  t.is(topic.length, 64)
+})
+
+function shardAnnounceTopicTest (addr) {
+  return b4a.toString(shardAnnounceTopic(addr), 'hex')
+}

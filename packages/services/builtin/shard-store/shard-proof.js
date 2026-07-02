@@ -42,6 +42,39 @@ export function shardAttestSignable (hash, nonceHex) {
   return b4a.from(SHARD_PROOF_DOMAIN + '\0A\0' + hash + '\0' + nonceHex, 'utf8')
 }
 
+// Non-serving tombstone: the relay signs that it stopped serving shard:<hash>
+// at time `at` (custody expiry / GC). Feeds custody-non-serving-proof.
+export function shardTombstoneSignable (hash, at) {
+  return b4a.from(SHARD_PROOF_DOMAIN + '\0T\0' + hash + '\0' + String(at), 'utf8')
+}
+
+export function buildShardTombstone ({ hash, at, keyPair }) {
+  const h = normalizeShardAddress(hash)
+  const sig = b4a.alloc(sodium.crypto_sign_BYTES)
+  sodium.crypto_sign_detached(sig, shardTombstoneSignable(h, at), keyPair.secretKey)
+  return {
+    mode: 'T',
+    kind: SHARD_PROOF_KIND,
+    hash: h,
+    at,
+    relay: b4a.toString(keyPair.publicKey, 'hex'),
+    signature: b4a.toString(sig, 'hex')
+  }
+}
+
+export function verifyShardTombstone (tomb, { hash, relayPubkey } = {}) {
+  if (!tomb || tomb.mode !== 'T') return false
+  const h = normalizeShardAddress(hash || tomb.hash)
+  if (!h || tomb.hash !== h || !Number.isFinite(tomb.at)) return false
+  const relay = String(relayPubkey || tomb.relay || '').toLowerCase()
+  if (!HEX64.test(relay) || (tomb.relay && tomb.relay.toLowerCase() !== relay)) return false
+  try {
+    return sodium.crypto_sign_verify_detached(b4a.from(tomb.signature, 'hex'), shardTombstoneSignable(h, tomb.at), b4a.from(relay, 'hex'))
+  } catch {
+    return false
+  }
+}
+
 function normNonce (nonce) {
   const hex = b4a.isBuffer(nonce) ? b4a.toString(nonce, 'hex') : String(nonce || '').toLowerCase()
   return HEX64.test(hex) ? hex : null

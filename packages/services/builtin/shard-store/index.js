@@ -11,9 +11,10 @@ import b4a from 'b4a'
 import { ShardEngine, DEFAULT_MAX_SHARD_BYTES, normalizeShardAddress, shardHash, shardError } from './shard-engine.js'
 import { ShardPinRegistry, authorizeShardPin, verifyShardPin, signShardPin, shardPinRef, SHARD_PIN_DOMAIN } from './shard-pin.js'
 import {
-  buildShardRetrievalProof, buildShardAttestation, verifyShardProof,
+  buildShardRetrievalProof, buildShardAttestation, buildShardTombstone, verifyShardProof, verifyShardTombstone,
   SHARD_PROOF_DOMAIN, SHARD_PROOF_KIND, SHARD_PROOF_LIMITATION
 } from './shard-proof.js'
+import { recoverShards, shardAnnounceTopic } from './shard-recover.js'
 
 export const SHARD_STORE_VERSION = '0.1.0'
 const DEFAULT_PUT_AUTH = ['custody', 'payment']
@@ -94,7 +95,8 @@ export class ShardStoreService extends ServiceProvider {
     if (!this.pins) {
       this.pins = new ShardPinRegistry({
         persistence: this.opts.pinPersistence || null,
-        persistFlushMs: this.opts.persistFlushMs
+        persistFlushMs: this.opts.persistFlushMs,
+        clock: this.clock
       })
     }
     await this.engine.ready()
@@ -174,6 +176,35 @@ export class ShardStoreService extends ServiceProvider {
     return { ok: true, proof: buildShardAttestation({ hash, nonce, keyPair: this.keyPair }) }
   }
 
+  /**
+   * Retention GC: for every shard whose pins have all expired, sign a
+   * non-serving tombstone (proof it stopped serving), delete the blob, and
+   * purge the pins. Returns the tombstones (for the custody state machine).
+   * The relay calls this on a timer / at custody expiry.
+   */
+  async sweep () {
+    const now = this.clock()
+    const expired = this.pins.expiredHashes(now)
+    const tombstones = []
+    for (const hash of expired) {
+      if (this.keyPair) tombstones.push(buildShardTombstone({ hash, at: now, keyPair: this.keyPair }))
+      await this.engine.delete(hash)
+    }
+    this.pins.purgeExpired(now)
+    return { ok: true, swept: expired.length, tombstones }
+  }
+
+  /** Bytes + shard count, for StorageAccounting + metrics (no per-hash detail). */
+  async stats () {
+    const s = await this.engine.stats()
+    return { ok: true, shards: s.shards, bytes: s.bytes }
+  }
+
+  /** The DHT topic a holder announces on / a client looks up for a shard. */
+  announceTopic (params = {}) {
+    return { ok: true, topic: b4a.toString(shardAnnounceTopic(params.shard || params.hash), 'hex') }
+  }
+
   /** Remove one pin. When the last live pin is gone, GC the blob. */
   async unpin (params = {}) {
     const hash = normalizeShardAddress(params.shard || params.hash)
@@ -193,5 +224,6 @@ export default ShardStoreService
 export {
   ShardEngine, DEFAULT_MAX_SHARD_BYTES, normalizeShardAddress, shardHash,
   ShardPinRegistry, authorizeShardPin, verifyShardPin, signShardPin, shardPinRef, SHARD_PIN_DOMAIN,
-  buildShardRetrievalProof, buildShardAttestation, verifyShardProof, SHARD_PROOF_DOMAIN
+  buildShardRetrievalProof, buildShardAttestation, buildShardTombstone, verifyShardProof, verifyShardTombstone, SHARD_PROOF_DOMAIN,
+  recoverShards, shardAnnounceTopic
 }
