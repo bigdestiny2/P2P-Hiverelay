@@ -1,8 +1,70 @@
 import test from 'brittle'
 import {
   MAX_PEER_LIST_ENTRIES,
-  buildPeerListPayload
+  buildPeerListPayload,
+  buildPeerStateRoutePayload,
+  resolvePeerStateRoute
 } from '../../packages/core/core/relay-node/api-peer-state.js'
+
+test('api peer state: route helper maps exact public peer routes', (t) => {
+  t.alike(resolvePeerStateRoute('GET', '/peers'), {
+    kind: 'legacy-peer-list'
+  })
+  t.alike(resolvePeerStateRoute('GET', '/api/peers'), {
+    kind: 'peer-list'
+  })
+
+  t.is(resolvePeerStateRoute('POST', '/peers'), null)
+  t.is(resolvePeerStateRoute('GET', '/peers/extra'), null)
+  t.is(resolvePeerStateRoute('GET', '/api/peers/extra'), null)
+})
+
+test('api peer state: route payload helper dispatches legacy and full peer lists', (t) => {
+  const peerKey = Buffer.alloc(32, 0xab)
+  const conn = { remotePublicKey: peerKey, type: 'tcp' }
+  const connections = new Map([[conn, { lastActivity: 900 }]])
+  const reputationCalls = []
+  const reputation = {
+    getRecord (pubkey) {
+      reputationCalls.push(pubkey)
+      return { score: 3 }
+    }
+  }
+
+  const legacy = buildPeerStateRoutePayload({
+    route: { kind: 'legacy-peer-list' },
+    swarm: { connections: [conn] },
+    connections,
+    reputation,
+    redact: false,
+    now: 1000
+  })
+  const full = buildPeerStateRoutePayload({
+    route: { kind: 'peer-list' },
+    swarm: { connections: [conn] },
+    connections,
+    reputation,
+    redact: false,
+    now: 1000
+  })
+  const unknown = buildPeerStateRoutePayload({
+    route: { kind: 'unknown' },
+    swarm: { connections: [conn] }
+  })
+
+  t.is(legacy.ok, true)
+  t.alike(legacy.payload.peers[0], {
+    remotePublicKey: 'ab'.repeat(32),
+    type: 'tcp',
+    connectedFor: null
+  })
+  t.is(full.ok, true)
+  t.is(full.payload.peers[0].connectedFor, 100)
+  t.is(full.payload.peers[0].reputation.score, 3)
+  t.alike(reputationCalls, ['ab'.repeat(32)])
+  t.is(unknown.status, 404)
+  t.is(unknown.payload.error, 'unknown peer state route')
+})
 
 test('api peer state: builds stable public peer list payload', (t) => {
   const peerKey = Buffer.alloc(32, 0xab)

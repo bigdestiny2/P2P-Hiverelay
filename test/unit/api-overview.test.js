@@ -2,14 +2,18 @@ import test from 'brittle'
 import {
   bandwidthOverview,
   buildOverviewPayload,
+  buildOverviewRoutePayload,
+  buildOverviewRouteResponse,
   formatOverviewUptime,
   overviewRelay,
   overviewSeeder,
   overviewServed,
+  overviewHealth,
   overviewStorage,
   overviewTorInfo,
   registryOverview,
-  reputationOverview
+  reputationOverview,
+  resolveOverviewRoute
 } from 'p2p-hiverelay/core/relay-node/api-overview.js'
 
 test('api overview: uptime formatter keeps hours and compact human text', (t) => {
@@ -22,6 +26,51 @@ test('api overview: uptime formatter keeps hours and compact human text', (t) =>
     ms: 0,
     hours: 0,
     human: '0m'
+  })
+})
+
+test('api overview: route helper maps exact public overview route', (t) => {
+  t.alike(resolveOverviewRoute('GET', '/api/overview'), {
+    kind: 'overview'
+  })
+
+  t.is(resolveOverviewRoute('POST', '/api/overview'), null)
+  t.is(resolveOverviewRoute('GET', '/api/overview/extra'), null)
+  t.is(resolveOverviewRoute('GET', '/api/overviews'), null)
+})
+
+test('api overview: route response helper dispatches overview reads', (t) => {
+  const route = resolveOverviewRoute('GET', '/api/overview')
+  const result = buildOverviewRouteResponse({
+    route,
+    node: {
+      config: { regions: ['EU'], maxStorageBytes: 1000 },
+      metrics: { startedAt: 1000, _errorCount: 1 },
+      getStats (opts) {
+        t.alike(opts, { includeSecrets: false })
+        return {
+          publicKey: 'a'.repeat(64),
+          connections: 2,
+          seededApps: 3,
+          storage: { totalBytes: 100 }
+        }
+      }
+    },
+    authed: false,
+    memory: { heapUsed: 4, rss: 5 },
+    now: 7000
+  })
+
+  t.is(result.ok, true)
+  t.is(result.status, undefined)
+  t.is(result.payload.uptime.ms, 6000)
+  t.is(result.payload.region, 'EU')
+  t.alike(result.payload.memory, { heapUsed: 4, rss: 5 })
+
+  t.alike(buildOverviewRouteResponse({ route: null }), {
+    ok: false,
+    status: 404,
+    payload: { error: 'unknown overview route' }
   })
 })
 
@@ -180,6 +229,34 @@ test('api overview: relay, seeder, and tor summaries are known-field only', (t) 
   }).includes('should-not-leak'))
 })
 
+test('api overview: health summary is known-field only', (t) => {
+  const health = overviewHealth({
+    healthy: true,
+    lastCheck: 1234.9,
+    consecutiveFailures: 1.8,
+    secret: 'should-not-leak',
+    checks: {
+      memory: { ok: true, heapPct: 12.5, rssMB: 99.25, raw: 'should-not-leak' },
+      connections: { ok: false, critical: true, zeroFor: 2000, suggestion: 'should-not-leak' },
+      disk: { ok: true, usedPct: 45.5, freeGB: 8.25, error: 'should-not-leak' },
+      custom: { ok: true, token: 'should-not-leak' }
+    }
+  })
+
+  t.alike(health, {
+    healthy: true,
+    lastCheck: 1234,
+    consecutiveFailures: 1,
+    checks: {
+      memory: { ok: true, heapPct: 12.5, rssMB: 99.25 },
+      connections: { ok: false, critical: true, zeroFor: 2000 },
+      disk: { ok: true, usedPct: 45.5, freeGB: 8.25 }
+    }
+  })
+  t.absent(JSON.stringify(health).includes('should-not-leak'))
+  t.is(overviewHealth(null), null)
+})
+
 test('api overview: build payload preserves dashboard contract', (t) => {
   const payload = buildOverviewPayload({
     stats: {
@@ -198,7 +275,7 @@ test('api overview: build payload preserves dashboard contract', (t) => {
     reputation: { trackedRelays: 1, topRelay: null },
     tor: { running: true, socksProxy: 'should-not-leak' },
     holesailKey: 'secret-key',
-    health: { healthy: true },
+    health: { healthy: true, secret: 'should-not-leak' },
     bandwidth: { totalProvenBytes: 5, receiptsIssued: 1 },
     registry: { running: true, autoAccept: true },
     gateway: { requests: 3 }
@@ -216,4 +293,90 @@ test('api overview: build payload preserves dashboard contract', (t) => {
   t.alike(payload.health, { healthy: true })
   t.alike(payload.gateway, { requests: 3 })
   t.absent(JSON.stringify(payload).includes('should-not-leak'))
+})
+
+test('api overview: route helper assembles public and authenticated payloads', (t) => {
+  const calls = []
+  const node = {
+    config: { regions: ['NA'], maxStorageBytes: 1000, registryAutoAccept: false },
+    metrics: { startedAt: 1000, _errorCount: 2 },
+    getStats (opts) {
+      calls.push(opts)
+      return {
+        publicKey: 'a'.repeat(64),
+        connections: 3,
+        seededApps: 4,
+        storage: { totalBytes: 100 },
+        seeder: { totalBytesStored: 50 },
+        relay: { totalBytesRelayed: 9 }
+      }
+    },
+    getHealthStatus () {
+      return {
+        healthy: true,
+        lastCheck: 6000,
+        secret: 'should-not-leak',
+        checks: {
+          memory: { ok: true, heapPct: 12.5, raw: 'should-not-leak' },
+          connections: { ok: false, zeroFor: 2000, suggestion: 'should-not-leak' },
+          disk: { ok: true, freeGB: 8.25, error: 'should-not-leak' },
+          custom: { ok: true, token: 'should-not-leak' }
+        }
+      }
+    },
+    _bandwidthReceipt: {
+      _issuedReceipts: [{}, {}],
+      getTotalProvenBandwidth () {
+        return 123
+      }
+    },
+    seedingRegistry: { running: true },
+    torTransport: {
+      getInfo () {
+        return {
+          running: true,
+          onionAddress: 'relay.onion',
+          socksProxy: 'should-not-leak',
+          activeConnections: 2
+        }
+      }
+    },
+    holesailTransport: { connectionKey: 'hole-key' }
+  }
+  const gateway = {
+    getStats () {
+      return {
+        cachedDrives: 2.9,
+        totalRequests: 7,
+        totalBytesServed: 11,
+        rawKeys: ['should-not-leak']
+      }
+    }
+  }
+
+  const pub = buildOverviewRoutePayload({ node, authed: false, gateway, memory: { heapUsed: 1, rss: 2 }, now: 7000 })
+  t.alike(calls[0], { includeSecrets: false })
+  t.is(pub.uptime.ms, 6000)
+  t.alike(pub.memory, { heapUsed: 1, rss: 2 })
+  t.alike(pub.bandwidth, { totalProvenBytes: 123, receiptsIssued: 2 })
+  t.alike(pub.registry, { running: true, autoAccept: false })
+  t.alike(pub.gateway, { cachedDrives: 2, totalRequests: 7, totalBytesServed: 11 })
+  t.alike(pub.health, {
+    healthy: true,
+    lastCheck: 6000,
+    checks: {
+      memory: { ok: true, heapPct: 12.5 },
+      connections: { ok: false, zeroFor: 2000 },
+      disk: { ok: true, freeGB: 8.25 }
+    }
+  })
+  t.is(pub.tor, null, 'public overview omits transport details')
+  t.is(pub.holesailKey, null, 'public overview omits holesail key')
+  t.absent(JSON.stringify(pub).includes('should-not-leak'))
+
+  const authed = buildOverviewRoutePayload({ node, authed: true, gateway: null, memory: {}, now: 7000 })
+  t.alike(calls[1], { includeSecrets: true })
+  t.alike(authed.tor, { running: true, onionAddress: 'relay.onion', activeConnections: 2 })
+  t.is(authed.holesailKey, 'hole-key')
+  t.is(authed.gateway, null)
 })

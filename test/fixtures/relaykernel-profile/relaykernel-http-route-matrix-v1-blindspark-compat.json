@@ -1,0 +1,143 @@
+{
+  "name": "relaykernel-http-route-matrix-v1-blindspark-compat",
+  "kind": "http-route-matrix-conformance",
+  "profile": "relaykernel",
+  "compatibility": "blindspark-http-gateway",
+  "surfaces": [
+    "/.well-known/hiverelay.json",
+    "/catalog.json",
+    "/v1/hyper/:driveKey/*path"
+  ],
+  "matrix": [
+    {
+      "surface": "/.well-known/hiverelay.json",
+      "purpose": "signed relay capability metadata for clients before they speak Hypercore",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        {
+          "runtime": "node-api",
+          "file": "packages/core/core/relay-node/api.js",
+          "requiredTerms": [
+            "const capabilityRoute = resolveCapabilityRoute(req.method, path)",
+            "capabilityRoute && capabilityRoute.kind === 'capability-doc'",
+            "buildCapabilityRoutePayload({",
+            "runtime: 'node'",
+            "result.headers"
+          ]
+        },
+        {
+          "runtime": "bare-http",
+          "file": "packages/core/core/relay-node/bare-http-server.js",
+          "requiredTerms": [
+            "path === '/.well-known/hiverelay.json' || path === '/api/capabilities'",
+            "buildCapabilityDoc({",
+            "runtime: 'bare'",
+            "Cache-Control"
+          ]
+        }
+      ]
+    },
+    {
+      "surface": "/catalog.json",
+      "purpose": "bounded public app/content catalog for browser and mobile bootstrap",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        {
+          "runtime": "node-api",
+          "file": "packages/core/core/relay-node/api.js",
+          "requiredTerms": [
+            "const catalogReadRoute = resolveCatalogReadRoute(req.method, path)",
+            "catalogReadRoute && catalogReadRoute.kind === 'catalog'",
+            "buildCatalogReadRoutePayload({",
+            "route: catalogReadRoute"
+          ]
+        },
+        {
+          "runtime": "node-api-catalog-helper",
+          "file": "packages/core/core/relay-node/api-catalog-read.js",
+          "requiredTerms": [
+            "export function buildCatalogReadRoutePayload",
+            "route.kind === 'catalog'",
+            "return buildRelayCatalogPayload({ node, url, relayKey, maxPageSize })",
+            "export function buildRelayCatalogPayload"
+          ]
+        },
+        {
+          "runtime": "data-plane-gateway",
+          "file": "packages/core/core/relay-node/gateway-server.js",
+          "requiredTerms": [
+            "req.method === 'GET' && path === '/catalog.json'",
+            "this._serveCatalog(req, res)"
+          ]
+        },
+        {
+          "runtime": "bare-http",
+          "file": "packages/core/core/relay-node/bare-http-server.js",
+          "requiredTerms": [
+            "path === '/catalog.json'",
+            "this._catalog(url)"
+          ]
+        }
+      ]
+    },
+    {
+      "surface": "/v1/hyper/:driveKey/*path",
+      "purpose": "Hyperdrive content gateway retained for PearBrowser while RelayKernel extracts",
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "capabilities": [
+        "Range"
+      ],
+      "handlers": [
+        {
+          "runtime": "node-api",
+          "file": "packages/core/core/relay-node/api.js",
+          "requiredTerms": [
+            "isHyperGatewayRoute(path)",
+            "from './api-route-mounts.js'",
+            "this._gateway.handle(req, res)"
+          ]
+        },
+        {
+          "runtime": "node-api-route-table",
+          "file": "packages/core/core/relay-node/api-route-mounts.js",
+          "requiredTerms": [
+            "export const HYPER_GATEWAY_ROUTE_PREFIX = '/v1/hyper/'",
+            "export function isHyperGatewayRoute",
+            "path.startsWith(HYPER_GATEWAY_ROUTE_PREFIX)"
+          ]
+        },
+        {
+          "runtime": "hyper-gateway-core",
+          "file": "packages/core/gateway/hyper-gateway.js",
+          "requiredTerms": [
+            "req.method !== 'GET' && req.method !== 'HEAD'",
+            "res.setHeader('Allow', 'GET, HEAD')",
+            "const isHead = req.method === 'HEAD'",
+            "res.setHeader('Accept-Ranges', 'bytes')",
+            "const rangeHeader = req.headers && req.headers.range",
+            "res.setHeader('Content-Range'",
+            "if (isHead) {"
+          ]
+        },
+        {
+          "runtime": "data-plane-gateway",
+          "file": "packages/core/core/relay-node/gateway-server.js",
+          "requiredTerms": [
+            "path.startsWith('/v1/hyper/')",
+            "this._gateway.handle(req, res)"
+          ]
+        }
+      ],
+      "notes": [
+        "Bare relays participate in the P2P mesh and expose catalog/capability HTTP; browser content gateway serving stays on Node/API or the dedicated data-plane gateway."
+      ]
+    }
+  ]
+}

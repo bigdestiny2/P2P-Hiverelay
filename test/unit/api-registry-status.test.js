@@ -2,7 +2,9 @@ import test from 'brittle'
 import {
   MAX_REGISTRY_STATUS_RELAYS_PER_REQUEST,
   MAX_REGISTRY_STATUS_REQUESTS,
-  buildRegistryStatusPayload
+  buildRegistryStatusPayload,
+  buildRegistryStatusRoutePayload,
+  resolveRegistryStatusRoute
 } from 'p2p-hiverelay/core/relay-node/api-registry-status.js'
 
 function requestEntry (appKey, overrides = {}) {
@@ -30,10 +32,70 @@ function requestEntry (appKey, overrides = {}) {
   }
 }
 
+test('api registry status: route helper maps exact operator status route', (t) => {
+  t.alike(resolveRegistryStatusRoute('GET', '/api/registry'), {
+    kind: 'registry-status',
+    authMessage: 'Unauthorized — API key required for /api/registry'
+  })
+
+  t.is(resolveRegistryStatusRoute('POST', '/api/registry'), null)
+  t.is(resolveRegistryStatusRoute('GET', '/api/registry/extra'), null)
+  t.is(resolveRegistryStatusRoute('GET', '/api/registries'), null)
+})
+
 test('api registry status: missing registry reports unavailable', async (t) => {
   const out = await buildRegistryStatusPayload()
   t.is(out.status, 503)
   t.alike(out.payload, { error: 'Registry not running' })
+})
+
+test('api registry status: route payload helper dispatches operator status reads', async (t) => {
+  const requests = [
+    requestEntry('A'.repeat(64)),
+    requestEntry('B'.repeat(64))
+  ]
+  let activeRequests = 0
+  let relayLookups = 0
+
+  const result = await buildRegistryStatusRoutePayload({
+    route: resolveRegistryStatusRoute('GET', '/api/registry'),
+    registry: {
+      key: Buffer.alloc(32, 2),
+      async getActiveRequests () {
+        activeRequests++
+        return requests
+      },
+      async getRelaysForApp () {
+        relayLookups++
+        return [{ relayPubkey: 'C'.repeat(64), region: 'EU' }]
+      }
+    },
+    maxRequests: 1,
+    maxRelaysPerRequest: 1
+  })
+
+  t.is(activeRequests, 1)
+  t.is(relayLookups, 1, 'only capped requests are relay-enriched')
+  t.is(result.ok, true)
+  t.is(result.payload.key, '02'.repeat(32))
+  t.is(result.payload.count, 1)
+  t.is(result.payload.total, 2)
+  t.is(result.payload.truncated, true)
+  t.is(result.payload.requests[0].relays.length, 1)
+
+  const unknown = await buildRegistryStatusRoutePayload({
+    route: null,
+    registry: {
+      async getActiveRequests () {
+        throw new Error('should not query registry')
+      }
+    }
+  })
+  t.alike(unknown, {
+    ok: false,
+    status: 404,
+    payload: { error: 'unknown registry status route' }
+  })
 })
 
 test('api registry status: sanitizes request fields and relay metadata', async (t) => {

@@ -21,10 +21,6 @@ import { EventEmitter } from 'events'
 import { DashboardFeed } from './ws-feed.js'
 import { PokerFeed } from './ws-feed-poker.js'
 import { HyperGateway } from '../../gateway/hyper-gateway.js'
-import {
-  isValidHexKey
-} from '../constants.js'
-import { buildCapabilityDoc } from '../capability-doc.js'
 import { ERR, formatErr } from '../error-prefixes.js'
 import { SetupWizard } from '../wizard.js'
 import { isTransientCoreError, TRANSIENT_RETRY_AFTER_SECONDS } from '../transient-core-errors.js'
@@ -39,12 +35,20 @@ import {
   hasLoopbackOrigin,
   isLoopbackLocalRequest
 } from './api-auth-helpers.js'
-import { queryInt } from './api-validation.js'
 import { readJsonBody } from './api-body.js'
 import { buildCorsDecision, getAllowedOrigin } from './api-cors.js'
 import { buildDashboardHtmlResponse, setDashboardSecurityHeaders } from './api-dashboard-html.js'
 import { resolveDashboardGetRoute } from './api-dashboard-routes.js'
+import { buildIndexProxyRouteResponse } from './api-index-proxy.js'
 import { getPostJsonContentTypeProblem } from './api-request.js'
+import {
+  isHyperGatewayRoute,
+  isIndexProxyRoute,
+  isManagementApiRoute,
+  isOutboxLogHttpRoute,
+  isPokerHttpRoute,
+  resolvePokerHttpRoutePolicy
+} from './api-route-mounts.js'
 import { appendVaryHeader, writeJson, writeText } from './api-response.js'
 import {
   checkApiRateLimit,
@@ -52,140 +56,226 @@ import {
   clientIpFromRequest,
   sweepRateLimitMap
 } from './api-rate-limit.js'
-import { runConfigUpdateAction } from './api-config-update.js'
 import {
-  BUILTIN_SERVICE_PLUGINS,
-  SERVICE_PLUGIN_BUNDLES,
-  activeServiceNames,
-  configuredBuiltinServicePlugins,
-  normalizeManageServicePlugins,
-  serviceConfigPayload,
-  servicesLockedByProfile
+  resolveConfigUpdateRoute,
+  runConfigUpdateAction
+} from './api-config-update.js'
+import {
+  resolveServiceConfigUpdateRoute,
+  runServiceConfigUpdateAction,
+  serviceConfigPayload
 } from './api-service-config.js'
-import { runServiceManagementAction } from './api-service-management.js'
-import { buildServiceCatalogPayload } from './api-service-read.js'
-import { buildRouterInfoPayload } from './api-router-read.js'
-import { buildStatusPayload } from './api-status-read.js'
 import {
-  exportBandwidthReceipts,
-  pokerUsageTelemetryPayload,
-  sumReceiptBytes,
-  tableWriterCount,
+  resolveServiceManagementRoute,
+  runServiceManagementAction
+} from './api-service-management.js'
+import {
+  resolveAIServiceProvider,
+  resolveNotifyServiceProvider,
+  resolveOutboxLogServiceProvider,
+  resolvePokerServiceProvider
+} from './api-service-provider.js'
+import {
+  buildServiceReadRoutePayload,
+  resolveServiceReadRoute
+} from './api-service-read.js'
+import {
+  notifyQueryParams,
+  resolveNotifyRoute,
+  runNotifyRouteAction
+} from './api-notify.js'
+import {
+  buildRouterInfoRoutePayload,
+  resolveRouterReadRoute
+} from './api-router-read.js'
+import {
+  buildMetricsRouteResponse,
+  resolveMetricsRoute
+} from './api-metrics.js'
+import {
+  buildStatusRoutePayload,
+  resolveStatusRoute
+} from './api-status-read.js'
+import {
+  buildUsageTelemetryRoutePayload,
+  resolveUsageTelemetryRoute,
   usageTelemetryPayload
 } from './api-usage-telemetry.js'
 import {
-  bandwidthOverview,
-  buildOverviewPayload,
-  registryOverview,
-  reputationOverview
+  buildOverviewRouteResponse,
+  resolveOverviewRoute
 } from './api-overview.js'
 import {
-  buildAutoHealPayload,
-  buildHealthDetailPayload,
-  buildMetricsHistoryPayload,
-  buildStorageTopPayload
+  buildOperatorTelemetryRoutePayload,
+  resolveOperatorTelemetryRoute
 } from './api-operator-telemetry.js'
 import {
-  buildManageAIModelRegistration,
-  buildManageAIModelsPayload,
-  manageAIModelStatus,
-  publicManageAIModelError
+  buildAccountingReceiptRoutePayload,
+  resolveAccountingReceiptRoute
+} from './api-accounting-receipt.js'
+import {
+  buildPokerHttpAdapterUnavailableResponse,
+  loadPokerHttpAdapterModule,
+  resolvePokerHttpRouteHandler
+} from './api-poker-http-adapter.js'
+import {
+  buildOutboxLogHttpAdapterUnavailableResponse,
+  loadOutboxLogHttpAdapterModule,
+  resolveOutboxLogHttpAdapter
+} from './api-outboxlog-http-adapter.js'
+import {
+  buildCapabilityRoutePayload,
+  resolveCapabilityRoute
+} from './api-capabilities.js'
+import {
+  resolveAIModelManagementRoute,
+  runAIModelManagementRouteAction
 } from './api-ai-models.js'
 import {
-  buildAnchorProofPayload,
-  buildAnchorStatusPayload,
-  isDetailedAnchorStatusQuery
+  buildAnchorProofRoutePayload,
+  buildAnchorStatusRoutePayload,
+  buildAnchorStatusRouteContext,
+  resolveAnchorProofRoute,
+  resolveAnchorStatusRoute
 } from './api-anchor-status.js'
 import {
-  buildNetworkStatePayload,
-  isDetailedNetworkStateQuery
+  buildNetworkStateRoutePayload,
+  buildNetworkStateRouteContext,
+  resolveNetworkStateRoute
 } from './api-network-state.js'
 import {
-  buildSubsidyClaimPayload,
-  buildSubsidyStatusPayload,
+  buildSubsidyRoutePayload,
+  resolveSubsidyRoute,
   updateSubsidyDestination
 } from './api-subsidy.js'
 import {
   RetrievabilityProofProvider,
+  resolveRetrievabilityProofRoute,
   runRetrievabilityProofAction
 } from './retrievability-proof.js'
 import {
-  buildLeaseStatusPayload,
+  buildLeaseRoutePayload,
+  resolveLeaseRoute,
   runLeaseConfigAction
 } from './api-lease.js'
-import { runWizardAction } from './api-wizard-actions.js'
 import {
-  runModeSwitchAction,
-  runTransportToggleAction
+  buildWizardSnapshotRoutePayload,
+  resolveWizardSnapshotRoute,
+  runWizardAction,
+  wizardActionFromPath
+} from './api-wizard-actions.js'
+import {
+  resolveModeTransportManagementRoute,
+  runModeTransportManagementRouteAction
 } from './api-mode-transport.js'
 import {
-  runDeviceManagementAction,
-  runPairingManagementAction
+  resolveDevicePairingManagementRoute,
+  runDevicePairingManagementRouteAction
 } from './api-device-pairing.js'
-import { runDispatchAction } from './api-dispatch.js'
 import {
-  buildPendingCatalogPayload,
-  runCatalogAllowlistAction,
-  runCatalogAppAction,
-  runCatalogModeAction,
-  runLegacyAutoAcceptAction,
-  runRegistryCancelAction
+  resolveDispatchRoute,
+  runDispatchAction
+} from './api-dispatch.js'
+import {
+  buildPendingCatalogRoutePayload,
+  resolveCatalogManagementRoute,
+  resolvePendingCatalogRoute,
+  runCatalogManagementRouteAction
 } from './api-catalog-management.js'
 import {
-  buildRelayCatalogPayload,
-  catalogEntriesByType
+  buildCatalogReadRoutePayload,
+  resolveCatalogReadRoute
 } from './api-catalog-read.js'
-import { buildRegistryStatusPayload } from './api-registry-status.js'
 import {
-  runOperatorCustodyAction,
-  runPublisherCustodyAction
+  buildRegistryStatusRoutePayload,
+  resolveRegistryStatusRoute
+} from './api-registry-status.js'
+import {
+  resolveOperatorCustodyRoute,
+  resolvePublisherCustodyRoute,
+  runOperatorCustodyRouteAction,
+  runPublisherCustodyRouteAction
 } from './api-custody-management.js'
-import { buildCustodyStatusPayload, redactCustodyStatus } from './api-custody-status.js'
 import {
-  buildFederationSnapshotPayload,
-  runFederationManagementAction
+  buildCustodyStatusRoutePayload,
+  resolveCustodyStatusRoute
+} from './api-custody-status.js'
+import {
+  buildFederationSnapshotRoutePayload,
+  resolveFederationManagementRoute,
+  resolveFederationSnapshotRoute,
+  runFederationManagementRouteAction
 } from './api-federation-management.js'
 import {
-  runOperatorSeedAction,
-  runPublisherSeedAction,
-  runRegistryPublishAction
+  resolveSeedPublishRoute,
+  runSeedPublishRouteAction
 } from './api-seed-publish.js'
 import {
+  resolveSeedCoreRoute,
+  runSeedCoreAction
+} from './api-seed-core.js'
+import {
+  resolveUnseedRoute,
   runOperatorUnseedAction,
   runPublisherUnseedAction
 } from './api-unseed-actions.js'
 import {
-  runAuthorManifestFetchAction,
+  authorManifestPubkeyFromPath,
+  buildAuthorManifestFetchRoutePayload,
+  resolveSignedIngressRoute,
   runAuthorManifestPublishAction,
   runForkProofPublishAction
 } from './api-signed-ingress.js'
-import { buildForkProofsPayload } from './api-fork-proofs.js'
 import {
-  buildReputationLeaderboardPayload,
-  buildReputationRecordPayload
+  buildForkProofsRoutePayload,
+  resolveForkProofReadRoute
+} from './api-fork-proofs.js'
+import {
+  buildReputationLeaderboardRoutePayload,
+  buildReputationRecordRoutePayload,
+  resolveReputationLeaderboardRoute,
+  resolveReputationRecordRoute
 } from './api-reputation-read.js'
-import { buildHealthResponse } from './api-health.js'
 import {
-  buildAlertLogPayload,
-  runAlertTestAction
+  buildHealthResponse,
+  resolveHealthRoute
+} from './api-health.js'
+import {
+  resolveAlertManagementRoute,
+  runAlertManagementRouteAction
 } from './api-alert-management.js'
-import { runEvictionPurgeAction } from './api-eviction-purge.js'
-import { runDedupReclaimAction } from './api-dedup-reclaim.js'
-import { runIndexRoomAction } from './api-index-room.js'
-import { runLifecycleAction } from './api-lifecycle-actions.js'
 import {
-  buildGatewayStatsPayload,
-  sanitizeGatewayStats
+  resolveEvictionPurgeRoute,
+  runEvictionPurgeAction
+} from './api-eviction-purge.js'
+import {
+  resolveDedupReclaimRoute,
+  runDedupReclaimAction
+} from './api-dedup-reclaim.js'
+import {
+  resolveIndexRoomRoute,
+  runIndexRoomAction
+} from './api-index-room.js'
+import {
+  resolveLifecycleManagementRoute,
+  runLifecycleAction
+} from './api-lifecycle-actions.js'
+import {
+  buildGatewayStatsRoutePayload,
+  resolveGatewayStatsRoute
 } from './api-gateway-stats.js'
 import {
-  buildDeviceStatusPayload,
-  buildModeCatalogPayload,
-  buildPairingStatusPayload,
-  buildServiceRegistrySnapshot,
-  buildTransportStatusPayload
+  buildManagementSnapshotRoutePayload,
+  resolveManagementSnapshotRoute
 } from './api-management-snapshots.js'
 import {
-  buildDelegationRevocationsPayload,
+  configPersistFailureResult,
+  persistErrorMessage,
+  wizardPersistFailureResult
+} from './api-persist-failures.js'
+import {
+  buildDelegationRevocationsRoutePayload,
+  resolveDelegationManagementRoute,
   runDelegationRevokeAction
 } from './api-delegation-management.js'
 import {
@@ -193,7 +283,10 @@ import {
   restoreWizardConfig,
   snapshotWizardConfig
 } from './api-safe-config.js'
-import { buildPeerListPayload } from './api-peer-state.js'
+import {
+  buildPeerStateRoutePayload,
+  resolvePeerStateRoute
+} from './api-peer-state.js'
 import { redactIp } from '../privacy.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -210,19 +303,6 @@ function _getSyncRequire () {
 const DEFAULT_PORT = 9100
 
 const MANAGEMENT_AUTH_ERROR = 'Unauthorized — management API requires API key or localhost access'
-const CONFIG_PERSIST_FAILED_MESSAGE = 'failed to persist config; check storage permissions and disk space'
-const FEDERATION_PERSIST_FAILED_MESSAGE = 'failed to persist federation state; check storage permissions and disk space'
-const DEVICE_PERSIST_FAILED_MESSAGE = 'failed to persist device allowlist; check storage permissions and disk space'
-const WIZARD_PERSIST_FAILED_MESSAGE = 'failed to persist wizard state; check storage permissions and disk space'
-const SUBSIDY_PERSIST_FAILED_MESSAGE = 'failed to persist subsidy state; check storage permissions and disk space'
-const MANIFEST_PERSIST_FAILED_MESSAGE = 'failed to persist seeding manifest; check storage permissions and disk space'
-const FORK_PERSIST_FAILED_MESSAGE = 'failed to persist fork proof; check storage permissions and disk space'
-const CUSTODY_SEED_FIELDS = ['custodyIntentId', 'blindContentId', 'ciphertextRoot']
-
-function hasCustodySeedFields (body) {
-  if (!body || typeof body !== 'object') return false
-  return CUSTODY_SEED_FIELDS.some(field => body[field] !== undefined)
-}
 
 export class RelayAPI extends EventEmitter {
   constructor (relayNode, opts = {}) {
@@ -271,6 +351,11 @@ export class RelayAPI extends EventEmitter {
     this._dashboardFeed = null
     this._pokerFeed = null
     this._wizard = null // lazily constructed by _getWizard() on first /api/wizard hit
+    this._loadPokerHttpAdapter = opts.loadPokerHttpAdapter || loadPokerHttpAdapterModule
+    this._loadOutboxLogHttpAdapter = opts.loadOutboxLogHttpAdapter || loadOutboxLogHttpAdapterModule
+    this._outboxLogHttpAdapter = null
+    this._outboxLogHttpAuth = opts.outboxLogHttpAuth || null
+    this._outboxLogHttpState = opts.outboxLogHttpState || null
     this._gateway = new HyperGateway(relayNode, { store: relayNode.store })
     this._retrievabilityProofProvider = new RetrievabilityProofProvider()
   }
@@ -374,7 +459,7 @@ export class RelayAPI extends EventEmitter {
         this._pokerFeed = new PokerFeed({
           server: this.server,
           getPokerApp: () => {
-            const pk = this._getPokerServiceProvider()
+            const pk = resolvePokerServiceProvider(this.node)
             return pk.ok ? pk.provider : null
           }
         })
@@ -577,13 +662,18 @@ export class RelayAPI extends EventEmitter {
 
     try {
       // Hyper Gateway — serve Hyperdrive content over HTTP
-      if (path.startsWith('/v1/hyper/')) {
+      if (isHyperGatewayRoute(path)) {
         return this._gateway.handle(req, res)
       }
 
+      const gatewayStatsRoute = resolveGatewayStatsRoute(req.method, path)
+
       // Gateway stats endpoint
-      if (req.method === 'GET' && path === '/api/gateway') {
-        const result = buildGatewayStatsPayload({ gateway: this._gateway })
+      if (gatewayStatsRoute && gatewayStatsRoute.kind === 'gateway-stats') {
+        const result = buildGatewayStatsRoutePayload({
+          route: gatewayStatsRoute,
+          gateway: this._gateway
+        })
         return this._json(res, result.payload, result.status || 200)
       }
 
@@ -592,40 +682,62 @@ export class RelayAPI extends EventEmitter {
       // read-only GET routes so the desktop hits a single gatewayUrl. Disabled
       // (501) until config.indexSidecarUrl points at a running sidecar. Only
       // GET passthrough of method+path+query — no client headers/IP forwarded.
-      if (req.method === 'GET' && (path === '/api/index/room' || path.startsWith('/index/'))) {
+      if (isIndexProxyRoute(req.method, path)) {
         return this._proxyIndex(req, res, url)
       }
+
+      // OutboxLog Peerit bridge mount. The route behavior lives in the optional
+      // p2p-hiveservices package and is covered there; core only resolves the
+      // running provider and lazily delegates the exact token/sync/swarm routes.
+      if (isOutboxLogHttpRoute(path)) {
+        const outbox = resolveOutboxLogServiceProvider(this.node)
+        if (!outbox.ok) return this._json(res, { error: outbox.error }, outbox.status)
+        let adapter
+        try {
+          adapter = await resolveOutboxLogHttpAdapter({
+            cachedAdapter: this._outboxLogHttpAdapter,
+            loadAdapter: this._loadOutboxLogHttpAdapter
+          })
+          this._outboxLogHttpAdapter = adapter
+          if (!this._outboxLogHttpAuth) this._outboxLogHttpAuth = adapter.createOutboxLogTokenAuth()
+          if (!this._outboxLogHttpState) this._outboxLogHttpState = adapter.createOutboxLogHttpState()
+        } catch (err) {
+          const unavailable = buildOutboxLogHttpAdapterUnavailableResponse(err)
+          this.emit(unavailable.event.name, unavailable.event.detail)
+          return this._json(res, unavailable.payload, unavailable.status)
+        }
+        const handled = await adapter.handleOutboxLogRoute(req, res, {
+          outboxLogApp: outbox.provider,
+          auth: this._outboxLogHttpAuth,
+          state: this._outboxLogHttpState,
+          allowOrigin: this.corsOrigins && this.corsOrigins.length ? this.corsOrigins : '*',
+          trustProxy: this.trustProxy
+        })
+        if (handled) return
+        return this._json(res, { error: 'not found' }, 404)
+      }
+
+      const usageRoute = resolveUsageTelemetryRoute(req.method, path)
+      const catalogReadRoute = resolveCatalogReadRoute(req.method, path)
+      const serviceReadRoute = resolveServiceReadRoute(req.method, path)
+      const routerReadRoute = resolveRouterReadRoute(req.method, path)
+      const notifyRoute = resolveNotifyRoute(req.method, path)
 
       // Poker honest-usage measure (operator earnings/activity view) — derived
       // from the PLAYER-signed log, so the relay cannot forge the count. This is
       // poker's payout-relevant signal: a per-table append + writer-seat tally,
       // counts ONLY — never card/hole/payload data. Sits ahead of the generic
       // /api/poker/* mount so "usage" isn't routed as a table key. Auth-gated.
-      if (path === '/api/poker/usage' && req.method === 'GET') {
-        if (!this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return
-        const pk = this._getPokerServiceProvider()
+      if (usageRoute && usageRoute.kind === 'poker-usage') {
+        if (!this._requireAuth(req, res, usageRoute.authMessage)) return
+        const pk = resolvePokerServiceProvider(this.node)
         const provider = pk.ok ? pk.provider : this._getPokerApp()
         if (!provider) return this._json(res, { error: pk.error }, pk.status)
-        const tables = typeof provider.listTables === 'function' ? provider.listTables() : []
-        let appends = 0
-        let seats = 0
-        const perTable = tables.map((t) => {
-          const rawAppends = Number(t && t.length)
-          const a = Number.isFinite(rawAppends) && rawAppends > 0 ? rawAppends : 0
-          const w = tableWriterCount(t && t.writers)
-          appends += a
-          seats += w
-          return { tableKey: t.tableKey, appends: a, writers: w, lastTs: t.lastTs || null }
+        const result = buildUsageTelemetryRoutePayload({
+          route: usageRoute,
+          pokerProvider: provider
         })
-        return this._json(res, {
-          enabled: true,
-          service: 'poker',
-          tables: tables.length,
-          appends, // total player-signed log entries (relay-unforgeable)
-          seats,
-          perTable,
-          note: 'appends = player-signed log entries (the relay cannot forge them). Counts only — no card/hole/payload data.'
-        })
+        return this._json(res, result.payload, result.status || 200)
       }
 
       // Poker substrate (card-blind SignedLog) — served only when the 'poker'
@@ -635,17 +747,24 @@ export class RelayAPI extends EventEmitter {
       // (the signed log entry is itself the authorization). The adapter lives in
       // the optional p2p-hiveservices package, so it is dynamic-imported — core
       // stays decoupled when services aren't installed.
-      if (path === '/api/poker' || path.startsWith('/api/poker/')) {
-        const pk = this._getPokerServiceProvider()
+      if (isPokerHttpRoute(path)) {
+        const pk = resolvePokerServiceProvider(this.node)
         if (!pk.ok) return this._json(res, { error: pk.error }, pk.status)
-        if (req.method === 'POST' && path === '/api/poker/tables') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required to create a poker table')) return
+        const pokerRoutePolicy = resolvePokerHttpRoutePolicy(req.method, path)
+        if (pokerRoutePolicy && pokerRoutePolicy.authRequired) {
+          if (!this._requireAuth(req, res, pokerRoutePolicy.authMessage)) return
         }
         let handlePokerRoute
         try {
-          handlePokerRoute = await this._getPokerHttpRouteHandler()
+          handlePokerRoute = await resolvePokerHttpRouteHandler({
+            cachedHandler: this._handlePokerRoute,
+            loadAdapter: this._loadPokerHttpAdapter
+          })
+          this._handlePokerRoute = handlePokerRoute
         } catch (err) {
-          return this._pokerHttpAdapterUnavailable(res, err)
+          const unavailable = buildPokerHttpAdapterUnavailableResponse(err)
+          this.emit(unavailable.event.name, unavailable.event.detail)
+          return this._json(res, unavailable.payload, unavailable.status)
         }
         const handled = await handlePokerRoute(req, res, { pokerApp: pk.provider })
         if (handled) return
@@ -660,34 +779,45 @@ export class RelayAPI extends EventEmitter {
       // receipt's own signature IS the authorization (rejected unless it
       // verifies + is non-replayed); it carries no payload/content/IP. The
       // digest view is auth-gated (operator earnings evidence).
-      if (path === '/api/usage/receipt' && req.method === 'POST') {
-        if (!this.node.usageLedger) return this._json(res, { error: 'metering unavailable' }, 503)
+      if (usageRoute && usageRoute.kind === 'receipt-submit') {
         let body
         try { body = await this._readBody(req) } catch { return this._json(res, { error: 'invalid body' }, 400) }
-        const result = this.node.usageLedger.record(body)
-        return this._json(res, result, result.ok ? 200 : 400)
-      }
-      if (path === '/api/usage' && req.method === 'GET') {
-        if (!this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return
-        if (this.node._bandwidthReceipt) return this._json(res, this._getUsageTelemetryPayload())
-        const verified = this.node.usageLedger
-          ? this.node.usageLedger.digest()
-          : { count: 0, totals: {}, receiptRoot: null }
-        return this._json(res, {
-          verified, // counterparty-signed, payout-eligible
-          note: 'verified = counterparty-signed receipts (payout-eligible). Per-service registry stats are self-reported (statsVerified:false) and are NOT payout-eligible.'
+        const result = buildUsageTelemetryRoutePayload({
+          route: usageRoute,
+          usageLedger: this.node.usageLedger,
+          body
         })
+        return this._json(res, result.payload, result.status || 200)
+      }
+      if (usageRoute && usageRoute.kind === 'usage-digest') {
+        if (!this._requireAuth(req, res, usageRoute.authMessage)) return
+        const result = buildUsageTelemetryRoutePayload({
+          route: usageRoute,
+          usageLedger: this.node.usageLedger,
+          bandwidthReceiptPayload: this.node._bandwidthReceipt ? this._getUsageTelemetryPayload() : null
+        })
+        return this._json(res, result.payload, result.status || 200)
       }
 
       // Catalog endpoint — typed content catalog (apps, drives, resources, datasets, media)
-      if (req.method === 'GET' && path === '/catalog.json') {
-        const result = buildRelayCatalogPayload({ node: this.node, url })
+      if (catalogReadRoute && catalogReadRoute.kind === 'catalog') {
+        const result = buildCatalogReadRoutePayload({
+          route: catalogReadRoute,
+          node: this.node,
+          url
+        })
         return this._json(res, result.payload, result.status || 200)
       }
 
       // GET routes
       if (req.method === 'GET') {
-        if (path === '/health') {
+        const peerStateRoute = resolvePeerStateRoute(req.method, path)
+        const healthRoute = resolveHealthRoute(req.method, path)
+        const statusRoute = resolveStatusRoute(req.method, path)
+        const metricsRoute = resolveMetricsRoute(req.method, path)
+        const wizardSnapshotRoute = resolveWizardSnapshotRoute(req.method, path)
+
+        if (healthRoute && healthRoute.kind === 'health') {
           // v0.8.28 (#27): include disk status in the health payload.
           // When config.diskHealthGate=true AND disk.status='critical',
           // return 503 so load balancers / uptime monitors can drain
@@ -701,32 +831,40 @@ export class RelayAPI extends EventEmitter {
           return this._json(res, result.payload, result.status)
         }
 
-        if (path === '/status') {
-          const result = buildStatusPayload({ node: this.node })
+        if (statusRoute && statusRoute.kind === 'status') {
+          const result = buildStatusRoutePayload({
+            route: statusRoute,
+            node: this.node
+          })
           return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/metrics') {
-          if (this.node.metrics) {
-            return writeText(res, this.node.metrics.toPrometheus() + this._authFailureMetricsLines())
-          }
-          return this._json(res, { error: 'Metrics not enabled' }, 503)
+        if (metricsRoute && metricsRoute.kind === 'metrics') {
+          const result = buildMetricsRouteResponse({
+            metrics: this.node.metrics,
+            authFailureLines: this._authFailureMetricsLines()
+          })
+          if (!result.ok) return this._json(res, result.payload, result.status || 503)
+          return writeText(res, result.text, result.status || 200)
         }
 
-        if (path === '/peers') {
-          return this._json(res, buildPeerListPayload({
+        if (peerStateRoute && peerStateRoute.kind === 'legacy-peer-list') {
+          const result = buildPeerStateRoutePayload({
+            route: peerStateRoute,
             swarm: this.node.swarm,
             redact: this._redactPeers()
-          }))
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // --- Dashboard endpoints ---
         const dashboardRoute = await this._resolveDashboardGetRoute(req, path)
         if (dashboardRoute) return this._sendDashboardGetRoute(res, dashboardRoute)
 
-        if (path === '/api/health-detail') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/health-detail')) return
-          const result = buildHealthDetailPayload({ node: this.node })
+        const operatorTelemetryRoute = resolveOperatorTelemetryRoute(req.method, path)
+        if (operatorTelemetryRoute && operatorTelemetryRoute.kind === 'health-detail') {
+          if (!this._requireAuth(req, res, operatorTelemetryRoute.authMessage)) return
+          const result = buildOperatorTelemetryRoutePayload({ route: operatorTelemetryRoute, node: this.node, url })
           return this._json(res, result.payload, result.status || 200)
         }
 
@@ -735,30 +873,34 @@ export class RelayAPI extends EventEmitter {
         // policy, fees, features) without speaking Hypercore first. Also
         // mirrored at /api/capabilities for convenience. Both responses are
         // identical and cheap (<1ms to build).
-        if (path === '/.well-known/hiverelay.json' || path === '/api/capabilities') {
-          const doc = buildCapabilityDoc({
-            relay: this.node,
+        const capabilityRoute = resolveCapabilityRoute(req.method, path)
+        if (capabilityRoute && capabilityRoute.kind === 'capability-doc') {
+          const result = buildCapabilityRoutePayload({
+            node: this.node,
             version: this._relayVersion(),
             runtime: 'node'
           })
-          res.setHeader('Cache-Control', 'public, max-age=60')
-          return this._json(res, doc)
+          return this._json(res, result.payload, result.status || 200, result.headers || null)
         }
 
         // Author seeding manifest fetch. Clients GET this to discover which
         // relays an author uses for seeding. Returns 404 if we haven't cached
         // a manifest for this author — that's a normal state, not an error.
-        const authorMatch = path.match(/^\/api\/authors\/([0-9a-f]{64})\/seeding\.json$/i)
-        if (authorMatch) {
-          const result = runAuthorManifestFetchAction({
+        const authorPubkey = authorManifestPubkeyFromPath(path)
+        if (authorPubkey) {
+          const result = buildAuthorManifestFetchRoutePayload({
             manifestStore: this.node.manifestStore,
-            pubkey: authorMatch[1]
+            path
           })
           return this._json(res, result.payload, result.status || 200, result.headers || null)
         }
 
-        if (path === '/api/forks/proofs') {
-          const result = buildForkProofsPayload({ forkDetector: this.node.forkDetector })
+        const forkProofReadRoute = resolveForkProofReadRoute(req.method, path)
+        if (forkProofReadRoute && forkProofReadRoute.kind === 'fork-proof-list') {
+          const result = buildForkProofsRoutePayload({
+            route: forkProofReadRoute,
+            forkDetector: this.node.forkDetector
+          })
           return this._json(res, result.payload, result.status || 200, result.headers || null)
         }
 
@@ -767,43 +909,43 @@ export class RelayAPI extends EventEmitter {
         // wizard or the main UI. Auth: API key (bearer) or localhost. In
         // exposeToken mode the UI supplies the embedded token; without a
         // key configured this reduces to the original localhost-only gate.
-        if (path === '/api/wizard') {
-          if (!this._requireAuth(req, res, 'Unauthorized — wizard requires API key or localhost')) return
-          const wizard = await this._getWizard()
-          return this._json(res, wizard.snapshot())
+        if (wizardSnapshotRoute && wizardSnapshotRoute.kind === 'wizard-snapshot') {
+          if (!this._requireAuth(req, res, wizardSnapshotRoute.authMessage)) return
+          const result = await buildWizardSnapshotRoutePayload({
+            route: wizardSnapshotRoute,
+            getWizard: () => this._getWizard()
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // Largest measured drives — operator visibility for storage
         // triage and the input for manual purges. Management auth.
-        if (path === '/api/storage/top') {
-          if (!this._requireAuth(req, res, 'Unauthorized — storage top requires API key or localhost')) return
-          const n = this._queryInt(url, 'n', 30, 1, 100)
-          const result = buildStorageTopPayload({ storageAccounting: this.node.storageAccounting, n })
+        if (operatorTelemetryRoute && operatorTelemetryRoute.kind === 'storage-top') {
+          if (!this._requireAuth(req, res, operatorTelemetryRoute.authMessage)) return
+          const result = buildOperatorTelemetryRoutePayload({ route: operatorTelemetryRoute, node: this.node, url })
           return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/accounting/receipt') {
-          if (!this._requireAuth(req, res, 'Unauthorized — accounting receipt requires API key or localhost')) return
-          if (!this.node || typeof this.node.createAccountingReceipt !== 'function') {
-            return this._json(res, { error: 'accounting receipts unavailable' }, 503)
-          }
-          try {
-            const receipt = await this.node.createAccountingReceipt({
-              refresh: url.searchParams.get('refresh') !== '0'
-            })
-            return this._json(res, { receipt })
-          } catch (err) {
-            return this._json(res, { error: err && err.message ? err.message : 'accounting receipt unavailable' }, 503)
-          }
+        const accountingReceiptRoute = resolveAccountingReceiptRoute(req.method, path)
+        if (accountingReceiptRoute && accountingReceiptRoute.kind === 'receipt') {
+          if (!this._requireAuth(req, res, accountingReceiptRoute.authMessage)) return
+          const result = await buildAccountingReceiptRoutePayload({
+            route: accountingReceiptRoute,
+            node: this.node,
+            url
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // Operator subsidy status (Phase 1). Accrued ESTIMATE + payout
         // destination — operator-private, so management auth (bearer or
         // localhost), same gate as the wizard. {enabled:false} when the
         // subsidy is off so the dashboard card knows to stay hidden.
-        if (path === '/api/subsidy') {
-          if (!this._requireAuth(req, res, 'Unauthorized — subsidy status requires API key or localhost')) return
-          const result = buildSubsidyStatusPayload({
+        const subsidyRoute = resolveSubsidyRoute(req.method, path)
+        if (subsidyRoute && subsidyRoute.kind === 'status') {
+          if (!this._requireAuth(req, res, subsidyRoute.authMessage)) return
+          const result = buildSubsidyRoutePayload({
+            route: subsidyRoute,
             config: this.node.config,
             subsidyAccrual: this.node.subsidyAccrual
           })
@@ -813,11 +955,13 @@ export class RelayAPI extends EventEmitter {
         // Paid pin-lease status (operator-facing). {enabled:false} when off so
         // the dashboard card stays hidden. activeLeases is counted live from
         // the registry (entries currently under a paid, unexpired lease).
-        if (path === '/api/lease') {
+        const leaseRoute = resolveLeaseRoute(req.method, path)
+        if (leaseRoute && leaseRoute.kind === 'status') {
           if (!this._checkAuth(req)) {
-            return this._json(res, { error: formatErr('NOT_ALLOWED', 'lease status requires API key or localhost') }, 403)
+            return this._json(res, { error: formatErr('NOT_ALLOWED', leaseRoute.authMessage) }, 403)
           }
-          const result = buildLeaseStatusPayload({
+          const result = buildLeaseRoutePayload({
+            route: leaseRoute,
             leaseManager: this.node.leaseManager,
             appRegistry: this.node.appRegistry
           })
@@ -826,79 +970,78 @@ export class RelayAPI extends EventEmitter {
 
         // Signed subsidy claim export — what the Phase-2 coordinator
         // fetches (and independently verifies) to dispatch payouts.
-        if (path === '/api/subsidy/claim') {
-          if (!this._requireAuth(req, res, 'Unauthorized — subsidy claim requires API key or localhost')) return
-          const result = buildSubsidyClaimPayload({ subsidyAccrual: this.node.subsidyAccrual })
+        if (subsidyRoute && subsidyRoute.kind === 'claim') {
+          if (!this._requireAuth(req, res, subsidyRoute.authMessage)) return
+          const result = buildSubsidyRoutePayload({
+            route: subsidyRoute,
+            subsidyAccrual: this.node.subsidyAccrual
+          })
           return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/alerts') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/alerts')) return
-          const result = buildAlertLogPayload({ alertManager: this.node.alertManager, url })
+        const alertRoute = resolveAlertManagementRoute(req.method, path)
+        if (alertRoute && alertRoute.kind === 'log') {
+          if (!this._requireAuth(req, res, alertRoute.authMessage)) return
+          const result = runAlertManagementRouteAction({
+            route: alertRoute,
+            alertManager: this.node.alertManager,
+            url
+          })
           return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/auto-heal') {
+        if (operatorTelemetryRoute && operatorTelemetryRoute.kind === 'auto-heal') {
           // Read-only operator telemetry. Surfaces the AutoHeal scheduler's
           // current view of archive-tier drives + which ones are below
           // diversity threshold + per-drive backoff state. Useful for the
           // dashboard, ops monitoring, and debugging recruitment decisions.
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/auto-heal')) return
-          const result = buildAutoHealPayload({ autoHeal: this.node.autoHeal })
+          if (!this._requireAuth(req, res, operatorTelemetryRoute.authMessage)) return
+          const result = buildOperatorTelemetryRoutePayload({ route: operatorTelemetryRoute, node: this.node, url })
           return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/overview') {
+        const overviewRoute = resolveOverviewRoute(req.method, path)
+        if (overviewRoute && overviewRoute.kind === 'overview') {
           // Unauthenticated like /status — redact transport secrets unless
           // the caller is authenticated.
           const authed = this._checkAuth(req)
-          const stats = this.node.getStats({ includeSecrets: authed })
-          const uptimeMs = this.node.metrics ? Date.now() - this.node.metrics.startedAt : 0
-          const config = this.node.config || {}
-
-          return this._json(res, buildOverviewPayload({
-            stats,
-            config,
+          const result = buildOverviewRouteResponse({
+            route: overviewRoute,
+            node: this.node,
+            authed,
             memory: process.memoryUsage(),
-            uptimeMs,
-            errors: this.node.metrics ? this.node.metrics._errorCount : 0,
-            reputation: reputationOverview(this.node.reputation),
-            tor: authed && this.node.torTransport ? this.node.torTransport.getInfo() : null,
-            holesailKey: authed && this.node.holesailTransport ? this.node.holesailTransport.connectionKey : null,
-            health: this.node.getHealthStatus(),
-            bandwidth: bandwidthOverview(this.node._bandwidthReceipt),
-            registry: registryOverview(this.node.seedingRegistry, config),
-            gateway: this._gateway ? sanitizeGatewayStats(this._gateway.getStats()) : null
-          }))
-        }
-
-        if (path === '/api/history') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/history')) return
-          const minutes = this._queryInt(url, 'minutes', 60, 1, 24 * 60)
-          const result = buildMetricsHistoryPayload({ metrics: this.node.metrics, minutes })
+            gateway: this._gateway
+          })
           return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/apps') {
-          return this._json(res, catalogEntriesByType({ node: this.node, type: 'app', url }))
+        if (operatorTelemetryRoute && operatorTelemetryRoute.kind === 'history') {
+          if (!this._requireAuth(req, res, operatorTelemetryRoute.authMessage)) return
+          const result = buildOperatorTelemetryRoutePayload({ route: operatorTelemetryRoute, node: this.node, url })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/drives') {
-          return this._json(res, catalogEntriesByType({ node: this.node, type: 'drive', url }))
+        if (catalogReadRoute && catalogReadRoute.kind === 'legacy-type') {
+          const result = buildCatalogReadRoutePayload({
+            route: catalogReadRoute,
+            node: this.node,
+            url
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (req.method === 'GET' && path.startsWith('/api/custody/') && path.endsWith('/status')) {
-          if (this._custodyApiDisabled()) return this._custodyDisabledResponse(res)
-          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
-          const intentId = path.slice('/api/custody/'.length, -'/status'.length)
-          if (!isValidHexKey(intentId, 64)) return this._json(res, { error: 'intentId must be 64 hex characters' }, 400)
-          const status = this.node.seedingRegistry.getCustodyStatus(intentId)
-          const detailed = url.searchParams.get('detailed') === '1' || url.searchParams.get('detailed') === 'true'
-          if (detailed) {
-            if (!this._requireAuth(req, res, 'Unauthorized — API key required for detailed custody status')) return
-            return this._json(res, buildCustodyStatusPayload(status, { detailed: true }))
+        const custodyStatusRoute = resolveCustodyStatusRoute(req.method, path)
+        if (custodyStatusRoute && custodyStatusRoute.kind === 'custody-status') {
+          const result = buildCustodyStatusRoutePayload({
+            path,
+            url,
+            registry: this.node.seedingRegistry,
+            disabled: this._custodyApiDisabled()
+          })
+          if (result.requiresAuth) {
+            if (!this._requireAuth(req, res, result.authMessage)) return
           }
-          return this._json(res, buildCustodyStatusPayload(status))
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // Anchor proof — signed attestation for a single drive. Returns
@@ -914,10 +1057,11 @@ export class RelayAPI extends EventEmitter {
         //             utf8('hiverelay-anchor-proof-v1') || appKey ||
         //             uint64(version) || uint64(attestedAt) ||
         //             uint8(anchored ? 1 : 0)
-        if (path.startsWith('/api/anchors/') && path.endsWith('/proof')) {
-          const result = await buildAnchorProofPayload({
+        const anchorProofRoute = resolveAnchorProofRoute(req.method, path)
+        if (anchorProofRoute && anchorProofRoute.kind === 'anchor-proof') {
+          const result = await buildAnchorProofRoutePayload({
             node: this.node,
-            appKey: path.slice('/api/anchors/'.length, -'/proof'.length)
+            path
           })
           return this._json(res, result.payload, result.status || 200)
         }
@@ -925,88 +1069,128 @@ export class RelayAPI extends EventEmitter {
         // Anchor status — distinguishes "we accepted seeding" from "we
         // actually have replicated blocks." Operators + clients can use
         // this to detect ghost entries that need re-replication.
-        if (path === '/api/anchors') {
-          const detailed = isDetailedAnchorStatusQuery(url.searchParams.get('detailed'))
-          if (detailed && !this._requireAuth(req, res, 'Unauthorized — API key required for detailed anchor status')) return
-          const result = buildAnchorStatusPayload({
+        const anchorStatusRoute = resolveAnchorStatusRoute(req.method, path)
+        if (anchorStatusRoute && anchorStatusRoute.kind === 'anchor-status') {
+          const route = buildAnchorStatusRouteContext(url)
+          if (route.requiresAuth && !this._requireAuth(req, res, 'Unauthorized — API key required for detailed anchor status')) return
+          const result = buildAnchorStatusRoutePayload({
+            route: anchorStatusRoute,
+            context: route,
             appRegistry: this.node.appRegistry,
-            detailed,
             lastCheckedAt: this.node._lastAnchorCheckAt || null
           })
           return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/peers') {
-          return this._json(res, buildPeerListPayload({
+        if (peerStateRoute && peerStateRoute.kind === 'peer-list') {
+          const result = buildPeerStateRoutePayload({
+            route: peerStateRoute,
             swarm: this.node.swarm,
             connections: this.node.connections,
             reputation: this.node.reputation,
             redact: this._redactPeers()
-          }))
-        }
-
-        if (path === '/api/network') {
-          const detailed = isDetailedNetworkStateQuery(url.searchParams.get('detailed'))
-          if (detailed && !this._requireAuth(req, res, 'Unauthorized — API key required for detailed network state')) return
-          const result = buildNetworkStatePayload({
-            networkDiscovery: this.node.networkDiscovery,
-            detailed
           })
           return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/registry/pending' || path === '/api/manage/catalog/pending') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for ' + path)) return
-          return this._json(res, buildPendingCatalogPayload({
+        const networkStateRoute = resolveNetworkStateRoute(req.method, path)
+        if (networkStateRoute && networkStateRoute.kind === 'network-state') {
+          const route = buildNetworkStateRouteContext(url)
+          if (route.requiresAuth && !this._requireAuth(req, res, 'Unauthorized — API key required for detailed network state')) return
+          const result = buildNetworkStateRoutePayload({
+            route: networkStateRoute,
+            context: route,
+            networkDiscovery: this.node.networkDiscovery
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        const pendingCatalogRoute = resolvePendingCatalogRoute(req.method, path)
+        if (pendingCatalogRoute && pendingCatalogRoute.kind === 'pending-catalog') {
+          if (!this._requireAuth(req, res, pendingCatalogRoute.authMessage)) return
+          const result = buildPendingCatalogRoutePayload({
+            route: pendingCatalogRoute,
             pendingRequests: this.node._pendingRequests,
             resolveAcceptMode: this.node._resolveAcceptMode
               ? () => this.node._resolveAcceptMode()
               : null
-          }))
-        }
-
-        if (path === '/api/manage/federation') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/federation')) return
-          if (this._federationApiDisabled()) return this._federationDisabledResponse(res)
-          const result = buildFederationSnapshotPayload({ federation: this.node.federation })
+          })
           return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/manage/delegation/revocations') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/delegation/revocations')) return
-          return this._json(res, buildDelegationRevocationsPayload({
+        const federationSnapshotRoute = resolveFederationSnapshotRoute(req.method, path)
+        if (federationSnapshotRoute && federationSnapshotRoute.kind === 'federation-snapshot') {
+          if (!this._requireAuth(req, res, federationSnapshotRoute.authMessage)) return
+          const result = buildFederationSnapshotRoutePayload({
+            route: federationSnapshotRoute,
+            federation: this.node.federation,
+            disabled: this._federationApiDisabled()
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        const delegationRoute = resolveDelegationManagementRoute(req.method, path)
+        if (delegationRoute && delegationRoute.kind === 'list') {
+          if (!this._requireAuth(req, res, delegationRoute.authMessage)) return
+          const result = buildDelegationRevocationsRoutePayload({
+            route: delegationRoute,
             listRevocations: this.node.listRevocations ? () => this.node.listRevocations() : null
-          }))
-        }
-
-        if (path === '/api/registry') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/registry')) return
-          const result = await buildRegistryStatusPayload({ registry: this.node.seedingRegistry })
+          })
           return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/reputation') {
-          const result = buildReputationLeaderboardPayload({ reputation: this.node.reputation })
+        const registryStatusRoute = resolveRegistryStatusRoute(req.method, path)
+        if (registryStatusRoute && registryStatusRoute.kind === 'registry-status') {
+          if (!this._requireAuth(req, res, registryStatusRoute.authMessage)) return
+          const result = await buildRegistryStatusRoutePayload({
+            route: registryStatusRoute,
+            registry: this.node.seedingRegistry
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        const reputationLeaderboardRoute = resolveReputationLeaderboardRoute(req.method, path)
+        if (reputationLeaderboardRoute && reputationLeaderboardRoute.kind === 'reputation-leaderboard') {
+          const result = buildReputationLeaderboardRoutePayload({
+            route: reputationLeaderboardRoute,
+            reputation: this.node.reputation
+          })
           return this._json(res, result.payload, result.status || 200, result.headers || null)
         }
 
-        if (path.startsWith('/api/reputation/')) {
-          const result = buildReputationRecordPayload({
+        const reputationRecordRoute = resolveReputationRecordRoute(req.method, path)
+        if (reputationRecordRoute && reputationRecordRoute.kind === 'reputation-record') {
+          const result = buildReputationRecordRoutePayload({
             reputation: this.node.reputation,
-            pubkey: path.slice('/api/reputation/'.length)
+            path
           })
           return this._json(res, result.payload, result.status || 200, result.headers || null)
         }
       }
 
       // ─── Services & Router ───
-      if (req.method === 'GET' && path === '/api/v1/services') {
-        const result = buildServiceCatalogPayload({ registry: this.node.serviceRegistry })
+      if (serviceReadRoute && serviceReadRoute.kind === 'service-catalog') {
+        const result = buildServiceReadRoutePayload({
+          route: serviceReadRoute,
+          registry: this.node.serviceRegistry
+        })
         return this._json(res, result.payload, result.status || 200, result.headers || null)
       }
 
-      if (req.method === 'GET' && path === '/api/v1/router') {
-        const result = buildRouterInfoPayload({ router: this.node.router })
+      if (routerReadRoute && routerReadRoute.kind === 'router-info') {
+        const result = buildRouterInfoRoutePayload({
+          route: routerReadRoute,
+          router: this.node.router
+        })
+        return this._json(res, result.payload, result.status || 200, result.headers || null)
+      }
+
+      if (notifyRoute && !notifyRoute.management && req.method === 'GET') {
+        const result = await runNotifyRouteAction({
+          route: notifyRoute,
+          providerResult: resolveNotifyServiceProvider(this.node),
+          body: notifyQueryParams(url)
+        })
         return this._json(res, result.payload, result.status || 200, result.headers || null)
       }
 
@@ -1017,26 +1201,42 @@ export class RelayAPI extends EventEmitter {
         return this._json(res, { error: contentTypeProblem.error }, 400, contentTypeProblem.close ? { Connection: 'close' } : null)
       }
 
-      if (req.method === 'POST' && path === '/api/v1/dispatch') {
-        if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/v1/dispatch')) return
+      const dispatchRoute = resolveDispatchRoute(req.method, path)
+      if (dispatchRoute && dispatchRoute.kind === 'dispatch') {
+        if (!this._requireAuth(req, res, dispatchRoute.authMessage)) return
         const body = await this._readBody(req)
-        return this._handleDispatch(res, body, this._isLocalRequest(req))
+        const result = await runDispatchAction({
+          body,
+          router: this.node.router,
+          isLocalRequest: this._isLocalRequest(req)
+        })
+        return this._json(res, result.payload, result.status || 200)
       }
 
       // POST routes
       if (req.method === 'POST') {
         const body = await this._readBody(req)
 
+        if (notifyRoute && !notifyRoute.management) {
+          const result = await runNotifyRouteAction({
+            route: notifyRoute,
+            providerResult: resolveNotifyServiceProvider(this.node),
+            body
+          })
+          return this._json(res, result.payload, result.status || 200, result.headers || null)
+        }
+
         // Seeding manifest publish. Any signed, verified manifest is
         // accepted — no API key required, because the signature on the
         // manifest IS the authorization. Unsigned or tampered manifests
         // are rejected at the signature-verification step below.
-        if (path === '/api/authors/seeding.json') {
+        const signedIngressRoute = resolveSignedIngressRoute(req.method, path)
+        if (signedIngressRoute && signedIngressRoute.kind === 'author-manifest-publish') {
           const result = await runAuthorManifestPublishAction({
             body,
-            manifestStore: this.node.manifestStore
+            manifestStore: this.node.manifestStore,
+            emit: (...args) => this.emit(...args)
           })
-          if (!result.ok && result.kind === 'manifest-persist') return this._manifestPersistErrorResponse(res, result.error)
           return this._json(res, result.payload, result.status || 200)
         }
 
@@ -1047,12 +1247,12 @@ export class RelayAPI extends EventEmitter {
         // every cross-network fork proof MUST be signed by the
         // observer's identity key. Unsigned proofs accepted via this
         // endpoint would let any anonymous actor flood quarantines.
-        if (path === '/api/forks/proof') {
+        if (signedIngressRoute && signedIngressRoute.kind === 'fork-proof-publish') {
           const result = await runForkProofPublishAction({
             body,
-            forkDetector: this.node.forkDetector
+            forkDetector: this.node.forkDetector,
+            emit: (...args) => this.emit(...args)
           })
-          if (!result.ok && result.kind === 'fork-persist') return this._forkPersistErrorResponse(res, result.error)
           return this._json(res, result.payload, result.status || 200)
         }
 
@@ -1061,7 +1261,8 @@ export class RelayAPI extends EventEmitter {
         // services runtime, which lets the RelayKernel profile expose proof as
         // a kernel-compatible surface while legacy service clients continue to
         // work unchanged.
-        if (path === '/api/proof/retrievability') {
+        const retrievabilityProofRoute = resolveRetrievabilityProofRoute(req.method, path)
+        if (retrievabilityProofRoute && retrievabilityProofRoute.kind === 'retrievability-proof') {
           const result = await runRetrievabilityProofAction({
             body,
             provider: this._retrievabilityProofProvider,
@@ -1082,8 +1283,9 @@ export class RelayAPI extends EventEmitter {
         // operator is the authorization. Archive-tier and custody-bound
         // entries are refused per-key (durability promises hold even
         // here); results are reported per key, not all-or-nothing.
-        if (path === '/api/eviction/purge') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/eviction/purge')) return
+        const evictionPurgeRoute = resolveEvictionPurgeRoute(req.method, path)
+        if (evictionPurgeRoute && evictionPurgeRoute.kind === 'eviction-purge') {
+          if (!this._requireAuth(req, res, evictionPurgeRoute.authMessage)) return
           const result = await runEvictionPurgeAction({
             body,
             node: this.node
@@ -1097,8 +1299,9 @@ export class RelayAPI extends EventEmitter {
         // assertPurgable (archive/custody/lease are never reclaimed even when
         // superseded). Distinct from /api/eviction/purge (operator names keys)
         // and from the disk-pressure sweep (fleet over-replication).
-        if (path === '/api/dedup/reclaim') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/dedup/reclaim')) return
+        const dedupReclaimRoute = resolveDedupReclaimRoute(req.method, path)
+        if (dedupReclaimRoute && dedupReclaimRoute.kind === 'dedup-reclaim') {
+          if (!this._requireAuth(req, res, dedupReclaimRoute.authMessage)) return
           const result = await runDedupReclaimAction({
             body,
             node: this.node,
@@ -1110,8 +1313,9 @@ export class RelayAPI extends EventEmitter {
         // Set/replace the subsidy payout destination (operator's own
         // lightning address / BOLT12 offer / on-chain address — the relay
         // never holds funds). Management auth, same gate as the wizard.
-        if (path === '/api/subsidy/destination') {
-          if (!this._requireAuth(req, res, 'Unauthorized — subsidy destination requires API key or localhost')) return
+        const subsidyRoute = resolveSubsidyRoute(req.method, path)
+        if (subsidyRoute && subsidyRoute.kind === 'destination') {
+          if (!this._requireAuth(req, res, subsidyRoute.authMessage)) return
           const result = await updateSubsidyDestination({
             body,
             config: this.node.config,
@@ -1121,9 +1325,8 @@ export class RelayAPI extends EventEmitter {
             emit: (...args) => this.emit(...args)
           })
           if (!result.ok) {
-            if (result.kind === 'wizard-persist') return this._wizardPersistErrorResponse(res, result.error)
-            if (result.kind === 'config-persist') return this._configPersistErrorResponse(res)
-            if (result.kind === 'subsidy-persist') return this._subsidyPersistErrorResponse(res, result.error)
+            if (result.kind === 'wizard-persist' || result.kind === 'config-persist') return this._persistFailureResponse(res, result)
+            if (result.payload) return this._json(res, result.payload, result.status || 400)
             return this._json(res, { error: formatErr('BAD_REQUEST', result.message) }, 400)
           }
           return this._json(res, result.payload)
@@ -1132,9 +1335,10 @@ export class RelayAPI extends EventEmitter {
         // Set the paid-seeding rate at runtime. Enabling/disabling the lease
         // requires the config flag + restart (the manager + LN provider are
         // wired at boot); the per-GiB-day rate is live-settable here.
-        if (path === '/api/lease/config') {
+        const leaseRoute = resolveLeaseRoute(req.method, path)
+        if (leaseRoute && leaseRoute.kind === 'config') {
           if (!this._checkAuth(req)) {
-            return this._json(res, { error: formatErr('NOT_ALLOWED', 'lease config requires API key or localhost') }, 403)
+            return this._json(res, { error: formatErr('NOT_ALLOWED', leaseRoute.authMessage) }, 403)
           }
           const result = await runLeaseConfigAction({
             body,
@@ -1143,13 +1347,13 @@ export class RelayAPI extends EventEmitter {
           return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path.startsWith('/api/wizard/')) {
+        const wizardAction = wizardActionFromPath(path)
+        if (wizardAction !== null) {
           if (!this._requireAuth(req, res, 'Unauthorized — wizard requires API key or localhost')) return
           const wizard = await this._getWizard()
-          const action = path.slice('/api/wizard/'.length)
           const result = await runWizardAction({
             wizard,
-            action,
+            action: wizardAction,
             body,
             applyConfig: this.node._applyWizardConfig ? cfg => this.node._applyWizardConfig(cfg) : null,
             persistConfig: () => this._persistConfig(),
@@ -1163,61 +1367,50 @@ export class RelayAPI extends EventEmitter {
               const message = result.error && result.error.message ? result.error.message : String(result.error || 'unknown error')
               return this._json(res, { error: formatErr('UNSUPPORTED', 'failed to apply wizard config: ' + message) }, 500)
             }
-            if (result.kind === 'config-persist') return this._configPersistErrorResponse(res)
-            if (result.kind === 'wizard-persist') return this._wizardPersistErrorResponse(res, result.error)
+            if (result.kind === 'config-persist' || result.kind === 'wizard-persist') return this._persistFailureResponse(res, result)
             return this._json(res, { error: formatErr('BAD_REQUEST', result.message) }, 400)
           }
           return this._json(res, result.payload)
         }
 
-        if (path === '/api/alerts/test') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/alerts/test')) return
-          const result = runAlertTestAction({ body, alertManager: this.node.alertManager })
+        const alertRoute = resolveAlertManagementRoute(req.method, path)
+        if (alertRoute && alertRoute.kind === 'test') {
+          if (!this._requireAuth(req, res, alertRoute.authMessage)) return
+          const result = runAlertManagementRouteAction({
+            route: alertRoute,
+            body,
+            alertManager: this.node.alertManager
+          })
           return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/seed') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /seed')) return
-          return this._handleOperatorSeed(res, body)
+        const seedPublishRoute = resolveSeedPublishRoute(req.method, path)
+        if (seedPublishRoute && seedPublishRoute.kind === 'operator-seed') {
+          if (!this._requireAuth(req, res, seedPublishRoute.authMessage)) return
+          const result = await runSeedPublishRouteAction({
+            route: seedPublishRoute,
+            body,
+            node: this.node,
+            disabled: this._custodyApiDisabled()
+          })
+          if (!result.ok && result.kind === 'seed-error') return this._custodyErrorResponse(res, result.error)
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        // Pin a BARE Hypercore by public key (no Hyperdrive wrapper). seedApp
-        // above opens a Hyperdrive; a Hyperbee — e.g. a replicable catalog bee
-        // (scripts/publish-catalog-bee.js) — is a plain Hypercore and must be
-        // seeded via Seeder.seedCore instead. Operator-authed: the operator
-        // pins their own catalog/index cores. Content stays opaque (the relay
-        // replicates blocks; it does not interpret the bee).
-        if (path === '/seed-core') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /seed-core')) return
-          if (!this.node.seeder || typeof this.node.seeder.seedCore !== 'function') {
-            return this._json(res, { error: 'seeder not available' }, 503)
-          }
-          const coreKey = typeof body.coreKey === 'string'
-            ? body.coreKey.trim().toLowerCase()
-            : (typeof body.appKey === 'string' ? body.appKey.trim().toLowerCase() : null)
-          if (!coreKey || !isValidHexKey(coreKey, 64)) {
-            return this._json(res, { error: 'coreKey must be 64 hex characters' }, 400)
-          }
-          try {
-            const entry = await this.node.seeder.seedCore(coreKey)
-            // Optionally advertise this core as THE relay's catalog bee, so
-            // /catalog.json surfaces it for consumers to replicate.
-            let catalogBee = false
-            if (body.catalog === true && typeof this.node.setCatalogBeeKey === 'function') {
-              await this.node.setCatalogBeeKey(coreKey)
-              catalogBee = true
-            }
-            return this._json(res, { ok: true, coreKey, length: entry && entry.core ? entry.core.length : 0, catalogBee })
-          } catch (err) {
-            return this._custodyErrorResponse(res, err)
-          }
+        const seedCoreRoute = resolveSeedCoreRoute(req.method, path)
+        if (seedCoreRoute && seedCoreRoute.kind === 'seed-core') {
+          if (!this._requireAuth(req, res, seedCoreRoute.authMessage)) return
+          const result = await runSeedCoreAction({ node: this.node, body })
+          if (!result.ok && result.kind === 'seed-error') return this._custodyErrorResponse(res, result.error)
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // Publish this relay's index-room pointer. Called by the index sidecar
         // (loopback) once its schema-sheets room is ready, so the relay can
         // advertise it in the capability doc + /catalog.json. Operator-authed.
-        if (path === '/api/manage/index-room') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/index-room')) return
+        const indexRoomRoute = resolveIndexRoomRoute(req.method, path)
+        if (indexRoomRoute && indexRoomRoute.kind === 'index-room') {
+          if (!this._requireAuth(req, res, indexRoomRoute.authMessage)) return
           const result = await runIndexRoomAction({
             body,
             node: this.node,
@@ -1226,139 +1419,81 @@ export class RelayAPI extends EventEmitter {
           return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/registry/publish') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /registry/publish')) return
-          return this._handleRegistryPublish(res, body)
+        if (seedPublishRoute && seedPublishRoute.kind === 'registry-publish') {
+          if (!this._requireAuth(req, res, seedPublishRoute.authMessage)) return
+          const result = await runSeedPublishRouteAction({
+            route: seedPublishRoute,
+            body,
+            node: this.node,
+            disabled: this._custodyApiDisabled()
+          })
+          if (!result.ok && result.kind === 'seed-error') return this._custodyErrorResponse(res, result.error)
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/custody/intent') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/intent')) return
-          return this._handleOperatorCustodyAction(res, 'intent', body)
-        }
-
-        if (path.startsWith('/api/custody/') && path.endsWith('/commit')) {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/:intentId/commit')) return
-          const intentId = path.slice('/api/custody/'.length, -'/commit'.length)
-          return this._handleOperatorCustodyAction(res, 'commit', body, intentId)
-        }
-
-        if (path.startsWith('/api/custody/') && path.endsWith('/source-retired')) {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/:intentId/source-retired')) return
-          const intentId = path.slice('/api/custody/'.length, -'/source-retired'.length)
-          return this._handleOperatorCustodyAction(res, 'source-retired', body, intentId)
-        }
-
-        if (path === '/api/custody/proof') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/proof')) return
-          return this._handleOperatorCustodyAction(res, 'proof', body)
-        }
-
-        if (path.startsWith('/api/custody/') && path.endsWith('/witness')) {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/:intentId/witness')) return
-          const intentId = path.slice('/api/custody/'.length, -'/witness'.length)
-          return this._handleOperatorCustodyAction(res, 'witness', body, intentId)
-        }
-
-        if (path.startsWith('/api/custody/') && path.endsWith('/non-serving-proof')) {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/:intentId/non-serving-proof')) return
-          const intentId = path.slice('/api/custody/'.length, -'/non-serving-proof'.length)
-          return this._handleOperatorCustodyAction(res, 'non-serving-proof', body, intentId)
-        }
-
-        if (path === '/registry/auto-accept') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /registry/auto-accept')) return
-          return this._handleLegacyAutoAccept(res, body)
-        }
-
-        if (path === '/registry/approve') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /registry/approve')) return
-          return this._handleCatalogAppAction(res, 'approve', body)
-        }
-
-        if (path === '/registry/reject') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /registry/reject')) return
-          return this._handleCatalogAppAction(res, 'reject', body)
-        }
-
-        if (path === '/registry/cancel') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /registry/cancel')) return
-          return this._handleRegistryCancel(res, body)
+        const operatorCustodyRoute = resolveOperatorCustodyRoute(req.method, path)
+        if (operatorCustodyRoute) {
+          if (!this._requireAuth(req, res, operatorCustodyRoute.authMessage)) return
+          const result = await runOperatorCustodyRouteAction({
+            route: operatorCustodyRoute,
+            body,
+            node: this.node,
+            disabled: this._custodyApiDisabled()
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // ─── /api/manage/catalog/* — operator catalog controls ───────────
         // Replaces the older /registry/{auto-accept,approve,reject} endpoints
         // with a clearer surface aligned to the per-relay local-catalog model.
 
-        if (path === '/api/manage/catalog/mode') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/catalog/mode')) return
-          return this._handleCatalogMode(res, body)
-        }
-
-        if (path === '/api/manage/catalog/allowlist') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/catalog/allowlist')) return
-          return this._handleCatalogAllowlist(res, body)
-        }
-
-        if (path === '/api/manage/catalog/approve') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/catalog/approve')) return
-          return this._handleCatalogAppAction(res, 'approve', body)
-        }
-
-        if (path === '/api/manage/catalog/reject') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/catalog/reject')) return
-          return this._handleCatalogAppAction(res, 'reject', body)
-        }
-
-        if (path === '/api/manage/catalog/remove') {
-          // Operator-initiated removal of an app from the local catalog (and unseed).
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/catalog/remove')) return
-          return this._handleCatalogAppAction(res, 'remove', body)
+        const catalogRoute = resolveCatalogManagementRoute(req.method, path)
+        if (catalogRoute) {
+          if (!this._requireAuth(req, res, catalogRoute.authMessage)) return
+          const result = await runCatalogManagementRouteAction({
+            route: catalogRoute,
+            body,
+            config: this.node.config,
+            node: this.node,
+            persistConfig: () => this._persistConfig(),
+            emit: (...args) => this.emit(...args)
+          })
+          if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // ─── /api/manage/federation/* — explicit cross-relay federation ──
 
-        if (path === '/api/manage/federation/follow') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/federation/follow')) return
-          return this._handleFederationManagement(res, 'follow', body)
-        }
-
-        if (path === '/api/manage/federation/mirror') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/federation/mirror')) return
-          return this._handleFederationManagement(res, 'mirror', body)
-        }
-
-        if (path === '/api/manage/federation/unfollow') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/federation/unfollow')) return
-          return this._handleFederationManagement(res, 'unfollow', body)
-        }
-
-        if (path === '/api/manage/federation/republish') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/federation/republish')) return
-          return this._handleFederationManagement(res, 'republish', body)
-        }
-
-        if (path === '/api/manage/federation/unrepublish') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/federation/unrepublish')) return
-          return this._handleFederationManagement(res, 'unrepublish', body)
+        const federationRoute = resolveFederationManagementRoute(req.method, path)
+        if (federationRoute) {
+          if (!this._requireAuth(req, res, federationRoute.authMessage)) return
+          const result = await runFederationManagementRouteAction({
+            route: federationRoute,
+            body,
+            federation: this.node.federation,
+            emit: (...args) => this.emit(...args),
+            disabled: this._federationApiDisabled()
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // ─── /api/manage/delegation/* — device-attestation revocation ────
 
-        if (path === '/api/manage/delegation/revoke') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/delegation/revoke')) return
+        const delegationRoute = resolveDelegationManagementRoute(req.method, path)
+        if (delegationRoute && delegationRoute.kind === 'revoke') {
+          if (!this._requireAuth(req, res, delegationRoute.authMessage)) return
           const result = runDelegationRevokeAction({ body, node: this.node })
           return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/unseed') {
-          // Operator unseed — requires API key (use /api/v1/unseed for developer-signed unseed)
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /unseed (use /api/v1/unseed for developer-signed unseed)')) return
+        const unseedRoute = resolveUnseedRoute(req.method, path)
+        if (unseedRoute && unseedRoute.kind === 'operator-unseed') {
+          if (!this._requireAuth(req, res, unseedRoute.authMessage)) return
           const result = await runOperatorUnseedAction({ body, node: this.node })
           return this._json(res, result.payload, result.status || 200)
         }
 
-        // ─── Developer Authenticated Unseed (Kill Switch) ───────────
-        if (path === '/api/v1/unseed') {
+        if (unseedRoute && unseedRoute.kind === 'publisher-unseed') {
           const result = await runPublisherUnseedAction({ body, node: this.node })
           return this._json(res, result.payload, result.status || 200)
         }
@@ -1372,8 +1507,15 @@ export class RelayAPI extends EventEmitter {
         // extended to the publish side. Crucially this is the path that
         // accepts custodyIntentId/blindContentId/ciphertextRoot and
         // triggers the auto-emit custody-receipt downstream.
-        if (path === '/api/v1/seed') {
-          return this._handlePublisherSeed(res, body)
+        if (seedPublishRoute && seedPublishRoute.kind === 'publisher-seed') {
+          const result = await runSeedPublishRouteAction({
+            route: seedPublishRoute,
+            body,
+            node: this.node,
+            disabled: this._custodyApiDisabled()
+          })
+          if (!result.ok && result.kind === 'seed-error') return this._custodyErrorResponse(res, result.error)
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // ─── Publisher-signed custody pipeline (no operator API key) ─
@@ -1383,75 +1525,109 @@ export class RelayAPI extends EventEmitter {
         // append, so the publisher's signing key IS the authorization.
         // We pass `null` as the keypair so the registry refuses to
         // fall back to relay-side signing — body MUST be pre-signed.
-        if (path === '/api/v1/custody/intent') {
-          return this._handlePublisherCustodyAction(res, 'intent', body)
-        }
-
-        if (path.startsWith('/api/v1/custody/') && path.endsWith('/commit')) {
-          const intentId = path.slice('/api/v1/custody/'.length, -'/commit'.length)
-          return this._handlePublisherCustodyAction(res, 'commit', body, intentId)
-        }
-
-        if (path.startsWith('/api/v1/custody/') && path.endsWith('/source-retired')) {
-          const intentId = path.slice('/api/v1/custody/'.length, -'/source-retired'.length)
-          return this._handlePublisherCustodyAction(res, 'source-retired', body, intentId)
+        const publisherCustodyRoute = resolvePublisherCustodyRoute(req.method, path)
+        if (publisherCustodyRoute) {
+          const result = await runPublisherCustodyRouteAction({
+            route: publisherCustodyRoute,
+            body,
+            node: this.node,
+            disabled: this._custodyApiDisabled()
+          })
+          if (!result.ok && result.kind === 'custody-error') return this._custodyErrorResponse(res, result.error)
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // ─── Live Management API (requires API key or localhost) ─────
 
-        if (path.startsWith('/api/manage/')) {
+        if (isManagementApiRoute(path)) {
           if (!this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return
         }
 
-        if (path === '/api/manage/ai/models') {
-          return this._handleManageAIModelRegister(res, body)
-        }
-
-        if (path === '/api/manage/ai/models/remove') {
-          return this._handleManageAIModelRemove(res, body)
-        }
-
-        if (path === '/api/manage/config') {
-          return this._handleConfigUpdate(res, body)
-        }
-
-        if (path === '/api/manage/services/config') {
-          return this._handleServiceConfigUpdate(res, body)
-        }
-
-        if (path === '/api/manage/services') {
-          return this._handleServiceManagement(res, body)
-        }
-
-        if (path === '/api/manage/mode') {
-          return this._handleModeSwitch(res, body)
-        }
-
-        if (path === '/api/manage/devices') {
-          return this._handleDeviceManagement(res, body)
-        }
-
-        if (path === '/api/manage/pairing') {
-          return this._handlePairingManagement(res, body)
-        }
-
-        if (path === '/api/manage/transport') {
-          return this._handleTransportToggle(res, body)
-        }
-
-        if (path === '/api/manage/restart') {
-          const result = runLifecycleAction({
-            action: 'restart',
+        const aiModelManagementRoute = resolveAIModelManagementRoute(req.method, path)
+        if (aiModelManagementRoute) {
+          const service = resolveAIServiceProvider(this.node)
+          if (!service.ok) return this._json(res, { error: service.error }, service.status)
+          const result = await runAIModelManagementRouteAction({
+            route: aiModelManagementRoute,
+            provider: service.provider,
+            body,
             node: this.node,
             emit: (...args) => this.emit(...args)
           })
           return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/manage/shutdown') {
+        const configUpdateRoute = resolveConfigUpdateRoute(req.method, path)
+        if (configUpdateRoute && configUpdateRoute.kind === 'config-update') {
+          const result = await runConfigUpdateAction({
+            body,
+            config: this.node.config,
+            persistConfig: () => this._persistConfig(),
+            safeConfigPayload: () => this._getSafeConfig()
+          })
+          if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        const serviceConfigUpdateRoute = resolveServiceConfigUpdateRoute(req.method, path)
+        if (serviceConfigUpdateRoute && serviceConfigUpdateRoute.kind === 'service-config-update') {
+          const result = await runServiceConfigUpdateAction({
+            body,
+            config: this.node.config,
+            registry: this.node.serviceRegistry,
+            persistConfig: () => this._persistConfig(),
+            serviceConfigPayload: () => serviceConfigPayload(this.node.config, this.node.serviceRegistry)
+          })
+          if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        const serviceManagementRoute = resolveServiceManagementRoute(req.method, path)
+        if (serviceManagementRoute && serviceManagementRoute.kind === 'service-management') {
+          const result = await runServiceManagementAction({
+            body,
+            registry: this.node.serviceRegistry,
+            config: this.node.config,
+            node: this.node,
+            store: this.node.store,
+            persistConfig: () => this._persistConfig(),
+            serviceConfigPayload: () => serviceConfigPayload(this.node.config, this.node.serviceRegistry)
+          })
+          if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        const modeTransportRoute = resolveModeTransportManagementRoute(req.method, path)
+        if (modeTransportRoute) {
+          const result = await runModeTransportManagementRouteAction({
+            route: modeTransportRoute,
+            body,
+            node: this.node,
+            config: this.node.config,
+            persistConfig: () => this._persistConfig(),
+            emit: (...args) => this.emit(...args)
+          })
+          if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        const devicePairingRoute = resolveDevicePairingManagementRoute(req.method, path)
+        if (devicePairingRoute) {
+          const result = await runDevicePairingManagementRouteAction({
+            route: devicePairingRoute,
+            body,
+            node: this.node,
+            emit: (...args) => this.emit(...args)
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        const lifecycleRoute = resolveLifecycleManagementRoute(req.method, path)
+        if (lifecycleRoute) {
           const result = runLifecycleAction({
-            action: 'shutdown',
-            node: this.node
+            action: lifecycleRoute.action,
+            node: this.node,
+            emit: (...args) => this.emit(...args)
           })
           return this._json(res, result.payload, result.status || 200)
         }
@@ -1459,50 +1635,26 @@ export class RelayAPI extends EventEmitter {
 
       // GET — Management info endpoints (require auth)
       if (req.method === 'GET') {
-        if (path.startsWith('/api/manage/') && !this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return
+        if (isManagementApiRoute(path) && !this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return
 
-        if (path === '/api/manage/config') {
-          return this._json(res, {
-            config: this._getSafeConfig(),
-            mode: this.node._operatingMode || 'standard'
+        if (notifyRoute && notifyRoute.management) {
+          const result = await runNotifyRouteAction({
+            route: notifyRoute,
+            providerResult: resolveNotifyServiceProvider(this.node),
+            query: notifyQueryParams(url)
           })
+          return this._json(res, result.payload, result.status || 200, result.headers || null)
         }
 
-        if (path === '/api/manage/ai/models') {
-          return this._handleManageAIModelsList(res)
-        }
-
-        if (path === '/api/manage/services/available') {
-          return this._json(res, this._getServiceConfigPayload())
-        }
-
-        if (path === '/api/manage/services') {
-          const snapshot = buildServiceRegistrySnapshot(this.node.serviceRegistry)
-          return this._json(res, {
-            enabled: !!this.node.serviceRegistry,
-            ...snapshot,
-            statsVerified: false,
-            services: snapshot.services.map(service => ({
-              ...service,
-              capabilities: Array.isArray(service.methods) ? service.methods : []
-            }))
+        const managementSnapshotRoute = resolveManagementSnapshotRoute(req.method, path)
+        if (managementSnapshotRoute) {
+          const result = await buildManagementSnapshotRoutePayload({
+            route: managementSnapshotRoute,
+            node: this.node,
+            aiModelProvider: managementSnapshotRoute.kind === 'ai-models' ? resolveAIServiceProvider(this.node) : null,
+            emit: (...args) => this.emit(...args)
           })
-        }
-
-        if (path === '/api/manage/transports') {
-          return this._json(res, buildTransportStatusPayload(this.node))
-        }
-
-        if (path === '/api/manage/devices') {
-          return this._json(res, buildDeviceStatusPayload(this.node))
-        }
-
-        if (path === '/api/manage/pairing') {
-          return this._json(res, buildPairingStatusPayload(this.node))
-        }
-
-        if (path === '/api/manage/modes') {
-          return this._json(res, buildModeCatalogPayload(this.node._operatingMode || 'relay-core'))
+          return this._json(res, result.payload, result.status || 200)
         }
       }
 
@@ -1634,18 +1786,6 @@ export class RelayAPI extends EventEmitter {
     return this._relayKernelProfileActive()
   }
 
-  _custodyDisabledResponse (res) {
-    return this._json(res, {
-      error: formatErr('NOT_ENABLED', 'custody pipeline is disabled for this relay profile')
-    }, 409)
-  }
-
-  _federationDisabledResponse (res) {
-    return this._json(res, {
-      error: formatErr('NOT_ENABLED', 'federation is disabled for this relay profile')
-    }, 409)
-  }
-
   /**
    * Reverse-proxy a read-only index query to the sidecar. The schema-sheets
    * index lives out-of-process (corestore-7/hc11, dependency-isolated); the
@@ -1657,58 +1797,14 @@ export class RelayAPI extends EventEmitter {
    * or compromised sidecar can't OOM the relay by sending a huge body.
    */
   async _proxyIndex (req, res, url) {
-    const base = this.node.indexSidecarUrl
-    if (!base) {
-      return this._json(res, { error: 'index sidecar not configured', errorCode: 'index-disabled' }, 501)
-    }
-    const CAP = 5 * 1024 * 1024
-    const target = base + url.pathname + (url.search || '')
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 8000)
-    try {
-      const upstream = await fetch(target, {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-        signal: controller.signal
-      })
-      // Reject up front if the upstream declares an over-cap body.
-      const declared = parseInt(upstream.headers.get('content-length') || '', 10)
-      if (Number.isFinite(declared) && declared > CAP) {
-        controller.abort()
-        return this._json(res, { error: 'index response too large' }, 502)
-      }
-      // Stream and enforce the cap as bytes arrive — never buffer past CAP.
-      const reader = upstream.body && upstream.body.getReader ? upstream.body.getReader() : null
-      if (!reader) {
-        const text = await upstream.text()
-        if (text.length > CAP) return this._json(res, { error: 'index response too large' }, 502)
-        res.writeHead(upstream.status, { 'Content-Type': 'application/json' })
-        return res.end(text)
-      }
-      const chunks = []
-      let total = 0
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        total += value.length
-        if (total > CAP) {
-          controller.abort()
-          return this._json(res, { error: 'index response too large' }, 502)
-        }
-        chunks.push(Buffer.from(value))
-      }
-      res.writeHead(upstream.status, { 'Content-Type': 'application/json' })
-      res.end(Buffer.concat(chunks))
-    } catch (err) {
-      const code = err.name === 'AbortError' ? 504 : 502
-      this.emit('index-proxy-error', { error: err, status: code })
-      return this._json(res, {
-        error: formatErr('UNSUPPORTED', 'index sidecar unreachable'),
-        errorCode: 'index-unreachable'
-      }, code)
-    } finally {
-      clearTimeout(timer)
-    }
+    const result = await buildIndexProxyRouteResponse({
+      base: this.node.indexSidecarUrl,
+      url
+    })
+    if (result.event) this.emit(result.event.name, result.event.detail)
+    if (result.kind === 'json') return this._json(res, result.payload, result.status || 200, result.headers || null)
+    res.writeHead(result.status || 200, result.headers || { 'Content-Type': 'application/json' })
+    return res.end(result.kind === 'buffer' ? result.body : result.text)
   }
 
   /**
@@ -1785,315 +1881,9 @@ export class RelayAPI extends EventEmitter {
     return readJsonBody(req, maxBytes)
   }
 
-  // ─── Management Handlers ──────────────────────────────────────────
-
-  _queryInt (url, name, defaultValue, min, max) {
-    return queryInt(url, name, defaultValue, min, max)
-  }
-
-  async _handleDispatch (res, body, isLocalRequest = false) {
-    const result = await runDispatchAction({
-      body,
-      router: this.node.router,
-      isLocalRequest
-    })
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  _getAIServiceProvider () {
-    const registry = this.node.serviceRegistry
-    const services = registry && registry.services
-    const entry = services && typeof services.get === 'function' ? services.get('ai') : null
-    if (!entry) {
-      return { ok: false, status: 503, error: 'AI service is not registered on this relay' }
-    }
-
-    if (entry.status && entry.status !== 'running') {
-      return { ok: false, status: 503, error: 'AI service is not running (status=' + entry.status + ')' }
-    }
-
-    const provider = entry.provider || entry
-    if (!provider || typeof provider['list-models'] !== 'function' ||
-        typeof provider['register-model'] !== 'function' ||
-        typeof provider['remove-model'] !== 'function') {
-      return { ok: false, status: 503, error: 'AI service does not expose model management methods' }
-    }
-
-    return { ok: true, provider, entry }
-  }
-
-  // Resolve the running PokerApp provider from the registry (mirror of
-  // _getAIServiceProvider). Used by the /api/poker/* gateway mount.
-  _getPokerServiceProvider () {
-    const registry = this.node.serviceRegistry
-    const services = registry && registry.services
-    const entry = services && typeof services.get === 'function' ? services.get('poker') : null
-    if (!entry) {
-      return { ok: false, status: 503, error: 'Poker service is not enabled on this relay' }
-    }
-    if (entry.status && entry.status !== 'running') {
-      return { ok: false, status: 503, error: 'Poker service is not running (status=' + entry.status + ')' }
-    }
-    const provider = entry.provider || entry
-    if (!provider || typeof provider.listTables !== 'function') {
-      return { ok: false, status: 503, error: 'Poker service does not expose the substrate methods' }
-    }
-    return { ok: true, provider, entry }
-  }
-
-  async _handleManageAIModelsList (res) {
-    const service = this._getAIServiceProvider()
-    if (!service.ok) return this._json(res, { error: service.error }, service.status)
-    try {
-      return this._json(res, await this._manageAIModelsPayload(service.provider))
-    } catch (err) {
-      const error = publicManageAIModelError(err, 'AI model list failed')
-      this.emit('ai-model-error', { action: 'list', error: err && err.message ? err.message : String(err || 'unknown error') })
-      return this._json(res, { error }, 500)
-    }
-  }
-
-  async _handleManageAIModelRegister (res, body) {
-    const service = this._getAIServiceProvider()
-    if (!service.ok) return this._json(res, { error: service.error }, service.status)
-
-    const request = this._buildManageAIModelRegistration(body)
-    if (!request.ok) return this._json(res, { error: request.error }, 400)
-
-    try {
-      const result = await service.provider['register-model'](request.params, {
-        role: 'relay-admin',
-        caller: 'manage-api',
-        authenticated: true,
-        node: this.node
-      })
-      const payload = await this._manageAIModelsPayload(service.provider)
-      const model = payload.models.find(m => m.modelId === request.params.modelId) || null
-      return this._json(res, {
-        ok: true,
-        action: 'registered',
-        ...result,
-        model,
-        qvac: payload.qvac
-      })
-    } catch (err) {
-      const message = publicManageAIModelError(err, 'AI model registration failed')
-      const status = message === 'AI model registration failed' ? 500 : (message.startsWith('ACCESS_DENIED') ? 403 : 400)
-      this.emit('ai-model-error', { action: 'register', error: err && err.message ? err.message : String(err || 'unknown error'), publicError: message })
-      return this._json(res, { error: message }, status)
-    }
-  }
-
-  async _handleManageAIModelRemove (res, body) {
-    const service = this._getAIServiceProvider()
-    if (!service.ok) return this._json(res, { error: service.error }, service.status)
-
-    const modelId = body && typeof body.modelId === 'string' ? body.modelId.trim() : ''
-    if (!modelId) return this._json(res, { error: 'modelId required' }, 400)
-
-    try {
-      const result = await service.provider['remove-model']({ modelId }, {
-        role: 'relay-admin',
-        caller: 'manage-api',
-        authenticated: true,
-        node: this.node
-      })
-      const payload = await this._manageAIModelsPayload(service.provider)
-      return this._json(res, {
-        ok: true,
-        action: 'removed',
-        modelId,
-        removed: !!result.removed,
-        qvac: payload.qvac,
-        count: payload.count,
-        qvacCount: payload.qvacCount
-      })
-    } catch (err) {
-      const message = publicManageAIModelError(err, 'AI model removal failed')
-      const status = message === 'AI model removal failed' ? 500 : (message.startsWith('ACCESS_DENIED') ? 403 : 400)
-      this.emit('ai-model-error', { action: 'remove', error: err && err.message ? err.message : String(err || 'unknown error'), publicError: message })
-      return this._json(res, { error: message }, status)
-    }
-  }
-
-  _buildManageAIModelRegistration (body) {
-    return buildManageAIModelRegistration(body)
-  }
-
-  async _manageAIModelsPayload (provider) {
-    const models = await provider['list-models']({}, {
-      role: 'relay-admin',
-      caller: 'manage-api',
-      authenticated: true
-    })
-    const status = typeof provider.status === 'function'
-      ? await provider.status({}, {
-        role: 'relay-admin',
-        caller: 'manage-api',
-        authenticated: true
-      })
-      : null
-    return buildManageAIModelsPayload(models, status)
-  }
-
-  _manageAIModelStatus (model, qvacStatus) {
-    return manageAIModelStatus(model, qvacStatus)
-  }
-
-  async _handleLegacyAutoAccept (res, body) {
-    const result = await runLegacyAutoAcceptAction({
-      body,
-      config: this.node.config,
-      persistConfig: () => this._persistConfig(),
-      emit: (...args) => this.emit(...args)
-    })
-    if (!result.ok && result.kind === 'config-persist') return this._configPersistErrorResponse(res)
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  async _handleCatalogMode (res, body) {
-    const result = await runCatalogModeAction({
-      body,
-      config: this.node.config,
-      persistConfig: () => this._persistConfig(),
-      emit: (...args) => this.emit(...args)
-    })
-    if (!result.ok && result.kind === 'config-persist') return this._configPersistErrorResponse(res)
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  async _handleCatalogAllowlist (res, body) {
-    const result = await runCatalogAllowlistAction({
-      body,
-      config: this.node.config,
-      persistConfig: () => this._persistConfig(),
-      emit: (...args) => this.emit(...args)
-    })
-    if (!result.ok && result.kind === 'config-persist') return this._configPersistErrorResponse(res)
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  async _handleCatalogAppAction (res, action, body) {
-    const result = await runCatalogAppAction({
-      action,
-      body,
-      node: this.node
-    })
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  async _handleRegistryCancel (res, body) {
-    const result = await runRegistryCancelAction({
-      body,
-      node: this.node
-    })
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  async _handleOperatorSeed (res, body) {
-    if (this._custodyApiDisabled() && hasCustodySeedFields(body)) return this._custodyDisabledResponse(res)
-    const result = await runOperatorSeedAction({
-      body,
-      node: this.node
-    })
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  async _handleRegistryPublish (res, body) {
-    const result = await runRegistryPublishAction({
-      body,
-      node: this.node
-    })
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  async _handlePublisherSeed (res, body) {
-    if (this._custodyApiDisabled() && hasCustodySeedFields(body)) return this._custodyDisabledResponse(res)
-    const result = await runPublisherSeedAction({
-      body,
-      node: this.node
-    })
-    if (!result.ok && result.kind === 'seed-error') return this._custodyErrorResponse(res, result.error)
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  async _handleOperatorCustodyAction (res, action, body, intentId = null) {
-    if (this._custodyApiDisabled()) return this._custodyDisabledResponse(res)
-    const result = await runOperatorCustodyAction({
-      action,
-      body,
-      intentId,
-      node: this.node
-    })
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  async _handlePublisherCustodyAction (res, action, body, intentId = null) {
-    if (this._custodyApiDisabled()) return this._custodyDisabledResponse(res)
-    const result = await runPublisherCustodyAction({
-      action,
-      body,
-      intentId,
-      node: this.node
-    })
-    if (!result.ok && result.kind === 'custody-error') return this._custodyErrorResponse(res, result.error)
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  async _handleFederationManagement (res, action, body) {
-    if (this._federationApiDisabled()) return this._federationDisabledResponse(res)
-    const result = await runFederationManagementAction({
-      action,
-      body,
-      federation: this.node.federation,
-      emit: (...args) => this.emit(...args)
-    })
-    if (!result.ok && result.kind === 'federation-persist') return this._federationPersistErrorResponse(res, result.error)
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  async _handleConfigUpdate (res, body) {
-    const result = await runConfigUpdateAction({
-      body,
-      config: this.node.config,
-      persistConfig: () => this._persistConfig(),
-      safeConfigPayload: () => this._getSafeConfig()
-    })
-    if (!result.ok && result.kind === 'config-persist') return this._configPersistErrorResponse(res)
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  _normalizeManageServicePlugins (plugins) {
-    return normalizeManageServicePlugins(plugins)
-  }
-
-  _activeServiceNames () {
-    return activeServiceNames(this.node.serviceRegistry)
-  }
-
-  _getConfiguredBuiltinServicePlugins () {
-    return configuredBuiltinServicePlugins(this.node.config)
-  }
-
-  _getServiceConfigPayload () {
-    return serviceConfigPayload(this.node.config, this.node.serviceRegistry)
-  }
-
   _getUsageTelemetryPayload () {
     const stats = typeof this.node.getStats === 'function' ? this.node.getStats() : {}
     return usageTelemetryPayload(this.node._bandwidthReceipt, stats)
-  }
-
-  _exportBandwidthReceipts () {
-    return exportBandwidthReceipts(this.node._bandwidthReceipt)
-  }
-
-  _sumReceiptBytes (receipts) {
-    return sumReceiptBytes(receipts)
-  }
-
-  _getPokerUsageTelemetryPayload () {
-    return pokerUsageTelemetryPayload(this._getPokerApp())
   }
 
   _getPokerApp () {
@@ -2106,134 +1896,6 @@ export class RelayAPI extends EventEmitter {
     if (entry.provider && typeof entry.provider.listTables === 'function') return entry.provider
     if (typeof entry.listTables === 'function') return entry
     return null
-  }
-
-  async _getPokerHttpRouteHandler () {
-    if (this._handlePokerRoute) return this._handlePokerRoute
-    const mod = await this._loadPokerHttpAdapter()
-    const handlePokerRoute = mod.handlePokerRoute
-    if (typeof handlePokerRoute !== 'function') throw new Error('missing handlePokerRoute export')
-    this._handlePokerRoute = handlePokerRoute
-    return handlePokerRoute
-  }
-
-  _pokerHttpAdapterUnavailable (res, err) {
-    this.emit('poker-http-adapter-error', { error: err })
-    return this._json(res, {
-      error: formatErr('UNSUPPORTED', 'poker HTTP adapter unavailable'),
-      errorCode: 'poker-http-adapter-unavailable'
-    }, 503)
-  }
-
-  async _loadPokerHttpAdapter () {
-    return import('p2p-hiveservices/builtin/poker/http-adapter.js')
-  }
-
-  _tableWriterCount (writers) {
-    return tableWriterCount(writers)
-  }
-
-  async _handleServiceConfigUpdate (res, body) {
-    if (!body || typeof body !== 'object') {
-      return this._json(res, { error: 'request body required' }, 400)
-    }
-    if (servicesLockedByProfile(this.node.config)) {
-      return this._json(res, {
-        error: 'Services are locked off by the RelayKernel profile',
-        errorCode: 'relaykernel-services-locked',
-        config: this._getServiceConfigPayload()
-      }, 409)
-    }
-
-    const normalized = this._normalizeManageServicePlugins(body.plugins)
-    if (!normalized.ok) {
-      return this._json(res, {
-        error: normalized.error,
-        available: normalized.available || BUILTIN_SERVICE_PLUGINS,
-        bundles: normalized.bundles || SERVICE_PLUGIN_BUNDLES
-      }, 400)
-    }
-
-    const enabled = body.enabled !== false && normalized.plugins.length > 0
-    const previousEnableServices = this.node.config.enableServices
-    const previousPlugins = this.node.config.plugins
-    this.node.config.enableServices = enabled
-    this.node.config.plugins = normalized.plugins
-
-    if (!await this._persistConfigOrRespond(res, () => {
-      this.node.config.enableServices = previousEnableServices
-      this.node.config.plugins = previousPlugins
-    })) return
-
-    return this._json(res, {
-      ok: true,
-      restartRequired: true,
-      config: this._getServiceConfigPayload()
-    })
-  }
-
-  async _handleServiceManagement (res, body) {
-    if (servicesLockedByProfile(this.node.config)) {
-      return this._json(res, {
-        error: 'Services are locked off by the RelayKernel profile',
-        errorCode: 'relaykernel-services-locked',
-        config: this._getServiceConfigPayload()
-      }, 409)
-    }
-
-    const result = await runServiceManagementAction({
-      body,
-      registry: this.node.serviceRegistry,
-      config: this.node.config,
-      node: this.node,
-      store: this.node.store,
-      persistConfig: () => this._persistConfig(),
-      serviceConfigPayload: () => this._getServiceConfigPayload()
-    })
-    if (!result.ok && result.kind === 'config-persist') return this._configPersistErrorResponse(res)
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  async _handleModeSwitch (res, body) {
-    const result = await runModeSwitchAction({
-      body,
-      node: this.node,
-      persistConfig: () => this._persistConfig(),
-      emit: (...args) => this.emit(...args)
-    })
-    if (!result.ok && result.kind === 'config-persist') return this._configPersistErrorResponse(res)
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  async _handleDeviceManagement (res, body) {
-    const result = await runDeviceManagementAction({
-      body,
-      node: this.node
-    })
-    if (!result.ok && result.kind === 'device-persist') return this._devicePersistErrorResponse(res, result.error)
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  _handlePairingManagement (res, body) {
-    const result = runPairingManagementAction({
-      body,
-      node: this.node
-    })
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  async _handleTransportToggle (res, body) {
-    const result = await runTransportToggleAction({
-      body,
-      config: this.node.config,
-      persistConfig: () => this._persistConfig()
-    })
-    if (!result.ok && result.kind === 'config-persist') return this._configPersistErrorResponse(res)
-    return this._json(res, result.payload, result.status || 200)
-  }
-
-  _redactCustodyStatus (status = {}) {
-    return redactCustodyStatus(status)
   }
 
   _getSafeConfig () {
@@ -2254,7 +1916,7 @@ export class RelayAPI extends EventEmitter {
       return saveConfig(this._getSafeConfig())
     } catch (err) {
       this.emit('config-persist-error', {
-        message: err && err.message ? err.message : String(err || 'unknown error'),
+        message: persistErrorMessage(err),
         error: err
       })
       throw err
@@ -2271,87 +1933,21 @@ export class RelayAPI extends EventEmitter {
           await rollback()
         } catch (err) {
           this.emit('config-rollback-error', {
-            message: err && err.message ? err.message : String(err || 'unknown error'),
+            message: persistErrorMessage(err),
             error: err
           })
         }
       }
-      this._configPersistErrorResponse(res)
+      this._persistFailureResponse(res, { kind: 'config-persist' })
       return false
     }
   }
 
-  _configPersistErrorResponse (res) {
-    return this._json(res, {
-      error: formatErr('PERSIST_FAILED', CONFIG_PERSIST_FAILED_MESSAGE),
-      errorCode: 'persist-failed'
-    }, 500)
-  }
-
-  _federationPersistErrorResponse (res, err) {
-    this.emit('federation-persist-error', {
-      message: err && err.message ? err.message : String(err || 'unknown error'),
-      error: err
-    })
-    return this._json(res, {
-      error: formatErr('PERSIST_FAILED', FEDERATION_PERSIST_FAILED_MESSAGE),
-      errorCode: 'persist-failed'
-    }, 500)
-  }
-
-  _devicePersistErrorResponse (res, err) {
-    this.emit('device-persist-error', {
-      message: err && err.message ? err.message : String(err || 'unknown error'),
-      error: err
-    })
-    return this._json(res, {
-      error: formatErr('PERSIST_FAILED', DEVICE_PERSIST_FAILED_MESSAGE),
-      errorCode: 'persist-failed'
-    }, 500)
-  }
-
-  _wizardPersistErrorResponse (res, err) {
-    this.emit('wizard-persist-error', {
-      message: err && err.message ? err.message : String(err || 'unknown error'),
-      error: err
-    })
-    return this._json(res, {
-      error: formatErr('PERSIST_FAILED', WIZARD_PERSIST_FAILED_MESSAGE),
-      errorCode: 'persist-failed'
-    }, 500)
-  }
-
-  _subsidyPersistErrorResponse (res, err) {
-    this.emit('subsidy-persist-error', {
-      message: err && err.message ? err.message : String(err || 'unknown error'),
-      error: err
-    })
-    return this._json(res, {
-      error: formatErr('PERSIST_FAILED', SUBSIDY_PERSIST_FAILED_MESSAGE),
-      errorCode: 'persist-failed'
-    }, 500)
-  }
-
-  _manifestPersistErrorResponse (res, err) {
-    this.emit('manifest-persist-error', {
-      message: err && err.message ? err.message : String(err || 'unknown error'),
-      error: err
-    })
-    return this._json(res, {
-      error: formatErr('PERSIST_FAILED', MANIFEST_PERSIST_FAILED_MESSAGE),
-      errorCode: 'persist-failed'
-    }, 500)
-  }
-
-  _forkPersistErrorResponse (res, err) {
-    this.emit('fork-persist-error', {
-      message: err && err.message ? err.message : String(err || 'unknown error'),
-      error: err
-    })
-    return this._json(res, {
-      error: formatErr('PERSIST_FAILED', FORK_PERSIST_FAILED_MESSAGE),
-      errorCode: 'persist-failed'
-    }, 500)
+  _persistFailureResponse (res, result) {
+    const out = result && result.kind === 'wizard-persist'
+      ? wizardPersistFailureResult({ error: result.error, emit: (...args) => this.emit(...args) })
+      : configPersistFailureResult()
+    return this._json(res, out.payload, out.status)
   }
 
   async stop () {

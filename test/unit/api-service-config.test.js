@@ -109,6 +109,8 @@ test('service config api: catalog is authenticated and reports configured servic
   t.alike(res.body.plugins, ['identity', 'vrf'])
   t.ok(res.body.available.includes('ai'))
   t.ok(res.body.available.includes('poker'))
+  t.ok(res.body.available.includes('outboxlog'))
+  t.ok(res.body.available.includes('notify'))
   t.alike(res.body.bundles.poker, ['poker', 'vrf', 'arbitration', 'zk'])
   t.alike(res.body.active, ['identity'])
 })
@@ -368,7 +370,9 @@ test('wallet destination api: live subsidy persistence failure rolls back config
   })
   const savedStates = []
   const liveWrites = []
+  const persistErrors = []
   api._wizard = wizard
+  api.on('subsidy-persist-error', (info) => persistErrors.push(info.message))
   wizard.save = async () => {
     savedStates.push({ ...wizard.state })
   }
@@ -393,6 +397,7 @@ test('wallet destination api: live subsidy persistence failure rolls back config
   t.is(savedStates[0].payoutDestination, 'operator@example.com')
   t.is(savedStates[1].payoutDestination, 'old@example.com')
   t.is(persisted().subsidy.payoutDestination, 'old@example.com')
+  t.alike(persistErrors, ['subsidy store readonly'])
 })
 
 test('service config api: oversized JSON body returns 413 without resetting the client', async (t) => {

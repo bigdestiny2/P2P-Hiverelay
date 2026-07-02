@@ -1,5 +1,10 @@
 import test from 'brittle'
-import { runWizardAction } from 'p2p-hiverelay/core/relay-node/api-wizard-actions.js'
+import {
+  buildWizardSnapshotRoutePayload,
+  resolveWizardSnapshotRoute,
+  runWizardAction,
+  wizardActionFromPath
+} from 'p2p-hiverelay/core/relay-node/api-wizard-actions.js'
 
 function makeWizard (opts = {}) {
   const wizard = {
@@ -82,6 +87,79 @@ function restoreConfig (config, snapshot) {
   if (snapshot.hasSubsidy) config.subsidy = snapshot.subsidy
   else delete config.subsidy
 }
+
+test('api wizard actions: route helper extracts action names without validation', (t) => {
+  t.is(wizardActionFromPath('/api/wizard/goto'), 'goto')
+  t.is(wizardActionFromPath('/api/wizard/relay-name'), 'relay-name')
+  t.is(wizardActionFromPath('/api/wizard/made-up'), 'made-up')
+  t.is(wizardActionFromPath('/api/wizard/'), '')
+  t.is(wizardActionFromPath('/api/wizard'), null)
+  t.is(wizardActionFromPath('/api/manage/wizard/goto'), null)
+})
+
+test('api wizard actions: snapshot route helper matches exact GET route', (t) => {
+  t.alike(resolveWizardSnapshotRoute('GET', '/api/wizard'), {
+    kind: 'wizard-snapshot',
+    authMessage: 'Unauthorized — wizard requires API key or localhost'
+  })
+  t.is(resolveWizardSnapshotRoute('POST', '/api/wizard'), null)
+  t.is(resolveWizardSnapshotRoute('GET', '/api/wizard/'), null)
+  t.is(resolveWizardSnapshotRoute('GET', '/api/wizard/goto'), null)
+  t.is(resolveWizardSnapshotRoute('GET', '/api/manage/wizard'), null)
+})
+
+test('api wizard actions: snapshot route payload helper dispatches wizard reads', async (t) => {
+  const wizard = makeWizard()
+  wizard.state = {
+    ...wizard.state,
+    step: 'complete',
+    relayName: 'operator relay',
+    completedAt: 1234
+  }
+  let calls = 0
+
+  const result = await buildWizardSnapshotRoutePayload({
+    route: resolveWizardSnapshotRoute('GET', '/api/wizard'),
+    getWizard: async () => {
+      calls++
+      return wizard
+    }
+  })
+
+  t.is(calls, 1)
+  t.is(result.ok, true)
+  t.is(result.status, undefined)
+  t.alike(result.payload, {
+    step: 'complete',
+    relayName: 'operator relay',
+    payoutDestination: null,
+    acceptMode: 'review',
+    completedAt: 1234,
+    isComplete: true
+  })
+
+  const unavailable = await buildWizardSnapshotRoutePayload({
+    route: resolveWizardSnapshotRoute('GET', '/api/wizard'),
+    getWizard: async () => null
+  })
+  t.alike(unavailable, {
+    ok: false,
+    status: 503,
+    payload: { error: 'wizard unavailable' }
+  })
+
+  const unknown = await buildWizardSnapshotRoutePayload({
+    route: null,
+    getWizard: async () => {
+      throw new Error('should not call getWizard')
+    }
+  })
+  t.alike(unknown, {
+    ok: false,
+    status: 404,
+    payload: { error: 'unknown wizard snapshot route' }
+  })
+})
 
 test('api wizard actions: step actions mutate and save wizard state', async (t) => {
   const wizard = makeWizard()

@@ -1,5 +1,8 @@
 import test from 'brittle'
-import { runServiceManagementAction } from 'p2p-hiverelay/core/relay-node/api-service-management.js'
+import {
+  resolveServiceManagementRoute,
+  runServiceManagementAction
+} from 'p2p-hiverelay/core/relay-node/api-service-management.js'
 
 function makeRegistry () {
   return {
@@ -16,6 +19,16 @@ function makeRegistry () {
     }
   }
 }
+
+test('api service management: route helper maps exact live service management endpoint', (t) => {
+  t.alike(resolveServiceManagementRoute('POST', '/api/manage/services'), {
+    kind: 'service-management'
+  })
+
+  t.is(resolveServiceManagementRoute('GET', '/api/manage/services'), null)
+  t.is(resolveServiceManagementRoute('POST', '/api/manage/services/config'), null)
+  t.is(resolveServiceManagementRoute('POST', '/api/manage/services/restart'), null)
+})
 
 test('api service management: validates service registry and action payload', async (t) => {
   t.alike(await runServiceManagementAction({ body: {}, registry: null, config: {} }), {
@@ -42,6 +55,37 @@ test('api service management: validates service registry and action payload', as
     status: 400,
     payload: { error: 'Unknown action: unknown (use: disable, restart)' }
   })
+})
+
+test('api service management: RelayKernel lock rejects service actions before registry or persistence', async (t) => {
+  let persisted = false
+  const out = await runServiceManagementAction({
+    body: { action: 'disable', service: 'ai' },
+    registry: null,
+    config: { productProfile: 'relaykernel', enableServices: true, plugins: ['ai'] },
+    persistConfig: async () => { persisted = true },
+    serviceConfigPayload: () => ({
+      enabled: false,
+      plugins: [],
+      active: [],
+      locked: true,
+      lockReason: 'relaykernel-profile'
+    })
+  })
+
+  t.is(out.ok, false)
+  t.is(out.kind, 'locked')
+  t.is(out.status, 409)
+  t.is(out.payload.error, 'Services are locked off by the RelayKernel profile')
+  t.is(out.payload.errorCode, 'relaykernel-services-locked')
+  t.alike(out.payload.config, {
+    enabled: false,
+    plugins: [],
+    active: [],
+    locked: true,
+    lockReason: 'relaykernel-profile'
+  })
+  t.is(persisted, false)
 })
 
 test('api service management: disable persists configured plugin removal before unregistering', async (t) => {

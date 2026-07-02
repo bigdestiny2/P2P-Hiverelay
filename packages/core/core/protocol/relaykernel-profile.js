@@ -16,11 +16,133 @@ export const RELAYKERNEL_REQUIRED_CONTRACTS = [
   'os-accounting'
 ]
 
-export const BLINDSPARK_HTTP_SURFACES = [
-  '/.well-known/hiverelay.json',
-  '/catalog.json',
-  '/v1/hyper/:driveKey/*path'
-]
+export const BLINDSPARK_HTTP_ROUTE_MATRIX = Object.freeze([
+  Object.freeze({
+    surface: '/.well-known/hiverelay.json',
+    purpose: 'signed relay capability metadata for clients before they speak Hypercore',
+    methods: Object.freeze(['GET']),
+    handlers: Object.freeze([
+      Object.freeze({
+        runtime: 'node-api',
+        file: 'packages/core/core/relay-node/api.js',
+        requiredTerms: Object.freeze([
+          'const capabilityRoute = resolveCapabilityRoute(req.method, path)',
+          "capabilityRoute && capabilityRoute.kind === 'capability-doc'",
+          'buildCapabilityRoutePayload({',
+          "runtime: 'node'",
+          'result.headers'
+        ])
+      }),
+      Object.freeze({
+        runtime: 'bare-http',
+        file: 'packages/core/core/relay-node/bare-http-server.js',
+        requiredTerms: Object.freeze([
+          "path === '/.well-known/hiverelay.json' || path === '/api/capabilities'",
+          'buildCapabilityDoc({',
+          "runtime: 'bare'",
+          'Cache-Control'
+        ])
+      })
+    ])
+  }),
+  Object.freeze({
+    surface: '/catalog.json',
+    purpose: 'bounded public app/content catalog for browser and mobile bootstrap',
+    methods: Object.freeze(['GET']),
+    handlers: Object.freeze([
+      Object.freeze({
+        runtime: 'node-api',
+        file: 'packages/core/core/relay-node/api.js',
+        requiredTerms: Object.freeze([
+          'const catalogReadRoute = resolveCatalogReadRoute(req.method, path)',
+          "catalogReadRoute && catalogReadRoute.kind === 'catalog'",
+          'buildCatalogReadRoutePayload({',
+          'route: catalogReadRoute'
+        ])
+      }),
+      Object.freeze({
+        runtime: 'node-api-catalog-helper',
+        file: 'packages/core/core/relay-node/api-catalog-read.js',
+        requiredTerms: Object.freeze([
+          'export function buildCatalogReadRoutePayload',
+          "route.kind === 'catalog'",
+          'return buildRelayCatalogPayload({ node, url, relayKey, maxPageSize })',
+          'export function buildRelayCatalogPayload'
+        ])
+      }),
+      Object.freeze({
+        runtime: 'data-plane-gateway',
+        file: 'packages/core/core/relay-node/gateway-server.js',
+        requiredTerms: Object.freeze([
+          "req.method === 'GET' && path === '/catalog.json'",
+          'this._serveCatalog(req, res)'
+        ])
+      }),
+      Object.freeze({
+        runtime: 'bare-http',
+        file: 'packages/core/core/relay-node/bare-http-server.js',
+        requiredTerms: Object.freeze([
+          "path === '/catalog.json'",
+          'this._catalog(url)'
+        ])
+      })
+    ])
+  }),
+  Object.freeze({
+    surface: '/v1/hyper/:driveKey/*path',
+    purpose: 'Hyperdrive content gateway retained for PearBrowser while RelayKernel extracts',
+    methods: Object.freeze(['GET', 'HEAD']),
+    capabilities: Object.freeze(['Range']),
+    handlers: Object.freeze([
+      Object.freeze({
+        runtime: 'node-api',
+        file: 'packages/core/core/relay-node/api.js',
+        requiredTerms: Object.freeze([
+          'isHyperGatewayRoute(path)',
+          "from './api-route-mounts.js'",
+          'this._gateway.handle(req, res)'
+        ])
+      }),
+      Object.freeze({
+        runtime: 'node-api-route-table',
+        file: 'packages/core/core/relay-node/api-route-mounts.js',
+        requiredTerms: Object.freeze([
+          "export const HYPER_GATEWAY_ROUTE_PREFIX = '/v1/hyper/'",
+          'export function isHyperGatewayRoute',
+          'path.startsWith(HYPER_GATEWAY_ROUTE_PREFIX)'
+        ])
+      }),
+      Object.freeze({
+        runtime: 'hyper-gateway-core',
+        file: 'packages/core/gateway/hyper-gateway.js',
+        requiredTerms: Object.freeze([
+          "req.method !== 'GET' && req.method !== 'HEAD'",
+          "res.setHeader('Allow', 'GET, HEAD')",
+          "const isHead = req.method === 'HEAD'",
+          "res.setHeader('Accept-Ranges', 'bytes')",
+          'const rangeHeader = req.headers && req.headers.range',
+          "res.setHeader('Content-Range'",
+          'if (isHead) {'
+        ])
+      }),
+      Object.freeze({
+        runtime: 'data-plane-gateway',
+        file: 'packages/core/core/relay-node/gateway-server.js',
+        requiredTerms: Object.freeze([
+          "path.startsWith('/v1/hyper/')",
+          'this._gateway.handle(req, res)'
+        ])
+      })
+    ]),
+    notes: Object.freeze([
+      'Bare relays participate in the P2P mesh and expose catalog/capability HTTP; browser content gateway serving stays on Node/API or the dedicated data-plane gateway.'
+    ])
+  })
+])
+
+export const BLINDSPARK_HTTP_SURFACES = Object.freeze(
+  BLINDSPARK_HTTP_ROUTE_MATRIX.map(entry => entry.surface)
+)
 
 const APP_MODULE_NAMES = new Set([
   'ai',

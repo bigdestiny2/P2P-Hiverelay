@@ -27,6 +27,7 @@ Subpath modules (all Bare-safe, usable standalone):
 import { keygen, split, reconstruct } from 'p2p-hiverelay-client/secret-sharing.js'
 import { createCustodyIntent } from 'p2p-hiverelay-client/custody.js'
 import { attachPairing } from 'p2p-hiverelay-client/pairing.js'
+import { createNotifyIntent } from 'p2p-hiverelay-client/notify.js'
 ```
 
 ## Quickstart
@@ -121,6 +122,40 @@ off() // unsubscribe
 `(relay, topic)` pair and `MSG_UNSUBSCRIBE` when the last detaches; pass hex keys
 (e.g. a poker `tableKey`) in **lowercase**, or the subscription is silently dead.
 `onEvent` must be a function; the topic string must be ≤ 256 chars.
+
+### Notify helpers
+
+`p2p-hiverelay-client/notify.js` is a Bare-safe helper module for the optional
+`notify` relay service. It builds the signed capability and wake objects the
+relay verifies; app content stays encrypted and the app still syncs truth from
+its own P2P data after wake.
+
+```js
+import {
+  createNotifyIntent,
+  createNotifyServiceClient
+} from 'p2p-hiverelay-client/notify.js'
+
+const notify = createNotifyServiceClient(client, { relay: relayPubkeyHex })
+const intent = createNotifyIntent({
+  intentId,
+  receiveCap,
+  sendCap,
+  app,
+  receiver: devicePubkey,
+  channel: 'message',
+  urgency: 'normal',
+  ttlSeconds: 3600,
+  payloadCiphertext
+}, senderKeyPair)
+
+await notify.send(intent)
+```
+
+The module also exports builders for provider bindings, device registrations,
+receive/send caps, revocations, watches, status requests, plus
+`createNotifyHttpClient(relayUrl)` for browser/mobile clients using the relay's
+`/api/v1/notify/*` facade.
 
 ### Trustless seed verification
 

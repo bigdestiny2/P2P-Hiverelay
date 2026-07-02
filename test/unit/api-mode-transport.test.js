@@ -1,9 +1,79 @@
 import test from 'brittle'
 import {
   AVAILABLE_MODES,
+  resolveModeTransportManagementRoute,
+  runModeTransportManagementRouteAction,
   runModeSwitchAction,
   runTransportToggleAction
 } from '../../packages/core/core/relay-node/api-mode-transport.js'
+
+test('api mode transport: route helper maps exact mode and transport mutation routes', (t) => {
+  t.alike(resolveModeTransportManagementRoute('POST', '/api/manage/mode'), {
+    kind: 'mode-switch'
+  })
+  t.alike(resolveModeTransportManagementRoute('POST', '/api/manage/transport'), {
+    kind: 'transport-toggle'
+  })
+
+  t.is(resolveModeTransportManagementRoute('GET', '/api/manage/mode'), null)
+  t.is(resolveModeTransportManagementRoute('POST', '/api/manage/modes'), null)
+  t.is(resolveModeTransportManagementRoute('POST', '/api/manage/transport/tor'), null)
+})
+
+test('api mode transport: route action helper dispatches mode and transport mutations', async (t) => {
+  const persisted = []
+  const node = {
+    config: { mode: 'standard' },
+    mode: 'standard',
+    _operatingMode: 'standard',
+    async applyMode (mode, overrides) {
+      this.mode = mode
+      this._operatingMode = mode
+      this.config = { ...this.config, mode, ...overrides }
+    }
+  }
+  const persistConfig = async () => {
+    persisted.push({ ...node.config })
+  }
+
+  let result = await runModeTransportManagementRouteAction({
+    route: resolveModeTransportManagementRoute('POST', '/api/manage/mode'),
+    body: { mode: 'homehive' },
+    node,
+    config: node.config,
+    persistConfig
+  })
+  t.is(result.ok, true)
+  t.is(result.payload.mode, 'homehive')
+  t.is(node.mode, 'homehive')
+
+  result = await runModeTransportManagementRouteAction({
+    route: resolveModeTransportManagementRoute('POST', '/api/manage/transport'),
+    body: { transport: 'tor', enabled: false },
+    node,
+    config: node.config,
+    persistConfig
+  })
+  t.is(result.ok, true)
+  t.alike(result.payload, {
+    ok: true,
+    transport: 'tor',
+    enabled: false,
+    note: 'Transport changes may require a node restart to take full effect'
+  })
+  t.is(node.config.transports.tor, false)
+  t.is(persisted.length, 2)
+
+  const unknown = await runModeTransportManagementRouteAction({
+    route: { kind: 'unknown' },
+    body: {},
+    node,
+    config: node.config,
+    persistConfig
+  })
+  t.is(unknown.status, 404)
+  t.alike(unknown.payload, { error: 'unknown mode/transport management route' })
+})
 
 test('api mode transport: validates mode action before applying', async (t) => {
   let applyCalls = 0

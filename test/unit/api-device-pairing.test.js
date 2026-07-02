@@ -2,11 +2,70 @@ import test from 'brittle'
 import {
   DEVICE_NAME_MAX_LENGTH,
   MAX_DEVICE_LIST_ENTRIES,
+  devicePersistFailureResult,
   normalizeDeviceName,
+  resolveDevicePairingManagementRoute,
   runDeviceManagementAction,
+  runDevicePairingManagementRouteAction,
   runPairingManagementAction,
   sanitizeDeviceList
 } from '../../packages/core/core/relay-node/api-device-pairing.js'
+
+test('api device pairing: route helper maps exact device and pairing mutation routes', (t) => {
+  t.alike(resolveDevicePairingManagementRoute('POST', '/api/manage/devices'), {
+    kind: 'device-management'
+  })
+  t.alike(resolveDevicePairingManagementRoute('POST', '/api/manage/pairing'), {
+    kind: 'pairing-management'
+  })
+
+  t.is(resolveDevicePairingManagementRoute('GET', '/api/manage/devices'), null)
+  t.is(resolveDevicePairingManagementRoute('POST', '/api/manage/device'), null)
+  t.is(resolveDevicePairingManagementRoute('POST', '/api/manage/pairing/start'), null)
+})
+
+test('api device pairing: route action helper dispatches device and pairing mutations', async (t) => {
+  const node = {
+    mode: 'private',
+    accessControl: {
+      isPairing: true,
+      _pairingState: { expiresAt: 123 }
+    },
+    listDevices: () => [{
+      pubkey: 'A'.repeat(64),
+      name: '  Operator phone  ',
+      pairedAt: 1,
+      lastSeen: 2,
+      secretToken: 'do-not-leak'
+    }]
+  }
+
+  let result = await runDevicePairingManagementRouteAction({
+    route: resolveDevicePairingManagementRoute('POST', '/api/manage/devices'),
+    body: { action: 'list' },
+    node
+  })
+  t.is(result.ok, true)
+  t.is(result.payload.count, 1)
+  t.is(result.payload.devices[0].pubkey, 'a'.repeat(64))
+  t.absent(result.payload.devices[0].secretToken)
+
+  result = await runDevicePairingManagementRouteAction({
+    route: resolveDevicePairingManagementRoute('POST', '/api/manage/pairing'),
+    body: { action: 'status' },
+    node
+  })
+  t.is(result.ok, true)
+  t.alike(result.payload, { ok: true, active: true, expiresAt: 123 })
+
+  const unknown = await runDevicePairingManagementRouteAction({
+    route: { kind: 'unknown' },
+    body: {},
+    node
+  })
+  t.is(unknown.status, 404)
+  t.alike(unknown.payload, { error: 'unknown device/pairing management route' })
+})
 
 test('api device pairing: rejects unavailable access-control modes', async (t) => {
   const node = { mode: 'public' }
@@ -168,13 +227,45 @@ test('api device pairing: separates validation, operator, and persistence errors
 
   const diskError = new Error('disk full')
   node.addDevice = async () => { throw diskError }
+  const events = []
   const persist = await runDeviceManagementAction({
     body: { action: 'add', pubkey: 'c'.repeat(64), name: 'phone' },
-    node
+    node,
+    emit: (event, payload) => events.push({ event, payload })
   })
   t.is(persist.ok, false)
   t.is(persist.kind, 'device-persist')
-  t.is(persist.error, diskError)
+  t.is(persist.status, 500)
+  t.is(persist.payload.errorCode, 'persist-failed')
+  t.ok(persist.payload.error.startsWith('persist-failed: '), 'public payload is stable and prefixed')
+  t.absent(persist.payload.error.includes('disk full'), 'public payload does not leak local storage error')
+  t.is(events.length, 1)
+  t.is(events[0].event, 'device-persist-error')
+  t.is(events[0].payload.message, 'disk full')
+  t.is(events[0].payload.error, diskError)
+})
+
+test('api device pairing: device persist failure mapper emits internal diagnostics', (t) => {
+  const err = new Error('readonly allowlist')
+  const events = []
+  const out = devicePersistFailureResult({
+    error: err,
+    emit: (event, payload) => events.push({ event, payload })
+  })
+
+  t.is(out.ok, false)
+  t.is(out.kind, 'device-persist')
+  t.is(out.status, 500)
+  t.is(out.payload.errorCode, 'persist-failed')
+  t.ok(out.payload.error.startsWith('persist-failed: '))
+  t.absent(out.payload.error.includes('readonly allowlist'))
+  t.alike(events, [{
+    event: 'device-persist-error',
+    payload: {
+      message: 'readonly allowlist',
+      error: err
+    }
+  }])
 })
 
 test('api device pairing: validates pairing actions before state changes', async (t) => {

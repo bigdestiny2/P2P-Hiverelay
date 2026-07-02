@@ -1,7 +1,27 @@
 import { buildReputationLeaderboardPayload } from './api-reputation-read.js'
+import { sanitizeGatewayStats } from './api-gateway-stats.js'
 
 export const DEFAULT_MAX_STORAGE_BYTES = 5368709120
 export const MAX_OVERVIEW_STRING_BYTES = 128
+
+const OVERVIEW_ROUTES = Object.freeze({
+  'GET /api/overview': Object.freeze({ kind: 'overview' })
+})
+
+const OVERVIEW_HEALTH_CHECKS = ['memory', 'connections', 'swarm', 'errors', 'disk']
+const OVERVIEW_HEALTH_FIELDS = {
+  memory: ['heapPct', 'rssMB'],
+  connections: ['zeroFor', 'staleCount', 'totalConns', 'stalePct'],
+  swarm: [],
+  errors: ['errorRate'],
+  disk: ['usedPct', 'freeGB', 'totalGB']
+}
+
+export function resolveOverviewRoute (method, path) {
+  const route = OVERVIEW_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
 
 function objectRecord (value) {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -22,6 +42,28 @@ function safeOverviewCounter (value) {
   const n = Number(value)
   if (!Number.isFinite(n) || n <= 0) return 0
   return Math.floor(n)
+}
+
+function safeOverviewMetric (value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < 0) return null
+  return Math.min(n, Number.MAX_SAFE_INTEGER)
+}
+
+function safeOverviewBoolean (value) {
+  if (value === true) return true
+  if (value === false) return false
+  return null
+}
+
+function safeOverviewTimestamp (value) {
+  const n = safeOverviewMetric(value)
+  return n === null ? null : Math.floor(n)
+}
+
+function assignOverviewMetric (target, key, value) {
+  const n = safeOverviewMetric(value)
+  if (n !== null) target[key] = n
 }
 
 function safeOverviewPositiveCounter (value, fallback) {
@@ -165,6 +207,49 @@ export function overviewTorInfo (tor) {
   }
 }
 
+export function overviewHealth (health) {
+  if (!objectRecord(health)) return null
+
+  const out = {}
+  const healthy = safeOverviewBoolean(health.healthy)
+  const lastCheck = safeOverviewTimestamp(health.lastCheck)
+  const consecutiveFailures = safeOverviewTimestamp(health.consecutiveFailures)
+  const checks = overviewHealthChecks(health.checks)
+
+  if (healthy !== null) out.healthy = healthy
+  if (lastCheck !== null) out.lastCheck = lastCheck
+  if (consecutiveFailures !== null) out.consecutiveFailures = consecutiveFailures
+  if (checks) out.checks = checks
+
+  return Object.keys(out).length > 0 ? out : null
+}
+
+function overviewHealthChecks (checks) {
+  if (!objectRecord(checks)) return null
+
+  const out = {}
+  for (const check of OVERVIEW_HEALTH_CHECKS) {
+    const summary = overviewHealthCheck(checks[check], OVERVIEW_HEALTH_FIELDS[check] || [])
+    if (summary) out[check] = summary
+  }
+
+  return Object.keys(out).length > 0 ? out : null
+}
+
+function overviewHealthCheck (entry, numericFields) {
+  if (!objectRecord(entry)) return null
+
+  const out = {}
+  const ok = safeOverviewBoolean(entry.ok)
+  const critical = safeOverviewBoolean(entry.critical)
+
+  if (ok !== null) out.ok = ok
+  if (critical !== null) out.critical = critical
+  for (const field of numericFields) assignOverviewMetric(out, field, entry[field])
+
+  return Object.keys(out).length > 0 ? out : null
+}
+
 export function buildOverviewPayload ({
   stats = {},
   config = {},
@@ -194,9 +279,67 @@ export function buildOverviewPayload ({
     reputation,
     tor: overviewTorInfo(tor),
     holesailKey: safeOverviewString(holesailKey, 128),
-    health,
+    health: overviewHealth(health),
     bandwidth,
     registry,
     gateway
+  }
+}
+
+export function buildOverviewRoutePayload ({
+  node = {},
+  authed = false,
+  gateway = null,
+  memory = {},
+  now = Date.now()
+} = {}) {
+  const stats = node && typeof node.getStats === 'function'
+    ? node.getStats({ includeSecrets: authed === true })
+    : {}
+  const config = objectRecord(node && node.config) ? node.config : {}
+  const metrics = objectRecord(node && node.metrics) ? node.metrics : null
+  const uptimeMs = metrics && Number.isFinite(metrics.startedAt) ? now - metrics.startedAt : 0
+  const tor = authed === true && node && node.torTransport && typeof node.torTransport.getInfo === 'function'
+    ? node.torTransport.getInfo()
+    : null
+  const holesailKey = authed === true && node && node.holesailTransport
+    ? node.holesailTransport.connectionKey
+    : null
+
+  return buildOverviewPayload({
+    stats,
+    config,
+    memory,
+    uptimeMs,
+    errors: metrics ? metrics._errorCount : 0,
+    reputation: reputationOverview(node && node.reputation),
+    tor,
+    holesailKey,
+    health: node && typeof node.getHealthStatus === 'function' ? node.getHealthStatus() : null,
+    bandwidth: bandwidthOverview(node && node._bandwidthReceipt),
+    registry: registryOverview(node && node.seedingRegistry, config),
+    gateway: gateway && typeof gateway.getStats === 'function' ? sanitizeGatewayStats(gateway.getStats()) : null
+  })
+}
+
+export function buildOverviewRouteResponse ({
+  route,
+  node = {},
+  authed = false,
+  gateway = null,
+  memory = {},
+  now = Date.now()
+} = {}) {
+  if (!route || route.kind !== 'overview') {
+    return {
+      ok: false,
+      status: 404,
+      payload: { error: 'unknown overview route' }
+    }
+  }
+
+  return {
+    ok: true,
+    payload: buildOverviewRoutePayload({ node, authed, gateway, memory, now })
   }
 }

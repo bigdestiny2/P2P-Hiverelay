@@ -1,3 +1,7 @@
+const WIZARD_ACTION_PREFIX = '/api/wizard/'
+const WIZARD_SNAPSHOT_ROUTE = '/api/wizard'
+const WIZARD_AUTH_MESSAGE = 'Unauthorized — wizard requires API key or localhost'
+
 function snapshotWizardState (wizard) {
   if (!wizard || !wizard.state) return null
   return { ...wizard.state }
@@ -20,6 +24,44 @@ async function persistConfigRollback ({ persistConfig, emit }) {
     await persistConfig()
   } catch (err) {
     emitRollbackError(emit, 'config-rollback-error', err)
+  }
+}
+
+export function wizardActionFromPath (path) {
+  return typeof path === 'string' && path.startsWith(WIZARD_ACTION_PREFIX)
+    ? path.slice(WIZARD_ACTION_PREFIX.length)
+    : null
+}
+
+export function resolveWizardSnapshotRoute (method, path) {
+  if (method !== 'GET') return null
+  if (path === WIZARD_SNAPSHOT_ROUTE) {
+    return { kind: 'wizard-snapshot', authMessage: WIZARD_AUTH_MESSAGE }
+  }
+  return null
+}
+
+export async function buildWizardSnapshotRoutePayload ({ route, getWizard }) {
+  if (!route || route.kind !== 'wizard-snapshot') {
+    return {
+      ok: false,
+      status: 404,
+      payload: { error: 'unknown wizard snapshot route' }
+    }
+  }
+
+  const wizard = typeof getWizard === 'function' ? await getWizard() : null
+  if (!wizard || typeof wizard.snapshot !== 'function') {
+    return {
+      ok: false,
+      status: 503,
+      payload: { error: 'wizard unavailable' }
+    }
+  }
+
+  return {
+    ok: true,
+    payload: wizard.snapshot()
   }
 }
 

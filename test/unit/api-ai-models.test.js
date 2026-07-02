@@ -2,9 +2,78 @@ import test from 'brittle'
 import {
   buildManageAIModelRegistration,
   buildManageAIModelsPayload,
+  runAIModelManagementRouteAction,
+  runManageAIModelRegisterAction,
+  runManageAIModelRemoveAction,
+  runManageAIModelsListAction,
   manageAIModelStatus,
-  publicManageAIModelError
+  publicManageAIModelError,
+  resolveAIModelManagementRoute
 } from 'p2p-hiverelay/core/relay-node/api-ai-models.js'
+
+test('api ai models: route helper maps exact POST model mutation routes', (t) => {
+  t.alike(resolveAIModelManagementRoute('POST', '/api/manage/ai/models'), { kind: 'register' })
+  t.alike(resolveAIModelManagementRoute('POST', '/api/manage/ai/models/remove'), { kind: 'remove' })
+
+  t.is(resolveAIModelManagementRoute('GET', '/api/manage/ai/models'), null)
+  t.is(resolveAIModelManagementRoute('POST', '/api/manage/ai/models/remove/extra'), null)
+  t.is(resolveAIModelManagementRoute('POST', '/api/manage/ai/model'), null)
+})
+
+test('api ai models: route action helper dispatches register and remove primitives', async (t) => {
+  const calls = []
+  const provider = {
+    async 'register-model' (params, ctx) {
+      calls.push({ action: 'register', params, ctx })
+      return { registered: true }
+    },
+    async 'remove-model' (params, ctx) {
+      calls.push({ action: 'remove', params, ctx })
+      return { removed: true }
+    },
+    async 'list-models' () {
+      return [{ modelId: 'local-qvac', backend: 'qvac', qvac: { loaded: true } }]
+    },
+    async status () {
+      return { qvac: { enabled: true, checked: true, available: true } }
+    }
+  }
+  const node = { id: 'relay-node' }
+
+  const registered = await runAIModelManagementRouteAction({
+    route: { kind: 'register' },
+    provider,
+    body: { modelId: ' local-qvac ', qvac: { qvacModelId: 'loaded' } },
+    node
+  })
+  const removed = await runAIModelManagementRouteAction({
+    route: { kind: 'remove' },
+    provider,
+    body: { modelId: ' local-qvac ' },
+    node
+  })
+  const unknown = await runAIModelManagementRouteAction({
+    route: { kind: 'unknown' },
+    provider,
+    body: {}
+  })
+
+  t.is(registered.ok, true)
+  t.is(registered.payload.action, 'registered')
+  t.is(removed.ok, true)
+  t.is(removed.payload.action, 'removed')
+  t.alike(calls.map(call => call.action), ['register', 'remove'])
+  t.is(calls[0].params.modelId, 'local-qvac')
+  t.alike(calls[0].ctx, {
+    role: 'relay-admin',
+    caller: 'manage-api',
+    authenticated: true,
+    node
+  })
+  t.is(calls[1].params.modelId, 'local-qvac')
+  t.is(unknown.status, 404)
+  t.is(unknown.payload.error, 'unknown AI model management route')
+})
 
 test('api ai models: registration requires a model id and qvac source or loaded id', (t) => {
   t.alike(buildManageAIModelRegistration(null), { ok: false, error: 'request body required' })
@@ -121,4 +190,122 @@ test('api ai models: public errors preserve stable AI codes and redact internals
     publicManageAIModelError(new Error('failed to read /data/models/private/key-material'), 'AI model registration failed'),
     'AI model registration failed'
   )
+})
+
+test('api ai models: list action decorates provider models and emits redacted failures', async (t) => {
+  const contexts = []
+  const provider = {
+    async 'list-models' (params, ctx) {
+      contexts.push(ctx)
+      return [{ modelId: 'local-qvac', backend: 'qvac' }]
+    },
+    async status (params, ctx) {
+      contexts.push(ctx)
+      return { qvac: { enabled: true, checked: true, available: true } }
+    }
+  }
+
+  const out = await runManageAIModelsListAction({ provider })
+  t.is(out.ok, true)
+  t.is(out.payload.count, 1)
+  t.alike(contexts, [
+    { role: 'relay-admin', caller: 'manage-api', authenticated: true },
+    { role: 'relay-admin', caller: 'manage-api', authenticated: true }
+  ])
+
+  const events = []
+  const failed = await runManageAIModelsListAction({
+    provider: {
+      async 'list-models' () { throw new Error('/private/models/key') }
+    },
+    emit: (name, event) => events.push({ name, event })
+  })
+
+  t.is(failed.ok, false)
+  t.is(failed.status, 500)
+  t.alike(failed.payload, { error: 'AI model list failed' })
+  t.is(events[0].name, 'ai-model-error')
+  t.is(events[0].event.action, 'list')
+})
+
+test('api ai models: register action validates, calls provider with node context, and returns decorated model', async (t) => {
+  const node = { id: 'relay-node' }
+  const calls = []
+  const provider = {
+    async 'register-model' (params, ctx) {
+      calls.push({ params, ctx })
+      return { registered: true }
+    },
+    async 'list-models' () {
+      return [{ modelId: 'local-qvac', backend: 'qvac', qvac: { loaded: true } }]
+    },
+    async status () {
+      return { qvac: { enabled: true, checked: true, available: true } }
+    }
+  }
+
+  const invalid = await runManageAIModelRegisterAction({ provider, body: {} })
+  t.alike(invalid, {
+    ok: false,
+    status: 400,
+    payload: { error: 'modelId required' }
+  })
+
+  const out = await runManageAIModelRegisterAction({
+    provider,
+    body: { modelId: ' local-qvac ', qvac: { qvacModelId: 'loaded' } },
+    node
+  })
+
+  t.is(out.ok, true)
+  t.is(out.payload.action, 'registered')
+  t.is(out.payload.model.modelId, 'local-qvac')
+  t.is(out.payload.model.status, 'loaded')
+  t.is(calls[0].params.modelId, 'local-qvac')
+  t.alike(calls[0].ctx, {
+    role: 'relay-admin',
+    caller: 'manage-api',
+    authenticated: true,
+    node
+  })
+})
+
+test('api ai models: register and remove actions preserve known errors and redact unexpected errors', async (t) => {
+  const events = []
+  const denied = await runManageAIModelRegisterAction({
+    provider: {
+      async 'register-model' () { throw new Error('ACCESS_DENIED: no') }
+    },
+    body: { modelId: 'local-qvac', qvac: { qvacModelId: 'loaded' } },
+    emit: (name, event) => events.push({ name, event })
+  })
+  t.is(denied.status, 403)
+  t.alike(denied.payload, { error: 'ACCESS_DENIED: no' })
+  t.is(events[0].event.publicError, 'ACCESS_DENIED: no')
+
+  const removed = await runManageAIModelRemoveAction({
+    provider: {
+      async 'remove-model' (params, ctx) {
+        t.alike(params, { modelId: 'local-qvac' })
+        t.is(ctx.node.id, 'relay-node')
+        return { removed: true }
+      },
+      async 'list-models' () { return [] },
+      async status () { return { qvac: { enabled: true } } }
+    },
+    body: { modelId: ' local-qvac ' },
+    node: { id: 'relay-node' }
+  })
+  t.is(removed.ok, true)
+  t.is(removed.payload.action, 'removed')
+  t.is(removed.payload.removed, true)
+
+  const failed = await runManageAIModelRemoveAction({
+    provider: {
+      async 'remove-model' () { throw new Error('/private/model/path') }
+    },
+    body: { modelId: 'local-qvac' }
+  })
+  t.is(failed.status, 500)
+  t.alike(failed.payload, { error: 'AI model removal failed' })
 })

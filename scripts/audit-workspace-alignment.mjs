@@ -94,16 +94,19 @@ const pearBrowserDemoManifest = readJson(hiverelayRoot, 'examples', 'pearbrowser
 const pearBrowserDemoReadme = readText(hiverelayRoot, 'examples', 'pearbrowser-marketplace-demo', 'README.md')
 const pearBrowserDemoHtml = readText(hiverelayRoot, 'examples', 'pearbrowser-marketplace-demo', 'index.html')
 const releaseAutomationDocs = readText(hiverelayRoot, 'docs', 'RELEASE_AUTOMATION.md')
+const servicesDocs = readText(hiverelayRoot, 'docs', 'SERVICES.md')
 const architectureGraphDoc = readText(hiverelayRoot, 'docs', 'HIVERELAY-ARCHITECTURE-GRAPH.md')
 const architectureGraphSvg = readText(hiverelayRoot, 'docs', 'assets', 'hiverelay-core3-architecture.svg')
 const detailedArchitectureDoc = readText(hiverelayRoot, 'docs', 'HIVERELAY-DETAILED-ARCHITECTURE-DIAGRAM.md')
 const readme = readText(hiverelayRoot, 'README.md')
 const auditDoc = readText(hiverelayRoot, 'docs', 'AUDIT-2026-06-22.md')
 const auditRoadmap = readText(hiverelayRoot, 'docs', 'AUDIT-ROADMAP.md')
+const pushNotificationSpec = readText(hiverelayRoot, 'docs', 'PUSH-NOTIFICATION-SERVICE-SPEC.md')
 const threatModelDoc = readText(hiverelayRoot, 'docs', 'THREAT-MODEL.md')
 const reverseProxyDocs = readText(hiverelayRoot, 'docs', 'REVERSE-PROXY.md')
 const protocolSpecDocs = readText(hiverelayRoot, 'docs', 'PROTOCOL-SPEC.md')
 const developerDocs = readText(hiverelayRoot, 'docs', 'DEVELOPER.md')
+const relayKernelGatewayCompatibilityDocs = readText(hiverelayRoot, 'docs', 'RELAYKERNEL-GATEWAY-COMPATIBILITY.md')
 const readmeMainUpdateAudit = readText(hiverelayRoot, 'docs', 'README-MAIN-UPDATE-AUDIT.md')
 const shipHandoff20260626 = readText(hiverelayRoot, 'docs', 'SHIP-HANDOFF-2026-06-26.md')
 const testCommandMatrix20260627 = readText(hiverelayRoot, 'docs', 'TEST-COMMAND-MATRIX-2026-06-27.md')
@@ -141,7 +144,14 @@ const releaseSecretsTemplate = readText(hiverelayRoot, 'scripts', 'write-release
 const ecosystemConsumersAudit = readText(hiverelayRoot, 'scripts', 'audit-ecosystem-consumers.mjs')
 const ecosystemConsumersSync = readText(hiverelayRoot, 'scripts', 'sync-ecosystem-consumers.mjs')
 const npmLatestCheck = readText(hiverelayRoot, 'scripts', 'check-npm-latest.mjs')
+const releaseBlockersCheck = readText(hiverelayRoot, 'scripts', 'check-release-blockers.mjs')
 const npmPackagePackCheck = readText(hiverelayRoot, 'scripts', 'check-npm-package-pack.mjs')
+const auditOwnedDiffCheck = readText(hiverelayRoot, 'scripts', 'check-audit-owned-diff.mjs')
+const auditOwnedDiffLib = readText(hiverelayRoot, 'scripts', 'lib', 'audit-owned-diff.mjs')
+const outboxLogBench = readText(hiverelayRoot, 'scripts', 'bench-outboxlog.mjs')
+const relayKernelGatewayCompatCheck = readText(hiverelayRoot, 'scripts', 'check-relaykernel-gateway-compat.mjs')
+const releasePromiseScopeCheck = readText(hiverelayRoot, 'scripts', 'check-release-promise-scope.mjs')
+const releasePromiseScopeLib = readText(hiverelayRoot, 'scripts', 'lib', 'release-promise-scope.mjs')
 const ecosystemWorkspaceCheck = readText(hiverelayRoot, 'scripts', 'check-ecosystem-workspace.mjs')
 const ecosystemConsumersCommit = readText(hiverelayRoot, 'scripts', 'commit-ecosystem-consumers.mjs')
 const publicArtifactSecretsAudit = readText(hiverelayRoot, 'scripts', 'check-public-artifact-secrets.mjs')
@@ -177,6 +187,8 @@ const wizardDashboard = readText(hiverelayRoot, 'dashboard', 'wizard.html')
 const relayApi = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api.js')
 const bareHttpServer = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'bare-http-server.js')
 const relayMetrics = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'metrics.js')
+const relayApiAccountingReceipt = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-accounting-receipt.js')
+const relayApiCapabilities = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-capabilities.js')
 const relayApiAlertManagement = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-alert-management.js')
 const relayApiAiModels = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-ai-models.js')
 const relayApiAnchorStatus = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-anchor-status.js')
@@ -187,6 +199,7 @@ const relayApiCatalogManagement = readText(hiverelayRoot, 'packages', 'core', 'c
 const relayApiCatalogRead = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-catalog-read.js')
 const relayApiConfigUpdate = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-config-update.js')
 const relayApiCors = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-cors.js')
+const relayApiCustodyDisabled = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-custody-disabled.js')
 const relayApiCustodyManagement = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-custody-management.js')
 const relayApiCustodyStatus = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-custody-status.js')
 const relayApiDashboardHtml = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-dashboard-html.js')
@@ -197,27 +210,37 @@ const relayApiDispatch = readText(hiverelayRoot, 'packages', 'core', 'core', 're
 const relayApiEvictionPurge = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-eviction-purge.js')
 const relayApiDedupReclaim = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-dedup-reclaim.js')
 const relayApiIndexRoom = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-index-room.js')
+const relayApiIndexProxy = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-index-proxy.js')
 const relayApiFederationManagement = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-federation-management.js')
 const relayApiForkProofs = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-fork-proofs.js')
 const relayApiGatewayStats = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-gateway-stats.js')
 const relayApiHealth = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-health.js')
 const relayApiLifecycleActions = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-lifecycle-actions.js')
 const relayApiManagementSnapshots = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-management-snapshots.js')
+const relayApiMetrics = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-metrics.js')
 const relayApiNetworkState = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-network-state.js')
+const relayApiNotify = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-notify.js')
 const relayApiOverview = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-overview.js')
 const relayApiOperatorTelemetry = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-operator-telemetry.js')
 const relayApiPeerState = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-peer-state.js')
+const relayApiPersistFailures = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-persist-failures.js')
+const relayApiOutboxLogHttpAdapter = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-outboxlog-http-adapter.js')
+const relayApiPokerHttpAdapter = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-poker-http-adapter.js')
 const relayApiRegistryStatus = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-registry-status.js')
 const relayApiReputationRead = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-reputation-read.js')
 const relayApiRequest = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-request.js')
 const relayApiRateLimit = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-rate-limit.js')
 const relayApiResponse = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-response.js')
+const relayApiRouteMounts = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-route-mounts.js')
 const relayApiRouterRead = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-router-read.js')
 const relayApiSafeConfig = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-safe-config.js')
+const relayApiSeedCore = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-seed-core.js')
 const relayApiSeedPublish = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-seed-publish.js')
 const relayApiSignedIngress = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-signed-ingress.js')
+const relayRetrievabilityProof = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'retrievability-proof.js')
 const relayApiServiceConfig = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-service-config.js')
 const relayApiServiceManagement = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-service-management.js')
+const relayApiServiceProvider = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-service-provider.js')
 const relayApiServiceRead = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-service-read.js')
 const relayApiStatusRead = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-status-read.js')
 const relayApiModeTransport = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'api-mode-transport.js')
@@ -237,6 +260,7 @@ const serviceProtocol = readText(hiverelayRoot, 'packages', 'core', 'core', 'ser
 const appRegistryCore = readText(hiverelayRoot, 'packages', 'core', 'core', 'app-registry.js')
 const appLifecycleCore = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'app-lifecycle.js')
 const pluginLoader = readText(hiverelayRoot, 'packages', 'core', 'core', 'plugin-loader.js')
+const capabilityDoc = readText(hiverelayRoot, 'packages', 'core', 'core', 'capability-doc.js')
 const accessControl = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'access-control.js')
 const federationCore = readText(hiverelayRoot, 'packages', 'core', 'core', 'federation.js')
 const networkDiscoveryCore = readText(hiverelayRoot, 'packages', 'core', 'core', 'network-discovery.js')
@@ -253,6 +277,8 @@ const proofOfRelay = readText(hiverelayRoot, 'packages', 'core', 'core', 'protoc
 const protocolMessages = readText(hiverelayRoot, 'packages', 'core', 'core', 'protocol', 'messages.js')
 const seedRequestProtocol = readText(hiverelayRoot, 'packages', 'core', 'core', 'protocol', 'seed-request.js')
 const relayCircuitProtocol = readText(hiverelayRoot, 'packages', 'core', 'core', 'protocol', 'relay-circuit.js')
+const relayKernelProfile = readText(hiverelayRoot, 'packages', 'core', 'core', 'protocol', 'relaykernel-profile.js')
+const profileVectorVerifier = readText(hiverelayRoot, 'packages', 'core', 'core', 'protocol', 'profile-vector-verifier.js')
 const forwardRelayProtocol = readText(hiverelayRoot, 'packages', 'core', 'core', 'protocol', 'forward-relay.js')
 const jsonMessageEncoding = readText(hiverelayRoot, 'packages', 'core', 'core', 'protocol', 'json-message-encoding.js')
 const anchorChannel = readText(hiverelayRoot, 'packages', 'core', 'core', 'protocol', 'anchor-channel.js')
@@ -263,8 +289,19 @@ const seedingRegistry = readText(hiverelayRoot, 'packages', 'core', 'core', 'reg
 const pokerHttpAdapter = readText(hiverelayRoot, 'packages', 'services', 'builtin', 'poker', 'http-adapter.js')
 const pokerWsAdapter = readText(hiverelayRoot, 'packages', 'services', 'builtin', 'poker', 'ws-adapter.js')
 const pokerReadme = readText(hiverelayRoot, 'packages', 'services', 'builtin', 'poker', 'README.md')
+const servicesIndex = readText(hiverelayRoot, 'packages', 'services', 'index.js')
+const servicesReadme = readText(hiverelayRoot, 'packages', 'services', 'README.md')
+const notifyService = readText(hiverelayRoot, 'packages', 'services', 'builtin', 'notify-service.js')
+const outboxLogApp = readText(hiverelayRoot, 'packages', 'services', 'builtin', 'outboxlog', 'index.js')
+const outboxLogBlindSeal = readText(hiverelayRoot, 'packages', 'services', 'builtin', 'outboxlog', 'blind-seal.js')
+const outboxLogEngine = readText(hiverelayRoot, 'packages', 'services', 'builtin', 'outboxlog', 'outbox-log.js')
+const outboxLogHypercoreJournal = readText(hiverelayRoot, 'packages', 'services', 'builtin', 'outboxlog', 'hypercore-journal.js')
+const outboxLogHttpAdapter = readText(hiverelayRoot, 'packages', 'services', 'builtin', 'outboxlog', 'http-adapter.js')
+const outboxLogSwarmHub = readText(hiverelayRoot, 'packages', 'services', 'builtin', 'outboxlog', 'swarm-hub.js')
 const servedAccounting = readText(hiverelayRoot, 'packages', 'core', 'core', 'relay-node', 'served-accounting.js')
 const clientSdk = readText(hiverelayRoot, 'packages', 'client', 'index.js')
+const clientReadme = readText(hiverelayRoot, 'packages', 'client', 'README.md')
+const clientNotify = readText(hiverelayRoot, 'packages', 'client', 'notify.js')
 const clientPairing = readText(hiverelayRoot, 'packages', 'client', 'pairing.js')
 const errorPrefixes = readText(hiverelayRoot, 'packages', 'core', 'core', 'error-prefixes.js')
 const subsidyCore = readText(hiverelayRoot, 'packages', 'core', 'incentive', 'subsidy', 'index.js')
@@ -285,6 +322,10 @@ const errorPrefixesTest = readText(hiverelayRoot, 'test', 'unit', 'error-prefixe
 const protocolJsonEncodingTest = readText(hiverelayRoot, 'test', 'unit', 'protocol-json-encoding.test.js')
 const pairingProtocolTest = readText(hiverelayRoot, 'test', 'unit', 'pairing-protocol.test.js')
 const seedProtocolEncodingTest = readText(hiverelayRoot, 'test', 'unit', 'seed-protocol-encoding.test.js')
+const relayKernelGatewayCompatTest = readText(hiverelayRoot, 'test', 'unit', 'relaykernel-gateway-compat.test.js')
+const profileVectorVerifierTest = readText(hiverelayRoot, 'test', 'unit', 'profile-vector-verifier.test.js')
+const relayKernelHttpRouteMatrixVector = readText(hiverelayRoot, 'test', 'fixtures', 'relaykernel-profile', 'relaykernel-http-route-matrix-v1-blindspark-compat.json')
+const relayKernelAppModuleBoundaryVector = readText(hiverelayRoot, 'test', 'fixtures', 'relaykernel-profile', 'relaykernel-profile-v1-app-module-boundary.json')
 const forwardRelayEncodingTest = readText(hiverelayRoot, 'test', 'unit', 'forward-relay-encoding.test.js')
 const circuitRelayEncodingTest = readText(hiverelayRoot, 'test', 'unit', 'circuit-relay-encoding.test.js')
 const proofOfRelayTest = readText(hiverelayRoot, 'test', 'unit', 'proof-of-relay.test.js')
@@ -292,6 +333,8 @@ const autoHealTest = readText(hiverelayRoot, 'test', 'unit', 'auto-heal.test.js'
 const evictionTest = readText(hiverelayRoot, 'test', 'unit', 'eviction.test.js')
 const unseedVerifyTest = readText(hiverelayRoot, 'test', 'unit', 'unseed-verify.test.js')
 const clientServiceTest = readText(hiverelayRoot, 'test', 'unit', 'client-service.test.js')
+const clientNotifyTest = readText(hiverelayRoot, 'test', 'unit', 'client-notify.test.js')
+const accountingReceiptRuntimeTest = readText(hiverelayRoot, 'test', 'unit', 'accounting-receipt-runtime.test.js')
 const apiAlertManagementTest = readText(hiverelayRoot, 'test', 'unit', 'api-alert-management.test.js')
 const apiAiModelsTest = readText(hiverelayRoot, 'test', 'unit', 'api-ai-models.test.js')
 const apiAnchorStatusTest = readText(hiverelayRoot, 'test', 'unit', 'api-anchor-status.test.js')
@@ -314,6 +357,7 @@ const apiDispatchTest = readText(hiverelayRoot, 'test', 'unit', 'api-dispatch.te
 const apiEvictionPurgeTest = readText(hiverelayRoot, 'test', 'unit', 'api-eviction-purge.test.js')
 const apiDedupReclaimTest = readText(hiverelayRoot, 'test', 'unit', 'api-dedup-reclaim.test.js')
 const apiIndexRoomTest = readText(hiverelayRoot, 'test', 'unit', 'api-index-room.test.js')
+const apiIndexProxyTest = readText(hiverelayRoot, 'test', 'unit', 'api-index-proxy.test.js')
 const apiFederationManagementTest = readText(hiverelayRoot, 'test', 'unit', 'api-federation-management.test.js')
 const apiGatewayStatsTest = readText(hiverelayRoot, 'test', 'unit', 'api-gateway-stats.test.js')
 const federationHardeningTest = readText(hiverelayRoot, 'test', 'unit', 'federation-hardening.test.js')
@@ -321,7 +365,9 @@ const federationPollManyTest = readText(hiverelayRoot, 'test', 'integration', 'f
 const apiHealthTest = readText(hiverelayRoot, 'test', 'unit', 'api-health.test.js')
 const apiLifecycleActionsTest = readText(hiverelayRoot, 'test', 'unit', 'api-lifecycle-actions.test.js')
 const apiManagementSnapshotsTest = readText(hiverelayRoot, 'test', 'unit', 'api-management-snapshots.test.js')
+const apiMetricsTest = readText(hiverelayRoot, 'test', 'unit', 'api-metrics.test.js')
 const apiNetworkStateTest = readText(hiverelayRoot, 'test', 'unit', 'api-network-state.test.js')
+const apiNotifyTest = readText(hiverelayRoot, 'test', 'unit', 'api-notify.test.js')
 const networkDiscoveryTest = readText(hiverelayRoot, 'test', 'unit', 'network-discovery.test.js')
 const apiOverviewTest = readText(hiverelayRoot, 'test', 'unit', 'api-overview.test.js')
 const apiOperatorTelemetryTest = readText(hiverelayRoot, 'test', 'unit', 'api-operator-telemetry.test.js')
@@ -332,9 +378,13 @@ const apiReputationReadTest = readText(hiverelayRoot, 'test', 'unit', 'api-reput
 const apiRequestTest = readText(hiverelayRoot, 'test', 'unit', 'api-request.test.js')
 const apiRateLimitTest = readText(hiverelayRoot, 'test', 'unit', 'api-rate-limit.test.js')
 const apiResponseTest = readText(hiverelayRoot, 'test', 'unit', 'api-response.test.js')
+const retrievabilityProofApiTest = readText(hiverelayRoot, 'test', 'unit', 'retrievability-proof-api.test.js')
+const apiRouteMountsTest = readText(hiverelayRoot, 'test', 'unit', 'api-route-mounts.test.js')
 const apiRouterReadTest = readText(hiverelayRoot, 'test', 'unit', 'api-router-read.test.js')
+const apiServiceReadTest = readText(hiverelayRoot, 'test', 'unit', 'api-service-read.test.js')
 const routerTest = readText(hiverelayRoot, 'test', 'unit', 'router.test.js')
 const apiSafeConfigTest = readText(hiverelayRoot, 'test', 'unit', 'api-safe-config.test.js')
+const apiPersistFailuresTest = readText(hiverelayRoot, 'test', 'unit', 'api-persist-failures.test.js')
 const apiSeedPublishTest = readText(hiverelayRoot, 'test', 'unit', 'api-seed-publish.test.js')
 const apiSignedIngressTest = readText(hiverelayRoot, 'test', 'unit', 'api-signed-ingress.test.js')
 const apiStatusReadTest = readText(hiverelayRoot, 'test', 'unit', 'api-status-read.test.js')
@@ -345,6 +395,7 @@ const apiValidationTest = readText(hiverelayRoot, 'test', 'unit', 'api-validatio
 const apiWizardActionsTest = readText(hiverelayRoot, 'test', 'unit', 'api-wizard-actions.test.js')
 const apiModeTransportTest = readText(hiverelayRoot, 'test', 'unit', 'api-mode-transport.test.js')
 const apiUsageTelemetryTest = readText(hiverelayRoot, 'test', 'unit', 'api-usage-telemetry.test.js')
+const apiSeedCoreTest = readText(hiverelayRoot, 'test', 'unit', 'api-seed-core.test.js')
 const apiUiTokenTest = readText(hiverelayRoot, 'test', 'unit', 'api-ui-token.test.js')
 const manageCliClientTest = readText(hiverelayRoot, 'test', 'unit', 'manage-cli-client.test.js')
 const configLoaderTest = readText(hiverelayRoot, 'test', 'unit', 'config-loader.test.js')
@@ -356,6 +407,10 @@ const bareHttpServerTest = readText(hiverelayRoot, 'test', 'unit', 'bare-http-se
 const apiServiceConfigHelpersTest = readText(hiverelayRoot, 'test', 'unit', 'api-service-config-helpers.test.js')
 const apiServiceManagementTest = readText(hiverelayRoot, 'test', 'unit', 'api-service-management.test.js')
 const apiServiceConfigTest = readText(hiverelayRoot, 'test', 'unit', 'api-service-config.test.js')
+const apiServiceProviderTest = readText(hiverelayRoot, 'test', 'unit', 'api-service-provider.test.js')
+const apiOutboxLogHttpAdapterTest = readText(hiverelayRoot, 'test', 'unit', 'api-outboxlog-http-adapter.test.js')
+const apiOutboxLogTest = readText(hiverelayRoot, 'test', 'unit', 'api-outboxlog.test.js')
+const apiPokerHttpAdapterTest = readText(hiverelayRoot, 'test', 'unit', 'api-poker-http-adapter.test.js')
 const apiPokerTest = readText(hiverelayRoot, 'test', 'unit', 'api-poker.test.js')
 const serviceCatalogSanitizerTest = readText(hiverelayRoot, 'test', 'unit', 'service-catalog-sanitizer.test.js')
 const apiPublisherSignedTest = readText(hiverelayRoot, 'test', 'unit', 'api-publisher-signed.test.js')
@@ -370,11 +425,16 @@ const blindMintTest = readText(hiverelayRoot, 'test', 'unit', 'blind-mint.test.j
 const cashuTest = readText(hiverelayRoot, 'test', 'unit', 'cashu.test.js')
 const appRegistryTest = readText(hiverelayRoot, 'test', 'unit', 'app-registry.test.js')
 const signedDirectoryTest = readText(hiverelayRoot, 'test', 'unit', 'signed-directory.test.js')
+const capabilityDocTest = readText(hiverelayRoot, 'test', 'unit', 'capability-doc.test.js')
 const appLifecyclePersistenceTest = readText(hiverelayRoot, 'test', 'unit', 'app-lifecycle-persistence.test.js')
 const manifestStoreTest = readText(hiverelayRoot, 'test', 'unit', 'manifest-store.test.js')
 const forkDetectorTest = readText(hiverelayRoot, 'test', 'unit', 'fork-detector.test.js')
 const pluginLoaderTest = readText(hiverelayRoot, 'test', 'unit', 'plugin-loader.test.js')
 const prepareReleaseTest = readText(hiverelayRoot, 'test', 'unit', 'prepare-release.test.js')
+const releasePromiseScopeTest = readText(hiverelayRoot, 'test', 'unit', 'release-promise-scope.test.js')
+const auditOwnedDiffTest = readText(hiverelayRoot, 'test', 'unit', 'audit-owned-diff.test.js')
+const outboxLogBenchTest = readText(hiverelayRoot, 'test', 'unit', 'outboxlog-bench.test.js')
+const outboxLogSeederRuntimeTest = readText(hiverelayRoot, 'test', 'unit', 'outboxlog-seeder-runtime.test.js')
 const fleetRolloutCheckTest = readText(hiverelayRoot, 'test', 'unit', 'fleet-rollout-check.test.js')
 const fleetShellSafetyTest = readText(hiverelayRoot, 'test', 'unit', 'fleet-shell-safety.test.js')
 const officialUmbrelExportTest = readText(hiverelayRoot, 'test', 'unit', 'official-umbrel-export.test.js')
@@ -388,6 +448,7 @@ const githubReleaseSecretsApplyTest = readText(hiverelayRoot, 'test', 'unit', 'g
 const releaseSecretsTemplateTest = readText(hiverelayRoot, 'test', 'unit', 'release-secret-template.test.js')
 const ecosystemConsumersAuditTest = readText(hiverelayRoot, 'test', 'unit', 'ecosystem-consumers.test.js')
 const npmLatestCheckTest = readText(hiverelayRoot, 'test', 'unit', 'npm-latest-check.test.js')
+const releaseBlockersCheckTest = readText(hiverelayRoot, 'test', 'unit', 'release-blockers-check.test.js')
 const npmPackagePackCheckTest = readText(hiverelayRoot, 'test', 'unit', 'npm-package-pack-check.test.js')
 const publicArtifactSecretsAuditTest = readText(hiverelayRoot, 'test', 'unit', 'public-artifact-secret-scan.test.js')
 const releaseEvidenceTest = readText(hiverelayRoot, 'test', 'unit', 'release-evidence.test.js')
@@ -417,6 +478,10 @@ const hyperGatewayHardeningTest = readText(hiverelayRoot, 'test', 'unit', 'hyper
 const standaloneGatewayServerTest = readText(hiverelayRoot, 'test', 'unit', 'gateway-standalone-server.test.js')
 const pokerHttpAdapterTest = readText(hiverelayRoot, 'test', 'unit', 'poker-http-adapter.test.js')
 const pokerWsAdapterTest = readText(hiverelayRoot, 'test', 'unit', 'poker-ws-adapter.test.js')
+const outboxLogTest = readText(hiverelayRoot, 'test', 'unit', 'outboxlog.test.js')
+const outboxLogBlindSealTest = readText(hiverelayRoot, 'test', 'unit', 'outboxlog-blind-seal.test.js')
+const outboxLogHttpAdapterTest = readText(hiverelayRoot, 'test', 'unit', 'outboxlog-http-adapter.test.js')
+const notifyServiceTest = readText(hiverelayRoot, 'test', 'unit', 'notify-service.test.js')
 const docsDashboard = readText(hiverelayRoot, 'dashboard', 'docs.html')
 const catalogDashboard = readText(hiverelayRoot, 'dashboard', 'catalog.html')
 const networkDashboard = readText(hiverelayRoot, 'dashboard', 'network.html')
@@ -1149,12 +1214,31 @@ if (
 }
 
 if (
-  relayApi.includes("import { runWizardAction } from './api-wizard-actions.js'") &&
+  relayApi.includes('buildWizardSnapshotRoutePayload,') &&
+  relayApi.includes('resolveWizardSnapshotRoute,') &&
+  relayApi.includes("} from './api-wizard-actions.js'") &&
+  relayApi.includes('const wizardSnapshotRoute = resolveWizardSnapshotRoute(req.method, path)') &&
+  relayApi.includes("wizardSnapshotRoute && wizardSnapshotRoute.kind === 'wizard-snapshot'") &&
+  relayApi.includes('wizardSnapshotRoute.authMessage') &&
+  relayApi.includes('const result = await buildWizardSnapshotRoutePayload({') &&
+  relayApi.includes('route: wizardSnapshotRoute') &&
+  relayApi.includes('getWizard: () => this._getWizard()') &&
+  !relayApi.includes('wizard.snapshot()') &&
+  !relayApi.includes("if (path === '/api/wizard')") &&
+  relayApi.includes('const wizardAction = wizardActionFromPath(path)') &&
+  relayApi.includes('if (wizardAction !== null)') &&
+  relayApi.includes('action: wizardAction') &&
+  !relayApi.includes("path.slice('/api/wizard/'.length)") &&
   relayApi.includes('const result = await runWizardAction({') &&
   relayApi.includes('applyConfig: this.node._applyWizardConfig ? cfg => this.node._applyWizardConfig(cfg) : null') &&
   relayApi.includes('if (result.kind === \'apply-config\')') &&
-  relayApi.includes("if (result.kind === 'config-persist') return this._configPersistErrorResponse(res)") &&
-  relayApi.includes("if (result.kind === 'wizard-persist') return this._wizardPersistErrorResponse(res, result.error)") &&
+  relayApi.includes("if (result.kind === 'config-persist' || result.kind === 'wizard-persist') return this._persistFailureResponse(res, result)") &&
+  relayApiWizardActions.includes('export function resolveWizardSnapshotRoute') &&
+  relayApiWizardActions.includes("kind: 'wizard-snapshot'") &&
+  relayApiWizardActions.includes('export async function buildWizardSnapshotRoutePayload') &&
+  relayApiWizardActions.includes('unknown wizard snapshot route') &&
+  relayApiWizardActions.includes('wizard unavailable') &&
+  relayApiWizardActions.includes('export function wizardActionFromPath') &&
   relayApiWizardActions.includes('export async function runWizardAction') &&
   relayApiWizardActions.includes('case \'complete\'') &&
   relayApiWizardActions.includes('restoreRuntime()') &&
@@ -1162,6 +1246,11 @@ if (
   relayApiWizardActions.includes("return { ok: false, kind: 'apply-config', error: err }") &&
   relayApiWizardActions.includes("return { ok: false, kind: 'config-persist', error: err }") &&
   relayApiWizardActions.includes("return { ok: false, kind: 'wizard-persist', error: err }") &&
+  apiWizardActionsTest.includes('api wizard actions: snapshot route helper matches exact GET route') &&
+  apiWizardActionsTest.includes('api wizard actions: snapshot route payload helper dispatches wizard reads') &&
+  apiWizardActionsTest.includes('unknown wizard snapshot route') &&
+  apiWizardActionsTest.includes('wizard unavailable') &&
+  apiWizardActionsTest.includes('api wizard actions: route helper extracts action names without validation') &&
   apiWizardActionsTest.includes('api wizard actions: step actions mutate and save wizard state') &&
   apiWizardActionsTest.includes('api wizard actions: apply-config failure restores wizard and config') &&
   apiWizardActionsTest.includes('api wizard actions: config persistence failure restores wizard and config') &&
@@ -1176,10 +1265,21 @@ if (
 
 if (
   relayApi.includes('} from \'./api-subsidy.js\'') &&
-  relayApi.includes('buildSubsidyStatusPayload({') &&
-  relayApi.includes('buildSubsidyClaimPayload({ subsidyAccrual: this.node.subsidyAccrual })') &&
+  relayApi.includes('resolveSubsidyRoute,') &&
+  relayApi.includes('const subsidyRoute = resolveSubsidyRoute(req.method, path)') &&
+  relayApi.includes('subsidyRoute.authMessage') &&
+  relayApi.includes('const result = buildSubsidyRoutePayload({') &&
+  relayApi.includes('route: subsidyRoute') &&
+  !relayApi.includes('const result = buildSubsidyStatusPayload({') &&
+  !relayApi.includes('const result = buildSubsidyClaimPayload({') &&
   relayApi.includes('const result = await updateSubsidyDestination({') &&
   relayApi.includes('persistConfig: () => this._persistConfig()') &&
+  relayApiSubsidy.includes('export function resolveSubsidyRoute') &&
+  relayApiSubsidy.includes("'GET /api/subsidy'") &&
+  relayApiSubsidy.includes("'GET /api/subsidy/claim'") &&
+  relayApiSubsidy.includes("'POST /api/subsidy/destination'") &&
+  relayApiSubsidy.includes('export function buildSubsidyRoutePayload') &&
+  relayApiSubsidy.includes('unknown subsidy route') &&
   relayApiSubsidy.includes('export function buildSubsidyStatusPayload') &&
   relayApiSubsidy.includes('export function buildSubsidyClaimPayload') &&
   relayApiSubsidy.includes("formatErr('UNSUPPORTED', 'subsidy claim export unavailable')") &&
@@ -1188,6 +1288,9 @@ if (
   relayApiSubsidy.includes('destination (string or null) required') &&
   relayApiSubsidy.includes('await saveWizardRollback(wizard, wizardSaved, emit)') &&
   relayApiSubsidy.includes("emitRollbackError(emit, 'config-rollback-error', rollbackErr)") &&
+  apiSubsidyTest.includes('api subsidy: route helper maps exact subsidy routes') &&
+  apiSubsidyTest.includes('api subsidy: route payload helper dispatches read routes') &&
+  apiSubsidyTest.includes('unknown subsidy route') &&
   apiSubsidyTest.includes('api subsidy: status payload is shaped for disabled and enabled accrual') &&
   apiSubsidyTest.includes('api subsidy: claim payload reports disabled and unavailable exporters without throwing') &&
   apiSubsidyTest.includes('api subsidy: destination parser requires string or null and normalizes rails') &&
@@ -1205,8 +1308,18 @@ if (
 
 if (
   relayApi.includes('} from \'./api-lease.js\'') &&
-  relayApi.includes('buildLeaseStatusPayload({') &&
+  relayApi.includes('resolveLeaseRoute,') &&
+  relayApi.includes('const leaseRoute = resolveLeaseRoute(req.method, path)') &&
+  relayApi.includes("formatErr('NOT_ALLOWED', leaseRoute.authMessage)") &&
+  relayApi.includes('const result = buildLeaseRoutePayload({') &&
+  relayApi.includes('route: leaseRoute') &&
+  !relayApi.includes('const result = buildLeaseStatusPayload({') &&
   relayApi.includes('const result = await runLeaseConfigAction({') &&
+  relayApiLease.includes('export function resolveLeaseRoute') &&
+  relayApiLease.includes("'GET /api/lease'") &&
+  relayApiLease.includes("'POST /api/lease/config'") &&
+  relayApiLease.includes('export function buildLeaseRoutePayload') &&
+  relayApiLease.includes('unknown lease route') &&
   relayApiLease.includes('export function buildLeaseStatusPayload') &&
   relayApiLease.includes('export function parseLeaseRateUpdate') &&
   relayApiLease.includes('export async function runLeaseConfigAction') &&
@@ -1219,6 +1332,9 @@ if (
   leaseManager.includes('this.satsPerGiBDay = previous') &&
   leaseManager.includes("wrapped.code = 'LEASE_RATE_PERSIST_FAILED'") &&
   leaseManager.includes("this._persist().catch((err) => { this.emit('persist-error', err) })") &&
+  apiLeaseTest.includes('api lease: route helper maps exact paid lease routes') &&
+  apiLeaseTest.includes('api lease: route payload helper dispatches paid lease status') &&
+  apiLeaseTest.includes('unknown lease route') &&
   apiLeaseTest.includes('api lease: status payload shapes summary and counts active paid leases') &&
   apiLeaseTest.includes('api lease: config update uses durable setter before returning success') &&
   apiLeaseTest.includes('api lease: config update reports persistence failure without pretending success') &&
@@ -1297,18 +1413,34 @@ if (
 
 if (
   relayApi.includes("} from './api-overview.js'") &&
-  relayApi.includes('const stats = this.node.getStats({ includeSecrets: authed })') &&
-  relayApi.includes('return this._json(res, buildOverviewPayload({') &&
-  relayApi.includes('reputation: reputationOverview(this.node.reputation)') &&
-  relayApi.includes('bandwidth: bandwidthOverview(this.node._bandwidthReceipt)') &&
-  relayApi.includes('registry: registryOverview(this.node.seedingRegistry, config)') &&
+  relayApi.includes('const overviewRoute = resolveOverviewRoute(req.method, path)') &&
+  relayApi.includes("overviewRoute && overviewRoute.kind === 'overview'") &&
+  relayApi.includes('const result = buildOverviewRouteResponse({') &&
+  relayApi.includes('route: overviewRoute') &&
+  !relayApi.includes('return this._json(res, buildOverviewRoutePayload({') &&
+  relayApi.includes('node: this.node') &&
+  relayApi.includes('gateway: this._gateway') &&
+  !relayApi.includes("if (path === '/api/overview')") &&
+  !relayApi.includes('reputation: reputationOverview(this.node.reputation)') &&
+  !relayApi.includes('bandwidth: bandwidthOverview(this.node._bandwidthReceipt)') &&
+  !relayApi.includes('registry: registryOverview(this.node.seedingRegistry, config)') &&
   relayApiOverview.includes("import { buildReputationLeaderboardPayload } from './api-reputation-read.js'") &&
+  relayApiOverview.includes("import { sanitizeGatewayStats } from './api-gateway-stats.js'") &&
+  relayApiOverview.includes('export function resolveOverviewRoute') &&
+  relayApiOverview.includes("'GET /api/overview'") &&
   relayApiOverview.includes('export function buildOverviewPayload') &&
+  relayApiOverview.includes('export function buildOverviewRoutePayload') &&
+  relayApiOverview.includes('export function buildOverviewRouteResponse') &&
+  relayApiOverview.includes('unknown overview route') &&
+  relayApiOverview.includes('export function overviewHealth') &&
+  relayApiOverview.includes('node.getStats({ includeSecrets: authed === true })') &&
+  relayApiOverview.includes('sanitizeGatewayStats(gateway.getStats())') &&
   relayApiOverview.includes('export function overviewStorage') &&
   relayApiOverview.includes('export function overviewServed') &&
   relayApiOverview.includes('export function overviewRelay') &&
   relayApiOverview.includes('export function overviewSeeder') &&
   relayApiOverview.includes('export function overviewTorInfo') &&
+  relayApiOverview.includes('health: overviewHealth(health)') &&
   relayApiOverview.includes('function safeOverviewCounter') &&
   relayApiOverview.includes('buildReputationLeaderboardPayload({ reputation, maxEntries: 1 })') &&
   relayApiOverview.includes('relay: overviewRelay(stats)') &&
@@ -1316,10 +1448,15 @@ if (
   !relayApiOverview.includes('...stats.seeder') &&
   !relayApiOverview.includes('relay: stats.relay ||') &&
   relayApiOverview.includes('DEFAULT_MAX_STORAGE_BYTES') &&
+  apiOverviewTest.includes('api overview: route helper maps exact public overview route') &&
+  apiOverviewTest.includes('api overview: route response helper dispatches overview reads') &&
+  apiOverviewTest.includes('unknown overview route') &&
   apiOverviewTest.includes('api overview: measured storage and served counters beat legacy seeder fallbacks') &&
   apiOverviewTest.includes('api overview: legacy storage and served fallbacks remain stable') &&
   apiOverviewTest.includes('api overview: relay, seeder, and tor summaries are known-field only') &&
+  apiOverviewTest.includes('api overview: health summary is known-field only') &&
   apiOverviewTest.includes('api overview: build payload preserves dashboard contract') &&
+  apiOverviewTest.includes('api overview: route helper assembles public and authenticated payloads') &&
   apiAuthTest.includes('public overview requests use redacted stats and authenticated requests may include transport secrets') &&
   apiAuthTest.includes('overview tor details are shaped before response') &&
   statusSecretsRedactionTest.includes('getStats() redacts transport secrets when includeSecrets is false') &&
@@ -1334,16 +1471,28 @@ if (
 }
 
 if (
-  relayApi.includes("import { buildStatusPayload } from './api-status-read.js'") &&
-  relayApi.includes("if (path === '/status')") &&
-  relayApi.includes('const result = buildStatusPayload({ node: this.node })') &&
+  relayApi.includes("from './api-status-read.js'") &&
+  relayApi.includes('resolveStatusRoute(req.method, path)') &&
+  !relayApi.includes("if (path === '/status')") &&
+  relayApi.includes('const result = buildStatusRoutePayload({') &&
+  relayApi.includes('route: statusRoute') &&
+  !relayApi.includes('const result = buildStatusPayload({ node: this.node })') &&
   !relayApi.includes('this.node.getStats({ includeSecrets: this._checkAuth(req) })') &&
+  relayApiStatusRead.includes('export function resolveStatusRoute') &&
+  relayApiStatusRead.includes("path === '/status'") &&
+  relayApiStatusRead.includes('export function buildStatusRoutePayload') &&
+  relayApiStatusRead.includes('unknown status route') &&
   relayApiStatusRead.includes('export function buildStatusPayload') &&
   relayApiStatusRead.includes('node.getStats({ includeSecrets: false })') &&
   relayApiStatusRead.includes('export function sanitizeTransportSummary') &&
   relayApiStatusRead.includes('export function sanitizeDiskInfo') &&
   relayApiStatusRead.includes('export function buildStatusServicesSummary') &&
   relayApiStatusRead.includes('sanitizeServiceCatalogEntries') &&
+  apiStatusReadTest.includes('api status: route resolver maps only the exact public status route') &&
+  apiStatusReadTest.includes('api status: route payload helper dispatches bounded public status') &&
+  apiStatusReadTest.includes('unknown status route') &&
+  apiStatusReadTest.includes("resolveStatusRoute('GET', '/health')") &&
+  apiStatusReadTest.includes("resolveStatusRoute('GET', '/metrics')") &&
   apiStatusReadTest.includes('api status: build payload shapes public counters and omits raw secret fields') &&
   apiStatusReadTest.includes('api status: malformed public fields become stable null or zero values') &&
   apiAuthTest.includes('GET /status always returns bounded public status') &&
@@ -1518,34 +1667,80 @@ if (
 
 if (
   relayApi.includes("} from './api-service-config.js'") &&
-  relayApi.includes('return normalizeManageServicePlugins(plugins)') &&
-  relayApi.includes('return serviceConfigPayload(this.node.config, this.node.serviceRegistry)') &&
+  relayApi.includes('resolveServiceConfigUpdateRoute,') &&
+  relayApi.includes('runServiceConfigUpdateAction,') &&
+  relayApi.includes('const serviceConfigUpdateRoute = resolveServiceConfigUpdateRoute(req.method, path)') &&
+  relayApi.includes("serviceConfigUpdateRoute && serviceConfigUpdateRoute.kind === 'service-config-update'") &&
+  relayApiServiceConfig.includes('const normalized = normalizeManageServicePlugins(body.plugins)') &&
+  relayApi.includes('serviceConfigPayload: () => serviceConfigPayload(this.node.config, this.node.serviceRegistry)') &&
+  relayApi.includes('const result = await runServiceConfigUpdateAction({') &&
+  relayApi.includes('config: this.node.config') &&
+  relayApi.includes('registry: this.node.serviceRegistry') &&
+  relayApi.includes("if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)") &&
+  !relayApi.includes('_handleServiceConfigUpdate') &&
+  !relayApi.includes('_getServiceConfigPayload') &&
+  !relayApi.includes('const normalized = this._normalizeManageServicePlugins(body.plugins)') &&
   relayApiServiceConfig.includes('export const BUILTIN_SERVICE_PLUGINS') &&
   relayApiServiceConfig.includes('export const SERVICE_PLUGIN_BUNDLES') &&
   relayApiServiceConfig.includes("poker: Object.freeze(['poker', 'vrf', 'arbitration', 'zk'])") &&
   relayApiServiceConfig.includes('export function normalizeManageServicePlugins') &&
+  relayApiServiceConfig.includes('export function resolveServiceConfigUpdateRoute') &&
+  relayApiServiceConfig.includes("'POST /api/manage/services/config'") &&
   relayApiServiceConfig.includes('export function serviceConfigPayload') &&
-  countOccurrences(relayApi, "path === '/api/poker' || path.startsWith('/api/poker/')") === 1 &&
+  relayApiServiceConfig.includes('export async function runServiceConfigUpdateAction') &&
+  relayApiServiceConfig.includes("kind: 'config-persist'") &&
+  relayApiServiceConfig.includes('config.enableServices = previousEnableServices') &&
+  relayApiServiceConfig.includes('config.plugins = previousPlugins') &&
+  relayApi.includes('isPokerHttpRoute(path)') &&
+  relayApi.includes('const pokerRoutePolicy = resolvePokerHttpRoutePolicy(req.method, path)') &&
+  relayApi.includes('pokerRoutePolicy && pokerRoutePolicy.authRequired') &&
+  relayApi.includes('pokerRoutePolicy.authMessage') &&
+  !relayApi.includes("req.method === 'POST' && path === '/api/poker/tables'") &&
+  !relayApi.includes("path === '/api/poker' || path.startsWith('/api/poker/')") &&
+  relayApiRouteMounts.includes("export const POKER_HTTP_ROUTE = '/api/poker'") &&
+  relayApiRouteMounts.includes("export const POKER_HTTP_ROUTE_PREFIX = '/api/poker/'") &&
+  relayApiRouteMounts.includes("export const POKER_TABLE_CREATE_ROUTE = '/api/poker/tables'") &&
+  relayApiRouteMounts.includes('export function isPokerHttpRoute') &&
+  relayApiRouteMounts.includes('export function resolvePokerHttpRoutePolicy') &&
+  apiRouteMountsTest.includes('api route mounts: poker substrate keeps exact root plus subtree') &&
+  apiRouteMountsTest.includes('api route mounts: poker create-table mutation is the only auth policy override') &&
   !relayApi.includes("path.startsWith('/api/poker/') && path !== '/api/poker/usage'") &&
   !relayApi.includes('async _handlePokerHttpRoute') &&
   relayApiCors.includes('isPublicPokerCorsRoute') &&
   relayApiCors.includes("path.startsWith('/api/poker/')") &&
   relayApiCors.includes("path !== '/api/poker/usage'") &&
-  relayApi.includes('/api/manage/services/available') &&
-  relayApi.includes('/api/manage/services/config') &&
-  relayApi.includes('/api/usage') &&
-  relayApi.includes('/api/poker/usage') &&
-  relayApi.includes("import('p2p-hiveservices/builtin/poker/http-adapter.js')") &&
+  relayApi.includes('resolveManagementSnapshotRoute') &&
+  relayApi.includes('buildManagementSnapshotRoutePayload') &&
+  relayApiManagementSnapshots.includes("kind === 'service-config'") &&
+  relayApiManagementSnapshots.includes("'GET /api/manage/services/available'") &&
+  relayApiServiceConfig.includes("'POST /api/manage/services/config'") &&
+  relayApiUsageTelemetry.includes("'GET /api/usage'") &&
+  relayApiUsageTelemetry.includes("'GET /api/poker/usage'") &&
+  relayApi.includes("from './api-poker-http-adapter.js'") &&
   relayApi.includes("} from './api-usage-telemetry.js'") &&
+  relayApi.includes('buildUsageTelemetryRoutePayload,') &&
+  relayApi.includes('resolveUsageTelemetryRoute') &&
+  relayApi.includes('const usageRoute = resolveUsageTelemetryRoute(req.method, path)') &&
   relayApi.includes('_getUsageTelemetryPayload') &&
-  relayApi.includes('_getPokerUsageTelemetryPayload') &&
-  relayApi.includes("if (path === '/api/usage' && req.method === 'GET')") &&
-  relayApi.includes('if (this.node._bandwidthReceipt) return this._json(res, this._getUsageTelemetryPayload())') &&
-  relayApi.includes("if (path === '/api/poker/usage' && req.method === 'GET')") &&
+  !relayApi.includes('_getPokerUsageTelemetryPayload') &&
+  !relayApi.includes('recordUsageReceiptPayload(this.node.usageLedger, body)') &&
+  !relayApi.includes('usageLedgerDigestPayload(this.node.usageLedger)') &&
+  relayApi.includes("usageRoute && usageRoute.kind === 'receipt-submit'") &&
+  relayApi.includes("usageRoute && usageRoute.kind === 'usage-digest'") &&
+  !relayApi.includes('if (this.node._bandwidthReceipt) return this._json(res, this._getUsageTelemetryPayload())') &&
+  relayApi.includes("usageRoute && usageRoute.kind === 'poker-usage'") &&
+  relayApi.includes('if (!this._requireAuth(req, res, usageRoute.authMessage)) return') &&
   relayApi.includes('const provider = pk.ok ? pk.provider : this._getPokerApp()') &&
-  relayApi.includes('enabled: true') &&
+  !relayApi.includes('return this._json(res, pokerUsageTelemetryPayload(provider))') &&
+  relayApi.includes('const result = buildUsageTelemetryRoutePayload({') &&
+  relayApi.includes('route: usageRoute') &&
+  relayApi.includes('pokerProvider: provider') &&
+  relayApi.includes('usageLedger: this.node.usageLedger') &&
+  relayApi.includes('body') &&
+  relayApi.includes('bandwidthReceiptPayload: this.node._bandwidthReceipt ? this._getUsageTelemetryPayload() : null') &&
+  !relayApi.includes('const perTable = tables.map') &&
   relayApi.includes('return usageTelemetryPayload(this.node._bandwidthReceipt, stats)') &&
-  relayApi.includes('return pokerUsageTelemetryPayload(this._getPokerApp())') &&
+  !relayApi.includes('return pokerUsageTelemetryPayload(this._getPokerApp())') &&
   pokerHttpAdapter.includes("from 'p2p-hiverelay/core/relay-node/api-body.js'") &&
   pokerHttpAdapter.includes("from 'p2p-hiverelay/core/relay-node/api-request.js'") &&
   pokerHttpAdapter.includes("from 'p2p-hiverelay/core/relay-node/api-response.js'") &&
@@ -1557,13 +1752,45 @@ if (
   pokerHttpAdapter.includes("error: 'Poker move failed'") &&
   pokerHttpAdapter.includes("error: 'Poker table list failed'") &&
   !pokerHttpAdapter.includes('res.end(JSON.stringify(body)') &&
-  relayApi.includes('async _loadPokerHttpAdapter ()') &&
-  relayApi.includes("this.emit('poker-http-adapter-error', { error: err })") &&
-  relayApi.includes("formatErr('UNSUPPORTED', 'poker HTTP adapter unavailable')") &&
-  relayApi.includes("errorCode: 'poker-http-adapter-unavailable'") &&
+  relayApi.includes('this._loadPokerHttpAdapter = opts.loadPokerHttpAdapter || loadPokerHttpAdapterModule') &&
+  relayApi.includes('await resolvePokerHttpRouteHandler({') &&
+  relayApi.includes('cachedHandler: this._handlePokerRoute') &&
+  relayApi.includes('loadAdapter: this._loadPokerHttpAdapter') &&
+  relayApi.includes('const unavailable = buildPokerHttpAdapterUnavailableResponse(err)') &&
+  relayApi.includes('this.emit(unavailable.event.name, unavailable.event.detail)') &&
+  relayApi.includes('return this._json(res, unavailable.payload, unavailable.status)') &&
+  !relayApi.includes('async _loadPokerHttpAdapter ()') &&
+  !relayApi.includes('_pokerHttpAdapterUnavailable') &&
+  relayApiPokerHttpAdapter.includes('export const POKER_HTTP_ADAPTER_UNAVAILABLE_CODE') &&
+  relayApiPokerHttpAdapter.includes('export async function loadPokerHttpAdapterModule') &&
+  relayApiPokerHttpAdapter.includes("return import('p2p-hiveservices/builtin/poker/http-adapter.js')") &&
+  relayApiPokerHttpAdapter.includes('export async function resolvePokerHttpRouteHandler') &&
+  relayApiPokerHttpAdapter.includes('if (cachedHandler) return cachedHandler') &&
+  relayApiPokerHttpAdapter.includes('missing handlePokerRoute export') &&
+  relayApiPokerHttpAdapter.includes('export function buildPokerHttpAdapterUnavailableResponse') &&
+  relayApiPokerHttpAdapter.includes("formatErr('UNSUPPORTED', 'poker HTTP adapter unavailable')") &&
+  relayApiPokerHttpAdapter.includes('errorCode: POKER_HTTP_ADAPTER_UNAVAILABLE_CODE') &&
+  relayApiPokerHttpAdapter.includes("name: 'poker-http-adapter-error'") &&
   !relayApi.includes("poker HTTP adapter unavailable: ' + err.message") &&
+  apiPokerHttpAdapterTest.includes('api poker http adapter: cached handler is reused without loading optional module') &&
+  apiPokerHttpAdapterTest.includes('api poker http adapter: loader returns exact handlePokerRoute export') &&
+  apiPokerHttpAdapterTest.includes('api poker http adapter: missing route export fails before request handling') &&
+  apiPokerHttpAdapterTest.includes('api poker http adapter: unavailable response redacts public payload and keeps event detail') &&
   relayApiUsageTelemetry.includes('export function usageTelemetryPayload') &&
+  relayApiUsageTelemetry.includes('export function resolveUsageTelemetryRoute') &&
+  relayApiUsageTelemetry.includes('USAGE_TELEMETRY_AUTH_ERROR') &&
+  relayApiUsageTelemetry.includes("'GET /api/poker/usage'") &&
+  relayApiUsageTelemetry.includes("'POST /api/usage/receipt'") &&
+  relayApiUsageTelemetry.includes("'GET /api/usage'") &&
+  relayApiUsageTelemetry.includes('export function buildUsageTelemetryRoutePayload') &&
+  relayApiUsageTelemetry.includes('unknown usage telemetry route') &&
+  relayApiUsageTelemetry.includes('export function recordUsageReceiptPayload') &&
+  relayApiUsageTelemetry.includes('export function usageLedgerDigestPayload') &&
+  relayApiUsageTelemetry.includes('USAGE_DIGEST_NOTE') &&
   relayApiUsageTelemetry.includes('export function pokerUsageTelemetryPayload') &&
+  relayApiUsageTelemetry.includes('MAX_POKER_USAGE_TABLE_ROWS') &&
+  relayApiUsageTelemetry.includes('perTable') &&
+  relayApiUsageTelemetry.includes('safeTableKey') &&
   relayApiUsageTelemetry.includes('export function sumReceiptBytes') &&
   relayApiUsageTelemetry.includes('export function tableWriterCount') &&
   relayApiServiceConfig.includes('unknown service plugin') &&
@@ -1572,8 +1799,18 @@ if (
   pluginLoader.includes('expandPluginConfigs') &&
   apiServiceConfigHelpersTest.includes('api service config helpers: normalize builtins and expand bundles') &&
   apiServiceConfigHelpersTest.includes('api service config helpers: payload reports configured builtins and active providers') &&
+  apiServiceConfigHelpersTest.includes('api service config helpers: update action persists normalized plugins') &&
+  apiServiceConfigHelpersTest.includes('api service config helpers: update action rejects locked profiles before mutation') &&
+  apiServiceConfigHelpersTest.includes('api service config helpers: update action rolls back on persistence failure') &&
+  apiUsageTelemetryTest.includes('api usage telemetry: route helper maps exact usage routes') &&
   apiUsageTelemetryTest.includes('api usage telemetry: builds dashboard payload from verified and measured counters') &&
+  apiUsageTelemetryTest.includes('api usage telemetry: records signed usage receipts through a bounded helper') &&
+  apiUsageTelemetryTest.includes('api usage telemetry: builds payout-eligible ledger digest payload') &&
+  apiUsageTelemetryTest.includes('api usage telemetry: route payload helper dispatches usage reads and receipt writes') &&
+  apiUsageTelemetryTest.includes('unknown usage telemetry route') &&
   apiUsageTelemetryTest.includes('api usage telemetry: poker usage counts tables, appends, and seats defensively') &&
+  apiUsageTelemetryTest.includes('api usage telemetry: poker usage caps per-table rows while preserving totals') &&
+  apiUsageTelemetryTest.includes('per-table rows never expose raw table payload fields') &&
   apiAuthTest.includes('api-auth: operator usage telemetry requires auth and returns aggregate proof counters') &&
   apiServiceConfigTest.includes('poker service http api is delegated when poker provider is running') &&
   apiServiceConfigTest.includes('poker table api keeps app-facing CORS separate from management usage telemetry') &&
@@ -1594,12 +1831,638 @@ if (
 }
 
 if (
+  outboxLogEngine.includes('export function createOutboxLog') &&
+  outboxLogEngine.includes('verifyAppend = null') &&
+  outboxLogEngine.includes('verifyOutboxRecordSignature({ appId, type: op.type, data: op.data }, { registry: namespaceRegistry })') &&
+  outboxLogEngine.includes('DEFAULT_MAX_GROUPS = 20000') &&
+  outboxLogEngine.includes('DEFAULT_MAX_ROWS_PER_GROUP = 50000') &&
+  outboxLogEngine.includes('DEFAULT_MAX_ID_LENGTH = 256') &&
+  outboxLogEngine.includes('DEFAULT_MAX_APP_ID_LENGTH = 128') &&
+  outboxLogEngine.includes('DEFAULT_MAX_VALUE_BYTES = 64 * 1024') &&
+  outboxLogEngine.includes('DEFAULT_MAX_TOTAL_BYTES = 256 * 1024 * 1024') &&
+  outboxLogEngine.includes("throw fail('bad signature', 400)") &&
+  outboxLogEngine.includes('writer !== outboxWriter') &&
+  outboxLogEngine.includes('sodium.crypto_sign_verify_detached') &&
+  outboxLogEngine.includes('export function canonicalOutboxRecord') &&
+  outboxLogEngine.includes("const SIG_FIELDS = new Set(['_sig', '_k', '_dk', '_ns', '_alg'])") &&
+  outboxLogEngine.includes('function subscribe (appId, opts, fn)') &&
+  outboxLogEngine.includes("group.rows.get('head!' + appId)") &&
+  outboxLogApp.includes('export class OutboxLogApp extends ServiceProvider') &&
+  outboxLogApp.includes("name: 'outboxlog'") &&
+  outboxLogApp.includes("capabilities: ['outboxlog.sync', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces']") &&
+  outboxLogTest.includes('runWireConformance') &&
+  outboxLogTest.includes("t.is(runWireConformance(log.sync, { label: 'outboxlog' }), 26)") &&
+  outboxLogTest.includes('default verifier accepts same-writer opaque records') &&
+  outboxLogTest.includes('default verifier rejects foreign writers and tampered bodies') &&
+  outboxLogTest.includes('emits append events without read-side group creation')
+) {
+  pass('OutboxLog additive engine preserves Peerit sync wire shape with strict single-writer envelope verification before mount wiring')
+} else {
+  fail('OutboxLog additive engine can drift from Peerit wire conformance, single-writer verification, or mount-deferred service shape')
+}
+
+if (
+  outboxLogEngine.includes('export const DEFAULT_OUTBOXLOG_NAMESPACE') &&
+  outboxLogEngine.includes('export function createOutboxNamespaceRegistry') &&
+  outboxLogEngine.includes('namespaceRegistry = createOutboxNamespaceRegistry') &&
+  outboxLogEngine.includes('namespaceInfoForAppend') &&
+  outboxLogEngine.includes('namespaceCap(namespaceInfo') &&
+  outboxLogEngine.includes('BLIND_FORBIDDEN_FIELDS') &&
+  outboxLogEngine.includes('OUTBOXLOG_BLIND_SEAL_VERSION') &&
+  outboxLogEngine.includes('createOutboxBlindSealedBody') &&
+  outboxLogEngine.includes('isOutboxBlindRecord(data) && !hasBlindForbiddenField(data)') &&
+  outboxLogEngine.includes("const BLIND_BODY_FIELDS = new Set(['sealed'])") &&
+  outboxLogEngine.includes('function normalizeBlindSealedBody') &&
+  outboxLogEngine.includes('function normalizeBlindSeal') &&
+  outboxLogEngine.includes('function hasBlindForbiddenField') &&
+  outboxLogEngine.includes('bytesPerDay: optionalPositiveInteger') &&
+  outboxLogApp.includes('outboxlog.namespaces') &&
+  outboxLogApp.includes('createOutboxBlindSealedBody') &&
+  outboxLogApp.includes('isOutboxBlindRecord') &&
+  servicesIndex.includes('createOutboxBlindSealedBody') &&
+  servicesIndex.includes('isOutboxBlindSealedBody') &&
+  outboxLogApp.includes("capabilities: ['outboxlog.sync', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces']") &&
+  outboxLogApp.includes('namespaces ()') &&
+  outboxLogHttpAdapter.includes('sync.create(body.body.appId, { namespace: body.body.namespace })') &&
+  outboxLogTest.includes('namespace registry accepts non-Peerit app records and enforces caps') &&
+  outboxLogTest.includes('blind namespace requires sealed ciphertext body and rejects unsafe plaintext fields') &&
+  outboxLogTest.includes('createOutboxBlindSealedBody({ nonce:') &&
+  outboxLogTest.includes('opaque-but-unsealed') &&
+  outboxLogTest.includes('version: 0') &&
+  outboxLogTest.includes('namespace config admits Poked-style apps without a relay fork') &&
+  servicesReadme.includes('It is namespace-driven rather than Peerit-specific') &&
+  servicesReadme.includes('`outboxlog.namespaces` such as `peerit`, `poked`, or `privchat`') &&
+  servicesReadme.includes('`createOutboxBlindSealedBody()`') &&
+  servicesReadme.includes('rejects naked ciphertext objects')
+) {
+  pass('OutboxLog namespace registration admits app-agnostic Poked/Peerit-style outboxes with sealed blind guards and hot-path caps')
+} else {
+  fail('OutboxLog can drift back to Peerit-only semantics without namespace registry, config wiring, sealed blind guard, cap tests, or HTTP create compatibility')
+}
+
+if (
+  outboxLogBlindSeal.includes('export function createOutboxBlindSealKey') &&
+  outboxLogBlindSeal.includes('export function sealOutboxBlindPayload') &&
+  outboxLogBlindSeal.includes('export function openOutboxBlindPayload') &&
+  outboxLogBlindSeal.includes('crypto_aead_xchacha20poly1305_ietf_encrypt') &&
+  outboxLogBlindSeal.includes('crypto_aead_xchacha20poly1305_ietf_decrypt') &&
+  outboxLogBlindSeal.includes('OUTBOXLOG_BLIND_SEAL_KEY_BYTES') &&
+  outboxLogBlindSeal.includes('normalizeAad') &&
+  outboxLogBlindSeal.includes('createOutboxBlindSealedBody') &&
+  outboxLogApp.includes("from './blind-seal.js'") &&
+  outboxLogApp.includes('sealOutboxBlindPayload') &&
+  servicesIndex.includes('sealOutboxBlindPayload') &&
+  servicesIndex.includes('openOutboxBlindPayload') &&
+  servicesReadme.includes('`sealOutboxBlindPayload()`') &&
+  servicesReadme.includes('additional authenticated data') &&
+  outboxLogBlindSealTest.includes('outboxlog blind seal: encrypts JSON payloads and opens with matching aad') &&
+  outboxLogBlindSealTest.includes('wrong key') &&
+  outboxLogBlindSealTest.includes('helper output appends into a blind namespace without plaintext storage') &&
+  outboxLogBlindSealTest.includes('t.absent(JSON.stringify(stored).includes')
+) {
+  pass('OutboxLog blind seal helper gives clients a tested XChaCha20-Poly1305 path for sealed private namespace payloads')
+} else {
+  fail('OutboxLog blind seal helper can drift from client-owned encryption, AAD verification, package exports, or blind namespace append coverage')
+}
+
+if (
+  outboxLogBlindSeal.includes('export function createOutboxBlindRecipientKeyPair') &&
+  outboxLogBlindSeal.includes('export function wrapOutboxBlindSealKey') &&
+  outboxLogBlindSeal.includes('export function openOutboxBlindSealKeyEnvelope') &&
+  outboxLogBlindSeal.includes('crypto_box_seal') &&
+  outboxLogBlindSeal.includes('crypto_box_seal_open') &&
+  outboxLogBlindSeal.includes('OUTBOXLOG_BLIND_KEY_ENVELOPE_VERSION') &&
+  outboxLogBlindSeal.includes('OUTBOXLOG_BLIND_RECIPIENT_PUBLIC_KEY_BYTES') &&
+  outboxLogBlindSeal.includes('selectRecipientEnvelope') &&
+  outboxLogApp.includes('wrapOutboxBlindSealKey') &&
+  outboxLogApp.includes('openOutboxBlindSealKeyEnvelope') &&
+  servicesIndex.includes('createOutboxBlindRecipientKeyPair') &&
+  servicesIndex.includes('wrapOutboxBlindSealKey') &&
+  servicesIndex.includes('openOutboxBlindSealKeyEnvelope') &&
+  servicesReadme.includes('`wrapOutboxBlindSealKey()`') &&
+  servicesReadme.includes('recipient discovery, trust, rotation, and group') &&
+  outboxLogBlindSealTest.includes('recipient key envelope unwraps only for intended recipients') &&
+  outboxLogBlindSealTest.includes('recipient public key mismatch') &&
+  outboxLogBlindSealTest.includes('stored key envelope opens appended private payload for recipient') &&
+  outboxLogBlindSealTest.includes('recipient secret')
+) {
+  pass('OutboxLog blind key envelope helper wraps private payload keys to intended recipients without relay key authority')
+} else {
+  fail('OutboxLog blind recipient key wrapping can drift from app-owned sealed-box envelopes, exports, docs, or unintended-recipient rejection tests')
+}
+
+if (
+  outboxLogBlindSeal.includes('export function createOutboxBlindSealAAD') &&
+  outboxLogBlindSeal.includes('OUTBOXLOG_BLIND_SEAL_AAD_DOMAIN') &&
+  outboxLogBlindSeal.includes('normalizeAadField') &&
+  outboxLogApp.includes('createOutboxBlindSealAAD') &&
+  servicesIndex.includes('createOutboxBlindSealAAD') &&
+  servicesReadme.includes('`createOutboxBlindSealAAD()`') &&
+  servicesReadme.includes('namespace/appId/type/id/keyId') &&
+  outboxLogBlindSealTest.includes('canonical aad binds private payloads to app namespace records') &&
+  outboxLogBlindSealTest.includes("namespace: 'poked'") &&
+  outboxLogBlindSealTest.includes("namespace: 'peerit'") &&
+  outboxLogBlindSealTest.includes('poked-room:alpha@2')
+) {
+  pass('OutboxLog blind AAD helper binds private ciphertext to app namespace, writer, record, and key epoch metadata')
+} else {
+  fail('OutboxLog blind AAD binding can drift from canonical app-owned namespace/type/id/keyId coverage, exports, docs, or wrong-binding rejection tests')
+}
+
+if (
+  outboxLogBlindSeal.includes('export function createOutboxBlindRecipientDirectoryEntry') &&
+  outboxLogBlindSeal.includes('export function verifyOutboxBlindRecipientDirectoryEntry') &&
+  outboxLogBlindSeal.includes('OUTBOXLOG_BLIND_RECIPIENT_DIRECTORY_DOMAIN') &&
+  outboxLogBlindSeal.includes('fingerprintRecipientDirectoryEntry') &&
+  outboxLogApp.includes('createOutboxBlindRecipientDirectoryEntry') &&
+  outboxLogApp.includes('verifyOutboxBlindRecipientDirectoryEntry') &&
+  servicesIndex.includes('createOutboxBlindRecipientDirectoryEntry') &&
+  servicesIndex.includes('verifyOutboxBlindRecipientDirectoryEntry') &&
+  servicesReadme.includes('`createOutboxBlindRecipientDirectoryEntry()`') &&
+  servicesReadme.includes('record-shape integrity') &&
+  outboxLogBlindSealTest.includes('recipient directory entry stays app-owned before private payload wrap') &&
+  outboxLogBlindSealTest.includes("namespace: 'poked-private'") &&
+  outboxLogBlindSealTest.includes('fingerprint mismatch') &&
+  outboxLogBlindSealTest.includes('namespace mismatch')
+) {
+  pass('OutboxLog recipient directory helper gives apps canonical public-key/key-epoch records without relay trust authority')
+} else {
+  fail('OutboxLog recipient directory helper can drift from app-owned canonical entry shape, fingerprint checks, exports, docs, or trust-boundary tests')
+}
+
+if (
+  outboxLogBlindSeal.includes('export function verifyOutboxBlindRecipientDirectoryRotation') &&
+  outboxLogBlindSeal.includes('recipient directory rotation replacesKeyId mismatch') &&
+  outboxLogBlindSeal.includes('recipient directory rotation keyId unchanged') &&
+  outboxLogBlindSeal.includes('recipient directory rotation public key unchanged') &&
+  outboxLogApp.includes('verifyOutboxBlindRecipientDirectoryRotation') &&
+  servicesIndex.includes('verifyOutboxBlindRecipientDirectoryRotation') &&
+  servicesReadme.includes('`verifyOutboxBlindRecipientDirectoryRotation()`') &&
+  servicesReadme.includes('`replacesKeyId`') &&
+  outboxLogBlindSealTest.includes('recipient directory rotation accepts only linked key replacements') &&
+  outboxLogBlindSealTest.includes('rotated key secret') &&
+  outboxLogBlindSealTest.includes('replacesKeyId mismatch') &&
+  outboxLogBlindSealTest.includes('public key unchanged')
+) {
+  pass('OutboxLog recipient rotation helper verifies linked key replacements without relay trust authority')
+} else {
+  fail('OutboxLog recipient rotation helper can drift from app-owned replacesKeyId continuity, exports, docs, or malformed-rotation rejection tests')
+}
+
+if (
+  outboxLogBlindSeal.includes('export function verifyOutboxBlindRecipientDirectoryRecord') &&
+  outboxLogBlindSeal.includes('verifyOutboxRecordSignature') &&
+  outboxLogBlindSeal.includes('normalizeTrustedPublishers') &&
+  outboxLogBlindSeal.includes('untrusted recipient directory publisher') &&
+  outboxLogBlindSeal.includes('recipient directory record signature mismatch') &&
+  outboxLogApp.includes('verifyOutboxBlindRecipientDirectoryRecord') &&
+  servicesIndex.includes('verifyOutboxBlindRecipientDirectoryRecord') &&
+  servicesReadme.includes('`verifyOutboxBlindRecipientDirectoryRecord()`') &&
+  servicesReadme.includes('app-supplied trusted publisher') &&
+  outboxLogBlindSealTest.includes('recipient directory records require app supplied trust roots') &&
+  outboxLogBlindSealTest.includes('trusted publisher secret') &&
+  outboxLogBlindSealTest.includes('trusted publishers required') &&
+  outboxLogBlindSealTest.includes('untrusted recipient directory publisher') &&
+  outboxLogBlindSealTest.includes('signature mismatch')
+) {
+  pass('OutboxLog recipient directory record helper binds app-supplied trust roots to signed directory rows without relay authority')
+} else {
+  fail('OutboxLog recipient directory record helper can drift from trusted-publisher roots, signature verification, exports, docs, or negative tests')
+}
+
+if (
+  outboxLogHttpAdapter.includes('export function createOutboxLogHttpHandler') &&
+  outboxLogHttpAdapter.includes('export function createOutboxLogTokenAuth') &&
+  outboxLogHttpAdapter.includes('export async function handleOutboxLogRoute') &&
+  outboxLogHttpAdapter.includes("path === '/api/token'") &&
+  outboxLogHttpAdapter.includes("path === '/api/bridge/status'") &&
+  outboxLogHttpAdapter.includes("path.startsWith('/api/identity')") &&
+  outboxLogHttpAdapter.includes("path === '/api/sync/create'") &&
+  outboxLogHttpAdapter.includes("path === '/api/sync/append'") &&
+  outboxLogHttpAdapter.includes("path === '/api/sync/heads'") &&
+  outboxLogHttpAdapter.includes("path === '/api/directory'") &&
+  outboxLogHttpAdapter.includes("path === '/api/swarm/events'") &&
+  outboxLogHttpAdapter.includes("path === '/api/swarm/join'") &&
+  outboxLogHttpAdapter.includes("path === '/api/swarm/send'") &&
+  outboxLogHttpAdapter.includes("path === '/api/swarm/leave'") &&
+  outboxLogHttpAdapter.includes('OUTBOXLOG_MAX_JSON_BODY_BYTES = 1024 * 1024') &&
+  outboxLogHttpAdapter.includes('getPostJsonContentTypeProblem(req)') &&
+  outboxLogHttpAdapter.includes('readJsonBody(req, OUTBOXLOG_MAX_JSON_BODY_BYTES)') &&
+  outboxLogHttpAdapter.includes("return respond(res, 401, { error: 'missing or invalid token' })") &&
+  outboxLogHttpAdapter.includes("return respond(res, 410, { error: 'identity is browser-local; this relay never signs' })") &&
+  outboxLogHttpAdapter.includes("return respond(res, 500, { error: 'outboxlog route failed' })") &&
+  outboxLogHttpAdapter.includes('sseMaxPerIp') &&
+  outboxLogHttpAdapter.includes('sseMaxTotal') &&
+  outboxLogHttpAdapter.includes('overLimit(ip, ctx.rateLimit || DEFAULT_RATE_LIMIT, state)') &&
+  outboxLogHttpAdapter.includes("res.setHeader('Content-Type', 'text/event-stream')") &&
+  outboxLogHttpAdapter.includes("res.write('data: ' + JSON.stringify(event) + '\\n\\n')") &&
+  outboxLogSwarmHub.includes('export function createOutboxSwarmHub') &&
+  outboxLogSwarmHub.includes('maxDescriptorsPerTopic = 20000') &&
+  outboxLogSwarmHub.includes('remember(channel.topic, data)') &&
+  outboxLogSwarmHub.includes('replay(channelId)') &&
+  outboxLogApp.includes('createOutboxSwarmHub') &&
+  outboxLogApp.includes('this.swarm = opts.swarm || this.engine.swarm || createOutboxSwarmHub(opts)') &&
+  outboxLogEngine.includes('swarm = createOutboxSwarmHub()') &&
+  outboxLogEngine.includes('swarm,') &&
+  outboxLogHttpAdapterTest.includes("from 'p2p-hiveservices/builtin/outboxlog/http-adapter.js'") &&
+  outboxLogHttpAdapterTest.includes('issues tokens and gates bridge status') &&
+  outboxLogHttpAdapterTest.includes('serves Peerit sync routes and directory') &&
+  outboxLogHttpAdapterTest.includes('hardens JSON body parsing before sync mutation') &&
+  outboxLogHttpAdapterTest.includes('rate limits by client IP') &&
+  outboxLogHttpAdapterTest.includes('tokenized swarm SSE receives peer messages') &&
+  outboxLogHttpAdapterTest.includes('caps open SSE streams per IP')
+) {
+  pass('OutboxLog HTTP adapter covers Peerit token, sync, directory, and swarm SSE routes with hardened bounds before mount wiring')
+} else {
+  fail('OutboxLog HTTP adapter can drift from Peerit route compatibility, token auth, JSON hardening, or SSE/rate bounds')
+}
+
+if (
+  outboxLogEngine.includes('DEFAULT_DIRECTORY_LIMIT = 5000') &&
+  outboxLogEngine.includes('DEFAULT_MAX_DIRECTORY_LIMIT = 5000') &&
+  outboxLogEngine.includes('let directorySeq = 0') &&
+  outboxLogEngine.includes("const updatesDirectory = key === 'head!' + appId") &&
+  outboxLogEngine.includes('function directoryPage') &&
+  outboxLogEngine.includes('nextCursor') &&
+  outboxLogEngine.includes('hasMore') &&
+  outboxLogEngine.includes('watermark: directorySeq') &&
+  outboxLogEngine.includes('directorySeq: group.directorySeq || 0') &&
+  outboxLogEngine.includes('function normalizeDirectorySince') &&
+  outboxLogHttpAdapter.includes('directoryOptsFrom(parsed)') &&
+  outboxLogHttpAdapter.includes('function directoryOptsFrom') &&
+  outboxLogHttpAdapter.includes("cursor: url.searchParams.get('cursor')") &&
+  outboxLogHttpAdapter.includes("since: url.searchParams.get('since')") &&
+  outboxLogTest.includes('directory pages heads and exposes delta watermark') &&
+  outboxLogTest.includes('directory watermark survives persistence reloads') &&
+  outboxLogHttpAdapterTest.includes('directory query exposes pagination and delta cursors')
+) {
+  pass('OutboxLog directory pagination and delta reads bound author-discovery boot paths')
+} else {
+  fail('OutboxLog directory can drift back to silent truncation without cursor, watermark, persistence, or HTTP-query coverage')
+}
+
+if (
+  outboxLogEngine.includes('DEFAULT_MAX_APPEND_EVENTS_PER_OUTBOX = 1000') &&
+  outboxLogEngine.includes('DEFAULT_MAX_APPEND_EVENT_LIMIT = 1000') &&
+  outboxLogEngine.includes('const appendEventsByApp = new Map()') &&
+  outboxLogEngine.includes('let appendSeq = 0') &&
+  outboxLogEngine.includes("topic: 'outbox/' + appId") &&
+  outboxLogEngine.includes('function appendEventsPage') &&
+  outboxLogEngine.includes('function rememberAppendEvent') &&
+  outboxLogEngine.includes('function normalizeAppendEvent') &&
+  outboxLogEngine.includes('appendEvents: [...appendEventsByApp.entries()]') &&
+  outboxLogEngine.includes('replay: true') &&
+  outboxLogApp.includes('events (appId, opts = {})') &&
+  outboxLogHttpAdapter.includes("path === '/api/sync/events'") &&
+  outboxLogHttpAdapter.includes('eventOptsFrom(parsed)') &&
+  outboxLogHttpAdapter.includes('function eventOptsFrom') &&
+  outboxLogTest.includes('append event replay is per-outbox bounded and watermark based') &&
+  outboxLogTest.includes('append event replay survives persistence reloads') &&
+  outboxLogHttpAdapterTest.includes('sync events expose bounded per-outbox replay markers')
+) {
+  pass('OutboxLog append event replay exposes bounded per-key change markers for JSON and stream consumers')
+} else {
+  fail('OutboxLog append event replay can drift without bounded markers, persisted watermarks, app wrapper, HTTP read path, or tests')
+}
+
+if (
+  outboxLogHttpAdapter.includes('DEFAULT_SYNC_EVENT_APP_ID_LIMIT = 128') &&
+  outboxLogHttpAdapter.includes('DEFAULT_SYNC_EVENT_APP_ID_LENGTH = 128') &&
+  outboxLogHttpAdapter.includes('DEFAULT_SYNC_EVENT_REPLAY_LIMIT = 1000') &&
+  outboxLogHttpAdapter.includes('wantsSyncEventStream(req, parsed)') &&
+  outboxLogHttpAdapter.includes('function openSyncEvents') &&
+  outboxLogHttpAdapter.includes('function eventAppIdsFrom') &&
+  outboxLogHttpAdapter.includes('function appendEventMarker') &&
+  outboxLogHttpAdapter.includes('app.subscribe(appId, { replay: false }') &&
+  outboxLogHttpAdapter.includes("writeSseData(res, marker, 'append')") &&
+  outboxLogHttpAdapter.includes('function claimSseSlot') &&
+  outboxLogHttpAdapter.includes('function attachSseCleanup') &&
+  outboxLogHttpAdapterTest.includes('sync event stream replays markers and follows live appends') &&
+  outboxLogHttpAdapterTest.includes('sync event stream bounds appId fan-in')
+) {
+  pass('OutboxLog sync event SSE streams bounded append markers across outbox topics')
+} else {
+  fail('OutboxLog sync event SSE can drift without bounded appIds, marker redaction, shared SSE cleanup, or multiplex replay/live tests')
+}
+
+if (
+  outboxLogEngine.includes('OUTBOXLOG_JOURNAL_VERSION = 1') &&
+  outboxLogEngine.includes('let operationJournal = normalizeJournal(journal)') &&
+  outboxLogEngine.includes('function journalCreateEntry') &&
+  outboxLogEngine.includes('function journalAppendEntry') &&
+  outboxLogEngine.includes('function appendJournalEntry') &&
+  outboxLogEngine.includes('function loadJournal') &&
+  outboxLogEngine.includes('function applyJournalEntry') &&
+  outboxLogEngine.includes('function normalizeJournalEntry') &&
+  outboxLogEngine.includes('export function createMemoryOutboxJournal') &&
+  outboxLogEngine.includes('export function createJsonlOutboxJournal') &&
+  outboxLogApp.includes('createMemoryOutboxJournal') &&
+  outboxLogApp.includes('createJsonlOutboxJournal') &&
+  outboxLogTest.includes('operation journal replays accepted mutations into directory and event markers') &&
+  outboxLogTest.includes('operation journal rejects non-contiguous persisted entries') &&
+  outboxLogTest.includes('JSONL operation journal restores accepted rows')
+) {
+  pass('OutboxLog operation journal replays accepted mutations as the durability seam before Hypercore storage')
+} else {
+  fail('OutboxLog durability can drift without a replayable operation journal, JSONL adapter, export surface, or corruption tests')
+}
+
+if (
+  outboxLogHypercoreJournal.includes("OUTBOXLOG_HYPERCORE_JOURNAL_NAME = 'outboxlog/operations'") &&
+  outboxLogHypercoreJournal.includes('export async function createHypercoreOutboxJournal') &&
+  outboxLogHypercoreJournal.includes('store.get({ name })') &&
+  outboxLogHypercoreJournal.includes('await core.ready()') &&
+  outboxLogHypercoreJournal.includes('await core.get(i)') &&
+  outboxLogHypercoreJournal.includes('core.append(blob)') &&
+  outboxLogHypercoreJournal.includes('append-error') &&
+  outboxLogHypercoreJournal.includes('async flush') &&
+  outboxLogApp.includes("from './hypercore-journal.js'") &&
+  outboxLogApp.includes("outboxlog.journal === 'hypercore'") &&
+  outboxLogApp.includes('context.store || (context.node && context.node.store)') &&
+  outboxLogApp.includes('await this.engine.flush()') &&
+  outboxLogTest.includes('Corestore operation journal mirrors and replays accepted rows') &&
+  outboxLogTest.includes('Corestore operation journal rejects corrupt blocks before replay') &&
+  outboxLogTest.includes('hypercore journal config restores rows from context store')
+) {
+  pass('OutboxLog operation journal binds to Corestore-backed Hypercore blocks without widening the sync API')
+} else {
+  fail('OutboxLog Hypercore durability can drift without Corestore open/replay, append mirroring, flush/error surfacing, app config wiring, or tests')
+}
+
+if (
+  outboxLogHypercoreJournal.includes("OUTBOXLOG_PARTITIONED_JOURNAL_INDEX_NAME = 'outboxlog/outboxes/index'") &&
+  outboxLogHypercoreJournal.includes("OUTBOXLOG_OUTBOX_CORE_PREFIX = 'outboxlog/outboxes/'") &&
+  outboxLogHypercoreJournal.includes('export async function createPartitionedHypercoreOutboxJournal') &&
+  outboxLogHypercoreJournal.includes('store.get({ name: meta.coreName })') &&
+  outboxLogHypercoreJournal.includes('coreNameForOutbox(entry.appId, this.coreNamePrefix)') &&
+  outboxLogHypercoreJournal.includes('async seedCores') &&
+  outboxLogHypercoreJournal.includes('await seeder.seedCore(coreKey)') &&
+  outboxLogApp.includes("outboxlog.journal === 'hypercore-outboxes'") &&
+  outboxLogApp.includes('seedPersistenceCores') &&
+  outboxLogTest.includes('partitioned Corestore journal mirrors accepted rows into per-outbox cores') &&
+  outboxLogTest.includes('partitioned Corestore journal exposes seed-core pickup keys') &&
+  outboxLogTest.includes('partitioned hypercore journal config restores rows and exposes seed cores')
+) {
+  pass('OutboxLog partitioned Hypercore journal maps accepted operations to per-outbox cores and seed-core pickup keys')
+} else {
+  fail('OutboxLog partitioned Hypercore durability can drift without per-outbox core layout, seed-core pickup, app config wiring, or tests')
+}
+
+if (
+  outboxLogSeederRuntimeTest.includes("from 'p2p-hiverelay/core/relay-node/seeder.js'") &&
+  outboxLogSeederRuntimeTest.includes('outboxlog app runtime seeder pins partitioned Hypercore cores by key') &&
+  outboxLogSeederRuntimeTest.includes("journal: 'hypercore-outboxes'") &&
+  outboxLogSeederRuntimeTest.includes('app.seedPersistenceCores()') &&
+  outboxLogSeederRuntimeTest.includes('get ({ name, key })') &&
+  outboxLogSeederRuntimeTest.includes('keyGets.push(keyHex)') &&
+  outboxLogSeederRuntimeTest.includes('seeder.cores.get(info.index.coreKey).core') &&
+  outboxLogSeederRuntimeTest.includes("seeder.on('seeding-core'") &&
+  outboxLogSeederRuntimeTest.includes('swarm.joins.length') &&
+  outboxLogSeederRuntimeTest.includes('OUTBOXLOG_PARTITIONED_JOURNAL_INDEX_NAME') &&
+  outboxLogSeederRuntimeTest.includes('OUTBOXLOG_OUTBOX_CORE_PREFIX')
+) {
+  pass('OutboxLog runtime seeder rehearsal pins partitioned Hypercore index and outbox cores by key')
+} else {
+  fail('OutboxLog runtime seeder pickup can drift without a real Seeder, key-based Corestore lookup, swarm join, or partitioned core proof')
+}
+
+if (
+  relayApi.includes("from './api-outboxlog-http-adapter.js'") &&
+  relayApi.includes('isOutboxLogHttpRoute(path)') &&
+  relayApi.includes('resolveOutboxLogServiceProvider(this.node)') &&
+  relayApi.includes('await resolveOutboxLogHttpAdapter({') &&
+  relayApi.includes('cachedAdapter: this._outboxLogHttpAdapter') &&
+  relayApi.includes('loadAdapter: this._loadOutboxLogHttpAdapter') &&
+  relayApi.includes('this._outboxLogHttpAdapter = adapter') &&
+  relayApi.includes('adapter.createOutboxLogTokenAuth()') &&
+  relayApi.includes('adapter.createOutboxLogHttpState()') &&
+  relayApi.includes('adapter.handleOutboxLogRoute(req, res, {') &&
+  relayApi.includes('outboxLogApp: outbox.provider') &&
+  relayApi.includes('auth: this._outboxLogHttpAuth') &&
+  relayApi.includes('state: this._outboxLogHttpState') &&
+  relayApi.includes('const unavailable = buildOutboxLogHttpAdapterUnavailableResponse(err)') &&
+  relayApi.includes('this.emit(unavailable.event.name, unavailable.event.detail)') &&
+  relayApiOutboxLogHttpAdapter.includes('export const OUTBOXLOG_HTTP_ADAPTER_UNAVAILABLE_CODE') &&
+  relayApiOutboxLogHttpAdapter.includes('export async function loadOutboxLogHttpAdapterModule') &&
+  relayApiOutboxLogHttpAdapter.includes("return import('p2p-hiveservices/builtin/outboxlog/http-adapter.js')") &&
+  relayApiOutboxLogHttpAdapter.includes('export async function resolveOutboxLogHttpAdapter') &&
+  relayApiOutboxLogHttpAdapter.includes('missing handleOutboxLogRoute export') &&
+  relayApiOutboxLogHttpAdapter.includes('missing createOutboxLogTokenAuth export') &&
+  relayApiOutboxLogHttpAdapter.includes('missing createOutboxLogHttpState export') &&
+  relayApiOutboxLogHttpAdapter.includes('export function buildOutboxLogHttpAdapterUnavailableResponse') &&
+  relayApiOutboxLogHttpAdapter.includes("formatErr('UNSUPPORTED', 'outboxlog HTTP adapter unavailable')") &&
+  relayApiRouteMounts.includes('OUTBOXLOG_HTTP_EXACT_ROUTES') &&
+  relayApiRouteMounts.includes('OUTBOXLOG_HTTP_ROUTE_PREFIXES') &&
+  relayApiRouteMounts.includes('export function isOutboxLogHttpRoute') &&
+  relayApiServiceProvider.includes('export function resolveOutboxLogServiceProvider') &&
+  relayApiServiceProvider.includes("const entry = serviceEntry(node, 'outboxlog')") &&
+  relayApiServiceProvider.includes("error: 'OutboxLog service is not enabled on this relay'") &&
+  relayApiServiceProvider.includes("error: 'OutboxLog service does not expose sync methods'") &&
+  relayApiServiceProvider.includes("error: 'OutboxLog service does not expose swarm methods'") &&
+  pluginLoader.includes("outboxlog: { module: 'p2p-hiveservices/builtin/outboxlog/index.js', className: 'OutboxLogApp' }") &&
+  apiOutboxLogHttpAdapterTest.includes('api outboxlog http adapter: cached adapter is reused without loading optional module') &&
+  apiOutboxLogHttpAdapterTest.includes('api outboxlog http adapter: missing token/state exports fail before request handling') &&
+  apiOutboxLogHttpAdapterTest.includes('api outboxlog http adapter: unavailable response redacts public payload and keeps event detail') &&
+  apiOutboxLogTest.includes('outboxlog is a builtin service provider') &&
+  apiOutboxLogTest.includes('/api/token returns 503 when outboxlog is not enabled') &&
+  apiOutboxLogTest.includes('/api/token redacts adapter load failures and emits internals') &&
+  apiOutboxLogTest.includes('/api/outboxlog bridge token gates sync routes through RelayAPI') &&
+  apiRouteMountsTest.includes('api route mounts: outboxlog bridge owns exact Peerit /api routes only') &&
+  pluginLoaderTest.includes('plugin loader resolves outboxlog as a builtin service provider')
+) {
+  pass('OutboxLog RelayAPI mount lazily loads the optional adapter, owns exact Peerit bridge routes, and redacts adapter failures')
+} else {
+  fail('OutboxLog RelayAPI mount can drift from optional adapter loading, exact route ownership, provider shape, or failure redaction')
+}
+
+if (
+  monorepoPkg.scripts?.['bench:outboxlog'] === 'node scripts/bench-outboxlog.mjs' &&
+  monorepoPkg.scripts?.['bench:outboxlog:release'] === 'node scripts/bench-outboxlog.mjs --assert' &&
+  outboxLogBench.includes("kind: 'hiverelay-outboxlog-benchmark'") &&
+  outboxLogBench.includes("OUTBOXLOG_RELEASE_BUDGET_PROFILE = 'release-local-v1'") &&
+  outboxLogBench.includes('export const OUTBOXLOG_RELEASE_BUDGET') &&
+  outboxLogBench.includes("import http from 'node:http'") &&
+  outboxLogBench.includes("from '../packages/services/builtin/outboxlog/http-adapter.js'") &&
+  outboxLogBench.includes('export async function buildOutboxLogBenchReport') &&
+  outboxLogBench.includes('performance.now()') &&
+  outboxLogBench.includes('process.memoryUsage().rss') &&
+  outboxLogBench.includes('appendEventLatencyMs') &&
+  outboxLogBench.includes('httpPublishToSse') &&
+  outboxLogBench.includes('publishToSseLatencyMs') &&
+  outboxLogBench.includes('openSseStream') &&
+  outboxLogBench.includes('rangeRowsPerSecond') &&
+  outboxLogBench.includes('rssPer1kOutboxesBytes') &&
+  outboxLogBench.includes('directoryPayloadBytes') &&
+  outboxLogBench.includes('budgetFailures') &&
+  outboxLogBench.includes('findBudgetFailures') &&
+  outboxLogBench.includes('maxHttpPublishToSseP99Ms') &&
+  outboxLogBench.includes('--max-http-publish-to-sse-p99-ms') &&
+  outboxLogBench.includes('sodium.crypto_sign_detached') &&
+  outboxLogBenchTest.includes('outboxlog benchmark reports append, range, directory, HTTP SSE, event, and RSS metrics') &&
+  outboxLogBenchTest.includes('outboxlog benchmark blocks explicit release budget regressions')
+) {
+  pass('OutboxLog benchmark gate reports append, HTTP publish-to-SSE, range, directory, live-event, RSS baselines, and release/runtime budgets')
+} else {
+  fail('OutboxLog benchmark gate can drift from append, HTTP publish-to-SSE, range, directory, live-event, RSS, signed-envelope evidence, or release/runtime budgets')
+}
+
+if (
+  servicesIndex.includes('NotifyService') &&
+  servicesIndex.includes("from './builtin/notify-service.js'") &&
+  pluginLoader.includes("notify: { module: 'p2p-hiveservices/builtin/notify-service.js', className: 'NotifyService' }") &&
+  pluginLoaderTest.includes('plugin loader resolves notify as a builtin service provider') &&
+  notifyService.includes('export class NotifyService extends ServiceProvider') &&
+  notifyService.includes("providerBinding: 'hiverelay.notify.v1.provider-binding'") &&
+  notifyService.includes("receiveCap: 'hiverelay.notify.v1.receive-cap'") &&
+  notifyService.includes("sendCap: 'hiverelay.notify.v1.send-cap'") &&
+  notifyService.includes("intent: 'hiverelay.notify.v1.intent'") &&
+  notifyService.includes("deliveryEvent: 'hiverelay.notify.v1.delivery-event'") &&
+  notifyService.includes("async 'bind-provider'") &&
+  notifyService.includes("async 'register-device'") &&
+  notifyService.includes("async 'install-receive-cap'") &&
+  notifyService.includes("async 'install-send-cap'") &&
+  notifyService.includes('async revoke') &&
+  notifyService.includes('async send') &&
+  notifyService.includes('async watch') &&
+  notifyService.includes("async 'delivery-event'") &&
+  notifyService.includes("async 'production-gates'") &&
+  notifyService.includes('payloadBytes(intent.payloadCiphertext) > this.maxPayloadBytes') &&
+  notifyService.includes('redactDeliveryEvent') &&
+  notifyService.includes('export function verifyNotifySignature') &&
+  pushNotificationSpec.includes('push wakes the app; p2p sync gives the app truth') &&
+  pushNotificationSpec.includes('Service MVP implemented; production adapters pending') &&
+  pushNotificationSpec.includes('No plaintext app messages on the relay') &&
+  notifyServiceTest.includes('notify service: signed direct wake path stores redacted delivery event') &&
+  notifyServiceTest.includes('notify service: sender without matching SendCap is rejected before provider attempt') &&
+  notifyServiceTest.includes('notify service: revoked send capability suppresses provider egress') &&
+  notifyServiceTest.includes('notify service: watch mode is opaque and requires receive/send caps') &&
+  notifyServiceTest.includes('notify service: manifest exposes v1 service capabilities')
+) {
+  pass('Notify service MVP keeps push as encrypted wake-only capability plumbing with redacted delivery evidence')
+} else {
+  fail('Notify service MVP can drift into plaintext push, backend authority, unbounded provider egress, or untested service discovery')
+}
+
+if (
+  capabilityDoc.includes("features.push('notify-v1')") &&
+  capabilityDoc.includes("features.push('outboxlog-v1')") &&
+  capabilityDoc.includes('function buildServicesProtocolProfile') &&
+  capabilityDoc.includes("providers: ['runtime', 'apns', 'fcm', 'webpush']") &&
+  capabilityDoc.includes("credential_modes: ['runtime-owned', 'app-owned']") &&
+  capabilityDoc.includes("modes: ['direct', 'watch', 'presence-fallback']") &&
+  capabilityDoc.includes('plaintext_allowed: false') &&
+  capabilityDoc.includes("privacy_profiles: ['generic', 'local-template']") &&
+  capabilityDoc.includes("model: 'single-writer-signed-outbox'") &&
+  capabilityDoc.includes("bridge: 'peerit-compatible-http-sse'") &&
+  capabilityDoc.includes('function hasRunningService') &&
+  capabilityDoc.includes('function serviceVersion') &&
+  bareRelay.includes("HIVERELAY_OUTBOXLOG === '1'") &&
+  bareRelay.includes("HIVERELAY_NOTIFY === '1'") &&
+  bareRelay.includes("name: 'outboxlog', module: 'p2p-hiveservices/builtin/outboxlog/index.js', className: 'OutboxLogApp'") &&
+  bareRelay.includes("name: 'notify', module: 'p2p-hiveservices/builtin/notify-service.js', className: 'NotifyService'") &&
+  servicesIndex.includes('OutboxLogApp') &&
+  servicesIndex.includes('createOutboxBlindSealedBody') &&
+  servicesIndex.includes('createOutboxBlindSealAAD') &&
+  servicesIndex.includes('createOutboxBlindRecipientDirectoryEntry') &&
+  servicesIndex.includes('sealOutboxBlindPayload') &&
+  servicesIndex.includes('openOutboxBlindPayload') &&
+  servicesIndex.includes('wrapOutboxBlindSealKey') &&
+  servicesIndex.includes('openOutboxBlindSealKeyEnvelope') &&
+  servicesIndex.includes('verifyOutboxBlindRecipientDirectoryEntry') &&
+  servicesIndex.includes('verifyOutboxBlindRecipientDirectoryRotation') &&
+  servicesIndex.includes('verifyOutboxBlindRecipientDirectoryRecord') &&
+  servicesIndex.includes('isOutboxBlindRecord') &&
+  servicesIndex.includes("from './builtin/outboxlog/index.js'") &&
+  servicesIndex.includes('NotifyService') &&
+  servicesIndex.includes("from './builtin/notify-service.js'") &&
+  capabilityDocTest.includes('capability doc advertises notify and outboxlog service profiles when running') &&
+  capabilityDocTest.includes("doc.features.includes('notify-v1')") &&
+  capabilityDocTest.includes("doc.features.includes('outboxlog-v1')")
+) {
+  pass('Capability docs and Bare runtime advertise optional notify/outboxlog service profiles only when enabled and running')
+} else {
+  fail('Capability docs or Bare runtime can drift from optional notify/outboxlog service discovery and privacy profile claims')
+}
+
+if (
+  relayApi.includes("} from './api-notify.js'") &&
+  relayApi.includes('const notifyRoute = resolveNotifyRoute(req.method, path)') &&
+  relayApi.includes('if (notifyRoute && !notifyRoute.management && req.method === \'GET\')') &&
+  relayApi.includes('if (notifyRoute && !notifyRoute.management)') &&
+  relayApi.includes('if (notifyRoute && notifyRoute.management)') &&
+  relayApi.includes('providerResult: resolveNotifyServiceProvider(this.node)') &&
+  relayApi.includes('body: notifyQueryParams(url)') &&
+  relayApi.includes('query: notifyQueryParams(url)') &&
+  relayApiServiceProvider.includes('export function resolveNotifyServiceProvider') &&
+  relayApiServiceProvider.includes("const entry = serviceEntry(node, 'notify')") &&
+  relayApiServiceProvider.includes("error: 'Notify service is not enabled on this relay'") &&
+  relayApiNotify.includes('const PUBLIC_NOTIFY_ROUTES = Object.freeze') &&
+  relayApiNotify.includes("'GET /api/v1/notify/capabilities'") &&
+  relayApiNotify.includes("'POST /api/v1/notify/send'") &&
+  relayApiNotify.includes("'GET /api/manage/notify/production-gates'") &&
+  relayApiNotify.includes('export function resolveNotifyRoute') &&
+  relayApiNotify.includes('export async function runNotifyRouteAction') &&
+  relayApiNotify.includes('signed notify status request required') &&
+  relayApiNotify.includes("headers: { 'Cache-Control': 'public, max-age=10' }") &&
+  relayApiNotify.includes('plaintextAllowed: false') &&
+  relayApiNotify.includes('function notifyErrorResponse') &&
+  clientPkg.exports?.['./notify.js'] === './notify.js' &&
+  Array.isArray(clientPkg.files) && clientPkg.files.includes('notify.js') &&
+  clientNotify.includes('export function createNotifyIntent') &&
+  clientNotify.includes('export function createNotifyHttpClient') &&
+  clientNotify.includes('export function createNotifyServiceClient') &&
+  clientNotify.includes('export async function notifyHttpRequest') &&
+  clientNotify.includes("headers.Authorization = 'Bearer ' + opts.apiKey") &&
+  clientNotify.includes('parseResponseBody') &&
+  clientReadme.includes("import { createNotifyIntent } from 'p2p-hiverelay-client/notify.js'") &&
+  clientReadme.includes('createNotifyHttpClient(relayUrl)') &&
+  servicesDocs.includes('Notify Service (v0.1.0') &&
+  servicesDocs.includes('a lightweight HTTP facade') &&
+  servicesDocs.includes('Bare-safe client signing helpers') &&
+  servicesReadme.includes('- `notify`') &&
+  servicesReadme.includes('encrypted wake') &&
+  apiNotifyTest.includes('notify http api: capabilities report disabled provider cleanly') &&
+  apiNotifyTest.includes('notify http api: signed wake flow and redacted diagnostics') &&
+  apiServiceProviderTest.includes('api service provider: notify lookup preserves readiness and method-shape contract') &&
+  clientNotifyTest.includes('client notify: signed builders interoperate with notify service verifier') &&
+  clientNotifyTest.includes('client notify: service client wraps callService method names') &&
+  clientNotifyTest.includes('client notify: http client maps stable routes and bearer auth')
+) {
+  pass('Notify HTTP facade and Bare-safe client helpers expose signed wake capabilities without widening plaintext authority')
+} else {
+  fail('Notify HTTP facade or client helper surface can drift from signed capability routing, auth boundaries, docs, or package exports')
+}
+
+if (
   relayApi.includes('} from \'./api-ai-models.js\'') &&
-  relayApi.includes('return buildManageAIModelRegistration(body)') &&
-  relayApi.includes('return buildManageAIModelsPayload(models, status)') &&
-  relayApi.includes('return manageAIModelStatus(model, qvacStatus)') &&
-  relayApi.includes('publicManageAIModelError(err') &&
-  relayApi.includes("this.emit('ai-model-error'") &&
+  relayApi.includes('runAIModelManagementRouteAction') &&
+  relayApi.includes('const aiModelManagementRoute = resolveAIModelManagementRoute(req.method, path)') &&
+  relayApi.includes('if (aiModelManagementRoute)') &&
+  relayApi.includes('const service = resolveAIServiceProvider(this.node)') &&
+  relayApi.includes('const result = await runAIModelManagementRouteAction({') &&
+  relayApi.includes('route: aiModelManagementRoute') &&
+  relayApi.includes('provider: service.provider') &&
+  !relayApi.includes('_handleManageAIModelRegister') &&
+  !relayApi.includes('_handleManageAIModelRemove') &&
+  !relayApi.includes('_getAIServiceProvider') &&
+  relayApiManagementSnapshots.includes('runManageAIModelsListAction({') &&
+  relayApi.includes('emit: (...args) => this.emit(...args)') &&
+  !relayApi.includes("service.provider['register-model']") &&
+  !relayApi.includes("service.provider['remove-model']") &&
+  !relayApi.includes("provider['list-models']({}, {") &&
+  relayApiAiModels.includes('export async function runManageAIModelsListAction') &&
+  relayApiAiModels.includes('export async function runManageAIModelRegisterAction') &&
+  relayApiAiModels.includes('export async function runManageAIModelRemoveAction') &&
+  relayApiAiModels.includes('export async function runAIModelManagementRouteAction') &&
+  relayApiAiModels.includes('export function resolveAIModelManagementRoute') &&
+  relayApiAiModels.includes("'POST /api/manage/ai/models'") &&
+  relayApiAiModels.includes("'POST /api/manage/ai/models/remove'") &&
+  relayApiAiModels.includes('export async function buildManageAIModelsProviderPayload') &&
+  relayApiAiModels.includes("provider['register-model'](request.params, manageAIModelProviderContext({ node }))") &&
+  relayApiAiModels.includes("provider['remove-model']({ modelId }, manageAIModelProviderContext({ node }))") &&
+  relayApiAiModels.includes('emitManageAIModelError(emit') &&
+  relayApiAiModels.includes('function manageAIModelErrorStatus') &&
+  relayApiAiModels.includes('function manageAIModelProviderContext') &&
   relayApiAiModels.includes('export function buildManageAIModelRegistration') &&
   relayApiAiModels.includes('export function buildManageAIModelsPayload') &&
   relayApiAiModels.includes('export function manageAIModelStatus') &&
@@ -1612,11 +2475,16 @@ if (
   relayApiAiModels.includes('delete params.handler') &&
   relayApiAiModels.includes('this endpoint only registers qvac-backed models') &&
   apiAiModelsTest.includes('api ai models: registration rejects malformed qvac option shapes') &&
+  apiAiModelsTest.includes('api ai models: route helper maps exact POST model mutation routes') &&
+  apiAiModelsTest.includes('api ai models: route action helper dispatches register and remove primitives') &&
   apiAiModelsTest.includes('modelConfig must be an object') &&
   apiAiModelsTest.includes('loadOptions must be an object') &&
   apiAiModelsTest.includes('api ai models: registration normalizes top-level qvac model sources') &&
   apiAiModelsTest.includes('api ai models: status decoration distinguishes qvac and handler backends') &&
   apiAiModelsTest.includes('api ai models: public errors preserve stable AI codes and redact internals') &&
+  apiAiModelsTest.includes('api ai models: list action decorates provider models and emits redacted failures') &&
+  apiAiModelsTest.includes('api ai models: register action validates, calls provider with node context, and returns decorated model') &&
+  apiAiModelsTest.includes('api ai models: register and remove actions preserve known errors and redact unexpected errors') &&
   apiQvacModelsTest.includes('manage api qvac models: register, list, remove') &&
   apiQvacModelsTest.includes('manage api qvac models: rejects non-qvac registration') &&
   apiQvacModelsTest.includes('manage api qvac models: redacts unexpected provider errors') &&
@@ -1629,13 +2497,88 @@ if (
 }
 
 if (
-  relayApi.includes("import { runServiceManagementAction } from './api-service-management.js'") &&
+  relayApi.includes("} from './api-service-provider.js'") &&
+  relayApi.includes('resolveAIServiceProvider,') &&
+  relayApi.includes('resolveOutboxLogServiceProvider,') &&
+  relayApi.includes('resolvePokerServiceProvider') &&
+  relayApi.includes('resolvePokerServiceProvider(this.node)') &&
+  relayApi.includes('resolveOutboxLogServiceProvider(this.node)') &&
+  relayApi.includes('resolveAIServiceProvider(this.node)') &&
+  !relayApi.includes('_getAIServiceProvider') &&
+  !relayApi.includes('_getPokerServiceProvider') &&
+  relayApiServiceProvider.includes('export function resolveAIServiceProvider') &&
+  relayApiServiceProvider.includes("const entry = serviceEntry(node, 'ai')") &&
+  relayApiServiceProvider.includes("error: 'AI service is not registered on this relay'") &&
+  relayApiServiceProvider.includes("error: 'AI service does not expose model management methods'") &&
+  relayApiServiceProvider.includes('export function resolvePokerServiceProvider') &&
+  relayApiServiceProvider.includes("const entry = serviceEntry(node, 'poker')") &&
+  relayApiServiceProvider.includes("error: 'Poker service is not enabled on this relay'") &&
+  relayApiServiceProvider.includes("error: 'Poker service does not expose the substrate methods'") &&
+  relayApiServiceProvider.includes('export function resolveOutboxLogServiceProvider') &&
+  relayApiServiceProvider.includes("const entry = serviceEntry(node, 'outboxlog')") &&
+  relayApiServiceProvider.includes("error: 'OutboxLog service is not enabled on this relay'") &&
+  relayApiServiceProvider.includes("error: 'OutboxLog service does not expose sync methods'") &&
+  relayApiServiceProvider.includes("error: 'OutboxLog service does not expose swarm methods'") &&
+  apiServiceProviderTest.includes('api service provider: AI lookup preserves readiness and method-shape contract') &&
+  apiServiceProviderTest.includes('api service provider: poker lookup preserves runtime and substrate contract') &&
+  apiServiceProviderTest.includes('api service provider: outboxlog lookup preserves sync and swarm contract') &&
+  apiQvacModelsTest.includes('manage api qvac models: register, list, remove') &&
+  apiPokerTest.includes('/api/poker/* \u2192 503 when poker is not enabled') &&
+  apiOutboxLogTest.includes('/api/token returns 503 when outboxlog is not enabled') &&
+  apiManagementSnapshotsTest.includes('AI service is not running')
+) {
+  pass('AI, Poker, and OutboxLog service-provider lookup is extracted with readiness, provider-shape, and route-usage coverage')
+} else {
+  fail('AI, Poker, or OutboxLog service-provider lookup can drift back into the HTTP dispatcher or lose readiness/provider-shape coverage')
+}
+
+if (
+  !relayApi.includes('_normalizeManageServicePlugins') &&
+  !relayApi.includes('_activeServiceNames') &&
+  !relayApi.includes('_getConfiguredBuiltinServicePlugins') &&
+  !relayApi.includes('_getServiceConfigPayload') &&
+  !relayApi.includes('_exportBandwidthReceipts') &&
+  !relayApi.includes('_sumReceiptBytes') &&
+  !relayApi.includes('_getPokerUsageTelemetryPayload') &&
+  !relayApi.includes('_tableWriterCount') &&
+  !relayApi.includes('_redactCustodyStatus') &&
+  relayApi.includes('serviceConfigPayload: () => serviceConfigPayload(this.node.config, this.node.serviceRegistry)') &&
+  !relayApi.includes('normalizeManageServicePlugins,') &&
+  !relayApi.includes('activeServiceNames,') &&
+  !relayApi.includes('configuredBuiltinServicePlugins,') &&
+  !relayApi.includes('exportBandwidthReceipts,') &&
+  !relayApi.includes('pokerUsageTelemetryPayload,') &&
+  !relayApi.includes('sumReceiptBytes,') &&
+  !relayApi.includes('tableWriterCount,') &&
+  !relayApi.includes('redactCustodyStatus') &&
+  auditOwnedDiffLib.includes('api-private-shim-cleanup') &&
+  auditOwnedDiffTest.includes('audit-owned diff accepts known audit slice paths')
+) {
+  pass('relay API dead private helper shims stay removed while active service-config callbacks remain explicit')
+} else {
+  fail('relay API dead private helper shims can drift back into the dispatcher or unused imports')
+}
+
+if (
+  relayApi.includes("} from './api-service-management.js'") &&
+  relayApi.includes('resolveServiceManagementRoute,') &&
+  relayApi.includes('const serviceManagementRoute = resolveServiceManagementRoute(req.method, path)') &&
+  relayApi.includes("serviceManagementRoute && serviceManagementRoute.kind === 'service-management'") &&
   relayApi.includes('const result = await runServiceManagementAction({') &&
   relayApi.includes('persistConfig: () => this._persistConfig()') &&
-  relayApi.includes('serviceConfigPayload: () => this._getServiceConfigPayload()') &&
-  relayApi.includes("if (!result.ok && result.kind === 'config-persist') return this._configPersistErrorResponse(res)") &&
-  countOccurrences(relayApi, "if (path === '/api/manage/services/config')") === 1 &&
+  relayApi.includes('serviceConfigPayload: () => serviceConfigPayload(this.node.config, this.node.serviceRegistry)') &&
+  relayApi.includes("if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)") &&
+  !relayApi.includes('_handleServiceManagement') &&
+  !relayApi.includes('if (servicesLockedByProfile(this.node.config))') &&
+  countOccurrences(relayApi, "if (path === '/api/manage/services/config')") === 0 &&
+  countOccurrences(relayApi, "if (path === '/api/manage/services')") === 0 &&
+  countOccurrences(relayApiServiceConfig, "'POST /api/manage/services/config'") === 1 &&
+  countOccurrences(relayApiServiceManagement, "'POST /api/manage/services'") === 1 &&
+  relayApiServiceManagement.includes('export function resolveServiceManagementRoute') &&
   relayApiServiceManagement.includes('export async function runServiceManagementAction') &&
+  relayApiServiceManagement.includes('servicesLockedByProfile(config)') &&
+  relayApiServiceManagement.includes("kind: 'locked'") &&
+  relayApiServiceManagement.includes("errorCode: 'relaykernel-services-locked'") &&
   relayApiServiceManagement.includes('const configuredPlugins = configuredServicePlugins(config)') &&
   relayApiServiceManagement.includes('const bundleParents = bundleParentsForService(service, configuredPlugins)') &&
   relayApiServiceConfig.includes('export function configuredServicePlugins') &&
@@ -1646,6 +2589,8 @@ if (
   relayApiServiceManagement.indexOf('await persistConfig()') !== -1 &&
   relayApiServiceManagement.indexOf('await persistConfig()') < relayApiServiceManagement.indexOf('await registry.unregister(service)') &&
   relayApiServiceManagement.includes('registry.restart(service, ctx)') &&
+  apiServiceManagementTest.includes('api service management: route helper maps exact live service management endpoint') &&
+  apiServiceManagementTest.includes('api service management: RelayKernel lock rejects service actions before registry or persistence') &&
   apiServiceManagementTest.includes('api service management: disable persists configured plugin removal before unregistering') &&
   apiServiceManagementTest.includes('api service management: disable rolls back config when persistence fails') &&
   apiServiceManagementTest.includes('api service management: disable rejects bundle dependencies before persistence') &&
@@ -1667,10 +2612,18 @@ if (
 }
 
 if (
-  relayApi.includes("import { buildServiceCatalogPayload } from './api-service-read.js'") &&
-  relayApi.includes('const result = buildServiceCatalogPayload({ registry: this.node.serviceRegistry })') &&
+  relayApi.includes('resolveServiceReadRoute') &&
+  relayApi.includes('const serviceReadRoute = resolveServiceReadRoute(req.method, path)') &&
+  relayApi.includes("serviceReadRoute && serviceReadRoute.kind === 'service-catalog'") &&
+  relayApi.includes('const result = buildServiceReadRoutePayload({') &&
+  relayApi.includes('route: serviceReadRoute') &&
+  !relayApi.includes("req.method === 'GET' && path === '/api/v1/services'") &&
   !relayApi.includes('services: this.node.serviceRegistry.catalog()') &&
   !relayApi.includes('count: this.node.serviceRegistry.services.size') &&
+  relayApiServiceRead.includes('export function resolveServiceReadRoute') &&
+  relayApiServiceRead.includes("'GET /api/v1/services'") &&
+  relayApiServiceRead.includes('export function buildServiceReadRoutePayload') &&
+  relayApiServiceRead.includes('unknown service read route') &&
   relayApiServiceRead.includes('export function buildServiceCatalogPayload') &&
   relayApiServiceRead.includes('sanitizeServiceCatalogEntries(raw)') &&
   relayApiServiceRead.includes("'Cache-Control': 'public, max-age=10'") &&
@@ -1687,6 +2640,9 @@ if (
   serviceProtocol.includes("this.emit('catalog-received', { remotePubkey, services })") &&
   serviceCatalogSanitizerTest.includes('service catalog sanitizer shapes public entries') &&
   serviceCatalogSanitizerTest.includes('api service read helper returns bounded public payload') &&
+  apiServiceReadTest.includes('api service read: route helper maps exact service catalog route') &&
+  apiServiceReadTest.includes('api service read: route payload helper dispatches sanitized service catalog') &&
+  apiServiceReadTest.includes('unknown service read route') &&
   servicesTest.includes('ServiceRegistry - sanitizes remote service catalogs before storing') &&
   protocolSecurityTest.includes('peer service catalogs are sanitized before registry and events') &&
   apiAuthTest.includes('GET /api/v1/services returns sanitized public service catalog') &&
@@ -1698,10 +2654,18 @@ if (
 }
 
 if (
-  relayApi.includes("import { buildRouterInfoPayload } from './api-router-read.js'") &&
-  relayApi.includes('const result = buildRouterInfoPayload({ router: this.node.router })') &&
+  relayApi.includes('resolveRouterReadRoute') &&
+  relayApi.includes('const routerReadRoute = resolveRouterReadRoute(req.method, path)') &&
+  relayApi.includes("routerReadRoute && routerReadRoute.kind === 'router-info'") &&
+  relayApi.includes('const result = buildRouterInfoRoutePayload({') &&
+  relayApi.includes('route: routerReadRoute') &&
+  !relayApi.includes("req.method === 'GET' && path === '/api/v1/router'") &&
   !relayApi.includes('topics: this.node.router.pubsub.topics?.() || []') &&
   !relayApi.includes('routes: this.node.router.routes().length') &&
+  relayApiRouterRead.includes('export function resolveRouterReadRoute') &&
+  relayApiRouterRead.includes("'GET /api/v1/router'") &&
+  relayApiRouterRead.includes('export function buildRouterInfoRoutePayload') &&
+  relayApiRouterRead.includes('unknown router read route') &&
   relayApiRouterRead.includes('export const MAX_ROUTER_TOPICS = 256') &&
   relayApiRouterRead.includes('export const MAX_ROUTER_TOPIC_BYTES = 256') &&
   relayApiRouterRead.includes('export function buildRouterInfoPayload') &&
@@ -1709,6 +2673,9 @@ if (
   relayApiRouterRead.includes('pubsub.topicCount()') &&
   relayApiRouterRead.includes('safeSubscriberCount(pubsub)') &&
   relayApiRouterRead.includes("'Cache-Control': 'public, max-age=10'") &&
+  apiRouterReadTest.includes('api router read: route helper maps exact router info route') &&
+  apiRouterReadTest.includes('api router read: route payload helper dispatches bounded router info') &&
+  apiRouterReadTest.includes('unknown router read route') &&
   apiRouterReadTest.includes('uses router stats for route count without materializing routes') &&
   apiRouterReadTest.includes('bounds and sanitizes public pubsub topics') &&
   apiRouterReadTest.includes('tolerates throwing router and pubsub helpers') &&
@@ -1739,11 +2706,33 @@ if (
 
 if (
   relayApi.includes("} from './api-mode-transport.js'") &&
-  relayApi.includes('const result = await runModeSwitchAction({') &&
-  relayApi.includes('const result = await runTransportToggleAction({') &&
+  relayApi.includes('resolveModeTransportManagementRoute,') &&
+  relayApi.includes('runModeTransportManagementRouteAction') &&
+  relayApi.includes('const modeTransportRoute = resolveModeTransportManagementRoute(req.method, path)') &&
+  relayApi.includes('if (modeTransportRoute) {') &&
+  countOccurrences(relayApi, "if (path === '/api/manage/mode')") === 0 &&
+  countOccurrences(relayApi, "if (path === '/api/manage/transport')") === 0 &&
+  relayApi.includes('const result = await runModeTransportManagementRouteAction({') &&
+  relayApi.includes('route: modeTransportRoute') &&
+  relayApi.includes('node: this.node') &&
+  relayApi.includes('config: this.node.config') &&
+  relayApi.includes('persistConfig: () => this._persistConfig()') &&
+  relayApi.includes('emit: (...args) => this.emit(...args)') &&
+  relayApi.includes("if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)") &&
+  !relayApi.includes('runModeSwitchAction,') &&
+  !relayApi.includes('runTransportToggleAction,') &&
+  !relayApi.includes('_handleModeSwitch') &&
+  !relayApi.includes('_handleTransportToggle') &&
   relayApiModeTransport.includes('export const AVAILABLE_MODES') &&
+  relayApiModeTransport.includes('export function resolveModeTransportManagementRoute') &&
+  relayApiModeTransport.includes("'POST /api/manage/mode'") &&
+  relayApiModeTransport.includes("'POST /api/manage/transport'") &&
   relayApiModeTransport.includes('export async function runModeSwitchAction') &&
   relayApiModeTransport.includes('export async function runTransportToggleAction') &&
+  relayApiModeTransport.includes('export async function runModeTransportManagementRouteAction') &&
+  relayApiModeTransport.includes('unknown mode/transport management route') &&
+  relayApiModeTransport.includes('return runModeSwitchAction({ body, node, persistConfig, emit })') &&
+  relayApiModeTransport.includes('return runTransportToggleAction({ body, config, persistConfig })') &&
   relayApiModeTransport.includes('validatePositiveInt(body.maxConnections, 0, 100000, \'maxConnections\')') &&
   relayApiModeTransport.includes('validatePositiveNumber(body.maxRelayBandwidthMbps, 0, 100000, \'maxRelayBandwidthMbps\')') &&
   relayApiModeTransport.includes('function objectRecord') &&
@@ -1756,6 +2745,9 @@ if (
   relayApiModeTransport.includes("emit('config-rollback-error'") &&
   relayApiModeTransport.includes("RESERVED_TRANSPORT_NAMES = new Set(['__proto__', 'constructor', 'prototype'])") &&
   relayApiModeTransport.includes('delete config.transports') &&
+  apiModeTransportTest.includes('api mode transport: route helper maps exact mode and transport mutation routes') &&
+  apiModeTransportTest.includes('api mode transport: route action helper dispatches mode and transport mutations') &&
+  apiModeTransportTest.includes('unknown mode/transport management route') &&
   apiModeTransportTest.includes('api mode transport: validates mode action before applying') &&
   apiModeTransportTest.includes('field} must be an object') &&
   apiModeTransportTest.includes('registryAutoAccept must be a boolean') &&
@@ -1848,13 +2840,20 @@ if (
 }
 
 const dispatchRouteBlock = relayApi.slice(
-  relayApi.indexOf("req.method === 'POST' && path === '/api/v1/dispatch'"),
+  relayApi.indexOf('const dispatchRoute = resolveDispatchRoute'),
   relayApi.indexOf('// POST routes')
 )
 if (
-  relayApi.includes("import { runDispatchAction } from './api-dispatch.js'") &&
-  dispatchRouteBlock.includes('return this._handleDispatch(res, body, this._isLocalRequest(req))') &&
-  relayApi.includes('const result = await runDispatchAction({') &&
+  relayApi.includes('resolveDispatchRoute,') &&
+  dispatchRouteBlock.includes('dispatchRoute.authMessage') &&
+  dispatchRouteBlock.includes('const result = await runDispatchAction({') &&
+  dispatchRouteBlock.includes('router: this.node.router') &&
+  dispatchRouteBlock.includes('isLocalRequest: this._isLocalRequest(req)') &&
+  dispatchRouteBlock.includes('return this._json(res, result.payload, result.status || 200)') &&
+  !relayApi.includes('_handleDispatch') &&
+  relayApiDispatch.includes('export const DISPATCH_AUTH_MESSAGE') &&
+  relayApiDispatch.includes('export function resolveDispatchRoute') &&
+  relayApiDispatch.includes("method === 'POST' && path === '/api/v1/dispatch'") &&
   relayApiDispatch.includes('export const LOCAL_ONLY_DISPATCH_ROUTES') &&
   relayApiDispatch.includes("'identity.sign'") &&
   relayApiDispatch.includes("'identity.verify'") &&
@@ -1864,6 +2863,9 @@ if (
   relayApiDispatch.includes("caller: 'remote'") &&
   relayApiDispatch.includes("routeAccess === 'relay-admin' ? 'relay-admin' : 'authenticated-user'") &&
   relayApiDispatch.includes('role: dispatchRole({ router, route: body.route, isLocalRequest })') &&
+  apiDispatchTest.includes('api dispatch: route resolver matches only the exact dispatch POST route') &&
+  apiDispatchTest.includes('wrong method falls through') &&
+  apiDispatchTest.includes('extra path segment falls through') &&
   apiDispatchTest.includes('api dispatch: remote callers cannot use local-only identity routes') &&
   apiDispatchTest.includes('local-only denial happens before dispatch') &&
   apiDispatchTest.includes('api dispatch: rejects non-object params before dispatch') &&
@@ -1881,38 +2883,61 @@ if (
 }
 
 const authorManifestGetBlock = relayApi.slice(
-  relayApi.indexOf('const authorMatch = path.match'),
-  relayApi.indexOf("if (path === '/api/forks/proofs')")
+  relayApi.indexOf('const authorPubkey = authorManifestPubkeyFromPath(path)'),
+  relayApi.indexOf('const forkProofReadRoute = resolveForkProofReadRoute(req.method, path)')
 )
-const forkProofGetStart = relayApi.indexOf("if (path === '/api/forks/proofs')")
+const forkProofGetStart = relayApi.indexOf('const forkProofReadRoute = resolveForkProofReadRoute(req.method, path)')
 const forkProofGetBlock = relayApi.slice(
   forkProofGetStart,
   relayApi.indexOf('// First-run setup wizard', forkProofGetStart)
 )
 const authorManifestPostBlock = relayApi.slice(
-  relayApi.indexOf("if (path === '/api/authors/seeding.json')"),
+  relayApi.indexOf('const signedIngressRoute = resolveSignedIngressRoute'),
   relayApi.indexOf('// Fork-proof gossip — receive a fork proof')
 )
 const forkProofPostBlock = relayApi.slice(
-  relayApi.indexOf("if (path === '/api/forks/proof')"),
+  relayApi.indexOf("signedIngressRoute.kind === 'fork-proof-publish'"),
   relayApi.indexOf('// ─── Setup wizard mutations')
 )
 if (
-  relayApi.includes('runAuthorManifestFetchAction,\n  runAuthorManifestPublishAction,\n  runForkProofPublishAction') &&
-  authorManifestGetBlock.includes('runAuthorManifestFetchAction({') &&
+  relayApi.includes('authorManifestPubkeyFromPath,\n  buildAuthorManifestFetchRoutePayload,\n  resolveSignedIngressRoute,\n  runAuthorManifestPublishAction,\n  runForkProofPublishAction') &&
+  authorManifestGetBlock.includes('const authorPubkey = authorManifestPubkeyFromPath(path)') &&
+  authorManifestGetBlock.includes('if (authorPubkey)') &&
+  authorManifestGetBlock.includes('buildAuthorManifestFetchRoutePayload({') &&
   authorManifestGetBlock.includes('manifestStore: this.node.manifestStore') &&
-  authorManifestGetBlock.includes('pubkey: authorMatch[1]') &&
+  authorManifestGetBlock.includes('path') &&
+  !authorManifestGetBlock.includes('path.match(/^\\/api\\/authors') &&
+  !authorManifestGetBlock.includes('authorMatch[1]') &&
+  authorManifestPostBlock.includes('const signedIngressRoute = resolveSignedIngressRoute(req.method, path)') &&
+  authorManifestPostBlock.includes("signedIngressRoute.kind === 'author-manifest-publish'") &&
   authorManifestPostBlock.includes('runAuthorManifestPublishAction({') &&
   authorManifestPostBlock.includes('manifestStore: this.node.manifestStore') &&
-  authorManifestPostBlock.includes("result.kind === 'manifest-persist'") &&
+  authorManifestPostBlock.includes('emit: (...args) => this.emit(...args)') &&
+  forkProofPostBlock.includes("signedIngressRoute.kind === 'fork-proof-publish'") &&
   forkProofPostBlock.includes('runForkProofPublishAction({') &&
   forkProofPostBlock.includes('forkDetector: this.node.forkDetector') &&
-  forkProofPostBlock.includes("result.kind === 'fork-persist'") &&
+  forkProofPostBlock.includes('emit: (...args) => this.emit(...args)') &&
+  !relayApi.includes("if (path === '/api/authors/seeding.json')") &&
+  !relayApi.includes("if (path === '/api/forks/proof')") &&
+  !relayApi.includes('_manifestPersistErrorResponse') &&
+  !relayApi.includes('_forkPersistErrorResponse') &&
+  !relayApi.includes('MANIFEST_PERSIST_FAILED_MESSAGE') &&
+  !relayApi.includes('FORK_PERSIST_FAILED_MESSAGE') &&
   !relayApi.includes('verifySeedingManifest') &&
   !relayApi.includes('verifyForkProof') &&
   relayApiSignedIngress.includes("import { verifySeedingManifest } from '../seeding-manifest.js'") &&
   relayApiSignedIngress.includes("import { verifyForkProof } from '../fork-proof-signing.js'") &&
+  relayApiSignedIngress.includes('const AUTHOR_MANIFEST_ROUTE =') &&
+  relayApiSignedIngress.includes('export function resolveSignedIngressRoute') &&
+  relayApiSignedIngress.includes("path === '/api/authors/seeding.json'") &&
+  relayApiSignedIngress.includes("path === '/api/forks/proof'") &&
+  relayApiSignedIngress.includes('export function authorManifestPubkeyFromPath') &&
+  relayApiSignedIngress.includes('export function buildAuthorManifestFetchRoutePayload') &&
   relayApiSignedIngress.includes('export function runAuthorManifestFetchAction') &&
+  relayApiSignedIngress.includes('export function signedIngressPersistFailureResult') &&
+  relayApiSignedIngress.includes("event: 'manifest-persist-error'") &&
+  relayApiSignedIngress.includes("event: 'fork-persist-error'") &&
+  relayApiSignedIngress.includes("formatErr('PERSIST_FAILED', spec.message)") &&
   relayApiSignedIngress.includes('export async function runAuthorManifestPublishAction') &&
   relayApiSignedIngress.includes('export async function runForkProofPublishAction') &&
   relayApiSignedIngress.includes('const check = verifySeedingManifest(body)') &&
@@ -1920,15 +2945,24 @@ if (
   relayApiSignedIngress.includes('manifestStore.put(body)') &&
   relayApiSignedIngress.includes('await manifestStore.save()') &&
   relayApiSignedIngress.includes('manifestStore.restoreSnapshot(snapshot)') &&
+  relayApiSignedIngress.includes("signedIngressPersistFailureResult({ kind: 'manifest-persist', error: err, emit })") &&
   relayApiSignedIngress.includes('const status = /stale/.test(result.reason) ? 409 : 400') &&
   relayApiSignedIngress.includes('forkDetector.report({') &&
   relayApiSignedIngress.includes('await forkDetector.save()') &&
   relayApiSignedIngress.includes('forkDetector.restoreSnapshot(snapshot)') &&
+  relayApiSignedIngress.includes("signedIngressPersistFailureResult({ kind: 'fork-persist', error: err, emit })") &&
+  apiSignedIngressTest.includes('api signed ingress: route resolver matches only exact public signed POST routes') &&
+  apiSignedIngressTest.includes('author publish wrong method falls through') &&
+  apiSignedIngressTest.includes('fork proof list route stays separate') &&
+  apiSignedIngressTest.includes('api signed ingress: author manifest route helper isolates public fetch path parsing') &&
   apiSignedIngressTest.includes('api signed ingress: author manifest publish verifies before store mutation') &&
   apiSignedIngressTest.includes('invalid signature path never reaches put') &&
   apiSignedIngressTest.includes('api signed ingress: author manifest save failure rolls back live store') &&
+  apiSignedIngressTest.includes('manifest-persist-error') &&
   apiSignedIngressTest.includes('api signed ingress: fork proof publish requires signed envelopes before report') &&
   apiSignedIngressTest.includes('api signed ingress: fork proof save failure rolls back report') &&
+  apiSignedIngressTest.includes('fork-persist-error') &&
+  apiSignedIngressTest.includes('api signed ingress: unknown persist kinds are ignored by the failure mapper') &&
   manifestStoreTest.includes('snapshot + restore rolls back replacements and cap evictions') &&
   forkDetectorTest.includes('snapshot + restore rolls back fork evidence and bypass log changes') &&
   auditRoadmap.includes('api-signed-ingress.js') &&
@@ -1940,15 +2974,27 @@ if (
 }
 
 if (
-  relayApi.includes("import { buildForkProofsPayload } from './api-fork-proofs.js'") &&
-  forkProofGetBlock.includes('const result = buildForkProofsPayload({ forkDetector: this.node.forkDetector })') &&
+  relayApi.includes('resolveForkProofReadRoute') &&
+  relayApi.includes('const forkProofReadRoute = resolveForkProofReadRoute(req.method, path)') &&
+  relayApi.includes("forkProofReadRoute && forkProofReadRoute.kind === 'fork-proof-list'") &&
+  !relayApi.includes("if (path === '/api/forks/proofs')") &&
+  forkProofGetBlock.includes('const result = buildForkProofsRoutePayload({') &&
+  forkProofGetBlock.includes('route: forkProofReadRoute') &&
+  !forkProofGetBlock.includes('const result = buildForkProofsPayload({ forkDetector: this.node.forkDetector })') &&
   !forkProofGetBlock.includes('forkDetector.list().slice') &&
   relayApiForkProofs.includes('export const MAX_FORK_PROOF_RECORDS = 200') &&
   relayApiForkProofs.includes('export const MAX_FORK_PROOF_EVIDENCE_PER_RECORD = 16') &&
   relayApiForkProofs.includes('export const MAX_FORK_PROOF_EVIDENCE_FIELD_BYTES = 8192') &&
+  relayApiForkProofs.includes('export function resolveForkProofReadRoute') &&
+  relayApiForkProofs.includes('export function buildForkProofsRoutePayload') &&
+  relayApiForkProofs.includes('unknown fork-proof read route') &&
+  relayApiForkProofs.includes("'GET /api/forks/proofs'") &&
   relayApiForkProofs.includes('source.slice(0, recordLimit)') &&
   relayApiForkProofs.includes('evidenceTruncated = true') &&
   relayApiForkProofs.includes('resolutionNote') === false &&
+  apiForkProofsTest.includes('api fork proofs: route helper maps exact public proof list route') &&
+  apiForkProofsTest.includes('api fork proofs: route payload helper dispatches public proof list') &&
+  apiForkProofsTest.includes('unknown fork-proof read route') &&
   apiForkProofsTest.includes('sanitizes public records without raw store fields') &&
   apiForkProofsTest.includes('caps records and per-record evidence') &&
   apiAuthTest.includes('GET /api/forks/proofs returns bounded sanitized public proofs') &&
@@ -1999,16 +3045,27 @@ if (
 
 if (
   relayApi.includes("this._requireAuth(req, res, 'Unauthorized — wizard requires API key or localhost')") &&
-  relayApi.includes("this._requireAuth(req, res, 'Unauthorized — subsidy destination requires API key or localhost')") &&
-  relayApi.includes("this._requireAuth(req, res, 'Unauthorized — storage top requires API key or localhost')") &&
-  relayApi.includes("this._requireAuth(req, res, 'Unauthorized — subsidy claim requires API key or localhost')") &&
-    relayApi.includes("this._requireAuth(req, res, 'Unauthorized — API key required for /api/alerts')") &&
-    relayApi.includes("this._requireAuth(req, res, 'Unauthorized — API key required for /api/health-detail')") &&
-    relayApi.includes("this._requireAuth(req, res, 'Unauthorized — API key required for /api/auto-heal')") &&
-    relayApi.includes("if (path === '/api/usage' && req.method === 'GET')") &&
-    relayApi.includes("if (path === '/api/poker/usage' && req.method === 'GET')") &&
-    relayApi.includes('if (!this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return') &&
-    relayApi.includes("this._requireAuth(req, res, 'Unauthorized — API key required for /api/history')")
+  relayApi.includes('resolveSubsidyRoute,') &&
+  relayApi.includes('if (!this._requireAuth(req, res, subsidyRoute.authMessage)) return') &&
+  relayApiSubsidy.includes('Unauthorized — subsidy status requires API key or localhost') &&
+  relayApiSubsidy.includes('Unauthorized — subsidy claim requires API key or localhost') &&
+  relayApiSubsidy.includes('Unauthorized — subsidy destination requires API key or localhost') &&
+  relayApi.includes('resolveAlertManagementRoute,') &&
+  relayApi.includes('if (!this._requireAuth(req, res, alertRoute.authMessage)) return') &&
+  relayApiAlertManagement.includes('Unauthorized — API key required for /api/alerts') &&
+  relayApiAlertManagement.includes('Unauthorized — API key required for /api/alerts/test') &&
+  relayApi.includes('resolveOperatorTelemetryRoute') &&
+  relayApi.includes('if (!this._requireAuth(req, res, operatorTelemetryRoute.authMessage)) return') &&
+  relayApiOperatorTelemetry.includes('Unauthorized — API key required for /api/health-detail') &&
+  relayApiOperatorTelemetry.includes('Unauthorized — storage top requires API key or localhost') &&
+  relayApiOperatorTelemetry.includes('Unauthorized — API key required for /api/auto-heal') &&
+  relayApiOperatorTelemetry.includes('Unauthorized — API key required for /api/history') &&
+  relayApi.includes('const usageRoute = resolveUsageTelemetryRoute(req.method, path)') &&
+  relayApi.includes("usageRoute && usageRoute.kind === 'usage-digest'") &&
+  relayApi.includes("usageRoute && usageRoute.kind === 'poker-usage'") &&
+  relayApi.includes('if (!this._requireAuth(req, res, usageRoute.authMessage)) return') &&
+  relayApiUsageTelemetry.includes('Unauthorized — management API requires API key or localhost access') &&
+  relayApi.includes('operatorTelemetryRoute && operatorTelemetryRoute.kind === \'history\'')
 ) {
   pass('wizard, wallet, alerts, diagnostics, usage, history, and operator telemetry auth failures use central auth metrics')
 } else {
@@ -2017,10 +3074,22 @@ if (
 
 if (
   relayApi.includes("} from './api-operator-telemetry.js'") &&
-  relayApi.includes('buildHealthDetailPayload({ node: this.node })') &&
-  relayApi.includes('buildStorageTopPayload({ storageAccounting: this.node.storageAccounting, n })') &&
-  relayApi.includes('buildAutoHealPayload({ autoHeal: this.node.autoHeal })') &&
-  relayApi.includes('buildMetricsHistoryPayload({ metrics: this.node.metrics, minutes })') &&
+  relayApi.includes('resolveOperatorTelemetryRoute') &&
+  relayApi.includes('const operatorTelemetryRoute = resolveOperatorTelemetryRoute(req.method, path)') &&
+  relayApi.includes('operatorTelemetryRoute.authMessage') &&
+  relayApi.includes('buildOperatorTelemetryRoutePayload({ route: operatorTelemetryRoute, node: this.node, url })') &&
+  !relayApi.includes('buildStorageTopPayload({ storageAccounting: this.node.storageAccounting, n })') &&
+  !relayApi.includes('buildMetricsHistoryPayload({ metrics: this.node.metrics, minutes })') &&
+  relayApiOperatorTelemetry.includes("import { queryInt } from './api-validation.js'") &&
+  relayApiOperatorTelemetry.includes('export function resolveOperatorTelemetryRoute') &&
+  relayApiOperatorTelemetry.includes("'GET /api/health-detail'") &&
+  relayApiOperatorTelemetry.includes("'GET /api/storage/top'") &&
+  relayApiOperatorTelemetry.includes("'GET /api/auto-heal'") &&
+  relayApiOperatorTelemetry.includes("'GET /api/history'") &&
+  relayApiOperatorTelemetry.includes('export function buildOperatorTelemetryRoutePayload') &&
+  relayApiOperatorTelemetry.includes('queryRouteInt(url, \'n\', DEFAULT_OPERATOR_STORAGE_TOP_ENTRIES, 1, MAX_OPERATOR_STORAGE_TOP_ENTRIES)') &&
+  relayApiOperatorTelemetry.includes('queryRouteInt(url, \'minutes\', DEFAULT_METRICS_HISTORY_MINUTES, 1, MAX_METRICS_HISTORY_MINUTES)') &&
+  relayApiOperatorTelemetry.includes('unknown operator telemetry route') &&
   relayApiOperatorTelemetry.includes('export function buildHealthDetailPayload') &&
   relayApiOperatorTelemetry.includes('export function buildStorageTopPayload') &&
   relayApiOperatorTelemetry.includes('export function buildAutoHealPayload') &&
@@ -2036,6 +3105,9 @@ if (
   relayApiOperatorTelemetry.includes('function sanitizeMetricGroup') &&
   relayApiOperatorTelemetry.includes('Number.isFinite(snapshot.timestamp)') &&
   apiOperatorTelemetryTest.includes('api operator telemetry: health detail caps and sanitizes health and self-heal actions') &&
+  apiOperatorTelemetryTest.includes('api operator telemetry: route helper maps exact telemetry routes') &&
+  apiOperatorTelemetryTest.includes('api operator telemetry: route payload builder centralizes telemetry responses and query clamps') &&
+  apiOperatorTelemetryTest.includes('unknown operator telemetry route') &&
   apiOperatorTelemetryTest.includes('api operator telemetry: storage top sanitizes summary and measured rows') &&
   apiOperatorTelemetryTest.includes('api operator telemetry: auto-heal payload distinguishes disabled and sanitizes running state') &&
   apiOperatorTelemetryTest.includes('api operator telemetry: metrics history is retention-bounded, capped, and sanitized') &&
@@ -2053,6 +3125,49 @@ if (
   fail('operator diagnostics payload shaping can regress to inline dispatcher logic or raw telemetry snapshots')
 }
 
+const accountingReceiptRouteBlock = relayApi.slice(
+  relayApi.indexOf('const accountingReceiptRoute = resolveAccountingReceiptRoute(req.method, path)'),
+  relayApi.indexOf('// Operator subsidy status', relayApi.indexOf('const accountingReceiptRoute = resolveAccountingReceiptRoute(req.method, path)'))
+)
+if (
+  relayApi.includes('buildAccountingReceiptRoutePayload,') &&
+  relayApi.includes('resolveAccountingReceiptRoute') &&
+  accountingReceiptRouteBlock.includes("accountingReceiptRoute && accountingReceiptRoute.kind === 'receipt'") &&
+  accountingReceiptRouteBlock.includes('if (!this._requireAuth(req, res, accountingReceiptRoute.authMessage)) return') &&
+  accountingReceiptRouteBlock.includes('const result = await buildAccountingReceiptRoutePayload({') &&
+  accountingReceiptRouteBlock.includes('route: accountingReceiptRoute') &&
+  accountingReceiptRouteBlock.includes('node: this.node') &&
+  accountingReceiptRouteBlock.includes('url') &&
+  !accountingReceiptRouteBlock.includes('const result = await buildAccountingReceiptPayload({') &&
+  !accountingReceiptRouteBlock.includes("refresh: accountingReceiptRefreshFlag(url.searchParams.get('refresh'))") &&
+  !accountingReceiptRouteBlock.includes("path === '/api/accounting/receipt'") &&
+  !accountingReceiptRouteBlock.includes('this.node.createAccountingReceipt') &&
+  relayApiAccountingReceipt.includes('export function resolveAccountingReceiptRoute') &&
+  relayApiAccountingReceipt.includes("'GET /api/accounting/receipt'") &&
+  relayApiAccountingReceipt.includes("authMessage: 'Unauthorized — accounting receipt requires API key or localhost'") &&
+  relayApiAccountingReceipt.includes('export function accountingReceiptRefreshFlag') &&
+  relayApiAccountingReceipt.includes("return value !== '0'") &&
+  relayApiAccountingReceipt.includes('export async function buildAccountingReceiptRoutePayload') &&
+  relayApiAccountingReceipt.includes('unknown accounting receipt route') &&
+  relayApiAccountingReceipt.includes("refresh: accountingReceiptRefreshFlag(searchParamValue(url, 'refresh'))") &&
+  relayApiAccountingReceipt.includes('export async function buildAccountingReceiptPayload') &&
+  relayApiAccountingReceipt.includes("typeof node.createAccountingReceipt !== 'function'") &&
+  relayApiAccountingReceipt.includes("payload: { error: 'accounting receipts unavailable' }") &&
+  relayApiAccountingReceipt.includes('node.createAccountingReceipt({ refresh })') &&
+  relayApiAccountingReceipt.includes('function accountingReceiptErrorMessage') &&
+  accountingReceiptRuntimeTest.includes('api accounting receipt helper maps exact operator receipt route') &&
+  accountingReceiptRuntimeTest.includes('api accounting receipt helper preserves refresh and error contract') &&
+  accountingReceiptRuntimeTest.includes('api accounting receipt route payload helper dispatches receipt reads') &&
+  accountingReceiptRuntimeTest.includes('unknown accounting receipt route') &&
+  accountingReceiptRuntimeTest.includes("'/api/accounting/receipt?refresh=0'") &&
+  accountingReceiptRuntimeTest.includes('GET /api/accounting/receipt is auth-gated and returns a verifiable receipt') &&
+  accountingReceiptRuntimeTest.includes('GET /api/accounting/receipt reports unavailable receipts as 503')
+) {
+  pass('accounting receipt route is extracted with refresh semantics, unavailable-state handling, and runtime proof coverage')
+} else {
+  fail('accounting receipt route can regress to inline receipt construction, refresh drift, or untested unavailable-state handling')
+}
+
 if (
   relayMetrics.includes('this.node.getStats({ includeSecrets: false }) || {}') &&
   relayMetrics.includes('this._buf[this._head] = this._snapshot()') &&
@@ -2062,12 +3177,26 @@ if (
   relayMetrics.includes('if (!Number.isFinite(number) || number < 0) return 0') &&
   relayMetrics.includes('Math.min(number, MAX_PROMETHEUS_VALUE)') &&
   relayApi.includes("import { appendVaryHeader, writeJson, writeText } from './api-response.js'") &&
-  relayApi.includes('return writeText(res, this.node.metrics.toPrometheus() + this._authFailureMetricsLines())') &&
+  relayApi.includes('resolveMetricsRoute(req.method, path)') &&
+  relayApi.includes('buildMetricsRouteResponse({') &&
+  relayApi.includes('authFailureLines: this._authFailureMetricsLines()') &&
+  relayApi.includes('return writeText(res, result.text, result.status || 200)') &&
+  !relayApi.includes("if (path === '/metrics')") &&
+  relayApiMetrics.includes('export function resolveMetricsRoute') &&
+  relayApiMetrics.includes("path === '/metrics'") &&
+  relayApiMetrics.includes('export function buildMetricsRouteResponse') &&
+  relayApiMetrics.includes('metrics.toPrometheus() + authFailureLines') &&
+  relayApiMetrics.includes("payload: { error: 'Metrics not enabled' }") &&
   relayApiResponse.includes('export function writeText') &&
   relayApiResponse.includes("Content-Type', 'text/plain; charset=utf-8'") &&
   metricsTest.includes('metrics: Prometheus exporter uses redacted stats and clamps sample values') &&
   metricsTest.includes('metrics: snapshots and summaries request public-redacted stats') &&
   metricsTest.includes('hiverelay_injected 1') &&
+  apiMetricsTest.includes('api metrics: route resolver maps only the exact public metrics route') &&
+  apiMetricsTest.includes("resolveMetricsRoute('GET', '/health')") &&
+  apiMetricsTest.includes("resolveMetricsRoute('GET', '/status')") &&
+  apiMetricsTest.includes('response builder appends auth-failure metrics to exporter output') &&
+  apiMetricsTest.includes('response builder preserves disabled metrics fallback') &&
   apiResponseTest.includes('api response: writeText applies plain-text security defaults') &&
   apiAuthTest.includes('metrics endpoint disables content sniffing') &&
   apiAuthTest.includes('metrics endpoint is not cached by default') &&
@@ -2081,8 +3210,20 @@ if (
 
 if (
   relayApi.includes("} from './api-alert-management.js'") &&
-  relayApi.includes('const result = buildAlertLogPayload({ alertManager: this.node.alertManager, url })') &&
-  relayApi.includes('const result = runAlertTestAction({ body, alertManager: this.node.alertManager })') &&
+  relayApi.includes('resolveAlertManagementRoute,') &&
+  relayApi.includes('runAlertManagementRouteAction') &&
+  relayApi.includes('const alertRoute = resolveAlertManagementRoute(req.method, path)') &&
+  relayApi.includes('alertRoute.authMessage') &&
+  relayApi.includes('const result = runAlertManagementRouteAction({') &&
+  !relayApi.includes('const result = buildAlertLogPayload({ alertManager: this.node.alertManager, url })') &&
+  !relayApi.includes('const result = runAlertTestAction({ body, alertManager: this.node.alertManager })') &&
+  relayApiAlertManagement.includes('export function resolveAlertManagementRoute') &&
+  relayApiAlertManagement.includes("'GET /api/alerts'") &&
+  relayApiAlertManagement.includes("'POST /api/alerts/test'") &&
+  relayApiAlertManagement.includes('export function runAlertManagementRouteAction') &&
+  relayApiAlertManagement.includes("if (kind === 'log') return buildAlertLogPayload({ alertManager, url })") &&
+  relayApiAlertManagement.includes("if (kind === 'test') return runAlertTestAction({ body, alertManager })") &&
+  relayApiAlertManagement.includes('unknown alert management route') &&
   relayApiAlertManagement.includes("export const ALERT_SEVERITIES = ['info', 'warn', 'error', 'critical']") &&
   relayApiAlertManagement.includes('export const MAX_ALERT_TYPE_FILTER_BYTES = 80') &&
   relayApiAlertManagement.includes('export const MAX_ALERT_TEST_MESSAGE_BYTES = 512') &&
@@ -2090,6 +3231,9 @@ if (
   relayApiAlertManagement.includes('type must be 1-80 bytes of letters, numbers, dot, underscore, colon, or dash') &&
   relayApiAlertManagement.includes('message must be 512 bytes or smaller') &&
   relayApiAlertManagement.includes('details must be 2048 bytes or smaller') &&
+  apiAlertManagementTest.includes('api alert management: route helper maps exact alert management routes') &&
+  apiAlertManagementTest.includes('api alert management: route action helper dispatches log and test primitives') &&
+  apiAlertManagementTest.includes('unknown alert management route') &&
   apiAlertManagementTest.includes('api alert management: alert log validates filters and clamps pagination before lookup') &&
   apiAlertManagementTest.includes('api alert management: test alert validates body before dispatch') &&
   apiAuthTest.includes('alert test route validates body before dispatch') &&
@@ -2129,7 +3273,21 @@ if (
 
 if (
   relayApi.includes("import { appendVaryHeader, writeJson, writeText } from './api-response.js'") &&
+  relayApi.includes('resolveCapabilityRoute') &&
+  relayApi.includes('const capabilityRoute = resolveCapabilityRoute(req.method, path)') &&
+  relayApi.includes("capabilityRoute && capabilityRoute.kind === 'capability-doc'") &&
+  relayApi.includes('const result = buildCapabilityRoutePayload({') &&
+  relayApi.includes('return this._json(res, result.payload, result.status || 200, result.headers || null)') &&
+  !relayApi.includes("path === '/.well-known/hiverelay.json' || path === '/api/capabilities'") &&
+  !relayApi.includes("res.setHeader('Cache-Control', 'public, max-age=60')") &&
   relayApi.includes('return writeJson(res, data, status, headers)') &&
+  relayApiCapabilities.includes("import { buildCapabilityDoc } from '../capability-doc.js'") &&
+  relayApiCapabilities.includes('export function resolveCapabilityRoute') &&
+  relayApiCapabilities.includes("'GET /.well-known/hiverelay.json'") &&
+  relayApiCapabilities.includes("'GET /api/capabilities'") &&
+  relayApiCapabilities.includes('export const CAPABILITY_DOC_CACHE_CONTROL') &&
+  relayApiCapabilities.includes("headers: { 'Cache-Control': CAPABILITY_DOC_CACHE_CONTROL }") &&
+  relayApiCapabilities.includes('payload: buildCapabilityDoc({') &&
   bareHttpServer.includes("import { writeJson } from './api-response.js'") &&
   bareHttpServer.includes('return writeJson(res, body, status, {') &&
   bareHttpServer.includes("'Access-Control-Allow-Origin': '*'") &&
@@ -2149,6 +3307,8 @@ if (
   apiResponseTest.includes('writeJson applies JSON security defaults') &&
   apiResponseTest.includes('writeJson preserves explicit cache and extra headers') &&
   apiResponseTest.includes('writeJson preserves explicit cache on minimal response objects') &&
+  capabilityEndpointsTest.includes('capability route helper builds node runtime doc with public cache headers') &&
+  capabilityEndpointsTest.includes('capability route helper maps exact public capability routes') &&
   capabilityEndpointsTest.includes('capability docs are typed as JSON') &&
   capabilityEndpointsTest.includes('JSON responses disable content sniffing') &&
   capabilityEndpointsTest.includes('error response is typed as JSON') &&
@@ -2172,10 +3332,40 @@ if (
 }
 
 if (
-  relayApi.includes("import { buildHealthResponse } from './api-health.js'") &&
+  relayApi.includes('resolveRetrievabilityProofRoute,') &&
+  relayApi.includes('const retrievabilityProofRoute = resolveRetrievabilityProofRoute(req.method, path)') &&
+  relayApi.includes("retrievabilityProofRoute && retrievabilityProofRoute.kind === 'retrievability-proof'") &&
+  relayApi.includes('const result = await runRetrievabilityProofAction({') &&
+  countOccurrences(relayApi, "if (path === '/api/proof/retrievability')") === 0 &&
+  relayRetrievabilityProof.includes('export function resolveRetrievabilityProofRoute') &&
+  relayRetrievabilityProof.includes("'POST /api/proof/retrievability'") &&
+  relayRetrievabilityProof.includes('export async function runRetrievabilityProofAction') &&
+  relayRetrievabilityProof.includes("return proofFailure('SERVICE_UNAVAILABLE')") &&
+  relayRetrievabilityProof.includes("if (code === 'RATE_LIMITED')") &&
+  relayRetrievabilityProof.includes("headers: { 'Retry-After': '60' }") &&
+  relayApiRateLimit.includes("'/api/proof/retrievability': 30") &&
+  retrievabilityProofApiTest.includes('api retrievability proof: route helper maps exact public proof route') &&
+  retrievabilityProofApiTest.includes('api retrievability proof: public HTTP proof verifies against drive key') &&
+  retrievabilityProofApiTest.includes('api retrievability proof: opt-in domain signature profile verifies') &&
+  retrievabilityProofApiTest.includes('api retrievability proof: blind and private drives are indistinguishable from not-seeded') &&
+  readme.includes('kernel-compatible `POST /api/proof/retrievability` route') &&
+  protocolSpecDocs.includes('| Core HTTP route | `POST /api/proof/retrievability` |') &&
+  protocolSpecDocs.includes('| Core route access policy | `public`')
+) {
+  pass('proof-of-retrievability HTTP route is extracted with exact public route and privacy/rate-limit coverage')
+} else {
+  fail('proof-of-retrievability HTTP route can drift from exact public route, privacy posture, or rate-limit coverage')
+}
+
+if (
+  relayApi.includes("from './api-health.js'") &&
+  relayApi.includes('resolveHealthRoute(req.method, path)') &&
   relayApi.includes('const result = buildHealthResponse({') &&
   relayApi.includes('version: this._relayVersion()') &&
   relayApi.includes('return this._json(res, result.payload, result.status)') &&
+  !relayApi.includes("if (path === '/health')") &&
+  relayApiHealth.includes('export function resolveHealthRoute') &&
+  relayApiHealth.includes("path === '/health'") &&
   relayApiHealth.includes('export function diskHealthSummary') &&
   relayApiHealth.includes('MAX_HEALTH_DISK_ERROR_BYTES') &&
   relayApiHealth.includes('export function buildHealthResponse') &&
@@ -2187,6 +3377,9 @@ if (
   relayApiHealth.includes("disk.status === 'critical'") &&
   relayApiHealth.includes("reason: 'disk-critical'") &&
   relayApiHealth.includes('disk: diskSummary') &&
+  apiHealthTest.includes('api health: route resolver maps only the exact public health route') &&
+  apiHealthTest.includes("resolveHealthRoute('GET', '/status')") &&
+  apiHealthTest.includes("resolveHealthRoute('GET', '/api/health-detail')") &&
   apiHealthTest.includes('api health: disk summary omits filesystem topology and caps unsafe errors') &&
   apiHealthTest.includes('api health: critical disk stays 200 unless diskHealthGate is enabled') &&
   apiHealthTest.includes('api health: diskHealthGate drains critical relays with stable fleet payload') &&
@@ -2207,11 +3400,18 @@ if (
 }
 
 if (
-  relayApi.includes("import { runEvictionPurgeAction } from './api-eviction-purge.js'") &&
-  relayApi.includes("this._requireAuth(req, res, 'Unauthorized — API key required for /api/eviction/purge')") &&
+  relayApi.includes('resolveEvictionPurgeRoute,') &&
+  relayApi.includes('const evictionPurgeRoute = resolveEvictionPurgeRoute(req.method, path)') &&
+  relayApi.includes("evictionPurgeRoute && evictionPurgeRoute.kind === 'eviction-purge'") &&
+  relayApi.includes('this._requireAuth(req, res, evictionPurgeRoute.authMessage)') &&
+  countOccurrences(relayApi, "if (path === '/api/eviction/purge')") === 0 &&
   relayApi.includes('const result = await runEvictionPurgeAction({') &&
   relayApi.includes('node: this.node') &&
+  relayApiEvictionPurge.includes('export const EVICTION_PURGE_AUTH_MESSAGE') &&
   relayApiEvictionPurge.includes('export const MAX_PURGE_APP_KEYS = 50') &&
+  relayApiEvictionPurge.includes('export function resolveEvictionPurgeRoute') &&
+  relayApiEvictionPurge.includes("'POST /api/eviction/purge'") &&
+  relayApiEvictionPurge.includes('authMessage: EVICTION_PURGE_AUTH_MESSAGE') &&
   relayApiEvictionPurge.includes("badRequest('appKeys (non-empty array) required')") &&
   relayApiEvictionPurge.includes("badRequest('max 50 appKeys per request')") &&
   relayApiEvictionPurge.includes('!isValidHexKey(appKey, 64)') &&
@@ -2219,6 +3419,7 @@ if (
   relayApiEvictionPurge.includes("throw new Error('manual purge unavailable')") &&
   relayApiEvictionPurge.includes('normalizeFreedBytes(out && out.bytes)') &&
   relayApiEvictionPurge.includes('freedBytes: purged.reduce((total, r) => total + normalizeFreedBytes(r.bytes), 0)') &&
+  apiEvictionPurgeTest.includes('api eviction purge: route helper maps exact operator purge route') &&
   apiEvictionPurgeTest.includes('api eviction purge: validates request body before purging') &&
   apiEvictionPurgeTest.includes('api eviction purge: caps batch size before purging') &&
   apiEvictionPurgeTest.includes('api eviction purge: reports invalid keys per item and keeps valid purges moving') &&
@@ -2236,10 +3437,17 @@ if (
 }
 
 if (
-  relayApi.includes("import { runDedupReclaimAction } from './api-dedup-reclaim.js'") &&
-  relayApi.includes("this._requireAuth(req, res, 'Unauthorized — API key required for /api/dedup/reclaim')") &&
+  relayApi.includes('resolveDedupReclaimRoute,') &&
+  relayApi.includes('const dedupReclaimRoute = resolveDedupReclaimRoute(req.method, path)') &&
+  relayApi.includes("dedupReclaimRoute && dedupReclaimRoute.kind === 'dedup-reclaim'") &&
+  relayApi.includes('this._requireAuth(req, res, dedupReclaimRoute.authMessage)') &&
+  countOccurrences(relayApi, "if (path === '/api/dedup/reclaim')") === 0 &&
   relayApi.includes('const result = await runDedupReclaimAction({') &&
   relayApi.includes('emit: (...args) => this.emit(...args)') &&
+  relayApiDedupReclaim.includes('export const DEDUP_RECLAIM_AUTH_MESSAGE') &&
+  relayApiDedupReclaim.includes('export function resolveDedupReclaimRoute') &&
+  relayApiDedupReclaim.includes("'POST /api/dedup/reclaim'") &&
+  relayApiDedupReclaim.includes('authMessage: DEDUP_RECLAIM_AUTH_MESSAGE') &&
   relayApiDedupReclaim.includes('export function parseDedupReclaimOptions') &&
   relayApiDedupReclaim.includes('body.execute !== true') &&
   relayApiDedupReclaim.includes('Number.isSafeInteger') &&
@@ -2248,6 +3456,7 @@ if (
   errorPrefixes.includes("RECLAIM_FAILED: 'reclaim-failed: '") &&
   errorPrefixesTest.includes("formatErr('RECLAIM_FAILED', 'dedup reclaim failed')") &&
   errorPrefixesTest.includes("classifyErr('reclaim-failed: dedup reclaim failed')") &&
+  apiDedupReclaimTest.includes('api dedup reclaim: route helper maps exact operator reclaim route') &&
   apiDedupReclaimTest.includes('api dedup reclaim: defaults to dry-run with zero retained superseded versions') &&
   apiDedupReclaimTest.includes('api dedup reclaim: parses execute, retainVersions, and max without numeric coercion') &&
   apiDedupReclaimTest.includes('api dedup reclaim: rejects malformed body and integer options before reclaiming') &&
@@ -2263,11 +3472,16 @@ if (
 }
 
 if (
-  relayApi.includes("import { runIndexRoomAction } from './api-index-room.js'") &&
-  relayApi.includes("this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/index-room')") &&
+  relayApi.includes('resolveIndexRoomRoute,') &&
+  relayApi.includes('const indexRoomRoute = resolveIndexRoomRoute(req.method, path)') &&
+  relayApi.includes('indexRoomRoute.authMessage') &&
+  !relayApi.includes("if (path === '/api/manage/index-room')") &&
   relayApi.includes('const result = await runIndexRoomAction({') &&
   relayApi.includes('emit: (...args) => this.emit(...args)') &&
   relayApiIndexRoom.includes('export const INDEX_ROOM_KEY_RE') &&
+  relayApiIndexRoom.includes('export const INDEX_ROOM_AUTH_MESSAGE') &&
+  relayApiIndexRoom.includes('export function resolveIndexRoomRoute') &&
+  relayApiIndexRoom.includes("method === 'POST' && path === '/api/manage/index-room'") &&
   relayApiIndexRoom.includes('export function parseIndexRoomRequest') &&
   relayApiIndexRoom.includes("return { ok: false, message: 'JSON body object required' }") &&
   relayApiIndexRoom.includes("return { ok: false, message: 'room must be a 52-char z32 key' }") &&
@@ -2275,6 +3489,9 @@ if (
   relayApiIndexRoom.includes("formatErr('UNSUPPORTED', 'index room not supported')") &&
   relayApiIndexRoom.includes("formatErr('PERSIST_FAILED', 'failed to set index room')") &&
   relayApiIndexRoom.includes("emit('index-room-error', { error: err })") &&
+  apiIndexRoomTest.includes('api index room: route resolver maps only the exact operator index-room route') &&
+  apiIndexRoomTest.includes('wrong method falls through') &&
+  apiIndexRoomTest.includes('subpath falls through') &&
   apiIndexRoomTest.includes('api index room: validates and trims z32 room requests') &&
   apiIndexRoomTest.includes('api index room: rejects malformed body and room before mutation') &&
   apiIndexRoomTest.includes('api index room: reports unsupported relay node without mutation') &&
@@ -2290,10 +3507,28 @@ if (
 }
 
 if (
-  relayApi.includes("this.emit('index-proxy-error', { error: err, status: code })") &&
-  relayApi.includes("formatErr('UNSUPPORTED', 'index sidecar unreachable')") &&
-  relayApi.includes("errorCode: 'index-unreachable'") &&
+  relayApi.includes("import { buildIndexProxyRouteResponse } from './api-index-proxy.js'") &&
+  relayApi.includes('const result = await buildIndexProxyRouteResponse({') &&
+  relayApi.includes('base: this.node.indexSidecarUrl') &&
+  relayApi.includes('if (result.event) this.emit(result.event.name, result.event.detail)') &&
+  relayApi.includes("res.end(result.kind === 'buffer' ? result.body : result.text)") &&
+  relayApiIndexProxy.includes('export const INDEX_PROXY_RESPONSE_LIMIT = 5 * 1024 * 1024') &&
+  relayApiIndexProxy.includes('export const INDEX_PROXY_TIMEOUT_MS = 8000') &&
+  relayApiIndexProxy.includes('export function buildIndexProxyDisabledResponse') &&
+  relayApiIndexProxy.includes('export async function buildIndexProxyRouteResponse') &&
+  relayApiIndexProxy.includes("headers: { Accept: 'application/json' }") &&
+  relayApiIndexProxy.includes('controller.abort()') &&
+  relayApiIndexProxy.includes('Buffer.byteLength(text) > limitBytes') &&
+  relayApiIndexProxy.includes("formatErr('UNSUPPORTED', 'index sidecar unreachable')") &&
+  relayApiIndexProxy.includes("errorCode: 'index-unreachable'") &&
+  relayApiIndexProxy.includes("name: 'index-proxy-error'") &&
   !relayApi.includes('detail: err.message') &&
+  apiIndexProxyTest.includes('api index proxy: target preserves path and query without forwarding client headers') &&
+  apiIndexProxyTest.includes('api index proxy: streams upstream JSON while enforcing a byte cap') &&
+  apiIndexProxyTest.includes('api index proxy: declared oversized upstream body aborts before buffering') &&
+  apiIndexProxyTest.includes('api index proxy: streamed oversized upstream body aborts incrementally') &&
+  apiIndexProxyTest.includes('api index proxy: text fallback uses byte length for cap enforcement') &&
+  apiIndexProxyTest.includes('api index proxy: timeout and fetch failures produce stable public errors with internal event detail') &&
   indexRoomTest.includes('GET /index/* redacts sidecar connection failures and emits internals') &&
   indexRoomTest.includes("t.absent(Object.prototype.hasOwnProperty.call(res.body, 'detail'))") &&
   auditRoadmap.includes('4.124') &&
@@ -2305,11 +3540,15 @@ if (
 }
 
 if (
-  relayApi.includes("import { runLifecycleAction } from './api-lifecycle-actions.js'") &&
-  relayApi.includes("action: 'restart'") &&
+  relayApi.includes("} from './api-lifecycle-actions.js'") &&
+  relayApi.includes('resolveLifecycleManagementRoute,') &&
+  relayApi.includes('const lifecycleRoute = resolveLifecycleManagementRoute(req.method, path)') &&
+  relayApi.includes('action: lifecycleRoute.action') &&
   relayApi.includes('emit: (...args) => this.emit(...args)') &&
-  relayApi.includes("action: 'shutdown'") &&
   relayApiLifecycleActions.includes('export const LIFECYCLE_ACTION_DELAY_MS = 500') &&
+  relayApiLifecycleActions.includes('export function resolveLifecycleManagementRoute') &&
+  relayApiLifecycleActions.includes("'POST /api/manage/restart': 'restart'") &&
+  relayApiLifecycleActions.includes("'POST /api/manage/shutdown': 'shutdown'") &&
   relayApiLifecycleActions.includes('export function runLifecycleAction') &&
   relayApiLifecycleActions.includes('schedule(async () => {') &&
   relayApiLifecycleActions.includes('await node.stop()') &&
@@ -2317,6 +3556,7 @@ if (
   relayApiLifecycleActions.includes("emit('error', { context: 'restart', error: err })") &&
   relayApiLifecycleActions.includes("node.emit('shutdown-complete', { clean: true })") &&
   relayApiLifecycleActions.includes("node.emit('shutdown-complete', { clean: false, error: err })") &&
+  apiLifecycleActionsTest.includes('api lifecycle actions: route helper maps POST management paths to lifecycle actions') &&
   apiLifecycleActionsTest.includes('api lifecycle actions: restart schedules stop then start after response payload') &&
   apiLifecycleActionsTest.includes('api lifecycle actions: restart emits API error when stop or start fails') &&
   apiLifecycleActionsTest.includes('api lifecycle actions: shutdown schedules stop and emits clean completion') &&
@@ -2334,13 +3574,33 @@ if (
 
 if (
   relayApi.includes("from './api-management-snapshots.js'") &&
-  relayApi.includes('buildServiceRegistrySnapshot(this.node.serviceRegistry)') &&
-  relayApi.includes('buildTransportStatusPayload(this.node)') &&
-  relayApi.includes('buildDeviceStatusPayload(this.node)') &&
-  relayApi.includes('buildPairingStatusPayload(this.node)') &&
-  relayApi.includes("buildModeCatalogPayload(this.node._operatingMode || 'relay-core')") &&
+  relayApi.includes('const managementSnapshotRoute = resolveManagementSnapshotRoute(req.method, path)') &&
+  relayApi.includes('const result = await buildManagementSnapshotRoutePayload({') &&
+  relayApi.includes("aiModelProvider: managementSnapshotRoute.kind === 'ai-models' ? resolveAIServiceProvider(this.node) : null") &&
+  !relayApi.includes('buildServiceRegistrySnapshot(this.node.serviceRegistry)') &&
   relayApiManagementSnapshots.includes("import { AVAILABLE_MODES } from './api-mode-transport.js'") &&
   relayApiManagementSnapshots.includes("import { sanitizeDeviceList } from './api-device-pairing.js'") &&
+  relayApiManagementSnapshots.includes("import { buildSafeConfigPayload } from './api-safe-config.js'") &&
+  relayApiManagementSnapshots.includes("import { serviceConfigPayload } from './api-service-config.js'") &&
+  relayApiManagementSnapshots.includes("import { runManageAIModelsListAction } from './api-ai-models.js'") &&
+  relayApiManagementSnapshots.includes('export function resolveManagementSnapshotRoute') &&
+  relayApiManagementSnapshots.includes("'GET /api/manage/config'") &&
+  relayApiManagementSnapshots.includes("'GET /api/manage/ai/models'") &&
+  relayApiManagementSnapshots.includes("'GET /api/manage/services/available'") &&
+  relayApiManagementSnapshots.includes("'GET /api/manage/services'") &&
+  relayApiManagementSnapshots.includes("'GET /api/manage/transports'") &&
+  relayApiManagementSnapshots.includes("'GET /api/manage/devices'") &&
+  relayApiManagementSnapshots.includes("'GET /api/manage/pairing'") &&
+  relayApiManagementSnapshots.includes("'GET /api/manage/modes'") &&
+  relayApiManagementSnapshots.includes('export async function buildManagementSnapshotRoutePayload') &&
+  relayApiManagementSnapshots.includes('serviceConfigPayload(node && node.config, node && node.serviceRegistry)') &&
+  relayApiManagementSnapshots.includes('runManageAIModelsListAction({') &&
+  relayApiManagementSnapshots.includes('unknown management snapshot route') &&
+  relayApiManagementSnapshots.includes('export function buildManagementConfigPayload') &&
+  relayApiManagementSnapshots.includes('config: buildSafeConfigPayload(node)') &&
+  relayApiManagementSnapshots.includes('export function buildManagementServicesPayload') &&
+  relayApiManagementSnapshots.includes('statsVerified: false') &&
+  relayApiManagementSnapshots.includes('capabilities: Array.isArray(service.methods) ? service.methods : []') &&
   relayApiManagementSnapshots.includes('export function buildServiceRegistrySnapshot') &&
   relayApiManagementSnapshots.includes('try { providerStats = provider.stats() } catch (_) {}') &&
   relayApiManagementSnapshots.includes('MAX_MANAGEMENT_SERVICE_SNAPSHOT_SERVICES = 128') &&
@@ -2357,6 +3617,12 @@ if (
   !relayApiManagementSnapshots.includes('token: state.token') &&
   relayApiManagementSnapshots.includes('export function buildModeCatalogPayload') &&
   relayApiManagementSnapshots.includes('AVAILABLE_MODES.map') &&
+  apiManagementSnapshotsTest.includes('api management snapshots: route helper maps exact GET snapshot reads') &&
+  apiManagementSnapshotsTest.includes('api management snapshots: route payload builder centralizes GET snapshot responses') &&
+  apiManagementSnapshotsTest.includes('AI service is not running') &&
+  apiManagementSnapshotsTest.includes('unknown management snapshot route') &&
+  apiManagementSnapshotsTest.includes('api management snapshots: config payload uses safe config fields only') &&
+  apiManagementSnapshotsTest.includes('api management snapshots: services payload preserves compatibility capabilities') &&
   apiManagementSnapshotsTest.includes('api management snapshots: service entries prefer capabilities and isolate stats failures') &&
   apiManagementSnapshotsTest.includes('api management snapshots: service entries sanitize provider stats and noisy metadata') &&
   apiManagementSnapshotsTest.includes('MAX_MANAGEMENT_SERVICE_STATS_STRING_BYTES') &&
@@ -2376,15 +3642,27 @@ if (
 }
 
 if (
-  relayApi.includes("import { buildPeerListPayload } from './api-peer-state.js'") &&
-  relayApi.includes('return this._json(res, buildPeerListPayload({') &&
-  relayApi.includes("if (path === '/peers')") &&
+  relayApi.includes('resolvePeerStateRoute') &&
+  relayApi.includes('const peerStateRoute = resolvePeerStateRoute(req.method, path)') &&
+  relayApi.includes("peerStateRoute && peerStateRoute.kind === 'legacy-peer-list'") &&
+  relayApi.includes("peerStateRoute && peerStateRoute.kind === 'peer-list'") &&
+  !relayApi.includes("if (path === '/peers')") &&
+  !relayApi.includes("if (path === '/api/peers')") &&
+  relayApi.includes('buildPeerStateRoutePayload') &&
+  relayApi.includes('const result = buildPeerStateRoutePayload({') &&
+  relayApi.includes('route: peerStateRoute') &&
+  !relayApi.includes('return this._json(res, buildPeerListPayload({') &&
   relayApi.includes('redact: this._redactPeers()') &&
   bareHttpServer.includes("import { buildPeerListPayload } from './api-peer-state.js'") &&
   bareHttpServer.includes('publicKeyAlias: true') &&
   bareHttpServer.includes('includeLastActivity: true') &&
   relayApiPeerState.includes("import { redactPubkeyHex } from '../privacy.js'") &&
   relayApiPeerState.includes('export const MAX_PEER_LIST_ENTRIES = 1000') &&
+  relayApiPeerState.includes('export function resolvePeerStateRoute') &&
+  relayApiPeerState.includes("'GET /peers'") &&
+  relayApiPeerState.includes("'GET /api/peers'") &&
+  relayApiPeerState.includes('export function buildPeerStateRoutePayload') &&
+  relayApiPeerState.includes('unknown peer state route') &&
   relayApiPeerState.includes('export function buildPeerListPayload') &&
   relayApiPeerState.includes('maxPeers = MAX_PEER_LIST_ENTRIES') &&
   relayApiPeerState.includes('redact = true') &&
@@ -2399,6 +3677,9 @@ if (
   relayApiPeerState.includes('Math.max(0, Math.floor(now - lastActivity))') &&
   relayApiPeerState.includes('Math.min(Math.floor(value), Math.floor(now))') &&
   relayApiPeerState.includes('!/^[a-z0-9_-]+$/i.test(type)') &&
+  apiPeerStateTest.includes('api peer state: route helper maps exact public peer routes') &&
+  apiPeerStateTest.includes('api peer state: route payload helper dispatches legacy and full peer lists') &&
+  apiPeerStateTest.includes('unknown peer state route') &&
   apiPeerStateTest.includes('builds stable public peer list payload') &&
   apiPeerStateTest.includes('redacts malformed peer metadata into JSON-safe fields') &&
   apiPeerStateTest.includes('tolerates absent swarm and connection maps') &&
@@ -2489,8 +3770,6 @@ if (
 }
 
 if (
-  relayApi.includes('_queryInt (url, name, defaultValue, min, max)') &&
-  relayApi.includes('return queryInt(url, name, defaultValue, min, max)') &&
   relayApiValidation.includes('export function queryInt') &&
   relayApiValidation.includes('Number.isSafeInteger(parsed)') &&
   relayApiCatalogRead.includes("queryInt(parsed, 'page', 1, 1, 1_000_000)") &&
@@ -2498,10 +3777,13 @@ if (
   relayApiCatalogRead.includes('RELAY_CATALOG_PAGE_SIZE_MAX = 500') &&
   relayApiAlertManagement.includes("queryInt(parsed, 'offset', 0, 0, 10_000)") &&
   relayApiAlertManagement.includes("queryInt(parsed, 'limit', 50, 1, 500)") &&
-  relayApi.includes("this._queryInt(url, 'n', 30, 1, 100)") &&
-  relayApi.includes("this._queryInt(url, 'minutes', 60, 1, 24 * 60)") &&
+  relayApiOperatorTelemetry.includes('function queryRouteInt') &&
+  relayApiOperatorTelemetry.includes('return queryInt(url, name, defaultValue, min, max)') &&
+  relayApiOperatorTelemetry.includes('queryRouteInt(url, \'n\', DEFAULT_OPERATOR_STORAGE_TOP_ENTRIES, 1, MAX_OPERATOR_STORAGE_TOP_ENTRIES)') &&
+  relayApiOperatorTelemetry.includes('queryRouteInt(url, \'minutes\', DEFAULT_METRICS_HISTORY_MINUTES, 1, MAX_METRICS_HISTORY_MINUTES)') &&
   apiAuthTest.includes('alert pagination query values are clamped before log lookup') &&
   apiAuthTest.includes('metrics history minutes query is clamped to metrics retention') &&
+  apiOperatorTelemetryTest.includes('api operator telemetry: route payload builder centralizes telemetry responses and query clamps') &&
   apiValidationTest.includes('queryInt clamps safe integers and defaults malformed values') &&
   apiValidationTest.includes('queryInt clamps unsafe negative integers to min')
 ) {
@@ -2511,14 +3793,23 @@ if (
 }
 
 if (
-  relayApi.includes("import { runConfigUpdateAction } from './api-config-update.js'") &&
+  relayApi.includes("} from './api-config-update.js'") &&
+  relayApi.includes('resolveConfigUpdateRoute,') &&
+  relayApi.includes('const configUpdateRoute = resolveConfigUpdateRoute(req.method, path)') &&
+  relayApi.includes("configUpdateRoute && configUpdateRoute.kind === 'config-update'") &&
+  countOccurrences(relayApi, "if (path === '/api/manage/config')") === 0 &&
   relayApi.includes('const result = await runConfigUpdateAction({') &&
+  relayApi.includes('safeConfigPayload: () => this._getSafeConfig()') &&
+  relayApi.includes("if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)") &&
+  !relayApi.includes('_handleConfigUpdate') &&
   relayApiValidation.includes('export function validatePositiveInt') &&
   relayApiValidation.includes('export function validatePositiveNumber') &&
   relayApiValidation.includes('if (!/^\\d+$/.test(text))') &&
   relayApiValidation.includes('if (!/^-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)$/.test(text))') &&
   relayApiValidation.includes('!Number.isSafeInteger(parsed)') &&
   relayApiConfigUpdate.includes('export async function runConfigUpdateAction') &&
+  relayApiConfigUpdate.includes('export function resolveConfigUpdateRoute') &&
+  relayApiConfigUpdate.includes("'POST /api/manage/config'") &&
   relayApiConfigUpdate.includes('function rollbackApplied') &&
   relayApiConfigUpdate.includes('function validateRegions') &&
   relayApiConfigUpdate.includes('function objectRecord') &&
@@ -2532,16 +3823,23 @@ if (
   relayApiModeTransport.includes("const result = validatePositiveInt(body.maxConnections, 0, 100000, 'maxConnections')") &&
   relayApiModeTransport.includes("const result = validatePositiveNumber(body.maxRelayBandwidthMbps, 0, 100000, 'maxRelayBandwidthMbps')") &&
   relayApiModeTransport.includes("const result = validatePositiveInt(body.maxStorageBytes, 0, 10e12, 'maxStorageBytes')") &&
-  relayApi.includes('runDeviceManagementAction') &&
-  relayApi.includes('runPairingManagementAction') &&
+  relayApi.includes('runDevicePairingManagementRouteAction') &&
+  relayApi.includes('resolveDevicePairingManagementRoute,') &&
+  relayApi.includes('const devicePairingRoute = resolveDevicePairingManagementRoute(req.method, path)') &&
   relayApi.includes("from './api-device-pairing.js'") &&
+  relayApiDevicePairing.includes('export function resolveDevicePairingManagementRoute') &&
+  relayApiDevicePairing.includes("'POST /api/manage/devices'") &&
+  relayApiDevicePairing.includes("'POST /api/manage/pairing'") &&
+  relayApiDevicePairing.includes('export async function runDevicePairingManagementRouteAction') &&
   relayApiDevicePairing.includes("const result = validatePositiveInt(body.timeoutMs, 10_000, 30 * 60 * 1000, 'timeoutMs')") &&
+  apiConfigUpdateTest.includes('api config update: route helper maps exact config update route') &&
   apiConfigUpdateTest.includes('api config update: rejects malformed integers and rolls back earlier fields') &&
   apiConfigUpdateTest.includes('api config update: rejects malformed decimals and rolls back earlier fields') &&
   apiConfigUpdateTest.includes('api config update: rejects malformed regions and nested object fields without mutation') &&
   apiConfigUpdateTest.includes('registryAutoAccept must be a boolean') &&
   apiConfigUpdateTest.includes('requireSignedCatalog must be a boolean') &&
   apiConfigUpdateTest.includes('api config update: persistence failure rolls back all applied fields') &&
+  apiDevicePairingTest.includes('api device pairing: route action helper dispatches device and pairing mutations') &&
   apiDevicePairingTest.includes('api device pairing: validates pairing actions before state changes') &&
   apiServiceConfigTest.includes('config management api: rejects malformed integer strings and rolls back earlier fields') &&
   apiServiceConfigTest.includes('config management api: rejects malformed decimal strings and rolls back earlier fields') &&
@@ -2591,6 +3889,12 @@ if (
   relayApiCatalogRead.includes('function safeCatalogHexKey') &&
   relayApiCatalogRead.includes('function safeCatalogLabel') &&
   relayApiCatalogRead.includes('function safeCatalogAcceptMode') &&
+  relayApiCatalogRead.includes('export function resolveCatalogReadRoute') &&
+  relayApiCatalogRead.includes("'GET /catalog.json'") &&
+  relayApiCatalogRead.includes("'GET /api/apps'") &&
+  relayApiCatalogRead.includes("'GET /api/drives'") &&
+  relayApiCatalogRead.includes('export function buildCatalogReadRoutePayload') &&
+  relayApiCatalogRead.includes('unknown catalog read route') &&
   relayApiCatalogRead.includes('export function catalogEntriesByType ({ node, type, url, maxPageSize = RELAY_CATALOG_PAGE_SIZE_MAX } = {})') &&
   relayApiCatalogRead.includes("const pageSize = queryInt(parsed, 'pageSize', maxPageSize, 1, maxPageSize)") &&
   relayApiCatalogRead.includes('federation: federationCatalogSnapshot(node)') &&
@@ -2599,8 +3903,16 @@ if (
   !relayApiCatalogRead.includes('federation: node?.federation ? node.federation.snapshot() : null') &&
   relayApiCatalogRead.includes('pageCatalogEntries') &&
   relayApiCatalogRead.includes('catalogBeeKey') &&
-  relayApi.includes("catalogEntriesByType({ node: this.node, type: 'app', url })") &&
-  relayApi.includes("catalogEntriesByType({ node: this.node, type: 'drive', url })") &&
+  relayApi.includes('resolveCatalogReadRoute') &&
+  relayApi.includes('const catalogReadRoute = resolveCatalogReadRoute(req.method, path)') &&
+  relayApi.includes("catalogReadRoute && catalogReadRoute.kind === 'catalog'") &&
+  relayApi.includes("catalogReadRoute && catalogReadRoute.kind === 'legacy-type'") &&
+  relayApi.includes('const result = buildCatalogReadRoutePayload({') &&
+  relayApi.includes('route: catalogReadRoute') &&
+  !relayApi.includes('buildRelayCatalogPayload({ node: this.node, url })') &&
+  !relayApi.includes('catalogEntriesByType({ node: this.node, type: catalogReadRoute.type, url })') &&
+  !relayApi.includes("path === '/api/apps'") &&
+  !relayApi.includes("path === '/api/drives'") &&
   relayApiValidation.includes('export function queryInt') &&
   relayApiValidation.includes('!Number.isSafeInteger(parsed)') &&
   gatewayServer.includes('closeAllConnections') &&
@@ -2613,6 +3925,9 @@ if (
   gatewayServer.includes('!Number.isFinite(entry.count)') &&
   gatewayServer.includes('!Number.isFinite(entry.resetAt)') &&
   gatewayServer.includes('function positiveInteger') &&
+  apiCatalogReadTest.includes('api catalog read: route helper maps exact public catalog reads') &&
+  apiCatalogReadTest.includes('api catalog read: route payload helper dispatches catalog and legacy typed routes') &&
+  apiCatalogReadTest.includes('unknown catalog read route') &&
   apiCatalogReadTest.includes('relay catalog filters, counts, and paginates in one bounded helper') &&
   apiCatalogReadTest.includes('relay catalog sanitizes top-level public metadata') &&
   apiCatalogReadTest.includes('invalid types are rejected instead of widening public catalog reads') &&
@@ -2645,16 +3960,25 @@ if (
   fail('public catalog reads can drift to duplicated permissive parsing, unbounded pagination, weak data-plane JSON headers, unbounded gateway rate-limit buckets, or hanging gateway shutdown')
 }
 
-const gatewayStatsRouteStart = relayApi.indexOf("path === '/api/gateway'")
-const gatewayStatsRouteBlock = relayApi.slice(
-  gatewayStatsRouteStart,
-  relayApi.indexOf('// Catalog endpoint', gatewayStatsRouteStart)
-)
+const gatewayStatsRouteStart = relayApi.indexOf('const gatewayStatsRoute = resolveGatewayStatsRoute(req.method, path)')
+const gatewayStatsRouteEnd = relayApi.indexOf('// Index-layer query routes', gatewayStatsRouteStart)
+const gatewayStatsRouteBlock = gatewayStatsRouteStart === -1
+  ? ''
+  : relayApi.slice(gatewayStatsRouteStart, gatewayStatsRouteEnd)
 if (
-  relayApi.includes("import {\n  buildGatewayStatsPayload,\n  sanitizeGatewayStats\n} from './api-gateway-stats.js'") &&
-  gatewayStatsRouteBlock.includes('const result = buildGatewayStatsPayload({ gateway: this._gateway })') &&
+  relayApi.includes("import {\n  buildGatewayStatsRoutePayload,\n  resolveGatewayStatsRoute\n} from './api-gateway-stats.js'") &&
+  relayApi.includes('const gatewayStatsRoute = resolveGatewayStatsRoute(req.method, path)') &&
+  relayApi.includes("gatewayStatsRoute && gatewayStatsRoute.kind === 'gateway-stats'") &&
+  !relayApi.includes("req.method === 'GET' && path === '/api/gateway'") &&
+  gatewayStatsRouteBlock.includes('const result = buildGatewayStatsRoutePayload({') &&
+  gatewayStatsRouteBlock.includes('route: gatewayStatsRoute') &&
   !gatewayStatsRouteBlock.includes('this._gateway.getStats()') &&
-  relayApi.includes('gateway: this._gateway ? sanitizeGatewayStats(this._gateway.getStats()) : null') &&
+  relayApiOverview.includes("import { sanitizeGatewayStats } from './api-gateway-stats.js'") &&
+  relayApiOverview.includes("gateway: gateway && typeof gateway.getStats === 'function' ? sanitizeGatewayStats(gateway.getStats()) : null") &&
+  relayApiGatewayStats.includes('export function resolveGatewayStatsRoute') &&
+  relayApiGatewayStats.includes("'GET /api/gateway'") &&
+  relayApiGatewayStats.includes('export function buildGatewayStatsRoutePayload') &&
+  relayApiGatewayStats.includes('unknown gateway stats route') &&
   relayApiGatewayStats.includes('export function sanitizeGatewayStats') &&
   relayApiGatewayStats.includes('cachedDrives: safeCounter(stats && stats.cachedDrives)') &&
   relayApiGatewayStats.includes('totalRequests: safeCounter(stats && stats.totalRequests)') &&
@@ -2662,6 +3986,9 @@ if (
   relayApiGatewayStats.includes('...stats') === false &&
   standaloneGatewayServer.includes("import { sanitizeGatewayStats } from '../core/relay-node/api-gateway-stats.js'") &&
   standaloneGatewayServer.includes('...sanitizeGatewayStats(gateway.getStats())') &&
+  apiGatewayStatsTest.includes('api gateway stats: route helper maps exact public stats route') &&
+  apiGatewayStatsTest.includes('api gateway stats: route payload helper dispatches sanitized public stats') &&
+  apiGatewayStatsTest.includes('unknown gateway stats route') &&
   apiGatewayStatsTest.includes('sanitizes public counters without raw fields') &&
   apiAuthTest.includes('GET /api/gateway returns sanitized public gateway stats') &&
   apiAuthTest.includes('overview gateway stats are sanitized') &&
@@ -2710,9 +4037,14 @@ if (
   hyperGateway.includes('clearTimeout(timer)') &&
   hyperGateway.includes('if (timer.unref) timer.unref()') &&
   hyperGateway.includes('function writeGatewayJson') &&
+  hyperGateway.includes('function writeGatewayJson (res, body, status = 200, headers = null, opts = {})') &&
   hyperGateway.includes("res.setHeader('Content-Type', 'application/json; charset=utf-8')") &&
   hyperGateway.includes("res.setHeader('X-Content-Type-Options', 'nosniff')") &&
   hyperGateway.includes("res.setHeader('Cache-Control', 'no-store, max-age=0')") &&
+  hyperGateway.includes("res.setHeader('Content-Length', Buffer.byteLength(payload))") &&
+  hyperGateway.includes('res.end(opts.head ? null : payload)') &&
+  hyperGateway.includes("const isHead = req.method === 'HEAD'") &&
+  hyperGateway.includes('_serveDirectoryListing (res, drive, keyHex, dirPath, opts = {})') &&
   hyperGateway.includes("error: 'Gateway read failed'") &&
   hyperGateway.includes("error: 'Gateway stream failed'") &&
   !hyperGateway.includes('JSON.stringify({ error: err.message })') &&
@@ -2724,31 +4056,67 @@ if (
   hyperGatewayHardeningTest.includes('malformed path encoding returns 400 instead of surfacing a 500') &&
   hyperGatewayHardeningTest.includes('double-encoded traversal remains forbidden') &&
   hyperGatewayHardeningTest.includes('byte ranges reject permissive JavaScript number syntax') &&
-  hyperGatewayHardeningTest.includes('unsupported range units and multi-ranges are ignored as full responses')
+  hyperGatewayHardeningTest.includes('unsupported range units and multi-ranges are ignored as full responses') &&
+  hyperGatewayHardeningTest.includes('HEAD preserves range headers without serving bytes') &&
+  hyperGatewayHardeningTest.includes('HEAD on rewritten HTML and directory listings is header-only')
 ) {
-  pass('Hyperdrive HTTP gateway rejects malformed paths, redacts internal errors, hardens JSON responses, and bounds range/timeouts')
+  pass('Hyperdrive HTTP gateway rejects malformed paths, redacts internal errors, hardens JSON responses, preserves HEAD semantics, and bounds range/timeouts')
 } else {
-  fail('Hyperdrive HTTP gateway can accept unsafe methods, leak raw errors, emit weak JSON errors, accept permissive ranges, or leave stale timeout handles')
+  fail('Hyperdrive HTTP gateway can accept unsafe methods, leak raw errors, emit weak JSON errors, serve bodies for HEAD, accept permissive ranges, or leave stale timeout handles')
 }
 
-const persistGuardUses = (relayApi.match(/_persistConfigOrRespond\(res/g) || []).length
+const serviceConfigUpdateActionGuard = (
+  relayApi.includes('const serviceConfigUpdateRoute = resolveServiceConfigUpdateRoute(req.method, path)') &&
+  relayApi.includes("serviceConfigUpdateRoute && serviceConfigUpdateRoute.kind === 'service-config-update'") &&
+  relayApi.includes('const result = await runServiceConfigUpdateAction({') &&
+  relayApiServiceConfig.includes('export function resolveServiceConfigUpdateRoute') &&
+  relayApiServiceConfig.includes("'POST /api/manage/services/config'") &&
+  relayApiServiceConfig.includes('export async function runServiceConfigUpdateAction') &&
+  relayApiServiceConfig.includes('await persistConfig()') &&
+  relayApiServiceConfig.includes("return {\n      ok: false,\n      kind: 'config-persist',") &&
+  relayApiServiceConfig.includes('config.enableServices = previousEnableServices') &&
+  relayApiServiceConfig.includes('config.plugins = previousPlugins') &&
+  apiServiceConfigHelpersTest.includes('api service config helpers: update action rolls back on persistence failure')
+)
 if (
   errorPrefixes.includes("PERSIST_FAILED: 'persist-failed: '") &&
   errorPrefixes.includes("NOT_ENABLED: 'not-enabled: '") &&
   errorPrefixesTest.includes("formatErr('NOT_ENABLED', 'service disabled')") &&
   errorPrefixesTest.includes("classifyErr('not-enabled: service disabled')") &&
-  relayApi.includes("formatErr('PERSIST_FAILED'") &&
-  relayApi.includes('_getPokerServiceProvider ()') &&
-  relayApi.includes("error: 'Poker service is not enabled on this relay'") &&
-  relayApi.includes("error: 'Poker service does not expose the substrate methods'") &&
+  relayApiPersistFailures.includes('CONFIG_PERSIST_FAILED_MESSAGE') &&
+  relayApiPersistFailures.includes('WIZARD_PERSIST_FAILED_MESSAGE') &&
+  relayApiPersistFailures.includes('export function configPersistFailureResult') &&
+  relayApiPersistFailures.includes('export function wizardPersistFailureResult') &&
+  relayApiPersistFailures.includes('export function persistErrorMessage') &&
+  relayApiPersistFailures.includes("formatErr('PERSIST_FAILED', CONFIG_PERSIST_FAILED_MESSAGE)") &&
+  relayApiPersistFailures.includes("formatErr('PERSIST_FAILED', WIZARD_PERSIST_FAILED_MESSAGE)") &&
+  relayApiPersistFailures.includes("emit('wizard-persist-error'") &&
+  relayApi.includes('configPersistFailureResult,') &&
+  relayApi.includes('persistErrorMessage,') &&
+  relayApi.includes('wizardPersistFailureResult') &&
+  relayApi.includes('_persistFailureResponse (res, result)') &&
+  relayApi.includes('wizardPersistFailureResult({ error: result.error, emit: (...args) => this.emit(...args) })') &&
+  relayApi.includes('configPersistFailureResult()') &&
+  !relayApi.includes('CONFIG_PERSIST_FAILED_MESSAGE') &&
+  !relayApi.includes('WIZARD_PERSIST_FAILED_MESSAGE') &&
+  !relayApi.includes('_configPersistErrorResponse') &&
+  !relayApi.includes('_wizardPersistErrorResponse') &&
+  relayApi.includes('resolvePokerServiceProvider(this.node)') &&
+  relayApiServiceProvider.includes("error: 'Poker service is not enabled on this relay'") &&
+  relayApiServiceProvider.includes("error: 'Poker service does not expose the substrate methods'") &&
   relayApiSubsidy.includes("formatErr('NOT_ENABLED', 'subsidy is not enabled on this relay')") &&
-  relayApi.includes("errorCode: 'persist-failed'") &&
+  relayApiSubsidy.includes('SUBSIDY_PERSIST_FAILED_MESSAGE') &&
+  relayApiSubsidy.includes('export function subsidyPersistFailureResult') &&
+  relayApiSubsidy.includes("formatErr('PERSIST_FAILED', SUBSIDY_PERSIST_FAILED_MESSAGE)") &&
+  relayApiSubsidy.includes("emit('subsidy-persist-error'") &&
+  relayApiSubsidy.includes('subsidyPersistFailureResult({ error: err, emit })') &&
+  relayApi.includes('if (result.payload) return this._json(res, result.payload, result.status || 400)') &&
+  !relayApi.includes('SUBSIDY_PERSIST_FAILED_MESSAGE') &&
+  !relayApi.includes("this.emit('subsidy-persist-error'") &&
+  !relayApi.includes('_subsidyPersistErrorResponse') &&
+  relayApiPersistFailures.includes("errorCode: 'persist-failed'") &&
   relayApi.includes("this.emit('config-persist-error'") &&
   relayApi.includes("this.emit('config-rollback-error'") &&
-  relayApi.includes('WIZARD_PERSIST_FAILED_MESSAGE') &&
-  relayApi.includes('SUBSIDY_PERSIST_FAILED_MESSAGE') &&
-  relayApi.includes("this.emit('wizard-persist-error'") &&
-  relayApi.includes("this.emit('subsidy-persist-error'") &&
   relayApi.includes('return saveConfig(this._getSafeConfig())') &&
   relayApi.includes('throw err') &&
   relayApi.includes('_snapshotWizardConfig') &&
@@ -2765,9 +4133,12 @@ if (
   relayApiServiceManagement.includes("return { ok: false, kind: 'config-persist', error: err }") &&
   relayApiServiceManagement.includes('config.plugins = previousPlugins') &&
   relayApiServiceManagement.includes('config.enableServices = previousEnableServices') &&
-  relayApi.includes("if (!result.ok && result.kind === 'config-persist') return this._configPersistErrorResponse(res)") &&
+  relayApi.includes("if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)") &&
   apiServiceManagementTest.includes('api service management: disable rolls back config when persistence fails') &&
   apiServiceConfigTest.includes('service management api: disable rolls back configured plugins when persistence fails') &&
+  apiPersistFailuresTest.includes('api persist failures: config mapper returns stable public payload') &&
+  apiPersistFailuresTest.includes('api persist failures: wizard mapper emits internal diagnostics') &&
+  apiPersistFailuresTest.includes('public payload does not leak local storage error') &&
   relayApiModeTransport.includes('await persistConfig()') &&
   relayApiModeTransport.includes("return { ok: false, kind: 'config-persist', error: err }") &&
   relayApiModeTransport.includes('node.config = previousConfig') &&
@@ -2780,12 +4151,49 @@ if (
   apiSubsidyTest.includes('api subsidy: wizard save failures restore config and wizard state') &&
   apiSubsidyTest.includes('api subsidy: config persist failures restore runtime state and wizard file') &&
   apiSubsidyTest.includes('api subsidy: live accrual failures restore persisted config and emit rollback drift') &&
-  relayApi.includes('buildPendingCatalogPayload,') &&
-  relayApi.includes('runCatalogAllowlistAction,') &&
-  relayApi.includes('return this._json(res, buildPendingCatalogPayload({') &&
-  relayApi.includes('return this._handleCatalogMode(res, body)') &&
-  relayApi.includes('return this._handleCatalogAllowlist(res, body)') &&
-  relayApi.includes("return this._handleCatalogAppAction(res, 'remove', body)") &&
+  apiSubsidyTest.includes('api subsidy: persist failure mapper emits internal diagnostics') &&
+  apiSubsidyTest.includes('public payload does not leak local storage error') &&
+  apiServiceConfigTest.includes("persistErrors, ['subsidy store readonly']") &&
+  relayApi.includes('buildPendingCatalogRoutePayload,') &&
+  relayApi.includes('resolveCatalogManagementRoute,') &&
+  relayApi.includes('resolvePendingCatalogRoute,') &&
+  relayApi.includes('runCatalogManagementRouteAction') &&
+  relayApi.includes('const pendingCatalogRoute = resolvePendingCatalogRoute(req.method, path)') &&
+  relayApi.includes("pendingCatalogRoute && pendingCatalogRoute.kind === 'pending-catalog'") &&
+  relayApi.includes('if (!this._requireAuth(req, res, pendingCatalogRoute.authMessage)) return') &&
+  relayApi.includes('const result = buildPendingCatalogRoutePayload({') &&
+  relayApi.includes('route: pendingCatalogRoute') &&
+  !relayApi.includes('return this._json(res, buildPendingCatalogPayload({') &&
+  relayApi.includes('const catalogRoute = resolveCatalogManagementRoute(req.method, path)') &&
+  !relayApi.includes('const catalogRoute = resolveCatalogManagementRoute(path)') &&
+  relayApi.includes('catalogRoute.authMessage') &&
+  relayApi.includes('const result = await runCatalogManagementRouteAction({') &&
+  relayApi.includes('route: catalogRoute') &&
+  relayApi.includes('config: this.node.config') &&
+  relayApi.includes('persistConfig: () => this._persistConfig()') &&
+  relayApi.includes('emit: (...args) => this.emit(...args)') &&
+  relayApi.includes("if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)") &&
+  !relayApi.includes('runCatalogAllowlistAction,') &&
+  !relayApi.includes('runCatalogAppAction,') &&
+  !relayApi.includes('runCatalogModeAction,') &&
+  !relayApi.includes('runLegacyAutoAcceptAction,') &&
+  !relayApi.includes('runRegistryCancelAction,') &&
+  !relayApi.includes('_handleLegacyAutoAccept') &&
+  !relayApi.includes('_handleCatalogMode') &&
+  !relayApi.includes('_handleCatalogAllowlist') &&
+  !relayApi.includes('_handleCatalogAppAction') &&
+  !relayApi.includes('_handleRegistryCancel') &&
+  relayApiCatalogManagement.includes('export function resolveCatalogManagementRoute') &&
+  relayApiCatalogManagement.includes('export function resolvePendingCatalogRoute') &&
+  relayApiCatalogManagement.includes("'GET /api/registry/pending'") &&
+  relayApiCatalogManagement.includes("'GET /api/manage/catalog/pending'") &&
+  relayApiCatalogManagement.includes("kind: 'pending-catalog'") &&
+  relayApiCatalogManagement.includes("'POST /registry/auto-accept': Object.freeze({ kind: 'legacy-auto-accept' })") &&
+  relayApiCatalogManagement.includes("'POST /api/manage/catalog/remove': Object.freeze({ kind: 'app', action: 'remove' })") &&
+  relayApiCatalogManagement.includes('CATALOG_MANAGEMENT_ROUTES[`$' + '{method} $' + '{path}`]') &&
+  relayApiCatalogManagement.includes('authMessage: `Unauthorized — API key required for $' + '{path}`') &&
+  relayApiCatalogManagement.includes('export function buildPendingCatalogRoutePayload') &&
+  relayApiCatalogManagement.includes('unknown pending catalog route') &&
   relayApiCatalogManagement.includes('export function buildPendingCatalogPayload') &&
   relayApiCatalogManagement.includes('function buildPendingCatalogRequest') &&
   relayApiCatalogManagement.includes('export async function runCatalogModeAction') &&
@@ -2793,6 +4201,13 @@ if (
   relayApiCatalogManagement.includes('export async function runCatalogAllowlistAction') &&
   relayApiCatalogManagement.includes('export async function runCatalogAppAction') &&
   relayApiCatalogManagement.includes('export async function runRegistryCancelAction') &&
+  relayApiCatalogManagement.includes('export async function runCatalogManagementRouteAction') &&
+  relayApiCatalogManagement.includes('return runLegacyAutoAcceptAction({ body, config, persistConfig, emit })') &&
+  relayApiCatalogManagement.includes('return runCatalogModeAction({ body, config, persistConfig, emit })') &&
+  relayApiCatalogManagement.includes('return runCatalogAllowlistAction({ body, config, persistConfig, emit })') &&
+  relayApiCatalogManagement.includes('return runCatalogAppAction({ action: route.action, body, node })') &&
+  relayApiCatalogManagement.includes('return runRegistryCancelAction({ body, node })') &&
+  relayApiCatalogManagement.includes('unknown catalog management route') &&
   relayApiCatalogManagement.includes('function validateBooleanField') &&
   relayApiCatalogManagement.includes("validateBooleanField(body.enabled, 'enabled')") &&
   relayApiCatalogManagement.includes('delete config.registryAutoAccept // disambiguate') &&
@@ -2802,6 +4217,13 @@ if (
   relayApiCatalogManagement.includes('restoreAllowlistConfig(config, snapshot, emit)') &&
   relayApiCatalogManagement.includes('await persistConfig()') &&
   relayApiCatalogManagement.includes("return { ok: false, kind: 'config-persist', error: err }") &&
+  apiCatalogManagementTest.includes('api catalog management: route helper maps legacy and management paths') &&
+  apiCatalogManagementTest.includes("resolveCatalogManagementRoute('GET', '/api/manage/catalog/remove')") &&
+  apiCatalogManagementTest.includes('api catalog management: pending route helper maps exact queue reads') &&
+  apiCatalogManagementTest.includes('api catalog management: pending route payload helper dispatches queue reads') &&
+  apiCatalogManagementTest.includes('unknown pending catalog route') &&
+  apiCatalogManagementTest.includes('api catalog management: route action helper dispatches every mutation family') &&
+  apiCatalogManagementTest.includes('only config-backed catalog mutations persist config') &&
   apiCatalogManagementTest.includes('api catalog management: mode persists accept mode and rolls back failures') &&
   apiCatalogManagementTest.includes('api catalog management: legacy auto-accept persists alias and rolls back failures') &&
   apiCatalogManagementTest.includes('enabled must be a boolean') &&
@@ -2828,7 +4250,7 @@ if (
   subsidyTest.includes('setPayoutDestination: persistence failure rejects and keeps previous value') &&
   !relayApi.includes('_persistConfig().catch') &&
   relayNode.includes('delete this.config.registryAutoAccept') &&
-  persistGuardUses >= 1
+  serviceConfigUpdateActionGuard
 ) {
   pass('management API reports config, wizard, and subsidy persistence failures before UI save success, rolls back failed service/wallet/wizard/mode saves, and sanitizes pending catalog reads')
 } else {
@@ -2836,20 +4258,35 @@ if (
 }
 
 const registryStatusRouteBlock = relayApi.slice(
-  relayApi.indexOf("path === '/api/registry'"),
-  relayApi.indexOf("path === '/api/reputation'")
+  relayApi.indexOf('const registryStatusRoute = resolveRegistryStatusRoute(req.method, path)'),
+  relayApi.indexOf('const reputationLeaderboardRoute = resolveReputationLeaderboardRoute(req.method, path)')
 )
 if (
-  relayApi.includes("import { buildRegistryStatusPayload } from './api-registry-status.js'") &&
-  registryStatusRouteBlock.includes('const result = await buildRegistryStatusPayload({ registry: this.node.seedingRegistry })') &&
+  relayApi.includes('buildRegistryStatusRoutePayload,') &&
+  relayApi.includes('resolveRegistryStatusRoute') &&
+  registryStatusRouteBlock.includes("registryStatusRoute && registryStatusRoute.kind === 'registry-status'") &&
+  registryStatusRouteBlock.includes('if (!this._requireAuth(req, res, registryStatusRoute.authMessage)) return') &&
+  registryStatusRouteBlock.includes('const result = await buildRegistryStatusRoutePayload({') &&
+  registryStatusRouteBlock.includes('route: registryStatusRoute') &&
+  registryStatusRouteBlock.includes('registry: this.node.seedingRegistry') &&
+  !registryStatusRouteBlock.includes('const result = await buildRegistryStatusPayload({ registry: this.node.seedingRegistry })') &&
+  !registryStatusRouteBlock.includes("path === '/api/registry'") &&
   !registryStatusRouteBlock.includes('...req') &&
   !registryStatusRouteBlock.includes('for (const req of requests)') &&
+  relayApiRegistryStatus.includes('export function resolveRegistryStatusRoute') &&
+  relayApiRegistryStatus.includes('export async function buildRegistryStatusRoutePayload') &&
+  relayApiRegistryStatus.includes('unknown registry status route') &&
+  relayApiRegistryStatus.includes("'GET /api/registry'") &&
+  relayApiRegistryStatus.includes("authMessage: 'Unauthorized — API key required for /api/registry'") &&
   relayApiRegistryStatus.includes('export const MAX_REGISTRY_STATUS_REQUESTS = 500') &&
   relayApiRegistryStatus.includes('export const MAX_REGISTRY_STATUS_RELAYS_PER_REQUEST = 100') &&
   relayApiRegistryStatus.includes('source.slice(0, requestLimit)') &&
   relayApiRegistryStatus.includes('relays.slice(0, relayLimit).map(sanitizeRelay)') &&
   relayApiRegistryStatus.includes('relaysTruncated: relays.length > relayItems.length') &&
   relayApiRegistryStatus.includes('publisherSignature') === false &&
+  apiRegistryStatusTest.includes('api registry status: route helper maps exact operator status route') &&
+  apiRegistryStatusTest.includes('api registry status: route payload helper dispatches operator status reads') &&
+  apiRegistryStatusTest.includes('unknown registry status route') &&
   apiRegistryStatusTest.includes('sanitizes request fields and relay metadata') &&
   apiRegistryStatusTest.includes('caps request enrichment and per-request relays') &&
   apiAuthTest.includes('GET /api/registry requires auth and returns bounded sanitized status') &&
@@ -2860,24 +4297,48 @@ if (
   fail('registry status reads can regress to raw request spreading or unbounded relay enrichment')
 }
 
-const reputationReadRouteStart = relayApi.indexOf("path === '/api/reputation'")
+const reputationReadRouteStart = relayApi.indexOf('const reputationLeaderboardRoute = resolveReputationLeaderboardRoute(req.method, path)')
 const reputationReadRouteBlock = relayApi.slice(
   reputationReadRouteStart,
   relayApi.indexOf('// ─── Services & Router', reputationReadRouteStart)
 )
 if (
-  relayApi.includes('buildReputationLeaderboardPayload,\n  buildReputationRecordPayload') &&
-  reputationReadRouteBlock.includes('const result = buildReputationLeaderboardPayload({ reputation: this.node.reputation })') &&
-  reputationReadRouteBlock.includes('const result = buildReputationRecordPayload({') &&
+  relayApi.includes('buildReputationLeaderboardRoutePayload,\n  buildReputationRecordRoutePayload,\n  resolveReputationLeaderboardRoute,\n  resolveReputationRecordRoute') &&
+  reputationReadRouteBlock.includes('const reputationLeaderboardRoute = resolveReputationLeaderboardRoute(req.method, path)') &&
+  reputationReadRouteBlock.includes("reputationLeaderboardRoute && reputationLeaderboardRoute.kind === 'reputation-leaderboard'") &&
+  reputationReadRouteBlock.includes('const result = buildReputationLeaderboardRoutePayload({') &&
+  reputationReadRouteBlock.includes('route: reputationLeaderboardRoute') &&
+  !reputationReadRouteBlock.includes('const result = buildReputationLeaderboardPayload({ reputation: this.node.reputation })') &&
+  reputationReadRouteBlock.includes('const reputationRecordRoute = resolveReputationRecordRoute(req.method, path)') &&
+  reputationReadRouteBlock.includes("reputationRecordRoute && reputationRecordRoute.kind === 'reputation-record'") &&
+  !reputationReadRouteBlock.includes('if (isReputationRecordRoute(path))') &&
+  reputationReadRouteBlock.includes('const result = buildReputationRecordRoutePayload({') &&
+  reputationReadRouteBlock.includes('path') &&
+  !reputationReadRouteBlock.includes("pubkey: path.slice('/api/reputation/'.length)") &&
   !reputationReadRouteBlock.includes('getLeaderboard(100)') &&
   !reputationReadRouteBlock.includes('getRecord(pubkey)') &&
   relayApiReputationRead.includes('export const MAX_REPUTATION_LEADERBOARD_ENTRIES = 100') &&
+  relayApiReputationRead.includes('export function resolveReputationLeaderboardRoute') &&
+  relayApiReputationRead.includes("'GET /api/reputation'") &&
+  relayApiReputationRead.includes("kind: 'reputation-leaderboard'") &&
+  relayApiReputationRead.includes('export function buildReputationLeaderboardRoutePayload') &&
+  relayApiReputationRead.includes('unknown reputation leaderboard route') &&
+  relayApiReputationRead.includes('export function resolveReputationRecordRoute') &&
+  relayApiReputationRead.includes("kind: 'reputation-record'") &&
+  relayApiReputationRead.includes('export function isReputationRecordRoute') &&
+  relayApiReputationRead.includes('export function reputationRecordPubkeyFromPath') &&
+  relayApiReputationRead.includes('export function buildReputationRecordRoutePayload') &&
   relayApiReputationRead.includes('source.slice(0, limit)') &&
   relayApiReputationRead.includes('export function sanitizeReputationRecord') &&
   relayApiReputationRead.includes('secretToken') === false &&
   relayApiReputationRead.includes('...record') === false &&
   relayApiPeerState.includes("import { sanitizeReputationRecord } from './api-reputation-read.js'") &&
   relayApiPeerState.includes('peer.reputation = sanitizeReputationRecord(reputation.getRecord(realPubkey))') &&
+  apiReputationReadTest.includes('leaderboard route helper maps exact public read') &&
+  apiReputationReadTest.includes('leaderboard route payload helper dispatches public read') &&
+  apiReputationReadTest.includes('unknown reputation leaderboard route') &&
+  apiReputationReadTest.includes('record route helper isolates pubkey path parsing') &&
+  apiReputationReadTest.includes('resolveReputationRecordRoute') &&
   apiReputationReadTest.includes('sanitizes direct records without raw store fields') &&
   apiReputationReadTest.includes('caps and sanitizes leaderboard rows') &&
   apiPeerStateTest.includes('raw reputation fields are omitted') &&
@@ -2892,6 +4353,7 @@ if (
 }
 
 const federationPersistFalseUses = (relayApiFederationManagement.match(/persist: false/g) || []).length
+const federationDisabledDelegations = (relayApi.match(/disabled: this\._federationApiDisabled\(\)/g) || []).length
 if (
   federationCore.includes('async save ({ throwOnError = false } = {})') &&
   federationCore.includes('restoreSnapshot (snapshot = {})') &&
@@ -2907,33 +4369,80 @@ if (
   federationCore.includes('typeof globalThis.fetch ===') &&
   !federationCore.includes("import https from 'https'") &&
   federationCore.includes('contentLength > MAX_FEDERATION_JSON_BYTES') &&
-  relayApi.includes('FEDERATION_PERSIST_FAILED_MESSAGE') &&
-  relayApi.includes('buildFederationSnapshotPayload,\n  runFederationManagementAction') &&
-  relayApi.includes('const result = buildFederationSnapshotPayload({ federation: this.node.federation })') &&
-  relayApi.includes('const result = await runFederationManagementAction({') &&
-  relayApi.includes("this.emit('federation-persist-error'") &&
-  relayApi.includes('_federationPersistErrorResponse(res, result.error)') &&
+  !relayApi.includes('FEDERATION_PERSIST_FAILED_MESSAGE') &&
+  relayApi.includes('buildFederationSnapshotRoutePayload,\n  resolveFederationManagementRoute,\n  resolveFederationSnapshotRoute,\n  runFederationManagementRouteAction') &&
+  relayApi.includes('const federationSnapshotRoute = resolveFederationSnapshotRoute(req.method, path)') &&
+  relayApi.includes("federationSnapshotRoute && federationSnapshotRoute.kind === 'federation-snapshot'") &&
+  relayApi.includes('if (!this._requireAuth(req, res, federationSnapshotRoute.authMessage)) return') &&
+  relayApi.includes('const result = buildFederationSnapshotRoutePayload({') &&
+  relayApi.includes('route: federationSnapshotRoute') &&
+  federationDisabledDelegations >= 2 &&
+  !relayApi.includes('_federationDisabledResponse') &&
+  !relayApi.includes('const result = buildFederationSnapshotPayload({ federation: this.node.federation })') &&
+  relayApi.includes('const federationRoute = resolveFederationManagementRoute(req.method, path)') &&
+  !relayApi.includes('const federationRoute = resolveFederationManagementRoute(path)') &&
+  relayApi.includes('federationRoute.authMessage') &&
+  relayApi.includes('const result = await runFederationManagementRouteAction({') &&
+  relayApi.includes('route: federationRoute') &&
+  relayApi.includes('federation: this.node.federation') &&
+  relayApi.includes('emit: (...args) => this.emit(...args)') &&
+  relayApi.includes('disabled: this._federationApiDisabled()') &&
+  !relayApi.includes('_handleFederationManagement') &&
+  !relayApi.includes('federationRoute.action, body') &&
+  !relayApi.includes("this.emit('federation-persist-error'") &&
+  !relayApi.includes('_federationPersistErrorResponse') &&
+  relayApiFederationManagement.includes('export function resolveFederationManagementRoute') &&
+  relayApiFederationManagement.includes('export function resolveFederationSnapshotRoute') &&
+  relayApiFederationManagement.includes("'GET /api/manage/federation'") &&
+  relayApiFederationManagement.includes("kind: 'federation-snapshot'") &&
+  relayApiFederationManagement.includes("'POST /api/manage/federation/follow': 'follow'") &&
+  relayApiFederationManagement.includes('FEDERATION_MANAGEMENT_ROUTES[`$' + '{method} $' + '{path}`]') &&
+  relayApiFederationManagement.includes('authMessage: `Unauthorized — API key required for $' + '{path}`') &&
   relayApiFederationManagement.includes('export function buildFederationSnapshotPayload') &&
+  relayApiFederationManagement.includes('export function buildFederationSnapshotRoutePayload') &&
+  relayApiFederationManagement.includes('unknown federation snapshot route') &&
+  relayApiFederationManagement.includes('disabled = false') &&
+  relayApiFederationManagement.includes("kind: 'disabled-profile'") &&
+  relayApiFederationManagement.includes("formatErr('NOT_ENABLED', FEDERATION_DISABLED_MESSAGE)") &&
+  relayApiFederationManagement.includes('FEDERATION_PERSIST_FAILED_MESSAGE') &&
+  relayApiFederationManagement.includes('export function federationPersistFailureResult') &&
+  relayApiFederationManagement.includes("emit('federation-persist-error'") &&
+  relayApiFederationManagement.includes("formatErr('PERSIST_FAILED', FEDERATION_PERSIST_FAILED_MESSAGE)") &&
   relayApiFederationManagement.includes('MAX_FEDERATION_SNAPSHOT_RELAYS = 128') &&
   relayApiFederationManagement.includes('MAX_FEDERATION_SNAPSHOT_PEER_APPS = 128') &&
   relayApiFederationManagement.includes('function sanitizePeerCatalogEntry') &&
   relayApiFederationManagement.includes('function sanitizePeerCatalogApp') &&
   relayApiFederationManagement.includes('if (parsed.username || parsed.password) return null') &&
   relayApiFederationManagement.includes('export async function runFederationManagementAction') &&
+  relayApiFederationManagement.includes('export async function runFederationManagementRouteAction') &&
+  relayApiFederationManagement.includes('unknown federation management route') &&
+  relayApiFederationManagement.includes('action: route.action') &&
   relayApiFederationManagement.includes('await federation.save({ throwOnError: true })') &&
   relayApiFederationManagement.includes('federation.restoreSnapshot(snapshot)') &&
   relayApiFederationManagement.includes("emit('federation-rollback-error'") &&
   relayApiFederationManagement.includes("message.startsWith('Federation:')") &&
+  relayApiFederationManagement.includes('federationPersistFailureResult({ error: err, emit })') &&
   relayApiFederationManagement.includes('MAX_FEDERATION_NOTE_LENGTH') &&
   relayApiFederationManagement.includes('sourcePubkey must be 64 hex characters') &&
   relayApiFederationManagement.includes('channel must be a string') &&
   federationPersistFalseUses >= 5 &&
+  apiFederationManagementTest.includes('api federation management: snapshot route helper maps exact operator read route') &&
+  apiFederationManagementTest.includes('api federation management: snapshot route payload helper dispatches operator read') &&
+  apiFederationManagementTest.includes('api federation management: disabled profile rejects reads and writes before runtime access') &&
+  apiFederationManagementTest.includes('disabled federation read must not reach snapshot') &&
+  apiFederationManagementTest.includes('unknown federation snapshot route') &&
+  apiFederationManagementTest.includes('api federation management: route helper maps management paths to actions') &&
+  apiFederationManagementTest.includes('api federation management: route action helper dispatches management mutations') &&
+  apiFederationManagementTest.includes('unknown federation management route') &&
+  apiFederationManagementTest.includes("resolveFederationManagementRoute('GET', '/api/manage/federation/follow')") &&
   apiFederationManagementTest.includes('api federation management: validates action bodies before federation access') &&
   apiFederationManagementTest.includes('api federation management: canonicalizes optional trusted metadata before persistence') &&
   apiFederationManagementTest.includes('api federation management: persists every mutation before success') &&
   apiFederationManagementTest.includes('api federation management: persistence failure restores snapshot') &&
+  apiFederationManagementTest.includes('public payload does not leak local storage error') &&
   apiFederationManagementTest.includes('api federation management: federation validation failures roll back without save') &&
   apiFederationManagementTest.includes('api federation management: rollback errors are emitted without hiding persistence failure') &&
+  apiFederationManagementTest.includes('api federation management: persist failure mapper emits internal diagnostics') &&
   apiFederationManagementTest.includes('api federation management: snapshot payload sanitizes remote federation state') &&
   apiAuthTest.includes('GET /api/manage/federation returns bounded sanitized management snapshot') &&
   federationPollManyTest.includes('federation poll: review queue uses RelayNode bounded pending helper') &&
@@ -2949,10 +4458,15 @@ if (
 }
 
 if (
-  relayApi.includes('MANIFEST_PERSIST_FAILED_MESSAGE') &&
-  relayApi.includes('FORK_PERSIST_FAILED_MESSAGE') &&
-  relayApi.includes("this.emit('manifest-persist-error'") &&
-  relayApi.includes("this.emit('fork-persist-error'") &&
+  !relayApi.includes('MANIFEST_PERSIST_FAILED_MESSAGE') &&
+  !relayApi.includes('FORK_PERSIST_FAILED_MESSAGE') &&
+  !relayApi.includes("this.emit('manifest-persist-error'") &&
+  !relayApi.includes("this.emit('fork-persist-error'") &&
+  relayApiSignedIngress.includes('MANIFEST_PERSIST_FAILED_MESSAGE') &&
+  relayApiSignedIngress.includes('FORK_PERSIST_FAILED_MESSAGE') &&
+  relayApiSignedIngress.includes("event: 'manifest-persist-error'") &&
+  relayApiSignedIngress.includes("event: 'fork-persist-error'") &&
+  relayApiSignedIngress.includes("errorCode: 'persist-failed'") &&
   relayApiSignedIngress.includes('manifestStore.snapshot()') &&
   relayApiSignedIngress.includes('manifestStore.restoreSnapshot(snapshot)') &&
   relayApiSignedIngress.includes('forkDetector.snapshot()') &&
@@ -2966,7 +4480,9 @@ if (
   capabilityEndpointsTest.includes('POST /api/authors/seeding.json rolls back memory when manifest save fails') &&
   capabilityEndpointsTest.includes('POST /api/forks/proof rolls back memory when fork save fails') &&
   apiSignedIngressTest.includes('api signed ingress: author manifest save failure rolls back live store') &&
+  apiSignedIngressTest.includes('public payload does not leak local storage error') &&
   apiSignedIngressTest.includes('api signed ingress: fork proof save failure rolls back report') &&
+  apiSignedIngressTest.includes('public payload does not leak local storage error') &&
   manifestStoreTest.includes('snapshot + restore rolls back replacements and cap evictions') &&
   forkDetectorTest.includes('snapshot + restore rolls back fork evidence and bypass log changes')
 ) {
@@ -3013,13 +4529,36 @@ if (
   accessControl.includes('timingSafeEqual') &&
   accessControl.includes('safePairingTokenEqual') &&
   !accessControl.includes('token !== this._pairingState.token') &&
-  relayApi.includes('DEVICE_PERSIST_FAILED_MESSAGE') &&
-  relayApi.includes('const result = await runDeviceManagementAction({') &&
-  relayApi.includes('const result = runPairingManagementAction({') &&
-  relayApi.includes("this.emit('device-persist-error'") &&
-  relayApi.includes('_devicePersistErrorResponse') &&
+  !relayApi.includes('DEVICE_PERSIST_FAILED_MESSAGE') &&
+  relayApi.includes('resolveDevicePairingManagementRoute,') &&
+  relayApi.includes('runDevicePairingManagementRouteAction') &&
+  relayApi.includes('const devicePairingRoute = resolveDevicePairingManagementRoute(req.method, path)') &&
+  relayApi.includes('if (devicePairingRoute) {') &&
+  countOccurrences(relayApi, "if (path === '/api/manage/devices')") === 0 &&
+  countOccurrences(relayApi, "if (path === '/api/manage/pairing')") === 0 &&
+  relayApi.includes('const result = await runDevicePairingManagementRouteAction({') &&
+  relayApi.includes('route: devicePairingRoute') &&
+  relayApi.includes('node: this.node') &&
+  relayApi.includes('emit: (...args) => this.emit(...args)') &&
+  !relayApi.includes('runDeviceManagementAction,') &&
+  !relayApi.includes('runPairingManagementAction,') &&
+  !relayApi.includes('_handleDeviceManagement') &&
+  !relayApi.includes('_handlePairingManagement') &&
+  !relayApi.includes("this.emit('device-persist-error'") &&
+  !relayApi.includes('_devicePersistErrorResponse') &&
   relayApiDevicePairing.includes('export const DEVICE_NAME_MAX_LENGTH = 80') &&
   relayApiDevicePairing.includes('export const MAX_DEVICE_LIST_ENTRIES = 128') &&
+  relayApiDevicePairing.includes('DEVICE_PERSIST_FAILED_MESSAGE') &&
+  relayApiDevicePairing.includes('export function devicePersistFailureResult') &&
+  relayApiDevicePairing.includes("emit('device-persist-error'") &&
+  relayApiDevicePairing.includes("formatErr('PERSIST_FAILED', DEVICE_PERSIST_FAILED_MESSAGE)") &&
+  relayApiDevicePairing.includes('export function resolveDevicePairingManagementRoute') &&
+  relayApiDevicePairing.includes("'POST /api/manage/devices'") &&
+  relayApiDevicePairing.includes("'POST /api/manage/pairing'") &&
+  relayApiDevicePairing.includes('export async function runDevicePairingManagementRouteAction') &&
+  relayApiDevicePairing.includes('unknown device/pairing management route') &&
+  relayApiDevicePairing.includes('return runDeviceManagementAction({ body, node, emit })') &&
+  relayApiDevicePairing.includes('return runPairingManagementAction({ body, node })') &&
   relayApiDevicePairing.includes('export function normalizeDeviceName') &&
   relayApiDevicePairing.includes("error: 'name must not contain control characters'") &&
   relayApiDevicePairing.includes('export function sanitizeDeviceList') &&
@@ -3029,16 +4568,22 @@ if (
   relayApiDevicePairing.includes('function isKnownDeviceOperatorError') &&
   relayApiDevicePairing.includes("message === 'Device not in allowlist'") &&
   relayApiDevicePairing.includes("message.startsWith('Maximum devices reached')") &&
+  relayApiDevicePairing.includes('devicePersistFailureResult({ error: err, emit })') &&
   relayApiDevicePairing.includes("const result = validatePositiveInt(body.timeoutMs, 10_000, 30 * 60 * 1000, 'timeoutMs')") &&
   privateModeTest.includes('AccessControl - addDevice rolls back when save fails') &&
   privateModeTest.includes('AccessControl - removeDevice rolls back when save fails') &&
   privateModeTest.includes('AccessControl - pairing save failure keeps pairing active and device unpaired') &&
   privateModeTest.includes('AccessControl - pairing tokens use timing-safe comparison') &&
   privateModeTest.includes('AccessControl - restoreBackup rolls back when save fails') &&
+  apiDevicePairingTest.includes('api device pairing: route helper maps exact device and pairing mutation routes') &&
+  apiDevicePairingTest.includes('api device pairing: route action helper dispatches device and pairing mutations') &&
+  apiDevicePairingTest.includes('unknown device/pairing management route') &&
   apiDevicePairingTest.includes('api device pairing: normalizes device names and canonicalizes pubkeys') &&
   apiDevicePairingTest.includes('api device pairing: list action sanitizes persisted device rows') &&
   apiDevicePairingTest.includes('MAX_DEVICE_LIST_ENTRIES') &&
   apiDevicePairingTest.includes('api device pairing: separates validation, operator, and persistence errors') &&
+  apiDevicePairingTest.includes('api device pairing: device persist failure mapper emits internal diagnostics') &&
+  apiDevicePairingTest.includes('public payload does not leak local storage error') &&
   apiDevicePairingTest.includes('api device pairing: validates pairing actions before state changes') &&
   apiServiceConfigTest.includes('device management api: add/list/remove canonicalizes keys and bounds names') &&
   apiServiceConfigTest.includes('device management api: persistence failures return persist-failed response') &&
@@ -3051,14 +4596,30 @@ if (
 
 if (
   relayApi.includes("} from './api-delegation-management.js'") &&
-  relayApi.includes('buildDelegationRevocationsPayload({') &&
+  relayApi.includes('resolveDelegationManagementRoute,') &&
+  relayApi.includes('const delegationRoute = resolveDelegationManagementRoute(req.method, path)') &&
+  relayApi.includes("delegationRoute && delegationRoute.kind === 'list'") &&
+  relayApi.includes("delegationRoute && delegationRoute.kind === 'revoke'") &&
+  relayApi.includes('delegationRoute.authMessage') &&
+  relayApi.includes('const result = buildDelegationRevocationsRoutePayload({') &&
+  relayApi.includes('route: delegationRoute') &&
+  !relayApi.includes('return this._json(res, buildDelegationRevocationsPayload({') &&
   relayApi.includes('const result = runDelegationRevokeAction({ body, node: this.node })') &&
   relayApiDelegationManagement.includes('export const MAX_DELEGATION_REVOCATION_LIST_ENTRIES = 1000') &&
+  relayApiDelegationManagement.includes('export function resolveDelegationManagementRoute') &&
+  relayApiDelegationManagement.includes('export function buildDelegationRevocationsRoutePayload') &&
+  relayApiDelegationManagement.includes('unknown delegation revocation route') &&
+  relayApiDelegationManagement.includes("'GET /api/manage/delegation/revocations': Object.freeze({ kind: 'list' })") &&
+  relayApiDelegationManagement.includes("'POST /api/manage/delegation/revoke': Object.freeze({ kind: 'revoke' })") &&
+  relayApiDelegationManagement.includes('authMessage: `Unauthorized — API key required for $' + '{path}`') &&
   relayApiDelegationManagement.includes("errorPayload('certExpiresAt must be a positive safe integer')") &&
   relayApiDelegationManagement.includes("errorPayload('revocation required (signed message from primary identity)')") &&
   relayApiDelegationManagement.includes('node.submitRevocation(body.revocation, expiry.opts)') &&
   relayApiDelegationManagement.includes('function sanitizeRevocationEntry') &&
   relayApiDelegationManagement.includes("Buffer.byteLength(entry.reason, 'utf8') <= 256") &&
+  apiDelegationManagementTest.includes('api delegation management: route helper maps list and revoke routes by method') &&
+  apiDelegationManagementTest.includes('api delegation management: revocation route payload helper dispatches list reads') &&
+  apiDelegationManagementTest.includes('unknown delegation revocation route') &&
   apiDelegationManagementTest.includes('api delegation management: revoke validates body and cert expiry before mutation') &&
   apiDelegationManagementTest.includes('api delegation management: revocation list is capped and sanitized') &&
   apiAuthTest.includes('delegation revocation routes require auth and validate before mutation') &&
@@ -3117,11 +4678,40 @@ if (
 }
 
 if (
-  relayApi.includes("import { buildCustodyStatusPayload, redactCustodyStatus } from './api-custody-status.js'") &&
-  relayApi.includes('return this._json(res, buildCustodyStatusPayload(status, { detailed: true }))') &&
-  relayApi.includes('return this._json(res, buildCustodyStatusPayload(status))') &&
-  relayApi.includes('return redactCustodyStatus(status)') &&
+  relayApi.includes('buildCustodyStatusRoutePayload,') &&
+  relayApi.includes('resolveCustodyStatusRoute') &&
+  relayApi.includes('const custodyStatusRoute = resolveCustodyStatusRoute(req.method, path)') &&
+  relayApi.includes("custodyStatusRoute && custodyStatusRoute.kind === 'custody-status'") &&
+  relayApi.includes('const result = buildCustodyStatusRoutePayload({') &&
+  relayApi.includes('registry: this.node.seedingRegistry') &&
+  relayApi.includes('disabled: this._custodyApiDisabled()') &&
+  !relayApi.includes('if (this._custodyApiDisabled()) return this._custodyDisabledResponse(res)') &&
+  relayApi.includes('if (result.requiresAuth)') &&
+  relayApi.includes('result.authMessage') &&
+  relayApi.includes('return this._json(res, result.payload, result.status || 200)') &&
+  relayApiCustodyDisabled.includes('export function custodyDisabledResult') &&
+  relayApiCustodyDisabled.includes("kind: 'disabled-profile'") &&
+  relayApiCustodyDisabled.includes("formatErr('NOT_ENABLED', CUSTODY_DISABLED_MESSAGE)") &&
+  !relayApi.includes("if (req.method === 'GET' && isCustodyStatusRoute(path))") &&
+  !relayApi.includes("'Unauthorized — API key required for detailed custody status'") &&
+  !relayApi.includes("req.method === 'GET' && path.startsWith('/api/custody/') && path.endsWith('/status')") &&
+  !relayApi.includes('const status = this.node.seedingRegistry.getCustodyStatus(intentId)') &&
+  !relayApi.includes('_redactCustodyStatus') &&
+  relayApiCustodyStatus.includes('return opts.detailed ? detailedCustodyStatus(status) : redactCustodyStatus(status)') &&
   !relayApi.includes('return this._json(res, status)') &&
+  relayApiCustodyStatus.includes("import { isValidHexKey } from '../constants.js'") &&
+  relayApiCustodyStatus.includes("import { custodyDisabledResult } from './api-custody-disabled.js'") &&
+  relayApiCustodyStatus.includes('export function isCustodyStatusRoute') &&
+  relayApiCustodyStatus.includes('export function resolveCustodyStatusRoute') &&
+  relayApiCustodyStatus.includes("kind: 'custody-status'") &&
+  relayApiCustodyStatus.includes('export function buildCustodyStatusRoutePayload') &&
+  relayApiCustodyStatus.includes('disabled = false') &&
+  relayApiCustodyStatus.includes('if (disabled) return custodyDisabledResult()') &&
+  relayApiCustodyStatus.includes('export function custodyStatusIntentId') &&
+  relayApiCustodyStatus.includes('export function isDetailedCustodyStatusQuery') &&
+  relayApiCustodyStatus.includes('requiresAuth: true') &&
+  relayApiCustodyStatus.includes('authMessage: CUSTODY_STATUS_DETAILED_AUTH_MESSAGE') &&
+  relayApiCustodyStatus.includes('registry.getCustodyStatus(intentId)') &&
   relayApiCustodyStatus.includes('export function buildCustodyStatusPayload') &&
   relayApiCustodyStatus.includes('export function detailedCustodyStatus') &&
   relayApiCustodyStatus.includes('export function redactCustodyStatus') &&
@@ -3141,6 +4731,12 @@ if (
   !relayApiCustodyStatus.includes('shareBundleKey') &&
   !relayApiCustodyStatus.includes('publisherSignature') &&
   apiCustodyStatusTest.includes('api custody status: redacted receipts expose only public attestation fields') &&
+  apiCustodyStatusTest.includes('api custody status: route helper validates registry and intent id before lookup') &&
+  apiCustodyStatusTest.includes('api custody status: disabled profile rejects before registry lookup') &&
+  apiCustodyStatusTest.includes('disabled custody status must not reach registry') &&
+  apiCustodyStatusTest.includes('api custody status: route helper builds public and detailed payloads') &&
+  apiCustodyStatusTest.includes('resolveCustodyStatusRoute') &&
+  apiCustodyStatusTest.includes('api custody status: route query helpers stay narrow') &&
   apiCustodyStatusTest.includes('api custody status: redacted status omits detailed intent proof and witness bodies') &&
   apiCustodyStatusTest.includes('api custody status: detailed status preserves diagnostics without raw proof bodies') &&
   apiCustodyStatusTest.includes('api custody status: missing or malformed fields normalize to stable defaults') &&
@@ -3159,23 +4755,45 @@ if (
 
 if (
   relayApi.includes("} from './api-anchor-status.js'") &&
-  relayApi.includes('buildAnchorProofPayload({') &&
-  relayApi.includes("appKey: path.slice('/api/anchors/'.length, -'/proof'.length)") &&
-  relayApi.includes("const detailed = isDetailedAnchorStatusQuery(url.searchParams.get('detailed'))") &&
-  relayApi.includes("if (detailed && !this._requireAuth(req, res, 'Unauthorized — API key required for detailed anchor status')) return") &&
-  relayApi.includes('const result = buildAnchorStatusPayload({') &&
+  relayApi.includes('buildAnchorProofRoutePayload({') &&
+  relayApi.includes('const anchorProofRoute = resolveAnchorProofRoute(req.method, path)') &&
+  relayApi.includes("anchorProofRoute && anchorProofRoute.kind === 'anchor-proof'") &&
+  !relayApi.includes('if (isAnchorProofRoute(path))') &&
+  relayApi.includes('const anchorStatusRoute = resolveAnchorStatusRoute(req.method, path)') &&
+  relayApi.includes("anchorStatusRoute && anchorStatusRoute.kind === 'anchor-status'") &&
+  relayApi.includes('const route = buildAnchorStatusRouteContext(url)') &&
+  relayApi.includes("if (route.requiresAuth && !this._requireAuth(req, res, 'Unauthorized — API key required for detailed anchor status')) return") &&
+  relayApi.includes('const result = buildAnchorStatusRoutePayload({') &&
+  relayApi.includes('context: route') &&
   relayApi.includes('return this._json(res, result.payload, result.status || 200)') &&
+  !relayApi.includes("appKey: path.slice('/api/anchors/'.length, -'/proof'.length)") &&
+  !relayApi.includes("const detailed = isDetailedAnchorStatusQuery(url.searchParams.get('detailed'))") &&
   bareHttpServer.includes("import { buildAnchorStatusPayload } from './api-anchor-status.js'") &&
   bareHttpServer.includes("if (path === '/api/anchors')") &&
   bareHttpServer.includes('const result = buildAnchorStatusPayload({') &&
   bareHttpServer.includes('appRegistry: this.relay.appRegistry') &&
   !bareHttpServer.includes('...this.relay.appRegistry.anchorStats()') &&
+  relayApiAnchorStatus.includes('const ANCHOR_PROOF_PREFIX') &&
+  relayApiAnchorStatus.includes('export function resolveAnchorProofRoute') &&
+  relayApiAnchorStatus.includes("kind: 'anchor-proof'") &&
+  relayApiAnchorStatus.includes('export function resolveAnchorStatusRoute') &&
+  relayApiAnchorStatus.includes("'GET /api/anchors'") &&
+  relayApiAnchorStatus.includes("kind: 'anchor-status'") &&
+  relayApiAnchorStatus.includes('export function isAnchorProofRoute') &&
+  relayApiAnchorStatus.includes('export function anchorProofAppKeyFromPath') &&
+  relayApiAnchorStatus.includes('export async function buildAnchorProofRoutePayload') &&
+  relayApiAnchorStatus.includes('export function buildAnchorStatusRouteContext') &&
+  relayApiAnchorStatus.includes('requiresAuth: detailed') &&
+  relayApiAnchorStatus.includes('export function buildAnchorStatusRoutePayload') &&
+  relayApiAnchorStatus.includes('unknown anchor status route') &&
+  relayApiAnchorStatus.includes('context || buildAnchorStatusRouteContext(url)') &&
   relayApiAnchorStatus.includes('export function isDetailedAnchorStatusQuery') &&
   relayApiAnchorStatus.includes('export async function buildAnchorProofPayload') &&
   relayApiAnchorStatus.includes('!isValidHexKey(appKey)') &&
   relayApiAnchorStatus.includes("typeof node.createAnchorProof !== 'function'") &&
   relayApiAnchorStatus.includes('payload: await node.createAnchorProof(appKey)') &&
   relayApiAnchorStatus.includes("payload: { error: 'proof generation failed' }") &&
+  apiAnchorStatusTest.includes('resolveAnchorProofRoute') &&
   relayApiAnchorStatus.includes('export function buildAnchorStatusPayload') &&
   relayApiAnchorStatus.includes('total: count(stats && stats.total)') &&
   relayApiAnchorStatus.includes('anchored: count(stats && stats.anchored)') &&
@@ -3193,6 +4811,11 @@ if (
   !relayApiAnchorStatus.includes('retainUntil') &&
   !relayApiAnchorStatus.includes('ciphertextRoot') &&
   !relayApiAnchorStatus.includes('shareBundleKey') &&
+  apiAnchorStatusTest.includes('api anchor proof: route helpers isolate proof path parsing') &&
+  apiAnchorStatusTest.includes('api anchor status: route helper maps exact aggregate read') &&
+  apiAnchorStatusTest.includes('api anchor status: route context owns detailed auth decision') &&
+  apiAnchorStatusTest.includes('api anchor status: route payload helper dispatches aggregate status') &&
+  apiAnchorStatusTest.includes('unknown anchor status route') &&
   apiAnchorStatusTest.includes('api anchor proof: valid appKey delegates to proof signer') &&
   apiAnchorStatusTest.includes('api anchor proof: malformed appKey is rejected before proof generation') &&
   apiAnchorStatusTest.includes('api anchor proof: unavailable or throwing signer returns stable payloads') &&
@@ -3222,12 +4845,24 @@ if (
 
 if (
   relayApi.includes("} from './api-network-state.js'") &&
-  relayApi.includes("const detailed = isDetailedNetworkStateQuery(url.searchParams.get('detailed'))") &&
-  relayApi.includes("if (detailed && !this._requireAuth(req, res, 'Unauthorized — API key required for detailed network state')) return") &&
-  relayApi.includes('const result = buildNetworkStatePayload({') &&
+  relayApi.includes('const networkStateRoute = resolveNetworkStateRoute(req.method, path)') &&
+  relayApi.includes("networkStateRoute && networkStateRoute.kind === 'network-state'") &&
+  relayApi.includes('const route = buildNetworkStateRouteContext(url)') &&
+  relayApi.includes("if (route.requiresAuth && !this._requireAuth(req, res, 'Unauthorized — API key required for detailed network state')) return") &&
+  relayApi.includes('const result = buildNetworkStateRoutePayload({') &&
+  relayApi.includes('context: route') &&
+  !relayApi.includes("const detailed = isDetailedNetworkStateQuery(url.searchParams.get('detailed'))") &&
   relayApiNetworkState.includes('export function publicNetworkState') &&
   relayApiNetworkState.includes('export function publicNetworkRelay') &&
   relayApiNetworkState.includes('export function detailedNetworkState') &&
+  relayApiNetworkState.includes('export function resolveNetworkStateRoute') &&
+  relayApiNetworkState.includes("'GET /api/network'") &&
+  relayApiNetworkState.includes("kind: 'network-state'") &&
+  relayApiNetworkState.includes('export function buildNetworkStateRouteContext') &&
+  relayApiNetworkState.includes('requiresAuth: detailed') &&
+  relayApiNetworkState.includes('export function buildNetworkStateRoutePayload') &&
+  relayApiNetworkState.includes('unknown network state route') &&
+  relayApiNetworkState.includes('context || buildNetworkStateRouteContext(url)') &&
   relayApiNetworkState.includes('MAX_NETWORK_RELAYS = 1000') &&
   relayApiNetworkState.includes('payload: detailed ? detailedNetworkState(state) : publicNetworkState(state)') &&
   relayApiNetworkState.includes('relays: relays.slice(0, MAX_NETWORK_RELAYS).map(sanitizeDetailedNetworkRelay)') &&
@@ -3257,6 +4892,10 @@ if (
   networkDiscoveryCore.includes("finish(reject, new Error('Response too large'))") &&
   networkDiscoveryCore.includes("finish(reject, new Error('Unexpected status: ' + res.statusCode))") &&
   networkDiscoveryCore.includes("throw new Error('Invalid holesail key')") &&
+  apiNetworkStateTest.includes('api network state: route helper maps exact network read') &&
+  apiNetworkStateTest.includes('api network state: route context owns detailed auth decision') &&
+  apiNetworkStateTest.includes('api network state: route payload helper dispatches redacted and detailed state') &&
+  apiNetworkStateTest.includes('unknown network state route') &&
   apiNetworkStateTest.includes('api network state: public relay redacts connection metadata') &&
   networkDiscoveryTest.includes('network discovery fetches bounded API overview JSON') &&
   networkDiscoveryTest.includes('network discovery rejects oversized API overview content-length') &&
@@ -3280,17 +4919,50 @@ if (
   fail('network discovery state can leak host/API/Tor/Holesail details, lose dashboard fallback coverage, parse unbounded relay overview responses, or accept unbounded/invalid Holesail metadata')
 }
 
-const custodyWitnessRouteBlock = relayApi.slice(
-  relayApi.indexOf("path.startsWith('/api/custody/') && path.endsWith('/witness')"),
-  relayApi.indexOf("path.startsWith('/api/custody/') && path.endsWith('/non-serving-proof')")
+const operatorCustodyRouteBlock = relayApi.slice(
+  relayApi.indexOf('const operatorCustodyRoute = resolveOperatorCustodyRoute(req.method, path)'),
+  relayApi.indexOf("path === '/registry/auto-accept'")
+)
+const publisherCustodyRouteBlock = relayApi.slice(
+  relayApi.indexOf('const publisherCustodyRoute = resolvePublisherCustodyRoute(req.method, path)'),
+  relayApi.indexOf('// ─── Live Management API', relayApi.indexOf('const publisherCustodyRoute = resolvePublisherCustodyRoute(req.method, path)'))
 )
 if (
-  relayApi.includes('import {\n  runOperatorCustodyAction') &&
-  relayApi.includes('runPublisherCustodyAction') &&
-  custodyWitnessRouteBlock.includes("return this._handleOperatorCustodyAction(res, 'witness', body, intentId)") &&
-  !custodyWitnessRouteBlock.includes('await this._readBody(req)') &&
+  relayApi.includes('runOperatorCustodyRouteAction') &&
+  relayApi.includes('runPublisherCustodyRouteAction') &&
+  relayApi.includes('const operatorCustodyRoute = resolveOperatorCustodyRoute(req.method, path)') &&
+  relayApi.includes('const publisherCustodyRoute = resolvePublisherCustodyRoute(req.method, path)') &&
+  relayApi.includes('disabled: this._custodyApiDisabled()') &&
+  !relayApi.includes('if (this._custodyApiDisabled()) return this._custodyDisabledResponse(res)') &&
+  !relayApi.includes('const operatorCustodyRoute = resolveOperatorCustodyRoute(path)') &&
+  !relayApi.includes('const publisherCustodyRoute = resolvePublisherCustodyRoute(path)') &&
+  operatorCustodyRouteBlock.includes('if (!this._requireAuth(req, res, operatorCustodyRoute.authMessage)) return') &&
+  operatorCustodyRouteBlock.includes('const result = await runOperatorCustodyRouteAction({') &&
+  operatorCustodyRouteBlock.includes('route: operatorCustodyRoute') &&
+  operatorCustodyRouteBlock.includes('node: this.node') &&
+  operatorCustodyRouteBlock.includes('disabled: this._custodyApiDisabled()') &&
+  publisherCustodyRouteBlock.includes('const result = await runPublisherCustodyRouteAction({') &&
+  publisherCustodyRouteBlock.includes('route: publisherCustodyRoute') &&
+  publisherCustodyRouteBlock.includes('node: this.node') &&
+  publisherCustodyRouteBlock.includes('disabled: this._custodyApiDisabled()') &&
+  publisherCustodyRouteBlock.includes("if (!result.ok && result.kind === 'custody-error') return this._custodyErrorResponse(res, result.error)") &&
+  !relayApi.includes('_handleOperatorCustodyAction') &&
+  !relayApi.includes('_handlePublisherCustodyAction') &&
+  !operatorCustodyRouteBlock.includes('path.slice(') &&
+  !publisherCustodyRouteBlock.includes('path.slice(') &&
+  !operatorCustodyRouteBlock.includes('await this._readBody(req)') &&
+  relayApiCustodyManagement.includes('export function resolveOperatorCustodyRoute') &&
+  relayApiCustodyManagement.includes("if (method !== 'POST') return null") &&
+  relayApiCustodyManagement.includes('export function resolvePublisherCustodyRoute') &&
+  relayApiCustodyManagement.includes("authMessage: 'Unauthorized — API key required for /api/custody/:intentId/witness'") &&
+  relayApiCustodyManagement.includes("authMessage: 'Unauthorized — API key required for /api/custody/:intentId/non-serving-proof'") &&
   relayApiCustodyManagement.includes('export async function runOperatorCustodyAction') &&
   relayApiCustodyManagement.includes('export async function runPublisherCustodyAction') &&
+  relayApiCustodyManagement.includes('export async function runOperatorCustodyRouteAction') &&
+  relayApiCustodyManagement.includes('export async function runPublisherCustodyRouteAction') &&
+  relayApiCustodyManagement.includes("import { custodyDisabledResult } from './api-custody-disabled.js'") &&
+  relayApiCustodyManagement.includes('disabled = false') &&
+  relayApiCustodyManagement.includes('if (disabled) return custodyDisabledResult()') &&
   relayApiCustodyManagement.includes("action === 'witness'") &&
   relayApiCustodyManagement.includes('{ ...body, intentId }') &&
   relayApiCustodyManagement.includes("registryNotRunning('registry not running')") &&
@@ -3300,7 +4972,14 @@ if (
   relayApiCustodyManagement.includes('node.seedingRegistry.publishSourceRetired({ ...body, intentId }, null)') &&
   relayApiCustodyManagement.includes("return { ok: false, kind: 'custody-error', error: err }") &&
   relayApi.includes("if (!result.ok && result.kind === 'custody-error') return this._custodyErrorResponse(res, result.error)") &&
+  apiCustodyManagementTest.includes('operator route resolver preserves auth messages and path ids') &&
+  apiCustodyManagementTest.includes('publisher route resolver keeps signed custody route scope narrow') &&
+  apiCustodyManagementTest.includes("resolveOperatorCustodyRoute('GET', '/api/custody/intent')") &&
+  apiCustodyManagementTest.includes("resolvePublisherCustodyRoute('GET', '/api/v1/custody/intent')") &&
+  apiCustodyManagementTest.includes('api custody management: route action helpers keep operator and publisher signer boundaries separate') &&
   apiCustodyManagementTest.includes('api custody management: operator routes preserve readiness and validation order') &&
+  apiCustodyManagementTest.includes('api custody management: disabled profile rejects operator and publisher actions before runtime access') &&
+  apiCustodyManagementTest.includes('disabled custody action must not mutate registry') &&
   apiCustodyManagementTest.includes('witness rejects malformed route ids before registry access') &&
   apiCustodyManagementTest.includes('api custody management: publisher routes require signatures and pass null signer') &&
   apiCustodyManagementTest.includes('api custody management: publisher registry errors stay delegated to custody error response') &&
@@ -3317,30 +4996,76 @@ if (
   fail('custody management routes can regress witness parsing, publisher-signed custody auth, or transient-error mapping')
 }
 
-const operatorSeedRouteBlock = relayApi.slice(
-  relayApi.indexOf("path === '/seed'"),
-  relayApi.indexOf("path === '/registry/publish'")
-)
-const registryPublishRouteBlock = relayApi.slice(
-  relayApi.indexOf("path === '/registry/publish'"),
-  relayApi.indexOf("path === '/api/custody/intent'")
-)
-const publisherSeedRouteBlock = relayApi.slice(
-  relayApi.indexOf("path === '/api/v1/seed'"),
-  relayApi.indexOf("path === '/api/v1/custody/intent'")
-)
+const inlineSeedCoreRouteCheck = relayApi.includes("if (path === '/seed-core')")
+if (
+  relayApi.includes("from './api-seed-core.js'") &&
+  relayApi.includes('resolveSeedCoreRoute(req.method, path)') &&
+  relayApi.includes('seedCoreRoute.authMessage') &&
+  relayApi.includes('const result = await runSeedCoreAction({ node: this.node, body })') &&
+  relayApi.includes("if (!result.ok && result.kind === 'seed-error') return this._custodyErrorResponse(res, result.error)") &&
+  !relayApi.includes('this.node.seeder.seedCore') &&
+  !relayApi.includes('isValidHexKey(coreKey') &&
+  !inlineSeedCoreRouteCheck &&
+  relayApiSeedCore.includes('export const SEED_CORE_AUTH_MESSAGE') &&
+  relayApiSeedCore.includes('export function resolveSeedCoreRoute') &&
+  relayApiSeedCore.includes("path === '/seed-core'") &&
+  relayApiSeedCore.includes('export function normalizeSeedCoreKey') &&
+  relayApiSeedCore.includes('export async function runSeedCoreAction') &&
+  relayApiSeedCore.includes("typeof body.coreKey === 'string'") &&
+  relayApiSeedCore.includes("typeof body.appKey === 'string'") &&
+  relayApiSeedCore.includes('isValidHexKey(coreKey, 64)') &&
+  relayApiSeedCore.includes("return { ok: false, status: 503, payload: { error: 'seeder not available' } }") &&
+  relayApiSeedCore.includes('node.seeder.seedCore(coreKey)') &&
+  relayApiSeedCore.includes("body.catalog === true && typeof node.setCatalogBeeKey === 'function'") &&
+  relayApiSeedCore.includes("return { ok: false, kind: 'seed-error', error: err }") &&
+  apiSeedCoreTest.includes('seed-core helper: route resolver maps only the exact operator seed-core route') &&
+  apiSeedCoreTest.includes("resolveSeedCoreRoute('POST', '/seed')") &&
+  apiSeedCoreTest.includes("resolveSeedCoreRoute('POST', '/api/v1/seed')") &&
+  apiSeedCoreTest.includes('seed-core helper: normalizes aliases and validates route contract') &&
+  apiSeedCoreTest.includes('seed-core helper: delegates seed errors to caller error mapping') &&
+  apiSeedCoreTest.includes('seed-core: valid key pins via seeder.seedCore') &&
+  apiSeedCoreTest.includes('seed-core: transient seed errors stay retryable through the route') &&
+  apiSeedCoreTest.includes('seed-core: catalog:true registers the catalog-bee pointer')
+) {
+  pass('seed-core route is extracted with plain Hypercore key validation, catalog-bee flag handling, and seed-error delegation')
+} else {
+  fail('seed-core route can regress to inline validation, direct seeder mutation, or uncoupled catalog-bee error handling')
+}
+
+const inlineSeedPublishRouteChecks = relayApi.includes("if (path === '/seed')") ||
+  relayApi.includes("if (path === '/registry/publish')") ||
+  relayApi.includes("if (path === '/api/v1/seed')")
 if (
   relayApi.includes("from './api-seed-publish.js'") &&
-  operatorSeedRouteBlock.includes('return this._handleOperatorSeed(res, body)') &&
-  registryPublishRouteBlock.includes('return this._handleRegistryPublish(res, body)') &&
-  publisherSeedRouteBlock.includes('return this._handlePublisherSeed(res, body)') &&
-  relayApi.includes('const result = await runOperatorSeedAction({') &&
-  relayApi.includes('const result = await runRegistryPublishAction({') &&
-  relayApi.includes('const result = await runPublisherSeedAction({') &&
+  relayApi.includes('resolveSeedPublishRoute(req.method, path)') &&
+  relayApi.includes('seedPublishRoute.authMessage') &&
+  relayApi.includes('const result = await runSeedPublishRouteAction({') &&
+  relayApi.includes('route: seedPublishRoute') &&
+  relayApi.includes('disabled: this._custodyApiDisabled()') &&
+  !relayApi.includes('_handleOperatorSeed') &&
+  !relayApi.includes('_handleRegistryPublish') &&
+  !relayApi.includes('_handlePublisherSeed') &&
+  !inlineSeedPublishRouteChecks &&
   relayApi.includes("if (!result.ok && result.kind === 'seed-error') return this._custodyErrorResponse(res, result.error)") &&
+  !relayApi.includes('hasCustodySeedFields') &&
+  !relayApi.includes('_custodyDisabledResponse') &&
+  relayApiSeedPublish.includes('export const OPERATOR_SEED_AUTH_MESSAGE') &&
+  relayApiSeedPublish.includes('export const REGISTRY_PUBLISH_AUTH_MESSAGE') &&
+  relayApiSeedPublish.includes("import { custodyDisabledResult } from './api-custody-disabled.js'") &&
+  relayApiSeedPublish.includes("const CUSTODY_SEED_FIELDS = ['custodyIntentId', 'blindContentId', 'ciphertextRoot']") &&
+  relayApiSeedPublish.includes('function hasCustodySeedFields') &&
+  relayApiSeedPublish.includes('export function resolveSeedPublishRoute') &&
+  relayApiSeedPublish.includes("path === '/seed'") &&
+  relayApiSeedPublish.includes("path === '/registry/publish'") &&
+  relayApiSeedPublish.includes("path === '/api/v1/seed'") &&
   relayApiSeedPublish.includes('export async function runOperatorSeedAction') &&
   relayApiSeedPublish.includes('export async function runRegistryPublishAction') &&
   relayApiSeedPublish.includes('export async function runPublisherSeedAction') &&
+  relayApiSeedPublish.includes('export async function runSeedPublishRouteAction') &&
+  relayApiSeedPublish.includes("if (kind === 'operator-seed') return runOperatorSeedAction({ body, node, disabled })") &&
+  relayApiSeedPublish.includes("if (kind === 'registry-publish') return runRegistryPublishAction({ body, node })") &&
+  relayApiSeedPublish.includes("if (kind === 'publisher-seed') return runPublisherSeedAction({ body, node, disabled })") &&
+  relayApiSeedPublish.includes('if (disabled && hasCustodySeedFields(body)) return custodyDisabledResult()') &&
   relayApiSeedPublish.includes('function cloneSeedOpts') &&
   relayApiSeedPublish.includes("badRequest('opts must be an object')") &&
   relayApiSeedPublish.includes('return { ok: true, seedOpts: { ...opts } }') &&
@@ -3355,8 +5080,15 @@ if (
   relayApiSeedPublish.includes('publisherPubkey: node.swarm ? node.swarm.keyPair.publicKey : Buffer.alloc(32)') &&
   relayApiSeedPublish.includes('buildPublisherSignedSeedOpts(body, {') &&
   relayApiSeedPublish.includes("return { ok: false, kind: 'seed-error', error: err }") &&
+  apiSeedPublishTest.includes('route resolver maps exact seed and registry publish routes') &&
+  apiSeedPublishTest.includes('api seed publish: route action helper dispatches seed and registry primitives') &&
+  apiSeedPublishTest.includes("resolveSeedPublishRoute('POST', '/seed-core')") &&
+  apiSeedPublishTest.includes("resolveSeedPublishRoute('POST', '/api/v1/unseed')") &&
   apiSeedPublishTest.includes('api seed publish: operator seed normalizes metadata without mutating opts') &&
   apiSeedPublishTest.includes('api seed publish: operator seed rejects malformed input before seeding') &&
+  apiSeedPublishTest.includes('api seed publish: disabled custody seed fields reject before seed runtime access') &&
+  apiSeedPublishTest.includes('disabled operator custody seed must not reach seedApp') &&
+  apiSeedPublishTest.includes('api seed publish: disabled profile still allows plain operator seed') &&
   apiSeedPublishTest.includes('opts must be an object') &&
   apiSeedPublishTest.includes('api seed publish: registry publish builds the signed catalog request') &&
   apiSeedPublishTest.includes('api seed publish: registry publish preserves readiness and validation errors') &&
@@ -3374,20 +5106,20 @@ if (
   fail('seed or registry publish routes can regress validation, request construction, transient-error mapping, or route delegation')
 }
 
-const operatorUnseedRouteBlock = relayApi.slice(
-  relayApi.indexOf("path === '/unseed'"),
-  relayApi.indexOf("path === '/api/v1/unseed'")
-)
-const publisherUnseedRouteBlock = relayApi.slice(
-  relayApi.indexOf("path === '/api/v1/unseed'"),
-  relayApi.indexOf("path === '/api/v1/seed'")
-)
+const inlineUnseedRouteChecks = relayApi.includes("if (path === '/unseed')") ||
+  relayApi.includes("if (path === '/api/v1/unseed')")
 if (
   relayApi.includes("from './api-unseed-actions.js'") &&
-  operatorUnseedRouteBlock.includes('const result = await runOperatorUnseedAction({ body, node: this.node })') &&
-  publisherUnseedRouteBlock.includes('const result = await runPublisherUnseedAction({ body, node: this.node })') &&
-  !operatorUnseedRouteBlock.includes('await this.node.unseedApp(body.appKey)') &&
-  !publisherUnseedRouteBlock.includes('await this.node.unseedApp(body.appKey)') &&
+  relayApi.includes('resolveUnseedRoute(req.method, path)') &&
+  relayApi.includes('unseedRoute.authMessage') &&
+  relayApi.includes('const result = await runOperatorUnseedAction({ body, node: this.node })') &&
+  relayApi.includes('const result = await runPublisherUnseedAction({ body, node: this.node })') &&
+  !relayApi.includes('await this.node.unseedApp(body.appKey)') &&
+  !inlineUnseedRouteChecks &&
+  relayApiUnseedActions.includes('export const OPERATOR_UNSEED_AUTH_MESSAGE') &&
+  relayApiUnseedActions.includes('export function resolveUnseedRoute') &&
+  relayApiUnseedActions.includes("path === '/unseed'") &&
+  relayApiUnseedActions.includes("path === '/api/v1/unseed'") &&
   relayApiUnseedActions.includes('export async function runOperatorUnseedAction') &&
   relayApiUnseedActions.includes('export async function runPublisherUnseedAction') &&
   relayApiUnseedActions.includes("badRequest('timestamp must be a positive safe integer')") &&
@@ -3395,6 +5127,9 @@ if (
   relayApiUnseedActions.includes('node.verifyUnseedRequest(body.appKey, body.publisherPubkey, body.signature, body.timestamp)') &&
   relayApiUnseedActions.includes('await node.unseedApp(body.appKey)') &&
   relayApiUnseedActions.includes('node.broadcastUnseed(body.appKey, body.publisherPubkey, body.signature, body.timestamp)') &&
+  apiUnseedActionsTest.includes('route resolver maps only exact operator and publisher unseed routes') &&
+  apiUnseedActionsTest.includes("resolveUnseedRoute('GET', '/unseed')") &&
+  apiUnseedActionsTest.includes("resolveUnseedRoute('POST', '/api/v1/seed')") &&
   apiUnseedActionsTest.includes('publisher-signed unseed validates body before verifier and mutation') &&
   apiUnseedActionsTest.includes('malformed signed unseed does not verify, mutate, or broadcast') &&
   apiAuthTest.includes('publisher-signed unseed validates before verifier, mutation, and broadcast') &&
@@ -3680,6 +5415,144 @@ if (
   pass('seed protocol encodings and handshakes are capped and no-throw on malformed peer input across relay and client handlers')
 } else {
   fail('seed protocol encodings, handshake parsing, or handlers can still allocate/throw or replay pending requests on malformed peer input')
+}
+
+const relayKernelGatewayCompatMissing = [
+  ...missingTerms(relayKernelProfile, [
+    'BLINDSPARK_HTTP_ROUTE_MATRIX',
+    "'/.well-known/hiverelay.json'",
+    "'/catalog.json'",
+    "'/v1/hyper/:driveKey/*path'",
+    "'node-api'",
+    "'node-api-catalog-helper'",
+    "'node-api-route-table'",
+    "'data-plane-gateway'",
+    "'bare-http'",
+    'Bare relays participate in the P2P mesh'
+  ]).map(term => `relaykernel-profile ${JSON.stringify(term)}`),
+  ...missingTerms(relayKernelGatewayCompatCheck, [
+    'checkRelayKernelGatewayCompatibility',
+    'BLINDSPARK_HTTP_ROUTE_MATRIX',
+    'sourceTextByFile',
+    'handler source is missing required route terms',
+    'RelayKernel gateway compatibility check'
+  ]).map(term => `check-relaykernel-gateway-compat ${JSON.stringify(term)}`),
+  ...missingTerms(relayKernelGatewayCompatTest, [
+    'RelayKernel gateway compatibility audit is exposed as a package command',
+    'RelayKernel gateway compatibility matrix is bound to checked-in handlers',
+    'RelayKernel gateway compatibility matrix fails when a route term drifts',
+    'RelayKernel gateway compatibility matrix follows extracted hyper route predicate',
+    'RelayKernel gateway compatibility CLI emits JSON pass report'
+  ]).map(term => `relaykernel-gateway-compat.test ${JSON.stringify(term)}`),
+  ...missingTerms(profileVectorVerifier, [
+    'PROFILE_VECTOR_VERIFIERS',
+    'SUPPORTED_PROFILE_VECTOR_NAMES',
+    'Object.keys(PROFILE_VECTOR_VERIFIERS)',
+    'requireSupportedSet',
+    'duplicate profile vector name',
+    'missing supported profile vector',
+    'relaykernel-http-route-matrix-v1-blindspark-compat',
+    'relaykernel-profile-v1-app-module-boundary',
+    'verifyRelayKernelHttpRouteMatrixVector',
+    'BLINDSPARK_HTTP_ROUTE_MATRIX',
+    'relaykernel http route matrix'
+  ]).map(term => `profile-vector-verifier ${JSON.stringify(term)}`),
+  ...missingTerms(profileVectorVerifierTest, [
+    'fixture names match supported verifier table',
+    'profile vector verifier enforces full fixture inventory only when requested',
+    'missing supported profile vector',
+    'duplicate profile vector name',
+    'fixture set includes RelayKernel app-module boundary vector',
+    'fixture set includes RelayKernel HTTP route matrix vector',
+    'tampered app-module boundary vector fails',
+    'tampered route matrix vector fails',
+    'relaykernel http route surfaces mismatch'
+  ]).map(term => `profile-vector-verifier.test ${JSON.stringify(term)}`),
+  ...missingTerms(relayKernelHttpRouteMatrixVector, [
+    'relaykernel-http-route-matrix-v1-blindspark-compat',
+    'http-route-matrix-conformance',
+    'blindspark-http-gateway',
+    'node-api-route-table',
+    '/v1/hyper/:driveKey/*path'
+  ]).map(term => `relaykernel-http-route-matrix vector ${JSON.stringify(term)}`),
+  ...missingTerms(relayKernelAppModuleBoundaryVector, [
+    'relaykernel-profile-v1-app-module-boundary',
+    'appModulesExcludedFromKernel',
+    'application modules present outside kernel profile',
+    'qvac',
+    'poker',
+    'custody',
+    'services'
+  ]).map(term => `relaykernel app-module boundary vector ${JSON.stringify(term)}`),
+  ...missingTerms(relayKernelGatewayCompatibilityDocs, [
+    'npm run audit:relaykernel-gateway',
+    'node scripts/verify-profile-vectors.mjs',
+    'full supported vector inventory',
+    'BLINDSPARK_HTTP_ROUTE_MATRIX',
+    'relaykernel-http-route-matrix-v1-blindspark-compat.json',
+    'relaykernel-profile-v1-app-module-boundary',
+    'Node API catalog helper',
+    '`GET /.well-known/hiverelay.json`',
+    '`GET /catalog.json`',
+    '`GET /v1/hyper/:driveKey/*path`',
+    'outside-kernel modules',
+    'Bare relays participate in the P2P mesh'
+  ]).map(term => `RELAYKERNEL-GATEWAY-COMPATIBILITY.md ${JSON.stringify(term)}`),
+  ...missingTerms(readme, [
+    'docs/RELAYKERNEL-GATEWAY-COMPATIBILITY.md',
+    'npm run audit:relaykernel-gateway',
+    'node scripts/verify-profile-vectors.mjs',
+    'full supported vector',
+    'relaykernel-http-route-matrix-v1-blindspark-compat',
+    'relaykernel-profile-v1-app-module-boundary',
+    'silently absorbed into the RelayKernel contract',
+    '/v1/hyper/:driveKey/*path'
+  ]).map(term => `README ${JSON.stringify(term)}`),
+  ...missingTerms(relayApi, [
+    'isHyperGatewayRoute(path)',
+    "from './api-route-mounts.js'",
+    'const catalogReadRoute = resolveCatalogReadRoute(req.method, path)',
+    "catalogReadRoute && catalogReadRoute.kind === 'catalog'",
+    'buildCatalogReadRoutePayload({',
+    'route: catalogReadRoute'
+  ]).map(term => `RelayAPI ${JSON.stringify(term)}`),
+  ...missingTerms(relayApiCatalogRead, [
+    'export function buildCatalogReadRoutePayload',
+    "route.kind === 'catalog'",
+    'return buildRelayCatalogPayload({ node, url, relayKey, maxPageSize })',
+    'export function buildRelayCatalogPayload'
+  ]).map(term => `api-catalog-read ${JSON.stringify(term)}`),
+  ...missingTerms(relayApi, [
+    'const capabilityRoute = resolveCapabilityRoute(req.method, path)',
+    "capabilityRoute && capabilityRoute.kind === 'capability-doc'"
+  ]).map(term => `RelayAPI ${JSON.stringify(term)}`),
+  ...missingTerms(relayApiRouteMounts, [
+    "export const HYPER_GATEWAY_ROUTE_PREFIX = '/v1/hyper/'",
+    'export function isHyperGatewayRoute',
+    'path.startsWith(HYPER_GATEWAY_ROUTE_PREFIX)'
+  ]).map(term => `RelayAPIRouteMounts ${JSON.stringify(term)}`),
+  ...missingTerms(apiRouteMountsTest, [
+    'api route mounts: hyper gateway predicate stays bound to RelayKernel route prefix',
+    'api route mounts: index sidecar proxy remains read-only',
+    'api route mounts: poker substrate keeps exact root plus subtree',
+    'api route mounts: management API predicate covers control-plane subtree only'
+  ]).map(term => `api-route-mounts.test ${JSON.stringify(term)}`),
+  ...missingTerms(gatewayServer, [
+    "path.startsWith('/v1/hyper/')",
+    "req.method === 'GET' && path === '/catalog.json'"
+  ]).map(term => `GatewayServer ${JSON.stringify(term)}`),
+  ...missingTerms(bareHttpServer, [
+    "path === '/catalog.json'",
+    "path === '/.well-known/hiverelay.json' || path === '/api/capabilities'"
+  ]).map(term => `BareHttpServer ${JSON.stringify(term)}`)
+]
+if (monorepoPkg.scripts?.['audit:relaykernel-gateway'] !== 'node scripts/check-relaykernel-gateway-compat.mjs') {
+  relayKernelGatewayCompatMissing.push('package.json audit:relaykernel-gateway command')
+}
+if (relayKernelGatewayCompatMissing.length === 0) {
+  pass('RelayKernel gateway compatibility matrix is executable and bound to Node/Bare/data-plane route handlers')
+} else {
+  fail(`RelayKernel gateway compatibility matrix is missing: ${relayKernelGatewayCompatMissing.join(', ')}`)
 }
 
 if (
@@ -3993,21 +5866,45 @@ const desktopHiveRelayLockEntries = {
   'p2p-hiverelay-verifier': '../../00-core/hiverelay/packages/verifier'
 }
 const desktopHiveRelayDrift = []
-for (const [dep, lockPath] of Object.entries(desktopHiveRelayLockEntries)) {
-  const entry = desktopLock.packages?.[lockPath]
-  if (entry?.name === dep && entry?.version === expectedVersion) {
-    pass(`pearbrowser-desktop lockfile records ${dep}@${expectedVersion}`)
-  } else {
-    desktopHiveRelayDrift.push(`package-lock ${lockPath} records ${entry?.name || dep}@${entry?.version || '(missing)'} instead of ${dep}@${expectedVersion}`)
-  }
-}
 
-const desktopClientLockEntry = desktopLock.packages?.['../../00-core/hiverelay/packages/client']
-const expectedCoreRange = `^${expectedVersion}`
-if (desktopClientLockEntry?.dependencies?.['p2p-hiverelay'] === expectedCoreRange) {
-  pass(`pearbrowser-desktop client lockfile depends on p2p-hiverelay ${expectedCoreRange}`)
+const desktopHiveRelayUsesNpmLatest = Object.entries(expectedDesktopDeps)
+  .every(([dep, expected]) => desktopDeps[dep] === expected)
+
+if (desktopHiveRelayUsesNpmLatest) {
+  for (const dep of Object.keys(desktopHiveRelayLockEntries)) {
+    const entry = desktopLock.packages?.[`node_modules/${dep}`]
+    const expectedRegistryUrl = `https://registry.npmjs.org/${dep}/-/${dep}-${expectedVersion}.tgz`
+    if (entry?.version === expectedVersion && String(entry?.resolved || '').startsWith(expectedRegistryUrl)) {
+      pass(`pearbrowser-desktop lockfile records ${dep}@${expectedVersion} from npm registry`)
+    } else {
+      desktopHiveRelayDrift.push(`package-lock node_modules/${dep} records ${entry?.version || '(missing)'} from ${JSON.stringify(entry?.resolved || '(missing)')}; expected npm registry ${dep}@${expectedVersion}`)
+    }
+  }
+
+  const desktopClientLockEntry = desktopLock.packages?.['node_modules/p2p-hiverelay-client']
+  const expectedCoreRange = `^${expectedVersion}`
+  if (desktopClientLockEntry?.dependencies?.['p2p-hiverelay'] === expectedCoreRange) {
+    pass(`pearbrowser-desktop npm client lockfile depends on p2p-hiverelay ${expectedCoreRange}`)
+  } else {
+    desktopHiveRelayDrift.push(`package-lock npm client dependency p2p-hiverelay is ${JSON.stringify(desktopClientLockEntry?.dependencies?.['p2p-hiverelay'])}; expected ${expectedCoreRange}`)
+  }
 } else {
-  desktopHiveRelayDrift.push(`package-lock client dependency p2p-hiverelay is ${JSON.stringify(desktopClientLockEntry?.dependencies?.['p2p-hiverelay'])}; expected ${expectedCoreRange}`)
+  for (const [dep, lockPath] of Object.entries(desktopHiveRelayLockEntries)) {
+    const entry = desktopLock.packages?.[lockPath]
+    if (entry?.name === dep && entry?.version === expectedVersion) {
+      pass(`pearbrowser-desktop workspace lockfile records ${dep}@${expectedVersion}`)
+    } else {
+      desktopHiveRelayDrift.push(`package-lock ${lockPath} records ${entry?.name || dep}@${entry?.version || '(missing)'} instead of ${dep}@${expectedVersion}`)
+    }
+  }
+
+  const desktopClientLockEntry = desktopLock.packages?.['../../00-core/hiverelay/packages/client']
+  const expectedCoreRange = `^${expectedVersion}`
+  if (desktopClientLockEntry?.dependencies?.['p2p-hiverelay'] === expectedCoreRange) {
+    pass(`pearbrowser-desktop workspace client lockfile depends on p2p-hiverelay ${expectedCoreRange}`)
+  } else {
+    desktopHiveRelayDrift.push(`package-lock workspace client dependency p2p-hiverelay is ${JSON.stringify(desktopClientLockEntry?.dependencies?.['p2p-hiverelay'])}; expected ${expectedCoreRange}`)
+  }
 }
 
 const expectedDesktopLayoutGuardTerms = [
@@ -4114,7 +6011,7 @@ if (!desktopRelease) {
   fail('pearbrowser-desktop README is missing current release metadata for ecosystem sync checks')
 } else {
   const [, desktopVersion, desktopLength] = desktopRelease
-  const expectedHero = `Desktop ${desktopVersion} · production length ${desktopLength} · installer artifacts pending · macOS · Windows · Linux`
+  const expectedHero = `Desktop ${desktopVersion} · production length ${desktopLength} · preview builds live · macOS · Windows · Linux`
   const expectedSpec = `${desktopVersion} · production length ${desktopLength} · pinned on the HiveRelay backbone`
   if (
     pearBrowserComIndex.includes(expectedHero) &&
@@ -4245,6 +6142,37 @@ if (
     npmLatestCheck.includes('latest=unverified') &&
     npmLatestCheck.includes('Blocked: app lockfiles and live consumer promotion must wait until npm latest points at this release.') &&
     npmLatestCheck.includes('--json') &&
+    npmLatestCheck.includes('--out npm-latest-evidence.json') &&
+    npmLatestCheck.includes("kind: 'hiverelay-npm-latest-evidence'") &&
+    npmLatestCheck.includes('Refusing to write npm latest evidence') &&
+    releaseBlockersCheck.includes('NPM_LATEST_EVIDENCE_FILE') &&
+    releaseBlockersCheck.includes('npm-latest-evidence.json') &&
+    releaseBlockersCheck.includes('readNpmLatestEvidence') &&
+    releaseBlockersCheck.includes('--out <path>') &&
+    releaseBlockersCheck.includes('writeReport(args.out, report)') &&
+    releaseBlockersCheck.includes('fs.writeFileSync(path.resolve(file)') &&
+    releaseBlockersCheck.includes('function sanitizeReport') &&
+    releaseBlockersCheck.includes('const report = sanitizeReport({') &&
+    releaseBlockersCheck.includes('addBundleDirCheck') &&
+    releaseBlockersCheck.includes("id: 'bundle.dir'") &&
+    releaseBlockersCheck.includes('bundleDirectoryStatus') &&
+    releaseBlockersCheck.includes('bundle-dir must not be a symlink') &&
+    releaseBlockersCheck.includes('firstUsableEvidenceFile') &&
+    releaseBlockersCheck.includes('evidenceFileStatus') &&
+    releaseBlockersCheck.includes('MAX_EVIDENCE_JSON_BYTES') &&
+    releaseBlockersCheck.includes('fs.lstatSync(file)') &&
+    releaseBlockersCheck.includes('must not be a symlink') &&
+    releaseBlockersCheck.includes('must not be empty') &&
+    releaseBlockersCheck.includes('bytes or smaller') &&
+    releaseBlockersCheck.includes('must contain valid JSON') &&
+    releaseBlockersCheck.includes('must contain a JSON object') &&
+    releaseBlockersCheck.includes('npm run release:write-evidence -- --out release-evidence.json') &&
+    releaseBlockersCheck.includes('npm run release:smoke-image -- <ref>@sha256:<digest> --evidence release-image-smoke-evidence.json') &&
+    releaseBlockersCheck.includes('npm run umbrel:smoke-package -- --image-ref <ref>@sha256:<digest> --evidence umbrel-package-smoke-evidence.json') &&
+    releaseBlockersCheck.includes('npm run release:write-official-umbrel-pr-evidence -- --out official-umbrel-pr-evidence.json') &&
+    releaseBlockersCheck.includes('npm run umbrel:write-runtime-review -- --out umbrel-runtime-review-evidence.json') &&
+    releaseBlockersCheck.includes('npm run release:write-startos-registry-evidence -- --out startos-registry-evidence.json') &&
+    releaseBlockersCheck.includes('npm run fleet:check-rollout -- --target v<version> --channel both --evidence fleet-rollout-evidence.json') &&
     ecosystemConsumersAuditTest.includes('ecosystem consumer audit classifies current, stale, and ignored consumers') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit fails on unclassified Hiverelay pins') &&
   ecosystemConsumersAuditTest.includes('ecosystem consumer audit fails when the known stale inventory changes') &&
@@ -4271,7 +6199,23 @@ if (
     npmLatestCheckTest.includes('npm latest check fails while registry latest would downgrade app consumers') &&
     npmLatestCheckTest.includes('npm latest check passes once every package latest tag matches the release') &&
     npmLatestCheckTest.includes('npm latest check emits machine-readable release evidence') &&
+    npmLatestCheckTest.includes('npm latest check writes reusable evidence sidecar only after verified latest tags') &&
+    npmLatestCheckTest.includes('npm latest check refuses to write reusable evidence when latest tags are stale') &&
     npmLatestCheckTest.includes('npm latest check distinguishes unverified registry proof from missing latest tags') &&
+    releaseBlockersCheckTest.includes('release blocker closure writes public-safe JSON report when blocked') &&
+    releaseBlockersCheckTest.includes('release blocker closure redacts top-level report paths before printing or writing') &&
+    releaseBlockersCheckTest.includes('release blocker closure recommends artifact-producing commands for missing sidecars') &&
+    releaseBlockersCheckTest.includes('release blocker closure rejects symlinked evidence candidates before marking rows present') &&
+    releaseBlockersCheckTest.includes('release blocker closure rejects symlinked bundle directories before trusting sidecars') &&
+    releaseBlockersCheckTest.includes('release blocker closure rejects empty and oversized JSON evidence candidates') &&
+    releaseBlockersCheckTest.includes('release blocker closure rejects malformed and non-object JSON evidence candidates') &&
+    releaseBlockersCheckTest.includes('release blocker closure accepts a usable alternate artifact path when the preferred path is unusable') &&
+    releaseBlockersCheckTest.includes('release blocker closure rejects unusable npm latest evidence before schema validation') &&
+    releaseBlockersCheckTest.includes('npm run release:write-official-umbrel-pr-evidence -- --out official-umbrel-pr-evidence.json') &&
+    releaseBlockersCheckTest.includes('npm run fleet:check-rollout -- --target v<version> --channel both --evidence fleet-rollout-evidence.json') &&
+    releaseBlockersCheckTest.includes('release blocker closure accepts npm latest evidence from release bundle') &&
+    releaseBlockersCheckTest.includes('release blocker closure rejects stale npm latest evidence from release bundle') &&
+    testCommandMatrix20260627.includes('The bundle directory itself must be a regular directory, not a symlink') &&
     npmLatestCheckTest.includes('p2p-hiveservices') &&
     readme.includes('ECOSYSTEM-UPGRADE-0.20.2.md') &&
   readme.includes('npm run ecosystem:sync -- --check') &&
@@ -5052,6 +6996,90 @@ if (
   pass('release prep preserves empty official Umbrel first-submission release notes and rejects unsafe public release-note text')
 } else {
   fail('release prep can overwrite/fail on official Umbrel first-submission releaseNotes or publish unsafe release-note text')
+}
+
+if (
+  monorepoPkg.scripts?.['audit:release-promise'] === 'node scripts/check-release-promise-scope.mjs' &&
+  releasePromiseScopeLib.includes('NARROW_RELEASE_PROMISE_LABEL') &&
+  releasePromiseScopeLib.includes('findOverbroadReleasePromises') &&
+  releasePromiseScopeLib.includes('assertNarrowReleasePromise') &&
+  releasePromiseScopeLib.includes('AI/QVAC/Ollama product claim') &&
+  releasePromiseScopeLib.includes('poker product claim') &&
+  releasePromiseScopeLib.includes('custody product claim') &&
+  releasePromiseScopeCheck.includes('prepare-release default release notes') &&
+  releasePromiseScopeCheck.includes('official Umbrel PR body template') &&
+  releasePromiseScopeCheck.includes('checkReleasePromiseScope') &&
+  prepareRelease.includes("import { assertNarrowReleasePromise } from './lib/release-promise-scope.mjs'") &&
+  prepareRelease.includes("assertNarrowReleasePromise(value, { label: 'release notes' })") &&
+  prepareReleaseTest.includes('prepare-release rejects overbroad release promise claims before metadata sync') &&
+  releasePromiseScopeTest.includes('release-promise scope accepts current public handoff surfaces') &&
+  releasePromiseScopeTest.includes('release-promise scope rejects overbroad product claims') &&
+  releasePromiseScopeTest.includes('release-promise scope CLI emits JSON and fails overbroad inline text')
+) {
+  pass('public release promise stays narrowed to Core Availability / Blindspark instead of overbroad service claims')
+} else {
+  fail('public release promise can drift into AI/poker/custody/service-marketplace claims without a release-note or PR-body gate')
+}
+
+if (
+  monorepoPkg.scripts?.['audit:owned-diff'] === 'node scripts/check-audit-owned-diff.mjs' &&
+  auditOwnedDiffLib.includes('AUDIT_OWNED_DIFF_SLICES') &&
+  auditOwnedDiffLib.includes('release-blocker-closure') &&
+  auditOwnedDiffLib.includes('seed-protocol-handshake-alias') &&
+  auditOwnedDiffLib.includes('relaykernel-gateway-compatibility') &&
+  auditOwnedDiffLib.includes('scripts/verify-profile-vectors.mjs') &&
+  auditOwnedDiffLib.includes('public-release-promise-scope') &&
+  auditOwnedDiffLib.includes('release-worktree-owned-diff') &&
+  auditOwnedDiffLib.includes('dispatch-route-helper') &&
+  auditOwnedDiffLib.includes('poker-usage-telemetry-helper') &&
+  auditOwnedDiffLib.includes('overview-route-helper') &&
+  auditOwnedDiffLib.includes('registry-status-route-helper') &&
+  auditOwnedDiffLib.includes('persist-failure-helper') &&
+  auditOwnedDiffLib.includes('route-mount-predicate-helper') &&
+  auditOwnedDiffLib.includes('federation-management-route-helper') &&
+  auditOwnedDiffLib.includes('catalog-management-route-helper') &&
+  auditOwnedDiffLib.includes('delegation-management-route-helper') &&
+  auditOwnedDiffLib.includes('lifecycle-management-route-helper') &&
+  auditOwnedDiffLib.includes('lease-route-helper') &&
+  auditOwnedDiffLib.includes('subsidy-route-helper') &&
+  auditOwnedDiffLib.includes('alert-management-route-helper') &&
+  auditOwnedDiffLib.includes('operator-telemetry-route-helper') &&
+  auditOwnedDiffLib.includes('index-proxy-route-helper') &&
+  auditOwnedDiffLib.includes('poker-http-adapter-helper') &&
+  auditOwnedDiffLib.includes('outboxlog-additive-engine') &&
+  auditOwnedDiffLib.includes('outboxlog-http-adapter') &&
+  auditOwnedDiffLib.includes('outboxlog-relayapi-mount') &&
+  auditOwnedDiffLib.includes('outboxlog-bench-gate') &&
+  auditOwnedDiffLib.includes('outboxlog-release-budget-gate') &&
+  auditOwnedDiffLib.includes('outboxlog-directory-pagination') &&
+  auditOwnedDiffLib.includes('outboxlog-append-event-replay') &&
+  auditOwnedDiffLib.includes('outboxlog-sync-event-sse') &&
+  auditOwnedDiffLib.includes('outboxlog-operation-journal') &&
+  auditOwnedDiffLib.includes('outboxlog-hypercore-journal') &&
+  auditOwnedDiffLib.includes('outboxlog-partitioned-hypercore-journal') &&
+  auditOwnedDiffLib.includes('outboxlog-runtime-seeder-rehearsal') &&
+  auditOwnedDiffLib.includes('outboxlog-namespace-registration') &&
+  auditOwnedDiffLib.includes('outboxlog-sealed-blind-namespace') &&
+  auditOwnedDiffLib.includes('outboxlog-blind-seal-helper') &&
+  auditOwnedDiffLib.includes('outboxlog-blind-recipient-key-wrap') &&
+  auditOwnedDiffLib.includes('outboxlog-blind-aad-binding-helper') &&
+  auditOwnedDiffLib.includes('outboxlog-blind-recipient-directory-helper') &&
+  auditOwnedDiffLib.includes('outboxlog-blind-recipient-rotation-helper') &&
+  auditOwnedDiffLib.includes('outboxlog-blind-recipient-trust-root-helper') &&
+  auditOwnedDiffLib.includes('notify-service-mvp') &&
+  auditOwnedDiffLib.includes('service-capability-profile') &&
+  auditOwnedDiffLib.includes('notify-http-client-api') &&
+  auditOwnedDiffLib.includes('hyper-gateway-head-semantics') &&
+  auditOwnedDiffCheck.includes('git status --porcelain=v1') &&
+  auditOwnedDiffCheck.includes('status-file') &&
+  auditOwnedDiffCheck.includes('release closure still requires a clean worktree') &&
+  auditOwnedDiffTest.includes('audit-owned diff accepts known audit slice paths') &&
+  auditOwnedDiffTest.includes('audit-owned diff blocks unknown development paths') &&
+  auditOwnedDiffTest.includes('audit-owned diff treats a clean status as pass')
+) {
+  pass('development dirty worktree paths are mapped to explicit audit-owned slices without weakening clean release closure')
+} else {
+  fail('development dirty worktree paths can drift without an explicit audit-owned slice map')
 }
 
 const umbrelAppDataDirExpression = '$' + '{APP_DATA_DIR}'

@@ -3,6 +3,29 @@ import b4a from 'b4a'
 export const MAX_ROUTER_TOPICS = 256
 export const MAX_ROUTER_TOPIC_BYTES = 256
 
+const ROUTER_READ_ROUTES = Object.freeze({
+  'GET /api/v1/router': Object.freeze({ kind: 'router-info' })
+})
+
+export function resolveRouterReadRoute (method, path) {
+  const route = ROUTER_READ_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
+
+export function buildRouterInfoRoutePayload ({
+  route,
+  router = null
+} = {}) {
+  if (!route || route.kind !== 'router-info') {
+    return {
+      status: 404,
+      payload: { error: 'unknown router read route' }
+    }
+  }
+  return buildRouterInfoPayload({ router })
+}
+
 function safeCounter (value) {
   const n = Number(value)
   if (!Number.isFinite(n) || n < 0) return 0

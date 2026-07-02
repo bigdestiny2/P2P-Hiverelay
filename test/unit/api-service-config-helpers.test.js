@@ -7,15 +7,27 @@ import {
   configuredBuiltinServicePlugins,
   configuredServicePlugins,
   normalizeManageServicePlugins,
+  resolveServiceConfigUpdateRoute,
+  runServiceConfigUpdateAction,
   serviceConfigPayload
 } from 'p2p-hiverelay/core/relay-node/api-service-config.js'
 
+test('api service config helpers: route helper maps exact service config update', (t) => {
+  t.alike(resolveServiceConfigUpdateRoute('POST', '/api/manage/services/config'), {
+    kind: 'service-config-update'
+  })
+
+  t.is(resolveServiceConfigUpdateRoute('GET', '/api/manage/services/config'), null)
+  t.is(resolveServiceConfigUpdateRoute('POST', '/api/manage/services'), null)
+  t.is(resolveServiceConfigUpdateRoute('POST', '/api/manage/services/config/extra'), null)
+})
+
 test('api service config helpers: normalize builtins and expand bundles', (t) => {
-  const normalized = normalizeManageServicePlugins([' Poker ', 'AI', 'vrf', ''])
+  const normalized = normalizeManageServicePlugins([' Poker ', 'AI', 'vrf', 'outboxlog', 'notify', ''])
 
   t.alike(normalized, {
     ok: true,
-    plugins: ['poker', 'vrf', 'arbitration', 'zk', 'ai']
+    plugins: ['poker', 'vrf', 'arbitration', 'zk', 'ai', 'outboxlog', 'notify']
   })
 
   t.alike(normalizeManageServicePlugins(null), { ok: true, plugins: [] })
@@ -53,7 +65,9 @@ test('api service config helpers: payload reports configured builtins and active
     available: BUILTIN_SERVICE_PLUGINS,
     plugins: ['identity', 'poker'],
     active: ['identity', 'ai'],
-    bundles: SERVICE_PLUGIN_BUNDLES
+    bundles: SERVICE_PLUGIN_BUNDLES,
+    locked: false,
+    lockReason: null
   })
 
   t.is(serviceConfigPayload({ enableServices: false, plugins: ['ai'] }, registry).enabled, false)
@@ -73,4 +87,59 @@ test('api service config helpers: bundle parents identify configured bundle depe
   t.alike(bundleParentsForService('poker', configured), [])
   t.alike(bundleParentsForService('ai', configured), [])
   t.alike(bundleParentsForService('vrf', null), [])
+})
+
+test('api service config helpers: update action persists normalized plugins', async (t) => {
+  const config = { enableServices: false, plugins: [] }
+  const registry = { services: new Map([['ai', {}]]) }
+  const persistCalls = []
+
+  const out = await runServiceConfigUpdateAction({
+    body: { enabled: true, plugins: ['poker', 'ai'] },
+    config,
+    registry,
+    persistConfig: async () => { persistCalls.push(config.plugins.join(',')) }
+  })
+
+  t.is(out.ok, true)
+  t.alike(persistCalls, ['poker,vrf,arbitration,zk,ai'])
+  t.alike(config.plugins, ['poker', 'vrf', 'arbitration', 'zk', 'ai'])
+  t.is(config.enableServices, true)
+  t.is(out.payload.restartRequired, true)
+  t.alike(out.payload.config.plugins, ['poker', 'vrf', 'arbitration', 'zk', 'ai'])
+  t.alike(out.payload.config.active, ['ai'])
+})
+
+test('api service config helpers: update action rejects locked profiles before mutation', async (t) => {
+  const config = { productProfile: 'relaykernel', enableServices: false, plugins: [] }
+  let persisted = false
+
+  const out = await runServiceConfigUpdateAction({
+    body: { enabled: true, plugins: ['ai'] },
+    config,
+    persistConfig: async () => { persisted = true }
+  })
+
+  t.is(out.ok, false)
+  t.is(out.status, 409)
+  t.is(out.payload.errorCode, 'relaykernel-services-locked')
+  t.is(out.payload.config.locked, true)
+  t.alike(config.plugins, [])
+  t.is(config.enableServices, false)
+  t.is(persisted, false)
+})
+
+test('api service config helpers: update action rolls back on persistence failure', async (t) => {
+  const config = { enableServices: true, plugins: ['identity', 'vrf'] }
+
+  const out = await runServiceConfigUpdateAction({
+    body: { enabled: true, plugins: ['ai'] },
+    config,
+    persistConfig: async () => { throw new Error('readonly') }
+  })
+
+  t.is(out.ok, false)
+  t.is(out.kind, 'config-persist')
+  t.alike(config.plugins, ['identity', 'vrf'])
+  t.is(config.enableServices, true)
 })

@@ -3,6 +3,54 @@ import { formatErr } from '../error-prefixes.js'
 
 const DESTINATION_REQUIRED = 'destination (string or null) required'
 const DESTINATION_UNRECOGNIZED = 'Unrecognized payout destination (expected lightning address, BOLT12 offer, or bitcoin address)'
+const SUBSIDY_PERSIST_FAILED_MESSAGE = 'failed to persist subsidy state; check storage permissions and disk space'
+
+const SUBSIDY_ROUTES = Object.freeze({
+  'GET /api/subsidy': Object.freeze({
+    kind: 'status',
+    authMessage: 'Unauthorized — subsidy status requires API key or localhost'
+  }),
+  'GET /api/subsidy/claim': Object.freeze({
+    kind: 'claim',
+    authMessage: 'Unauthorized — subsidy claim requires API key or localhost'
+  }),
+  'POST /api/subsidy/destination': Object.freeze({
+    kind: 'destination',
+    authMessage: 'Unauthorized — subsidy destination requires API key or localhost'
+  })
+})
+
+export function resolveSubsidyRoute (method, path) {
+  const route = SUBSIDY_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
+
+export function buildSubsidyRoutePayload ({
+  route,
+  config,
+  subsidyAccrual
+} = {}) {
+  if (!route) {
+    return {
+      payload: { error: 'unknown subsidy route' },
+      status: 404
+    }
+  }
+
+  if (route.kind === 'status') {
+    return buildSubsidyStatusPayload({ config, subsidyAccrual })
+  }
+
+  if (route.kind === 'claim') {
+    return buildSubsidyClaimPayload({ subsidyAccrual })
+  }
+
+  return {
+    payload: { error: 'unknown subsidy route' },
+    status: 404
+  }
+}
 
 export function subsidyDestinationFromConfig (config) {
   return validatePayoutDestination(config?.subsidy?.payoutDestination || '')
@@ -105,6 +153,32 @@ function emitRollbackError (emit, event, error) {
   })
 }
 
+function errorMessage (err) {
+  return err && err.message ? err.message : String(err || 'unknown error')
+}
+
+export function subsidyPersistFailureResult ({
+  error,
+  emit = null
+}) {
+  if (typeof emit === 'function') {
+    emit('subsidy-persist-error', {
+      message: errorMessage(error),
+      error
+    })
+  }
+
+  return {
+    ok: false,
+    kind: 'subsidy-persist',
+    status: 500,
+    payload: {
+      error: formatErr('PERSIST_FAILED', SUBSIDY_PERSIST_FAILED_MESSAGE),
+      errorCode: 'persist-failed'
+    }
+  }
+}
+
 async function saveWizardRollback (wizard, wizardSaved, emit) {
   if (!wizardSaved || !wizard) return
   try {
@@ -174,7 +248,7 @@ export async function updateSubsidyDestination ({
       } catch (rollbackErr) {
         emitRollbackError(emit, 'config-rollback-error', rollbackErr)
       }
-      return { ok: false, kind: 'subsidy-persist', error: err }
+      return subsidyPersistFailureResult({ error: err, emit })
     }
   }
 

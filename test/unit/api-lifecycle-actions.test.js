@@ -1,6 +1,7 @@
 import test from 'brittle'
 import {
   LIFECYCLE_ACTION_DELAY_MS,
+  resolveLifecycleManagementRoute,
   runLifecycleAction
 } from '../../packages/core/core/relay-node/api-lifecycle-actions.js'
 
@@ -13,6 +14,18 @@ function scheduler () {
     }
   }
 }
+
+test('api lifecycle actions: route helper maps POST management paths to lifecycle actions', (t) => {
+  t.alike(resolveLifecycleManagementRoute('POST', '/api/manage/restart'), {
+    action: 'restart'
+  })
+  t.alike(resolveLifecycleManagementRoute('POST', '/api/manage/shutdown'), {
+    action: 'shutdown'
+  })
+  t.is(resolveLifecycleManagementRoute('GET', '/api/manage/restart'), null)
+  t.is(resolveLifecycleManagementRoute('POST', '/api/manage/restart/now'), null)
+  t.is(resolveLifecycleManagementRoute('POST', '/api/manage/services/restart'), null)
+})
 
 test('api lifecycle actions: restart schedules stop then start after response payload', async (t) => {
   const events = []

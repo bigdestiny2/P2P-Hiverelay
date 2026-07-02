@@ -2,6 +2,23 @@ import { isValidHexKey } from '../constants.js'
 
 export const CATALOG_ACCEPT_MODES = ['open', 'review', 'allowlist', 'closed']
 
+const CATALOG_MANAGEMENT_ROUTES = Object.freeze({
+  'POST /registry/auto-accept': Object.freeze({ kind: 'legacy-auto-accept' }),
+  'POST /registry/approve': Object.freeze({ kind: 'app', action: 'approve' }),
+  'POST /registry/reject': Object.freeze({ kind: 'app', action: 'reject' }),
+  'POST /registry/cancel': Object.freeze({ kind: 'cancel' }),
+  'POST /api/manage/catalog/mode': Object.freeze({ kind: 'mode' }),
+  'POST /api/manage/catalog/allowlist': Object.freeze({ kind: 'allowlist' }),
+  'POST /api/manage/catalog/approve': Object.freeze({ kind: 'app', action: 'approve' }),
+  'POST /api/manage/catalog/reject': Object.freeze({ kind: 'app', action: 'reject' }),
+  'POST /api/manage/catalog/remove': Object.freeze({ kind: 'app', action: 'remove' })
+})
+
+const CATALOG_PENDING_ROUTES = Object.freeze({
+  'GET /api/registry/pending': Object.freeze({ kind: 'pending-catalog' }),
+  'GET /api/manage/catalog/pending': Object.freeze({ kind: 'pending-catalog' })
+})
+
 function errorPayload (message) {
   return { error: message }
 }
@@ -69,6 +86,42 @@ function validateAppKeyBody (body) {
     return { ok: false, status: 400, payload: errorPayload('appKey must be 64 hex characters') }
   }
   return { ok: true }
+}
+
+export function resolveCatalogManagementRoute (method, path) {
+  const route = CATALOG_MANAGEMENT_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return {
+    ...route,
+    authMessage: `Unauthorized — API key required for ${path}`
+  }
+}
+
+export function resolvePendingCatalogRoute (method, path) {
+  const route = CATALOG_PENDING_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return {
+    ...route,
+    authMessage: `Unauthorized — API key required for ${path}`
+  }
+}
+
+export function buildPendingCatalogRoutePayload ({
+  route,
+  pendingRequests,
+  resolveAcceptMode = null
+} = {}) {
+  if (!route || route.kind !== 'pending-catalog') {
+    return {
+      payload: { error: 'unknown pending catalog route' },
+      status: 404
+    }
+  }
+
+  return {
+    payload: buildPendingCatalogPayload({ pendingRequests, resolveAcceptMode }),
+    status: 200
+  }
 }
 
 function safeString (value) {
@@ -338,4 +391,39 @@ export async function runRegistryCancelAction ({
   const pubkey = node.swarm ? Buffer.from(node.swarm.keyPair.publicKey).toString('hex') : null
   await node.seedingRegistry.cancelRequest(body.appKey, pubkey)
   return { ok: true, payload: { ok: true } }
+}
+
+export async function runCatalogManagementRouteAction ({
+  route,
+  body = {},
+  config,
+  node,
+  persistConfig = async () => {},
+  emit = null
+} = {}) {
+  if (!route) {
+    return { ok: false, kind: 'not-found', status: 404, payload: errorPayload('unknown catalog management route') }
+  }
+
+  if (route.kind === 'legacy-auto-accept') {
+    return runLegacyAutoAcceptAction({ body, config, persistConfig, emit })
+  }
+
+  if (route.kind === 'mode') {
+    return runCatalogModeAction({ body, config, persistConfig, emit })
+  }
+
+  if (route.kind === 'allowlist') {
+    return runCatalogAllowlistAction({ body, config, persistConfig, emit })
+  }
+
+  if (route.kind === 'app') {
+    return runCatalogAppAction({ action: route.action, body, node })
+  }
+
+  if (route.kind === 'cancel') {
+    return runRegistryCancelAction({ body, node })
+  }
+
+  return { ok: false, kind: 'not-found', status: 404, payload: errorPayload('unknown catalog management route') }
 }

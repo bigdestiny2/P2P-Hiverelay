@@ -138,7 +138,7 @@ function decodePathComponent (value) {
   }
 }
 
-function writeGatewayJson (res, body, status = 200, headers = null) {
+function writeGatewayJson (res, body, status = 200, headers = null, opts = {}) {
   let explicitCacheControl = false
   if (headers) {
     for (const [name, value] of Object.entries(headers)) {
@@ -149,8 +149,10 @@ function writeGatewayJson (res, body, status = 200, headers = null) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
   res.setHeader('X-Content-Type-Options', 'nosniff')
   if (!explicitCacheControl) res.setHeader('Cache-Control', 'no-store, max-age=0')
+  const payload = JSON.stringify(body) + '\n'
+  res.setHeader('Content-Length', Buffer.byteLength(payload))
   res.writeHead(status)
-  res.end(JSON.stringify(body) + '\n')
+  res.end(opts.head ? null : payload)
 }
 
 /**
@@ -303,11 +305,15 @@ export class HyperGateway extends EventEmitter {
       writeGatewayJson(res, { error: 'Method Not Allowed' }, 405)
       return
     }
+    const isHead = req.method === 'HEAD'
+    const sendJson = (body, status = 200, headers = null) => {
+      writeGatewayJson(res, body, status, headers, { head: isHead })
+    }
 
     // Parse: /v1/hyper/KEY/path
     const prefix = '/v1/hyper/'
     if (!path.startsWith(prefix)) {
-      writeGatewayJson(res, { error: 'Invalid path' }, 400)
+      sendJson({ error: 'Invalid path' }, 400)
       return
     }
 
@@ -320,13 +326,13 @@ export class HyperGateway extends EventEmitter {
     // Block: .. (parent dir), null bytes, absolute paths, URL-encoded variants
     const decoded = decodePathComponent(filePath)
     if (!decoded.ok) {
-      writeGatewayJson(res, { error: 'Malformed path encoding' }, 400)
+      sendJson({ error: 'Malformed path encoding' }, 400)
       return
     }
     const decodedPath = decoded.value
     const doubleDecoded = decodePathComponent(decodedPath)
     if (!doubleDecoded.ok) {
-      writeGatewayJson(res, { error: 'Malformed path encoding' }, 400)
+      sendJson({ error: 'Malformed path encoding' }, 400)
       return
     }
     const doubleDecodedPath = doubleDecoded.value
@@ -338,25 +344,25 @@ export class HyperGateway extends EventEmitter {
       decodedPath.includes('\x00') ||
       /^[a-zA-Z]:/.test(decodedPath) // Windows absolute paths
     ) {
-      writeGatewayJson(res, { error: 'Forbidden: path traversal rejected' }, 403)
+      sendJson({ error: 'Forbidden: path traversal rejected' }, 403)
       return
     }
 
     if (!keyHex || keyHex.length !== 64 || !/^[0-9a-f]+$/i.test(keyHex)) {
-      writeGatewayJson(res, { error: 'Invalid drive key' }, 400)
+      sendJson({ error: 'Invalid drive key' }, 400)
       return
     }
 
     // Check if this drive is seeded on the relay
     if (this.node.seededApps && !this.node.seededApps.has(keyHex)) {
-      writeGatewayJson(res, { error: 'Drive not seeded on this relay' }, 404)
+      sendJson({ error: 'Drive not seeded on this relay' }, 404)
       return
     }
 
     // Blind apps: relay has encrypted ciphertext, can't serve over HTTP
     const appEntry = this.node.seededApps && this.node.seededApps.get(keyHex)
     if (appEntry && appEntry.blind) {
-      writeGatewayJson(res, {
+      sendJson({
         error: 'Private app — encrypted content, P2P access only',
         blind: true,
         hint: 'Use PearBrowser or Hyperswarm to access this app with the encryption key'
@@ -366,7 +372,7 @@ export class HyperGateway extends EventEmitter {
 
     const privacyTier = String(appEntry?.privacyTier || 'public').toLowerCase()
     if (this.node.config?.gatewayPublicOnlyPrivacyTier !== false && privacyTier !== 'public') {
-      writeGatewayJson(res, {
+      sendJson({
         error: 'Gateway access blocked by privacy tier policy',
         privacyTier,
         hint: 'Use direct P2P access for non-public apps'
@@ -377,7 +383,7 @@ export class HyperGateway extends EventEmitter {
     if (this.node.policyGuard && appEntry) {
       const policy = this.node.policyGuard.check(keyHex, privacyTier, 'serve-code')
       if (!policy.allowed) {
-        writeGatewayJson(res, {
+        sendJson({
           error: 'PolicyGuard blocked this app',
           privacyTier,
           reason: policy.reason
@@ -391,7 +397,7 @@ export class HyperGateway extends EventEmitter {
     try {
       const drive = await this._getDrive(keyHex)
       if (!drive) {
-        writeGatewayJson(res, { error: 'Drive not available yet — still replicating' }, 404)
+        sendJson({ error: 'Drive not available yet — still replicating' }, 404)
         return
       }
 
@@ -406,7 +412,7 @@ export class HyperGateway extends EventEmitter {
           filePath = (filePath || '/') + 'index.html'
         } else {
           // Directory listing
-          return this._serveDirectoryListing(res, drive, keyHex, filePath || '/')
+          return this._serveDirectoryListing(res, drive, keyHex, filePath || '/', { head: isHead })
         }
       }
 
@@ -417,7 +423,7 @@ export class HyperGateway extends EventEmitter {
         'drive.entry()'
       )
       if (!entry || !entry.value.blob) {
-        writeGatewayJson(res, { error: 'File not found', path: filePath }, 404)
+        sendJson({ error: 'File not found', path: filePath }, 404)
         return
       }
 
@@ -442,7 +448,7 @@ export class HyperGateway extends EventEmitter {
           'drive.get()'
         )
         if (!content) {
-          writeGatewayJson(res, { error: 'File not found', path: filePath }, 404)
+          sendJson({ error: 'File not found', path: filePath }, 404)
           return
         }
         let html = content.toString('utf-8')
@@ -451,8 +457,12 @@ export class HyperGateway extends EventEmitter {
           .replace(/href='\//g, "href='./")
           .replace(/src='\//g, "src='./")
         const buf = Buffer.from(html)
-        this._totalBytesServed += buf.length
         res.writeHead(200, { 'Content-Length': buf.length })
+        if (isHead) {
+          res.end()
+          return
+        }
+        this._totalBytesServed += buf.length
         res.end(buf)
         this.emit('served', { keyHex, filePath, bytes: buf.length })
         return
@@ -472,7 +482,7 @@ export class HyperGateway extends EventEmitter {
         const parsed = parseRange(rangeHeader, byteLength)
         if (parsed === 'invalid') {
           res.setHeader('Content-Range', `bytes */${byteLength}`)
-          writeGatewayJson(res, { error: 'Range Not Satisfiable' }, 416)
+          sendJson({ error: 'Range Not Satisfiable' }, 416)
           return
         }
         if (parsed) {
@@ -511,7 +521,7 @@ export class HyperGateway extends EventEmitter {
         // instead of a hung socket.
         if (!res.headersSent) {
           try {
-            writeGatewayJson(res, { error: 'Gateway stream failed' }, 502)
+            sendJson({ error: 'Gateway stream failed' }, 502)
           } catch {}
         } else {
           try { res.destroy(err) } catch {}
@@ -530,7 +540,7 @@ export class HyperGateway extends EventEmitter {
       stream.pipe(res)
     } catch (err) {
       this.emit('drive-error', { context: 'handle', key: keyHex, path: filePath, error: err.message })
-      writeGatewayJson(res, { error: 'Gateway read failed' }, 502)
+      sendJson({ error: 'Gateway read failed' }, 502)
     }
   }
 
@@ -611,7 +621,7 @@ export class HyperGateway extends EventEmitter {
     }
   }
 
-  async _serveDirectoryListing (res, drive, keyHex, dirPath) {
+  async _serveDirectoryListing (res, drive, keyHex, dirPath, opts = {}) {
     const entries = []
     const MAX_ENTRIES = 1000 // Prevent memory exhaustion from huge directories
     const startTime = Date.now()
@@ -638,7 +648,7 @@ export class HyperGateway extends EventEmitter {
       'X-Hyper-Key': keyHex,
       'X-Served-By': 'hiverelay-gateway',
       'Cache-Control': 'public, max-age=60'
-    })
+    }, { head: !!opts.head })
   }
 
   getStats () {

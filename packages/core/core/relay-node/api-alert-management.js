@@ -5,6 +5,17 @@ export const MAX_ALERT_TYPE_FILTER_BYTES = 80
 export const MAX_ALERT_TEST_MESSAGE_BYTES = 512
 export const MAX_ALERT_TEST_DETAILS_BYTES = 2048
 
+const ALERT_MANAGEMENT_ROUTES = Object.freeze({
+  'GET /api/alerts': Object.freeze({
+    kind: 'log',
+    authMessage: 'Unauthorized — API key required for /api/alerts'
+  }),
+  'POST /api/alerts/test': Object.freeze({
+    kind: 'test',
+    authMessage: 'Unauthorized — API key required for /api/alerts/test'
+  })
+})
+
 function errorPayload (message) {
   return { error: message }
 }
@@ -54,6 +65,12 @@ function validateTestDetails (value) {
     return { ok: false, payload: errorPayload('details must be 2048 bytes or smaller') }
   }
   return { ok: true, value }
+}
+
+export function resolveAlertManagementRoute (method, path) {
+  const route = ALERT_MANAGEMENT_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
 }
 
 export function buildAlertLogPayload ({
@@ -106,4 +123,16 @@ export function runAlertTestAction ({
     details: details.value
   })
   return { ok: true, payload: { ok: true, dispatched } }
+}
+
+export function runAlertManagementRouteAction ({
+  route,
+  body = {},
+  alertManager = null,
+  url
+} = {}) {
+  const kind = route && route.kind
+  if (kind === 'log') return buildAlertLogPayload({ alertManager, url })
+  if (kind === 'test') return runAlertTestAction({ body, alertManager })
+  return { ok: false, status: 404, payload: errorPayload('unknown alert management route') }
 }

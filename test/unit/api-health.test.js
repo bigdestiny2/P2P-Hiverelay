@@ -2,7 +2,8 @@ import test from 'brittle'
 import {
   buildHealthResponse,
   diskHealthSummary,
-  MAX_HEALTH_DISK_ERROR_BYTES
+  MAX_HEALTH_DISK_ERROR_BYTES,
+  resolveHealthRoute
 } from '../../packages/core/core/relay-node/api-health.js'
 
 function nodeFixture (overrides = {}) {
@@ -17,6 +18,14 @@ function nodeFixture (overrides = {}) {
     ...overrides
   }
 }
+
+test('api health: route resolver maps only the exact public health route', (t) => {
+  t.alike(resolveHealthRoute('GET', '/health'), { kind: 'health' })
+  t.is(resolveHealthRoute('POST', '/health'), null, 'wrong method falls through')
+  t.is(resolveHealthRoute('GET', '/health/extra'), null, 'subpath falls through')
+  t.is(resolveHealthRoute('GET', '/status'), null, 'adjacent status route falls through')
+  t.is(resolveHealthRoute('GET', '/api/health-detail'), null, 'operator health detail route falls through')
+})
 
 test('api health: summarizes missing, error, and ordinary disk state', (t) => {
   t.is(diskHealthSummary(null), null)

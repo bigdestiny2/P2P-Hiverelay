@@ -1,5 +1,12 @@
 import { isValidHexKey } from '../constants.js'
 
+const ANCHOR_PROOF_PREFIX = '/api/anchors/'
+const ANCHOR_PROOF_SUFFIX = '/proof'
+
+const ANCHOR_STATUS_ROUTES = Object.freeze({
+  'GET /api/anchors': Object.freeze({ kind: 'anchor-status' })
+})
+
 function count (value) {
   const n = Number(value)
   if (!Number.isFinite(n) || n < 0) return 0
@@ -14,6 +21,70 @@ function timestampOrNull (value) {
 
 export function isDetailedAnchorStatusQuery (value) {
   return value === '1' || value === 'true'
+}
+
+export function resolveAnchorStatusRoute (method, path) {
+  const route = ANCHOR_STATUS_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
+
+export function isAnchorProofRoute (path) {
+  return typeof path === 'string' && path.startsWith(ANCHOR_PROOF_PREFIX) && path.endsWith(ANCHOR_PROOF_SUFFIX)
+}
+
+export function resolveAnchorProofRoute (method, path) {
+  if (method !== 'GET') return null
+  if (isAnchorProofRoute(path)) return { kind: 'anchor-proof' }
+  return null
+}
+
+export function anchorProofAppKeyFromPath (path) {
+  return isAnchorProofRoute(path)
+    ? path.slice(ANCHOR_PROOF_PREFIX.length, -ANCHOR_PROOF_SUFFIX.length)
+    : ''
+}
+
+export async function buildAnchorProofRoutePayload ({
+  node,
+  path
+} = {}) {
+  return buildAnchorProofPayload({
+    node,
+    appKey: anchorProofAppKeyFromPath(path)
+  })
+}
+
+export function buildAnchorStatusRouteContext (url) {
+  const params = url && url.searchParams
+  const detailed = isDetailedAnchorStatusQuery(params && typeof params.get === 'function' ? params.get('detailed') : null)
+  return {
+    detailed,
+    requiresAuth: detailed
+  }
+}
+
+export function buildAnchorStatusRoutePayload ({
+  route,
+  context = null,
+  url,
+  appRegistry,
+  lastCheckedAt = null
+} = {}) {
+  if (!route || route.kind !== 'anchor-status') {
+    return {
+      ok: false,
+      status: 404,
+      payload: { error: 'unknown anchor status route' }
+    }
+  }
+
+  const routeContext = context || buildAnchorStatusRouteContext(url)
+  return buildAnchorStatusPayload({
+    appRegistry,
+    detailed: routeContext.detailed,
+    lastCheckedAt
+  })
 }
 
 export async function buildAnchorProofPayload ({

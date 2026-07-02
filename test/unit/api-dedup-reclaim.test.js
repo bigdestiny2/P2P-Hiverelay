@@ -1,8 +1,21 @@
 import test from 'brittle'
 import {
+  DEDUP_RECLAIM_AUTH_MESSAGE,
   parseDedupReclaimOptions,
+  resolveDedupReclaimRoute,
   runDedupReclaimAction
 } from '../../packages/core/core/relay-node/api-dedup-reclaim.js'
+
+test('api dedup reclaim: route helper maps exact operator reclaim route', (t) => {
+  t.alike(resolveDedupReclaimRoute('POST', '/api/dedup/reclaim'), {
+    kind: 'dedup-reclaim',
+    authMessage: DEDUP_RECLAIM_AUTH_MESSAGE
+  })
+
+  t.is(resolveDedupReclaimRoute('GET', '/api/dedup/reclaim'), null)
+  t.is(resolveDedupReclaimRoute('POST', '/api/dedup'), null)
+  t.is(resolveDedupReclaimRoute('POST', '/api/dedup/reclaim/all'), null)
+})
 
 test('api dedup reclaim: defaults to dry-run with zero retained superseded versions', async (t) => {
   const calls = []

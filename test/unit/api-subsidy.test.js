@@ -1,9 +1,12 @@
 import test from 'brittle'
 import {
   buildSubsidyClaimPayload,
+  buildSubsidyRoutePayload,
   buildSubsidyStatusPayload,
   parseSubsidyDestinationUpdate,
+  resolveSubsidyRoute,
   subsidyDestinationFromConfig,
+  subsidyPersistFailureResult,
   updateSubsidyDestination
 } from 'p2p-hiverelay/core/relay-node/api-subsidy.js'
 
@@ -22,6 +25,59 @@ function makeWizard (opts = {}) {
     }
   }
 }
+
+test('api subsidy: route helper maps exact subsidy routes', (t) => {
+  t.alike(resolveSubsidyRoute('GET', '/api/subsidy'), {
+    kind: 'status',
+    authMessage: 'Unauthorized — subsidy status requires API key or localhost'
+  })
+  t.alike(resolveSubsidyRoute('GET', '/api/subsidy/claim'), {
+    kind: 'claim',
+    authMessage: 'Unauthorized — subsidy claim requires API key or localhost'
+  })
+  t.alike(resolveSubsidyRoute('POST', '/api/subsidy/destination'), {
+    kind: 'destination',
+    authMessage: 'Unauthorized — subsidy destination requires API key or localhost'
+  })
+  t.is(resolveSubsidyRoute('POST', '/api/subsidy'), null)
+  t.is(resolveSubsidyRoute('POST', '/api/subsidy/claim'), null)
+  t.is(resolveSubsidyRoute('GET', '/api/subsidy/destination'), null)
+  t.is(resolveSubsidyRoute('GET', '/api/subsidy/destination/extra'), null)
+})
+
+test('api subsidy: route payload helper dispatches read routes', (t) => {
+  const status = buildSubsidyRoutePayload({
+    route: resolveSubsidyRoute('GET', '/api/subsidy'),
+    config: { subsidy: { payoutDestination: 'Operator@Example.com' } }
+  })
+  t.is(status.status, 200)
+  t.alike(status.payload, {
+    enabled: false,
+    payoutDestination: { type: 'lightning-address', value: 'operator@example.com' }
+  })
+
+  const claim = buildSubsidyRoutePayload({
+    route: resolveSubsidyRoute('GET', '/api/subsidy/claim'),
+    subsidyAccrual: {
+      buildClaim () {
+        return { relay: 'a'.repeat(64), amountSats: 42 }
+      }
+    }
+  })
+  t.is(claim.status, 200)
+  t.alike(claim.payload, { relay: 'a'.repeat(64), amountSats: 42 })
+
+  const unknown = buildSubsidyRoutePayload({
+    route: resolveSubsidyRoute('POST', '/api/subsidy/destination'),
+    subsidyAccrual: {
+      buildClaim () {
+        throw new Error('destination routes are handled by updateSubsidyDestination')
+      }
+    }
+  })
+  t.is(unknown.status, 404)
+  t.alike(unknown.payload, { error: 'unknown subsidy route' })
+})
 
 test('api subsidy: destination parser requires string or null and normalizes rails', (t) => {
   t.alike(parseSubsidyDestinationUpdate({}), {
@@ -212,14 +268,45 @@ test('api subsidy: live accrual failures restore persisted config and emit rollb
       persists++
       if (persists === 2) throw new Error('rollback disk full')
     },
-    emit: (event, payload) => events.push({ event, message: payload.message })
+    emit: (event, payload) => events.push({ event, message: payload.message, error: payload.error })
   })
 
   t.is(result.ok, false)
   t.is(result.kind, 'subsidy-persist')
+  t.is(result.status, 500)
+  t.is(result.payload.errorCode, 'persist-failed')
+  t.ok(result.payload.error.startsWith('persist-failed: '), 'public payload is stable and prefixed')
+  t.absent(result.payload.error.includes('subsidy disk full'), 'public payload does not leak local storage error')
   t.is(config.subsidy.payoutDestination, 'old@example.com')
   t.is(wizard.state.payoutDestination, 'old@example.com')
   t.is(wizard.saves, 2)
   t.is(persists, 2)
-  t.alike(events, [{ event: 'config-rollback-error', message: 'rollback disk full' }])
+  t.is(events.length, 2)
+  t.is(events[0].event, 'config-rollback-error')
+  t.is(events[0].message, 'rollback disk full')
+  t.is(events[1].event, 'subsidy-persist-error')
+  t.is(events[1].message, 'subsidy disk full')
+})
+
+test('api subsidy: persist failure mapper emits internal diagnostics', (t) => {
+  const err = new Error('subsidy store readonly')
+  const events = []
+  const result = subsidyPersistFailureResult({
+    error: err,
+    emit: (event, payload) => events.push({ event, payload })
+  })
+
+  t.is(result.ok, false)
+  t.is(result.kind, 'subsidy-persist')
+  t.is(result.status, 500)
+  t.is(result.payload.errorCode, 'persist-failed')
+  t.ok(result.payload.error.startsWith('persist-failed: '))
+  t.absent(result.payload.error.includes('subsidy store readonly'))
+  t.alike(events, [{
+    event: 'subsidy-persist-error',
+    payload: {
+      message: 'subsidy store readonly',
+      error: err
+    }
+  }])
 })

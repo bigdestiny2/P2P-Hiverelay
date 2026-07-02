@@ -1,8 +1,56 @@
 import test from 'brittle'
 import {
   buildGatewayStatsPayload,
+  buildGatewayStatsRoutePayload,
+  resolveGatewayStatsRoute,
   sanitizeGatewayStats
 } from 'p2p-hiverelay/core/relay-node/api-gateway-stats.js'
+
+test('api gateway stats: route helper maps exact public stats route', (t) => {
+  t.alike(resolveGatewayStatsRoute('GET', '/api/gateway'), {
+    kind: 'gateway-stats'
+  })
+
+  t.is(resolveGatewayStatsRoute('POST', '/api/gateway'), null)
+  t.is(resolveGatewayStatsRoute('GET', '/api/gateway/extra'), null)
+  t.is(resolveGatewayStatsRoute('GET', '/api/overview'), null)
+})
+
+test('api gateway stats: route payload helper dispatches sanitized public stats', (t) => {
+  let calls = 0
+  const gateway = {
+    getStats () {
+      calls++
+      return {
+        cachedDrives: 2,
+        totalRequests: 3,
+        totalBytesServed: 4,
+        cachePath: '/private/cache'
+      }
+    }
+  }
+
+  const result = buildGatewayStatsRoutePayload({
+    route: { kind: 'gateway-stats' },
+    gateway
+  })
+  const unknown = buildGatewayStatsRoutePayload({
+    route: { kind: 'unknown' },
+    gateway
+  })
+
+  t.is(calls, 1)
+  t.alike(result, {
+    ok: true,
+    payload: {
+      cachedDrives: 2,
+      totalRequests: 3,
+      totalBytesServed: 4
+    }
+  })
+  t.is(unknown.status, 404)
+  t.is(unknown.payload.error, 'unknown gateway stats route')
+})
 
 test('api gateway stats: missing gateway returns stable zero counters', (t) => {
   t.alike(buildGatewayStatsPayload(), {

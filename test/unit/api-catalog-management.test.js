@@ -1,12 +1,194 @@
 import test from 'brittle'
 import {
   buildPendingCatalogPayload,
+  buildPendingCatalogRoutePayload,
+  resolveCatalogManagementRoute,
+  resolvePendingCatalogRoute,
   runCatalogAllowlistAction,
   runCatalogAppAction,
+  runCatalogManagementRouteAction,
   runCatalogModeAction,
   runLegacyAutoAcceptAction,
   runRegistryCancelAction
 } from '../../packages/core/core/relay-node/api-catalog-management.js'
+
+test('api catalog management: route helper maps legacy and management paths', (t) => {
+  t.alike(resolveCatalogManagementRoute('POST', '/registry/auto-accept'), {
+    kind: 'legacy-auto-accept',
+    authMessage: 'Unauthorized — API key required for /registry/auto-accept'
+  })
+  t.alike(resolveCatalogManagementRoute('POST', '/registry/approve'), {
+    kind: 'app',
+    action: 'approve',
+    authMessage: 'Unauthorized — API key required for /registry/approve'
+  })
+  t.alike(resolveCatalogManagementRoute('POST', '/registry/reject'), {
+    kind: 'app',
+    action: 'reject',
+    authMessage: 'Unauthorized — API key required for /registry/reject'
+  })
+  t.alike(resolveCatalogManagementRoute('POST', '/registry/cancel'), {
+    kind: 'cancel',
+    authMessage: 'Unauthorized — API key required for /registry/cancel'
+  })
+  t.alike(resolveCatalogManagementRoute('POST', '/api/manage/catalog/mode'), {
+    kind: 'mode',
+    authMessage: 'Unauthorized — API key required for /api/manage/catalog/mode'
+  })
+  t.alike(resolveCatalogManagementRoute('POST', '/api/manage/catalog/allowlist'), {
+    kind: 'allowlist',
+    authMessage: 'Unauthorized — API key required for /api/manage/catalog/allowlist'
+  })
+  t.alike(resolveCatalogManagementRoute('POST', '/api/manage/catalog/approve'), {
+    kind: 'app',
+    action: 'approve',
+    authMessage: 'Unauthorized — API key required for /api/manage/catalog/approve'
+  })
+  t.alike(resolveCatalogManagementRoute('POST', '/api/manage/catalog/reject'), {
+    kind: 'app',
+    action: 'reject',
+    authMessage: 'Unauthorized — API key required for /api/manage/catalog/reject'
+  })
+  t.alike(resolveCatalogManagementRoute('POST', '/api/manage/catalog/remove'), {
+    kind: 'app',
+    action: 'remove',
+    authMessage: 'Unauthorized — API key required for /api/manage/catalog/remove'
+  })
+  t.is(resolveCatalogManagementRoute('GET', '/api/manage/catalog/remove'), null)
+  t.is(resolveCatalogManagementRoute('POST', '/api/manage/catalog'), null)
+  t.is(resolveCatalogManagementRoute('POST', '/api/manage/catalog/remove/extra'), null)
+  t.is(resolveCatalogManagementRoute('POST', '/registry/publish'), null)
+})
+
+test('api catalog management: pending route helper maps exact queue reads', (t) => {
+  t.alike(resolvePendingCatalogRoute('GET', '/api/registry/pending'), {
+    kind: 'pending-catalog',
+    authMessage: 'Unauthorized — API key required for /api/registry/pending'
+  })
+  t.alike(resolvePendingCatalogRoute('GET', '/api/manage/catalog/pending'), {
+    kind: 'pending-catalog',
+    authMessage: 'Unauthorized — API key required for /api/manage/catalog/pending'
+  })
+
+  t.is(resolvePendingCatalogRoute('POST', '/api/registry/pending'), null)
+  t.is(resolvePendingCatalogRoute('GET', '/api/manage/catalog/pending/extra'), null)
+  t.is(resolvePendingCatalogRoute('GET', '/api/manage/catalog'), null)
+})
+
+test('api catalog management: pending route payload helper dispatches queue reads', (t) => {
+  const appKey = 'a'.repeat(64)
+  const result = buildPendingCatalogRoutePayload({
+    route: resolvePendingCatalogRoute('GET', '/api/registry/pending'),
+    pendingRequests: new Map([
+      [appKey, {
+        name: 'Example App',
+        publisherSignature: Buffer.alloc(64, 8),
+        secretToken: 'do-not-leak'
+      }]
+    ]),
+    resolveAcceptMode: () => 'review'
+  })
+
+  t.is(result.status, 200)
+  t.is(result.payload.count, 1)
+  t.is(result.payload.mode, 'review')
+  t.alike(result.payload.requests[0], {
+    appKey,
+    name: 'Example App'
+  })
+
+  const unknown = buildPendingCatalogRoutePayload({
+    route: resolveCatalogManagementRoute('POST', '/api/manage/catalog/approve'),
+    pendingRequests: new Map([
+      [appKey, { name: 'should not read action routes' }]
+    ])
+  })
+  t.is(unknown.status, 404)
+  t.alike(unknown.payload, { error: 'unknown pending catalog route' })
+})
+
+test('api catalog management: route action helper dispatches every mutation family', async (t) => {
+  const appKey = 'a'.repeat(64)
+  const config = {
+    acceptMode: 'review',
+    acceptAllowlist: []
+  }
+  const persisted = []
+  const calls = []
+  const node = {
+    async approveRequest (key) { calls.push(['approve', key]) },
+    rejectRequest (key) { calls.push(['reject', key]) },
+    async unseedApp (key) { calls.push(['remove', key]) },
+    swarm: { keyPair: { publicKey: Buffer.alloc(32, 2) } },
+    seedingRegistry: {
+      async cancelRequest (key, pubkey) { calls.push(['cancel', key, pubkey]) }
+    }
+  }
+  const persistConfig = async () => persisted.push({ ...config })
+
+  let out = await runCatalogManagementRouteAction({
+    route: resolveCatalogManagementRoute('POST', '/registry/auto-accept'),
+    body: { enabled: true },
+    config,
+    node,
+    persistConfig
+  })
+  t.alike(out.payload, { ok: true, autoAccept: true })
+  t.is(config.registryAutoAccept, true)
+
+  out = await runCatalogManagementRouteAction({
+    route: resolveCatalogManagementRoute('POST', '/api/manage/catalog/mode'),
+    body: { mode: 'allowlist' },
+    config,
+    node,
+    persistConfig
+  })
+  t.alike(out.payload, { ok: true, mode: 'allowlist' })
+  t.is(config.acceptMode, 'allowlist')
+
+  out = await runCatalogManagementRouteAction({
+    route: resolveCatalogManagementRoute('POST', '/api/manage/catalog/allowlist'),
+    body: { allowlist: [appKey] },
+    config,
+    node,
+    persistConfig
+  })
+  t.alike(out.payload, { ok: true, allowlist: [appKey] })
+
+  out = await runCatalogManagementRouteAction({
+    route: resolveCatalogManagementRoute('POST', '/api/manage/catalog/approve'),
+    body: { appKey },
+    config,
+    node,
+    persistConfig
+  })
+  t.alike(out.payload, { ok: true })
+
+  out = await runCatalogManagementRouteAction({
+    route: resolveCatalogManagementRoute('POST', '/registry/cancel'),
+    body: { appKey },
+    config,
+    node,
+    persistConfig
+  })
+  t.alike(out.payload, { ok: true })
+
+  t.is(persisted.length, 3, 'only config-backed catalog mutations persist config')
+  t.alike(calls, [
+    ['approve', appKey],
+    ['cancel', appKey, Buffer.alloc(32, 2).toString('hex')]
+  ])
+
+  const unknown = await runCatalogManagementRouteAction({
+    route: { kind: 'unknown' },
+    body: { appKey },
+    config,
+    node,
+    persistConfig
+  })
+  t.is(unknown.status, 404)
+  t.alike(unknown.payload, { error: 'unknown catalog management route' })
+})
 
 test('api catalog management: pending payload uses a stable public schema', (t) => {
   const appKey = 'a'.repeat(64)

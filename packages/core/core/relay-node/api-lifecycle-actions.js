@@ -1,5 +1,16 @@
 export const LIFECYCLE_ACTION_DELAY_MS = 500
 
+const LIFECYCLE_MANAGEMENT_ROUTES = Object.freeze({
+  'POST /api/manage/restart': 'restart',
+  'POST /api/manage/shutdown': 'shutdown'
+})
+
+export function resolveLifecycleManagementRoute (method, path) {
+  const action = LIFECYCLE_MANAGEMENT_ROUTES[`${method} ${path}`]
+  if (!action) return null
+  return { action }
+}
+
 export function runLifecycleAction ({
   action,
   node,

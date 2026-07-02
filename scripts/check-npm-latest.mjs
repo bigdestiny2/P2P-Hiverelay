@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import fs from 'node:fs'
 import { HIVERELAY_DEPS, CURRENT_HIVERELAY_VERSION, verifyNpmLatestDistTags } from './audit-ecosystem-consumers.mjs'
 
 function parseArgs (argv) {
@@ -16,6 +17,12 @@ function parseArgs (argv) {
       out.expectedVersion = value
       continue
     }
+    if (arg === '--out') {
+      const value = argv[++i]
+      if (!value || value.startsWith('--')) throw new Error('Missing value for --out')
+      out.out = value
+      continue
+    }
     if (arg === '--help' || arg === '-h') {
       out.help = true
       continue
@@ -26,7 +33,7 @@ function parseArgs (argv) {
 }
 
 function usage () {
-  return `Usage: node scripts/check-npm-latest.mjs [--expected-version <semver>] [--json]
+  return `Usage: node scripts/check-npm-latest.mjs [--expected-version <semver>] [--json] [--out npm-latest-evidence.json]
 
 Verifies that every HiveRelay npm package latest dist-tag resolves to the
 expected release version. Set HIVERELAY_NPM_LATEST_JSON for offline fixtures.`
@@ -77,7 +84,11 @@ function main () {
     expectedVersion: args.expectedVersion
   })
   const result = {
+    schemaVersion: 1,
+    kind: 'hiverelay-npm-latest-evidence',
     ok: check.ok,
+    status: check.ok ? 'verified' : 'blocked',
+    generatedAt: new Date().toISOString(),
     expectedVersion: args.expectedVersion,
     packages: HIVERELAY_DEPS,
     checks: check.checks,
@@ -87,6 +98,14 @@ function main () {
 
   if (args.json) console.log(JSON.stringify(result, null, 2))
   else console.log(formatReport(result))
+
+  if (args.out) {
+    if (!result.ok) {
+      console.error(`Refusing to write npm latest evidence because not every latest dist-tag points at ${args.expectedVersion}.`)
+      process.exit(1)
+    }
+    fs.writeFileSync(args.out, JSON.stringify(result, null, 2) + '\n')
+  }
 
   if (!result.ok) process.exit(1)
 }

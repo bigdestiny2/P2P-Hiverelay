@@ -2,9 +2,13 @@ import test from 'brittle'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import {
+  authorManifestPubkeyFromPath,
+  buildAuthorManifestFetchRoutePayload,
+  resolveSignedIngressRoute,
   runAuthorManifestFetchAction,
   runAuthorManifestPublishAction,
-  runForkProofPublishAction
+  runForkProofPublishAction,
+  signedIngressPersistFailureResult
 } from '../../packages/core/core/relay-node/api-signed-ingress.js'
 import { createSeedingManifest } from '../../packages/core/core/seeding-manifest.js'
 import { signForkProof } from '../../packages/core/core/fork-proof-signing.js'
@@ -111,6 +115,19 @@ class FakeForkDetector {
   }
 }
 
+test('api signed ingress: route resolver matches only exact public signed POST routes', (t) => {
+  t.alike(resolveSignedIngressRoute('POST', '/api/authors/seeding.json'), {
+    kind: 'author-manifest-publish'
+  })
+  t.alike(resolveSignedIngressRoute('POST', '/api/forks/proof'), {
+    kind: 'fork-proof-publish'
+  })
+  t.is(resolveSignedIngressRoute('GET', '/api/authors/seeding.json'), null, 'author publish wrong method falls through')
+  t.is(resolveSignedIngressRoute('POST', '/api/authors/seeding.json/extra'), null, 'author publish subpath falls through')
+  t.is(resolveSignedIngressRoute('GET', '/api/forks/proof'), null, 'fork proof wrong method falls through')
+  t.is(resolveSignedIngressRoute('POST', '/api/forks/proofs'), null, 'fork proof list route stays separate')
+})
+
 test('api signed ingress: author manifest fetch handles unsupported, missing, and cacheable hits', (t) => {
   const missingStore = runAuthorManifestFetchAction({
     manifestStore: null,
@@ -134,6 +151,28 @@ test('api signed ingress: author manifest fetch handles unsupported, missing, an
     manifestStore: store,
     pubkey: manifest.pubkey.toUpperCase()
   })
+  t.is(hit.status, 200)
+  t.is(hit.payload.signature, manifest.signature)
+  t.alike(hit.headers, { 'Cache-Control': 'public, max-age=30' })
+})
+
+test('api signed ingress: author manifest route helper isolates public fetch path parsing', (t) => {
+  const pubkey = hex('3')
+  const path = `/api/authors/${pubkey.toUpperCase()}/seeding.json`
+  const store = new FakeManifestStore()
+  const kp = keyPair()
+  const manifest = manifestFor(kp)
+  store.put(manifest)
+
+  t.is(authorManifestPubkeyFromPath(path), pubkey.toUpperCase())
+  t.is(authorManifestPubkeyFromPath('/api/authors/not-hex/seeding.json'), null)
+  t.is(authorManifestPubkeyFromPath('/api/authors/' + pubkey), null)
+
+  const hit = buildAuthorManifestFetchRoutePayload({
+    manifestStore: store,
+    path: `/api/authors/${manifest.pubkey}/seeding.json`
+  })
+
   t.is(hit.status, 200)
   t.is(hit.payload.signature, manifest.signature)
   t.alike(hit.headers, { 'Cache-Control': 'public, max-age=30' })
@@ -189,12 +228,25 @@ test('api signed ingress: author manifest save failure rolls back live store', a
   const kp = keyPair()
   const older = manifestFor(kp, { timestamp: 1000 })
   const newer = manifestFor(kp, { timestamp: 2000 })
+  const events = []
   store.put(older)
 
-  const out = await runAuthorManifestPublishAction({ body: newer, manifestStore: store })
+  const out = await runAuthorManifestPublishAction({
+    body: newer,
+    manifestStore: store,
+    emit: (event, payload) => events.push({ event, payload })
+  })
 
-  t.absent(out.ok)
+  t.is(out.ok, false)
   t.is(out.kind, 'manifest-persist')
+  t.is(out.status, 500)
+  t.is(out.payload.errorCode, 'persist-failed')
+  t.ok(out.payload.error.startsWith('persist-failed: '), 'public payload is stable and prefixed')
+  t.absent(out.payload.error.includes('disk full'), 'public payload does not leak local storage error')
+  t.is(events.length, 1)
+  t.is(events[0].event, 'manifest-persist-error')
+  t.is(events[0].payload.message, 'disk full')
+  t.is(events[0].payload.error.message, 'disk full')
   t.is(store.restoreCalls, 1)
   t.is(store.get(older.pubkey).timestamp, 1000)
 })
@@ -249,15 +301,37 @@ test('api signed ingress: fork detector report failures stay bad requests', asyn
 
 test('api signed ingress: fork proof save failure rolls back report', async (t) => {
   const forkDetector = new FakeForkDetector({ saveFails: true })
+  const events = []
   forkDetector.records.push({ hypercoreKey: hex('d') })
   const out = await runForkProofPublishAction({
     body: signedForkProof(),
-    forkDetector
+    forkDetector,
+    emit: (event, payload) => events.push({ event, payload })
   })
 
-  t.absent(out.ok)
+  t.is(out.ok, false)
   t.is(out.kind, 'fork-persist')
+  t.is(out.status, 500)
+  t.is(out.payload.errorCode, 'persist-failed')
+  t.ok(out.payload.error.startsWith('persist-failed: '), 'public payload is stable and prefixed')
+  t.absent(out.payload.error.includes('fork disk full'), 'public payload does not leak local storage error')
+  t.is(events.length, 1)
+  t.is(events[0].event, 'fork-persist-error')
+  t.is(events[0].payload.message, 'fork disk full')
+  t.is(events[0].payload.error.message, 'fork disk full')
   t.is(forkDetector.restoreCalls, 1)
   t.is(forkDetector.records.length, 1)
   t.is(forkDetector.records[0].hypercoreKey, hex('d'))
+})
+
+test('api signed ingress: unknown persist kinds are ignored by the failure mapper', (t) => {
+  let emitted = false
+  const out = signedIngressPersistFailureResult({
+    kind: 'config-persist',
+    error: new Error('not a signed ingress persist failure'),
+    emit: () => { emitted = true }
+  })
+
+  t.is(out, null)
+  t.is(emitted, false)
 })

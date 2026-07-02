@@ -5,8 +5,10 @@ import path from 'node:path'
 import sodium from 'sodium-universal'
 import b4a from 'b4a'
 import {
+  buildLeaseRoutePayload,
   buildLeaseStatusPayload,
   parseLeaseRateUpdate,
+  resolveLeaseRoute,
   runLeaseConfigAction
 } from 'p2p-hiverelay/core/relay-node/api-lease.js'
 import { LeaseManager } from 'p2p-hiverelay/incentive/lease/index.js'
@@ -20,6 +22,76 @@ function makeKeyPair () {
   sodium.crypto_sign_keypair(publicKey, secretKey)
   return { publicKey, secretKey }
 }
+
+test('api lease: route helper maps exact paid lease routes', (t) => {
+  t.alike(resolveLeaseRoute('GET', '/api/lease'), {
+    kind: 'status',
+    authMessage: 'lease status requires API key or localhost'
+  })
+  t.alike(resolveLeaseRoute('POST', '/api/lease/config'), {
+    kind: 'config',
+    authMessage: 'lease config requires API key or localhost'
+  })
+  t.is(resolveLeaseRoute('POST', '/api/lease'), null)
+  t.is(resolveLeaseRoute('GET', '/api/lease/config'), null)
+  t.is(resolveLeaseRoute('GET', '/api/lease/config/extra'), null)
+  t.is(resolveLeaseRoute('GET', '/api/leases'), null)
+})
+
+test('api lease: route payload helper dispatches paid lease status', (t) => {
+  const appRegistry = {
+    apps: new Map([
+      ['active', { leaseManaged: true, retainUntil: NOW + 1000 }],
+      ['expired', { leaseManaged: true, retainUntil: NOW - 1000 }]
+    ])
+  }
+
+  const result = buildLeaseRoutePayload({
+    route: resolveLeaseRoute('GET', '/api/lease'),
+    appRegistry,
+    now: NOW,
+    leaseManager: {
+      getSummary () {
+        return {
+          satsPerGiBDay: 42,
+          minDays: 1,
+          maxDays: 7,
+          payTo: 'operator@example.com',
+          totalLeasedSats: 100,
+          leaseCount: 3,
+          provider: 'MockProvider',
+          providerConnected: true,
+          rawSecret: 'do-not-leak'
+        }
+      }
+    }
+  })
+
+  t.is(result.status, 200)
+  t.alike(result.payload, {
+    enabled: true,
+    satsPerGiBDay: 42,
+    minDays: 1,
+    maxDays: 7,
+    payTo: 'operator@example.com',
+    totalLeasedSats: 100,
+    leaseCount: 3,
+    provider: 'MockProvider',
+    providerConnected: true,
+    activeLeases: 1
+  })
+
+  const unknown = buildLeaseRoutePayload({
+    route: resolveLeaseRoute('POST', '/api/lease/config'),
+    leaseManager: {
+      getSummary () {
+        throw new Error('config routes are handled by runLeaseConfigAction')
+      }
+    }
+  })
+  t.is(unknown.status, 404)
+  t.alike(unknown.payload, { error: 'unknown lease route' })
+})
 
 test('api lease: status payload shapes summary and counts active paid leases', (t) => {
   const appRegistry = {

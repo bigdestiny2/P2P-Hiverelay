@@ -3,6 +3,15 @@ export const LOCAL_ONLY_DISPATCH_ROUTES = new Set([
   'identity.verify'
 ])
 
+export const DISPATCH_AUTH_MESSAGE = 'Unauthorized — API key required for /api/v1/dispatch'
+
+export function resolveDispatchRoute (method, path) {
+  if (method === 'POST' && path === '/api/v1/dispatch') {
+    return { kind: 'dispatch', authMessage: DISPATCH_AUTH_MESSAGE }
+  }
+  return null
+}
+
 function errorPayload (message) {
   return { error: message }
 }

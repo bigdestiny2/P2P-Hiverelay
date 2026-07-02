@@ -1,10 +1,17 @@
 import test from 'brittle'
 import {
+  anchorProofAppKeyFromPath,
   anchorStatusEntries,
   anchorStatusEntry,
   buildAnchorProofPayload,
+  buildAnchorProofRoutePayload,
   buildAnchorStatusPayload,
-  isDetailedAnchorStatusQuery
+  buildAnchorStatusRoutePayload,
+  buildAnchorStatusRouteContext,
+  isAnchorProofRoute,
+  isDetailedAnchorStatusQuery,
+  resolveAnchorProofRoute,
+  resolveAnchorStatusRoute
 } from '../../packages/core/core/relay-node/api-anchor-status.js'
 
 test('api anchor status: detailed query parser is explicit', (t) => {
@@ -13,6 +20,137 @@ test('api anchor status: detailed query parser is explicit', (t) => {
   t.absent(isDetailedAnchorStatusQuery('TRUE'))
   t.absent(isDetailedAnchorStatusQuery('0'))
   t.absent(isDetailedAnchorStatusQuery(null))
+})
+
+test('api anchor status: route helper maps exact aggregate read', (t) => {
+  t.alike(resolveAnchorStatusRoute('GET', '/api/anchors'), {
+    kind: 'anchor-status'
+  })
+
+  t.is(resolveAnchorStatusRoute('POST', '/api/anchors'), null)
+  t.is(resolveAnchorStatusRoute('GET', '/api/anchors/extra'), null)
+  t.is(resolveAnchorStatusRoute('GET', '/api/anchors/aaaaaaaa/proof'), null)
+})
+
+test('api anchor proof: route helpers isolate proof path parsing', async (t) => {
+  const appKey = 'a'.repeat(64)
+  const path = `/api/anchors/${appKey}/proof`
+  const proof = { appKey, anchored: true }
+  let calledWith = null
+
+  t.ok(isAnchorProofRoute(path))
+  t.ok(isAnchorProofRoute('/api/anchors/not-hex/proof'))
+  t.absent(isAnchorProofRoute(`/api/anchors/${appKey}`))
+  t.alike(resolveAnchorProofRoute('GET', path), { kind: 'anchor-proof' })
+  t.is(resolveAnchorProofRoute('POST', path), null)
+  t.is(resolveAnchorProofRoute('GET', `/api/anchors/${appKey}`), null)
+  t.is(anchorProofAppKeyFromPath(path), appKey)
+  t.is(anchorProofAppKeyFromPath('/api/anchors/not-hex/proof'), 'not-hex')
+  t.is(anchorProofAppKeyFromPath('/api/anchors'), '')
+
+  const result = await buildAnchorProofRoutePayload({
+    path,
+    node: {
+      async createAnchorProof (key) {
+        calledWith = key
+        return proof
+      }
+    }
+  })
+
+  t.is(calledWith, appKey)
+  t.alike(result, {
+    ok: true,
+    status: 200,
+    payload: proof
+  })
+
+  t.alike(await buildAnchorProofRoutePayload({
+    path: '/api/anchors/not-hex/proof',
+    node: {
+      async createAnchorProof () {
+        t.fail('malformed route appKey must be rejected before proof generation')
+      }
+    }
+  }), {
+    ok: false,
+    status: 400,
+    payload: { error: 'invalid appKey' }
+  })
+})
+
+test('api anchor status: route context owns detailed auth decision', (t) => {
+  const detailed = buildAnchorStatusRouteContext(new URL('http://127.0.0.1/api/anchors?detailed=1'))
+  t.alike(detailed, {
+    detailed: true,
+    requiresAuth: true
+  })
+
+  t.alike(buildAnchorStatusRouteContext(new URL('http://127.0.0.1/api/anchors?detailed=true')), {
+    detailed: true,
+    requiresAuth: true
+  })
+
+  t.alike(buildAnchorStatusRouteContext(new URL('http://127.0.0.1/api/anchors?detailed=TRUE')), {
+    detailed: false,
+    requiresAuth: false
+  })
+
+  t.alike(buildAnchorStatusRouteContext(null), {
+    detailed: false,
+    requiresAuth: false
+  })
+})
+
+test('api anchor status: route payload helper dispatches aggregate status', (t) => {
+  const appRegistry = {
+    anchorStats () {
+      return { total: 1, anchored: 1, unanchored: 0, neverChecked: 0 }
+    },
+    catalog () {
+      return [{
+        appKey: 'a'.repeat(64),
+        type: 'drive',
+        anchored: true,
+        anchoredAt: 99,
+        anchoredLength: 123
+      }]
+    }
+  }
+
+  const pub = buildAnchorStatusRoutePayload({
+    route: { kind: 'anchor-status' },
+    url: new URL('http://127.0.0.1/api/anchors'),
+    appRegistry,
+    lastCheckedAt: 42
+  })
+  const detailed = buildAnchorStatusRoutePayload({
+    route: { kind: 'anchor-status' },
+    url: new URL('http://127.0.0.1/api/anchors?detailed=true'),
+    appRegistry,
+    lastCheckedAt: 42
+  })
+  const contextOverride = buildAnchorStatusRoutePayload({
+    route: { kind: 'anchor-status' },
+    context: { detailed: false },
+    url: new URL('http://127.0.0.1/api/anchors?detailed=true'),
+    appRegistry,
+    lastCheckedAt: 42
+  })
+  const unknown = buildAnchorStatusRoutePayload({
+    route: { kind: 'unknown' },
+    appRegistry
+  })
+
+  t.is(pub.ok, true)
+  t.is(pub.payload.entries, null)
+  t.is(pub.payload.lastCheckedAt, 42)
+  t.is(detailed.ok, true)
+  t.is(detailed.payload.entries.length, 1)
+  t.is(detailed.payload.entries[0].appKey, 'a'.repeat(64))
+  t.is(contextOverride.payload.entries, null)
+  t.is(unknown.status, 404)
+  t.is(unknown.payload.error, 'unknown anchor status route')
 })
 
 test('api anchor proof: valid appKey delegates to proof signer', async (t) => {

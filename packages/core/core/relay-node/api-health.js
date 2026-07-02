@@ -2,6 +2,12 @@ export const MAX_HEALTH_DISK_ERROR_BYTES = 256
 
 const DISK_STATUSES = new Set(['ok', 'warn', 'critical'])
 
+export function resolveHealthRoute (method, path) {
+  if (method !== 'GET') return null
+  if (path === '/health') return { kind: 'health' }
+  return null
+}
+
 function hasControlChar (value) {
   for (let i = 0; i < value.length; i++) {
     const code = value.charCodeAt(i)

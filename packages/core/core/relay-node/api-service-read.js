@@ -4,6 +4,29 @@ import {
   serviceCatalogTotal
 } from '../services/service-catalog.js'
 
+const SERVICE_READ_ROUTES = Object.freeze({
+  'GET /api/v1/services': Object.freeze({ kind: 'service-catalog' })
+})
+
+export function resolveServiceReadRoute (method, path) {
+  const route = SERVICE_READ_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
+
+export function buildServiceReadRoutePayload ({
+  route,
+  registry = null
+} = {}) {
+  if (!route || route.kind !== 'service-catalog') {
+    return {
+      status: 404,
+      payload: { error: 'unknown service read route' }
+    }
+  }
+  return buildServiceCatalogPayload({ registry })
+}
+
 export function buildServiceCatalogPayload ({ registry = null } = {}) {
   if (!registry || typeof registry.catalog !== 'function') {
     return {

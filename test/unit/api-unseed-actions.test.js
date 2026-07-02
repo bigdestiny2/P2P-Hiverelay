@@ -1,8 +1,24 @@
 import test from 'brittle'
 import {
+  OPERATOR_UNSEED_AUTH_MESSAGE,
+  resolveUnseedRoute,
   runOperatorUnseedAction,
   runPublisherUnseedAction
 } from 'p2p-hiverelay/core/relay-node/api-unseed-actions.js'
+
+test('api unseed actions: route resolver maps only exact operator and publisher unseed routes', (t) => {
+  t.alike(resolveUnseedRoute('POST', '/unseed'), {
+    kind: 'operator-unseed',
+    authMessage: OPERATOR_UNSEED_AUTH_MESSAGE
+  })
+  t.alike(resolveUnseedRoute('POST', '/api/v1/unseed'), {
+    kind: 'publisher-unseed'
+  })
+  t.is(resolveUnseedRoute('GET', '/unseed'), null, 'wrong method falls through')
+  t.is(resolveUnseedRoute('POST', '/unseed/extra'), null, 'operator subpath falls through')
+  t.is(resolveUnseedRoute('POST', '/api/v1/unseed/extra'), null, 'publisher subpath falls through')
+  t.is(resolveUnseedRoute('POST', '/api/v1/seed'), null, 'adjacent publisher route falls through')
+})
 
 test('api unseed actions: operator unseed validates app key before mutation', async (t) => {
   const calls = []

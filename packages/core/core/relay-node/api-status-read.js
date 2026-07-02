@@ -11,6 +11,26 @@ export const MAX_STATUS_SERVICES = 128
 const HEX_64 = /^[0-9a-f]{64}$/i
 const DISK_STATUS = new Set(['ok', 'warn', 'critical'])
 
+export function resolveStatusRoute (method, path) {
+  if (method !== 'GET') return null
+  if (path === '/status') return { kind: 'status' }
+  return null
+}
+
+export function buildStatusRoutePayload ({
+  route,
+  node,
+  now = Date.now()
+} = {}) {
+  if (!route || route.kind !== 'status') {
+    return {
+      status: 404,
+      payload: { error: 'unknown status route' }
+    }
+  }
+  return buildStatusPayload({ node, now })
+}
+
 function isObject (value) {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }

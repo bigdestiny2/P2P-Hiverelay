@@ -1,5 +1,7 @@
 import { isValidHexKey } from '../constants.js'
 
+export const OPERATOR_UNSEED_AUTH_MESSAGE = 'Unauthorized — API key required for /unseed (use /api/v1/unseed for developer-signed unseed)'
+
 function errorPayload (message) {
   return { error: message }
 }
@@ -30,6 +32,18 @@ function validateSignedUnseedBody (body) {
   if (!Number.isSafeInteger(body.timestamp) || body.timestamp <= 0) {
     return badRequest('timestamp must be a positive safe integer')
   }
+  return null
+}
+
+export function resolveUnseedRoute (method, path) {
+  if (method !== 'POST') return null
+  if (path === '/unseed') {
+    return {
+      kind: 'operator-unseed',
+      authMessage: OPERATOR_UNSEED_AUTH_MESSAGE
+    }
+  }
+  if (path === '/api/v1/unseed') return { kind: 'publisher-unseed' }
   return null
 }
 

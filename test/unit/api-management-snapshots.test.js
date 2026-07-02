@@ -7,16 +7,144 @@ import {
   MAX_MANAGEMENT_SERVICE_STATS_ARRAY,
   MAX_MANAGEMENT_SERVICE_STATS_KEYS,
   MAX_MANAGEMENT_SERVICE_STATS_STRING_BYTES,
+  buildManagementSnapshotRoutePayload,
   buildDeviceStatusPayload,
+  buildManagementConfigPayload,
+  buildManagementServicesPayload,
   buildModeCatalogPayload,
   buildPairingStatusPayload,
   buildServiceRegistrySnapshot,
-  buildTransportStatusPayload
+  buildTransportStatusPayload,
+  resolveManagementSnapshotRoute
 } from '../../packages/core/core/relay-node/api-management-snapshots.js'
+
+test('api management snapshots: route helper maps exact GET snapshot reads', (t) => {
+  t.alike(resolveManagementSnapshotRoute('GET', '/api/manage/config'), { kind: 'config' })
+  t.alike(resolveManagementSnapshotRoute('GET', '/api/manage/ai/models'), { kind: 'ai-models' })
+  t.alike(resolveManagementSnapshotRoute('GET', '/api/manage/services/available'), { kind: 'service-config' })
+  t.alike(resolveManagementSnapshotRoute('GET', '/api/manage/services'), { kind: 'services' })
+  t.alike(resolveManagementSnapshotRoute('GET', '/api/manage/transports'), { kind: 'transports' })
+  t.alike(resolveManagementSnapshotRoute('GET', '/api/manage/devices'), { kind: 'devices' })
+  t.alike(resolveManagementSnapshotRoute('GET', '/api/manage/pairing'), { kind: 'pairing' })
+  t.alike(resolveManagementSnapshotRoute('GET', '/api/manage/modes'), { kind: 'modes' })
+
+  t.is(resolveManagementSnapshotRoute('POST', '/api/manage/config'), null)
+  t.is(resolveManagementSnapshotRoute('GET', '/api/manage/service'), null)
+  t.is(resolveManagementSnapshotRoute('GET', '/api/manage/services/available/extra'), null)
+  t.is(resolveManagementSnapshotRoute('GET', '/api/manage'), null)
+})
 
 test('api management snapshots: service registry payload tolerates missing registry', (t) => {
   t.alike(buildServiceRegistrySnapshot(null), { services: [], count: 0 })
   t.alike(buildServiceRegistrySnapshot({ services: null }), { services: [], count: 0 })
+})
+
+test('api management snapshots: config payload uses safe config fields only', (t) => {
+  const payload = buildManagementConfigPayload({
+    _operatingMode: 'gateway',
+    config: {
+      name: 'relay',
+      storage: '/tmp/hiverelay',
+      apiKey: 'do-not-leak',
+      connectionKey: 'do-not-leak-either',
+      plugins: ['poker'],
+      pairing: { enabled: true, token: 'hidden' },
+      subsidy: { enabled: true, payoutDestination: 'addr' }
+    }
+  })
+
+  t.is(payload.mode, 'gateway')
+  t.is(payload.config.name, 'relay')
+  t.is(payload.config.mode, 'gateway')
+  t.alike(payload.config.plugins, ['poker'])
+  t.absent(Object.prototype.hasOwnProperty.call(payload.config, 'apiKey'))
+  t.absent(Object.prototype.hasOwnProperty.call(payload.config, 'connectionKey'))
+})
+
+test('api management snapshots: route payload builder centralizes GET snapshot responses', async (t) => {
+  const node = {
+    _operatingMode: 'private',
+    mode: 'private',
+    config: {
+      name: 'relay',
+      enableServices: true,
+      plugins: ['ai'],
+      transports: { websocket: true },
+      wsPort: 9999
+    },
+    serviceRegistry: {
+      services: new Map([
+        ['ai', { status: 'running', capabilities: ['list-models'] }]
+      ])
+    },
+    accessControl: {
+      isPairing: true,
+      _pairingState: {
+        token: 'do-not-leak',
+        expiresAt: 12345
+      }
+    },
+    listDevices () {
+      return [{ pubkey: 'a'.repeat(64), name: 'phone' }]
+    }
+  }
+  const aiProvider = {
+    ok: true,
+    provider: {
+      async 'list-models' () {
+        return [{ modelId: 'local-model', hasEndpoint: true }]
+      }
+    }
+  }
+
+  const config = await buildManagementSnapshotRoutePayload({ route: { kind: 'config' }, node })
+  const aiModels = await buildManagementSnapshotRoutePayload({ route: { kind: 'ai-models' }, node, aiModelProvider: aiProvider })
+  const serviceConfig = await buildManagementSnapshotRoutePayload({ route: { kind: 'service-config' }, node })
+  const services = await buildManagementSnapshotRoutePayload({ route: { kind: 'services' }, node })
+  const transports = await buildManagementSnapshotRoutePayload({ route: { kind: 'transports' }, node })
+  const devices = await buildManagementSnapshotRoutePayload({ route: { kind: 'devices' }, node })
+  const pairing = await buildManagementSnapshotRoutePayload({ route: { kind: 'pairing' }, node })
+  const modes = await buildManagementSnapshotRoutePayload({ route: { kind: 'modes' }, node })
+  const missingAI = await buildManagementSnapshotRoutePayload({
+    route: { kind: 'ai-models' },
+    node,
+    aiModelProvider: { ok: false, status: 503, error: 'AI service is not running' }
+  })
+  const unknown = await buildManagementSnapshotRoutePayload({ route: { kind: 'unknown' }, node })
+
+  t.is(config.status, undefined)
+  t.is(config.payload.mode, 'private')
+  t.is(aiModels.payload.count, 1)
+  t.is(aiModels.payload.models[0].modelId, 'local-model')
+  t.alike(serviceConfig.payload.plugins, ['ai'])
+  t.is(services.payload.count, 1)
+  t.is(transports.payload.websocket.port, 9999)
+  t.is(devices.payload.count, 1)
+  t.is(pairing.payload.pairing.expiresAt, 12345)
+  t.is(modes.payload.current, 'private')
+  t.is(missingAI.status, 503)
+  t.is(missingAI.payload.error, 'AI service is not running')
+  t.is(unknown.status, 404)
+  t.is(unknown.payload.error, 'unknown management snapshot route')
+  t.absent(JSON.stringify(pairing.payload).includes('do-not-leak'))
+})
+
+test('api management snapshots: services payload preserves compatibility capabilities', (t) => {
+  const payload = buildManagementServicesPayload({
+    services: new Map([
+      ['storage', {
+        status: 'running',
+        capabilities: ['put', 'get'],
+        provider: { stats () { return { ok: true } } }
+      }]
+    ])
+  })
+
+  t.is(payload.enabled, true)
+  t.is(payload.statsVerified, false)
+  t.is(payload.count, 1)
+  t.alike(payload.services[0].methods, ['put', 'get'])
+  t.alike(payload.services[0].capabilities, ['put', 'get'])
 })
 
 test('api management snapshots: service entries prefer capabilities and isolate stats failures', (t) => {

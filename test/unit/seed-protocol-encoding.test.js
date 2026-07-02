@@ -14,10 +14,13 @@ import {
   unseedRequestEncoding
 } from 'p2p-hiverelay/core/protocol/messages.js'
 import {
+  MAX_PROTOCOL_HANDSHAKE_BYTES,
   SEED_PROTOCOL_HANDSHAKE_MAX_BYTES,
   SEED_PROTOCOL_VERSION,
   SeedProtocol,
-  evaluateSeedProtocolHandshake
+  evaluateSeedProtocolHandshake,
+  parseProtocolHandshake,
+  parseSeedProtocolHandshake
 } from 'p2p-hiverelay/core/protocol/seed-request.js'
 import { HiveRelayClient } from 'p2p-hiverelay-client'
 
@@ -365,7 +368,14 @@ test('SeedProtocol handlers ignore decoded seed protocol errors without throwing
 
 test('SeedProtocol handshake evaluator pins major-version negotiation policy', (t) => {
   t.alike(SEED_PROTOCOL_VERSION, { major: 1, minor: 0 })
+  t.is(MAX_PROTOCOL_HANDSHAKE_BYTES, 256)
   t.is(SEED_PROTOCOL_HANDSHAKE_MAX_BYTES, 256)
+  t.is(SEED_PROTOCOL_HANDSHAKE_MAX_BYTES, MAX_PROTOCOL_HANDSHAKE_BYTES)
+  t.alike(
+    parseProtocolHandshake(b4a.from(JSON.stringify({ major: 1, minor: 0 }))),
+    parseSeedProtocolHandshake(b4a.from(JSON.stringify({ major: 1, minor: 0 }))),
+    'legacy parser export remains an alias for the canonical parser'
+  )
 
   t.alike(
     evaluateSeedProtocolHandshake(b4a.from(JSON.stringify({ major: 1, minor: 0 }))),

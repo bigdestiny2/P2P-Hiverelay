@@ -19,6 +19,16 @@ export const AVAILABLE_MODES = [
 
 const TRANSPORT_NAME_PATTERN = /^[a-z0-9-]+$/
 const RESERVED_TRANSPORT_NAMES = new Set(['__proto__', 'constructor', 'prototype'])
+const MODE_TRANSPORT_MANAGEMENT_ROUTES = Object.freeze({
+  'POST /api/manage/mode': Object.freeze({ kind: 'mode-switch' }),
+  'POST /api/manage/transport': Object.freeze({ kind: 'transport-toggle' })
+})
+
+export function resolveModeTransportManagementRoute (method, path) {
+  const route = MODE_TRANSPORT_MANAGEMENT_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
 
 function errorPayload (message, extra = null) {
   return extra ? { error: message, ...extra } : { error: message }
@@ -199,4 +209,27 @@ export async function runTransportToggleAction ({
       note: 'Transport changes may require a node restart to take full effect'
     }
   }
+}
+
+export async function runModeTransportManagementRouteAction ({
+  route,
+  body = {},
+  node,
+  config,
+  persistConfig = async () => {},
+  emit = null
+} = {}) {
+  if (!route) {
+    return { ok: false, kind: 'not-found', status: 404, payload: errorPayload('unknown mode/transport management route') }
+  }
+
+  if (route.kind === 'mode-switch') {
+    return runModeSwitchAction({ body, node, persistConfig, emit })
+  }
+
+  if (route.kind === 'transport-toggle') {
+    return runTransportToggleAction({ body, config, persistConfig })
+  }
+
+  return { ok: false, kind: 'not-found', status: 404, payload: errorPayload('unknown mode/transport management route') }
 }

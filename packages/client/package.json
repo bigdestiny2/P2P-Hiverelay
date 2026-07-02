@@ -8,7 +8,8 @@
     ".": "./index.js",
     "./pairing.js": "./pairing.js",
     "./secret-sharing.js": "./secret-sharing.js",
-    "./custody.js": "./custody.js"
+    "./custody.js": "./custody.js",
+    "./notify.js": "./notify.js"
   },
   "imports": {
     "events": {
@@ -33,6 +34,7 @@
     "pairing.js",
     "secret-sharing.js",
     "custody.js",
+    "notify.js",
     "README.md",
     "LICENSE"
   ],

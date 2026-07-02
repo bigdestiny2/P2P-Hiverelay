@@ -1,5 +1,5 @@
 > [!NOTE]
-> Refreshed for v0.10.0: eight builtin services (`identity`, `storage`, `schema`, `vrf`, `ai`, `zk`, `sla`, `arbitration`) plus the card-blind poker/SignedLog substrate. Services are opt-in (`enableServices`); `vrf` is production-ready (RFC 9381, validated against the spec's own test vectors), while `ai`/`zk`/`sla`/`arbitration` remain experimental. See the [CHANGELOG](../CHANGELOG.md) for the authoritative architecture.
+> Refreshed for the next relay update: the core builtin services remain opt-in, with new app-facing service providers for encrypted wake notifications (`notify`) and single-writer signed outboxes (`outboxlog`). Services are opt-in (`enableServices` / selected `plugins`); `vrf` is production-ready (RFC 9381, validated against the spec's own test vectors), while `ai`/`zk`/`sla`/`arbitration`, `notify`, and `outboxlog` remain experimental. Notify and outboxlog now have local JSON state, but production provider adapters, billing gates, and operational hardening are still incomplete. See the [CHANGELOG](../CHANGELOG.md) for the authoritative architecture.
 
 # HiveRelay Services Layer
 
@@ -192,6 +192,66 @@ A card-blind, append-only signed-log substrate for turn-based games with hidden 
 
 See the [poker substrate README](../packages/services/builtin/poker/README.md).
 
+### Notify Service (v0.1.0 — Encrypted Wake Notifications)
+
+`notify` is a relay-hosted wakeup service for P2P apps. It is not an app
+backend and it is not a durable mailbox: the relay only validates signed,
+revocable notification capabilities, attempts a bounded encrypted provider
+egress, and records redacted delivery events. The device wakes, reconnects,
+and syncs authoritative state from the app's Hypercore/Autobase/direct P2P
+model.
+
+**Capabilities:** `bind-provider`, `register-device`, `install-receive-cap`,
+`install-send-cap`, `revoke`, `send`, `watch`, `unwatch`, `status`,
+`delivery-event`, `production-gates`
+
+**Security model:**
+- Provider tokens are stored and forwarded only as ciphertext; service reads
+  and delivery events do not expose provider tokens or plaintext payloads.
+- A wake requires a valid `ReceiveCap` plus a matching `SendCap`; app/vendor
+  keys alone cannot wake a user.
+- `revoke` covers app, device, binding, receive cap, send cap, channel, and
+  relay scopes.
+- Delivery events are relay-signed and redacted, so operators and apps can
+  meter attempts without leaking wake payloads.
+- Watch mode stores opaque Hypercore/feed heads only; app-defined filtering and
+  message truth stay in the application.
+
+**Current implementation status:** the v0.1.0 provider has signed object
+verification, Node relay JSON persistence under `<storage>/notify-service-state.json`,
+quota/replay/dedupe guards, redacted signed delivery events, capability-doc
+advertising, a lightweight HTTP facade, Bare-safe client signing helpers, and a
+memory push provider for tests. Production APNs/FCM/Web Push adapters and
+pricing/billing enforcement are follow-up gates.
+
+Enable it explicitly through `config.plugins` / `services.json` (`notify`) or,
+on the Bare/appliance path, with `HIVERELAY_NOTIFY=1`.
+
+See [PUSH-NOTIFICATION-SERVICE-SPEC.md](./PUSH-NOTIFICATION-SERVICE-SPEC.md).
+
+### Signed Outbox Log Service (v0.1.0)
+
+`outboxlog` is a Peerit-compatible single-writer signed outbox bridge for apps
+that need a relay-assisted append and sync path while the app stays in charge
+of encrypting and interpreting entries. The relay verifies writer signatures,
+keeps entries opaque, and exposes a token-gated HTTP/SSE bridge for sync.
+
+**Capabilities:** `create`, `append`, `get`, `head`, `list`, `events`,
+`authorize-bridge`, `bridge-token`
+
+**Security model:**
+- Only the configured writer can append to a log.
+- Entry bodies remain opaque to the relay; plaintext is not allowed by the
+  service contract.
+- Bridge routes are token-gated and route through the service registry instead
+  of a separate app backend.
+- Capability docs advertise `outboxlog-v1` only when the provider is running.
+- Signed opaque rows and invite keys persist to
+  `<storage>/outboxlog-state.json` when a Node relay supplies `config.storage`.
+
+Enable it explicitly through `config.plugins` / `services.json` (`outboxlog`)
+or, on the Bare/appliance path, with `HIVERELAY_OUTBOXLOG=1`.
+
 ### Storage-Proof Service (v0.20.0 — Trustless Seed Verification, Tier 2)
 
 Signed challenge-response proof that this relay genuinely holds a seeded app. A caller picks a random block of a drive's metadata core; the relay reads it from **local storage only** and returns a Hypercore Merkle proof signed with its swarm identity key. The caller verifies the proof against the **drive key alone** (Hypercore hashes the block into the drive's signed Merkle root, so forged content is rejected) plus the relay signature (attribution + nonce freshness, no replay) — the relay is trusted for nothing.
@@ -321,4 +381,4 @@ The `p2p-hiverelay setup` wizard selects services by node profile. The relay-onl
 | Experimental Lab | true | identity, storage, schema, vrf, ai, zk, sla, arbitration |
 | Custom | — | hand-picked from the full service list |
 
-The eight builtin services are `identity`, `storage`, `schema`, `vrf`, `ai`, `zk`, `sla`, and `arbitration`. `vrf` is production-ready and ships with the Service Operator profile. The `ai`, `zk`, `sla`, and `arbitration` services are experimental and ship enabled only under the Experimental Lab profile or an explicit custom selection.
+The original core builtin services are `identity`, `storage`, `schema`, `vrf`, `ai`, `zk`, `sla`, and `arbitration`; newer optional providers include `storage-proof`, `poker`, `notify`, and `outboxlog`. `vrf` is production-ready and ships with the Service Operator profile. The `ai`, `zk`, `sla`, `arbitration`, `notify`, and `outboxlog` services are experimental and ship enabled only under explicit custom/plugin selection.

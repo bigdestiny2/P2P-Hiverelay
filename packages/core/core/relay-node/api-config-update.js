@@ -27,9 +27,18 @@ const OBJECT_MERGE_FIELDS = [
   'access',
   'pairing'
 ]
+const CONFIG_UPDATE_ROUTES = Object.freeze({
+  'POST /api/manage/config': Object.freeze({ kind: 'config-update' })
+})
 
 function errorPayload (message) {
   return { error: message }
+}
+
+export function resolveConfigUpdateRoute (method, path) {
+  const route = CONFIG_UPDATE_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
 }
 
 function objectRecord (value) {

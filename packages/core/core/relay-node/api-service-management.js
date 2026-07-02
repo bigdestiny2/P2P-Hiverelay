@@ -1,10 +1,21 @@
 import {
   bundleParentsForService,
-  configuredServicePlugins
+  configuredServicePlugins,
+  servicesLockedByProfile
 } from './api-service-config.js'
+
+const SERVICE_MANAGEMENT_ROUTES = Object.freeze({
+  'POST /api/manage/services': Object.freeze({ kind: 'service-management' })
+})
 
 function errorPayload (message) {
   return { error: message }
+}
+
+export function resolveServiceManagementRoute (method, path) {
+  const route = SERVICE_MANAGEMENT_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
 }
 
 export async function runServiceManagementAction ({
@@ -16,6 +27,19 @@ export async function runServiceManagementAction ({
   persistConfig = async () => {},
   serviceConfigPayload = () => ({})
 }) {
+  if (servicesLockedByProfile(config)) {
+    return {
+      ok: false,
+      kind: 'locked',
+      status: 409,
+      payload: {
+        error: 'Services are locked off by the RelayKernel profile',
+        errorCode: 'relaykernel-services-locked',
+        config: serviceConfigPayload()
+      }
+    }
+  }
+
   if (!registry) {
     return { ok: false, kind: 'unavailable', status: 503, payload: errorPayload('Services not enabled') }
   }

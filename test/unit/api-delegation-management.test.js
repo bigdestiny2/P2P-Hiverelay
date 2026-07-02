@@ -2,8 +2,56 @@ import test from 'brittle'
 import {
   MAX_DELEGATION_REVOCATION_LIST_ENTRIES,
   buildDelegationRevocationsPayload,
+  buildDelegationRevocationsRoutePayload,
+  resolveDelegationManagementRoute,
   runDelegationRevokeAction
 } from 'p2p-hiverelay/core/relay-node/api-delegation-management.js'
+
+test('api delegation management: route helper maps list and revoke routes by method', (t) => {
+  t.alike(resolveDelegationManagementRoute('GET', '/api/manage/delegation/revocations'), {
+    kind: 'list',
+    authMessage: 'Unauthorized — API key required for /api/manage/delegation/revocations'
+  })
+  t.alike(resolveDelegationManagementRoute('POST', '/api/manage/delegation/revoke'), {
+    kind: 'revoke',
+    authMessage: 'Unauthorized — API key required for /api/manage/delegation/revoke'
+  })
+  t.is(resolveDelegationManagementRoute('POST', '/api/manage/delegation/revocations'), null)
+  t.is(resolveDelegationManagementRoute('GET', '/api/manage/delegation/revoke'), null)
+  t.is(resolveDelegationManagementRoute('GET', '/api/manage/delegation/revocations/extra'), null)
+})
+
+test('api delegation management: revocation route payload helper dispatches list reads', (t) => {
+  const route = resolveDelegationManagementRoute('GET', '/api/manage/delegation/revocations')
+  const result = buildDelegationRevocationsRoutePayload({
+    route,
+    listRevocations: () => [{
+      revokedCertSignature: 'A'.repeat(128),
+      primaryPubkey: 'B'.repeat(64),
+      revokedAt: 10,
+      secretToken: 'do-not-leak'
+    }]
+  })
+
+  t.is(result.ok, true)
+  t.is(result.status, undefined)
+  t.alike(result.payload, {
+    count: 1,
+    total: 1,
+    truncated: false,
+    revocations: [{
+      revokedCertSignature: 'a'.repeat(128),
+      primaryPubkey: 'b'.repeat(64),
+      revokedAt: 10
+    }]
+  })
+
+  t.alike(buildDelegationRevocationsRoutePayload({ route: null }), {
+    ok: false,
+    status: 404,
+    payload: { error: 'unknown delegation revocation route' }
+  })
+})
 
 test('api delegation management: revoke validates body and cert expiry before mutation', (t) => {
   let calls = 0

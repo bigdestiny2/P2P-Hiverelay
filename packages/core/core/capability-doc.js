@@ -160,6 +160,8 @@ export function buildCapabilityDoc (opts = {}) {
     features.push(CIRCUIT_LIMITS_PROFILE_FEATURE)
   }
   if (relay && typeof relay.createAccountingReceipt === 'function') features.push('accounting-receipts')
+  if (servicesEnabled && hasRunningService(relay, 'notify')) features.push('notify-v1')
+  if (servicesEnabled && hasRunningService(relay, 'outboxlog')) features.push('outboxlog-v1')
   features.push('capability-doc') // we're advertising this doc, so always set
   // Revocability — this build understands and enforces the v0.8 seed-request
   // revocability fields (revocable + unseedFreezeMs). Clients querying the
@@ -391,8 +393,44 @@ function buildProtocolProfile ({
         legacy_accepted: true,
         http_opt_in: retrievabilityHttpEnabled
       }
+    },
+    services: buildServicesProtocolProfile(relay, servicesEnabled)
+  }
+}
+
+function buildServicesProtocolProfile (relay, servicesEnabled) {
+  if (!servicesEnabled || !relay || !relay.serviceRegistry || !relay.serviceRegistry.services) return null
+  const services = relay.serviceRegistry.services
+  const profile = {}
+  if (hasRunningService(relay, 'notify')) {
+    profile.notify = {
+      version: '0.1.0',
+      providers: ['runtime', 'apns', 'fcm', 'webpush'],
+      credential_modes: ['runtime-owned', 'app-owned'],
+      modes: ['direct', 'watch', 'presence-fallback'],
+      payload: {
+        max_ciphertext_bytes: 3072,
+        plaintext_allowed: false,
+        privacy_profiles: ['generic', 'local-template']
+      },
+      limits: {
+        max_ttl_seconds: 604800,
+        max_devices_per_user_app: 32,
+        max_watches_per_receive_cap: 128,
+        default_channel_per_hour: 30
+      }
     }
   }
+  if (hasRunningService(relay, 'outboxlog')) {
+    profile.outboxlog = {
+      version: serviceVersion(services.get('outboxlog')) || '0.1.0',
+      model: 'single-writer-signed-outbox',
+      plaintext_allowed: false,
+      bridge: 'peerit-compatible-http-sse',
+      capabilities: ['outboxlog.sync', 'outboxlog.directory', 'outboxlog.events']
+    }
+  }
+  return Object.keys(profile).length ? profile : null
 }
 
 function buildCircuitLimitsProfile ({ relay, config }) {
@@ -525,6 +563,29 @@ function hasRelaySigningKey (relay) {
     (relay && relay.identityKeyPair && relay.identityKeyPair.secretKey) ||
     (relay && relay.swarm && relay.swarm.keyPair && relay.swarm.keyPair.secretKey)
   )
+}
+
+function hasRunningService (relay, name) {
+  const entry = serviceEntry(relay, name)
+  return !!entry && (!entry.status || entry.status === 'running')
+}
+
+function serviceEntry (relay, name) {
+  const services = relay && relay.serviceRegistry && relay.serviceRegistry.services
+  return services && typeof services.get === 'function' ? services.get(name) : null
+}
+
+function serviceVersion (entry) {
+  if (!entry) return null
+  if (typeof entry.version === 'string' && entry.version) return entry.version
+  const provider = entry.provider || entry
+  if (provider && typeof provider.manifest === 'function') {
+    try {
+      const manifest = provider.manifest()
+      if (manifest && typeof manifest.version === 'string') return manifest.version
+    } catch (_) {}
+  }
+  return null
 }
 
 /**

@@ -1,10 +1,117 @@
 import test from 'brittle'
 import {
   buildCustodyStatusPayload,
+  buildCustodyStatusRoutePayload,
+  custodyStatusIntentId,
   detailedCustodyStatus,
+  isCustodyStatusRoute,
+  isDetailedCustodyStatusQuery,
   redactCustodyReceipt,
-  redactCustodyStatus
+  redactCustodyStatus,
+  resolveCustodyStatusRoute
 } from '../../packages/core/core/relay-node/api-custody-status.js'
+
+const INTENT_ID = 'a'.repeat(64)
+
+function makeUrl (path) {
+  return new URL(path, 'http://localhost')
+}
+
+function makeRegistry (status = {}) {
+  const calls = []
+  return {
+    calls,
+    getCustodyStatus (intentId) {
+      calls.push(intentId)
+      return { intentId, ...status }
+    }
+  }
+}
+
+test('api custody status: route helper validates registry and intent id before lookup', (t) => {
+  t.alike(buildCustodyStatusRoutePayload({
+    path: `/api/custody/${INTENT_ID}/status`,
+    url: makeUrl(`/api/custody/${INTENT_ID}/status`),
+    registry: null
+  }), {
+    status: 503,
+    payload: { error: 'Registry not running' }
+  })
+
+  const registry = makeRegistry()
+  t.alike(buildCustodyStatusRoutePayload({
+    path: '/api/custody/not-hex/status',
+    url: makeUrl('/api/custody/not-hex/status'),
+    registry
+  }), {
+    status: 400,
+    payload: { error: 'intentId must be 64 hex characters' }
+  })
+  t.alike(registry.calls, [])
+})
+
+test('api custody status: disabled profile rejects before registry lookup', (t) => {
+  const result = buildCustodyStatusRoutePayload({
+    path: `/api/custody/${INTENT_ID}/status`,
+    url: makeUrl(`/api/custody/${INTENT_ID}/status`),
+    disabled: true,
+    registry: {
+      getCustodyStatus () {
+        t.fail('disabled custody status must not reach registry')
+      }
+    }
+  })
+
+  t.is(result.ok, false)
+  t.is(result.kind, 'disabled-profile')
+  t.is(result.status, 409)
+  t.ok(result.payload.error.startsWith('not-enabled: '), 'status read returns formatted disabled-profile error')
+})
+
+test('api custody status: route helper builds public and detailed payloads', (t) => {
+  const registry = makeRegistry({
+    receipts: [{ relayPubkey: 'b'.repeat(64), shareIndex: 1, relayRegion: 'secret-region' }],
+    pvss: { shareScheme: 'pvss-secp256k1-v1' }
+  })
+
+  const publicResult = buildCustodyStatusRoutePayload({
+    path: `/api/custody/${INTENT_ID}/status`,
+    url: makeUrl(`/api/custody/${INTENT_ID}/status`),
+    registry
+  })
+  t.absent(publicResult.requiresAuth)
+  t.is(publicResult.intentId, INTENT_ID)
+  t.is(publicResult.status || 200, 200)
+  t.absent(Object.prototype.hasOwnProperty.call(publicResult.payload, 'pvss'))
+  t.absent(Object.prototype.hasOwnProperty.call(publicResult.payload.receipts[0], 'relayRegion'))
+
+  const detailedResult = buildCustodyStatusRoutePayload({
+    path: `/api/custody/${INTENT_ID}/status`,
+    url: makeUrl(`/api/custody/${INTENT_ID}/status?detailed=true`),
+    registry
+  })
+  t.is(detailedResult.requiresAuth, true)
+  t.is(detailedResult.authMessage, 'Unauthorized — API key required for detailed custody status')
+  t.is(detailedResult.payload.pvss.shareScheme, 'pvss-secp256k1-v1')
+  t.alike(registry.calls, [INTENT_ID, INTENT_ID])
+})
+
+test('api custody status: route query helpers stay narrow', (t) => {
+  t.alike(resolveCustodyStatusRoute('GET', `/api/custody/${INTENT_ID}/status`), {
+    kind: 'custody-status'
+  })
+  t.is(resolveCustodyStatusRoute('POST', `/api/custody/${INTENT_ID}/status`), null)
+  t.is(resolveCustodyStatusRoute('GET', '/api/custody/not-hex/commit'), null)
+  t.is(isCustodyStatusRoute(`/api/custody/${INTENT_ID}/status`), true)
+  t.is(isCustodyStatusRoute('/api/custody/not-hex/status'), true)
+  t.is(isCustodyStatusRoute('/api/custody/not-hex/commit'), false)
+  t.is(isCustodyStatusRoute('/api/v1/custody/not-hex/status'), false)
+  t.is(custodyStatusIntentId(`/api/custody/${INTENT_ID}/status`), INTENT_ID)
+  t.is(custodyStatusIntentId('/api/custody/not-hex/commit'), '')
+  t.is(isDetailedCustodyStatusQuery(makeUrl('/api/custody/x/status?detailed=1')), true)
+  t.is(isDetailedCustodyStatusQuery(makeUrl('/api/custody/x/status?detailed=true')), true)
+  t.is(isDetailedCustodyStatusQuery(makeUrl('/api/custody/x/status?detailed=yes')), false)
+})
 
 test('api custody status: redacted receipts expose only public attestation fields', (t) => {
   const receipt = redactCustodyReceipt({

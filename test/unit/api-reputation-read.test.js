@@ -2,7 +2,13 @@ import test from 'brittle'
 import {
   MAX_REPUTATION_LEADERBOARD_ENTRIES,
   buildReputationLeaderboardPayload,
+  buildReputationLeaderboardRoutePayload,
   buildReputationRecordPayload,
+  buildReputationRecordRoutePayload,
+  isReputationRecordRoute,
+  reputationRecordPubkeyFromPath,
+  resolveReputationLeaderboardRoute,
+  resolveReputationRecordRoute,
   sanitizeReputationRecord
 } from 'p2p-hiverelay/core/relay-node/api-reputation-read.js'
 
@@ -32,6 +38,67 @@ test('api reputation read: missing reputation returns empty public payloads', (t
   t.alike(recordOut.headers, { 'Cache-Control': 'public, max-age=30' })
 })
 
+test('api reputation read: leaderboard route helper maps exact public read', (t) => {
+  t.alike(resolveReputationLeaderboardRoute('GET', '/api/reputation'), {
+    kind: 'reputation-leaderboard'
+  })
+
+  t.is(resolveReputationLeaderboardRoute('POST', '/api/reputation'), null)
+  t.is(resolveReputationLeaderboardRoute('GET', '/api/reputation/extra'), null)
+  t.is(resolveReputationLeaderboardRoute('GET', '/api/reputations'), null)
+})
+
+test('api reputation read: leaderboard route payload helper dispatches public read', (t) => {
+  let requestedLimit = null
+  const result = buildReputationLeaderboardRoutePayload({
+    route: resolveReputationLeaderboardRoute('GET', '/api/reputation'),
+    maxEntries: 1,
+    reputation: {
+      getLeaderboard (limit) {
+        requestedLimit = limit
+        return [{
+          relay: 'A'.repeat(64),
+          score: 3.456,
+          totalChallenges: 5,
+          passedChallenges: 4,
+          failedChallenges: 1,
+          secretToken: 'do-not-leak'
+        }]
+      }
+    }
+  })
+
+  t.is(requestedLimit, 1)
+  t.is(result.status, undefined)
+  t.alike(result.headers, { 'Cache-Control': 'public, max-age=30' })
+  t.alike(result.payload, [{
+    relay: 'a'.repeat(64),
+    score: 3.46,
+    reliability: '80%',
+    avgLatencyMs: 0,
+    uptimeHours: 0,
+    bytesServed: 0,
+    totalChallenges: 5,
+    passedChallenges: 4,
+    failedChallenges: 1,
+    region: 'unknown',
+    lastActivity: null,
+    firstSeen: null
+  }])
+  t.absent(JSON.stringify(result.payload).includes('do-not-leak'))
+
+  const unknown = buildReputationLeaderboardRoutePayload({
+    route: resolveReputationRecordRoute('GET', '/api/reputation/' + 'a'.repeat(64)),
+    reputation: {
+      getLeaderboard () {
+        throw new Error('record routes are handled by buildReputationRecordRoutePayload')
+      }
+    }
+  })
+  t.is(unknown.status, 404)
+  t.alike(unknown.payload, { error: 'unknown reputation leaderboard route' })
+})
+
 test('api reputation read: invalid pubkey rejects before store lookup', (t) => {
   let called = false
   const out = buildReputationRecordPayload({
@@ -47,6 +114,52 @@ test('api reputation read: invalid pubkey rejects before store lookup', (t) => {
   t.is(out.status, 400)
   t.alike(out.payload, { error: 'Invalid pubkey' })
   t.absent(called, 'store lookup is skipped for invalid pubkey')
+})
+
+test('api reputation read: record route helper isolates pubkey path parsing', (t) => {
+  const pubkey = 'A'.repeat(64)
+  const path = `/api/reputation/${pubkey}`
+  let calledWith = null
+
+  t.ok(isReputationRecordRoute(path))
+  t.ok(isReputationRecordRoute('/api/reputation/not-hex'))
+  t.absent(isReputationRecordRoute('/api/reputation'))
+  t.alike(resolveReputationRecordRoute('GET', path), { kind: 'reputation-record' })
+  t.is(resolveReputationRecordRoute('POST', path), null)
+  t.is(resolveReputationRecordRoute('GET', '/api/reputation'), null)
+  t.is(reputationRecordPubkeyFromPath(path), pubkey)
+  t.is(reputationRecordPubkeyFromPath('/api/reputation/not-hex'), 'not-hex')
+  t.is(reputationRecordPubkeyFromPath('/api/reputation'), '')
+
+  const out = buildReputationRecordRoutePayload({
+    path,
+    reputation: {
+      getRecord (key) {
+        calledWith = key
+        return record({ region: 'NA' })
+      }
+    }
+  })
+
+  t.is(calledWith, 'a'.repeat(64))
+  t.is(out.payload.pubkey, 'a'.repeat(64))
+  t.is(out.payload.region, 'NA')
+  t.alike(out.headers, { 'Cache-Control': 'public, max-age=30' })
+
+  let invalidLookup = false
+  const invalid = buildReputationRecordRoutePayload({
+    path: '/api/reputation/not-hex',
+    reputation: {
+      getRecord () {
+        invalidLookup = true
+        return record()
+      }
+    }
+  })
+
+  t.absent(invalidLookup, 'malformed route pubkey does not reach reputation store')
+  t.is(invalid.status, 400)
+  t.alike(invalid.payload, { error: 'Invalid pubkey' })
 })
 
 test('api reputation read: sanitizes direct records without raw store fields', (t) => {
