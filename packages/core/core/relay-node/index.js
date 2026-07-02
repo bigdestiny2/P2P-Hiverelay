@@ -1240,17 +1240,26 @@ export class RelayNode extends EventEmitter {
       // Distinct from `wsTransport` above (which carries Hypercore replication).
       // Disabled by default — operator opts in via config.transports.dhtRelayWs.
       if (this.config.transports && this.config.transports.dhtRelayWs) {
+        const dhtRelayWsCfg = this.config.dhtRelayWs || {}
         this.dhtRelayWs = new DHTRelayWS({
           dht: this.swarm.dht,
           port: this.config.dhtRelayWsPort || 8766,
-          host: this.config.dhtRelayWsHost,
-          maxConnections: this.config.maxConnections,
+          // Behind a TLS reverse proxy (the supported deploy), bind loopback
+          // so the plaintext ws:// port is never publicly reachable; Caddy
+          // owns public 443. Falls back to the transport default (0.0.0.0)
+          // only when no host + no proxy is configured (bare/dev).
+          host: this.config.dhtRelayWsHost || (dhtRelayWsCfg.trustProxy ? '127.0.0.1' : undefined),
+          // Distinct from the Hyperswarm P2P maxConnections: the pipe's fd
+          // ceiling should be sized against ulimit -n + per-conn buffers,
+          // not tied to the swarm peer cap. Falls back to it if unset.
+          maxConnections: dhtRelayWsCfg.maxConnections || this.config.maxConnections,
+          trustProxy: dhtRelayWsCfg.trustProxy || false,
           // Pure-pipe prod bounds — all content-neutral (lengths/timings
           // only). Operators tune via config.dhtRelayWs.{rateLimit,
           // keepalive,flow}; defaults are safe for an unattended 24/7 pipe.
-          rateLimit: (this.config.dhtRelayWs && this.config.dhtRelayWs.rateLimit) || undefined,
-          keepalive: (this.config.dhtRelayWs && this.config.dhtRelayWs.keepalive) || undefined,
-          flow: (this.config.dhtRelayWs && this.config.dhtRelayWs.flow) || undefined
+          rateLimit: dhtRelayWsCfg.rateLimit || undefined,
+          keepalive: dhtRelayWsCfg.keepalive || undefined,
+          flow: dhtRelayWsCfg.flow || undefined
         })
         this.dhtRelayWs.on('relay-error', (info) => this.emit('dht-relay-error', info))
         await this.dhtRelayWs.start()

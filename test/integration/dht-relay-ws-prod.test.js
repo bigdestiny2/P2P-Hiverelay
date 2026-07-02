@@ -170,6 +170,26 @@ test('prod: aborted upgrades no longer leak concurrency slots (pending reservati
   t.is(relay._checkRateLimit(ip), null, 'slot available again after expiry — no leak')
 })
 
+test('prod: trustProxy keys rate limiting on X-Forwarded-For, not the shared proxy socket IP', async (t) => {
+  const port = pickPort()
+  // Behind a proxy every socket IP is the proxy's; without trustProxy the
+  // limiter collapses to one bucket. With it, distinct XFF hops are distinct
+  // clients. Drive _checkRateLimit through fake reqs to assert the keying.
+  const relay = new DHTRelayWS({ dht: fakeDHT(), port, trustProxy: true, rateLimit: { maxConcurrentPerIp: 1 } })
+  await relay.start()
+  t.teardown(() => relay.stop())
+
+  const proxyReq = (xff) => ({ headers: { 'x-forwarded-for': xff }, socket: { remoteAddress: '10.0.0.254' } })
+  // clientIpFromRequest is what verifyClient calls; exercise the same path.
+  const { clientIpFromRequest } = await import('p2p-hiverelay/core/relay-node/api-rate-limit.js')
+  t.is(clientIpFromRequest(proxyReq('198.51.100.7, 10.0.0.254'), true), '198.51.100.7', 'first XFF hop is the client')
+
+  // Two different real clients behind the same proxy get independent buckets.
+  t.is(relay._checkRateLimit(clientIpFromRequest(proxyReq('198.51.100.7'), true)), null, 'client A allowed')
+  t.is(relay._checkRateLimit(clientIpFromRequest(proxyReq('198.51.100.7'), true)), 'max-concurrent', 'client A capped')
+  t.is(relay._checkRateLimit(clientIpFromRequest(proxyReq('198.51.100.8'), true)), null, 'client B has its own bucket — no proxy collapse')
+})
+
 test('prod: getStats exposes aggregate-only metering (bytes, reaps, bounds config)', async (t) => {
   const port = pickPort()
   const relay = new DHTRelayWS({ dht: fakeDHT(), port })

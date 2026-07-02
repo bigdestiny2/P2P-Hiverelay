@@ -57,6 +57,7 @@ import { createHash } from 'crypto'
 import { WebSocketServer } from 'ws'
 import { relay } from '@hyperswarm/dht-relay'
 import Stream from '@hyperswarm/dht-relay/ws'
+import { clientIpFromRequest } from '../../core/relay-node/api-rate-limit.js'
 
 const DEFAULT_PORT = 8766
 const DEFAULT_CONNECTIONS_PER_MINUTE_PER_IP = 10
@@ -96,6 +97,7 @@ export class DHTRelayWS extends EventEmitter {
    * @param {number} [opts.port]
    * @param {string} [opts.host]
    * @param {number} [opts.maxConnections]
+   * @param {boolean} [opts.trustProxy=false] - derive client IP from X-Forwarded-For (set when behind a TLS reverse proxy)
    * @param {object} [opts.rateLimit]
    * @param {number} [opts.rateLimit.connectionsPerMinutePerIp=10]
    * @param {number} [opts.rateLimit.maxConcurrentPerIp=5]
@@ -119,6 +121,15 @@ export class DHTRelayWS extends EventEmitter {
     this.port = opts.port || DEFAULT_PORT
     this.host = opts.host || '0.0.0.0'
     this.maxConnections = opts.maxConnections || 256
+    // When the pipe sits behind a TLS-terminating reverse proxy (the
+    // supported deploy: Caddy → 127.0.0.1:8766), every connection's socket
+    // IP is the proxy's, collapsing per-IP rate limiting into ONE global
+    // bucket. With trustProxy on, the rate limiter (and the salted event
+    // hash) key on the first X-Forwarded-For hop instead — reusing core's
+    // clientIpFromRequest so the XFF parsing matches the rest of the relay.
+    // This is still content-neutral: it reads a transport header for
+    // metering identity, never the Noise-encrypted payload.
+    this.trustProxy = opts.trustProxy || false
     // Per-process random salt for the IP-hash exposed in events. Without
     // a salt, a hash prefix is a stable global identifier for the IP and
     // could be cross-correlated across relays. With a per-process salt,
@@ -296,7 +307,7 @@ export class DHTRelayWS extends EventEmitter {
       // open-then-close cycle. The connection-event handler still enforces
       // the global maxConnections cap.
       verifyClient: (info, cb) => {
-        const ip = info.req.socket.remoteAddress
+        const ip = clientIpFromRequest(info.req, this.trustProxy)
         const rateLimitReason = this._checkRateLimit(ip)
         if (rateLimitReason) {
           this._totalRateLimited++
@@ -317,7 +328,10 @@ export class DHTRelayWS extends EventEmitter {
     })
 
     this.server.on('connection', (socket, req) => {
-      const ip = req.socket.remoteAddress
+      // MUST match the verifyClient key exactly (same trustProxy/XFF
+      // derivation) or the reservation consume + slot release would target
+      // a different bucket than the one verifyClient reserved.
+      const ip = clientIpFromRequest(req, this.trustProxy)
       // The verifyClient reservation matured into a live connection.
       this._consumePendingReservation(ip)
 
