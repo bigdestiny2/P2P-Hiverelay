@@ -3,7 +3,9 @@ import {
   MAX_FORK_PROOF_EVIDENCE_FIELD_BYTES,
   MAX_FORK_PROOF_EVIDENCE_PER_RECORD,
   MAX_FORK_PROOF_RECORDS,
-  buildForkProofsPayload
+  buildForkProofsPayload,
+  buildForkProofsRoutePayload,
+  resolveForkProofReadRoute
 } from 'p2p-hiverelay/core/relay-node/api-fork-proofs.js'
 
 function record (key = 'a'.repeat(64), overrides = {}) {
@@ -22,6 +24,39 @@ function record (key = 'a'.repeat(64), overrides = {}) {
     ...overrides
   }
 }
+
+test('api fork proofs: route helper maps exact public proof list route', (t) => {
+  t.alike(resolveForkProofReadRoute('GET', '/api/forks/proofs'), {
+    kind: 'fork-proof-list'
+  })
+
+  t.is(resolveForkProofReadRoute('POST', '/api/forks/proofs'), null)
+  t.is(resolveForkProofReadRoute('GET', '/api/forks/proofs/extra'), null)
+  t.is(resolveForkProofReadRoute('GET', '/api/forks/proof'), null)
+})
+
+test('api fork proofs: route payload helper dispatches public proof list', (t) => {
+  const route = resolveForkProofReadRoute('GET', '/api/forks/proofs')
+  const out = buildForkProofsRoutePayload({
+    route,
+    forkDetector: {
+      list () {
+        return [record('A'.repeat(64))]
+      }
+    }
+  })
+
+  t.is(out.ok, true)
+  t.is(out.payload.count, 1)
+  t.is(out.payload.proofs[0].hypercoreKey, 'a'.repeat(64))
+  t.alike(out.headers, { 'Cache-Control': 'public, max-age=30' })
+
+  t.alike(buildForkProofsRoutePayload({ route: null }), {
+    ok: false,
+    status: 404,
+    payload: { error: 'unknown fork-proof read route' }
+  })
+})
 
 test('api fork proofs: missing detector returns empty bounded payload', (t) => {
   const out = buildForkProofsPayload()

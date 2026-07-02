@@ -2,8 +2,62 @@ import test from 'brittle'
 import {
   MAX_STATUS_ERROR_BYTES,
   buildStatusPayload,
+  buildStatusRoutePayload,
+  resolveStatusRoute,
   statusString
 } from 'p2p-hiverelay/core/relay-node/api-status-read.js'
+
+test('api status: route resolver maps only the exact public status route', (t) => {
+  t.alike(resolveStatusRoute('GET', '/status'), { kind: 'status' })
+  t.is(resolveStatusRoute('POST', '/status'), null, 'wrong method falls through')
+  t.is(resolveStatusRoute('GET', '/status/extra'), null, 'subpath falls through')
+  t.is(resolveStatusRoute('GET', '/health'), null, 'adjacent health route falls through')
+  t.is(resolveStatusRoute('GET', '/metrics'), null, 'adjacent metrics route falls through')
+})
+
+test('api status: route payload helper dispatches bounded public status', (t) => {
+  const calls = []
+  const result = buildStatusRoutePayload({
+    route: { kind: 'status' },
+    now: 15_000,
+    node: {
+      config: { regions: ['NA'] },
+      metrics: { startedAt: 10_000 },
+      getStats (opts) {
+        calls.push(opts)
+        return {
+          running: true,
+          mode: 'relay-core',
+          publicKey: 'B'.repeat(64),
+          seededApps: 4,
+          connections: 7,
+          holesail: {
+            running: true,
+            connectionKey: 'do-not-leak'
+          }
+        }
+      }
+    }
+  })
+  const unknown = buildStatusRoutePayload({
+    route: { kind: 'unknown' },
+    node: {
+      getStats () {
+        throw new Error('should not be called')
+      }
+    }
+  })
+
+  t.alike(calls, [{ includeSecrets: false }])
+  t.is(result.status, 200)
+  t.is(result.payload.running, true)
+  t.is(result.payload.publicKey, 'b'.repeat(64))
+  t.is(result.payload.uptimeMs, 5000)
+  t.alike(result.payload.transports.holesail, { running: true })
+  t.absent(JSON.stringify(result.payload).includes('do-not-leak'))
+  t.is(unknown.status, 404)
+  t.is(unknown.payload.error, 'unknown status route')
+})
 
 test('api status: build payload shapes public counters and omits raw secret fields', (t) => {
   const calls = []

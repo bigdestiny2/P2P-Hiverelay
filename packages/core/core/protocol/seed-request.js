@@ -21,7 +21,8 @@ import { TokenBucketRateLimiter } from './rate-limiter.js'
 import { SEED_PROTOCOL_NAME } from '../constants.js'
 
 export const SEED_PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 0 })
-export const SEED_PROTOCOL_HANDSHAKE_MAX_BYTES = 256
+export const MAX_PROTOCOL_HANDSHAKE_BYTES = 256
+export const SEED_PROTOCOL_HANDSHAKE_MAX_BYTES = MAX_PROTOCOL_HANDSHAKE_BYTES
 export const SEED_REQUEST_SIGNATURE_DOMAIN = 'hiverelay.seed-request.v3'
 export const SEED_REQUEST_SIGNATURE_VERSION = 3
 export const SEED_REQUEST_REPLAY_SIGNATURE_DOMAIN = 'hiverelay.seed-request.replay-v1'
@@ -52,13 +53,13 @@ function normalizeProtocolVersion (version) {
   return { major: version.major, minor: version.minor }
 }
 
-export function parseSeedProtocolHandshake (handshake) {
+export function parseProtocolHandshake (handshake) {
   if (!handshake) return { remote: null }
   const size = typeof handshake === 'string'
     ? b4a.byteLength(handshake)
     : (handshake && Number.isSafeInteger(handshake.byteLength) ? handshake.byteLength : 0)
   if (size <= 0) return { error: 'malformed handshake' }
-  if (size > SEED_PROTOCOL_HANDSHAKE_MAX_BYTES) return { error: 'handshake too large' }
+  if (size > MAX_PROTOCOL_HANDSHAKE_BYTES) return { error: 'handshake too large' }
 
   let remote
   try {
@@ -82,9 +83,13 @@ export function parseSeedProtocolHandshake (handshake) {
   }
 }
 
+export function parseSeedProtocolHandshake (handshake) {
+  return parseProtocolHandshake(handshake)
+}
+
 export function evaluateSeedProtocolHandshake (handshake, opts = {}) {
   const local = normalizeProtocolVersion(opts.localVersion) || SEED_PROTOCOL_VERSION
-  const parsed = parseSeedProtocolHandshake(handshake)
+  const parsed = parseProtocolHandshake(handshake)
   if (parsed.error) {
     return {
       valid: false,

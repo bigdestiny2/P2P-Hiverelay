@@ -7,6 +7,39 @@ const MAX_PAY_TO_LENGTH = 512
 const MAX_PROVIDER_LENGTH = 128
 const RATE_MAX_PREFIX = 'satsPerGiBDay exceeds maximum'
 
+const LEASE_ROUTES = Object.freeze({
+  'GET /api/lease': Object.freeze({
+    kind: 'status',
+    authMessage: 'lease status requires API key or localhost'
+  }),
+  'POST /api/lease/config': Object.freeze({
+    kind: 'config',
+    authMessage: 'lease config requires API key or localhost'
+  })
+})
+
+export function resolveLeaseRoute (method, path) {
+  const route = LEASE_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
+
+export function buildLeaseRoutePayload ({
+  route,
+  leaseManager,
+  appRegistry,
+  now = Date.now()
+} = {}) {
+  if (!route || route.kind !== 'status') {
+    return {
+      payload: { error: 'unknown lease route' },
+      status: 404
+    }
+  }
+
+  return buildLeaseStatusPayload({ leaseManager, appRegistry, now })
+}
+
 export function countActiveLeaseManagedApps ({ appRegistry, now = Date.now() } = {}) {
   let activeLeases = 0
   const apps = appRegistry && appRegistry.apps

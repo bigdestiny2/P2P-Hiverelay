@@ -3,6 +3,53 @@ import { redactPubkeyHex } from '../privacy.js'
 
 export const MAX_PEER_LIST_ENTRIES = 1000
 
+const PEER_STATE_ROUTES = Object.freeze({
+  'GET /peers': Object.freeze({ kind: 'legacy-peer-list' }),
+  'GET /api/peers': Object.freeze({ kind: 'peer-list' })
+})
+
+export function resolvePeerStateRoute (method, path) {
+  const route = PEER_STATE_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
+
+export function buildPeerStateRoutePayload ({
+  route,
+  swarm = null,
+  connections = null,
+  reputation = null,
+  redact = true,
+  now = Date.now()
+} = {}) {
+  const kind = route && route.kind
+  if (kind === 'legacy-peer-list') {
+    return {
+      ok: true,
+      status: 200,
+      payload: buildPeerListPayload({ swarm, redact, now })
+    }
+  }
+  if (kind === 'peer-list') {
+    return {
+      ok: true,
+      status: 200,
+      payload: buildPeerListPayload({
+        swarm,
+        connections,
+        reputation,
+        redact,
+        now
+      })
+    }
+  }
+  return {
+    ok: false,
+    status: 404,
+    payload: { error: 'unknown peer state route' }
+  }
+}
+
 export function buildPeerListPayload ({
   swarm = null,
   connections = null,

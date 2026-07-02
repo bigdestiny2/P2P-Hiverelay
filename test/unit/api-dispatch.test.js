@@ -1,5 +1,9 @@
 import test from 'brittle'
-import { runDispatchAction } from '../../packages/core/core/relay-node/api-dispatch.js'
+import {
+  DISPATCH_AUTH_MESSAGE,
+  resolveDispatchRoute,
+  runDispatchAction
+} from '../../packages/core/core/relay-node/api-dispatch.js'
 
 function makeRouter (opts = {}) {
   const calls = []
@@ -13,6 +17,16 @@ function makeRouter (opts = {}) {
     }
   }
 }
+
+test('api dispatch: route resolver matches only the exact dispatch POST route', (t) => {
+  t.alike(resolveDispatchRoute('POST', '/api/v1/dispatch'), {
+    kind: 'dispatch',
+    authMessage: DISPATCH_AUTH_MESSAGE
+  })
+  t.is(resolveDispatchRoute('GET', '/api/v1/dispatch'), null, 'wrong method falls through')
+  t.is(resolveDispatchRoute('POST', '/api/v1/dispatch/extra'), null, 'extra path segment falls through')
+  t.is(resolveDispatchRoute('POST', '/api/v1/router'), null, 'adjacent v1 route falls through')
+})
 
 test('api dispatch: readiness and route validation happen before dispatch', async (t) => {
   let out = await runDispatchAction({

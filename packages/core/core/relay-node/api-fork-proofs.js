@@ -4,6 +4,16 @@ export const MAX_FORK_PROOF_RECORDS = 200
 export const MAX_FORK_PROOF_EVIDENCE_PER_RECORD = 16
 export const MAX_FORK_PROOF_EVIDENCE_FIELD_BYTES = 8192
 
+const FORK_PROOF_READ_ROUTES = Object.freeze({
+  'GET /api/forks/proofs': Object.freeze({ kind: 'fork-proof-list' })
+})
+
+export function resolveForkProofReadRoute (method, path) {
+  const route = FORK_PROOF_READ_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
+
 function normalizeLimit (value, max) {
   if (!Number.isSafeInteger(value)) return max
   if (value < 0) return 0
@@ -106,4 +116,27 @@ export function buildForkProofsPayload ({
     },
     headers: { 'Cache-Control': 'public, max-age=30' }
   }
+}
+
+export function buildForkProofsRoutePayload ({
+  route,
+  forkDetector = null,
+  maxRecords = MAX_FORK_PROOF_RECORDS,
+  maxEvidencePerRecord = MAX_FORK_PROOF_EVIDENCE_PER_RECORD,
+  maxEvidenceFieldBytes = MAX_FORK_PROOF_EVIDENCE_FIELD_BYTES
+} = {}) {
+  if (!route || route.kind !== 'fork-proof-list') {
+    return {
+      ok: false,
+      status: 404,
+      payload: { error: 'unknown fork-proof read route' }
+    }
+  }
+
+  return buildForkProofsPayload({
+    forkDetector,
+    maxRecords,
+    maxEvidencePerRecord,
+    maxEvidenceFieldBytes
+  })
 }

@@ -1,3 +1,5 @@
+import { queryInt } from './api-validation.js'
+
 export const MAX_METRICS_HISTORY_SNAPSHOTS = 1440
 export const MAX_OPERATOR_HEALTH_ACTIONS = 50
 export const MAX_OPERATOR_STORAGE_TOP_ENTRIES = 100
@@ -5,6 +7,28 @@ export const MAX_OPERATOR_AUTO_HEAL_DRIVES = 256
 export const MAX_OPERATOR_LABEL_BYTES = 128
 export const MAX_OPERATOR_MESSAGE_BYTES = 512
 export const MAX_OPERATOR_LIST_VALUES = 32
+export const DEFAULT_OPERATOR_STORAGE_TOP_ENTRIES = 30
+export const DEFAULT_METRICS_HISTORY_MINUTES = 60
+export const MAX_METRICS_HISTORY_MINUTES = 24 * 60
+
+const OPERATOR_TELEMETRY_ROUTES = Object.freeze({
+  'GET /api/health-detail': Object.freeze({
+    kind: 'health-detail',
+    authMessage: 'Unauthorized — API key required for /api/health-detail'
+  }),
+  'GET /api/storage/top': Object.freeze({
+    kind: 'storage-top',
+    authMessage: 'Unauthorized — storage top requires API key or localhost'
+  }),
+  'GET /api/auto-heal': Object.freeze({
+    kind: 'auto-heal',
+    authMessage: 'Unauthorized — API key required for /api/auto-heal'
+  }),
+  'GET /api/history': Object.freeze({
+    kind: 'history',
+    authMessage: 'Unauthorized — API key required for /api/history'
+  })
+})
 
 const HEX_64 = /^[0-9a-f]{64}$/i
 
@@ -94,6 +118,12 @@ const AUTO_HEAL_THRESHOLD_FIELDS = [
 const AUTO_HEAL_DRIVE_NUMERIC_FIELDS = ['replicas']
 const AUTO_HEAL_DRIVE_LIST_FIELDS = ['regions', 'operators']
 
+export function resolveOperatorTelemetryRoute (method, path) {
+  const route = OPERATOR_TELEMETRY_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
+
 export function buildHealthDetailPayload ({ node } = {}) {
   const health = node && typeof node.getHealthStatus === 'function'
     ? node.getHealthStatus()
@@ -175,6 +205,39 @@ export function buildMetricsHistoryPayload ({ metrics, minutes = 60, now = Date.
   payload.reverse()
 
   return { payload, status: 200 }
+}
+
+export function buildOperatorTelemetryRoutePayload ({
+  route,
+  node,
+  url
+} = {}) {
+  const kind = route && route.kind
+  if (kind === 'health-detail') return buildHealthDetailPayload({ node })
+  if (kind === 'storage-top') {
+    const n = queryRouteInt(url, 'n', DEFAULT_OPERATOR_STORAGE_TOP_ENTRIES, 1, MAX_OPERATOR_STORAGE_TOP_ENTRIES)
+    return buildStorageTopPayload({
+      storageAccounting: node && node.storageAccounting,
+      n
+    })
+  }
+  if (kind === 'auto-heal') return buildAutoHealPayload({ autoHeal: node && node.autoHeal })
+  if (kind === 'history') {
+    const minutes = queryRouteInt(url, 'minutes', DEFAULT_METRICS_HISTORY_MINUTES, 1, MAX_METRICS_HISTORY_MINUTES)
+    return buildMetricsHistoryPayload({
+      metrics: node && node.metrics,
+      minutes
+    })
+  }
+  return {
+    payload: { error: 'unknown operator telemetry route' },
+    status: 404
+  }
+}
+
+function queryRouteInt (url, name, defaultValue, min, max) {
+  if (!url || !url.searchParams) return defaultValue
+  return queryInt(url, name, defaultValue, min, max)
 }
 
 function sanitizeMetricsSnapshot (snapshot) {

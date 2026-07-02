@@ -4,9 +4,157 @@ import {
   MAX_FEDERATION_SNAPSHOT_PEER_APPS,
   MAX_FEDERATION_SNAPSHOT_RELAYS,
   buildFederationSnapshotPayload,
+  buildFederationSnapshotRoutePayload,
+  federationPersistFailureResult,
   MAX_FEDERATION_NOTE_LENGTH,
-  runFederationManagementAction
+  resolveFederationManagementRoute,
+  resolveFederationSnapshotRoute,
+  runFederationManagementAction,
+  runFederationManagementRouteAction
 } from '../../packages/core/core/relay-node/api-federation-management.js'
+
+test('api federation management: snapshot route helper maps exact operator read route', (t) => {
+  t.alike(resolveFederationSnapshotRoute('GET', '/api/manage/federation'), {
+    kind: 'federation-snapshot',
+    authMessage: 'Unauthorized — API key required for /api/manage/federation'
+  })
+
+  t.is(resolveFederationSnapshotRoute('POST', '/api/manage/federation'), null)
+  t.is(resolveFederationSnapshotRoute('GET', '/api/manage/federation/follow'), null)
+  t.is(resolveFederationSnapshotRoute('GET', '/api/manage/federation/extra'), null)
+})
+
+test('api federation management: snapshot route payload helper dispatches operator read', (t) => {
+  const route = resolveFederationSnapshotRoute('GET', '/api/manage/federation')
+  const result = buildFederationSnapshotRoutePayload({
+    route,
+    federation: {
+      snapshot: () => ({
+        followed: [{ url: 'https://relay.example', pubkey: 'A'.repeat(64), addedAt: 1 }],
+        mirrored: [],
+        republished: [],
+        peerCatalogs: [],
+        running: true
+      })
+    }
+  })
+
+  t.is(result.ok, true)
+  t.is(result.status, undefined)
+  t.alike(result.payload.followed, [{
+    url: 'https://relay.example',
+    pubkey: 'a'.repeat(64),
+    addedAt: 1
+  }])
+  t.is(result.payload.running, true)
+
+  t.alike(buildFederationSnapshotRoutePayload({ route: null, federation: null }), {
+    ok: false,
+    status: 404,
+    payload: { error: 'unknown federation snapshot route' }
+  })
+})
+
+test('api federation management: disabled profile rejects reads and writes before runtime access', async (t) => {
+  const route = resolveFederationSnapshotRoute('GET', '/api/manage/federation')
+  const federation = {
+    snapshot () {
+      t.fail('disabled federation read must not reach snapshot')
+    },
+    follow () {
+      t.fail('disabled federation write must not mutate runtime state')
+    },
+    async save () {
+      t.fail('disabled federation write must not persist runtime state')
+    }
+  }
+
+  const read = buildFederationSnapshotRoutePayload({
+    route,
+    federation,
+    disabled: true
+  })
+  t.is(read.ok, false)
+  t.is(read.kind, 'disabled-profile')
+  t.is(read.status, 409)
+  t.ok(read.payload.error.startsWith('not-enabled: '), 'read returns formatted disabled-profile error')
+
+  const write = await runFederationManagementAction({
+    action: 'follow',
+    body: {},
+    federation,
+    disabled: true
+  })
+  t.is(write.ok, false)
+  t.is(write.kind, 'disabled-profile')
+  t.is(write.status, 409)
+  t.ok(write.payload.error.startsWith('not-enabled: '), 'write returns formatted disabled-profile error')
+})
+
+test('api federation management: route helper maps management paths to actions', (t) => {
+  t.alike(resolveFederationManagementRoute('POST', '/api/manage/federation/follow'), {
+    action: 'follow',
+    authMessage: 'Unauthorized — API key required for /api/manage/federation/follow'
+  })
+  t.alike(resolveFederationManagementRoute('POST', '/api/manage/federation/mirror'), {
+    action: 'mirror',
+    authMessage: 'Unauthorized — API key required for /api/manage/federation/mirror'
+  })
+  t.alike(resolveFederationManagementRoute('POST', '/api/manage/federation/unfollow'), {
+    action: 'unfollow',
+    authMessage: 'Unauthorized — API key required for /api/manage/federation/unfollow'
+  })
+  t.alike(resolveFederationManagementRoute('POST', '/api/manage/federation/republish'), {
+    action: 'republish',
+    authMessage: 'Unauthorized — API key required for /api/manage/federation/republish'
+  })
+  t.alike(resolveFederationManagementRoute('POST', '/api/manage/federation/unrepublish'), {
+    action: 'unrepublish',
+    authMessage: 'Unauthorized — API key required for /api/manage/federation/unrepublish'
+  })
+  t.is(resolveFederationManagementRoute('GET', '/api/manage/federation/follow'), null)
+  t.is(resolveFederationManagementRoute('POST', '/api/manage/federation'), null)
+  t.is(resolveFederationManagementRoute('POST', '/api/manage/federation/follow/extra'), null)
+  t.is(resolveFederationManagementRoute('POST', '/api/manage/catalog/follow'), null)
+})
+
+test('api federation management: route action helper dispatches management mutations', async (t) => {
+  const pubkey = 'A'.repeat(64)
+  const calls = []
+  const federation = {
+    snapshot () {
+      calls.push(['snapshot'])
+      return { followed: [] }
+    },
+    follow (url, opts) {
+      calls.push(['follow', url, opts])
+    },
+    async save (opts) {
+      calls.push(['save', opts])
+    }
+  }
+
+  const result = await runFederationManagementRouteAction({
+    route: resolveFederationManagementRoute('POST', '/api/manage/federation/follow'),
+    body: { url: ' https://relay.example ', pubkey },
+    federation
+  })
+
+  t.alike(result.payload, { ok: true, mode: 'follow', url: 'https://relay.example' })
+  t.alike(calls, [
+    ['snapshot'],
+    ['follow', 'https://relay.example', { pubkey: pubkey.toLowerCase(), persist: false }],
+    ['save', { throwOnError: true }]
+  ])
+
+  const unknown = await runFederationManagementRouteAction({
+    route: null,
+    body: { url: 'https://relay.example' },
+    federation
+  })
+  t.is(unknown.status, 404)
+  t.alike(unknown.payload, { error: 'unknown federation management route' })
+})
 
 test('api federation management: validates action bodies before federation access', async (t) => {
   const missingUrl = await runFederationManagementAction({
@@ -173,6 +321,7 @@ test('api federation management: canonicalizes optional trusted metadata before 
 test('api federation management: persistence failure restores snapshot', async (t) => {
   const federation = new Federation({})
   federation.follow('http://existing.example', { persist: false })
+  const events = []
   federation.save = async () => {
     throw new Error('readonly federation volume')
   }
@@ -180,12 +329,19 @@ test('api federation management: persistence failure restores snapshot', async (
   const result = await runFederationManagementAction({
     action: 'follow',
     body: { url: 'http://new.example' },
-    federation
+    federation,
+    emit: (event, payload) => events.push({ event, payload })
   })
 
   t.is(result.ok, false)
   t.is(result.kind, 'federation-persist')
-  t.is(result.error.message, 'readonly federation volume')
+  t.is(result.status, 500)
+  t.is(result.payload.errorCode, 'persist-failed')
+  t.ok(result.payload.error.startsWith('persist-failed: '), 'public payload is stable and prefixed')
+  t.absent(result.payload.error.includes('readonly federation volume'), 'public payload does not leak local storage error')
+  t.is(events.length, 1)
+  t.is(events[0].event, 'federation-persist-error')
+  t.is(events[0].payload.message, 'readonly federation volume')
   const snap = federation.snapshot()
   t.is(snap.followed.length, 1)
   t.is(snap.followed[0].url, 'http://existing.example')
@@ -232,10 +388,36 @@ test('api federation management: rollback errors are emitted without hiding pers
 
   t.is(result.ok, false)
   t.is(result.kind, 'federation-persist')
-  t.is(result.error, persistError)
-  t.is(events.length, 1)
+  t.is(result.status, 500)
+  t.is(result.payload.errorCode, 'persist-failed')
+  t.is(events.length, 2)
   t.is(events[0].event, 'federation-rollback-error')
   t.is(events[0].payload.error, restoreError)
+  t.is(events[1].event, 'federation-persist-error')
+  t.is(events[1].payload.error, persistError)
+})
+
+test('api federation management: persist failure mapper emits internal diagnostics', (t) => {
+  const err = new Error('readonly federation volume')
+  const events = []
+  const result = federationPersistFailureResult({
+    error: err,
+    emit: (event, payload) => events.push({ event, payload })
+  })
+
+  t.is(result.ok, false)
+  t.is(result.kind, 'federation-persist')
+  t.is(result.status, 500)
+  t.is(result.payload.errorCode, 'persist-failed')
+  t.ok(result.payload.error.startsWith('persist-failed: '))
+  t.absent(result.payload.error.includes('readonly federation volume'))
+  t.alike(events, [{
+    event: 'federation-persist-error',
+    payload: {
+      message: 'readonly federation volume',
+      error: err
+    }
+  }])
 })
 
 test('api federation management: snapshot payload sanitizes remote federation state', (t) => {

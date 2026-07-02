@@ -25,6 +25,8 @@ import {
   storageProofSignable
 } from './proof-of-storage.js'
 import {
+  BLINDSPARK_HTTP_ROUTE_MATRIX,
+  BLINDSPARK_HTTP_SURFACES,
   buildRelayKernelProfile,
   validateRelayKernelProfile
 } from './relaykernel-profile.js'
@@ -77,6 +79,32 @@ import {
   circuitStatusEncoding
 } from './relay-circuit.js'
 
+const PROFILE_VECTOR_VERIFIERS = Object.freeze({
+  'accounting-receipt-v1-os-grounded': verifyAccountingVector,
+  'retrievability-proof-signable-v1': verifyRetrievabilityVector,
+  'relaykernel-profile-v1-minimal-compat': verifyRelayKernelVector,
+  'relaykernel-profile-v1-app-module-boundary': verifyRelayKernelVector,
+  'relaykernel-http-route-matrix-v1-blindspark-compat': verifyRelayKernelHttpRouteMatrixVector,
+  'hivemesh-tier-profile-v1-t2-custody-vault': verifyHiveMeshVector,
+  'witness-quorum-policy-v1-5-of-7-diverse': verifyWitnessQuorumVector,
+  'custody-allowlist-v2-strict': verifyCustodyAllowlistVector,
+  'relaykernel-reputation-profile-v1-no-self-attestation': verifyReputationVector,
+  'relaykernel-seed-lease-profile-v1-caps-replay': verifySeedLeaseVector,
+  'role-domain-signature-profile-v1-prefix-domain': verifyRoleDomainVector,
+  'relaykernel-meta-profile-v1-opt-in-directory': verifyRelayKernelMetaVector,
+  'relaykernel-meta-profile-v1-reserved-namespace-reject': verifyRelayKernelMetaVector,
+  'hivemesh-prove-held-profile-v1-commit-reveal': verifyHiveMeshProveHeldVector,
+  'hivemesh-tier-reputation-profile-v1-no-global-score': verifyHiveMeshTierReputationVector,
+  'hivemesh-tombstone-adjudication-profile-v1-false-tombstone': verifyHiveMeshTombstoneAdjudicationVector,
+  'relaykernel-circuit-limits-profile-v1-hard-caps': verifyRelayKernelCircuitLimitsVector,
+  'capability-doc-signature-v1': verifyCapabilityDocVector,
+  'seed-protocol-binary-v1': verifySeedProtocolBinaryVector,
+  'seed-protocol-handshake-v1': verifySeedProtocolHandshakeVector,
+  'circuit-protocol-binary-v1': verifyCircuitProtocolBinaryVector
+})
+
+export const SUPPORTED_PROFILE_VECTOR_NAMES = Object.freeze(Object.keys(PROFILE_VECTOR_VERIFIERS))
+
 export function verifyProfileVector (vector) {
   const errors = []
   const warnings = []
@@ -87,25 +115,7 @@ export function verifyProfileVector (vector) {
   const name = typeof vector.name === 'string' ? vector.name : null
   try {
     if (!name) errors.push('vector name required')
-    else if (name === 'accounting-receipt-v1-os-grounded') verifyAccountingVector(vector, errors)
-    else if (name === 'retrievability-proof-signable-v1') verifyRetrievabilityVector(vector, errors)
-    else if (name === 'relaykernel-profile-v1-minimal-compat') verifyRelayKernelVector(vector, errors)
-    else if (name === 'hivemesh-tier-profile-v1-t2-custody-vault') verifyHiveMeshVector(vector, errors)
-    else if (name === 'witness-quorum-policy-v1-5-of-7-diverse') verifyWitnessQuorumVector(vector, errors)
-    else if (name === 'custody-allowlist-v2-strict') verifyCustodyAllowlistVector(vector, errors)
-    else if (name === 'relaykernel-reputation-profile-v1-no-self-attestation') verifyReputationVector(vector, errors)
-    else if (name === 'relaykernel-seed-lease-profile-v1-caps-replay') verifySeedLeaseVector(vector, errors)
-    else if (name === 'role-domain-signature-profile-v1-prefix-domain') verifyRoleDomainVector(vector, errors)
-    else if (name === 'relaykernel-meta-profile-v1-opt-in-directory') verifyRelayKernelMetaVector(vector, errors)
-    else if (name === 'relaykernel-meta-profile-v1-reserved-namespace-reject') verifyRelayKernelMetaVector(vector, errors)
-    else if (name === 'hivemesh-prove-held-profile-v1-commit-reveal') verifyHiveMeshProveHeldVector(vector, errors)
-    else if (name === 'hivemesh-tier-reputation-profile-v1-no-global-score') verifyHiveMeshTierReputationVector(vector, errors)
-    else if (name === 'hivemesh-tombstone-adjudication-profile-v1-false-tombstone') verifyHiveMeshTombstoneAdjudicationVector(vector, errors)
-    else if (name === 'relaykernel-circuit-limits-profile-v1-hard-caps') verifyRelayKernelCircuitLimitsVector(vector, errors)
-    else if (name === 'capability-doc-signature-v1') verifyCapabilityDocVector(vector, errors)
-    else if (name === 'seed-protocol-binary-v1') verifySeedProtocolBinaryVector(vector, errors)
-    else if (name === 'seed-protocol-handshake-v1') verifySeedProtocolHandshakeVector(vector, errors)
-    else if (name === 'circuit-protocol-binary-v1') verifyCircuitProtocolBinaryVector(vector, errors)
+    else if (Object.hasOwn(PROFILE_VECTOR_VERIFIERS, name)) PROFILE_VECTOR_VERIFIERS[name](vector, errors)
     else errors.push('unsupported vector: ' + name)
   } catch (err) {
     errors.push('vector verification error: ' + (err && err.message ? err.message : String(err)))
@@ -114,15 +124,41 @@ export function verifyProfileVector (vector) {
   return { valid: errors.length === 0, name, errors, warnings }
 }
 
-export function verifyProfileVectors (vectors) {
+export function verifyProfileVectors (vectors, opts = {}) {
+  const requireSupportedSet = !!opts.requireSupportedSet
   const results = Array.isArray(vectors) ? vectors.map(verifyProfileVector) : []
+  const failedResults = results.filter(result => !result.valid)
+  const inventory = profileVectorInventory(vectors, requireSupportedSet)
   return {
-    valid: results.length > 0 && results.every(result => result.valid),
+    valid: results.length > 0 && failedResults.length === 0 && inventory.errors.length === 0,
     count: results.length,
     passed: results.filter(result => result.valid).length,
-    failed: results.filter(result => !result.valid).length,
+    failed: failedResults.length + inventory.errors.length,
+    inventory,
     results
   }
+}
+
+function profileVectorInventory (vectors, requireSupportedSet) {
+  const counts = new Map()
+  if (Array.isArray(vectors)) {
+    for (const vector of vectors) {
+      if (!vector || typeof vector.name !== 'string') continue
+      counts.set(vector.name, (counts.get(vector.name) || 0) + 1)
+    }
+  }
+
+  const names = [...counts.keys()].sort()
+  const duplicateNames = names.filter(name => counts.get(name) > 1)
+  const missingNames = requireSupportedSet
+    ? SUPPORTED_PROFILE_VECTOR_NAMES.filter(name => !counts.has(name))
+    : []
+  const errors = [
+    ...duplicateNames.map(name => 'duplicate profile vector name: ' + name),
+    ...missingNames.map(name => 'missing supported profile vector: ' + name)
+  ]
+
+  return { names, duplicateNames, missingNames, errors }
 }
 
 function verifyAccountingVector (vector, errors) {
@@ -170,6 +206,30 @@ function verifyRelayKernelVector (vector, errors) {
   const verdict = validateRelayKernelProfile(profile)
   compareJson('relaykernel profile', profile, vector.profile, errors)
   compareJson('relaykernel verdict', verdict, vector.verdict, errors)
+}
+
+function verifyRelayKernelHttpRouteMatrixVector (vector, errors) {
+  if (vector.kind !== 'http-route-matrix-conformance') errors.push('relaykernel route matrix kind mismatch')
+  if (vector.profile !== 'relaykernel') errors.push('relaykernel route matrix profile mismatch')
+  if (vector.compatibility !== 'blindspark-http-gateway') errors.push('relaykernel route matrix compatibility mismatch')
+
+  compareJson('relaykernel http route surfaces', BLINDSPARK_HTTP_SURFACES, vector.surfaces, errors)
+  compareJson('relaykernel http route matrix', BLINDSPARK_HTTP_ROUTE_MATRIX, vector.matrix, errors)
+
+  const rows = Array.isArray(vector.matrix) ? vector.matrix : []
+  for (const row of rows) {
+    const surface = typeof row?.surface === 'string' ? row.surface : '(missing surface)'
+    if (!Array.isArray(row?.methods) || !row.methods.includes('GET')) {
+      errors.push('relaykernel route matrix row missing GET: ' + surface)
+    }
+    if (Array.isArray(row?.capabilities) && row.capabilities.includes('Range') &&
+      (!Array.isArray(row?.methods) || !row.methods.includes('HEAD'))) {
+      errors.push('relaykernel route matrix Range surface missing HEAD: ' + surface)
+    }
+    if (!Array.isArray(row?.handlers) || row.handlers.length === 0) {
+      errors.push('relaykernel route matrix row has no handlers: ' + surface)
+    }
+  }
 }
 
 function verifyHiveMeshVector (vector, errors) {

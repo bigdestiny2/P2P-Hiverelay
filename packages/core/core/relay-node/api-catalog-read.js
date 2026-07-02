@@ -8,6 +8,62 @@ export const CATALOG_TYPE_ERROR = `type must be one of: ${Array.from(CONTENT_TYP
 const CATALOG_ACCEPT_MODES = ['open', 'review', 'allowlist', 'closed']
 const MAX_CATALOG_LABEL_BYTES = 128
 
+const CATALOG_READ_ROUTES = Object.freeze({
+  'GET /catalog.json': Object.freeze({
+    kind: 'catalog'
+  }),
+  'GET /api/apps': Object.freeze({
+    kind: 'legacy-type',
+    type: 'app'
+  }),
+  'GET /api/drives': Object.freeze({
+    kind: 'legacy-type',
+    type: 'drive'
+  })
+})
+
+export function resolveCatalogReadRoute (method, path) {
+  const route = CATALOG_READ_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
+
+export function buildCatalogReadRoutePayload ({
+  route,
+  node,
+  url,
+  relayKey = relayPublicKeyHex(node),
+  maxPageSize = RELAY_CATALOG_PAGE_SIZE_MAX
+} = {}) {
+  if (!route) {
+    return {
+      status: 404,
+      payload: { error: 'unknown catalog read route' }
+    }
+  }
+
+  if (route.kind === 'catalog') {
+    return buildRelayCatalogPayload({ node, url, relayKey, maxPageSize })
+  }
+
+  if (route.kind === 'legacy-type') {
+    return {
+      status: 200,
+      payload: catalogEntriesByType({
+        node,
+        type: route.type,
+        url,
+        maxPageSize
+      })
+    }
+  }
+
+  return {
+    status: 404,
+    payload: { error: 'unknown catalog read route' }
+  }
+}
+
 export function buildRelayCatalogPayload ({
   node,
   url,

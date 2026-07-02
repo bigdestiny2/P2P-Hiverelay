@@ -104,6 +104,29 @@ test('features list is sorted and reflects wired subsystems', async (t) => {
   t.is(doc.protocol_profile.signature_domains.seed_request.replay_protection.domain, 'hiverelay.seed-request.replay-v1')
 })
 
+test('capability doc advertises notify and outboxlog service profiles when running', async (t) => {
+  const relay = {
+    config: { enableServices: true },
+    serviceRegistry: {
+      services: new Map([
+        ['notify', { status: 'running', version: '0.1.0' }],
+        ['outboxlog', { status: 'running', version: '0.1.0' }]
+      ]),
+      catalog: () => [
+        { name: 'notify', version: '0.1.0' },
+        { name: 'outboxlog', version: '0.1.0' }
+      ]
+    }
+  }
+
+  const doc = buildCapabilityDoc({ relay })
+  t.ok(doc.features.includes('notify-v1'))
+  t.ok(doc.features.includes('outboxlog-v1'))
+  t.is(doc.protocol_profile.services.notify.version, '0.1.0')
+  t.is(doc.protocol_profile.services.notify.payload.plaintext_allowed, false)
+  t.is(doc.protocol_profile.services.outboxlog.model, 'single-writer-signed-outbox')
+})
+
 test('relaykernel capability doc advertises only active kernel-compatible surfaces', async (t) => {
   const kp = makeKeyPair()
   const relay = {

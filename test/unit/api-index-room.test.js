@@ -1,11 +1,23 @@
 import test from 'brittle'
 import {
+  INDEX_ROOM_AUTH_MESSAGE,
   INDEX_ROOM_KEY_RE,
   parseIndexRoomRequest,
+  resolveIndexRoomRoute,
   runIndexRoomAction
 } from '../../packages/core/core/relay-node/api-index-room.js'
 
 const ROOM = 'y'.repeat(52)
+
+test('api index room: route resolver maps only the exact operator index-room route', (t) => {
+  t.alike(resolveIndexRoomRoute('POST', '/api/manage/index-room'), {
+    kind: 'index-room',
+    authMessage: INDEX_ROOM_AUTH_MESSAGE
+  })
+  t.is(resolveIndexRoomRoute('GET', '/api/manage/index-room'), null, 'wrong method falls through')
+  t.is(resolveIndexRoomRoute('POST', '/api/manage/index-room/extra'), null, 'subpath falls through')
+  t.is(resolveIndexRoomRoute('POST', '/api/manage/index'), null, 'adjacent management route falls through')
+})
 
 test('api index room: validates and trims z32 room requests', async (t) => {
   const calls = []

@@ -22,3 +22,33 @@ export { StorageService } from './builtin/storage-service.js'
 export { ZKService } from './builtin/zk-service.js'
 export { ArbitrationService } from './builtin/arbitration-service.js'
 export { StorageProofService } from './builtin/storage-proof-service.js'
+export {
+  createJsonFileNotifyPersistence,
+  createMemoryNotifyPersistence,
+  NotifyService
+} from './builtin/notify-service.js'
+export {
+  createOutboxBlindRecipientDirectoryEntry,
+  createOutboxBlindRecipientKeyPair,
+  createOutboxBlindSealAAD,
+  createOutboxBlindSealKey,
+  createOutboxBlindSealedBody,
+  createJsonFileOutboxPersistence,
+  createMemoryOutboxPersistence,
+  decodeOutboxBlindRecipientPublicKey,
+  decodeOutboxBlindRecipientSecretKey,
+  decodeOutboxBlindSealKey,
+  encodeOutboxBlindRecipientPublicKey,
+  encodeOutboxBlindRecipientSecretKey,
+  encodeOutboxBlindSealKey,
+  isOutboxBlindRecord,
+  isOutboxBlindSealedBody,
+  openOutboxBlindPayload,
+  openOutboxBlindSealKeyEnvelope,
+  sealOutboxBlindPayload,
+  verifyOutboxBlindRecipientDirectoryEntry,
+  verifyOutboxBlindRecipientDirectoryRecord,
+  verifyOutboxBlindRecipientDirectoryRotation,
+  wrapOutboxBlindSealKey,
+  OutboxLogApp
+} from './builtin/outboxlog/index.js'

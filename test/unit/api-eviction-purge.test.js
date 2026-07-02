@@ -1,12 +1,25 @@
 import test from 'brittle'
 import {
+  EVICTION_PURGE_AUTH_MESSAGE,
   MAX_PURGE_APP_KEYS,
+  resolveEvictionPurgeRoute,
   runEvictionPurgeAction
 } from '../../packages/core/core/relay-node/api-eviction-purge.js'
 
 function key (char) {
   return char.repeat(64)
 }
+
+test('api eviction purge: route helper maps exact operator purge route', (t) => {
+  t.alike(resolveEvictionPurgeRoute('POST', '/api/eviction/purge'), {
+    kind: 'eviction-purge',
+    authMessage: EVICTION_PURGE_AUTH_MESSAGE
+  })
+
+  t.is(resolveEvictionPurgeRoute('GET', '/api/eviction/purge'), null)
+  t.is(resolveEvictionPurgeRoute('POST', '/api/eviction'), null)
+  t.is(resolveEvictionPurgeRoute('POST', '/api/eviction/purge/all'), null)
+})
 
 test('api eviction purge: validates request body before purging', async (t) => {
   const node = {

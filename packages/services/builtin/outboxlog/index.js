@@ -1,0 +1,249 @@
+import { ServiceProvider } from 'p2p-hiverelay/core/services/provider.js'
+import {
+  DEFAULT_OUTBOXLOG_NAMESPACE,
+  OUTBOXLOG_BLIND_SEAL_DEFAULT_ALG,
+  OUTBOXLOG_BLIND_SEAL_VERSION,
+  canonicalOutboxRecord,
+  createOutboxBlindSealedBody,
+  createJsonFileOutboxPersistence,
+  createJsonlOutboxJournal,
+  createMemoryOutboxJournal,
+  createMemoryOutboxPersistence,
+  createOutboxNamespaceRegistry,
+  createOutboxLog,
+  createOutboxSignatureVerifier,
+  isOutboxBlindRecord,
+  isOutboxBlindSealedBody,
+  verifyOutboxRecordSignature
+} from './outbox-log.js'
+import {
+  createHypercoreOutboxJournal,
+  createPartitionedHypercoreOutboxJournal
+} from './hypercore-journal.js'
+import { createOutboxSwarmHub } from './swarm-hub.js'
+export {
+  OUTBOXLOG_BLIND_SEAL_AAD_DOMAIN,
+  OUTBOXLOG_BLIND_SEAL_AAD_VERSION,
+  OUTBOXLOG_BLIND_SEAL_KEY_BYTES,
+  OUTBOXLOG_BLIND_SEAL_NONCE_BYTES,
+  OUTBOXLOG_BLIND_SEAL_TAG_BYTES,
+  OUTBOXLOG_BLIND_KEY_ENVELOPE_ALG,
+  OUTBOXLOG_BLIND_KEY_ENVELOPE_SEAL_BYTES,
+  OUTBOXLOG_BLIND_KEY_ENVELOPE_VERSION,
+  OUTBOXLOG_BLIND_RECIPIENT_DIRECTORY_DOMAIN,
+  OUTBOXLOG_BLIND_RECIPIENT_DIRECTORY_VERSION,
+  OUTBOXLOG_BLIND_RECIPIENT_PUBLIC_KEY_BYTES,
+  OUTBOXLOG_BLIND_RECIPIENT_SECRET_KEY_BYTES,
+  createOutboxBlindSealKey,
+  createOutboxBlindSealAAD,
+  createOutboxBlindRecipientKeyPair,
+  createOutboxBlindRecipientDirectoryEntry,
+  decodeOutboxBlindRecipientPublicKey,
+  decodeOutboxBlindRecipientSecretKey,
+  decodeOutboxBlindSealKey,
+  encodeOutboxBlindRecipientPublicKey,
+  encodeOutboxBlindRecipientSecretKey,
+  encodeOutboxBlindSealKey,
+  openOutboxBlindPayload,
+  openOutboxBlindSealKeyEnvelope,
+  verifyOutboxBlindRecipientDirectoryEntry,
+  verifyOutboxBlindRecipientDirectoryRecord,
+  verifyOutboxBlindRecipientDirectoryRotation,
+  wrapOutboxBlindSealKey,
+  sealOutboxBlindPayload
+} from './blind-seal.js'
+
+export class OutboxLogApp extends ServiceProvider {
+  constructor (opts = {}) {
+    super()
+    this.engine = opts.engine || createOutboxLog(opts)
+    this.sync = this.engine.sync
+    this.swarm = opts.swarm || this.engine.swarm || createOutboxSwarmHub(opts)
+    this.persistencePath = typeof opts.persistencePath === 'string' ? opts.persistencePath : null
+    this.storagePath = typeof opts.storagePath === 'string' ? opts.storagePath : null
+    this.persistenceDisabled = opts.persistence === false
+    this.journal = opts.journal || null
+    this.node = null
+  }
+
+  manifest () {
+    return {
+      name: 'outboxlog',
+      version: '0.1.0',
+      description: 'Single-writer signed outbox log with Peerit relay wire compatibility',
+      capabilities: ['outboxlog.sync', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces']
+    }
+  }
+
+  async start (context = {}) {
+    this.node = context.node || null
+    const config = context && context.config && typeof context.config === 'object' ? context.config : {}
+    const outboxlog = config.outboxlog && typeof config.outboxlog === 'object' ? config.outboxlog : {}
+    if (this.engine.configureNamespaces && (outboxlog.namespaces || typeof outboxlog.namespace === 'string')) {
+      this.engine.configureNamespaces({
+        namespace: typeof outboxlog.namespace === 'string' ? outboxlog.namespace : DEFAULT_OUTBOXLOG_NAMESPACE,
+        namespaces: outboxlog.namespaces || null
+      })
+    }
+    if (!this.persistenceDisabled && this.engine.configurePersistence) {
+      const usePartitionedHypercoreJournal = outboxlog.journal === 'hypercore-outboxes' ||
+        outboxlog.persistence === 'hypercore-outboxes' ||
+        outboxlog.perOutboxHypercore === true
+      const useHypercoreJournal = usePartitionedHypercoreJournal ||
+        outboxlog.journal === 'hypercore' ||
+        outboxlog.persistence === 'hypercore' ||
+        outboxlog.hypercore === true
+      let journal = null
+      if (usePartitionedHypercoreJournal) {
+        journal = await createPartitionedHypercoreOutboxJournal({
+          store: context.store || (context.node && context.node.store) || null,
+          indexName: typeof outboxlog.indexName === 'string'
+            ? outboxlog.indexName
+            : (typeof outboxlog.journalName === 'string' ? outboxlog.journalName : undefined),
+          coreNamePrefix: typeof outboxlog.outboxCorePrefix === 'string' ? outboxlog.outboxCorePrefix : undefined
+        })
+      } else if (useHypercoreJournal) {
+        journal = await createHypercoreOutboxJournal({
+          store: context.store || (context.node && context.node.store) || null,
+          name: typeof outboxlog.journalName === 'string' ? outboxlog.journalName : undefined
+        })
+      }
+      const configured = this.engine.configurePersistence({
+        persistencePath: useHypercoreJournal ? null : this.persistencePath || (typeof outboxlog.persistencePath === 'string' ? outboxlog.persistencePath : null),
+        journal,
+        journalPath: useHypercoreJournal ? null : (typeof outboxlog.journalPath === 'string' ? outboxlog.journalPath : null),
+        storagePath: useHypercoreJournal ? null : this.storagePath || (typeof config.storage === 'string' ? config.storage : null)
+      })
+      if (journal && configured !== false) this.journal = journal
+    }
+  }
+
+  async stop () {
+    if (this.engine.flush) await this.engine.flush()
+    this.node = null
+  }
+
+  create (appId, opts = {}) {
+    if (appId && typeof appId === 'object') {
+      opts = { namespace: appId.namespace }
+      appId = appId.appId
+    }
+    return this.sync.create(appId, opts)
+  }
+
+  join (appId, inviteKey) {
+    if (appId && typeof appId === 'object') {
+      inviteKey = appId.inviteKey
+      appId = appId.appId
+    }
+    return this.sync.join(appId, inviteKey)
+  }
+
+  append (appId, op) {
+    if (appId && typeof appId === 'object') {
+      op = appId.op
+      appId = appId.appId
+    }
+    return this.sync.append(appId, op)
+  }
+
+  get (appId, key) {
+    if (appId && typeof appId === 'object') {
+      key = appId.key
+      appId = appId.appId
+    }
+    return this.sync.get(appId, key)
+  }
+
+  list (appId, prefix, opts = {}) {
+    if (appId && typeof appId === 'object') {
+      opts = appId.opts || {}
+      prefix = appId.prefix
+      appId = appId.appId
+    }
+    return this.sync.list(appId, prefix, opts)
+  }
+
+  range (appId, opts = {}) {
+    if (appId && typeof appId === 'object') {
+      opts = appId.opts || appId
+      appId = appId.appId
+    }
+    return this.sync.range(appId, opts)
+  }
+
+  count (appId, prefix) {
+    if (appId && typeof appId === 'object') {
+      prefix = appId.prefix
+      appId = appId.appId
+    }
+    return this.sync.count(appId, prefix)
+  }
+
+  status (appId) {
+    if (appId && typeof appId === 'object') appId = appId.appId
+    return this.sync.status(appId)
+  }
+
+  heads (appIds) {
+    if (appIds && typeof appIds === 'object' && !Array.isArray(appIds)) appIds = appIds.appIds
+    return this.sync.heads(appIds)
+  }
+
+  directory (opts = {}) {
+    return this.sync.directory(opts)
+  }
+
+  events (appId, opts = {}) {
+    if (appId && typeof appId === 'object') {
+      opts = appId.opts || appId
+      appId = appId.appId
+    }
+    return this.sync.events(appId, opts)
+  }
+
+  subscribe (appId, opts, fn) {
+    return this.engine.subscribe(appId, opts, fn)
+  }
+
+  journalInfo () {
+    return this.journal && typeof this.journal.info === 'function' ? this.journal.info() : null
+  }
+
+  namespaces () {
+    return this.engine.namespaces ? this.engine.namespaces() : []
+  }
+
+  async seedPersistenceCores (seeder = this.node && this.node.seeder) {
+    if (!this.journal || typeof this.journal.seedCores !== 'function') return []
+    return this.journal.seedCores(seeder)
+  }
+}
+
+export {
+  DEFAULT_OUTBOXLOG_NAMESPACE,
+  OUTBOXLOG_BLIND_SEAL_DEFAULT_ALG,
+  OUTBOXLOG_BLIND_SEAL_VERSION,
+  canonicalOutboxRecord,
+  createOutboxBlindSealedBody,
+  createJsonFileOutboxPersistence,
+  createJsonlOutboxJournal,
+  createMemoryOutboxJournal,
+  createMemoryOutboxPersistence,
+  createOutboxNamespaceRegistry,
+  createOutboxLog,
+  createOutboxSignatureVerifier,
+  isOutboxBlindRecord,
+  isOutboxBlindSealedBody,
+  verifyOutboxRecordSignature
+}
+
+export {
+  OUTBOXLOG_OUTBOX_CORE_PREFIX,
+  OUTBOXLOG_PARTITIONED_INDEX_VERSION,
+  OUTBOXLOG_PARTITIONED_JOURNAL_INDEX_NAME,
+  coreNameForOutbox,
+  createHypercoreOutboxJournal,
+  createPartitionedHypercoreOutboxJournal
+} from './hypercore-journal.js'
+export { createOutboxSwarmHub }

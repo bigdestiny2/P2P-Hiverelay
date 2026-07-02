@@ -2,6 +2,11 @@ import { isValidHexKey } from '../constants.js'
 
 export const MAX_DELEGATION_REVOCATION_LIST_ENTRIES = 1000
 
+const DELEGATION_MANAGEMENT_ROUTES = Object.freeze({
+  'GET /api/manage/delegation/revocations': Object.freeze({ kind: 'list' }),
+  'POST /api/manage/delegation/revoke': Object.freeze({ kind: 'revoke' })
+})
+
 function errorPayload (message) {
   return { error: message }
 }
@@ -26,6 +31,15 @@ function validateCertExpiresAt (body) {
   return { ok: true, opts: { certExpiresAt: body.certExpiresAt } }
 }
 
+export function resolveDelegationManagementRoute (method, path) {
+  const route = DELEGATION_MANAGEMENT_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return {
+    ...route,
+    authMessage: `Unauthorized — API key required for ${path}`
+  }
+}
+
 export function buildDelegationRevocationsPayload ({
   listRevocations = null,
   maxEntries = MAX_DELEGATION_REVOCATION_LIST_ENTRIES
@@ -48,6 +62,25 @@ export function buildDelegationRevocationsPayload ({
     total: source.length,
     truncated: revocations.length < source.length,
     revocations
+  }
+}
+
+export function buildDelegationRevocationsRoutePayload ({
+  route,
+  listRevocations = null,
+  maxEntries = MAX_DELEGATION_REVOCATION_LIST_ENTRIES
+} = {}) {
+  if (!route || route.kind !== 'list') {
+    return {
+      ok: false,
+      status: 404,
+      payload: errorPayload('unknown delegation revocation route')
+    }
+  }
+
+  return {
+    ok: true,
+    payload: buildDelegationRevocationsPayload({ listRevocations, maxEntries })
   }
 }
 

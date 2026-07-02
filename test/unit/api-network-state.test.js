@@ -1,10 +1,13 @@
 import test from 'brittle'
 import {
   buildNetworkStatePayload,
+  buildNetworkStateRoutePayload,
+  buildNetworkStateRouteContext,
   detailedNetworkState,
   isDetailedNetworkStateQuery,
   publicNetworkRelay,
-  publicNetworkState
+  publicNetworkState,
+  resolveNetworkStateRoute
 } from '../../packages/core/core/relay-node/api-network-state.js'
 
 function detailedState () {
@@ -46,6 +49,75 @@ test('api network state: detailed query parser is explicit', (t) => {
   t.absent(isDetailedNetworkStateQuery('TRUE'))
   t.absent(isDetailedNetworkStateQuery('0'))
   t.absent(isDetailedNetworkStateQuery(null))
+})
+
+test('api network state: route helper maps exact network read', (t) => {
+  t.alike(resolveNetworkStateRoute('GET', '/api/network'), {
+    kind: 'network-state'
+  })
+
+  t.is(resolveNetworkStateRoute('POST', '/api/network'), null)
+  t.is(resolveNetworkStateRoute('GET', '/api/network/extra'), null)
+  t.is(resolveNetworkStateRoute('GET', '/api/networks'), null)
+})
+
+test('api network state: route context owns detailed auth decision', (t) => {
+  t.alike(buildNetworkStateRouteContext(new URL('http://127.0.0.1/api/network?detailed=1')), {
+    detailed: true,
+    requiresAuth: true
+  })
+
+  t.alike(buildNetworkStateRouteContext(new URL('http://127.0.0.1/api/network?detailed=true')), {
+    detailed: true,
+    requiresAuth: true
+  })
+
+  t.alike(buildNetworkStateRouteContext(new URL('http://127.0.0.1/api/network?detailed=TRUE')), {
+    detailed: false,
+    requiresAuth: false
+  })
+
+  t.alike(buildNetworkStateRouteContext(null), {
+    detailed: false,
+    requiresAuth: false
+  })
+})
+
+test('api network state: route payload helper dispatches redacted and detailed state', (t) => {
+  const networkDiscovery = {
+    getNetworkState: detailedState
+  }
+
+  const pub = buildNetworkStateRoutePayload({
+    route: { kind: 'network-state' },
+    url: new URL('http://127.0.0.1/api/network'),
+    networkDiscovery
+  })
+  const detailed = buildNetworkStateRoutePayload({
+    route: { kind: 'network-state' },
+    url: new URL('http://127.0.0.1/api/network?detailed=true'),
+    networkDiscovery
+  })
+  const contextOverride = buildNetworkStateRoutePayload({
+    route: { kind: 'network-state' },
+    context: { detailed: false },
+    url: new URL('http://127.0.0.1/api/network?detailed=true'),
+    networkDiscovery
+  })
+  const unknown = buildNetworkStateRoutePayload({
+    route: { kind: 'unknown' },
+    networkDiscovery
+  })
+
+  t.is(pub.ok, true)
+  t.absent(pub.payload.relays[0].host)
+  t.absent(JSON.stringify(pub.payload).includes('holesail-secret-key'))
+  t.is(detailed.ok, true)
+  t.is(detailed.payload.relays[0].host, '203.0.113.10')
+  t.is(detailed.payload.relays[0].holesailKey, 'holesail-secret-key')
+  t.absent(contextOverride.payload.relays[0].host)
+  t.is(unknown.status, 404)
+  t.is(unknown.payload.error, 'unknown network state route')
 })
 
 test('api network state: unavailable discovery returns stable 503 payload', (t) => {

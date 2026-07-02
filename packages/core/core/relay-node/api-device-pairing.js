@@ -1,8 +1,20 @@
 import { isValidHexKey } from '../constants.js'
+import { formatErr } from '../error-prefixes.js'
 import { validatePositiveInt } from './api-validation.js'
 
 export const DEVICE_NAME_MAX_LENGTH = 80
 export const MAX_DEVICE_LIST_ENTRIES = 128
+const DEVICE_PERSIST_FAILED_MESSAGE = 'failed to persist device allowlist; check storage permissions and disk space'
+const DEVICE_PAIRING_MANAGEMENT_ROUTES = Object.freeze({
+  'POST /api/manage/devices': Object.freeze({ kind: 'device-management' }),
+  'POST /api/manage/pairing': Object.freeze({ kind: 'pairing-management' })
+})
+
+export function resolveDevicePairingManagementRoute (method, path) {
+  const route = DEVICE_PAIRING_MANAGEMENT_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
 
 function errorPayload (message) {
   return { error: message }
@@ -10,6 +22,28 @@ function errorPayload (message) {
 
 function errorMessage (err) {
   return err && err.message ? err.message : String(err || 'unknown error')
+}
+
+export function devicePersistFailureResult ({
+  error,
+  emit = null
+}) {
+  if (typeof emit === 'function') {
+    emit('device-persist-error', {
+      message: errorMessage(error),
+      error
+    })
+  }
+
+  return {
+    ok: false,
+    kind: 'device-persist',
+    status: 500,
+    payload: {
+      error: formatErr('PERSIST_FAILED', DEVICE_PERSIST_FAILED_MESSAGE),
+      errorCode: 'persist-failed'
+    }
+  }
 }
 
 function isKnownDeviceOperatorError (message) {
@@ -66,7 +100,8 @@ function hasControlChar (value) {
 
 export async function runDeviceManagementAction ({
   body = {},
-  node
+  node,
+  emit = null
 }) {
   body = body || {}
 
@@ -113,7 +148,7 @@ export async function runDeviceManagementAction ({
       if (isKnownDeviceOperatorError(message)) {
         return { ok: false, kind: 'bad-request', status: 400, payload: errorPayload(message) }
       }
-      return { ok: false, kind: 'device-persist', error: err }
+      return devicePersistFailureResult({ error: err, emit })
     }
 
     return { ok: true, payload: { ok: true, action: 'added', pubkey, name: name.value } }
@@ -132,7 +167,7 @@ export async function runDeviceManagementAction ({
       if (isKnownDeviceOperatorError(message)) {
         return { ok: false, kind: 'bad-request', status: 400, payload: errorPayload(message) }
       }
-      return { ok: false, kind: 'device-persist', error: err }
+      return devicePersistFailureResult({ error: err, emit })
     }
 
     return { ok: true, payload: { ok: true, action: 'removed', pubkey } }
@@ -196,4 +231,25 @@ export function runPairingManagementAction ({
   }
 
   return { ok: false, kind: 'bad-request', status: 400, payload: errorPayload('Unknown action (use status, start, stop)') }
+}
+
+export async function runDevicePairingManagementRouteAction ({
+  route,
+  body = {},
+  node,
+  emit = null
+} = {}) {
+  if (!route) {
+    return { ok: false, kind: 'not-found', status: 404, payload: errorPayload('unknown device/pairing management route') }
+  }
+
+  if (route.kind === 'device-management') {
+    return runDeviceManagementAction({ body, node, emit })
+  }
+
+  if (route.kind === 'pairing-management') {
+    return runPairingManagementAction({ body, node })
+  }
+
+  return { ok: false, kind: 'not-found', status: 404, payload: errorPayload('unknown device/pairing management route') }
 }

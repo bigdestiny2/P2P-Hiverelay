@@ -1,4 +1,5 @@
 import { isValidHexKey } from '../constants.js'
+import { formatErr } from '../error-prefixes.js'
 
 export const MAX_FEDERATION_CHANNEL_LENGTH = 80
 export const MAX_FEDERATION_NOTE_LENGTH = 500
@@ -8,8 +9,35 @@ export const MAX_FEDERATION_SNAPSHOT_PEER_APPS = 128
 export const MAX_FEDERATION_SNAPSHOT_LABEL_BYTES = 128
 export const MAX_FEDERATION_SNAPSHOT_URL_BYTES = 2048
 
+const FEDERATION_MANAGEMENT_ROUTES = Object.freeze({
+  'POST /api/manage/federation/follow': 'follow',
+  'POST /api/manage/federation/mirror': 'mirror',
+  'POST /api/manage/federation/unfollow': 'unfollow',
+  'POST /api/manage/federation/republish': 'republish',
+  'POST /api/manage/federation/unrepublish': 'unrepublish'
+})
+
+const FEDERATION_SNAPSHOT_ROUTES = Object.freeze({
+  'GET /api/manage/federation': Object.freeze({
+    kind: 'federation-snapshot',
+    authMessage: 'Unauthorized — API key required for /api/manage/federation'
+  })
+})
+
+const FEDERATION_DISABLED_MESSAGE = 'federation is disabled for this relay profile'
+const FEDERATION_PERSIST_FAILED_MESSAGE = 'failed to persist federation state; check storage permissions and disk space'
+
 function errorPayload (message) {
   return { error: message }
+}
+
+function federationDisabledResult () {
+  return {
+    ok: false,
+    kind: 'disabled-profile',
+    status: 409,
+    payload: errorPayload(formatErr('NOT_ENABLED', FEDERATION_DISABLED_MESSAGE))
+  }
 }
 
 function errorMessage (err) {
@@ -22,6 +50,28 @@ function emitRollbackError (emit, error) {
     message: errorMessage(error),
     error
   })
+}
+
+export function federationPersistFailureResult ({
+  error,
+  emit = null
+}) {
+  if (typeof emit === 'function') {
+    emit('federation-persist-error', {
+      message: errorMessage(error),
+      error
+    })
+  }
+
+  return {
+    ok: false,
+    kind: 'federation-persist',
+    status: 500,
+    payload: {
+      error: formatErr('PERSIST_FAILED', FEDERATION_PERSIST_FAILED_MESSAGE),
+      errorCode: 'persist-failed'
+    }
+  }
 }
 
 function validateFederationActionBody (action, body = {}) {
@@ -79,6 +129,21 @@ function validateFederationActionBody (action, body = {}) {
   return { ok: false, status: 400, payload: errorPayload('Unknown federation action') }
 }
 
+export function resolveFederationManagementRoute (method, path) {
+  const action = FEDERATION_MANAGEMENT_ROUTES[`${method} ${path}`]
+  if (!action) return null
+  return {
+    action,
+    authMessage: `Unauthorized — API key required for ${path}`
+  }
+}
+
+export function resolveFederationSnapshotRoute (method, path) {
+  const route = FEDERATION_SNAPSHOT_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
+
 function buildFederationMutation (action, body) {
   if (action === 'follow') {
     return (federation) => {
@@ -126,8 +191,11 @@ export async function runFederationManagementAction ({
   action,
   body = {},
   federation,
-  emit = null
+  emit = null,
+  disabled = false
 }) {
+  if (disabled) return federationDisabledResult()
+
   body = body || {}
 
   const valid = validateFederationActionBody(action, body)
@@ -168,8 +236,28 @@ export async function runFederationManagementAction ({
       return { ok: false, kind: 'bad-request', status: 400, payload: errorPayload(message) }
     }
 
-    return { ok: false, kind: 'federation-persist', error: err }
+    return federationPersistFailureResult({ error: err, emit })
   }
+}
+
+export async function runFederationManagementRouteAction ({
+  route,
+  body = {},
+  federation,
+  emit = null,
+  disabled = false
+} = {}) {
+  if (!route || !route.action) {
+    return { ok: false, kind: 'not-found', status: 404, payload: errorPayload('unknown federation management route') }
+  }
+
+  return runFederationManagementAction({
+    action: route.action,
+    body,
+    federation,
+    emit,
+    disabled
+  })
 }
 
 export function buildFederationSnapshotPayload ({
@@ -208,6 +296,24 @@ export function buildFederationSnapshotPayload ({
       peerCatalogsTruncated: peerCatalogs.truncated
     }
   }
+}
+
+export function buildFederationSnapshotRoutePayload ({
+  route,
+  federation,
+  disabled = false
+}) {
+  if (!route || route.kind !== 'federation-snapshot') {
+    return {
+      ok: false,
+      status: 404,
+      payload: errorPayload('unknown federation snapshot route')
+    }
+  }
+
+  if (disabled) return federationDisabledResult()
+
+  return buildFederationSnapshotPayload({ federation })
 }
 
 function sanitizeList (source, limit, sanitize) {

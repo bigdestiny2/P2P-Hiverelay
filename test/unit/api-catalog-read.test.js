@@ -2,9 +2,11 @@ import test from 'brittle'
 import {
   CATALOG_TYPE_ERROR,
   RELAY_CATALOG_PAGE_SIZE_MAX,
+  buildCatalogReadRoutePayload,
   buildGatewayCatalogPayload,
   buildRelayCatalogPayload,
-  catalogEntriesByType
+  catalogEntriesByType,
+  resolveCatalogReadRoute
 } from 'p2p-hiverelay/core/relay-node/api-catalog-read.js'
 
 function nodeWithCatalog (entries, config = {}) {
@@ -27,6 +29,59 @@ function nodeWithCatalog (entries, config = {}) {
     }
   }
 }
+
+test('api catalog read: route helper maps exact public catalog reads', (t) => {
+  t.alike(resolveCatalogReadRoute('GET', '/catalog.json'), {
+    kind: 'catalog'
+  })
+  t.alike(resolveCatalogReadRoute('GET', '/api/apps'), {
+    kind: 'legacy-type',
+    type: 'app'
+  })
+  t.alike(resolveCatalogReadRoute('GET', '/api/drives'), {
+    kind: 'legacy-type',
+    type: 'drive'
+  })
+
+  t.is(resolveCatalogReadRoute('POST', '/catalog.json'), null)
+  t.is(resolveCatalogReadRoute('GET', '/catalog.json/extra'), null)
+  t.is(resolveCatalogReadRoute('GET', '/api/apps/extra'), null)
+  t.is(resolveCatalogReadRoute('GET', '/api/resources'), null)
+})
+
+test('api catalog read: route payload helper dispatches catalog and legacy typed routes', (t) => {
+  const entries = [
+    { appKey: '1'.repeat(64), type: 'app', name: 'App One' },
+    { appKey: '2'.repeat(64), type: 'drive', name: 'Drive One' },
+    { appKey: '3'.repeat(64), type: 'drive', name: 'Drive Two' }
+  ]
+  const node = nodeWithCatalog(entries)
+
+  const catalog = buildCatalogReadRoutePayload({
+    route: { kind: 'catalog' },
+    node,
+    url: new URL('http://relay.local/catalog.json?type=drive&pageSize=1')
+  })
+  const legacy = buildCatalogReadRoutePayload({
+    route: { kind: 'legacy-type', type: 'drive' },
+    node,
+    url: new URL('http://relay.local/api/drives?page=2&pageSize=1')
+  })
+  const unknown = buildCatalogReadRoutePayload({
+    route: { kind: 'unknown' },
+    node,
+    url: new URL('http://relay.local/catalog.json')
+  })
+
+  t.is(catalog.ok, true)
+  t.is(catalog.payload.filters.type, 'drive')
+  t.is(catalog.payload.pagination.pageSize, 1)
+  t.is(catalog.payload.drives[0].appKey, '2'.repeat(64))
+  t.is(legacy.status, 200)
+  t.alike(legacy.payload, [{ appKey: '3'.repeat(64), type: 'drive', name: 'Drive Two' }])
+  t.is(unknown.status, 404)
+  t.is(unknown.payload.error, 'unknown catalog read route')
+})
 
 test('api catalog read: relay catalog filters, counts, and paginates in one bounded helper', (t) => {
   const parentKey = 'f'.repeat(64)

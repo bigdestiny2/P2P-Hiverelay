@@ -2,8 +2,48 @@ const MAX_NETWORK_RELAYS = 1000
 const MAX_NETWORK_STRING_BYTES = 128
 const HEX_64 = /^[a-f0-9]{64}$/i
 
+const NETWORK_STATE_ROUTES = Object.freeze({
+  'GET /api/network': Object.freeze({ kind: 'network-state' })
+})
+
 export function isDetailedNetworkStateQuery (value) {
   return value === '1' || value === 'true'
+}
+
+export function resolveNetworkStateRoute (method, path) {
+  const route = NETWORK_STATE_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
+
+export function buildNetworkStateRouteContext (url) {
+  const params = url && url.searchParams
+  const detailed = isDetailedNetworkStateQuery(params && typeof params.get === 'function' ? params.get('detailed') : null)
+  return {
+    detailed,
+    requiresAuth: detailed
+  }
+}
+
+export function buildNetworkStateRoutePayload ({
+  route,
+  context = null,
+  url,
+  networkDiscovery
+} = {}) {
+  if (!route || route.kind !== 'network-state') {
+    return {
+      ok: false,
+      status: 404,
+      payload: { error: 'unknown network state route' }
+    }
+  }
+
+  const routeContext = context || buildNetworkStateRouteContext(url)
+  return buildNetworkStatePayload({
+    networkDiscovery,
+    detailed: routeContext.detailed
+  })
 }
 
 export function buildNetworkStatePayload ({

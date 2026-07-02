@@ -1,6 +1,20 @@
 import { formatErr } from '../error-prefixes.js'
 
 const RECLAIM_UNAVAILABLE = 'dedup reclaim not available (eviction manager not enabled)'
+export const DEDUP_RECLAIM_AUTH_MESSAGE = 'Unauthorized — API key required for /api/dedup/reclaim'
+
+const DEDUP_RECLAIM_ROUTES = Object.freeze({
+  'POST /api/dedup/reclaim': Object.freeze({
+    kind: 'dedup-reclaim',
+    authMessage: DEDUP_RECLAIM_AUTH_MESSAGE
+  })
+})
+
+export function resolveDedupReclaimRoute (method, path) {
+  const route = DEDUP_RECLAIM_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
 
 function badRequest (message) {
   return { error: formatErr('BAD_REQUEST', message) }

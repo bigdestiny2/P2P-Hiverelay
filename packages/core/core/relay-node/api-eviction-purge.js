@@ -2,6 +2,20 @@ import { isValidHexKey } from '../constants.js'
 import { formatErr } from '../error-prefixes.js'
 
 export const MAX_PURGE_APP_KEYS = 50
+export const EVICTION_PURGE_AUTH_MESSAGE = 'Unauthorized — API key required for /api/eviction/purge'
+
+const EVICTION_PURGE_ROUTES = Object.freeze({
+  'POST /api/eviction/purge': Object.freeze({
+    kind: 'eviction-purge',
+    authMessage: EVICTION_PURGE_AUTH_MESSAGE
+  })
+})
+
+export function resolveEvictionPurgeRoute (method, path) {
+  const route = EVICTION_PURGE_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
 
 function badRequest (message) {
   return { error: formatErr('BAD_REQUEST', message) }

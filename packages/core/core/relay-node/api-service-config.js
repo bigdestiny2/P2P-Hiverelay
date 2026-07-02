@@ -7,7 +7,9 @@ export const BUILTIN_SERVICE_PLUGINS = Object.freeze([
   'zk',
   'sla',
   'arbitration',
-  'poker'
+  'poker',
+  'outboxlog',
+  'notify'
 ])
 
 export const BUILTIN_SERVICE_PLUGIN_SET = new Set(BUILTIN_SERVICE_PLUGINS)
@@ -15,6 +17,15 @@ export const BUILTIN_SERVICE_PLUGIN_SET = new Set(BUILTIN_SERVICE_PLUGINS)
 export const SERVICE_PLUGIN_BUNDLES = Object.freeze({
   poker: Object.freeze(['poker', 'vrf', 'arbitration', 'zk'])
 })
+const SERVICE_CONFIG_UPDATE_ROUTES = Object.freeze({
+  'POST /api/manage/services/config': Object.freeze({ kind: 'service-config-update' })
+})
+
+export function resolveServiceConfigUpdateRoute (method, path) {
+  const route = SERVICE_CONFIG_UPDATE_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
 
 export function normalizeManageServicePlugins (plugins) {
   if (plugins === undefined || plugins === null) return { ok: true, plugins: [] }
@@ -87,6 +98,77 @@ export function serviceConfigPayload (config, registry) {
     bundles: SERVICE_PLUGIN_BUNDLES,
     locked,
     lockReason: locked ? 'relaykernel-profile' : null
+  }
+}
+
+export async function runServiceConfigUpdateAction ({
+  body,
+  config,
+  registry = null,
+  persistConfig = null,
+  serviceConfigPayload: buildPayload = serviceConfigPayload
+} = {}) {
+  if (!body || typeof body !== 'object') {
+    return {
+      ok: false,
+      kind: 'bad-request',
+      status: 400,
+      payload: { error: 'request body required' }
+    }
+  }
+
+  if (servicesLockedByProfile(config)) {
+    return {
+      ok: false,
+      kind: 'locked',
+      status: 409,
+      payload: {
+        error: 'Services are locked off by the RelayKernel profile',
+        errorCode: 'relaykernel-services-locked',
+        config: buildPayload(config, registry)
+      }
+    }
+  }
+
+  const normalized = normalizeManageServicePlugins(body.plugins)
+  if (!normalized.ok) {
+    return {
+      ok: false,
+      kind: 'bad-request',
+      status: 400,
+      payload: {
+        error: normalized.error,
+        available: normalized.available || BUILTIN_SERVICE_PLUGINS,
+        bundles: normalized.bundles || SERVICE_PLUGIN_BUNDLES
+      }
+    }
+  }
+
+  const enabled = body.enabled !== false && normalized.plugins.length > 0
+  const previousEnableServices = config && config.enableServices
+  const previousPlugins = config && config.plugins
+  config.enableServices = enabled
+  config.plugins = normalized.plugins
+
+  try {
+    if (typeof persistConfig === 'function') await persistConfig()
+  } catch (err) {
+    config.enableServices = previousEnableServices
+    config.plugins = previousPlugins
+    return {
+      ok: false,
+      kind: 'config-persist',
+      error: err
+    }
+  }
+
+  return {
+    ok: true,
+    payload: {
+      ok: true,
+      restartRequired: true,
+      config: buildPayload(config, registry)
+    }
   }
 }
 

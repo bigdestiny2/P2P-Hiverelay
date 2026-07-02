@@ -3,7 +3,9 @@ export { SeedingRegistry } from './registry/index.js'
 export {
   SeedProtocol,
   SEED_PROTOCOL_VERSION,
+  MAX_PROTOCOL_HANDSHAKE_BYTES,
   SEED_PROTOCOL_HANDSHAKE_MAX_BYTES,
+  parseProtocolHandshake,
   parseSeedProtocolHandshake,
   evaluateSeedProtocolHandshake
 } from './protocol/seed-request.js'
@@ -20,7 +22,8 @@ export {
   buildRelayKernelProfile,
   validateRelayKernelProfile,
   RELAYKERNEL_REQUIRED_CONTRACTS,
-  BLINDSPARK_HTTP_SURFACES
+  BLINDSPARK_HTTP_SURFACES,
+  BLINDSPARK_HTTP_ROUTE_MATRIX
 } from './protocol/relaykernel-profile.js'
 export {
   buildHiveMeshTierProfile,

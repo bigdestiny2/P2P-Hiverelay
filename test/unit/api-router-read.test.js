@@ -2,14 +2,65 @@ import test from 'brittle'
 import {
   MAX_ROUTER_TOPICS,
   MAX_ROUTER_TOPIC_BYTES,
-  buildRouterInfoPayload
+  buildRouterInfoPayload,
+  buildRouterInfoRoutePayload,
+  resolveRouterReadRoute
 } from 'p2p-hiverelay/core/relay-node/api-router-read.js'
+
+test('api router read: route helper maps exact router info route', (t) => {
+  t.alike(resolveRouterReadRoute('GET', '/api/v1/router'), {
+    kind: 'router-info'
+  })
+
+  t.is(resolveRouterReadRoute('POST', '/api/v1/router'), null)
+  t.is(resolveRouterReadRoute('GET', '/api/v1/router/extra'), null)
+  t.is(resolveRouterReadRoute('GET', '/api/v1/services'), null)
+})
 
 test('api router read: missing router returns stable disabled payload', (t) => {
   t.alike(buildRouterInfoPayload(), {
     status: 503,
     payload: { error: 'Router not enabled' }
   })
+})
+
+test('api router read: route payload helper dispatches bounded router info', (t) => {
+  let statsCalls = 0
+  const router = {
+    getStats () {
+      statsCalls++
+      return { routes: 4 }
+    },
+    pubsub: {
+      topics () {
+        return [' chat/general ', 'bad\nname']
+      },
+      topicCount () {
+        return 2
+      },
+      subscriberCount () {
+        return 3
+      }
+    }
+  }
+
+  const result = buildRouterInfoRoutePayload({
+    route: { kind: 'router-info' },
+    router
+  })
+  const unknown = buildRouterInfoRoutePayload({
+    route: { kind: 'unknown' },
+    router
+  })
+
+  t.is(statsCalls, 1)
+  t.is(result.status, 200)
+  t.is(result.headers['Cache-Control'], 'public, max-age=10')
+  t.is(result.payload.routes, 4)
+  t.alike(result.payload.pubsub.topics, ['chat/general'])
+  t.is(result.payload.pubsub.subscriberCount, 3)
+  t.is(unknown.status, 404)
+  t.is(unknown.payload.error, 'unknown router read route')
 })
 
 test('api router read: uses router stats for route count without materializing routes', (t) => {

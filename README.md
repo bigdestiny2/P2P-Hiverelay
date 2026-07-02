@@ -503,6 +503,18 @@ custody, federation, legacy signed-directory discovery, payment settlement,
 leases, and subsidy claims are profile-locked off, including constructor
 overrides and persisted `services.json` toggles. The public gateway/API, core
 proof-of-retrievability route, and review-mode seed ingress stay available.
+The browser bootstrap surfaces are pinned in
+[docs/RELAYKERNEL-GATEWAY-COMPATIBILITY.md](docs/RELAYKERNEL-GATEWAY-COMPATIBILITY.md)
+and checked by `npm run audit:relaykernel-gateway`, so a future extraction
+cannot silently drop PearBrowser's `/.well-known/hiverelay.json`,
+`/catalog.json`, or `/v1/hyper/:driveKey/*path` contract. The same matrix is
+also pinned as the `relaykernel-http-route-matrix-v1-blindspark-compat`
+profile vector and verified by `node scripts/verify-profile-vectors.mjs`,
+whose default fixture-directory mode requires the full supported vector
+inventory exactly once. The vector inventory also includes
+`relaykernel-profile-v1-app-module-boundary`, which proves QVAC, poker,
+custody, and service plugins are detected as outside-kernel modules instead of
+being silently absorbed into the RelayKernel contract.
 
 The Blindspark dashboard exposes a service manager for these plugins. The
 `poker` preset enables the `poker` provider plus `vrf`, `arbitration`, and
@@ -644,7 +656,9 @@ The `storage-proof.prove` method accepts a challenged core key, block index, and
 nonce, reads only locally held app-registry cores, and returns a relay-signed
 proof bound to `coreKey`, `index`, `nonce`, and block hash. Clients verify the
 proof in an isolated verifier core, so fake content, replayed nonces, wrong
-indices, and forged signatures fail independently of catalog trust.
+indices, and forged signatures fail independently of catalog trust. The
+`StorageProofService` implementation is the opt-in `storage-proof` service
+behind that route.
 
 ### Usage Receipt
 
@@ -1031,10 +1045,14 @@ Important release commands:
 | Command | Purpose |
 |---|---|
 | `npm run release:prepare` | Sync package versions, ecosystem app defaults, fleet channels, Umbrel, and StartOS |
+| `npm run release:check-blockers` | Read-only closure board for the public full-release blockers: clean worktree, distribution env, npm latest, GHCR image proof, Umbrel PR/runtime proof, StartOS registry proof, fleet rollout, and final handoff bundle |
 | `npm run release:check-distribution-env` | Fail stable releases missing or malformed npm, fleet, Umbrel, or StartOS credentials; use `--env-file` to validate local candidate secrets before setting GitHub Secrets |
 | `npm run release:check-github-setup` | Verify the repo exposes release secret/variable names before tagging and print the safe secret-rotation repair path when names are missing; values are validated by the Actions preflight |
 | `npm run release:apply-github-secrets` | Validate a local release secret env-file, then apply those exact values to GitHub Secrets through `gh` stdin |
 | `npm run release:check-npm-packages` | Dry-run pack the four publishable npm workspaces and fail missing README/license metadata or unsafe tarball paths before publish |
+| `npm run audit:relaykernel-gateway` | Verify the RelayKernel-profile gateway compatibility matrix against the concrete Node/Bare/data-plane route handlers |
+| `npm run audit:release-promise` | Verify public release notes and official PR body templates stay scoped to Core Availability / Blindspark instead of overbroad service claims |
+| `npm run audit:owned-diff` | Verify a dirty development checkout is composed only of explicitly named audit-owned slices; full release closure still requires a clean worktree |
 | `npm run release:check-image-manifest` | Verify the pinned GHCR digest exposes `linux/amd64` and `linux/arm64` manifests |
 | `npm run release:smoke-image` | Boot exact GHCR digest and test dashboard/API writes, in-band dashboard WebSocket auth, and usage telemetry |
 | `npm run umbrel:smoke-package` | Boot package compose and verify WebSocket auth, telemetry, and persistence |

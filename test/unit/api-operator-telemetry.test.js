@@ -3,11 +3,114 @@ import {
   buildAutoHealPayload,
   buildHealthDetailPayload,
   buildMetricsHistoryPayload,
+  buildOperatorTelemetryRoutePayload,
   buildStorageTopPayload,
+  MAX_OPERATOR_STORAGE_TOP_ENTRIES,
   MAX_OPERATOR_AUTO_HEAL_DRIVES,
   MAX_OPERATOR_HEALTH_ACTIONS,
-  MAX_METRICS_HISTORY_SNAPSHOTS
+  MAX_METRICS_HISTORY_SNAPSHOTS,
+  resolveOperatorTelemetryRoute
 } from 'p2p-hiverelay/core/relay-node/api-operator-telemetry.js'
+
+test('api operator telemetry: route helper maps exact telemetry routes', (t) => {
+  t.alike(resolveOperatorTelemetryRoute('GET', '/api/health-detail'), {
+    kind: 'health-detail',
+    authMessage: 'Unauthorized — API key required for /api/health-detail'
+  })
+  t.alike(resolveOperatorTelemetryRoute('GET', '/api/storage/top'), {
+    kind: 'storage-top',
+    authMessage: 'Unauthorized — storage top requires API key or localhost'
+  })
+  t.alike(resolveOperatorTelemetryRoute('GET', '/api/auto-heal'), {
+    kind: 'auto-heal',
+    authMessage: 'Unauthorized — API key required for /api/auto-heal'
+  })
+  t.alike(resolveOperatorTelemetryRoute('GET', '/api/history'), {
+    kind: 'history',
+    authMessage: 'Unauthorized — API key required for /api/history'
+  })
+  t.is(resolveOperatorTelemetryRoute('POST', '/api/health-detail'), null)
+  t.is(resolveOperatorTelemetryRoute('GET', '/api/history/extra'), null)
+  t.is(resolveOperatorTelemetryRoute('GET', '/api/storage'), null)
+  t.is(resolveOperatorTelemetryRoute('GET', '/api/auto-heal/drives'), null)
+})
+
+test('api operator telemetry: route payload builder centralizes telemetry responses and query clamps', (t) => {
+  const storageTopCalls = []
+  const node = {
+    getHealthStatus () {
+      return {
+        healthy: true,
+        checks: {
+          memory: { ok: true, heapPct: 20, rssMB: 100 }
+        }
+      }
+    },
+    selfHeal: {
+      getActions () {
+        return []
+      }
+    },
+    storageAccounting: {
+      getSummary () {
+        return { totalBytes: 100, measuredEntries: 1 }
+      },
+      getTop (n) {
+        storageTopCalls.push(n)
+        return [{ appKey: 'a'.repeat(64), bytes: 50, measuredAt: 123 }]
+      }
+    },
+    autoHeal: {
+      snapshot () {
+        return {
+          enabled: true,
+          running: true,
+          tracked: 1,
+          drives: [{ appKey: 'b'.repeat(64), replicas: 2 }]
+        }
+      }
+    },
+    metrics: {
+      snapshots: [{ timestamp: Date.now(), connections: 2 }]
+    }
+  }
+
+  const health = buildOperatorTelemetryRoutePayload({
+    route: { kind: 'health-detail' },
+    node,
+    url: new URL('http://relay.test/api/health-detail')
+  })
+  const storage = buildOperatorTelemetryRoutePayload({
+    route: { kind: 'storage-top' },
+    node,
+    url: new URL('http://relay.test/api/storage/top?n=999999')
+  })
+  const autoHeal = buildOperatorTelemetryRoutePayload({
+    route: { kind: 'auto-heal' },
+    node,
+    url: new URL('http://relay.test/api/auto-heal')
+  })
+  const history = buildOperatorTelemetryRoutePayload({
+    route: { kind: 'history' },
+    node,
+    url: new URL('http://relay.test/api/history?minutes=bad')
+  })
+  const unknown = buildOperatorTelemetryRoutePayload({
+    route: { kind: 'unknown' },
+    node,
+    url: new URL('http://relay.test/api/unknown')
+  })
+
+  t.is(health.status, 200)
+  t.is(health.payload.healthy, true)
+  t.alike(storageTopCalls, [MAX_OPERATOR_STORAGE_TOP_ENTRIES])
+  t.is(storage.payload.entries.length, 1)
+  t.is(autoHeal.payload.enabled, true)
+  t.is(history.status, 200)
+  t.is(history.payload.length, 1)
+  t.is(unknown.status, 404)
+  t.is(unknown.payload.error, 'unknown operator telemetry route')
+})
 
 test('api operator telemetry: health detail caps and sanitizes health and self-heal actions', (t) => {
   const out = buildHealthDetailPayload({

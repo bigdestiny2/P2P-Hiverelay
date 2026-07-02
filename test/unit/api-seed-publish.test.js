@@ -3,9 +3,13 @@ import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import {
   MAX_DISCOVERY_KEYS,
+  OPERATOR_SEED_AUTH_MESSAGE,
+  REGISTRY_PUBLISH_AUTH_MESSAGE,
+  resolveSeedPublishRoute,
   runOperatorSeedAction,
   runPublisherSeedAction,
-  runRegistryPublishAction
+  runRegistryPublishAction,
+  runSeedPublishRouteAction
 } from '../../packages/core/core/relay-node/api-seed-publish.js'
 import {
   serializeSeedRequestForReplaySigning,
@@ -56,6 +60,75 @@ function signedSeedBody (publisherKp, overrides = {}) {
   body.publisherSignature = b4a.toString(msg.publisherSignature, 'hex')
   return body
 }
+
+test('api seed publish: route resolver maps exact seed and registry publish routes', (t) => {
+  t.alike(resolveSeedPublishRoute('POST', '/seed'), {
+    kind: 'operator-seed',
+    authMessage: OPERATOR_SEED_AUTH_MESSAGE
+  })
+  t.alike(resolveSeedPublishRoute('POST', '/registry/publish'), {
+    kind: 'registry-publish',
+    authMessage: REGISTRY_PUBLISH_AUTH_MESSAGE
+  })
+  t.alike(resolveSeedPublishRoute('POST', '/api/v1/seed'), {
+    kind: 'publisher-seed'
+  })
+  t.is(resolveSeedPublishRoute('GET', '/seed'), null, 'wrong method falls through')
+  t.is(resolveSeedPublishRoute('POST', '/seed-core'), null, 'adjacent seed-core route falls through')
+  t.is(resolveSeedPublishRoute('POST', '/registry/publish/extra'), null, 'registry subpath falls through')
+  t.is(resolveSeedPublishRoute('POST', '/api/v1/seed/extra'), null, 'publisher subpath falls through')
+  t.is(resolveSeedPublishRoute('POST', '/api/v1/unseed'), null, 'adjacent publisher route falls through')
+})
+
+test('api seed publish: route action helper dispatches seed and registry primitives', async (t) => {
+  const publisher = keyPair()
+  const calls = []
+  const node = {
+    swarm: { keyPair: { publicKey: Buffer.alloc(32, 9) } },
+    seedingRegistry: {
+      async publishRequest (request) {
+        calls.push({ type: 'registry', request })
+        return { entryId: 'registry-entry' }
+      },
+      getCustodyIntent () { return null }
+    },
+    async seedApp (appKey, opts) {
+      calls.push({ type: 'seed', appKey, opts })
+      return { discoveryKey: 'seeded-' + appKey[0] }
+    }
+  }
+
+  const operator = await runSeedPublishRouteAction({
+    route: { kind: 'operator-seed' },
+    body: { appKey: 'a'.repeat(64) },
+    node
+  })
+  const registry = await runSeedPublishRouteAction({
+    route: { kind: 'registry-publish' },
+    body: { appKey: 'b'.repeat(64), discoveryKeys: [] },
+    node
+  })
+  const publisherOut = await runSeedPublishRouteAction({
+    route: { kind: 'publisher-seed' },
+    body: signedSeedBody(publisher, { appKey: 'c'.repeat(64) }),
+    node
+  })
+  const unknown = await runSeedPublishRouteAction({
+    route: { kind: 'unknown' },
+    body: {},
+    node
+  })
+
+  t.alike(operator.payload, { ok: true, discoveryKey: 'seeded-a' })
+  t.alike(registry.payload, { ok: true, entryId: 'registry-entry' })
+  t.alike(publisherOut.payload, { ok: true, discoveryKey: 'seeded-c' })
+  t.alike(calls.map(call => call.type), ['seed', 'registry', 'seed'])
+  t.is(calls[0].appKey, 'a'.repeat(64))
+  t.is(calls[1].request.appKey.toString('hex'), 'b'.repeat(64))
+  t.is(calls[2].appKey, 'c'.repeat(64))
+  t.is(unknown.status, 404)
+  t.is(unknown.payload.error, 'unknown seed publish route')
+})
 
 test('api seed publish: operator seed normalizes metadata without mutating opts', async (t) => {
   const calls = []
@@ -163,6 +236,56 @@ test('api seed publish: operator seed rejects malformed input before seeding', a
   })
   t.is(out.status, 400)
   t.alike(out.payload, { error: 'shardIds must contain non-negative integers' })
+})
+
+test('api seed publish: disabled custody seed fields reject before seed runtime access', async (t) => {
+  const intentId = 'c'.repeat(64)
+  const operator = await runOperatorSeedAction({
+    body: { custodyIntentId: intentId },
+    node: {
+      async seedApp () {
+        t.fail('disabled operator custody seed must not reach seedApp')
+      }
+    },
+    disabled: true
+  })
+  t.is(operator.ok, false)
+  t.is(operator.kind, 'disabled-profile')
+  t.is(operator.status, 409)
+  t.ok(operator.payload.error.startsWith('not-enabled: '), 'operator custody seed returns formatted disabled-profile error')
+
+  const publisher = await runPublisherSeedAction({
+    body: { custodyIntentId: intentId },
+    node: {
+      get seedApp () {
+        t.fail('disabled publisher custody seed must not inspect seedApp readiness')
+      }
+    },
+    disabled: true
+  })
+  t.is(publisher.ok, false)
+  t.is(publisher.kind, 'disabled-profile')
+  t.is(publisher.status, 409)
+  t.ok(publisher.payload.error.startsWith('not-enabled: '), 'publisher custody seed returns formatted disabled-profile error')
+})
+
+test('api seed publish: disabled profile still allows plain operator seed', async (t) => {
+  const calls = []
+  const out = await runOperatorSeedAction({
+    body: { appKey: 'a'.repeat(64) },
+    node: {
+      async seedApp (appKey, opts) {
+        calls.push({ appKey, opts })
+        return { discoveryKey: 'plain-seed-ok' }
+      }
+    },
+    disabled: true
+  })
+
+  t.alike(out.payload, { ok: true, discoveryKey: 'plain-seed-ok' })
+  t.is(calls.length, 1)
+  t.is(calls[0].appKey, 'a'.repeat(64))
+  t.alike(calls[0].opts, {})
 })
 
 test('api seed publish: registry publish builds the signed catalog request', async (t) => {

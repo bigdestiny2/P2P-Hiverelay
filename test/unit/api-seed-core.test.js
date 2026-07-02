@@ -7,6 +7,12 @@
 import test from 'brittle'
 import http from 'http'
 import { RelayAPI } from 'p2p-hiverelay/core/relay-node/api.js'
+import {
+  normalizeSeedCoreKey,
+  resolveSeedCoreRoute,
+  SEED_CORE_AUTH_MESSAGE,
+  runSeedCoreAction
+} from 'p2p-hiverelay/core/relay-node/api-seed-core.js'
 
 const API_KEY = 'seed-core-test-key'
 const HEX64 = 'a'.repeat(64)
@@ -44,7 +50,7 @@ function request (port, method, path, body, headers = {}) {
       res.on('end', () => {
         let parsed
         try { parsed = JSON.parse(data) } catch (_) { parsed = data }
-        resolve({ statusCode: res.statusCode, body: parsed })
+        resolve({ statusCode: res.statusCode, headers: res.headers, body: parsed })
       })
     })
     req.on('error', reject)
@@ -65,6 +71,58 @@ async function makeServer (t, seeder, nodeOpts) {
   })
   return { port, node }
 }
+
+test('seed-core helper: route resolver maps only the exact operator seed-core route', (t) => {
+  t.alike(resolveSeedCoreRoute('POST', '/seed-core'), {
+    kind: 'seed-core',
+    authMessage: SEED_CORE_AUTH_MESSAGE
+  })
+  t.is(resolveSeedCoreRoute('GET', '/seed-core'), null, 'wrong method falls through')
+  t.is(resolveSeedCoreRoute('POST', '/seed-core/extra'), null, 'subpath falls through')
+  t.is(resolveSeedCoreRoute('POST', '/seed'), null, 'adjacent operator seed route falls through')
+  t.is(resolveSeedCoreRoute('POST', '/api/v1/seed'), null, 'publisher seed route falls through')
+})
+
+test('seed-core helper: normalizes aliases and validates route contract', async (t) => {
+  t.is(normalizeSeedCoreKey({ coreKey: '  ' + 'A'.repeat(64) + '  ' }), HEX64)
+  t.is(normalizeSeedCoreKey({ appKey: 'B'.repeat(64) }), 'b'.repeat(64))
+  t.is(normalizeSeedCoreKey({ coreKey: 'not-hex' }), null)
+
+  const unavailable = await runSeedCoreAction({ node: {}, body: { coreKey: HEX64 } })
+  t.alike(unavailable, { ok: false, status: 503, payload: { error: 'seeder not available' } })
+
+  const calls = []
+  const node = mockRelayNode({
+    async seedCore (key) {
+      calls.push(key)
+      return { core: { length: 9 } }
+    }
+  })
+  const seeded = await runSeedCoreAction({ node, body: { coreKey: 'A'.repeat(64), catalog: true } })
+  t.alike(seeded, {
+    ok: true,
+    status: 200,
+    payload: { ok: true, coreKey: HEX64, length: 9, catalogBee: true }
+  })
+  t.alike(calls, [HEX64])
+  t.alike(node._catalogSet, [HEX64])
+})
+
+test('seed-core helper: delegates seed errors to caller error mapping', async (t) => {
+  const err = new Error('corestore closed')
+  const result = await runSeedCoreAction({
+    node: mockRelayNode({
+      async seedCore () {
+        throw err
+      }
+    }),
+    body: { coreKey: HEX64 }
+  })
+
+  t.is(result.ok, false)
+  t.is(result.kind, 'seed-error')
+  t.is(result.error, err)
+})
 
 test('seed-core: auth required', async (t) => {
   const { port } = await makeServer(t, { async seedCore () { return { core: { length: 1 } } } })
@@ -104,6 +162,19 @@ test('seed-core: 503 when seeder is unavailable', async (t) => {
   const { port } = await makeServer(t, null)
   const res = await request(port, 'POST', '/seed-core', { coreKey: HEX64 }, { Authorization: 'Bearer ' + API_KEY })
   t.is(res.statusCode, 503)
+})
+
+test('seed-core: transient seed errors stay retryable through the route', async (t) => {
+  const seeder = {
+    async seedCore () {
+      throw new Error('The corestore is closed')
+    }
+  }
+  const { port } = await makeServer(t, seeder)
+  const res = await request(port, 'POST', '/seed-core', { coreKey: HEX64 }, { Authorization: 'Bearer ' + API_KEY })
+  t.is(res.statusCode, 503)
+  t.is(res.headers['retry-after'], '5')
+  t.is(res.body.retryable, true)
 })
 
 test('seed-core: catalog:true registers the catalog-bee pointer', async (t) => {

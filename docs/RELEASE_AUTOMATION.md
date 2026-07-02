@@ -44,6 +44,11 @@ OCI/Docker image index containing `linux/amd64` and `linux/arm64` manifests.
 The normal verifier path rejects non-success workflow evidence; failed-run
 artifacts are diagnostic only and require the explicit
 `--allow-failed-diagnostic` flag for local inspection.
+Public release notes and the official Umbrel PR body are intentionally scoped
+to Core Availability / Blindspark. `npm run audit:release-promise` checks those
+public handoff surfaces, and `prepare-release` rejects custom release notes
+that recast the release as an AI, poker, custody, payment, ZK, arbitration, or
+service-marketplace product.
 After upload, it downloads the release assets back from GitHub Release into a
 temporary bundle and runs the same verifier with `--bundle-dir`, proving the
 published assets round-trip. After the post-publication Umbrel and StartOS
@@ -258,6 +263,64 @@ Umbrel PRs, or publishing to StartOS. A full release is considered live only
 after `release-surfaces.yml` succeeds and attaches `release-evidence.json` plus
 the required sidecars to the GitHub Release.
 
+Before rerunning a public full release, or before calling a completed release
+ready, use the read-only closure board. It does not publish, upload, set
+secrets, update fleet metadata, open PRs, or contact npm unless
+`--check-npm-live` is passed explicitly. With `--npm-latest-json`, the npm
+proof is taken from a trusted offline fixture and the checker refuses incomplete
+fixtures instead of falling through to a live lookup. Once the live registry
+gate is green, write `npm-latest-evidence.json` beside the other downloaded
+release assets:
+
+```sh
+npm run release:check-npm-latest -- \
+  --expected-version 0.20.2 \
+  --out npm-latest-evidence.json
+```
+
+The npm-latest command refuses to write that sidecar unless every package
+`latest` tag is verified at the expected release version.
+
+```sh
+npm run release:check-blockers -- \
+  --bundle-dir /path/to/downloaded-release-assets \
+  --env-file /private/tmp/hiverelay-release-secrets.env \
+  --npm-latest-json /private/tmp/hiverelay-npm-latest.json \
+  --out release-blockers-report.json
+```
+
+The command aggregates the DMC-style public-release blockers into one
+machine-readable board: clean worktree, side-effect-free distribution env,
+npm `latest` via `npm-latest-evidence.json`, release evidence, GHCR image
+manifest and image smoke, Umbrel package smoke, official Umbrel PR, real Umbrel
+runtime review, StartOS registry publication, StartOS package artifact, fleet
+rollout, and the strict review-ready handoff verifier. It exits non-zero until
+every blocker has a present evidence file and the existing release/handoff
+verifiers pass. The optional `--out release-blockers-report.json` file is a
+public-safe diagnostic report of the current board, not a release proof; it can
+be attached to handoff notes while blockers are still open. The printed and
+written reports redact token-looking values across top-level paths, row details,
+and command strings before they leave the process. Missing sidecar rows
+prefer artifact-producing commands where the repo has one; for example, the
+official Umbrel PR row points at
+`npm run release:write-official-umbrel-pr-evidence -- --out official-umbrel-pr-evidence.json`,
+image and Umbrel smoke rows use their `--evidence` writers, and fleet rollout
+uses `--evidence fleet-rollout-evidence.json`. The final release and handoff
+rows remain verifier commands because they validate the already-collected
+bundle. `npm run release:check-official-umbrel-pr` remains the local
+manifest/submission URL gate before the official PR sidecar can be written.
+When checking a downloaded bundle, evidence entries must be regular files; the
+closure board rejects symlinked or non-regular evidence candidates instead of
+marking those rows present. JSON evidence sidecars must also be non-empty and
+2 MiB or smaller, matching the public-safe evidence writer limit, and must
+parse as JSON objects before the row can be marked present.
+
+For development loops that intentionally carry a dirty audit branch, run
+`npm run audit:owned-diff` before cutting a release branch. That command does
+not satisfy the `worktree.clean` release blocker; it only proves every changed
+or untracked path is mapped to a named audit-owned slice so the release branch
+can be committed, reviewed, or split deliberately.
+
 The same masked-value check also gates `release-surfaces.yml` before public
 GitHub Release continuation. For tag-push and manual runs, the workflow now
 verifies the full-release distribution values before it even checks whether the
@@ -355,8 +418,9 @@ release-candidate skips. The audit proves there are no new unclassified
    unsafe-path checks fail before npm side effects.
    Operators can check the live registry gate without publishing by running
    `npm run release:check-npm-latest`; it fails until all four package `latest`
-   dist-tags equal the monorepo release version and can emit JSON with
-   `-- --json` for release evidence.
+   dist-tags equal the monorepo release version, emits JSON with `-- --json`,
+   and writes `npm-latest-evidence.json` with `-- --out` only when the proof is
+   verified.
 10. Returns to `main`, then runs `npm run release:prepare -- vX.Y.Z --channel both
    --image-digest sha256:... --ecosystem-workspace-root .. --ecosystem-consumer-scope release --ecosystem-dependency-mode npm-latest`.
    In a full sibling workspace this switches tracked app manifests to npm

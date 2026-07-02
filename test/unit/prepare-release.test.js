@@ -216,6 +216,22 @@ test('prepare-release rejects unsafe release-note control characters before meta
   t.absent(res.stderr.includes('Release surfaces are out of sync'))
 })
 
+test('prepare-release rejects overbroad release promise claims before metadata sync', async (t) => {
+  const res = await runPrepare([
+    'v0.16.3',
+    '--channel', 'none',
+    '--image-digest', DIGEST,
+    '--no-umbrel-store',
+    '--release-notes', 'Ship AI poker custody as the public release story.',
+    '--check'
+  ])
+
+  t.is(res.status, 1)
+  t.ok(res.stderr.includes('release notes must stay scoped to Core Availability / Blindspark'))
+  t.ok(res.stderr.includes('AI/QVAC/Ollama product claim'))
+  t.absent(res.stderr.includes('Release surfaces are out of sync'))
+})
+
 test('prepare-release removes local-only README status suffix for public releases', async (t) => {
   const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-fixture-'))
   t.teardown(async () => {
@@ -239,6 +255,7 @@ test('prepare-release removes local-only README status suffix for public release
 
 async function writeMinimalReleaseFixture (repo) {
   await writeText(path.join(repo, 'scripts', 'prepare-release.mjs'), await readFile('scripts/prepare-release.mjs', 'utf8'))
+  await writeText(path.join(repo, 'scripts', 'lib', 'release-promise-scope.mjs'), await readFile('scripts/lib/release-promise-scope.mjs', 'utf8'))
   await writeText(path.join(repo, 'scripts', 'audit-ecosystem-consumers.mjs'), await readFile('scripts/audit-ecosystem-consumers.mjs', 'utf8'))
   await writeText(path.join(repo, 'scripts', 'check-ecosystem-workspace.mjs'), await readFile('scripts/check-ecosystem-workspace.mjs', 'utf8'))
   await writeText(path.join(repo, 'scripts', 'sync-ecosystem-consumers.mjs'), await readFile('scripts/sync-ecosystem-consumers.mjs', 'utf8'))

@@ -1,5 +1,8 @@
 import test from 'brittle'
 import { execFile } from 'node:child_process'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 
 function runCheck (argv = [], env = {}) {
   return new Promise((resolve) => {
@@ -18,6 +21,14 @@ function runCheck (argv = [], env = {}) {
       })
     })
   })
+}
+
+async function tempDir (t) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'hiverelay-npm-latest-'))
+  t.teardown(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+  return dir
 }
 
 function npmLatestEnv (version) {
@@ -58,7 +69,10 @@ test('npm latest check emits machine-readable release evidence', async (t) => {
   const payload = JSON.parse(res.stdout)
 
   t.is(res.status, 1)
+  t.is(payload.schemaVersion, 1)
+  t.is(payload.kind, 'hiverelay-npm-latest-evidence')
   t.is(payload.ok, false)
+  t.is(payload.status, 'blocked')
   t.is(payload.expectedVersion, '0.20.2')
   t.alike(payload.packages, [
     'p2p-hiverelay',
@@ -68,6 +82,39 @@ test('npm latest check emits machine-readable release evidence', async (t) => {
   ])
   t.is(payload.checks.length, 4)
   t.ok(payload.errors.some(error => error.includes('p2p-hiveservices npm latest dist-tag is 0.9.2; expected 0.20.2')))
+})
+
+test('npm latest check writes reusable evidence sidecar only after verified latest tags', async (t) => {
+  const dir = await tempDir(t)
+  const outFile = path.join(dir, 'npm-latest-evidence.json')
+  const res = await runCheck(['--json', '--out', outFile], npmLatestEnv('0.20.2'))
+
+  t.is(res.status, 0)
+  t.alike(res.stderr, '')
+
+  const payload = JSON.parse(await readFile(outFile, 'utf8'))
+  t.is(payload.schemaVersion, 1)
+  t.is(payload.kind, 'hiverelay-npm-latest-evidence')
+  t.is(payload.ok, true)
+  t.is(payload.status, 'verified')
+  t.is(payload.expectedVersion, '0.20.2')
+  t.is(payload.checks.length, 4)
+  t.ok(payload.checks.every(check => check.ok === true && check.latest === '0.20.2'))
+})
+
+test('npm latest check refuses to write reusable evidence when latest tags are stale', async (t) => {
+  const dir = await tempDir(t)
+  const outFile = path.join(dir, 'npm-latest-evidence.json')
+  const res = await runCheck(['--json', '--out', outFile], npmLatestEnv('0.9.2'))
+
+  t.is(res.status, 1)
+  t.ok(res.stderr.includes('Refusing to write npm latest evidence'))
+  try {
+    await readFile(outFile, 'utf8')
+    t.fail('stale npm latest proof should not write a sidecar')
+  } catch (err) {
+    t.is(err.code, 'ENOENT')
+  }
 })
 
 test('npm latest check distinguishes unverified registry proof from missing latest tags', async (t) => {

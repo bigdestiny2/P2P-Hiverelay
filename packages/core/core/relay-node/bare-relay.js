@@ -273,6 +273,18 @@ export class BareRelay extends EventEmitter {
         bareSafeServices.push({ name: 'poker', module: 'p2p-hiveservices/builtin/poker/index.js', className: 'PokerApp' })
       }
 
+      const outboxLogSelected = (Array.isArray(appServices) && appServices.includes('outboxlog')) ||
+        env.HIVERELAY_OUTBOXLOG === '1'
+      if (outboxLogSelected) {
+        bareSafeServices.push({ name: 'outboxlog', module: 'p2p-hiveservices/builtin/outboxlog/index.js', className: 'OutboxLogApp' })
+      }
+
+      const notifySelected = (Array.isArray(appServices) && appServices.includes('notify')) ||
+        env.HIVERELAY_NOTIFY === '1'
+      if (notifySelected) {
+        bareSafeServices.push({ name: 'notify', module: 'p2p-hiveservices/builtin/notify-service.js', className: 'NotifyService' })
+      }
+
       // Storage-proof — Tier-2 trustless seed verification (signed proof that
       // this relay holds a seeded block). Opt-in like poker so a stock node
       // stays minimal; uses node.appRegistry + the relay identity (node.keyPair

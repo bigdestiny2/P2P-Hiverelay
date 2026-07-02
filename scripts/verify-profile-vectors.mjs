@@ -12,7 +12,8 @@ const repoRoot = path.resolve(here, '..')
 async function main () {
   const args = parseArgs(process.argv.slice(2))
   const fixtureDir = path.resolve(repoRoot, args.fixtureDir || 'test/fixtures/relaykernel-profile')
-  const files = args.files.length > 0
+  const hasExplicitFiles = args.files.length > 0
+  const files = hasExplicitFiles
     ? args.files.map(file => path.resolve(repoRoot, file))
     : await fixtureFiles(fixtureDir)
 
@@ -21,11 +22,16 @@ async function main () {
     vectors.push(JSON.parse(await readFile(file, 'utf8')))
   }
 
-  const summary = verifyProfileVectors(vectors)
+  const summary = verifyProfileVectors(vectors, {
+    requireSupportedSet: !hasExplicitFiles
+  })
   if (args.json) {
     console.log(JSON.stringify(summary, null, 2))
   } else {
     console.log(`profile vectors: ${summary.passed}/${summary.count} passed`)
+    for (const error of summary.inventory.errors) {
+      console.error(`- inventory: ${error}`)
+    }
     for (const result of summary.results) {
       if (result.valid) continue
       console.error(`- ${result.name || '(unnamed)'}: ${result.errors.join('; ')}`)

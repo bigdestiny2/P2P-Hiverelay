@@ -2,6 +2,10 @@ import { isValidHexKey } from '../constants.js'
 
 export const MAX_REPUTATION_LEADERBOARD_ENTRIES = 100
 export const MAX_REPUTATION_STRING_BYTES = 128
+const REPUTATION_LEADERBOARD_ROUTES = Object.freeze({
+  'GET /api/reputation': Object.freeze({ kind: 'reputation-leaderboard' })
+})
+const REPUTATION_RECORD_PREFIX = '/api/reputation/'
 
 function normalizeLimit (value, max) {
   if (!Number.isSafeInteger(value)) return max
@@ -127,6 +131,54 @@ export function buildReputationLeaderboardPayload ({
     payload,
     headers: { 'Cache-Control': 'public, max-age=30' }
   }
+}
+
+export function resolveReputationLeaderboardRoute (method, path) {
+  const route = REPUTATION_LEADERBOARD_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
+
+export function buildReputationLeaderboardRoutePayload ({
+  route,
+  reputation = null,
+  maxEntries = MAX_REPUTATION_LEADERBOARD_ENTRIES
+} = {}) {
+  if (!route || route.kind !== 'reputation-leaderboard') {
+    return {
+      ok: false,
+      status: 404,
+      payload: { error: 'unknown reputation leaderboard route' }
+    }
+  }
+
+  return buildReputationLeaderboardPayload({ reputation, maxEntries })
+}
+
+export function isReputationRecordRoute (path) {
+  return typeof path === 'string' && path.startsWith(REPUTATION_RECORD_PREFIX)
+}
+
+export function resolveReputationRecordRoute (method, path) {
+  if (method !== 'GET') return null
+  if (isReputationRecordRoute(path)) return { kind: 'reputation-record' }
+  return null
+}
+
+export function reputationRecordPubkeyFromPath (path) {
+  return isReputationRecordRoute(path)
+    ? path.slice(REPUTATION_RECORD_PREFIX.length)
+    : ''
+}
+
+export function buildReputationRecordRoutePayload ({
+  reputation = null,
+  path = ''
+} = {}) {
+  return buildReputationRecordPayload({
+    reputation,
+    pubkey: reputationRecordPubkeyFromPath(path)
+  })
 }
 
 export function buildReputationRecordPayload ({

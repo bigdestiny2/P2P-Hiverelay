@@ -2,8 +2,76 @@ import { verifyForkProof } from '../fork-proof-signing.js'
 import { verifySeedingManifest } from '../seeding-manifest.js'
 import { formatErr } from '../error-prefixes.js'
 
+const AUTHOR_MANIFEST_ROUTE = /^\/api\/authors\/([0-9a-f]{64})\/seeding\.json$/i
+const MANIFEST_PERSIST_FAILED_MESSAGE = 'failed to persist seeding manifest; check storage permissions and disk space'
+const FORK_PERSIST_FAILED_MESSAGE = 'failed to persist fork proof; check storage permissions and disk space'
+
+const SIGNED_INGRESS_PERSIST_FAILURES = Object.freeze({
+  'manifest-persist': Object.freeze({
+    event: 'manifest-persist-error',
+    message: MANIFEST_PERSIST_FAILED_MESSAGE
+  }),
+  'fork-persist': Object.freeze({
+    event: 'fork-persist-error',
+    message: FORK_PERSIST_FAILED_MESSAGE
+  })
+})
+
 function errorPayload (code, message) {
   return { error: formatErr(code, message) }
+}
+
+function errorMessage (err) {
+  return err && err.message ? err.message : String(err || 'unknown error')
+}
+
+export function signedIngressPersistFailureResult ({
+  kind,
+  error,
+  emit = null
+}) {
+  const spec = SIGNED_INGRESS_PERSIST_FAILURES[kind]
+  if (!spec) return null
+
+  if (typeof emit === 'function') {
+    emit(spec.event, {
+      message: errorMessage(error),
+      error
+    })
+  }
+
+  return {
+    ok: false,
+    kind,
+    status: 500,
+    payload: {
+      error: formatErr('PERSIST_FAILED', spec.message),
+      errorCode: 'persist-failed'
+    }
+  }
+}
+
+export function resolveSignedIngressRoute (method, path) {
+  if (method !== 'POST') return null
+  if (path === '/api/authors/seeding.json') return { kind: 'author-manifest-publish' }
+  if (path === '/api/forks/proof') return { kind: 'fork-proof-publish' }
+  return null
+}
+
+export function authorManifestPubkeyFromPath (path) {
+  if (typeof path !== 'string') return null
+  const match = path.match(AUTHOR_MANIFEST_ROUTE)
+  return match ? match[1] : null
+}
+
+export function buildAuthorManifestFetchRoutePayload ({
+  manifestStore,
+  path
+}) {
+  return runAuthorManifestFetchAction({
+    manifestStore,
+    pubkey: authorManifestPubkeyFromPath(path)
+  })
 }
 
 export function runAuthorManifestFetchAction ({ manifestStore, pubkey }) {
@@ -22,7 +90,7 @@ export function runAuthorManifestFetchAction ({ manifestStore, pubkey }) {
   }
 }
 
-export async function runAuthorManifestPublishAction ({ body, manifestStore }) {
+export async function runAuthorManifestPublishAction ({ body, manifestStore, emit = null }) {
   if (!manifestStore) {
     return { ok: false, status: 503, payload: errorPayload('UNSUPPORTED', 'manifest store not initialized') }
   }
@@ -50,7 +118,7 @@ export async function runAuthorManifestPublishAction ({ body, manifestStore }) {
     if (snapshot && typeof manifestStore.restoreSnapshot === 'function') {
       manifestStore.restoreSnapshot(snapshot)
     }
-    return { ok: false, kind: 'manifest-persist', error: err }
+    return signedIngressPersistFailureResult({ kind: 'manifest-persist', error: err, emit })
   }
 
   return {
@@ -60,7 +128,7 @@ export async function runAuthorManifestPublishAction ({ body, manifestStore }) {
   }
 }
 
-export async function runForkProofPublishAction ({ body, forkDetector }) {
+export async function runForkProofPublishAction ({ body, forkDetector, emit = null }) {
   if (!forkDetector) {
     return { ok: false, status: 503, payload: errorPayload('UNSUPPORTED', 'fork detector not initialized') }
   }
@@ -92,7 +160,7 @@ export async function runForkProofPublishAction ({ body, forkDetector }) {
     if (snapshot && typeof forkDetector.restoreSnapshot === 'function') {
       forkDetector.restoreSnapshot(snapshot)
     }
-    return { ok: false, kind: 'fork-persist', error: err }
+    return signedIngressPersistFailureResult({ kind: 'fork-persist', error: err, emit })
   }
 
   return {

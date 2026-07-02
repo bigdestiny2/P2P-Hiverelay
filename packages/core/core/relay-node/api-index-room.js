@@ -1,9 +1,17 @@
 import { formatErr } from '../error-prefixes.js'
 
 export const INDEX_ROOM_KEY_RE = /^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/
+export const INDEX_ROOM_AUTH_MESSAGE = 'Unauthorized — API key required for /api/manage/index-room'
 
 function badRequest (message) {
   return { error: formatErr('BAD_REQUEST', message) }
+}
+
+export function resolveIndexRoomRoute (method, path) {
+  if (method === 'POST' && path === '/api/manage/index-room') {
+    return { kind: 'index-room', authMessage: INDEX_ROOM_AUTH_MESSAGE }
+  }
+  return null
 }
 
 export function parseIndexRoomRequest (body) {

@@ -29,6 +29,11 @@ const BUILTIN_MAP = {
   // Card-blind poker substrate (SignedLog). Useful only with its crypto
   // support services — see SERVICE_BUNDLES below.
   poker: { module: 'p2p-hiveservices/builtin/poker/index.js', className: 'PokerApp' },
+  // Single-writer app outbox availability bridge for Pear/PearBrowser apps.
+  outboxlog: { module: 'p2p-hiveservices/builtin/outboxlog/index.js', className: 'OutboxLogApp' },
+  // Encrypted wake-only notification bridge. Provider SDK adapters are
+  // service-owned; Core only loads the optional provider.
+  notify: { module: 'p2p-hiveservices/builtin/notify-service.js', className: 'NotifyService' },
   // Tier-2 trustless seed verification: signed challenge-response proof that
   // this relay holds a seeded block. Independent — NOT part of any bundle.
   'storage-proof': { module: 'p2p-hiveservices/builtin/storage-proof-service.js', className: 'StorageProofService' }

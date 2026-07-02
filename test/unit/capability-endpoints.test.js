@@ -16,6 +16,11 @@ import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import { ManifestStore } from 'p2p-hiverelay/core/manifest-store.js'
 import { createSeedingManifest } from 'p2p-hiverelay/core/seeding-manifest.js'
+import {
+  buildCapabilityRoutePayload,
+  CAPABILITY_DOC_CACHE_CONTROL,
+  resolveCapabilityRoute
+} from 'p2p-hiverelay/core/relay-node/api-capabilities.js'
 
 function mockRelayNode ({ manifestStore, forkDetector } = {}) {
   return {
@@ -162,6 +167,35 @@ async function setupApi (t, nodeExtras = {}) {
   })
   return { api, node, port }
 }
+
+test('capability route helper builds node runtime doc with public cache headers', (t) => {
+  const node = mockRelayNode()
+  const result = buildCapabilityRoutePayload({
+    node,
+    version: '1.2.3-test',
+    runtime: 'node'
+  })
+
+  t.is(result.status, 200)
+  t.alike(result.headers, { 'Cache-Control': CAPABILITY_DOC_CACHE_CONTROL })
+  t.is(result.payload.version, '1.2.3-test')
+  t.is(result.payload.runtime, 'node')
+  t.is(result.payload.limitation.accept_mode, 'review')
+  t.ok(result.payload.features.includes('capability-doc'))
+})
+
+test('capability route helper maps exact public capability routes', (t) => {
+  t.alike(resolveCapabilityRoute('GET', '/.well-known/hiverelay.json'), {
+    kind: 'capability-doc'
+  })
+  t.alike(resolveCapabilityRoute('GET', '/api/capabilities'), {
+    kind: 'capability-doc'
+  })
+
+  t.is(resolveCapabilityRoute('POST', '/.well-known/hiverelay.json'), null)
+  t.is(resolveCapabilityRoute('GET', '/.well-known/hiverelay.json/extra'), null)
+  t.is(resolveCapabilityRoute('GET', '/api/capabilities/extra'), null)
+})
 
 test('GET /.well-known/hiverelay.json returns a valid capability doc', async (t) => {
   const { port } = await setupApi(t)

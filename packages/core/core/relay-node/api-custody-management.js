@@ -1,4 +1,8 @@
 import { isValidHexKey } from '../constants.js'
+import { custodyDisabledResult } from './api-custody-disabled.js'
+
+const OPERATOR_CUSTODY_PREFIX = '/api/custody/'
+const PUBLISHER_CUSTODY_PREFIX = '/api/v1/custody/'
 
 function errorPayload (message) {
   return { error: message }
@@ -26,6 +30,15 @@ function keyPairFromNode (node) {
   return node && node.swarm ? node.swarm.keyPair : null
 }
 
+function prefixedActionRoute ({ path, prefix, suffix, action, authMessage = null }) {
+  if (typeof path !== 'string' || !path.startsWith(prefix) || !path.endsWith(suffix)) return null
+  return {
+    action,
+    intentId: path.slice(prefix.length, -suffix.length),
+    authMessage
+  }
+}
+
 async function runRegistryCall ({ call, providerErrorFallback = null, wrapOk = true }) {
   try {
     const entry = await call()
@@ -40,12 +53,84 @@ async function runRegistryCall ({ call, providerErrorFallback = null, wrapOk = t
   }
 }
 
+export function resolveOperatorCustodyRoute (method, path) {
+  if (method !== 'POST') return null
+
+  if (path === '/api/custody/intent') {
+    return {
+      action: 'intent',
+      intentId: null,
+      authMessage: 'Unauthorized — API key required for /api/custody/intent'
+    }
+  }
+
+  if (path === '/api/custody/proof') {
+    return {
+      action: 'proof',
+      intentId: null,
+      authMessage: 'Unauthorized — API key required for /api/custody/proof'
+    }
+  }
+
+  return prefixedActionRoute({
+    path,
+    prefix: OPERATOR_CUSTODY_PREFIX,
+    suffix: '/commit',
+    action: 'commit',
+    authMessage: 'Unauthorized — API key required for /api/custody/:intentId/commit'
+  }) || prefixedActionRoute({
+    path,
+    prefix: OPERATOR_CUSTODY_PREFIX,
+    suffix: '/source-retired',
+    action: 'source-retired',
+    authMessage: 'Unauthorized — API key required for /api/custody/:intentId/source-retired'
+  }) || prefixedActionRoute({
+    path,
+    prefix: OPERATOR_CUSTODY_PREFIX,
+    suffix: '/witness',
+    action: 'witness',
+    authMessage: 'Unauthorized — API key required for /api/custody/:intentId/witness'
+  }) || prefixedActionRoute({
+    path,
+    prefix: OPERATOR_CUSTODY_PREFIX,
+    suffix: '/non-serving-proof',
+    action: 'non-serving-proof',
+    authMessage: 'Unauthorized — API key required for /api/custody/:intentId/non-serving-proof'
+  })
+}
+
+export function resolvePublisherCustodyRoute (method, path) {
+  if (method !== 'POST') return null
+
+  if (path === '/api/v1/custody/intent') {
+    return {
+      action: 'intent',
+      intentId: null
+    }
+  }
+
+  return prefixedActionRoute({
+    path,
+    prefix: PUBLISHER_CUSTODY_PREFIX,
+    suffix: '/commit',
+    action: 'commit'
+  }) || prefixedActionRoute({
+    path,
+    prefix: PUBLISHER_CUSTODY_PREFIX,
+    suffix: '/source-retired',
+    action: 'source-retired'
+  })
+}
+
 export async function runOperatorCustodyAction ({
   action,
   body = {},
   intentId = null,
-  node
+  node,
+  disabled = false
 }) {
+  if (disabled) return custodyDisabledResult()
+
   body = body || {}
 
   if (action === 'intent') {
@@ -114,8 +199,11 @@ export async function runPublisherCustodyAction ({
   action,
   body = {},
   intentId = null,
-  node
+  node,
+  disabled = false
 }) {
+  if (disabled) return custodyDisabledResult()
+
   body = body || {}
   if (!node || !node.seedingRegistry) return registryNotRunning()
 
@@ -157,4 +245,40 @@ export async function runPublisherCustodyAction ({
   }
 
   return { ok: false, kind: 'bad-request', status: 400, payload: errorPayload('Unknown custody action') }
+}
+
+export async function runOperatorCustodyRouteAction ({
+  route,
+  body = {},
+  node,
+  disabled = false
+} = {}) {
+  if (!route || !route.action) {
+    return { ok: false, kind: 'bad-request', status: 404, payload: errorPayload('unknown operator custody route') }
+  }
+  return runOperatorCustodyAction({
+    action: route.action,
+    body,
+    intentId: route.intentId,
+    node,
+    disabled
+  })
+}
+
+export async function runPublisherCustodyRouteAction ({
+  route,
+  body = {},
+  node,
+  disabled = false
+} = {}) {
+  if (!route || !route.action) {
+    return { ok: false, kind: 'bad-request', status: 404, payload: errorPayload('unknown publisher custody route') }
+  }
+  return runPublisherCustodyAction({
+    action: route.action,
+    body,
+    intentId: route.intentId,
+    node,
+    disabled
+  })
 }

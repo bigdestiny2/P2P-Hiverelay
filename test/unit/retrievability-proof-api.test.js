@@ -11,6 +11,9 @@ import {
   RETRIEVABILITY_PROOF_SIGNATURE_PROFILE,
   verifyStorageProof
 } from 'p2p-hiverelay/core/protocol/proof-of-storage.js'
+import {
+  resolveRetrievabilityProofRoute
+} from 'p2p-hiverelay/core/relay-node/retrievability-proof.js'
 
 let seq = 0
 function tmp () {
@@ -115,6 +118,16 @@ function request (port, body) {
     req.end()
   })
 }
+
+test('api retrievability proof: route helper maps exact public proof route', (t) => {
+  t.alike(resolveRetrievabilityProofRoute('POST', '/api/proof/retrievability'), {
+    kind: 'retrievability-proof'
+  })
+
+  t.is(resolveRetrievabilityProofRoute('GET', '/api/proof/retrievability'), null)
+  t.is(resolveRetrievabilityProofRoute('POST', '/api/proof/retrievability/extra'), null)
+  t.is(resolveRetrievabilityProofRoute('POST', '/api/proofs/retrievability'), null)
+})
 
 test('api retrievability proof: public HTTP proof verifies against drive key', async (t) => {
   const core = await seededCore([b4a.from('a'), b4a.from('bb'), b4a.from('ccc')])

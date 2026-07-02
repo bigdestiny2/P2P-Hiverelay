@@ -7,6 +7,7 @@ import {
   DEFAULT_DEPENDENCY_MODE
 } from './audit-ecosystem-consumers.mjs'
 import { checkEcosystemWorkspace } from './check-ecosystem-workspace.mjs'
+import { assertNarrowReleasePromise } from './lib/release-promise-scope.mjs'
 import { syncEcosystemConsumers } from './sync-ecosystem-consumers.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -173,6 +174,11 @@ function assertPublicReleaseNotes (value) {
   }
   for (const [pattern, name] of FORBIDDEN_PUBLIC_RELEASE_NOTES_PATTERNS) {
     if (pattern.test(value)) die(`release notes must not expose ${name}`)
+  }
+  try {
+    assertNarrowReleasePromise(value, { label: 'release notes' })
+  } catch (err) {
+    die(err.message)
   }
 }
 

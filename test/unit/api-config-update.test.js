@@ -1,5 +1,18 @@
 import test from 'brittle'
-import { runConfigUpdateAction } from '../../packages/core/core/relay-node/api-config-update.js'
+import {
+  resolveConfigUpdateRoute,
+  runConfigUpdateAction
+} from '../../packages/core/core/relay-node/api-config-update.js'
+
+test('api config update: route helper maps exact config update route', (t) => {
+  t.alike(resolveConfigUpdateRoute('POST', '/api/manage/config'), {
+    kind: 'config-update'
+  })
+
+  t.is(resolveConfigUpdateRoute('GET', '/api/manage/config'), null)
+  t.is(resolveConfigUpdateRoute('POST', '/api/manage/config/extra'), null)
+  t.is(resolveConfigUpdateRoute('POST', '/api/manage/configuration'), null)
+})
 
 test('api config update: rejects malformed integers and rolls back earlier fields', async (t) => {
   const config = {

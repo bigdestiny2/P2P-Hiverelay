@@ -5,8 +5,64 @@ import {
   MAX_ALERT_TEST_MESSAGE_BYTES,
   MAX_ALERT_TYPE_FILTER_BYTES,
   buildAlertLogPayload,
+  resolveAlertManagementRoute,
+  runAlertManagementRouteAction,
   runAlertTestAction
 } from 'p2p-hiverelay/core/relay-node/api-alert-management.js'
+
+test('api alert management: route helper maps exact alert management routes', (t) => {
+  t.alike(resolveAlertManagementRoute('GET', '/api/alerts'), {
+    kind: 'log',
+    authMessage: 'Unauthorized — API key required for /api/alerts'
+  })
+  t.alike(resolveAlertManagementRoute('POST', '/api/alerts/test'), {
+    kind: 'test',
+    authMessage: 'Unauthorized — API key required for /api/alerts/test'
+  })
+  t.is(resolveAlertManagementRoute('POST', '/api/alerts'), null)
+  t.is(resolveAlertManagementRoute('GET', '/api/alerts/test'), null)
+  t.is(resolveAlertManagementRoute('GET', '/api/alerts/test/extra'), null)
+  t.is(resolveAlertManagementRoute('GET', '/api/alerts-public'), null)
+})
+
+test('api alert management: route action helper dispatches log and test primitives', (t) => {
+  const getLogCalls = []
+  const fireTestCalls = []
+  const alertManager = {
+    getLog (opts) {
+      getLogCalls.push(opts)
+      return { total: 1, offset: opts.offset, limit: opts.limit, items: [{ type: 'disk' }] }
+    },
+    fireTest (opts) {
+      fireTestCalls.push(opts)
+      return true
+    }
+  }
+
+  const log = runAlertManagementRouteAction({
+    route: { kind: 'log' },
+    alertManager,
+    url: new URL('http://relay.local/api/alerts?offset=3&limit=4&severity=warn&type=disk')
+  })
+  const testAlert = runAlertManagementRouteAction({
+    route: { kind: 'test' },
+    alertManager,
+    body: { severity: 'critical', message: 'manual test', details: { source: 'unit' } }
+  })
+  const unknown = runAlertManagementRouteAction({
+    route: { kind: 'unknown' },
+    alertManager
+  })
+
+  t.is(log.ok, true)
+  t.alike(getLogCalls, [{ offset: 3, limit: 4, severity: 'warn', type: 'disk' }])
+  t.alike(log.payload, { enabled: true, total: 1, offset: 3, limit: 4, items: [{ type: 'disk' }] })
+  t.is(testAlert.ok, true)
+  t.alike(testAlert.payload, { ok: true, dispatched: true })
+  t.alike(fireTestCalls, [{ severity: 'critical', message: 'manual test', details: { source: 'unit' } }])
+  t.is(unknown.status, 404)
+  t.is(unknown.payload.error, 'unknown alert management route')
+})
 
 test('api alert management: alert log validates filters and clamps pagination before lookup', (t) => {
   t.alike(ALERT_SEVERITIES, ['info', 'warn', 'error', 'critical'])

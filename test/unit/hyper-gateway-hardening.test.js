@@ -200,3 +200,36 @@ test('HyperGateway - unsupported range units and multi-ranges are ignored as ful
   t.is(multi.statusCode, 200, 'multi-range is ignored')
   t.is(multi.raw.toString(), '0123456789abcdef', 'multi-range returns full body')
 })
+
+test('HyperGateway - HEAD preserves range headers without serving bytes', async (t) => {
+  const ctx = await bootGateway(t)
+
+  const res = await request(ctx.port, 'HEAD', ctx.path(), { Range: 'bytes=2-5' })
+
+  t.is(res.statusCode, 206, 'HEAD range request returns partial-content headers')
+  t.is(res.headers['accept-ranges'], 'bytes', 'range support is advertised')
+  t.is(res.headers['content-range'], 'bytes 2-5/16', 'content range is preserved')
+  t.is(res.headers['content-length'], '4', 'partial content length is preserved')
+  t.is(res.raw.length, 0, 'HEAD response has no body')
+  t.is(ctx.gateway.getStats().totalBytesServed, 0, 'HEAD does not count bytes as served')
+})
+
+test('HyperGateway - HEAD on rewritten HTML and directory listings is header-only', async (t) => {
+  const html = Buffer.from('<script src="/assets/app.js"></script>')
+  const rewritten = Buffer.from('<script src="./assets/app.js"></script>')
+  const ctx = await bootGateway(t, { '/index.html': html })
+
+  const htmlHead = await request(ctx.port, 'HEAD', ctx.path('/index.html'))
+  t.is(htmlHead.statusCode, 200, 'HTML HEAD succeeds')
+  t.is(htmlHead.headers['content-type'], 'text/html; charset=utf-8', 'HTML content type is preserved')
+  t.is(htmlHead.headers['content-length'], String(rewritten.length), 'HTML HEAD reports rewritten length')
+  t.is(htmlHead.raw.length, 0, 'HTML HEAD does not send the rewritten body')
+  t.is(ctx.gateway.getStats().totalBytesServed, 0, 'HTML HEAD does not count bytes')
+
+  const listingCtx = await bootGateway(t, {})
+  const listingHead = await request(listingCtx.port, 'HEAD', listingCtx.path('/'))
+  t.is(listingHead.statusCode, 200, 'directory listing HEAD succeeds')
+  t.is(listingHead.headers['content-type'], 'application/json; charset=utf-8', 'directory listing stays JSON')
+  t.is(listingHead.headers['x-hyper-key'], KEY, 'directory listing keeps gateway metadata')
+  t.is(listingHead.raw.length, 0, 'directory listing HEAD is header-only')
+})

@@ -7,6 +7,15 @@ import {
 
 const HEX64 = /^[0-9a-f]{64}$/i
 const MAX_PROOF_INDEX = 0xffffffff
+const RETRIEVABILITY_PROOF_ROUTES = Object.freeze({
+  'POST /api/proof/retrievability': Object.freeze({ kind: 'retrievability-proof' })
+})
+
+export function resolveRetrievabilityProofRoute (method, path) {
+  const route = RETRIEVABILITY_PROOF_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
 
 export class RetrievabilityProofProvider {
   constructor (opts = {}) {

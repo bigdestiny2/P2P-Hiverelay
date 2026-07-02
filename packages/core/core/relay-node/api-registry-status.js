@@ -3,6 +3,19 @@ import { isValidHexKey } from '../constants.js'
 export const MAX_REGISTRY_STATUS_REQUESTS = 500
 export const MAX_REGISTRY_STATUS_RELAYS_PER_REQUEST = 100
 
+const REGISTRY_STATUS_ROUTES = Object.freeze({
+  'GET /api/registry': Object.freeze({
+    kind: 'registry-status',
+    authMessage: 'Unauthorized — API key required for /api/registry'
+  })
+})
+
+export function resolveRegistryStatusRoute (method, path) {
+  const route = REGISTRY_STATUS_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
+
 function errorPayload (message) {
   return { error: message }
 }
@@ -119,4 +132,25 @@ export async function buildRegistryStatusPayload ({
       requests: enriched
     }
   }
+}
+
+export async function buildRegistryStatusRoutePayload ({
+  route,
+  registry = null,
+  maxRequests = MAX_REGISTRY_STATUS_REQUESTS,
+  maxRelaysPerRequest = MAX_REGISTRY_STATUS_RELAYS_PER_REQUEST
+} = {}) {
+  if (!route || route.kind !== 'registry-status') {
+    return {
+      ok: false,
+      status: 404,
+      payload: errorPayload('unknown registry status route')
+    }
+  }
+
+  return buildRegistryStatusPayload({
+    registry,
+    maxRequests,
+    maxRelaysPerRequest
+  })
 }

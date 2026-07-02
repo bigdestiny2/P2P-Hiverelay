@@ -1,5 +1,8 @@
 import { AVAILABLE_MODES } from './api-mode-transport.js'
 import { sanitizeDeviceList } from './api-device-pairing.js'
+import { buildSafeConfigPayload } from './api-safe-config.js'
+import { serviceConfigPayload } from './api-service-config.js'
+import { runManageAIModelsListAction } from './api-ai-models.js'
 
 export const MAX_MANAGEMENT_SERVICE_SNAPSHOT_SERVICES = 128
 export const MAX_MANAGEMENT_SERVICE_METHODS = 64
@@ -12,6 +15,16 @@ export const MAX_MANAGEMENT_SERVICE_STATS_STRING_BYTES = 256
 export const MAX_MANAGEMENT_SERVICE_STATS_NODES = 256
 
 const SENSITIVE_STATS_KEY = /(?:secret|token|password|credential|authorization|bearer|private|app[_-]?seed|api[_-]?key|connection[_-]?key|public[_-]?key)/i
+const MANAGEMENT_SNAPSHOT_ROUTES = Object.freeze({
+  'GET /api/manage/config': Object.freeze({ kind: 'config' }),
+  'GET /api/manage/ai/models': Object.freeze({ kind: 'ai-models' }),
+  'GET /api/manage/services/available': Object.freeze({ kind: 'service-config' }),
+  'GET /api/manage/services': Object.freeze({ kind: 'services' }),
+  'GET /api/manage/transports': Object.freeze({ kind: 'transports' }),
+  'GET /api/manage/devices': Object.freeze({ kind: 'devices' }),
+  'GET /api/manage/pairing': Object.freeze({ kind: 'pairing' }),
+  'GET /api/manage/modes': Object.freeze({ kind: 'modes' })
+})
 
 const MODE_DETAILS = Object.freeze({
   'relay-core': Object.freeze({
@@ -72,6 +85,12 @@ const MODE_DETAILS = Object.freeze({
   })
 })
 
+export function resolveManagementSnapshotRoute (method, path) {
+  const route = MANAGEMENT_SNAPSHOT_ROUTES[`${method} ${path}`]
+  if (!route) return null
+  return { ...route }
+}
+
 export function buildServiceRegistrySnapshot (registry) {
   if (!registry || !registry.services || typeof registry.services[Symbol.iterator] !== 'function') {
     return { services: [], count: 0 }
@@ -87,6 +106,62 @@ export function buildServiceRegistrySnapshot (registry) {
     count: services.length,
     total: registry.services.size || services.length,
     truncated: (registry.services.size || services.length) > services.length
+  }
+}
+
+export function buildManagementConfigPayload (node) {
+  return {
+    config: buildSafeConfigPayload(node),
+    mode: node && node._operatingMode ? node._operatingMode : 'standard'
+  }
+}
+
+export function buildManagementServicesPayload (registry) {
+  const snapshot = buildServiceRegistrySnapshot(registry)
+  return {
+    enabled: !!registry,
+    ...snapshot,
+    statsVerified: false,
+    services: snapshot.services.map(service => ({
+      ...service,
+      capabilities: Array.isArray(service.methods) ? service.methods : []
+    }))
+  }
+}
+
+export async function buildManagementSnapshotRoutePayload ({
+  route,
+  node,
+  aiModelProvider = null,
+  emit = null
+} = {}) {
+  const kind = route && route.kind
+  if (kind === 'config') return { ok: true, payload: buildManagementConfigPayload(node) }
+  if (kind === 'ai-models') {
+    if (!aiModelProvider || !aiModelProvider.ok) {
+      return {
+        ok: false,
+        status: aiModelProvider && aiModelProvider.status ? aiModelProvider.status : 503,
+        payload: { error: aiModelProvider && aiModelProvider.error ? aiModelProvider.error : 'AI service is not registered on this relay' }
+      }
+    }
+    return runManageAIModelsListAction({
+      provider: aiModelProvider.provider,
+      emit
+    })
+  }
+  if (kind === 'service-config') {
+    return { ok: true, payload: serviceConfigPayload(node && node.config, node && node.serviceRegistry) }
+  }
+  if (kind === 'services') return { ok: true, payload: buildManagementServicesPayload(node && node.serviceRegistry) }
+  if (kind === 'transports') return { ok: true, payload: buildTransportStatusPayload(node) }
+  if (kind === 'devices') return { ok: true, payload: buildDeviceStatusPayload(node) }
+  if (kind === 'pairing') return { ok: true, payload: buildPairingStatusPayload(node) }
+  if (kind === 'modes') return { ok: true, payload: buildModeCatalogPayload(node && node._operatingMode ? node._operatingMode : 'relay-core') }
+  return {
+    ok: false,
+    status: 404,
+    payload: { error: 'unknown management snapshot route' }
   }
 }
 

@@ -13,6 +13,7 @@ import {
   consumePublisherSeedReplayNonce
 } from '../seed-request-builder.js'
 import { evaluateSeedLease } from '../../incentive/lease/gate.js'
+import { custodyDisabledResult } from './api-custody-disabled.js'
 import { validatePositiveInt } from './api-validation.js'
 
 export const MAX_DISCOVERY_KEYS = 100
@@ -25,6 +26,10 @@ export const PRIVACY_TIER_ERROR = 'privacyTier must be one of: public, local-fir
 export const CONTENT_TYPE_ERROR = `type must be one of: ${Array.from(CONTENT_TYPES).join(', ')}`
 export const STORAGE_CLASS_ERROR = `storageClass must be one of: ${Array.from(STORAGE_CLASSES).join(', ')}`
 export const AVAILABILITY_CLASS_ERROR = `availabilityClass must be one of: ${Array.from(AVAILABILITY_CLASSES).join(', ')}`
+export const OPERATOR_SEED_AUTH_MESSAGE = 'Unauthorized — API key required for /seed'
+export const REGISTRY_PUBLISH_AUTH_MESSAGE = 'Unauthorized — API key required for /registry/publish'
+
+const CUSTODY_SEED_FIELDS = ['custodyIntentId', 'blindContentId', 'ciphertextRoot']
 
 function errorPayload (message) {
   return { error: message }
@@ -38,6 +43,11 @@ function publisherSeedReplayCache (node) {
 
 function badRequest (message) {
   return { ok: false, kind: 'bad-request', status: 400, payload: errorPayload(message) }
+}
+
+function hasCustodySeedFields (body) {
+  if (!body || typeof body !== 'object') return false
+  return CUSTODY_SEED_FIELDS.some(field => body[field] !== undefined)
 }
 
 function cloneSeedOpts (opts) {
@@ -309,11 +319,32 @@ function buildRegistryPublishRequest (body, node) {
   }
 }
 
+export function resolveSeedPublishRoute (method, path) {
+  if (method !== 'POST') return null
+  if (path === '/seed') {
+    return {
+      kind: 'operator-seed',
+      authMessage: OPERATOR_SEED_AUTH_MESSAGE
+    }
+  }
+  if (path === '/registry/publish') {
+    return {
+      kind: 'registry-publish',
+      authMessage: REGISTRY_PUBLISH_AUTH_MESSAGE
+    }
+  }
+  if (path === '/api/v1/seed') return { kind: 'publisher-seed' }
+  return null
+}
+
 export async function runOperatorSeedAction ({
   body = {},
-  node
+  node,
+  disabled = false
 }) {
   body = body || {}
+  if (disabled && hasCustodySeedFields(body)) return custodyDisabledResult()
+
   if (!body.appKey) return badRequest('appKey required')
   if (!isValidHexKey(body.appKey, 64)) return badRequest('appKey must be 64 hex characters')
 
@@ -342,9 +373,12 @@ export async function runRegistryPublishAction ({
 
 export async function runPublisherSeedAction ({
   body = {},
-  node
+  node,
+  disabled = false
 }) {
   body = body || {}
+  if (disabled && hasCustodySeedFields(body)) return custodyDisabledResult()
+
   if (!node || typeof node.seedApp !== 'function') {
     return { ok: false, kind: 'unavailable', status: 503, payload: errorPayload('seedApp not available') }
   }
@@ -385,4 +419,17 @@ export async function runPublisherSeedAction ({
   } catch (err) {
     return { ok: false, kind: 'seed-error', error: err }
   }
+}
+
+export async function runSeedPublishRouteAction ({
+  route,
+  body = {},
+  node,
+  disabled = false
+} = {}) {
+  const kind = route && route.kind
+  if (kind === 'operator-seed') return runOperatorSeedAction({ body, node, disabled })
+  if (kind === 'registry-publish') return runRegistryPublishAction({ body, node })
+  if (kind === 'publisher-seed') return runPublisherSeedAction({ body, node, disabled })
+  return { ok: false, kind: 'bad-request', status: 404, payload: errorPayload('unknown seed publish route') }
 }

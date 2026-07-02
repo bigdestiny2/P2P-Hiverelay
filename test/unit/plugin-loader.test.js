@@ -22,3 +22,21 @@ test('plugin loader resolves poker as a builtin service provider', async (t) => 
   ])
   await loader.stopAll()
 })
+
+test('plugin loader resolves outboxlog as a builtin service provider', async (t) => {
+  const loader = new PluginLoader()
+  const providers = await loader.load(['outboxlog'])
+  t.alike(providers.map(provider => provider.manifest().name), [
+    'outboxlog'
+  ])
+  await loader.stopAll()
+})
+
+test('plugin loader resolves notify as a builtin service provider', async (t) => {
+  const loader = new PluginLoader()
+  const providers = await loader.load(['notify'])
+  t.alike(providers.map(provider => provider.manifest().name), [
+    'notify'
+  ])
+  await loader.stopAll()
+})
