@@ -146,6 +146,54 @@ test('notify service: replay guard is durable before provider egress (no double-
   await second.stop()
 })
 
+test('notify service: hot-path persistence is debounced, stop() flushes the final state (#144)', async (t) => {
+  const relay = keyPair(1)
+  const user = keyPair(2)
+  const device = keyPair(3)
+  const sender = keyPair(4)
+  let saves = 0
+  let lastSnapshot = null
+  const persistence = {
+    async load () { return null },
+    async save (snapshot) { saves++; lastSnapshot = snapshot }
+  }
+  const notify = new NotifyService({
+    keyPair: relay,
+    provider: { async send () { return { status: 'accepted_by_provider' } } },
+    clock: () => NOW,
+    persistence,
+    persistFlushMs: 60000 // park the debounce so only explicit barriers write
+  })
+  await notify.start({})
+  await installHappyPath(notify, { relay, user, device, sender })
+  const savesAfterSetup = saves
+
+  // A rejection flood (unknown caps -> rejected_by_relay) must not write
+  // per-intent: each rejection only schedules the debounced flush.
+  for (let i = 0; i < 50; i++) {
+    await notify.send(signed(sender, NOTIFY_DOMAINS.intent, {
+      type: 'hiverelay.notify.intent.v1',
+      intentId: hex(60 + (i % 100)),
+      receiveCap: hex(41), // no such cap
+      sendCap: hex(42),
+      app: hex(5),
+      receiver: device.hex,
+      sender: sender.hex,
+      channel: 'message',
+      urgency: 'normal',
+      ttlSeconds: 3600,
+      createdAt: NOW,
+      payloadCiphertext: 'ciphertext',
+      privacyProfile: 'generic'
+    }))
+  }
+  t.is(saves, savesAfterSetup, '50 rejections scheduled zero synchronous snapshot writes')
+
+  await notify.stop()
+  t.ok(saves > savesAfterSetup, 'stop() flushed the pending state')
+  t.is(lastSnapshot.deliveryEvents.length, 50, 'flushed snapshot carries every rejection event')
+})
+
 test('notify service: delivery-event requires a device-signed request (no cross-tenant IDOR)', async (t) => {
   const relay = keyPair(1)
   const user = keyPair(2)

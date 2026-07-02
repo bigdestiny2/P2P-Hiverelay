@@ -642,6 +642,44 @@ test('outboxlog swarm hub: destroy() stops delivery and clears channel state', (
   t.is(hub._channelCount(), 0)
 })
 
+test('outboxlog: snapshot checkpoints lag the journal, restore replays the tail (#144)', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'outboxlog-ckpt-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+
+  const writer = keyPair(23)
+  const journalFile = join(dir, 'ops.jsonl')
+  let snapshotSaves = 0
+  let stored = null
+  const countingPersistence = {
+    loadSync () { return stored },
+    saveSync (state) { snapshotSaves++; stored = state }
+  }
+
+  const log = createOutboxLog({
+    persistence: countingPersistence,
+    journalPath: journalFile,
+    checkpointInterval: 10
+  })
+  log.sync.create(writer.publicKeyHex)
+  for (let i = 0; i < 25; i++) {
+    log.sync.append(writer.publicKeyHex, { type: 'post', data: signRecord(writer, { id: 'r' + i, body: { ciphertext: 'c' + i } }) })
+  }
+  // 26 journaled mutations (create + 25 appends) at interval 10 -> 2 snapshot
+  // writes, not 26. The journal carries per-append durability.
+  t.is(snapshotSaves, 2, 'snapshot writes are checkpointed, not per-append')
+
+  // Crash without flush(): a fresh instance restores checkpoint + journal tail.
+  const restored = createOutboxLog({ persistence: countingPersistence, journalPath: journalFile })
+  for (const i of [0, 9, 19, 24]) {
+    t.alike(restored.sync.get(writer.publicKeyHex, 'post!r' + i).body, { ciphertext: 'c' + i }, 'row r' + i + ' survives (tail replay)')
+  }
+
+  // flush() forces the pending checkpoint.
+  const before = snapshotSaves
+  log.flush()
+  t.is(snapshotSaves, before + 1, 'flush() writes the dirty checkpoint')
+})
+
 test('outboxlog: append lands in the journal even when snapshot persistence is configured (#146)', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'outboxlog-both-'))
   t.teardown(() => rm(dir, { recursive: true, force: true }))

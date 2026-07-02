@@ -66,6 +66,7 @@ export class NotifyService extends ServiceProvider {
     this.maxEvents = positiveInteger(opts.maxEvents, DEFAULT_MAX_EVENTS)
     this.maxWatchesPerReceiveCap = positiveInteger(opts.maxWatchesPerReceiveCap, DEFAULT_MAX_WATCHES)
     this.abuseLimits = normalizeAbuseLimits(opts.abuseLimits)
+    this.persistFlushMs = positiveInteger(opts.persistFlushMs, DEFAULT_PERSIST_FLUSH_MS)
     this.persistence = normalizePersistence(opts.persistence || null)
     this.persistencePath = stringOr(opts.persistencePath, null)
     this.persistenceDisabled = opts.persistence === false
@@ -83,6 +84,7 @@ export class NotifyService extends ServiceProvider {
     this.watches = new Map()
     this._eventSeq = 0
     this._persistChain = Promise.resolve()
+    this._persistTimer = null
     this.node = null
     this.store = null
   }
@@ -119,6 +121,10 @@ export class NotifyService extends ServiceProvider {
   }
 
   async stop () {
+    if (this._persistTimer) {
+      clearTimeout(this._persistTimer)
+      this._persistTimer = null
+    }
     await this._saveState()
     this.node = null
     this.store = null
@@ -383,7 +389,9 @@ export class NotifyService extends ServiceProvider {
       payloadBytes: payloadBytes(params.payloadCiphertext),
       now
     })
-    await this._saveState()
+    // The durable facts (replay/dedupe) hit disk before egress above; the
+    // delivery event itself can flush on the debounce. (#144)
+    this._schedulePersist()
     return { ok: normalized.status === 'accepted_by_provider' || normalized.status === 'provider_attempted', intentId: params.intentId, status: event.status, reason: event.reason, eventId: event.eventId, event }
   }
 
@@ -612,7 +620,9 @@ export class NotifyService extends ServiceProvider {
 
   async _finalizeRejectedIntentAndPersist (intent, verdict) {
     const result = this._finalizeRejectedIntent(intent, verdict)
-    await this._saveState()
+    // Rejections are the abuse-shaped path — a flood of bad intents must not
+    // turn into a flood of synchronous snapshot writes. (#144)
+    this._schedulePersist()
     return result
   }
 
@@ -754,10 +764,28 @@ export class NotifyService extends ServiceProvider {
 
   async _saveState () {
     if (!this.persistence) return
+    if (this._persistTimer) {
+      clearTimeout(this._persistTimer)
+      this._persistTimer = null
+    }
     const snapshot = this._stateSnapshot()
     const write = this._persistChain.catch(() => {}).then(() => this.persistence.save(snapshot))
     this._persistChain = write
     await write
+  }
+
+  // Debounced persist for high-frequency paths (rejected intents under abuse,
+  // post-egress event recording). The caller does NOT wait on disk; the
+  // snapshot lands within persistFlushMs, and stop()/_saveState() flush any
+  // pending write. Durability-critical paths (control-plane ops, the
+  // pre-egress replay barrier) keep calling _saveState() directly. (#144)
+  _schedulePersist () {
+    if (!this.persistence || this._persistTimer) return
+    this._persistTimer = setTimeout(() => {
+      this._persistTimer = null
+      this._saveState().catch(() => {})
+    }, this.persistFlushMs)
+    if (this._persistTimer.unref) this._persistTimer.unref()
   }
 
   _stateSnapshot () {

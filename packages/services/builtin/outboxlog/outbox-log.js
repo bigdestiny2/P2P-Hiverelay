@@ -25,6 +25,7 @@ export const DEFAULT_DIRECTORY_LIMIT = 5000
 export const DEFAULT_MAX_DIRECTORY_LIMIT = 5000
 export const DEFAULT_MAX_APPEND_EVENTS_PER_OUTBOX = 1000
 export const DEFAULT_MAX_APPEND_EVENT_LIMIT = 1000
+export const DEFAULT_CHECKPOINT_INTERVAL = 256
 export const DEFAULT_OUTBOXLOG_NAMESPACE = 'peerit'
 export const OUTBOXLOG_BLIND_SEAL_VERSION = 1
 export const OUTBOXLOG_BLIND_SEAL_DEFAULT_ALG = 'xchacha20poly1305'
@@ -62,6 +63,7 @@ export function createOutboxLog ({
   journal = null,
   journalPath = null,
   storagePath = null,
+  checkpointInterval = DEFAULT_CHECKPOINT_INTERVAL,
   onAppend = null,
   log = () => {}
 } = {}) {
@@ -80,6 +82,9 @@ export function createOutboxLog ({
   let directorySeq = 0
   let appendSeq = 0
   let journalSeq = 0
+  const checkpointEvery = positiveInteger(checkpointInterval, DEFAULT_CHECKPOINT_INTERVAL)
+  let entriesSinceCheckpoint = 0
+  let snapshotDirty = false
 
   loadState()
 
@@ -482,7 +487,10 @@ export function createOutboxLog ({
         loaded = true
       }
     }
-    if (!loaded && operationJournal) loadJournal()
+    // With checkpointing the snapshot may lag the journal: replay the journal
+    // tail (entries past the snapshot's journalSeq) to recover appends that
+    // landed after the last checkpoint. Without a snapshot, replay it all.
+    if (operationJournal) loadJournal(loaded ? journalSeq : 0)
   }
 
   function saveState (journalEntry = null) {
@@ -493,11 +501,29 @@ export function createOutboxLog ({
     // wired both journalPath + storagePath. (#146)
     if (operationJournal && journalEntry) appendJournalEntry(journalEntry)
     if (!statePersistence) return
+    if (operationJournal) {
+      // Contract: with a journal configured every mutation passes a journal
+      // entry, so a null entry here means nothing changed (create on an
+      // existing group) — skip. The journal already made real mutations
+      // durable; the full snapshot is an O(state) write that must not run
+      // per-append. Checkpoint every checkpointInterval entries;
+      // flush()/stop force the rest. (#144)
+      if (!journalEntry) return
+      snapshotDirty = true
+      entriesSinceCheckpoint++
+      if (entriesSinceCheckpoint < checkpointEvery) return
+    }
     statePersistence.saveSync(snapshot())
+    snapshotDirty = false
+    entriesSinceCheckpoint = 0
   }
 
   function flush () {
-    saveState()
+    if (statePersistence && (snapshotDirty || !operationJournal)) {
+      statePersistence.saveSync(snapshot())
+      snapshotDirty = false
+      entriesSinceCheckpoint = 0
+    }
     if (operationJournal && typeof operationJournal.flush === 'function') {
       return operationJournal.flush()
     }
@@ -665,7 +691,7 @@ export function createOutboxLog ({
     journalSeq = record.seq
   }
 
-  function loadJournal () {
+  function loadJournal (afterSeq = 0) {
     const entries = operationJournal.loadSync()
     if (!entries) return
     if (!Array.isArray(entries)) throw fail('outboxlog journal must be an array', 500)
@@ -673,7 +699,10 @@ export function createOutboxLog ({
     for (const entry of entries) {
       const normalized = normalizeJournalEntry(entry, expected)
       if (!normalized) throw fail('corrupt outboxlog journal entry ' + expected, 500)
-      applyJournalEntry(normalized)
+      // Entries at or below afterSeq are already reflected in the snapshot
+      // checkpoint — sequence-check them (the file must still be coherent)
+      // but do not re-apply.
+      if (normalized.seq > afterSeq) applyJournalEntry(normalized)
       journalSeq = normalized.seq
       expected++
     }
