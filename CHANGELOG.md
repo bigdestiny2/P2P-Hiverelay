@@ -8,6 +8,52 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+### Added
+
+- **Notify service (`notify`) — relay-hosted encrypted wake-up push.** An
+  always-on relay can now wake a peer's app through APNs/FCM/WebPush/runtime
+  without ever seeing who is being notified or why. Capabilities split into
+  ReceiveCap (the device consents to be woken) + SendCap (a peer is authorized
+  to wake it); the relay verifies domain-separated Ed25519 signatures and stays
+  blind — payloads are opaque ciphertext, wakes are generic. Modes:
+  direct, watch (Mode 2), presence-fallback. Delivery events are relay-signed
+  and redacted (no provider tokens/plaintext). Rule: *push wakes the app; p2p
+  sync gives the app truth.*
+- **Signed outbox log (`outboxlog`) — Peerit-compatible single-writer append
+  log.** A blind-sealed, signature-gated per-pubkey log with a token-gated
+  HTTP/SSE bridge, a hypercore operation journal, and an in-process swarm hub
+  for browser peers. The relay stores and serves signed rows it cannot read.
+- **Mode-2 `watch` runtime** — a `notify-feed-head` watch composes with a
+  co-resident `outboxlog`: when the watched outbox head advances, the device
+  gets one opaque, coalesced wake. Watches for a source kind with no attached
+  observer are rejected (`SOURCE_UNAVAILABLE`) rather than silently accepted.
+- **Client SDK** — `createNotifyDeliveryEventRequest` (device-signed
+  delivery-event reads) and the `notify-feed-head` watch builders.
+
+### Security
+
+- **`notify.delivery-event` is authenticated** — it now requires a request
+  signed by the receiving device key and returns only that device's events,
+  closing a cross-tenant metadata IDOR (billable/device/timing leak). `status`
+  counts are scoped to the caller's app/device instead of relay-global totals.
+- **`outboxlog` re-verifies signatures on load** and drops unverifiable rows —
+  the persisted state file / journal is no longer a trust root; only the
+  writer key is.
+
+### Changed
+
+- **Hot-path persistence** — notify debounces snapshot writes (durability-
+  critical replay/dedupe still persist synchronously *before* provider egress
+  so a crash can't double-send); outboxlog treats the journal as the per-append
+  WAL and the snapshot as a periodic checkpoint (restore = checkpoint + journal
+  tail replay).
+- **outboxlog SSE honors backpressure** (drops live events under a full socket
+  buffer, resumes on drain) and the swarm hub gained an explicit
+  `destroy()`/`close()`. Notify abuse limits (app/sender/device/channel) are
+  now operator-configurable; a zero limit disables a scope (`quota_exhausted`).
+
+Design review + benchmarks: `docs/NOTIFY-OUTBOX-REVIEW.md`. Issues #142–#146.
+
 ## [0.20.2] — 2026-06-24
 
 ### Added
