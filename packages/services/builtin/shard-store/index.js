@@ -10,9 +10,28 @@ import { ServiceProvider } from 'p2p-hiverelay/core/services/provider.js'
 import b4a from 'b4a'
 import { ShardEngine, DEFAULT_MAX_SHARD_BYTES, normalizeShardAddress, shardHash, shardError } from './shard-engine.js'
 import { ShardPinRegistry, authorizeShardPin, verifyShardPin, signShardPin, shardPinRef, SHARD_PIN_DOMAIN } from './shard-pin.js'
+import {
+  buildShardRetrievalProof, buildShardAttestation, verifyShardProof,
+  SHARD_PROOF_DOMAIN, SHARD_PROOF_KIND, SHARD_PROOF_LIMITATION
+} from './shard-proof.js'
 
 export const SHARD_STORE_VERSION = '0.1.0'
 const DEFAULT_PUT_AUTH = ['custody', 'payment']
+const DEFAULT_PROOF_BUCKET = { perHour: 600, burst: 60 }
+
+// Minimal per-caller token bucket (proof-spam throttle), mirroring the notify
+// consumeBucket shape so behaviour is familiar.
+function consumeProofBucket (buckets, key, quota, now) {
+  const perHour = quota.perHour > 0 ? quota.perHour : 0
+  const burst = quota.burst > 0 ? quota.burst : perHour
+  if (!perHour || !burst) return false
+  let b = buckets.get(key)
+  if (!b || now - b.start >= 3600000) b = { start: now, count: 0, burstStart: now, burstCount: 0 }
+  if (now - b.burstStart >= 60000) { b.burstStart = now; b.burstCount = 0 }
+  if (b.count >= perHour || b.burstCount >= burst) { buckets.set(key, b); return false }
+  b.count++; b.burstCount++; buckets.set(key, b)
+  return true
+}
 
 function decodeCiphertext (input) {
   if (b4a.isBuffer(input)) return input
@@ -41,6 +60,10 @@ export class ShardStoreService extends ServiceProvider {
     this.checkPaymentQuota = opts.checkPaymentQuota || null
     this.checkToken = opts.checkToken || null
     this.relayPubkey = opts.relayPubkey || null
+    this.keyPair = opts.keyPair || null
+    this.proofBucketQuota = opts.proofBuckets || DEFAULT_PROOF_BUCKET
+    this._proofBuckets = new Map()
+    this.clock = typeof opts.clock === 'function' ? opts.clock : () => Date.now()
     this.store = null
   }
 
@@ -49,9 +72,12 @@ export class ShardStoreService extends ServiceProvider {
       name: 'shard-store',
       version: SHARD_STORE_VERSION,
       description: 'Content-addressed blind blob store for custody shards (shard:<hash>)',
-      capabilities: ['put', 'get', 'has', 'unpin'],
+      capabilities: ['put', 'get', 'has', 'unpin', 'prove'],
       addressing: 'blake2b-256-ciphertext',
       pinDomain: SHARD_PIN_DOMAIN,
+      proofDomain: SHARD_PROOF_DOMAIN,
+      proofKind: SHARD_PROOF_KIND,
+      proofLimitation: SHARD_PROOF_LIMITATION,
       putAuth: this.allowedReasons,
       limits: { maxShardBytes: this.maxShardBytes }
     }
@@ -59,6 +85,7 @@ export class ShardStoreService extends ServiceProvider {
 
   async start (context = {}) {
     this.store = context.store || this.opts.store || null
+    this.keyPair = this.keyPair || (context.node && (context.node.keyPair || (context.node.swarm && context.node.swarm.keyPair))) || null
     this.relayPubkey = this.relayPubkey || relayPubkeyFromContext(context, this.opts)
     if (!this.engine) {
       if (!this.store) throw new Error('ShardStoreService: corestore required (context.store)')
@@ -112,12 +139,39 @@ export class ShardStoreService extends ServiceProvider {
 
   async get (params = {}) {
     const r = await this.engine.get(params.shard || params.hash)
-    return { ok: true, shard: 'shard:' + r.hash, byteLength: r.byteLength, encoding: 'base64', ciphertext: b4a.toString(r.ciphertext, 'base64') }
+    const out = { ok: true, shard: 'shard:' + r.hash, byteLength: r.byteLength, encoding: 'base64', ciphertext: b4a.toString(r.ciphertext, 'base64') }
+    // A nonce upgrades GET to Mode R: a relay-signed, replay-guarded proof that
+    // these exact bytes were served for this challenge.
+    if (params.nonce && this.keyPair) {
+      out.proof = buildShardRetrievalProof({ hash: r.hash, nonce: params.nonce, bytes: r.ciphertext, keyPair: this.keyPair })
+    }
+    return out
   }
 
   async has (params = {}) {
     const r = await this.engine.has(params.shard || params.hash)
     return { ok: true, ...r }
+  }
+
+  /**
+   * Mode A signed possession attestation (no bytes transferred). Only for a
+   * held shard; NOT_HELD is indistinguishable from unauthorized/absent. Fresh
+   * nonce required; per-caller throttled.
+   */
+  async prove (params = {}, context = {}) {
+    if (!this.keyPair) throw shardError('SERVICE_UNAVAILABLE', 'relay signing key unavailable')
+    const hash = normalizeShardAddress(params.shard || params.hash)
+    if (!hash) throw shardError('BAD_ADDRESS', 'invalid shard address')
+    const nonce = params.nonce
+    const caller = String(context.remotePubkey || context.caller || 'anon')
+    if (!consumeProofBucket(this._proofBuckets, caller, this.proofBucketQuota, this.clock())) {
+      throw shardError('RATE_LIMITED', 'proof rate limit')
+    }
+    // Phantom-hash DoS guard: a single constant-time index lookup, and an
+    // unheld hash is indistinguishable from an unauthorized one.
+    const present = (await this.engine.has(hash)).present
+    if (!present) throw shardError('NOT_HELD', 'shard not held')
+    return { ok: true, proof: buildShardAttestation({ hash, nonce, keyPair: this.keyPair }) }
   }
 
   /** Remove one pin. When the last live pin is gone, GC the blob. */
@@ -138,5 +192,6 @@ export class ShardStoreService extends ServiceProvider {
 export default ShardStoreService
 export {
   ShardEngine, DEFAULT_MAX_SHARD_BYTES, normalizeShardAddress, shardHash,
-  ShardPinRegistry, authorizeShardPin, verifyShardPin, signShardPin, shardPinRef, SHARD_PIN_DOMAIN
+  ShardPinRegistry, authorizeShardPin, verifyShardPin, signShardPin, shardPinRef, SHARD_PIN_DOMAIN,
+  buildShardRetrievalProof, buildShardAttestation, verifyShardProof, SHARD_PROOF_DOMAIN
 }

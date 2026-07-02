@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import Corestore from 'corestore'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
-import { ShardStoreService, ShardEngine, shardHash, normalizeShardAddress, signShardPin, verifyShardPin, ShardPinRegistry } from '../../packages/services/builtin/shard-store/index.js'
+import { ShardStoreService, ShardEngine, shardHash, normalizeShardAddress, signShardPin, verifyShardPin, ShardPinRegistry, verifyShardProof } from '../../packages/services/builtin/shard-store/index.js'
 import { createCustodyIntent, createCustodyReceipt, verifyCustodyEntry, validateCustodyTransition } from '../../packages/core/core/custody-signing.js'
 
 async function tmpStore (t) {
@@ -226,7 +226,7 @@ test('shard-store service: manifest advertises the content-addressed surface + p
   const svc = new ShardStoreService({ maxShardBytes: 1024, putAuth: ['custody', 'payment'] })
   const m = svc.manifest()
   t.is(m.name, 'shard-store')
-  t.alike(m.capabilities, ['put', 'get', 'has', 'unpin'])
+  t.alike(m.capabilities, ['put', 'get', 'has', 'unpin', 'prove'])
   t.is(m.addressing, 'blake2b-256-ciphertext')
   t.alike(m.putAuth, ['custody', 'payment'])
   t.is(m.limits.maxShardBytes, 1024)
@@ -297,4 +297,53 @@ test('custody shareManifest: binds shareIndex -> shard:<hash>, signed + receipt-
   const bad = validateCustodyTransition(forged, { intent })
   t.is(bad.valid, false)
   t.is(bad.reason, 'shareCommitment does not match manifest binding')
+})
+
+test('shard proofs: Mode R (get+nonce) is relay-signed, content-checked, replay-guarded (M3)', async (t) => {
+  const { store } = await tmpStore(t)
+  const relay = keyPair(30)
+  const pinner = keyPair(31)
+  const svc = new ShardStoreService({ putAuth: ['payment'], checkPaymentQuota: () => true, keyPair: relay })
+  await svc.start({ store })
+  t.teardown(() => svc.stop())
+
+  const sealed = b4a.from('share-bytes-for-proof', 'utf8')
+  const hash = shardHash(sealed)
+  await svc.put({ ciphertext: b4a.toString(sealed, 'base64'), pin: paymentPin(hash, pinner) })
+
+  const nonce = '1'.repeat(64)
+  const got = await svc.get({ shard: 'shard:' + hash, nonce })
+  t.ok(got.proof, 'get with nonce carries a Mode R proof')
+  t.is(got.proof.mode, 'R')
+  const bytes = b4a.from(got.ciphertext, 'base64')
+  t.ok(verifyShardProof(got.proof, { hash, nonce, relayPubkey: relay.hex, bytes }), 'proof verifies against hash + relay key')
+
+  // replay: same proof does not verify for a different challenge nonce
+  t.absent(verifyShardProof(got.proof, { hash, nonce: '2'.repeat(64), relayPubkey: relay.hex, bytes }))
+  // tampered bytes fail content-address check
+  t.absent(verifyShardProof(got.proof, { hash, nonce, relayPubkey: relay.hex, bytes: b4a.concat([bytes, b4a.from('x')]) }))
+  // a different relay key can't validate the signature
+  t.absent(verifyShardProof(got.proof, { hash, nonce, relayPubkey: keyPair(99).hex, bytes }))
+})
+
+test('shard proofs: Mode A attestation only for held shards; NOT_HELD otherwise (M3)', async (t) => {
+  const { store } = await tmpStore(t)
+  const relay = keyPair(32)
+  const pinner = keyPair(33)
+  const svc = new ShardStoreService({ putAuth: ['payment'], checkPaymentQuota: () => true, keyPair: relay })
+  await svc.start({ store })
+  t.teardown(() => svc.stop())
+
+  const sealed = b4a.from('attested-share', 'utf8')
+  const hash = shardHash(sealed)
+  await svc.put({ ciphertext: b4a.toString(sealed, 'base64'), pin: paymentPin(hash, pinner) })
+
+  const nonce = '3'.repeat(64)
+  const res = await svc.prove({ shard: 'shard:' + hash, nonce })
+  t.is(res.proof.mode, 'A')
+  t.ok(verifyShardProof(res.proof, { hash, nonce, relayPubkey: relay.hex }), 'attestation verifies (no bytes needed)')
+  t.absent(verifyShardProof(res.proof, { hash, nonce: '4'.repeat(64), relayPubkey: relay.hex }), 'replay-guarded')
+
+  // proving an unheld shard is NOT_HELD (indistinguishable from unauthorized)
+  await t.exception(svc.prove({ shard: 'shard:' + 'e'.repeat(64), nonce }), /NOT_HELD/)
 })
