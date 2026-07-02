@@ -1070,11 +1070,11 @@ function normalizeAbuseLimits (input, base = DEFAULT_ABUSE_LIMITS) {
     const fallback = base[scope] || DEFAULT_ABUSE_LIMITS[scope]
     out[scope] = override
       ? Object.freeze({
-          // 0 is a legal operator value: it disables the scope entirely, and
-          // consumeBucket reports it as quota_exhausted (not rate_limited).
-          perHour: Number.isSafeInteger(override.perHour) && override.perHour >= 0 ? override.perHour : fallback.perHour,
-          burst: Number.isSafeInteger(override.burst) && override.burst >= 0 ? override.burst : fallback.burst
-        })
+        // 0 is a legal operator value: it disables the scope entirely, and
+        // consumeBucket reports it as quota_exhausted (not rate_limited).
+        perHour: Number.isSafeInteger(override.perHour) && override.perHour >= 0 ? override.perHour : fallback.perHour,
+        burst: Number.isSafeInteger(override.burst) && override.burst >= 0 ? override.burst : fallback.burst
+      })
       : fallback
   }
   return Object.freeze(out)
