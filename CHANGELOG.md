@@ -8,6 +8,42 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+## [0.21.1] — 2026-07-02
+
+Hardening patch from the v0.21.0 pre-release expert-panel audit. No API or
+wire-format changes; safe in-place upgrade from 0.21.0.
+
+### Fixed
+
+- **SSE keepalive pings now honor backpressure/teardown (`witnesslog`,
+  `repairticket`).** `startSsePing` wrote `: ping` frames unconditionally on
+  its interval, bypassing the `res._ssePaused / writableEnded / destroyed` gate
+  that `writeSseData` already enforces — a slow reader could keep the socket
+  buffer growing. The ping now checks the same gate (matching the outboxlog
+  adapter).
+- **`notify` watch wakes honor send-cap revocation.** `_fireWatch` re-checked
+  receive-cap, device, app, channel, and relay revocations on every fire but
+  not the send-cap the watch was installed under; the direct-send path already
+  honored it. Revoking a send-cap now stops watch wakes as well as direct
+  sends.
+
+### Security
+
+- **`shard-store` HTTP adapter now rate-limits per IP.** The adapter (not yet
+  mounted into the request path) had no per-IP throttle, unlike the sibling
+  outboxlog / witnesslog / repairticket adapters. Added the same
+  `{ windowMs, max }` token-bucket limiter — on by default via a process-wide
+  bucket store, scoped/overridden via `state` / `rateLimit` / `trustProxy` in
+  opts — closing the timing/enumeration-probe surface before the adapter is
+  wired.
+
+### Notes
+
+- One HIGH audit finding (outboxlog "namespace not in signed payload") was a
+  false positive: the namespace is bound by the signature through the message
+  prefix (`pear.app.<driveKey>:<ns>:…`), so cross-namespace signature reuse
+  fails verification. No change required.
+
 ## [0.21.0] — 2026-07-02
 
 ### Added

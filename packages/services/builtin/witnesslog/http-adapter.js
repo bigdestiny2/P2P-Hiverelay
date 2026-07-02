@@ -255,6 +255,10 @@ function writeSseData (res, event, name = null) {
 
 function startSsePing (res, ctx) {
   const ping = setInterval(() => {
+    // Honor the same backpressure/teardown gate as writeSseData: a keepalive
+    // ping must not re-grow the socket buffer while a slow reader is paused,
+    // nor write to a closed socket after cleanup. (Matches outboxlog.)
+    if (res._ssePaused || res.writableEnded || res.destroyed) return
     try {
       res.write(': ping\n\n')
     } catch {}

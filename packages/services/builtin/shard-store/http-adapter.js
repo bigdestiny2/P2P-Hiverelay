@@ -9,6 +9,42 @@ import { normalizeShardAddress } from './shard-engine.js'
 
 export const SHARD_HTTP_PREFIX = '/api/v1/shard'
 
+// Per-IP rate limiting mirrors the outboxlog / witnesslog / repairticket
+// adapters. On by default via a process-wide bucket store so the protection is
+// live the moment this adapter is mounted; callers may pass their own `state`
+// and `rateLimit` in opts to scope/override it.
+const DEFAULT_RATE_LIMIT = { windowMs: 60000, max: 1200 }
+const MAX_RATE_BUCKETS = 50000
+const moduleRateState = createShardHttpState()
+
+export function createShardHttpState () {
+  return { buckets: new Map() }
+}
+
+function clientIp (req, opts) {
+  if (opts && opts.trustProxy && req.headers && req.headers['x-forwarded-for']) {
+    return String(req.headers['x-forwarded-for']).split(',')[0].trim() || 'unknown'
+  }
+  return (req.socket && req.socket.remoteAddress) || 'unknown'
+}
+
+function overLimit (ip, rateLimit, state) {
+  if (!rateLimit || rateLimit.max === false || rateLimit.max === Infinity) return false
+  const now = Date.now()
+  let bucket = state.buckets.get(ip)
+  if (!bucket || now - bucket.start > rateLimit.windowMs) {
+    bucket = { start: now, count: 0 }
+    state.buckets.set(ip, bucket)
+  }
+  bucket.count++
+  if (state.buckets.size > MAX_RATE_BUCKETS) {
+    for (const [key, value] of state.buckets) {
+      if (now - value.start > rateLimit.windowMs) state.buckets.delete(key)
+    }
+  }
+  return bucket.count > rateLimit.max
+}
+
 export function resolveShardRoute (method, path) {
   if (!path || !path.startsWith(SHARD_HTTP_PREFIX)) return null
   const rest = path.slice(SHARD_HTTP_PREFIX.length).split('?')[0]
@@ -62,7 +98,14 @@ const STATUS_BY_CODE = {
 }
 
 /** Handle a resolved shard route. Returns true if handled. */
-export async function handleShardHttp (service, route, req, res, { url } = {}) {
+export async function handleShardHttp (service, route, req, res, opts = {}) {
+  const url = opts.url
+  const rateState = opts.state || moduleRateState
+  const rateLimit = opts.rateLimit || DEFAULT_RATE_LIMIT
+  if (overLimit(clientIp(req, opts), rateLimit, rateState)) {
+    sendJson(res, 429, { error: 'RATE_LIMITED' })
+    return true
+  }
   try {
     if (route.kind === 'head') {
       const has = await service.has({ hash: route.hash })

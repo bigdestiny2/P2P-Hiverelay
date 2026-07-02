@@ -447,6 +447,59 @@ test('notify service: notify-feed-head watch composes with outboxlog and coalesc
   t.is(provider.attempts.length, 2, 'no wake after unwatch')
 })
 
+test('notify service: revoking the send-cap suppresses watch wakes, not just direct sends (v0.21.1 audit)', async (t) => {
+  const now = NOW
+  const relay = keyPair(31)
+  const user = keyPair(32)
+  const device = keyPair(33)
+  const sender = keyPair(34)
+  const writerApp = hex(40)
+  const provider = { attempts: [], async send (delivery) { this.attempts.push(delivery); return { status: 'accepted_by_provider' } } }
+
+  const outbox = new OutboxLogApp({ verifyAppend: () => true, persistence: false })
+  const notify = new NotifyService({ keyPair: relay, provider, clock: () => now })
+  notify.attachWatchSource('notify-feed-head', (source, onChange) => {
+    return outbox.subscribe(source.key, {}, (event) => {
+      if (event && event.key === 'head!' + source.key && !event.replay) onChange(event)
+    })
+  })
+
+  await installHappyPath(notify, { relay, user, device, sender, modes: ['direct', 'watch'] })
+  await notify.watch(signed(user, NOTIFY_DOMAINS.watch, {
+    type: 'hiverelay.notify.watch.v1',
+    watchId: hex(39),
+    receiveCap: hex(6),
+    sendCap: hex(7),
+    app: hex(5),
+    audience: relay.hex,
+    source: { kind: 'notify-feed-head', key: writerApp, start: 0 },
+    channel: 'message',
+    policy: { minIntervalSeconds: 30 },
+    createdAt: NOW,
+    expiresAt: NOW + HOUR
+  }))
+
+  // Revoke the SEND capability the watch was installed under. The direct-send
+  // path already honored this ('cap_revoked'); the watch-fire path must too,
+  // otherwise a revoked sender keeps waking the device indefinitely.
+  await notify.revoke(signed(user, NOTIFY_DOMAINS.revoke, {
+    type: 'hiverelay.notify.revocation.v1',
+    target: hex(7),
+    user: user.hex,
+    app: hex(5),
+    audience: relay.hex,
+    scope: 'send-cap',
+    createdAt: NOW,
+    nonce: 'd'.repeat(32)
+  }))
+
+  const tick = () => new Promise(resolve => setImmediate(resolve))
+  outbox.create({ appId: writerApp })
+  outbox.append({ appId: writerApp, op: { type: 'head', data: { id: writerApp, version: 1 } } })
+  await tick()
+  t.is(provider.attempts.length, 0, 'head bump does not wake a device whose send-cap was revoked')
+})
+
 test('notify service: default file persistence restores signed caps, watches, revocations and events', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'notify-service-'))
   t.teardown(() => rm(dir, { recursive: true, force: true }))
