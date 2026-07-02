@@ -15,6 +15,7 @@ import {
   SHARD_PROOF_DOMAIN, SHARD_PROOF_KIND, SHARD_PROOF_LIMITATION
 } from './shard-proof.js'
 import { recoverShards, shardAnnounceTopic } from './shard-recover.js'
+import { resolveShardRoute, handleShardHttp, SHARD_HTTP_PREFIX } from './http-adapter.js'
 
 export const SHARD_STORE_VERSION = '0.1.0'
 const DEFAULT_PUT_AUTH = ['custody', 'payment']
@@ -65,6 +66,8 @@ export class ShardStoreService extends ServiceProvider {
     this.proofBucketQuota = opts.proofBuckets || DEFAULT_PROOF_BUCKET
     this._proofBuckets = new Map()
     this.clock = typeof opts.clock === 'function' ? opts.clock : () => Date.now()
+    // Metrics counters (aggregate only — never per-hash, for privacy).
+    this._metrics = { put: 0, get: 0, proof: 0, sweep: 0, rejected: 0 }
     this.store = null
   }
 
@@ -114,20 +117,27 @@ export class ShardStoreService extends ServiceProvider {
     // trusting a client-supplied hash.
     const hash = shardHash(ciphertext)
     if (ciphertext.byteLength > this.maxShardBytes) throw shardError('TOO_LARGE', 'shard exceeds maxShardBytes')
-    if (!params.pin) throw shardError('UNAUTHORIZED_PIN', 'a signed pin is required to PUT')
+    if (!params.pin) { this._metrics.rejected++; throw shardError('UNAUTHORIZED_PIN', 'a signed pin is required to PUT') }
 
-    const pin = await authorizeShardPin(params.pin, {
-      hash,
-      byteLength: ciphertext.byteLength,
-      relayPubkey: this.relayPubkey,
-      allowedReasons: this.allowedReasons,
-      resolveCustodyAssignment: this.resolveCustodyAssignment,
-      checkPaymentQuota: this.checkPaymentQuota,
-      checkToken: this.checkToken
-    })
+    let pin
+    try {
+      pin = await authorizeShardPin(params.pin, {
+        hash,
+        byteLength: ciphertext.byteLength,
+        relayPubkey: this.relayPubkey,
+        allowedReasons: this.allowedReasons,
+        resolveCustodyAssignment: this.resolveCustodyAssignment,
+        checkPaymentQuota: this.checkPaymentQuota,
+        checkToken: this.checkToken
+      })
+    } catch (err) {
+      this._metrics.rejected++
+      throw err
+    }
 
     const r = await this.engine.put(ciphertext, { claimedHash: params.claimedHash || null })
     const pinRef = this.pins.add(pin)
+    this._metrics.put++
     return {
       ok: true,
       shard: r.address,
@@ -141,6 +151,7 @@ export class ShardStoreService extends ServiceProvider {
 
   async get (params = {}) {
     const r = await this.engine.get(params.shard || params.hash)
+    this._metrics.get++
     const out = { ok: true, shard: 'shard:' + r.hash, byteLength: r.byteLength, encoding: 'base64', ciphertext: b4a.toString(r.ciphertext, 'base64') }
     // A nonce upgrades GET to Mode R: a relay-signed, replay-guarded proof that
     // these exact bytes were served for this challenge.
@@ -173,7 +184,29 @@ export class ShardStoreService extends ServiceProvider {
     // unheld hash is indistinguishable from an unauthorized one.
     const present = (await this.engine.has(hash)).present
     if (!present) throw shardError('NOT_HELD', 'shard not held')
+    this._metrics.proof++
     return { ok: true, proof: buildShardAttestation({ hash, nonce, keyPair: this.keyPair }) }
+  }
+
+  /** Prometheus lines (aggregate; no per-hash labels). */
+  async metricsLines () {
+    const s = await this.engine.stats()
+    return [
+      '# HELP hiverelay_shards_held Content-addressed shards currently held',
+      '# TYPE hiverelay_shards_held gauge',
+      'hiverelay_shards_held ' + s.shards,
+      '# HELP hiverelay_shard_bytes Bytes of shard ciphertext held',
+      '# TYPE hiverelay_shard_bytes gauge',
+      'hiverelay_shard_bytes ' + s.bytes,
+      '# TYPE hiverelay_shard_put_total counter',
+      'hiverelay_shard_put_total ' + this._metrics.put,
+      '# TYPE hiverelay_shard_get_total counter',
+      'hiverelay_shard_get_total ' + this._metrics.get,
+      '# TYPE hiverelay_shard_proof_total counter',
+      'hiverelay_shard_proof_total ' + this._metrics.proof,
+      '# TYPE hiverelay_shard_rejected_total counter',
+      'hiverelay_shard_rejected_total ' + this._metrics.rejected
+    ]
   }
 
   /**
@@ -225,5 +258,6 @@ export {
   ShardEngine, DEFAULT_MAX_SHARD_BYTES, normalizeShardAddress, shardHash,
   ShardPinRegistry, authorizeShardPin, verifyShardPin, signShardPin, shardPinRef, SHARD_PIN_DOMAIN,
   buildShardRetrievalProof, buildShardAttestation, buildShardTombstone, verifyShardProof, verifyShardTombstone, SHARD_PROOF_DOMAIN,
-  recoverShards, shardAnnounceTopic
+  recoverShards, shardAnnounceTopic,
+  resolveShardRoute, handleShardHttp, SHARD_HTTP_PREFIX
 }

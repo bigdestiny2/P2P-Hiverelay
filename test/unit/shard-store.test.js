@@ -411,3 +411,86 @@ test('shard recovery: k-of-n by hash with content-address verification (M4)', as
 function shardAnnounceTopicTest (addr) {
   return b4a.toString(shardAnnounceTopic(addr), 'hex')
 }
+
+test('shard-store service: metrics lines are aggregate (no per-hash labels) (M5)', async (t) => {
+  const { store } = await tmpStore(t)
+  const pinner = keyPair(50)
+  const svc = new ShardStoreService({ putAuth: ['payment'], checkPaymentQuota: () => true, keyPair: keyPair(51) })
+  await svc.start({ store })
+  t.teardown(() => svc.stop())
+
+  const sealed = b4a.from('metered-share', 'utf8'); const hash = shardHash(sealed)
+  await svc.put({ ciphertext: b4a.toString(sealed, 'base64'), pin: paymentPin(hash, pinner) })
+  await svc.get({ shard: 'shard:' + hash })
+  const lines = (await svc.metricsLines()).join('\n')
+  t.ok(lines.includes('hiverelay_shards_held 1'))
+  t.ok(lines.includes('hiverelay_shard_put_total 1'))
+  t.ok(lines.includes('hiverelay_shard_get_total 1'))
+  t.absent(lines.includes(hash), 'no per-hash labels leak')
+})
+
+test('shard-store http bridge: PUT/GET/HEAD/prove round-trip (M5)', async (t) => {
+  const { store } = await tmpStore(t)
+  const relay = keyPair(52)
+  const pinner = keyPair(53)
+  const svc = new ShardStoreService({ putAuth: ['payment'], checkPaymentQuota: () => true, keyPair: relay })
+  await svc.start({ store })
+  t.teardown(() => svc.stop())
+
+  const sealed = b4a.from('http-share-bytes', 'utf8')
+  const hash = shardHash(sealed)
+
+  // PUT
+  const putRes = await httpCall(svc, 'POST', '/api/v1/shard', sealed, { 'x-shard-pin': JSON.stringify(paymentPin(hash, pinner)) })
+  t.is(putRes.status, 201)
+  t.is(putRes.json.shard, 'shard:' + hash)
+
+  // HEAD present
+  const headRes = await httpCall(svc, 'HEAD', '/api/v1/shard/' + hash)
+  t.is(headRes.status, 200)
+  t.is(headRes.headers['Content-Length'], String(sealed.byteLength))
+
+  // GET with nonce -> octet-stream body + proof header
+  const nonce = '5'.repeat(64)
+  const getRes = await httpCall(svc, 'GET', '/api/v1/shard/' + hash + '?nonce=' + nonce)
+  t.is(getRes.status, 200)
+  t.ok(b4a.equals(getRes.body, sealed), 'raw ciphertext returned')
+  const proof = JSON.parse(getRes.headers['X-Shard-Proof'])
+  t.ok(verifyShardProof(proof, { hash, nonce, relayPubkey: relay.hex, bytes: getRes.body }))
+
+  // prove
+  const proveRes = await httpCall(svc, 'POST', '/api/v1/shard/' + hash + '/prove', b4a.from(JSON.stringify({ nonce })))
+  t.is(proveRes.status, 200)
+  t.is(proveRes.json.proof.mode, 'A')
+
+  // unknown hash -> 404 (indistinguishable)
+  const missRes = await httpCall(svc, 'HEAD', '/api/v1/shard/' + 'e'.repeat(64))
+  t.is(missRes.status, 404)
+})
+
+// Minimal HTTP req/res harness driving the shard adapter.
+async function httpCall (svc, method, path, body = null, headers = {}) {
+  const { EventEmitter } = await import('node:events')
+  const { resolveShardRoute, handleShardHttp } = await import('../../packages/services/builtin/shard-store/http-adapter.js')
+  const req = new EventEmitter()
+  req.method = method
+  req.headers = headers
+  const res = {
+    _status: null,
+    _headers: {},
+    _chunks: [],
+    writeHead (s, h) { this._status = s; if (h) Object.assign(this._headers, h) },
+    end (c) { if (c != null) this._chunks.push(b4a.isBuffer(c) ? c : b4a.from(c)); this._done = true }
+  }
+  const route = resolveShardRoute(method, path)
+  if (!route) return { status: 404, json: null }
+  const url = { searchParams: new URLSearchParams(path.split('?')[1] || '') }
+  const p = handleShardHttp(svc, route, req, res, { url })
+  if (body != null) { req.emit('data', b4a.isBuffer(body) ? body : b4a.from(body)) }
+  req.emit('end')
+  await p
+  const raw = b4a.concat(res._chunks)
+  const out = { status: res._status, headers: res._headers, body: raw }
+  try { out.json = JSON.parse(b4a.toString(raw, 'utf8')) } catch { out.json = null }
+  return out
+}

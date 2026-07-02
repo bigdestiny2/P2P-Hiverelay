@@ -10,6 +10,21 @@ The packages are versioned in lockstep.
 
 ### Added
 
+- **Blind shard store (`shard-store`) — content-addressed blind blob surface
+  for custody shares.** `PUT` opaque ciphertext, get back `shard:<hash>`
+  (`hash = blake2b-256(ciphertext)`); `GET shard:<hash>` returns the exact
+  bytes and the caller re-hashes to verify — the relay is trusted for nothing
+  and never introspects a blob. Every `PUT` is authorized by a signed pin
+  (custody: the hash is bound to a `shareIndex` assigned to this relay in a
+  verified custody-intent's new signed `shareManifest`; or payment/quota), and
+  the pin registry is the retention authority (re-verifies signatures on load).
+  Adds domain-separated possession proofs (Mode R retrieval + Mode A
+  attestation), non-serving tombstones, retention GC, client-side k-of-n
+  `recoverShards`, an HTTP bridge, and aggregate (never per-hash) metrics.
+  Opt-in (`config.plugins` includes `shard-store`). See
+  `docs/BLIND-SHARD-STORE-SPEC.md`.
+
+
 - **Notify service (`notify`) — relay-hosted encrypted wake-up push.** An
   always-on relay can now wake a peer's app through APNs/FCM/WebPush/runtime
   without ever seeing who is being notified or why. Capabilities split into
