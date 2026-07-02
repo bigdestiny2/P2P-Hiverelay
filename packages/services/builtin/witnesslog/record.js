@@ -71,10 +71,23 @@ export function witnessRecordBytes (input) {
   return b4a.from(WITNESSLOG_SIGNATURE_DOMAIN + '|' + stable(record), 'utf8')
 }
 
+// blake2b-256 of the raw hypercore key -> the public target id, so a witness
+// can attest availability without ever exposing the raw key.
+export function hashTargetKey (keyHex) {
+  const out = b4a.alloc(32)
+  sodium.crypto_generichash(out, b4a.from(String(keyHex).toLowerCase(), 'hex'))
+  return b4a.toString(out, 'hex')
+}
+
 export function redactWitnessRecord (input) {
   const record = normalizeWitnessRecord(input)
   const target = { ...record.target }
-  if (target.keyHash) delete target.key
+  // Read-path redaction ALWAYS strips the raw key — deriving keyHash for a
+  // key-only record so no public read leaks the raw hypercore key.
+  if (target.key) {
+    if (!target.keyHash) target.keyHash = hashTargetKey(target.key)
+    delete target.key
+  }
   return {
     id: record.id,
     version: record.version,
@@ -98,7 +111,8 @@ export function witnessRecordMarker (input) {
     expiresAt: record.expiresAt,
     observer: record.observer.publicKey,
     relay: record.relay.url,
-    target: record.target.keyHash || record.target.key || null,
+    // Never expose the raw key on the public marker/SSE surface.
+    target: record.target.keyHash || (record.target.key ? hashTargetKey(record.target.key) : null),
     targetKind: record.target.kind,
     ok: record.result.ok,
     latencyMs: record.result.latencyMs,

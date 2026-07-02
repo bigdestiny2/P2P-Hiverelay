@@ -143,6 +143,10 @@ export class RepairTicketApp extends ServiceProvider {
     }
     if (typeof fn !== 'function') throw new Error('RepairTicket.subscribe: not a function')
     const target = opts && (opts.target || opts.key || opts.keyHash)
+    // Build the ticket index ONCE, then keep it warm from the event stream.
+    // Previously every append re-snapshotted + re-verified the ENTIRE store per
+    // open subscriber (O(store) crypto per event) — a quadratic DoS.
+    const byId = collectRecords(this.engine, this.verifyOpts).byId
     return this.engine.subscribe('*', { replay: false }, event => {
       if (!event || !event.value || event.value._ns !== REPAIRTICKET_NAMESPACE) return
       let record
@@ -150,7 +154,8 @@ export class RepairTicketApp extends ServiceProvider {
       try {
         record = stripRepairOutboxFields(event.value)
         assertRepairRecord(record, this.verifyOpts)
-        if (record.ticketId) ticket = collectRecords(this.engine, this.verifyOpts).byId.get(record.ticketId) || null
+        if (record.type === REPAIRTICKET_RECORD_TYPE_TICKET) byId.set(record.id, record)
+        if (record.ticketId) ticket = byId.get(record.ticketId) || null
       } catch {
         return
       }
@@ -234,11 +239,20 @@ function repairTicketSummaries (records, byId, now = null) {
   const tickets = records.filter(record => record.type === REPAIRTICKET_RECORD_TYPE_TICKET)
   return tickets.map(ticket => {
     const related = records.filter(record => repairRecordTicketId(record) === ticket.id)
+    const signerOf = (record) => record && record.signer && String(record.signer.publicKey).toLowerCase()
+    const creator = signerOf(ticket)
     const claims = related.filter(record => record.type === REPAIRTICKET_RECORD_TYPE_CLAIM)
     const receipts = related.filter(record => record.type === REPAIRTICKET_RECORD_TYPE_RECEIPT)
     const closes = related.filter(record => record.type === REPAIRTICKET_RECORD_TYPE_CLOSE)
-    const latestClose = closes[closes.length - 1] || null
-    const goodReceipt = receipts.find(record => record.result && record.result.ok)
+    // AUTHORITY: derive status only from records whose signer is entitled to set
+    // it. A close counts only from the ticket CREATOR (only the filer ends the
+    // ticket); a "repaired" receipt counts only from a relay that actually
+    // CLAIMED the ticket. Otherwise any keypair could copy a public ticketId and
+    // forge a closure/receipt, making the fleet stop healing a dead core.
+    const claimers = new Set(claims.map(signerOf))
+    const authoritativeCloses = closes.filter(record => signerOf(record) === creator)
+    const latestClose = authoritativeCloses[authoritativeCloses.length - 1] || null
+    const goodReceipt = receipts.find(record => record.result && record.result.ok && claimers.has(signerOf(record)))
     const status = latestClose
       ? latestClose.outcome
       : (goodReceipt ? 'repaired' : (claims.length ? 'claimed' : (Date.parse(ticket.expiresAt) < nowMs ? 'expired' : 'open')))

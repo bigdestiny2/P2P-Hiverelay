@@ -190,3 +190,17 @@ function throws (fn) {
   }
   throw new Error('expected function to throw')
 }
+
+test('witnesslog: redaction/markers never expose a raw key even for key-only records', t => {
+  const observer = keyPair(30)
+  const keyOnly = signWitnessRecord({ ...witnessInput(observer), target: { kind: 'hypercore', key: TARGET } }, observer.secretKey)
+
+  const redacted = redactWitnessRecord(keyOnly)
+  t.absent(redacted.target.key, 'raw key stripped on read')
+  t.ok(redacted.target.keyHash, 'keyHash derived for identification')
+  t.not(redacted.target.keyHash, TARGET)
+
+  const marker = witnessRecordMarker(keyOnly)
+  t.not(marker.target, TARGET, 'marker does not expose the raw key')
+  t.ok(marker.target)
+})

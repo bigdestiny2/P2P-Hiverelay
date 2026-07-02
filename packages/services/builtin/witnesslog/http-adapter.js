@@ -234,11 +234,23 @@ function writeSseStart (res) {
 }
 
 function writeSseData (res, event, name = null) {
+  // Honor backpressure: drop live events while the socket buffer is full rather
+  // than growing the process heap for a slow reader; resume on 'drain'. The
+  // client re-syncs on reconnect. (Matches the hardened outboxlog adapter.)
+  if (res._ssePaused || res.writableEnded || res.destroyed) return false
+  let ok = true
   try {
     if (name) res.write('event: ' + name + '\n')
     if (event && event.id) res.write('id: ' + event.id + '\n')
-    res.write('data: ' + JSON.stringify(event) + '\n\n')
-  } catch {}
+    ok = res.write('data: ' + JSON.stringify(event) + '\n\n')
+  } catch {
+    return false
+  }
+  if (ok === false) {
+    res._ssePaused = true
+    if (typeof res.once === 'function') res.once('drain', () => { res._ssePaused = false })
+  }
+  return ok
 }
 
 function startSsePing (res, ctx) {

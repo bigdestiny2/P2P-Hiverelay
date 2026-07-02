@@ -81,10 +81,23 @@ export function repairRecordBytes (input) {
   return b4a.from(REPAIRTICKET_SIGNATURE_DOMAIN + '|' + stable(record), 'utf8')
 }
 
+// blake2b-256 of the raw hypercore key -> the public target id. Lets a
+// repair record identify a target without ever exposing the raw key.
+export function hashTargetKey (keyHex) {
+  const out = b4a.alloc(32)
+  sodium.crypto_generichash(out, b4a.from(String(keyHex).toLowerCase(), 'hex'))
+  return b4a.toString(out, 'hex')
+}
+
 export function redactRepairRecord (input) {
   const record = normalizeRepairRecord(input)
   const out = clone(record)
-  if (out.target && out.target.keyHash) delete out.target.key
+  // Read-path redaction must ALWAYS strip the raw key — deriving keyHash when a
+  // key-only record was submitted, so no public read ever leaks the raw key.
+  if (out.target && out.target.key) {
+    if (!out.target.keyHash) out.target.keyHash = hashTargetKey(out.target.key)
+    delete out.target.key
+  }
   return out
 }
 
@@ -99,7 +112,8 @@ export function repairRecordMarker (input, ticket = null) {
     createdAt: record.createdAt,
     expiresAt: record.expiresAt,
     signer: record.signer.publicKey,
-    target: target ? (target.keyHash || target.key || null) : null,
+    // Never expose the raw key on the public marker/SSE surface.
+    target: target ? (target.keyHash || (target.key ? hashTargetKey(target.key) : null)) : null,
     targetKind: target ? target.kind : null,
     reason: record.repair ? record.repair.reason : null,
     action: record.action || null,

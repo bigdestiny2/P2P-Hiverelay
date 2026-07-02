@@ -273,3 +273,43 @@ function throws (fn) {
   }
   throw new Error('expected function to throw')
 }
+
+test('repairticket: forged close/receipt from unauthorized keys cannot set status (auth binding)', t => {
+  const opener = keyPair(20)
+  const attacker = keyPair(21) // never files, claims, or is authorized for anything
+  const app = new RepairTicketApp({ verify: { now: NOW } })
+
+  const ticket = signRepairRecord(ticketInput(opener), opener.secretKey)
+  app.append(ticket)
+  t.is(app.tickets({ target: TARGET_HASH }).tickets[0].status, 'open')
+
+  // attacker copies the public ticketId and forges a 'cancelled' close -> ignored
+  const forgedClose = signRepairRecord({ ...closeInput(attacker, ticket.id), outcome: 'cancelled' }, attacker.secretKey)
+  app.append(forgedClose)
+  t.is(app.tickets({ target: TARGET_HASH }).tickets[0].status, 'open', 'non-creator close does not close the ticket')
+
+  // attacker forges a good receipt without ever claiming -> ignored
+  const forgedReceipt = signRepairRecord(receiptInput(attacker, ticket.id), attacker.secretKey)
+  app.append(forgedReceipt)
+  t.is(app.tickets({ target: TARGET_HASH }).tickets[0].status, 'open', 'non-claimer receipt does not mark repaired')
+
+  // the ticket CREATOR's own close IS authoritative
+  const realClose = signRepairRecord({ ...closeInput(opener, ticket.id), outcome: 'cancelled' }, opener.secretKey)
+  app.append(realClose)
+  t.is(app.tickets({ target: TARGET_HASH }).tickets[0].status, 'cancelled', 'creator close is honored')
+})
+
+test('repairticket: redaction/markers never expose a raw key even for key-only records', t => {
+  const opener = keyPair(22)
+  // a target with only a raw key, no keyHash (permitted by normalizeTarget)
+  const keyOnly = signRepairRecord({ ...ticketInput(opener), target: { kind: 'hypercore', key: TARGET } }, opener.secretKey)
+
+  const redacted = redactRepairRecord(keyOnly)
+  t.absent(redacted.target.key, 'raw key stripped on read')
+  t.ok(redacted.target.keyHash, 'keyHash derived for identification')
+  t.not(redacted.target.keyHash, TARGET, 'keyHash is not the raw key')
+
+  const marker = repairRecordMarker(keyOnly)
+  t.not(marker.target, TARGET, 'marker does not expose the raw key')
+  t.ok(marker.target)
+})
