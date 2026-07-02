@@ -1244,7 +1244,13 @@ export class RelayNode extends EventEmitter {
           dht: this.swarm.dht,
           port: this.config.dhtRelayWsPort || 8766,
           host: this.config.dhtRelayWsHost,
-          maxConnections: this.config.maxConnections
+          maxConnections: this.config.maxConnections,
+          // Pure-pipe prod bounds — all content-neutral (lengths/timings
+          // only). Operators tune via config.dhtRelayWs.{rateLimit,
+          // keepalive,flow}; defaults are safe for an unattended 24/7 pipe.
+          rateLimit: (this.config.dhtRelayWs && this.config.dhtRelayWs.rateLimit) || undefined,
+          keepalive: (this.config.dhtRelayWs && this.config.dhtRelayWs.keepalive) || undefined,
+          flow: (this.config.dhtRelayWs && this.config.dhtRelayWs.flow) || undefined
         })
         this.dhtRelayWs.on('relay-error', (info) => this.emit('dht-relay-error', info))
         await this.dhtRelayWs.start()
