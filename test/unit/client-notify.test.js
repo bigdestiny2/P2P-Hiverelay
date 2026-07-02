@@ -4,6 +4,7 @@ import sodium from 'sodium-universal'
 import { NotifyService, verifyNotifySignature as verifyServiceNotifySignature } from 'p2p-hiveservices/builtin/notify-service.js'
 import {
   NOTIFY_DOMAINS,
+  createNotifyDeliveryEventRequest,
   createNotifyDeviceRegistration,
   createNotifyHttpClient,
   createNotifyIntent,
@@ -114,6 +115,15 @@ test('client notify: signed builders interoperate with notify service verifier',
   }, sender, { now: NOW }))
   t.is(sent.ok, true)
   t.is(attempts.length, 1)
+
+  // The device reads its own delivery events with the signed request builder;
+  // a foreign key proving its own device reads nothing.
+  const events = await notify['delivery-event'](createNotifyDeliveryEventRequest({ intentId: hex(9) }, device))
+  t.is(events.count, 1)
+  t.is(events.events[0].status, 'accepted_by_provider')
+  const foreign = keyPair(9)
+  const denied = await notify['delivery-event'](createNotifyDeliveryEventRequest({ intentId: hex(9) }, foreign))
+  t.is(denied.count, 0)
 })
 
 test('client notify: service client wraps callService method names', async (t) => {

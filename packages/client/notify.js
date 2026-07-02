@@ -10,7 +10,8 @@ export const NOTIFY_DOMAINS = Object.freeze({
   watch: 'hiverelay.notify.v1.watch',
   status: 'hiverelay.notify.v1.status',
   revoke: 'hiverelay.notify.v1.revoke',
-  deliveryEvent: 'hiverelay.notify.v1.delivery-event'
+  deliveryEvent: 'hiverelay.notify.v1.delivery-event',
+  deliveryEventRequest: 'hiverelay.notify.v1.delivery-event-request'
 })
 
 export const NOTIFY_HTTP_PATHS = Object.freeze({
@@ -135,6 +136,17 @@ export function createNotifyUnwatch (fields, keyPair) {
     type: 'hiverelay.notify.unwatch.v1',
     ...fields
   })
+}
+
+// delivery-event reads are authenticated: the request must be signed by the
+// receiving device key, and the relay only returns events whose device matches
+// that key. Pass intentId or eventId in fields; device defaults to the key.
+export function createNotifyDeliveryEventRequest (fields, deviceKeyPair) {
+  const body = {
+    ...fields,
+    device: fields && fields.device ? fields.device : publicKeyHex(deviceKeyPair)
+  }
+  return signNotifyObject(deviceKeyPair, NOTIFY_DOMAINS.deliveryEventRequest, body)
 }
 
 export function createNotifyStatusRequest (fields, keyPair, opts = {}) {
