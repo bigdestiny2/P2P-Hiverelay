@@ -54,12 +54,56 @@ test('notify service: signed direct wake path stores redacted delivery event', a
   t.is(provider.attempts.length, 1)
   t.is(provider.attempts[0].providerTokenCiphertext, 'encrypted-provider-token')
 
-  const events = await notify['delivery-event']({ intentId: intent.intentId })
+  const events = await notify['delivery-event'](signed(device, NOTIFY_DOMAINS.deliveryEventRequest, { intentId: intent.intentId, device: device.hex }))
   t.is(events.count, 1)
   t.is(events.events[0].status, 'accepted_by_provider')
   t.is(events.events[0].providerStatus, 'memory-ok')
   t.absent(JSON.stringify(events.events[0]).includes('encrypted-provider-token'))
   t.ok(verifyNotifySignature(events.events[0], NOTIFY_DOMAINS.deliveryEvent, relay.hex))
+})
+
+test('notify service: delivery-event requires a device-signed request (no cross-tenant IDOR)', async (t) => {
+  const relay = keyPair(1)
+  const user = keyPair(2)
+  const device = keyPair(3)
+  const sender = keyPair(4)
+  const attacker = keyPair(88)
+  const provider = { attempts: [], async send () { return { status: 'accepted_by_provider' } } }
+  const notify = new NotifyService({ keyPair: relay, provider, clock: () => NOW })
+
+  await installHappyPath(notify, { relay, user, device, sender })
+  const intent = signed(sender, NOTIFY_DOMAINS.intent, {
+    type: 'hiverelay.notify.intent.v1',
+    intentId: hex(9),
+    receiveCap: hex(6),
+    sendCap: hex(7),
+    app: hex(5),
+    receiver: device.hex,
+    sender: sender.hex,
+    channel: 'message',
+    urgency: 'normal',
+    ttlSeconds: 3600,
+    createdAt: NOW,
+    payloadCiphertext: 'ciphertext',
+    privacyProfile: 'generic'
+  })
+  const sent = await notify.send(intent)
+  t.is(sent.ok, true)
+
+  // Unsigned request is rejected outright.
+  await t.exception(notify['delivery-event']({ intentId: intent.intentId, device: device.hex }), /BAD_SIGNATURE/)
+  // A request with no device field cannot prove caller scope.
+  await t.exception(notify['delivery-event'](signed(device, NOTIFY_DOMAINS.deliveryEventRequest, { intentId: intent.intentId })), /BAD_SIGNATURE/)
+  // Attacker names the victim's device but signs with their own key: the
+  // signature fails to verify against the claimed device key -> rejected.
+  await t.exception(notify['delivery-event'](signed(attacker, NOTIFY_DOMAINS.deliveryEventRequest, { intentId: intent.intentId, device: device.hex })), /BAD_SIGNATURE/)
+  // Attacker validly proves control of their OWN device, but the victim's
+  // event.device != attacker -> reads nothing (no metadata leak).
+  const leaked = await notify['delivery-event'](signed(attacker, NOTIFY_DOMAINS.deliveryEventRequest, { intentId: intent.intentId, device: attacker.hex }))
+  t.is(leaked.count, 0)
+  // The legitimate device still reads its own event.
+  const ok = await notify['delivery-event'](signed(device, NOTIFY_DOMAINS.deliveryEventRequest, { intentId: intent.intentId, device: device.hex }))
+  t.is(ok.count, 1)
 })
 
 test('notify service: sender without matching SendCap is rejected before provider attempt', async (t) => {
@@ -254,7 +298,7 @@ test('notify service: default file persistence restores signed caps, watches, re
   t.is(status.counts.revocations, 1)
   t.is(status.counts.deliveryEvents, 1)
 
-  const events = await second['delivery-event']({ intentId: intent.intentId })
+  const events = await second['delivery-event'](signed(device, NOTIFY_DOMAINS.deliveryEventRequest, { intentId: intent.intentId, device: device.hex }))
   t.is(events.count, 1)
   t.is(events.events[0].status, 'accepted_by_provider')
   t.ok(verifyNotifySignature(events.events[0], NOTIFY_DOMAINS.deliveryEvent, relay.hex))
@@ -284,7 +328,7 @@ test('notify service: default file persistence restores signed caps, watches, re
     clock: () => NOW
   })
   await third.start({ config: { storage: dir } })
-  const blockedEvents = await third['delivery-event']({ intentId: blocked.intentId })
+  const blockedEvents = await third['delivery-event'](signed(device, NOTIFY_DOMAINS.deliveryEventRequest, { intentId: blocked.intentId, device: device.hex }))
   t.is(blockedEvents.count, 1)
   t.is(blockedEvents.events[0].reason, 'cap_revoked')
   await third.stop()

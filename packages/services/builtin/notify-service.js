@@ -14,7 +14,8 @@ export const NOTIFY_DOMAINS = Object.freeze({
   watch: 'hiverelay.notify.v1.watch',
   status: 'hiverelay.notify.v1.status',
   revoke: 'hiverelay.notify.v1.revoke',
-  deliveryEvent: 'hiverelay.notify.v1.delivery-event'
+  deliveryEvent: 'hiverelay.notify.v1.delivery-event',
+  deliveryEventRequest: 'hiverelay.notify.v1.delivery-event-request'
 })
 
 export const NOTIFY_PRIVACY_PROFILES = Object.freeze([
@@ -430,7 +431,11 @@ export class NotifyService extends ServiceProvider {
     const device = params && typeof params.device === 'string' ? params.device : null
     const matches = (entry) => {
       if (app && entry.app !== app) return false
-      if (device && entry.device !== device) return false
+      // Device scoping applies only to entries that carry a device (bindings,
+      // caps, watches, delivery events). Revocations are app+scope keyed and
+      // store device: null, so they are isolated by app alone — filtering them
+      // by device would wrongly zero the count for a device-scoped query.
+      if (device && entry.device != null && entry.device !== device) return false
       return true
     }
     return {
@@ -448,22 +453,34 @@ export class NotifyService extends ServiceProvider {
         receiveCaps: countMap(this.receiveCaps, matches),
         sendCaps: countMap(this.sendCaps, matches),
         watches: countMap(this.watches, matches),
-        deliveryEvents: this.deliveryEvents.size,
-        revocations: this.revocations.size
+        deliveryEvents: countMap(this.deliveryEvents, matches),
+        revocations: countMap(this.revocations, matches)
       }
     }
   }
 
   async 'delivery-event' (params = {}) {
+    // Authorization: the request MUST be signed by the receiving device key.
+    // An event is returned only if its device is the key that ACTUALLY verified
+    // this request, so a request naming another tenant's device/intent reads
+    // nothing. (Previously unauthenticated: a cross-tenant metadata IDOR leaking
+    // billable/device/timing fields — spec §826 requires caller scoping.) The
+    // sender already receives its own eventId + status synchronously from send();
+    // a sender-poll path is a deliberate V1 cut, not required to close the leak.
+    const device = typeof params.device === 'string' ? params.device : null
+    if (!params || !params.signature || !device) {
+      throw fail('BAD_SIGNATURE', 'delivery-event requires a request signed by the receiving device key')
+    }
+    verifySignedAny(params, NOTIFY_DOMAINS.deliveryEventRequest, [device])
+    const authorized = (event) => event.device === device
     const events = []
-    if (params && params.eventId) {
+    if (params.eventId) {
       const event = this.deliveryEvents.get(params.eventId)
-      if (event) events.push(redactDeliveryEvent(event))
-    } else if (params && params.intentId) {
-      const ids = this.eventsByIntent.get(params.intentId) || []
-      for (const id of ids) {
+      if (event && authorized(event)) events.push(redactDeliveryEvent(event))
+    } else if (params.intentId) {
+      for (const id of (this.eventsByIntent.get(params.intentId) || [])) {
         const event = this.deliveryEvents.get(id)
-        if (event) events.push(redactDeliveryEvent(event))
+        if (event && authorized(event)) events.push(redactDeliveryEvent(event))
       }
     }
     return { ok: true, events, count: events.length }
