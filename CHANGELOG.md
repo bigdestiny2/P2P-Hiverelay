@@ -10,6 +10,15 @@ The packages are versioned in lockstep.
 
 ### Added
 
+- **Custody availability primitives — `witnesslog` + `repairticket`.** Two
+  OutboxLog-backed signed logs that complete the shard store's
+  placement/recovery story. `witnesslog` records signed third-party
+  availability observations (the custody witness role — independent,
+  non-storage observers sign what they see); `repairticket` records signed
+  repair requests, claims, receipts, and closures for self-healing recovery
+  (the AutoHeal loop). Both HTTP-bridge at `/api/witness` and `/api/repair`,
+  are dashboard-selectable, and inherit the OutboxLog engine's hardening
+  (re-verify-signatures-on-load, journal-first persistence, SSE backpressure).
 - **Blind shard store (`shard-store`) — content-addressed blind blob surface
   for custody shares.** `PUT` opaque ciphertext, get back `shard:<hash>`
   (`hash = blake2b-256(ciphertext)`); `GET shard:<hash>` returns the exact
