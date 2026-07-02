@@ -10,8 +10,26 @@ The packages are versioned in lockstep.
 
 ## [0.21.1] — 2026-07-02
 
-Hardening patch from the v0.21.0 pre-release expert-panel audit. No API or
-wire-format changes; safe in-place upgrade from 0.21.0.
+Hardening patch from the v0.21.0 pre-release expert-panel audit, plus a
+release-critical custody-signing regression fix. Safe in-place upgrade from
+0.21.0 — and v0.21.0 should not be deployed for custody: its dealer→relay
+custody-intent path is broken (see below).
+
+### Fixed (critical)
+
+- **Custody-intent signing regression (v0.21.0).** v0.21.0 added an optional
+  `shareManifest` field to the version-2 custody-intent *signable* field set,
+  and `custodySignablePayload` emitted it as `["shareManifest", null]` even when
+  absent — changing the canonical payload for **every** v2 custody-intent. The
+  client's self-contained bare-safe signer (`_createCustodyIntent`, which by
+  design never imports core's custody-signing) still omitted the field, so every
+  real dealer→relay custody publish failed `INVALID_CUSTODY_ENTRY: bad
+  signature`. The cross-impl parity guard (`client-custody-crossimpl.test.js`)
+  was red on v0.21.0. Fix: an optional signature-covered field is now omitted
+  from the payload when absent, making the payload byte-identical to pre-v0.21.0
+  for any intent that doesn't carry it (and matching the client). Required
+  fields keep their historical `?? null` inclusion, so v1/older signatures stay
+  byte-identical.
 
 ### Fixed
 
@@ -43,6 +61,13 @@ wire-format changes; safe in-place upgrade from 0.21.0.
   false positive: the namespace is bound by the signature through the message
   prefix (`pear.app.<driveKey>:<ns>:…`), so cross-namespace signature reuse
   fails verification. No change required.
+- A follow-up cross-impl parity audit confirmed the custody fix above is complete
+  for every current intent, and surfaced a **latent** (not-yet-live) sibling: the
+  client's self-contained signer keeps its own `SHARE_FIELDS_BY_TYPE` that also
+  omits `shareManifest`. It is harmless while the client cannot emit a manifest
+  (the field is always absent → dropped from both payloads), but must be mirrored
+  — as one cohesive change — before client-side shard-binding custody goes live.
+  Guard comments were added at both field-set sites; see the follow-up task.
 
 ## [0.21.0] — 2026-07-02
 

@@ -174,6 +174,16 @@ const SHARE_FIELDS_BY_TYPE = {
   // shareManifest (optional) binds each shareIndex to a content-addressed
   // shard:<hash> in the blind shard store, so a share is an independently
   // placeable + verifiable blob instead of an offset in shareBundleKey.
+  //
+  // PARITY WARNING: the client's bare-safe signer keeps its OWN copy of this
+  // list (packages/client/custody.js) and must produce byte-identical signable
+  // payloads — pinned by test/unit/client-custody-crossimpl.test.js. The client
+  // copy deliberately OMITS 'shareManifest' today: it cannot yet construct a
+  // manifest-bearing intent, so the field is always absent and OPTIONAL_SIGNABLE_FIELDS
+  // (below) drops it from BOTH payloads, keeping them identical. Before the client
+  // can emit a manifest, mirror 'shareManifest' + the manifest normalizers into
+  // the client signer AND add a manifest-PRESENT cross-impl fixture, or every real
+  // client->relay v2 intent signature will fail INVALID_CUSTODY_ENTRY.
   'custody-intent': ['shareScheme', 'shareThreshold', 'commitmentRoot', 'shareBundleKey', 'shareAssignments', 'shareManifest'],
   'custody-receipt': ['shareScheme', 'commitmentRoot', 'shareIndex', 'shareCommitment', 'shareVerified']
 }
@@ -943,8 +953,20 @@ function normalizeExpiryWitness (entry) {
   return orderedEntry(entry)
 }
 
+// A signature-covered field that is OPTIONAL (may be legitimately absent) must
+// be omitted from the payload when absent — never emitted as `null`. Otherwise
+// a payload that carries `[field, null]` diverges from every signer that omits
+// the field entirely: the bare-safe client signer (which never knew about it),
+// and every entry of this version signed before the field was introduced. Only
+// list fields here that were ADDED to an existing signed field set; required
+// fields keep their historical `?? null` inclusion so v1/older payloads stay
+// byte-identical.
+const OPTIONAL_SIGNABLE_FIELDS = new Set(['shareManifest'])
+
 function custodySignablePayload (entry) {
-  const fields = signableFieldsFor(entry)
+  const fields = signableFieldsFor(entry).filter(
+    field => !OPTIONAL_SIGNABLE_FIELDS.has(field) || entry[field] !== undefined
+  )
   const pairs = fields.map(field => [field, entry[field] ?? null])
   return b4a.from(`hiverelay-${entry.type}-v1:${JSON.stringify(pairs)}`)
 }

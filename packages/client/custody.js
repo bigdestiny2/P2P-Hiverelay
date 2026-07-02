@@ -196,6 +196,19 @@ const SIGNABLE_FIELDS_BY_TYPE = {
 // (shareAssignments) that tells each custodying relay which encrypted share it
 // must verify. The receipt attests which blind share the relay custodies and
 // that it publicly verified it (no secret key).
+// PARITY WARNING: this is the client's self-contained mirror of core's
+// SHARE_FIELDS_BY_TYPE (packages/core/core/custody-signing.js). The two MUST
+// produce byte-identical signable payloads or every real client->relay custody
+// signature fails INVALID_CUSTODY_ENTRY — pinned by
+// test/unit/client-custody-crossimpl.test.js. This copy INTENTIONALLY omits
+// 'custody-intent' -> 'shareManifest' (core has it): the client cannot yet
+// construct a manifest-bearing intent, so the field is always absent and core's
+// OPTIONAL_SIGNABLE_FIELDS filter drops it from both payloads. Before enabling
+// client-side shard-binding custody, add 'shareManifest' here AND port core's
+// manifest handling (OPTIONAL_SIGNABLE_FIELDS filter in custodySignablePayload,
+// normalizeShareManifest, normalizeShardAddressField, allowlist entry, and the
+// validateCustodyTransition binding block) together — a partial mirror re-breaks
+// parity. Add a manifest-PRESENT cross-impl fixture at the same time.
 const SHARE_FIELDS_BY_TYPE = {
   'custody-intent': ['shareScheme', 'shareThreshold', 'commitmentRoot', 'shareBundleKey', 'shareAssignments'],
   'custody-receipt': ['shareScheme', 'commitmentRoot', 'shareIndex', 'shareCommitment', 'shareVerified']
