@@ -145,6 +145,10 @@ export class NotifyService extends ServiceProvider {
     if (!receiveCap || !isFuture(receiveCap.expiresAt, now)) return
     if (
       this._hasRevocation('receive-cap', receiveCap.capId, watch.app) ||
+      // The watch was authorized by a send-cap; honor its revocation here the
+      // same way the direct-send path does, so revoking the send-cap stops
+      // wakes and not just direct sends.
+      this._hasRevocation('send-cap', watch.sendCap, watch.app) ||
       this._hasRevocation('device', watch.device, watch.app) ||
       this._hasRevocation('app', watch.app, watch.app) ||
       this._hasRevocation('channel', watch.channel, watch.app) ||

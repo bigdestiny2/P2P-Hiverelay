@@ -15,7 +15,7 @@ import {
   SHARD_PROOF_DOMAIN, SHARD_PROOF_KIND, SHARD_PROOF_LIMITATION
 } from './shard-proof.js'
 import { recoverShards, shardAnnounceTopic } from './shard-recover.js'
-import { resolveShardRoute, handleShardHttp, SHARD_HTTP_PREFIX } from './http-adapter.js'
+import { resolveShardRoute, handleShardHttp, createShardHttpState, SHARD_HTTP_PREFIX } from './http-adapter.js'
 
 export const SHARD_STORE_VERSION = '0.1.0'
 const DEFAULT_PUT_AUTH = ['custody', 'payment']
@@ -259,5 +259,5 @@ export {
   ShardPinRegistry, authorizeShardPin, verifyShardPin, signShardPin, shardPinRef, SHARD_PIN_DOMAIN,
   buildShardRetrievalProof, buildShardAttestation, buildShardTombstone, verifyShardProof, verifyShardTombstone, SHARD_PROOF_DOMAIN,
   recoverShards, shardAnnounceTopic,
-  resolveShardRoute, handleShardHttp, SHARD_HTTP_PREFIX
+  resolveShardRoute, handleShardHttp, createShardHttpState, SHARD_HTTP_PREFIX
 }

@@ -207,3 +207,24 @@ function keyPair (seedByte) {
     publicKeyHex: b4a.toString(publicKey, 'hex')
   }
 }
+
+test('repairticket http adapter: SSE keepalive ping honors the backpressure/teardown gate (v0.21.1 audit)', async (t) => {
+  const ctx = createCtx()
+  ctx.ssePingMs = 5
+  const req = fakeReq('GET', '/api/repair/events?stream=1', null, { accept: 'text/event-stream' })
+  const res = fakeRes()
+  const handled = await handleRepairTicketRoute(req, res, ctx)
+  t.is(handled, true)
+  t.is(res.statusCode, 200)
+
+  // Simulate a paused (backpressured) socket. The periodic keepalive ping must
+  // NOT write while paused — that would re-grow the socket buffer the
+  // backpressure gate just protected. Asserting absence is flake-proof: a
+  // broken guard emits >=1 ping in the wait window; a working one emits 0.
+  res._ssePaused = true
+  res.chunks.length = 0
+  await new Promise(resolve => setTimeout(resolve, 60))
+  t.absent(res.chunks.some(c => c.includes(': ping')), 'no keepalive ping while paused')
+
+  req.emit('close')
+})
