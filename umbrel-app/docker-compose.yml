@@ -26,7 +26,7 @@ services:
     # Pinned by digest per Umbrel's reproducibility requirement. For a
     # personal sideload before submission, the bare tag also works; the
     # digest pin is an App Store review requirement.
-    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.20.2@sha256:13e47f20d1c8f7d76abb23a3009f195c59a36184ec1fed1a9d3d5c365f62ff1e
+    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.21.0
     init: true
     restart: on-failure
     stop_grace_period: 1m

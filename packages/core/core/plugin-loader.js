@@ -31,12 +31,19 @@ const BUILTIN_MAP = {
   poker: { module: 'p2p-hiveservices/builtin/poker/index.js', className: 'PokerApp' },
   // Single-writer app outbox availability bridge for Pear/PearBrowser apps.
   outboxlog: { module: 'p2p-hiveservices/builtin/outboxlog/index.js', className: 'OutboxLogApp' },
+  // Signed third-party availability observations backed by the OutboxLog engine.
+  witnesslog: { module: 'p2p-hiveservices/builtin/witnesslog/index.js', className: 'WitnessLogApp' },
+  // Signed repair tickets, claims, receipts, and closures for self-healing availability.
+  repairticket: { module: 'p2p-hiveservices/builtin/repairticket/index.js', className: 'RepairTicketApp' },
   // Encrypted wake-only notification bridge. Provider SDK adapters are
   // service-owned; Core only loads the optional provider.
   notify: { module: 'p2p-hiveservices/builtin/notify-service.js', className: 'NotifyService' },
   // Tier-2 trustless seed verification: signed challenge-response proof that
   // this relay holds a seeded block. Independent — NOT part of any bundle.
-  'storage-proof': { module: 'p2p-hiveservices/builtin/storage-proof-service.js', className: 'StorageProofService' }
+  'storage-proof': { module: 'p2p-hiveservices/builtin/storage-proof-service.js', className: 'StorageProofService' },
+  // Content-addressed blind blob store for custody shards (shard:<hash>
+  // PUT/GET). M1: engine + surface. Independent — NOT part of any bundle.
+  'shard-store': { module: 'p2p-hiveservices/builtin/shard-store/index.js', className: 'ShardStoreService' }
 }
 
 // Names operators can add as services (the Services tab's "available" list).

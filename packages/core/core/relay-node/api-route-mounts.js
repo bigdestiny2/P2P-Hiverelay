@@ -12,6 +12,10 @@ export const OUTBOXLOG_HTTP_ROUTE_PREFIXES = Object.freeze([
   '/api/sync/',
   '/api/swarm/'
 ])
+export const WITNESSLOG_HTTP_ROUTE = '/api/witness'
+export const WITNESSLOG_HTTP_ROUTE_PREFIX = '/api/witness/'
+export const REPAIRTICKET_HTTP_ROUTE = '/api/repair'
+export const REPAIRTICKET_HTTP_ROUTE_PREFIX = '/api/repair/'
 export const POKER_HTTP_ROUTE = '/api/poker'
 export const POKER_HTTP_ROUTE_PREFIX = '/api/poker/'
 export const POKER_TABLE_CREATE_ROUTE = '/api/poker/tables'
@@ -36,6 +40,16 @@ export function isOutboxLogHttpRoute (path) {
   return typeof path === 'string' &&
     (OUTBOXLOG_HTTP_EXACT_ROUTES.includes(path) ||
       OUTBOXLOG_HTTP_ROUTE_PREFIXES.some(prefix => path.startsWith(prefix)))
+}
+
+export function isWitnessLogHttpRoute (path) {
+  return typeof path === 'string' &&
+    (path === WITNESSLOG_HTTP_ROUTE || path.startsWith(WITNESSLOG_HTTP_ROUTE_PREFIX))
+}
+
+export function isRepairTicketHttpRoute (path) {
+  return typeof path === 'string' &&
+    (path === REPAIRTICKET_HTTP_ROUTE || path.startsWith(REPAIRTICKET_HTTP_ROUTE_PREFIX))
 }
 
 export function resolvePokerHttpRoutePolicy (method, path) {
