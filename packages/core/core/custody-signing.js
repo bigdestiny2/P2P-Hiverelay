@@ -171,7 +171,10 @@ const SIGNABLE_FIELDS_BY_TYPE = {
 // must verify. The receipt attests which blind share the relay custodies and
 // that it publicly verified it (no secret key).
 const SHARE_FIELDS_BY_TYPE = {
-  'custody-intent': ['shareScheme', 'shareThreshold', 'commitmentRoot', 'shareBundleKey', 'shareAssignments'],
+  // shareManifest (optional) binds each shareIndex to a content-addressed
+  // shard:<hash> in the blind shard store, so a share is an independently
+  // placeable + verifiable blob instead of an offset in shareBundleKey.
+  'custody-intent': ['shareScheme', 'shareThreshold', 'commitmentRoot', 'shareBundleKey', 'shareAssignments', 'shareManifest'],
   'custody-receipt': ['shareScheme', 'commitmentRoot', 'shareIndex', 'shareCommitment', 'shareVerified']
 }
 
@@ -484,6 +487,17 @@ export function validateCustodyTransition (entry, status = {}) {
         if (!assigned) return { valid: false, reason: 'relay not in shareAssignments' }
         if (assigned.shareIndex !== entry.shareIndex) return { valid: false, reason: 'shareIndex does not match assignment' }
       }
+      // When the intent binds shares to content-addressed shards, the receipt's
+      // shareIndex must exist in the signed manifest and its public commitment
+      // must equal the manifest's binding — so a relay cannot attest a share
+      // whose blob the dealer never committed to.
+      if (Array.isArray(intent.shareManifest)) {
+        const bound = intent.shareManifest.find(m => m.shareIndex === entry.shareIndex)
+        if (!bound) return { valid: false, reason: 'shareIndex not in shareManifest' }
+        if (entry.shareCommitment && entry.shareCommitment !== bound.shareCommitment) {
+          return { valid: false, reason: 'shareCommitment does not match manifest binding' }
+        }
+      }
       if (entry.shareVerified !== true) return { valid: false, reason: 'shareVerified must be true' }
     } else if (entry.shareScheme) {
       return { valid: false, reason: 'share custody declared for non-PVSS intent' }
@@ -782,6 +796,41 @@ function normalizeShareIntentFields (entry) {
   entry.commitmentRoot = hexField(entry.commitmentRoot, 'commitmentRoot')
   entry.shareBundleKey = hexField(entry.shareBundleKey, 'shareBundleKey')
   entry.shareAssignments = normalizeShareAssignments(entry.shareAssignments, entry.requiredReplicas, entry.shareThreshold)
+  const manifest = normalizeShareManifest(entry.shareManifest, entry.requiredReplicas)
+  if (manifest === undefined) delete entry.shareManifest
+  else entry.shareManifest = manifest
+}
+
+// shareManifest binds shareIndex -> content-addressed shard:<hash> (+ the
+// per-share public commitment). Optional: a v2 intent may still use the
+// shareBundleKey bundle instead. When present it is signed with the intent.
+function normalizeShareManifest (value, requiredReplicas) {
+  if (value == null) return undefined
+  if (!Array.isArray(value)) throw new Error('shareManifest must be an array')
+  const seen = new Set()
+  const out = value.map((raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('shareManifest entry must be an object')
+    const shareIndex = positiveInteger(raw.shareIndex, 'shareManifest.shareIndex')
+    if (shareIndex > requiredReplicas) throw new Error('shareManifest shareIndex exceeds requiredReplicas')
+    if (seen.has(shareIndex)) throw new Error('duplicate shareIndex in shareManifest')
+    seen.add(shareIndex)
+    return {
+      shareIndex,
+      shard: normalizeShardAddressField(raw.shard, 'shareManifest.shard'),
+      // Same compressed secp256k1 point the receipt commits to (66 hex).
+      shareCommitment: pointField(raw.shareCommitment, 'shareManifest.shareCommitment')
+    }
+  })
+  out.sort((a, b) => a.shareIndex - b.shareIndex)
+  return out
+}
+
+function normalizeShardAddressField (value, name) {
+  if (typeof value !== 'string') throw new Error(name + ' must be a string')
+  const raw = value.startsWith('shard:') ? value.slice('shard:'.length) : value
+  const lower = raw.toLowerCase()
+  if (!HEX_32.test(lower)) throw new Error(name + ' must be shard:<64-hex>')
+  return 'shard:' + lower
 }
 
 // Each PVSS share is encrypted to a guardian and custodied by a specific relay.

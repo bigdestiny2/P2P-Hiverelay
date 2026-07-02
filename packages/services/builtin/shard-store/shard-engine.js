@@ -136,6 +136,19 @@ export class ShardEngine {
     return { refs: rec.refs, removed: false }
   }
 
+  /** Force-remove a shard's bytes + index row, ignoring the engine ref count.
+   *  Used when the pin registry (the retention authority) drops to zero pins. */
+  async delete (address) {
+    await this.ready()
+    const hash = normalizeShardAddress(address)
+    if (!hash) throw shardError('BAD_ADDRESS', 'invalid shard address')
+    const node = await this.index.get(hash)
+    if (!node || !node.value) return { removed: false }
+    if (typeof this.blobs.clear === 'function') { try { await this.blobs.clear(node.value.blobId) } catch {} }
+    await this.index.del(hash)
+    return { removed: true }
+  }
+
   async stats () {
     await this.ready()
     let shards = 0
