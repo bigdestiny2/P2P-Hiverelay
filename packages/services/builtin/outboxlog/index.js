@@ -120,6 +120,10 @@ export class OutboxLogApp extends ServiceProvider {
 
   async stop () {
     if (this.engine.flush) await this.engine.flush()
+    // Tear down the swarm hub so no descriptor delivery fires after stop and
+    // its channel/descriptor state is released. Guard the method so an
+    // injected swarm without destroy()/close() is tolerated.
+    if (this.swarm && typeof this.swarm.destroy === 'function') this.swarm.destroy()
     this.node = null
   }
 

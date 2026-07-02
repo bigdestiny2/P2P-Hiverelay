@@ -507,15 +507,31 @@ function writeSseStart (res) {
 }
 
 function writeSseData (res, event, name = null) {
+  // Honor backpressure. res.write() returns false when the socket's send
+  // buffer is full; if we keep writing we grow the process heap without bound
+  // for a slow reader. While paused we DROP live events rather than buffer
+  // them — the client re-syncs on reconnect (markers are replayed) or via p2p,
+  // so a dropped push is recoverable: "push wakes the app; p2p sync gives the
+  // app truth". The paused flag clears on the next 'drain'.
+  if (res._ssePaused || res.writableEnded || res.destroyed) return false
+  let ok = true
   try {
     if (name) res.write('event: ' + name + '\n')
     if (event && Number.isFinite(Number(event.seq))) res.write('id: ' + event.seq + '\n')
-    res.write('data: ' + JSON.stringify(event) + '\n\n')
-  } catch {}
+    ok = res.write('data: ' + JSON.stringify(event) + '\n\n')
+  } catch {
+    return false
+  }
+  if (ok === false) {
+    res._ssePaused = true
+    if (typeof res.once === 'function') res.once('drain', () => { res._ssePaused = false })
+  }
+  return ok
 }
 
 function startSsePing (res, ctx) {
   const ping = setInterval(() => {
+    if (res._ssePaused || res.writableEnded || res.destroyed) return
     try {
       res.write(': ping\n\n')
     } catch {}

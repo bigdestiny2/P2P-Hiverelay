@@ -11,9 +11,11 @@ export function createOutboxSwarmHub ({ maxDescriptorsPerTopic = 20000, onChange
   const descriptors = new Map()
   let seq = 0
   let synth = 0
+  let destroyed = false
 
   return {
     join (topicHex, opts = {}) {
+      if (destroyed) return null
       const channelId = 'ch-' + (++seq)
       channels.set(channelId, {
         topic: topicHex || 'default',
@@ -30,6 +32,7 @@ export function createOutboxSwarmHub ({ maxDescriptorsPerTopic = 20000, onChange
     },
 
     send (channelId, peerId, data) {
+      if (destroyed) return { ok: false }
       const channel = channels.get(channelId)
       if (channel) remember(channel.topic, data)
       deliver(peerId, { type: 'message', peerId: channelId, data })
@@ -38,7 +41,14 @@ export function createOutboxSwarmHub ({ maxDescriptorsPerTopic = 20000, onChange
 
     leave,
 
+    // Explicit teardown: null every live event sink so no descriptor delivery
+    // can fire after close, drop all channel + descriptor state, and make the
+    // hub inert. Idempotent. (Mafintosh: a primitive that opens must close.)
+    destroy,
+    close: destroy,
+
     subscribe (channelId, onEvent) {
+      if (destroyed) return () => {}
       const channel = channels.get(channelId)
       if (!channel) return () => {}
       channel.onEvent = onEvent
@@ -75,7 +85,16 @@ export function createOutboxSwarmHub ({ maxDescriptorsPerTopic = 20000, onChange
     }
   }
 
+  function destroy () {
+    if (destroyed) return
+    destroyed = true
+    for (const channel of channels.values()) channel.onEvent = null
+    channels.clear()
+    descriptors.clear()
+  }
+
   function deliver (channelId, event) {
+    if (destroyed) return
     const channel = channels.get(channelId)
     if (!channel || !channel.onEvent) return
     try {

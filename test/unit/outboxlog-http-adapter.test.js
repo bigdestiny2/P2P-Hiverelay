@@ -282,6 +282,41 @@ test('outboxlog http adapter: sync event stream replays markers and follows live
   t.is(ctx.state.ssePerIp.size, 0)
 })
 
+test('outboxlog http adapter: sync event stream honors backpressure and resumes on drain', async (t) => {
+  const ctx = createCtx()
+  const token = ctx.auth.issue()
+  await handleOutboxLogRoute(jsonReq('POST', '/api/sync/create', { appId: A }, token), fakeRes(), ctx)
+
+  const streamReq = fakeReq('GET', '/api/sync/events?appIds=' + A + '&since=0&stream=1&token=' + token)
+  const streamRes = fakeRes()
+  // Simulate a full socket send buffer: every write reports backpressure.
+  streamRes.write = function write (chunk) { this.chunks.push(String(chunk)); return false }
+  await handleOutboxLogRoute(streamReq, streamRes, ctx)
+  t.is(streamRes.statusCode, 200)
+
+  // First live append completes its frame (the write that discovers the full
+  // buffer still lands), then the stream pauses.
+  await handleOutboxLogRoute(jsonReq('POST', '/api/sync/append', { appId: A, op: { type: 'post', data: { id: 'p1', body: 'x' } } }, token), fakeRes(), ctx)
+  const afterP1 = streamRes.chunks.length
+
+  // While paused, further events are dropped — no unbounded heap growth.
+  await handleOutboxLogRoute(jsonReq('POST', '/api/sync/append', { appId: A, op: { type: 'post', data: { id: 'p2', body: 'y' } } }, token), fakeRes(), ctx)
+  t.is(streamRes.chunks.length, afterP1, 'p2 dropped while backpressured')
+
+  // Drain: writes are accepted again, delivery resumes.
+  streamRes.write = function write (chunk) { this.chunks.push(String(chunk)); return true }
+  streamRes.emit('drain')
+  await handleOutboxLogRoute(jsonReq('POST', '/api/sync/append', { appId: A, op: { type: 'post', data: { id: 'p3', body: 'z' } } }, token), fakeRes(), ctx)
+  t.ok(streamRes.chunks.length > afterP1, 'writes resume after drain')
+
+  const keys = ssePayloads(streamRes).map(event => event.key)
+  t.ok(keys.includes('post!p1'), 'p1 delivered before pause')
+  t.absent(keys.includes('post!p2'), 'p2 dropped during backpressure')
+  t.ok(keys.includes('post!p3'), 'p3 delivered after drain')
+
+  streamReq.emit('close')
+})
+
 test('outboxlog http adapter: sync event stream bounds appId fan-in', async (t) => {
   const ctx = createCtx({ syncEventMaxAppIds: 1, syncEventMaxAppIdLength: 64 })
   const token = ctx.auth.issue()

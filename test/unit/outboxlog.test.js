@@ -16,6 +16,7 @@ import {
   createMemoryOutboxPersistence,
   createMemoryOutboxJournal,
   createOutboxNamespaceRegistry,
+  createOutboxSwarmHub,
   createOutboxLog,
   isOutboxBlindRecord,
   isOutboxBlindSealedBody,
@@ -623,6 +624,23 @@ test('outboxlog app: default file persistence restores signed opaque rows', asyn
 function parseBlockJson (block) {
   return JSON.parse(block.toString('utf8'))
 }
+
+test('outboxlog swarm hub: destroy() stops delivery and clears channel state', (t) => {
+  const hub = createOutboxSwarmHub()
+  const events = []
+  const a = hub.join('topic-x')
+  const b = hub.join('topic-x')
+  hub.subscribe(a.channelId, (event) => events.push(event))
+
+  hub.destroy()
+  t.is(hub._channelCount(), 0, 'channels cleared')
+  t.is(hub.join('topic-y'), null, 'join is inert after destroy')
+  t.alike(hub.send(b.channelId, a.channelId, 'hello'), { ok: false }, 'send delivers nothing after destroy')
+  t.is(events.length, 0, 'no delivery after destroy')
+
+  hub.destroy() // idempotent
+  t.is(hub._channelCount(), 0)
+})
 
 test('outboxlog: append lands in the journal even when snapshot persistence is configured (#146)', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'outboxlog-both-'))
