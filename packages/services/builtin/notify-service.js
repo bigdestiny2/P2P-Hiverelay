@@ -39,6 +39,13 @@ const DEFAULT_CLOCK_SKEW_MS = 5 * 60 * 1000
 const DEFAULT_EVENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const DEFAULT_MAX_EVENTS = 10000
 const DEFAULT_MAX_WATCHES = 128
+const DEFAULT_PERSIST_FLUSH_MS = 250
+const DEFAULT_ABUSE_LIMITS = Object.freeze({
+  app: { perHour: 10000, burst: 1000 },
+  sender: { perHour: 1000, burst: 100 },
+  device: { perHour: 120, burst: 10 },
+  channel: { perHour: 1000, burst: 100 }
+})
 const NOTIFY_STATE_VERSION = 1
 const URGENCY_RANK = Object.freeze({
   silent: 0,
@@ -58,6 +65,7 @@ export class NotifyService extends ServiceProvider {
     this.eventRetentionMs = positiveInteger(opts.eventRetentionMs, DEFAULT_EVENT_RETENTION_MS)
     this.maxEvents = positiveInteger(opts.maxEvents, DEFAULT_MAX_EVENTS)
     this.maxWatchesPerReceiveCap = positiveInteger(opts.maxWatchesPerReceiveCap, DEFAULT_MAX_WATCHES)
+    this.abuseLimits = normalizeAbuseLimits(opts.abuseLimits)
     this.persistence = normalizePersistence(opts.persistence || null)
     this.persistencePath = stringOr(opts.persistencePath, null)
     this.persistenceDisabled = opts.persistence === false
@@ -104,6 +112,8 @@ export class NotifyService extends ServiceProvider {
     this.node = context.node || null
     this.store = context.store || null
     if (!this.keyPair) this.keyPair = extractRelayKeyPair(this.node)
+    const notifyConfig = objectOr(objectOr(context && context.config, {}).notify, {})
+    if (notifyConfig.abuseLimits) this.abuseLimits = normalizeAbuseLimits(notifyConfig.abuseLimits, this.abuseLimits)
     if (!this.persistence) this.persistence = await this._createDefaultPersistence(context)
     await this._loadState()
   }
@@ -328,20 +338,36 @@ export class NotifyService extends ServiceProvider {
     this.replay.set(params.intentId, now + params.ttlSeconds * 1000)
     this._sweepExpiringMaps(now)
 
-    const providerResult = await this.provider.send({
-      provider: binding.provider,
-      credentialMode: binding.credentialMode,
-      providerTokenCiphertext: binding.tokenCiphertext,
-      app: params.app,
-      device: params.receiver,
-      channel: params.channel,
-      urgency: params.urgency,
-      ttlSeconds: params.ttlSeconds,
-      collapseKey: params.collapseKey || null,
-      payloadCiphertext: params.payloadCiphertext,
-      genericDisplay: true,
-      intent: params
-    })
+    // Durability barrier: replay + dedupe MUST hit disk before provider
+    // egress. If the process dies mid-egress, a restart replaying the same
+    // intent must land on the replay guard instead of double-pushing (and
+    // double-billing) the device. This is the one deliberate synchronous
+    // persist on the send path — bounded by egress rate, not abuse rate.
+    await this._saveState()
+
+    let providerResult
+    try {
+      providerResult = await this.provider.send({
+        provider: binding.provider,
+        credentialMode: binding.credentialMode,
+        providerTokenCiphertext: binding.tokenCiphertext,
+        app: params.app,
+        device: params.receiver,
+        channel: params.channel,
+        urgency: params.urgency,
+        ttlSeconds: params.ttlSeconds,
+        collapseKey: params.collapseKey || null,
+        payloadCiphertext: params.payloadCiphertext,
+        genericDisplay: true,
+        intent: params
+      })
+    } catch (err) {
+      // A throw mid-egress leaves the outcome unknown. Record the attempt
+      // (non-billable — the operator cannot prove delivery) instead of letting
+      // the error erase it; the replay guard above already blocks a blind
+      // client retry from double-sending.
+      providerResult = { status: 'provider_attempted', reason: 'provider_exception', billable: false, providerStatus: stringOr(err && err.message, null) }
+    }
     const normalized = normalizeProviderResult(providerResult)
     if (normalized.status === 'token_invalid') {
       this.providerBindings.set(binding.bindingId, freezeClone({ ...binding, stale: true }))
@@ -558,10 +584,10 @@ export class NotifyService extends ServiceProvider {
     for (const check of [
       consumeBucket(this.buckets, 'receive:' + receiveCap.capId, receiveCap.quota, now),
       consumeBucket(this.buckets, 'send:' + sendCap.capId, sendCap.quota, now),
-      consumeBucket(this.buckets, 'app:' + intent.app, { perHour: 10000, burst: 1000 }, now),
-      consumeBucket(this.buckets, 'sender:' + intent.sender, { perHour: 1000, burst: 100 }, now),
-      consumeBucket(this.buckets, 'device:' + intent.receiver, { perHour: 120, burst: 10 }, now),
-      consumeBucket(this.buckets, 'channel:' + intent.app + ':' + intent.channel, { perHour: 1000, burst: 100 }, now)
+      consumeBucket(this.buckets, 'app:' + intent.app, this.abuseLimits.app, now),
+      consumeBucket(this.buckets, 'sender:' + intent.sender, this.abuseLimits.sender, now),
+      consumeBucket(this.buckets, 'device:' + intent.receiver, this.abuseLimits.device, now),
+      consumeBucket(this.buckets, 'channel:' + intent.app + ':' + intent.channel, this.abuseLimits.channel, now)
     ]) {
       if (!check.ok) return check
     }
@@ -879,6 +905,24 @@ function hashHex (value) {
   const out = b4a.alloc(32)
   sodium.crypto_generichash(out, b4a.from(String(value), 'utf8'))
   return b4a.toString(out, 'hex')
+}
+
+function normalizeAbuseLimits (input, base = DEFAULT_ABUSE_LIMITS) {
+  const source = objectOr(input, {})
+  const out = {}
+  for (const scope of ['app', 'sender', 'device', 'channel']) {
+    const override = objectOr(source[scope], null)
+    const fallback = base[scope] || DEFAULT_ABUSE_LIMITS[scope]
+    out[scope] = override
+      ? Object.freeze({
+          // 0 is a legal operator value: it disables the scope entirely, and
+          // consumeBucket reports it as quota_exhausted (not rate_limited).
+          perHour: Number.isSafeInteger(override.perHour) && override.perHour >= 0 ? override.perHour : fallback.perHour,
+          burst: Number.isSafeInteger(override.burst) && override.burst >= 0 ? override.burst : fallback.burst
+        })
+      : fallback
+  }
+  return Object.freeze(out)
 }
 
 function consumeBucket (buckets, key, quota, now) {

@@ -62,6 +62,90 @@ test('notify service: signed direct wake path stores redacted delivery event', a
   t.ok(verifyNotifySignature(events.events[0], NOTIFY_DOMAINS.deliveryEvent, relay.hex))
 })
 
+test('notify service: abuse limits are configurable and zero disables a scope (quota_exhausted)', async (t) => {
+  const relay = keyPair(1)
+  const user = keyPair(2)
+  const device = keyPair(3)
+  const sender = keyPair(4)
+  const provider = { attempts: [], async send () { this.attempts.push(1); return { status: 'accepted_by_provider' } } }
+  const notify = new NotifyService({
+    keyPair: relay,
+    provider,
+    clock: () => NOW,
+    abuseLimits: { device: { perHour: 0, burst: 0 } }
+  })
+  await installHappyPath(notify, { relay, user, device, sender })
+  const blocked = await notify.send(signed(sender, NOTIFY_DOMAINS.intent, {
+    type: 'hiverelay.notify.intent.v1',
+    intentId: hex(9),
+    receiveCap: hex(6),
+    sendCap: hex(7),
+    app: hex(5),
+    receiver: device.hex,
+    sender: sender.hex,
+    channel: 'message',
+    urgency: 'normal',
+    ttlSeconds: 3600,
+    createdAt: NOW,
+    payloadCiphertext: 'ciphertext',
+    privacyProfile: 'generic'
+  }))
+  t.is(blocked.ok, false)
+  t.is(blocked.status, 'rate_limited')
+  t.is(blocked.reason, 'quota_exhausted')
+  t.is(provider.attempts.length, 0, 'no egress when a scope is disabled')
+})
+
+test('notify service: replay guard is durable before provider egress (no double-send after crash)', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'notify-replay-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+
+  const relay = keyPair(1)
+  const user = keyPair(2)
+  const device = keyPair(3)
+  const sender = keyPair(4)
+  const intent = () => signed(sender, NOTIFY_DOMAINS.intent, {
+    type: 'hiverelay.notify.intent.v1',
+    intentId: hex(9),
+    receiveCap: hex(6),
+    sendCap: hex(7),
+    app: hex(5),
+    receiver: device.hex,
+    sender: sender.hex,
+    channel: 'message',
+    urgency: 'normal',
+    ttlSeconds: 3600,
+    createdAt: NOW,
+    payloadCiphertext: 'ciphertext',
+    privacyProfile: 'generic'
+  })
+
+  // "Crash" mid-egress: the provider throws after the durability barrier.
+  const crashing = { async send () { throw new Error('socket died mid-egress') } }
+  const first = new NotifyService({ keyPair: relay, provider: crashing, clock: () => NOW })
+  await first.start({ config: { storage: dir } })
+  await installHappyPath(first, { relay, user, device, sender })
+  const attempted = await first.send(intent())
+  // provider_attempted is ok:true by contract — the push MAY have left; only
+  // the metering (billable:false) records that the relay cannot prove it.
+  t.is(attempted.ok, true)
+  t.is(attempted.status, 'provider_attempted', 'throw is recorded, not lost')
+  t.is(attempted.reason, 'provider_exception')
+  t.is(attempted.event.metering.billable, false, 'unknown outcome is not billable')
+  await first.stop()
+
+  // Restart from disk: the same intent must land on the replay guard, not the
+  // provider — replay/dedupe were persisted BEFORE egress.
+  const restoredProvider = { attempts: [], async send () { this.attempts.push(1); return { status: 'accepted_by_provider' } } }
+  const second = new NotifyService({ keyPair: relay, provider: restoredProvider, clock: () => NOW })
+  await second.start({ config: { storage: dir } })
+  const replayed = await second.send(intent())
+  t.is(replayed.ok, false)
+  t.is(replayed.reason, 'replay', 'restart rejects the replayed intent')
+  t.is(restoredProvider.attempts.length, 0, 'no double egress after restart')
+  await second.stop()
+})
+
 test('notify service: delivery-event requires a device-signed request (no cross-tenant IDOR)', async (t) => {
   const relay = keyPair(1)
   const user = keyPair(2)
