@@ -55,8 +55,15 @@
 import { EventEmitter } from 'events'
 import { createHash } from 'crypto'
 import { WebSocketServer } from 'ws'
-import { relay } from '@hyperswarm/dht-relay'
-import Stream from '@hyperswarm/dht-relay/ws'
+// VENDORED @hyperswarm/dht-relay@0.4.3 (upstream: "do not use in production").
+// Pinned + vendored under ./vendor/dht-relay so the exact code that proxies
+// browser DHT ops against the operator's real DHT is auditable in-tree and
+// carries our prod-hardening patches (ingress/egress backpressure in the ws
+// Stream; per-connection error containment + query drain in node-proxy). See
+// ./vendor/dht-relay/VENDOR.md for the patch log. Its transitive deps
+// (hyperdht, protomux, secret-stream, …) still resolve from node_modules.
+import { relay } from './vendor/dht-relay/index.js'
+import Stream from './vendor/dht-relay/ws.js'
 import { clientIpFromRequest } from '../../core/relay-node/api-rate-limit.js'
 
 const DEFAULT_PORT = 8766

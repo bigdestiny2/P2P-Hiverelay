@@ -96,7 +96,8 @@
     "ignore": [
       "scripts/test-*.js",
       "examples/**",
-      "**/dist/**"
+      "**/dist/**",
+      "**/transports/dht-relay-ws/vendor/**"
     ]
   },
   "dependencies": {
