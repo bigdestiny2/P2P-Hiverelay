@@ -9,6 +9,8 @@ export const BUILTIN_SERVICE_PLUGINS = Object.freeze([
   'arbitration',
   'poker',
   'outboxlog',
+  'witnesslog',
+  'repairticket',
   'notify',
   'shard-store'
 ])

@@ -63,6 +63,48 @@ export function resolveOutboxLogServiceProvider (node) {
   return { ok: true, provider, entry }
 }
 
+export function resolveWitnessLogServiceProvider (node) {
+  const entry = serviceEntry(node, 'witnesslog')
+  if (!entry) {
+    return { ok: false, status: 503, error: 'WitnessLog service is not enabled on this relay' }
+  }
+
+  if (entry.status && entry.status !== 'running') {
+    return { ok: false, status: 503, error: 'WitnessLog service is not running (status=' + entry.status + ')' }
+  }
+
+  const provider = entry.provider || entry
+  if (!provider || typeof provider.append !== 'function' || typeof provider.list !== 'function') {
+    return { ok: false, status: 503, error: 'WitnessLog service does not expose append/range methods' }
+  }
+  if (typeof provider.markers !== 'function' || typeof provider.subscribe !== 'function') {
+    return { ok: false, status: 503, error: 'WitnessLog service does not expose event methods' }
+  }
+
+  return { ok: true, provider, entry }
+}
+
+export function resolveRepairTicketServiceProvider (node) {
+  const entry = serviceEntry(node, 'repairticket')
+  if (!entry) {
+    return { ok: false, status: 503, error: 'RepairTicket service is not enabled on this relay' }
+  }
+
+  if (entry.status && entry.status !== 'running') {
+    return { ok: false, status: 503, error: 'RepairTicket service is not running (status=' + entry.status + ')' }
+  }
+
+  const provider = entry.provider || entry
+  if (!provider || typeof provider.append !== 'function' || typeof provider.list !== 'function' || typeof provider.tickets !== 'function') {
+    return { ok: false, status: 503, error: 'RepairTicket service does not expose append/range/ticket methods' }
+  }
+  if (typeof provider.markers !== 'function' || typeof provider.subscribe !== 'function') {
+    return { ok: false, status: 503, error: 'RepairTicket service does not expose event methods' }
+  }
+
+  return { ok: true, provider, entry }
+}
+
 export function resolveNotifyServiceProvider (node) {
   const entry = serviceEntry(node, 'notify')
   if (!entry) {

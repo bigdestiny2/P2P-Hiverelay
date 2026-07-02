@@ -47,6 +47,8 @@ import {
   isManagementApiRoute,
   isOutboxLogHttpRoute,
   isPokerHttpRoute,
+  isRepairTicketHttpRoute,
+  isWitnessLogHttpRoute,
   resolvePokerHttpRoutePolicy
 } from './api-route-mounts.js'
 import { appendVaryHeader, writeJson, writeText } from './api-response.js'
@@ -73,7 +75,9 @@ import {
   resolveAIServiceProvider,
   resolveNotifyServiceProvider,
   resolveOutboxLogServiceProvider,
-  resolvePokerServiceProvider
+  resolvePokerServiceProvider,
+  resolveRepairTicketServiceProvider,
+  resolveWitnessLogServiceProvider
 } from './api-service-provider.js'
 import {
   buildServiceReadRoutePayload,
@@ -123,6 +127,16 @@ import {
   loadOutboxLogHttpAdapterModule,
   resolveOutboxLogHttpAdapter
 } from './api-outboxlog-http-adapter.js'
+import {
+  buildWitnessLogHttpAdapterUnavailableResponse,
+  loadWitnessLogHttpAdapterModule,
+  resolveWitnessLogHttpAdapter
+} from './api-witnesslog-http-adapter.js'
+import {
+  buildRepairTicketHttpAdapterUnavailableResponse,
+  loadRepairTicketHttpAdapterModule,
+  resolveRepairTicketHttpAdapter
+} from './api-repairticket-http-adapter.js'
 import {
   buildCapabilityRoutePayload,
   resolveCapabilityRoute
@@ -353,9 +367,15 @@ export class RelayAPI extends EventEmitter {
     this._wizard = null // lazily constructed by _getWizard() on first /api/wizard hit
     this._loadPokerHttpAdapter = opts.loadPokerHttpAdapter || loadPokerHttpAdapterModule
     this._loadOutboxLogHttpAdapter = opts.loadOutboxLogHttpAdapter || loadOutboxLogHttpAdapterModule
+    this._loadWitnessLogHttpAdapter = opts.loadWitnessLogHttpAdapter || loadWitnessLogHttpAdapterModule
+    this._loadRepairTicketHttpAdapter = opts.loadRepairTicketHttpAdapter || loadRepairTicketHttpAdapterModule
     this._outboxLogHttpAdapter = null
+    this._witnessLogHttpAdapter = null
+    this._repairTicketHttpAdapter = null
     this._outboxLogHttpAuth = opts.outboxLogHttpAuth || null
     this._outboxLogHttpState = opts.outboxLogHttpState || null
+    this._witnessLogHttpState = opts.witnessLogHttpState || null
+    this._repairTicketHttpState = opts.repairTicketHttpState || null
     this._gateway = new HyperGateway(relayNode, { store: relayNode.store })
     this._retrievabilityProofProvider = new RetrievabilityProofProvider()
   }
@@ -710,6 +730,64 @@ export class RelayAPI extends EventEmitter {
           outboxLogApp: outbox.provider,
           auth: this._outboxLogHttpAuth,
           state: this._outboxLogHttpState,
+          allowOrigin: this.corsOrigins && this.corsOrigins.length ? this.corsOrigins : '*',
+          trustProxy: this.trustProxy
+        })
+        if (handled) return
+        return this._json(res, { error: 'not found' }, 404)
+      }
+
+      // WitnessLog availability observations. Like OutboxLog, the protocol
+      // implementation is optional and service-owned; Core only brokers the
+      // running provider to a lazily-loaded HTTP adapter.
+      if (isWitnessLogHttpRoute(path)) {
+        const witness = resolveWitnessLogServiceProvider(this.node)
+        if (!witness.ok) return this._json(res, { error: witness.error }, witness.status)
+        let adapter
+        try {
+          adapter = await resolveWitnessLogHttpAdapter({
+            cachedAdapter: this._witnessLogHttpAdapter,
+            loadAdapter: this._loadWitnessLogHttpAdapter
+          })
+          this._witnessLogHttpAdapter = adapter
+          if (!this._witnessLogHttpState) this._witnessLogHttpState = adapter.createWitnessLogHttpState()
+        } catch (err) {
+          const unavailable = buildWitnessLogHttpAdapterUnavailableResponse(err)
+          this.emit(unavailable.event.name, unavailable.event.detail)
+          return this._json(res, unavailable.payload, unavailable.status)
+        }
+        const handled = await adapter.handleWitnessLogRoute(req, res, {
+          witnessLogApp: witness.provider,
+          state: this._witnessLogHttpState,
+          allowOrigin: this.corsOrigins && this.corsOrigins.length ? this.corsOrigins : '*',
+          trustProxy: this.trustProxy
+        })
+        if (handled) return
+        return this._json(res, { error: 'not found' }, 404)
+      }
+
+      // RepairTicket self-healing loop. Service-owned records make Core a
+      // broker only: it verifies there is a running provider, then delegates
+      // repair tickets/claims/receipts/closures to the optional adapter.
+      if (isRepairTicketHttpRoute(path)) {
+        const repair = resolveRepairTicketServiceProvider(this.node)
+        if (!repair.ok) return this._json(res, { error: repair.error }, repair.status)
+        let adapter
+        try {
+          adapter = await resolveRepairTicketHttpAdapter({
+            cachedAdapter: this._repairTicketHttpAdapter,
+            loadAdapter: this._loadRepairTicketHttpAdapter
+          })
+          this._repairTicketHttpAdapter = adapter
+          if (!this._repairTicketHttpState) this._repairTicketHttpState = adapter.createRepairTicketHttpState()
+        } catch (err) {
+          const unavailable = buildRepairTicketHttpAdapterUnavailableResponse(err)
+          this.emit(unavailable.event.name, unavailable.event.detail)
+          return this._json(res, unavailable.payload, unavailable.status)
+        }
+        const handled = await adapter.handleRepairTicketRoute(req, res, {
+          repairTicketApp: repair.provider,
+          state: this._repairTicketHttpState,
           allowOrigin: this.corsOrigins && this.corsOrigins.length ? this.corsOrigins : '*',
           trustProxy: this.trustProxy
         })

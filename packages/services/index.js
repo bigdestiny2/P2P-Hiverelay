@@ -24,6 +24,57 @@ export { ArbitrationService } from './builtin/arbitration-service.js'
 export { StorageProofService } from './builtin/storage-proof-service.js'
 export { ShardStoreService, ShardEngine, shardHash, normalizeShardAddress } from './builtin/shard-store/index.js'
 export {
+  WITNESSLOG_DEFAULT_MAX_AGE_MS,
+  WITNESSLOG_DEFAULT_MAX_CLOCK_SKEW_MS,
+  WITNESSLOG_DEFAULT_MAX_TTL_MS,
+  WITNESSLOG_NAMESPACE,
+  WITNESSLOG_RECORD_TYPE_AVAILABILITY,
+  WITNESSLOG_RECORD_VERSION,
+  WITNESSLOG_SIGNATURE_DOMAIN,
+  WitnessLogApp,
+  assertWitnessRecord,
+  canonicalWitnessRecord,
+  createWitnessRecord,
+  normalizeWitnessOutboxRecord,
+  normalizeWitnessRecord,
+  redactWitnessRecord,
+  signWitnessRecord,
+  stripOutboxFields,
+  targetMatchesWitnessRecord,
+  verifyWitnessOutboxRecord,
+  verifyWitnessRecord,
+  witnessRecordBytes,
+  witnessRecordMarker
+} from './builtin/witnesslog/index.js'
+export {
+  REPAIRTICKET_DEFAULT_MAX_AGE_MS,
+  REPAIRTICKET_DEFAULT_MAX_CLOCK_SKEW_MS,
+  REPAIRTICKET_DEFAULT_MAX_TTL_MS,
+  REPAIRTICKET_NAMESPACE,
+  REPAIRTICKET_RECORD_TYPE_CLAIM,
+  REPAIRTICKET_RECORD_TYPE_CLOSE,
+  REPAIRTICKET_RECORD_TYPE_RECEIPT,
+  REPAIRTICKET_RECORD_TYPE_TICKET,
+  REPAIRTICKET_RECORD_VERSION,
+  REPAIRTICKET_SIGNATURE_DOMAIN,
+  RepairTicketApp,
+  assertRepairRecord,
+  canonicalRepairRecord,
+  createRepairRecord,
+  normalizeRepairOutboxRecord,
+  normalizeRepairRecord,
+  redactRepairRecord,
+  repairRecordBytes,
+  repairRecordMarker,
+  repairRecordOpType,
+  repairRecordTicketId,
+  signRepairRecord,
+  stripRepairOutboxFields,
+  targetMatchesRepairRecord,
+  verifyRepairOutboxRecord,
+  verifyRepairRecord
+} from './builtin/repairticket/index.js'
+export {
   createJsonFileNotifyPersistence,
   createMemoryNotifyPersistence,
   NotifyService

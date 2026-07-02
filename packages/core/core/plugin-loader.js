@@ -31,6 +31,10 @@ const BUILTIN_MAP = {
   poker: { module: 'p2p-hiveservices/builtin/poker/index.js', className: 'PokerApp' },
   // Single-writer app outbox availability bridge for Pear/PearBrowser apps.
   outboxlog: { module: 'p2p-hiveservices/builtin/outboxlog/index.js', className: 'OutboxLogApp' },
+  // Signed third-party availability observations backed by the OutboxLog engine.
+  witnesslog: { module: 'p2p-hiveservices/builtin/witnesslog/index.js', className: 'WitnessLogApp' },
+  // Signed repair tickets, claims, receipts, and closures for self-healing availability.
+  repairticket: { module: 'p2p-hiveservices/builtin/repairticket/index.js', className: 'RepairTicketApp' },
   // Encrypted wake-only notification bridge. Provider SDK adapters are
   // service-owned; Core only loads the optional provider.
   notify: { module: 'p2p-hiveservices/builtin/notify-service.js', className: 'NotifyService' },
