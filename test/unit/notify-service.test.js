@@ -10,6 +10,7 @@ import {
   notifySignaturePayload,
   verifyNotifySignature
 } from '../../packages/services/builtin/notify-service.js'
+import { OutboxLogApp } from '../../packages/services/builtin/outboxlog/index.js'
 
 const NOW = 1782864000000
 const HOUR = 60 * 60 * 1000
@@ -319,6 +320,7 @@ test('notify service: watch mode is opaque and requires receive/send caps', asyn
   const device = keyPair(33)
   const sender = keyPair(34)
   const notify = new NotifyService({ keyPair: relay, clock: () => NOW })
+  notify.attachWatchSource('hypercore-head', () => () => {})
 
   await installHappyPath(notify, { relay, user, device, sender, modes: ['direct', 'watch'] })
   const watch = signed(user, NOTIFY_DOMAINS.watch, {
@@ -348,6 +350,103 @@ test('notify service: watch mode is opaque and requires receive/send caps', asyn
   t.is(status.privacy.plaintextAllowed, false)
 })
 
+test('notify service: watch requires an attached observer for the source kind (#142)', async (t) => {
+  const relay = keyPair(31)
+  const user = keyPair(32)
+  const device = keyPair(33)
+  const sender = keyPair(34)
+  const notify = new NotifyService({ keyPair: relay, clock: () => NOW })
+  await installHappyPath(notify, { relay, user, device, sender, modes: ['direct', 'watch'] })
+
+  // No observer attached for 'notify-feed-head': the watch is rejected
+  // instead of being accepted (and billed) as a dead registration.
+  await t.exception(notify.watch(signed(user, NOTIFY_DOMAINS.watch, {
+    type: 'hiverelay.notify.watch.v1',
+    watchId: hex(39),
+    receiveCap: hex(6),
+    sendCap: hex(7),
+    app: hex(5),
+    audience: relay.hex,
+    source: { kind: 'notify-feed-head', key: hex(40), start: 0 },
+    channel: 'message',
+    policy: { minIntervalSeconds: 30 },
+    createdAt: NOW,
+    expiresAt: NOW + HOUR
+  })), /SOURCE_UNAVAILABLE/)
+})
+
+test('notify service: notify-feed-head watch composes with outboxlog and coalesces wakes (#142/#145)', async (t) => {
+  let now = NOW
+  const relay = keyPair(31)
+  const user = keyPair(32)
+  const device = keyPair(33)
+  const sender = keyPair(34)
+  const writerApp = hex(40) // the outbox appId being watched
+  const provider = { attempts: [], async send (delivery) { this.attempts.push(delivery); return { status: 'accepted_by_provider' } } }
+
+  const outbox = new OutboxLogApp({ verifyAppend: () => true, persistence: false })
+  const notify = new NotifyService({ keyPair: relay, provider, clock: () => now })
+  // Same composition the relay wires at startup: feed-head watches observe
+  // the outbox's signed head row through the engine's own subscribe().
+  notify.attachWatchSource('notify-feed-head', (source, onChange) => {
+    return outbox.subscribe(source.key, {}, (event) => {
+      if (event && event.key === 'head!' + source.key && !event.replay) onChange(event)
+    })
+  })
+
+  await installHappyPath(notify, { relay, user, device, sender, modes: ['direct', 'watch'] })
+  const installed = await notify.watch(signed(user, NOTIFY_DOMAINS.watch, {
+    type: 'hiverelay.notify.watch.v1',
+    watchId: hex(39),
+    receiveCap: hex(6),
+    sendCap: hex(7),
+    app: hex(5),
+    audience: relay.hex,
+    source: { kind: 'notify-feed-head', key: writerApp, start: 0 },
+    channel: 'message',
+    policy: { minIntervalSeconds: 30 },
+    createdAt: NOW,
+    expiresAt: NOW + HOUR
+  }))
+  t.is(installed.ok, true)
+
+  const tick = () => new Promise(resolve => setImmediate(resolve))
+  outbox.create({ appId: writerApp })
+
+  // A non-head append does not wake anyone.
+  outbox.append({ appId: writerApp, op: { type: 'post', data: { id: 'p1', body: 'secret-plaintext' } } })
+  await tick()
+  t.is(provider.attempts.length, 0, 'non-head appends do not fire the watch')
+
+  // Head bump -> one opaque wake: no payload, no plaintext leakage.
+  outbox.append({ appId: writerApp, op: { type: 'head', data: { id: writerApp, version: 1 } } })
+  await tick()
+  t.is(provider.attempts.length, 1, 'head bump wakes the device')
+  t.is(provider.attempts[0].payloadCiphertext, '', 'wake carries no payload')
+  t.absent(JSON.stringify(provider.attempts[0]).includes('secret-plaintext'))
+  const wakeEvents = [...notify.deliveryEvents.values()].filter(e => e.reason === 'watch_wake')
+  t.is(wakeEvents.length, 1, 'wake recorded as a delivery event')
+  t.ok(verifyNotifySignature(wakeEvents[0], NOTIFY_DOMAINS.deliveryEvent, relay.hex), 'wake event is relay-signed')
+
+  // A second head bump inside minIntervalSeconds coalesces.
+  outbox.append({ appId: writerApp, op: { type: 'head', data: { id: writerApp, version: 2 } } })
+  await tick()
+  t.is(provider.attempts.length, 1, 'wake inside the interval coalesces')
+
+  // After the interval the next bump fires again.
+  now = NOW + 31000
+  outbox.append({ appId: writerApp, op: { type: 'head', data: { id: writerApp, version: 3 } } })
+  await tick()
+  t.is(provider.attempts.length, 2, 'wake fires again after minIntervalSeconds')
+
+  // unwatch() detaches the subscription: no further wakes.
+  await notify.unwatch(signed(user, NOTIFY_DOMAINS.watch, { watchId: hex(39) }))
+  now = NOW + 120000
+  outbox.append({ appId: writerApp, op: { type: 'head', data: { id: writerApp, version: 4 } } })
+  await tick()
+  t.is(provider.attempts.length, 2, 'no wake after unwatch')
+})
+
 test('notify service: default file persistence restores signed caps, watches, revocations and events', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'notify-service-'))
   t.teardown(() => rm(dir, { recursive: true, force: true }))
@@ -363,6 +462,7 @@ test('notify service: default file persistence restores signed caps, watches, re
     clock: () => NOW
   })
   await first.start({ config: { storage: dir } })
+  first.attachWatchSource('notify-feed-head', () => () => {})
   const ids = await installHappyPath(first, { relay, user, device, sender, modes: ['direct', 'watch'] })
 
   await first.watch(signed(user, NOTIFY_DOMAINS.watch, {

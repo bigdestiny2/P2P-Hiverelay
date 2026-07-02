@@ -85,8 +85,124 @@ export class NotifyService extends ServiceProvider {
     this._eventSeq = 0
     this._persistChain = Promise.resolve()
     this._persistTimer = null
+    this._watchSources = new Map()
+    this._watchSubs = new Map()
+    this._watchLastFire = new Map()
     this.node = null
     this.store = null
+  }
+
+  // Mode 2 (watch) observer registry. A source kind is usable only once an
+  // observer factory is attached — watch() rejects unattached kinds with
+  // SOURCE_UNAVAILABLE instead of accepting (and billing) a watch that can
+  // never fire. (#142) The relay wires 'notify-feed-head' to the co-resident
+  // outboxlog's subscribe() (#145); factory: (source, onChange) => unsubscribe.
+  attachWatchSource (kind, factory) {
+    if (typeof kind !== 'string' || !kind) throw fail('BAD_SOURCE_KIND', 'watch source kind required')
+    if (typeof factory !== 'function') throw fail('BAD_SOURCE_FACTORY', 'watch source factory required')
+    this._watchSources.set(kind, factory)
+    // Re-arm dormant stored watches of this kind (restored from disk before
+    // the source was attached — wiring order must not matter).
+    for (const watch of this.watches.values()) {
+      if (watch.source.kind === kind && !this._watchSubs.has(watch.watchId)) {
+        this._subscribeWatch(watch)
+      }
+    }
+  }
+
+  _subscribeWatch (watch) {
+    const factory = this._watchSources.get(watch.source.kind)
+    if (!factory) return false
+    const unsubscribe = factory(watch.source, (event) => {
+      this._fireWatch(watch.watchId, event).catch(() => {})
+    })
+    if (typeof unsubscribe === 'function') this._watchSubs.set(watch.watchId, unsubscribe)
+    return true
+  }
+
+  _unsubscribeWatch (watchId) {
+    const unsubscribe = this._watchSubs.get(watchId)
+    if (unsubscribe) {
+      this._watchSubs.delete(watchId)
+      try {
+        unsubscribe()
+      } catch {}
+    }
+    this._watchLastFire.delete(watchId)
+  }
+
+  async _fireWatch (watchId, sourceEvent) {
+    const watch = this.watches.get(watchId)
+    if (!watch) return
+    const now = this.clock()
+    if (!isFuture(watch.expiresAt, now)) {
+      this.watches.delete(watchId)
+      this._unsubscribeWatch(watchId)
+      this._schedulePersist()
+      return
+    }
+    const receiveCap = this.receiveCaps.get(watch.receiveCap)
+    if (!receiveCap || !isFuture(receiveCap.expiresAt, now)) return
+    if (
+      this._hasRevocation('receive-cap', receiveCap.capId, watch.app) ||
+      this._hasRevocation('device', watch.device, watch.app) ||
+      this._hasRevocation('app', watch.app, watch.app) ||
+      this._hasRevocation('channel', watch.channel, watch.app) ||
+      this._hasRevocation('relay', this._relayKeyHex(), watch.app)
+    ) return
+    const binding = this.providerBindings.get(receiveCap.bindingId)
+    if (!binding || binding.stale || !isFuture(binding.expiresAt, now)) return
+
+    // Coalesce: at most one wake per policy.minIntervalSeconds per watch. The
+    // app re-syncs everything on wake, so dropped intermediate pokes are free.
+    const minIntervalMs = positiveInteger(watch.policy && watch.policy.minIntervalSeconds, 30) * 1000
+    const lastFire = this._watchLastFire.get(watchId) || 0
+    if (now - lastFire < minIntervalMs) return
+    // Watch wakes spend the same device budget as direct sends.
+    if (!consumeBucket(this.buckets, 'device:' + watch.device, this.abuseLimits.device, now).ok) return
+    this._watchLastFire.set(watchId, now)
+
+    let providerResult
+    try {
+      providerResult = await this.provider.send({
+        provider: binding.provider,
+        credentialMode: binding.credentialMode,
+        providerTokenCiphertext: binding.tokenCiphertext,
+        app: watch.app,
+        device: watch.device,
+        channel: watch.channel,
+        urgency: 'normal',
+        ttlSeconds: Math.min(600, this.maxTtlSeconds),
+        collapseKey: 'watch:' + watchId,
+        // A watch wake carries NO payload — it is an opaque "something
+        // changed" poke; the woken app fetches truth over p2p.
+        payloadCiphertext: '',
+        genericDisplay: true,
+        watch: { watchId, seq: sourceEvent && Number.isSafeInteger(sourceEvent.seq) ? sourceEvent.seq : null }
+      })
+    } catch (err) {
+      providerResult = { status: 'provider_attempted', reason: 'provider_exception', billable: false, providerStatus: stringOr(err && err.message, null) }
+    }
+    const normalized = normalizeProviderResult(providerResult)
+    if (normalized.status === 'token_invalid') {
+      this.providerBindings.set(binding.bindingId, freezeClone({ ...binding, stale: true }))
+    }
+    this._recordDeliveryEvent({
+      intent: {
+        intentId: hashHex(JSON.stringify(['watch-wake', watchId, now])),
+        app: watch.app,
+        receiver: watch.device
+      },
+      status: normalized.status,
+      reason: normalized.status === 'accepted_by_provider' ? 'watch_wake' : normalized.reason,
+      providerStatus: normalized.providerStatus,
+      binding,
+      billable: normalized.billable !== false,
+      attempts: 1,
+      payloadBytes: 0,
+      now
+    })
+    this._schedulePersist()
   }
 
   manifest () {
@@ -125,6 +241,7 @@ export class NotifyService extends ServiceProvider {
       clearTimeout(this._persistTimer)
       this._persistTimer = null
     }
+    for (const watchId of [...this._watchSubs.keys()]) this._unsubscribeWatch(watchId)
     await this._saveState()
     this.node = null
     this.store = null
@@ -412,6 +529,9 @@ export class NotifyService extends ServiceProvider {
 
     const source = objectOr(params.source, null)
     if (!source || (source.kind !== 'hypercore-head' && source.kind !== 'notify-feed-head')) throw fail('SOURCE_DENIED', 'unsupported watch source')
+    // A watch is accepted only when an observer for the source kind is
+    // actually attached — never bill for a watch that cannot fire. (#142)
+    if (!this._watchSources.has(source.kind)) throw fail('SOURCE_UNAVAILABLE', 'no observer attached for watch source kind ' + source.kind)
     requireHex(source.key, 'source.key')
     const existingForCap = [...this.watches.values()].filter(w => w.receiveCap === receiveCap.capId).length
     if (existingForCap >= this.maxWatchesPerReceiveCap) throw fail('WATCH_LIMIT', 'receive capability watch limit reached')
@@ -439,6 +559,7 @@ export class NotifyService extends ServiceProvider {
       lastSeq: Number.isSafeInteger(source.start) && source.start >= 0 ? source.start : 0
     })
     this.watches.set(watch.watchId, watch)
+    this._subscribeWatch(watch)
     await this._saveState()
     return { ok: true, watchId: watch.watchId, source: watch.source }
   }
@@ -451,6 +572,7 @@ export class NotifyService extends ServiceProvider {
     const receiveCap = this._requireReceiveCap(watch.receiveCap)
     verifySignedAny(params, NOTIFY_DOMAINS.watch, [params.signatureKey, receiveCap.user, receiveCap.device])
     this.watches.delete(params.watchId)
+    this._unsubscribeWatch(params.watchId)
     await this._saveState()
     return { ok: true, removed: true }
   }
@@ -760,6 +882,11 @@ export class NotifyService extends ServiceProvider {
     const snapshot = await this.persistence.load()
     if (!snapshot) return
     this._applyState(snapshot)
+    // Re-arm restored watches whose source kind is already attached; kinds
+    // attached later re-arm in attachWatchSource().
+    for (const watch of this.watches.values()) {
+      if (!this._watchSubs.has(watch.watchId)) this._subscribeWatch(watch)
+    }
   }
 
   async _saveState () {

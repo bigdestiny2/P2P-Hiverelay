@@ -1352,6 +1352,23 @@ export class RelayNode extends EventEmitter {
         }
         this._startServiceSupervision()
 
+        // Compose notify Mode-2 with the co-resident outboxlog: a
+        // 'notify-feed-head' watch observes the outbox's signed head row via
+        // the engine's own subscribe() — one event path, no parallel
+        // observer machinery. Without outboxlog enabled, notify keeps
+        // rejecting that source kind (SOURCE_UNAVAILABLE) instead of
+        // accepting watches that can never fire. (#142/#145)
+        const notifyEntry = this.serviceRegistry.services.get('notify')
+        const outboxEntry = this.serviceRegistry.services.get('outboxlog')
+        if (notifyEntry && outboxEntry && typeof notifyEntry.provider.attachWatchSource === 'function') {
+          const outboxApp = outboxEntry.provider
+          notifyEntry.provider.attachWatchSource('notify-feed-head', (source, onChange) => {
+            return outboxApp.subscribe(source.key, {}, (event) => {
+              if (event && event.key === 'head!' + source.key && !event.replay) onChange(event)
+            })
+          })
+        }
+
         // Set up seeded apps callback for catalog broadcast
         this.serviceProtocol._getSeededApps = () => this.appRegistry.catalogForBroadcast()
         this.serviceProtocol._getCatalogEnvelope = (opts = {}) => {
