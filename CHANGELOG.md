@@ -28,6 +28,16 @@ The packages are versioned in lockstep.
   let a reader rebuild the exact secret. Plus a codec/driver unit suite
   (`test/unit/blind-shards.test.js`) covering determinism, k-of-n, and
   content-address integrity against a tampering relay.
+- **HTTP shard transport** (`p2p-hiverelay-client/shard-transport.js`) — turns the
+  transport-agnostic `disperseSecret`/`recoverSecret` into a real over-the-wire
+  flow against the mounted `/api/v1/shard`: `createHttpShardPut` signs a custody
+  pin (signing is injected, never reimplemented, so the signature stays
+  byte-identical to the relay's verifier) and `POST`s each opaque shard to its
+  assigned relay; `createHttpShardFetch` `GET`s a shard by content address from
+  whichever relay answers. Verified end to end against live relay HTTP servers
+  (`test/integration/shard-http-transport-e2e.test.js`): a dealer disperses
+  2-of-3 across three `RelayAPI` servers and a reader reconstructs the exact
+  secret over HTTP; a single relay is insufficient.
 - **Blind shard store mounted on the relay HTTP path.** The `shard-store`
   service shipped in v0.21.0 but its HTTP adapter was never wired into the relay
   request dispatch, so `/api/v1/shard` returned 404 on every box. It is now
