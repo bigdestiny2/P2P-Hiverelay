@@ -8,6 +8,7 @@
     ".": "./index.js",
     "./pairing.js": "./pairing.js",
     "./secret-sharing.js": "./secret-sharing.js",
+    "./blind-shards.js": "./blind-shards.js",
     "./custody.js": "./custody.js",
     "./notify.js": "./notify.js"
   },
@@ -33,6 +34,7 @@
     "index.js",
     "pairing.js",
     "secret-sharing.js",
+    "blind-shards.js",
     "custody.js",
     "notify.js",
     "README.md",

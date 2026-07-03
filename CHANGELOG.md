@@ -9,6 +9,25 @@ The packages are versioned in lockstep.
 ## [Unreleased]
 
 ### Added
+- **Blind-shard dispersal + recovery client layer** (`p2p-hiverelay-client/blind-shards.js`)
+  — the connective tissue between PVSS secret-sharing and the content-addressed
+  blind shard store. `disperseSecret({count, threshold, put})` splits a secret
+  into `n` self-verifying shares, encodes each as a canonical **opaque** shard
+  blob (versioned, deterministic; `blake2b` content address byte-identical to the
+  relay's), and disperses them; `recoverSecret({shareManifest, threshold, fetch})`
+  collects ≥`k` shards, verifies each by content address, decodes, and
+  reconstructs the secret **at the reader's edge** — no relay ever holds the whole
+  thing. Transport-agnostic (`put`/`fetch` injected: HTTP `/api/v1/shard`, P2P
+  RPC, or in-process). This is the "public plaintext, blind custody" path:
+  encrypt content with a random key, store the ciphertext, and disperse the KEY
+  as blind shards so no single operator can produce the plaintext.
+- **End-to-end blind-custody proof** (`test/integration/blind-shard-dispersal-e2e.test.js`):
+  a dealer disperses a secret across 5 real `ShardStoreService` relays (custody-pin
+  authorized); the test asserts each relay holds exactly one opaque shard, **no
+  single relay and no k-1 colluding relays can reconstruct**, and any `k` relays
+  let a reader rebuild the exact secret. Plus a codec/driver unit suite
+  (`test/unit/blind-shards.test.js`) covering determinism, k-of-n, and
+  content-address integrity against a tampering relay.
 - **Blind shard store mounted on the relay HTTP path.** The `shard-store`
   service shipped in v0.21.0 but its HTTP adapter was never wired into the relay
   request dispatch, so `/api/v1/shard` returned 404 on every box. It is now
