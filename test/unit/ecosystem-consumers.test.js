@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import {
+  CURRENT_HIVERELAY_VERSION,
   DEFAULT_DEPENDENCY_MODE,
   EXPECTED_CURRENT_CONSUMERS,
   HIVERELAY_DEPS,
@@ -168,10 +169,10 @@ test('ecosystem consumer audit guards PearPaste current Hiverelay docs', (t) => 
     "p2p-hiverelay-client": "file:../../00-core/hiverelay/packages/client"
   `)
   writeFile(root, '02-apps/pearpaste/docs/PEARPASTE_TECHNICAL_SPEC.md', `
-    Integrate the HiveRelay \`0.20.2\` local workspace packages by default.
+    Integrate the HiveRelay \`${CURRENT_HIVERELAY_VERSION}\` local workspace packages by default.
   `)
   writeFile(root, '02-apps/pearpaste/REVIEW.md', `
-    current p2p-hiverelay-client@0.20.2 split-client package line
+    current p2p-hiverelay-client@${CURRENT_HIVERELAY_VERSION} split-client package line
   `)
   writeFile(root, '02-apps/pearpaste/scripts/probe-circuit.mjs', `
     // current HiveRelay fleet
@@ -190,7 +191,7 @@ test('ecosystem consumer audit guards PearPaste current Hiverelay docs', (t) => 
     expectedStale: []
   })
   const summary = checkConsumerState(rows, {
-    expectedVersion: '0.20.2',
+    expectedVersion: CURRENT_HIVERELAY_VERSION,
     expectedCurrent: [pearpaste],
     expectedStale: [],
     sourceChecks
@@ -208,7 +209,7 @@ test('ecosystem consumer audit guards PearPaste current Hiverelay docs', (t) => 
     expectedStale: []
   })
   const failedSummary = checkConsumerState(rows, {
-    expectedVersion: '0.20.2',
+    expectedVersion: CURRENT_HIVERELAY_VERSION,
     expectedCurrent: [pearpaste],
     expectedStale: [],
     sourceChecks: failedChecks
@@ -226,21 +227,21 @@ test('ecosystem consumer audit guards PearBrowser and POS current Hiverelay sour
   ].includes(consumer.path))
   const pearbrowser = expectedCurrent.find(consumer => consumer.path === '01-browser/pearbrowser-desktop/package.json')
   writeExpectedConsumerPackages(root, expectedCurrent)
-  writeSourceCheckTerms(root, pearbrowser, '0.20.2')
+  writeSourceCheckTerms(root, pearbrowser, CURRENT_HIVERELAY_VERSION)
   writeFile(root, '02-apps/pear-pos/app/backend/hiverelay-client.js', `
-    // ESM -> CJS bridge for p2p-hiverelay-client@0.20.2
+    // ESM -> CJS bridge for p2p-hiverelay-client@${CURRENT_HIVERELAY_VERSION}
   `)
   writeFile(root, '02-apps/pear-pos/app/backend/hiverelay-sync.js', `
-    // Seed lifecycle (v0.20.2)
+    // Seed lifecycle (v${CURRENT_HIVERELAY_VERSION})
   `)
   writeFile(root, '02-apps/pear-pos/ARCHITECTURE.md', `
-    p2p-hiverelay-client@0.20.2
+    p2p-hiverelay-client@${CURRENT_HIVERELAY_VERSION}
   `)
   writeFile(root, '02-apps/pear-pos/PLAN.md', `
-    current HiveRelay 0.20.2 split packages
+    current HiveRelay ${CURRENT_HIVERELAY_VERSION} split packages
   `)
   writeFile(root, '02-apps/pear-pos/RESEARCH.md', `
-    SDK: \`p2p-hiverelay-client@0.20.2\`
+    SDK: \`p2p-hiverelay-client@${CURRENT_HIVERELAY_VERSION}\`
   `)
   writeFile(root, '02-apps/pear-pos/scripts/validate-publish-surface.mjs', `
     failures.push('package.json optionalDependencies.p2p-hiverelay should default to npm latest')
@@ -254,7 +255,7 @@ test('ecosystem consumer audit guards PearBrowser and POS current Hiverelay sour
     expectedStale: []
   })
   const summary = checkConsumerState(rows, {
-    expectedVersion: '0.20.2',
+    expectedVersion: CURRENT_HIVERELAY_VERSION,
     expectedCurrent,
     expectedStale: [],
     sourceChecks
