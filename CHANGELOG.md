@@ -9,6 +9,20 @@ The packages are versioned in lockstep.
 ## [Unreleased]
 
 ### Added
+- **App-facing blind-custody dispersal** (`p2p-hiverelay-client/blind-custody.js`)
+  — one call each: `disperse(secret, {relays, threshold, signPin, publishIntent})`
+  plans the shards (`planDispersal`, added to `blind-shards.js` — split + encode
+  every share's content address *without storing anything*, so the signed custody
+  intent can be published before shards go out), assigns share `i` to relay `i`,
+  publishes the app-signed intent to each relay, and PUTs each opaque shard to its
+  custodian over `/api/v1/shard`; `recover({relays, shareManifest, threshold})`
+  gathers ≥`k` and reconstructs at the reader's edge. Custody-pin signing and
+  intent-publishing are INJECTED (the publisher key + relay write creds belong to
+  the app; the pin signature stays byte-identical to the relay's verifier) — this
+  module owns only the orchestration. Proven over live `RelayAPI` servers
+  (`test/integration/blind-custody-disperse-e2e.test.js`): a dealer disperses
+  across three relays, intent is published before any PUT, and a reader
+  reconstructs the exact secret from any `k`.
 - **Blind-shard dispersal + recovery client layer** (`p2p-hiverelay-client/blind-shards.js`)
   — the connective tissue between PVSS secret-sharing and the content-addressed
   blind shard store. `disperseSecret({count, threshold, put})` splits a secret

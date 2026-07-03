@@ -122,30 +122,62 @@ export function decodeShareShard (bytes) {
  *   key/secretPoint are DEALER-PRIVATE — exactly what a reader reconstructs.
  */
 export async function disperseSecret ({ count, threshold, secret, put } = {}) {
-  if (!Number.isInteger(count) || count < 1) throw new Error('disperseSecret: count >= 1 required')
-  if (!Number.isInteger(threshold) || threshold < 1 || threshold > count) {
-    throw new Error('disperseSecret: 1 <= threshold <= count required')
-  }
   if (typeof put !== 'function') throw new Error('disperseSecret: put(shardBytes, meta) required')
+  const plan = await planDispersal({ count, threshold, secret })
+
+  const shareManifest = []
+  for (const s of plan.shares) {
+    const shard = await put(s.bytes, { shareIndex: s.shareIndex })
+    if (normalizeAddress(shard) !== s.shard) {
+      throw new Error('disperseSecret: relay stored a different hash for share ' + s.shareIndex)
+    }
+    shareManifest.push({ shareIndex: s.shareIndex, shard: s.shard, shareCommitment: s.shareCommitment })
+  }
+
+  return {
+    key: plan.key,
+    secretPoint: plan.secretPoint,
+    threshold: plan.threshold,
+    count: plan.count,
+    commitmentRoot: plan.commitmentRoot,
+    shareManifest
+  }
+}
+
+/**
+ * DEALER, phase 1 — split + encode every share WITHOUT storing anything, so a
+ * caller can learn each share's content address up front (to bind them into a
+ * signed custody intent and PUBLISH that intent to the relays) BEFORE the shards
+ * are PUT and authorized against it. disperseSecret() is this plus the PUT loop.
+ *
+ * @param {object} p
+ * @param {number} p.count      n — total shares (>= threshold)
+ * @param {number} p.threshold  k
+ * @param {string} [p.secret]   64-hex scalar; random if omitted
+ * @returns {Promise<{ key, secretPoint, threshold, count, commitmentRoot,
+ *   shares:Array<{shareIndex:number, bytes:Uint8Array, shard:string, shareCommitment:string}> }>}
+ *   shares are ordered by shareIndex; `shard` is the content address the relay
+ *   will store the bytes under, `shareCommitment` = S_i = p(i)*G.
+ */
+export async function planDispersal ({ count, threshold, secret } = {}) {
+  if (!Number.isInteger(count) || count < 1) throw new Error('planDispersal: count >= 1 required')
+  if (!Number.isInteger(threshold) || threshold < 1 || threshold > count) {
+    throw new Error('planDispersal: 1 <= threshold <= count required')
+  }
 
   const holders = []
   for (let i = 0; i < count; i++) holders.push(await keygen())
   const dealt = await split({ threshold, shareholders: holders.map(h => h.publicKey), secret })
 
-  const shareManifest = []
+  const shares = []
   for (const enc of dealt.public.encryptedShares) {
     const holder = holders[enc.index - 1]
     const share = await decryptShare({ encryptedShare: enc, secretKey: holder.secretKey })
     const bytes = encodeShareShard(share)
-    const expected = shardAddressOf(bytes)
-    const shard = await put(bytes, { shareIndex: enc.index })
-    if (normalizeAddress(shard) !== expected) {
-      throw new Error('disperseSecret: relay stored a different hash for share ' + enc.index)
-    }
-    // The manifest's shareCommitment for index i IS S_i = p(i)*G — the same
-    // Feldman-verifiable point a reader checks and a relay's shareVerified gate
-    // binds its held blob to (BLIND-SHARD-STORE-SPEC.md §9.3).
-    shareManifest.push({ shareIndex: enc.index, shard: expected, shareCommitment: share.share })
+    // shareCommitment for index i IS S_i = p(i)*G — the same Feldman-verifiable
+    // point a reader checks and a relay's shareVerified gate binds its blob to
+    // (BLIND-SHARD-STORE-SPEC.md §9.3).
+    shares.push({ shareIndex: enc.index, bytes, shard: shardAddressOf(bytes), shareCommitment: share.share })
   }
 
   return {
@@ -154,7 +186,7 @@ export async function disperseSecret ({ count, threshold, secret, put } = {}) {
     threshold,
     count,
     commitmentRoot: dealt.public.commitmentRoot,
-    shareManifest
+    shares
   }
 }
 

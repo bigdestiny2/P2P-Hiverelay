@@ -10,6 +10,7 @@
     "./secret-sharing.js": "./secret-sharing.js",
     "./blind-shards.js": "./blind-shards.js",
     "./shard-transport.js": "./shard-transport.js",
+    "./blind-custody.js": "./blind-custody.js",
     "./custody.js": "./custody.js",
     "./notify.js": "./notify.js"
   },
@@ -37,6 +38,7 @@
     "secret-sharing.js",
     "blind-shards.js",
     "shard-transport.js",
+    "blind-custody.js",
     "custody.js",
     "notify.js",
     "README.md",
