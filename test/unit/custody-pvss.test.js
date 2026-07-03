@@ -290,13 +290,26 @@ test('custody v2: cleartext PVSS share material is forbidden in any custody entr
     shareThreshold: 2,
     commitmentRoot: hashHex('forbid-root')
   }
+  // A top-level PVSS secret field is rejected by the positive allowlist (which
+  // names the offending field) before signing — the same primary gate the base
+  // custody fields use (see custody-signing.test.js and custody-signing.js:
+  // rejectUnknownFields runs before the recursive forbidden scan). These field
+  // names are never in any allowlist, so they can never reach a signed entry.
   for (const secretField of ['share', 'shareScalar', 'decryptedShare', 'secret', 'secretPoint', 'coefficient', 'coefficients', 'polynomial']) {
     t.exception(
       () => createCustodyIntent({ ...base, [secretField]: 'deadbeef' }, publisher, { timestamp: now }),
-      /forbidden plaintext\/key field/,
-      `forbidden: ${secretField}`
+      new RegExp('unknown custody field: ' + secretField),
+      `top-level ${secretField} rejected by the allowlist`
     )
   }
+  // Nested PVSS secret material riding inside an otherwise-allowed container is
+  // caught by the recursive forbidden-secret scan (the backstop for allowlisted
+  // containers).
+  t.exception(
+    () => createCustodyIntent({ ...base, candidateRelays: [{ share: 'nested-secret' }] }, publisher, { timestamp: now }),
+    /forbidden/,
+    'nested PVSS secret is rejected by the recursive scan'
+  )
 })
 
 test('custody v2: receipt↔intent PVSS binding is enforced by validateCustodyTransition', async (t) => {

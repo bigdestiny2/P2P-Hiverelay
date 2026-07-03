@@ -175,6 +175,11 @@ export class EvictionManager extends EventEmitter {
    * @param {function} deps.unseed               async (appKeyHex) -> void
    * @param {object} [deps.store]                corestore (for purge); omit in tests with purgeDrive injected
    * @param {function} [deps.purgeDrive]         async (appKeyHex) -> void (test seam)
+   * @param {function} [deps.getStorageCap]      () -> number — the operator-DESIGNATED
+   *   maxStorageBytes cap (0/undefined = unlimited). When our measured usage
+   *   exceeds it, the sweep runs even below whole-disk pressure, so an operator
+   *   who designates "give HiveRelay N GB of this box" gets shed down to N GB
+   *   without needing the physical disk to be near-full.
    * @param {object} [config]                    eviction config block
    */
   constructor (deps, config = {}) {
@@ -183,6 +188,7 @@ export class EvictionManager extends EventEmitter {
       if (!deps[k]) throw new Error('EvictionManager: missing dep ' + k)
     }
     this.deps = deps
+    this._getStorageCap = typeof deps.getStorageCap === 'function' ? deps.getStorageCap : () => 0
     this.config = { ...DEFAULTS, ...config }
 
     this._interval = null
@@ -204,6 +210,18 @@ export class EvictionManager extends EventEmitter {
     if (this._interval) {
       clearInterval(this._interval)
       this._interval = null
+    }
+  }
+
+  // Our measured on-disk footprint, via the same StorageAccounting summary
+  // the operator dashboard reports (st.blocks*512, matches df) — used to test
+  // the designated-cap gate. Best-effort: 0 if unavailable (→ cap gate off).
+  _measuredUsedBytes () {
+    try {
+      const s = this.deps.storageAccounting.getSummary()
+      return Number(s && s.totalBytes) || 0
+    } catch (_) {
+      return 0
     }
   }
 
@@ -334,7 +352,13 @@ export class EvictionManager extends EventEmitter {
       if (!disk || !Number.isFinite(disk.usedPct)) {
         return this._finish({ at: now, skipped: 'no-disk-signal', scanned: 0, candidates: 0, evicted: [], freedBytes: 0 })
       }
-      if (!opts.force && disk.usedPct < this.config.diskPressurePct) {
+      // Over the operator-DESIGNATED cap? Then shed regardless of whole-disk
+      // pressure — this is what makes "designate N GB and shrink to fit" work
+      // on a box whose physical disk is nowhere near full. Cap 0 = unlimited.
+      const cap = Number(this._getStorageCap()) || 0
+      const usedBytes = this._measuredUsedBytes()
+      const overCap = cap > 0 && usedBytes > cap
+      if (!opts.force && !overCap && disk.usedPct < this.config.diskPressurePct) {
         return this._finish({ at: now, skipped: 'below-pressure', usedPct: disk.usedPct, scanned: 0, candidates: 0, evicted: [], freedBytes: 0 })
       }
 
@@ -400,9 +424,12 @@ export class EvictionManager extends EventEmitter {
         // this entry, K = how many copies the network can spare. Skipped
         // above rankBypassPct — politeness must not starve a critical
         // box when the farther holders are unpressured and will never
-        // act (floor + margin remain the real safety).
+        // act (floor + margin remain the real safety). Also skipped when
+        // we are over the operator's DESIGNATED cap: the operator asked us
+        // to shrink to N bytes, so rank-politeness must not block it (floor
+        // + margin still protect the network).
         const surplus = remaining - (h.target + this.config.floorMargin) + 1
-        if (disk.usedPct < this.config.rankBypassPct && weAreCounted && holders.length > 1) {
+        if (!overCap && disk.usedPct < this.config.rankBypassPct && weAreCounted && holders.length > 1) {
           const ranked = holders
             .map(pk => ({ pk, d: xorDistance(pk, appKey) }))
             .sort((a, b) => compareBuffers(b.d, a.d)) // farthest first
@@ -429,10 +456,13 @@ export class EvictionManager extends EventEmitter {
       const volTotal = disk.totalBytes || null
       for (const cand of candidates) {
         if (evicted.length >= this.config.maxEvictionsPerSweep) break
-        if (volTotal) {
-          const projectedPct = disk.usedPct - (freedBytes / volTotal) * 100
-          if (projectedPct <= this.config.resumePct) break
-        }
+        // Keep shedding while EITHER reason to sweep still holds: we're still
+        // over the operator-designated cap, OR the physical disk is still
+        // pressured. Stop once both are satisfied. (Pre-cap behaviour — stop at
+        // resumePct — is preserved when no cap is set.)
+        const stillOverCap = cap > 0 && (usedBytes - freedBytes) > cap
+        const stillPressured = volTotal ? (disk.usedPct - (freedBytes / volTotal) * 100) > this.config.resumePct : true
+        if (!stillOverCap && !stillPressured) break
         try {
           const unseeded = await raceTimeout(
             Promise.resolve().then(() => this.deps.unseed(cand.appKey)).then(() => true),

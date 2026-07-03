@@ -1644,6 +1644,14 @@ export class RelayAPI extends EventEmitter {
             safeConfigPayload: () => this._getSafeConfig()
           })
           if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)
+          // Live-apply a storage designation: persisting maxStorageBytes alone
+          // does not re-cap the running seeder or shed to fit. Push it into the
+          // seeder + enable eviction + kick a sweep so lowering the cap frees
+          // space without a restart.
+          if (result.ok && Array.isArray(result.payload?.applied) && result.payload.applied.includes('maxStorageBytes') &&
+              typeof this.node.applyStorageDesignation === 'function') {
+            try { await this.node.applyStorageDesignation(this.node.config.maxStorageBytes) } catch (_) {}
+          }
           return this._json(res, result.payload, result.status || 200)
         }
 
