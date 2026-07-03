@@ -197,6 +197,9 @@ export function sanitizeTransportSummary (stats) {
           activeConnections: count(stats.dhtRelayWs.activeConnections),
           totalConnectionsServed: count(stats.dhtRelayWs.totalConnectionsServed),
           totalRateLimited: count(stats.dhtRelayWs.totalRateLimited),
+          totalReaped: count(stats.dhtRelayWs.totalReaped),
+          totalBytesIn: count(stats.dhtRelayWs.totalBytesIn),
+          totalBytesOut: count(stats.dhtRelayWs.totalBytesOut),
           maxConnections: count(stats.dhtRelayWs.maxConnections),
           rateLimit: isObject(stats.dhtRelayWs.rateLimit)
             ? {

@@ -1,6 +1,6 @@
 {
   "name": "p2p-hiverelay",
-  "version": "0.21.1",
+  "version": "0.22.0",
   "description": "HiveRelay Core — minimal always-on P2P availability infrastructure (seeding, circuit relay, proof-of-relay, gateway)",
   "type": "module",
   "main": "core/index.js",
@@ -66,7 +66,7 @@
   "dependencies": {
     "@grpc/grpc-js": "^1.14.4",
     "@grpc/proto-loader": "^0.7.15",
-    "@hyperswarm/dht-relay": "^0.4.3",
+    "@hyperswarm/dht-relay": "0.4.3",
     "@inquirer/prompts": "^8.4.1",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",

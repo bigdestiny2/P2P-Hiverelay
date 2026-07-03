@@ -75,3 +75,60 @@ test('e2e: WS server cleanly handles client disconnect mid-session', async (t) =
 
   t.is(relayWs.getStats().activeConnections, 0, 'relay cleaned up the dropped connection')
 })
+
+test('crash-safety: a proxied DHT op that throws tears down only its connection, never the process', async (t) => {
+  const testnet = await createTestnet(2, t.teardown)
+  const relayDHT = testnet.nodes[0]
+
+  // Wrap the real DHT so lookup() throws synchronously — simulating a
+  // malformed/hostile frame or an op against a closed DHT. Upstream let such a
+  // throw propagate out of the protocol EventEmitter → uncaughtException →
+  // whole-relay crash-loop under systemd. Our vendored node-proxy `guard` must
+  // contain it to the one faulting connection. Everything else proxies to the
+  // real DHT (methods bound to it) so the handshake still completes.
+  const throwingDht = new Proxy(relayDHT, {
+    get (target, prop) {
+      if (prop === 'lookup') return () => { throw new Error('boom: simulated DHT fault') }
+      const v = target[prop]
+      return typeof v === 'function' ? v.bind(target) : v
+    }
+  })
+
+  const port = pickPort()
+  const relayWs = new DHTRelayWS({ dht: throwingDht, port, host: '127.0.0.1' })
+  await relayWs.start()
+  t.teardown(() => relayWs.stop())
+
+  // A clean run already implies the process survived (brittle aborts on an
+  // uncaught fault), but assert it explicitly by trapping any that escape.
+  const fatal = []
+  const onFatal = (err) => fatal.push(err)
+  process.on('uncaughtException', onFatal)
+  process.on('unhandledRejection', onFatal)
+  t.teardown(() => {
+    process.off('uncaughtException', onFatal)
+    process.off('unhandledRejection', onFatal)
+  })
+
+  const socket = new WebSocket(`ws://127.0.0.1:${port}`)
+  await new Promise((resolve, reject) => { socket.on('open', resolve); socket.on('error', reject) })
+  const browserDHT = new RelayedDHT(new RelayedStream(true, socket))
+  await browserDHT.ready()
+  t.is(relayWs.getStats().activeConnections, 1, 'session established (handshake unaffected)')
+
+  // Trigger the throwing op. The relayed lookup stream errors/closes as the
+  // relay tears its connection down; we only care that the process survives.
+  try {
+    const stream = browserDHT.lookup(Buffer.alloc(32))
+    stream.on('error', () => {})
+    if (typeof stream.resume === 'function') stream.resume()
+  } catch (_) {}
+
+  await new Promise((resolve) => setTimeout(resolve, 300))
+
+  t.is(fatal.length, 0, 'no uncaughtException/unhandledRejection escaped the guard')
+  t.is(relayWs.getStats().activeConnections, 0, 'only the faulting connection was torn down')
+
+  try { await browserDHT.destroy() } catch (_) {}
+  try { socket.close() } catch (_) {}
+})

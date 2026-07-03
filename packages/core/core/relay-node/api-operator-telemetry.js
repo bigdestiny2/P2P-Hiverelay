@@ -75,6 +75,9 @@ const METRIC_GROUPS = {
     'activeConnections',
     'totalConnectionsServed',
     'totalRateLimited',
+    'totalReaped',
+    'totalBytesIn',
+    'totalBytesOut',
     'maxConnections'
   ]
 }

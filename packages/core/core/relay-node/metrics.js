@@ -109,6 +109,24 @@ export class Metrics extends EventEmitter {
       pushMetric(lines, 'hiverelay_bytes_relayed', 'Total bytes relayed', 'counter', stats.relay.totalBytesRelayed)
     }
 
+    // DHT-relay WS pure-pipe transport. Aggregate-only, matching the
+    // transport's own neutrality contract: byte totals are frame-length
+    // sums across all connections (the pipe's metering signal), never
+    // per-client, never tied to an address.
+    if (stats.dhtRelayWs) {
+      pushMetric(lines, 'hiverelay_dhtrelay_active_connections', 'Active dht-relay-ws client connections', 'gauge', stats.dhtRelayWs.activeConnections)
+
+      pushMetric(lines, 'hiverelay_dhtrelay_connections_total', 'Total dht-relay-ws connections served', 'counter', stats.dhtRelayWs.totalConnectionsServed)
+
+      pushMetric(lines, 'hiverelay_dhtrelay_rate_limited_total', 'dht-relay-ws upgrades refused by the per-IP rate limiter', 'counter', stats.dhtRelayWs.totalRateLimited)
+
+      pushMetric(lines, 'hiverelay_dhtrelay_reaped_total', 'dht-relay-ws connections reaped by the supervisor (dead socket, no first frame, backpressure, session limit, rx rate)', 'counter', stats.dhtRelayWs.totalReaped)
+
+      pushMetric(lines, 'hiverelay_dhtrelay_bytes_in_total', 'Total bytes received across all dht-relay-ws connections (frame lengths only)', 'counter', stats.dhtRelayWs.totalBytesIn)
+
+      pushMetric(lines, 'hiverelay_dhtrelay_bytes_out_total', 'Total bytes sent across all dht-relay-ws connections (frame lengths only)', 'counter', stats.dhtRelayWs.totalBytesOut)
+    }
+
     // Process metrics
     const mem = process.memoryUsage()
     pushMetric(lines, 'hiverelay_process_heap_bytes', 'Process heap memory in bytes', 'gauge', mem.heapUsed)

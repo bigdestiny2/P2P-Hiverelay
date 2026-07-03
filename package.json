@@ -1,6 +1,6 @@
 {
   "name": "p2p-hiverelay-monorepo",
-  "version": "0.21.1",
+  "version": "0.22.0",
   "description": "Monorepo root for HiveRelay (Core + Services + Client)",
   "private": true,
   "type": "module",
@@ -96,7 +96,8 @@
     "ignore": [
       "scripts/test-*.js",
       "examples/**",
-      "**/dist/**"
+      "**/dist/**",
+      "**/transports/dht-relay-ws/vendor/**"
     ]
   },
   "dependencies": {

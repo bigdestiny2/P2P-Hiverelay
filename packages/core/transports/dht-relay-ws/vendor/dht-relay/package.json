@@ -1,0 +1,57 @@
+{
+  "name": "@hyperswarm/dht-relay",
+  "version": "0.4.3",
+  "description": "Relaying the Hyperswarm DHT over framed streams to bring decentralized networking to everyone",
+  "main": "./index.js",
+  "bin": {
+    "dht-relay": "./bin.js"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./tcp": "./tcp.js",
+    "./ws": "./ws.js"
+  },
+  "files": [
+    "index.js",
+    "tcp.js",
+    "ws.js",
+    "bin.js",
+    "lib/**/*.js"
+  ],
+  "scripts": {
+    "test": "standard && brittle test/*.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/holepunchto/hyperswarm-dht-relay.git"
+  },
+  "author": "Kasper Isager Dalsgarð <kasper@funktionel.co>",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/holepunchto/hyperswarm-dht-relay/issues"
+  },
+  "homepage": "https://github.com/holepunchto/hyperswarm-dht-relay#readme",
+  "dependencies": {
+    "@hyperswarm/secret-stream": "^6.0.0",
+    "b4a": "^1.1.4",
+    "compact-encoding": "^2.6.1",
+    "compact-encoding-net": "^1.0.1",
+    "events": "^3.3.0",
+    "graceful-goodbye": "^1.2.1",
+    "hyperdht": "^6.6.0",
+    "noise-handshake": "^3.0.3",
+    "protomux": "^3.1.1",
+    "safety-catch": "^1.0.1",
+    "sodium-universal": "^4.0.0",
+    "streamx": "^2.11.3",
+    "timeout-refresh": "^2.0.1",
+    "ws": "^8.12.1"
+  },
+  "devDependencies": {
+    "brittle": "^3.2.1",
+    "hypercore": "^10.0.0-alpha.34",
+    "hyperswarm": "^4.0.1",
+    "random-access-memory": "^6.1.0",
+    "standard": "^17.0.0"
+  }
+}
