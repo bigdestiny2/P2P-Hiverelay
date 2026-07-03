@@ -30,6 +30,33 @@ The packages are versioned in lockstep.
 - Enabling dispersal on a box still requires turning on the `shard-store`
   service (Services tab / `plugins`). Mounting only makes the surface reachable.
 
+## [0.23.0] — 2026-07-03
+
+### Added
+
+- **Operator storage designation.** An appliance operator can now set how much of
+  the box's disk HiveRelay may use, live and without a restart, from the
+  Blindspark page (a GB control) or `POST /api/manage/config { maxStorageBytes }`.
+  The relay re-caps the seeder's adoption gate, enables eviction, and sheds
+  surplus blind fragments down to the designated cap — the eviction sweep now
+  triggers on *our measured usage vs the cap*, not only whole-disk pressure, and
+  bypasses rank-deferral while over-cap so "give HiveRelay N GB and shrink to
+  fit" works even when the physical disk is far from full. The replication floor
+  + margin still protect the network; an unset cap (0) preserves the prior
+  disk-pressure-only behaviour.
+
+### Fixed
+
+- **Release-tooling + custody test staleness.** The ecosystem-consumer audit and
+  npm-latest-check tests hardcoded a release version (`0.20.2`) in fixtures and
+  so rotted red on every version bump; they now read the current version
+  dynamically. The custody-pvss "cleartext share material is forbidden" test was
+  aligned to the intentional allowlist-first design (top-level forbidden fields
+  are rejected by the positive allowlist; the recursive scan is the backstop for
+  nested content). All previously-red on the v0.21.x/v0.22.0 line.
+
+## [0.22.0] — 2026-07-03
+
 Production-hardens the `dht-relay-ws` transport for the Phase 5 **pure-pipe**
 path — an operator running a content-blind DHT byte-pipe 24/7. Every bound
 added here is **content-neutral** (frame lengths, buffer sizes, timings — never

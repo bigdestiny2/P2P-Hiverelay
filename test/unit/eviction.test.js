@@ -73,6 +73,7 @@ function makeEviction (over = {}) {
     diskMonitor: { getInfo: () => (over.disk || { usedPct: 85, totalBytes: 20e9 }) },
     getReplicationHealth: () => health,
     myPubkeyHex: over.myPubkey || MY_PK,
+    getStorageCap: over.getStorageCap,
     unseed: async (k) => { unseeded.push(k); registry._map && registry._map.delete(k) },
     purgeDrive: async (k) => { purged.push(k) }
   }, { enabled: true, minAgeMs: 3 * 24 * 60 * 60 * 1000, ...over.config })
@@ -108,6 +109,46 @@ test('accounting: paces in batches and prunes removed entries', async (t) => {
   await acc._tick(); await acc._tick()
   t.is(acc.getBytes('b'), null, 'cache pruned for removed entry')
   acc.stop()
+})
+
+// ─── Designated-cap shedding (v0.23.0 storage designation) ─────────
+
+test('eviction: over the DESIGNATED cap sheds even below whole-disk pressure', async (t) => {
+  // Physical disk only 40% full — far below diskPressurePct (80). Normally the
+  // sweep skips 'below-pressure' and sheds nothing. But our own measured usage
+  // (5000) exceeds the operator's designated cap (1000), so the cap gate must
+  // run the sweep AND bypass rank-deferral to shrink us toward the cap.
+  const { ev, unseeded } = makeEviction({
+    disk: { usedPct: 40, totalBytes: 20e9 },
+    accounting: { getBytes: () => 5000, measure: async () => 5000, getSummary: () => ({ totalBytes: 5000 }) },
+    getStorageCap: () => 1000
+  })
+  const res = await ev.sweep({ now: NOW })
+  t.absent(res.skipped, 'did not skip below-pressure — we are over the designated cap')
+  t.is(unseeded.length, 1, 'shed the surplus replica')
+  t.is(unseeded[0], APP)
+})
+
+test('eviction: UNDER the designated cap + below disk pressure still skips (no needless shedding)', async (t) => {
+  const { ev, unseeded } = makeEviction({
+    disk: { usedPct: 40, totalBytes: 20e9 },
+    accounting: { getBytes: () => 500, measure: async () => 500, getSummary: () => ({ totalBytes: 500 }) },
+    getStorageCap: () => 1000
+  })
+  const res = await ev.sweep({ now: NOW })
+  t.is(res.skipped, 'below-pressure', 'under cap + calm disk → nothing shed')
+  t.is(unseeded.length, 0)
+})
+
+test('eviction: an unset cap (0) preserves the pure disk-pressure behavior', async (t) => {
+  const { ev, unseeded } = makeEviction({
+    disk: { usedPct: 40, totalBytes: 20e9 },
+    accounting: { getBytes: () => 5000, measure: async () => 5000, getSummary: () => ({ totalBytes: 5000 }) },
+    getStorageCap: () => 0
+  })
+  const res = await ev.sweep({ now: NOW })
+  t.is(res.skipped, 'below-pressure', 'no cap set → calm disk means no shedding, as before')
+  t.is(unseeded.length, 0)
 })
 
 // ─── EvictionManager policy ────────────────────────────────────────

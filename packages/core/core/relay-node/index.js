@@ -1968,20 +1968,7 @@ export class RelayNode extends EventEmitter {
       // surplus replicas under disk pressure. See eviction.js for the
       // policy contract.
       if (this.config.eviction?.enabled) {
-        this.eviction = new EvictionManager({
-          appRegistry: this.appRegistry,
-          seedingRegistry: this.seedingRegistry,
-          storageAccounting: this.storageAccounting,
-          diskMonitor: this.diskMonitor,
-          getReplicationHealth: () => this._replicationHealth,
-          myPubkeyHex: b4a.toString(this.swarm.keyPair.publicKey, 'hex'),
-          unseed: (appKeyHex) => this.unseedApp(appKeyHex),
-          store: this.store
-        }, { targetFloor: Math.max(1, Number(this.config.targetReplicaFloor) || 1), ...this.config.eviction })
-        this.eviction.on('evicted', (e) => this.emit('eviction', e))
-        this.eviction.on('evict-failed', (e) => this.emit('eviction-failed', e))
-        this.eviction.on('error', (err) => this.emit('eviction-error', { error: err && err.message }))
-        this.eviction.start()
+        this._ensureEviction()
       }
 
       // Operator subsidy accrual (Phase 1, relay side). Off by default;
@@ -2620,6 +2607,68 @@ export class RelayNode extends EventEmitter {
    * @param {string} [cfg.acceptMode]  - 'open' | 'review' | 'allowlist' | 'closed'
    * @param {object} [cfg.subsidy]     - { payoutDestination } payout destination
    */
+  // Construct + start the eviction manager (idempotent). Extracted from start()
+  // so the storage-designation flow can turn eviction on at runtime. The
+  // getStorageCap dep makes the sweep shed down to the operator-designated
+  // maxStorageBytes even when the physical disk is nowhere near full.
+  _ensureEviction () {
+    if (this.eviction) return this.eviction
+    this.eviction = new EvictionManager({
+      appRegistry: this.appRegistry,
+      seedingRegistry: this.seedingRegistry,
+      storageAccounting: this.storageAccounting,
+      diskMonitor: this.diskMonitor,
+      getReplicationHealth: () => this._replicationHealth,
+      myPubkeyHex: b4a.toString(this.swarm.keyPair.publicKey, 'hex'),
+      unseed: (appKeyHex) => this.unseedApp(appKeyHex),
+      getStorageCap: () => this.config.maxStorageBytes || 0,
+      store: this.store
+    }, { targetFloor: Math.max(1, Number(this.config.targetReplicaFloor) || 1), ...this.config.eviction })
+    this.eviction.on('evicted', (e) => this.emit('eviction', e))
+    this.eviction.on('evict-failed', (e) => this.emit('eviction-failed', e))
+    this.eviction.on('error', (err) => this.emit('eviction-error', { error: err && err.message }))
+    this.eviction.start()
+    return this.eviction
+  }
+
+  // Apply an operator storage designation live (no restart): set the byte cap
+  // on the seeder's adoption gate + config, turn eviction on so we shrink to
+  // fit, and kick a forced sweep so lowering the cap frees space immediately.
+  // Returns a small summary for the API/UI. `maxStorageBytes` is assumed
+  // already validated by the config-update layer (min 1 MiB).
+  async applyStorageDesignation (maxStorageBytes) {
+    const cap = Number(maxStorageBytes)
+    if (!Number.isFinite(cap) || cap <= 0) return { ok: false, error: 'invalid maxStorageBytes' }
+
+    this.config.maxStorageBytes = cap
+    // Live adoption cap: the seeder cached this at construction, so update it
+    // in place — otherwise new content keeps being adopted against the old cap.
+    if (this.seeder) this.seeder.maxStorageBytes = cap
+
+    // Designating a cap implies "keep me under it": enable eviction so the
+    // sweep can shed surplus down to the cap (never below the replication
+    // floor). Persisted so it survives restart.
+    this.config.eviction = { ...(this.config.eviction || {}), enabled: true }
+    this._ensureEviction()
+
+    // Kick a forced sweep in the background (force:true → shed now even below
+    // physical-disk pressure; the getStorageCap gate shrinks us toward the
+    // cap). A full shed can unseed many drives and take a while, so we do NOT
+    // block the config response on it — the dashboard polls storage stats to
+    // watch usage fall. Periodic sweeps continue converging afterward.
+    Promise.resolve()
+      .then(() => this.eviction.sweep({ force: true }))
+      .catch((err) => this.emit('eviction-error', { error: err && err.message }))
+
+    return {
+      ok: true,
+      maxStorageBytes: cap,
+      evictionEnabled: true,
+      usedBytes: this._storageUsedBytes(),
+      sweeping: true
+    }
+  }
+
   _applyWizardConfig (cfg) {
     if (!cfg || typeof cfg !== 'object') return
     if (typeof cfg.name === 'string' && cfg.name.length > 0) {
