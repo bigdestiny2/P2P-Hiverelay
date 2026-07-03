@@ -1359,7 +1359,7 @@ export class RelayNode extends EventEmitter {
         }
 
         // Start all services (passes { node: this } as context)
-        this._serviceContext = { node: this, store: this.store, config: this.config }
+        this._serviceContext = this._buildServiceContext()
         const startupResult = await this.serviceRegistry.startAll(this._serviceContext)
         if (startupResult.failed.length > 0 && this.config.servicesFailOpen !== true) {
           const names = startupResult.failed.map(s => s.name).join(', ')
@@ -3442,7 +3442,7 @@ export class RelayNode extends EventEmitter {
       }
 
       try {
-        await this.serviceRegistry.restart(name, this._serviceContext || { node: this, store: this.store, config: this.config })
+        await this.serviceRegistry.restart(name, this._serviceContext || this._buildServiceContext())
         restarted++
       } catch (err) {
         failed++
@@ -3455,10 +3455,46 @@ export class RelayNode extends EventEmitter {
     return result
   }
 
+  // Resolve a custody-shard assignment for the blind shard store's PUT auth.
+  // Given a custody intent this relay has indexed, return THIS relay's assigned
+  // { shareIndex, shard } — binding relayPubkey -> shareIndex (shareAssignments)
+  // -> shard hash (shareManifest), both signed into the intent. Returns null
+  // when this relay was not assigned a share, so a relay can only pin the exact
+  // share the dealer committed to it. Read-only; never throws.
+  _resolveShardCustodyAssignment (custodyIntentId, relayPubkey) {
+    const reg = this.seedingRegistry
+    if (!reg || typeof reg.getCustodyIntent !== 'function') return null
+    const intent = reg.getCustodyIntent(custodyIntentId)
+    if (!intent || !Array.isArray(intent.shareAssignments) || !Array.isArray(intent.shareManifest)) return null
+    const mine = intent.shareAssignments.find(a => a && a.relayPubkey === relayPubkey)
+    if (!mine) return null
+    const share = intent.shareManifest.find(m => m && m.shareIndex === mine.shareIndex)
+    if (!share) return null
+    return { shareIndex: mine.shareIndex, shard: share.shard }
+  }
+
+  // Service start context. Adds the shard-store authorization seam: a custody
+  // assignment resolver (backed by the seeding registry) plus the operator's
+  // enforceable pin reasons (custody-only by default; payment needs per-pinner
+  // quota that does not exist relay-side yet). Services that don't read these
+  // keys ignore them.
+  _buildServiceContext () {
+    return {
+      node: this,
+      store: this.store,
+      config: this.config,
+      resolveCustodyAssignment: (custodyIntentId, relayPubkey) =>
+        this._resolveShardCustodyAssignment(custodyIntentId, relayPubkey),
+      shardPutAuth: (this.config.shardStore && Array.isArray(this.config.shardStore.putAuth))
+        ? this.config.shardStore.putAuth
+        : ['custody']
+    }
+  }
+
   async _checkServiceHealth (entry) {
     const provider = entry?.provider
     if (!provider) return false
-    const context = this._serviceContext || { node: this, store: this.store, config: this.config }
+    const context = this._serviceContext || this._buildServiceContext()
     if (typeof provider.healthCheck === 'function') {
       const result = await provider.healthCheck(context)
       return result !== false && result?.ok !== false

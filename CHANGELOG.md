@@ -8,7 +8,27 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
-## [0.22.0] — 2026-07-03
+### Added
+- **Blind shard store mounted on the relay HTTP path.** The `shard-store`
+  service shipped in v0.21.0 but its HTTP adapter was never wired into the relay
+  request dispatch, so `/api/v1/shard` returned 404 on every box. It is now
+  mounted (`packages/core`): `GET`/`HEAD`/`POST …/prove`/`DELETE` on
+  `shard:<hash>` and `POST /api/v1/shard`. `GET`/`HEAD`/`prove`/`DELETE` are
+  content-neutral (opaque bytes addressed by blake2b hash); `PUT` is authorized
+  by a signed pin.
+- **Relay-backed custody authorization for shard PUTs.** The relay now supplies
+  the shard store a custody-assignment resolver via the service start context,
+  backed by the seeding registry's indexed custody intents. A PUT is accepted
+  only when the pin names a custody intent this relay has indexed and the
+  relay's own `relayPubkey → shareIndex → shard:<hash>` binding
+  (`shareAssignments` + `shareManifest`, both signed into the intent) matches —
+  so a relay can only pin the exact share it was assigned. Operator-enforceable
+  pin reasons default to `custody` (config `shardStore.putAuth`); payment-gated
+  pinning stays disabled until per-pinner quota exists relay-side.
+
+### Notes
+- Enabling dispersal on a box still requires turning on the `shard-store`
+  service (Services tab / `plugins`). Mounting only makes the surface reachable.
 
 Production-hardens the `dht-relay-ws` transport for the Phase 5 **pure-pipe**
 path — an operator running a content-blind DHT byte-pipe 24/7. Every bound

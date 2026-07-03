@@ -105,6 +105,25 @@ export function resolveRepairTicketServiceProvider (node) {
   return { ok: true, provider, entry }
 }
 
+export function resolveShardServiceProvider (node) {
+  const entry = serviceEntry(node, 'shard-store')
+  if (!entry) {
+    return { ok: false, status: 503, error: 'Shard store service is not enabled on this relay' }
+  }
+
+  if (entry.status && entry.status !== 'running') {
+    return { ok: false, status: 503, error: 'Shard store service is not running (status=' + entry.status + ')' }
+  }
+
+  const provider = entry.provider || entry
+  if (!provider || typeof provider.put !== 'function' || typeof provider.get !== 'function' ||
+      typeof provider.has !== 'function' || typeof provider.prove !== 'function') {
+    return { ok: false, status: 503, error: 'Shard store service does not expose put/get/has/prove methods' }
+  }
+
+  return { ok: true, provider, entry }
+}
+
 export function resolveNotifyServiceProvider (node) {
   const entry = serviceEntry(node, 'notify')
   if (!entry) {

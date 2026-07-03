@@ -91,6 +91,19 @@ export class ShardStoreService extends ServiceProvider {
     this.store = context.store || this.opts.store || null
     this.keyPair = this.keyPair || (context.node && (context.node.keyPair || (context.node.swarm && context.node.swarm.keyPair))) || null
     this.relayPubkey = this.relayPubkey || relayPubkeyFromContext(context, this.opts)
+    // Relay-wired authorization hooks. Constructor opts win (tests inject
+    // stubs); otherwise the relay supplies them through the service start
+    // context, mirroring how keyPair/relayPubkey are pulled from context above.
+    // Absent a hook, the matching pin reason is cleanly unauthorized — never a
+    // crash. putAuth may likewise be narrowed by the relay to the reasons it can
+    // actually back (e.g. ['custody'] until per-pinner payment quota exists), so
+    // manifest().putAuth never advertises an unenforceable path.
+    this.resolveCustodyAssignment = this.resolveCustodyAssignment || context.resolveCustodyAssignment || null
+    this.checkPaymentQuota = this.checkPaymentQuota || context.checkPaymentQuota || null
+    this.checkToken = this.checkToken || context.checkToken || null
+    if (!Array.isArray(this.opts.putAuth) && Array.isArray(context.shardPutAuth)) {
+      this.allowedReasons = context.shardPutAuth
+    }
     if (!this.engine) {
       if (!this.store) throw new Error('ShardStoreService: corestore required (context.store)')
       this.engine = new ShardEngine(this.store, { maxShardBytes: this.maxShardBytes })
