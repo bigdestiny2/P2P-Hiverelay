@@ -402,6 +402,21 @@ dialog::backdrop{background:rgba(4,7,14,.68)}
     <div class="stat"><div class="s-label">Storage used</div><div class="s-val orange" id="storagePct">&mdash;</div><div class="s-sub" id="storagePctSub">of capacity</div></div>
   </section>
 
+  <section class="panel" id="storagePanel">
+    <div class="row">
+      <div class="row-k">Storage for HiveRelay
+        <div class="row-note">How much of this box's disk HiveRelay may use. Lowering it sheds surplus blind fragments to fit &mdash; never below the network's safety floor.</div>
+      </div>
+      <div class="row-v" style="gap:.5rem;align-items:center">
+        <input id="storageCapGb" type="number" min="1" step="1" inputmode="numeric" aria-label="Storage cap in GB"
+          style="width:82px;background:var(--bg);border:1px solid var(--card-border-hi);border-radius:7px;color:var(--text);padding:.4rem .5rem;font-family:var(--mono);font-size:.82rem">
+        <span style="color:var(--text-dim);font-size:.78rem">GB</span>
+        <button id="storageCapApply" onclick="applyStorageCap()"
+          style="border-radius:7px;padding:.42rem .95rem;font-size:.78rem;border:1px solid var(--card-border-hi);background:var(--card-hi);color:var(--text);cursor:pointer">Apply</button>
+      </div>
+    </div>
+  </section>
+
   <section class="panel">
     <div class="row">
       <div class="row-k">Accept mode</div>
@@ -638,6 +653,12 @@ function renderOverview(o){
   var frac = (typeof st.pct === 'number') ? st.pct : (st.max ? stored / st.max : 0);
   $('storagePct').textContent = (Math.round(frac * 1000) / 10) + '%';
   $('storagePctSub').textContent = fmtBytes(stored) + (st.max ? ' of ' + fmtBytes(st.max) : ' stored');
+  // Prefill the designation input with the current cap in GB — but never while
+  // the operator is mid-edit (a background refresh must not clobber typing).
+  var capInput = $('storageCapGb');
+  if (capInput && st.max && document.activeElement !== capInput) {
+    capInput.value = Math.max(1, Math.round(st.max / (1024 * 1024 * 1024)));
+  }
   $('uptime').textContent = o.uptime ? o.uptime.human : '—';
   if (o.publicKey){
     pubKey = o.publicKey;
@@ -781,6 +802,21 @@ function svcPost(path, body){
   }).then(function(r){
     return r.json().catch(function(){ return {}; }).then(function(out){ return { ok: r.ok, out: out }; });
   });
+}
+
+// Storage designation: set how much of this box HiveRelay may use. The relay
+// applies it live — re-caps adoption, enables eviction, and sheds surplus blind
+// fragments down to the cap (never below the network's replication floor).
+function applyStorageCap(){
+  var gb = parseFloat($('storageCapGb').value);
+  if (!(gb > 0)) { toast('Enter a storage size in GB'); return; }
+  var bytes = Math.round(gb * 1024 * 1024 * 1024);
+  var btn = $('storageCapApply'); btn.disabled = true;
+  svcPost('/api/manage/config', { maxStorageBytes: bytes }).then(function(res){
+    if (res.ok) toast('Storage set to ' + gb + ' GB — shrinking to fit');
+    else toast((res.out && res.out.error) || 'Could not set storage');
+    setTimeout(function(){ refresh(true); }, 900);
+  }).finally(function(){ btn.disabled = false; });
 }
 
 function setSvcConfigBusy(busy){
