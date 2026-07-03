@@ -181,6 +181,12 @@ button{font-family:inherit;cursor:pointer}
 .seedform .acts button{border-radius:7px;padding:.42rem .9rem;font-size:.78rem;border:1px solid var(--card-border-hi);background:transparent;color:var(--text-dim)}
 .seedform .acts button.go{background:var(--accent);border-color:var(--accent);color:#10131b;font-weight:600}
 .seedform .acts button[disabled]{opacity:.5;cursor:default}
+.storagecap{gap:.5rem;align-items:center}
+.storagecap input{width:82px;background:var(--bg);border:1px solid var(--card-border-hi);border-radius:7px;color:var(--text);padding:.4rem .5rem;font-family:var(--mono);font-size:.82rem}
+.storagecap input:focus{outline:none;border-color:var(--accent)}
+.storagecap .u{color:var(--text-dim);font-size:.78rem}
+.storagecap button{border-radius:7px;padding:.42rem .95rem;font-size:.78rem;border:1px solid var(--card-border-hi);background:var(--card-hi);color:var(--text);cursor:pointer}
+.storagecap button[disabled]{opacity:.5;cursor:default}
 
 .svc-hero{
   padding:.15rem .15rem .25rem;margin:.1rem 0 .8rem;
@@ -407,12 +413,10 @@ dialog::backdrop{background:rgba(4,7,14,.68)}
       <div class="row-k">Storage for HiveRelay
         <div class="row-note">How much of this box's disk HiveRelay may use. Lowering it sheds surplus blind fragments to fit &mdash; never below the network's safety floor.</div>
       </div>
-      <div class="row-v" style="gap:.5rem;align-items:center">
-        <input id="storageCapGb" type="number" min="1" step="1" inputmode="numeric" aria-label="Storage cap in GB"
-          style="width:82px;background:var(--bg);border:1px solid var(--card-border-hi);border-radius:7px;color:var(--text);padding:.4rem .5rem;font-family:var(--mono);font-size:.82rem">
-        <span style="color:var(--text-dim);font-size:.78rem">GB</span>
-        <button id="storageCapApply" onclick="applyStorageCap()"
-          style="border-radius:7px;padding:.42rem .95rem;font-size:.78rem;border:1px solid var(--card-border-hi);background:var(--card-hi);color:var(--text);cursor:pointer">Apply</button>
+      <div class="row-v storagecap">
+        <input id="storageCapGb" type="number" min="1" step="1" inputmode="numeric" aria-label="Storage cap in GB">
+        <span class="u">GB</span>
+        <button id="storageCapApply" type="button" onclick="applyStorageCap()">Apply</button>
       </div>
     </div>
   </section>
