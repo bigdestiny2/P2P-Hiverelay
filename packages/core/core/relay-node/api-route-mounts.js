@@ -16,6 +16,8 @@ export const WITNESSLOG_HTTP_ROUTE = '/api/witness'
 export const WITNESSLOG_HTTP_ROUTE_PREFIX = '/api/witness/'
 export const REPAIRTICKET_HTTP_ROUTE = '/api/repair'
 export const REPAIRTICKET_HTTP_ROUTE_PREFIX = '/api/repair/'
+export const SHARD_HTTP_ROUTE = '/api/v1/shard'
+export const SHARD_HTTP_ROUTE_PREFIX = '/api/v1/shard/'
 export const POKER_HTTP_ROUTE = '/api/poker'
 export const POKER_HTTP_ROUTE_PREFIX = '/api/poker/'
 export const POKER_TABLE_CREATE_ROUTE = '/api/poker/tables'
@@ -50,6 +52,11 @@ export function isWitnessLogHttpRoute (path) {
 export function isRepairTicketHttpRoute (path) {
   return typeof path === 'string' &&
     (path === REPAIRTICKET_HTTP_ROUTE || path.startsWith(REPAIRTICKET_HTTP_ROUTE_PREFIX))
+}
+
+export function isShardHttpRoute (path) {
+  return typeof path === 'string' &&
+    (path === SHARD_HTTP_ROUTE || path.startsWith(SHARD_HTTP_ROUTE_PREFIX))
 }
 
 export function resolvePokerHttpRoutePolicy (method, path) {
