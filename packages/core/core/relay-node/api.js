@@ -48,6 +48,7 @@ import {
   isOutboxLogHttpRoute,
   isPokerHttpRoute,
   isRepairTicketHttpRoute,
+  isShardHttpRoute,
   isWitnessLogHttpRoute,
   resolvePokerHttpRoutePolicy
 } from './api-route-mounts.js'
@@ -77,6 +78,7 @@ import {
   resolveOutboxLogServiceProvider,
   resolvePokerServiceProvider,
   resolveRepairTicketServiceProvider,
+  resolveShardServiceProvider,
   resolveWitnessLogServiceProvider
 } from './api-service-provider.js'
 import {
@@ -137,6 +139,11 @@ import {
   loadRepairTicketHttpAdapterModule,
   resolveRepairTicketHttpAdapter
 } from './api-repairticket-http-adapter.js'
+import {
+  buildShardHttpAdapterUnavailableResponse,
+  loadShardHttpAdapterModule,
+  resolveShardHttpAdapter
+} from './api-shard-http-adapter.js'
 import {
   buildCapabilityRoutePayload,
   resolveCapabilityRoute
@@ -369,13 +376,16 @@ export class RelayAPI extends EventEmitter {
     this._loadOutboxLogHttpAdapter = opts.loadOutboxLogHttpAdapter || loadOutboxLogHttpAdapterModule
     this._loadWitnessLogHttpAdapter = opts.loadWitnessLogHttpAdapter || loadWitnessLogHttpAdapterModule
     this._loadRepairTicketHttpAdapter = opts.loadRepairTicketHttpAdapter || loadRepairTicketHttpAdapterModule
+    this._loadShardHttpAdapter = opts.loadShardHttpAdapter || loadShardHttpAdapterModule
     this._outboxLogHttpAdapter = null
     this._witnessLogHttpAdapter = null
     this._repairTicketHttpAdapter = null
+    this._shardHttpAdapter = null
     this._outboxLogHttpAuth = opts.outboxLogHttpAuth || null
     this._outboxLogHttpState = opts.outboxLogHttpState || null
     this._witnessLogHttpState = opts.witnessLogHttpState || null
     this._repairTicketHttpState = opts.repairTicketHttpState || null
+    this._shardHttpState = opts.shardHttpState || null
     this._gateway = new HyperGateway(relayNode, { store: relayNode.store })
     this._retrievabilityProofProvider = new RetrievabilityProofProvider()
   }
@@ -789,6 +799,39 @@ export class RelayAPI extends EventEmitter {
           repairTicketApp: repair.provider,
           state: this._repairTicketHttpState,
           allowOrigin: this.corsOrigins && this.corsOrigins.length ? this.corsOrigins : '*',
+          trustProxy: this.trustProxy
+        })
+        if (handled) return
+        return this._json(res, { error: 'not found' }, 404)
+      }
+
+      // Blind shard store — content-addressed custody-shard dispersal surface.
+      // GET/HEAD/prove/DELETE are content-neutral (opaque bytes by hash); PUT is
+      // authorized by a signed pin the service verifies against a custody intent
+      // this relay has indexed (relayPubkey -> shareIndex -> shard). Core is a
+      // broker: resolve the running provider, then delegate the resolved route to
+      // the optional service-owned adapter. The adapter writes the response.
+      if (isShardHttpRoute(path)) {
+        const shard = resolveShardServiceProvider(this.node)
+        if (!shard.ok) return this._json(res, { error: shard.error }, shard.status)
+        let adapter
+        try {
+          adapter = await resolveShardHttpAdapter({
+            cachedAdapter: this._shardHttpAdapter,
+            loadAdapter: this._loadShardHttpAdapter
+          })
+          this._shardHttpAdapter = adapter
+          if (!this._shardHttpState) this._shardHttpState = adapter.createShardHttpState()
+        } catch (err) {
+          const unavailable = buildShardHttpAdapterUnavailableResponse(err)
+          this.emit(unavailable.event.name, unavailable.event.detail)
+          return this._json(res, unavailable.payload, unavailable.status)
+        }
+        const route = adapter.resolveShardRoute(req.method, path)
+        if (!route) return this._json(res, { error: 'not found' }, 404)
+        const handled = await adapter.handleShardHttp(shard.provider, route, req, res, {
+          url,
+          state: this._shardHttpState,
           trustProxy: this.trustProxy
         })
         if (handled) return
