@@ -35,6 +35,22 @@ async function fileExists (file) {
   }
 }
 
+const PINNED_TEST_IMAGE = `ghcr.io/bigdestiny2/p2p-hiverelay:0.24.0@sha256:${'e'.repeat(64)}`
+
+// smoke-umbrel-package.mjs runs static compose validation (which requires a
+// digest-pinned image) BEFORE the behaviour under test. These tests must point
+// it at a valid digest-pinned compose, or it fatals on the repo compose's
+// between-release tag-only ref instead of exercising the gate we're asserting.
+// The separate "the shipped repo compose must be digest-pinned" invariant is
+// enforced at release time by scripts/check-release-blockers.mjs, not here.
+async function pinnedComposeFor (dir) {
+  const raw = await readFile(path.join(process.cwd(), 'umbrel-app', 'docker-compose.yml'), 'utf8')
+  const pinned = raw.replace(/^(\s*image:\s*)\S+.*$/m, `$1${PINNED_TEST_IMAGE}`)
+  const file = path.join(dir, 'pinned-docker-compose.yml')
+  await writeFile(file, pinned)
+  return file
+}
+
 function assertSmokeWriterPublicSafety (t, source, label) {
   t.ok(source.includes('FORBIDDEN_PUBLIC_VALUE_PATTERNS'), `${label} scans secret-looking values`)
   t.ok(source.includes('FORBIDDEN_PUBLIC_SMOKE_KEYS'), `${label} rejects forbidden public evidence keys`)
@@ -150,6 +166,7 @@ test('release smoke scripts require digest-pinned image refs before writing publ
     [
       'scripts/smoke-umbrel-package.mjs',
       [
+        '--compose', await pinnedComposeFor(dir),
         '--image-ref', 'ghcr.io/example/hiverelay:9.9.9',
         '--evidence', path.join(dir, 'umbrel-package-smoke-evidence.json'),
         '--timeout-ms', '1000'
@@ -187,7 +204,7 @@ test('release smoke scripts require release image manifest evidence before writi
     ],
     [
       'scripts/smoke-umbrel-package.mjs',
-      ['--image-ref', digestRef, '--evidence', path.join(dir, 'umbrel-package-smoke-evidence.json'), '--timeout-ms', '1000']
+      ['--compose', await pinnedComposeFor(dir), '--image-ref', digestRef, '--evidence', path.join(dir, 'umbrel-package-smoke-evidence.json'), '--timeout-ms', '1000']
     ]
   ]
 
@@ -312,7 +329,7 @@ exit 0
   const env = { PATH: dir + path.delimiter + process.env.PATH }
   const cases = [
     ['scripts/smoke-release-image.mjs', ['ghcr.io/example/hiverelay:9.9.9', '--timeout-ms', '1000']],
-    ['scripts/smoke-umbrel-package.mjs', ['--image-ref', 'ghcr.io/example/hiverelay:9.9.9', '--timeout-ms', '1000']]
+    ['scripts/smoke-umbrel-package.mjs', ['--compose', await pinnedComposeFor(dir), '--image-ref', 'ghcr.io/example/hiverelay:9.9.9', '--timeout-ms', '1000']]
   ]
 
   for (const [script, args] of cases) {
