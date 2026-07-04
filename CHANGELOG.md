@@ -9,7 +9,8 @@ The packages are versioned in lockstep.
 ## [Unreleased]
 
 ### Added
-- **Full custody-path dispersal proof + live fleet harness.** A new integration
+- **Full custody-path dispersal proof + fleet-run harness (not yet run against the
+  fleet).** A new integration
   test (`test/integration/blind-custody-intent-e2e.test.js`) exercises the REAL
   path — a signed v2 `createCustodyIntent` binding `shareAssignments` +
   `shareManifest`, "published" to each relay, with the **production**
@@ -18,15 +19,19 @@ The packages are versioned in lockstep.
   unpublished-intent PUT rejected. `scripts/blind-dispersal-live.mjs` runs the same
   flow against a real relay set from an operator-supplied config (URLs + relay
   pubkeys + admin keys) — plan → publish intent → PUT shards → reconstruct. Note:
-  a node dealer uses the core custody signer; the client mirror still lacks the v2
-  share fields (tracked separately), so a Bare/client-only dealer is blocked on that.
+  a node dealer uses the core custody signer; the client mirror still lacks the
+  `shareManifest` v2 field (it already carries the other five — task tracked
+  separately), so a Bare/client-only dealer is blocked on that.
   A second integration test (`test/integration/blind-dispersal-fleet-e2e.test.js`)
   proves the same flow against **four full `RelayNode` instances** on a testnet DHT
   with the `shard-store` service enabled: each relay ingests the published intent
   into its **real seeding registry** and authorizes every PUT through the production
   resolver — no stub of any kind — then a reader reconstructs the exact secret from
-  any k and k-1 is refused. This is the miniature of the real fleet run (identical
-  code path; swap the in-process relays for the fleet's URLs).
+  any k and k-1 is refused. This is the in-process miniature of a real fleet run
+  (identical code path; swap the in-process relays for the fleet's URLs) — but that
+  run has **not** been executed yet, and dispersing across relays a single operator
+  controls proves the MECHANISM, not the security property (no single operator can
+  reconstruct), which requires independent operators (GATE 2, still pending).
 - **App-facing blind-custody dispersal** (`p2p-hiverelay-client/blind-custody.js`)
   — one call each: `disperse(secret, {relays, threshold, signPin, publishIntent})`
   plans the shards (`planDispersal`, added to `blind-shards.js` — split + encode
