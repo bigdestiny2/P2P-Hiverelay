@@ -1,6 +1,7 @@
 import test from 'brittle'
 import { execFile } from 'child_process'
-import { readFile, readdir, writeFile } from 'fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'fs/promises'
+import { tmpdir } from 'os'
 import path from 'path'
 import {
   SUPPORTED_PROFILE_VECTOR_NAMES,
@@ -167,7 +168,14 @@ test('profile vector CLI emits JSON summary', async (t) => {
 })
 
 test('profile vector CLI fails on a tampered fixture file', async (t) => {
-  const file = path.join('/private/tmp', 'tampered-profile-vector-' + process.pid + '.json')
+  // Portable, isolated temp dir with awaited cleanup. The previous hardcoded
+  // '/private/tmp' path is a macOS-only symlink; on the Linux CI runner that
+  // directory does not exist, so the write rejected ENOENT and surfaced as an
+  // "async activity after the test ended" unhandledRejection that failed the
+  // whole unit-tests job even though every assertion passed.
+  const dir = await mkdtemp(path.join(tmpdir(), 'tampered-profile-vector-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const file = path.join(dir, 'tampered.json')
   const vectors = await loadVectors()
   const proof = vectors.find(vector => vector.name === 'retrievability-proof-signable-v1')
   const tampered = { ...proof, signature: '00'.repeat(64) }
