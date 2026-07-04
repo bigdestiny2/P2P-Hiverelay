@@ -212,7 +212,8 @@
           "legacy_accepted": true,
           "http_opt_in": true
         }
-      }
+      },
+      "services": null
     },
     "directory_privacy": {
       "mode": "relaykernel-private",
@@ -252,10 +253,10 @@
     "attestedAt": 1782753600000,
     "signature": {
       "v": 1,
-      "sig": "53bc63ff27443025eabf3b4489445ea35fb9537cda964fe142abdba75b7b6c67e483b828c2d144346865c9b1e5707540cf3ae30610a38ab661f420fe20fb1702"
+      "sig": "20af845b9ae0b8f86604426edaae2eb7bc56c3a65af51eeab9762e105a132dc67956d91cdf0172e1217bb21be429e6a1849945a46cd900d5a65b648d0e9cb709"
     }
   },
-  "signableHash": "1451425f03a1b8f3c88d46422c6580221122d94bdb1a1aa32bd4f065981104e1",
+  "signableHash": "87f8e8e8b22f369d1d634aa1ef577fc40b29a604f4807cb485e91289c7143b1e",
   "verdict": {
     "valid": true
   },
