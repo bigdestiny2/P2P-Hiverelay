@@ -8,6 +8,8 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-07-04
+
 ### Added
 - **Full custody-path dispersal proof + fleet-run harness (not yet run against the
   fleet).** A new integration
