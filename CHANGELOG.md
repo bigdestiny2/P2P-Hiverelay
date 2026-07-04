@@ -9,6 +9,17 @@ The packages are versioned in lockstep.
 ## [Unreleased]
 
 ### Added
+- **Full custody-path dispersal proof + live fleet harness.** A new integration
+  test (`test/integration/blind-custody-intent-e2e.test.js`) exercises the REAL
+  path — a signed v2 `createCustodyIntent` binding `shareAssignments` +
+  `shareManifest`, "published" to each relay, with the **production**
+  `RelayNode._resolveShardCustodyAssignment` authorizing every PUT (no stub): 3-of-4
+  dispersal over live HTTP, reconstruct from any k, k-1 insufficient, and an
+  unpublished-intent PUT rejected. `scripts/blind-dispersal-live.mjs` runs the same
+  flow against a real relay set from an operator-supplied config (URLs + relay
+  pubkeys + admin keys) — plan → publish intent → PUT shards → reconstruct. Note:
+  a node dealer uses the core custody signer; the client mirror still lacks the v2
+  share fields (tracked separately), so a Bare/client-only dealer is blocked on that.
 - **App-facing blind-custody dispersal** (`p2p-hiverelay-client/blind-custody.js`)
   — one call each: `disperse(secret, {relays, threshold, signPin, publishIntent})`
   plans the shards (`planDispersal`, added to `blind-shards.js` — split + encode
