@@ -1,6 +1,6 @@
 {
   "name": "p2p-hiverelay-client",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "description": "Unified client SDK for HiveRelay (Core + Services). Talks to either via capability flags advertised by relay nodes.",
   "type": "module",
   "main": "index.js",
@@ -55,7 +55,7 @@
     "corestore": "^6.18.0",
     "hyperdrive": "^11.8.0",
     "hyperswarm": "^4.17.0",
-    "p2p-hiverelay": "^0.23.0",
+    "p2p-hiverelay": "^0.24.0",
     "sodium-universal": "^4.0.0"
   },
   "engines": {
