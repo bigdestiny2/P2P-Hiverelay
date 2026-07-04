@@ -20,6 +20,13 @@ The packages are versioned in lockstep.
   pubkeys + admin keys) — plan → publish intent → PUT shards → reconstruct. Note:
   a node dealer uses the core custody signer; the client mirror still lacks the v2
   share fields (tracked separately), so a Bare/client-only dealer is blocked on that.
+  A second integration test (`test/integration/blind-dispersal-fleet-e2e.test.js`)
+  proves the same flow against **four full `RelayNode` instances** on a testnet DHT
+  with the `shard-store` service enabled: each relay ingests the published intent
+  into its **real seeding registry** and authorizes every PUT through the production
+  resolver — no stub of any kind — then a reader reconstructs the exact secret from
+  any k and k-1 is refused. This is the miniature of the real fleet run (identical
+  code path; swap the in-process relays for the fleet's URLs).
 - **App-facing blind-custody dispersal** (`p2p-hiverelay-client/blind-custody.js`)
   — one call each: `disperse(secret, {relays, threshold, signPin, publishIntent})`
   plans the shards (`planDispersal`, added to `blind-shards.js` — split + encode
