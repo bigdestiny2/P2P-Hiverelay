@@ -3515,14 +3515,17 @@ export class RelayNode extends EventEmitter {
   // ciphertextAssignments + ciphertextShard fields in the signed intent, so the
   // body ciphertext can be stored on the shard cohort under the same custody
   // intent while staying separated from the PVSS key shares.
-  _resolveShardCustodyAssignment (custodyIntentId, relayPubkey) {
+  _resolveShardCustodyAssignment (custodyIntentId, relayPubkey, shareIndex) {
     const reg = this.seedingRegistry
     if (!reg || typeof reg.getCustodyIntent !== 'function') return null
     const intent = reg.getCustodyIntent(custodyIntentId)
     if (!intent) return null
-    if (Array.isArray(intent.ciphertextAssignments) && intent.ciphertextShard) {
+    // shareIndex 0 is the body ciphertext blob; >0 are PVSS key shares.
+    // A relay may hold both, so route by the requested shareIndex.
+    if (shareIndex === 0 && Array.isArray(intent.ciphertextAssignments) && intent.ciphertextShard) {
       const holdsCiphertext = intent.ciphertextAssignments.find(a => a && a.relayPubkey === relayPubkey)
       if (holdsCiphertext) return { shareIndex: 0, shard: intent.ciphertextShard }
+      return null
     }
     if (!Array.isArray(intent.shareAssignments) || !Array.isArray(intent.shareManifest)) return null
     const mine = intent.shareAssignments.find(a => a && a.relayPubkey === relayPubkey)
@@ -3542,8 +3545,8 @@ export class RelayNode extends EventEmitter {
       node: this,
       store: this.store,
       config: this.config,
-      resolveCustodyAssignment: (custodyIntentId, relayPubkey) =>
-        this._resolveShardCustodyAssignment(custodyIntentId, relayPubkey),
+      resolveCustodyAssignment: (custodyIntentId, relayPubkey, shareIndex) =>
+        this._resolveShardCustodyAssignment(custodyIntentId, relayPubkey, shareIndex),
       shardPutAuth: (this.config.shardStore && Array.isArray(this.config.shardStore.putAuth))
         ? this.config.shardStore.putAuth
         : ['custody']

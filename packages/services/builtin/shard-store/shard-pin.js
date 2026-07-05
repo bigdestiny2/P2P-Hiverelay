@@ -104,7 +104,7 @@ export async function authorizeShardPin (pin, {
   }
   if (pin.reason === 'custody') {
     if (typeof resolveCustodyAssignment !== 'function') throw shardError('UNAUTHORIZED_PIN', 'custody binding unavailable')
-    const assign = await resolveCustodyAssignment(pin.custodyIntentId, relayPubkey)
+    const assign = await resolveCustodyAssignment(pin.custodyIntentId, relayPubkey, pin.shareIndex)
     if (!assign) throw shardError('UNAUTHORIZED_PIN', 'no custody assignment for this relay')
     if (assign.shareIndex !== pin.shareIndex) throw shardError('UNAUTHORIZED_PIN', 'shareIndex does not match assignment')
     if (normalizeShardAddress(assign.shard) !== hash) throw shardError('UNAUTHORIZED_PIN', 'assigned share hash does not match')
