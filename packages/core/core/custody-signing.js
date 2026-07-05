@@ -184,7 +184,7 @@ const SHARE_FIELDS_BY_TYPE = {
   // can emit a manifest, mirror 'shareManifest' + the manifest normalizers into
   // the client signer AND add a manifest-PRESENT cross-impl fixture, or every real
   // client->relay v2 intent signature will fail INVALID_CUSTODY_ENTRY.
-  'custody-intent': ['shareScheme', 'shareThreshold', 'commitmentRoot', 'shareBundleKey', 'shareAssignments', 'shareManifest'],
+  'custody-intent': ['shareScheme', 'shareThreshold', 'commitmentRoot', 'shareBundleKey', 'shareAssignments', 'shareManifest', 'ciphertextAssignments', 'ciphertextShard', 'plaintextHash'],
   'custody-receipt': ['shareScheme', 'commitmentRoot', 'shareIndex', 'shareCommitment', 'shareVerified']
 }
 
@@ -809,6 +809,12 @@ function normalizeShareIntentFields (entry) {
   const manifest = normalizeShareManifest(entry.shareManifest, entry.requiredReplicas)
   if (manifest === undefined) delete entry.shareManifest
   else entry.shareManifest = manifest
+  const ciphertextAssignments = normalizeCiphertextAssignments(entry.ciphertextAssignments, entry.requiredReplicas)
+  if (ciphertextAssignments === undefined) delete entry.ciphertextAssignments
+  else entry.ciphertextAssignments = ciphertextAssignments
+  if (entry.ciphertextShard != null) entry.ciphertextShard = normalizeShardAddressField(entry.ciphertextShard, 'ciphertextShard')
+  else if (entry.ciphertextAssignments != null) throw new Error('ciphertextShard required when ciphertextAssignments is present')
+  if (entry.plaintextHash != null) entry.plaintextHash = hexField(entry.plaintextHash, 'plaintextHash')
 }
 
 // shareManifest binds shareIndex -> content-addressed shard:<hash> (+ the
@@ -876,6 +882,32 @@ function normalizeShareAssignments (value, requiredReplicas, shareThreshold) {
     throw new Error('shareAssignments fewer than shareThreshold')
   }
   return out.sort((a, b) => a.shareIndex - b.shareIndex)
+}
+
+// ciphertextAssignments is the signed relay->ciphertextShard map used by the
+// blind shard store to authorize shareIndex:0 pins. Each listed relay may pin
+// the exact ciphertextShard (a content-addressed shard:<hash>) so the body
+// ciphertext is replicated off the VPS/outbox under the same signed custody
+// intent as the PVSS key shares. Optional; when present every relay must be
+// distinct and ciphertextShard must be provided.
+function normalizeCiphertextAssignments (value, requiredReplicas) {
+  if (value == null) return undefined
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error('ciphertextAssignments must be a non-empty array')
+  }
+  const relays = new Set()
+  const out = value.map(a => {
+    if (!a || typeof a !== 'object') throw new Error('ciphertextAssignment must be an object')
+    rejectUnknownObjectFields(a, ['relayPubkey'], 'ciphertextAssignment')
+    const relayPubkey = hexField(a.relayPubkey, 'ciphertextAssignment.relayPubkey')
+    if (relays.has(relayPubkey)) throw new Error('duplicate relayPubkey in ciphertextAssignments')
+    relays.add(relayPubkey)
+    return { relayPubkey }
+  })
+  if (out.length > requiredReplicas) {
+    throw new Error('ciphertextAssignments exceeds requiredReplicas')
+  }
+  return out.sort((a, b) => a.relayPubkey.localeCompare(b.relayPubkey))
 }
 
 function normalizeReceipt (entry) {

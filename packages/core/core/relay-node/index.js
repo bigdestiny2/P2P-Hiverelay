@@ -3510,11 +3510,21 @@ export class RelayNode extends EventEmitter {
   // -> shard hash (shareManifest), both signed into the intent. Returns null
   // when this relay was not assigned a share, so a relay can only pin the exact
   // share the dealer committed to it. Read-only; never throws.
+  //
+  // Ciphertext blobs use shareIndex:0 and are authorized by the separate
+  // ciphertextAssignments + ciphertextShard fields in the signed intent, so the
+  // body ciphertext can be stored on the shard cohort under the same custody
+  // intent while staying separated from the PVSS key shares.
   _resolveShardCustodyAssignment (custodyIntentId, relayPubkey) {
     const reg = this.seedingRegistry
     if (!reg || typeof reg.getCustodyIntent !== 'function') return null
     const intent = reg.getCustodyIntent(custodyIntentId)
-    if (!intent || !Array.isArray(intent.shareAssignments) || !Array.isArray(intent.shareManifest)) return null
+    if (!intent) return null
+    if (Array.isArray(intent.ciphertextAssignments) && intent.ciphertextShard) {
+      const holdsCiphertext = intent.ciphertextAssignments.find(a => a && a.relayPubkey === relayPubkey)
+      if (holdsCiphertext) return { shareIndex: 0, shard: intent.ciphertextShard }
+    }
+    if (!Array.isArray(intent.shareAssignments) || !Array.isArray(intent.shareManifest)) return null
     const mine = intent.shareAssignments.find(a => a && a.relayPubkey === relayPubkey)
     if (!mine) return null
     const share = intent.shareManifest.find(m => m && m.shareIndex === mine.shareIndex)
