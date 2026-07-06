@@ -6,8 +6,25 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const hiverelayRoot = path.resolve(here, '..')
 const workspaceRoot = path.resolve(hiverelayRoot, '..', '..')
 
+// The cross-workspace alignment checks read sibling monorepo repos under
+// workspaceRoot (the pear-ecosystem root): 01-browser/{pearbrowser-desktop,
+// PearBrowser} and 03-sites/pearbrowser-com. In the hiverelay-only CI checkout
+// those siblings are absent, so we detect that up front and skip (not fail) the
+// cross-repo section while still running every in-repo check. When the siblings
+// ARE present, the external checks run and enforce exactly as before.
+const externalWorkspaceDirs = [
+  path.join(workspaceRoot, '01-browser', 'pearbrowser-desktop'),
+  path.join(workspaceRoot, '01-browser', 'PearBrowser'),
+  path.join(workspaceRoot, '03-sites', 'pearbrowser-com')
+]
+const externalWorkspaceAvailable = externalWorkspaceDirs.every((dir) => fs.existsSync(dir))
+
 const checks = []
 const warnings = []
+
+if (!externalWorkspaceAvailable) {
+  warn('cross-workspace alignment checks skipped — run from the full pear-ecosystem monorepo (01-browser, 03-sites present) to verify')
+}
 
 function readText (...parts) {
   return fs.readFileSync(path.join(...parts), 'utf8')
@@ -18,6 +35,12 @@ function readJson (...parts) {
 }
 
 function readExternalText (label, ...parts) {
+  // When the sibling monorepo repos are absent (hiverelay-only checkout), the
+  // cross-workspace checks are skipped wholesale — return a null sentinel and do
+  // NOT fail(). The single top-level warn already records the skip, and every
+  // consuming assertion block guards on !externalWorkspaceAvailable. When the
+  // siblings ARE present, a missing/unreadable file is a real regression → fail().
+  if (!externalWorkspaceAvailable) return null
   const file = path.join(...parts)
   try {
     return fs.readFileSync(file, 'utf8')
@@ -28,6 +51,7 @@ function readExternalText (label, ...parts) {
 }
 
 function readExternalJson (label, ...parts) {
+  if (!externalWorkspaceAvailable) return null
   const file = path.join(...parts)
   const text = readExternalText(label, ...parts)
   if (!text) return {}
@@ -5848,180 +5872,184 @@ const pearBrowserComManifest = readExternalJson('pearbrowser.com site manifest',
 const pearBrowserIntegrationDoc = readText(hiverelayRoot, 'docs', 'PEARBROWSER-INTEGRATION.md')
 const pearIntegrationDoc = readText(hiverelayRoot, 'docs', 'PEAR-INTEGRATION.md')
 const ecosystemUpgradeDoc = readText(hiverelayRoot, 'docs', 'ECOSYSTEM-UPGRADE-0.20.2.md')
-const desktopDeps = desktopPkg.dependencies || {}
-const expectedDesktopDeps = {
-  'p2p-hiverelay': 'latest',
-  'p2p-hiverelay-client': 'latest',
-  'p2p-hiverelay-verifier': 'latest'
-}
-for (const [dep, expected] of Object.entries(expectedDesktopDeps)) {
-  const actual = desktopDeps[dep]
-  if (actual === expected) pass(`pearbrowser-desktop defaults ${dep} to npm latest`)
-  else fail(`pearbrowser-desktop ${dep} is ${JSON.stringify(actual)}; expected ${JSON.stringify(expected)}`)
-}
+if (!externalWorkspaceAvailable) {
+  // cross-workspace desktop/mobile/site alignment checks skipped, covered by the one top-level warn
+} else {
+  const desktopDeps = desktopPkg.dependencies || {}
+  const expectedDesktopDeps = {
+    'p2p-hiverelay': 'latest',
+    'p2p-hiverelay-client': 'latest',
+    'p2p-hiverelay-verifier': 'latest'
+  }
+  for (const [dep, expected] of Object.entries(expectedDesktopDeps)) {
+    const actual = desktopDeps[dep]
+    if (actual === expected) pass(`pearbrowser-desktop defaults ${dep} to npm latest`)
+    else fail(`pearbrowser-desktop ${dep} is ${JSON.stringify(actual)}; expected ${JSON.stringify(expected)}`)
+  }
 
-const desktopHiveRelayLockEntries = {
-  'p2p-hiverelay': '../../00-core/hiverelay/packages/core',
-  'p2p-hiverelay-client': '../../00-core/hiverelay/packages/client',
-  'p2p-hiverelay-verifier': '../../00-core/hiverelay/packages/verifier'
-}
-const desktopHiveRelayDrift = []
+  const desktopHiveRelayLockEntries = {
+    'p2p-hiverelay': '../../00-core/hiverelay/packages/core',
+    'p2p-hiverelay-client': '../../00-core/hiverelay/packages/client',
+    'p2p-hiverelay-verifier': '../../00-core/hiverelay/packages/verifier'
+  }
+  const desktopHiveRelayDrift = []
 
-const desktopHiveRelayUsesNpmLatest = Object.entries(expectedDesktopDeps)
-  .every(([dep, expected]) => desktopDeps[dep] === expected)
+  const desktopHiveRelayUsesNpmLatest = Object.entries(expectedDesktopDeps)
+    .every(([dep, expected]) => desktopDeps[dep] === expected)
 
-if (desktopHiveRelayUsesNpmLatest) {
-  for (const dep of Object.keys(desktopHiveRelayLockEntries)) {
-    const entry = desktopLock.packages?.[`node_modules/${dep}`]
-    const expectedRegistryUrl = `https://registry.npmjs.org/${dep}/-/${dep}-${expectedVersion}.tgz`
-    if (entry?.version === expectedVersion && String(entry?.resolved || '').startsWith(expectedRegistryUrl)) {
-      pass(`pearbrowser-desktop lockfile records ${dep}@${expectedVersion} from npm registry`)
+  if (desktopHiveRelayUsesNpmLatest) {
+    for (const dep of Object.keys(desktopHiveRelayLockEntries)) {
+      const entry = desktopLock.packages?.[`node_modules/${dep}`]
+      const expectedRegistryUrl = `https://registry.npmjs.org/${dep}/-/${dep}-${expectedVersion}.tgz`
+      if (entry?.version === expectedVersion && String(entry?.resolved || '').startsWith(expectedRegistryUrl)) {
+        pass(`pearbrowser-desktop lockfile records ${dep}@${expectedVersion} from npm registry`)
+      } else {
+        desktopHiveRelayDrift.push(`package-lock node_modules/${dep} records ${entry?.version || '(missing)'} from ${JSON.stringify(entry?.resolved || '(missing)')}; expected npm registry ${dep}@${expectedVersion}`)
+      }
+    }
+
+    const desktopClientLockEntry = desktopLock.packages?.['node_modules/p2p-hiverelay-client']
+    const expectedCoreRange = `^${expectedVersion}`
+    if (desktopClientLockEntry?.dependencies?.['p2p-hiverelay'] === expectedCoreRange) {
+      pass(`pearbrowser-desktop npm client lockfile depends on p2p-hiverelay ${expectedCoreRange}`)
     } else {
-      desktopHiveRelayDrift.push(`package-lock node_modules/${dep} records ${entry?.version || '(missing)'} from ${JSON.stringify(entry?.resolved || '(missing)')}; expected npm registry ${dep}@${expectedVersion}`)
+      desktopHiveRelayDrift.push(`package-lock npm client dependency p2p-hiverelay is ${JSON.stringify(desktopClientLockEntry?.dependencies?.['p2p-hiverelay'])}; expected ${expectedCoreRange}`)
+    }
+  } else {
+    for (const [dep, lockPath] of Object.entries(desktopHiveRelayLockEntries)) {
+      const entry = desktopLock.packages?.[lockPath]
+      if (entry?.name === dep && entry?.version === expectedVersion) {
+        pass(`pearbrowser-desktop workspace lockfile records ${dep}@${expectedVersion}`)
+      } else {
+        desktopHiveRelayDrift.push(`package-lock ${lockPath} records ${entry?.name || dep}@${entry?.version || '(missing)'} instead of ${dep}@${expectedVersion}`)
+      }
+    }
+
+    const desktopClientLockEntry = desktopLock.packages?.['../../00-core/hiverelay/packages/client']
+    const expectedCoreRange = `^${expectedVersion}`
+    if (desktopClientLockEntry?.dependencies?.['p2p-hiverelay'] === expectedCoreRange) {
+      pass(`pearbrowser-desktop workspace client lockfile depends on p2p-hiverelay ${expectedCoreRange}`)
+    } else {
+      desktopHiveRelayDrift.push(`package-lock workspace client dependency p2p-hiverelay is ${JSON.stringify(desktopClientLockEntry?.dependencies?.['p2p-hiverelay'])}; expected ${expectedCoreRange}`)
     }
   }
 
-  const desktopClientLockEntry = desktopLock.packages?.['node_modules/p2p-hiverelay-client']
-  const expectedCoreRange = `^${expectedVersion}`
-  if (desktopClientLockEntry?.dependencies?.['p2p-hiverelay'] === expectedCoreRange) {
-    pass(`pearbrowser-desktop npm client lockfile depends on p2p-hiverelay ${expectedCoreRange}`)
+  const expectedDesktopLayoutGuardTerms = [
+    `['p2p-hiverelay', '${expectedVersion}', '../../00-core/hiverelay/packages/core/package.json']`,
+    `['p2p-hiverelay-client', '${expectedVersion}', '../../00-core/hiverelay/packages/client/package.json']`,
+    `['p2p-hiverelay-verifier', '${expectedVersion}', '../../00-core/hiverelay/packages/verifier/package.json']`,
+    'usesNpmLatestDefaults',
+    `verify npm latest resolves to HiveRelay ${expectedVersion}`
+  ]
+  const missingDesktopLayoutGuardTerms = missingTerms(desktopLayoutGuard, expectedDesktopLayoutGuardTerms)
+  if (missingDesktopLayoutGuardTerms.length === 0) {
+    pass(`pearbrowser-desktop install guard expects HiveRelay ${expectedVersion}`)
   } else {
-    desktopHiveRelayDrift.push(`package-lock npm client dependency p2p-hiverelay is ${JSON.stringify(desktopClientLockEntry?.dependencies?.['p2p-hiverelay'])}; expected ${expectedCoreRange}`)
-  }
-} else {
-  for (const [dep, lockPath] of Object.entries(desktopHiveRelayLockEntries)) {
-    const entry = desktopLock.packages?.[lockPath]
-    if (entry?.name === dep && entry?.version === expectedVersion) {
-      pass(`pearbrowser-desktop workspace lockfile records ${dep}@${expectedVersion}`)
-    } else {
-      desktopHiveRelayDrift.push(`package-lock ${lockPath} records ${entry?.name || dep}@${entry?.version || '(missing)'} instead of ${dep}@${expectedVersion}`)
-    }
+    desktopHiveRelayDrift.push(`scripts/check-hiverelay-layout.mjs missing ${missingDesktopLayoutGuardTerms.map(term => JSON.stringify(term)).join(', ')}`)
   }
 
-  const desktopClientLockEntry = desktopLock.packages?.['../../00-core/hiverelay/packages/client']
-  const expectedCoreRange = `^${expectedVersion}`
-  if (desktopClientLockEntry?.dependencies?.['p2p-hiverelay'] === expectedCoreRange) {
-    pass(`pearbrowser-desktop workspace client lockfile depends on p2p-hiverelay ${expectedCoreRange}`)
+  const expectedDesktopCiTerms = [
+    `ref: v${expectedVersion}`,
+    `Guard HiveRelay ${expectedVersion} workspace layout`,
+    `['p2p-hiverelay', '${expectedVersion}', 'pear-ecosystem/00-core/hiverelay/packages/core/package.json']`,
+    `['p2p-hiverelay-client', '${expectedVersion}', 'pear-ecosystem/00-core/hiverelay/packages/client/package.json']`,
+    `['p2p-hiverelay-verifier', '${expectedVersion}', 'pear-ecosystem/00-core/hiverelay/packages/verifier/package.json']`
+  ]
+  const missingDesktopCiTerms = missingTerms(desktopCi, expectedDesktopCiTerms)
+  if (missingDesktopCiTerms.length === 0) {
+    pass(`pearbrowser-desktop CI checks out and guards HiveRelay ${expectedVersion}`)
   } else {
-    desktopHiveRelayDrift.push(`package-lock workspace client dependency p2p-hiverelay is ${JSON.stringify(desktopClientLockEntry?.dependencies?.['p2p-hiverelay'])}; expected ${expectedCoreRange}`)
+    desktopHiveRelayDrift.push(`desktop-ci.yml missing ${missingDesktopCiTerms.map(term => JSON.stringify(term)).join(', ')}`)
   }
-}
 
-const expectedDesktopLayoutGuardTerms = [
-  `['p2p-hiverelay', '${expectedVersion}', '../../00-core/hiverelay/packages/core/package.json']`,
-  `['p2p-hiverelay-client', '${expectedVersion}', '../../00-core/hiverelay/packages/client/package.json']`,
-  `['p2p-hiverelay-verifier', '${expectedVersion}', '../../00-core/hiverelay/packages/verifier/package.json']`,
-  'usesNpmLatestDefaults',
-  `verify npm latest resolves to HiveRelay ${expectedVersion}`
-]
-const missingDesktopLayoutGuardTerms = missingTerms(desktopLayoutGuard, expectedDesktopLayoutGuardTerms)
-if (missingDesktopLayoutGuardTerms.length === 0) {
-  pass(`pearbrowser-desktop install guard expects HiveRelay ${expectedVersion}`)
-} else {
-  desktopHiveRelayDrift.push(`scripts/check-hiverelay-layout.mjs missing ${missingDesktopLayoutGuardTerms.map(term => JSON.stringify(term)).join(', ')}`)
-}
+  const expectedDesktopReadmeTerms = [
+    'desktop packages default to npm `latest` for HiveRelay',
+    `dist-tag resolving to \`${expectedVersion}\``,
+    'defaults to npm `latest` for `p2p-hiverelay`'
+  ]
+  const missingDesktopReadmeTerms = missingTerms(desktopReadme, expectedDesktopReadmeTerms)
+  if (missingDesktopReadmeTerms.length === 0) {
+    pass(`pearbrowser-desktop README names npm latest HiveRelay ${expectedVersion} release gate`)
+  } else {
+    desktopHiveRelayDrift.push(`README.md missing ${missingDesktopReadmeTerms.map(term => JSON.stringify(term)).join(', ')}`)
+  }
 
-const expectedDesktopCiTerms = [
-  `ref: v${expectedVersion}`,
-  `Guard HiveRelay ${expectedVersion} workspace layout`,
-  `['p2p-hiverelay', '${expectedVersion}', 'pear-ecosystem/00-core/hiverelay/packages/core/package.json']`,
-  `['p2p-hiverelay-client', '${expectedVersion}', 'pear-ecosystem/00-core/hiverelay/packages/client/package.json']`,
-  `['p2p-hiverelay-verifier', '${expectedVersion}', 'pear-ecosystem/00-core/hiverelay/packages/verifier/package.json']`
-]
-const missingDesktopCiTerms = missingTerms(desktopCi, expectedDesktopCiTerms)
-if (missingDesktopCiTerms.length === 0) {
-  pass(`pearbrowser-desktop CI checks out and guards HiveRelay ${expectedVersion}`)
-} else {
-  desktopHiveRelayDrift.push(`desktop-ci.yml missing ${missingDesktopCiTerms.map(term => JSON.stringify(term)).join(', ')}`)
-}
+  if (desktopHiveRelayDrift.length === 0) {
+    pass(`pearbrowser-desktop bundle metadata is aligned with HiveRelay ${expectedVersion}`)
+  } else {
+    warn(`pearbrowser-desktop is not yet aligned with HiveRelay ${expectedVersion}: ${desktopHiveRelayDrift.join('; ')}`)
+  }
 
-const expectedDesktopReadmeTerms = [
-  'desktop packages default to npm `latest` for HiveRelay',
-  `dist-tag resolving to \`${expectedVersion}\``,
-  'defaults to npm `latest` for `p2p-hiverelay`'
-]
-const missingDesktopReadmeTerms = missingTerms(desktopReadme, expectedDesktopReadmeTerms)
-if (missingDesktopReadmeTerms.length === 0) {
-  pass(`pearbrowser-desktop README names npm latest HiveRelay ${expectedVersion} release gate`)
-} else {
-  desktopHiveRelayDrift.push(`README.md missing ${missingDesktopReadmeTerms.map(term => JSON.stringify(term)).join(', ')}`)
-}
-
-if (desktopHiveRelayDrift.length === 0) {
-  pass(`pearbrowser-desktop bundle metadata is aligned with HiveRelay ${expectedVersion}`)
-} else {
-  warn(`pearbrowser-desktop is not yet aligned with HiveRelay ${expectedVersion}: ${desktopHiveRelayDrift.join('; ')}`)
-}
-
-const expectedBrowserHttpsDep = '^2.1.3'
-const desktopRootLock = desktopLock.packages?.['']
-const mobileRootLock = mobileLock.packages?.['']
-if (
-  desktopPkg.dependencies?.['bare-https'] === expectedBrowserHttpsDep &&
-  desktopRootLock?.dependencies?.['bare-https'] === expectedBrowserHttpsDep &&
-  mobilePkg.dependencies?.['bare-https'] === expectedBrowserHttpsDep &&
-  mobileRootLock?.dependencies?.['bare-https'] === expectedBrowserHttpsDep
-) {
-  pass('PearBrowser desktop and mobile declare bare-https for public HTTPS relay gateways')
-} else {
-  fail('PearBrowser desktop/mobile package metadata is missing the direct bare-https relay transport dependency')
-}
-
-if (
-  desktopRelayClient.includes("const https = require('bare-https')") &&
-  desktopRelayClient.includes('function relayTransportForUrl') &&
-  desktopRelayClient.includes("parsed.protocol === 'https:'") &&
-  desktopRelayClient.includes('transport.get(relayRequestOptions(parsed)') &&
-  desktopRelayClient.includes('transport.request({') &&
-  desktopRelayClient.includes("parsed.protocol === 'https:' ? 443 : 80") &&
-  desktopRelayClient.includes('DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024') &&
-  desktopRelayClient.includes('DEFAULT_MAX_CONTROL_RESPONSE_BYTES = 1024 * 1024') &&
-  desktopRelayClient.includes('positiveIntegerOption') &&
-  desktopRelayClient.includes('relay response exceeded ' + '$' + '{maxBytes}' + ' bytes') &&
-  desktopRelayClient.includes('req?.destroy?.()') &&
-  desktopRelayClient.includes('module.exports = { RelayClient, relayRequestOptions }') &&
-  desktopReleasePackagingTest.includes('RelayClient uses scheme-aware transport for public HTTPS gateways') &&
-  desktopReleasePackagingTest.includes('DEFAULT_MAX_RESPONSE_BYTES') &&
-  desktopRelayClientHttpTest.includes('RelayClient GET rejects oversized relay bodies and destroys the request') &&
-  desktopRelayClientHttpTest.includes('RelayClient POST rejects oversized control responses and destroys the request') &&
-  desktopRelayClientHttpTest.includes('RelayClient timeout actively destroys hanging relay requests')
-) {
-  pass('pearbrowser-desktop relay client uses tested scheme-aware HTTP/HTTPS transport with bounded relay responses')
-} else {
-  fail('pearbrowser-desktop relay client can regress to untested plain HTTP transport, wrong HTTPS defaults, or unbounded relay responses')
-}
-
-if (
-  mobileRelayClient.includes("const https = require('bare-https')") &&
-  mobileRelayClient.includes('function relayTransportForUrl') &&
-  mobileRelayClient.includes("parsed.protocol === 'https:'") &&
-  mobileRelayClient.includes('transport.get(relayRequestOptions(parsed)') &&
-  mobileRelayClient.includes('transport.request({') &&
-  mobileRelayClient.includes("parsed.protocol === 'https:' ? 443 : 80") &&
-  mobileRelayClient.includes('module.exports = { RelayClient, relayRequestOptions }') &&
-  mobileRelayClientTest.includes('relayRequestOptions uses scheme-aware default ports')
-) {
-  pass('PearBrowser mobile relay client uses tested scheme-aware HTTP/HTTPS transport for gateway fetches')
-} else {
-  fail('PearBrowser mobile relay client is missing tested HTTPS relay transport/default-port handling')
-}
-
-const desktopRelease = desktopReadme.match(/\*\*Current release:\*\*\s*`(v[^`]+)` · production length `(\d+)`/)
-if (!desktopRelease) {
-  fail('pearbrowser-desktop README is missing current release metadata for ecosystem sync checks')
-} else {
-  const [, desktopVersion, desktopLength] = desktopRelease
-  const expectedHero = `Desktop ${desktopVersion} · production length ${desktopLength} · preview builds live · macOS · Windows · Linux`
-  const expectedSpec = `${desktopVersion} · production length ${desktopLength} · pinned on the HiveRelay backbone`
+  const expectedBrowserHttpsDep = '^2.1.3'
+  const desktopRootLock = desktopLock.packages?.['']
+  const mobileRootLock = mobileLock.packages?.['']
   if (
-    pearBrowserComIndex.includes(expectedHero) &&
-    pearBrowserComIndex.includes(expectedSpec) &&
-    pearBrowserComManifest.desktopRelease?.version === desktopVersion &&
-    pearBrowserComManifest.desktopRelease?.productionLength === Number(desktopLength)
+    desktopPkg.dependencies?.['bare-https'] === expectedBrowserHttpsDep &&
+    desktopRootLock?.dependencies?.['bare-https'] === expectedBrowserHttpsDep &&
+    mobilePkg.dependencies?.['bare-https'] === expectedBrowserHttpsDep &&
+    mobileRootLock?.dependencies?.['bare-https'] === expectedBrowserHttpsDep
   ) {
-    pass('pearbrowser.com release metadata is synced to the bundled PearBrowser desktop README')
+    pass('PearBrowser desktop and mobile declare bare-https for public HTTPS relay gateways')
   } else {
-    fail('pearbrowser.com release metadata is stale relative to the bundled PearBrowser desktop README')
+    fail('PearBrowser desktop/mobile package metadata is missing the direct bare-https relay transport dependency')
+  }
+
+  if (
+    desktopRelayClient.includes("const https = require('bare-https')") &&
+    desktopRelayClient.includes('function relayTransportForUrl') &&
+    desktopRelayClient.includes("parsed.protocol === 'https:'") &&
+    desktopRelayClient.includes('transport.get(relayRequestOptions(parsed)') &&
+    desktopRelayClient.includes('transport.request({') &&
+    desktopRelayClient.includes("parsed.protocol === 'https:' ? 443 : 80") &&
+    desktopRelayClient.includes('DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024') &&
+    desktopRelayClient.includes('DEFAULT_MAX_CONTROL_RESPONSE_BYTES = 1024 * 1024') &&
+    desktopRelayClient.includes('positiveIntegerOption') &&
+    desktopRelayClient.includes('relay response exceeded ' + '$' + '{maxBytes}' + ' bytes') &&
+    desktopRelayClient.includes('req?.destroy?.()') &&
+    desktopRelayClient.includes('module.exports = { RelayClient, relayRequestOptions }') &&
+    desktopReleasePackagingTest.includes('RelayClient uses scheme-aware transport for public HTTPS gateways') &&
+    desktopReleasePackagingTest.includes('DEFAULT_MAX_RESPONSE_BYTES') &&
+    desktopRelayClientHttpTest.includes('RelayClient GET rejects oversized relay bodies and destroys the request') &&
+    desktopRelayClientHttpTest.includes('RelayClient POST rejects oversized control responses and destroys the request') &&
+    desktopRelayClientHttpTest.includes('RelayClient timeout actively destroys hanging relay requests')
+  ) {
+    pass('pearbrowser-desktop relay client uses tested scheme-aware HTTP/HTTPS transport with bounded relay responses')
+  } else {
+    fail('pearbrowser-desktop relay client can regress to untested plain HTTP transport, wrong HTTPS defaults, or unbounded relay responses')
+  }
+
+  if (
+    mobileRelayClient.includes("const https = require('bare-https')") &&
+    mobileRelayClient.includes('function relayTransportForUrl') &&
+    mobileRelayClient.includes("parsed.protocol === 'https:'") &&
+    mobileRelayClient.includes('transport.get(relayRequestOptions(parsed)') &&
+    mobileRelayClient.includes('transport.request({') &&
+    mobileRelayClient.includes("parsed.protocol === 'https:' ? 443 : 80") &&
+    mobileRelayClient.includes('module.exports = { RelayClient, relayRequestOptions }') &&
+    mobileRelayClientTest.includes('relayRequestOptions uses scheme-aware default ports')
+  ) {
+    pass('PearBrowser mobile relay client uses tested scheme-aware HTTP/HTTPS transport for gateway fetches')
+  } else {
+    fail('PearBrowser mobile relay client is missing tested HTTPS relay transport/default-port handling')
+  }
+
+  const desktopRelease = desktopReadme.match(/\*\*Current release:\*\*\s*`(v[^`]+)` · production length `(\d+)`/)
+  if (!desktopRelease) {
+    fail('pearbrowser-desktop README is missing current release metadata for ecosystem sync checks')
+  } else {
+    const [, desktopVersion, desktopLength] = desktopRelease
+    const expectedHero = `Desktop ${desktopVersion} · production length ${desktopLength} · preview builds live · macOS · Windows · Linux`
+    const expectedSpec = `${desktopVersion} · production length ${desktopLength} · pinned on the HiveRelay backbone`
+    if (
+      pearBrowserComIndex.includes(expectedHero) &&
+      pearBrowserComIndex.includes(expectedSpec) &&
+      pearBrowserComManifest.desktopRelease?.version === desktopVersion &&
+      pearBrowserComManifest.desktopRelease?.productionLength === Number(desktopLength)
+    ) {
+      pass('pearbrowser.com release metadata is synced to the bundled PearBrowser desktop README')
+    } else {
+      fail('pearbrowser.com release metadata is stale relative to the bundled PearBrowser desktop README')
+    }
   }
 }
 
@@ -6274,8 +6302,10 @@ if (
   fail('ecosystem consumer sync/audit commands, docs, or tests are missing current/stale consumer drift or app-level migration coverage')
 }
 
-const mobileReadme = readText(workspaceRoot, '01-browser', 'PearBrowser', 'README.md')
-if (mobileReadme.includes('/catalog.json') && mobileReadme.includes('/.well-known/hiverelay.json')) {
+const mobileReadme = readExternalText('PearBrowser mobile README', workspaceRoot, '01-browser', 'PearBrowser', 'README.md')
+if (!externalWorkspaceAvailable) {
+  // skipped, covered by the one top-level warn
+} else if (mobileReadme.includes('/catalog.json') && mobileReadme.includes('/.well-known/hiverelay.json')) {
   pass('PearBrowser README documents the HTTP catalog and capability-doc relay contracts')
 } else {
   fail('PearBrowser README is missing the catalog or capability-doc relay contract')
