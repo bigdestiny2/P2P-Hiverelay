@@ -252,6 +252,26 @@ keeps entries opaque, and exposes a token-gated HTTP/SSE bridge for sync.
 Enable it explicitly through `config.plugins` / `services.json` (`outboxlog`)
 or, on the Bare/appliance path, with `HIVERELAY_OUTBOXLOG=1`.
 
+**Namespace registration (required for app-specific records — deployment footgun):**
+The outbox is **app-neutral**. Every signed record carries a namespace, and an
+app signs its records under a specific one — for example Peerit signs `'peerit'`.
+The relay rejects any record whose namespace is **not registered** with
+`unknown namespace` (HTTP `400`), so a relay that enables the service but does
+not register the app's namespace refuses **every** append from that app. Enabling
+`HIVERELAY_OUTBOXLOG=1` alone is not enough — you must also tell the relay which
+namespace to admit. Register it one of two ways:
+
+- config: `config.outboxlog.namespace = "peerit"` (or a `config.outboxlog.namespaces`
+  map to register several at once)
+- env (Bare/appliance): `HIVERELAY_OUTBOXLOG_NAMESPACE=peerit`
+
+The env var is a **default, not an override**: a `outboxlog.namespace` persisted
+in `config.json` wins over it (matching `HIVERELAY_ACCEPT_MODE`). When neither is
+set, only the app-neutral default namespace is registered, so any app that signs
+under its own namespace (Peerit, Poked, etc.) will be rejected until you register
+it. This is the most common reason a freshly ENV-provisioned fleet/appliance box
+`400`s every publish from an otherwise-working app.
+
 **Operator takedown surface (`/api/admin/takedown` · `/restore` · `/takedowns`):**
 An operator can drop or restore a single outbox row by its opaque
 `(appId, key)` id — content is never read; this exists for operator liability
