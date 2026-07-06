@@ -218,6 +218,29 @@ export class OutboxLogApp extends ServiceProvider {
     return this.engine.namespaces ? this.engine.namespaces() : []
   }
 
+  // Operator takedown surface (DO-NOT-SERVE by opaque record id). Suppresses a
+  // record from serve-time reads without reading/deleting its content. The
+  // record still exists in storage; restore() reverses it.
+  takedown (appId, key) {
+    if (appId && typeof appId === 'object') {
+      key = appId.key
+      appId = appId.appId
+    }
+    return this.sync.takedown(appId, key)
+  }
+
+  restore (appId, key) {
+    if (appId && typeof appId === 'object') {
+      key = appId.key
+      appId = appId.appId
+    }
+    return this.sync.restore(appId, key)
+  }
+
+  takedowns () {
+    return this.sync.takedowns ? this.sync.takedowns() : { takedowns: [], count: 0 }
+  }
+
   async seedPersistenceCores (seeder = this.node && this.node.seeder) {
     if (!this.journal || typeof this.journal.seedCores !== 'function') return []
     return this.journal.seedCores(seeder)

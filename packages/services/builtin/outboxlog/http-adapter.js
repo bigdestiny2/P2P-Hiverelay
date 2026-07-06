@@ -64,6 +64,32 @@ export function createOutboxLogTokenAuth ({ tokenBytes = 32, maxTokens = 4096 } 
   }
 }
 
+// Admin auth for the takedown surface. Unlike the browser token (which is
+// issued on demand and short-lived), admin tokens are operator-provisioned
+// secrets supplied up front. verify() is constant-time. An empty token never
+// verifies, so an unauthenticated caller is always rejected.
+export function createOutboxLogAdminAuth ({ tokens = [] } = {}) {
+  const known = new Set()
+  for (const token of Array.isArray(tokens) ? tokens : [tokens]) {
+    if (typeof token === 'string' && token) known.add(token)
+  }
+  return {
+    verify (token) {
+      if (typeof token !== 'string' || !token) return false
+      let ok = false
+      // Compare against every known token (no early return) so timing does not
+      // leak how many/which tokens matched.
+      for (const candidate of known) {
+        if (safeTokenEqual(token, candidate)) ok = true
+      }
+      return ok
+    },
+    _size () {
+      return known.size
+    }
+  }
+}
+
 export async function handleOutboxLogRoute (req, res, ctx = {}) {
   let parsed
   try {
@@ -89,6 +115,18 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
     return respond(res, 429, { error: 'rate limited' })
   }
 
+  const app = ctx.outboxLogApp || ctx.outboxlogApp || ctx.app || ctx.core
+  const sync = ctx.sync || (app && app.sync)
+  const swarm = ctx.swarm || (app && app.swarm)
+
+  // Operator admin surface (DO-NOT-SERVE takedown). Gated by a SEPARATE admin
+  // auth — never the browser sync token — so an ordinary client that holds a
+  // /api/token can't take content down. No admin auth configured => 404 (the
+  // surface is simply not enabled), unauthenticated => 401.
+  if (isAdminPath(path)) {
+    return await handleAdminRoute(req, res, parsed, ctx, sync)
+  }
+
   const auth = ctx.auth || ctx.outboxLogAuth
   if (path === '/api/token') {
     if (req.method !== 'POST') return respond(res, 405, { error: 'method not allowed' })
@@ -99,10 +137,6 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
   if (!auth || typeof auth.verify !== 'function' || !auth.verify(tokenFrom(req, parsed))) {
     return respond(res, 401, { error: 'missing or invalid token' })
   }
-
-  const app = ctx.outboxLogApp || ctx.outboxlogApp || ctx.app || ctx.core
-  const sync = ctx.sync || (app && app.sync)
-  const swarm = ctx.swarm || (app && app.swarm)
 
   try {
     if (path === '/api/bridge/status') {
@@ -217,8 +251,50 @@ function isOutboxLogApiPath (path) {
     path === '/api/directory' ||
     path.startsWith('/api/identity') ||
     path.startsWith('/api/sync/') ||
-    path.startsWith('/api/swarm/')
+    path.startsWith('/api/swarm/') ||
+    path.startsWith('/api/admin/')
   )
+}
+
+function isAdminPath (path) {
+  return path === '/api/admin/takedown' || path === '/api/admin/restore' || path === '/api/admin/takedowns'
+}
+
+// The operator admin surface. Authenticated with a dedicated admin auth that is
+// distinct from the browser sync token, and passed via the X-Pear-Admin-Token
+// header (or ?adminToken=). Takedown drops a record by its opaque (appId,key)
+// id — content is never read — for operator liability parity.
+async function handleAdminRoute (req, res, parsed, ctx, sync) {
+  const adminAuth = ctx.adminAuth || ctx.outboxLogAdminAuth || null
+  if (!adminAuth || typeof adminAuth.verify !== 'function') {
+    return respond(res, 404, { error: 'not found' })
+  }
+  if (!adminAuth.verify(adminTokenFrom(req, parsed))) {
+    return respond(res, 401, { error: 'missing or invalid admin token' })
+  }
+  if (!sync) return respond(res, 503, { error: 'outboxlog sync unavailable' })
+
+  const path = parsed.pathname
+  try {
+    if (path === '/api/admin/takedowns') {
+      if (req.method !== 'GET') return respond(res, 405, { error: 'method not allowed' })
+      if (typeof sync.takedowns !== 'function') return respond(res, 503, { error: 'outboxlog takedown unavailable' })
+      return respond(res, 200, sync.takedowns())
+    }
+
+    const drop = path === '/api/admin/takedown'
+    if (req.method !== 'POST') return respond(res, 405, { error: 'method not allowed' })
+    const method = drop ? sync.takedown : sync.restore
+    if (typeof method !== 'function') return respond(res, 503, { error: 'outboxlog takedown unavailable' })
+    const body = await readJson(req)
+    if (!body.ok) return respondReadProblem(res, body)
+    return respond(res, 200, await method.call(sync, body.body.appId, body.body.key))
+  } catch (err) {
+    if (err && Number.isInteger(err.status) && err.status >= 400 && err.status < 500) {
+      return respond(res, err.status, { error: err.message || 'outboxlog admin request failed' })
+    }
+    return respond(res, 500, { error: 'outboxlog admin route failed' })
+  }
 }
 
 function isMethodMismatch (path, method) {
@@ -252,7 +328,7 @@ function applyCors (req, res, ctx) {
     ? '*'
     : (Array.isArray(allowOrigin) && requestOrigin && allowOrigin.includes(requestOrigin) ? requestOrigin : allowOrigin[0] || '*')
   res.setHeader('Access-Control-Allow-Origin', origin)
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Pear-Token')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Pear-Token, X-Pear-Admin-Token')
   res.setHeader('Access-Control-Max-Age', '86400')
   appendVaryHeader(res, 'Origin')
 }
@@ -284,6 +360,11 @@ function overLimit (ip, rateLimit, state) {
 function tokenFrom (req, url) {
   const headers = req.headers || {}
   return headers['x-pear-token'] || headers['X-Pear-Token'] || url.searchParams.get('token') || ''
+}
+
+function adminTokenFrom (req, url) {
+  const headers = req.headers || {}
+  return headers['x-pear-admin-token'] || headers['X-Pear-Admin-Token'] || url.searchParams.get('adminToken') || ''
 }
 
 async function readJson (req) {

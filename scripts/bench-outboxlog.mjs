@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import {
+  DEFAULT_OUTBOXLOG_NAMESPACE,
   canonicalOutboxRecord,
   createOutboxLog
 } from '../packages/services/builtin/outboxlog/index.js'
@@ -287,7 +288,7 @@ function signRecord (writer, type, fields = {}) {
     ...fields,
     _k: writer.publicKeyHex,
     _dk: fields._dk || digestHex(`drive:${writer.publicKeyHex}`),
-    _ns: fields._ns || 'peerit',
+    _ns: fields._ns || DEFAULT_OUTBOXLOG_NAMESPACE,
     _alg: 'ed25519'
   }
   const signed = `pear.app.${data._dk}:${data._ns}:${canonicalOutboxRecord(type, data)}`
