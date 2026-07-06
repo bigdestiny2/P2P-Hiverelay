@@ -8,27 +8,45 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-07-06
+
+### Security (audit hardening — five HIGH blockers closed before public exposure)
+- **Fork-proof quarantine is now cryptographically gated.** Previously any
+  followed relay could quarantine any drive network-wide (unauthenticated
+  censorship/DoS). `verifyForkEvidence` now requires the two conflicting signed
+  heads to verify against the drive key before any quarantine, and pulled proofs
+  are gated by a trusted-observer pubkey allow-list (empty list = fail-closed). A
+  forged or unsigned proof cannot quarantine.
+- **Shard byte integrity under concurrency and disk pressure.** Shard bytes are
+  deleted only when BOTH the pin-registry and engine dedup ref-counts reach zero,
+  under a per-hash lock — a concurrent dedup-PUT racing a sweep can no longer
+  delete live bytes, and a duplicate signed PUT no longer leaves a permanent byte
+  orphan. Shard usage is registered with StorageAccounting, and an
+  `evictUnderPressure` sweep sheds expired/lowest-priority shards first while
+  honoring the `retainUntil` floor.
+- **Signed supply chain.** The fleet updater verifies the target tag is signed by
+  a trusted key before checkout (fail-closed, with a documented break-glass
+  override), the Umbrel appliance compose is pinned by `@sha256` digest, and image
+  publishing gains cosign keyless signing plus a documented verify step. The
+  signing key, allowed-signers file, and cosign identity are the operator's
+  one-time provisioning — see `docs/SUPPLY-CHAIN.md`. (The peerit browser
+  key-at-rest + CSP fix lives in the peerit repo.)
+
 ### Added
 - **OutboxLog operator takedown surface is now wired end-to-end.** The
   `/api/admin/takedown` · `/restore` · `/takedowns` routes (opaque `(appId,key)`
-  id; content never read) now activate when an operator provisions a **dedicated
-  admin credential** distinct from the browser sync token — `config.outboxlog.adminKey`
+  id; content never read) activate when an operator provisions a **dedicated admin
+  credential** distinct from the browser sync token — `config.outboxlog.adminKey`
   or `HIVERELAY_OUTBOXLOG_ADMIN_KEY`. Safe-by-default: no credential ⇒ `404`;
   configured ⇒ absent/wrong token `401`, only the exact token `200`
-  (constant-time compare). Fixes the follow-up flagged in the takedown PR where
-  the surface stayed `404` even when outboxlog was enabled (nothing passed
-  `ctx.adminAuth`, and the route matcher never admitted `/api/admin/`). Documented
-  in `docs/SERVICES.md`.
-
-### Changed
-- OutboxLog claims **exactly** the three `/api/admin/*` takedown routes rather
-  than reserving the whole `/api/admin/` namespace, so a future non-outboxlog
-  `/api/admin/<x>` route stays free to mount and a stray `/api/admin/<other>`
-  falls through to the server's generic not-found.
-
-## [0.24.0] — 2026-07-04
-
-### Added
+  (constant-time compare). OutboxLog claims exactly these three `/api/admin/*`
+  routes rather than reserving the whole namespace, so a future non-outboxlog
+  `/api/admin/<x>` route stays free and a stray `/api/admin/<other>` falls through
+  to the server's generic not-found. Documented in `docs/SERVICES.md`.
+- **Client custody `shareManifest` v2 mirror.** The client custody signer now
+  emits the v2 `shareManifest` field byte-identically to the core node signer,
+  closing the gap the dispersal proof called out and unblocking a Bare/client-only
+  blind-shard dealer.
 - **Full custody-path dispersal proof + fleet-run harness (not yet run against the
   fleet).** A new integration
   test (`test/integration/blind-custody-intent-e2e.test.js`) exercises the REAL
