@@ -648,6 +648,44 @@ test('outboxlog app: namespace config admits Poked-style apps without a relay fo
   await app.stop()
 })
 
+test('outboxlog app: HIVERELAY_OUTBOXLOG_NAMESPACE-style config admits a peerit append', async (t) => {
+  // Mirrors what the CLI produces when HIVERELAY_OUTBOXLOG_NAMESPACE=peerit is
+  // set: applyOutboxlogNamespaceEnv → config.outboxlog.namespace === 'peerit'.
+  // Proves that config registers the namespace so a peerit-signed append is
+  // accepted (not rejected `unknown namespace`), closing the ENV-driven
+  // operator gap.
+  const writer = keyPair(9)
+  const app = new OutboxLogApp()
+  await app.start({
+    config: { outboxlog: { namespace: 'peerit' } },
+    node: { id: 'relay-bern' }
+  })
+
+  t.alike(app.namespaces().map(entry => entry.name), ['peerit'], 'peerit namespace is registered')
+
+  const record = signRecord(writer, { id: 'peerit-rec-1', _ns: 'peerit', body: { hello: 'bern' } }, 'post')
+  t.alike(
+    app.append({ appId: writer.publicKeyHex, op: { type: 'post', data: record } }),
+    { ok: true, key: 'post!peerit-rec-1' },
+    'peerit-signed append is accepted, not rejected unknown namespace'
+  )
+  await app.stop()
+})
+
+test('outboxlog app: an unregistered namespace is still rejected (unknown namespace)', async (t) => {
+  // Guard the negative: with only the default namespace registered (no env,
+  // no config), a peerit-signed record must be refused — this is the failure
+  // the env wiring exists to fix.
+  const writer = keyPair(10)
+  const app = new OutboxLogApp()
+  await app.start({ node: { id: 'relay-default' } })
+
+  const record = signRecord(writer, { id: 'peerit-rec-2', _ns: 'peerit', body: { hello: 'x' } }, 'post')
+  const err = throws(() => app.append({ appId: writer.publicKeyHex, op: { type: 'post', data: record } }))
+  t.ok(/unknown namespace/i.test(err.message), 'peerit append rejected when the namespace is unregistered')
+  await app.stop()
+})
+
 test('outboxlog app: hypercore journal config restores rows from context store', async (t) => {
   const store = createMockCorestore()
   const first = new OutboxLogApp({ verifyAppend: () => true })

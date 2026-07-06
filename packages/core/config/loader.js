@@ -35,6 +35,41 @@ export function deriveTokenFromSeed (seed) {
 }
 
 /**
+ * Apply the HIVERELAY_OUTBOXLOG_NAMESPACE env var to CLI overrides.
+ *
+ * The app-neutral outboxlog rejects records signed under an unregistered
+ * namespace (`unknown namespace`, 400). An ENV-driven operator (fleet/bern box
+ * with HIVERELAY_OUTBOXLOG=1) needs a way to register the namespace their app
+ * signs under (e.g. Peerit signs 'peerit'); this maps the env value to
+ * config.outboxlog.namespace, which OutboxLogApp.start() feeds to the engine's
+ * namespace registry.
+ *
+ * Precedence — env is a DEFAULT, not a permanent override, mirroring
+ * HIVERELAY_ACCEPT_MODE / HIVERELAY_MAX_STORAGE. Because loadConfig()'s deep
+ * merge is `defaults < config.json < cliOverrides`, applying the env
+ * unconditionally would clobber a persisted config.json outboxlog.namespace.
+ * So the env is only applied when the operator has NOT persisted an explicit
+ * outboxlog.namespace (hasPersistedNamespace === false) and has not already set
+ * one on cliOverrides. Mutates and returns cliOverrides.
+ *
+ * @param {object} cliOverrides - the mutable CLI-override object
+ * @param {string|undefined} rawEnvValue - process.env.HIVERELAY_OUTBOXLOG_NAMESPACE
+ * @param {boolean} hasPersistedNamespace - true if config.json already has outboxlog.namespace
+ */
+export function applyOutboxlogNamespaceEnv (cliOverrides = {}, rawEnvValue, hasPersistedNamespace = false) {
+  if (!rawEnvValue || hasPersistedNamespace) return cliOverrides
+  const namespace = String(rawEnvValue).trim()
+  if (!namespace) return cliOverrides
+  if (!cliOverrides.outboxlog || typeof cliOverrides.outboxlog !== 'object') {
+    cliOverrides.outboxlog = {}
+  }
+  if (typeof cliOverrides.outboxlog.namespace !== 'string') {
+    cliOverrides.outboxlog.namespace = namespace
+  }
+  return cliOverrides
+}
+
+/**
  * Load config: defaults < config.json < CLI overrides
  */
 export function loadConfig (cliOverrides = {}) {

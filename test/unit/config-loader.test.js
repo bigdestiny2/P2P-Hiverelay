@@ -135,6 +135,65 @@ test('cli start --storage overrides HIVERELAY_STORAGE', async (t) => {
   t.absent(res.stdout.includes(`Storage:    ${envStorage}`))
 })
 
+test('applyOutboxlogNamespaceEnv: env sets config.outboxlog.namespace on a fresh box', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-outboxlog-ns-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const { loadConfig, applyOutboxlogNamespaceEnv } = await importLoaderWithHome(home)
+
+  // Fresh box (no persisted config.json) → env is applied.
+  const cliOverrides = {}
+  applyOutboxlogNamespaceEnv(cliOverrides, 'peerit', false)
+  t.is(cliOverrides.outboxlog.namespace, 'peerit', 'env value lands on cliOverrides')
+
+  const config = loadConfig(cliOverrides)
+  t.is(config.outboxlog.namespace, 'peerit', 'loadConfig surfaces it as config.outboxlog.namespace')
+})
+
+test('applyOutboxlogNamespaceEnv: unset env leaves config unchanged (default behavior)', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-outboxlog-ns-unset-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const { loadConfig, applyOutboxlogNamespaceEnv } = await importLoaderWithHome(home)
+
+  const cliOverrides = {}
+  applyOutboxlogNamespaceEnv(cliOverrides, undefined, false)
+  t.absent(cliOverrides.outboxlog, 'no env → no outboxlog override created')
+
+  const config = loadConfig(cliOverrides)
+  // Default config carries no outboxlog.namespace; the engine falls back to
+  // the app-neutral DEFAULT_OUTBOXLOG_NAMESPACE. Assert we did not invent one.
+  t.absent(config.outboxlog && config.outboxlog.namespace, 'default config has no forced namespace')
+})
+
+test('applyOutboxlogNamespaceEnv: a persisted config.json namespace wins over env (precedence)', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-outboxlog-ns-persisted-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const configDir = path.join(home, '.hiverelay')
+  await mkdir(configDir, { recursive: true })
+  await writeFile(
+    path.join(configDir, 'config.json'),
+    JSON.stringify({ outboxlog: { namespace: 'saved-ns' } }, null, 2) + '\n'
+  )
+
+  const { loadConfig, applyOutboxlogNamespaceEnv } = await importLoaderWithHome(home)
+
+  // hasPersistedNamespace === true → env is a no-op, the saved value survives.
+  const cliOverrides = {}
+  applyOutboxlogNamespaceEnv(cliOverrides, 'peerit', true)
+  t.absent(cliOverrides.outboxlog, 'env skipped when a namespace is already persisted')
+
+  const config = loadConfig(cliOverrides)
+  t.is(config.outboxlog.namespace, 'saved-ns', 'persisted namespace wins over the env default')
+})
+
 function execCli (argv, env) {
   return new Promise((resolve, reject) => {
     execFile(process.execPath, ['packages/core/cli/index.js', ...argv], {

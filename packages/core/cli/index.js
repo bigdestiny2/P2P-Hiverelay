@@ -19,7 +19,7 @@ import goodbye from 'graceful-goodbye'
 import { RelayNode } from '../core/relay-node/index.js'
 import { createLogger } from '../core/logger.js'
 import { isValidHexKey } from '../core/constants.js'
-import { loadConfig, saveConfig, ensureDirs, CONFIG_PATH, deriveTokenFromSeed } from '../config/loader.js'
+import { loadConfig, saveConfig, ensureDirs, CONFIG_PATH, deriveTokenFromSeed, applyOutboxlogNamespaceEnv } from '../config/loader.js'
 import b4a from 'b4a'
 import { existsSync, mkdirSync, cpSync, readFileSync } from 'fs'
 import { join, dirname } from 'path'
@@ -438,6 +438,18 @@ async function start () {
       cliOverrides.subsidy.payoutDestination = process.env.HIVERELAY_SUBSIDY_DESTINATION
     }
   }
+
+  // HIVERELAY_OUTBOXLOG_NAMESPACE — register the app namespace an ENV-driven
+  // operator's app signs records under (e.g. Peerit signs 'peerit'). Without
+  // it, a fleet/bern box configured purely by ENV (HIVERELAY_OUTBOXLOG=1) had
+  // no way to admit its app and every append was rejected `unknown namespace`
+  // (400). Precedence (env is a default, persisted config.json wins) is handled
+  // by applyOutboxlogNamespaceEnv — see its doc in config/loader.js.
+  applyOutboxlogNamespaceEnv(
+    cliOverrides,
+    process.env.HIVERELAY_OUTBOXLOG_NAMESPACE,
+    hasPersistedOutboxlogNamespace()
+  )
 
   const config = loadConfig(cliOverrides)
 
@@ -1650,6 +1662,18 @@ function hasPersistedConfig () {
   try {
     const parsed = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
     return !!(parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+  } catch (_) {
+    return false
+  }
+}
+
+function hasPersistedOutboxlogNamespace () {
+  if (!existsSync(CONFIG_PATH)) return false
+  try {
+    const parsed = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
+    return !!(parsed && typeof parsed === 'object' && parsed.outboxlog &&
+      typeof parsed.outboxlog === 'object' &&
+      typeof parsed.outboxlog.namespace === 'string')
   } catch (_) {
     return false
   }
