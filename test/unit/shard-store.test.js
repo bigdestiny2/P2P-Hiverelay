@@ -543,6 +543,74 @@ test('STO-002: a concurrent dedup PUT racing a sweep does not lose the shard', a
   t.ok(b4a.equals(b4a.from(got.ciphertext, 'base64'), sealed), 'bytes intact after the race')
 })
 
+test('STO-002 (dup-orphan regression): a duplicate signed PUT reclaims bytes on expiry (no permanent orphan)', async (t) => {
+  const { store } = await tmpStore(t)
+  let now = NOW
+  const relay = keyPair(70)
+  const pinner = keyPair(71)
+  const svc = new ShardStoreService({ putAuth: ['payment'], checkPaymentQuota: () => true, keyPair: relay, clock: () => now })
+  await svc.start({ store })
+  t.teardown(() => svc.stop())
+
+  const sealed = b4a.from('idempotent-retry-ciphertext', 'utf8')
+  const hash = shardHash(sealed)
+  const b64 = b4a.toString(sealed, 'base64')
+
+  // An idempotent network retry replays the SAME signed pin (same pinner +
+  // nonce + hash), so both PUTs carry a byte-identical pin body.
+  const dupPin = signShardPin({ reason: 'payment', hash, retainUntil: NOW + 1000, nonce: 'ee'.repeat(16) }, pinner)
+  const p1 = await svc.put({ ciphertext: b64, pin: dupPin })
+  const p2 = await svc.put({ ciphertext: b64, pin: { ...dupPin } }) // replayed identical signed pin
+  t.is(p2.deduped, true, 'identical bytes dedup')
+  t.is(p2.pinRef, p1.pinRef, 'identical signed pin collapses onto the same pinRef')
+  t.is(p2.refs, 1, 'a duplicate signed pin does NOT create a second pin')
+  // Engine refs must track DISTINCT pins (1), not raw PUT count (2) — otherwise
+  // the collapsed duplicate leaves an engine ref no pin can ever release.
+  t.is(await svc.engine.refs(hash), 1, 'engine dedup ref stays 1:1 with the single distinct pin')
+
+  now = NOW + 2000 // the one (and only) pin has expired
+  const swept = await svc.sweep()
+  t.is(swept.swept, 1, 'expired shard reclaimed — no orphan')
+  t.is((await svc.has({ shard: 'shard:' + hash })).present, false, 'bytes actually reclaimed on expiry')
+  t.is(await svc.engine.refs(hash), 0, 'no stale engine ref left behind')
+  const stats = await svc.stats()
+  t.is(stats.shards, 0, 'no orphaned shard row')
+  t.is(stats.bytes, 0, 'no leaked bytes')
+})
+
+test('STO-002 (dup-orphan regression): a genuine concurrent DISTINCT PUT is still protected', async (t) => {
+  const { store } = await tmpStore(t)
+  let now = NOW
+  const relay = keyPair(72)
+  const pinner = keyPair(73)
+  const svc = new ShardStoreService({ putAuth: ['payment'], checkPaymentQuota: () => true, keyPair: relay, clock: () => now })
+  await svc.start({ store })
+  t.teardown(() => svc.stop())
+
+  const sealed = b4a.from('distinct-inflight-ciphertext', 'utf8')
+  const hash = shardHash(sealed)
+  const b64 = b4a.toString(sealed, 'base64')
+
+  // Seed with a short-lived pin, then race a sweep against a DISTINCT dedup PUT
+  // (different nonce -> different pinRef -> a real, separate in-flight pin).
+  const shortPin = signShardPin({ reason: 'payment', hash, retainUntil: NOW + 1000, nonce: 'aa'.repeat(16) }, pinner)
+  await svc.put({ ciphertext: b64, pin: shortPin })
+
+  now = NOW + 2000 // seed pin expired -> sweep would GC it...
+  const freshPin = signShardPin({ reason: 'payment', hash, retainUntil: NOW + 3600000, nonce: 'ff'.repeat(16) }, pinner)
+  const [sweptRes] = await Promise.all([
+    svc.sweep(),
+    svc.put({ ciphertext: b64, pin: freshPin })
+  ])
+  t.ok(sweptRes.ok)
+  // The distinct pin carries its own engine ref (collapsed=false), so the fix
+  // does NOT reweaken STO-002: the bytes the in-flight pin references survive.
+  t.is((await svc.has({ shard: 'shard:' + hash })).present, true, 'distinct concurrent PUT preserved the shard')
+  t.is(svc.pins.refs(hash, now), 1, 'the fresh distinct live pin survived the race')
+  const got = await svc.get({ shard: 'shard:' + hash })
+  t.ok(b4a.equals(b4a.from(got.ciphertext, 'base64'), sealed), 'bytes intact after the race')
+})
+
 // ─── STO-005: shard bytes accounted + disk-pressure eviction ───────────
 
 test('STO-005: shard bytes register with StorageAccounting and update on GC', async (t) => {

@@ -197,7 +197,17 @@ export class ShardStoreService extends ServiceProvider {
     }
 
     const r = await this.engine.put(ciphertext, { claimedHash: params.claimedHash || null })
-    const pinRef = this.pins.add(pin)
+    const { ref: pinRef, collapsed } = this.pins.addPin(pin)
+    // Keep engine dedup refs 1:1 with DISTINCT pins. A byte-identical signed pin
+    // (same pinner+nonce+hash — an idempotent retry of the same signed PUT)
+    // bumped the engine ref but collapsed onto an existing pinRef, so it added
+    // NO new pin. Give that extra engine ref straight back, or on expiry the
+    // sweep (which decRefs once per purged pin) would leave a permanent
+    // engineRefs=1 orphan with zero pins — unreachable to every GC path. This
+    // does NOT reweaken STO-002: a genuine concurrent DISTINCT PUT carries its
+    // own new pin (collapsed=false) and keeps its engine ref, so bytes a live
+    // in-flight pin references are still protected from deletion.
+    if (collapsed) await this.engine.decRef(r.hash)
     if (!r.deduped) this._cachedBytes += r.byteLength // new bytes on disk
     this._metrics.put++
     return {

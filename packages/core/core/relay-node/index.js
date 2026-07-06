@@ -2627,8 +2627,43 @@ export class RelayNode extends EventEmitter {
     this.eviction.on('evicted', (e) => this.emit('eviction', e))
     this.eviction.on('evict-failed', (e) => this.emit('eviction-failed', e))
     this.eviction.on('error', (err) => this.emit('eviction-error', { error: err && err.message }))
+    // Drive the shard-store's own disk-pressure eviction on the SAME periodic
+    // cadence (STO-005). The EvictionManager sweeps app drives; the shard-store
+    // owns a dedicated hypercore the app-eviction path never touches, so it must
+    // shed its own expired/over-pressure shards or a filling box leaks shard
+    // bytes. Reuses the sweep tick (no new timer); disk usage is read live so a
+    // 'no-disk-signal' summary still gets an accurate reading (or is skipped).
+    this.eviction.on('sweep', () => { this._trackFireAndForget(this._sweepShardStoreUnderPressure()) })
     this.eviction.start()
     return this.eviction
+  }
+
+  /** The started shard-store service provider, or null if the service is off. */
+  _shardStoreProvider () {
+    if (!this.serviceRegistry) return null
+    const entry = this.serviceRegistry.services.get('shard-store')
+    return entry && entry.provider && typeof entry.provider.evictUnderPressure === 'function'
+      ? entry.provider
+      : null
+  }
+
+  /**
+   * Ask the shard-store to shed expired / over-pressure shards, using the live
+   * disk reading. Best-effort and non-throwing: a filling disk must not be able
+   * to crash the eviction loop. Below the shard-store's own pressure gate this
+   * is a cheap no-op (returns skipped: 'below-pressure').
+   */
+  async _sweepShardStoreUnderPressure () {
+    const svc = this._shardStoreProvider()
+    if (!svc) return
+    const disk = this.diskMonitor ? this.diskMonitor.getInfo() : null
+    if (!disk || !Number.isFinite(disk.usedPct)) return
+    try {
+      const res = await svc.evictUnderPressure({ usedPct: disk.usedPct })
+      if (res && res.evicted > 0) this.emit('shard-eviction', { usedPct: disk.usedPct, ...res })
+    } catch (err) {
+      this.emit('shard-eviction-error', { error: err && err.message })
+    }
   }
 
   // Apply an operator storage designation live (no restart): set the byte cap

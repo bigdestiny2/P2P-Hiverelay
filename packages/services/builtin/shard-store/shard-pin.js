@@ -150,15 +150,32 @@ export class ShardPinRegistry {
     const ref = shardPinRef(pin)
     let set = this.pins.get(pin.hash)
     if (!set) { set = new Map(); this.pins.set(pin.hash, set) }
+    const collapsed = set.has(ref) // an identical signed pin (same pinner+nonce+hash) already exists
     set.set(ref, pin)
-    return ref
+    return { ref, collapsed }
   }
 
-  /** Add a pre-verified/authorized pin. Returns its pinRef. */
+  /**
+   * Add a pre-verified/authorized pin. Returns its pinRef.
+   *
+   * A pinRef is the hash of the pin's signed body, so a byte-identical signed
+   * pin (same pinner + nonce + hash — e.g. an idempotent network retry of the
+   * same signed PUT) collapses onto the SAME pinRef and does NOT grow the pin
+   * set. `addPin()` exposes that collapse so the engine can keep its dedup
+   * ref-count 1:1 with DISTINCT pins (see index.js put()); otherwise a
+   * collapsed duplicate would leave an engine ref no pin can ever release
+   * (permanent byte orphan on expiry+sweep).
+   */
   add (pin) {
-    const ref = this._apply(pin)
+    return this.addPin(pin).ref
+  }
+
+  /** Like add(), but returns { ref, collapsed } so callers can detect a
+   *  duplicate signed pin that collapsed onto an existing pinRef. */
+  addPin (pin) {
+    const res = this._apply(pin)
     this._schedulePersist()
-    return ref
+    return res
   }
 
   /** Remove a pin; the remover must prove pinner control (a signed removal). */
