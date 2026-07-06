@@ -45,8 +45,17 @@
 import { EventEmitter } from 'events'
 import { readFile, writeFile, rename, mkdir } from 'fs/promises'
 import { dirname, basename, join } from 'path'
+import { verifyForkEvidence } from './fork-proof-signing.js'
 
 const SCHEMA_VERSION = 1
+
+// Provenance of a reported fork. `local` = the detector's own host
+// observed the equivocation directly (its own hypercore truncated /
+// failed verification, or its own quorum queries diverged). That is
+// internally trusted — the observer IS the victim. Anything else came
+// off the network and MUST carry cryptographic proof before it is
+// allowed to quarantine a drive.
+const LOCAL_PROVENANCE = 'local'
 
 export class ForkDetector extends EventEmitter {
   /**
@@ -123,14 +132,26 @@ export class ForkDetector extends EventEmitter {
    * relays serve different blocks at the same index for the same
    * hypercore.
    *
+   * SECURITY (audit HR-SVC-004): a fork report quarantines a drive —
+   * a censorship-grade action. Reports that did not originate on this
+   * host (provenance !== 'local') MUST cryptographically prove the fork
+   * before they are allowed to quarantine anything: the two conflicting
+   * blocks must each carry a valid Ed25519 signature by the hypercore's
+   * own key. Unproven network reports are refused. Local self-detection
+   * (our own core truncated / our own quorum diverged) is internally
+   * trusted and keeps its lightweight, non-cryptographic evidence shape.
+   *
    * @param {object} args
    * @param {string} args.hypercoreKey      key (hex) of the offending hypercore
    * @param {number} args.blockIndex        index where the divergence occurred
    * @param {object} args.evidenceA         { fromRelay, block, signature }
    * @param {object} args.evidenceB         { fromRelay, block, signature }
+   * @param {string} [args.provenance='local']  'local' = internally trusted;
+   *                                        anything else requires a
+   *                                        cryptographically valid fork proof.
    * @returns {{ok: boolean, recordExists: boolean, reason?: string}}
    */
-  report ({ hypercoreKey, blockIndex, evidenceA, evidenceB }) {
+  report ({ hypercoreKey, blockIndex, evidenceA, evidenceB, provenance = LOCAL_PROVENANCE }) {
     if (typeof hypercoreKey !== 'string' || !/^[0-9a-f]{64}$/i.test(hypercoreKey)) {
       return { ok: false, reason: 'bad hypercoreKey' }
     }
@@ -142,6 +163,19 @@ export class ForkDetector extends EventEmitter {
     }
     if (evidenceA.signature === evidenceB.signature) {
       return { ok: false, reason: 'evidence pair has identical signatures — not a fork' }
+    }
+
+    // Network-originated reports get NO trust for free. Require a
+    // cryptographically valid conflicting-heads proof before we let a
+    // remote party quarantine a drive. This is the gate that stops an
+    // unauthenticated peer from censoring arbitrary drives with forged
+    // or unsigned "evidence".
+    if (provenance !== LOCAL_PROVENANCE) {
+      const proof = verifyForkEvidence({ hypercoreKey, evidenceA, evidenceB })
+      if (!proof.valid) {
+        this.emit('fork-report-rejected', { hypercoreKey: hypercoreKey.toLowerCase(), provenance, reason: proof.reason })
+        return { ok: false, reason: 'unverified fork evidence: ' + proof.reason }
+      }
     }
 
     const key = hypercoreKey.toLowerCase()
