@@ -3,3 +3,4 @@
 # /etc/hiverelay/allowed-signers, where fleet/updater.sh verify_tag checks
 # every release tag's signature against it (fail-closed). See docs/SUPPLY-CHAIN.md.
 # Format:  <signer-email> ssh-ed25519 AAAA... hiverelay-release
+bigdestiny2@users.noreply.github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxvfmV3/yKO0C5HMCGRiOMiqfEwkzr6/aMlz4TUfojO hiverelay-release
