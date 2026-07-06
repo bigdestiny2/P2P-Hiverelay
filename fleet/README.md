@@ -42,9 +42,32 @@ fleet/channels.json   ──(raw.githubusercontent)──▶  each box's updater
 **manual, single-box** layer. They compose: the timer keeps boxes on
 their channel; `manage` is for hands-on tweaks to one node.
 
+## Signed releases (required)
+
+The updater checks out a channel-named tag it resolves over the network and
+runs it **as root**. It refuses to check out any tag that is not an annotated
+tag signed by a key in a locally provisioned allowed-signers file — a moved or
+forged tag (repo, GitHub-account, CDN, or CA MITM) is rejected and the box
+stays on its current version. This is fail-closed: a missing allowed-signers
+file or an untrusted signer both abort the update.
+
+One-time setup (maintainer + one file per box) is documented in
+[`docs/SUPPLY-CHAIN.md`](../docs/SUPPLY-CHAIN.md#1-signed-release-tags-hr-dis-003--required-operator-setup).
+In short:
+
+- Maintainer: sign release tags (`git tag -s vX.Y.Z`) with a dedicated SSH (or
+  GPG) key, and publish the public half in an `allowed-signers` file.
+- Each box: install it at `/etc/hiverelay/allowed-signers` (override with
+  `HIVERELAY_ALLOWED_SIGNERS`).
+
+Audit a tag by hand: `hiverelay-updater --verify-only vX.Y.Z` (exit 0 =
+trusted). Break-glass override: `HIVERELAY_REQUIRE_SIGNED_TAGS=0` (loud, never
+standing).
+
 ## Releasing
 
-1. Cut a release as usual (tag `vX.Y.Z`, CI publishes the image).
+1. Cut a release as usual (**signed** tag `git tag -s vX.Y.Z`, CI publishes and
+   cosign-signs the image). An unsigned tag will be refused by every box.
 2. **Canary:** bump `canary` in `channels.json`, commit. The canary box
    (utah) self-updates within ~15 min, health-gates, rolls back if bad.
 3. **Verify:** `npm run fleet:check-rollout -- --target vX.Y.Z --channel canary`
@@ -68,6 +91,10 @@ older tag exactly like a forward update (health-gated the same way).
 - **Health-gated:** after restart the agent polls `/health` for
   `running:true` and a runtime `version` matching the target tag (120s). No
   green -> automatic rollback to the prior SHA.
+- **Signed-tag gate (fail closed):** the agent refuses to check out any tag
+  that is not signed by a key in `/etc/hiverelay/allowed-signers`. A moved or
+  forged tag is rejected before checkout; the box stays on its current
+  version. See "Signed releases" above and `docs/SUPPLY-CHAIN.md`.
 - **Dirty-tree guard:** the agent refuses to act if the repo has
   uncommitted changes — it never clobbers a hand-edit.
 - **Config treated as data:** `/etc/hiverelay-updater.conf` is parsed for a

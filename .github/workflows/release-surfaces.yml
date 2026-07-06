@@ -27,6 +27,10 @@ on:
 permissions:
   contents: write
   packages: write
+  # cosign keyless (OIDC) image signing — no long-lived signing key stored
+  # anywhere; Fulcio issues a short-lived cert from the job's OIDC token
+  # (audit HR-DIS-001).
+  id-token: write
 
 concurrency:
   group: release-surfaces
@@ -415,6 +419,23 @@ jobs:
             exit 1
           fi
           echo "HIVERELAY_IMAGE_DIGEST=$digest" >> "$GITHUB_ENV"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Keyless (OIDC) signature over the pushed multi-arch manifest digest —
+      # the SAME digest that gets pinned into docker-compose.yml, the StartOS
+      # s9pk, and the release evidence. Signing by digest binds the signature
+      # to the exact bytes operators run. Verify with the identity + issuer
+      # documented in docs/SUPPLY-CHAIN.md (audit HR-DIS-001).
+      - name: Sign release image (cosign keyless)
+        working-directory: hiverelay
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          cosign sign --recursive "$IMAGE_NAME@$HIVERELAY_IMAGE_DIGEST"
+          echo "HIVERELAY_IMAGE_COSIGN_STATUS=signed" >> "$GITHUB_ENV"
 
       - name: Verify release image manifest platforms
         working-directory: hiverelay
