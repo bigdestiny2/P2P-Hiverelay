@@ -115,6 +115,13 @@ export class StorageAccounting extends EventEmitter {
     this.diskIntervalMs = Number.isFinite(opts.diskIntervalMs) ? Math.max(1000, opts.diskIntervalMs) : DEFAULT_DISK_INTERVAL_MS
 
     this._bytes = new Map() // appKeyHex -> { bytes, measuredAt }
+    // External byte sources outside the appRegistry drive walk — e.g. the
+    // blind shard-store, whose bytes live in a dedicated hypercore, NOT an
+    // appRegistry Hyperdrive, so the per-entry sweep never sees them. Each
+    // source is a () => number (bytes). Counted into getSummary().sourceBytes
+    // and folded into totalBytes so shard bytes are no longer invisible to the
+    // adoption/eviction guards (STO-005).
+    this._sources = new Map() // name -> () => number
     this._cursor = 0
     this._interval = null
     this._sweeping = false
@@ -209,6 +216,33 @@ export class StorageAccounting extends EventEmitter {
     }
   }
 
+  /**
+   * Register an external byte source counted alongside the appRegistry drives.
+   * `fn` is a synchronous () => number (bytes). Used by the shard-store so its
+   * dedicated-hypercore bytes are visible to the storage guards (STO-005).
+   * Re-registering the same name replaces the callback.
+   */
+  registerExternalSource (name, fn) {
+    if (!name || typeof fn !== 'function') throw new Error('registerExternalSource: name + fn required')
+    this._sources.set(name, fn)
+  }
+
+  unregisterExternalSource (name) {
+    this._sources.delete(name)
+  }
+
+  /** Sum of all registered external sources (bytes), robust to a throwing fn. */
+  sourceBytes () {
+    let total = 0
+    for (const fn of this._sources.values()) {
+      try {
+        const v = Number(fn())
+        if (Number.isFinite(v) && v > 0) total += v
+      } catch { /* a broken source counts as 0, never crashes accounting */ }
+    }
+    return total
+  }
+
   getBytes (appKeyHex) {
     const rec = this._bytes.get(appKeyHex)
     return rec ? rec.bytes : null
@@ -225,14 +259,20 @@ export class StorageAccounting extends EventEmitter {
   getSummary () {
     let perEntry = 0
     for (const rec of this._bytes.values()) perEntry += rec.bytes
+    const sourceBytes = this.sourceBytes()
     // Authoritative total = the measured on-disk footprint when available
     // (catches bare/lazy cores the per-entry walk misses); the per-entry sum
-    // is only ever a subset, so max() is a safe floor before the first du.
-    const totalBytes = this._diskBytes != null ? Math.max(this._diskBytes, perEntry) : perEntry
+    // plus registered external sources (e.g. shard-store bytes) is only ever a
+    // subset, so max() is a safe floor before the first du. Using max() also
+    // means shard bytes already captured by the du of storagePath are never
+    // double-counted (STO-005).
+    const measured = perEntry + sourceBytes
+    const totalBytes = this._diskBytes != null ? Math.max(this._diskBytes, measured) : measured
     return {
       totalBytes,
       diskBytes: this._diskBytes,
       perEntryBytes: perEntry,
+      sourceBytes,
       measuredEntries: this._bytes.size,
       fullSweeps: this._fullSweeps,
       lastFullSweepAt: this._lastFullSweepAt

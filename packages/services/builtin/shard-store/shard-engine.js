@@ -55,6 +55,33 @@ export class ShardEngine {
     this.blobs = new Hyperblobs(this._blobsCore)
     this.index = new Hyperbee(this._indexCore, { keyEncoding: 'utf-8', valueEncoding: 'json' })
     this._ready = null
+    // Per-hash serialization: a PUT-dedup that bumps a shard's dedup ref-count
+    // and a delete that drops it to zero must not interleave, or a concurrent
+    // PUT could re-reference bytes a sweep is about to wipe (STO-002). All
+    // ref-count reads/writes and byte deletes for a given hash run through this
+    // FIFO chain so check-then-delete is atomic w.r.t. the ref count.
+    this._locks = new Map() // hash -> Promise (tail of that hash's op chain)
+  }
+
+  /**
+   * Serialize an async op against a single shard hash. Ops for the same hash
+   * run strictly one-at-a-time (FIFO); different hashes never block each other.
+   */
+  async _withLock (hash, fn) {
+    const prev = this._locks.get(hash) || Promise.resolve()
+    let release
+    const next = new Promise((resolve) => { release = resolve })
+    // Chain onto the previous op; ignore its result/error so one failure does
+    // not poison the chain for the next waiter.
+    this._locks.set(hash, prev.then(() => next, () => next))
+    await prev.catch(() => {})
+    try {
+      return await fn()
+    } finally {
+      release()
+      // GC the map entry if we were the tail (nothing chained after us).
+      if (this._locks.get(hash) === next) this._locks.delete(hash)
+    }
   }
 
   async ready () {
@@ -85,17 +112,40 @@ export class ShardEngine {
     if (claimedHash != null && normalizeShardAddress(claimedHash) !== hash) {
       throw shardError('HASH_MISMATCH', 'ciphertext does not hash to claimedHash')
     }
-    const existing = await this.index.get(hash)
-    if (existing && existing.value) {
-      const rec = existing.value
-      rec.refs = (rec.refs || 0) + 1
+    // Under the per-hash lock so a bump-to-N never races a delete-at-zero
+    // (STO-002): a dedup PUT and a concurrent sweep for the same hash are
+    // strictly ordered, so bytes a live PUT just re-referenced are never wiped.
+    return this._withLock(hash, async () => {
+      const existing = await this.index.get(hash)
+      if (existing && existing.value) {
+        const rec = existing.value
+        rec.refs = (rec.refs || 0) + 1
+        await this.index.put(hash, rec)
+        return { hash, address: 'shard:' + hash, byteLength: rec.byteLength, deduped: true }
+      }
+      const blobId = await this.blobs.put(bytes)
+      const rec = { hash, blobId, byteLength: bytes.byteLength, refs: 1, addedAt: this.clock() }
       await this.index.put(hash, rec)
-      return { hash, address: 'shard:' + hash, byteLength: rec.byteLength, deduped: true }
-    }
-    const blobId = await this.blobs.put(bytes)
-    const rec = { hash, blobId, byteLength: bytes.byteLength, refs: 1, addedAt: this.clock() }
-    await this.index.put(hash, rec)
-    return { hash, address: 'shard:' + hash, byteLength: bytes.byteLength, deduped: false }
+      return { hash, address: 'shard:' + hash, byteLength: bytes.byteLength, deduped: false }
+    })
+  }
+
+  /** Stored byte length for a shard (0 if absent). */
+  async byteLengthOf (address) {
+    await this.ready()
+    const hash = normalizeShardAddress(address)
+    if (!hash) return 0
+    const node = await this.index.get(hash)
+    return node && node.value && Number.isFinite(node.value.byteLength) ? node.value.byteLength : 0
+  }
+
+  /** Current engine dedup ref-count for a shard (0 if absent). */
+  async refs (address) {
+    await this.ready()
+    const hash = normalizeShardAddress(address)
+    if (!hash) return 0
+    const node = await this.index.get(hash)
+    return node && node.value ? (node.value.refs || 0) : 0
   }
 
   /** Return the exact ciphertext for a held shard, or throw NOT_HELD. */
@@ -123,30 +173,73 @@ export class ShardEngine {
     await this.ready()
     const hash = normalizeShardAddress(address)
     if (!hash) throw shardError('BAD_ADDRESS', 'invalid shard address')
-    const node = await this.index.get(hash)
-    if (!node || !node.value) return { refs: 0, removed: false }
-    const rec = node.value
-    rec.refs = Math.max(0, (rec.refs || 0) - 1)
-    if (rec.refs === 0) {
-      if (typeof this.blobs.clear === 'function') { try { await this.blobs.clear(rec.blobId) } catch {} }
-      await this.index.del(hash)
-      return { refs: 0, removed: true }
-    }
-    await this.index.put(hash, rec)
-    return { refs: rec.refs, removed: false }
+    return this._withLock(hash, async () => {
+      const node = await this.index.get(hash)
+      if (!node || !node.value) return { refs: 0, removed: false }
+      const rec = node.value
+      rec.refs = Math.max(0, (rec.refs || 0) - 1)
+      if (rec.refs === 0) {
+        if (typeof this.blobs.clear === 'function') { try { await this.blobs.clear(rec.blobId) } catch {} }
+        await this.index.del(hash)
+        return { refs: 0, removed: true }
+      }
+      await this.index.put(hash, rec)
+      return { refs: rec.refs, removed: false }
+    })
   }
 
-  /** Force-remove a shard's bytes + index row, ignoring the engine ref count.
-   *  Used when the pin registry (the retention authority) drops to zero pins. */
-  async delete (address) {
+  /**
+   * Decrement one engine dedup ref WITHOUT deleting bytes. Returns the
+   * remaining ref count. The retention authority (pin registry) owns the
+   * decision to delete; this only keeps the dedup count honest so that
+   * deleteIfUnreferenced() sees the true engine-side reference total.
+   */
+  async decRef (address) {
     await this.ready()
     const hash = normalizeShardAddress(address)
     if (!hash) throw shardError('BAD_ADDRESS', 'invalid shard address')
-    const node = await this.index.get(hash)
-    if (!node || !node.value) return { removed: false }
-    if (typeof this.blobs.clear === 'function') { try { await this.blobs.clear(node.value.blobId) } catch {} }
-    await this.index.del(hash)
-    return { removed: true }
+    return this._withLock(hash, async () => {
+      const node = await this.index.get(hash)
+      if (!node || !node.value) return 0
+      const rec = node.value
+      rec.refs = Math.max(0, (rec.refs || 0) - 1)
+      await this.index.put(hash, rec)
+      return rec.refs
+    })
+  }
+
+  /**
+   * Reconciled, atomic delete (STO-002). Removes a shard's bytes + index row
+   * ONLY when BOTH ref sources are zero: the engine's own dedup ref-count
+   * (re-read under the lock) AND the caller-supplied pin-registry ref-count
+   * (`pinRefs`). The pin count is read a moment before this call in the
+   * service; the lock re-checks the engine count and holds it stable across
+   * the delete, so a concurrent PUT-dedup for the same hash cannot slip a new
+   * reference in between the check and the delete. `force` bypasses the engine
+   * count only (used by operator purge / eviction), never the caller's intent.
+   */
+  async deleteIfUnreferenced (address, { pinRefs = 0, force = false } = {}) {
+    await this.ready()
+    const hash = normalizeShardAddress(address)
+    if (!hash) throw shardError('BAD_ADDRESS', 'invalid shard address')
+    return this._withLock(hash, async () => {
+      const node = await this.index.get(hash)
+      if (!node || !node.value) return { removed: false, refs: 0, retained: false }
+      const engineRefs = node.value.refs || 0
+      // Retain if EITHER source still references the shard (unless forced).
+      if (!force && (engineRefs > 0 || pinRefs > 0)) {
+        return { removed: false, refs: engineRefs, retained: true }
+      }
+      if (typeof this.blobs.clear === 'function') { try { await this.blobs.clear(node.value.blobId) } catch {} }
+      await this.index.del(hash)
+      return { removed: true, refs: 0, retained: false }
+    })
+  }
+
+  /** Force-remove a shard's bytes + index row, ignoring the engine ref count.
+   *  Kept for operator purge; retention-driven deletes use deleteIfUnreferenced. */
+  async delete (address) {
+    return this.deleteIfUnreferenced(address, { force: true })
   }
 
   async stats () {
