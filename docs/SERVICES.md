@@ -252,6 +252,27 @@ keeps entries opaque, and exposes a token-gated HTTP/SSE bridge for sync.
 Enable it explicitly through `config.plugins` / `services.json` (`outboxlog`)
 or, on the Bare/appliance path, with `HIVERELAY_OUTBOXLOG=1`.
 
+**Operator takedown surface (`/api/admin/takedown` · `/restore` · `/takedowns`):**
+An operator can drop or restore a single outbox row by its opaque
+`(appId, key)` id — content is never read; this exists for operator liability
+parity, not for reading user data. The surface is gated by a **dedicated admin
+credential that is separate from the browser sync token**, supplied via the
+`X-Pear-Admin-Token` header (or `?adminToken=`), so an ordinary client holding a
+`/api/token` can never authorize a takedown. It is **safe-by-default**: with no
+admin credential configured the three routes return `404` (the surface is simply
+not enabled); with one configured, an absent or wrong token returns `401` and
+only the exact token succeeds (constant-time compare). Configure the credential
+with:
+
+- config: `config.outboxlog.adminKey = "<operator-secret>"`
+- env (Bare/appliance): `HIVERELAY_OUTBOXLOG_ADMIN_KEY=<operator-secret>`
+
+There is no default — provision this only on relays where you intend to enable
+takedown. Outboxlog claims exactly these three `/api/admin/*` routes and does not
+reserve the rest of the `/api/admin/` namespace. The admin key is read once at
+node construction (boot-time snapshot, matching `HIVERELAY_API_KEY`); restart the
+node to rotate it.
+
 ### Storage-Proof Service (v0.20.0 — Trustless Seed Verification, Tier 2)
 
 Signed challenge-response proof that this relay genuinely holds a seeded app. A caller picks a random block of a drive's metadata core; the relay reads it from **local storage only** and returns a Hypercore Merkle proof signed with its swarm identity key. The caller verifies the proof against the **drive key alone** (Hypercore hashes the block into the drive's signed Merkle root, so forged content is rejected) plus the relay signature (attribution + nonce freshness, no replay) — the relay is trusted for nothing.
