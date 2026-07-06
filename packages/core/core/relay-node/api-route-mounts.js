@@ -10,7 +10,12 @@ export const OUTBOXLOG_HTTP_EXACT_ROUTES = Object.freeze([
 export const OUTBOXLOG_HTTP_ROUTE_PREFIXES = Object.freeze([
   '/api/identity/',
   '/api/sync/',
-  '/api/swarm/'
+  '/api/swarm/',
+  // Operator takedown admin surface (/api/admin/takedown|restore|takedowns).
+  // Routed into the outboxlog dispatch so ctx.adminAuth can gate it; the
+  // adapter's own isAdminPath narrows to the three takedown routes and serves
+  // the surface as 404 when no admin auth is configured (safe-by-default).
+  '/api/admin/'
 ])
 export const WITNESSLOG_HTTP_ROUTE = '/api/witness'
 export const WITNESSLOG_HTTP_ROUTE_PREFIX = '/api/witness/'

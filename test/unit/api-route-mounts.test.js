@@ -48,7 +48,7 @@ test('api route mounts: poker substrate keeps exact root plus subtree', (t) => {
 
 test('api route mounts: outboxlog bridge owns exact Peerit /api routes only', (t) => {
   t.alike(OUTBOXLOG_HTTP_EXACT_ROUTES, ['/api/token', '/api/bridge/status', '/api/directory', '/api/identity'])
-  t.alike(OUTBOXLOG_HTTP_ROUTE_PREFIXES, ['/api/identity/', '/api/sync/', '/api/swarm/'])
+  t.alike(OUTBOXLOG_HTTP_ROUTE_PREFIXES, ['/api/identity/', '/api/sync/', '/api/swarm/', '/api/admin/'])
   t.is(isOutboxLogHttpRoute('/api/token'), true)
   t.is(isOutboxLogHttpRoute('/api/bridge/status'), true)
   t.is(isOutboxLogHttpRoute('/api/directory'), true)
@@ -56,10 +56,15 @@ test('api route mounts: outboxlog bridge owns exact Peerit /api routes only', (t
   t.is(isOutboxLogHttpRoute('/api/identity/sign'), true)
   t.is(isOutboxLogHttpRoute('/api/sync/create'), true)
   t.is(isOutboxLogHttpRoute('/api/swarm/events'), true)
+  // Takedown admin surface routes into the outboxlog dispatch (adapter gates it).
+  t.is(isOutboxLogHttpRoute('/api/admin/takedown'), true)
+  t.is(isOutboxLogHttpRoute('/api/admin/restore'), true)
+  t.is(isOutboxLogHttpRoute('/api/admin/takedowns'), true)
   t.is(isOutboxLogHttpRoute('/api/tokens'), false)
   t.is(isOutboxLogHttpRoute('/api/identityish'), false)
   t.is(isOutboxLogHttpRoute('/api/identity-sign'), false)
   t.is(isOutboxLogHttpRoute('/api/synchronize'), false)
+  t.is(isOutboxLogHttpRoute('/api/admin'), false)
   t.is(isOutboxLogHttpRoute('/api/poker/tables'), false)
 })
 

@@ -9,7 +9,8 @@ test('api outboxlog http adapter: cached adapter is reused without loading optio
   const cached = {
     handleOutboxLogRoute: async function handleOutboxLogRoute () {},
     createOutboxLogTokenAuth () {},
-    createOutboxLogHttpState () {}
+    createOutboxLogHttpState () {},
+    createOutboxLogAdminAuth () {}
   }
   const adapter = await resolveOutboxLogHttpAdapter({
     cachedAdapter: cached,
@@ -25,7 +26,8 @@ test('api outboxlog http adapter: loader returns required exports', async (t) =>
   const loaded = {
     handleOutboxLogRoute: async function handleOutboxLogRoute () {},
     createOutboxLogTokenAuth () {},
-    createOutboxLogHttpState () {}
+    createOutboxLogHttpState () {},
+    createOutboxLogAdminAuth () {}
   }
   const adapter = await resolveOutboxLogHttpAdapter({
     loadAdapter: async () => loaded
@@ -34,6 +36,7 @@ test('api outboxlog http adapter: loader returns required exports', async (t) =>
   t.is(adapter.handleOutboxLogRoute, loaded.handleOutboxLogRoute)
   t.is(adapter.createOutboxLogTokenAuth, loaded.createOutboxLogTokenAuth)
   t.is(adapter.createOutboxLogHttpState, loaded.createOutboxLogHttpState)
+  t.is(adapter.createOutboxLogAdminAuth, loaded.createOutboxLogAdminAuth)
 })
 
 test('api outboxlog http adapter: missing route export fails before request handling', async (t) => {
@@ -79,6 +82,20 @@ test('api outboxlog http adapter: missing token/state exports fail before reques
     stateErr = error
   }
   t.is(stateErr && stateErr.message, 'missing createOutboxLogHttpState export')
+
+  let adminErr = null
+  try {
+    await resolveOutboxLogHttpAdapter({
+      loadAdapter: async () => ({
+        handleOutboxLogRoute: async function handleOutboxLogRoute () {},
+        createOutboxLogTokenAuth () {},
+        createOutboxLogHttpState () {}
+      })
+    })
+  } catch (error) {
+    adminErr = error
+  }
+  t.is(adminErr && adminErr.message, 'missing createOutboxLogAdminAuth export')
 })
 
 test('api outboxlog http adapter: unavailable response redacts public payload and keeps event detail', (t) => {
