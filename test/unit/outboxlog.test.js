@@ -6,6 +6,7 @@ import test from 'brittle'
 import sodium from 'sodium-universal'
 import b4a from 'b4a'
 import {
+  DEFAULT_OUTBOXLOG_NAMESPACE,
   OUTBOXLOG_OUTBOX_CORE_PREFIX,
   OUTBOXLOG_PARTITIONED_JOURNAL_INDEX_NAME,
   OutboxLogApp,
@@ -286,6 +287,111 @@ test('outboxlog: directory watermark survives persistence reloads', (t) => {
   t.alike(Object.keys(after.heads), [B])
   t.is(after.heads[B].version, 2)
   t.is(after.watermark, before.watermark)
+})
+
+test('outboxlog: takedown suppresses a record from every serve path but keeps it in storage', (t) => {
+  const log = createOutboxLog({ verifyAppend: () => true })
+  log.sync.create(A)
+  log.sync.append(A, { type: 'post', data: post('p1', { t: 'keep' }) })
+  log.sync.append(A, { type: 'post', data: post('p2', { t: 'drop-me' }) })
+  log.sync.append(A, { type: 'head', data: post(A, { version: 1 }) })
+
+  // Baseline: both posts and the directory head are served.
+  t.alike(log.sync.list(A, 'post!').map(r => r.key), ['post!p1', 'post!p2'])
+  t.is(log.sync.count(A, 'post!').count, 2)
+  t.ok(Object.keys(log.sync.directory().heads).includes(A))
+
+  // Operator drops post!p2 by its opaque (appId, key) id. No content is read.
+  const result = log.takedown(A, 'post!p2')
+  t.alike(result, { appId: A, key: 'post!p2', suppressed: true })
+
+  // Serve-time suppression across get / list / range / count / events.
+  t.is(log.sync.get(A, 'post!p2'), null, 'get suppressed')
+  t.alike(log.sync.list(A, 'post!').map(r => r.key), ['post!p1'], 'list suppressed')
+  t.alike(log.sync.range(A, { gte: 'post!', lt: 'post!\xff' }).map(r => r.key), ['post!p1'], 'range suppressed')
+  t.is(log.sync.count(A, 'post!').count, 1, 'count suppressed')
+  t.absent(log.sync.events(A).events.map(e => e.key).includes('post!p2'), 'append marker suppressed')
+
+  // p1 is untouched.
+  t.alike(log.sync.get(A, 'post!p1'), post('p1', { t: 'keep' }))
+
+  // The record STILL EXISTS in storage — takedown is serve-time only.
+  t.ok(log.isSuppressed(A, 'post!p2'))
+  t.is(log.snapshot().groups.find(([id]) => id === A)[1].rows.filter(([k]) => k === 'post!p2').length, 1,
+    'suppressed record remains in the persisted rows')
+
+  // takedowns() lists the opaque id without any content.
+  t.alike(log.takedowns(), { takedowns: [{ appId: A, key: 'post!p2' }], count: 1 })
+
+  // restore() reverses it; the record serves again.
+  t.alike(log.restore(A, 'post!p2'), { appId: A, key: 'post!p2', suppressed: false })
+  t.alike(log.sync.get(A, 'post!p2'), post('p2', { t: 'drop-me' }))
+  t.is(log.sync.count(A, 'post!').count, 2)
+})
+
+test('outboxlog: taking down head!<appId> hides the outbox from the directory', (t) => {
+  const log = createOutboxLog({ verifyAppend: () => true })
+  log.sync.create(A)
+  log.sync.append(A, { type: 'head', data: post(A, { version: 1 }) })
+  log.sync.create(B)
+  log.sync.append(B, { type: 'head', data: post(B, { version: 1 }) })
+
+  t.alike(Object.keys(log.sync.directory().heads).sort(), [A, B].sort())
+  log.takedown(A, 'head!' + A)
+  t.alike(Object.keys(log.sync.directory().heads), [B], 'A dropped from directory by opaque head id')
+  // The head row itself still exists in storage.
+  t.ok(log.isSuppressed(A, 'head!' + A))
+})
+
+test('outboxlog: takedown works on a blind record by opaque id without reading content', (t) => {
+  // Blind namespace: the relay may not read/decode the record. Takedown must
+  // still be able to drop it purely by its opaque (appId, key) id.
+  const log = createOutboxLog({ verifyAppend: () => true, namespaces: { blindns: { blind: true } } })
+  log.sync.create(A, { namespace: 'blindns' })
+  const sealed = createOutboxBlindSealedBody({ nonce: 'n'.repeat(48), ciphertext: 'ciphertext-bytes' })
+  log.sync.append(A, { type: 'post', data: { id: 'secret', _ns: 'blindns', body: sealed } })
+
+  t.ok(isOutboxBlindRecord(log.sync.get(A, 'post!secret')), 'record is blind-sealed')
+  log.takedown(A, 'post!secret')
+  t.is(log.sync.get(A, 'post!secret'), null, 'blind record suppressed by opaque id')
+  t.ok(log.isSuppressed(A, 'post!secret'))
+})
+
+test('outboxlog: takedown survives persistence reloads', (t) => {
+  const persistence = createMemoryOutboxPersistence()
+  const first = createOutboxLog({ verifyAppend: () => true, persistence })
+  first.sync.create(A)
+  first.sync.append(A, { type: 'post', data: post('p1') })
+  first.sync.append(A, { type: 'post', data: post('p2') })
+  first.takedown(A, 'post!p2')
+  t.is(first.sync.get(A, 'post!p2'), null)
+
+  const second = createOutboxLog({ verifyAppend: () => true, persistence })
+  t.is(second.sync.get(A, 'post!p2'), null, 'takedown reloaded from snapshot')
+  t.alike(second.sync.list(A, 'post!').map(r => r.key), ['post!p1'])
+  t.ok(second.isSuppressed(A, 'post!p2'))
+  // The record is still in storage post-reload.
+  t.alike(second.snapshot().groups.find(([id]) => id === A)[1].rows.map(([k]) => k).sort(), ['post!p1', 'post!p2'])
+})
+
+test('outboxlog: takedown survives journal replay', (t) => {
+  const journal = createMemoryOutboxJournal()
+  const first = createOutboxLog({ verifyAppend: () => true, journal })
+  first.sync.create(A)
+  first.sync.append(A, { type: 'post', data: post('p1') })
+  first.takedown(A, 'post!p1')
+  first.restore(A, 'post!p1')
+  first.takedown(A, 'post!p1')
+
+  const second = createOutboxLog({ verifyAppend: () => true, journal })
+  t.is(second.sync.get(A, 'post!p1'), null, 'net takedown replayed from journal')
+  t.ok(second.isSuppressed(A, 'post!p1'))
+})
+
+test('outboxlog: takedown of a bad opaque id is rejected', (t) => {
+  const log = createOutboxLog({ verifyAppend: () => true })
+  const err = throws(() => log.takedown(A, ''))
+  t.is(err.status, 400)
 })
 
 test('outboxlog: append event replay is per-outbox bounded and watermark based', (t) => {
@@ -742,7 +848,7 @@ function keyPair (seedByte) {
 }
 
 function signRecord (writer, fields = {}, type = 'post') {
-  const namespace = fields._ns || 'peerit'
+  const namespace = fields._ns || DEFAULT_OUTBOXLOG_NAMESPACE
   const data = {
     id: fields.id || 'p1',
     author: writer.publicKeyHex,

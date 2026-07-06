@@ -26,7 +26,13 @@ export const DEFAULT_MAX_DIRECTORY_LIMIT = 5000
 export const DEFAULT_MAX_APPEND_EVENTS_PER_OUTBOX = 1000
 export const DEFAULT_MAX_APPEND_EVENT_LIMIT = 1000
 export const DEFAULT_CHECKPOINT_INTERVAL = 256
-export const DEFAULT_OUTBOXLOG_NAMESPACE = 'peerit'
+// App-neutral default namespace. Registered apps SHOULD pass an explicit
+// namespace; this fallback exists only so an operator who configures nothing
+// still gets a working single-namespace registry. It is intentionally NOT
+// 'peerit' — that was the last app-coupling in the generalized outboxlog.
+// Back-compat: an explicit namespace:'peerit' (or a namespaces map containing
+// 'peerit') still works exactly as before.
+export const DEFAULT_OUTBOXLOG_NAMESPACE = 'outbox'
 export const OUTBOXLOG_BLIND_SEAL_VERSION = 1
 export const OUTBOXLOG_BLIND_SEAL_DEFAULT_ALG = 'xchacha20poly1305'
 export const OUTBOXLOG_STATE_VERSION = 1
@@ -70,6 +76,12 @@ export function createOutboxLog ({
   const groups = new Map()
   const subscribers = new Map()
   const appendEventsByApp = new Map()
+  // DO-NOT-SERVE suppression set (operator takedown / liability parity). Keys
+  // are opaque `appId \x00 rowKey` composites — an operator drops a record by
+  // its opaque id WITHOUT reading the (possibly blind) content. The record
+  // stays in `group.rows`; suppression is applied only at serve time. Persisted
+  // so a takedown survives restart.
+  const suppressed = new Set()
   let namespaceRegistry = createOutboxNamespaceRegistry({ namespace, namespaces })
   const customVerifyAppend = typeof verifyAppend === 'function' ? verifyAppend : null
   const shouldVerifyAppend = verifyAppend !== false
@@ -207,24 +219,27 @@ export function createOutboxLog ({
 
     get (appId, key) {
       const group = getGroup(appId)
-      return group ? (group.rows.get(key) ?? null) : null
+      if (!group) return null
+      if (isSuppressed(appId, key)) return null // DO-NOT-SERVE
+      return group.rows.get(key) ?? null
     },
 
     list (appId, prefix, opts = {}) {
-      return rangeRows(getGroup(appId) || EMPTY, { prefix, limit: opts.limit })
+      return rangeRows(getGroup(appId) || EMPTY, { prefix, limit: opts.limit }, appId)
     },
 
     range (appId, opts = {}) {
-      return rangeRows(getGroup(appId) || EMPTY, opts)
+      return rangeRows(getGroup(appId) || EMPTY, opts, appId)
     },
 
     count (appId, prefix) {
       const group = getGroup(appId)
       if (!group) return { count: 0 }
-      if (!prefix) return { count: group.rows.size }
       let count = 0
       for (const key of group.rows.keys()) {
-        if (key >= prefix && key < prefix + '\xff') count++
+        if (prefix && !(key >= prefix && key < prefix + '\xff')) continue
+        if (isSuppressed(appId, key)) continue // DO-NOT-SERVE
+        count++
       }
       return { count }
     },
@@ -253,6 +268,31 @@ export function createOutboxLog ({
 
     events (appId, opts = {}) {
       return appendEventsPage(appId, opts)
+    },
+
+    // Operator takedown: mark an opaque record id (appId + rowKey) DO-NOT-SERVE.
+    // The record is NOT read, decoded, or deleted — subsequent serve-time reads
+    // simply suppress it. Idempotent. Returns whether the id is now suppressed.
+    takedown (appId, key) {
+      return applyTakedown(appId, key, true)
+    },
+
+    // Reverse a takedown for an opaque record id. Idempotent.
+    restore (appId, key) {
+      return applyTakedown(appId, key, false)
+    },
+
+    // List the current DO-NOT-SERVE set as opaque { appId, key } ids. Content
+    // is never read; this is the operator-facing audit surface for takedowns.
+    takedowns () {
+      const ids = []
+      for (const composite of suppressed) {
+        const split = composite.indexOf('\x00')
+        if (split < 0) continue
+        ids.push({ appId: composite.slice(0, split), key: composite.slice(split + 1) })
+      }
+      ids.sort((a, b) => (a.appId < b.appId ? -1 : a.appId > b.appId ? 1 : a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      return { takedowns: ids, count: ids.length }
     }
   }
 
@@ -264,10 +304,43 @@ export function createOutboxLog ({
     configurePersistence,
     configureNamespaces,
     namespaces: () => namespaceRegistry.snapshot(),
+    takedown: sync.takedown,
+    restore: sync.restore,
+    takedowns: sync.takedowns,
+    isSuppressed,
     snapshot,
     _stats () {
       return { groups: groups.size, totalBytes, directorySeq, appendSeq }
     }
+  }
+
+  function suppressionKey (appId, key) {
+    if (typeof appId !== 'string' || !appId || appId.length > maxAppIdLength) return null
+    if (typeof key !== 'string' || !key || key.length > maxIdLength + 65) return null
+    return appId + '\x00' + key
+  }
+
+  function isSuppressed (appId, key) {
+    const composite = suppressionKey(appId, key)
+    return composite ? suppressed.has(composite) : false
+  }
+
+  function applyTakedown (appId, key, drop) {
+    const composite = suppressionKey(appId, key)
+    if (!composite) throw fail('bad takedown id', 400)
+    const already = suppressed.has(composite)
+    if (drop === already) return { appId, key, suppressed: drop } // no change
+    if (drop) suppressed.add(composite)
+    else suppressed.delete(composite)
+    try {
+      saveState(journalTakedownEntry(appId, key, drop))
+    } catch (err) {
+      // Roll back the in-memory change so state and persistence stay coherent.
+      if (drop) suppressed.delete(composite)
+      else suppressed.add(composite)
+      throw fail('persistence failed', 500, err)
+    }
+    return { appId, key, suppressed: drop }
   }
 
   function namespaceInfoForCreate (opts = {}) {
@@ -344,6 +417,8 @@ export function createOutboxLog ({
   }
 
   function emitAppend (event) {
+    // DO-NOT-SERVE: never push a live event for a suppressed row.
+    if (event && isSuppressed(event.appId, event.key)) return
     if (onAppend) safeCall(onAppend, event)
     const globalSubscribers = subscribers.get('*')
     const appSubscribers = subscribers.get(event.appId)
@@ -363,8 +438,11 @@ export function createOutboxLog ({
     }
   }
 
-  function rangeRows (group, opts = {}) {
+  function rangeRows (group, opts = {}, appId = null) {
     let rows = sortedRows(group)
+    // DO-NOT-SERVE: drop suppressed rows before any paging so a taken-down
+    // record never appears in list/range results (it still exists in storage).
+    if (appId) rows = rows.filter((row) => !isSuppressed(appId, row.key))
     if (opts.prefix) rows = rows.filter((row) => row.key >= opts.prefix && row.key < opts.prefix + '\xff')
     if (opts.gte != null && opts.gte !== '') rows = rows.filter((row) => row.key >= opts.gte)
     if (opts.gt != null && opts.gt !== '') rows = rows.filter((row) => row.key > opts.gt)
@@ -384,7 +462,9 @@ export function createOutboxLog ({
     const rows = []
 
     for (const [appId, group] of groups) {
-      const head = group.rows.get('head!' + appId)
+      const headKey = 'head!' + appId
+      if (isSuppressed(appId, headKey)) continue // DO-NOT-SERVE: hide from directory
+      const head = group.rows.get(headKey)
       if (!head) continue
       const seq = Number.isSafeInteger(group.directorySeq) ? group.directorySeq : 0
       if (minSeq > 0 && seq <= minSeq) continue
@@ -415,7 +495,9 @@ export function createOutboxLog ({
     const minSeq = normalizeAppendSince(since)
     const pageLimit = clampAppendEventLimit(limit, maxAppendEventLimit)
     const events = appendEventsByApp.get(appId) || []
-    const changed = events.filter(event => event.seq > minSeq)
+    // DO-NOT-SERVE: drop append markers for suppressed rows so a taken-down
+    // record is not re-advertised to sync clients via the event stream.
+    const changed = events.filter(event => event.seq > minSeq && !isSuppressed(appId, event.key))
     const page = changed.slice(0, pageLimit).map(clone)
     return {
       events: page,
@@ -535,6 +617,9 @@ export function createOutboxLog ({
       directorySeq,
       appendSeq,
       journalSeq,
+      // Persist DO-NOT-SERVE ids as opaque [appId, key] pairs so takedowns
+      // survive restart. Never carries any record content.
+      suppressed: [...suppressed].map(splitSuppressionKey).filter(Boolean),
       appendEvents: [...appendEventsByApp.entries()].map(([appId, events]) => [
         appId,
         events.map(event => clone(event))
@@ -647,6 +732,12 @@ export function createOutboxLog ({
     for (const [appId, group] of nextGroups) groups.set(appId, group)
     appendEventsByApp.clear()
     for (const [appId, events] of nextAppendEvents) appendEventsByApp.set(appId, events)
+    suppressed.clear()
+    for (const entry of Array.isArray(state.suppressed) ? state.suppressed : []) {
+      if (!Array.isArray(entry) || entry.length !== 2) continue
+      const composite = suppressionKey(entry[0], entry[1])
+      if (composite) suppressed.add(composite)
+    }
     totalBytes = nextTotalBytes
     directorySeq = Math.max(
       Number.isSafeInteger(state.directorySeq) && state.directorySeq >= 0 ? state.directorySeq : 0,
@@ -665,6 +756,15 @@ export function createOutboxLog ({
       appId,
       inviteKey: group.inviteKey,
       namespace: group.namespace || null
+    }
+  }
+
+  function journalTakedownEntry (appId, key, drop) {
+    return {
+      kind: 'takedown',
+      appId,
+      key,
+      drop: drop === true
     }
   }
 
@@ -710,6 +810,13 @@ export function createOutboxLog ({
 
   function applyJournalEntry (entry) {
     if (entry.appId.length > maxAppIdLength) throw fail('persisted outbox appId too long', 400)
+    if (entry.kind === 'takedown') {
+      const composite = suppressionKey(entry.appId, entry.key)
+      if (!composite) return
+      if (entry.drop) suppressed.add(composite)
+      else suppressed.delete(composite)
+      return
+    }
     const entryNamespace = normalizePersistedNamespace(entry.namespace)
     const entryNamespaceInfo = entryNamespace ? namespaceRegistry.get(entryNamespace) : null
     if (entryNamespace && !entryNamespaceInfo) throw fail('persisted outbox namespace is not registered', 400)
@@ -857,7 +964,9 @@ export function createJsonlOutboxJournal (path) {
 
 export function createOutboxNamespaceRegistry ({ namespace = DEFAULT_OUTBOXLOG_NAMESPACE, namespaces = null } = {}) {
   const entries = new Map()
-  const configured = namespaces != null || namespace !== DEFAULT_OUTBOXLOG_NAMESPACE
+  const explicitNamespace = typeof namespace === 'string' && namespace !== DEFAULT_OUTBOXLOG_NAMESPACE
+  const explicitNamespaces = namespaces != null
+  const configured = explicitNamespaces || explicitNamespace
   const source = namespaces && typeof namespaces === 'object' && !Array.isArray(namespaces)
     ? namespaces
     : { [namespace || DEFAULT_OUTBOXLOG_NAMESPACE]: { blind: false } }
@@ -867,8 +976,15 @@ export function createOutboxNamespaceRegistry ({ namespace = DEFAULT_OUTBOXLOG_N
     entries.set(normalized.name, normalized)
   }
 
-  const defaultName = normalizeNamespaceName(namespace || DEFAULT_OUTBOXLOG_NAMESPACE)
-  if (!entries.has(defaultName)) entries.set(defaultName, normalizeNamespaceEntry(defaultName, { blind: false }))
+  // Only seed a default namespace when the caller configured NOTHING. When an
+  // explicit `namespaces` map or an explicit `namespace` is supplied, the
+  // registry admits exactly what was asked for — it no longer hard-injects a
+  // house namespace ('peerit' historically, now the app-neutral default). This
+  // is the last app-coupling removed: a Poked-only registry is Poked-only.
+  if (!configured) {
+    const defaultName = normalizeNamespaceName(namespace || DEFAULT_OUTBOXLOG_NAMESPACE)
+    if (!entries.has(defaultName)) entries.set(defaultName, normalizeNamespaceEntry(defaultName, { blind: false }))
+  }
 
   return {
     configured,
@@ -1132,6 +1248,19 @@ function normalizeJournalEntry (entry, expectedSeq) {
   if (entry.version !== OUTBOXLOG_JOURNAL_VERSION) return null
   if (entry.seq !== expectedSeq) return null
   if (typeof entry.appId !== 'string' || !entry.appId || entry.appId.length > DEFAULT_MAX_APP_ID_LENGTH) return null
+  // Takedown entries carry no inviteKey/op — just an opaque (appId,key) id and a
+  // drop flag. Normalize them before the inviteKey requirement below.
+  if (entry.kind === 'takedown') {
+    if (typeof entry.key !== 'string' || !entry.key || entry.key.length > DEFAULT_MAX_ID_LENGTH + 65) return null
+    return {
+      version: entry.version,
+      seq: entry.seq,
+      kind: 'takedown',
+      appId: entry.appId,
+      key: entry.key,
+      drop: entry.drop === true
+    }
+  }
   if (typeof entry.inviteKey !== 'string' || entry.inviteKey.length !== 64) return null
   const namespace = normalizePersistedNamespace(entry.namespace)
   if (entry.kind === 'create') {
@@ -1170,6 +1299,13 @@ function normalizeJournalEntry (entry, expectedSeq) {
       data: clone(op.data)
     }
   }
+}
+
+function splitSuppressionKey (composite) {
+  if (typeof composite !== 'string') return null
+  const split = composite.indexOf('\x00')
+  if (split < 0) return null
+  return [composite.slice(0, split), composite.slice(split + 1)]
 }
 
 function clone (value) {

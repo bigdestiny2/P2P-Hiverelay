@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 import { OutboxLogApp } from 'p2p-hiveservices/builtin/outboxlog/index.js'
 import {
+  createOutboxLogAdminAuth,
   createOutboxLogHttpHandler,
   createOutboxLogHttpState,
   createOutboxLogTokenAuth,
@@ -422,7 +423,7 @@ test('outboxlog http adapter: applies CORS and OPTIONS headers', async (t) => {
 
   t.is(res.statusCode, 204)
   t.is(res.header('Access-Control-Allow-Origin'), 'https://peerit.example')
-  t.is(res.header('Access-Control-Allow-Headers'), 'Content-Type, X-Pear-Token')
+  t.is(res.header('Access-Control-Allow-Headers'), 'Content-Type, X-Pear-Token, X-Pear-Admin-Token')
   t.is(res.header('Access-Control-Allow-Methods'), 'GET, POST, OPTIONS')
   t.is(res.header('Vary'), 'Origin')
 })
@@ -500,4 +501,119 @@ test('outboxlog http adapter: caps open SSE streams per IP', async (t) => {
   t.alike(parseBody(second), { error: 'too many open streams' })
 
   firstReq.emit('close')
+})
+
+test('outboxlog http admin: authenticated takedown suppresses serve-time reads; record survives; unauth rejected', async (t) => {
+  const app = new OutboxLogApp({ verifyAppend: () => true })
+  const adminAuth = createOutboxLogAdminAuth({ tokens: ['s3cret-admin-token'] })
+  const ctx = { ...createCtx({ app }), adminAuth }
+  const token = ctx.auth.issue()
+
+  await handleOutboxLogRoute(jsonReq('POST', '/api/sync/create', { appId: A }, token), fakeRes(), ctx)
+  await handleOutboxLogRoute(jsonReq('POST', '/api/sync/append', { appId: A, op: { type: 'post', data: { id: 'p1', t: 'ok' } } }, token), fakeRes(), ctx)
+  await handleOutboxLogRoute(jsonReq('POST', '/api/sync/append', { appId: A, op: { type: 'post', data: { id: 'p2', t: 'bad' } } }, token), fakeRes(), ctx)
+
+  // The browser sync token must NOT be able to take content down.
+  const withSyncToken = fakeRes()
+  await handleOutboxLogRoute(jsonReq('POST', '/api/admin/takedown', { appId: A, key: 'post!p2' }, token), withSyncToken, ctx)
+  t.is(withSyncToken.statusCode, 401, 'browser token rejected on admin surface')
+
+  // No token at all is rejected.
+  const noToken = fakeRes()
+  await handleOutboxLogRoute(jsonReq('POST', '/api/admin/takedown', { appId: A, key: 'post!p2' }), noToken, ctx)
+  t.is(noToken.statusCode, 401, 'unauthenticated takedown rejected')
+
+  // p2 is still served before an authorized takedown.
+  const before = fakeRes()
+  await handleOutboxLogRoute(fakeReq('GET', '/api/sync/get?appId=' + A + '&key=post!p2', null, { 'x-pear-token': token }), before, ctx)
+  t.alike(parseBody(before), { id: 'p2', t: 'bad' })
+
+  // Authorized takedown via the dedicated admin header.
+  const adminReq = jsonReq('POST', '/api/admin/takedown', { appId: A, key: 'post!p2' })
+  adminReq.headers['x-pear-admin-token'] = 's3cret-admin-token'
+  const takedown = fakeRes()
+  await handleOutboxLogRoute(adminReq, takedown, ctx)
+  t.is(takedown.statusCode, 200, 'authorized takedown accepted')
+  t.alike(parseBody(takedown), { appId: A, key: 'post!p2', suppressed: true })
+
+  // Now p2 is suppressed at serve time.
+  const after = fakeRes()
+  await handleOutboxLogRoute(fakeReq('GET', '/api/sync/get?appId=' + A + '&key=post!p2', null, { 'x-pear-token': token }), after, ctx)
+  t.is(parseBody(after), null, 'suppressed after authorized takedown')
+
+  // p1 is unaffected.
+  const p1 = fakeRes()
+  await handleOutboxLogRoute(fakeReq('GET', '/api/sync/get?appId=' + A + '&key=post!p1', null, { 'x-pear-token': token }), p1, ctx)
+  t.alike(parseBody(p1), { id: 'p1', t: 'ok' })
+})
+
+test('outboxlog http admin: takedown drops record from serve reads but not from storage', async (t) => {
+  const app = new OutboxLogApp({ verifyAppend: () => true })
+  const adminAuth = createOutboxLogAdminAuth({ tokens: ['admintok'] })
+  const ctx = { ...createCtx({ app }), adminAuth }
+  const token = ctx.auth.issue()
+
+  await handleOutboxLogRoute(jsonReq('POST', '/api/sync/create', { appId: A }, token), fakeRes(), ctx)
+  await handleOutboxLogRoute(jsonReq('POST', '/api/sync/append', { appId: A, op: { type: 'post', data: { id: 'p1', t: 'ok' } } }, token), fakeRes(), ctx)
+  await handleOutboxLogRoute(jsonReq('POST', '/api/sync/append', { appId: A, op: { type: 'post', data: { id: 'p2', t: 'bad' } } }, token), fakeRes(), ctx)
+
+  const adminReq = jsonReq('POST', '/api/admin/takedown', { appId: A, key: 'post!p2' })
+  adminReq.headers['x-pear-admin-token'] = 'admintok'
+  const takedown = fakeRes()
+  await handleOutboxLogRoute(adminReq, takedown, ctx)
+  t.is(takedown.statusCode, 200)
+  t.alike(parseBody(takedown), { appId: A, key: 'post!p2', suppressed: true })
+
+  // Suppressed at serve time.
+  const get = fakeRes()
+  await handleOutboxLogRoute(fakeReq('GET', '/api/sync/get?appId=' + A + '&key=post!p2', null, { 'x-pear-token': token }), get, ctx)
+  t.is(parseBody(get), null, 'get suppressed')
+
+  const list = fakeRes()
+  await handleOutboxLogRoute(fakeReq('GET', '/api/sync/list?appId=' + A + '&prefix=post!', null, { 'x-pear-token': token }), list, ctx)
+  t.alike(parseBody(list).map(r => r.key), ['post!p1'], 'list suppressed')
+
+  // But the record still EXISTS in storage.
+  t.ok(app.engine.isSuppressed(A, 'post!p2'))
+  const rows = app.engine.snapshot().groups.find(([id]) => id === A)[1].rows.map(([k]) => k).sort()
+  t.alike(rows, ['post!p1', 'post!p2'], 'suppressed record remains in storage')
+
+  // takedowns() audit surface lists the opaque id.
+  const listTakedowns = fakeRes()
+  const listReq = fakeReq('GET', '/api/admin/takedowns')
+  listReq.headers['x-pear-admin-token'] = 'admintok'
+  await handleOutboxLogRoute(listReq, listTakedowns, ctx)
+  t.alike(parseBody(listTakedowns), { takedowns: [{ appId: A, key: 'post!p2' }], count: 1 })
+
+  // Restore reverses it.
+  const restoreReq = jsonReq('POST', '/api/admin/restore', { appId: A, key: 'post!p2' })
+  restoreReq.headers['x-pear-admin-token'] = 'admintok'
+  const restore = fakeRes()
+  await handleOutboxLogRoute(restoreReq, restore, ctx)
+  t.alike(parseBody(restore), { appId: A, key: 'post!p2', suppressed: false })
+
+  const getAfter = fakeRes()
+  await handleOutboxLogRoute(fakeReq('GET', '/api/sync/get?appId=' + A + '&key=post!p2', null, { 'x-pear-token': token }), getAfter, ctx)
+  t.alike(parseBody(getAfter), { id: 'p2', t: 'bad' }, 'served again after restore')
+})
+
+test('outboxlog http admin: admin surface is 404 when no admin auth is configured', async (t) => {
+  const ctx = createCtx() // no adminAuth
+  const req = jsonReq('POST', '/api/admin/takedown', { appId: A, key: 'post!p2' })
+  req.headers['x-pear-admin-token'] = 'whatever'
+  const res = fakeRes()
+  await handleOutboxLogRoute(req, res, ctx)
+  t.is(res.statusCode, 404, 'admin surface not enabled without admin auth')
+})
+
+test('outboxlog app: works with an arbitrary explicit namespace and no longer hard-defaults to peerit', async (t) => {
+  const app = new OutboxLogApp()
+  await app.start({
+    config: { outboxlog: { namespaces: { widget: { blind: false } } } },
+    node: { id: 'relay-widget' }
+  })
+  // Exactly the configured namespace — 'peerit' is NOT hard-injected any more.
+  t.alike(app.namespaces().map(entry => entry.name), ['widget'])
+  t.absent(app.namespaces().some(entry => entry.name === 'peerit'), 'no implicit peerit namespace')
+  await app.stop()
 })
