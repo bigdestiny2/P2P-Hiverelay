@@ -190,11 +190,58 @@ export class ShardPinRegistry {
     return this.livePins(hash, now).reduce((max, p) => Math.max(max, p.retainUntil), 0)
   }
 
+  /** All hashes with at least one live pin. */
+  liveHashes (now = this.clock()) {
+    const out = []
+    for (const [hash] of this.pins) if (this.refs(hash, now) > 0) out.push(hash)
+    return out
+  }
+
+  /** Forcibly drop every pin for a hash (operator/eviction purge). */
+  purgeHash (hash) {
+    if (this.pins.delete(hash)) this._schedulePersist()
+  }
+
   /** hashes whose every pin has expired (candidates for GC). */
   expiredHashes (now = this.clock()) {
     const out = []
     for (const [hash] of this.pins) if (this.refs(hash, now) === 0) out.push(hash)
     return out
+  }
+
+  /**
+   * hashes with AT LEAST ONE expired pin (whether or not a live pin remains).
+   * The sweep visits these so an expired pin on a still-live hash is purged and
+   * its engine dedup ref reconciled away — without ever deleting the bytes a
+   * remaining live pin still references (STO-002).
+   */
+  hashesWithExpiredPins (now = this.clock()) {
+    const out = []
+    for (const [hash, set] of this.pins) {
+      for (const pin of set.values()) {
+        if (!(pin.retainUntil > now)) { out.push(hash); break }
+      }
+    }
+    return out
+  }
+
+  /**
+   * Drop only the EXPIRED pins for one hash and return how many were removed.
+   * Live (still-valid retainUntil) pins are left intact — critical for the
+   * sweep-vs-PUT race: a fresh pin added concurrently for an expiring hash
+   * survives, so its shard is never wiped (STO-002). If the hash has no pins
+   * left afterwards the map row is dropped.
+   */
+  purgeExpiredPins (hash, now = this.clock()) {
+    const set = this.pins.get(hash)
+    if (!set) return 0
+    let removed = 0
+    for (const [ref, pin] of set) {
+      if (!(pin.retainUntil > now)) { set.delete(ref); removed++ }
+    }
+    if (set.size === 0) this.pins.delete(hash)
+    if (removed) this._schedulePersist()
+    return removed
   }
 
   /** Drop all fully-expired hashes from the registry. Returns the purged list. */

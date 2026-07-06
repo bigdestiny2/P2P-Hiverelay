@@ -3532,6 +3532,11 @@ export class RelayNode extends EventEmitter {
       node: this,
       store: this.store,
       config: this.config,
+      // Let the shard-store register its bytes with StorageAccounting so its
+      // dedicated-hypercore footprint is visible to the adoption/eviction
+      // guards (STO-005) — otherwise valid long-retain pins fill the disk
+      // unaccounted, re-opening the disk-full failure this fleet hit.
+      storageAccounting: this.storageAccounting || null,
       resolveCustodyAssignment: (custodyIntentId, relayPubkey) =>
         this._resolveShardCustodyAssignment(custodyIntentId, relayPubkey),
       shardPutAuth: (this.config.shardStore && Array.isArray(this.config.shardStore.putAuth))

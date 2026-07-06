@@ -35,6 +35,10 @@ function consumeProofBucket (buckets, key, quota, now) {
   return true
 }
 
+function numOr (v, fallback) {
+  return Number.isFinite(v) ? v : fallback
+}
+
 function decodeCiphertext (input) {
   if (b4a.isBuffer(input)) return input
   if (input instanceof Uint8Array) return b4a.from(input)
@@ -67,8 +71,21 @@ export class ShardStoreService extends ServiceProvider {
     this._proofBuckets = new Map()
     this.clock = typeof opts.clock === 'function' ? opts.clock : () => Date.now()
     // Metrics counters (aggregate only — never per-hash, for privacy).
-    this._metrics = { put: 0, get: 0, proof: 0, sweep: 0, rejected: 0 }
+    this._metrics = { put: 0, get: 0, proof: 0, sweep: 0, rejected: 0, evicted: 0 }
     this.store = null
+    // Cached shard byte total for the StorageAccounting source callback — a
+    // cheap synchronous read (recomputed on put/sweep/unpin/evict), so the
+    // relay's accounting sweep never has to walk the shard index (STO-005).
+    this._cachedBytes = 0
+    this._accounting = null
+    // Disk-pressure thresholds for the shard eviction path (STO-005). Above
+    // diskPressurePct we shed expired shards; only above hardCeilingPct do we
+    // touch still-valid (retainUntil-live) pins, lowest-priority first.
+    this.evictionConfig = {
+      diskPressurePct: numOr(opts.eviction?.diskPressurePct, 85),
+      hardCeilingPct: numOr(opts.eviction?.hardCeilingPct, 97),
+      maxEvictionsPerSweep: numOr(opts.eviction?.maxEvictionsPerSweep, 256)
+    }
   }
 
   manifest () {
@@ -117,9 +134,40 @@ export class ShardStoreService extends ServiceProvider {
     }
     await this.engine.ready()
     await this.pins.load()
+    await this._refreshCachedBytes()
+    // Register shard bytes with the relay's StorageAccounting so they are no
+    // longer invisible to the adoption/eviction guards (STO-005). The relay
+    // passes its accounting instance via the start context; absent it, the
+    // service still works (just uncounted, as before).
+    const accounting = this.opts.storageAccounting || context.storageAccounting || null
+    if (accounting) this.registerStorageAccounting(accounting)
+  }
+
+  /** Recompute the cached shard byte total from the engine (authoritative). */
+  async _refreshCachedBytes () {
+    try {
+      const s = await this.engine.stats()
+      this._cachedBytes = Number.isFinite(s.bytes) ? s.bytes : this._cachedBytes
+    } catch { /* keep the last known value on a transient stats failure */ }
+    return this._cachedBytes
+  }
+
+  /**
+   * Register this service's shard byte usage with a StorageAccounting instance
+   * (STO-005). The callback is synchronous and returns the cached total, so the
+   * relay's accounting sweep never walks the shard index.
+   */
+  registerStorageAccounting (accounting) {
+    if (!accounting || typeof accounting.registerExternalSource !== 'function') return false
+    this._accounting = accounting
+    accounting.registerExternalSource('shard-store', () => this._cachedBytes)
+    return true
   }
 
   async stop () {
+    if (this._accounting && typeof this._accounting.unregisterExternalSource === 'function') {
+      this._accounting.unregisterExternalSource('shard-store')
+    }
     if (this.pins) await this.pins.close()
     if (this.engine) await this.engine.close()
   }
@@ -150,6 +198,7 @@ export class ShardStoreService extends ServiceProvider {
 
     const r = await this.engine.put(ciphertext, { claimedHash: params.claimedHash || null })
     const pinRef = this.pins.add(pin)
+    if (!r.deduped) this._cachedBytes += r.byteLength // new bytes on disk
     this._metrics.put++
     return {
       ok: true,
@@ -230,14 +279,98 @@ export class ShardStoreService extends ServiceProvider {
    */
   async sweep () {
     const now = this.clock()
-    const expired = this.pins.expiredHashes(now)
+    // Visit every hash with at least one expired pin — not only fully-expired
+    // hashes — so an expired pin on a still-live hash is purged and its engine
+    // dedup ref reconciled, while the bytes a remaining live pin references are
+    // retained (STO-002).
+    const expired = this.pins.hashesWithExpiredPins(now)
     const tombstones = []
+    const swept = []
     for (const hash of expired) {
-      if (this.keyPair) tombstones.push(buildShardTombstone({ hash, at: now, keyPair: this.keyPair }))
-      await this.engine.delete(hash)
+      // Reconcile the engine dedup ref-count with the pins we purge: every PUT
+      // contributed one engine ref + one pin, so drop one engine ref per purged
+      // (expired) pin. Only EXPIRED pins are removed — a live pin added
+      // concurrently for this hash survives. Then delete the bytes ONLY if BOTH
+      // the engine dedup count AND the remaining pin count are zero (STO-002).
+      // The engine serializes this check-then-delete against any concurrent
+      // PUT-dedup for the same hash, so a shard a live index generation still
+      // references is never silently wiped.
+      const purged = this.pins.purgeExpiredPins(hash, now)
+      for (let i = 0; i < purged; i++) await this.engine.decRef(hash)
+      const pinRefs = this.pins.refs(hash, now)
+      const del = await this.engine.deleteIfUnreferenced(hash, { pinRefs })
+      if (del.removed) {
+        if (this.keyPair) tombstones.push(buildShardTombstone({ hash, at: now, keyPair: this.keyPair }))
+        swept.push(hash)
+      }
     }
-    this.pins.purgeExpired(now)
-    return { ok: true, swept: expired.length, tombstones }
+    this._metrics.sweep += swept.length
+    if (swept.length) await this._refreshCachedBytes()
+    return { ok: true, swept: swept.length, tombstones }
+  }
+
+  /**
+   * Disk-pressure eviction for shards (STO-005). Bounds unbounded growth from
+   * valid long-retainUntil pins that would otherwise fill the disk (the
+   * disk-full failure this fleet already hit).
+   *
+   * Policy, from safest to most aggressive:
+   *   1. Below diskPressurePct: no-op.
+   *   2. At/above diskPressurePct: sweep expired shards (same as sweep()).
+   *   3. At/above hardCeilingPct ONLY: shed still-valid pins, lowest-priority
+   *      first (soonest-expiring retainUntil), to claw back space on a truly
+   *      full box. Below the hard ceiling a still-valid retainUntil pin is
+   *      NEVER evicted — the retention floor holds.
+   *
+   * @param {object} p
+   * @param {number} p.usedPct           current disk used percentage (0-100)
+   * @param {number} [p.diskPressurePct] override the configured pressure gate
+   * @param {number} [p.hardCeilingPct]  override the configured hard ceiling
+   * @param {number} [p.maxEvictions]    cap evictions this pass
+   * @returns {{ ok, usedPct, skipped?, expiredEvicted, forcedEvicted, evicted, tombstones }}
+   */
+  async evictUnderPressure ({ usedPct, diskPressurePct, hardCeilingPct, maxEvictions } = {}) {
+    const now = this.clock()
+    const pressurePct = numOr(diskPressurePct, this.evictionConfig.diskPressurePct)
+    const ceilingPct = numOr(hardCeilingPct, this.evictionConfig.hardCeilingPct)
+    const cap = numOr(maxEvictions, this.evictionConfig.maxEvictionsPerSweep)
+    const tombstones = []
+
+    if (!Number.isFinite(usedPct) || usedPct < pressurePct) {
+      return { ok: true, usedPct, skipped: 'below-pressure', expiredEvicted: 0, forcedEvicted: 0, evicted: 0, tombstones }
+    }
+
+    // Step 2: always reclaim expired shards under pressure.
+    const swept = await this.sweep()
+    for (const tomb of swept.tombstones) tombstones.push(tomb)
+    const expiredEvicted = swept.swept
+    let forcedEvicted = 0
+
+    // Step 3: only on a truly full box do we touch STILL-VALID pins. Below the
+    // hard ceiling the retainUntil floor is absolute — a valid pin is retained.
+    if (usedPct >= ceilingPct) {
+      // Lowest-priority first = soonest-to-expire retainUntil (least remaining
+      // value to the custody set). Deterministic and privacy-preserving (no
+      // per-hash logging).
+      const ranked = this.pins.liveHashes(now)
+        .map(hash => ({ hash, retainUntil: this.pins.retainUntil(hash, now) }))
+        .sort((a, b) => a.retainUntil - b.retainUntil)
+      for (const { hash } of ranked) {
+        if (expiredEvicted + forcedEvicted >= cap) break
+        // Force-drop every pin + the bytes for this hash.
+        this.pins.purgeHash(hash)
+        const del = await this.engine.deleteIfUnreferenced(hash, { pinRefs: 0, force: true })
+        if (del.removed) {
+          if (this.keyPair) tombstones.push(buildShardTombstone({ hash, at: now, keyPair: this.keyPair }))
+          forcedEvicted++
+        }
+      }
+    }
+
+    const evicted = expiredEvicted + forcedEvicted
+    this._metrics.evicted += forcedEvicted
+    if (evicted) await this._refreshCachedBytes()
+    return { ok: true, usedPct, expiredEvicted, forcedEvicted, evicted, tombstones }
   }
 
   /** Bytes + shard count, for StorageAccounting + metrics (no per-hash detail). */
@@ -258,9 +391,14 @@ export class ShardStoreService extends ServiceProvider {
     if (!params.pinRef || !params.removal) throw shardError('BAD_REQUEST', 'pinRef + signed removal required')
     const res = this.pins.remove(hash, params.pinRef, params.removal)
     let removed = false
-    if (this.pins.refs(hash) === 0) {
-      const del = await this.engine.delete(hash)
+    if (res.removed) {
+      // One pin gone -> drop the matching engine dedup ref, then delete the
+      // bytes ONLY if BOTH the engine dedup count AND the remaining live pin
+      // count are zero (STO-002). Atomic vs. a concurrent PUT-dedup.
+      await this.engine.decRef(hash)
+      const del = await this.engine.deleteIfUnreferenced(hash, { pinRefs: this.pins.refs(hash) })
       removed = del.removed
+      if (removed) await this._refreshCachedBytes()
     }
     return { ok: true, refs: res.refs, unpinned: res.removed, gc: removed }
   }

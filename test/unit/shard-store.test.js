@@ -468,6 +468,145 @@ test('shard-store http bridge: PUT/GET/HEAD/prove round-trip (M5)', async (t) =>
   t.is(missRes.status, 404)
 })
 
+// ─── STO-002: ref-count reconciliation + concurrent dedup/sweep ────────
+
+test('STO-002: sweep does not delete bytes a live (unexpired) pin still references', async (t) => {
+  const { store } = await tmpStore(t)
+  let now = NOW
+  const relay = keyPair(60)
+  const pinner = keyPair(61)
+  const svc = new ShardStoreService({ putAuth: ['payment'], checkPaymentQuota: () => true, keyPair: relay, clock: () => now })
+  await svc.start({ store })
+  t.teardown(() => svc.stop())
+
+  const sealed = b4a.from('shared-ciphertext-blob', 'utf8')
+  const hash = shardHash(sealed)
+  const b64 = b4a.toString(sealed, 'base64')
+
+  // Two pins on the SAME bytes -> engine dedup refs = 2, two pins.
+  // One expires early, one is long-lived (a live index generation).
+  const shortPin = signShardPin({ reason: 'payment', hash, retainUntil: NOW + 1000, nonce: 'aa'.repeat(16) }, pinner)
+  const longPin = signShardPin({ reason: 'payment', hash, retainUntil: NOW + 3600000, nonce: 'bb'.repeat(16) }, pinner)
+  await svc.put({ ciphertext: b64, pin: shortPin })
+  const p2 = await svc.put({ ciphertext: b64, pin: longPin })
+  t.is(p2.deduped, true, 'second put deduped the identical bytes')
+  t.is(p2.refs, 2, 'two live pins')
+  t.is(await svc.engine.refs(hash), 2, 'engine dedup ref-count tracks both puts')
+
+  now = NOW + 2000 // short pin expired, long pin still live
+  const swept = await svc.sweep()
+  t.is(swept.swept, 0, 'nothing deleted — a live pin still references the bytes')
+  t.is((await svc.has({ shard: 'shard:' + hash })).present, true, 'bytes retained (no custody data loss)')
+  t.is(await svc.engine.refs(hash), 1, 'one engine ref reconciled away with the expired pin')
+
+  // Now the long pin expires too -> both sources zero -> deleted.
+  now = NOW + 3600001
+  const swept2 = await svc.sweep()
+  t.is(swept2.swept, 1, 'last pin gone -> bytes finally reclaimed')
+  t.is((await svc.has({ shard: 'shard:' + hash })).present, false, 'bytes gone once BOTH sources are zero')
+})
+
+test('STO-002: a concurrent dedup PUT racing a sweep does not lose the shard', async (t) => {
+  const { store } = await tmpStore(t)
+  let now = NOW
+  const relay = keyPair(62)
+  const pinner = keyPair(63)
+  const svc = new ShardStoreService({ putAuth: ['payment'], checkPaymentQuota: () => true, keyPair: relay, clock: () => now })
+  await svc.start({ store })
+  t.teardown(() => svc.stop())
+
+  const sealed = b4a.from('race-ciphertext', 'utf8')
+  const hash = shardHash(sealed)
+  const b64 = b4a.toString(sealed, 'base64')
+
+  // Seed with a single short-lived pin.
+  const shortPin = signShardPin({ reason: 'payment', hash, retainUntil: NOW + 1000, nonce: 'cc'.repeat(16) }, pinner)
+  await svc.put({ ciphertext: b64, pin: shortPin })
+
+  now = NOW + 2000 // the seed pin is now expired -> sweep would GC it...
+  // ...but a fresh dedup PUT (new live pin) fires concurrently. The engine's
+  // per-hash lock serializes the two so the new reference is never wiped.
+  const freshPin = signShardPin({ reason: 'payment', hash, retainUntil: NOW + 3600000, nonce: 'dd'.repeat(16) }, pinner)
+  const [sweptRes] = await Promise.all([
+    svc.sweep(),
+    svc.put({ ciphertext: b64, pin: freshPin })
+  ])
+
+  // Regardless of interleaving, the shard the concurrent PUT re-referenced
+  // must still be held. (sweep may report 0 or 1 depending on order, but the
+  // bytes+the fresh live pin must survive.)
+  t.is((await svc.has({ shard: 'shard:' + hash })).present, true, 'concurrent dedup PUT preserved the shard')
+  t.is(svc.pins.refs(hash, now), 1, 'the fresh live pin survived the race')
+  t.ok(sweptRes.ok)
+  // And the bytes are actually retrievable (not a dangling index row).
+  const got = await svc.get({ shard: 'shard:' + hash })
+  t.ok(b4a.equals(b4a.from(got.ciphertext, 'base64'), sealed), 'bytes intact after the race')
+})
+
+// ─── STO-005: shard bytes accounted + disk-pressure eviction ───────────
+
+test('STO-005: shard bytes register with StorageAccounting and update on GC', async (t) => {
+  const { store } = await tmpStore(t)
+  const { StorageAccounting } = await import('../../packages/core/core/relay-node/storage-accounting.js')
+  const acc = new StorageAccounting({ appRegistry: { keys: () => [].values() } })
+  const pinner = keyPair(64)
+  const svc = new ShardStoreService({ putAuth: ['payment'], checkPaymentQuota: () => true, keyPair: keyPair(65), storageAccounting: acc })
+  await svc.start({ store })
+  t.teardown(() => svc.stop())
+
+  t.is(acc.getSummary().sourceBytes, 0, 'no shard bytes yet')
+  const sealed = b4a.from('accounted-share-bytes', 'utf8')
+  const hash = shardHash(sealed)
+  const put = await svc.put({ ciphertext: b4a.toString(sealed, 'base64'), pin: paymentPin(hash, pinner) })
+  t.is(acc.getSummary().sourceBytes, put.byteLength, 'shard bytes now visible to StorageAccounting')
+  t.ok(acc.getSummary().totalBytes >= put.byteLength, 'folded into the authoritative total')
+
+  // GC via unpin drops the bytes back out of accounting.
+  const removal = paymentPin(hash, pinner, 'f'.repeat(32))
+  await svc.unpin({ shard: 'shard:' + hash, pinRef: put.pinRef, removal })
+  t.is(acc.getSummary().sourceBytes, 0, 'accounting reflects reclaimed bytes')
+})
+
+test('STO-005: disk-pressure eviction sheds expired shards but never a still-valid retainUntil pin', async (t) => {
+  const { store } = await tmpStore(t)
+  let now = NOW
+  const relay = keyPair(66)
+  const pinner = keyPair(67)
+  const svc = new ShardStoreService({ putAuth: ['payment'], checkPaymentQuota: () => true, keyPair: relay, clock: () => now })
+  await svc.start({ store })
+  t.teardown(() => svc.stop())
+
+  const expiredBytes = b4a.from('expired-under-pressure', 'utf8')
+  const validBytes = b4a.from('still-valid-under-pressure', 'utf8')
+  const expiredHash = shardHash(expiredBytes)
+  const validHash = shardHash(validBytes)
+
+  const expiredPin = signShardPin({ reason: 'payment', hash: expiredHash, retainUntil: NOW + 1000, nonce: '11'.repeat(16) }, pinner)
+  const validPin = signShardPin({ reason: 'payment', hash: validHash, retainUntil: NOW + 3600000, nonce: '22'.repeat(16) }, pinner)
+  await svc.put({ ciphertext: b4a.toString(expiredBytes, 'base64'), pin: expiredPin })
+  await svc.put({ ciphertext: b4a.toString(validBytes, 'base64'), pin: validPin })
+
+  now = NOW + 2000 // the expired pin is now past retainUntil; the valid one is not.
+
+  // Below the hard ceiling: expired shard is evicted, the still-valid pin's
+  // retainUntil floor is honored (NOT evicted) even though we are under pressure.
+  const res = await svc.evictUnderPressure({ usedPct: 90, diskPressurePct: 85, hardCeilingPct: 97 })
+  t.is(res.expiredEvicted, 1, 'expired shard evicted under pressure')
+  t.is(res.forcedEvicted, 0, 'no still-valid pin touched below the hard ceiling')
+  t.is((await svc.has({ shard: 'shard:' + expiredHash })).present, false, 'expired shard gone')
+  t.is((await svc.has({ shard: 'shard:' + validHash })).present, true, 'still-valid retainUntil pin retained (floor honored)')
+
+  // Below the pressure gate: no-op.
+  const calm = await svc.evictUnderPressure({ usedPct: 50, diskPressurePct: 85 })
+  t.is(calm.skipped, 'below-pressure')
+  t.is((await svc.has({ shard: 'shard:' + validHash })).present, true, 'still held on a calm disk')
+
+  // At the hard ceiling: a truly full box may claw back even the valid pin.
+  const full = await svc.evictUnderPressure({ usedPct: 98, diskPressurePct: 85, hardCeilingPct: 97 })
+  t.is(full.forcedEvicted, 1, 'hard ceiling sheds the lowest-priority still-valid pin')
+  t.is((await svc.has({ shard: 'shard:' + validHash })).present, false, 'valid pin evicted only at the hard ceiling')
+})
+
 // Minimal HTTP req/res harness driving the shard adapter.
 async function httpCall (svc, method, path, body = null, headers = {}) {
   const { EventEmitter } = await import('node:events')
