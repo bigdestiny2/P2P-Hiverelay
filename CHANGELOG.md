@@ -8,6 +8,24 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+### Added
+- **OutboxLog operator takedown surface is now wired end-to-end.** The
+  `/api/admin/takedown` · `/restore` · `/takedowns` routes (opaque `(appId,key)`
+  id; content never read) now activate when an operator provisions a **dedicated
+  admin credential** distinct from the browser sync token — `config.outboxlog.adminKey`
+  or `HIVERELAY_OUTBOXLOG_ADMIN_KEY`. Safe-by-default: no credential ⇒ `404`;
+  configured ⇒ absent/wrong token `401`, only the exact token `200`
+  (constant-time compare). Fixes the follow-up flagged in the takedown PR where
+  the surface stayed `404` even when outboxlog was enabled (nothing passed
+  `ctx.adminAuth`, and the route matcher never admitted `/api/admin/`). Documented
+  in `docs/SERVICES.md`.
+
+### Changed
+- OutboxLog claims **exactly** the three `/api/admin/*` takedown routes rather
+  than reserving the whole `/api/admin/` namespace, so a future non-outboxlog
+  `/api/admin/<x>` route stays free to mount and a stray `/api/admin/<other>`
+  falls through to the server's generic not-found.
+
 ## [0.24.0] — 2026-07-04
 
 ### Added

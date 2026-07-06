@@ -9,6 +9,7 @@ function fakeOutboxLogApp () {
   const groups = new Map()
   let channelSeq = 0
   const channels = new Map()
+  const suppressed = new Set()
 
   function ensureGroup (appId) {
     let group = groups.get(appId)
@@ -45,7 +46,22 @@ function fakeOutboxLogApp () {
         for (const appId of appIds || []) heads[appId] = groups.get(appId)?.version || 0
         return { heads }
       },
-      directory () { return { heads: {}, count: 0 } }
+      directory () { return { heads: {}, count: 0 } },
+      takedown (appId, key) {
+        suppressed.add(appId + '|' + key)
+        return { appId, key, suppressed: true }
+      },
+      restore (appId, key) {
+        suppressed.delete(appId + '|' + key)
+        return { appId, key, suppressed: false }
+      },
+      takedowns () {
+        const list = [...suppressed].map((id) => {
+          const [appId, key] = id.split('|')
+          return { appId, key }
+        })
+        return { takedowns: list, count: list.length }
+      }
     },
     swarm: {
       join (topicHex) {
@@ -177,4 +193,41 @@ test('/api/outboxlog bridge token gates sync routes through RelayAPI', async (t)
   const created = await request(port, 'POST', '/api/sync/create', { appId: 'a'.repeat(64) }, { 'X-Pear-Token': token })
   t.is(created.statusCode, 200)
   t.is(created.body.appId, 'a'.repeat(64))
+})
+
+test('/api/admin/takedown is 404 through RelayAPI when no admin key is configured', async (t) => {
+  const app = fakeOutboxLogApp()
+  // No outboxLogAdminKey opt and no HIVERELAY_OUTBOXLOG_ADMIN_KEY env => the
+  // takedown surface must stay disabled (safe-by-default), even with an admin
+  // token supplied by the caller.
+  const { port } = await serverWithApi(t, mockNode({ registry: outboxRegistry(app) }))
+  const res = await request(port, 'POST', '/api/admin/takedown', { appId: 'a'.repeat(64), key: 'post!p1' }, { 'X-Pear-Admin-Token': 'anything' })
+
+  t.is(res.statusCode, 404, 'admin surface not enabled without an admin key')
+})
+
+test('/api/admin/takedown activates through RelayAPI when an admin key is configured', async (t) => {
+  const app = fakeOutboxLogApp()
+  const ADMIN_KEY = 'outboxlog-admin-secret'
+  const { port } = await serverWithApi(t, mockNode({ registry: outboxRegistry(app) }), { outboxLogAdminKey: ADMIN_KEY })
+  const appId = 'a'.repeat(64)
+
+  // Reachable (not 404) but rejects an absent admin token with 401.
+  const noToken = await request(port, 'POST', '/api/admin/takedown', { appId, key: 'post!p1' })
+  t.is(noToken.statusCode, 401, 'missing admin token rejected once the surface is enabled')
+
+  // Rejects a wrong admin token with 401. The browser sync token must NOT work
+  // on the admin surface, so exercise a plausible-but-wrong secret.
+  const wrongToken = await request(port, 'POST', '/api/admin/takedown', { appId, key: 'post!p1' }, { 'X-Pear-Admin-Token': 'wrong-secret' })
+  t.is(wrongToken.statusCode, 401, 'wrong admin token rejected')
+
+  // Accepts the configured admin token and performs the takedown.
+  const ok = await request(port, 'POST', '/api/admin/takedown', { appId, key: 'post!p1' }, { 'X-Pear-Admin-Token': ADMIN_KEY })
+  t.is(ok.statusCode, 200, 'correct admin token accepted')
+  t.alike(ok.body, { appId, key: 'post!p1', suppressed: true })
+
+  // The audit list surface is reachable under the same credential.
+  const list = await request(port, 'GET', '/api/admin/takedowns', null, { 'X-Pear-Admin-Token': ADMIN_KEY })
+  t.is(list.statusCode, 200)
+  t.alike(list.body, { takedowns: [{ appId, key: 'post!p1' }], count: 1 })
 })

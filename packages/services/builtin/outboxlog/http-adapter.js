@@ -252,7 +252,10 @@ function isOutboxLogApiPath (path) {
     path.startsWith('/api/identity') ||
     path.startsWith('/api/sync/') ||
     path.startsWith('/api/swarm/') ||
-    path.startsWith('/api/admin/')
+    // Exactly the three takedown routes — not the whole /api/admin/* namespace,
+    // so a stray /api/admin/<other> is not owned by outboxlog even when this
+    // adapter is mounted standalone.
+    isAdminPath(path)
   )
 }
 

@@ -16,13 +16,19 @@ export async function resolveOutboxLogHttpAdapter ({
   const handleOutboxLogRoute = mod && mod.handleOutboxLogRoute
   const createOutboxLogTokenAuth = mod && mod.createOutboxLogTokenAuth
   const createOutboxLogHttpState = mod && mod.createOutboxLogHttpState
+  // The takedown admin auth is service-owned (constant-time verify, separate
+  // from the browser sync token). Core resolves it here so it can construct
+  // ctx.adminAuth from operator config without reimplementing the primitive.
+  const createOutboxLogAdminAuth = mod && mod.createOutboxLogAdminAuth
   if (typeof handleOutboxLogRoute !== 'function') throw new Error('missing handleOutboxLogRoute export')
   if (typeof createOutboxLogTokenAuth !== 'function') throw new Error('missing createOutboxLogTokenAuth export')
   if (typeof createOutboxLogHttpState !== 'function') throw new Error('missing createOutboxLogHttpState export')
+  if (typeof createOutboxLogAdminAuth !== 'function') throw new Error('missing createOutboxLogAdminAuth export')
   return {
     handleOutboxLogRoute,
     createOutboxLogTokenAuth,
-    createOutboxLogHttpState
+    createOutboxLogHttpState,
+    createOutboxLogAdminAuth
   }
 }
 

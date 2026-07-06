@@ -1197,6 +1197,10 @@ export class RelayNode extends EventEmitter {
           apiHost: this.config.apiHost,
           corsOrigins: this.config.corsOrigins,
           apiKey: this.config.apiKey,
+          // Operator credential for the OutboxLog takedown admin surface. When
+          // unset here (and no HIVERELAY_OUTBOXLOG_ADMIN_KEY env), the admin
+          // routes stay 404 (safe-by-default) — takedown is opt-in per operator.
+          outboxLogAdminKey: this.config.outboxlog?.adminKey || null,
           trustProxy: this.config.trustProxy || false,
           uiExposeToken: this.config.ui?.exposeToken || false,
           uiSimple: this.config.ui?.simple || false

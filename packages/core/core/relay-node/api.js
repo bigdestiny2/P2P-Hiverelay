@@ -350,6 +350,15 @@ export class RelayAPI extends EventEmitter {
     // Read from opts, env var, or generate a random one
     this._apiKey = opts.apiKey || process.env.HIVERELAY_API_KEY || null
 
+    // Operator-provisioned admin credential for the OutboxLog takedown surface
+    // (/api/admin/takedown|restore|takedowns). Separate from _apiKey and from
+    // the browser sync token by design: only an operator who sets this up front
+    // can take content down. When unset the admin surface stays 404
+    // (safe-by-default) — the takedown routes are simply not enabled. Read from
+    // opts, config.outboxlog.adminKey, or the HIVERELAY_OUTBOXLOG_ADMIN_KEY env
+    // var, mirroring how HIVERELAY_API_KEY is wired.
+    this._outboxLogAdminKey = opts.outboxLogAdminKey || process.env.HIVERELAY_OUTBOXLOG_ADMIN_KEY || null
+
     // Per-IP request counts: ip -> { count, resetAt }
     this._rateLimits = new Map()
     this._endpointRateLimits = new Map()
@@ -382,6 +391,7 @@ export class RelayAPI extends EventEmitter {
     this._repairTicketHttpAdapter = null
     this._shardHttpAdapter = null
     this._outboxLogHttpAuth = opts.outboxLogHttpAuth || null
+    this._outboxLogHttpAdminAuth = opts.outboxLogHttpAdminAuth || null
     this._outboxLogHttpState = opts.outboxLogHttpState || null
     this._witnessLogHttpState = opts.witnessLogHttpState || null
     this._repairTicketHttpState = opts.repairTicketHttpState || null
@@ -731,6 +741,12 @@ export class RelayAPI extends EventEmitter {
           this._outboxLogHttpAdapter = adapter
           if (!this._outboxLogHttpAuth) this._outboxLogHttpAuth = adapter.createOutboxLogTokenAuth()
           if (!this._outboxLogHttpState) this._outboxLogHttpState = adapter.createOutboxLogHttpState()
+          // Construct the takedown admin auth only when the operator has
+          // provisioned a credential. No credential => adminAuth stays null =>
+          // the adapter serves the /api/admin/* surface as 404 (safe-by-default).
+          if (!this._outboxLogHttpAdminAuth && this._outboxLogAdminKey) {
+            this._outboxLogHttpAdminAuth = adapter.createOutboxLogAdminAuth({ tokens: [this._outboxLogAdminKey] })
+          }
         } catch (err) {
           const unavailable = buildOutboxLogHttpAdapterUnavailableResponse(err)
           this.emit(unavailable.event.name, unavailable.event.detail)
@@ -739,6 +755,7 @@ export class RelayAPI extends EventEmitter {
         const handled = await adapter.handleOutboxLogRoute(req, res, {
           outboxLogApp: outbox.provider,
           auth: this._outboxLogHttpAuth,
+          adminAuth: this._outboxLogHttpAdminAuth,
           state: this._outboxLogHttpState,
           allowOrigin: this.corsOrigins && this.corsOrigins.length ? this.corsOrigins : '*',
           trustProxy: this.trustProxy
