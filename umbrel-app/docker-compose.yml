@@ -2,8 +2,12 @@
 #
 # Conformance notes for Umbrel reviewers:
 #   - Multi-arch image (linux/amd64, linux/arm64), pinned by sha256 digest
-#     per Umbrel's reproducibility requirement (fill the digest in below —
-#     see the comment on the `image:` line).
+#     per Umbrel's reproducibility requirement. The `image:` ref below is
+#     name:tag@sha256:<digest>; the digest is authoritative and is rewritten
+#     to the freshly-built manifest digest at release time by
+#     `npm run release:prepare -- <version> --image-digest ...`. CI
+#     (.github/workflows/umbrel-app-validate.yml) fails the build if this ref
+#     ever regresses to a tag-only reference (audit HR-DIS-002).
 #   - The relay process runs non-root (uid/gid 999). The image entrypoint
 #     starts as root only to chown the bind-mounted /data, then drops to 999
 #     via gosu before exec'ing node — so no `user:` pin is set here (pinning
@@ -23,10 +27,15 @@ services:
       APP_PORT: 9100
 
   web:
-    # Pinned by digest per Umbrel's reproducibility requirement. For a
-    # personal sideload before submission, the bare tag also works; the
-    # digest pin is an App Store review requirement.
-    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.21.0
+    # Pinned by immutable digest (name:tag@sha256:...). The digest is
+    # authoritative — Docker resolves and verifies it, so a moved or
+    # re-pushed tag can never change what runs here. `release:prepare`
+    # rewrites this line to the freshly-built multi-arch manifest digest at
+    # release time (--image-digest). Do NOT hand-edit down to a bare `:tag`:
+    # that reintroduces the audited supply-chain gap (HR-DIS-002) and CI
+    # will reject it. This baseline pin is v0.20.2 (the last release whose
+    # digest was captured); the next `release:prepare` bumps it.
+    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.20.2@sha256:13e47f20d1c8f7d76abb23a3009f195c59a36184ec1fed1a9d3d5c365f62ff1e
     init: true
     restart: on-failure
     stop_grace_period: 1m

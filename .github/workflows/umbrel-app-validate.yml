@@ -136,6 +136,28 @@ jobs:
               print("::error::web service must specify an image", file=sys.stderr)
               sys.exit(1)
 
+          # Supply-chain gate (audit HR-DIS-002), FAIL CLOSED: the web image
+          # must be pinned by an immutable sha256 digest, not a floating tag.
+          # A tag-only ref lets whoever controls the registry/tag swap the
+          # bytes that run on every install; the digest makes the pull
+          # content-addressed and verifiable. Shape: name:tag@sha256:<64 hex>.
+          import re as _re
+          image_ref = str(web['image'])
+          digest_pin = _re.compile(
+              r'^ghcr\.io/bigdestiny2/p2p-hiverelay:'
+              r'\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?'
+              r'@sha256:[a-f0-9]{64}$'
+          )
+          if not digest_pin.match(image_ref):
+              print(
+                  f"::error::web image '{image_ref}' is not digest-pinned. "
+                  "It must be ghcr.io/bigdestiny2/p2p-hiverelay:<version>@sha256:<64 hex> "
+                  "(audit HR-DIS-002). Run `npm run release:prepare -- <version> "
+                  "--image-digest sha256:<digest>` to repin; never ship a tag-only ref.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
           # Spec compliance: persistent volume should mount under APP_DATA_DIR
           volumes = web.get('volumes', [])
           has_data_volume = any('${APP_DATA_DIR}' in v for v in volumes)

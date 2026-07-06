@@ -24,6 +24,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Required for cosign keyless (OIDC) signing: the job mints a short-lived
+      # OIDC token that Fulcio exchanges for an ephemeral signing certificate.
+      # No long-lived signing key is stored anywhere (audit HR-DIS-001).
+      id-token: write
 
     steps:
       - name: Checkout
@@ -53,6 +57,7 @@ jobs:
             type=sha,prefix=main-,enable={{is_default_branch}}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -62,3 +67,18 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Keyless (OIDC) signature over the pushed multi-arch manifest DIGEST
+      # (never a tag — tags move, digests don't). Signing by digest binds the
+      # signature to the exact bytes. Consumers verify with the identity +
+      # issuer below; see docs/SUPPLY-CHAIN.md (audit HR-DIS-001).
+      - name: Sign image (cosign keyless)
+        env:
+          COSIGN_YES: "true"
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --recursive "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"

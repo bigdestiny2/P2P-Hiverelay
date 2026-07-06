@@ -33,6 +33,16 @@ chmod 0644 /etc/hiverelay-updater.conf
 systemctl daemon-reload
 systemctl enable --now hiverelay-updater.timer
 
+# Supply-chain gate (audit HR-DIS-003): the updater refuses to check out a tag
+# that is not signed by a trusted key. Warn loudly if the allowed-signers file
+# is not yet provisioned — until it exists, updates correctly FAIL CLOSED.
+# See docs/SUPPLY-CHAIN.md § "Signed release tags".
+ALLOWED_SIGNERS="${HIVERELAY_ALLOWED_SIGNERS:-/etc/hiverelay/allowed-signers}"
+if [ ! -r "$ALLOWED_SIGNERS" ]; then
+  echo "WARN allowed-signers file '$ALLOWED_SIGNERS' not found — signed-tag" >&2
+  echo "     verification will FAIL CLOSED (no updates) until you install it." >&2
+fi
+
 # Also bound the log footprint so updates can't bloat the disk (idempotent,
 # does not restart the relay). Safe no-op if already hardened.
 if [ -f "$SRC/harden-box.sh" ]; then

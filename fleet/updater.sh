@@ -35,11 +35,95 @@ ENV_FILE="${HIVERELAY_ENV_FILE:-/etc/hiverelay/hiverelay.env}"
 HEALTH_TIMEOUT="${HIVERELAY_HEALTH_TIMEOUT:-120}"
 LOCK="/run/hiverelay-updater.lock"
 
+# ── supply-chain trust ─────────────────────────────────────────────
+# The updater checks out a channel-named tag it resolves from a remote
+# JSON file over the network. A repo/GitHub-account/CDN/CA MITM that can
+# move that tag (or serve a forged one) would otherwise run arbitrary code
+# as root on every box. We refuse to check out any tag that is not signed
+# by a key in a locally provisioned allowed-signers file — fail closed.
+#
+# ALLOWED_SIGNERS is an OpenSSH allowed_signers file (the operator writes
+# it once; see fleet/README.md "Signed releases"). We pin it as git's
+# gpg.ssh.allowedSignersFile for the verify and force gpg.format=ssh, so
+# verification never depends on whatever the box's git config happens to
+# be. Set HIVERELAY_REQUIRE_SIGNED_TAGS=0 ONLY to break glass in an
+# emergency where signing is broken and you accept the risk.
+ALLOWED_SIGNERS="${HIVERELAY_ALLOWED_SIGNERS:-/etc/hiverelay/allowed-signers}"
+REQUIRE_SIGNED_TAGS="${HIVERELAY_REQUIRE_SIGNED_TAGS:-1}"
+
 DRY_RUN=0
-[ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+VERIFY_ONLY=0
+case "${1:-}" in
+  --dry-run)     DRY_RUN=1 ;;
+  # Verify-only: run just the tag-signature gate against a given tag and
+  # exit 0 (trusted) / non-zero (untrusted). Used by the regression test
+  # and handy for operators auditing a tag by hand. Does not touch the box.
+  --verify-only) VERIFY_ONLY=1 ;;
+esac
 
 log() { echo "[updater $(date -u +%FT%TZ)] $*"; }
 die() { log "ERR $*"; exit 1; }
+
+# ── tag signature gate (fail closed) ───────────────────────────────
+# Return 0 only if $1 is an existing tag whose signature verifies against a
+# key in the operator-provisioned allowed-signers file. Any doubt -> non-zero.
+# We invoke git with an explicit, self-contained trust config (SSH format +
+# our allowed_signers path) so the result can't be softened by the box's
+# ambient git config, and we require an actual "Good ... signature" line
+# rather than trusting git's exit code alone.
+verify_tag() {
+  local tag="$1"
+  local out
+
+  if [ "$REQUIRE_SIGNED_TAGS" != "1" ]; then
+    log "WARN HIVERELAY_REQUIRE_SIGNED_TAGS=$REQUIRE_SIGNED_TAGS — tag signature verification DISABLED (break-glass); NOT recommended"
+    return 0
+  fi
+
+  if [ -z "$tag" ]; then
+    log "verify_tag: no tag given"; return 1
+  fi
+  # Must be an annotated/signed tag object; lightweight tags can't be signed.
+  if [ "$(git cat-file -t "refs/tags/$tag" 2>/dev/null)" != "tag" ]; then
+    log "verify_tag: '$tag' is not an annotated (signable) tag — refusing"
+    return 1
+  fi
+  if [ ! -r "$ALLOWED_SIGNERS" ]; then
+    log "verify_tag: allowed-signers file '$ALLOWED_SIGNERS' missing/unreadable — refusing (provision it; see fleet/README.md)"
+    return 1
+  fi
+  # SSH-signature path (default/documented). git prints the verification
+  # result to stderr; capture both streams. A verified SSH signature yields
+  # a "Good \"git\" signature" line; a GPG-signed tag yields
+  # "Good signature". Accept either, but ONLY when git also exits 0.
+  if out="$(git -c gpg.format=ssh \
+                -c "gpg.ssh.allowedSignersFile=$ALLOWED_SIGNERS" \
+                verify-tag --raw "$tag" 2>&1)"; then
+    if printf '%s' "$out" | grep -Eq 'GOODSIG|TRUST_(FULLY|ULTIMATE)' \
+       || printf '%s' "$out" | grep -qi 'Good.*signature'; then
+      return 0
+    fi
+  fi
+  log "verify_tag: signature check FAILED for '$tag' — refusing to check it out"
+  printf '%s\n' "$out" | sed 's/^/[updater verify]   /' >&2 || true
+  return 1
+}
+
+# ── verify-only mode ───────────────────────────────────────────────
+# `hiverelay-updater --verify-only <tag>`: run only the signature gate in
+# REPO_DIR and exit. No lock, no network, no box mutation — safe to run by
+# hand and used by the regression test to prove the gate rejects an
+# unsigned/untrusted tag.
+if [ "$VERIFY_ONLY" = 1 ]; then
+  VERIFY_TAG_ARG="${2:-}"
+  [ -n "$VERIFY_TAG_ARG" ] || die "--verify-only requires a tag argument"
+  cd "$REPO_DIR" || die "repo dir $REPO_DIR not found"
+  if verify_tag "$VERIFY_TAG_ARG"; then
+    log "verify-only: '$VERIFY_TAG_ARG' is TRUSTED"
+    exit 0
+  fi
+  die "verify-only: '$VERIFY_TAG_ARG' is UNTRUSTED"
+fi
 
 # ── single-flight ──────────────────────────────────────────────────
 # Lock under /run on Linux; fall back to /tmp where /run isn't writable
@@ -179,6 +263,13 @@ rollback_to_previous() {
 }
 
 # ── update ─────────────────────────────────────────────────────────
+# SUPPLY-CHAIN GATE (fail closed): never check out a tag we can't verify was
+# signed by a trusted key. This runs AFTER fetch (so the tag object + its
+# signature are local) and BEFORE checkout (so a forged/moved tag can never
+# reach the working tree, deps install, or a service restart). A failure
+# here leaves the box exactly where it was — no rollback needed.
+verify_tag "$TARGET" || die "refusing to update: tag $TARGET is not signed by a trusted key (see fleet/README.md 'Signed releases')"
+
 git checkout --quiet "$TARGET" || die "checkout $TARGET failed"
 deps_if_changed "$CUR_SHA" "$TARGET_SHA" || rollback_to_previous "dependency install failed on $TARGET"
 systemctl restart "$SERVICE"
