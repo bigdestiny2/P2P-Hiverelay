@@ -7225,7 +7225,7 @@ if (
   fleetRolloutCheck.includes("process.env.HIVERELAY_FLEET_CHANNEL || 'both'") &&
   fleetRolloutCheckTest.includes('defaults to both fleet channels') &&
   readme.includes('npm run fleet:check-rollout -- --target v<version> --channel both') &&
-  prepareRelease.includes('!args.noUmbrelStore && !isPrerelease') &&
+  prepareRelease.includes('!args.noUmbrelStore && (!isPrerelease || Boolean(args.umbrelStore))') &&
   prepareRelease.includes('!args.noEcosystemConsumers && !isPrerelease') &&
   prepareRelease.includes('syncEcosystemConsumerDefaults()') &&
   prepareRelease.includes('syncEcosystemConsumers({') &&
@@ -7235,7 +7235,7 @@ if (
   prepareRelease.includes("semver.includes('-') ? 'none' : 'both'") &&
   prepareReleaseTest.includes('defaults full release channel to both') &&
   prepareRelease.includes('cannot promote fleet/app-store channel') &&
-  prepareRelease.includes('cannot sync the community Umbrel store') &&
+  prepareReleaseTest.includes('syncs the community store for a prerelease with an explicit target') &&
   releaseEvidence.includes('successful prerelease channel') &&
   releaseWorkflow.includes('echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"') &&
   releaseWorkflow.includes('Pre-release $version cannot promote fleet/app-store channel') &&

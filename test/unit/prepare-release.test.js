@@ -157,21 +157,51 @@ test('prepare-release rejects explicit prerelease channel promotion', async (t) 
   t.ok(res.stderr.includes('Pre-release v9.9.9-beta.1 cannot promote fleet/app-store channel "canary"'))
 })
 
-test('prepare-release rejects explicit prerelease community-store sync', async (t) => {
+test('prepare-release syncs the community store for a prerelease with an explicit target', async (t) => {
+  // The community Umbrel store must auto-sync on EVERY release, prereleases
+  // included, so it never lags the fleet. A prerelease that passes an explicit
+  // --umbrel-store target is no longer rejected; it syncs the store (bumps the
+  // version and re-pins the image digest) just like a full release.
+  const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-prerelease-store-repo-'))
   const store = await mkdtemp(path.join(tmpdir(), 'hiverelay-prerelease-store-'))
   t.teardown(async () => {
+    await rm(repo, { recursive: true, force: true })
     await rm(store, { recursive: true, force: true })
   })
+  await writeMinimalReleaseFixture(repo)
+  await writeCommunityStoreFixture(store, '0.16.3')
 
   const res = await runPrepare([
     'v9.9.9-beta.1',
     '--umbrel-store', store,
     '--image-digest', DIGEST,
+    '--no-ecosystem-consumers',
     '--check'
-  ])
+  ], path.join(repo, 'scripts', 'prepare-release.mjs'))
 
-  t.is(res.status, 1)
-  t.ok(res.stderr.includes('Pre-release v9.9.9-beta.1 cannot sync the community Umbrel store'))
+  t.is(res.status, 1, res.stderr)
+  t.ok(res.stderr.includes('Release surfaces are out of sync:'))
+  t.ok(res.stderr.includes('hiverelay-blindspark/docker-compose.yml'), 'prerelease re-pins the community store compose image')
+  t.absent(res.stderr.includes('cannot sync the community Umbrel store'), 'prerelease with explicit store target is no longer rejected')
+  t.absent(res.stderr.includes('fleet/channels.json'), 'prerelease still does not bump fleet channels')
+})
+
+test('prepare-release skips the community store for an implicit prerelease', async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-prerelease-implicit-repo-'))
+  t.teardown(async () => {
+    await rm(repo, { recursive: true, force: true })
+  })
+  await writeMinimalReleaseFixture(repo)
+
+  const res = await runPrepare([
+    'v9.9.9-beta.1',
+    '--image-digest', DIGEST,
+    '--no-ecosystem-consumers',
+    '--check'
+  ], path.join(repo, 'scripts', 'prepare-release.mjs'))
+
+  t.is(res.status, 1, res.stderr)
+  t.absent(res.stderr.includes('hiverelay-blindspark'), 'implicit prerelease without --umbrel-store does not sync the community store')
 })
 
 test('prepare-release rejects invalid ecosystem dependency mode', async (t) => {
@@ -283,6 +313,20 @@ async function writeMinimalReleaseFixture (repo) {
   await writeText(path.join(repo, 'startos', 'manifest.yaml'), 'id: blindspark\nversion: 0.16.3\nrelease-notes: |\n  old\nlicense: apache-2.0\n')
   await writeText(path.join(repo, 'startos', 'Makefile'), 'VERSION ?= $(shell sed -n \'s/.*"version"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p\' ../package.json | head -n 1)\n')
   await writeText(path.join(repo, 'startos', 'README.md'), 'Status: v0.16.3, one-page dashboard\n')
+}
+
+async function writeCommunityStoreFixture (store, oldVersion) {
+  await writeJson(path.join(store, 'package.json'), { id: 'hiverelay-blindspark-store', version: oldVersion })
+  await writeText(
+    path.join(store, 'hiverelay-blindspark', 'docker-compose.yml'),
+    'services:\n  app:\n    image: ghcr.io/bigdestiny2/p2p-hiverelay:' + oldVersion + '@sha256:' + 'c'.repeat(64) + '\n'
+  )
+  await writeText(
+    path.join(store, 'hiverelay-blindspark', 'umbrel-app.yml'),
+    'version: "' + oldVersion + '"\nreleaseNotes: >-\n  old\n'
+  )
+  await writeText(path.join(store, 'README.md'), 'Image: `ghcr.io/bigdestiny2/p2p-hiverelay:' + oldVersion + '`\n')
+  await writeText(path.join(store, 'index.html'), '<p>ghcr.io/bigdestiny2/p2p-hiverelay:' + oldVersion + '</p>\n')
 }
 
 async function writeEcosystemConsumerFixture (root, oldVersion) {

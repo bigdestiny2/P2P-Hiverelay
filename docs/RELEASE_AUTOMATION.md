@@ -63,16 +63,24 @@ handoff and registry publication assets agree with the final release
 certificate, image-platform proof, smoke proof, live-fleet rollout proof, and
 package hash.
 
-Pre-releases are isolated by default. A tag such as `vX.Y.Z-beta.1` or a
-GitHub Release marked pre-release builds and pushes only its explicit image tag,
-uploads the StartOS test package to that GitHub Release, and uses
-`channel=none`. It does not update `latest`, fleet channels, Umbrel metadata,
-or the community store. The workflow rejects prereleases if a channel other
-than `none` is requested. `release:prepare` follows the same rule locally:
-pre-release versions default to `channel=none` and reject explicit fleet/app
-store channel promotion. They also skip the community Umbrel store by default
-and reject an explicit pre-release `--umbrel-store` target. They do not move
-sibling ecosystem app defaults.
+Pre-releases are isolated by default, with ONE deliberate exception: the
+community Umbrel store. A tag such as `vX.Y.Z-beta.1` or a GitHub Release marked
+pre-release builds and pushes only its explicit image tag, uploads the StartOS
+test package to that GitHub Release, and uses `channel=none`. It does not update
+`latest`, fleet channels, official Umbrel fork metadata, or npm `latest`. The
+workflow rejects prereleases if a channel other than `none` is requested.
+
+The community Umbrel store (`bigdestiny2/blindspark-umbrel-store`) now
+auto-syncs on EVERY release — prereleases included — whenever the
+`UMBREL_STORE_TOKEN` repository secret is set, so it never lags the fleet. The
+checkout, validate, and commit/push steps are gated on `UMBREL_STORE_TOKEN`
+alone (no `is_prerelease` condition). The built multi-arch image digest still
+flows into the store's `hiverelay-blindspark/docker-compose.yml` `@sha256` pin
+on every sync. `release:prepare` mirrors this locally: a full release syncs the
+store by default, and a prerelease syncs it when an explicit `--umbrel-store`
+target is passed (the workflow passes it whenever the store checkout is
+present). `--no-umbrel-store` always wins. Prereleases still do not move sibling
+ecosystem app defaults or promote a fleet/app-store channel.
 
 Full releases are distribution-complete by default. Before any public GitHub
 Release is looked up, created, reused, or written to, the workflow requires the
@@ -354,11 +362,19 @@ manually dispatched, the workflow:
 2. Creates or reuses the public GitHub Release object only after the
    distribution preflight passes for tag-push/manual runs so later asset
    uploads and download verification target the same release.
-3. Installs dependencies and runs `npm audit`, `npm run lint`,
-   `npm run audit:workspace`, `npm run audit:public-artifacts`,
+3. Installs dependencies and runs the blocking release gate: `npm audit`,
+   `npm run lint`, `npm run audit:public-artifacts`,
    `npm run release:check-npm-packages`,
    `node --test test/unit/ecosystem-consumers.test.js`, and
-   `npm run test:unit`. The public-artifact audit keeps release docs and
+   `npm run test:unit`. A real failure in any of these still fails the release.
+   `npm run audit:workspace` runs SEPARATELY as an ADVISORY step
+   (`continue-on-error`): it checks StartOS/Umbrel/docs version alignment and
+   cross-repo drift — release hygiene, not code correctness or security — so it
+   emits a `::warning::` annotation on drift but never aborts the image build or
+   the community-store sync. Fix flagged alignment drift before the next stable.
+   The public-artifact audit stays BLOCKING because it is a real secrets-leak
+   scanner (GitHub tokens, private keys, Bearer tokens in README/docs/.github),
+   not an alignment check. The public-artifact audit keeps release docs and
    workflows free of scanner-sensitive secret examples, the npm package dry-run
    gate proves the four publishable tarballs include README/license metadata
    without obvious unsafe paths, and the explicit ecosystem inventory guard
@@ -493,9 +509,16 @@ before SSH probing or public evidence writing.
 The in-repo Umbrel package (`umbrel-app/`) is always updated with the new
 image tag and digest.
 
-The community Umbrel store checkout is updated automatically. Full releases
-require repository secret `UMBREL_STORE_TOKEN` with push access to
-`bigdestiny2/blindspark-umbrel-store`; prereleases skip the external store.
+The community Umbrel store checkout is updated automatically on EVERY release —
+prereleases included — whenever repository secret `UMBREL_STORE_TOKEN` (push
+access to `bigdestiny2/blindspark-umbrel-store`) is set, so the community store
+never lags the fleet. The checkout, validate, and commit/push steps gate on
+`UMBREL_STORE_TOKEN` alone; there is no `is_prerelease` condition on the
+community store. Each sync bumps the store `package.json`/`umbrel-app.yml`
+version and re-pins the `hiverelay-blindspark/docker-compose.yml` image to the
+built multi-arch `@sha256` digest. Only the OFFICIAL Umbrel fork PR to
+getumbrel/umbrel-apps and the npm `latest` publish remain non-prerelease-gated.
+If `UMBREL_STORE_TOKEN` is unset, the store sync is skipped for that run.
 
 After metadata sync, the workflow runs `npm run umbrel:smoke-package` against
 the newly pinned package. This is a Docker lifecycle smoke for the Umbrel

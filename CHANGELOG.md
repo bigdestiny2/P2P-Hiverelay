@@ -8,6 +8,26 @@ The packages are versioned in lockstep.
 
 ## [Unreleased]
 
+### Changed (release automation)
+- **The community Umbrel store now auto-syncs on every release.** The
+  `bigdestiny2/blindspark-umbrel-store` checkout, validation, and commit/push
+  steps in `release-surfaces.yml` are gated on `UMBREL_STORE_TOKEN` alone — the
+  blanket `is_prerelease != 'true'` condition was removed — so prereleases sync
+  the store too and it never lags the fleet again. The built multi-arch image
+  digest still flows into the store's `docker-compose.yml` `@sha256` pin on every
+  sync. `prepare-release.mjs` now permits a prerelease community-store sync when
+  an explicit `--umbrel-store` target is given (the workflow passes it whenever
+  the store checkout is present). The official Umbrel fork PR and npm `latest`
+  publish remain non-prerelease/token-gated as before.
+- **Workspace/docs alignment audit is now advisory, not blocking.**
+  `npm run audit:workspace` (StartOS/Umbrel/docs version alignment + cross-repo
+  drift — release hygiene, not correctness) runs in its own `continue-on-error`
+  step and emits a `::warning::` annotation on drift instead of aborting the
+  release before the real unit tests, image build, and store sync. `npm audit`,
+  `npm run lint`, `npm run audit:public-artifacts` (a real secrets-leak
+  scanner), `release:check-npm-packages`, the ecosystem-consumers test, and
+  `npm run test:unit` stay hard-blocking.
+
 ## [0.24.0] — 2026-07-06
 
 ### Security (audit hardening — five HIGH blockers closed before public exposure)
