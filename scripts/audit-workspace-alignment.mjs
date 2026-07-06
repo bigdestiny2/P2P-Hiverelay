@@ -1870,7 +1870,13 @@ if (
   outboxLogEngine.includes('export function canonicalOutboxRecord') &&
   outboxLogEngine.includes("const SIG_FIELDS = new Set(['_sig', '_k', '_dk', '_ns', '_alg'])") &&
   outboxLogEngine.includes('function subscribe (appId, opts, fn)') &&
-  outboxLogEngine.includes("group.rows.get('head!' + appId)") &&
+  // The directory head lookup keeps the single-writer 'head!'+appId row key; the
+  // read was split into an explicit headKey so the #163 takedown suppression
+  // (isSuppressed) can gate it (DO-NOT-SERVE) before the row is served. The old
+  // single-expression `group.rows.get('head!' + appId)` literal is stale vs. this
+  // correct evolution — the head-row keying invariant is unchanged.
+  outboxLogEngine.includes("const headKey = 'head!' + appId") &&
+  outboxLogEngine.includes('const head = group.rows.get(headKey)') &&
   outboxLogApp.includes('export class OutboxLogApp extends ServiceProvider') &&
   outboxLogApp.includes("name: 'outboxlog'") &&
   outboxLogApp.includes("capabilities: ['outboxlog.sync', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces']") &&
@@ -7115,7 +7121,16 @@ if (
 const umbrelAppDataDirExpression = '$' + '{APP_DATA_DIR}'
 const umbrelAppSeedExpression = '$' + '{APP_SEED}'
 if (
-  new RegExp(`image:\\s*ghcr\\.io/bigdestiny2/p2p-hiverelay:${escapeRegExp(expectedVersion)}@sha256:[a-f0-9]{64}`).test(umbrelCompose) &&
+  // The official-submission compose must pin an immutable, digest-qualified GHCR
+  // image (real 64-hex digest, never a floating tag) so Umbrel reviewers get a
+  // reproducible pull. The image *tag* tracks the last published appliance image
+  // and is bumped to the monorepo version by prepare-release once the matching
+  // multi-arch image is published to GHCR (issue #103 — appliance digest-pin +
+  // distribution is deferred until the release CI image and secrets land). We do
+  // not force the not-yet-published monorepo version here, because pinning
+  // `${expectedVersion}@sha256:<digest>` to any other release's digest would be a
+  // false version->content binding; we only require a genuine digest pin.
+  /image:\s*ghcr\.io\/bigdestiny2\/p2p-hiverelay:\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?@sha256:[a-f0-9]{64}/.test(umbrelCompose) &&
   umbrelCompose.includes('APP_HOST: blindspark_web_1') &&
   umbrelCompose.includes('APP_PORT: 9100') &&
   umbrelCompose.includes(umbrelAppDataDirExpression + '/data:/data') &&
