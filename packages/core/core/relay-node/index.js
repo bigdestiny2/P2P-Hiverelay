@@ -1857,6 +1857,7 @@ export class RelayNode extends EventEmitter {
         followInterval: this.config.federation?.followInterval,
         followed: this.config.federation?.followed || [],
         mirrored: this.config.federation?.mirrored || [],
+        trustedForkObservers: this.config.federation?.trustedForkObservers || [],
         storagePath: join(this.config.storage, 'federation.json')
       })
       // Hydrate persisted follow/mirror state. The bootstrap entries from

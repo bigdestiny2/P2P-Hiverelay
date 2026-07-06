@@ -159,6 +159,85 @@ export function verifyForkProof (signed, opts = {}) {
 }
 
 /**
+ * Cryptographically verify that a pair of evidence entries proves a
+ * genuine hypercore fork (equivocation).
+ *
+ * The smoking gun for a fork is that the *hypercore's own key* signed
+ * two DIFFERENT blocks. In hypercore, every appended block is committed
+ * by an Ed25519 signature made with the core's keypair — and the core's
+ * public key IS the hypercore key. So a real fork proof is:
+ *
+ *   - two evidence entries whose `signature` is a valid Ed25519
+ *     signature, by the hypercore key, over that entry's `block`, and
+ *   - the two signed `block` payloads differ.
+ *
+ * If BOTH signatures verify under the hypercore key and the blocks
+ * differ, the key has demonstrably equivocated — no honest single-key
+ * core can produce that. Anything that fails to verify is NOT proof of
+ * a fork and MUST NOT be allowed to quarantine a drive: otherwise any
+ * peer could forge junk "evidence" and censor arbitrary drives
+ * network-wide (audit HR-SVC-004 / attack 8.2).
+ *
+ * `block` / `signature` are hex-encoded. This mirrors how the rest of
+ * the codebase serializes signed material on the wire.
+ *
+ * @param {object} args
+ * @param {string} args.hypercoreKey  hex (64) public key of the core
+ * @param {object} args.evidenceA     { block, signature }  (hex-encoded)
+ * @param {object} args.evidenceB     { block, signature }  (hex-encoded)
+ * @returns {{valid: boolean, reason?: string}}
+ */
+export function verifyForkEvidence ({ hypercoreKey, evidenceA, evidenceB } = {}) {
+  try {
+    if (typeof hypercoreKey !== 'string' || !/^[0-9a-f]{64}$/i.test(hypercoreKey)) {
+      return { valid: false, reason: 'bad hypercoreKey' }
+    }
+    if (!evidenceA || typeof evidenceA !== 'object' || !evidenceB || typeof evidenceB !== 'object') {
+      return { valid: false, reason: 'two evidence entries required' }
+    }
+    const pub = b4a.from(hypercoreKey, 'hex')
+
+    const a = decodeSignedBlock(evidenceA)
+    if (!a) return { valid: false, reason: 'evidenceA is not a hex-encoded signed block' }
+    const b = decodeSignedBlock(evidenceB)
+    if (!b) return { valid: false, reason: 'evidenceB is not a hex-encoded signed block' }
+
+    // The two conflicting heads must actually differ. Identical blocks
+    // (or identical signatures) are not equivocation.
+    if (b4a.equals(a.block, b.block)) {
+      return { valid: false, reason: 'both blocks are identical — not a fork' }
+    }
+    if (b4a.equals(a.signature, b.signature)) {
+      return { valid: false, reason: 'both signatures are identical — not a fork' }
+    }
+
+    // Each block must be validly signed BY THE HYPERCORE KEY. This is
+    // the cryptographic core of the proof.
+    if (!sodium.crypto_sign_verify_detached(a.signature, a.block, pub)) {
+      return { valid: false, reason: 'evidenceA signature does not verify under hypercoreKey' }
+    }
+    if (!sodium.crypto_sign_verify_detached(b.signature, b.block, pub)) {
+      return { valid: false, reason: 'evidenceB signature does not verify under hypercoreKey' }
+    }
+
+    return { valid: true }
+  } catch (err) {
+    return { valid: false, reason: 'verify error: ' + err.message }
+  }
+}
+
+function decodeSignedBlock (evidence) {
+  if (typeof evidence.block !== 'string' || evidence.block.length === 0) return null
+  if (typeof evidence.signature !== 'string' || !/^[0-9a-f]{128}$/i.test(evidence.signature)) return null
+  if (!/^[0-9a-f]+$/i.test(evidence.block) || evidence.block.length % 2 !== 0) return null
+  const block = b4a.from(evidence.block, 'hex')
+  const signature = b4a.from(evidence.signature, 'hex')
+  if (signature.length !== 64) return null
+  if (block.length === 0) return null
+  return { block, signature }
+}
+
+/**
  * Canonical serialization for signing. Sorts evidence-entry keys so
  * different JSON encoders produce identical bytes for the same
  * logical input.

@@ -384,6 +384,7 @@ export class BareRelay extends EventEmitter {
       followed: this.config.federation?.followed || [],
       mirrored: this.config.federation?.mirrored || [],
       republished: this.config.federation?.republished || [],
+      trustedForkObservers: this.config.federation?.trustedForkObservers || [],
       storagePath: join(this.config.storage, 'federation.json')
     })
     try { await this.federation.load() } catch (err) { log.warn('  federation load failed:', err.message) }

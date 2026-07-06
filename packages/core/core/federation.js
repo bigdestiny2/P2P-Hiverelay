@@ -26,7 +26,7 @@ import { EventEmitter } from 'events'
 import http from 'http'
 import { readFile, writeFile, mkdir, rename, unlink } from 'fs/promises'
 import { dirname, basename, join } from 'path'
-import { verifyForkProof } from './fork-proof-signing.js'
+import { verifyForkProof, verifyForkEvidence } from './fork-proof-signing.js'
 
 const DEFAULT_FOLLOW_INTERVAL = 5 * 60 * 1000 // 5 minutes
 const FETCH_TIMEOUT = 10_000
@@ -63,6 +63,21 @@ function validateUrlSafe (url) {
   } catch {
     return false
   }
+}
+
+// Normalize an operator-supplied trusted-fork-observer allow-list into a
+// lowercase Set of 64-hex pubkeys. Anything that isn't a valid 32-byte
+// hex key is dropped, so a malformed config entry can't silently widen
+// trust. Accepts an array of hex strings, or a single hex string.
+function normalizeObserverAllowList (input) {
+  const out = new Set()
+  const items = Array.isArray(input) ? input : (input == null ? [] : [input])
+  for (const item of items) {
+    if (typeof item === 'string' && /^[0-9a-f]{64}$/i.test(item)) {
+      out.add(item.toLowerCase())
+    }
+  }
+  return out
 }
 
 function utf8ByteLength (text) {
@@ -123,6 +138,14 @@ export class Federation extends EventEmitter {
     this.node = opts.node
     this.followInterval = opts.followInterval || DEFAULT_FOLLOW_INTERVAL
     this.storagePath = opts.storagePath || null
+
+    // Trusted fork-observer allow-list (audit HR-SVC-004). A pulled
+    // fork proof may only quarantine a drive if it was attested by an
+    // observer whose pubkey is on this list AND its conflicting-heads
+    // proof cryptographically verifies. Empty list = pulled fork proofs
+    // NEVER quarantine (fail closed) — an operator must explicitly trust
+    // observers before their gossip can censor drives on this node.
+    this.trustedForkObservers = normalizeObserverAllowList(opts.trustedForkObservers)
     // Keyed by URL so follow/unfollow are idempotent.
     this.followed = new Map()
     this.mirrored = new Map()
@@ -533,42 +556,75 @@ export class Federation extends EventEmitter {
     let rejected = 0
     for (const proof of data.proofs) {
       if (!proof) continue
-      // Two acceptable shapes during the M2 transition:
-      //   A. Signed envelope { version, proof, observer } — preferred
-      //   B. Bare record { hypercoreKey, evidence, ... } — accepted
-      //      from peers who haven't yet upgraded to the signed format.
-      //      Still funneled through ForkDetector but flagged as
-      //      'unverified-observer' in the fork record metadata.
-      let coreProof
-      let trustLevel
-      if (proof.version && proof.proof && proof.observer) {
-        const verify = verifyForkProof(proof)
-        if (!verify.valid) {
-          rejected++
-          continue
-        }
-        coreProof = proof.proof
-        trustLevel = 'signed-observer'
-      } else if (proof.hypercoreKey && Array.isArray(proof.evidence) && proof.evidence.length >= 2) {
-        coreProof = proof
-        trustLevel = 'unverified-observer'
-      } else {
+
+      // SECURITY (audit HR-SVC-004): a pulled fork proof quarantines a
+      // drive network-wide — an unauthenticated-censorship primitive if
+      // left ungated. Three cumulative gates before we let a remote
+      // party quarantine anything:
+      //
+      //   1. It MUST be a signed observer envelope. Bare unsigned
+      //      records ('unverified-observer') are rejected outright — no
+      //      more accept-anything transition path.
+      //   2. The observer envelope signature must verify.
+      //   3. The observer pubkey must be on our trusted-observer
+      //      allow-list. Empty list = fail closed (nothing quarantines).
+      //   4. The underlying conflicting-heads evidence must be a
+      //      cryptographically valid fork proof (both blocks signed by
+      //      the hypercore key, and different). Enforced again inside
+      //      forkDetector.report({ provenance: 'network' }).
+      if (!(proof.version && proof.proof && proof.observer)) {
+        rejected++
+        this.emit('fork-proof-rejected', { source: entryUrl, reason: 'unsigned proof (signed envelope required)' })
         continue
       }
+      const verify = verifyForkProof(proof)
+      if (!verify.valid) {
+        rejected++
+        this.emit('fork-proof-rejected', { source: entryUrl, reason: 'observer signature invalid: ' + verify.reason })
+        continue
+      }
+      const observerPubkey = typeof verify.observer === 'string' ? verify.observer.toLowerCase() : null
+      if (!observerPubkey || !this.trustedForkObservers.has(observerPubkey)) {
+        rejected++
+        this.emit('fork-proof-rejected', {
+          source: entryUrl,
+          observer: observerPubkey,
+          reason: 'observer not on trusted allow-list'
+        })
+        continue
+      }
+
+      const coreProof = proof.proof
+      if (!coreProof || !Array.isArray(coreProof.evidence) || coreProof.evidence.length < 2) {
+        rejected++
+        continue
+      }
+
+      // Final cryptographic gate: prove the actual fork before quarantine.
+      const evidenceValid = verifyForkEvidence({
+        hypercoreKey: coreProof.hypercoreKey,
+        evidenceA: coreProof.evidence[0],
+        evidenceB: coreProof.evidence[1]
+      })
+      if (!evidenceValid.valid) {
+        rejected++
+        this.emit('fork-proof-rejected', {
+          source: entryUrl,
+          observer: observerPubkey,
+          reason: 'fork evidence does not verify: ' + evidenceValid.reason
+        })
+        continue
+      }
+
       const result = this.node.forkDetector.report({
         hypercoreKey: coreProof.hypercoreKey,
         blockIndex: coreProof.blockIndex || 0,
         evidenceA: coreProof.evidence[0],
-        evidenceB: coreProof.evidence[1]
+        evidenceB: coreProof.evidence[1],
+        provenance: 'network'
       })
       if (result.ok && !result.recordExists) merged++
-      // (Future M2: persist trustLevel on the fork record so dashboard
-      // can distinguish signed observer attestations from legacy
-      // unverified ones.) For now the trust level is captured in the
-      // emit below.
-      if (trustLevel === 'unverified-observer') {
-        this.emit('fork-proof-unverified', { source: entryUrl, hypercoreKey: coreProof.hypercoreKey })
-      }
+      else if (!result.ok) rejected++
     }
     if (merged > 0 || rejected > 0) {
       this.emit('fork-proofs-merged', { source: entryUrl, count: merged, rejected })

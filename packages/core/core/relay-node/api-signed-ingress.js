@@ -144,11 +144,18 @@ export async function runForkProofPublishAction ({ body, forkDetector, emit = nu
   const snapshot = typeof forkDetector.snapshot === 'function'
     ? forkDetector.snapshot()
     : null
+  // SECURITY (audit HR-SVC-004): a valid observer envelope signature only
+  // proves SOMEONE signed this report — not that a real fork happened.
+  // Report as network provenance so ForkDetector additionally requires a
+  // cryptographically valid conflicting-heads proof before quarantining.
+  // Otherwise any client could POST an envelope-signed junk proof and
+  // censor an arbitrary drive.
   const result = forkDetector.report({
     hypercoreKey: body.proof.hypercoreKey,
     blockIndex: body.proof.blockIndex,
     evidenceA: body.proof.evidence[0],
-    evidenceB: body.proof.evidence[1]
+    evidenceB: body.proof.evidence[1],
+    provenance: 'network'
   })
   if (!result.ok) {
     return { ok: false, status: 400, payload: errorPayload('BAD_REQUEST', result.reason) }

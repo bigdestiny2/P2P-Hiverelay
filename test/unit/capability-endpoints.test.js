@@ -22,6 +22,25 @@ import {
   resolveCapabilityRoute
 } from 'p2p-hiverelay/core/relay-node/api-capabilities.js'
 
+// Build a GENUINE hypercore fork proof: two different blocks each signed
+// by the hypercore's OWN key. Post-HR-SVC-004 the fork endpoints require
+// this — a signed envelope over junk evidence no longer quarantines.
+function genuineForkProof (sodium, b4a) {
+  const publicKey = b4a.alloc(32)
+  const secretKey = b4a.alloc(64)
+  sodium.crypto_sign_keypair(publicKey, secretKey)
+  const hypercoreKey = b4a.toString(publicKey, 'hex')
+  const blockA = b4a.from('head-A@7', 'utf8')
+  const blockB = b4a.from('head-B@7-conflict', 'utf8')
+  const sigA = b4a.alloc(64); sodium.crypto_sign_detached(sigA, blockA, secretKey)
+  const sigB = b4a.alloc(64); sodium.crypto_sign_detached(sigB, blockB, secretKey)
+  return {
+    hypercoreKey,
+    evidenceA: { fromRelay: 'r1', block: b4a.toString(blockA, 'hex'), signature: b4a.toString(sigA, 'hex') },
+    evidenceB: { fromRelay: 'r2', block: b4a.toString(blockB, 'hex'), signature: b4a.toString(sigB, 'hex') }
+  }
+}
+
 function mockRelayNode ({ manifestStore, forkDetector } = {}) {
   return {
     running: true,
@@ -392,16 +411,21 @@ test('POST /api/forks/proof accepts properly signed envelope', async (t) => {
   const secretKey = b4a.alloc(64)
   sodium.crypto_sign_keypair(publicKey, secretKey)
 
+  // A genuine fork proof: two DIFFERENT blocks each signed by the
+  // hypercore's own key. Post-HR-SVC-004 the endpoint requires this — a
+  // signed envelope over junk evidence no longer quarantines.
+  const fork = genuineForkProof(sodium, b4a)
   const signed = signForkProof({
-    hypercoreKey: 'b'.repeat(64),
+    hypercoreKey: fork.hypercoreKey,
     blockIndex: 7,
-    evidence: [{ fromRelay: 'r1', block: 'b1', signature: 's1' }, { fromRelay: 'r2', block: 'b2', signature: 's2' }]
+    evidence: [fork.evidenceA, fork.evidenceB]
   }, { publicKey, secretKey })
 
   const res = await request(port, 'POST', '/api/forks/proof', signed)
   t.is(res.statusCode, 200)
   t.ok(res.body.ok)
   t.is(res.body.observer, b4a.toString(publicKey, 'hex'))
+  t.ok(fd.isQuarantined(fork.hypercoreKey), 'genuine proof quarantined the drive')
 })
 
 test('POST /api/forks/proof rolls back memory when fork save fails', async (t) => {
@@ -418,10 +442,11 @@ test('POST /api/forks/proof rolls back memory when fork save fails', async (t) =
   const secretKey = b4a.alloc(64)
   sodium.crypto_sign_keypair(publicKey, secretKey)
 
+  const fork = genuineForkProof(sodium, b4a)
   const signed = signForkProof({
-    hypercoreKey: 'd'.repeat(64),
+    hypercoreKey: fork.hypercoreKey,
     blockIndex: 7,
-    evidence: [{ fromRelay: 'r1', block: 'b1', signature: 's1' }, { fromRelay: 'r2', block: 'b2', signature: 's2' }]
+    evidence: [fork.evidenceA, fork.evidenceB]
   }, { publicKey, secretKey })
 
   const res = await request(port, 'POST', '/api/forks/proof', signed)
@@ -429,7 +454,7 @@ test('POST /api/forks/proof rolls back memory when fork save fails', async (t) =
   t.is(res.body.errorCode, 'persist-failed')
   t.ok(res.body.error?.startsWith('persist-failed: '))
   t.is(fd.list().length, 0, 'failed save did not leave runtime fork proof')
-  t.absent(fd.isQuarantined('d'.repeat(64)), 'failed save did not quarantine the key')
+  t.absent(fd.isQuarantined(fork.hypercoreKey), 'failed save did not quarantine the key')
 })
 
 test('POST /api/forks/proof rejects tampered signed proof', async (t) => {
