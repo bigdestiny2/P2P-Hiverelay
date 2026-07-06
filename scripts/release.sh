@@ -157,6 +157,11 @@ cmd_cut() {
   KEYFILE="$(mktemp)"; chmod 600 "$KEYFILE"
   get_signing_key > "$KEYFILE"
   [ -s "$KEYFILE" ] || die "signing key is empty (vault miss or empty env var)"
+  # Secret stores (keyvault included) strip the trailing newline, but OpenSSH
+  # private keys REQUIRE it — without it ssh-keygen reports 'invalid format',
+  # which git surfaces as the confusing 'Couldn't load public key … No such
+  # file or directory'. Re-add exactly one newline if the key doesn't end in one.
+  if [ -n "$(tail -c1 "$KEYFILE")" ]; then printf '\n' >> "$KEYFILE"; fi
 
   [ -z "$notes" ] && notes="$version"
   log "signing $version @ $target_sha (SSH, signer $SIGNER_EMAIL)…"
