@@ -1,0 +1,5 @@
+# HiveRelay release-tag allowed signers (OpenSSH allowed_signers format).
+# Populated by `scripts/release.sh setup`. Installed on each box at
+# /etc/hiverelay/allowed-signers, where fleet/updater.sh verify_tag checks
+# every release tag's signature against it (fail-closed). See docs/SUPPLY-CHAIN.md.
+# Format:  <signer-email> ssh-ed25519 AAAA... hiverelay-release
