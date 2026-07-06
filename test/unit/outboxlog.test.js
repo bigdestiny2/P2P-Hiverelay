@@ -671,7 +671,10 @@ test('outboxlog app: partitioned hypercore journal config restores rows and expo
   first.append({ appId: A, op: { type: 'post', data: post('p1', { body: 'app-outbox-core' }) } })
   await first.stop()
 
+  // Idempotent fake seeder (mirrors the real Seeder: re-seeding a pinned core
+  // is a cheap no-op). `calls` records only the first pin of each distinct key.
   const calls = []
+  const pinned = new Set()
   const second = new OutboxLogApp({ verifyAppend: () => true })
   await second.start({
     config: { outboxlog: { persistence: 'hypercore-outboxes' } },
@@ -680,6 +683,8 @@ test('outboxlog app: partitioned hypercore journal config restores rows and expo
       id: 'relay-b',
       seeder: {
         seedCore: async (coreKey) => {
+          if (pinned.has(coreKey)) return { ok: true }
+          pinned.add(coreKey)
           calls.push(coreKey)
           return { ok: true }
         }
@@ -692,6 +697,8 @@ test('outboxlog app: partitioned hypercore journal config restores rows and expo
   const info = second.journalInfo()
   t.is(info.index.name, OUTBOXLOG_PARTITIONED_JOURNAL_INDEX_NAME)
   t.alike(info.outboxes.map(outbox => outbox.name), [OUTBOXLOG_OUTBOX_CORE_PREFIX + A])
+  // On restore both cores already exist, so start() auto-seeds them both to the
+  // fleet seeder; this explicit re-seed is idempotent (no new pins).
   const seeded = await second.seedPersistenceCores()
   t.alike(seeded.map(entry => entry.coreKey), [info.index.coreKey, info.outboxes[0].coreKey])
   t.alike(calls, seeded.map(entry => entry.coreKey))

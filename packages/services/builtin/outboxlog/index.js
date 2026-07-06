@@ -53,6 +53,18 @@ export {
   sealOutboxBlindPayload
 } from './blind-seal.js'
 
+// Default re-affirm interval: re-hand the outbox cores to the fleet seeder
+// every 10 minutes so a core created between ticks becomes fleet-durable, and
+// re-affirmation survives seeder restarts. seedCore() is idempotent, so a
+// re-affirm of an already-seeded core is cheap.
+export const OUTBOXLOG_SEED_REAFFIRM_DEFAULT_MS = 600000
+
+function normalizeReaffirmMs (value, fallback) {
+  const n = Number(value)
+  if (Number.isFinite(n) && n >= 0) return Math.floor(n)
+  return fallback
+}
+
 export class OutboxLogApp extends ServiceProvider {
   constructor (opts = {}) {
     super()
@@ -64,6 +76,11 @@ export class OutboxLogApp extends ServiceProvider {
     this.persistenceDisabled = opts.persistence === false
     this.journal = opts.journal || null
     this.node = null
+    // Periodic re-affirm interval (ms) for handing the hypercore-outboxes
+    // journal cores to the fleet seeder. 0 disables the periodic re-affirm
+    // (the one-shot initial seed still runs). Default 10 minutes.
+    this.seedReaffirmMs = normalizeReaffirmMs(opts.seedReaffirmMs, OUTBOXLOG_SEED_REAFFIRM_DEFAULT_MS)
+    this._seedTimer = null
   }
 
   manifest () {
@@ -79,6 +96,9 @@ export class OutboxLogApp extends ServiceProvider {
     this.node = context.node || null
     const config = context && context.config && typeof context.config === 'object' ? context.config : {}
     const outboxlog = config.outboxlog && typeof config.outboxlog === 'object' ? config.outboxlog : {}
+    if (outboxlog.seedReaffirmMs !== undefined) {
+      this.seedReaffirmMs = normalizeReaffirmMs(outboxlog.seedReaffirmMs, this.seedReaffirmMs)
+    }
     if (this.engine.configureNamespaces && (outboxlog.namespaces || typeof outboxlog.namespace === 'string')) {
       this.engine.configureNamespaces({
         namespace: typeof outboxlog.namespace === 'string' ? outboxlog.namespace : DEFAULT_OUTBOXLOG_NAMESPACE,
@@ -116,9 +136,58 @@ export class OutboxLogApp extends ServiceProvider {
       })
       if (journal && configured !== false) this.journal = journal
     }
+    await this._startFleetSeeding()
+  }
+
+  // Hand the hypercore-outboxes journal cores to the fleet seeder so the log is
+  // fleet-durable (not just single-relay-durable). No-op unless the journal is
+  // in hypercore-outboxes mode. Never throws — the relay must still start.
+  async _startFleetSeeding () {
+    if (!this.journal || typeof this.journal.seedCores !== 'function') return
+    const seeder = this.node && this.node.seeder
+    if (!seeder || typeof seeder.seedCore !== 'function') {
+      this._logSeedWarn('[outboxlog] hypercore journal configured but node.seeder unavailable — outbox cores will NOT be fleet-durable; enable relay seeding')
+      return
+    }
+    // Initial one-shot seed (awaited so the log is fleet-durable by the time
+    // start() resolves; failure is caught inside _safeSeed and is non-fatal).
+    await this._safeSeed()
+    // Periodic re-affirm so cores created between ticks become fleet-durable and
+    // pins survive seeder restarts. seedCore() is idempotent (cheap re-affirm).
+    if (this.seedReaffirmMs > 0 && !this._seedTimer) {
+      this._seedTimer = setInterval(() => { this._safeSeed() }, this.seedReaffirmMs)
+      // Long-running relay: the timer must not hold the process open.
+      if (this._seedTimer && typeof this._seedTimer.unref === 'function') this._seedTimer.unref()
+    }
+  }
+
+  // Seed all persistence cores, catching + logging any error so a transient
+  // seed failure never crashes start() or the re-affirm loop.
+  async _safeSeed () {
+    try {
+      const seeded = await this.seedPersistenceCores()
+      this._logSeedInfo('[outboxlog] seeded ' + (Array.isArray(seeded) ? seeded.length : 0) + ' persistence core(s) to fleet seeder')
+      return seeded
+    } catch (err) {
+      this._logSeedWarn('[outboxlog] failed to seed persistence cores to fleet seeder: ' + (err && err.message ? err.message : err))
+      return []
+    }
+  }
+
+  // Overridable log sinks (tests capture these; default to console).
+  _logSeedWarn (msg) {
+    if (typeof console !== 'undefined' && typeof console.warn === 'function') console.warn(msg)
+  }
+
+  _logSeedInfo (msg) {
+    if (typeof console !== 'undefined' && typeof console.debug === 'function') console.debug(msg)
   }
 
   async stop () {
+    if (this._seedTimer) {
+      clearInterval(this._seedTimer)
+      this._seedTimer = null
+    }
     if (this.engine.flush) await this.engine.flush()
     // Tear down the swarm hub so no descriptor delivery fires after stop and
     // its channel/descriptor state is released. Guard the method so an

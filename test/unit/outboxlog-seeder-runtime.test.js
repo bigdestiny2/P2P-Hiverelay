@@ -33,6 +33,10 @@ test('outboxlog app runtime seeder pins partitioned Hypercore cores by key', asy
   app.create({ appId: A })
   app.append({ appId: A, op: { type: 'post', data: { id: 'p1', body: 'runtime-seeder-pickup' } } })
 
+  // start() auto-seeds the index core (the only core that exists at start,
+  // length 0) to the fleet seeder; this manual re-seed picks up the outbox core
+  // created by create()/append() above. seedCore() is idempotent, so the index
+  // is not re-pinned (no second seeding-core event for it).
   const seeded = await app.seedPersistenceCores()
   const info = app.journalInfo()
 
@@ -47,7 +51,10 @@ test('outboxlog app runtime seeder pins partitioned Hypercore cores by key', asy
   t.is(seeder.cores.get(info.index.coreKey).core, store.core(info.index.name))
   t.is(seeder.cores.get(info.outboxes[0].coreKey).core, store.core(info.outboxes[0].name))
   t.alike(seededEvents.map(event => event.publicKeyHex), seeded.map(entry => entry.coreKey))
-  t.alike(seededEvents.map(event => event.length), [1, 2])
+  // Index seeded on start() at length 0 (no outbox exists yet); the outbox is
+  // seeded on the manual re-seed, by which point create()+append() have taken
+  // its length to 2.
+  t.alike(seededEvents.map(event => event.length), [0, 2])
   t.is(swarm.joins.length, 2)
   t.alike(swarm.joins.map(entry => entry.opts), [
     { server: true, client: true },
