@@ -252,8 +252,11 @@ jobs:
         working-directory: hiverelay
         run: git checkout --detach "$HIVERELAY_RELEASE_SHA"
 
+      # Community store syncs on EVERY release (including prereleases) whenever
+      # the token is present, so it never lags the fleet. The OFFICIAL Umbrel
+      # fork PR + npm publish stay non-prerelease-gated below on purpose.
       - name: Checkout Umbrel community store
-        if: ${{ env.UMBREL_STORE_TOKEN != '' && steps.rel.outputs.is_prerelease != 'true' }}
+        if: ${{ env.UMBREL_STORE_TOKEN != '' }}
         uses: actions/checkout@v7
         with:
           repository: bigdestiny2/blindspark-umbrel-store
@@ -331,13 +334,28 @@ jobs:
         working-directory: hiverelay
         run: npm ci
 
+      # Workspace/docs ALIGNMENT drift (StartOS/Umbrel/docs version alignment,
+      # cross-repo sibling checks) is a release-hygiene signal, NOT code
+      # correctness or security. It must WARN loudly but never abort the image
+      # build or the community-store sync — otherwise a stale doc version blocks
+      # every distribution surface and the community store lags the fleet. Run
+      # it in its own non-fatal step so the annotation stays visible.
+      - name: Audit workspace alignment (advisory)
+        working-directory: hiverelay
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if ! npm run audit:workspace; then
+            echo "::warning title=Workspace alignment drift::npm run audit:workspace failed (non-blocking) — StartOS/Umbrel/docs alignment drift; fix before the next stable release."
+            exit 1
+          fi
+
       - name: Audit and test release gate
         working-directory: hiverelay
         run: |
           set -euo pipefail
           npm audit
           npm run lint
-          npm run audit:workspace
           npm run audit:public-artifacts
           npm run release:check-npm-packages
           node --test test/unit/ecosystem-consumers.test.js
@@ -521,8 +539,15 @@ jobs:
         run: |
           set -euo pipefail
           args=()
-          if [ "${{ steps.rel.outputs.is_prerelease }}" = "true" ]; then
+          # The community Umbrel store must sync on EVERY release (including
+          # prereleases) whenever the checkout is present, so the store never
+          # lags the fleet. Only skip the store sync when the token/checkout is
+          # absent. Ecosystem-consumer + main-surface sync stay prerelease-gated
+          # inside prepare-release.mjs.
+          if [ ! -d ../blindspark-umbrel-store ]; then
             args+=(--no-umbrel-store)
+          elif [ "${{ steps.rel.outputs.is_prerelease }}" = "true" ]; then
+            args+=(--umbrel-store ../blindspark-umbrel-store)
           fi
           npm run release:prepare -- "${{ steps.rel.outputs.version }}" \
             --channel "${{ steps.rel.outputs.channel }}" \
@@ -629,7 +654,7 @@ jobs:
           echo "HIVERELAY_STARTOS_RELEASE_ASSET_STATUS=uploaded" >> "$GITHUB_ENV"
 
       - name: Validate Umbrel community store
-        if: ${{ env.UMBREL_STORE_TOKEN != '' && steps.rel.outputs.is_prerelease != 'true' }}
+        if: ${{ env.UMBREL_STORE_TOKEN != '' }}
         working-directory: blindspark-umbrel-store
         run: |
           set -euo pipefail
@@ -837,7 +862,7 @@ jobs:
           echo "Official Umbrel draft PR: $pr_url"
 
       - name: Commit Umbrel community store
-        if: ${{ env.UMBREL_STORE_TOKEN != '' && steps.rel.outputs.is_prerelease != 'true' }}
+        if: ${{ env.UMBREL_STORE_TOKEN != '' }}
         working-directory: blindspark-umbrel-store
         run: |
           set -euo pipefail

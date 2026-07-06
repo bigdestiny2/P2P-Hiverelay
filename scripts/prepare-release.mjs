@@ -63,7 +63,11 @@ const releaseNotesProvided = Boolean(releaseNotesInline || releaseNotesPath)
 const releaseNotes = loadReleaseNotes(releaseNotesInline, releaseNotesPath) ||
   `Blindspark ${tag}: synchronized HiveRelay release for the fleet, Umbrel packages, and StartOS metadata.`
 assertPublicReleaseNotes(releaseNotes)
-const syncUmbrelStore = !args.noUmbrelStore && !isPrerelease
+// The community Umbrel store syncs on EVERY release so it never lags the fleet.
+// For a full release it syncs by default; for a prerelease it syncs only when an
+// explicit --umbrel-store target is given (the release workflow passes it
+// whenever the store checkout is present). --no-umbrel-store always wins.
+const syncUmbrelStore = !args.noUmbrelStore && (!isPrerelease || Boolean(args.umbrelStore))
 const syncEcosystemDefaults = !args.noEcosystemConsumers && !isPrerelease
 const ecosystemDependencyMode = args.ecosystemDependencyMode || process.env.HIVERELAY_ECOSYSTEM_DEPENDENCY_MODE || DEFAULT_DEPENDENCY_MODE
 const ecosystemConsumerScope = args.ecosystemConsumerScope || process.env.HIVERELAY_ECOSYSTEM_CONSUMER_SCOPE || 'all'
@@ -83,9 +87,9 @@ if (!['canary', 'stable', 'both', 'none'].includes(channel)) {
 if (isPrerelease && channel !== 'none') {
   die(`Pre-release ${tag} cannot promote fleet/app-store channel "${channel}"; use --channel none.`)
 }
-if (isPrerelease && args.umbrelStore) {
-  die(`Pre-release ${tag} cannot sync the community Umbrel store; use --no-umbrel-store.`)
-}
+// A prerelease MAY sync the community Umbrel store (so it never lags the fleet)
+// when an explicit --umbrel-store target is provided. It still cannot promote a
+// fleet/app-store channel (enforced above).
 if (!['local', 'npm-latest'].includes(ecosystemDependencyMode)) {
   die(`Invalid --ecosystem-dependency-mode "${ecosystemDependencyMode}". Expected local or npm-latest.`)
 }
