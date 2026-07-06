@@ -43,7 +43,7 @@ die()  { printf '\033[31mrelease: ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 need() { command -v "$1" >/dev/null 2>&1 || die "missing required tool: $1"; }
 
-# Any secret material written to disk is tracked here and shredded on EVERY exit
+# Any secret material written to disk is tracked here and removed on EVERY exit
 # path — success, error under `set -e`, or interrupt. A function-local trap would
 # miss the errexit path and strand a private key in the temp dir.
 KEYFILE=""; SETUP_TMP=""
@@ -86,7 +86,7 @@ cmd_setup() {
     printf '%s\n' "$line" >> "$ALLOWED_SIGNERS"
     log "added public key to $ALLOWED_SIGNERS"
   fi
-  log "PRIVATE key stored: vault '$VAULT_SCOPE/$VAULT_KEY_NAME' (never written to disk)"
+  log "PRIVATE key stored in vault '$VAULT_SCOPE/$VAULT_KEY_NAME' (generated in a 0700 temp dir, then removed — never persisted outside the vault)"
   cat >&2 <<EOF
 
   NEXT:
@@ -121,7 +121,10 @@ cmd_cut() {
   # FOOTGUN GUARD: the fleet updater health-gate compares the tag (minus 'v') to
   # the running /health version, which is package.json's version. A mismatch
   # (e.g. an -rc suffix while package.json says 0.24.0) auto-rolls-back the box.
-  local pkgver tagver; pkgver="$(node -p "require('$REPO_ROOT/package.json').version")"; tagver="${version#v}"
+  local pkgver tagver
+  pkgver="$(node -p "require('$REPO_ROOT/package.json').version" 2>/dev/null)" || true
+  [ -n "$pkgver" ] || die "cannot read a version from $REPO_ROOT/package.json"
+  tagver="${version#v}"
   if [ "$tagver" != "$pkgver" ]; then
     die "tag $version (=$tagver) != package.json version $pkgver. The fleet health-gate compares these; an -rc tag would auto-roll-back. Bump package.json to match, or tag exactly v$pkgver."
   fi
@@ -137,8 +140,20 @@ cmd_cut() {
   fi
   local target_sha; target_sha="$(git -C "$REPO_ROOT" rev-parse --short "$ref^{commit}")"
 
-  # Materialize the signing key to a 0600 temp file (shredded on ANY exit by the
-  # global cleanup trap — see KEYFILE above).
+  # Confirm BEFORE signing, so an abort — or a non-interactive stdin — can never
+  # strand a signed local tag.
+  if [ "$assume_yes" != 1 ]; then
+    if [ ! -t 0 ]; then
+      die "non-interactive (no TTY on stdin): re-run with -y to confirm — e.g. 'scripts/release.sh cut $version -y'"
+    fi
+    printf '\033[1mrelease: sign + push %s (%s) to %s as a %s release? [y/N] \033[0m' \
+      "$version" "$target_sha" "$GITHUB_REPO" "$([ "$prerelease" = 1 ] && echo prerelease || echo STABLE)" >&2
+    local reply=""; read -r reply || reply=""
+    [[ "$reply" =~ ^[Yy]$ ]] || die "aborted by user (nothing signed)"
+  fi
+
+  # Materialize the signing key to a 0600 temp file (removed on ANY exit path by
+  # the global cleanup trap — see KEYFILE above).
   KEYFILE="$(mktemp)"; chmod 600 "$KEYFILE"
   get_signing_key > "$KEYFILE"
   [ -s "$KEYFILE" ] || die "signing key is empty (vault miss or empty env var)"
@@ -149,9 +164,13 @@ cmd_cut() {
       tag -s "$version" "$ref" -m "$notes"
 
   # Self-verify against the shipped allowed-signers BEFORE pushing, so we never
-  # publish a tag the fleet's verify_tag would reject. Only when the file has at
-  # least one real (non-comment) signer line.
-  if [ -r "$ALLOWED_SIGNERS" ] && [ "$(grep -cvE '^[[:space:]]*(#|$)' "$ALLOWED_SIGNERS" 2>/dev/null || echo 0)" -gt 0 ]; then
+  # publish a tag the fleet's verify_tag would reject — but only when the file
+  # has at least one real (non-comment) signer line.
+  local signer_lines=0
+  if [ -r "$ALLOWED_SIGNERS" ]; then
+    signer_lines="$(grep -cvE '^[[:space:]]*(#|$)' "$ALLOWED_SIGNERS" 2>/dev/null || true)"
+  fi
+  if [ "${signer_lines:-0}" -gt 0 ]; then
     if git -C "$REPO_ROOT" -c gpg.format=ssh -c "gpg.ssh.allowedSignersFile=$ALLOWED_SIGNERS" \
          verify-tag "$version" >/dev/null 2>&1; then
       log "self-verify OK — signature trusts against fleet/allowed-signers"
@@ -163,20 +182,20 @@ cmd_cut() {
     warn "fleet/allowed-signers is empty — skipping self-verify. The fleet's verify_tag will REJECT this tag until you populate + ship it (run: $0 setup)."
   fi
 
-  if [ "$assume_yes" != 1 ]; then
-    printf '\033[1mrelease: push %s (%s) to %s and create a %s GitHub release? [y/N] \033[0m' \
-      "$version" "$target_sha" "$GITHUB_REPO" "$([ "$prerelease" = 1 ] && echo prerelease || echo STABLE)" >&2
-    read -r reply; [[ "$reply" =~ ^[Yy]$ ]] || { git -C "$REPO_ROOT" tag -d "$version" >/dev/null 2>&1 || true; die "aborted by user; local tag removed"; }
-  fi
-
   log "pushing tag…"
   git -C "$REPO_ROOT" push origin "$version"
 
   if command -v gh >/dev/null 2>&1; then
-    local pflag=(); [ "$prerelease" = 1 ] && pflag=(--prerelease)
     log "creating GitHub release ($([ "$prerelease" = 1 ] && echo prerelease || echo stable))…"
-    gh release create "$version" --repo "$GITHUB_REPO" "${pflag[@]}" --title "$version" \
-      --notes "$notes" || warn "gh release create failed (tag is pushed; create the release manually)"
+    # Build the invocation without an empty array — "${arr[@]}" on an empty array
+    # is an 'unbound variable' under `set -u` in bash 3.2 (macOS default).
+    if [ "$prerelease" = 1 ]; then
+      gh release create "$version" --repo "$GITHUB_REPO" --prerelease --title "$version" --notes "$notes" \
+        || warn "gh release create failed (tag is pushed; create the release manually)"
+    else
+      gh release create "$version" --repo "$GITHUB_REPO" --title "$version" --notes "$notes" \
+        || warn "gh release create failed (tag is pushed; create the release manually)"
+    fi
   else
     warn "gh not installed — tag pushed, but no GitHub release created. Install gh or create it in the UI."
   fi
@@ -209,7 +228,8 @@ cmd_status() {
   else
     printf 'signing key:    NOT in vault — run: %s setup\n' "$0"
   fi
-  printf 'allowed-signers:%s\n' "$([ -s "$ALLOWED_SIGNERS" ] && echo " $(grep -cvE '^\s*(#|$)' "$ALLOWED_SIGNERS") signer(s)" || echo ' empty — run: setup')"
+  local as_n=0; [ -r "$ALLOWED_SIGNERS" ] && as_n="$(grep -cvE '^[[:space:]]*(#|$)' "$ALLOWED_SIGNERS" 2>/dev/null || true)"
+  printf 'allowed-signers:%s\n' "$([ "${as_n:-0}" -gt 0 ] && echo " ${as_n} signer(s)" || echo ' none — run: setup')"
   printf 'package.json:    v%s (a fleet tag MUST be exactly this)\n' "$(node -p "require('$REPO_ROOT/package.json').version" 2>/dev/null || echo '?')"
 }
 

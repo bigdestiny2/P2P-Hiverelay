@@ -26,8 +26,9 @@ scripts/release.sh setup
 ```
 
 This generates an ed25519 key, stores the **private** half in the vault
-(`hiverelay-release/tag-signing-key`, never written to disk beyond a shredded
-temp), and appends the **public** half to `fleet/allowed-signers` keyed by your
+(`hiverelay-release/tag-signing-key`; generated in a `0700` temp dir that is
+removed immediately, so the private key never persists outside the vault), and
+appends the **public** half to `fleet/allowed-signers` keyed by your
 git `user.email`. Then:
 
 ```bash
@@ -70,7 +71,7 @@ email, allowed-signers count, package.json version).
   `fleet/allowed-signers` locally; if your key isn't trusted there, the tag is
   deleted and nothing is pushed — you never publish a tag the fleet would reject.
 - **No key on disk.** The signing key is materialized only to a `0600` temp file
-  that is shredded on every exit path (success, error, or interrupt).
+  that is removed on every exit path (success, error, or interrupt).
 
 ## Rotating the signing key
 
