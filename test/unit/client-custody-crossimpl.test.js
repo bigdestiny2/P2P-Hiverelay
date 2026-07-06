@@ -23,6 +23,8 @@ import {
   createCustodyIntent as clientIntent,
   createCustodyCommit as clientCommit,
   createSourceRetired as clientRetired,
+  verifyCustodyEntry as clientVerify,
+  validateCustodyTransition as clientValidate,
   hashHex as clientHashHex,
   summarizeCustodyStatus as clientSummary
 } from 'p2p-hiverelay-client/custody.js'
@@ -54,6 +56,17 @@ async function shareholders (n) {
 // relays[i] custodies share i+1 — the dealer's split-to-relay assignment.
 function assignmentsFor (relays) {
   return relays.map((r, i) => ({ relayPubkey: b4a.toString(r.publicKey, 'hex'), shareIndex: i + 1 }))
+}
+
+// shareManifest binds each shareIndex to a content-addressed shard:<hash> plus
+// the same per-index public commitment point the receipt pins. `res` is the
+// split() result carrying the Feldman commitment vector.
+function manifestFor (n, res) {
+  return Array.from({ length: n }, (_, i) => ({
+    shareIndex: i + 1,
+    shard: 'shard:' + hashHex('xm-shard-' + (i + 1)),
+    shareCommitment: shareCommitmentAt(res.public.commitments, i + 1)
+  }))
 }
 
 test('cross-impl: client + core hashHex agree', (t) => {
@@ -216,6 +229,80 @@ test('cross-impl: a client-signed v2 PVSS intent is byte-identical to core, veri
   }, relays[0], { timestamp: now + 1000 })
   t.ok(verifyCustodyEntry(receipt, { now: now + 1000 }).valid, 'core relay receipt verifies')
   t.ok(validateCustodyTransition(receipt, { intent: ci }).valid, 'core receipt binds to the client-signed v2 intent')
+})
+
+test('cross-impl: a client-signed v2 intent WITH a shareManifest is byte-identical to core, verifies, and binds a core receipt', async (t) => {
+  const now = Date.now()
+  const n = 3
+  const threshold = 2
+  const keys = await shareholders(n)
+  const res = await split({ threshold, shareholders: keys.map(k => k.publicKey) })
+  const publisher = keyPair()
+  const relays = Array.from({ length: n }, () => keyPair())
+  const manifest = manifestFor(n, res)
+  const fields = {
+    version: 2,
+    blindContentId: hashHex('xm-blind'),
+    ciphertextRoot: hashHex('xm-cipher'),
+    contentVersion: 1,
+    requiredReplicas: n,
+    deadline: now + 60_000,
+    retainUntil: now + 120_000,
+    shareScheme: 'pvss-secp256k1-v1',
+    shareThreshold: threshold,
+    commitmentRoot: res.public.commitmentRoot,
+    shareBundleKey: hashHex('xm-bundle'),
+    shareAssignments: assignmentsFor(relays),
+    shareManifest: manifest
+  }
+  const ci = clientIntent({ ...fields }, publisher, { timestamp: now })
+  const ki = coreIntent({ ...fields }, publisher, { timestamp: now })
+  // Keystone: the client can now author a manifest-bearing v2 intent and the
+  // signed bytes match core exactly — proves shareManifest (a nested array of
+  // objects stringified positionally) serializes identically in both impls.
+  t.is(ci.signature, ki.signature, 'client + core sign the manifest-bearing v2 intent identically')
+  t.alike(ci.shareManifest, ki.shareManifest, 'shareManifest normalizes identically')
+  t.is(ci.shareManifest.length, n, 'manifest survives normalization')
+  t.ok(verifyCustodyEntry(ci, { now }).valid, 'core verifies the client-signed manifest-bearing v2 intent')
+
+  // And the reverse: a core-signed manifest-bearing intent verifies + validates
+  // against the CLIENT verifier, and a core receipt binds to the client intent's
+  // manifest via the transition check (relays[0] custodies shareIndex 1).
+  t.ok(clientVerify(ki, { now }).valid, 'client verifies the core-signed manifest-bearing v2 intent')
+  const receipt = coreReceipt({
+    version: 2,
+    intentId: ci.intentId,
+    blindContentId: ci.blindContentId,
+    ciphertextRoot: ci.ciphertextRoot,
+    contentVersion: ci.contentVersion,
+    retainUntil: ci.retainUntil,
+    relayRegion: 'xm',
+    shardIds: [0],
+    shareScheme: 'pvss-secp256k1-v1',
+    commitmentRoot: ci.commitmentRoot,
+    shareIndex: 1,
+    shareCommitment: shareCommitmentAt(res.public.commitments, 1),
+    shareVerified: true
+  }, relays[0], { timestamp: now + 1000 })
+  t.ok(verifyCustodyEntry(receipt, { now: now + 1000 }).valid, 'core relay receipt verifies')
+  t.ok(validateCustodyTransition(receipt, { intent: ci }).valid, 'core receipt binds to the client-signed manifest-bearing intent (core transition)')
+  t.ok(clientValidate(receipt, { intent: ci }).valid, 'core receipt binds via the client transition check too')
+
+  // A receipt whose shareCommitment contradicts the manifest binding is rejected
+  // by BOTH transition checks — the manifest genuinely constrains the receipt.
+  const wrongCommitment = { ...receipt, shareCommitment: shareCommitmentAt(res.public.commitments, 2) }
+  t.absent(validateCustodyTransition(wrongCommitment, { intent: ci }).valid, 'core rejects a manifest-binding mismatch')
+  t.absent(clientValidate(wrongCommitment, { intent: ci }).valid, 'client rejects a manifest-binding mismatch')
+
+  // Manifest-ABSENT parity is not regressed: a v2 intent with no manifest still
+  // signs byte-identically between client and core (the optional field is
+  // dropped from both payloads).
+  const noManifest = { ...fields }
+  delete noManifest.shareManifest
+  const ciNo = clientIntent({ ...noManifest }, publisher, { timestamp: now })
+  const kiNo = coreIntent({ ...noManifest }, publisher, { timestamp: now })
+  t.is(ciNo.signature, kiNo.signature, 'manifest-absent v2 intents remain byte-identical (no regression)')
+  t.absent(ciNo.shareManifest, 'absent manifest is omitted, not null')
 })
 
 test('cross-impl: a client-signed custody-commit verifies and validates against core receipts', async (t) => {

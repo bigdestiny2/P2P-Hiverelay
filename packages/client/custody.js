@@ -200,17 +200,17 @@ const SIGNABLE_FIELDS_BY_TYPE = {
 // SHARE_FIELDS_BY_TYPE (packages/core/core/custody-signing.js). The two MUST
 // produce byte-identical signable payloads or every real client->relay custody
 // signature fails INVALID_CUSTODY_ENTRY — pinned by
-// test/unit/client-custody-crossimpl.test.js. This copy INTENTIONALLY omits
-// 'custody-intent' -> 'shareManifest' (core has it): the client cannot yet
-// construct a manifest-bearing intent, so the field is always absent and core's
-// OPTIONAL_SIGNABLE_FIELDS filter drops it from both payloads. Before enabling
-// client-side shard-binding custody, add 'shareManifest' here AND port core's
-// manifest handling (OPTIONAL_SIGNABLE_FIELDS filter in custodySignablePayload,
-// normalizeShareManifest, normalizeShardAddressField, allowlist entry, and the
-// validateCustodyTransition binding block) together — a partial mirror re-breaks
-// parity. Add a manifest-PRESENT cross-impl fixture at the same time.
+// test/unit/client-custody-crossimpl.test.js. As of task #115 this copy mirrors
+// core's 'shareManifest' field so a browser/Bare dealer can author a
+// manifest-bearing v2 intent. 'shareManifest' is OPTIONAL: when absent the
+// OPTIONAL_SIGNABLE_FIELDS filter (in custodySignablePayload) drops it from BOTH
+// payloads so a manifest-absent intent stays byte-identical to a manifest-absent
+// core intent; when present the manifest normalizers below make the signed bytes
+// identical to core's. Any edit here MUST be mirrored in core (and vice-versa):
+// the field list, OPTIONAL_SIGNABLE_FIELDS, normalizeShareManifest,
+// normalizeShardAddressField, and the allowlist all move together.
 const SHARE_FIELDS_BY_TYPE = {
-  'custody-intent': ['shareScheme', 'shareThreshold', 'commitmentRoot', 'shareBundleKey', 'shareAssignments'],
+  'custody-intent': ['shareScheme', 'shareThreshold', 'commitmentRoot', 'shareBundleKey', 'shareAssignments', 'shareManifest'],
   'custody-receipt': ['shareScheme', 'commitmentRoot', 'shareIndex', 'shareCommitment', 'shareVerified']
 }
 
@@ -523,6 +523,18 @@ export function validateCustodyTransition (entry, status = {}) {
         if (!assigned) return { valid: false, reason: 'relay not in shareAssignments' }
         if (assigned.shareIndex !== entry.shareIndex) return { valid: false, reason: 'shareIndex does not match assignment' }
       }
+      // When the intent binds shares to content-addressed shards, the receipt's
+      // shareIndex must exist in the signed manifest and its public commitment
+      // must equal the manifest's binding — so a relay cannot attest a share
+      // whose blob the dealer never committed to. Mirror of core's manifest
+      // binding block in validateCustodyTransition.
+      if (Array.isArray(intent.shareManifest)) {
+        const bound = intent.shareManifest.find(m => m.shareIndex === entry.shareIndex)
+        if (!bound) return { valid: false, reason: 'shareIndex not in shareManifest' }
+        if (entry.shareCommitment && entry.shareCommitment !== bound.shareCommitment) {
+          return { valid: false, reason: 'shareCommitment does not match manifest binding' }
+        }
+      }
       if (entry.shareVerified !== true) return { valid: false, reason: 'shareVerified must be true' }
     } else if (entry.shareScheme) {
       return { valid: false, reason: 'share custody declared for non-PVSS intent' }
@@ -821,6 +833,42 @@ function normalizeShareIntentFields (entry) {
   entry.commitmentRoot = hexField(entry.commitmentRoot, 'commitmentRoot')
   entry.shareBundleKey = hexField(entry.shareBundleKey, 'shareBundleKey')
   entry.shareAssignments = normalizeShareAssignments(entry.shareAssignments, entry.requiredReplicas, entry.shareThreshold)
+  const manifest = normalizeShareManifest(entry.shareManifest, entry.requiredReplicas)
+  if (manifest === undefined) delete entry.shareManifest
+  else entry.shareManifest = manifest
+}
+
+// shareManifest binds shareIndex -> content-addressed shard:<hash> (+ the
+// per-share public commitment). Optional: a v2 intent may still use the
+// shareBundleKey bundle instead. When present it is signed with the intent.
+// Byte-identical mirror of core's normalizeShareManifest.
+function normalizeShareManifest (value, requiredReplicas) {
+  if (value == null) return undefined
+  if (!Array.isArray(value)) throw new Error('shareManifest must be an array')
+  const seen = new Set()
+  const out = value.map((raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('shareManifest entry must be an object')
+    const shareIndex = positiveInteger(raw.shareIndex, 'shareManifest.shareIndex')
+    if (shareIndex > requiredReplicas) throw new Error('shareManifest shareIndex exceeds requiredReplicas')
+    if (seen.has(shareIndex)) throw new Error('duplicate shareIndex in shareManifest')
+    seen.add(shareIndex)
+    return {
+      shareIndex,
+      shard: normalizeShardAddressField(raw.shard, 'shareManifest.shard'),
+      // Same compressed secp256k1 point the receipt commits to (66 hex).
+      shareCommitment: pointField(raw.shareCommitment, 'shareManifest.shareCommitment')
+    }
+  })
+  out.sort((a, b) => a.shareIndex - b.shareIndex)
+  return out
+}
+
+function normalizeShardAddressField (value, name) {
+  if (typeof value !== 'string') throw new Error(name + ' must be a string')
+  const raw = value.startsWith('shard:') ? value.slice('shard:'.length) : value
+  const lower = raw.toLowerCase()
+  if (!HEX_32.test(lower)) throw new Error(name + ' must be shard:<64-hex>')
+  return 'shard:' + lower
 }
 
 // Each PVSS share is encrypted to a guardian and custodied by a specific relay.
@@ -933,8 +981,18 @@ function normalizeExpiryWitness (entry) {
   return orderedEntry(entry)
 }
 
+// A signature-covered field that is OPTIONAL (may be legitimately absent) must
+// be omitted from the payload when absent — never emitted as `null`. Otherwise
+// a payload that carries `[field, null]` diverges from every signer that omits
+// the field entirely (core when the manifest is absent, and every entry of this
+// version signed before the field was introduced). Byte-identical mirror of
+// core's OPTIONAL_SIGNABLE_FIELDS + custodySignablePayload filter.
+const OPTIONAL_SIGNABLE_FIELDS = new Set(['shareManifest'])
+
 function custodySignablePayload (entry) {
-  const fields = signableFieldsFor(entry)
+  const fields = signableFieldsFor(entry).filter(
+    field => !OPTIONAL_SIGNABLE_FIELDS.has(field) || entry[field] !== undefined
+  )
   const pairs = fields.map(field => [field, entry[field] ?? null])
   return b4a.from(`hiverelay-${entry.type}-v1:${JSON.stringify(pairs)}`)
 }
