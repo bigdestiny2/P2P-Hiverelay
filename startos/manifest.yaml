@@ -13,7 +13,7 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.24.0
+version: 0.24.1
 release-notes: |
   Five new blind relay services: an encrypted wake-up push bridge, a signed
   single-writer append log, a content-addressed blind blob store, signed
