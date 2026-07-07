@@ -23,12 +23,24 @@
 import Hyperdrive from 'hyperdrive'
 import { spawn } from 'node:child_process'
 import http from 'node:http'
-import { mkdir, writeFile, rm, rename } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, writeFile, rm, rename, readdir, symlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { verifyDriveManifest, verifyDriveContents } from './release-manifest.mjs'
 
 const MANIFEST_PATH = '/release-manifest.json'
 const MANIFEST_SIG_PATH = '/release-manifest.sig'
+
+// The monorepo's workspace self-references (node_modules/p2p-hiverelay -> ../packages/core
+// etc.). The drive ships packages/, NOT node_modules; these links point the cross-package
+// imports at the MIRROR's fresh packages/ so a self-update actually takes effect, while every
+// external dep resolves to the image's baked node_modules (native addons pinned to the image).
+const DEFAULT_WORKSPACE_LINKS = [
+  { name: 'p2p-hiverelay', target: 'packages/core' },
+  { name: 'p2p-hiveservices', target: 'packages/services' },
+  { name: 'p2p-hiverelay-client', target: 'packages/client' },
+  { name: 'p2p-hiverelay-verifier', target: 'packages/verifier' }
+]
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -102,8 +114,8 @@ export async function verifyAndMirror ({ drive, driveVersion, expectedReleaseKey
   }
 }
 
-export function spawnApp ({ dir, entry, port, dataDir, env = {} }) {
-  const child = spawn(process.execPath, [join(dir, entry)], {
+export function spawnApp ({ dir, entry, args = [], port, dataDir, env = {} }) {
+  const child = spawn(process.execPath, [join(dir, entry), ...args], {
     env: { ...process.env, ...env, PORT: String(port), DRIVE_BOOT_DATA_DIR: dataDir || '' },
     stdio: ['ignore', 'pipe', 'pipe']
   })
@@ -113,6 +125,26 @@ export function spawnApp ({ dir, entry, port, dataDir, env = {} }) {
   child.stderr.on('data', cap)
   child._logs = logs
   return child
+}
+
+// Wire a mirrored checkout's node_modules so EXTERNAL deps resolve to the image's baked
+// node_modules (native addons pinned to the image ABI) while the WORKSPACE packages resolve
+// to the MIRROR's fresh packages/. This is the concrete "pure-JS rides the drive, native stays
+// in the image" boundary (D2). Idempotent — skips if node_modules already exists.
+export async function linkNodeModules (mirrorDir, imageNodeModules, workspaceLinks = DEFAULT_WORKSPACE_LINKS) {
+  const nm = join(mirrorDir, 'node_modules')
+  if (existsSync(nm)) return nm
+  await mkdir(nm, { recursive: true })
+  const workspaceNames = new Set(workspaceLinks.map((w) => w.name))
+  const entries = await readdir(imageNodeModules, { withFileTypes: true })
+  for (const e of entries) {
+    if (workspaceNames.has(e.name)) continue // our own workspace pkgs override the image's
+    await symlink(join(imageNodeModules, e.name), join(nm, e.name)).catch(() => {})
+  }
+  for (const w of workspaceLinks) {
+    await symlink(join('..', w.target), join(nm, w.name)).catch(() => {})
+  }
+  return nm
 }
 
 // Poll the child's /health until running:true AND version==expected, or timeout.
@@ -130,9 +162,10 @@ export class DriveBootLoader {
   constructor (opts) {
     const {
       store, driveKey, expectedReleaseKey, mirrorRoot, dataDir,
-      entry, appPort, publicPort, healthPath = '/health', healthTimeoutMs = 120000, env = {}
+      entry, appArgs = [], portFlag = null, nodeModules = null, workspaceLinks = DEFAULT_WORKSPACE_LINKS,
+      appPort, publicPort, healthPath = '/health', healthTimeoutMs = 120000, env = {}
     } = opts
-    Object.assign(this, { store, driveKey, expectedReleaseKey, mirrorRoot, dataDir, entry, appPort, publicPort, healthPath, healthTimeoutMs, env })
+    Object.assign(this, { store, driveKey, expectedReleaseKey, mirrorRoot, dataDir, entry, appArgs, portFlag, nodeModules, workspaceLinks, appPort, publicPort, healthPath, healthTimeoutMs, env })
     this.state = { phase: 'sync', appVersion: null, driveVersion: null }
     this.current = null // { child, dir, appVersion, driveVersion }
     this.lastGood = null // { dir, appVersion, driveVersion }
@@ -156,6 +189,15 @@ export class DriveBootLoader {
   async _mirror (driveVersion) {
     await Promise.race([this.drive.update().catch(() => {}), sleep(3000)])
     return verifyAndMirror({ drive: this.drive, driveVersion, expectedReleaseKey: this.expectedReleaseKey, mirrorRoot: this.mirrorRoot })
+  }
+
+  // Link the mirror's node_modules (if configured for the real Node app) then spawn the
+  // entry with its args + the port flag. Centralizes the spawn so activate/swap/rollback
+  // all bring the app up identically.
+  async _spawn (dir) {
+    if (this.nodeModules) await linkNodeModules(dir, this.nodeModules, this.workspaceLinks)
+    const args = [...this.appArgs, ...(this.portFlag ? [this.portFlag, String(this.appPort)] : [])]
+    return spawnApp({ dir, entry: this.entry, args, port: this.appPort, dataDir: this.dataDir, env: this.env })
   }
 
   // The PUBLIC health/reverse-proxy shim. /health answers from loader STATE so it stays
@@ -191,7 +233,7 @@ export class DriveBootLoader {
   async _bringUp (driveVersion, phase) {
     this.state = { ...this.state, phase }
     const m = await this._mirror(driveVersion)
-    const child = spawnApp({ dir: m.dir, entry: this.entry, port: this.appPort, dataDir: this.dataDir, env: this.env })
+    const child = await this._spawn(m.dir)
     const ok = await healthGate({ port: this.appPort, healthPath: this.healthPath, expectedVersion: m.appVersion, timeoutMs: this.healthTimeoutMs })
     if (!ok) { child.kill('SIGKILL'); await onExit(child, 3000); throw Object.assign(new Error('drive-boot: health gate failed for ' + m.appVersion), { logs: child._logs.join('') }) }
     return { child, dir: m.dir, appVersion: m.appVersion, driveVersion: m.driveVersion }
@@ -225,7 +267,7 @@ export class DriveBootLoader {
 
     // 2. stop current, start the new version on the same port, health-gate it
     prev.child.kill('SIGTERM'); await onExit(prev.child, 5000)
-    const child = spawnApp({ dir: mirrored.dir, entry: this.entry, port: this.appPort, dataDir: this.dataDir, env: this.env })
+    const child = await this._spawn(mirrored.dir)
     const ok = await healthGate({ port: this.appPort, healthPath: this.healthPath, expectedVersion: mirrored.appVersion, timeoutMs: this.healthTimeoutMs })
     if (ok) {
       this.current = { child, dir: mirrored.dir, appVersion: mirrored.appVersion, driveVersion: mirrored.driveVersion }
@@ -236,7 +278,7 @@ export class DriveBootLoader {
 
     // 3. new version unhealthy → roll back to prev (last-good) and re-gate
     child.kill('SIGKILL'); await onExit(child, 3000)
-    const rb = spawnApp({ dir: prev.dir, entry: this.entry, port: this.appPort, dataDir: this.dataDir, env: this.env })
+    const rb = await this._spawn(prev.dir)
     const rbok = await healthGate({ port: this.appPort, healthPath: this.healthPath, expectedVersion: prev.appVersion, timeoutMs: this.healthTimeoutMs })
     this.current = { child: rb, dir: prev.dir, appVersion: prev.appVersion, driveVersion: prev.driveVersion }
     this.state = { phase: rbok ? 'running' : 'failed', appVersion: prev.appVersion, driveVersion: prev.driveVersion }
