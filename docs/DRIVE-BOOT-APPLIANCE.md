@@ -109,24 +109,30 @@ Two viable designs for mapping `channel → drive-version`:
 
 ---
 
-## 5. Governance decision — **DECISION D1 (blocking)**
+## 5. Governance decision — **DECISION D1 + D4 (RATIFIED 2026-07-07)**
 
-Drive-boot **opt-in, disclosed, off the official stores.** Concretely:
-- **Default:** ship auto-update **off**; operator enables it from the dashboard ("Keep Blindspark up to date automatically, channel: stable/canary"). *(Alternative: default on for our community store, off-switch prominent. Recommend default-off to honor the platform consent norm.)*
-- **Disclosure:** the store description + release notes + a first-run dashboard notice state plainly that the app can self-update its code over a signed P2P channel, and how to turn it off / pin a version.
-- **Distribution:** our own Umbrel community store + a StartOS custom registry + sideload. **Not** submitted to the official Umbrel/Start9 stores as a self-updating app (their review + pinned-digest/consent model would reject it, and rightly).
-- **Version honesty:** the dashboard shows the *true running* drive-version + channel + last-update/rollback, so the store-manifest version (which will lag) is never the source of truth an operator relies on.
+**Ratified:** pursue **all distribution channels including the official stores** (D1 = "Official too"), and ship auto-update **on by default with a prominent off-switch** (D4 = "On by default"). This is the widest-reach / most-hands-off end of the range; it is also the combination furthest from the platforms' *"never update without consent"* norm, so it carries **review risk on the official channels** and makes the disclosure/off-switch UX **load-bearing for acceptance**.
+
+Concretely:
+- **Default:** auto-update **on** out of the box (channel: stable), with a prominent dashboard off-switch and a per-version pin. First-run dashboard notice + store description + release notes disclose plainly that the app self-updates its code over a signed P2P channel and how to turn it off.
+- **Distribution:** our Umbrel community store + StartOS custom registry + sideload **and** submission to the **official** Umbrel/Start9 stores. Because the official channels' pinned-digest + consent model may reject an on-by-default self-updating app, official submission is **gated on a policy read (M0)** with a **defined fallback**: ship an **opt-in (default-off) variant for the official channel only** if reviewers require it — the off-switch makes this a config flag, not a rebuild.
+- **Version honesty:** the dashboard shows the *true running* drive-version + channel + last-update/rollback, so the (lagging) store-manifest version is never the source of truth.
+
+> **Why validation-first:** recon found no *written* ban on self-update in either platform's guidelines, but no green light either, and both guarantee consent-gated updates. Building an official-store submission before confirming policy risks wasted official-specific work. The shared core (M1-M3) is distribution-agnostic and proceeds regardless.
 
 ---
 
 ## 6. Execution plan
 
 ### Track 0 — Design + decisions (this doc; gates the rest)
-- **D1 Governance** (§5): opt-in default, disclosure, community-only. *Blocking.*
-- **D2 ABI/dep boundary:** v1 = `packages/`-only drive; dep changes ride image bumps. *(Recommended; low risk.)*
-- **D3 Channel pointer** (§4.4): signed Hyperbee (recommended) vs HTTPS `channels.json`.
-- **D4 Auto-update default:** off (recommended) vs on-with-off-switch.
-- **Exit:** decisions ratified; this doc merged.
+- **D1 Distribution:** ✅ RATIFIED "Official too" — all channels incl. official stores (§5), gated on M0 + opt-in fallback for the official channel.
+- **D2 ABI/dep boundary:** ✅ v1 = `packages/`-only drive; dep changes ride image bumps.
+- **D3 Channel pointer** (§4.4): signed Hyperbee (recommended) vs HTTPS `channels.json` — implementation choice, taken as signed-Hyperbee default.
+- **D4 Auto-update default:** ✅ RATIFIED "On by default" + prominent off-switch + disclosure (§5).
+- **Exit:** decisions ratified (done); this doc merged.
+
+### Track 0.5 — Official-store policy validation (gates T2/T3 official submission ONLY; NOT the shared core)
+- **M0 — Confirm the official-store stance.** Get an authoritative read from **Umbrel** (issue on `getumbrel/umbrel-apps` and/or Discord) and **Start9** (community forum / docs / Matrix) on whether a **disclosed, off-switchable, on-by-default self-updating** app is acceptable in their official store/registry, given their pinned-digest + consent guarantees. *Accept:* a documented yes / no / conditions from each platform. *On "no/conditions":* fall back to the opt-in (default-off) variant for that official channel; community + sideload proceed unchanged. **Runs in parallel with M1-M3; does not block them.**
 
 ### Track 1 — Shared drive-boot core
 - **M1 — Code-drive publisher.** Extend the publish path to package `packages/` into a signed hyperdrive + an offline-signed release manifest (reuse `sign-release.mjs`); seed durably on the fleet (archive tier). Prove durability with the existing metadata+blob gates. *Accept:* a published drive version reconstructs byte-identical on a fresh peer and the manifest verifies.
@@ -151,7 +157,7 @@ Drive-boot **opt-in, disclosed, off the official stores.** Concretely:
 
 | # | Risk / decision | Disposition |
 |---|---|---|
-| R1 | **Subverts platform consent model** | Opt-in + disclosed + community/sideload only (D1). Do not submit as self-updating to official stores. |
+| R1 | **On-by-default self-update + official-store submission conflicts with the platforms' consent model** (ratified D1/D4 = the highest-friction combo) | Validate first (**M0**) before official-specific work; disclosure + off-switch are load-bearing; **fallback = opt-in/default-off variant for the official channel only** (a config flag). Community + sideload proceed regardless. |
 | R2 | **StartOS 30 s health grace vs drive-sync time** | Loader serves `/health` from second 0 (§4.1). Validate on-device. |
 | R3 | **ABI/dep skew** if drive JS needs a dep the image lacks | v1 ships `packages/` only; dep changes ride image bumps (D2). CI check: drive version's `package-lock` == image's. |
 | R4 | **`noexec` mirror target** breaks `.node` dlopen | v1 keeps addons in the image; mirror only pure JS. Revisit for v2. |
