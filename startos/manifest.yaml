@@ -13,12 +13,10 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.24.1
+version: 0.24.2
 release-notes: |
-  Five new blind relay services: an encrypted wake-up push bridge, a signed
-  single-writer append log, a content-addressed blind blob store, signed
-  availability observations, and a signed self-healing repair loop. All
-  relay-blind and hardened via adversarial review.
+  Blindspark v0.24.2: synchronized HiveRelay release for the fleet, Umbrel
+  packages, and StartOS metadata.
 license: apache-2.0
 wrapper-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
 upstream-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"

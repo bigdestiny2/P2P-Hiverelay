@@ -6,6 +6,23 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.24.2] — 2026-07-07
+
+### Fixed
+- **CORS preflight for the public outboxlog surface (unblocks browsers).** The global
+  CORS handler ran before the outboxlog route dispatch and applied the default-deny
+  policy to it: with no `corsOrigins` allowlist (the fleet default) a cross-origin
+  `OPTIONS` preflight for outboxlog routes was answered `403 CORS origin denied`, and
+  `Access-Control-Allow-Headers` was hardcoded `Content-Type, Authorization` — missing
+  `X-Pear-Token`, the header a browser client sends. Browsers preflight; Node clients
+  never do, so every Node E2E (convergence, seed-author) passed while a real browser
+  could not make one authenticated call and hung at "connecting to peers…". Outboxlog
+  is a public, token-in-header (no-cookie) API, so its routes now get
+  `Access-Control-Allow-Origin: *` and `Access-Control-Allow-Headers: Content-Type,
+  X-Pear-Token, X-Pear-Admin-Token`, and their preflight is never denied — the same
+  public treatment `buildCorsDecision` already grants poker. Scoped via
+  `isOutboxLogHttpRoute`; management/dashboard routes stay `corsOrigins`-gated.
+
 ## [0.24.1] — 2026-07-07
 
 ### Added
