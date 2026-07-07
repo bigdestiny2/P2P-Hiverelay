@@ -6,7 +6,7 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
-## [Unreleased]
+## [0.24.1] — 2026-07-07
 
 ### Added
 - **`HIVERELAY_OUTBOXLOG_NAMESPACE` env var registers an app's outbox namespace.**
