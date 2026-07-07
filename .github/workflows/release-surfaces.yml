@@ -256,12 +256,18 @@ jobs:
       # the token is present, so it never lags the fleet. The OFFICIAL Umbrel
       # fork PR + npm publish stay non-prerelease-gated below on purpose.
       - name: Checkout Umbrel community store
+        id: store_checkout
         if: ${{ env.UMBREL_STORE_TOKEN != '' }}
+        continue-on-error: true
         uses: actions/checkout@v7
         with:
           repository: bigdestiny2/blindspark-umbrel-store
           token: ${{ env.UMBREL_STORE_TOKEN }}
           path: blindspark-umbrel-store
+
+      - name: Warn if community store checkout failed
+        if: ${{ env.UMBREL_STORE_TOKEN != '' && steps.store_checkout.outcome == 'failure' }}
+        run: echo "::warning title=Umbrel community store not synced::UMBREL_STORE_TOKEN is set but the checkout of bigdestiny2/blindspark-umbrel-store failed (bad/expired credentials or missing access). The release + image build continue; fix the token to resume store auto-sync."
 
       - name: Checkout official Umbrel fork
         if: ${{ env.UMBREL_OFFICIAL_PR_TOKEN != '' && env.UMBREL_OFFICIAL_FORK != '' && steps.rel.outputs.is_prerelease != 'true' }}
@@ -654,7 +660,7 @@ jobs:
           echo "HIVERELAY_STARTOS_RELEASE_ASSET_STATUS=uploaded" >> "$GITHUB_ENV"
 
       - name: Validate Umbrel community store
-        if: ${{ env.UMBREL_STORE_TOKEN != '' }}
+        if: ${{ env.UMBREL_STORE_TOKEN != '' && steps.store_checkout.outcome == 'success' }}
         working-directory: blindspark-umbrel-store
         run: |
           set -euo pipefail
@@ -862,7 +868,7 @@ jobs:
           echo "Official Umbrel draft PR: $pr_url"
 
       - name: Commit Umbrel community store
-        if: ${{ env.UMBREL_STORE_TOKEN != '' }}
+        if: ${{ env.UMBREL_STORE_TOKEN != '' && steps.store_checkout.outcome == 'success' }}
         working-directory: blindspark-umbrel-store
         run: |
           set -euo pipefail
