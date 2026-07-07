@@ -666,14 +666,24 @@ export class RelayAPI extends EventEmitter {
     if (cors.varyOrigin) {
       appendVaryHeader(res, 'Origin')
     }
-    if (cors.allowedOrigin) {
-      res.setHeader('Access-Control-Allow-Origin', cors.allowedOrigin)
+    // The outboxlog HTTP surface is a PUBLIC, app-agnostic blind pipe: any browser
+    // or app may call it, auth is a bearer token in a header (no cookies), so it
+    // gets ACAO '*' plus the outboxlog auth headers. The global handler runs BEFORE
+    // the outboxlog adapter, so without this a cross-origin preflight (which only
+    // browsers send — Node clients don't, hence local tests passed) is denied 403 or
+    // returned without X-Pear-Token, breaking every authenticated browser call.
+    // buildCorsDecision already extends the same public treatment to poker.
+    const publicOutboxLog = isOutboxLogHttpRoute(requestPath)
+    if (cors.allowedOrigin || publicOutboxLog) {
+      res.setHeader('Access-Control-Allow-Origin', publicOutboxLog ? '*' : cors.allowedOrigin)
     }
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+    res.setHeader('Access-Control-Allow-Headers', publicOutboxLog
+      ? 'Content-Type, X-Pear-Token, X-Pear-Admin-Token'
+      : 'Content-Type, Authorization')
 
     // Handle CORS preflight
     if (req.method === 'OPTIONS') {
-      if (cors.preflightDenied) {
+      if (cors.preflightDenied && !publicOutboxLog) {
         return this._json(res, { error: 'CORS origin denied' }, 403)
       }
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
