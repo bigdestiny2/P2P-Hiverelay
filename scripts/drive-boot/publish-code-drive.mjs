@@ -111,7 +111,7 @@ async function main () {
   const drive = existingKey ? new Hyperdrive(store, Buffer.from(existingKey, 'hex')) : new Hyperdrive(store)
   await drive.ready()
 
-  const { manifest, signature, driveKey } = await writeCodeDrive(drive, { files, version, seedHex, runtime })
+  const { signature, driveKey } = await writeCodeDrive(drive, { files, version, seedHex, runtime })
 
   console.log('publish-code-drive: signed code drive built')
   console.log('  version:    ' + version)
@@ -129,5 +129,5 @@ async function main () {
 
 // Only run the CLI when invoked directly, not when imported by the test/loader.
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((err) => { console.error('publish-code-drive: ' + (err && err.stack || err)); process.exit(1) })
+  main().catch((err) => { console.error('publish-code-drive: ' + ((err && err.stack) || err)); process.exit(1) })
 }
