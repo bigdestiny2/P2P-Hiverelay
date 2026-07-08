@@ -6,6 +6,31 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [Unreleased]
+
+### Added
+- **Ghost-outbox sweep reclaims leaked group slots (outboxlog).** A create whose
+  writer never appends leaves an empty group holding one of the relay's
+  `maxGroups` (20000) slots forever — the peerit web client's
+  identity-per-refresh churn minted one per page load until its 2026-07-08
+  lazy-identity fix, and at the cap the relay `503`s every NEW author
+  ("relay at group capacity"). `sweepGhosts({ ttlMs })` deletes groups with zero
+  rows and version 0 older than the TTL (groups persisted before this feature
+  carry no `createdAt` and count as infinitely old — by definition churn-era).
+  Deletions are journaled (new `kind: 'sweep'` entry) so a restart's journal
+  replay cannot resurrect them, the snapshot checkpoint agrees, and takedown
+  suppressions scoped to swept groups are dropped. Remembered swarm descriptors
+  attributable to swept appIds are pruned too (new `pruneDescriptors(keep)` on
+  the swarm hub) — those descriptors were replayed to EVERY new subscriber
+  forever, the per-boot request amplifier the churn era left behind. Safe by
+  construction: an empty group holds no content, and the peerit client's
+  open-my-outbox path is join → catch → create, so a false positive self-heals
+  on the owner's next write. Runs at `OutboxLogApp.start()` and hourly
+  (`config.outboxlog.sweep: false | { enabled, ttlMs, intervalMs }`; defaults
+  ON, TTL 24h), plus an operator break-glass `POST /api/admin/sweep`
+  (`{ "ttlMs": 0 }` = sweep everything empty now) behind the existing admin
+  token. New group `createdAt` rides the create journal entry and the snapshot.
+
 ## [0.24.2] — 2026-07-07
 
 ### Fixed
