@@ -61,7 +61,7 @@
  */
 
 import { ServiceProvider } from 'p2p-hiverelay/core/services/provider.js'
-import { SignedLog, REJECT } from './signed-log.js'
+import { SignedLog, REJECT, KIND } from './signed-log.js'
 
 const DEFAULT_MAX_TABLES = 1024
 const DEFAULT_TABLE_LIFETIME_MS = 24 * 60 * 60 * 1000 // 24h, see seeding-manifest 'session'
@@ -132,7 +132,15 @@ export class PokerApp extends ServiceProvider {
    *
    * @param {object} args
    * @param {string} args.tableKey      Hex pubkey identifying the table.
-   * @param {string[]} args.writers     Allowed writer pubkeys (hex), N seats.
+   * @param {string[]} args.writers     Genesis writer pubkeys (hex). For a
+   *                                    public open-join table this is just the
+   *                                    creator; strangers join via claim-seat.
+   * @param {number} [args.maxSeats]    Writer-set hard cap. Defaults to
+   *                                    writers.length (a fixed invite table).
+   *                                    Pass a larger value to open seats to
+   *                                    claimers (public table).
+   * @param {string} [args.genesis]     Admission authority (the only key that
+   *                                    may kick). Defaults to writers[0].
    * @param {object} [args.options]     App-level options (blinds, etc.) —
    *                                    OPAQUE to the relay; held verbatim.
    * @returns {object} Public table descriptor.
@@ -148,6 +156,8 @@ export class PokerApp extends ServiceProvider {
     const log = new SignedLog({
       tableKey: args.tableKey,
       writers: args.writers,
+      maxSeats: args.maxSeats,
+      genesis: args.genesis,
       maxEntries: this.maxEntriesPerTable,
       log: this._log
     })
@@ -236,6 +246,8 @@ export class PokerApp extends ServiceProvider {
       out.push({
         tableKey: key,
         writers: st.writers ? Object.keys(st.writers).length : 0,
+        maxSeats: st.maxSeats,
+        open: st.open,
         lastTs: st.lastTs,
         length: st.length,
         idleAt: record.idleAt
@@ -293,6 +305,10 @@ export class PokerApp extends ServiceProvider {
     return {
       tableKey,
       writers: Array.from(record.log.writers),
+      seats: st.seats,
+      maxSeats: st.maxSeats,
+      genesis: st.genesis,
+      open: st.open,
       options: record.options,
       lastTs: st.lastTs,
       length: st.length,
@@ -348,7 +364,7 @@ function deepFreeze (o) {
   return o
 }
 
-export { REJECT }
+export { REJECT, KIND }
 export { SignedLog } from './signed-log.js'
 
 // Verifiable hand-seed helpers. The relay stays card-blind; these let clients

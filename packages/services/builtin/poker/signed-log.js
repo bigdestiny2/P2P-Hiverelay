@@ -86,14 +86,58 @@ export const REJECT = Object.freeze({
   BAD_TS: 'bad-ts',
   BAD_SIG: 'bad-sig',
   OVERSIZED: 'oversized',
-  LOG_FULL: 'log-full'
+  LOG_FULL: 'log-full',
+  // ─── Open-join control-entry rejections (public tables) ──────────────────
+  SEAT_TAKEN: 'seat-taken',       // claim-seat for an already-occupied seat
+  TABLE_FULL: 'table-full',       // claim-seat when writers.size === maxSeats
+  SEAT_INVALID: 'seat-invalid',   // seat index outside [0, maxSeats)
+  NOT_GENESIS: 'not-genesis',     // revoke-seat by someone other than the host
+  RATE_LIMITED: 'rate-limited'    // too many claim-seat attempts from one key
 })
+
+/**
+ * Control-entry kinds. These ride in the entry ENVELOPE (`entry.kind`), NOT in
+ * `entry.payload`, so the relay can act on them while keeping `payload` fully
+ * opaque — card-blindness is preserved (a seat index and a "kind" tag are not
+ * card values). An entry with no `kind` is an ordinary game action, gated on
+ * the writer allowlist exactly as before.
+ *
+ *   claim-seat  { kind, seat }    self-signed by a NOT-yet-writer; if the seat
+ *                                 is free and the table is under maxSeats the
+ *                                 author is admitted as a writer (open-join).
+ *   revoke-seat { kind, target }  genesis(host)-signed; removes `target` from
+ *                                 the writer set and frees their seat (kick).
+ */
+export const KIND = Object.freeze({
+  CLAIM_SEAT: 'claim-seat',
+  REVOKE_SEAT: 'revoke-seat'
+})
+
+// Open-join claim-seat rate limit (per author pubkey). A token bucket that
+// refills one token per CLAIM_REFILL_MS up to CLAIM_BURST. Consumed only AFTER
+// signature verification, so a spoofed writer field can't drain a victim's
+// bucket. Storage-flood is already closed by rejecting losing claims before
+// they're stored; this bounds claim-retry churn on top of that.
+export const CLAIM_BURST = 5
+export const CLAIM_REFILL_MS = 10 * 1000
 
 export class SignedLog {
   /**
    * @param {object} opts
    * @param {string} opts.tableKey      Hex pubkey identifying the table.
-   * @param {string[]} opts.writers     Allowed writer pubkeys (hex).
+   * @param {string[]} opts.writers     Genesis writer pubkeys (hex). For an
+   *                                    open (public) table this is just the
+   *                                    creator; strangers join via claim-seat.
+   * @param {number} [opts.maxSeats]    Hard cap on the writer set. Defaults to
+   *                                    writers.length — so a fixed invite table
+   *                                    is "already full" and open-join is a
+   *                                    no-op on it. Pass a larger number to
+   *                                    open N-writers.length seats to claimers.
+   * @param {string} [opts.genesis]     The admission authority — the only key
+   *                                    allowed to sign a revoke-seat (kick).
+   *                                    Defaults to writers[0].
+   * @param {number} [opts.claimBurst]      Override CLAIM_BURST.
+   * @param {number} [opts.claimRefillMs]   Override CLAIM_REFILL_MS.
    * @param {number} [opts.maxEntries]  Override DEFAULT_MAX_ENTRIES.
    * @param {number} [opts.tsSkewMs]    Override TS_SKEW_MS.
    * @param {(label, info) => void} [opts.log]  Optional logger for warnings.
@@ -106,27 +150,56 @@ export class SignedLog {
       throw new Error('SignedLog: writers must be a non-empty array')
     }
     const writers = new Set()
+    const seatOrder = []
     for (const w of opts.writers) {
       if (!isHexKey(w)) throw new Error('SignedLog: bad writer pubkey: ' + w)
-      writers.add(w.toLowerCase())
+      const lw = w.toLowerCase()
+      if (!writers.has(lw)) seatOrder.push(lw)
+      writers.add(lw)
+    }
+
+    const maxSeats = opts.maxSeats == null ? writers.size : opts.maxSeats
+    if (!Number.isInteger(maxSeats) || maxSeats < writers.size) {
+      throw new Error('SignedLog: maxSeats must be an integer >= genesis writer count')
+    }
+    const genesis = (opts.genesis == null ? seatOrder[0] : String(opts.genesis).toLowerCase())
+    if (!isHexKey(genesis) || !writers.has(genesis)) {
+      throw new Error('SignedLog: genesis must be one of the genesis writers')
     }
 
     this.tableKey = opts.tableKey.toLowerCase()
     this.writers = writers
+    this.maxSeats = maxSeats
+    this.genesis = genesis
     this.maxEntries = opts.maxEntries || DEFAULT_MAX_ENTRIES
     this.tsSkewMs = opts.tsSkewMs || TS_SKEW_MS
+    this.claimBurst = opts.claimBurst || CLAIM_BURST
+    this.claimRefillMs = opts.claimRefillMs || CLAIM_REFILL_MS
     this._log = opts.log || (() => {})
 
     /** @type {object[]} Append-only entries; index is the global log index. */
     this.entries = []
     /** @type {Map<string, number>} writer pubkey → last accepted seq. */
     this._lastSeq = new Map()
+    /** @type {Map<number, string>} seat index → occupant writer pubkey. */
+    this._seats = new Map()
+    /** @type {Map<string, number>} occupant writer pubkey → seat index. */
+    this._seatOf = new Map()
+    /** @type {Map<string, {tokens:number, ts:number}>} claim-seat rate buckets. */
+    this._claimBuckets = new Map()
     /** @type {Set<Function>} subscribers — see subscribe(). */
     this._subscribers = new Set()
     /** @type {number} Wall-clock at construction; used in state(). */
     this.createdAt = Date.now()
     /** @type {?number} Wall-clock of the last accepted entry. */
     this.lastTs = null
+
+    // Seat the genesis writers deterministically at seats 0..n-1 in the order
+    // they were supplied. Strangers then claim any remaining free seat.
+    for (let i = 0; i < seatOrder.length; i++) {
+      this._seats.set(i, seatOrder[i])
+      this._seatOf.set(seatOrder[i], i)
+    }
   }
 
   /**
@@ -150,12 +223,39 @@ export class SignedLog {
     if (typeof entry.signature !== 'string') return reject(REJECT.BAD_SHAPE, 'signature')
     // `payload` may be any JSON-serializable value, including null/undefined.
 
+    // 1b. Control-entry shape (open-join). `kind` rides in the ENVELOPE, never
+    //     in payload, so the relay stays card-blind while still able to act on
+    //     seat admission. An entry with no `kind` is an ordinary game action.
+    const kind = entry.kind == null ? null : entry.kind
+    if (kind !== null) {
+      if (typeof kind !== 'string') return reject(REJECT.BAD_SHAPE, 'kind')
+      if (kind === KIND.CLAIM_SEAT) {
+        if (!Number.isInteger(entry.seat) || entry.seat < 0) return reject(REJECT.BAD_SHAPE, 'seat')
+      } else if (kind === KIND.REVOKE_SEAT) {
+        if (typeof entry.target !== 'string' || !isHexKey(entry.target)) return reject(REJECT.BAD_SHAPE, 'target')
+      } else {
+        return reject(REJECT.BAD_SHAPE, 'unknown-kind')
+      }
+    }
+
     // 2. Table binding.
     if (entry.tableKey.toLowerCase() !== this.tableKey) return reject(REJECT.WRONG_TABLE, entry.tableKey)
 
-    // 3. Writer allowlist.
     const writer = entry.writer.toLowerCase()
-    if (!this.writers.has(writer)) return reject(REJECT.UNKNOWN_WRITER, writer)
+
+    // 3. Writer gate. `claim-seat` is the ONLY kind a not-yet-writer may
+    //    append — every other kind (game actions, revoke-seat) still requires
+    //    existing membership. This scoped relaxation is the delicate heart of
+    //    open-join: keep it exactly this narrow or an unauthenticated peer
+    //    could forge game state.
+    if (kind === KIND.CLAIM_SEAT) {
+      if (this.writers.has(writer)) return reject(REJECT.SEAT_TAKEN, 'already-seated')
+      if (entry.seat >= this.maxSeats) return reject(REJECT.SEAT_INVALID, entry.seat)
+    } else {
+      if (!this.writers.has(writer)) return reject(REJECT.UNKNOWN_WRITER, writer)
+      // Only the genesis (host) may kick.
+      if (kind === KIND.REVOKE_SEAT && writer !== this.genesis) return reject(REJECT.NOT_GENESIS, writer)
+    }
 
     // 4. Per-writer monotonic seq. We enforce strict +1 (no gaps): clients
     //    can re-send the same entry idempotently by accepting BAD_SEQ as a
@@ -170,7 +270,8 @@ export class SignedLog {
     if (entry.ts > now + this.tsSkewMs) return reject(REJECT.BAD_TS, 'future')
     if (entry.ts < now - this.tsSkewMs) return reject(REJECT.BAD_TS, 'past')
 
-    // 6. Byte budget. Serialize once and reuse for sig verification.
+    // 6. Byte budget. Serialize once and reuse for sig verification. The
+    //    canonical bytes bind kind/seat/target when present (see _canonicalEntry).
     const canonical = _canonicalEntry(entry)
     if (canonical.byteLength > MAX_ENTRY_BYTES) return reject(REJECT.OVERSIZED, canonical.byteLength)
 
@@ -184,19 +285,35 @@ export class SignedLog {
     }
     if (sig.byteLength !== SIG_BYTES) return reject(REJECT.BAD_SIG, 'length')
     const pub = b4a.from(writer, 'hex')
-    const ok = sodium.crypto_sign_verify_detached(sig, canonical, pub)
-    if (!ok) return reject(REJECT.BAD_SIG, 'verify')
+    const okSig = sodium.crypto_sign_verify_detached(sig, canonical, pub)
+    if (!okSig) return reject(REJECT.BAD_SIG, 'verify')
 
-    // 8. Log bound.
+    // 8. Admission, AFTER the signature so a forged `writer` field can neither
+    //    probe live seat state nor drain a victim's rate bucket. A losing
+    //    claim is rejected here and NEVER stored — that is what keeps the open
+    //    self-claim path from being a log-storage flood: only winners persist.
+    if (kind === KIND.CLAIM_SEAT) {
+      if (!this._takeClaimToken(writer, now)) return reject(REJECT.RATE_LIMITED, writer)
+      if (this._seats.has(entry.seat)) return reject(REJECT.SEAT_TAKEN, entry.seat)
+      if (this.writers.size >= this.maxSeats) return reject(REJECT.TABLE_FULL, this.maxSeats)
+    } else if (kind === KIND.REVOKE_SEAT) {
+      const target = entry.target.toLowerCase()
+      if (target === this.genesis) return reject(REJECT.NOT_GENESIS, 'cannot-revoke-genesis')
+      if (!this.writers.has(target)) return reject(REJECT.BAD_SHAPE, 'target-not-writer')
+    }
+
+    // 9. Log bound.
     if (this.entries.length >= this.maxEntries) return reject(REJECT.LOG_FULL, this.maxEntries)
 
     // Accept. Freeze a defensive shallow copy so subscribers can't mutate
-    // the canonical record.
+    // the canonical record, then apply any control effect (writer-set / seat
+    // mutation) so the append gate and state() see it immediately.
     const frozen = Object.freeze({ ...entry, writer })
     const index = this.entries.length
     this.entries.push(frozen)
     this._lastSeq.set(writer, entry.seq)
     this.lastTs = entry.ts
+    if (kind !== null) this._applyControl(frozen)
 
     // Emit. Subscriber errors are swallowed — we will not let a buggy
     // listener block the log.
@@ -205,6 +322,47 @@ export class SignedLog {
     }
 
     return { ok: true, index, ts: entry.ts }
+  }
+
+  /**
+   * Apply a control entry's effect on the derived writer-set / seat-map.
+   * Called on the live path (after an accepted append) and on rehydrate
+   * (_replay). Idempotent-safe for replay because the persisted log only ever
+   * contains winning claims (losers were rejected at the gate, never stored).
+   */
+  _applyControl (entry) {
+    const writer = entry.writer.toLowerCase()
+    if (entry.kind === KIND.CLAIM_SEAT) {
+      this.writers.add(writer)
+      this._seats.set(entry.seat, writer)
+      this._seatOf.set(writer, entry.seat)
+    } else if (entry.kind === KIND.REVOKE_SEAT) {
+      const target = String(entry.target).toLowerCase()
+      this.writers.delete(target)
+      const seat = this._seatOf.get(target)
+      if (seat !== undefined) {
+        this._seats.delete(seat)
+        this._seatOf.delete(target)
+      }
+    }
+  }
+
+  /**
+   * Per-author token bucket for claim-seat attempts. Refills one token every
+   * claimRefillMs up to claimBurst. Returns true if a token was available (and
+   * consumes it), false if rate-limited. Consumed only after signature checks.
+   */
+  _takeClaimToken (writer, now) {
+    let b = this._claimBuckets.get(writer)
+    if (!b) { b = { tokens: this.claimBurst, ts: now }; this._claimBuckets.set(writer, b) }
+    const refill = Math.floor((now - b.ts) / this.claimRefillMs)
+    if (refill > 0) {
+      b.tokens = Math.min(this.claimBurst, b.tokens + refill)
+      b.ts = now
+    }
+    if (b.tokens <= 0) return false
+    b.tokens -= 1
+    return true
   }
 
   /**
@@ -239,13 +397,21 @@ export class SignedLog {
   state () {
     const writers = {}
     for (const w of this.writers) writers[w] = this._lastSeq.get(w) ?? -1
+    const seats = {}
+    for (const [seat, w] of this._seats) seats[seat] = w
     return {
       tableKey: this.tableKey,
       createdAt: this.createdAt,
       lastTs: this.lastTs,
       lastIndex: this.entries.length - 1,
       length: this.entries.length,
-      writers
+      writers,
+      // Open-join projection: current seat map, cap, and admission authority.
+      // `open` is true when the table has room for claimers beyond its genesis.
+      seats,
+      maxSeats: this.maxSeats,
+      genesis: this.genesis,
+      open: this.maxSeats > this._seatOf.size
     }
   }
 
@@ -270,9 +436,13 @@ export class SignedLog {
    */
   _replay (entries) {
     for (const e of entries) {
-      this.entries.push(Object.freeze({ ...e, writer: e.writer.toLowerCase() }))
+      const frozen = Object.freeze({ ...e, writer: e.writer.toLowerCase() })
+      this.entries.push(frozen)
       this._lastSeq.set(e.writer.toLowerCase(), e.seq)
       this.lastTs = e.ts
+      // Reconstruct the writer-set / seat-map from control entries so a
+      // restarted relay derives the exact roster that was live before restart.
+      if (e.kind != null) this._applyControl(frozen)
     }
   }
 }
@@ -304,6 +474,18 @@ function _canonicalEntry (entry) {
     String(entry.ts),
     JSON.stringify(_sortDeep(entry.payload === undefined ? null : entry.payload))
   ]
+  // Control fields ride in the envelope and MUST be signature-bound so they
+  // can't be stripped or forged. They're appended ONLY when present, so an
+  // ordinary action entry (no kind) canonicalizes to the exact same 5-part
+  // bytes as before — every pre-existing signature still verifies, zero
+  // migration. Stripping `kind` from a signed claim-seat yields the 5-part
+  // form, whose bytes differ from what was signed → BAD_SIG.
+  const kind = entry.kind
+  if (kind !== undefined && kind !== null && kind !== '') {
+    parts.push('kind:' + String(kind))
+    if (String(kind) === 'claim-seat') parts.push('seat:' + String(entry.seat))
+    else if (String(kind) === 'revoke-seat') parts.push('target:' + String(entry.target).toLowerCase())
+  }
   return b4a.from(parts.join('\n'), 'utf8')
 }
 
