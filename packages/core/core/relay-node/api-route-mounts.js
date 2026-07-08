@@ -55,6 +55,32 @@ export function isOutboxLogHttpRoute (path) {
       OUTBOXLOG_HTTP_ROUTE_PREFIXES.some(prefix => path.startsWith(prefix)))
 }
 
+// The outboxlog READ surface. These routes only ever serve signed rows the
+// client re-verifies (Ed25519 + key-binding), so throttling them protects no
+// integrity property — and a cold browser boot legitimately bursts ~10+ reads,
+// which is how the coarse per-IP budget locked returning visitors out to an
+// empty feed. /api/sync/heads is POST (appIds ride in the body) but is a read.
+// Writes (/api/token, create/join/append, swarm join/send/leave) and the admin
+// surface are NOT reads and stay under the global budget.
+export const OUTBOXLOG_HTTP_READ_GET_ROUTES = Object.freeze([
+  '/api/bridge/status',
+  '/api/directory',
+  '/api/sync/get',
+  '/api/sync/list',
+  '/api/sync/range',
+  '/api/sync/count',
+  '/api/sync/status',
+  '/api/sync/events',
+  '/api/swarm/events'
+])
+
+export function isOutboxLogHttpReadRequest (method, path) {
+  if (typeof path !== 'string') return false
+  if (method === 'GET') return OUTBOXLOG_HTTP_READ_GET_ROUTES.includes(path)
+  if (method === 'POST') return path === '/api/sync/heads'
+  return false
+}
+
 export function isWitnessLogHttpRoute (path) {
   return typeof path === 'string' &&
     (path === WITNESSLOG_HTTP_ROUTE || path.startsWith(WITNESSLOG_HTTP_ROUTE_PREFIX))

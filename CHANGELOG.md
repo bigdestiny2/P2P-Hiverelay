@@ -31,6 +31,29 @@ The packages are versioned in lockstep.
   (`{ "ttlMs": 0 }` = sweep everything empty now) behind the existing admin
   token. New group `createdAt` rides the create journal entry and the snapshot.
 
+### Fixed
+- **Rate limiters no longer count rejected requests (the self-lockout).** Both
+  the global fixed-window limiter (`checkFixedWindowRateLimit`) and the
+  outboxlog adapter's per-IP bucket incremented the counter before checking the
+  cap, so a client retrying through a 429 kept consuming window budget and
+  could never recover within the window even when its accepted-rate would fit.
+  Both now check-before-increment: a 429'd request costs nothing.
+- **Outboxlog READ routes are exempt from the coarse 60/min per-IP budget.**
+  A cold browser boot legitimately bursts ~10+ reads of signed rows the client
+  re-verifies anyway; the global budget was what dropped returning visitors to
+  an empty feed. GET reads (`/api/directory`, `/api/sync/get` · `list` ·
+  `range` · `count` · `status` · `events`, `/api/swarm/events`,
+  `/api/bridge/status`) plus the POST-shaped read `/api/sync/heads` skip the
+  global gate (`isOutboxLogHttpReadRequest`); the adapter's own (much higher)
+  per-IP bucket still bounds them, so the exemption narrows the gate rather
+  than removing it. Writes (`/api/token`, `create`/`join`/`append`, swarm
+  mutations) and the admin surface stay under the global budget. Ships as
+  generic transport policy per the Service Contract
+  (`docs/SERVICE-CONTRACT.md`) — no app deadline attached. (The `GET /api/boot`
+  cold-boot bundle from the same diagnosis was withdrawn under the contract's
+  triage test; the app-side answer is a verifying cache/CDN in front of the
+  existing read surface.)
+
 ## [0.24.2] — 2026-07-07
 
 ### Fixed

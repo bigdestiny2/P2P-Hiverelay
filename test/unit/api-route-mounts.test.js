@@ -13,6 +13,7 @@ import {
   isHyperGatewayRoute,
   isIndexProxyRoute,
   isManagementApiRoute,
+  isOutboxLogHttpReadRequest,
   isOutboxLogHttpRoute,
   isPokerHttpRoute,
   resolvePokerHttpRoutePolicy
@@ -95,4 +96,16 @@ test('api route mounts: management API predicate covers control-plane subtree on
   t.is(isManagementApiRoute('/api/manage'), false)
   t.is(isManagementApiRoute('/api/management/config'), false)
   t.is(isManagementApiRoute(undefined), false)
+})
+
+test('api route mounts: outboxlog read-request classifier (global rate-limit exemption)', (t) => {
+  t.ok(isOutboxLogHttpReadRequest('GET', '/api/directory'))
+  t.ok(isOutboxLogHttpReadRequest('GET', '/api/sync/range'))
+  t.ok(isOutboxLogHttpReadRequest('GET', '/api/sync/events'))
+  t.ok(isOutboxLogHttpReadRequest('POST', '/api/sync/heads'), 'heads is POST-shaped but a read')
+  t.absent(isOutboxLogHttpReadRequest('POST', '/api/token'), 'token issuance is not a read')
+  t.absent(isOutboxLogHttpReadRequest('POST', '/api/sync/append'), 'writes stay under the global budget')
+  t.absent(isOutboxLogHttpReadRequest('POST', '/api/swarm/join'))
+  t.absent(isOutboxLogHttpReadRequest('GET', '/api/admin/takedowns'), 'admin surface is never exempt')
+  t.absent(isOutboxLogHttpReadRequest('POST', '/api/directory'), 'wrong method is not exempt')
 })

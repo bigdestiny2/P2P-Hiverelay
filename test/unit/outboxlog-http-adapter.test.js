@@ -617,3 +617,16 @@ test('outboxlog app: works with an arbitrary explicit namespace and no longer ha
   t.absent(app.namespaces().some(entry => entry.name === 'peerit'), 'no implicit peerit namespace')
   await app.stop()
 })
+
+test('outboxlog http adapter: rejected requests do not consume rate-limit budget', async (t) => {
+  const ctx = createCtx({ rateLimit: { windowMs: 60_000, max: 2 } })
+  await handleOutboxLogRoute(fakeReq('POST', '/api/token'), fakeRes(), ctx)
+  await handleOutboxLogRoute(fakeReq('POST', '/api/token'), fakeRes(), ctx)
+
+  const limited = fakeRes()
+  await handleOutboxLogRoute(fakeReq('POST', '/api/token'), limited, ctx)
+  t.is(limited.statusCode, 429)
+
+  const bucket = ctx.state.buckets.get('127.0.0.1')
+  t.is(bucket.count, 2, '429s do not grow the bucket — no self-lockout')
+})

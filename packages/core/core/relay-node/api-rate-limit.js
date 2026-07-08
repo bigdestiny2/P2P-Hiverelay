@@ -51,8 +51,13 @@ export function checkFixedWindowRateLimit (limits, key, cap, now = Date.now(), w
     limits.set(key, entry)
   }
 
+  // Rejected requests must NOT consume window budget. Counting them means a
+  // client that keeps retrying after a 429 can never recover within the
+  // window even if its accepted-rate would fit — the self-lockout that kept
+  // 429ing browsers that were merely polling through a burst.
+  if (entry.count >= max) return false
   entry.count++
-  return entry.count <= max
+  return true
 }
 
 export function checkApiRateLimit (limits, ip, now = Date.now()) {
