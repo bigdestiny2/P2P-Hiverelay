@@ -13,9 +13,9 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.24.2
+version: 0.24.3
 release-notes: |
-  Blindspark v0.24.2: synchronized HiveRelay release for the fleet, Umbrel
+  Blindspark v0.24.3: synchronized HiveRelay release for the fleet, Umbrel
   packages, and StartOS metadata.
 license: apache-2.0
 wrapper-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
