@@ -6,7 +6,7 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
-## [Unreleased]
+## [0.24.3] — 2026-07-08
 
 ### Added
 - **Ghost-outbox sweep reclaims leaked group slots (outboxlog).** A create whose
