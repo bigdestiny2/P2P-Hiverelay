@@ -64,3 +64,16 @@ test('api rate limit: cleanup removes expired windows only', (t) => {
   t.absent(limits.has('expired'))
   t.ok(limits.has('fresh'))
 })
+
+test('api rate limit: rejected requests do not consume window budget (no self-lockout)', (t) => {
+  const limits = new Map()
+  t.ok(checkFixedWindowRateLimit(limits, 'ip', 2, 1_000, 60_000))
+  t.ok(checkFixedWindowRateLimit(limits, 'ip', 2, 1_001, 60_000))
+  let rejected = 0
+  for (let i = 0; i < 100; i++) {
+    if (!checkFixedWindowRateLimit(limits, 'ip', 2, 1_002 + i, 60_000)) rejected++
+  }
+  t.is(rejected, 100, 'over-cap requests keep rejecting inside the window')
+  t.is(limits.get('ip').count, 2, 'rejected attempts never incremented the count')
+  t.ok(checkFixedWindowRateLimit(limits, 'ip', 2, 61_001, 60_000), 'window still resets on schedule')
+})

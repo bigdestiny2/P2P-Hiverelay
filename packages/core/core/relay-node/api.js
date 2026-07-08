@@ -45,6 +45,7 @@ import {
   isHyperGatewayRoute,
   isIndexProxyRoute,
   isManagementApiRoute,
+  isOutboxLogHttpReadRequest,
   isOutboxLogHttpRoute,
   isPokerHttpRoute,
   isRepairTicketHttpRoute,
@@ -692,8 +693,14 @@ export class RelayAPI extends EventEmitter {
       return
     }
 
-    // Rate limit check
-    if (!this._checkRateLimit(ip)) {
+    // Rate limit check. Outboxlog READ routes are exempt from the coarse
+    // per-IP budget: a cold browser boot legitimately bursts ~10+ reads of
+    // signed rows the client re-verifies anyway, and the budget was what
+    // dropped returning visitors to an empty feed. The outboxlog adapter
+    // still enforces its own (much higher) per-IP bucket on these routes,
+    // so the exemption narrows the gate — it does not remove it.
+    const outboxLogRead = publicOutboxLog && isOutboxLogHttpReadRequest(req.method, requestPath)
+    if (!outboxLogRead && !this._checkRateLimit(ip)) {
       return this._json(res, { error: 'Too many requests' }, 429, { 'Retry-After': '60' })
     }
 

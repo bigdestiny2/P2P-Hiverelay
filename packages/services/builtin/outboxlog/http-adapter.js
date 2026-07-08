@@ -351,13 +351,17 @@ function overLimit (ip, rateLimit, state) {
     bucket = { start: now, count: 0 }
     state.buckets.set(ip, bucket)
   }
-  bucket.count++
   if (state.buckets.size > MAX_RATE_BUCKETS) {
     for (const [key, value] of state.buckets) {
       if (now - value.start > rateLimit.windowMs) state.buckets.delete(key)
     }
   }
-  return bucket.count > rateLimit.max
+  // Check-before-increment: a rejected request must not consume window budget,
+  // otherwise a client retrying through a 429 can never recover within the
+  // window even when its accepted-rate would fit (self-lockout).
+  if (bucket.count >= rateLimit.max) return true
+  bucket.count++
+  return false
 }
 
 function tokenFrom (req, url) {
