@@ -16,6 +16,14 @@ import b4a from 'b4a'
 import { createOutboxSwarmHub } from './swarm-hub.js'
 
 export const DEFAULT_MAX_GROUPS = 20000
+// Ghost-outbox sweep: an outbox with ZERO rows and version 0 older than this TTL
+// is a leaked group slot (a create whose writer never appended — the peerit
+// web-client churn era minted one per page refresh until 2026-07-08). Sweeping
+// is safe by construction: an empty group holds no content, and the client's
+// open-my-outbox path is join-with-stored-key -> catch -> create, so a false
+// positive self-heals on the owner's next write.
+export const DEFAULT_SWEEP_TTL_MS = 24 * 60 * 60 * 1000
+const SWEEP_JOURNAL_BATCH = 1000 // appIds per journal entry (bounds the entry size)
 export const DEFAULT_MAX_ROWS_PER_GROUP = 50000
 export const DEFAULT_MAX_ID_LENGTH = 256
 export const DEFAULT_MAX_APP_ID_LENGTH = 128
@@ -107,7 +115,7 @@ export function createOutboxLog ({
     if (!group) {
       if (groups.size >= maxGroups) throw fail('relay at group capacity', 503)
       assertNamespaceOutboxCapacity(namespaceInfo)
-      group = { inviteKey: hex(32), rows: new Map(), version: 0, directorySeq: 0, namespace: namespaceInfo ? namespaceInfo.name : null }
+      group = { inviteKey: hex(32), rows: new Map(), version: 0, directorySeq: 0, namespace: namespaceInfo ? namespaceInfo.name : null, createdAt: Date.now() }
       groups.set(appId, group)
     } else {
       bindGroupNamespace(group, namespaceInfo)
@@ -296,6 +304,8 @@ export function createOutboxLog ({
     }
   }
 
+  sync.sweepGhosts = sweepGhosts
+
   return {
     sync,
     swarm,
@@ -307,6 +317,7 @@ export function createOutboxLog ({
     takedown: sync.takedown,
     restore: sync.restore,
     takedowns: sync.takedowns,
+    sweepGhosts,
     isSuppressed,
     snapshot,
     _stats () {
@@ -341,6 +352,73 @@ export function createOutboxLog ({
       throw fail('persistence failed', 500, err)
     }
     return { appId, key, suppressed: drop }
+  }
+
+  // Remove ALL server-side state for an appId whose group is being swept:
+  // the group itself, its buffered append events, and any takedown
+  // suppressions scoped to it (nothing left to suppress). Namespace outbox
+  // counts are derived live from `groups`, so capacity self-corrects.
+  function deleteGroupState (appId) {
+    groups.delete(appId)
+    appendEventsByApp.delete(appId)
+    const prefix = appId + '\x00'
+    for (const composite of [...suppressed]) {
+      if (composite.startsWith(prefix)) suppressed.delete(composite)
+    }
+  }
+
+  // Ghost-outbox sweep (2026-07-08): reclaim group slots leaked by writers that
+  // created an outbox and never appended — most notably the peerit web client's
+  // identity-per-refresh churn era, which minted one empty group per page load
+  // until the lazy-identity fix. Ghost = zero rows AND version 0 AND older than
+  // ttlMs (a group with no createdAt predates this feature and is treated as
+  // infinitely old — every such empty group is churn-era by definition).
+  //
+  // SAFE BY CONSTRUCTION: an empty group holds no user content, and the client
+  // recreates its outbox on demand (join-with-stored-key -> catch -> create), so
+  // even a false positive costs one extra create on the owner's next write.
+  // Deletions are journaled (kind 'sweep') so they survive journal replay, and
+  // stale swarm descriptors pointing at swept appIds are pruned — those replays
+  // are the per-boot request amplifier the churn era left behind.
+  function sweepGhosts ({ ttlMs = DEFAULT_SWEEP_TTL_MS, now = Date.now() } = {}) {
+    const ttl = Number.isFinite(ttlMs) && ttlMs >= 0 ? ttlMs : DEFAULT_SWEEP_TTL_MS
+    const cutoff = now - ttl
+    const victims = []
+    for (const [appId, group] of groups) {
+      if (group.rows.size !== 0 || group.version !== 0) continue
+      const created = Number.isFinite(group.createdAt) ? group.createdAt : 0
+      if (created <= cutoff) victims.push(appId)
+    }
+    let swept = 0
+    for (let i = 0; i < victims.length; i += SWEEP_JOURNAL_BATCH) {
+      const batch = victims.slice(i, i + SWEEP_JOURNAL_BATCH)
+      const rollback = batch.map((appId) => [appId, groups.get(appId)])
+      for (const appId of batch) deleteGroupState(appId)
+      try {
+        saveState(journalSweepEntry(batch))
+      } catch (err) {
+        // Same coherence contract as applyTakedown: if persistence refuses the
+        // entry, restore the in-memory groups so state and journal agree.
+        for (const [appId, group] of rollback) { if (group) groups.set(appId, group) }
+        throw fail('persistence failed', 500, err)
+      }
+      swept += batch.length
+    }
+    // Prune remembered swarm descriptors that point at appIds with no live
+    // group (swept now or ever). Conservative: only descriptors we can
+    // positively attribute (JSON with a string appId) are considered — anything
+    // else (another app's format) is kept. Feature-detected so an injected hub
+    // without prune support is tolerated.
+    let descriptorsPruned = 0
+    if (swarm && typeof swarm.pruneDescriptors === 'function') {
+      descriptorsPruned = swarm.pruneDescriptors((topic, data) => {
+        let d = null
+        try { d = JSON.parse(data) } catch { return true }
+        if (!d || typeof d !== 'object' || typeof d.appId !== 'string' || !d.appId) return true
+        return groups.has(d.appId)
+      })
+    }
+    return { swept, remaining: groups.size, descriptorsPruned }
   }
 
   function namespaceInfoForCreate (opts = {}) {
@@ -631,6 +709,7 @@ export function createOutboxLog ({
           version: group.version,
           directorySeq: group.directorySeq || 0,
           namespace: group.namespace || null,
+          createdAt: Number.isFinite(group.createdAt) ? group.createdAt : null,
           rows: [...group.rows.entries()].map(([key, value]) => [key, clone(value)])
         }
       ])
@@ -708,7 +787,8 @@ export function createOutboxLog ({
         rows,
         directorySeq: restoredDirectorySeq,
         namespace: namespaceName,
-        version: Number.isSafeInteger(groupState.version) && groupState.version >= rows.size ? groupState.version : rows.size
+        version: Number.isSafeInteger(groupState.version) && groupState.version >= rows.size ? groupState.version : rows.size,
+        createdAt: Number.isFinite(groupState.createdAt) ? groupState.createdAt : null
       })
     }
     for (const entry of Array.isArray(state.appendEvents) ? state.appendEvents : []) {
@@ -755,7 +835,18 @@ export function createOutboxLog ({
       kind: 'create',
       appId,
       inviteKey: group.inviteKey,
-      namespace: group.namespace || null
+      namespace: group.namespace || null,
+      createdAt: Number.isFinite(group.createdAt) ? group.createdAt : null
+    }
+  }
+
+  // One entry per sweep batch: replaying it deletes the same ghosts, so a swept
+  // slot can never resurrect from journal replay after a restart.
+  function journalSweepEntry (appIds) {
+    return {
+      kind: 'sweep',
+      appId: '*', // entry-level appId is unused for sweeps; batch rides in appIds
+      appIds: [...appIds]
     }
   }
 
@@ -809,6 +900,10 @@ export function createOutboxLog ({
   }
 
   function applyJournalEntry (entry) {
+    if (entry.kind === 'sweep') {
+      for (const appId of entry.appIds) deleteGroupState(appId)
+      return
+    }
     if (entry.appId.length > maxAppIdLength) throw fail('persisted outbox appId too long', 400)
     if (entry.kind === 'takedown') {
       const composite = suppressionKey(entry.appId, entry.key)
@@ -829,7 +924,8 @@ export function createOutboxLog ({
           rows: new Map(),
           version: 0,
           directorySeq: 0,
-          namespace: entryNamespace
+          namespace: entryNamespace,
+          createdAt: Number.isFinite(entry.createdAt) ? entry.createdAt : null
         })
       }
       return
@@ -856,7 +952,8 @@ export function createOutboxLog ({
         rows: new Map(),
         version: 0,
         directorySeq: 0,
-        namespace: opNamespace
+        namespace: opNamespace,
+        createdAt: null // unknown; irrelevant — the append below makes it non-ghost
       }
       groups.set(entry.appId, group)
     } else if (!group.namespace) {
@@ -1261,6 +1358,24 @@ function normalizeJournalEntry (entry, expectedSeq) {
       drop: entry.drop === true
     }
   }
+  // Sweep entries carry no inviteKey/op — just the batch of ghost appIds whose
+  // deletion must survive journal replay. Normalize before the inviteKey
+  // requirement below (same pattern as takedown).
+  if (entry.kind === 'sweep') {
+    if (!Array.isArray(entry.appIds) || entry.appIds.length === 0) return null
+    const appIds = []
+    for (const id of entry.appIds) {
+      if (typeof id !== 'string' || !id || id.length > DEFAULT_MAX_APP_ID_LENGTH) return null
+      appIds.push(id)
+    }
+    return {
+      version: entry.version,
+      seq: entry.seq,
+      kind: 'sweep',
+      appId: '*',
+      appIds
+    }
+  }
   if (typeof entry.inviteKey !== 'string' || entry.inviteKey.length !== 64) return null
   const namespace = normalizePersistedNamespace(entry.namespace)
   if (entry.kind === 'create') {
@@ -1270,7 +1385,11 @@ function normalizeJournalEntry (entry, expectedSeq) {
       kind: 'create',
       appId: entry.appId,
       inviteKey: entry.inviteKey,
-      namespace
+      namespace,
+      // Optional since sweep shipped; legacy entries lack it (treated as
+      // infinitely old by the sweep — every timestamp-less empty group predates
+      // the client-side lazy-identity fix and is churn-era by definition).
+      createdAt: Number.isFinite(entry.createdAt) ? entry.createdAt : null
     }
   }
   if (entry.kind !== 'append') return null
