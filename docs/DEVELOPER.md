@@ -1,9 +1,9 @@
 > [!WARNING]
-> **Doc may be partially out of date.** This file was written before the Compute removal, Core/Services split, and Catalog auto-sync removal. See the [CHANGELOG](../CHANGELOG.md) for current architecture.
+> **This doc tracks v0.24.3.** For anything newer, the [CHANGELOG](../CHANGELOG.md) is authoritative — release notes land there first and this file follows.
 
 # HiveRelay Developer Documentation
 
-**Version:** 0.3.0
+**Version:** 0.24.3
 **License:** Apache 2.0
 **Runtime:** Node.js >= 20.0.0
 **Module System:** ESM (`"type": "module"`)
@@ -161,6 +161,10 @@ Developer goes offline — relay nodes continue serving
 End user opens app by key — discovers relays via DHT — gets content
 ```
 
+### The Service Contract
+
+The relay owns **plumbing** (caps, sweeps, rate limits, persistence, transport); the app owns **meaning** (schemas, signatures, merge rules, UX). The wire surface is a stable, additive contract: new capabilities are added, never changed in place, and apps must **feature-detect and degrade gracefully** against older relays — fleet boxes update on their own cadence, so a relay update can never be a prerequisite for app health. See [docs/SERVICE-CONTRACT.md](./SERVICE-CONTRACT.md) for the triage rule and worked examples.
+
 ---
 
 ## 3. Project Structure
@@ -208,8 +212,10 @@ hiverelay/
 │   │   └── stream.js             # WebSocketStream — Duplex adapter for Protomux
 │   ├── tor/
 │   │   └── index.js              # TorTransport (hidden service + SOCKS5 proxy)
-│   └── holesail/
-│       └── index.js              # HolesailTransport (TCP/UDP tunneling over Hyperswarm)
+│   ├── holesail/
+│   │   └── index.js              # HolesailTransport (TCP/UDP tunneling over Hyperswarm)
+│   └── dht-relay-ws/
+│       └── index.js              # DHT-over-WebSocket byte pipe for browser peers (vendored @hyperswarm/dht-relay)
 ├── platform/                         # Privacy platform APIs
 │   ├── index.js                      # Exports all platform primitives
 │   ├── crypto.js                     # XChaCha20-Poly1305 encrypt/decrypt, BLAKE2b hash
@@ -492,6 +498,57 @@ Connect to a peer through a relay node. If no relay is specified, selects the fi
 const connected = await app.connectViaRelay(targetPubkeyHex)
 ```
 
+### Service RPC
+
+Relays expose named services (identity, storage-proof, arbitration, …) over a P2P service channel. `callService` is the request/response primitive; `subscribeService` is its streaming counterpart.
+
+#### `app.callService(service, method, params?, opts?)` → `Promise<any>`
+
+Call a method on a relay service.
+
+```js
+const result = await app.callService('identity', 'whoami')
+const proof = await app.callService('storage-proof', 'prove', params, { relay: pubkeyHex })
+```
+
+**Options:**
+- `relay` (string) — Relay pubkey hex. Defaults to the best-scored relay with a service channel
+- `timeout` (number, default: `30000`) — Response deadline in ms
+
+**Throws:** `NO_RELAY` (no relay with a service channel), `NO_SERVICE_CHANNEL` (chosen relay lacks the protocol), `SERVICE_TIMEOUT`.
+
+#### `app.subscribeService(service, event, onEvent, opts?)` → `function`
+
+Subscribe to live service events. Topics follow the producer convention `<service>/<event>`; returns an unsubscribe function.
+
+```js
+const off = app.subscribeService('arbitration', 'resolved', (data) => {
+  console.log('resolved:', data)
+})
+off() // unsubscribe
+```
+
+One `MSG_SUBSCRIBE` is sent for the first local listener on a `(relay, topic)` pair and `MSG_UNSUBSCRIBE` when the last detaches. `opts.relay` selects the relay; `onEvent` must be a function; the topic string is capped at 256 chars.
+
+**Caveat:** topics are matched **exactly** — no normalization. Pass hex keys (e.g. a poker `tableKey`) in lowercase, or the subscription is silently dead.
+
+### Capability Documents
+
+#### `app.fetchCapabilities(relayUrl, opts?)` → `Promise<object>`
+
+Fetch a relay's capability document from `/.well-known/hiverelay.json` (with an `/api/capabilities` fallback for proxies that hide `/.well-known`). Useful for relay-shopping by version, accept mode, and advertised features without opening a swarm connection.
+
+```js
+const doc = await app.fetchCapabilities('https://relay.example', {
+  requireSignature: false,          // throw if the doc is unsigned
+  requireFreshCapabilityDoc: false, // strict: reject signed-but-stale/future-skewed docs
+  maxAgeMs: 24 * 60 * 60 * 1000,    // freshness window (default: 24h)
+  expectedPubkey: relayPubkeyHex    // out-of-band pubkey pin
+})
+```
+
+If the doc carries a signature it is always verified against the pubkey in the doc (TOFU); a failure emits `'capability-verify-error'` and throws. A signed doc whose `attestedAt` is older than `maxAgeMs` emits `'capability-doc-stale'` (warn-only) unless `requireFreshCapabilityDoc: true`, which rejects it. A pinned-pubkey mismatch emits `'capability-pubkey-mismatch'` and throws.
+
 ### Status Methods
 
 #### `app.getRelays()` → `object[]`
@@ -514,6 +571,65 @@ const status = app.getSeedStatus(keyHex)
 const status = app.getStatus()
 // { started: true, relays: [...], drives: 2, connections: 47 }
 ```
+
+### Trustless Verification
+
+Two methods confirm a relay genuinely holds and serves an app (Hyperdrive), with zero trust in its self-reported catalog.
+
+#### `app.verifySeeded(driveKey, opts)` → `Promise<object>`
+
+Tier 1: replication-based check. Opens the drive, confirms the relay is a live peer advertising the full length, and downloads **both** cores (metadata + blobs) to completion. Hypercore verifies every block against the drive key's signed Merkle root on arrival, so a relay cannot fake content it does not hold.
+
+```js
+const v = await app.verifySeeded(driveKey, { relay: relayPubkeyHex })
+// { complete, relayIsPeer, relayHasFullLength, contentVerified,
+//   metaLength, blobsLength, relayRemoteLength, driveKey, relay }
+if (v.complete) console.log('relay is serving the full app')
+```
+
+**Options:** `relay` (pubkey hex, **required** — throws without it), `timeout` (ms, default `30000`).
+
+**Caveat:** replication rides the shared swarm, so `contentVerified` proves the content is genuine and served, and `relayHasFullLength` is the relay's own advertised state — it is **not** a per-block, relay-attributable, third-party-portable proof. For that, use `proveSeeded`.
+
+#### `app.proveSeeded(driveKey, opts)` → `Promise<object>`
+
+Tier 2: signed proof-of-retrievability sampling. Opens the drive to learn the metadata head, samples random block indices, and verifies each **signed** proof against an isolated temp-Corestore verifier pinned to that head. Each proof is signed by the relay over a fresh nonce, so a passing result is per-block, relay-attributable, and non-replayable. Prefers the relay's `POST /api/proof/retrievability` HTTP route when the capability doc advertises `retrievability-proof-http`, otherwise falls back to the `storage-proof.prove` service per sample.
+
+```js
+const r = await app.proveSeeded(driveKey, { relay: relayPubkeyHex, samples: 5 })
+// r.ok === true only if EVERY sampled block verified at the current head
+// { ok, proofKind, proofLimit, proofTransport, driveKey, relay,
+//   head, passed, total, samples: [{ index, transport, valid, proofKind, signatureProfile, reason }] }
+```
+
+**Options:**
+- `relay` (pubkey hex, **required**)
+- `relayUrl` (string) — Optional HTTP capability/proof URL
+- `proofTransport` — `'auto'` (default), `'http'`, or `'service'`
+- `proofSignatureProfile` — `'retrievability-proof-v1'` requests the RelayKernel domain-separated signature preimage when the relay advertises `retrievability-proof-domain-v1`; omit for legacy-compatible proof bytes
+- `samples` (number, default: `3`, clamped to `1..16`)
+- `timeout` (ms, default: `30000`)
+
+The relay must either advertise `retrievability-proof-http` in its capability doc or run the opt-in `storage-proof` service (default OFF). This is challenge-response proof-of-*retrievability*, not sealed proof-of-replication: a relay could fetch a block on demand rather than store it; random sampling plus the latency bound make that expensive, not cryptographically precluded. v1 proves the drive **metadata** core.
+
+**Signature profiles (seed requests):** `app.seed()` keeps the legacy v2 signature preimage by default for mixed-version relay fleets. Pass `seedSignatureDomain: 'v3'` to sign the domain-separated `hiverelay.seed-request.v3` preimage against relays advertising `seed-signature-domain-v3`. Publisher-signed `/api/v1/seed` submissions can also use the replay-hardened `hiverelay.seed-request.replay-v1` profile (signs `issuedAt` + a 16-byte `requestNonce`); relays advertising `seed-request-replay-v1` reject stale replay-profile submissions and duplicate nonces.
+
+### Accounting Receipts
+
+#### `app.fetchAccountingReceipt(relayUrl, opts?)` → `Promise<{ ok, verified, receipt }>`
+
+Fetch and locally verify a relay's signed, OS-grounded accounting receipt from `GET /api/accounting/receipt`. The endpoint is management-authenticated (receipts expose operator/storage counters); verification is local — the receipt signature is checked against its embedded `relayPubkey`.
+
+```js
+const r = await app.fetchAccountingReceipt('https://relay.example', {
+  apiKey,                          // management bearer token
+  expectedPubkey: relayPubkeyHex,  // reject a valid receipt from the wrong relay
+  refresh: true                    // set false to skip a fresh disk scan
+})
+console.log(r.verified, r.receipt.diskBytes)
+```
+
+Throws on HTTP failure, malformed response, signature failure, or `expectedPubkey` mismatch.
 
 ### Events
 
@@ -541,6 +657,150 @@ await app.destroy()
 ```
 
 Closes all drives, leaves all swarm topics, clears all state. If the client created its own Corestore and Hyperswarm (simple mode), those are destroyed too. If you provided them (advanced mode), they're left untouched.
+
+### Blind Custody & Dispersal
+
+Place a **secret key** into *blind* custody on the relay fleet. The invariant: a relay can publicly verify the encrypted share it holds, but can never open it — it never sees the secret, never runs the split, and never reconstructs. Fewer than `t` guardians — and **any** number of relays — cannot recover the key; no single relay ever holds enough to matter.
+
+Two flavors ship in the client:
+
+| API | Scheme | Custody unit |
+|-----|--------|--------------|
+| `splitForCustody` / `reconstructFromCustody` | PVSS (Schoenmakers, secp256k1) with guardian keypairs | Guardian-encrypted shares, verified receipts, signed quorum commit |
+| `disperse` / `recover` (`p2p-hiverelay-client/blind-custody.js`) | k-of-n opaque shards over the content-addressed shard store | Raw shard PUT/GET on `/api/v1/shard`, app-injected signing |
+
+#### `app.splitForCustody({ secret?, guardians, threshold, relays, appKey, opts })` → `Promise<object>`
+
+PVSS-split a secret to `n` guardians (secp256k1 recipient keypairs), one relay custodian per guardian-encrypted share. Publishes the **public** share bundle (commitments + encrypted shares — no secret material), signs a v2 custody intent naming the bundle and assigning one share-index per relay, waits for a share-verified receipt from every relay, then signs and publishes the quorum commit.
+
+```js
+import { keygen } from 'p2p-hiverelay-client/secret-sharing.js'
+
+const guardians = [await keygen(), await keygen(), await keygen()]
+const relays = [
+  { url: 'http://relay-a.example:9100', pubkey: '<relay-a-pubkey-hex>' },
+  { url: 'http://relay-b.example:9100', pubkey: '<relay-b-pubkey-hex>' },
+  { url: 'http://relay-c.example:9100', pubkey: '<relay-c-pubkey-hex>' }
+]
+
+const custody = await app.splitForCustody({
+  guardians: guardians.map(g => g.publicKey),
+  threshold: 2,          // any 2 of 3 guardians can recover
+  relays,
+  appKey,                // the content drive this custody protects
+  opts: { apiKey, retainMs: 365 * 24 * 60 * 60 * 1000 }
+})
+// { intentId, commitmentRoot, shareBundleKey, key, secretPoint, intent, commit, receipts }
+```
+
+`custody.key` is **dealer-private** — it never leaves the client. Custody **writes** (intent / seed / commit) are authenticated (`opts.apiKey`, per-relay Bearer key — 401 without it); custody **reads** and reconstruction are permissionless. Requires relays on v0.9.1+. Other `opts`: `secret` (64-hex scalar; random if omitted), `retainMs` (default 30 days), `deadlineMs` (default 10 min), `pollTimeoutMs` (default `60000`), `pollIntervalMs` (default `1000`), plus `blindContentId` / `ciphertextRoot` / `contentVersion` to bind the custody to a specific encrypted payload.
+
+#### `app.reconstructFromCustody({ intentId, guardianSecretKeys, relays, shareBundleKey?, threshold? })` → `Promise<object>`
+
+On any device that can gather `t` guardian **secret** keys — no relay API key needed:
+
+```js
+const recovered = await app.reconstructFromCustody({
+  intentId: custody.intentId,
+  guardianSecretKeys: [guardians[0].secretKey, guardians[2].secretKey], // any t
+  relays // resolves shareBundleKey + threshold from the signed intent
+})
+recovered.key === custody.key // true
+```
+
+Pass `shareBundleKey` and `threshold` explicitly to skip the relay round-trip. Each guardian decrypts only its own share; every decryption's DLEQ proof is re-verified, so a forged or merely-encrypted share is rejected.
+
+**Encrypt-then-custody (the pattern):** `custody.key` is a *fresh* dealer key, not your secret bytes. To make an existing secret (a seed, a mnemonic, a master key) recoverable: encrypt the secret with the dealer key (e.g. `crypto_secretbox_easy`), store the ciphertext anywhere, and custody the dealer key. Recovery = reconstruct the dealer key → decrypt the secret. Keep the **recovery coordinates** (`intentId`, `shareBundleKey`, `threshold`, relays) on a recovery card — they are not secret and are useless without `t` guardian keys.
+
+#### `disperse(secret, { relays, threshold, signPin, publishIntent?, fetch? })` → `Promise<object>`
+
+From `p2p-hiverelay-client/blind-custody.js` — one-call k-of-n dispersal of opaque shards over `/api/v1/shard`. Plans the shards, assigns share `i` to `relays[i-1]` (so no operator holds ≥ threshold), publishes the app-signed custody intent to each relay **before** any PUT, then PUTs every shard to its custodian.
+
+```js
+import { disperse, recover } from 'p2p-hiverelay-client/blind-custody.js'
+
+const out = await disperse(undefined /* random secret */, {
+  relays,        // [{ baseUrl, pubkey }] — n custodians in share-index order
+  threshold: 2,  // k
+  signPin,       // (ctx) => signed custody pin — the app's keys, injected
+  publishIntent  // (relay, intent) => publish signed custody intent to a relay
+})
+// { key, secretPoint, threshold, count, commitmentRoot,
+//   shareManifest, shareAssignments, refs }
+```
+
+Signing and publishing are **injected**, never done by the module — the publisher key and each relay's write credential belong to the app, and the custody-pin signature must stay byte-identical to the relay's verifier. The returned `shareAssignments` + `shareManifest` + `commitmentRoot` are exactly the fields a v2 custody intent binds (`createCustodyIntent` in `p2p-hiverelay-client/custody.js`).
+
+#### `recover({ relays, shareManifest, threshold, fetch? })` → `Promise<object>`
+
+Gathers ≥ `threshold` shards from the relay set and reconstructs the secret at the reader's edge.
+
+```js
+const back = await recover({ relays, shareManifest: out.shareManifest, threshold: 2 })
+// { ok, key?, secretPoint?, used?, collected, need, reason? }
+```
+
+Integrity rests on an **authentic** `shareManifest` — take it from a publisher-signed custody intent, not from a relay's word.
+
+**Caveats:** this is k-of-n custody, not backup — losing `n - k + 1` relays loses the secret. And dispersing across relays a single operator controls proves the *mechanism*, not the security property; "no single operator can reconstruct" requires independent operators.
+
+### Notify Service Helpers
+
+**File:** `packages/client/notify.js` — Bare-safe helper module for the optional `notify` relay service. Builds the signed capability and wake objects the relay verifies; app content stays encrypted and the app syncs truth from its own P2P data after wake.
+
+```js
+import {
+  createNotifyIntent,
+  createNotifyServiceClient
+} from 'p2p-hiverelay-client/notify.js'
+
+const notify = createNotifyServiceClient(app, { relay: relayPubkeyHex })
+const intent = createNotifyIntent({
+  intentId,
+  receiveCap,
+  sendCap,
+  app: appId,
+  receiver: devicePubkey,
+  channel: 'message',
+  urgency: 'normal',
+  ttlSeconds: 3600,
+  payloadCiphertext
+}, senderKeyPair)
+
+await notify.send(intent)
+```
+
+- `createNotifyServiceClient(client, opts)` — wraps `callService` for the P2P path; `opts.relay` pins the relay
+- `createNotifyIntent(fields, senderKeyPair, opts?)` — builds and signs a wake intent
+- `createNotifyHttpClient(relayUrl, opts?)` — same surface over the relay's `/api/v1/notify/*` HTTP facade for browser/mobile clients
+
+The module also exports signed builders for provider bindings, device registrations, receive/send caps, revocations, watches, and status requests (`createNotifyProviderBinding`, `createNotifyDeviceRegistration`, `createNotifyReceiveCap`, `createNotifySendCap`, `createNotifyRevocation`, `createNotifyWatch`, `createNotifyStatusRequest`).
+
+### Pairing & Device Binding
+
+**File:** `packages/client/pairing.js` — pair a second device with a 6-digit code instead of copying an identity bundle. The identity moves over an end-to-end-encrypted Hyperswarm channel (`hiverelay-pair` Protomux protocol) derived from BLAKE2b(code); the code itself never traverses the wire — only HMAC-SHA256 challenge/response proofs.
+
+#### `app.createPairingCode(opts?)` → `Promise<{ code, expiresAt, topic }>`
+
+Device A: generate a one-time numeric code and wait on the derived swarm topic.
+
+```js
+const { code } = await app.createPairingCode()
+// display "123456" to the user; expires after opts.ttlMs (default 5 min)
+```
+
+#### `app.claimPairingCode(code, opts?)` → `Promise<{ ok, identity?, reason? }>`
+
+Device B: claim the code. On success this client's identity is replaced with the one received from the source device (`importIdentity` is called).
+
+```js
+const result = await app.claimPairingCode('123456', { timeoutMs: 30_000 })
+if (result.ok) console.log('paired as', result.identity.publicKey)
+```
+
+Both methods are lazy wrappers over `attachPairing(client, opts)` (exported from `p2p-hiverelay-client/pairing.js`), which attaches an idempotent `PairingManager`. Pass `opts` to `attachPairing` to tune `ttlMs`, `claimTimeoutMs`, and the per-peer rate limit.
+
+**Security posture:** single-claim semantics; server-side pair attempts are rate-limited per peer (default 6/min), capping online brute-force of the 1M-code space to negligible odds within the 5-minute TTL. The bundle is the raw private key — the Noise XK channel protects it in transit, but treat pairing like handing over the identity, because it is. Full protocol and threat notes live in the SECURITY NOTES block at the bottom of `packages/client/pairing.js`.
 
 ---
 
@@ -1253,6 +1513,8 @@ const stream = new WebSocketStream(ws)
 
 Handles backpressure: when the WebSocket buffer is full, the Duplex's write returns false, causing upstream to pause.
 
+For browser peers that need full DHT access (not just Corestore replication), see [9.5 DHT Relay WebSocket](#95-dht-relay-websocket-dht-relay-ws).
+
 ### 9.3 Tor Transport
 
 **File:** `transports/tor/index.js` (366 lines)
@@ -1294,6 +1556,58 @@ await tor.stop()
 **File:** `transports/holesail/index.js`
 
 TCP/UDP tunneling over Hyperswarm. Enables relay services to be exposed through NAT-traversing tunnels — any local port can be made accessible to peers on the network without port forwarding or static IPs. Built on the Holesail library which uses Hyperswarm for hole-punching.
+
+### 9.5 DHT Relay WebSocket (dht-relay-ws)
+
+**File:** `transports/dht-relay-ws/`
+**Since:** v0.22.0 (production hardening)
+
+A content-blind DHT byte pipe for browser peers: proxies HyperDHT operations over WebSocket so a browser can hole-punch and talk to the swarm through the relay. **Disabled by default** — enable via `config.transports.dhtRelayWs`. Built on a vendored, patched `@hyperswarm/dht-relay@0.4.3` (`transports/dht-relay-ws/vendor/dht-relay`, pinned exact); the patches fix egress backpressure, per-connection crash containment, and resource drain on close — see `vendor/dht-relay/VENDOR.md`.
+
+Every bound is **content-neutral** (frame lengths, buffer sizes, timings — never the Noise-encrypted payload), preserving the operator's transitory-conduit posture.
+
+**Connection supervisor** (one shared timer):
+- WS ping/pong liveness — terminates half-open TCP
+- First-frame deadline — reaps clients that never speak the protocol (they'd otherwise squat a `maxConnections` slot forever)
+- Sustained egress-backpressure termination — a slow reader can't grow relay heap without bound
+- Optional absolute session ceiling
+
+**Config surface:**
+
+```js
+transports: { dhtRelayWs: true },  // off by default
+dhtRelayWs: {
+  rateLimit: {
+    connectionsPerMinutePerIp: 10,
+    maxConcurrentPerIp: 5
+  },
+  keepalive: {
+    intervalMs: 30_000,            // WS ping cadence + supervisor sweep (0 disables)
+    firstFrameTimeoutMs: 30_000,   // reap connections that never send a frame
+    maxSessionMs: 0                // absolute session ceiling (0 = unlimited)
+  },
+  flow: {
+    maxPayloadBytes: 8 * 1024 * 1024,  // single WS frame cap (ws default is 100 MiB)
+    maxBufferedBytes: 16 * 1024 * 1024, // egress buffer ceiling per connection
+    maxRxBytesPerSec: 0                 // ingress byte-rate cap (default off)
+  },
+  maxConnections: 256,             // distinct cap — not tied to the swarm's maxConnections
+  trustProxy: false
+}
+```
+
+- `trustProxy` — behind a TLS reverse proxy the rate limiter would key on the proxy's socket IP, collapsing per-IP limiting into one global bucket. Set `trustProxy: true` to key on the first `X-Forwarded-For` hop (and bind the ws server loopback behind the proxy).
+
+**Byte metering** — the signal a pure-pipe operator budgets/bills on. `getStats()` reports aggregate `totalBytesIn/Out` and `totalReaped`; Prometheus exports:
+
+| Metric | Type |
+|--------|------|
+| `hiverelay_dhtrelay_active_connections` | gauge |
+| `hiverelay_dhtrelay_connections_total` | counter |
+| `hiverelay_dhtrelay_rate_limited_total` | counter |
+| `hiverelay_dhtrelay_reaped_total` | counter |
+| `hiverelay_dhtrelay_bytes_in_total` | counter |
+| `hiverelay_dhtrelay_bytes_out_total` | counter |
 
 ---
 
@@ -1511,6 +1825,50 @@ Live management endpoints used by `p2p-hiverelay manage` TUI. All changes are ho
 | `/api/manage/mode` | POST | `{ mode: "standard"|"homehive"|"seed-only"|"relay-only"|"stealth"|"gateway" }` |
 | `/api/manage/restart` | POST | Graceful node restart |
 | `/api/manage/shutdown` | POST | Graceful shutdown |
+
+### Outbox Admin API
+
+Operator surface for the OutboxLog service (see [Outbox Service Configuration](#outbox-service-configuration)). Authenticated with a **dedicated admin credential distinct from the browser sync token** — `config.outboxlog.adminKey` or `HIVERELAY_OUTBOXLOG_ADMIN_KEY` — passed via the `X-Pear-Admin-Token` header (or `?adminToken=`). An ordinary client holding an `/api/token` sync token can never authorize a takedown.
+
+**Safe-by-default:** with no admin credential configured, all four routes return `404` — the surface simply doesn't exist. Configured: absent/wrong token → `401`; only the exact token succeeds (constant-time compare). The key is read once at node construction; restart to rotate. OutboxLog claims exactly these `/api/admin/*` routes — it does not reserve the rest of the namespace.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/admin/takedown` | POST | `{ appId, key }` — suppress one row by its opaque id |
+| `/api/admin/restore` | POST | `{ appId, key }` — undo a takedown |
+| `/api/admin/takedowns` | GET | List current takedowns |
+| `/api/admin/sweep` | POST | Ghost-outbox sweep (v0.24.3) — reclaim empty group slots now |
+
+Takedown drops a record by its opaque `(appId, key)` id — **content is never read** — for operator liability parity, not for reading user data.
+
+**Break-glass sweep:** a create whose writer never appends leaves an empty group holding a `maxGroups` slot forever; at the cap the relay `503`s every new author. The sweep runs automatically at start and hourly (see `config.outboxlog.sweep`), but an operator can force it:
+
+```bash
+curl -X POST http://localhost:9100/api/admin/sweep \
+  -H "X-Pear-Admin-Token: $HIVERELAY_OUTBOXLOG_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"ttlMs": 0}'   # sweep every currently-empty group regardless of age
+```
+
+Deletions are journaled (`kind: 'sweep'`) so a restart's journal replay cannot resurrect them; swept groups' takedown suppressions and remembered swarm descriptors are pruned too. Safe by construction: an empty group holds no content, and a false positive self-heals on the owner's next write (join → catch → create).
+
+**Rate limiting:** outboxlog READ routes (`GET /api/directory`, `/api/sync/get·list·range·count·status·events`, `/api/swarm/events`, `/api/bridge/status`, plus the POST-shaped read `/api/sync/heads`) are **exempt from the global 60/min per-IP gate** (`isOutboxLogHttpReadRequest`) — a cold browser boot legitimately bursts ~10+ reads of signed rows the client re-verifies anyway. The adapter's own (much higher) per-IP bucket still bounds them. Writes and this admin surface stay under the global budget.
+
+### Shard Store API
+
+Content-addressed blind shard storage, mounted at `/api/v1/shard` (v0.24.0). **Opt-in:** the routes only work when the `shard-store` service is enabled (Services tab / `config.plugins`); mounting alone makes the surface reachable, not active.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/shard` | POST | Store a shard (body = opaque bytes); authorized by a **signed custody pin** |
+| `/api/v1/shard/<hash>` | GET | Fetch shard bytes by content address |
+| `/api/v1/shard/<hash>` | HEAD | Existence check |
+| `/api/v1/shard/<hash>/prove` | POST | Signed possession proof over a caller nonce |
+| `/api/v1/shard/<hash>` | DELETE | Remove a shard |
+
+`<hash>` is the 64-hex **BLAKE2b content address** of the shard bytes — byte-identical between client and relay, so a tampering relay is caught at fetch time. `GET`/`HEAD`/`prove`/`DELETE` are content-neutral (opaque bytes addressed by hash); `POST` (PUT) is accepted only when the pin names a custody intent this relay has indexed and the relay's own `relayPubkey → shareIndex → shard:<hash>` binding (signed into the intent's `shareAssignments` + `shareManifest`) matches — a relay can only pin the exact share it was assigned. Pin reasons default to `custody` (`config.shardStore.putAuth`); payment-gated pinning stays disabled until per-pinner quotas exist.
+
+Client-side consumers: `disperse` / `recover` in `p2p-hiverelay-client/blind-custody.js` and the lower-level `createHttpShardPut` / `createHttpShardFetch` in `shard-transport.js` (see [Blind Custody & Dispersal](#blind-custody--dispersal)).
 
 ### Error Responses
 
@@ -1828,6 +2186,42 @@ saveConfig(config)              // Write to ~/.hiverelay/config.json
 └── keys/             # Ed25519 keypair (if generated)
 ```
 
+### Outbox Service Configuration
+
+The OutboxLog service (signed, append-only outboxes for browser apps — see `docs/SERVICES.md`) is enabled explicitly through `config.plugins` / `services.json` (`outboxlog`), or on the Bare/appliance path with:
+
+```bash
+export HIVERELAY_OUTBOXLOG=1
+```
+
+**Namespace registration (required — deployment footgun):** the outbox is app-neutral, and every signed record carries a namespace (Peerit signs `'peerit'`). The relay rejects any record whose namespace is not registered with `unknown namespace` (HTTP `400`) — so `HIVERELAY_OUTBOXLOG=1` alone is not enough; a freshly ENV-provisioned box `400`s every publish until you register the app's namespace:
+
+```bash
+# env (Bare/appliance)
+export HIVERELAY_OUTBOXLOG_NAMESPACE=peerit
+```
+
+```js
+// or config
+config.outboxlog.namespace = 'peerit'
+// (or a config.outboxlog.namespaces map to register several at once)
+```
+
+The env var is a **default, not an override**: an `outboxlog.namespace` persisted in `config.json` wins over it (matching `HIVERELAY_ACCEPT_MODE` / `HIVERELAY_MAX_STORAGE`). When neither is set, only the app-neutral default namespace is registered.
+
+**Ghost sweep (v0.24.3):** empty groups (a create whose writer never appends) are swept at `OutboxLogApp.start()` and then periodically:
+
+```js
+config.outboxlog.sweep = false                 // disable entirely
+config.outboxlog.sweep = {                     // or tune (defaults shown)
+  enabled: true,
+  ttlMs: 24 * 60 * 60 * 1000,                  // only sweep empty groups older than this
+  intervalMs: 60 * 60 * 1000                   // hourly
+}
+```
+
+Defaults ON. Groups persisted before the feature carry no `createdAt` and count as infinitely old. For the operator break-glass `POST /api/admin/sweep` and the admin credential (`config.outboxlog.adminKey` / `HIVERELAY_OUTBOXLOG_ADMIN_KEY`), see [Outbox Admin API](#outbox-admin-api).
+
 ---
 
 ## 14. Agent Integration
@@ -1997,7 +2391,7 @@ Each node gets isolated storage and a unique API port (9100, 9101, 9102, ...). S
 This prevents data corruption on power loss or crash.
 
 **Rate limiting:**
-- HTTP API: 60 req/min per IP (token bucket)
+- HTTP API: 60 req/min per IP (fixed window; rejected requests don't consume budget). Outboxlog READ routes are exempt from this global gate (`isOutboxLogHttpReadRequest`) — the outboxlog adapter's own per-IP bucket still bounds them; writes and the admin surface stay under the global budget
 - P2P protocol: token bucket rate limiter per peer key (`core/protocol/rate-limiter.js`)
 - Directory listings: max 1000 entries with timeout
 
