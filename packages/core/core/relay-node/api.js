@@ -887,10 +887,15 @@ export class RelayAPI extends EventEmitter {
         if (!this._requireAuth(req, res, usageRoute.authMessage)) return
         const pk = resolvePokerServiceProvider(this.node)
         const provider = pk.ok ? pk.provider : this._getPokerApp()
-        if (!provider) return this._json(res, { error: pk.error }, pk.status)
+        // No provider is NOT an error here: this is the operator's telemetry
+        // view, and "poker isn't enabled" is a valid answer. The payload
+        // builder returns { enabled: false, tables: 0, ... } for a null
+        // provider — the contract the release-image smoke gate checks on a
+        // stock (no-services) boot. 503ing instead kept every Release
+        // surfaces run red from v0.24.0 through v0.24.3.
         const result = buildUsageTelemetryRoutePayload({
           route: usageRoute,
-          pokerProvider: provider
+          pokerProvider: provider || null
         })
         return this._json(res, result.payload, result.status || 200)
       }
