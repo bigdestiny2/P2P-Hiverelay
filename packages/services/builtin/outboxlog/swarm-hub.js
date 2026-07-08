@@ -69,6 +69,29 @@ export function createOutboxSwarmHub ({ maxDescriptorsPerTopic = 20000, onChange
       return out
     },
 
+    // Drop remembered descriptors the keep(topic, data) predicate rejects.
+    // Used by the outboxlog ghost sweep: descriptors for swept appIds would
+    // otherwise be replayed to EVERY future subscriber forever (the per-boot
+    // request amplifier the churn era left behind) and hold maxDescriptorsPerTopic
+    // slots. A throwing predicate keeps the descriptor (conservative). Fires
+    // onChange once when anything was pruned so persistence snapshots update.
+    pruneDescriptors (keep) {
+      if (destroyed || typeof keep !== 'function') return 0
+      let pruned = 0
+      for (const [topic, map] of descriptors) {
+        for (const data of [...map.keys()]) {
+          let keepIt = true
+          try { keepIt = keep(topic, data) !== false } catch { keepIt = true }
+          if (!keepIt) { map.delete(data); pruned++ }
+        }
+        if (map.size === 0) descriptors.delete(topic)
+      }
+      if (pruned > 0 && onChange) {
+        try { onChange() } catch {}
+      }
+      return pruned
+    },
+
     _loadDescriptors (obj) {
       if (!obj || typeof obj !== 'object') return
       for (const topic of Object.keys(obj)) {

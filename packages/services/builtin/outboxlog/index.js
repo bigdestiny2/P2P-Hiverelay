@@ -58,6 +58,11 @@ export {
 // re-affirmation survives seeder restarts. seedCore() is idempotent, so a
 // re-affirm of an already-seeded core is cheap.
 export const OUTBOXLOG_SEED_REAFFIRM_DEFAULT_MS = 600000
+// Ghost-outbox sweep cadence: reclaim empty (never-appended) group slots older
+// than the TTL, hourly by default, plus once at start(). Default ON — a swept
+// group holds zero content and the client recreates its outbox on demand.
+export const OUTBOXLOG_SWEEP_DEFAULT_TTL_MS = 24 * 60 * 60 * 1000
+export const OUTBOXLOG_SWEEP_DEFAULT_INTERVAL_MS = 60 * 60 * 1000
 
 function normalizeReaffirmMs (value, fallback) {
   const n = Number(value)
@@ -81,6 +86,12 @@ export class OutboxLogApp extends ServiceProvider {
     // (the one-shot initial seed still runs). Default 10 minutes.
     this.seedReaffirmMs = normalizeReaffirmMs(opts.seedReaffirmMs, OUTBOXLOG_SEED_REAFFIRM_DEFAULT_MS)
     this._seedTimer = null
+    // Ghost-outbox sweep (see outbox-log.js sweepGhosts). opts.sweep === false
+    // disables; ttl/interval overridable here and via config.outboxlog.sweep.
+    this.sweepEnabled = opts.sweep !== false
+    this.sweepTtlMs = normalizeReaffirmMs(opts.sweepTtlMs, OUTBOXLOG_SWEEP_DEFAULT_TTL_MS)
+    this.sweepIntervalMs = normalizeReaffirmMs(opts.sweepIntervalMs, OUTBOXLOG_SWEEP_DEFAULT_INTERVAL_MS)
+    this._sweepTimer = null
   }
 
   manifest () {
@@ -137,6 +148,42 @@ export class OutboxLogApp extends ServiceProvider {
       if (journal && configured !== false) this.journal = journal
     }
     await this._startFleetSeeding()
+    this._startGhostSweep(outboxlog)
+  }
+
+  // Startup + periodic ghost sweep. Runs AFTER persistence is configured (the
+  // journal/snapshot state is loaded by then), so the very first tick reclaims
+  // the churn-era backlog without waiting an interval. Config shape:
+  //   outboxlog.sweep: false | { enabled, ttlMs, intervalMs }
+  _startGhostSweep (outboxlogConfig = {}) {
+    const cfg = outboxlogConfig && outboxlogConfig.sweep
+    if (cfg === false) this.sweepEnabled = false
+    else if (cfg && typeof cfg === 'object') {
+      if (cfg.enabled === false) this.sweepEnabled = false
+      this.sweepTtlMs = normalizeReaffirmMs(cfg.ttlMs, this.sweepTtlMs)
+      this.sweepIntervalMs = normalizeReaffirmMs(cfg.intervalMs, this.sweepIntervalMs)
+    }
+    if (!this.sweepEnabled || typeof this.engine.sweepGhosts !== 'function') return
+    this._safeSweep()
+    if (this.sweepIntervalMs > 0 && !this._sweepTimer) {
+      this._sweepTimer = setInterval(() => { this._safeSweep() }, this.sweepIntervalMs)
+      if (this._sweepTimer && typeof this._sweepTimer.unref === 'function') this._sweepTimer.unref()
+    }
+  }
+
+  // Sweep, catching + logging any error so a transient persistence failure
+  // never crashes start() or the periodic loop.
+  _safeSweep () {
+    try {
+      const res = this.engine.sweepGhosts({ ttlMs: this.sweepTtlMs })
+      if (res && res.swept > 0) {
+        this._logSeedInfo('[outboxlog] ghost sweep: reclaimed ' + res.swept + ' empty group slot(s), pruned ' + res.descriptorsPruned + ' stale descriptor(s), ' + res.remaining + ' group(s) remain')
+      }
+      return res
+    } catch (err) {
+      this._logSeedWarn('[outboxlog] ghost sweep failed (will retry next interval): ' + (err && err.message ? err.message : err))
+      return null
+    }
   }
 
   // Hand the hypercore-outboxes journal cores to the fleet seeder so the log is
@@ -187,6 +234,10 @@ export class OutboxLogApp extends ServiceProvider {
     if (this._seedTimer) {
       clearInterval(this._seedTimer)
       this._seedTimer = null
+    }
+    if (this._sweepTimer) {
+      clearInterval(this._sweepTimer)
+      this._sweepTimer = null
     }
     if (this.engine.flush) await this.engine.flush()
     // Tear down the swarm hub so no descriptor delivery fires after stop and

@@ -260,7 +260,7 @@ function isOutboxLogApiPath (path) {
 }
 
 function isAdminPath (path) {
-  return path === '/api/admin/takedown' || path === '/api/admin/restore' || path === '/api/admin/takedowns'
+  return path === '/api/admin/takedown' || path === '/api/admin/restore' || path === '/api/admin/takedowns' || path === '/api/admin/sweep'
 }
 
 // The operator admin surface. Authenticated with a dedicated admin auth that is
@@ -283,6 +283,19 @@ async function handleAdminRoute (req, res, parsed, ctx, sync) {
       if (req.method !== 'GET') return respond(res, 405, { error: 'method not allowed' })
       if (typeof sync.takedowns !== 'function') return respond(res, 503, { error: 'outboxlog takedown unavailable' })
       return respond(res, 200, sync.takedowns())
+    }
+
+    // Operator-triggered ghost sweep (break-glass: reclaim empty group slots
+    // NOW instead of waiting for the periodic tick). Body is optional JSON;
+    // { "ttlMs": 0 } sweeps every currently-empty group regardless of age.
+    if (path === '/api/admin/sweep') {
+      if (req.method !== 'POST') return respond(res, 405, { error: 'method not allowed' })
+      if (typeof sync.sweepGhosts !== 'function') return respond(res, 503, { error: 'outboxlog sweep unavailable' })
+      const body = await readJson(req)
+      if (!body.ok) return respondReadProblem(res, body)
+      const rawTtl = body.body && body.body.ttlMs
+      const ttlMs = Number.isFinite(Number(rawTtl)) && Number(rawTtl) >= 0 ? Number(rawTtl) : undefined
+      return respond(res, 200, sync.sweepGhosts(ttlMs === undefined ? {} : { ttlMs }))
     }
 
     const drop = path === '/api/admin/takedown'
