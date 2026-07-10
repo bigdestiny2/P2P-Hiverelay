@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 import { OutboxLogApp } from 'p2p-hiveservices/builtin/outboxlog/index.js'
 import {
+  OUTBOXLOG_HTTP_MAX_RATE_BUCKETS,
   createOutboxLogAdminAuth,
   createOutboxLogHttpHandler,
   createOutboxLogHttpState,
@@ -128,6 +129,14 @@ test('outboxlog http adapter: issues tokens and gates bridge status', async (t) 
   t.is(ok.statusCode, 200)
   t.is(parseBody(ok).ready, true)
   t.is(parseBody(ok).service, 'outboxlog')
+  t.alike(parseBody(ok).httpRateLimit, {
+    scope: 'public-writes',
+    source: 'outboxlog-default',
+    enabled: true,
+    windowMs: 60000,
+    max: 1200,
+    outboxLogEnvelope: { enabled: true, windowMs: 60000, max: 1200 }
+  })
 })
 
 test('outboxlog token auth: stateless verification scales past 4096 clients and expires deterministically', (t) => {
@@ -442,6 +451,7 @@ test('outboxlog http adapter: applies CORS and OPTIONS headers', async (t) => {
   t.is(res.statusCode, 204)
   t.is(res.header('Access-Control-Allow-Origin'), 'https://peerit.example')
   t.is(res.header('Access-Control-Allow-Headers'), 'Content-Type, X-Pear-Token, X-Pear-Admin-Token')
+  t.is(res.header('Access-Control-Expose-Headers'), 'Retry-After')
   t.is(res.header('Access-Control-Allow-Methods'), 'GET, POST, OPTIONS')
   t.is(res.header('Vary'), 'Origin')
 })
@@ -463,6 +473,58 @@ test('outboxlog http adapter: rate limits by client IP', async (t) => {
   await handler(fakeReq('GET', '/api/bridge/status', null, { 'x-pear-token': token }), limited)
   t.is(limited.statusCode, 429)
   t.alike(parseBody(limited), { error: 'rate limited' })
+  t.is(limited.header('Retry-After'), '60', '429 supplies an integer delta-seconds retry window')
+  t.is(limited.header('Access-Control-Expose-Headers'), 'Retry-After', 'browser JavaScript can observe the retry window')
+})
+
+test('outboxlog http adapter: rate bucket cardinality stays bounded under unique-IP churn', async (t) => {
+  const state = createOutboxLogHttpState()
+  const now = Date.now()
+  for (let i = 0; i < OUTBOXLOG_HTTP_MAX_RATE_BUCKETS; i++) {
+    state.buckets.set('198.51.100.' + i, { start: now, count: 1 })
+  }
+  const ctx = createCtx({
+    state,
+    rateLimit: { windowMs: 24 * 60 * 60 * 1000, max: 100 }
+  })
+  const res = fakeRes()
+
+  await handleOutboxLogRoute(fakeReq('GET', '/api/bridge/status', null, { remoteAddress: '203.0.113.1' }), res, ctx)
+
+  t.is(res.statusCode, 401)
+  t.is(state.buckets.size, OUTBOXLOG_HTTP_MAX_RATE_BUCKETS, 'public IP churn cannot grow the bucket map past its fixed cap')
+  t.absent(state.buckets.has('198.51.100.0'), 'oldest fixed window is evicted at capacity')
+  t.ok(state.buckets.has('203.0.113.1'), 'new client receives the replacement bucket')
+})
+
+test('outboxlog http adapter: explicit local/staging disable keeps auth gates while removing only the IP envelope', async (t) => {
+  const auth = createOutboxLogTokenAuth()
+  const token = auth.issue()
+  const handler = createOutboxLogHttpHandler({
+    outboxLogApp: new OutboxLogApp({ verifyAppend: () => true }),
+    auth,
+    rateLimit: false
+  })
+
+  for (let i = 0; i < 3; i++) {
+    const res = fakeRes()
+    await handler(fakeReq('GET', '/api/bridge/status', null, { 'x-pear-token': token }), res)
+    t.is(res.statusCode, 200)
+    t.alike(parseBody(res).httpRateLimit, {
+      scope: 'public-writes',
+      source: 'operator',
+      enabled: false,
+      windowMs: 60000,
+      max: null,
+      outboxLogEnvelope: { enabled: false, windowMs: 60000, max: null }
+    })
+  }
+  const unauthenticated = fakeRes()
+  await handler(fakeReq('GET', '/api/bridge/status'), unauthenticated)
+  t.is(unauthenticated.statusCode, 401, 'disabling the IP envelope does not disable token auth')
+  const admin = fakeRes()
+  await handler(jsonReq('POST', '/api/admin/takedown', { appId: A, key: 'post!p1' }, token), admin)
+  t.is(admin.statusCode, 404, 'disabling the IP envelope does not enable the admin surface')
 })
 
 test('outboxlog http adapter: tokenized swarm SSE receives peer messages', async (t) => {

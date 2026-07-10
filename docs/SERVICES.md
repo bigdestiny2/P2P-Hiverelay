@@ -272,6 +272,39 @@ under its own namespace (Peerit, Poked, etc.) will be rejected until you registe
 it. This is the most common reason a freshly ENV-provisioned fleet/appliance box
 `400`s every publish from an otherwise-working app.
 
+**HTTP shared-NAT rate envelope:** OutboxLog's adapter defaults to 1,200
+requests per 60 seconds per client IP. For backward compatibility, public
+writes also remain under the relay API's generic 60/minute/IP ceiling until an
+operator explicitly configures the dedicated envelope. An explicit setting
+makes that envelope authoritative for the public OutboxLog data plane; operator
+admin routes retain the generic gate and their separate admin authentication.
+For example, a production relay serving roughly 30 active writers behind one
+NAT can start with:
+
+```json
+{
+  "outboxlog": {
+    "http": {
+      "rateLimit": {
+        "enabled": true,
+        "windowMs": 60000,
+        "max": 12000
+      }
+    }
+  }
+}
+```
+
+Keep the envelope enabled in production and tune `max` from measured peak
+traffic plus headroom. Local or staging deployments can explicitly disable only
+this IP envelope with `{ "enabled": false }` (or `rateLimit: false`); token,
+admin-auth, body-size, and atomic-commit gates remain active. `windowMs` must be
+an integer from 1 through 86,400,000 and `max` from 1 through 10,000,000;
+unknown or malformed fields fail relay startup. Authenticated
+`GET /api/bridge/status` reports the effective public-write limit, its source,
+and the underlying adapter envelope. A `429` includes an integer delta-seconds
+`Retry-After` header and exposes it to browser JavaScript through CORS.
+
 **Operator takedown surface (`/api/admin/takedown` · `/restore` · `/takedowns`):**
 An operator can drop or restore a single outbox row by its opaque
 `(appId, key)` id — content is never read; this exists for operator liability

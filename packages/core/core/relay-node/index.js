@@ -1201,6 +1201,9 @@ export class RelayNode extends EventEmitter {
           // unset here (and no HIVERELAY_OUTBOXLOG_ADMIN_KEY env), the admin
           // routes stay 404 (safe-by-default) — takedown is opt-in per operator.
           outboxLogAdminKey: this.config.outboxlog?.adminKey || null,
+          // Optional shared-NAT capacity envelope. RelayAPI validates this and
+          // otherwise preserves the established 1200 requests/60s/IP default.
+          outboxLogHttpRateLimit: this.config.outboxlog?.http?.rateLimit,
           trustProxy: this.config.trustProxy || false,
           uiExposeToken: this.config.ui?.exposeToken || false,
           uiSimple: this.config.ui?.simple || false

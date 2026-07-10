@@ -55,6 +55,8 @@ import {
 } from './api-route-mounts.js'
 import { appendVaryHeader, writeJson, writeText } from './api-response.js'
 import {
+  API_RATE_LIMIT_MAX,
+  API_RATE_LIMIT_WINDOW_MS,
   checkApiRateLimit,
   checkEndpointRateLimit,
   clientIpFromRequest,
@@ -127,7 +129,10 @@ import {
 } from './api-poker-http-adapter.js'
 import {
   buildOutboxLogHttpAdapterUnavailableResponse,
+  configuredOutboxLogHttpRateLimit,
   loadOutboxLogHttpAdapterModule,
+  normalizeOutboxLogHttpRateLimit,
+  outboxLogHttpRateLimitAdapterConfig,
   resolveOutboxLogHttpAdapter
 } from './api-outboxlog-http-adapter.js'
 import {
@@ -359,6 +364,21 @@ export class RelayAPI extends EventEmitter {
     // opts, config.outboxlog.adminKey, or the HIVERELAY_OUTBOXLOG_ADMIN_KEY env
     // var, mirroring how HIVERELAY_API_KEY is wired.
     this._outboxLogAdminKey = opts.outboxLogAdminKey || process.env.HIVERELAY_OUTBOXLOG_ADMIN_KEY || null
+    // Public OutboxLog data-plane limiter. The established 1200/60s/IP
+    // default remains unless an operator explicitly sets the constructor
+    // option or config.outboxlog.http.rateLimit. Validate synchronously so a
+    // malformed production config fails startup instead of silently disabling
+    // protection or surfacing only on the first browser request.
+    const nodeOutboxRateLimit = configuredOutboxLogHttpRateLimit(relayNode && relayNode.config)
+    this._outboxLogHttpRateLimitOperatorConfigured = opts.outboxLogHttpRateLimit !== undefined || nodeOutboxRateLimit !== undefined
+    const configuredOutboxRateLimit = opts.outboxLogHttpRateLimit !== undefined
+      ? opts.outboxLogHttpRateLimit
+      : nodeOutboxRateLimit
+    this._outboxLogHttpRateLimit = normalizeOutboxLogHttpRateLimit(configuredOutboxRateLimit)
+    this._outboxLogHttpRateLimitAdapterConfig = outboxLogHttpRateLimitAdapterConfig(this._outboxLogHttpRateLimit)
+    this._outboxLogEffectivePublicWriteRateLimit = this._outboxLogHttpRateLimitOperatorConfigured
+      ? this._outboxLogHttpRateLimit
+      : { enabled: true, windowMs: API_RATE_LIMIT_WINDOW_MS, max: API_RATE_LIMIT_MAX }
 
     // Per-IP request counts: ip -> { count, resetAt }
     this._rateLimits = new Map()
@@ -388,6 +408,7 @@ export class RelayAPI extends EventEmitter {
     this._loadRepairTicketHttpAdapter = opts.loadRepairTicketHttpAdapter || loadRepairTicketHttpAdapterModule
     this._loadShardHttpAdapter = opts.loadShardHttpAdapter || loadShardHttpAdapterModule
     this._outboxLogHttpAdapter = null
+    this._outboxLogHttpAdapterSetupFailed = false
     this._witnessLogHttpAdapter = null
     this._repairTicketHttpAdapter = null
     this._shardHttpAdapter = null
@@ -681,6 +702,7 @@ export class RelayAPI extends EventEmitter {
     res.setHeader('Access-Control-Allow-Headers', publicOutboxLog
       ? 'Content-Type, X-Pear-Token, X-Pear-Admin-Token'
       : 'Content-Type, Authorization')
+    if (publicOutboxLog) res.setHeader('Access-Control-Expose-Headers', 'Retry-After')
 
     // Handle CORS preflight
     if (req.method === 'OPTIONS') {
@@ -693,14 +715,18 @@ export class RelayAPI extends EventEmitter {
       return
     }
 
-    // Rate limit check. Outboxlog READ routes are exempt from the coarse
-    // per-IP budget: a cold browser boot legitimately bursts ~10+ reads of
-    // signed rows the client re-verifies anyway, and the budget was what
-    // dropped returning visitors to an empty feed. The outboxlog adapter
-    // still enforces its own (much higher) per-IP bucket on these routes,
-    // so the exemption narrows the gate — it does not remove it.
+    // Rate limit check. OutboxLog reads remain exempt from the coarse budget.
+    // When (and only when) an operator explicitly configures the dedicated
+    // OutboxLog envelope, that validated envelope also becomes authoritative
+    // for its public writes. This lets shared-NAT writers exceed the generic
+    // management API's 60/minute ceiling without changing the existing default.
+    // Admin routes retain the coarse gate in addition to adapter admin auth.
     const outboxLogRead = publicOutboxLog && isOutboxLogHttpReadRequest(req.method, requestPath)
-    if (!outboxLogRead && !this._checkRateLimit(ip)) {
+    const configuredOutboxLogDataPlane = publicOutboxLog &&
+      !requestPath.startsWith('/api/admin/') &&
+      this._outboxLogHttpRateLimitOperatorConfigured
+    const delegatedOutboxLogRateLimit = outboxLogRead || configuredOutboxLogDataPlane
+    if (!delegatedOutboxLogRateLimit && !this._checkRateLimit(ip)) {
       return this._json(res, { error: 'Too many requests' }, 429, { 'Retry-After': '60' })
     }
 
@@ -747,8 +773,29 @@ export class RelayAPI extends EventEmitter {
       // p2p-hiveservices package and is covered there; core only resolves the
       // running provider and lazily delegates the exact token/sync/swarm routes.
       if (isOutboxLogHttpRoute(path)) {
+        // After an adapter setup failure, spend the generic budget before
+        // retrying provider/import work so repeated failures cannot become an
+        // unthrottled public CPU/logging endpoint. The first resolution attempt
+        // is allowed through: a healthy adapter must not depend on the generic
+        // bucket when an operator configured a dedicated envelope or disabled
+        // it for staging.
+        let fallbackRateLimitConsumed = false
+        if (delegatedOutboxLogRateLimit && this._outboxLogHttpAdapterSetupFailed) {
+          if (!this._checkRateLimit(ip)) {
+            return this._json(res, { error: 'Too many requests' }, 429, { 'Retry-After': '60' })
+          }
+          fallbackRateLimitConsumed = true
+        }
         const outbox = resolveOutboxLogServiceProvider(this.node)
-        if (!outbox.ok) return this._json(res, { error: outbox.error }, outbox.status)
+        if (!outbox.ok) {
+          // Reads and explicitly configured data-plane requests normally
+          // delegate limiting to the adapter. If the provider is unavailable
+          // there is no adapter gate, so retain the generic fail-safe.
+          if (delegatedOutboxLogRateLimit && !fallbackRateLimitConsumed && !this._checkRateLimit(ip)) {
+            return this._json(res, { error: 'Too many requests' }, 429, { 'Retry-After': '60' })
+          }
+          return this._json(res, { error: outbox.error }, outbox.status)
+        }
         let adapter
         try {
           adapter = await resolveOutboxLogHttpAdapter({
@@ -764,7 +811,15 @@ export class RelayAPI extends EventEmitter {
           if (!this._outboxLogHttpAdminAuth && this._outboxLogAdminKey) {
             this._outboxLogHttpAdminAuth = adapter.createOutboxLogAdminAuth({ tokens: [this._outboxLogAdminKey] })
           }
+          this._outboxLogHttpAdapterSetupFailed = false
         } catch (err) {
+          this._outboxLogHttpAdapterSetupFailed = true
+          // Dynamic adapter setup failed before its dedicated limiter could
+          // run. Fall back to the generic gate rather than leaving delegated
+          // reads or configured data-plane traffic unthrottled.
+          if (delegatedOutboxLogRateLimit && !fallbackRateLimitConsumed && !this._checkRateLimit(ip)) {
+            return this._json(res, { error: 'Too many requests' }, 429, { 'Retry-After': '60' })
+          }
           const unavailable = buildOutboxLogHttpAdapterUnavailableResponse(err)
           this.emit(unavailable.event.name, unavailable.event.detail)
           return this._json(res, unavailable.payload, unavailable.status)
@@ -774,6 +829,9 @@ export class RelayAPI extends EventEmitter {
           auth: this._outboxLogHttpAuth,
           adminAuth: this._outboxLogHttpAdminAuth,
           state: this._outboxLogHttpState,
+          rateLimit: this._outboxLogHttpRateLimitAdapterConfig,
+          effectivePublicWriteRateLimit: this._outboxLogEffectivePublicWriteRateLimit,
+          rateLimitSource: this._outboxLogHttpRateLimitOperatorConfigured ? 'operator' : 'relay-api-default',
           allowOrigin: this.corsOrigins && this.corsOrigins.length ? this.corsOrigins : '*',
           trustProxy: this.trustProxy
         })

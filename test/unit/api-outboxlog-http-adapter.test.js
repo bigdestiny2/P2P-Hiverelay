@@ -1,9 +1,30 @@
 import test from 'brittle'
 import {
   OUTBOXLOG_HTTP_ADAPTER_UNAVAILABLE_CODE,
+  OUTBOXLOG_HTTP_RATE_LIMIT_DEFAULT,
   buildOutboxLogHttpAdapterUnavailableResponse,
+  configuredOutboxLogHttpRateLimit,
+  normalizeOutboxLogHttpRateLimit,
+  outboxLogHttpRateLimitAdapterConfig,
   resolveOutboxLogHttpAdapter
 } from '../../packages/core/core/relay-node/api-outboxlog-http-adapter.js'
+
+test('api outboxlog rate limit config: defaults, explicit overrides, disable, aliases, and invalid values', (t) => {
+  t.alike(normalizeOutboxLogHttpRateLimit(), OUTBOXLOG_HTTP_RATE_LIMIT_DEFAULT)
+  t.alike(normalizeOutboxLogHttpRateLimit({ windowMs: 120_000, max: 12_000 }), { enabled: true, windowMs: 120_000, max: 12_000 })
+  t.alike(normalizeOutboxLogHttpRateLimit(false), { enabled: false, windowMs: 60_000, max: null })
+  t.alike(normalizeOutboxLogHttpRateLimit({ enabled: false, windowMs: 5_000 }), { enabled: false, windowMs: 5_000, max: null })
+  t.alike(normalizeOutboxLogHttpRateLimit(normalizeOutboxLogHttpRateLimit(false)), { enabled: false, windowMs: 60_000, max: null })
+  t.alike(outboxLogHttpRateLimitAdapterConfig(false), { enabled: false, windowMs: 60_000, max: false })
+  t.is(configuredOutboxLogHttpRateLimit({ outboxlog: { http: { rateLimit: { max: 2 } } } }).max, 2)
+  t.is(configuredOutboxLogHttpRateLimit({ outboxlog: { api: { rateLimit: false } } }), false)
+
+  for (const invalid of [null, true, { max: 0 }, { max: 10_000_001 }, { max: '1200' }, { max: null }, { windowMs: 0 }, { enabled: 'no' }, { enabled: true, max: false }, { unknown: 1 }]) {
+    let err = null
+    try { normalizeOutboxLogHttpRateLimit(invalid) } catch (error) { err = error }
+    t.ok(err, 'invalid config rejected: ' + JSON.stringify(invalid))
+  }
+})
 
 test('api outboxlog http adapter: cached adapter is reused without loading optional module', async (t) => {
   const cached = {

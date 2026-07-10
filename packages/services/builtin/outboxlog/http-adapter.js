@@ -9,6 +9,9 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { readJsonBody } from 'p2p-hiverelay/core/relay-node/api-body.js'
+import {
+  normalizeOutboxLogHttpRateLimit
+} from 'p2p-hiverelay/core/relay-node/api-outboxlog-http-adapter.js'
 import { getPostJsonContentTypeProblem } from 'p2p-hiverelay/core/relay-node/api-request.js'
 import { appendVaryHeader, writeJson } from 'p2p-hiverelay/core/relay-node/api-response.js'
 
@@ -16,18 +19,28 @@ export const OUTBOXLOG_API_PREFIX = '/api'
 export const OUTBOXLOG_MAX_JSON_BODY_BYTES = 1024 * 1024
 export const OUTBOXLOG_SSE_PING_MS = 25000
 
-const DEFAULT_RATE_LIMIT = { windowMs: 60000, max: 1200 }
 const DEFAULT_SSE_MAX_PER_IP = 8
 const DEFAULT_SSE_MAX_TOTAL = 2000
 const DEFAULT_SYNC_EVENT_APP_ID_LIMIT = 128
 const DEFAULT_SYNC_EVENT_APP_ID_LENGTH = 128
 const DEFAULT_SYNC_EVENT_REPLAY_LIMIT = 1000
-const MAX_RATE_BUCKETS = 50000
+export const OUTBOXLOG_HTTP_MAX_RATE_BUCKETS = 50000
 export const OUTBOXLOG_TOKEN_TTL_MS = 15 * 60 * 1000
 
 export function createOutboxLogHttpHandler (opts = {}) {
   const state = createOutboxLogHttpState()
-  return (req, res) => handleOutboxLogRoute(req, res, { ...opts, state })
+  const rateLimit = normalizeOutboxLogHttpRateLimit(opts.rateLimit)
+  const effectivePublicWriteRateLimit = opts.effectivePublicWriteRateLimit === undefined
+    ? rateLimit
+    : normalizeOutboxLogHttpRateLimit(opts.effectivePublicWriteRateLimit)
+  const rateLimitSource = opts.rateLimitSource || (opts.rateLimit === undefined ? 'outboxlog-default' : 'operator')
+  return (req, res) => handleOutboxLogRoute(req, res, {
+    ...opts,
+    effectivePublicWriteRateLimit,
+    rateLimit,
+    rateLimitSource,
+    state
+  })
 }
 
 export function createOutboxLogHttpState () {
@@ -117,7 +130,10 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
 
   const state = ctx.state || createOutboxLogHttpState()
   const ip = clientIp(req, ctx)
-  if (overLimit(ip, ctx.rateLimit || DEFAULT_RATE_LIMIT, state)) {
+  const rateLimit = normalizeOutboxLogHttpRateLimit(ctx.rateLimit)
+  const rate = consumeRateLimit(ip, rateLimit, state)
+  if (!rate.allowed) {
+    res.setHeader('Retry-After', String(rate.retryAfterSeconds))
     return respond(res, 429, { error: 'rate limited' })
   }
 
@@ -160,7 +176,8 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
         service: 'outboxlog',
         serviceVersion: capabilities.serviceVersion,
         atomicCommit: capabilities.atomicCommit,
-        legacyWrites: capabilities.legacyWrites
+        legacyWrites: capabilities.legacyWrites,
+        httpRateLimit: publicRateLimit(rateLimit, ctx)
       })
     }
 
@@ -401,6 +418,7 @@ function applyCors (req, res, ctx) {
     : (Array.isArray(allowOrigin) && requestOrigin && allowOrigin.includes(requestOrigin) ? requestOrigin : allowOrigin[0] || '*')
   res.setHeader('Access-Control-Allow-Origin', origin)
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Pear-Token, X-Pear-Admin-Token')
+  res.setHeader('Access-Control-Expose-Headers', 'Retry-After')
   res.setHeader('Access-Control-Max-Age', '86400')
   appendVaryHeader(res, 'Origin')
 }
@@ -412,25 +430,51 @@ function clientIp (req, ctx) {
   return (req.socket && req.socket.remoteAddress) || 'unknown'
 }
 
-function overLimit (ip, rateLimit, state) {
-  if (!rateLimit || rateLimit.max === false || rateLimit.max === Infinity) return false
+function consumeRateLimit (ip, rateLimit, state) {
+  if (!rateLimit.enabled) return { allowed: true }
   const now = Date.now()
   let bucket = state.buckets.get(ip)
-  if (!bucket || now - bucket.start > rateLimit.windowMs) {
+  if (!bucket || now - bucket.start >= rateLimit.windowMs) {
+    // Keep attacker-controlled IP cardinality from growing memory without
+    // bound. Deleting and reinserting expired buckets keeps Map insertion
+    // order aligned with window age, so the first entry is the oldest window
+    // and can be evicted in O(1) when the fixed cap is full.
+    if (bucket) state.buckets.delete(ip)
+    while (state.buckets.size >= OUTBOXLOG_HTTP_MAX_RATE_BUCKETS) {
+      state.buckets.delete(state.buckets.keys().next().value)
+    }
     bucket = { start: now, count: 0 }
     state.buckets.set(ip, bucket)
-  }
-  if (state.buckets.size > MAX_RATE_BUCKETS) {
-    for (const [key, value] of state.buckets) {
-      if (now - value.start > rateLimit.windowMs) state.buckets.delete(key)
-    }
   }
   // Check-before-increment: a rejected request must not consume window budget,
   // otherwise a client retrying through a 429 can never recover within the
   // window even when its accepted-rate would fit (self-lockout).
-  if (bucket.count >= rateLimit.max) return true
+  if (bucket.count >= rateLimit.max) {
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.max(1, Math.ceil((bucket.start + rateLimit.windowMs - now) / 1000))
+    }
+  }
   bucket.count++
-  return false
+  return { allowed: true }
+}
+
+function publicRateLimit (rateLimit, ctx) {
+  const effective = ctx.effectivePublicWriteRateLimit
+    ? normalizeOutboxLogHttpRateLimit(ctx.effectivePublicWriteRateLimit)
+    : rateLimit
+  return {
+    scope: 'public-writes',
+    source: ctx.rateLimitSource || 'outboxlog-default',
+    enabled: effective.enabled,
+    windowMs: effective.windowMs,
+    max: effective.max,
+    outboxLogEnvelope: {
+      enabled: rateLimit.enabled,
+      windowMs: rateLimit.windowMs,
+      max: rateLimit.max
+    }
+  }
 }
 
 function tokenFrom (req, url) {

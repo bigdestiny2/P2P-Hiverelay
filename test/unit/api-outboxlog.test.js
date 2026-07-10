@@ -110,7 +110,7 @@ function outboxRegistry (provider) {
 function mockNode (opts = {}) {
   return {
     running: true,
-    config: { storage: null, plugins: opts.plugins || [], trustProxy: true },
+    config: { storage: null, plugins: opts.plugins || [], trustProxy: true, ...(opts.config || {}) },
     metrics: { getSummary () { return { uptime: 1 } } },
     seededApps: new Map(),
     appRegistry: { apps: new Map(), catalog () { return [] }, catalogForBroadcast () { return [] } },
@@ -191,6 +191,47 @@ test('/api/token redacts adapter load failures and emits internals', async (t) =
   t.ok(events[0].error.message.includes('/data/hiverelay/private'))
 })
 
+test('/api/token explicit OutboxLog config retains a coarse fail-safe when adapter loading fails', async (t) => {
+  const app = fakeOutboxLogApp()
+  const node = mockNode({
+    registry: outboxRegistry(app),
+    config: { outboxlog: { http: { rateLimit: { windowMs: 60_000, max: 12_000 } } } }
+  })
+  const { api, port } = await serverWithApi(t, node)
+  let loads = 0
+  api._loadOutboxLogHttpAdapter = async function () {
+    loads++
+    throw new Error('adapter unavailable')
+  }
+
+  for (let i = 0; i < 60; i++) {
+    t.is((await request(port, 'POST', '/api/token')).statusCode, 503)
+  }
+  const limited = await request(port, 'POST', '/api/token')
+  t.is(limited.statusCode, 429)
+  t.alike(limited.body, { error: 'Too many requests' })
+  t.is(limited.headers['access-control-expose-headers'], 'Retry-After')
+  t.is(loads, 60, 'rate gate stops repeated dynamic adapter resolution failures')
+})
+
+test('/api/bridge/status default read exemption retains a coarse fail-safe until the adapter resolves', async (t) => {
+  const app = fakeOutboxLogApp()
+  const { api, port } = await serverWithApi(t, mockNode({ registry: outboxRegistry(app) }), { trustProxy: true })
+  let loads = 0
+  api._loadOutboxLogHttpAdapter = async function () {
+    loads++
+    throw new Error('adapter unavailable')
+  }
+  const ip = '198.51.100.77'
+  api._rateLimits.set(ip, { count: 59, resetAt: Date.now() + 60_000 })
+  const headers = { 'X-Forwarded-For': ip }
+
+  t.is((await request(port, 'GET', '/api/bridge/status', null, headers)).statusCode, 503)
+  const limited = await request(port, 'GET', '/api/bridge/status', null, headers)
+  t.is(limited.statusCode, 429)
+  t.is(loads, 1, 'fallback gate rejects before repeating failed adapter work')
+})
+
 test('/api/outboxlog bridge token gates sync routes through RelayAPI', async (t) => {
   const app = fakeOutboxLogApp()
   const { port } = await serverWithApi(t, mockNode({ registry: outboxRegistry(app) }))
@@ -206,10 +247,125 @@ test('/api/outboxlog bridge token gates sync routes through RelayAPI', async (t)
   const status = await request(port, 'GET', '/api/bridge/status', null, { 'X-Pear-Token': token })
   t.is(status.body.ready, true)
   t.is(status.body.service, 'outboxlog')
+  t.alike(status.body.httpRateLimit, {
+    scope: 'public-writes',
+    source: 'relay-api-default',
+    enabled: true,
+    windowMs: 60000,
+    max: 60,
+    outboxLogEnvelope: { enabled: true, windowMs: 60000, max: 1200 }
+  })
 
   const created = await request(port, 'POST', '/api/sync/create', { appId: 'a'.repeat(64) }, { 'X-Pear-Token': token })
   t.is(created.statusCode, 200)
   t.is(created.body.appId, 'a'.repeat(64))
+})
+
+test('/api/outboxlog preserves the default coarse 60/minute public-write gate', async (t) => {
+  const app = fakeOutboxLogApp()
+  const { port } = await serverWithApi(t, mockNode({ registry: outboxRegistry(app) }))
+  for (let i = 0; i < 60; i++) {
+    t.is((await request(port, 'POST', '/api/token')).statusCode, 200)
+  }
+  const limited = await request(port, 'POST', '/api/token')
+  t.is(limited.statusCode, 429)
+  t.alike(limited.body, { error: 'Too many requests' })
+  t.is(limited.headers['retry-after'], '60')
+  t.is(limited.headers['access-control-expose-headers'], 'Retry-After')
+})
+
+test('/api/outboxlog accepts validated shared-NAT rate config and returns Retry-After at the configured ceiling', async (t) => {
+  const app = fakeOutboxLogApp()
+  const node = mockNode({
+    registry: outboxRegistry(app),
+    config: { outboxlog: { http: { rateLimit: { windowMs: 120_000, max: 65 } } } }
+  })
+  const { port } = await serverWithApi(t, node)
+  const tokenRes = await request(port, 'POST', '/api/token')
+  const token = tokenRes.body.token
+  const headers = { 'X-Pear-Token': token }
+
+  const status = await request(port, 'GET', '/api/bridge/status', null, headers)
+  t.is(status.statusCode, 200)
+  t.alike(status.body.httpRateLimit, {
+    scope: 'public-writes',
+    source: 'operator',
+    enabled: true,
+    windowMs: 120000,
+    max: 65,
+    outboxLogEnvelope: { enabled: true, windowMs: 120000, max: 65 }
+  })
+  // Token + status consumed two dedicated slots. Sixty-three writes now cross
+  // the generic management API's 60/minute ceiling while staying within the
+  // explicitly configured OutboxLog envelope.
+  for (let i = 0; i < 63; i++) {
+    const appId = i.toString(16).padStart(64, '0')
+    t.is((await request(port, 'POST', '/api/sync/create', { appId }, headers)).statusCode, 200)
+  }
+  const limited = await request(port, 'GET', '/api/bridge/status', null, headers)
+  t.is(limited.statusCode, 429)
+  t.ok(/^\d+$/.test(limited.headers['retry-after']))
+  t.ok(Number(limited.headers['retry-after']) >= 1)
+  t.is(limited.headers['access-control-expose-headers'], 'Retry-After')
+})
+
+test('/api/outboxlog supports explicit staging disable without weakening token auth', async (t) => {
+  const app = fakeOutboxLogApp()
+  const { port } = await serverWithApi(t, mockNode({ registry: outboxRegistry(app) }), { outboxLogHttpRateLimit: false })
+  const tokenRes = await request(port, 'POST', '/api/token')
+  const headers = { 'X-Pear-Token': tokenRes.body.token }
+  for (let i = 0; i < 5; i++) {
+    const status = await request(port, 'GET', '/api/bridge/status', null, headers)
+    t.is(status.statusCode, 200)
+    t.is(status.body.httpRateLimit.enabled, false)
+  }
+  t.is((await request(port, 'GET', '/api/bridge/status')).statusCode, 401)
+})
+
+test('/api/outboxlog healthy first adapter resolution honors explicit data-plane config over a saturated generic bucket', async (t) => {
+  const app = fakeOutboxLogApp()
+  const { api, port } = await serverWithApi(t, mockNode({ registry: outboxRegistry(app) }), {
+    outboxLogHttpRateLimit: false,
+    trustProxy: true
+  })
+  const ip = '198.51.100.88'
+  api._rateLimits.set(ip, { count: 60, resetAt: Date.now() + 60_000 })
+
+  const token = await request(port, 'POST', '/api/token', null, { 'X-Forwarded-For': ip })
+  t.is(token.statusCode, 200, 'healthy adapter bootstraps under the explicit data-plane policy')
+  t.ok(token.body.token)
+})
+
+test('/api/outboxlog explicit data-plane config does not bypass the global admin rate gate', async (t) => {
+  const app = fakeOutboxLogApp()
+  const { port } = await serverWithApi(t, mockNode({ registry: outboxRegistry(app) }), {
+    outboxLogAdminKey: 'admin-secret',
+    outboxLogHttpRateLimit: false
+  })
+  for (let i = 0; i < 60; i++) {
+    const denied = await request(port, 'GET', '/api/admin/takedowns')
+    t.is(denied.statusCode, 401)
+  }
+  const limited = await request(port, 'GET', '/api/admin/takedowns')
+  t.is(limited.statusCode, 429)
+  t.alike(limited.body, { error: 'Too many requests' })
+})
+
+test('/api/outboxlog rejects malformed operator rate config at RelayAPI construction', (t) => {
+  let err = null
+  let api = null
+  try {
+    api = new RelayAPI(mockNode({ config: { outboxlog: { http: { rateLimit: { max: 'unbounded' } } } } }), {
+      apiPort: 0,
+      apiHost: '127.0.0.1',
+      apiKey: API_KEY
+    })
+  } catch (error) {
+    err = error
+  }
+  t.absent(api)
+  t.ok(err)
+  t.ok(err.message.includes('outboxlog.http.rateLimit.max'))
 })
 
 test('/api/admin/takedown is 404 through RelayAPI when no admin key is configured', async (t) => {
