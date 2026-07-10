@@ -2098,13 +2098,25 @@ function acquireJsonlWriterOwnership (path) {
     path: lockPath,
     release () {
       if (released) return
-      const gate = acquireJsonlOwnershipGate(lockPath, owner)
+      let gate
       try {
-        const existing = readWriterOwner(lockPath)
-        if (sameWriterOwner(existing, owner)) {
-          unlinkSync(lockPath)
-          fsyncDirectory(parent)
-        }
+        gate = acquireJsonlOwnershipGate(lockPath, owner)
+      } catch (err) {
+        if (!err || err.code !== 'OUTBOXLOG_OWNERSHIP_GATE_BUSY') throw err
+        // A competing or orphaned gate must remain untouched and therefore
+        // continues to block every new compliant owner. It is nevertheless
+        // safe to remove our exact token-verified live owner record: only the
+        // current gate holder could install a successor, every other process
+        // remains blocked, and there is no second unlink that could hit that
+        // successor. This
+        // keeps constructor/configuration rollback from losing the only lease
+        // handle while preserving fail-closed acquisition.
+        releaseOwnedWriterLock(lockPath, parent, owner)
+        released = true
+        return
+      }
+      try {
+        releaseOwnedWriterLock(lockPath, parent, owner)
       } finally {
         gate.release()
       }
@@ -2133,7 +2145,11 @@ function acquireJsonlOwnershipGate (lockPath, owner) {
     if (created) {
       try { unlinkSync(gatePath) } catch {}
     }
-    if (err && err.code === 'EEXIST') throw new Error('OutboxLog: journal ownership transition is active or unverifiable')
+    if (err && err.code === 'EEXIST') {
+      const busy = new Error('OutboxLog: journal ownership transition is active or unverifiable')
+      busy.code = 'OUTBOXLOG_OWNERSHIP_GATE_BUSY'
+      throw busy
+    }
     throw err
   }
 
@@ -2146,6 +2162,18 @@ function acquireJsonlOwnershipGate (lockPath, owner) {
       released = true
     }
   }
+}
+
+function releaseOwnedWriterLock (lockPath, parent, owner) {
+  const existing = readWriterOwner(lockPath)
+  if (!sameWriterOwner(existing, owner)) return
+  try {
+    unlinkSync(lockPath)
+  } catch (err) {
+    if (!err || err.code !== 'ENOENT') throw err
+    return
+  }
+  fsyncDirectory(parent)
 }
 
 let cachedJsonlWriterHostId = null

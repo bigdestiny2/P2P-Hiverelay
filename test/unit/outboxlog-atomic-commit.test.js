@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
+import { writeFileSync } from 'node:fs'
 import { appendFile, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -382,6 +383,7 @@ test('outboxlog configurePersistence: failed partial replay restores all engine 
   const dir = await mkdtemp(join(tmpdir(), 'outboxlog-config-transaction-'))
   t.teardown(() => rm(dir, { recursive: true, force: true }))
   const path = join(dir, 'operations.jsonl')
+  const gatePath = path + '.writer.lock.gate'
   const a = 'a'.repeat(64)
   const b = 'b'.repeat(64)
   const c = 'c'.repeat(64)
@@ -400,18 +402,50 @@ test('outboxlog configurePersistence: failed partial replay restores all engine 
   engine.sync.append(c, { type: 'post', data: { id: 'preexisting', _ns: DEFAULT_OUTBOXLOG_NAMESPACE } })
   engine.sync.takedown(c, 'post!preexisting')
   const before = engine.snapshot()
-  t.is(throws(() => engine.configurePersistence({ journalPath: path })).status, 500, 'corrupt tail fails after earlier entries were tentatively replayed')
+  let blockCleanup = true
+  const blockingSnapshot = {
+    loadSync () {
+      if (blockCleanup) writeFileSync(gatePath, 'forced cleanup gate conflict')
+      return null
+    },
+    saveSync () {}
+  }
+  t.is(throws(() => engine.configurePersistence({ journalPath: path, persistence: blockingSnapshot })).status, 500, 'corrupt tail fails after earlier entries were tentatively replayed')
   t.alike(engine.snapshot(), before, 'failed configuration restores every mutable state surface')
   t.is(engine.sync.status(a).viewLength, 0, 'partial group replay is absent after rollback')
+  t.is((await rejectsAsync(readFile(path + '.writer.lock'))).code, 'ENOENT', 'gate conflict cannot strand the failed configuration writer lease')
+  t.ok(throws(() => createJsonlOutboxJournal(path)).message.includes('transition'), 'the conflicting gate remains fail-closed after exact owner cleanup')
+
+  await rm(gatePath, { force: true })
+  const releasedProbe = createJsonlOutboxJournal(path)
+  releasedProbe.close()
 
   lines[2].seq = 3
   await writeFile(path, lines.map(line => JSON.stringify(line)).join('\n') + '\n')
-  t.is(engine.configurePersistence({ journalPath: path }), true, 'repaired persistence can be configured on the same engine')
+  blockCleanup = false
+  t.is(engine.configurePersistence({ journalPath: path, persistence: blockingSnapshot }), true, 'repaired persistence can be configured on the same engine')
   t.is(engine.sync.heads([a]).heads[a], 1, 'repaired retry applies the append exactly once')
   t.is(engine.sync.get(a, 'post!p1').id, 'p1')
   t.ok(engine.sync.status(b).inviteKey, 'later group is restored after repair')
   t.alike(engine.sync.takedowns(), { takedowns: [{ appId: c, key: 'post!preexisting' }], count: 1 }, 'pre-existing moderation state survives failure and repaired retry')
   engine.close()
+
+  const constructorPath = join(dir, 'constructor-corrupt.jsonl')
+  const constructorGate = constructorPath + '.writer.lock.gate'
+  lines[2].seq = 99
+  await writeFile(constructorPath, lines.map(line => JSON.stringify(line)).join('\n') + '\n')
+  const constructorSnapshot = {
+    loadSync () {
+      writeFileSync(constructorGate, 'forced constructor cleanup gate conflict')
+      return null
+    },
+    saveSync () {}
+  }
+  t.is(throws(() => createOutboxLog({ journalPath: constructorPath, persistence: constructorSnapshot, verifyAppend: false })).status, 500, 'constructor replay failure is surfaced')
+  t.is((await rejectsAsync(readFile(constructorPath + '.writer.lock'))).code, 'ENOENT', 'constructor rollback also releases its exact writer lease under gate conflict')
+  await rm(constructorGate, { force: true })
+  const constructorProbe = createJsonlOutboxJournal(constructorPath)
+  constructorProbe.close()
 })
 
 test('outboxlog atomic commit: JSONL recovery truncates only a torn final tail and rejects interior corruption', async (t) => {
