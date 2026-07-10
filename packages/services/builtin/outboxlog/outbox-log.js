@@ -8,8 +8,8 @@
  * relay; only the generic signed envelope is verified.
  */
 
-import { randomBytes } from 'node:crypto'
-import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { createHash, randomBytes } from 'node:crypto'
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync, writeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import sodium from 'sodium-universal'
 import b4a from 'b4a'
@@ -34,6 +34,9 @@ export const DEFAULT_MAX_DIRECTORY_LIMIT = 5000
 export const DEFAULT_MAX_APPEND_EVENTS_PER_OUTBOX = 1000
 export const DEFAULT_MAX_APPEND_EVENT_LIMIT = 1000
 export const DEFAULT_CHECKPOINT_INTERVAL = 256
+export const DEFAULT_MAX_COMMIT_RECEIPTS_PER_GROUP = 4096
+export const DEFAULT_MAX_COMMIT_MUTATIONS = 256
+export const DEFAULT_OUTBOXLOG_SERVICE_VERSION = '0.24.3'
 // App-neutral default namespace. Registered apps SHOULD pass an explicit
 // namespace; this fallback exists only so an operator who configures nothing
 // still gets a working single-namespace registry. It is intentionally NOT
@@ -78,6 +81,10 @@ export function createOutboxLog ({
   journalPath = null,
   storagePath = null,
   checkpointInterval = DEFAULT_CHECKPOINT_INTERVAL,
+  maxCommitReceiptsPerGroup = DEFAULT_MAX_COMMIT_RECEIPTS_PER_GROUP,
+  maxCommitMutations = DEFAULT_MAX_COMMIT_MUTATIONS,
+  serviceVersion = DEFAULT_OUTBOXLOG_SERVICE_VERSION,
+  legacyWrites = true,
   onAppend = null,
   log = () => {}
 } = {}) {
@@ -105,6 +112,17 @@ export function createOutboxLog ({
   const checkpointEvery = positiveInteger(checkpointInterval, DEFAULT_CHECKPOINT_INTERVAL)
   let entriesSinceCheckpoint = 0
   let snapshotDirty = false
+  let legacyWritesEnabled = legacyWrites !== false
+  let commitJournalFailed = false
+  const commitReceiptLimit = Math.min(
+    positiveInteger(maxCommitReceiptsPerGroup, DEFAULT_MAX_COMMIT_RECEIPTS_PER_GROUP),
+    positiveInteger(maxRowsPerGroup, DEFAULT_MAX_ROWS_PER_GROUP)
+  )
+  const commitMutationLimit = Math.min(
+    positiveInteger(maxCommitMutations, DEFAULT_MAX_COMMIT_MUTATIONS),
+    positiveInteger(maxRowsPerGroup, DEFAULT_MAX_ROWS_PER_GROUP)
+  )
+  const reportedServiceVersion = typeof serviceVersion === 'string' && serviceVersion ? serviceVersion : DEFAULT_OUTBOXLOG_SERVICE_VERSION
 
   loadState()
 
@@ -115,7 +133,7 @@ export function createOutboxLog ({
     if (!group) {
       if (groups.size >= maxGroups) throw fail('relay at group capacity', 503)
       assertNamespaceOutboxCapacity(namespaceInfo)
-      group = { inviteKey: hex(32), rows: new Map(), version: 0, directorySeq: 0, namespace: namespaceInfo ? namespaceInfo.name : null, createdAt: Date.now() }
+      group = { inviteKey: hex(32), rows: new Map(), commits: new Map(), version: 0, directorySeq: 0, namespace: namespaceInfo ? namespaceInfo.name : null, createdAt: Date.now() }
       groups.set(appId, group)
     } else {
       bindGroupNamespace(group, namespaceInfo)
@@ -127,6 +145,7 @@ export function createOutboxLog ({
 
   const sync = {
     create (appId, opts = {}) {
+      if (!legacyWritesEnabled) throw fail('legacy create is disabled', 403)
       const namespaceInfo = namespaceInfoForCreate(opts)
       const existed = groups.has(appId)
       const previousGroup = groups.get(appId)
@@ -150,6 +169,7 @@ export function createOutboxLog ({
     },
 
     append (appId, op) {
+      if (!legacyWritesEnabled) throw fail('legacy append is disabled', 403)
       if (!op || typeof op.type !== 'string' || op.type.length > 64 || !op.data || op.data.id == null) throw fail('bad op', 400)
       const namespaceInfo = namespaceInfoForAppend(op.data)
       const id = String(op.data.id)
@@ -223,6 +243,33 @@ export function createOutboxLog ({
 
       emitAppend({ ...event, value: op.data })
       return { ok: true, key }
+    },
+
+    commit (appId, commit) {
+      if (!hasDurableCommitJournal()) throw fail('durable commit persistence unavailable', 503)
+      const prepared = prepareAtomicCommit(appId, commit)
+      if (prepared.duplicate) return clone(prepared.receipt)
+
+      // The complete transition is one journal record. A successful append is
+      // the commit point; JSONL journals fsync it before returning. No group is
+      // allocated and no row is visible before this succeeds.
+      try {
+        appendJournalEntry(journalCommitEntry(prepared))
+      } catch (err) {
+        // A short/failed append may have left an unacknowledged tail. Do not
+        // attempt another commit in this process and risk concatenating onto it.
+        commitJournalFailed = true
+        throw fail('persistence failed', 500, err)
+      }
+
+      applyPreparedCommit(prepared)
+      markJournalMutationForCheckpoint()
+      for (const event of prepared.events) emitAppend({ ...event, value: prepared.group.rows.get(event.key) })
+      return clone(prepared.receipt)
+    },
+
+    capabilities () {
+      return commitCapabilities()
     },
 
     get (appId, key) {
@@ -313,6 +360,7 @@ export function createOutboxLog ({
     flush,
     configurePersistence,
     configureNamespaces,
+    configureLegacyWrites,
     namespaces: () => namespaceRegistry.snapshot(),
     takedown: sync.takedown,
     restore: sync.restore,
@@ -322,6 +370,293 @@ export function createOutboxLog ({
     snapshot,
     _stats () {
       return { groups: groups.size, totalBytes, directorySeq, appendSeq }
+    }
+  }
+
+  function hasDurableCommitJournal () {
+    return !!(operationJournal && operationJournal.durableSync === true && !commitJournalFailed)
+  }
+
+  function commitCapabilities () {
+    return {
+      schema: 1,
+      serviceVersion: reportedServiceVersion,
+      atomicCommit: {
+        schema: 1,
+        method: 'POST',
+        route: '/api/sync/commit',
+        enabled: true,
+        durable: hasDurableCommitJournal(),
+        cas: true,
+        idempotent: true
+      },
+      legacyWrites: {
+        create: legacyWritesEnabled,
+        append: legacyWritesEnabled
+      }
+    }
+  }
+
+  function prepareAtomicCommit (appId, input, replay = {}) {
+    if (!isHex(appId, 64)) throw fail('bad appId', 400)
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw fail('bad commit', 400)
+    if (input.schema !== 1) throw fail('unsupported commit schema', 400)
+    if (!isHex(input.commitId, 64)) throw fail('bad commitId', 400)
+
+    const commit = clone(input)
+    const fingerprint = hashHex(stableAll({ appId, commit }))
+    const existingGroup = groups.get(appId) || null
+    const prior = existingGroup && existingGroup.commits ? existingGroup.commits.get(commit.commitId) : null
+    if (prior) {
+      if (prior.fingerprint !== fingerprint) throw fail('commitId conflict', 409)
+      return { duplicate: true, receipt: prior.receipt }
+    }
+
+    const expected = commit.expected
+    if (!expected || typeof expected !== 'object' || Array.isArray(expected)) throw fail('bad expected head', 400)
+    if (!Number.isSafeInteger(expected.version) || expected.version < 0) throw fail('bad expected version', 400)
+    if (!isHex(expected.root, 64)) throw fail('bad expected root', 400)
+    if (!Array.isArray(commit.mutations) || commit.mutations.length < 1 || commit.mutations.length > commitMutationLimit) {
+      throw fail('bad mutations', 400)
+    }
+    if (!commit.head || typeof commit.head !== 'object' || Array.isArray(commit.head) || commit.head.type !== 'head') {
+      throw fail('bad head mutation', 400)
+    }
+    if (!commit.authorization || typeof commit.authorization !== 'object' || Array.isArray(commit.authorization)) {
+      throw fail('bad commit authorization', 400)
+    }
+
+    const authorization = commit.authorization
+    const namespaceName = recordNamespace(authorization)
+    const namespaceInfo = namespaceName ? namespaceRegistry.get(namespaceName) : null
+    if (!namespaceName || !namespaceInfo) throw fail('unknown namespace', 400)
+    if (existingGroup && existingGroup.namespace && existingGroup.namespace !== namespaceName) throw fail('namespace mismatch', 400)
+
+    verifyAtomicRecord(appId, 'commit', authorization, namespaceName, 'commit authorization')
+    const authorizationFields = Object.keys(authorization).filter(key => !SIG_FIELDS.has(key)).sort()
+    const expectedAuthorizationFields = ['appId', 'createdAt', 'expectedRoot', 'expectedVersion', 'headSig', 'id', 'mutationSigs']
+    if (!sameStringArray(authorizationFields, expectedAuthorizationFields)) throw fail('bad commit authorization fields', 400)
+    if (authorization.id !== commit.commitId || authorization.appId !== appId) throw fail('commit authorization binding mismatch', 400)
+    if (authorization.expectedVersion !== expected.version || authorization.expectedRoot !== expected.root) {
+      throw fail('commit authorization binding mismatch', 400)
+    }
+    if (!Number.isSafeInteger(authorization.createdAt) || authorization.createdAt < 0) throw fail('bad commit authorization createdAt', 400)
+    if (!Array.isArray(authorization.mutationSigs) || !authorization.mutationSigs.every(sig => isHex(sig, 128)) || !isHex(authorization.headSig, 128)) {
+      throw fail('bad commit authorization bindings', 400)
+    }
+    const derivedCommitId = hashHex(canonicalOutboxRecord('commit-id', {
+      appId: authorization.appId,
+      expectedVersion: authorization.expectedVersion,
+      expectedRoot: authorization.expectedRoot,
+      mutationSigs: authorization.mutationSigs,
+      headSig: authorization.headSig,
+      createdAt: authorization.createdAt
+    }))
+    if (derivedCommitId !== commit.commitId) throw fail('commitId does not match authorization', 400)
+
+    const mutationSigs = []
+    const ops = []
+    const seenKeys = new Set()
+    for (const mutation of commit.mutations) {
+      if (!mutation || typeof mutation !== 'object' || Array.isArray(mutation)) throw fail('bad mutation', 400)
+      if (typeof mutation.type !== 'string' || !mutation.type || mutation.type.length > 64) throw fail('bad mutation type', 400)
+      if (mutation.type.includes(':') || mutation.type.includes('!')) throw fail('ambiguous mutation type', 400)
+      if (mutation.type === 'head' || mutation.type.startsWith('head:') || (mutation.data && mutation.data._t === 'head')) {
+        throw fail('head is not allowed in mutations', 400)
+      }
+      if (!mutation.data || typeof mutation.data !== 'object' || Array.isArray(mutation.data) || mutation.data.id == null) {
+        throw fail('bad mutation data', 400)
+      }
+      const id = String(mutation.data.id)
+      if (id.length > maxIdLength) throw fail('id too long', 400)
+      if (recordNamespace(mutation.data) !== namespaceName) throw fail('namespace mismatch', 400)
+      verifyAtomicRecord(appId, mutation.type, mutation.data, namespaceName, 'mutation')
+      const key = mutation.type.replace(':', '!') + '!' + id
+      if (seenKeys.has(key)) throw fail('duplicate mutation key', 400)
+      seenKeys.add(key)
+      mutationSigs.push(mutation.data._sig)
+      ops.push({ type: mutation.type, data: clone(mutation.data), key })
+    }
+
+    const headData = commit.head.data
+    if (!headData || typeof headData !== 'object' || Array.isArray(headData) || headData.id !== appId) throw fail('bad head data', 400)
+    if (recordNamespace(headData) !== namespaceName) throw fail('namespace mismatch', 400)
+    verifyAtomicRecord(appId, 'head', headData, namespaceName, 'head')
+
+    if (!sameStringArray(authorization.mutationSigs, mutationSigs) || authorization.headSig !== headData._sig) {
+      throw fail('commit authorization binding mismatch', 400)
+    }
+
+    const current = currentSignedHead(existingGroup, appId)
+    if (current.version !== expected.version || current.root !== expected.root) throw fail('stale head', 409)
+    if (expected.version === Number.MAX_SAFE_INTEGER) throw fail('head version exhausted', 409)
+
+    const rows = existingGroup ? new Map(existingGroup.rows) : new Map()
+    for (const op of ops) rows.set(op.key, op.data)
+    const census = atomicCensus(rows, appId)
+    const nextRoot = hashHex(census.join('\x01'))
+    const nextVersion = expected.version + 1
+    if (headData.version !== nextVersion || headData.count !== census.length || headData.root !== nextRoot) {
+      throw fail('head does not match committed census', 400)
+    }
+    const headKey = 'head!' + appId
+    rows.set(headKey, clone(headData))
+
+    const rowLimit = namespaceCap(namespaceInfo, 'maxEntriesPerOutbox', maxRowsPerGroup)
+    if (rows.size > rowLimit) throw fail('outbox at row capacity', 503)
+    let nextBytes = totalBytes
+    for (const op of [...ops, { type: 'head', data: headData, key: headKey }]) {
+      const old = existingGroup ? existingGroup.rows.get(op.key) : undefined
+      const oldSize = old === undefined ? 0 : Buffer.byteLength(JSON.stringify(old))
+      const size = Buffer.byteLength(JSON.stringify(op.data))
+      if (size > namespaceCap(namespaceInfo, 'maxValueBytes', maxValueBytes)) throw fail('record too large', 413)
+      nextBytes += size - oldSize
+    }
+    if (nextBytes > maxTotalBytes) throw fail('relay at storage capacity', 503)
+    if (!existingGroup) {
+      if (groups.size >= maxGroups) throw fail('relay at group capacity', 503)
+      assertNamespaceOutboxCapacity(namespaceInfo)
+    } else if (!existingGroup.namespace) {
+      // Legacy create() could leave an unbound empty ghost. Binding it during
+      // genesis must consume the same namespace slot as allocating a new group.
+      assertNamespaceOutboxCapacity(namespaceInfo)
+    }
+
+    const inviteKey = existingGroup ? existingGroup.inviteKey : (replay.inviteKey || hex(32))
+    const receipt = {
+      ok: true,
+      durable: true,
+      commitId: commit.commitId,
+      appId,
+      inviteKey,
+      head: { version: nextVersion, count: census.length, root: nextRoot },
+      relayVersion: (existingGroup ? existingGroup.version : 0) + ops.length + 1
+    }
+
+    return {
+      duplicate: false,
+      appId,
+      commit,
+      fingerprint,
+      receipt,
+      inviteKey,
+      namespace: namespaceName,
+      createdAt: existingGroup ? existingGroup.createdAt : (Number.isFinite(replay.createdAt) ? replay.createdAt : Date.now()),
+      existingGroup,
+      rows,
+      ops: [...ops, { type: 'head', data: clone(headData), key: headKey }],
+      nextBytes,
+      events: []
+    }
+  }
+
+  function verifyAtomicRecord (appId, type, data, namespaceName, label) {
+    if (data._k !== appId || recordNamespace(data) !== namespaceName) throw fail(label + ' owner mismatch', 400)
+    if (!verifyOutboxRecordSignature({ appId, type, data }, { registry: namespaceRegistry })) throw fail('bad ' + label + ' signature', 400)
+  }
+
+  function currentSignedHead (group, appId) {
+    const emptyRoot = hashHex('')
+    if (!group) return { version: 0, count: 0, root: emptyRoot }
+    const data = group.rows.get('head!' + appId)
+    if (!data) {
+      if (group.rows.size !== 0) throw fail('headless outbox cannot accept genesis commit', 409)
+      return { version: 0, count: 0, root: emptyRoot }
+    }
+    const namespaceName = recordNamespace(data)
+    if (!namespaceName || (group.namespace && group.namespace !== namespaceName)) throw fail('current head is invalid', 409)
+    try {
+      verifyAtomicRecord(appId, 'head', data, namespaceName, 'current head')
+    } catch {
+      throw fail('current head is invalid', 409)
+    }
+    if (!Number.isSafeInteger(data.version) || data.version < 1 || !Number.isSafeInteger(data.count) || data.count < 0 || !isHex(data.root, 64)) {
+      throw fail('current head is invalid', 409)
+    }
+    const census = atomicCensus(group.rows, appId)
+    if (data.count !== census.length || data.root !== hashHex(census.join('\x01'))) throw fail('current head census mismatch', 409)
+    return { version: data.version, count: data.count, root: data.root }
+  }
+
+  function atomicCensus (rows, appId) {
+    const census = []
+    for (const [key, value] of rows) {
+      if (!key || !value || typeof value._sig !== 'string') continue
+      if (key.split('!')[0] === 'head' || value._t === 'head') continue
+      if (value._k !== appId) continue
+      census.push(key + '\x00' + value._sig)
+    }
+    census.sort()
+    return census
+  }
+
+  function applyPreparedCommit (prepared) {
+    let group = prepared.existingGroup
+    if (!group) {
+      group = {
+        inviteKey: prepared.inviteKey,
+        rows: new Map(),
+        commits: new Map(),
+        version: 0,
+        directorySeq: 0,
+        namespace: prepared.namespace,
+        createdAt: prepared.createdAt
+      }
+      groups.set(prepared.appId, group)
+    } else {
+      if (!group.commits) group.commits = new Map()
+      if (!group.namespace) group.namespace = prepared.namespace
+    }
+    prepared.group = group
+
+    for (const op of prepared.ops) {
+      group.rows.set(op.key, clone(op.data))
+      group.version++
+      if (op.type === 'head') group.directorySeq = ++directorySeq
+      const event = rememberAppendEvent({
+        seq: ++appendSeq,
+        topic: 'outbox/' + prepared.appId,
+        appId: prepared.appId,
+        key: op.key,
+        type: op.type,
+        version: group.version
+      })
+      prepared.events.push(event)
+    }
+    totalBytes = prepared.nextBytes
+    rememberCommitReceipt(group, prepared.commit.commitId, prepared.fingerprint, prepared.receipt)
+  }
+
+  function rememberCommitReceipt (group, commitId, fingerprint, receipt) {
+    if (!group.commits) group.commits = new Map()
+    group.commits.set(commitId, { fingerprint, receipt: clone(receipt) })
+    while (group.commits.size > commitReceiptLimit) group.commits.delete(group.commits.keys().next().value)
+  }
+
+  function journalCommitEntry (prepared) {
+    return {
+      kind: 'commit',
+      appId: prepared.appId,
+      inviteKey: prepared.inviteKey,
+      namespace: prepared.namespace,
+      createdAt: prepared.createdAt,
+      fingerprint: prepared.fingerprint,
+      commit: clone(prepared.commit),
+      receipt: clone(prepared.receipt)
+    }
+  }
+
+  function markJournalMutationForCheckpoint () {
+    if (!statePersistence) return
+    snapshotDirty = true
+    entriesSinceCheckpoint++
+    if (entriesSinceCheckpoint < checkpointEvery) return
+    try {
+      statePersistence.saveSync(snapshot())
+      snapshotDirty = false
+      entriesSinceCheckpoint = 0
+    } catch (err) {
+      log('outboxlog-checkpoint-error', { error: err })
     }
   }
 
@@ -638,6 +973,11 @@ export function createOutboxLog ({
     return namespaceRegistry.snapshot()
   }
 
+  function configureLegacyWrites (enabled) {
+    legacyWritesEnabled = enabled !== false
+    return legacyWritesEnabled
+  }
+
   function loadState () {
     let loaded = false
     if (statePersistence) {
@@ -710,6 +1050,7 @@ export function createOutboxLog ({
           directorySeq: group.directorySeq || 0,
           namespace: group.namespace || null,
           createdAt: Number.isFinite(group.createdAt) ? group.createdAt : null,
+          commits: [...(group.commits || new Map()).entries()].map(([commitId, saved]) => [commitId, clone(saved)]),
           rows: [...group.rows.entries()].map(([key, value]) => [key, clone(value)])
         }
       ])
@@ -779,12 +1120,19 @@ export function createOutboxLog ({
         rows.set(row[0], value)
         nextTotalBytes += size
       }
+      const commits = new Map()
+      const restoredInviteKey = typeof groupState.inviteKey === 'string' && isHex(groupState.inviteKey, 64) ? groupState.inviteKey : hex(32)
+      for (const saved of Array.isArray(groupState.commits) ? groupState.commits.slice(-commitReceiptLimit) : []) {
+        const normalized = normalizePersistedCommitReceipt(saved, appId, restoredInviteKey)
+        if (normalized) commits.set(normalized[0], normalized[1])
+      }
       let restoredDirectorySeq = Number.isSafeInteger(groupState.directorySeq) && groupState.directorySeq >= 0 ? groupState.directorySeq : 0
       if (restoredDirectorySeq > nextDirectorySeq) nextDirectorySeq = restoredDirectorySeq
       if (restoredDirectorySeq === 0 && rows.has('head!' + appId)) restoredDirectorySeq = ++nextDirectorySeq
       nextGroups.set(appId, {
-        inviteKey: typeof groupState.inviteKey === 'string' ? groupState.inviteKey : hex(32),
+        inviteKey: restoredInviteKey,
         rows,
+        commits,
         directorySeq: restoredDirectorySeq,
         namespace: namespaceName,
         version: Number.isSafeInteger(groupState.version) && groupState.version >= rows.size ? groupState.version : rows.size,
@@ -912,6 +1260,21 @@ export function createOutboxLog ({
       else suppressed.delete(composite)
       return
     }
+    if (entry.kind === 'commit') {
+      const prepared = prepareAtomicCommit(entry.appId, entry.commit, {
+        inviteKey: entry.inviteKey,
+        createdAt: entry.createdAt
+      })
+      if (prepared.duplicate) {
+        if (stableAll(prepared.receipt) !== stableAll(entry.receipt)) throw fail('conflicting persisted commit receipt', 500)
+        return
+      }
+      if (prepared.fingerprint !== entry.fingerprint || prepared.inviteKey !== entry.inviteKey) throw fail('corrupt persisted commit', 500)
+      if (stableAll(prepared.receipt) !== stableAll(entry.receipt)) throw fail('corrupt persisted commit receipt', 500)
+      prepared.receipt = clone(entry.receipt)
+      applyPreparedCommit(prepared)
+      return
+    }
     const entryNamespace = normalizePersistedNamespace(entry.namespace)
     const entryNamespaceInfo = entryNamespace ? namespaceRegistry.get(entryNamespace) : null
     if (entryNamespace && !entryNamespaceInfo) throw fail('persisted outbox namespace is not registered', 400)
@@ -922,6 +1285,7 @@ export function createOutboxLog ({
         groups.set(entry.appId, {
           inviteKey: entry.inviteKey,
           rows: new Map(),
+          commits: new Map(),
           version: 0,
           directorySeq: 0,
           namespace: entryNamespace,
@@ -950,6 +1314,7 @@ export function createOutboxLog ({
       group = {
         inviteKey: entry.inviteKey,
         rows: new Map(),
+        commits: new Map(),
         version: 0,
         directorySeq: 0,
         namespace: opNamespace,
@@ -1002,9 +1367,12 @@ export function createMemoryOutboxPersistence (initialState = null) {
   }
 }
 
-export function createMemoryOutboxJournal (initialEntries = []) {
+export function createMemoryOutboxJournal (initialEntries = [], { durableSync = false } = {}) {
   const entries = Array.isArray(initialEntries) ? clone(initialEntries) : []
   return {
+    // In-memory storage is never process-durable. Tests that intentionally
+    // model a synchronous durable journal must opt in explicitly.
+    durableSync: durableSync === true,
     loadSync () {
       return clone(entries)
     },
@@ -1040,6 +1408,7 @@ export function createJsonFileOutboxPersistence (path) {
 export function createJsonlOutboxJournal (path) {
   if (typeof path !== 'string' || !path) throw new Error('OutboxLog: journal path required')
   return {
+    durableSync: true,
     loadSync () {
       try {
         const text = readFileSync(path, 'utf8')
@@ -1053,9 +1422,37 @@ export function createJsonlOutboxJournal (path) {
       }
     },
     appendSync (entry) {
-      mkdirSync(dirname(path), { recursive: true })
-      appendFileSync(path, JSON.stringify(entry) + '\n', 'utf8')
+      const parent = dirname(path)
+      mkdirSync(parent, { recursive: true })
+      const created = !existsSync(path)
+      const fd = openSync(path, 'a')
+      try {
+        // On the first append, make the new directory entry durable before any
+        // receipt can be returned. Then write the whole JSON line and fsync the
+        // file content. (A single writeSync is not guaranteed to consume every
+        // byte on all filesystems.)
+        if (created) fsyncDirectory(parent)
+        const line = Buffer.from(JSON.stringify(entry) + '\n', 'utf8')
+        let offset = 0
+        while (offset < line.byteLength) {
+          const written = writeSync(fd, line, offset, line.byteLength - offset)
+          if (written < 1) throw new Error('OutboxLog: journal write made no progress')
+          offset += written
+        }
+        fsyncSync(fd)
+      } finally {
+        closeSync(fd)
+      }
     }
+  }
+}
+
+function fsyncDirectory (path) {
+  const fd = openSync(path, 'r')
+  try {
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
   }
 }
 
@@ -1378,6 +1775,31 @@ function normalizeJournalEntry (entry, expectedSeq) {
   }
   if (typeof entry.inviteKey !== 'string' || entry.inviteKey.length !== 64) return null
   const namespace = normalizePersistedNamespace(entry.namespace)
+  if (entry.kind === 'commit') {
+    if (!namespace || !isHex(entry.fingerprint, 64)) return null
+    if (!entry.commit || typeof entry.commit !== 'object' || Array.isArray(entry.commit) || entry.commit.schema !== 1) return null
+    const receipt = normalizeCommitReceipt(entry.receipt, entry.appId, entry.commit.commitId, entry.inviteKey)
+    if (!receipt) return null
+    let size
+    try {
+      size = Buffer.byteLength(JSON.stringify(entry.commit))
+    } catch {
+      return null
+    }
+    if (size > 1024 * 1024) return null
+    return {
+      version: entry.version,
+      seq: entry.seq,
+      kind: 'commit',
+      appId: entry.appId,
+      inviteKey: entry.inviteKey,
+      namespace,
+      createdAt: Number.isFinite(entry.createdAt) ? entry.createdAt : null,
+      fingerprint: entry.fingerprint,
+      commit: clone(entry.commit),
+      receipt
+    }
+  }
   if (entry.kind === 'create') {
     return {
       version: entry.version,
@@ -1425,6 +1847,52 @@ function splitSuppressionKey (composite) {
   const split = composite.indexOf('\x00')
   if (split < 0) return null
   return [composite.slice(0, split), composite.slice(split + 1)]
+}
+
+function normalizePersistedCommitReceipt (saved, appId, inviteKey) {
+  if (!Array.isArray(saved) || saved.length !== 2 || !isHex(saved[0], 64)) return null
+  const value = saved[1]
+  if (!value || typeof value !== 'object' || !isHex(value.fingerprint, 64)) return null
+  const receipt = normalizeCommitReceipt(value.receipt, appId, saved[0], inviteKey)
+  return receipt ? [saved[0], { fingerprint: value.fingerprint, receipt }] : null
+}
+
+function normalizeCommitReceipt (receipt, appId, commitId, inviteKey) {
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return null
+  if (receipt.ok !== true || receipt.durable !== true) return null
+  if (receipt.appId !== appId || receipt.commitId !== commitId || receipt.inviteKey !== inviteKey || !isHex(inviteKey, 64)) return null
+  if (!Number.isSafeInteger(receipt.relayVersion) || receipt.relayVersion < 1) return null
+  const head = receipt.head
+  if (!head || typeof head !== 'object' || Array.isArray(head)) return null
+  if (!Number.isSafeInteger(head.version) || head.version < 1 || !Number.isSafeInteger(head.count) || head.count < 0 || !isHex(head.root, 64)) return null
+  return {
+    ok: true,
+    durable: true,
+    commitId,
+    appId,
+    inviteKey,
+    head: { version: head.version, count: head.count, root: head.root },
+    relayVersion: receipt.relayVersion
+  }
+}
+
+function sameStringArray (left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+  for (let i = 0; i < left.length; i++) {
+    if (typeof left[i] !== 'string' || left[i] !== right[i]) return false
+  }
+  return true
+}
+
+function hashHex (value) {
+  return createHash('sha256').update(String(value), 'utf8').digest('hex')
+}
+
+function stableAll (value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value === undefined ? null : value)
+  if (Array.isArray(value)) return '[' + value.map(stableAll).join(',') + ']'
+  const keys = Object.keys(value).filter(key => value[key] !== undefined).sort()
+  return '{' + keys.map(key => JSON.stringify(key) + ':' + stableAll(value[key])).join(',') + '}'
 }
 
 function clone (value) {

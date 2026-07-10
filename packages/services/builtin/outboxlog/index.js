@@ -1,6 +1,7 @@
 import { ServiceProvider } from 'p2p-hiverelay/core/services/provider.js'
 import {
   DEFAULT_OUTBOXLOG_NAMESPACE,
+  DEFAULT_OUTBOXLOG_SERVICE_VERSION,
   OUTBOXLOG_BLIND_SEAL_DEFAULT_ALG,
   OUTBOXLOG_BLIND_SEAL_VERSION,
   canonicalOutboxRecord,
@@ -99,7 +100,7 @@ export class OutboxLogApp extends ServiceProvider {
       name: 'outboxlog',
       version: '0.1.0',
       description: 'Single-writer signed outbox log with Peerit relay wire compatibility',
-      capabilities: ['outboxlog.sync', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces']
+      capabilities: ['outboxlog.sync', 'outboxlog.commit', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces']
     }
   }
 
@@ -107,6 +108,9 @@ export class OutboxLogApp extends ServiceProvider {
     this.node = context.node || null
     const config = context && context.config && typeof context.config === 'object' ? context.config : {}
     const outboxlog = config.outboxlog && typeof config.outboxlog === 'object' ? config.outboxlog : {}
+    if (outboxlog.legacyWrites !== undefined && this.engine.configureLegacyWrites) {
+      this.engine.configureLegacyWrites(outboxlog.legacyWrites)
+    }
     if (outboxlog.seedReaffirmMs !== undefined) {
       this.seedReaffirmMs = normalizeReaffirmMs(outboxlog.seedReaffirmMs, this.seedReaffirmMs)
     }
@@ -271,6 +275,18 @@ export class OutboxLogApp extends ServiceProvider {
     return this.sync.append(appId, op)
   }
 
+  commit (appId, commit) {
+    if (appId && typeof appId === 'object') {
+      commit = appId.commit
+      appId = appId.appId
+    }
+    return this.sync.commit(appId, commit)
+  }
+
+  capabilities () {
+    return this.sync.capabilities()
+  }
+
   get (appId, key) {
     if (appId && typeof appId === 'object') {
       key = appId.key
@@ -369,6 +385,7 @@ export class OutboxLogApp extends ServiceProvider {
 
 export {
   DEFAULT_OUTBOXLOG_NAMESPACE,
+  DEFAULT_OUTBOXLOG_SERVICE_VERSION,
   OUTBOXLOG_BLIND_SEAL_DEFAULT_ALG,
   OUTBOXLOG_BLIND_SEAL_VERSION,
   canonicalOutboxRecord,

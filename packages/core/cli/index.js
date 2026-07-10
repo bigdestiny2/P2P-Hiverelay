@@ -451,6 +451,21 @@ async function start () {
     hasPersistedOutboxlogNamespace()
   )
 
+  // Atomic-writer deployment controls. Legacy create/append stay enabled by
+  // default for wire compatibility; production Peerit relays set this to 0 so
+  // replayable signed rows can only enter through CAS-protected /sync/commit.
+  const legacyWrites = process.env.HIVERELAY_OUTBOXLOG_LEGACY_WRITES
+  if (legacyWrites === '0' || legacyWrites === 'false' || legacyWrites === '1' || legacyWrites === 'true') {
+    if (!cliOverrides.outboxlog || typeof cliOverrides.outboxlog !== 'object' || Array.isArray(cliOverrides.outboxlog)) cliOverrides.outboxlog = {}
+    cliOverrides.outboxlog.legacyWrites = legacyWrites === '1' || legacyWrites === 'true'
+  }
+  // A durable commit is acknowledged only with a synchronous journal. This
+  // container-friendly path selects the fsynced JSONL journal implementation.
+  if (process.env.HIVERELAY_OUTBOXLOG_JOURNAL_PATH) {
+    if (!cliOverrides.outboxlog || typeof cliOverrides.outboxlog !== 'object' || Array.isArray(cliOverrides.outboxlog)) cliOverrides.outboxlog = {}
+    cliOverrides.outboxlog.journalPath = process.env.HIVERELAY_OUTBOXLOG_JOURNAL_PATH
+  }
+
   const config = loadConfig(cliOverrides)
 
   console.log(mainBanner(VERSION))

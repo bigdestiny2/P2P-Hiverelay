@@ -141,7 +141,16 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
   try {
     if (path === '/api/bridge/status') {
       if (req.method !== 'GET') return respond(res, 405, { error: 'method not allowed' })
-      return respond(res, 200, { ready: true, service: 'outboxlog' })
+      const capabilities = sync && typeof sync.capabilities === 'function'
+        ? await sync.capabilities()
+        : unavailableCommitCapabilities()
+      return respond(res, 200, {
+        ready: true,
+        service: 'outboxlog',
+        serviceVersion: capabilities.serviceVersion,
+        atomicCommit: capabilities.atomicCommit,
+        legacyWrites: capabilities.legacyWrites
+      })
     }
 
     if (path.startsWith('/api/identity')) {
@@ -149,6 +158,10 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
     }
 
     if (!sync) return respond(res, 503, { error: 'outboxlog sync unavailable' })
+
+    if (path === '/api/sync/capabilities' && req.method === 'GET') {
+      return respond(res, 200, typeof sync.capabilities === 'function' ? await sync.capabilities() : unavailableCommitCapabilities())
+    }
 
     if (path === '/api/sync/create' && req.method === 'POST') {
       const body = await readJson(req)
@@ -166,6 +179,13 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
       const body = await readJson(req)
       if (!body.ok) return respondReadProblem(res, body)
       return respond(res, 200, await sync.append(body.body.appId, body.body.op))
+    }
+
+    if (path === '/api/sync/commit' && req.method === 'POST') {
+      if (typeof sync.commit !== 'function') return respond(res, 503, { error: 'atomic commit unavailable' })
+      const body = await readJson(req)
+      if (!body.ok) return respondReadProblem(res, body)
+      return respond(res, 200, await sync.commit(body.body.appId, body.body.commit))
     }
 
     if (path === '/api/sync/heads' && req.method === 'POST') {
@@ -237,7 +257,7 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
     if (isMethodMismatch(path, req.method)) return respond(res, 405, { error: 'method not allowed' })
     return respond(res, 404, { error: 'not found' })
   } catch (err) {
-    if (err && Number.isInteger(err.status) && err.status >= 400 && err.status < 500) {
+    if (err && Number.isInteger(err.status) && err.status >= 400 && (err.status < 500 || err.status === 503)) {
       return respond(res, err.status, { error: err.message || 'outboxlog request failed' })
     }
     return respond(res, 500, { error: 'outboxlog route failed' })
@@ -318,6 +338,7 @@ function isMethodMismatch (path, method) {
     '/api/sync/create',
     '/api/sync/join',
     '/api/sync/append',
+    '/api/sync/commit',
     '/api/sync/heads',
     '/api/swarm/join',
     '/api/swarm/send',
@@ -331,10 +352,31 @@ function isMethodMismatch (path, method) {
     '/api/sync/count',
     '/api/sync/status',
     '/api/sync/events',
+    '/api/sync/capabilities',
     '/api/directory',
     '/api/swarm/events'
   ])
   return (postOnly.has(path) && method !== 'POST') || (getOnly.has(path) && method !== 'GET')
+}
+
+function unavailableCommitCapabilities () {
+  return {
+    schema: 1,
+    serviceVersion: null,
+    atomicCommit: {
+      schema: 1,
+      method: 'POST',
+      route: '/api/sync/commit',
+      enabled: false,
+      durable: false,
+      cas: true,
+      idempotent: true
+    },
+    legacyWrites: {
+      create: false,
+      append: false
+    }
+  }
 }
 
 function applyCors (req, res, ctx) {
