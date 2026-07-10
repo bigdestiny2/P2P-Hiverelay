@@ -141,6 +141,27 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
   const sync = ctx.sync || (app && app.sync)
   const swarm = ctx.swarm || (app && app.swarm)
 
+  // Federation traffic has its own relay-identity authentication. It is
+  // intentionally handled before browser-token authentication: an operator
+  // never distributes browser bearer tokens to another operator.
+  if (path === '/api/sync/federation/commit') {
+    if (req.method !== 'POST') return respond(res, 405, { error: 'method not allowed' })
+    const federation = app && app.federationQuorum
+    if (!federation || federation.enabled !== true || typeof federation.accept !== 'function') {
+      return respond(res, 404, { error: 'not found' })
+    }
+    const body = await readJson(req)
+    if (!body.ok) return respondReadProblem(res, body)
+    try {
+      return respond(res, 200, { receipt: await federation.accept(body.body, sync) })
+    } catch (err) {
+      if (err && Number.isInteger(err.status) && err.status >= 400 && err.status < 600) {
+        return respond(res, err.status, { error: err.message || 'federation request failed', errorCode: err.code || null })
+      }
+      return respond(res, 500, { error: 'federation request failed' })
+    }
+  }
+
   // Operator admin surface (DO-NOT-SERVE takedown). Gated by a SEPARATE admin
   // auth — never the browser sync token — so an ordinary client that holds a
   // /api/token can't take content down. No admin auth configured => 404 (the
@@ -177,6 +198,7 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
         serviceVersion: capabilities.serviceVersion,
         atomicCommit: capabilities.atomicCommit,
         legacyWrites: capabilities.legacyWrites,
+        networkQuorum: federationCapabilities(app),
         httpRateLimit: publicRateLimit(rateLimit, ctx)
       })
     }
@@ -188,7 +210,8 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
     if (!sync) return respond(res, 503, { error: 'outboxlog sync unavailable' })
 
     if (path === '/api/sync/capabilities' && req.method === 'GET') {
-      return respond(res, 200, typeof sync.capabilities === 'function' ? await sync.capabilities() : unavailableCommitCapabilities())
+      const capabilities = typeof sync.capabilities === 'function' ? await sync.capabilities() : unavailableCommitCapabilities()
+      return respond(res, 200, { ...capabilities, networkQuorum: federationCapabilities(app) })
     }
 
     if (path === '/api/sync/create' && req.method === 'POST') {
@@ -213,7 +236,15 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
       if (typeof sync.commit !== 'function') return respond(res, 503, { error: 'atomic commit unavailable' })
       const body = await readJson(req)
       if (!body.ok) return respondReadProblem(res, body)
-      return respond(res, 200, await sync.commit(body.body.appId, body.body.commit))
+      const receipt = await sync.commit(body.body.appId, body.body.commit)
+      const federation = app && app.federationQuorum
+      if (!federation || federation.enabled !== true || typeof federation.confirm !== 'function') return respond(res, 200, receipt)
+      const networkDurability = await federation.confirm({
+        appId: body.body.appId,
+        commit: body.body.commit,
+        localReceipt: receipt
+      })
+      return respond(res, 200, { ...receipt, networkDurability })
     }
 
     if (path === '/api/sync/heads' && req.method === 'POST') {
@@ -305,6 +336,12 @@ function isOutboxLogApiPath (path) {
     // adapter is mounted standalone.
     isAdminPath(path)
   )
+}
+
+function federationCapabilities (app) {
+  if (app && typeof app.federationCapabilities === 'function') return app.federationCapabilities()
+  if (app && app.federationQuorum && typeof app.federationQuorum.descriptor === 'function') return app.federationQuorum.descriptor()
+  return { enabled: false }
 }
 
 function isAdminPath (path) {

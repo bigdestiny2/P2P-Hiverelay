@@ -38,6 +38,9 @@ Corollaries:
   operator admin routes (`/api/admin/{takedown,restore,takedowns,sweep}`).
   New capabilities are added, never changed in place; clients feature-detect and
   degrade gracefully against older relays. Deprecations get long windows.
+  The opt-in `POST /api/sync/federation/commit` route is relay-to-relay only:
+  it authenticates a configured relay Ed25519 signature rather than a browser
+  token and returns a signed durable receipt for one exact atomic head.
 - **Apps treat the relay as an untrusted pipe.** Every record is verified
   client-side (signature, key-binding, PoW), so a relay can withhold or go stale
   but never forge — which is exactly what makes relay updates operationally

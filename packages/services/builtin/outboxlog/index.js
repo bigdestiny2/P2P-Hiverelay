@@ -23,6 +23,7 @@ import {
   createPartitionedHypercoreOutboxJournal
 } from './hypercore-journal.js'
 import { createOutboxSwarmHub } from './swarm-hub.js'
+import { createOutboxFederationQuorum } from './federation-quorum.js'
 export {
   OUTBOXLOG_BLIND_SEAL_AAD_DOMAIN,
   OUTBOXLOG_BLIND_SEAL_AAD_VERSION,
@@ -99,6 +100,9 @@ export class OutboxLogApp extends ServiceProvider {
     this._stopRequested = false
     this._stopped = false
     this._swarmDestroyed = false
+    // Null unless explicitly configured. Federation quorum is opt-in because
+    // local durability is still a valid mode for general OutboxLog users.
+    this.federationQuorum = opts.federationQuorum || null
   }
 
   manifest () {
@@ -172,6 +176,13 @@ export class OutboxLogApp extends ServiceProvider {
       } else if (!capabilities || capabilities.ready !== true || !capabilities.atomicCommit || capabilities.atomicCommit.durable !== true || capabilities.atomicCommit.ready !== true) {
         throw new Error('OutboxLog: atomic-only mode failed durable journal readiness')
       }
+    }
+    if (outboxlog.federationQuorum !== undefined) {
+      const keyPair = context.keyPair || (context.node && (context.node.keyPair || (context.node.swarm && context.node.swarm.keyPair))) || null
+      this.federationQuorum = createOutboxFederationQuorum({
+        config: outboxlog.federationQuorum,
+        keyPair
+      })
     }
     await this._startFleetSeeding()
     this._startGhostSweep(outboxlog)
@@ -331,6 +342,12 @@ export class OutboxLogApp extends ServiceProvider {
     return this.sync.capabilities()
   }
 
+  federationCapabilities () {
+    return this.federationQuorum && typeof this.federationQuorum.descriptor === 'function'
+      ? this.federationQuorum.descriptor()
+      : { enabled: false }
+  }
+
   get (appId, key) {
     if (appId && typeof appId === 'object') {
       key = appId.key
@@ -446,6 +463,18 @@ export {
   isOutboxBlindSealedBody,
   verifyOutboxRecordSignature
 }
+
+export {
+  OUTBOXLOG_FEDERATION_QUORUM_PATH,
+  OUTBOXLOG_FEDERATION_QUORUM_PROTOCOL,
+  OUTBOXLOG_FEDERATION_QUORUM_VERSION,
+  createFederationReceipt,
+  createOutboxFederationQuorum,
+  normalizeOutboxFederationQuorumConfig,
+  signFederationRequest,
+  verifyFederationReceipt,
+  verifyFederationRequest
+} from './federation-quorum.js'
 
 export {
   OUTBOXLOG_OUTBOX_CORE_PREFIX,

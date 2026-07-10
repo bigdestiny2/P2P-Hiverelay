@@ -305,6 +305,46 @@ unknown or malformed fields fail relay startup. Authenticated
 and the underlying adapter envelope. A `429` includes an integer delta-seconds
 `Retry-After` header and exposes it to browser JavaScript through CORS.
 
+**Federation-quorum durability (opt-in):** An atomic commit is locally durable
+before it returns. To make one browser-facing ingress wait for independently
+operated relays as well, configure `outboxlog.federationQuorum` on **every**
+participating operator. The public browser continues to use only the ingress
+domain; the operator URLs are private infrastructure configuration. Each relay
+uses its existing Ed25519 node identity to sign a receipt for the exact
+`(appId, commitId, head)`, and the ingress returns success only after the
+configured number of remote receipts verify. If the remote quorum is unavailable
+or a signature/head differs, the public commit returns `503` while the exact
+locally durable envelope remains safely retryable.
+
+```json
+{
+  "outboxlog": {
+    "namespace": "peerit",
+    "legacyWrites": false,
+    "federationQuorum": {
+      "enabled": true,
+      "quorum": 1,
+      "timeoutMs": 8000,
+      "peers": [
+        {
+          "id": "independent-operator",
+          "url": "https://operator-relay.example",
+          "publicKey": "<operator-node-ed25519-public-key>"
+        }
+      ]
+    }
+  }
+}
+```
+
+The independent operator must configure the ingress node's public key in its
+own `peers` list (with its internal HTTPS address); this is a mutual allow-list,
+not open federation or trust inferred from swarm membership. Browser clients
+must pin the same receipt public keys in their signed app roster and verify the
+returned receipts before treating a post as published. Do not enable a writable
+single-ingress deployment until that operator-side setup and the receipt proof
+both pass staging.
+
 **Operator takedown surface (`/api/admin/takedown` · `/restore` · `/takedowns`):**
 An operator can drop or restore a single outbox row by its opaque
 `(appId, key)` id — content is never read; this exists for operator liability
