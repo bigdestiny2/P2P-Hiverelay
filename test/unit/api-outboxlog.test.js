@@ -22,6 +22,22 @@ function fakeOutboxLogApp () {
 
   return {
     sync: {
+      capabilities () {
+        return {
+          schema: 1,
+          ready: true,
+          serviceVersion: 'test-fixture',
+          atomicCommit: {
+            schema: 1,
+            enabled: false,
+            durable: false,
+            ready: false,
+            cas: false,
+            idempotent: false
+          },
+          legacyWrites: { create: true, append: true }
+        }
+      },
       create (appId) {
         const group = ensureGroup(appId)
         return { appId, inviteKey: group.inviteKey, writerPublicKey: appId }

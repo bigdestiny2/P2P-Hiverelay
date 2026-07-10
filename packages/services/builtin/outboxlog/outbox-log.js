@@ -9,7 +9,8 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto'
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, truncateSync, unlinkSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, truncateSync, unlinkSync, writeSync } from 'node:fs'
+import { hostname, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import sodium from 'sodium-universal'
 import b4a from 'b4a'
@@ -39,6 +40,7 @@ export const DEFAULT_MAX_COMMIT_TOMBSTONES_PER_GROUP = 16384
 export const DEFAULT_MAX_COMMIT_HISTORY_TOTAL = 40000
 export const DEFAULT_MAX_COMMIT_MUTATIONS = 256
 export const DEFAULT_MAX_JOURNAL_BYTES = 64 * 1024 * 1024
+export const OUTBOXLOG_MAX_REPLAY_COMMIT_BYTES = 1024 * 1024
 export const DEFAULT_OUTBOXLOG_SERVICE_VERSION = '0.24.3'
 // App-neutral default namespace. Registered apps SHOULD pass an explicit
 // namespace; this fallback exists only so an operator who configures nothing
@@ -91,6 +93,7 @@ export function createOutboxLog ({
   maxCommitHistoryTotal = DEFAULT_MAX_COMMIT_HISTORY_TOTAL,
   maxCommitMutations = DEFAULT_MAX_COMMIT_MUTATIONS,
   maxJournalBytes = DEFAULT_MAX_JOURNAL_BYTES,
+  journalFaultInjector = null,
   serviceVersion = DEFAULT_OUTBOXLOG_SERVICE_VERSION,
   legacyWrites = true,
   onAppend = null,
@@ -112,7 +115,6 @@ export function createOutboxLog ({
   if (!statePersistence && persistencePath) statePersistence = createJsonFileOutboxPersistence(persistencePath)
   if (!statePersistence && storagePath) statePersistence = createJsonFileOutboxPersistence(join(storagePath, 'outboxlog-state.json'))
   let operationJournal = normalizeJournal(journal)
-  if (!operationJournal && journalPath) operationJournal = createJsonlOutboxJournal(journalPath, { maxBytes: maxJournalBytes })
   let totalBytes = 0
   let directorySeq = 0
   let appendSeq = 0
@@ -121,7 +123,9 @@ export function createOutboxLog ({
   let entriesSinceCheckpoint = 0
   let snapshotDirty = false
   let legacyWritesEnabled = legacyWrites !== false
-  let commitJournalFailed = false
+  let journalWriteFailed = false
+  let closeRequested = false
+  let closed = false
   let commitHistoryCount = 0
   let commitHistoryOrder = []
   const commitReceiptLimit = Math.min(
@@ -137,7 +141,16 @@ export function createOutboxLog ({
   if (commitHistoryLimit < maxGroups) throw new Error('OutboxLog: maxCommitHistoryTotal must reserve at least one receipt per outbox')
   const reportedServiceVersion = typeof serviceVersion === 'string' && serviceVersion ? serviceVersion : DEFAULT_OUTBOXLOG_SERVICE_VERSION
 
-  loadState()
+  // Validate all constructor invariants before taking exclusive ownership. A
+  // rejected engine configuration must never strand a writer lease.
+  if (!operationJournal && journalPath) operationJournal = createJsonlOutboxJournal(journalPath, { maxBytes: maxJournalBytes, faultInjector: journalFaultInjector })
+
+  try {
+    loadState()
+  } catch (err) {
+    try { if (operationJournal && typeof operationJournal.close === 'function') operationJournal.close() } catch {}
+    throw err
+  }
 
   const getGroup = (appId) => groups.get(appId) || null
   const ensureGroup = (appId, namespaceInfo = null) => {
@@ -159,6 +172,7 @@ export function createOutboxLog ({
   const sync = {
     create (appId, opts = {}) {
       if (!legacyWritesEnabled) throw fail('legacy create is disabled', 403)
+      assertJournalMutationAllowed()
       const namespaceInfo = namespaceInfoForCreate(opts)
       const existed = groups.has(appId)
       const previousGroup = groups.get(appId)
@@ -183,6 +197,7 @@ export function createOutboxLog ({
 
     append (appId, op) {
       if (!legacyWritesEnabled) throw fail('legacy append is disabled', 403)
+      assertJournalMutationAllowed()
       if (!op || typeof op.type !== 'string' || op.type.length > 64 || !op.data || op.data.id == null) throw fail('bad op', 400)
       const namespaceInfo = namespaceInfoForAppend(op.data)
       const id = String(op.data.id)
@@ -261,6 +276,7 @@ export function createOutboxLog ({
     },
 
     commit (appId, commit) {
+      assertJournalMutationAllowed()
       if (!hasDurableCommitJournal()) throw fail('durable commit persistence unavailable', 503)
       const prepared = prepareAtomicCommit(appId, commit)
       if (prepared.duplicate) return clone(prepared.receipt)
@@ -271,9 +287,6 @@ export function createOutboxLog ({
       try {
         appendJournalEntry(journalCommitEntry(prepared))
       } catch (err) {
-        // A short/failed append may have left an unacknowledged tail. Do not
-        // attempt another commit in this process and risk concatenating onto it.
-        commitJournalFailed = true
         throw fail('persistence failed', 500, err)
       }
 
@@ -374,6 +387,7 @@ export function createOutboxLog ({
     swarm,
     subscribe,
     flush,
+    close,
     configurePersistence,
     configureNamespaces,
     configureLegacyWrites,
@@ -395,15 +409,17 @@ export function createOutboxLog ({
       operationJournal &&
       operationJournal.durableSync === true &&
       operationJournal.ready !== false &&
-      !commitJournalFailed
+      !journalWriteFailed &&
+      !closeRequested
     )
   }
 
   function commitCapabilities () {
     const durable = hasDurableCommitJournal()
+    const mutationReady = !journalWriteFailed && !closeRequested
     return {
       schema: 1,
-      ready: legacyWritesEnabled || durable,
+      ready: mutationReady && (legacyWritesEnabled || durable),
       serviceVersion: reportedServiceVersion,
       atomicCommit: {
         schema: 1,
@@ -424,9 +440,21 @@ export function createOutboxLog ({
         }
       },
       legacyWrites: {
-        create: legacyWritesEnabled,
-        append: legacyWritesEnabled
+        create: mutationReady && legacyWritesEnabled,
+        append: mutationReady && legacyWritesEnabled
       }
+    }
+  }
+
+  function assertJournalMutationAllowed () {
+    if (closeRequested) throw fail('outboxlog is closed', 503)
+    if (journalWriteFailed) throw fail('journal write state is uncertain; restart required', 503)
+  }
+
+  function fenceJournalWrite (err) {
+    journalWriteFailed = true
+    if (operationJournal && typeof operationJournal.markFailed === 'function') {
+      try { operationJournal.markFailed(err) } catch {}
     }
   }
 
@@ -450,6 +478,15 @@ export function createOutboxLog ({
     if (!isHex(input.commitId, 64)) throw fail('bad commitId', 400)
 
     const commit = clone(input)
+    let commitBytes
+    try {
+      commitBytes = Buffer.byteLength(JSON.stringify(commit))
+    } catch {
+      throw fail('unserializable commit', 400)
+    }
+    // Replay applies the same 1 MiB bound. Reject before signature/CAS work so
+    // no acknowledged commit can later make a restart fail as unreplayable.
+    if (commitBytes > OUTBOXLOG_MAX_REPLAY_COMMIT_BYTES) throw fail('commit too large', 413)
     const existingGroup = groups.get(appId) || null
 
     const expected = commit.expected
@@ -856,6 +893,7 @@ export function createOutboxLog ({
       snapshotDirty = false
       entriesSinceCheckpoint = 0
     } catch (err) {
+      fenceJournalWrite(err)
       log('outboxlog-checkpoint-error', { error: err })
     }
   }
@@ -872,6 +910,7 @@ export function createOutboxLog ({
   }
 
   function applyTakedown (appId, key, drop) {
+    assertJournalMutationAllowed()
     const composite = suppressionKey(appId, key)
     if (!composite) throw fail('bad takedown id', 400)
     const already = suppressed.has(composite)
@@ -918,6 +957,7 @@ export function createOutboxLog ({
   // stale swarm descriptors pointing at swept appIds are pruned — those replays
   // are the per-boot request amplifier the churn era left behind.
   function sweepGhosts ({ ttlMs = DEFAULT_SWEEP_TTL_MS, now = Date.now() } = {}) {
+    assertJournalMutationAllowed()
     const ttl = Number.isFinite(ttlMs) && ttlMs >= 0 ? ttlMs : DEFAULT_SWEEP_TTL_MS
     const cutoff = now - ttl
     const victims = []
@@ -1156,13 +1196,22 @@ export function createOutboxLog ({
 
   function configurePersistence ({ persistence = null, persistencePath = null, journal = null, journalPath = null, storagePath = null } = {}) {
     if (statePersistence || operationJournal) return false
-    statePersistence = normalizePersistence(persistence) ||
+    const nextStatePersistence = normalizePersistence(persistence) ||
       (persistencePath ? createJsonFileOutboxPersistence(persistencePath) : null) ||
       (storagePath ? createJsonFileOutboxPersistence(join(storagePath, 'outboxlog-state.json')) : null)
-    operationJournal = normalizeJournal(journal) ||
-      (journalPath ? createJsonlOutboxJournal(journalPath, { maxBytes: maxJournalBytes }) : null)
-    if (!statePersistence && !operationJournal) return false
-    loadState()
+    const nextOperationJournal = normalizeJournal(journal) ||
+      (journalPath ? createJsonlOutboxJournal(journalPath, { maxBytes: maxJournalBytes, faultInjector: journalFaultInjector }) : null)
+    if (!nextStatePersistence && !nextOperationJournal) return false
+    statePersistence = nextStatePersistence
+    operationJournal = nextOperationJournal
+    try {
+      loadState()
+    } catch (err) {
+      try { if (nextOperationJournal && typeof nextOperationJournal.close === 'function') nextOperationJournal.close() } catch {}
+      statePersistence = null
+      operationJournal = null
+      throw err
+    }
     return true
   }
 
@@ -1231,20 +1280,44 @@ export function createOutboxLog ({
       entriesSinceCheckpoint++
       if (entriesSinceCheckpoint < checkpointEvery) return
     }
-    saveCheckpointSnapshot()
-    snapshotDirty = false
-    entriesSinceCheckpoint = 0
-  }
-
-  function flush () {
-    const hasJournalCheckpoint = operationJournal && typeof operationJournal.checkpointSync === 'function'
-    if ((statePersistence || hasJournalCheckpoint) && (snapshotDirty || !operationJournal)) {
+    try {
       saveCheckpointSnapshot()
       snapshotDirty = false
       entriesSinceCheckpoint = 0
+    } catch (err) {
+      fenceJournalWrite(err)
+      throw err
     }
-    if (operationJournal && typeof operationJournal.flush === 'function') {
-      return operationJournal.flush()
+  }
+
+  function flush () {
+    assertJournalMutationAllowed()
+    const hasJournalCheckpoint = operationJournal && typeof operationJournal.checkpointSync === 'function'
+    try {
+      if ((statePersistence || hasJournalCheckpoint) && (snapshotDirty || !operationJournal)) {
+        saveCheckpointSnapshot()
+        snapshotDirty = false
+        entriesSinceCheckpoint = 0
+      }
+      if (operationJournal && typeof operationJournal.flush === 'function') {
+        return operationJournal.flush()
+      }
+    } catch (err) {
+      fenceJournalWrite(err)
+      throw err
+    }
+  }
+
+  function close () {
+    if (closed) return
+    closeRequested = true
+    subscribers.clear()
+    try {
+      if (operationJournal && typeof operationJournal.close === 'function') operationJournal.close()
+      closed = true
+    } catch (err) {
+      fenceJournalWrite(err)
+      throw err
     }
   }
 
@@ -1463,17 +1536,26 @@ export function createOutboxLog ({
   }
 
   function appendJournalEntry (entry) {
+    assertJournalMutationAllowed()
     const record = {
       version: OUTBOXLOG_JOURNAL_VERSION,
       seq: journalSeq + 1,
       ...entry
     }
-    if (typeof operationJournal.needsCheckpointSync === 'function' && operationJournal.needsCheckpointSync(record)) {
-      if (typeof operationJournal.checkpointSync !== 'function') throw new Error('OutboxLog: journal byte quota exceeded')
-      operationJournal.checkpointSync(snapshot())
+    try {
+      if (typeof operationJournal.needsCheckpointSync === 'function' && operationJournal.needsCheckpointSync(record)) {
+        if (typeof operationJournal.checkpointSync !== 'function') throw new Error('OutboxLog: journal byte quota exceeded')
+        operationJournal.checkpointSync(snapshot())
+      }
+      operationJournal.appendSync(record)
+      journalSeq = record.seq
+    } catch (err) {
+      // A failed fsync/write/checkpoint can have landed any prefix, including a
+      // committed manifest rename. Never concatenate another mutation in this
+      // process; a clean restart re-reads disk topology and repairs a torn tail.
+      fenceJournalWrite(err)
+      throw err
     }
-    operationJournal.appendSync(record)
-    journalSeq = record.seq
   }
 
   function loadJournal (afterSeq = 0) {
@@ -1657,10 +1739,11 @@ export function createJsonFileOutboxPersistence (path) {
   }
 }
 
-export function createJsonlOutboxJournal (path, { maxBytes = DEFAULT_MAX_JOURNAL_BYTES } = {}) {
+export function createJsonlOutboxJournal (path, { maxBytes = DEFAULT_MAX_JOURNAL_BYTES, faultInjector = null } = {}) {
   if (typeof path !== 'string' || !path) throw new Error('OutboxLog: journal path required')
   const parent = dirname(path)
   const manifestPath = path + '.manifest.json'
+  const ownership = acquireJsonlWriterOwnership(path)
   const journalByteLimit = positiveInteger(maxBytes, DEFAULT_MAX_JOURNAL_BYTES)
   let activeGeneration = 0
   let fallbackGeneration = null
@@ -1668,22 +1751,27 @@ export function createJsonlOutboxJournal (path, { maxBytes = DEFAULT_MAX_JOURNAL
   let selectedCheckpointState = null
   let loadPlanReady = false
   let ready = false
+  let closeRequested = false
+  let closed = false
+  const injectFault = typeof faultInjector === 'function' ? faultInjector : null
 
   const journal = {
     kind: 'jsonl-fsync',
     path,
     durableSync: true,
-    get ready () { return ready },
+    get ready () { return ready && !closeRequested && !closed },
     probeSync,
     loadCheckpointSync,
     checkpointSync,
     needsCheckpointSync (entry) {
+      assertOpen()
       const file = journalGenerationPath(path, activeGeneration)
       const bytes = Buffer.byteLength(JSON.stringify(entry) + '\n')
       if (bytes > journalByteLimit) throw new Error('OutboxLog: journal entry exceeds byte quota')
       return fileSizeSync(file) + bytes > journalByteLimit
     },
     loadSync () {
+      assertOpen()
       if (!loadPlanReady) loadCheckpointSync()
       const entries = []
       for (let generation = selectedBaseGeneration; generation <= activeGeneration; generation++) {
@@ -1694,28 +1782,49 @@ export function createJsonlOutboxJournal (path, { maxBytes = DEFAULT_MAX_JOURNAL
       return entries
     },
     appendSync (entry) {
+      assertOpen()
       if (!ready) probeSync()
-      const file = journalGenerationPath(path, activeGeneration)
-      const line = Buffer.from(JSON.stringify(entry) + '\n', 'utf8')
-      const currentBytes = fileSizeSync(file)
-      if (line.byteLength > journalByteLimit || currentBytes + line.byteLength > journalByteLimit) {
-        throw new Error('OutboxLog: journal byte quota exceeded')
+      try {
+        const file = journalGenerationPath(path, activeGeneration)
+        const line = Buffer.from(JSON.stringify(entry) + '\n', 'utf8')
+        const currentBytes = fileSizeSync(file)
+        if (line.byteLength > journalByteLimit || currentBytes + line.byteLength > journalByteLimit) {
+          throw new Error('OutboxLog: journal byte quota exceeded')
+        }
+        appendFsyncedSync(file, line)
+      } catch (err) {
+        ready = false
+        throw err
       }
-      appendFsyncedSync(file, line)
     },
     flush () {
-      if (!ready) probeSync()
-      const file = journalGenerationPath(path, activeGeneration)
-      const fd = openSync(file, 'r+')
+      assertOpen()
       try {
-        fsyncSync(fd)
-      } finally {
-        closeSync(fd)
+        if (!ready) probeSync()
+        const file = journalGenerationPath(path, activeGeneration)
+        const fd = openSync(file, 'r+')
+        try {
+          fsyncSync(fd)
+        } finally {
+          closeSync(fd)
+        }
+        fsyncDirectory(parent)
+      } catch (err) {
+        ready = false
+        throw err
       }
-      fsyncDirectory(parent)
+    },
+    markFailed () { ready = false },
+    close () {
+      if (closed) return
+      closeRequested = true
+      ready = false
+      ownership.release()
+      closed = true
     },
     paths () {
       return {
+        lock: ownership.path,
         manifest: manifestPath,
         activeGeneration,
         fallbackGeneration,
@@ -1727,30 +1836,50 @@ export function createJsonlOutboxJournal (path, { maxBytes = DEFAULT_MAX_JOURNAL
     }
   }
 
-  probeSync()
-  return journal
+  try {
+    probeSync()
+    return journal
+  } catch (err) {
+    try { ownership.release() } catch {}
+    throw err
+  }
+
+  function assertOpen () {
+    if (closeRequested || closed) throw new Error('OutboxLog: journal is closed')
+  }
+
+  function fault (stage) {
+    if (injectFault) injectFault(stage, { path, activeGeneration, fallbackGeneration })
+  }
 
   function probeSync () {
-    mkdirSync(parent, { recursive: true })
-    refreshTopology()
-    const file = journalGenerationPath(path, activeGeneration)
-    const created = !existsSync(file)
-    const fd = openSync(file, 'a+')
+    assertOpen()
     try {
-      // This is deliberately a real file fsync, not merely a successful open:
-      // atomic-only readiness means the configured volume accepts the same
-      // durability primitive used before receipts are returned.
-      fsyncSync(fd)
-    } finally {
-      closeSync(fd)
+      mkdirSync(parent, { recursive: true })
+      refreshTopology()
+      const file = journalGenerationPath(path, activeGeneration)
+      const created = !existsSync(file)
+      const fd = openSync(file, 'a+')
+      try {
+        // This is deliberately a real file fsync, not merely a successful open:
+        // atomic-only readiness means the configured volume accepts the same
+        // durability primitive used before receipts are returned.
+        fsyncSync(fd)
+      } finally {
+        closeSync(fd)
+      }
+      if (created) fsyncDirectory(parent)
+      else fsyncDirectory(parent) // readiness also probes directory fsync support
+      ready = true
+      return true
+    } catch (err) {
+      ready = false
+      throw err
     }
-    if (created) fsyncDirectory(parent)
-    else fsyncDirectory(parent) // readiness also probes directory fsync support
-    ready = true
-    return true
   }
 
   function loadCheckpointSync () {
+    assertOpen()
     refreshTopology()
     const active = readCheckpointGeneration(path, activeGeneration)
     if (active.ok) {
@@ -1771,6 +1900,7 @@ export function createJsonlOutboxJournal (path, { maxBytes = DEFAULT_MAX_JOURNAL
   }
 
   function checkpointSync (snapshot) {
+    assertOpen()
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new Error('OutboxLog: invalid checkpoint state')
     if (!Number.isSafeInteger(snapshot.journalSeq) || snapshot.journalSeq < 0) throw new Error('OutboxLog: invalid checkpoint sequence')
     const seq = snapshot.journalSeq
@@ -1792,21 +1922,37 @@ export function createJsonlOutboxJournal (path, { maxBytes = DEFAULT_MAX_JOURNAL
     // Each file is individually fsynced + atomically renamed. The manifest is
     // the commit point: before it lands the old generation remains active;
     // afterwards the old generation is the complete fallback segment.
-    atomicWriteFileSync(checkpointGenerationPath(path, nextGeneration), JSON.stringify(checkpoint))
-    atomicWriteFileSync(journalGenerationPath(path, nextGeneration), '')
-    atomicWriteFileSync(manifestPath, JSON.stringify({
-      version: OUTBOXLOG_JOURNAL_MANIFEST_VERSION,
-      active: nextGeneration,
-      fallback: nextFallback
-    }))
+    try {
+      fault('before-checkpoint-file')
+      atomicWriteFileSync(checkpointGenerationPath(path, nextGeneration), JSON.stringify(checkpoint))
+      fault('after-checkpoint-file')
+      fault('before-journal-file')
+      atomicWriteFileSync(journalGenerationPath(path, nextGeneration), '')
+      fault('after-journal-file')
+      fault('before-manifest-file')
+      atomicWriteFileSync(manifestPath, JSON.stringify({
+        version: OUTBOXLOG_JOURNAL_MANIFEST_VERSION,
+        active: nextGeneration,
+        fallback: nextFallback
+      }), () => fault('manifest-after-rename-before-directory-fsync'))
+      fault('after-manifest-file')
 
-    fallbackGeneration = nextFallback
-    activeGeneration = nextGeneration
-    selectedBaseGeneration = activeGeneration
-    selectedCheckpointState = state
-    loadPlanReady = true
-    ready = true
-    cleanupOldJournalGenerations(path, fallbackGeneration, activeGeneration)
+      fallbackGeneration = nextFallback
+      activeGeneration = nextGeneration
+      selectedBaseGeneration = activeGeneration
+      selectedCheckpointState = state
+      loadPlanReady = true
+      ready = true
+      fault('before-cleanup')
+      cleanupOldJournalGenerations(path, fallbackGeneration, activeGeneration)
+      fault('after-cleanup')
+    } catch (err) {
+      // The manifest rename/fsync may already be the durable commit point while
+      // these in-memory generation fields still name the old file. Stay closed
+      // to writes; only a new engine may refresh/reconcile the disk topology.
+      ready = false
+      throw err
+    }
   }
 
   function refreshTopology () {
@@ -1819,6 +1965,192 @@ export function createJsonlOutboxJournal (path, { maxBytes = DEFAULT_MAX_JOURNAL
     const generations = scanJournalGenerations(path)
     activeGeneration = generations.length ? generations[generations.length - 1] : 0
     fallbackGeneration = generations.length > 1 ? generations[generations.length - 2] : null
+  }
+}
+
+function acquireJsonlWriterOwnership (path) {
+  const parent = dirname(path)
+  const lockPath = path + '.writer.lock'
+  const host = hostname()
+  const hostId = jsonlWriterHostId()
+  const token = hex(32)
+  const owner = { version: 2, hostname: host, hostId, pid: process.pid, token, createdAt: Date.now() }
+  const candidate = lockPath + '.candidate-' + process.pid + '-' + token
+  mkdirSync(parent, { recursive: true })
+  const fd = openSync(candidate, 'wx', 0o600)
+  try {
+    writeAllSync(fd, Buffer.from(JSON.stringify(owner), 'utf8'))
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+
+  let ownsLock = false
+  try {
+    // All owner acquisition, stale recovery, and release transitions take the
+    // same create-exclusive gate. The gate is intentionally never reclaimed:
+    // if a process dies in this tiny window, operator intervention is safer
+    // than guessing and permitting two writers. The hostId comes from a
+    // random per-user file in the OS-local tmpdir, not the potentially shared
+    // journal volume, so equal hostnames on two machines are not trusted.
+    const gate = acquireJsonlOwnershipGate(lockPath, owner)
+    try {
+      try {
+        linkSync(candidate, lockPath)
+        ownsLock = true
+      } catch (err) {
+        if (!err || err.code !== 'EEXIST') throw err
+        const existing = readWriterOwner(lockPath)
+        // Only reclaim when a cryptographic OS-local host instance matches and
+        // that host's kernel says the pid is absent. Malformed, legacy, or
+        // remote/shared-volume owners remain locked and require intervention.
+        if (!existing || existing.hostId !== hostId || isProcessAlive(existing.pid)) {
+          throw new Error('OutboxLog: journal already has an active or unverifiable writer owner')
+        }
+        unlinkSync(lockPath)
+        fsyncDirectory(parent)
+        linkSync(candidate, lockPath)
+        ownsLock = true
+      }
+      fsyncDirectory(parent)
+    } finally {
+      gate.release()
+    }
+  } catch (err) {
+    // If ownership linked but its directory fsync (or gate release) failed,
+    // do not throw away the only release handle while leaving our lock behind.
+    if (ownsLock) {
+      try {
+        const existing = readWriterOwner(lockPath)
+        if (sameWriterOwner(existing, owner)) {
+          unlinkSync(lockPath)
+          fsyncDirectory(parent)
+        }
+      } catch {}
+    }
+    throw err
+  } finally {
+    try { unlinkSync(candidate) } catch {}
+  }
+  if (!ownsLock) throw new Error('OutboxLog: could not acquire exclusive journal writer ownership')
+
+  let released = false
+  return {
+    path: lockPath,
+    release () {
+      if (released) return
+      const gate = acquireJsonlOwnershipGate(lockPath, owner)
+      try {
+        const existing = readWriterOwner(lockPath)
+        if (sameWriterOwner(existing, owner)) {
+          unlinkSync(lockPath)
+          fsyncDirectory(parent)
+        }
+      } finally {
+        gate.release()
+      }
+      released = true
+    }
+  }
+}
+
+function acquireJsonlOwnershipGate (lockPath, owner) {
+  const gatePath = lockPath + '.gate'
+  const parent = dirname(lockPath)
+  let fd = null
+  let created = false
+  try {
+    fd = openSync(gatePath, 'wx', 0o600)
+    created = true
+    writeAllSync(fd, Buffer.from(JSON.stringify(owner), 'utf8'))
+    fsyncSync(fd)
+    closeSync(fd)
+    fd = null
+    fsyncDirectory(parent)
+  } catch (err) {
+    if (fd !== null) {
+      try { closeSync(fd) } catch {}
+    }
+    if (created) {
+      try { unlinkSync(gatePath) } catch {}
+    }
+    if (err && err.code === 'EEXIST') throw new Error('OutboxLog: journal ownership transition is active or unverifiable')
+    throw err
+  }
+
+  let released = false
+  return {
+    release () {
+      if (released) return
+      unlinkSync(gatePath)
+      fsyncDirectory(parent)
+      released = true
+    }
+  }
+}
+
+let cachedJsonlWriterHostId = null
+
+function jsonlWriterHostId () {
+  if (cachedJsonlWriterHostId) return cachedJsonlWriterHostId
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 'user'
+  const identityPath = join(tmpdir(), '.hiverelay-outboxlog-host-' + uid + '.id')
+  const token = hex(32)
+  const candidate = identityPath + '.candidate-' + process.pid + '-' + token
+  mkdirSync(dirname(identityPath), { recursive: true })
+  const fd = openSync(candidate, 'wx', 0o600)
+  try {
+    writeAllSync(fd, Buffer.from(token, 'utf8'))
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+  try {
+    try {
+      linkSync(candidate, identityPath)
+      fsyncDirectory(dirname(identityPath))
+    } catch (err) {
+      if (!err || err.code !== 'EEXIST') throw err
+    }
+  } finally {
+    try { unlinkSync(candidate) } catch {}
+  }
+  const hostId = readFileSync(identityPath, 'utf8').trim().toLowerCase()
+  if (!isHex(hostId, 64)) throw new Error('OutboxLog: invalid local writer host identity')
+  cachedJsonlWriterHostId = hostId
+  return hostId
+}
+
+function readWriterOwner (path) {
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8'))
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    if (parsed.version !== 2 || typeof parsed.hostname !== 'string' || !parsed.hostname) return null
+    if (!isHex(parsed.hostId, 64)) return null
+    if (!Number.isSafeInteger(parsed.pid) || parsed.pid < 1 || !isHex(parsed.token, 64)) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function sameWriterOwner (left, right) {
+  return !!(
+    left &&
+    right &&
+    left.version === right.version &&
+    left.hostId === right.hostId &&
+    left.pid === right.pid &&
+    left.token === right.token
+  )
+}
+
+function isProcessAlive (pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return !!(err && err.code !== 'ESRCH')
   }
 }
 
@@ -1944,7 +2276,7 @@ function truncateFsyncedSync (path, length) {
   }
 }
 
-function atomicWriteFileSync (path, value) {
+function atomicWriteFileSync (path, value, afterRename = null) {
   const parent = dirname(path)
   mkdirSync(parent, { recursive: true })
   const tmp = path + '.tmp-' + process.pid + '-' + Date.now() + '-' + hex(4)
@@ -1957,6 +2289,7 @@ function atomicWriteFileSync (path, value) {
     closeSync(fd)
     fd = null
     renameSync(tmp, path)
+    if (typeof afterRename === 'function') afterRename()
     fsyncDirectory(parent)
   } catch (err) {
     if (fd !== null) {
@@ -2065,12 +2398,14 @@ export function verifyOutboxRecordSignature ({ appId, type, data }, { namespace 
   const outboxWriter = typeof appId === 'string' ? appId.toLowerCase() : ''
   const driveKey = typeof data._dk === 'string' ? data._dk.toLowerCase() : ''
   const ns = typeof data._ns === 'string' ? data._ns : ''
+  const algorithm = typeof data._alg === 'string' ? data._alg : ''
   const sigHex = typeof data._sig === 'string' ? data._sig : ''
   const namespaceRegistry = registry || createOutboxNamespaceRegistry({ namespace, namespaces })
   const namespaceInfo = namespaceRegistry.get(ns)
 
   if (!isHex(writer, 64) || !isHex(outboxWriter, 64) || writer !== outboxWriter) return false
   if (!isHex(driveKey, 64) || !isHex(sigHex, 128)) return false
+  if (algorithm !== 'ed25519') return false
   if (!namespaceInfo) return false
   if (!namespaceRecordAllowed(namespaceInfo, data)) return false
 
@@ -2349,7 +2684,7 @@ function normalizeJournalEntry (entry, expectedSeq) {
     } catch {
       return null
     }
-    if (size > 1024 * 1024) return null
+    if (size > OUTBOXLOG_MAX_REPLAY_COMMIT_BYTES) return null
     return {
       version: entry.version,
       seq: entry.seq,

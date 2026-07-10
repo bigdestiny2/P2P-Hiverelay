@@ -156,7 +156,7 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
         ? await sync.capabilities()
         : unavailableCommitCapabilities()
       return respond(res, 200, {
-        ready: true,
+        ready: capabilities.ready === true,
         service: 'outboxlog',
         serviceVersion: capabilities.serviceVersion,
         atomicCommit: capabilities.atomicCommit,

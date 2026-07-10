@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { appendFile, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'brittle'
@@ -9,8 +9,10 @@ import sodium from 'sodium-universal'
 import b4a from 'b4a'
 import {
   DEFAULT_OUTBOXLOG_NAMESPACE,
+  OUTBOXLOG_MAX_REPLAY_COMMIT_BYTES,
   OutboxLogApp,
   canonicalOutboxRecord,
+  createJsonlOutboxJournal,
   createMemoryOutboxJournal,
   createMemoryOutboxPersistence,
   createOutboxLog
@@ -56,6 +58,10 @@ test('outboxlog atomic commit: durable genesis is one journal transaction and re
   const unknownWrapper = structuredClone(built.commit)
   unknownWrapper.untrusted = 'poison'
   t.is(throws(() => log.sync.commit(writer.publicKeyHex, unknownWrapper)).status, 400, 'unknown commit wrapper fields fail closed')
+  const algorithmPoison = structuredClone(built.commit)
+  algorithmPoison.mutations[0].data._alg = 'not-ed25519'
+  t.is(throws(() => log.sync.commit(writer.publicKeyHex, algorithmPoison)).status, 400, 'unsigned algorithm metadata cannot poison an existing commitId')
+  t.alike(log.sync.commit(writer.publicKeyHex, built.commit), receipt, 'the original retry still returns its durable receipt after metadata poison')
   t.is(journal.entries().length, 1)
 })
 
@@ -155,6 +161,112 @@ test('outboxlog atomic commit: journal failure is not acknowledged and does not 
   t.is(log.sync.capabilities().atomicCommit.durable, false)
 })
 
+test('outboxlog atomic commit: admission rejects commits larger than the replay bound through engine and App', (t) => {
+  const writer = keyPair(68)
+  const built = transition(writer, {
+    expected: { version: 0, root: EMPTY_ROOT },
+    mutations: Array.from({ length: 18 }, (_, i) => ({
+      type: 'post',
+      fields: { id: 'oversized-' + i, body: 'x'.repeat(60000) }
+    }))
+  })
+  t.ok(Buffer.byteLength(JSON.stringify(built.commit)) > OUTBOXLOG_MAX_REPLAY_COMMIT_BYTES, 'fixture crosses the exact replay ceiling')
+
+  const engineJournal = durableMemoryJournal()
+  const engine = createOutboxLog({ journal: engineJournal })
+  t.is(throws(() => engine.sync.commit(writer.publicKeyHex, built.commit)).status, 413, 'direct engine admission rejects')
+  t.is(engineJournal.entries().length, 0, 'oversized engine request never reaches the journal')
+  t.is(engine.sync.status(writer.publicKeyHex).inviteKey, null, 'oversized engine request never allocates')
+
+  const appJournal = durableMemoryJournal()
+  const app = new OutboxLogApp({ engine: createOutboxLog({ journal: appJournal }) })
+  t.is(throws(() => app.commit(writer.publicKeyHex, built.commit)).status, 413, 'ServiceProvider App admission rejects')
+  t.is(appJournal.entries().length, 0, 'oversized App request never reaches the journal')
+})
+
+test('outboxlog journal uncertainty: every mutation family fences every later writer before another append', (t) => {
+  const cases = [
+    {
+      name: 'create',
+      kind: 'create',
+      mutate: ({ log, writer }) => log.sync.create(writer.publicKeyHex)
+    },
+    {
+      name: 'append',
+      kind: 'append',
+      setup: ({ log, writer }) => log.sync.create(writer.publicKeyHex),
+      mutate: ({ log, writer }) => log.sync.append(writer.publicKeyHex, {
+        type: 'post',
+        data: signRecord(writer, 'post', { id: 'append-failure', author: writer.publicKeyHex })
+      })
+    },
+    {
+      name: 'commit',
+      kind: 'commit',
+      mutate: ({ log, writer, commit }) => log.sync.commit(writer.publicKeyHex, commit.commit)
+    },
+    {
+      name: 'takedown',
+      kind: 'takedown',
+      mutate: ({ log, writer }) => log.sync.takedown(writer.publicKeyHex, 'post!failure')
+    },
+    {
+      name: 'restore',
+      kind: 'takedown',
+      setup: ({ log, writer }) => log.sync.takedown(writer.publicKeyHex, 'post!failure'),
+      mutate: ({ log, writer }) => log.sync.restore(writer.publicKeyHex, 'post!failure')
+    },
+    {
+      name: 'sweep',
+      kind: 'sweep',
+      setup: ({ log, writer }) => log.sync.create(writer.publicKeyHex),
+      mutate: ({ log }) => log.sync.sweepGhosts({ ttlMs: 0, now: Date.now() + 1 })
+    }
+  ]
+
+  for (const mode of ['before', 'after']) {
+    for (let i = 0; i < cases.length; i++) {
+      const item = cases[i]
+      const writer = keyPair(70 + i)
+      const journal = uncertainJournal()
+      const log = createOutboxLog({ journal })
+      const commit = transition(writer, {
+        expected: { version: 0, root: EMPTY_ROOT },
+        mutations: [{ type: 'post', fields: { id: 'commit-failure' } }]
+      })
+      const context = { log, writer, commit }
+      if (item.setup) item.setup(context)
+      journal.fail(item.kind, mode)
+
+      t.is(throws(() => item.mutate(context)).status, 500, item.name + ' ' + mode + ' uncertainty rejects the triggering mutation')
+      const callsAtFence = journal.callCount()
+      const followupWriter = keyPair(90 + i)
+      const followupCommit = transition(followupWriter, {
+        expected: { version: 0, root: EMPTY_ROOT },
+        mutations: [{ type: 'post', fields: { id: 'must-not-append' } }]
+      })
+      const followups = [
+        () => log.sync.create(followupWriter.publicKeyHex),
+        () => log.sync.append(followupWriter.publicKeyHex, {
+          type: 'post',
+          data: signRecord(followupWriter, 'post', { id: 'must-not-append', author: followupWriter.publicKeyHex })
+        }),
+        () => log.sync.commit(followupWriter.publicKeyHex, followupCommit.commit),
+        () => log.sync.takedown(followupWriter.publicKeyHex, 'post!must-not-append'),
+        () => log.sync.restore(followupWriter.publicKeyHex, 'post!must-not-append'),
+        () => log.sync.sweepGhosts({ ttlMs: 0, now: Date.now() + 1 })
+      ]
+      for (const followup of followups) t.is(throws(followup).status, 503, item.name + ' ' + mode + ' fence blocks later mutation')
+      t.is(journal.callCount(), callsAtFence, item.name + ' ' + mode + ' fence prevents every later journal append')
+      const capabilities = log.sync.capabilities()
+      t.is(capabilities.ready, false, item.name + ' ' + mode + ' removes bridge readiness')
+      t.is(capabilities.atomicCommit.durable, false, item.name + ' ' + mode + ' removes durable capability')
+      t.is(capabilities.atomicCommit.ready, false, item.name + ' ' + mode + ' removes atomic readiness')
+      t.alike(capabilities.legacyWrites, { create: false, append: false }, item.name + ' ' + mode + ' removes legacy readiness')
+    }
+  }
+})
+
 test('outboxlog atomic commit: JSONL replay restores rows and the original receipt', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'outboxlog-atomic-'))
   t.teardown(() => rm(dir, { recursive: true, force: true }))
@@ -167,11 +279,74 @@ test('outboxlog atomic commit: JSONL replay restores rows and the original recei
   const first = createOutboxLog({ journalPath: path })
   const receipt = first.sync.commit(writer.publicKeyHex, built.commit)
   const before = await readFile(path, 'utf8')
+  first.close()
 
   const reloaded = createOutboxLog({ journalPath: path })
   t.is(reloaded.sync.get(writer.publicKeyHex, 'post!persisted').id, 'persisted')
   t.alike(reloaded.sync.commit(writer.publicKeyHex, built.commit), receipt)
   t.is(await readFile(path, 'utf8'), before, 'replayed retry does not grow the journal')
+  reloaded.close()
+})
+
+test('outboxlog JSONL ownership: overlap is refused, close/stop release, same-host stale owners recover, remote owners do not', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'outboxlog-owner-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+
+  const overlapPath = join(dir, 'overlap.jsonl')
+  const first = createJsonlOutboxJournal(overlapPath)
+  t.ok(throws(() => createJsonlOutboxJournal(overlapPath)).message.includes('writer owner'), 'overlapping writer is refused')
+  first.close()
+  const replacement = createJsonlOutboxJournal(overlapPath)
+  replacement.close()
+
+  const invalidPath = join(dir, 'invalid-config.jsonl')
+  t.ok(throws(() => createOutboxLog({ journalPath: invalidPath, maxGroups: 2, maxCommitHistoryTotal: 1 })).message.includes('reserve'), 'constructor validation fails before taking ownership')
+  const afterInvalidConfig = createJsonlOutboxJournal(invalidPath)
+  afterInvalidConfig.close()
+
+  const retryPath = join(dir, 'configure-retry.jsonl')
+  const blocker = createJsonlOutboxJournal(retryPath)
+  const configurable = createOutboxLog()
+  t.ok(throws(() => configurable.configurePersistence({ journalPath: retryPath })).message.includes('writer owner'), 'contended runtime configuration fails closed')
+  blocker.close()
+  t.is(configurable.configurePersistence({ journalPath: retryPath }), true, 'failed configuration is transactional and can retry')
+  configurable.close()
+
+  const stalePath = join(dir, 'stale.jsonl')
+  const identityProbe = createJsonlOutboxJournal(stalePath)
+  const sameHostOwner = JSON.parse(await readFile(identityProbe.paths().lock, 'utf8'))
+  identityProbe.close()
+  await writeFile(stalePath + '.writer.lock', JSON.stringify({
+    ...sameHostOwner,
+    pid: 2147483647,
+    token: '1'.repeat(64),
+    createdAt: 1
+  }))
+  const recovered = createJsonlOutboxJournal(stalePath)
+  t.ok(recovered.ready, 'definitely absent same-host pid is safely reclaimed')
+  recovered.close()
+
+  const remotePath = join(dir, 'remote.jsonl')
+  await writeFile(remotePath + '.writer.lock', JSON.stringify({
+    ...sameHostOwner,
+    hostname: hostname(),
+    hostId: sameHostOwner.hostId === 'f'.repeat(64) ? 'e'.repeat(64) : 'f'.repeat(64),
+    pid: 2147483647,
+    token: '2'.repeat(64),
+    createdAt: 1
+  }))
+  t.ok(throws(() => createJsonlOutboxJournal(remotePath)).message.includes('unverifiable'), 'remote/shared-volume owner is never presumed dead')
+
+  const providerPath = join(dir, 'provider.jsonl')
+  const app = new OutboxLogApp({ sweep: false })
+  await app.start({ config: { outboxlog: { journalPath: providerPath, legacyWrites: false, sweep: false } } })
+  t.ok(throws(() => createJsonlOutboxJournal(providerPath)).message.includes('writer owner'), 'provider owns the path while running')
+  await app.stop()
+  t.is(app.sync.capabilities().ready, false, 'closed provider no longer advertises mutation readiness')
+  await app.stop()
+  const afterStop = createJsonlOutboxJournal(providerPath)
+  t.ok(afterStop.ready, 'provider stop releases ownership for a clean restart')
+  afterStop.close()
 })
 
 test('outboxlog atomic commit: JSONL recovery truncates only a torn final tail and rejects interior corruption', async (t) => {
@@ -186,11 +361,13 @@ test('outboxlog atomic commit: JSONL recovery truncates only a torn final tail a
   const first = createOutboxLog({ journalPath: path })
   first.sync.commit(writer.publicKeyHex, built.commit)
   const complete = await readFile(path, 'utf8')
+  first.close()
 
   await appendFile(path, '{"version":1,"seq":2')
   const recovered = createOutboxLog({ journalPath: path })
   t.is(recovered.sync.get(writer.publicKeyHex, 'post!safe').id, 'safe')
   t.is(await readFile(path, 'utf8'), complete, 'unacknowledged final fragment was durably truncated')
+  recovered.close()
 
   await writeFile(path, complete + 'not-json\n' + complete)
   const corrupt = throws(() => createOutboxLog({ journalPath: path }))
@@ -215,6 +392,7 @@ test('outboxlog atomic commit: generational checkpoints compact, survive corrupt
     createdAt: 2000
   })
   const secondReceipt = first.sync.commit(writer.publicKeyHex, secondTransition.commit)
+  first.close()
 
   await writeFile(path + '.g2.checkpoint.json', '{corrupt-checkpoint')
   const recovered = createOutboxLog({ journalPath: path, checkpointInterval: 1 })
@@ -240,8 +418,64 @@ test('outboxlog atomic commit: generational checkpoints compact, survive corrupt
   const files = await readdir(dir)
   t.is(files.filter(name => /operations\.jsonl\.g\d+\.jsonl$/.test(name)).length, 2, 'only active and fallback journal generations remain after repair')
   t.is(files.filter(name => /operations\.jsonl\.g\d+\.checkpoint\.json$/.test(name)).length, 2, 'only active and fallback checkpoints remain after repair')
+  recovered.close()
   const restarted = createOutboxLog({ journalPath: path, checkpointInterval: 1 })
   t.is(restarted.sync.get(writer.publicKeyHex, 'post!p4').id, 'p4')
+  restarted.close()
+})
+
+test('outboxlog checkpoint uncertainty: every fault stage fences until restart and preserves the acknowledged receipt', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'outboxlog-checkpoint-faults-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const stages = [
+    'before-checkpoint-file',
+    'after-checkpoint-file',
+    'before-journal-file',
+    'after-journal-file',
+    'before-manifest-file',
+    'manifest-after-rename-before-directory-fsync',
+    'after-manifest-file',
+    'before-cleanup',
+    'after-cleanup'
+  ]
+
+  for (let i = 0; i < stages.length; i++) {
+    const stage = stages[i]
+    const path = join(dir, stage, 'operations.jsonl')
+    const writer = keyPair(110 + i)
+    const built = transition(writer, {
+      expected: { version: 0, root: EMPTY_ROOT },
+      mutations: [{ type: 'post', fields: { id: 'durable-' + i } }]
+    })
+    let injected = 0
+    const first = createOutboxLog({
+      journalPath: path,
+      checkpointInterval: 1,
+      journalFaultInjector (current) {
+        if (current !== stage) return
+        injected++
+        throw new Error('injected checkpoint fault at ' + stage)
+      }
+    })
+    const receipt = first.sync.commit(writer.publicKeyHex, built.commit)
+    t.is(injected, 1, stage + ' fault was reached')
+    t.is(receipt.durable, true, stage + ' commit was fsynced before checkpoint maintenance')
+    t.is(first.sync.capabilities().ready, false, stage + ' fences process readiness')
+    const next = transition(writer, {
+      expected: { version: 1, root: built.head.root },
+      base: built.census,
+      mutations: [{ type: 'post', fields: { id: 'blocked-' + i } }],
+      createdAt: 2000 + i
+    })
+    t.is(throws(() => first.sync.commit(writer.publicKeyHex, next.commit)).status, 503, stage + ' prevents writes in the desynchronized process')
+    first.close()
+
+    const restarted = createOutboxLog({ journalPath: path, checkpointInterval: 1 })
+    t.is(restarted.sync.get(writer.publicKeyHex, 'post!durable-' + i).id, 'durable-' + i, stage + ' restart recovers the acknowledged row')
+    t.alike(restarted.sync.commit(writer.publicKeyHex, built.commit), receipt, stage + ' original lost-response retry recovers its receipt')
+    t.is(restarted.sync.capabilities().ready, true, stage + ' clean restart restores readiness')
+    restarted.close()
+  }
 })
 
 test('outboxlog atomic commit: forced tiny journal byte quota rotates before exhaustion and restarts', async (t) => {
@@ -256,6 +490,7 @@ test('outboxlog atomic commit: forced tiny journal byte quota rotates before exh
   const sizing = createOutboxLog({ journalPath: sizingPath })
   sizing.sync.commit(writer.publicKeyHex, firstTransition.commit)
   const oneEntryBytes = Buffer.byteLength(await readFile(sizingPath, 'utf8'))
+  sizing.close()
 
   const path = join(dir, 'operations.jsonl')
   const log = createOutboxLog({ journalPath: path, maxJournalBytes: oneEntryBytes + 64 })
@@ -278,6 +513,7 @@ test('outboxlog atomic commit: forced tiny journal byte quota rotates before exh
   const files = await readdir(dir)
   t.ok(files.includes('operations.jsonl.manifest.json'), 'quota pressure activated generational compaction')
   t.ok(files.filter(name => /operations\.jsonl\.g\d+\.jsonl$/.test(name)).length <= 2, 'quota rotations retain bounded generations')
+  log.close()
   const restarted = createOutboxLog({ journalPath: path, maxJournalBytes: oneEntryBytes + 64 })
   t.is(restarted.sync.get(writer.publicKeyHex, 'post!quota-3').id, 'quota-3')
   t.alike(restarted.sync.commit(writer.publicKeyHex, firstTransition.commit), firstReceipt, 'compaction retains the original receipt inside the bounded window')
@@ -319,6 +555,49 @@ test('outboxlog atomic commit: latest receipt per outbox survives cross-author g
   t.is(log._stats().commitHistoryCount, 3, 'global receipt history remains bounded without a permanent write cliff')
   t.is(log.sync.capabilities().atomicCommit.idempotency.latestPerOutbox, true)
   t.ok(a1Receipt.durable)
+})
+
+test('outboxlog atomic commit: cross-author receipt eviction survives JSONL checkpoint and restart', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'outboxlog-cross-author-restart-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const path = join(dir, 'operations.jsonl')
+  const writers = [keyPair(120), keyPair(121), keyPair(122)]
+  const opts = {
+    journalPath: path,
+    checkpointInterval: 1,
+    maxGroups: 3,
+    maxCommitReceiptsPerGroup: 1,
+    maxCommitTombstonesPerGroup: 8,
+    maxCommitHistoryTotal: 3
+  }
+  const first = createOutboxLog(opts)
+  const a1 = transition(writers[0], {
+    expected: { version: 0, root: EMPTY_ROOT },
+    mutations: [{ type: 'post', fields: { id: 'a1' } }]
+  })
+  first.sync.commit(writers[0].publicKeyHex, a1.commit)
+  const a2 = transition(writers[0], {
+    expected: { version: 1, root: a1.head.root },
+    base: a1.census,
+    mutations: [{ type: 'post', fields: { id: 'a2' } }],
+    createdAt: 2000
+  })
+  const a2Receipt = first.sync.commit(writers[0].publicKeyHex, a2.commit)
+  for (let i = 1; i < writers.length; i++) {
+    const pressure = transition(writers[i], {
+      expected: { version: 0, root: EMPTY_ROOT },
+      mutations: [{ type: 'post', fields: { id: 'pressure-' + i } }],
+      createdAt: 3000 + i
+    })
+    first.sync.commit(writers[i].publicKeyHex, pressure.commit)
+  }
+  first.close()
+
+  const restarted = createOutboxLog(opts)
+  t.alike(restarted.sync.commit(writers[0].publicKeyHex, a2.commit), a2Receipt, 'quiet author latest receipt survives checkpoint/restart and other-author pressure')
+  t.is(throws(() => restarted.sync.commit(writers[0].publicKeyHex, a1.commit)).status, 409, 'evicted older receipt remains expired after restart')
+  t.is(restarted._stats().commitHistoryCount, 3, 'restored global history remains bounded')
+  restarted.close()
 })
 
 test('outboxlog atomic-only startup requires an opened fsync-probed path and disabled legacy writes', async (t) => {
@@ -438,6 +717,29 @@ test('outboxlog atomic commit HTTP: capability preflight, receipt, and stale CAS
   t.alike(jsonBody(rejected), { error: 'stale head' })
 })
 
+test('outboxlog bridge status: journal fence is reported as ready false', async (t) => {
+  const writer = keyPair(130)
+  const journal = uncertainJournal()
+  const engine = createOutboxLog({ journal })
+  journal.fail('create', 'after')
+  t.is(throws(() => engine.sync.create(writer.publicKeyHex)).status, 500)
+
+  const auth = createOutboxLogTokenAuth()
+  const token = auth.issue()
+  const status = fakeRes()
+  await handleOutboxLogRoute(
+    fakeReq('GET', '/api/bridge/status', null, { 'x-pear-token': token }),
+    status,
+    { outboxLogApp: new OutboxLogApp({ engine }), auth, state: createOutboxLogHttpState() }
+  )
+  const body = jsonBody(status)
+  t.is(status.statusCode, 200)
+  t.is(body.ready, false, 'bridge readiness follows sync.capabilities().ready')
+  t.is(body.atomicCommit.ready, false)
+  t.is(body.atomicCommit.durable, false)
+  t.alike(body.legacyWrites, { create: false, append: false })
+})
+
 test('outboxlog atomic commit: a non-durable engine advertises false and rejects acknowledgements', (t) => {
   const writer = keyPair(48)
   const log = createOutboxLog({ journal: createMemoryOutboxJournal() })
@@ -532,6 +834,34 @@ function transition (writer, opts) {
 
 function durableMemoryJournal () {
   return createMemoryOutboxJournal([], { durableSync: true })
+}
+
+function uncertainJournal () {
+  const entries = []
+  let armedKind = null
+  let armedMode = null
+  let calls = 0
+  return {
+    durableSync: true,
+    ready: true,
+    loadSync: () => structuredClone(entries),
+    appendSync (entry) {
+      calls++
+      if (entry.kind === armedKind && armedMode === 'before') throw new Error('injected pre-append uncertainty')
+      entries.push(structuredClone(entry))
+      if (entry.kind === armedKind && armedMode === 'after') throw new Error('injected post-append uncertainty')
+    },
+    markFailed () {
+      this.ready = false
+    },
+    fail (kind, mode) {
+      armedKind = kind
+      armedMode = mode
+    },
+    callCount () {
+      return calls
+    }
+  }
 }
 
 function keyPair (seedByte) {

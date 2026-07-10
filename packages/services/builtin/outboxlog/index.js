@@ -4,6 +4,7 @@ import {
   DEFAULT_OUTBOXLOG_SERVICE_VERSION,
   OUTBOXLOG_BLIND_SEAL_DEFAULT_ALG,
   OUTBOXLOG_BLIND_SEAL_VERSION,
+  OUTBOXLOG_MAX_REPLAY_COMMIT_BYTES,
   canonicalOutboxRecord,
   createOutboxBlindSealedBody,
   createJsonFileOutboxPersistence,
@@ -95,6 +96,9 @@ export class OutboxLogApp extends ServiceProvider {
     this.sweepTtlMs = normalizeReaffirmMs(opts.sweepTtlMs, OUTBOXLOG_SWEEP_DEFAULT_TTL_MS)
     this.sweepIntervalMs = normalizeReaffirmMs(opts.sweepIntervalMs, OUTBOXLOG_SWEEP_DEFAULT_INTERVAL_MS)
     this._sweepTimer = null
+    this._stopRequested = false
+    this._stopped = false
+    this._swarmDestroyed = false
   }
 
   manifest () {
@@ -253,6 +257,7 @@ export class OutboxLogApp extends ServiceProvider {
   }
 
   async stop () {
+    if (this._stopped) return
     if (this._seedTimer) {
       clearInterval(this._seedTimer)
       this._seedTimer = null
@@ -261,12 +266,33 @@ export class OutboxLogApp extends ServiceProvider {
       clearInterval(this._sweepTimer)
       this._sweepTimer = null
     }
-    if (this.engine.flush) await this.engine.flush()
-    // Tear down the swarm hub so no descriptor delivery fires after stop and
-    // its channel/descriptor state is released. Guard the method so an
-    // injected swarm without destroy()/close() is tolerated.
-    if (this.swarm && typeof this.swarm.destroy === 'function') this.swarm.destroy()
-    this.node = null
+    const shouldFlush = !this._stopRequested
+    this._stopRequested = true
+    let failure = null
+    let closeSucceeded = false
+    try {
+      if (shouldFlush && this.engine.flush) await this.engine.flush()
+    } catch (err) {
+      failure = err
+    } finally {
+      try {
+        // Release exclusive JSONL ownership even when a fenced/failed flush
+        // reports an error; a failed release remains retryable on stop().
+        if (this.engine.close) await this.engine.close()
+        closeSucceeded = true
+      } catch (err) {
+        if (!failure) failure = err
+      } finally {
+        // Teardown must still complete if ownership release reports an error.
+        if (!this._swarmDestroyed && this.swarm && typeof this.swarm.destroy === 'function') {
+          this.swarm.destroy()
+          this._swarmDestroyed = true
+        }
+        this.node = null
+      }
+    }
+    if (closeSucceeded) this._stopped = true
+    if (failure) throw failure
   }
 
   create (appId, opts = {}) {
@@ -406,6 +432,7 @@ export {
   DEFAULT_OUTBOXLOG_SERVICE_VERSION,
   OUTBOXLOG_BLIND_SEAL_DEFAULT_ALG,
   OUTBOXLOG_BLIND_SEAL_VERSION,
+  OUTBOXLOG_MAX_REPLAY_COMMIT_BYTES,
   canonicalOutboxRecord,
   createOutboxBlindSealedBody,
   createJsonFileOutboxPersistence,
