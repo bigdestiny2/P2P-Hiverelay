@@ -199,6 +199,7 @@ export function createOutboxLog ({
       if (!legacyWritesEnabled) throw fail('legacy append is disabled', 403)
       assertJournalMutationAllowed()
       if (!op || typeof op.type !== 'string' || op.type.length > 64 || !op.data || op.data.id == null) throw fail('bad op', 400)
+      assertNoNestedSignatureFields(op.data)
       const namespaceInfo = namespaceInfoForAppend(op.data)
       const id = String(op.data.id)
       if (id.length > maxIdLength) throw fail('id too long', 400)
@@ -506,6 +507,7 @@ export function createOutboxLog ({
     }
 
     const authorization = commit.authorization
+    assertNoNestedSignatureFields(authorization)
     const expectedAuthorizationFields = ['appId', 'createdAt', 'expectedRoot', 'expectedVersion', 'headSig', 'id', 'mutationSigs']
     assertExactObjectFields(authorization, [...expectedAuthorizationFields, ...SIG_FIELDS], 'bad commit authorization fields')
     const namespaceName = recordNamespace(authorization)
@@ -548,6 +550,7 @@ export function createOutboxLog ({
       if (!mutation.data || typeof mutation.data !== 'object' || Array.isArray(mutation.data) || mutation.data.id == null) {
         throw fail('bad mutation data', 400)
       }
+      assertNoNestedSignatureFields(mutation.data)
       const id = String(mutation.data.id)
       if (id.length > maxIdLength) throw fail('id too long', 400)
       if (recordNamespace(mutation.data) !== namespaceName) throw fail('namespace mismatch', 400)
@@ -561,6 +564,7 @@ export function createOutboxLog ({
 
     const headData = commit.head.data
     if (!headData || typeof headData !== 'object' || Array.isArray(headData) || headData.id !== appId) throw fail('bad head data', 400)
+    assertNoNestedSignatureFields(headData)
     if (recordNamespace(headData) !== namespaceName) throw fail('namespace mismatch', 400)
     verifyAtomicRecord(appId, 'head', headData, namespaceName, 'head')
 
@@ -1195,24 +1199,78 @@ export function createOutboxLog ({
   }
 
   function configurePersistence ({ persistence = null, persistencePath = null, journal = null, journalPath = null, storagePath = null } = {}) {
+    // Check lifecycle before constructing a file-backed handle: a closed
+    // engine cannot retain/release a newly acquired writer lease.
+    if (closeRequested || closed) throw fail('outboxlog is closed', 503)
     if (statePersistence || operationJournal) return false
-    const nextStatePersistence = normalizePersistence(persistence) ||
-      (persistencePath ? createJsonFileOutboxPersistence(persistencePath) : null) ||
-      (storagePath ? createJsonFileOutboxPersistence(join(storagePath, 'outboxlog-state.json')) : null)
-    const nextOperationJournal = normalizeJournal(journal) ||
-      (journalPath ? createJsonlOutboxJournal(journalPath, { maxBytes: maxJournalBytes, faultInjector: journalFaultInjector }) : null)
-    if (!nextStatePersistence && !nextOperationJournal) return false
-    statePersistence = nextStatePersistence
-    operationJournal = nextOperationJournal
+    const before = captureRuntimeState()
+    let nextStatePersistence = null
+    let nextOperationJournal = null
     try {
+      nextStatePersistence = normalizePersistence(persistence) ||
+        (persistencePath ? createJsonFileOutboxPersistence(persistencePath) : null) ||
+        (storagePath ? createJsonFileOutboxPersistence(join(storagePath, 'outboxlog-state.json')) : null)
+      nextOperationJournal = normalizeJournal(journal) ||
+        (journalPath ? createJsonlOutboxJournal(journalPath, { maxBytes: maxJournalBytes, faultInjector: journalFaultInjector }) : null)
+      if (!nextStatePersistence && !nextOperationJournal) return false
+      statePersistence = nextStatePersistence
+      operationJournal = nextOperationJournal
       loadState()
+      return true
     } catch (err) {
       try { if (nextOperationJournal && typeof nextOperationJournal.close === 'function') nextOperationJournal.close() } catch {}
       statePersistence = null
       operationJournal = null
+      restoreRuntimeState(before)
       throw err
     }
-    return true
+  }
+
+  function captureRuntimeState () {
+    return {
+      groups: [...groups.entries()].map(([appId, group]) => [appId, cloneRuntimeGroup(group)]),
+      appendEvents: [...appendEventsByApp.entries()].map(([appId, events]) => [appId, clone(events)]),
+      suppressed: [...suppressed],
+      totalBytes,
+      directorySeq,
+      appendSeq,
+      journalSeq,
+      entriesSinceCheckpoint,
+      snapshotDirty,
+      legacyWritesEnabled,
+      journalWriteFailed,
+      commitHistoryCount,
+      commitHistoryOrder: clone(commitHistoryOrder)
+    }
+  }
+
+  function restoreRuntimeState (state) {
+    groups.clear()
+    for (const [appId, group] of state.groups) groups.set(appId, group)
+    appendEventsByApp.clear()
+    for (const [appId, events] of state.appendEvents) appendEventsByApp.set(appId, events)
+    suppressed.clear()
+    for (const composite of state.suppressed) suppressed.add(composite)
+    totalBytes = state.totalBytes
+    directorySeq = state.directorySeq
+    appendSeq = state.appendSeq
+    journalSeq = state.journalSeq
+    entriesSinceCheckpoint = state.entriesSinceCheckpoint
+    snapshotDirty = state.snapshotDirty
+    legacyWritesEnabled = state.legacyWritesEnabled
+    journalWriteFailed = state.journalWriteFailed
+    commitHistoryCount = state.commitHistoryCount
+    commitHistoryOrder = state.commitHistoryOrder
+  }
+
+  function cloneRuntimeGroup (group) {
+    return {
+      ...group,
+      atomicCensus: Array.isArray(group.atomicCensus) ? [...group.atomicCensus] : group.atomicCensus,
+      rows: new Map([...group.rows.entries()].map(([key, value]) => [key, clone(value)])),
+      commits: new Map([...(group.commits || new Map()).entries()].map(([key, value]) => [key, clone(value)])),
+      commitTombstones: new Map([...(group.commitTombstones || new Map()).entries()].map(([key, value]) => [key, clone(value)]))
+    }
   }
 
   function configureNamespaces (opts = {}) {
@@ -1367,6 +1425,7 @@ export function createOutboxLog ({
   // is not a trust root — anyone who can write it must not be able to inject
   // rows attributed to another writer key. (#146)
   function restoreVerifies (appId, type, data, namespaceInfo) {
+    if (hasNestedSignatureFields(data)) return false
     if (!shouldVerifyAppend) return true
     if (typeof type !== 'string' || !type) return false
     let verified = false
@@ -2393,6 +2452,7 @@ export function createOutboxNamespaceRegistry ({ namespace = DEFAULT_OUTBOXLOG_N
 export function verifyOutboxRecordSignature ({ appId, type, data }, { namespace = DEFAULT_OUTBOXLOG_NAMESPACE, namespaces = null, registry = null } = {}) {
   if (typeof type !== 'string' || !type) return false
   if (!data || typeof data !== 'object') return false
+  if (hasNestedSignatureFields(data)) return false
 
   const writer = typeof data._k === 'string' ? data._k.toLowerCase() : ''
   const outboxWriter = typeof appId === 'string' ? appId.toLowerCase() : ''
@@ -2417,7 +2477,8 @@ export function verifyOutboxRecordSignature ({ appId, type, data }, { namespace 
 }
 
 export function canonicalOutboxRecord (type, data) {
-  return type + '|' + stable(data)
+  assertNoNestedSignatureFields(data)
+  return type + '|' + stable(data, true)
 }
 
 function normalizeNamespaceEntry (name, config = {}) {
@@ -2717,6 +2778,7 @@ function normalizeJournalEntry (entry, expectedSeq) {
   if (!op || typeof op !== 'object' || Array.isArray(op)) return null
   if (typeof op.type !== 'string' || !op.type || op.type.length > 64) return null
   if (!op.data || typeof op.data !== 'object' || Array.isArray(op.data) || op.data.id == null) return null
+  if (hasNestedSignatureFields(op.data)) return null
   const id = String(op.data.id)
   if (id.length > DEFAULT_MAX_ID_LENGTH) return null
   let size
@@ -2821,9 +2883,23 @@ function isHex (value, length) {
   return typeof value === 'string' && value.length === length && /^[0-9a-f]+$/i.test(value)
 }
 
-function stable (value) {
+function stable (value, root = false) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value === undefined ? null : value)
-  if (Array.isArray(value)) return '[' + value.map(stable).join(',') + ']'
-  const keys = Object.keys(value).filter(key => !SIG_FIELDS.has(key)).sort()
-  return '{' + keys.map(key => JSON.stringify(key) + ':' + stable(value[key])).join(',') + '}'
+  if (Array.isArray(value)) return '[' + value.map(item => stable(item, false)).join(',') + ']'
+  const keys = Object.keys(value).filter(key => !(root && SIG_FIELDS.has(key))).sort()
+  return '{' + keys.map(key => JSON.stringify(key) + ':' + stable(value[key], false)).join(',') + '}'
+}
+
+function assertNoNestedSignatureFields (value) {
+  if (hasNestedSignatureFields(value)) throw fail('reserved signature metadata must be top-level', 400)
+}
+
+function hasNestedSignatureFields (value, depth = 0) {
+  if (value === null || typeof value !== 'object') return false
+  if (Array.isArray(value)) return value.some(item => hasNestedSignatureFields(item, depth + 1))
+  for (const key of Object.keys(value)) {
+    if (depth > 0 && SIG_FIELDS.has(key)) return true
+    if (hasNestedSignatureFields(value[key], depth + 1)) return true
+  }
+  return false
 }

@@ -31,7 +31,7 @@ test('outboxlog atomic commit: durable genesis is one journal transaction and re
   const log = createOutboxLog({ journal })
   const built = transition(writer, {
     expected: { version: 0, root: EMPTY_ROOT },
-    mutations: [{ type: 'post', fields: { id: 'p1', title: 'genesis' } }]
+    mutations: [{ type: 'post', fields: { id: 'p1', title: 'genesis', meta: { nested: {} } } }]
   })
 
   const receipt = log.sync.commit(writer.publicKeyHex, built.commit)
@@ -61,8 +61,29 @@ test('outboxlog atomic commit: durable genesis is one journal transaction and re
   const algorithmPoison = structuredClone(built.commit)
   algorithmPoison.mutations[0].data._alg = 'not-ed25519'
   t.is(throws(() => log.sync.commit(writer.publicKeyHex, algorithmPoison)).status, 400, 'unsigned algorithm metadata cannot poison an existing commitId')
+  for (const field of ['_sig', '_k', '_dk', '_ns', '_alg']) {
+    const nestedPoison = structuredClone(built.commit)
+    nestedPoison.mutations[0].data.meta = { nested: { [field]: 'unsigned-poison' } }
+    t.is(throws(() => log.sync.commit(writer.publicKeyHex, nestedPoison)).status, 400, 'nested reserved field ' + field + ' cannot poison an existing commitId')
+  }
   t.alike(log.sync.commit(writer.publicKeyHex, built.commit), receipt, 'the original retry still returns its durable receipt after metadata poison')
   t.is(journal.entries().length, 1)
+})
+
+test('outboxlog signatures: nested reserved metadata is rejected even when signature verification is disabled', (t) => {
+  const writer = keyPair(69)
+  const journal = durableMemoryJournal()
+  const log = createOutboxLog({ journal, verifyAppend: false })
+  log.sync.create(writer.publicKeyHex)
+  const data = {
+    id: 'nested-reserved',
+    _ns: DEFAULT_OUTBOXLOG_NAMESPACE,
+    body: { items: [{ metadata: { _alg: 'unsigned' } }] }
+  }
+
+  t.is(throws(() => canonicalOutboxRecord('post', data)).status, 400, 'canonical signing rejects nested reserved metadata')
+  t.is(throws(() => log.sync.append(writer.publicKeyHex, { type: 'post', data })).status, 400, 'storage admission rejects independently of the verifier')
+  t.is(journal.entries().length, 1, 'rejected nested metadata never reaches durable storage')
 })
 
 test('outboxlog atomic commit: CAS blocks stale signed replay and validates next head', (t) => {
@@ -304,6 +325,14 @@ test('outboxlog JSONL ownership: overlap is refused, close/stop release, same-ho
   const afterInvalidConfig = createJsonlOutboxJournal(invalidPath)
   afterInvalidConfig.close()
 
+  const closedPath = join(dir, 'closed-config.jsonl')
+  const closedEngine = createOutboxLog()
+  closedEngine.close()
+  t.is(throws(() => closedEngine.configurePersistence({ journalPath: closedPath })).status, 503, 'closed engine rejects configuration before taking a lease')
+  const afterClosedConfig = createJsonlOutboxJournal(closedPath)
+  t.ok(afterClosedConfig.ready, 'rejected closed-engine configuration leaves no writer lock')
+  afterClosedConfig.close()
+
   const retryPath = join(dir, 'configure-retry.jsonl')
   const blocker = createJsonlOutboxJournal(retryPath)
   const configurable = createOutboxLog()
@@ -347,6 +376,42 @@ test('outboxlog JSONL ownership: overlap is refused, close/stop release, same-ho
   const afterStop = createJsonlOutboxJournal(providerPath)
   t.ok(afterStop.ready, 'provider stop releases ownership for a clean restart')
   afterStop.close()
+})
+
+test('outboxlog configurePersistence: failed partial replay restores all engine state before a repaired retry', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'outboxlog-config-transaction-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const path = join(dir, 'operations.jsonl')
+  const a = 'a'.repeat(64)
+  const b = 'b'.repeat(64)
+  const c = 'c'.repeat(64)
+  const source = createOutboxLog({ journalPath: path, verifyAppend: false })
+  source.sync.create(a)
+  source.sync.append(a, { type: 'post', data: { id: 'p1', _ns: DEFAULT_OUTBOXLOG_NAMESPACE } })
+  source.sync.create(b)
+  source.close()
+
+  const lines = (await readFile(path, 'utf8')).trimEnd().split('\n').map(line => JSON.parse(line))
+  lines[2].seq = 99
+  await writeFile(path, lines.map(line => JSON.stringify(line)).join('\n') + '\n')
+
+  const engine = createOutboxLog({ verifyAppend: false })
+  engine.sync.create(c)
+  engine.sync.append(c, { type: 'post', data: { id: 'preexisting', _ns: DEFAULT_OUTBOXLOG_NAMESPACE } })
+  engine.sync.takedown(c, 'post!preexisting')
+  const before = engine.snapshot()
+  t.is(throws(() => engine.configurePersistence({ journalPath: path })).status, 500, 'corrupt tail fails after earlier entries were tentatively replayed')
+  t.alike(engine.snapshot(), before, 'failed configuration restores every mutable state surface')
+  t.is(engine.sync.status(a).viewLength, 0, 'partial group replay is absent after rollback')
+
+  lines[2].seq = 3
+  await writeFile(path, lines.map(line => JSON.stringify(line)).join('\n') + '\n')
+  t.is(engine.configurePersistence({ journalPath: path }), true, 'repaired persistence can be configured on the same engine')
+  t.is(engine.sync.heads([a]).heads[a], 1, 'repaired retry applies the append exactly once')
+  t.is(engine.sync.get(a, 'post!p1').id, 'p1')
+  t.ok(engine.sync.status(b).inviteKey, 'later group is restored after repair')
+  t.alike(engine.sync.takedowns(), { takedowns: [{ appId: c, key: 'post!preexisting' }], count: 1 }, 'pre-existing moderation state survives failure and repaired retry')
+  engine.close()
 })
 
 test('outboxlog atomic commit: JSONL recovery truncates only a torn final tail and rejects interior corruption', async (t) => {
