@@ -7,7 +7,7 @@
  * without moving sync, auth, or SSE mechanics into the large relay dispatcher.
  */
 
-import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { readJsonBody } from 'p2p-hiverelay/core/relay-node/api-body.js'
 import { getPostJsonContentTypeProblem } from 'p2p-hiverelay/core/relay-node/api-request.js'
 import { appendVaryHeader, writeJson } from 'p2p-hiverelay/core/relay-node/api-response.js'
@@ -23,6 +23,7 @@ const DEFAULT_SYNC_EVENT_APP_ID_LIMIT = 128
 const DEFAULT_SYNC_EVENT_APP_ID_LENGTH = 128
 const DEFAULT_SYNC_EVENT_REPLAY_LIMIT = 1000
 const MAX_RATE_BUCKETS = 50000
+export const OUTBOXLOG_TOKEN_TTL_MS = 15 * 60 * 1000
 
 export function createOutboxLogHttpHandler (opts = {}) {
   const state = createOutboxLogHttpState()
@@ -37,29 +38,34 @@ export function createOutboxLogHttpState () {
   }
 }
 
-export function createOutboxLogTokenAuth ({ tokenBytes = 32, maxTokens = 4096 } = {}) {
-  const tokens = new Set()
-  const order = []
+export function createOutboxLogTokenAuth ({ tokenBytes = 16, ttlMs = OUTBOXLOG_TOKEN_TTL_MS, secret = randomBytes(32), now = () => Date.now() } = {}) {
+  const nonceBytes = Number.isSafeInteger(tokenBytes) && tokenBytes >= 8 && tokenBytes <= 64 ? tokenBytes : 16
+  const lifetime = Number.isSafeInteger(ttlMs) && ttlMs > 0 ? ttlMs : OUTBOXLOG_TOKEN_TTL_MS
+  const key = Buffer.isBuffer(secret) || secret instanceof Uint8Array ? Buffer.from(secret) : Buffer.from(String(secret), 'utf8')
+  if (key.byteLength < 16) throw new Error('OutboxLog: token auth secret must be at least 16 bytes')
 
   return {
+    ttlMs: lifetime,
     issue () {
-      const token = randomBytes(tokenBytes).toString('hex')
-      tokens.add(token)
-      order.push(token)
-      while (order.length > maxTokens) tokens.delete(order.shift())
-      return token
+      const expiresAt = Math.floor(now() + lifetime)
+      const payload = 'v1.' + expiresAt.toString(36) + '.' + randomBytes(nonceBytes).toString('hex')
+      return payload + '.' + tokenMac(key, payload)
     },
 
     verify (token) {
-      if (typeof token !== 'string' || !token) return false
-      for (const known of tokens) {
-        if (safeTokenEqual(token, known)) return true
-      }
-      return false
+      const parsed = parseStatelessToken(token)
+      if (!parsed || parsed.expiresAt < now()) return false
+      const expected = tokenMac(key, parsed.payload)
+      return safeTokenEqual(parsed.mac, expected)
+    },
+
+    expiresAt (token) {
+      const parsed = parseStatelessToken(token)
+      return parsed ? parsed.expiresAt : null
     },
 
     _size () {
-      return tokens.size
+      return 0
     }
   }
 }
@@ -131,7 +137,12 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
   if (path === '/api/token') {
     if (req.method !== 'POST') return respond(res, 405, { error: 'method not allowed' })
     if (!auth || typeof auth.issue !== 'function') return respond(res, 503, { error: 'outboxlog auth unavailable' })
-    return respond(res, 200, { token: auth.issue() })
+    const token = auth.issue()
+    return respond(res, 200, {
+      token,
+      expiresAt: typeof auth.expiresAt === 'function' ? auth.expiresAt(token) : null,
+      ttlMs: Number.isSafeInteger(auth.ttlMs) ? auth.ttlMs : null
+    })
   }
 
   if (!auth || typeof auth.verify !== 'function' || !auth.verify(tokenFrom(req, parsed))) {
@@ -362,6 +373,7 @@ function isMethodMismatch (path, method) {
 function unavailableCommitCapabilities () {
   return {
     schema: 1,
+    ready: false,
     serviceVersion: null,
     atomicCommit: {
       schema: 1,
@@ -369,8 +381,10 @@ function unavailableCommitCapabilities () {
       route: '/api/sync/commit',
       enabled: false,
       durable: false,
+      ready: false,
       cas: true,
-      idempotent: true
+      idempotent: false,
+      idempotency: null
     },
     legacyWrites: {
       create: false,
@@ -696,6 +710,19 @@ function attachSseCleanup (req, res, ping, onCleanup) {
   req.on('close', cleanup)
   res.on('close', cleanup)
   return cleanup
+}
+
+function tokenMac (key, payload) {
+  return createHmac('sha256', key).update(payload, 'utf8').digest('hex')
+}
+
+function parseStatelessToken (token) {
+  if (typeof token !== 'string' || token.length < 32 || token.length > 512) return null
+  const parts = token.split('.')
+  if (parts.length !== 4 || parts[0] !== 'v1' || !/^[0-9a-z]+$/.test(parts[1]) || !/^[0-9a-f]{16,128}$/.test(parts[2]) || !/^[0-9a-f]{64}$/.test(parts[3])) return null
+  const expiresAt = Number.parseInt(parts[1], 36)
+  if (!Number.isSafeInteger(expiresAt) || expiresAt < 0) return null
+  return { payload: parts.slice(0, 3).join('.'), expiresAt, mac: parts[3] }
 }
 
 function safeTokenEqual (a, b) {

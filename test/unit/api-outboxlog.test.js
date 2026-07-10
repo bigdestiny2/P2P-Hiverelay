@@ -188,7 +188,8 @@ test('/api/outboxlog bridge token gates sync routes through RelayAPI', async (t)
   t.is(denied.statusCode, 401)
 
   const status = await request(port, 'GET', '/api/bridge/status', null, { 'X-Pear-Token': token })
-  t.alike(status.body, { ready: true, service: 'outboxlog' })
+  t.is(status.body.ready, true)
+  t.is(status.body.service, 'outboxlog')
 
   const created = await request(port, 'POST', '/api/sync/create', { appId: 'a'.repeat(64) }, { 'X-Pear-Token': token })
   t.is(created.statusCode, 200)

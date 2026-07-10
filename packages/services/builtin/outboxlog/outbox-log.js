@@ -9,8 +9,8 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto'
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync, writeSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, truncateSync, unlinkSync, writeSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import sodium from 'sodium-universal'
 import b4a from 'b4a'
 import { createOutboxSwarmHub } from './swarm-hub.js'
@@ -33,9 +33,12 @@ export const DEFAULT_DIRECTORY_LIMIT = 5000
 export const DEFAULT_MAX_DIRECTORY_LIMIT = 5000
 export const DEFAULT_MAX_APPEND_EVENTS_PER_OUTBOX = 1000
 export const DEFAULT_MAX_APPEND_EVENT_LIMIT = 1000
-export const DEFAULT_CHECKPOINT_INTERVAL = 256
+export const DEFAULT_CHECKPOINT_INTERVAL = 4096
 export const DEFAULT_MAX_COMMIT_RECEIPTS_PER_GROUP = 4096
+export const DEFAULT_MAX_COMMIT_TOMBSTONES_PER_GROUP = 16384
+export const DEFAULT_MAX_COMMIT_HISTORY_TOTAL = 40000
 export const DEFAULT_MAX_COMMIT_MUTATIONS = 256
+export const DEFAULT_MAX_JOURNAL_BYTES = 64 * 1024 * 1024
 export const DEFAULT_OUTBOXLOG_SERVICE_VERSION = '0.24.3'
 // App-neutral default namespace. Registered apps SHOULD pass an explicit
 // namespace; this fallback exists only so an operator who configures nothing
@@ -48,6 +51,8 @@ export const OUTBOXLOG_BLIND_SEAL_VERSION = 1
 export const OUTBOXLOG_BLIND_SEAL_DEFAULT_ALG = 'xchacha20poly1305'
 export const OUTBOXLOG_STATE_VERSION = 1
 export const OUTBOXLOG_JOURNAL_VERSION = 1
+export const OUTBOXLOG_CHECKPOINT_VERSION = 1
+export const OUTBOXLOG_JOURNAL_MANIFEST_VERSION = 1
 
 const SIG_BYTES = 64
 const PUBKEY_BYTES = 32
@@ -82,7 +87,10 @@ export function createOutboxLog ({
   storagePath = null,
   checkpointInterval = DEFAULT_CHECKPOINT_INTERVAL,
   maxCommitReceiptsPerGroup = DEFAULT_MAX_COMMIT_RECEIPTS_PER_GROUP,
+  maxCommitTombstonesPerGroup = DEFAULT_MAX_COMMIT_TOMBSTONES_PER_GROUP,
+  maxCommitHistoryTotal = DEFAULT_MAX_COMMIT_HISTORY_TOTAL,
   maxCommitMutations = DEFAULT_MAX_COMMIT_MUTATIONS,
+  maxJournalBytes = DEFAULT_MAX_JOURNAL_BYTES,
   serviceVersion = DEFAULT_OUTBOXLOG_SERVICE_VERSION,
   legacyWrites = true,
   onAppend = null,
@@ -104,7 +112,7 @@ export function createOutboxLog ({
   if (!statePersistence && persistencePath) statePersistence = createJsonFileOutboxPersistence(persistencePath)
   if (!statePersistence && storagePath) statePersistence = createJsonFileOutboxPersistence(join(storagePath, 'outboxlog-state.json'))
   let operationJournal = normalizeJournal(journal)
-  if (!operationJournal && journalPath) operationJournal = createJsonlOutboxJournal(journalPath)
+  if (!operationJournal && journalPath) operationJournal = createJsonlOutboxJournal(journalPath, { maxBytes: maxJournalBytes })
   let totalBytes = 0
   let directorySeq = 0
   let appendSeq = 0
@@ -114,6 +122,8 @@ export function createOutboxLog ({
   let snapshotDirty = false
   let legacyWritesEnabled = legacyWrites !== false
   let commitJournalFailed = false
+  let commitHistoryCount = 0
+  let commitHistoryOrder = []
   const commitReceiptLimit = Math.min(
     positiveInteger(maxCommitReceiptsPerGroup, DEFAULT_MAX_COMMIT_RECEIPTS_PER_GROUP),
     positiveInteger(maxRowsPerGroup, DEFAULT_MAX_ROWS_PER_GROUP)
@@ -122,6 +132,9 @@ export function createOutboxLog ({
     positiveInteger(maxCommitMutations, DEFAULT_MAX_COMMIT_MUTATIONS),
     positiveInteger(maxRowsPerGroup, DEFAULT_MAX_ROWS_PER_GROUP)
   )
+  const commitTombstoneLimit = positiveInteger(maxCommitTombstonesPerGroup, DEFAULT_MAX_COMMIT_TOMBSTONES_PER_GROUP)
+  const commitHistoryLimit = positiveInteger(maxCommitHistoryTotal, DEFAULT_MAX_COMMIT_HISTORY_TOTAL)
+  if (commitHistoryLimit < maxGroups) throw new Error('OutboxLog: maxCommitHistoryTotal must reserve at least one receipt per outbox')
   const reportedServiceVersion = typeof serviceVersion === 'string' && serviceVersion ? serviceVersion : DEFAULT_OUTBOXLOG_SERVICE_VERSION
 
   loadState()
@@ -133,7 +146,7 @@ export function createOutboxLog ({
     if (!group) {
       if (groups.size >= maxGroups) throw fail('relay at group capacity', 503)
       assertNamespaceOutboxCapacity(namespaceInfo)
-      group = { inviteKey: hex(32), rows: new Map(), commits: new Map(), version: 0, directorySeq: 0, namespace: namespaceInfo ? namespaceInfo.name : null, createdAt: Date.now() }
+      group = { inviteKey: hex(32), rows: new Map(), commits: new Map(), commitTombstones: new Map(), version: 0, directorySeq: 0, namespace: namespaceInfo ? namespaceInfo.name : null, createdAt: Date.now() }
       groups.set(appId, group)
     } else {
       bindGroupNamespace(group, namespaceInfo)
@@ -211,7 +224,9 @@ export function createOutboxLog ({
       if (old === undefined && group.rows.size >= namespaceCap(namespaceInfo, 'maxEntriesPerOutbox', maxRowsPerGroup)) throw fail('outbox at row capacity', 503)
       if (size > oldSize && totalBytes - oldSize + size > maxTotalBytes) throw fail('relay at storage capacity', 503)
 
-      group.rows.set(key, op.data)
+      group.rows.set(key, clone(op.data))
+      group.atomicCensus = null
+      group.atomicCensusRoot = null
       totalBytes += size - oldSize
       group.version++
       if (updatesDirectory) group.directorySeq = ++directorySeq
@@ -241,7 +256,7 @@ export function createOutboxLog ({
         throw fail('persistence failed', 500, err)
       }
 
-      emitAppend({ ...event, value: op.data })
+      emitAppend({ ...event, value: clone(op.data) })
       return { ok: true, key }
     },
 
@@ -264,7 +279,7 @@ export function createOutboxLog ({
 
       applyPreparedCommit(prepared)
       markJournalMutationForCheckpoint()
-      for (const event of prepared.events) emitAppend({ ...event, value: prepared.group.rows.get(event.key) })
+      for (const event of prepared.events) emitAppend({ ...event, value: clone(prepared.group.rows.get(event.key)) })
       return clone(prepared.receipt)
     },
 
@@ -276,7 +291,8 @@ export function createOutboxLog ({
       const group = getGroup(appId)
       if (!group) return null
       if (isSuppressed(appId, key)) return null // DO-NOT-SERVE
-      return group.rows.get(key) ?? null
+      const value = group.rows.get(key)
+      return value === undefined ? null : clone(value)
     },
 
     list (appId, prefix, opts = {}) {
@@ -361,6 +377,7 @@ export function createOutboxLog ({
     configurePersistence,
     configureNamespaces,
     configureLegacyWrites,
+    assertAtomicWriteReady,
     namespaces: () => namespaceRegistry.snapshot(),
     takedown: sync.takedown,
     restore: sync.restore,
@@ -369,26 +386,42 @@ export function createOutboxLog ({
     isSuppressed,
     snapshot,
     _stats () {
-      return { groups: groups.size, totalBytes, directorySeq, appendSeq }
+      return { groups: groups.size, totalBytes, directorySeq, appendSeq, commitHistoryCount }
     }
   }
 
   function hasDurableCommitJournal () {
-    return !!(operationJournal && operationJournal.durableSync === true && !commitJournalFailed)
+    return !!(
+      operationJournal &&
+      operationJournal.durableSync === true &&
+      operationJournal.ready !== false &&
+      !commitJournalFailed
+    )
   }
 
   function commitCapabilities () {
+    const durable = hasDurableCommitJournal()
     return {
       schema: 1,
+      ready: legacyWritesEnabled || durable,
       serviceVersion: reportedServiceVersion,
       atomicCommit: {
         schema: 1,
         method: 'POST',
         route: '/api/sync/commit',
         enabled: true,
-        durable: hasDurableCommitJournal(),
+        durable,
+        ready: durable,
         cas: true,
-        idempotent: true
+        idempotent: true,
+        idempotency: {
+          mode: 'bounded',
+          latestPerOutbox: true,
+          hotReceiptsPerOutbox: commitReceiptLimit,
+          tombstonesPerOutbox: commitTombstoneLimit,
+          aggregateEntries: commitHistoryLimit,
+          extraHistoryEntries: commitHistoryLimit - maxGroups
+        }
       },
       legacyWrites: {
         create: legacyWritesEnabled,
@@ -397,23 +430,31 @@ export function createOutboxLog ({
     }
   }
 
+  function assertAtomicWriteReady ({ requireFsyncedPath = false } = {}) {
+    const capabilities = commitCapabilities()
+    if (legacyWritesEnabled) throw fail('atomic-only mode requires legacy create/append disabled', 500)
+    if (requireFsyncedPath && (!operationJournal || operationJournal.kind !== 'jsonl-fsync' || typeof operationJournal.path !== 'string' || operationJournal.ready !== true)) {
+      throw fail('atomic-only mode requires a configured, fsync-probed JSONL journal path', 500)
+    }
+    if (!capabilities.atomicCommit.durable || !capabilities.atomicCommit.ready) {
+      throw fail('atomic-only mode requires a ready fsynced durable journal', 500)
+    }
+    return true
+  }
+
   function prepareAtomicCommit (appId, input, replay = {}) {
     if (!isHex(appId, 64)) throw fail('bad appId', 400)
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw fail('bad commit', 400)
+    assertExactObjectFields(input, ['schema', 'commitId', 'expected', 'mutations', 'head', 'authorization'], 'bad commit fields')
     if (input.schema !== 1) throw fail('unsupported commit schema', 400)
     if (!isHex(input.commitId, 64)) throw fail('bad commitId', 400)
 
     const commit = clone(input)
-    const fingerprint = hashHex(stableAll({ appId, commit }))
     const existingGroup = groups.get(appId) || null
-    const prior = existingGroup && existingGroup.commits ? existingGroup.commits.get(commit.commitId) : null
-    if (prior) {
-      if (prior.fingerprint !== fingerprint) throw fail('commitId conflict', 409)
-      return { duplicate: true, receipt: prior.receipt }
-    }
 
     const expected = commit.expected
     if (!expected || typeof expected !== 'object' || Array.isArray(expected)) throw fail('bad expected head', 400)
+    assertExactObjectFields(expected, ['version', 'root'], 'bad expected head fields')
     if (!Number.isSafeInteger(expected.version) || expected.version < 0) throw fail('bad expected version', 400)
     if (!isHex(expected.root, 64)) throw fail('bad expected root', 400)
     if (!Array.isArray(commit.mutations) || commit.mutations.length < 1 || commit.mutations.length > commitMutationLimit) {
@@ -422,11 +463,14 @@ export function createOutboxLog ({
     if (!commit.head || typeof commit.head !== 'object' || Array.isArray(commit.head) || commit.head.type !== 'head') {
       throw fail('bad head mutation', 400)
     }
+    assertCommitWrapperFields(commit.head, 'bad head mutation fields')
     if (!commit.authorization || typeof commit.authorization !== 'object' || Array.isArray(commit.authorization)) {
       throw fail('bad commit authorization', 400)
     }
 
     const authorization = commit.authorization
+    const expectedAuthorizationFields = ['appId', 'createdAt', 'expectedRoot', 'expectedVersion', 'headSig', 'id', 'mutationSigs']
+    assertExactObjectFields(authorization, [...expectedAuthorizationFields, ...SIG_FIELDS], 'bad commit authorization fields')
     const namespaceName = recordNamespace(authorization)
     const namespaceInfo = namespaceName ? namespaceRegistry.get(namespaceName) : null
     if (!namespaceName || !namespaceInfo) throw fail('unknown namespace', 400)
@@ -434,7 +478,6 @@ export function createOutboxLog ({
 
     verifyAtomicRecord(appId, 'commit', authorization, namespaceName, 'commit authorization')
     const authorizationFields = Object.keys(authorization).filter(key => !SIG_FIELDS.has(key)).sort()
-    const expectedAuthorizationFields = ['appId', 'createdAt', 'expectedRoot', 'expectedVersion', 'headSig', 'id', 'mutationSigs']
     if (!sameStringArray(authorizationFields, expectedAuthorizationFields)) throw fail('bad commit authorization fields', 400)
     if (authorization.id !== commit.commitId || authorization.appId !== appId) throw fail('commit authorization binding mismatch', 400)
     if (authorization.expectedVersion !== expected.version || authorization.expectedRoot !== expected.root) {
@@ -459,6 +502,7 @@ export function createOutboxLog ({
     const seenKeys = new Set()
     for (const mutation of commit.mutations) {
       if (!mutation || typeof mutation !== 'object' || Array.isArray(mutation)) throw fail('bad mutation', 400)
+      assertCommitWrapperFields(mutation, 'bad mutation fields')
       if (typeof mutation.type !== 'string' || !mutation.type || mutation.type.length > 64) throw fail('bad mutation type', 400)
       if (mutation.type.includes(':') || mutation.type.includes('!')) throw fail('ambiguous mutation type', 400)
       if (mutation.type === 'head' || mutation.type.startsWith('head:') || (mutation.data && mutation.data._t === 'head')) {
@@ -487,23 +531,47 @@ export function createOutboxLog ({
       throw fail('commit authorization binding mismatch', 400)
     }
 
+    // Fingerprint only the authenticated state transition. Wrapper timestamps
+    // are accepted for Peerit wire compatibility but are not security inputs;
+    // changing one after a lost response must still replay the same receipt.
+    // Unknown wrapper fields are rejected above so they cannot become a second
+    // unauthenticated interpretation of the same commitId.
+    const fingerprint = hashHex(stableAll({
+      appId,
+      schema: commit.schema,
+      commitId: commit.commitId,
+      expected,
+      mutations: commit.mutations.map(({ type, data }) => ({ type, data })),
+      head: { type: commit.head.type, data: commit.head.data },
+      authorization
+    }))
+    const prior = findCommitReceipt(existingGroup, commit.commitId)
+    if (prior) {
+      if (prior.fingerprint !== fingerprint) throw fail('commitId conflict', 409)
+      return { duplicate: true, receipt: prior.receipt }
+    }
     const current = currentSignedHead(existingGroup, appId)
     if (current.version !== expected.version || current.root !== expected.root) throw fail('stale head', 409)
     if (expected.version === Number.MAX_SAFE_INTEGER) throw fail('head version exhausted', 409)
 
-    const rows = existingGroup ? new Map(existingGroup.rows) : new Map()
-    for (const op of ops) rows.set(op.key, op.data)
-    const census = atomicCensus(rows, appId)
+    // Keep the protocol's exact sorted-census root while avoiding a full rows
+    // clone plus O(n log n) re-sort on every write. The current census is
+    // verified/cached once; a bounded mutation batch is merged in O(n + mlogm).
+    const census = applyAtomicCensusMutations(current.census, ops)
     const nextRoot = hashHex(census.join('\x01'))
     const nextVersion = expected.version + 1
     if (headData.version !== nextVersion || headData.count !== census.length || headData.root !== nextRoot) {
       throw fail('head does not match committed census', 400)
     }
     const headKey = 'head!' + appId
-    rows.set(headKey, clone(headData))
 
     const rowLimit = namespaceCap(namespaceInfo, 'maxEntriesPerOutbox', maxRowsPerGroup)
-    if (rows.size > rowLimit) throw fail('outbox at row capacity', 503)
+    let nextRowCount = existingGroup ? existingGroup.rows.size : 0
+    for (const op of ops) {
+      if (!existingGroup || !existingGroup.rows.has(op.key)) nextRowCount++
+    }
+    if (!existingGroup || !existingGroup.rows.has(headKey)) nextRowCount++
+    if (nextRowCount > rowLimit) throw fail('outbox at row capacity', 503)
     let nextBytes = totalBytes
     for (const op of [...ops, { type: 'head', data: headData, key: headKey }]) {
       const old = existingGroup ? existingGroup.rows.get(op.key) : undefined
@@ -543,7 +611,8 @@ export function createOutboxLog ({
       namespace: namespaceName,
       createdAt: existingGroup ? existingGroup.createdAt : (Number.isFinite(replay.createdAt) ? replay.createdAt : Date.now()),
       existingGroup,
-      rows,
+      census,
+      nextRoot,
       ops: [...ops, { type: 'head', data: clone(headData), key: headKey }],
       nextBytes,
       events: []
@@ -557,11 +626,11 @@ export function createOutboxLog ({
 
   function currentSignedHead (group, appId) {
     const emptyRoot = hashHex('')
-    if (!group) return { version: 0, count: 0, root: emptyRoot }
+    if (!group) return { version: 0, count: 0, root: emptyRoot, census: [] }
     const data = group.rows.get('head!' + appId)
     if (!data) {
       if (group.rows.size !== 0) throw fail('headless outbox cannot accept genesis commit', 409)
-      return { version: 0, count: 0, root: emptyRoot }
+      return { version: 0, count: 0, root: emptyRoot, census: [] }
     }
     const namespaceName = recordNamespace(data)
     if (!namespaceName || (group.namespace && group.namespace !== namespaceName)) throw fail('current head is invalid', 409)
@@ -573,9 +642,16 @@ export function createOutboxLog ({
     if (!Number.isSafeInteger(data.version) || data.version < 1 || !Number.isSafeInteger(data.count) || data.count < 0 || !isHex(data.root, 64)) {
       throw fail('current head is invalid', 409)
     }
-    const census = atomicCensus(group.rows, appId)
-    if (data.count !== census.length || data.root !== hashHex(census.join('\x01'))) throw fail('current head census mismatch', 409)
-    return { version: data.version, count: data.count, root: data.root }
+    let census = null
+    if (Array.isArray(group.atomicCensus) && group.atomicCensusRoot === data.root && group.atomicCensus.length === data.count) {
+      census = group.atomicCensus
+    } else {
+      census = atomicCensus(group.rows, appId)
+      if (data.count !== census.length || data.root !== hashHex(census.join('\x01'))) throw fail('current head census mismatch', 409)
+      group.atomicCensus = census
+      group.atomicCensusRoot = data.root
+    }
+    return { version: data.version, count: data.count, root: data.root, census }
   }
 
   function atomicCensus (rows, appId) {
@@ -590,6 +666,32 @@ export function createOutboxLog ({
     return census
   }
 
+  function applyAtomicCensusMutations (current, ops) {
+    const updates = new Map()
+    for (const op of ops) updates.set(op.key, op.key + '\x00' + op.data._sig)
+    const retained = []
+    for (const entry of current) {
+      const split = entry.lastIndexOf('\x00')
+      const key = split < 0 ? entry : entry.slice(0, split)
+      if (updates.has(key)) {
+        retained.push(updates.get(key))
+        updates.delete(key)
+      } else {
+        retained.push(entry)
+      }
+    }
+    const additions = [...updates.values()].sort()
+    if (additions.length === 0) return retained
+    const merged = []
+    let left = 0
+    let right = 0
+    while (left < retained.length || right < additions.length) {
+      if (right >= additions.length || (left < retained.length && retained[left] < additions[right])) merged.push(retained[left++])
+      else merged.push(additions[right++])
+    }
+    return merged
+  }
+
   function applyPreparedCommit (prepared) {
     let group = prepared.existingGroup
     if (!group) {
@@ -597,6 +699,7 @@ export function createOutboxLog ({
         inviteKey: prepared.inviteKey,
         rows: new Map(),
         commits: new Map(),
+        commitTombstones: new Map(),
         version: 0,
         directorySeq: 0,
         namespace: prepared.namespace,
@@ -605,6 +708,7 @@ export function createOutboxLog ({
       groups.set(prepared.appId, group)
     } else {
       if (!group.commits) group.commits = new Map()
+      if (!group.commitTombstones) group.commitTombstones = new Map()
       if (!group.namespace) group.namespace = prepared.namespace
     }
     prepared.group = group
@@ -624,13 +728,109 @@ export function createOutboxLog ({
       prepared.events.push(event)
     }
     totalBytes = prepared.nextBytes
+    group.atomicCensus = prepared.census
+    group.atomicCensusRoot = prepared.nextRoot
     rememberCommitReceipt(group, prepared.commit.commitId, prepared.fingerprint, prepared.receipt)
   }
 
   function rememberCommitReceipt (group, commitId, fingerprint, receipt) {
     if (!group.commits) group.commits = new Map()
+    if (!group.commitTombstones) group.commitTombstones = new Map()
+    const existed = group.commits.has(commitId) || group.commitTombstones.has(commitId)
+    group.commitTombstones.delete(commitId)
     group.commits.set(commitId, { fingerprint, receipt: clone(receipt) })
-    while (group.commits.size > commitReceiptLimit) group.commits.delete(group.commits.keys().next().value)
+    if (!existed) {
+      commitHistoryCount++
+      commitHistoryOrder.push([receipt.appId, commitId])
+    }
+    while (group.commits.size > commitReceiptLimit) {
+      const oldestId = group.commits.keys().next().value
+      const oldest = group.commits.get(oldestId)
+      group.commits.delete(oldestId)
+      group.commitTombstones.set(oldestId, oldest)
+    }
+    while (group.commitTombstones.size > commitTombstoneLimit) {
+      group.commitTombstones.delete(group.commitTombstones.keys().next().value)
+      commitHistoryCount--
+    }
+    evictGlobalCommitHistory()
+  }
+
+  function findCommitReceipt (group, commitId) {
+    if (!group) return null
+    return (group.commits && group.commits.get(commitId)) ||
+      (group.commitTombstones && group.commitTombstones.get(commitId)) ||
+      null
+  }
+
+  function evictGlobalCommitHistory () {
+    if (commitHistoryCount <= commitHistoryLimit) {
+      compactCommitHistoryOrderIfNeeded()
+      return
+    }
+    const deferredLatest = []
+    while (commitHistoryCount > commitHistoryLimit && commitHistoryOrder.length > 0) {
+      const entry = commitHistoryOrder.shift()
+      const appId = entry && entry[0]
+      const commitId = entry && entry[1]
+      const group = groups.get(appId)
+      if (!group || !findCommitReceipt(group, commitId)) continue
+      if (latestCommitId(group) === commitId) {
+        deferredLatest.push(entry)
+        continue
+      }
+      if (group.commits) group.commits.delete(commitId)
+      if (group.commitTombstones) group.commitTombstones.delete(commitId)
+      commitHistoryCount--
+    }
+    commitHistoryOrder.push(...deferredLatest)
+    if (commitHistoryCount > commitHistoryLimit) {
+      // Construction enforces one aggregate slot per possible outbox, so this
+      // can only indicate corrupt internal accounting rather than load.
+      throw fail('commit receipt retention invariant failed', 500)
+    }
+    compactCommitHistoryOrderIfNeeded()
+  }
+
+  function latestCommitId (group) {
+    if (group.commits && group.commits.size > 0) return [...group.commits.keys()].at(-1)
+    if (group.commitTombstones && group.commitTombstones.size > 0) return [...group.commitTombstones.keys()].at(-1)
+    return null
+  }
+
+  function compactCommitHistoryOrderIfNeeded () {
+    if (commitHistoryOrder.length <= commitHistoryLimit * 2 + maxGroups) return
+    commitHistoryOrder = commitHistoryOrder.filter(([appId, commitId]) => findCommitReceipt(groups.get(appId), commitId))
+  }
+
+  function serializedCommitHistoryOrder () {
+    const normalized = normalizeCommitHistoryOrder(commitHistoryOrder, groups)
+    commitHistoryOrder = normalized
+    return normalized.map(entry => [...entry])
+  }
+
+  function normalizeCommitHistoryOrder (savedOrder, sourceGroups) {
+    const normalized = []
+    const seen = new Set()
+    const add = (appId, commitId) => {
+      if (typeof appId !== 'string' || !isHex(commitId, 64)) return
+      const group = sourceGroups.get(appId)
+      const exists = group && ((group.commits && group.commits.has(commitId)) || (group.commitTombstones && group.commitTombstones.has(commitId)))
+      const key = appId + '\x00' + commitId
+      if (!exists || seen.has(key)) return
+      seen.add(key)
+      normalized.push([appId, commitId])
+    }
+    for (const entry of Array.isArray(savedOrder) ? savedOrder : []) {
+      if (Array.isArray(entry) && entry.length === 2) add(entry[0], entry[1])
+    }
+    // Older checkpoints predate the global FIFO. Tombstones are older than
+    // hot receipts; Map insertion order preserves chronology within each tier.
+    for (const [appId, group] of sourceGroups) {
+      for (const commitId of (group.commitTombstones || new Map()).keys()) add(appId, commitId)
+      for (const commitId of (group.commits || new Map()).keys()) add(appId, commitId)
+    }
+    return normalized
   }
 
   function journalCommitEntry (prepared) {
@@ -647,12 +847,12 @@ export function createOutboxLog ({
   }
 
   function markJournalMutationForCheckpoint () {
-    if (!statePersistence) return
+    if (!statePersistence && !(operationJournal && typeof operationJournal.checkpointSync === 'function')) return
     snapshotDirty = true
     entriesSinceCheckpoint++
     if (entriesSinceCheckpoint < checkpointEvery) return
     try {
-      statePersistence.saveSync(snapshot())
+      saveCheckpointSnapshot()
       snapshotDirty = false
       entriesSinceCheckpoint = 0
     } catch (err) {
@@ -694,6 +894,8 @@ export function createOutboxLog ({
   // suppressions scoped to it (nothing left to suppress). Namespace outbox
   // counts are derived live from `groups`, so capacity self-corrects.
   function deleteGroupState (appId) {
+    const group = groups.get(appId)
+    if (group) commitHistoryCount -= (group.commits ? group.commits.size : 0) + (group.commitTombstones ? group.commitTombstones.size : 0)
     groups.delete(appId)
     appendEventsByApp.delete(appId)
     const prefix = appId + '\x00'
@@ -888,7 +1090,7 @@ export function createOutboxLog ({
     rows.sort((a, b) => (a.appId < b.appId ? -1 : a.appId > b.appId ? 1 : 0))
     const page = rows.slice(0, pageLimit)
     const heads = {}
-    for (const row of page) heads[row.appId] = row.head
+    for (const row of page) heads[row.appId] = clone(row.head)
 
     return {
       heads,
@@ -958,7 +1160,7 @@ export function createOutboxLog ({
       (persistencePath ? createJsonFileOutboxPersistence(persistencePath) : null) ||
       (storagePath ? createJsonFileOutboxPersistence(join(storagePath, 'outboxlog-state.json')) : null)
     operationJournal = normalizeJournal(journal) ||
-      (journalPath ? createJsonlOutboxJournal(journalPath) : null)
+      (journalPath ? createJsonlOutboxJournal(journalPath, { maxBytes: maxJournalBytes }) : null)
     if (!statePersistence && !operationJournal) return false
     loadState()
     return true
@@ -980,11 +1182,26 @@ export function createOutboxLog ({
 
   function loadState () {
     let loaded = false
-    if (statePersistence) {
-      const state = statePersistence.loadSync()
+    if (operationJournal && typeof operationJournal.loadCheckpointSync === 'function') {
+      const state = operationJournal.loadCheckpointSync()
       if (state) {
         applyState(state)
         loaded = true
+      }
+    }
+    if (statePersistence) {
+      try {
+        const state = statePersistence.loadSync()
+        if (state && (!loaded || persistedJournalSeq(state) > journalSeq)) {
+          applyState(state)
+          loaded = true
+        }
+      } catch (err) {
+        // A journal-managed checkpoint (or the journal from sequence zero) is
+        // a complete recovery source. A corrupt convenience snapshot must not
+        // take down an otherwise recoverable atomic relay.
+        if (!operationJournal) throw err
+        log('outboxlog-snapshot-recovery', { error: err })
       }
     }
     // With checkpointing the snapshot may lag the journal: replay the journal
@@ -1000,7 +1217,8 @@ export function createOutboxLog ({
     // `!statePersistence` guard left the journal silently empty when start()
     // wired both journalPath + storagePath. (#146)
     if (operationJournal && journalEntry) appendJournalEntry(journalEntry)
-    if (!statePersistence) return
+    const hasJournalCheckpoint = operationJournal && typeof operationJournal.checkpointSync === 'function'
+    if (!statePersistence && !hasJournalCheckpoint) return
     if (operationJournal) {
       // Contract: with a journal configured every mutation passes a journal
       // entry, so a null entry here means nothing changed (create on an
@@ -1013,14 +1231,15 @@ export function createOutboxLog ({
       entriesSinceCheckpoint++
       if (entriesSinceCheckpoint < checkpointEvery) return
     }
-    statePersistence.saveSync(snapshot())
+    saveCheckpointSnapshot()
     snapshotDirty = false
     entriesSinceCheckpoint = 0
   }
 
   function flush () {
-    if (statePersistence && (snapshotDirty || !operationJournal)) {
-      statePersistence.saveSync(snapshot())
+    const hasJournalCheckpoint = operationJournal && typeof operationJournal.checkpointSync === 'function'
+    if ((statePersistence || hasJournalCheckpoint) && (snapshotDirty || !operationJournal)) {
+      saveCheckpointSnapshot()
       snapshotDirty = false
       entriesSinceCheckpoint = 0
     }
@@ -1029,12 +1248,23 @@ export function createOutboxLog ({
     }
   }
 
+  function saveCheckpointSnapshot () {
+    const state = snapshot()
+    // The journal checkpoint is the authoritative crash-recovery boundary and
+    // rotates the JSONL tail. Do not write the same O(state) image a second
+    // time through compatibility persistence; non-compacting journals still
+    // use that snapshot layer exactly as before.
+    if (operationJournal && typeof operationJournal.checkpointSync === 'function') operationJournal.checkpointSync(state)
+    else if (statePersistence) statePersistence.saveSync(state)
+  }
+
   function snapshot () {
     return {
       version: OUTBOXLOG_STATE_VERSION,
       directorySeq,
       appendSeq,
       journalSeq,
+      commitHistoryOrder: serializedCommitHistoryOrder(),
       // Persist DO-NOT-SERVE ids as opaque [appId, key] pairs so takedowns
       // survive restart. Never carries any record content.
       suppressed: [...suppressed].map(splitSuppressionKey).filter(Boolean),
@@ -1051,6 +1281,7 @@ export function createOutboxLog ({
           namespace: group.namespace || null,
           createdAt: Number.isFinite(group.createdAt) ? group.createdAt : null,
           commits: [...(group.commits || new Map()).entries()].map(([commitId, saved]) => [commitId, clone(saved)]),
+          commitTombstones: [...(group.commitTombstones || new Map()).entries()].map(([commitId, saved]) => [commitId, clone(saved)]),
           rows: [...group.rows.entries()].map(([key, value]) => [key, clone(value)])
         }
       ])
@@ -1085,6 +1316,7 @@ export function createOutboxLog ({
     let nextTotalBytes = 0
     let nextDirectorySeq = 0
     let nextAppendSeq = 0
+    let nextCommitHistoryCount = 0
     for (const entry of Array.isArray(state.groups) ? state.groups : []) {
       if (!Array.isArray(entry) || entry.length !== 2) continue
       const appId = entry[0]
@@ -1121,11 +1353,17 @@ export function createOutboxLog ({
         nextTotalBytes += size
       }
       const commits = new Map()
+      const commitTombstones = new Map()
       const restoredInviteKey = typeof groupState.inviteKey === 'string' && isHex(groupState.inviteKey, 64) ? groupState.inviteKey : hex(32)
       for (const saved of Array.isArray(groupState.commits) ? groupState.commits.slice(-commitReceiptLimit) : []) {
         const normalized = normalizePersistedCommitReceipt(saved, appId, restoredInviteKey)
         if (normalized) commits.set(normalized[0], normalized[1])
       }
+      for (const saved of Array.isArray(groupState.commitTombstones) ? groupState.commitTombstones.slice(-commitTombstoneLimit) : []) {
+        const normalized = normalizePersistedCommitReceipt(saved, appId, restoredInviteKey)
+        if (normalized && !commits.has(normalized[0])) commitTombstones.set(normalized[0], normalized[1])
+      }
+      nextCommitHistoryCount += commits.size + commitTombstones.size
       let restoredDirectorySeq = Number.isSafeInteger(groupState.directorySeq) && groupState.directorySeq >= 0 ? groupState.directorySeq : 0
       if (restoredDirectorySeq > nextDirectorySeq) nextDirectorySeq = restoredDirectorySeq
       if (restoredDirectorySeq === 0 && rows.has('head!' + appId)) restoredDirectorySeq = ++nextDirectorySeq
@@ -1133,6 +1371,7 @@ export function createOutboxLog ({
         inviteKey: restoredInviteKey,
         rows,
         commits,
+        commitTombstones,
         directorySeq: restoredDirectorySeq,
         namespace: namespaceName,
         version: Number.isSafeInteger(groupState.version) && groupState.version >= rows.size ? groupState.version : rows.size,
@@ -1158,6 +1397,9 @@ export function createOutboxLog ({
     }
     groups.clear()
     for (const [appId, group] of nextGroups) groups.set(appId, group)
+    commitHistoryCount = nextCommitHistoryCount
+    commitHistoryOrder = normalizeCommitHistoryOrder(state.commitHistoryOrder, nextGroups)
+    evictGlobalCommitHistory()
     appendEventsByApp.clear()
     for (const [appId, events] of nextAppendEvents) appendEventsByApp.set(appId, events)
     suppressed.clear()
@@ -1226,6 +1468,10 @@ export function createOutboxLog ({
       seq: journalSeq + 1,
       ...entry
     }
+    if (typeof operationJournal.needsCheckpointSync === 'function' && operationJournal.needsCheckpointSync(record)) {
+      if (typeof operationJournal.checkpointSync !== 'function') throw new Error('OutboxLog: journal byte quota exceeded')
+      operationJournal.checkpointSync(snapshot())
+    }
     operationJournal.appendSync(record)
     journalSeq = record.seq
   }
@@ -1234,7 +1480,12 @@ export function createOutboxLog ({
     const entries = operationJournal.loadSync()
     if (!entries) return
     if (!Array.isArray(entries)) throw fail('outboxlog journal must be an array', 500)
-    let expected = 1
+    if (entries.length === 0) return
+    const firstSeq = entries[0] && entries[0].seq
+    if (!Number.isSafeInteger(firstSeq) || firstSeq < 1 || firstSeq > afterSeq + 1) {
+      throw fail('corrupt outboxlog journal entry ' + (afterSeq + 1), 500)
+    }
+    let expected = firstSeq
     for (const entry of entries) {
       const normalized = normalizeJournalEntry(entry, expected)
       if (!normalized) throw fail('corrupt outboxlog journal entry ' + expected, 500)
@@ -1286,6 +1537,7 @@ export function createOutboxLog ({
           inviteKey: entry.inviteKey,
           rows: new Map(),
           commits: new Map(),
+          commitTombstones: new Map(),
           version: 0,
           directorySeq: 0,
           namespace: entryNamespace,
@@ -1315,6 +1567,7 @@ export function createOutboxLog ({
         inviteKey: entry.inviteKey,
         rows: new Map(),
         commits: new Map(),
+        commitTombstones: new Map(),
         version: 0,
         directorySeq: 0,
         namespace: opNamespace,
@@ -1333,6 +1586,8 @@ export function createOutboxLog ({
     if (size > oldSize && totalBytes - oldSize + size > maxTotalBytes) throw fail('persisted outbox storage capacity exceeded', 503)
 
     group.rows.set(key, clone(op.data))
+    group.atomicCensus = null
+    group.atomicCensusRoot = null
     totalBytes += size - oldSize
     group.version++
     if (key === 'head!' + entry.appId) group.directorySeq = ++directorySeq
@@ -1397,54 +1652,358 @@ export function createJsonFileOutboxPersistence (path) {
       }
     },
     saveSync (snapshot) {
-      const tmp = path + '.tmp-' + process.pid + '-' + Date.now()
-      mkdirSync(dirname(path), { recursive: true })
-      writeFileSync(tmp, JSON.stringify(snapshot), 'utf8')
-      renameSync(tmp, path)
+      atomicWriteFileSync(path, JSON.stringify(snapshot))
     }
   }
 }
 
-export function createJsonlOutboxJournal (path) {
+export function createJsonlOutboxJournal (path, { maxBytes = DEFAULT_MAX_JOURNAL_BYTES } = {}) {
   if (typeof path !== 'string' || !path) throw new Error('OutboxLog: journal path required')
-  return {
+  const parent = dirname(path)
+  const manifestPath = path + '.manifest.json'
+  const journalByteLimit = positiveInteger(maxBytes, DEFAULT_MAX_JOURNAL_BYTES)
+  let activeGeneration = 0
+  let fallbackGeneration = null
+  let selectedBaseGeneration = 0
+  let selectedCheckpointState = null
+  let loadPlanReady = false
+  let ready = false
+
+  const journal = {
+    kind: 'jsonl-fsync',
+    path,
     durableSync: true,
+    get ready () { return ready },
+    probeSync,
+    loadCheckpointSync,
+    checkpointSync,
+    needsCheckpointSync (entry) {
+      const file = journalGenerationPath(path, activeGeneration)
+      const bytes = Buffer.byteLength(JSON.stringify(entry) + '\n')
+      if (bytes > journalByteLimit) throw new Error('OutboxLog: journal entry exceeds byte quota')
+      return fileSizeSync(file) + bytes > journalByteLimit
+    },
     loadSync () {
-      try {
-        const text = readFileSync(path, 'utf8')
-        return text
-          .split('\n')
-          .filter(line => line.trim() !== '')
-          .map(line => JSON.parse(line))
-      } catch (err) {
-        if (err && err.code === 'ENOENT') return []
-        throw err
+      if (!loadPlanReady) loadCheckpointSync()
+      const entries = []
+      for (let generation = selectedBaseGeneration; generation <= activeGeneration; generation++) {
+        const file = journalGenerationPath(path, generation)
+        if (!existsSync(file)) throw new Error('OutboxLog: missing journal generation ' + generation)
+        entries.push(...readJsonlGenerationSync(file, generation === activeGeneration))
       }
+      return entries
     },
     appendSync (entry) {
-      const parent = dirname(path)
-      mkdirSync(parent, { recursive: true })
-      const created = !existsSync(path)
-      const fd = openSync(path, 'a')
+      if (!ready) probeSync()
+      const file = journalGenerationPath(path, activeGeneration)
+      const line = Buffer.from(JSON.stringify(entry) + '\n', 'utf8')
+      const currentBytes = fileSizeSync(file)
+      if (line.byteLength > journalByteLimit || currentBytes + line.byteLength > journalByteLimit) {
+        throw new Error('OutboxLog: journal byte quota exceeded')
+      }
+      appendFsyncedSync(file, line)
+    },
+    flush () {
+      if (!ready) probeSync()
+      const file = journalGenerationPath(path, activeGeneration)
+      const fd = openSync(file, 'r+')
       try {
-        // On the first append, make the new directory entry durable before any
-        // receipt can be returned. Then write the whole JSON line and fsync the
-        // file content. (A single writeSync is not guaranteed to consume every
-        // byte on all filesystems.)
-        if (created) fsyncDirectory(parent)
-        const line = Buffer.from(JSON.stringify(entry) + '\n', 'utf8')
-        let offset = 0
-        while (offset < line.byteLength) {
-          const written = writeSync(fd, line, offset, line.byteLength - offset)
-          if (written < 1) throw new Error('OutboxLog: journal write made no progress')
-          offset += written
-        }
         fsyncSync(fd)
       } finally {
         closeSync(fd)
       }
+      fsyncDirectory(parent)
+    },
+    paths () {
+      return {
+        manifest: manifestPath,
+        activeGeneration,
+        fallbackGeneration,
+        activeJournal: journalGenerationPath(path, activeGeneration),
+        activeCheckpoint: checkpointGenerationPath(path, activeGeneration),
+        fallbackJournal: fallbackGeneration == null ? null : journalGenerationPath(path, fallbackGeneration),
+        fallbackCheckpoint: fallbackGeneration == null ? null : checkpointGenerationPath(path, fallbackGeneration)
+      }
     }
   }
+
+  probeSync()
+  return journal
+
+  function probeSync () {
+    mkdirSync(parent, { recursive: true })
+    refreshTopology()
+    const file = journalGenerationPath(path, activeGeneration)
+    const created = !existsSync(file)
+    const fd = openSync(file, 'a+')
+    try {
+      // This is deliberately a real file fsync, not merely a successful open:
+      // atomic-only readiness means the configured volume accepts the same
+      // durability primitive used before receipts are returned.
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+    if (created) fsyncDirectory(parent)
+    else fsyncDirectory(parent) // readiness also probes directory fsync support
+    ready = true
+    return true
+  }
+
+  function loadCheckpointSync () {
+    refreshTopology()
+    const active = readCheckpointGeneration(path, activeGeneration)
+    if (active.ok) {
+      selectedBaseGeneration = activeGeneration
+      selectedCheckpointState = active.state
+    } else {
+      const fallback = fallbackGeneration == null
+        ? { ok: false }
+        : readCheckpointGeneration(path, fallbackGeneration)
+      if (!fallback.ok) {
+        throw new Error('OutboxLog: corrupt active checkpoint and no valid fallback')
+      }
+      selectedBaseGeneration = fallbackGeneration
+      selectedCheckpointState = fallback.state
+    }
+    loadPlanReady = true
+    return selectedCheckpointState ? clone(selectedCheckpointState) : null
+  }
+
+  function checkpointSync (snapshot) {
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new Error('OutboxLog: invalid checkpoint state')
+    if (!Number.isSafeInteger(snapshot.journalSeq) || snapshot.journalSeq < 0) throw new Error('OutboxLog: invalid checkpoint sequence')
+    const seq = snapshot.journalSeq
+    refreshTopology()
+    const nextGeneration = activeGeneration + 1
+    const nextFallback = loadPlanReady && selectedBaseGeneration < activeGeneration
+      ? selectedBaseGeneration
+      : activeGeneration
+    const state = clone(snapshot)
+    const serializedState = JSON.stringify(state)
+    const checkpoint = {
+      version: OUTBOXLOG_CHECKPOINT_VERSION,
+      generation: nextGeneration,
+      seq,
+      checksum: hashHex(serializedState),
+      state
+    }
+
+    // Each file is individually fsynced + atomically renamed. The manifest is
+    // the commit point: before it lands the old generation remains active;
+    // afterwards the old generation is the complete fallback segment.
+    atomicWriteFileSync(checkpointGenerationPath(path, nextGeneration), JSON.stringify(checkpoint))
+    atomicWriteFileSync(journalGenerationPath(path, nextGeneration), '')
+    atomicWriteFileSync(manifestPath, JSON.stringify({
+      version: OUTBOXLOG_JOURNAL_MANIFEST_VERSION,
+      active: nextGeneration,
+      fallback: nextFallback
+    }))
+
+    fallbackGeneration = nextFallback
+    activeGeneration = nextGeneration
+    selectedBaseGeneration = activeGeneration
+    selectedCheckpointState = state
+    loadPlanReady = true
+    ready = true
+    cleanupOldJournalGenerations(path, fallbackGeneration, activeGeneration)
+  }
+
+  function refreshTopology () {
+    const manifest = readJournalManifest(manifestPath)
+    if (manifest && existsSync(journalGenerationPath(path, manifest.active))) {
+      activeGeneration = manifest.active
+      fallbackGeneration = manifest.fallback
+      return
+    }
+    const generations = scanJournalGenerations(path)
+    activeGeneration = generations.length ? generations[generations.length - 1] : 0
+    fallbackGeneration = generations.length > 1 ? generations[generations.length - 2] : null
+  }
+}
+
+function journalGenerationPath (path, generation) {
+  return generation === 0 ? path : path + '.g' + generation + '.jsonl'
+}
+
+function checkpointGenerationPath (path, generation) {
+  return path + '.g' + generation + '.checkpoint.json'
+}
+
+function scanJournalGenerations (path) {
+  const parent = dirname(path)
+  const name = basename(path)
+  let names
+  try {
+    names = readdirSync(parent)
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return []
+    throw err
+  }
+  const generations = []
+  if (names.includes(name)) generations.push(0)
+  const pattern = new RegExp('^' + escapeRegExp(name) + '\\.g([0-9]+)\\.jsonl$')
+  for (const entry of names) {
+    const match = pattern.exec(entry)
+    if (!match) continue
+    const generation = Number(match[1])
+    if (Number.isSafeInteger(generation) && generation > 0) generations.push(generation)
+  }
+  generations.sort((a, b) => a - b)
+  return [...new Set(generations)]
+}
+
+function readJournalManifest (path) {
+  let parsed
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'))
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return null
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  if (!sameStringArray(Object.keys(parsed).sort(), ['active', 'fallback', 'version'])) return null
+  if (parsed.version !== OUTBOXLOG_JOURNAL_MANIFEST_VERSION) return null
+  if (!Number.isSafeInteger(parsed.active) || parsed.active < 0) return null
+  if (parsed.fallback !== null && (!Number.isSafeInteger(parsed.fallback) || parsed.fallback < 0 || parsed.fallback >= parsed.active)) return null
+  return parsed
+}
+
+function readCheckpointGeneration (path, generation) {
+  if (generation === 0 && !existsSync(checkpointGenerationPath(path, generation))) {
+    return { ok: true, state: null, seq: 0 }
+  }
+  let parsed
+  try {
+    parsed = JSON.parse(readFileSync(checkpointGenerationPath(path, generation), 'utf8'))
+  } catch {
+    return { ok: false }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ok: false }
+  if (!sameStringArray(Object.keys(parsed).sort(), ['checksum', 'generation', 'seq', 'state', 'version'])) return { ok: false }
+  if (parsed.version !== OUTBOXLOG_CHECKPOINT_VERSION || parsed.generation !== generation) return { ok: false }
+  if (!Number.isSafeInteger(parsed.seq) || parsed.seq < 0) return { ok: false }
+  if (!parsed.state || typeof parsed.state !== 'object' || Array.isArray(parsed.state)) return { ok: false }
+  if (parsed.state.version !== OUTBOXLOG_STATE_VERSION || persistedJournalSeq(parsed.state) !== parsed.seq) return { ok: false }
+  if (!Array.isArray(parsed.state.groups) || !isHex(parsed.checksum, 64)) return { ok: false }
+  if (hashHex(JSON.stringify(parsed.state)) !== parsed.checksum) return { ok: false }
+  return { ok: true, state: parsed.state, seq: parsed.seq }
+}
+
+function readJsonlGenerationSync (path, allowTornTail) {
+  let text
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch (err) {
+    if (err && err.code === 'ENOENT') throw new Error('OutboxLog: missing journal generation')
+    throw err
+  }
+  if (!text) return []
+  const lastNewline = text.lastIndexOf('\n')
+  if (!text.endsWith('\n')) {
+    if (!allowTornTail) throw new Error('OutboxLog: torn non-final journal generation')
+    const safeLength = lastNewline < 0 ? 0 : Buffer.byteLength(text.slice(0, lastNewline + 1), 'utf8')
+    truncateFsyncedSync(path, safeLength)
+    text = lastNewline < 0 ? '' : text.slice(0, lastNewline + 1)
+  }
+  if (!text) return []
+  const lines = text.slice(0, -1).split('\n')
+  const entries = []
+  for (const line of lines) {
+    if (!line) throw new Error('OutboxLog: corrupt interior journal entry')
+    try {
+      entries.push(JSON.parse(line))
+    } catch {
+      throw new Error('OutboxLog: corrupt interior journal entry')
+    }
+  }
+  return entries
+}
+
+function appendFsyncedSync (path, bytes) {
+  const parent = dirname(path)
+  mkdirSync(parent, { recursive: true })
+  const created = !existsSync(path)
+  const fd = openSync(path, 'a')
+  try {
+    writeAllSync(fd, bytes)
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+  if (created) fsyncDirectory(parent)
+}
+
+function truncateFsyncedSync (path, length) {
+  truncateSync(path, length)
+  const fd = openSync(path, 'r+')
+  try {
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+}
+
+function atomicWriteFileSync (path, value) {
+  const parent = dirname(path)
+  mkdirSync(parent, { recursive: true })
+  const tmp = path + '.tmp-' + process.pid + '-' + Date.now() + '-' + hex(4)
+  const bytes = Buffer.from(String(value), 'utf8')
+  let fd = null
+  try {
+    fd = openSync(tmp, 'wx', 0o600)
+    writeAllSync(fd, bytes)
+    fsyncSync(fd)
+    closeSync(fd)
+    fd = null
+    renameSync(tmp, path)
+    fsyncDirectory(parent)
+  } catch (err) {
+    if (fd !== null) {
+      try { closeSync(fd) } catch {}
+    }
+    try { unlinkSync(tmp) } catch {}
+    throw err
+  }
+}
+
+function writeAllSync (fd, bytes) {
+  let offset = 0
+  while (offset < bytes.byteLength) {
+    const written = writeSync(fd, bytes, offset, bytes.byteLength - offset)
+    if (written < 1) throw new Error('OutboxLog: write made no progress')
+    offset += written
+  }
+}
+
+function cleanupOldJournalGenerations (path, fallback, active) {
+  const generations = scanJournalGenerations(path)
+  let changed = false
+  for (const generation of generations) {
+    if (generation >= fallback && generation <= active) continue
+    for (const file of [journalGenerationPath(path, generation), checkpointGenerationPath(path, generation)]) {
+      try {
+        unlinkSync(file)
+        changed = true
+      } catch (err) {
+        if (!err || err.code !== 'ENOENT') throw err
+      }
+    }
+  }
+  if (changed) fsyncDirectory(dirname(path))
+}
+
+function fileSizeSync (path) {
+  try {
+    return statSync(path).size
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return 0
+    throw err
+  }
+}
+
+function escapeRegExp (value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function fsyncDirectory (path) {
@@ -1658,7 +2217,7 @@ function optionalPositiveInteger (value) {
 function sortedRows (group) {
   return [...group.rows.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([key, value]) => ({ key, value }))
+    .map(([key, value]) => ({ key, value: clone(value) }))
 }
 
 function clampDirectoryLimit (value, defaultLimit = DEFAULT_DIRECTORY_LIMIT, maxLimit = DEFAULT_MAX_DIRECTORY_LIMIT) {
@@ -1673,6 +2232,10 @@ function clampDirectoryLimit (value, defaultLimit = DEFAULT_DIRECTORY_LIMIT, max
 function positiveInteger (value, fallback) {
   const n = Number(value)
   return Number.isSafeInteger(n) && n > 0 ? n : fallback
+}
+
+function persistedJournalSeq (state) {
+  return state && Number.isSafeInteger(state.journalSeq) && state.journalSeq >= 0 ? state.journalSeq : 0
 }
 
 function normalizeDirectorySince (value) {
@@ -1882,6 +2445,19 @@ function sameStringArray (left, right) {
     if (typeof left[i] !== 'string' || left[i] !== right[i]) return false
   }
   return true
+}
+
+function assertExactObjectFields (value, expected, message) {
+  const keys = Object.keys(value).sort()
+  const wanted = [...expected].sort()
+  if (!sameStringArray(keys, wanted)) throw fail(message, 400)
+}
+
+function assertCommitWrapperFields (value, message) {
+  const keys = Object.keys(value).sort()
+  const allowed = new Set(['type', 'data', 'timestamp'])
+  if (!keys.includes('type') || !keys.includes('data') || keys.some(key => !allowed.has(key))) throw fail(message, 400)
+  if (value.timestamp !== undefined && (typeof value.timestamp !== 'string' || value.timestamp.length > 128)) throw fail(message, 400)
 }
 
 function hashHex (value) {

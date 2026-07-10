@@ -126,7 +126,25 @@ test('outboxlog http adapter: issues tokens and gates bridge status', async (t) 
   const ok = fakeRes()
   await handleOutboxLogRoute(fakeReq('GET', '/api/bridge/status?token=' + encodeURIComponent(token)), ok, ctx)
   t.is(ok.statusCode, 200)
-  t.alike(parseBody(ok), { ready: true, service: 'outboxlog' })
+  t.is(parseBody(ok).ready, true)
+  t.is(parseBody(ok).service, 'outboxlog')
+})
+
+test('outboxlog token auth: stateless verification scales past 4096 clients and expires deterministically', (t) => {
+  let now = 1000
+  const auth = createOutboxLogTokenAuth({
+    secret: Buffer.alloc(32, 7),
+    ttlMs: 100,
+    now: () => now
+  })
+  const tokens = Array.from({ length: 5001 }, () => auth.issue())
+  t.is(auth._size(), 0, 'verification has no linear server-side token set')
+  t.is(auth.verify(tokens[0]), true, 'oldest concurrently issued token is not churned out')
+  t.is(auth.verify(tokens.at(-1)), true)
+  t.is(auth.expiresAt(tokens[0]), 1100)
+  t.is(auth.verify(tokens[0].slice(0, -1) + (tokens[0].endsWith('0') ? '1' : '0')), false, 'tampering fails authentication')
+  now = 1101
+  t.is(auth.verify(tokens[0]), false, 'token expires after advertised TTL')
 })
 
 test('outboxlog http adapter: serves Peerit sync routes and directory', async (t) => {

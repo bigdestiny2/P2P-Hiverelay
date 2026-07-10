@@ -79,6 +79,8 @@ export class OutboxLogApp extends ServiceProvider {
     this.swarm = opts.swarm || this.engine.swarm || createOutboxSwarmHub(opts)
     this.persistencePath = typeof opts.persistencePath === 'string' ? opts.persistencePath : null
     this.storagePath = typeof opts.storagePath === 'string' ? opts.storagePath : null
+    this.journalPath = typeof opts.journalPath === 'string' ? opts.journalPath : null
+    this.atomicOnlyRequested = opts.legacyWrites === false
     this.persistenceDisabled = opts.persistence === false
     this.journal = opts.journal || null
     this.node = null
@@ -120,14 +122,15 @@ export class OutboxLogApp extends ServiceProvider {
         namespaces: outboxlog.namespaces || null
       })
     }
-    if (!this.persistenceDisabled && this.engine.configurePersistence) {
-      const usePartitionedHypercoreJournal = outboxlog.journal === 'hypercore-outboxes' ||
+    const usePartitionedHypercoreJournal = outboxlog.journal === 'hypercore-outboxes' ||
         outboxlog.persistence === 'hypercore-outboxes' ||
         outboxlog.perOutboxHypercore === true
-      const useHypercoreJournal = usePartitionedHypercoreJournal ||
+    const useHypercoreJournal = usePartitionedHypercoreJournal ||
         outboxlog.journal === 'hypercore' ||
         outboxlog.persistence === 'hypercore' ||
         outboxlog.hypercore === true
+    const configuredJournalPath = this.journalPath || (typeof outboxlog.journalPath === 'string' ? outboxlog.journalPath : null)
+    if (!this.persistenceDisabled && this.engine.configurePersistence) {
       let journal = null
       if (usePartitionedHypercoreJournal) {
         journal = await createPartitionedHypercoreOutboxJournal({
@@ -146,10 +149,25 @@ export class OutboxLogApp extends ServiceProvider {
       const configured = this.engine.configurePersistence({
         persistencePath: useHypercoreJournal ? null : this.persistencePath || (typeof outboxlog.persistencePath === 'string' ? outboxlog.persistencePath : null),
         journal,
-        journalPath: useHypercoreJournal ? null : (typeof outboxlog.journalPath === 'string' ? outboxlog.journalPath : null),
+        journalPath: useHypercoreJournal ? null : configuredJournalPath,
         storagePath: useHypercoreJournal ? null : this.storagePath || (typeof config.storage === 'string' ? config.storage : null)
       })
       if (journal && configured !== false) this.journal = journal
+    }
+    const capabilities = this.sync && typeof this.sync.capabilities === 'function' ? this.sync.capabilities() : null
+    const atomicOnly = this.atomicOnlyRequested || outboxlog.legacyWrites === false || (
+      capabilities && capabilities.legacyWrites &&
+      capabilities.legacyWrites.create === false && capabilities.legacyWrites.append === false
+    )
+    if (atomicOnly) {
+      if (this.persistenceDisabled || useHypercoreJournal || !configuredJournalPath) {
+        throw new Error('OutboxLog: atomic-only mode requires a durable JSONL journalPath')
+      }
+      if (typeof this.engine.assertAtomicWriteReady === 'function') {
+        this.engine.assertAtomicWriteReady({ requireFsyncedPath: true })
+      } else if (!capabilities || capabilities.ready !== true || !capabilities.atomicCommit || capabilities.atomicCommit.durable !== true || capabilities.atomicCommit.ready !== true) {
+        throw new Error('OutboxLog: atomic-only mode failed durable journal readiness')
+      }
     }
     await this._startFleetSeeding()
     this._startGhostSweep(outboxlog)
