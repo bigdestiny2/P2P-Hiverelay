@@ -166,6 +166,8 @@ export class HypercorePersistence extends EventEmitter {
     const desc = this.pokerApp.createTable({
       tableKey: key,
       writers: args.writers,
+      maxSeats: args.maxSeats,
+      genesis: args.genesis,
       options: args.options
     })
 
