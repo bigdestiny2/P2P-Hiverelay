@@ -1,0 +1,70 @@
+{
+  "schema": "hiverelay-vnext-blind-cr5-route-scope-candidate-v1",
+  "createdAt": "2026-07-12T16:25:20Z",
+  "sourceAudit": "git/088ebb7b105fa09578d6c5dd656400d06fa755d2/docs/vnext/blind-handoff-cr-audit.json",
+  "sourceDesign": "git/67ed85c088f4a6438382a2776619a9aeaa8d04c3/docs/vnext/blind-forward-route-scope-design.md",
+  "sourceV3Gate": "git/5844e25a42f5bfc228580d431c89beffa3a006c7/docs/vnext/blind-v3-staged-put-gate.json",
+  "custodyRoot": "00-core/vnext-custody/blind-cr5-route-scope-20260712-edf62a3",
+  "custodyManifestSha256": "fb560036d5858d0b89fad801b1605bbc75d41b43d3caa56b2522e2beb9bf9f98",
+  "base": "70e85f90bdbe811c379bfce02075d4491c67d0e6",
+  "tip": "edf62a3546972921e4a53e6e7d65c5f593dc3316",
+  "branch": "fix/blind-cr5-route-scope",
+  "bundle": {
+    "file": "blind-cr5-route-scope-20260712.bundle",
+    "sha256": "9c3863f99b98caa8f8ef95c94fe91113d3c061d7c4246f910e9f32562ed2caa8",
+    "completeHistory": true,
+    "verified": true
+  },
+  "result": {
+    "change": "CR-5",
+    "gate": "V-6",
+    "status": "draft-targeted-pass",
+    "maxRelayCount": 4,
+    "fullPrefixVerifiedBeforeAdmission": true,
+    "immutableAuthenticatedParentContext": true,
+    "rootZeroOnlyOnDirectParent": true,
+    "routeResetRejected": true,
+    "overDepthRejected": true,
+    "cyclesRejected": [
+      "A-B-A",
+      "A-B-C-A"
+    ],
+    "nonceScopeClaimAtomic": true,
+    "maxRelayCountAcrossContinuations": "exact-root-value",
+    "expiresEpochAcrossContinuations": "exact-root-value",
+    "forwardProductionEnabled": false
+  },
+  "verification": {
+    "independentRootReview": "pass-after-three-remediation-rounds",
+    "v6Focused": "14/14 tests; 182/182 assertions",
+    "rootFourFileSet": "33/33 tests; 489/489 assertions",
+    "lint": "pass",
+    "diffCheck": "pass",
+    "verifyBlindSpecs": "expected-red: FORWARD_ROUTE_SCOPE_AUTHORITY_REGENERATION_PENDING",
+    "generatedCategoryDrift": [
+      "BlindForwardRouteHopV1",
+      "BlindForwardRouteScopeV1"
+    ],
+    "generatedDomainDrift": 213,
+    "fullBlindBoundary": "not-rerun-unsandboxed-after-sandbox-only-unix-socket-eperm"
+  },
+  "residualLimitations": [
+    "The V-6 suite exercises real service and adjacent accept paths in one process rather than separate relay processes",
+    "Production transport adapters and signed catalogue inputs are not yet integrated",
+    "V-1, V-2 and applicable V-7 remain required before FORWARD can be enabled",
+    "The selected V1 shape cannot propagate monotonic per-hop relay-count or expiry reductions, so both remain immutable root commitments",
+    "Frozen protocol, ABI, vector, browser, package and release authorities remain intentionally stale",
+    "D-6 and D-7 remain open"
+  ],
+  "authorityPolicy": {
+    "cr5ImplementedAsDraft": true,
+    "v6TargetedGatePassed": true,
+    "v6MultiProcessGatePassed": false,
+    "protocolFreezePassed": false,
+    "regenerateBrowserAuthorityNow": false,
+    "regenerateFinalHashesNow": false,
+    "mergeAllowed": false,
+    "releaseAllowed": false,
+    "deploymentAllowed": false
+  }
+}
