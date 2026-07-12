@@ -106,7 +106,8 @@
       "id": "PG-0",
       "status": "in-progress",
       "evidence": [
-        "git/744c6d4d77052d4a1baeb676e99ce27d8f6355df/docs/vnext/workspace-inventory.json"
+        "git/744c6d4d77052d4a1baeb676e99ce27d8f6355df/docs/vnext/workspace-inventory.json",
+        "git/9a7d6a75f68095aa5833d10f8eb1622411712e44/docs/vnext/blind-peerit-preservation.json"
       ]
     },
     { "id": "PG-1", "status": "pending", "evidence": [] },
@@ -128,7 +129,13 @@
         "git/744c6d4d77052d4a1baeb676e99ce27d8f6355df/ecosystem-custody-inventory"
       ]
     },
-    { "id": "T01", "status": "in-progress", "handoffs": [] },
+    {
+      "id": "T01",
+      "status": "in-progress",
+      "handoffs": [
+        "git/9a7d6a75f68095aa5833d10f8eb1622411712e44/blind-peerit-preservation"
+      ]
+    },
     { "id": "T01B", "status": "pending", "handoffs": [] },
     { "id": "T02", "status": "pending", "handoffs": [] },
     { "id": "T03", "status": "pending", "handoffs": [] },
