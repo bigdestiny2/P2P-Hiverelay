@@ -1,5 +1,6 @@
 import test from 'brittle'
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
+import { GatewayServer } from 'p2p-hiverelay/core/relay-node/gateway-server.js'
 import { ServiceProvider, ServiceRegistry } from 'p2p-hiverelay/core/services/index.js'
 import path from 'path'
 import { tmpdir } from 'os'
@@ -20,6 +21,96 @@ test('RelayNode - defaults custody to blind mode', (t) => {
   t.is(node.config.custody.requireEncryptedPayload, true, 'custody requires encrypted payloads')
   t.is(node.config.custody.metadataVisibility, 'redacted', 'blind custody redacts metadata by default')
   t.is(node.config.custody.proofTarget, 'ciphertext', 'proofs target ciphertext')
+})
+
+test('RelayNode - validates public Hive gateway isolation before initialization', async (t) => {
+  t.exception(() => new RelayNode({
+    storage: tmpStorage(),
+    hiveAppHostSuffix: 'hive.relay.example',
+    gatewayPort: 9100,
+    apiPort: 9100
+  }), /requires a distinct dedicated gatewayPort/)
+
+  t.exception(() => new RelayNode({
+    storage: tmpStorage(),
+    enableAPI: false,
+    hiveAppHostSuffix: 'hive.relay.example',
+    gatewayPort: 9200
+  }), /requires enableAPI/)
+
+  t.exception(() => new RelayNode({
+    storage: tmpStorage(),
+    hiveAppHostSuffix: 'hive.relay.example',
+    hiveAppPublicKeys: ['not-a-key'],
+    gatewayPort: 9200
+  }), /hiveAppPublicKeys/)
+
+  t.exception(() => new RelayNode({
+    storage: tmpStorage(),
+    hiveAppHostSuffix: 'hive.relay.example',
+    hiveAppPublicKeys: ['a'.repeat(64)],
+    hiveAppPublicVersions: { ['b'.repeat(64)]: 1 },
+    gatewayPort: 9200
+  }), /outside hiveAppPublicKeys/)
+
+  t.exception(() => new RelayNode({
+    productProfile: 'public-t1-gateway',
+    storage: tmpStorage(),
+    apiHost: '127.0.0.1',
+    apiPort: 9100,
+    gatewayHost: '127.0.0.1',
+    gatewayPort: 9200,
+    gatewayTrustProxy: true,
+    gatewayRequireForwardedSNI: true,
+    hiveAppHostSuffix: 'hive.relay.example',
+    hiveAppPublicKeys: ['a'.repeat(64)],
+    hiveAppPublicVersions: { ['a'.repeat(64)]: 7 },
+    custody: { enabled: false }
+  }), /compiled fleet-ready non-transitional admission capability/,
+  'RelayNode construction itself refuses the production profile while substrate admission is transitional')
+
+  const node = new RelayNode({
+    storage: tmpStorage(),
+    hiveAppHostSuffix: 'hive.relay.example',
+    hiveAppPublicKeys: ['a'.repeat(64)],
+    hiveAppPublicVersions: { ['a'.repeat(64)]: 7 },
+    gatewayPort: 9200,
+    apiPort: 9100,
+    custody: { enabled: false }
+  })
+  t.teardown(async () => {
+    try { await node.store.close() } catch (_) {}
+  })
+  t.alike(node.config.hiveAppPublicKeys, ['a'.repeat(64)], 'validated key allowlist stays in operator config')
+  t.alike(node.config.hiveAppPublicVersions, { ['a'.repeat(64)]: 7 }, 'immutable drive-version pins stay in operator config')
+})
+
+test('RelayNode - a starting secondary exact gateway blocks applyMode before listen completes', async (t) => {
+  const key = 'a'.repeat(64)
+  const node = new RelayNode({
+    storage: tmpStorage(),
+    hiveAppHostSuffix: 'hive.relay.example',
+    hiveAppPublicKeys: [key],
+    hiveAppPublicVersions: { [key]: 7 },
+    gatewayHost: '127.0.0.1',
+    gatewayPort: 0,
+    apiPort: 9100,
+    custody: { enabled: false }
+  })
+  const gateway = new GatewayServer(node, {
+    gatewayHost: '127.0.0.1',
+    gatewayPort: 0,
+    gateway: { async close () {}, handle (_req, res) { res.end() } }
+  })
+  t.teardown(async () => {
+    try { await gateway.stop() } catch (_) {}
+    try { await node.store.close() } catch (_) {}
+  })
+
+  const starting = gateway.start()
+  await t.exception(async () => node.applyMode('homehive'), /while an exact app-host GatewayServer is active/)
+  await starting
+  t.is(node.mode, 'relay-core', 'failed racing mutation leaves node mode unchanged')
 })
 
 test('RelayNode - relaykernel mode narrows to seed/proof/circuit core', async (t) => {

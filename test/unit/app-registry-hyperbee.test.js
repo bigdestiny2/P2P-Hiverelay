@@ -16,6 +16,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import Corestore from 'corestore'
 import { AppRegistry } from 'p2p-hiverelay/core/app-registry.js'
+import { admitPublicHiveAppEntry } from 'p2p-hiverelay/gateway/public-app-admission.js'
 
 async function freshTmp () {
   return mkdtemp(join(tmpdir(), 'hiverelay-app-reg-bee-'))
@@ -115,6 +116,18 @@ test('bee mode: migrates existing JSON on first load', async (t) => {
     t.is(reg.get('b'.repeat(64)).blind, true)
     t.is(entries.length, 2, 'reseed list has both')
 
+    const legacyPublic = reg.get('a'.repeat(64))
+    t.is(legacyPublic.privacyTier, 'public', 'legacy hydration retains its compatibility default')
+    t.is(legacyPublic.storageClass, 'persistent', 'legacy hydration retains its storage default')
+    t.is(legacyPublic.availabilityClass, 'always-on', 'legacy hydration retains its availability default')
+    t.alike(admitPublicHiveAppEntry(legacyPublic, {
+      appKey: 'a'.repeat(64),
+      publicAppKeys: []
+    }), {
+      allowed: false,
+      reason: 'not-operator-approved'
+    }, 'hydrated defaults cannot independently publish a legacy row')
+
     // JSON file renamed to .bak, bee now authoritative
     t.absent(await exists(jsonPath), 'app-registry.json renamed')
     t.ok(await exists(bakPath), 'app-registry.json.bak present')
@@ -190,6 +203,13 @@ test('legacy JSON mode: still works when no store is passed', async (t) => {
       await reg.load()
       t.is(reg.size, 1)
       t.is(reg.get(appKey).appId, 'legacy')
+      t.alike(admitPublicHiveAppEntry(reg.get(appKey), {
+        appKey,
+        publicAppKeys: []
+      }), {
+        allowed: false,
+        reason: 'not-operator-approved'
+      }, 'legacy JSON hydration remains private without local key approval')
     }
   } finally {
     await rm(dir, { recursive: true, force: true })

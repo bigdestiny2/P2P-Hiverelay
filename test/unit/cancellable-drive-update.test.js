@@ -163,6 +163,72 @@ test('updateWithTimeout: clears the active-requests array on timeout', async (t)
   t.ok(clearCalls.length >= 1, 'clearRequests was called at least once')
 })
 
+test('updateWithTimeout: an already-aborted signal never starts an update', async (t) => {
+  const controller = new AbortController()
+  controller.abort(new Error('client already gone'))
+  let updateCalls = 0
+  const drive = {
+    update () {
+      updateCalls++
+      return new Promise(() => {})
+    }
+  }
+
+  let failure = null
+  try {
+    await updateWithTimeout(drive, { timeoutMs: 1000, signal: controller.signal })
+  } catch (err) {
+    failure = err
+  }
+  t.is(failure?.name, 'AbortError')
+  t.is(updateCalls, 0, 'abort-before-start creates no replicator request')
+})
+
+test('updateWithTimeout: abort detaches only this operation and removes its listener', async (t) => {
+  const { drive, clearCalls } = mockDrive()
+  let driveCloseCalls = 0
+  drive.close = async () => { driveCloseCalls++ }
+  const controller = new AbortController()
+  let adds = 0
+  let removes = 0
+  const add = controller.signal.addEventListener.bind(controller.signal)
+  const remove = controller.signal.removeEventListener.bind(controller.signal)
+  controller.signal.addEventListener = (...args) => { adds++; return add(...args) }
+  controller.signal.removeEventListener = (...args) => { removes++; return remove(...args) }
+
+  const pending = updateWithTimeout(drive, {
+    timeoutMs: 1000,
+    signal: controller.signal
+  })
+  await new Promise(resolve => setImmediate(resolve))
+  controller.abort(new Error('client disconnected'))
+
+  let failure = null
+  try { await pending } catch (err) { failure = err }
+  t.is(failure?.name, 'AbortError')
+  t.is(clearCalls.length, 1, 'operation request set is cleared exactly once')
+  t.is(clearCalls[0].count, 1, 'only the update-owned ref was present')
+  t.is(driveCloseCalls, 0, 'cancelling an update never closes a shared drive')
+  t.is(adds, 1, 'one abort listener installed')
+  t.is(removes, 1, 'abort listener removed after settlement')
+})
+
+test('updateWithTimeout: timeout and abort race settles and clears idempotently', async (t) => {
+  const { drive, clearCalls } = mockDrive()
+  const controller = new AbortController()
+  const pending = updateWithTimeout(drive, {
+    timeoutMs: 15,
+    signal: controller.signal
+  })
+  setTimeout(() => controller.abort(), 15)
+
+  let failure = null
+  try { await pending } catch (err) { failure = err }
+  t.ok(failure?.name === 'AbortError' || failure?.message === 'update timeout', 'one bounded terminal reason wins')
+  await new Promise(resolve => setImmediate(resolve))
+  t.is(clearCalls.length, 1, 'race cannot clear/reject the operation twice')
+})
+
 // ─── downloadWithTimeout ────────────────────────────────────────────
 
 test('downloadWithTimeout: resolves when download completes before timeout', async (t) => {

@@ -225,6 +225,44 @@ test('official Umbrel PR evidence writer records public release links', async (t
   t.is(body.evidenceLinks.startosRegistry, `${RELEASE_BASE}/startos-registry-evidence.json`)
 })
 
+test('official Umbrel PR evidence writer records gateway rollout as deferred without a false fleet link', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'hiverelay-official-pr-evidence-'))
+  t.teardown(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const releaseBytes = releaseEvidenceBytes({
+    release: {
+      channel: 'none',
+      publicGateway: {
+        enabled: true,
+        manifestStatus: 'enabled',
+        manifestPath: 'fleet/public-hive-gateway-release.json',
+        manifestSha256: '4'.repeat(64),
+        releaseTarget: 'v9.9.9',
+        commitSha: HEAD_SHA,
+        admissionProfile: 'blind-substrate-public-v1',
+        cohortSize: 3
+      }
+    },
+    surfaces: {
+      fleetRollout: 'deferred-gateway-canary-gated',
+      fleetRolloutEvidence: { path: '', sha256: '' }
+    }
+  })
+  await writeLinkedArtifacts(dir, {
+    'release-evidence.json': releaseBytes,
+    'fleet-rollout-evidence.json': false
+  })
+  const outFile = path.join(dir, 'official-umbrel-pr-evidence.json')
+  await runWriter(outFile, env({
+    HIVERELAY_PUBLIC_GATEWAY_RELEASE_ENABLED: 'true'
+  }), { cwd: dir, linkedArtifacts: false })
+
+  const body = JSON.parse(await readFile(outFile, 'utf8'))
+  t.is(body.evidenceLinks.fleetRollout, '')
+})
+
 test('official Umbrel PR evidence writer requires linked release artifacts before write', async (t) => {
   const dir = await mkdtemp(path.join(tmpdir(), 'hiverelay-official-pr-evidence-'))
   t.teardown(async () => {

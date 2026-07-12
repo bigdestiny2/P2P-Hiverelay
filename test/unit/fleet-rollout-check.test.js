@@ -1,11 +1,13 @@
 import test from 'brittle'
-import { execFile } from 'node:child_process'
+import { execFile, spawnSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { encodeHiveAppKey } from '../../packages/core/gateway/hive-host.js'
 
 const TARGET_SHA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+const GATEWAY_FIXTURE_VERIFIER = '#!/usr/bin/env node\nprocess.stdout.write("fixture verifier must not run in dirty-tree test\\n")\n'
 
 function runCheck (argv) {
   return new Promise((resolve, reject) => {
@@ -96,10 +98,14 @@ printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\
   t.is(evidence.summary.packageVersionMatches, 1)
   t.is(evidence.summary.healthy, 1)
   t.is(evidence.summary.runtimeVersionMatches, 1)
+  t.absent(evidence.summary.gatewayHealthy, 'default rollout evidence keeps the v1 summary schema')
+  t.absent(evidence.probes.publicGatewayEvidence, 'gateway proof is opt-in')
   t.is(evidence.relays[0].name, 'mock-canary')
   t.is(evidence.relays[0].headSha, TARGET_SHA)
   t.is(evidence.relays[0].healthVersion, '9.9.9')
   t.is(evidence.relays[0].packageVersionMatches, true)
+  t.absent(evidence.relays[0].gatewayHealthy, 'default relay evidence remains schema v1')
+  t.absent(evidence.relays[0].gatewayEvidenceSha256, 'default relay evidence has no gateway digest')
   t.ok(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(evidence.relays[0].observedAt), 'relay observation time is recorded')
   t.is(evidence.relays[0].note, 'ok')
   t.absent(evidence.relays[0].host, 'host is not written to public rollout evidence')
@@ -1043,6 +1049,276 @@ test('fleet rollout evidence rejects control-character relay metadata', async (t
   t.ok(evidenceErr, 'control-character relay metadata is rejected before public evidence is written')
 })
 
+test('fleet rollout opt-in gateway evidence is remotely verified and gates convergence', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'hiverelay-fleet-rollout-'))
+  t.teardown(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+  const relaysPath = path.join(dir, 'relays.json')
+  const sshPath = path.join(dir, 'mock-ssh.sh')
+  const stdinPath = path.join(dir, 'remote-probe.sh')
+  const argvPath = path.join(dir, 'ssh-argv.txt')
+  const evidencePath = path.join(dir, 'fleet-rollout-evidence.json')
+  const channelsPath = await writeFixtureChannels(dir)
+  const gatewayEvidence = '/root/.hiverelay/gateway-evidence/preflight-live.json'
+  const knownHostsPath = path.join(dir, 'known_hosts')
+  const gatewayWindowState = path.join(dir, 'gateway-window-state.json')
+  const release = await createGatewayReleaseRepo(dir)
+  const gatewayToken = gatewayRolloutToken(release)
+
+  await writeFile(relaysPath, JSON.stringify({
+    relays: [{
+      name: 'mock-canary',
+      publicIp: '127.0.0.1',
+      sshKey: 'default',
+      channel: 'canary'
+    }]
+  }))
+  await writeFile(knownHostsPath, 'mock-canary ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockPinnedKey\n')
+  await writeGatewayWindowState(gatewayWindowState, release, gatewayToken)
+  await writeFile(sshPath, `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$@" > ${sh(argvPath)}
+cat > ${sh(stdinPath)}
+printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\ttrue\\t%s\\n' '${release.targetSha}' '${gatewayToken}'
+`)
+  await chmod(sshPath, 0o755)
+
+  const { stdout } = await runCheck([
+    '--target', 'v9.9.9',
+    '--target-sha', release.targetSha,
+    '--repo', release.repo,
+    '--allowed-signers', release.allowedSigners,
+    '--channel', 'canary',
+    '--relays', relaysPath,
+    '--channels', channelsPath,
+    '--ssh-command', sshPath,
+    '--gateway-evidence', gatewayEvidence,
+    '--gateway-manifest', release.manifestPath,
+    '--gateway-window-state', gatewayWindowState,
+    '--known-hosts', knownHostsPath,
+    '--evidence', evidencePath,
+    '--timeout-ms', '600000',
+    '--interval-ms', '5000'
+  ])
+  t.ok(stdout.includes('Fleet rollout verified: 1/1'))
+
+  const evidence = JSON.parse(await readFile(evidencePath, 'utf8'))
+  t.is(evidence.schemaVersion, 2)
+  t.is(evidence.probes.publicGatewayEvidence, true)
+  t.is(evidence.summary.gatewayHealthy, 1)
+  t.is(evidence.relays[0].gatewayHealthy, true)
+  t.is(evidence.relays[0].gateway.evidenceSha256, gatewayRolloutTokenValue(release).evidenceSha256)
+  t.is(evidence.publicGateway.manifest.sha256, release.manifestSha256)
+  t.is(evidence.publicGateway.window.complete, true)
+  t.absent(JSON.stringify(evidence).includes(gatewayEvidence), 'node-local artifact path is not public evidence')
+
+  const remote = await readFile(stdinPath, 'utf8')
+  const remoteSyntax = spawnSync('bash', ['-n', stdinPath], { encoding: 'utf8' })
+  t.is(remoteSyntax.status, 0, remoteSyntax.stderr)
+  t.ok(remote.includes(`gateway_evidence=${sh(gatewayEvidence)}`))
+  t.ok(remote.includes('scripts/verify-public-hive-gateway-evidence.mjs'))
+  t.ok(remote.includes('--release-target "$release_target"'))
+  t.ok(remote.includes('--release-sha "$release_sha"'))
+  t.ok(remote.includes('--require-mode fleet'))
+  t.ok(remote.includes(`expected_origin=${sh(release.entry.origin)}`))
+  t.ok(remote.includes('--expected-nginx-sha256 "$expected_nginx_sha256"'))
+  t.ok(remote.includes('diff --no-ext-diff --quiet "$release_sha" --'))
+  t.ok(remote.includes('diff --no-ext-diff --cached --quiet "$release_sha" --'))
+  t.ok(remote.indexOf('target worktree is dirty') < remote.indexOf('node "$verifier"'),
+    'clean target worktree is required before verifier execution')
+
+  const argv = await readFile(argvPath, 'utf8')
+  t.ok(argv.includes('StrictHostKeyChecking=yes'))
+  t.ok(argv.includes(`UserKnownHostsFile=${knownHostsPath}`))
+  t.ok(argv.includes('GlobalKnownHostsFile=/dev/null'))
+  t.absent(argv.includes('accept-new'))
+
+  // Execute the captured remote program against a target whose HEAD is still
+  // correct but whose tracked verifier is modified. It must stop before Node.
+  const fixtureVerifier = path.join(release.repo, 'scripts', 'verify-public-hive-gateway-evidence.mjs')
+  await writeFile(fixtureVerifier, GATEWAY_FIXTURE_VERIFIER + '// tampered\n')
+  await writeFile(sshPath, '#!/usr/bin/env bash\nset -euo pipefail\nexec bash -s\n')
+  await chmod(sshPath, 0o755)
+  let dirtyErr = null
+  try {
+    await runCheck([
+      '--target', 'v9.9.9',
+      '--target-sha', release.targetSha,
+      '--repo', release.repo,
+      '--allowed-signers', release.allowedSigners,
+      '--channel', 'canary',
+      '--relays', relaysPath,
+      '--channels', channelsPath,
+      '--ssh-command', sshPath,
+      '--remote-repo-dir', release.repo,
+      '--gateway-evidence', gatewayEvidence,
+      '--gateway-manifest', release.manifestPath,
+      '--gateway-window-state', gatewayWindowState,
+      '--known-hosts', knownHostsPath,
+      '--evidence', evidencePath,
+      '--timeout-ms', '120',
+      '--interval-ms', '25'
+    ])
+  } catch (err) {
+    dirtyErr = err
+  }
+  t.ok(dirtyErr, 'dirty signed-target worktree is rejected')
+  const dirtyEvidence = JSON.parse(await readFile(evidencePath, 'utf8'))
+  t.ok(dirtyEvidence.relays[0].error.includes('target worktree is dirty'),
+    'remote verifier refuses mutable tracked code before execution')
+  await writeFile(fixtureVerifier, GATEWAY_FIXTURE_VERIFIER)
+  await writeGatewayWindowState(gatewayWindowState, release, gatewayToken)
+
+  await writeFile(sshPath, `#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\tfalse\\t\\n' '${release.targetSha}'
+`)
+  await chmod(sshPath, 0o755)
+  let redErr = null
+  try {
+    await runCheck([
+      '--target', 'v9.9.9',
+      '--target-sha', release.targetSha,
+      '--repo', release.repo,
+      '--allowed-signers', release.allowedSigners,
+      '--channel', 'canary',
+      '--relays', relaysPath,
+      '--channels', channelsPath,
+      '--ssh-command', sshPath,
+      '--gateway-evidence', gatewayEvidence,
+      '--gateway-manifest', release.manifestPath,
+      '--gateway-window-state', gatewayWindowState,
+      '--known-hosts', knownHostsPath,
+      '--evidence', evidencePath,
+      '--timeout-ms', '120',
+      '--interval-ms', '25'
+    ])
+  } catch (e) {
+    redErr = e
+  }
+  t.ok(redErr, 'a red gateway artifact prevents rollout convergence')
+  const failedEvidence = JSON.parse(await readFile(evidencePath, 'utf8'))
+  t.is(failedEvidence.status, 'failed')
+  t.is(failedEvidence.summary.gatewayHealthy, 0)
+  t.is(failedEvidence.relays[0].note, 'waiting-gateway-evidence')
+
+  await writeFile(sshPath, `#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\ttrue\\t%s\\n' '${release.targetSha}' '${gatewayToken}'
+`)
+  await chmod(sshPath, 0o755)
+  let observingErr = null
+  try {
+    await runCheck([
+      '--target', 'v9.9.9',
+      '--target-sha', release.targetSha,
+      '--repo', release.repo,
+      '--allowed-signers', release.allowedSigners,
+      '--channel', 'canary',
+      '--relays', relaysPath,
+      '--channels', channelsPath,
+      '--ssh-command', sshPath,
+      '--gateway-evidence', gatewayEvidence,
+      '--gateway-manifest', release.manifestPath,
+      '--gateway-window-state', gatewayWindowState,
+      '--known-hosts', knownHostsPath,
+      '--evidence', evidencePath,
+      '--timeout-ms', '600000',
+      '--interval-ms', '5000'
+    ])
+  } catch (err) {
+    observingErr = err
+  }
+  t.is(observingErr?.code, 2, 'an incomplete continuity window exits with observing status')
+  t.ok(observingErr.stderr.includes('observation window is incomplete'))
+  const observingEvidence = JSON.parse(await readFile(evidencePath, 'utf8'))
+  t.is(observingEvidence.status, 'observing')
+  t.is(observingEvidence.publicGateway.window.complete, false)
+  t.is(observingEvidence.relays[0].note, 'waiting-observation-window')
+
+  let err = null
+  try {
+    await runCheck([
+      '--target', 'v9.9.9',
+      '--target-sha', TARGET_SHA,
+      '--channel', 'canary',
+      '--relays', relaysPath,
+      '--channels', channelsPath,
+      '--ssh-command', sshPath,
+      '--gateway-evidence', 'relative/live.json',
+      '--dry-run'
+    ])
+  } catch (e) {
+    err = e
+  }
+  t.ok(err)
+  t.ok(err.stderr.includes('expected an absolute path'))
+
+  // A historically complete window is no longer complete once its last
+  // controller collection exceeds the signed maximum gap. A fresh token starts
+  // a new window instead of reviving the stale one.
+  await writeGatewayWindowState(gatewayWindowState, release, gatewayToken, {
+    timelineEndMs: Date.now() - release.manifest.maxProbeGapMs - 1000
+  })
+  let staleWindowErr = null
+  try {
+    await runCheck([
+      '--target', 'v9.9.9',
+      '--target-sha', release.targetSha,
+      '--repo', release.repo,
+      '--allowed-signers', release.allowedSigners,
+      '--channel', 'canary',
+      '--relays', relaysPath,
+      '--channels', channelsPath,
+      '--ssh-command', sshPath,
+      '--gateway-evidence', gatewayEvidence,
+      '--gateway-manifest', release.manifestPath,
+      '--gateway-window-state', gatewayWindowState,
+      '--known-hosts', knownHostsPath,
+      '--evidence', evidencePath,
+      '--timeout-ms', '600000',
+      '--interval-ms', '5000'
+    ])
+  } catch (err) {
+    staleWindowErr = err
+  }
+  t.is(staleWindowErr?.code, 2, 'stale completed window returns to observing')
+  const staleWindowEvidence = JSON.parse(await readFile(evidencePath, 'utf8'))
+  t.absent(staleWindowEvidence.publicGateway.window.complete)
+
+  // Relay timestamps cannot manufacture a day of continuity while the
+  // controller has collected evidence for only one hour.
+  await writeGatewayWindowState(gatewayWindowState, release, gatewayToken, {
+    controllerWindowMs: 60 * 60 * 1000
+  })
+  let compressedClockErr = null
+  try {
+    await runCheck([
+      '--target', 'v9.9.9',
+      '--target-sha', release.targetSha,
+      '--repo', release.repo,
+      '--allowed-signers', release.allowedSigners,
+      '--channel', 'canary',
+      '--relays', relaysPath,
+      '--channels', channelsPath,
+      '--ssh-command', sshPath,
+      '--gateway-evidence', gatewayEvidence,
+      '--gateway-manifest', release.manifestPath,
+      '--gateway-window-state', gatewayWindowState,
+      '--known-hosts', knownHostsPath,
+      '--evidence', evidencePath,
+      '--dry-run'
+    ])
+  } catch (err) {
+    compressedClockErr = err
+  }
+  t.ok(compressedClockErr)
+  t.ok(compressedClockErr.stderr.includes('not fresh at controller collection time'))
+})
+
 function sh (value) {
   return "'" + String(value).replace(/'/g, "'\\''") + "'"
 }
@@ -1056,4 +1332,144 @@ async function writeFixtureChannels (dir, overrides = {}) {
     ...overrides
   }))
   return file
+}
+
+async function createGatewayReleaseRepo (dir) {
+  const repo = path.join(dir, 'release-repo')
+  const fleetDir = path.join(repo, 'fleet')
+  const signingKey = path.join(dir, 'release-signing-key')
+  const allowedSigners = path.join(fleetDir, 'allowed-signers')
+  const manifestPath = 'fleet/gateway.json'
+  const appKey = 'aa'.repeat(32)
+  const suffix = 'hive-canary.operator.example'
+  const origin = `https://${encodeHiveAppKey(Buffer.from(appKey, 'hex'))}.${suffix}`
+  const peerFingerprint256 = Array(32).fill('AA').join(':')
+  const entry = {
+    relay: 'mock-canary',
+    channel: 'canary',
+    suffix,
+    origin,
+    connectAddress: '127.0.0.1',
+    appKey,
+    path: '/index.html',
+    contentSha256: 'b'.repeat(64),
+    driveVersion: '7',
+    peerFingerprint256,
+    nginxConfigSha256: 'c'.repeat(64),
+    deploymentProfile: 'public-t1-gateway',
+    operatorContractSha256: 'e'.repeat(64)
+  }
+  const manifest = {
+    schema: 'hiverelay-public-gateway-release-v1',
+    enabled: true,
+    releaseTarget: 'v9.9.9',
+    admissionProfile: 'blind-substrate-public-v1',
+    observationWindowMs: 24 * 60 * 60 * 1000,
+    maxProbeGapMs: 20 * 60 * 1000,
+    cohort: [entry]
+  }
+  await mkdir(fleetDir, { recursive: true })
+  await mkdir(path.join(repo, 'scripts'), { recursive: true })
+  const manifestBytes = Buffer.from(JSON.stringify(manifest, null, 2) + '\n')
+  await writeFile(path.join(repo, manifestPath), manifestBytes)
+  await writeFile(path.join(repo, 'package.json'), JSON.stringify({ version: '9.9.9' }) + '\n')
+  await writeFile(path.join(repo, 'scripts', 'verify-public-hive-gateway-evidence.mjs'), GATEWAY_FIXTURE_VERIFIER)
+  command('ssh-keygen', ['-t', 'ed25519', '-f', signingKey, '-N', '', '-q', '-C', 'release@hiverelay'])
+  await writeFile(allowedSigners, `release@hiverelay ${(await readFile(signingKey + '.pub', 'utf8')).trim()}\n`)
+  command('git', ['init', '-q', repo])
+  command('git', ['-C', repo, 'config', 'user.name', 'tester'])
+  command('git', ['-C', repo, 'config', 'user.email', 'release@hiverelay'])
+  command('git', ['-C', repo, 'config', 'gpg.format', 'ssh'])
+  command('git', ['-C', repo, 'add', 'package.json', manifestPath, 'fleet/allowed-signers', 'scripts/verify-public-hive-gateway-evidence.mjs'])
+  command('git', ['-C', repo, 'commit', '-qm', 'gateway release'])
+  command('git', ['-C', repo, '-c', `user.signingkey=${signingKey}.pub`, 'tag', '-s', '-m', 'release', 'v9.9.9'])
+  return {
+    repo,
+    allowedSigners,
+    manifestPath,
+    manifestSha256: crypto.createHash('sha256').update(manifestBytes).digest('hex'),
+    targetSha: command('git', ['-C', repo, 'rev-parse', 'v9.9.9^{commit}']).stdout.trim(),
+    entry,
+    manifest
+  }
+}
+
+function gatewayRolloutTokenValue (release) {
+  const now = new Date().toISOString()
+  return {
+    schema: 'hiverelay-public-gateway-evidence-verification-v1',
+    status: 'verified',
+    mode: 'fleet',
+    admissionProfile: release.manifest.admissionProfile,
+    publicSuffixReady: false,
+    releaseTarget: 'v9.9.9',
+    releaseSha: release.targetSha,
+    checkedAt: now,
+    probeObservedAt: now,
+    origin: release.entry.origin,
+    connectAddress: release.entry.connectAddress,
+    appKey: release.entry.appKey,
+    path: release.entry.path,
+    contentSha256: release.entry.contentSha256,
+    driveVersion: release.entry.driveVersion,
+    tlsProtocol: 'TLSv1.3',
+    peerFingerprint256: release.entry.peerFingerprint256,
+    nginxSha256: release.entry.nginxConfigSha256,
+    checks: {
+      metadata: true,
+      exactBytes: true,
+      range: true,
+      head: true,
+      canonicalIdentity: true,
+      managementIsolation: true,
+      forwardedHostIsolation: true,
+      unavailableAppIsolation: true,
+      defaultSniRejection: true,
+      sniHostBinding: true
+    },
+    evidenceSha256: 'd'.repeat(64)
+  }
+}
+
+function gatewayRolloutToken (release) {
+  return Buffer.from(JSON.stringify(gatewayRolloutTokenValue(release))).toString('base64url')
+}
+
+async function writeGatewayWindowState (file, release, encodedToken, opts = {}) {
+  const token = JSON.parse(Buffer.from(encodedToken, 'base64url').toString('utf8'))
+  const windowMs = release.manifest.observationWindowMs
+  const end = opts.timelineEndMs ?? Date.parse(token.probeObservedAt)
+  const controllerWindowMs = opts.controllerWindowMs ?? windowMs
+  const controllerEnd = opts.controllerEndMs ?? end
+  const samples = []
+  for (let offset = 24 * 60; offset >= 0; offset -= 20) {
+    const observedAt = new Date(end - offset * 60 * 1000).toISOString()
+    const collectedAt = controllerWindowMs === windowMs && controllerEnd === end
+      ? observedAt
+      : new Date(controllerEnd - Math.round((offset * 60 * 1000 / windowMs) * controllerWindowMs)).toISOString()
+    samples.push({
+      observedAt,
+      collectedAt,
+      evidenceSha256: offset === 0
+        ? token.evidenceSha256
+        : crypto.createHash('sha256').update(`gateway-sample-${offset}`).digest('hex')
+    })
+  }
+  await writeFile(file, JSON.stringify({
+    schema: 'hiverelay-public-gateway-window-state-v1',
+    releaseTarget: 'v9.9.9',
+    releaseSha: release.targetSha,
+    channel: 'canary',
+    manifestSha256: release.manifestSha256,
+    observationWindowMs: release.manifest.observationWindowMs,
+    maxProbeGapMs: release.manifest.maxProbeGapMs,
+    cohortNames: ['mock-canary'],
+    relays: [{ name: 'mock-canary', samples }]
+  }, null, 2) + '\n')
+}
+
+function command (name, args) {
+  const result = spawnSync(name, args, { encoding: 'utf8', timeout: 20000 })
+  if (result.status !== 0) throw new Error(`${name} ${args.join(' ')} failed: ${result.stderr || result.stdout}`)
+  return result
 }

@@ -2607,6 +2607,45 @@ pm2 start cli/index.js --name hiverelay -- start --region EU
 curl http://localhost:9100/health
 ```
 
+### Standalone content gateway security defaults
+
+`packages/core/gateway/server.js` is a legacy standalone content gateway. It is
+not the public HTTPS fleet listener and must not be used as a management-plane
+shortcut. As a security compatibility change, it now binds `127.0.0.1` by
+default instead of `0.0.0.0`, and `POST /v1/seed` is absent unless
+`--allow-dynamic-seed` is supplied explicitly. Static drive keys passed on the
+command line continue to work without enabling the mutating endpoint.
+
+```bash
+# Read-only, loopback-only default
+node packages/core/gateway/server.js <64-hex-drive-key>
+
+# Explicit local dynamic-seed mode (still loopback-only)
+node packages/core/gateway/server.js --allow-dynamic-seed
+```
+
+A non-loopback dynamic-seed bind fails startup unless
+`HIVERELAY_GATEWAY_SEED_TOKEN` contains at least 32 characters. The endpoint
+then requires the exact token as `Authorization: Bearer ...`; duplicate
+authorization headers fail closed. Keep this listener behind authenticated TLS
+and a firewall because the bearer token must never cross plaintext public HTTP.
+Drive count, seed-request rate, JSON body size, and drive-open duration have
+finite limits. The command below is illustrative; provide the token through a
+secret manager in production.
+
+```bash
+HIVERELAY_GATEWAY_SEED_TOKEN="$(openssl rand -hex 32)" \
+  node packages/core/gateway/server.js \
+  --host 0.0.0.0 \
+  --allow-dynamic-seed \
+  --max-seeded-drives 64 \
+  --max-seed-requests-per-minute 30
+```
+
+The key-derived public HTTPS gateway has no seed route. Its TLS edge should
+forward only the documented read-only app requests to the dedicated loopback
+data plane.
+
 ### Example systemd Service
 
 ```ini

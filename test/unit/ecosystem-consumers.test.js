@@ -99,6 +99,45 @@ test('ecosystem consumer audit fails on unclassified Hiverelay pins', (t) => {
   t.ok(summary.errors[0].includes('Unclassified Hiverelay package consumer'))
 })
 
+test('ecosystem consumer audit skips the workspace research corpus before parsing fixtures', (t) => {
+  const root = fixtureWorkspace()
+  const fixture = path.join(root, '00-brain', 'compiled-corpus', 'test', 'fixtures', 'package.json')
+  fs.mkdirSync(path.dirname(fixture), { recursive: true })
+  fs.writeFileSync(fixture, '{ definitely-not-json')
+  writePackage(root, '02-apps/unknown/package.json', {
+    dependencies: {
+      'p2p-hiverelay-client': '^0.8.0'
+    }
+  })
+
+  const rows = scanHiverelayConsumers({ workspaceRoot: root })
+  t.is(rows.length, 1, 'research fixture is excluded but active workspace consumers remain visible')
+  t.is(rows[0].path, '02-apps/unknown/package.json')
+})
+
+test('ecosystem consumer audit skips unregistered HiveRelay feature worktrees', (t) => {
+  const root = fixtureWorkspace()
+  writePackage(root, '00-core/hr-feature/package.json', {
+    name: 'p2p-hiverelay-monorepo',
+    version: '9.9.9'
+  })
+  writePackage(root, '00-core/hr-feature/packages/client/package.json', {
+    name: 'p2p-hiverelay-client',
+    dependencies: {
+      'p2p-hiverelay': '^9.9.9'
+    }
+  })
+  writePackage(root, '02-apps/unknown/package.json', {
+    dependencies: {
+      'p2p-hiverelay-client': '^0.8.0'
+    }
+  })
+
+  const rows = scanHiverelayConsumers({ workspaceRoot: root })
+  t.is(rows.length, 1, 'feature worktree packages cannot become false consumer pins')
+  t.is(rows[0].path, '02-apps/unknown/package.json')
+})
+
 test('ecosystem consumer audit fails when the known stale inventory changes', (t) => {
   const root = fixtureWorkspace()
   writePackage(root, '02-apps/pearpaste/package.json', {
