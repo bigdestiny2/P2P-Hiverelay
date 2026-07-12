@@ -223,7 +223,13 @@
         "git/ad8fbe9b63dfcbd81217582ed8d8c41ebfdd88a8/peerit-vendor-repair"
       ]
     },
-    { "id": "T01B", "status": "pending", "handoffs": [] },
+    {
+      "id": "T01B",
+      "status": "in-progress",
+      "handoffs": [
+        "git/5e90232ddead9e5bab71be75eae2e722f813bba0/credits-auth-remediation"
+      ]
+    },
     {
       "id": "T02",
       "status": "in-progress",

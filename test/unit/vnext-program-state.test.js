@@ -10,7 +10,7 @@ test('vNext program state validates the canonical release train without approvin
   t.is(result.profiles, 5)
   t.alike(result.pendingDecisions, ['D-1', 'D-2', 'D-3', 'D-4', 'D-5', 'D-6', 'D-7'])
   t.alike(result.passedGates, [])
-  t.alike(result.activeTracks, ['T00', 'T01', 'T02', 'T05'])
+  t.alike(result.activeTracks, ['T00', 'T01', 'T01B', 'T02', 'T05'])
 })
 
 test('vNext program state rejects recommendation-as-authorization drift', (t) => {
