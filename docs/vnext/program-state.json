@@ -108,7 +108,9 @@
       "evidence": [
         "git/744c6d4d77052d4a1baeb676e99ce27d8f6355df/docs/vnext/workspace-inventory.json",
         "git/9a7d6a75f68095aa5833d10f8eb1622411712e44/docs/vnext/blind-peerit-preservation.json",
-        "git/95098d93db74e5ce1bddaa7a82187244f035c8b9/docs/vnext/blind-peerit-preservation.json"
+        "git/95098d93db74e5ce1bddaa7a82187244f035c8b9/docs/vnext/blind-peerit-preservation.json",
+        "git/349db39b0df03582a141bf54f99a3c00af2a375b/docs/vnext/blind-peerit-preservation.json",
+        "git/5a7af14a1e16ee79bc91a5c663b2406498029106/docs/vnext/hiverelay-main-salvage.json"
       ]
     },
     { "id": "PG-1", "status": "pending", "evidence": [] },
@@ -135,7 +137,9 @@
       "status": "in-progress",
       "handoffs": [
         "git/9a7d6a75f68095aa5833d10f8eb1622411712e44/blind-peerit-preservation",
-        "git/95098d93db74e5ce1bddaa7a82187244f035c8b9/blind-reproducibility-repair"
+        "git/95098d93db74e5ce1bddaa7a82187244f035c8b9/blind-reproducibility-repair",
+        "git/349db39b0df03582a141bf54f99a3c00af2a375b/peerit-independent-verification",
+        "git/5a7af14a1e16ee79bc91a5c663b2406498029106/hiverelay-main-salvage"
       ]
     },
     { "id": "T01B", "status": "pending", "handoffs": [] },
