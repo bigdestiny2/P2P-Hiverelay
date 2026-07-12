@@ -1,0 +1,214 @@
+{
+  "schemaVersion": 1,
+  "kind": "hiverelay-main-salvage-audit",
+  "generatedAt": "2026-07-12T14:38:51Z",
+  "source": {
+    "repository": "/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay",
+    "readOnly": true,
+    "branch": "main",
+    "head": "999b0afd7584bb727cef6e6a88a054f11513927a",
+    "upstream": "origin/main",
+    "ahead": 0,
+    "behind": 0,
+    "stagedPaths": 0,
+    "modifiedTrackedPaths": 23,
+    "untrackedPaths": 15,
+    "dirtyPathCount": 38,
+    "porcelainV2Sha256": "98855f17339ea8ee4134075b064fbe421416aacb0b11d2f22760f8eebf18997e"
+  },
+  "verdict": {
+    "p0": [],
+    "p1Count": 2,
+    "safeToPreserveAsOneCommit": false,
+    "safeToDeployAsIs": false,
+    "completionClaim": "audit complete; preservation, integration, release, and deployment are not complete",
+    "canonicalMainMutatedByAudit": false
+  },
+  "stopShip": [
+    {
+      "id": "HR-SALVAGE-P1-CREDITS-AUTH",
+      "severity": "P1",
+      "title": "Per-app credit wallets and aggregate financial activity are publicly readable despite a configured API key",
+      "evidence": [
+        "packages/core/core/relay-node/api.js:979-1035 dispatches all four credit GET routes before any _requireAuth call",
+        "packages/core/core/relay-node/api-credits.js:82-101 returns appPubkey, balance, totalDeposited, totalSpent, bonus totals, and activity timestamps",
+        "A loopback HTTP probe started RelayAPI with apiKey=configured-secret and no Authorization header; /api/v1/credits/stats and /api/v1/credits/wallets both returned HTTP 200 with the seeded wallet and its financial totals",
+        "dashboard/payments.html:565-587 sends an empty x-api-key header, not the supported Authorization: Bearer token"
+      ],
+      "impact": "Any party that can reach the public API can enumerate app identities and correlate balances, deposits, spend, bonuses, and activity. The helper-only tests encode the disclosure instead of exercising the HTTP authorization boundary.",
+      "requiredBeforeCommit": [
+        "Keep pricing and comparison public only if intentionally advertised; require management auth for stats and wallets",
+        "Make the dashboard use the existing embedded UI token/Bearer flow without putting credentials in URLs",
+        "Add full HTTP tests proving unauthenticated requests get 401 and authenticated requests get bounded data",
+        "Do not create fallback financial state on read"
+      ]
+    },
+    {
+      "id": "HR-SALVAGE-P1-STORAGE-CAP",
+      "severity": "P1",
+      "title": "Storage-cap provenance and headroom math can enlarge an explicit operator cap and still fill the disk",
+      "evidence": [
+        "packages/core/config/loader.js:121 treats maxStorageBytes === the built-in 50 GiB value as proof that the cap was unset",
+        "packages/core/config/loader.js:119-128 derives 75%/90% from total blocks and ignores available/free blocks and existing non-HiveRelay use",
+        "An adversarial unit probe passed an explicit 50 GiB cap on a mocked 1 TiB disk with only 2 GiB available; resolveStorageCap changed it to 768 GiB",
+        "A 100 GiB mocked disk with 1 GiB available resolved an unset cap to 75 GiB",
+        "docker-compose.yml explicitly supplies --max-storage 50GB, so the equality/provenance collision is a real repository deployment path",
+        "A nonexistent custom storage path is measured at its nearest existing ancestor; the probe measured /, which can be the wrong future mount",
+        "packages/core/config/default.js:149-160 leaves eviction.enabled false, while the incident patch shortens minAgeMs; the default boot therefore does not proactively shed an already-over-cap store"
+      ],
+      "impact": "An explicit resource designation can be silently expanded by hundreds of GiB, a nearly full volume can be treated as having ample headroom, and an already-pressured node can remain above the new cap. This contradicts the incident-fix safety claim.",
+      "requiredBeforeCommit": [
+        "Carry explicit provenance from CLI, environment, and persisted config; numerical equality is not provenance",
+        "Preserve explicit 50 GiB semantics and persist an explicit value even when it equals the built-in default",
+        "For an unset cap, never increase the legacy 50 GiB default merely because the disk is large; use a safe min with available-space/reserve math",
+        "Create/verify the actual storage mount before statfs or fail closed when the intended device cannot be proven",
+        "Define and test recovery for usage already over cap; do not imply the 6-hour age change is active while eviction is disabled",
+        "Add tests for explicit-equals-default, low-available-space, pre-used volume, wrong ancestor/mount, restart provenance, and all production entry points"
+      ]
+    }
+  ],
+  "additionalFindings": [
+    {
+      "severity": "P2-release-blocker",
+      "title": "Credits endpoints are disconnected from authoritative runtime state",
+      "detail": "Repository-wide inspection found no RelayNode construction or lifecycle assignment of creditManager or pricingEngine outside the new helper/tests. api-credits.js instead creates ephemeral default managers/engines on GET, so stock runtime can return authoritative-looking empty wallets and default prices rather than configured persistent state. Wire lifecycle-owned state or return an explicit disabled/unavailable response."
+    },
+    {
+      "severity": "P2-release-evidence",
+      "title": "FEATURES.csv is not admissible release evidence",
+      "detail": "It marks the credits work Retested despite the P1 disclosure and disconnected state. update-cli-help.py is non-idempotent, and the generator plus sequential mutators do not provide one deterministic reproduction command. Preserve only after correcting statuses and making generation deterministic."
+    },
+    {
+      "severity": "P2-coverage",
+      "title": "Compatibility aliases lack direct checked-in assertions",
+      "detail": "The existing status/metrics tests still assert only /status and /metrics. A direct probe confirmed /api/status and /api/metrics resolve, but alias assertions and full HTTP parity tests should be added before the compatibility commit."
+    },
+    {
+      "severity": "note",
+      "title": "Pear gracedown migration is viable but documentation is incomplete",
+      "detail": "Node signal smoke completed cleanup and exited 143; Bare imported pear-gracedown successfully. Root and standalone dependency trees resolve. Non-dirty hiverelay.service, docs/DEVELOPER.md, and standalone/ARCHITECTURE.md still name graceful-goodbye and must be updated in the migration commit. Transitive graceful-goodbye remains through Holesail and @hyperswarm/dht-relay."
+    }
+  ],
+  "dirtyPaths": [
+    {"path":"dashboard/calculator.html","status":"modified","sha256":"43b50ce134dc0c8a810f9e4cbc0ed1481e66a9b7e997e22d27939cd4f039d058","group":"compatibility-aliases-docs-examples","disposition":"preserve-nav-hunk"},
+    {"path":"dashboard/catalog.html","status":"modified","sha256":"a04b232ab228cd0ba6ee108153d1d93ba4136fa7d6491e4ba99a4c29252cb537","group":"compatibility-aliases-docs-examples","disposition":"preserve-nav-hunk"},
+    {"path":"dashboard/leaderboard.html","status":"modified","sha256":"a62307475046490220844ee710387a7c4c7449fa0cf6605e379c43aebd2fcf17","group":"compatibility-aliases-docs-examples","disposition":"preserve-nav-hunk"},
+    {"path":"dashboard/payments.html","status":"modified","sha256":"60bd61d81c3e86d965f8888c997c5a164f480fc7b495e691aa772a862ff17966","group":"credits-api-dashboard","disposition":"split: nav hunk may preserve; wallet hunk blocked by credits P1"},
+    {"path":"docs/RELAYKERNEL-GATEWAY-COMPATIBILITY.md","status":"modified","sha256":"909552ee7d8f625b63e740b4b600ca862b1a6d3f60006266c566fec39385a9f6","group":"compatibility-aliases-docs-examples","disposition":"do-not-cherry-pick; superseded by newer gateway-worktree document"},
+    {"path":"examples/node-app/index.js","status":"modified","sha256":"409ad870956546bdb5432f12df2497b8ad3a91c506274fa4f1c20333e4aab51a","group":"compatibility-aliases-docs-examples","disposition":"preserve"},
+    {"path":"examples/pear-app/index.js","status":"modified","sha256":"d9cb01cb58d1c833614c820ab771a6eb4fcee61ee336a5ffbce0d9d496fb6d12","group":"compatibility-aliases-docs-examples","disposition":"preserve"},
+    {"path":"fleet/fleet-status.sh","status":"modified","sha256":"8ef049b095541fd53cf9eb5eab89899a64b5275f021bbba2b9929a30b943edd9","group":"storage-cap-eviction-incident-fix","disposition":"preserve after storage policy correction"},
+    {"path":"package-lock.json","status":"modified","sha256":"49dd821b2ee50808c1b1c3bda56866f9ca39ea586c2316f33aaad7e7ebca6e9c","group":"pear-gracedown-migration","disposition":"preserve"},
+    {"path":"packages/core/cli/index.js","status":"modified","sha256":"d9ae68ad085c28592572d823aee8d16b485576fd8a4c81ae35728addb2badf8d","group":"shared-multi-hunk","disposition":"split into cli-help, pear-gracedown, and blocked storage-cap hunks"},
+    {"path":"packages/core/config/default.js","status":"modified","sha256":"40b027f63e149a62c07707ba61b8beea1450fd29e86bd87172a3d69c7947dae7","group":"storage-cap-eviction-incident-fix","disposition":"blocked pending 6h retention safety decision/tests"},
+    {"path":"packages/core/config/loader.js","status":"modified","sha256":"fac3c8281e7ece20f2ebf00cca2f24d1637230f9647d5a1615fff90558d0c8de","group":"storage-cap-eviction-incident-fix","disposition":"blocked by storage P1; redesign rather than preserve as-is"},
+    {"path":"packages/core/core/relay-node/api-metrics.js","status":"modified","sha256":"c55bd1eabce79aabbe5fe25eafa953649c3abf23d1e649a615c08fde2efee222","group":"compatibility-aliases-docs-examples","disposition":"preserve with direct alias tests"},
+    {"path":"packages/core/core/relay-node/api-status-read.js","status":"modified","sha256":"563d3344cdff02f80c41ebab5481da06e88b35ca4139fb83bc22440fe1fcb1b4","group":"compatibility-aliases-docs-examples","disposition":"preserve with direct alias tests"},
+    {"path":"packages/core/core/relay-node/api.js","status":"modified","sha256":"185a6b5cf642d8c3fe31a7f422caa4dbe53ea3c33cdd6c597225fff57d9451b8","group":"credits-api-dashboard","disposition":"blocked by credits P1"},
+    {"path":"packages/core/core/relay-node/eviction.js","status":"modified","sha256":"28ef001b4c43881b8d535cff560307443a886e022f361d32b7dea41f1c4a6f02","group":"storage-cap-eviction-incident-fix","disposition":"blocked pending 6h retention safety decision/tests"},
+    {"path":"packages/core/package.json","status":"modified","sha256":"8a422fb7e7227e0a5f6e353b9cc90774cecccd490f44df199b7cadaa651bcd3e","group":"pear-gracedown-migration","disposition":"preserve"},
+    {"path":"packages/services/README.md","status":"modified","sha256":"329cfb92944bb816f5fa8878e096b045a99ae6cb1c1a3456567c16be27173c45","group":"compatibility-aliases-docs-examples","disposition":"preserve; exports verified"},
+    {"path":"standalone/client.js","status":"modified","sha256":"8dedec8ba9d969ff318792b1afa149f521aa7e316097b5de9c8e0e7c54663e69","group":"pear-gracedown-migration","disposition":"preserve"},
+    {"path":"standalone/package-lock.json","status":"modified","sha256":"c433de4a6b5a666c5ff6cdb96ab667d69ebf8cb140f6a70c2e8987db873f6a0a","group":"pear-gracedown-migration","disposition":"preserve"},
+    {"path":"standalone/package.json","status":"modified","sha256":"c0d55db2b5f3cbf7189726ef914bfbd65bffe5dbafe1f5aca20ef0e612a172bb","group":"pear-gracedown-migration","disposition":"preserve"},
+    {"path":"standalone/server.js","status":"modified","sha256":"a198a329c48a374295b6e6e2531cbf17e1b5ba1bb84e896b2cb0a57905d53da1","group":"pear-gracedown-migration","disposition":"preserve"},
+    {"path":"test/unit/config-loader.test.js","status":"modified","sha256":"ea6d12846adc741a67f3c057835e5d2aba80e47434df4844d95174cb1c03d9ab","group":"storage-cap-eviction-incident-fix","disposition":"replace weak machine-dependent assertion and add provenance cases"},
+    {"path":"FEATURES.csv","status":"untracked","sha256":"e607f0787d4a94cf2772ce674191c4acfc7f2a34b023fbdf303a083cc8f2fab8","group":"other-feature-inventory","disposition":"hold; not release evidence until false Retested rows are corrected"},
+    {"path":"HiveRelay-0.24.1-Announcement.pdf","status":"untracked","sha256":"8054f71924770ba72282de3ad0c134386d75ee7c250edd77dab68494c38637c5","group":"other-release-artifacts","disposition":"exclude from vNext source commits; stale 0.24.1 generated artifact"},
+    {"path":"HiveRelay-0.24.1-Explainer.pdf","status":"untracked","sha256":"b58eb651e8f32bd56c8fa266cf819de60f6dec476aa176e94a20edd8533ec54a","group":"other-release-artifacts","disposition":"exclude from vNext source commits; stale 0.24.1 generated artifact"},
+    {"path":"docs/PUBLIC-HTTPS-HIVE-GATEWAY-SPEC.md","status":"untracked","sha256":"daed8fae6642c1d4745d0dbc68f5023297da3908b7da5d2adf28323fc3579c02","group":"other-gateway-doc","disposition":"do-not-cherry-pick; newer gateway-worktree spec is a 273-addition/25-removal successor"},
+    {"path":"packages/core/core/relay-node/api-credits.js","status":"untracked","sha256":"cf3c30fa39cc3a8fba94e3d92f52600164af20d143051caab327ce7df1c21d56","group":"credits-api-dashboard","disposition":"blocked by credits P1 and runtime-state disconnect"},
+    {"path":"scripts/generate-features-csv.py","status":"untracked","sha256":"4e5fbb17a3aa79f3050e98882d276b2e4c79627824afc8d4ce0d5fe961f5c779","group":"other-feature-inventory","disposition":"hold; replace with deterministic idempotent generation"},
+    {"path":"scripts/mark-retested.py","status":"untracked","sha256":"fb1519840033baae07721e51d7950274e539b9366a60f60e0db24e337e8acafc","group":"other-feature-inventory","disposition":"hold; currently records disproven completion"},
+    {"path":"scripts/update-cli-help.py","status":"untracked","sha256":"741ebb7ccbbd2884c48826b07df7b84bdc6f6971d766bf4ce576f245c8fafb86","group":"other-feature-inventory","disposition":"hold; non-idempotent row append"},
+    {"path":"scripts/update-features-csv.py","status":"untracked","sha256":"2d31ba3fc943a5a6ed65a09df99e7845959138c097c4e21032bcdeb5d7a2686d","group":"other-feature-inventory","disposition":"hold; one-off mutator"},
+    {"path":"startos-0.4/javascript/index.js","status":"untracked","sha256":"acfdb0ff759fd8c0bbcf962f49ffcded3bdba6b4230f0fec9570e8716a3fe10a","group":"other-generated-build","disposition":"exclude/regenerate; 2.6 MB compiled StartOS SDK scratch output without its source project"},
+    {"path":"test/unit/api-credits.test.js","status":"untracked","sha256":"a25f551733fa798f0752785e7ffdb7af44dfb308a82659c15d78c9b75da56d65","group":"credits-api-dashboard","disposition":"replace helper-only open-route assumptions with HTTP auth and lifecycle-state tests"},
+    {"path":"test/unit/storage-cap-resolve.test.js","status":"untracked","sha256":"d45dace55f4c4ed5bb12244dd844a7ea5a74cd4bc080c5e62615d54407bf181f","group":"storage-cap-eviction-incident-fix","disposition":"extend with adversarial provenance/free-space/mount/restart cases before preserve"},
+    {"path":"tmp-test-relay2/bootstrap-cache.json","status":"untracked","sha256":"a5e1938890d57f9b27e5c96760155b5bcda67ff21680945456ba957e010f8c6c","group":"other-runtime-state","disposition":"exclude; runtime peer cache containing observed public/link-local endpoints"},
+    {"path":"tmp-test-relay2/manifests.json","status":"untracked","sha256":"31c3f8fe93fa54309b6126c4f08afc2c9877b8c89456bf37eb8433aa4cebe33f","group":"other-runtime-state","disposition":"exclude; ephemeral test state"},
+    {"path":"tmp-test-relay2/reputation.json","status":"untracked","sha256":"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a","group":"other-runtime-state","disposition":"exclude; ephemeral test state"}
+  ],
+  "orderedPreservationPlan": [
+    {
+      "order": 0,
+      "id": "exclude-non-source",
+      "commit": false,
+      "action": "Retain this report's hashes, then exclude runtime state, generated StartOS scratch output, stale PDFs, and the superseded main-worktree gateway draft from source commits. Do not delete canonical-main files during integration without the owner's separate preservation decision."
+    },
+    {
+      "order": 1,
+      "id": "cli-help-safety",
+      "commit": true,
+      "action": "Extract only the SUBCOMMAND_HELP_COMMANDS/main-dispatch hunk from packages/core/cli/index.js; add an automated matrix for all 14 commands."
+    },
+    {
+      "order": 2,
+      "id": "pear-gracedown-migration",
+      "commit": true,
+      "action": "Extract package/lock/source shutdown changes plus the gracedown hunks in cli/index.js; update all remaining direct documentation names; run Node signal and Bare import/runtime smoke."
+    },
+    {
+      "order": 3,
+      "id": "storage-cap-eviction-incident-fix",
+      "commit": true,
+      "blockedBy": ["HR-SALVAGE-P1-STORAGE-CAP"],
+      "action": "Redesign provenance, safe-cap math, mount verification, and already-over-cap recovery; then preserve fleet warning, corrected config/runtime code, eviction policy, and adversarial tests as one incident-bound commit."
+    },
+    {
+      "order": 4,
+      "id": "compatibility-aliases-docs-examples",
+      "commit": true,
+      "action": "Preserve /api/status and /api/metrics aliases, dashboard navigation hunks, defensive examples, and services README correction with direct alias parity tests. Do not take the superseded gateway-document hunks."
+    },
+    {
+      "order": 5,
+      "id": "credits-api-dashboard",
+      "commit": true,
+      "blockedBy": ["HR-SALVAGE-P1-CREDITS-AUTH"],
+      "action": "Wire lifecycle-owned authoritative pricing/wallet state, auth-gate operator finance views, fix dashboard Bearer authentication, bound/sort output, and add real HTTP auth/restart tests before preserving."
+    },
+    {
+      "order": 6,
+      "id": "feature-inventory",
+      "commit": true,
+      "action": "Regenerate from one deterministic idempotent command after preceding commits are green; preserve only truthful statuses and immutable test references."
+    }
+  ],
+  "overlapsAndDependencies": [
+    "packages/core/cli/index.js contains three independent hunks: CLI help, storage-cap resolution, and pear-gracedown. It must be split, not committed wholesale.",
+    "dashboard/payments.html contains a navigation hunk and credits-wallet hunks. The nav can move with compatibility; wallet code stays blocked.",
+    "docs/RELAYKERNEL-GATEWAY-COMPATIBILITY.md points at the untracked draft, but both documents have newer successors in /Users/localllm/Projects/pear-ecosystem/00-core/hr-https-gateway and should not be salvaged from main.",
+    "package-lock.json is wholly coupled to packages/core/package.json for pear-gracedown, while standalone/package-lock.json is coupled to standalone/package.json.",
+    "The storage change depends on non-dirty docker-compose.yml, Umbrel/StartOS entry points, config persistence, storage accounting, DiskMonitor, seeder admission, and eviction enablement; tests limited to resolveStorageCap do not prove the deployment property.",
+    "The credits change depends on a lifecycle-owned CreditManager/PricingEngine and the dashboard's existing UI-token contract; neither dependency is wired by the dirty patch."
+  ],
+  "testEvidence": [
+    {"command":"brittle storage/config/credits/status/metrics focused set","result":"pass","tests":"32/32","assertions":"123/123","qualification":"Passing helper tests do not clear either P1; the adversarial cases are absent."},
+    {"command":"brittle eviction/shard-wiring/api-purge focused set","result":"pass","tests":"31/31","assertions":"99/99","qualification":"No checked-in assertion proves the new 6-hour default or default-disabled recovery."},
+    {"command":"standard on all changed/new JS plus bash -n and node --check","result":"pass","qualification":"Initial Standard run hit an environment cache EPERM; rerun with XDG_CACHE_HOME=/private/tmp passed."},
+    {"command":"14-command CLI --help subprocess matrix","result":"pass","tests":"14/14 exit 0 with usage","qualification":"Executed read-only with HOME under /private/tmp; should become a checked-in test."},
+    {"command":"RelayAPI loopback credits probe with configured API key and no auth","result":"fail-security","qualification":"Both stats and wallets returned 200 with financial data; confirms HR-SALVAGE-P1-CREDITS-AUTH."},
+    {"command":"resolveStorageCap adversarial probes","result":"fail-safety","qualification":"Explicit 50 GiB became 768 GiB on 1 TiB and 75 GiB was selected with only 1 GiB available; confirms HR-SALVAGE-P1-STORAGE-CAP."},
+    {"command":"pear-gracedown Node SIGTERM smoke","result":"pass","qualification":"Cleanup completed; process exited 143."},
+    {"command":"pear-gracedown Bare import smoke","result":"pass","qualification":"Package imported as a function. Full Core CLI under Bare still fails on the pre-existing Node os import and is not evidence of Bare CLI support."},
+    {"command":"npm ls pear-gracedown graceful-goodbye in root and standalone","result":"pass","qualification":"Direct migration resolves; graceful-goodbye remains transitively in root."},
+    {"command":"services export probe","result":"pass","qualification":"IdentityService and StorageProofService are exported; createBuiltInServices is not."},
+    {"command":"post-test git status","result":"unchanged","qualification":"Still exactly 23 modified tracked plus 15 untracked paths; canonical main was not edited."}
+  ],
+  "requiredFinalGates": [
+    "Resolve both P1 findings and add their adversarial tests",
+    "Run full unit, integration, Bare, lint, workspace-alignment, public-artifact, package-pack, and release-blocker suites from the clean integration branch",
+    "Run a real-volume low-space test proving cap math against current HiveRelay bytes, available bytes, reserved headroom, and the actual mounted device",
+    "Run a real RelayNode restart test proving explicit cap provenance and authoritative credits persistence",
+    "Run authenticated and unauthenticated dashboard/API browser tests",
+    "Run fleet canary only after the blind-substrate and gateway gates are merged; no live deployment is proven by this salvage audit"
+  ],
+  "residualBlockers": [
+    "No preservation commits have been created from canonical main.",
+    "The two P1 changes are unsafe as written.",
+    "The main-worktree gateway docs are superseded, not integration input.",
+    "Feature inventory completion labels are currently untrustworthy.",
+    "No live fleet, real DNS/TLS, or blind-substrate integration evidence was produced by this task."
+  ]
+}
