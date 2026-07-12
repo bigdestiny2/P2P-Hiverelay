@@ -106,8 +106,14 @@ before admission, reservation, persistence, or dialing.
 
 BlindForwardHopOpenV1 carries the full extended BlindForwardRouteScopeV1.
 BlindForwardHopAcceptV1 and BlindForwardOpenResultV1 echo the accepted scopeHash
-and relay count. BlindTransportRouteV1 carries the signed maxRelayCount; an OPEN
-may only reduce the route/profile limit, never increase it.
+and relay count. BlindTransportRouteV1 carries the signed maxRelayCount.
+
+`maxRelayCount` and `expiresEpoch` are both inside the genesis hash. The selected
+V1 shape has no signed per-hop effective-limit or effective-expiry field, so a
+continuation cannot reduce either value without invalidating prior signatures,
+and a local-only reduction would be lost at the following hop. Continuations
+therefore carry the exact root values. A later protocol revision may add signed
+monotonic effective values if per-hop reduction is required.
 
 ## Relay algorithm
 

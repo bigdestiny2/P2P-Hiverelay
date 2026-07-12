@@ -193,7 +193,8 @@
         "git/046e845eec67db6061314b3aa9fa48785549f02a/docs/vnext/protocol-remediation.json",
         "git/9456f12400e25e02ab0233e3dc069bdda41a8f96/docs/vnext/blind-protocol-v1-field-remediation.json",
         "git/67ed85c088f4a6438382a2776619a9aeaa8d04c3/docs/vnext/blind-forward-route-scope-design.md",
-        "git/5844e25a42f5bfc228580d431c89beffa3a006c7/docs/vnext/blind-v3-staged-put-gate.json"
+        "git/5844e25a42f5bfc228580d431c89beffa3a006c7/docs/vnext/blind-v3-staged-put-gate.json",
+        "git/2692a9a9ef507fe3dce16d21493153dad0f053e7/docs/vnext/blind-cr5-route-scope-candidate.json"
       ]
     },
     { "id": "PG-3", "status": "pending", "evidence": [] },
@@ -242,7 +243,8 @@
         "git/046e845eec67db6061314b3aa9fa48785549f02a/protocol-freeze-guard",
         "git/9456f12400e25e02ab0233e3dc069bdda41a8f96/V-1-field-remediation",
         "git/67ed85c088f4a6438382a2776619a9aeaa8d04c3/forward-route-scope-design",
-        "git/5844e25a42f5bfc228580d431c89beffa3a006c7/V-3-staged-put-gate"
+        "git/5844e25a42f5bfc228580d431c89beffa3a006c7/V-3-staged-put-gate",
+        "git/2692a9a9ef507fe3dce16d21493153dad0f053e7/CR-5-route-scope-candidate"
       ]
     },
     {
