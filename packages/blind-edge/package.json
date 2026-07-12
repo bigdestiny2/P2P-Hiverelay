@@ -1,0 +1,31 @@
+{
+  "name": "@hiverelay/blind-edge",
+  "version": "0.0.0-draft.1",
+  "description": "Public metadata-stripping transport edge for the HiveRelay blind substrate",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "hiverelay-blind-edge": "./cli.js"
+  },
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "cli.js",
+    "index.js",
+    "ipc-client.js",
+    "readiness.js",
+    "server.js"
+  ],
+  "dependencies": {
+    "@hiverelay/blind-ipc": "0.0.0-draft.1",
+    "@hiverelay/blind-peercred": "0.0.0-draft.1",
+    "@hiverelay/blind-protocol": "0.0.0-draft.1",
+    "b4a": "^1.6.6"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "Apache-2.0"
+}

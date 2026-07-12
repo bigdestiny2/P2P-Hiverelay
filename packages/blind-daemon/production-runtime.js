@@ -1,0 +1,831 @@
+import { constants as FS_CONSTANTS } from 'node:fs'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import { createHmac, timingSafeEqual } from 'node:crypto'
+import b4a from 'b4a'
+import sodium from 'sodium-universal'
+import {
+  ENDPOINT_ROLE,
+  DISPATCH_LIMITS,
+  FAMILY,
+  HEALTH_CLOCK_STATE,
+  HEALTH_INTEGRITY_STATE,
+  HEALTH_REBALANCE_STATE,
+  OPERATION,
+  OUTER_CLASS,
+  OUTER_ENVELOPE_HEADER_BYTES,
+  RESULT_SIGNATURE_DOMAIN_ID,
+  STORE_LIFECYCLE_STATE,
+  TRANSPORT_ID,
+  TRANSPORT_SUPPORT,
+  assertReleaseReady,
+  blindHealthResultV1,
+  encodeCanonical,
+  resultSignaturePayload
+} from '@hiverelay/blind-protocol'
+import { assertPrivateIpcReady } from '@hiverelay/blind-ipc'
+import { AdmissionCoordinator } from './admission-coordinator.js'
+import {
+  BLIND_CELL_RUNTIME_BLOCKERS,
+  BlindCellRuntimeAdapter
+} from './cell-runtime-adapter.js'
+import { BlindOperationCoordinator } from './coordinator.js'
+import { DescriptorState } from './descriptor-state.js'
+import { ReadinessCoordinator } from './readiness-coordinator.js'
+import { ResourceBudget } from './resource-budget.js'
+import { BlindDaemon } from './server.js'
+import {
+  BLIND_CELL_STORAGE_PRODUCTION_BLOCKERS,
+  BlindCellStorageEngine
+} from './storage-engine.js'
+import { loadBundledBlindStoreFormatAuthority } from './store-format-binding.js'
+
+const DESCRIBE_OPERATION_BITS = 0x00000007
+const CELL_OPERATION_BITS = 0x000001f8
+const DESCRIBE_AND_CELL_OPERATION_BITS = DESCRIBE_OPERATION_BITS | CELL_OPERATION_BITS
+const KNOWN_TRANSPORT_SUPPORT_BITS = Object.values(TRANSPORT_SUPPORT)
+  .reduce((bits, bit) => bits | bit, 0)
+const MAX_U64 = (1n << 64n) - 1n
+const RUNTIME_BINDING_MAGIC = b4a.from('HRBRT001', 'ascii')
+const RUNTIME_BINDING_PREFIX_BYTES = 8 + 32 + 32 + 32 + 1 + 2 + 2 + 32 + 8 + 32
+const RUNTIME_BINDING_BYTES = RUNTIME_BINDING_PREFIX_BYTES + 32
+const RUNTIME_BINDING_FILE = 'runtime-binding.v1'
+
+export const PRODUCTION_RUNTIME_OPERATION_BITS = DESCRIBE_OPERATION_BITS
+export const PRODUCTION_CELL_RUNTIME_OPERATION_BITS = CELL_OPERATION_BITS
+export const PRODUCTION_DESCRIBE_AND_CELL_OPERATION_BITS = DESCRIBE_AND_CELL_OPERATION_BITS
+export const PRODUCTION_RUNTIME_EXCLUSIONS = Object.freeze([
+  'FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED',
+  'TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED',
+  'DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED',
+  'CELL_PUBLIC_EXECUTION_UNASSEMBLED',
+  'INBOX_PUBLIC_EXECUTION_UNASSEMBLED',
+  'CORE_PUBLIC_EXECUTION_UNASSEMBLED',
+  'FORWARD_PUBLIC_EXECUTION_UNASSEMBLED',
+  'PRIVATE_CONTENT_STREAM_RUNTIME_UNASSEMBLED',
+  'ADMISSION_REDEMPTION_ADAPTER_UNASSEMBLED',
+  'PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED'
+])
+
+export function assertProductionRuntimeReleaseReady () {
+  assertReleaseReady()
+  assertPrivateIpcReady()
+  assertProductionRuntimeCompleteness()
+}
+
+export function assertProductionRuntimeCompleteness ({
+  runtimeExclusions = PRODUCTION_RUNTIME_EXCLUSIONS,
+  storageBlockers = BLIND_CELL_STORAGE_PRODUCTION_BLOCKERS
+} = {}) {
+  if (!Array.isArray(runtimeExclusions) || !Array.isArray(storageBlockers)) {
+    throw new TypeError('production completeness inputs must be blocker arrays')
+  }
+  if (runtimeExclusions.length > 0) {
+    runtimeFailure('BLIND_RUNTIME_INCOMPLETE',
+      `production runtime is incomplete: ${runtimeExclusions.join(',')}`)
+  }
+  if (storageBlockers.length > 0) {
+    runtimeFailure('BLIND_STORAGE_INCOMPLETE',
+      `production storage is incomplete: ${storageBlockers.join(',')}`)
+  }
+}
+
+function runtimeFailure (code, message) {
+  const error = new Error(message)
+  error.code = code
+  throw error
+}
+
+function canonicalAbsolutePath (value, field) {
+  if (typeof value !== 'string' || value.length === 0 || value.includes('\0') ||
+      !path.isAbsolute(value) || path.normalize(value) !== value) {
+    runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID', `${field} must be a canonical absolute path`)
+  }
+  return value
+}
+
+function requiredPath (environment, name) {
+  return canonicalAbsolutePath(environment[name], name)
+}
+
+function requiredPathList (environment, name, maximum) {
+  const raw = environment[name]
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 32768 || raw.includes(' ')) {
+    runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID', `${name} must be a comma-separated canonical path list`)
+  }
+  const values = raw.split(',')
+  if (values.length < 1 || values.length > maximum) {
+    runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID', `${name} must contain 1..${maximum} paths`)
+  }
+  const seen = new Set()
+  for (let index = 0; index < values.length; index++) {
+    canonicalAbsolutePath(values[index], `${name}[${index}]`)
+    if (seen.has(values[index])) runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID', `${name} contains a duplicate path`)
+    seen.add(values[index])
+  }
+  return Object.freeze(values)
+}
+
+function canonicalUnsigned (environment, name, fallback, minimum, maximum) {
+  const raw = environment[name]
+  if (raw == null && fallback != null) return fallback
+  if (typeof raw !== 'string' || raw.length > 16 || !/^(0|[1-9][0-9]*)$/.test(raw)) {
+    runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID', `${name} must be a canonical unsigned integer`)
+  }
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID', `${name} is outside ${minimum}..${maximum}`)
+  }
+  return value
+}
+
+function canonicalU64 (environment, name, minimum = 1n) {
+  const raw = environment[name]
+  if (typeof raw !== 'string' || raw.length > 20 || !/^(0|[1-9][0-9]*)$/.test(raw)) {
+    runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID', `${name} must be a canonical u64 integer`)
+  }
+  const value = BigInt(raw)
+  if (value < minimum || value > MAX_U64) {
+    runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID', `${name} is outside its required u64 range`)
+  }
+  return value
+}
+
+function requiredHash (environment, name) {
+  const raw = environment[name]
+  if (typeof raw !== 'string' || !/^[0-9a-fA-F]{64}$/.test(raw)) {
+    runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID', `${name} must be an exact 32-byte hash in hex`)
+  }
+  return b4a.from(raw, 'hex')
+}
+
+function endpointSupportBindings (environment, endpointIds) {
+  const raw = environment.HIVERELAY_BLIND_ENDPOINT_SUPPORT_BITS
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 2039 ||
+      !/^[1-9][0-9]*:[1-9][0-9]*(?:,[1-9][0-9]*:[1-9][0-9]*)*$/.test(raw)) {
+    runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID',
+      'HIVERELAY_BLIND_ENDPOINT_SUPPORT_BITS must be a canonical endpoint:support-bit list')
+  }
+  const rows = raw.split(',').map(row => {
+    const [endpoint, support] = row.split(':')
+    return { endpointId: Number(endpoint), transportSupportBit: Number(support) }
+  })
+  if (rows.length !== endpointIds.length) {
+    runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID', 'endpoint support bindings must cover the exact launch endpoint set')
+  }
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index]
+    if (row.endpointId !== endpointIds[index] || !Number.isInteger(row.transportSupportBit) ||
+        row.transportSupportBit === 0 || (row.transportSupportBit & (row.transportSupportBit - 1)) !== 0 ||
+        (row.transportSupportBit & ~KNOWN_TRANSPORT_SUPPORT_BITS) !== 0) {
+      runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID',
+        'endpoint support bindings must be ordered, exact, and use one registered support bit')
+    }
+    Object.freeze(row)
+  }
+  return Object.freeze(rows)
+}
+
+export function loadProductionRuntimeConfig (environment = process.env, endpointIds) {
+  if (!Array.isArray(endpointIds) || endpointIds.length === 0) {
+    throw new TypeError('endpointIds from the signed launch topology are required')
+  }
+  return Object.freeze({
+    descriptorFiles: requiredPathList(environment, 'HIVERELAY_BLIND_DESCRIPTOR_FILES', 4096),
+    admissionParameterFiles: requiredPathList(environment, 'HIVERELAY_BLIND_ADMISSION_PARAMETER_FILES', 64),
+    relaySecretKeyFile: requiredPath(environment, 'HIVERELAY_BLIND_RELAY_SECRET_KEY_FILE'),
+    storeRoot: requiredPath(environment, 'HIVERELAY_BLIND_STORE_ROOT'),
+    partitionKeyFile: requiredPath(environment, 'HIVERELAY_BLIND_PARTITION_KEY_FILE'),
+    ownerFenceTokenHashFile: requiredPath(environment, 'HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE'),
+    mapGeneration: canonicalU64(environment, 'HIVERELAY_BLIND_MAP_GENERATION'),
+    expectedDescriptorSequence: canonicalU64(environment, 'HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_SEQUENCE', 0n),
+    expectedDescriptorHash: requiredHash(environment, 'HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_HASH'),
+    endpointSupportBindings: endpointSupportBindings(environment, endpointIds),
+    resourceBudget: Object.freeze({
+      maxItems: canonicalUnsigned(environment, 'HIVERELAY_BLIND_MAX_INFLIGHT_ITEMS', 1024, 1, 1_000_000),
+      maxBytes: canonicalUnsigned(environment, 'HIVERELAY_BLIND_MAX_INFLIGHT_BYTES', 64 * 1024 * 1024,
+        1, 1024 * 1024 * 1024),
+      reservePercent: canonicalUnsigned(environment, 'HIVERELAY_BLIND_RESERVED_PERCENT', 5, 5, 50)
+    }),
+    server: Object.freeze({
+      maxConnections: canonicalUnsigned(environment, 'HIVERELAY_BLIND_MAX_CONNECTIONS', 1024, 1, 1_000_000),
+      maxBufferedBytes: canonicalUnsigned(environment, 'HIVERELAY_BLIND_MAX_BUFFERED_BYTES',
+        64 * 1024 * 1024, 1, 1024 * 1024 * 1024),
+      closeTimeoutMs: canonicalUnsigned(environment, 'HIVERELAY_BLIND_CLOSE_TIMEOUT_MS', 5000, 1, 60000)
+    })
+  })
+}
+
+function sameInode (left, right) {
+  return left.dev === right.dev && left.ino === right.ino
+}
+
+function sameFileState (left, right) {
+  return sameInode(left, right) && left.size === right.size && left.mode === right.mode &&
+    left.uid === right.uid && left.gid === right.gid && left.nlink === right.nlink &&
+    left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs
+}
+
+async function readBoundFile (file, options = {}) {
+  const maximumBytes = options.maximumBytes == null ? 1024 * 1024 : options.maximumBytes
+  const handle = await fs.open(file, FS_CONSTANTS.O_RDONLY | FS_CONSTANTS.O_NOFOLLOW)
+  try {
+    const [opened, linked] = await Promise.all([handle.stat(), fs.lstat(file)])
+    if (!opened.isFile() || linked.isSymbolicLink() || !sameInode(opened, linked) || opened.size < 1 ||
+        opened.size > maximumBytes || (linked.mode & 0o022) !== 0) {
+      runtimeFailure('BLIND_RUNTIME_FILE_INVALID', `${options.field || file} is not a stable protected regular file`)
+    }
+    if (options.secret === true) {
+      const permissions = linked.mode & 0o777
+      if (typeof process.getuid !== 'function' || linked.uid !== process.getuid() || linked.nlink !== 1 ||
+          (permissions !== 0o600 && permissions !== 0o400)) {
+        runtimeFailure('BLIND_RUNTIME_FILE_INVALID', `${options.field || file} must be daemon-owned and mode 0600/0400`)
+      }
+    }
+    if (await fs.realpath(file) !== file) {
+      runtimeFailure('BLIND_RUNTIME_FILE_INVALID', `${options.field || file} must not traverse a symlinked path`)
+    }
+    const value = await handle.readFile()
+    const [after, linkedAfter] = await Promise.all([handle.stat(), fs.lstat(file)])
+    if (!sameFileState(opened, after) || !sameFileState(after, linkedAfter) ||
+        value.byteLength !== opened.size || await fs.realpath(file) !== file) {
+      runtimeFailure('BLIND_RUNTIME_FILE_INVALID', `${options.field || file} changed while it was read`)
+    }
+    if (options.exactBytes != null && value.byteLength !== options.exactBytes) {
+      runtimeFailure('BLIND_RUNTIME_FILE_INVALID', `${options.field || file} must contain exactly ${options.exactBytes} bytes`)
+    }
+    return value
+  } finally {
+    await handle.close()
+  }
+}
+
+async function verifyPrivateStoreRoot (root) {
+  const stat = await fs.lstat(root)
+  if (!stat.isDirectory() || stat.isSymbolicLink() || typeof process.getuid !== 'function' ||
+      stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0 || await fs.realpath(root) !== root) {
+    runtimeFailure('BLIND_RUNTIME_STORE_INVALID', 'blind store root must be a canonical daemon-owned private directory')
+  }
+}
+
+function encodeRuntimeBinding (descriptor, mapGeneration, ownerFenceTokenHash, partitionKey) {
+  const prefix = b4a.alloc(RUNTIME_BINDING_PREFIX_BYTES)
+  let offset = 0
+  b4a.copy(RUNTIME_BINDING_MAGIC, prefix, offset); offset += 8
+  b4a.copy(descriptor.relayPublicKey, prefix, offset); offset += 32
+  b4a.copy(descriptor.storeId, prefix, offset); offset += 32
+  b4a.copy(descriptor.durabilityContinuityHash, prefix, offset); offset += 32
+  prefix[offset++] = descriptor.durability.profileId
+  prefix.writeUInt16BE(descriptor.durability.storeFormatMajor, offset); offset += 2
+  prefix.writeUInt16BE(descriptor.durability.storeFormatMinor, offset); offset += 2
+  b4a.copy(descriptor.durability.storeFormatHash, prefix, offset); offset += 32
+  prefix.writeBigUInt64BE(mapGeneration, offset); offset += 8
+  b4a.copy(ownerFenceTokenHash, prefix, offset)
+  const mac = createHmac('sha256', partitionKey).update(prefix).digest()
+  return b4a.concat([prefix, mac], RUNTIME_BINDING_BYTES)
+}
+
+async function syncDirectory (directory) {
+  const handle = await fs.open(directory, FS_CONSTANTS.O_RDONLY)
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+async function bindStoreIdentity (root, expected) {
+  const file = path.join(root, RUNTIME_BINDING_FILE)
+  let existing
+  try {
+    existing = await readBoundFile(file, {
+      field: 'runtime store binding',
+      maximumBytes: RUNTIME_BINDING_BYTES,
+      exactBytes: RUNTIME_BINDING_BYTES,
+      secret: true
+    })
+  } catch (error) {
+    if (!error || error.code !== 'ENOENT') throw error
+  }
+  if (!existing) {
+    const entries = await fs.readdir(root)
+    if (entries.length !== 0) {
+      runtimeFailure('BLIND_RUNTIME_STORE_BINDING_REQUIRED',
+        'a nonempty store without a verified runtime binding must not be claimed or modified')
+    }
+    let handle
+    try {
+      handle = await fs.open(file, FS_CONSTANTS.O_WRONLY | FS_CONSTANTS.O_CREAT | FS_CONSTANTS.O_EXCL |
+        FS_CONSTANTS.O_NOFOLLOW, 0o600)
+      await handle.writeFile(expected)
+      await handle.sync()
+      await handle.close()
+      handle = null
+      await syncDirectory(root)
+      existing = b4a.from(expected)
+    } catch (error) {
+      if (handle) await handle.close().catch(() => {})
+      if (!error || error.code !== 'EEXIST') throw error
+      existing = await readBoundFile(file, {
+        field: 'runtime store binding',
+        maximumBytes: RUNTIME_BINDING_BYTES,
+        exactBytes: RUNTIME_BINDING_BYTES,
+        secret: true
+      })
+    }
+  }
+  if (!timingSafeEqual(existing, expected)) {
+    runtimeFailure('BLIND_RUNTIME_STORE_IDENTITY_MISMATCH',
+      'store root is bound to another relay/store/durability/map/fence tuple')
+  }
+}
+
+function verifyDetached (input) {
+  if (input.signal && input.signal.aborted) return false
+  try {
+    return sodium.crypto_sign_verify_detached(input.signature, input.payload, input.publicKey)
+  } catch {
+    return false
+  }
+}
+
+function currentSigner (secretKey, publicKey) {
+  let closed = false
+  return Object.freeze({
+    async sign (input) {
+      if (closed || (input.signal && input.signal.aborted) ||
+          (input.domainId !== RESULT_SIGNATURE_DOMAIN_ID.HEALTH_RESULT &&
+            input.domainId !== RESULT_SIGNATURE_DOMAIN_ID.CELL_RECEIPT &&
+            input.domainId !== RESULT_SIGNATURE_DOMAIN_ID.BATCH_GET_RESULT) ||
+          !b4a.equals(input.publicKey, publicKey)) {
+        runtimeFailure('BLIND_RUNTIME_SIGNING_REFUSED', 'runtime signer refused an unbound signing request')
+      }
+      const signature = b4a.alloc(sodium.crypto_sign_BYTES)
+      sodium.crypto_sign_detached(signature, input.payload, secretKey)
+      return signature
+    },
+    async verify (input) {
+      return verifyDetached(input)
+    },
+    close () {
+      closed = true
+      secretKey.fill(0)
+    }
+  })
+}
+
+function describeResultVerifier () {
+  return Object.freeze({
+    async verify (input) {
+      if (input.signal && input.signal.aborted) return false
+      if (input.familyId !== FAMILY.DESCRIBE || !input.result || !input.result.relayPublicKey ||
+          !input.result.signature || input.result.signature.byteLength !== sodium.crypto_sign_BYTES ||
+          input.canonicalResultBytes.byteLength <= sodium.crypto_sign_BYTES) return false
+      if (input.operationId === OPERATION.DESCRIBE.GET &&
+          input.resultSignatureDomainId !== RESULT_SIGNATURE_DOMAIN_ID.DESCRIPTOR) return false
+      if (input.operationId === OPERATION.DESCRIBE.CHALLENGE &&
+          input.resultSignatureDomainId !== RESULT_SIGNATURE_DOMAIN_ID.HEALTH_RESULT) return false
+      if (input.operationId === OPERATION.DESCRIBE.ADMISSION_PARAMETERS &&
+          input.resultSignatureDomainId !== RESULT_SIGNATURE_DOMAIN_ID.ADMISSION_PARAMETERS) return false
+      const unsigned = input.canonicalResultBytes.subarray(0,
+        input.canonicalResultBytes.byteLength - sodium.crypto_sign_BYTES)
+      const trailing = input.canonicalResultBytes.subarray(unsigned.byteLength)
+      if (!b4a.equals(trailing, input.result.signature)) return false
+      let payload
+      try {
+        payload = resultSignaturePayload(input.resultSignatureDomainId, unsigned)
+      } catch {
+        return false
+      }
+      return sodium.crypto_sign_verify_detached(input.result.signature, payload, input.result.relayPublicKey)
+    }
+  })
+}
+
+function unavailableHook (method, label) {
+  return Object.freeze({
+    async [method] () {
+      runtimeFailure('INTERNAL', `${label} is deliberately unavailable in the signed DESCRIBE-only runtime`)
+    }
+  })
+}
+
+function cellHook (adapterHook, method, label) {
+  const unavailable = unavailableHook(method, label)
+  return Object.freeze({
+    async [method] (input) {
+      if (input && input.profile && input.profile.familyId === FAMILY.CELL) {
+        return adapterHook[method](input)
+      }
+      return unavailable[method](input)
+    }
+  })
+}
+
+function describeAndCellResultVerifier (cellAdapter) {
+  const describe = describeResultVerifier()
+  return Object.freeze({
+    async verify (input) {
+      if (input && input.familyId === FAMILY.DESCRIBE) return describe.verify(input)
+      if (input && input.familyId === FAMILY.CELL) return cellAdapter.resultVerifier.verify(input)
+      return false
+    }
+  })
+}
+
+function sameNumberSet (left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function assertRuntimeDescriptor (snapshot, bootstrap, config, cellRuntimeEnabled) {
+  const descriptor = snapshot.descriptor
+  const expectedOperationBits = cellRuntimeEnabled
+    ? DESCRIBE_AND_CELL_OPERATION_BITS
+    : DESCRIBE_OPERATION_BITS
+  if (descriptor.storeLifecycleState !== STORE_LIFECYCLE_STATE.ACTIVE ||
+      descriptor.enabledOperationBits !== expectedOperationBits) {
+    runtimeFailure('BLIND_RUNTIME_DESCRIPTOR_UNSUPPORTED',
+      `production runtime requires an ACTIVE descriptor with exact enabled operation bits 0x${expectedOperationBits.toString(16)}`)
+  }
+  if (descriptor.durability.profileId !== 1) {
+    runtimeFailure('BLIND_RUNTIME_DESCRIPTOR_UNSUPPORTED',
+      'durability profile 2 is unavailable until its external journal and witness coordinator are assembled')
+  }
+  if (!b4a.equals(descriptor.build.storeFormatHash, descriptor.durability.storeFormatHash)) {
+    runtimeFailure('BLIND_RUNTIME_STORE_FORMAT_MISMATCH',
+      'signed build and durability profiles name different store-format authorities')
+  }
+  if (descriptor.capacityBand !== 0) {
+    runtimeFailure('BLIND_RUNTIME_DESCRIPTOR_UNSUPPORTED',
+      'runtime must not attest an unmeasured nonzero capacity band')
+  }
+  const endpointIds = descriptor.endpoints.map(endpoint => endpoint.endpointId)
+  if (!sameNumberSet(endpointIds, bootstrap.endpointIds)) {
+    runtimeFailure('BLIND_RUNTIME_TOPOLOGY_MISMATCH',
+      'signed descriptor endpoints must equal the signed local launch endpoint set')
+  }
+  for (let index = 0; index < descriptor.endpoints.length; index++) {
+    const endpoint = descriptor.endpoints[index]
+    const support = config.endpointSupportBindings[index]
+    const expectedRoleBits = cellRuntimeEnabled
+      ? ENDPOINT_ROLE.DESCRIPTOR_DISCOVERY | ENDPOINT_ROLE.STORAGE | ENDPOINT_ROLE.QUOTA_REDEEMER
+      : ENDPOINT_ROLE.DESCRIPTOR_DISCOVERY
+    if (endpoint.roleBits !== expectedRoleBits ||
+        endpoint.transportId !== TRANSPORT_ID.HTTPS_DIRECT ||
+        support.transportSupportBit !== TRANSPORT_SUPPORT.DIRECT_HTTP) {
+      runtimeFailure('BLIND_RUNTIME_DESCRIPTOR_UNSUPPORTED',
+        'runtime endpoint roles and HTTPS_DIRECT/DIRECT_HTTP support must equal the assembled family surface')
+    }
+  }
+}
+
+function assertDescribeResponseFit (snapshot, descriptorBytes, parameterBytes) {
+  const descriptor = snapshot.descriptor
+  const healthBytes = encodeCanonical(blindHealthResultV1, {
+    version: 1,
+    relayPublicKey: descriptor.relayPublicKey,
+    storeId: descriptor.storeId,
+    descriptorSequence: descriptor.descriptorSequence,
+    descriptorHash: snapshot.hash,
+    endpointId: descriptor.endpoints[0].endpointId,
+    transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
+    durabilityContinuityHash: descriptor.durabilityContinuityHash,
+    durabilityProfileHash: descriptor.durabilityProfileHash,
+    clientNonce: b4a.alloc(32, 1),
+    readyRoleBits: ENDPOINT_ROLE.DESCRIPTOR_DISCOVERY,
+    readyOperationBits: DESCRIBE_OPERATION_BITS,
+    clockState: HEALTH_CLOCK_STATE.READY,
+    effectiveEpochFloor: descriptor.issuedEpoch,
+    integrityState: HEALTH_INTEGRITY_STATE.DEGRADED,
+    checkpointAgeBand: 0,
+    scrubAgeBand: 0,
+    rebalanceState: HEALTH_REBALANCE_STATE.FENCED,
+    capacityBand: 0,
+    challengeEpoch: descriptor.issuedEpoch,
+    signature: b4a.alloc(64)
+  })
+  const maximumBodyBytes = Math.max(healthBytes.byteLength,
+    ...descriptorBytes.map(bytes => bytes.byteLength), ...parameterBytes.map(bytes => bytes.byteLength))
+  if (descriptor.maxResponseBytes < maximumBodyBytes) {
+    runtimeFailure('BLIND_RUNTIME_DESCRIPTOR_UNSUPPORTED',
+      'signed maxResponseBytes cannot carry every configured DESCRIBE result')
+  }
+  const requiredOuterBytes = OUTER_ENVELOPE_HEADER_BYTES + DISPATCH_LIMITS.PREFIX_BYTES +
+    DISPATCH_LIMITS.HEADER_BYTES + maximumBodyBytes
+  for (const endpoint of descriptor.endpoints) {
+    const maximumOuterBytes = Object.entries(OUTER_CLASS).reduce((maximum, [id, bytes]) =>
+      (endpoint.envelopeClassBits & (1 << Number(id))) !== 0 ? Math.max(maximum, bytes) : maximum, 0)
+    if (maximumOuterBytes < requiredOuterBytes) {
+      runtimeFailure('BLIND_RUNTIME_DESCRIPTOR_UNSUPPORTED',
+        'endpoint envelope classes cannot carry every configured DESCRIBE result')
+    }
+  }
+}
+
+function assertDescriptorLaunchFloor (snapshot, config) {
+  if (snapshot.descriptorSequence !== config.expectedDescriptorSequence ||
+      !b4a.equals(snapshot.hash, config.expectedDescriptorHash)) {
+    runtimeFailure('BLIND_RUNTIME_DESCRIPTOR_FLOOR_MISMATCH',
+      'activated descriptor does not match the exact signed launch sequence/hash floor')
+  }
+}
+
+function contextAuthority (snapshot, supportByEndpoint, context) {
+  const endpoint = snapshot.descriptor.endpoints.find(entry => entry.endpointId === context.endpointId)
+  const supportBit = supportByEndpoint.get(context.endpointId)
+  if (!endpoint || context.transportId !== endpoint.transportId || context.transportSupportBit !== supportBit) {
+    runtimeFailure('TRANSPORT_UNSUPPORTED',
+      'private IPC context does not match its signed descriptor endpoint and explicit launch support bit')
+  }
+  return endpoint
+}
+
+function storageDependencySnapshot (storage, enabledOperationBits, readyRoleBits) {
+  return async input => {
+    const status = storage.status()
+    const hasFormatBlockers = status.blockers.length !== 0
+    return Object.freeze({
+      selfVerified: true,
+      descriptorSequence: input.descriptorSequence,
+      descriptorHash: b4a.from(input.descriptorHash),
+      endpointId: input.endpointId,
+      transportSupportBit: input.transportSupportBit,
+      fullStoreVerified: status.state !== 'READ_ONLY' && !hasFormatBlockers,
+      readyRoleBits,
+      readyOperationBits: enabledOperationBits,
+      clockState: status.state === 'CLOCK_UNSAFE' ? HEALTH_CLOCK_STATE.UNSAFE : HEALTH_CLOCK_STATE.READY,
+      effectiveEpochFloor: status.epochFloor,
+      integrityState: status.state === 'READ_ONLY'
+        ? HEALTH_INTEGRITY_STATE.FAILED
+        : hasFormatBlockers ? HEALTH_INTEGRITY_STATE.DEGRADED : HEALTH_INTEGRITY_STATE.VERIFIED,
+      checkpointAgeBand: 0,
+      scrubAgeBand: 0,
+      rebalanceState: status.blockers.includes('ONLINE_REBALANCE_UNIMPLEMENTED')
+        ? HEALTH_REBALANCE_STATE.FENCED
+        : HEALTH_REBALANCE_STATE.STABLE,
+      capacityBand: input.descriptor.capacityBand
+    })
+  }
+}
+
+function exactParameterHashes (snapshot, installed) {
+  const expected = snapshot.descriptor.admissionProfiles
+    .map(profile => b4a.toString(profile.parameterHash, 'hex')).sort()
+  const actual = installed.map(record => b4a.toString(record.hash, 'hex')).sort()
+  if (expected.length !== actual.length || expected.some((hash, index) => hash !== actual[index])) {
+    runtimeFailure('BLIND_RUNTIME_ADMISSION_MISMATCH',
+      'configured admission parameter files must equal the exact current signed descriptor profile set')
+  }
+}
+
+export async function assembleProductionBlindDaemon (options = {}) {
+  const bootstrap = options.bootstrap
+  if (!bootstrap || !Array.isArray(bootstrap.endpointIds) || !bootstrap.launchTopologyHash) {
+    throw new TypeError('validated daemon bootstrap configuration is required')
+  }
+  const releaseGate = options.releaseGate || assertProductionRuntimeReleaseReady
+  await releaseGate()
+  const cellRuntimeEnabled = options.enableCellRuntime === true
+  if (cellRuntimeEnabled && typeof options.resolveAdmissionAdapter !== 'function') {
+    runtimeFailure('BLIND_RUNTIME_ADMISSION_ADAPTER_REQUIRED',
+      'CELL runtime assembly requires an explicit admission adapter resolver')
+  }
+  const config = options.runtimeConfig || loadProductionRuntimeConfig(options.environment, bootstrap.endpointIds)
+  let secretKey
+  let signer
+  let storage
+  let readiness
+  let daemon
+  let runtime
+  let cellAdapter
+  try {
+    const descriptorBytes = await Promise.all(config.descriptorFiles.map((file, index) => readBoundFile(file, {
+      field: `descriptorFiles[${index}]`,
+      maximumBytes: 16 * 1024
+    })))
+    const descriptorState = new DescriptorState({ verifySignature: verifyDetached })
+    let descriptorSnapshot
+    for (const bytes of descriptorBytes) descriptorSnapshot = await descriptorState.activate(bytes)
+    assertDescriptorLaunchFloor(descriptorSnapshot, config)
+    assertRuntimeDescriptor(descriptorSnapshot, bootstrap, config, cellRuntimeEnabled)
+    const storeFormatAuthority = await loadBundledBlindStoreFormatAuthority({
+      expectedStoreFormatHash: descriptorSnapshot.descriptor.durability.storeFormatHash,
+      expectedFormatMajor: descriptorSnapshot.descriptor.durability.storeFormatMajor,
+      expectedFormatMinor: descriptorSnapshot.descriptor.durability.storeFormatMinor
+    })
+
+    secretKey = await readBoundFile(config.relaySecretKeyFile, {
+      field: 'relay secret key',
+      exactBytes: sodium.crypto_sign_SECRETKEYBYTES,
+      maximumBytes: sodium.crypto_sign_SECRETKEYBYTES,
+      secret: true
+    })
+    const derivedPublicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
+    sodium.crypto_sign_ed25519_sk_to_pk(derivedPublicKey, secretKey)
+    if (!b4a.equals(derivedPublicKey, descriptorSnapshot.descriptor.relayPublicKey)) {
+      runtimeFailure('BLIND_RUNTIME_SIGNING_KEY_MISMATCH',
+        'relay signing secret does not match the current signed descriptor relay key')
+    }
+    signer = currentSigner(secretKey, derivedPublicKey)
+
+    const admission = new AdmissionCoordinator({
+      descriptorState,
+      verifySignature: verifyDetached,
+      resolveAdapter: options.resolveAdmissionAdapter || (async () => null)
+    })
+    const parameterBytes = await Promise.all(config.admissionParameterFiles.map((file, index) => readBoundFile(file, {
+      field: `admissionParameterFiles[${index}]`,
+      maximumBytes: 1024 * 1024
+    })))
+    const installedParameters = []
+    for (const bytes of parameterBytes) installedParameters.push(await admission.installParameters(bytes))
+    exactParameterHashes(descriptorSnapshot, installedParameters)
+    if (!admission.descriptorParametersAvailable(descriptorSnapshot)) {
+      runtimeFailure('BLIND_RUNTIME_ADMISSION_MISMATCH', 'current signed admission parameters are unavailable')
+    }
+    assertDescribeResponseFit(descriptorSnapshot, descriptorBytes, parameterBytes)
+
+    const partitionKey = await readBoundFile(config.partitionKeyFile, {
+      field: 'store partition key', exactBytes: 32, maximumBytes: 32, secret: true
+    })
+    let ownerFenceTokenHash
+    try {
+      ownerFenceTokenHash = await readBoundFile(config.ownerFenceTokenHashFile, {
+        field: 'owner fence token hash', exactBytes: 32, maximumBytes: 32, secret: true
+      })
+      await verifyPrivateStoreRoot(config.storeRoot)
+      const binding = encodeRuntimeBinding(descriptorSnapshot.descriptor, config.mapGeneration,
+        ownerFenceTokenHash, partitionKey)
+      await bindStoreIdentity(config.storeRoot, binding)
+      storage = new BlindCellStorageEngine({
+        root: config.storeRoot,
+        relayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
+        storeId: descriptorSnapshot.descriptor.storeId,
+        durabilityProfileId: descriptorSnapshot.descriptor.durability.profileId,
+        durabilityProfileHash: descriptorSnapshot.descriptor.durabilityProfileHash,
+        partitionKey,
+        mapGeneration: config.mapGeneration,
+        ownerFenceTokenHash,
+        durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
+        storeFormatAuthority
+      })
+      await storage.open()
+    } finally {
+      partitionKey.fill(0)
+      if (ownerFenceTokenHash) ownerFenceTokenHash.fill(0)
+    }
+
+    const enabledOperationBits = cellRuntimeEnabled
+      ? DESCRIBE_AND_CELL_OPERATION_BITS
+      : DESCRIBE_OPERATION_BITS
+    const readyRoleBits = cellRuntimeEnabled
+      ? ENDPOINT_ROLE.DESCRIPTOR_DISCOVERY | ENDPOINT_ROLE.STORAGE | ENDPOINT_ROLE.QUOTA_REDEEMER
+      : ENDPOINT_ROLE.DESCRIPTOR_DISCOVERY
+    readiness = new ReadinessCoordinator({
+      descriptorState,
+      admission,
+      dependencySnapshot: storageDependencySnapshot(storage, enabledOperationBits, readyRoleBits),
+      signer
+    })
+    const budget = new ResourceBudget(config.resourceBudget)
+    if (cellRuntimeEnabled) {
+      cellAdapter = new BlindCellRuntimeAdapter({ storage, descriptorState, signer })
+    }
+    const coordinator = new BlindOperationCoordinator({
+      descriptorState,
+      admission,
+      readiness,
+      budget,
+      relationVerifier: cellRuntimeEnabled
+        ? cellHook(cellAdapter.relationVerifier, 'verify', 'non-CELL relation verifier')
+        : unavailableHook('verify', 'non-DESCRIBE relation verifier'),
+      capabilityVerifier: cellRuntimeEnabled
+        ? cellHook(cellAdapter.capabilityVerifier, 'verify', 'non-CELL capability verifier')
+        : unavailableHook('verify', 'non-DESCRIBE capability verifier'),
+      cheapStateVerifier: cellRuntimeEnabled
+        ? cellHook(cellAdapter.cheapStateVerifier, 'inspect', 'non-CELL state inspector')
+        : unavailableHook('inspect', 'non-DESCRIBE state inspector'),
+      terminalStateVerifier: cellRuntimeEnabled
+        ? cellHook(cellAdapter.terminalStateVerifier, 'check', 'non-CELL terminal-state verifier')
+        : unavailableHook('check', 'non-DESCRIBE terminal-state verifier'),
+      capacityGuard: cellRuntimeEnabled
+        ? cellHook(cellAdapter.capacityGuard, 'check', 'non-CELL capacity guard')
+        : unavailableHook('check', 'non-DESCRIBE capacity guard'),
+      operationExecutor: cellRuntimeEnabled
+        ? cellHook(cellAdapter.operationExecutor, 'execute', 'non-CELL operation executor')
+        : unavailableHook('execute', 'non-DESCRIBE operation executor'),
+      transactionCoordinator: cellRuntimeEnabled ? cellAdapter.transactionCoordinator : null,
+      resultVerifier: cellRuntimeEnabled ? describeAndCellResultVerifier(cellAdapter) : describeResultVerifier(),
+      authenticatedSessionVerifier: unavailableHook('verify', 'non-DESCRIBE authenticated session verifier')
+    })
+    const supportByEndpoint = new Map(config.endpointSupportBindings
+      .map(row => [row.endpointId, row.transportSupportBit]))
+    const readinessSnapshot = input => {
+      const supportBit = supportByEndpoint.get(input.endpointId)
+      if (!supportBit || !b4a.equals(input.launchTopologyHash, bootstrap.launchTopologyHash)) {
+        runtimeFailure('BLIND_RUNTIME_TOPOLOGY_MISMATCH', 'readiness request is outside the signed launch topology')
+      }
+      return readiness.serverSnapshot({
+        ...input,
+        transportSupportBit: supportBit
+      })
+    }
+    const dispatch = (frame, context) => {
+      contextAuthority(descriptorSnapshot, supportByEndpoint, context)
+      return coordinator.dispatch(frame, context)
+    }
+    const dispatchStagedPut = cellRuntimeEnabled
+      ? (staged, context) => {
+          contextAuthority(descriptorSnapshot, supportByEndpoint, context)
+          return coordinator.dispatchStagedCellPut(staged, context)
+        }
+      : null
+    const streamTransportProfileHashForEndpoint = cellRuntimeEnabled
+      ? input => b4a.from(contextAuthority(descriptorSnapshot, supportByEndpoint, input).transportProfileHash)
+      : null
+    daemon = new BlindDaemon({
+      ...bootstrap,
+      ...config.server,
+      dispatch,
+      dispatchStagedPut,
+      streamTransportProfileHashForEndpoint,
+      readinessSnapshot,
+      releaseGate: async () => {},
+      onError: options.onError
+    })
+
+    let started = false
+    let closed = false
+    let closePromise = null
+    const runtimeExclusions = cellRuntimeEnabled
+      ? Object.freeze([
+        ...PRODUCTION_RUNTIME_EXCLUSIONS.filter(value =>
+          value !== 'CELL_PUBLIC_EXECUTION_UNASSEMBLED' &&
+          value !== 'PRIVATE_CONTENT_STREAM_RUNTIME_UNASSEMBLED' &&
+          value !== 'ADMISSION_REDEMPTION_ADAPTER_UNASSEMBLED'),
+        ...BLIND_CELL_RUNTIME_BLOCKERS
+      ])
+      : PRODUCTION_RUNTIME_EXCLUSIONS
+    runtime = Object.freeze({
+      descriptorState,
+      admission,
+      readiness,
+      budget,
+      coordinator,
+      cellAdapter,
+      storage,
+      daemon,
+      exclusions: runtimeExclusions,
+      async start () {
+        if (closed) throw new Error('blind production runtime is closed')
+        if (!started) {
+          await daemon.start()
+          started = true
+        }
+        return runtime
+      },
+      close () {
+        if (closePromise) return closePromise
+        closed = true
+        readiness.close()
+        closePromise = (async () => {
+          let failure = null
+          try {
+            await daemon.close()
+          } catch (error) {
+            failure = error
+          }
+          try {
+            await storage.close()
+          } catch (error) {
+            failure = failure || error
+          } finally {
+            signer.close()
+          }
+          if (failure) throw failure
+        })()
+        return closePromise
+      },
+      status () {
+        return Object.freeze({
+          started,
+          closed,
+          descriptorSequence: descriptorSnapshot.descriptorSequence,
+          descriptorHash: b4a.from(descriptorSnapshot.hash),
+          enabledOperationBits,
+          exclusions: runtimeExclusions,
+          cell: cellAdapter == null ? null : cellAdapter.status(),
+          storage: storage.status()
+        })
+      }
+    })
+    return runtime
+  } catch (error) {
+    if (readiness) readiness.close()
+    if (daemon) await daemon.close().catch(() => {})
+    if (storage) await storage.close().catch(() => {})
+    if (signer) signer.close()
+    else if (secretKey) secretKey.fill(0)
+    throw error
+  }
+}

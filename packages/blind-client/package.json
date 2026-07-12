@@ -1,0 +1,60 @@
+{
+  "name": "@hiverelay/blind-client",
+  "version": "0.0.0-draft.1",
+  "description": "Application-agnostic client composition for the HiveRelay blind substrate",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "browser": {
+    "./crypto.js": "./crypto-browser.js"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./cells": "./cells.js",
+    "./core": "./core.js",
+    "./control": "./control.js",
+    "./browser-artifact": "./browser-artifact.js",
+    "./browser-artifacts/blind-client-control-v1.mjs": "./browser-artifacts/blind-client-control-v1.mjs",
+    "./browser-artifacts/blind-client-control-v1.manifest.cenc": "./browser-artifacts/blind-client-control-v1.manifest.cenc",
+    "./browser-artifacts/blind-client-control-v1.chromium-evidence.json": "./browser-artifacts/blind-client-control-v1.chromium-evidence.json",
+    "./browser-artifacts/blind-client-control-v1.cross-host-evidence.json": "./browser-artifacts/blind-client-control-v1.cross-host-evidence.json",
+    "./bootstrap-http": "./bootstrap-http.js",
+    "./describe": "./describe.js",
+    "./capabilities": "./capabilities.js",
+    "./requests": "./requests.js",
+    "./results": "./results.js",
+    "./selection": "./selection.js",
+    "./wire": "./wire.js",
+    "./direct-http": "./direct-http.js",
+    "./forward": "./forward.js",
+    "./inbox": "./inbox.js",
+    "./intent": "./intent.js",
+    "./qualification": "./qualification.js",
+    "./runtime/node": "./runtime/node.js",
+    "./runtime/bare": "./runtime/bare.js",
+    "./runtime/browser": "./runtime/browser.js"
+  },
+  "files": [
+    "*.js",
+    "runtime/",
+    "browser-artifacts/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "brittle test/*.test.js",
+    "test:bare": "PATH=\"$PWD/../../node_modules/bare/bin:$PATH\" brittle-bare test/bare.runtime.js",
+    "lint": "XDG_CACHE_HOME=/private/tmp/hiverelay-standard-cache standard --no-cache ."
+  },
+  "dependencies": {
+    "@hiverelay/blind-protocol": "0.0.0-draft.1",
+    "b4a": "^1.6.6",
+    "bare-crypto": "^1.15.3",
+    "sodium-javascript": "~0.8.0",
+    "sodium-universal": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,33 @@
+{
+  "name": "@hiverelay/blind-ipc",
+  "version": "0.0.0-draft.1",
+  "description": "Final private length-bounded IPC authority shared by the HiveRelay blind edge and daemon",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "framing-vectors.js",
+    "private-hashes.js",
+    "policy.js",
+    "registry.js",
+    "stream.js",
+    "*.cenc",
+    "hiverelay-blind-private-ipc-authority-v1.json",
+    "vectors/",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@hiverelay/blind-protocol": "0.0.0-draft.1",
+    "b4a": "^1.6.6",
+    "compact-encoding": "^2.15.0",
+    "sodium-universal": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "Apache-2.0"
+}

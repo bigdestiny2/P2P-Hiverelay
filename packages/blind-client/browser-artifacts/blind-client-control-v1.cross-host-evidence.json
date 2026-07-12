@@ -1,0 +1,22 @@
+{
+  "schema": "HiveRelayBlindClientBrowserArtifactCrossHostEvidenceV1",
+  "version": 1,
+  "evidenceClass": "clean-linux-container",
+  "artifactPath": "browser-artifacts/blind-client-control-v1.mjs",
+  "artifactLength": 244795,
+  "artifactHash": "30bcbde57251dd47018b980eaf3dba69de3afcb44ccf6930f7bddd89b708fba3",
+  "manifestHash": "a1915b2e2e05a08f08a3f6915ab3d093dfb7671b2e454286dc7bfddb46a12834",
+  "sourceClosureHash": "1ee52e78ef044d375707ff2bc9596755785ccaff74d69833ecf6dc0d6a53dac4",
+  "platform": "linux",
+  "architecture": "arm64",
+  "containerImageId": "sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4",
+  "node": "v22.23.1",
+  "toolchain": "esbuild@0.28.1",
+  "checks": [
+    "CLEAN_LINUX_DEPENDENCY_INSTALL",
+    "FROZEN_GENERATOR_CHECK",
+    "ARTIFACT_BYTE_EQUALITY",
+    "MANIFEST_BYTE_EQUALITY"
+  ],
+  "passed": true
+}
