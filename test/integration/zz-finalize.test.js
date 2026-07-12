@@ -13,9 +13,10 @@
  *      if the loop drains naturally, the timer is collected and we
  *      exit normally. If something leaks, the timer fires.
  *
- * Filename `zz-finalize` ensures it runs last alphabetically — brittle's
- * glob expansion respects sort order, and every other integration test
- * file starts with a letter before 'z'.
+ * `scripts/run-brittle-suite.mjs` moves every `zz-finalize` file behind all
+ * ordinary tests; relying on filesystem/glob order can terminate a live suite.
+ * The forced exit preserves `process.exitCode`, so an earlier failure cannot
+ * be converted into a successful run.
  *
  * If this guard ever stops firing, that means whatever leak this is
  * masking has been fixed and this file can be removed.
@@ -24,6 +25,6 @@
 import { test } from 'brittle'
 
 test('integration suite: schedule post-suite force-exit', async (t) => {
-  setTimeout(() => process.exit(0), 5000).unref()
+  setTimeout(() => process.exit(process.exitCode || 0), 5000).unref()
   t.pass('force-exit timer armed (5s, .unref())')
 })
