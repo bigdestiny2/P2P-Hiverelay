@@ -1,0 +1,40 @@
+{
+  "schema": "hiverelay-public-gateway-operator-contract-v1",
+  "deploymentProfile": "public-t1-gateway",
+  "relay": "utah",
+  "channel": "canary",
+  "operatorId": "operator-a",
+  "registrableDomain": "operator.example",
+  "apiHostname": "relay-api.operator.example",
+  "suffix": "hive-canary.operator.example",
+  "appKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "addressFamilyPolicy": "dual-stack",
+  "expectedAddresses": [
+    "<globally-routable-ipv4>",
+    "<globally-routable-ipv6>"
+  ],
+  "expectedConnectAddress": "127.0.0.1",
+  "certificateFingerprint256": "<colon-separated-leaf-certificate-sha256>",
+  "certificateSpkiSha256": "<lowercase-leaf-spki-sha256>",
+  "publicSuffixReady": false,
+  "finiteProductionPolicy": {
+    "schema": "hiverelay-public-gateway-finite-policy-v1",
+    "maxResponseBytes": 67108864,
+    "maxTransformBytes": 4194304,
+    "oversizedFullOrHeadStatus": 413,
+    "oversizedRangeStatus": 416,
+    "unsupportedRangeStatus": 416,
+    "multiRangeStatus": 416,
+    "unsupportedProofAcceptStatus": 406,
+    "egressBytesPerClientAppWindow": 268435456,
+    "egressWindowMs": 60000,
+    "maxResponseLifetimeMs": 900000
+  },
+  "release": {
+    "target": "vX.Y.Z",
+    "expectedPath": "/index.html",
+    "expectedContentSha256": "<publisher-verified-content-sha256>",
+    "expectedDriveVersion": "7",
+    "expectedNginxSha256": "<complete-active-nginx-t-sha256>"
+  }
+}

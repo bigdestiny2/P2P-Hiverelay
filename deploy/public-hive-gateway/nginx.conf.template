@@ -1,0 +1,90 @@
+# Public HTTPS Hive app edge. Render with `npm run gateway:preflight --`
+# plus `--nginx-template ... --nginx-output ...`, then install the result at
+# `/etc/nginx/conf.d/hiverelay-public-apps.conf` as documented in the runbook.
+#
+# Include the limit zones once in nginx's `http {}` context. Phase 1 disables
+# per-request app logging; bounded aggregate metrics and signed probes are the
+# public-edge observability surface.
+limit_req_zone $binary_remote_addr zone=hive_app_rate:10m rate=20r/s;
+limit_conn_zone $binary_remote_addr zone=hive_app_conn:10m;
+
+# This must be the TLS default for the public app listener. It prevents an
+# unknown/malformed SNI value from falling through to an API or other vhost.
+server {
+  listen 443 ssl default_server;
+  listen [::]:443 ssl default_server;
+  server_name _;
+
+  ssl_certificate __HIVE_TLS_CERTIFICATE__;
+  ssl_certificate_key __HIVE_TLS_CERTIFICATE_KEY__;
+  ssl_protocols TLSv1.2 TLSv1.3;
+  ssl_session_tickets off;
+
+  gzip off;
+  gunzip off;
+  access_log off;
+  error_log stderr crit;
+  return 421;
+}
+
+server {
+  listen 443 ssl;
+  listen [::]:443 ssl;
+
+  # One canonical z-base-32 app-key label. No base host, extra labels, or
+  # unrelated virtual hosts can fall through to the compatibility gateway.
+  server_name "~^(?<hive_app_key>[ybndrfg8ejkmcpqxot1uwisza345h769]{52})\.__HIVE_APP_HOST_SUFFIX_REGEX__$";
+
+  ssl_certificate __HIVE_TLS_CERTIFICATE__;
+  ssl_certificate_key __HIVE_TLS_CERTIFICATE_KEY__;
+  ssl_protocols TLSv1.2 TLSv1.3;
+  ssl_session_tickets off;
+
+  access_log off;
+  error_log stderr crit;
+  server_tokens off;
+
+  # The first canary is an exact-byte, no-shared-cache transport. Compression,
+  # cookie injection, request bodies, and automatic upstream failover are off.
+  gzip off;
+  gunzip off;
+  proxy_cache off;
+  proxy_hide_header Set-Cookie;
+  client_max_body_size 1k;
+  limit_req zone=hive_app_rate burst=40 nodelay;
+  limit_conn hive_app_conn 16;
+  limit_req_status 429;
+  limit_conn_status 429;
+
+  if ($ssl_server_name != $host) { return 421; }
+
+  location / {
+    limit_except GET { deny all; }
+
+    proxy_pass http://127.0.0.1:__HIVE_GATEWAY_PORT__;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Accept-Encoding "";
+    proxy_set_header Host $host;
+
+    # Treat forwarding headers from the public request as hostile input. The
+    # edge overwrites client IP and attests the SNI it actually terminated.
+    proxy_set_header Forwarded "";
+    proxy_set_header X-Forwarded-Host "";
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Hive-Forwarded-SNI $ssl_server_name;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+
+    proxy_connect_timeout 3s;
+    proxy_send_timeout 65s;
+    proxy_read_timeout 65s;
+    proxy_next_upstream off;
+    proxy_buffering off;
+    proxy_request_buffering off;
+  }
+
+  add_header Strict-Transport-Security "max-age=31536000" always;
+}
