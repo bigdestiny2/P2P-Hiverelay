@@ -11,10 +11,12 @@ function masterDefined (name) {
 
 export const SCHEMA_METADATA_OVERRIDES = Object.freeze([
   schema('BlindReceiptV1', [
-    ['version', 'u8=1'], ['relayBinding', 'RelayResultBindingV1'], ['storageSlot', bytes32],
-    ['allocationEpoch', 'u32be'], ['sizeClass', 'u8[1..5]'], ['leaseEpoch', 'u32be'],
-    ['stateRevision', 'u64be'], ['cellBlobHash', bytes32], ['result', 'u8[1..2]'],
-    ['requestNonce', bytes32], ['requestCommitment', bytes32], ['signature', bytes64]
+    ['version', 'u8=1'], ['protocol', 'exact-ascii(hiverelay-blind-cell-v1)'],
+    ['relayBinding', 'RelayResultBindingV1'], ['slotCommitment', bytes32],
+    ['cellBlobHash', bytes32], ['allocationCommitment', bytes32], ['requestCommitment', bytes32],
+    ['sizeClass', 'u8[1..5]'], ['allocationEpoch', 'u32be'], ['leaseClass', 'u8[0..4]'],
+    ['leaseEpoch', 'u32be'], ['stateRevision', 'u64be'], ['receiptEpoch', 'u32be'],
+    ['requestNonce', bytes32], ['result', 'u8[1..4]'], ['signature', bytes64]
   ]),
   schema('BatchGetResultV1', [
     ['version', 'u8=1'], ['relayBinding', 'RelayResultBindingV1'], ['requestNonce', bytes32],
@@ -22,14 +24,16 @@ export const SCHEMA_METADATA_OVERRIDES = Object.freeze([
     ['entriesCommitment', bytes32], ['signature', bytes64]
   ]),
   schema('InboxReceiptV1', [
-    ['version', 'u8=1'], ['relayBinding', 'RelayResultBindingV1'], ['physicalTopic', bytes32],
-    ['leaseEpoch', 'u32be'], ['stateRevision', 'u64be'], ['policyRevision', 'u64be'],
-    ['result', 'u8[1..2]'], ['requestNonce', bytes32], ['requestCommitment', bytes32], ['signature', bytes64]
+    ['version', 'u8=1'], ['relayBinding', 'RelayResultBindingV1'], ['topicCommitment', bytes32],
+    ['stateRevision', 'u64be'], ['leaseClass', 'u8[0..4]'], ['leaseEpoch', 'u32be'],
+    ['requestNonce', bytes32], ['requestCommitment', bytes32], ['result', 'u8[1..3]'],
+    ['signature', bytes64]
   ]),
   schema('InboxAppendAckV1', [
-    ['version', 'u8=1'], ['relayBinding', 'RelayResultBindingV1'], ['physicalTopic', bytes32],
-    ['frameHash', bytes32], ['appendRevision', 'u64be'], ['result', 'u8[1..2]'],
-    ['requestNonce', bytes32], ['requestCommitment', bytes32], ['signature', bytes64]
+    ['version', 'u8=1'], ['relayBinding', 'RelayResultBindingV1'], ['topicCommitment', bytes32],
+    ['frameHash', bytes32], ['appendRevision', 'u64be'], ['storedAtEpoch', 'u32be'],
+    ['expiresAtEpoch', 'u32be'], ['requestNonce', bytes32], ['requestCommitment', bytes32],
+    ['result', 'u8=1'], ['signature', bytes64]
   ]),
   schema('InboxReadResultV1', [
     ['version', 'u8=1'], ['relayBinding', 'RelayResultBindingV1'], ['requestNonce', bytes32],
@@ -45,17 +49,20 @@ export const SCHEMA_METADATA_OVERRIDES = Object.freeze([
   schema('CoreOpenReplicationResultV1', [
     ['version', 'u8=1'], ['relayBinding', 'RelayResultBindingV1'], ['wireProfileHash', bytes32],
     ['sessionClass', 'u8[1..3]'], ['controlChannelId', 'u64be-nonzero'], ['parentChannelBinding', bytes32],
-    ['childChannelBinding', bytes32], ['maxSessionBytes', 'u64be[class-tuple]'],
+    ['streamId', 'u64be-nonzero'], ['maxSessionBytes', 'u64be[class-tuple]'],
     ['idleMillis', 'u32be[class-tuple]'], ['lifetimeMillis', 'u32be[class-tuple]'],
-    ['requestNonce', bytes32], ['requestCommitment', bytes32], ['signature', bytes64]
+    ['openedAtEpoch', 'u32be'], ['requestNonce', bytes32],
+    ['requestCommitment', bytes32], ['signature', bytes64]
   ]),
   schema('BlindForwardOpenResultV1', [
-    ['version', 'u8=1'], ['relayBinding', 'RelayResultBindingV1'], ['streamId', 'u64be-nonzero'],
-    ['circuitNonce', bytes32], ['selectedRouteId', 'optional(fixed16)'], ['wireClass', 'u8[1..3]'],
-    ['circuitClass', 'u8[1..3]'], ['grantedInitialWindow', 'u32be[class-tuple]'],
+    ['version', 'u8=1'], ['relayBinding', 'RelayResultBindingV1'], ['routeId', 'fixed16'],
+    ['nextDescriptorSequence', 'u64be'], ['nextDescriptorHash', bytes32], ['circuitNonce', bytes32],
+    ['grantedWireClass', 'u8[1..3]'], ['circuitClass', 'u8[1..3]'], ['streamId', 'u64be-nonzero'],
+    ['grantedInitialWindow', 'u32be[class-tuple]'],
     ['maxDataBytes', 'u32be[wire-class]'], ['maxCircuitBytes', 'u64be[class-tuple]'],
     ['idleMillis', 'u32be[class-tuple]'], ['lifetimeMillis', 'u32be[class-tuple]'],
-    ['openedAtEpoch', 'u32be'], ['requestNonce', bytes32], ['requestCommitment', bytes32], ['signature', bytes64]
+    ['openedAtEpoch', 'u32be'], ['requestCommitment', bytes32],
+    ['nextHopAccept', 'BlindForwardHopAcceptV1'], ['signature', bytes64]
   ]),
   schema('BlindForwardHopAcceptV1', [
     ['version', 'u8=1'], ['previousRelayKey', bytes32], ['previousDescriptorSequence', 'u64be'],

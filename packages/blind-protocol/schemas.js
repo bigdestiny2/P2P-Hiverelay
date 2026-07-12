@@ -180,7 +180,7 @@ function assertNonzeroBytes (value, name) {
 }
 
 function cappedEncoding (encoding, maximum, name) {
-  return {
+  const capped = {
     preencode (state, value) {
       const start = state.end
       encoding.preencode(state, value)
@@ -196,6 +196,17 @@ function cappedEncoding (encoding, maximum, name) {
       return value
     }
   }
+  if (Array.isArray(encoding.schemaFields)) {
+    Object.defineProperties(capped, {
+      schemaName: {
+        value: encoding.schemaName || name
+      },
+      schemaFields: {
+        value: encoding.schemaFields
+      }
+    })
+  }
+  return capped
 }
 
 export const admissionCostRuleV1 = struct([

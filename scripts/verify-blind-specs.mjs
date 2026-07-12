@@ -1,7 +1,11 @@
 import fs from 'fs'
 import path from 'path'
 import process from 'process'
-import { ABI_STATUS, FAMILY_ROUTES } from '@hiverelay/blind-protocol'
+import {
+  ABI_STATUS,
+  EXECUTABLE_SCHEMA_FIELD_STATUS,
+  FAMILY_ROUTES
+} from '@hiverelay/blind-protocol'
 import { PRIVATE_IPC_STATUS } from '@hiverelay/blind-ipc'
 
 const root = process.cwd()
@@ -102,8 +106,11 @@ requireText(privateIpc, 'does not prove the production daemon storage engines', 
 if (!ABI_STATUS.releaseReady) {
   throw new Error(`blind public WIRE authority gate failed: ${ABI_STATUS.wireMissingSchemaNames.length} schemas remain`)
 }
+if (!EXECUTABLE_SCHEMA_FIELD_STATUS.complete) {
+  throw new Error(`blind executable schema field metadata drifted: ${EXECUTABLE_SCHEMA_FIELD_STATUS.mismatches.map(row => row.schemaName).join(',')}`)
+}
 if (!PRIVATE_IPC_STATUS.releaseReady) {
   throw new Error(`blind private IPC authority gate failed: ${PRIVATE_IPC_STATUS.releaseBlockers.length} blockers remain`)
 }
 
-process.stdout.write(`blind specs verified; public WIRE (${ABI_STATUS.wireRequiredSchemaNames.length} schemas) and private IPC (${PRIVATE_IPC_STATUS.schemaCount} schemas) authorities are final\n`)
+process.stdout.write(`blind draft candidates are internally consistent across ${ABI_STATUS.wireRequiredSchemaNames.length} public WIRE and ${PRIVATE_IPC_STATUS.schemaCount} private IPC schemas; this does not authorize freeze or release\n`)

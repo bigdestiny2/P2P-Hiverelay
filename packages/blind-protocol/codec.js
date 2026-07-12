@@ -456,7 +456,7 @@ export function arrayOf (encoding, minimum, maximum, name = 'array') {
 
 export function struct (fields, options = {}) {
   if (!Array.isArray(fields) || fields.length === 0) throw new TypeError('struct requires fields')
-  return {
+  const encoding = {
     preencode (state, value) {
       if (!value || typeof value !== 'object') fail(`${options.name || 'struct'} must be an object`)
       for (const [name, encoding] of fields) encoding.preencode(state, value[name], value)
@@ -473,6 +473,15 @@ export function struct (fields, options = {}) {
       return value
     }
   }
+  Object.defineProperties(encoding, {
+    schemaName: {
+      value: options.name || null
+    },
+    schemaFields: {
+      value: Object.freeze(fields.map(([name]) => name))
+    }
+  })
+  return encoding
 }
 
 export function constant (encoding, expected, name) {
