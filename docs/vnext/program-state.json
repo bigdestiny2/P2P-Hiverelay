@@ -46,58 +46,121 @@
   "decisions": [
     {
       "id": "D-1",
+      "owner": "product-owner",
+      "deadline": null,
       "status": "pending-owner",
       "question": "Ship an honestly labelled direct G2-S invitation canary before advanced blind profiles?",
       "recommendation": "approve-direct-g2s-canary",
+      "recommendationRationale": "A bounded invitation canary yields real workload evidence without borrowing OHTTP, CORE, FORWARD, or G3 claims.",
+      "affectedProfiles": ["direct-blind-g2s"],
+      "blocks": ["T09", "direct-blind-g2s"],
+      "supersededAssumptions": [
+        "The first blind canary must wait for every transport and storage family."
+      ],
       "selected": null,
+      "rationale": null,
       "evidence": []
     },
     {
       "id": "D-2",
+      "owner": "product-owner",
+      "deadline": null,
       "status": "pending-owner",
       "question": "Which independently controlled operator supplies OHTTP ingress?",
       "recommendation": "require-independent-ingress-operator",
+      "recommendationRationale": "OHTTP mechanics under one operator do not establish source separation or a non-collusion boundary.",
+      "affectedProfiles": ["split-web-ohttp-v1"],
+      "blocks": ["split-web-ohttp-v1", "G2-W", "G4-T"],
+      "supersededAssumptions": [
+        "Running ingress and storage as separate processes under one operator is independent operation."
+      ],
       "selected": null,
+      "rationale": null,
       "evidence": []
     },
     {
       "id": "D-3",
+      "owner": "product-owner",
+      "deadline": null,
       "status": "pending-owner",
       "question": "Who owns and funds G3 repair, cadence, offline-writer behavior, and repair-hint authenticity?",
       "recommendation": "defer-g3-until-repair-contract",
+      "recommendationRationale": "Randomized cells are not a durable G3 product until repair responsibility, placement, renewal cadence, and incentives are operationally owned.",
+      "affectedProfiles": ["g3-randomized-cells"],
+      "blocks": ["g3-randomized-cells", "V-8"],
+      "supersededAssumptions": [
+        "Randomized cell names alone make renewal and placement unlinkable."
+      ],
       "selected": null,
+      "rationale": null,
       "evidence": []
     },
     {
       "id": "D-4",
+      "owner": "product-owner-legal",
+      "deadline": null,
       "status": "pending-owner-legal",
       "question": "What operator liability, takedown, retention, and acknowledgement posture is approved?",
       "recommendation": "require-jurisdiction-aware-operator-policy",
+      "recommendationRationale": "Third-party operators need an explicit abuse, locator-report, retention, acknowledgement, and jurisdiction contract before recruitment.",
+      "affectedProfiles": ["direct-blind-g2s", "g3-randomized-cells", "split-web-ohttp-v1"],
+      "blocks": ["third-party-operator-recruitment", "PG-7"],
+      "supersededAssumptions": [
+        "Opaque payload storage removes operator policy and legal responsibilities."
+      ],
       "selected": null,
+      "rationale": null,
       "evidence": []
     },
     {
       "id": "D-5",
+      "owner": "product-owner",
+      "deadline": null,
       "status": "pending-owner",
       "question": "Keep the HTTPS gateway as the separately named public-t1-gateway product?",
       "recommendation": "keep-separate-t1-product",
+      "recommendationRationale": "Public exact-byte HTTPS distribution is valuable, but its operator-visible access path must not inherit blind-storage privacy claims.",
+      "affectedProfiles": ["public-t1-gateway"],
+      "blocks": ["T05-public-positioning", "T18-gateway-collateral"],
+      "supersededAssumptions": [
+        "Every HiveRelay delivery surface belongs to one progressively stronger privacy product."
+      ],
       "selected": null,
+      "rationale": null,
       "evidence": []
     },
     {
       "id": "D-6",
+      "owner": "product-owner",
+      "deadline": null,
       "status": "pending-owner",
       "question": "Retain K_partition only with measured benefit and a tested recovery contract, or remove it?",
       "recommendation": "remove-unless-measured-benefit",
+      "recommendationRationale": "An unrecoverable partition secret adds operational failure risk unless measured cross-relay privacy benefit exceeds the backup and rotation burden.",
+      "affectedProfiles": ["direct-blind-g2s", "g3-randomized-cells", "split-web-ohttp-v1"],
+      "blocks": ["PG-2", "specHash", "store-format-freeze"],
+      "supersededAssumptions": [
+        "A private keyed bucket map is automatically worth making store recovery depend on another secret."
+      ],
       "selected": null,
+      "rationale": null,
       "evidence": []
     },
     {
       "id": "D-7",
+      "owner": "product-owner",
+      "deadline": null,
       "status": "pending-owner",
       "question": "Acknowledge that rollback after the first blind-only write is dual-read only, never legacy-only?",
       "recommendation": "approve-dual-read-rollback-floor",
+      "recommendationRationale": "A legacy-only rollback after blind-only writes would hide or strand accepted state and is therefore not a valid recovery path.",
+      "affectedProfiles": ["direct-blind-g2s", "g3-randomized-cells", "split-web-ohttp-v1"],
+      "blocks": ["PG-2", "T09-migration-runbook", "specHash"],
+      "supersededAssumptions": [
+        "The legacy-only binary remains a safe rollback target after blind-only writes begin."
+      ],
       "selected": null,
+      "rationale": null,
       "evidence": []
     }
   ],

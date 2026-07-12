@@ -19,13 +19,38 @@ test('vNext program state rejects recommendation-as-authorization drift', (t) =>
   t.exception(() => validateVnextProgramState(state), /pending decision D-1 cannot encode a selection/)
 })
 
+test('vNext program state keeps owner, deadline, rationale, and affected boundaries explicit', (t) => {
+  const unsafeOwner = structuredClone(canonical)
+  unsafeOwner.decisions[0].owner = '../anyone'
+  t.exception(() => validateVnextProgramState(unsafeOwner), /decision D-1 owner is invalid/)
+
+  const badDeadline = structuredClone(canonical)
+  badDeadline.decisions[0].deadline = '2026-02-30'
+  t.exception(() => validateVnextProgramState(badDeadline), /decision D-1 deadline is invalid/)
+
+  const resolvedWithoutDeadline = structuredClone(canonical)
+  Object.assign(resolvedWithoutDeadline.decisions[0], {
+    status: 'approved',
+    selected: 'approve-direct-g2s-canary',
+    rationale: 'The owner accepted the bounded G2-S invitation canary and its disclosed residuals.',
+    evidence: ['decisions/D-1.signed.json']
+  })
+  t.exception(() => validateVnextProgramState(resolvedWithoutDeadline), /requires its decision deadline/)
+
+  const missingBoundary = structuredClone(canonical)
+  missingBoundary.decisions[0].affectedProfiles = []
+  t.exception(() => validateVnextProgramState(missingBoundary), /affectedProfiles are invalid/)
+})
+
 test('vNext program state rejects evidence-free completion and promotion', (t) => {
   const gate = structuredClone(canonical)
   gate.gates[0].status = 'passed'
+  gate.gates[0].evidence = []
   t.exception(() => validateVnextProgramState(gate), /passed gate PG-0 requires evidence/)
 
   const track = structuredClone(canonical)
   track.tracks[0].status = 'completed'
+  track.tracks[0].handoffs = []
   t.exception(() => validateVnextProgramState(track), /completed track T00 requires a handoff/)
 })
 

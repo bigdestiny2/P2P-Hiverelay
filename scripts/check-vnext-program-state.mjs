@@ -88,18 +88,39 @@ function validateProfiles (rows) {
 function validateDecisions (rows) {
   exactIdSet(rows, DECISIONS, 'decisions')
   for (const row of rows) {
-    exactKeys(row, ['id', 'status', 'question', 'recommendation', 'selected', 'evidence'], `decision ${row.id}`)
+    exactKeys(row, [
+      'id', 'owner', 'deadline', 'status', 'question', 'recommendation',
+      'recommendationRationale', 'affectedProfiles', 'blocks',
+      'supersededAssumptions', 'selected', 'rationale', 'evidence'
+    ], `decision ${row.id}`)
     if (!['pending-owner', 'pending-owner-legal', 'approved', 'rejected', 'deferred'].includes(row.status)) {
       throw new Error(`decision ${row.id} status is invalid`)
     }
+    if (!SAFE_TOKEN.test(row.owner || '')) throw new Error(`decision ${row.id} owner is invalid`)
+    if (row.deadline !== null && !isCanonicalDate(row.deadline)) throw new Error(`decision ${row.id} deadline is invalid`)
     boundedString(row.question, `decision ${row.id} question`, 16, 512)
     boundedString(row.recommendation, `decision ${row.id} recommendation`, 3, 128)
+    boundedString(row.recommendationRationale, `decision ${row.id} recommendation rationale`, 16, 512)
+    uniqueStrings(row.affectedProfiles, `decision ${row.id} affectedProfiles`)
+    if (row.affectedProfiles.length === 0 || row.affectedProfiles.some(id => !PROFILES.includes(id))) {
+      throw new Error(`decision ${row.id} affectedProfiles are invalid`)
+    }
+    safeEvidence(row.blocks, `decision ${row.id} blocks`)
+    if (row.blocks.length === 0) throw new Error(`decision ${row.id} must name a blocked boundary`)
+    uniqueStrings(row.supersededAssumptions, `decision ${row.id} supersededAssumptions`)
+    if (row.supersededAssumptions.length === 0) throw new Error(`decision ${row.id} must name a superseded assumption`)
+    for (const assumption of row.supersededAssumptions) {
+      boundedString(assumption, `decision ${row.id} superseded assumption`, 8, 512)
+    }
     safeEvidence(row.evidence, `decision ${row.id} evidence`)
     const pending = row.status.startsWith('pending-')
     if (pending && row.selected !== null) throw new Error(`pending decision ${row.id} cannot encode a selection`)
+    if (pending && row.rationale !== null) throw new Error(`pending decision ${row.id} cannot encode a rationale`)
+    if (!pending && row.deadline === null) throw new Error(`resolved decision ${row.id} requires its decision deadline`)
     if (!pending && (!SAFE_TOKEN.test(row.selected || '') || row.evidence.length === 0)) {
       throw new Error(`resolved decision ${row.id} requires a selected option and evidence`)
     }
+    if (!pending) boundedString(row.rationale, `decision ${row.id} rationale`, 16, 1024)
   }
 }
 
@@ -179,4 +200,10 @@ function hasControlChars (value) {
     const code = character.charCodeAt(0)
     return code <= 31 || code === 127
   })
+}
+
+function isCanonicalDate (value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
 }
