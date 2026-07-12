@@ -18,6 +18,7 @@
     "audit:ecosystem-consumers:release": "node scripts/audit-ecosystem-consumers.mjs --check --dependency-mode npm-latest --consumer-scope release",
     "audit:ecosystem-consumers:local": "node scripts/audit-ecosystem-consumers.mjs --check --dependency-mode local",
     "audit:owned-diff": "node scripts/check-audit-owned-diff.mjs",
+    "vnext:check-program": "node scripts/check-vnext-program-state.mjs",
     "bench:outboxlog": "node scripts/bench-outboxlog.mjs",
     "bench:outboxlog:release": "node scripts/bench-outboxlog.mjs --assert",
     "audit:relaykernel-gateway": "node scripts/check-relaykernel-gateway-compat.mjs",

@@ -1,0 +1,144 @@
+{
+  "schema": "hiverelay-vnext-program-state-v1",
+  "releaseTrain": {
+    "candidatePattern": "v0.25.0-rc.N",
+    "artifactBaseline": {
+      "tag": "v0.24.3",
+      "commit": "d0190577c5eccd10b7e4ae84baf2dc7b0f2b1c80"
+    },
+    "integrationBase": {
+      "branch": "feat/vnext-integration",
+      "commit": "999b0afd7584bb727cef6e6a88a054f11513927a"
+    }
+  },
+  "profiles": [
+    {
+      "id": "public-t1-gateway",
+      "status": "hardening",
+      "claim": "Public exact-byte HTTPS distribution; no blind privacy claim",
+      "requiredGates": ["PG-0", "PG-1", "PG-3", "PG-5", "PG-6"]
+    },
+    {
+      "id": "direct-blind-g2s",
+      "status": "spec-only",
+      "claim": "Direct blind storage with disclosed stable access metadata",
+      "requiredGates": ["PG-0", "PG-1", "PG-2", "PG-3", "PG-4", "PG-5", "PG-6"]
+    },
+    {
+      "id": "g3-randomized-cells",
+      "status": "spec-only",
+      "claim": "At-rest unlinkability only after repair, placement, renewal-correlation, and classifier evidence",
+      "requiredGates": ["PG-0", "PG-1", "PG-2", "PG-3", "PG-4", "PG-5", "PG-6"]
+    },
+    {
+      "id": "split-web-ohttp-v1",
+      "status": "spec-only",
+      "claim": "Source-separated browser ingress and storage only with independent operators",
+      "requiredGates": ["PG-0", "PG-1", "PG-2", "PG-3", "PG-4", "PG-5", "PG-6"]
+    },
+    {
+      "id": "browser-hc11-cs7",
+      "status": "discovery-only",
+      "claim": "Browser Hypercore 11/Corestore 7 storage after IndexedDB conformance and real-browser evidence",
+      "requiredGates": ["PG-0", "PG-3", "PG-4", "PG-5", "PG-6"]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "D-1",
+      "status": "pending-owner",
+      "question": "Ship an honestly labelled direct G2-S invitation canary before advanced blind profiles?",
+      "recommendation": "approve-direct-g2s-canary",
+      "selected": null,
+      "evidence": []
+    },
+    {
+      "id": "D-2",
+      "status": "pending-owner",
+      "question": "Which independently controlled operator supplies OHTTP ingress?",
+      "recommendation": "require-independent-ingress-operator",
+      "selected": null,
+      "evidence": []
+    },
+    {
+      "id": "D-3",
+      "status": "pending-owner",
+      "question": "Who owns and funds G3 repair, cadence, offline-writer behavior, and repair-hint authenticity?",
+      "recommendation": "defer-g3-until-repair-contract",
+      "selected": null,
+      "evidence": []
+    },
+    {
+      "id": "D-4",
+      "status": "pending-owner-legal",
+      "question": "What operator liability, takedown, retention, and acknowledgement posture is approved?",
+      "recommendation": "require-jurisdiction-aware-operator-policy",
+      "selected": null,
+      "evidence": []
+    },
+    {
+      "id": "D-5",
+      "status": "pending-owner",
+      "question": "Keep the HTTPS gateway as the separately named public-t1-gateway product?",
+      "recommendation": "keep-separate-t1-product",
+      "selected": null,
+      "evidence": []
+    },
+    {
+      "id": "D-6",
+      "status": "pending-owner",
+      "question": "Retain K_partition only with measured benefit and a tested recovery contract, or remove it?",
+      "recommendation": "remove-unless-measured-benefit",
+      "selected": null,
+      "evidence": []
+    },
+    {
+      "id": "D-7",
+      "status": "pending-owner",
+      "question": "Acknowledge that rollback after the first blind-only write is dual-read only, never legacy-only?",
+      "recommendation": "approve-dual-read-rollback-floor",
+      "selected": null,
+      "evidence": []
+    }
+  ],
+  "gates": [
+    { "id": "PG-0", "status": "in-progress", "evidence": [] },
+    { "id": "PG-1", "status": "pending", "evidence": [] },
+    { "id": "PG-2", "status": "pending", "evidence": [] },
+    { "id": "PG-3", "status": "pending", "evidence": [] },
+    { "id": "PG-4", "status": "pending", "evidence": [] },
+    { "id": "PG-5", "status": "pending", "evidence": [] },
+    { "id": "PG-6", "status": "pending", "evidence": [] },
+    { "id": "PG-7", "status": "pending", "evidence": [] },
+    { "id": "PG-8", "status": "pending", "evidence": [] },
+    { "id": "PG-9", "status": "pending", "evidence": [] },
+    { "id": "PG-10", "status": "pending", "evidence": [] }
+  ],
+  "tracks": [
+    { "id": "T00", "status": "in-progress", "handoffs": [] },
+    { "id": "T01", "status": "in-progress", "handoffs": [] },
+    { "id": "T01B", "status": "pending", "handoffs": [] },
+    { "id": "T02", "status": "pending", "handoffs": [] },
+    { "id": "T03", "status": "pending", "handoffs": [] },
+    { "id": "T04", "status": "pending", "handoffs": [] },
+    { "id": "T05", "status": "in-progress", "handoffs": [] },
+    { "id": "T06", "status": "pending", "handoffs": [] },
+    { "id": "T07", "status": "pending", "handoffs": [] },
+    { "id": "T08", "status": "pending", "handoffs": [] },
+    { "id": "T09", "status": "pending", "handoffs": [] },
+    { "id": "T10", "status": "pending", "handoffs": [] },
+    { "id": "T11", "status": "pending", "handoffs": [] },
+    { "id": "T12", "status": "pending", "handoffs": [] },
+    { "id": "T13", "status": "pending", "handoffs": [] },
+    { "id": "T14", "status": "pending", "handoffs": [] },
+    { "id": "T14M", "status": "pending", "handoffs": [] },
+    { "id": "T15", "status": "pending", "handoffs": [] },
+    { "id": "T15H", "status": "pending", "handoffs": [] },
+    { "id": "T16", "status": "pending", "handoffs": [] },
+    { "id": "T17", "status": "pending", "handoffs": [] },
+    { "id": "T18", "status": "pending", "handoffs": [] },
+    { "id": "T19", "status": "pending", "handoffs": [] },
+    { "id": "T20", "status": "pending", "handoffs": [] },
+    { "id": "T21", "status": "pending", "handoffs": [] }
+  ]
+}
