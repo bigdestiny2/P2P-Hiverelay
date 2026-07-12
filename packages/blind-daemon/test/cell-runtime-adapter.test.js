@@ -4,6 +4,7 @@ import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import {
   CELL_RECEIPT_RESULT,
+  CELL_SIZE_CLASS,
   ERROR_CODE,
   FAMILY,
   FRAME_KIND,
@@ -11,6 +12,7 @@ import {
   RESULT_SIGNATURE_DOMAIN_ID,
   TRANSPORT_ID,
   TRANSPORT_SUPPORT,
+  admissionParametersHash,
   allocationCommitment,
   batchGetV1,
   batchGetResultV1,
@@ -26,11 +28,13 @@ import {
   encodeDispatchFrame,
   getCellResultV1,
   getCellV1,
+  operationProfile,
   proveCellResultV1,
   proveCellV1,
   putCellV1,
   renewCellV1
 } from '@hiverelay/blind-protocol'
+import { AdmissionCoordinator } from '../admission-coordinator.js'
 import {
   BLIND_CELL_RUNTIME_BLOCKERS,
   BlindCellRuntimeAdapter
@@ -45,10 +49,12 @@ import { DescriptorState } from '../descriptor-state.js'
 import { ResourceBudget } from '../resource-budget.js'
 import { BlindCellStorageEngine } from '../storage-engine.js'
 import { StagedCellPutDispatchIngestor } from '../staged-put.js'
-import { descriptorBytes, successorBytes } from './coordinator-fixtures.js'
+import { descriptorAndParameters, descriptorBytes, successorBytes } from './coordinator-fixtures.js'
 
 const EPOCH = 101
 const EPOCH_MILLIS = 21600000n
+const MAX_ADMISSION_TOKEN_BYTES = 4096
+const MAX_CANONICAL_CELL_PUT_METADATA_BYTES = 263 + 36 + 3 + MAX_ADMISSION_TOKEN_BYTES
 
 function keyPair () {
   const publicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
@@ -77,9 +83,9 @@ function cellFixture (relayPublicKey, overrides = {}) {
   const renew = keyPair()
   const drop = keyPair()
   const allocationEpoch = EPOCH
-  const sizeClass = 1
+  const sizeClass = overrides.sizeClass || 1
   const leaseClass = 1
-  const cellBlob = b4a.alloc(4096, overrides.blobByte || 0xb1)
+  const cellBlob = b4a.alloc(CELL_SIZE_CLASS[sizeClass], overrides.blobByte || 0xb1)
   const storageSlot = cellStorageSlot({ allocationEpoch, createPublicKey: create.publicKey })
   const declaredBlobHash = blake2b256(cellBlob)
   const allocation = allocationCommitment({
@@ -106,7 +112,7 @@ function cellFixture (relayPublicKey, overrides = {}) {
     dropPublicKey: drop.publicKey,
     declaredBlobHash,
     createSignature: signature(create.secretKey, allocation),
-    admission: admission(overrides.spendByte || 0xb3),
+    admission: overrides.admission || admission(overrides.spendByte || 0xb3),
     cellBlob
   }
   return { request, cellBlob, allocation, create, renew, drop }
@@ -150,7 +156,15 @@ async function harness (t, overrides = {}) {
   t.teardown(async () => fs.rm(root, { recursive: true, force: true }))
   const relay = keyPair()
   const state = new DescriptorState({ epochNow: () => EPOCH, verifySignature: async () => true })
-  await state.activate(descriptorBytes({ relayPublicKey: relay.publicKey }))
+  const admissionAuthority = overrides.authoritativeAdmission === true
+    ? descriptorAndParameters({
+      relayPublicKey: relay.publicKey,
+      ...(overrides.admissionAuthorityOverrides || {})
+    })
+    : null
+  await state.activate(admissionAuthority == null
+    ? descriptorBytes({ relayPublicKey: relay.publicKey })
+    : admissionAuthority.descriptor)
   let nowUnixMillis = BigInt(EPOCH) * EPOCH_MILLIS
   const storageOptions = {
     root,
@@ -179,20 +193,22 @@ async function harness (t, overrides = {}) {
       return signature(relay.secretKey, input.payload)
     }
   })
-  const admissionCoordinator = {
-    async prepare (input) {
-      return {
-        spendTag: blake2b256(input.admission.token),
-        requestCommitment: b4a.from(input.requestCommitment),
-        costClass: { ...input.cost, costUnits: 1n },
-        walCommitRecord: b4a.from(input.admission.token),
-        profileId: input.admission.profileId,
-        schemeId: input.admission.schemeId,
-        parameterHash: b4a.from(input.admission.parameterHash)
+  const admissionCoordinator = overrides.admissionCoordinatorFactory == null
+    ? {
+        async prepare (input) {
+          return {
+            spendTag: blake2b256(input.admission.token),
+            requestCommitment: b4a.from(input.requestCommitment),
+            costClass: { ...input.cost, costUnits: 1n },
+            walCommitRecord: b4a.from(input.admission.token),
+            profileId: input.admission.profileId,
+            schemeId: input.admission.schemeId,
+            parameterHash: b4a.from(input.admission.parameterHash)
+          }
+        },
+        parametersForRequest: () => null
       }
-    },
-    parametersForRequest: () => null
-  }
+    : await overrides.admissionCoordinatorFactory({ state, admissionAuthority })
   const readiness = {
     async evaluate () {
       const snapshot = state.requireCurrent()
@@ -233,6 +249,7 @@ async function harness (t, overrides = {}) {
     root,
     relay,
     state,
+    admissionAuthority,
     storage,
     storageOptions,
     assemble,
@@ -662,4 +679,105 @@ test('staged CELL.PUT reaches storage without coordinator body buffering and rej
     bad.finish()
   } catch {}
   t.is(errorName(await rejected), 'BAD_ENCODING')
+})
+
+test('V-3 rejects a maximum-shape staged CELL.PUT proof before body, staging, WAL, or fsync work', async t => {
+  let observeOperationIo = false
+  let proofChecks = 0
+  let walRecords = 0
+  let fsyncs = 0
+  const h = await harness(t, {
+    authoritativeAdmission: true,
+    admissionAuthorityOverrides: {
+      parameters: {
+        resourceCosts: [{
+          familyId: FAMILY.CELL,
+          operationId: OPERATION.CELL.PUT,
+          resourceClass: 5,
+          leaseClass: 1,
+          costUnits: 50n
+        }]
+      }
+    },
+    admissionCoordinatorFactory: async ({ state, admissionAuthority }) => {
+      const coordinator = new AdmissionCoordinator({
+        descriptorState: state,
+        verifySignature: async () => true,
+        resolveAdapter: async () => ({
+          async prepare () {
+            proofChecks++
+            return null
+          }
+        })
+      })
+      await coordinator.installParameters(admissionAuthority.parameters)
+      return coordinator
+    },
+    storageOptions: {
+      faultInjector (point) {
+        if (!observeOperationIo) return
+        if (point === 'wal:after-write') walRecords++
+        if (point === 'wal:after-sync' || point === 'body:after-fsync' ||
+            point === 'body:after-publish') fsyncs++
+      }
+    }
+  })
+  const fixture = cellFixture(h.relay.publicKey, {
+    sizeClass: 5,
+    admission: {
+      profileId: 7,
+      schemeId: 9,
+      parameterHash: admissionParametersHash(h.admissionAuthority.parameters),
+      token: b4a.alloc(MAX_ADMISSION_TOKEN_BYTES, 0xe7)
+    }
+  })
+  const requestBody = encodeCanonical(putCellV1, fixture.request)
+  const profile = operationProfile(FAMILY.CELL, OPERATION.CELL.PUT)
+  t.is(fixture.cellBlob.byteLength, CELL_SIZE_CLASS[5])
+  t.is(fixture.request.admission.token.byteLength, MAX_ADMISSION_TOKEN_BYTES)
+  t.is(requestBody.byteLength, CELL_SIZE_CLASS[5] + MAX_CANONICAL_CELL_PUT_METADATA_BYTES)
+  t.ok(requestBody.byteLength <= profile.maxRequestBodyBytes)
+
+  const canonical = encodeDispatchFrame({
+    frameKind: FRAME_KIND.REQUEST,
+    familyId: FAMILY.CELL,
+    operationId: OPERATION.CELL.PUT,
+    requestId: b4a.alloc(16, 0xf3),
+    body: requestBody
+  })
+  const metadataBytes = canonical.byteLength - fixture.cellBlob.byteLength
+  const ingestor = new StagedCellPutDispatchIngestor()
+  await ingestor.push(canonical.subarray(0, metadataBytes))
+  const staged = await ingestor.ready
+  t.is(staged.sourceByteLength, CELL_SIZE_CLASS[5])
+  t.is(ingestor.bodyPullCount, 0)
+
+  const stageOpaque = h.storage.transactionStore.stageOpaque.bind(h.storage.transactionStore)
+  let stageOpaqueCalls = 0
+  h.storage.transactionStore.stageOpaque = async options => {
+    stageOpaqueCalls++
+    return stageOpaque(options)
+  }
+  const before = h.storage.status()
+  const walBefore = await fs.stat(`${h.root}/control/wal.v2`)
+  t.alike(await fs.readdir(`${h.root}/staging`), [])
+  t.is(h.adapter.storage, h.storage)
+
+  observeOperationIo = true
+  const rejected = await h.coordinator.dispatchStagedCellPut(staged, context())
+  observeOperationIo = false
+  const after = h.storage.status()
+  const walAfter = await fs.stat(`${h.root}/control/wal.v2`)
+
+  t.is(errorName(rejected), 'SPEND_INVALID')
+  t.is(proofChecks, 1)
+  t.is(ingestor.bodyPullCount, 0)
+  t.is(stageOpaqueCalls, 0)
+  t.is(after.accounting.stagingBytes, 0)
+  t.is(after.accounting.stagingBytes, before.accounting.stagingBytes)
+  t.is(after.walSequence - before.walSequence, 0n)
+  t.is(walAfter.size, walBefore.size)
+  t.is(walRecords, 0)
+  t.is(fsyncs, 0)
+  t.alike(await fs.readdir(`${h.root}/staging`), [])
 })

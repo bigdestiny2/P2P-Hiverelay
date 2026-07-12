@@ -73,6 +73,7 @@ class BoundedAsyncByteQueue {
     this.failure = null
     this.claimed = false
     this.discarding = false
+    this.pullCount = 0
   }
 
   async push (input) {
@@ -148,6 +149,7 @@ class BoundedAsyncByteQueue {
     return Object.freeze({
       [Symbol.asyncIterator] () { return this },
       next () {
+        queue.pullCount++
         if (queue.failure) return Promise.reject(queue.failure)
         if (queue.discarding) return Promise.resolve({ done: true, value: undefined })
         if (queue.items.length > 0) {
@@ -421,6 +423,10 @@ export class StagedCellPutDispatchIngestor {
 
   get bufferedBytes () {
     return this.prefix.byteLength + this.queue.bufferedBytes
+  }
+
+  get bodyPullCount () {
+    return this.queue.pullCount
   }
 }
 

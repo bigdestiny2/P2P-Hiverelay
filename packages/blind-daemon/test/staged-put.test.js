@@ -68,6 +68,7 @@ test('staged CELL.PUT parses bounded metadata then streams opaque body from real
   t.is(staged.request.cellBlob, undefined)
   t.alike(staged.request.admission.token, expected.admission.token)
   t.ok(staged.maximumBufferedBytes <= STAGED_CELL_PUT_MAX_PREFIX_BYTES + 65_535)
+  t.is(ingestor.bodyPullCount, 0)
 
   const consume = (async () => {
     const chunks = []
@@ -92,6 +93,7 @@ test('staged CELL.PUT parses bounded metadata then streams opaque body from real
     if ((frame.flags & LOCAL_STREAM_FLAG.FIN) !== 0) ingestor.finish()
   }
   t.alike(await consume, expected.cellBlob)
+  t.ok(ingestor.bodyPullCount > 0)
 })
 
 test('staged CELL.PUT queue applies backpressure and refuses truncation/trailing bytes', async t => {
