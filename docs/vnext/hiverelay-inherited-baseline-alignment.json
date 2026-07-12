@@ -1,0 +1,55 @@
+{
+  "schema": "hiverelay-vnext-inherited-baseline-alignment-v1",
+  "verifiedAt": "2026-07-12T15:54:31Z",
+  "integrationCommit": "981bc076a67f892ceeb49f91d3b6f7d5b18aa4f0",
+  "track": "T01B",
+  "disposition": "in-repo-audit-failures-remediated-with-external-warnings",
+  "remediations": [
+    {
+      "id": "management-cors-audit",
+      "result": "audit now follows the public OutboxLog exception while retaining dynamic Origin Vary and managed Poker usage boundaries",
+      "runtimeChanged": false
+    },
+    {
+      "id": "pearbrowser-integration-docs",
+      "result": "0.24.3 is the documented authority and the preserved desktop 0.20.2 manifest/lock drift is named as a release blocker rather than hidden"
+    },
+    {
+      "id": "umbrel-image-pin",
+      "result": "official compose pins the published v0.24.3 multi-arch OCI index by immutable digest",
+      "image": "ghcr.io/bigdestiny2/p2p-hiverelay:0.24.3@sha256:cb104aa65d7e8f57766ea7d60d64dbb6b081a0b9fc5b318c0fa75cb22c0d31c8",
+      "platforms": ["linux/amd64", "linux/arm64"]
+    }
+  ],
+  "verification": {
+    "auditWorkspace": {
+      "status": "pass",
+      "exitCode": 0,
+      "inRepoFailures": 0
+    },
+    "standard": "pass",
+    "diffCheck": "pass",
+    "registryInspection": "docker buildx imagetools inspect confirmed the exact multi-arch digest and both required platforms"
+  },
+  "externalWarnings": [
+    {
+      "owner": "pearbrowser-desktop",
+      "status": "open",
+      "blocker": "manifest, lockfile, layout guard, CI checkout, and README still bind the 0.20.2 package line instead of 0.24.3"
+    },
+    {
+      "owner": "official-umbrel-submission",
+      "status": "open",
+      "blocker": "the real getumbrel/umbrel-apps pull-request URL does not exist yet"
+    }
+  ],
+  "mutationPolicy": {
+    "pearbrowserWorkspaceChanged": false,
+    "umbrelPullRequestCreated": false,
+    "packagePublished": false,
+    "fleetChanged": false,
+    "deployed": false
+  },
+  "authorizesRelease": false,
+  "authorizesDeployment": false
+}
