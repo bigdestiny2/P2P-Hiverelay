@@ -176,8 +176,20 @@
         "git/5a7af14a1e16ee79bc91a5c663b2406498029106/docs/vnext/hiverelay-main-salvage.json"
       ]
     },
-    { "id": "PG-1", "status": "pending", "evidence": [] },
-    { "id": "PG-2", "status": "pending", "evidence": [] },
+    {
+      "id": "PG-1",
+      "status": "in-progress",
+      "evidence": [
+        "git/c61be6df8d32693f9b72f479638ea9cdd5ea331b/docs/vnext/program-state.json"
+      ]
+    },
+    {
+      "id": "PG-2",
+      "status": "in-progress",
+      "evidence": [
+        "git/088ebb7b105fa09578d6c5dd656400d06fa755d2/docs/vnext/blind-handoff-cr-audit.json"
+      ]
+    },
     { "id": "PG-3", "status": "pending", "evidence": [] },
     { "id": "PG-4", "status": "pending", "evidence": [] },
     { "id": "PG-5", "status": "pending", "evidence": [] },
@@ -192,7 +204,8 @@
       "id": "T00",
       "status": "in-progress",
       "handoffs": [
-        "git/744c6d4d77052d4a1baeb676e99ce27d8f6355df/ecosystem-custody-inventory"
+        "git/744c6d4d77052d4a1baeb676e99ce27d8f6355df/ecosystem-custody-inventory",
+        "git/c61be6df8d32693f9b72f479638ea9cdd5ea331b/owner-decision-controls"
       ]
     },
     {
@@ -206,7 +219,13 @@
       ]
     },
     { "id": "T01B", "status": "pending", "handoffs": [] },
-    { "id": "T02", "status": "pending", "handoffs": [] },
+    {
+      "id": "T02",
+      "status": "in-progress",
+      "handoffs": [
+        "git/088ebb7b105fa09578d6c5dd656400d06fa755d2/blind-handoff-cr-audit"
+      ]
+    },
     { "id": "T03", "status": "pending", "handoffs": [] },
     { "id": "T04", "status": "pending", "handoffs": [] },
     { "id": "T05", "status": "in-progress", "handoffs": [] },
