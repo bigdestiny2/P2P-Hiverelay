@@ -1,0 +1,52 @@
+{
+  "schema": "hiverelay-vnext-blind-protocol-v1-field-remediation-v1",
+  "createdAt": "2026-07-12T15:22:08Z",
+  "sourceAudit": "git/088ebb7b105fa09578d6c5dd656400d06fa755d2/docs/vnext/blind-handoff-cr-audit.json",
+  "custodyRoot": "00-core/vnext-custody/blind-protocol-remediation-20260712-065e1a8",
+  "base": "211b20d892203de89be07975c155a09c976d6bd4",
+  "tip": "065e1a8c457658b72ea627a8ae1f0f2b3b86dd8d",
+  "branch": "fix/blind-protocol-remediation",
+  "bundle": {
+    "file": "blind-protocol-remediation-20260712.bundle",
+    "sha256": "00e1081cadf814f62c8d701f43f01b2c4702b81b8fe39a1e3aa24a685a027d39",
+    "completeHistory": true,
+    "verified": true
+  },
+  "result": {
+    "gate": "V-1",
+    "status": "partial",
+    "checkedExecutableSchemas": 93,
+    "totalExecutableSchemas": 141,
+    "fieldNamesAndOrderFailClosed": true,
+    "correctedMetadataSchemas": [
+      "BlindReceiptV1",
+      "InboxReceiptV1",
+      "InboxAppendAckV1",
+      "CoreOpenReplicationResultV1",
+      "BlindForwardOpenResultV1"
+    ],
+    "remaining": [
+      "Derive field types and constraints from the sole canonical registry",
+      "Replace the 48 placeholder or custom-codec gaps",
+      "Generate and structurally validate both specifications from that registry",
+      "Make a registry mutation fail both generated specs and daemon startup",
+      "Regenerate browser and downstream consumer authorities after protocol remediation stabilizes"
+    ]
+  },
+  "verification": {
+    "schemaMeta": "3/3 tests; 16/16 assertions",
+    "blindProtocol": "30/30 tests; 1343/1343 assertions",
+    "standard": "pass",
+    "diffCheck": "pass",
+    "browserArtifact": "blocked-by-expected-source-drift"
+  },
+  "authorityPolicy": {
+    "draftOnly": true,
+    "v1Passed": false,
+    "regenerateBrowserAuthorityNow": false,
+    "regenerateFinalHashesNow": false,
+    "mergeAllowed": false,
+    "releaseAllowed": false,
+    "deploymentAllowed": false
+  }
+}
