@@ -48,7 +48,10 @@
       "implementationStatus": "missing",
       "gateStatus": "blocked",
       "requiredValidations": ["V-6"],
-      "evidence": ["audit/BH-003"]
+      "evidence": [
+        "audit/BH-003",
+        "git/67ed85c088f4a6438382a2776619a9aeaa8d04c3/forward-route-scope-design"
+      ]
     },
     {
       "id": "CR-6",
