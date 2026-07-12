@@ -173,7 +173,8 @@
         "git/9a7d6a75f68095aa5833d10f8eb1622411712e44/docs/vnext/blind-peerit-preservation.json",
         "git/95098d93db74e5ce1bddaa7a82187244f035c8b9/docs/vnext/blind-peerit-preservation.json",
         "git/349db39b0df03582a141bf54f99a3c00af2a375b/docs/vnext/blind-peerit-preservation.json",
-        "git/5a7af14a1e16ee79bc91a5c663b2406498029106/docs/vnext/hiverelay-main-salvage.json"
+        "git/5a7af14a1e16ee79bc91a5c663b2406498029106/docs/vnext/hiverelay-main-salvage.json",
+        "git/ce167bd222c23d246e6a51d9c33fb1ca895b3a19/docs/vnext/peerit-vendor-authority-drift.json"
       ]
     },
     {
@@ -187,7 +188,8 @@
       "id": "PG-2",
       "status": "in-progress",
       "evidence": [
-        "git/088ebb7b105fa09578d6c5dd656400d06fa755d2/docs/vnext/blind-handoff-cr-audit.json"
+        "git/088ebb7b105fa09578d6c5dd656400d06fa755d2/docs/vnext/blind-handoff-cr-audit.json",
+        "git/046e845eec67db6061314b3aa9fa48785549f02a/docs/vnext/protocol-remediation.json"
       ]
     },
     { "id": "PG-3", "status": "pending", "evidence": [] },
@@ -215,7 +217,8 @@
         "git/9a7d6a75f68095aa5833d10f8eb1622411712e44/blind-peerit-preservation",
         "git/95098d93db74e5ce1bddaa7a82187244f035c8b9/blind-reproducibility-repair",
         "git/349db39b0df03582a141bf54f99a3c00af2a375b/peerit-independent-verification",
-        "git/5a7af14a1e16ee79bc91a5c663b2406498029106/hiverelay-main-salvage"
+        "git/5a7af14a1e16ee79bc91a5c663b2406498029106/hiverelay-main-salvage",
+        "git/ce167bd222c23d246e6a51d9c33fb1ca895b3a19/peerit-vendor-authority-drift"
       ]
     },
     { "id": "T01B", "status": "pending", "handoffs": [] },
@@ -223,10 +226,17 @@
       "id": "T02",
       "status": "in-progress",
       "handoffs": [
-        "git/088ebb7b105fa09578d6c5dd656400d06fa755d2/blind-handoff-cr-audit"
+        "git/088ebb7b105fa09578d6c5dd656400d06fa755d2/blind-handoff-cr-audit",
+        "git/046e845eec67db6061314b3aa9fa48785549f02a/protocol-freeze-guard"
       ]
     },
-    { "id": "T03", "status": "pending", "handoffs": [] },
+    {
+      "id": "T03",
+      "status": "pending",
+      "handoffs": [
+        "git/ce167bd222c23d246e6a51d9c33fb1ca895b3a19/peerit-vendor-authority-drift"
+      ]
+    },
     { "id": "T04", "status": "pending", "handoffs": [] },
     { "id": "T05", "status": "in-progress", "handoffs": [] },
     { "id": "T06", "status": "pending", "handoffs": [] },
