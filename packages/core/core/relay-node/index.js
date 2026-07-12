@@ -82,6 +82,11 @@ import { LifecycleScope, isAbortError } from './lifecycle-scope.js'
 import { buildDedupReport } from './dedup-report.js'
 import { encodeRelayRecord, relayRecordHasContent } from './relay-record.js'
 import { hashHex } from '../custody-signing.js'
+import {
+  evaluateStorageAdmission,
+  getStorageCapProvenance,
+  markStorageCapExplicit
+} from '../../config/storage-cap.js'
 
 // z32-encoded 32-byte key (the Hypercore/Autobase z-base-32 alphabet), 52 chars.
 // Used to validate the index-room pointer published by the sidecar.
@@ -212,7 +217,9 @@ const DEFAULT_CONFIG = {
   bootstrapNodes: null, // null = use HyperDHT defaults
   dhtFlushTimeoutMs: 1000,
   shutdownTimeoutMs: 10_000,
-  enableEviction: true,
+  // Legacy seed-time "evict oldest" behavior is disabled. The reviewed
+  // EvictionManager remains independently opt-in via eviction.enabled.
+  enableEviction: false,
   // Bound the in-memory pending-approval queue. With `acceptMode: 'review'` an
   // attacker (or a misconfigured peer) could otherwise pile up unbounded entries
   // in `_pendingRequests` until the operator approves/rejects them. When the cap
@@ -1037,6 +1044,7 @@ export class RelayNode extends EventEmitter {
         this.seeder = new Seeder(this.store, this.swarm, {
           maxStorageBytes: this.config.maxStorageBytes,
           announceInterval: this.config.announceInterval,
+          canAdopt: (additionalBytes = 0) => this._storageAdmission(additionalBytes),
           // Persist bare-core pins (catalog bees + any /seed-core) so they
           // survive a restart. Null storage (tests) -> persistence is a no-op.
           storagePath: this.config.storage ? join(this.config.storage, 'seeded-cores.json') : null
@@ -2671,41 +2679,32 @@ export class RelayNode extends EventEmitter {
     }
   }
 
-  // Apply an operator storage designation live (no restart): set the byte cap
-  // on the seeder's adoption gate + config, turn eviction on so we shrink to
-  // fit, and kick a forced sweep so lowering the cap frees space immediately.
-  // Returns a small summary for the API/UI. `maxStorageBytes` is assumed
-  // already validated by the config-update layer (min 1 MiB).
+  // Apply an operator storage designation live (no restart). Lowering a cap
+  // below current usage blocks NEW adoption immediately, but never silently
+  // enables eviction: serving, inspection, manual unseed and any explicitly
+  // configured eviction policy remain available for operator-led recovery.
   async applyStorageDesignation (maxStorageBytes) {
     const cap = Number(maxStorageBytes)
     if (!Number.isFinite(cap) || cap <= 0) return { ok: false, error: 'invalid maxStorageBytes' }
 
     this.config.maxStorageBytes = cap
+    markStorageCapExplicit(this.config, 'management-api')
     // Live adoption cap: the seeder cached this at construction, so update it
     // in place — otherwise new content keeps being adopted against the old cap.
     if (this.seeder) this.seeder.maxStorageBytes = cap
 
-    // Designating a cap implies "keep me under it": enable eviction so the
-    // sweep can shed surplus down to the cap (never below the replication
-    // floor). Persisted so it survives restart.
-    this.config.eviction = { ...(this.config.eviction || {}), enabled: true }
-    this._ensureEviction()
-
-    // Kick a forced sweep in the background (force:true → shed now even below
-    // physical-disk pressure; the getStorageCap gate shrinks us toward the
-    // cap). A full shed can unseed many drives and take a while, so we do NOT
-    // block the config response on it — the dashboard polls storage stats to
-    // watch usage fall. Periodic sweeps continue converging afterward.
-    Promise.resolve()
-      .then(() => this.eviction.sweep({ force: true }))
-      .catch((err) => this.emit('eviction-error', { error: err && err.message }))
+    const usedBytes = this._storageUsedBytes()
+    const admission = this._storageAdmission()
 
     return {
       ok: true,
       maxStorageBytes: cap,
-      evictionEnabled: true,
-      usedBytes: this._storageUsedBytes(),
-      sweeping: true
+      evictionEnabled: this.config.eviction?.enabled === true,
+      usedBytes,
+      overCap: usedBytes >= cap,
+      adoptionBlocked: !admission.allowed,
+      admissionReason: admission.reason,
+      sweeping: false
     }
   }
 
@@ -2895,15 +2894,37 @@ export class RelayNode extends EventEmitter {
    * disk measurement lands.
    */
   _storageUsedBytes () {
-    const measured = this.storageAccounting ? this.storageAccounting.getSummary().totalBytes : 0
-    return measured > 0 ? measured : ((this.seeder && this.seeder.totalBytesStored) || 0)
+    const accounting = this.storageAccounting ? this.storageAccounting.getSummary() : null
+    if (accounting && (accounting.diskBytes != null || accounting.totalBytes > 0)) return accounting.totalBytes
+    const seederBytes = (this.seeder && this.seeder.totalBytesStored) || 0
+    if (seederBytes > 0) return seederBytes
+    const startupBytes = getStorageCapProvenance(this.config)?.currentStorageBytes
+    return Number.isSafeInteger(startupBytes) && startupBytes > 0 ? startupBytes : 0
+  }
+
+  /**
+   * Admission state for NEW storage only. Existing pins, serving, health and
+   * unseed/config management do not pass through this gate, so a node that is
+   * already over cap remains recoverable. The logical operator cap and the
+   * live physical reserve are both enforced; neither path enables eviction.
+   */
+  _storageAdmission (additionalBytes = 0) {
+    const diskInfo = this.diskMonitor && typeof this.diskMonitor.getInfo === 'function'
+      ? this.diskMonitor.getInfo()
+      : null
+    return evaluateStorageAdmission(this.config, {
+      usedBytes: this._storageUsedBytes(),
+      additionalBytes,
+      diskInfo: diskInfo && !diskInfo.error ? diskInfo : null
+    })
   }
 
   async _scanRegistry () {
     if (!this.seedingRegistry || !this.seeder) return
 
     const region = (this.config.regions && this.config.regions[0]) || null
-    let availableBytes = this.config.maxStorageBytes - this._storageUsedBytes()
+    let admission = this._storageAdmission()
+    let availableBytes = admission.availableBytes
     const acceptMode = this._resolveAcceptMode()
 
     const requests = await this.seedingRegistry.getActiveRequests({
@@ -2914,7 +2935,9 @@ export class RelayNode extends EventEmitter {
     const myPubkey = this.swarm ? b4a.toString(this.swarm.keyPair.publicKey, 'hex') : null
 
     for (const req of requests) {
-      availableBytes = this.config.maxStorageBytes - this._storageUsedBytes()
+      admission = this._storageAdmission(req.maxStorageBytes || 0)
+      availableBytes = admission.availableBytes
+      if (!admission.allowed) continue
       const reqTier = normalizePrivacyTier(req.privacyTier, 'public')
 
       // If a delegation cert is attached, verify the chain before accepting.
@@ -3127,7 +3150,8 @@ export class RelayNode extends EventEmitter {
     if (!this.seeder) return
 
     const appKeyHex = b4a.toString(msg.appKey, 'hex')
-    const availableBytes = this.config.maxStorageBytes - this._storageUsedBytes()
+    const admission = this._storageAdmission(msg.maxStorageBytes || 0)
+    const availableBytes = admission.availableBytes
 
     // Reply with a wire-level deny so the publisher sees WHY instead of
     // timing out. Best-effort: channel may be null for in-process callers.
@@ -3138,9 +3162,9 @@ export class RelayNode extends EventEmitter {
     }
 
     // Check capacity
-    if (availableBytes < msg.maxStorageBytes) {
+    if (!admission.allowed) {
       this.emit('seed-rejected', { appKey: appKeyHex, reason: 'insufficient storage' })
-      deny('insufficient-storage', 'relay has ' + Math.max(0, availableBytes) + ' bytes available, request asked for ' + msg.maxStorageBytes)
+      deny('insufficient-storage', 'relay has ' + Math.max(0, availableBytes) + ' bytes available, request asked for ' + msg.maxStorageBytes + ' (' + admission.reason + ')')
       return
     }
 
@@ -4283,9 +4307,8 @@ export class RelayNode extends EventEmitter {
     // never bound and adoption was effectively uncapped (how the fleet's disks
     // filled, 2026-06). Also reject when the budget is simply exhausted, not
     // only when the request declares a size.
-    const availableBytes = this.config.maxStorageBytes - this._storageUsedBytes()
-    if (availableBytes <= 0) return false
-    if (request.maxStorageBytes > 0 && request.maxStorageBytes > availableBytes) return false
+    const admission = this._storageAdmission(request.maxStorageBytes || 0)
+    if (!admission.allowed) return false
 
     // Paid pin-lease: don't auto-adopt a non-exempt publisher's registry
     // request for free here. The MVP charges each relay individually (no

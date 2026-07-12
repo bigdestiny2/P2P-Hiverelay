@@ -1,4 +1,5 @@
 import { validatePositiveInt, validatePositiveNumber } from './api-validation.js'
+import { markStorageCapExplicit } from '../../config/storage-cap.js'
 
 export const AVAILABLE_MODES = [
   'relay-core',
@@ -126,6 +127,9 @@ export async function runModeSwitchAction ({
   const previousOperatingMode = node._operatingMode
   try {
     await node.applyMode(mode, built.overrides)
+    if (Object.prototype.hasOwnProperty.call(built.overrides, 'maxStorageBytes')) {
+      markStorageCapExplicit(node.config, 'management-api')
+    }
   } catch (err) {
     return {
       ok: false,
