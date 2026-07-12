@@ -44,7 +44,7 @@ const DEFAULTS = {
   diskPressurePct: 80,
   resumePct: 70,
   floorMargin: 1,
-  minAgeMs: 3 * 24 * 60 * 60 * 1000, // 3 days
+  minAgeMs: 6 * 60 * 60 * 1000, // 6h (see config/default.js — 3 days let boxes fill before shedding)
   sweepIntervalMs: 10 * 60 * 1000,
   maxEvictionsPerSweep: 20,
   // Replica target when an entry has no replication-health row (boot-
