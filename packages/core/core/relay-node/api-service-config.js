@@ -86,7 +86,11 @@ export function configuredServicePlugins (config) {
 }
 
 export function servicesLockedByProfile (config) {
-  return !!config && config.productProfile === 'relaykernel'
+  return !!config && (config.productProfile === 'relaykernel' || config.productProfile === 'public-t1-gateway')
+}
+
+function serviceLockReason (config) {
+  return config?.productProfile === 'public-t1-gateway' ? 'public-t1-gateway-profile' : 'relaykernel-profile'
 }
 
 export function serviceConfigPayload (config, registry) {
@@ -100,7 +104,7 @@ export function serviceConfigPayload (config, registry) {
     active,
     bundles: SERVICE_PLUGIN_BUNDLES,
     locked,
-    lockReason: locked ? 'relaykernel-profile' : null
+    lockReason: locked ? serviceLockReason(config) : null
   }
 }
 
@@ -126,8 +130,10 @@ export async function runServiceConfigUpdateAction ({
       kind: 'locked',
       status: 409,
       payload: {
-        error: 'Services are locked off by the RelayKernel profile',
-        errorCode: 'relaykernel-services-locked',
+        error: 'Services are locked off by the active product profile',
+        errorCode: config.productProfile === 'public-t1-gateway'
+          ? 'public-t1-gateway-services-locked'
+          : 'relaykernel-services-locked',
         config: buildPayload(config, registry)
       }
     }

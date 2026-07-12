@@ -28,6 +28,11 @@ export class AppLifecycle extends EventEmitter {
     super()
     this.node = node
     this._seedMutex = false
+    // Request-scoped readers (the public Hyperdrive gateway today) borrow a
+    // seeded drive without owning it. Track those borrows by registry-entry
+    // identity so unseed/reseed of the same app key cannot close the old
+    // drive underneath an in-flight immutable checkout.
+    this._driveReadLeaseStates = new Map()
   }
 
   /**
@@ -36,6 +41,68 @@ export class AppLifecycle extends EventEmitter {
    */
   get seededApps () {
     return this.node.appRegistry.apps
+  }
+
+  /**
+   * Borrow a seeded drive until release() is called. Ownership remains with
+   * AppLifecycle: callers must never close the returned drive. Once unseed
+   * begins, new leases fail closed and teardown waits for existing readers.
+   */
+  acquireDriveReadLease (appKeyHex) {
+    const entry = this.seededApps.get(appKeyHex)
+    const drive = entry && entry.drive
+    if (!drive || drive.closed || drive.closing) return null
+
+    let state = this._driveReadLeaseStates.get(entry)
+    if (state && state.retiring) return null
+    if (!state) {
+      state = { active: 0, retiring: false, waiters: [] }
+      this._driveReadLeaseStates.set(entry, state)
+    }
+    state.active++
+
+    let released = false
+    return {
+      drive,
+      release: () => {
+        if (released) return
+        released = true
+        state.active = Math.max(0, state.active - 1)
+        if (state.active !== 0) return
+
+        const waiters = state.waiters.splice(0)
+        for (const resolve of waiters) resolve()
+        if (!state.retiring && this._driveReadLeaseStates.get(entry) === state) {
+          this._driveReadLeaseStates.delete(entry)
+        }
+      }
+    }
+  }
+
+  _beginDriveRetirement (entry) {
+    let state = this._driveReadLeaseStates.get(entry)
+    if (!state) {
+      state = { active: 0, retiring: false, waiters: [] }
+      this._driveReadLeaseStates.set(entry, state)
+    }
+    state.retiring = true
+    return state
+  }
+
+  _waitForDriveReadLeases (state) {
+    if (!state || state.active === 0) return Promise.resolve()
+    return new Promise(resolve => state.waiters.push(resolve))
+  }
+
+  _cancelDriveRetirement (entry, state) {
+    if (this._driveReadLeaseStates.get(entry) !== state) return
+    state.retiring = false
+    if (state.active === 0) this._driveReadLeaseStates.delete(entry)
+  }
+
+  _completeDriveRetirement (entry, state) {
+    if (this._driveReadLeaseStates.get(entry) !== state) return
+    if (state.active === 0) this._driveReadLeaseStates.delete(entry)
   }
 
   /**
@@ -1376,6 +1443,10 @@ export class AppLifecycle extends EventEmitter {
     const node = this.node
     const entry = node.appRegistry.get(appKeyHex)
     if (!entry) return
+    // This synchronous transition closes the admission race: after this
+    // point no new gateway reader can borrow the drive, while readers that
+    // already hold a lease are allowed to finish their response.
+    const retirement = this._beginDriveRetirement(entry)
 
     if (forget) {
       const registrySnapshot = typeof node.appRegistry.snapshot === 'function'
@@ -1399,38 +1470,45 @@ export class AppLifecycle extends EventEmitter {
             })
           }
         }
+        this._cancelDriveRetirement(entry, retirement)
         throw err
       }
     }
 
-    // Destroy persistent download ranges before tearing down the drive
-    // so their replicator refs don't leak into the closing core's
-    // session pool. Same defensive pattern as _trackEagerReplicate +
-    // LifecycleScope from Reliability v2.
-    if (Array.isArray(entry.downloadRanges)) {
-      for (const dl of entry.downloadRanges) {
-        try { if (dl && typeof dl.destroy === 'function') dl.destroy() } catch (_) {}
+    await this._waitForDriveReadLeases(retirement)
+
+    try {
+      // Destroy persistent download ranges before tearing down the drive
+      // so their replicator refs don't leak into the closing core's
+      // session pool. Same defensive pattern as _trackEagerReplicate +
+      // LifecycleScope from Reliability v2.
+      if (Array.isArray(entry.downloadRanges)) {
+        for (const dl of entry.downloadRanges) {
+          try { if (dl && typeof dl.destroy === 'function') dl.destroy() } catch (_) {}
+        }
+        entry.downloadRanges = null
       }
-      entry.downloadRanges = null
+
+      if (node.distributedDriveBridge) {
+        node.distributedDriveBridge.unregisterDrive(appKeyHex)
+      }
+
+      try { await node.swarm.leave(entry.discoveryKey) } catch (_) {}
+      try { await entry.drive.close() } catch (_) {}
+
+      if (!forget) {
+        // Keep the persisted entry; just drop the live handles so reseed
+        // can rebuild them. reseedFromRegistry overwrites these via
+        // _hydrateEntry on the next start(), but null them now so nothing
+        // touches the closed drive in the meantime.
+        entry.drive = null
+        entry.discoveryKey = null
+      }
+
+      this.emit('unseeded', { appKey: appKeyHex, forgotten: forget })
+    } finally {
+      this._completeDriveRetirement(entry, retirement)
     }
-
-    if (node.distributedDriveBridge) {
-      node.distributedDriveBridge.unregisterDrive(appKeyHex)
-    }
-
-    try { await node.swarm.leave(entry.discoveryKey) } catch (_) {}
-    try { await entry.drive.close() } catch (_) {}
-
-    if (!forget) {
-      // Keep the persisted entry; just drop the live handles so reseed
-      // can rebuild them. reseedFromRegistry overwrites these via
-      // _hydrateEntry on the next start(), but null them now so nothing
-      // touches the closed drive in the meantime.
-      entry.drive = null
-      entry.discoveryKey = null
-    }
-
-    this.emit('unseeded', { appKey: appKeyHex, forgotten: forget })
   }
 
   /**

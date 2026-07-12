@@ -44,59 +44,79 @@ const DEFAULT_DOWNLOAD_TIMEOUT_MS = 120_000
 export async function updateWithTimeout (drive, opts = {}) {
   const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : DEFAULT_UPDATE_TIMEOUT_MS
   const wait = opts.wait !== false
+  const signal = opts.signal || null
   const activeRequests = []
 
   let timer = null
-  let timedOut = false
+  let abortHandler = null
+  let settled = false
+
+  if (signal?.aborted) throw createAbortError(signal.reason)
 
   const updatePromise = drive.update({ wait, activeRequests })
 
+  const clearOperationRequests = (err) => {
+    // activeRequests belongs only to this update() call. Clearing it cannot
+    // close the shared/borrowed drive or disturb upgrade refs owned by seeding
+    // and other concurrent readers.
+    const replicator = drive.db && drive.db.core && drive.db.core.replicator
+    if (replicator && typeof replicator.clearRequests === 'function' && activeRequests.length > 0) {
+      try { replicator.clearRequests(activeRequests, err) } catch {}
+    }
+  }
+
   try {
     return await new Promise((resolve, reject) => {
+      const finish = (fn, value) => {
+        if (settled) return
+        settled = true
+        fn(value)
+      }
+
       timer = setTimeout(() => {
-        timedOut = true
-        // Cancel any in-flight upgrade refs sitting in our activeRequests
-        // array. This is the hypercore-documented way to abort an update.
-        const replicator = drive.db && drive.db.core && drive.db.core.replicator
-        if (replicator && typeof replicator.clearRequests === 'function') {
-          try {
-            replicator.clearRequests(activeRequests, new Error('UPDATE_TIMEOUT'))
-          } catch {
-            // Replicator might be torn down already; ignore.
-          }
-        }
-        reject(new Error('update timeout'))
+        if (settled) return
+        const err = new Error('update timeout')
+        clearOperationRequests(new Error('UPDATE_TIMEOUT'))
+        finish(reject, err)
       }, timeoutMs)
       // We deliberately don't .unref() the timer — brittle's deadlock
       // detector treats unref'd timers as "no pending work" and aborts
       // tests prematurely. Timers are short (30s default) and clearTimeout
       // fires in every resolution path, so production behavior is fine.
 
-      updatePromise.then(
-        (value) => {
-          if (!timedOut) {
-            clearTimeout(timer)
-            resolve(value)
-          }
-        },
-        (err) => {
-          if (!timedOut) {
-            clearTimeout(timer)
-            reject(err)
-          }
+      if (signal) {
+        abortHandler = () => {
+          if (settled) return
+          const err = createAbortError(signal.reason)
+          clearOperationRequests(err)
+          finish(reject, err)
         }
+        signal.addEventListener('abort', abortHandler, { once: true })
+        // Abort may race between the preflight check and listener install.
+        if (signal.aborted) abortHandler()
+      }
+
+      Promise.resolve(updatePromise).then(
+        value => finish(resolve, value),
+        err => finish(reject, err)
       )
     })
   } finally {
     if (timer) clearTimeout(timer)
+    if (signal && abortHandler) signal.removeEventListener('abort', abortHandler)
     // Defensive: if for any reason a ref remained in our array (e.g. the
     // updatePromise resolved at the same instant the timer fired), make
     // sure nothing leaks. clearRequests on an empty array is a no-op.
-    const replicator = drive.db && drive.db.core && drive.db.core.replicator
-    if (replicator && typeof replicator.clearRequests === 'function' && activeRequests.length > 0) {
-      try { replicator.clearRequests(activeRequests, new Error('UPDATE_CANCELLED')) } catch {}
-    }
+    clearOperationRequests(new Error('UPDATE_CANCELLED'))
   }
+}
+
+function createAbortError (reason) {
+  if (reason instanceof Error && reason.name === 'AbortError') return reason
+  const err = new Error(reason instanceof Error ? reason.message : 'Aborted')
+  err.name = 'AbortError'
+  if (reason !== undefined) err.cause = reason
+  return err
 }
 
 /**

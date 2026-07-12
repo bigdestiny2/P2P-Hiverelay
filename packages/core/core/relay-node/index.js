@@ -77,7 +77,8 @@ import {
 import { SwarmFirewall } from './swarm-firewall.js'
 import { PolicyGuard } from '../policy-guard.js'
 import { AppLifecycle } from './app-lifecycle.js'
-import { GatewayServer } from './gateway-server.js'
+import { GatewayServer, assertHiveAppGatewayIsolation } from './gateway-server.js'
+import { hasActiveExactGateway } from '../../gateway/exact-app-context.js'
 import { LifecycleScope, isAbortError } from './lifecycle-scope.js'
 import { buildDedupReport } from './dedup-report.js'
 import { encodeRelayRecord, relayRecordHasContent } from './relay-record.js'
@@ -122,6 +123,22 @@ const DEFAULT_CONFIG = {
   custodyExpiryInterval: 60_000,
   custodyExpiryGraceMs: 0,
   gatewayPublicOnlyPrivacyTier: true,
+  gatewayPort: null,
+  gatewayHost: '127.0.0.1',
+  gatewayTrustProxy: false,
+  gatewayTrustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'],
+  gatewayRequireForwardedSNI: false,
+  gatewayCompatibilityHosts: ['127.0.0.1', 'localhost', '[::1]'],
+  gatewayMaxInFlight: 256,
+  gatewayMaxInFlightPerApp: 32,
+  gatewayMaxResponseBytes: 64 * 1024 * 1024,
+  gatewayMaxTransformBytes: 4 * 1024 * 1024,
+  gatewayEgressBytesPerWindow: 256 * 1024 * 1024,
+  gatewayEgressWindowMs: 60 * 1000,
+  gatewayMaxResponseLifetimeMs: 15 * 60 * 1000,
+  hiveAppHostSuffix: null,
+  hiveAppPublicKeys: [],
+  hiveAppPublicVersions: {},
   requireSignedCatalog: false,
   catalogSignatureMaxAgeMs: 5 * 60 * 1000,
   catalogMaxAppAgeMs: 30 * 24 * 60 * 60 * 1000,
@@ -292,6 +309,32 @@ const MODE_PRESETS = {
     },
     custodyExpiryInterval: 60_000,
     targetReplicaFloor: 3
+  },
+  'public-t1-gateway': {
+    productProfile: 'public-t1-gateway',
+    enableRelay: false,
+    enableSeeding: true,
+    enableAPI: true,
+    enableServices: false,
+    plugins: [],
+    strictSeedingPrivacy: true,
+    gatewayPublicOnlyPrivacyTier: true,
+    requireSignedCatalog: true,
+    custody: {
+      enabled: false,
+      defaultMode: 'blind',
+      allowTransparent: false,
+      requireEncryptedPayload: true,
+      metadataVisibility: 'redacted',
+      redactedCatalog: true,
+      proofTarget: 'ciphertext',
+      defaultRetainMs: 0
+    },
+    signedDirectory: { enabled: false },
+    federation: { enabled: false, followed: [], mirrored: [] },
+    lease: { enabled: false },
+    payment: { enabled: false },
+    subsidy: { enabled: false, payoutDestination: null }
   },
   public: {},
   standard: {
@@ -471,7 +514,8 @@ function isRelayKernelProfile (node) {
   return !!node && (
     node.mode === 'relaykernel' ||
     node._operatingMode === 'relaykernel' ||
-    (node.config && node.config.productProfile === 'relaykernel')
+    (node.config && (node.config.productProfile === 'relaykernel' ||
+      node.config.productProfile === 'public-t1-gateway'))
   )
 }
 
@@ -501,8 +545,56 @@ function identityTempPath (keyPath) {
 export class RelayNode extends EventEmitter {
   constructor (opts = {}) {
     super()
-    this.mode = opts.mode || opts.productProfile || 'relay-core'
+    const explicitMode = typeof opts.mode === 'string' ? opts.mode.trim().toLowerCase() : null
+    const explicitProfile = typeof opts.productProfile === 'string' ? opts.productProfile.trim().toLowerCase() : null
+    if ((explicitMode === 'public-t1-gateway' && opts.mode !== 'public-t1-gateway') ||
+        (explicitProfile === 'public-t1-gateway' && opts.productProfile !== 'public-t1-gateway')) {
+      throw new Error('public-t1-gateway mode and productProfile must use exact canonical spelling')
+    }
+    if ((explicitMode === 'public-t1-gateway' || explicitProfile === 'public-t1-gateway') &&
+        ((explicitMode && explicitMode !== 'public-t1-gateway') ||
+         (explicitProfile && explicitProfile !== 'public-t1-gateway'))) {
+      throw new Error('public-t1-gateway productProfile and mode must select the same exact preset')
+    }
+    this.mode = explicitProfile === 'public-t1-gateway'
+      ? 'public-t1-gateway'
+      : (opts.mode || opts.productProfile || 'relay-core')
     this.config = buildConfig(this.mode, opts)
+    // Validate origin-isolated gateway topology before Corestore, swarm, or
+    // either HTTP listener is created. A bad public-host configuration must
+    // fail without leaving partially initialized network state behind.
+    assertHiveAppGatewayIsolation({
+      hiveAppHostSuffix: this.config.hiveAppHostSuffix,
+      hiveAppPublicKeys: this.config.hiveAppPublicKeys,
+      hiveAppPublicVersions: this.config.hiveAppPublicVersions,
+      gatewayPort: this.config.gatewayPort,
+      gatewayHost: this.config.gatewayHost,
+      gatewayCompatibilityHosts: this.config.gatewayCompatibilityHosts,
+      gatewayTrustedProxyAddresses: this.config.gatewayTrustedProxyAddresses,
+      gatewayTrustProxy: this.config.gatewayTrustProxy,
+      gatewayRequireForwardedSNI: this.config.gatewayRequireForwardedSNI,
+      gatewayMaxResponseBytes: this.config.gatewayMaxResponseBytes,
+      gatewayMaxTransformBytes: this.config.gatewayMaxTransformBytes,
+      gatewayEgressBytesPerWindow: this.config.gatewayEgressBytesPerWindow,
+      gatewayEgressWindowMs: this.config.gatewayEgressWindowMs,
+      gatewayMaxResponseLifetimeMs: this.config.gatewayMaxResponseLifetimeMs,
+      apiPort: this.config.apiPort,
+      apiHost: this.config.apiHost,
+      enableAPI: this.config.enableAPI,
+      enableSeeding: this.config.enableSeeding,
+      enableRelay: this.config.enableRelay,
+      enableServices: this.config.enableServices,
+      plugins: this.config.plugins,
+      signedDirectory: this.config.signedDirectory,
+      federation: this.config.federation,
+      lease: this.config.lease,
+      payment: this.config.payment,
+      subsidy: this.config.subsidy,
+      shardStore: this.config.shardStore,
+      custody: this.config.custody,
+      mode: this.mode,
+      productProfile: this.config.productProfile
+    })
     this._operatingMode = this.mode
     this.store = new Corestore(this.config.storage)
     this.swarm = null
@@ -672,6 +764,9 @@ export class RelayNode extends EventEmitter {
   }
 
   async applyMode (mode, overrides = {}) {
+    if (hasActiveExactGateway(this)) {
+      throw new Error('Runtime mode changes are forbidden while an exact app-host GatewayServer is active; stop and perform a reviewed restart')
+    }
     const carry = { ...this.config }
     for (const key of [
       'mode',
@@ -764,7 +859,9 @@ export class RelayNode extends EventEmitter {
     }
     if (locked) {
       payload.locked = true
-      payload.lockReason = 'relaykernel-profile'
+      payload.lockReason = this.config.productProfile === 'public-t1-gateway'
+        ? 'public-t1-gateway-profile'
+        : 'relaykernel-profile'
     }
     const path = this._servicesOverridePath()
     if (path) {
@@ -910,6 +1007,39 @@ export class RelayNode extends EventEmitter {
 
   async start () {
     if (this.running) return
+
+    assertHiveAppGatewayIsolation({
+      hiveAppHostSuffix: this.config.hiveAppHostSuffix,
+      hiveAppPublicKeys: this.config.hiveAppPublicKeys,
+      hiveAppPublicVersions: this.config.hiveAppPublicVersions,
+      gatewayPort: this.config.gatewayPort,
+      gatewayHost: this.config.gatewayHost,
+      gatewayCompatibilityHosts: this.config.gatewayCompatibilityHosts,
+      gatewayTrustedProxyAddresses: this.config.gatewayTrustedProxyAddresses,
+      gatewayTrustProxy: this.config.gatewayTrustProxy,
+      gatewayRequireForwardedSNI: this.config.gatewayRequireForwardedSNI,
+      gatewayMaxResponseBytes: this.config.gatewayMaxResponseBytes,
+      gatewayMaxTransformBytes: this.config.gatewayMaxTransformBytes,
+      gatewayEgressBytesPerWindow: this.config.gatewayEgressBytesPerWindow,
+      gatewayEgressWindowMs: this.config.gatewayEgressWindowMs,
+      gatewayMaxResponseLifetimeMs: this.config.gatewayMaxResponseLifetimeMs,
+      apiPort: this.config.apiPort,
+      apiHost: this.config.apiHost,
+      enableAPI: this.config.enableAPI,
+      enableSeeding: this.config.enableSeeding,
+      enableRelay: this.config.enableRelay,
+      enableServices: this.config.enableServices,
+      plugins: this.config.plugins,
+      signedDirectory: this.config.signedDirectory,
+      federation: this.config.federation,
+      lease: this.config.lease,
+      payment: this.config.payment,
+      subsidy: this.config.subsidy,
+      shardStore: this.config.shardStore,
+      custody: this.config.custody,
+      mode: this.mode,
+      productProfile: this.config.productProfile
+    })
 
     // Fresh lifecycle scope — every loop / handler that participates in
     // the cancellation contract reads `this._scope` and is automatically
@@ -1213,14 +1343,24 @@ export class RelayNode extends EventEmitter {
         // This prevents heavy file traffic from starving the management API.
         const gatewayPort = this.config.gatewayPort
         if (gatewayPort && gatewayPort !== (this.config.apiPort || 9100)) {
-          this.gatewayServer = new GatewayServer(this, {
+          const gatewayOptions = {
             gatewayPort,
-            gatewayHost: this.config.gatewayHost || '0.0.0.0',
+            gatewayHost: this.config.gatewayHost || '127.0.0.1',
             corsOrigins: this.config.corsOrigins,
-            trustProxy: this.config.trustProxy || false,
-            // Share the HyperGateway instance with RelayAPI to avoid duplicate state
-            gateway: this.api._gateway
-          })
+            trustProxy: this.config.gatewayTrustProxy === true,
+            trustedProxyAddresses: this.config.gatewayTrustedProxyAddresses,
+            requireForwardedSNI: this.config.gatewayRequireForwardedSNI === true,
+            compatibilityHosts: this.config.gatewayCompatibilityHosts,
+            maxInFlight: this.config.gatewayMaxInFlight,
+            maxInFlightPerApp: this.config.gatewayMaxInFlightPerApp,
+            hiveAppHostSuffix: this.config.hiveAppHostSuffix || null,
+            hiveAppPublicKeys: this.config.hiveAppPublicKeys,
+            hiveAppPublicVersions: this.config.hiveAppPublicVersions
+          }
+          // Production exact-host serving constructs its own trusted handler;
+          // compatibility profiles may keep sharing RelayAPI's gateway state.
+          if (this.config.productProfile !== 'public-t1-gateway') gatewayOptions.gateway = this.api._gateway
+          this.gatewayServer = new GatewayServer(this, gatewayOptions)
           startups.push(this.gatewayServer.start())
         }
       }

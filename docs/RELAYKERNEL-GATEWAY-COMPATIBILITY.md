@@ -33,6 +33,13 @@ Bare relays participate in the P2P mesh and expose the catalog/capability HTTP
 surfaces. They do not claim the browser content gateway; `/v1/hyper/*` remains
 the Node/API or dedicated data-plane gateway responsibility.
 
+On a RelayNode, that compatibility route is no longer authority to open or
+advance an arbitrary mapped key. It borrows an AppLifecycle drive lease and
+checks out only the persisted `storageProvedDriveVersion`; a startup
+placeholder or missing proof returns bounded unavailable without a network
+update or block pull. Standalone HyperGateway dynamic-open behavior remains a
+separate explicit authority and is not inherited by the RelayNode route.
+
 The profile vector inventory also carries
 `relaykernel-profile-v1-app-module-boundary`. That vector keeps QVAC, poker,
 custody, and service-plugin signals visible as outside-kernel modules. They can
@@ -41,3 +48,19 @@ compatibility floor.
 
 This is deliberately not a full RelayKernel replacement claim. It is the
 compatibility floor for the current HiveRelay/Blindspark release line.
+
+## Isolated public HTTPS extension
+
+The compatibility floor above preserves today's path-addressed gateway. The
+design for key-derived HTTPS subdomains, publisher domains, signed
+gateway advertisements and leases, exact-byte serving, and proof-carrying HTTP
+responses is specified in
+[`PUBLIC-HTTPS-HIVE-GATEWAY-SPEC.md`](PUBLIC-HTTPS-HIVE-GATEWAY-SPEC.md).
+
+That work remains a T1/public availability layer above RelayKernel. It MUST NOT
+be mounted or advertised by the T2 blind-custody role. Runtime implementation
+and TLS-edge hardening may proceed in isolation, but release-branch integration
+and live-fleet deployment start only after the blind-substrate role,
+storage-class, and signing contracts pass the readiness gates in that
+specification. The single-app deployment sequence is documented in
+[`PUBLIC-HIVE-GATEWAY-CANARY-RUNBOOK.md`](PUBLIC-HIVE-GATEWAY-CANARY-RUNBOOK.md).

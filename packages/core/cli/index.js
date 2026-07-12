@@ -20,6 +20,12 @@ import { RelayNode } from '../core/relay-node/index.js'
 import { createLogger } from '../core/logger.js'
 import { isValidHexKey } from '../core/constants.js'
 import { loadConfig, saveConfig, ensureDirs, CONFIG_PATH, deriveTokenFromSeed, applyOutboxlogNamespaceEnv } from '../config/loader.js'
+import {
+  applyPublicHiveGatewayEnv,
+  assertPublicHiveGatewayConcurrency,
+  assertPublicHiveGatewayFiniteLimits,
+  assertPublicHiveGatewayVersionPins
+} from '../config/public-hive-gateway-env.js'
 import b4a from 'b4a'
 import { existsSync, mkdirSync, cpSync, readFileSync } from 'fs'
 import { join, dirname } from 'path'
@@ -36,7 +42,22 @@ const VERSION = pkg.version
 const SKILL_SRC = join(__dirname, '..', 'skills', 'SKILL.md')
 const VALID_ACCEPT_MODES = ['open', 'review', 'allowlist', 'closed']
 
-const args = minimist(process.argv.slice(2), { boolean: ['version', 'auto-heal', 'autoheal'] })
+const args = minimist(process.argv.slice(2), {
+  boolean: ['version', 'auto-heal', 'autoheal'],
+  // Keep identity-like values as exact strings. In particular, an app key
+  // containing only decimal digits must never be coerced through Number.
+  string: [
+    'gateway-host',
+    'gateway-port',
+    'gateway-trusted-proxy-address',
+    'gateway-compatibility-host',
+    'gateway-max-in-flight',
+    'gateway-max-in-flight-per-app',
+    'hive-app-host-suffix',
+    'hive-app-public-key',
+    'hive-app-public-version'
+  ]
+})
 const command = args._[0]
 
 // Handle --version / -v before anything else (no deps, no banner spam).
@@ -451,7 +472,22 @@ async function start () {
     hasPersistedOutboxlogNamespace()
   )
 
+  try {
+    applyPublicHiveGatewayEnv(cliOverrides, args, process.env)
+  } catch (err) {
+    console.error(err && err.message ? err.message : String(err))
+    process.exit(1)
+  }
+
   const config = loadConfig(cliOverrides)
+  try {
+    assertPublicHiveGatewayConcurrency(config)
+    assertPublicHiveGatewayFiniteLimits(config)
+    assertPublicHiveGatewayVersionPins(config)
+  } catch (err) {
+    console.error(err && err.message ? err.message : String(err))
+    process.exit(1)
+  }
 
   console.log(mainBanner(VERSION))
   console.log('  ' + ARROW + ' ' + paint(C.cyan, 'starting relay node') + ' ' + paint(C.dim, '...'))
@@ -1510,6 +1546,22 @@ Start Options:
   --region <code>               Region code
   --port <n>                    API port (default: 9100)
   --api-host <host>             API bind host (default: config/default.js)
+  --gateway-host <host>         Dedicated data-plane bind host
+  --gateway-port <n>            Dedicated data-plane port
+  --gateway-trust-proxy[=bool]  Trust forwarded client IP from allowed proxies
+  --gateway-trusted-proxy-address <ip,...>
+                                 Allowed proxy socket IPs (repeatable)
+  --gateway-require-forwarded-sni[=bool]
+                                 Require the trusted TLS edge to bind SNI to Host
+  --gateway-compatibility-host <host,...>
+                                 Allowed non-app Host values (repeatable)
+  --gateway-max-in-flight <n>   Total data-plane concurrency limit (1-4096)
+  --gateway-max-in-flight-per-app <n>
+                                 Per-app concurrency limit (1-4096)
+  --hive-app-host-suffix <dns>  App-origin DNS suffix (for example hive.example)
+  --hive-app-public-key <hex>   Transitional public app allowlist (repeatable)
+  --hive-app-public-version <key=n>
+                                 Immutable Hyperdrive version pin (repeatable)
   --bootstrap <host:port,...>   Override DHT bootstrap nodes
   --seed <key>                  Seed a Pear app key on startup
   --distributed-drive           Enable distributed-drive peer bridge (Ghost Drive mode)

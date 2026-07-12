@@ -397,7 +397,10 @@ export class RelayAPI extends EventEmitter {
     this._witnessLogHttpState = opts.witnessLogHttpState || null
     this._repairTicketHttpState = opts.repairTicketHttpState || null
     this._shardHttpState = opts.shardHttpState || null
-    this._gateway = new HyperGateway(relayNode, { store: relayNode.store })
+    this._gateway = new HyperGateway(relayNode, {
+      store: relayNode.store,
+      requireLifecycleDriveAuthority: true
+    })
     this._retrievabilityProofProvider = new RetrievabilityProofProvider()
   }
 
@@ -1941,7 +1944,9 @@ export class RelayAPI extends EventEmitter {
   _relayKernelProfileActive () {
     return this.node && (
       this.node.mode === 'relaykernel' ||
-      (this.node.config && this.node.config.productProfile === 'relaykernel')
+      this.node.mode === 'public-t1-gateway' ||
+      (this.node.config && (this.node.config.productProfile === 'relaykernel' ||
+        this.node.config.productProfile === 'public-t1-gateway'))
     )
   }
 

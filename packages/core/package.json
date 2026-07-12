@@ -22,6 +22,8 @@
     "./core/protocol/publish-channel.js": "./core/protocol/publish-channel.js",
     "./core/protocol/seed-request": "./core/protocol/seed-request.js",
     "./core/protocol/seed-request.js": "./core/protocol/seed-request.js",
+    "./gateway/exact-app-context": null,
+    "./gateway/exact-app-context.js": null,
     "./*": "./*"
   },
   "imports": {
