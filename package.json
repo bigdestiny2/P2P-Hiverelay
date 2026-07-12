@@ -19,6 +19,8 @@
     "audit:ecosystem-consumers:local": "node scripts/audit-ecosystem-consumers.mjs --check --dependency-mode local",
     "audit:owned-diff": "node scripts/check-audit-owned-diff.mjs",
     "vnext:check-program": "node scripts/check-vnext-program-state.mjs",
+    "vnext:inventory": "node scripts/inventory-vnext-workspaces.mjs",
+    "vnext:check-inventory": "node scripts/inventory-vnext-workspaces.mjs --check",
     "bench:outboxlog": "node scripts/bench-outboxlog.mjs",
     "bench:outboxlog:release": "node scripts/bench-outboxlog.mjs --assert",
     "audit:relaykernel-gateway": "node scripts/check-relaykernel-gateway-compat.mjs",
