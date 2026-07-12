@@ -104,6 +104,13 @@ import {
   resolveStatusRoute
 } from './api-status-read.js'
 import {
+  buildCreditsCompareRoutePayload,
+  buildCreditsPricingRoutePayload,
+  buildCreditsStatsRoutePayload,
+  buildCreditsWalletsRoutePayload,
+  resolveCreditsRoute
+} from './api-credits.js'
+import {
   buildUsageTelemetryRoutePayload,
   resolveUsageTelemetryRoute,
   usageTelemetryPayload
@@ -975,6 +982,7 @@ export class RelayAPI extends EventEmitter {
         const healthRoute = resolveHealthRoute(req.method, path)
         const statusRoute = resolveStatusRoute(req.method, path)
         const metricsRoute = resolveMetricsRoute(req.method, path)
+        const creditsRoute = resolveCreditsRoute(req.method, path)
         const wizardSnapshotRoute = resolveWizardSnapshotRoute(req.method, path)
 
         if (healthRoute && healthRoute.kind === 'health') {
@@ -1006,6 +1014,27 @@ export class RelayAPI extends EventEmitter {
           })
           if (!result.ok) return this._json(res, result.payload, result.status || 503)
           return writeText(res, result.text, result.status || 200)
+        }
+
+        if (creditsRoute) {
+          if (creditsRoute.requiresAuth && !this._requireAuth(req, res, creditsRoute.authMessage)) return
+
+          if (creditsRoute.kind === 'credits-pricing') {
+            const result = buildCreditsPricingRoutePayload({ route: creditsRoute, node: this.node })
+            return this._json(res, result.payload, result.status || 200)
+          }
+          if (creditsRoute.kind === 'credits-pricing-compare') {
+            const result = buildCreditsCompareRoutePayload({ route: creditsRoute, node: this.node })
+            return this._json(res, result.payload, result.status || 200)
+          }
+          if (creditsRoute.kind === 'credits-stats') {
+            const result = buildCreditsStatsRoutePayload({ route: creditsRoute, node: this.node })
+            return this._json(res, result.payload, result.status || 200)
+          }
+          if (creditsRoute.kind === 'credits-wallets') {
+            const result = buildCreditsWalletsRoutePayload({ route: creditsRoute, node: this.node })
+            return this._json(res, result.payload, result.status || 200)
+          }
         }
 
         if (peerStateRoute && peerStateRoute.kind === 'legacy-peer-list') {

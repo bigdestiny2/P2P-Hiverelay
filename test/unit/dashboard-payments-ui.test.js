@@ -4,6 +4,30 @@ import vm from 'node:vm'
 
 const payments = readFileSync('dashboard/payments.html', 'utf8')
 
+test('payments finance reads use the embedded management bearer token', (t) => {
+  const source = [
+    extractFunction('getUiToken'),
+    extractFunction('getUiAuthHeaders'),
+    'getUiAuthHeaders()'
+  ].join('\n')
+  const withToken = vm.runInNewContext(source, {
+    document: {
+      querySelector () {
+        return { getAttribute () { return 'operator-secret' } }
+      }
+    }
+  })
+  const withoutToken = vm.runInNewContext(source, {
+    document: { querySelector () { return null } }
+  })
+
+  t.is(withToken.Authorization, 'Bearer operator-secret')
+  t.is(Object.keys(withoutToken).length, 0)
+  t.absent(payments.includes('x-api-key'), 'dashboard does not send unsupported empty x-api-key headers')
+  t.ok(payments.includes("fetchWithTimeout('/api/v1/credits/stats', { headers: getUiAuthHeaders() })"))
+  t.ok(payments.includes("fetchWithTimeout('/api/v1/credits/wallets', { headers: getUiAuthHeaders() })"))
+})
+
 test('payments pricing tables render untrusted API strings as DOM text and normalize malformed prices', async (t) => {
   const out = await renderPricing({
     '/api/v1/credits/pricing': {
