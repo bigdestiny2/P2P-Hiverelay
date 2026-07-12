@@ -74,12 +74,12 @@ function endpoint (overrides = {}) {
   }
 }
 
-test('blind schema catalog: category and operation gaps fail closed independently', t => {
-  t.is(REQUIRED_SCHEMA_NAMES.length, 148)
-  t.is(IMPLEMENTED_SCHEMAS.length, 141)
+test('blind candidate schema catalog: category and operation gaps fail closed independently', t => {
+  t.is(REQUIRED_SCHEMA_NAMES.length, 150)
+  t.is(IMPLEMENTED_SCHEMAS.length, 143)
   t.is(ABI_STATUS.missingSchemaNames.length, 0)
-  t.is(ABI_STATUS.wireRequiredSchemaNames.length, 71)
-  t.is(ABI_STATUS.wireImplementedSchemaNames.length, 71)
+  t.is(ABI_STATUS.wireRequiredSchemaNames.length, 73)
+  t.is(ABI_STATUS.wireImplementedSchemaNames.length, 73)
   t.is(ABI_STATUS.wireMissingSchemaNames.length, 0)
   t.is(ABI_STATUS.schemaStatusByCategory[SCHEMA_CATEGORY.EVIDENCE].missingSchemaNames.length, 0)
   t.is(ABI_STATUS.schemaStatusByCategory[SCHEMA_CATEGORY.CLIENT_EXAMPLE].missingSchemaNames.length, 0)
@@ -108,8 +108,8 @@ test('blind schema catalog: category and operation gaps fail closed independentl
   ]) t.ok(REQUIRED_SCHEMA_NAMES.includes(name), `${name} is classified`)
 
   const registry = draftAbiRegistryValue()
-  t.is(registry.requiredSchemaNames.length, 71)
-  t.is(registry.implementedSchemas.length, 71)
+  t.is(registry.requiredSchemaNames.length, 73)
+  t.is(registry.implementedSchemas.length, 73)
   t.is(registry.missingSchemaNames.length, 0)
   t.absent(registry.implementedSchemas.find(schema => schema.name === 'ProtocolProfileArtifactV1'))
 })

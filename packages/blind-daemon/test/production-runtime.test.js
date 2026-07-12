@@ -422,7 +422,7 @@ test('packaged CLI assembly starts through its real child-process path and shuts
   t.is(signal, null)
 })
 
-test('direct production bin advances through final binary authorities and stops at runtime completeness', async t => {
+test('direct production bin stops at the draft route-scope authority blocker before runtime assembly', async t => {
   const fixture = await runtimeFixture()
   t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
   const cli = path.resolve('packages/blind-daemon/cli.js')
@@ -434,8 +434,8 @@ test('direct production bin advances through final binary authorities and stops 
   const output = childOutput(child)
   const [code] = await once(child, 'exit')
   t.is(code, 1)
-  t.ok(output.stderr().includes('BLIND_RUNTIME_INCOMPLETE'))
-  t.absent(output.stderr().includes('BLIND_ABI_INCOMPLETE'))
+  t.ok(output.stderr().includes('BLIND_ABI_INCOMPLETE'))
+  t.absent(output.stderr().includes('BLIND_RUNTIME_INCOMPLETE'))
   t.absent(output.stderr().includes('BLIND_PRIVATE_IPC_INCOMPLETE'))
   t.absent(output.stderr().includes('BLIND_DISPATCHER_MISSING'))
   t.absent(output.stderr().includes('BLIND_READINESS_SNAPSHOT_MISSING'))

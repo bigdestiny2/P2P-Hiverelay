@@ -270,7 +270,7 @@ test('commitment helpers reject ambiguous classes, management modes and bounds',
   }), /outside 1..30000/)
 })
 
-test('all 39 domain IDs, purposes, recipes and ASCII bytes match the frozen table', t => {
+test('all 40 frozen-plus-candidate domain rows have exact IDs, recipes and ASCII bytes', t => {
   const expected = [
     [1, 1, 1, 'hiverelay.blind.request.v1cell-put'],
     [2, 1, 1, 'hiverelay.blind.request.v1cell-get'],
@@ -310,7 +310,8 @@ test('all 39 domain IDs, purposes, recipes and ASCII bytes match the frozen tabl
     [209, 3, 2, 'hiverelay.blind.restore-evidence-head.v1'],
     [210, 3, 2, 'hiverelay.blind.backup-manifest.v1'],
     [211, 3, 2, 'hiverelay.blind.clean-restore-evidence.v1'],
-    [212, 3, 2, 'hiverelay.blind.backup-retention-transition.v1']
+    [212, 3, 2, 'hiverelay.blind.backup-retention-transition.v1'],
+    [213, 3, 2, 'hiverelay.blind.forward-route-scope.v1']
   ]
   t.alike(DOMAIN_REGISTRY.map(entry => [
     entry.domainId,
@@ -330,19 +331,25 @@ test('all 39 domain IDs, purposes, recipes and ASCII bytes match the frozen tabl
     DOMAIN_REGISTRY.find(entry => entry.domainId === id).exactAsciiBytes))
 })
 
-test('domain and admission-cost registries encode only their frozen rows', t => {
-  t.is(DOMAIN_REGISTRY.length, 39)
+test('domain and admission-cost registries distinguish frozen rows from the candidate domain', t => {
+  t.is(DOMAIN_REGISTRY.length, 40)
   t.is(ADMISSION_COST_RULES.length, 11)
   for (let i = 1; i < DOMAIN_REGISTRY.length; i++) {
     t.ok(DOMAIN_REGISTRY[i - 1].domainId < DOMAIN_REGISTRY[i].domainId, 'domain IDs are sorted')
   }
-  for (const entry of DOMAIN_REGISTRY) {
+  for (const entry of DOMAIN_REGISTRY.slice(0, -1)) {
     const value = { ...entry, exactAsciiBytes: b4a.from(entry.exactAsciiBytes, 'ascii') }
     const decoded = decodeCanonical(domainRegistryEntryV1, encodeCanonical(domainRegistryEntryV1, value))
     t.is(decoded.domainId, entry.domainId)
     t.is(decoded.purpose, entry.purpose)
     t.is(decoded.recipeId, entry.recipeId)
   }
+  const candidate = DOMAIN_REGISTRY.at(-1)
+  t.is(candidate.domainId, AUXILIARY_SIGNATURE_DOMAIN_ID.FORWARD_ROUTE_SCOPE)
+  t.exception(() => encodeCanonical(domainRegistryEntryV1, {
+    ...candidate,
+    exactAsciiBytes: b4a.from(candidate.exactAsciiBytes, 'ascii')
+  }), /not in the frozen registry/)
   for (const rule of ADMISSION_COST_RULES) {
     t.alike(decodeCanonical(admissionCostRuleV1, encodeCanonical(admissionCostRuleV1, rule)), rule)
   }
@@ -470,7 +477,7 @@ test('error profile 1 is closed over all 20 codes and BlindError body bits', t =
   }), /does not match error profile 1/)
 })
 
-test('12 CELL/INBOX operation rows match exact caps, schema IDs and numeric registries', t => {
+test('12 candidate CELL/INBOX rows retain exact caps and reject unfrozen schema-ID shifts', t => {
   const expected = [
     [FAMILY.CELL, OPERATION.CELL.PUT, 'PutCellV1', 'BlindReceiptV1', 1056768, 16384, 2, 1, 1, 104],
     [FAMILY.CELL, OPERATION.CELL.GET, 'GetCellV1', 'GetCellResultV1', 16384, 1048832, 1, 2, 2, 0],
@@ -509,26 +516,38 @@ test('12 CELL/INBOX operation rows match exact caps, schema IDs and numeric regi
       errorProfileId: 1,
       transportSupportBits: 31
     })
-    const encoded = encodeCanonical(operationProfileV1, row)
-    t.is(encoded.byteLength, 27)
-    t.alike(decodeCanonical(operationProfileV1, encoded), row)
+    if (familyId === FAMILY.CELL && operationId === OPERATION.CELL.BATCH_GET) {
+      const encoded = encodeCanonical(operationProfileV1, row)
+      t.is(encoded.byteLength, 27)
+      t.alike(decodeCanonical(operationProfileV1, encoded), row)
+    } else {
+      t.exception(() => encodeCanonical(operationProfileV1, row), /not in the frozen registry/)
+    }
   }
   t.is(OPERATION_PROFILE_STATUS.requiredPairs.length, 22)
   t.is(OPERATION_PROFILE_STATUS.implementedPairs.length, 22)
   t.is(OPERATION_PROFILE_STATUS.missingPairs.length, 0)
-  t.is(ABI_STATUS.releaseReady, true)
+  t.is(ABI_STATUS.releaseReady, false)
   t.is(ABI_STATUS.wireAuthorityPublished, true)
   t.is(TRANSPORT_SUPPORT.DIRECT_HTTP | TRANSPORT_SUPPORT.DIRECT_NATIVE |
     TRANSPORT_SUPPORT.OHTTP | TRANSPORT_SUPPORT.TOR_HTTP | TRANSPORT_SUPPORT.TOR_NATIVE, 31)
   t.is(COST_CLASS_RULE_ID.INBOX_WATCH_BOUND_WAIT, 8)
 
   const registry = draftAbiRegistryValue()
-  t.is(registry.domainRegistry.length, 39)
+  t.is(registry.domainRegistry.length, 40)
   t.is(registry.domainRecipes.length, 2)
   t.is(registry.errorProfiles.length, 20)
   t.is(registry.admissionCostRules.length, 11)
   t.is(registry.operationProfiles.length, 22)
-  t.ok(encodeDraftAbiRegistry().byteLength > 0)
+  let encodingError = null
+  try {
+    encodeDraftAbiRegistry()
+  } catch (error) {
+    encodingError = error
+  }
+  t.ok(encodingError)
+  t.is(encodingError.code, 'BLIND_ABI_INCOMPLETE')
+  t.alike(encodingError.releaseBlockers, ['FORWARD_ROUTE_SCOPE_AUTHORITY_REGENERATION_PENDING'])
 })
 
 test('OperationProfileV1 rejects wrong-purpose domains and inconsistent admission rows', t => {

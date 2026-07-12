@@ -66,6 +66,7 @@ import {
   HEALTH_INTEGRITY_STATE,
   HEALTH_REBALANCE_STATE,
   AUXILIARY_SIGNATURE_DOMAIN_ID,
+  assertReleaseReady,
   draftSchemaId,
   schemaCategory
 } from './registry.js'
@@ -589,11 +590,19 @@ export function wireAbiRegistryValue (schemaCatalogEntries = null) {
 }
 
 export function encodeWireAbiRegistry (schemaCatalogEntries = null) {
+  // A candidate registry may intentionally describe not-yet-frozen rows so it
+  // can be reviewed and exercised before authority regeneration.  Never let
+  // the final-authority encoder turn that candidate into publishable bytes.
+  // This also produces the governing release blocker instead of an incidental
+  // validation error against the older frozen runtime registry.
+  assertReleaseReady()
   return encodeWith(wireAbiV1Encoding, wireAbiRegistryValue(schemaCatalogEntries))
 }
 
-// Transitional API aliases intentionally produce the byte-identical final WIRE
-// authority. They may be removed only in a later package major.
+// Transitional API aliases share the final-authority gate. A review candidate
+// may expose unfrozen rows through the value API, but neither encoder emits
+// bytes until the candidate is release-ready; after freezing both names remain
+// byte-identical. The aliases may be removed only in a later package major.
 export const draftAbiRegistryValue = wireAbiRegistryValue
 export const encodeDraftAbiRegistry = encodeWireAbiRegistry
 export const draftRegistryEncoding = wireAbiV1Encoding

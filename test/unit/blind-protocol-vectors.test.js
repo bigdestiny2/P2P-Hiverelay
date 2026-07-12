@@ -94,13 +94,20 @@ test('blind vectors: negative frames and padded outer fixture behave as declared
   t.is(outer.frame.familyId, 2)
 })
 
-test('blind vectors: checked-in final ABI artifact and transitional alias match executable registry', (t) => {
+test('blind vectors: checked-in authority remains immutable while candidate regeneration is blocked', (t) => {
   const artifact = fs.readFileSync(new URL('../../packages/blind-protocol/hiverelay-blind-abi-v1.cenc', import.meta.url))
   const alias = fs.readFileSync(new URL('../../packages/blind-protocol/hiverelay-blind-abi-v1.draft.cenc', import.meta.url))
-  const generated = encodeWireAbiRegistry(masterSchemaCatalog().entries)
-  t.ok(b4a.equals(artifact, generated))
   t.ok(b4a.equals(alias, artifact))
-  t.ok(b4a.equals(hashAbi(artifact), hashAbi(generated)))
+  t.is(hashAbi(artifact).byteLength, 32)
+  let encodingError = null
+  try {
+    encodeWireAbiRegistry()
+  } catch (error) {
+    encodingError = error
+  }
+  t.ok(encodingError)
+  t.is(encodingError.code, 'BLIND_ABI_INCOMPLETE')
+  t.alike(encodingError.releaseBlockers, ['FORWARD_ROUTE_SCOPE_AUTHORITY_REGENERATION_PENDING'])
 })
 
 test('blind vectors: final WIRE manifest is category-isolated, complete and byte-reproducible', t => {
@@ -150,11 +157,21 @@ test('blind vectors: final WIRE manifest is category-isolated, complete and byte
   t.is(authority.vectorSetHash, b4a.toString(hashVectorSet(manifest), 'hex'))
 })
 
-test('blind vectors: stable-master meta grammar classifies all owned and external schemas', t => {
-  const compiled = masterSchemaCatalog()
-  t.is(compiled.entries.length, 148)
-  t.is(compiled.inventoryAudit.namedMasterSchemaCount, 147)
-  t.is(compiled.inventoryAudit.catalogSchemaCount, 148)
+test('blind vectors: frozen master catalog stays unchanged while candidate schemas await reconciliation', t => {
+  let compileError = null
+  try {
+    masterSchemaCatalog()
+  } catch (error) {
+    compileError = error
+  }
+  t.ok(compileError)
+  t.is(compileError.code, 'BLIND_MASTER_SCHEMA_INVENTORY_MISMATCH')
+  t.is(compileError.audit.namedMasterSchemaCount, 147)
+  t.is(compileError.audit.catalogSchemaCount, 150)
+  t.alike(compileError.audit.missingMasterDefinitions, [
+    'BlindForwardRouteHopV1',
+    'BlindForwardRouteScopeV1'
+  ])
   const complete = decodeSchemaCatalog(readVector('registry/master-schema-catalog.bin'), {
     minimum: 148,
     maximum: 148
@@ -173,15 +190,26 @@ test('blind vectors: stable-master meta grammar classifies all owned and externa
   }
 })
 
-test('blind vectors: WIRE schema compilation is isolated from every non-WIRE category', t => {
+test('blind vectors: candidate WIRE schemas remain absent after unrelated category edits', t => {
   let isolatedMaster = fs.readFileSync(masterSpecUrl, 'utf8')
   for (const name of ['BuildManifestV1', 'ReadCellCapV1', 'BlindStoreManifestV1', 'LocalDispatchV1']) {
     const declaration = `${name} {`
     t.ok(isolatedMaster.includes(declaration), `${name} declaration exists in the full master`)
     isolatedMaster = isolatedMaster.replace(declaration, `${name}Removed {`)
   }
-  const wire = compileMasterSchemaCatalogForCategory(isolatedMaster, SCHEMA_CATEGORY.WIRE)
-  t.is(wire.entries.length, 71)
+  let categoryError = null
+  try {
+    compileMasterSchemaCatalogForCategory(isolatedMaster, SCHEMA_CATEGORY.WIRE)
+  } catch (error) {
+    categoryError = error
+  }
+  t.ok(categoryError)
+  t.is(categoryError.code, 'BLIND_MASTER_SCHEMA_CATEGORY_MISMATCH')
+  t.is(categoryError.category, SCHEMA_CATEGORY.WIRE)
+  t.alike(categoryError.missingSchemaNames, [
+    'BlindForwardRouteHopV1',
+    'BlindForwardRouteScopeV1'
+  ])
   t.exception(() => compileMasterSchemaCatalog(isolatedMaster), /inventory does not match/)
 })
 
@@ -266,7 +294,7 @@ test('blind vectors: malformed CELL/INBOX and registry bytes remain negative', t
     readVector('invalid/error-profile-wrong-retryable.bin')), /not in the frozen registry/)
 })
 
-test('blind vectors: DESCRIBE, CORE and FORWARD public closure is executable', t => {
+test('blind vectors: unchanged public closure stays executable while revised FORWARD rows await vectors', t => {
   const vectors = [
     ['describe/admission-parameters.bin', admissionParametersV1],
     ['describe/admission-profile.bin', admissionProfileV1],
@@ -282,8 +310,6 @@ test('blind vectors: DESCRIBE, CORE and FORWARD public closure is executable', t
     ['core/mirror-request.bin', coreMirrorRequestV1],
     ['core/serve-challenge.bin', coreServeChallengeV1],
     ['core/serve-result.bin', coreServeResultV1],
-    ['forward/open.bin', blindForwardOpenV1],
-    ['forward/open-result.bin', blindForwardOpenResultV1],
     ['forward/data-body.bin', blindForwardDataV1],
     ['forward/window.bin', blindForwardWindowV1],
     ['forward/close.bin', blindForwardCloseV1],
@@ -297,6 +323,8 @@ test('blind vectors: DESCRIBE, CORE and FORWARD public closure is executable', t
     }
     t.exception(() => decodeCanonical(codec, b4a.concat([bytes, b4a.from([0])])))
   }
+  t.exception(() => decodeCanonical(blindForwardOpenV1, readVector('forward/open.bin')))
+  t.exception(() => decodeCanonical(blindForwardOpenResultV1, readVector('forward/open-result.bin')))
   t.exception(() => decodeCanonical(blindStreamChunkPlainV1,
     readVector('invalid/stream-chunk-unknown-class.bin')), /outside 1\.\.3/)
 })

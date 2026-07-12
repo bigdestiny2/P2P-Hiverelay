@@ -122,14 +122,18 @@ test('blind vector manifest: path order is canonical and invalid paths fail', (t
   t.exception(() => decodeVectorManifest(unsorted), /strictly sorted/)
 })
 
-test('blind public WIRE ABI: deterministic drift signal and final authority gate', (t) => {
-  const registry = encodeWireAbiRegistry()
-  t.ok(registry.byteLength > 0)
-  t.ok(b4a.equals(hashAbi(registry), hashAbi(encodeWireAbiRegistry())))
-  const changed = b4a.concat([registry, b4a.from([0])])
-  t.absent(b4a.equals(hashAbi(registry), hashAbi(changed)))
-  t.is(ABI_STATUS.releaseReady, true)
+test('blind public WIRE ABI: candidate blocks final authority encoding', (t) => {
+  let encodingError = null
+  try {
+    encodeWireAbiRegistry()
+  } catch (error) {
+    encodingError = error
+  }
+  t.ok(encodingError)
+  t.is(encodingError.code, 'BLIND_ABI_INCOMPLETE')
+  t.alike(encodingError.releaseBlockers, ['FORWARD_ROUTE_SCOPE_AUTHORITY_REGENERATION_PENDING'])
+  t.is(ABI_STATUS.releaseReady, false)
   t.is(ABI_STATUS.missingSchemaNames.length, 0)
-  t.alike(ABI_STATUS.releaseBlockers, [])
-  t.execution(() => assertReleaseReady())
+  t.alike(ABI_STATUS.releaseBlockers, ['FORWARD_ROUTE_SCOPE_AUTHORITY_REGENERATION_PENDING'])
+  t.exception(() => assertReleaseReady(), /release blockers remain/)
 })

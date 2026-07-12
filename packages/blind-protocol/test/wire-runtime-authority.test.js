@@ -9,6 +9,7 @@ import {
   FAMILY_ROUTES as REGISTRY_FAMILY_ROUTES,
   OUTER_CLASS as REGISTRY_OUTER_CLASS,
   PROTOCOL as REGISTRY_PROTOCOL,
+  SCHEMA_CATEGORY,
   SCHEMA_NAMES_BY_CATEGORY,
   STREAM_WIRE_CLASS as REGISTRY_STREAM_WIRE_CLASS,
   TRANSPORT_ID as REGISTRY_TRANSPORT_ID,
@@ -31,8 +32,12 @@ import {
 } from '../wire-runtime-authority.js'
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const CANDIDATE_SCHEMA_NAMES = new Set([
+  'BlindForwardRouteHopV1',
+  'BlindForwardRouteScopeV1'
+])
 
-test('generated WIRE runtime authority is exact, closed, and release ready', async t => {
+test('frozen generated WIRE runtime authority remains exact, closed, and independently release ready', async t => {
   const metadata = JSON.parse(await fs.readFile(path.join(
     packageRoot, 'hiverelay-blind-wire-authority-v1.json'), 'utf8'))
   t.alike(WIRE_RUNTIME_AUTHORITY, metadata)
@@ -67,8 +72,13 @@ test('generated WIRE runtime authority is exact, closed, and release ready', asy
 
 test('schema catalog runtime commitment is exact and vocabulary-free', async t => {
   for (const [category, names] of Object.entries(SCHEMA_NAMES_BY_CATEGORY)) {
-    t.alike(SCHEMA_CATALOG_NAME_HASHES_BY_CATEGORY[category], names.map(name =>
+    const frozenNames = names.filter(name => !CANDIDATE_SCHEMA_NAMES.has(name))
+    t.alike(SCHEMA_CATALOG_NAME_HASHES_BY_CATEGORY[category], frozenNames.map(name =>
       b4a.toString(blake2b256(b4a.from(name, 'ascii')), 'hex')))
+  }
+  for (const name of CANDIDATE_SCHEMA_NAMES) {
+    const hash = b4a.toString(blake2b256(b4a.from(name, 'ascii')), 'hex')
+    t.absent(SCHEMA_CATALOG_NAME_HASHES_BY_CATEGORY[SCHEMA_CATEGORY.WIRE].includes(hash), `${name} is not frozen`)
   }
   const source = await fs.readFile(path.join(packageRoot, 'schema-catalog-runtime-authority.js'), 'utf8')
   t.absent(source.match(/^\s*import\s/m), 'schema commitment authority is import-free')
