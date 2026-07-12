@@ -102,7 +102,13 @@
     }
   ],
   "gates": [
-    { "id": "PG-0", "status": "in-progress", "evidence": [] },
+    {
+      "id": "PG-0",
+      "status": "in-progress",
+      "evidence": [
+        "git/744c6d4d77052d4a1baeb676e99ce27d8f6355df/docs/vnext/workspace-inventory.json"
+      ]
+    },
     { "id": "PG-1", "status": "pending", "evidence": [] },
     { "id": "PG-2", "status": "pending", "evidence": [] },
     { "id": "PG-3", "status": "pending", "evidence": [] },
@@ -115,7 +121,13 @@
     { "id": "PG-10", "status": "pending", "evidence": [] }
   ],
   "tracks": [
-    { "id": "T00", "status": "in-progress", "handoffs": [] },
+    {
+      "id": "T00",
+      "status": "in-progress",
+      "handoffs": [
+        "git/744c6d4d77052d4a1baeb676e99ce27d8f6355df/ecosystem-custody-inventory"
+      ]
+    },
     { "id": "T01", "status": "in-progress", "handoffs": [] },
     { "id": "T01B", "status": "pending", "handoffs": [] },
     { "id": "T02", "status": "pending", "handoffs": [] },
