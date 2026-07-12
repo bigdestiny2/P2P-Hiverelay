@@ -44,6 +44,21 @@ and expiry. It rejects widening and lossy local reduction. Supporting monotonic
 reduction would require a schema revision, such as signed per-hop effective
 limit and expiry fields.
 
+## Client boundary
+
+The low-level client commits `parentRouteScopeHash` before it asks an admission
+provider for a token. A direct open uses the all-zero parent hash; a forwarding
+caller supplies the exact inherited hash obtained from its authenticated parent
+context. The hash is carried in the canonical request and exposed to the
+admission provider, so neither admission nor retry identity can be reused under
+a different route prefix.
+
+This helper does not turn an untrusted hash into authenticated route context.
+The daemon still derives the parent origin independently, and result acceptance
+still requires the caller's `nextHopVerifier` to validate the descriptor and
+route proof represented by the returned scope hash and relay count. Frozen
+browser, ABI, vector, and runtime authorities remain unchanged.
+
 ## Evidence boundary
 
 The adversarial suite exercises real `ForwardStreamService` and adjacent

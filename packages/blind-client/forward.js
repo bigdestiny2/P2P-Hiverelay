@@ -79,6 +79,9 @@ export async function createForwardOpenRequest (options) {
   const circuitNonce = options.circuitNonce == null
     ? randomNonzero(options.runtime, 32, 'circuitNonce')
     : fixed(options.circuitNonce, 32, 'circuitNonce', true)
+  const parentRouteScopeHash = options.parentRouteScopeHash == null
+    ? b4a.alloc(32)
+    : fixed(options.parentRouteScopeHash, 32, 'parentRouteScopeHash')
   const innerHandshake = fixed(options.innerHandshake, 32, 'innerHandshake')
   if (options.expectedInnerHandshakeBytes != null) {
     integer(options.expectedInnerHandshakeBytes, 32, 32, 'expectedInnerHandshakeBytes')
@@ -91,6 +94,7 @@ export async function createForwardOpenRequest (options) {
     requestedWireClass,
     circuitClass,
     circuitNonce,
+    parentRouteScopeHash,
     innerHandshake
   })
   const hopAdmission = await admission(options, {
@@ -100,7 +104,8 @@ export async function createForwardOpenRequest (options) {
     relayPublicKey: previousRelayKey,
     routeId,
     requestedWireClass,
-    circuitClass
+    circuitClass,
+    parentRouteScopeHash: b4a.from(parentRouteScopeHash)
   })
   const request = {
     version: 1,
@@ -110,6 +115,7 @@ export async function createForwardOpenRequest (options) {
     requestedWireClass,
     circuitClass,
     circuitNonce,
+    parentRouteScopeHash,
     hopAdmission,
     innerHandshake
   }

@@ -110,6 +110,7 @@ test('Forward OPEN selects only a signed route tuple and carries no open-proxy d
   t.is(created.wire.familyId, FAMILY.FORWARD)
   t.is(created.wire.operationId, OPERATION.FORWARD.OPEN)
   t.is(created.wire.requiresAuthenticatedStream, true)
+  t.alike(decoded.parentRouteScopeHash, b4a.alloc(32))
   t.absent(decoded.hostname)
   t.absent(decoded.url)
   t.absent(decoded.destination)
@@ -131,6 +132,31 @@ test('Forward OPEN validates transport shape before acquiring admission', async 
     admissionProvider: async () => { calls++; return admission }
   }), /exactly 32 bytes|transport profile/)
   t.is(calls, 0)
+})
+
+test('Forward OPEN binds an inherited route-scope hash before admission', async t => {
+  const parentRouteScopeHash = b4a.alloc(32, 0x58)
+  let admissionContext = null
+  const created = await createForwardOpenRequest({
+    runtime,
+    previousRelayKey,
+    routeId,
+    nextDescriptorSequence: 8n,
+    nextDescriptorHash,
+    requestedWireClass: 1,
+    circuitClass: 1,
+    circuitNonce,
+    parentRouteScopeHash,
+    innerHandshake: b4a.alloc(32, 0x59),
+    admissionProvider: async context => {
+      admissionContext = context
+      return admission
+    }
+  })
+  const decoded = decodeCanonical(blindForwardOpenV1, created.requestBytes, { copyBytes: true })
+  t.alike(decoded.parentRouteScopeHash, parentRouteScopeHash)
+  t.alike(admissionContext.parentRouteScopeHash, parentRouteScopeHash)
+  t.alike(created.requestCommitment, forwardOpenRequestCommitment({ previousRelayKey, ...decoded }))
 })
 
 test('Forward OPEN result verifies both independently qualified relay bindings and signatures', async t => {
@@ -170,6 +196,7 @@ test('Forward OPEN result verifies both independently qualified relay bindings a
     admission
   })
   const tuple = FORWARD_CIRCUIT_CLASS[1]
+  const acceptedRouteScopeHash = b4a.alloc(32, 0x6a)
   const nextAccept = signFinalField(blindForwardHopAcceptV1, {
     version: 1,
     previousRelayKey: previousKeys.publicKey,
@@ -191,6 +218,8 @@ test('Forward OPEN result verifies both independently qualified relay bindings a
     lifetimeMillis: tuple.lifetimeMillis,
     openedAtEpoch: 101,
     hopOpenCommitment: b4a.alloc(32, 0x5e),
+    acceptedRouteScopeHash,
+    acceptedRelayCount: 1,
     handshakeFlight2: b4a.alloc(96, 0x5f),
     nextSignature: b4a.alloc(64)
   }, AUXILIARY_SIGNATURE_DOMAIN_ID.FORWARD_HOP_ACCEPT,
@@ -212,6 +241,8 @@ test('Forward OPEN result verifies both independently qualified relay bindings a
     lifetimeMillis: tuple.lifetimeMillis,
     openedAtEpoch: 101,
     requestCommitment: created.requestCommitment,
+    acceptedRouteScopeHash,
+    acceptedRelayCount: 1,
     nextHopAccept: nextAccept,
     signature: b4a.alloc(64)
   }

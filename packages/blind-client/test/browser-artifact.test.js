@@ -256,16 +256,14 @@ test('browser artifact manifest and verification inputs are exact and canonical'
   }), 'BAD_BLIND_CLIENT_BROWSER_ARTIFACT')
 })
 
-test('browser artifact generation is cwd-independent and package-addressable', t => {
+test('browser artifact stays package-addressable while candidate authority blocks regeneration', t => {
   const generated = spawnSync(process.execPath, [fileURLToPath(generatorUrl), '--check'], {
     cwd: os.tmpdir(),
     encoding: 'utf8'
   })
-  t.is(generated.status, 0, generated.stderr || generated.stdout)
-  const report = JSON.parse(generated.stdout.trim())
-  t.is(report.schema, 'HiveRelayBlindClientBrowserArtifactGenerationV1')
-  t.ok(report.sourceClosureEntryCount > report.sourceInputCount,
-    'closure includes generator, lockfile, and resolver package authorities')
+  t.is(generated.status, 1)
+  t.ok(generated.stderr.includes('browser artifact tuple authority is stale'))
+  t.ok(generated.stderr.includes('BlindForwardRouteScopeV1'))
   const resolvedArtifact = fileURLToPath(import.meta.resolve(
     '@hiverelay/blind-client/browser-artifacts/blind-client-control-v1.mjs'))
   const resolvedManifest = fileURLToPath(import.meta.resolve(
