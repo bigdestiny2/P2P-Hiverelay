@@ -192,7 +192,8 @@
         "git/088ebb7b105fa09578d6c5dd656400d06fa755d2/docs/vnext/blind-handoff-cr-audit.json",
         "git/046e845eec67db6061314b3aa9fa48785549f02a/docs/vnext/protocol-remediation.json",
         "git/9456f12400e25e02ab0233e3dc069bdda41a8f96/docs/vnext/blind-protocol-v1-field-remediation.json",
-        "git/67ed85c088f4a6438382a2776619a9aeaa8d04c3/docs/vnext/blind-forward-route-scope-design.md"
+        "git/67ed85c088f4a6438382a2776619a9aeaa8d04c3/docs/vnext/blind-forward-route-scope-design.md",
+        "git/5844e25a42f5bfc228580d431c89beffa3a006c7/docs/vnext/blind-v3-staged-put-gate.json"
       ]
     },
     { "id": "PG-3", "status": "pending", "evidence": [] },
@@ -239,7 +240,8 @@
         "git/088ebb7b105fa09578d6c5dd656400d06fa755d2/blind-handoff-cr-audit",
         "git/046e845eec67db6061314b3aa9fa48785549f02a/protocol-freeze-guard",
         "git/9456f12400e25e02ab0233e3dc069bdda41a8f96/V-1-field-remediation",
-        "git/67ed85c088f4a6438382a2776619a9aeaa8d04c3/forward-route-scope-design"
+        "git/67ed85c088f4a6438382a2776619a9aeaa8d04c3/forward-route-scope-design",
+        "git/5844e25a42f5bfc228580d431c89beffa3a006c7/V-3-staged-put-gate"
       ]
     },
     {
