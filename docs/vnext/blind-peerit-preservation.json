@@ -68,7 +68,13 @@
         "ae35abb75417061e62d63899521fc55db9b9e61f",
         "e13b297b5baf5d981907edc98fc7524e961f5bce",
         "00f46f3c26a44adb29a80894d247be1411093c37"
-      ]
+      ],
+      "independentVerification": {
+        "cleanInstall": "pass",
+        "npmTest": "pass",
+        "worktreeCleanAfterTests": true,
+        "scope": "local-node-and-harness-tests-only"
+      }
     }
   ],
   "reports": [
