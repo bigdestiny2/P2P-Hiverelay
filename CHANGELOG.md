@@ -170,10 +170,11 @@ The packages are versioned in lockstep.
   dispersal over live HTTP, reconstruct from any k, k-1 insufficient, and an
   unpublished-intent PUT rejected. `scripts/blind-dispersal-live.mjs` runs the same
   flow against a real relay set from an operator-supplied config (URLs + relay
-  pubkeys + admin keys) — plan → publish intent → PUT shards → reconstruct. Note:
-  a node dealer uses the core custody signer; the client mirror still lacks the
-  `shareManifest` v2 field (it already carries the other five — task tracked
-  separately), so a Bare/client-only dealer is blocked on that.
+  pubkeys + admin keys) — plan → publish intent → PUT shards → reconstruct. Both
+  a node dealer (core custody signer) and a Bare/browser dealer work: the client
+  custody signer mirrors all six v2 custody-intent fields including
+  `shareManifest` (#115 / #162), so a client-only dealer can author a
+  manifest-bearing intent.
   A second integration test (`test/integration/blind-dispersal-fleet-e2e.test.js`)
   proves the same flow against **four full `RelayNode` instances** on a testnet DHT
   with the `shard-store` service enabled: each relay ingests the published intent
