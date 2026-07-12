@@ -1,6 +1,6 @@
 {
   "schema": "hiverelay-vnext-preservation-handoff-v1",
-  "verifiedAt": "2026-07-12T14:34:32.000Z",
+  "verifiedAt": "2026-07-12T14:46:22.000Z",
   "custodyRoot": "00-core/vnext-custody/blind-peerit-20260712-a8e87df0",
   "authorizesRelease": false,
   "authorizesDeployment": false,
@@ -12,23 +12,41 @@
     {
       "id": "hiverelay-blind",
       "base": "999b0afd7584bb727cef6e6a88a054f11513927a",
-      "tip": "180fc7387949f481fd0698205d7bf3cc26943430",
+      "tip": "211b20d892203de89be07975c155a09c976d6bd4",
       "branch": "codex/blind-service-plane-preserve-20260712",
       "bundle": {
+        "file": "hiverelay-blind-preserve-20260712-r2.bundle",
+        "sha256": "966571d4a4cebc27ca3017d3a2c03a3e3e619dc3967b276290fe36bea862e1c7",
+        "verified": true
+      },
+      "supersededBundle": {
+        "tip": "180fc7387949f481fd0698205d7bf3cc26943430",
         "file": "hiverelay-blind-preserve-20260712.bundle",
         "sha256": "8577ce5ec7250a0c31e280e4fd21f8b8dc4bb608bc410f2a2c781fbc7da9571c",
-        "verified": true
+        "reason": "browser-artifact-authority-drift-and-cli-mode-drift"
       },
       "inventory": {
         "file": "hiverelay-blind-preserve-20260712.inventory.tsv",
         "sha256": "b99c1f432b45855f19a6ac8cac985cbca55ae73ce1596cd4ecec3530fa949bca",
-        "paths": 843
+        "paths": 843,
+        "coversTip": "180fc7387949f481fd0698205d7bf3cc26943430"
       },
       "commits": [
         "365309174d5a7ceb726c0a18064005176f8af842",
         "046c54e1e2e8fd7737773c2787eaccfc4d5aca51",
-        "180fc7387949f481fd0698205d7bf3cc26943430"
-      ]
+        "180fc7387949f481fd0698205d7bf3cc26943430",
+        "211b20d892203de89be07975c155a09c976d6bd4"
+      ],
+      "repairVerification": {
+        "cleanInstall": "pass",
+        "blindSpecs": "pass",
+        "blindClientTests": "60/60 tests; 1398/1398 assertions",
+        "blindBoundaryTests": "276/276 tests; 3260/3260 assertions",
+        "browserArtifactReleaseReady": true,
+        "manifestAuthorityHash": "c56d951b526c4915204c531f45a870a14af815887d26e535812773fcb4977b94",
+        "sourceClosureHash": "2fd7a1fa4e8d4496d179dc99ca72d29d1dab4c307efd8b5f03167c75f9a8dd49",
+        "artifactHash": "30bcbde57251dd47018b980eaf3dba69de3afcb44ccf6930f7bddd89b708fba3"
+      }
     },
     {
       "id": "peerit-blind",
