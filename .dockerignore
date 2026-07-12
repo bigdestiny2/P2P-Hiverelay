@@ -4,6 +4,8 @@ node_modules
 .github
 .gitignore
 test
+**/test
+**/test/**
 scripts
 examples
 docs

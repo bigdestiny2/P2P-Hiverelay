@@ -1,22 +1,42 @@
 # HiveRelay
 
-**Core3 blind relay infrastructure for Pear/Holepunch apps, packaged as Blindspark for home servers and operated as a live release-gated fleet.**
+**A generic blind availability substrate for Pear/Holepunch and browser apps,
+packaged as Blindspark for independent operators.**
 
-HiveRelay keeps Hypercore/Hyperdrive applications available after the original
-publisher goes offline. It joins the same Hyperswarm DHT as the app, stores and
-serves the app's drives, exposes browser/mobile-friendly HTTP ingress, and can
-run optional service plugins on top of the relay kernel. For encrypted
-workloads, the relay stays blind: private data remains ciphertext on disk,
-private catalog metadata is redacted, and the custody plane rejects plaintext
-and key-material fields at the schema boundary.
+The replacement product is an isolated, app-agnostic blind substrate for
+applications that encrypt before upload. It exposes only five generic protocol
+families through separate least-privilege edge and daemon components. Apps keep
+their schemas, identities, merge rules, moderation, indexes, and content keys;
+relays keep only bounded opaque storage, inbox, Core, forwarding, admission, and
+evidence responsibilities. See the
+[canonical master protocol](docs/protocol/BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md)
+and [implementation specification](docs/protocol/BLIND-SUBSTRATE-IMPLEMENTATION-SPEC.md).
 
-**Blindspark** is the appliance packaging of HiveRelay for Umbrel and StartOS:
-a one-page dashboard, first-run setup, wallet destination, service selection,
-and persistent identity behind each platform's authenticated app proxy.
+Applications adopt it entirely on the client side. The
+[application adoption contract](docs/protocol/BLIND-SUBSTRATE-APPLICATION-ADOPTION.md)
+maps existing semantic relay patterns onto generic cells, encrypted cores,
+opaque inboxes, signed discovery, and client-owned validation/repair without an
+operator install or per-application configuration.
+
+The currently published `v0.24.3` fleet is still the application-aware legacy
+implementation. It must not be described as the blind substrate. This branch is
+building its complete replacement and intentionally refuses to bind production
+listeners until the ABI, store, signed topology, readiness, migration, and release
+evidence gates pass. The old Core/ServiceProvider runtime is retained only as a
+separately built, signed, time-bounded compatibility product; it is not a second
+future app-serving architecture. Root `npm start` selects only the replacement
+path. This workspace deliberately exposes no `start:legacy` escape hatch: any
+temporary compatibility product must be built, signed, sunset-enforced, and run
+from its own disjoint artifact.
+
+**Blindspark** remains the Umbrel/StartOS operator packaging, but its replacement
+dashboard configures only generic capacity, admission, transport/privacy roles,
+updates, evidence, and relay identity. Application/service selection belongs to
+the published compatibility appliance and does not carry into the blind product.
 
 **Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.24.3**
 
-The four packages are versioned in lockstep:
+The current published compatibility line has four lockstep packages:
 
 | Package | Role |
 |---|---|
@@ -24,6 +44,13 @@ The four packages are versioned in lockstep:
 | `p2p-hiveservices` | Optional service providers and poker/SignedLog substrate |
 | `p2p-hiverelay-client` | App/client SDK |
 | `p2p-hiverelay-verifier` | Verification helpers |
+
+The replacement is being built in the unpublished
+`@hiverelay/blind-protocol`, `@hiverelay/blind-ipc`,
+`@hiverelay/blind-client`, `@hiverelay/blind-edge`, and
+`@hiverelay/blind-daemon` workspaces. Their draft versions and generated hashes
+are not release authority; production start remains fail-closed until every
+catalog and signed-evidence gate is complete.
 
 Release-by-release notes live in [CHANGELOG.md](./CHANGELOG.md). This README is
 structured for GitHub `main`: before a tag is cut, `npm run release:prepare`
@@ -120,7 +147,22 @@ The repo has moved from a relay prototype into a Core3 infrastructure stack:
 
 ## Architecture
 
-HiveRelay is four connected layers:
+The currently shipped compatibility release is the four-layer system described
+below. It is **not** the destination architecture. The strict blind substrate
+completely replaces that application-serving runtime: it ships as the isolated
+edge/daemon product, uses the five generic protocol families, and does not run
+inside or beside the service registry as a second permanent serving path.
+
+During the bounded migration window the old runtime may exist only as a
+separately signed compatibility artifact with disjoint listeners, identity,
+storage, release channel, and sunset evidence. Peerit migrates its complete
+network/persistence path to the blind substrate. Other applications migrate by
+adopting the generic client contract; relay operators do not install app code,
+enable plugins, register namespaces, add routes, provision app keys, or restart
+for each application.
+
+The following four layers and the large graph after them document the legacy
+compatibility product so existing operators can identify what is being retired:
 
 1. **Core3 relay kernel**: DHT peer, seeder, app registry, gateway, custody,
    AutoHeal, accounting, eviction, dashboard feed.

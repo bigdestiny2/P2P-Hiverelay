@@ -1,0 +1,17 @@
+{
+  "name": "hiverelay-blind-edge-image",
+  "version": "0.0.0-draft.1",
+  "private": true,
+  "type": "module",
+  "description": "Selective dependency closure for the public HiveRelay blind edge image",
+  "dependencies": {
+    "@hiverelay/blind-edge": "file:../../../packages/blind-edge",
+    "@hiverelay/blind-ipc": "file:../../../packages/blind-ipc",
+    "@hiverelay/blind-peercred": "file:../../../packages/blind-peercred",
+    "@hiverelay/blind-protocol": "file:../../../packages/blind-protocol"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "Apache-2.0"
+}

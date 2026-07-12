@@ -1,0 +1,146 @@
+name: hiverelay-blind
+
+x-blind-hardening: &blind-hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
+  stop_grace_period: 20s
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=64m
+  ulimits:
+    nofile:
+      soft: 8192
+      hard: 8192
+
+services:
+  # Named volumes survive replacement releases. This one-shot initializer is
+  # the only root process and receives only the three capabilities needed to
+  # repair top-level ownership/mode. It never loads or starts product code and
+  # is killed before the signed 60-second maximum can be exceeded.
+  blind-volume-init:
+    image: "${HIVERELAY_BLIND_DAEMON_IMAGE:-hiverelay/blind-daemon:local}"
+    restart: "no"
+    read_only: true
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+    network_mode: none
+    stop_grace_period: 1s
+    entrypoint: ["/usr/bin/timeout", "--signal=KILL", "59s", "/bin/sh", "-ec"]
+    command:
+      - |
+        test ! -L /run/hiverelay-blind
+        test ! -L /data/blind
+        mkdir -p -- /run/hiverelay-blind /data/blind
+        test -d /run/hiverelay-blind
+        test -d /data/blind
+        test ! -L /run/hiverelay-blind
+        test ! -L /data/blind
+        chown 999:997 -- /run/hiverelay-blind /data/blind
+        chmod 0750 -- /run/hiverelay-blind
+        chmod 0700 -- /data/blind
+    volumes:
+      - blind-runtime:/run/hiverelay-blind
+      - blind-data:/data/blind
+
+  blind-daemon:
+    <<: *blind-hardening
+    image: "${HIVERELAY_BLIND_DAEMON_IMAGE:-hiverelay/blind-daemon:local}"
+    build:
+      context: .
+      dockerfile: Dockerfile.blind
+      target: blind-daemon
+      args:
+        HIVERELAY_BLIND_BUNDLE_ID: "${HIVERELAY_BLIND_BUNDLE_ID:-local}"
+    user: "999:997"
+    depends_on:
+      blind-volume-init:
+        condition: service_completed_successfully
+    network_mode: none
+    environment:
+      HIVERELAY_BLIND_RUNTIME_DIR: /run/hiverelay-blind
+      HIVERELAY_BLIND_UNARY_SOCKET: /run/hiverelay-blind/unary.sock
+      HIVERELAY_BLIND_STREAM_SOCKET: /run/hiverelay-blind/stream.sock
+      HIVERELAY_BLIND_DATA: /data/blind
+      # Parsed by the daemon only once the fixed dispatcher/coordinator lands;
+      # empty values preserve the current mandatory fail-closed startup gate.
+      HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH: "${HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH:-}"
+      HIVERELAY_BLIND_ENDPOINT_IDS: "${HIVERELAY_BLIND_ENDPOINT_IDS:-}"
+      HIVERELAY_BLIND_EDGE_UID: "998"
+      HIVERELAY_BLIND_DAEMON_UID: "999"
+      HIVERELAY_BLIND_DAEMON_GID: "997"
+      HIVERELAY_BLIND_SHARED_GID: "997"
+    volumes:
+      - blind-runtime:/run/hiverelay-blind
+      - blind-data:/data/blind
+
+  blind-edge:
+    <<: *blind-hardening
+    image: "${HIVERELAY_BLIND_EDGE_IMAGE:-hiverelay/blind-edge:local}"
+    build:
+      context: .
+      dockerfile: Dockerfile.blind
+      target: blind-edge
+      args:
+        HIVERELAY_BLIND_BUNDLE_ID: "${HIVERELAY_BLIND_BUNDLE_ID:-local}"
+    user: "998:997"
+    depends_on:
+      blind-daemon:
+        condition: service_healthy
+        restart: true
+    environment:
+      HIVERELAY_BLIND_RUNTIME_DIR: /run/hiverelay-blind
+      HIVERELAY_BLIND_UNARY_SOCKET: /run/hiverelay-blind/unary.sock
+      HIVERELAY_BLIND_STREAM_SOCKET: /run/hiverelay-blind/stream.sock
+      # These have no fallback by design: an omitted signed topology hash or
+      # endpoint leaves the edge fail-closed before it opens a public listener.
+      HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH: "${HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH:-}"
+      HIVERELAY_BLIND_HOST: 0.0.0.0
+      HIVERELAY_BLIND_PORT: "9100"
+      HIVERELAY_BLIND_ENDPOINT_ID: "${HIVERELAY_BLIND_ENDPOINT_ID:-}"
+      HIVERELAY_BLIND_DAEMON_UID: "999"
+      HIVERELAY_BLIND_DAEMON_GID: "997"
+      HIVERELAY_BLIND_SHARED_GID: "997"
+      HIVERELAY_BLIND_TLS_KEY: /run/secrets/hiverelay-blind-tls.key
+      HIVERELAY_BLIND_TLS_CERT: /run/secrets/hiverelay-blind-tls.crt
+    ports:
+      - "${HIVERELAY_BLIND_BIND:-0.0.0.0}:${HIVERELAY_BLIND_PORT:-9100}:9100"
+    volumes:
+      - blind-runtime:/run/hiverelay-blind:ro
+    secrets:
+      - source: blind-tls-key
+        target: hiverelay-blind-tls.key
+        uid: "998"
+        gid: "997"
+        mode: 0400
+      - source: blind-tls-cert
+        target: hiverelay-blind-tls.crt
+        uid: "998"
+        gid: "997"
+        mode: 0444
+    networks:
+      - blind-public
+
+volumes:
+  blind-runtime:
+  blind-data:
+
+networks:
+  blind-public:
+
+secrets:
+  blind-tls-key:
+    file: "${HIVERELAY_BLIND_TLS_KEY_FILE:-./deploy/blind/secrets/tls.key}"
+  blind-tls-cert:
+    file: "${HIVERELAY_BLIND_TLS_CERT_FILE:-./deploy/blind/secrets/tls.crt}"

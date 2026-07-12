@@ -6,12 +6,24 @@ updates?* They must not. This page is the triage rule that keeps it that way.
 
 ## The principle
 
-HiveRelay nodes are **generic infrastructure**; services (outboxlog, shard-store,
-poker, notify) are mounts, and apps ride them under namespaces. The relay owns
-**plumbing**; the app owns **meaning**. An app must be able to ship features and
-fixes on its own cadence, against the fleet as it exists today — fleet boxes
-(including Umbrel/StartOS appliances we do not operate) update on *their* cadence,
-so a fleet update can never be a prerequisite for app health.
+HiveRelay is moving from one historical contract to one replacement contract:
+
+1. The published `ServiceProvider` compatibility plane hosts application-aware services such as
+   OutboxLog, shard-store, poker, and notify. Those services may use namespaces,
+   schemas, or service-specific RPC and must state their actual visibility. It is
+   frozen as a separately built, signed, sunset-bounded compatibility product;
+   it is not extended into the replacement.
+2. The strict blind substrate is the replacement app-serving product. It is an
+   isolated edge plus daemon with only the
+   `DESCRIBE`, `CELL`, `INBOX`, `CORE`, and `FORWARD` families. It receives no app
+   registration or namespace and never loads the service registry. Its canonical
+   contract is the [blind master specification](protocol/BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md).
+
+During migration the same ownership rule applies, but only the blind contract is
+the long-term substrate: the relay owns **plumbing** and the app owns **meaning**. Once a
+versioned generic wire is deployed, an app must be able to ship features and
+fixes on its own cadence against compatible fleet boxes—including independently
+operated Umbrel/StartOS appliances—without an app-specific relay update.
 
 The test for any proposed change:
 
@@ -31,13 +43,20 @@ The test for any proposed change:
 
 Corollaries:
 
-- **The wire surface is a stable, additive contract.** For outboxlog:
+- **Each wire surface is a stable, versioned contract.** Legacy OutboxLog uses:
   `POST /api/token`, `POST /api/sync/{create,join,append,heads}`,
   `GET /api/sync/{range,count,get}`, `GET /api/directory`,
   `POST /api/swarm/{join,send}`, `GET /api/swarm/events`, and the enumerated
   operator admin routes (`/api/admin/{takedown,restore,takedowns,sweep}`).
-  New capabilities are added, never changed in place; clients feature-detect and
-  degrade gracefully against older relays. Deprecations get long windows.
+  This surface is frozen for signed migration compatibility rather than expanded.
+  Its deadlines and supported predecessor set come only from the non-extendable
+  compatibility sunset chain.
+  These routes are not the strict blind ABI: they expose app-aware OutboxLog
+  concepts and remain only a migration path in the separate compatibility artifact.
+- **The strict blind wire has no app namespace.** Its one-route-per-family binary
+  ABI, hashes, vectors, admission, isolation, and release gates are maintained
+  beside the [implementation specification](protocol/BLIND-SUBSTRATE-IMPLEMENTATION-SPEC.md).
+  Adding an app changes only its encrypted client profile.
 - **Apps treat the relay as an untrusted pipe.** Every record is verified
   client-side (signature, key-binding, PoW), so a relay can withhold or go stale
   but never forge — which is exactly what makes relay updates operationally

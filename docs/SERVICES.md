@@ -3,6 +3,17 @@
 
 # HiveRelay Services Layer
 
+> [!IMPORTANT]
+> This page documents the application-aware `ServiceProvider`/RPC plane. It is
+> not the strict blind substrate and its plugins receive a broader node/store
+> context. OutboxLog, notify, poker, and other semantic providers must not inherit
+> a whole-node “blind” claim merely because some payload fields are encrypted.
+> The replacement isolated five-family substrate is defined separately by the
+> [blind master specification](protocol/BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md)
+> and [implementation specification](protocol/BLIND-SUBSTRATE-IMPLEMENTATION-SPEC.md).
+> This services tree is compatibility source only: it is absent from both blind
+> component images and cannot be enabled by a blind-mode flag or plugin setting.
+
 ## Overview
 
 HiveRelay has a two-layer architecture:
