@@ -39,9 +39,10 @@ const compositionDependencies = deepFreeze({
   BlindCellReservedSpendSnapshotV1: ['BlindPreparedAdmissionStoreV1'],
   BlindCellTerminalSpendSnapshotV1: ['BlindPreparedAdmissionStoreV1'],
   BlindForwardHopAcceptV1: ['RelayResultBindingV1'],
-  BlindForwardHopOpenV1: ['BlindTransportRouteV1'],
+  BlindForwardHopOpenV1: ['BlindForwardRouteScopeV1', 'BlindTransportRouteV1'],
   BlindForwardOpenResultV1: ['BlindForwardHopAcceptV1', 'RelayResultBindingV1'],
   BlindForwardOpenV1: ['AdmissionV1'],
+  BlindForwardRouteScopeV1: ['BlindForwardRouteHopV1'],
   BlindListenerCatalogV1: ['BlindListenerEntryV1'],
   BlindOuterEnvelopeV1: ['BlindDispatchFrameV1'],
   BlindProductIsolationReportBundleV1: [

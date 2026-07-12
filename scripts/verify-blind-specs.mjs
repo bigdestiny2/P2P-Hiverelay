@@ -104,7 +104,7 @@ requireText(privateIpc, 'privateIpcVectorSetHash', privateIpcPath)
 requireText(privateIpc, 'does not prove the production daemon storage engines', privateIpcPath)
 
 if (!ABI_STATUS.releaseReady) {
-  throw new Error(`blind public WIRE authority gate failed: ${ABI_STATUS.wireMissingSchemaNames.length} schemas remain`)
+  throw new Error(`blind public WIRE authority gate failed: ${ABI_STATUS.wireMissingSchemaNames.length} schemas remain; release blockers=${ABI_STATUS.releaseBlockers.join(',') || 'none'}`)
 }
 if (!EXECUTABLE_SCHEMA_FIELD_STATUS.complete) {
   throw new Error(`blind executable schema field metadata drifted: ${EXECUTABLE_SCHEMA_FIELD_STATUS.mismatches.map(row => row.schemaName).join(',')}`)

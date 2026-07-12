@@ -893,6 +893,7 @@ export const blindTransportRouteV1 = struct([
   ['maxOpenBytes', u32be],
   ['maxCircuitBytes', u64be],
   ['maxConcurrentStreams', u16be],
+  ['maxRelayCount', ranged(u8, 2, 4, 'maxRelayCount')],
   ['hopAdmissionProfileId', profileId],
   ['issuedEpoch', u32be],
   ['expiresEpoch', u32be],
@@ -928,9 +929,65 @@ export const blindTransportRouteV1 = struct([
   }
 })
 
+export const blindForwardRouteHopV1 = struct([
+  ['hopIndex', ranged(u8, 0, 3, 'hopIndex')],
+  ['relayPublicKey', bytes32],
+  ['descriptorSequence', u64be],
+  ['descriptorHash', bytes32],
+  ['previousScopeHash', bytes32],
+  ['scopeHash', bytes32],
+  ['relaySignature', bytes64]
+], {
+  name: 'BlindForwardRouteHopV1',
+  validate (value) {
+    assertNonzeroBytes(value.relayPublicKey, 'relayPublicKey')
+    assertNonzeroBytes(value.descriptorHash, 'descriptorHash')
+    assertNonzeroBytes(value.scopeHash, 'scopeHash')
+    if (value.hopIndex === 0 && !isAllZero(value.previousScopeHash)) {
+      fail('route-scope hop zero requires an all-zero previousScopeHash')
+    }
+    if (value.hopIndex !== 0 && isAllZero(value.previousScopeHash)) {
+      fail('route-scope continuation requires a nonzero previousScopeHash')
+    }
+  }
+})
+
+const blindForwardRouteHopsV1 = arrayOf(blindForwardRouteHopV1, 1, 4, 'forward route-scope hops')
+
+export const blindForwardRouteScopeV1 = struct([
+  ['version', version1],
+  ['rootRouteId', bytes16],
+  ['rootCircuitNonce', bytes32],
+  ['rootRequestCommitment', bytes32],
+  ['maxRelayCount', ranged(u8, 2, 4, 'maxRelayCount')],
+  ['expiresEpoch', u32be],
+  ['hops', blindForwardRouteHopsV1]
+], {
+  name: 'BlindForwardRouteScopeV1',
+  validate (value) {
+    assertNonzeroBytes(value.rootRouteId, 'rootRouteId')
+    assertNonzeroBytes(value.rootCircuitNonce, 'rootCircuitNonce')
+    assertNonzeroBytes(value.rootRequestCommitment, 'rootRequestCommitment')
+    if (value.expiresEpoch === 0) fail('route-scope expiresEpoch must be nonzero')
+    if (value.hops.length > value.maxRelayCount) fail('route-scope relay count exceeds maxRelayCount')
+    const relayKeys = new Set()
+    for (let index = 0; index < value.hops.length; index++) {
+      const hop = value.hops[index]
+      if (hop.hopIndex !== index) fail('route-scope hop indexes must be contiguous from zero')
+      if (index > 0 && !b4a.equals(hop.previousScopeHash, value.hops[index - 1].scopeHash)) {
+        fail('route-scope previousScopeHash does not bind the complete prefix')
+      }
+      const relayKey = b4a.toString(hop.relayPublicKey, 'hex')
+      if (relayKeys.has(relayKey)) fail('route-scope repeats a relay public key')
+      relayKeys.add(relayKey)
+    }
+  }
+})
+
 export const blindForwardHopOpenV1 = struct([
   ['version', version1],
   ['route', blindTransportRouteV1],
+  ['routeScope', blindForwardRouteScopeV1],
   ['previousDescriptorSequence', u64be],
   ['previousDescriptorHash', bytes32],
   ['circuitNonce', bytes32],
@@ -957,6 +1014,16 @@ export const blindForwardHopOpenV1 = struct([
     if (bigint(value.maxCircuitBytes, 'maxCircuitBytes') > bigint(value.route.maxCircuitBytes, 'route.maxCircuitBytes')) {
       fail('forward circuit exceeds the route byte cap')
     }
+    const lastHop = value.routeScope.hops[value.routeScope.hops.length - 1]
+    if (!b4a.equals(lastHop.relayPublicKey, value.route.previousRelayKey) ||
+        bigint(lastHop.descriptorSequence, 'routeScope descriptorSequence') !==
+          bigint(value.previousDescriptorSequence, 'previousDescriptorSequence') ||
+        !b4a.equals(lastHop.descriptorHash, value.previousDescriptorHash)) {
+      fail('BlindForwardHopOpenV1 route scope does not end at the forwarding relay descriptor')
+    }
+    if (value.routeScope.hops.length > value.route.maxRelayCount) {
+      fail('BlindForwardHopOpenV1 route scope exceeds the signed route relay bound')
+    }
   }
 })
 
@@ -981,6 +1048,8 @@ export const blindForwardHopAcceptV1 = struct([
   ['lifetimeMillis', u32be],
   ['openedAtEpoch', u32be],
   ['hopOpenCommitment', bytes32],
+  ['acceptedRouteScopeHash', bytes32],
+  ['acceptedRelayCount', ranged(u8, 1, 4, 'acceptedRelayCount')],
   ['handshakeFlight2', bytes96],
   ['nextSignature', bytes64]
 ], {
@@ -1436,6 +1505,7 @@ export const blindForwardOpenV1 = struct([
   ['requestedWireClass', wireClass],
   ['circuitClass', circuitClass],
   ['circuitNonce', bytes32],
+  ['parentRouteScopeHash', bytes32],
   ['hopAdmission', admissionV1],
   ['innerHandshake', boundedBytes(32, 32, 'innerHandshake')]
 ], {
@@ -1464,6 +1534,8 @@ export const blindForwardOpenResultV1 = struct([
   ['lifetimeMillis', u32be],
   ['openedAtEpoch', u32be],
   ['requestCommitment', bytes32],
+  ['acceptedRouteScopeHash', bytes32],
+  ['acceptedRelayCount', ranged(u8, 1, 4, 'acceptedRelayCount')],
   ['nextHopAccept', blindForwardHopAcceptV1],
   ['signature', bytes64]
 ], {
@@ -1485,7 +1557,9 @@ export const blindForwardOpenResultV1 = struct([
         value.grantedInitialWindow !== next.grantedInitialWindow || value.maxDataBytes !== next.maxDataBytes ||
         bigint(value.maxCircuitBytes, 'maxCircuitBytes') !== bigint(next.maxCircuitBytes, 'next maxCircuitBytes') ||
         value.idleMillis !== next.idleMillis || value.lifetimeMillis !== next.lifetimeMillis ||
-        value.openedAtEpoch !== next.openedAtEpoch) {
+        value.openedAtEpoch !== next.openedAtEpoch ||
+        !b4a.equals(value.acceptedRouteScopeHash, next.acceptedRouteScopeHash) ||
+        value.acceptedRelayCount !== next.acceptedRelayCount) {
       fail('forward open result does not match nextHopAccept')
     }
   }

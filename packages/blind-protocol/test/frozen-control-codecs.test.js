@@ -17,6 +17,8 @@ import {
   STREAM_WIRE_CLASS,
   blindForwardHopAcceptV1,
   blindForwardHopOpenV1,
+  blindForwardRouteHopV1,
+  blindForwardRouteScopeV1,
   blindOhttpTransportErrorV1,
   blindTransportRouteV1,
   blake2b256,
@@ -27,7 +29,9 @@ import {
   decodeDispatchFrame,
   draftAbiRegistryValue,
   encodeCanonical,
-  encodeDispatchFrame
+  encodeDispatchFrame,
+  forwardRouteScopeGenesisHash,
+  forwardRouteScopeHopHash
 } from '../index.js'
 
 const KiB = 1024
@@ -78,6 +82,7 @@ function streamingRoute () {
     maxOpenBytes: 128 * KiB,
     maxCircuitBytes: 256n * BigInt(MiB),
     maxConcurrentStreams: 16,
+    maxRelayCount: 4,
     hopAdmissionProfileId: 7,
     issuedEpoch: 20,
     expiresEpoch: 24,
@@ -86,10 +91,38 @@ function streamingRoute () {
   }
 }
 
+function routeScope () {
+  const root = {
+    version: 1,
+    rootRouteId: bytes(16, 0x10),
+    rootCircuitNonce: bytes(32, 0x21),
+    rootRequestCommitment: bytes(32, 0x22),
+    maxRelayCount: 4,
+    expiresEpoch: 24
+  }
+  const genesis = forwardRouteScopeGenesisHash(root)
+  const hop = {
+    hopIndex: 0,
+    relayPublicKey: bytes(32, 0x11),
+    descriptorSequence: 3n,
+    descriptorHash: bytes(32, 0x20),
+    previousScopeHash: bytes(32, 0)
+  }
+  return {
+    ...root,
+    hops: [{
+      ...hop,
+      scopeHash: forwardRouteScopeHopHash({ ...hop, previousScopeHash: genesis }),
+      relaySignature: bytes(64, 0x25)
+    }]
+  }
+}
+
 function forwardHopOpen () {
   return {
     version: 1,
     route: streamingRoute(),
+    routeScope: routeScope(),
     previousDescriptorSequence: 3n,
     previousDescriptorHash: bytes(32, 0x20),
     circuitNonce: bytes(32, 0x21),
@@ -132,6 +165,8 @@ function forwardHopAccept () {
     lifetimeMillis: 60 * 60_000,
     openedAtEpoch: 21,
     hopOpenCommitment: bytes(32, 0x36),
+    acceptedRouteScopeHash: bytes(32, 0x39),
+    acceptedRelayCount: 1,
     handshakeFlight2: bytes(96, 0x37),
     nextSignature: bytes(64, 0x38)
   }
@@ -141,11 +176,11 @@ test('blind registry: frozen codes, wire class and schema gate stay synchronized
   t.is(ERROR_CODE.TRANSPORT_UNSUPPORTED, 20)
   t.is(STREAM_WIRE_CLASS[3], 65535)
   t.is(DISPATCH_LIMITS.MAX_FORWARD_DATA_BYTES, 65535)
-  t.is(REQUIRED_SCHEMA_NAMES.length, 148)
-  t.is(IMPLEMENTED_SCHEMAS.length, 141)
+  t.is(REQUIRED_SCHEMA_NAMES.length, 150)
+  t.is(IMPLEMENTED_SCHEMAS.length, 143)
   t.is(ABI_STATUS.missingSchemaNames.length, 0)
-  t.is(ABI_RELEASE_BLOCKERS.length, 0)
-  t.is(ABI_STATUS.releaseReady, true)
+  t.alike(ABI_RELEASE_BLOCKERS, ['FORWARD_ROUTE_SCOPE_AUTHORITY_REGENERATION_PENDING'])
+  t.is(ABI_STATUS.releaseReady, false)
   const draftRegistry = draftAbiRegistryValue()
   t.is(draftRegistry.dispatchLimits.find(limit => limit.name === 'MAX_FORWARD_DATA_BYTES').value, 65535)
   t.is(draftRegistry.forwardCircuitClasses.find(entry => entry.id === 2).maxCircuitBytes, 64 * MiB)
@@ -155,6 +190,8 @@ test('blind registry: frozen codes, wire class and schema gate stay synchronized
     'BlindCoreReadCapV1',
     'BlindForwardHopAcceptV1',
     'BlindForwardHopOpenV1',
+    'BlindForwardRouteHopV1',
+    'BlindForwardRouteScopeV1',
     'BlindLocalCheckpointV1',
     'BlindOhttpTransportErrorV1',
     'BlindStoreManifestV1',
@@ -194,20 +231,25 @@ test('blind OHTTP transport error: protected pre-dispatch code is exactly two by
 
 test('blind forwarding: route and adjacent-hop records are byte-exact', t => {
   const route = encodeCanonical(blindTransportRouteV1, streamingRoute())
-  t.is(route.byteLength, 255)
+  t.is(route.byteLength, 256)
   t.is(decodeCanonical(blindTransportRouteV1, route).nextDescriptorSequence, 2n)
 
   const open = encodeCanonical(blindForwardHopOpenV1, forwardHopOpen())
-  t.is(open.byteLength, 482)
+  t.is(open.byteLength, 771)
   const decodedOpen = decodeCanonical(blindForwardHopOpenV1, open)
   t.is(decodedOpen.maxDataBytes, 65535)
   t.alike(decodedOpen.handshakeFlight1, bytes(32, 0x23))
 
   const accept = encodeCanonical(blindForwardHopAcceptV1, forwardHopAccept())
-  t.is(accept.byteLength, 634)
+  t.is(accept.byteLength, 667)
   const decodedAccept = decodeCanonical(blindForwardHopAcceptV1, accept)
   t.is(decodedAccept.nextStreamId, 5n)
   t.alike(decodedAccept.handshakeFlight2, bytes(96, 0x37))
+
+  const scope = encodeCanonical(blindForwardRouteScopeV1, routeScope())
+  t.is(decodeCanonical(blindForwardRouteHopV1,
+    encodeCanonical(blindForwardRouteHopV1, routeScope().hops[0])).hopIndex, 0)
+  t.alike(decodeCanonical(blindForwardRouteScopeV1, scope).hops[0].relayPublicKey, bytes(32, 0x11))
 })
 
 test('blind forwarding: route, class and stream invariants fail closed', t => {

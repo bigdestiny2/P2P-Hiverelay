@@ -255,6 +255,7 @@ export function forwardOpenRequestCommitment (value) {
     encodeU8(value.requestedWireClass, 'requestedWireClass'),
     encodeU8(value.circuitClass, 'circuitClass'),
     nonzeroFixedBytesInput(value.circuitNonce, 32, 'circuitNonce'),
+    fixedBytesInput(value.parentRouteScopeHash, 32, 'parentRouteScopeHash'),
     blake2b256(innerHandshake)
   ])
 }

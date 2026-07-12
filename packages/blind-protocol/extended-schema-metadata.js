@@ -62,6 +62,7 @@ export const SCHEMA_METADATA_OVERRIDES = Object.freeze([
     ['maxDataBytes', 'u32be[wire-class]'], ['maxCircuitBytes', 'u64be[class-tuple]'],
     ['idleMillis', 'u32be[class-tuple]'], ['lifetimeMillis', 'u32be[class-tuple]'],
     ['openedAtEpoch', 'u32be'], ['requestCommitment', bytes32],
+    ['acceptedRouteScopeHash', bytes32], ['acceptedRelayCount', 'u8[1..4]'],
     ['nextHopAccept', 'BlindForwardHopAcceptV1'], ['signature', bytes64]
   ]),
   schema('BlindForwardHopAcceptV1', [
@@ -72,7 +73,9 @@ export const SCHEMA_METADATA_OVERRIDES = Object.freeze([
     ['circuitClass', 'u8[1..3]'], ['grantedInitialWindow', 'u32be[class-tuple]'],
     ['maxDataBytes', 'u32be[wire-class]'], ['maxCircuitBytes', 'u64be[class-tuple]'],
     ['idleMillis', 'u32be[class-tuple]'], ['lifetimeMillis', 'u32be[class-tuple]'],
-    ['openedAtEpoch', 'u32be'], ['hopOpenCommitment', bytes32], ['handshakeFlight2', 'fixed96'], ['nextSignature', bytes64]
+    ['openedAtEpoch', 'u32be'], ['hopOpenCommitment', bytes32],
+    ['acceptedRouteScopeHash', bytes32], ['acceptedRelayCount', 'u8[1..4]'],
+    ['handshakeFlight2', 'fixed96'], ['nextSignature', bytes64]
   ]),
   schema('DurabilityProfileV1', [
     ['profileId', 'u8[1..2]'], ['storeFormatMajor', 'u16be'], ['storeFormatMinor', 'u16be'],

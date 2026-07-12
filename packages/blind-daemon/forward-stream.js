@@ -14,6 +14,7 @@ import {
   blindForwardHopOpenV1,
   blindForwardOpenResultV1,
   blindForwardOpenV1,
+  blindForwardRouteScopeV1,
   blindForwardWindowV1,
   blindTransportRouteV1,
   blake2b256,
@@ -23,6 +24,12 @@ import {
   encodeDispatchFrame,
   forwardOpenRequestCommitment
 } from '@hiverelay/blind-protocol'
+import {
+  FORWARD_PARENT_ORIGIN,
+  extendForwardRouteScope,
+  normalizeForwardParentContext,
+  verifyForwardRouteScope
+} from './forward-route-scope.js'
 
 const MAX_U64 = (1n << 64n) - 1n
 const FORWARD_NONCE_DOMAIN = b4a.from('hiverelay.blind.forward-open-live-key.v1', 'ascii')
@@ -66,6 +73,13 @@ function u64 (value, field) {
 
 function sameBytes (left, right) {
   return left.byteLength === right.byteLength && b4a.equals(left, right)
+}
+
+function allZero (value) {
+  for (const byte of value) {
+    if (byte !== 0) return false
+  }
+  return true
 }
 
 function byteKey (value) {
@@ -325,6 +339,12 @@ export class ForwardStreamService {
     this.dialAuthorizedRoute = options.dialAuthorizedRoute
     this.verifyHopAccept = options.verifyHopAccept
     this.buildResult = options.buildResult
+    this.verifyRouteScopeSignature = options.verifyRouteScopeSignature
+    this.verifyRouteScopeDescriptor = options.verifyRouteScopeDescriptor
+    this.signRouteScope = options.signRouteScope
+    this.epochNow = typeof options.epochNow === 'function'
+      ? options.epochNow
+      : () => Math.floor(Date.now() / (6 * 60 * 60 * 1000))
     this.persistence = options.persistence
     for (const [name, hook] of [
       ['authenticateParent', this.authenticateParent],
@@ -334,7 +354,10 @@ export class ForwardStreamService {
       ['buildHopOpen', this.buildHopOpen],
       ['dialAuthorizedRoute', this.dialAuthorizedRoute],
       ['verifyHopAccept', this.verifyHopAccept],
-      ['buildResult', this.buildResult]
+      ['buildResult', this.buildResult],
+      ['verifyRouteScopeSignature', this.verifyRouteScopeSignature],
+      ['verifyRouteScopeDescriptor', this.verifyRouteScopeDescriptor],
+      ['signRouteScope', this.signRouteScope]
     ]) {
       if (typeof hook !== 'function') throw new TypeError(`${name} hook is required`)
     }
@@ -347,19 +370,34 @@ export class ForwardStreamService {
     this.recordsBySpend = new Map()
     this.recordsByScope = new Map()
     this.routeCounts = new Map()
+    this.claimsByNonce = new Map()
+    this.closing = false
   }
 
   async open (rawRequest, context = {}) {
     const request = normalizeOpen(rawRequest)
     const auth = await this.authenticateParent({ request, context })
     if (!auth || auth.verified !== true) fail('TRANSPORT_UNSUPPORTED', 'FORWARD parent channel is not authenticated')
+    const parentRouteContext = normalizeForwardParentContext(auth.forwardParentContext)
+    if (parentRouteContext.origin === FORWARD_PARENT_ORIGIN.DIRECT) {
+      if (!allZero(request.parentRouteScopeHash)) {
+        fail('CONFLICT', 'direct FORWARD parent requires the zero route-scope root')
+      }
+    } else if (!sameBytes(request.parentRouteScopeHash, parentRouteContext.inheritedScopeHash)) {
+      fail('CONFLICT', 'forwarded FORWARD parent route scope was reset or changed')
+    }
+    const verifiedParentRouteScope = parentRouteContext.origin === FORWARD_PARENT_ORIGIN.FORWARDED
+      ? await verifyForwardRouteScope(parentRouteContext.routeScope, {
+        nowEpoch: this.epochNow(),
+        verifySignature: this.verifyRouteScopeSignature,
+        verifyDescriptorBinding: this.verifyRouteScopeDescriptor,
+        signal: context.signal
+      })
+      : null
     const parentSessionId = asBytes(auth.parentSessionId, 'parentSessionId')
     const parent = parentKey(parentSessionId)
     const commitment = forwardOpenRequestCommitment({ previousRelayKey: this.relayPublicKey, ...request })
     const nonceKey = nonceIndexKey(this.relayPublicKey, request.circuitNonce)
-
-    let existing = this.recordsByNonce.get(nonceKey)
-    if (existing) return this._retry(existing, commitment, parent)
 
     const authorization = await this.authorizeRoute({
       routeId: b4a.from(request.routeId),
@@ -371,34 +409,74 @@ export class ForwardStreamService {
       signal: context.signal
     })
     const route = this._validateAuthorization(authorization, request)
-    existing = this.recordsByNonce.get(nonceKey)
-    if (existing) return this._retry(existing, commitment, parent)
 
-    const admission = await this.authorizeAdmission({
-      operation: 'forward-open',
-      admission: request.hopAdmission,
-      circuitClass: request.circuitClass,
-      requestCommitment: b4a.from(commitment),
-      routeId: b4a.from(request.routeId),
+    const routeScope = await this._prepareRouteScope({
+      auth,
+      parentRouteContext,
+      verifiedParentRouteScope,
+      route,
+      request,
+      requestCommitment: commitment,
       signal: context.signal
     })
-    if (!admission || admission.accepted !== true) fail('SPEND_INVALID', 'FORWARD admission was not accepted')
-    const spendTag = asBytes(admission.spendTag, 'spendTag', 1, 128)
-    const spendKey = byteKey(spendTag)
+    const acceptedRouteScopeHash = b4a.from(routeScope.hops[routeScope.hops.length - 1].scopeHash)
+    const acceptedRelayCount = routeScope.hops.length
+    const nonceClaim = this._claimNonce({
+      nonceKey,
+      parent,
+      requestCommitment: commitment,
+      routeScopeHash: acceptedRouteScopeHash
+    })
+    if (nonceClaim.record) {
+      return this._retry(nonceClaim.record, commitment, parent, acceptedRouteScopeHash)
+    }
+    if (!nonceClaim.owner) return nonceClaim.claim.wait.promise
+    const claim = nonceClaim.claim
 
-    existing = this.recordsByNonce.get(nonceKey)
-    if (existing) return this._retry(existing, commitment, parent)
-    if (this.recordsBySpend.has(spendKey)) fail('SPEND_REPLAY', 'FORWARD admission spend tag was already used')
-    if (this.recordsByNonce.size >= this.maxRecords) fail('BUSY', 'FORWARD retry record capacity is exhausted')
+    let admission
+    try {
+      admission = await this.authorizeAdmission({
+        operation: 'forward-open',
+        admission: request.hopAdmission,
+        circuitClass: request.circuitClass,
+        requestCommitment: b4a.from(commitment),
+        routeId: b4a.from(request.routeId),
+        signal: context.signal
+      })
+      this._assertClaimOwner(claim)
+      if (!admission || admission.accepted !== true) fail('SPEND_INVALID', 'FORWARD admission was not accepted')
+    } catch (error) {
+      throw this._terminalizeUnrecordedClaim(claim, error, 'FORWARD admission failed terminally')
+    }
 
-    const routeKey = byteKey(route.routeId)
-    const activeForRoute = this.routeCounts.get(routeKey) || 0
-    if (activeForRoute >= route.maxConcurrentStreams) fail('BUSY', 'signed route stream capacity is exhausted')
-    const callerStreamId = u64(await this.allocateStreamId({ family: FAMILY.FORWARD, request, context }), 'streamId')
-    if (callerStreamId === 0n) fail('INTERNAL', 'FORWARD stream allocator returned zero')
-    const tuple = FORWARD_CIRCUIT_CLASS[request.circuitClass]
-    const maxDataBytes = STREAM_WIRE_CLASS[request.requestedWireClass]
-    const wait = deferred()
+    let spendTag
+    let spendKey
+    let routeKey
+    let activeForRoute
+    let tuple
+    let maxDataBytes
+    try {
+      spendTag = asBytes(admission.spendTag, 'spendTag', 1, 128)
+      spendKey = byteKey(spendTag)
+      if (this.recordsBySpend.has(spendKey)) fail('SPEND_REPLAY', 'FORWARD admission spend tag was already used')
+      routeKey = byteKey(route.routeId)
+      activeForRoute = this.routeCounts.get(routeKey) || 0
+      if (activeForRoute >= route.maxConcurrentStreams) fail('BUSY', 'signed route stream capacity is exhausted')
+      tuple = FORWARD_CIRCUIT_CLASS[request.circuitClass]
+      maxDataBytes = STREAM_WIRE_CLASS[request.requestedWireClass]
+    } catch (error) {
+      throw this._terminalizeUnrecordedClaim(claim, error, 'FORWARD claimed open failed terminally')
+    }
+
+    let callerStreamId
+    try {
+      callerStreamId = u64(await this.allocateStreamId({ family: FAMILY.FORWARD, request, context }), 'streamId')
+      this._assertClaimOwner(claim)
+      if (callerStreamId === 0n) fail('INTERNAL', 'FORWARD stream allocator returned zero')
+    } catch (error) {
+      throw this._terminalizeUnrecordedClaim(claim, error, 'FORWARD stream allocation failed terminally')
+    }
+    const wait = claim.wait
     const record = {
       family: FAMILY.FORWARD,
       nonceKey,
@@ -408,9 +486,14 @@ export class ForwardStreamService {
       parentSessionId: b4a.from(parentSessionId),
       request,
       requestCommitment: b4a.from(commitment),
+      routeScopeHash: b4a.from(acceptedRouteScopeHash),
       route,
       routeKey,
       authorization,
+      parentRouteContext,
+      routeScope,
+      acceptedRouteScopeHash,
+      acceptedRelayCount,
       callerStreamId,
       tuple,
       maxDataBytes,
@@ -440,7 +523,13 @@ export class ForwardStreamService {
         idleMillis: tuple.idleMillis,
         lifetimeMillis: tuple.lifetimeMillis,
         readiness: auth.readiness,
-        metadata: { operation: 'FORWARD.OPEN', routeId: routeKey, nonceKey },
+        metadata: {
+          operation: 'FORWARD.OPEN',
+          routeId: routeKey,
+          nonceKey,
+          routeScopeHash: byteKey(record.acceptedRouteScopeHash),
+          relayCount: record.acceptedRelayCount
+        },
         onClose: reason => this._onScopeClose(record, reason)
       })
       this.recordsByScope.set(record.scope.key, record)
@@ -471,6 +560,10 @@ export class ForwardStreamService {
       })
       if (accepted !== true) fail('CONFLICT', 'next-hop accept failed authenticated verification')
       if (record.hopAccept.nextStreamId !== record.nextStreamId) fail('CONFLICT', 'next-hop stream ID changed in its accept')
+      if (!sameBytes(record.hopAccept.acceptedRouteScopeHash, record.acceptedRouteScopeHash) ||
+          record.hopAccept.acceptedRelayCount !== record.acceptedRelayCount) {
+        fail('CONFLICT', 'next-hop accept changed the authenticated route scope')
+      }
       record.scope.assertActive()
       record.circuit = new ForwardCircuit({
         scope: record.scope,
@@ -487,7 +580,7 @@ export class ForwardStreamService {
       record.ticket = this.plane.issueTicket(record.scope, record.parentSessionId)
       record.ticketIssuedMonotonicMillis = this.plane.now()
       const response = this._response(record, false)
-      wait.resolve(response)
+      this._resolveRecordedClaim(claim, response)
       return response
     } catch (error) {
       record.status = 'terminal'
@@ -497,7 +590,7 @@ export class ForwardStreamService {
       const terminal = error instanceof BlindProtocolError
         ? error
         : new BlindProtocolError('INTERNAL', 'FORWARD authorized dial failed terminally')
-      wait.reject(terminal)
+      this._rejectRecordedClaim(claim, terminal)
       throw terminal
     }
   }
@@ -527,9 +620,137 @@ export class ForwardStreamService {
     return route
   }
 
-  async _retry (record, commitment, parent) {
-    if (record.parent !== parent) fail('RETRY_TERMINAL', 'FORWARD retry moved to another authenticated parent')
-    if (!sameBytes(record.requestCommitment, commitment)) fail('CONFLICT', 'FORWARD circuit nonce was reused with another open')
+  async _prepareRouteScope (input) {
+    const nowEpoch = this.epochNow()
+    const parent = input.parentRouteContext
+    let inherited = null
+    if (parent.origin === FORWARD_PARENT_ORIGIN.FORWARDED) {
+      inherited = input.verifiedParentRouteScope
+      if (inherited == null) fail('INTERNAL', 'verified FORWARD parent route scope is absent')
+      if (!sameBytes(inherited.hops[inherited.hops.length - 1].scopeHash, parent.inheritedScopeHash) ||
+          inherited.hops.length !== parent.inheritedRelayCount) {
+        fail('CONFLICT', 'authenticated FORWARD parent route context changed after verification')
+      }
+      if (input.route.maxRelayCount !== inherited.maxRelayCount) {
+        // maxRelayCount is inside the signed genesis preimage. The selected V1
+        // shape has no monotonic effective-limit field, so a continuation
+        // cannot reduce and propagate the value without invalidating every
+        // prefix signature. Require the immutable root value at every hop.
+        fail('CONFLICT', 'FORWARD continuation changed the signed root relay-count bound')
+      }
+      if (input.route.expiresEpoch !== inherited.expiresEpoch) {
+        // expiresEpoch is also inside the signed genesis preimage and has no
+        // independently propagated effective value in V1. Reject both an
+        // extension and a local-only reduction that a later hop could lose.
+        fail('CONFLICT', 'FORWARD continuation changed the signed root expiry')
+      }
+      if (inherited.hops.length >= input.route.maxRelayCount) {
+        fail('TOO_LARGE', 'FORWARD continuation exceeds the signed route relay-count bound')
+      }
+    }
+    const priorHops = inherited == null ? [] : inherited.hops
+    if (priorHops.some(hop => sameBytes(hop.relayPublicKey, this.relayPublicKey))) {
+      fail('CONFLICT', 'FORWARD continuation repeats the current relay')
+    }
+    if (sameBytes(input.route.nextRelayKey, this.relayPublicKey) ||
+        priorHops.some(hop => sameBytes(hop.relayPublicKey, input.route.nextRelayKey))) {
+      fail('CONFLICT', 'FORWARD continuation would create a relay cycle')
+    }
+    const routeScope = await extendForwardRouteScope({
+      routeScope: inherited,
+      rootRouteId: input.request.routeId,
+      rootCircuitNonce: input.request.circuitNonce,
+      rootRequestCommitment: input.requestCommitment,
+      maxRelayCount: input.route.maxRelayCount,
+      expiresEpoch: input.route.expiresEpoch,
+      relayPublicKey: this.relayPublicKey,
+      descriptor: input.auth.readiness,
+      sign: this.signRouteScope,
+      signal: input.signal
+    })
+    const verified = await verifyForwardRouteScope(routeScope, {
+      nowEpoch,
+      verifySignature: this.verifyRouteScopeSignature,
+      verifyDescriptorBinding: this.verifyRouteScopeDescriptor,
+      signal: input.signal
+    })
+    const last = verified.hops[verified.hops.length - 1]
+    if (!sameBytes(last.relayPublicKey, this.relayPublicKey) || verified.hops.length > input.route.maxRelayCount) {
+      fail('INTERNAL', 'FORWARD route-scope signer changed the bounded append')
+    }
+    return verified
+  }
+
+  _claimNonce (input) {
+    if (this.closing) fail('BUSY', 'FORWARD service is draining')
+    const record = this.recordsByNonce.get(input.nonceKey)
+    if (record) return { owner: false, record, claim: null }
+    const existing = this.claimsByNonce.get(input.nonceKey)
+    if (existing) {
+      this._assertNonceBinding(existing, input.parent, input.requestCommitment, input.routeScopeHash)
+      return { owner: false, record: null, claim: existing }
+    }
+    let unrecordedClaims = 0
+    for (const nonceKey of this.claimsByNonce.keys()) {
+      if (!this.recordsByNonce.has(nonceKey)) unrecordedClaims++
+    }
+    if (this.recordsByNonce.size + unrecordedClaims >= this.maxRecords) {
+      fail('BUSY', 'FORWARD retry record capacity is exhausted')
+    }
+    const claim = {
+      nonceKey: input.nonceKey,
+      parent: input.parent,
+      requestCommitment: b4a.from(input.requestCommitment),
+      routeScopeHash: b4a.from(input.routeScopeHash),
+      status: 'claiming',
+      wait: deferred(),
+      error: null
+    }
+    this.claimsByNonce.set(input.nonceKey, claim)
+    return { owner: true, record: null, claim }
+  }
+
+  _assertNonceBinding (value, parent, commitment, routeScopeHash) {
+    if (value.parent !== parent) fail('RETRY_TERMINAL', 'FORWARD retry moved to another authenticated parent')
+    if (!sameBytes(value.requestCommitment, commitment) ||
+        !sameBytes(value.routeScopeHash, routeScopeHash)) {
+      fail('CONFLICT', 'FORWARD circuit nonce was reused with another route scope')
+    }
+  }
+
+  _terminalizeUnrecordedClaim (claim, error, message) {
+    if (claim.status === 'terminal') return claim.error
+    const terminal = error instanceof BlindProtocolError
+      ? error
+      : new BlindProtocolError('INTERNAL', message)
+    claim.status = 'terminal'
+    claim.error = terminal
+    claim.wait.reject(terminal)
+    if (this.claimsByNonce.get(claim.nonceKey) === claim) this.claimsByNonce.delete(claim.nonceKey)
+    return terminal
+  }
+
+  _assertClaimOwner (claim) {
+    if (claim.status !== 'claiming' || this.claimsByNonce.get(claim.nonceKey) !== claim) {
+      throw claim.error || new BlindProtocolError('RETRY_TERMINAL', 'FORWARD nonce claim is terminal')
+    }
+  }
+
+  _resolveRecordedClaim (claim, response) {
+    if (this.claimsByNonce.get(claim.nonceKey) === claim) this.claimsByNonce.delete(claim.nonceKey)
+    claim.status = 'live'
+    claim.wait.resolve(response)
+  }
+
+  _rejectRecordedClaim (claim, error) {
+    if (this.claimsByNonce.get(claim.nonceKey) === claim) this.claimsByNonce.delete(claim.nonceKey)
+    claim.status = 'terminal'
+    claim.error = error
+    claim.wait.reject(error)
+  }
+
+  async _retry (record, commitment, parent, routeScopeHash) {
+    this._assertNonceBinding(record, parent, commitment, routeScopeHash)
     if (record.status === 'reserving' || record.status === 'reserved') return record.wait.promise
     if (record.status !== 'live' || !record.scope || !record.scope.poll()) {
       fail('RETRY_TERMINAL', 'FORWARD circuit is no longer live')
@@ -586,7 +807,8 @@ export class ForwardStreamService {
       maxCircuitBytes: BigInt(record.tuple.maxCircuitBytes),
       idleMillis: record.tuple.idleMillis,
       lifetimeMillis: record.tuple.lifetimeMillis,
-      clientRequestCommitment: b4a.from(record.requestCommitment)
+      clientRequestCommitment: b4a.from(record.requestCommitment),
+      routeScope: record.routeScope
     })
     const hop = decodeCanonical(blindForwardHopOpenV1, encodeCanonical(blindForwardHopOpenV1, value))
     const request = record.request
@@ -595,7 +817,12 @@ export class ForwardStreamService {
         hop.grantedInitialWindow !== record.tuple.grantedInitialWindow || hop.maxDataBytes !== record.maxDataBytes ||
         hop.maxCircuitBytes !== BigInt(record.tuple.maxCircuitBytes) || hop.idleMillis !== record.tuple.idleMillis ||
         hop.lifetimeMillis !== record.tuple.lifetimeMillis ||
-        !sameBytes(hop.clientRequestCommitment, record.requestCommitment)) {
+        !sameBytes(hop.clientRequestCommitment, record.requestCommitment) ||
+        !sameBytes(hop.routeScope.hops[hop.routeScope.hops.length - 1].scopeHash,
+          record.acceptedRouteScopeHash) ||
+        hop.routeScope.hops.length !== record.acceptedRelayCount ||
+        !sameBytes(encodeCanonical(blindForwardRouteScopeV1, hop.routeScope),
+          encodeCanonical(blindForwardRouteScopeV1, record.routeScope))) {
       fail('INTERNAL', 'FORWARD HopOpen builder changed a frozen field')
     }
     return hop
@@ -611,6 +838,8 @@ export class ForwardStreamService {
       idleMillis: record.tuple.idleMillis,
       lifetimeMillis: record.tuple.lifetimeMillis,
       requestCommitment: b4a.from(record.requestCommitment),
+      acceptedRouteScopeHash: b4a.from(record.acceptedRouteScopeHash),
+      acceptedRelayCount: record.acceptedRelayCount,
       hopAccept: record.hopAccept
     })
     const result = decodeCanonical(blindForwardOpenResultV1,
@@ -624,7 +853,9 @@ export class ForwardStreamService {
         result.grantedInitialWindow !== record.tuple.grantedInitialWindow || result.maxDataBytes !== record.maxDataBytes ||
         result.maxCircuitBytes !== BigInt(record.tuple.maxCircuitBytes) || result.idleMillis !== record.tuple.idleMillis ||
         result.lifetimeMillis !== record.tuple.lifetimeMillis ||
-        !sameBytes(result.requestCommitment, record.requestCommitment)) {
+        !sameBytes(result.requestCommitment, record.requestCommitment) ||
+        !sameBytes(result.acceptedRouteScopeHash, record.acceptedRouteScopeHash) ||
+        result.acceptedRelayCount !== record.acceptedRelayCount) {
       fail('INTERNAL', 'FORWARD result builder changed a frozen open field')
     }
     return result
@@ -639,6 +870,9 @@ export class ForwardStreamService {
       requestCommitment: b4a.from(record.requestCommitment),
       parentSessionId: b4a.from(record.parentSessionId),
       routeId: b4a.from(record.request.routeId),
+      routeScopeHash: b4a.from(record.acceptedRouteScopeHash),
+      relayCount: record.acceptedRelayCount,
+      routeScope: record.routeScope,
       circuitNonce: b4a.from(record.request.circuitNonce),
       callerStreamId: record.callerStreamId,
       nextStreamId: record.nextStreamId,
@@ -675,6 +909,14 @@ export class ForwardStreamService {
   }
 
   async close (reason = 'daemon-shutdown') {
+    this.closing = true
+    for (const [nonceKey, claim] of this.claimsByNonce) {
+      if (!this.recordsByNonce.has(nonceKey) && claim.status === 'claiming') {
+        this._terminalizeUnrecordedClaim(claim,
+          new BlindProtocolError('RETRY_TERMINAL', 'FORWARD service closed during nonce claim'),
+          'FORWARD service closed during nonce claim')
+      }
+    }
     const closing = []
     for (const record of this.recordsByNonce.values()) {
       if (record.scope && !record.scope.closed) closing.push(record.scope.close(reason))

@@ -46,6 +46,7 @@ import {
   schemaCatalogEntryV1,
   wireAbiRegistryValue
 } from '../index.js'
+import { OPERATION_PROFILE_ROWS as FROZEN_OPERATION_PROFILE_ROWS } from '../wire-runtime-authority.js'
 
 const KiB = 1024
 const MiB = 1024 * KiB
@@ -156,6 +157,8 @@ function nextHopAccept () {
     lifetimeMillis: limits.lifetimeMillis,
     openedAtEpoch: 100,
     hopOpenCommitment: bytes(32, 0x37),
+    acceptedRouteScopeHash: bytes(32, 0x3a),
+    acceptedRelayCount: 1,
     handshakeFlight2: bytes(96, 0x38),
     nextSignature: bytes(64, 0x39)
   }
@@ -283,8 +286,10 @@ test('public WIRE closure has executable codecs and all 22 operation rows', t =>
   t.is(ABI_STATUS.missingSchemaNames.length, 0)
   t.is(OPERATION_PROFILE_ROWS.length, 22)
   t.is(OPERATION_PROFILE_STATUS.missingPairs.length, 0)
-  t.is(ABI_STATUS.releaseReady, true)
-  t.is(ABI_STATUS.releaseBlockers.length, 0)
+  t.is(ABI_STATUS.releaseReady, false)
+  t.alike(ABI_STATUS.releaseBlockers, [
+    'FORWARD_ROUTE_SCOPE_AUTHORITY_REGENERATION_PENDING'
+  ])
   t.is(ABI_STATUS.wireAuthorityPublished, true)
   t.is(ABI_STATUS.operationCapStatus.complete, true)
   t.is(ABI_STATUS.errorTransportMappingStatus.complete, true)
@@ -317,7 +322,7 @@ test('final WIRE ABI serializes every public enum, cap and operation bit without
     t.is(registry.operationBits[ordinal].ordinal, ordinal)
     t.is(registry.operationBits[ordinal].bit, 2 ** ordinal)
   }
-  t.is(registry.implementedSchemas.length, 71)
+  t.is(registry.implementedSchemas.length, 73)
   t.ok(registry.implementedSchemas.every(schema => schema.category === SCHEMA_CATEGORY.WIRE))
   t.absent(Object.hasOwn(registry, 'releaseReady'))
   t.absent(Object.hasOwn(registry, 'releaseBlockers'))
@@ -626,6 +631,7 @@ test('FORWARD open/result codecs bind the adjacent accept and frozen class tuple
     requestedWireClass: 1,
     circuitClass: 1,
     circuitNonce: next.circuitNonce,
+    parentRouteScopeHash: bytes(32, 0),
     hopAdmission: admission(),
     innerHandshake: bytes(32, 0x3a)
   }
@@ -657,6 +663,8 @@ test('FORWARD open/result codecs bind the adjacent accept and frozen class tuple
     lifetimeMillis: next.lifetimeMillis,
     openedAtEpoch: next.openedAtEpoch,
     requestCommitment: bytes(32, 0x3b),
+    acceptedRouteScopeHash: next.acceptedRouteScopeHash,
+    acceptedRelayCount: next.acceptedRelayCount,
     nextHopAccept: next,
     signature: bytes(64, 0x3c)
   }
@@ -736,12 +744,18 @@ test('DESCRIBE, CORE and FORWARD operation metadata is complete and transition-s
   const describe = OPERATION_PROFILE_ROWS.filter(row => row.familyId === FAMILY.DESCRIBE)
   const core = OPERATION_PROFILE_ROWS.filter(row => row.familyId === FAMILY.CORE)
   const forward = OPERATION_PROFILE_ROWS.filter(row => row.familyId === FAMILY.FORWARD)
+  const frozenByPair = new Map(FROZEN_OPERATION_PROFILE_ROWS.map(row => [
+    `${row.familyId}:${row.operationId}`,
+    row
+  ]))
   t.is(describe.length, 3)
   t.is(core.length, 3)
   t.is(forward.length, 4)
   for (const row of [...describe, ...core, ...forward]) {
+    const frozenRow = frozenByPair.get(`${row.familyId}:${row.operationId}`)
+    t.ok(frozenRow, 'operation exists in the frozen runtime authority')
     t.is(decodeCanonical(operationProfileV1,
-      encodeCanonical(operationProfileV1, row)).operationId, row.operationId)
+      encodeCanonical(operationProfileV1, frozenRow)).operationId, row.operationId)
   }
 
   for (const row of describe) {

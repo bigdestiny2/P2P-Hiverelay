@@ -2,7 +2,9 @@ import b4a from 'b4a'
 import {
   DISPATCH_LIMITS,
   FORWARD_CIRCUIT_CLASS,
-  STREAM_WIRE_CLASS
+  STREAM_WIRE_CLASS,
+  forwardRouteScopeGenesisHash,
+  forwardRouteScopeHopHash
 } from '@hiverelay/blind-protocol'
 
 const KiB = 1024
@@ -87,6 +89,7 @@ export function fixtureForwardOpen (overrides = {}) {
     requestedWireClass: 1,
     circuitClass: 1,
     circuitNonce: fixtureBytes(32, 0x43),
+    parentRouteScopeHash: fixtureBytes(32, 0),
     hopAdmission: fixtureAdmission(0xb0),
     innerHandshake: fixtureBytes(32, 0x44),
     ...overrides
@@ -111,6 +114,7 @@ export function fixtureRoute (relayPublicKey, request, overrides = {}) {
     maxOpenBytes: 128 * KiB,
     maxCircuitBytes: 256n * BigInt(MiB),
     maxConcurrentStreams: 16,
+    maxRelayCount: 4,
     hopAdmissionProfileId: 7,
     issuedEpoch: 20,
     expiresEpoch: 24,
@@ -120,10 +124,35 @@ export function fixtureRoute (relayPublicKey, request, overrides = {}) {
   }
 }
 
+export function fixtureRouteScope (relayPublicKey, route, requestCommitment, request, overrides = {}) {
+  const root = {
+    version: 1,
+    rootRouteId: b4a.from(route.routeId),
+    rootCircuitNonce: b4a.from(request.circuitNonce),
+    rootRequestCommitment: b4a.from(requestCommitment),
+    maxRelayCount: route.maxRelayCount,
+    expiresEpoch: route.expiresEpoch
+  }
+  const genesisHash = forwardRouteScopeGenesisHash(root)
+  const hop = {
+    hopIndex: 0,
+    relayPublicKey: b4a.from(relayPublicKey),
+    descriptorSequence: 9n,
+    descriptorHash: fixtureBytes(32, 0x22),
+    previousScopeHash: fixtureBytes(32, 0)
+  }
+  hop.scopeHash = forwardRouteScopeHopHash({ ...hop, previousScopeHash: genesisHash })
+  hop.relaySignature = fixtureBytes(64, 0x60)
+  return { ...root, hops: [hop], ...overrides }
+}
+
 export function fixtureHopOpen (fields, overrides = {}) {
+  const routeScope = fields.routeScope || fixtureRouteScope(fields.route.previousRelayKey,
+    fields.route, fields.clientRequestCommitment, fields.request)
   return {
     version: 1,
     route: fields.route,
+    routeScope,
     previousDescriptorSequence: 9n,
     previousDescriptorHash: fixtureBytes(32, 0x22),
     circuitNonce: b4a.from(fields.request.circuitNonce),
@@ -168,6 +197,8 @@ export function fixtureHopAccept (relayPublicKey, route, request, overrides = {}
     lifetimeMillis: limits.lifetimeMillis,
     openedAtEpoch,
     hopOpenCommitment: fixtureBytes(32, 0x56),
+    acceptedRouteScopeHash: fixtureBytes(32, 0x5a),
+    acceptedRelayCount: 1,
     handshakeFlight2: fixtureBytes(96, 0x57),
     nextSignature: fixtureBytes(64, 0x58),
     ...overrides
@@ -196,6 +227,8 @@ export function fixtureForwardResult (relayPublicKey, fields, overrides = {}) {
     lifetimeMillis: fields.lifetimeMillis,
     openedAtEpoch: accept.openedAtEpoch,
     requestCommitment: b4a.from(fields.requestCommitment),
+    acceptedRouteScopeHash: b4a.from(accept.acceptedRouteScopeHash),
+    acceptedRelayCount: accept.acceptedRelayCount,
     nextHopAccept: accept,
     signature: fixtureBytes(64, 0x59),
     ...overrides

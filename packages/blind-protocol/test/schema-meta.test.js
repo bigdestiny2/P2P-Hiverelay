@@ -18,7 +18,7 @@ import {
 const ascii = value => b4a.from(value, 'ascii')
 
 test('schema meta grammar is canonical and category-local catalog rows round trip', t => {
-  t.is(EXECUTABLE_SCHEMA_CODEC_STATUS.executableCodecCount, 141)
+  t.is(EXECUTABLE_SCHEMA_CODEC_STATUS.executableCodecCount, 143)
   t.is(EXECUTABLE_SCHEMA_CODEC_STATUS.privateIpcCodecNames.length, 7)
   t.alike(EXECUTABLE_SCHEMA_CODEC_STATUS.privateIpcLeakNames, [])
   const definition = {
@@ -69,6 +69,8 @@ test('executable struct fields fail closed on metadata name or order drift', t =
     'lifetimeMillis',
     'openedAtEpoch',
     'requestCommitment',
+    'acceptedRouteScopeHash',
+    'acceptedRelayCount',
     'nextHopAccept',
     'signature'
   ])

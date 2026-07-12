@@ -371,7 +371,8 @@ export const AUXILIARY_SIGNATURE_DOMAIN_ID = deepFreeze({
   RESTORE_EVIDENCE_HEAD: 209,
   BACKUP_MANIFEST: 210,
   CLEAN_RESTORE_EVIDENCE: 211,
-  BACKUP_RETENTION_TRANSITION: 212
+  BACKUP_RETENTION_TRANSITION: 212,
+  FORWARD_ROUTE_SCOPE: 213
 })
 
 export const DOMAIN_REGISTRY = deepFreeze([
@@ -413,7 +414,8 @@ export const DOMAIN_REGISTRY = deepFreeze([
   { domainId: 209, purpose: 3, recipeId: 2, exactAsciiBytes: 'hiverelay.blind.restore-evidence-head.v1' },
   { domainId: 210, purpose: 3, recipeId: 2, exactAsciiBytes: 'hiverelay.blind.backup-manifest.v1' },
   { domainId: 211, purpose: 3, recipeId: 2, exactAsciiBytes: 'hiverelay.blind.clean-restore-evidence.v1' },
-  { domainId: 212, purpose: 3, recipeId: 2, exactAsciiBytes: 'hiverelay.blind.backup-retention-transition.v1' }
+  { domainId: 212, purpose: 3, recipeId: 2, exactAsciiBytes: 'hiverelay.blind.backup-retention-transition.v1' },
+  { domainId: 213, purpose: 3, recipeId: 2, exactAsciiBytes: 'hiverelay.blind.forward-route-scope.v1' }
 ])
 
 export const RESULT_SIGNATURE_DOMAIN = deepFreeze(Object.fromEntries(
@@ -650,6 +652,8 @@ const BASE_IMPLEMENTED_SCHEMAS = deepFreeze([
       ['lifetimeMillis', 'u32be[class-tuple]'],
       ['openedAtEpoch', 'u32be'],
       ['hopOpenCommitment', 'fixed32'],
+      ['acceptedRouteScopeHash', 'fixed32'],
+      ['acceptedRelayCount', 'u8[1..4]'],
       ['handshakeFlight2', 'fixed96'],
       ['nextSignature', 'fixed64']
     ]
@@ -659,6 +663,7 @@ const BASE_IMPLEMENTED_SCHEMAS = deepFreeze([
     fields: [
       ['version', 'u8=1'],
       ['route', 'BlindTransportRouteV1'],
+      ['routeScope', 'BlindForwardRouteScopeV1'],
       ['previousDescriptorSequence', 'u64be'],
       ['previousDescriptorHash', 'fixed32'],
       ['circuitNonce', 'fixed32'],
@@ -672,6 +677,30 @@ const BASE_IMPLEMENTED_SCHEMAS = deepFreeze([
       ['clientRequestCommitment', 'fixed32'],
       ['handshakeFlight1', 'fixed32'],
       ['forwarderSignature', 'fixed64']
+    ]
+  },
+  {
+    name: 'BlindForwardRouteHopV1',
+    fields: [
+      ['hopIndex', 'u8[0..3]'],
+      ['relayPublicKey', 'fixed32[nonzero]'],
+      ['descriptorSequence', 'u64be'],
+      ['descriptorHash', 'fixed32[nonzero]'],
+      ['previousScopeHash', 'fixed32'],
+      ['scopeHash', 'fixed32[nonzero]'],
+      ['relaySignature', 'fixed64']
+    ]
+  },
+  {
+    name: 'BlindForwardRouteScopeV1',
+    fields: [
+      ['version', 'u8=1'],
+      ['rootRouteId', 'fixed16[nonzero]'],
+      ['rootCircuitNonce', 'fixed32[nonzero]'],
+      ['rootRequestCommitment', 'fixed32[nonzero]'],
+      ['maxRelayCount', 'u8[2..4]'],
+      ['expiresEpoch', 'u32be[nonzero]'],
+      ['hops', 'array[1..4](BlindForwardRouteHopV1)']
     ]
   },
   {
@@ -710,6 +739,7 @@ const BASE_IMPLEMENTED_SCHEMAS = deepFreeze([
       ['maxOpenBytes', 'u32be[0..131072]'],
       ['maxCircuitBytes', 'u64be'],
       ['maxConcurrentStreams', 'u16be[0..1024]'],
+      ['maxRelayCount', 'u8[2..4]'],
       ['hopAdmissionProfileId', 'u16be[1..65535]'],
       ['issuedEpoch', 'u32be'],
       ['expiresEpoch', 'u32be[issued+1..issued+4]'],
@@ -1241,6 +1271,8 @@ const BASE_IMPLEMENTED_SCHEMAS = deepFreeze([
       ['lifetimeMillis', 'u32be[class-tuple]'],
       ['openedAtEpoch', 'u32be'],
       ['requestCommitment', 'fixed32'],
+      ['acceptedRouteScopeHash', 'fixed32'],
+      ['acceptedRelayCount', 'u8[1..4]'],
       ['nextHopAccept', 'BlindForwardHopAcceptV1'],
       ['signature', 'fixed64']
     ]
@@ -1255,6 +1287,7 @@ const BASE_IMPLEMENTED_SCHEMAS = deepFreeze([
       ['requestedWireClass', 'u8[1..3]'],
       ['circuitClass', 'u8[1..3]'],
       ['circuitNonce', 'fixed32[nonzero]'],
+      ['parentRouteScopeHash', 'fixed32'],
       ['hopAdmission', 'AdmissionV1'],
       ['innerHandshake', 'compact-bytes[32]']
     ]
@@ -1465,6 +1498,8 @@ export const SCHEMA_NAMES_BY_CATEGORY = deepFreeze({
     'BlindForwardHopOpenV1',
     'BlindForwardOpenResultV1',
     'BlindForwardOpenV1',
+    'BlindForwardRouteHopV1',
+    'BlindForwardRouteScopeV1',
     'BlindForwardWindowV1',
     'BlindHealthChallengeV1',
     'BlindHealthResultV1',
@@ -1901,7 +1936,9 @@ export const CATEGORY_REGISTRY_STATUS = deepFreeze({
     Object.keys(CATEGORY_REGISTRY_ARTIFACTS).length === 5
 })
 
-export const ABI_RELEASE_BLOCKERS = deepFreeze([])
+export const ABI_RELEASE_BLOCKERS = deepFreeze([
+  'FORWARD_ROUTE_SCOPE_AUTHORITY_REGENERATION_PENDING'
+])
 
 export const ABI_STATUS = deepFreeze({
   profile: 'wire-authority-v1',
