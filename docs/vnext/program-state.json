@@ -174,7 +174,8 @@
         "git/95098d93db74e5ce1bddaa7a82187244f035c8b9/docs/vnext/blind-peerit-preservation.json",
         "git/349db39b0df03582a141bf54f99a3c00af2a375b/docs/vnext/blind-peerit-preservation.json",
         "git/5a7af14a1e16ee79bc91a5c663b2406498029106/docs/vnext/hiverelay-main-salvage.json",
-        "git/ce167bd222c23d246e6a51d9c33fb1ca895b3a19/docs/vnext/peerit-vendor-authority-drift.json"
+        "git/ce167bd222c23d246e6a51d9c33fb1ca895b3a19/docs/vnext/peerit-vendor-authority-drift.json",
+        "git/ad8fbe9b63dfcbd81217582ed8d8c41ebfdd88a8/docs/vnext/peerit-vendor-repair.json"
       ]
     },
     {
@@ -218,7 +219,8 @@
         "git/95098d93db74e5ce1bddaa7a82187244f035c8b9/blind-reproducibility-repair",
         "git/349db39b0df03582a141bf54f99a3c00af2a375b/peerit-independent-verification",
         "git/5a7af14a1e16ee79bc91a5c663b2406498029106/hiverelay-main-salvage",
-        "git/ce167bd222c23d246e6a51d9c33fb1ca895b3a19/peerit-vendor-authority-drift"
+        "git/ce167bd222c23d246e6a51d9c33fb1ca895b3a19/peerit-vendor-authority-drift",
+        "git/ad8fbe9b63dfcbd81217582ed8d8c41ebfdd88a8/peerit-vendor-repair"
       ]
     },
     { "id": "T01B", "status": "pending", "handoffs": [] },
@@ -234,7 +236,8 @@
       "id": "T03",
       "status": "pending",
       "handoffs": [
-        "git/ce167bd222c23d246e6a51d9c33fb1ca895b3a19/peerit-vendor-authority-drift"
+        "git/ce167bd222c23d246e6a51d9c33fb1ca895b3a19/peerit-vendor-authority-drift",
+        "git/ad8fbe9b63dfcbd81217582ed8d8c41ebfdd88a8/peerit-vendor-repair"
       ]
     },
     { "id": "T04", "status": "pending", "handoffs": [] },
