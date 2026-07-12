@@ -1,0 +1,562 @@
+{
+  "matrixVersion": 1,
+  "matrixId": "hiverelay.blind.ecosystem-migration.v1",
+  "decisionAuthority": "computed-code-owned-blockers-only",
+  "authorizationRule": {
+    "computedBy": "scripts/verify-blind-ecosystem-migration.mjs",
+    "editableDecisionFields": "forbidden",
+    "legacyRemovalPolicy": "deploy/blind/legacy-retirement-policy.json",
+    "rule": "Application cutover and legacy-component removal are computed from code-owned production, gate, row-specific and retirement blockers. This matrix cannot authorize either action."
+  },
+  "boundaries": [
+    {
+      "id": "blind-relay-base",
+      "allowedSurface": ["DESCRIBE", "CELL", "INBOX", "CORE", "FORWARD"],
+      "owner": "relay-operator",
+      "visibility": "Opaque canonical envelopes plus the minimum family, size-class, routing, lease and accounting metadata required by the selected primitive.",
+      "forbiddenResponsibilities": ["application schemas", "application reducers", "semantic search", "business policy", "content moderation", "provider computation", "plaintext push payloads", "operator administration"]
+    },
+    {
+      "id": "application-client",
+      "allowedSurface": ["application state", "application schemas", "encryption keys", "signatures", "reducers", "derived indexes", "moderation policy"],
+      "owner": "application-publisher-and-user",
+      "visibility": "Application plaintext and semantics remain local unless the user explicitly discloses them to a named provider."
+    },
+    {
+      "id": "nonblind-provider",
+      "allowedSurface": ["explicitly disclosed provider request", "provider-specific result"],
+      "owner": "separately identified provider",
+      "visibility": "The provider may learn disclosed application inputs; it is not part of the blind relay trust boundary."
+    },
+    {
+      "id": "nonblind-index",
+      "allowedSurface": ["explicitly public or disclosed index input", "semantic query", "derived result"],
+      "owner": "separately identified index operator",
+      "visibility": "The index may learn indexed content and queries; it is optional and is not a blind relay feature."
+    },
+    {
+      "id": "operator-control",
+      "allowedSurface": ["loopback or private administration", "generic resource accounting", "release lifecycle"],
+      "owner": "relay-operator",
+      "visibility": "The control plane sees generic relay health and resource classes but no application namespace or payload semantics."
+    }
+  ],
+  "externalDependencies": [
+    {
+      "id": "client-derived-index",
+      "boundary": "application-client",
+      "purpose": "Build feeds, graphs, search keys and materialized views from verified application records."
+    },
+    {
+      "id": "signed-app-catalog",
+      "boundary": "application-client",
+      "purpose": "Publish and verify application-owned catalogs over CORE without turning DESCRIBE into an app registry."
+    },
+    {
+      "id": "native-push-bridge",
+      "boundary": "nonblind-provider",
+      "purpose": "Translate explicitly disclosed notification metadata to platform push services."
+    },
+    {
+      "id": "semantic-index-provider",
+      "boundary": "nonblind-index",
+      "purpose": "Offer optional search or discovery over content explicitly disclosed for indexing."
+    },
+    {
+      "id": "ai-compute-provider",
+      "boundary": "nonblind-provider",
+      "purpose": "Run model inference on inputs explicitly disclosed by the user or application."
+    },
+    {
+      "id": "payment-settlement-provider",
+      "boundary": "nonblind-provider",
+      "purpose": "Perform payment, compliance or settlement work outside the relay base."
+    },
+    {
+      "id": "mobility-provider",
+      "boundary": "nonblind-provider",
+      "purpose": "Perform mapping, dispatch, geocoding or availability matching on disclosed inputs."
+    },
+    {
+      "id": "realtime-media-provider",
+      "boundary": "nonblind-provider",
+      "purpose": "Provide optional TURN, transcoding, conferencing or live-media services when direct or blind FORWARD paths are insufficient."
+    },
+    {
+      "id": "device-automation-provider",
+      "boundary": "nonblind-provider",
+      "purpose": "Execute device or automation commands on an explicitly paired endpoint."
+    },
+    {
+      "id": "sports-data-provider",
+      "boundary": "nonblind-provider",
+      "purpose": "Supply licensed or centralized live sports data separately from blind transport."
+    },
+    {
+      "id": "git-ci-provider",
+      "boundary": "nonblind-provider",
+      "purpose": "Run repository hosting bridges, builds or CI on explicitly supplied repository data."
+    },
+    {
+      "id": "identity-arbitration-provider",
+      "boundary": "nonblind-provider",
+      "purpose": "Perform identity, witness, arbitration, schema, SLA, ZK or VRF services with an explicit provider contract."
+    },
+    {
+      "id": "operator-admin-plane",
+      "boundary": "operator-control",
+      "purpose": "Configure, observe and roll back the generic relay without sharing the public data-plane listener."
+    },
+    {
+      "id": "operator-accounting-plane",
+      "boundary": "operator-control",
+      "purpose": "Account for generic family and resource classes without application labels."
+    }
+  ],
+  "rolloutTracks": [
+    {
+      "id": "data-log-consumer",
+      "sequence": ["inventory", "adapter", "shadow-compare", "independent-operator-canary", "default-cutover", "legacy-drain"]
+    },
+    {
+      "id": "content-publication",
+      "sequence": ["inventory", "adapter", "shadow-compare", "independent-operator-canary", "default-cutover", "legacy-drain"]
+    },
+    {
+      "id": "marketplace-transaction",
+      "sequence": ["inventory", "adapter", "semantic-replay", "independent-operator-canary", "default-cutover", "legacy-drain"]
+    },
+    {
+      "id": "private-coordination",
+      "sequence": ["inventory", "adapter", "privacy-and-retry-drill", "independent-operator-canary", "default-cutover", "legacy-drain"]
+    },
+    {
+      "id": "realtime-application",
+      "sequence": ["inventory", "adapter", "partition-and-backpressure-drill", "independent-operator-canary", "default-cutover", "legacy-drain"]
+    },
+    {
+      "id": "provider-mediated",
+      "sequence": ["inventory", "boundary-disclosure", "adapter", "provider-failure-drill", "default-cutover", "legacy-drain"]
+    },
+    {
+      "id": "registry-distribution",
+      "sequence": ["inventory", "adapter", "signature-and-version-replay", "independent-operator-canary", "default-cutover", "legacy-drain"]
+    },
+    {
+      "id": "operator-infrastructure",
+      "sequence": ["inventory", "private-plane-isolation", "recovery-drill", "operator-canary", "default-cutover", "legacy-drain"]
+    }
+  ],
+  "legacyComponents": [
+    {
+      "id": "legacy-service-plane",
+      "semanticOwner": "application-or-provider",
+      "families": ["FORWARD"],
+      "outsideBaseDependencies": ["ai-compute-provider", "identity-arbitration-provider"],
+      "retainedSemantics": ["Provider-specific validation, computation and result interpretation stay in a separately identified provider or application SDK."],
+      "rolloutTrack": "provider-mediated",
+      "cutoverGates": ["G0", "G1", "G2", "G3", "G6"],
+      "requiredEvidenceIds": ["final-authorities", "all-family-runtime", "blindness-sentinel", "semantic-parity", "cross-runtime-consumers"]
+    },
+    {
+      "id": "outboxlog",
+      "semanticOwner": "application-client",
+      "families": ["CELL", "INBOX", "CORE"],
+      "outsideBaseDependencies": ["client-derived-index"],
+      "retainedSemantics": ["Application signatures, record schemas, reducers, feed ordering and offline authoring remain client-owned."],
+      "rolloutTrack": "data-log-consumer",
+      "cutoverGates": ["G0", "G1", "G2", "G3", "G4", "G5", "G6", "G7"],
+      "requiredEvidenceIds": ["final-authorities", "all-family-runtime", "blindness-sentinel", "semantic-parity", "durability-scale", "independent-operators", "cross-runtime-consumers", "migration-restore"]
+    },
+    {
+      "id": "witness-repair",
+      "semanticOwner": "application-or-provider",
+      "families": ["CELL", "INBOX", "CORE"],
+      "outsideBaseDependencies": ["identity-arbitration-provider"],
+      "retainedSemantics": ["Witness selection, adjudication and repair policy remain in application records or an explicit external witness service."],
+      "rolloutTrack": "provider-mediated",
+      "cutoverGates": ["G0", "G1", "G3", "G4", "G5", "G7"],
+      "requiredEvidenceIds": ["final-authorities", "all-family-runtime", "semantic-parity", "durability-scale", "independent-operators", "migration-restore"]
+    },
+    {
+      "id": "shard-custody",
+      "semanticOwner": "application-client",
+      "families": ["CELL"],
+      "outsideBaseDependencies": [],
+      "retainedSemantics": ["Client encryption, dispersal, replica selection, retention and proof policy remain client-owned."],
+      "rolloutTrack": "data-log-consumer",
+      "cutoverGates": ["G0", "G1", "G2", "G3", "G4", "G5", "G7"],
+      "requiredEvidenceIds": ["final-authorities", "all-family-runtime", "blindness-sentinel", "semantic-parity", "durability-scale", "independent-operators", "migration-restore"]
+    },
+    {
+      "id": "seed-storage-gateway",
+      "semanticOwner": "application-client",
+      "families": ["CELL", "CORE"],
+      "outsideBaseDependencies": [],
+      "retainedSemantics": ["Drive manifests, content authorization and replication intent remain publisher-owned; the relay stores opaque cells and mirrors authorized cores."],
+      "rolloutTrack": "content-publication",
+      "cutoverGates": ["G0", "G1", "G2", "G3", "G4", "G5", "G6", "G7"],
+      "requiredEvidenceIds": ["final-authorities", "all-family-runtime", "blindness-sentinel", "semantic-parity", "durability-scale", "independent-operators", "cross-runtime-consumers", "migration-restore"]
+    },
+    {
+      "id": "catalog-federation-index",
+      "semanticOwner": "application-client-or-index",
+      "families": ["CORE"],
+      "outsideBaseDependencies": ["client-derived-index", "signed-app-catalog", "semantic-index-provider"],
+      "retainedSemantics": ["Application catalogs live in signed application cores; semantic indexing stays client-side or in an explicitly nonblind index."],
+      "rolloutTrack": "registry-distribution",
+      "cutoverGates": ["G0", "G1", "G2", "G3", "G5", "G6", "G7"],
+      "requiredEvidenceIds": ["final-authorities", "all-family-runtime", "blindness-sentinel", "semantic-parity", "independent-operators", "cross-runtime-consumers", "migration-restore"]
+    },
+    {
+      "id": "notify",
+      "semanticOwner": "application-client-or-provider",
+      "families": ["INBOX"],
+      "outsideBaseDependencies": ["native-push-bridge"],
+      "retainedSemantics": ["Notification meaning and sealed payloads remain app-owned; native push is a separately disclosed edge."],
+      "rolloutTrack": "private-coordination",
+      "cutoverGates": ["G0", "G1", "G2", "G3", "G4", "G6"],
+      "requiredEvidenceIds": ["final-authorities", "all-family-runtime", "blindness-sentinel", "semantic-parity", "durability-scale", "cross-runtime-consumers"]
+    },
+    {
+      "id": "poker",
+      "semanticOwner": "application-client",
+      "families": ["INBOX", "CORE", "FORWARD"],
+      "outsideBaseDependencies": [],
+      "retainedSemantics": ["Tables, moves, hand seeds, game crypto and reducers remain in the poker application."],
+      "rolloutTrack": "realtime-application",
+      "cutoverGates": ["G0", "G1", "G2", "G3", "G6", "G7"],
+      "requiredEvidenceIds": ["final-authorities", "all-family-runtime", "blindness-sentinel", "semantic-parity", "cross-runtime-consumers", "migration-restore"]
+    },
+    {
+      "id": "compute-trust-services",
+      "semanticOwner": "application-or-provider",
+      "families": ["FORWARD"],
+      "outsideBaseDependencies": ["ai-compute-provider", "identity-arbitration-provider"],
+      "retainedSemantics": ["AI, identity, schema, SLA, ZK, arbitration and VRF contracts stay in explicit providers and application verification code."],
+      "rolloutTrack": "provider-mediated",
+      "cutoverGates": ["G0", "G1", "G2", "G3", "G6"],
+      "requiredEvidenceIds": ["final-authorities", "all-family-runtime", "blindness-sentinel", "semantic-parity", "cross-runtime-consumers"]
+    },
+    {
+      "id": "legacy-circuit-forward",
+      "semanticOwner": "application-client",
+      "families": ["FORWARD"],
+      "outsideBaseDependencies": [],
+      "retainedSemantics": ["Session protocol and end-to-end encryption stay in the application; the relay enforces only generic stream limits."],
+      "rolloutTrack": "realtime-application",
+      "cutoverGates": ["G0", "G1", "G2", "G3", "G4", "G5", "G6"],
+      "requiredEvidenceIds": ["final-authorities", "all-family-runtime", "blindness-sentinel", "semantic-parity", "durability-scale", "independent-operators", "cross-runtime-consumers"]
+    },
+    {
+      "id": "edge-transports",
+      "semanticOwner": "transport-client",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "outsideBaseDependencies": [],
+      "retainedSemantics": ["WebSocket, DHT relay, Holesail and Tor stay transport adapters with explicit metadata and anonymity claim ceilings."],
+      "rolloutTrack": "operator-infrastructure",
+      "cutoverGates": ["G0", "G1", "G2", "G3", "G4"],
+      "requiredEvidenceIds": ["final-authorities", "all-family-runtime", "blindness-sentinel", "semantic-parity", "durability-scale"]
+    },
+    {
+      "id": "legacy-client-verifier",
+      "semanticOwner": "application-client",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "outsideBaseDependencies": [],
+      "retainedSemantics": ["Canonical application bytes, keys and result interpretation remain in cross-runtime blind-client consumers."],
+      "rolloutTrack": "data-log-consumer",
+      "cutoverGates": ["G0", "G1", "G2", "G3", "G6", "G7"],
+      "requiredEvidenceIds": ["final-authorities", "all-family-runtime", "blindness-sentinel", "semantic-parity", "cross-runtime-consumers", "migration-restore"]
+    },
+    {
+      "id": "operator-control-economics",
+      "semanticOwner": "relay-operator",
+      "families": [],
+      "outsideBaseDependencies": ["operator-admin-plane", "operator-accounting-plane"],
+      "retainedSemantics": ["Administration, lifecycle and generic resource economics remain isolated on the private operator control plane."],
+      "rolloutTrack": "operator-infrastructure",
+      "cutoverGates": ["G0", "G2", "G3", "G4"],
+      "requiredEvidenceIds": ["final-authorities", "blindness-sentinel", "semantic-parity", "durability-scale"]
+    },
+    {
+      "id": "peerit-legacy-consumer-plane",
+      "semanticOwner": "application-client",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "outsideBaseDependencies": ["client-derived-index", "semantic-index-provider"],
+      "retainedSemantics": ["Peerit identities, signatures, communities, posts, moderation, ranking and offline publication remain in Peerit."],
+      "rolloutTrack": "data-log-consumer",
+      "cutoverGates": ["G0", "G1", "G2", "G3", "G4", "G5", "G6", "G7"],
+      "requiredEvidenceIds": ["final-authorities", "all-family-runtime", "blindness-sentinel", "semantic-parity", "durability-scale", "independent-operators", "cross-runtime-consumers", "migration-restore"]
+    }
+  ],
+  "applications": [
+    {
+      "id": "peerit",
+      "name": "Peerit",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["identities", "communities", "posts and comments", "votes", "moderation", "ranking", "offline outbox"],
+      "outsideBaseDependencies": ["client-derived-index", "semantic-index-provider"],
+      "legacyDependencies": ["outboxlog", "peerit-legacy-consumer-plane"],
+      "rolloutTrack": "data-log-consumer",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "p2pbuilders",
+      "name": "P2PBuilders",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["builder identities", "project graph", "discussion", "moderation"],
+      "outsideBaseDependencies": ["client-derived-index", "semantic-index-provider"],
+      "legacyDependencies": ["outboxlog", "catalog-federation-index"],
+      "rolloutTrack": "data-log-consumer",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "pearfeed",
+      "name": "Pearfeed",
+      "families": ["CELL", "INBOX", "CORE"],
+      "retainedSemantics": ["authors", "feed records", "subscriptions", "ranking", "moderation"],
+      "outsideBaseDependencies": ["client-derived-index", "semantic-index-provider"],
+      "legacyDependencies": ["outboxlog"],
+      "rolloutTrack": "data-log-consumer",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "bazaar",
+      "name": "Bazaar",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["listings", "offers", "orders", "reputation", "dispute policy"],
+      "outsideBaseDependencies": ["client-derived-index", "semantic-index-provider", "payment-settlement-provider", "identity-arbitration-provider"],
+      "legacyDependencies": ["catalog-federation-index", "compute-trust-services"],
+      "rolloutTrack": "marketplace-transaction",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "exchange",
+      "name": "Exchange",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["markets", "orders", "matching rules", "settlement intent", "risk policy"],
+      "outsideBaseDependencies": ["client-derived-index", "payment-settlement-provider", "identity-arbitration-provider"],
+      "legacyDependencies": ["compute-trust-services"],
+      "rolloutTrack": "marketplace-transaction",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "rides",
+      "name": "Rides",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["ride requests", "driver offers", "trip state", "reputation", "safety policy"],
+      "outsideBaseDependencies": ["mobility-provider", "payment-settlement-provider", "identity-arbitration-provider"],
+      "legacyDependencies": ["notify", "compute-trust-services"],
+      "rolloutTrack": "marketplace-transaction",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "stays",
+      "name": "Stays",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["properties", "availability", "bookings", "reviews", "disputes"],
+      "outsideBaseDependencies": ["semantic-index-provider", "payment-settlement-provider", "mobility-provider", "identity-arbitration-provider"],
+      "legacyDependencies": ["catalog-federation-index", "notify", "compute-trust-services"],
+      "rolloutTrack": "marketplace-transaction",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "comms",
+      "name": "Comms",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["contacts", "conversation membership", "message encryption", "call signaling", "retention policy"],
+      "outsideBaseDependencies": ["realtime-media-provider", "native-push-bridge"],
+      "legacyDependencies": ["notify", "legacy-circuit-forward"],
+      "rolloutTrack": "private-coordination",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "dealroom",
+      "name": "Dealroom",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["room membership", "documents", "proposals", "approvals", "audit policy"],
+      "outsideBaseDependencies": ["identity-arbitration-provider", "realtime-media-provider"],
+      "legacyDependencies": ["witness-repair", "compute-trust-services"],
+      "rolloutTrack": "private-coordination",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "home",
+      "name": "Home",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["home graph", "device identity", "automation rules", "command authorization", "event history"],
+      "outsideBaseDependencies": ["device-automation-provider"],
+      "legacyDependencies": ["legacy-circuit-forward"],
+      "rolloutTrack": "provider-mediated",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["agent identity", "tool policy", "jobs", "artifacts", "audit history"],
+      "outsideBaseDependencies": ["device-automation-provider", "ai-compute-provider"],
+      "legacyDependencies": ["compute-trust-services"],
+      "rolloutTrack": "provider-mediated",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "pos",
+      "name": "POS",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["catalog", "basket", "receipts", "inventory", "refund policy"],
+      "outsideBaseDependencies": ["payment-settlement-provider", "client-derived-index"],
+      "legacyDependencies": ["catalog-federation-index", "compute-trust-services"],
+      "rolloutTrack": "marketplace-transaction",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "sahifa",
+      "name": "Sahifa",
+      "families": ["CELL", "INBOX", "CORE"],
+      "retainedSemantics": ["publication identity", "articles", "editions", "subscriptions", "editorial policy"],
+      "outsideBaseDependencies": ["client-derived-index", "semantic-index-provider", "native-push-bridge"],
+      "legacyDependencies": ["seed-storage-gateway", "catalog-federation-index", "notify"],
+      "rolloutTrack": "content-publication",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "sanduq",
+      "name": "Sanduq",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["vault policy", "key ownership", "recovery workflow", "access grants", "audit records"],
+      "outsideBaseDependencies": ["identity-arbitration-provider"],
+      "legacyDependencies": ["shard-custody", "witness-repair"],
+      "rolloutTrack": "private-coordination",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "tickets",
+      "name": "Tickets",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["events", "issuance", "ownership transfer", "admission verification", "refund policy"],
+      "outsideBaseDependencies": ["payment-settlement-provider", "identity-arbitration-provider"],
+      "legacyDependencies": ["catalog-federation-index", "compute-trust-services"],
+      "rolloutTrack": "marketplace-transaction",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "matchday-mesh",
+      "name": "Matchday Mesh",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["match identity", "participants", "live events", "fan coordination", "moderation"],
+      "outsideBaseDependencies": ["sports-data-provider", "realtime-media-provider"],
+      "legacyDependencies": ["legacy-circuit-forward", "notify"],
+      "rolloutTrack": "realtime-application",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "pearpaste",
+      "name": "PearPaste",
+      "families": ["CELL", "INBOX", "CORE"],
+      "retainedSemantics": ["paste encryption", "expiry", "sharing capabilities", "version history"],
+      "outsideBaseDependencies": [],
+      "legacyDependencies": ["seed-storage-gateway", "shard-custody"],
+      "rolloutTrack": "content-publication",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "peartube",
+      "name": "PearTube",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["channels", "video manifests", "comments", "subscriptions", "moderation", "playback policy"],
+      "outsideBaseDependencies": ["client-derived-index", "semantic-index-provider", "realtime-media-provider"],
+      "legacyDependencies": ["seed-storage-gateway", "catalog-federation-index", "notify"],
+      "rolloutTrack": "content-publication",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "ultimate-sports",
+      "name": "Ultimate Sports",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["teams", "competitions", "scores", "communities", "ranking", "moderation"],
+      "outsideBaseDependencies": ["sports-data-provider", "client-derived-index", "semantic-index-provider"],
+      "legacyDependencies": ["outboxlog", "catalog-federation-index", "notify"],
+      "rolloutTrack": "realtime-application",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "pearcup",
+      "name": "PearCup",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["tournaments", "teams", "fixtures", "results", "rules", "matchmaking"],
+      "outsideBaseDependencies": ["sports-data-provider"],
+      "legacyDependencies": ["outboxlog", "notify", "legacy-circuit-forward"],
+      "rolloutTrack": "realtime-application",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "hiveworm",
+      "name": "Hiveworm",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["game identity", "sessions", "moves", "leaderboards", "anti-cheat policy"],
+      "outsideBaseDependencies": [],
+      "legacyDependencies": ["legacy-circuit-forward", "compute-trust-services"],
+      "rolloutTrack": "realtime-application",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "pear-registry",
+      "name": "pear-registry",
+      "families": ["CELL", "CORE"],
+      "retainedSemantics": ["publisher identity", "package names", "versions", "release signatures", "selection policy"],
+      "outsideBaseDependencies": ["signed-app-catalog", "client-derived-index", "semantic-index-provider"],
+      "legacyDependencies": ["catalog-federation-index", "seed-storage-gateway"],
+      "rolloutTrack": "registry-distribution",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "opengit",
+      "name": "OpenGit",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["repository identity", "refs", "objects", "reviews", "permissions", "merge policy"],
+      "outsideBaseDependencies": ["git-ci-provider", "client-derived-index"],
+      "legacyDependencies": ["seed-storage-gateway", "notify", "legacy-circuit-forward"],
+      "rolloutTrack": "provider-mediated",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "anongpt",
+      "name": "anonGPT",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["conversation encryption", "model policy", "tool permissions", "context retention", "result verification"],
+      "outsideBaseDependencies": ["ai-compute-provider"],
+      "legacyDependencies": ["compute-trust-services", "legacy-circuit-forward"],
+      "rolloutTrack": "provider-mediated",
+      "evidenceProfile": "full-application-cutover"
+    },
+    {
+      "id": "platforms",
+      "name": "Platforms",
+      "families": ["CELL", "INBOX", "CORE", "FORWARD"],
+      "retainedSemantics": ["platform manifests", "membership", "application policy", "workflows", "derived views"],
+      "outsideBaseDependencies": ["signed-app-catalog", "client-derived-index", "semantic-index-provider"],
+      "legacyDependencies": ["legacy-service-plane", "catalog-federation-index"],
+      "rolloutTrack": "registry-distribution",
+      "evidenceProfile": "full-application-cutover"
+    }
+  ],
+  "evidenceProfiles": [
+    {
+      "id": "full-application-cutover",
+      "requiredGates": ["G0", "G1", "G2", "G3", "G4", "G5", "G6", "G7"],
+      "requiredEvidenceIds": ["final-authorities", "all-family-runtime", "blindness-sentinel", "semantic-parity", "durability-scale", "independent-operators", "cross-runtime-consumers", "migration-restore"]
+    }
+  ],
+  "evidenceCatalog": [
+    { "id": "final-authorities", "gate": "G0" },
+    { "id": "all-family-runtime", "gate": "G1" },
+    { "id": "blindness-sentinel", "gate": "G2" },
+    { "id": "semantic-parity", "gate": "G3" },
+    { "id": "durability-scale", "gate": "G4" },
+    { "id": "independent-operators", "gate": "G5" },
+    { "id": "cross-runtime-consumers", "gate": "G6" },
+    { "id": "migration-restore", "gate": "G7" },
+    { "id": "zero-legacy-traffic", "gate": "G8" }
+  ]
+}
