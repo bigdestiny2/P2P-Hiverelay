@@ -243,6 +243,7 @@ function verifyReleaseBasics (body) {
     die('release.candidate requires release.prerelease=true')
   }
   requirePattern('release.tagSha', body.release?.tagSha, /^[a-f0-9]{40}$/i)
+  validatePublicGatewayBinding(body)
   requirePattern('release.metadataSha', body.release?.metadataSha, /^[a-f0-9]{40}$/i)
   requireEqual('release workflow status', body.release.workflow?.status, 'success')
   requirePattern('release workflow repository', body.release.workflow?.repository, /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)
@@ -279,8 +280,21 @@ function assertReleaseEvidenceSchema (body) {
     'candidate',
     'tagSha',
     'metadataSha',
+    'publicGateway',
     'workflow'
   ])
+  if (body.release.publicGateway != null) {
+    requireOnlyKeys('release evidence public gateway binding', body.release.publicGateway, [
+      'enabled',
+      'manifestStatus',
+      'manifestPath',
+      'manifestSha256',
+      'releaseTarget',
+      'commitSha',
+      'admissionProfile',
+      'cohortSize'
+    ])
+  }
   requireOnlyKeys('release evidence workflow', body.release.workflow, [
     'status',
     'repository',
@@ -353,7 +367,8 @@ async function verifyReleaseHandoffs (release, inputs) {
     return
   }
 
-  requireOneOf('release.channel', release.release.channel, ['canary', 'stable', 'both'])
+  const publicGatewayRelease = isEnabledPublicGatewayRelease(release)
+  requireOneOf('release.channel', release.release.channel, publicGatewayRelease ? ['none'] : ['canary', 'stable', 'both'])
   requireOneOf('npm packages', release.surfaces?.npmPackages, ['published', 'current'])
   requireOneOf('official Umbrel PR status', release.surfaces?.umbrelOfficial?.status, ['draft-pr-ready'])
   requirePattern('official Umbrel PR URL', release.surfaces.umbrelOfficial.prUrl, OFFICIAL_UMBREL_PR_URL_PATTERN)
@@ -374,12 +389,21 @@ async function verifyReleaseHandoffs (release, inputs) {
   requireRegistryPackageUrl('StartOS registry package URL', release.surfaces.startosRegistryPackageUrl, release.surfaces.startosRegistryUrl, release.surfaces.startosPackageId)
   requireEqual('StartOS package path', release.artifacts?.startosPackage?.path, 'startos/blindspark.s9pk')
   requirePattern('StartOS package SHA-256', release.artifacts.startosPackage.sha256, /^[a-f0-9]{64}$/i)
-  requireOneOf('fleet rollout status', release.surfaces?.fleetRollout, ['verified'])
-  requireEqual('fleet rollout channel', release.surfaces.fleetRolloutChannel, release.release.channel)
-  requireEqual('fleet rollout evidence path', release.surfaces.fleetRolloutEvidence?.path, 'fleet-rollout-evidence.json')
-  requirePattern('fleet rollout evidence SHA-256', release.surfaces.fleetRolloutEvidence?.sha256, /^[a-f0-9]{64}$/i)
-  requireEqual('fleet channel config path', release.surfaces.fleetChannelConfig?.path, 'fleet/channels.json')
-  requirePattern('fleet channel config SHA-256', release.surfaces.fleetChannelConfig?.sha256, /^[a-f0-9]{64}$/i)
+  if (publicGatewayRelease) {
+    requireOneOf('public gateway fleet rollout status', release.surfaces?.fleetRollout, ['deferred-gateway-canary-gated'])
+    requireOneOf('public gateway fleet rollout channel', release.surfaces?.fleetRolloutChannel || 'deferred', ['deferred'])
+    requireOneOf('public gateway fleet rollout evidence path', release.surfaces?.fleetRolloutEvidence?.path || 'deferred', ['deferred'])
+    requireOneOf('public gateway fleet rollout evidence hash', release.surfaces?.fleetRolloutEvidence?.sha256 || 'deferred', ['deferred'])
+    requireOneOf('public gateway fleet channel config path', release.surfaces?.fleetChannelConfig?.path || 'deferred', ['deferred'])
+    requireOneOf('public gateway fleet channel config hash', release.surfaces?.fleetChannelConfig?.sha256 || 'deferred', ['deferred'])
+  } else {
+    requireOneOf('fleet rollout status', release.surfaces?.fleetRollout, ['verified'])
+    requireEqual('fleet rollout channel', release.surfaces.fleetRolloutChannel, release.release.channel)
+    requireEqual('fleet rollout evidence path', release.surfaces.fleetRolloutEvidence?.path, 'fleet-rollout-evidence.json')
+    requirePattern('fleet rollout evidence SHA-256', release.surfaces.fleetRolloutEvidence?.sha256, /^[a-f0-9]{64}$/i)
+    requireEqual('fleet channel config path', release.surfaces.fleetChannelConfig?.path, 'fleet/channels.json')
+    requirePattern('fleet channel config SHA-256', release.surfaces.fleetChannelConfig?.sha256, /^[a-f0-9]{64}$/i)
+  }
   requireOneOf('release image manifest gate', release.gates?.imageManifest, ['passed'])
   requireEqual('release image manifest evidence path', release.gates?.imageManifestEvidence?.path, 'release-image-manifest-evidence.json')
   requirePattern('release image manifest evidence SHA-256', release.gates?.imageManifestEvidence?.sha256, /^[a-f0-9]{64}$/i)
@@ -387,7 +411,7 @@ async function verifyReleaseHandoffs (release, inputs) {
   const official = readRequiredJson(inputs.officialUmbrelPrFile, 'official Umbrel PR handoff evidence')
   const startos = readRequiredJson(inputs.startosRegistryFile, 'StartOS registry handoff evidence')
   const imageManifestFile = requireFile(inputs.releaseImageManifestFile, 'release image manifest evidence')
-  const fleetRolloutFile = requireFile(inputs.fleetRolloutFile, 'fleet rollout evidence')
+  const fleetRolloutFile = publicGatewayRelease ? '' : requireFile(inputs.fleetRolloutFile, 'fleet rollout evidence')
   const packageFile = requireFile(inputs.startosPackageFile, 'StartOS package')
 
   const imageManifestGeneratedAtMs = verifyImageManifestSidecar(release, imageManifestFile)
@@ -407,7 +431,7 @@ async function verifyReleaseHandoffs (release, inputs) {
     UMBREL_PACKAGE_SMOKE_CHECKS,
     imageManifestGeneratedAtMs
   )
-  verifyFleetRolloutSidecar(release, fleetRolloutFile)
+  if (!publicGatewayRelease) verifyFleetRolloutSidecar(release, fleetRolloutFile)
   verifyOfficialUmbrelPrHandoff(release, official)
   if (inputs.requireUmbrelRuntimeReview && !inputs.umbrelRuntimeReviewFile) {
     die('Umbrel runtime review handoff evidence is required when --require-umbrel-runtime-review is set')
@@ -703,7 +727,11 @@ function verifyOfficialUmbrelPrHandoff (release, body) {
   requireEqual('official Umbrel PR image manifest link', body.evidenceLinks?.releaseImageManifest, `${releaseBase}/release-image-manifest-evidence.json`)
   requireEqual('official Umbrel PR image smoke link', body.evidenceLinks?.releaseImageSmoke, `${releaseBase}/release-image-smoke-evidence.json`)
   requireEqual('official Umbrel PR Umbrel smoke link', body.evidenceLinks?.umbrelPackageSmoke, `${releaseBase}/umbrel-package-smoke-evidence.json`)
-  requireEqual('official Umbrel PR fleet rollout link', body.evidenceLinks?.fleetRollout, `${releaseBase}/fleet-rollout-evidence.json`)
+  requireEqual(
+    'official Umbrel PR fleet rollout link',
+    body.evidenceLinks?.fleetRollout,
+    isEnabledPublicGatewayRelease(release) ? '' : `${releaseBase}/fleet-rollout-evidence.json`
+  )
   requireEqual('official Umbrel PR StartOS package link', body.evidenceLinks?.startosPackage, `${releaseBase}/blindspark.s9pk`)
   requireEqual('official Umbrel PR StartOS registry package link', body.evidenceLinks?.startosRegistryPackage, release.surfaces.startosRegistryPackageUrl)
   requireEqual('official Umbrel PR StartOS registry link', body.evidenceLinks?.startosRegistry, `${releaseBase}/startos-registry-evidence.json`)
@@ -1341,6 +1369,50 @@ function requireOnlyKeys (label, value, allowed) {
 function requireBoolean (label, actual) {
   if (typeof actual === 'boolean') return
   die(`${label} must be a boolean; got ${JSON.stringify(actual)}`)
+}
+
+function validatePublicGatewayBinding (body) {
+  const gateway = body.release?.publicGateway
+  if (gateway == null) return false
+  requireBoolean('release public gateway enabled', gateway.enabled)
+  requireOneOf('release public gateway manifest status', gateway.manifestStatus, [
+    'enabled',
+    'disabled',
+    'missing',
+    'not-applicable'
+  ])
+  requireEqual('release public gateway manifest path', gateway.manifestPath, 'fleet/public-hive-gateway-release.json')
+  requireEqual('release public gateway target', gateway.releaseTarget, body.release.version)
+  requireEqual('release public gateway commit', gateway.commitSha, body.release.tagSha)
+
+  if (gateway.enabled) {
+    requireEqual('enabled release public gateway manifest status', gateway.manifestStatus, 'enabled')
+    requirePattern('enabled release public gateway manifest SHA-256', gateway.manifestSha256, /^[a-f0-9]{64}$/)
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(gateway.admissionProfile || '') ||
+        gateway.admissionProfile.startsWith('transitional-')) {
+      die('enabled release public gateway admission profile must be bounded and frozen')
+    }
+    requireIntegerRange('enabled release public gateway cohort size', gateway.cohortSize, 1, 128)
+    return true
+  }
+
+  requireOneOf('disabled release public gateway manifest status', gateway.manifestStatus, [
+    'disabled',
+    'missing',
+    'not-applicable'
+  ])
+  if (gateway.manifestStatus === 'disabled') {
+    requirePattern('disabled release public gateway manifest SHA-256', gateway.manifestSha256, /^[a-f0-9]{64}$/)
+  } else {
+    requireEqual('absent release public gateway manifest SHA-256', gateway.manifestSha256, '')
+  }
+  requireEqual('disabled release public gateway admission profile', gateway.admissionProfile, '')
+  requireEqual('disabled release public gateway cohort size', gateway.cohortSize, 0)
+  return false
+}
+
+function isEnabledPublicGatewayRelease (body) {
+  return body.release?.publicGateway?.enabled === true
 }
 
 function requireNonNegativeNumber (label, actual) {

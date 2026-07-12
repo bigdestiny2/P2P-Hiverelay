@@ -54,6 +54,7 @@ const version = normalizeVersion(versionInput)
 const tag = `v${version}`
 const isPrerelease = version.includes('-')
 const channel = args.channel || process.env.HIVERELAY_RELEASE_CHANNEL || defaultChannelForVersion(version)
+const publicGatewayRelease = readPublicGatewayReleaseControl()
 const imageDigest = normalizeDigest(args.imageDigest || process.env.HIVERELAY_IMAGE_DIGEST || '')
 const checkOnly = Boolean(args.check)
 const allowUnpinnedImage = Boolean(args.allowUnpinnedImage)
@@ -86,6 +87,12 @@ if (!['canary', 'stable', 'both', 'none'].includes(channel)) {
 }
 if (isPrerelease && channel !== 'none') {
   die(`Pre-release ${tag} cannot promote fleet/app-store channel "${channel}"; use --channel none.`)
+}
+if (publicGatewayRelease.enabled && publicGatewayRelease.releaseTarget !== tag) {
+  die(`Enabled public gateway release manifest targets ${publicGatewayRelease.releaseTarget}; expected ${tag}.`)
+}
+if (publicGatewayRelease.enabled && channel !== 'none') {
+  die(`Public gateway release ${tag} cannot move fleet channel "${channel}" during release preparation; use --channel none and the evidence-gated fleet promotion tool.`)
 }
 // A prerelease MAY sync the community Umbrel store (so it never lags the fleet)
 // when an explicit --umbrel-store target is provided. It still cannot promote a
@@ -155,6 +162,25 @@ function normalizeVersion (input) {
 
 function defaultChannelForVersion (semver) {
   return semver.includes('-') ? 'none' : 'both'
+}
+
+function readPublicGatewayReleaseControl () {
+  const file = path.join(repoRoot, 'fleet', 'public-hive-gateway-release.json')
+  if (!fs.existsSync(file)) return { enabled: false, releaseTarget: null }
+  let value
+  try {
+    value = JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch {
+    die('fleet/public-hive-gateway-release.json must contain valid JSON')
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      value.schema !== 'hiverelay-public-gateway-release-v1' || typeof value.enabled !== 'boolean') {
+    die('fleet/public-hive-gateway-release.json has an invalid release-control schema')
+  }
+  if (value.enabled && !/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value.releaseTarget || '')) {
+    die('enabled public gateway release manifest must name a valid releaseTarget')
+  }
+  return { enabled: value.enabled, releaseTarget: value.releaseTarget || null }
 }
 
 function normalizeDigest (input) {
