@@ -230,7 +230,8 @@
       "id": "T01B",
       "status": "in-progress",
       "handoffs": [
-        "git/5e90232ddead9e5bab71be75eae2e722f813bba0/credits-auth-remediation"
+        "git/5e90232ddead9e5bab71be75eae2e722f813bba0/credits-auth-remediation",
+        "git/640b83ec0a5c7836351264e67bf7ab7dce22a056/inherited-baseline-alignment"
       ]
     },
     {
