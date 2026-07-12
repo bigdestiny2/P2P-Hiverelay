@@ -19,7 +19,18 @@ import goodbye from 'graceful-goodbye'
 import { RelayNode } from '../core/relay-node/index.js'
 import { createLogger } from '../core/logger.js'
 import { isValidHexKey } from '../core/constants.js'
-import { loadConfig, saveConfig, ensureDirs, CONFIG_PATH, deriveTokenFromSeed, applyOutboxlogNamespaceEnv } from '../config/loader.js'
+import {
+  loadConfig,
+  saveConfig,
+  ensureDirs,
+  CONFIG_PATH,
+  STORAGE_DIR,
+  deriveTokenFromSeed,
+  applyOutboxlogNamespaceEnv,
+  getStorageCapProvenance,
+  markStorageCapExplicit,
+  resolveStorageCap
+} from '../config/loader.js'
 import {
   applyPublicHiveGatewayEnv,
   assertPublicHiveGatewayConcurrency,
@@ -238,10 +249,13 @@ async function init () {
 
   // 1. Create directories and config
   ensureDirs()
-  const config = loadConfig({
-    region: args.region || undefined,
-    maxStorageBytes: args['max-storage'] ? parseBytesOrExit(args['max-storage'], '--max-storage') : undefined
-  })
+  const initOverrides = {}
+  if (args.region) initOverrides.region = args.region
+  if (args['max-storage']) {
+    initOverrides.maxStorageBytes = parseBytesOrExit(args['max-storage'], '--max-storage')
+    markStorageCapExplicit(initOverrides, 'cli')
+  }
+  const config = loadConfig(initOverrides)
   const configPath = saveConfig(config)
   console.log(`  [ok] Config:  ${configPath}`)
   console.log(`  [ok] Storage: ${config.storage}`)
@@ -317,10 +331,15 @@ async function start () {
   const cliOverrides = {}
   if (args.storage) cliOverrides.storage = args.storage
   else if (process.env.HIVERELAY_STORAGE) cliOverrides.storage = process.env.HIVERELAY_STORAGE
-  if (args['max-storage']) cliOverrides.maxStorageBytes = parseBytesOrExit(args['max-storage'], '--max-storage')
-  else if (process.env.HIVERELAY_MAX_STORAGE) {
+  if (args['max-storage']) {
+    cliOverrides.maxStorageBytes = parseBytesOrExit(args['max-storage'], '--max-storage')
+    markStorageCapExplicit(cliOverrides, 'cli')
+  } else if (process.env.HIVERELAY_MAX_STORAGE) {
     const maxStorageBytes = parseBytesOrExit(process.env.HIVERELAY_MAX_STORAGE, 'HIVERELAY_MAX_STORAGE')
-    if (!hasPersistedConfig()) cliOverrides.maxStorageBytes = maxStorageBytes
+    if (!hasPersistedMaxStorage()) {
+      cliOverrides.maxStorageBytes = maxStorageBytes
+      markStorageCapExplicit(cliOverrides, 'environment')
+    }
   }
   if (args['max-connections']) cliOverrides.maxConnections = parseInt(args['max-connections'])
   if (args['max-bandwidth']) cliOverrides.maxRelayBandwidthMbps = parseInt(args['max-bandwidth'])
@@ -487,6 +506,18 @@ async function start () {
   } catch (err) {
     console.error(err && err.message ? err.message : String(err))
     process.exit(1)
+  }
+
+  // The built-in storage directory is owned by HiveRelay and safe to create.
+  // A custom path may be an intended future mount, so it must already exist;
+  // resolveStorageCap measures the exact path and otherwise pauses adoption.
+  if (config.storage === STORAGE_DIR) ensureDirs()
+  resolveStorageCap(config)
+  const storageCap = getStorageCapProvenance(config)
+  if (storageCap?.status !== 'resolved') {
+    console.log(`  ${ARROW} ${paint(C.yellow, 'storage admission paused')} (${storageCap?.reason || 'filesystem unresolved'}; management and recovery remain available)`)
+  } else if (storageCap.explicit !== true && config.maxStorageBytes < storageCap.requestedBytes) {
+    console.log(`  ${ARROW} ${paint(C.yellow, 'default max-storage resolved')} ${formatBytes(config.maxStorageBytes)} (available-space reserve protected)`)
   }
 
   console.log(mainBanner(VERSION))
@@ -1637,7 +1668,7 @@ Environment:
   HIVERELAY_LOG_LEVEL           Log level: fatal, error, warn, info, debug, trace
   HIVERELAY_ACCEPT_MODE         Catalog mode: open, review, allowlist, or closed
   HIVERELAY_STORAGE             Storage path used when --storage is absent
-  HIVERELAY_MAX_STORAGE         First-boot storage cap, e.g. 10GB or 500MB
+  HIVERELAY_MAX_STORAGE         Storage cap until maxStorageBytes is persisted
 
 Examples:
   npx p2p-hiverelay setup                              # Interactive setup wizard
@@ -1709,11 +1740,12 @@ function hasPersistedAcceptMode () {
   }
 }
 
-function hasPersistedConfig () {
+function hasPersistedMaxStorage () {
   if (!existsSync(CONFIG_PATH)) return false
   try {
     const parsed = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
-    return !!(parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+    return !!(parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
+      Object.prototype.hasOwnProperty.call(parsed, 'maxStorageBytes'))
   } catch (_) {
     return false
   }

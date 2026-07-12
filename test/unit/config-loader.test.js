@@ -67,7 +67,7 @@ test('cli start rejects invalid HIVERELAY_MAX_STORAGE before boot', async (t) =>
   t.ok(res.stderr.includes('Invalid HIVERELAY_MAX_STORAGE'))
 })
 
-test('cli start uses HIVERELAY_MAX_STORAGE only before saved operator config exists', async (t) => {
+test('cli start keeps HIVERELAY_MAX_STORAGE explicit until a cap is persisted', async (t) => {
   const freshHome = await mkdtemp(path.join(tmpdir(), 'hiverelay-cli-env-fresh-'))
   const savedHome = await mkdtemp(path.join(tmpdir(), 'hiverelay-cli-env-saved-'))
   t.teardown(async () => {
@@ -96,7 +96,113 @@ test('cli start uses HIVERELAY_MAX_STORAGE only before saved operator config exi
   }, 'Max Store:')
 
   t.ok(saved.sawNeedle)
-  t.ok(saved.stdout.includes('Max Store:  50.0 GB'))
+  t.ok(saved.stdout.includes('Max Store:  10.0 GB'), 'an unrelated config file does not erase the env designation')
+
+  await writeFile(path.join(configDir, 'config.json'), JSON.stringify({ maxStorageBytes: 50 * 1024 ** 3 }, null, 2) + '\n')
+  const persisted = await execCliUntil(startArgs, {
+    ...process.env,
+    HOME: savedHome,
+    HIVERELAY_MAX_STORAGE: '10GB'
+  }, 'Max Store:')
+
+  t.ok(persisted.sawNeedle)
+  t.ok(persisted.stdout.includes('Max Store:  50.0 GB'), 'persisted explicit cap wins over env')
+})
+
+test('cli start preserves an explicit --max-storage equal to 50 GiB', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-cli-explicit-default-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const res = await execCliUntil([
+    'start',
+    '--max-storage', '50GB',
+    '--no-api',
+    '--no-relay',
+    '--no-seeding',
+    '--quiet'
+  ], { ...process.env, HOME: home }, 'Max Store:')
+
+  t.ok(res.sawNeedle)
+  t.ok(res.stdout.includes('Max Store:  50.0 GB'))
+})
+
+test('config loader: explicit-equals-default persists and reloads its provenance', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-config-cap-explicit-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const {
+    getStorageCapProvenance,
+    loadConfig,
+    resolveStorageCap,
+    saveConfig
+  } = await importLoaderWithHome(home)
+  const bytes = 50 * 1024 ** 3
+  const config = loadConfig({ maxStorageBytes: bytes })
+  resolveStorageCap(config, {
+    stat: () => ({ dev: 9, isDirectory: () => true }),
+    realpath: p => p,
+    statfs: () => ({ blocks: 100 * 1024 ** 3, bavail: 5 * 1024 ** 3, bsize: 1 }),
+    measureStorageBytes: () => 0
+  })
+
+  t.is(config.maxStorageBytes, bytes, 'low available space never enlarges or rewrites explicit bytes')
+  saveConfig(config)
+  const saved = JSON.parse(await readFile(path.join(home, '.hiverelay', 'config.json'), 'utf8'))
+  t.is(saved.maxStorageBytes, bytes, 'numeric equality with the default is still persisted')
+
+  const restarted = loadConfig()
+  t.is(restarted.maxStorageBytes, bytes)
+  t.is(getStorageCapProvenance(restarted).explicit, true)
+  t.is(getStorageCapProvenance(restarted).source, 'persisted')
+})
+
+test('config loader: setup-style plain config persists explicit 50 GiB', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-config-cap-setup-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const { saveConfig } = await importLoaderWithHome(home)
+  saveConfig({ maxStorageBytes: 50 * 1024 ** 3 })
+  const saved = JSON.parse(await readFile(path.join(home, '.hiverelay', 'config.json'), 'utf8'))
+  t.is(saved.maxStorageBytes, 50 * 1024 ** 3)
+})
+
+test('config loader: a resolved unset cap is not persisted as an operator designation', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-config-cap-derived-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const { loadConfig, resolveStorageCap, saveConfig } = await importLoaderWithHome(home)
+  const config = loadConfig()
+  resolveStorageCap(config, {
+    stat: () => ({ dev: 10, isDirectory: () => true }),
+    realpath: p => p,
+    statfs: () => ({ blocks: 100 * 1024 ** 3, bavail: 18 * 1024 ** 3, bsize: 1 }),
+    measureStorageBytes: () => 0
+  })
+  t.is(config.maxStorageBytes, 8 * 1024 ** 3)
+
+  saveConfig(config)
+  const saved = JSON.parse(await readFile(path.join(home, '.hiverelay', 'config.json'), 'utf8'))
+  t.absent(Object.prototype.hasOwnProperty.call(saved, 'maxStorageBytes'), 'derived value stays derived after restart')
+})
+
+test('cli init persists an explicit cap equal to the built-in default', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-init-cap-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const res = await execCli(['init', '--max-storage', '50GB'], { ...process.env, HOME: home })
+  t.is(res.code, 0)
+  const saved = JSON.parse(await readFile(path.join(home, '.hiverelay', 'config.json'), 'utf8'))
+  t.is(saved.maxStorageBytes, 50 * 1024 ** 3)
 })
 
 test('cli start uses HIVERELAY_STORAGE when --storage is absent', async (t) => {

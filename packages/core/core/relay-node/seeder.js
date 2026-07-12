@@ -10,7 +10,8 @@ export class Seeder extends EventEmitter {
     super()
     this.store = store
     this.swarm = swarm
-    this.maxStorageBytes = opts.maxStorageBytes || 50 * 1024 * 1024 * 1024
+    this.maxStorageBytes = opts.maxStorageBytes ?? 50 * 1024 * 1024 * 1024
+    this._canAdopt = typeof opts.canAdopt === 'function' ? opts.canAdopt : null
     this.announceInterval = opts.announceInterval || 15 * 60 * 1000
     this.cores = new Map() // hex key -> { core, interval, bytesStored }
     this.totalBytesStored = 0
@@ -40,6 +41,20 @@ export class Seeder extends EventEmitter {
 
   async seedCore (publicKeyHex) {
     if (this.cores.has(publicKeyHex)) return this.cores.get(publicKeyHex)
+
+    // Persisted cores are recovery, not new adoption: they must reopen even
+    // when the node is already over cap so the operator can serve or unseed
+    // them. Every new bare-core pin uses the same admission policy as drives.
+    if (!this._restoring && this._canAdopt) {
+      const admission = this._canAdopt(0)
+      const allowed = typeof admission === 'boolean' ? admission : admission && admission.allowed
+      if (!allowed) {
+        const err = new Error('Storage admission blocked: ' + ((admission && admission.reason) || 'insufficient-storage'))
+        err.code = 'STORAGE_ADMISSION_BLOCKED'
+        err.storageAdmission = admission
+        throw err
+      }
+    }
 
     const key = b4a.from(publicKeyHex, 'hex')
     const core = this.store.get({ key })
@@ -121,6 +136,10 @@ export class Seeder extends EventEmitter {
   }
 
   hasCapacity (additionalBytes = 0) {
+    if (this._canAdopt) {
+      const admission = this._canAdopt(additionalBytes)
+      return typeof admission === 'boolean' ? admission : !!(admission && admission.allowed)
+    }
     return (this.totalBytesStored + additionalBytes) < this.maxStorageBytes
   }
 
@@ -129,7 +148,9 @@ export class Seeder extends EventEmitter {
       coresSeeded: this.cores.size,
       totalBytesStored: this.totalBytesStored,
       totalBytesServed: this.totalBytesServed,
-      capacityUsedPct: Math.round((this.totalBytesStored / this.maxStorageBytes) * 100)
+      capacityUsedPct: this.maxStorageBytes > 0
+        ? Math.round((this.totalBytesStored / this.maxStorageBytes) * 100)
+        : (this.totalBytesStored > 0 ? 100 : 0)
     }
   }
 

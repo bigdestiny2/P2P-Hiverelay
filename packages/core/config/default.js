@@ -27,7 +27,10 @@ export default {
 
   // Seeding
   enableSeeding: true,
-  maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
+  // Legacy ceiling for an unset cap. CLI startup resolves an unset value
+  // against exact-filesystem available bytes + reserve; explicit values keep
+  // their exact operator designation even when equal to 50 GiB.
+  maxStorageBytes: 50 * 1024 * 1024 * 1024,
   announceInterval: 15 * 60 * 1000, // 15 minutes
 
   // Circuit relay

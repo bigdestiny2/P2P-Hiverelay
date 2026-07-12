@@ -308,6 +308,7 @@ export class AppLifecycle extends EventEmitter {
 
   async _seedAppInner (appKeyHex, opts, contentType, parentKey, mountPath, privacyTier) {
     const node = this.node
+    const recoveringExisting = this.seededApps.has(appKeyHex)
 
     // Re-check after acquiring mutex — another call may have seeded it.
     // Same null-discoveryKey guard + v0.8.12 opts reconcile as the
@@ -325,28 +326,25 @@ export class AppLifecycle extends EventEmitter {
       // else: placeholder entry from load() — fall through.
     }
 
-    // Evict oldest app if storage capacity would be exceeded
-    if (node.config.enableEviction !== false && node.seeder.totalBytesStored >= node.config.maxStorageBytes && this.seededApps.size > 0) {
-      const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000
-      let oldestKey = null
-      let oldestTime = Infinity
-
-      for (const [appKey, entry] of this.seededApps) {
-        if (entry.startedAt < oldestTime) {
-          oldestTime = entry.startedAt
-          oldestKey = appKey
-        }
-      }
-
-      const shouldEvict = oldestKey && (
-        (opts.replicationFactor && opts.replicationFactor > (this.seededApps.get(oldestKey)?.replicationFactor || 1)) ||
-        (Date.now() - oldestTime > TWENTY_FOUR_HOURS)
-      )
-
-      if (shouldEvict) {
-        await node._evictOldestApp()
-      } else {
-        throw new Error('Storage capacity exceeded and no eligible app to evict')
+    // Existing registry entries may be reopened while over cap so the node can
+    // boot, serve, inspect and manually unseed them. Every genuinely NEW pin
+    // must pass the logical-cap + physical-reserve gate. This never turns on
+    // eviction; shedding remains an explicit operator policy.
+    if (!recoveringExisting) {
+      const requestedBytes = Number.isSafeInteger(opts.maxStorage) && opts.maxStorage > 0
+        ? opts.maxStorage
+        : 0
+      const admission = typeof node._storageAdmission === 'function'
+        ? node._storageAdmission(requestedBytes)
+        : {
+            allowed: (Number(node.config.maxStorageBytes) - Number(node.seeder.totalBytesStored || 0)) > requestedBytes,
+            reason: 'storage-cap-reached'
+          }
+      if (!admission.allowed) {
+        const err = new Error('Storage admission blocked: ' + (admission.reason || 'insufficient-storage'))
+        err.code = 'STORAGE_ADMISSION_BLOCKED'
+        err.storageAdmission = admission
+        throw err
       }
     }
 

@@ -1,6 +1,8 @@
+import { copyStorageCapProvenance } from '../../config/storage-cap.js'
+
 export function buildSafeConfigPayload (node) {
   const c = node && node.config ? node.config : {}
-  return {
+  const payload = {
     name: c.name,
     storage: c.storage,
     acceptMode: c.acceptMode,
@@ -40,6 +42,7 @@ export function buildSafeConfigPayload (node) {
     subsidy: c.subsidy || { enabled: false, payoutDestination: null },
     mode: node && node._operatingMode ? node._operatingMode : 'standard'
   }
+  return copyStorageCapProvenance(c, payload)
 }
 
 export function snapshotWizardConfig (config = {}) {

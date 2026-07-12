@@ -2019,7 +2019,7 @@ p2p-hiverelay start [options]
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--storage <path>` | Storage directory | `~/.hiverelay/storage` |
-| `--max-storage <size>` | Max storage (e.g., `50GB`) | `50GB` |
+| `--max-storage <size>` | Explicit max storage (e.g., `50GB`) | unset: safely resolved up to `50GB` |
 | `--max-connections <n>` | Max peer connections | `256` |
 | `--max-bandwidth <mbps>` | Max relay bandwidth | `100` |
 | `--region <code>` | Region code | all |
@@ -2032,6 +2032,9 @@ p2p-hiverelay start [options]
 | `--tor [password]` | Enable Tor hidden service | disabled |
 | `--holesail` | Enable Holesail NAT tunnel | disabled |
 | `--quiet` | Suppress periodic status output | — |
+
+See [STORAGE-CAP-SAFETY.md](./STORAGE-CAP-SAFETY.md) for explicit-cap
+provenance, physical reserve math, mount verification, and over-cap recovery.
 
 **Config precedence:** CLI flags > `~/.hiverelay/config.json` > built-in defaults.
 
