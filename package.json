@@ -21,6 +21,7 @@
     "vnext:check-program": "node scripts/check-vnext-program-state.mjs",
     "vnext:inventory": "node scripts/inventory-vnext-workspaces.mjs",
     "vnext:check-inventory": "node scripts/inventory-vnext-workspaces.mjs --check",
+    "vnext:check-protocol": "node scripts/check-vnext-protocol-remediation.mjs",
     "bench:outboxlog": "node scripts/bench-outboxlog.mjs",
     "bench:outboxlog:release": "node scripts/bench-outboxlog.mjs --assert",
     "audit:relaykernel-gateway": "node scripts/check-relaykernel-gateway-compat.mjs",

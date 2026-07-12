@@ -17,6 +17,15 @@ Validate it with:
 npm run vnext:check-program
 ```
 
+`protocol-remediation.json` keeps the preserved Blind protocol candidate in a
+draft-only state while the audited CR-1 through CR-8 controls, D-6, D-7, and
+PG-2 remain open. Its validator also rejects the appearance of final authority
+artifacts before all of those controls are supported by immutable evidence:
+
+```bash
+npm run vnext:check-protocol
+```
+
 The current integration base is post-release `main` at `999b0afd…`; the exact
 `v0.24.3` artifact baseline remains `d0190577…`. The tentative train is
 `v0.25.0-rc.N`. No concrete RC number, profile promotion, channel movement, or
