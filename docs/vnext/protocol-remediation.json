@@ -55,14 +55,21 @@
       "implementationStatus": "partial",
       "gateStatus": "blocked",
       "requiredValidations": ["V-1", "V-7"],
-      "evidence": ["audit/BH-004", "audit/BH-CR-6"]
+      "evidence": [
+        "audit/BH-004",
+        "audit/BH-CR-6",
+        "git/9456f12400e25e02ab0233e3dc069bdda41a8f96/V-1-field-remediation"
+      ]
     },
     {
       "id": "CR-7",
       "implementationStatus": "partial",
       "gateStatus": "blocked",
       "requiredValidations": ["V-1", "claim-lint"],
-      "evidence": ["audit/BH-CR-7"]
+      "evidence": [
+        "audit/BH-CR-7",
+        "git/9456f12400e25e02ab0233e3dc069bdda41a8f96/V-1-field-remediation"
+      ]
     },
     {
       "id": "CR-8",
