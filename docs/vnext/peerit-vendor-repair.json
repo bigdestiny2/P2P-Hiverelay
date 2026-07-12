@@ -1,0 +1,49 @@
+{
+  "schema": "hiverelay-vnext-peerit-vendor-repair-v1",
+  "createdAt": "2026-07-12T15:10:16Z",
+  "sourceFinding": "git/ce167bd222c23d246e6a51d9c33fb1ca895b3a19/docs/vnext/peerit-vendor-authority-drift.json",
+  "custodyRoot": "00-core/vnext-custody/peerit-vendor-repair-20260712-de339da",
+  "base": "00f46f3c26a44adb29a80894d247be1411093c37",
+  "tip": "de339da29a5b9cf45ea0e98318f604ecaced9950",
+  "branch": "fix/peerit-blind-vendor-authority",
+  "sourceHiveRelayTip": "211b20d892203de89be07975c155a09c976d6bd4",
+  "bundle": {
+    "file": "peerit-vendor-repair-20260712.bundle",
+    "sha256": "ccbd3fbef8d98a1f5a4bf36fe70e1811941f598d18dc07e747f54d85500229f1",
+    "completeHistory": true,
+    "verified": true
+  },
+  "authority": {
+    "manifestAuthorityHash": "c56d951b526c4915204c531f45a870a14af815887d26e535812773fcb4977b94",
+    "sourceClosureHash": "2fd7a1fa4e8d4496d179dc99ca72d29d1dab4c307efd8b5f03167c75f9a8dd49",
+    "artifactHash": "30bcbde57251dd47018b980eaf3dba69de3afcb44ccf6930f7bddd89b708fba3"
+  },
+  "verification": {
+    "cleanInstall": "pass",
+    "vendorCheck": "pass",
+    "peeritSubstrateAndBuildClosure": "pass",
+    "npmTest": "pass",
+    "standard": "pass",
+    "worktreeCleanAfterCommit": true,
+    "webBuild": {
+      "status": "pass",
+      "files": 65,
+      "releaseSequence": 6,
+      "evidenceSha256": "4e0ec68b8b70b95fb6ba076f4cd448fdc4a3d64818b3b23cbca00c974aa2db90"
+    },
+    "webRelease": {
+      "status": "blocked",
+      "expected": true,
+      "productBlockers": 23,
+      "reportSha256": "fff53fba58936a0dabc0cab58abd859cac36514719b4cc9eccdc372c1fef4ecf"
+    }
+  },
+  "integrationPolicy": {
+    "reviewCommitIndividually": true,
+    "advanceReleaseSequenceNow": false,
+    "createSignatureNow": false,
+    "mergeAllowed": false,
+    "releaseAllowed": false,
+    "deploymentAllowed": false
+  }
+}
