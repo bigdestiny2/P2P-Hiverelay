@@ -55,6 +55,14 @@ function exactBytes32 (value, field) {
   return bytes
 }
 
+function nonzeroBytes32 (value, field) {
+  const bytes = exactBytes32(value, field)
+  for (const byte of bytes) {
+    if (byte !== 0) return bytes
+  }
+  throw new TypeError(`${field} must not be all zero`)
+}
+
 export function validateReadinessTopology (input, endpointId) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('readinessTopology must be an object')
   const unarySocketPath = socketPath(input.unarySocketPath, 'readinessTopology.unarySocketPath')
@@ -70,6 +78,12 @@ export function validateReadinessTopology (input, endpointId) {
     daemonGid: unsignedInteger(input.daemonGid, 'readinessTopology.daemonGid'),
     socketGroupGid: unsignedInteger(input.socketGroupGid, 'readinessTopology.socketGroupGid'),
     socketMode,
+    // A CELL.PUT content stream is accepted only when the edge has the
+    // descriptor-bound transport profile used by the daemon to authenticate
+    // its private channel. Older/read-only topologies deliberately omit it.
+    streamTransportProfileHash: input.streamTransportProfileHash == null
+      ? null
+      : nonzeroBytes32(input.streamTransportProfileHash, 'readinessTopology.streamTransportProfileHash'),
     endpointId: unsignedInteger(endpointId, 'endpointId', 0xff)
   })
 }

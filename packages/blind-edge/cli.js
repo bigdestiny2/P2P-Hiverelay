@@ -22,6 +22,15 @@ function requiredTopologyHash () {
   return Buffer.from(value, 'hex')
 }
 
+function optionalStreamTransportProfileHash () {
+  const value = process.env.HIVERELAY_BLIND_STREAM_TRANSPORT_PROFILE_HASH
+  if (value == null) return null
+  if (typeof value !== 'string' || !/^[0-9a-fA-F]{64}$/.test(value) || /^0{64}$/i.test(value)) {
+    throw new Error('HIVERELAY_BLIND_STREAM_TRANSPORT_PROFILE_HASH must be one nonzero 32-byte descriptor transport-profile hash in hex')
+  }
+  return Buffer.from(value, 'hex')
+}
+
 const tlsKeyPath = process.env.HIVERELAY_BLIND_TLS_KEY || '/run/secrets/hiverelay-blind-tls.key'
 const tlsCertPath = process.env.HIVERELAY_BLIND_TLS_CERT || '/run/secrets/hiverelay-blind-tls.crt'
 const endpointId = requiredUnsignedEnvironment('HIVERELAY_BLIND_ENDPOINT_ID', 0xff, 1)
@@ -29,6 +38,7 @@ const readinessTopology = {
   unarySocketPath: process.env.HIVERELAY_BLIND_UNARY_SOCKET || '/run/hiverelay-blind/unary.sock',
   streamSocketPath: process.env.HIVERELAY_BLIND_STREAM_SOCKET || '/run/hiverelay-blind/stream.sock',
   launchTopologyHash: requiredTopologyHash(),
+  streamTransportProfileHash: optionalStreamTransportProfileHash(),
   daemonUid: requiredUnsignedEnvironment('HIVERELAY_BLIND_DAEMON_UID'),
   daemonGid: requiredUnsignedEnvironment('HIVERELAY_BLIND_DAEMON_GID'),
   socketGroupGid: requiredUnsignedEnvironment('HIVERELAY_BLIND_SHARED_GID'),

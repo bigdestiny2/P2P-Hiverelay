@@ -1,18 +1,27 @@
 import http from 'node:http'
 import https from 'node:https'
+import { randomBytes } from 'node:crypto'
 import b4a from 'b4a'
 import {
   DISPATCH_LIMITS,
   FAMILY,
   FAMILY_ROUTES,
+  OPERATION,
   OUTER_CLASS,
   PROTOCOL,
   TRANSPORT_ID,
   TRANSPORT_SUPPORT,
   assertReleaseReady
 } from '@hiverelay/blind-protocol/wire-runtime-authority'
-import { MAX_LOCAL_BODY_BYTES, PRIVATE_IPC_TIMING_MILLIS, assertPrivateIpcReady } from '@hiverelay/blind-ipc'
-import { exchangeLocal } from './ipc-client.js'
+import { decodeDispatchFrame, decodeOuterEnvelope, encodeOuterEnvelope } from '@hiverelay/blind-protocol'
+import {
+  LOCAL_STREAM_MODE,
+  LOCAL_STREAM_OPEN_KIND,
+  MAX_LOCAL_BODY_BYTES,
+  PRIVATE_IPC_TIMING_MILLIS,
+  assertPrivateIpcReady
+} from '@hiverelay/blind-ipc'
+import { exchangeLocal, exchangeLocalContent } from './ipc-client.js'
 import { EdgeReadinessError, performReadinessHandshake, validateReadinessTopology } from './readiness.js'
 
 const DEFAULT_HOST = '127.0.0.1'
@@ -139,6 +148,10 @@ function inspectOuterEnvelope (input) {
     throw new EdgeTransportError(400, 'malformed blind envelope')
   }
   return outerClass
+}
+
+function sameBytes (left, right) {
+  return left.byteLength === right.byteLength && b4a.equals(left, right)
 }
 
 function readBoundedBody (request, maxBytes, signal, reserveBytes, timing) {
@@ -394,12 +407,14 @@ export class BlindEdge {
       this.unsafeReadinessProbe = unsafeReadinessProbe
       this.unarySocketPath = unarySocketPath
       this.streamSocketPath = null
+      this.streamTransportProfileHash = null
     } else {
       this.readinessMode = 'production'
       this.readinessTopology = validateReadinessTopology(options.readinessTopology, this.endpointId)
       this.unsafeReadinessProbe = null
       this.unarySocketPath = this.readinessTopology.unarySocketPath
       this.streamSocketPath = this.readinessTopology.streamSocketPath
+      this.streamTransportProfileHash = this.readinessTopology.streamTransportProfileHash
     }
     this.socketPath = this.unarySocketPath
     this.stageTimeouts = stageTimeouts(options.stageTimeouts)
@@ -762,6 +777,14 @@ export class BlindEdge {
         bodyCompleteMs: this.stageTimeouts.bodyCompleteMs
       })
       const outerClass = inspectOuterEnvelope(body)
+      let outer
+      try {
+        outer = decodeOuterEnvelope(body, { copyInner: true, copyBody: false })
+      } catch {
+        throw new EdgeTransportError(400, 'malformed blind envelope')
+      }
+      const stagedCellPut = family === FAMILY.CELL &&
+        outer.frame.familyId === FAMILY.CELL && outer.frame.operationId === OPERATION.CELL.PUT
       const acceptedMonotonicMillis = requestState.t0
       const remainingMillis = absoluteDeadlineMonotonicMillis - this.now()
       if (remainingMillis <= 0n) throw new EdgeTransportError(503, 'absolute request deadline elapsed')
@@ -769,23 +792,70 @@ export class BlindEdge {
       // committed operation can always carry its same-class response: encoded
       // request plus response chunks, assembled frame, and decoded body.
       reserveBytes(body.byteLength * 4)
-      const result = await exchangeLocal(this.socketPath, {
-        family,
-        transportId: TRANSPORT_ID.HTTPS_DIRECT,
-        transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
-        endpointId: this.endpointId,
-        outerClass,
-        acceptedMonotonicMillis,
-        absoluteDeadlineMonotonicMillis,
-        adjacentRelayKey: null,
-        body
-      }, {
-        timeoutMs: Number(remainingMillis),
-        writeTimeoutMs: Math.min(this.stageTimeouts.ipcWriteMs, Number(remainingMillis)),
-        signal: abortController.signal
-      })
-      const responseOuterClass = inspectOuterEnvelope(result)
-      if (responseOuterClass !== outerClass) throw new EdgeTransportError(503, 'daemon changed the selected outer class')
+      let result
+      if (stagedCellPut) {
+        if (!this.streamSocketPath || !this.streamTransportProfileHash) {
+          throw new EdgeTransportError(503, 'staged CELL.PUT is not enabled by this edge topology')
+        }
+        const dispatch = await exchangeLocalContent(this.streamSocketPath, outer.innerDispatch, {
+          open: {
+            openKind: LOCAL_STREAM_OPEN_KIND.PUBLIC_CONTENT_CHANNEL,
+            transportId: TRANSPORT_ID.HTTPS_DIRECT,
+            transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
+            endpointId: this.endpointId,
+            streamMode: LOCAL_STREAM_MODE.DISPATCH_CONTENT,
+            channelClass: 3,
+            acceptedMonotonicMillis,
+            openDeadlineMonotonicMillis: absoluteDeadlineMonotonicMillis,
+            adjacentRelayKey: null
+          },
+          channel: {
+            launchTopologyHash: this.readinessTopology.launchTopologyHash,
+            edgeProcessNonce: b4a.from(randomBytes(32)),
+            localChannelNonce: b4a.from(randomBytes(32)),
+            transportProfileHash: this.streamTransportProfileHash,
+            finalNoiseHandshakeHash: b4a.from(randomBytes(64))
+          }
+        }, {
+          timeoutMs: Number(remainingMillis),
+          writeTimeoutMs: Math.min(this.stageTimeouts.ipcWriteMs, Number(remainingMillis)),
+          signal: abortController.signal
+        })
+        let responseFrame
+        try {
+          responseFrame = decodeDispatchFrame(dispatch, { copyBody: false })
+        } catch {
+          throw new EdgeTransportError(503, 'staged CELL.PUT daemon response is malformed')
+        }
+        if (responseFrame.familyId !== outer.frame.familyId ||
+            responseFrame.operationId !== outer.frame.operationId ||
+            !sameBytes(responseFrame.requestId, outer.frame.requestId)) {
+          throw new EdgeTransportError(503, 'staged CELL.PUT daemon response is not correlated')
+        }
+        try {
+          result = encodeOuterEnvelope({ innerDispatch: dispatch, outerClass })
+        } catch {
+          throw new EdgeTransportError(503, 'staged CELL.PUT daemon response does not fit the selected outer class')
+        }
+      } else {
+        result = await exchangeLocal(this.socketPath, {
+          family,
+          transportId: TRANSPORT_ID.HTTPS_DIRECT,
+          transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
+          endpointId: this.endpointId,
+          outerClass,
+          acceptedMonotonicMillis,
+          absoluteDeadlineMonotonicMillis,
+          adjacentRelayKey: null,
+          body
+        }, {
+          timeoutMs: Number(remainingMillis),
+          writeTimeoutMs: Math.min(this.stageTimeouts.ipcWriteMs, Number(remainingMillis)),
+          signal: abortController.signal
+        })
+        const responseOuterClass = inspectOuterEnvelope(result)
+        if (responseOuterClass !== outerClass) throw new EdgeTransportError(503, 'daemon changed the selected outer class')
+      }
       const frameCompleteMonotonicMillis = this.now()
       const firstByteDeadlineMonotonicMillis = minimumDeadline(
         frameCompleteMonotonicMillis + BigInt(this.stageTimeouts.responseFirstByteMs),
