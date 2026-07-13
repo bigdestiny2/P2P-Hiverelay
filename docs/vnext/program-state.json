@@ -14,7 +14,7 @@
   "profiles": [
     {
       "id": "public-t1-gateway",
-      "status": "merged-into-vnext-train",
+      "status": "active-ship-track",
       "claim": "Public exact-byte HTTPS distribution; no blind privacy claim",
       "requiredGates": [
         "PG-0",
@@ -23,17 +23,19 @@
         "PG-5",
         "PG-6"
       ],
-      "liveTip": "feat/vnext-gateway-merge@2ab0cb625910",
+      "liveTip": "feat/vnext-gateway-merge canary-preflight pass (transitional admission)",
       "remaining": [
-        "frozen non-transitional T1/T2/T3 admission",
-        "staging canary evidence (not fleet)",
-        "D-5 owner decision",
-        "full suite on release candidate commit"
-      ]
+        "operator: staging host + DNS + TLS + one app key",
+        "live probe preflight on staging",
+        "24h observation",
+        "frozen T1 admission before --mode fleet",
+        "D-5 collateral: never claim blind privacy"
+      ],
+      "priority": 1
     },
     {
       "id": "direct-blind-g2s",
-      "status": "draft-implementation-on-merged-train",
+      "status": "parked-per-D-1",
       "claim": "Direct blind storage with disclosed stable access metadata (G2-S)",
       "requiredGates": [
         "PG-0",
@@ -51,7 +53,8 @@
         "daemon production readiness gates",
         "browser artifact evidence-bound releaseReady",
         "seven-day soak / disposable cohort"
-      ]
+      ],
+      "priority": 99
     },
     {
       "id": "g3-randomized-cells",
@@ -346,7 +349,8 @@
       "id": "PG-3",
       "status": "in-progress",
       "evidence": [
-        "git/2ab0cb625910db856f01f25db0b18d78ebf17c94/docs/vnext/vnext-gateway-merge-2026-07-13.json#verification"
+        "git/2ab0cb625910db856f01f25db0b18d78ebf17c94/docs/vnext/vnext-gateway-merge-2026-07-13.json#verification",
+        "docs/vnext/PUBLIC-T1-GATEWAY-GO-NOW-2026-07-13.md#verified-today-local"
       ]
     },
     {
@@ -570,5 +574,12 @@
     "openFollowups": [
       "D-1-scope: define the minimum advanced profile that unblocks first blind canary"
     ]
+  },
+  "activeShipTrack": {
+    "id": "public-t1-gateway",
+    "setAt": "2026-07-13T11:29:16Z",
+    "reason": "owner directed: get public HTTPS gateway going for now",
+    "posture": "staging-canary-only",
+    "fleetBlockedUntil": "non-transitional T1 admission profile"
   }
 }
