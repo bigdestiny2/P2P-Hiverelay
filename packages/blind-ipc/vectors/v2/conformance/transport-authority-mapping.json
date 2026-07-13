@@ -1,0 +1,15 @@
+{
+  "https": {
+    "authorityKind": 1,
+    "supportBit": 1,
+    "transportId": 1
+  },
+  "nativeNoise": {
+    "authorityKind": 2,
+    "supportBit": 2,
+    "transportId": 2
+  },
+  "rule": "peer credentials authenticate the edge attestation; session binding material is not independent proof against a malicious authenticated edge",
+  "tlsExporterBytes": 32,
+  "tlsExporterLabel": "EXPORTER-HiveRelay-Blind-Staged-Cell-Put-v2"
+}

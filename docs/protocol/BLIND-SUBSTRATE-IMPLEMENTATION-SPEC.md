@@ -210,10 +210,15 @@ or compatibility schema. EVIDENCE contains `BlindProductDistributionBundleV1`,
 `HiveRelayCompatibilitySunsetHeadV1`,
 `HiveRelayCompatibilityAuthorityTransitionV1`, and
 `HiveRelayCompatibilityRuntimeBoundaryEvidenceV1` under the exact master schemas,
-hashes, domains, time/floor/key-transition rules, and vectors. PRIVATE_IPC contains
+hashes, domains, time/floor/key-transition rules, and vectors. PRIVATE_IPC v1 contains
 exactly the seven local edge↔daemon schemas named in the master; its registry/vectors hash into the build
 and topology but never WIRE. INTERNAL_STORE contains none of them and gains no
 product mode. A generator must reject a duplicate copy or category change.
+
+The additive PRIVATE_IPC v2 staged-`CELL.PUT` authority retains those seven v1
+rows and adds IDs 8..12 under separate registry, vector, and hash-domain artifacts.
+V1 staged writes are forbidden. A v2 record is never decoded or retried as v1.
+The v2 contract is not a release gate by itself.
 
 `vectorManifestBytes` are `u32 entryCount` followed by entries encoded as
 `u16 pathLength || pathBytes || u64 vectorLength || BLAKE2b-256(vectorBytes)`.
@@ -460,6 +465,14 @@ signed topology; edge also authenticates daemon UID and the opened socket inode'
 signed owner/group/mode/path. Unary and stream use two absolute, unequal,
 non-symlink Unix-domain paths; multiplexing both over one socket is forbidden.
 Every frame begins with big-endian `totalLength:u32` equal to all remaining bytes.
+
+For staged HTTPS `CELL.PUT`, the operation-specific v2 contract in
+`HIVERELAY-BLIND-PRIVATE-IPC-V2.md` supersedes the generic v1 stream row without
+changing it. It carries one full outer envelope over 65,535-byte local frames,
+requires peercred-authenticated TLS-exporter edge attestation, exposes separate
+write-readiness and feature masks, and validates a same-class correlated
+`RESPONSE`/`ERROR` fit before publish, WAL, spend, or signing. Raw binding bytes
+are not authority and no v1 fallback is permitted.
 
 The unary socket request and response are exactly:
 

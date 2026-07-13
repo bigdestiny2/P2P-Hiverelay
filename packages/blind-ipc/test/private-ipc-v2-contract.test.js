@@ -1,0 +1,327 @@
+import crypto from 'node:crypto'
+import { execFileSync } from 'node:child_process'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import b4a from 'b4a'
+import test from 'brittle'
+import {
+  blake2b256,
+  decodeVectorManifest,
+  hashAbi
+} from '@hiverelay/blind-protocol'
+import {
+  PRIVATE_IPC_SCHEMAS,
+  verifyPrivateIpcRegistry
+} from '../registry.js'
+import * as contract from '../private-ipc-v2-contract.js'
+
+const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const repositoryRoot = path.resolve(packageRoot, '../..')
+const vectorRoot = path.join(packageRoot, 'vectors/v2')
+const baseCommit = 'fa71427da4b215e20bb083daadd590fbc5ee807d'
+const fixed = (length, byte) => b4a.alloc(length, byte)
+const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
+
+function capture (t, operation, message) {
+  let error = null
+  try {
+    operation()
+  } catch (caught) {
+    error = caught
+  }
+  t.ok(error, message)
+  return error
+}
+
+function mutate (input, operation) {
+  const output = b4a.from(input)
+  operation(output)
+  return output
+}
+
+async function artifact (relative) {
+  return fs.readFile(path.join(packageRoot, ...relative.split('/')))
+}
+
+test('private IPC v2 registry and vectors are deterministic while V1 stays byte-identical', async t => {
+  const wireAbi = await fs.readFile(path.join(repositoryRoot, 'packages/blind-protocol/hiverelay-blind-abi-v1.cenc'))
+  const registry = await artifact('hiverelay-blind-private-ipc-v2.cenc')
+  const manifest = await artifact('vector-manifest-v2.cenc')
+  const authority = JSON.parse(await fs.readFile(path.join(packageRoot, 'hiverelay-blind-private-ipc-authority-v2.json'), 'utf8'))
+  const value = contract.verifyPrivateIpcV2Registry(registry, wireAbi)
+
+  t.ok(b4a.equals(contract.encodePrivateIpcV2Registry(wireAbi), registry), 'V2 registry reproduces')
+  t.is(value.magic, contract.PRIVATE_IPC_V2_MAGIC)
+  t.is(value.formatVersion, 2)
+  t.is(value.schemas.length, 12)
+  t.alike(value.schemas.slice(0, 7), PRIVATE_IPC_SCHEMAS, 'V1 rows are retained exactly')
+  t.alike(value.schemas.slice(7).map(schema => [schema.schemaId, schema.schemaName]), [
+    [8, 'LocalTransportBindingV2'],
+    [9, 'LocalStagedCellPutOpenV2'],
+    [10, 'LocalStagedCellPutFrameV2'],
+    [11, 'LocalReadyProbeV2'],
+    [12, 'LocalReadyAckV2']
+  ])
+  t.is(b4a.toString(contract.hashPrivateIpcV2Registry(registry), 'hex'), authority.privateIpcFormatHash)
+  t.is(b4a.toString(contract.hashPrivateIpcV2VectorManifest(manifest), 'hex'), authority.privateIpcVectorSetHash)
+  t.is(b4a.toString(hashAbi(wireAbi), 'hex'), authority.importedWireAbiHash)
+  t.is(sha256(registry), authority.privateIpcRegistrySha256)
+  t.is(sha256(manifest), authority.privateIpcVectorManifestSha256)
+  t.is(authority.schemaCount, 12)
+  t.is(authority.v1SchemaCount, 7)
+  t.is(authority.v2SchemaCount, 5)
+  t.ok(authority.vectorCount >= 104)
+  t.is(authority.contractReady, true)
+  t.is(authority.runtimeReleaseReady, false)
+  t.is(authority.authorizesRelease, false)
+
+  const entries = decodeVectorManifest(manifest)
+  t.is(entries.length, authority.vectorCount)
+  for (const entry of entries) {
+    const bytes = await fs.readFile(path.join(vectorRoot, ...entry.path.split('/')))
+    t.is(BigInt(bytes.byteLength), entry.vectorLength, `${entry.path} length`)
+    t.ok(b4a.equals(blake2b256(bytes), entry.vectorHash), `${entry.path} hash`)
+  }
+
+  for (const relative of Object.keys(authority.v1FileSha256)) {
+    const current = await artifact(relative)
+    const atBase = execFileSync('git', ['show', `${baseCommit}:packages/blind-ipc/${relative}`], { cwd: repositoryRoot })
+    t.ok(b4a.equals(current, atBase), `${relative} is byte-identical to ${baseCommit}`)
+    t.is(sha256(current), authority.v1FileSha256[relative], `${relative} frozen SHA-256`)
+  }
+
+  const v1Registry = await artifact('hiverelay-blind-private-ipc-v1.cenc')
+  t.ok(verifyPrivateIpcRegistry(v1Registry, wireAbi), 'V1 verifier still accepts V1')
+  t.is(capture(t, () => verifyPrivateIpcRegistry(registry, wireAbi), 'V1 verifier rejects V2').code, 'BAD_PRIVATE_IPC_REGISTRY')
+  t.is(capture(t, () => contract.decodePrivateIpcV2Registry(v1Registry), 'V2 decoder rejects V1').code, 'PRIVATE_IPC_V2_NO_FALLBACK')
+})
+
+test('private IPC v2 codecs freeze exact lengths and opaque edge-attested authority', async t => {
+  const bindingBytes = await artifact('vectors/v2/accepted/transport-binding-tls.bin')
+  const openBytes = await artifact('vectors/v2/accepted/staged-cell-put-open-class-3.bin')
+  const requestFrame = await artifact('vectors/v2/accepted/request-frame-0-max.bin')
+  const abortFrame = await artifact('vectors/v2/accepted/request-abort.bin')
+  const probeBytes = await artifact('vectors/v2/accepted/ready-probe.bin')
+  const ackBytes = await artifact('vectors/v2/accepted/ready-ack.bin')
+
+  t.is(bindingBytes.byteLength, 162)
+  t.is(openBytes.byteLength, 200)
+  t.is(requestFrame.byteLength, 65_535)
+  t.is(abortFrame.byteLength, 21)
+  t.is(probeBytes.byteLength, 95)
+  t.is(ackBytes.byteLength, 133)
+  t.is(contract.PRIVATE_IPC_V2_LIMITS.STAGED_OPEN_HEADER_BYTES, 38)
+  t.is(contract.PRIVATE_IPC_V2_LIMITS.STAGED_FRAME_HEADER_BYTES, 20)
+  t.is(contract.PRIVATE_IPC_V2_LIMITS.LOCAL_FRAME_CONTENT_BYTES, 65_515)
+  t.is(contract.CELL_PUT_OPERATION_BIT_V2, 8)
+  t.is(contract.CELL_PUT_ENDPOINT_ROLE_BIT_V2, 1)
+  t.is(contract.REQUIRED_LOCAL_IPC_FEATURE_BITS_V2, 0x3f)
+
+  const binding = contract.decodeLocalTransportBindingV2(bindingBytes)
+  const open = contract.decodeLocalStagedCellPutOpenV2(openBytes)
+  const probe = contract.decodeLocalReadyProbeV2(probeBytes)
+  const ack = contract.decodeLocalReadyAckV2(ackBytes)
+  t.is(binding.authorityKind, contract.LOCAL_TRANSPORT_AUTHORITY_KIND_V2.TLS_EXPORTER_BY_PEERCRED_EDGE)
+  t.is(open.context.authorityKind, open.authorityKind)
+  t.is(open.transportId, contract.TRANSPORT_ID.HTTPS_DIRECT)
+  t.is(open.transportSupportBit, contract.TRANSPORT_SUPPORT.DIRECT_HTTP)
+  t.is(open.requestEnvelopeBytes, contract.OUTER_CLASS[3])
+  t.is(probe.absoluteDeadlineMonotonicMillis - probe.acceptedMonotonicMillis, 2_000n)
+  t.is(ack.readyWriteOperationBits, contract.CELL_PUT_OPERATION_BIT_V2)
+  t.is(ack.readyIpcFeatureBits, 0x3f)
+
+  const readers = [
+    [contract.readLocalStagedCellPutOpenLengthV2, openBytes, 38, 200],
+    [contract.readLocalStagedCellPutFrameLengthV2, requestFrame, 20, 65_535],
+    [contract.readLocalReadyProbeLengthV2, probeBytes, 7, 95],
+    [contract.readLocalReadyAckLengthV2, ackBytes, 7, 133]
+  ]
+  for (const [reader, bytes, required, exact] of readers) {
+    t.is(reader(bytes.subarray(0, 3)), null, 'reader waits for prefix')
+    t.is(reader(bytes.subarray(0, 4)), null, 'reader waits for version')
+    t.is(reader(bytes.subarray(0, required - 1)), null, 'reader waits for bounded header/discriminant')
+    t.is(reader(bytes.subarray(0, required)), exact, 'reader returns exact declared record length')
+    t.is(reader(bytes), exact, 'reader accepts complete record')
+    t.exception(() => reader(mutate(bytes.subarray(0, 4), value => { value.fill(0) })), 'reader rejects impossible declaration')
+    t.is(capture(t, () => reader(mutate(bytes.subarray(0, 5), value => { value[4] = 1 })), 'reader rejects V1').code,
+      'PRIVATE_IPC_V2_NO_FALLBACK')
+  }
+  t.exception(() => contract.readLocalStagedCellPutOpenLengthV2(
+    mutate(openBytes.subarray(0, 38), value => { b4a.writeUInt32BE(value, 161, 34) })), 'open reader rejects context contradiction')
+  t.exception(() => contract.readLocalStagedCellPutFrameLengthV2(
+    mutate(requestFrame.subarray(0, 20), value => { b4a.writeUInt32BE(value, 1, 16) })), 'frame reader rejects body contradiction')
+
+  t.is(capture(t, () => contract.verifyLocalStagedCellPutOpenBindingV2(open, {
+    peerCredentialAuthenticated: false,
+    launchTopologyHash: fixed(32, 0xa1),
+    transportProfileHash: fixed(32, 0xa4)
+  }), 'raw open is not authority').code, 'PRIVATE_IPC_V2_PEERCRED_REQUIRED')
+  const handle = contract.verifyLocalStagedCellPutOpenBindingV2(open, {
+    peerCredentialAuthenticated: true,
+    launchTopologyHash: fixed(32, 0xa1),
+    transportProfileHash: fixed(32, 0xa4)
+  })
+  t.alike(Object.keys(handle), [], 'verified authority handle is opaque')
+  const authority = contract.localStagedCellPutAuthorityV2(handle)
+  t.is(authority.authority, 'peercred-authenticated-edge-attestation')
+  t.is(authority.endpointId, 7)
+  t.ok(b4a.equals(authority.replayTupleHash, contract.replayTupleHashV2(binding)))
+  t.is(capture(t, () => contract.localStagedCellPutAuthorityV2(open), 'decoded bytes are not authority').code, 'PRIVATE_IPC_V2_AUTHORITY_REQUIRED')
+  t.alike(Object.keys(contract).filter(name => /(?:raw|random|test).*authority/i.test(name)), [], 'no raw/random/test authority constructor is exported')
+})
+
+test('private IPC v2 negative fixture expectations reject exact enum, bit, length and downgrade errors', async t => {
+  const open = await artifact('vectors/v2/accepted/staged-cell-put-open-class-3.bin')
+  const requestId = fixed(16, 0xe1)
+  const names = (await fs.readdir(path.join(vectorRoot, 'negative')))
+    .filter(name => name.endsWith('.expectation.json'))
+    .sort()
+  t.ok(names.length >= 35)
+  for (const expectationName of names) {
+    const expectation = JSON.parse(await fs.readFile(path.join(vectorRoot, 'negative', expectationName), 'utf8'))
+    const vectorName = expectationName.startsWith('v1-private-ipc-registry.')
+      ? 'v1-private-ipc-registry.cenc'
+      : expectationName.replace('.expectation.json', '.bin')
+    const bytes = await fs.readFile(path.join(vectorRoot, 'negative', vectorName))
+    let operation
+    if (expectation.decoder === 'decodeLocalStagedCellPutOpenV2') operation = () => contract.decodeLocalStagedCellPutOpenV2(bytes)
+    else if (expectation.decoder === 'decodeLocalStagedCellPutFrameV2') operation = () => contract.decodeLocalStagedCellPutFrameV2(bytes)
+    else if (expectation.decoder === 'decodeLocalReadyProbeV2') operation = () => contract.decodeLocalReadyProbeV2(bytes)
+    else if (expectation.decoder === 'decodeLocalReadyAckV2') operation = () => contract.decodeLocalReadyAckV2(bytes)
+    else if (expectation.decoder === 'decodePrivateIpcV2Registry') operation = () => contract.decodePrivateIpcV2Registry(bytes)
+    else if (expectation.decoder === 'verifyStagedCellPutPublicOuterEnvelopeV2.request') {
+      operation = () => contract.verifyStagedCellPutPublicOuterEnvelopeV2(bytes, open, contract.LOCAL_STAGED_DIRECTION_V2.REQUEST)
+    } else if (expectation.decoder === 'verifyStagedCellPutPublicOuterEnvelopeV2.result') {
+      operation = () => contract.verifyStagedCellPutPublicOuterEnvelopeV2(bytes, open, contract.LOCAL_STAGED_DIRECTION_V2.RESULT, requestId)
+    } else throw new Error(`unknown negative vector decoder ${expectation.decoder}`)
+    const error = capture(t, operation, `${vectorName} rejects`)
+    t.is(error.code, expectation.errorCode, `${vectorName} error code`)
+  }
+})
+
+test('private IPC v2 fragmented exchange is split/coalesce safe and state sequenced', async t => {
+  const open = await artifact('vectors/v2/accepted/staged-cell-put-open-class-3.bin')
+  const request0 = await artifact('vectors/v2/accepted/request-frame-0-max.bin')
+  const request1 = await artifact('vectors/v2/accepted/request-frame-1-fin.bin')
+  const result0 = await artifact('vectors/v2/accepted/result-frame-0-max.bin')
+  const result1 = await artifact('vectors/v2/accepted/result-frame-1-fin.bin')
+  const abort = await artifact('vectors/v2/accepted/request-abort.bin')
+  const all = b4a.concat([request0, request1, result0, result1])
+
+  const decoded = contract.decodeLocalStagedCellPutFramesV2(all)
+  t.is(decoded.frames.length, 4)
+  t.is(decoded.remainder.byteLength, 0)
+  const complete = contract.verifyLocalStagedCellPutExchangeV2(open, decoded.frames)
+  t.is(complete.requestBytes, contract.OUTER_CLASS[3])
+  t.is(complete.resultBytes, contract.OUTER_CLASS[3])
+  t.is(complete.requestFinished, true)
+  t.is(complete.resultFinished, true)
+
+  const scenario = JSON.parse(await fs.readFile(path.join(vectorRoot, 'conformance/framing-split-coalesce.json'), 'utf8'))
+  let pending = b4a.alloc(0)
+  let offset = 0
+  const splitFrames = []
+  for (const length of scenario.splitAndCoalescedFrames) {
+    pending = b4a.concat([pending, all.subarray(offset, offset + length)])
+    offset += length
+    const partial = contract.decodeLocalStagedCellPutFramesV2(pending, { allowIncomplete: true })
+    splitFrames.push(...partial.frames)
+    pending = partial.remainder
+  }
+  t.is(offset, all.byteLength)
+  t.is(pending.byteLength, 0)
+  t.is(splitFrames.length, 4)
+  contract.verifyLocalStagedCellPutExchangeV2(open, splitFrames)
+
+  const abortResult = contract.verifyLocalStagedCellPutExchangeV2(open, [abort])
+  t.is(abortResult.aborted, true)
+  t.exception(() => contract.verifyLocalStagedCellPutExchangeV2(open, [result0]), 'result cannot precede request FIN')
+  t.exception(() => contract.verifyLocalStagedCellPutExchangeV2(open, [request0, result0]), 'result cannot replace request continuation')
+  const replayedRequest1 = contract.encodeLocalStagedCellPutFrameV2({
+    direction: contract.LOCAL_STAGED_DIRECTION_V2.REQUEST,
+    frameKind: contract.LOCAL_STAGED_FRAME_KIND_V2.CONTENT,
+    sequence: 0n,
+    flags: contract.LOCAL_STAGED_FLAG_V2.FIN,
+    bytes: request1.subarray(contract.PRIVATE_IPC_V2_LIMITS.STAGED_FRAME_HEADER_BYTES)
+  })
+  t.exception(() => contract.verifyLocalStagedCellPutExchangeV2(open, [request0, replayedRequest1]), 'sequence replay rejects')
+  t.exception(() => contract.verifyLocalStagedCellPutExchangeV2(open, [abort, request0]), 'frame after ABORT rejects')
+  t.exception(() => contract.verifyLocalStagedCellPutExchangeV2(open, [...decoded.frames, result1]), 'frame after result FIN rejects')
+
+  let openOffset = 0
+  let accumulatedOpen = b4a.alloc(0)
+  for (const length of scenario.splitAllOpenFields) {
+    accumulatedOpen = b4a.concat([accumulatedOpen, open.subarray(openOffset, openOffset + length)])
+    openOffset += length
+    if (openOffset < open.byteLength) t.exception(() => contract.decodeLocalStagedCellPutOpenV2(accumulatedOpen))
+  }
+  t.is(contract.decodeLocalStagedCellPutOpenV2(accumulatedOpen).outerClass, 3)
+})
+
+test('private IPC v2 readiness is a write-specific descriptor-bound fail-closed gate', async t => {
+  const probe = contract.decodeLocalReadyProbeV2(await artifact('vectors/v2/accepted/ready-probe.bin'))
+  const ack = contract.decodeLocalReadyAckV2(await artifact('vectors/v2/accepted/ready-ack.bin'))
+  const descriptor = {
+    sequence: 9n,
+    hash: fixed(32, 0xd1),
+    roleBits: contract.CELL_PUT_ENDPOINT_ROLE_BIT_V2,
+    enabledOperationBits: contract.CELL_PUT_OPERATION_BIT_V2,
+    expiresMonotonicMillis: 2_001_800n
+  }
+  t.alike(contract.localReadyDecisionV2(probe, ack, descriptor, 2_001_000n), { ready: true, reasons: [] })
+  t.ok(contract.localReadyDecisionV2(probe, ack, { ...descriptor, sequence: 10n }, 2_001_000n).reasons.includes('descriptor-freshness-mismatch'))
+  t.ok(contract.localReadyDecisionV2(probe, ack, { ...descriptor, hash: fixed(32, 0xd2) }, 2_001_000n).reasons.includes('descriptor-freshness-mismatch'))
+  t.ok(contract.localReadyDecisionV2(probe, ack, { ...descriptor, roleBits: 0 }, 2_001_000n).reasons.includes('descriptor-role-subset-mismatch'))
+  t.ok(contract.localReadyDecisionV2(probe, ack, { ...descriptor, enabledOperationBits: 0 }, 2_001_000n).reasons.includes('descriptor-operation-subset-mismatch'))
+  t.ok(contract.localReadyDecisionV2(probe, ack, { ...descriptor, expiresMonotonicMillis: 2_001_000n }, 2_001_000n).reasons.includes('descriptor-expiry-mismatch'))
+  t.ok(contract.localReadyDecisionV2(probe, ack, descriptor, 2_002_001n).reasons.includes('expired'))
+
+  const extraReadyOperationAck = contract.decodeLocalReadyAckV2(contract.encodeLocalReadyAckV2({
+    ...ack,
+    readyOperationBits: ack.readyOperationBits | 1
+  }))
+  t.ok(contract.localReadyDecisionV2(probe, extraReadyOperationAck, descriptor, 2_001_000n).reasons.includes('descriptor-operation-subset-mismatch'))
+  const extraRoleAck = contract.decodeLocalReadyAckV2(contract.encodeLocalReadyAckV2({
+    ...ack,
+    readyRoleBits: ack.readyRoleBits | 2
+  }))
+  t.ok(contract.localReadyDecisionV2(probe, extraRoleAck, descriptor, 2_001_000n).reasons.includes('descriptor-role-subset-mismatch'))
+})
+
+test('private IPC v2 freezes transport/class/replay mapping and precommit result fit', async t => {
+  const open = await artifact('vectors/v2/accepted/staged-cell-put-open-class-3.bin')
+  const publicRequest = await artifact('vectors/v2/accepted/public-request-outer-envelope-class-3.bin')
+  const publicResult = await artifact('vectors/v2/accepted/public-result-outer-envelope-class-3.bin')
+  const requestId = fixed(16, 0xe1)
+  const request = contract.verifyStagedCellPutPublicOuterEnvelopeV2(
+    publicRequest, open, contract.LOCAL_STAGED_DIRECTION_V2.REQUEST)
+  const result = contract.verifyStagedCellPutPublicOuterEnvelopeV2(
+    publicResult, open, contract.LOCAL_STAGED_DIRECTION_V2.RESULT, requestId)
+  t.is(request.frame.frameKind, contract.PRIVATE_IPC_V2_CONTRACT.publicWireOperation.requestFrameKind)
+  t.ok(contract.PRIVATE_IPC_V2_CONTRACT.publicWireOperation.resultFrameKinds.includes(result.frame.frameKind))
+  t.ok(b4a.equals(request.frame.requestId, result.frame.requestId), 'result requestId is correlated')
+
+  for (let outerClass = 1; outerClass <= 6; outerClass++) {
+    t.is(contract.localIpcChannelClassForOuterClassV2(outerClass), contract.LOCAL_IPC_CHANNEL_CLASS_V2.LOCAL_64K)
+  }
+  t.is(contract.PRIVATE_IPC_V2_LIMITS.CELL_PUT_WORST_CASE_RESULT_ENVELOPE_BYTES, 16_435)
+  t.is(contract.cellPutWorstCaseResultFitsOuterClassV2(2), false)
+  t.is(contract.cellPutWorstCaseResultFitsOuterClassV2(3), true)
+  t.is(contract.cellPutPredictedResultFitsOuterClassV2(2, 104), true)
+  t.is(capture(t, () => contract.assertPrecommitCellPutResultFitV2(2), 'class 2 worst case rejects').code,
+    'PRIVATE_IPC_V2_PRECOMMIT_RESULT_CLASS')
+  t.is(contract.assertPrecommitCellPutResultFitV2(2, 104), 2, 'authenticated predicted receipt may use class 2')
+
+  const binding = contract.decodeLocalTransportBindingV2(await artifact('vectors/v2/accepted/transport-binding-tls.bin'))
+  const replay = contract.replayTupleHashV2(binding)
+  for (const field of ['edgeProcessNonce', 'localChannelNonce', 'publicSessionBindingHash']) {
+    const changed = { ...binding, [field]: mutate(binding[field], bytes => { bytes[0] ^= 1 }) }
+    t.not(b4a.toString(contract.replayTupleHashV2(changed), 'hex'), b4a.toString(replay, 'hex'), `${field} binds replay tuple`)
+  }
+  t.is(contract.PRIVATE_IPC_V2_CONTRACT.httpsTransport.authorityKind,
+    contract.LOCAL_TRANSPORT_AUTHORITY_KIND_V2.TLS_EXPORTER_BY_PEERCRED_EDGE)
+  t.is(contract.PRIVATE_IPC_V2_TRANSPORT_AUTHORITY[contract.TRANSPORT_ID.DIRECT_PROTOMUX_NOISE].authorityKind,
+    contract.LOCAL_TRANSPORT_AUTHORITY_KIND_V2.NOISE_TRANSCRIPT_BY_PEERCRED_EDGE)
+  t.is(contract.PRIVATE_IPC_V2_CONTRACT.v1FallbackPermitted, false)
+})

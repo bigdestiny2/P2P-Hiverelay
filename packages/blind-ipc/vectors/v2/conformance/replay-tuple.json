@@ -1,0 +1,17 @@
+{
+  "consumeBefore": [
+    "body-allocation",
+    "outer-envelope-reassembly",
+    "admission",
+    "publish",
+    "wal",
+    "spend",
+    "sign"
+  ],
+  "hash": "1fd02e4f0af9d3faaa4b2332aaafc0a7736a43e6d9f924b285a5d90b1ac0a902",
+  "tuple": [
+    "edgeProcessNonce",
+    "localChannelNonce",
+    "publicSessionBindingHash"
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "accepted": [
+    "exact-echo",
+    "fresh-descriptor-tuple",
+    "storage-role",
+    "ready-operation-cell-put",
+    "ready-write-cell-put",
+    "all-six-features",
+    "not-expired"
+  ],
+  "rejected": [
+    "missing-write-bit",
+    "missing-any-feature",
+    "unknown-feature",
+    "write-not-ready-subset",
+    "role-not-descriptor-subset",
+    "operation-not-descriptor-subset",
+    "descriptor-sequence-mismatch",
+    "descriptor-hash-mismatch",
+    "descriptor-expiry-mismatch",
+    "endpoint-mismatch",
+    "nonce-mismatch",
+    "topology-mismatch",
+    "probe-expired",
+    "ack-expired"
+  ]
+}

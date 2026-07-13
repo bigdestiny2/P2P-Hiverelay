@@ -15,6 +15,11 @@ The normative architecture and behavioral requirements remain in
 boundary, dependency, framing inventory, and hash construction needed to
 reproduce one exact private IPC authority.
 
+This v1 authority remains byte-for-byte frozen. It does not authorize staged
+`CELL.PUT`: the additive, separately versioned v2 contract carries that operation.
+A rejected v2 record is never retried or decoded as v1, and no v1/v2 fallback or
+downgrade exists.
+
 ## 1. Final authority files
 
 ```text

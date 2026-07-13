@@ -1,0 +1,14 @@
+{
+  "authenticatedPredictedReceiptBodyBytes": 104,
+  "class2Bytes": 16384,
+  "class2Fits": false,
+  "class2FitsAuthenticatedPredictedReceiptBody": true,
+  "class3Bytes": 65536,
+  "class3Fits": true,
+  "dispatchHeaderBytes": 45,
+  "minimumWorstCaseOuterClass": 3,
+  "outerHeaderBytes": 6,
+  "resultBodyBytes": 16384,
+  "rule": "reject before publish/WAL/spend/sign",
+  "worstCaseEnvelopeBytes": 16435
+}

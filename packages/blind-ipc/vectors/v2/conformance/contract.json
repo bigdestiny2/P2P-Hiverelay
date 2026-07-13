@@ -1,0 +1,75 @@
+{
+  "formatVersion": 2,
+  "httpsTransport": {
+    "authorityKind": 1,
+    "tlsExporterBytes": 32,
+    "tlsExporterLabel": "EXPORTER-HiveRelay-Blind-Staged-Cell-Put-v2",
+    "transportId": 1,
+    "transportSupportBit": 1
+  },
+  "limits": {
+    "CELL_PUT_MAX_RESULT_BODY_BYTES": 16384,
+    "CELL_PUT_WORST_CASE_MINIMUM_OUTER_CLASS": 3,
+    "CELL_PUT_WORST_CASE_RESULT_ENVELOPE_BYTES": 16435,
+    "DISPATCH_HEADER_BYTES": 45,
+    "LOCAL_FRAME_BYTES": 65535,
+    "LOCAL_FRAME_CONTENT_BYTES": 65515,
+    "OPEN_DEADLINE_MILLIS": 15000,
+    "OUTER_HEADER_BYTES": 6,
+    "PUBLIC_SESSION_BINDING_HASH_BYTES": 32,
+    "READY_ACK_BYTES": 133,
+    "READY_DEADLINE_MILLIS": 2000,
+    "READY_PROBE_BYTES": 95,
+    "STAGED_FRAME_HEADER_BYTES": 20,
+    "STAGED_OPEN_BYTES": 200,
+    "STAGED_OPEN_HEADER_BYTES": 38,
+    "TLS_EXPORTER_BYTES": 32,
+    "TLS_EXPORTER_CONTEXT_BYTES": 32,
+    "TRANSPORT_BINDING_BYTES": 162
+  },
+  "localChannelClassByOuterClass": {
+    "1": 1,
+    "2": 1,
+    "3": 1,
+    "4": 1,
+    "5": 1,
+    "6": 1
+  },
+  "magic": "hiverelay-blind-private-ipc-v2",
+  "precommitOrder": [
+    "peer-credentials",
+    "exact-shape",
+    "transport-profile",
+    "topology",
+    "endpoint",
+    "deadline",
+    "replay-consume",
+    "open-binding",
+    "outer-request-decode",
+    "same-class-result-fit",
+    "admission",
+    "publish-or-wal-or-spend-or-sign"
+  ],
+  "publicWireOperation": {
+    "endpointRoleBit": 1,
+    "familyId": 2,
+    "operationBit": 8,
+    "operationId": 1,
+    "requestFrameKind": 1,
+    "resultFrameKinds": [
+      2,
+      3
+    ]
+  },
+  "requiredFeatureBits": 63,
+  "schemaCount": 12,
+  "schemaIds": [
+    8,
+    9,
+    10,
+    11,
+    12
+  ],
+  "v1FallbackPermitted": false,
+  "v1SchemaCount": 7
+}

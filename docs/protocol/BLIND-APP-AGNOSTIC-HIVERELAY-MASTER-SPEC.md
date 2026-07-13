@@ -1363,7 +1363,7 @@ SchemaCatalogEntryV1 {
   WIRE `specHash`; any interoperable serialization is owned and hashed by its
   signed application/client profile and vectors. They enter none of the WIRE,
   EVIDENCE, INTERNAL_STORE, or PRIVATE_IPC format hashes.
-- PRIVATE_IPC contains only `LocalDispatchV1`, `LocalUnaryResponseV1`,
+- PRIVATE_IPC v1 contains only `LocalDispatchV1`, `LocalUnaryResponseV1`,
   `LocalStreamOpenV1`, `LocalStreamFrameV1`,
   `LocalAuthenticatedChannelV1`, `LocalStreamAttachContextV1`, and
   `LocalStreamControlV1`. Its separate canonical
@@ -1372,6 +1372,15 @@ SchemaCatalogEntryV1 {
   product components and enters neither the public WIRE ABI nor an app/client
   bundle. The readiness probe/ACK are closed variants of the first two schemas,
   not additional schema types or public operations.
+- PRIVATE_IPC v2 is a separate additive authority for staged HTTPS `CELL.PUT`.
+  It retains the seven v1 registry rows exactly and adds category-local IDs 8..12:
+  `LocalTransportBindingV2`, `LocalStagedCellPutOpenV2`,
+  `LocalStagedCellPutFrameV2`, `LocalReadyProbeV2`, and `LocalReadyAckV2`.
+  It carries the full public outer envelope, separates write readiness, binds the
+  authenticated edge attestation to real TLS exporter material, and requires a
+  same-class correlated result-fit barrier before commit. V1 staged writes and
+  v1/v2 fallback are forbidden. Its separate registry/vectors use v2 hash domains
+  and enter neither public WIRE nor a client bundle.
 
 Schema IDs are category-local and cannot be referenced across categories except by
 a 32-byte format hash field. The sole v1 exception is that PRIVATE_IPC imports the
