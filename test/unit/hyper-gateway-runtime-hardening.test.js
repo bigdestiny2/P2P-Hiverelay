@@ -498,7 +498,8 @@ test('HyperGateway runtime - unseed drains an active borrowed exact-response lea
   const pendingUnseed = node.appLifecycle.unseedApp(KEY).then(() => { unseedSettled = true })
   await immediate()
 
-  t.absent(registry.has(KEY), 'unseed removes public admission before waiting')
+  t.ok(registry.has(KEY), 'retiring owner remains registry-owned until durable teardown completes')
+  t.absent(node.appLifecycle.acquireDriveReadLease(KEY), 'unseed removes public drive admission before waiting')
   t.absent(unseedSettled, 'unseed waits for the active response lease')
   t.is(parentCloseCalls, 0, 'AppLifecycle cannot close the borrowed parent mid-response')
 
