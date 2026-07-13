@@ -10,6 +10,10 @@ import {
   encodeLocalReadyProbe
 } from '@hiverelay/blind-ipc'
 import { BlindDaemon } from '../index.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 const TOPOLOGY_HASH = b4a.alloc(32, 0x31)
 const DESCRIPTOR_HASH = b4a.alloc(32, 0x42)
@@ -141,8 +145,8 @@ function isBrokerError (t, response, code) {
 }
 
 test('blind daemon requires two absolute canonical unequal socket paths', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-daemon-paths-')
-  t.teardown(async () => fs.rm(directory, { recursive: true, force: true }))
+  const directory = await createBlindBoundaryScratch('blind-daemon-paths-')
+  t.teardown(async () => removeBlindBoundaryScratch(directory))
   const paths = socketPaths(directory)
 
   t.exception.all(() => new BlindDaemon(validOptions({
@@ -166,8 +170,8 @@ test('blind daemon requires two absolute canonical unequal socket paths', async 
 })
 
 test('blind daemon refuses non-sockets and symlinked socket parents before binding either path', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-daemon-refusal-')
-  t.teardown(async () => fs.rm(directory, { recursive: true, force: true }))
+  const directory = await createBlindBoundaryScratch('blind-daemon-refusal-')
+  t.teardown(async () => removeBlindBoundaryScratch(directory))
 
   const unaryBlocked = socketPaths(path.join(directory, 'unary-blocked'))
   await fs.mkdir(path.dirname(unaryBlocked.unarySocketPath), { recursive: true })
@@ -197,9 +201,9 @@ test('blind daemon refuses non-sockets and symlinked socket parents before bindi
 })
 
 test('release, dispatcher, readiness and topology gates fail before creating either socket', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-daemon-gate-')
+  const directory = await createBlindBoundaryScratch('blind-daemon-gate-')
   const paths = socketPaths(directory)
-  t.teardown(async () => fs.rm(directory, { recursive: true, force: true }))
+  t.teardown(async () => removeBlindBoundaryScratch(directory))
 
   const incomplete = new BlindDaemon(validOptions(paths, {
     releaseGate: () => {
@@ -224,7 +228,7 @@ test('release, dispatcher, readiness and topology gates fail before creating eit
 })
 
 test('both sockets bind atomically with distinct inodes and an active daemon cannot be taken over', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-daemon-takeover-')
+  const directory = await createBlindBoundaryScratch('blind-daemon-takeover-')
   const paths = socketPaths(directory)
   const options = validOptions(paths)
   const first = new BlindDaemon(options)
@@ -232,7 +236,7 @@ test('both sockets bind atomically with distinct inodes and an active daemon can
   t.teardown(async () => {
     await first.close()
     await second.close()
-    await fs.rm(directory, { recursive: true, force: true })
+    await removeBlindBoundaryScratch(directory)
   })
 
   await first.start()
@@ -256,7 +260,7 @@ test('both sockets bind atomically with distinct inodes and an active daemon can
 })
 
 test('one clean authenticated stream EOF authorizes exactly one ready ACK', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-daemon-ready-')
+  const directory = await createBlindBoundaryScratch('blind-daemon-ready-')
   const paths = socketPaths(directory)
   const now = 10000n
   let dispatchCalls = 0
@@ -285,7 +289,7 @@ test('one clean authenticated stream EOF authorizes exactly one ready ACK', asyn
   }))
   t.teardown(async () => {
     await daemon.close()
-    await fs.rm(directory, { recursive: true, force: true })
+    await removeBlindBoundaryScratch(directory)
   })
   await daemon.start()
 
@@ -313,7 +317,7 @@ test('one clean authenticated stream EOF authorizes exactly one ready ACK', asyn
 })
 
 test('readiness tickets are one-use under concurrency and stream data creates no ticket', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-daemon-ready-race-')
+  const directory = await createBlindBoundaryScratch('blind-daemon-ready-race-')
   const paths = socketPaths(directory)
   const now = 15000n
   const daemon = new BlindDaemon(validOptions(paths, {
@@ -322,7 +326,7 @@ test('readiness tickets are one-use under concurrency and stream data creates no
   }))
   t.teardown(async () => {
     await daemon.close()
-    await fs.rm(directory, { recursive: true, force: true })
+    await removeBlindBoundaryScratch(directory)
   })
   await daemon.start()
 
@@ -341,7 +345,7 @@ test('readiness tickets are one-use under concurrency and stream data creates no
 })
 
 test('wrong peer, stale stream check and expired probe never produce an ACK', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-daemon-negative-ready-')
+  const directory = await createBlindBoundaryScratch('blind-daemon-negative-ready-')
   const paths = socketPaths(directory)
   let now = 20000n
   const wrongPeer = new BlindDaemon(validOptions(paths, {
@@ -357,7 +361,7 @@ test('wrong peer, stale stream check and expired probe never produce an ACK', as
   const daemon = new BlindDaemon(validOptions(paths, { monotonicMillis: () => now }))
   t.teardown(async () => {
     await daemon.close()
-    await fs.rm(directory, { recursive: true, force: true })
+    await removeBlindBoundaryScratch(directory)
   })
   await daemon.start()
   await connectNoFrame(paths.streamSocketPath)
@@ -373,7 +377,7 @@ test('wrong peer, stale stream check and expired probe never produce an ACK', as
 })
 
 test('topology, endpoint, readiness bits, snapshot and completion substitutions fail closed', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-daemon-substitution-')
+  const directory = await createBlindBoundaryScratch('blind-daemon-substitution-')
   const paths = socketPaths(directory)
   let now = 40000n
   let snapshot = {
@@ -389,7 +393,7 @@ test('topology, endpoint, readiness bits, snapshot and completion substitutions 
   }))
   t.teardown(async () => {
     await daemon.close()
-    await fs.rm(directory, { recursive: true, force: true })
+    await removeBlindBoundaryScratch(directory)
   })
   await daemon.start()
 
@@ -429,7 +433,7 @@ test('topology, endpoint, readiness bits, snapshot and completion substitutions 
 })
 
 test('readiness descriptor sequence is monotonic and equal sequence cannot fork', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-daemon-descriptor-floor-')
+  const directory = await createBlindBoundaryScratch('blind-daemon-descriptor-floor-')
   const paths = socketPaths(directory)
   const now = 50000n
   let descriptorSequence = 2n
@@ -446,7 +450,7 @@ test('readiness descriptor sequence is monotonic and equal sequence cannot fork'
   }))
   t.teardown(async () => {
     await daemon.close()
-    await fs.rm(directory, { recursive: true, force: true })
+    await removeBlindBoundaryScratch(directory)
   })
   await daemon.start()
 
@@ -468,7 +472,7 @@ test('readiness descriptor sequence is monotonic and equal sequence cannot fork'
 })
 
 test('socket identity substitution blocks ACK and cleanup never unlinks the replacement', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-daemon-inode-fence-')
+  const directory = await createBlindBoundaryScratch('blind-daemon-inode-fence-')
   const paths = socketPaths(directory)
   const now = 60000n
   const replacementTarget = path.join(directory, 'replacement-target')
@@ -487,7 +491,7 @@ test('socket identity substitution blocks ACK and cleanup never unlinks the repl
       }
     }
   }))
-  t.teardown(async () => fs.rm(directory, { recursive: true, force: true }))
+  t.teardown(async () => removeBlindBoundaryScratch(directory))
   await daemon.start()
   await connectNoFrame(paths.streamSocketPath)
   const response = await probe(paths, now)
@@ -499,7 +503,7 @@ test('socket identity substitution blocks ACK and cleanup never unlinks the repl
 })
 
 test('close aborts pending readiness work, clears both sockets and releases lifecycle state', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-daemon-close-ready-')
+  const directory = await createBlindBoundaryScratch('blind-daemon-close-ready-')
   const paths = socketPaths(directory)
   const now = monotonicMillis()
   let providerStarted
@@ -515,7 +519,7 @@ test('close aborts pending readiness work, clears both sockets and releases life
       }, { once: true })
     })
   }))
-  t.teardown(async () => fs.rm(directory, { recursive: true, force: true }))
+  t.teardown(async () => removeBlindBoundaryScratch(directory))
   await daemon.start()
   await connectNoFrame(paths.streamSocketPath)
   const pending = probe(paths, now).catch(() => null)

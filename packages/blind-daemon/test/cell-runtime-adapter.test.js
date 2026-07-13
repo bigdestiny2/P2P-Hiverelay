@@ -51,6 +51,10 @@ import { ResourceBudget } from '../resource-budget.js'
 import { BlindCellStorageEngine } from '../storage-engine.js'
 import { StagedCellPutDispatchIngestor } from '../staged-put.js'
 import { descriptorAndParameters, descriptorBytes, successorBytes } from './coordinator-fixtures.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 const EPOCH = 101
 const EPOCH_MILLIS = 21600000n
@@ -154,8 +158,8 @@ function errorName (result) {
 }
 
 async function harness (t, overrides = {}) {
-  const root = await fs.mkdtemp('/private/tmp/blind-cell-runtime-')
-  t.teardown(async () => fs.rm(root, { recursive: true, force: true }))
+  const root = await createBlindBoundaryScratch('blind-cell-runtime-')
+  t.teardown(async () => removeBlindBoundaryScratch(root))
   const relay = keyPair()
   const state = new DescriptorState({ epochNow: () => EPOCH, verifySignature: async () => true })
   const admissionAuthority = overrides.authoritativeAdmission === true

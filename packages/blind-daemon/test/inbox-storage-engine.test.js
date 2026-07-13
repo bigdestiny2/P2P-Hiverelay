@@ -32,6 +32,10 @@ import {
   reconstructBlindInboxControlSnapshot,
   streamBlindInboxControlSnapshotEntries
 } from '../inbox-control-snapshot.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 const EPOCH_MILLIS = 21_600_000n
 const RELAY_AUTHORITY = (() => {
@@ -221,8 +225,8 @@ function watchFixture (created, overrides = {}) {
 }
 
 async function temporaryRoot (t, name = 'blind-inbox-store') {
-  const root = await fs.mkdtemp(`/private/tmp/${name}-`)
-  t.teardown(async () => fs.rm(root, { recursive: true, force: true }))
+  const root = await createBlindBoundaryScratch(`${name}-`)
+  t.teardown(async () => removeBlindBoundaryScratch(root))
   return root
 }
 

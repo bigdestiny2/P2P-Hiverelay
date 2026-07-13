@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
 import b4a from 'b4a'
 import test from 'brittle'
@@ -18,14 +17,17 @@ import {
   descriptorValue,
   manifestBytes
 } from './coordinator-fixtures.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 async function fixture (t) {
-  const createdRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'hiverelay-blind-manifest-'))
-  const root = await fs.realpath(createdRoot)
+  const root = await createBlindBoundaryScratch('hiverelay-blind-manifest-')
   const controlDirectory = path.join(root, 'control')
   await fs.chmod(root, 0o700)
   await fs.mkdir(controlDirectory, { mode: 0o700 })
-  t.teardown(() => fs.rm(root, { recursive: true, force: true }))
+  t.teardown(() => removeBlindBoundaryScratch(root))
   const descriptor = descriptorValue()
   const canonicalBytes = encodeCanonical(blindServiceDescriptorV1, descriptor)
   const manifest = decodeCanonical(blindStoreManifestV1,

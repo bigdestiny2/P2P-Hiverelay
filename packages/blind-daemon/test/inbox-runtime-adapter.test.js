@@ -1,4 +1,3 @@
-import fs from 'node:fs/promises'
 import test from 'brittle'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
@@ -44,6 +43,10 @@ import { BlindOperationCoordinator } from '../coordinator.js'
 import { DescriptorState } from '../descriptor-state.js'
 import { ResourceBudget } from '../resource-budget.js'
 import { descriptorBytes, successorBytes } from './coordinator-fixtures.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 const EPOCH = 101
 const EPOCH_MILLIS = 21_600_000n
@@ -265,8 +268,8 @@ function requestCommitment (operationId, request, relayPublicKey) {
 }
 
 async function harness (t, overrides = {}) {
-  const root = await fs.mkdtemp('/private/tmp/blind-inbox-runtime-')
-  t.teardown(async () => fs.rm(root, { recursive: true, force: true }))
+  const root = await createBlindBoundaryScratch('blind-inbox-runtime-')
+  t.teardown(async () => removeBlindBoundaryScratch(root))
   const relay = keyPair()
   const state = new DescriptorState({ epochNow: () => EPOCH, verifySignature: async () => true })
   await state.activate(descriptorBytes({ relayPublicKey: relay.publicKey }))

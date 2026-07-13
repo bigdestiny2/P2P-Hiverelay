@@ -2,7 +2,6 @@ import fs from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import test from 'brittle'
 import b4a from 'b4a'
 import {
@@ -47,13 +46,16 @@ import { BoundedReplayGuardV2 } from '../private-ipc-v2-runtime.js'
 import { ResourceBudget } from '../resource-budget.js'
 import { stagedCellPutAuthority } from '../staged-put.js'
 import { descriptorValue } from './coordinator-fixtures.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 const TOPOLOGY_HASH = b4a.alloc(32, 0xa1)
 const PROFILE_HASH = b4a.alloc(32, 0xa4)
 const DESCRIPTOR_HASH = b4a.alloc(32, 0xd1)
 const ENDPOINT_ID = 7
 const STAGED_RELAY_PUBLIC_KEY = descriptorValue().relayPublicKey
-const TEST_TMP_PREFIX = fileURLToPath(new URL('../../../.test-tmp-blind-daemon-v2-', import.meta.url))
 const REQUEST_OUTER = readFileSync(new URL(
   '../../blind-ipc/vectors/v2/accepted/public-request-outer-envelope-class-3.bin', import.meta.url))
 const RESULT_OUTER = readFileSync(new URL(
@@ -200,7 +202,7 @@ function testDurableReplayAuthority (options = {}) {
 }
 
 async function createDaemon (t, options = {}) {
-  const directory = await fs.mkdtemp(TEST_TMP_PREFIX)
+  const directory = await createBlindBoundaryScratch('blind-daemon-v2-')
   const paths = socketPaths(directory)
   const errors = []
   const durableReplayAuthority = Object.hasOwn(options, 'durableReplayAuthority')
@@ -246,7 +248,7 @@ async function createDaemon (t, options = {}) {
   await daemon.start()
   t.teardown(async () => {
     await daemon.close()
-    await fs.rm(directory, { recursive: true, force: true })
+    await removeBlindBoundaryScratch(directory)
   })
   return { daemon, paths, errors }
 }

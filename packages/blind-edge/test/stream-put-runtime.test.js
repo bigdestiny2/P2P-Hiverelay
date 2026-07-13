@@ -26,6 +26,10 @@ import {
 } from '@hiverelay/blind-ipc'
 import { BlindDaemon } from '@hiverelay/blind-daemon'
 import { exchangeLocalContent } from '../ipc-client.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 const putBody = await fs.readFile(new URL(
   '../../blind-protocol/vectors/draft/cell/put-class-1.bin', import.meta.url))
@@ -104,7 +108,7 @@ function streamRequestAuthority ({ launchTopologyHash, transportProfileHash, req
 }
 
 test('real stream socket authenticates, fragments, stages, hashes, and reassembles CELL.PUT CONTENT', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-stream-put-')
+  const directory = await createBlindBoundaryScratch('blind-stream-put-')
   const unarySocketPath = path.join(directory, 'unary.sock')
   const streamSocketPath = path.join(directory, 'stream.sock')
   const launchTopologyHash = b4a.alloc(32, 0x31)
@@ -155,7 +159,7 @@ test('real stream socket authenticates, fragments, stages, hashes, and reassembl
   await daemon.start()
   t.teardown(async () => {
     await daemon.close()
-    await fs.rm(directory, { recursive: true, force: true })
+    await removeBlindBoundaryScratch(directory)
   })
 
   const accepted = monotonicMillis()
@@ -205,7 +209,7 @@ const terminalAttacks = Object.freeze([
 
 for (const [attackIndex, attack] of terminalAttacks.entries()) {
   test(`real stream socket rejects ${attack.label} before staged PUT commit`, async t => {
-    const directory = await fs.mkdtemp('/private/tmp/blind-stream-terminal-')
+    const directory = await createBlindBoundaryScratch('blind-stream-terminal-')
     const unarySocketPath = path.join(directory, 'unary.sock')
     const streamSocketPath = path.join(directory, 'stream.sock')
     const launchTopologyHash = b4a.alloc(32, 0x51)
@@ -258,7 +262,7 @@ for (const [attackIndex, attack] of terminalAttacks.entries()) {
     await daemon.start()
     t.teardown(async () => {
       await daemon.close()
-      await fs.rm(directory, { recursive: true, force: true })
+      await removeBlindBoundaryScratch(directory)
     })
 
     const requestFin = attack.kind !== 'missing-fin' && attack.kind !== 'post-abort'

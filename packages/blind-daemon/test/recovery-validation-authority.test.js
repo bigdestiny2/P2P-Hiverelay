@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
 import b4a from 'b4a'
 import test from 'brittle'
@@ -42,6 +41,10 @@ import {
   descriptorValue,
   manifestBytes
 } from './coordinator-fixtures.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 const MANIFEST_KEY = b4a.alloc(32, 0x91)
 
@@ -176,10 +179,9 @@ async function rejectsCode (t, promise, code) {
 }
 
 async function fixture (t, options = {}) {
-  const created = await fs.mkdtemp(path.join(os.tmpdir(), 'hiverelay-joint-recovery-'))
-  const root = await fs.realpath(created)
+  const root = await createBlindBoundaryScratch('hiverelay-joint-recovery-')
   await fs.chmod(root, 0o700)
-  t.teardown(() => fs.rm(root, { recursive: true, force: true }))
+  t.teardown(() => removeBlindBoundaryScratch(root))
 
   const descriptor = descriptorValue()
   const descriptorCanonical = encodeCanonical(blindServiceDescriptorV1, descriptor)

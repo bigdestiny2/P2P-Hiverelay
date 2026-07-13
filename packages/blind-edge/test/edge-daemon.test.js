@@ -26,6 +26,11 @@ import {
 import { BlindDaemon } from '@hiverelay/blind-daemon'
 import { BlindEdge, exchangeLocal } from '../index.js'
 import { writeBoundedResponse } from '../server.js'
+import {
+  blindBoundaryScratchPath,
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 const requestId = value => b4a.alloc(16, value)
 
@@ -43,7 +48,7 @@ function requestEnvelope ({ family = FAMILY.CELL, operation = OPERATION.CELL.GET
 }
 
 async function fixture (t, options = {}) {
-  const directory = await fs.mkdtemp('/private/tmp/blind-boundary-test-')
+  const directory = await createBlindBoundaryScratch('blind-boundary-test-')
   const socketPath = path.join(directory, 'daemon-unary.sock')
   const streamSocketPath = path.join(directory, 'daemon-stream.sock')
   const launchTopologyHash = b4a.alloc(32, 0x41)
@@ -91,7 +96,7 @@ async function fixture (t, options = {}) {
   t.teardown(async () => {
     await edge.close()
     await daemon.close()
-    await fs.rm(directory, { recursive: true, force: true })
+    await removeBlindBoundaryScratch(directory)
   })
   return { daemon, edge, socketPath, streamSocketPath, contexts, base, port: address.port }
 }
@@ -121,7 +126,7 @@ async function listenUnix (server, socketPath) {
 }
 
 async function readinessDaemon (options = {}) {
-  const directory = await fs.mkdtemp('/private/tmp/blind-edge-ready-')
+  const directory = await createBlindBoundaryScratch('blind-edge-ready-')
   const unarySocketPath = path.join(directory, 'unary.sock')
   const streamSocketPath = path.join(directory, 'stream.sock')
   const launchTopologyHash = b4a.alloc(32, 0x51)
@@ -198,7 +203,7 @@ async function readinessDaemon (options = {}) {
   } catch (error) {
     for (const socket of sockets) socket.destroy()
     await Promise.all([closeNetServer(unaryServer), closeNetServer(streamServer)])
-    await fs.rm(directory, { recursive: true, force: true })
+    await removeBlindBoundaryScratch(directory)
     throw error
   }
   const socketGroupGid = (await fs.lstat(unarySocketPath)).gid
@@ -228,7 +233,7 @@ async function readinessDaemon (options = {}) {
     async close () {
       for (const socket of sockets) socket.destroy()
       await Promise.all([closeNetServer(unaryServer), closeNetServer(streamServer)])
-      await fs.rm(directory, { recursive: true, force: true })
+      await removeBlindBoundaryScratch(directory)
     }
   }
 }
@@ -306,8 +311,9 @@ function decodedHeaderBytes (rows) {
 }
 
 test('public edge refuses to bind when its injected release authority gate fails', async t => {
+  const socketPath = await blindBoundaryScratchPath('nonexistent-blind-daemon.sock')
   const edge = new BlindEdge({
-    socketPath: '/private/tmp/nonexistent-blind-daemon.sock',
+    socketPath,
     host: '127.0.0.1',
     port: 0,
     allowInsecureLoopback: true,
@@ -525,15 +531,18 @@ test('daemon close aborts and settles admitted dispatch work before returning', 
 })
 
 test('production bind remains TLS-only outside the explicit loopback seam', async t => {
+  const socketPath = await blindBoundaryScratchPath('nonexistent-blind-daemon.sock')
+  const unarySocketPath = await blindBoundaryScratchPath('nonexistent-blind-daemon-unary.sock')
+  const streamSocketPath = await blindBoundaryScratchPath('nonexistent-blind-daemon-stream.sock')
   const edge = new BlindEdge({
-    socketPath: '/private/tmp/nonexistent-blind-daemon.sock',
+    socketPath,
     host: '0.0.0.0',
     port: 0,
     allowInsecureLoopback: true,
     releaseGate: () => {},
     readinessTopology: {
-      unarySocketPath: '/private/tmp/nonexistent-blind-daemon-unary.sock',
-      streamSocketPath: '/private/tmp/nonexistent-blind-daemon-stream.sock',
+      unarySocketPath,
+      streamSocketPath,
       launchTopologyHash: b4a.alloc(32, 1),
       daemonUid: process.getuid(),
       daemonGid: process.getgid(),
@@ -553,9 +562,10 @@ test('production bind remains TLS-only outside the explicit loopback seam', asyn
   t.is(edge.address(), null)
 })
 
-test('deadline seams can only tighten bounds in explicit loopback tests', t => {
+test('deadline seams can only tighten bounds in explicit loopback tests', async t => {
+  const socketPath = await blindBoundaryScratchPath('test.sock')
   const base = {
-    socketPath: '/private/tmp/test.sock',
+    socketPath,
     host: '127.0.0.1',
     port: 0,
     allowUnsafeReadinessProbe: true,
@@ -576,7 +586,7 @@ test('deadline seams can only tighten bounds in explicit loopback tests', t => {
 })
 
 test('production readiness mutually authenticates the real daemon on both paths before bind', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-edge-mutual-ready-')
+  const directory = await createBlindBoundaryScratch('blind-edge-mutual-ready-')
   const unarySocketPath = path.join(directory, 'unary.sock')
   const streamSocketPath = path.join(directory, 'stream.sock')
   const launchTopologyHash = b4a.alloc(32, 0x61)
@@ -620,7 +630,7 @@ test('production readiness mutually authenticates the real daemon on both paths 
   t.teardown(async () => {
     await edge.close()
     await daemon.close()
-    await fs.rm(directory, { recursive: true, force: true })
+    await removeBlindBoundaryScratch(directory)
   })
 
   await edge.start()
@@ -863,6 +873,8 @@ test('failed refresh closes the listener and every accepted socket by ACK expiry
 })
 
 test('a refresh completing after its prior ACK expiry cannot resurrect readiness', async t => {
+  const unarySocketPath = await blindBoundaryScratchPath('readiness-race-unary.sock')
+  const streamSocketPath = await blindBoundaryScratchPath('readiness-race-stream.sock')
   let now = 100n
   const errors = []
   const edge = new BlindEdge({
@@ -873,8 +885,8 @@ test('a refresh completing after its prior ACK expiry cannot resurrect readiness
     releaseGate: () => {},
     monotonicMillis: () => now,
     readinessTopology: {
-      unarySocketPath: '/private/tmp/readiness-race-unary.sock',
-      streamSocketPath: '/private/tmp/readiness-race-stream.sock',
+      unarySocketPath,
+      streamSocketPath,
       launchTopologyHash: b4a.alloc(32, 0x77),
       daemonUid: process.getuid(),
       daemonGid: process.getgid(),
@@ -1063,6 +1075,7 @@ test('first-body-byte, body-progress idle, and complete-body deadlines are indep
 })
 
 test('edge IPC client rejects absent or ambiguous transport support before dial', async t => {
+  const socketPath = await blindBoundaryScratchPath('invalid-transport.sock')
   const body = requestEnvelope()
   const now = process.hrtime.bigint() / 1_000_000n
   const request = {
@@ -1080,7 +1093,7 @@ test('edge IPC client rejects absent or ambiguous transport support before dial'
     TRANSPORT_SUPPORT.DIRECT_HTTP | TRANSPORT_SUPPORT.DIRECT_NATIVE]) {
     let error
     try {
-      await exchangeLocal('/private/tmp/test.sock', { ...request, transportSupportBit }, {
+      await exchangeLocal(socketPath, { ...request, transportSupportBit }, {
         socketFactory: () => { dialed = true }
       })
     } catch (caught) {
@@ -1093,6 +1106,7 @@ test('edge IPC client rejects absent or ambiguous transport support before dial'
 })
 
 test('IPC connect and complete request write share one hard two-second stage', async t => {
+  const socketPath = await blindBoundaryScratchPath('stalled-write.sock')
   const body = requestEnvelope()
   const now = process.hrtime.bigint() / 1_000_000n
   const request = {
@@ -1115,7 +1129,7 @@ test('IPC connect and complete request write share one hard two-second stage', a
   let socket = new StalledSocket()
   let error
   try {
-    await exchangeLocal('/private/tmp/test.sock', request, {
+    await exchangeLocal(socketPath, request, {
       timeoutMs: 200,
       writeTimeoutMs: 25,
       socketFactory: () => socket
@@ -1130,7 +1144,7 @@ test('IPC connect and complete request write share one hard two-second stage', a
   queueMicrotask(() => socket.emit('connect'))
   error = null
   try {
-    await exchangeLocal('/private/tmp/test.sock', request, {
+    await exchangeLocal(socketPath, request, {
       timeoutMs: 200,
       writeTimeoutMs: 25,
       socketFactory: () => socket
@@ -1142,7 +1156,7 @@ test('IPC connect and complete request write share one hard two-second stage', a
   t.is(socket.destroyed, true)
   error = null
   try {
-    await exchangeLocal('/private/tmp/test.sock', request, { writeTimeoutMs: 2001 })
+    await exchangeLocal(socketPath, request, { writeTimeoutMs: 2001 })
   } catch (caught) {
     error = caught
   }

@@ -33,6 +33,10 @@ import {
   fixtureReadiness,
   fixtureRelayBinding
 } from './stream-fixtures.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 const EPOCH_MILLIS = 21600000n
 const PARTITION_KEY = b4a.alloc(32, 0x81)
@@ -76,8 +80,8 @@ function clock () {
 }
 
 async function temporaryRoot (t, name) {
-  const root = await fs.mkdtemp(`/private/tmp/${name}-`)
-  t.teardown(async () => fs.rm(root, { recursive: true, force: true }))
+  const root = await createBlindBoundaryScratch(`${name}-`)
+  t.teardown(async () => removeBlindBoundaryScratch(root))
   return root
 }
 

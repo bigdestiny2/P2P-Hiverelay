@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises'
-import path from 'node:path'
 import b4a from 'b4a'
 import test from 'brittle'
 import {
@@ -16,6 +15,10 @@ import {
   BLIND_CELL_STORE_FORMAT_BINDING_BLOCKER,
   BlindCellStorageEngine
 } from '../storage-engine.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 const authorityUrl = new URL(
   '../../blind-protocol/hiverelay-blind-store-format-authority-v1.draft.cenc',
@@ -97,9 +100,9 @@ test('daemon store-format binding rejects stale artifacts, catalogs, pins, and f
 test('cell engine consumes only a branded exact store-format binding without claiming publication', async t => {
   const input = await candidate()
   const binding = createBlindStoreFormatAuthorityBinding(input)
-  const root = await fs.mkdtemp(path.join(await fs.realpath('/tmp'), 'blind-format-binding-'))
+  const root = await createBlindBoundaryScratch('blind-format-binding-')
   await fs.chmod(root, 0o700)
-  t.teardown(async () => fs.rm(root, { recursive: true, force: true }))
+  t.teardown(async () => removeBlindBoundaryScratch(root))
 
   const engineOptions = {
     root,

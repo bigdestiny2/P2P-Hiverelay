@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
 import b4a from 'b4a'
 import test from 'brittle'
@@ -9,16 +8,19 @@ import {
   encodeCanonical
 } from '@hiverelay/blind-protocol'
 import { verifyBlindControlStateSnapshotFile } from '../control-snapshot-stream.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 function bytes (length, fill) {
   return b4a.alloc(length, fill)
 }
 
 async function fixture (t) {
-  const created = await fs.mkdtemp(path.join(os.tmpdir(), 'hiverelay-control-snapshot-'))
-  const root = await fs.realpath(created)
+  const root = await createBlindBoundaryScratch('hiverelay-control-snapshot-')
   await fs.chmod(root, 0o700)
-  t.teardown(() => fs.rm(root, { recursive: true, force: true }))
+  t.teardown(() => removeBlindBoundaryScratch(root))
   const value = {
     version: 1,
     relayPublicKey: bytes(32, 0x11),

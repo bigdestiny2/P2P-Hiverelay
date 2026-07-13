@@ -1,7 +1,6 @@
 import test from 'brittle'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import {
   createHmac,
   generateKeyPairSync,
@@ -35,6 +34,10 @@ import {
   BlindTransactionStore,
   BlindWalIntegrityError
 } from '../transaction-store.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 const EPOCH_MILLIS = 21600000n
 const DURABILITY_CONTINUITY_HASH = b4a.alloc(32, 0x94)
@@ -45,7 +48,6 @@ const STORE_ID = b4a.alloc(32, 0x95)
 const DURABILITY_PROFILE_HASH = b4a.alloc(32, 0x96)
 const FINGERPRINT_DOMAIN = b4a.from('hiverelay.blind.store-request-fingerprint.v1', 'ascii')
 const RESULT_IDENTITY_DOMAIN = b4a.from('hiverelay.blind.store-result-identity.v1', 'ascii')
-const ATOMIC_RECOVERY_SCRATCH = fileURLToPath(new URL('../../../.t/blind-cell-atomic-recovery/', import.meta.url))
 const STORE_FORMAT_AUTHORITY_URL = new URL(
   '../../blind-protocol/hiverelay-blind-store-format-authority-v1.draft.cenc',
   import.meta.url
@@ -381,15 +383,14 @@ async function rejectsCode (t, promise, code) {
 }
 
 async function temporaryRoot (t, name) {
-  const root = await fs.mkdtemp(`/private/tmp/${name}-`)
-  t.teardown(async () => fs.rm(root, { recursive: true, force: true }))
+  const root = await createBlindBoundaryScratch(`${name}-`)
+  t.teardown(async () => removeBlindBoundaryScratch(root))
   return root
 }
 
 async function containedAtomicRecoveryRoot (t, name) {
-  await fs.mkdir(ATOMIC_RECOVERY_SCRATCH, { recursive: true, mode: 0o700 })
-  const root = await fs.mkdtemp(path.join(ATOMIC_RECOVERY_SCRATCH, `${name}-`))
-  t.teardown(async () => fs.rm(root, { recursive: true, force: true }))
+  const root = await createBlindBoundaryScratch(`blind-cell-atomic-recovery-${name}-`)
+  t.teardown(async () => removeBlindBoundaryScratch(root))
   return root
 }
 

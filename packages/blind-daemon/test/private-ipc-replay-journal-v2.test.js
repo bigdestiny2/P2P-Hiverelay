@@ -16,10 +16,13 @@ import {
   privateIpcReplayJournalV2Status,
   reservePrivateIpcReplayTupleV2
 } from '../private-ipc-replay-journal-v2.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 const JOURNAL_FILE = 'replay-journal.v2'
 const LOCK_FILE = 'writer.lock.v2'
-const SCRATCH_ROOT = path.resolve('.t')
 
 function fixed (byte) {
   return b4a.alloc(32, byte)
@@ -43,12 +46,9 @@ function journalOptions (root, clock, overrides = {}) {
 }
 
 async function temporaryRoot (t, name = 'blind-replay-journal-v2-') {
-  await fs.mkdir(SCRATCH_ROOT, { recursive: true, mode: 0o700 })
-  await fs.chmod(SCRATCH_ROOT, 0o700)
-  const created = await fs.mkdtemp(path.join(SCRATCH_ROOT, name))
-  const root = await fs.realpath(created)
+  const root = await createBlindBoundaryScratch(name)
   await fs.chmod(root, 0o700)
-  t.teardown(() => fs.rm(root, { recursive: true, force: true }))
+  t.teardown(() => removeBlindBoundaryScratch(root))
   return root
 }
 
@@ -672,7 +672,7 @@ test('V2 replay post-fsync acceptance revalidates the exact root, lock, and jour
       : path.join(root, displacedBinding === 'lock'
         ? 'writer.lock.post-sync-displaced'
         : 'replay-journal.post-sync-displaced')
-    t.teardown(() => fs.rm(displaced, { recursive: true, force: true }))
+    t.teardown(() => removeBlindBoundaryScratch(displaced))
     let now = initialNow
     let injected = false
     let authority = await openPrivateIpcReplayJournalV2(journalOptions(root, () => now, {
@@ -710,7 +710,7 @@ test('V2 replay post-fsync acceptance revalidates the exact root, lock, and jour
       await fs.unlink(path.join(root, JOURNAL_FILE))
       await fs.rename(displaced, path.join(root, JOURNAL_FILE))
     } else {
-      await fs.rm(root, { recursive: true, force: true })
+      await removeBlindBoundaryScratch(root)
       await fs.rename(displaced, root)
     }
 

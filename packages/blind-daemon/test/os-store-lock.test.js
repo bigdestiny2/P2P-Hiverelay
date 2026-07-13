@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
 import b4a from 'b4a'
 import test from 'brittle'
@@ -21,12 +20,15 @@ import {
 import {
   scanBlindWalV2ForAnchoredRecovery
 } from '../wal-recovery-scan.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 async function temporaryRoot (t, name) {
-  const createdRoot = await fs.mkdtemp(path.join(os.tmpdir(), name))
-  const root = await fs.realpath(createdRoot)
+  const root = await createBlindBoundaryScratch(name)
   await fs.chmod(root, 0o700)
-  t.teardown(() => fs.rm(root, { recursive: true, force: true }))
+  t.teardown(() => removeBlindBoundaryScratch(root))
   return root
 }
 

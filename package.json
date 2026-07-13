@@ -84,7 +84,7 @@
     "test": "node scripts/run-brittle-suite.mjs all",
     "test:unit": "node scripts/run-brittle-suite.mjs unit",
     "test:blind-protocol": "brittle --timeout 120000 test/unit/blind-protocol-*.test.js",
-    "test:blind-boundary": "brittle --timeout 120000 packages/blind-ipc/test/*.test.js packages/blind-peercred/test/*.test.js packages/blind-edge/test/*.test.js packages/blind-daemon/test/*.test.js",
+    "test:blind-boundary": "node scripts/test-blind-boundary-contained.mjs",
     "test:blind-client": "brittle --timeout 120000 packages/blind-client/test/*.test.js",
     "test:blind-client:bare": "PATH=\"$PWD/node_modules/bare/bin:$PATH\" brittle-bare --timeout 120000 packages/blind-client/test/bare.runtime.js",
     "test:blind-client:browser-bundle": "node scripts/test-blind-client-browser-bundle.mjs",

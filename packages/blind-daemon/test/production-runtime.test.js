@@ -63,6 +63,10 @@ import {
   descriptorValue,
   parameterValue
 } from './coordinator-fixtures.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 const SIX_HOURS_MILLIS = 6 * 60 * 60 * 1000
 
@@ -103,8 +107,7 @@ async function privateFile (file, bytes) {
 }
 
 async function runtimeFixture (options = {}) {
-  const temporary = await fs.mkdtemp(path.join(await fs.realpath('/tmp'), 'brt-'))
-  const directory = await fs.realpath(temporary)
+  const directory = await createBlindBoundaryScratch('brt-')
   await fs.chmod(directory, 0o700)
   const storeRoot = path.join(directory, 'store')
   const privateIpcReplayRoot = path.join(directory, 'private-ipc-replay')
@@ -407,7 +410,7 @@ async function exchangeProductionV2Put (runtime, bootstrap, outer) {
 
 test('production assembler derives signed readiness and exposes only its real surface', async t => {
   const fixture = await runtimeFixture()
-  t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
+  t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
   const environment = { ...fixture.environment }
   delete environment.HIVERELAY_BLIND_PRIVATE_IPC_REPLAY_ROOT
   const bootstrap = loadDaemonBootstrapConfig(environment)
@@ -439,7 +442,7 @@ test('production assembler derives signed readiness and exposes only its real su
 
 test('legacy-only admission adapter cannot advertise or dispatch production V2 CELL.PUT', async t => {
   const fixture = await runtimeFixture({ cellRuntime: true })
-  t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
+  t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
   const bootstrap = loadDaemonBootstrapConfig(fixture.environment)
   const runtimeConfig = loadProductionRuntimeConfig(fixture.environment, bootstrap.endpointIds)
   const runtime = await assembleProductionBlindDaemon({
@@ -535,7 +538,7 @@ test('legacy-only admission adapter cannot advertise or dispatch production V2 C
 
 test('captured split adapter and production-owned replay journal execute one real production V2 CELL.PUT', async t => {
   const fixture = await runtimeFixture({ cellRuntime: true, descriptorSequence: 1 })
-  t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
+  t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
   const bootstrap = loadDaemonBootstrapConfig(fixture.environment)
   const localPeerBootstrap = Object.freeze({ ...bootstrap, expectedPeerUid: process.getuid() })
   const runtimeConfig = loadProductionRuntimeConfig(fixture.environment, bootstrap.endpointIds)
@@ -644,7 +647,7 @@ test('captured split adapter and production-owned replay journal execute one rea
 
 test('production replay journal restart quarantines writes, preserves tuples, and releases its writer lock on close', async t => {
   const fixture = await runtimeFixture({ cellRuntime: true, descriptorSequence: 1 })
-  t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
+  t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
   let now = 10_000n
   const replayOptions = { monotonicMillis: () => now }
   let runtime = await assembleProductionCellFixture(fixture, { replayOptions })
@@ -703,7 +706,7 @@ test('production replay journal restart quarantines writes, preserves tuples, an
 
 test('missing production replay root permits CELL reads but refuses V2 writes', async t => {
   const fixture = await runtimeFixture({ cellRuntime: true, descriptorSequence: 1 })
-  t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
+  t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
   const environment = { ...fixture.environment }
   delete environment.HIVERELAY_BLIND_PRIVATE_IPC_REPLAY_ROOT
   const bootstrap = loadDaemonBootstrapConfig(environment)
@@ -728,7 +731,7 @@ test('missing production replay root permits CELL reads but refuses V2 writes', 
 
 test('production replay journal lock and topology faults degrade only V2 writes while reads remain live', async t => {
   const fixture = await runtimeFixture({ cellRuntime: true, descriptorSequence: 1 })
-  t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
+  t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
   const now = 40_000n
   const replayOptions = { monotonicMillis: () => now }
   let runtime = await assembleProductionCellFixture(fixture, { replayOptions })
@@ -780,7 +783,7 @@ test('production replay journal lock and topology faults degrade only V2 writes 
 
 test('production replay journal poison masks only V2 writes', async t => {
   const fixture = await runtimeFixture({ cellRuntime: true, descriptorSequence: 1 })
-  t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
+  t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
   let now = 70_000n
   let injected = false
   const runtime = await assembleProductionCellFixture(fixture, {
@@ -815,7 +818,7 @@ test('production replay journal poison masks only V2 writes', async t => {
 
 test('production launch floor and explicit one-hot transport authority fail closed', async t => {
   const fixture = await runtimeFixture()
-  t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
+  t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
   const bootstrap = loadDaemonBootstrapConfig(fixture.environment)
   t.exception(() => loadProductionRuntimeConfig({
     ...fixture.environment,
@@ -841,7 +844,7 @@ test('production launch floor and explicit one-hot transport authority fail clos
 
 test('production assembly rejects split build/durability pins and stale signed store authorities', async t => {
   const split = await runtimeFixture({ buildStoreFormatHash: b4a.alloc(32, 0xa1) })
-  t.teardown(async () => fs.rm(split.directory, { recursive: true, force: true }))
+  t.teardown(async () => removeBlindBoundaryScratch(split.directory))
   const splitBootstrap = loadDaemonBootstrapConfig(split.environment)
   await t.exception(assembleProductionBlindDaemon({
     bootstrap: splitBootstrap,
@@ -850,7 +853,7 @@ test('production assembly rejects split build/durability pins and stale signed s
   }), /build and durability profiles name different store-format authorities/)
 
   const stale = await runtimeFixture({ storeFormatHash: b4a.alloc(32, 0xa2) })
-  t.teardown(async () => fs.rm(stale.directory, { recursive: true, force: true }))
+  t.teardown(async () => removeBlindBoundaryScratch(stale.directory))
   const staleBootstrap = loadDaemonBootstrapConfig(stale.environment)
   let rejected
   try {
@@ -871,7 +874,7 @@ test('packaged CLI assembly starts through its real child-process path and shuts
   let child = null
   t.teardown(async () => {
     if (child && child.exitCode == null && child.signalCode == null) child.kill('SIGKILL')
-    await fs.rm(fixture.directory, { recursive: true, force: true })
+    await removeBlindBoundaryScratch(fixture.directory)
   })
   const cliUrl = pathToFileURL(path.resolve('packages/blind-daemon/cli.js')).href
   const source = `import { runBlindDaemonCli } from ${JSON.stringify(cliUrl)}; ` +
@@ -900,7 +903,7 @@ test('packaged CLI assembly starts through its real child-process path and shuts
 
 test('direct production bin stops at the draft route-scope authority blocker before runtime assembly', async t => {
   const fixture = await runtimeFixture()
-  t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
+  t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
   const cli = path.resolve('packages/blind-daemon/cli.js')
   const child = spawn(process.execPath, [cli], {
     cwd: path.resolve('.'),

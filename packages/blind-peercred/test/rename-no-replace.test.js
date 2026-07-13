@@ -1,16 +1,19 @@
 import fs from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
 import b4a from 'b4a'
 import test from 'brittle'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 import {
   renameFileNoReplace,
   renameFileNoReplacePlatformSupported
 } from '../index.js'
 
 test('native no-replace rename installs once and never overwrites', async t => {
-  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'hiverelay-rename-no-replace-')))
-  t.teardown(() => fs.rm(root, { recursive: true, force: true }))
+  const root = await createBlindBoundaryScratch('hiverelay-rename-no-replace-')
+  t.teardown(() => removeBlindBoundaryScratch(root))
   const source = path.join(root, 'source.tmp')
   const competing = path.join(root, 'competing.tmp')
   const destination = path.join(root, 'final.v1')

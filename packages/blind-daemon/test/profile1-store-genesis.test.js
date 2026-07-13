@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
 import b4a from 'b4a'
 import test from 'brittle'
@@ -39,6 +38,10 @@ import {
 } from '../profile1-store-genesis.js'
 import { classifyBlindStoreRoot, BLIND_STORE_ROOT_CLASSIFICATION } from '../store-session.js'
 import { descriptorValue, manifestBytes } from './coordinator-fixtures.js'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 
 const PARTITION_KEY = b4a.alloc(32, 0x71)
 const MANIFEST_KEY = b4a.alloc(32, 0x91)
@@ -139,10 +142,9 @@ async function snapshotAuthority (manifest) {
 }
 
 async function newRoot (t) {
-  const created = await fs.mkdtemp(path.join(os.tmpdir(), 'hiverelay-profile1-genesis-'))
-  const root = await fs.realpath(created)
+  const root = await createBlindBoundaryScratch('hiverelay-profile1-genesis-')
   await fs.chmod(root, 0o700)
-  t.teardown(() => fs.rm(root, { recursive: true, force: true }))
+  t.teardown(() => removeBlindBoundaryScratch(root))
   return root
 }
 
