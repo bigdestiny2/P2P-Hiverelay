@@ -505,11 +505,12 @@ function writeCompletedObservation (f, statePath, evidencePath, endMs) {
       runtimeVersionMatches: true,
       gatewayHealthy: true,
       gateway: {
-        schema: 'hiverelay-public-gateway-evidence-verification-v1',
+        schema: 'hiverelay-public-gateway-evidence-verification-v2',
         status: 'verified',
         mode: 'fleet',
         admissionProfile: f.enabledManifest.admissionProfile,
         publicSuffixReady: false,
+        physicalEnforcementRequired: true,
         releaseTarget: TARGET,
         releaseSha: f.targetSha,
         checkedAt: now,

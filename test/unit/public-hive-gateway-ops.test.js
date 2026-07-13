@@ -56,6 +56,7 @@ function contractFixture (overrides = {}) {
     certificateFingerprint256: FINGERPRINT,
     certificateSpkiSha256: SPKI,
     publicSuffixReady: false,
+    physicalEnforcementRequired: true,
     finiteProductionPolicy: { ...PUBLIC_HIVE_GATEWAY_FINITE_POLICY },
     release: {
       target: 'v1.2.3',
@@ -71,6 +72,7 @@ function contractFixture (overrides = {}) {
 function configFixture (overrides = {}) {
   return {
     productProfile: 'relay-core',
+    requirePhysicalEnforcement: true,
     apiHost: '127.0.0.1',
     apiPort: 9100,
     gatewayHost: '127.0.0.1',
@@ -167,6 +169,7 @@ function baseEvidenceFixture (contract, overrides = {}) {
       connectAddress: contract.expectedConnectAddress,
       publicSuffixReady: false,
       custodyEnabled: false,
+      physicalEnforcementRequired: true,
       finiteProductionPolicy: { ...PUBLIC_HIVE_GATEWAY_FINITE_POLICY }
     },
     static: { ok: true, errors: [], warnings: ['transitional rehearsal'] },
@@ -360,6 +363,19 @@ test('public gateway ops - rehearsal config is narrow while fleet requires compi
   const fleet = inspectPublicHiveGatewayOpsConfig(configFixture({ productProfile: 'public-t1-gateway' }), contract, 'fleet')
   t.ok(fleet.ok)
 
+  const missingPhysicalRequirement = configFixture({ productProfile: 'public-t1-gateway' })
+  delete missingPhysicalRequirement.requirePhysicalEnforcement
+  const missingPhysicalResult = inspectPublicHiveGatewayOpsConfig(missingPhysicalRequirement, contract, 'fleet')
+  t.absent(missingPhysicalResult.ok)
+  t.ok(missingPhysicalResult.errors.some(value => value.includes('physical enforcement')))
+
+  const disabledPhysicalResult = inspectPublicHiveGatewayOpsConfig(configFixture({
+    productProfile: 'public-t1-gateway',
+    requirePhysicalEnforcement: false
+  }), contract, 'fleet')
+  t.absent(disabledPhysicalResult.ok)
+  t.ok(disabledPhysicalResult.errors.some(value => value.includes('physical enforcement')))
+
   const custody = inspectPublicHiveGatewayOpsConfig(configFixture({ custody: { enabled: true } }), contract, 'rehearsal')
   t.absent(custody.ok)
   t.ok(custody.errors.some(value => value.includes('disable T2 custody')))
@@ -446,6 +462,19 @@ test('public gateway ops - fleet verifier derives the signed contract and reject
   const falseBlindClaim = structuredClone(evidence)
   falseBlindClaim.claims.provesBlindG2 = true
   t.exception(() => verifyFleetEvidence(falseBlindClaim, contract, manifest, contractSha256, manifestSha256), /provesBlindG2/)
+
+  const oldReadinessSchema = structuredClone(evidence)
+  oldReadinessSchema.schema = 'hiverelay-public-gateway-operator-readiness-v2'
+  t.exception(() => verifyFleetEvidence(oldReadinessSchema, contract, manifest, contractSha256, manifestSha256), /schema/)
+  const missingPhysicalRequirement = structuredClone(evidence)
+  delete missingPhysicalRequirement.physicalEnforcementRequired
+  t.exception(() => verifyFleetEvidence(missingPhysicalRequirement, contract, manifest, contractSha256, manifestSha256), /physicalEnforcementRequired/)
+  const disabledPhysicalRequirement = structuredClone(evidence)
+  disabledPhysicalRequirement.physicalEnforcementRequired = false
+  t.exception(() => verifyFleetEvidence(disabledPhysicalRequirement, contract, manifest, contractSha256, manifestSha256), /physical enforcement requirement/)
+  const gatewayRequirementDrift = structuredClone(evidence)
+  gatewayRequirementDrift.gateway.physicalEnforcementRequired = false
+  t.exception(() => verifyFleetEvidence(gatewayRequirementDrift, contract, manifest, contractSha256, manifestSha256), /gateway physicalEnforcementRequired|gateway physical enforcement requirement/)
 
   const exposedSocket = structuredClone(evidence)
   exposedSocket.sockets.observed.gateway = ['0.0.0.0:9200']
@@ -539,6 +568,7 @@ function operatorEvidenceFixture (overrides = {}) {
     status: 'pass',
     mode: 'rehearsal',
     deploymentProfile: 'public-t1-gateway',
+    physicalEnforcementRequired: true,
     operator: {
       relay: 'utah',
       operatorId: 'operator-a',
@@ -551,6 +581,7 @@ function operatorEvidenceFixture (overrides = {}) {
       appKey: APP_KEY,
       contentSha256: CONTENT_SHA,
       driveVersion: '7',
+      physicalEnforcementRequired: true,
       releaseTarget: 'v1.2.3',
       releaseSha: RELEASE_SHA
     },
@@ -571,6 +602,8 @@ function operatorEvidenceFixture (overrides = {}) {
     checks: { config: true, certificate: true, dns: true, tls: true, sockets: true, gateway: true },
     claims: {
       attestsFiniteProductionPolicyValues: true,
+      attestsPhysicalEnforcementRequirement: true,
+      provesActivePhysicalEnforcement: false,
       provesBlindG2: false,
       provesBlindG3: false
     },
@@ -611,6 +644,7 @@ function fleetOpsEvidenceFixture (contract, contractSha256, manifestSha256) {
     checkedAt: new Date(NOW).toISOString(),
     mode: 'fleet',
     deploymentProfile: 'public-t1-gateway',
+    physicalEnforcementRequired: true,
     operator: {
       relay: contract.relay,
       operatorId: contract.operatorId,
@@ -620,7 +654,7 @@ function fleetOpsEvidenceFixture (contract, contractSha256, manifestSha256) {
       publicSuffixReady: contract.publicSuffixReady
     },
     gateway: {
-      schema: 'hiverelay-public-gateway-evidence-verification-v1',
+      schema: 'hiverelay-public-gateway-evidence-verification-v2',
       status: 'verified',
       mode: 'fleet',
       admissionProfile: 'blind-substrate-public-v1',
@@ -636,6 +670,7 @@ function fleetOpsEvidenceFixture (contract, contractSha256, manifestSha256) {
       path: contract.release.expectedPath,
       contentSha256: contract.release.expectedContentSha256,
       driveVersion: contract.release.expectedDriveVersion,
+      physicalEnforcementRequired: true,
       tlsProtocol: 'TLSv1.3',
       peerFingerprint256: contract.certificateFingerprint256,
       nginxSha256: contract.release.expectedNginxSha256,
@@ -727,6 +762,8 @@ function fleetOpsEvidenceFixture (contract, contractSha256, manifestSha256) {
       forbidsT2Exposure: true,
       forbidsUnknownExposure: true,
       attestsFiniteProductionPolicyValues: true,
+      attestsPhysicalEnforcementRequirement: true,
+      provesActivePhysicalEnforcement: false,
       provesBlindG2: false,
       provesBlindG3: false,
       provesFiniteProductionPolicyBehavior: false,

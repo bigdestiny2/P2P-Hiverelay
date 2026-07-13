@@ -28,7 +28,7 @@ const RELEASE_TAG_PATTERN = /^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/
 const PROMOTION_MAX_AGE_MS = 30 * 60 * 1000
 const PROMOTION_MAX_FUTURE_SKEW_MS = 5 * 60 * 1000
 const GATEWAY_WINDOW_STATE_SCHEMA = 'hiverelay-public-gateway-window-state-v1'
-const GATEWAY_TOKEN_SCHEMA = 'hiverelay-public-gateway-evidence-verification-v1'
+const GATEWAY_TOKEN_SCHEMA = 'hiverelay-public-gateway-evidence-verification-v2'
 const CANONICAL_GATEWAY_MANIFEST_PATH = 'fleet/public-hive-gateway-release.json'
 const SSH_KEYGEN_PROGRAM = '/usr/bin/ssh-keygen'
 const GIT_PROGRAM = '/usr/bin/git'
@@ -732,6 +732,7 @@ function inspectGatewayToken (token, entry, expected, manifest) {
     'mode',
     'admissionProfile',
     'publicSuffixReady',
+    'physicalEnforcementRequired',
     'releaseTarget',
     'releaseSha',
     'checkedAt',
@@ -751,6 +752,7 @@ function inspectGatewayToken (token, entry, expected, manifest) {
   if (!entry || token.schema !== GATEWAY_TOKEN_SCHEMA || token.status !== 'verified' || token.mode !== 'fleet' ||
       token.admissionProfile !== manifest.admissionProfile || token.releaseTarget !== expected.target ||
       String(token.releaseSha || '').toLowerCase() !== expected.targetSha ||
+      token.physicalEnforcementRequired !== true ||
       typeof token.publicSuffixReady !== 'boolean' || !/^[a-f0-9]{64}$/.test(token.evidenceSha256 || '') ||
       (token.tlsProtocol !== 'TLSv1.2' && token.tlsProtocol !== 'TLSv1.3')) {
     throw new Error('canary gateway token does not prove the exact non-transitional fleet release posture')

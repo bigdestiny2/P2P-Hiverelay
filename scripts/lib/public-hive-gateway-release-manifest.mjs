@@ -8,7 +8,7 @@ import {
 
 export const PUBLIC_HIVE_GATEWAY_RELEASE_SCHEMA = 'hiverelay-public-gateway-release-v1'
 export const PUBLIC_HIVE_GATEWAY_RELEASE_MANIFEST_PATH = 'fleet/public-hive-gateway-release.json'
-export const PUBLIC_HIVE_GATEWAY_OPERATOR_CONTRACT_SCHEMA = 'hiverelay-public-gateway-operator-contract-v1'
+export const PUBLIC_HIVE_GATEWAY_OPERATOR_CONTRACT_SCHEMA = 'hiverelay-public-gateway-operator-contract-v2'
 export const PUBLIC_HIVE_GATEWAY_OPERATOR_CONTRACT_DIRECTORY = 'fleet/public-hive-gateway-operators'
 export const MIN_PUBLIC_HIVE_GATEWAY_OBSERVATION_WINDOW_MS = 24 * 60 * 60 * 1000
 export const MAX_PUBLIC_HIVE_GATEWAY_OBSERVATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
@@ -189,7 +189,7 @@ export function normalizePublicHiveGatewayOperatorContract (value, opts = {}) {
       'registrableDomain', 'apiHostname', 'suffix', 'appKey', 'appLabel',
       'appHostname', 'origin', 'addressFamilyPolicy', 'expectedAddresses',
       'expectedConnectAddress', 'certificateFingerprint256',
-      'certificateSpkiSha256', 'publicSuffixReady', 'finiteProductionPolicy',
+      'certificateSpkiSha256', 'publicSuffixReady', 'physicalEnforcementRequired', 'finiteProductionPolicy',
       'release'
     ])
     value = {
@@ -208,6 +208,7 @@ export function normalizePublicHiveGatewayOperatorContract (value, opts = {}) {
       certificateFingerprint256: value.certificateFingerprint256,
       certificateSpkiSha256: value.certificateSpkiSha256,
       publicSuffixReady: value.publicSuffixReady,
+      physicalEnforcementRequired: value.physicalEnforcementRequired,
       finiteProductionPolicy: value.finiteProductionPolicy,
       release: value.release
     }
@@ -228,6 +229,7 @@ export function normalizePublicHiveGatewayOperatorContract (value, opts = {}) {
     'certificateFingerprint256',
     'certificateSpkiSha256',
     'publicSuffixReady',
+    'physicalEnforcementRequired',
     'finiteProductionPolicy',
     'release'
   ])
@@ -278,6 +280,7 @@ export function normalizePublicHiveGatewayOperatorContract (value, opts = {}) {
   const certificateSpkiSha256 = String(value.certificateSpkiSha256 || '').toLowerCase()
   if (!SHA256_PATTERN.test(certificateSpkiSha256)) throw new Error(`${label} certificateSpkiSha256 is invalid`)
   if (typeof value.publicSuffixReady !== 'boolean') throw new Error(`${label} publicSuffixReady must be boolean`)
+  requireEqual(value.physicalEnforcementRequired, true, `${label} physicalEnforcementRequired`)
   const finiteProductionPolicy = normalizeFiniteProductionPolicy(value.finiteProductionPolicy, label)
   const release = normalizeOperatorRelease(value.release, label, opts)
 
@@ -300,6 +303,7 @@ export function normalizePublicHiveGatewayOperatorContract (value, opts = {}) {
     certificateFingerprint256,
     certificateSpkiSha256,
     publicSuffixReady: value.publicSuffixReady,
+    physicalEnforcementRequired: true,
     finiteProductionPolicy,
     release
   })

@@ -594,6 +594,7 @@ local key allowlist; registry compatibility defaults are never sufficient:
 ```json
 {
   "productProfile": "public-t1-gateway",
+  "requirePhysicalEnforcement": true,
   "enableAPI": true,
   "enableSeeding": true,
   "apiPort": 9100,
@@ -624,6 +625,13 @@ The exact production value is `productProfile: public-t1-gateway`. Before the
 blind substrate compiles that profile, isolated staging may use only the
 explicit rehearsal posture; a generic relay profile cannot produce fleet or
 publication-grade readiness evidence.
+
+`requirePhysicalEnforcement: true` is an immutable Public-T1 writer lock. It
+cannot be weakened by a config override or live mode change. The boolean does
+not itself prove that an OS quota is installed: without a valid provider lease
+and attestation, the registry remains serve-only/read-only, existing proved
+content may be served, and pin, re-pin, repair, eviction, and durable registry
+mutations stay disabled.
 
 The TLS proxy sends wildcard app hosts only to port `9200`, preserves the
 original Host, never routes them to port `9100`, strips client-supplied
@@ -985,9 +993,10 @@ and keep their substrate admission predicate replaceable.
 | G7 operator prerequisites | At least two operators can provide distinct domains/keys for multi-gateway integration testing |
 | G8 release evidence | Signed tag embeds the exact per-node gateway manifest/operator-contract digests and the canary completes its manifest-defined observation window with bounded gaps |
 | G9 operator readiness | Every `public-t1-gateway` cohort relay has fresh fleet-mode DNS/TLS/socket/config evidence deriving the signed canonical operator-contract digest; the evidence makes no independent timestamp or operator-control claim |
-| G10 storage admission | Every RelayNode HTTP route uses an AppLifecycle lease and the persisted `storageProvedDriveVersion`; absent/mismatch is unavailable without update, checkout, or block pull |
+| G10 storage admission | Every RelayNode HTTP route uses an AppLifecycle lease and the complete persisted drive proof tuple; absent/mismatch is unavailable without update, dynamic open, or block pull |
 | G11 bounded registry | Public-T1 consumes the bounded SeedingRegistry slice or proves the registry workload disabled while direct pre-pinned app seeding remains |
 | G12 proxy runtime | A renewed-authority run captures the pinned production image's real default `nginx -T`; this run could not access Docker and makes no live-image claim |
+| G13 physical ceiling | Public-T1 config and signed evidence require physical enforcement, and a real host provider proves an active exclusive whole-root ceiling; without that proof the node remains serve-only/read-only and pin routes stay disabled |
 
 Known low-severity evidence gap: the frozen quarantine verifier structurally
 requires `gzip off`, `gunzip off`, and a closed directive posture, but its live

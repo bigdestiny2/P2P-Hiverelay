@@ -1397,11 +1397,12 @@ async function createGatewayReleaseRepo (dir) {
 function gatewayRolloutTokenValue (release) {
   const now = new Date().toISOString()
   return {
-    schema: 'hiverelay-public-gateway-evidence-verification-v1',
+    schema: 'hiverelay-public-gateway-evidence-verification-v2',
     status: 'verified',
     mode: 'fleet',
     admissionProfile: release.manifest.admissionProfile,
     publicSuffixReady: false,
+    physicalEnforcementRequired: true,
     releaseTarget: 'v9.9.9',
     releaseSha: release.targetSha,
     checkedAt: now,

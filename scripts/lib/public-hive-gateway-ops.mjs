@@ -38,7 +38,7 @@ export {
 } from './public-hive-gateway-policy.mjs'
 
 export const PUBLIC_HIVE_GATEWAY_OPS_CONTRACT_SCHEMA = PUBLIC_HIVE_GATEWAY_OPERATOR_CONTRACT_SCHEMA
-export const PUBLIC_HIVE_GATEWAY_OPS_EVIDENCE_SCHEMA = 'hiverelay-public-gateway-operator-readiness-v2'
+export const PUBLIC_HIVE_GATEWAY_OPS_EVIDENCE_SCHEMA = 'hiverelay-public-gateway-operator-readiness-v3'
 export const PUBLIC_HIVE_GATEWAY_DNS_SNAPSHOT_SCHEMA = 'hiverelay-public-gateway-dns-snapshot-v2'
 export const PUBLIC_HIVE_GATEWAY_TLS_SNAPSHOT_SCHEMA = 'hiverelay-public-gateway-tls-snapshot-v1'
 export const PUBLIC_HIVE_GATEWAY_OPERATOR_SET_SCHEMA = 'hiverelay-public-gateway-operator-set-v1'
@@ -414,6 +414,12 @@ export function inspectPublicHiveGatewayOpsConfig (config, contract, mode, opts 
   try { requireNumericLoopback(config.apiHost, 'operator API listener host') } catch (err) { errors.push(err.message) }
   try { requireNumericLoopback(config.gatewayHost, 'operator gateway listener host') } catch (err) { errors.push(err.message) }
   if (config.custody?.enabled !== false) errors.push('operator public-t1-gateway config must explicitly disable T2 custody')
+  const explicitConfig = opts.explicitConfig || config
+  const physicalEnforcementRequired = config.requirePhysicalEnforcement === true
+  if ((mode === 'fleet' || config.productProfile === PUBLIC_HIVE_GATEWAY_DEPLOYMENT_PROFILE) &&
+      (!Object.hasOwn(explicitConfig, 'requirePhysicalEnforcement') || !physicalEnforcementRequired)) {
+    errors.push('operator public-t1-gateway config must explicitly require physical enforcement')
+  }
   if (config.gatewayTrustProxy !== true || config.gatewayRequireForwardedSNI !== true) {
     errors.push('operator gateway config must require the reviewed loopback proxy and forwarded SNI binding')
   }
@@ -434,6 +440,7 @@ export function inspectPublicHiveGatewayOpsConfig (config, contract, mode, opts 
       apiPort: config.apiPort,
       gatewayHost: config.gatewayHost,
       gatewayPort: config.gatewayPort,
+      physicalEnforcementRequired,
       custodyEnabled: config.custody?.enabled === true,
       admittedAppCount: Array.isArray(config.hiveAppPublicKeys) ? config.hiveAppPublicKeys.length : 0,
       finiteProductionPolicy: {
@@ -494,6 +501,8 @@ export function inspectPublicHiveGatewayBaseEvidence (evidence, config, contract
     requireEqual(normalizeAddress(evidence.config?.connectAddress), contract.expectedConnectAddress, 'operator base gateway connect address')
     requireEqual(evidence.config?.publicSuffixReady, contract.publicSuffixReady, 'operator base gateway Public Suffix assertion')
     requireEqual(evidence.config?.custodyEnabled, false, 'operator base gateway custody status')
+    requireEqual(evidence.config?.physicalEnforcementRequired, true,
+      'operator base gateway physical enforcement requirement')
     requireObject(evidence.config?.finiteProductionPolicy, 'operator base gateway finite production policy')
     for (const [field, expected] of Object.entries(contract.finiteProductionPolicy)) {
       requireEqual(evidence.config.finiteProductionPolicy[field], expected, `operator base gateway finite production policy ${field}`)
@@ -549,6 +558,7 @@ export function inspectPublicHiveGatewayBaseEvidence (evidence, config, contract
           appKey: evidence.probe.appKey,
           contentSha256: evidence.probe.sha256,
           driveVersion: evidence.probe.driveVersion,
+          physicalEnforcementRequired: true,
           peerFingerprint256: String(evidence.probe.peerFingerprint256).toUpperCase(),
           nginxSha256: evidence.nginx.sha256
         }
@@ -575,7 +585,7 @@ export function verifyPublicHiveGatewayOpsEvidence (evidence, opts = {}) {
   requireObject(evidence, 'operator readiness evidence')
   requireOnlyKeys('operator readiness evidence', evidence, [
     'schema', 'status', 'checkedAt', 'mode', 'deploymentProfile', 'operator',
-    'gateway', 'finiteProductionPolicy', 'certificate', 'dns', 'tls',
+    'physicalEnforcementRequired', 'gateway', 'finiteProductionPolicy', 'certificate', 'dns', 'tls',
     'sockets', 'sourceDigests', 'checks', 'claims', 'externalGates', 'errors'
   ])
   requireEqual(evidence.schema, PUBLIC_HIVE_GATEWAY_OPS_EVIDENCE_SCHEMA, 'operator readiness evidence schema')
@@ -583,6 +593,10 @@ export function verifyPublicHiveGatewayOpsEvidence (evidence, opts = {}) {
   requireFreshTimestamp(evidence.checkedAt, 'operator readiness evidence checkedAt', opts.now)
   requireEqual(evidence.mode, 'fleet', 'operator readiness evidence mode')
   requireEqual(evidence.deploymentProfile, PUBLIC_HIVE_GATEWAY_DEPLOYMENT_PROFILE, 'operator readiness evidence profile')
+  requireEqual(evidence.physicalEnforcementRequired, true,
+    'operator readiness evidence physical enforcement requirement')
+  requireEqual(contract.physicalEnforcementRequired, true,
+    'operator readiness contract physical enforcement requirement')
   if (!Array.isArray(evidence.errors) || evidence.errors.length !== 0) throw new Error('operator readiness evidence errors must be empty')
 
   requireObject(evidence.operator, 'operator readiness operator')
@@ -607,9 +621,9 @@ export function verifyPublicHiveGatewayOpsEvidence (evidence, opts = {}) {
     'finiteProductionPolicy', 'releaseTarget', 'releaseSha', 'checkedAt',
     'probeObservedAt', 'origin', 'connectAddress', 'appKey', 'path',
     'contentSha256', 'driveVersion', 'tlsProtocol', 'peerFingerprint256',
-    'nginxSha256', 'checks'
+    'nginxSha256', 'physicalEnforcementRequired', 'checks'
   ])
-  requireEqual(evidence.gateway.schema, 'hiverelay-public-gateway-evidence-verification-v1',
+  requireEqual(evidence.gateway.schema, 'hiverelay-public-gateway-evidence-verification-v2',
     'operator readiness gateway schema')
   requireEqual(evidence.gateway.status, 'verified', 'operator readiness gateway status')
   requireEqual(evidence.gateway.admissionProfile, manifest.admissionProfile,
@@ -643,6 +657,7 @@ export function verifyPublicHiveGatewayOpsEvidence (evidence, opts = {}) {
     path: contract.release.expectedPath,
     contentSha256: contract.release.expectedContentSha256,
     driveVersion: contract.release.expectedDriveVersion,
+    physicalEnforcementRequired: true,
     peerFingerprint256: contract.certificateFingerprint256,
     nginxSha256: contract.release.expectedNginxSha256
   }
@@ -824,6 +839,8 @@ export function verifyPublicHiveGatewayOpsEvidence (evidence, opts = {}) {
     forbidsT2Exposure: true,
     forbidsUnknownExposure: true,
     attestsFiniteProductionPolicyValues: true,
+    attestsPhysicalEnforcementRequirement: true,
+    provesActivePhysicalEnforcement: false,
     provesBlindG2: false,
     provesBlindG3: false,
     provesFiniteProductionPolicyBehavior: false,
@@ -838,7 +855,7 @@ export function verifyPublicHiveGatewayOpsEvidence (evidence, opts = {}) {
   assertPublicSafeOpsEvidence(evidence)
 
   return {
-    schema: 'hiverelay-public-gateway-operator-readiness-verification-v1',
+    schema: 'hiverelay-public-gateway-operator-readiness-verification-v2',
     status: 'verified',
     mode: 'fleet',
     deploymentProfile: PUBLIC_HIVE_GATEWAY_DEPLOYMENT_PROFILE,
@@ -852,11 +869,12 @@ export function verifyPublicHiveGatewayOpsEvidence (evidence, opts = {}) {
     releaseTarget: contract.release.target,
     releaseSha,
     operatorContractSha256: expectedDigest,
+    physicalEnforcementRequired: true,
     certificateFingerprint256: contract.certificateFingerprint256,
     certificateSpkiSha256: contract.certificateSpkiSha256,
     expectedAddresses: [...contract.expectedAddresses],
     checkedAt: evidence.checkedAt,
-    claimBoundary: 'operator edge readiness; no blind G2/G3, independent timestamp, or organizational-control proof'
+    claimBoundary: 'operator edge readiness and fail-closed physical-enforcement requirement; no active OS quota; no blind G2/G3, independent timestamp, or organizational-control proof'
   }
 }
 
@@ -1217,6 +1235,8 @@ function normalizeOpsEvidenceSummary (evidence, index, requiredMode, now) {
       provesCurrentLoopbackSockets: true,
       forbidsT2Exposure: true,
       forbidsUnknownExposure: true,
+      attestsPhysicalEnforcementRequirement: true,
+      provesActivePhysicalEnforcement: false,
       provesBlindG2: false,
       provesBlindG3: false,
       provesFiniteProductionPolicyBehavior: false,
@@ -1254,6 +1274,15 @@ function normalizeOpsEvidenceSummary (evidence, index, requiredMode, now) {
   }
   requireEqual(evidence.claims?.attestsFiniteProductionPolicyValues, true,
     `operator readiness evidence[${index}] finite production policy value attestation`)
+  if (typeof evidence.physicalEnforcementRequired !== 'boolean') {
+    throw new Error(`operator readiness evidence[${index}] physical enforcement requirement must be boolean`)
+  }
+  if (requiredMode === 'fleet') {
+    requireEqual(evidence.physicalEnforcementRequired, true,
+      `operator readiness evidence[${index}] physical enforcement requirement`)
+    requireEqual(evidence.gateway?.physicalEnforcementRequired, true,
+      `operator readiness evidence[${index}] gateway physical enforcement requirement`)
+  }
   const expectedAddresses = evidence.dns?.expectedAddresses
   if (!Array.isArray(expectedAddresses) || expectedAddresses.length < 1) {
     throw new Error(`operator readiness evidence[${index}] has no reviewed public addresses`)
@@ -1286,6 +1315,7 @@ function normalizeOpsEvidenceSummary (evidence, index, requiredMode, now) {
     releaseTarget: evidence.gateway?.releaseTarget,
     releaseSha,
     operatorContractSha256,
+    physicalEnforcementRequired: evidence.physicalEnforcementRequired === true,
     checkedAt
   }
 }

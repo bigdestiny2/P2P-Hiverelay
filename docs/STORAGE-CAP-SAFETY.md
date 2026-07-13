@@ -185,9 +185,11 @@ they roll back exactly the caller's reservation. Residual filesystem bytes are
 charged by the next exact tree walk.
 After persistence, a reservation-invariant failure is fail-closed and retains
 the conservative debt; it is never freed merely because the caller saw an
-error. Intentional unseed retires the in-memory entry, durably deletes it,
-drains same-key HTTP/PVSS leases, destroys ranges and pinned snapshots, closes
-the drive, and releases the commitment last.
+error. Intentional unseed synchronously retires the in-memory entry, drains
+same-key HTTP/PVSS leases, destroys ranges and pinned snapshots, closes the
+drive, durably deletes the entry, and releases the commitment last. A failed
+durable delete keeps the closed retiring owner and conservative debt available
+for an explicit retry; it never reopens the old drive to new readers.
 
 Bare-core retirement follows the same release-last rule. The seeded-core v3
 intent is rewritten first, then listeners and refresh work are quiesced, the

@@ -109,6 +109,17 @@ test('public gateway release manifest binds public-t1 cohort to one canonical op
   const normalized = normalizePublicHiveGatewayOperatorContract(contract, { releaseTarget: 'v1.2.3' })
   t.is(normalized.release.expectedPath, '/index.html')
   t.exception(() => normalizePublicHiveGatewayOperatorContract({ ...contract, unknown: true }), /unsupported fields/)
+
+  const oldSchema = operatorFixture()
+  oldSchema.schema = 'hiverelay-public-gateway-operator-contract-v1'
+  t.exception(() => normalizePublicHiveGatewayOperatorContract(oldSchema), /schema/)
+  const missingPhysicalRequirement = operatorFixture()
+  delete missingPhysicalRequirement.physicalEnforcementRequired
+  t.exception(() => normalizePublicHiveGatewayOperatorContract(missingPhysicalRequirement), /physicalEnforcementRequired/)
+  t.exception(() => normalizePublicHiveGatewayOperatorContract({
+    ...operatorFixture(),
+    physicalEnforcementRequired: false
+  }), /physicalEnforcementRequired/)
 })
 
 test('public gateway release manifest keeps historical parsing but rejects legacy cohorts for new publication', (t) => {
@@ -144,7 +155,7 @@ function fixture () {
 
 function operatorFixture () {
   return {
-    schema: 'hiverelay-public-gateway-operator-contract-v1',
+    schema: 'hiverelay-public-gateway-operator-contract-v2',
     deploymentProfile: 'public-t1-gateway',
     relay: 'canary-1',
     channel: 'canary',
@@ -159,6 +170,7 @@ function operatorFixture () {
     certificateFingerprint256: FINGERPRINT,
     certificateSpkiSha256: 'dd'.repeat(32),
     publicSuffixReady: false,
+    physicalEnforcementRequired: true,
     finiteProductionPolicy: { ...PUBLIC_HIVE_GATEWAY_FINITE_POLICY },
     release: {
       target: 'v1.2.3',

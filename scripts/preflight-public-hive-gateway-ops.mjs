@@ -210,6 +210,7 @@ const evidence = {
   checkedAt: new Date(now).toISOString(),
   mode,
   deploymentProfile: PUBLIC_HIVE_GATEWAY_DEPLOYMENT_PROFILE,
+  physicalEnforcementRequired: configCheck.result?.physicalEnforcementRequired === true,
   operator: {
     relay: contract.relay,
     operatorId: contract.operatorId,
@@ -226,6 +227,7 @@ const evidence = {
     appKey: contract.appKey,
     contentSha256: contract.release.expectedContentSha256,
     driveVersion: contract.release.expectedDriveVersion,
+    physicalEnforcementRequired: configCheck.result?.physicalEnforcementRequired === true,
     peerFingerprint256: contract.certificateFingerprint256,
     nginxSha256: contract.release.expectedNginxSha256
   },
@@ -265,6 +267,8 @@ const evidence = {
     forbidsT2Exposure: true,
     forbidsUnknownExposure: true,
     attestsFiniteProductionPolicyValues: configCheck.ok,
+    attestsPhysicalEnforcementRequirement: configCheck.result?.physicalEnforcementRequired === true,
+    provesActivePhysicalEnforcement: false,
     provesBlindG2: false,
     provesBlindG3: false,
     provesFiniteProductionPolicyBehavior: false,
@@ -277,6 +281,7 @@ const evidence = {
     'authoritative compiled public-t1-gateway substrate/profile evidence',
     'negative T2 and unknown storage-class exposure conformance',
     'finite-production-policy response/egress/lifetime conformance evidence from the exact release',
+    'active exclusive OS quota provider lease and fresh settlement attestation; the config boolean proves only the fail-closed requirement',
     'blind G2 storage-classification and G3 signing-foundation evidence',
     'authenticated proof of DNS, certificate-key, and operator organizational control'
   ],

@@ -26,7 +26,7 @@ export function createPublicT1OpsFixture (opts = {}) {
   const nginxSha256 = opts.nginxSha256 || 'd'.repeat(64)
   const expectedAddresses = opts.expectedAddresses || ['8.8.8.8', '2606:4700:4700::1111']
   const contract = {
-    schema: 'hiverelay-public-gateway-operator-contract-v1',
+    schema: 'hiverelay-public-gateway-operator-contract-v2',
     deploymentProfile: 'public-t1-gateway',
     relay,
     channel: opts.channel || 'canary',
@@ -41,6 +41,7 @@ export function createPublicT1OpsFixture (opts = {}) {
     certificateFingerprint256: fingerprint256,
     certificateSpkiSha256: spkiSha256,
     publicSuffixReady: false,
+    physicalEnforcementRequired: true,
     finiteProductionPolicy: { ...PUBLIC_HIVE_GATEWAY_FINITE_POLICY },
     release: {
       target: opts.releaseTarget || 'v1.2.3',
@@ -83,6 +84,7 @@ export function createPublicT1OpsFixture (opts = {}) {
     checkedAt,
     mode: 'fleet',
     deploymentProfile: 'public-t1-gateway',
+    physicalEnforcementRequired: true,
     operator: {
       relay,
       operatorId: contract.operatorId,
@@ -92,7 +94,7 @@ export function createPublicT1OpsFixture (opts = {}) {
       publicSuffixReady: false
     },
     gateway: {
-      schema: 'hiverelay-public-gateway-evidence-verification-v1',
+      schema: 'hiverelay-public-gateway-evidence-verification-v2',
       status: 'verified',
       mode: 'fleet',
       admissionProfile: manifest.admissionProfile,
@@ -108,6 +110,7 @@ export function createPublicT1OpsFixture (opts = {}) {
       path: contract.release.expectedPath,
       contentSha256,
       driveVersion: contract.release.expectedDriveVersion,
+      physicalEnforcementRequired: true,
       tlsProtocol: 'TLSv1.3',
       peerFingerprint256: fingerprint256,
       nginxSha256,
@@ -214,6 +217,8 @@ export function createPublicT1OpsFixture (opts = {}) {
       forbidsT2Exposure: true,
       forbidsUnknownExposure: true,
       attestsFiniteProductionPolicyValues: true,
+      attestsPhysicalEnforcementRequirement: true,
+      provesActivePhysicalEnforcement: false,
       provesBlindG2: false,
       provesBlindG3: false,
       provesFiniteProductionPolicyBehavior: false,

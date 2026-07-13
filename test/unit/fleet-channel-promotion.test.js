@@ -619,11 +619,12 @@ function gatewayRolloutEvidence (fixture, statePath) {
   for (const relay of evidence.relays) {
     relay.gatewayHealthy = true
     relay.gateway = {
-      schema: 'hiverelay-public-gateway-evidence-verification-v1',
+      schema: 'hiverelay-public-gateway-evidence-verification-v2',
       status: 'verified',
       mode: 'fleet',
       admissionProfile: fixture.gatewayManifest.admissionProfile,
       publicSuffixReady: false,
+      physicalEnforcementRequired: true,
       releaseTarget: fixture.target,
       releaseSha: fixture.targetSha,
       checkedAt,

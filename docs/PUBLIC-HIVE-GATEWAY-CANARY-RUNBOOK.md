@@ -219,6 +219,7 @@ unrelated relay settings. A complete shape is also available at
 ```json
 {
   "productProfile": "public-t1-gateway",
+  "requirePhysicalEnforcement": true,
   "enableAPI": true,
   "enableSeeding": true,
   "apiHost": "127.0.0.1",
@@ -251,6 +252,12 @@ registry or enforces an explicit registry-disabled profile while retaining
 direct seeding for the single pre-pinned app. The same update must persist
 `storageProvedDriveVersion`; the release pin may select bytes only after that
 independent storage-admission proof matches.
+
+`requirePhysicalEnforcement: true` is mandatory and restart-only. It proves a
+fail-closed requirement, not an installed quota. Until a real provider returns
+a valid exclusive whole-root lease and fresh attestation, the relay may serve
+already validated proved content but remains read-only: do not enable pin,
+re-pin, repair, eviction, or other durable writer routes.
 
 `productProfile: public-t1-gateway` is the exact post-substrate fleet value.
 An isolated pre-merge host may exercise the same edge only with ops
@@ -547,7 +554,8 @@ it with the node-local socket result. That schema does not exist yet.
 
 The ops artifact deliberately states that it does **not** prove blind G2/G3,
 Public Suffix/registrar ownership, operator organizational control, continuous
-runtime enforcement, or an independent timestamp. It does prove that the
+runtime enforcement, an active OS quota merely from the config boolean, or an
+independent timestamp. It does prove that the
 exact finite production policy was contract-bound and present in the observed
 runtime config, and that the locally reviewed public-T1 DNS/TLS/socket edge
 posture was observed at the recorded time. Runtime negative tests establish

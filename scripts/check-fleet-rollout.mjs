@@ -74,7 +74,7 @@ const UNSAFE_GIT_ENV = new Set([
 const MAX_GATEWAY_SAMPLES_PER_RELAY = 20000
 const GATEWAY_CONTROLLER_CLOCK_SKEW_MS = 5 * 60 * 1000
 const GATEWAY_WINDOW_STATE_SCHEMA = 'hiverelay-public-gateway-window-state-v1'
-const GATEWAY_TOKEN_SCHEMA = 'hiverelay-public-gateway-evidence-verification-v1'
+const GATEWAY_TOKEN_SCHEMA = 'hiverelay-public-gateway-evidence-verification-v2'
 const GATEWAY_CHECK_NAMES = Object.freeze([
   'metadata',
   'exactBytes',
@@ -435,6 +435,9 @@ function decodeAndValidateRolloutToken (encoded, relay) {
   if (typeof token.publicSuffixReady !== 'boolean' || !/^[a-f0-9]{64}$/.test(token.evidenceSha256 || '')) {
     throw new Error('gateway rollout token public fields are invalid')
   }
+  if (token.physicalEnforcementRequired !== true) {
+    throw new Error('gateway rollout token must attest the physical enforcement requirement')
+  }
   const checkedAt = requireIsoMs(token.checkedAt, 'gateway rollout token checkedAt')
   const observedAt = requireIsoMs(token.probeObservedAt, 'gateway rollout token probeObservedAt')
   if (observedAt > checkedAt) throw new Error('gateway rollout token observation is after its check')
@@ -458,6 +461,7 @@ function assertRolloutTokenSummarySchema (token, label) {
     'mode',
     'admissionProfile',
     'publicSuffixReady',
+    'physicalEnforcementRequired',
     'releaseTarget',
     'releaseSha',
     'checkedAt',

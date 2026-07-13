@@ -1,5 +1,5 @@
 {
-  "schema": "hiverelay-public-gateway-operator-contract-v1",
+  "schema": "hiverelay-public-gateway-operator-contract-v2",
   "deploymentProfile": "public-t1-gateway",
   "relay": "utah",
   "channel": "canary",
@@ -17,6 +17,7 @@
   "certificateFingerprint256": "<colon-separated-leaf-certificate-sha256>",
   "certificateSpkiSha256": "<lowercase-leaf-spki-sha256>",
   "publicSuffixReady": false,
+  "physicalEnforcementRequired": true,
   "finiteProductionPolicy": {
     "schema": "hiverelay-public-gateway-finite-policy-v1",
     "maxResponseBytes": 67108864,

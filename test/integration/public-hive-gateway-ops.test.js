@@ -90,6 +90,7 @@ test('public gateway ops CLI - certbot symlinks and offline DNS/TLS/socket fixtu
   const witnessHostname = `${encodeHiveAppKey(Buffer.alloc(32))}.${SUFFIX}`
   const config = {
     productProfile: 'relay-core',
+    requirePhysicalEnforcement: true,
     apiHost: '127.0.0.1',
     apiPort: 9100,
     gatewayHost: '127.0.0.1',
@@ -330,6 +331,7 @@ function contractFixture (certificate, overrides = {}) {
     certificateFingerprint256: certificate.fingerprint256,
     certificateSpkiSha256: certificate.spkiSha256,
     publicSuffixReady: false,
+    physicalEnforcementRequired: true,
     finiteProductionPolicy: { ...PUBLIC_HIVE_GATEWAY_FINITE_POLICY },
     release: {
       target: 'v1.2.3',
@@ -360,6 +362,7 @@ function baseEvidenceFixture (contract, now, validTo) {
       connectAddress: contract.expectedConnectAddress,
       publicSuffixReady: false,
       custodyEnabled: false,
+      physicalEnforcementRequired: true,
       finiteProductionPolicy: { ...PUBLIC_HIVE_GATEWAY_FINITE_POLICY }
     },
     static: { ok: true, errors: [], warnings: ['transitional rehearsal'] },
