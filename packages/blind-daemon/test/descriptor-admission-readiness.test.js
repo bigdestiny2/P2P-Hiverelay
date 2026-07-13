@@ -19,7 +19,10 @@ import {
   relayIdentityTransitionV1,
   serviceDescriptorHash
 } from '@hiverelay/blind-protocol'
-import { AdmissionCoordinator } from '../admission-coordinator.js'
+import {
+  ADMISSION_PREFLIGHT_SPLIT_STATUS,
+  AdmissionCoordinator
+} from '../admission-coordinator.js'
 import {
   DESCRIPTOR_CLOSED_REASON,
   DESCRIPTOR_STATE_KIND,
@@ -50,6 +53,81 @@ function descriptorState (options = {}) {
     verifySignature: async () => true,
     ...options
   })
+}
+
+function admissionPreflightInput (pair, snapshot, overrides = {}) {
+  const base = {
+    profile: daemonOperationProfile(FAMILY.CELL, OPERATION.CELL.PUT),
+    admission: {
+      profileId: 7,
+      schemeId: 9,
+      parameterHash: admissionParametersHash(pair.parameters),
+      token: fixtureBytes(16, 0xa4)
+    },
+    cost: { resourceClass: 1, leaseClass: 1 },
+    requestCommitment: fixtureBytes(32, 0xa3),
+    descriptorSnapshot: snapshot,
+    endpoint: snapshot.descriptor.endpoints[0]
+  }
+  return { ...base, ...overrides }
+}
+
+async function capturedError (operation) {
+  try {
+    await operation()
+  } catch (error) {
+    return error
+  }
+  return null
+}
+
+function postEofAuthorityHarness () {
+  const bindings = new WeakMap()
+  let consumeCalls = 0
+
+  function bind (input) {
+    return Object.freeze({
+      descriptorSequence: input.descriptorSnapshot.descriptorSequence,
+      descriptorHash: b4a.from(input.descriptorSnapshot.hash),
+      endpointId: input.endpoint.endpointId,
+      familyId: input.profile.familyId,
+      operationId: input.profile.operationId,
+      requestCommitment: b4a.from(input.requestCommitment)
+    })
+  }
+
+  return {
+    mint (input) {
+      const authority = Object.freeze({})
+      bindings.set(authority, bind(input))
+      return authority
+    },
+    async consume (input) {
+      consumeCalls++
+      const expected = input.authority && bindings.get(input.authority)
+      if (!expected) return false
+      bindings.delete(input.authority)
+      return expected.descriptorSequence === input.descriptorSequence &&
+        b4a.equals(expected.descriptorHash, input.descriptorHash) &&
+        expected.endpointId === input.endpointId && expected.familyId === input.familyId &&
+        expected.operationId === input.operationId &&
+        b4a.equals(expected.requestCommitment, input.requestCommitment)
+    },
+    consumeCalls: () => consumeCalls
+  }
+}
+
+function confirmedAdmission (input, overrides = {}) {
+  return {
+    spendTag: fixtureBytes(32, 0xa1),
+    requestCommitment: b4a.from(input.requestCommitment),
+    profileId: input.admission.profileId,
+    schemeId: input.admission.schemeId,
+    parameterHash: b4a.from(input.admission.parameterHash),
+    costClass: { ...input.costClass },
+    walCommitRecord: fixtureBytes(8, 0xa2),
+    ...overrides
+  }
 }
 
 test('descriptor authority uses shared hashes and is mutation-proof', async t => {
@@ -427,6 +505,432 @@ test('admission rejects zero spend tags and adapter cost substitution', async t 
     rejected = error
   }
   t.is(rejected.code, 'SPEND_INVALID')
+})
+
+test('admission preflight is opaque, side-effect-free, byte-owned, and confirmed only after a private EOF brand', async t => {
+  const pair = descriptorAndParameters()
+  const state = descriptorState()
+  const snapshot = await state.activate(pair.descriptor)
+  const postEof = postEofAuthorityHarness()
+  const adapterAuthorities = new WeakSet()
+  const calls = { preflight: 0, confirm: 0, prepare: 0, spend: 0, wal: 0 }
+  let adapterResult
+  const adapter = {
+    async preparePreflight (input) {
+      calls.preflight++
+      t.is(input.mutationAllowed, false)
+      t.is(input.adapterPreflight, null)
+      const authority = Object.freeze({})
+      adapterAuthorities.add(authority)
+      input.admission.parameterHash.fill(0)
+      input.admission.token.fill(0)
+      input.requestCommitment.fill(0)
+      input.descriptorHash.fill(0)
+      input.parameters.relayPublicKey.fill(0)
+      return authority
+    },
+    async confirmAfterEof (input) {
+      calls.confirm++
+      if (!adapterAuthorities.has(input.adapterPreflight)) throw new Error('unbranded adapter preflight')
+      adapterAuthorities.delete(input.adapterPreflight)
+      adapterResult = confirmedAdmission(input)
+      input.admission.parameterHash.fill(0)
+      input.admission.token.fill(0)
+      input.requestCommitment.fill(0)
+      input.descriptorHash.fill(0)
+      input.parameters.relayPublicKey.fill(0)
+      return adapterResult
+    },
+    async prepare () { calls.prepare++ },
+    async spend () { calls.spend++ },
+    async appendWal () { calls.wal++ }
+  }
+  const admission = new AdmissionCoordinator({
+    descriptorState: state,
+    verifySignature: async () => true,
+    resolveAdapter: async () => adapter,
+    consumePostEofAuthority: postEof.consume
+  })
+  await admission.installParameters(pair.parameters)
+
+  const callerInput = admissionPreflightInput(pair, snapshot)
+  const preflight = await admission.preparePreflight(callerInput)
+  t.ok(Object.isFrozen(preflight))
+  t.is(Reflect.ownKeys(preflight).length, 0)
+  t.absent(preflight.spendTag)
+  t.absent(preflight.walCommitRecord)
+  t.alike(calls, { preflight: 1, confirm: 0, prepare: 0, spend: 0, wal: 0 })
+
+  callerInput.admission.parameterHash.fill(0)
+  callerInput.admission.token.fill(0)
+  callerInput.requestCommitment.fill(0)
+  const confirmationInput = admissionPreflightInput(pair, state.requireCurrent())
+  const expectedCommitment = b4a.from(confirmationInput.requestCommitment)
+  const confirmed = await admission.confirmAfterEof(preflight, {
+    ...confirmationInput,
+    postEofAuthority: postEof.mint(confirmationInput)
+  })
+  t.ok(Object.isFrozen(confirmed))
+  t.ok(Object.isFrozen(confirmed.costClass))
+  t.ok(b4a.equals(confirmed.requestCommitment, expectedCommitment))
+  t.ok(confirmed.spendTag.some(byte => byte !== 0))
+  t.is(confirmed.costClass.costUnits, 10n)
+  t.alike(calls, { preflight: 1, confirm: 1, prepare: 0, spend: 0, wal: 0 })
+  t.is(postEof.consumeCalls(), 1)
+
+  adapterResult.spendTag.fill(0)
+  adapterResult.requestCommitment.fill(0)
+  adapterResult.parameterHash.fill(0)
+  adapterResult.walCommitRecord.fill(0)
+  t.ok(confirmed.spendTag.some(byte => byte !== 0))
+  t.ok(b4a.equals(confirmed.requestCommitment, expectedCommitment))
+  t.ok(confirmed.parameterHash.some(byte => byte !== 0))
+  t.ok(confirmed.walCommitRecord.some(byte => byte !== 0))
+
+  const reused = await capturedError(() => admission.confirmAfterEof(preflight, {
+    ...confirmationInput,
+    postEofAuthority: postEof.mint(confirmationInput)
+  }))
+  t.is(reused.code, 'SPEND_INVALID')
+  t.is(calls.confirm, 1)
+})
+
+test('admission preflight retains captured adapter methods across mutable property replacement', async t => {
+  const pair = descriptorAndParameters()
+  const state = descriptorState()
+  const snapshot = await state.activate(pair.descriptor)
+  const postEof = postEofAuthorityHarness()
+  const adapterAuthorities = new WeakSet()
+  let originalPreflights = 0
+  let originalConfirmations = 0
+  let replacements = 0
+  const adapter = {
+    async preparePreflight () {
+      t.is(this, adapter)
+      originalPreflights++
+      const authority = Object.freeze({})
+      adapterAuthorities.add(authority)
+      return authority
+    },
+    async confirmAfterEof (input) {
+      t.is(this, adapter)
+      originalConfirmations++
+      if (!adapterAuthorities.has(input.adapterPreflight)) throw new Error('unbranded adapter preflight')
+      adapterAuthorities.delete(input.adapterPreflight)
+      return confirmedAdmission(input)
+    }
+  }
+  const admission = new AdmissionCoordinator({
+    descriptorState: state,
+    verifySignature: async () => true,
+    resolveAdapter: async () => adapter,
+    consumePostEofAuthority: postEof.consume
+  })
+  await admission.installParameters(pair.parameters)
+  const input = admissionPreflightInput(pair, snapshot)
+  const authority = await admission.preparePreflight(input)
+  adapter.preparePreflight = async () => { replacements++; throw new Error('replacement prepare ran') }
+  adapter.confirmAfterEof = async () => { replacements++; throw new Error('replacement confirm ran') }
+  const confirmed = await admission.confirmAfterEof(authority, {
+    ...input,
+    postEofAuthority: postEof.mint(input)
+  })
+  t.is(originalPreflights, 1)
+  t.is(originalConfirmations, 1)
+  t.is(replacements, 0)
+  t.ok(confirmed.spendTag.some(byte => byte !== 0))
+})
+
+test('admission preflight snapshots getter-backed adapter methods exactly once with their receiver', async t => {
+  const pair = descriptorAndParameters()
+  const state = descriptorState()
+  const snapshot = await state.activate(pair.descriptor)
+  const postEof = postEofAuthorityHarness()
+  const adapterAuthorities = new WeakSet()
+  let prepareReads = 0
+  let confirmReads = 0
+  let originalPreflights = 0
+  let originalConfirmations = 0
+  let swappedCalls = 0
+  const adapter = {}
+  const originalPrepare = async function () {
+    t.is(this, adapter)
+    originalPreflights++
+    const authority = Object.freeze({})
+    adapterAuthorities.add(authority)
+    return authority
+  }
+  const originalConfirm = async function (input) {
+    t.is(this, adapter)
+    originalConfirmations++
+    if (!adapterAuthorities.has(input.adapterPreflight)) throw new Error('unbranded adapter preflight')
+    adapterAuthorities.delete(input.adapterPreflight)
+    return confirmedAdmission(input)
+  }
+  const swapped = async () => { swappedCalls++; throw new Error('getter swap ran') }
+  Object.defineProperties(adapter, {
+    preparePreflight: {
+      get () {
+        prepareReads++
+        return prepareReads === 1 ? originalPrepare : swapped
+      }
+    },
+    confirmAfterEof: {
+      get () {
+        confirmReads++
+        return confirmReads === 1 ? originalConfirm : swapped
+      }
+    }
+  })
+  const admission = new AdmissionCoordinator({
+    descriptorState: state,
+    verifySignature: async () => true,
+    resolveAdapter: async () => adapter,
+    consumePostEofAuthority: postEof.consume
+  })
+  await admission.installParameters(pair.parameters)
+  const input = admissionPreflightInput(pair, snapshot)
+  const authority = await admission.preparePreflight(input)
+  const confirmed = await admission.confirmAfterEof(authority, {
+    ...input,
+    postEofAuthority: postEof.mint(input)
+  })
+  t.is(prepareReads, 1)
+  t.is(confirmReads, 1)
+  t.is(originalPreflights, 1)
+  t.is(originalConfirmations, 1)
+  t.is(swappedCalls, 0)
+  t.ok(confirmed.spendTag.some(byte => byte !== 0))
+})
+
+test('admission preflight rejects forged, copied, rebound, public EOF, and stale capabilities', async t => {
+  const pair = descriptorAndParameters()
+  const state = descriptorState()
+  const snapshot = await state.activate(pair.descriptor)
+  const postEof = postEofAuthorityHarness()
+  const adapterAuthorities = new WeakSet()
+  let confirmations = 0
+  const admission = new AdmissionCoordinator({
+    descriptorState: state,
+    verifySignature: async () => true,
+    resolveAdapter: async () => ({
+      async preparePreflight () {
+        const authority = Object.freeze({})
+        adapterAuthorities.add(authority)
+        return authority
+      },
+      async confirmAfterEof (input) {
+        confirmations++
+        if (!adapterAuthorities.has(input.adapterPreflight)) throw new Error('unbranded adapter preflight')
+        adapterAuthorities.delete(input.adapterPreflight)
+        return confirmedAdmission(input)
+      }
+    }),
+    consumePostEofAuthority: postEof.consume
+  })
+  await admission.installParameters(pair.parameters)
+
+  const base = admissionPreflightInput(pair, snapshot)
+  const forged = await capturedError(() => admission.confirmAfterEof(Object.freeze({}), {
+    ...base,
+    postEofAuthority: postEof.mint(base)
+  }))
+  t.is(forged.code, 'SPEND_INVALID')
+  t.is(confirmations, 0)
+
+  const original = await admission.preparePreflight(base)
+  const copied = Object.freeze({ ...original })
+  const copiedError = await capturedError(() => admission.confirmAfterEof(copied, {
+    ...base,
+    postEofAuthority: postEof.mint(base)
+  }))
+  t.is(copiedError.code, 'SPEND_INVALID')
+  await admission.confirmAfterEof(original, {
+    ...base,
+    postEofAuthority: postEof.mint(base)
+  })
+  t.is(confirmations, 1)
+
+  for (const changed of [
+    {
+      ...base,
+      requestCommitment: fixtureBytes(32, 0xb1)
+    },
+    {
+      ...base,
+      endpoint: { ...base.endpoint, roleBits: base.endpoint.roleBits ^ 1 }
+    },
+    {
+      ...base,
+      cost: { resourceClass: 2, leaseClass: 1 }
+    },
+    {
+      ...base,
+      admission: { ...base.admission, token: fixtureBytes(16, 0xb2) }
+    }
+  ]) {
+    const authority = await admission.preparePreflight(base)
+    const before = confirmations
+    const rejected = await capturedError(() => admission.confirmAfterEof(authority, {
+      ...changed,
+      postEofAuthority: postEof.mint(base)
+    }))
+    t.is(rejected.code, 'SPEND_INVALID')
+    t.is(confirmations, before)
+    const burned = await capturedError(() => admission.confirmAfterEof(authority, {
+      ...base,
+      postEofAuthority: postEof.mint(base)
+    }))
+    t.is(burned.code, 'SPEND_INVALID')
+  }
+
+  const publicFieldPreflight = await admission.preparePreflight(base)
+  const consumeCalls = postEof.consumeCalls()
+  const publicField = await capturedError(() => admission.confirmAfterEof(publicFieldPreflight, {
+    ...base,
+    postEofAuthority: Object.freeze({ eofObserved: true })
+  }))
+  t.is(publicField.code, 'SPEND_INVALID')
+  t.is(postEof.consumeCalls(), consumeCalls)
+
+  const unbrandedPreflight = await admission.preparePreflight(base)
+  const unbranded = await capturedError(() => admission.confirmAfterEof(unbrandedPreflight, {
+    ...base,
+    postEofAuthority: Object.freeze({})
+  }))
+  t.is(unbranded.code, 'SPEND_INVALID')
+  t.is(confirmations, 1)
+
+  const stalePreflight = await admission.preparePreflight(base)
+  await state.activate(successorBytes(snapshot, {
+    issuedEpoch: snapshot.descriptor.issuedEpoch,
+    expiresEpoch: snapshot.descriptor.expiresEpoch,
+    storeLifecycleState: STORE_LIFECYCLE_STATE.DRAINING,
+    drainStartedEpoch: snapshot.descriptor.issuedEpoch,
+    enabledOperationBits: 0x000129d7
+  }))
+  const stale = await capturedError(() => admission.confirmAfterEof(stalePreflight, {
+    ...base,
+    postEofAuthority: postEof.mint(base)
+  }))
+  t.is(stale.code, 'SPEND_INVALID')
+  t.is(confirmations, 1)
+})
+
+test('unwired admission preflight has explicit APIs, a hard PostEOF blocker, and abort fences', async t => {
+  t.is(ADMISSION_PREFLIGHT_SPLIT_STATUS.wired, false)
+  t.is(ADMISSION_PREFLIGHT_SPLIT_STATUS.productionReady, false)
+  t.is(ADMISSION_PREFLIGHT_SPLIT_STATUS.daemonPrivatePostEofBrandRequired, true)
+  t.is(ADMISSION_PREFLIGHT_SPLIT_STATUS.blocker, 'POST_EOF_AUTHORITY_RUNTIME_UNWIRED')
+
+  const pair = descriptorAndParameters()
+  const state = descriptorState()
+  const snapshot = await state.activate(pair.descriptor)
+  const input = admissionPreflightInput(pair, snapshot)
+  const postEof = postEofAuthorityHarness()
+  let resolutions = 0
+  const withoutConsumer = new AdmissionCoordinator({
+    descriptorState: state,
+    verifySignature: async () => true,
+    resolveAdapter: async () => { resolutions++; return null }
+  })
+  await withoutConsumer.installParameters(pair.parameters)
+  const blocked = await capturedError(() => withoutConsumer.preparePreflight(input))
+  t.is(blocked.code, 'SPEND_INVALID')
+  t.is(resolutions, 0)
+
+  let legacyPrepare = 0
+  const legacyOnly = new AdmissionCoordinator({
+    descriptorState: state,
+    verifySignature: async () => true,
+    resolveAdapter: async () => ({ async prepare () { legacyPrepare++ } }),
+    consumePostEofAuthority: postEof.consume
+  })
+  await legacyOnly.installParameters(pair.parameters)
+  const noFallback = await capturedError(() => legacyOnly.preparePreflight(input))
+  t.is(noFallback.code, 'SPEND_INVALID')
+  t.is(legacyPrepare, 0)
+
+  let incompletePreflights = 0
+  const incomplete = new AdmissionCoordinator({
+    descriptorState: state,
+    verifySignature: async () => true,
+    resolveAdapter: async () => ({
+      async preparePreflight () { incompletePreflights++; return Object.freeze({}) }
+    }),
+    consumePostEofAuthority: postEof.consume
+  })
+  await incomplete.installParameters(pair.parameters)
+  const noConfirmation = await capturedError(() => incomplete.preparePreflight(input))
+  t.is(noConfirmation.code, 'SPEND_INVALID')
+  t.is(incompletePreflights, 0)
+
+  let badCapabilityConfirmations = 0
+  const badCapability = new AdmissionCoordinator({
+    descriptorState: state,
+    verifySignature: async () => true,
+    resolveAdapter: async () => ({
+      async preparePreflight () {
+        return Object.freeze({ nested: { mutable: fixtureBytes(1, 1) } })
+      },
+      async confirmAfterEof () { badCapabilityConfirmations++ }
+    }),
+    consumePostEofAuthority: postEof.consume
+  })
+  await badCapability.installParameters(pair.parameters)
+  const publicAdapterCapability = await capturedError(() => badCapability.preparePreflight(input))
+  t.is(publicAdapterCapability.code, 'SPEND_INVALID')
+  t.is(badCapabilityConfirmations, 0)
+
+  const adapterAuthorities = new WeakSet()
+  let validPreflights = 0
+  let confirmations = 0
+  const abortable = new AdmissionCoordinator({
+    descriptorState: state,
+    verifySignature: async () => true,
+    resolveAdapter: async () => ({
+      async preparePreflight () {
+        validPreflights++
+        const authority = Object.freeze({})
+        adapterAuthorities.add(authority)
+        return authority
+      },
+      async confirmAfterEof (confirmed) {
+        confirmations++
+        if (!adapterAuthorities.has(confirmed.adapterPreflight)) throw new Error('unbranded adapter preflight')
+        adapterAuthorities.delete(confirmed.adapterPreflight)
+        return confirmedAdmission(confirmed)
+      }
+    }),
+    consumePostEofAuthority: postEof.consume
+  })
+  await abortable.installParameters(pair.parameters)
+  const preAborted = new AbortController()
+  preAborted.abort()
+  const abortedPreflight = await capturedError(() => abortable.preparePreflight({
+    ...input,
+    signal: preAborted.signal
+  }))
+  t.is(abortedPreflight.code, 'ABORT_ERR')
+  t.is(validPreflights, 0)
+
+  const authority = await abortable.preparePreflight(input)
+  const abortConfirmation = new AbortController()
+  abortConfirmation.abort()
+  const consumeCalls = postEof.consumeCalls()
+  const abortedConfirmation = await capturedError(() => abortable.confirmAfterEof(authority, {
+    ...input,
+    postEofAuthority: postEof.mint(input),
+    signal: abortConfirmation.signal
+  }))
+  t.is(abortedConfirmation.code, 'ABORT_ERR')
+  t.is(postEof.consumeCalls(), consumeCalls)
+  t.is(confirmations, 0)
+  const burned = await capturedError(() => abortable.confirmAfterEof(authority, {
+    ...input,
+    postEofAuthority: postEof.mint(input)
+  }))
+  t.is(burned.code, 'SPEND_INVALID')
 })
 
 function readinessHarness (options = {}) {
