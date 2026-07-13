@@ -107,7 +107,9 @@ async function runtimeFixture (options = {}) {
   const directory = await fs.realpath(temporary)
   await fs.chmod(directory, 0o700)
   const storeRoot = path.join(directory, 'store')
+  const privateIpcReplayRoot = path.join(directory, 'private-ipc-replay')
   await fs.mkdir(storeRoot, { mode: 0o700 })
+  await fs.mkdir(privateIpcReplayRoot, { mode: 0o700 })
 
   const relayPublicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
   const relaySecretKey = b4a.alloc(sodium.crypto_sign_SECRETKEYBYTES)
@@ -212,13 +214,14 @@ async function runtimeFixture (options = {}) {
     HIVERELAY_BLIND_ADMISSION_PARAMETER_FILES: parametersFile,
     HIVERELAY_BLIND_RELAY_SECRET_KEY_FILE: secretKeyFile,
     HIVERELAY_BLIND_STORE_ROOT: storeRoot,
+    HIVERELAY_BLIND_PRIVATE_IPC_REPLAY_ROOT: privateIpcReplayRoot,
     HIVERELAY_BLIND_PARTITION_KEY_FILE: partitionKeyFile,
     HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE: ownerFenceFile,
     HIVERELAY_BLIND_MAP_GENERATION: '1',
     HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_SEQUENCE: String(activeDescriptor.descriptorSequence),
     HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_HASH: b4a.toString(serviceDescriptorHash(canonicalDescriptor), 'hex')
   }
-  return { directory, environment }
+  return { directory, environment, privateIpcReplayRoot }
 }
 
 function childOutput (child) {
@@ -283,17 +286,68 @@ function splitAdmissionAdapter () {
   })
 }
 
-function durableReplayAuthority () {
-  return Object.freeze({
-    async reserve (input) {
-      return Object.freeze({
-        kind: 'reserved-new',
-        durablyCommitted: true,
-        replayTupleHash: b4a.from(input.replayTupleHash),
-        expiresMonotonicMillis: input.expiresMonotonicMillis
-      })
-    }
+async function rejectsCode (t, promise, code) {
+  let rejected = null
+  try {
+    await promise
+  } catch (error) {
+    rejected = error
+  }
+  t.is(rejected?.code, code)
+  return rejected
+}
+
+async function assembleProductionCellFixture (fixture, options = {}) {
+  const bootstrap = loadDaemonBootstrapConfig(fixture.environment)
+  const localPeerBootstrap = Object.freeze({ ...bootstrap, expectedPeerUid: process.getuid() })
+  const runtimeConfig = options.runtimeConfig ||
+    loadProductionRuntimeConfig(fixture.environment, bootstrap.endpointIds)
+  return assembleProductionBlindDaemon({
+    bootstrap: options.bootstrap || localPeerBootstrap,
+    runtimeConfig,
+    enableCellRuntime: true,
+    resolveAdmissionAdapter: async () => splitAdmissionAdapter(),
+    testOnlyPrivateIpcReplayJournalOptions: options.replayOptions,
+    onError: options.onError,
+    releaseGate: async () => {}
   })
+}
+
+async function assertCellReadRuntimeLive (t, runtime, fill) {
+  const now = process.hrtime.bigint() / 1_000_000n
+  const result = await runtime.coordinator.dispatch({
+    frameKind: FRAME_KIND.REQUEST,
+    familyId: FAMILY.CELL,
+    operationId: OPERATION.CELL.GET,
+    requestId: b4a.alloc(16, fill),
+    body: encodeCanonical(getCellV1, {
+      version: 1,
+      storageSlot: b4a.alloc(32, fill + 1),
+      clientNonce: b4a.alloc(32, fill + 2),
+      admission: null
+    })
+  }, {
+    endpointId: 1,
+    transportId: TRANSPORT_ID.HTTPS_DIRECT,
+    transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
+    outerClass: null,
+    acceptedMonotonicMillis: now,
+    absoluteDeadlineMonotonicMillis: now + 5000n
+  })
+  const frame = decodeDispatchFrame(result.dispatch, { copyBody: true })
+  const error = decodeCanonical(blindErrorV1, frame.body)
+  t.is(frame.frameKind, FRAME_KIND.ERROR)
+  t.is(error.code, ERROR_CODE.NOT_FOUND)
+}
+
+async function assertV2WriteMasked (t, runtime, fill) {
+  const readiness = await runtime.readiness.serverSnapshot({
+    edgeInstanceNonce: b4a.alloc(32, fill),
+    endpointId: 1,
+    transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP
+  })
+  t.is(readiness.readyOperationBits & 0x08, 0)
+  t.is(runtime.daemon.v2WriteDisabledReason, 'DURABLE_REPLAY_AUTHORITY_MISSING')
 }
 
 async function exchangeProductionV2Put (runtime, bootstrap, outer) {
@@ -354,8 +408,11 @@ async function exchangeProductionV2Put (runtime, bootstrap, outer) {
 test('production assembler derives signed readiness and exposes only its real surface', async t => {
   const fixture = await runtimeFixture()
   t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
-  const bootstrap = loadDaemonBootstrapConfig(fixture.environment)
-  const runtimeConfig = loadProductionRuntimeConfig(fixture.environment, bootstrap.endpointIds)
+  const environment = { ...fixture.environment }
+  delete environment.HIVERELAY_BLIND_PRIVATE_IPC_REPLAY_ROOT
+  const bootstrap = loadDaemonBootstrapConfig(environment)
+  const runtimeConfig = loadProductionRuntimeConfig(environment, bootstrap.endpointIds)
+  t.is(runtimeConfig.privateIpcReplayRoot, null)
   const runtime = await assembleProductionBlindDaemon({
     bootstrap,
     runtimeConfig,
@@ -476,7 +533,7 @@ test('legacy-only admission adapter cannot advertise or dispatch production V2 C
     'Cell durability profile identity is destroyed on close')
 })
 
-test('captured split adapter and durable replay authority execute one real production V2 CELL.PUT', async t => {
+test('captured split adapter and production-owned replay journal execute one real production V2 CELL.PUT', async t => {
   const fixture = await runtimeFixture({ cellRuntime: true, descriptorSequence: 1 })
   t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
   const bootstrap = loadDaemonBootstrapConfig(fixture.environment)
@@ -485,16 +542,23 @@ test('captured split adapter and durable replay authority execute one real produ
   const adapter = splitAdmissionAdapter()
   const daemonErrors = []
   let resolveCalls = 0
+  let replayOffset = -15_000n
   const runtime = await assembleProductionBlindDaemon({
     bootstrap: localPeerBootstrap,
     runtimeConfig,
     enableCellRuntime: true,
     resolveAdmissionAdapter: async () => { resolveCalls++; return adapter },
-    durableReplayAuthority: durableReplayAuthority(),
+    testOnlyPrivateIpcReplayJournalOptions: {
+      monotonicMillis: () => (process.hrtime.bigint() / 1_000_000n) + replayOffset
+    },
     onError: error => daemonErrors.push(error),
     releaseGate: async () => {}
   })
   t.teardown(() => runtime.close())
+  t.is(runtime.status().v2WritePathReady, false)
+  t.is(runtime.status().privateIpcReplayJournal.reason,
+    'PRIVATE_IPC_V2_REPLAY_JOURNAL_STARTUP_QUARANTINE')
+  replayOffset = 0n
   t.is(runtime.status().v2WritePathReady, true)
   t.is(resolveCalls, 1)
   t.alike(runtime.status().admissionCapture, { complete: true, required: 1, captured: 1 })
@@ -575,6 +639,177 @@ test('captured split adapter and durable replay authority execute one real produ
   t.alike((await runtime.storage.readCell(storageSlot)).cellBlob, cellBlob)
   t.is(runtime.storage.status().accounting.atomicStagingLeases, 0)
   t.is(resolveCalls, 1, 'the live PUT uses the assembly-captured adapter without dynamic re-resolution')
+  await runtime.close()
+})
+
+test('production replay journal restart quarantines writes, preserves tuples, and releases its writer lock on close', async t => {
+  const fixture = await runtimeFixture({ cellRuntime: true, descriptorSequence: 1 })
+  t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
+  let now = 10_000n
+  const replayOptions = { monotonicMillis: () => now }
+  let runtime = await assembleProductionCellFixture(fixture, { replayOptions })
+  t.teardown(async () => runtime && runtime.close())
+
+  t.is(runtime.status().v2WritePathReady, false)
+  now += 15_000n
+  t.is(runtime.status().v2WritePathReady, true)
+  const replayTupleHash = b4a.alloc(32, 0xa6)
+  await runtime.testOnlyDurableReplayAuthority.reserve({
+    replayTupleHash,
+    expiresMonotonicMillis: now + 15_000n
+  })
+  await runtime.close()
+
+  runtime = await assembleProductionCellFixture(fixture, { replayOptions })
+  let status = runtime.status()
+  t.is(status.v2WritePathReady, false)
+  t.is(status.privateIpcReplayJournal.occupied, 1)
+  t.is(status.privateIpcReplayJournal.reason,
+    'PRIVATE_IPC_V2_REPLAY_JOURNAL_STARTUP_QUARANTINE')
+  const readiness = await runtime.readiness.serverSnapshot({
+    edgeInstanceNonce: b4a.alloc(32, 0xa7),
+    endpointId: 1,
+    transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP
+  })
+  t.is(readiness.readyOperationBits & 0x08, 0,
+    'startup quarantine suppresses CELL.PUT from the production readiness proof')
+  await rejectsCode(t, runtime.testOnlyDurableReplayAuthority.reserve({
+    replayTupleHash,
+    expiresMonotonicMillis: now + 15_000n
+  }), 'PRIVATE_IPC_V2_REPLAY_JOURNAL_STARTUP_QUARANTINE')
+  await rejectsCode(t, runtime.testOnlyDurableReplayAuthority.reserve({
+    replayTupleHash: b4a.alloc(32, 0xa8),
+    expiresMonotonicMillis: now + 15_000n
+  }), 'PRIVATE_IPC_V2_REPLAY_JOURNAL_STARTUP_QUARANTINE')
+
+  now += 14_999n
+  t.is(runtime.status().v2WritePathReady, false)
+  now++
+  status = runtime.status()
+  t.is(status.v2WritePathReady, true)
+  t.is(status.privateIpcReplayJournal.occupied, 0)
+  await runtime.testOnlyDurableReplayAuthority.reserve({
+    replayTupleHash,
+    expiresMonotonicMillis: now + 15_000n
+  })
+  await runtime.close()
+
+  runtime = await assembleProductionCellFixture(fixture, { replayOptions })
+  t.is(runtime.status().privateIpcReplayJournal.state, 'OPEN',
+    'a clean close releases the exclusive replay writer lock and permits restart')
+  await runtime.close()
+  runtime = null
+})
+
+test('missing production replay root permits CELL reads but refuses V2 writes', async t => {
+  const fixture = await runtimeFixture({ cellRuntime: true, descriptorSequence: 1 })
+  t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
+  const environment = { ...fixture.environment }
+  delete environment.HIVERELAY_BLIND_PRIVATE_IPC_REPLAY_ROOT
+  const bootstrap = loadDaemonBootstrapConfig(environment)
+  const runtimeConfig = loadProductionRuntimeConfig(environment, bootstrap.endpointIds)
+  const errors = []
+  const runtime = await assembleProductionCellFixture(fixture, {
+    runtimeConfig,
+    onError: error => errors.push(error)
+  })
+  t.teardown(() => runtime.close())
+
+  t.is(errors[0]?.code, 'PRIVATE_IPC_V2_REPLAY_JOURNAL_ROOT_UNCONFIGURED')
+  t.is(runtime.status().privateIpcReplayJournal.reason,
+    'PRIVATE_IPC_V2_REPLAY_JOURNAL_ROOT_UNCONFIGURED')
+  t.is(runtime.status().privateIpcReplayJournal.recovery,
+    'OPERATOR_REPLAY_JOURNAL_REPAIR_OR_MIGRATION_AND_RESTART_REQUIRED')
+  t.is(runtime.status().v2WritePathAssembled, true)
+  t.is(runtime.status().v2WritePathReady, false)
+  await assertCellReadRuntimeLive(t, runtime, 0xac)
+  await assertV2WriteMasked(t, runtime, 0xad)
+})
+
+test('production replay journal lock and topology faults degrade only V2 writes while reads remain live', async t => {
+  const fixture = await runtimeFixture({ cellRuntime: true, descriptorSequence: 1 })
+  t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
+  const now = 40_000n
+  const replayOptions = { monotonicMillis: () => now }
+  let runtime = await assembleProductionCellFixture(fixture, { replayOptions })
+  t.teardown(async () => runtime && runtime.close())
+
+  const bootstrap = loadDaemonBootstrapConfig(fixture.environment)
+  const runtimeConfig = loadProductionRuntimeConfig(fixture.environment, bootstrap.endpointIds)
+  const competingStoreRoot = path.join(fixture.directory, 'competing-store')
+  await fs.mkdir(competingStoreRoot, { mode: 0o700 })
+  const competingErrors = []
+  let degraded = await assembleProductionCellFixture(fixture, {
+    runtimeConfig: Object.freeze({ ...runtimeConfig, storeRoot: competingStoreRoot }),
+    replayOptions,
+    onError: error => competingErrors.push(error)
+  })
+  t.is(competingErrors[0]?.code, 'PRIVATE_IPC_V2_REPLAY_JOURNAL_LOCKED')
+  t.is(degraded.status().privateIpcReplayJournal.reason,
+    'PRIVATE_IPC_V2_REPLAY_JOURNAL_LOCKED')
+  t.is(degraded.status().v2WritePathAssembled, true)
+  t.is(degraded.status().v2WritePathReady, false)
+  await assertCellReadRuntimeLive(t, degraded, 0xac)
+  await assertV2WriteMasked(t, degraded, 0xad)
+  await degraded.close()
+  t.is(runtime.status().privateIpcReplayJournal.state, 'OPEN')
+  await runtime.close()
+
+  const driftedBootstrap = Object.freeze({
+    ...bootstrap,
+    expectedPeerUid: process.getuid(),
+    launchTopologyHash: b4a.alloc(32, 0xa9)
+  })
+  const driftErrors = []
+  degraded = await assembleProductionCellFixture(fixture, {
+    bootstrap: driftedBootstrap,
+    replayOptions,
+    onError: error => driftErrors.push(error)
+  })
+  t.is(driftErrors[0]?.code, 'PRIVATE_IPC_V2_REPLAY_JOURNAL_IDENTITY_MISMATCH')
+  t.is(degraded.status().privateIpcReplayJournal.reason,
+    'PRIVATE_IPC_V2_REPLAY_JOURNAL_IDENTITY_MISMATCH')
+  t.is(degraded.status().privateIpcReplayJournal.recovery,
+    'OPERATOR_REPLAY_JOURNAL_REPAIR_OR_MIGRATION_AND_RESTART_REQUIRED')
+  t.is(degraded.status().v2WritePathReady, false)
+  await assertCellReadRuntimeLive(t, degraded, 0xaf)
+  await assertV2WriteMasked(t, degraded, 0xb0)
+  await degraded.close()
+  runtime = null
+})
+
+test('production replay journal poison masks only V2 writes', async t => {
+  const fixture = await runtimeFixture({ cellRuntime: true, descriptorSequence: 1 })
+  t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
+  let now = 70_000n
+  let injected = false
+  const runtime = await assembleProductionCellFixture(fixture, {
+    replayOptions: {
+      monotonicMillis: () => now,
+      faultInjector: async point => {
+        if (injected || point !== 'reserve:after-sync') return
+        injected = true
+        const error = new Error('injected production replay durability uncertainty')
+        error.code = 'INJECTED_PRODUCTION_REPLAY_POISON'
+        throw error
+      }
+    }
+  })
+  now += 15_000n
+  await rejectsCode(t, runtime.testOnlyDurableReplayAuthority.reserve({
+    replayTupleHash: b4a.alloc(32, 0xaa),
+    expiresMonotonicMillis: now + 100n
+  }), 'INJECTED_PRODUCTION_REPLAY_POISON')
+  const poisoned = runtime.status()
+  t.is(poisoned.privateIpcReplayJournal.state, 'POISONED')
+  t.is(poisoned.v2WritePathReady, false)
+  const poisonedReadiness = await runtime.readiness.serverSnapshot({
+    edgeInstanceNonce: b4a.alloc(32, 0xab),
+    endpointId: 1,
+    transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP
+  })
+  t.is(poisonedReadiness.readyOperationBits & 0x08, 0)
+  await assertCellReadRuntimeLive(t, runtime, 0xb2)
   await runtime.close()
 })
 

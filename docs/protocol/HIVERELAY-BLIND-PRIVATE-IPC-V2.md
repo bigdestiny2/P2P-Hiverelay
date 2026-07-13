@@ -421,9 +421,14 @@ node packages/blind-ipc/generate-private-ipc-v2.mjs
 node packages/blind-ipc/generate-private-ipc-v2.mjs --check
 ```
 
-These artifacts prove the contract and fixtures only. Public write readiness
-still requires the branded replay journal and startup quarantine, persisted
-sequence-1 descriptor floor, post-EOF `PUT_ATOMIC_COMMITTED` storage and crash
-recovery, reviewed edge/daemon integration, real local TLS exporter evidence,
-browser/client integration, independent assurance, and staged multi-relay
-evidence. Until those gates pass, the v2 authority does not authorize deployment.
+These artifacts prove the contract and fixtures only. The production assembler
+owns the branded replay journal and its mandatory startup quarantine, but the
+packaged production entrypoint remains DESCRIBE-only until a reviewed admission
+adapter/profile authority enables CELL explicitly. Public write readiness also
+requires the persisted sequence-1 descriptor floor, post-EOF
+`PUT_ATOMIC_COMMITTED` storage and crash recovery, reviewed edge/daemon
+integration, real local TLS exporter evidence, browser/client integration,
+independent assurance, and staged multi-relay evidence. The quarantine plus
+recovered-live retention is the complete restart fence; no separate durable boot
+generation is required. Until the remaining gates pass, the v2 authority does
+not authorize deployment.

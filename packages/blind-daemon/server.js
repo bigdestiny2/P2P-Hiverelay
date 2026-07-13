@@ -1046,7 +1046,8 @@ export class BlindDaemon {
     })), signal)
     const now = currentMonotonic(this.now)
     if (!raw || typeof raw !== 'object' || raw.selfVerified !== true ||
-        raw.cellRuntimeReady !== true || raw.storageReady !== true || raw.admissionReady !== true) {
+        raw.cellRuntimeReady !== true || raw.storageReady !== true || raw.admissionReady !== true ||
+        raw.replayJournalReady !== true) {
       throw Object.assign(new Error('V2 write-readiness projection is not a complete live assembly proof'), {
         code: 'BLIND_STREAM_UNAVAILABLE'
       })

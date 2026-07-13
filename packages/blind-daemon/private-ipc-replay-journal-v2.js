@@ -75,15 +75,22 @@ export const PRIVATE_IPC_REPLAY_JOURNAL_V2_INTEGRATION_STATUS = Object.freeze({
   durableReplayImplemented: true,
   startupQuarantineRequired: true,
   restartPolicy: 'MANDATORY_FULL_HORIZON_STARTUP_QUARANTINE',
+  externalBootGenerationFenceRequired: false,
   externalBootGenerationFenceImplemented: false,
   onDiskGenerationPurpose: 'COMPACTION_CHAIN_GENERATION_ONLY',
   acceptedRecordMaximumTtlMillis: PRIVATE_IPC_V2_REPLAY_POLICY.acceptedRecordMaximumTtlMillis,
   recoveredEntryMinimumRetentionMillis: PRIVATE_IPC_V2_REPLAY_POLICY.recoveredEntryMinimumRetentionMillis,
   startupWriteQuarantineMillis: PRIVATE_IPC_V2_REPLAY_POLICY.startupWriteQuarantineMillis,
-  serverWired: false,
+  serverWired: true,
+  assemblerWired: true,
   productionRuntimeWired: false,
+  productionEntrypointWired: false,
   releaseReady: false,
-  blocker: 'PRIVATE_IPC_REPLAY_JOURNAL_V2_UNWIRED'
+  blocker: 'PRODUCTION_ENTRYPOINT_CELL_ADMISSION_ASSEMBLY_UNWIRED',
+  blockers: Object.freeze([
+    'PRODUCTION_ENTRYPOINT_CELL_ADMISSION_ASSEMBLY_UNWIRED',
+    'PRIVATE_IPC_V2_AGGREGATE_DEPLOYMENT_GATES_UNSATISFIED'
+  ])
 })
 
 export class PrivateIpcReplayJournalV2Error extends Error {
@@ -987,18 +994,28 @@ export function privateIpcReplayJournalV2Status (authority) {
     } catch {}
   }
   const quarantined = state.phase === STATE.OPEN && now < state.quarantineUntilMonotonicMillis
+  let occupied = state.entries.size
+  if (state.phase === STATE.OPEN) {
+    occupied = 0
+    for (const entry of state.entries.values()) {
+      if (entry.expiresMonotonicMillis > now) occupied++
+    }
+  }
+  const atCapacity = occupied >= CAPACITY
   return Object.freeze({
     state: state.phase,
-    ready: state.phase === STATE.OPEN && !quarantined,
+    ready: state.phase === STATE.OPEN && !quarantined && !atCapacity,
     reason: state.phase === STATE.POISONED
       ? state.poisonReason
       : quarantined
         ? 'PRIVATE_IPC_V2_REPLAY_JOURNAL_STARTUP_QUARANTINE'
-        : state.phase === STATE.OPEN
-          ? null
-          : `PRIVATE_IPC_V2_REPLAY_JOURNAL_${state.phase}`,
+        : atCapacity
+          ? 'PRIVATE_IPC_V2_REPLAY_JOURNAL_CAPACITY'
+          : state.phase === STATE.OPEN
+            ? null
+            : `PRIVATE_IPC_V2_REPLAY_JOURNAL_${state.phase}`,
     capacity: CAPACITY,
-    occupied: state.entries.size,
+    occupied,
     recordCount: state.recordCount,
     generation: state.generation,
     acceptedRecordMaximumTtlMillis: PRIVATE_IPC_V2_REPLAY_POLICY.acceptedRecordMaximumTtlMillis,
@@ -1183,6 +1200,35 @@ export function consumePrivateIpcReplayReservationV2 (authority, receipt, expect
       'PRIVATE_IPC_V2_REPLAY_RESERVATION_INVALID')
   }
   return true
+}
+
+export function createPrivateIpcReplayReservationAuthorityV2 (authority) {
+  stateFor(authority)
+  return Object.freeze({
+    async reserve (input) {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        throw new TypeError('durable replay reservation input is required')
+      }
+      const replayTupleHash = ownedBytes(input.replayTupleHash, 32, 'replayTupleHash')
+      const expiresMonotonicMillis = asU64(input.expiresMonotonicMillis,
+        'expiresMonotonicMillis')
+      const receipt = await reservePrivateIpcReplayTupleV2(authority, {
+        replayTupleHash,
+        expiresMonotonicMillis,
+        signal: input.signal
+      })
+      consumePrivateIpcReplayReservationV2(authority, receipt, {
+        replayTupleHash,
+        expiresMonotonicMillis
+      })
+      return Object.freeze({
+        kind: 'reserved-new',
+        durablyCommitted: true,
+        replayTupleHash,
+        expiresMonotonicMillis
+      })
+    }
+  })
 }
 
 export function closePrivateIpcReplayJournalV2 (authority) {

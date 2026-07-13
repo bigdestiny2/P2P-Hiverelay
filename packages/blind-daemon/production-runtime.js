@@ -40,6 +40,12 @@ import { ResourceBudget } from './resource-budget.js'
 import { BlindDaemon } from './server.js'
 import { createDaemonPrivatePostEofAuthorityIssuer } from './post-eof-authority.js'
 import {
+  closePrivateIpcReplayJournalV2,
+  createPrivateIpcReplayReservationAuthorityV2,
+  openPrivateIpcReplayJournalV2,
+  privateIpcReplayJournalV2Status
+} from './private-ipc-replay-journal-v2.js'
+import {
   BLIND_CELL_STORAGE_PRODUCTION_BLOCKERS,
   BlindCellStorageEngine
 } from './storage-engine.js'
@@ -111,6 +117,11 @@ function canonicalAbsolutePath (value, field) {
 
 function requiredPath (environment, name) {
   return canonicalAbsolutePath(environment[name], name)
+}
+
+function optionalPath (environment, name) {
+  const value = environment[name]
+  return value == null || value === '' ? null : canonicalAbsolutePath(value, name)
 }
 
 function requiredPathList (environment, name, maximum) {
@@ -200,6 +211,7 @@ export function loadProductionRuntimeConfig (environment = process.env, endpoint
     admissionParameterFiles: requiredPathList(environment, 'HIVERELAY_BLIND_ADMISSION_PARAMETER_FILES', 64),
     relaySecretKeyFile: requiredPath(environment, 'HIVERELAY_BLIND_RELAY_SECRET_KEY_FILE'),
     storeRoot: requiredPath(environment, 'HIVERELAY_BLIND_STORE_ROOT'),
+    privateIpcReplayRoot: optionalPath(environment, 'HIVERELAY_BLIND_PRIVATE_IPC_REPLAY_ROOT'),
     partitionKeyFile: requiredPath(environment, 'HIVERELAY_BLIND_PARTITION_KEY_FILE'),
     ownerFenceTokenHashFile: requiredPath(environment, 'HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE'),
     mapGeneration: canonicalU64(environment, 'HIVERELAY_BLIND_MAP_GENERATION'),
@@ -652,6 +664,21 @@ export async function assembleProductionBlindDaemon (options = {}) {
     throw new TypeError('validated daemon bootstrap configuration is required')
   }
   const releaseGate = options.releaseGate || assertProductionRuntimeReleaseReady
+  const testOnlyReplayJournalOptions = options.testOnlyPrivateIpcReplayJournalOptions
+  if (testOnlyReplayJournalOptions != null) {
+    if (releaseGate === assertProductionRuntimeReleaseReady ||
+        !testOnlyReplayJournalOptions || typeof testOnlyReplayJournalOptions !== 'object' ||
+        Array.isArray(testOnlyReplayJournalOptions)) {
+      runtimeFailure('BLIND_RUNTIME_TEST_SEAM_FORBIDDEN',
+        'private IPC replay journal overrides are available only behind an explicit non-production release gate')
+    }
+    const unknown = Object.keys(testOnlyReplayJournalOptions).find(key =>
+      !['monotonicMillis', 'faultInjector', 'compactionRecordLimit'].includes(key))
+    if (unknown) {
+      runtimeFailure('BLIND_RUNTIME_TEST_SEAM_FORBIDDEN',
+        `unknown private IPC replay journal test override ${unknown}`)
+    }
+  }
   await releaseGate()
   const cellRuntimeEnabled = options.enableCellRuntime === true
   if (cellRuntimeEnabled && typeof options.resolveAdmissionAdapter !== 'function') {
@@ -662,6 +689,9 @@ export async function assembleProductionBlindDaemon (options = {}) {
   let secretKey
   let signer
   let storage
+  let privateIpcReplayJournal
+  let privateIpcReplayFailure = null
+  let durableReplayAuthority
   let readiness
   let daemon
   let runtime
@@ -749,14 +779,58 @@ export async function assembleProductionBlindDaemon (options = {}) {
         storeFormatAuthority
       })
       await storage.open()
+      if (cellRuntimeEnabled) {
+        try {
+          if (config.privateIpcReplayRoot == null) {
+            runtimeFailure('PRIVATE_IPC_V2_REPLAY_JOURNAL_ROOT_UNCONFIGURED',
+              'private IPC replay journal root is not configured')
+          }
+          if (config.privateIpcReplayRoot === config.storeRoot ||
+              config.privateIpcReplayRoot.startsWith(`${config.storeRoot}${path.sep}`) ||
+              config.storeRoot.startsWith(`${config.privateIpcReplayRoot}${path.sep}`)) {
+            runtimeFailure('PRIVATE_IPC_V2_REPLAY_JOURNAL_ROOT_OVERLAP',
+              'private IPC replay journal and blind store roots must be disjoint')
+          }
+          privateIpcReplayJournal = await openPrivateIpcReplayJournalV2({
+            root: config.privateIpcReplayRoot,
+            partitionKey,
+            launchTopologyHash: bootstrap.launchTopologyHash,
+            relayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
+            storeId: descriptorSnapshot.descriptor.storeId,
+            durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
+            durabilityProfileHash: descriptorSnapshot.descriptor.durabilityProfileHash,
+            storeFormatHash: descriptorSnapshot.descriptor.durability.storeFormatHash,
+            mapGeneration: config.mapGeneration,
+            ownerFenceTokenHash,
+            ...(testOnlyReplayJournalOptions || {})
+          })
+          durableReplayAuthority = createPrivateIpcReplayReservationAuthorityV2(
+            privateIpcReplayJournal)
+        } catch (error) {
+          privateIpcReplayFailure = Object.freeze({
+            state: 'UNAVAILABLE',
+            ready: false,
+            reason: typeof error?.code === 'string'
+              ? error.code
+              : 'PRIVATE_IPC_V2_REPLAY_JOURNAL_OPEN_FAILED',
+            recovery: 'OPERATOR_REPLAY_JOURNAL_REPAIR_OR_MIGRATION_AND_RESTART_REQUIRED'
+          })
+          if (typeof options.onError === 'function') {
+            try {
+              options.onError(error)
+            } catch {}
+          }
+        }
+      }
     } finally {
       partitionKey.fill(0)
       if (ownerFenceTokenHash) ownerFenceTokenHash.fill(0)
     }
 
-    const durableReplayReady = Boolean(options.durableReplayAuthority &&
-      typeof options.durableReplayAuthority.reserve === 'function')
-    const v2WritePathReady = cellRuntimeEnabled && admissionCapture.complete && durableReplayReady
+    const durableReplayReady = Boolean(durableReplayAuthority &&
+      typeof durableReplayAuthority.reserve === 'function')
+    const v2WritePathAssembled = cellRuntimeEnabled && admissionCapture.complete
+    const v2WritePathReady = v2WritePathAssembled && durableReplayReady
     const enabledOperationBits = cellRuntimeEnabled
       ? v2WritePathReady
         ? DESCRIBE_AND_CELL_OPERATION_BITS
@@ -772,7 +846,9 @@ export async function assembleProductionBlindDaemon (options = {}) {
         const current = descriptorState.state().snapshot
         return v2WritePathReady && current &&
           current.descriptorSequence === descriptorSnapshot.descriptorSequence &&
-          b4a.equals(current.hash, descriptorSnapshot.hash)
+          b4a.equals(current.hash, descriptorSnapshot.hash) &&
+          privateIpcReplayJournal != null &&
+          privateIpcReplayJournalV2Status(privateIpcReplayJournal).ready
       }),
       signer
     })
@@ -823,16 +899,16 @@ export async function assembleProductionBlindDaemon (options = {}) {
       contextAuthority(descriptorSnapshot, supportByEndpoint, context)
       return coordinator.dispatch(frame, context)
     }
-    const dispatchStagedPut = v2WritePathReady
+    const dispatchStagedPut = v2WritePathAssembled
       ? (staged, context) => {
           contextAuthority(descriptorSnapshot, supportByEndpoint, context)
           return coordinator.dispatchStagedCellPut(staged, context)
         }
       : null
-    const streamTransportProfileHashForEndpoint = v2WritePathReady
+    const streamTransportProfileHashForEndpoint = v2WritePathAssembled
       ? input => b4a.from(contextAuthority(descriptorSnapshot, supportByEndpoint, input).transportProfileHash)
       : null
-    const writeReadinessProjection = v2WritePathReady
+    const writeReadinessProjection = v2WritePathAssembled
       ? async input => {
         const supportBit = supportByEndpoint.get(input.endpointId)
         if (!supportBit || supportBit !== TRANSPORT_SUPPORT.DIRECT_HTTP ||
@@ -846,6 +922,9 @@ export async function assembleProductionBlindDaemon (options = {}) {
           signal: input.signal
         })
         const storageStatus = storage.status()
+        const replayStatus = privateIpcReplayJournal == null
+          ? privateIpcReplayFailure
+          : privateIpcReplayJournalV2Status(privateIpcReplayJournal)
         const current = descriptorState.state().snapshot
         const captureCurrent = current &&
             current.descriptorSequence === descriptorSnapshot.descriptorSequence &&
@@ -857,6 +936,8 @@ export async function assembleProductionBlindDaemon (options = {}) {
               (state.readyOperationBits & CELL_PUT_OPERATION_BIT_V2) !== 0,
           storageReady: storageStatus.state === 'READY',
           admissionReady: captureCurrent && admissionCapture.complete,
+          replayJournalReady: replayStatus?.ready === true &&
+            replayStatus.occupied < replayStatus.capacity,
           endpointId: input.endpointId,
           launchTopologyHash: b4a.from(bootstrap.launchTopologyHash),
           transportProfileHash: b4a.from(input.transportProfileHash),
@@ -884,7 +965,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
       postEofAuthorityIssuer,
       stagedPutRelayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
       streamTransportProfileHashForEndpoint,
-      durableReplayAuthority: options.durableReplayAuthority,
+      durableReplayAuthority,
       writeReadinessProjection,
       readinessSnapshot,
       releaseGate: async () => {},
@@ -913,6 +994,9 @@ export async function assembleProductionBlindDaemon (options = {}) {
       coordinator,
       cellAdapter,
       storage,
+      ...(testOnlyReplayJournalOptions == null
+        ? {}
+        : { testOnlyDurableReplayAuthority: durableReplayAuthority }),
       daemon,
       exclusions: runtimeExclusions,
       async start () {
@@ -935,6 +1019,13 @@ export async function assembleProductionBlindDaemon (options = {}) {
             failure = error
           }
           try {
+            if (privateIpcReplayJournal) {
+              await closePrivateIpcReplayJournalV2(privateIpcReplayJournal)
+            }
+          } catch (error) {
+            failure = failure || error
+          }
+          try {
             await storage.close()
           } catch (error) {
             failure = failure || error
@@ -946,13 +1037,20 @@ export async function assembleProductionBlindDaemon (options = {}) {
         return closePromise
       },
       status () {
+        const replayStatus = privateIpcReplayJournal == null
+          ? privateIpcReplayFailure
+          : privateIpcReplayJournalV2Status(privateIpcReplayJournal)
         return Object.freeze({
           started,
           closed,
           descriptorSequence: descriptorSnapshot.descriptorSequence,
           descriptorHash: b4a.from(descriptorSnapshot.hash),
-          enabledOperationBits,
-          v2WritePathReady,
+          enabledOperationBits: replayStatus == null || replayStatus.ready
+            ? enabledOperationBits
+            : enabledOperationBits & ~CELL_PUT_OPERATION_BIT_V2,
+          v2WritePathReady: v2WritePathReady && replayStatus != null && replayStatus.ready,
+          v2WritePathAssembled,
+          privateIpcReplayJournal: replayStatus,
           admissionCapture: Object.freeze({
             complete: admissionCapture.complete,
             required: admissionCapture.required,
@@ -968,6 +1066,9 @@ export async function assembleProductionBlindDaemon (options = {}) {
   } catch (error) {
     if (readiness) readiness.close()
     if (daemon) await daemon.close().catch(() => {})
+    if (privateIpcReplayJournal) {
+      await closePrivateIpcReplayJournalV2(privateIpcReplayJournal).catch(() => {})
+    }
     if (storage) await storage.close().catch(() => {})
     if (signer) signer.close()
     else if (secretKey) secretKey.fill(0)

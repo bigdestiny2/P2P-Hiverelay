@@ -162,6 +162,7 @@ function defaultProjection (input, overrides = {}) {
     cellRuntimeReady: true,
     storageReady: true,
     admissionReady: true,
+    replayJournalReady: true,
     endpointId: ENDPOINT_ID,
     launchTopologyHash: TOPOLOGY_HASH,
     transportProfileHash: PROFILE_HASH,
