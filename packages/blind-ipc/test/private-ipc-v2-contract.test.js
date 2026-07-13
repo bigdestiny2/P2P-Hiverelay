@@ -6,9 +6,13 @@ import { fileURLToPath } from 'node:url'
 import b4a from 'b4a'
 import test from 'brittle'
 import {
+  blindErrorV1,
+  blindReceiptV1,
   blake2b256,
+  decodeCanonical,
   decodeVectorManifest,
-  hashAbi
+  hashAbi,
+  putCellV1
 } from '@hiverelay/blind-protocol'
 import {
   PRIVATE_IPC_SCHEMAS,
@@ -97,7 +101,7 @@ test('private IPC v2 registry and vectors are deterministic while V1 stays byte-
   t.is(capture(t, () => contract.decodePrivateIpcV2Registry(v1Registry), 'V2 decoder rejects V1').code, 'PRIVATE_IPC_V2_NO_FALLBACK')
 })
 
-test('private IPC v2 codecs freeze exact lengths and opaque edge-attested authority', async t => {
+test('private IPC v2 codecs freeze exact lengths and expose only non-authoritative binding validation', async t => {
   const bindingBytes = await artifact('vectors/v2/accepted/transport-binding-tls.bin')
   const openBytes = await artifact('vectors/v2/accepted/staged-cell-put-open-class-3.bin')
   const requestFrame = await artifact('vectors/v2/accepted/request-frame-0-max.bin')
@@ -152,23 +156,40 @@ test('private IPC v2 codecs freeze exact lengths and opaque edge-attested author
   t.exception(() => contract.readLocalStagedCellPutFrameLengthV2(
     mutate(requestFrame.subarray(0, 20), value => { b4a.writeUInt32BE(value, 1, 16) })), 'frame reader rejects body contradiction')
 
-  t.is(capture(t, () => contract.verifyLocalStagedCellPutOpenBindingV2(open, {
-    peerCredentialAuthenticated: false,
-    launchTopologyHash: fixed(32, 0xa1),
-    transportProfileHash: fixed(32, 0xa4)
-  }), 'raw open is not authority').code, 'PRIVATE_IPC_V2_PEERCRED_REQUIRED')
-  const handle = contract.verifyLocalStagedCellPutOpenBindingV2(open, {
-    peerCredentialAuthenticated: true,
+  const validation = contract.validateLocalStagedCellPutOpenBindingV2(open, {
     launchTopologyHash: fixed(32, 0xa1),
     transportProfileHash: fixed(32, 0xa4)
   })
-  t.alike(Object.keys(handle), [], 'verified authority handle is opaque')
-  const authority = contract.localStagedCellPutAuthorityV2(handle)
-  t.is(authority.authority, 'peercred-authenticated-edge-attestation')
-  t.is(authority.endpointId, 7)
-  t.ok(b4a.equals(authority.replayTupleHash, contract.replayTupleHashV2(binding)))
-  t.is(capture(t, () => contract.localStagedCellPutAuthorityV2(open), 'decoded bytes are not authority').code, 'PRIVATE_IPC_V2_AUTHORITY_REQUIRED')
+  t.is(Object.isFrozen(validation), true)
+  t.is(validation.validationKind, 'NON_AUTHORITATIVE_BINDING_VALIDATION_V2')
+  t.is(validation.authorityGranted, false)
+  t.is(validation.peerCredentialsObserved, false)
+  t.is(validation.endpointId, 7)
+  t.ok(b4a.equals(validation.replayTupleHash, contract.replayTupleHashV2(binding)))
+  const validationProfileByte = validation.transportProfileHash[0]
+  open.context.transportProfileHash[0] ^= 1
+  t.is(validation.transportProfileHash[0], validationProfileByte, 'validation record snapshots caller bytes')
+  open.context.transportProfileHash[0] ^= 1
+  t.exception(() => contract.validateLocalStagedCellPutOpenBindingV2(open, {
+    launchTopologyHash: fixed(32, 0xa1),
+    transportProfileHash: fixed(32, 0xff)
+  }), 'profile mismatch rejects without minting authority')
+  t.exception(() => contract.validateLocalStagedCellPutOpenBindingV2(open, {
+    launchTopologyHash: fixed(32, 0xa1),
+    transportProfileHash: fixed(32, 0xa4),
+    peerCredentialAuthenticated: true
+  }), 'caller peer-credential assertions are rejected as unknown options')
   t.alike(Object.keys(contract).filter(name => /(?:raw|random|test).*authority/i.test(name)), [], 'no raw/random/test authority constructor is exported')
+  t.alike(Object.entries(contract)
+    .filter(([name, value]) => typeof value === 'function' && /(?:peercred|authority)/i.test(name))
+    .map(([name]) => name), [], 'contract exports no peercred/runtime-authority function')
+  const source = await fs.readFile(path.join(packageRoot, 'private-ipc-v2-contract.js'), 'utf8')
+  for (const forbidden of [
+    'peerCredentialAuthenticated',
+    'VERIFIED_STAGED_OPEN_AUTHORITIES',
+    'verifyLocalStagedCellPutOpenBindingV2',
+    'localStagedCellPutAuthorityV2'
+  ]) t.is(source.includes(forbidden), false, `source omits ${forbidden}`)
 })
 
 test('private IPC v2 negative fixture expectations reject exact enum, bit, length and downgrade errors', async t => {
@@ -217,6 +238,14 @@ test('private IPC v2 fragmented exchange is split/coalesce safe and state sequen
   t.is(complete.resultBytes, contract.OUTER_CLASS[3])
   t.is(complete.requestFinished, true)
   t.is(complete.resultFinished, true)
+  t.ok(b4a.equals(
+    b4a.concat(decoded.frames.slice(0, 2).map(frame => frame.bytes)),
+    await artifact('vectors/v2/accepted/public-request-outer-envelope-class-3.bin')
+  ), 'staged request frames reconstruct the exact canonical public request envelope')
+  t.ok(b4a.equals(
+    b4a.concat(decoded.frames.slice(2).map(frame => frame.bytes)),
+    await artifact('vectors/v2/accepted/public-result-outer-envelope-class-3.bin')
+  ), 'staged result frames reconstruct the exact canonical public result envelope')
 
   const scenario = JSON.parse(await fs.readFile(path.join(vectorRoot, 'conformance/framing-split-coalesce.json'), 'utf8'))
   let pending = b4a.alloc(0)
@@ -269,13 +298,29 @@ test('private IPC v2 readiness is a write-specific descriptor-bound fail-closed 
     enabledOperationBits: contract.CELL_PUT_OPERATION_BIT_V2,
     expiresMonotonicMillis: 2_001_800n
   }
+  t.alike(contract.localReadyDecisionV2(probe, ack, descriptor, 2_000_000n), { ready: true, reasons: [] })
+  t.ok(contract.localReadyDecisionV2(probe, ack, descriptor, 1_999_999n).reasons.includes('not-yet-valid'))
   t.alike(contract.localReadyDecisionV2(probe, ack, descriptor, 2_001_000n), { ready: true, reasons: [] })
   t.ok(contract.localReadyDecisionV2(probe, ack, { ...descriptor, sequence: 10n }, 2_001_000n).reasons.includes('descriptor-freshness-mismatch'))
   t.ok(contract.localReadyDecisionV2(probe, ack, { ...descriptor, hash: fixed(32, 0xd2) }, 2_001_000n).reasons.includes('descriptor-freshness-mismatch'))
   t.ok(contract.localReadyDecisionV2(probe, ack, { ...descriptor, roleBits: 0 }, 2_001_000n).reasons.includes('descriptor-role-subset-mismatch'))
   t.ok(contract.localReadyDecisionV2(probe, ack, { ...descriptor, enabledOperationBits: 0 }, 2_001_000n).reasons.includes('descriptor-operation-subset-mismatch'))
-  t.ok(contract.localReadyDecisionV2(probe, ack, { ...descriptor, expiresMonotonicMillis: 2_001_000n }, 2_001_000n).reasons.includes('descriptor-expiry-mismatch'))
-  t.ok(contract.localReadyDecisionV2(probe, ack, descriptor, 2_002_001n).reasons.includes('expired'))
+  const descriptorExpiry = contract.localReadyDecisionV2(
+    probe, ack, { ...descriptor, expiresMonotonicMillis: 2_001_000n }, 2_001_000n)
+  t.ok(descriptorExpiry.reasons.includes('descriptor-expiry-mismatch'))
+  t.ok(descriptorExpiry.reasons.includes('descriptor-expired'))
+  t.alike(contract.localReadyDecisionV2(probe, ack, descriptor, 2_001_499n), { ready: true, reasons: [] })
+  t.ok(contract.localReadyDecisionV2(probe, ack, descriptor, 2_001_500n).reasons.includes('expired'))
+  t.ok(contract.localReadyDecisionV2(probe, ack, descriptor, 2_002_000n).reasons.includes('expired'))
+  t.ok(contract.localReadyDecisionV2(probe, ack, descriptor, 2_001_800n).reasons.includes('descriptor-expired'))
+
+  const boundaries = JSON.parse(await fs.readFile(
+    path.join(vectorRoot, 'conformance/readiness-expiry-boundaries.json'), 'utf8'))
+  t.is(boundaries.acceptedAtProbeStart.ready, true)
+  t.ok(boundaries.rejectedBeforeProbeStart.reasons.includes('not-yet-valid'))
+  t.ok(boundaries.rejectedAtAckExpiry.reasons.includes('expired'))
+  t.ok(boundaries.rejectedAtProbeDeadline.reasons.includes('expired'))
+  t.ok(boundaries.rejectedAtDescriptorExpiry.reasons.includes('descriptor-expired'))
 
   const extraReadyOperationAck = contract.decodeLocalReadyAckV2(contract.encodeLocalReadyAckV2({
     ...ack,
@@ -293,14 +338,25 @@ test('private IPC v2 freezes transport/class/replay mapping and precommit result
   const open = await artifact('vectors/v2/accepted/staged-cell-put-open-class-3.bin')
   const publicRequest = await artifact('vectors/v2/accepted/public-request-outer-envelope-class-3.bin')
   const publicResult = await artifact('vectors/v2/accepted/public-result-outer-envelope-class-3.bin')
+  const publicError = await artifact('vectors/v2/accepted/public-error-outer-envelope-class-3.bin')
   const requestId = fixed(16, 0xe1)
   const request = contract.verifyStagedCellPutPublicOuterEnvelopeV2(
     publicRequest, open, contract.LOCAL_STAGED_DIRECTION_V2.REQUEST)
   const result = contract.verifyStagedCellPutPublicOuterEnvelopeV2(
     publicResult, open, contract.LOCAL_STAGED_DIRECTION_V2.RESULT, requestId)
+  const error = contract.verifyStagedCellPutPublicOuterEnvelopeV2(
+    publicError, open, contract.LOCAL_STAGED_DIRECTION_V2.RESULT, requestId)
+  t.is(request.bodySchemaName, 'PutCellV1')
+  t.is(result.bodySchemaName, 'BlindReceiptV1')
+  t.is(error.bodySchemaName, 'BlindErrorV1')
+  t.is(decodeCanonical(putCellV1, request.frame.body).version, 1)
+  t.is(decodeCanonical(blindReceiptV1, result.frame.body).result, 1)
+  t.is(decodeCanonical(blindErrorV1, error.frame.body).code, 17)
   t.is(request.frame.frameKind, contract.PRIVATE_IPC_V2_CONTRACT.publicWireOperation.requestFrameKind)
   t.ok(contract.PRIVATE_IPC_V2_CONTRACT.publicWireOperation.resultFrameKinds.includes(result.frame.frameKind))
+  t.ok(contract.PRIVATE_IPC_V2_CONTRACT.publicWireOperation.resultFrameKinds.includes(error.frame.frameKind))
   t.ok(b4a.equals(request.frame.requestId, result.frame.requestId), 'result requestId is correlated')
+  t.ok(b4a.equals(request.frame.requestId, error.frame.requestId), 'error requestId is correlated')
 
   for (let outerClass = 1; outerClass <= 6; outerClass++) {
     t.is(contract.localIpcChannelClassForOuterClassV2(outerClass), contract.LOCAL_IPC_CHANNEL_CLASS_V2.LOCAL_64K)
@@ -321,7 +377,7 @@ test('private IPC v2 freezes transport/class/replay mapping and precommit result
   }
   t.is(contract.PRIVATE_IPC_V2_CONTRACT.httpsTransport.authorityKind,
     contract.LOCAL_TRANSPORT_AUTHORITY_KIND_V2.TLS_EXPORTER_BY_PEERCRED_EDGE)
-  t.is(contract.PRIVATE_IPC_V2_TRANSPORT_AUTHORITY[contract.TRANSPORT_ID.DIRECT_PROTOMUX_NOISE].authorityKind,
+  t.is(contract.PRIVATE_IPC_V2_TRANSPORT_BINDING_RULES[contract.TRANSPORT_ID.DIRECT_PROTOMUX_NOISE].authorityKind,
     contract.LOCAL_TRANSPORT_AUTHORITY_KIND_V2.NOISE_TRANSCRIPT_BY_PEERCRED_EDGE)
   t.is(contract.PRIVATE_IPC_V2_CONTRACT.v1FallbackPermitted, false)
 })

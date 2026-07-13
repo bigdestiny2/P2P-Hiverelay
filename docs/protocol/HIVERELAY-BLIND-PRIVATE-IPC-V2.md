@@ -148,6 +148,10 @@ The result is one same-class public outer envelope containing the correlated
 request ID and either `frameKind=RESPONSE` or `frameKind=ERROR`, exact
 `CELL.PUT`, zero flags, zero stream ID, and zero sequence. Any other kind, family,
 operation, class, correlation, flag, stream, or sequence is rejected.
+`RESPONSE` carries exactly one canonical closed-schema `BlindReceiptV1` body;
+`ERROR` carries exactly one canonical closed-schema `BlindErrorV1` body. A body
+that fails its mapped codec, has trailing bytes, or does not re-encode byte for
+byte is rejected as a private-IPC contract error before commit-capable work.
 
 The staged exchange is not successful merely because its request bytes reached
 the daemon. Success becomes committable only after the daemon has authenticated
@@ -174,9 +178,13 @@ TLSSocket.exportKeyingMaterial(
 
 No random bytes, request nonce, caller-provided hash, raw test value, or
 self-minted substitute may stand in for this exporter. Production code exposes
-no raw/random/test authority constructor. A successful peercred-first
-verification returns an opaque branded handle; decoded context or open bytes are
-never authority.
+no raw/random/test authority constructor. The pure v2 contract validates only
+the canonical open and transport-binding relationship. It does not observe peer
+credentials, accept a caller boolean claiming that they were observed, or mint
+runtime authority. The daemon runtime must first obtain the native socket peer
+credentials itself, then combine that observation with the non-authoritative
+binding validation and mint its own process-private authority handle. Decoded
+context, open bytes, or the validation record are never authority.
 
 The context hash is BLAKE2b-256 over the exact ASCII domain
 `hiverelay.blind.tls-exporter-context.v2`, the launch-topology hash, canonical
@@ -193,9 +201,11 @@ under `hiverelay.blind.local-staged-replay-tuple.v2`. The daemon atomically
 consumes it before request-body allocation, reassembly, admission, publish, WAL,
 spend, or signing. Replay, collision, or expiry is terminal.
 
-Verification order is peer credentials, exact shape, transport profile,
-topology, endpoint, deadline, replay consumption, and open binding. Only the
-resulting opaque handle may enter outer-envelope decode.
+Runtime verification order is native peer-credential observation, exact shape,
+transport profile, topology, endpoint, deadline, replay consumption, and open
+binding. The pure contract implements the binding-validation subset only. Only
+the process-private runtime authority produced after all gates may enter
+outer-envelope decode.
 
 ## 5. Write-specific readiness
 
@@ -239,7 +249,9 @@ enabled-operation bits. `readyRoleBits` must include generated `STORAGE` and be 
 descriptor subset. Endpoint, nonce, topology, descriptor sequence/hash, and
 expiry must match a fresh descriptor snapshot. Missing write readiness, any
 missing or unknown feature, a stale/forked descriptor tuple, a subset mismatch,
-or expiry keeps public writes disabled.
+or expiry keeps public writes disabled. A decision before
+`acceptedMonotonicMillis` is not yet valid. Probe deadline, ACK expiry, and
+descriptor expiry are exclusive upper bounds: equality is already expired.
 
 ## 6. Precommit result fit and ordering
 

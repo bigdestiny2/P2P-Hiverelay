@@ -1,5 +1,12 @@
 import b4a from 'b4a'
 import {
+  blindErrorV1,
+  blindReceiptV1,
+  decodeCanonical,
+  encodeCanonical,
+  putCellV1
+} from '@hiverelay/blind-protocol'
+import {
   FAMILY,
   FRAME_KIND,
   OPERATION,
@@ -28,7 +35,6 @@ const LOCAL_OPEN_BINDING_DOMAIN = b4a.from('hiverelay.blind.local-staged-open-bi
 const REPLAY_TUPLE_DOMAIN = b4a.from('hiverelay.blind.local-staged-replay-tuple.v2', 'ascii')
 const MAX_U64 = (1n << 64n) - 1n
 const MAX_PRIVATE_IPC_REGISTRY_BYTES = 1024 * 1024
-const VERIFIED_STAGED_OPEN_AUTHORITIES = new WeakMap()
 
 export const PRIVATE_IPC_V2_MAGIC = 'hiverelay-blind-private-ipc-v2'
 export const PRIVATE_IPC_V2_FORMAT_VERSION = 2
@@ -107,7 +113,8 @@ export const PRIVATE_IPC_V2_ADDITIONAL_SCHEMAS = Object.freeze([
       'edgeProcessNonce:fixed32[nonzero]', 'localChannelNonce:fixed32[nonzero]',
       'transportProfileHash:fixed32[nonzero]', 'publicSessionBindingHash:fixed32[nonzero]',
       'openBindingHash:fixed32[nonzero]', 'exactBytes:162',
-      'authority:peercred-authenticates-edge-attestation',
+      'contract-validation:non-authoritative-binding-only',
+      'runtime-authority:native-peercred-plus-validated-binding-outside-contract',
       'tls-or-noise-binding:session-material-not-independent-edge-proof'
     ])
   }),
@@ -178,7 +185,7 @@ export const PRIVATE_IPC_V2_SCHEMAS = Object.freeze([
   ...PRIVATE_IPC_V2_ADDITIONAL_SCHEMAS
 ])
 
-export const PRIVATE_IPC_V2_TRANSPORT_AUTHORITY = Object.freeze({
+export const PRIVATE_IPC_V2_TRANSPORT_BINDING_RULES = Object.freeze({
   [TRANSPORT_ID.HTTPS_DIRECT]: Object.freeze({
     transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
     authorityKind: LOCAL_TRANSPORT_AUTHORITY_KIND_V2.TLS_EXPORTER_BY_PEERCRED_EDGE,
@@ -467,7 +474,7 @@ function normalizedOpenFields (input) {
   if (value.authorityKind !== LOCAL_TRANSPORT_AUTHORITY_KIND_V2.TLS_EXPORTER_BY_PEERCRED_EDGE ||
       value.transportId !== TRANSPORT_ID.HTTPS_DIRECT ||
       value.transportSupportBit !== TRANSPORT_SUPPORT.DIRECT_HTTP) {
-    fail('HTTPS staged CELL.PUT accepts only HTTPS_DIRECT/DIRECT_HTTP with TLS-exporter peercred-edge authority')
+    fail('HTTPS staged CELL.PUT accepts only HTTPS_DIRECT/DIRECT_HTTP with the TLS-exporter edge-attestation kind')
   }
   if (value.requestEnvelopeBytes !== OUTER_CLASS[outerClass]) fail('requestEnvelopeBytes must equal the exact selected public outer class')
   return value
@@ -621,10 +628,14 @@ export function decodeLocalStagedCellPutOpenV2 (input) {
   return Object.freeze({ ...value, context })
 }
 
-export function verifyLocalStagedCellPutOpenBindingV2 (input, options) {
-  const open = input && input.context ? input : decodeLocalStagedCellPutOpenV2(input)
-  if (!options || options.peerCredentialAuthenticated !== true) {
-    fail('peer credentials must authenticate the edge before its transport-binding attestation is considered', 'PRIVATE_IPC_V2_PEERCRED_REQUIRED')
+export function validateLocalStagedCellPutOpenBindingV2 (input, options) {
+  const open = input && input.context
+    ? decodeLocalStagedCellPutOpenV2(encodeLocalStagedCellPutOpenV2(input))
+    : decodeLocalStagedCellPutOpenV2(input)
+  if (!options || typeof options !== 'object') fail('binding validation options are required')
+  const optionKeys = Object.keys(options).sort()
+  if (optionKeys.length !== 2 || optionKeys[0] !== 'launchTopologyHash' || optionKeys[1] !== 'transportProfileHash') {
+    fail('binding validation accepts exactly launchTopologyHash and transportProfileHash')
   }
   const expectedTopology = fixed(options.launchTopologyHash, 32, 'launchTopologyHash')
   const expectedProfile = fixed(options.transportProfileHash, 32, 'transportProfileHash')
@@ -639,23 +650,17 @@ export function verifyLocalStagedCellPutOpenBindingV2 (input, options) {
     publicSessionBindingHash: open.context.publicSessionBindingHash
   })
   if (!b4a.equals(open.context.openBindingHash, expectedOpenBinding)) fail('local staged open binding hash does not match')
-  const state = Object.freeze({
-    authority: 'peercred-authenticated-edge-attestation',
+  return Object.freeze({
+    validationKind: 'NON_AUTHORITATIVE_BINDING_VALIDATION_V2',
+    authorityGranted: false,
+    peerCredentialsObserved: false,
     endpointId: open.endpointId,
     outerClass: open.outerClass,
-    replayTupleHash: replayTupleHashV2(open.context)
-  })
-  const handle = Object.freeze(Object.create(null))
-  VERIFIED_STAGED_OPEN_AUTHORITIES.set(handle, state)
-  return handle
-}
-
-export function localStagedCellPutAuthorityV2 (handle) {
-  const state = VERIFIED_STAGED_OPEN_AUTHORITIES.get(handle)
-  if (!state) fail('staged CELL.PUT authority requires an opaque verified handle', 'PRIVATE_IPC_V2_AUTHORITY_REQUIRED')
-  return Object.freeze({
-    ...state,
-    replayTupleHash: b4a.from(state.replayTupleHash)
+    transportProfileHash: b4a.from(open.context.transportProfileHash),
+    publicSessionBindingHash: b4a.from(open.context.publicSessionBindingHash),
+    openBindingHash: b4a.from(open.context.openBindingHash),
+    replayTupleHash: replayTupleHashV2(open.context),
+    runtimeRequirement: 'observe-native-peer-credentials-before-minting-process-private-authority'
   })
 }
 
@@ -839,7 +844,26 @@ export function verifyStagedCellPutPublicOuterEnvelopeV2 (input, openInput, dire
     const expectedRequestId = fixed(requestId, 16, 'requestId')
     if (!b4a.equals(frame.requestId, expectedRequestId)) fail('staged CELL.PUT result requestId is not correlated')
   }
-  return Object.freeze({ outerClass: decoded.outerClass, frame })
+  const bodySchema = direction === LOCAL_STAGED_DIRECTION_V2.REQUEST
+    ? putCellV1
+    : frame.frameKind === FRAME_KIND.RESPONSE
+      ? blindReceiptV1
+      : blindErrorV1
+  const bodySchemaName = direction === LOCAL_STAGED_DIRECTION_V2.REQUEST
+    ? 'PutCellV1'
+    : frame.frameKind === FRAME_KIND.RESPONSE
+      ? 'BlindReceiptV1'
+      : 'BlindErrorV1'
+  let canonicalBody
+  try {
+    canonicalBody = encodeCanonical(bodySchema, decodeCanonical(bodySchema, frame.body, { copyBytes: true }))
+  } catch {
+    fail(`staged CELL.PUT ${frame.frameKind === FRAME_KIND.ERROR ? 'error' : direction === LOCAL_STAGED_DIRECTION_V2.REQUEST ? 'request' : 'response'} body is not exact canonical ${bodySchemaName}`)
+  }
+  if (!b4a.equals(canonicalBody, frame.body)) {
+    fail(`staged CELL.PUT body does not re-encode as exact canonical ${bodySchemaName}`)
+  }
+  return Object.freeze({ outerClass: decoded.outerClass, frame, bodySchemaName })
 }
 
 export function encodeLocalReadyProbeV2 (input) {
@@ -958,7 +982,8 @@ export function localReadyDecisionV2 (probeInput, ackInput, descriptor, nowMonot
   if (probe.endpointId !== ack.endpointId) reasons.push('endpoint-mismatch')
   if (!b4a.equals(probe.edgeProcessNonce, ack.edgeProcessNonce)) reasons.push('edge-nonce-mismatch')
   if (!b4a.equals(probe.launchTopologyHash, ack.launchTopologyHash)) reasons.push('topology-mismatch')
-  if (now > probe.absoluteDeadlineMonotonicMillis || now > ack.expiresMonotonicMillis) reasons.push('expired')
+  if (now < probe.acceptedMonotonicMillis) reasons.push('not-yet-valid')
+  if (now >= probe.absoluteDeadlineMonotonicMillis || now >= ack.expiresMonotonicMillis) reasons.push('expired')
   if (!descriptor || typeof descriptor !== 'object') reasons.push('descriptor-absent')
   else {
     const sequence = u64(descriptor.sequence, 'descriptor.sequence', true)
@@ -970,6 +995,7 @@ export function localReadyDecisionV2 (probeInput, ackInput, descriptor, nowMonot
     if ((ack.readyRoleBits & ~roleBits) !== 0 || (ack.readyRoleBits & CELL_PUT_ENDPOINT_ROLE_BIT_V2) === 0) reasons.push('descriptor-role-subset-mismatch')
     if ((ack.readyOperationBits & ~operationBits) !== 0 || (ack.readyWriteOperationBits & ~operationBits) !== 0) reasons.push('descriptor-operation-subset-mismatch')
     if (ack.expiresMonotonicMillis > expires) reasons.push('descriptor-expiry-mismatch')
+    if (now >= expires) reasons.push('descriptor-expired')
   }
   if (probe.edgeFeatureBits !== REQUIRED_LOCAL_IPC_FEATURE_BITS_V2 ||
       ack.readyIpcFeatureBits !== REQUIRED_LOCAL_IPC_FEATURE_BITS_V2) reasons.push('feature-bits-missing-or-unknown')
@@ -1014,6 +1040,9 @@ export const PRIVATE_IPC_V2_CONTRACT = Object.freeze({
   schemaCount: PRIVATE_IPC_V2_SCHEMAS.length,
   v1SchemaCount: PRIVATE_IPC_SCHEMAS.length,
   v1FallbackPermitted: false,
+  contractLayerMintsRuntimeAuthority: false,
+  callerPeerCredentialAssertionAccepted: false,
+  bindingValidationIsAuthoritative: false,
   publicWireOperation: Object.freeze({
     familyId: FAMILY.CELL,
     operationId: OPERATION.CELL.PUT,

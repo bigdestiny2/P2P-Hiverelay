@@ -1377,10 +1377,15 @@ SchemaCatalogEntryV1 {
   `LocalTransportBindingV2`, `LocalStagedCellPutOpenV2`,
   `LocalStagedCellPutFrameV2`, `LocalReadyProbeV2`, and `LocalReadyAckV2`.
   It carries the full public outer envelope, separates write readiness, binds the
-  authenticated edge attestation to real TLS exporter material, and requires a
-  same-class correlated result-fit barrier before commit. V1 staged writes and
-  v1/v2 fallback are forbidden. Its separate registry/vectors use v2 hash domains
-  and enter neither public WIRE nor a client bundle.
+  edge attestation to real TLS exporter material, enforces exact canonical
+  `PutCellV1`/`BlindReceiptV1`/`BlindErrorV1` bodies, and requires a same-class
+  correlated result-fit barrier before commit. Its pure contract validates the
+  binding only: daemon runtime must independently observe native peer credentials
+  and mint process-private authority, and no caller assertion or validation record
+  grants it. Readiness is invalid before acceptance and expired at exact probe,
+  ACK, or descriptor bounds. V1 staged writes and v1/v2 fallback are forbidden.
+  Its separate registry/vectors use v2 hash domains and enter neither public WIRE
+  nor a client bundle.
 
 Schema IDs are category-local and cannot be referenced across categories except by
 a 32-byte format hash field. The sole v1 exception is that PRIVATE_IPC imports the

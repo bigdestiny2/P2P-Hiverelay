@@ -469,10 +469,14 @@ Every frame begins with big-endian `totalLength:u32` equal to all remaining byte
 For staged HTTPS `CELL.PUT`, the operation-specific v2 contract in
 `HIVERELAY-BLIND-PRIVATE-IPC-V2.md` supersedes the generic v1 stream row without
 changing it. It carries one full outer envelope over 65,535-byte local frames,
-requires peercred-authenticated TLS-exporter edge attestation, exposes separate
-write-readiness and feature masks, and validates a same-class correlated
-`RESPONSE`/`ERROR` fit before publish, WAL, spend, or signing. Raw binding bytes
-are not authority and no v1 fallback is permitted.
+validates a TLS-exporter edge-attestation binding, exposes separate write-readiness
+and feature masks, and validates canonical `PutCellV1`, `BlindReceiptV1`, or
+`BlindErrorV1` bodies plus a same-class correlated `RESPONSE`/`ERROR` fit before
+publish, WAL, spend, or signing. The pure contract neither observes peer
+credentials nor mints authority. Daemon runtime must observe native socket peer
+credentials itself and combine them with the non-authoritative binding validation
+before minting a process-private handle. A caller boolean, raw binding bytes, or
+the validation record is not authority, and no v1 fallback is permitted.
 
 The unary socket request and response are exactly:
 

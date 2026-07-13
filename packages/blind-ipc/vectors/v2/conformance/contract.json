@@ -1,4 +1,7 @@
 {
+  "bindingValidationIsAuthoritative": false,
+  "callerPeerCredentialAssertionAccepted": false,
+  "contractLayerMintsRuntimeAuthority": false,
   "formatVersion": 2,
   "httpsTransport": {
     "authorityKind": 1,

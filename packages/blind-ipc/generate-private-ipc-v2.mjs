@@ -4,12 +4,18 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import b4a from 'b4a'
 import {
+  CELL_RECEIPT_RESULT,
+  blindErrorV1,
+  blindReceiptV1,
   blake2b256,
+  cellStorageSlot,
   decodeVectorManifest,
   encodeDispatchFrame,
+  encodeCanonical,
   encodeOuterEnvelope,
   encodeVectorManifest,
-  hashAbi
+  hashAbi,
+  putCellV1
 } from '@hiverelay/blind-protocol'
 import { verifyPrivateIpcRegistry } from './registry.js'
 import {
@@ -34,6 +40,8 @@ import {
   TRANSPORT_SUPPORT,
   cellPutWorstCaseResultFitsOuterClassV2,
   cellPutPredictedResultFitsOuterClassV2,
+  decodeLocalReadyAckV2,
+  decodeLocalReadyProbeV2,
   decodeLocalTransportBindingV2,
   deriveLocalStagedOpenBindingHashV2,
   derivePublicSessionBindingHashV2,
@@ -47,6 +55,7 @@ import {
   hashPrivateIpcV2Registry,
   hashPrivateIpcV2VectorManifest,
   localIpcChannelClassForOuterClassV2,
+  localReadyDecisionV2,
   replayTupleHashV2,
   verifyStagedCellPutPublicOuterEnvelopeV2,
   verifyLocalStagedCellPutExchangeV2,
@@ -117,6 +126,22 @@ function chunkPlan (bytes, boundaries) {
   return output
 }
 
+function relayBinding (seed) {
+  return {
+    version: 1,
+    relayPublicKey: fixed(32, seed),
+    storeId: fixed(32, seed + 1),
+    descriptorSequence: 1n,
+    descriptorHash: fixed(32, seed + 2),
+    durabilityProfileId: 1,
+    durabilityContinuityHash: fixed(32, seed + 3),
+    durabilityProfileHash: fixed(32, seed + 4),
+    restoreEvidenceHeadSequence: 0n,
+    restoreEvidenceHeadHash: fixed(32, 0),
+    externalCommitWitness: null
+  }
+}
+
 function buildFixtures (registryBytes, v1RegistryBytes) {
   const launchTopologyHash = fixed(32, 0xa1)
   const edgeProcessNonce = fixed(32, 0xa2)
@@ -169,33 +194,111 @@ function buildFixtures (registryBytes, v1RegistryBytes) {
     ...openFields,
     context: decodeLocalTransportBindingV2(transportBinding)
   })
+  const allocationEpoch = 0x01020304
+  const createPublicKey = fixed(32, 0x11)
+  const cellBlob = fixed(4096, 0x51)
+  const requestBody = encodeCanonical(putCellV1, {
+    version: 1,
+    storageSlot: cellStorageSlot({ allocationEpoch, createPublicKey }),
+    allocationEpoch,
+    sizeClass: 1,
+    leaseClass: 2,
+    clientNonce: fixed(32, 0x12),
+    createPublicKey,
+    renewPublicKey: fixed(32, 0x13),
+    dropPublicKey: fixed(32, 0x14),
+    declaredBlobHash: blake2b256(cellBlob),
+    createSignature: fixed(64, 0x15),
+    admission: {
+      profileId: 7,
+      schemeId: 9,
+      parameterHash: fixed(32, 0xa0),
+      token: fixed(3, 0xa1)
+    },
+    cellBlob
+  })
+  const resultBody = encodeCanonical(blindReceiptV1, {
+    version: 1,
+    protocol: b4a.from('hiverelay-blind-cell-v1', 'ascii'),
+    relayBinding: relayBinding(0x21),
+    slotCommitment: fixed(32, 0x22),
+    cellBlobHash: fixed(32, 0x23),
+    allocationCommitment: fixed(32, 0x24),
+    requestCommitment: fixed(32, 0x25),
+    sizeClass: 1,
+    allocationEpoch: 10,
+    leaseClass: 2,
+    leaseEpoch: 11,
+    stateRevision: 12n,
+    receiptEpoch: 13,
+    requestNonce: fixed(32, 0x26),
+    result: CELL_RECEIPT_RESULT.STORED,
+    signature: fixed(64, 0x27)
+  })
+  const errorBody = encodeCanonical(blindErrorV1, {
+    version: 1,
+    code: 17,
+    retryable: 1,
+    retryAfterEpoch: null
+  })
+  const requestId = fixed(16, 0xe1)
+  const publicRequest = encodeOuterEnvelope({
+    outerClass: 3,
+    innerDispatch: encodeDispatchFrame({
+      frameKind: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.requestFrameKind,
+      familyId: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.familyId,
+      operationId: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.operationId,
+      requestId,
+      body: requestBody
+    })
+  }, { randomFill: padding => padding.fill(0xe3) })
+  const publicResult = encodeOuterEnvelope({
+    outerClass: 3,
+    innerDispatch: encodeDispatchFrame({
+      frameKind: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.resultFrameKinds[0],
+      familyId: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.familyId,
+      operationId: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.operationId,
+      requestId,
+      body: resultBody
+    })
+  }, { randomFill: padding => padding.fill(0xe5) })
+  const publicError = encodeOuterEnvelope({
+    outerClass: 3,
+    innerDispatch: encodeDispatchFrame({
+      frameKind: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.resultFrameKinds[1],
+      familyId: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.familyId,
+      operationId: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.operationId,
+      requestId,
+      body: errorBody
+    })
+  }, { randomFill: padding => padding.fill(0xe7) })
   const requestFrame0 = encodeLocalStagedCellPutFrameV2({
     direction: LOCAL_STAGED_DIRECTION_V2.REQUEST,
     frameKind: LOCAL_STAGED_FRAME_KIND_V2.CONTENT,
     sequence: 0n,
     flags: 0,
-    bytes: fixed(PRIVATE_IPC_V2_LIMITS.LOCAL_FRAME_CONTENT_BYTES, 0xb1)
+    bytes: publicRequest.subarray(0, PRIVATE_IPC_V2_LIMITS.LOCAL_FRAME_CONTENT_BYTES)
   })
   const requestFrame1 = encodeLocalStagedCellPutFrameV2({
     direction: LOCAL_STAGED_DIRECTION_V2.REQUEST,
     frameKind: LOCAL_STAGED_FRAME_KIND_V2.CONTENT,
     sequence: 1n,
     flags: LOCAL_STAGED_FLAG_V2.FIN,
-    bytes: fixed(OUTER_CLASS[3] - PRIVATE_IPC_V2_LIMITS.LOCAL_FRAME_CONTENT_BYTES, 0xb2)
+    bytes: publicRequest.subarray(PRIVATE_IPC_V2_LIMITS.LOCAL_FRAME_CONTENT_BYTES)
   })
   const resultFrame0 = encodeLocalStagedCellPutFrameV2({
     direction: LOCAL_STAGED_DIRECTION_V2.RESULT,
     frameKind: LOCAL_STAGED_FRAME_KIND_V2.CONTENT,
     sequence: 0n,
     flags: 0,
-    bytes: fixed(PRIVATE_IPC_V2_LIMITS.LOCAL_FRAME_CONTENT_BYTES, 0xc1)
+    bytes: publicResult.subarray(0, PRIVATE_IPC_V2_LIMITS.LOCAL_FRAME_CONTENT_BYTES)
   })
   const resultFrame1 = encodeLocalStagedCellPutFrameV2({
     direction: LOCAL_STAGED_DIRECTION_V2.RESULT,
     frameKind: LOCAL_STAGED_FRAME_KIND_V2.CONTENT,
     sequence: 1n,
     flags: LOCAL_STAGED_FLAG_V2.FIN,
-    bytes: fixed(OUTER_CLASS[3] - PRIVATE_IPC_V2_LIMITS.LOCAL_FRAME_CONTENT_BYTES, 0xc2)
+    bytes: publicResult.subarray(PRIVATE_IPC_V2_LIMITS.LOCAL_FRAME_CONTENT_BYTES)
   })
   verifyLocalStagedCellPutExchangeV2(open, [requestFrame0, requestFrame1, resultFrame0, resultFrame1])
   const abortFrame = encodeLocalStagedCellPutFrameV2({
@@ -227,29 +330,34 @@ function buildFixtures (registryBytes, v1RegistryBytes) {
     readyIpcFeatureBits: REQUIRED_LOCAL_IPC_FEATURE_BITS_V2,
     expiresMonotonicMillis: 2_001_500n
   })
-  const requestId = fixed(16, 0xe1)
-  const publicRequest = encodeOuterEnvelope({
-    outerClass: 3,
-    innerDispatch: encodeDispatchFrame({
-      frameKind: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.requestFrameKind,
-      familyId: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.familyId,
-      operationId: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.operationId,
-      requestId,
-      body: b4a.from([0xe2])
-    })
-  }, { randomFill: padding => padding.fill(0xe3) })
-  const publicResult = encodeOuterEnvelope({
-    outerClass: 3,
-    innerDispatch: encodeDispatchFrame({
-      frameKind: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.resultFrameKinds[0],
-      familyId: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.familyId,
-      operationId: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.operationId,
-      requestId,
-      body: b4a.from([0xe4])
-    })
-  }, { randomFill: padding => padding.fill(0xe5) })
+  const descriptor = Object.freeze({
+    sequence: 9n,
+    hash: descriptorHash,
+    roleBits: CELL_PUT_ENDPOINT_ROLE_BIT_V2,
+    enabledOperationBits: CELL_PUT_OPERATION_BIT_V2,
+    expiresMonotonicMillis: 2_001_800n
+  })
+  const probeDeadlineAck = decodeLocalReadyAckV2(encodeLocalReadyAckV2({
+    ...decodeLocalReadyAckV2(ack),
+    expiresMonotonicMillis: 2_002_100n
+  }))
+  const readinessExpiryBoundaries = Object.freeze({
+    acceptedAtProbeStart: localReadyDecisionV2(decodeLocalReadyProbeV2(probe), decodeLocalReadyAckV2(ack), descriptor, 2_000_000n),
+    rejectedBeforeProbeStart: localReadyDecisionV2(decodeLocalReadyProbeV2(probe), decodeLocalReadyAckV2(ack), descriptor, 1_999_999n),
+    acceptedImmediatelyBeforeAckExpiry: localReadyDecisionV2(decodeLocalReadyProbeV2(probe), decodeLocalReadyAckV2(ack), descriptor, 2_001_499n),
+    rejectedAtAckExpiry: localReadyDecisionV2(decodeLocalReadyProbeV2(probe), decodeLocalReadyAckV2(ack), descriptor, 2_001_500n),
+    rejectedAtProbeDeadline: localReadyDecisionV2(decodeLocalReadyProbeV2(probe), probeDeadlineAck, {
+      ...descriptor,
+      expiresMonotonicMillis: 2_002_200n
+    }, 2_002_000n),
+    rejectedAtDescriptorExpiry: localReadyDecisionV2(decodeLocalReadyProbeV2(probe), decodeLocalReadyAckV2(ack), {
+      ...descriptor,
+      expiresMonotonicMillis: 2_001_200n
+    }, 2_001_200n)
+  })
   verifyStagedCellPutPublicOuterEnvelopeV2(publicRequest, open, LOCAL_STAGED_DIRECTION_V2.REQUEST)
   verifyStagedCellPutPublicOuterEnvelopeV2(publicResult, open, LOCAL_STAGED_DIRECTION_V2.RESULT, requestId)
+  verifyStagedCellPutPublicOuterEnvelopeV2(publicError, open, LOCAL_STAGED_DIRECTION_V2.RESULT, requestId)
 
   const openMutations = [
     ['version-v1', 4, 1, 'PRIVATE_IPC_V2_NO_FALLBACK'],
@@ -274,7 +382,8 @@ function buildFixtures (registryBytes, v1RegistryBytes) {
     vector('accepted/ready-probe.bin', probe),
     vector('accepted/ready-ack.bin', ack),
     vector('accepted/public-request-outer-envelope-class-3.bin', publicRequest),
-    vector('accepted/public-result-outer-envelope-class-3.bin', publicResult)
+    vector('accepted/public-result-outer-envelope-class-3.bin', publicResult),
+    vector('accepted/public-error-outer-envelope-class-3.bin', publicError)
   ]
   for (const [name, offset, value, code] of openMutations) {
     vectors.push(vector(`negative/open-${name}.bin`, changed(open, output => { output[offset] = value })))
@@ -344,6 +453,8 @@ function buildFixtures (registryBytes, v1RegistryBytes) {
     jsonVector('negative/public-request-nonzero-stream-id.expectation.json', { decoder: 'verifyStagedCellPutPublicOuterEnvelopeV2.request', errorCode: 'BAD_PRIVATE_IPC_V2_CONTRACT', outcome: 'reject' }),
     vector('negative/public-request-nonzero-sequence.bin', changed(publicRequest, output => { output[46] = 1 })),
     jsonVector('negative/public-request-nonzero-sequence.expectation.json', { decoder: 'verifyStagedCellPutPublicOuterEnvelopeV2.request', errorCode: 'BAD_PRIVATE_IPC_V2_CONTRACT', outcome: 'reject' }),
+    vector('negative/public-request-malformed-put-cell-body.bin', changed(publicRequest, output => { output[51] = 2 })),
+    jsonVector('negative/public-request-malformed-put-cell-body.expectation.json', { decoder: 'verifyStagedCellPutPublicOuterEnvelopeV2.request', errorCode: 'BAD_PRIVATE_IPC_V2_CONTRACT', outcome: 'reject' }),
     vector('negative/public-result-wrong-correlation.bin', changed(publicResult, output => { output[15] ^= 1 })),
     jsonVector('negative/public-result-wrong-correlation.expectation.json', { decoder: 'verifyStagedCellPutPublicOuterEnvelopeV2.result', errorCode: 'BAD_PRIVATE_IPC_V2_CONTRACT', outcome: 'reject' }),
     vector('negative/public-result-wrong-kind.bin', changed(publicResult, output => {
@@ -356,6 +467,10 @@ function buildFixtures (registryBytes, v1RegistryBytes) {
     jsonVector('negative/public-result-nonzero-stream-id.expectation.json', { decoder: 'verifyStagedCellPutPublicOuterEnvelopeV2.result', errorCode: 'BAD_PRIVATE_IPC_V2_CONTRACT', outcome: 'reject' }),
     vector('negative/public-result-nonzero-sequence.bin', changed(publicResult, output => { output[46] = 1 })),
     jsonVector('negative/public-result-nonzero-sequence.expectation.json', { decoder: 'verifyStagedCellPutPublicOuterEnvelopeV2.result', errorCode: 'BAD_PRIVATE_IPC_V2_CONTRACT', outcome: 'reject' }),
+    vector('negative/public-result-malformed-receipt-body.bin', changed(publicResult, output => { output[51] = 2 })),
+    jsonVector('negative/public-result-malformed-receipt-body.expectation.json', { decoder: 'verifyStagedCellPutPublicOuterEnvelopeV2.result', errorCode: 'BAD_PRIVATE_IPC_V2_CONTRACT', outcome: 'reject' }),
+    vector('negative/public-error-malformed-error-body.bin', changed(publicError, output => { output[51] = 2 })),
+    jsonVector('negative/public-error-malformed-error-body.expectation.json', { decoder: 'verifyStagedCellPutPublicOuterEnvelopeV2.result', errorCode: 'BAD_PRIVATE_IPC_V2_CONTRACT', outcome: 'reject' }),
     vector('negative/v1-private-ipc-registry.cenc', v1RegistryBytes),
     jsonVector('negative/v1-private-ipc-registry.expectation.json', { decoder: 'decodePrivateIpcV2Registry', errorCode: 'PRIVATE_IPC_V2_NO_FALLBACK', outcome: 'reject', rule: 'V1 and V2 never fall back or downgrade' })
   )
@@ -387,8 +502,9 @@ function buildFixtures (registryBytes, v1RegistryBytes) {
     }),
     jsonVector('conformance/readiness-matrix.json', {
       accepted: ['exact-echo', 'fresh-descriptor-tuple', 'storage-role', 'ready-operation-cell-put', 'ready-write-cell-put', 'all-six-features', 'not-expired'],
-      rejected: ['missing-write-bit', 'missing-any-feature', 'unknown-feature', 'write-not-ready-subset', 'role-not-descriptor-subset', 'operation-not-descriptor-subset', 'descriptor-sequence-mismatch', 'descriptor-hash-mismatch', 'descriptor-expiry-mismatch', 'endpoint-mismatch', 'nonce-mismatch', 'topology-mismatch', 'probe-expired', 'ack-expired']
+      rejected: ['before-probe-accepted', 'missing-write-bit', 'missing-any-feature', 'unknown-feature', 'write-not-ready-subset', 'role-not-descriptor-subset', 'operation-not-descriptor-subset', 'descriptor-sequence-mismatch', 'descriptor-hash-mismatch', 'descriptor-expiry-mismatch', 'descriptor-expired-at-equality', 'endpoint-mismatch', 'nonce-mismatch', 'topology-mismatch', 'probe-expired-at-deadline-equality', 'ack-expired-at-equality']
     }),
+    jsonVector('conformance/readiness-expiry-boundaries.json', readinessExpiryBoundaries),
     jsonVector('conformance/class-mapping.json', {
       localIpcChannelClass: LOCAL_IPC_CHANNEL_CLASS_V2.LOCAL_64K,
       mapping: Object.fromEntries(Object.keys(OUTER_CLASS).map(key => [key, localIpcChannelClassForOuterClassV2(Number(key))])),
@@ -398,9 +514,18 @@ function buildFixtures (registryBytes, v1RegistryBytes) {
     jsonVector('conformance/transport-authority-mapping.json', {
       https: { authorityKind: LOCAL_TRANSPORT_AUTHORITY_KIND_V2.TLS_EXPORTER_BY_PEERCRED_EDGE, supportBit: TRANSPORT_SUPPORT.DIRECT_HTTP, transportId: TRANSPORT_ID.HTTPS_DIRECT },
       nativeNoise: { authorityKind: LOCAL_TRANSPORT_AUTHORITY_KIND_V2.NOISE_TRANSCRIPT_BY_PEERCRED_EDGE, supportBit: TRANSPORT_SUPPORT.DIRECT_NATIVE, transportId: TRANSPORT_ID.DIRECT_PROTOMUX_NOISE },
-      rule: 'peer credentials authenticate the edge attestation; session binding material is not independent proof against a malicious authenticated edge',
+      callerPeerCredentialAssertionAccepted: false,
+      contractValidationIsAuthoritative: false,
+      rule: 'the pure contract validates binding bytes only; the runtime must observe native peer credentials before minting process-private authority',
+      runtimeMustObserveNativePeerCredentials: true,
       tlsExporterBytes: PRIVATE_IPC_V2_LIMITS.TLS_EXPORTER_BYTES,
       tlsExporterLabel: TLS_EXPORTER_LABEL_V2
+    }),
+    jsonVector('conformance/public-cell-put-body-mapping.json', {
+      error: { frameKind: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.resultFrameKinds[1], schema: 'BlindErrorV1', canonicalBodyBytes: errorBody.byteLength },
+      request: { frameKind: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.requestFrameKind, schema: 'PutCellV1', canonicalBodyBytes: requestBody.byteLength },
+      response: { frameKind: PRIVATE_IPC_V2_CONTRACT.publicWireOperation.resultFrameKinds[0], schema: 'BlindReceiptV1', canonicalBodyBytes: resultBody.byteLength },
+      rule: 'each body is strict canonical closed-schema bytes; decode failures normalize to BAD_PRIVATE_IPC_V2_CONTRACT'
     }),
     jsonVector('conformance/replay-tuple.json', {
       consumeBefore: ['body-allocation', 'outer-envelope-reassembly', 'admission', 'publish', 'wal', 'spend', 'sign'],
@@ -424,7 +549,7 @@ function buildFixtures (registryBytes, v1RegistryBytes) {
     jsonVector('conformance/contract.json', PRIVATE_IPC_V2_CONTRACT)
   )
 
-  return { vectors, fixtures: { ack, descriptorHash, edgeProcessNonce, launchTopologyHash, open, probe, publicRequest, publicResult, registryBytes, requestId, transportBinding } }
+  return { vectors, fixtures: { ack, descriptorHash, edgeProcessNonce, launchTopologyHash, open, probe, publicError, publicRequest, publicResult, registryBytes, requestId, transportBinding } }
 }
 
 async function readV1Hashes () {
@@ -467,7 +592,7 @@ async function build () {
     privateIpcVectorManifestSha256: sha256(vectorManifestBytes),
     privateIpcVectorSetHash: hex(hashPrivateIpcV2VectorManifest(vectorManifestBytes)),
     releaseBlockers: [
-      'runtime codecs and peer-credential authority are not implemented by this artifact',
+      'the contract deliberately does not observe native peer credentials or mint runtime authority; daemon integration remains external',
       'TLS exporter binding requires a real TLSSocket integration test',
       'precommit storage/coordinator barrier and restart/retrieval proof remain external',
       'signed descriptor readiness and public multi-relay evidence remain external'

@@ -9,6 +9,7 @@
     "not-expired"
   ],
   "rejected": [
+    "before-probe-accepted",
     "missing-write-bit",
     "missing-any-feature",
     "unknown-feature",
@@ -18,10 +19,11 @@
     "descriptor-sequence-mismatch",
     "descriptor-hash-mismatch",
     "descriptor-expiry-mismatch",
+    "descriptor-expired-at-equality",
     "endpoint-mismatch",
     "nonce-mismatch",
     "topology-mismatch",
-    "probe-expired",
-    "ack-expired"
+    "probe-expired-at-deadline-equality",
+    "ack-expired-at-equality"
   ]
 }

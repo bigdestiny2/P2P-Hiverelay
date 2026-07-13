@@ -4,12 +4,12 @@
   "baseCommit": "fa71427da4b215e20bb083daadd590fbc5ee807d",
   "contractReady": true,
   "importedWireAbiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",
-  "privateIpcFormatHash": "687fc75f2e3e4a6475d1ecdee94671c32a0ce548fa720ac60f316534e40908a8",
-  "privateIpcRegistrySha256": "34d5c22f1efa09a6fc5dc481117c19f56eec9790c561218d275963aca34519b6",
-  "privateIpcVectorManifestSha256": "b3cbb23f6a11d616d7d704d6593486ed6302c4b7ee0af903f912688f7f742719",
-  "privateIpcVectorSetHash": "b2cb11bced9bb23dd8f9fb1f97fbe5505ea260dc78f668079075e0076c833d50",
+  "privateIpcFormatHash": "76e89fc952a57a029109673ca78793687ecd530c46bcf979851fc3964bf6edf6",
+  "privateIpcRegistrySha256": "7fcc302fc993bb11d33c3b2b431393292728d61d8098774b4745d01b21dab748",
+  "privateIpcVectorManifestSha256": "7877deb7fcad6f24239671851534b0d4111070b2d583fb05565663b1b5b7d409",
+  "privateIpcVectorSetHash": "2512126cc7b2f89047ce4d4478800bc78b7e065e5e0c3855f087d1e2c7c345a1",
   "releaseBlockers": [
-    "runtime codecs and peer-credential authority are not implemented by this artifact",
+    "the contract deliberately does not observe native peer credentials or mint runtime authority; daemon integration remains external",
     "TLS exporter binding requires a real TLSSocket integration test",
     "precommit storage/coordinator barrier and restart/retrieval proof remain external",
     "signed descriptor readiness and public multi-relay evidence remain external"
@@ -25,5 +25,5 @@
   },
   "v1SchemaCount": 7,
   "v2SchemaCount": 5,
-  "vectorCount": 105
+  "vectorCount": 114
 }
