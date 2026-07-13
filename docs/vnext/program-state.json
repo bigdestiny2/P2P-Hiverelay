@@ -99,7 +99,7 @@
       "id": "D-1",
       "owner": "product-owner",
       "deadline": null,
-      "status": "pending-owner",
+      "status": "decided",
       "question": "Ship an honestly labelled direct G2-S invitation canary before advanced blind profiles?",
       "recommendation": "approve-direct-g2s-canary",
       "recommendationRationale": "A bounded invitation canary yields real workload evidence without borrowing OHTTP, CORE, FORWARD, or G3 claims.",
@@ -113,15 +113,21 @@
       "supersededAssumptions": [
         "The first blind canary must wait for every transport and storage family."
       ],
-      "selected": null,
-      "rationale": null,
-      "evidence": []
+      "selected": "wait-for-full-advanced-blind-before-canary",
+      "rationale": "Owner rejected early honestly-labelled G2-S canary. Peerit blind migration and direct-blind-g2s public canary wait until advanced blind profiles are ready. NOTE: tension with D-3 (G3 deferred) and D-4 (self-ops only) \u2014 define which advanced profile unblocks first canary (e.g. OHTTP with independent operator only).",
+      "evidence": [
+        "owner-session-2026-07-13-decision-interview",
+        "docs/vnext/owner-decisions-2026-07-13.json"
+      ],
+      "decidedAt": "2026-07-13T11:26:51Z",
+      "followedRecommendation": false,
+      "recommendationWas": "approve-direct-g2s-canary"
     },
     {
       "id": "D-2",
       "owner": "product-owner",
       "deadline": null,
-      "status": "pending-owner",
+      "status": "decided",
       "question": "Which independently controlled operator supplies OHTTP ingress?",
       "recommendation": "require-independent-ingress-operator",
       "recommendationRationale": "OHTTP mechanics under one operator do not establish source separation or a non-collusion boundary.",
@@ -136,15 +142,21 @@
       "supersededAssumptions": [
         "Running ingress and storage as separate processes under one operator is independent operation."
       ],
-      "selected": null,
-      "rationale": null,
-      "evidence": []
+      "selected": "require-independent-ingress-operator",
+      "rationale": "OHTTP / split-web claims require a separate ingress operator with independent control, keys, hosts, deploy access, logs, and failure domain. Same-operator OHTTP may prove mechanics only; effective claim remains G2-S until independence is real.",
+      "evidence": [
+        "owner-session-2026-07-13-decision-interview",
+        "docs/vnext/owner-decisions-2026-07-13.json"
+      ],
+      "decidedAt": "2026-07-13T11:26:51Z",
+      "followedRecommendation": true,
+      "recommendationWas": "require-independent-ingress-operator"
     },
     {
       "id": "D-3",
       "owner": "product-owner",
       "deadline": null,
-      "status": "pending-owner",
+      "status": "decided",
       "question": "Who owns and funds G3 repair, cadence, offline-writer behavior, and repair-hint authenticity?",
       "recommendation": "defer-g3-until-repair-contract",
       "recommendationRationale": "Randomized cells are not a durable G3 product until repair responsibility, placement, renewal cadence, and incentives are operationally owned.",
@@ -158,15 +170,21 @@
       "supersededAssumptions": [
         "Randomized cell names alone make renewal and placement unlinkable."
       ],
-      "selected": null,
-      "rationale": null,
-      "evidence": []
+      "selected": "defer-g3-until-repair-contract",
+      "rationale": "No G3 product commitment or marketing until repair ownership, payment, cadence, offline-writer behavior, and repair-hint authenticity are defined and evidenced.",
+      "evidence": [
+        "owner-session-2026-07-13-decision-interview",
+        "docs/vnext/owner-decisions-2026-07-13.json"
+      ],
+      "decidedAt": "2026-07-13T11:26:51Z",
+      "followedRecommendation": true,
+      "recommendationWas": "defer-g3-until-repair-contract"
     },
     {
       "id": "D-4",
       "owner": "product-owner-legal",
       "deadline": null,
-      "status": "pending-owner-legal",
+      "status": "decided",
       "question": "What operator liability, takedown, retention, and acknowledgement posture is approved?",
       "recommendation": "require-jurisdiction-aware-operator-policy",
       "recommendationRationale": "Third-party operators need an explicit abuse, locator-report, retention, acknowledgement, and jurisdiction contract before recruitment.",
@@ -182,15 +200,22 @@
       "supersededAssumptions": [
         "Opaque payload storage removes operator policy and legal responsibilities."
       ],
-      "selected": null,
-      "rationale": null,
-      "evidence": []
+      "selected": "self-operated-relays-only-for-now",
+      "rationale": "No third-party storage operator recruitment until a full jurisdiction-aware operator policy pack exists. For now only self-operated relays. Blocks independent-operator and multi-operator collusion claims.",
+      "evidence": [
+        "owner-session-2026-07-13-decision-interview",
+        "docs/vnext/owner-decisions-2026-07-13.json"
+      ],
+      "decidedAt": "2026-07-13T11:26:51Z",
+      "followedRecommendation": false,
+      "recommendationWas": "require-jurisdiction-aware-operator-policy",
+      "note": "Aligned with caution; chooses self-ops rather than recruiting under draft policy."
     },
     {
       "id": "D-5",
       "owner": "product-owner",
       "deadline": null,
-      "status": "pending-owner",
+      "status": "decided",
       "question": "Keep the HTTPS gateway as the separately named public-t1-gateway product?",
       "recommendation": "keep-separate-t1-product",
       "recommendationRationale": "Public exact-byte HTTPS distribution is valuable, but its operator-visible access path must not inherit blind-storage privacy claims.",
@@ -204,15 +229,21 @@
       "supersededAssumptions": [
         "Every HiveRelay delivery surface belongs to one progressively stronger privacy product."
       ],
-      "selected": null,
-      "rationale": null,
-      "evidence": []
+      "selected": "keep-separate-t1-product",
+      "rationale": "Public HTTPS gateway is the separately named public-t1-gateway / public-gateway-v1 product for exact-byte public app distribution. It must not inherit blind privacy claims.",
+      "evidence": [
+        "owner-session-2026-07-13-decision-interview",
+        "docs/vnext/owner-decisions-2026-07-13.json"
+      ],
+      "decidedAt": "2026-07-13T11:26:51Z",
+      "followedRecommendation": true,
+      "recommendationWas": "keep-separate-t1-product"
     },
     {
       "id": "D-6",
       "owner": "product-owner",
       "deadline": null,
-      "status": "pending-owner",
+      "status": "decided",
       "question": "Retain K_partition only with measured benefit and a tested recovery contract, or remove it?",
       "recommendation": "remove-unless-measured-benefit",
       "recommendationRationale": "An unrecoverable partition secret adds operational failure risk unless measured cross-relay privacy benefit exceeds the backup and rotation burden.",
@@ -229,15 +260,21 @@
       "supersededAssumptions": [
         "A private keyed bucket map is automatically worth making store recovery depend on another secret."
       ],
-      "selected": null,
-      "rationale": null,
-      "evidence": []
+      "selected": "remove-k-partition-unless-measured-benefit",
+      "rationale": "Do not freeze K_partition into store layout. Prefer simpler recovery. Revisit only if measured cross-relay privacy benefit justifies a tested backup/rotation/recovery contract.",
+      "evidence": [
+        "owner-session-2026-07-13-decision-interview",
+        "docs/vnext/owner-decisions-2026-07-13.json"
+      ],
+      "decidedAt": "2026-07-13T11:26:51Z",
+      "followedRecommendation": true,
+      "recommendationWas": "remove-unless-measured-benefit"
     },
     {
       "id": "D-7",
       "owner": "product-owner",
       "deadline": null,
-      "status": "pending-owner",
+      "status": "decided",
       "question": "Acknowledge that rollback after the first blind-only write is dual-read only, never legacy-only?",
       "recommendation": "approve-dual-read-rollback-floor",
       "recommendationRationale": "A legacy-only rollback after blind-only writes would hide or strand accepted state and is therefore not a valid recovery path.",
@@ -254,9 +291,15 @@
       "supersededAssumptions": [
         "The legacy-only binary remains a safe rollback target after blind-only writes begin."
       ],
-      "selected": null,
-      "rationale": null,
-      "evidence": []
+      "selected": "dual-read-rollback-only-after-blind-only-write",
+      "rationale": "After the first successful blind-only write, rollback is only to a dual-read build that understands blind + legacy. Legacy-only binaries are not a valid recovery path.",
+      "evidence": [
+        "owner-session-2026-07-13-decision-interview",
+        "docs/vnext/owner-decisions-2026-07-13.json"
+      ],
+      "decidedAt": "2026-07-13T11:26:51Z",
+      "followedRecommendation": true,
+      "recommendationWas": "approve-dual-read-rollback-floor"
     }
   ],
   "gates": [
@@ -280,10 +323,12 @@
     },
     {
       "id": "PG-1",
-      "status": "in-progress",
+      "status": "decided-with-open-followups",
       "evidence": [
-        "git/c61be6df8d32693f9b72f479638ea9cdd5ea331b/docs/vnext/program-state.json"
-      ]
+        "git/c61be6df8d32693f9b72f479638ea9cdd5ea331b/docs/vnext/program-state.json",
+        "docs/vnext/owner-decisions-2026-07-13.json"
+      ],
+      "notes": "D-1..D-7 recorded. D-1 hard-blocks early G2-S canary; open follow-up: which advanced profile unblocks first blind canary given D-3 defers G3 and D-4 is self-ops."
     },
     {
       "id": "PG-2",
@@ -517,6 +562,13 @@
       "optional: promote merge into feat/vnext-integration after review",
       "owner decisions D-5 D-6 D-7",
       "staging gateway canary only after frozen T1 admission"
+    ]
+  },
+  "lastOwnerDecisionPass": {
+    "at": "2026-07-13T11:26:51Z",
+    "allSevenRecorded": true,
+    "openFollowups": [
+      "D-1-scope: define the minimum advanced profile that unblocks first blind canary"
     ]
   }
 }

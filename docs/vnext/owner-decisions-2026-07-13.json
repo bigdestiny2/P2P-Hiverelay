@@ -1,0 +1,63 @@
+{
+  "schema": "hiverelay-owner-decisions-v1",
+  "at": "2026-07-13T11:26:51Z",
+  "source": "owner interview in conductor session",
+  "decisions": {
+    "D-1": {
+      "selected": "wait-for-full-advanced-blind-before-canary",
+      "rationale": "Owner rejected early honestly-labelled G2-S canary. Peerit blind migration and direct-blind-g2s public canary wait until advanced blind profiles are ready. NOTE: tension with D-3 (G3 deferred) and D-4 (self-ops only) \u2014 define which advanced profile unblocks first canary (e.g. OHTTP with independent operator only).",
+      "followedRecommendation": false
+    },
+    "D-2": {
+      "selected": "require-independent-ingress-operator",
+      "rationale": "OHTTP / split-web claims require a separate ingress operator with independent control, keys, hosts, deploy access, logs, and failure domain. Same-operator OHTTP may prove mechanics only; effective claim remains G2-S until independence is real.",
+      "followedRecommendation": true
+    },
+    "D-3": {
+      "selected": "defer-g3-until-repair-contract",
+      "rationale": "No G3 product commitment or marketing until repair ownership, payment, cadence, offline-writer behavior, and repair-hint authenticity are defined and evidenced.",
+      "followedRecommendation": true
+    },
+    "D-4": {
+      "selected": "self-operated-relays-only-for-now",
+      "rationale": "No third-party storage operator recruitment until a full jurisdiction-aware operator policy pack exists. For now only self-operated relays. Blocks independent-operator and multi-operator collusion claims.",
+      "followedRecommendation": false
+    },
+    "D-5": {
+      "selected": "keep-separate-t1-product",
+      "rationale": "Public HTTPS gateway is the separately named public-t1-gateway / public-gateway-v1 product for exact-byte public app distribution. It must not inherit blind privacy claims.",
+      "followedRecommendation": true
+    },
+    "D-6": {
+      "selected": "remove-k-partition-unless-measured-benefit",
+      "rationale": "Do not freeze K_partition into store layout. Prefer simpler recovery. Revisit only if measured cross-relay privacy benefit justifies a tested backup/rotation/recovery contract.",
+      "followedRecommendation": true
+    },
+    "D-7": {
+      "selected": "dual-read-rollback-only-after-blind-only-write",
+      "rationale": "After the first successful blind-only write, rollback is only to a dual-read build that understands blind + legacy. Legacy-only binaries are not a valid recovery path.",
+      "followedRecommendation": true
+    }
+  },
+  "plainLanguageSummary": {
+    "D-1": "Do not ship a half-private G2-S canary first; wait for stronger advanced blind.",
+    "D-2": "OHTTP privacy only counts with a truly separate front-door operator.",
+    "D-3": "No G3 \u201cunlinkable cells\u201d product until someone owns repair and payment.",
+    "D-4": "Only run relays yourself for now; no third-party operator recruitment yet.",
+    "D-5": "Public HTTPS gateway is its own public product, not part of the privacy story.",
+    "D-6": "Drop the extra K_partition secret unless we later prove it is worth the pain.",
+    "D-7": "After blind-only writes, you can only roll back to dual-read \u2014 never old-only."
+  },
+  "coherenceNote": {
+    "tension": "D-1 waits for advanced blind; D-3 defers G3; D-4 self-ops only; D-2 needs independent OHTTP operator",
+    "implication": "First public blind canary is blocked until either (a) an independent OHTTP ingress operator exists and OHTTP gates pass, or (b) owner revises D-1 to allow a labelled G2-S self-ops canary as an intermediate step.",
+    "doesNotBlock": [
+      "public-t1-gateway staging work (D-5)",
+      "blind protocol freeze work that removes K_partition (D-6)",
+      "dual-read migration runbook wording (D-7)",
+      "self-operated daemon implementation and soak"
+    ]
+  },
+  "authorizesRelease": false,
+  "authorizesDeploy": false
+}
