@@ -36,7 +36,7 @@ async function candidate () {
     schemaCatalogBytes,
     expectedStoreFormatHash: hashStoreFormat(authorityBytes),
     expectedFormatMajor: 1,
-    expectedFormatMinor: 0
+    expectedFormatMinor: 1
   }
 }
 
@@ -48,7 +48,7 @@ test('daemon store-format binding brands the exact generated authority and retur
 
   t.is(first.authorityVersion, 1)
   t.is(first.formatMajor, 1)
-  t.is(first.formatMinor, 0)
+  t.is(first.formatMinor, 1)
   t.is(first.publicationFinal, false)
   first.storeFormatHash[0] ^= 1
   t.alike(inspectBlindStoreFormatAuthorityBinding(binding).storeFormatHash, expected)
@@ -90,8 +90,8 @@ test('daemon store-format binding rejects stale artifacts, catalogs, pins, and f
 
   t.exception(() => createBlindStoreFormatAuthorityBinding({
     ...input,
-    expectedFormatMinor: 1
-  }), /does not match expected 1\.1/)
+    expectedFormatMinor: 0
+  }), /does not match expected 1\.0/)
 })
 
 test('cell engine consumes only a branded exact store-format binding without claiming publication', async t => {

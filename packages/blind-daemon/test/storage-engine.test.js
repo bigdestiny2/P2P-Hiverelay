@@ -1,6 +1,7 @@
 import test from 'brittle'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   createHmac,
   generateKeyPairSync,
@@ -10,15 +11,24 @@ import b4a from 'b4a'
 import {
   allocationCommitment,
   blake2b256,
+  blindPreparedAdmissionStoreV1,
+  blindPutAtomicCommittedStoreV1,
   blindWalHeaderV2,
   cellManageRequestCommitment,
   cellPutRequestCommitment,
   cellStorageSlot,
-  decodeCanonical
+  decodeCanonical,
+  decodeStoreFormatAuthorityV1,
+  encodeCanonical,
+  relayResultBindingV1
 } from '@hiverelay/blind-protocol'
+import { PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY } from '@hiverelay/blind-ipc/private-ipc-v2-contract'
 import {
+  BLIND_CELL_STORAGE_LIMITS,
+  BLIND_CELL_WAL_TYPE,
   BlindCellStorageEngine,
-  BlindCellStorageError
+  BlindCellStorageError,
+  verifyBlindCellStorageControlSnapshotState
 } from '../storage-engine.js'
 import {
   BLIND_STORE_SERVICE_TAG,
@@ -31,6 +41,64 @@ const DURABILITY_CONTINUITY_HASH = b4a.alloc(32, 0x94)
 const RELAY_PUBLIC_KEY = b4a.alloc(32, 0x71)
 const PARTITION_KEY = b4a.alloc(32, 0x81)
 const FENCE_HASH = b4a.alloc(32, 0x91)
+const STORE_ID = b4a.alloc(32, 0x95)
+const DURABILITY_PROFILE_HASH = b4a.alloc(32, 0x96)
+const FINGERPRINT_DOMAIN = b4a.from('hiverelay.blind.store-request-fingerprint.v1', 'ascii')
+const RESULT_IDENTITY_DOMAIN = b4a.from('hiverelay.blind.store-result-identity.v1', 'ascii')
+const ATOMIC_RECOVERY_SCRATCH = fileURLToPath(new URL('../../../.t/blind-cell-atomic-recovery/', import.meta.url))
+const STORE_FORMAT_AUTHORITY_URL = new URL(
+  '../../blind-protocol/hiverelay-blind-store-format-authority-v1.draft.cenc',
+  import.meta.url
+)
+const BLIND_PROTOCOL_PACKAGE_URL = new URL('../../blind-protocol/package.json', import.meta.url)
+
+function u32bytes (value) {
+  return b4a.from([value >>> 24, value >>> 16, value >>> 8, value])
+}
+
+function u64bytes (value) {
+  value = BigInt(value)
+  const output = b4a.alloc(8)
+  for (let index = 7; index >= 0; index--) {
+    output[index] = Number(value & 0xffn)
+    value >>= 8n
+  }
+  return output
+}
+
+function hashParts (domain, ...parts) {
+  return blake2b256(b4a.concat([domain, ...parts]))
+}
+
+function storedResultIdentity (slot, requestCommitment, blobHash, leaseClass, leaseEpoch) {
+  return hashParts(
+    RESULT_IDENTITY_DOMAIN,
+    b4a.from('stored', 'ascii'),
+    slot,
+    requestCommitment,
+    blobHash,
+    b4a.from([leaseClass]),
+    u32bytes(leaseEpoch),
+    u64bytes(0n)
+  )
+}
+
+function profile1ResultBindingBytes (overrides = {}) {
+  return encodeCanonical(relayResultBindingV1, {
+    version: 1,
+    relayPublicKey: RELAY_PUBLIC_KEY,
+    storeId: STORE_ID,
+    descriptorSequence: 1n,
+    descriptorHash: b4a.alloc(32, 0x97),
+    durabilityProfileId: 1,
+    durabilityContinuityHash: DURABILITY_CONTINUITY_HASH,
+    durabilityProfileHash: DURABILITY_PROFILE_HASH,
+    restoreEvidenceHeadSequence: 0n,
+    restoreEvidenceHeadHash: b4a.alloc(32),
+    externalCommitWitness: null,
+    ...overrides
+  })
+}
 
 function rawEd25519KeyPair () {
   const pair = generateKeyPairSync('ed25519')
@@ -120,6 +188,135 @@ function putFixture (fixture = {}) {
   }
 }
 
+function preparedAdmissionBytesFor (fixture, overrides = {}) {
+  return encodeCanonical(blindPreparedAdmissionStoreV1, {
+    version: 1,
+    spendTag: fixture.preparedAdmission.spendTag,
+    requestCommitment: fixture.preparedAdmission.requestCommitment,
+    profileId: fixture.preparedAdmission.profileId,
+    schemeId: fixture.preparedAdmission.schemeId,
+    parameterHash: fixture.preparedAdmission.parameterHash,
+    resourceClass: fixture.preparedAdmission.costClass.resourceClass,
+    leaseClass: fixture.preparedAdmission.costClass.leaseClass,
+    costUnits: fixture.preparedAdmission.costClass.costUnits,
+    walCommitRecord: fixture.preparedAdmission.walCommitRecord,
+    ...overrides
+  })
+}
+
+async function atomicCommitCandidate (engine, time, fixture) {
+  const preparedAdmissionBytes = preparedAdmissionBytesFor(fixture)
+  const allocation = allocationCommitment({
+    relayPublicKey: RELAY_PUBLIC_KEY,
+    storageSlot: fixture.request.storageSlot,
+    allocationEpoch: fixture.request.allocationEpoch,
+    sizeClass: fixture.request.sizeClass,
+    leaseClass: fixture.request.leaseClass,
+    declaredCellBlobHash: fixture.request.declaredBlobHash,
+    createPublicKey: fixture.request.createPublicKey,
+    renewPublicKey: fixture.request.renewPublicKey,
+    dropPublicKey: fixture.request.dropPublicKey
+  })
+  const requestFingerprint = hashParts(
+    FINGERPRINT_DOMAIN,
+    fixture.preparedAdmission.spendTag,
+    fixture.preparedAdmission.requestCommitment,
+    fixture.request.storageSlot,
+    allocation,
+    fixture.request.declaredBlobHash,
+    u32bytes(fixture.cellBlob.byteLength),
+    b4a.from([fixture.request.leaseClass]),
+    u32bytes(fixture.preparedAdmission.profileId),
+    blake2b256(preparedAdmissionBytes)
+  )
+  const resultBindingBytes = profile1ResultBindingBytes()
+  const virtualBucket = engine.transactionStore.virtualBucket(
+    BLIND_STORE_SERVICE_TAG.CELL,
+    fixture.request.storageSlot
+  )
+  const staged = await engine.transactionStore.stageOpaque({
+    source: fixture.cellBlob,
+    expectedLength: fixture.cellBlob.byteLength,
+    expectedHash: fixture.request.declaredBlobHash,
+    deadlineUnixMillis: time.now() + 10000n,
+    nowUnixMillis: () => time.now()
+  })
+  const reference = await engine.transactionStore.publishOpaque(staged, virtualBucket)
+  const leaseEpoch = time.epoch + BLIND_CELL_STORAGE_LIMITS.leaseEpochs[fixture.request.leaseClass]
+  const resultIdentity = storedResultIdentity(
+    fixture.request.storageSlot,
+    fixture.preparedAdmission.requestCommitment,
+    fixture.request.declaredBlobHash,
+    fixture.request.leaseClass,
+    leaseEpoch
+  )
+  return {
+    transactionId: engine.transactionStore.newTransactionId(),
+    virtualBucket,
+    reference,
+    payload: {
+      version: 1,
+      spendTag: fixture.preparedAdmission.spendTag,
+      requestCommitment: fixture.preparedAdmission.requestCommitment,
+      requestFingerprint,
+      storageSlot: fixture.request.storageSlot,
+      allocationEpoch: fixture.request.allocationEpoch,
+      sizeClass: fixture.request.sizeClass,
+      leaseClass: fixture.request.leaseClass,
+      declaredBlobHash: fixture.request.declaredBlobHash,
+      createPublicKey: fixture.request.createPublicKey,
+      renewPublicKey: fixture.request.renewPublicKey,
+      dropPublicKey: fixture.request.dropPublicKey,
+      allocationCommitment: allocation,
+      profileId: fixture.preparedAdmission.profileId,
+      preparedAdmissionBytes,
+      resultBindingBytes,
+      declaredBytes: fixture.cellBlob.byteLength,
+      blobObjectId: reference.objectId,
+      leaseEpoch,
+      stateRevision: 0n,
+      policyRevision: 0n,
+      resultIdentity,
+      committedEpoch: time.epoch
+    }
+  }
+}
+
+function recoveryState (engine) {
+  return {
+    spends: [...engine.spends.keys()].sort(),
+    commitments: [...engine.commitments.keys()].sort(),
+    requestResults: [...engine.requestResults.keys()].sort(),
+    cells: [...engine.cells.entries()].map(([key, value]) => ({
+      key,
+      virtualBucket: value.blobReference.virtualBucket,
+      objectId: b4a.toString(value.blobReference.objectId, 'hex')
+    })).sort((left, right) => left.key.localeCompare(right.key)),
+    accounting: {
+      storedBytes: engine.accounting.storedBytes,
+      stagingBytes: engine.accounting.stagingBytes,
+      controlBytes: engine.accounting.controlBytes,
+      tombstoneBytes: engine.accounting.tombstoneBytes,
+      reservedCells: engine.accounting.reservedCells,
+      stagingByProfile: [...engine.accounting.stagingByProfile.entries()]
+        .sort(([left], [right]) => left - right)
+    },
+    epochFloor: engine.epochFloor,
+    clockUnsafe: engine.clockUnsafe,
+    readOnlyReason: engine.readOnlyReason,
+    integrityEvidence: engine.integrityEvidence.length
+  }
+}
+
+function opaqueBlobPath (root, reference) {
+  return path.join(
+    root,
+    'blobs',
+    reference.virtualBucket.toString(16).padStart(4, '0'),
+    `${b4a.toString(reference.objectId, 'hex')}.blob`
+  )
+}
+
 function renewRequest (fixture, record, time, overrides = {}) {
   const request = {
     storageSlot: fixture.request.storageSlot,
@@ -188,6 +385,209 @@ async function temporaryRoot (t, name) {
   t.teardown(async () => fs.rm(root, { recursive: true, force: true }))
   return root
 }
+
+async function containedAtomicRecoveryRoot (t, name) {
+  await fs.mkdir(ATOMIC_RECOVERY_SCRATCH, { recursive: true, mode: 0o700 })
+  const root = await fs.mkdtemp(path.join(ATOMIC_RECOVERY_SCRATCH, `${name}-`))
+  t.teardown(async () => fs.rm(root, { recursive: true, force: true }))
+  return root
+}
+
+async function zeroLastWalTransactionId (root) {
+  const walPath = path.join(root, 'control', 'wal.v2')
+  const bytes = await fs.readFile(walPath)
+  let offset = 0
+  let lastOffset = null
+  while (offset < bytes.byteLength) {
+    if (offset + 10 > bytes.byteLength) throw new Error('test WAL is truncated before its last frame')
+    lastOffset = offset
+    const totalLength = b4a.readUInt32BE(bytes, offset + 6)
+    if (totalLength < 224 || offset + totalLength > bytes.byteLength) {
+      throw new Error('test WAL has an invalid frame length')
+    }
+    offset += totalLength
+  }
+  if (offset !== bytes.byteLength || lastOffset == null) throw new Error('test WAL has no complete frame')
+  const handle = await fs.open(walPath, 'r+')
+  try {
+    await handle.write(b4a.alloc(32), 0, 32, lastOffset + 18)
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+const MALFORMED_ATOMIC_RECOVERY_CASES = Object.freeze([
+  {
+    name: 'duplicate spend',
+    baseline: true,
+    mutate (candidate, { baseline }) {
+      candidate.payload.spendTag = baseline.preparedAdmission.spendTag
+    },
+    error: /redefines an existing spend, commitment, or cell/
+  },
+  {
+    name: 'duplicate request commitment',
+    baseline: true,
+    mutate (candidate, { baseline }) {
+      candidate.payload.requestCommitment = baseline.preparedAdmission.requestCommitment
+    },
+    error: /redefines an existing spend, commitment, or cell/
+  },
+  {
+    name: 'duplicate storage slot',
+    baseline: true,
+    mutate (candidate, { baseline, engine }) {
+      candidate.payload.storageSlot = baseline.request.storageSlot
+      candidate.virtualBucket = engine.transactionStore.virtualBucket(
+        BLIND_STORE_SERVICE_TAG.CELL,
+        candidate.payload.storageSlot
+      )
+    },
+    error: /redefines an existing spend, commitment, or cell/
+  },
+  {
+    name: 'wrong virtual bucket',
+    mutate (candidate) {
+      candidate.virtualBucket = (candidate.virtualBucket + 1) & 0xffff
+    },
+    error: /virtual bucket/
+  },
+  {
+    name: 'zero WAL transaction ID',
+    zeroTransactionId: true,
+    error: /transaction ID must be nonzero/
+  },
+  {
+    name: 'size-class byte mismatch',
+    mutate (candidate) {
+      candidate.payload.declaredBytes += 4096
+    },
+    error: /size class and declared bytes disagree/
+  },
+  {
+    name: 'non-self-certifying storage slot',
+    mutate (candidate, { engine }) {
+      candidate.payload.storageSlot = b4a.alloc(32, 0x55)
+      candidate.virtualBucket = engine.transactionStore.virtualBucket(
+        BLIND_STORE_SERVICE_TAG.CELL,
+        candidate.payload.storageSlot
+      )
+    },
+    error: /storage slot is not self-certifying/
+  },
+  {
+    name: 'duplicate management keys',
+    mutate (candidate) {
+      candidate.payload.dropPublicKey = candidate.payload.renewPublicKey
+    },
+    error: /management keys must be distinct/
+  },
+  {
+    name: 'allocation commitment mismatch',
+    mutate (candidate) {
+      candidate.payload.allocationCommitment = b4a.from(candidate.payload.allocationCommitment)
+      candidate.payload.allocationCommitment[0] ^= 1
+    },
+    error: /allocation commitment mismatch/
+  },
+  {
+    name: 'result binding names another store',
+    mutate (candidate) {
+      candidate.payload.resultBindingBytes = profile1ResultBindingBytes({
+        storeId: b4a.alloc(32, 0xee)
+      })
+    },
+    error: /does not bind this profile-1 relay\/store authority/
+  },
+  {
+    name: 'noncanonical result binding',
+    mutate (candidate) {
+      candidate.payload.resultBindingBytes = b4a.concat([
+        candidate.payload.resultBindingBytes,
+        b4a.from([0])
+      ])
+    },
+    error: /not a canonical relay result binding/
+  },
+  {
+    name: 'prepared admission binding mismatch',
+    mutate (candidate, { atomic }) {
+      candidate.payload.preparedAdmissionBytes = preparedAdmissionBytesFor(atomic, {
+        spendTag: b4a.alloc(32, 0xed)
+      })
+    },
+    error: /binding mismatch/
+  },
+  {
+    name: 'noncanonical prepared admission',
+    mutate (candidate) {
+      candidate.payload.preparedAdmissionBytes = b4a.concat([
+        candidate.payload.preparedAdmissionBytes,
+        b4a.from([0])
+      ])
+    },
+    error: /trailing bytes/
+  },
+  {
+    name: 'request fingerprint mismatch',
+    mutate (candidate) {
+      candidate.payload.requestFingerprint = b4a.from(candidate.payload.requestFingerprint)
+      candidate.payload.requestFingerprint[0] ^= 1
+    },
+    error: /fingerprint, lease, allocation epoch, or result binding is invalid/
+  },
+  {
+    name: 'lease epoch mismatch',
+    mutate (candidate) {
+      candidate.payload.leaseEpoch++
+      candidate.payload.resultIdentity = storedResultIdentity(
+        candidate.payload.storageSlot,
+        candidate.payload.requestCommitment,
+        candidate.payload.declaredBlobHash,
+        candidate.payload.leaseClass,
+        candidate.payload.leaseEpoch
+      )
+    },
+    error: /fingerprint, lease, allocation epoch, or result binding is invalid/
+  },
+  {
+    name: 'result identity mismatch',
+    mutate (candidate) {
+      candidate.payload.resultIdentity = b4a.from(candidate.payload.resultIdentity)
+      candidate.payload.resultIdentity[0] ^= 1
+    },
+    error: /fingerprint, lease, allocation epoch, or result binding is invalid/
+  },
+  {
+    name: 'committed epoch mismatch',
+    mutate (candidate) {
+      candidate.payload.committedEpoch++
+      candidate.payload.leaseEpoch = candidate.payload.committedEpoch +
+        BLIND_CELL_STORAGE_LIMITS.leaseEpochs[candidate.payload.leaseClass]
+      candidate.payload.resultIdentity = storedResultIdentity(
+        candidate.payload.storageSlot,
+        candidate.payload.requestCommitment,
+        candidate.payload.declaredBlobHash,
+        candidate.payload.leaseClass,
+        candidate.payload.leaseEpoch
+      )
+    },
+    error: /fingerprint, lease, allocation epoch, or result binding is invalid/
+  },
+  {
+    name: 'allocation epoch is too far in the future',
+    allocationEpoch (time) { return time.epoch + 2 },
+    error: /fingerprint, lease, allocation epoch, or result binding is invalid/
+  },
+  {
+    name: 'allocation epoch exceeds the retention window',
+    allocationEpoch (time) {
+      return time.epoch - BLIND_CELL_STORAGE_LIMITS.retentionHorizonEpochs
+    },
+    error: /fingerprint, lease, allocation epoch, or result binding is invalid/
+  }
+])
 
 async function findOnlyBlob (root) {
   const bucketNames = await fs.readdir(path.join(root, 'blobs'))
@@ -513,6 +913,153 @@ test('cell PUT is durable, first-write-wins, opaque on disk, and exact retry sur
   await rejectsCode(t, engine.putCell(changedSpend), 'CONFLICT')
   await engine.close()
 })
+
+test('daemon pins the private IPC atomic record kind to WAL type 17 and the generated store authority', async t => {
+  const recordKind = PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.atomicCommitRecordKind
+  const recordType = BLIND_CELL_WAL_TYPE[recordKind]
+  const decoded = decodeStoreFormatAuthorityV1(await fs.readFile(STORE_FORMAT_AUTHORITY_URL))
+  const rule = decoded.entries.find(entry => entry.name === 'wal.cell.put-atomic-committed')
+  const protocolPackage = JSON.parse(await fs.readFile(BLIND_PROTOCOL_PACKAGE_URL, 'utf8'))
+
+  t.is(recordKind, 'PUT_ATOMIC_COMMITTED')
+  t.is(recordType, 17)
+  t.is(PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.v2EmitsLegacyReservationWal, false)
+  t.ok(rule)
+  t.ok(rule.value.includes(`recordType=${recordType}`))
+  t.ok(rule.value.includes('BlindPutAtomicCommittedStoreV1'))
+  t.absent(protocolPackage.dependencies?.['@hiverelay/blind-ipc'])
+})
+
+test('recovery composes legacy Cell WAL records with one self-contained atomic type-17 commit', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-mixed-atomic-recovery')
+  const time = clock()
+  const engineOverrides = {
+    storeId: STORE_ID,
+    durabilityProfileHash: DURABILITY_PROFILE_HASH
+  }
+  const legacy = putFixture({ spendByte: 0xa1, blobByte: 0xa1 })
+  const atomic = putFixture({ spendByte: 0xa2, blobByte: 0xa2 })
+  let engine = new BlindCellStorageEngine(options(root, time, engineOverrides))
+  await engine.open()
+  await engine.putCell(legacy)
+  const candidate = await atomicCommitCandidate(engine, time, atomic)
+  const resultBindingBytes = candidate.payload.resultBindingBytes
+  const resultIdentity = candidate.payload.resultIdentity
+  await engine.transactionStore.append({
+    type: BLIND_CELL_WAL_TYPE.PUT_ATOMIC_COMMITTED,
+    transactionId: candidate.transactionId,
+    virtualBucket: candidate.virtualBucket,
+    payload: encodeCanonical(blindPutAtomicCommittedStoreV1, candidate.payload)
+  })
+  await engine.close()
+
+  engine = new BlindCellStorageEngine(options(root, time, engineOverrides))
+  await engine.open()
+  t.alike(BLIND_CELL_WAL_TYPE, {
+    INGRESS_RESERVED: 1,
+    ATTEMPT_CONSUMED: 2,
+    PUT_COMMITTED: 3,
+    PUT_TERMINAL: 4,
+    RENEW_COMMITTED: 5,
+    DROP_COMMITTED: 6,
+    POLICY_COMMITTED: 7,
+    GC_COMMITTED: 8,
+    FLOOR_ADVANCE: 9,
+    CLOCK_UNSAFE: 10,
+    CLOCK_CONFIRM: 11,
+    COMPACT: 12,
+    INTEGRITY_FAILED: 13,
+    READ_PIN_COMMITTED: 14,
+    READ_PIN_FINALIZED: 15,
+    READ_PIN_EXPIRED: 16,
+    PUT_ATOMIC_COMMITTED: 17
+  })
+  t.alike((await engine.readCell(legacy.request.storageSlot)).cellBlob, legacy.cellBlob)
+  t.alike((await engine.readCell(atomic.request.storageSlot)).cellBlob, atomic.cellBlob)
+  const replay = await engine.putCell({
+    ...atomic,
+    resultBinding: resultBindingBytes,
+    source: (async function * () { throw new Error('atomic retry must not read a body') })()
+  })
+  t.is(replay.replay, true)
+  t.alike(replay.resultIdentity, resultIdentity)
+  const snapshot = verifyBlindCellStorageControlSnapshotState(
+    await engine.captureControlSnapshotState()
+  )
+  const atomicSpend = snapshot.spends.get(b4a.toString(atomic.preparedAdmission.spendTag, 'hex'))
+  t.is(atomicSpend.atomicCommitted, true)
+  t.absent(atomicSpend.deadlineUnixMillis)
+  t.absent(atomicSpend.remainingAttempts)
+  t.absent(atomicSpend.reservedEpoch)
+  t.is(engine.status().accounting.storedBytes, 2 * atomic.cellBlob.byteLength)
+  t.is(engine.status().accounting.spends, 2)
+  await engine.close()
+})
+
+for (const scenario of MALFORMED_ATOMIC_RECOVERY_CASES) {
+  test(`type-17 recovery rejects ${scenario.name} without partial authority`, async t => {
+    const root = await containedAtomicRecoveryRoot(t, scenario.name.replaceAll(' ', '-'))
+    const time = clock(2000)
+    const engineOverrides = {
+      storeId: STORE_ID,
+      durabilityProfileHash: DURABILITY_PROFILE_HASH
+    }
+    const baseline = putFixture({ spendByte: 0xa1, blobByte: 0xa1 })
+    const atomic = putFixture({
+      allocationEpoch: scenario.allocationEpoch == null
+        ? 1000
+        : scenario.allocationEpoch(time),
+      spendByte: 0xa2,
+      blobByte: 0xa2
+    })
+    let engine = new BlindCellStorageEngine(options(root, time, engineOverrides))
+    await engine.open()
+    if (scenario.baseline) await engine.putCell(baseline)
+    const expectedState = recoveryState(engine)
+    const candidate = await atomicCommitCandidate(engine, time, atomic)
+    if (scenario.mutate) scenario.mutate(candidate, { atomic, baseline, engine, time })
+    const orphanPath = opaqueBlobPath(root, candidate.reference)
+    const orphanObjectId = b4a.from(candidate.reference.objectId)
+    await engine.transactionStore.append({
+      type: BLIND_CELL_WAL_TYPE.PUT_ATOMIC_COMMITTED,
+      transactionId: candidate.transactionId,
+      virtualBucket: candidate.virtualBucket,
+      payload: encodeCanonical(blindPutAtomicCommittedStoreV1, candidate.payload)
+    })
+    await engine.close()
+    if (scenario.zeroTransactionId) await zeroLastWalTransactionId(root)
+
+    engine = new BlindCellStorageEngine(options(root, time, engineOverrides))
+    let failure = null
+    try {
+      await engine.open()
+    } catch (error) {
+      failure = error
+    }
+    if (failure == null) {
+      await engine.close()
+      t.fail(`${scenario.name} unexpectedly recovered`)
+      return
+    }
+
+    t.ok(failure instanceof BlindWalIntegrityError)
+    t.ok(scenario.error.test(failure.message), `${scenario.name}: ${failure.message}`)
+    t.is(engine.opened, false)
+    t.is(engine.transactionStore.opened, false)
+    t.is(engine.transactionStore.handle, null)
+    t.is(engine.transactionStore.storeLockHandle, null)
+    t.alike(recoveryState(engine), expectedState)
+    t.absent([...engine.cells.values()].some(record =>
+      b4a.equals(record.blobReference.objectId, orphanObjectId)))
+    t.alike(await fs.readFile(orphanPath), atomic.cellBlob,
+      'published bytes remain a physical orphan, never recovered blob authority')
+    t.exception(() => engine.status(), /cell storage engine is not open/)
+    await t.exception(
+      Promise.resolve().then(() => engine.readCell(atomic.request.storageSlot)),
+      /cell storage engine is not open/
+    )
+  })
+}
 
 test('concurrent identical PUT consumes one spend and publishes one cell', async t => {
   const root = await temporaryRoot(t, 'blind-cell-concurrent')

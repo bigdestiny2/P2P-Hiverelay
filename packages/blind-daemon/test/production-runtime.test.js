@@ -130,7 +130,7 @@ async function runtimeFixture (options = {}) {
     import.meta.url
   ))
   descriptor.durability.storeFormatMajor = 1
-  descriptor.durability.storeFormatMinor = 0
+  descriptor.durability.storeFormatMinor = 1
   descriptor.durability.storeFormatHash = options.storeFormatHash == null
     ? hashStoreFormat(authorityBytes)
     : b4a.from(options.storeFormatHash)

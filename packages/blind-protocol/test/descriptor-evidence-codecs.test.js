@@ -203,7 +203,7 @@ test('blind descriptor evidence: durability and build profiles are fixed and bou
   const durability = {
     profileId: DURABILITY_PROFILE_ID.CONTROL_RPO0_3_NODE_V1,
     storeFormatMajor: 1,
-    storeFormatMinor: 0,
+    storeFormatMinor: 1,
     storeFormatHash: bytes(32, 0x41),
     externalJournalId: bytes(32, 0x42),
     externalWitnessPublicKey: bytes(32, 0x43),

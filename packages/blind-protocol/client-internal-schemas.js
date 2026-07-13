@@ -308,6 +308,60 @@ export const blindCellCommittedPutSpendSnapshotV1 = struct([
   validate (value) { validateCellIngressSnapshot(value, ['resultIdentity']) }
 })
 
+const cellAtomicCommittedPutFields = [
+  ['version', version1],
+  ['spendTag', bytes32],
+  ['requestCommitment', bytes32],
+  ['requestFingerprint', bytes32],
+  ['storageSlot', bytes32],
+  ['allocationEpoch', u32be],
+  ['sizeClass', ranged(u8, 1, 5, 'sizeClass')],
+  ['leaseClass', ranged(u8, 1, 4, 'leaseClass')],
+  ['declaredBlobHash', bytes32],
+  ['createPublicKey', bytes32],
+  ['renewPublicKey', bytes32],
+  ['dropPublicKey', bytes32],
+  ['allocationCommitment', bytes32],
+  ['profileId', ranged(u16be, 1, 0xffff, 'profileId')],
+  ['preparedAdmissionBytes', boundedBytes(1, 17408, 'preparedAdmissionBytes')],
+  ['resultBindingBytes', boundedBytes(1, 1024, 'resultBindingBytes')],
+  ['declaredBytes', u32be]
+]
+
+function validateCellAtomicCommittedPut (value, extra = []) {
+  for (const field of [
+    'spendTag', 'requestCommitment', 'requestFingerprint', 'storageSlot', 'declaredBlobHash',
+    'createPublicKey', 'renewPublicKey', 'dropPublicKey', 'allocationCommitment', ...extra
+  ]) nonzero(value[field], field)
+}
+
+export const blindPutAtomicCommittedStoreV1 = struct([
+  ...cellAtomicCommittedPutFields,
+  ['blobObjectId', bytes32],
+  ['leaseEpoch', u32be],
+  ['stateRevision', constant(u64be, 0n, 'stateRevision')],
+  ['policyRevision', constant(u64be, 0n, 'policyRevision')],
+  ['resultIdentity', bytes32],
+  ['committedEpoch', u32be]
+], {
+  name: 'BlindPutAtomicCommittedStoreV1',
+  validate (value) { validateCellAtomicCommittedPut(value, ['blobObjectId', 'resultIdentity']) }
+})
+
+export const blindCellAtomicCommittedPutSpendSnapshotV1 = struct([
+  ['version', version1],
+  ['transactionId', bytes32],
+  ...cellAtomicCommittedPutFields.slice(1),
+  ['resultIdentity', bytes32],
+  ['committedEpoch', u32be],
+  ['resultCell', blindCellHistoricalResultSnapshotV1]
+], {
+  name: 'BlindCellAtomicCommittedPutSpendSnapshotV1',
+  validate (value) {
+    validateCellAtomicCommittedPut(value, ['transactionId', 'resultIdentity'])
+  }
+})
+
 export const blindCellTerminalSpendSnapshotV1 = struct([
   ...cellIngressSnapshotFields(ranged(u8, 0, 2, 'remainingAttempts')),
   ['terminalReason', ranged(u8, 1, 3, 'terminalReason')],

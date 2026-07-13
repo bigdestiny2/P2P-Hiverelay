@@ -7,6 +7,7 @@ import {
   OPERATION,
   allocationCommitment,
   arrayOf,
+  blindCellAtomicCommittedPutSpendSnapshotV1,
   blindCellChargedReadPinEntrySnapshotV1,
   blindCellChargedReadRetrySnapshotV1,
   blindCellCommittedPutSpendSnapshotV1,
@@ -58,6 +59,7 @@ const SUBTYPE = Object.freeze({
   COMMITTED_RENEW_SPEND: 2,
   TERMINAL_PUT_SPEND: 3,
   REQUEST_RESULT: 4,
+  ATOMIC_COMMITTED_PUT_SPEND: 5,
   RESERVED_PUT_SPEND: 1,
   CELL_RECORD: 1,
   GLOBAL: 1,
@@ -369,6 +371,32 @@ function ingressSnapshotValue (entry) {
   }
 }
 
+function atomicCommittedPutSnapshotValue (entry) {
+  return {
+    version: 1,
+    transactionId: entry.transactionId,
+    spendTag: entry.spendTag,
+    requestCommitment: entry.requestCommitment,
+    requestFingerprint: entry.requestFingerprint,
+    storageSlot: entry.storageSlot,
+    allocationEpoch: entry.allocationEpoch,
+    sizeClass: entry.sizeClass,
+    leaseClass: entry.leaseClass,
+    declaredBlobHash: entry.declaredBlobHash,
+    createPublicKey: entry.createPublicKey,
+    renewPublicKey: entry.renewPublicKey,
+    dropPublicKey: entry.dropPublicKey,
+    allocationCommitment: entry.allocationCommitment,
+    profileId: entry.profileId,
+    preparedAdmissionBytes: entry.preparedAdmissionBytes,
+    resultBindingBytes: entry.resultBindingBytes,
+    declaredBytes: entry.declaredBytes,
+    resultIdentity: entry.resultIdentity,
+    committedEpoch: entry.committedEpoch,
+    resultCell: historicalResultSnapshotValue(entry.resultCell)
+  }
+}
+
 function historicalResultSnapshotValue (value) {
   if (!value || typeof value !== 'object') fail('historical Cell result is required')
   const objectState = value.objectState === 'PRESENT' || value.objectState === 1
@@ -525,7 +553,11 @@ function candidateEntries (state) {
           committedEpoch: value.committedEpoch,
           resultCell: historicalResultSnapshotValue(value.resultCell)
         }))
-    } else if (value.status === 'committed' && value.operation == null) {
+    } else if (value.status === 'committed' && value.operation == null && value.atomicCommitted === true) {
+      output.push(encodedEntry(ENTRY_KIND.SPEND_IDEMPOTENCY, SUBTYPE.ATOMIC_COMMITTED_PUT_SPEND,
+        value.spendTag, blindCellAtomicCommittedPutSpendSnapshotV1,
+        atomicCommittedPutSnapshotValue(value)))
+    } else if (value.status === 'committed' && value.operation == null && value.atomicCommitted !== true) {
       output.push(encodedEntry(ENTRY_KIND.SPEND_IDEMPOTENCY, SUBTYPE.COMMITTED_PUT_SPEND,
         value.spendTag, blindCellCommittedPutSpendSnapshotV1, {
           ...ingressSnapshotValue(value),
@@ -688,6 +720,36 @@ function commonIngressEntry (value, status) {
     terminalEpoch: null,
     resultIdentity: null,
     committedEpoch: null,
+    inFlight: false
+  }
+}
+
+function atomicCommittedPutEntry (value) {
+  return {
+    status: 'committed',
+    operation: null,
+    atomicCommitted: true,
+    transactionId: cloneBytes(value.transactionId),
+    spendTag: cloneBytes(value.spendTag),
+    requestCommitment: cloneBytes(value.requestCommitment),
+    requestFingerprint: cloneBytes(value.requestFingerprint),
+    storageSlot: cloneBytes(value.storageSlot),
+    allocationEpoch: value.allocationEpoch,
+    sizeClass: value.sizeClass,
+    leaseClass: value.leaseClass,
+    declaredBlobHash: cloneBytes(value.declaredBlobHash),
+    createPublicKey: cloneBytes(value.createPublicKey),
+    renewPublicKey: cloneBytes(value.renewPublicKey),
+    dropPublicKey: cloneBytes(value.dropPublicKey),
+    allocationCommitment: cloneBytes(value.allocationCommitment),
+    profileId: value.profileId,
+    preparedAdmissionBytes: cloneBytes(value.preparedAdmissionBytes),
+    resultBindingBytes: cloneBytes(value.resultBindingBytes),
+    declaredBytes: value.declaredBytes,
+    terminalEpoch: null,
+    resultIdentity: cloneBytes(value.resultIdentity),
+    committedEpoch: value.committedEpoch,
+    resultCell: reconstructedHistoricalResult(value.resultCell),
     inFlight: false
   }
 }
@@ -947,6 +1009,22 @@ async function reconstructEntries (source, context = {}) {
       reconstructed.committedEpoch = value.committedEpoch
       reconstructed.resultCell = reconstructedHistoricalResult(value.resultCell)
       addSpend(state, reconstructed)
+      continue
+    }
+    if (entry.entryKind === ENTRY_KIND.SPEND_IDEMPOTENCY && subtype === SUBTYPE.ATOMIC_COMMITTED_PUT_SPEND) {
+      const identity = keyIdentity(entry, ENTRY_KIND.SPEND_IDEMPOTENCY, subtype, 32,
+        'atomic committed put spend')
+      const value = decodeValue(blindCellAtomicCommittedPutSpendSnapshotV1, entry.value,
+        'atomic committed put spend')
+      if (!b4a.equals(identity, value.spendTag)) fail('atomic committed put spend key does not match spendTag')
+      assertIngressSemantics(value, relayPublicKey, context)
+      const expectedLease = value.committedEpoch + [0, 4, 28, 120, 360][value.leaseClass]
+      const expectedResult = resultIdentity('stored', value.storageSlot, value.requestCommitment,
+        value.declaredBlobHash, value.leaseClass, expectedLease, 0n)
+      if (!b4a.equals(expectedResult, value.resultIdentity)) {
+        fail('atomic committed put result identity does not match')
+      }
+      addSpend(state, atomicCommittedPutEntry(value))
       continue
     }
     if (entry.entryKind === ENTRY_KIND.SPEND_IDEMPOTENCY && subtype === SUBTYPE.COMMITTED_RENEW_SPEND) {

@@ -23,6 +23,10 @@ const compositionDependencies = deepFreeze({
   BatchGetV1: ['AdmissionV1'],
   BlindBackupChunkManifestV1: ['BlindBackupEncryptionProfileV1'],
   BlindCoreAckV1: ['RelayResultBindingV1'],
+  BlindCellAtomicCommittedPutSpendSnapshotV1: [
+    'BlindCellHistoricalResultSnapshotV1',
+    'BlindPreparedAdmissionStoreV1'
+  ],
   BlindCellChargedReadRetrySnapshotV1: [
     'BlindCellChargedReadPinEntrySnapshotV1',
     'BlindPreparedAdmissionStoreV1'
@@ -45,6 +49,7 @@ const compositionDependencies = deepFreeze({
   BlindForwardRouteScopeV1: ['BlindForwardRouteHopV1'],
   BlindListenerCatalogV1: ['BlindListenerEntryV1'],
   BlindOuterEnvelopeV1: ['BlindDispatchFrameV1'],
+  BlindPutAtomicCommittedStoreV1: ['BlindPreparedAdmissionStoreV1'],
   BlindProductIsolationReportBundleV1: [
     'BlindArtifactFileInventoryV1',
     'BlindExecutableEntrypointCatalogV1',

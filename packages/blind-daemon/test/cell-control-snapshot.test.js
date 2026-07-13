@@ -4,12 +4,14 @@ import { createHmac } from 'node:crypto'
 import {
   CELL_SIZE_CLASS,
   allocationCommitment,
+  blindCellAtomicCommittedPutSpendSnapshotV1,
   blindPreparedAdmissionStoreV1,
   blindCellControlGlobalSnapshotV1,
   blake2b256,
   cellStorageSlot,
   decodeCanonical,
-  encodeCanonical
+  encodeCanonical,
+  relayResultBindingV1
 } from '@hiverelay/blind-protocol'
 import {
   BLIND_CELL_CONTROL_SNAPSHOT_STATUS,
@@ -67,6 +69,22 @@ function virtualBucket (storageSlot) {
     .update(storageSlot)
     .digest()
   return digest[0] * 0x100 + digest[1]
+}
+
+function profile1ResultBinding (relayPublicKey) {
+  return encodeCanonical(relayResultBindingV1, {
+    version: 1,
+    relayPublicKey,
+    storeId: bytes(0x02),
+    descriptorSequence: 1n,
+    descriptorHash: bytes(0x06),
+    durabilityProfileId: 1,
+    durabilityContinuityHash: bytes(0x03),
+    durabilityProfileHash: bytes(0x07),
+    restoreEvidenceHeadSequence: 0n,
+    restoreEvidenceHeadHash: b4a.alloc(32),
+    externalCommitWitness: null
+  })
 }
 
 function semanticAuthority () {
@@ -215,6 +233,8 @@ function fixture (reverse = false) {
   }
   return {
     relayPublicKey,
+    storeId: bytes(0x02),
+    durabilityContinuityHash: bytes(0x03),
     spends,
     commitments,
     requestResults: new Map(),
@@ -232,6 +252,74 @@ function fixture (reverse = false) {
     readOnlyReason: null,
     integrityEvidence: []
   }
+}
+
+function fixtureWithAtomicCommittedPut () {
+  const state = fixture()
+  const atomic = ingress(state.relayPublicKey, 3, { allocationEpoch: 99 })
+  atomic.status = 'committed'
+  atomic.operation = null
+  atomic.atomicCommitted = true
+  atomic.resultBindingBytes = profile1ResultBinding(state.relayPublicKey)
+  atomic.committedEpoch = 100
+  atomic.resultIdentity = resultIdentity(
+    'stored',
+    atomic.storageSlot,
+    atomic.requestCommitment,
+    atomic.declaredBlobHash,
+    atomic.leaseClass,
+    104,
+    0n
+  )
+  atomic.resultCell = {
+    storageSlot: atomic.storageSlot,
+    allocationEpoch: atomic.allocationEpoch,
+    sizeClass: atomic.sizeClass,
+    leaseClass: atomic.leaseClass,
+    leaseEpoch: 104,
+    stateRevision: 0n,
+    policyRevision: 0n,
+    cellBlobHash: atomic.declaredBlobHash,
+    allocationCommitment: atomic.allocationCommitment,
+    objectState: 'PRESENT',
+    policyState: 'VISIBLE'
+  }
+  delete atomic.deadlineUnixMillis
+  delete atomic.remainingAttempts
+  delete atomic.reservedEpoch
+  const spendKey = b4a.toString(atomic.spendTag, 'hex')
+  const commitmentKey = b4a.toString(atomic.requestCommitment, 'hex')
+  state.spends.set(spendKey, atomic)
+  state.commitments.set(commitmentKey, {
+    spendKey,
+    fingerprint: b4a.toString(atomic.requestFingerprint, 'hex')
+  })
+  state.cells.set(b4a.toString(atomic.storageSlot, 'hex'), {
+    storageSlot: atomic.storageSlot,
+    allocationEpoch: atomic.allocationEpoch,
+    sizeClass: atomic.sizeClass,
+    leaseClass: atomic.leaseClass,
+    leaseEpoch: 104,
+    stateRevision: 0n,
+    policyRevision: 0n,
+    cellBlobHash: atomic.declaredBlobHash,
+    blobReference: { virtualBucket: virtualBucket(atomic.storageSlot), objectId: bytes(0x82) },
+    createPublicKey: atomic.createPublicKey,
+    renewPublicKey: atomic.renewPublicKey,
+    dropPublicKey: atomic.dropPublicKey,
+    allocationCommitment: atomic.allocationCommitment,
+    objectState: 1,
+    policyState: 1,
+    tombstoneReason: null,
+    terminalEpoch: null,
+    createSpendTag: atomic.spendTag,
+    resultIdentity: atomic.resultIdentity,
+    createdEpoch: atomic.committedEpoch
+  })
+  state.accounting.storedBytes += atomic.declaredBytes
+  state.accounting.controlBytes += 512
+  state.accounting.tombstoneBytes += 512
+  return { state, atomic }
 }
 
 function headers (state) {
@@ -300,6 +388,32 @@ test('Cell recovery snapshots are deterministic, exact, and preserve allocation 
   t.is(recovered.accounting.stagingByProfile.get(2), CELL_SIZE_CLASS[1])
   t.is(recovered.epochFloor, 100)
   t.is(recovered.clockUnsafe, true)
+})
+
+test('atomic committed PUT checkpoints omit legacy reservation fields and reconstruct beside legacy state', async t => {
+  const authority = semanticAuthority()
+  const { state, atomic } = fixtureWithAtomicCommittedPut()
+  const entries = await entriesFor(authority, state)
+  const entry = entries.find(value => value.entryKind === 1 && value.key[1] === 5)
+  t.ok(entry)
+  const decoded = decodeCanonical(blindCellAtomicCommittedPutSpendSnapshotV1, entry.value, {
+    copyBytes: true
+  })
+  t.absent(decoded.deadlineUnixMillis)
+  t.absent(decoded.remainingAttempts)
+  t.absent(decoded.reservedEpoch)
+  t.alike(decoded.spendTag, atomic.spendTag)
+
+  const recovered = (await reconstruct(authority, state, entries)).cellState
+  const restored = recovered.spends.get(b4a.toString(atomic.spendTag, 'hex'))
+  t.is(restored.atomicCommitted, true)
+  t.absent(restored.deadlineUnixMillis)
+  t.absent(restored.remainingAttempts)
+  t.absent(restored.reservedEpoch)
+  t.alike(restored.resultIdentity, atomic.resultIdentity)
+  t.is(recovered.spends.size, 3)
+  t.is(recovered.cells.size, 2)
+  t.is(recovered.accounting.storedBytes, 2 * CELL_SIZE_CLASS[1])
 })
 
 test('Cell semantic result state and tuple copies cannot mutate the branded verification record', async t => {

@@ -7,6 +7,7 @@ import {
   arrayOf,
   blake2b256,
   blindPreparedAdmissionStoreV1,
+  blindPutAtomicCommittedStoreV1,
   boundedBytes,
   cellManageRequestCommitment,
   cellPutRequestCommitment,
@@ -80,7 +81,8 @@ export const BLIND_CELL_WAL_TYPE = Object.freeze({
   INTEGRITY_FAILED: 13,
   READ_PIN_COMMITTED: 14,
   READ_PIN_FINALIZED: 15,
-  READ_PIN_EXPIRED: 16
+  READ_PIN_EXPIRED: 16,
+  PUT_ATOMIC_COMMITTED: 17
 })
 
 const version1 = constant(u8, 1, 'version')
@@ -309,7 +311,8 @@ const WAL_PAYLOAD_CODEC = new Map([
   [BLIND_CELL_WAL_TYPE.INTEGRITY_FAILED, integrityFailedV1],
   [BLIND_CELL_WAL_TYPE.READ_PIN_COMMITTED, chargedReadPinCommittedV1],
   [BLIND_CELL_WAL_TYPE.READ_PIN_FINALIZED, chargedReadPinFinalizedV1],
-  [BLIND_CELL_WAL_TYPE.READ_PIN_EXPIRED, chargedReadPinExpiredV1]
+  [BLIND_CELL_WAL_TYPE.READ_PIN_EXPIRED, chargedReadPinExpiredV1],
+  [BLIND_CELL_WAL_TYPE.PUT_ATOMIC_COMMITTED, blindPutAtomicCommittedStoreV1]
 ])
 
 const LEASE_EPOCHS = Object.freeze({ 1: 4, 2: 28, 3: 120, 4: 360 })
@@ -912,6 +915,7 @@ export class BlindCellStorageEngine {
       case BLIND_CELL_WAL_TYPE.READ_PIN_COMMITTED: this.#applyReadPin(frame, value); break
       case BLIND_CELL_WAL_TYPE.READ_PIN_FINALIZED: this.#applyReadPinFinalized(frame, value); break
       case BLIND_CELL_WAL_TYPE.READ_PIN_EXPIRED: this.#applyReadPinExpired(frame, value); break
+      case BLIND_CELL_WAL_TYPE.PUT_ATOMIC_COMMITTED: this.#applyAtomicPut(frame, value); break
       default: throw new BlindWalIntegrityError(`unhandled cell WAL type ${frame.type}`)
     }
     this.#assertAccounting()
@@ -1078,6 +1082,134 @@ export class BlindCellStorageEngine {
     this.#releaseStaging(entry)
     this.accounting.reservedCells--
     this.accounting.storedBytes += entry.declaredBytes
+  }
+
+  #applyAtomicPut (frame, value) {
+    this.#verifyBucket(frame, value.storageSlot)
+    const spendKey = hex(value.spendTag)
+    const commitmentKey = hex(value.requestCommitment)
+    const slotKey = hex(value.storageSlot)
+    if (this.spends.has(spendKey) || this.commitments.has(commitmentKey) || this.cells.has(slotKey)) {
+      throw new BlindWalIntegrityError('atomic put redefines an existing spend, commitment, or cell')
+    }
+    if (isZero(frame.transactionId)) throw new BlindWalIntegrityError('atomic put transactionId must be nonzero')
+    if (CELL_SIZE_CLASS[value.sizeClass] !== value.declaredBytes) {
+      throw new BlindWalIntegrityError('atomic put size class and declared bytes disagree')
+    }
+    if (!equal(cellStorageSlot(value), value.storageSlot)) {
+      throw new BlindWalIntegrityError('atomic put storage slot is not self-certifying')
+    }
+    if (new Set([value.createPublicKey, value.renewPublicKey, value.dropPublicKey].map(hex)).size !== 3) {
+      throw new BlindWalIntegrityError('atomic put management keys must be distinct')
+    }
+    const expectedAllocation = allocationCommitment({
+      relayPublicKey: this.relayPublicKey,
+      storageSlot: value.storageSlot,
+      allocationEpoch: value.allocationEpoch,
+      sizeClass: value.sizeClass,
+      leaseClass: value.leaseClass,
+      declaredCellBlobHash: value.declaredBlobHash,
+      createPublicKey: value.createPublicKey,
+      renewPublicKey: value.renewPublicKey,
+      dropPublicKey: value.dropPublicKey
+    })
+    if (!equal(expectedAllocation, value.allocationCommitment)) {
+      throw new BlindWalIntegrityError('atomic put allocation commitment mismatch')
+    }
+    let resultBindingBytes
+    let preparedAdmissionBytes
+    try {
+      resultBindingBytes = this.#resultBindingBytes(value.resultBindingBytes,
+        'atomic committed resultBindingBytes')
+      const decodedPrepared = decodeCanonical(blindPreparedAdmissionStoreV1,
+        value.preparedAdmissionBytes, { copyBytes: true })
+      const canonicalPrepared = this.#preparedAdmission(decodedPrepared,
+        'atomic committed preparedAdmissionBytes')
+      if (!equal(canonicalPrepared.canonicalBytes, value.preparedAdmissionBytes) ||
+          !equal(canonicalPrepared.value.spendTag, value.spendTag) ||
+          !equal(canonicalPrepared.value.requestCommitment, value.requestCommitment) ||
+          canonicalPrepared.value.profileId !== value.profileId) throw new Error('binding mismatch')
+      preparedAdmissionBytes = canonicalPrepared.canonicalBytes
+    } catch (error) {
+      throw new BlindWalIntegrityError(error.message)
+    }
+    const expectedFingerprint = requestFingerprint([
+      value.spendTag,
+      value.requestCommitment,
+      value.storageSlot,
+      value.allocationCommitment,
+      value.declaredBlobHash,
+      u32bytes(value.declaredBytes),
+      b4a.from([value.leaseClass]),
+      u32bytes(value.profileId),
+      blake2b256(preparedAdmissionBytes)
+    ])
+    const expectedLeaseEpoch = value.committedEpoch + LEASE_EPOCHS[value.leaseClass]
+    const expectedResult = resultIdentity('stored', value.storageSlot, value.requestCommitment,
+      value.declaredBlobHash, value.leaseClass, value.leaseEpoch, 0n)
+    if (!equal(expectedFingerprint, value.requestFingerprint) ||
+        value.committedEpoch !== this.epochFloor ||
+        value.leaseEpoch !== expectedLeaseEpoch ||
+        !equal(expectedResult, value.resultIdentity) ||
+        value.allocationEpoch > value.committedEpoch + 1 ||
+        value.committedEpoch >= value.allocationEpoch + RETENTION_HORIZON_EPOCHS) {
+      throw new BlindWalIntegrityError('atomic put fingerprint, lease, allocation epoch, or result binding is invalid')
+    }
+    const entry = {
+      status: 'committed',
+      operation: null,
+      atomicCommitted: true,
+      transactionId: b4a.from(frame.transactionId),
+      spendTag: b4a.from(value.spendTag),
+      requestCommitment: b4a.from(value.requestCommitment),
+      requestFingerprint: b4a.from(value.requestFingerprint),
+      storageSlot: b4a.from(value.storageSlot),
+      allocationEpoch: value.allocationEpoch,
+      sizeClass: value.sizeClass,
+      leaseClass: value.leaseClass,
+      declaredBlobHash: b4a.from(value.declaredBlobHash),
+      createPublicKey: b4a.from(value.createPublicKey),
+      renewPublicKey: b4a.from(value.renewPublicKey),
+      dropPublicKey: b4a.from(value.dropPublicKey),
+      allocationCommitment: b4a.from(value.allocationCommitment),
+      profileId: value.profileId,
+      preparedAdmissionBytes,
+      resultBindingBytes,
+      declaredBytes: value.declaredBytes,
+      terminalEpoch: null,
+      resultIdentity: b4a.from(value.resultIdentity),
+      committedEpoch: value.committedEpoch,
+      inFlight: false
+    }
+    const record = {
+      storageSlot: b4a.from(value.storageSlot),
+      allocationEpoch: value.allocationEpoch,
+      sizeClass: value.sizeClass,
+      leaseClass: value.leaseClass,
+      leaseEpoch: value.leaseEpoch,
+      stateRevision: value.stateRevision,
+      policyRevision: value.policyRevision,
+      cellBlobHash: b4a.from(value.declaredBlobHash),
+      blobReference: { virtualBucket: frame.virtualBucket, objectId: b4a.from(value.blobObjectId) },
+      createPublicKey: b4a.from(value.createPublicKey),
+      renewPublicKey: b4a.from(value.renewPublicKey),
+      dropPublicKey: b4a.from(value.dropPublicKey),
+      allocationCommitment: b4a.from(value.allocationCommitment),
+      objectState: OBJECT_STATE.PRESENT,
+      policyState: POLICY_STATE.VISIBLE,
+      tombstoneReason: null,
+      terminalEpoch: null,
+      createSpendTag: b4a.from(value.spendTag),
+      resultIdentity: b4a.from(value.resultIdentity),
+      createdEpoch: value.committedEpoch
+    }
+    entry.resultCell = publicCell(record)
+    this.spends.set(spendKey, entry)
+    this.commitments.set(commitmentKey, { spendKey, fingerprint: hex(value.requestFingerprint) })
+    this.cells.set(slotKey, record)
+    this.accounting.storedBytes += value.declaredBytes
+    this.accounting.controlBytes += CONTROL_RECORD_BYTES
+    this.accounting.tombstoneBytes += TOMBSTONE_RECORD_BYTES
   }
 
   #applyTerminal (frame, value) {

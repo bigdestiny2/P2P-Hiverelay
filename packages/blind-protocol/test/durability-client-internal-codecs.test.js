@@ -8,6 +8,7 @@ import {
   blindBackupEncryptionProfileV1,
   blindBackupManifestV1,
   blindBackupRetentionTransitionV1,
+  blindCellAtomicCommittedPutSpendSnapshotV1,
   blindCleanRestoreEvidenceV1,
   blindControlStateSnapshotV1,
   blindCoreReadCapV1,
@@ -15,6 +16,7 @@ import {
   blindExternalCommitWitnessV1,
   blindExternalControlCheckpointV1,
   blindLocalCheckpointV1,
+  blindPutAtomicCommittedStoreV1,
   blindRestoreEvidenceBundleV1,
   blindRestoreEvidenceHeadV1,
   blindStoreManifestV1,
@@ -69,6 +71,63 @@ test('version-2 WAL header freezes continuity-bound 192-byte recovery authority'
   }), /total and payload lengths disagree/)
 })
 
+test('atomic Cell PUT store and checkpoint codecs require result authority without reservation fields', t => {
+  const committed = {
+    version: 1,
+    spendTag: bytes(32, 0x35),
+    requestCommitment: bytes(32, 0x36),
+    requestFingerprint: bytes(32, 0x37),
+    storageSlot: bytes(32, 0x38),
+    allocationEpoch: 1,
+    sizeClass: 1,
+    leaseClass: 1,
+    declaredBlobHash: bytes(32, 0x39),
+    createPublicKey: bytes(32, 0x3a),
+    renewPublicKey: bytes(32, 0x3b),
+    dropPublicKey: bytes(32, 0x3c),
+    allocationCommitment: bytes(32, 0x3d),
+    profileId: 1,
+    preparedAdmissionBytes: bytes(1, 0x3e),
+    resultBindingBytes: bytes(1, 0x3f),
+    declaredBytes: 4096,
+    blobObjectId: bytes(32, 0x40),
+    leaseEpoch: 5,
+    stateRevision: 0n,
+    policyRevision: 0n,
+    resultIdentity: bytes(32, 0x41),
+    committedEpoch: 1
+  }
+  const encoded = encodeCanonical(blindPutAtomicCommittedStoreV1, committed)
+  t.alike(decodeCanonical(blindPutAtomicCommittedStoreV1, encoded).resultIdentity,
+    committed.resultIdentity)
+  t.exception(() => encodeCanonical(blindPutAtomicCommittedStoreV1, {
+    ...committed,
+    resultBindingBytes: null
+  }), /resultBindingBytes/)
+
+  const checkpoint = decodeCanonical(blindCellAtomicCommittedPutSpendSnapshotV1,
+    encodeCanonical(blindCellAtomicCommittedPutSpendSnapshotV1, {
+      ...committed,
+      transactionId: bytes(32, 0x42),
+      resultCell: {
+        storageSlot: committed.storageSlot,
+        allocationEpoch: committed.allocationEpoch,
+        sizeClass: committed.sizeClass,
+        leaseClass: committed.leaseClass,
+        leaseEpoch: committed.leaseEpoch,
+        stateRevision: committed.stateRevision,
+        policyRevision: committed.policyRevision,
+        cellBlobHash: committed.declaredBlobHash,
+        allocationCommitment: committed.allocationCommitment,
+        objectState: 1,
+        policyState: 1
+      }
+    }))
+  t.absent(checkpoint.deadlineUnixMillis)
+  t.absent(checkpoint.remainingAttempts)
+  t.absent(checkpoint.reservedEpoch)
+})
+
 test('local checkpoint header binds one exact snapshot and covered WAL anchor', t => {
   const checkpoint = {
     magic: ascii('HRBCKP01'),
@@ -79,7 +138,7 @@ test('local checkpoint header binds one exact snapshot and covered WAL anchor', 
     durabilityContinuityHash: bytes(32, 0x43),
     durabilityProfileHash: bytes(32, 0x44),
     formatMajor: 1,
-    formatMinor: 0,
+    formatMinor: 1,
     storeFormatHash: bytes(32, 0x45),
     specHash: bytes(32, 0x46),
     abiHash: bytes(32, 0x47),
@@ -519,7 +578,7 @@ test('internal store codecs bind migration, floors, checkpoints and retry caps',
     durabilityContinuityHash: snapshot.durabilityContinuityHash,
     durabilityProfileHash: bytes(32, 126),
     formatMajor: 1,
-    formatMinor: 0,
+    formatMinor: 1,
     storeFormatHash: bytes(32, 127),
     specHash: bytes(32, 128),
     abiHash: bytes(32, 129),

@@ -191,7 +191,7 @@ function durabilityProfile () {
   return {
     profileId: 1,
     storeFormatMajor: 1,
-    storeFormatMinor: 0,
+    storeFormatMinor: 1,
     storeFormatHash: bytes(32, 0x41),
     externalJournalId: bytes(32, 0),
     externalWitnessPublicKey: bytes(32, 0),

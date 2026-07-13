@@ -23,7 +23,7 @@ test('store-format authority directly binds catalog bytes and frozen layout sema
   t.is(STORE_FORMAT_AUTHORITY_LAYOUT_V1.magic, 'HRBSFA01')
   t.is(decoded.authorityVersion, 1)
   t.is(decoded.formatMajor, 1)
-  t.is(decoded.formatMinor, 0)
+  t.is(decoded.formatMinor, 1)
   t.alike(decoded.schemaCatalogBytes, catalog)
   t.is(decoded.entries.length, STORE_FORMAT_AUTHORITY_V1.length)
   t.alike(encodeStoreFormatAuthorityV1(catalog), artifact)
@@ -44,6 +44,10 @@ test('store-format authority directly binds catalog bytes and frozen layout sema
   t.ok(values.get('retention.wal').includes('sequence 1'))
   t.ok(values.get('binding.runtime-root').includes('exactly 213 bytes'))
   t.ok(values.get('binding.runtime-verification').includes('unforgeable local verifier authority'))
+  t.ok(values.get('control-snapshot.cell-value-codecs').includes(
+    '1/5=BlindCellAtomicCommittedPutSpendSnapshotV1'))
+  t.ok(values.get('wal.cell.put-atomic-committed').includes(
+    'recordType=17 payload is canonical BlindPutAtomicCommittedStoreV1'))
   for (const name of [
     'unsupported.checkpoint-gc',
     'unsupported.migration',
@@ -59,7 +63,7 @@ test('store-format authority directly binds catalog bytes and frozen layout sema
     expectedStoreFormatHash: b4a.from(hashes.storeFormatHash, 'hex')
   })
   t.is(verified.formatMajor, 1)
-  t.is(verified.formatMinor, 0)
+  t.is(verified.formatMinor, 1)
   t.alike(verified.authorityBytes, artifact)
   t.alike(verified.schemaCatalogBytes, catalog)
   t.is(b4a.toString(verified.storeFormatHash, 'hex'), hashes.storeFormatHash)
@@ -72,6 +76,9 @@ test('store-format authority rejects non-canonical framing and ordering', t => {
   const badMagic = b4a.from(artifact)
   badMagic[0] ^= 1
   t.exception(() => decodeStoreFormatAuthorityV1(badMagic), /invalid magic/)
+  const oldFormatMinor = b4a.from(artifact)
+  oldFormatMinor[13] = 0
+  t.exception(() => decodeStoreFormatAuthorityV1(oldFormatMinor), /unsupported version/)
   t.exception(() => encodeStoreFormatAuthorityV1(catalog, [
     STORE_FORMAT_AUTHORITY_V1[1],
     STORE_FORMAT_AUTHORITY_V1[0]

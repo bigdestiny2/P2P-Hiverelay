@@ -114,6 +114,17 @@ export const EXTENDED_SCHEMA_METADATA = Object.freeze([
   ]),
   schema('BlindBackupManifestV1', [['canonicalDefinition', 'schema-meta-v1(master-declaration)']]),
   schema('BlindBackupRetentionTransitionV1', [['canonicalDefinition', 'schema-meta-v1(master-declaration)']]),
+  schema('BlindCellAtomicCommittedPutSpendSnapshotV1', [
+    ['version', 'u8=1'], ['transactionId', bytes32], ['spendTag', bytes32], ['requestCommitment', bytes32],
+    ['requestFingerprint', bytes32], ['storageSlot', bytes32], ['allocationEpoch', 'u32be'],
+    ['sizeClass', 'u8[1..5]'], ['leaseClass', 'u8[1..4]'], ['declaredBlobHash', bytes32],
+    ['createPublicKey', bytes32], ['renewPublicKey', bytes32], ['dropPublicKey', bytes32],
+    ['allocationCommitment', bytes32], ['profileId', 'u16be[1..65535]'],
+    ['preparedAdmissionBytes', 'compact-bytes[1..17408]'],
+    ['resultBindingBytes', 'compact-bytes[1..1024]'], ['declaredBytes', 'u32be'],
+    ['resultIdentity', bytes32], ['committedEpoch', 'u32be'],
+    ['resultCell', 'BlindCellHistoricalResultSnapshotV1']
+  ]),
   schema('BlindCellChargedReadPinEntrySnapshotV1', [
     ['storageSlot', bytes32], ['present', 'u8[0..1]'], ['sizeClass', 'u8[0..5]'],
     ['allocationEpoch', 'u32be'], ['leaseClass', 'u8[0..4]'], ['leaseEpoch', 'u32be'],
@@ -345,6 +356,17 @@ export const EXTENDED_SCHEMA_METADATA = Object.freeze([
     ['profileId', 'u16be[1..65535]'], ['schemeId', 'u16be[1..65535]'],
     ['parameterHash', bytes32], ['resourceClass', 'u16be'], ['leaseClass', 'u8'],
     ['costUnits', 'u64be'], ['walCommitRecord', 'compact-bytes[1..16384]']
+  ]),
+  schema('BlindPutAtomicCommittedStoreV1', [
+    ['version', 'u8=1'], ['spendTag', bytes32], ['requestCommitment', bytes32],
+    ['requestFingerprint', bytes32], ['storageSlot', bytes32], ['allocationEpoch', 'u32be'],
+    ['sizeClass', 'u8[1..5]'], ['leaseClass', 'u8[1..4]'], ['declaredBlobHash', bytes32],
+    ['createPublicKey', bytes32], ['renewPublicKey', bytes32], ['dropPublicKey', bytes32],
+    ['allocationCommitment', bytes32], ['profileId', 'u16be[1..65535]'],
+    ['preparedAdmissionBytes', 'compact-bytes[1..17408]'],
+    ['resultBindingBytes', 'compact-bytes[1..1024]'], ['declaredBytes', 'u32be'],
+    ['blobObjectId', bytes32], ['leaseEpoch', 'u32be'], ['stateRevision', 'u64be=0'],
+    ['policyRevision', 'u64be=0'], ['resultIdentity', bytes32], ['committedEpoch', 'u32be']
   ]),
   schema('BlindWalHeaderV2', [
     ['magic', 'fixed4=ASCII(HRWL)'], ['walVersion', 'u8=2'], ['recordType', 'u8[1..255]'],

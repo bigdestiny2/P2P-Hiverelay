@@ -8,7 +8,7 @@
   "vectorManifestArtifact": "packages/blind-protocol/vector-manifest-v1.cenc",
   "specHash": "470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9",
   "abiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",
-  "vectorSetHash": "7943626bb0e9ffc0886a13e3b6532aa3ebfd60a3c26e4ff0c5842743ae788d07",
+  "vectorSetHash": "09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78",
   "wireSchemaCount": 71,
   "operationCount": 22,
   "errorCount": 20,

@@ -682,7 +682,7 @@ const serviceDescriptorBody = encodeCanonical(blindServiceDescriptorV1, {
   durability: {
     profileId: 1,
     storeFormatMajor: 1,
-    storeFormatMinor: 0,
+    storeFormatMinor: 1,
     storeFormatHash: bytes(32, 0x0c),
     externalJournalId: bytes(32, 0),
     externalWitnessPublicKey: bytes(32, 0),
@@ -1061,7 +1061,7 @@ const localCheckpointV1 = wireOnly
       durabilityContinuityHash: bytes(32, 0xd3),
       durabilityProfileHash: bytes(32, 0xd4),
       formatMajor: 1,
-      formatMinor: 0,
+      formatMinor: 1,
       storeFormatHash: bytes(32, 0xd5),
       specHash: bytes(32, 0xd6),
       abiHash: bytes(32, 0xd7),

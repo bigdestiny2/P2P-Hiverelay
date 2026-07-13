@@ -3028,6 +3028,32 @@ BlindPreparedAdmissionStoreV1 { // INTERNAL_STORE; admission-sensitive at rest
   walCommitRecord:       bounded bytes[1..16384]
 }
 
+BlindPutAtomicCommittedStoreV1 { // INTERNAL_STORE; Cell WAL recordType 17 payload
+  version:               u8 = 1
+  spendTag:              32 nonzero bytes
+  requestCommitment:     32 nonzero bytes
+  requestFingerprint:    32 nonzero bytes
+  storageSlot:           32 nonzero bytes
+  allocationEpoch:       u32
+  sizeClass:             u8[1..5]
+  leaseClass:            u8[1..4]
+  declaredBlobHash:      32 nonzero bytes
+  createPublicKey:       32 nonzero bytes
+  renewPublicKey:        32 nonzero bytes
+  dropPublicKey:         32 nonzero bytes
+  allocationCommitment:  32 nonzero bytes
+  profileId:             u16[1..65535]
+  preparedAdmissionBytes:bounded canonical BlindPreparedAdmissionStoreV1 bytes[1..17408]
+  resultBindingBytes:    canonical profile-1 result-binding bytes[1..1024]
+  declaredBytes:         u32
+  blobObjectId:          32 nonzero bytes
+  leaseEpoch:            u32
+  stateRevision:         u64 = 0
+  policyRevision:        u64 = 0
+  resultIdentity:        32 nonzero bytes
+  committedEpoch:        u32
+}
+
 BlindCellHistoricalResultSnapshotV1 {
   storageSlot:           32 nonzero bytes
   allocationEpoch:       u32
@@ -3088,6 +3114,30 @@ BlindCellCommittedPutSpendSnapshotV1 {
   deadlineUnixMillis:    u64 nonzero
   remainingAttempts:     u8[0..1]
   reservedEpoch:         u32
+  resultIdentity:        32 nonzero bytes
+  committedEpoch:        u32
+  resultCell:            BlindCellHistoricalResultSnapshotV1
+}
+
+BlindCellAtomicCommittedPutSpendSnapshotV1 {
+  version:               u8 = 1
+  transactionId:         32 nonzero bytes
+  spendTag:              32 nonzero bytes
+  requestCommitment:     32 nonzero bytes
+  requestFingerprint:    32 nonzero bytes
+  storageSlot:           32 nonzero bytes
+  allocationEpoch:       u32
+  sizeClass:             u8[1..5]
+  leaseClass:            u8[1..4]
+  declaredBlobHash:      32 nonzero bytes
+  createPublicKey:       32 nonzero bytes
+  renewPublicKey:        32 nonzero bytes
+  dropPublicKey:         32 nonzero bytes
+  allocationCommitment:  32 nonzero bytes
+  profileId:             u16[1..65535]
+  preparedAdmissionBytes:bounded canonical BlindPreparedAdmissionStoreV1 bytes[1..17408]
+  resultBindingBytes:    canonical profile-1 result-binding bytes[1..1024]
+  declaredBytes:         u32
   resultIdentity:        32 nonzero bytes
   committedEpoch:        u32
   resultCell:            BlindCellHistoricalResultSnapshotV1

@@ -385,7 +385,7 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls) 
   descriptor.admissionProfiles[0].roleBits = admission.roleBits
   descriptor.admissionProfiles[0].parameterHash = b4a.from(parameterHash)
   descriptor.durability.storeFormatMajor = 1
-  descriptor.durability.storeFormatMinor = 0
+  descriptor.durability.storeFormatMinor = 1
   descriptor.durability.storeFormatHash = hashStoreFormat(authorityBytes)
   descriptor.build.storeFormatHash = b4a.from(descriptor.durability.storeFormatHash)
   bindDurability(descriptor)

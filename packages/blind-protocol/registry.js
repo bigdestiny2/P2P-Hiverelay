@@ -1584,6 +1584,7 @@ export const SCHEMA_NAMES_BY_CATEGORY = deepFreeze({
     'WriteCellCapV1'
   ],
   [SCHEMA_CATEGORY.INTERNAL_STORE]: [
+    'BlindCellAtomicCommittedPutSpendSnapshotV1',
     'BlindCellChargedReadPinEntrySnapshotV1',
     'BlindCellChargedReadRetrySnapshotV1',
     'BlindCellCommittedPutSpendSnapshotV1',
@@ -1616,6 +1617,7 @@ export const SCHEMA_NAMES_BY_CATEGORY = deepFreeze({
     'BlindInboxTerminalSpendSnapshotV1',
     'BlindLocalCheckpointV1',
     'BlindPreparedAdmissionStoreV1',
+    'BlindPutAtomicCommittedStoreV1',
     'BlindStoreManifestV1',
     'BlindWalHeaderV2',
     'CellRecordV1',

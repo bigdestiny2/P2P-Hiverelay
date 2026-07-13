@@ -177,7 +177,7 @@ test('client-composition artifacts cannot perturb WIRE or import relay persisten
   const wire = JSON.parse(artifact('hiverelay-blind-wire-authority-v1.json'))
   t.is(wire.specHash, '470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9')
   t.is(wire.abiHash, 'aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d')
-  t.is(wire.vectorSetHash, '7943626bb0e9ffc0886a13e3b6532aa3ebfd60a3c26e4ff0c5842743ae788d07')
+  t.is(wire.vectorSetHash, '09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78')
   t.is(b4a.toString(hashSpec(fs.readFileSync(new URL(
     'docs/protocol/HIVERELAY-BLIND-WIRE-V1.md', rootUrl))), 'hex'), wire.specHash)
   t.is(b4a.toString(hashAbi(artifact('hiverelay-blind-abi-v1.cenc')), 'hex'), wire.abiHash)
