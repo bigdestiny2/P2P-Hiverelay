@@ -1,4 +1,4 @@
-import { test } from 'node:test'
+import test from 'brittle'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, openSync, writeSync, closeSync } from 'fs'
 import { tmpdir } from 'os'

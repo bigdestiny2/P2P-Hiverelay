@@ -79,7 +79,7 @@ Both methods are on `HiveRelayClient`. Crypto (`p2p-hiverelay-client/secret-shar
 and signing (`p2p-hiverelay-client/custody.js`) are Bare-safe and self-contained
 — they do not depend on the relay package, so they run in Pear/Bare.
 
-### `splitForCustody({ secret?, guardians, threshold, relays, appKey, opts? })`
+### `splitForCustody({ secret?, guardians, threshold, relays, appKey, opts })`
 
 1. PVSS-split the secret to the guardians' recipient pubkeys.
 2. Write the public share bundle to a fresh sibling Hypercore and serve it.
@@ -90,7 +90,9 @@ and signing (`p2p-hiverelay-client/custody.js`) are Bare-safe and self-contained
 5. **Seed for custody** — POST `/seed` per relay with the `custodyIntentId`.
    This is what drives the relay to replicate + verify its assigned share and
    anchor a receipt. *(Added in v0.9.1; without it no receipt is ever
-   produced.)*
+   produced.)* `opts.maxStorage` is required as a positive safe-integer byte
+   bound and is forwarded unchanged to every relay seed. Missing, zero, or
+   unsafe bounds fail before the bundle or intent is published.
 6. Poll until every relay returns a **share-verified, anchored** receipt.
 7. Sign + publish the quorum commit.
 
@@ -114,7 +116,7 @@ const res = await app.splitForCustody({
   threshold: 2,
   relays: [r1, r2, r3],          // { url, pubkey }
   appKey,
-  opts: { apiKey }
+  opts: { apiKey, maxStorage: 512 * 1024 * 1024 }
 })
 
 const out = await app.reconstructFromCustody({

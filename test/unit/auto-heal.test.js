@@ -18,6 +18,8 @@
 import test from 'brittle'
 import { AutoHeal } from 'p2p-hiverelay/core/auto-heal.js'
 
+const STORAGE_BOUND = 1024 * 1024
+
 // ─── Mock RelayNode ─────────────────────────────────────────────────
 
 function makeNode (opts = {}) {
@@ -25,7 +27,14 @@ function makeNode (opts = {}) {
   const operator = opts.operator
   const pubkey = opts.pubkey || 'mypub'
   const localCatalog = opts.localCatalog || []
-  const peerCatalogs = opts.peerCatalogs || []
+  const peerCatalogs = (opts.peerCatalogs || []).map(peer => ({
+    ...peer,
+    apps: (peer.apps || []).map(app => (
+      opts.preserveMissingBounds || Object.hasOwn(app, 'maxStorageBytes') || Object.hasOwn(app, 'maxStorage')
+        ? app
+        : { ...app, maxStorageBytes: STORAGE_BOUND }
+    ))
+  }))
   const acceptMode = opts.acceptMode || 'open'
   const seededApps = []
 
@@ -114,6 +123,7 @@ test('AutoHeal: recruits when below threshold AND adds region diversity', async 
   t.is(recruited[0].opts.durability, 1, 'recruited as archive tier')
   t.is(recruited[0].opts.revocable, false, 'archive recruits are non-revocable')
   t.is(recruited[0].opts.source, 'auto-heal')
+  t.is(recruited[0].opts.maxStorage, STORAGE_BOUND, 'catalog bound propagates to the fresh pin')
 })
 
 test('AutoHeal: does NOT recruit when threshold already met', async (t) => {
@@ -408,6 +418,34 @@ test('AutoHeal: refuses to recruit when maxStorageBytes is missing or invalid', 
 
   t.is(recruited.length, 0, 'declined recruit without a positive maxStorageBytes cap')
   t.ok(skipped.find(s => s.reason === 'storage-capacity-unavailable'), 'emitted unavailable-capacity skip event')
+})
+
+test('AutoHeal: refuses a peer catalog entry without a per-drive bound', async (t) => {
+  const recruited = []
+  const node = makeNode({
+    region: 'AS',
+    preserveMissingBounds: true,
+    peerCatalogs: [{
+      pubkey: 'peerA',
+      region: 'NA',
+      apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }]
+    }],
+    seedApp: async (k, o) => recruited.push({ k, o })
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: false,
+    thresholds: { minReplicas: 3, minRegions: 2, minOperators: 2 },
+    random: () => 0
+  })
+  heal._running = true
+  const skipped = []
+  heal.on('recruit-skipped', info => skipped.push(info))
+
+  await heal._tick()
+
+  t.is(recruited.length, 0)
+  t.ok(skipped.find(info => info.reason === 'storage-bound-invalid'))
 })
 
 test('AutoHeal: backs off retrying a drive after a recruit error', async (t) => {

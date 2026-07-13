@@ -176,6 +176,7 @@ test('client seed can opt into domain-v3 signing', async (t) => {
     autoDiscover: false
   })
   t.teardown(() => client.destroy())
+  await client.start()
 
   await client.seed(appKey, {
     timeout: 1,

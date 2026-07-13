@@ -24,6 +24,21 @@ function mockSwarm () {
   }
 }
 
+function registryForStop (events, discoveryHandle) {
+  const registry = new SeedingRegistry({}, {
+    removeListener (event) { events.push(`swarm-remove-${event}`) }
+  })
+  registry.running = true
+  registry._discoveryHandle = discoveryHandle
+  registry._onSwarmConnection = () => {}
+  registry._onLocalAppend = () => {}
+  registry.localLog = {
+    removeListener (event) { events.push(`local-remove-${event}`) },
+    async close () { events.push('local-close') }
+  }
+  return registry
+}
+
 test('SeedingRegistry - rejects meta announce when declared peer key mismatches transport key', (t) => {
   const registry = new SeedingRegistry(mockStore(), mockSwarm())
   let called = 0
@@ -90,4 +105,58 @@ test('SeedingRegistry - enforces max peer log cap', async (t) => {
 
   await registry._registerPeerLog('a'.repeat(64), '2'.repeat(64), {})
   t.is(registry._peerLogMeta.size, 1, 'new peer log rejected once cap is reached')
+})
+
+test('SeedingRegistry - stop awaits its discovery handle before closing logs', async (t) => {
+  const events = []
+  let settleDiscovery
+  const discoverySettled = new Promise(resolve => { settleDiscovery = resolve })
+  const registry = registryForStop(events, {
+    async destroy () {
+      events.push('discovery-destroy-start')
+      await discoverySettled
+      events.push('discovery-destroy-done')
+    }
+  })
+
+  const stopping = registry.stop()
+  await new Promise(resolve => setImmediate(resolve))
+  t.alike(events, [
+    'swarm-remove-connection',
+    'local-remove-append',
+    'discovery-destroy-start'
+  ])
+  t.ok(registry.localLog, 'registry log remains open while discovery retirement is pending')
+
+  settleDiscovery()
+  await stopping
+  t.alike(events.slice(-3), ['discovery-destroy-start', 'discovery-destroy-done', 'local-close'])
+  t.is(registry._discoveryHandle, null)
+  t.is(registry.localLog, null)
+  t.is(registry._stopping, false)
+})
+
+test('SeedingRegistry - rejected discovery retirement retains handle and logs for retry', async (t) => {
+  const events = []
+  let rejectDestroy = true
+  const handle = {
+    async destroy () {
+      events.push('discovery-destroy')
+      if (rejectDestroy) throw new Error('injected registry discovery failure')
+    }
+  }
+  const registry = registryForStop(events, handle)
+
+  await t.exception(registry.stop(), /injected registry discovery failure/)
+  t.is(registry._discoveryHandle, handle)
+  t.ok(registry.localLog, 'registry log remains owned after failed discovery retirement')
+  t.is(registry._stopping, true)
+  t.absent(events.includes('local-close'))
+
+  rejectDestroy = false
+  await registry.stop()
+  t.is(registry._discoveryHandle, null)
+  t.is(registry.localLog, null)
+  t.is(registry._stopping, false)
+  t.ok(events.includes('local-close'))
 })

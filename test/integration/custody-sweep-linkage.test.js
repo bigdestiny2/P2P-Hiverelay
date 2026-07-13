@@ -32,6 +32,8 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
 
+const STORAGE_BOUND = 1024 * 1024
+
 function keyPair () {
   const publicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
   const secretKey = b4a.alloc(sodium.crypto_sign_SECRETKEYBYTES)
@@ -52,6 +54,7 @@ function unlinkedEntry (overrides = {}) {
     availabilityClass: 'atomic-handoff',
     custodyIntentId: null,
     anchored: true,
+    maxStorage: STORAGE_BOUND,
     ...overrides
   }
 }
@@ -62,10 +65,15 @@ test('custody sweep: recovers custodyIntentId by addressKey, backfills live entr
   const testnet = await createTestnet(3)
   let relay = null
   await mkdir(baseDir, { recursive: true })
+  await mkdir(join(baseDir, 'relay'), { recursive: true })
   t.teardown(async () => {
-    if (relay) { try { await relay.stop() } catch {} }
-    try { await testnet.destroy() } catch {}
-    try { await rm(baseDir, { recursive: true, force: true }) } catch {}
+    let firstError = null
+    if (relay) {
+      try { await relay.stop() } catch (err) { if (!firstError) firstError = err }
+    }
+    try { await testnet.destroy() } catch (err) { if (!firstError) firstError = err }
+    try { await rm(baseDir, { recursive: true, force: true }) } catch (err) { if (!firstError) firstError = err }
+    if (firstError) throw firstError
   })
 
   relay = new RelayNode({
@@ -97,6 +105,7 @@ test('custody sweep: recovers custodyIntentId by addressKey, backfills live entr
     retainUntil: liveRetain
   }, publisher)
   relay.appRegistry.set(liveKey, unlinkedEntry({ retainUntil: liveRetain, blindContentId: liveBlind }))
+  relay.storageAdmission.adoptRecovery(`drive:${liveKey}`, STORAGE_BOUND, { kind: 'drive' })
 
   // ── Entry B: EXPIRED (retain elapsed). Full chain (committed), mirroring
   //    Drop's foundation evidence. The relay's own key signs the receipt so it
@@ -119,6 +128,7 @@ test('custody sweep: recovers custodyIntentId by addressKey, backfills live entr
   }, relay.swarm.keyPair)
   await relay.seedingRegistry.publishCustodyCommit({ intentId: deadIntent.intentId }, publisher)
   relay.appRegistry.set(deadKey, unlinkedEntry({ retainUntil: deadRetain, blindContentId: deadBlind }))
+  relay.storageAdmission.adoptRecovery(`drive:${deadKey}`, STORAGE_BOUND, { kind: 'drive' })
 
   // Both entries start unlinked; the registry can resolve both by addressKey.
   t.is(relay.appRegistry.get(liveKey).custodyIntentId || null, null, 'live entry starts unlinked')

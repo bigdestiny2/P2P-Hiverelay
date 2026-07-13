@@ -6,10 +6,79 @@ import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
 import { EventEmitter } from 'events'
 import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises'
+import { mkdirSync } from 'fs'
+
+const STORAGE_BOUND = 1024 * 1024
 
 function tmpStorage () {
-  return path.join(tmpdir(), 'hiverelay-test-' + randomBytes(8).toString('hex'))
+  const storage = path.join(tmpdir(), 'hiverelay-test-' + randomBytes(8).toString('hex'))
+  mkdirSync(storage, { recursive: true })
+  return storage
 }
+
+function deferred () {
+  let resolvePromise
+  let rejectPromise
+  const promise = new Promise((resolve, reject) => {
+    resolvePromise = resolve
+    rejectPromise = reject
+  })
+  return { promise, resolve: resolvePromise, reject: rejectPromise }
+}
+
+function permitFixtureStorageRelease (node) {
+  node.storageAdmission = {
+    runKeyMutation: (_key, run) => run(),
+    release: () => true,
+    failClosed: () => {}
+  }
+  node.appRegistry.setStorageAdmission(null, { requirePhysicalEnforcement: false })
+}
+
+test('RelayNode - concurrent start callers share one exact completion authority', async (t) => {
+  const gate = deferred()
+  const node = Object.create(RelayNode.prototype)
+  Object.assign(node, {
+    running: false,
+    _starting: false,
+    _stopping: null,
+    _startCompletion: null,
+    async _startLifecycle () {
+      await gate.promise
+      this.running = true
+      return this
+    }
+  })
+
+  const first = node.start()
+  const concurrent = node.start()
+  t.is(concurrent, first, 'concurrent caller receives the exact first promise')
+
+  gate.resolve()
+  t.is(await first, node, 'shared completion resolves to the exact node')
+  t.is(node.start(), first, 'already-running start returns the completed authority')
+
+  const failureGate = deferred()
+  const failure = new Error('injected relay startup failure')
+  const failing = Object.create(RelayNode.prototype)
+  Object.assign(failing, {
+    running: false,
+    _starting: false,
+    _stopping: null,
+    _startCompletion: null,
+    async _startLifecycle () {
+      await failureGate.promise
+      throw failure
+    }
+  })
+  const rejectedFirst = failing.start()
+  const rejectedConcurrent = failing.start()
+  t.is(rejectedConcurrent, rejectedFirst, 'rejected concurrent caller shares exact promise')
+  failureGate.resolve()
+  let observed = null
+  try { await rejectedConcurrent } catch (err) { observed = err }
+  t.is(observed, failure, 'shared rejection preserves the exact startup error')
+})
 
 test('RelayNode - defaults custody to blind mode', (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
@@ -20,6 +89,64 @@ test('RelayNode - defaults custody to blind mode', (t) => {
   t.is(node.config.custody.requireEncryptedPayload, true, 'custody requires encrypted payloads')
   t.is(node.config.custody.metadataVisibility, 'redacted', 'blind custody redacts metadata by default')
   t.is(node.config.custody.proofTarget, 'ciphertext', 'proofs target ciphertext')
+})
+
+test('RelayNode - hard physical enforcement is explicit or provider-enabled', (t) => {
+  const ordinary = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  t.is(ordinary.appRegistry._requirePhysicalEnforcement, false, 'relay-core preserves logical-cap operation')
+
+  const required = new RelayNode({
+    storage: tmpStorage(),
+    enableAPI: false,
+    requirePhysicalEnforcement: true
+  })
+  t.is(required.appRegistry._requirePhysicalEnforcement, true)
+
+  const provider = {
+    schemaVersion: 1,
+    async installAbsoluteCeiling () {},
+    async inspectAbsoluteCeiling () {}
+  }
+  const providerEnabled = new RelayNode({
+    storage: tmpStorage(),
+    enableAPI: false,
+    physicalEnforcer: provider
+  })
+  t.is(providerEnabled.appRegistry._requirePhysicalEnforcement, true)
+})
+
+test('RelayNode - applyMode keeps physical enforcement restart-only', async (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  const originalConfig = node.config
+
+  await t.exception(
+    node.applyMode('relay-core', { requirePhysicalEnforcement: true }),
+    /physical storage enforcement changes require restart/
+  )
+  t.is(node.config, originalConfig, 'rejected requirement change leaves config authority untouched')
+  t.is(node.appRegistry._requirePhysicalEnforcement, false, 'registry remains in its original logical-only scope')
+
+  const provider = {
+    schemaVersion: 1,
+    async installAbsoluteCeiling () {},
+    async inspectAbsoluteCeiling () {}
+  }
+  await t.exception(
+    node.applyMode('relay-core', { physicalEnforcer: provider }),
+    /physical storage enforcement changes require restart/
+  )
+  t.is(node.storageAdmission.physicalEnforcer, null, 'rejected provider change cannot reach admission authority')
+
+  const enforced = new RelayNode({
+    storage: tmpStorage(),
+    enableAPI: false,
+    requirePhysicalEnforcement: true
+  })
+  await t.exception(
+    enforced.applyMode('relay-core', { requirePhysicalEnforcement: false }),
+    /physical storage enforcement changes require restart/
+  )
+  t.is(enforced.appRegistry._requirePhysicalEnforcement, true, 'rejected downgrade cannot disable registry enforcement')
 })
 
 test('RelayNode - relaykernel mode narrows to seed/proof/circuit core', async (t) => {
@@ -229,8 +356,8 @@ test('RelayNode - _onConnection attaches distributed-drive peer bridge', async (
     }
   }
 
-  const origReplicate = node.store.replicate
-  node.store.replicate = () => {}
+  node.store = { replicate () {} }
+  node._storageIngressReady = true
 
   node._onConnection(fakeConn, { publicKey: remotePub })
 
@@ -240,8 +367,6 @@ test('RelayNode - _onConnection attaches distributed-drive peer bridge', async (
 
   fakeConn.emit('close')
   t.is(node.connections.size, 0, 'connection removed on close')
-
-  node.store.replicate = origReplicate
 })
 
 test('RelayNode - _onConnection assigns relay-admin service role from allowlist', (t) => {
@@ -261,16 +386,14 @@ test('RelayNode - _onConnection assigns relay-admin service role from allowlist'
     }
   }
 
-  const origReplicate = node.store.replicate
-  node.store.replicate = () => {}
+  node.store = { replicate () {} }
+  node._storageIngressReady = true
 
   node._onConnection(fakeConn, { publicKey: remotePub })
 
   t.is(assigned.length, 1, 'service role assigned once')
   t.is(assigned[0].pubkey, remotePubHex, 'role assigned to remote pubkey')
   t.is(assigned[0].role, 'relay-admin', 'allowlisted peer promoted to relay-admin')
-
-  node.store.replicate = origReplicate
 })
 
 test('RelayNode - emits started event with publicKey', async (t) => {
@@ -312,13 +435,14 @@ test('RelayNode - replication health monitor attempts local repair', async (t) =
   node.config.registryAutoAccept = true
   node.config.replicationRepairEnabled = true
   node.config.targetReplicaFloor = 2
+  node._storageAdmission = () => ({ allowed: true, availableBytes: STORAGE_BOUND })
 
   node.seedingRegistry = {
     async getActiveRequests () {
       return [{
         appKey,
         replicationFactor: 2,
-        maxStorageBytes: 0,
+        maxStorageBytes: STORAGE_BOUND,
         publisherPubkey: 'b'.repeat(64),
         privacyTier: 'public'
       }]
@@ -342,7 +466,7 @@ test('RelayNode - replication health monitor attempts local repair', async (t) =
   t.ok(node._replicationHealth.has(appKey), 'replication health entry recorded')
 })
 
-test('RelayNode - seed protocol request queues in review mode', (t) => {
+test('RelayNode - seed protocol request queues in review mode', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
   const appKeyBuf = randomBytes(32)
   const publisherBuf = randomBytes(32)
@@ -351,6 +475,7 @@ test('RelayNode - seed protocol request queues in review mode', (t) => {
   node.seeder = { totalBytesStored: 0 }
   node.config.maxStorageBytes = 1024 * 1024
   node.config.acceptMode = 'review'
+  node._storageAdmission = () => ({ allowed: true, availableBytes: STORAGE_BOUND })
   node._seedProtocol = {
     acceptSeedRequest () {
       t.fail('should not accept request in review mode')
@@ -361,12 +486,12 @@ test('RelayNode - seed protocol request queues in review mode', (t) => {
     t.fail('should not auto-seed request in review mode')
   }
 
-  node._onSeedRequest({
+  await node._onSeedRequest({
     appKey: appKeyBuf,
     publisherPubkey: publisherBuf,
     discoveryKeys: [],
     replicationFactor: 2,
-    maxStorageBytes: 0,
+    maxStorageBytes: STORAGE_BOUND,
     ttlSeconds: 3600,
     bountyRate: 0,
     revocable: true,
@@ -396,7 +521,7 @@ test('RelayNode - replication repair respects closed accept mode', async (t) => 
   const ok = await node._attemptReplicationRepair({
     appKey: 'a'.repeat(64),
     replicationFactor: 2,
-    maxStorageBytes: 0,
+    maxStorageBytes: STORAGE_BOUND,
     publisherPubkey: 'b'.repeat(64),
     privacyTier: 'public'
   }, {
@@ -412,6 +537,7 @@ test('RelayNode - replication repair respects closed accept mode', async (t) => 
 
 test('RelayNode - seedApp enforces strict replicate-user-data policy by default', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  node._storageIngressReady = true
   node.seeder = { totalBytesStored: 0 }
 
   let operation = null
@@ -423,7 +549,7 @@ test('RelayNode - seedApp enforces strict replicate-user-data policy by default'
   }
 
   try {
-    await node.seedApp('c'.repeat(64), { privacyTier: 'local-first' })
+    await node.seedApp('c'.repeat(64), { privacyTier: 'local-first', maxStorage: 1024 * 1024 })
     t.fail('expected policy violation')
   } catch (err) {
     t.ok(err.message.includes('POLICY_VIOLATION'))
@@ -433,6 +559,7 @@ test('RelayNode - seedApp enforces strict replicate-user-data policy by default'
 
 test('RelayNode - seedApp can use serve-code policy when strict mode disabled', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  node._storageIngressReady = true
   node.seeder = { totalBytesStored: 0 }
   node.config.strictSeedingPrivacy = false
 
@@ -445,7 +572,7 @@ test('RelayNode - seedApp can use serve-code policy when strict mode disabled', 
   }
 
   try {
-    await node.seedApp('d'.repeat(64), { privacyTier: 'local-first' })
+    await node.seedApp('d'.repeat(64), { privacyTier: 'local-first', maxStorage: 1024 * 1024 })
     t.fail('expected policy violation')
   } catch (err) {
     t.ok(err.message.includes('POLICY_VIOLATION'))
@@ -455,6 +582,7 @@ test('RelayNode - seedApp can use serve-code policy when strict mode disabled', 
 
 test('RelayNode - seedApp keeps replicate-user-data policy for drive type when strict mode disabled', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  node._storageIngressReady = true
   node.seeder = { totalBytesStored: 0 }
   node.config.strictSeedingPrivacy = false
 
@@ -467,7 +595,7 @@ test('RelayNode - seedApp keeps replicate-user-data policy for drive type when s
   }
 
   try {
-    await node.seedApp('f'.repeat(64), { type: 'drive', privacyTier: 'local-first' })
+    await node.seedApp('f'.repeat(64), { type: 'drive', privacyTier: 'local-first', maxStorage: 1024 * 1024 })
     t.fail('expected policy violation')
   } catch (err) {
     t.ok(err.message.includes('POLICY_VIOLATION'))
@@ -477,6 +605,7 @@ test('RelayNode - seedApp keeps replicate-user-data policy for drive type when s
 
 test('RelayNode - seedApp uses encrypted policy operation for blind custody', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  node._storageIngressReady = true
   node.seeder = { totalBytesStored: 0 }
 
   let operation = null
@@ -491,7 +620,8 @@ test('RelayNode - seedApp uses encrypted policy operation for blind custody', as
     await node.seedApp('b'.repeat(64), {
       type: 'drive',
       privacyTier: 'p2p-only',
-      blind: true
+      blind: true,
+      maxStorage: 1024 * 1024
     })
     t.fail('expected policy violation')
   } catch (err) {
@@ -502,6 +632,7 @@ test('RelayNode - seedApp uses encrypted policy operation for blind custody', as
 
 test('RelayNode - custody expiry removes expired temporary atomic entries only', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  permitFixtureStorageRelease(node)
   const now = Date.now()
   const expiredKey = '1'.repeat(64)
   const activeKey = '2'.repeat(64)
@@ -510,6 +641,7 @@ test('RelayNode - custody expiry removes expired temporary atomic entries only',
   const expiredEvents = []
 
   node.appRegistry._filePath = null
+  node.appRegistry.persistDelete = async () => {}
   node.swarm = {
     async leave () {}
   }
@@ -556,6 +688,7 @@ test('RelayNode - custody expiry removes expired temporary atomic entries only',
 
 test('RelayNode - custody expiry auto-emits non-serving-proof for blind handoffs with intent', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  permitFixtureStorageRelease(node)
   const now = Date.now()
   const appKey = 'a'.repeat(64)
   const intentId = 'b'.repeat(64)
@@ -565,6 +698,7 @@ test('RelayNode - custody expiry auto-emits non-serving-proof for blind handoffs
   const recordedProofs = []
 
   node.appRegistry._filePath = null
+  node.appRegistry.persistDelete = async () => {}
   node.swarm = {
     keyPair: { publicKey: Buffer.alloc(32, 1), secretKey: Buffer.alloc(64, 2) },
     async leave () {}
@@ -615,6 +749,7 @@ test('RelayNode - custody expiry without custodyIntentId expires but does not at
   // custodyIntentId. They should still self-remove at expiry; no proof
   // can be signed without an intent to bind against.
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  permitFixtureStorageRelease(node)
   const now = Date.now()
   const appKey = 'e'.repeat(64)
   const expiredEvents = []
@@ -622,6 +757,7 @@ test('RelayNode - custody expiry without custodyIntentId expires but does not at
   const errorEvents = []
 
   node.appRegistry._filePath = null
+  node.appRegistry.persistDelete = async () => {}
   node.swarm = { keyPair: { publicKey: Buffer.alloc(32), secretKey: Buffer.alloc(64) }, async leave () {} }
   let proofCalls = 0
   node.seedingRegistry = {
@@ -655,6 +791,7 @@ test('RelayNode - custody expiry without custodyIntentId expires but does not at
 
 test('RelayNode - custody expiry surfaces attest errors but keeps unseed clean', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  permitFixtureStorageRelease(node)
   const now = Date.now()
   const appKey = 'f'.repeat(64)
   const intentId = '0'.repeat(64)
@@ -662,6 +799,7 @@ test('RelayNode - custody expiry surfaces attest errors but keeps unseed clean',
   const expiredEvents = []
 
   node.appRegistry._filePath = null
+  node.appRegistry.persistDelete = async () => {}
   node.swarm = { keyPair: { publicKey: Buffer.alloc(32, 1), secretKey: Buffer.alloc(64, 2) }, async leave () {} }
   // Intent missing from this relay's registry (federation hasn't gossiped
   // it back yet) — createCustodyNonServingProof throws inside the call.
@@ -934,7 +1072,7 @@ test('RelayNode - replication repair skips non-public tiers in strict privacy mo
       return [{
         appKey,
         replicationFactor: 2,
-        maxStorageBytes: 0,
+        maxStorageBytes: STORAGE_BOUND,
         publisherPubkey: 'f'.repeat(64),
         privacyTier: 'local-first'
       }]

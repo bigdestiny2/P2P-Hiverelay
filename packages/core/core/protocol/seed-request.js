@@ -241,16 +241,29 @@ export class SeedProtocol extends EventEmitter {
       sodium.crypto_sign_detached(acceptance.relaySignature, payload, this.keyPair.secretKey)
     }
 
+    let sent = 0
+    let failed = 0
     for (const channel of this.channels) {
       if (channel.opened && channel._hiverelay) {
-        channel._hiverelay.seedAcceptMsg.send(acceptance)
+        try {
+          channel._hiverelay.seedAcceptMsg.send(acceptance)
+          sent++
+        } catch (err) {
+          failed++
+          try { this.emit('accept-delivery-error', { appKey: b4a.toString(appKey, 'hex'), error: err }) } catch (_) {}
+        }
       }
     }
 
-    this.emit('request-accepted', {
-      appKey: b4a.toString(appKey, 'hex'),
-      relay: b4a.toString(relayPubkey, 'hex')
-    })
+    try {
+      this.emit('request-accepted', {
+        appKey: b4a.toString(appKey, 'hex'),
+        relay: b4a.toString(relayPubkey, 'hex'),
+        sent,
+        failed
+      })
+    } catch (_) {}
+    return { acceptance, sent, failed }
   }
 
   /**

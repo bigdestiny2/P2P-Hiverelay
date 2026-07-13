@@ -312,6 +312,7 @@ const custody = await client.splitForCustody({
   appKey,
   opts: {
     apiKey,            // required: Bearer key the relays accept for custody writes
+    maxStorage: 512 * 1024 * 1024, // required finite byte bound for each relay pin
     retainMs: 365 * 24 * 60 * 60 * 1000, // how long relays hold the share
     pollTimeoutMs: 90_000                // how long to wait for verified receipts
   }
@@ -321,6 +322,11 @@ console.log('dealer key:', custody.key) // 64-hex — DEALER-PRIVATE, never publ
 console.log('intentId:', custody.intentId)
 console.log('share bundle:', custody.shareBundleKey)
 ```
+
+`opts.maxStorage` is required and must be a positive safe-integer byte bound.
+Custody fails before publishing a share bundle or intent when the bound is
+missing or invalid; the exact value is sent in every `/seed` request and
+persisted by each accepting relay.
 
 `splitForCustody` returns:
 
@@ -350,6 +356,7 @@ reconstruction threshold `t` is the separate `shareThreshold` field.
 | Field | Default | Notes |
 | --- | --- | --- |
 | `apiKey` | — | **Bearer key for the custody writes.** The intent / seed / commit endpoints are authenticated; without it they 401. Per-relay. |
+| `maxStorage` | — | **Required positive safe-integer byte bound.** Sent unchanged in every custody seed; missing, zero, fractional, or unsafe values fail before PVSS/publication work. |
 | `secret` | random | 64-hex scalar to split. Omit for a fresh dealer key. |
 | `retainMs` | 30 days | How long relays retain the share before expiry. |
 | `deadlineMs` | 10 min | Receipt-collection window. |
@@ -384,7 +391,13 @@ import sodium from 'sodium-universal'
 import b4a from 'b4a'
 
 // SETUP — custody a fresh dealer key, encrypt your real secret under it.
-const custody = await client.splitForCustody({ guardians, threshold: 2, relays, appKey, opts: { apiKey } })
+const custody = await client.splitForCustody({
+  guardians,
+  threshold: 2,
+  relays,
+  appKey,
+  opts: { apiKey, maxStorage: 512 * 1024 * 1024 }
+})
 const dealerKey = b4a.from(custody.key, 'hex')                 // 32 bytes
 const nonce = b4a.alloc(sodium.crypto_secretbox_NONCEBYTES); sodium.randombytes_buf(nonce)
 const box = b4a.alloc(mySecret.length + sodium.crypto_secretbox_MACBYTES)

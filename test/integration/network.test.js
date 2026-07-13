@@ -1,13 +1,19 @@
 import test from 'brittle'
 import createTestnet from '@hyperswarm/testnet'
+import Hyperdrive from 'hyperdrive'
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
 import b4a from 'b4a'
 import path from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
+import { mkdirSync } from 'fs'
+
+const TEST_MAX_STORAGE_BYTES = 64 * 1024 * 1024
 
 function tmpStorage () {
-  return path.join(tmpdir(), 'hiverelay-integ-' + randomBytes(8).toString('hex'))
+  const storage = path.join(tmpdir(), 'hiverelay-integ-' + randomBytes(8).toString('hex'))
+  mkdirSync(storage, { recursive: true })
+  return storage
 }
 
 function createNode (testnet, overrides = {}) {
@@ -27,6 +33,29 @@ async function waitFor (fn, timeoutMs = 15000, intervalMs = 200) {
     await new Promise(resolve => setTimeout(resolve, intervalMs))
   }
   return false
+}
+
+async function authorLocalDrive (node, files) {
+  const writer = new Hyperdrive(node.store.session())
+  let keyHex = null
+  try {
+    await writer.ready()
+    for (const [filePath, content] of Object.entries(files)) {
+      await writer.put(filePath, content)
+    }
+    keyHex = b4a.toString(writer.key, 'hex')
+  } finally {
+    await writer.close()
+  }
+
+  const probe = new Hyperdrive(node.store.session(), b4a.from(keyHex, 'hex'))
+  try {
+    await probe.ready()
+    if (probe.version <= 0) throw new Error('authored drive did not reopen by key')
+  } finally {
+    await probe.close()
+  }
+  return keyHex
 }
 
 // ─── Two-node discovery ────────────────────────────────────────────
@@ -113,7 +142,6 @@ test('integration: seedApp makes Hyperdrive available to other nodes', async (t)
   await publisher.start()
 
   // Publisher creates a Hyperdrive and writes a file
-  const Hyperdrive = (await import('hyperdrive')).default
   const drive = new Hyperdrive(publisher.store)
   await drive.ready()
   await drive.put('/readme.txt', b4a.from('HiveRelay test file'))
@@ -126,7 +154,7 @@ test('integration: seedApp makes Hyperdrive available to other nodes', async (t)
 
   // Seeder starts and seeds the app by key
   await seeder.start()
-  const result = await seeder.seedApp(appKeyHex)
+  const result = await seeder.seedApp(appKeyHex, { maxStorage: TEST_MAX_STORAGE_BYTES })
   t.ok(result.discoveryKey, 'seedApp returns discoveryKey')
   t.is(seeder.seededApps.size, 1, 'seeder tracks seeded app')
 
@@ -174,19 +202,22 @@ test('integration: seeding registry requests replicate across relays', async (t)
     discoveryKeys: [randomBytes(32)],
     replicationFactor: 1,
     geoPreference: [],
-    maxStorageBytes: 0,
+    maxStorageBytes: TEST_MAX_STORAGE_BYTES,
     bountyRate: 0,
     ttlSeconds: 3600,
     privacyTier: 'public',
     publisherPubkey: nodeA.swarm.keyPair.publicKey
   })
 
+  let replicatedEntry = null
   const replicated = await waitFor(async () => {
     const requests = await nodeB.seedingRegistry.getActiveRequests()
-    return requests.some(r => r.appKey === appKeyHex)
+    replicatedEntry = requests.find(r => r.appKey === appKeyHex) || null
+    return replicatedEntry !== null
   }, 20000, 250)
 
   t.is(replicated, true, 'node B indexed node A registry request')
+  t.is(replicatedEntry?.maxStorageBytes, TEST_MAX_STORAGE_BYTES, 'finite storage bound replicates exactly')
 })
 
 // ─── unseedApp cleanup ─────────────────────────────────────────────
@@ -202,13 +233,42 @@ test('integration: unseedApp cleans up drive and topic', async (t) => {
 
   await node.start()
 
-  // Seed a dummy key (won't find peers, but validates lifecycle)
-  const fakeKey = randomBytes(32).toString('hex')
-  await node.seedApp(fakeKey)
+  const appKey = await authorLocalDrive(node, {
+    '/unseed.txt': b4a.from('production unseed fixture')
+  })
+  await node.seedApp(appKey, { maxStorage: TEST_MAX_STORAGE_BYTES })
   t.is(node.seededApps.size, 1, 'app seeded')
+  t.ok(node.storageAdmission.canAcknowledge(`drive:${appKey}`), 'seeded app has committed storage authority')
 
-  await node.unseedApp(fakeKey)
+  await node.unseedApp(appKey)
   t.is(node.seededApps.size, 0, 'app removed after unseed')
+  t.is(node.storageAdmission.canAcknowledge(`drive:${appKey}`), false, 'unseed retires storage authority ACK')
+})
+
+test('integration: peerless drive without a blob proof fails before durable admission', async (t) => {
+  const testnet = await createTestnet(3)
+  const node = createNode(testnet)
+
+  t.teardown(async () => {
+    await node.stop()
+    await testnet.destroy()
+  })
+
+  await node.start()
+  const fakeKey = randomBytes(32).toString('hex')
+  const error = await node.seedApp(fakeKey, { maxStorage: TEST_MAX_STORAGE_BYTES }).then(
+    () => null,
+    err => err
+  )
+
+  t.ok(error, 'peerless drive is rejected')
+  t.ok(
+    /DRIVE_SIZE_UNRESOLVED|timeout/i.test(error?.message || '') ||
+      error?.code === 'STORAGE_SIZE_PROOF_UNAVAILABLE',
+    'rejection identifies unresolved authoritative drive size'
+  )
+  t.is(node.appRegistry.has(fakeKey), false, 'failed proof creates no durable registry entry')
+  t.is(node.storageAdmission.canAcknowledge(`drive:${fakeKey}`), false, 'failed proof creates no authority ACK')
 })
 
 // ─── Connection events ─────────────────────────────────────────────
@@ -353,14 +413,16 @@ test('integration: HTTP API seed and unseed', async (t) => {
 
   await node.start()
 
-  const fakeKey = randomBytes(32).toString('hex')
+  const appKey = await authorLocalDrive(node, {
+    '/api-seed.txt': b4a.from('production API seed fixture')
+  })
   const authHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }
 
   // Seed via API
   const seedRes = await fetch(`http://127.0.0.1:${port}/seed`, {
     method: 'POST',
     headers: authHeaders,
-    body: JSON.stringify({ appKey: fakeKey })
+    body: JSON.stringify({ appKey, maxStorageBytes: TEST_MAX_STORAGE_BYTES })
   })
   t.is(seedRes.status, 200, 'seed returns 200')
   const seedData = await seedRes.json()
@@ -376,7 +438,7 @@ test('integration: HTTP API seed and unseed', async (t) => {
   const unseedRes = await fetch(`http://127.0.0.1:${port}/unseed`, {
     method: 'POST',
     headers: authHeaders,
-    body: JSON.stringify({ appKey: fakeKey })
+    body: JSON.stringify({ appKey })
   })
   t.is(unseedRes.status, 200, 'unseed returns 200')
 

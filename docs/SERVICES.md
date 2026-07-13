@@ -246,11 +246,25 @@ keeps entries opaque, and exposes a token-gated HTTP/SSE bridge for sync.
 - Bridge routes are token-gated and route through the service registry instead
   of a separate app backend.
 - Capability docs advertise `outboxlog-v1` only when the provider is running.
-- Signed opaque rows and invite keys persist to
-  `<storage>/outboxlog-state.json` when a Node relay supplies `config.storage`.
+- On a relay with the shared storage authority, persistent rows require a
+  bounded Hypercore journal. Legacy file/snapshot/JSONL persistence is refused
+  with `OUTBOXLOG_BOUNDED_PERSISTENCE_REQUIRED` until migrated or disabled.
 
 Enable it explicitly through `config.plugins` / `services.json` (`outboxlog`)
 or, on the Bare/appliance path, with `HIVERELAY_OUTBOXLOG=1`.
+
+For a Hypercore-backed journal, configure a finite aggregate local bound with
+`config.outboxlog.maxJournalStorageBytes`. This single authority commitment
+covers the index and every per-outbox writer core. The separate
+`config.outboxlog.seedMaxStorageBytes` controls whether those already-owned
+cores are announced for fleet pickup; omitting it leaves the journal local-only
+without disabling its locally bounded persistence.
+
+Legacy `outboxlog-state.json` / JSONL deployments must migrate to
+`journal="hypercore"` or `journal="hypercore-outboxes"` before enabling the
+provider under a storage-authority relay. Set a positive
+`maxJournalStorageBytes`; otherwise startup fails closed. Disabling persistence
+is the only supported alternative to migration.
 
 **Namespace registration (required for app-specific records — deployment footgun):**
 The outbox is **app-neutral**. Every signed record carries a namespace, and an

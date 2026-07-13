@@ -17,9 +17,15 @@ import sodium from 'sodium-universal'
 import path from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
+import { mkdirSync } from 'fs'
+import Hyperdrive from 'hyperdrive'
+
+const REQUEST_BOUND = 16 * 1024 * 1024
 
 function tmpStorage () {
-  return path.join(tmpdir(), 'hiverelay-deleg-' + randomBytes(8).toString('hex'))
+  const storage = path.join(tmpdir(), 'hiverelay-deleg-' + randomBytes(8).toString('hex'))
+  mkdirSync(storage, { recursive: true })
+  return storage
 }
 
 function createNode (testnet, overrides = {}) {
@@ -32,6 +38,23 @@ function createNode (testnet, overrides = {}) {
     acceptMode: 'open',
     ...overrides
   })
+}
+
+async function keyedReopenVersion (node, key, timeoutMs = 5000) {
+  const drive = new Hyperdrive(node.store.session(), key)
+  let timer = null
+  try {
+    await Promise.race([
+      drive.ready(),
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('fixture keyed reopen timed out')), timeoutMs)
+      })
+    ])
+    return drive.version
+  } finally {
+    if (timer) clearTimeout(timer)
+    await drive.close().catch(() => {})
+  }
 }
 
 // Generate an Ed25519 keypair (libsodium).
@@ -105,7 +128,7 @@ function makeRegistryEntry ({ device, primary, cert, appKey, discoveryKey, signW
     mountPath: null,
     replicationFactor: 1,
     geoPreference: [],
-    maxStorageBytes: 0,
+    maxStorageBytes: REQUEST_BOUND,
     bountyRate: 0,
     ttlSeconds: 3600,
     privacyTier: 'public',
@@ -128,9 +151,20 @@ async function injectAndScan (node, entry, eventNames = ['registry-seed-accepted
     node.on(name, h)
   }
   node.seedingRegistry._requests.set(entry.appKey, entry)
+  let timer = null
   try {
-    await node._scanRegistry()
+    await Promise.race([
+      node._scanRegistry(),
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {
+          const err = new Error('delegated publish registry scan timed out')
+          err.code = 'REGISTRY_SCAN_TIMEOUT'
+          reject(err)
+        }, 15_000)
+      })
+    ])
   } finally {
+    if (timer) clearTimeout(timer)
     for (const [name, h] of handlers) node.removeListener(name, h)
   }
   return events
@@ -160,7 +194,9 @@ test('verifyDelegationCert agrees with the createDeviceAttestation format', asyn
 test('relay accepts seed request with valid delegation cert; primary attributed', async (t) => {
   const testnet = await createTestnet(3)
   const node = createNode(testnet)
+  let sourceDrive = null
   t.teardown(async () => {
+    if (sourceDrive) await sourceDrive.close().catch(() => {})
     await node.stop()
     await testnet.destroy()
   })
@@ -170,8 +206,14 @@ test('relay accepts seed request with valid delegation cert; primary attributed'
   const device = keygen()
   const cert = createDelegationCert(primary, device.publicKey, { label: 'laptop' })
 
-  const appKey = randomBytes(32)
-  const discoveryKey = randomBytes(32)
+  sourceDrive = new Hyperdrive(node.store.session())
+  await sourceDrive.ready()
+  await sourceDrive.put('/index.html', b4a.from('delegated publish fixture'))
+  const appKey = b4a.from(sourceDrive.key)
+  const discoveryKey = b4a.from(sourceDrive.discoveryKey)
+  await sourceDrive.close()
+  sourceDrive = null
+  t.ok(await keyedReopenVersion(node, appKey) > 0, 'published drive reopens through the production keyed session')
   const entry = makeRegistryEntry({ device, primary, cert, appKey, discoveryKey })
 
   const events = await injectAndScan(node, entry)
@@ -187,6 +229,7 @@ test('relay accepts seed request with valid delegation cert; primary attributed'
   t.ok(seeded, 'app is seeded')
   t.is(seeded.publisherPubkey, b4a.toString(primary.publicKey, 'hex'),
     'stored publisherPubkey is the primary identity')
+  t.is(seeded.maxStorage, REQUEST_BOUND, 'the exact finite request bound reaches AppLifecycle')
 })
 
 // ─── negative: tampered cert signature ───────────────────────────────
@@ -364,15 +407,23 @@ test('rejects when request signature is not from the device named in cert', asyn
 test('seed request without delegation cert still works (backward compatible)', async (t) => {
   const testnet = await createTestnet(3)
   const node = createNode(testnet)
+  let sourceDrive = null
   t.teardown(async () => {
+    if (sourceDrive) await sourceDrive.close().catch(() => {})
     await node.stop()
     await testnet.destroy()
   })
   await node.start()
 
   const publisher = keygen()
-  const appKey = randomBytes(32)
-  const discoveryKey = randomBytes(32)
+  sourceDrive = new Hyperdrive(node.store.session())
+  await sourceDrive.ready()
+  await sourceDrive.put('/index.html', b4a.from('legacy publish fixture'))
+  const appKey = b4a.from(sourceDrive.key)
+  const discoveryKey = b4a.from(sourceDrive.discoveryKey)
+  await sourceDrive.close()
+  sourceDrive = null
+  t.ok(await keyedReopenVersion(node, appKey) > 0, 'legacy published drive reopens through the production keyed session')
   // No cert; entry has the standard publisher pubkey only.
   const entry = makeRegistryEntry({
     device: publisher,
@@ -395,4 +446,5 @@ test('seed request without delegation cert still works (backward compatible)', a
   t.ok(seeded, 'app seeded')
   t.is(seeded.publisherPubkey, b4a.toString(publisher.publicKey, 'hex'),
     'stored publisherPubkey is the original publisher')
+  t.is(seeded.maxStorage, REQUEST_BOUND, 'legacy path preserves the exact finite request bound')
 })

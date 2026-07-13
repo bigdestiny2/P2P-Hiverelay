@@ -2,6 +2,7 @@ import test from 'brittle'
 import http from 'http'
 
 const API_KEY = 'test-secret-key-12345'
+const STORAGE_BOUND = 1024 * 1024
 
 /**
  * Create a minimal mock RelayNode that satisfies RelayAPI's needs.
@@ -691,6 +692,7 @@ test('api-auth: relaykernel profile rejects custody APIs but keeps plain operato
 
   const custodySeed = await request(port, 'POST', '/seed', {
     appKey: 'a'.repeat(64),
+    maxStorageBytes: STORAGE_BOUND,
     custodyIntentId: intentId
   }, {
     Authorization: 'Bearer ' + API_KEY
@@ -699,7 +701,7 @@ test('api-auth: relaykernel profile rejects custody APIs but keeps plain operato
   t.is(node._seedCalls.length, beforeSeeds, 'custody-linked seed does not reach seedApp')
   t.is(custodyCalls, 0, 'disabled custody routes do not reach registry methods')
 
-  const plainSeed = await request(port, 'POST', '/seed', { appKey: 'a'.repeat(64) }, {
+  const plainSeed = await request(port, 'POST', '/seed', { appKey: 'a'.repeat(64), maxStorageBytes: STORAGE_BOUND }, {
     Authorization: 'Bearer ' + API_KEY
   })
   t.is(plainSeed.statusCode, 200)
@@ -904,6 +906,7 @@ test('api-auth: POST /api/dedup/reclaim requires auth and dispatches strict opti
 test('api-auth: POST /seed forwards metadata fields with auth', async (t) => {
   const res = await request(port, 'POST', '/seed', {
     appKey: 'c'.repeat(64),
+    maxStorageBytes: STORAGE_BOUND,
     type: 'drive',
     parentKey: 'd'.repeat(64),
     mountPath: '/data',
@@ -938,6 +941,7 @@ test('api-auth: POST /seed forwards metadata fields with auth', async (t) => {
   t.is(lastCall.opts.blind, true, 'blind flag forwarded')
   t.is(lastCall.opts.storageClass, 'temporary', 'storage class forwarded')
   t.is(lastCall.opts.availabilityClass, 'atomic-handoff', 'availability class forwarded')
+  t.is(lastCall.opts.maxStorage, STORAGE_BOUND, 'storage bound forwarded')
 })
 
 test('api-auth: GET /catalog.json supports type filtering and typed buckets', async (t) => {
@@ -1664,6 +1668,7 @@ test('api-auth: POST /seed forwards durability for operator-pinned archive tier'
   node._seedCalls.length = 0
   const res = await request(port, 'POST', '/seed', {
     appKey: 'e'.repeat(64),
+    maxStorageBytes: STORAGE_BOUND,
     durability: 1
   }, { Authorization: 'Bearer ' + API_KEY })
   t.is(res.statusCode, 200, 'authenticated archive pin accepted')
@@ -1674,6 +1679,7 @@ test('api-auth: POST /seed forwards durability for operator-pinned archive tier'
 test('api-auth: POST /seed rejects malformed durability', async (t) => {
   const res = await request(port, 'POST', '/seed', {
     appKey: 'e'.repeat(64),
+    maxStorageBytes: STORAGE_BOUND,
     durability: 'archive'
   }, { Authorization: 'Bearer ' + API_KEY })
   t.is(res.statusCode, 400, 'non-integer durability rejected')
@@ -1784,7 +1790,7 @@ test('api-auth: auth-failure route labels strip query secrets and sanitize log c
 
 test('api-auth: authed requests do not touch the auth-failure counter', async (t) => {
   const before = api._authFailureTotal
-  await request(port, 'POST', '/seed', { appKey: 'd'.repeat(64) }, {
+  await request(port, 'POST', '/seed', { appKey: 'd'.repeat(64), maxStorageBytes: STORAGE_BOUND }, {
     Authorization: 'Bearer ' + API_KEY
   })
   t.is(api._authFailureTotal, before, 'counter unchanged on authorized call')

@@ -25,13 +25,9 @@ import { createHttpShardPut, createHttpShardFetch } from '../../packages/client/
 import { signShardPin, normalizeShardAddress } from '../../packages/services/builtin/shard-store/index.js'
 import { createCustodyIntent } from '../../packages/core/core/custody-signing.js'
 
-// @hyperswarm/testnet teardown can throw a benign "Node destroyed" after asserts.
-function benign (err) { return /Node destroyed|REQUEST_DESTROYED|Request destroyed|IO_SUSPENDED|Node was destroyed/i.test(String((err && (err.message || err.code)) || '')) }
-process.on('uncaughtException', (e) => { if (!benign(e)) { console.error(e); process.exit(1) } })
-process.on('unhandledRejection', (e) => { if (!benign(e)) { console.error(e); process.exit(1) } })
-
-async function bringUpRelay (t, baseDir, testnet, i) {
+async function bringUpRelay (baseDir, testnet, i) {
   const apiKey = 'shard-e2e-' + randomBytes(6).toString('hex')
+  await mkdir(join(baseDir, 'relay-' + i), { recursive: true })
   const node = new RelayNode({
     storage: join(baseDir, 'relay-' + i),
     bootstrapNodes: testnet.bootstrap,
@@ -47,7 +43,6 @@ async function bringUpRelay (t, baseDir, testnet, i) {
     gatewayServeBlind: false
   })
   await node.start()
-  t.teardown(async () => { try { await node.stop() } catch {} })
   return {
     node,
     apiKey,
@@ -69,12 +64,20 @@ test('live blind-shard dispersal across 4 real RelayNodes (no stub)', { timeout:
   const baseDir = join(tmpdir(), 'shard-fleet-e2e-' + randomBytes(4).toString('hex'))
   await mkdir(baseDir, { recursive: true })
   const testnet = await createTestnet(3)
-  t.teardown(async () => { try { await testnet.destroy() } catch {}; try { await rm(baseDir, { recursive: true, force: true }) } catch {} })
 
   const N = 4
   const K = 3
   const relays = []
-  for (let i = 0; i < N; i++) relays.push(await bringUpRelay(t, baseDir, testnet, i))
+  t.teardown(async () => {
+    let firstError = null
+    for (const relay of relays) {
+      try { await relay.node.stop() } catch (err) { if (!firstError) firstError = err }
+    }
+    try { await testnet.destroy() } catch (err) { if (!firstError) firstError = err }
+    try { await rm(baseDir, { recursive: true, force: true }) } catch (err) { if (!firstError) firstError = err }
+    if (firstError) throw firstError
+  })
+  for (let i = 0; i < N; i++) relays.push(await bringUpRelay(baseDir, testnet, i))
   t.pass('brought up ' + N + ' real relay nodes with shard-store enabled')
 
   const publisher = (() => { const pk = b4a.alloc(32); const sk = b4a.alloc(64); sodium.crypto_sign_seed_keypair(pk, sk, b4a.alloc(32, 7)); return { publicKey: pk, secretKey: sk } })()

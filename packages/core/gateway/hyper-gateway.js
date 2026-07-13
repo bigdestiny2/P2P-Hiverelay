@@ -19,9 +19,60 @@
 
 import Corestore from 'corestore'
 import Hyperswarm from 'hyperswarm'
-import Hyperdrive from 'hyperdrive'
+import Hyperblobs from 'hyperblobs'
 import { EventEmitter } from 'events'
 import { join } from 'path'
+
+const TRACKED_GATEWAY_STORAGE_LEASE = Symbol('tracked-gateway-storage-lease')
+
+function stableCoreProofState (core, attempts = 4) {
+  if (!core) return null
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const forkBefore = Number(core.fork ?? 0)
+    const lengthBefore = Number(core.length)
+    const byteLengthBefore = Number(core.byteLength)
+    const lengthAfter = Number(core.length)
+    const byteLengthAfter = Number(core.byteLength)
+    const forkAfter = Number(core.fork ?? 0)
+    if (Number.isSafeInteger(forkBefore) && forkBefore >= 0 && forkBefore === forkAfter &&
+        Number.isSafeInteger(lengthBefore) && lengthBefore >= 0 && lengthBefore === lengthAfter &&
+        Number.isSafeInteger(byteLengthBefore) && byteLengthBefore >= 0 && byteLengthBefore === byteLengthAfter) {
+      return { fork: forkAfter, length: lengthAfter, byteLength: byteLengthAfter }
+    }
+  }
+  return null
+}
+
+function durableDriveProof (entry) {
+  const proof = {
+    driveVersion: entry?.storageProvedDriveVersion,
+    metaLength: entry?.storageProvedMetaLength,
+    blobLength: entry?.storageProvedBlobLength,
+    totalBytes: entry?.storageProvedTotalBytes,
+    metaFork: entry?.storageProvedMetaFork,
+    blobFork: entry?.storageProvedBlobFork
+  }
+  if (entry?.anchored !== true || entry.anchoredLength !== proof.driveVersion ||
+      !Number.isSafeInteger(proof.driveVersion) || proof.driveVersion <= 0 ||
+      !Number.isSafeInteger(proof.metaLength) || proof.metaLength < 0 ||
+      !Number.isSafeInteger(proof.blobLength) || proof.blobLength < 0 ||
+      !Number.isSafeInteger(proof.totalBytes) || proof.totalBytes < 0 ||
+      !Number.isSafeInteger(proof.metaFork) || proof.metaFork < 0 ||
+      !Number.isSafeInteger(proof.blobFork) || proof.blobFork < 0 ||
+      !Number.isSafeInteger(entry.maxStorage) || proof.totalBytes > entry.maxStorage) return null
+  proof.fingerprint = [proof.driveVersion, proof.metaLength, proof.blobLength, proof.totalBytes, proof.metaFork, proof.blobFork].join(':')
+  return proof
+}
+
+function nonClosingCoreView (core) {
+  return new Proxy(core, {
+    get (target, property) {
+      if (property === 'close') return async () => {}
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    }
+  })
+}
 
 const CONTENT_TYPES = {
   html: 'text/html; charset=utf-8',
@@ -221,6 +272,8 @@ export class HyperGateway extends EventEmitter {
     super()
     this.node = relayNode
     this._drives = new DriveCache(opts.maxCachedDrives || 20) // LRU cache
+    this._driveProofs = new Map()
+    this._driveCacheKeys = new Map()
     this._totalRequests = 0
     this._totalBytesServed = 0
     this._driveOperationTimeout = opts.driveOperationTimeout || 30000 // 30s default
@@ -319,7 +372,7 @@ export class HyperGateway extends EventEmitter {
 
     const rest = path.slice(prefix.length)
     const slashIdx = rest.indexOf('/')
-    const keyHex = slashIdx === -1 ? rest : rest.slice(0, slashIdx)
+    let keyHex = slashIdx === -1 ? rest : rest.slice(0, slashIdx)
     let filePath = slashIdx === -1 ? '/' : rest.slice(slashIdx)
 
     // Reject path traversal attempts
@@ -351,6 +404,28 @@ export class HyperGateway extends EventEmitter {
     if (!keyHex || keyHex.length !== 64 || !/^[0-9a-f]+$/i.test(keyHex)) {
       sendJson({ error: 'Invalid drive key' }, 400)
       return
+    }
+    keyHex = keyHex.toLowerCase()
+
+    // Hold the same per-drive storage lease used by seed/unseed and the PVSS
+    // auxiliary fetch for the complete HTTP read. This makes durable unseed
+    // wait until a stalled response has stopped touching pinned core sessions,
+    // and prevents a new request from entering after retirement begins.
+    if (this.node.storageAdmission?.runKeyMutation && req[TRACKED_GATEWAY_STORAGE_LEASE] !== true) {
+      try {
+        return await this.node.storageAdmission.runKeyMutation(`drive:${keyHex}`, async () => {
+          req[TRACKED_GATEWAY_STORAGE_LEASE] = true
+          try {
+            return await this.handle(req, res)
+          } finally {
+            delete req[TRACKED_GATEWAY_STORAGE_LEASE]
+          }
+        })
+      } catch (err) {
+        if (!res.headersSent) sendJson({ error: 'Gateway storage is stopping' }, 503)
+        else try { res.destroy(err) } catch (_) {}
+        return
+      }
     }
 
     // Check if this drive is seeded on the relay
@@ -537,7 +612,19 @@ export class HyperGateway extends EventEmitter {
         }
       })
 
-      stream.pipe(res)
+      await new Promise((resolve) => {
+        let settled = false
+        const done = () => {
+          if (settled) return
+          settled = true
+          resolve()
+        }
+        res.once('finish', done)
+        res.once('close', done)
+        stream.once('close', done)
+        stream.once('error', done)
+        stream.pipe(res)
+      })
     } catch (err) {
       this.emit('drive-error', { context: 'handle', key: keyHex, path: filePath, error: err.message })
       sendJson({ error: 'Gateway read failed' }, 502)
@@ -547,76 +634,75 @@ export class HyperGateway extends EventEmitter {
   async _getDrive (keyHex) {
     const seededEntry = this.node.seededApps && this.node.seededApps.get(keyHex)
     const seededDrive = seededEntry && seededEntry.drive
-    if (seededDrive && !seededDrive.closed && !seededDrive.closing) {
-      this._drives.set(keyHex, seededDrive)
-      return seededDrive
-    }
+    if (!seededDrive || seededDrive.closed || seededDrive.closing) return null
+    // HTTP is a read surface, never a second replication ingress. Only serve
+    // the exact live drive owned and size-proved by AppLifecycle; a startup
+    // placeholder or stale cache must not open/update/download from the shared
+    // Corestore. Where a shared authority exists, the durable commitment must
+    // still be ACK-eligible too.
+    if (!this.node.storageAdmission) return seededDrive
+    if (!this.node.storageAdmission.canAcknowledge(`drive:${keyHex}`)) return null
+    const proof = durableDriveProof(seededEntry)
+    const proofCores = Array.isArray(seededEntry.downloadSnapshotCores)
+      ? seededEntry.downloadSnapshotCores
+      : null
+    const metaProofCore = proofCores && proofCores[0]
+    const blobProofCore = proofCores && proofCores[1]
+    const metaProofState = stableCoreProofState(metaProofCore)
+    const blobProofState = stableCoreProofState(blobProofCore)
+    if (!proof || typeof seededDrive.checkout !== 'function' ||
+        !metaProofState || metaProofState.length !== proof.metaLength || metaProofState.fork !== proof.metaFork ||
+        !blobProofState || blobProofState.length !== proof.blobLength || blobProofState.fork !== proof.blobFork ||
+        metaProofState.byteLength + blobProofState.byteLength !== proof.totalBytes) return null
 
-    // Return cached drive if already open and has content
-    if (this._drives.has(keyHex)) {
-      const cached = this._drives.get(keyHex)
-      // Refresh in background for next request
-      cached.update().catch(err => {
-        this.emit('drive-update-error', { key: keyHex, error: err.message })
-      })
+    const cacheKey = `${keyHex}:${proof.fingerprint}`
+    const previousCacheKey = this._driveCacheKeys.get(keyHex)
+    if (previousCacheKey && previousCacheKey !== cacheKey) {
+      const previous = this._drives.get(previousCacheKey)
+      if (previous && !previous.closed) {
+        try { await previous.close() } catch (_) {}
+      }
+      this._drives.delete(previousCacheKey)
+      this._driveProofs.delete(previousCacheKey)
+    }
+    this._driveCacheKeys.set(keyHex, cacheKey)
+
+    const cached = this._drives.get(cacheKey)
+    const cachedProof = this._driveProofs.get(cacheKey)
+    if (cached && !cached.closed && cachedProof?.sourceDrive === seededDrive &&
+        cachedProof.metaProofCore === metaProofCore && cachedProof.blobProofCore === blobProofCore) {
       return cached
     }
+    if (cached && !cached.closed) {
+      try { await cached.close() } catch (_) {}
+    }
+    this._drives.delete(cacheKey)
+    this._driveProofs.delete(cacheKey)
 
-    // Initialize our own P2P stack on first use
-    await this._ensureReady()
-
+    const checkout = seededDrive.checkout(proof.driveVersion)
     try {
-      // Per-drive corestore session so cache eviction / drive.close()
-      // tears down only this session's refs, not the root store. Without
-      // .session(), hyperdrive._close() cascades to the externalStore
-      // (the relay's node.store) and wedges the entire relay until
-      // restart — same class as the v0.8.14 fix in
-      // app-lifecycle.js:_seedAppInner. The captured trace from utah-us
-      // canary 2026-05-18 confirms this path fires (DriveCache eviction
-      // → hyperdrive._close → store.close on the wrapped root).
-      const drive = new Hyperdrive(this._store.session(), Buffer.from(keyHex, 'hex'))
-      await drive.ready()
-
-      // Join the drive's discovery key on the swarm (only when we own it)
-      if (this._swarm) {
-        const done = drive.findingPeers()
-        this._swarm.join(drive.discoveryKey, { server: true, client: true })
-        this._swarm.flush().then(done, done)
-      }
-
-      // Wait for drive data to arrive from peers
-      if (drive.version === 0) {
-        try {
-          await Promise.race([
-            drive.update({ wait: true }),
-            new Promise((_resolve, reject) => setTimeout(() => reject(new Error('timeout')), 20000))
-          ])
-        } catch (err) {
-          this.emit('drive-wait-error', { key: keyHex, error: err.message })
-        }
-      }
-
-      // Still no content
-      if (drive.version === 0) {
-        await drive.close()
+      if (checkout && typeof checkout.ready === 'function') await checkout.ready()
+      const checkoutMeta = stableCoreProofState(checkout?.db?.core)
+      const current = this.node.seededApps && this.node.seededApps.get(keyHex)
+      const currentProof = durableDriveProof(current)
+      if (!checkout || current !== seededEntry || current.drive !== seededDrive ||
+          currentProof?.fingerprint !== proof.fingerprint ||
+          current.downloadSnapshotCores?.[0] !== metaProofCore || current.downloadSnapshotCores?.[1] !== blobProofCore ||
+          !checkoutMeta || checkout.version !== proof.driveVersion ||
+          checkoutMeta.length !== proof.metaLength || checkoutMeta.fork !== proof.metaFork ||
+          !this.node.storageAdmission.canAcknowledge(`drive:${keyHex}`)) {
+        if (checkout && checkout !== seededDrive) try { await checkout.close() } catch (_) {}
         return null
       }
-
-      // Eagerly download all files for future requests
-      try {
-        const dl = drive.download('/')
-        // Don't await — let it download in background
-        dl.done().catch(err => {
-          this.emit('drive-download-error', { key: keyHex, error: err.message })
-        })
-      } catch (err) {
-        this.emit('drive-download-init-error', { key: keyHex, error: err.message })
-      }
-
-      this._drives.set(keyHex, drive)
-      return drive
-    } catch (err) {
-      this.emit('drive-error', { context: 'getDrive', key: keyHex, error: err })
+      // Hyperdrive checkout() pins only metadata; by default getBlobs() reuses
+      // the mutable parent blob core. Serve through the exact lifecycle-owned
+      // blob snapshot that was durably committed with this proof tuple.
+      checkout.blobs = new Hyperblobs(nonClosingCoreView(blobProofCore))
+      this._drives.set(cacheKey, checkout)
+      this._driveProofs.set(cacheKey, { sourceDrive: seededDrive, metaProofCore, blobProofCore })
+      return checkout
+    } catch (_) {
+      if (checkout && checkout !== seededDrive) try { await checkout.close() } catch (_) {}
       return null
     }
   }
@@ -673,6 +759,8 @@ export class HyperGateway extends EventEmitter {
       }
     }
     this._drives.clear()
+    this._driveProofs.clear()
+    this._driveCacheKeys.clear()
 
     if (this._ownsSwarm && this._swarm) {
       try { await this._swarm.destroy() } catch (err) {

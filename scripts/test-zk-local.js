@@ -13,11 +13,13 @@ import createTestnet from '@hyperswarm/testnet'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
+import { mkdir } from 'fs/promises'
 
 console.log('=== Local ZK P2P Service Test ===\n')
 
 const testnet = await createTestnet(3)
 const relayStorage = join(tmpdir(), 'zk-relay-' + randomBytes(4).toString('hex'))
+await mkdir(relayStorage, { recursive: true })
 
 // Start relay with services + router
 const node = new RelayNode({

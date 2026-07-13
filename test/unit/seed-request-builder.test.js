@@ -244,7 +244,23 @@ test('builder: negative maxStorageBytes → 400', (t) => {
     maxStorageBytes: -1
   })
   t.is(r.ok, false)
-  t.is(r.error, 'maxStorageBytes must be non-negative')
+  t.is(r.error, 'maxStorageBytes must be a positive safe integer')
+})
+
+test('builder: missing, zero, or unsafe maxStorageBytes → 400', (t) => {
+  const base = {
+    appKey: 'a'.repeat(64),
+    publisherPubkey: 'b'.repeat(64),
+    publisherSignature: 'c'.repeat(128)
+  }
+  for (const maxStorageBytes of [undefined, 0, Number.MAX_SAFE_INTEGER + 1]) {
+    const body = { ...base }
+    if (maxStorageBytes !== undefined) body.maxStorageBytes = maxStorageBytes
+    const r = buildPublisherSignedSeedOpts(body)
+    t.is(r.ok, false)
+    t.is(r.status, 400)
+    t.is(r.error, 'maxStorageBytes must be a positive safe integer')
+  }
 })
 
 // ─── discoveryKeys ──────────────────────────────────────────────────

@@ -16,6 +16,7 @@
 
 import test from 'brittle'
 import createTestnet from '@hyperswarm/testnet'
+import Hyperdrive from 'hyperdrive'
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
 import { isAbortError } from 'p2p-hiverelay/core/relay-node/lifecycle-scope.js'
 import b4a from 'b4a'
@@ -25,10 +26,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
-
-function randomAppKey () {
-  return b4a.toString(randomBytes(32), 'hex')
-}
+const TEST_MAX_STORAGE_BYTES = 64 * 1024 * 1024
 
 async function makeNode (baseDir, name, bootstrap, extra = {}) {
   const dir = join(baseDir, name)
@@ -45,6 +43,29 @@ async function makeNode (baseDir, name, bootstrap, extra = {}) {
     shutdownTimeoutMs: 10_000,
     ...extra
   })
+}
+
+async function waitFor (fn, timeoutMs = 30_000, intervalMs = 50) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await fn()) return true
+    await sleep(intervalMs)
+  }
+  return false
+}
+
+async function within (promise, timeoutMs, label) {
+  let timer = null
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(label + ' timed out after ' + timeoutMs + 'ms')), timeoutMs)
+      })
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 test('Reliability v2: start() creates a scope; stop() drains + clears it', async (t) => {
@@ -122,12 +143,35 @@ test('Reliability v2: multi-cycle start/stop with seeded apps is clean', async (
   const baseDir = join(tmpdir(), `hiverelay-relv2-cycles-${id}`)
   const testnet = await createTestnet(2)
   const node = await makeNode(baseDir, 'node', testnet.bootstrap)
+  const publisher = await makeNode(baseDir, 'publisher', testnet.bootstrap)
+  const sourceDrives = []
+  const sourceDiscovery = []
 
   t.teardown(async () => {
     try { await node.stop() } catch {}
+    for (const handle of sourceDiscovery) {
+      try { await handle.destroy() } catch {}
+    }
+    for (const drive of sourceDrives) {
+      try { await drive.close() } catch {}
+    }
+    try { await publisher.stop() } catch {}
     try { await testnet.destroy() } catch {}
     try { await rm(baseDir, { recursive: true, force: true }) } catch {}
   })
+
+  await publisher.start()
+  const seededKeys = []
+  for (let i = 0; i < 3; i++) {
+    const drive = new Hyperdrive(publisher.store.namespace('reliability-source-' + i).session())
+    await drive.ready()
+    await drive.put('/initial.bin', randomBytes(64 * 1024))
+    sourceDrives.push(drive)
+    seededKeys.push(b4a.toString(drive.key, 'hex'))
+    sourceDiscovery.push(publisher.swarm.join(drive.discoveryKey, { server: true, client: true }))
+  }
+  t.is(new Set(seededKeys).size, 3, 'publisher authored three distinct drive keys')
+  await publisher.swarm.flush()
 
   const reseedErrors = []
   const repairErrors = []
@@ -136,26 +180,46 @@ test('Reliability v2: multi-cycle start/stop with seeded apps is clean', async (
   node.on('repair-error', (e) => repairErrors.push(e))
   node.on('index-error', (e) => indexErrors.push(e))
 
-  const seededKeys = []
-
   for (let cycle = 0; cycle < 3; cycle++) {
     await node.start()
     t.ok(node._scope, 'cycle ' + cycle + ': scope created')
 
-    // First cycle seeds three random apps; subsequent cycles see them
-    // reseeded from disk and each re-fires eagerReplicate.
+    // First cycle seeds three real, finite-bounded drives from a live
+    // publisher. Subsequent cycles recover the persisted entries and re-fire
+    // eagerReplicate against the same publisher-owned content.
     if (cycle === 0) {
-      for (let i = 0; i < 3; i++) {
-        const k = randomAppKey()
-        seededKeys.push(k)
-        await node.seedApp(k, {})
+      for (const key of seededKeys) {
+        const seedStartedAt = Date.now()
+        await within(
+          node.seedApp(key, { maxStorage: TEST_MAX_STORAGE_BYTES }),
+          30_000,
+          'authoritative seed ' + key.slice(0, 8)
+        )
+        t.ok(Date.now() - seedStartedAt < 30_000, 'cycle 0: authoritative seed returned within 30s')
+        const proved = await waitFor(() => {
+          const entry = node.appRegistry.get(key)
+          return entry?.anchored === true &&
+            Number.isSafeInteger(entry.storageProvedDriveVersion) && entry.storageProvedDriveVersion > 0 &&
+            Array.isArray(entry.downloadSnapshotCores) && entry.downloadSnapshotCores.length === 2
+        })
+        t.ok(proved, 'cycle 0: seeded drive has a persisted pinned proof')
+        t.ok(node.storageAdmission.canAcknowledge(`drive:${key}`), 'cycle 0: seeded drive has authority ACK')
       }
+    } else {
+      t.ok(await waitFor(() => seededKeys.every(key => node.appRegistry.get(key)?.drive)),
+        'cycle ' + cycle + ': all persisted drives reopened')
     }
 
-    // Let the in-flight eagerReplicate fan-out kick off — each seedApp
-    // launches a tracked _eagerReplicate that enters swarm.flush() then
-    // updateWithTimeout(30s). 200ms is enough for the loop to be
-    // mid-await on every app.
+    // Advance every publisher drive and explicitly trigger the same tracked
+    // product fan-out used by fresh seeds and recovery. stop() must abort and
+    // drain these real drive update/download paths before closing Corestore.
+    for (let i = 0; i < sourceDrives.length; i++) {
+      await sourceDrives[i].put(`/cycle-${cycle}.bin`, randomBytes(64 * 1024))
+      const entry = node.appRegistry.get(seededKeys[i])
+      node.appLifecycle._trackEagerReplicate(seededKeys[i], entry.drive, {
+        maxStorage: TEST_MAX_STORAGE_BYTES
+      }, { source: 'reliability-v2-cycle' })
+    }
     await sleep(200)
 
     const stopStart = Date.now()
