@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Peerit final form — system diagrams</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #171d25;
+      --ink: #e8eef4;
+      --muted: #8b9aab;
+      --line: #2a3544;
+      --blue: #4c9aed;
+      --blue-d: #2b6cb0;
+      --green: #3ecf8e;
+      --green-d: #0c8a68;
+      --purple: #a78bfa;
+      --amber: #f0b429;
+      --coral: #f07178;
+      --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: var(--sans); background: var(--bg); color: var(--ink);
+      line-height: 1.55;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 2rem 1.25rem 3.5rem; }
+    header {
+      border-bottom: 1px solid var(--line); padding-bottom: 1.25rem; margin-bottom: 1.5rem;
+    }
+    header .ey {
+      font-size: .75rem; letter-spacing: .14em; text-transform: uppercase;
+      color: var(--green); font-weight: 700; margin: 0 0 .5rem;
+    }
+    h1 {
+      margin: 0 0 .6rem; font-size: clamp(1.6rem, 3.5vw, 2.15rem);
+      letter-spacing: -0.02em; line-height: 1.2;
+    }
+    .sub { color: var(--muted); max-width: 62ch; margin: 0; font-size: 1.02rem; }
+    .badge-row { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: 1rem; }
+    .badge {
+      font-size: .75rem; font-weight: 600; padding: .3rem .65rem; border-radius: 999px;
+      border: 1px solid var(--line); color: var(--muted);
+    }
+    .badge.on { color: var(--green); border-color: rgba(62,207,142,.35); background: rgba(62,207,142,.08); }
+    .badge.warn { color: var(--amber); border-color: rgba(240,180,41,.35); background: rgba(240,180,41,.08); }
+    nav {
+      display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: 1.75rem;
+    }
+    nav a {
+      color: var(--muted); text-decoration: none; font-size: .8rem; font-weight: 600;
+      padding: .35rem .7rem; border-radius: 8px; background: var(--panel); border: 1px solid var(--line);
+    }
+    nav a:hover { color: var(--ink); border-color: var(--blue); }
+    section {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+      padding: 1.35rem 1.2rem 1.5rem; margin-bottom: 1.15rem;
+    }
+    h2 {
+      margin: 0 0 .4rem; font-size: 1.25rem; letter-spacing: -0.01em;
+    }
+    h2 span {
+      color: var(--green); font-size: .8rem; font-weight: 800; letter-spacing: .08em;
+      display: block; margin-bottom: .25rem; text-transform: uppercase;
+    }
+    .lede { color: var(--muted); margin: 0 0 1rem; max-width: 70ch; }
+    p { margin: .45rem 0; max-width: 70ch; color: #c5d0dc; }
+    ul { margin: .4rem 0 0; padding-left: 1.15rem; color: #c5d0dc; max-width: 70ch; }
+    li { margin: .25rem 0; }
+    .fig {
+      margin: 1rem 0 .5rem; background: #0c1015; border: 1px solid var(--line);
+      border-radius: 14px; padding: 1rem .75rem .75rem; overflow-x: auto;
+    }
+    .fig svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+    .cap {
+      text-align: center; font-size: .78rem; color: var(--muted); margin: .55rem 0 0;
+    }
+    .note {
+      margin-top: 1rem; padding: .85rem 1rem; border-radius: 10px;
+      background: rgba(76,154,237,.08); border: 1px solid rgba(76,154,237,.25);
+      font-size: .92rem; color: #b8c9dc; max-width: 72ch;
+    }
+    .note.warn {
+      background: rgba(240,180,41,.08); border-color: rgba(240,180,41,.3); color: #e0d0a8;
+    }
+    .note strong { color: var(--ink); display: block; margin-bottom: .25rem; }
+    table {
+      width: 100%; border-collapse: collapse; font-size: .85rem; margin-top: 1rem;
+    }
+    th, td {
+      text-align: left; padding: .55rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top;
+    }
+    th { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; }
+    td { color: #c5d0dc; }
+    td.k { color: var(--ink); font-weight: 700; white-space: nowrap; }
+    footer {
+      text-align: center; color: var(--muted); font-size: .78rem; margin-top: 1.5rem; padding: 1rem;
+    }
+    @media print {
+      body { background: #fff; color: #111; }
+      section, .fig { break-inside: avoid; background: #fff; border-color: #ccc; }
+      .fig { background: #f7f7f7; }
+      p, ul, td { color: #222; }
+      header { border-color: #ccc; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <p class="ey">Peerit · final-form architecture · diagram pack</p>
+      <h1>How Peerit works when everything is built</h1>
+      <p class="sub">
+        Where data lives, how a post is written and read, every pathway into the system,
+        and what never lives on a relay. This is the <strong>target end-state</strong>, not today’s OutboxLog-only canary.
+      </p>
+      <div class="badge-row">
+        <span class="badge on">Target architecture</span>
+        <span class="badge warn">Not fully live yet</span>
+        <span class="badge">Blind cells + T1 gateway + multi-path clients</span>
+      </div>
+    </header>
+
+    <nav>
+      <a href="#big">1. Big picture</a>
+      <a href="#store">2. Where data is stored</a>
+      <a href="#write">3. Write path</a>
+      <a href="#read">4. Read path</a>
+      <a href="#paths">5. Client pathways</a>
+      <a href="#keys">6. Keys &amp; trust</a>
+      <a href="#lifecycle">7. Lifecycle of a post</a>
+      <a href="#today">8. Today vs final</a>
+    </nav>
+
+    <!-- 1 BIG -->
+    <section id="big">
+      <h2><span>Diagram 01</span>Big picture — the whole system</h2>
+      <p class="lede">
+        Peerit is not “a database in the cloud.” It is many personal signed streams that devices merge.
+        Relays only provide always-on doors and opaque storage capacity.
+      </p>
+      <div class="fig">
+        <svg viewBox="0 0 1000 520" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="s" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.35"/>
+            </filter>
+            <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#5a6a7a"/>
+            </marker>
+          </defs>
+
+          <!-- title strip -->
+          <text x="500" y="28" text-anchor="middle" fill="#8b9aab" font-size="13" font-weight="700">PEERIT FINAL FORM · one product · many doors · cryptographic truth</text>
+
+          <!-- CLIENTS -->
+          <text x="500" y="58" text-anchor="middle" fill="#4c9aed" font-size="11" font-weight="800" letter-spacing="1">CLIENTS (hold keys · encrypt · verify · merge · UI)</text>
+
+          <g filter="url(#s)">
+            <rect x="40" y="72" width="200" height="78" rx="12" fill="#1e3a5f" stroke="#4c9aed"/>
+            <text x="140" y="102" text-anchor="middle" fill="#fff" font-size="13" font-weight="800">Normal browser</text>
+            <text x="140" y="122" text-anchor="middle" fill="#8bb8e8" font-size="10">Chrome / Safari / Firefox</text>
+            <text x="140" y="138" text-anchor="middle" fill="#6a9fd4" font-size="9">max accessibility</text>
+          </g>
+          <g filter="url(#s)">
+            <rect x="280" y="72" width="200" height="78" rx="12" fill="#1a3d32" stroke="#3ecf8e"/>
+            <text x="380" y="102" text-anchor="middle" fill="#fff" font-size="13" font-weight="800">PearBrowser / Bare</text>
+            <text x="380" y="122" text-anchor="middle" fill="#7dcea0" font-size="10">desktop · mobile worklet</text>
+            <text x="380" y="138" text-anchor="middle" fill="#5aaa80" font-size="9">direct P2P preferred</text>
+          </g>
+          <g filter="url(#s)">
+            <rect x="520" y="72" width="200" height="78" rx="12" fill="#2d2640" stroke="#a78bfa"/>
+            <text x="620" y="102" text-anchor="middle" fill="#fff" font-size="13" font-weight="800">Mobile / offline first</text>
+            <text x="620" y="122" text-anchor="middle" fill="#c4b5fd" font-size="10">local commit · later sync</text>
+            <text x="620" y="138" text-anchor="middle" fill="#9b8fd4" font-size="9">queue when no relay</text>
+          </g>
+          <g filter="url(#s)">
+            <rect x="760" y="72" width="200" height="78" rx="12" fill="#2a2418" stroke="#f0b429"/>
+            <text x="860" y="102" text-anchor="middle" fill="#fff" font-size="13" font-weight="800">Peerit client core</text>
+            <text x="860" y="122" text-anchor="middle" fill="#e8d48a" font-size="10">same logic everywhere</text>
+            <text x="860" y="138" text-anchor="middle" fill="#c4a84a" font-size="9">keys · merge · mod · UI</text>
+          </g>
+
+          <!-- arrows down from clients -->
+          <path d="M140 150 V185" stroke="#4c9aed" stroke-width="2" marker-end="url(#arr)"/>
+          <path d="M380 150 V185" stroke="#3ecf8e" stroke-width="2" marker-end="url(#arr)"/>
+          <path d="M620 150 V185" stroke="#a78bfa" stroke-width="2" marker-end="url(#arr)"/>
+          <path d="M860 150 V200 H500 V220" stroke="#f0b429" stroke-width="1.5" fill="none" stroke-dasharray="4 3"/>
+
+          <!-- DOORS -->
+          <text x="500" y="205" text-anchor="middle" fill="#8b9aab" font-size="11" font-weight="800" letter-spacing="1">PATHWAYS (doors — not the source of truth)</text>
+
+          <g filter="url(#s)">
+            <rect x="50" y="220" width="280" height="95" rx="12" fill="#152238" stroke="#4c9aed"/>
+            <text x="190" y="248" text-anchor="middle" fill="#4c9aed" font-size="12" font-weight="800">① T1 public HTTPS gateway</text>
+            <text x="190" y="268" text-anchor="middle" fill="#8bb8e8" font-size="10">Serve shell / public package</text>
+            <text x="190" y="286" text-anchor="middle" fill="#6a9fd4" font-size="10">https://…hive…/  exact bytes</text>
+            <text x="190" y="304" text-anchor="middle" fill="#5a7a9a" font-size="9">NOT social write storage</text>
+          </g>
+          <g filter="url(#s)">
+            <rect x="360" y="220" width="280" height="95" rx="12" fill="#132820" stroke="#3ecf8e"/>
+            <text x="500" y="248" text-anchor="middle" fill="#3ecf8e" font-size="12" font-weight="800">② Blind substrate</text>
+            <text x="500" y="268" text-anchor="middle" fill="#7dcea0" font-size="10">CELL · INBOX mailbox chains</text>
+            <text x="500" y="286" text-anchor="middle" fill="#5aaa80" font-size="10">opaque ciphertext only</text>
+            <text x="500" y="304" text-anchor="middle" fill="#4a8a68" font-size="9">PRIMARY social storage (final)</text>
+          </g>
+          <g filter="url(#s)">
+            <rect x="670" y="220" width="280" height="95" rx="12" fill="#1a2030" stroke="#5a6a7a"/>
+            <text x="810" y="248" text-anchor="middle" fill="#a0aebc" font-size="12" font-weight="800">③ Direct P2P mesh</text>
+            <text x="810" y="268" text-anchor="middle" fill="#8b9aab" font-size="10">Hyperswarm peer replication</text>
+            <text x="810" y="286" text-anchor="middle" fill="#6b7a8a" font-size="10">no relay when peers awake</text>
+            <text x="810" y="304" text-anchor="middle" fill="#5a6a7a" font-size="9">PearBrowser power path</text>
+          </g>
+
+          <!-- HIVERELAY ESTATE -->
+          <path d="M190 315 V340" stroke="#4c9aed" stroke-width="2"/>
+          <path d="M500 315 V340" stroke="#3ecf8e" stroke-width="2"/>
+          <path d="M810 315 V355 H500" stroke="#5a6a7a" stroke-width="1.5" fill="none" stroke-dasharray="4 3"/>
+
+          <g filter="url(#s)">
+            <rect x="120" y="340" width="760" height="70" rx="14" fill="#0c8a68"/>
+            <text x="500" y="370" text-anchor="middle" fill="#fff" font-size="14" font-weight="800">HiveRelay estate (always-on peers)</text>
+            <text x="500" y="392" text-anchor="middle" fill="rgba(255,255,255,.88)" font-size="11">T1 seeders · blind-edge + blind-daemon · multi-region · home appliances · optional services</text>
+          </g>
+
+          <!-- TRUTH -->
+          <g filter="url(#s)">
+            <rect x="200" y="430" width="600" height="70" rx="14" fill="#1a1520" stroke="#a78bfa"/>
+            <text x="500" y="458" text-anchor="middle" fill="#a78bfa" font-size="13" font-weight="800">Source of truth = cryptographic</text>
+            <text x="500" y="480" text-anchor="middle" fill="#c4b5fd" font-size="11">author signatures on inner events · capability roots for cells · highest valid signed head wins</text>
+          </g>
+          <path d="M500 410 V430" stroke="#a78bfa" stroke-width="2"/>
+        </svg>
+        <p class="cap">Figure 1 — Clients hold meaning and keys. Relays hold uptime and opaque bytes. Signatures are the truth.</p>
+      </div>
+      <div class="note">
+        <strong>Remember</strong>
+        The relay never becomes “the Peerit database.” If every relay disappeared, users with local data and keys
+        still hold their history; availability would suffer until new relays seed again.
+      </div>
+    </section>
+
+    <!-- 2 STORE -->
+    <section id="store">
+      <h2><span>Diagram 02</span>Where data is stored</h2>
+      <p class="lede">Four places matter. Mixing them up causes bad security claims.</p>
+      <div class="fig">
+        <svg viewBox="0 0 1000 480" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="s2" x="-15%" y="-15%" width="130%" height="140%">
+              <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>
+            </filter>
+          </defs>
+
+          <!-- Device -->
+          <g filter="url(#s2)">
+            <rect x="30" y="40" width="460" height="400" rx="16" fill="#151c28" stroke="#4c9aed"/>
+            <text x="260" y="70" text-anchor="middle" fill="#4c9aed" font-size="14" font-weight="800">ON THE USER DEVICE</text>
+
+            <rect x="55" y="90" width="410" height="70" rx="10" fill="#1e3a5f"/>
+            <text x="260" y="118" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">1 · Author identity key (Ed25519)</text>
+            <text x="260" y="140" text-anchor="middle" fill="#8bb8e8" font-size="10">signs every post / vote / mod action · never sent to relay as private key</text>
+
+            <rect x="55" y="175" width="410" height="70" rx="10" fill="#1a3d32"/>
+            <text x="260" y="203" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">2 · Blind capability roots &amp; leases</text>
+            <text x="260" y="225" text-anchor="middle" fill="#7dcea0" font-size="10">create / renew / drop / read caps for cells · recovery domain #3</text>
+
+            <rect x="55" y="260" width="410" height="70" rx="10" fill="#2d2640"/>
+            <text x="260" y="288" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">3 · Local app state &amp; indexes</text>
+            <text x="260" y="310" text-anchor="middle" fill="#c4b5fd" font-size="10">feed UI, materialised index, cutover floor, offline queue</text>
+
+            <rect x="55" y="345" width="410" height="70" rx="10" fill="#2a2418"/>
+            <text x="260" y="373" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">4 · Optional local cores / seeds</text>
+            <text x="260" y="395" text-anchor="middle" fill="#e8d48a" font-size="10">Corestore aliases · migration floors · recovery domain #2</text>
+          </g>
+
+          <!-- Relay -->
+          <g filter="url(#s2)">
+            <rect x="520" y="40" width="450" height="400" rx="16" fill="#121a16" stroke="#3ecf8e"/>
+            <text x="745" y="70" text-anchor="middle" fill="#3ecf8e" font-size="14" font-weight="800">ON HIVERELAY (always-on)</text>
+
+            <rect x="545" y="90" width="400" height="85" rx="10" fill="#0c3d2e"/>
+            <text x="745" y="120" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">A · Blind cells &amp; inboxes (PRIMARY)</text>
+            <text x="745" y="140" text-anchor="middle" fill="#7dcea0" font-size="10">fixed-size ciphertext slots · opaque mailbox pointers</text>
+            <text x="745" y="158" text-anchor="middle" fill="#5aaa80" font-size="10">NO post text · NO author graph · NO community schema</text>
+
+            <rect x="545" y="190" width="400" height="70" rx="10" fill="#1e3a5f"/>
+            <text x="745" y="218" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">B · Public app package (T1 seed)</text>
+            <text x="745" y="240" text-anchor="middle" fill="#8bb8e8" font-size="10">HTML/JS shell drive — public by design · served via gateway</text>
+
+            <rect x="545" y="275" width="400" height="70" rx="10" fill="#2a2418"/>
+            <text x="745" y="303" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">C · Signed descriptors &amp; receipts</text>
+            <text x="745" y="325" text-anchor="middle" fill="#e8d48a" font-size="10">what this relay offers · health · proof you stored something</text>
+
+            <rect x="545" y="360" width="400" height="55" rx="10" fill="#2a1a1a" stroke="#f07178"/>
+            <text x="745" y="383" text-anchor="middle" fill="#f07178" font-size="11" font-weight="800">NOT stored: plaintext posts · private keys · app registry of “Peerit”</text>
+            <text x="745" y="400" text-anchor="middle" fill="#c07070" font-size="9">blind daemon is app-agnostic</text>
+          </g>
+        </svg>
+        <p class="cap">Figure 2 — Device holds secrets and meaning. Relay holds opaque capacity and public shells.</p>
+      </div>
+      <table>
+        <thead><tr><th>Data</th><th>Where</th><th>Who can read</th></tr></thead>
+        <tbody>
+          <tr><td class="k">Post body (inner event)</td><td>Encrypted inside cell on relay; plaintext only after client decrypt</td><td>Holders of cell read capability (+ world if you publish a public read key by design)</td></tr>
+          <tr><td class="k">Author signature</td><td>Inside sealed payload / client verification path</td><td>Anyone verifying the open form after decrypt</td></tr>
+          <tr><td class="k">UI / static app files</td><td>Public Hyperdrive on T1 seeders + gateway</td><td>Anyone (public)</td></tr>
+          <tr><td class="k">Capability private seeds</td><td>Device only (or recovery backup you control)</td><td>You</td></tr>
+          <tr><td class="k">Feed ranking / UI index</td><td>Rebuilt on device from verified events</td><td>Local</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 3 WRITE -->
+    <section id="write">
+      <h2><span>Diagram 03</span>Write path — posting in final form</h2>
+      <p class="lede">From “user hits Post” to “opaque cell stored on relays.”</p>
+      <div class="fig">
+        <svg viewBox="0 0 1000 560" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="s3" x="-10%" y="-10%" width="120%" height="130%">
+              <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.3"/>
+            </filter>
+          </defs>
+
+          <!-- steps vertical flow left numbers right boxes -->
+          <g filter="url(#s3)">
+            <circle cx="50" cy="50" r="20" fill="#4c9aed"/>
+            <text x="50" y="55" text-anchor="middle" fill="#fff" font-weight="800" font-size="14">1</text>
+            <rect x="90" y="25" width="860" height="50" rx="10" fill="#1e3a5f"/>
+            <text x="520" y="55" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Compose post in UI → build inner event (type, body, refs, timestamps…)</text>
+          </g>
+
+          <g filter="url(#s3)">
+            <circle cx="50" cy="120" r="20" fill="#4c9aed"/>
+            <text x="50" y="125" text-anchor="middle" fill="#fff" font-weight="800" font-size="14">2</text>
+            <rect x="90" y="95" width="860" height="50" rx="10" fill="#1e3a5f"/>
+            <text x="520" y="125" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Sign with author Ed25519 → content authority is the author, not the relay</text>
+          </g>
+
+          <g filter="url(#s3)">
+            <circle cx="50" cy="190" r="20" fill="#3ecf8e"/>
+            <text x="50" y="195" text-anchor="middle" fill="#0a2a1c" font-weight="800" font-size="14">3</text>
+            <rect x="90" y="165" width="860" height="50" rx="10" fill="#0c3d2e"/>
+            <text x="520" y="195" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Local atom / journal: durable local commit receipt before network (offline OK)</text>
+          </g>
+
+          <g filter="url(#s3)">
+            <circle cx="50" cy="260" r="20" fill="#3ecf8e"/>
+            <text x="50" y="265" text-anchor="middle" fill="#0a2a1c" font-weight="800" font-size="14">4</text>
+            <rect x="90" y="235" width="860" height="50" rx="10" fill="#0c3d2e"/>
+            <text x="520" y="265" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Seal into cell(s): pad to size class · AES-GCM · capability-root crypto (blind-client)</text>
+          </g>
+
+          <g filter="url(#s3)">
+            <circle cx="50" cy="330" r="20" fill="#3ecf8e"/>
+            <text x="50" y="335" text-anchor="middle" fill="#0a2a1c" font-weight="800" font-size="14">5</text>
+            <rect x="90" y="305" width="860" height="50" rx="10" fill="#0c3d2e"/>
+            <text x="520" y="335" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Mailbox compose: encrypted next-pointer chain (relay cannot parse mailbox semantics)</text>
+          </g>
+
+          <g filter="url(#s3)">
+            <circle cx="50" cy="400" r="20" fill="#a78bfa"/>
+            <text x="50" y="405" text-anchor="middle" fill="#1a1028" font-weight="800" font-size="14">6</text>
+            <rect x="90" y="375" width="860" height="50" rx="10" fill="#2d2640"/>
+            <text x="520" y="405" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Qualify relays: DESCRIBE + health → VerifiedEndpoint only (no raw URL bypass)</text>
+          </g>
+
+          <g filter="url(#s3)">
+            <circle cx="50" cy="470" r="20" fill="#a78bfa"/>
+            <text x="50" y="475" text-anchor="middle" fill="#1a1028" font-weight="800" font-size="14">7</text>
+            <rect x="90" y="445" width="860" height="50" rx="10" fill="#2d2640"/>
+            <text x="520" y="475" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">CELL.PUT / INBOX append → blind-edge → blind-daemon → opaque disk + signed receipt</text>
+          </g>
+
+          <g filter="url(#s3)">
+            <circle cx="50" cy="530" r="18" fill="#f0b429"/>
+            <text x="50" y="535" text-anchor="middle" fill="#1a1508" font-weight="800" font-size="12">8</text>
+            <rect x="90" y="510" width="860" height="40" rx="10" fill="#2a2418" stroke="#f0b429"/>
+            <text x="520" y="535" text-anchor="middle" fill="#e8d48a" font-size="12" font-weight="700">Optional: replicate to N relays for durability · UI shows effective privacy profile (e.g. G2-S)</text>
+          </g>
+        </svg>
+        <p class="cap">Figure 3 — Write path. Network failure after step 3 still leaves a local atom to retry.</p>
+      </div>
+      <div class="note warn">
+        <strong>Migration window only</strong>
+        During dual-read cutover, steps 4–7 may also mirror to OutboxLog for old clients.
+        Final form: new writes are blind-first; legacy path becomes read-only, then retired.
+      </div>
+    </section>
+
+    <!-- 4 READ -->
+    <section id="read">
+      <h2><span>Diagram 04</span>Read path — building a feed</h2>
+      <p class="lede">Readers never trust “the server’s feed object.” They fetch opaque data, open what they can, verify, then merge.</p>
+      <div class="fig">
+        <svg viewBox="0 0 1000 420" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="s4" x="-10%" y="-10%" width="120%" height="130%">
+              <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.3"/>
+            </filter>
+          </defs>
+
+          <!-- left sources -->
+          <g filter="url(#s4)">
+            <rect x="40" y="40" width="220" height="100" rx="12" fill="#0c3d2e" stroke="#3ecf8e"/>
+            <text x="150" y="80" text-anchor="middle" fill="#3ecf8e" font-size="12" font-weight="800">Blind relays</text>
+            <text x="150" y="100" text-anchor="middle" fill="#7dcea0" font-size="10">cells / inbox frames</text>
+            <text x="150" y="118" text-anchor="middle" fill="#5aaa80" font-size="10">ciphertext + receipts</text>
+          </g>
+          <g filter="url(#s4)">
+            <rect x="40" y="160" width="220" height="100" rx="12" fill="#1a2030" stroke="#5a6a7a"/>
+            <text x="150" y="200" text-anchor="middle" fill="#a0aebc" font-size="12" font-weight="800">Live peers (optional)</text>
+            <text x="150" y="220" text-anchor="middle" fill="#8b9aab" font-size="10">direct swarm copies</text>
+            <text x="150" y="238" text-anchor="middle" fill="#6b7a8a" font-size="10">when peers online</text>
+          </g>
+          <g filter="url(#s4)">
+            <rect x="40" y="280" width="220" height="100" rx="12" fill="#2a1a1a" stroke="#f07178"/>
+            <text x="150" y="320" text-anchor="middle" fill="#f07178" font-size="12" font-weight="800">Legacy OutboxLog</text>
+            <text x="150" y="340" text-anchor="middle" fill="#c07070" font-size="10">dual-read only</text>
+            <text x="150" y="358" text-anchor="middle" fill="#a06060" font-size="10">migration window</text>
+          </g>
+
+          <!-- arrows -->
+          <path d="M260 90 H340" stroke="#3ecf8e" stroke-width="2"/>
+          <path d="M260 210 H340" stroke="#5a6a7a" stroke-width="2"/>
+          <path d="M260 330 H340" stroke="#f07178" stroke-width="2" stroke-dasharray="5 4"/>
+
+          <!-- process pipeline -->
+          <g filter="url(#s4)">
+            <rect x="340" y="40" width="300" height="340" rx="14" fill="#151c28" stroke="#4c9aed"/>
+            <text x="490" y="70" text-anchor="middle" fill="#4c9aed" font-size="13" font-weight="800">On your device</text>
+
+            <rect x="365" y="90" width="250" height="45" rx="8" fill="#1e3a5f"/>
+            <text x="490" y="118" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">Decrypt with read caps</text>
+
+            <rect x="365" y="150" width="250" height="45" rx="8" fill="#1e3a5f"/>
+            <text x="490" y="178" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">Verify author signatures</text>
+
+            <rect x="365" y="210" width="250" height="45" rx="8" fill="#1a3d32"/>
+            <text x="490" y="238" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">Drop forgeries / bad rows</text>
+
+            <rect x="365" y="270" width="250" height="45" rx="8" fill="#2d2640"/>
+            <text x="490" y="298" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">Merge by Peerit rules</text>
+
+            <rect x="365" y="330" width="250" height="35" rx="8" fill="#2a2418"/>
+            <text x="490" y="352" text-anchor="middle" fill="#e8d48a" font-size="11" font-weight="700">Apply signed moderation</text>
+          </g>
+
+          <path d="M640 210 H720" stroke="#4c9aed" stroke-width="2"/>
+
+          <!-- output -->
+          <g filter="url(#s4)">
+            <rect x="720" y="120" width="240" height="180" rx="14" fill="#1e3a5f" stroke="#4c9aed"/>
+            <text x="840" y="170" text-anchor="middle" fill="#fff" font-size="14" font-weight="800">Your feed UI</text>
+            <text x="840" y="200" text-anchor="middle" fill="#8bb8e8" font-size="11">posts · threads · votes</text>
+            <text x="840" y="225" text-anchor="middle" fill="#8bb8e8" font-size="11">rebuilt locally</text>
+            <text x="840" y="260" text-anchor="middle" fill="#6a9fd4" font-size="10">not “whatever relay sent</text>
+            <text x="840" y="276" text-anchor="middle" fill="#6a9fd4" font-size="10">as HTML feed JSON”</text>
+          </g>
+        </svg>
+        <p class="cap">Figure 4 — Read path. Relays supply bytes; the client builds the social view.</p>
+      </div>
+    </section>
+
+    <!-- 5 PATHS -->
+    <section id="paths">
+      <h2><span>Diagram 05</span>Every pathway into Peerit</h2>
+      <p class="lede">Same product, different doors depending on device capability.</p>
+      <div class="fig">
+        <svg viewBox="0 0 1000 380" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="s5" x="-10%" y="-10%" width="120%" height="130%">
+              <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.3"/>
+            </filter>
+          </defs>
+
+          <!-- path A -->
+          <g filter="url(#s5)">
+            <rect x="30" y="30" width="940" height="95" rx="12" fill="#152238" stroke="#4c9aed"/>
+            <text x="50" y="58" fill="#4c9aed" font-size="13" font-weight="800">PATH A — Normal browser (maximum users)</text>
+            <text x="50" y="82" fill="#8bb8e8" font-size="12">Load UI from T1 gateway or publisher HTTPS → blind-client in page → HTTPS/WSS to blind-edge → cells</text>
+            <text x="50" y="104" fill="#6a9fd4" font-size="11">Shell is public. Social data is sealed. No Pear install required.</text>
+          </g>
+
+          <!-- path B -->
+          <g filter="url(#s5)">
+            <rect x="30" y="140" width="940" height="95" rx="12" fill="#132820" stroke="#3ecf8e"/>
+            <text x="50" y="168" fill="#3ecf8e" font-size="13" font-weight="800">PATH B — PearBrowser / Bare (maximum sovereignty)</text>
+            <text x="50" y="192" fill="#7dcea0" font-size="12">Prefer Hyperswarm peer replication of sealed data · use relays when peers sleep or NAT fails</text>
+            <text x="50" y="214" fill="#5aaa80" font-size="11">Can open hyper:// drive for shell · still verifies the same author signatures</text>
+          </g>
+
+          <!-- path C -->
+          <g filter="url(#s5)">
+            <rect x="30" y="250" width="940" height="95" rx="12" fill="#2a2418" stroke="#f0b429"/>
+            <text x="50" y="278" fill="#f0b429" font-size="13" font-weight="800">PATH C — Migration dual-read (temporary)</text>
+            <text x="50" y="302" fill="#e8d48a" font-size="12">Read OutboxLog + blind · write policy flips to blind-first after cutover floor · old tabs cannot append</text>
+            <text x="50" y="324" fill="#c4a84a" font-size="11">Exists so we can ship without hard-cutting the live canary</text>
+          </g>
+        </svg>
+        <p class="cap">Figure 5 — Three pathways. Final form keeps A + B permanently; C is the bridge.</p>
+      </div>
+      <table>
+        <thead><tr><th>Path</th><th>Loads UI from</th><th>Writes social data to</th><th>Best for</th></tr></thead>
+        <tbody>
+          <tr><td class="k">A Browser</td><td>T1 gateway / publisher origin</td><td>Blind cells via edge</td><td>Anyone with a link</td></tr>
+          <tr><td class="k">B Pear</td><td>Drive / local package</td><td>Peers first, relays backup</td><td>Power users, offline-ish</td></tr>
+          <tr><td class="k">C Dual-read</td><td>Same as A/B</td><td>Policy-controlled transition</td><td>Cutover only</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 6 KEYS -->
+    <section id="keys">
+      <h2><span>Diagram 06</span>Keys, trust, and what a relay can / cannot do</h2>
+      <div class="fig">
+        <svg viewBox="0 0 1000 340" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="s6" x="-10%" y="-10%" width="120%" height="130%">
+              <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.3"/>
+            </filter>
+          </defs>
+
+          <g filter="url(#s6)">
+            <rect x="40" y="40" width="280" height="260" rx="14" fill="#1e3a5f" stroke="#4c9aed"/>
+            <text x="180" y="80" text-anchor="middle" fill="#4c9aed" font-size="14" font-weight="800">Author key</text>
+            <text x="180" y="115" text-anchor="middle" fill="#fff" font-size="12">Proves “I wrote this”</text>
+            <text x="180" y="150" text-anchor="middle" fill="#8bb8e8" font-size="11">Relay cannot forge</text>
+            <text x="180" y="175" text-anchor="middle" fill="#8bb8e8" font-size="11">a valid signature</text>
+            <text x="180" y="220" text-anchor="middle" fill="#6a9fd4" font-size="11">Recovery domain 1</text>
+            <text x="180" y="250" text-anchor="middle" fill="#5a7a9a" font-size="10">seed / identity vault</text>
+          </g>
+
+          <g filter="url(#s6)">
+            <rect x="360" y="40" width="280" height="260" rx="14" fill="#0c3d2e" stroke="#3ecf8e"/>
+            <text x="500" y="80" text-anchor="middle" fill="#3ecf8e" font-size="14" font-weight="800">Cell capabilities</text>
+            <text x="500" y="115" text-anchor="middle" fill="#fff" font-size="12">Proves “I may open</text>
+            <text x="500" y="135" text-anchor="middle" fill="#fff" font-size="12">or renew this slot”</text>
+            <text x="500" y="175" text-anchor="middle" fill="#7dcea0" font-size="11">Relay stores blob</text>
+            <text x="500" y="195" text-anchor="middle" fill="#7dcea0" font-size="11">without these secrets</text>
+            <text x="500" y="220" text-anchor="middle" fill="#5aaa80" font-size="11">Recovery domain 3</text>
+            <text x="500" y="250" text-anchor="middle" fill="#4a8a68" font-size="10">separate from author key</text>
+          </g>
+
+          <g filter="url(#s6)">
+            <rect x="680" y="40" width="280" height="260" rx="14" fill="#2a1a1a" stroke="#f07178"/>
+            <text x="820" y="80" text-anchor="middle" fill="#f07178" font-size="14" font-weight="800">Relay can…</text>
+            <text x="820" y="120" text-anchor="middle" fill="#f0a0a0" font-size="12">✓ store / serve ciphertext</text>
+            <text x="820" y="145" text-anchor="middle" fill="#f0a0a0" font-size="12">✓ refuse / drop opaque ids</text>
+            <text x="820" y="170" text-anchor="middle" fill="#f0a0a0" font-size="12">✓ see traffic metadata</text>
+            <text x="820" y="210" text-anchor="middle" fill="#f07178" font-size="12">✗ forge author posts</text>
+            <text x="820" y="235" text-anchor="middle" fill="#f07178" font-size="12">✗ read sealed content*</text>
+            <text x="820" y="260" text-anchor="middle" fill="#a06060" font-size="10">*if you encrypt client-side</text>
+            <text x="820" y="278" text-anchor="middle" fill="#a06060" font-size="10">and don’t publish read keys</text>
+          </g>
+        </svg>
+        <p class="cap">Figure 6 — Trust split. Censorship can be evident; forgery should be cryptographically impossible.</p>
+      </div>
+    </section>
+
+    <!-- 7 LIFECYCLE -->
+    <section id="lifecycle">
+      <h2><span>Diagram 07</span>Lifecycle of one post (end-to-end story)</h2>
+      <div class="fig">
+        <svg viewBox="0 0 1000 200" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <linearGradient id="flow" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stop-color="#4c9aed"/>
+              <stop offset="50%" stop-color="#3ecf8e"/>
+              <stop offset="100%" stop-color="#a78bfa"/>
+            </linearGradient>
+          </defs>
+          <rect x="40" y="90" width="920" height="6" rx="3" fill="url(#flow)"/>
+
+          <circle cx="100" cy="93" r="14" fill="#4c9aed"/>
+          <text x="100" y="140" text-anchor="middle" fill="#8bb8e8" font-size="11" font-weight="700">Compose</text>
+          <text x="100" y="156" text-anchor="middle" fill="#5a6a7a" font-size="9">UI</text>
+
+          <circle cx="250" cy="93" r="14" fill="#4c9aed"/>
+          <text x="250" y="140" text-anchor="middle" fill="#8bb8e8" font-size="11" font-weight="700">Sign</text>
+          <text x="250" y="156" text-anchor="middle" fill="#5a6a7a" font-size="9">author key</text>
+
+          <circle cx="400" cy="93" r="14" fill="#3ecf8e"/>
+          <text x="400" y="140" text-anchor="middle" fill="#7dcea0" font-size="11" font-weight="700">Seal</text>
+          <text x="400" y="156" text-anchor="middle" fill="#5a6a7a" font-size="9">cell crypto</text>
+
+          <circle cx="550" cy="93" r="14" fill="#3ecf8e"/>
+          <text x="550" y="140" text-anchor="middle" fill="#7dcea0" font-size="11" font-weight="700">Store</text>
+          <text x="550" y="156" text-anchor="middle" fill="#5a6a7a" font-size="9">N relays</text>
+
+          <circle cx="700" cy="93" r="14" fill="#a78bfa"/>
+          <text x="700" y="140" text-anchor="middle" fill="#c4b5fd" font-size="11" font-weight="700">Fetch</text>
+          <text x="700" y="156" text-anchor="middle" fill="#5a6a7a" font-size="9">readers</text>
+
+          <circle cx="850" cy="93" r="14" fill="#a78bfa"/>
+          <text x="850" y="140" text-anchor="middle" fill="#c4b5fd" font-size="11" font-weight="700">Merge</text>
+          <text x="850" y="156" text-anchor="middle" fill="#5a6a7a" font-size="9">local feed</text>
+
+          <text x="500" y="40" text-anchor="middle" fill="#8b9aab" font-size="12" font-weight="700">One post · birth to appearance in someone else’s feed</text>
+        </svg>
+        <p class="cap">Figure 7 — Time line of a single post in final form.</p>
+      </div>
+      <ul>
+        <li><strong>Creator offline after Store?</strong> Readers still fetch cells from relays.</li>
+        <li><strong>One relay drops the cell?</strong> Other replicas + client repair / re-put policy.</li>
+        <li><strong>Relay tries to inject spam?</strong> Signature verification drops it.</li>
+        <li><strong>UI shell updates?</strong> New public package on T1; social history stays in cells.</li>
+      </ul>
+    </section>
+
+    <!-- 8 TODAY -->
+    <section id="today">
+      <h2><span>Diagram 08</span>Today’s canary vs final form</h2>
+      <div class="fig">
+        <svg viewBox="0 0 1000 280" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="s8" x="-10%" y="-10%" width="120%" height="130%">
+              <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.3"/>
+            </filter>
+          </defs>
+
+          <g filter="url(#s8)">
+            <rect x="40" y="40" width="440" height="200" rx="14" fill="#2a1a1a" stroke="#f0b429"/>
+            <text x="260" y="80" text-anchor="middle" fill="#f0b429" font-size="14" font-weight="800">TODAY (live canary)</text>
+            <text x="260" y="115" text-anchor="middle" fill="#e8d48a" font-size="12">peerit.site → static signed UI</text>
+            <text x="260" y="140" text-anchor="middle" fill="#e8d48a" font-size="12">outbox.peerit.site → OutboxLog</text>
+            <text x="260" y="165" text-anchor="middle" fill="#c4a84a" font-size="12">single ingress writer</text>
+            <text x="260" y="190" text-anchor="middle" fill="#c4a84a" font-size="12">not blind-cell primary</text>
+            <text x="260" y="215" text-anchor="middle" fill="#a08040" font-size="11">works — limited privacy/ops claims</text>
+          </g>
+
+          <g filter="url(#s8)">
+            <rect x="520" y="40" width="440" height="200" rx="14" fill="#0c3d2e" stroke="#3ecf8e"/>
+            <text x="740" y="80" text-anchor="middle" fill="#3ecf8e" font-size="14" font-weight="800">FINAL FORM</text>
+            <text x="740" y="115" text-anchor="middle" fill="#7dcea0" font-size="12">T1 gateway → public shell</text>
+            <text x="740" y="140" text-anchor="middle" fill="#7dcea0" font-size="12">blind cells → social truth</text>
+            <text x="740" y="165" text-anchor="middle" fill="#5aaa80" font-size="12">multi-relay · multi-path clients</text>
+            <text x="740" y="190" text-anchor="middle" fill="#5aaa80" font-size="12">honest G2-S (or stronger if gated)</text>
+            <text x="740" y="215" text-anchor="middle" fill="#4a8a68" font-size="11">OutboxLog retired after dual-read</text>
+          </g>
+        </svg>
+        <p class="cap">Figure 8 — We design for the right diagram, ship the left one carefully until cutover.</p>
+      </div>
+      <div class="note">
+        <strong>How to read this whole pack</strong>
+        If someone asks “where is my post?” in the final world: <em>sealed in cells on relays you chose,
+        openable with your capabilities, verified with your author key, rendered by your client.</em>
+        If they ask “where is the website?”: <em>public package on T1 seeders, opened through an HTTPS door.</em>
+      </div>
+    </section>
+
+    <footer>
+      Peerit final-form diagram pack · target architecture · July 2026<br />
+      <code>docs/vnext/PEERIT-FINAL-FORM-DIAGRAMS.html</code> · open in browser · print to PDF
+    </footer>
+  </div>
+</body>
+</html>
