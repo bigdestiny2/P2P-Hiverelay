@@ -6,17 +6,20 @@
   "type": "module",
   "main": "index.js",
   "exports": {
-    ".": "./index.js"
+    ".": "./index.js",
+    "./private-ipc-v2-contract": "./private-ipc-v2-contract.js"
   },
   "files": [
     "index.js",
     "framing-vectors.js",
     "private-hashes.js",
     "policy.js",
+    "private-ipc-v2-contract.js",
     "registry.js",
     "stream.js",
     "*.cenc",
     "hiverelay-blind-private-ipc-authority-v1.json",
+    "hiverelay-blind-private-ipc-authority-v2.json",
     "vectors/",
     "LICENSE"
   ],
