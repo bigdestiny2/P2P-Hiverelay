@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pear Ecosystem · Colleague Briefing · July 2026</title>
+  <style>
+    :root {
+      --ink: #1a1f1c;
+      --muted: #5a6560;
+      --faint: #8a948e;
+      --line: #e2e8e4;
+      --paper: #fafbf9;
+      --card: #ffffff;
+      --green: #0d7a5f;
+      --green-soft: #e6f5f0;
+      --green-deep: #0a5c47;
+      --amber: #9a6b12;
+      --amber-soft: #fbf3e0;
+      --red: #a33b3b;
+      --red-soft: #fceeee;
+      --blue: #2a5f8f;
+      --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+      --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: var(--sans);
+      line-height: 1.6;
+      font-size: 16px;
+    }
+    a { color: var(--green-deep); }
+    .page { max-width: 920px; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+    .mast {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 1.75rem;
+      margin-bottom: 2rem;
+    }
+    .eyebrow {
+      font-size: .78rem; letter-spacing: .12em; text-transform: uppercase;
+      color: var(--green); font-weight: 600; margin: 0 0 .75rem;
+    }
+    h1 {
+      font-family: var(--serif);
+      font-size: clamp(2rem, 5vw, 2.75rem);
+      line-height: 1.15;
+      font-weight: 600;
+      margin: 0 0 1rem;
+      letter-spacing: -0.02em;
+    }
+    h1 em { font-style: italic; color: var(--green); font-weight: 600; }
+    .deck {
+      font-size: 1.12rem; color: var(--muted); max-width: 62ch; margin: 0 0 1.25rem;
+    }
+    .meta-row {
+      display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem;
+    }
+    .chip {
+      font-size: .78rem; padding: .3rem .65rem; border-radius: 999px;
+      border: 1px solid var(--line); background: var(--card); color: var(--muted);
+    }
+    .chip.on { background: var(--green-soft); border-color: #b7e0d2; color: var(--green-deep); }
+    .chip.warn { background: var(--amber-soft); border-color: #ecd9a8; color: var(--amber); }
+    nav.toc {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 1.1rem 1.25rem;
+      margin: 0 0 2.5rem;
+    }
+    nav.toc h2 {
+      font-size: .75rem; text-transform: uppercase; letter-spacing: .1em;
+      color: var(--faint); margin: 0 0 .6rem; font-weight: 600; font-family: var(--sans);
+    }
+    nav.toc ol { margin: 0; padding-left: 1.2rem; columns: 2; column-gap: 2rem; }
+    nav.toc li { margin: .25rem 0; break-inside: avoid; font-size: .92rem; }
+    @media (max-width: 640px) { nav.toc ol { columns: 1; } }
+    h2 {
+      font-family: var(--serif);
+      font-size: 1.65rem;
+      margin: 2.75rem 0 .75rem;
+      padding-top: .5rem;
+      border-top: 1px solid var(--line);
+      font-weight: 600;
+    }
+    h2 .num { color: var(--green); font-size: .95rem; letter-spacing: .08em; display: block;
+      font-family: var(--sans); font-weight: 600; margin-bottom: .35rem; text-transform: uppercase; }
+    h3 { font-size: 1.1rem; margin: 1.5rem 0 .5rem; color: var(--ink); }
+    h4 { font-size: .98rem; margin: 1.1rem 0 .4rem; color: #2c3530; }
+    p { margin: .55rem 0; max-width: 68ch; }
+    .lead { font-size: 1.05rem; color: var(--muted); max-width: 68ch; }
+    ul, ol { max-width: 68ch; margin: .4rem 0 1rem; padding-left: 1.25rem; }
+    li { margin: .3rem 0; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+    .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 1rem 0; }
+    @media (max-width: 720px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 1rem 1.1rem;
+    }
+    .card h3 { margin-top: 0; }
+    .card.green { border-top: 3px solid var(--green); }
+    .card.amber { border-top: 3px solid var(--amber); }
+    .stat {
+      font-family: var(--serif);
+      font-size: 1.75rem; font-weight: 600; color: var(--green-deep); line-height: 1.1;
+    }
+    .stat span { display: block; font-family: var(--sans); font-size: .78rem; color: var(--muted);
+      font-weight: 500; margin-top: .35rem; line-height: 1.35; }
+    table {
+      width: 100%; border-collapse: collapse; margin: 1rem 0 1.4rem;
+      font-size: .9rem; background: var(--card); border: 1px solid var(--line);
+      border-radius: 10px; overflow: hidden;
+    }
+    th, td { text-align: left; padding: .65rem .75rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { background: #f3f6f4; font-weight: 600; font-size: .82rem; }
+    tr:last-child td { border-bottom: 0; }
+    .callout {
+      border-left: 4px solid var(--green);
+      background: var(--green-soft);
+      padding: .9rem 1rem; border-radius: 0 10px 10px 0; margin: 1.1rem 0;
+      max-width: 70ch;
+    }
+    .callout.warn { border-left-color: var(--amber); background: var(--amber-soft); }
+    .callout.note { border-left-color: var(--blue); background: #eef5fb; }
+    .callout strong { display: block; margin-bottom: .25rem; }
+    pre, .diagram {
+      background: #14221c; color: #d8ebe3;
+      border-radius: 10px; padding: 1rem 1.1rem; overflow-x: auto;
+      font-family: var(--mono); font-size: .78rem; line-height: 1.45; margin: .9rem 0 1.2rem;
+    }
+    code { font-family: var(--mono); font-size: .86em; background: #eef2ef; padding: .1em .35em; border-radius: 4px; }
+    pre code { background: none; padding: 0; color: inherit; }
+    blockquote {
+      margin: 1rem 0; padding: .75rem 1rem; border-left: 3px solid var(--green);
+      color: var(--muted); font-family: var(--serif); font-style: italic; max-width: 62ch;
+    }
+    .two-col { display: grid; grid-template-columns: 1.2fr .8fr; gap: 1.25rem; align-items: start; }
+    @media (max-width: 800px) { .two-col { grid-template-columns: 1fr; } }
+    .sidebar-box {
+      background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 1rem;
+      font-size: .9rem;
+    }
+    .sidebar-box h4 { margin-top: 0; }
+    footer {
+      margin-top: 3rem; padding-top: 1.25rem; border-top: 1px solid var(--line);
+      font-size: .82rem; color: var(--faint);
+    }
+    .audience { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
+    .audience span {
+      font-size: .8rem; padding: .45rem .7rem; border-radius: 8px; background: #f0f4f1;
+      border: 1px solid var(--line); max-width: 22ch;
+    }
+    @media print {
+      body { background: white; font-size: 11pt; }
+      .page { max-width: none; padding: 0; }
+      h2 { break-before: page; border-top: 0; }
+      h2:first-of-type { break-before: auto; }
+      nav.toc { break-after: page; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="mast">
+      <p class="eyebrow">HiveRelay · Peerit · PearBrowser · App fleet · Colleague briefing · July 2026</p>
+      <h1>The peer-to-peer stack that <em>stays online</em>.</h1>
+      <p class="deck">
+        A plain-language briefing for colleagues: what this project is, why it exists,
+        who it is for, how the technology and business work, how it stays decentralized,
+        and what is honestly live versus still in flight.
+      </p>
+      <div class="meta-row">
+        <span class="chip on">Independent open source (Apache-2.0)</span>
+        <span class="chip">Built on Holepunch / Pear primitives</span>
+        <span class="chip warn">Not affiliated with Tether, Bitfinex, or Holepunch Inc.</span>
+        <span class="chip">Companion to the July 2026 Ecosystem Report</span>
+      </div>
+    </header>
+
+    <nav class="toc">
+      <h2>Contents</h2>
+      <ol>
+        <li><a href="#exec">Executive snapshot</a></li>
+        <li><a href="#purpose">Purpose &amp; mission</a></li>
+        <li><a href="#problem">The problem</a></li>
+        <li><a href="#solution">The solution</a></li>
+        <li><a href="#usecases">Use cases &amp; audiences</a></li>
+        <li><a href="#stack">How the stack fits together</a></li>
+        <li><a href="#decentralization">Decentralization model</a></li>
+        <li><a href="#ops">Operating model</a></li>
+        <li><a href="#business">Business case &amp; economics</a></li>
+        <li><a href="#status">Honest status today</a></li>
+        <li><a href="#roadmap">What “success” looks like next</a></li>
+        <li><a href="#talking">Talking points for meetings</a></li>
+        <li><a href="#faq">FAQ for colleagues</a></li>
+        <li><a href="#read">Further reading</a></li>
+      </ol>
+    </nav>
+
+    <!-- ========== EXEC ========== -->
+    <h2 id="exec"><span class="num">01</span>Executive snapshot</h2>
+    <p class="lead">
+      <strong>Availability you can verify. Privacy you don’t have to trust a company for.</strong>
+      Pure peer-to-peer apps usually die when their users sleep. This project builds the missing
+      always-on layer — relays that keep apps discoverable and reachable — without turning those
+      relays into a new centralized platform that can read, seize, or silently rewrite user data.
+    </p>
+
+    <div class="grid3">
+      <div class="card green">
+        <div class="stat">HiveRelay<div><span>Always-on blind-capable relay infrastructure for Pear/Holepunch apps</span></div></div>
+      </div>
+      <div class="card green">
+        <div class="stat">Peerit<div><span>P2P social forum (Reddit-like) live as a public web canary</span></div></div>
+      </div>
+      <div class="card green">
+        <div class="stat">~20 apps<div><span>Portfolio spanning POS, tickets, stays, exchange, paste, sports, and more</span></div></div>
+      </div>
+    </div>
+
+    <div class="callout note">
+      <strong>One sentence you can say in a meeting</strong>
+      “We’re building the always-on, proof-carrying availability layer for real peer-to-peer apps —
+      so creators can close their laptops without the product disappearing — and shipping apps on
+      top of it, starting with a public P2P social network.”
+    </div>
+
+    <div class="audience">
+      <span><strong>Product / eng</strong> — architecture &amp; ship tracks</span>
+      <span><strong>Ops</strong> — fleet, appliances, evidence</span>
+      <span><strong>Business / BD</strong> — market &amp; phases</span>
+      <span><strong>Legal / trust</strong> — liability &amp; claims</span>
+      <span><strong>Partners</strong> — independence &amp; open source</span>
+    </div>
+
+    <!-- ========== PURPOSE ========== -->
+    <h2 id="purpose"><span class="num">02</span>Purpose &amp; mission</h2>
+    <h3>What we are building</h3>
+    <p>
+      An <strong>independent open-source ecosystem</strong> of local-first, peer-to-peer applications
+      on the Pear / Holepunch stack (Hypercore, Hyperswarm, Hyperdrive, Bare/Pear runtimes), plus the
+      infrastructure that makes those apps usable in the real world: always-on relays, browser access,
+      optional services, home-server appliances, and honest release discipline.
+    </p>
+    <h3>The mission in three layers</h3>
+    <ol>
+      <li><strong>Kernel:</strong> HiveRelay — keep P2P apps online, seeded, and reachable after publishers disconnect; prove custody and availability where we claim them.</li>
+      <li><strong>Products:</strong> Peerit (social), PearBrowser (desktop/mobile P2P browser), and a fleet of vertical apps that reuse one launch pattern.</li>
+      <li><strong>Network:</strong> Operators (starting with self-run fleet and home appliances) who earn reputation — and later fees — for bandwidth and storage without needing to read user content.</li>
+    </ol>
+    <h3>What we are not</h3>
+    <ul>
+      <li>Not a Tether / Bitfinex / Holepunch Inc. product or official spin-out.</li>
+      <li>Not “Web3” that requires a blockchain for every write (custody proofs are signatures + logs).</li>
+      <li>Not a claim that the live fleet already delivers every privacy label in the research docs.</li>
+      <li>Not a single company database dressed up as decentralization.</li>
+    </ul>
+
+    <!-- ========== PROBLEM ========== -->
+    <h2 id="problem"><span class="num">03</span>The problem</h2>
+    <div class="two-col">
+      <div>
+        <h3>3.1 Centralized internet failure modes</h3>
+        <p>
+          Modern apps concentrate control in a few planes: cloud accounts, app stores, DNS, API gateways,
+          recommender pipelines. Those planes can be ordered offline, repriced overnight, breached at scale,
+          or captured by policy. The July 2026 ecosystem report documents the trendline: record internet
+          shutdowns, single-vendor outages affecting millions of machines, and cloud concentration where a
+          handful of providers take most infrastructure spend.
+        </p>
+        <p>
+          Even “encrypted” consumer apps often still depend on a company to introduce peers, host media,
+          and decide whether your account exists tomorrow.
+        </p>
+        <h3>3.2 Pure P2P’s fatal flaw</h3>
+        <p>
+          Holepunch-style P2P is production-proven (e.g. Keet-scale consumer usage of the primitives).
+          But if your app is only served by user devices, <strong>it sleeps when they do</strong>.
+          Laptops close. Phones background-kill. Carrier NATs break holepunching for a non-trivial tail.
+          Ordinary browsers cannot open raw UDP sockets at all.
+        </p>
+        <p>
+          So builders face a false choice: pure P2P that flickers offline, or a classic server that
+          re-centralizes identity and data.
+        </p>
+      </div>
+      <div class="sidebar-box">
+        <h4>Three hard edge realities</h4>
+        <ul>
+          <li><strong>Peers sleep</strong> — zero seeders at 4 a.m. is normal.</li>
+          <li><strong>NATs bite</strong> — holepunch is excellent, not 100%.</li>
+          <li><strong>Browsers can’t join natively</strong> — need HTTP/WSS bridges.</li>
+        </ul>
+        <h4>The bad “fix”</h4>
+        <p style="max-width:none">
+          Hand data to a server you hope is honest. Without receipts, expiry proofs, and
+          cryptographic challenges, a relay is just a server with better branding.
+        </p>
+      </div>
+    </div>
+
+    <div class="diagram">
+WITHOUT RELAY                          WITH HIVERELAY
+Publisher laptop (asleep)              Publisher laptop (asleep) — fine
+   ×  app dark                            │ seeded once
+   ×  readers stuck                       ▼
+                                      Relay quorum (always-on peers)
+                                      signed receipts · verified replicas
+                                         │
+                         readers / browsers / new visitors stay online
+    </div>
+
+    <!-- ========== SOLUTION ========== -->
+    <h2 id="solution"><span class="num">04</span>The solution</h2>
+    <p class="lead">
+      Treat relays as <strong>always-on peers</strong>, not as the application’s owner.
+      Content is addressed by cryptographic keys. Availability is proved with signatures and challenges.
+      Encrypted workloads stay ciphertext on disk. Public content can be served to ordinary browsers
+      without pretending the gateway is the app’s identity.
+    </p>
+
+    <h3>4.1 HiveRelay in one paragraph</h3>
+    <p>
+      Hand a HiveRelay node your app’s drive key (and policy). It joins the same Hyperswarm world as
+      the app, seeds data, optionally holds time-bounded blind custody with signed receipts, can forward
+      opaque bytes when peers cannot holepunch, and can expose HTTP/WebSocket ingress so phones and
+      browsers participate. Optional plug-in services (randomness, identity helpers, OutboxLog feeds,
+      etc.) run under fail-closed supervision.
+    </p>
+
+    <h3>4.2 One node, five conceptual roles</h3>
+    <table>
+      <thead><tr><th>Role</th><th>Job</th><th>Trust implication</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Seeder</strong></td><td>Replicate public app drives so content survives offline publishers</td><td>Public availability; app key remains identity</td></tr>
+        <tr><td><strong>Custody peer</strong></td><td>Store ciphertext under a signed custody protocol; issue receipts/proofs</td><td>Should not see plaintext for blind workloads</td></tr>
+        <tr><td><strong>Witness</strong></td><td>Probe others after expiry; sign observations (can be cheap hardware)</td><td>Independent observation, not storage</td></tr>
+        <tr><td><strong>Circuit relay</strong></td><td>Forward opaque encrypted bytes when NAT fails</td><td>Transport helper, not content host</td></tr>
+        <tr><td><strong>Service host</strong></td><td>Optional RPC services apps opt into</td><td>Fail closed if unhealthy; not always on</td></tr>
+      </tbody>
+    </table>
+
+    <h3>4.3 Proof, not promises</h3>
+    <p>
+      The design center is a signed custody handshake: intent → per-relay receipts → quorum commit →
+      optional source retirement → possession challenges during retention → non-serving proof after expiry,
+      plus independent witness observations. Replicas only “count” when they answer fresh cryptographic
+      challenges — not self-reported pin counts.
+    </p>
+    <blockquote>
+      The pitch is not “trust us.” It is trust you can check.
+    </blockquote>
+
+    <h3>4.4 Two product doors people confuse (keep them separate)</h3>
+    <div class="grid2">
+      <div class="card green">
+        <h3>Public T1 HTTPS gateway</h3>
+        <p>Ordinary browsers open <em>public</em> app bytes by HTTPS URL. Exact-byte distribution. Replaceable hostname. <strong>No privacy claim.</strong> Active staging track now.</p>
+      </div>
+      <div class="card amber">
+        <h3>Blind cell substrate (vNext)</h3>
+        <p>App-agnostic encrypted cells/inbox: relay stores opaque slots; apps (e.g. Peerit later) encrypt client-side. Large draft implementation; not the live Peerit write path yet.</p>
+      </div>
+    </div>
+
+    <h3>4.5 Peerit as the flagship proof</h3>
+    <p>
+      Peerit is a Reddit-like social app with no central post database: each author writes a signed outbox;
+      clients merge by cryptographic rules; moderation is signed data, not a privileged server rewrite.
+      It is live on the public web as a <strong>writable canary</strong> (not yet marketing-scale GA), using
+      HiveRelay-compatible OutboxLog for durable browser writes/reads.
+    </p>
+
+    <!-- ========== USE CASES ========== -->
+    <h2 id="usecases"><span class="num">05</span>Use cases &amp; audiences</h2>
+    <table>
+      <thead><tr><th>Audience</th><th>What they get</th><th>Example</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>End users</strong></td>
+          <td>Apps and social spaces that keep working when creators sleep; less “platform hostage”</td>
+          <td>Read Peerit communities; open a public Pear app via browser gateway</td>
+        </tr>
+        <tr>
+          <td><strong>App builders</strong></td>
+          <td>Publish once, seed to relays, reuse a battle-tested launch pattern</td>
+          <td>~5 lines to publish a drive; copy the Peerit/POS/tickets pattern</td>
+        </tr>
+        <tr>
+          <td><strong>Operators</strong></td>
+          <td>Run a box that earns reputation (later sats) for uptime/storage/bandwidth without reading ciphertext</td>
+          <td>VPS fleet node or Umbrel/StartOS “Blindspark” appliance</td>
+        </tr>
+        <tr>
+          <td><strong>Organizations / communities</strong></td>
+          <td>Forums, marketplaces, ticketing that are harder to seize by seizing one company DB</td>
+          <td>Community forums, event tickets, local marketplaces</td>
+        </tr>
+        <tr>
+          <td><strong>Researchers / auditors</strong></td>
+          <td>Open protocol, verifiers, honest limitation notes, evidence-gated releases</td>
+          <td><code>hive-verify</code>-style checks; release-evidence chain</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Vertical examples already in the portfolio</h3>
+    <ul>
+      <li><strong>Social:</strong> Peerit</li>
+      <li><strong>Commerce / ops:</strong> pear-pos, pear-tickets, pear-exchange, pear-bazaar</li>
+      <li><strong>Travel / services:</strong> pear-stays, pear-rides</li>
+      <li><strong>Knowledge / content:</strong> pearpaste, peartube, pearfeed, pear-sahifa</li>
+      <li><strong>Coordination:</strong> pear-dealroom, matchday-mesh, sports apps</li>
+      <li><strong>Access:</strong> PearBrowser desktop + mobile</li>
+    </ul>
+    <p>
+      Not every directory is a supported production product; maturity varies. The strategic point is
+      <strong>one infrastructure pattern</strong> rather than twenty unrelated backends.
+    </p>
+
+    <!-- ========== STACK ========== -->
+    <h2 id="stack"><span class="num">06</span>How the stack fits together</h2>
+    <div class="diagram">
+┌─────────────────────────────────────────────────────────────┐
+│  Applications (Peerit, POS, tickets, paste, …)               │
+│  sign their own data · own UX · own moderation rules         │
+└───────────────────────────┬─────────────────────────────────┘
+                            │ Hypercore / Hyperdrive keys
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Pear / Bare runtimes + Holepunch primitives                 │
+│  Hypercore · Hyperswarm · HyperDHT · Hyperbee · Corestore    │
+└───────────────────────────┬─────────────────────────────────┘
+                            │ seed / announce / replicate
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│  HiveRelay kernel                                            │
+│  seeding · custody plane · circuits · catalogs · health      │
+│  + optional services (OutboxLog, VRF, identity, …)           │
+│  + public T1 HTTPS gateway (distribution, not privacy)       │
+│  + vNext blind daemon (cells/inbox — draft train)            │
+└───────────────────────────┬─────────────────────────────────┘
+                            │
+          ┌─────────────────┼─────────────────┐
+          ▼                 ▼                 ▼
+     Raw fleet VPS    Home appliances    Browsers via
+     canary/stable    Umbrel / StartOS   HTTPS / WSS
+    </div>
+
+    <h3>Key design principles (colleague-friendly)</h3>
+    <ol>
+      <li><strong>Keys, not accounts, are identity</strong> for content and apps.</li>
+      <li><strong>Local-first:</strong> devices hold authoritative user state where possible.</li>
+      <li><strong>Relays are peers with uptime,</strong> not product owners.</li>
+      <li><strong>Fail closed:</strong> broken services disappear from discovery rather than limp half-alive.</li>
+      <li><strong>Evidence over narrative:</strong> releases, fleet promotions, and privacy claims need artifacts.</li>
+      <li><strong>Honest ceilings:</strong> document what is not claimed (forensic erase, perfect anonymity, etc.).</li>
+    </ol>
+
+    <!-- ========== DECENTRALIZATION ========== -->
+    <h2 id="decentralization"><span class="num">07</span>Decentralization model</h2>
+    <p class="lead">
+      Decentralization here is not a slogan and not “many AWS regions under one login.”
+      It is a set of concrete properties about who can take the system away from users.
+    </p>
+
+    <h3>7.1 What is decentralized today</h3>
+    <table>
+      <thead><tr><th>Property</th><th>How it works</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Content addressing</td>
+          <td>App/drive keys and signed Hypercore history — not “row 123 in our SQL DB.”</td>
+        </tr>
+        <tr>
+          <td>No single publisher uptime requirement</td>
+          <td>Once seeded, relays and peers can serve public data while the creator is offline.</td>
+        </tr>
+        <tr>
+          <td>Multi-relay durability goals</td>
+          <td>AutoHeal-style replica floors across regions/operators (architecture + ops discipline).</td>
+        </tr>
+        <tr>
+          <td>Client-side verification</td>
+          <td>Readers re-verify signatures; a lying relay loses to higher signed heads / audits.</td>
+        </tr>
+        <tr>
+          <td>Open source + portable packages</td>
+          <td>Anyone can run the software; appliances target home operators, not only a corporate fleet.</td>
+        </tr>
+        <tr>
+          <td>Replaceable HTTPS entrances</td>
+          <td>Public gateway hostnames are conveniences; the app key remains canonical (T1 design).</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>7.2 What is still centralized or concentrated (honest)</h3>
+    <table>
+      <thead><tr><th>Concentration</th><th>Why it exists</th><th>Mitigation path</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Founder-operated raw fleet (order of ~9 boxes)</td>
+          <td>Prove release discipline before global operator marketplace</td>
+          <td>Home appliances + later Phase-2 operator market; never pretend 9 boxes = global neutrality</td>
+        </tr>
+        <tr>
+          <td>Peerit single signed Outbox ingress (canary)</td>
+          <td>Ship writable web path quickly</td>
+          <td>Second independent operator + multi-origin roster before multi-operator claims</td>
+        </tr>
+        <tr>
+          <td>Web hosting / DNS for peerit.site</td>
+          <td>Browsers need HTTPS origins</td>
+          <td>Signed assets, pins, multi-relay data plane; publisher-owned origins for identity</td>
+        </tr>
+        <tr>
+          <td>npm / GHCR distribution of relay images</td>
+          <td>Industry packaging defaults</td>
+          <td>Digest pins, cosign, reproducible evidence; users can build from source</td>
+        </tr>
+        <tr>
+          <td>Blind multi-operator privacy claims</td>
+          <td>Hard; requires real independence</td>
+          <td>Self-ops G2-S first; OHTTP needs separate ingress operator; G3 deferred until repair economics</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout warn">
+      <strong>How to talk about decentralization without overclaiming</strong>
+      Say: “Cryptographic ownership of data and multi-party availability, with named residual
+      concentrations during bootstrap.” Do <em>not</em> say: “No servers, no operators, fully anonymous,
+      uncensorable in every jurisdiction.”
+    </div>
+
+    <h3>7.3 Censorship and takedown (Peerit-shaped)</h3>
+    <p>
+      An honest relay operator can refuse to carry opaque ids they are compelled to drop; that is
+      <strong>censorship-evident</strong> (clients see withholding against signed censuses) rather than
+      silent global erase. Content-neutral pricing aims to avoid “earn more by reading posts.”
+      Full legal playbooks remain jurisdiction-specific — engineering reduces, not eliminates, policy risk.
+    </p>
+
+    <!-- ========== OPS ========== -->
+    <h2 id="ops"><span class="num">08</span>Operating model</h2>
+
+    <h3>8.1 Who runs what</h3>
+    <table>
+      <thead><tr><th>Actor</th><th>Responsibilities</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Core maintainers</strong></td>
+          <td>Protocol, relay software, release evidence, canary→stable discipline, docs honesty</td>
+        </tr>
+        <tr>
+          <td><strong>Fleet operators</strong> (today: project-run)</td>
+          <td>Keep nodes healthy, disk capped, channels updated, backups/restore drills</td>
+        </tr>
+        <tr>
+          <td><strong>Home operators</strong> (Blindspark path)</td>
+          <td>Run appliance on Umbrel/StartOS; capacity they choose; updates via store/image pins</td>
+        </tr>
+        <tr>
+          <td><strong>App publishers</strong></td>
+          <td>Ship signed app releases; seed; set retention/replica policy; own UX and moderation crypto</td>
+        </tr>
+        <tr>
+          <td><strong>Users</strong></td>
+          <td>Hold keys/devices; verify where clients allow; optionally seed</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>8.2 Release-gated operations (the culture)</h3>
+    <ul>
+      <li><strong>Canary then stable</strong> channels on the raw fleet — not big-bang production edits.</li>
+      <li><strong>Pull-based updater</strong> with health gates and rollback when probes fail.</li>
+      <li><strong>release-evidence.json</strong> style hash-linking of image, smoke, fleet, registry proofs.</li>
+      <li><strong>Signed tags / digest pins</strong> for images where the supply-chain path is enabled.</li>
+      <li><strong>Service Contract mindset:</strong> app releases should not require simultaneous relay upgrades.</li>
+    </ul>
+
+    <h3>8.3 Day-2 ops concerns (what colleagues should expect)</h3>
+    <ul>
+      <li>Disk pressure and storage caps (small boxes must not wedge to 100% and hang health).</li>
+      <li>Replica diversity — more regions/operators beats one fat machine.</li>
+      <li>Separate management plane vs public app plane on gateways (ports, hostnames, cookies).</li>
+      <li>Evidence freshness — a green test last month is not a live fleet claim today.</li>
+      <li>Incident language: degrade availability, do not silently rewrite signed history.</li>
+    </ul>
+
+    <h3>8.4 Three deployment shapes, one protocol</h3>
+    <div class="grid3">
+      <div class="card"><h3>Datacenter VPS</h3><p>Full Node relay, HTTP API, dashboard, fleet updater — current raw fleet.</p></div>
+      <div class="card"><h3>Home appliance</h3><p>Blindspark on Umbrel/StartOS — one-page setup, persistent identity, safe defaults.</p></div>
+      <div class="card"><h3>Pear/Bare embedded</h3><p>Relay-capable peers inside the P2P runtime for app-native topologies.</p></div>
+    </div>
+
+    <!-- ========== BUSINESS ========== -->
+    <h2 id="business"><span class="num">09</span>Business case &amp; economics</h2>
+
+    <h3>9.1 Why this is a business at all</h3>
+    <ul>
+      <li><strong>Infrastructure demand:</strong> creators and communities need distribution that platforms cannot arbitrarily revoke.</li>
+      <li><strong>Cost structure:</strong> Hypercore-native seeding can undercut generic pin/CDN pricing for the right workloads (framework numbers, not promises).</li>
+      <li><strong>Operator supply:</strong> large installed base of always-on home Lightning/node hardware is a distribution wedge for “run a relay” UX.</li>
+      <li><strong>Application surface:</strong> one relay stack → many vertical apps → repeated distribution economics.</li>
+      <li><strong>Timing:</strong> mainstream expectation of private-by-default messaging; simultaneous distrust of platform lock-in and outage concentration.</li>
+    </ul>
+
+    <h3>9.2 Phased money (anti-Helium discipline)</h3>
+    <table>
+      <thead><tr><th>Phase</th><th>What operators get</th><th>Gate to next phase</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Phase 1 — live now</strong></td>
+          <td>Reputation only. No protocol token payments by design.</td>
+          <td>Real demand: apps, uptime, countries, challenge pass rates</td>
+        </tr>
+        <tr>
+          <td><strong>Phase 2</strong></td>
+          <td>Lightning marketplace: sats for storage, bandwidth, relay, availability</td>
+          <td>Proven usage; cryptographic slashing only; no “work token” required</td>
+        </tr>
+        <tr>
+          <td><strong>Phase 3 — optional</strong></td>
+          <td>Possible work-token designs only after Phase-2 demand + operator supermajority</td>
+          <td>Explicit escape hatch back to Phase 2; no ICO narrative in core product</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="callout">
+      <strong>Colleague note</strong>
+      The core product has <strong>no token requirement</strong> to function. Any token discussion is optional,
+      gated, and secondary. Do not pitch this as a token sale.
+    </div>
+
+    <h3>9.3 Unit economics (framework, not forecast)</h3>
+    <p>
+      Published framework pricing (sats for GB-month, bandwidth, relay) is designed to sit under generic
+      pin services while remaining viable for $5–20 VPS operators at modest utilization, with larger
+      dedicated boxes needing higher demand. Sybil economics are intentionally hostile: faking a relay
+      should cost more than honest operation during hold periods.
+    </p>
+    <p>
+      Year-1 growth narratives in the ecosystem report (founder subsidy, Lightning node funnel, operator
+      of last resort) are <strong>planning frameworks</strong> — treat them as strategy sketches, not closed books.
+    </p>
+
+    <h3>9.4 Strategic moat (realistic)</h3>
+    <ul>
+      <li>Working software + release discipline + live apps beat whitepapers.</li>
+      <li>Wire-compatibility with a widely used P2P primitive set (Holepunch) without being captive to one vendor’s product roadmap.</li>
+      <li>Proof-carrying custody/availability is harder to copy than “we pin your CID.”</li>
+      <li>App fleet multiplies the same infrastructure investment.</li>
+    </ul>
+
+    <!-- ========== STATUS ========== -->
+    <h2 id="status"><span class="num">10</span>Honest status today (July 2026)</h2>
+    <p class="lead">
+      Use this section in internal updates so engineering ambition does not leak into external overclaims.
+    </p>
+    <table>
+      <thead><tr><th>Surface</th><th>Status</th><th>Colleague-safe phrasing</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>HiveRelay software line</td>
+          <td>v0.24.3 released; active vNext train</td>
+          <td>“Production relay line with daily release discipline”</td>
+        </tr>
+        <tr>
+          <td>Raw fleet</td>
+          <td>~9 project-operated boxes, multi-region</td>
+          <td>“Bootstrap fleet, not a global neutral network yet”</td>
+        </tr>
+        <tr>
+          <td>Peerit</td>
+          <td>Public writable canary (signed web + OutboxLog)</td>
+          <td>“Live canary; not multi-operator GA”</td>
+        </tr>
+        <tr>
+          <td>Public HTTPS gateway</td>
+          <td>Implemented; local canary preflight green; fleet mode blocked on frozen T1 admission</td>
+          <td>“Staging the public distribution product now”</td>
+        </tr>
+        <tr>
+          <td>Blind cells substrate</td>
+          <td>Large draft packages on vNext; WIRE advanced; production fail-closed</td>
+          <td>“In active development; not Peerit’s live write path”</td>
+        </tr>
+        <tr>
+          <td>PearBrowser</td>
+          <td>Desktop/mobile P2P browser in portfolio</td>
+          <td>“Access layer for the P2P web; version pins still need care”</td>
+        </tr>
+        <tr>
+          <td>Economics Phase 1</td>
+          <td>Reputation only, $0 protocol flows by design</td>
+          <td>“Prove demand before payments”</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- ========== ROADMAP ========== -->
+    <h2 id="roadmap"><span class="num">11</span>What success looks like next</h2>
+    <div class="grid2">
+      <div class="card green">
+        <h3>Near term (operating focus)</h3>
+        <ul>
+          <li>Stage public T1 HTTPS gateway (one trusted app, 24h observation)</li>
+          <li>Harden Peerit canary toward honest GA gates (headers, capacity, second ingress, devices)</li>
+          <li>Continue blind protocol freeze + daemon soak without public overclaim</li>
+        </ul>
+      </div>
+      <div class="card amber">
+        <h3>Medium term</h3>
+        <ul>
+          <li>Fleet gateway only after frozen T1 admission</li>
+          <li>Peerit dual-read onto blind cells if/when owner unlock allows</li>
+          <li>Grow operator diversity (appliances + independent operators under policy)</li>
+          <li>Phase-2 payments only after demand gates</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- ========== TALKING ========== -->
+    <h2 id="talking"><span class="num">12</span>Talking points for meetings</h2>
+    <h3>30 seconds</h3>
+    <p>
+      “P2P apps die when laptops sleep. We built always-on relays that keep them alive with cryptographic
+      receipts — and we’re shipping real apps on top, including a live P2P social network.”
+    </p>
+    <h3>2 minutes</h3>
+    <p>
+      “We stand on Holepunch’s open primitives, but we’re independent open source. HiveRelay seeds and
+      proves availability; optional services power things like Peerit’s browser writes. We’re careful about
+      decentralization: keys own data, relays are replaceable peers, but our bootstrap fleet and web origins
+      are still concentrated — and we say that out loud. Money is phase-gated: reputation first, sats later,
+      no token required to run.”
+    </p>
+    <h3>When someone says “so it’s like IPFS pinning”</h3>
+    <p>
+      “Pinning is usually self-reported and plaintext-friendly. We care about signed custody receipts,
+      ongoing possession challenges, expiry/non-serving proofs, and client verification — and we’re also
+      solving browser reachability and app-level products, not only static file pins.”
+    </p>
+    <h3>When someone says “so it’s a blockchain”</h3>
+    <p>
+      “No. Append-only signed logs and peer protocols, not a global consensus ledger for every post.
+      That’s how we keep costs and latency in the range of normal apps.”
+    </p>
+    <h3>When someone says “is Peerit fully decentralized?”</h3>
+    <p>
+      “Data ownership is cryptographic and multi-device merge is client-side, but today’s public web path
+      still uses a small number of ingress relays and ordinary HTTPS hosting. We’re widening that with
+      evidence, not slogans.”
+    </p>
+
+    <!-- ========== FAQ ========== -->
+    <h2 id="faq"><span class="num">13</span>FAQ for colleagues</h2>
+    <h4>Is this affiliated with Tether or Holepunch Inc.?</h4>
+    <p>No. Independent Apache-2.0 project targeting wire-compatibility with the Holepunch stack.</p>
+    <h4>Do we need users to buy a token?</h4>
+    <p>No. Phase 1 is reputation-only. Any token design is optional, gated, and not the core product.</p>
+    <h4>Can operators read Peerit posts?</h4>
+    <p>
+      On the current OutboxLog canary path, treat privacy ceilings carefully — public social content is
+      readable by design for public forums. Stronger “storage-role blindness” is the blind-cells track,
+      still in development for production Peerit writes.
+    </p>
+    <h4>What ships for normal browsers today?</h4>
+    <p>Peerit at peerit.site as a writable canary; public HTTPS gateway is the next distribution product being staged.</p>
+    <h4>What’s the biggest risk?</h4>
+    <p>
+      Overclaiming decentralization or privacy while bootstrap infrastructure is still founder-operated;
+      and underestimating ops (disk, capacity, multi-ingress) for public social writes.
+    </p>
+    <h4>What’s the biggest unfair advantage?</h4>
+    <p>
+      Shipping real apps + release-gated relay ops + proof-oriented protocols in one coherent ecosystem,
+      instead of a whitepaper network with no product.
+    </p>
+
+    <!-- ========== READ ========== -->
+    <h2 id="read"><span class="num">14</span>Further reading</h2>
+    <table>
+      <thead><tr><th>Document</th><th>When to open it</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>Downloads/ecosystem-report.pdf</code></td>
+          <td>Investor/partner narrative with diagrams and market framing (July 2026)</td>
+        </tr>
+        <tr>
+          <td><code>SHIP-GUIDE-PEERIT-AND-PUBLIC-GATEWAY.html</code></td>
+          <td>Operator/engineering detail: gateway, Peerit GA gates, blind track</td>
+        </tr>
+        <tr>
+          <td><code>HERMES.md</code> (ecosystem root)</td>
+          <td>Workspace map and agent/engineering constitution</td>
+        </tr>
+        <tr>
+          <td>HiveRelay <code>README.md</code> / <code>PRODUCTION.md</code></td>
+          <td>Package surface, fleet, release evidence</td>
+        </tr>
+        <tr>
+          <td>Peerit <code>EXPLAINER.md</code> / production readiness matrix</td>
+          <td>Social product architecture and canary vs GA</td>
+        </tr>
+        <tr>
+          <td><code>docs/protocol/BLIND-*.md</code> on vNext train</td>
+          <td>App-agnostic blind substrate design</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <strong>Print tip</strong>
+      This page is print-friendly (File → Print → PDF). Prefer sharing the HTML or a printed PDF
+      rather than screenshots so links and tables stay readable.
+    </div>
+
+    <footer>
+      Pear Ecosystem colleague briefing · July 2026 · Independent open-source project ·
+      Inspired in structure by the HiveRelay · Peerit · PearBrowser Ecosystem Report ·
+      Not a securities offering · Not a production authorization ·
+      Path: <code>00-core/hr-vnext-gateway-merge/docs/vnext/PEAR-ECOSYSTEM-COLLEAGUE-BRIEFING.html</code>
+    </footer>
+  </div>
+</body>
+</html>
