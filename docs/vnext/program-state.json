@@ -14,33 +14,87 @@
   "profiles": [
     {
       "id": "public-t1-gateway",
-      "status": "hardening",
+      "status": "implementation-clean-branch",
       "claim": "Public exact-byte HTTPS distribution; no blind privacy claim",
-      "requiredGates": ["PG-0", "PG-1", "PG-3", "PG-5", "PG-6"]
+      "requiredGates": [
+        "PG-0",
+        "PG-1",
+        "PG-3",
+        "PG-5",
+        "PG-6"
+      ],
+      "liveTip": "0ff54842 on feat/public-https-hive-gateway",
+      "remaining": [
+        "merge into feat/vnext-integration",
+        "frozen non-transitional T1/T2/T3 admission",
+        "canonical spec mirrors",
+        "V-GW1 + full suite on release commit",
+        "staging canary evidence",
+        "D-5 owner decision"
+      ]
     },
     {
       "id": "direct-blind-g2s",
-      "status": "spec-only",
-      "claim": "Direct blind storage with disclosed stable access metadata",
-      "requiredGates": ["PG-0", "PG-1", "PG-2", "PG-3", "PG-4", "PG-5", "PG-6"]
+      "status": "draft-implementation",
+      "claim": "Direct blind storage with disclosed stable access metadata (G2-S)",
+      "requiredGates": [
+        "PG-0",
+        "PG-1",
+        "PG-2",
+        "PG-3",
+        "PG-4",
+        "PG-5",
+        "PG-6"
+      ],
+      "liveTip": "2ef12971 on feat/vnext-integration; packages 0.0.0-draft.1",
+      "remaining": [
+        "D-1/D-6/D-7 before specHash",
+        "CR/V gate closure on one ABI",
+        "daemon production readiness gates",
+        "browser artifact evidence-bound releaseReady",
+        "seven-day soak / disposable cohort",
+        "merge gateway storage redesign without dropping blind packages"
+      ]
     },
     {
       "id": "g3-randomized-cells",
       "status": "spec-only",
       "claim": "At-rest unlinkability only after repair, placement, renewal-correlation, and classifier evidence",
-      "requiredGates": ["PG-0", "PG-1", "PG-2", "PG-3", "PG-4", "PG-5", "PG-6"]
+      "requiredGates": [
+        "PG-0",
+        "PG-1",
+        "PG-2",
+        "PG-3",
+        "PG-4",
+        "PG-5",
+        "PG-6"
+      ]
     },
     {
       "id": "split-web-ohttp-v1",
       "status": "spec-only",
       "claim": "Source-separated browser ingress and storage only with independent operators",
-      "requiredGates": ["PG-0", "PG-1", "PG-2", "PG-3", "PG-4", "PG-5", "PG-6"]
+      "requiredGates": [
+        "PG-0",
+        "PG-1",
+        "PG-2",
+        "PG-3",
+        "PG-4",
+        "PG-5",
+        "PG-6"
+      ]
     },
     {
       "id": "browser-hc11-cs7",
       "status": "discovery-only",
       "claim": "Browser Hypercore 11/Corestore 7 storage after IndexedDB conformance and real-browser evidence",
-      "requiredGates": ["PG-0", "PG-3", "PG-4", "PG-5", "PG-6"]
+      "requiredGates": [
+        "PG-0",
+        "PG-3",
+        "PG-4",
+        "PG-5",
+        "PG-6"
+      ]
     }
   ],
   "decisions": [
@@ -52,8 +106,13 @@
       "question": "Ship an honestly labelled direct G2-S invitation canary before advanced blind profiles?",
       "recommendation": "approve-direct-g2s-canary",
       "recommendationRationale": "A bounded invitation canary yields real workload evidence without borrowing OHTTP, CORE, FORWARD, or G3 claims.",
-      "affectedProfiles": ["direct-blind-g2s"],
-      "blocks": ["T09", "direct-blind-g2s"],
+      "affectedProfiles": [
+        "direct-blind-g2s"
+      ],
+      "blocks": [
+        "T09",
+        "direct-blind-g2s"
+      ],
       "supersededAssumptions": [
         "The first blind canary must wait for every transport and storage family."
       ],
@@ -69,8 +128,14 @@
       "question": "Which independently controlled operator supplies OHTTP ingress?",
       "recommendation": "require-independent-ingress-operator",
       "recommendationRationale": "OHTTP mechanics under one operator do not establish source separation or a non-collusion boundary.",
-      "affectedProfiles": ["split-web-ohttp-v1"],
-      "blocks": ["split-web-ohttp-v1", "G2-W", "G4-T"],
+      "affectedProfiles": [
+        "split-web-ohttp-v1"
+      ],
+      "blocks": [
+        "split-web-ohttp-v1",
+        "G2-W",
+        "G4-T"
+      ],
       "supersededAssumptions": [
         "Running ingress and storage as separate processes under one operator is independent operation."
       ],
@@ -86,8 +151,13 @@
       "question": "Who owns and funds G3 repair, cadence, offline-writer behavior, and repair-hint authenticity?",
       "recommendation": "defer-g3-until-repair-contract",
       "recommendationRationale": "Randomized cells are not a durable G3 product until repair responsibility, placement, renewal cadence, and incentives are operationally owned.",
-      "affectedProfiles": ["g3-randomized-cells"],
-      "blocks": ["g3-randomized-cells", "V-8"],
+      "affectedProfiles": [
+        "g3-randomized-cells"
+      ],
+      "blocks": [
+        "g3-randomized-cells",
+        "V-8"
+      ],
       "supersededAssumptions": [
         "Randomized cell names alone make renewal and placement unlinkable."
       ],
@@ -103,8 +173,15 @@
       "question": "What operator liability, takedown, retention, and acknowledgement posture is approved?",
       "recommendation": "require-jurisdiction-aware-operator-policy",
       "recommendationRationale": "Third-party operators need an explicit abuse, locator-report, retention, acknowledgement, and jurisdiction contract before recruitment.",
-      "affectedProfiles": ["direct-blind-g2s", "g3-randomized-cells", "split-web-ohttp-v1"],
-      "blocks": ["third-party-operator-recruitment", "PG-7"],
+      "affectedProfiles": [
+        "direct-blind-g2s",
+        "g3-randomized-cells",
+        "split-web-ohttp-v1"
+      ],
+      "blocks": [
+        "third-party-operator-recruitment",
+        "PG-7"
+      ],
       "supersededAssumptions": [
         "Opaque payload storage removes operator policy and legal responsibilities."
       ],
@@ -120,8 +197,13 @@
       "question": "Keep the HTTPS gateway as the separately named public-t1-gateway product?",
       "recommendation": "keep-separate-t1-product",
       "recommendationRationale": "Public exact-byte HTTPS distribution is valuable, but its operator-visible access path must not inherit blind-storage privacy claims.",
-      "affectedProfiles": ["public-t1-gateway"],
-      "blocks": ["T05-public-positioning", "T18-gateway-collateral"],
+      "affectedProfiles": [
+        "public-t1-gateway"
+      ],
+      "blocks": [
+        "T05-public-positioning",
+        "T18-gateway-collateral"
+      ],
       "supersededAssumptions": [
         "Every HiveRelay delivery surface belongs to one progressively stronger privacy product."
       ],
@@ -137,8 +219,16 @@
       "question": "Retain K_partition only with measured benefit and a tested recovery contract, or remove it?",
       "recommendation": "remove-unless-measured-benefit",
       "recommendationRationale": "An unrecoverable partition secret adds operational failure risk unless measured cross-relay privacy benefit exceeds the backup and rotation burden.",
-      "affectedProfiles": ["direct-blind-g2s", "g3-randomized-cells", "split-web-ohttp-v1"],
-      "blocks": ["PG-2", "specHash", "store-format-freeze"],
+      "affectedProfiles": [
+        "direct-blind-g2s",
+        "g3-randomized-cells",
+        "split-web-ohttp-v1"
+      ],
+      "blocks": [
+        "PG-2",
+        "specHash",
+        "store-format-freeze"
+      ],
       "supersededAssumptions": [
         "A private keyed bucket map is automatically worth making store recovery depend on another secret."
       ],
@@ -154,8 +244,16 @@
       "question": "Acknowledge that rollback after the first blind-only write is dual-read only, never legacy-only?",
       "recommendation": "approve-dual-read-rollback-floor",
       "recommendationRationale": "A legacy-only rollback after blind-only writes would hide or strand accepted state and is therefore not a valid recovery path.",
-      "affectedProfiles": ["direct-blind-g2s", "g3-randomized-cells", "split-web-ohttp-v1"],
-      "blocks": ["PG-2", "T09-migration-runbook", "specHash"],
+      "affectedProfiles": [
+        "direct-blind-g2s",
+        "g3-randomized-cells",
+        "split-web-ohttp-v1"
+      ],
+      "blocks": [
+        "PG-2",
+        "T09-migration-runbook",
+        "specHash"
+      ],
       "supersededAssumptions": [
         "The legacy-only binary remains a safe rollback target after blind-only writes begin."
       ],
@@ -175,8 +273,12 @@
         "git/349db39b0df03582a141bf54f99a3c00af2a375b/docs/vnext/blind-peerit-preservation.json",
         "git/5a7af14a1e16ee79bc91a5c663b2406498029106/docs/vnext/hiverelay-main-salvage.json",
         "git/ce167bd222c23d246e6a51d9c33fb1ca895b3a19/docs/vnext/peerit-vendor-authority-drift.json",
-        "git/ad8fbe9b63dfcbd81217582ed8d8c41ebfdd88a8/docs/vnext/peerit-vendor-repair.json"
-      ]
+        "git/ad8fbe9b63dfcbd81217582ed8d8c41ebfdd88a8/docs/vnext/peerit-vendor-repair.json",
+        "git-local/salvage/main-dirty-snapshot-2026-07-13@c360ff7b",
+        "docs/vnext/salvage-bundles/2026-07-13-main-dirty",
+        "docs/vnext/HIVERELAY-PHASE0-INTEGRATION-PLAN-2026-07-13.md"
+      ],
+      "notes": "Main dirty snapshotted 2026-07-13; P1 patches must not integrate as-is. Prefer vnext credits auth-gate and gateway/salvage storage redesign."
     },
     {
       "id": "PG-1",
@@ -197,14 +299,46 @@
         "git/2692a9a9ef507fe3dce16d21493153dad0f053e7/docs/vnext/blind-cr5-route-scope-candidate.json"
       ]
     },
-    { "id": "PG-3", "status": "pending", "evidence": [] },
-    { "id": "PG-4", "status": "pending", "evidence": [] },
-    { "id": "PG-5", "status": "pending", "evidence": [] },
-    { "id": "PG-6", "status": "pending", "evidence": [] },
-    { "id": "PG-7", "status": "pending", "evidence": [] },
-    { "id": "PG-8", "status": "pending", "evidence": [] },
-    { "id": "PG-9", "status": "pending", "evidence": [] },
-    { "id": "PG-10", "status": "pending", "evidence": [] }
+    {
+      "id": "PG-3",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "PG-4",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "PG-5",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "PG-6",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "PG-7",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "PG-8",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "PG-9",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "PG-10",
+      "status": "pending",
+      "evidence": []
+    }
   ],
   "tracks": [
     {
@@ -224,7 +358,8 @@
         "git/349db39b0df03582a141bf54f99a3c00af2a375b/peerit-independent-verification",
         "git/5a7af14a1e16ee79bc91a5c663b2406498029106/hiverelay-main-salvage",
         "git/ce167bd222c23d246e6a51d9c33fb1ca895b3a19/peerit-vendor-authority-drift",
-        "git/ad8fbe9b63dfcbd81217582ed8d8c41ebfdd88a8/peerit-vendor-repair"
+        "git/ad8fbe9b63dfcbd81217582ed8d8c41ebfdd88a8/peerit-vendor-repair",
+        "git-local/salvage/main-dirty-snapshot-2026-07-13@c360ff7b"
       ]
     },
     {
@@ -249,31 +384,135 @@
     },
     {
       "id": "T03",
-      "status": "pending",
+      "status": "in-progress",
       "handoffs": [
         "git/ce167bd222c23d246e6a51d9c33fb1ca895b3a19/peerit-vendor-authority-drift",
-        "git/ad8fbe9b63dfcbd81217582ed8d8c41ebfdd88a8/peerit-vendor-repair"
+        "git/ad8fbe9b63dfcbd81217582ed8d8c41ebfdd88a8/peerit-vendor-repair",
+        "packages/blind-protocol wire releaseReady; package still draft.1",
+        "packages/blind-client browser artifact fail-closed until evidence"
       ]
     },
-    { "id": "T04", "status": "pending", "handoffs": [] },
-    { "id": "T05", "status": "in-progress", "handoffs": [] },
-    { "id": "T06", "status": "pending", "handoffs": [] },
-    { "id": "T07", "status": "pending", "handoffs": [] },
-    { "id": "T08", "status": "pending", "handoffs": [] },
-    { "id": "T09", "status": "pending", "handoffs": [] },
-    { "id": "T10", "status": "pending", "handoffs": [] },
-    { "id": "T11", "status": "pending", "handoffs": [] },
-    { "id": "T12", "status": "pending", "handoffs": [] },
-    { "id": "T13", "status": "pending", "handoffs": [] },
-    { "id": "T14", "status": "pending", "handoffs": [] },
-    { "id": "T14M", "status": "pending", "handoffs": [] },
-    { "id": "T15", "status": "pending", "handoffs": [] },
-    { "id": "T15H", "status": "pending", "handoffs": [] },
-    { "id": "T16", "status": "pending", "handoffs": [] },
-    { "id": "T17", "status": "pending", "handoffs": [] },
-    { "id": "T18", "status": "pending", "handoffs": [] },
-    { "id": "T19", "status": "pending", "handoffs": [] },
-    { "id": "T20", "status": "pending", "handoffs": [] },
-    { "id": "T21", "status": "pending", "handoffs": [] }
-  ]
+    {
+      "id": "T04",
+      "status": "in-progress",
+      "handoffs": [
+        "packages/blind-daemon draft on feat/vnext-integration",
+        "packages/blind-edge draft on feat/vnext-integration"
+      ]
+    },
+    {
+      "id": "T05",
+      "status": "in-progress",
+      "handoffs": [
+        "local/hr-https-gateway@0ff54842 public-https-hive-gateway",
+        "docs/vnext/HIVERELAY-PHASE0-INTEGRATION-PLAN-2026-07-13.md"
+      ]
+    },
+    {
+      "id": "T06",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T07",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T08",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T09",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T10",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T11",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T12",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T13",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T14",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T14M",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T15",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T15H",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T16",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T17",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T18",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T19",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T20",
+      "status": "pending",
+      "handoffs": []
+    },
+    {
+      "id": "T21",
+      "status": "pending",
+      "handoffs": []
+    }
+  ],
+  "lastHiveRelayConductorPass": {
+    "at": "2026-07-13T11:02:53Z",
+    "scope": "hiverelay-only",
+    "peerit": "owned-by-parallel-agent-do-not-touch",
+    "actions": [
+      "immutable main-dirty salvage bundle",
+      "salvage/main-dirty-snapshot-2026-07-13 commit c360ff7b",
+      "phase-0 integration plan written",
+      "canonical main left clean of P1 dirty patches"
+    ],
+    "next": [
+      "merge feat/public-https-hive-gateway into feat/vnext-integration worktree",
+      "owner decisions D-5 D-6 D-7",
+      "staging gateway canary only after frozen T1 admission"
+    ]
+  }
 }

@@ -1,0 +1,827 @@
+diff --git a/dashboard/calculator.html b/dashboard/calculator.html
+index 3b9cb3c3..05347b1c 100644
+--- a/dashboard/calculator.html
++++ b/dashboard/calculator.html
+@@ -165,6 +165,7 @@ input[type="number"]:focus{border-color:var(--cyan)}
+   </a>
+   <nav class="topbar-nav">
+     <a href="/dashboard">Dashboard</a>
++    <a href="/catalog">Catalog</a>
+     <a href="/payments">Payments</a>
+     <a href="/calculator" class="active">Calculator</a>
+     <a href="/network">Network</a>
+diff --git a/dashboard/catalog.html b/dashboard/catalog.html
+index 77aad962..8df14e04 100644
+--- a/dashboard/catalog.html
++++ b/dashboard/catalog.html
+@@ -139,10 +139,10 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
+   <nav class="topbar-nav">
+     <a href="/dashboard">Dashboard</a>
+     <a href="/catalog" class="active">Catalog</a>
+-    <a href="/network">Network</a>
+-    <a href="/leaderboard">Leaderboard</a>
+     <a href="/payments">Payments</a>
+     <a href="/calculator">Calculator</a>
++    <a href="/network">Network</a>
++    <a href="/leaderboard">Leaderboard</a>
+     <a href="/docs">Docs</a>
+   </nav>
+ </div>
+diff --git a/dashboard/leaderboard.html b/dashboard/leaderboard.html
+index 81f07db4..7b1715ff 100644
+--- a/dashboard/leaderboard.html
++++ b/dashboard/leaderboard.html
+@@ -183,9 +183,10 @@ tr.this-node:hover{background:rgba(88,166,255,.08)}
+   </a>
+   <nav class="topbar-nav">
+     <a href="/dashboard">Dashboard</a>
+-    <a href="/network">Network</a>
++    <a href="/catalog">Catalog</a>
+     <a href="/payments">Payments</a>
+     <a href="/calculator">Calculator</a>
++    <a href="/network">Network</a>
+     <a href="/leaderboard" class="active">Leaderboard</a>
+     <a href="/docs">Docs</a>
+   </nav>
+diff --git a/dashboard/payments.html b/dashboard/payments.html
+index 15cb5b94..f2e01267 100644
+--- a/dashboard/payments.html
++++ b/dashboard/payments.html
+@@ -137,6 +137,7 @@ tr:hover td{background:rgba(88,166,255,.03)}
+   </a>
+   <nav class="topbar-nav">
+     <a href="/dashboard">Dashboard</a>
++    <a href="/catalog">Catalog</a>
+     <a href="/payments" class="active">Payments</a>
+     <a href="/calculator">Calculator</a>
+     <a href="/network">Network</a>
+@@ -540,20 +541,50 @@ async function fetchPricing() {
+ }
+ 
+ /* ===== Fetch wallets ===== */
++function renderWalletsTable(wallets) {
++  var tbody = document.getElementById('walletsBody');
++  clearNode(tbody);
++  if (!wallets || wallets.length === 0) {
++    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No wallets yet. Apps get 1,000 free credits on first connect. Everything works on the free tier.</td></tr>';
++    return;
++  }
++  for (var i = 0; i < wallets.length; i++) {
++    var w = wallets[i];
++    var row = appendEl(tbody, 'tr');
++    appendCell(row, truncateKey(w.appPubkey));
++    appendCell(row, formatSats(w.balance));
++    appendCell(row, formatSats(w.totalDeposited));
++    appendCell(row, formatSats(w.totalSpent));
++    appendCell(row, formatSats(w.totalBonusReceived + w.welcomeCreditsReceived));
++    var tierCell = appendCell(row, '');
++    tierCell.innerHTML = tierBadge(w.tier);
++    appendCell(row, timeAgo(w.lastActivity));
++  }
++}
++
+ async function fetchWallets() {
+   try {
+     var res = await fetchWithTimeout('/api/v1/credits/stats', { headers: { 'x-api-key': '' } });
+-    // Stats endpoint may require auth - fall back gracefully
+-    if (!res.ok) return;
+-    var stats = await res.json();
+-    if (stats.credits) {
+-      document.getElementById('walletSummary').textContent =
+-        metricCount(stats.credits.totalWallets) + ' wallets, ' + formatSats(stats.credits.totalDeposited) + ' deposited, ' +
+-        formatSats(stats.credits.totalSpent) + ' spent';
++    if (res.ok) {
++      var stats = await res.json();
++      if (stats.credits) {
++        document.getElementById('walletSummary').textContent =
++          metricCount(stats.credits.totalWallets) + ' wallets, ' + formatSats(stats.credits.totalDeposited) + ' deposited, ' +
++          formatSats(stats.credits.totalSpent) + ' spent';
++      }
+     }
+   } catch (e) {
+     // Stats may require auth — that's fine
+   }
++  try {
++    var wres = await fetchWithTimeout('/api/v1/credits/wallets', { headers: { 'x-api-key': '' } });
++    if (wres.ok) {
++      var wdata = await wres.json();
++      renderWalletsTable(wdata.wallets);
++    }
++  } catch (e) {
++    // Wallet list may require auth — that's fine
++  }
+ }
+ 
+ /* ===== Data Fetching & WebSocket ===== */
+diff --git a/docs/RELAYKERNEL-GATEWAY-COMPATIBILITY.md b/docs/RELAYKERNEL-GATEWAY-COMPATIBILITY.md
+index 069ab529..afd70954 100644
+--- a/docs/RELAYKERNEL-GATEWAY-COMPATIBILITY.md
++++ b/docs/RELAYKERNEL-GATEWAY-COMPATIBILITY.md
+@@ -41,3 +41,16 @@ compatibility floor.
+ 
+ This is deliberately not a full RelayKernel replacement claim. It is the
+ compatibility floor for the current HiveRelay/Blindspark release line.
++
++## Deferred public HTTPS extension
++
++The compatibility floor above preserves today's path-addressed gateway. The
++deferred design for key-derived HTTPS subdomains, publisher domains, signed
++gateway advertisements and leases, exact-byte serving, and proof-carrying HTTP
++responses is specified in
++[`PUBLIC-HTTPS-HIVE-GATEWAY-SPEC.md`](PUBLIC-HTTPS-HIVE-GATEWAY-SPEC.md).
++
++That work remains a T1/public availability layer above RelayKernel. It MUST NOT
++be mounted or advertised by the T2 blind-custody role. Runtime implementation
++starts only after the blind-substrate role, storage-class, and signing contracts
++pass the readiness gates in that specification.
+diff --git a/examples/node-app/index.js b/examples/node-app/index.js
+index eaf22c95..b92178ff 100644
+--- a/examples/node-app/index.js
++++ b/examples/node-app/index.js
+@@ -52,8 +52,10 @@ const apps = relay.getAvailableApps()
+ if (apps.length > 0) {
+   console.log(`\n${apps.length} app row(s) across connected relays:`)
+   for (const app of apps) {
+-    const id = app.appId || app.appKey.slice(0, 12) + '...'
+-    console.log(`  - ${id} (from relay ${app.source.relayPubkey.slice(0, 12)})`)
++    const appKey = app.appKey || app.key || ''
++    const id = app.appId || (appKey ? appKey.slice(0, 12) + '...' : 'unknown')
++    const relayPubkey = app.source && app.source.relayPubkey ? app.source.relayPubkey.slice(0, 12) : 'unknown'
++    console.log(`  - ${id} (from relay ${relayPubkey})`)
+   }
+ }
+ 
+diff --git a/examples/pear-app/index.js b/examples/pear-app/index.js
+index c5aa93f7..6af957e9 100644
+--- a/examples/pear-app/index.js
++++ b/examples/pear-app/index.js
+@@ -68,8 +68,10 @@ const apps = relay.getAvailableApps()
+ if (apps.length > 0) {
+   console.log(`\n${apps.length} app row(s) across connected relays:`)
+   for (const app of apps) {
+-    const id = app.appId || app.appKey.slice(0, 12) + '...'
+-    console.log(`  - ${id} (from relay ${app.source.relayPubkey.slice(0, 12)})`)
++    const appKey = app.appKey || app.key || ''
++    const id = app.appId || (appKey ? appKey.slice(0, 12) + '...' : 'unknown')
++    const relayPubkey = app.source && app.source.relayPubkey ? app.source.relayPubkey.slice(0, 12) : 'unknown'
++    console.log(`  - ${id} (from relay ${relayPubkey})`)
+   }
+ }
+ 
+diff --git a/fleet/fleet-status.sh b/fleet/fleet-status.sh
+index 1502bddc..f091849d 100755
+--- a/fleet/fleet-status.sh
++++ b/fleet/fleet-status.sh
+@@ -115,13 +115,21 @@ while IFS='|' read -r name host keyspec channel; do
+   out="$(printf '%s\n' "$out" | tail -n 1)"
+   IFS='|' read -r ver rest disk <<<"$out"
+   read -r run apps conns <<<"${rest:-? ? ?}"
++  # Flag disk pressure so a filling box is caught BEFORE it wedges (a full disk
++  # hangs the relay → public 502). ! at >=75%, !! at >=90%.
++  disk_pct="$(printf '%s' "$disk" | tr -dc '0-9')"
++  disk_display="${disk:-?}"
++  if [ -n "$disk_pct" ]; then
++    if [ "$disk_pct" -ge 90 ] 2>/dev/null; then disk_display="${disk}!!"
++    elif [ "$disk_pct" -ge 75 ] 2>/dev/null; then disk_display="${disk}!"; fi
++  fi
+   printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' \
+     "$safe_name" \
+     "$(clean_field "${ver:-?}")" \
+     "$(clean_field "${run:-?}")" \
+     "$(clean_field "${apps:-?}")" \
+     "$(clean_field "${conns:-?}")" \
+-    "$(clean_field "${disk:-?}")" \
++    "$(clean_field "${disk_display}")" \
+     "$safe_target"
+ done < <(python3 -c '
+ import json,sys
+@@ -130,3 +138,5 @@ for r in json.load(open(sys.argv[1]))["relays"]:
+     key  = "" if r.get("sshKey") in (None,"default") else r["sshKey"]
+     print("{}|{}|{}|{}".format(r["name"], host, key, r.get("channel", "stable")))
+ ' "$RELAYS")
++
++printf '\nDISK flags: %s = >=75%% (set/verify maxStorageBytes), %s = >=90%% (act now — a full disk wedges the relay).\n' '!' '!!'
+diff --git a/package-lock.json b/package-lock.json
+index 1c96e675..44d963ec 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -5879,6 +5879,18 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/pear-gracedown": {
++      "version": "1.0.3",
++      "resolved": "https://registry.npmjs.org/pear-gracedown/-/pear-gracedown-1.0.3.tgz",
++      "integrity": "sha512-PVh4AmpMDFxd+kMiCkuTyJ7NzRPgb0AEE7TR5GCl91x90uzWmFWon4TZMrCVhGtADG26OrQpOI+kL6S/o2w00w==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "bare-os": "^3.6.1",
++        "bare-signals": "^4.0.3",
++        "safety-catch": "^1.0.2",
++        "url-file-url": "^1.0.5"
++      }
++    },
+     "node_modules/picomatch": {
+       "version": "4.0.4",
+       "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.4.tgz",
+@@ -7531,6 +7543,16 @@
+         "bare-path": "^3.0.0"
+       }
+     },
++    "node_modules/url-file-url": {
++      "version": "1.0.5",
++      "resolved": "https://registry.npmjs.org/url-file-url/-/url-file-url-1.0.5.tgz",
++      "integrity": "sha512-RkUWAFWSmCDpyFn2qf2QO8Gnwf0y5RadgJuDpBeFD6gEzDuh6hTNpd/jox4znFFqZ79ghAS0gGM7F3ZU4nrMWw==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "bare-path": "^3.0.0",
++        "which-runtime": "^1.2.0"
++      }
++    },
+     "node_modules/v8-to-istanbul": {
+       "version": "9.3.0",
+       "resolved": "https://registry.npmjs.org/v8-to-istanbul/-/v8-to-istanbul-9.3.0.tgz",
+@@ -7844,7 +7866,6 @@
+         "compact-encoding": "^2.15.0",
+         "corestore": "^6.18.0",
+         "distributed-drive": "^0.1.1",
+-        "graceful-goodbye": "^1.3.0",
+         "holesail": "^2.4.1",
+         "hyperbee": "^2.20.5",
+         "hypercore": "^10.36.0",
+@@ -7854,6 +7875,7 @@
+         "minimist": "^1.2.8",
+         "multicast-dns": "^7.2.5",
+         "paparam": "^1.10.1",
++        "pear-gracedown": "^1.0.3",
+         "pino": "^9.0.0",
+         "protomux": "^3.6.0",
+         "socks": "^2.8.7",
+diff --git a/packages/core/cli/index.js b/packages/core/cli/index.js
+index 8719c7a2..edeb92f8 100755
+--- a/packages/core/cli/index.js
++++ b/packages/core/cli/index.js
+@@ -15,11 +15,11 @@
+  */
+ 
+ import minimist from 'minimist'
+-import goodbye from 'graceful-goodbye'
++import gracedown from 'pear-gracedown'
+ import { RelayNode } from '../core/relay-node/index.js'
+ import { createLogger } from '../core/logger.js'
+ import { isValidHexKey } from '../core/constants.js'
+-import { loadConfig, saveConfig, ensureDirs, CONFIG_PATH, deriveTokenFromSeed, applyOutboxlogNamespaceEnv } from '../config/loader.js'
++import { loadConfig, saveConfig, ensureDirs, CONFIG_PATH, deriveTokenFromSeed, applyOutboxlogNamespaceEnv, resolveStorageCap } from '../config/loader.js'
+ import b4a from 'b4a'
+ import { existsSync, mkdirSync, cpSync, readFileSync } from 'fs'
+ import { join, dirname } from 'path'
+@@ -149,12 +149,20 @@ const COMMANDS = {
+   help
+ }
+ 
++// These commands parse their own positional args and already print their own
++// usage on --help / invalid input. Everything else falls back to global help.
++const SUBCOMMAND_HELP_COMMANDS = new Set(['catalog', 'federation', 'qvac', 'ghostdrive'])
++
+ async function main () {
+   const handler = COMMANDS[command]
+   if (!handler) {
+     help()
+     process.exit(command ? 1 : 0)
+   }
++  if ((args.help || args.h === true) && !SUBCOMMAND_HELP_COMMANDS.has(command)) {
++    help()
++    process.exit(0)
++  }
+   await handler()
+ }
+ 
+@@ -453,6 +461,15 @@ async function start () {
+ 
+   const config = loadConfig(cliOverrides)
+ 
++  // Scale an unset storage cap to THIS box's disk (and clamp an over-large
++  // explicit cap) so the seeder's adoption gate stops before the volume fills
++  // and wedges the node. The fixed 50 GB default is too big for small boxes.
++  resolveStorageCap(config)
++  if (config._maxStorageBytesClampedFrom != null) {
++    console.log(`  ${ARROW} ${paint(C.yellow, 'max-storage clamped')} ${formatBytes(config._maxStorageBytesClampedFrom)} ${ARROW} ${formatBytes(config.maxStorageBytes)} (90% of disk — protects the volume)`)
++    delete config._maxStorageBytesClampedFrom
++  }
++
+   console.log(mainBanner(VERSION))
+   console.log('  ' + ARROW + ' ' + paint(C.cyan, 'starting relay node') + ' ' + paint(C.dim, '...'))
+   console.log()
+@@ -591,7 +608,7 @@ async function start () {
+ 
+   let statusInterval = null
+ 
+-  goodbye(async () => {
++  gracedown(async () => {
+     if (statusInterval) clearInterval(statusInterval)
+     log.info('shutting down')
+     console.log(shutdownBanner())
+@@ -818,7 +835,7 @@ async function startTestnet () {
+     process.stdout.write(`\r  [testnet] ${parts.join(' | ')}${clientPart}   `)
+   }, 5000)
+ 
+-  goodbye(async () => {
++  gracedown(async () => {
+     clearInterval(statusInterval)
+     console.log(shutdownBanner())
+     console.log('  ' + ARROW + ' ' + paint(C.dim, 'tearing down testnet...'))
+diff --git a/packages/core/config/default.js b/packages/core/config/default.js
+index f1ec921b..77d974d5 100644
+--- a/packages/core/config/default.js
++++ b/packages/core/config/default.js
+@@ -151,7 +151,11 @@ export default {
+     diskPressurePct: 80,
+     resumePct: 70,
+     floorMargin: 1,
+-    minAgeMs: 3 * 24 * 60 * 60 * 1000,
++    // 6h (was 3 days). 3 days was too protective: a box ingesting content
++    // faster than that could never shed old-enough over-replicated entries and
++    // would fill the disk to 100% before disk-pressure eviction could act. The
++    // floor + floorMargin still protect availability regardless of age.
++    minAgeMs: 6 * 60 * 60 * 1000,
+     sweepIntervalMs: 10 * 60 * 1000,
+     maxEvictionsPerSweep: 20
+   },
+diff --git a/packages/core/config/loader.js b/packages/core/config/loader.js
+index d0c55add..d7546751 100644
+--- a/packages/core/config/loader.js
++++ b/packages/core/config/loader.js
+@@ -7,7 +7,7 @@
+  *   3. config/default.js (built-in defaults)
+  */
+ 
+-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
++import { readFileSync, writeFileSync, mkdirSync, existsSync, statfsSync } from 'fs'
+ import { join } from 'path'
+ import { homedir } from 'os'
+ import { createHmac } from 'crypto'
+@@ -69,6 +69,66 @@ export function applyOutboxlogNamespaceEnv (cliOverrides = {}, rawEnvValue, hasP
+   return cliOverrides
+ }
+ 
++// Storage-cap safety fractions of the volume. The built-in default
++// (config/default.js maxStorageBytes = 50 GB) is a FIXED value that does not
++// scale to the disk — on a small box it is too big: a 58 GB box with a 50 GB
++// seeded cap fills the disk to 100% (seeded bytes + gateway store + OS + Hypercore
++// overhead) BEFORE the 50 GB cap binds, wedging the node (writes fail → /health
++// hangs → public 502). See the 2026-07 relay-us disk-full incident. So we make an
++// UNSET cap scale to the actual disk, and clamp any explicit cap that would risk
++// filling the volume.
++const DEFAULT_STORAGE_DISK_FRACTION = 0.75 // unset cap → 75% of the volume
++const MAX_STORAGE_DISK_FRACTION = 0.90 // hard ceiling any explicit cap is clamped to
++
++function existingAncestor (p) {
++  let cur = p
++  for (let i = 0; i < 64 && cur; i++) {
++    if (existsSync(cur)) return cur
++    const parent = join(cur, '..')
++    if (parent === cur) break
++    cur = parent
++  }
++  return cur
++}
++
++/**
++ * Resolve a disk-relative storage cap so an unset maxStorageBytes scales to the
++ * actual volume instead of the fixed 50 GB default. Rules:
++ *   - unset (equals the built-in default): cap = 75% of total disk.
++ *   - explicit but > 90% of disk: clamped to 90% (config._maxStorageBytesClampedFrom
++ *     records the original so the CLI can warn).
++ *   - disk unmeasurable / non-positive: config is left unchanged (safe fallback to
++ *     the merged value — never make the cap worse than it already was).
++ *
++ * Pure and testable: pass `opts.statfs` (a statfsSync-shaped fn returning
++ * { blocks, bsize }) to simulate a volume; defaults to fs.statfsSync of the
++ * storage path's nearest existing ancestor. Mutates and returns `config`.
++ */
++export function resolveStorageCap (config, opts = {}) {
++  const statfs = opts.statfs || statfsSync
++  const target = opts.storagePath || (config && config.storage) || STORAGE_DIR
++  let totalBytes = 0
++  try {
++    const s = statfs(existingAncestor(target))
++    totalBytes = Number(s.blocks) * Number(s.bsize)
++  } catch {
++    totalBytes = 0
++  }
++  if (!Number.isFinite(totalBytes) || totalBytes <= 0) return config
++
++  const diskDefault = Math.floor(totalBytes * DEFAULT_STORAGE_DISK_FRACTION)
++  const diskCeiling = Math.floor(totalBytes * MAX_STORAGE_DISK_FRACTION)
++  const isDefault = config.maxStorageBytes === defaults.maxStorageBytes
++
++  if (isDefault) {
++    config.maxStorageBytes = diskDefault
++  } else if (typeof config.maxStorageBytes === 'number' && config.maxStorageBytes > diskCeiling) {
++    config._maxStorageBytesClampedFrom = config.maxStorageBytes
++    config.maxStorageBytes = diskCeiling
++  }
++  return config
++}
++
+ /**
+  * Load config: defaults < config.json < CLI overrides
+  */
+diff --git a/packages/core/core/relay-node/api-metrics.js b/packages/core/core/relay-node/api-metrics.js
+index 74e7b567..800ca677 100644
+--- a/packages/core/core/relay-node/api-metrics.js
++++ b/packages/core/core/relay-node/api-metrics.js
+@@ -1,6 +1,6 @@
+ export function resolveMetricsRoute (method, path) {
+   if (method !== 'GET') return null
+-  if (path === '/metrics') return { kind: 'metrics' }
++  if (path === '/metrics' || path === '/api/metrics') return { kind: 'metrics' }
+   return null
+ }
+ 
+diff --git a/packages/core/core/relay-node/api-status-read.js b/packages/core/core/relay-node/api-status-read.js
+index 5b44fe91..d2fef54a 100644
+--- a/packages/core/core/relay-node/api-status-read.js
++++ b/packages/core/core/relay-node/api-status-read.js
+@@ -13,7 +13,7 @@ const DISK_STATUS = new Set(['ok', 'warn', 'critical'])
+ 
+ export function resolveStatusRoute (method, path) {
+   if (method !== 'GET') return null
+-  if (path === '/status') return { kind: 'status' }
++  if (path === '/status' || path === '/api/status') return { kind: 'status' }
+   return null
+ }
+ 
+diff --git a/packages/core/core/relay-node/api.js b/packages/core/core/relay-node/api.js
+index f1a8ca4e..15bc33bc 100644
+--- a/packages/core/core/relay-node/api.js
++++ b/packages/core/core/relay-node/api.js
+@@ -103,6 +103,13 @@ import {
+   buildStatusRoutePayload,
+   resolveStatusRoute
+ } from './api-status-read.js'
++import {
++  buildCreditsCompareRoutePayload,
++  buildCreditsPricingRoutePayload,
++  buildCreditsStatsRoutePayload,
++  buildCreditsWalletsRoutePayload,
++  resolveCreditsRoute
++} from './api-credits.js'
+ import {
+   buildUsageTelemetryRoutePayload,
+   resolveUsageTelemetryRoute,
+@@ -975,6 +982,7 @@ export class RelayAPI extends EventEmitter {
+         const healthRoute = resolveHealthRoute(req.method, path)
+         const statusRoute = resolveStatusRoute(req.method, path)
+         const metricsRoute = resolveMetricsRoute(req.method, path)
++        const creditsRoute = resolveCreditsRoute(req.method, path)
+         const wizardSnapshotRoute = resolveWizardSnapshotRoute(req.method, path)
+ 
+         if (healthRoute && healthRoute.kind === 'health') {
+@@ -1008,6 +1016,25 @@ export class RelayAPI extends EventEmitter {
+           return writeText(res, result.text, result.status || 200)
+         }
+ 
++        if (creditsRoute) {
++          if (creditsRoute.kind === 'credits-pricing') {
++            const result = buildCreditsPricingRoutePayload({ route: creditsRoute, node: this.node })
++            return this._json(res, result.payload, result.status || 200)
++          }
++          if (creditsRoute.kind === 'credits-pricing-compare') {
++            const result = buildCreditsCompareRoutePayload({ route: creditsRoute, node: this.node })
++            return this._json(res, result.payload, result.status || 200)
++          }
++          if (creditsRoute.kind === 'credits-stats') {
++            const result = buildCreditsStatsRoutePayload({ route: creditsRoute, node: this.node })
++            return this._json(res, result.payload, result.status || 200)
++          }
++          if (creditsRoute.kind === 'credits-wallets') {
++            const result = buildCreditsWalletsRoutePayload({ route: creditsRoute, node: this.node })
++            return this._json(res, result.payload, result.status || 200)
++          }
++        }
++
+         if (peerStateRoute && peerStateRoute.kind === 'legacy-peer-list') {
+           const result = buildPeerStateRoutePayload({
+             route: peerStateRoute,
+diff --git a/packages/core/core/relay-node/eviction.js b/packages/core/core/relay-node/eviction.js
+index 236826f7..43529967 100644
+--- a/packages/core/core/relay-node/eviction.js
++++ b/packages/core/core/relay-node/eviction.js
+@@ -44,7 +44,7 @@ const DEFAULTS = {
+   diskPressurePct: 80,
+   resumePct: 70,
+   floorMargin: 1,
+-  minAgeMs: 3 * 24 * 60 * 60 * 1000, // 3 days
++  minAgeMs: 6 * 60 * 60 * 1000, // 6h (see config/default.js — 3 days let boxes fill before shedding)
+   sweepIntervalMs: 10 * 60 * 1000,
+   maxEvictionsPerSweep: 20,
+   // Replica target when an entry has no replication-health row (boot-
+diff --git a/packages/core/package.json b/packages/core/package.json
+index 52e2ef12..00f1e49d 100644
+--- a/packages/core/package.json
++++ b/packages/core/package.json
+@@ -79,7 +79,6 @@
+     "compact-encoding": "^2.15.0",
+     "corestore": "^6.18.0",
+     "distributed-drive": "^0.1.1",
+-    "graceful-goodbye": "^1.3.0",
+     "holesail": "^2.4.1",
+     "hyperbee": "^2.20.5",
+     "hypercore": "^10.36.0",
+@@ -89,6 +88,7 @@
+     "minimist": "^1.2.8",
+     "multicast-dns": "^7.2.5",
+     "paparam": "^1.10.1",
++    "pear-gracedown": "^1.0.3",
+     "pino": "^9.0.0",
+     "protomux": "^3.6.0",
+     "socks": "^2.8.7",
+diff --git a/packages/services/README.md b/packages/services/README.md
+index d554a5ca..7c6bf996 100644
+--- a/packages/services/README.md
++++ b/packages/services/README.md
+@@ -12,13 +12,18 @@ npm install p2p-hiveservices
+ ```
+ 
+ ```js
+-import { createBuiltInServices } from 'p2p-hiveservices'
++import { IdentityService, StorageProofService } from 'p2p-hiveservices'
+ 
+-const services = createBuiltInServices({
+-  enabled: ['identity', 'storage-proof']
+-})
++const services = [
++  new IdentityService(),
++  new StorageProofService()
++]
+ ```
+ 
++Services are enabled by relay operators through Core's `PluginLoader` and the
++`config.plugins` array. The package exports service classes and helpers; it does
++not provide a `createBuiltInServices` factory.
++
+ The package is ESM-only and requires Node 20 or newer.
+ 
+ ## Built-In Providers
+diff --git a/standalone/client.js b/standalone/client.js
+index f91bb366..0cd930fd 100644
+--- a/standalone/client.js
++++ b/standalone/client.js
+@@ -18,7 +18,7 @@ import Hyperswarm from 'hyperswarm'
+ import ProtomuxRPC from 'protomux-rpc'
+ import c from 'compact-encoding'
+ import b4a from 'b4a'
+-import goodbye from 'graceful-goodbye'
++import gracedown from 'pear-gracedown'
+ import { createInterface } from 'readline'
+ import { mkdirSync } from 'fs'
+ import crypto from 'crypto'
+@@ -72,7 +72,7 @@ async function main () {
+   console.log('  Searching for server on DHT...\n')
+ 
+   // 3. Graceful shutdown
+-  goodbye(async () => {
++  gracedown(async () => {
+     console.log('\n  Shutting down...')
+     if (rpc) rpc.destroy()
+     await swarm.destroy()
+diff --git a/standalone/package-lock.json b/standalone/package-lock.json
+index 3b57ac0f..35470b13 100644
+--- a/standalone/package-lock.json
++++ b/standalone/package-lock.json
+@@ -11,9 +11,9 @@
+         "b4a": "^1.6.6",
+         "compact-encoding": "^2.15.0",
+         "corestore": "^6.18.0",
+-        "graceful-goodbye": "^1.3.0",
+         "hypercore": "^10.36.0",
+         "hyperswarm": "^4.7.0",
++        "pear-gracedown": "^1.0.3",
+         "protomux-rpc": "^1.3.0"
+       },
+       "devDependencies": {
+@@ -107,12 +107,6 @@
+         }
+       }
+     },
+-    "node_modules/bare-abort": {
+-      "version": "2.0.13",
+-      "resolved": "https://registry.npmjs.org/bare-abort/-/bare-abort-2.0.13.tgz",
+-      "integrity": "sha512-zdc8l88eB11Jsz5rDd6sCAgv2kUFXgdrZWoMlgU6JMkfAi1/uuGFC3IEHswKbIRQTk5H3T5CMuechsXYxiaHlQ==",
+-      "license": "Apache-2.0"
+-    },
+     "node_modules/bare-addon-resolve": {
+       "version": "1.10.0",
+       "resolved": "https://registry.npmjs.org/bare-addon-resolve/-/bare-addon-resolve-1.10.0.tgz",
+@@ -157,15 +151,6 @@
+         "bare-inspect": "^3.1.2"
+       }
+     },
+-    "node_modules/bare-env": {
+-      "version": "3.0.0",
+-      "resolved": "https://registry.npmjs.org/bare-env/-/bare-env-3.0.0.tgz",
+-      "integrity": "sha512-0u964P5ZLAxTi+lW4Kjp7YRJQ5gZr9ycYOtjLxsSrupgMz3sn5Z9n4SH/JIifHwvadsf1brA2JAjP+9IOWwTiw==",
+-      "license": "Apache-2.0",
+-      "dependencies": {
+-        "bare-os": "^3.0.1"
+-      }
+-    },
+     "node_modules/bare-events": {
+       "version": "2.8.2",
+       "resolved": "https://registry.npmjs.org/bare-events/-/bare-events-2.8.2.tgz",
+@@ -204,12 +189,6 @@
+         }
+       }
+     },
+-    "node_modules/bare-hrtime": {
+-      "version": "2.1.1",
+-      "resolved": "https://registry.npmjs.org/bare-hrtime/-/bare-hrtime-2.1.1.tgz",
+-      "integrity": "sha512-VMb3tHo05gsnbu3OXTmkDiwTjMlOsbQmKoysKqKEyR09m77TuDrYFbj3Q5GGk10dAKsUHrnXmwCaeJqzVpB5ZA==",
+-      "license": "Apache-2.0"
+-    },
+     "node_modules/bare-inspect": {
+       "version": "3.1.4",
+       "resolved": "https://registry.npmjs.org/bare-inspect/-/bare-inspect-3.1.4.tgz",
+@@ -258,34 +237,6 @@
+         "bare-os": "^3.0.1"
+       }
+     },
+-    "node_modules/bare-pipe": {
+-      "version": "4.1.5",
+-      "resolved": "https://registry.npmjs.org/bare-pipe/-/bare-pipe-4.1.5.tgz",
+-      "integrity": "sha512-6OfxaG8JSkRh3Gc4hzHRsxNt+yu2PpN7lrv1V+T78GdknWQkVGwiEvu4m+1nbfk8cMVQ0TGxRvQ90XA4rhnTuw==",
+-      "license": "Apache-2.0",
+-      "dependencies": {
+-        "bare-events": "^2.0.0",
+-        "bare-stream": "^2.0.0"
+-      },
+-      "engines": {
+-        "bare": ">=1.16.0"
+-      }
+-    },
+-    "node_modules/bare-process": {
+-      "version": "4.4.1",
+-      "resolved": "https://registry.npmjs.org/bare-process/-/bare-process-4.4.1.tgz",
+-      "integrity": "sha512-JfcTtymq6akqM2bdyTsP4A4GYJceBzb91k/ECmFps75uFf6uO33SM1bOZsRAqyRXExabsQJLn5S41NBl8HTM4A==",
+-      "license": "Apache-2.0",
+-      "dependencies": {
+-        "bare-abort": "^2.0.13",
+-        "bare-env": "^3.0.0",
+-        "bare-events": "^2.3.1",
+-        "bare-hrtime": "^2.0.0",
+-        "bare-os": "^3.7.1",
+-        "bare-signals": "^4.0.0",
+-        "bare-stdio": "^1.0.1"
+-      }
+-    },
+     "node_modules/bare-semver": {
+       "version": "1.0.3",
+       "resolved": "https://registry.npmjs.org/bare-semver/-/bare-semver-1.0.3.tgz",
+@@ -305,17 +256,6 @@
+         "bare": ">=1.7.0"
+       }
+     },
+-    "node_modules/bare-stdio": {
+-      "version": "1.0.2",
+-      "resolved": "https://registry.npmjs.org/bare-stdio/-/bare-stdio-1.0.2.tgz",
+-      "integrity": "sha512-3WJDqtvVGP4f+j68kyEC05umOYNwKJ1xG+YAXL8yZ605WgNqiRhVaFq+mVIhBt2eKNp7pa5vCQdhOt1pNh79SA==",
+-      "license": "Apache-2.0",
+-      "dependencies": {
+-        "bare-fs": "^4.5.2",
+-        "bare-pipe": "^4.1.5",
+-        "bare-tty": "^5.0.3"
+-      }
+-    },
+     "node_modules/bare-stream": {
+       "version": "2.13.0",
+       "resolved": "https://registry.npmjs.org/bare-stream/-/bare-stream-2.13.0.tgz",
+@@ -342,20 +282,6 @@
+         }
+       }
+     },
+-    "node_modules/bare-tty": {
+-      "version": "5.1.0",
+-      "resolved": "https://registry.npmjs.org/bare-tty/-/bare-tty-5.1.0.tgz",
+-      "integrity": "sha512-EZLvW4A+XiJgI3TW+e1pMME9PIJsfEXe/DA/WSKzIkq/v7Yarpv/rvG6Z5pGnpo4V/Bd+qopwnCLSR71hMMBYA==",
+-      "license": "Apache-2.0",
+-      "dependencies": {
+-        "bare-events": "^2.2.0",
+-        "bare-signals": "^4.0.0",
+-        "bare-stream": "^2.0.0"
+-      },
+-      "engines": {
+-        "bare": ">=1.16.0"
+-      }
+-    },
+     "node_modules/bare-type": {
+       "version": "1.1.0",
+       "resolved": "https://registry.npmjs.org/bare-type/-/bare-type-1.1.0.tgz",
+@@ -592,16 +518,6 @@
+         "which-runtime": "^1.2.0"
+       }
+     },
+-    "node_modules/graceful-goodbye": {
+-      "version": "1.3.3",
+-      "resolved": "https://registry.npmjs.org/graceful-goodbye/-/graceful-goodbye-1.3.3.tgz",
+-      "integrity": "sha512-ABj07mmHrK3FC8fJ3PP5QCrbA31zkB4Qg34NFmYgwJnBxzfbRmtMzOg54PL55OG5sFjvmBzD0q85JAtRlA3dSA==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "bare-process": "^4.0.0",
+-        "safety-catch": "^1.0.2"
+-      }
+-    },
+     "node_modules/hypercore": {
+       "version": "10.38.2",
+       "resolved": "https://registry.npmjs.org/hypercore/-/hypercore-10.38.2.tgz",
+@@ -882,6 +798,18 @@
+         }
+       }
+     },
++    "node_modules/pear-gracedown": {
++      "version": "1.0.3",
++      "resolved": "https://registry.npmjs.org/pear-gracedown/-/pear-gracedown-1.0.3.tgz",
++      "integrity": "sha512-PVh4AmpMDFxd+kMiCkuTyJ7NzRPgb0AEE7TR5GCl91x90uzWmFWon4TZMrCVhGtADG26OrQpOI+kL6S/o2w00w==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "bare-os": "^3.6.1",
++        "bare-signals": "^4.0.3",
++        "safety-catch": "^1.0.2",
++        "url-file-url": "^1.0.5"
++      }
++    },
+     "node_modules/protomux": {
+       "version": "3.10.1",
+       "resolved": "https://registry.npmjs.org/protomux/-/protomux-3.10.1.tgz",
+@@ -1188,6 +1116,16 @@
+         "b4a": "^1.6.6"
+       }
+     },
++    "node_modules/url-file-url": {
++      "version": "1.0.5",
++      "resolved": "https://registry.npmjs.org/url-file-url/-/url-file-url-1.0.5.tgz",
++      "integrity": "sha512-RkUWAFWSmCDpyFn2qf2QO8Gnwf0y5RadgJuDpBeFD6gEzDuh6hTNpd/jox4znFFqZ79ghAS0gGM7F3ZU4nrMWw==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "bare-path": "^3.0.0",
++        "which-runtime": "^1.2.0"
++      }
++    },
+     "node_modules/which-runtime": {
+       "version": "1.3.2",
+       "resolved": "https://registry.npmjs.org/which-runtime/-/which-runtime-1.3.2.tgz",
+diff --git a/standalone/package.json b/standalone/package.json
+index 71c2d52a..c83bebc4 100644
+--- a/standalone/package.json
++++ b/standalone/package.json
+@@ -14,9 +14,9 @@
+     "b4a": "^1.6.6",
+     "compact-encoding": "^2.15.0",
+     "corestore": "^6.18.0",
+-    "graceful-goodbye": "^1.3.0",
+     "hypercore": "^10.36.0",
+     "hyperswarm": "^4.7.0",
++    "pear-gracedown": "^1.0.3",
+     "protomux-rpc": "^1.3.0"
+   },
+   "engines": {
+diff --git a/standalone/server.js b/standalone/server.js
+index 21dcf49a..36683004 100644
+--- a/standalone/server.js
++++ b/standalone/server.js
+@@ -19,7 +19,7 @@ import Hyperswarm from 'hyperswarm'
+ import ProtomuxRPC from 'protomux-rpc'
+ import c from 'compact-encoding'
+ import b4a from 'b4a'
+-import goodbye from 'graceful-goodbye'
++import gracedown from 'pear-gracedown'
+ import { mkdirSync } from 'fs'
+ 
+ // ---------------------------------------------------------------------------
+@@ -71,7 +71,7 @@ async function main () {
+   console.log('\n  Waiting for peers...\n')
+ 
+   // 4. Graceful shutdown
+-  goodbye(async () => {
++  gracedown(async () => {
+     console.log('\n  Shutting down...')
+     for (const p of peers.values()) {
+       if (p.rpc) p.rpc.destroy()
+diff --git a/test/unit/config-loader.test.js b/test/unit/config-loader.test.js
+index 28307ff6..fd80633e 100644
+--- a/test/unit/config-loader.test.js
++++ b/test/unit/config-loader.test.js
+@@ -96,7 +96,12 @@ test('cli start uses HIVERELAY_MAX_STORAGE only before saved operator config exi
+   }, 'Max Store:')
+ 
+   t.ok(saved.sawNeedle)
+-  t.ok(saved.stdout.includes('Max Store:  50.0 GB'))
++  // Once a saved config.json exists, HIVERELAY_MAX_STORAGE is ignored (env is a
++  // default, not an override) and the cap falls back to the unset default. That
++  // default is now DISK-RELATIVE (resolveStorageCap → ~75% of the volume) rather
++  // than a fixed 50 GB, so assert the env value was not applied instead of a
++  // fixed number that depends on the test machine's disk.
++  t.absent(saved.stdout.includes('Max Store:  10.0 GB'), 'HIVERELAY_MAX_STORAGE not applied once a saved config exists')
+ })
+ 
+ test('cli start uses HIVERELAY_STORAGE when --storage is absent', async (t) => {
