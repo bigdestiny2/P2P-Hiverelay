@@ -819,13 +819,14 @@ export function verifyLocalStagedCellPutExchangeV2 (openInput, frameInputs) {
 export function verifyStagedCellPutPublicOuterEnvelopeV2 (input, openInput, direction, requestId = null) {
   const open = openInput && openInput.context ? openInput : decodeLocalStagedCellPutOpenV2(openInput)
   direction = exactEnum(LOCAL_STAGED_DIRECTION_V2, direction, 'direction')
+  const outerEnvelope = snapshot(input, 'public outer envelope')
   let decoded
   try {
-    decoded = decodeOuterEnvelope(asBuffer(input, 'public outer envelope'), { copyInner: false, copyBody: false })
+    decoded = decodeOuterEnvelope(outerEnvelope, { copyInner: true, copyBody: true })
   } catch {
     fail('staged CELL.PUT bytes are not one canonical public outer envelope')
   }
-  if (decoded.outerClass !== open.outerClass || asBuffer(input, 'public outer envelope').byteLength !== open.requestEnvelopeBytes) {
+  if (decoded.outerClass !== open.outerClass || outerEnvelope.byteLength !== open.requestEnvelopeBytes) {
     fail('staged CELL.PUT public outer envelope does not match the selected class')
   }
   const frame = decoded.frame
@@ -863,7 +864,18 @@ export function verifyStagedCellPutPublicOuterEnvelopeV2 (input, openInput, dire
   if (!b4a.equals(canonicalBody, frame.body)) {
     fail(`staged CELL.PUT body does not re-encode as exact canonical ${bodySchemaName}`)
   }
-  return Object.freeze({ outerClass: decoded.outerClass, frame, bodySchemaName })
+  const verifiedFrame = Object.freeze({
+    version: frame.version,
+    frameKind: frame.frameKind,
+    familyId: frame.familyId,
+    operationId: frame.operationId,
+    flags: frame.flags,
+    requestId: b4a.from(frame.requestId),
+    streamId: frame.streamId,
+    sequence: frame.sequence,
+    body: b4a.from(canonicalBody)
+  })
+  return Object.freeze({ outerClass: decoded.outerClass, frame: verifiedFrame, bodySchemaName })
 }
 
 export function encodeLocalReadyProbeV2 (input) {

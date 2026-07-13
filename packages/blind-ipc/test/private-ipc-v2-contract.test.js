@@ -340,8 +340,20 @@ test('private IPC v2 freezes transport/class/replay mapping and precommit result
   const publicResult = await artifact('vectors/v2/accepted/public-result-outer-envelope-class-3.bin')
   const publicError = await artifact('vectors/v2/accepted/public-error-outer-envelope-class-3.bin')
   const requestId = fixed(16, 0xe1)
+  const callerRequest = b4a.from(publicRequest)
   const request = contract.verifyStagedCellPutPublicOuterEnvelopeV2(
-    publicRequest, open, contract.LOCAL_STAGED_DIRECTION_V2.REQUEST)
+    callerRequest, open, contract.LOCAL_STAGED_DIRECTION_V2.REQUEST)
+  const verifiedRequestId = b4a.from(request.frame.requestId)
+  const verifiedRequestBody = b4a.from(request.frame.body)
+  callerRequest[15] ^= 1
+  callerRequest[51] = 2
+  t.is(Object.isFrozen(request.frame), true, 'verified frame record is frozen')
+  t.ok(b4a.equals(request.frame.requestId, verifiedRequestId), 'caller mutation cannot change verified requestId')
+  t.ok(b4a.equals(request.frame.body, verifiedRequestBody), 'caller mutation cannot change verified canonical body')
+  t.is(decodeCanonical(putCellV1, request.frame.body).version, 1, 'owned verified body remains canonical')
+  const mutatedCallerError = capture(t, () => contract.verifyStagedCellPutPublicOuterEnvelopeV2(
+    callerRequest, open, contract.LOCAL_STAGED_DIRECTION_V2.REQUEST), 'fresh verification observes caller mutation')
+  t.is(mutatedCallerError.code, 'BAD_PRIVATE_IPC_V2_CONTRACT')
   const result = contract.verifyStagedCellPutPublicOuterEnvelopeV2(
     publicResult, open, contract.LOCAL_STAGED_DIRECTION_V2.RESULT, requestId)
   const error = contract.verifyStagedCellPutPublicOuterEnvelopeV2(

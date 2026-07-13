@@ -152,6 +152,9 @@ operation, class, correlation, flag, stream, or sequence is rejected.
 `ERROR` carries exactly one canonical closed-schema `BlindErrorV1` body. A body
 that fails its mapped codec, has trailing bytes, or does not re-encode byte for
 byte is rejected as a private-IPC contract error before commit-capable work.
+The verifier snapshots the complete outer envelope once before decoding and
+returns a frozen frame record whose request ID and canonical body are owned
+copies. Later mutation of caller-owned input cannot invalidate verified fields.
 
 The staged exchange is not successful merely because its request bytes reached
 the daemon. Success becomes committable only after the daemon has authenticated
