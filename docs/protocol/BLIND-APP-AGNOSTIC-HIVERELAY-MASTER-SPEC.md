@@ -1387,6 +1387,30 @@ SchemaCatalogEntryV1 {
   Its separate registry/vectors use v2 hash domains and enter neither public WIRE
   nor a client bundle.
 
+  Initial staged `CELL.PUT` uses only the generated fixed 16,384-byte maximum
+  result body and 16,435-byte complete result envelope, so it authorizes public
+  outer classes 3..6 only and exposes no predicted-result authority. Edge process
+  nonces are fresh OS-CSPRNG output once per process start or fork and are never
+  persisted or reused; local channel nonces are fresh per attempt. Runtime order
+  is native peer credentials; exact open/profile/topology/endpoint/deadline/class;
+  binding; branded readiness anchored to a persisted descriptor floor at sequence
+  >=1; counter-only memory reservation; durable replay consumption; then the
+  first body pull. Binding/readiness/resource failure cannot consume replay state.
+
+  Replay uses a dedicated topology/store/durability-bound, module-branded,
+  fsync-backed journal with capacity 4,096, a 15,000-ms maximum accepted-record
+  TTL ending at the exact open deadline, no live eviction, and a mandatory
+  15,000-ms V2-write quarantine after every daemon start. Recovered live entries
+  are conservatively retained for at least that full interval from recovery;
+  this may outlive the original deadline but is not a longer accepted-record TTL.
+  During quarantine the daemon withholds its readiness brand and suppresses or
+  refuses `LocalReadyAckV2`; it never encodes one with
+  `readyWriteOperationBits=0`. Journal failure, descriptor rollback/fork, and
+  quarantine affect only V2 writes while read/unary/v1 service remains live. A
+  structural object or self-verified boolean is never replay or readiness
+  authority. Likewise the pure frame verifier cannot mint peer-EOF authority;
+  only the daemon's module-private native stream observer can do so.
+
 Schema IDs are category-local and cannot be referenced across categories except by
 a 32-byte format hash field. The sole v1 exception is that PRIVATE_IPC imports the
 generated WIRE values for family, transport ID, one-hot transport-support bit,
@@ -2662,7 +2686,55 @@ periodic atomically renamed index checkpoints. Hyperblobs/Hyperbee may back late
 implementations only if a conformance test proves the same cross-resource atomic
 contract; their current separate blob/index/pin stores are not sufficient.
 
-For create, the engine:
+Private IPC v2 staged `CELL.PUT` uses the following stricter additive path. It
+does not enter the reservation/attempt state machine below:
+
+1. after authenticated open, persisted sequence-1-or-greater write readiness,
+   complete counter-only memory reservation, and durable replay consumption, it
+   may decode an owned bounded prefix and invoke only a deterministic,
+   side-effect-free, module-branded admission preflight. Preflight cannot contact
+   an issuer, consume or reserve a spend, mutate admission state, append WAL,
+   reserve durable quota, publish, or sign;
+2. it may stream the body into bounded reversible ephemeral staging while hashing.
+   No `INGRESS_RESERVED`, `ATTEMPT_CONSUMED`, terminal-spend, or other reservation
+   transition is legal on the v2 path;
+3. after the exact full outer envelope and request FIN, the edge must
+   write-half-close its authenticated local IPC request direction while retaining
+   a readable response half. Only after the daemon observes EOF on that same
+   native-peer-credential-authenticated stream, canonical request revalidation,
+   exact body length/hash, and staging fsync may it reacquire canonical locks and
+   revalidate caller cancellation, deadline, descriptor lifecycle, admission,
+   capacity, idempotency, map/fence, and writer state immediately before entering
+   the publish-and-commit unit;
+4. a rejected revalidation returns a canonical correlated error without durable
+   mutation. A successful create enters a non-cancellable unit that may publish
+   an immutable body as a bounded recoverable orphan and then appends/fsyncs/
+   applies exactly one additive `PUT_ATOMIC_COMMITTED` WAL record containing the
+   complete spend, allocation, cell, accounting, idempotency/result, map/fence,
+   and result-binding union; and
+5. cancellation observed by the final check before that unit discards staging
+   without consuming a spend. Once `publishOpaque` begins, caller cancellation is
+   ignored through publication and `PUT_ATOMIC_COMMITTED` append/fsync/apply. A
+   later WAL prewrite fence checks only internal writer and commit invariants,
+   never the caller signal. The adapter rechecks cancellation after committed
+   state exists and may suppress signing/result release; a fresh transport tuple
+   retries the same idempotent public request.
+
+The v2 recovery invariant is binary: either no logical mutation exists and any
+pre-WAL body is a reclaimable orphan, or one complete `PUT_ATOMIC_COMMITTED`
+replays the spend, cell, accounting, and exact result together. A torn tail may
+truncate under the ordinary WAL rules; an interior or semantically partial atomic
+record fails closed. Legacy reservation and attempt record kinds remain decodable
+and recovery-compatible but are never emitted by private IPC v2.
+
+FIN without daemon-observed EOF before the deadline, EOF before FIN, or request
+data after FIN yields only a generic local abort/close, no public error, and no
+commit. A result before authenticated EOF is forbidden. Early closure of the
+edge response half is caller cancellation: it discards staging before the
+publish boundary and suppresses only the result after that boundary.
+
+The recovery-compatible reservation state machine for existing records and
+non-v2 paths remains:
 
 1. validates only the fixed prefix, declared body length/hash, slot/create
    signature, caps, clock, admission shape, and coarse available capacity without
@@ -4471,6 +4543,12 @@ work or releases a lock/outcome. Group commit is permitted, but the first body b
 waits for both the witnessed `INGRESS_RESERVED` and witnessed first-credit
 decrement. A daemon that cannot reach the pinned journal stops new admitted work;
 it does not fall back to locally durable spend accounting.
+
+That reservation rule does not grant private IPC v2 permission to emit
+`INGRESS_RESERVED` or attempt-credit transitions. Profile-2 private IPC v2 writes
+remain disabled until one `PUT_ATOMIC_COMMITTED` transition can receive the same
+lease-conditioned external coverage atomically; local replay-journal durability
+alone never upgrades the profile-2 claim.
 
 At profile-2 store genesis, `externalJournalId` and `externalWitnessPublicKey` are
 always generated

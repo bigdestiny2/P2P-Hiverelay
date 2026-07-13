@@ -34,12 +34,13 @@ import {
   PRIVATE_IPC_V2_ADDITIONAL_SCHEMAS,
   PRIVATE_IPC_V2_CONTRACT,
   PRIVATE_IPC_V2_LIMITS,
+  PRIVATE_IPC_V2_REPLAY_POLICY,
+  PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY,
   REQUIRED_LOCAL_IPC_FEATURE_BITS_V2,
   TLS_EXPORTER_LABEL_V2,
   TRANSPORT_ID,
   TRANSPORT_SUPPORT,
   cellPutWorstCaseResultFitsOuterClassV2,
-  cellPutPredictedResultFitsOuterClassV2,
   decodeLocalReadyAckV2,
   decodeLocalReadyProbeV2,
   decodeLocalTransportBindingV2,
@@ -54,6 +55,7 @@ import {
   encodePrivateIpcV2Registry,
   hashPrivateIpcV2Registry,
   hashPrivateIpcV2VectorManifest,
+  initialStagedCellPutOuterClassSupportedV2,
   localIpcChannelClassForOuterClassV2,
   localReadyDecisionV2,
   replayTupleHashV2,
@@ -528,23 +530,43 @@ function buildFixtures (registryBytes, v1RegistryBytes) {
       rule: 'each body is strict canonical closed-schema bytes; decode failures normalize to BAD_PRIVATE_IPC_V2_CONTRACT'
     }),
     jsonVector('conformance/replay-tuple.json', {
-      consumeBefore: ['body-allocation', 'outer-envelope-reassembly', 'admission', 'publish', 'wal', 'spend', 'sign'],
+      antiPoisoningBeforeConsume: [
+        'native-peer-credentials', 'exact-v2-open', 'transport-profile', 'launch-topology',
+        'endpoint', 'open-deadline', 'initial-cell-put-outer-class-3-through-6',
+        'open-binding', 'branded-persisted-descriptor-floor-readiness-sequence-at-least-1',
+        'counter-only-memory-reservation'
+      ],
+      consumeBefore: [
+        'first-request-body-pull', 'outer-envelope-reassembly',
+        'admission-preflight', 'ephemeral-staging', 'publish', 'wal', 'spend', 'sign'
+      ],
       hash: hex(replayTupleHashV2(decodeLocalTransportBindingV2(transportBinding))),
+      policy: PRIVATE_IPC_V2_REPLAY_POLICY,
       tuple: ['edgeProcessNonce', 'localChannelNonce', 'publicSessionBindingHash']
     }),
     jsonVector('conformance/precommit-response-fit.json', {
       class2Bytes: OUTER_CLASS[2],
       class2Fits: cellPutWorstCaseResultFitsOuterClassV2(2),
-      class2FitsAuthenticatedPredictedReceiptBody: cellPutPredictedResultFitsOuterClassV2(2, 104),
+      class2AuthorizedForInitialStagedCellPut: initialStagedCellPutOuterClassSupportedV2(2),
       class3Bytes: OUTER_CLASS[3],
       class3Fits: cellPutWorstCaseResultFitsOuterClassV2(3),
       dispatchHeaderBytes: PRIVATE_IPC_V2_LIMITS.DISPATCH_HEADER_BYTES,
+      fixedMaximumResultBodyBytes: PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.fixedMaximumResultBodyBytes,
+      fixedRequiredResultEnvelopeBytes: PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.fixedRequiredResultEnvelopeBytes,
       minimumWorstCaseOuterClass: PRIVATE_IPC_V2_LIMITS.CELL_PUT_WORST_CASE_MINIMUM_OUTER_CLASS,
       outerHeaderBytes: PRIVATE_IPC_V2_LIMITS.OUTER_HEADER_BYTES,
       resultBodyBytes: PRIVATE_IPC_V2_LIMITS.CELL_PUT_MAX_RESULT_BODY_BYTES,
-      authenticatedPredictedReceiptBodyBytes: 104,
-      rule: 'reject before publish/WAL/spend/sign',
+      initialAuthorizedOuterClasses: PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.initialOuterClasses,
+      resultSizingAuthority: PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.resultSizingAuthority,
+      rule: 'private IPC v2 uses only the generated 16384-byte maximum result body and 16435-byte required envelope; classes 3..6 are authorized and no predicted-result input exists',
       worstCaseEnvelopeBytes: PRIVATE_IPC_V2_LIMITS.CELL_PUT_WORST_CASE_RESULT_ENVELOPE_BYTES
+    }),
+    jsonVector('conformance/staged-cell-put-runtime-policy.json', {
+      nonceLifecycle: PRIVATE_IPC_V2_CONTRACT.nonceLifecycle,
+      order: PRIVATE_IPC_V2_CONTRACT.precommitOrder,
+      replay: PRIVATE_IPC_V2_REPLAY_POLICY,
+      requestCompletion: PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.requestCompletion,
+      stagedCellPut: PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY
     }),
     jsonVector('conformance/contract.json', PRIVATE_IPC_V2_CONTRACT)
   )
@@ -593,8 +615,9 @@ async function build () {
     privateIpcVectorSetHash: hex(hashPrivateIpcV2VectorManifest(vectorManifestBytes)),
     releaseBlockers: [
       'the contract deliberately does not observe native peer credentials or mint runtime authority; daemon integration remains external',
+      'a branded fsync-backed replay journal, persisted descriptor floor, sequence-1 activation and startup write quarantine remain external',
       'TLS exporter binding requires a real TLSSocket integration test',
-      'precommit storage/coordinator barrier and restart/retrieval proof remain external',
+      'edge write-half-close, authenticated daemon-observed EOF, post-EOF PUT_ATOMIC_COMMITTED storage/coordinator and crash/retrieval proof remain external',
       'signed descriptor readiness and public multi-relay evidence remain external'
     ],
     runtimeReleaseReady: false,

@@ -99,6 +99,58 @@ export const PRIVATE_IPC_V2_LIMITS = Object.freeze({
   CELL_PUT_WORST_CASE_MINIMUM_OUTER_CLASS: 3
 })
 
+export const PRIVATE_IPC_V2_REPLAY_POLICY = Object.freeze({
+  capacity: 4096,
+  acceptedRecordMaximumTtlMillis: 15_000,
+  freshEntryExpiry: 'exact-open-deadline',
+  recoveredEntryMinimumRetentionMillis: 15_000,
+  recoveredRetentionBasis: 'conservative-startup-fence-not-accepted-record-ttl',
+  startupWriteQuarantineMillis: 15_000,
+  quarantineReadyAck: 'suppress-or-refuse',
+  quarantineReadinessBrand: 'withheld',
+  quarantineZeroWriteBitsAckPermitted: false,
+  liveEntryEvictionPermitted: false,
+  authorityKind: 'module-private-branded-journal-and-one-use-consume-receipt'
+})
+
+export const PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY = Object.freeze({
+  initialOuterClasses: Object.freeze([3, 4, 5, 6]),
+  initialMinimumOuterClass: 3,
+  resultSizingAuthority: 'fixed-generated-worst-case-only',
+  fixedMaximumResultBodyBytes: PRIVATE_IPC_V2_LIMITS.CELL_PUT_MAX_RESULT_BODY_BYTES,
+  fixedRequiredResultEnvelopeBytes: PRIVATE_IPC_V2_LIMITS.CELL_PUT_WORST_CASE_RESULT_ENVELOPE_BYTES,
+  minimumReadyDescriptorSequence: 1,
+  atomicCommitRecordKind: 'PUT_ATOMIC_COMMITTED',
+  v2EmitsLegacyReservationWal: false,
+  legacyReservationWalRecoveryCompatible: true,
+  preEofAdmission: 'owned-prefix-side-effect-free-branded-preflight-only',
+  preEofStorage: 'reversible-ephemeral-staging-only',
+  cancellationFence: 'under-canonical-locks-immediately-before-non-cancellable-publish-and-commit-unit',
+  nonCancellableCommitUnit: 'publish-through-put-atomic-committed-fsync-and-apply',
+  walPrewriteFence: 'internal-writer-and-commit-invariants-only-never-caller-cancellation',
+  publicResultRequires: 'exact-outer-plus-request-fin-plus-edge-write-half-close-plus-daemon-observed-authenticated-peer-eof-plus-canonical-revalidation',
+  requestCompletion: Object.freeze({
+    sequence: Object.freeze([
+      'exact-outer-request-fin',
+      'edge-write-half-close',
+      'daemon-observed-authenticated-peer-eof',
+      'canonical-post-eof-revalidation'
+    ]),
+    edgeResponseHalfReadableUntilTerminal: true,
+    daemonEofAuthority: 'module-private-same-native-peercred-authenticated-stream-eof-after-request-fin',
+    callerEofAssertionPermitted: false,
+    frameVerifierMintsEofAuthority: false,
+    commitBeforeDaemonObservedEofPermitted: false,
+    negativeSemantics: Object.freeze({
+      eofBeforeFin: 'generic-local-abort-no-public-error-no-commit',
+      finWithoutEof: 'caller-cancellation-or-deadline-then-generic-local-abort-no-public-error-no-commit',
+      requestDataAfterFin: 'generic-local-abort-no-public-error-no-commit',
+      resultBeforeDaemonObservedEof: 'forbidden-runtime-conformance-failure',
+      responseHalfClosedBeforeTerminal: 'caller-cancelled-pre-boundary-discards-post-boundary-commit-completes-without-result'
+    })
+  })
+})
+
 if (PRIVATE_IPC_V2_LIMITS.CELL_PUT_WORST_CASE_RESULT_ENVELOPE_BYTES !== 16_435 ||
     OUTER_CLASS[2] !== 16_384 || OUTER_CLASS[3] !== 65_536) {
   throw new Error('generated CELL.PUT response-fit authority changed')
@@ -128,6 +180,8 @@ export const PRIVATE_IPC_V2_ADDITIONAL_SCHEMAS = Object.freeze([
       'authorityKind:u8=TLS_EXPORTER_BY_PEERCRED_EDGE',
       'transportId:u8=HTTPS_DIRECT', 'transportSupportBit:u16be=DIRECT_HTTP',
       'endpointId:u8[1..255]', 'outerClass:u8[1..6]',
+      'initial-CELL.PUT-policy:outerClass-u8[3..6]',
+      'result-sizing:fixed-generated-worst-case-16435-bytes',
       'ipcChannelClass:u8=LOCAL_64K', 'acceptedMonotonicMillis:u64be',
       'openDeadlineMonotonicMillis:u64be[accepted+1..15000]',
       'requestEnvelopeBytes:u32be=OUTER_CLASS[outerClass]',
@@ -1023,24 +1077,27 @@ export function localIpcChannelClassForOuterClassV2 (outerClass) {
 }
 
 export function cellPutWorstCaseResultFitsOuterClassV2 (outerClass) {
-  return cellPutPredictedResultFitsOuterClassV2(outerClass, PRIVATE_IPC_V2_LIMITS.CELL_PUT_MAX_RESULT_BODY_BYTES)
-}
-
-export function cellPutPredictedResultFitsOuterClassV2 (outerClass, authenticatedPredictedResultBodyBytes) {
   outerClass = u8(outerClass, 'outerClass', 1, 6)
-  const bodyBytes = u32(authenticatedPredictedResultBodyBytes, 'authenticatedPredictedResultBodyBytes')
-  if (bodyBytes > PRIVATE_IPC_V2_LIMITS.CELL_PUT_MAX_RESULT_BODY_BYTES) {
-    fail('authenticated predicted CELL.PUT result exceeds the generated public operation cap')
-  }
-  return PRIVATE_IPC_V2_LIMITS.OUTER_HEADER_BYTES + PRIVATE_IPC_V2_LIMITS.DISPATCH_HEADER_BYTES + bodyBytes <= OUTER_CLASS[outerClass]
+  return PRIVATE_IPC_V2_LIMITS.CELL_PUT_WORST_CASE_RESULT_ENVELOPE_BYTES <= OUTER_CLASS[outerClass]
 }
 
-export function assertPrecommitCellPutResultFitV2 (
-  outerClass,
-  authenticatedPredictedResultBodyBytes = PRIVATE_IPC_V2_LIMITS.CELL_PUT_MAX_RESULT_BODY_BYTES
-) {
-  if (!cellPutPredictedResultFitsOuterClassV2(outerClass, authenticatedPredictedResultBodyBytes)) {
-    fail('authenticated predicted CELL.PUT correlated result does not fit selected outer class before commit', 'PRIVATE_IPC_V2_PRECOMMIT_RESULT_CLASS')
+export function initialStagedCellPutOuterClassSupportedV2 (outerClass) {
+  outerClass = u8(outerClass, 'outerClass', 1, 6)
+  return outerClass >= PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.initialMinimumOuterClass
+}
+
+export function assertPrecommitCellPutResultFitV2 (outerClass, ...unsupportedPrediction) {
+  if (unsupportedPrediction.length !== 0) {
+    fail('private IPC v2 result sizing is fixed to the generated worst case and accepts no predicted-result input',
+      'PRIVATE_IPC_V2_FIXED_RESULT_SIZING')
+  }
+  if (!initialStagedCellPutOuterClassSupportedV2(outerClass)) {
+    fail('initial staged CELL.PUT requires public outer class 3 through 6 under fixed worst-case result sizing',
+      'PRIVATE_IPC_V2_PRECOMMIT_RESULT_CLASS')
+  }
+  if (!cellPutWorstCaseResultFitsOuterClassV2(outerClass)) {
+    fail('fixed worst-case CELL.PUT correlated result does not fit selected outer class before commit',
+      'PRIVATE_IPC_V2_PRECOMMIT_RESULT_CLASS')
   }
   return outerClass
 }
@@ -1074,10 +1131,23 @@ export const PRIVATE_IPC_V2_CONTRACT = Object.freeze({
     Object.keys(OUTER_CLASS).map(outerClass => [outerClass, LOCAL_IPC_CHANNEL_CLASS_V2.LOCAL_64K])
   )),
   precommitOrder: Object.freeze([
-    'peer-credentials', 'exact-shape', 'transport-profile', 'topology', 'endpoint',
-    'deadline', 'replay-consume', 'open-binding', 'outer-request-decode',
-    'same-class-result-fit', 'admission', 'publish-or-wal-or-spend-or-sign'
+    'native-peer-credentials', 'exact-v2-open', 'transport-profile', 'launch-topology',
+    'endpoint', 'open-deadline', 'initial-cell-put-outer-class-3-through-6',
+    'open-binding', 'branded-persisted-descriptor-floor-readiness-sequence-at-least-1',
+    'counter-only-memory-reservation', 'durable-replay-consume', 'first-request-body-pull',
+    'owned-prefix-side-effect-free-branded-admission-preflight',
+    'reversible-ephemeral-body-staging', 'exact-outer-request-fin',
+    'edge-write-half-close-response-half-readable',
+    'daemon-observed-authenticated-peer-eof', 'canonical-post-eof-revalidation',
+    'final-caller-cancellation-and-lifecycle-fence-before-publish',
+    'non-cancellable-publish-and-put-atomic-committed', 'sign-and-same-class-result'
   ]),
+  nonceLifecycle: Object.freeze({
+    edgeProcessNonce: 'os-csprng-once-after-start-or-fork-stable-until-process-exit-never-persisted-or-reused',
+    localChannelNonce: 'fresh-os-csprng-for-every-open-attempt-never-reused'
+  }),
+  replayPolicy: PRIVATE_IPC_V2_REPLAY_POLICY,
+  stagedCellPutPolicy: PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY,
   requiredFeatureBits: REQUIRED_LOCAL_IPC_FEATURE_BITS_V2,
   limits: PRIVATE_IPC_V2_LIMITS
 })

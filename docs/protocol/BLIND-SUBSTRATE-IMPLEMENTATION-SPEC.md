@@ -478,6 +478,27 @@ credentials itself and combine them with the non-authoritative binding validatio
 before minting a process-private handle. A caller boolean, raw binding bytes, or
 the validation record is not authority, and no v1 fallback is permitted.
 
+Initial v2 `CELL.PUT` uses only the generated fixed 16,384-byte maximum result
+body and 16,435-byte complete result envelope, accepts outer classes 3..6 only,
+and exposes no predicted-result authority. Edge process nonces are fresh
+OS-CSPRNG output once per process start or fork, never persisted/reused, and local
+channel nonces are fresh per attempt. The daemon orders native peer credentials;
+exact open/profile/topology/endpoint/deadline/class; binding; branded readiness
+anchored to a persisted descriptor floor at sequence >=1; counter-only memory
+reservation; durable replay consumption; then its first body pull. The replay
+journal is a dedicated branded, fsync-backed, topology/store/durability-bound
+authority with 4,096 entries, a 15-second maximum accepted-record TTL ending at
+the exact open deadline, no live eviction, and a mandatory 15-second V2-write
+startup quarantine. Recovered live entries are retained for at least that full
+interval from recovery; this conservative fence may outlive an original open
+deadline but is not a longer accepted-record TTL. During quarantine the daemon
+withholds its readiness brand and suppresses or refuses `LocalReadyAckV2`; it
+never encodes one with `readyWriteOperationBits=0`. Quarantine, journal poison,
+or descriptor rollback/fork leaves unary/v1/read service live and affects only V2
+writes. The pure frame verifier never mints EOF authority; only the daemon's
+module-private native stream observer does, and a caller boolean or structural
+record cannot substitute.
+
 The unary socket request and response are exactly:
 
 ```text
@@ -1876,7 +1897,48 @@ final-LSN, fsync, map commit, restart, and reclaim transition.
 
 ### 9.3 WAL/admission atomicity
 
-The ordered create/append/mirror transaction is:
+Private IPC v2 staged `CELL.PUT` has a stricter ordered transaction:
+
+1. only after durable replay consume may the daemon decode an owned prefix and
+   invoke a deterministic, side-effect-free, module-branded admission preflight;
+   it cannot contact an issuer, consume/reserve a spend, mutate state, append WAL,
+   reserve durable quota, publish, or sign;
+2. body work is bounded reversible ephemeral staging only. The v2 path emits no
+   `INGRESS_RESERVED`, `ATTEMPT_CONSUMED`, terminal-spend, or reservation record;
+3. after exact full outer bytes and request FIN, the edge write-half-closes its
+   authenticated local IPC request direction and retains a readable response
+   half. Only after the daemon observes EOF on that same native-peer-credential-
+   authenticated stream, canonical revalidation, exact body length/hash, and
+   staging fsync does it reacquire canonical locks and revalidate caller
+   cancellation, deadline, descriptor lifecycle, admission, capacity,
+   idempotency, map/fence, and writer state immediately before entering the
+   publish-and-commit unit;
+4. a failed revalidation releases only a canonical correlated error. Success
+   enters a non-cancellable unit that may publish one reclaimable pre-WAL orphan
+   and then appends/fsyncs/applies exactly one additive `PUT_ATOMIC_COMMITTED`
+   record holding the complete spend, object, accounting, idempotency/result,
+   map/fence, and result-binding union; and
+5. cancellation observed by the final check before that unit discards the stage
+   and consumes no spend. Once `publishOpaque` begins, caller cancellation is
+   ignored through publication and `PUT_ATOMIC_COMMITTED` append/fsync/apply. A
+   later WAL prewrite fence checks only internal writer and commit invariants,
+   never the caller signal. The adapter rechecks cancellation after commit and
+   may suppress signing/result release. Response loss retries the same idempotent
+   request under a fresh transport replay tuple.
+
+Recovery yields either no logical mutation plus a reclaimable orphan or exactly
+one atomic spend/object/result. Legacy reservation records remain readable and
+replayable but private IPC v2 never emits them. Profile-2 v2 remains disabled
+until the one atomic record can receive its required external coverage.
+
+FIN without daemon-observed EOF before the deadline, EOF before FIN, or request
+data after FIN yields only a generic local abort/close, no public error, and no
+commit. A result before authenticated EOF is forbidden. Early closure of the
+edge response half is caller cancellation: it discards staging before the
+publish boundary and suppresses only the result after that boundary.
+
+The recovery-compatible ordered create/append/mirror transaction for existing
+records and non-v2 paths is:
 
 1. Decode and validate fixed prefixes, declared body length/hash, caps, signatures,
    clock, coarse capacity, and admission shape without allocating staging or

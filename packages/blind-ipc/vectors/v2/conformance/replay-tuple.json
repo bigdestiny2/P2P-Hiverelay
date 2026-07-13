@@ -1,14 +1,40 @@
 {
+  "antiPoisoningBeforeConsume": [
+    "native-peer-credentials",
+    "exact-v2-open",
+    "transport-profile",
+    "launch-topology",
+    "endpoint",
+    "open-deadline",
+    "initial-cell-put-outer-class-3-through-6",
+    "open-binding",
+    "branded-persisted-descriptor-floor-readiness-sequence-at-least-1",
+    "counter-only-memory-reservation"
+  ],
   "consumeBefore": [
-    "body-allocation",
+    "first-request-body-pull",
     "outer-envelope-reassembly",
-    "admission",
+    "admission-preflight",
+    "ephemeral-staging",
     "publish",
     "wal",
     "spend",
     "sign"
   ],
   "hash": "1fd02e4f0af9d3faaa4b2332aaafc0a7736a43e6d9f924b285a5d90b1ac0a902",
+  "policy": {
+    "acceptedRecordMaximumTtlMillis": 15000,
+    "authorityKind": "module-private-branded-journal-and-one-use-consume-receipt",
+    "capacity": 4096,
+    "freshEntryExpiry": "exact-open-deadline",
+    "liveEntryEvictionPermitted": false,
+    "quarantineReadinessBrand": "withheld",
+    "quarantineReadyAck": "suppress-or-refuse",
+    "quarantineZeroWriteBitsAckPermitted": false,
+    "recoveredEntryMinimumRetentionMillis": 15000,
+    "recoveredRetentionBasis": "conservative-startup-fence-not-accepted-record-ttl",
+    "startupWriteQuarantineMillis": 15000
+  },
   "tuple": [
     "edgeProcessNonce",
     "localChannelNonce",

@@ -68,6 +68,13 @@ offset  bytes  field
 130     32     openBindingHash, nonzero
 ```
 
+`edgeProcessNonce` is generated from the operating-system CSPRNG once after the
+edge process starts, and again after any process fork. It is stable only until
+that process exits, is never persisted or restored, and is never reused by a
+later process. `localChannelNonce` is fresh operating-system CSPRNG output for
+every open attempt, including retries, and is never reused. Production code has
+no caller-supplied, raw, deterministic, or test nonce authority seam.
+
 Authority kinds are closed:
 
 1. `TLS_EXPORTER_BY_PEERCRED_EDGE`
@@ -92,7 +99,7 @@ offset  bytes  field
 8       1      transportId = HTTPS_DIRECT
 9       2      transportSupportBit = DIRECT_HTTP
 11      1      endpointId, 1..255
-12      1      outerClass, 1..6
+12      1      outerClass, syntactically 1..6; initial CELL.PUT policy 3..6
 13      1      ipcChannelClass = LOCAL_64K
 14      8      acceptedMonotonicMillis
 22      8      openDeadlineMonotonicMillis
@@ -105,6 +112,13 @@ The open deadline is strictly after acceptance and no more than 15,000 ms later.
 All public outer classes use the one local `LOCAL_64K` frame class and fragment
 when necessary. This mapping avoids allocating an 8-MiB private frame while still
 carrying the exact full public envelope.
+
+The initial staged `CELL.PUT` runtime authorizes outer classes 3 through 6 only.
+Classes 1 and 2 are rejected before open binding, write readiness, replay
+consumption, ingress construction, or body work. V2 result sizing is the fixed
+generated worst case: a 16,384-byte result body and 16,435-byte complete result
+envelope. No caller- or runtime-supplied predicted-result input or authority
+exists in V2.
 
 ### 2.3 Staged frames
 
@@ -128,10 +142,26 @@ offset  bytes  field
 abort code. It has no diagnostic text or free-form payload.
 
 Request frames start at sequence zero and end with FIN after exactly
-`OUTER_CLASS[outerClass]` bytes. Only then may result frames start at their own
-sequence zero. A non-aborted result ends with FIN after the same exact outer-class
-byte count. ABORT is terminal. A gap, replay, result-before-request-FIN, wrong
-aggregate length, or frame after FIN/ABORT closes the exchange.
+`OUTER_CLASS[outerClass]` bytes. After successfully writing that FIN, the edge
+must send no more request bytes and must write-half-close the authenticated local
+IPC socket while keeping its response/read half open until a terminal result,
+abort, or deadline. The daemon must observe peer EOF after FIN on that same
+native-peer-credential-authenticated stream. Only after that daemon-observed EOF
+may result frames start at their own sequence zero. A non-aborted result ends with
+FIN after the same exact outer-class byte count. ABORT is terminal.
+
+The pure frame verifier proves byte and FIN ordering only and never mints EOF
+authority. Runtime EOF authority is a module-private brand created only by the
+daemon's native stream observer; a caller boolean, callback, or structural record
+cannot substitute.
+
+FIN alone is not request-completion authority. EOF before FIN, request data after
+FIN, or FIN without daemon-observed EOF before the deadline produces only a
+generic local abort/close, no public error, and no commit. Result emission before
+daemon-observed EOF is a runtime conformance failure. If the edge closes its
+response half early, ordinary caller-cancellation semantics apply: a pre-publish
+boundary cancellation discards staging, while a post-boundary cancellation
+cannot interrupt the atomic commit and merely suppresses the result.
 
 ## 3. Public dispatch invariants
 
@@ -201,14 +231,55 @@ authority kind, both nonces, transport-profile hash, and public-session binding.
 The replay tuple is
 `(edgeProcessNonce, localChannelNonce, publicSessionBindingHash)`, domain-hashed
 under `hiverelay.blind.local-staged-replay-tuple.v2`. The daemon atomically
-consumes it before request-body allocation, reassembly, admission, publish, WAL,
-spend, or signing. Replay, collision, or expiry is terminal.
+consumes it before the first request-body pull, outer-envelope reassembly,
+admission preflight, staging, publish, WAL, spend, or signing. Once consumed, it
+remains occupied through the original open deadline even when readiness expires,
+the body is malformed, the caller aborts, or the operation returns no result.
+Replay, collision, or expiry is terminal; there is no release operation.
 
-Runtime verification order is native peer-credential observation, exact shape,
-transport profile, topology, endpoint, deadline, replay consumption, and open
-binding. The pure contract implements the binding-validation subset only. Only
-the process-private runtime authority produced after all gates may enter
-outer-envelope decode.
+Replay authority comes only from a dedicated module-private, fsync-backed journal
+opened for the exact private-IPC format, signed launch-topology hash, relay/store
+identity, durability-continuity/profile/store-format tuple, capacity 4,096, and a
+15,000-ms maximum accepted-record TTL. A fresh entry expires at its exact
+validated open deadline, which must be no more than 15,000 ms after acceptance;
+no accepted record may encode or configure a longer TTL. Its opened authority
+and one-use consume receipt are unforgeable process-private brands; a structural
+object, frozen fields, or caller boolean cannot substitute. A consume receipt is
+minted only after the complete record is durably appended. Live entries are never
+evicted: the 4,097th live tuple returns bounded `BUSY` without consuming another
+tuple.
+
+Journal open/recovery requires the exclusive writer lock, canonical owner-only
+paths, no-follow/inode/mode/link checks, authenticated header and records, a
+contiguous hash chain, and mandatory full startup quarantine. Any ambiguity,
+integrity failure, short/uncertain write, fsync failure, lock loss, identity
+mismatch, or clock regression poisons V2 writes only. Every daemon start enforces
+a full 15,000-ms monotonic V2-write quarantine after successful recovery; this
+quarantine plus recovered-live retention is the restart/rollback fence, not a
+separately incremented durable boot generation. All read/unary/v1 services remain
+available. Because restart cannot safely reconstruct the remaining monotonic open
+TTL, every recovered live tuple remains occupied for at least 15,000 ms from
+successful recovery. That conservative retention may outlive the original open
+deadline and is a recovery fence, not an accepted-record TTL above 15,000 ms. A
+topology change requires a fenced stop and the same full quarantine interval
+before a new topology-bound journal may authorize writes unless a later atomic
+migration preserves every live entry.
+
+The normative anti-poisoning order is:
+
+1. native peer credentials and connection quota;
+2. exact v2 open, transport profile, topology, endpoint, deadline, and initial
+   class-3-through-6 policy;
+3. non-authoritative open-binding validation;
+4. branded live readiness anchored to a persisted descriptor floor at sequence
+   one or greater;
+5. counter-only reservation of the complete bounded IPC memory charge;
+6. durable replay consumption and one-use daemon authority minting; and
+7. only then the first request-body pull and ingress construction.
+
+Binding failure, readiness failure, descriptor rollback/fork, memory `BUSY`, or
+pre-consume expiry therefore cannot poison a valid tuple. The pure contract
+implements the binding-validation subset only.
 
 ## 5. Write-specific readiness
 
@@ -256,30 +327,82 @@ or expiry keeps public writes disabled. A decision before
 `acceptedMonotonicMillis` is not yet valid. Probe deadline, ACK expiry, and
 descriptor expiry are exclusive upper bounds: equality is already expired.
 
+Sequence zero is a valid public descriptor genesis but never authorizes private
+IPC v2 writes. Initial V2 activation requires an explicitly signed and already
+persisted successor descriptor at sequence one or greater. The readiness
+projection is a daemon-private brand derived from the current verified descriptor
+and its MAC-verified manifest/checkpoint floor under the active store session;
+`selfVerified` booleans or callback-shaped objects are not authority. The floor is
+restored before readiness after every restart. Rollback or an equal-sequence
+different-hash fork clears only V2 write readiness while read service stays live.
+During the 15-second replay-journal startup quarantine, the daemon withholds the
+branded V2 write-readiness authority and suppresses or refuses `LocalReadyAckV2`.
+It never encodes an ACK with `readyWriteOperationBits=0`; such an ACK is invalid
+under the closed codec. Read/unary/v1 service remains live while no V2 write ACK
+exists.
+
 ## 6. Precommit result fit and ordering
 
-The daemon computes the exact required result-envelope bytes before any publish,
-WAL append, admission spend, or signature:
+Before open binding, the daemon uses only the generated fixed worst case. It does
+not authenticate or accept any predicted-result input:
 
 ```text
 required = 6-byte outer header + 45-byte dispatch framing +
-           authenticated predicted result-body bytes
+           fixed 16,384-byte generated maximum result body
+         = 16,435 bytes
 ```
 
-An operation-specific authenticated prediction may accept a smaller result. For
-example, a 104-byte predicted receipt fits class 2. A caller without such a
-prediction uses the generated maximum `CELL.PUT` result body of 16,384 bytes.
-That worst case requires `6 + 45 + 16,384 = 16,435` bytes, so class 2 (16,384)
-must be rejected and class 3 is the minimum worst-case class.
+Class 2 is 16,384 bytes and therefore cannot hold the fixed 16,435-byte result.
+Class 3 is the initial minimum, and only classes 3 through 6 are authorized.
 
 The barrier order is:
 
-1. authenticated open and replay consume;
-2. exact full outer-envelope reassembly and canonical `REQUEST CELL.PUT` decode;
-3. same-class correlated result prediction and fit;
-4. admission validation and storage/coordinator precommit;
-5. only then publish, WAL, spend, and sign; and
-6. emit the exact same-class correlated `RESPONSE` or `ERROR` envelope.
+1. complete the anti-poisoning open/readiness/memory/replay order in section 4;
+2. after replay, decode an owned bounded request prefix and permit only a
+   deterministic, side-effect-free, branded admission preflight over that owned
+   prefix; it may not contact an issuer, consume a spend, mutate replay/admission
+   state, append WAL, reserve durable quota, publish, or sign;
+3. stream only into bounded reversible ephemeral staging while hashing; no
+   `INGRESS_RESERVED`, `ATTEMPT_CONSUMED`, terminal-spend, or other legacy
+   reservation WAL record may be emitted by the v2 path;
+4. require the exact selected outer bytes and request FIN, then require the edge
+   to write-half-close only its request direction while retaining a readable
+   response half, require daemon-observed EOF on that same authenticated stream,
+   and only then perform canonical `REQUEST CELL.PUT` revalidation, exact body
+   length/hash validation, and fsync of the matching staging object;
+5. under canonical spend/object/WAL locks, revalidate caller cancellation,
+   deadline, descriptor lifecycle, admission, capacity, idempotency, map/fence,
+   writer state, and the branded preflight immediately before entering the
+   publish-and-commit unit; a rejected revalidation may now emit its exact
+   canonical same-class correlated `ERROR` without durable mutation;
+6. on success, enter a non-cancellable unit that publishes the immutable body as
+   a recoverable pre-WAL orphan if necessary, then appends/fsyncs/applies exactly
+   one additive `PUT_ATOMIC_COMMITTED` record that atomically consumes the spend
+   and creates the cell/idempotency result; and
+7. only after that commit, sign and emit the exact same-class correlated
+   `RESPONSE` envelope.
+
+Legacy reservation/attempt WAL kinds remain decodable and recovery-compatible;
+private IPC v2 never emits them. The final caller cancellation, deadline,
+descriptor-lifecycle, map, and writer-fence check occurs under the canonical
+locks immediately before entering the non-cancellable publish-and-commit unit.
+Cancellation observed at that boundary discards the ephemeral stage and consumes
+no spend. Once `publishOpaque` begins, caller cancellation is ignored through
+immutable publication and `PUT_ATOMIC_COMMITTED` append/fsync/apply. The WAL
+prewrite fence rechecks only internal writer and commit invariants and must not
+consult the caller signal. After the unit completes, the adapter rechecks caller
+cancellation and may suppress signing/result release. Response loss or
+post-commit signing failure is recovered by a new transport tuple carrying the
+same exact idempotent request, never by rolling back the spend.
+
+A public canonical error discovered from the owned prefix is retained until the
+complete outer envelope, FIN, edge write-half-close, authenticated daemon-observed
+EOF, and body validation all succeed. Invalid, truncated, overlong, wrong-hash,
+post-FIN, replayed-sequence, premature-EOF, missing-EOF, or private-authority
+failures suppress that error and close or send only a registered generic local
+abort. Before complete request authority there is no public error oracle. After a
+commit begins, an internal/signing/encoding failure closes the exchange and
+cannot emit an alternative error claiming that no commit occurred.
 
 An oversized or unrepresentable result therefore fails before externally visible
 mutation, never after a committed operation.
@@ -299,7 +422,8 @@ node packages/blind-ipc/generate-private-ipc-v2.mjs --check
 ```
 
 These artifacts prove the contract and fixtures only. Public write readiness
-still requires reviewed edge/daemon runtime integration, real local TLS exporter
-evidence, signed descriptor propagation, precommit storage/recovery/retrieval
-tests, browser/client integration, independent assurance, and staged multi-relay
+still requires the branded replay journal and startup quarantine, persisted
+sequence-1 descriptor floor, post-EOF `PUT_ATOMIC_COMMITTED` storage and crash
+recovery, reviewed edge/daemon integration, real local TLS exporter evidence,
+browser/client integration, independent assurance, and staged multi-relay
 evidence. Until those gates pass, the v2 authority does not authorize deployment.

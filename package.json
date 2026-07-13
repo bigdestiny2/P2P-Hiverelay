@@ -106,7 +106,7 @@
     "generate:blind-ipc-draft": "node scripts/generate-blind-ipc-draft.mjs",
     "verify:blind-ipc-draft": "node scripts/generate-blind-ipc-draft.mjs --check",
     "verify:blind-protocol-draft": "node scripts/generate-blind-protocol-draft.mjs --check",
-    "verify:blind-specs": "node scripts/verify-blind-specs.mjs && node scripts/generate-blind-protocol-draft.mjs --check && node scripts/generate-blind-client-composition-authority.mjs --check && node scripts/generate-blind-ipc-draft.mjs --check && node scripts/generate-blind-client-browser-artifacts.mjs --check",
+    "verify:blind-specs": "node packages/blind-ipc/generate-private-ipc-v2.mjs --check && node scripts/verify-blind-specs.mjs && node scripts/generate-blind-protocol-draft.mjs --check && node scripts/generate-blind-client-composition-authority.mjs --check && node scripts/generate-blind-ipc-draft.mjs --check && node scripts/generate-blind-client-browser-artifacts.mjs --check",
     "verify:blind-retirement": "node scripts/verify-blind-legacy-retirement-policy.mjs --json",
     "verify:blind-retirement:strict": "node scripts/verify-blind-legacy-retirement-policy.mjs --json --require-authorized",
     "verify:blind-ecosystem-migration": "node scripts/verify-blind-ecosystem-migration.mjs --json",

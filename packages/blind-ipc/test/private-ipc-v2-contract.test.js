@@ -376,10 +376,79 @@ test('private IPC v2 freezes transport/class/replay mapping and precommit result
   t.is(contract.PRIVATE_IPC_V2_LIMITS.CELL_PUT_WORST_CASE_RESULT_ENVELOPE_BYTES, 16_435)
   t.is(contract.cellPutWorstCaseResultFitsOuterClassV2(2), false)
   t.is(contract.cellPutWorstCaseResultFitsOuterClassV2(3), true)
-  t.is(contract.cellPutPredictedResultFitsOuterClassV2(2, 104), true)
+  t.is(contract.cellPutPredictedResultFitsOuterClassV2, undefined,
+    'V2 exports no predicted-result sizing authority')
+  t.is(contract.initialStagedCellPutOuterClassSupportedV2(2), false)
+  t.is(contract.initialStagedCellPutOuterClassSupportedV2(3), true)
   t.is(capture(t, () => contract.assertPrecommitCellPutResultFitV2(2), 'class 2 worst case rejects').code,
     'PRIVATE_IPC_V2_PRECOMMIT_RESULT_CLASS')
-  t.is(contract.assertPrecommitCellPutResultFitV2(2, 104), 2, 'authenticated predicted receipt may use class 2')
+  t.is(capture(t, () => contract.assertPrecommitCellPutResultFitV2(3, 104),
+    'predicted-result input rejects').code, 'PRIVATE_IPC_V2_FIXED_RESULT_SIZING')
+  t.is(contract.assertPrecommitCellPutResultFitV2(3), 3)
+  t.alike(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.initialOuterClasses, [3, 4, 5, 6])
+  t.is(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.resultSizingAuthority,
+    'fixed-generated-worst-case-only')
+  t.is(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.fixedMaximumResultBodyBytes, 16_384)
+  t.is(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.fixedRequiredResultEnvelopeBytes, 16_435)
+  t.is(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.minimumReadyDescriptorSequence, 1)
+  t.is(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.atomicCommitRecordKind, 'PUT_ATOMIC_COMMITTED')
+  t.is(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.v2EmitsLegacyReservationWal, false)
+  t.is(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.cancellationFence,
+    'under-canonical-locks-immediately-before-non-cancellable-publish-and-commit-unit')
+  t.is(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.nonCancellableCommitUnit,
+    'publish-through-put-atomic-committed-fsync-and-apply')
+  t.is(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.walPrewriteFence,
+    'internal-writer-and-commit-invariants-only-never-caller-cancellation')
+  t.is(contract.PRIVATE_IPC_V2_REPLAY_POLICY.capacity, 4096)
+  t.is(contract.PRIVATE_IPC_V2_REPLAY_POLICY.acceptedRecordMaximumTtlMillis, 15_000)
+  t.is(contract.PRIVATE_IPC_V2_REPLAY_POLICY.freshEntryExpiry, 'exact-open-deadline')
+  t.is(contract.PRIVATE_IPC_V2_REPLAY_POLICY.recoveredEntryMinimumRetentionMillis, 15_000)
+  t.is(contract.PRIVATE_IPC_V2_REPLAY_POLICY.recoveredRetentionBasis,
+    'conservative-startup-fence-not-accepted-record-ttl')
+  t.is(contract.PRIVATE_IPC_V2_REPLAY_POLICY.startupWriteQuarantineMillis, 15_000)
+  t.is(contract.PRIVATE_IPC_V2_REPLAY_POLICY.quarantineReadyAck, 'suppress-or-refuse')
+  t.is(contract.PRIVATE_IPC_V2_REPLAY_POLICY.quarantineReadinessBrand, 'withheld')
+  t.is(contract.PRIVATE_IPC_V2_REPLAY_POLICY.quarantineZeroWriteBitsAckPermitted, false)
+  t.is(contract.PRIVATE_IPC_V2_REPLAY_POLICY.maximumHorizonMillis, undefined,
+    'accepted-record TTL is not conflated with recovered retention')
+  t.is(contract.PRIVATE_IPC_V2_REPLAY_POLICY.liveEntryEvictionPermitted, false)
+  t.is(contract.PRIVATE_IPC_V2_CONTRACT.precommitOrder.indexOf('open-binding') <
+    contract.PRIVATE_IPC_V2_CONTRACT.precommitOrder.indexOf('durable-replay-consume'), true)
+  t.is(contract.PRIVATE_IPC_V2_CONTRACT.precommitOrder.indexOf('durable-replay-consume') <
+    contract.PRIVATE_IPC_V2_CONTRACT.precommitOrder.indexOf('first-request-body-pull'), true)
+  const completionOrder = contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.requestCompletion.sequence
+  t.alike(completionOrder, [
+    'exact-outer-request-fin',
+    'edge-write-half-close',
+    'daemon-observed-authenticated-peer-eof',
+    'canonical-post-eof-revalidation'
+  ])
+  t.is(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.requestCompletion.edgeResponseHalfReadableUntilTerminal, true)
+  t.is(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.requestCompletion.daemonEofAuthority,
+    'module-private-same-native-peercred-authenticated-stream-eof-after-request-fin')
+  t.is(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.requestCompletion.callerEofAssertionPermitted, false)
+  t.is(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.requestCompletion.frameVerifierMintsEofAuthority, false)
+  t.is(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.requestCompletion.commitBeforeDaemonObservedEofPermitted, false)
+  t.is(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.publicResultRequires,
+    'exact-outer-plus-request-fin-plus-edge-write-half-close-plus-daemon-observed-authenticated-peer-eof-plus-canonical-revalidation')
+  t.alike(contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.requestCompletion.negativeSemantics, {
+    eofBeforeFin: 'generic-local-abort-no-public-error-no-commit',
+    finWithoutEof: 'caller-cancellation-or-deadline-then-generic-local-abort-no-public-error-no-commit',
+    requestDataAfterFin: 'generic-local-abort-no-public-error-no-commit',
+    resultBeforeDaemonObservedEof: 'forbidden-runtime-conformance-failure',
+    responseHalfClosedBeforeTerminal: 'caller-cancelled-pre-boundary-discards-post-boundary-commit-completes-without-result'
+  })
+  const order = contract.PRIVATE_IPC_V2_CONTRACT.precommitOrder
+  t.is(order.indexOf('exact-outer-request-fin') < order.indexOf('edge-write-half-close-response-half-readable'), true)
+  t.is(order.indexOf('edge-write-half-close-response-half-readable') <
+    order.indexOf('daemon-observed-authenticated-peer-eof'), true)
+  t.is(order.indexOf('daemon-observed-authenticated-peer-eof') < order.indexOf('canonical-post-eof-revalidation'), true)
+  t.is(order.indexOf('canonical-post-eof-revalidation') <
+    order.indexOf('final-caller-cancellation-and-lifecycle-fence-before-publish'), true)
+  const runtimePolicy = JSON.parse(await artifact('vectors/v2/conformance/staged-cell-put-runtime-policy.json'))
+  t.alike(runtimePolicy.requestCompletion, contract.PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.requestCompletion)
+  t.alike(runtimePolicy.replay, contract.PRIVATE_IPC_V2_REPLAY_POLICY)
+  t.is(runtimePolicy.stagedCellPut.resultSizingAuthority, 'fixed-generated-worst-case-only')
 
   const binding = contract.decodeLocalTransportBindingV2(await artifact('vectors/v2/accepted/transport-binding-tls.bin'))
   const replay = contract.replayTupleHashV2(binding)
