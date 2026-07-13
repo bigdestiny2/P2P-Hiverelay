@@ -7,7 +7,7 @@ import {
   PUBLIC_HIVE_GATEWAY_FINITE_POLICY
 } from './public-hive-gateway-policy.mjs'
 
-export const PUBLIC_HIVE_GATEWAY_EVIDENCE_SCHEMA = 'hiverelay-public-gateway-preflight-v1'
+export const PUBLIC_HIVE_GATEWAY_EVIDENCE_SCHEMA = 'hiverelay-public-gateway-preflight-v2'
 export const PUBLIC_HIVE_GATEWAY_PROBE_SCHEMA = 'hiverelay-public-gateway-probe-v1'
 export const PUBLIC_HIVE_GATEWAY_PROBE_CHECKS = Object.freeze([
   'metadata',
@@ -111,6 +111,7 @@ export function verifyPublicHiveGatewayEvidence (evidence, opts) {
     'connectAddress',
     'publicSuffixReady',
     'custodyEnabled',
+    'physicalEnforcementRequired',
     'finiteProductionPolicy'
   ])
   const configuredSuffix = requireCanonicalDnsSuffix(evidence.config.suffix, 'gateway evidence config suffix')
@@ -131,6 +132,7 @@ export function verifyPublicHiveGatewayEvidence (evidence, opts) {
     requireEqual(evidence.config.finiteProductionPolicy[field], expectedValue, `gateway evidence finite production policy ${field}`)
   }
   requireEqual(evidence.config.custodyEnabled, false, 'gateway evidence custody status')
+  requireEqual(evidence.config.physicalEnforcementRequired, true, 'gateway evidence physical enforcement requirement')
   requireObject(evidence.static, 'gateway evidence static result')
   requireOnlyKeys('gateway evidence static result', evidence.static, ['ok', 'errors', 'warnings'])
   requireEqual(evidence.static.ok, true, 'gateway static preflight status')
@@ -218,11 +220,12 @@ export function verifyPublicHiveGatewayEvidence (evidence, opts) {
   }
 
   return {
-    schema: 'hiverelay-public-gateway-evidence-verification-v1',
+    schema: 'hiverelay-public-gateway-evidence-verification-v2',
     status: 'verified',
     mode: 'fleet',
     admissionProfile: evidence.admissionProfile,
     publicSuffixReady: evidence.config.publicSuffixReady,
+    physicalEnforcementRequired: true,
     finiteProductionPolicy: { ...PUBLIC_HIVE_GATEWAY_FINITE_POLICY },
     releaseTarget: expected.releaseTarget,
     releaseSha: expected.releaseSha,

@@ -323,6 +323,7 @@ const MODE_PRESETS = {
   },
   'public-t1-gateway': {
     productProfile: 'public-t1-gateway',
+    requirePhysicalEnforcement: true,
     enableRelay: false,
     enableSeeding: true,
     enableAPI: true,
@@ -477,6 +478,11 @@ function buildConfig (mode, opts) {
     }
   }
 
+  if ((mode === 'public-t1-gateway' || config.productProfile === 'public-t1-gateway') &&
+      config.requirePhysicalEnforcement !== true) {
+    throw new Error('public-t1-gateway requires requirePhysicalEnforcement to be true')
+  }
+
   return mode === 'relaykernel' ? enforceRelayKernelProfile(config) : config
 }
 
@@ -619,6 +625,7 @@ export class RelayNode extends EventEmitter {
       subsidy: this.config.subsidy,
       shardStore: this.config.shardStore,
       custody: this.config.custody,
+      requirePhysicalEnforcement: this.config.requirePhysicalEnforcement,
       mode: this.mode,
       productProfile: this.config.productProfile
     })
@@ -1223,6 +1230,7 @@ export class RelayNode extends EventEmitter {
       subsidy: this.config.subsidy,
       shardStore: this.config.shardStore,
       custody: this.config.custody,
+      requirePhysicalEnforcement: this.config.requirePhysicalEnforcement,
       mode: this.mode,
       productProfile: this.config.productProfile
     })

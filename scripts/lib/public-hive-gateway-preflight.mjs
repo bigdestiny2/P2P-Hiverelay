@@ -190,6 +190,7 @@ export function inspectPublicHiveGatewayConfig (config, opts = {}) {
       custody: config.custody,
       mode: config.mode,
       productProfile: config.productProfile,
+      requirePhysicalEnforcement: config.requirePhysicalEnforcement,
       // Static inspection reports compiled substrate readiness separately
       // below. Only RelayNode construction/startup may open the runtime gate.
       enforceCompiledAdmission: false
@@ -227,6 +228,11 @@ export function inspectPublicHiveGatewayConfig (config, opts = {}) {
   if (config.gatewayRequireForwardedSNI !== true) errors.push('gatewayRequireForwardedSNI must be true for SNI/Host binding')
   if (config.custody?.enabled !== false) {
     errors.push('custody.enabled must be false on the dedicated public availability gateway until the frozen substrate role predicate proves safe mixed-role segregation')
+  }
+  if (config.requirePhysicalEnforcement !== true ||
+      (opts.explicitConfig && (!Object.hasOwn(opts.explicitConfig, 'requirePhysicalEnforcement') ||
+        opts.explicitConfig.requirePhysicalEnforcement !== true))) {
+    errors.push('requirePhysicalEnforcement must be explicitly true in the raw public-t1 gateway config')
   }
 
   const trusted = config.gatewayTrustedProxyAddresses
@@ -270,6 +276,7 @@ export function inspectPublicHiveGatewayConfig (config, opts = {}) {
           appVersions: Object.fromEntries(versions),
           apiPort: config.apiPort,
           gatewayPort: config.gatewayPort,
+          physicalEnforcementRequired: config.requirePhysicalEnforcement === true,
           finiteProductionPolicy: { ...PUBLIC_HIVE_GATEWAY_FINITE_POLICY },
           admissionProfile: PUBLIC_HIVE_GATEWAY_ADMISSION_CAPABILITY.profile
         }

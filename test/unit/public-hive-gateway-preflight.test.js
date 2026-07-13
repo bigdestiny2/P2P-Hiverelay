@@ -16,6 +16,7 @@ const KEY_LABEL = 'ikikikikikikikikikikikikikikikikikikikikikikikikikiy'
 const CONFIG = {
   mode: 'public',
   productProfile: 'relay-core',
+  requirePhysicalEnforcement: true,
   enableAPI: true,
   enableSeeding: true,
   apiHost: '127.0.0.1',
@@ -51,8 +52,38 @@ test('public gateway preflight - hardened single-app canary passes with explicit
   t.is(result.normalized.suffix, CONFIG.hiveAppHostSuffix)
   t.alike(result.normalized.appKeys, [KEY])
   t.alike(result.normalized.appVersions, { [KEY]: 7 })
+  t.is(result.normalized.physicalEnforcementRequired, true)
   t.ok(result.warnings.some(value => value.includes('transitional-operator-allowlist-v1')))
   t.ok(result.warnings.some(value => value.includes('Public Suffix')))
+})
+
+test('public gateway preflight - physical enforcement must be explicitly required by raw config', (t) => {
+  const missing = { ...CONFIG }
+  delete missing.requirePhysicalEnforcement
+  const absent = inspectPublicHiveGatewayConfig(missing, {
+    mode: 'canary',
+    apiKeyPresent: true,
+    publicSuffixReady: false
+  })
+  t.absent(absent.ok)
+  t.ok(absent.errors.some(value => value.includes('requirePhysicalEnforcement must be explicitly true')))
+
+  const disabled = inspectPublicHiveGatewayConfig({ ...CONFIG, requirePhysicalEnforcement: false }, {
+    mode: 'canary',
+    apiKeyPresent: true,
+    publicSuffixReady: false
+  })
+  t.absent(disabled.ok)
+  t.ok(disabled.errors.some(value => value.includes('requirePhysicalEnforcement must be explicitly true')))
+
+  const inheritedOnly = inspectPublicHiveGatewayConfig(CONFIG, {
+    mode: 'canary',
+    apiKeyPresent: true,
+    publicSuffixReady: false,
+    explicitConfig: missing
+  })
+  t.absent(inheritedOnly.ok)
+  t.ok(inheritedOnly.errors.some(value => value.includes('raw public-t1 gateway config')))
 })
 
 test('public gateway preflight - one-app fleet posture waits for substrate but not PSL registration', (t) => {
@@ -565,6 +596,8 @@ test('public gateway preflight CLI - installed nginx input is inspected and hash
   })
   t.is(result.status, 0, result.stderr)
   const evidence = JSON.parse(result.stdout)
+  t.is(evidence.schema, 'hiverelay-public-gateway-preflight-v2')
+  t.is(evidence.config.physicalEnforcementRequired, true)
   t.is(evidence.nginx.source, 'installed')
   t.is(evidence.nginx.sha256, createHash('sha256').update(installed).digest('hex'))
   t.ok(evidence.nginx.ok)

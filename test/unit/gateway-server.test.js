@@ -698,8 +698,24 @@ test('GatewayServer - public-t1 product profile is a complete fail-closed runtim
     apiHost: '127.0.0.1',
     enableAPI: true,
     enableSeeding: true,
+    requirePhysicalEnforcement: true,
     custody: { enabled: false }
   }
+
+  const missingPhysicalEnforcement = { ...production }
+  delete missingPhysicalEnforcement.requirePhysicalEnforcement
+  t.exception(() => assertHiveAppGatewayIsolation(missingPhysicalEnforcement),
+    /requires requirePhysicalEnforcement to be true/,
+    'direct isolation validation rejects a missing physical-enforcement authority')
+  t.exception(() => assertHiveAppGatewayIsolation({
+    ...production,
+    requirePhysicalEnforcement: false
+  }), /requires requirePhysicalEnforcement to be true/,
+  'direct isolation validation rejects an explicit physical-enforcement downgrade')
+  t.is(assertHiveAppGatewayIsolation({
+    ...production,
+    enforceCompiledAdmission: false
+  }), 'hive.relay.example', 'the complete physical-enforcement contract passes before the transitional compiled gate')
 
   t.exception(() => assertHiveAppGatewayIsolation({
     ...production,

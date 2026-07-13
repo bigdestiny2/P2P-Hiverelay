@@ -134,9 +134,26 @@ test('RelayNode - validates public Hive gateway isolation before initialization'
     hiveAppHostSuffix: 'hive.relay.example',
     hiveAppPublicKeys: ['a'.repeat(64)],
     hiveAppPublicVersions: { ['a'.repeat(64)]: 7 },
+    requirePhysicalEnforcement: false,
+    custody: { enabled: false }
+  }), /requires requirePhysicalEnforcement to be true/,
+  'public-t1-gateway rejects an explicit downgrade before runtime initialization')
+
+  t.exception(() => new RelayNode({
+    productProfile: 'public-t1-gateway',
+    storage: tmpStorage(),
+    apiHost: '127.0.0.1',
+    apiPort: 9100,
+    gatewayHost: '127.0.0.1',
+    gatewayPort: 9200,
+    gatewayTrustProxy: true,
+    gatewayRequireForwardedSNI: true,
+    hiveAppHostSuffix: 'hive.relay.example',
+    hiveAppPublicKeys: ['a'.repeat(64)],
+    hiveAppPublicVersions: { ['a'.repeat(64)]: 7 },
     custody: { enabled: false }
   }), /compiled fleet-ready non-transitional admission capability/,
-  'RelayNode construction itself refuses the production profile while substrate admission is transitional')
+  'the public-t1 preset supplies hard enforcement before the transitional compiled admission gate')
 
   const node = new RelayNode({
     storage: tmpStorage(),

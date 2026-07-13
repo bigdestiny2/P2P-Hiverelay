@@ -98,6 +98,7 @@ export function assertHiveAppGatewayIsolation ({
   subsidy = { enabled: false },
   shardStore,
   custody,
+  requirePhysicalEnforcement,
   mode,
   productProfile,
   enforceCompiledAdmission = true
@@ -148,6 +149,9 @@ export function assertHiveAppGatewayIsolation ({
   }
 
   if (productionT1) {
+    if (requirePhysicalEnforcement !== true) {
+      throw new Error('public-t1-gateway requires requirePhysicalEnforcement to be true')
+    }
     if (!isLoopbackHost(apiHost)) throw new Error('public-t1-gateway requires apiHost to bind loopback')
     if (gatewayTrustProxy !== true) throw new Error('public-t1-gateway requires gatewayTrustProxy')
     if (gatewayRequireForwardedSNI !== true) throw new Error('public-t1-gateway requires gatewayRequireForwardedSNI')
@@ -466,6 +470,7 @@ export class GatewayServer extends EventEmitter {
       subsidy: config.subsidy,
       shardStore: config.shardStore,
       custody: config.custody,
+      requirePhysicalEnforcement: config.requirePhysicalEnforcement,
       mode: this.node.mode ?? config.mode,
       productProfile: config.productProfile
     })

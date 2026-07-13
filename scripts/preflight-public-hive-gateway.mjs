@@ -55,7 +55,7 @@ const release = normalizeReleaseArgs(args)
 const configPath = requiredPath(args.config, '--config')
 const persisted = JSON.parse(await readBoundedRegularFile(configPath, 'gateway config'))
 const publicT1Preset = persisted.productProfile === 'public-t1-gateway'
-  ? { mode: 'public-t1-gateway', enableRelay: false, enableSeeding: true, enableAPI: true, enableServices: false, plugins: [] }
+  ? { mode: 'public-t1-gateway', enableRelay: false, enableSeeding: true, enableAPI: true, enableServices: false, plugins: [], requirePhysicalEnforcement: true }
   : null
 const config = { ...defaults, ...(publicT1Preset || {}), ...persisted }
 const mode = args.mode || 'canary'
@@ -170,6 +170,7 @@ const evidence = {
     connectAddress,
     publicSuffixReady: args.publicSuffixReady === true,
     custodyEnabled: config.custody?.enabled === true,
+    physicalEnforcementRequired: staticResult.normalized?.physicalEnforcementRequired === true,
     finiteProductionPolicy: staticResult.normalized?.finiteProductionPolicy || null
   },
   static: {

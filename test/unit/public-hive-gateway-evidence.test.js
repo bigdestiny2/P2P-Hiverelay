@@ -48,6 +48,7 @@ test('public gateway evidence verifier binds a live proof to the exact release',
   t.is(result.tlsProtocol, 'TLSv1.3')
   t.is(result.mode, 'fleet')
   t.is(result.admissionProfile, 'frozen-public-admission-v1')
+  t.is(result.physicalEnforcementRequired, true)
   t.is(result.connectAddress, '127.0.0.1')
   t.is(result.nginxSha256, 'c'.repeat(64))
   t.is(result.evidenceSha256, createHash('sha256').update(contents).digest('hex'))
@@ -145,6 +146,18 @@ test('public gateway evidence verifier rejects release drift and incomplete live
   expandedEgress.config.finiteProductionPolicy.egressBytesPerClientAppWindow++
   t.exception(() => verifyPublicHiveGatewayEvidence(expandedEgress, expected()), /finite production policy egressBytesPerClientAppWindow/)
 
+  const oldSchema = validEvidence()
+  oldSchema.schema = 'hiverelay-public-gateway-preflight-v1'
+  t.exception(() => verifyPublicHiveGatewayEvidence(oldSchema, expected()), /gateway evidence schema/)
+
+  const missingPhysicalRequirement = validEvidence()
+  delete missingPhysicalRequirement.config.physicalEnforcementRequired
+  t.exception(() => verifyPublicHiveGatewayEvidence(missingPhysicalRequirement, expected()), /physical enforcement requirement/)
+
+  const disabledPhysicalRequirement = validEvidence()
+  disabledPhysicalRequirement.config.physicalEnforcementRequired = false
+  t.exception(() => verifyPublicHiveGatewayEvidence(disabledPhysicalRequirement, expected()), /physical enforcement requirement/)
+
   const stale = validEvidence()
   stale.checkedAt = new Date(NOW - 24 * 60 * 60 * 1000 - 1).toISOString()
   stale.probe.observedAt = new Date(NOW - 24 * 60 * 60 * 1000 - 2).toISOString()
@@ -206,6 +219,7 @@ test('public gateway evidence CLI emits only a public verification summary or di
   t.is(report.origin, APP_ORIGIN)
   t.is(report.connectAddress, '127.0.0.1')
   t.is(report.nginxSha256, 'c'.repeat(64))
+  t.is(report.physicalEnforcementRequired, true)
   t.is(report.path, '/index.html', 'public summary retains the bound content path')
   t.absent(summary.stdout.includes(file), 'private node-local evidence path is not printed')
   t.absent(summary.stdout.includes('apiKey'))
@@ -218,7 +232,8 @@ test('public gateway evidence CLI emits only a public verification summary or di
   t.is(token.status, 0, token.stderr)
   t.ok(/^[A-Za-z0-9_-]+\n$/.test(token.stdout))
   const tokenBody = JSON.parse(Buffer.from(token.stdout.trim(), 'base64url').toString('utf8'))
-  t.is(tokenBody.schema, 'hiverelay-public-gateway-evidence-verification-v1')
+  t.is(tokenBody.schema, 'hiverelay-public-gateway-evidence-verification-v2')
+  t.is(tokenBody.physicalEnforcementRequired, true)
   t.is(tokenBody.evidenceSha256, digest.stdout.trim())
   t.is(tokenBody.origin, APP_ORIGIN)
   t.is(tokenBody.peerFingerprint256, FINGERPRINT)
@@ -253,7 +268,9 @@ test('public gateway preflight release binding flags are paired and public-safe'
   ], { encoding: 'utf8', env })
   t.is(bound.status, 0, bound.stderr)
   const evidence = JSON.parse(await readFile(output, 'utf8'))
+  t.is(evidence.schema, 'hiverelay-public-gateway-preflight-v2')
   t.alike(evidence.release, { target: RELEASE_TARGET, sha: RELEASE_SHA })
+  t.is(evidence.config.physicalEnforcementRequired, true)
   t.absent(JSON.stringify(evidence).includes(env.HIVERELAY_API_KEY))
 })
 
@@ -263,7 +280,7 @@ function expected () {
 
 function validEvidence (now = NOW) {
   return {
-    schema: 'hiverelay-public-gateway-preflight-v1',
+    schema: 'hiverelay-public-gateway-preflight-v2',
     status: 'pass',
     checkedAt: new Date(now - 1000).toISOString(),
     mode: 'fleet',
@@ -282,6 +299,7 @@ function validEvidence (now = NOW) {
       connectAddress: '127.0.0.1',
       publicSuffixReady: false,
       custodyEnabled: false,
+      physicalEnforcementRequired: true,
       finiteProductionPolicy: { ...PUBLIC_HIVE_GATEWAY_FINITE_POLICY }
     },
     static: {
