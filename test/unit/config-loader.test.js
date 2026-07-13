@@ -128,6 +128,34 @@ test('cli start preserves an explicit --max-storage equal to 50 GiB', async (t) 
   t.ok(res.stdout.includes('Max Store:  50.0 GB'))
 })
 
+test('cli restart with --no-seeding recovers existing bare-core debt without serving it', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-cli-no-seeding-recovery-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+  const storage = path.join(home, '.hiverelay', 'storage')
+  await mkdir(storage, { recursive: true })
+  await writeFile(path.join(storage, 'seeded-cores.json'), JSON.stringify({
+    schemaVersion: 3,
+    cores: [{
+      key: 'a'.repeat(64),
+      maxStorageBytes: 1024 * 1024,
+      state: 'bounded'
+    }]
+  }))
+
+  const res = await execCliUntil([
+    'start',
+    '--no-api',
+    '--no-relay',
+    '--no-seeding',
+    '--quiet'
+  ], { ...process.env, HOME: home }, 'Node is running.')
+
+  t.ok(res.sawNeedle, 'core inventory sealed without starting Seeder serving')
+  t.ok(res.stdout.includes('Seeding:    disabled'))
+})
+
 test('config loader: explicit-equals-default persists and reloads its provenance', async (t) => {
   const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-config-cap-explicit-'))
   t.teardown(async () => {
@@ -211,6 +239,7 @@ test('cli start uses HIVERELAY_STORAGE when --storage is absent', async (t) => {
   t.teardown(async () => {
     await rm(home, { recursive: true, force: true })
   })
+  await mkdir(storage, { recursive: true })
 
   const res = await execCliUntil(['start', '--no-api', '--no-relay', '--no-seeding', '--quiet'], {
     ...process.env,
@@ -229,6 +258,8 @@ test('cli start --storage overrides HIVERELAY_STORAGE', async (t) => {
   t.teardown(async () => {
     await rm(home, { recursive: true, force: true })
   })
+  await mkdir(envStorage, { recursive: true })
+  await mkdir(flagStorage, { recursive: true })
 
   const res = await execCliUntil(['start', '--storage', flagStorage, '--no-api', '--no-relay', '--no-seeding', '--quiet'], {
     ...process.env,

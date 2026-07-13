@@ -35,6 +35,8 @@ import { createCustodyReceipt, computeReceiptRoot, hashHex } from 'p2p-hiverelay
 // synthesize the X_i a real relay would anchor (the client never re-checks it).
 import { shareCommitmentAt } from 'p2p-hiverelay/core/pvss.js'
 
+const TEST_MAX_STORAGE_BYTES = 64 * 1024 * 1024
+
 // Relays sign receipts with ed25519 identities — a SEPARATE key set from the
 // secp256k1 guardian keys the shares are encrypted to.
 function edKeyPair () {
@@ -58,6 +60,7 @@ function makeClient ({ now = Date.now() } = {}) {
     publisher,
     bundles: new Map(), // bundleKey -> public bundle
     intents: [], // { url, intent }
+    seedCalls: [], // { url, body, opts }
     commits: [], // { url, intentId, commit }
     statusCalls: [], // { url, intentId }
     relaysByPubkey: new Map() // relayPubkeyHex -> ed25519 keypair
@@ -75,6 +78,10 @@ function makeClient ({ now = Date.now() } = {}) {
   }
   client.publishCustodyCommit = async (url, intentId, commit) => {
     state.commits.push({ url, intentId, commit })
+    return { ok: true }
+  }
+  client._postSeed = async (url, body, opts) => {
+    state.seedCalls.push({ url, body, opts })
     return { ok: true }
   }
   // Synthesize a relay's status: one anchored, share-verified receipt per
@@ -121,7 +128,12 @@ async function scenario ({ n = 3, threshold = 2, now = Date.now() } = {}) {
     return { url: 'http://relay-' + i + '.example:9100', pubkey }
   })
   const appKey = hashHex('app-drive:' + now)
-  const opts = { pollIntervalMs: 5, pollTimeoutMs: 4000, timestamp: now }
+  const opts = {
+    maxStorage: TEST_MAX_STORAGE_BYTES,
+    pollIntervalMs: 5,
+    pollTimeoutMs: 4000,
+    timestamp: now
+  }
   return { client, state, guardians, relays, appKey, threshold, n, now, opts }
 }
 
@@ -157,6 +169,13 @@ test('splitForCustody: composes a signed v2 intent + quorum commit', async (t) =
   t.is(intent.addressKey, appKey, 'binds the content drive key')
   t.is(intent.shareBundleKey, res.shareBundleKey, 'names the published bundle')
   t.is(intent.commitmentRoot, state.bundles.get(res.shareBundleKey).commitmentRoot, 'commitmentRoot matches the bundle')
+
+  t.is(state.seedCalls.length, n, 'custody seed handed to each relay')
+  for (let i = 0; i < n; i++) {
+    t.is(state.seedCalls[i].url, relays[i].url, 'custody seed relay ' + i + ' url')
+    t.is(state.seedCalls[i].body.maxStorageBytes, TEST_MAX_STORAGE_BYTES, 'custody seed carries exact finite bound')
+    t.is(state.seedCalls[i].opts.maxStorage, TEST_MAX_STORAGE_BYTES, 'private seed boundary retains exact finite bound')
+  }
 
   // Assignment map: relays[i] -> shareIndex i+1.
   const assignments = intent.shareAssignments.map(a => ({ relayPubkey: a.relayPubkey, shareIndex: a.shareIndex }))
@@ -194,6 +213,40 @@ test('splitForCustody: validates its inputs', async (t) => {
   await t.exception(client.splitForCustody({ guardians: g, threshold, relays: relays.slice(0, 2), appKey }), /length must equal/, 'relays != guardians')
   await t.exception(client.splitForCustody({ guardians: g, threshold: 4, relays, appKey }), /exceeds relay/, 'threshold > n')
   await t.exception(client.splitForCustody({ guardians: g, threshold, relays, appKey: 'not-hex' }), /64-hex/, 'bad appKey')
+})
+
+test('splitForCustody: rejects missing, zero, and unsafe storage bounds before side effects', async (t) => {
+  const { client, state, guardians, relays, appKey, threshold } = await scenario()
+  const base = {
+    guardians: guardians.map(g => g.publicKey),
+    threshold,
+    relays,
+    appKey
+  }
+
+  for (const [label, opts] of [
+    ['missing', {}],
+    ['zero', { maxStorage: 0 }],
+    ['fractional', { maxStorage: 1.5 }],
+    ['unsafe', { maxStorage: Number.MAX_SAFE_INTEGER + 1 }],
+    ['string', { maxStorage: '67108864' }]
+  ]) {
+    await t.exception(
+      client.splitForCustody({ ...base, opts }),
+      /opts\.maxStorage must be a positive safe integer/,
+      label + ' bound fails immediately'
+    )
+  }
+
+  t.is(state.bundles.size, 0, 'invalid bounds publish no share bundle')
+  t.is(state.intents.length, 0, 'invalid bounds publish no custody intent')
+  t.is(state.seedCalls.length, 0, 'invalid bounds call no relay seed')
+  t.is(state.statusCalls.length, 0, 'invalid bounds start no receipt polling')
+  await t.exception(
+    client._seedForCustody('http://relay.test', { addressKey: appKey }, {}),
+    /opts\.maxStorage must be a positive safe integer/,
+    'private custody seed boundary also fails closed'
+  )
 })
 
 test('splitForCustody: requires a client keyPair', async (t) => {

@@ -5,12 +5,15 @@ import { MDNSDiscovery } from 'p2p-hiverelay/core/relay-node/mdns-discovery.js'
 import path from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
+import { mkdirSync } from 'fs'
 import { mkdir, readFile } from 'fs/promises'
 import { EventEmitter } from 'events'
 import b4a from 'b4a'
 
 function tmpStorage () {
-  return path.join(tmpdir(), 'hiverelay-private-test-' + randomBytes(8).toString('hex'))
+  const storage = path.join(tmpdir(), 'hiverelay-private-test-' + randomBytes(8).toString('hex'))
+  mkdirSync(storage, { recursive: true })
+  return storage
 }
 
 // ─── Access Control Tests ───────────────────────────────────────
@@ -536,6 +539,7 @@ async function makePrivateNodeShell (allowlist = []) {
   // The gate calls store.replicate() on the allowed path; stub it so we
   // don't need a real Corestore session.
   node.store = { replicate: () => {} }
+  node._storageIngressReady = true
 
   return node
 }

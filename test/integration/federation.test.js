@@ -8,12 +8,20 @@
 import test from 'brittle'
 import createTestnet from '@hyperswarm/testnet'
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
+import { Federation } from 'p2p-hiverelay/core/federation.js'
+import { EventEmitter } from 'events'
+import http from 'http'
 import path from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
+import { mkdirSync } from 'fs'
+
+const FEDERATED_APP_MAX_STORAGE_BYTES = 16 * 1024 * 1024
 
 function tmpStorage () {
-  return path.join(tmpdir(), 'hiverelay-fed-test-' + randomBytes(8).toString('hex'))
+  const storage = path.join(tmpdir(), 'hiverelay-fed-test-' + randomBytes(8).toString('hex'))
+  mkdirSync(storage, { recursive: true })
+  return storage
 }
 
 function pickPort () {
@@ -67,6 +75,7 @@ test('e2e federation: follow real peer in review mode → app lands in pending q
     type: 'app',
     version: '1.0.0',
     privacyTier: 'public',
+    maxStorage: FEDERATED_APP_MAX_STORAGE_BYTES,
     seededAt: Date.now()
   })
 
@@ -86,6 +95,18 @@ test('e2e federation: follow real peer in review mode → app lands in pending q
   const entry = sub._pendingRequests.get(fakeAppKey)
   t.is(entry.source, 'federation', 'pending entry tagged with source=federation')
   t.is(entry.sourceRelay, `http://127.0.0.1:${srcPort}`, 'source relay URL recorded')
+  t.is(entry.maxStorageBytes, FEDERATED_APP_MAX_STORAGE_BYTES, 'finite catalog bound reaches the review queue exactly')
+
+  // The same signed/catalogued commitment must reach an auto-accept seed
+  // without widening, truncation, or fallback to the subscriber default.
+  let accepted = null
+  sub._pendingRequests.delete(fakeAppKey)
+  sub._resolveAcceptMode = () => 'open'
+  sub.seedApp = async (appKey, opts) => { accepted = { appKey, opts } }
+  await sub.federation._pollAll()
+  t.ok(accepted, 'open-mode federation calls seedApp')
+  t.is(accepted.appKey, fakeAppKey)
+  t.is(accepted.opts.maxStorage, FEDERATED_APP_MAX_STORAGE_BYTES, 'finite catalog bound reaches seedApp exactly')
 })
 
 test('e2e federation: follow real peer in closed mode → app rejected, never queues', async (t) => {
@@ -111,20 +132,60 @@ test('e2e federation: follow real peer in closed mode → app rejected, never qu
     type: 'app',
     version: '1.0.0',
     privacyTier: 'public',
+    maxStorage: FEDERATED_APP_MAX_STORAGE_BYTES,
     seededAt: Date.now()
   })
 
   sub.appRegistry.has = () => false
   sub.seededApps.has = () => false
 
-  let rejectedCount = 0
-  sub.federation.on('federation-rejected', () => { rejectedCount++ })
+  const rejected = []
+  sub.federation.on('federation-rejected', info => rejected.push(info))
 
   sub.federation.follow(`http://127.0.0.1:${srcPort}`)
   await sub.federation._pollAll()
 
   t.is(sub._pendingRequests.size, 0, 'closed mode never queues anything')
-  t.is(rejectedCount, 1, 'rejection event emitted for the discovered app')
+  t.is(rejected.length, 1, 'rejection event emitted for the discovered app')
+  t.is(rejected[0].mode, 'closed', 'positive bounded app reaches the closed-mode policy gate')
+})
+
+test('federation rejects missing, zero, and unsafe catalog storage bounds', async (t) => {
+  const apps = [
+    { appKey: randomBytes(32).toString('hex'), type: 'app' },
+    { appKey: randomBytes(32).toString('hex'), type: 'app', maxStorageBytes: 0 },
+    { appKey: randomBytes(32).toString('hex'), type: 'app', maxStorageBytes: Number.MAX_SAFE_INTEGER + 1 }
+  ]
+  const server = http.createServer((_req, res) => {
+    res.setHeader('Content-Type', 'application/json')
+    res.end(JSON.stringify({ apps }))
+  })
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  t.teardown(() => new Promise(resolve => server.close(resolve)))
+
+  const node = new EventEmitter()
+  node.seededApps = new Set()
+  node.appRegistry = new Map()
+  node._pendingRequests = new Map()
+  node._resolveAcceptMode = () => 'review'
+  node._decideAcceptance = () => 'queue'
+  const federation = new Federation({ node })
+  const rejected = []
+  federation.on('federation-rejected', info => rejected.push(info))
+  federation.follow(`http://127.0.0.1:${server.address().port}`)
+
+  await federation._pollAll()
+
+  t.is(node._pendingRequests.size, 0, 'invalid bounds never enter the review queue')
+  t.is(rejected.length, apps.length)
+  t.alike(rejected.map(info => info.reason), [
+    'storage-bound-invalid',
+    'storage-bound-invalid',
+    'storage-bound-invalid'
+  ])
 })
 
 test('e2e federation: /catalog.json from a real RelayNode advertises federation field', async (t) => {

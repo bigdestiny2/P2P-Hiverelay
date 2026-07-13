@@ -23,11 +23,16 @@ import b4a from 'b4a'
 import path from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
+import { mkdirSync } from 'fs'
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
 import { HyperGateway } from 'p2p-hiverelay/gateway'
 
+const TEST_MAX_STORAGE_BYTES = 64 * 1024 * 1024
+
 function tmpStorage () {
-  return path.join(tmpdir(), 'hiverelay-gw-' + randomBytes(8).toString('hex'))
+  const storage = path.join(tmpdir(), 'hiverelay-gw-' + randomBytes(8).toString('hex'))
+  mkdirSync(storage, { recursive: true })
+  return storage
 }
 
 function createNode (testnet) {
@@ -36,8 +41,19 @@ function createNode (testnet) {
     bootstrapNodes: testnet.bootstrap,
     enableAPI: false,
     enableMetrics: false,
-    enableServices: false
+    enableServices: false,
+    enableNetworkDiscovery: false,
+    enableHolesail: false
   })
+}
+
+async function waitFor (fn, timeoutMs = 10_000, intervalMs = 25) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await fn()) return true
+    await new Promise(resolve => setTimeout(resolve, intervalMs))
+  }
+  return false
 }
 
 /**
@@ -49,31 +65,50 @@ async function bootGateway (t, files) {
   const node = createNode(testnet)
   await node.start()
 
-  // Create a drive directly on the relay's main Corestore. We hand the
-  // exact same drive instance to the gateway via its private cache so
-  // there's no need to wait for replication — this is an in-process test.
+  // Author through a disposable session, then close the writer before the
+  // relay adopts the drive through the production seed path. The gateway may
+  // serve only the exact metadata/blob snapshots committed by AppLifecycle.
   const Hyperdrive = (await import('hyperdrive')).default
-  const drive = new Hyperdrive(node.store.namespace('test-drive'))
-  await drive.ready()
+  const writerDrive = new Hyperdrive(node.store.session())
+  await writerDrive.ready()
 
   for (const [filePath, content] of Object.entries(files)) {
-    await drive.put(filePath, content)
+    await writerDrive.put(filePath, content)
   }
 
-  const keyHex = b4a.toString(drive.key, 'hex')
+  const keyHex = b4a.toString(writerDrive.key, 'hex')
+  // Each awaited put is this Hyperdrive version's durable append barrier;
+  // closing settles the writer session before production adopts the key.
+  await writerDrive.close()
 
-  // Register the drive in seededApps so the gateway authorization checks pass.
-  node.seededApps.set(keyHex, {
-    drive,
+  const reopenProbe = new Hyperdrive(node.store.session(), b4a.from(keyHex, 'hex'))
+  await reopenProbe.ready()
+  t.ok(reopenProbe.version > 0, 'authored drive reopens by key after writer close')
+  await reopenProbe.close()
+
+  await node.seedApp(keyHex, {
     privacyTier: 'public',
-    blind: false
+    maxStorage: TEST_MAX_STORAGE_BYTES
   })
 
-  const gateway = new HyperGateway(node, { store: node.store })
+  const anchored = await waitFor(() => node.appRegistry.get(keyHex)?.anchored === true)
+  t.ok(anchored, 'production seed path anchors the authored drive')
+  const seededEntry = node.appRegistry.get(keyHex)
+  t.ok(
+    seededEntry &&
+    seededEntry.anchoredLength === seededEntry.storageProvedDriveVersion &&
+    Number.isSafeInteger(seededEntry.storageProvedDriveVersion) && seededEntry.storageProvedDriveVersion > 0 &&
+    Number.isSafeInteger(seededEntry.storageProvedMetaLength) && seededEntry.storageProvedMetaLength >= 0 &&
+    Number.isSafeInteger(seededEntry.storageProvedBlobLength) && seededEntry.storageProvedBlobLength >= 0 &&
+    Number.isSafeInteger(seededEntry.storageProvedTotalBytes) && seededEntry.storageProvedTotalBytes >= 0 &&
+    Number.isSafeInteger(seededEntry.storageProvedMetaFork) && seededEntry.storageProvedMetaFork >= 0 &&
+    Number.isSafeInteger(seededEntry.storageProvedBlobFork) && seededEntry.storageProvedBlobFork >= 0 &&
+    Array.isArray(seededEntry.downloadSnapshotCores) && seededEntry.downloadSnapshotCores.length === 2,
+    'anchored entry retains the complete persisted metadata/blob proof tuple'
+  )
+  t.ok(node.storageAdmission.canAcknowledge(`drive:${keyHex}`), 'shared storage authority ACKs the committed drive')
 
-  // Short-circuit gateway's drive lookup: pre-seed the LRU with our drive so
-  // it never tries to open a fresh (empty) instance from its own namespace.
-  gateway._drives.set(keyHex, drive)
+  const gateway = new HyperGateway(node, { store: node.store })
 
   const server = createServer((req, res) => {
     if (req.url.startsWith('/v1/hyper/')) return gateway.handle(req, res)
@@ -90,15 +125,34 @@ async function bootGateway (t, files) {
   t.teardown(async () => {
     await new Promise(resolve => server.close(resolve))
     try { await gateway.close() } catch {}
-    try { await drive.close() } catch {}
     await node.stop()
     await testnet.destroy()
   })
 
   return {
     keyHex,
-    drive,
     url: (filePath) => `http://127.0.0.1:${port}/v1/hyper/${keyHex}${filePath}`,
+    rawUrl: (suffix) => `http://127.0.0.1:${port}${suffix}`
+  }
+}
+
+async function bootTraversalGateway (t) {
+  const gateway = new HyperGateway({
+    seededApps: new Map(),
+    config: { gatewayPublicOnlyPrivacyTier: true }
+  })
+  const server = createServer((req, res) => gateway.handle(req, res))
+  await new Promise((resolve, reject) => {
+    server.on('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const port = server.address().port
+  t.teardown(async () => {
+    await new Promise(resolve => server.close(resolve))
+    await gateway.close()
+  })
+  return {
+    keyHex: 'aa'.repeat(32),
     rawUrl: (suffix) => `http://127.0.0.1:${port}${suffix}`
   }
 }
@@ -305,9 +359,7 @@ test('integration: Accept-Ranges header is present on all 200/206 responses', as
 // ─── Path traversal rejected with 403 ──────────────────────────────
 
 test('integration: path traversal attempts are rejected with 403', async (t) => {
-  const ctx = await bootGateway(t, {
-    '/index.css': b4a.from('body{}')
-  })
+  const ctx = await bootTraversalGateway(t)
 
   // Encoded ../ traversal
   const res1 = await fetch(ctx.rawUrl(`/v1/hyper/${ctx.keyHex}/..%2Fetc%2Fpasswd`))

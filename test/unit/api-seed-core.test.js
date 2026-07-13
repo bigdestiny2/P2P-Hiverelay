@@ -16,6 +16,7 @@ import {
 
 const API_KEY = 'seed-core-test-key'
 const HEX64 = 'a'.repeat(64)
+const STORAGE_BOUND = 1024 * 1024
 
 function mockRelayNode (seeder, opts = {}) {
   return {
@@ -93,18 +94,18 @@ test('seed-core helper: normalizes aliases and validates route contract', async 
 
   const calls = []
   const node = mockRelayNode({
-    async seedCore (key) {
-      calls.push(key)
+    async seedCore (key, opts) {
+      calls.push({ key, opts })
       return { core: { length: 9 } }
     }
   })
-  const seeded = await runSeedCoreAction({ node, body: { coreKey: 'A'.repeat(64), catalog: true } })
+  const seeded = await runSeedCoreAction({ node, body: { coreKey: 'A'.repeat(64), catalog: true, maxStorageBytes: STORAGE_BOUND } })
   t.alike(seeded, {
     ok: true,
     status: 200,
     payload: { ok: true, coreKey: HEX64, length: 9, catalogBee: true }
   })
-  t.alike(calls, [HEX64])
+  t.alike(calls, [{ key: HEX64, opts: { maxStorageBytes: STORAGE_BOUND } }])
   t.alike(node._catalogSet, [HEX64])
 })
 
@@ -116,7 +117,7 @@ test('seed-core helper: delegates seed errors to caller error mapping', async (t
         throw err
       }
     }),
-    body: { coreKey: HEX64 }
+    body: { coreKey: HEX64, maxStorageBytes: STORAGE_BOUND }
   })
 
   t.is(result.ok, false)
@@ -134,7 +135,7 @@ test('seed-core: valid key pins via seeder.seedCore', async (t) => {
   const calls = []
   const seeder = { async seedCore (key) { calls.push(key); return { core: { length: 7 } } } }
   const { port } = await makeServer(t, seeder)
-  const res = await request(port, 'POST', '/seed-core', { coreKey: HEX64 }, { Authorization: 'Bearer ' + API_KEY })
+  const res = await request(port, 'POST', '/seed-core', { coreKey: HEX64, maxStorageBytes: STORAGE_BOUND }, { Authorization: 'Bearer ' + API_KEY })
   t.is(res.statusCode, 200)
   t.is(res.body.ok, true)
   t.is(res.body.coreKey, HEX64)
@@ -146,7 +147,7 @@ test('seed-core: accepts appKey alias + lowercases', async (t) => {
   const calls = []
   const seeder = { async seedCore (key) { calls.push(key); return { core: { length: 0 } } } }
   const { port } = await makeServer(t, seeder)
-  const res = await request(port, 'POST', '/seed-core', { appKey: 'B'.repeat(64) }, { Authorization: 'Bearer ' + API_KEY })
+  const res = await request(port, 'POST', '/seed-core', { appKey: 'B'.repeat(64), maxStorageBytes: STORAGE_BOUND }, { Authorization: 'Bearer ' + API_KEY })
   t.is(res.statusCode, 200)
   t.alike(calls, ['b'.repeat(64)])
 })
@@ -158,9 +159,31 @@ test('seed-core: rejects a non-64-hex key', async (t) => {
   t.ok(/64 hex/.test(res.body.error))
 })
 
+test('seed-core: rejects missing or unsafe storage bounds before seeding', async (t) => {
+  const calls = []
+  const { port } = await makeServer(t, {
+    async seedCore (...args) {
+      calls.push(args)
+      return { core: { length: 1 } }
+    }
+  })
+  const headers = { Authorization: 'Bearer ' + API_KEY }
+
+  for (const body of [
+    { coreKey: HEX64 },
+    { coreKey: HEX64, maxStorageBytes: 0 },
+    { coreKey: HEX64, maxStorageBytes: Number.MAX_SAFE_INTEGER + 1 }
+  ]) {
+    const res = await request(port, 'POST', '/seed-core', body, headers)
+    t.is(res.statusCode, 400)
+    t.ok(/positive safe integer/.test(res.body.error))
+  }
+  t.alike(calls, [], 'invalid bounds never reach the seeder')
+})
+
 test('seed-core: 503 when seeder is unavailable', async (t) => {
   const { port } = await makeServer(t, null)
-  const res = await request(port, 'POST', '/seed-core', { coreKey: HEX64 }, { Authorization: 'Bearer ' + API_KEY })
+  const res = await request(port, 'POST', '/seed-core', { coreKey: HEX64, maxStorageBytes: STORAGE_BOUND }, { Authorization: 'Bearer ' + API_KEY })
   t.is(res.statusCode, 503)
 })
 
@@ -171,7 +194,7 @@ test('seed-core: transient seed errors stay retryable through the route', async 
     }
   }
   const { port } = await makeServer(t, seeder)
-  const res = await request(port, 'POST', '/seed-core', { coreKey: HEX64 }, { Authorization: 'Bearer ' + API_KEY })
+  const res = await request(port, 'POST', '/seed-core', { coreKey: HEX64, maxStorageBytes: STORAGE_BOUND }, { Authorization: 'Bearer ' + API_KEY })
   t.is(res.statusCode, 503)
   t.is(res.headers['retry-after'], '5')
   t.is(res.body.retryable, true)
@@ -180,7 +203,7 @@ test('seed-core: transient seed errors stay retryable through the route', async 
 test('seed-core: catalog:true registers the catalog-bee pointer', async (t) => {
   const seeder = { async seedCore () { return { core: { length: 2 } } } }
   const { port, node } = await makeServer(t, seeder)
-  const res = await request(port, 'POST', '/seed-core', { coreKey: HEX64, catalog: true }, { Authorization: 'Bearer ' + API_KEY })
+  const res = await request(port, 'POST', '/seed-core', { coreKey: HEX64, catalog: true, maxStorageBytes: STORAGE_BOUND }, { Authorization: 'Bearer ' + API_KEY })
   t.is(res.statusCode, 200)
   t.is(res.body.catalogBee, true)
   t.alike(node._catalogSet, [HEX64], 'setCatalogBeeKey called with the core key')
@@ -190,7 +213,7 @@ test('seed-core: catalog:true registers the catalog-bee pointer', async (t) => {
 test('seed-core: without catalog flag, no pointer is set', async (t) => {
   const seeder = { async seedCore () { return { core: { length: 2 } } } }
   const { port, node } = await makeServer(t, seeder)
-  const res = await request(port, 'POST', '/seed-core', { coreKey: HEX64 }, { Authorization: 'Bearer ' + API_KEY })
+  const res = await request(port, 'POST', '/seed-core', { coreKey: HEX64, maxStorageBytes: STORAGE_BOUND }, { Authorization: 'Bearer ' + API_KEY })
   t.is(res.body.catalogBee, false)
   t.alike(node._catalogSet, [], 'setCatalogBeeKey not called')
 })

@@ -20,12 +20,61 @@
 import Corestore from 'corestore'
 import Hyperswarm from 'hyperswarm'
 import Hyperdrive from 'hyperdrive'
+import Hyperblobs from 'hyperblobs'
 import { EventEmitter } from 'events'
 import { Transform } from 'stream'
 import { join } from 'path'
 import { isIssuedExactAppContext } from './exact-app-context.js'
 import { updateWithTimeout } from '../core/relay-node/cancellable-drive-update.js'
 import { admitPublicHiveAppEntry } from './public-app-admission.js'
+
+function stableCoreProofState (core, attempts = 4) {
+  if (!core) return null
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const forkBefore = Number(core.fork ?? 0)
+    const lengthBefore = Number(core.length)
+    const byteLengthBefore = Number(core.byteLength)
+    const lengthAfter = Number(core.length)
+    const byteLengthAfter = Number(core.byteLength)
+    const forkAfter = Number(core.fork ?? 0)
+    if (Number.isSafeInteger(forkBefore) && forkBefore >= 0 && forkBefore === forkAfter &&
+        Number.isSafeInteger(lengthBefore) && lengthBefore >= 0 && lengthBefore === lengthAfter &&
+        Number.isSafeInteger(byteLengthBefore) && byteLengthBefore >= 0 && byteLengthBefore === byteLengthAfter) {
+      return { fork: forkAfter, length: lengthAfter, byteLength: byteLengthAfter }
+    }
+  }
+  return null
+}
+
+function durableDriveProof (entry) {
+  const proof = {
+    driveVersion: entry?.storageProvedDriveVersion,
+    metaLength: entry?.storageProvedMetaLength,
+    blobLength: entry?.storageProvedBlobLength,
+    totalBytes: entry?.storageProvedTotalBytes,
+    metaFork: entry?.storageProvedMetaFork,
+    blobFork: entry?.storageProvedBlobFork
+  }
+  if (entry?.anchored !== true || entry.anchoredLength !== proof.driveVersion ||
+      !Number.isSafeInteger(proof.driveVersion) || proof.driveVersion <= 0 ||
+      !Number.isSafeInteger(proof.metaLength) || proof.metaLength < 0 ||
+      !Number.isSafeInteger(proof.blobLength) || proof.blobLength < 0 ||
+      !Number.isSafeInteger(proof.totalBytes) || proof.totalBytes < 0 ||
+      !Number.isSafeInteger(proof.metaFork) || proof.metaFork < 0 ||
+      !Number.isSafeInteger(proof.blobFork) || proof.blobFork < 0 ||
+      !Number.isSafeInteger(entry.maxStorage) || proof.totalBytes > entry.maxStorage) return null
+  return proof
+}
+
+function nonClosingCoreView (core) {
+  return new Proxy(core, {
+    get (target, property) {
+      if (property === 'close') return async () => {}
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    }
+  })
+}
 
 const CONTENT_TYPES = {
   html: 'text/html; charset=utf-8',
@@ -758,7 +807,10 @@ export class HyperGateway extends EventEmitter {
       requestDriveLease = this._holdDriveLeaseForRequest(res, driveLease)
 
       let readDrive = drive
-      if (exactBytes || this._requireLifecycleDriveAuthority) {
+      if (driveLease.immutable === true) {
+        requestDriveLease.setCheckout(readDrive)
+        res.setHeader('X-Hive-Drive-Version', String(driveLease.pinnedVersion))
+      } else if (exactBytes || this._requireLifecycleDriveAuthority) {
         if (typeof drive.checkout !== 'function') {
           throw new Error('Immutable drive checkout is unavailable')
         }
@@ -1067,19 +1119,92 @@ export class HyperGateway extends EventEmitter {
     if (seededDrive && !seededDrive.closed && !seededDrive.closing) {
       // AppLifecycle owns seeded drives. The gateway borrows them for this
       // request but never inserts or closes them through its LRU.
+      let lifecycleLease = null
       if (this.node.appLifecycle && typeof this.node.appLifecycle.acquireDriveReadLease === 'function') {
-        const lease = this.node.appLifecycle.acquireDriveReadLease(keyHex)
-        if (!lease || lease.drive !== seededDrive || typeof lease.release !== 'function') {
+        lifecycleLease = this.node.appLifecycle.acquireDriveReadLease(keyHex)
+        if (!lifecycleLease || lifecycleLease.drive !== seededDrive || typeof lifecycleLease.release !== 'function') {
           try {
-            if (lease && typeof lease.release === 'function') lease.release()
+            if (lifecycleLease && typeof lifecycleLease.release === 'function') lifecycleLease.release()
           } catch {}
           return null
         }
-        return lease
+      } else if (this._requireLifecycleDriveAuthority) {
+        return null
+      } else {
+        lifecycleLease = { drive: seededDrive, release: () => {} }
       }
-      if (this._requireLifecycleDriveAuthority) return null
-      return { drive: seededDrive, release: () => {} }
+
+      // A storage-aware relay serves only the exact immutable tuple accepted
+      // by AppLifecycle's durable footprint proof. The mutable live drive is
+      // never itself exposed to HTTP after proof, and its blob core is replaced
+      // by the exact lifecycle-owned blob snapshot bound into that tuple.
+      if (this.node.storageAdmission) {
+        let checkout = null
+        let accepted = false
+        try {
+          if (typeof this.node.storageAdmission.canAcknowledge !== 'function' ||
+              !this.node.storageAdmission.canAcknowledge(`drive:${keyHex}`)) return null
+          const proof = durableDriveProof(seededEntry)
+          const proofCores = Array.isArray(seededEntry.downloadSnapshotCores)
+            ? seededEntry.downloadSnapshotCores
+            : null
+          const metaProofCore = proofCores && proofCores[0]
+          const blobProofCore = proofCores && proofCores[1]
+          const metaProofState = stableCoreProofState(metaProofCore)
+          const blobProofState = stableCoreProofState(blobProofCore)
+          if (!proof || typeof seededDrive.checkout !== 'function' ||
+              !metaProofState || metaProofState.length !== proof.metaLength || metaProofState.fork !== proof.metaFork ||
+              !blobProofState || blobProofState.length !== proof.blobLength || blobProofState.fork !== proof.blobFork ||
+              metaProofState.byteLength + blobProofState.byteLength !== proof.totalBytes) return null
+
+          checkout = seededDrive.checkout(proof.driveVersion)
+          if (checkout && typeof checkout.ready === 'function') {
+            await this._withTimeout(
+              checkout.ready(),
+              this._driveOperationTimeout,
+              'proved drive checkout',
+              opts.signal
+            )
+          }
+          const checkoutMeta = stableCoreProofState(checkout?.db?.core)
+          const current = this.node.seededApps && this.node.seededApps.get(keyHex)
+          const currentProof = durableDriveProof(current)
+          if (!checkout || current !== seededEntry || current.drive !== seededDrive ||
+              currentProof?.driveVersion !== proof.driveVersion ||
+              currentProof?.metaLength !== proof.metaLength || currentProof?.blobLength !== proof.blobLength ||
+              currentProof?.totalBytes !== proof.totalBytes || currentProof?.metaFork !== proof.metaFork ||
+              currentProof?.blobFork !== proof.blobFork ||
+              current.downloadSnapshotCores?.[0] !== metaProofCore || current.downloadSnapshotCores?.[1] !== blobProofCore ||
+              !checkoutMeta || checkout.version !== proof.driveVersion ||
+              checkoutMeta.length !== proof.metaLength || checkoutMeta.fork !== proof.metaFork ||
+              !this.node.storageAdmission.canAcknowledge(`drive:${keyHex}`)) return null
+
+          checkout.blobs = new Hyperblobs(nonClosingCoreView(blobProofCore))
+          accepted = true
+          return {
+            drive: checkout,
+            immutable: true,
+            pinnedVersion: proof.driveVersion,
+            release: lifecycleLease.release
+          }
+        } finally {
+          // Ownership of a successfully returned checkout transfers to the
+          // request cleanup path. Every rejected candidate closes here and
+          // releases the lifecycle borrow before another unseed can proceed.
+          if (!accepted) {
+            if (checkout && checkout !== seededDrive && !checkout.closed && typeof checkout.close === 'function') {
+              try { await checkout.close() } catch (_) {}
+            }
+            try { lifecycleLease.release() } catch {}
+          }
+        }
+      }
+      return lifecycleLease
     }
+
+    // A recovered registry row with no live drive is a serve-only placeholder,
+    // not permission for HTTP to open a second replication ingress.
+    if (seededEntry && this.node.storageAdmission) return null
 
     // Exact public hosts are authorized against the live seeded entry above.
     // If unseed won that race, do not reopen the key through the gateway's LRU

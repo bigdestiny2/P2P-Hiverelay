@@ -688,12 +688,16 @@ const custody = await app.splitForCustody({
   threshold: 2,          // any 2 of 3 guardians can recover
   relays,
   appKey,                // the content drive this custody protects
-  opts: { apiKey, retainMs: 365 * 24 * 60 * 60 * 1000 }
+  opts: {
+    apiKey,
+    maxStorage: 512 * 1024 * 1024, // required finite relay storage bound
+    retainMs: 365 * 24 * 60 * 60 * 1000
+  }
 })
 // { intentId, commitmentRoot, shareBundleKey, key, secretPoint, intent, commit, receipts }
 ```
 
-`custody.key` is **dealer-private** — it never leaves the client. Custody **writes** (intent / seed / commit) are authenticated (`opts.apiKey`, per-relay Bearer key — 401 without it); custody **reads** and reconstruction are permissionless. Requires relays on v0.9.1+. Other `opts`: `secret` (64-hex scalar; random if omitted), `retainMs` (default 30 days), `deadlineMs` (default 10 min), `pollTimeoutMs` (default `60000`), `pollIntervalMs` (default `1000`), plus `blindContentId` / `ciphertextRoot` / `contentVersion` to bind the custody to a specific encrypted payload.
+`custody.key` is **dealer-private** — it never leaves the client. Custody **writes** (intent / seed / commit) are authenticated (`opts.apiKey`, per-relay Bearer key — 401 without it); custody **reads** and reconstruction are permissionless. `opts.maxStorage` is also required as a positive safe-integer byte bound; the client rejects a missing, zero, or unsafe bound before PVSS or publication work and forwards the exact value to every relay seed. Requires relays on v0.9.1+. Other `opts`: `secret` (64-hex scalar; random if omitted), `retainMs` (default 30 days), `deadlineMs` (default 10 min), `pollTimeoutMs` (default `60000`), `pollIntervalMs` (default `1000`), plus `blindContentId` / `ciphertextRoot` / `contentVersion` to bind the custody to a specific encrypted payload.
 
 #### `app.reconstructFromCustody({ intentId, guardianSecretKeys, relays, shareBundleKey?, threshold? })` → `Promise<object>`
 

@@ -417,14 +417,36 @@ export const DOWNLOAD_TIMEOUT_MS = DEFAULT_DOWNLOAD_TIMEOUT_MS
  */
 export async function getDriveSize (drive, opts = {}) {
   const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 10_000
+  const requireAuthoritative = opts.requireAuthoritative === true
+  const pinSnapshots = opts.pinSnapshots === true
+  const readDriveVersion = () => {
+    const version = drive?.version
+    return Number.isSafeInteger(version) ? version : null
+  }
 
   const metaCore = drive && drive.db && drive.db.core
-  const blobCore = drive && drive.blobs && drive.blobs.core
+  let blobs = drive && drive.blobs
+  if (!blobs && drive && typeof drive.getBlobs === 'function') {
+    let blobsTimer = null
+    try {
+      blobs = await Promise.race([
+        drive.getBlobs(),
+        new Promise((_resolve, reject) => {
+          blobsTimer = setTimeout(() => reject(new Error('get-blobs timeout')), timeoutMs)
+        })
+      ])
+    } catch (err) {
+      if (requireAuthoritative) throw err
+    } finally {
+      if (blobsTimer) clearTimeout(blobsTimer)
+    }
+  }
+  const blobCore = blobs && blobs.core
 
   // Helper to update a raw hypercore with a cancellable timeout.
   // Mirrors updateWithTimeout but for a core (not a drive).
   async function updateCore (core) {
-    if (!core || typeof core.update !== 'function') return
+    if (!core || typeof core.update !== 'function') return false
     const activeRequests = []
     let timer = null
     try {
@@ -439,9 +461,11 @@ export async function getDriveSize (drive, opts = {}) {
           () => { clearTimeout(timer); resolve() },
           (err) => { clearTimeout(timer); reject(err) }
         )
-      }).catch(() => {
-        // Best-effort: partial size info is fine for the caller's decision.
       })
+      return true
+    } catch (err) {
+      if (requireAuthoritative) throw err
+      return false
     } finally {
       if (timer) clearTimeout(timer)
       if (core.replicator && typeof core.replicator.clearRequests === 'function' && activeRequests.length > 0) {
@@ -450,14 +474,96 @@ export async function getDriveSize (drive, opts = {}) {
     }
   }
 
+  function stableSnapshot (core) {
+    if (!core) return { byteLength: 0, length: 0, fork: 0 }
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const forkBefore = Number(core.fork ?? 0)
+      const lengthBefore = Number(core.length)
+      const byteLengthBefore = Number(core.byteLength)
+      const lengthMiddle = Number(core.length)
+      const byteLengthAfter = Number(core.byteLength)
+      const lengthAfter = Number(core.length)
+      const forkAfter = Number(core.fork ?? 0)
+      if (Number.isSafeInteger(lengthBefore) && lengthBefore >= 0 &&
+          Number.isSafeInteger(byteLengthBefore) && byteLengthBefore >= 0 &&
+          Number.isSafeInteger(forkBefore) && forkBefore >= 0 && forkBefore === forkAfter &&
+          lengthBefore === lengthMiddle && lengthMiddle === lengthAfter &&
+          byteLengthBefore === byteLengthAfter) {
+        return { byteLength: byteLengthAfter, length: lengthAfter, fork: forkAfter }
+      }
+    }
+    throw new Error('DRIVE_SIZE_CHANGED_DURING_PROOF')
+  }
+
   // Metadata core size — usually already known after the initial drive.update,
   // but we re-update just in case the caller hasn't done one yet.
-  await updateCore(metaCore)
-  const metaBytes = (metaCore && metaCore.byteLength) || 0
-
+  const metaUpdated = await updateCore(metaCore)
   // Blob core size — separate update required; drive.update doesn't touch it.
-  await updateCore(blobCore)
-  const blobBytes = (blobCore && blobCore.byteLength) || 0
+  const blobUpdated = await updateCore(blobCore)
+  const driveVersionBeforeProof = readDriveVersion()
+  const metaSnapshot = stableSnapshot(metaCore)
+  const blobSnapshot = stableSnapshot(blobCore)
+  const metaBytes = metaSnapshot.byteLength
+  const metaLength = metaSnapshot.length
+  const blobBytes = blobSnapshot.byteLength
+  const blobLength = blobSnapshot.length
 
-  return { totalBytes: metaBytes + blobBytes, metaBytes, blobBytes }
+  const totalBytes = metaBytes + blobBytes
+  if (requireAuthoritative && (!metaUpdated || !blobUpdated ||
+      !Number.isSafeInteger(metaBytes) || metaBytes < 0 ||
+      !Number.isSafeInteger(blobBytes) || blobBytes < 0 ||
+      !Number.isSafeInteger(metaLength) || metaLength < 0 ||
+      !Number.isSafeInteger(blobLength) || blobLength < 0 ||
+      !Number.isSafeInteger(totalBytes))) {
+    throw new Error('DRIVE_SIZE_UNRESOLVED')
+  }
+  let metaCoreSnapshot = null
+  let blobCoreSnapshot = null
+  let provedDriveVersion = driveVersionBeforeProof
+  if (pinSnapshots) {
+    try {
+      if (typeof metaCore?.snapshot !== 'function' || typeof blobCore?.snapshot !== 'function') {
+        throw new Error('DRIVE_SNAPSHOT_UNAVAILABLE')
+      }
+      metaCoreSnapshot = metaCore.snapshot({ wait: false })
+      blobCoreSnapshot = blobCore.snapshot({ wait: false })
+      if (typeof metaCoreSnapshot.ready === 'function') await metaCoreSnapshot.ready()
+      if (typeof blobCoreSnapshot.ready === 'function') await blobCoreSnapshot.ready()
+      const pinnedMeta = stableSnapshot(metaCoreSnapshot)
+      const pinnedBlob = stableSnapshot(blobCoreSnapshot)
+      if (pinnedMeta.length !== metaSnapshot.length || pinnedMeta.byteLength !== metaSnapshot.byteLength || pinnedMeta.fork !== metaSnapshot.fork ||
+          pinnedBlob.length !== blobSnapshot.length || pinnedBlob.byteLength !== blobSnapshot.byteLength || pinnedBlob.fork !== blobSnapshot.fork) {
+        throw new Error('DRIVE_SIZE_CHANGED_BEFORE_SNAPSHOT')
+      }
+      const driveVersionAfterProof = readDriveVersion()
+      if (!Number.isSafeInteger(driveVersionBeforeProof) || driveVersionBeforeProof <= 0 ||
+          driveVersionAfterProof !== driveVersionBeforeProof) {
+        throw new Error('DRIVE_VERSION_CHANGED_DURING_PROOF')
+      }
+      provedDriveVersion = driveVersionBeforeProof
+    } catch (err) {
+      if (metaCoreSnapshot) try { await metaCoreSnapshot.close() } catch (_) {}
+      if (blobCoreSnapshot) try { await blobCoreSnapshot.close() } catch (_) {}
+      throw err
+    }
+  } else {
+    const driveVersionAfterProof = readDriveVersion()
+    if (requireAuthoritative && driveVersionBeforeProof !== null && driveVersionAfterProof !== driveVersionBeforeProof) {
+      throw new Error('DRIVE_VERSION_CHANGED_DURING_PROOF')
+    }
+    provedDriveVersion = driveVersionBeforeProof
+  }
+  return {
+    totalBytes,
+    metaBytes,
+    blobBytes,
+    metaLength,
+    blobLength,
+    metaFork: metaSnapshot.fork,
+    blobFork: blobSnapshot.fork,
+    driveVersion: provedDriveVersion,
+    authoritative: metaUpdated && blobUpdated,
+    metaCoreSnapshot,
+    blobCoreSnapshot
+  }
 }

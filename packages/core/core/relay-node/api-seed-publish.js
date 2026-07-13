@@ -15,6 +15,7 @@ import {
 import { evaluateSeedLease } from '../../incentive/lease/gate.js'
 import { custodyDisabledResult } from './api-custody-disabled.js'
 import { validatePositiveInt } from './api-validation.js'
+import { positiveStorageBound } from '../../config/storage-cap.js'
 
 export const MAX_DISCOVERY_KEYS = 100
 export const MAX_REGISTRY_GEO_ITEMS = 64
@@ -98,6 +99,13 @@ function normalizeSeedOptions (body) {
   const cloned = cloneSeedOpts(body.opts)
   if (!cloned.ok) return cloned
   const seedOpts = cloned.seedOpts
+  const rawStorageBound = body.maxStorageBytes ?? body.maxStorage ?? seedOpts.maxStorageBytes ?? seedOpts.maxStorage
+  const storageBound = positiveStorageBound(rawStorageBound)
+  if (storageBound === null) {
+    return { ok: false, result: badRequest('maxStorageBytes must be a positive safe integer') }
+  }
+  seedOpts.maxStorage = storageBound
+  delete seedOpts.maxStorageBytes
   const requestedType = body.type !== undefined ? body.type : seedOpts.type
   if (requestedType !== undefined) {
     const type = normalizeContentType(requestedType, null)
@@ -290,8 +298,11 @@ function buildRegistryPublishRequest (body, node) {
   if (!replicationFactor.ok) return replicationFactor
   const geoPreference = normalizeRegistryGeoPreference(body.geo)
   if (!geoPreference.ok) return geoPreference
-  const maxStorageBytes = optionalRegistryInt(body, 'maxStorageBytes', 0, 0, MAX_REGISTRY_MAX_STORAGE_BYTES)
+  const maxStorageBytes = optionalRegistryInt(body, 'maxStorageBytes', null, 1, MAX_REGISTRY_MAX_STORAGE_BYTES)
   if (!maxStorageBytes.ok) return maxStorageBytes
+  if (maxStorageBytes.value === null) {
+    return { ok: false, result: badRequest('maxStorageBytes must be a positive safe integer') }
+  }
   const bountyRate = optionalRegistryInt(body, 'bountyRate', 0, 0, MAX_REGISTRY_BOUNTY_RATE)
   if (!bountyRate.ok) return bountyRate
   const ttlDays = optionalRegistryInt(body, 'ttlDays', 30, 1, MAX_REGISTRY_TTL_DAYS)
@@ -347,12 +358,17 @@ export async function runOperatorSeedAction ({
 
   if (!body.appKey) return badRequest('appKey required')
   if (!isValidHexKey(body.appKey, 64)) return badRequest('appKey must be 64 hex characters')
+  const appKey = body.appKey.toLowerCase()
 
   const built = normalizeSeedOptions(body)
   if (!built.ok) return built.result
 
-  const result = await node.seedApp(body.appKey, built.seedOpts)
-  return { ok: true, payload: { ok: true, ...result } }
+  try {
+    const result = await node.seedApp(appKey, built.seedOpts)
+    return { ok: true, payload: { ok: true, ...result } }
+  } catch (err) {
+    return { ok: false, kind: 'seed-error', error: err }
+  }
 }
 
 export async function runRegistryPublishAction ({

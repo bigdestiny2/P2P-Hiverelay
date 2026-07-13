@@ -1,5 +1,4 @@
 import { validatePositiveInt, validatePositiveNumber } from './api-validation.js'
-import { markStorageCapExplicit } from '../../config/storage-cap.js'
 
 export const AVAILABLE_MODES = [
   'relay-core',
@@ -77,7 +76,7 @@ function buildModeOverrides (body = {}) {
   }
 
   if (body.maxStorageBytes !== undefined) {
-    const result = validatePositiveInt(body.maxStorageBytes, 0, 10e12, 'maxStorageBytes')
+    const result = validatePositiveInt(body.maxStorageBytes, 1, 10e12, 'maxStorageBytes')
     if (!result.ok) return { ok: false, payload: errorPayload(result.error) }
     overrides.maxStorageBytes = result.value
   }
@@ -125,12 +124,15 @@ export async function runModeSwitchAction ({
   const previousConfig = node.config
   const previousMode = node.mode
   const previousOperatingMode = node._operatingMode
+  const rollbackState = typeof node._captureModeState === 'function'
+    ? node._captureModeState()
+    : null
   try {
     await node.applyMode(mode, built.overrides)
-    if (Object.prototype.hasOwnProperty.call(built.overrides, 'maxStorageBytes')) {
-      markStorageCapExplicit(node.config, 'management-api')
-    }
   } catch (err) {
+    if (rollbackState && typeof node._restoreModeState === 'function') {
+      try { await node._restoreModeState(rollbackState) } catch (rollbackErr) { emitRollbackError(emit, rollbackErr) }
+    }
     return {
       ok: false,
       kind: 'apply-mode',
@@ -142,14 +144,23 @@ export async function runModeSwitchAction ({
   try {
     await persistConfig()
   } catch (err) {
-    node.config = previousConfig
-    node.mode = previousMode
-    node._operatingMode = previousOperatingMode
-    if (node.running && typeof node._syncAccessControl === 'function') {
+    if (rollbackState && typeof node._restoreModeState === 'function') {
       try {
-        await node._syncAccessControl()
+        await node._restoreModeState(rollbackState)
       } catch (rollbackErr) {
         emitRollbackError(emit, rollbackErr)
+      }
+    } else {
+      node.config = previousConfig
+      node.mode = previousMode
+      node._operatingMode = previousOperatingMode
+      if (node.storageAdmission && typeof node.storageAdmission.setConfig === 'function') {
+        node.storageAdmission.setConfig(previousConfig)
+        if (typeof node.storageAdmission.refreshFilesystem === 'function') node.storageAdmission.refreshFilesystem()
+      }
+      if (node.seeder) node.seeder.maxStorageBytes = previousConfig.maxStorageBytes
+      if (node.running && typeof node._syncAccessControl === 'function') {
+        try { await node._syncAccessControl() } catch (rollbackErr) { emitRollbackError(emit, rollbackErr) }
       }
     }
     return { ok: false, kind: 'config-persist', error: err }

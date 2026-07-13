@@ -89,6 +89,8 @@ export class SeedingRegistry extends EventEmitter {
     this._metaChannels = new WeakMap() // conn -> { channel, msgHandler }
     this._onSwarmConnection = null
     this._onLocalAppend = null
+    this._discoveryHandle = null
+    this._stopping = false
     this._maxPeerLogs = Number.isFinite(opts.maxPeerLogs) && opts.maxPeerLogs > 0
       ? Math.floor(opts.maxPeerLogs)
       : 256
@@ -120,6 +122,12 @@ export class SeedingRegistry extends EventEmitter {
   }
 
   async start () {
+    if (this._stopping) {
+      const err = new Error('seeding registry teardown is pending')
+      err.code = 'REGISTRY_STOPPING'
+      throw err
+    }
+    this._stopping = false
     // v0.8.26 — open the indexed-views sidecar BEFORE the log replay so
     // hydration happens first. Defensive against bee-open failures
     // (test stubs, missing corestore caps): falls back silently and
@@ -168,7 +176,7 @@ export class SeedingRegistry extends EventEmitter {
     this.localLog.on('append', this._onLocalAppend)
 
     // Join DHT topic to discover other registry peers
-    this.swarm.join(REGISTRY_TOPIC, { server: true, client: true })
+    this._discoveryHandle = this.swarm.join(REGISTRY_TOPIC, { server: true, client: true })
 
     // Listen for new connections to exchange registry log keys and replicate logs
     this._onSwarmConnection = (conn, info) => this._onConnection(conn, info)
@@ -181,7 +189,7 @@ export class SeedingRegistry extends EventEmitter {
   }
 
   _onConnection (conn, info) {
-    if (!this.localLog) return
+    if (this._stopping || !this.localLog) return
 
     // Always replicate our local log
     this.localLog.replicate(conn)
@@ -224,6 +232,7 @@ export class SeedingRegistry extends EventEmitter {
   }
 
   _onMetaMessage (conn, info, msg) {
+    if (this._stopping) return
     if (!msg || msg.type === -1) return
     if (msg.type !== MSG_ANNOUNCE_LOG) return
     if (!msg.logKey || typeof msg.logKey !== 'string') return
@@ -261,7 +270,7 @@ export class SeedingRegistry extends EventEmitter {
   }
 
   async _registerPeerLog (logKeyHex, peerPubkey, conn) {
-    if (!this.localLog) return
+    if (this._stopping || !this.localLog) return
     logKeyHex = typeof logKeyHex === 'string' ? logKeyHex.toLowerCase() : logKeyHex
     peerPubkey = typeof peerPubkey === 'string' ? peerPubkey.toLowerCase() : peerPubkey
 
@@ -942,6 +951,11 @@ export class SeedingRegistry extends EventEmitter {
    * @returns {Promise<T>}
    */
   async _withKeyLock (key, fn) {
+    if (this._stopping) {
+      const err = new Error('seeding registry is stopping')
+      err.code = 'REGISTRY_STOPPING'
+      throw err
+    }
     const previous = this._keyLocks.get(key) || Promise.resolve()
     let release
     const next = new Promise((resolve) => { release = resolve })
@@ -1277,13 +1291,11 @@ export class SeedingRegistry extends EventEmitter {
 
   async stop () {
     this.running = false
-    // v0.8.26 — drain any fire-and-forget index-bee writes BEFORE
-    // closing the underlying core. Otherwise the next startup's
-    // hydration may miss the last few mutations.
-    try { await this._flushIndexBee() } catch (_) {}
-    try { await this.swarm.leave(REGISTRY_TOPIC) } catch (err) {
-      this.emit('stop-error', { operation: 'swarm.leave', error: err.message })
-    }
+    this._stopping = true
+
+    // Detach ingress first. Existing keyed mutations and index writes may
+    // still finish against live logs, but no new swarm connection or append
+    // listener can start more work while shutdown drains them.
     if (this._onSwarmConnection) {
       this.swarm.removeListener('connection', this._onSwarmConnection)
       this._onSwarmConnection = null
@@ -1295,20 +1307,57 @@ export class SeedingRegistry extends EventEmitter {
     for (const { log, onAppend } of this._peerLogMeta.values()) {
       if (onAppend) log.removeListener('append', onAppend)
     }
+
+    // A keyed mutation holds the authoritative append path. Its tail resolves
+    // only after the append/apply operation leaves its finally block. The
+    // stopping gate above prevents new tails from appearing during the drain.
+    while (this._keyLocks.size > 0) {
+      await Promise.all([...this._keyLocks.values()])
+    }
+
+    // v0.8.26 — drain any fire-and-forget index-bee writes BEFORE
+    // closing the underlying core. Otherwise the next startup's
+    // hydration may miss the last few mutations.
+    await this._flushIndexBee()
+
+    // The registry owns the exact session returned by join(). Await it before
+    // closing logs or allowing the relay to destroy the swarm/Corestore. A
+    // rejected destroy deliberately retains the handle and logs for retry.
+    if (this._discoveryHandle) {
+      try {
+        await this._discoveryHandle.destroy()
+        this._discoveryHandle = null
+      } catch (err) {
+        this.emit('stop-error', { operation: 'discovery.destroy', error: err.message })
+        throw err
+      }
+    }
+
+    let firstError = null
     if (this.localLog) {
-      try { await this.localLog.close() } catch (err) {
+      try {
+        await this.localLog.close()
+        this.localLog = null
+      } catch (err) {
         this.emit('stop-error', { operation: 'localLog.close', error: err.message })
+        if (!firstError) firstError = err
       }
     }
-    for (const log of this.peerLogs.values()) {
-      try { await log.close() } catch (err) {
+    for (const [key, log] of this.peerLogs) {
+      try {
+        await log.close()
+        this.peerLogs.delete(key)
+        this._peerLogMeta.delete(key)
+      } catch (err) {
         this.emit('stop-error', { operation: 'peerLog.close', error: err.message })
+        if (!firstError) firstError = err
       }
     }
-    this.peerLogs.clear()
-    this._peerLogMeta.clear()
+    if (firstError) throw firstError
+
     this._indexedOffsets.clear()
     this._custodyStatusCache.clear()
+    this._stopping = false
     this.emit('stopped')
   }
 }

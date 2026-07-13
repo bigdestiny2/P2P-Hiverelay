@@ -510,12 +510,13 @@ async function start () {
 
   // The built-in storage directory is owned by HiveRelay and safe to create.
   // A custom path may be an intended future mount, so it must already exist;
-  // resolveStorageCap measures the exact path and otherwise pauses adoption.
+  // resolveStorageCap measures the exact path and startup fails closed if that
+  // proof cannot be established.
   if (config.storage === STORAGE_DIR) ensureDirs()
   resolveStorageCap(config)
   const storageCap = getStorageCapProvenance(config)
   if (storageCap?.status !== 'resolved') {
-    console.log(`  ${ARROW} ${paint(C.yellow, 'storage admission paused')} (${storageCap?.reason || 'filesystem unresolved'}; management and recovery remain available)`)
+    console.log(`  ${ARROW} ${paint(C.red, 'storage startup blocked')} (${storageCap?.reason || 'filesystem unresolved'}; restore the configured path or mount before retrying)`)
   } else if (storageCap.explicit !== true && config.maxStorageBytes < storageCap.requestedBytes) {
     console.log(`  ${ARROW} ${paint(C.yellow, 'default max-storage resolved')} ${formatBytes(config.maxStorageBytes)} (available-space reserve protected)`)
   }
@@ -672,8 +673,11 @@ async function start () {
 
   // If seed keys provided via CLI, seed them immediately
   const seedKeys = args.seed ? [].concat(args.seed) : []
+  const seedMaxStorage = seedKeys.length > 0
+    ? parseBytesOrExit(args['seed-max-storage'], '--seed-max-storage')
+    : null
   for (const key of seedKeys) {
-    await node.seedApp(key)
+    await node.seedApp(key, { maxStorage: seedMaxStorage })
   }
 
   // Print status periodically. Keep the live carriage-return status bar for
@@ -1572,6 +1576,7 @@ Init Options:
 Start Options:
   --storage <path>              Storage directory
   --max-storage <size>          Max storage (e.g., 50GB, 100GB)
+  --seed-max-storage <size>     Required finite bound for each --seed app
   --max-connections <n>         Max peer connections (default: 256)
   --max-bandwidth <mbps>        Max relay bandwidth in Mbps (default: 100)
   --region <code>               Region code

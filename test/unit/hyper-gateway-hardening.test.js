@@ -1,8 +1,9 @@
 import test from 'brittle'
 import http from 'http'
-import { Readable } from 'stream'
+import { PassThrough, Readable } from 'stream'
 import { HyperGateway } from 'p2p-hiverelay/gateway'
 import { issueExactAppContext } from '../../packages/core/gateway/exact-app-context.js'
+import { AppLifecycle } from 'p2p-hiverelay/core/relay-node/app-lifecycle.js'
 
 const KEY = 'a'.repeat(64)
 
@@ -191,6 +192,282 @@ test('HyperGateway - public drive failures are redacted and use hardened JSON er
   t.absent(res.raw.toString('utf8').includes('HIVERELAY_API_KEY'), 'secret marker is not in response body')
   t.absent(res.raw.toString('utf8').includes('/private/data'), 'path detail is not in response body')
   t.ok(events.some(event => event.error === secretMessage), 'internal event keeps operator diagnostics')
+})
+
+test('HyperGateway - startup placeholder never opens or downloads through the shared store', async (t) => {
+  let storeOpens = 0
+  const node = {
+    config: { gatewayPublicOnlyPrivacyTier: true },
+    seededApps: new Map([[KEY, { drive: null, blind: false, privacyTier: 'public', maxStorage: 1024 }]]),
+    storageAdmission: { canAcknowledge: () => true },
+    store: {
+      async ready () {},
+      session () { storeOpens++; throw new Error('must not open placeholder') }
+    }
+  }
+  const gateway = new HyperGateway(node, { store: node.store })
+  const server = http.createServer((req, res) => gateway.handle(req, res))
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  t.teardown(async () => {
+    await new Promise(resolve => server.close(resolve))
+    await gateway.close()
+  })
+
+  const res = await request(server.address().port, 'GET', `/v1/hyper/${KEY}/oversized.bin`)
+  t.is(res.statusCode, 404)
+  t.is(storeOpens, 0, 'HTTP cannot become a replication ingress during deferred reseed')
+  t.is(gateway.getStats().cachedDrives, 0)
+})
+
+test('HyperGateway - post-proof publisher append and blob fork stay pinned to the admitted checkout', async (t) => {
+  const oldBody = Buffer.from('proved-v1')
+  let liveVersion = 2 // publisher advanced after version 1 was proved
+  let mutableUpdates = 0
+  let mutableDownloads = 0
+  let mutableBlobReads = 0
+  const checkoutVersions = []
+  const pinned = fakeDrive({ '/data.bin': oldBody })
+  pinned.version = 1
+  pinned.db = { core: { fork: 0, length: 2, byteLength: 0 } }
+  const metaProofCore = { fork: 0, length: 2, byteLength: 0 }
+  const blobProofCore = { fork: 0, length: 1, byteLength: oldBody.length }
+  const live = {
+    closed: false,
+    closing: false,
+    get version () { return liveVersion },
+    blobs: {
+      core: {
+        get fork () { mutableBlobReads++; return 9 },
+        get length () { mutableBlobReads++; return 7 },
+        get byteLength () { mutableBlobReads++; return 4096 }
+      }
+    },
+    async update () { mutableUpdates++ },
+    download () { mutableDownloads++; throw new Error('open-ended download forbidden') },
+    checkout (version) {
+      checkoutVersions.push(version)
+      return pinned
+    }
+  }
+  const entry = {
+    drive: live,
+    blind: false,
+    privacyTier: 'public',
+    anchored: true,
+    anchoredLength: 1,
+    storageProvedDriveVersion: 1,
+    storageProvedMetaLength: 2,
+    storageProvedBlobLength: 1,
+    storageProvedTotalBytes: oldBody.length,
+    storageProvedMetaFork: 0,
+    storageProvedBlobFork: 0,
+    maxStorage: 1024,
+    downloadSnapshotCores: [metaProofCore, blobProofCore]
+  }
+  const node = {
+    config: { gatewayPublicOnlyPrivacyTier: true },
+    seededApps: new Map([[KEY, entry]]),
+    storageAdmission: { canAcknowledge: () => true }
+  }
+  const gateway = new HyperGateway(node, {})
+  const server = http.createServer((req, res) => gateway.handle(req, res))
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  t.teardown(async () => {
+    await new Promise(resolve => server.close(resolve))
+    await gateway.close()
+  })
+
+  liveVersion = 3
+  const res = await request(server.address().port, 'GET', `/v1/hyper/${KEY}/data.bin`)
+  t.is(res.statusCode, 200)
+  t.alike(res.raw, oldBody)
+  t.alike(checkoutVersions, [1])
+  t.is(mutableUpdates, 0)
+  t.is(mutableDownloads, 0, 'no post-proof body range is requested')
+  t.is(mutableBlobReads, 0, 'HTTP never falls back to the live higher-fork blob core')
+})
+
+test('HyperGateway - same-version higher-fork proof replaces the complete-tuple cache key', async (t) => {
+  const firstBody = Buffer.from('fork-zero')
+  const secondBody = Buffer.from('fork-one')
+  const checkouts = []
+  const entry = {
+    blind: false,
+    privacyTier: 'public',
+    anchored: true,
+    anchoredLength: 1,
+    storageProvedDriveVersion: 1,
+    storageProvedMetaLength: 2,
+    storageProvedBlobLength: 1,
+    storageProvedTotalBytes: firstBody.length,
+    storageProvedMetaFork: 0,
+    storageProvedBlobFork: 0,
+    maxStorage: 1024
+  }
+  const live = {
+    closed: false,
+    closing: false,
+    checkout (version) {
+      const fork = entry.storageProvedMetaFork
+      checkouts.push({ version, fork })
+      const drive = fakeDrive({ '/data.bin': fork === 0 ? firstBody : secondBody })
+      drive.version = version
+      drive.db = { core: { fork, length: 2, byteLength: 0 } }
+      return drive
+    }
+  }
+  entry.drive = live
+  entry.downloadSnapshotCores = [
+    { fork: 0, length: 2, byteLength: 0 },
+    { fork: 0, length: 1, byteLength: firstBody.length }
+  ]
+  const node = {
+    config: { gatewayPublicOnlyPrivacyTier: true },
+    seededApps: new Map([[KEY, entry]]),
+    storageAdmission: { canAcknowledge: () => true }
+  }
+  const gateway = new HyperGateway(node, {})
+  const server = http.createServer((req, res) => gateway.handle(req, res))
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  t.teardown(async () => {
+    await new Promise(resolve => server.close(resolve))
+    await gateway.close()
+  })
+
+  const first = await request(server.address().port, 'GET', `/v1/hyper/${KEY}/data.bin`)
+  t.alike(first.raw, firstBody)
+
+  entry.storageProvedMetaFork = 1
+  entry.storageProvedBlobFork = 1
+  entry.storageProvedTotalBytes = secondBody.length
+  entry.downloadSnapshotCores = [
+    { fork: 1, length: 2, byteLength: 0 },
+    { fork: 1, length: 1, byteLength: secondBody.length }
+  ]
+  const second = await request(server.address().port, 'GET', `/v1/hyper/${KEY}/data.bin`)
+  t.alike(second.raw, secondBody)
+  t.alike(checkouts, [{ version: 1, fork: 0 }, { version: 1, fork: 1 }])
+})
+
+test('HyperGateway - stalled HTTP lease drains before unseed tears down ranges or releases debt', async (t) => {
+  const events = []
+  const tails = new Map()
+  let committed = true
+  const storageAdmission = {
+    canAcknowledge: () => committed,
+    runKeyMutation (key, run) {
+      const operation = (tails.get(key) || Promise.resolve()).catch(() => {}).then(run)
+      const tail = operation.catch(() => {})
+      tails.set(key, tail)
+      tail.finally(() => { if (tails.get(key) === tail) tails.delete(key) })
+      return operation
+    },
+    release () {
+      events.push('authority-release')
+      committed = false
+      return true
+    }
+  }
+  const bodyStream = new PassThrough()
+  let streamStarted
+  const started = new Promise(resolve => { streamStarted = resolve })
+  const checkout = fakeDrive({ '/data.bin': Buffer.from('leased') })
+  checkout.version = 1
+  checkout.db = { core: { fork: 0, length: 2, byteLength: 0 } }
+  checkout.createReadStream = () => {
+    events.push('http-stream-start')
+    streamStarted()
+    return bodyStream
+  }
+  const live = {
+    closed: false,
+    closing: false,
+    checkout: () => checkout,
+    async close () { events.push('drive-close'); this.closed = true }
+  }
+  const metaProof = {
+    fork: 0,
+    length: 2,
+    byteLength: 0,
+    async close () { events.push('meta-snapshot-close') }
+  }
+  const blobProof = {
+    fork: 0,
+    length: 1,
+    byteLength: 6,
+    async close () { events.push('blob-snapshot-close') }
+  }
+  const entry = {
+    drive: live,
+    discoveryKey: Buffer.alloc(32),
+    blind: false,
+    privacyTier: 'public',
+    anchored: true,
+    anchoredLength: 1,
+    storageProvedDriveVersion: 1,
+    storageProvedMetaLength: 2,
+    storageProvedBlobLength: 1,
+    storageProvedTotalBytes: 6,
+    storageProvedMetaFork: 0,
+    storageProvedBlobFork: 0,
+    maxStorage: 1024,
+    downloadRanges: [{ destroy () { events.push('range-destroy') } }],
+    downloadSnapshotCores: [metaProof, blobProof]
+  }
+  const apps = new Map([[KEY, entry]])
+  const appRegistry = {
+    apps,
+    get: key => apps.get(key),
+    has: key => apps.has(key),
+    delete (key) { events.push('registry-retire'); return apps.delete(key) },
+    set: (key, value) => apps.set(key, value),
+    async persistDelete () { events.push('registry-delete-durable') }
+  }
+  const node = {
+    config: { gatewayPublicOnlyPrivacyTier: true },
+    seededApps: apps,
+    appRegistry,
+    storageAdmission,
+    swarm: { async leave () { events.push('swarm-leave') } }
+  }
+  const lifecycle = new AppLifecycle(node)
+  node.appLifecycle = lifecycle
+  const gateway = new HyperGateway(node, {})
+  const server = http.createServer((req, res) => gateway.handle(req, res))
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  t.teardown(async () => {
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve))
+    await gateway.close()
+  })
+
+  const response = request(server.address().port, 'GET', `/v1/hyper/${KEY}/data.bin`)
+  await started
+  const unseed = lifecycle.unseedApp(KEY)
+  await new Promise(resolve => setImmediate(resolve))
+  t.absent(events.includes('registry-retire'), 'unseed waits behind the active lifecycle read lease')
+  t.absent(events.includes('authority-release'))
+  t.absent(events.includes('range-destroy'))
+
+  bodyStream.end(Buffer.from('leased'))
+  t.is((await response).statusCode, 200)
+  await unseed
+  t.ok(events.indexOf('range-destroy') < events.indexOf('registry-delete-durable'))
+  t.ok(events.indexOf('range-destroy') < events.indexOf('authority-release'))
+  t.ok(events.indexOf('blob-snapshot-close') < events.indexOf('authority-release'))
+  t.ok(events.indexOf('drive-close') < events.indexOf('authority-release'))
 })
 
 test('HyperGateway - successful drive timeouts clear their timer handles', async (t) => {

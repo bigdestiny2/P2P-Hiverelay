@@ -23,6 +23,10 @@ import { AppRegistry } from 'p2p-hiverelay/core/app-registry.js'
 
 function fakeNode ({ admission = { allowed: true, reason: null, availableBytes: Number.MAX_SAFE_INTEGER } } = {}) {
   const registry = new AppRegistry(null)
+  // The production path must await durable registry persistence before the
+  // raised reservation can commit. This isolated harness supplies a successful
+  // in-memory durability barrier; dedicated fault tests cover rejection.
+  registry.persistEntry = async () => {}
   const node = {
     appRegistry: registry,
     seededApps: registry.apps,
@@ -34,6 +38,22 @@ function fakeNode ({ admission = { allowed: true, reason: null, availableBytes: 
   node._storageAdmission = (additionalBytes) => {
     node._admissionCalls.push(additionalBytes)
     return typeof admission === 'function' ? admission(additionalBytes) : admission
+  }
+  node.storageAdmission = {
+    _tokens: new Map(),
+    reserve (key, newBound) {
+      const appKey = key.replace(/^drive:/, '')
+      const oldBound = Number(node.appRegistry.get(appKey)?.maxStorage) || 0
+      const admissionResult = node._storageAdmission(Math.max(0, newBound - oldBound))
+      if (!admissionResult || admissionResult.allowed !== true) return admissionResult
+      const token = { allowed: true, key, tokenId: Symbol(key), previousBound: oldBound }
+      this._tokens.set(key, token)
+      return token
+    },
+    owns (token) { return this._tokens.get(token.key) === token },
+    commit (token) { return this._tokens.delete(token.key) },
+    rollback (token) { return this._tokens.delete(token.key) },
+    release () { return true }
   }
   return node
 }
@@ -62,7 +82,7 @@ function fakeEntry ({ maxStorage = null, anchored = false, drive = fakeDrive() }
   }
 }
 
-test('reconcile: same cap → no-op (no events, entry unchanged)', (t) => {
+test('reconcile: same cap → no-op (no events, entry unchanged)', async (t) => {
   const node = fakeNode()
   const lifecycle = new AppLifecycle(node)
 
@@ -74,14 +94,14 @@ test('reconcile: same cap → no-op (no events, entry unchanged)', (t) => {
   lifecycle._eagerReplicate = async () => { replicateCalled = true }
 
   const entry = fakeEntry({ maxStorage: 1_000_000_000 })
-  lifecycle._reconcileSeedOptsOnRepin('a'.repeat(64), entry, { maxStorage: 1_000_000_000 })
+  await lifecycle._reconcileSeedOptsOnRepin('a'.repeat(64), entry, { maxStorage: 1_000_000_000 })
 
   t.is(events.length, 0, 'no events emitted for same cap')
   t.is(replicateCalled, false, 'eager replicate not retriggered')
   t.is(entry.maxStorage, 1_000_000_000, 'cap unchanged')
 })
 
-test('reconcile: both null → no-op', (t) => {
+test('reconcile: both null → no-op', async (t) => {
   const node = fakeNode()
   const lifecycle = new AppLifecycle(node)
 
@@ -93,14 +113,14 @@ test('reconcile: both null → no-op', (t) => {
   lifecycle._eagerReplicate = async () => { replicateCalled = true }
 
   const entry = fakeEntry({ maxStorage: null })
-  lifecycle._reconcileSeedOptsOnRepin('a'.repeat(64), entry, {})
+  await lifecycle._reconcileSeedOptsOnRepin('a'.repeat(64), entry, {})
 
   t.is(events.length, 0, 'no events emitted when neither side has a cap')
   t.is(replicateCalled, false, 'no replicate kicked off')
   t.is(entry.maxStorage, null, 'cap stays null')
 })
 
-test('reconcile: omitted cap preserves an existing finite cap', (t) => {
+test('reconcile: omitted cap preserves an existing finite cap', async (t) => {
   const node = fakeNode()
   const lifecycle = new AppLifecycle(node)
   let replicateCalls = 0
@@ -112,7 +132,7 @@ test('reconcile: omitted cap preserves an existing finite cap', (t) => {
   const entry = node.appRegistry.get(appKey)
   entry.drive = fakeDrive()
 
-  const result = lifecycle._reconcileSeedOptsOnRepin(appKey, entry, {})
+  const result = await lifecycle._reconcileSeedOptsOnRepin(appKey, entry, {})
 
   t.is(result.ok, true)
   t.is(result.changed, false)
@@ -143,7 +163,7 @@ test('reconcile: cap raised → entry updated + seed-cap-raised + replicate trig
   entry.drive = fakeDrive()
   entry.discoveryKey = entry.drive.discoveryKey
 
-  const result = lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: 1024 * 1024 * 1024 })
+  const result = await lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: 1024 * 1024 * 1024 })
 
   t.is(events.length, 1, 'seed-cap-raised emitted')
   t.is(events[0].appKey, appKey)
@@ -164,7 +184,7 @@ test('reconcile: cap raised → entry updated + seed-cap-raised + replicate trig
   t.is(replicateArgs.meta.source, 'repin-cap-raised', 'meta tags the source')
 })
 
-test('reconcile: cap newly declared with an unknown old baseline fails closed', (t) => {
+test('reconcile: cap newly declared with an unknown old baseline fails closed', async (t) => {
   const node = fakeNode()
   const lifecycle = new AppLifecycle(node)
 
@@ -179,7 +199,7 @@ test('reconcile: cap newly declared with an unknown old baseline fails closed', 
   const entry = node.appRegistry.get(appKey)
   entry.drive = fakeDrive()
 
-  const result = lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: 500 * 1024 * 1024 })
+  const result = await lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: 500 * 1024 * 1024 })
 
   t.is(events.length, 1, 'non-success warning emitted')
   t.is(events[0].reason, 'cap-baseline-unknown-on-repin')
@@ -194,7 +214,7 @@ test('reconcile: cap newly declared with an unknown old baseline fails closed', 
   t.is(result.incrementalBytes, null)
 })
 
-test('reconcile: over-cap admission blocks cap-up before mutation or replication', (t) => {
+test('reconcile: over-cap admission blocks cap-up before mutation or replication', async (t) => {
   const node = fakeNode({
     admission: { allowed: false, reason: 'storage-cap-reached', availableBytes: 0 }
   })
@@ -211,7 +231,7 @@ test('reconcile: over-cap admission blocks cap-up before mutation or replication
   const entry = node.appRegistry.get(appKey)
   entry.drive = fakeDrive()
 
-  const result = lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: newCap })
+  const result = await lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: newCap })
 
   t.alike(node._admissionCalls, [newCap - oldCap])
   t.is(result.ok, false)
@@ -224,7 +244,7 @@ test('reconcile: over-cap admission blocks cap-up before mutation or replication
   t.is(warnings[0].incrementalBytes, newCap - oldCap)
 })
 
-test('reconcile: reached physical reserve blocks cap-up before mutation or replication', (t) => {
+test('reconcile: reached physical reserve blocks cap-up before mutation or replication', async (t) => {
   const node = fakeNode({
     admission: { allowed: false, reason: 'storage-reserve-reached', availableBytes: 0 }
   })
@@ -239,7 +259,7 @@ test('reconcile: reached physical reserve blocks cap-up before mutation or repli
   const entry = node.appRegistry.get(appKey)
   entry.drive = fakeDrive()
 
-  const result = lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: newCap })
+  const result = await lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: newCap })
 
   t.is(result.ok, false)
   t.is(result.admissionReason, 'storage-reserve-reached')
@@ -248,7 +268,7 @@ test('reconcile: reached physical reserve blocks cap-up before mutation or repli
   t.is(replicateCalls, 0)
 })
 
-test('seedApp: blocked cap-up is surfaced in the alreadySeeded result', async (t) => {
+test('seedApp: blocked cap-up throws a terminal storage error', async (t) => {
   const node = fakeNode({
     admission: { allowed: false, reason: 'storage-cap-reached', availableBytes: 0 }
   })
@@ -260,12 +280,12 @@ test('seedApp: blocked cap-up is surfaced in the alreadySeeded result', async (t
   entry.drive = fakeDrive()
   entry.discoveryKey = entry.drive.discoveryKey
 
-  const result = await lifecycle.seedApp(appKey, { maxStorage: 500_000_000 })
+  let error = null
+  try { await lifecycle.seedApp(appKey, { maxStorage: 500_000_000 }) } catch (err) { error = err }
 
-  t.is(result.alreadySeeded, true)
-  t.is(result.repin.ok, false)
-  t.is(result.repin.reason, 'cap-raise-storage-admission-blocked')
-  t.is(result.repin.admissionReason, 'storage-cap-reached')
+  t.is(error.code, 'STORAGE_CAP_REPIN_BLOCKED')
+  t.is(error.repin.reason, 'cap-raise-storage-admission-blocked')
+  t.is(error.repin.admissionReason, 'storage-cap-reached')
   t.is(entry.maxStorage, oldCap)
 })
 
@@ -298,9 +318,8 @@ test('recovery placeholder: cap-up is admitted before drive adoption or registry
   }
 
   t.ok(error)
-  t.is(error.code, 'STORAGE_CAP_REPIN_BLOCKED')
-  t.is(error.repin.reason, 'cap-raise-storage-admission-blocked')
-  t.is(error.repin.admissionReason, 'storage-cap-reached')
+  t.is(error.code, 'STORAGE_ADMISSION_BLOCKED')
+  t.is(error.storageAdmission.reason, 'storage-cap-reached')
   t.alike(node._admissionCalls, [newCap - oldCap])
   t.is(node.appRegistry.get(appKey).maxStorage, oldCap, 'persisted cap remains unchanged')
   t.is(storeTouched, false, 'Corestore is untouched when incremental admission fails')
@@ -327,7 +346,7 @@ test('recovery placeholder: persisted cap can reopen without new admission', (t)
   t.alike(node._admissionCalls, [], 'restart recovery consumes no new capacity')
 })
 
-test('reconcile: cap lowered → seed-cap-warning + keep old cap + no replicate', (t) => {
+test('reconcile: cap lowered → seed-cap-warning + keep old cap + no replicate', async (t) => {
   const node = fakeNode()
   const lifecycle = new AppLifecycle(node)
 
@@ -341,7 +360,7 @@ test('reconcile: cap lowered → seed-cap-warning + keep old cap + no replicate'
   const entry = node.appRegistry.get(appKey)
   entry.drive = fakeDrive()
 
-  lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: 256 * 1024 * 1024 })
+  await lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: 256 * 1024 * 1024 })
 
   t.is(warnings.length, 1, 'seed-cap-warning emitted')
   t.is(warnings[0].reason, 'cap-lowered-on-repin')
@@ -351,7 +370,7 @@ test('reconcile: cap lowered → seed-cap-warning + keep old cap + no replicate'
   t.is(replicateCalled, false, 'no replicate retriggered for cap lowered')
 })
 
-test('reconcile: cap raised while _replicating → entry updated but no second replicate spawned', (t) => {
+test('reconcile: cap raised while _replicating → entry updated but no second replicate spawned', async (t) => {
   const node = fakeNode()
   const lifecycle = new AppLifecycle(node)
 
@@ -364,13 +383,13 @@ test('reconcile: cap raised while _replicating → entry updated but no second r
   entry.drive = fakeDrive()
   entry._replicating = true // simulate an in-flight retrigger
 
-  lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: 500_000_000 })
+  await lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: 500_000_000 })
 
   t.is(entry.maxStorage, 500_000_000, 'entry cap updated even while replicating')
   t.is(replicateCalls, 0, 'no second replicate spawned')
 })
 
-test('reconcile: cap raised but drive missing → entry updated but no replicate', (t) => {
+test('reconcile: cap raised but drive missing → entry updated but no replicate', async (t) => {
   const node = fakeNode()
   const lifecycle = new AppLifecycle(node)
 
@@ -382,13 +401,13 @@ test('reconcile: cap raised but drive missing → entry updated but no replicate
   const entry = node.appRegistry.get(appKey)
   // entry.drive intentionally undefined
 
-  lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: 500_000_000 })
+  await lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: 500_000_000 })
 
   t.is(entry.maxStorage, 500_000_000, 'cap updated')
   t.is(replicateCalls, 0, 'no replicate when drive missing')
 })
 
-test('reconcile: cap raised but drive already closed → no replicate', (t) => {
+test('reconcile: cap raised but drive already closed → no replicate', async (t) => {
   const node = fakeNode()
   const lifecycle = new AppLifecycle(node)
 
@@ -402,13 +421,13 @@ test('reconcile: cap raised but drive already closed → no replicate', (t) => {
   closedDrive.closed = true
   entry.drive = closedDrive
 
-  lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: 500_000_000 })
+  await lifecycle._reconcileSeedOptsOnRepin(appKey, entry, { maxStorage: 500_000_000 })
 
   t.is(entry.maxStorage, 500_000_000)
   t.is(replicateCalls, 0, 'no replicate when drive closed')
 })
 
-test('reconcile: invalid opts.maxStorage (NaN, negative, zero) treated as no-op when both equivalent to null', (t) => {
+test('reconcile: invalid opts.maxStorage (NaN, negative, zero) fails closed', async (t) => {
   const node = fakeNode()
   const lifecycle = new AppLifecycle(node)
 
@@ -420,12 +439,14 @@ test('reconcile: invalid opts.maxStorage (NaN, negative, zero) treated as no-op 
   lifecycle._eagerReplicate = async () => { replicateCalls++ }
 
   const entry = fakeEntry({ maxStorage: null })
-  lifecycle._reconcileSeedOptsOnRepin('2'.repeat(64), entry, { maxStorage: 0 })
-  lifecycle._reconcileSeedOptsOnRepin('2'.repeat(64), entry, { maxStorage: -1 })
-  lifecycle._reconcileSeedOptsOnRepin('2'.repeat(64), entry, { maxStorage: NaN })
-  lifecycle._reconcileSeedOptsOnRepin('2'.repeat(64), entry, { maxStorage: undefined })
+  const results = []
+  results.push(await lifecycle._reconcileSeedOptsOnRepin('2'.repeat(64), entry, { maxStorage: 0 }))
+  results.push(await lifecycle._reconcileSeedOptsOnRepin('2'.repeat(64), entry, { maxStorage: -1 }))
+  results.push(await lifecycle._reconcileSeedOptsOnRepin('2'.repeat(64), entry, { maxStorage: NaN }))
+  results.push(await lifecycle._reconcileSeedOptsOnRepin('2'.repeat(64), entry, { maxStorage: undefined }))
 
-  t.is(events.length, 0, 'invalid caps yield no events (treated as null)')
+  t.alike(results.map(result => result.ok), [false, false, false, true])
+  t.is(events.length, 0, 'invalid caps fail before events')
   t.is(replicateCalls, 0)
 })
 

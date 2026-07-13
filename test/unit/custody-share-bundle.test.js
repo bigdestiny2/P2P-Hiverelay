@@ -24,7 +24,12 @@
 
 import test from 'brittle'
 import b4a from 'b4a'
+import Corestore from 'corestore'
 import sodium from 'sodium-universal'
+import { EventEmitter } from 'events'
+import { access, mkdtemp, rm } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { keygen, split } from 'p2p-hiverelay-client/secret-sharing.js'
 import {
   createCustodyIntent,
@@ -34,6 +39,11 @@ import {
 } from 'p2p-hiverelay/core/custody-signing.js'
 import { verifyShareBundleForRelay, shareCommitmentAt } from 'p2p-hiverelay/core/pvss.js'
 import { AppLifecycle } from 'p2p-hiverelay/core/relay-node/app-lifecycle.js'
+import { measureStorageTreeBytes } from 'p2p-hiverelay/config/storage-cap.js'
+import {
+  STORAGE_DRIVE_AUXILIARY_ALLOWANCE_BYTES,
+  STORAGE_SHARE_BUNDLE_MAX_BYTES
+} from 'p2p-hiverelay/config/storage-admission-authority.js'
 
 // Relays sign custody entries with sodium ed25519 keys — a SEPARATE identity
 // from the secp256k1 shareholder keys the shares are encrypted to.
@@ -322,4 +332,224 @@ test('_recordCustodyReceipt: a plain (non-PVSS) intent anchors a v1 receipt unch
   t.absent(calls[0].fields.shareScheme)
   t.is(receipt.version, 1, 'receipt defaults to v1')
   t.ok(events.find(e => e.name === 'custody-receipt'))
+})
+
+test('_readShareBundle: oversized signed core proof is rejected before any body range materializes', async (t) => {
+  let downloads = 0
+  let gets = 0
+  let leaves = 0
+  const core = {
+    key: b4a.alloc(32, 1),
+    discoveryKey: b4a.alloc(32, 2),
+    length: 1,
+    byteLength: STORAGE_SHARE_BUNDLE_MAX_BYTES + 1,
+    async ready () {},
+    async update () { return true },
+    download () { downloads++; throw new Error('must not download oversized bundle') },
+    async get () { gets++; return null },
+    async close () {}
+  }
+  const node = {
+    swarm: {
+      join: () => ({ async flushed () {}, async destroy () { leaves++ } }),
+      async leave () {},
+      on () {},
+      removeListener () {}
+    },
+    storageAdmission: {
+      mutationAdmission: () => ({ allowed: true }),
+      canAcknowledge: () => true,
+      runMutation: run => Promise.resolve().then(run)
+    }
+  }
+  const lifecycle = new AppLifecycle(node)
+  const result = await lifecycle._readShareBundle('f'.repeat(64), {
+    appKey: 'a'.repeat(64),
+    timeoutMs: 100,
+    createAuxStore: async () => ({
+      async ready () {},
+      get: () => core,
+      replicate () {},
+      async close () {}
+    })
+  })
+  t.is(result, null)
+  t.is(downloads, 0)
+  t.is(gets, 0)
+  t.is(leaves, 1)
+})
+
+test('_readShareBundle: fork swap between proof and snapshot cannot authorize a body read', async (t) => {
+  let downloads = 0
+  let gets = 0
+  const snapshotCore = {
+    fork: 1,
+    length: 1,
+    byteLength: 16,
+    async ready () {},
+    download () { downloads++; return { async done () {}, destroy () {} } },
+    async get () { gets++; return b4a.from('{}') },
+    async close () {}
+  }
+  const core = {
+    key: b4a.alloc(32, 3),
+    discoveryKey: b4a.alloc(32, 4),
+    fork: 0,
+    length: 1,
+    byteLength: 16,
+    async ready () {},
+    async update () { return true },
+    snapshot () { return snapshotCore },
+    async close () {}
+  }
+  const node = {
+    swarm: {
+      join: () => ({ async flushed () {} }),
+      async leave () {},
+      on () {},
+      removeListener () {}
+    },
+    storageAdmission: {
+      mutationAdmission: () => ({ allowed: true }),
+      canAcknowledge: () => true
+    }
+  }
+  const lifecycle = new AppLifecycle(node)
+  const result = await lifecycle._readShareBundle('e'.repeat(64), {
+    appKey: 'f'.repeat(64),
+    timeoutMs: 100,
+    createAuxStore: async () => ({
+      async ready () {},
+      get: () => core,
+      replicate () {},
+      async close () {}
+    })
+  })
+  t.is(result, null)
+  t.is(downloads, 0, 'mismatched fork is rejected before finite range creation')
+  t.is(gets, 0, 'mismatched fork is never read')
+})
+
+test('share-bundle auxiliary allowance covers a worst-case one-block Corestore slot', async (t) => {
+  const storage = await mkdtemp(join(tmpdir(), 'share-bundle-footprint-'))
+  t.teardown(() => rm(storage, { recursive: true, force: true }))
+  const store = new Corestore(storage)
+  await store.ready()
+  const core = store.get({ name: 'bundle' })
+  await core.ready()
+  await core.append(b4a.alloc(STORAGE_SHARE_BUNDLE_MAX_BYTES))
+  await core.close()
+  await store.close()
+  const bytes = measureStorageTreeBytes(storage)
+  t.ok(bytes <= STORAGE_DRIVE_AUXILIARY_ALLOWANCE_BYTES, `${bytes} bytes fit in the per-drive auxiliary allowance`)
+})
+
+test('_readShareBundle: retries and replaced keys leave no persistent auxiliary core slot', async (t) => {
+  const storage = await mkdtemp(join(tmpdir(), 'share-bundle-ephemeral-'))
+  t.teardown(() => rm(storage, { recursive: true, force: true }))
+  const swarm = new EventEmitter()
+  swarm.join = () => ({ async flushed () {} })
+  swarm.leave = async () => {}
+  const appKey = 'b'.repeat(64)
+  const node = {
+    config: { storage },
+    connections: new Map(),
+    swarm,
+    storageAdmission: {
+      mutationAdmission: () => ({ allowed: true }),
+      canAcknowledge: () => true,
+      runKeyMutation: (_key, run) => Promise.resolve().then(run)
+    }
+  }
+  const lifecycle = new AppLifecycle(node)
+  for (const bundleKey of ['c'.repeat(64), 'd'.repeat(64)]) {
+    t.is(await lifecycle._readShareBundle(bundleKey, { appKey, timeoutMs: 25 }), null)
+    await t.exception(
+      access(join(storage, '.aux-share-bundles', appKey)),
+      /ENOENT/,
+      'isolated slot is removed after each attempt'
+    )
+  }
+})
+
+test('_readShareBundle: active auxiliary fetch drains before concurrent unseed releases drive debt', async (t) => {
+  const appKey = '7'.repeat(64)
+  const events = []
+  const tails = new Map()
+  let committed = true
+  let resolveProof
+  let proofStarted
+  const proofGate = new Promise(resolve => { resolveProof = resolve })
+  const started = new Promise(resolve => { proofStarted = resolve })
+  const snapshot = {
+    fork: 0,
+    length: 1,
+    byteLength: 2,
+    async ready () {},
+    download () { return { async done () {}, destroy () {} } },
+    async get () { return b4a.from('{}') },
+    async close () { events.push('aux-snapshot-close') }
+  }
+  const core = {
+    key: b4a.alloc(32, 5),
+    discoveryKey: b4a.alloc(32, 6),
+    fork: 0,
+    length: 1,
+    byteLength: 2,
+    async ready () {},
+    async update () { events.push('aux-proof-start'); proofStarted(); await proofGate; return true },
+    snapshot () { return snapshot },
+    async close () { events.push('aux-core-close') }
+  }
+  const storageAdmission = {
+    mutationAdmission: () => ({ allowed: true }),
+    canAcknowledge: () => committed,
+    runKeyMutation (key, run) {
+      const operation = (tails.get(key) || Promise.resolve()).catch(() => {}).then(run)
+      const tail = operation.catch(() => {})
+      tails.set(key, tail)
+      tail.finally(() => { if (tails.get(key) === tail) tails.delete(key) })
+      return operation
+    },
+    release () { events.push('authority-release'); committed = false; return true }
+  }
+  const entry = {
+    drive: { async close () { events.push('drive-close') } },
+    discoveryKey: b4a.alloc(32),
+    downloadRanges: [{ destroy () { events.push('range-destroy') } }],
+    downloadSnapshotCores: [{ async close () {} }, { async close () {} }]
+  }
+  const apps = new Map([[appKey, entry]])
+  const appRegistry = {
+    get: key => apps.get(key),
+    has: key => apps.has(key),
+    delete (key) { events.push('registry-retire'); return apps.delete(key) },
+    set: (key, value) => apps.set(key, value),
+    async persistDelete () { events.push('registry-delete-durable') }
+  }
+  const swarm = new EventEmitter()
+  swarm.join = () => ({ async flushed () {} })
+  swarm.leave = async () => { events.push('swarm-leave') }
+  const node = { storageAdmission, appRegistry, swarm, connections: new Map() }
+  const lifecycle = new AppLifecycle(node)
+  const fetch = lifecycle._readShareBundle('8'.repeat(64), {
+    appKey,
+    timeoutMs: 1000,
+    createAuxStore: async () => ({
+      async ready () {},
+      get: () => core,
+      replicate () {},
+      async close () { events.push('aux-store-close') }
+    })
+  })
+  await started
+  const unseed = lifecycle.unseedApp(appKey)
+  await new Promise(resolve => setImmediate(resolve))
+  t.absent(events.includes('registry-retire'), 'unseed queues behind the active auxiliary proof')
+  resolveProof()
+  t.alike(await fetch, {})
+  await unseed
+  t.ok(events.indexOf('aux-store-close') < events.indexOf('registry-retire'))
+  t.ok(events.indexOf('range-destroy') < events.indexOf('authority-release'))
+  t.ok(events.indexOf('drive-close') < events.indexOf('authority-release'))
 })
