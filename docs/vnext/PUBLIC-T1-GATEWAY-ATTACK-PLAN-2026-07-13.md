@@ -222,6 +222,16 @@ Until then, execution can still run Phase 1 fully on `feat/vnext-gateway-merge`.
 
 ## 8. Success criteria (checkbox form)
 
+### Phase 1 (local) — completed 2026-07-13
+
+- [x] 1.1 Gateway unit + deploy rehearsal (evidence under `docs/vnext/evidence/phase1-2026-07-13/`)
+- [x] 1.2 Live TLS harness (`test:public-hive-gateway:live` 50/50)
+- [x] 1.3 Staging config validator CLI + unit tests
+- [x] 1.4 `deploy/public-hive-gateway/staging.example.json`
+- [x] 1.5 `STAGING-FIRST-60-MIN.md` operator one-pager
+- [x] 1.6 Spec authority pointer in deploy README
+- [x] 1.7 Full monorepo suite deferred (gateway surface green)
+
 ### Finish line A — Staging canary
 
 - [ ] One isolated host, 443 public only  

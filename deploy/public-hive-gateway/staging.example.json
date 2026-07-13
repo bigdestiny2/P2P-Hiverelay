@@ -23,7 +23,7 @@
   "gatewayEgressWindowMs": 60000,
   "gatewayMaxResponseLifetimeMs": 900000,
   "custody": { "enabled": false },
-  "hiveAppHostSuffix": "hive-canary.operator.example",
+  "hiveAppHostSuffix": "hive-canary.staging.example.com",
   "hiveAppPublicKeys": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
   "hiveAppPublicVersions": {
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1

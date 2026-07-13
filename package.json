@@ -36,6 +36,7 @@
     "audit:release-promise": "node scripts/check-release-promise-scope.mjs",
     "audit:public-artifacts": "node scripts/check-public-artifact-secrets.mjs",
     "gateway:preflight": "node scripts/preflight-public-hive-gateway.mjs",
+    "gateway:validate-staging-config": "node scripts/validate-public-t1-staging-config.mjs",
     "gateway:preflight-ops": "node scripts/preflight-public-hive-gateway-ops.mjs",
     "gateway:verify-ops-evidence": "node scripts/verify-public-hive-gateway-ops-evidence.mjs",
     "gateway:verify-evidence": "node scripts/verify-public-hive-gateway-evidence.mjs",

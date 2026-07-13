@@ -1,0 +1,75 @@
+{
+  "schema": "public-t1-gateway-phase1-evidence-v1",
+  "at": "2026-07-13T16:25:00Z",
+  "branch": "feat/vnext-gateway-merge",
+  "tipAtStart": "2e3a89fa",
+  "scope": "Phase 1 local software only — no VPS, no fleet, no Peerit",
+  "results": {
+    "1.1_gateway_unit": {
+      "status": "pass",
+      "tests": "113/113",
+      "asserts": "1159/1159",
+      "log": "gateway-unit.log"
+    },
+    "1.1_deploy_rehearsal": {
+      "status": "pass",
+      "tests": "1/1",
+      "asserts": "38/38",
+      "log": "deploy-rehearsal.log"
+    },
+    "1.2_live_harness": {
+      "status": "pass",
+      "command": "npm run test:public-hive-gateway:live",
+      "tests": "1/1",
+      "asserts": "50/50",
+      "log": "live-harness.log",
+      "note": "Local TLS integration harness — not a public staging host"
+    },
+    "1.3_staging_config_validator": {
+      "status": "pass",
+      "cli": "scripts/validate-public-t1-staging-config.mjs",
+      "npm": "gateway:validate-staging-config",
+      "unitTests": "7/7",
+      "log": "validate-staging-config-tests.log"
+    },
+    "1.4_staging_template": {
+      "status": "done",
+      "path": "deploy/public-hive-gateway/staging.example.json",
+      "note": "Requires mode+productProfile public-t1-gateway; replace suffix and app key"
+    },
+    "1.5_operator_one_pager": {
+      "status": "done",
+      "path": "deploy/public-hive-gateway/STAGING-FIRST-60-MIN.md"
+    },
+    "1.6_spec_authority": {
+      "status": "done",
+      "canonical": "docs/PUBLIC-HTTPS-HIVE-GATEWAY-SPEC.md",
+      "lines": 1052,
+      "pointer": "deploy/public-hive-gateway/README.md"
+    },
+    "1.7_full_monorepo_suite": {
+      "status": "skipped",
+      "reason": "Phase 1 scoped to gateway surface; full npm test not required for local footguns",
+      "gatewaySurface": "green on unit + live + rehearsal + validator"
+    }
+  },
+  "artifacts": [
+    "deploy/public-hive-gateway/staging.example.json",
+    "deploy/public-hive-gateway/STAGING-FIRST-60-MIN.md",
+    "deploy/public-hive-gateway/README.md",
+    "scripts/validate-public-t1-staging-config.mjs",
+    "test/unit/validate-public-t1-staging-config.test.js"
+  ],
+  "next": {
+    "phase": 2,
+    "needsFromOwner": [
+      "staging domain (API + *.hive-canary…)",
+      "isolated VPS",
+      "one public app key + content hash",
+      "TLS plan (Let's Encrypt recommended)"
+    ]
+  },
+  "authorizesStagingHostDeploy": false,
+  "authorizesFleet": false,
+  "peeritTouched": false
+}
