@@ -14,15 +14,15 @@ const MAX_U64 = (1n << 64n) - 1n
 const MAX_WAL_COMMIT_RECORD_BYTES = 16 * 1024
 const PREFLIGHT_AUTHORITIES = new WeakMap()
 
-// This additive split is deliberately not production-wired. A server-owned,
-// daemon-private PostEOF brand consumer must be injected before it can mint a
-// usable preflight. A caller assertion or a public-field object is not EOF.
+// The production daemon assembly injects the server-owned PostEOF issuer's
+// consumer. Individual coordinators still fail closed when no consumer is
+// supplied; a caller assertion or public-field object is never EOF authority.
 export const ADMISSION_PREFLIGHT_SPLIT_STATUS = Object.freeze({
-  wired: false,
+  wired: true,
   daemonPrivatePostEofBrandRequired: true,
   postEofAuthorityRequired: true,
   productionReady: false,
-  blocker: 'POST_EOF_AUTHORITY_RUNTIME_UNWIRED'
+  blocker: 'PRODUCTION_ADMISSION_ADAPTER_CAPTURE_REQUIRED'
 })
 
 function protocolFailure (code, message) {
@@ -355,6 +355,7 @@ export class AdmissionCoordinator {
     const admission = admissionCopy(input.admission)
     const requestCommitment = b4a.from(asBytes(input.requestCommitment,
       'requestCommitment', [32, 32]))
+    const requestId = b4a.from(asBytes(input.requestId, 'requestId', [16, 16]))
     const requestedCost = costBinding(input.cost)
     const descriptorSnapshot = currentSnapshot(this.descriptorState, input.descriptorSnapshot)
     const current = currentSnapshot(this.descriptorState)
@@ -386,6 +387,7 @@ export class AdmissionCoordinator {
     return Object.freeze({
       operation,
       admission,
+      requestId,
       requestCommitment,
       descriptorSequence: descriptorSnapshot.descriptorSequence,
       descriptorHash: b4a.from(descriptorSnapshot.hash),
@@ -519,6 +521,7 @@ export class AdmissionCoordinator {
     const binding = retained.binding
     if (!sameOperationBinding(echoed.operation, binding.operation) ||
         !sameAdmissionBinding(echoed.admission, binding.admission) ||
+        !sameBytes(echoed.requestId, binding.requestId) ||
         !sameBytes(echoed.requestCommitment, binding.requestCommitment) ||
         echoed.descriptorSequence !== binding.descriptorSequence ||
         !sameBytes(echoed.descriptorHash, binding.descriptorHash) ||
@@ -541,6 +544,7 @@ export class AdmissionCoordinator {
       endpointId: binding.endpointId,
       familyId: binding.operation.familyId,
       operationId: binding.operation.operationId,
+      requestId: b4a.from(binding.requestId),
       requestCommitment: b4a.from(binding.requestCommitment),
       signal
     }), signal)

@@ -24,6 +24,10 @@ import {
   resultSignaturePayload
 } from '@hiverelay/blind-protocol'
 import { assertPrivateIpcReady } from '@hiverelay/blind-ipc'
+import {
+  CELL_PUT_OPERATION_BIT_V2,
+  REQUIRED_LOCAL_IPC_FEATURE_BITS_V2
+} from '@hiverelay/blind-ipc/private-ipc-v2-contract'
 import { AdmissionCoordinator } from './admission-coordinator.js'
 import {
   BLIND_CELL_RUNTIME_BLOCKERS,
@@ -31,9 +35,10 @@ import {
 } from './cell-runtime-adapter.js'
 import { BlindOperationCoordinator } from './coordinator.js'
 import { DescriptorState } from './descriptor-state.js'
-import { ReadinessCoordinator } from './readiness-coordinator.js'
+import { READINESS_STATE_KIND, ReadinessCoordinator } from './readiness-coordinator.js'
 import { ResourceBudget } from './resource-budget.js'
 import { BlindDaemon } from './server.js'
+import { createDaemonPrivatePostEofAuthorityIssuer } from './post-eof-authority.js'
 import {
   BLIND_CELL_STORAGE_PRODUCTION_BLOCKERS,
   BlindCellStorageEngine
@@ -540,10 +545,11 @@ function contextAuthority (snapshot, supportByEndpoint, context) {
   return endpoint
 }
 
-function storageDependencySnapshot (storage, enabledOperationBits, readyRoleBits) {
+function storageDependencySnapshot (storage, enabledOperationBits, readyRoleBits, writeReadinessGuard = null) {
   return async input => {
     const status = storage.status()
     const hasFormatBlockers = status.blockers.length !== 0
+    const writeReady = writeReadinessGuard == null || writeReadinessGuard(input) === true
     return Object.freeze({
       selfVerified: true,
       descriptorSequence: input.descriptorSequence,
@@ -552,7 +558,9 @@ function storageDependencySnapshot (storage, enabledOperationBits, readyRoleBits
       transportSupportBit: input.transportSupportBit,
       fullStoreVerified: status.state !== 'READ_ONLY' && !hasFormatBlockers,
       readyRoleBits,
-      readyOperationBits: enabledOperationBits,
+      readyOperationBits: writeReady
+        ? enabledOperationBits
+        : enabledOperationBits & ~CELL_PUT_OPERATION_BIT_V2,
       clockState: status.state === 'CLOCK_UNSAFE' ? HEALTH_CLOCK_STATE.UNSAFE : HEALTH_CLOCK_STATE.READY,
       effectiveEpochFloor: status.epochFloor,
       integrityState: status.state === 'READ_ONLY'
@@ -576,6 +584,66 @@ function exactParameterHashes (snapshot, installed) {
     runtimeFailure('BLIND_RUNTIME_ADMISSION_MISMATCH',
       'configured admission parameter files must equal the exact current signed descriptor profile set')
   }
+}
+
+function admissionAdapterKey (input) {
+  return `${input.profileId}:${input.schemeId}:${b4a.toString(input.parameterHash, 'hex')}:${input.endpointId}`
+}
+
+function capturedAdmissionAdapter (adapter) {
+  if (!adapter || typeof adapter.prepare !== 'function' ||
+      typeof adapter.preparePreflight !== 'function' || typeof adapter.confirmAfterEof !== 'function') {
+    return null
+  }
+  const receiver = adapter
+  const prepare = adapter.prepare
+  const preparePreflight = adapter.preparePreflight
+  const confirmAfterEof = adapter.confirmAfterEof
+  return Object.freeze({
+    prepare: input => prepare.call(receiver, input),
+    preparePreflight: input => preparePreflight.call(receiver, input),
+    confirmAfterEof: input => confirmAfterEof.call(receiver, input)
+  })
+}
+
+async function captureCellPutAdmissionAdapters (resolver, snapshot, installed) {
+  const captured = new Map()
+  const required = []
+  for (const record of installed) {
+    if (!record.value.resourceCosts.some(row =>
+      row.familyId === FAMILY.CELL && row.operationId === OPERATION.CELL.PUT)) continue
+    for (const endpoint of snapshot.descriptor.endpoints) {
+      if ((record.value.roleBits & endpoint.roleBits) === 0) continue
+      required.push({ record, endpoint })
+    }
+  }
+  let complete = required.length > 0
+  for (const { record, endpoint } of required) {
+    let adapter = null
+    try {
+      adapter = capturedAdmissionAdapter(await resolver({
+        profileId: record.value.profileId,
+        schemeId: record.value.schemeId,
+        parameterHash: b4a.from(record.hash),
+        descriptor: snapshot.descriptor,
+        parameters: record.value,
+        endpointId: endpoint.endpointId,
+        endpointRoleBits: endpoint.roleBits,
+        signal: null
+      }))
+    } catch {}
+    if (adapter == null) {
+      complete = false
+      continue
+    }
+    captured.set(admissionAdapterKey({
+      profileId: record.value.profileId,
+      schemeId: record.value.schemeId,
+      parameterHash: record.hash,
+      endpointId: endpoint.endpointId
+    }), adapter)
+  }
+  return Object.freeze({ captured, complete, required: required.length })
 }
 
 export async function assembleProductionBlindDaemon (options = {}) {
@@ -628,10 +696,13 @@ export async function assembleProductionBlindDaemon (options = {}) {
     }
     signer = currentSigner(secretKey, derivedPublicKey)
 
+    const postEofAuthorityIssuer = createDaemonPrivatePostEofAuthorityIssuer()
+    let admissionResolver = options.resolveAdmissionAdapter || (async () => null)
     const admission = new AdmissionCoordinator({
       descriptorState,
       verifySignature: verifyDetached,
-      resolveAdapter: options.resolveAdmissionAdapter || (async () => null)
+      resolveAdapter: input => admissionResolver(input),
+      consumePostEofAuthority: input => postEofAuthorityIssuer.consume(input)
     })
     const parameterBytes = await Promise.all(config.admissionParameterFiles.map((file, index) => readBoundFile(file, {
       field: `admissionParameterFiles[${index}]`,
@@ -642,6 +713,14 @@ export async function assembleProductionBlindDaemon (options = {}) {
     exactParameterHashes(descriptorSnapshot, installedParameters)
     if (!admission.descriptorParametersAvailable(descriptorSnapshot)) {
       runtimeFailure('BLIND_RUNTIME_ADMISSION_MISMATCH', 'current signed admission parameters are unavailable')
+    }
+    const admissionCapture = cellRuntimeEnabled
+      ? await captureCellPutAdmissionAdapters(admissionResolver, descriptorSnapshot, installedParameters)
+      : Object.freeze({ captured: new Map(), complete: false, required: 0 })
+    if (cellRuntimeEnabled) {
+      const fallbackResolver = admissionResolver
+      admissionResolver = input => admissionCapture.captured.get(admissionAdapterKey(input)) ||
+        fallbackResolver(input)
     }
     assertDescribeResponseFit(descriptorSnapshot, descriptorBytes, parameterBytes)
 
@@ -675,8 +754,13 @@ export async function assembleProductionBlindDaemon (options = {}) {
       if (ownerFenceTokenHash) ownerFenceTokenHash.fill(0)
     }
 
+    const durableReplayReady = Boolean(options.durableReplayAuthority &&
+      typeof options.durableReplayAuthority.reserve === 'function')
+    const v2WritePathReady = cellRuntimeEnabled && admissionCapture.complete && durableReplayReady
     const enabledOperationBits = cellRuntimeEnabled
-      ? DESCRIBE_AND_CELL_OPERATION_BITS
+      ? v2WritePathReady
+        ? DESCRIBE_AND_CELL_OPERATION_BITS
+        : DESCRIBE_AND_CELL_OPERATION_BITS ^ CELL_PUT_OPERATION_BIT_V2
       : DESCRIBE_OPERATION_BITS
     const readyRoleBits = cellRuntimeEnabled
       ? ENDPOINT_ROLE.DESCRIPTOR_DISCOVERY | ENDPOINT_ROLE.STORAGE | ENDPOINT_ROLE.QUOTA_REDEEMER
@@ -684,7 +768,12 @@ export async function assembleProductionBlindDaemon (options = {}) {
     readiness = new ReadinessCoordinator({
       descriptorState,
       admission,
-      dependencySnapshot: storageDependencySnapshot(storage, enabledOperationBits, readyRoleBits),
+      dependencySnapshot: storageDependencySnapshot(storage, enabledOperationBits, readyRoleBits, () => {
+        const current = descriptorState.state().snapshot
+        return v2WritePathReady && current &&
+          current.descriptorSequence === descriptorSnapshot.descriptorSequence &&
+          b4a.equals(current.hash, descriptorSnapshot.hash)
+      }),
       signer
     })
     const budget = new ResourceBudget(config.resourceBudget)
@@ -712,7 +801,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
         ? cellHook(cellAdapter.capacityGuard, 'check', 'non-CELL capacity guard')
         : unavailableHook('check', 'non-DESCRIBE capacity guard'),
       operationExecutor: cellRuntimeEnabled
-        ? cellHook(cellAdapter.operationExecutor, 'execute', 'non-CELL operation executor')
+        ? cellAdapter.operationExecutor
         : unavailableHook('execute', 'non-DESCRIBE operation executor'),
       transactionCoordinator: cellRuntimeEnabled ? cellAdapter.transactionCoordinator : null,
       resultVerifier: cellRuntimeEnabled ? describeAndCellResultVerifier(cellAdapter) : describeResultVerifier(),
@@ -734,21 +823,69 @@ export async function assembleProductionBlindDaemon (options = {}) {
       contextAuthority(descriptorSnapshot, supportByEndpoint, context)
       return coordinator.dispatch(frame, context)
     }
-    const dispatchStagedPut = cellRuntimeEnabled
+    const dispatchStagedPut = v2WritePathReady
       ? (staged, context) => {
           contextAuthority(descriptorSnapshot, supportByEndpoint, context)
           return coordinator.dispatchStagedCellPut(staged, context)
         }
       : null
-    const streamTransportProfileHashForEndpoint = cellRuntimeEnabled
+    const streamTransportProfileHashForEndpoint = v2WritePathReady
       ? input => b4a.from(contextAuthority(descriptorSnapshot, supportByEndpoint, input).transportProfileHash)
+      : null
+    const writeReadinessProjection = v2WritePathReady
+      ? async input => {
+        const supportBit = supportByEndpoint.get(input.endpointId)
+        if (!supportBit || supportBit !== TRANSPORT_SUPPORT.DIRECT_HTTP ||
+              !b4a.equals(input.launchTopologyHash, bootstrap.launchTopologyHash)) {
+          runtimeFailure('BLIND_RUNTIME_TOPOLOGY_MISMATCH',
+            'V2 write readiness is outside the exact production topology')
+        }
+        const state = await readiness.evaluate({
+          endpointId: input.endpointId,
+          transportSupportBit: supportBit,
+          signal: input.signal
+        })
+        const storageStatus = storage.status()
+        const current = descriptorState.state().snapshot
+        const captureCurrent = current &&
+            current.descriptorSequence === descriptorSnapshot.descriptorSequence &&
+            b4a.equals(current.hash, descriptorSnapshot.hash)
+        const expiresMonotonicMillis = input.absoluteDeadlineMonotonicMillis - 1n
+        return Object.freeze({
+          selfVerified: state.kind === READINESS_STATE_KIND.READY,
+          cellRuntimeReady: captureCurrent && state.kind === READINESS_STATE_KIND.READY &&
+              (state.readyOperationBits & CELL_PUT_OPERATION_BIT_V2) !== 0,
+          storageReady: storageStatus.state === 'READY',
+          admissionReady: captureCurrent && admissionCapture.complete,
+          endpointId: input.endpointId,
+          launchTopologyHash: b4a.from(bootstrap.launchTopologyHash),
+          transportProfileHash: b4a.from(input.transportProfileHash),
+          descriptorSequence: descriptorSnapshot.descriptorSequence,
+          descriptorHash: b4a.from(descriptorSnapshot.hash),
+          descriptorRoleBits: descriptorSnapshot.descriptor.endpoints.find(
+            endpoint => endpoint.endpointId === input.endpointId).roleBits,
+          descriptorEnabledOperationBits: descriptorSnapshot.descriptor.enabledOperationBits,
+          readyRoleBits: state.kind === READINESS_STATE_KIND.READY ? state.readyRoleBits : 0,
+          readyOperationBits: state.kind === READINESS_STATE_KIND.READY ? state.readyOperationBits : 0,
+          readyWriteOperationBits: state.kind === READINESS_STATE_KIND.READY
+            ? state.readyOperationBits & CELL_PUT_OPERATION_BIT_V2
+            : 0,
+          readyIpcFeatureBits: REQUIRED_LOCAL_IPC_FEATURE_BITS_V2,
+          expiresMonotonicMillis,
+          descriptorExpiresMonotonicMillis: input.absoluteDeadlineMonotonicMillis
+        })
+      }
       : null
     daemon = new BlindDaemon({
       ...bootstrap,
       ...config.server,
       dispatch,
       dispatchStagedPut,
+      postEofAuthorityIssuer,
+      stagedPutRelayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
       streamTransportProfileHashForEndpoint,
+      durableReplayAuthority: options.durableReplayAuthority,
+      writeReadinessProjection,
       readinessSnapshot,
       releaseGate: async () => {},
       onError: options.onError
@@ -757,7 +894,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
     let started = false
     let closed = false
     let closePromise = null
-    const runtimeExclusions = cellRuntimeEnabled
+    const runtimeExclusions = v2WritePathReady
       ? Object.freeze([
         ...PRODUCTION_RUNTIME_EXCLUSIONS.filter(value =>
           value !== 'CELL_PUBLIC_EXECUTION_UNASSEMBLED' &&
@@ -765,7 +902,9 @@ export async function assembleProductionBlindDaemon (options = {}) {
           value !== 'ADMISSION_REDEMPTION_ADAPTER_UNASSEMBLED'),
         ...BLIND_CELL_RUNTIME_BLOCKERS
       ])
-      : PRODUCTION_RUNTIME_EXCLUSIONS
+      : cellRuntimeEnabled
+        ? Object.freeze([...PRODUCTION_RUNTIME_EXCLUSIONS, ...BLIND_CELL_RUNTIME_BLOCKERS])
+        : PRODUCTION_RUNTIME_EXCLUSIONS
     runtime = Object.freeze({
       descriptorState,
       admission,
@@ -813,6 +952,12 @@ export async function assembleProductionBlindDaemon (options = {}) {
           descriptorSequence: descriptorSnapshot.descriptorSequence,
           descriptorHash: b4a.from(descriptorSnapshot.hash),
           enabledOperationBits,
+          v2WritePathReady,
+          admissionCapture: Object.freeze({
+            complete: admissionCapture.complete,
+            required: admissionCapture.required,
+            captured: admissionCapture.captured.size
+          }),
           exclusions: runtimeExclusions,
           cell: cellAdapter == null ? null : cellAdapter.status(),
           storage: storage.status()

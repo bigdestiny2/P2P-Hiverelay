@@ -322,6 +322,7 @@ const RESULT_IDENTITY_DOMAIN = b4a.from('hiverelay.blind.store-result-identity.v
 const REPAIR_LOCATOR_DOMAIN = b4a.from('hiverelay.blind.repair-locator-commitment.v1', 'ascii')
 const REPAIR_EVIDENCE_DOMAIN = b4a.from('hiverelay.blind.repair-evidence.v1', 'ascii')
 const CONTROL_SNAPSHOT_STATES = new WeakMap()
+const ATOMIC_STAGED_PUTS = new WeakMap()
 
 export class BlindCellStorageError extends Error {
   constructor (code, message, retryable = false) {
@@ -690,6 +691,12 @@ export class BlindCellStorageEngine {
       reservedCells: 0,
       stagingByProfile: new Map()
     }
+    this.atomicStaging = {
+      bytes: 0,
+      byProfile: new Map(),
+      items: 0
+    }
+    this.atomicStagedLeases = new Map()
     this.epochFloor = 0
     this.clockUnsafe = false
     this.readOnlyReason = null
@@ -735,6 +742,7 @@ export class BlindCellStorageEngine {
           this.#runOperation(async () => {
             await this.#refreshClock()
             await this.#sweepReservationBatch(4096)
+            await this.#sweepExpiredAtomicStaging()
             const readSweep = await this.#sweepExpiredChargedReadPins(4096)
             if (readSweep.moreDue) this.#scheduleChargedReadSweep()
           }).catch(() => { this.readOnlyReason = this.readOnlyReason || 'CLOCK_TIMER_FAILED' })
@@ -875,6 +883,15 @@ export class BlindCellStorageEngine {
     }
     for (const value of this.accounting.stagingByProfile.values()) {
       if (!Number.isSafeInteger(value) || value <= 0) throw new BlindWalIntegrityError('per-profile staging accounting is invalid')
+    }
+    if (!Number.isSafeInteger(this.atomicStaging.bytes) || this.atomicStaging.bytes < 0 ||
+        !Number.isSafeInteger(this.atomicStaging.items) || this.atomicStaging.items < 0) {
+      throw new BlindWalIntegrityError('ephemeral atomic staging accounting is invalid')
+    }
+    for (const value of this.atomicStaging.byProfile.values()) {
+      if (!Number.isSafeInteger(value) || value <= 0) {
+        throw new BlindWalIntegrityError('per-profile ephemeral atomic staging accounting is invalid')
+      }
     }
   }
 
@@ -1640,13 +1657,17 @@ export class BlindCellStorageEngine {
     return null
   }
 
-  #checkCreateQuota (declaredBytes, profileId) {
+  #checkCreateQuota (declaredBytes, profileId, stagingCredit = 0) {
+    const ephemeralBytes = this.atomicStaging.bytes - stagingCredit
+    const ephemeralProfileBytes = (this.atomicStaging.byProfile.get(profileId) || 0) - stagingCredit
+    if (ephemeralBytes < 0 || ephemeralProfileBytes < 0) fail('INTERNAL', 'atomic staging quota credit is invalid')
     if (this.cells.size + this.accounting.reservedCells >= this.quota.maxCells) fail('BUSY', 'cell record quota is full', true)
-    if (this.accounting.storedBytes + this.accounting.stagingBytes + declaredBytes > this.quota.maxStoredBytes) {
+    if (this.accounting.storedBytes + this.accounting.stagingBytes + ephemeralBytes + declaredBytes > this.quota.maxStoredBytes) {
       fail('BUSY', 'opaque storage quota is full', true)
     }
-    if (this.accounting.stagingBytes + declaredBytes > this.quota.maxStagingBytes) fail('BUSY', 'global staging quota is full', true)
-    if ((this.accounting.stagingByProfile.get(profileId) || 0) + declaredBytes > this.quota.maxStagingBytesPerProfile) {
+    if (this.accounting.stagingBytes + ephemeralBytes + declaredBytes > this.quota.maxStagingBytes) fail('BUSY', 'global staging quota is full', true)
+    if ((this.accounting.stagingByProfile.get(profileId) || 0) + ephemeralProfileBytes + declaredBytes >
+        this.quota.maxStagingBytesPerProfile) {
       fail('BUSY', 'generic admission-profile staging quota is full', true)
     }
     if (this.accounting.controlBytes + CONTROL_RECORD_BYTES > this.quota.maxControlBytes) fail('BUSY', 'control-record quota is full', true)
@@ -1794,6 +1815,330 @@ export class BlindCellStorageEngine {
 
   putCell (input) {
     return this.#runOperation(() => this.#putCell(input))
+  }
+
+  #atomicStagingInput (input) {
+    if (!input || !input.request || input.source == null) {
+      fail('BAD_ENCODING', 'atomic CELL.PUT staging requires a request and opaque source')
+    }
+    const request = input.request
+    const resultBindingBytes = this.#resultBindingBytes(input.resultBinding)
+    if (resultBindingBytes == null) fail('BAD_ENCODING', 'atomic CELL.PUT requires a profile-1 result binding')
+    const profileId = integer(input.admissionProfileId, 1, 0xffff, 'admissionProfileId')
+    const keys = validateDistinctKeys([
+      ['createPublicKey', request.createPublicKey],
+      ['renewPublicKey', request.renewPublicKey],
+      ['dropPublicKey', request.dropPublicKey]
+    ])
+    const storageSlot = fixed(request.storageSlot, 32, 'storageSlot', true)
+    const allocationEpoch = integer(request.allocationEpoch, 0, 0xffffffff, 'allocationEpoch')
+    const sizeClass = integer(request.sizeClass, 1, 5, 'sizeClass')
+    const leaseClass = integer(request.leaseClass, 1, 4, 'leaseClass')
+    const clientNonce = fixed(request.clientNonce, 32, 'clientNonce')
+    const declaredBlobHash = fixed(request.declaredBlobHash, 32, 'declaredBlobHash', true)
+    if (!equal(cellStorageSlot({ allocationEpoch, createPublicKey: keys.createPublicKey }), storageSlot)) {
+      fail('BAD_SLOT', 'storageSlot is not self-certifying')
+    }
+    const allocation = allocationCommitment({
+      relayPublicKey: this.relayPublicKey,
+      storageSlot,
+      allocationEpoch,
+      sizeClass,
+      leaseClass,
+      declaredCellBlobHash: declaredBlobHash,
+      createPublicKey: keys.createPublicKey,
+      renewPublicKey: keys.renewPublicKey,
+      dropPublicKey: keys.dropPublicKey
+    })
+    if (!verifyEd25519(keys.createPublicKey, allocation, request.createSignature)) {
+      fail('BAD_CREATE_SIG', 'cell create signature is invalid')
+    }
+    const requestCommitment = cellPutRequestCommitment({ allocationCommitment: allocation, clientNonce })
+    const signal = input.signal == null ? null : input.signal
+    if (signal != null && (typeof signal !== 'object' || typeof signal.aborted !== 'boolean' ||
+        typeof signal.addEventListener !== 'function' || typeof signal.removeEventListener !== 'function')) {
+      fail('BAD_ENCODING', 'atomic CELL.PUT signal must be an AbortSignal')
+    }
+    return {
+      source: input.source,
+      storageSlot,
+      allocationEpoch,
+      sizeClass,
+      leaseClass,
+      clientNonce,
+      declaredBlobHash,
+      createPublicKey: keys.createPublicKey,
+      renewPublicKey: keys.renewPublicKey,
+      dropPublicKey: keys.dropPublicKey,
+      allocationCommitment: allocation,
+      requestCommitment,
+      profileId,
+      resultBindingBytes,
+      declaredBytes: CELL_SIZE_CLASS[sizeClass],
+      signal
+    }
+  }
+
+  async #releaseAtomicStaging (retained, discard, quotaLockHeld = false) {
+    if (retained.released) return false
+    retained.released = true
+    if (retained.authority && this.atomicStagedLeases.get(retained.authority) === retained) {
+      this.atomicStagedLeases.delete(retained.authority)
+      ATOMIC_STAGED_PUTS.delete(retained.authority)
+    }
+    let discardFailure = null
+    try {
+      if (discard && retained.staged) await this.transactionStore.discardStaged(retained.staged)
+    } catch (error) {
+      discardFailure = error
+    } finally {
+      try {
+        if (retained.quotaReserved) {
+          const releaseAccounting = () => {
+            this.atomicStaging.bytes -= retained.declaredBytes
+            this.atomicStaging.items--
+            const profileBytes = (this.atomicStaging.byProfile.get(retained.profileId) || 0) - retained.declaredBytes
+            if (profileBytes === 0) this.atomicStaging.byProfile.delete(retained.profileId)
+            else this.atomicStaging.byProfile.set(retained.profileId, profileBytes)
+            retained.quotaReserved = false
+            this.#assertAccounting()
+          }
+          if (quotaLockHeld) releaseAccounting()
+          else await this.transactionStore.withLocks(['quota:atomic-staging'], releaseAccounting)
+        }
+      } finally {
+        this.activeOperations--
+        for (let index = this.drainWaiters.length - 1; index >= 0; index--) {
+          if (this.activeOperations <= this.drainWaiters[index].target) {
+            const [{ resolve }] = this.drainWaiters.splice(index, 1)
+            resolve()
+          }
+        }
+      }
+    }
+    if (discardFailure) throw discardFailure
+    return true
+  }
+
+  async stageAtomicCellPut (input) {
+    if (this.closing || this.snapshotting) fail('BUSY', 'store lifecycle is quiescing', true)
+    this.#assertWritable(true)
+    input = this.#atomicStagingInput(input)
+    assertPutLive(input.signal)
+    this.activeOperations++
+    const retained = {
+      ...input,
+      owner: this,
+      staged: null,
+      phase: 'staging',
+      released: false,
+      quotaReserved: false
+    }
+    try {
+      await this.transactionStore.withLocks(['quota:atomic-staging'], async () => {
+        const existingProfile = this.atomicStaging.byProfile.get(input.profileId) || 0
+        if (this.accounting.storedBytes + this.accounting.stagingBytes + this.atomicStaging.bytes +
+            input.declaredBytes > this.quota.maxStoredBytes ||
+            this.accounting.stagingBytes + this.atomicStaging.bytes + input.declaredBytes >
+            this.quota.maxStagingBytes ||
+            (this.accounting.stagingByProfile.get(input.profileId) || 0) + existingProfile +
+            input.declaredBytes > this.quota.maxStagingBytesPerProfile) {
+          fail('BUSY', 'bounded atomic staging quota is full', true)
+        }
+        this.atomicStaging.bytes += input.declaredBytes
+        this.atomicStaging.items++
+        this.atomicStaging.byProfile.set(input.profileId, existingProfile + input.declaredBytes)
+        retained.quotaReserved = true
+      })
+      const now = u64(this.nowUnixMillis(), 'nowUnixMillis')
+      if (now > MAX_U64 - this.reservationMillis) fail('BUSY', 'atomic staging deadline space is exhausted')
+      retained.expiresUnixMillis = now + this.reservationMillis
+      retained.staged = await this.transactionStore.stageOpaque({
+        source: input.source,
+        expectedLength: input.declaredBytes,
+        expectedHash: input.declaredBlobHash,
+        deadlineUnixMillis: retained.expiresUnixMillis,
+        nowUnixMillis: this.nowUnixMillis,
+        signal: input.signal
+      })
+      assertPutLive(input.signal)
+      if (this.closing || u64(this.nowUnixMillis(), 'nowUnixMillis') >= retained.expiresUnixMillis) {
+        fail('BUSY', 'atomic staging expired or the store began closing before authority issue', true)
+      }
+      retained.phase = 'staged'
+      const authority = Object.freeze({})
+      retained.authority = authority
+      ATOMIC_STAGED_PUTS.set(authority, retained)
+      this.atomicStagedLeases.set(authority, retained)
+      return authority
+    } catch (error) {
+      await this.#releaseAtomicStaging(retained, true)
+      if (error instanceof BlindOpaqueBodyError) {
+        throw new BlindCellStorageError(error.terminal ? 'RETRY_TERMINAL' : 'BUSY', error.message, !error.terminal)
+      }
+      throw error
+    }
+  }
+
+  async cancelAtomicCellPut (authority) {
+    const retained = authority && ATOMIC_STAGED_PUTS.get(authority)
+    if (!retained || retained.owner !== this || retained.phase !== 'staged') return false
+    ATOMIC_STAGED_PUTS.delete(authority)
+    this.atomicStagedLeases.delete(authority)
+    retained.phase = 'cancelled'
+    return this.#releaseAtomicStaging(retained, true)
+  }
+
+  async #sweepExpiredAtomicStaging () {
+    const now = u64(this.nowUnixMillis(), 'nowUnixMillis')
+    let cancelled = 0
+    let firstFailure = null
+    for (const [authority, retained] of [...this.atomicStagedLeases]) {
+      if (retained.phase !== 'staged' || retained.expiresUnixMillis > now) continue
+      try {
+        if (await this.cancelAtomicCellPut(authority)) cancelled++
+      } catch (error) {
+        firstFailure = firstFailure || error
+      }
+    }
+    if (firstFailure) throw firstFailure
+    return cancelled
+  }
+
+  sweepExpiredAtomicStaging () {
+    return this.#runOperation(() => this.#sweepExpiredAtomicStaging())
+  }
+
+  async commitAtomicCellPut (input) {
+    const retained = input && input.authority && ATOMIC_STAGED_PUTS.get(input.authority)
+    if (!retained) fail('BAD_ENCODING', 'atomic CELL.PUT requires one live staged authority')
+    if (retained.owner !== this) fail('BAD_ENCODING', 'atomic CELL.PUT staged authority belongs to another store')
+    if (typeof input.preCommitFence !== 'function') {
+      fail('BAD_ENCODING', 'atomic CELL.PUT requires a synchronous daemon-private precommit fence')
+    }
+    if (u64(this.nowUnixMillis(), 'nowUnixMillis') >= retained.expiresUnixMillis) {
+      await this.cancelAtomicCellPut(input.authority)
+      fail('BUSY', 'atomic CELL.PUT staged authority expired before confirmation', true)
+    }
+    const prepared = this.#preparedAdmission(input.preparedAdmission)
+    if (!equal(prepared.value.requestCommitment, retained.requestCommitment) ||
+        prepared.value.profileId !== retained.profileId) {
+      await this.cancelAtomicCellPut(input.authority)
+      fail('SPEND_INVALID', 'confirmed admission does not bind the exact staged CELL.PUT')
+    }
+    const fingerprint = requestFingerprint([
+      prepared.value.spendTag,
+      retained.requestCommitment,
+      retained.storageSlot,
+      retained.allocationCommitment,
+      retained.declaredBlobHash,
+      u32bytes(retained.declaredBytes),
+      b4a.from([retained.leaseClass]),
+      u32bytes(retained.profileId),
+      blake2b256(prepared.canonicalBytes)
+    ])
+    try {
+      assertPutLive(input.signal)
+      await this.#refreshClock()
+      this.#assertWritable(true)
+      return await this.transactionStore.withLocks([
+        'quota:atomic-staging',
+        `spend:${hex(prepared.value.spendTag)}`,
+        `cell:${hex(retained.storageSlot)}`
+      ], async () => {
+        if (ATOMIC_STAGED_PUTS.get(input.authority) !== retained || retained.released ||
+            retained.phase !== 'staged') {
+          fail('INTERNAL', 'atomic CELL.PUT was cancelled before its irreversible commit fence')
+        }
+        if (u64(this.nowUnixMillis(), 'nowUnixMillis') >= retained.expiresUnixMillis) {
+          ATOMIC_STAGED_PUTS.delete(input.authority)
+          this.atomicStagedLeases.delete(input.authority)
+          retained.phase = 'cancelled'
+          await this.#releaseAtomicStaging(retained, true, true)
+          fail('BUSY', 'atomic CELL.PUT staged authority expired while awaiting commit locks', true)
+        }
+        const existing = this.spends.get(hex(prepared.value.spendTag))
+        if (existing) {
+          const replay = this.#spendReplay(existing, { ...retained, spendTag: prepared.value.spendTag, fingerprint })
+          if (replay) {
+            ATOMIC_STAGED_PUTS.delete(input.authority)
+            this.atomicStagedLeases.delete(input.authority)
+            await this.#releaseAtomicStaging(retained, true, true)
+            return replay
+          }
+        }
+        const priorCommitment = this.commitments.get(hex(retained.requestCommitment))
+        if (priorCommitment) {
+          fail(priorCommitment.fingerprint === hex(fingerprint) ? 'SPEND_REPLAY' : 'CONFLICT',
+            'atomic CELL.PUT request commitment is already used')
+        }
+        if (this.cells.has(hex(retained.storageSlot))) fail('CONFLICT', 'cell slots are first-write-wins')
+        if (retained.allocationEpoch > this.epochFloor + 1 ||
+            this.epochFloor >= retained.allocationEpoch + RETENTION_HORIZON_EPOCHS) {
+          fail('BAD_SLOT', 'allocation epoch is outside its accepted transport-capability window')
+        }
+        this.#checkCreateQuota(retained.declaredBytes, retained.profileId, retained.declaredBytes)
+        const leaseEpoch = this.#leaseEpochFor(retained.leaseClass)
+        const identity = resultIdentity('stored', retained.storageSlot, retained.requestCommitment,
+          retained.declaredBlobHash, retained.leaseClass, leaseEpoch, 0n)
+        // This is the last cancellable fence. Once publication begins, object
+        // publication plus the type-17 WAL fsync/apply is one recovery unit.
+        const fenceResult = input.preCommitFence()
+        if (fenceResult && typeof fenceResult.then === 'function') {
+          fail('INTERNAL', 'atomic CELL.PUT precommit fence must be synchronous')
+        }
+        if (fenceResult !== true) fail('INTERNAL', 'atomic CELL.PUT precommit fence rejected publication')
+        assertPutLive(input.signal)
+        retained.phase = 'committing'
+        ATOMIC_STAGED_PUTS.delete(input.authority)
+        this.atomicStagedLeases.delete(input.authority)
+        const transactionId = this.transactionStore.newTransactionId()
+        const virtualBucket = this.transactionStore.virtualBucket(
+          BLIND_STORE_SERVICE_TAG.CELL, retained.storageSlot)
+        try {
+          const reference = await this.transactionStore.publishOpaque(retained.staged, virtualBucket)
+          await this.#appendAndApply(BLIND_CELL_WAL_TYPE.PUT_ATOMIC_COMMITTED,
+            transactionId, virtualBucket, {
+              version: 1,
+              spendTag: prepared.value.spendTag,
+              requestCommitment: retained.requestCommitment,
+              requestFingerprint: fingerprint,
+              storageSlot: retained.storageSlot,
+              allocationEpoch: retained.allocationEpoch,
+              sizeClass: retained.sizeClass,
+              leaseClass: retained.leaseClass,
+              declaredBlobHash: retained.declaredBlobHash,
+              createPublicKey: retained.createPublicKey,
+              renewPublicKey: retained.renewPublicKey,
+              dropPublicKey: retained.dropPublicKey,
+              allocationCommitment: retained.allocationCommitment,
+              profileId: retained.profileId,
+              preparedAdmissionBytes: prepared.canonicalBytes,
+              resultBindingBytes: retained.resultBindingBytes,
+              declaredBytes: retained.declaredBytes,
+              blobObjectId: reference.objectId,
+              leaseEpoch,
+              stateRevision: 0n,
+              policyRevision: 0n,
+              resultIdentity: identity,
+              committedEpoch: this.epochFloor
+            })
+          const committed = this.spends.get(hex(prepared.value.spendTag))
+          const result = resultView(committed, 'stored', false)
+          retained.phase = 'committed'
+          await this.#releaseAtomicStaging(retained, false, true)
+          return result
+        } catch (error) {
+          retained.phase = 'ambiguous'
+          this.readOnlyReason = 'AMBIGUOUS_ATOMIC_PUBLISH_REQUIRES_RECOVERY'
+          await this.#releaseAtomicStaging(retained, true, true).catch(() => {})
+          throw error
+        }
+      })
+    } catch (error) {
+      if (ATOMIC_STAGED_PUTS.has(input.authority)) await this.cancelAtomicCellPut(input.authority)
+      throw error
+    }
   }
 
   #leaseEpochFor (leaseClass) {
@@ -2417,7 +2762,8 @@ export class BlindCellStorageEngine {
       if (input.operationId === OPERATION.CELL.PUT) {
         const sizeClass = integer(input.request.sizeClass, 1, 5, 'sizeClass')
         const profileId = integer(input.preparedAdmission.profileId, 1, 0xffff, 'profileId')
-        this.#checkCreateQuota(CELL_SIZE_CLASS[sizeClass], profileId)
+        const stagingCredit = input.atomicStaged === true ? CELL_SIZE_CLASS[sizeClass] : 0
+        this.#checkCreateQuota(CELL_SIZE_CLASS[sizeClass], profileId, stagingCredit)
       } else if (input.operationId === OPERATION.CELL.RENEW &&
           this.accounting.controlBytes + CONTROL_RECORD_BYTES > this.quota.maxControlBytes) {
         fail('BUSY', 'control-record quota is full', true)
@@ -2961,7 +3307,10 @@ export class BlindCellStorageEngine {
         requestResults: this.requestResults.size,
         chargedReadPins,
         chargedReadFinalized,
-        chargedReadExpired
+        chargedReadExpired,
+        atomicStagingBytes: this.atomicStaging.bytes,
+        atomicStagingItems: this.atomicStaging.items,
+        atomicStagingLeases: this.atomicStagedLeases.size
       },
       blockers
     }
@@ -2975,6 +3324,14 @@ export class BlindCellStorageEngine {
       this.clockTimer = null
       if (this.chargedReadSweepTimer) clearTimeout(this.chargedReadSweepTimer)
       this.chargedReadSweepTimer = null
+      let cancellationFailure = null
+      for (const authority of [...this.atomicStagedLeases.keys()]) {
+        try {
+          await this.cancelAtomicCellPut(authority)
+        } catch (error) {
+          cancellationFailure = cancellationFailure || error
+        }
+      }
       await this.#waitForDrain()
       try {
         await this.transactionStore.close()
@@ -2982,6 +3339,7 @@ export class BlindCellStorageEngine {
         this.opened = false
         this.#destroyIdentityAuthorities()
       }
+      if (cancellationFailure) throw cancellationFailure
     })()
     return this.closePromise
   }

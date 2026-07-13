@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import fs from 'node:fs/promises'
+import net from 'node:net'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import test from 'brittle'
@@ -15,6 +16,7 @@ import {
   RESULT_SIGNATURE_DOMAIN_ID,
   TRANSPORT_ID,
   TRANSPORT_SUPPORT,
+  allocationCommitment,
   admissionParametersHash,
   admissionParametersV1,
   blake2b256,
@@ -22,12 +24,30 @@ import {
   blindServiceDescriptorV1,
   decodeCanonical,
   decodeDispatchFrame,
+  decodeOuterEnvelope,
   encodeCanonical,
+  encodeDispatchFrame,
+  encodeOuterEnvelope,
   getCellV1,
   hashStoreFormat,
+  putCellV1,
   resultSignaturePayload,
-  serviceDescriptorHash
+  serviceDescriptorHash,
+  cellStorageSlot
 } from '@hiverelay/blind-protocol'
+import {
+  LOCAL_STAGED_DIRECTION_V2,
+  LOCAL_STAGED_FLAG_V2,
+  LOCAL_STAGED_FRAME_KIND_V2,
+  OUTER_CLASS,
+  decodeLocalStagedCellPutFramesV2,
+  decodeLocalTransportBindingV2,
+  deriveLocalStagedOpenBindingHashV2,
+  encodeLocalStagedCellPutFrameV2,
+  encodeLocalStagedCellPutOpenV2,
+  encodeLocalTransportBindingV2,
+  verifyStagedCellPutPublicOuterEnvelopeV2
+} from '@hiverelay/blind-ipc/private-ipc-v2-contract'
 import { loadDaemonBootstrapConfig } from '../bootstrap-config.js'
 import {
   PRODUCTION_RUNTIME_EXCLUSIONS,
@@ -111,8 +131,8 @@ async function runtimeFixture (options = {}) {
     enabledOperationBits: options.cellRuntime
       ? PRODUCTION_DESCRIBE_AND_CELL_OPERATION_BITS
       : PRODUCTION_RUNTIME_OPERATION_BITS,
-    issuedEpoch: currentEpoch,
-    expiresEpoch: currentEpoch + 4,
+    issuedEpoch: options.descriptorSequence == null ? currentEpoch : currentEpoch - 1,
+    expiresEpoch: options.descriptorSequence == null ? currentEpoch + 4 : currentEpoch + 3,
     capacityBand: 0
   })
   descriptor.endpoints = [descriptor.endpoints[0]]
@@ -138,16 +158,33 @@ async function runtimeFixture (options = {}) {
     ? b4a.from(descriptor.durability.storeFormatHash)
     : b4a.from(options.buildStoreFormatHash)
   bindDurability(descriptor)
-  const canonicalDescriptor = signCanonical(blindServiceDescriptorV1, descriptor,
+  const canonicalGenesisDescriptor = signCanonical(blindServiceDescriptorV1, descriptor,
     RESULT_SIGNATURE_DOMAIN_ID.DESCRIPTOR, relaySecretKey)
+  let activeDescriptor = descriptor
+  let canonicalDescriptor = canonicalGenesisDescriptor
+  const descriptorChain = [canonicalGenesisDescriptor]
+  if (options.descriptorSequence != null) {
+    if (options.descriptorSequence !== 1) throw new Error('runtime fixture only supports one exact successor')
+    activeDescriptor = decodeCanonical(blindServiceDescriptorV1, canonicalGenesisDescriptor, { copyBytes: true })
+    activeDescriptor.descriptorSequence = 1n
+    activeDescriptor.previousDescriptorHash = serviceDescriptorHash(canonicalGenesisDescriptor)
+    activeDescriptor.issuedEpoch = currentEpoch
+    activeDescriptor.expiresEpoch = currentEpoch + 4
+    activeDescriptor.descriptorNonce = b4a.alloc(32, 0x64)
+    canonicalDescriptor = signCanonical(blindServiceDescriptorV1, activeDescriptor,
+      RESULT_SIGNATURE_DOMAIN_ID.DESCRIPTOR, relaySecretKey)
+    descriptorChain.push(canonicalDescriptor)
+  }
 
   const descriptorFile = path.join(directory, 'descriptor.bin')
+  const successorDescriptorFile = path.join(directory, 'descriptor-successor.bin')
   const parametersFile = path.join(directory, 'admission.bin')
   const secretKeyFile = path.join(directory, 'relay-secret.bin')
   const partitionKeyFile = path.join(directory, 'partition-key.bin')
   const ownerFenceFile = path.join(directory, 'owner-fence-hash.bin')
   await Promise.all([
-    privateFile(descriptorFile, canonicalDescriptor),
+    ...descriptorChain.map((bytes, index) => privateFile(
+      index === 0 ? descriptorFile : successorDescriptorFile, bytes)),
     privateFile(parametersFile, canonicalParameters),
     privateFile(secretKeyFile, relaySecretKey),
     privateFile(partitionKeyFile, b4a.alloc(32, 0x71)),
@@ -169,14 +206,16 @@ async function runtimeFixture (options = {}) {
     HIVERELAY_BLIND_DAEMON_UID: String(uid),
     HIVERELAY_BLIND_DAEMON_GID: String(gid),
     HIVERELAY_BLIND_SHARED_GID: String(gid),
-    HIVERELAY_BLIND_DESCRIPTOR_FILES: descriptorFile,
+    HIVERELAY_BLIND_DESCRIPTOR_FILES: descriptorChain.length === 1
+      ? descriptorFile
+      : `${descriptorFile},${successorDescriptorFile}`,
     HIVERELAY_BLIND_ADMISSION_PARAMETER_FILES: parametersFile,
     HIVERELAY_BLIND_RELAY_SECRET_KEY_FILE: secretKeyFile,
     HIVERELAY_BLIND_STORE_ROOT: storeRoot,
     HIVERELAY_BLIND_PARTITION_KEY_FILE: partitionKeyFile,
     HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE: ownerFenceFile,
     HIVERELAY_BLIND_MAP_GENERATION: '1',
-    HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_SEQUENCE: '0',
+    HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_SEQUENCE: String(activeDescriptor.descriptorSequence),
     HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_HASH: b4a.toString(serviceDescriptorHash(canonicalDescriptor), 'hex')
   }
   return { directory, environment }
@@ -215,6 +254,103 @@ function waitForText (child, output, match, timeoutMillis = 10000) {
   })
 }
 
+function preparedAdmissionResult (input) {
+  return {
+    spendTag: blake2b256(input.admission.token),
+    requestCommitment: input.requestCommitment,
+    costClass: input.costClass,
+    walCommitRecord: input.admission.token,
+    profileId: input.admission.profileId,
+    schemeId: input.admission.schemeId,
+    parameterHash: input.admission.parameterHash
+  }
+}
+
+function splitAdmissionAdapter () {
+  const preflights = new WeakSet()
+  return Object.freeze({
+    async prepare (input) { return preparedAdmissionResult(input) },
+    async preparePreflight () {
+      const authority = Object.freeze({})
+      preflights.add(authority)
+      return authority
+    },
+    async confirmAfterEof (input) {
+      if (!preflights.has(input.adapterPreflight)) throw new Error('unknown admission preflight')
+      preflights.delete(input.adapterPreflight)
+      return preparedAdmissionResult(input)
+    }
+  })
+}
+
+function durableReplayAuthority () {
+  return Object.freeze({
+    async reserve (input) {
+      return Object.freeze({
+        kind: 'reserved-new',
+        durablyCommitted: true,
+        replayTupleHash: b4a.from(input.replayTupleHash),
+        expiresMonotonicMillis: input.expiresMonotonicMillis
+      })
+    }
+  })
+}
+
+async function exchangeProductionV2Put (runtime, bootstrap, outer) {
+  const acceptedMonotonicMillis = process.hrtime.bigint() / 1_000_000n
+  const endpoint = runtime.descriptorState.requireCurrent().descriptor.endpoints[0]
+  const edgeProcessNonce = b4a.alloc(32, 0xd1)
+  const localChannelNonce = b4a.alloc(32, 0xd2)
+  const publicSessionBindingHash = b4a.alloc(32, 0xd3)
+  const openFields = Object.freeze({
+    endpointId: endpoint.endpointId,
+    outerClass: 3,
+    acceptedMonotonicMillis,
+    openDeadlineMonotonicMillis: acceptedMonotonicMillis + 15_000n,
+    requestEnvelopeBytes: OUTER_CLASS[3]
+  })
+  const openBindingHash = deriveLocalStagedOpenBindingHashV2({
+    open: openFields,
+    launchTopologyHash: bootstrap.launchTopologyHash,
+    authorityKind: 1,
+    edgeProcessNonce,
+    localChannelNonce,
+    transportProfileHash: endpoint.transportProfileHash,
+    publicSessionBindingHash
+  })
+  const context = decodeLocalTransportBindingV2(encodeLocalTransportBindingV2({
+    authorityKind: 1,
+    edgeProcessNonce,
+    localChannelNonce,
+    transportProfileHash: endpoint.transportProfileHash,
+    publicSessionBindingHash,
+    openBindingHash
+  }))
+  const open = encodeLocalStagedCellPutOpenV2({ ...openFields, context })
+  const frames = []
+  for (let offset = 0, sequence = 0n; offset < outer.byteLength; sequence++) {
+    const end = Math.min(outer.byteLength, offset + 65_515)
+    frames.push(encodeLocalStagedCellPutFrameV2({
+      direction: LOCAL_STAGED_DIRECTION_V2.REQUEST,
+      frameKind: LOCAL_STAGED_FRAME_KIND_V2.CONTENT,
+      sequence,
+      flags: end === outer.byteLength ? LOCAL_STAGED_FLAG_V2.FIN : 0,
+      bytes: outer.subarray(offset, end)
+    }))
+    offset = end
+  }
+  const socket = net.createConnection({ path: bootstrap.streamSocketPath })
+  await once(socket, 'connect')
+  const chunks = []
+  let socketError = null
+  socket.on('data', chunk => chunks.push(b4a.from(chunk)))
+  socket.on('error', error => { socketError = error })
+  const completed = new Promise(resolve => socket.once('close', resolve))
+  socket.end(b4a.concat([open, ...frames]))
+  await completed
+  return { wire: b4a.concat(chunks), open, socketError }
+}
+
 test('production assembler derives signed readiness and exposes only its real surface', async t => {
   const fixture = await runtimeFixture()
   t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
@@ -244,7 +380,7 @@ test('production assembler derives signed readiness and exposes only its real su
   await runtime.close()
 })
 
-test('production assembler composes the fail-closed CELL tranche and its private staged path', async t => {
+test('legacy-only admission adapter cannot advertise or dispatch production V2 CELL.PUT', async t => {
   const fixture = await runtimeFixture({ cellRuntime: true })
   t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
   const bootstrap = loadDaemonBootstrapConfig(fixture.environment)
@@ -277,13 +413,16 @@ test('production assembler composes the fail-closed CELL tranche and its private
   })
   t.is(readiness.readyRoleBits,
     ENDPOINT_ROLE.DESCRIPTOR_DISCOVERY | ENDPOINT_ROLE.STORAGE | ENDPOINT_ROLE.QUOTA_REDEEMER)
-  t.is(readiness.readyOperationBits, PRODUCTION_DESCRIBE_AND_CELL_OPERATION_BITS)
-  t.is(runtime.status().enabledOperationBits, PRODUCTION_DESCRIBE_AND_CELL_OPERATION_BITS)
-  t.is(typeof runtime.daemon.dispatchStagedPut, 'function')
-  t.is(typeof runtime.daemon.streamTransportProfileHashForEndpoint, 'function')
-  t.absent(runtime.status().exclusions.includes('CELL_PUBLIC_EXECUTION_UNASSEMBLED'))
+  const withoutPut = PRODUCTION_DESCRIBE_AND_CELL_OPERATION_BITS ^ 0x08
+  t.is(readiness.readyOperationBits, withoutPut)
+  t.is(runtime.status().enabledOperationBits, withoutPut)
+  t.is(runtime.daemon.dispatchStagedPut, null)
+  t.is(runtime.daemon.streamTransportProfileHashForEndpoint, null)
+  t.ok(runtime.status().exclusions.includes('CELL_PUBLIC_EXECUTION_UNASSEMBLED'))
   t.absent(runtime.status().exclusions.includes('CHARGED_CELL_READ_CHECKPOINT_STATE_UNASSEMBLED'))
-  t.is(runtime.status().cell.productionReady, true)
+  t.is(runtime.status().cell.productionReady, false)
+  t.is(runtime.status().v2WritePathReady, false)
+  t.alike(runtime.status().admissionCapture, { complete: false, required: 1, captured: 0 })
   t.ok(runtime.storage.transactionStore.partitionKey.some(byte => byte !== 0),
     'assembler wipe did not alias the store-owned partition key')
   t.ok(runtime.storage.transactionStore.ownerFenceTokenHash.some(byte => byte !== 0),
@@ -335,6 +474,108 @@ test('production assembler composes the fail-closed CELL tranche and its private
     'Cell durability continuity identity is destroyed on close')
   t.alike(runtime.storage.durabilityProfileHash, b4a.alloc(32),
     'Cell durability profile identity is destroyed on close')
+})
+
+test('captured split adapter and durable replay authority execute one real production V2 CELL.PUT', async t => {
+  const fixture = await runtimeFixture({ cellRuntime: true, descriptorSequence: 1 })
+  t.teardown(async () => fs.rm(fixture.directory, { recursive: true, force: true }))
+  const bootstrap = loadDaemonBootstrapConfig(fixture.environment)
+  const localPeerBootstrap = Object.freeze({ ...bootstrap, expectedPeerUid: process.getuid() })
+  const runtimeConfig = loadProductionRuntimeConfig(fixture.environment, bootstrap.endpointIds)
+  const adapter = splitAdmissionAdapter()
+  const daemonErrors = []
+  let resolveCalls = 0
+  const runtime = await assembleProductionBlindDaemon({
+    bootstrap: localPeerBootstrap,
+    runtimeConfig,
+    enableCellRuntime: true,
+    resolveAdmissionAdapter: async () => { resolveCalls++; return adapter },
+    durableReplayAuthority: durableReplayAuthority(),
+    onError: error => daemonErrors.push(error),
+    releaseGate: async () => {}
+  })
+  t.teardown(() => runtime.close())
+  t.is(runtime.status().v2WritePathReady, true)
+  t.is(resolveCalls, 1)
+  t.alike(runtime.status().admissionCapture, { complete: true, required: 1, captured: 1 })
+  t.is(runtime.status().enabledOperationBits, PRODUCTION_DESCRIBE_AND_CELL_OPERATION_BITS)
+  t.is(typeof runtime.daemon.dispatchStagedPut, 'function')
+  t.is(typeof runtime.daemon.streamTransportProfileHashForEndpoint, 'function')
+  t.ok(b4a.equals(runtime.daemon.stagedPutRelayPublicKey,
+    runtime.descriptorState.requireCurrent().descriptor.relayPublicKey))
+
+  const keys = [0, 1, 2].map(() => {
+    const publicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
+    const secretKey = b4a.alloc(sodium.crypto_sign_SECRETKEYBYTES)
+    sodium.crypto_sign_keypair(publicKey, secretKey)
+    return { publicKey, secretKey }
+  })
+  const descriptor = runtime.descriptorState.requireCurrent().descriptor
+  const allocationEpoch = runtime.storage.status().epochFloor
+  const cellBlob = b4a.alloc(4096, 0xe1)
+  const declaredBlobHash = blake2b256(cellBlob)
+  const storageSlot = cellStorageSlot({ allocationEpoch, createPublicKey: keys[0].publicKey })
+  const allocation = allocationCommitment({
+    relayPublicKey: descriptor.relayPublicKey,
+    storageSlot,
+    allocationEpoch,
+    sizeClass: 1,
+    leaseClass: 1,
+    declaredCellBlobHash: declaredBlobHash,
+    createPublicKey: keys[0].publicKey,
+    renewPublicKey: keys[1].publicKey,
+    dropPublicKey: keys[2].publicKey
+  })
+  const createSignature = b4a.alloc(sodium.crypto_sign_BYTES)
+  sodium.crypto_sign_detached(createSignature, allocation, keys[0].secretKey)
+  const profile = descriptor.admissionProfiles[0]
+  const requestId = b4a.alloc(16, 0xe2)
+  const dispatch = encodeDispatchFrame({
+    frameKind: FRAME_KIND.REQUEST,
+    familyId: FAMILY.CELL,
+    operationId: OPERATION.CELL.PUT,
+    requestId,
+    body: encodeCanonical(putCellV1, {
+      version: 1,
+      storageSlot,
+      allocationEpoch,
+      sizeClass: 1,
+      leaseClass: 1,
+      clientNonce: b4a.alloc(32, 0xe3),
+      createPublicKey: keys[0].publicKey,
+      renewPublicKey: keys[1].publicKey,
+      dropPublicKey: keys[2].publicKey,
+      declaredBlobHash,
+      createSignature,
+      admission: {
+        profileId: profile.profileId,
+        schemeId: profile.schemeId,
+        parameterHash: profile.parameterHash,
+        token: b4a.alloc(32, 0xe4)
+      },
+      cellBlob
+    })
+  })
+  const outer = encodeOuterEnvelope({ outerClass: 3, innerDispatch: dispatch }, {
+    randomFill: padding => padding.fill(0xe5)
+  })
+  await runtime.start()
+  const exchange = await exchangeProductionV2Put(runtime, localPeerBootstrap, outer)
+  for (const error of daemonErrors) t.comment(`${error.code || 'ERROR'}: ${error.message}`)
+  if (exchange.socketError) t.comment(`${exchange.socketError.code}: ${exchange.socketError.message}`)
+  const local = decodeLocalStagedCellPutFramesV2(exchange.wire)
+  t.is(local.remainder.byteLength, 0)
+  t.ok(local.frames.length > 0)
+  const resultOuter = b4a.concat(local.frames.map(frame => frame.bytes))
+  const verified = verifyStagedCellPutPublicOuterEnvelopeV2(resultOuter,
+    exchange.open, LOCAL_STAGED_DIRECTION_V2.RESULT, requestId)
+  const response = decodeOuterEnvelope(resultOuter, { copyInner: true })
+  t.is(verified.outerClass, 3)
+  t.is(response.frame.frameKind, FRAME_KIND.RESPONSE)
+  t.alike((await runtime.storage.readCell(storageSlot)).cellBlob, cellBlob)
+  t.is(runtime.storage.status().accounting.atomicStagingLeases, 0)
+  t.is(resolveCalls, 1, 'the live PUT uses the assembly-captured adapter without dynamic re-resolution')
+  await runtime.close()
 })
 
 test('production launch floor and explicit one-hot transport authority fail closed', async t => {

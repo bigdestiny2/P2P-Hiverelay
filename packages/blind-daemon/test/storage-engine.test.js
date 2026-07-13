@@ -930,6 +930,364 @@ test('daemon pins the private IPC atomic record kind to WAL type 17 and the gene
   t.absent(protocolPackage.dependencies?.['@hiverelay/blind-ipc'])
 })
 
+test('atomic staged PUT is ephemeral through EOF and commits as one type-17 WAL frame', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-live-atomic-put')
+  const time = clock()
+  const fixture = putFixture({ spendByte: 0xac, blobByte: 0xac })
+  const engine = new BlindCellStorageEngine(options(root, time, {
+    storeId: STORE_ID,
+    durabilityProfileHash: DURABILITY_PROFILE_HASH
+  }))
+  await engine.open()
+  const before = engine.status().walSequence
+  const authority = await engine.stageAtomicCellPut({
+    request: fixture.request,
+    source: fixture.cellBlob,
+    admissionProfileId: fixture.preparedAdmission.profileId,
+    resultBinding: profile1ResultBindingBytes()
+  })
+  t.is(engine.status().walSequence, before, 'pre-EOF staging emits no durable WAL')
+  t.is(engine.status().accounting.atomicStagingBytes, fixture.cellBlob.byteLength)
+  t.is(engine.status().accounting.storedBytes, 0)
+  const stored = await engine.commitAtomicCellPut({
+    authority,
+    preparedAdmission: fixture.preparedAdmission,
+    preCommitFence: () => true
+  })
+  t.is(stored.status, 'stored')
+  t.is(stored.replay, false)
+  t.is(engine.status().walSequence, before + 1n)
+  t.is(engine.status().accounting.atomicStagingBytes, 0)
+  t.is(engine.status().accounting.storedBytes, fixture.cellBlob.byteLength)
+  t.alike((await engine.readCell(fixture.request.storageSlot)).cellBlob, fixture.cellBlob)
+  await engine.close()
+})
+
+test('atomic staged PUT cancellation discards bytes without spend, cell, or WAL mutation', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-live-atomic-cancel')
+  const time = clock()
+  const fixture = putFixture({ spendByte: 0xad, blobByte: 0xad })
+  const engine = new BlindCellStorageEngine(options(root, time, {
+    storeId: STORE_ID,
+    durabilityProfileHash: DURABILITY_PROFILE_HASH
+  }))
+  await engine.open()
+  const before = engine.status().walSequence
+  const authority = await engine.stageAtomicCellPut({
+    request: fixture.request,
+    source: fixture.cellBlob,
+    admissionProfileId: fixture.preparedAdmission.profileId,
+    resultBinding: profile1ResultBindingBytes()
+  })
+  t.is(await engine.cancelAtomicCellPut(authority), true)
+  t.is(await engine.cancelAtomicCellPut(authority), false)
+  const status = engine.status()
+  t.is(status.walSequence, before)
+  t.is(status.accounting.atomicStagingBytes, 0)
+  t.is(status.accounting.storedBytes, 0)
+  t.is(status.accounting.spends, 0)
+  t.is(status.accounting.cellRecords, 0)
+  await engine.close()
+})
+
+test('expired atomic staging leases are swept and release quota plus drain ownership', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-live-atomic-expiry')
+  const time = clock()
+  const fixture = putFixture({ spendByte: 0xae, blobByte: 0xae })
+  const engine = new BlindCellStorageEngine(options(root, time, {
+    storeId: STORE_ID,
+    durabilityProfileHash: DURABILITY_PROFILE_HASH,
+    reservationMillis: 20
+  }))
+  await engine.open()
+  const before = engine.status().walSequence
+  const authority = await engine.stageAtomicCellPut({
+    request: fixture.request,
+    source: fixture.cellBlob,
+    admissionProfileId: fixture.preparedAdmission.profileId,
+    resultBinding: profile1ResultBindingBytes()
+  })
+  t.is(engine.status().accounting.atomicStagingLeases, 1)
+  time.offsetMillis = 21n
+  t.is(await engine.sweepExpiredAtomicStaging(), 1)
+  const status = engine.status()
+  t.is(status.walSequence, before)
+  t.is(status.accounting.atomicStagingBytes, 0)
+  t.is(status.accounting.atomicStagingItems, 0)
+  t.is(status.accounting.atomicStagingLeases, 0)
+  t.is(await engine.cancelAtomicCellPut(authority), false)
+  await engine.close()
+})
+
+test('atomic staging expiry is rechecked after waiting for canonical commit locks', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-live-atomic-expiry-under-lock')
+  const time = clock()
+  const fixture = putFixture({ spendByte: 0xa7, blobByte: 0xa7 })
+  const engine = new BlindCellStorageEngine(options(root, time, {
+    storeId: STORE_ID,
+    durabilityProfileHash: DURABILITY_PROFILE_HASH,
+    reservationMillis: 20
+  }))
+  await engine.open()
+  const before = engine.status().walSequence
+  const authority = await engine.stageAtomicCellPut({
+    request: fixture.request,
+    source: fixture.cellBlob,
+    admissionProfileId: fixture.preparedAdmission.profileId,
+    resultBinding: profile1ResultBindingBytes()
+  })
+  const withLocks = engine.transactionStore.withLocks.bind(engine.transactionStore)
+  engine.transactionStore.withLocks = async (keys, callback) => {
+    if (keys.length === 3 && keys[0] === 'quota:atomic-staging') time.offsetMillis = 21n
+    return withLocks(keys, callback)
+  }
+  let error = null
+  try {
+    await engine.commitAtomicCellPut({
+      authority,
+      preparedAdmission: fixture.preparedAdmission,
+      preCommitFence: () => true
+    })
+  } catch (caught) {
+    error = caught
+  }
+  t.ok(error && /expired while awaiting commit locks/.test(error.message))
+  t.is(error.code, 'BUSY')
+  const status = engine.status()
+  t.is(status.walSequence, before)
+  t.is(status.accounting.atomicStagingBytes, 0)
+  t.is(status.accounting.atomicStagingItems, 0)
+  t.is(status.accounting.atomicStagingLeases, 0)
+  t.is(status.accounting.spends, 0)
+  t.is(status.accounting.cellRecords, 0)
+  await engine.close()
+})
+
+test('storage close cancels every abandoned atomic staging lease before drain', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-live-atomic-close-cancel')
+  const time = clock()
+  const fixture = putFixture({ spendByte: 0xa9, blobByte: 0xa9 })
+  const engine = new BlindCellStorageEngine(options(root, time, {
+    storeId: STORE_ID,
+    durabilityProfileHash: DURABILITY_PROFILE_HASH
+  }))
+  await engine.open()
+  const before = engine.status().walSequence
+  const authority = await engine.stageAtomicCellPut({
+    request: fixture.request,
+    source: fixture.cellBlob,
+    admissionProfileId: fixture.preparedAdmission.profileId,
+    resultBinding: profile1ResultBindingBytes()
+  })
+  t.is(engine.status().accounting.atomicStagingLeases, 1)
+  await engine.close()
+  t.is(await engine.cancelAtomicCellPut(authority), false)
+  const reopened = new BlindCellStorageEngine(options(root, time, {
+    storeId: STORE_ID,
+    durabilityProfileHash: DURABILITY_PROFILE_HASH
+  }))
+  await reopened.open()
+  const status = reopened.status()
+  t.is(status.walSequence, before)
+  t.is(status.accounting.atomicStagingBytes, 0)
+  t.is(status.accounting.atomicStagingItems, 0)
+  t.is(status.accounting.atomicStagingLeases, 0)
+  await reopened.close()
+})
+
+test('atomic cancellation releases logical quota and drain state even when physical discard fails', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-live-atomic-discard-failure')
+  const time = clock()
+  const fixture = putFixture({ spendByte: 0xaf, blobByte: 0xaf })
+  const engine = new BlindCellStorageEngine(options(root, time, {
+    storeId: STORE_ID,
+    durabilityProfileHash: DURABILITY_PROFILE_HASH
+  }))
+  await engine.open()
+  const authority = await engine.stageAtomicCellPut({
+    request: fixture.request,
+    source: fixture.cellBlob,
+    admissionProfileId: fixture.preparedAdmission.profileId,
+    resultBinding: profile1ResultBindingBytes()
+  })
+  engine.transactionStore.discardStaged = async () => { throw new Error('physical discard failed') }
+  await t.exception(engine.cancelAtomicCellPut(authority), /physical discard failed/)
+  t.is(engine.status().accounting.atomicStagingBytes, 0)
+  t.is(engine.status().accounting.atomicStagingItems, 0)
+  await engine.close()
+})
+
+test('cancel racing before the atomic commit boundary wins without publication', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-live-atomic-cancel-race')
+  const time = clock()
+  const fixture = putFixture({ spendByte: 0xb0, blobByte: 0xb0 })
+  const engine = new BlindCellStorageEngine(options(root, time, {
+    storeId: STORE_ID,
+    durabilityProfileHash: DURABILITY_PROFILE_HASH
+  }))
+  await engine.open()
+  const authority = await engine.stageAtomicCellPut({
+    request: fixture.request,
+    source: fixture.cellBlob,
+    admissionProfileId: fixture.preparedAdmission.profileId,
+    resultBinding: profile1ResultBindingBytes()
+  })
+  let releaseCommit
+  const commitBlocked = new Promise(resolve => { releaseCommit = resolve })
+  let commitEntered
+  const commitWaiting = new Promise(resolve => { commitEntered = resolve })
+  const withLocks = engine.transactionStore.withLocks.bind(engine.transactionStore)
+  engine.transactionStore.withLocks = async (keys, callback) => {
+    if (keys.length === 3 && keys[0] === 'quota:atomic-staging') {
+      commitEntered()
+      await commitBlocked
+    }
+    return withLocks(keys, callback)
+  }
+  const pending = engine.commitAtomicCellPut({
+    authority,
+    preparedAdmission: fixture.preparedAdmission,
+    preCommitFence: () => true
+  })
+  await commitWaiting
+  t.is(await engine.cancelAtomicCellPut(authority), true)
+  releaseCommit()
+  await t.exception(pending, /cancelled before its irreversible commit fence/)
+  const status = engine.status()
+  t.is(status.accounting.storedBytes, 0)
+  t.is(status.accounting.spends, 0)
+  t.is(status.accounting.cellRecords, 0)
+  t.is(status.accounting.atomicStagingBytes, 0)
+  await engine.close()
+})
+
+test('pre-fence conflict and concurrent staging keep atomic quota accounting serialized', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-live-atomic-prefence-conflict')
+  const time = clock()
+  const keys = managementKeys()
+  const committed = putFixture({ keys, spendByte: 0xb3, blobByte: 0xb3, nonceByte: 0xb3 })
+  const conflict = putFixture({
+    keys,
+    spendByte: 0xb4,
+    cellBlob: committed.cellBlob,
+    clientNonce: committed.request.clientNonce
+  })
+  const concurrent = putFixture({ spendByte: 0xb5, blobByte: 0xb5 })
+  const engine = new BlindCellStorageEngine(options(root, time, {
+    storeId: STORE_ID,
+    durabilityProfileHash: DURABILITY_PROFILE_HASH
+  }))
+  await engine.open()
+  await engine.putCell({ ...committed, resultBinding: profile1ResultBindingBytes() })
+  const conflictAuthority = await engine.stageAtomicCellPut({
+    request: conflict.request,
+    source: conflict.cellBlob,
+    admissionProfileId: conflict.preparedAdmission.profileId,
+    resultBinding: profile1ResultBindingBytes()
+  })
+  const [commitResult, stageResult] = await Promise.allSettled([
+    engine.commitAtomicCellPut({
+      authority: conflictAuthority,
+      preparedAdmission: conflict.preparedAdmission,
+      preCommitFence: () => true
+    }),
+    engine.stageAtomicCellPut({
+      request: concurrent.request,
+      source: concurrent.cellBlob,
+      admissionProfileId: concurrent.preparedAdmission.profileId,
+      resultBinding: profile1ResultBindingBytes()
+    })
+  ])
+  t.is(commitResult.status, 'rejected')
+  t.is(commitResult.reason.code, 'CONFLICT')
+  t.is(stageResult.status, 'fulfilled')
+  t.is(engine.status().accounting.atomicStagingBytes, concurrent.cellBlob.byteLength)
+  t.is(engine.status().accounting.atomicStagingItems, 1)
+  t.is(await engine.cancelAtomicCellPut(stageResult.value), true)
+  t.is(engine.status().accounting.atomicStagingBytes, 0)
+  await engine.close()
+})
+
+test('cancel after the atomic publication boundary cannot touch the commit unit', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-live-atomic-post-boundary-cancel')
+  const time = clock()
+  const fixture = putFixture({ spendByte: 0xb2, blobByte: 0xb2 })
+  let cancellation
+  const engine = new BlindCellStorageEngine(options(root, time, {
+    storeId: STORE_ID,
+    durabilityProfileHash: DURABILITY_PROFILE_HASH,
+    faultInjector (point) {
+      if (point === 'body:after-publish') cancellation = engine.cancelAtomicCellPut(authority)
+    }
+  }))
+  await engine.open()
+  const authority = await engine.stageAtomicCellPut({
+    request: fixture.request,
+    source: fixture.cellBlob,
+    admissionProfileId: fixture.preparedAdmission.profileId,
+    resultBinding: profile1ResultBindingBytes()
+  })
+  const stored = await engine.commitAtomicCellPut({
+    authority,
+    preparedAdmission: fixture.preparedAdmission,
+    preCommitFence: () => true
+  })
+  t.is(await cancellation, false)
+  t.is(stored.status, 'stored')
+  t.is(engine.status().accounting.spends, 1)
+  t.is(engine.status().accounting.cellRecords, 1)
+  await engine.close()
+})
+
+test('type-17 fsync crash suppresses success and recovers an exact committed replay', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-live-atomic-fsync-crash')
+  const time = clock()
+  const fixture = putFixture({ spendByte: 0xae, blobByte: 0xae })
+  const overrides = { storeId: STORE_ID, durabilityProfileHash: DURABILITY_PROFILE_HASH }
+  let crashSequence = null
+  let engine = new BlindCellStorageEngine(options(root, time, {
+    ...overrides,
+    faultInjector (point, context) {
+      if (point === 'wal:after-sync' && context.sequence === crashSequence) {
+        throw new Error('crash after atomic type-17 fsync')
+      }
+    }
+  }))
+  await engine.open()
+  crashSequence = engine.status().walSequence + 1n
+  const authority = await engine.stageAtomicCellPut({
+    request: fixture.request,
+    source: fixture.cellBlob,
+    admissionProfileId: fixture.preparedAdmission.profileId,
+    resultBinding: profile1ResultBindingBytes()
+  })
+  await t.exception(engine.commitAtomicCellPut({
+    authority,
+    preparedAdmission: fixture.preparedAdmission,
+    preCommitFence: () => true
+  }), /crash after atomic type-17 fsync/)
+  await engine.close()
+
+  engine = new BlindCellStorageEngine(options(root, time, overrides))
+  await engine.open()
+  const retryAuthority = await engine.stageAtomicCellPut({
+    request: fixture.request,
+    source: fixture.cellBlob,
+    admissionProfileId: fixture.preparedAdmission.profileId,
+    resultBinding: profile1ResultBindingBytes()
+  })
+  const replay = await engine.commitAtomicCellPut({
+    authority: retryAuthority,
+    preparedAdmission: fixture.preparedAdmission,
+    preCommitFence: () => true
+  })
+  t.is(replay.replay, true)
+  t.is(engine.status().accounting.spends, 1)
+  t.is(engine.status().accounting.cellRecords, 1)
+  t.alike((await engine.readCell(fixture.request.storageSlot)).cellBlob, fixture.cellBlob)
+  await engine.close()
+})
+
 test('recovery composes legacy Cell WAL records with one self-contained atomic type-17 commit', async t => {
   const root = await temporaryRoot(t, 'blind-cell-mixed-atomic-recovery')
   const time = clock()

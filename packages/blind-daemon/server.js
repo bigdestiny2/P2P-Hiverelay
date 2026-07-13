@@ -9,8 +9,11 @@ import {
   ERROR_PROFILE_ID,
   FAMILY,
   FRAME_KIND,
+  OPERATION,
+  allocationCommitment,
   assertReleaseReady,
   blindErrorV1,
+  cellPutRequestCommitment,
   decodeDispatchFrame,
   decodeOuterEnvelope,
   encodeCanonical,
@@ -66,6 +69,10 @@ import {
   StagedCellPutResultEncoderV2,
   writeSocketFramesWithinDeadlineV2
 } from './private-ipc-v2-runtime.js'
+import {
+  createDaemonPrivatePostEofAuthorityIssuer,
+  isDaemonPrivatePostEofAuthorityIssuer
+} from './post-eof-authority.js'
 
 const DEFAULT_SOCKET_MODE = 0o660
 const DEFAULT_REQUEST_TIMEOUT_MS = 35_000
@@ -99,6 +106,7 @@ const V2_DAEMON_AUTHORITIES = new WeakMap()
 
 export const V2_WRITE_DISABLED_REASON = Object.freeze({
   STAGED_DISPATCHER_MISSING: 'STAGED_DISPATCHER_MISSING',
+  STAGED_PUT_RELAY_KEY_MISSING: 'STAGED_PUT_RELAY_KEY_MISSING',
   TRANSPORT_PROFILE_MISSING: 'TRANSPORT_PROFILE_MISSING',
   WRITE_READINESS_PROJECTION_MISSING: 'WRITE_READINESS_PROJECTION_MISSING',
   DURABLE_REPLAY_AUTHORITY_MISSING: 'DURABLE_REPLAY_AUTHORITY_MISSING'
@@ -111,6 +119,17 @@ function assertExecutableReleaseReady () {
 
 function monotonicMillis () {
   return process.hrtime.bigint() / 1_000_000n
+}
+
+function deferred () {
+  let resolve
+  let reject
+  const promise = new Promise((_resolve, _reject) => {
+    resolve = _resolve
+    reject = _reject
+  })
+  promise.catch(() => {})
+  return { promise, resolve, reject }
 }
 
 function localBrokerResponse (localBrokerError) {
@@ -688,6 +707,15 @@ export class BlindDaemon {
          typeof this.durableReplayAuthority.reserve !== 'function')) {
       throw new TypeError('durableReplayAuthority.reserve is required')
     }
+    this.postEofAuthorityIssuer = options.postEofAuthorityIssuer == null
+      ? createDaemonPrivatePostEofAuthorityIssuer()
+      : options.postEofAuthorityIssuer
+    if (!isDaemonPrivatePostEofAuthorityIssuer(this.postEofAuthorityIssuer)) {
+      throw new TypeError('postEofAuthorityIssuer must be a daemon-private branded issuer')
+    }
+    this.stagedPutRelayPublicKey = options.stagedPutRelayPublicKey == null
+      ? null
+      : fixed32(options.stagedPutRelayPublicKey, 'stagedPutRelayPublicKey')
     this.launchTopologyHash = fixed32(options.launchTopologyHash, 'launchTopologyHash', true)
     this.endpointIds = options.endpointIds == null && options.endpointId == null ? null : endpointSet(options)
     this.releaseGate = typeof options.releaseGate === 'function' ? options.releaseGate : assertExecutableReleaseReady
@@ -1272,12 +1300,27 @@ export class BlindDaemon {
       if (operationSignal.aborted) queueMicrotask(abortIngress)
       const records = localStagedFrameRecordsV2(socket)
       let requestId = null
+      let requestCommitment = null
+      const postEof = deferred()
       const dispatched = ingress.ready.then(staged => {
+        if (this.stagedPutRelayPublicKey == null) {
+          throw Object.assign(new Error('V2 staged PUT has no exact relay-key commitment authority'), {
+            code: 'BLIND_STREAM_UNAVAILABLE'
+          })
+        }
         requestId = b4a.from(staged.frame.requestId)
-        // Built-in storage may durably reserve admission/attempt state while it
-        // drains this bounded source, but stageOpaque cannot publish a blob and
-        // the coordinator cannot sign/release a receipt until exact FIN + peer
-        // EOF closes the source and its declared length/hash validate.
+        const committedAllocation = allocationCommitment({
+          ...staged.request,
+          relayPublicKey: this.stagedPutRelayPublicKey,
+          declaredCellBlobHash: staged.request.declaredBlobHash
+        })
+        requestCommitment = cellPutRequestCommitment({
+          allocationCommitment: committedAllocation,
+          clientNonce: staged.request.clientNonce
+        })
+        // The dispatcher may perform side-effect-free admission preflight and
+        // bounded ephemeral staging now. Its confirmation and durable mutation
+        // remain fenced on this same-stream PostEOF promise.
         return this.dispatchStagedPut(staged, {
           transportId: open.transportId,
           transportSupportBit: open.transportSupportBit,
@@ -1286,6 +1329,7 @@ export class BlindDaemon {
           adjacentRelayKey: null,
           acceptedMonotonicMillis: open.acceptedMonotonicMillis,
           absoluteDeadlineMonotonicMillis: effectiveDeadlineMonotonicMillis,
+          postEofAuthority: postEof.promise,
           signal: operationSignal
         })
       })
@@ -1324,8 +1368,38 @@ export class BlindDaemon {
         }
         socket.setTimeout(0)
         ingress.finishRequest()
+        if (requestId == null || requestCommitment == null) {
+          if (this.stagedPutRelayPublicKey == null) {
+            throw Object.assign(new Error('V2 staged PUT has no exact relay-key commitment authority'), {
+              code: 'BLIND_STREAM_UNAVAILABLE'
+            })
+          }
+          const staged = await ingress.ready
+          requestId = b4a.from(staged.frame.requestId)
+          const committedAllocation = allocationCommitment({
+            ...staged.request,
+            relayPublicKey: this.stagedPutRelayPublicKey,
+            declaredCellBlobHash: staged.request.declaredBlobHash
+          })
+          requestCommitment = cellPutRequestCommitment({
+            allocationCommitment: committedAllocation,
+            clientNonce: staged.request.clientNonce
+          })
+        }
+        postEof.resolve(this.postEofAuthorityIssuer.mint({
+          actualPeerEof: true,
+          exactRequestValidated: true,
+          endpointId: open.endpointId,
+          familyId: FAMILY.CELL,
+          operationId: OPERATION.CELL.PUT,
+          descriptorSequence: authenticated.projection.descriptorSequence,
+          descriptorHash: authenticated.projection.descriptorHash,
+          requestId,
+          requestCommitment
+        }))
       } catch (error) {
         ingressError = error
+        postEof.reject(error)
         try { ingress.abort(error) } catch {}
       }
 
@@ -1587,6 +1661,9 @@ export class BlindDaemon {
 
   get v2WriteDisabledReason () {
     if (!this.dispatchStagedPut) return V2_WRITE_DISABLED_REASON.STAGED_DISPATCHER_MISSING
+    if (!this.stagedPutRelayPublicKey) {
+      return V2_WRITE_DISABLED_REASON.STAGED_PUT_RELAY_KEY_MISSING
+    }
     if (!this.streamTransportProfileHash && !this.streamTransportProfileHashForEndpoint) {
       return V2_WRITE_DISABLED_REASON.TRANSPORT_PROFILE_MISSING
     }

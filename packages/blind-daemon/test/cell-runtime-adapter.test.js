@@ -10,6 +10,7 @@ import {
   FRAME_KIND,
   OPERATION,
   RESULT_SIGNATURE_DOMAIN_ID,
+  STORE_LIFECYCLE_STATE,
   TRANSPORT_ID,
   TRANSPORT_SUPPORT,
   admissionParametersHash,
@@ -135,7 +136,8 @@ function context () {
     transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
     outerClass: null,
     acceptedMonotonicMillis: 1000n,
-    absoluteDeadlineMonotonicMillis: 15000n
+    absoluteDeadlineMonotonicMillis: 15000n,
+    postEofAuthority: Promise.resolve(Object.freeze({}))
   }
 }
 
@@ -198,7 +200,7 @@ async function harness (t, overrides = {}) {
   })
   const admissionCoordinator = overrides.admissionCoordinatorFactory == null
     ? {
-        async prepare (input) {
+        prepared (input) {
           return {
             spendTag: blake2b256(input.admission.token),
             requestCommitment: b4a.from(input.requestCommitment),
@@ -209,6 +211,9 @@ async function harness (t, overrides = {}) {
             parameterHash: b4a.from(input.admission.parameterHash)
           }
         },
+        async prepare (input) { return this.prepared(input) },
+        async preparePreflight () { return Object.freeze({}) },
+        async confirmAfterEof (_authority, input) { return this.prepared(input) },
         parametersForRequest: () => null
       }
     : await overrides.admissionCoordinatorFactory({ state, admissionAuthority })
@@ -718,6 +723,50 @@ test('staged CELL.PUT reaches storage without coordinator body buffering and rej
   try { truncated.finish() } catch {}
   t.is((await truncatedError).code, 'BAD_ENCODING')
   t.is(h.signCalls(), 2, 'truncated replay cannot use the signing key')
+})
+
+test('descriptor advance while atomic commit waits on locks fails the final fence without type-17 authority', async t => {
+  const h = await harness(t)
+  const fixture = cellFixture(h.relay.publicKey, { blobByte: 0x76, nonceByte: 0x77, spendByte: 0x78 })
+  const dispatch = encodeDispatchFrame(frame(OPERATION.CELL.PUT, putCellV1, fixture.request))
+  const metadataBytes = dispatch.byteLength - fixture.cellBlob.byteLength
+  let enterCommit
+  let releaseCommit
+  const commitEntered = new Promise(resolve => { enterCommit = resolve })
+  const commitBlocked = new Promise(resolve => { releaseCommit = resolve })
+  const withLocks = h.storage.transactionStore.withLocks.bind(h.storage.transactionStore)
+  h.storage.transactionStore.withLocks = async (keys, callback) => {
+    if (keys.length === 3 && keys[0] === 'quota:atomic-staging') {
+      enterCommit()
+      await commitBlocked
+    }
+    return withLocks(keys, callback)
+  }
+  const ingestor = new StagedCellPutDispatchIngestor({ maxQueuedBodyBytes: 1024 })
+  await ingestor.push(dispatch.subarray(0, metadataBytes))
+  const staged = await ingestor.ready
+  const before = h.storage.status().walSequence
+  const pending = h.coordinator.dispatchStagedCellPut(staged, { ...context(), outerClass: 3 })
+  await ingestor.push(dispatch.subarray(metadataBytes))
+  ingestor.finish()
+  await commitEntered
+  const current = h.state.requireCurrent()
+  await h.state.activate(successorBytes(current, {
+    issuedEpoch: current.descriptor.issuedEpoch,
+    expiresEpoch: current.descriptor.expiresEpoch,
+    storeLifecycleState: STORE_LIFECYCLE_STATE.DRAINING,
+    drainStartedEpoch: current.descriptor.issuedEpoch,
+    enabledOperationBits: 0x000129d7
+  }))
+  releaseCommit()
+  t.is(errorName(await pending), 'BUSY')
+  const status = h.storage.status()
+  t.is(status.walSequence, before)
+  t.is(status.accounting.spends, 0)
+  t.is(status.accounting.cellRecords, 0)
+  t.is(status.accounting.storedBytes, 0)
+  t.is(status.accounting.atomicStagingBytes, 0)
+  t.is(h.signCalls(), 0)
 })
 
 test('post-publish abort commits recovery state but suppresses receipt signing and result release', async t => {

@@ -52,6 +52,7 @@ const TOPOLOGY_HASH = b4a.alloc(32, 0xa1)
 const PROFILE_HASH = b4a.alloc(32, 0xa4)
 const DESCRIPTOR_HASH = b4a.alloc(32, 0xd1)
 const ENDPOINT_ID = 7
+const STAGED_RELAY_PUBLIC_KEY = descriptorValue().relayPublicKey
 const TEST_TMP_PREFIX = fileURLToPath(new URL('../../../.test-tmp-blind-daemon-v2-', import.meta.url))
 const REQUEST_OUTER = readFileSync(new URL(
   '../../blind-ipc/vectors/v2/accepted/public-request-outer-envelope-class-3.bin', import.meta.url))
@@ -231,6 +232,9 @@ async function createDaemon (t, options = {}) {
     dispatchStagedPut: Object.hasOwn(options, 'dispatchStagedPut')
       ? options.dispatchStagedPut
       : async () => { throw new Error('unexpected staged dispatch') },
+    stagedPutRelayPublicKey: Object.hasOwn(options, 'stagedPutRelayPublicKey')
+      ? options.stagedPutRelayPublicKey
+      : STAGED_RELAY_PUBLIC_KEY,
     durableReplayAuthority,
     writeReadinessProjection: options.writeReadinessProjection,
     monotonicMillis: options.monotonicMillis,
@@ -333,11 +337,16 @@ test('real V2 Unix stream requires FIN plus actual EOF and returns one same-clas
   const now = 1_000_000n
   let dispatchCalls = 0
   let commits = 0
+  let postEofResolved = false
   const harness = await createDaemon(t, {
     monotonicMillis: () => now,
     writeReadinessProjection: async input => defaultProjection(input),
     dispatchStagedPut: async (staged, context) => {
       dispatchCalls++
+      const postEof = context.postEofAuthority.then(authority => {
+        postEofResolved = true
+        return authority
+      })
       const authority = stagedCellPutAuthority(staged)
       let bodyBytes = 0
       for await (const chunk of authority.source) bodyBytes += chunk.byteLength
@@ -347,6 +356,9 @@ test('real V2 Unix stream requires FIN plus actual EOF and returns one same-clas
       t.is(context.outerClass, 3)
       t.is(context.absoluteDeadlineMonotonicMillis, now + 14_999n)
       t.is(context.signal.aborted, false)
+      const postEofAuthority = await postEof
+      t.ok(Object.isFrozen(postEofAuthority))
+      t.is(Reflect.ownKeys(postEofAuthority).length, 0)
       commits++
       return {
         dispatch: decodeOuterEnvelope(RESULT_OUTER, { copyInner: true }).innerDispatch,
@@ -365,6 +377,7 @@ test('real V2 Unix stream requires FIN plus actual EOF and returns one same-clas
   for (const error of harness.errors) t.comment(`${error.code || 'ERROR'}: ${error.message}`)
   t.is(dispatchCalls, 1, 'metadata may enter dispatch before transport EOF')
   t.is(commits, 0, 'FIN alone cannot close the staged body or commit')
+  t.is(postEofResolved, false, 'FIN cannot mint the same-stream PostEOF authority')
   socket.end()
 
   const wire = await response
@@ -381,6 +394,37 @@ test('real V2 Unix stream requires FIN plus actual EOF and returns one same-clas
     LOCAL_STAGED_DIRECTION_V2.RESULT, decodeOuterEnvelope(REQUEST_OUTER).frame.requestId)
   t.is(verified.outerClass, 3)
   t.is(harness.daemon.v2ReplayReservationCount, 1)
+})
+
+test('V2 staged PUT rejects a production path missing exact descriptor relay-key authority', async t => {
+  const now = 1_100_000n
+  let dispatchCalls = 0
+  const harness = await createDaemon(t, {
+    monotonicMillis: () => now,
+    stagedPutRelayPublicKey: null,
+    writeReadinessProjection: async input => defaultProjection(input),
+    dispatchStagedPut: async () => { dispatchCalls++; throw new Error('must not dispatch') }
+  })
+  t.is(harness.daemon.v2WriteDisabledReason,
+    V2_WRITE_DISABLED_REASON.STAGED_PUT_RELAY_KEY_MISSING)
+  t.is((await unaryExchange(harness.paths.unarySocketPath,
+    encodeLocalReadyProbeV2({
+      endpointId: ENDPOINT_ID,
+      edgeProcessNonce: b4a.alloc(32, 0xb8),
+      launchTopologyHash: TOPOLOGY_HASH,
+      edgeFeatureBits: REQUIRED_LOCAL_IPC_FEATURE_BITS_V2,
+      requestedWriteOperationBits: CELL_PUT_OPERATION_BIT_V2,
+      acceptedMonotonicMillis: now,
+      absoluteDeadlineMonotonicMillis: now + 2_000n
+    }))).byteLength, 0,
+  'missing descriptor relay-key authority suppresses the V2 READY ACK')
+  const wire = await rejectedStream(harness.paths.streamSocketPath,
+    [makeOpen(now, { nonceByte: 0xb9 }), ...requestFrames()])
+  await waitForDaemonRelease(harness.daemon)
+  t.is(wire.byteLength, 0)
+  t.is(dispatchCalls, 0)
+  t.is(harness.daemon.v2IngressConstructionCount, 0,
+    'missing relay-key authority rejects before staged ingress construction')
 })
 
 test('real V2 retains an early coordinator error until valid FIN plus EOF and suppresses it on invalid bodies', async t => {

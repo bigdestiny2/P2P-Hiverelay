@@ -23,7 +23,10 @@ import {
 const CELL_PROTOCOL = b4a.from('hiverelay-blind-cell-v1', 'ascii')
 const SIGNATURE_BYTES = sodium.crypto_sign_BYTES
 
-export const BLIND_CELL_RUNTIME_BLOCKERS = Object.freeze([])
+export const BLIND_CELL_RUNTIME_BLOCKERS = Object.freeze([
+  'PRODUCTION_ADMISSION_ADAPTER_CAPTURE_REQUIRED',
+  'PRODUCTION_DURABLE_REPLAY_AUTHORITY_REQUIRED'
+])
 
 export const BLIND_CELL_RUNTIME_STATUS = Object.freeze({
   family: 'CELL',
@@ -38,7 +41,7 @@ export const BLIND_CELL_RUNTIME_STATUS = Object.freeze({
   chargedReadPinExpiry: true,
   chargedReadCheckpointState: true,
   admissionWalCommitRecordPersisted: true,
-  productionReady: true,
+  productionReady: false,
   blockers: BLIND_CELL_RUNTIME_BLOCKERS
 })
 
@@ -193,7 +196,10 @@ export class BlindCellRuntimeAdapter {
         typeof options.storage.chargedCellReadState !== 'function' ||
         typeof options.storage.chargedCellRead !== 'function' ||
         typeof options.storage.finalizeChargedCellRead !== 'function' ||
-        typeof options.storage.checkCellCapacity !== 'function') {
+        typeof options.storage.checkCellCapacity !== 'function' ||
+        typeof options.storage.stageAtomicCellPut !== 'function' ||
+        typeof options.storage.commitAtomicCellPut !== 'function' ||
+        typeof options.storage.cancelAtomicCellPut !== 'function') {
       throw new TypeError('complete BlindCellStorageEngine runtime authority is required')
     }
     if (!options.descriptorState || typeof options.descriptorState.resultBinding !== 'function') {
@@ -209,7 +215,12 @@ export class BlindCellRuntimeAdapter {
     this.cheapStateVerifier = Object.freeze({ inspect: input => this.inspectCheapState(input) })
     this.terminalStateVerifier = Object.freeze({ check: input => this.checkTerminalState(input) })
     this.capacityGuard = Object.freeze({ check: input => this.checkCapacity(input) })
-    this.operationExecutor = Object.freeze({ execute: input => this.execute(input) })
+    this.operationExecutor = Object.freeze({
+      execute: input => this.execute(input),
+      stageAtomicPut: input => this.stageAtomicPut(input),
+      commitAtomicPut: input => this.commitAtomicPut(input),
+      cancelAtomicPut: authority => this.storage.cancelAtomicCellPut(authority)
+    })
     this.transactionCoordinator = Object.freeze({
       lookup: input => this.lookupTransaction(input),
       run: (input, execute) => this.runTransaction(input, execute),
@@ -342,7 +353,8 @@ export class BlindCellRuntimeAdapter {
       requestCommitment: input.requestCommitment,
       resultBinding: isChargedRead(input)
         ? this.descriptorState.resultBinding(input.descriptorSnapshot)
-        : null
+        : null,
+      atomicStaged: input.atomicStaged === true
     })
   }
 
@@ -524,6 +536,42 @@ export class BlindCellRuntimeAdapter {
         input.signal)
     }
     fail('INTERNAL', 'registered CELL operation has no runtime implementation')
+  }
+
+  async stageAtomicPut (raw) {
+    const input = cellInput({ ...raw, descriptorState: this.descriptorState })
+    if (input.profile.operationId !== OPERATION.CELL.PUT || !input.opaqueBodySource ||
+        !Number.isInteger(input.admissionProfileId)) {
+      fail('INTERNAL', 'atomic staging is restricted to one admitted staged CELL.PUT')
+    }
+    assertLiveSignal(input.signal)
+    return this.storage.stageAtomicCellPut({
+      request: input.request,
+      source: input.opaqueBodySource,
+      admissionProfileId: input.admissionProfileId,
+      resultBinding: this.descriptorState.resultBinding(input.descriptorSnapshot),
+      signal: input.signal
+    })
+  }
+
+  async commitAtomicPut (raw) {
+    const input = cellInput({ ...raw, descriptorState: this.descriptorState })
+    if (input.profile.operationId !== OPERATION.CELL.PUT || !input.atomicStagedAuthority ||
+        !input.preparedAdmission || typeof input.preCommitFence !== 'function') {
+      fail('INTERNAL', 'atomic commit is restricted to one confirmed staged CELL.PUT')
+    }
+    assertLiveSignal(input.signal)
+    const stored = await this.storage.commitAtomicCellPut({
+      authority: input.atomicStagedAuthority,
+      preparedAdmission: input.preparedAdmission,
+      preCommitFence: input.preCommitFence,
+      signal: input.signal
+    })
+    // Storage deliberately ignores cancellation after its publication fence.
+    // This adapter is the result-suppression fence: an aborted peer can never
+    // obtain a signature or observable success even if recovery owns the commit.
+    assertLiveSignal(input.signal)
+    return committedCellResult(await signedReceipt(this, input, stored, CELL_RECEIPT_RESULT.STORED))
   }
 
   async verifyResult (input) {

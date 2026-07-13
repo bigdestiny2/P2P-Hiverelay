@@ -65,6 +65,7 @@ function admissionPreflightInput (pair, snapshot, overrides = {}) {
       token: fixtureBytes(16, 0xa4)
     },
     cost: { resourceClass: 1, leaseClass: 1 },
+    requestId: fixtureBytes(16, 0xa2),
     requestCommitment: fixtureBytes(32, 0xa3),
     descriptorSnapshot: snapshot,
     endpoint: snapshot.descriptor.endpoints[0]
@@ -92,6 +93,7 @@ function postEofAuthorityHarness () {
       endpointId: input.endpoint.endpointId,
       familyId: input.profile.familyId,
       operationId: input.profile.operationId,
+      requestId: b4a.from(input.requestId),
       requestCommitment: b4a.from(input.requestCommitment)
     })
   }
@@ -111,6 +113,7 @@ function postEofAuthorityHarness () {
         b4a.equals(expected.descriptorHash, input.descriptorHash) &&
         expected.endpointId === input.endpointId && expected.familyId === input.familyId &&
         expected.operationId === input.operationId &&
+        b4a.equals(expected.requestId, input.requestId) &&
         b4a.equals(expected.requestCommitment, input.requestCommitment)
     },
     consumeCalls: () => consumeCalls
@@ -817,11 +820,11 @@ test('admission preflight rejects forged, copied, rebound, public EOF, and stale
   t.is(confirmations, 1)
 })
 
-test('unwired admission preflight has explicit APIs, a hard PostEOF blocker, and abort fences', async t => {
-  t.is(ADMISSION_PREFLIGHT_SPLIT_STATUS.wired, false)
+test('wired admission preflight still fails closed without an injected PostEOF consumer and keeps abort fences', async t => {
+  t.is(ADMISSION_PREFLIGHT_SPLIT_STATUS.wired, true)
   t.is(ADMISSION_PREFLIGHT_SPLIT_STATUS.productionReady, false)
   t.is(ADMISSION_PREFLIGHT_SPLIT_STATUS.daemonPrivatePostEofBrandRequired, true)
-  t.is(ADMISSION_PREFLIGHT_SPLIT_STATUS.blocker, 'POST_EOF_AUTHORITY_RUNTIME_UNWIRED')
+  t.is(ADMISSION_PREFLIGHT_SPLIT_STATUS.blocker, 'PRODUCTION_ADMISSION_ADAPTER_CAPTURE_REQUIRED')
 
   const pair = descriptorAndParameters()
   const state = descriptorState()

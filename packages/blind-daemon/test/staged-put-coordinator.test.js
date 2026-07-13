@@ -50,7 +50,8 @@ function context () {
     transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
     outerClass: 6,
     acceptedMonotonicMillis: 1000n,
-    absoluteDeadlineMonotonicMillis: 15000n
+    absoluteDeadlineMonotonicMillis: 15000n,
+    postEofAuthority: Promise.resolve(Object.freeze({}))
   }
 }
 
@@ -94,8 +95,12 @@ function coordinatorHarness (state, hooks = {}) {
   const coordinator = new BlindOperationCoordinator({
     descriptorState: state,
     admission: {
-      async prepare (input) {
-        events.push('admission')
+      async preparePreflight () {
+        events.push('admission-preflight')
+        return Object.freeze({})
+      },
+      async confirmAfterEof (_authority, input) {
+        events.push('admission-confirm')
         return {
           spendTag: b4a.alloc(32, 0x64),
           requestCommitment: b4a.from(input.requestCommitment),
@@ -141,14 +146,23 @@ function coordinatorHarness (state, hooks = {}) {
       async replay () { throw new Error('unexpected replay') }
     },
     operationExecutor: {
-      async execute (input) {
-        events.push('execute')
+      async execute () { throw new Error('staged PUT used legacy execute') },
+      async stageAtomicPut (input) {
+        events.push('stage')
         enteredExecuteResolve()
         let total = 0
         for await (const chunk of input.opaqueBodySource) total += chunk.byteLength
         events.push('body')
         if (hooks.bodyBytes) hooks.bodyBytes(total)
+        return Object.freeze({})
+      },
+      async commitAtomicPut (input) {
+        events.push('commit')
         return receipt(input.request, input.requestCommitment, state)
+      },
+      async cancelAtomicPut () {
+        events.push('cancel')
+        return true
       }
     },
     resultVerifier: {
@@ -180,7 +194,7 @@ test('coordinator admits staged PUT metadata before pulling body and gates succe
   })
   const dispatched = h.coordinator.dispatchStagedCellPut(staged, context())
   await h.enteredExecute
-  t.alike(h.events, ['relation', 'authorization', 'cheap', 'admission', 'terminal', 'capacity', 'execute'])
+  t.alike(h.events, ['relation', 'authorization', 'cheap', 'admission-preflight', 'stage'])
   t.is(observedBodyBytes, 0)
 
   const producer = (async () => {
@@ -194,7 +208,10 @@ test('coordinator admits staged PUT metadata before pulling body and gates succe
   t.is(resultShape.canonicalRequestBytes, null)
   t.alike(resultShape.canonicalRequestPrefixBytes, staged.canonicalRequestPrefixBytes)
   t.is(resultShape.opaqueRequestBodyBytes, decoded.cellBlob.byteLength)
-  t.alike(h.events, ['relation', 'authorization', 'cheap', 'admission', 'terminal', 'capacity', 'execute', 'body', 'result'])
+  t.alike(h.events, [
+    'relation', 'authorization', 'cheap', 'admission-preflight', 'stage', 'body',
+    'admission-confirm', 'terminal', 'capacity', 'commit', 'result'
+  ])
 })
 test('coordinator cannot release staged PUT success when streamed body hash is wrong', async t => {
   const state = await descriptorState()

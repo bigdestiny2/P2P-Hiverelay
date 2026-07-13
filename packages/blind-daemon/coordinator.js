@@ -176,6 +176,27 @@ function deadlineSignal (parent, deadline, now) {
   return parent ? AbortSignal.any([parent, timeout]) : timeout
 }
 
+async function waitForSignalBoundPromise (value, signal) {
+  if (!value || typeof value.then !== 'function') {
+    protocolFailure('INTERNAL', 'staged CELL.PUT has no same-stream PostEOF promise')
+  }
+  if (signal.aborted) protocolFailure('INTERNAL', 'staged CELL.PUT crossed its abort fence')
+  let onAbort
+  const aborted = new Promise((resolve, reject) => {
+    onAbort = () => {
+      const error = new Error('staged CELL.PUT crossed its abort fence')
+      error.code = 'ABORT_ERR'
+      reject(error)
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  try {
+    return await Promise.race([value, aborted])
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+
 function validateEndpoint (profile, context, descriptorSnapshot) {
   const descriptor = descriptorSnapshot.descriptor
   const endpoint = descriptor.endpoints.find(entry => entry.endpointId === context.endpointId)
@@ -785,6 +806,7 @@ export class BlindOperationCoordinator {
         opaqueBodySource: stagedPut == null ? null : stagedPut.source,
         opaqueBodyByteLength: stagedPut == null ? null : stagedPut.sourceByteLength,
         ensureOpaqueBodyValidated: stagedPut == null ? null : stagedPut.ensureBodyValidated,
+        postEofAuthorityPromise: stagedPut == null ? null : context.postEofAuthority,
         timing,
         signal
       })
@@ -815,6 +837,19 @@ export class BlindOperationCoordinator {
       const predictedBytes = predictedResultBytes(authenticatedState, profile,
         descriptorSnapshot.descriptor, context.outerClass)
       const admission = admissionFromRequest(profile, decodeRequest(authority))
+      if (stagedPut && profile.familyId === FAMILY.CELL && profile.operationId === OPERATION.CELL.PUT) {
+        return await this._dispatchStagedAtomicPut({
+          authority,
+          context,
+          endpoint,
+          supportBit,
+          descriptorSnapshot,
+          requestCommitment,
+          authenticatedState,
+          predictedBytes,
+          admission
+        })
+      }
       let preparedAdmission = null
       if (admission == null && profile.admissionMode === ADMISSION_MODE.REQUIRED) {
         protocolFailure('SPEND_REQUIRED', 'operation requires admission')
@@ -945,6 +980,147 @@ export class BlindOperationCoordinator {
         dispatch,
         outerClass: context.outerClass == null ? null : context.outerClass
       }
+    }
+  }
+
+  async _dispatchStagedAtomicPut (input) {
+    const {
+      authority,
+      context,
+      endpoint,
+      supportBit,
+      descriptorSnapshot,
+      requestCommitment,
+      authenticatedState,
+      predictedBytes,
+      admission
+    } = input
+    if (admission == null) protocolFailure('SPEND_REQUIRED', 'staged CELL.PUT requires admission')
+    if (typeof this.admission.preparePreflight !== 'function' ||
+        typeof this.admission.confirmAfterEof !== 'function') {
+      protocolFailure('INTERNAL', 'staged CELL.PUT requires the explicit admission preflight split')
+    }
+    for (const method of ['stageAtomicPut', 'commitAtomicPut', 'cancelAtomicPut']) {
+      if (typeof this.operationExecutor[method] !== 'function') {
+        protocolFailure('INTERNAL', `staged CELL.PUT operation executor has no ${method}`)
+      }
+    }
+    const request = decodeRequest(authority)
+    const cost = deriveAdmissionCost(authority.profile, request, authenticatedState)
+    const preflightInput = {
+      profile: authority.profile,
+      admission,
+      cost,
+      requestId: b4a.from(authority.frame.requestId),
+      requestCommitment: b4a.from(requestCommitment),
+      descriptorSnapshot: this.descriptorState.selected(authority.descriptorHash),
+      endpoint: clonePlain(endpoint, 'endpoint'),
+      signal: authority.signal
+    }
+    const preflight = await this.admission.preparePreflight(preflightInput)
+
+    const readiness = await this.readiness.evaluate({
+      endpointId: endpoint.endpointId,
+      transportSupportBit: supportBit,
+      signal: authority.signal
+    })
+    const descriptor = descriptorSnapshot.descriptor
+    if (readiness.kind !== READINESS_STATE_KIND.READY ||
+        readiness.descriptorSequence !== authority.descriptorSequence ||
+        !sameBytes(readiness.descriptorHash, authority.descriptorHash) ||
+        !readiness.endpoint || readiness.endpoint.endpointId !== endpoint.endpointId ||
+        readiness.transportSupportBit !== supportBit ||
+        !Number.isInteger(readiness.readyRoleBits) || readiness.readyRoleBits === 0 ||
+        (readiness.readyRoleBits & ~endpoint.roleBits) !== 0 ||
+        readiness.capacityBand !== descriptor.capacityBand ||
+        (readiness.readyOperationBits & authority.profile.operationBit) === 0) {
+      protocolFailure('BUSY', 'staged CELL.PUT path is not ready')
+    }
+    if (!this.descriptorState.remainsUsable(this.descriptorState.selected(authority.descriptorHash))) {
+      protocolFailure('BUSY', 'staged CELL.PUT descriptor crossed a lifecycle fence')
+    }
+
+    const reservation = this.budget.acquire({
+      familyId: authority.profile.familyId,
+      operationId: authority.profile.operationId,
+      requestBytes: authority.requestWireBytes,
+      responseBytes: responseReservationBytes(authority.profile, descriptor,
+        context.outerClass, predictedBytes),
+      stagingBytes: authority.opaqueBodyByteLength,
+      critical: false
+    })
+    let stagedAuthority = null
+    try {
+      this._checkDeadline(authority)
+      stagedAuthority = await this.operationExecutor.stageAtomicPut({
+        ...this._hookContext(authority, {
+          requestCommitment,
+          authenticatedState,
+          admissionProfileId: admission.profileId
+        }),
+        opaqueBodySource: authority.opaqueBodySource,
+        opaqueBodyByteLength: authority.opaqueBodyByteLength
+      })
+      await authority.ensureOpaqueBodyValidated()
+      const postEofAuthority = await waitForSignalBoundPromise(
+        authority.postEofAuthorityPromise, authority.signal)
+      const preparedAdmission = clonePlain(await this.admission.confirmAfterEof(preflight, {
+        ...preflightInput,
+        postEofAuthority
+      }), 'prepared admission')
+      await this.terminalStateVerifier.check(this._hookContext(authority, {
+        requestCommitment,
+        preparedAdmission,
+        authenticatedState,
+        spendLookup: { kind: 'fresh' }
+      }))
+      await this.capacityGuard.check(this._hookContext(authority, {
+        requestCommitment,
+        preparedAdmission,
+        authenticatedState,
+        atomicStaged: true,
+        spendLookup: { kind: 'fresh' },
+        readiness: {
+          descriptorSequence: readiness.descriptorSequence,
+          descriptorHash: b4a.from(readiness.descriptorHash),
+          readyRoleBits: readiness.readyRoleBits,
+          readyOperationBits: readiness.readyOperationBits
+        }
+      }))
+      this._checkDeadline(authority)
+      const raw = await this.operationExecutor.commitAtomicPut({
+        ...this._hookContext(authority, {
+          requestCommitment,
+          preparedAdmission,
+          authenticatedState
+        }),
+        atomicStagedAuthority: stagedAuthority,
+        preCommitFence: () => {
+          let current
+          try {
+            current = this.descriptorState.requireCurrent()
+          } catch {
+            protocolFailure('BUSY', 'staged CELL.PUT descriptor is no longer current at commit')
+          }
+          const selected = this.descriptorState.selected(authority.descriptorHash)
+          if (!selected || current.descriptorSequence !== authority.descriptorSequence ||
+              !sameBytes(current.hash, authority.descriptorHash) ||
+              !this.descriptorState.remainsUsable(selected)) {
+            protocolFailure('BUSY', 'staged CELL.PUT descriptor changed at its final commit fence')
+          }
+          this._checkDeadline(authority)
+          return true
+        }
+      })
+      stagedAuthority = null
+      return {
+        dispatch: await this._validatedSuccess(authority, raw, requestCommitment,
+          preparedAdmission, authenticatedState),
+        outerClass: context.outerClass == null ? null : context.outerClass
+      }
+    } finally {
+      if (stagedAuthority) await this.operationExecutor.cancelAtomicPut(stagedAuthority).catch(() => {})
+      reservation.release()
     }
   }
 
