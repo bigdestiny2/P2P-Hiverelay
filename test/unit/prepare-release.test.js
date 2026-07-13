@@ -61,6 +61,33 @@ test('prepare-release defaults full release channel to both', async (t) => {
   t.ok(startosManifest.includes('metadata.\nlicense: apache-2.0'), 'StartOS release-notes block is newline-terminated')
 })
 
+test('prepare-release cannot move fleet channels for an enabled public gateway release', async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-gateway-fixture-'))
+  t.teardown(async () => {
+    await rm(repo, { recursive: true, force: true })
+  })
+  await writeMinimalReleaseFixture(repo)
+  await writeJson(path.join(repo, 'fleet', 'public-hive-gateway-release.json'), {
+    schema: 'hiverelay-public-gateway-release-v1',
+    enabled: true,
+    releaseTarget: 'v9.9.9'
+  })
+
+  const blocked = await runPrepare([
+    'v9.9.9',
+    '--image-digest', DIGEST,
+    '--no-umbrel-store',
+    '--no-ecosystem-consumers'
+  ], path.join(repo, 'scripts', 'prepare-release.mjs'))
+
+  t.is(blocked.status, 1)
+  t.ok(blocked.stderr.includes('cannot move fleet channel "both"'))
+  t.ok(blocked.stderr.includes('use --channel none'))
+  const channels = JSON.parse(await readFile(path.join(repo, 'fleet', 'channels.json'), 'utf8'))
+  t.is(channels.canary, 'v0.16.3')
+  t.is(channels.stable, 'v0.16.3')
+})
+
 test('prepare-release requires sibling ecosystem workspace for stable app-default sync', async (t) => {
   const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-missing-ecosystem-fixture-'))
   t.teardown(async () => {

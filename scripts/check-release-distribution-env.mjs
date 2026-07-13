@@ -8,7 +8,7 @@ const FLEET_ROLLOUT_TIMEOUT_MAX_MS = 4 * 60 * 60 * 1000
 
 const usage = `
 Usage:
-  node scripts/check-release-distribution-env.mjs --channel <canary|stable|both|none> --prerelease <true|false> [--env-file <path>] [--github-env <path>]
+  node scripts/check-release-distribution-env.mjs --channel <canary|stable|both|none> --prerelease <true|false> [--public-gateway-release <true|false>] [--env-file <path>] [--github-env <path>]
   node scripts/check-release-distribution-env.mjs --issue-120-repair --env-file <path>
 
 Defaults:
@@ -27,12 +27,15 @@ UMBREL_OFFICIAL_PR_TOKEN, UMBREL_OFFICIAL_FORK, and STARTOS_REGISTRY_URL.
 const args = parseArgs(process.argv.slice(2))
 if (args.issue120Repair && !args.envFile) die('--issue-120-repair requires --env-file so ambient secrets cannot mask the repair candidate.')
 const sourceEnv = args.envFile ? safeReadEnvFile(args.envFile) : process.env
-const prerelease = args.issue120Repair ? false : readBoolean(args.prerelease ?? sourceEnv.HIVERELAY_RELEASE_PRERELEASE)
+const prerelease = args.issue120Repair ? false : readBoolean(args.prerelease ?? sourceEnv.HIVERELAY_RELEASE_PRERELEASE, '--prerelease')
+const publicGatewayRelease = args.issue120Repair
+  ? false
+  : readBoolean(args.publicGatewayRelease ?? sourceEnv.HIVERELAY_PUBLIC_GATEWAY_RELEASE_ENABLED, '--public-gateway-release')
 const channel = args.issue120Repair ? 'both' : (args.channel || sourceEnv.HIVERELAY_RELEASE_CHANNEL || (prerelease ? 'none' : 'both'))
 const githubEnv = args.githubEnv || process.env.GITHUB_ENV || ''
 const result = args.issue120Repair
   ? checkIssue120MaskedValueRepair({ env: sourceEnv })
-  : checkReleaseDistributionEnv({ channel, prerelease, env: sourceEnv })
+  : checkReleaseDistributionEnv({ channel, prerelease, publicGatewayRelease, env: sourceEnv })
 
 appendGithubEnv(githubEnv, result.envUpdates)
 
@@ -52,7 +55,7 @@ if (result.skipped) {
   console.log('Stable release distribution preflight passed.')
 }
 
-function checkReleaseDistributionEnv ({ channel, prerelease, env }) {
+function checkReleaseDistributionEnv ({ channel, prerelease, publicGatewayRelease, env }) {
   if (!['canary', 'stable', 'both', 'none'].includes(channel)) {
     return {
       ok: false,
@@ -129,9 +132,14 @@ function checkReleaseDistributionEnv ({ channel, prerelease, env }) {
     }
   }
 
-  if (channel === 'none') {
+  if (publicGatewayRelease && channel !== 'none') {
+    missing.push('public gateway release channel must be none')
+    envUpdates.HIVERELAY_FLEET_ROLLOUT_STATUS = 'invalid-gateway-channel'
+  } else if (channel === 'none' && !publicGatewayRelease) {
     missing.push('release channel must be canary, stable, or both')
     envUpdates.HIVERELAY_FLEET_ROLLOUT_STATUS = 'missing-channel'
+  } else if (publicGatewayRelease) {
+    envUpdates.HIVERELAY_FLEET_ROLLOUT_STATUS = 'deferred-gateway-canary-gated'
   } else {
     requirePrivateKey('FLEET_SSH_PRIVATE_KEY', ['HIVERELAY_FLEET_ROLLOUT_STATUS'])
     requireOptionalFleetTimeout()
@@ -300,6 +308,10 @@ function parseArgs (argv) {
       out.prerelease = readValue(argv, ++i, arg)
       continue
     }
+    if (arg === '--public-gateway-release') {
+      out.publicGatewayRelease = readValue(argv, ++i, arg)
+      continue
+    }
     if (arg === '--github-env') {
       out.githubEnv = readValue(argv, ++i, arg)
       continue
@@ -331,11 +343,11 @@ function readValue (argv, index, flag) {
   return value
 }
 
-function readBoolean (value) {
+function readBoolean (value, flag) {
   const normalized = String(value || 'false').trim().toLowerCase()
   if (normalized === 'true') return true
   if (normalized === 'false') return false
-  die(`Invalid --prerelease "${value}". Expected true or false.`)
+  die(`Invalid ${flag} "${value}". Expected true or false.`)
 }
 
 function isPublicHttpsUrl (value) {

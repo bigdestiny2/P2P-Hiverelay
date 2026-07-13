@@ -120,10 +120,40 @@ jobs:
               exit 1
               ;;
           esac
+          if [ "$is_branch_candidate" = "true" ]; then
+            gateway_policy="$(cat <<EOF
+          effective_channel=$channel
+          public_gateway_enabled=false
+          public_gateway_manifest_status=not-applicable
+          public_gateway_manifest_path=fleet/public-hive-gateway-release.json
+          public_gateway_manifest_sha256=
+          public_gateway_release_target=$version
+          public_gateway_commit_sha=$PUSH_SHA
+          public_gateway_admission_profile=
+          public_gateway_cohort_size=0
+          EOF
+          )"
+          else
+            gateway_policy="$(node hiverelay/scripts/resolve-public-hive-gateway-release.mjs \
+              --repo hiverelay \
+              --ref "$version" \
+              --release-target "$version" \
+              --requested-channel "$channel" \
+              --format github)"
+          fi
+          resolved_channel="$(printf '%s\n' "$gateway_policy" | sed -n 's/^effective_channel=//p')"
+          case "$resolved_channel" in
+            canary|stable|both|none) channel="$resolved_channel" ;;
+            *)
+              echo "Public gateway resolver returned an invalid effective channel." >&2
+              exit 1
+              ;;
+          esac
           if [ "$is_prerelease" = "true" ] && [ "$channel" != "none" ]; then
             echo "Pre-release $version cannot promote fleet/app-store channel '$channel'; use channel=none." >&2
             exit 1
           fi
+          printf '%s\n' "$gateway_policy" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "semver=$semver" >> "$GITHUB_OUTPUT"
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
@@ -146,12 +176,25 @@ jobs:
           if [ "${{ steps.rel.outputs.is_branch_candidate }}" = "true" ]; then
             startos_release_asset_status=skipped
           fi
+          fleet_rollout_status=skipped
+          if [ "${{ steps.rel.outputs.public_gateway_enabled }}" = "true" ] && \
+             [ "${{ steps.rel.outputs.is_prerelease }}" != "true" ]; then
+            fleet_rollout_status=deferred-gateway-canary-gated
+          fi
           {
             echo "HIVERELAY_RELEASE_VERSION=${{ steps.rel.outputs.version }}"
             echo "HIVERELAY_RELEASE_SEMVER=${{ steps.rel.outputs.semver }}"
             echo "HIVERELAY_RELEASE_CHANNEL=${{ steps.rel.outputs.channel }}"
             echo "HIVERELAY_RELEASE_PRERELEASE=${{ steps.rel.outputs.is_prerelease }}"
             echo "HIVERELAY_RELEASE_CANDIDATE=${{ steps.rel.outputs.is_branch_candidate }}"
+            echo "HIVERELAY_PUBLIC_GATEWAY_RELEASE_ENABLED=${{ steps.rel.outputs.public_gateway_enabled }}"
+            echo "HIVERELAY_PUBLIC_GATEWAY_MANIFEST_STATUS=${{ steps.rel.outputs.public_gateway_manifest_status }}"
+            echo "HIVERELAY_PUBLIC_GATEWAY_MANIFEST_PATH=${{ steps.rel.outputs.public_gateway_manifest_path }}"
+            echo "HIVERELAY_PUBLIC_GATEWAY_MANIFEST_SHA256=${{ steps.rel.outputs.public_gateway_manifest_sha256 }}"
+            echo "HIVERELAY_PUBLIC_GATEWAY_RELEASE_TARGET=${{ steps.rel.outputs.public_gateway_release_target }}"
+            echo "HIVERELAY_PUBLIC_GATEWAY_COMMIT_SHA=${{ steps.rel.outputs.public_gateway_commit_sha }}"
+            echo "HIVERELAY_PUBLIC_GATEWAY_ADMISSION_PROFILE=${{ steps.rel.outputs.public_gateway_admission_profile }}"
+            echo "HIVERELAY_PUBLIC_GATEWAY_COHORT_SIZE=${{ steps.rel.outputs.public_gateway_cohort_size }}"
             echo "HIVERELAY_IMAGE_NAME=$IMAGE_NAME"
             echo "HIVERELAY_RELEASE_GATE_STATUS=pending"
             echo "HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS=$release_distribution_status"
@@ -166,7 +209,7 @@ jobs:
             echo "HIVERELAY_STARTOS_PACKAGE_SHA256="
             echo "HIVERELAY_STARTOS_RELEASE_ASSET_STATUS=$startos_release_asset_status"
             echo "HIVERELAY_RELEASE_SURFACES_STATUS=$release_surfaces_status"
-            echo "HIVERELAY_FLEET_ROLLOUT_STATUS=skipped"
+            echo "HIVERELAY_FLEET_ROLLOUT_STATUS=$fleet_rollout_status"
             echo "HIVERELAY_FLEET_ROLLOUT_CHANNEL="
             echo "HIVERELAY_FLEET_ROLLOUT_EVIDENCE="
             echo "HIVERELAY_FLEET_ROLLOUT_EVIDENCE_SHA256="
@@ -208,6 +251,12 @@ jobs:
             exit 0
           fi
           tag_sha="$(git rev-parse "${{ steps.rel.outputs.version }}^{commit}")"
+          if [ "$tag_sha" != "${{ steps.rel.outputs.public_gateway_commit_sha }}" ]; then
+            echo "Release tag moved after public gateway policy resolution." >&2
+            echo "Resolved: ${{ steps.rel.outputs.public_gateway_commit_sha }}" >&2
+            echo "Current:  $tag_sha" >&2
+            exit 1
+          fi
           main_sha="$(git rev-parse origin/main)"
           if ! git merge-base --is-ancestor "$tag_sha" "$main_sha"; then
             echo "${{ steps.rel.outputs.version }} is not an ancestor of main." >&2
@@ -227,6 +276,7 @@ jobs:
           npm run release:check-distribution-env -- \
             --channel "${{ steps.rel.outputs.channel }}" \
             --prerelease "${{ steps.rel.outputs.is_prerelease }}" \
+            --public-gateway-release "${{ steps.rel.outputs.public_gateway_enabled }}" \
             --github-env "$GITHUB_ENV"
 
       - name: Ensure GitHub Release exists
@@ -998,11 +1048,14 @@ jobs:
             --pattern 'blindspark.s9pk' \
             --dir "$bundle_dir/startos" \
             --clobber
-          if [ "${{ steps.rel.outputs.is_prerelease }}" != "true" ]; then
+          if [ "${{ steps.rel.outputs.is_prerelease }}" != "true" ] && \
+             [ "${{ steps.rel.outputs.public_gateway_enabled }}" != "true" ]; then
             gh release download "${{ steps.rel.outputs.version }}" \
               --pattern 'fleet-rollout-evidence.json' \
               --dir "$bundle_dir" \
               --clobber
+          fi
+          if [ "${{ steps.rel.outputs.is_prerelease }}" != "true" ]; then
             gh release download "${{ steps.rel.outputs.version }}" \
               --pattern 'startos-registry-evidence.json' \
               --dir "$bundle_dir" \
@@ -1038,6 +1091,11 @@ jobs:
           fi
           release_base_url="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/releases/download/${{ steps.rel.outputs.version }}"
           workflow_url="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if [ "${{ steps.rel.outputs.public_gateway_enabled }}" = "true" ]; then
+            fleet_evidence_line="- Fleet rollout: deferred to the signed public-gateway canary and observation gate (manifest ${{ steps.rel.outputs.public_gateway_manifest_sha256 }})."
+          else
+            fleet_evidence_line="- Fleet rollout evidence: ${release_base_url}/fleet-rollout-evidence.json"
+          fi
           pr_body="$RUNNER_TEMP/blindspark-official-pr-body.md"
           cat > "$pr_body" <<BODY
           Automated Blindspark official Umbrel package sync for ${{ steps.rel.outputs.version }}.
@@ -1048,7 +1106,7 @@ jobs:
           - Release image manifest: ${release_base_url}/release-image-manifest-evidence.json
           - Release image smoke: ${release_base_url}/release-image-smoke-evidence.json
           - Umbrel package smoke: ${release_base_url}/umbrel-package-smoke-evidence.json
-          - Fleet rollout evidence: ${release_base_url}/fleet-rollout-evidence.json
+          ${fleet_evidence_line}
           - StartOS package: ${release_base_url}/blindspark.s9pk
           - StartOS registry package: ${HIVERELAY_STARTOS_REGISTRY_PACKAGE_URL}
           - StartOS registry evidence: ${release_base_url}/startos-registry-evidence.json
@@ -1146,10 +1204,12 @@ jobs:
             --pattern 'umbrel-package-smoke-evidence.json' \
             --dir "$handoff_dir" \
             --clobber
-          gh release download "${{ steps.rel.outputs.version }}" \
-            --pattern 'fleet-rollout-evidence.json' \
-            --dir "$handoff_dir" \
-            --clobber
+          if [ "${{ steps.rel.outputs.public_gateway_enabled }}" != "true" ]; then
+            gh release download "${{ steps.rel.outputs.version }}" \
+              --pattern 'fleet-rollout-evidence.json' \
+              --dir "$handoff_dir" \
+              --clobber
+          fi
           gh release download "${{ steps.rel.outputs.version }}" \
             --pattern 'official-umbrel-pr-evidence.json' \
             --dir "$handoff_dir" \

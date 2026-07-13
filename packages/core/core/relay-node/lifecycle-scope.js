@@ -59,6 +59,7 @@ export class LifecycleScope {
     this._ac = new AbortController()
     this._inflight = new Set()
     this._closed = false
+    this._draining = null
   }
 
   /** AbortSignal that loops poll. */
@@ -66,6 +67,11 @@ export class LifecycleScope {
 
   /** True once stop()/drain() has begun. */
   get aborted () { return this._ac.signal.aborted }
+
+  /** Signal cancellation without closing registration for startup rollback. */
+  abort () {
+    if (!this._ac.signal.aborted) this._ac.abort()
+  }
 
   /**
    * Register a fire-and-forget promise so drain() can await it. The
@@ -147,13 +153,13 @@ export class LifecycleScope {
    * Stop accepting new tracked promises, fire the signal, then wait for
    * every already-tracked promise to settle. Idempotent.
    */
-  async drain () {
-    if (this._closed) return
+  drain () {
+    if (this._draining) return this._draining
     this._closed = true
-    this._ac.abort()
-    if (this._inflight.size === 0) return
+    this.abort()
     const snapshot = [...this._inflight]
-    await Promise.allSettled(snapshot)
+    this._draining = Promise.allSettled(snapshot).then(() => undefined)
+    return this._draining
   }
 }
 

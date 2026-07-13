@@ -27,7 +27,10 @@ export default {
 
   // Seeding
   enableSeeding: true,
-  maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
+  // Legacy ceiling for an unset cap. CLI startup resolves an unset value
+  // against exact-filesystem available bytes + reserve; explicit values keep
+  // their exact operator designation even when equal to 50 GiB.
+  maxStorageBytes: 50 * 1024 * 1024 * 1024,
   announceInterval: 15 * 60 * 1000, // 15 minutes
 
   // Circuit relay
@@ -166,6 +169,35 @@ export default {
 
   // Catalog and gateway trust policy
   gatewayPublicOnlyPrivacyTier: true,
+  gatewayPort: null,
+  // A public HTTPS edge terminates TLS and talks to this loopback-only data
+  // plane. Never expose the plaintext compatibility listener directly.
+  gatewayHost: '127.0.0.1',
+  gatewayTrustProxy: false,
+  gatewayTrustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'],
+  gatewayRequireForwardedSNI: false,
+  gatewayCompatibilityHosts: ['127.0.0.1', 'localhost', '[::1]'],
+  gatewayMaxInFlight: 256,
+  gatewayMaxInFlightPerApp: 32,
+  // V-GW1 finite production policy. Public HTTPS preflight additionally
+  // requires these exact values to be present explicitly in config.json so a
+  // deployment never relies on constructor fallback behavior.
+  gatewayMaxResponseBytes: 64 * 1024 * 1024,
+  gatewayMaxTransformBytes: 4 * 1024 * 1024,
+  gatewayEgressBytesPerWindow: 256 * 1024 * 1024,
+  gatewayEgressWindowMs: 60 * 1000,
+  gatewayMaxResponseLifetimeMs: 15 * 60 * 1000,
+  // Optional DNS suffix for origin-isolated public app hosts on the dedicated
+  // data-plane gateway, e.g. `hive.relay.example`. A 52-char z-base-32 app key
+  // becomes `<key>.hive.relay.example`. Disabled until explicitly configured.
+  hiveAppHostSuffix: null,
+  // Transitional local T1 provenance gate. Only exact 64-hex app keys listed
+  // here can use key-derived HTTPS hosts; registry defaults never grant access.
+  // The blind-substrate role predicate replaces this scaffold allowlist.
+  hiveAppPublicKeys: [],
+  // Optional immutable Hyperdrive version per admitted app key. Production
+  // public-gateway preflight requires an exact pin for every public origin.
+  hiveAppPublicVersions: {},
   requireSignedCatalog: false,
   catalogSignatureMaxAgeMs: 5 * 60 * 1000,
   catalogMaxAppAgeMs: 30 * 24 * 60 * 60 * 1000,

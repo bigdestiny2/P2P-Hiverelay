@@ -45,6 +45,7 @@ const prHeadOwner = env('HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_OWNER')
 const prHeadRef = env('HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_REF')
 const prHeadOid = env('HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_OID')
 const startosRegistryPackageUrl = env('HIVERELAY_STARTOS_REGISTRY_PACKAGE_URL') || env('STARTOS_REGISTRY_PACKAGE_URL')
+const publicGatewayRelease = booleanEnv('HIVERELAY_PUBLIC_GATEWAY_RELEASE_ENABLED') === true
 const releaseBaseUrl = repository && version ? `${serverUrl}/${repository}/releases/download/${version}` : ''
 const workflowUrl = repository && runId ? `${serverUrl}/${repository}/actions/runs/${runId}` : ''
 
@@ -85,7 +86,7 @@ const body = {
     releaseImageManifest: `${releaseBaseUrl}/release-image-manifest-evidence.json`,
     releaseImageSmoke: `${releaseBaseUrl}/release-image-smoke-evidence.json`,
     umbrelPackageSmoke: `${releaseBaseUrl}/umbrel-package-smoke-evidence.json`,
-    fleetRollout: `${releaseBaseUrl}/fleet-rollout-evidence.json`,
+    fleetRollout: publicGatewayRelease ? '' : `${releaseBaseUrl}/fleet-rollout-evidence.json`,
     startosPackage: `${releaseBaseUrl}/blindspark.s9pk`,
     startosRegistryPackage: startosRegistryPackageUrl,
     startosRegistry: `${releaseBaseUrl}/startos-registry-evidence.json`,
@@ -153,7 +154,11 @@ async function validate (body) {
   requireEqual('release image manifest evidence link', body.evidenceLinks.releaseImageManifest, `${releaseBase}/release-image-manifest-evidence.json`)
   requireEqual('release image smoke evidence link', body.evidenceLinks.releaseImageSmoke, `${releaseBase}/release-image-smoke-evidence.json`)
   requireEqual('Umbrel package smoke evidence link', body.evidenceLinks.umbrelPackageSmoke, `${releaseBase}/umbrel-package-smoke-evidence.json`)
-  requireEqual('fleet rollout evidence link', body.evidenceLinks.fleetRollout, `${releaseBase}/fleet-rollout-evidence.json`)
+  requireEqual(
+    'fleet rollout evidence link',
+    body.evidenceLinks.fleetRollout,
+    publicGatewayRelease ? '' : `${releaseBase}/fleet-rollout-evidence.json`
+  )
   requireEqual('StartOS package evidence link', body.evidenceLinks.startosPackage, `${releaseBase}/blindspark.s9pk`)
   requirePublicHttpsUrl('StartOS registry package link', body.evidenceLinks.startosRegistryPackage)
   requireEqual('StartOS registry evidence link', body.evidenceLinks.startosRegistry, `${releaseBase}/startos-registry-evidence.json`)
@@ -216,7 +221,14 @@ async function verifyLinkedEvidenceArtifacts (body) {
   await verifyLinkedEvidenceHash('release image manifest evidence', release.gates?.imageManifestEvidence, 'release-image-manifest-evidence.json')
   await verifyLinkedEvidenceHash('release image smoke evidence', release.gates?.pushedImageSmokeEvidence, 'release-image-smoke-evidence.json')
   await verifyLinkedEvidenceHash('Umbrel package smoke evidence', release.gates?.umbrelPackageSmokeEvidence, 'umbrel-package-smoke-evidence.json')
-  await verifyLinkedEvidenceHash('fleet rollout evidence', release.surfaces?.fleetRolloutEvidence, 'fleet-rollout-evidence.json')
+  if (publicGatewayRelease) {
+    requireEqual('public gateway release channel', release.release?.channel, 'none')
+    requireEqual('public gateway release fleet rollout status', release.surfaces?.fleetRollout, 'deferred-gateway-canary-gated')
+    requireEqual('public gateway release fleet rollout evidence path', release.surfaces?.fleetRolloutEvidence?.path, '')
+    requireEqual('public gateway release fleet rollout evidence SHA-256', release.surfaces?.fleetRolloutEvidence?.sha256, '')
+  } else {
+    await verifyLinkedEvidenceHash('fleet rollout evidence', release.surfaces?.fleetRolloutEvidence, 'fleet-rollout-evidence.json')
+  }
   await verifyLinkedEvidenceHash('StartOS registry evidence', release.surfaces?.startosRegistryEvidence, 'startos-registry-evidence.json')
   await verifyLinkedArtifactHash('StartOS package', release.artifacts?.startosPackage, path.join('startos', 'blindspark.s9pk'))
 }
@@ -241,6 +253,7 @@ function verifyReleaseEvidenceAlignment (body, release) {
   requireEqual('release evidence schemaVersion', release.schemaVersion, 1)
   requireEqual('release evidence release version', release.release?.version, body.release.version)
   requireEqual('release evidence release semver', release.release?.semver, body.release.semver)
+  requireEqual('release evidence public gateway release flag', release.release?.publicGateway?.enabled === true, publicGatewayRelease)
   requireEqual('release evidence workflow status', release.release?.workflow?.status, 'success')
   requireEqual('release evidence workflow repository', release.release?.workflow?.repository, body.workflow.repository)
   requireEqual('release evidence workflow run id', release.release?.workflow?.runId, body.workflow.runId)

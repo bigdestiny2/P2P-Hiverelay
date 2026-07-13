@@ -27,6 +27,10 @@ function mockSwarm () {
   return swarm
 }
 
+function mockDrive (core) {
+  return { core, async close () {} }
+}
+
 // ─── Issue #1 — discoveryKey is now correct ──────────────────────────
 
 test('seed() advertises the hypercore-derived discoveryKey, not a plain hash', async (t) => {
@@ -106,7 +110,7 @@ test('getDurableStatus: drive open but no peers → not durable', async (t) => {
   const client = new HiveRelayClient({ swarm: mockSwarm() })
   await client.start()
   const keyHex = 'a'.repeat(64)
-  client.drives.set(keyHex, { core: { length: 10, peers: [] } })
+  client.drives.set(keyHex, mockDrive({ length: 10, peers: [] }))
   client.seedRequests.set(keyHex, { acceptances: [{ relayPubkey: Buffer.alloc(32) }] })
 
   const status = client.getDurableStatus(keyHex)
@@ -121,15 +125,13 @@ test('getDurableStatus: at least one peer has caught up → durable', async (t) 
   const client = new HiveRelayClient({ swarm: mockSwarm() })
   await client.start()
   const keyHex = 'b'.repeat(64)
-  client.drives.set(keyHex, {
-    core: {
-      length: 10,
-      peers: [
-        { remoteLength: 10 },
-        { remoteLength: 8 }
-      ]
-    }
-  })
+  client.drives.set(keyHex, mockDrive({
+    length: 10,
+    peers: [
+      { remoteLength: 10 },
+      { remoteLength: 8 }
+    ]
+  }))
 
   const status = client.getDurableStatus(keyHex)
   t.is(status.activePeers, 2)
@@ -143,14 +145,12 @@ test('getDurableStatus: peers present but behind local → not durable yet', asy
   const client = new HiveRelayClient({ swarm: mockSwarm() })
   await client.start()
   const keyHex = 'c'.repeat(64)
-  client.drives.set(keyHex, {
-    core: {
-      length: 100,
-      peers: [
-        { remoteLength: 50 } // peer has only half our data
-      ]
-    }
-  })
+  client.drives.set(keyHex, mockDrive({
+    length: 100,
+    peers: [
+      { remoteLength: 50 } // peer has only half our data
+    ]
+  }))
   const status = client.getDurableStatus(keyHex)
   t.is(status.activePeers, 1)
   t.is(status.byteLengthRemoteMax, 50)
@@ -162,7 +162,7 @@ test('waitForDurable: resolves as soon as durability transitions to true', async
   const client = new HiveRelayClient({ swarm: mockSwarm() })
   await client.start()
   const keyHex = 'd'.repeat(64)
-  const drive = { core: { length: 5, peers: [] } }
+  const drive = mockDrive({ length: 5, peers: [] })
   client.drives.set(keyHex, drive)
 
   // After 50ms, simulate a peer catching up
@@ -180,7 +180,7 @@ test('waitForDurable: returns last snapshot on timeout even if never durable', a
   const client = new HiveRelayClient({ swarm: mockSwarm() })
   await client.start()
   const keyHex = 'e'.repeat(64)
-  client.drives.set(keyHex, { core: { length: 10, peers: [] } }) // no peers ever
+  client.drives.set(keyHex, mockDrive({ length: 10, peers: [] })) // no peers ever
 
   const started = Date.now()
   const status = await client.waitForDurable(keyHex, { timeoutMs: 200, pollIntervalMs: 30 })

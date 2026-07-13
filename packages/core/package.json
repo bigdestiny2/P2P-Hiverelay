@@ -22,12 +22,18 @@
     "./core/protocol/publish-channel.js": "./core/protocol/publish-channel.js",
     "./core/protocol/seed-request": "./core/protocol/seed-request.js",
     "./core/protocol/seed-request.js": "./core/protocol/seed-request.js",
+    "./gateway/exact-app-context": null,
+    "./gateway/exact-app-context.js": null,
     "./*": "./*"
   },
   "imports": {
     "events": {
       "bare": "bare-events",
       "default": "events"
+    },
+    "fs": {
+      "bare": "bare-fs",
+      "default": "fs"
     },
     "fs/promises": {
       "bare": "bare-fs/promises",
@@ -36,6 +42,10 @@
     "path": {
       "bare": "bare-path",
       "default": "path"
+    },
+    "crypto": {
+      "bare": "bare-crypto",
+      "default": "crypto"
     },
     "http": {
       "bare": "bare-http1",
@@ -72,6 +82,7 @@
     "@noble/hashes": "^2.2.0",
     "@noble/secp256k1": "^3.1.0",
     "b4a": "^1.6.6",
+    "bare-crypto": "^1.15.3",
     "bare-events": "^2.9.1",
     "bare-fs": "^4.7.2",
     "bare-http1": "^4.5.7",

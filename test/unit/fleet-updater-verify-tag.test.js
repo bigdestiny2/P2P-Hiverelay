@@ -36,6 +36,7 @@ test('updater defines a tag-signature gate wired before checkout', (t) => {
   t.ok(updater.includes('ALLOWED_SIGNERS='), 'allowed-signers path is configurable')
   t.ok(updater.includes('gpg.ssh.allowedSignersFile=$ALLOWED_SIGNERS'), 'pins allowed_signers for the verify')
   t.ok(updater.includes('gpg.format=ssh'), 'forces ssh signature format for the verify')
+  t.ok(updater.includes('gpg.ssh.program=/usr/bin/ssh-keygen'), 'pins the system SSH verifier')
   t.ok(updater.includes('is not an annotated (signable) tag'), 'rejects lightweight/unsigned tags')
   t.ok(updater.includes('missing/unreadable — refusing'), 'refuses when allowed-signers file is absent')
   // The success branch is only reachable when `git verify-tag` exits 0,

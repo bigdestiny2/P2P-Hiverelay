@@ -127,7 +127,7 @@ function destroyDiscoveryHandle (handle) {
  * @param {number} [periodMs=DISCOVERY_EPOCH_MS]
  * @returns {Map<string, *>} the same joined map
  */
-function syncEpochDiscoveryTopics (joined, swarm, joinOpts, now = null, periodMs = DISCOVERY_EPOCH_MS) {
+function syncEpochDiscoveryTopics (joined, swarm, joinOpts, now = null, periodMs = DISCOVERY_EPOCH_MS, onRetire = null) {
   const handles = joined instanceof Map ? joined : new Map()
   if (!swarm || typeof swarm.join !== 'function') return handles
 
@@ -143,7 +143,8 @@ function syncEpochDiscoveryTopics (joined, swarm, joinOpts, now = null, periodMs
   for (const [key, handle] of handles) {
     if (!active.has(key)) {
       handles.delete(key)
-      destroyDiscoveryHandle(handle)
+      if (typeof onRetire === 'function') onRetire(handle, key)
+      else destroyDiscoveryHandle(handle)
     }
   }
 

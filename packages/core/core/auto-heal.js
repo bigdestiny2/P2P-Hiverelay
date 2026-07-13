@@ -42,6 +42,7 @@
 
 import EventEmitter from 'events'
 import { fetchAndVerifyAnchorProof } from './anchor-proof-verifier.js'
+import { positiveStorageBound } from '../config/storage-cap.js'
 
 // Default thresholds — tuned for an archival use case where availability
 // matters more than over-replication. Operators can override via opts.
@@ -120,6 +121,7 @@ export class AutoHeal extends EventEmitter {
     this._proofCache = new Map()
     // ReplicaSets observed across the network: appKey → { relayPubkey → meta }
     this._fleet = new Map()
+    this._bounds = new Map()
     // Per-drive recruit-failure backoff. appKey → { failures, retryAt }.
     // Prevents tick-by-tick retry storms on permanently un-replicable drives.
     this._backoff = new Map()
@@ -200,6 +202,7 @@ export class AutoHeal extends EventEmitter {
     if (!this.node.appRegistry) return
 
     // 1. Refresh from local catalog + peer catalogs.
+    this._bounds.clear()
     this._refreshFromLocal()
     this._refreshFromFederation()
     this._pruneStale()
@@ -327,10 +330,16 @@ export class AutoHeal extends EventEmitter {
 
       // Recruit.
       try {
+        const maxStorage = positiveStorageBound(this._bounds.get(appKey))
+        if (maxStorage === null) {
+          this.emit('recruit-skipped', { appKey, reason: 'storage-bound-invalid' })
+          continue
+        }
         await this.node.seedApp(appKey, {
           durability: ARCHIVE_TIER,
           revocable: false, // archive drives are non-revocable by definition
-          source: 'auto-heal'
+          source: 'auto-heal',
+          maxStorage
         })
         recruits++
         this._clearBackoff(appKey) // success — clear any prior backoff
@@ -481,6 +490,11 @@ export class AutoHeal extends EventEmitter {
         if ((app.durability || 0) !== ARCHIVE_TIER) continue
         const appKey = app.appKey || app.driveKey || app.key
         if (!appKey) continue
+        const bound = positiveStorageBound(app.maxStorageBytes ?? app.maxStorage)
+        if (bound !== null) {
+          const prior = this._bounds.get(appKey) || 0
+          this._bounds.set(appKey, Math.max(prior, bound))
+        }
 
         const set = this._setFor(appKey)
         set.set(peerPubkey, {

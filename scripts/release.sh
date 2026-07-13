@@ -24,6 +24,24 @@
 #   scripts/release.sh cut v0.24.0
 #
 set -euo pipefail
+unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_CONFIG GIT_CONFIG_COUNT
+unset GIT_CONFIG_GLOBAL GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM GIT_DIR GIT_EXEC_PATH
+unset GIT_INDEX_FILE GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_PREFIX GIT_PROXY_COMMAND
+unset GIT_QUARANTINE_PATH GIT_REPLACE_REF_BASE GIT_SHALLOW_FILE GIT_SSH GIT_SSH_COMMAND
+unset GIT_SSL_CAINFO GIT_SSL_CAPATH GIT_SSL_NO_VERIFY GIT_WORK_TREE
+export GIT_NO_REPLACE_OBJECTS=1
+export GIT_GRAFT_FILE=/dev/null/hiverelay-disabled
+export GIT_CONFIG_COUNT=2
+export GIT_CONFIG_KEY_0=core.hooksPath
+export GIT_CONFIG_VALUE_0=/dev/null
+export GIT_CONFIG_KEY_1=core.fsmonitor
+export GIT_CONFIG_VALUE_1=false
+GIT_BIN=/usr/bin/git
+[ -x "$GIT_BIN" ] && [ -f "$GIT_BIN" ] && [ ! -L "$GIT_BIN" ] || {
+  printf '%s\n' 'release: ERROR: trusted Git executable is unavailable at /usr/bin/git' >&2
+  exit 1
+}
+git() { "$GIT_BIN" "$@"; }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ALLOWED_SIGNERS="$REPO_ROOT/fleet/allowed-signers"
@@ -118,6 +136,35 @@ cmd_cut() {
   [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "version must look like v0.24.0 (got '$version')"
   [ -n "$SIGNER_EMAIL" ] || die "no signer email — set HIVERELAY_RELEASE_SIGNER_EMAIL or 'git config user.email'"
 
+  git -C "$REPO_ROOT" rev-parse -q --verify "$ref^{commit}" >/dev/null || die "ref not found: $ref"
+
+  # Resolve the exact prospective tagged commit with the same closed-schema
+  # validator used by release-surfaces.yml. This happens before signing or
+  # pushing, and therefore before any GitHub Release can be created. Enabled
+  # gateway releases remain gated by scripts/promote-fleet-channel.mjs.
+  local gateway_resolution gateway_enabled requested_channel
+  if [ "$prerelease" = 1 ]; then
+    requested_channel=none
+  else
+    requested_channel="${HIVERELAY_RELEASE_CHANNEL:-both}"
+  fi
+  if ! gateway_resolution="$(node "$REPO_ROOT/scripts/resolve-public-hive-gateway-release.mjs" \
+    --repo "$REPO_ROOT" \
+    --ref "$ref" \
+    --release-target "$version" \
+    --requested-channel "$requested_channel" \
+    --format github)"; then
+    die "public gateway release policy validation failed before tag publication"
+  fi
+  gateway_enabled="$(printf '%s\n' "$gateway_resolution" | sed -n 's/^public_gateway_enabled=//p')"
+  case "$gateway_enabled" in
+    true|false) ;;
+    *) die "public gateway release resolver returned malformed output" ;;
+  esac
+  if [ "$gateway_enabled" = true ]; then
+    [ "$promote_canary" = 0 ] || die "--promote-canary is disabled for public gateway releases; use the evidence-gated fleet promotion tool"
+  fi
+
   # FOOTGUN GUARD: the fleet updater health-gate compares the tag (minus 'v') to
   # the running /health version, which is package.json's version. A mismatch
   # (e.g. an -rc suffix while package.json says 0.24.0) auto-rolls-back the box.
@@ -134,7 +181,6 @@ cmd_cut() {
     warn "cutting a STABLE (non-prerelease) release — release-surfaces.yml will run the npm/ecosystem-consumer jobs (needs NPM_TOKEN/ECOSYSTEM_CONSUMER_TOKEN)."
   fi
 
-  git -C "$REPO_ROOT" rev-parse -q --verify "$ref^{commit}" >/dev/null || die "ref not found: $ref"
   if git -C "$REPO_ROOT" rev-parse -q --verify "refs/tags/$version" >/dev/null 2>&1; then
     die "tag $version already exists locally — delete it first (git tag -d $version) if re-cutting"
   fi
@@ -177,6 +223,7 @@ cmd_cut() {
   fi
   if [ "${signer_lines:-0}" -gt 0 ]; then
     if git -C "$REPO_ROOT" -c gpg.format=ssh -c "gpg.ssh.allowedSignersFile=$ALLOWED_SIGNERS" \
+         -c gpg.ssh.program=/usr/bin/ssh-keygen \
          verify-tag "$version" >/dev/null 2>&1; then
       log "self-verify OK — signature trusts against fleet/allowed-signers"
     else
@@ -190,7 +237,9 @@ cmd_cut() {
   log "pushing tag…"
   git -C "$REPO_ROOT" push origin "$version"
 
-  if command -v gh >/dev/null 2>&1; then
+  if [ "$gateway_enabled" = true ]; then
+    log "public gateway release validated; GitHub Release creation is delegated to the manifest-gated release workflow"
+  elif command -v gh >/dev/null 2>&1; then
     log "creating GitHub release ($([ "$prerelease" = 1 ] && echo prerelease || echo stable))…"
     # Build the invocation without an empty array — "${arr[@]}" on an empty array
     # is an 'unbound variable' under `set -u` in bash 3.2 (macOS default).

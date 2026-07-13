@@ -19,7 +19,24 @@ import goodbye from 'graceful-goodbye'
 import { RelayNode } from '../core/relay-node/index.js'
 import { createLogger } from '../core/logger.js'
 import { isValidHexKey } from '../core/constants.js'
-import { loadConfig, saveConfig, ensureDirs, CONFIG_PATH, deriveTokenFromSeed, applyOutboxlogNamespaceEnv } from '../config/loader.js'
+import {
+  loadConfig,
+  saveConfig,
+  ensureDirs,
+  CONFIG_PATH,
+  STORAGE_DIR,
+  deriveTokenFromSeed,
+  applyOutboxlogNamespaceEnv,
+  getStorageCapProvenance,
+  markStorageCapExplicit,
+  resolveStorageCap
+} from '../config/loader.js'
+import {
+  applyPublicHiveGatewayEnv,
+  assertPublicHiveGatewayConcurrency,
+  assertPublicHiveGatewayFiniteLimits,
+  assertPublicHiveGatewayVersionPins
+} from '../config/public-hive-gateway-env.js'
 import b4a from 'b4a'
 import { existsSync, mkdirSync, cpSync, readFileSync } from 'fs'
 import { join, dirname } from 'path'
@@ -36,7 +53,22 @@ const VERSION = pkg.version
 const SKILL_SRC = join(__dirname, '..', 'skills', 'SKILL.md')
 const VALID_ACCEPT_MODES = ['open', 'review', 'allowlist', 'closed']
 
-const args = minimist(process.argv.slice(2), { boolean: ['version', 'auto-heal', 'autoheal'] })
+const args = minimist(process.argv.slice(2), {
+  boolean: ['version', 'auto-heal', 'autoheal'],
+  // Keep identity-like values as exact strings. In particular, an app key
+  // containing only decimal digits must never be coerced through Number.
+  string: [
+    'gateway-host',
+    'gateway-port',
+    'gateway-trusted-proxy-address',
+    'gateway-compatibility-host',
+    'gateway-max-in-flight',
+    'gateway-max-in-flight-per-app',
+    'hive-app-host-suffix',
+    'hive-app-public-key',
+    'hive-app-public-version'
+  ]
+})
 const command = args._[0]
 
 // Handle --version / -v before anything else (no deps, no banner spam).
@@ -217,10 +249,13 @@ async function init () {
 
   // 1. Create directories and config
   ensureDirs()
-  const config = loadConfig({
-    region: args.region || undefined,
-    maxStorageBytes: args['max-storage'] ? parseBytesOrExit(args['max-storage'], '--max-storage') : undefined
-  })
+  const initOverrides = {}
+  if (args.region) initOverrides.region = args.region
+  if (args['max-storage']) {
+    initOverrides.maxStorageBytes = parseBytesOrExit(args['max-storage'], '--max-storage')
+    markStorageCapExplicit(initOverrides, 'cli')
+  }
+  const config = loadConfig(initOverrides)
   const configPath = saveConfig(config)
   console.log(`  [ok] Config:  ${configPath}`)
   console.log(`  [ok] Storage: ${config.storage}`)
@@ -296,10 +331,15 @@ async function start () {
   const cliOverrides = {}
   if (args.storage) cliOverrides.storage = args.storage
   else if (process.env.HIVERELAY_STORAGE) cliOverrides.storage = process.env.HIVERELAY_STORAGE
-  if (args['max-storage']) cliOverrides.maxStorageBytes = parseBytesOrExit(args['max-storage'], '--max-storage')
-  else if (process.env.HIVERELAY_MAX_STORAGE) {
+  if (args['max-storage']) {
+    cliOverrides.maxStorageBytes = parseBytesOrExit(args['max-storage'], '--max-storage')
+    markStorageCapExplicit(cliOverrides, 'cli')
+  } else if (process.env.HIVERELAY_MAX_STORAGE) {
     const maxStorageBytes = parseBytesOrExit(process.env.HIVERELAY_MAX_STORAGE, 'HIVERELAY_MAX_STORAGE')
-    if (!hasPersistedConfig()) cliOverrides.maxStorageBytes = maxStorageBytes
+    if (!hasPersistedMaxStorage()) {
+      cliOverrides.maxStorageBytes = maxStorageBytes
+      markStorageCapExplicit(cliOverrides, 'environment')
+    }
   }
   if (args['max-connections']) cliOverrides.maxConnections = parseInt(args['max-connections'])
   if (args['max-bandwidth']) cliOverrides.maxRelayBandwidthMbps = parseInt(args['max-bandwidth'])
@@ -451,7 +491,35 @@ async function start () {
     hasPersistedOutboxlogNamespace()
   )
 
+  try {
+    applyPublicHiveGatewayEnv(cliOverrides, args, process.env)
+  } catch (err) {
+    console.error(err && err.message ? err.message : String(err))
+    process.exit(1)
+  }
+
   const config = loadConfig(cliOverrides)
+  try {
+    assertPublicHiveGatewayConcurrency(config)
+    assertPublicHiveGatewayFiniteLimits(config)
+    assertPublicHiveGatewayVersionPins(config)
+  } catch (err) {
+    console.error(err && err.message ? err.message : String(err))
+    process.exit(1)
+  }
+
+  // The built-in storage directory is owned by HiveRelay and safe to create.
+  // A custom path may be an intended future mount, so it must already exist;
+  // resolveStorageCap measures the exact path and startup fails closed if that
+  // proof cannot be established.
+  if (config.storage === STORAGE_DIR) ensureDirs()
+  resolveStorageCap(config)
+  const storageCap = getStorageCapProvenance(config)
+  if (storageCap?.status !== 'resolved') {
+    console.log(`  ${ARROW} ${paint(C.red, 'storage startup blocked')} (${storageCap?.reason || 'filesystem unresolved'}; restore the configured path or mount before retrying)`)
+  } else if (storageCap.explicit !== true && config.maxStorageBytes < storageCap.requestedBytes) {
+    console.log(`  ${ARROW} ${paint(C.yellow, 'default max-storage resolved')} ${formatBytes(config.maxStorageBytes)} (available-space reserve protected)`)
+  }
 
   console.log(mainBanner(VERSION))
   console.log('  ' + ARROW + ' ' + paint(C.cyan, 'starting relay node') + ' ' + paint(C.dim, '...'))
@@ -605,8 +673,11 @@ async function start () {
 
   // If seed keys provided via CLI, seed them immediately
   const seedKeys = args.seed ? [].concat(args.seed) : []
+  const seedMaxStorage = seedKeys.length > 0
+    ? parseBytesOrExit(args['seed-max-storage'], '--seed-max-storage')
+    : null
   for (const key of seedKeys) {
-    await node.seedApp(key)
+    await node.seedApp(key, { maxStorage: seedMaxStorage })
   }
 
   // Print status periodically. Keep the live carriage-return status bar for
@@ -1505,11 +1576,28 @@ Init Options:
 Start Options:
   --storage <path>              Storage directory
   --max-storage <size>          Max storage (e.g., 50GB, 100GB)
+  --seed-max-storage <size>     Required finite bound for each --seed app
   --max-connections <n>         Max peer connections (default: 256)
   --max-bandwidth <mbps>        Max relay bandwidth in Mbps (default: 100)
   --region <code>               Region code
   --port <n>                    API port (default: 9100)
   --api-host <host>             API bind host (default: config/default.js)
+  --gateway-host <host>         Dedicated data-plane bind host
+  --gateway-port <n>            Dedicated data-plane port
+  --gateway-trust-proxy[=bool]  Trust forwarded client IP from allowed proxies
+  --gateway-trusted-proxy-address <ip,...>
+                                 Allowed proxy socket IPs (repeatable)
+  --gateway-require-forwarded-sni[=bool]
+                                 Require the trusted TLS edge to bind SNI to Host
+  --gateway-compatibility-host <host,...>
+                                 Allowed non-app Host values (repeatable)
+  --gateway-max-in-flight <n>   Total data-plane concurrency limit (1-4096)
+  --gateway-max-in-flight-per-app <n>
+                                 Per-app concurrency limit (1-4096)
+  --hive-app-host-suffix <dns>  App-origin DNS suffix (for example hive.example)
+  --hive-app-public-key <hex>   Transitional public app allowlist (repeatable)
+  --hive-app-public-version <key=n>
+                                 Immutable Hyperdrive version pin (repeatable)
   --bootstrap <host:port,...>   Override DHT bootstrap nodes
   --seed <key>                  Seed a Pear app key on startup
   --distributed-drive           Enable distributed-drive peer bridge (Ghost Drive mode)
@@ -1585,7 +1673,7 @@ Environment:
   HIVERELAY_LOG_LEVEL           Log level: fatal, error, warn, info, debug, trace
   HIVERELAY_ACCEPT_MODE         Catalog mode: open, review, allowlist, or closed
   HIVERELAY_STORAGE             Storage path used when --storage is absent
-  HIVERELAY_MAX_STORAGE         First-boot storage cap, e.g. 10GB or 500MB
+  HIVERELAY_MAX_STORAGE         Storage cap until maxStorageBytes is persisted
 
 Examples:
   npx p2p-hiverelay setup                              # Interactive setup wizard
@@ -1657,11 +1745,12 @@ function hasPersistedAcceptMode () {
   }
 }
 
-function hasPersistedConfig () {
+function hasPersistedMaxStorage () {
   if (!existsSync(CONFIG_PATH)) return false
   try {
     const parsed = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
-    return !!(parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+    return !!(parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
+      Object.prototype.hasOwnProperty.call(parsed, 'maxStorageBytes'))
   } catch (_) {
     return false
   }

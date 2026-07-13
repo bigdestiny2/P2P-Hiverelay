@@ -1,4 +1,5 @@
 import { isValidHexKey } from '../constants.js'
+import { positiveStorageBound } from '../../config/storage-cap.js'
 
 export const SEED_CORE_AUTH_MESSAGE = 'Unauthorized — API key required for /seed-core'
 
@@ -32,9 +33,13 @@ export async function runSeedCoreAction ({ node, body = {} } = {}) {
   if (!coreKey) {
     return { ok: false, status: 400, payload: { error: 'coreKey must be 64 hex characters' } }
   }
+  const maxStorageBytes = positiveStorageBound(body.maxStorageBytes)
+  if (maxStorageBytes === null) {
+    return { ok: false, status: 400, payload: { error: 'maxStorageBytes must be a positive safe integer' } }
+  }
 
   try {
-    const entry = await node.seeder.seedCore(coreKey)
+    const entry = await node.seeder.seedCore(coreKey, { maxStorageBytes })
     let catalogBee = false
     if (body.catalog === true && typeof node.setCatalogBeeKey === 'function') {
       await node.setCatalogBeeKey(coreKey)

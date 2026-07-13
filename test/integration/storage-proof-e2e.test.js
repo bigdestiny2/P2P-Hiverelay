@@ -23,9 +23,30 @@ import b4a from 'b4a'
 import path from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
+import { mkdirSync } from 'fs'
 
-const tmpStorage = () => path.join(tmpdir(), 'hr-pos-e2e-' + randomBytes(8).toString('hex'))
+const TEST_MAX_STORAGE_BYTES = 64 * 1024 * 1024
+
+const tmpStorage = () => {
+  const storage = path.join(tmpdir(), 'hr-pos-e2e-' + randomBytes(8).toString('hex'))
+  mkdirSync(storage, { recursive: true })
+  return storage
+}
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function within (promise, timeoutMs, label) {
+  let timer = null
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(label)), timeoutMs)
+      })
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 test('e2e: client.proveSeeded verifies a relay holds a seeded drive over the swarm', { timeout: 120000 }, async (t) => {
   const testnet = await createTestnet(3)
@@ -52,7 +73,7 @@ test('e2e: client.proveSeeded verifies a relay holds a seeded drive over the swa
     plugins: ['storage-proof']
   })
   await relay.start()
-  await relay.seedApp(driveKey)
+  await relay.seedApp(driveKey, { maxStorage: TEST_MAX_STORAGE_BYTES })
   const relayDrive = relay.seededApps.get(driveKey).drive
   await relayDrive.update({ wait: true })
   // Download the full metadata core so any sampled block index is held locally.
@@ -85,10 +106,11 @@ test('e2e: client.proveSeeded verifies a relay holds a seeded drive over the swa
   // The real thing — callService over Protomux, anonymous (public route), signed
   // proofs verified against the drive key. Fail fast if it hangs so the failure
   // is legible rather than eating the global timeout.
-  const result = await Promise.race([
+  const result = await within(
     client.proveSeeded(driveKey, { relay: relayHex, samples: 4 }),
-    new Promise((_resolve, reject) => setTimeout(() => reject(new Error('PROVE_HANG_60s')), 60000))
-  ])
+    60_000,
+    'PROVE_HANG_60s'
+  )
   t.ok(result.ok, 'proveSeeded ok=true — relay produced valid signed proofs over the wire')
   t.is(result.passed, result.total, 'every sampled block verified')
   t.ok(result.total >= 1, 'at least one block sampled')

@@ -404,7 +404,10 @@ export class RelayAPI extends EventEmitter {
     this._witnessLogHttpState = opts.witnessLogHttpState || null
     this._repairTicketHttpState = opts.repairTicketHttpState || null
     this._shardHttpState = opts.shardHttpState || null
-    this._gateway = new HyperGateway(relayNode, { store: relayNode.store })
+    this._gateway = new HyperGateway(relayNode, {
+      store: relayNode.store,
+      requireLifecycleDriveAuthority: true
+    })
     this._retrievabilityProofProvider = new RetrievabilityProofProvider()
   }
 
@@ -1756,9 +1759,9 @@ export class RelayAPI extends EventEmitter {
           })
           if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)
           // Live-apply a storage designation: persisting maxStorageBytes alone
-          // does not re-cap the running seeder or shed to fit. Push it into the
-          // seeder + enable eviction + kick a sweep so lowering the cap frees
-          // space without a restart.
+          // does not re-cap the running seeder. The live application blocks
+          // new adoption when over cap but deliberately does not enable
+          // eviction or delete already-held data.
           if (result.ok && Array.isArray(result.payload?.applied) && result.payload.applied.includes('maxStorageBytes') &&
               typeof this.node.applyStorageDesignation === 'function') {
             try { await this.node.applyStorageDesignation(this.node.config.maxStorageBytes) } catch (_) {}
@@ -1970,7 +1973,9 @@ export class RelayAPI extends EventEmitter {
   _relayKernelProfileActive () {
     return this.node && (
       this.node.mode === 'relaykernel' ||
-      (this.node.config && this.node.config.productProfile === 'relaykernel')
+      this.node.mode === 'public-t1-gateway' ||
+      (this.node.config && (this.node.config.productProfile === 'relaykernel' ||
+        this.node.config.productProfile === 'public-t1-gateway'))
     )
   }
 
