@@ -60,6 +60,10 @@ function fail (code, message) {
   throw error
 }
 
+function assertLiveSignal (signal) {
+  if (signal && signal.aborted) fail('INTERNAL', 'CELL operation crossed its authenticated abort fence')
+}
+
 function same (left, right) {
   return Boolean(left && right && left.byteLength === right.byteLength && b4a.equals(left, right))
 }
@@ -110,6 +114,7 @@ function signedBytes (codec, value) {
 }
 
 async function signValue (signer, codec, value, domainId, relayPublicKey, signal) {
+  assertLiveSignal(signal)
   value.signature = b4a.alloc(SIGNATURE_BYTES)
   const { unsigned } = signedBytes(codec, value)
   value.signature = b4a.from(await signer.sign({
@@ -119,6 +124,7 @@ async function signValue (signer, codec, value, domainId, relayPublicKey, signal
     canonicalUnsignedBytes: b4a.from(unsigned),
     signal
   }))
+  assertLiveSignal(signal)
   if (value.signature.byteLength !== SIGNATURE_BYTES) fail('INTERNAL', 'CELL signer returned an invalid signature')
   return encodeCanonical(codec, value)
 }
@@ -442,13 +448,20 @@ export class BlindCellRuntimeAdapter {
       fail('INTERNAL', 'admitted CELL operation escaped its storage-owned transaction')
     }
     if (operationId === OPERATION.CELL.PUT) {
+      if (input.opaqueBodySource && typeof input.ensureOpaqueBodyValidated !== 'function') {
+        fail('INTERNAL', 'staged CELL.PUT has no branded body-validation fence')
+      }
+      assertLiveSignal(input.signal)
       const resultBinding = this.descriptorState.resultBinding(input.descriptorSnapshot)
       const stored = await this.storage.putCell({
         request: input.request,
         preparedAdmission: input.preparedAdmission,
         source: input.opaqueBodySource,
-        resultBinding
+        resultBinding,
+        signal: input.signal
       })
+      if (input.ensureOpaqueBodyValidated) await input.ensureOpaqueBodyValidated()
+      assertLiveSignal(input.signal)
       return committedCellResult(await signedReceipt(this, input, stored, CELL_RECEIPT_RESULT.STORED))
     }
     if (operationId === OPERATION.CELL.GET) {

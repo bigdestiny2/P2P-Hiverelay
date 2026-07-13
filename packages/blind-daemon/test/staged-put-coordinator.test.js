@@ -126,7 +126,12 @@ function coordinatorHarness (state, hooks = {}) {
     },
     budget: new ResourceBudget({ maxItems: 8, maxBytes: 8 * 1024 * 1024 }),
     relationVerifier: { async verify () { events.push('relation'); return true } },
-    capabilityVerifier: { async verify () { events.push('authorization'); return true } },
+    capabilityVerifier: {
+      async verify () {
+        events.push('authorization')
+        return hooks.authorized == null ? true : hooks.authorized
+      }
+    },
     cheapStateVerifier: { async inspect () { events.push('cheap'); return {} } },
     terminalStateVerifier: { async check () { events.push('terminal') } },
     capacityGuard: { async check () { events.push('capacity') } },
@@ -203,6 +208,7 @@ test('coordinator cannot release staged PUT success when streamed body hash is w
   const staged = await ingestor.ready
   const h = coordinatorHarness(state)
   const dispatched = h.coordinator.dispatchStagedCellPut(staged, context())
+  const rejected = dispatched.then(() => null, error => error)
   await h.enteredExecute
   let producerError = null
   try {
@@ -212,7 +218,110 @@ test('coordinator cannot release staged PUT success when streamed body hash is w
     producerError = error
   }
   t.is(producerError.code, 'BAD_ENCODING')
-  const result = await dispatched
-  t.is(errorName(result.dispatch), 'BAD_ENCODING')
+  const error = await rejected
+  t.is(error.code, 'BAD_ENCODING')
   t.is(h.events.includes('result'), false)
+})
+
+test('staged coordinator rejects class 2 before admission, body pull, or commit and requires branded input', async t => {
+  const state = await descriptorState()
+  const canonical = requestDispatch()
+  const decoded = decodeCanonical(putCellV1, putBody, { copyBytes: true })
+  const metadataBytes = canonical.byteLength - decoded.cellBlob.byteLength
+  const ingestor = new StagedCellPutDispatchIngestor()
+  await ingestor.push(canonical.subarray(0, metadataBytes))
+  const staged = await ingestor.ready
+  const h = coordinatorHarness(state)
+
+  const result = await h.coordinator.dispatchStagedCellPut(staged, { ...context(), outerClass: 2 })
+  t.is(errorName(result.dispatch), 'TOO_LARGE')
+  t.alike(h.events, [])
+
+  const missingClassIngestor = new StagedCellPutDispatchIngestor()
+  await missingClassIngestor.push(canonical.subarray(0, metadataBytes))
+  const missingClassStaged = await missingClassIngestor.ready
+  await t.exception(h.coordinator.dispatchStagedCellPut(missingClassStaged, {
+    ...context(),
+    outerClass: null
+  }), /non-null authenticated outer class/)
+  t.alike(h.events, [])
+  try { missingClassIngestor.abort(new Error('test cleanup')) } catch {}
+
+  await t.exception(h.coordinator.dispatchStagedCellPut(Object.freeze({}), context()),
+    /branded ingress authority/)
+})
+
+test('staged coordinator drains and validates before releasing an early canonical error', async t => {
+  const state = await descriptorState()
+  const canonical = requestDispatch()
+  const decoded = decodeCanonical(putCellV1, putBody, { copyBytes: true })
+  const metadataBytes = canonical.byteLength - decoded.cellBlob.byteLength
+  const ingestor = new StagedCellPutDispatchIngestor({ maxQueuedBodyBytes: 1024 })
+  await ingestor.push(canonical.subarray(0, metadataBytes))
+  const staged = await ingestor.ready
+  const h = coordinatorHarness(state, { authorized: false })
+  let settled = false
+  const dispatched = h.coordinator.dispatchStagedCellPut(staged, context())
+  dispatched.then(() => { settled = true }, () => { settled = true })
+
+  while (!h.events.includes('authorization')) await new Promise(resolve => setImmediate(resolve))
+  t.alike(h.events, ['relation', 'authorization'])
+  t.is(settled, false, 'prefix-derived error is retained while the body is absent')
+
+  await ingestor.push(canonical.subarray(metadataBytes))
+  await new Promise(resolve => setImmediate(resolve))
+  t.is(settled, false, 'full bytes without ingress FIN cannot release the error')
+  ingestor.finish()
+
+  const result = await dispatched
+  t.is(errorName(result.dispatch), 'BAD_CREATE_SIG')
+  t.is(decodeDispatchFrame(result.dispatch).frameKind, FRAME_KIND.ERROR)
+  t.alike(h.events, ['relation', 'authorization'])
+})
+
+test('staged coordinator suppresses an early canonical error when body validation fails', async t => {
+  const state = await descriptorState()
+  const canonical = requestDispatch()
+  const decoded = decodeCanonical(putCellV1, putBody, { copyBytes: true })
+  const metadataBytes = canonical.byteLength - decoded.cellBlob.byteLength
+
+  for (const mode of ['hash', 'truncated']) {
+    const changed = b4a.from(canonical)
+    const ingestor = new StagedCellPutDispatchIngestor({ maxQueuedBodyBytes: 1024 })
+    await ingestor.push(changed.subarray(0, metadataBytes))
+    const staged = await ingestor.ready
+    const h = coordinatorHarness(state, { authorized: false })
+    const dispatched = h.coordinator.dispatchStagedCellPut(staged, context())
+    const rejected = dispatched.then(
+      () => null,
+      error => error
+    )
+    if (mode === 'hash') changed[changed.byteLength - 1] ^= 1
+    const end = mode === 'truncated' ? changed.byteLength - 1 : changed.byteLength
+    await ingestor.push(changed.subarray(metadataBytes, end))
+    t.exception(() => ingestor.finish(), /staged CELL.PUT|declaredBlobHash/)
+    const error = await rejected
+    t.ok(error instanceof Error, `${mode} body suppresses the retained canonical error`)
+    t.is(error.code, 'BAD_ENCODING')
+    t.alike(h.events, ['relation', 'authorization'])
+  }
+})
+
+test('staged ingress abort clears queued body bytes and wakes a blocked producer', async t => {
+  const canonical = requestDispatch()
+  const decoded = decodeCanonical(putCellV1, putBody, { copyBytes: true })
+  const metadataBytes = canonical.byteLength - decoded.cellBlob.byteLength
+  const ingestor = new StagedCellPutDispatchIngestor({ maxQueuedBodyBytes: 1024 })
+  await ingestor.push(canonical.subarray(0, metadataBytes))
+  await ingestor.ready
+  const blocked = ingestor.push(canonical.subarray(metadataBytes, metadataBytes + 2048))
+  const rejected = blocked.then(() => null, error => error)
+  await new Promise(resolve => setImmediate(resolve))
+  t.ok(ingestor.bufferedBytes > ingestor.prefix.byteLength)
+  t.exception(() => ingestor.abort(Object.assign(new Error('test abort'), { code: 'ABORT_ERR' })),
+    /test abort/)
+  const error = await rejected
+  t.is(error.code, 'ABORT_ERR')
+  t.is(ingestor.bufferedBytes, ingestor.prefix.byteLength,
+    'failed queue retains no opaque body chunks')
 })

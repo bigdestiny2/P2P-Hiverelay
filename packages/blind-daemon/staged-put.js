@@ -130,6 +130,8 @@ class BoundedAsyncByteQueue {
   fail (error) {
     if (this.failure) return
     this.failure = error instanceof Error ? error : new Error('opaque PUT source failed')
+    this.items = []
+    this.bufferedBytes = 0
     if (this.waitingConsumer) {
       const waiter = this.waitingConsumer
       this.waitingConsumer = null

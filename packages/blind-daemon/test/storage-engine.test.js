@@ -248,6 +248,63 @@ test('transaction store uses keyed app-agnostic buckets and truncates only an in
   await reopened.close()
 })
 
+test('queued prewrite fence aborts under the WAL mutex before the first new byte', async t => {
+  const root = await temporaryRoot(t, 'blind-transaction-prewrite-fence')
+  let enterWalFence
+  let releaseWalFence
+  const walFenceEntered = new Promise(resolve => { enterWalFence = resolve })
+  const walFenceRelease = new Promise(resolve => { releaseWalFence = resolve })
+  const store = new BlindTransactionStore({
+    root,
+    partitionKey: PARTITION_KEY,
+    ownerFenceTokenHash: FENCE_HASH,
+    durabilityContinuityHash: DURABILITY_CONTINUITY_HASH,
+    async faultInjector (point, context) {
+      if (point === 'wal:after-sync' && context.sequence === 1n) {
+        enterWalFence()
+        await walFenceRelease
+      }
+    }
+  })
+  await store.open(() => {})
+  const first = store.appendAndApply({
+    type: 201,
+    transactionId: b4a.alloc(32, 0x51),
+    virtualBucket: 1,
+    payload: b4a.from('first', 'ascii')
+  }, () => {})
+  await walFenceEntered
+  const walPath = path.join(root, 'control', 'wal.v2')
+  const sizeWithFirstFrame = (await fs.stat(walPath)).size
+  const controller = new AbortController()
+  let secondApplied = false
+  const second = store.appendAndApply({
+    type: 202,
+    transactionId: b4a.alloc(32, 0x52),
+    virtualBucket: 2,
+    payload: b4a.from('second', 'ascii')
+  }, () => { secondApplied = true }, {
+    prewriteFence () {
+      if (controller.signal.aborted) {
+        const error = new Error('queued WAL append crossed its abort fence')
+        error.code = 'ABORT_ERR'
+        throw error
+      }
+    }
+  })
+  const secondError = second.then(() => null, error => error)
+  controller.abort()
+  releaseWalFence()
+  t.is((await first).sequence, 1n)
+  t.is((await secondError).code, 'ABORT_ERR')
+  t.is(secondApplied, false)
+  t.is((await fs.stat(walPath)).size, sizeWithFirstFrame,
+    'queued cancellation is fenced before writing any byte of the next frame')
+  t.is(store.walSequence, 1n)
+  t.is(store.poisoned, false)
+  await store.close()
+})
+
 test('transaction store owns runtime secrets and destroys them without retaining caller aliases', async t => {
   const root = await temporaryRoot(t, 'blind-transaction-secret-ownership')
   const partitionKey = b4a.alloc(32, 0xa1)
@@ -915,6 +972,85 @@ test('post-publish and post-final-fsync crashes recover without duplicate mutati
   t.ok(b4a.equals((await engine.readCell(fsyncedFixture.request.storageSlot)).cellBlob, fsyncedFixture.cellBlob))
   t.is(engine.status().accounting.spends, 1)
   t.is(engine.status().accounting.cellRecords, 1)
+  await engine.close()
+})
+
+test('aborted PUT after final stage fsync starts no publish or committed spend', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-abort-fence')
+  const time = clock()
+  let enterFsyncFence
+  let releaseFsyncFence
+  const fsyncFenceEntered = new Promise(resolve => { enterFsyncFence = resolve })
+  const fsyncFenceRelease = new Promise(resolve => { releaseFsyncFence = resolve })
+  const controller = new AbortController()
+  const fixture = putFixture({ spendByte: 0x8a })
+  fixture.signal = controller.signal
+  const engine = new BlindCellStorageEngine(options(root, time, {
+    async faultInjector (point) {
+      if (point === 'body:after-fsync') {
+        enterFsyncFence()
+        await fsyncFenceRelease
+      }
+    }
+  }))
+  await engine.open()
+  let publishCalls = 0
+  const publishOpaque = engine.transactionStore.publishOpaque.bind(engine.transactionStore)
+  engine.transactionStore.publishOpaque = (...args) => {
+    publishCalls++
+    return publishOpaque(...args)
+  }
+  const pending = engine.putCell(fixture)
+  const rejected = pending.then(() => null, error => error)
+  await fsyncFenceEntered
+  controller.abort()
+  releaseFsyncFence()
+  const error = await rejected
+  t.is(error.code, 'BUSY')
+  t.is(publishCalls, 0, 'abort fence prevents the irreversible publish from starting')
+  t.is(engine.status().accounting.cellRecords, 0)
+  t.is(engine.status().accounting.storedBytes, 0)
+  t.is([...engine.spends.values()].some(entry => entry.status === 'committed'), false,
+    'abort fence leaves no committed spend')
+  await engine.close()
+})
+
+test('abort after opaque publish cannot interrupt PUT_COMMITTED or poison recovery', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-post-publish-abort')
+  const time = clock()
+  const controller = new AbortController()
+  const fixture = putFixture({ spendByte: 0x8b })
+  fixture.signal = controller.signal
+  let publishFenceCalls = 0
+  let engine = new BlindCellStorageEngine(options(root, time, {
+    faultInjector (point) {
+      if (point === 'body:after-publish') {
+        publishFenceCalls++
+        controller.abort()
+      }
+    }
+  }))
+  await engine.open()
+  const stored = await engine.putCell(fixture)
+  t.is(stored.status, 'stored')
+  t.is(publishFenceCalls, 1)
+  t.is(controller.signal.aborted, true)
+  t.is(engine.status().readOnlyReason, null,
+    'external cancellation after publish cannot poison the live store')
+  t.is(engine.status().accounting.cellRecords, 1)
+  t.is([...engine.spends.values()].some(entry => entry.status === 'committed'), true)
+  await engine.close()
+
+  engine = new BlindCellStorageEngine(options(root, time))
+  await engine.open()
+  const replay = await engine.putCell({
+    ...fixture,
+    signal: undefined,
+    source: (async function * () { throw new Error('committed replay must not read bytes') })()
+  })
+  t.is(replay.replay, true)
+  t.is(engine.status().readOnlyReason, null)
+  t.ok(b4a.equals((await engine.readCell(fixture.request.storageSlot)).cellBlob, fixture.cellBlob))
   await engine.close()
 })
 

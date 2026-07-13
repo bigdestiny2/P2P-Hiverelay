@@ -862,15 +862,25 @@ export class BlindTransactionStore {
     })
   }
 
-  async appendAndApply (value, applyFrame) {
+  async appendAndApply (value, applyFrame, options = {}) {
     if (!this.handle || !this.opened) throw new Error('transaction store is not open')
     if (this.closing) throw new Error('transaction store is closing')
     if (this.poisoned) throw new BlindWalIntegrityError('transaction store requires recovery after an interrupted WAL append')
     if (typeof applyFrame !== 'function') throw new TypeError('applyFrame must be a function')
+    const prewriteFence = options.prewriteFence == null ? null : options.prewriteFence
+    if (prewriteFence != null && typeof prewriteFence !== 'function') {
+      throw new TypeError('prewriteFence must be a synchronous function')
+    }
     return this.locks.with(['\u0000wal'], async () => {
       if (!this.handle || !this.opened) throw new Error('transaction store is not open')
       if (this.closing) throw new Error('transaction store is closing')
       if (this.poisoned) throw new BlindWalIntegrityError('transaction store requires recovery after an interrupted WAL append')
+      if (prewriteFence) {
+        const result = prewriteFence()
+        if (result && typeof result.then === 'function') {
+          throw new TypeError('prewriteFence must not return a promise')
+        }
+      }
       const frame = await this.#appendSerialized(value)
       try {
         await applyFrame(frame)
@@ -1008,8 +1018,20 @@ export class BlindTransactionStore {
         if (!b4a.equals(digest, expectedHash)) {
           throw new BlindOpaqueBodyError('opaque body hash does not match its declaration', 'BODY_HASH_MISMATCH', true)
         }
+        if (signal && signal.aborted) {
+          throw new BlindOpaqueBodyError('opaque body input was aborted before final staging fsync',
+            'BODY_INTERRUPTED', false)
+        }
         await handle.sync()
+        if (signal && signal.aborted) {
+          throw new BlindOpaqueBodyError('opaque body input was aborted after final staging fsync',
+            'BODY_INTERRUPTED', false)
+        }
         await this.#fault('body:after-fsync', { temporaryPath, objectId, byteLength: total })
+        if (signal && signal.aborted) {
+          throw new BlindOpaqueBodyError('opaque body input was aborted before staging authority release',
+            'BODY_INTERRUPTED', false)
+        }
         const staged = {
           token: b4a.from(token),
           temporaryPath,

@@ -20,6 +20,7 @@ import {
   errorProfileEntry
 } from '@hiverelay/blind-protocol'
 import { READINESS_STATE_KIND } from './readiness-coordinator.js'
+import { assertPrecommitCellPutResultFitV2 } from '@hiverelay/blind-ipc/private-ipc-v2-contract'
 import {
   admissionFromRequest,
   assertOperationBodyRelation,
@@ -645,10 +646,27 @@ export class BlindOperationCoordinator {
 
   async dispatchStagedCellPut (input, context = {}) {
     const staged = stagedCellPutAuthority(input)
+    if (context.outerClass == null) {
+      protocolFailure('BAD_ENCODING', 'staged CELL.PUT requires a non-null authenticated outer class')
+    }
+    let bodyValidationRequired = true
+    try {
+      assertPrecommitCellPutResultFitV2(context.outerClass)
+    } catch {
+      // Preserve the class-2 precommit defence: dispatch owns its canonical
+      // TOO_LARGE result, but no opaque body may be pulled for that result.
+      bodyValidationRequired = false
+    }
     const abort = new Error('staged CELL.PUT dispatch no longer accepts body bytes')
     abort.code = 'ABORT_ERR'
     try {
-      return await this.dispatch(null, { ...context, [STAGED_CELL_PUT_CONTEXT]: staged })
+      const result = await this.dispatch(null, { ...context, [STAGED_CELL_PUT_CONTEXT]: staged })
+      // A canonical error discovered from the bounded request prefix must not
+      // abort the producer and turn that error into a socket close. Discard the
+      // queued body while ingress continues its exact length/hash validation;
+      // only then may the original correlated result be released.
+      if (bodyValidationRequired) await staged.ensureBodyValidated()
+      return result
     } finally {
       staged.abort(abort)
     }
@@ -667,6 +685,11 @@ export class BlindOperationCoordinator {
           body: b4a.from(stagedPut.canonicalRequestPrefixBytes)
         })
         profile = daemonOperationProfile(request.familyId, request.operationId)
+        try {
+          assertPrecommitCellPutResultFitV2(context.outerClass)
+        } catch {
+          protocolFailure('TOO_LARGE', 'staged CELL.PUT worst-case result does not fit its authenticated outer class')
+        }
       } else {
         const rawProfile = inputFrame && daemonOperationProfile(inputFrame.familyId, inputFrame.operationId)
         const rawBody = inputFrame && inputFrame.body
@@ -984,7 +1007,8 @@ export class BlindOperationCoordinator {
       ...context,
       transaction,
       opaqueBodySource: authority.opaqueBodySource,
-      opaqueBodyByteLength: authority.opaqueBodyByteLength
+      opaqueBodyByteLength: authority.opaqueBodyByteLength,
+      ensureOpaqueBodyValidated: authority.ensureOpaqueBodyValidated
     })
   }
 

@@ -333,6 +333,12 @@ function fail (code, message, retryable = false) {
   throw new BlindCellStorageError(code, message, retryable)
 }
 
+function assertPutLive (signal) {
+  if (signal && signal.aborted) {
+    fail('INTERNAL', 'CELL PUT crossed its authenticated abort fence')
+  }
+}
+
 function renewNotDue (retryAfterEpoch) {
   const error = new BlindCellStorageError('RENEW_NOT_DUE', 'renewal would not extend the lease', true)
   error.retryAfterEpoch = retryAfterEpoch
@@ -869,7 +875,7 @@ export class BlindCellStorageEngine {
     }
   }
 
-  async #appendAndApply (type, transactionId, virtualBucket, value) {
+  async #appendAndApply (type, transactionId, virtualBucket, value, prewriteFence = null) {
     const codec = WAL_PAYLOAD_CODEC.get(type)
     if (!codec) throw new BlindWalIntegrityError(`unknown cell WAL type ${type}`)
     return this.transactionStore.appendAndApply({
@@ -877,7 +883,7 @@ export class BlindCellStorageEngine {
       transactionId,
       virtualBucket,
       payload: encodeCanonical(codec, value)
-    }, frame => this.#applyFrame(frame, false))
+    }, frame => this.#applyFrame(frame, false), { prewriteFence })
   }
 
   #applyFrame (frame, recovering) {
@@ -1458,6 +1464,11 @@ export class BlindCellStorageEngine {
     ])
     const source = input.source == null ? request.cellBlob : input.source
     if (source == null) fail('BAD_ENCODING', 'putCell requires an opaque body source')
+    const signal = input.signal == null ? null : input.signal
+    if (signal != null && (typeof signal !== 'object' || typeof signal.aborted !== 'boolean' ||
+        typeof signal.addEventListener !== 'function' || typeof signal.removeEventListener !== 'function')) {
+      fail('BAD_ENCODING', 'putCell signal must be an AbortSignal')
+    }
     return {
       request,
       source,
@@ -1476,7 +1487,8 @@ export class BlindCellStorageEngine {
       profileId,
       preparedAdmissionBytes: preparedAdmission.canonicalBytes,
       fingerprint,
-      resultBindingBytes
+      resultBindingBytes,
+      signal
     }
   }
 
@@ -1541,6 +1553,7 @@ export class BlindCellStorageEngine {
       const deadlineUnixMillis = nowMillis + this.reservationMillis
       const transactionId = this.transactionStore.newTransactionId()
       const virtualBucket = this.transactionStore.virtualBucket(BLIND_STORE_SERVICE_TAG.CELL, input.storageSlot)
+      assertPutLive(input.signal)
       await this.#appendAndApply(BLIND_CELL_WAL_TYPE.INGRESS_RESERVED, transactionId, virtualBucket, {
         version: 1,
         spendTag: input.spendTag,
@@ -1562,7 +1575,7 @@ export class BlindCellStorageEngine {
         deadlineUnixMillis,
         remainingAttempts: 2,
         reservedEpoch: this.epochFloor
-      })
+      }, () => assertPutLive(input.signal))
       return { status: 'reserved', entry: this.spends.get(hex(input.spendTag)) }
     })
   }
@@ -1583,13 +1596,14 @@ export class BlindCellStorageEngine {
           : TERMINAL_REASON.ATTEMPTS_EXHAUSTED)
         fail('RETRY_TERMINAL', 'the ingress reservation expired or exhausted its attempts')
       }
+      assertPutLive(input.signal)
       await this.#appendAndApply(BLIND_CELL_WAL_TYPE.ATTEMPT_CONSUMED, entry.transactionId,
         this.transactionStore.virtualBucket(BLIND_STORE_SERVICE_TAG.CELL, entry.storageSlot), {
           version: 1,
           spendTag: entry.spendTag,
           requestCommitment: entry.requestCommitment,
           remainingAttempts: entry.remainingAttempts - 1
-        })
+        }, () => assertPutLive(input.signal))
       entry.inFlight = true
       return { status: 'attempt', entry }
     })
@@ -1658,16 +1672,20 @@ export class BlindCellStorageEngine {
 
   async #putCell (input) {
     this.#assertWritable(true)
+    assertPutLive(input && input.signal)
     await this.#refreshClock()
     this.#assertWritable(true)
     input = this.#putInput(input)
+    assertPutLive(input.signal)
     if (input.allocationEpoch > this.epochFloor + 1 || this.epochFloor >= input.allocationEpoch + RETENTION_HORIZON_EPOCHS) {
       fail('BAD_SLOT', 'allocation epoch is outside its accepted transport-capability window')
     }
     this.#leaseEpochFor(input.leaseClass)
     const reservation = await this.#reservePut(input)
+    assertPutLive(input.signal)
     if (reservation.status === 'stored') return reservation
     const attempt = await this.#consumeAttempt(input)
+    assertPutLive(input.signal)
     if (attempt.status === 'stored') return attempt
     const entry = attempt.entry
     let staged
@@ -1678,7 +1696,7 @@ export class BlindCellStorageEngine {
         expectedHash: entry.declaredBlobHash,
         deadlineUnixMillis: entry.deadlineUnixMillis,
         nowUnixMillis: this.nowUnixMillis,
-        signal: input.request.signal
+        signal: input.signal
       })
     } catch (error) {
       if (error instanceof BlindOpaqueBodyError) {
@@ -1715,6 +1733,11 @@ export class BlindCellStorageEngine {
       `spend:${hex(entry.spendTag)}`,
       `cell:${hex(entry.storageSlot)}`
     ], async () => {
+      if (input.signal && input.signal.aborted) {
+        entry.inFlight = false
+        await this.transactionStore.discardStaged(staged)
+        assertPutLive(input.signal)
+      }
       const current = this.spends.get(hex(entry.spendTag))
       const replay = this.#spendReplay(current, input)
       if (replay) {
@@ -1728,10 +1751,14 @@ export class BlindCellStorageEngine {
       }
       const virtualBucket = this.transactionStore.virtualBucket(BLIND_STORE_SERVICE_TAG.CELL, entry.storageSlot)
       const leaseEpoch = this.#leaseEpochFor(entry.leaseClass)
+      const identity = resultIdentity('stored', entry.storageSlot, entry.requestCommitment,
+        entry.declaredBlobHash, entry.leaseClass, leaseEpoch, 0n)
+      // Cancellation is authoritative only until the irreversible publication starts. Once
+      // publishOpaque is entered, the object and its PUT_COMMITTED record are one
+      // non-cancellable recovery unit; the caller may still suppress signing/result release.
+      assertPutLive(input.signal)
       try {
         const reference = await this.transactionStore.publishOpaque(staged, virtualBucket)
-        const identity = resultIdentity('stored', entry.storageSlot, entry.requestCommitment,
-          entry.declaredBlobHash, entry.leaseClass, leaseEpoch, 0n)
         await this.#appendAndApply(BLIND_CELL_WAL_TYPE.PUT_COMMITTED, entry.transactionId, virtualBucket, {
           version: 1,
           spendTag: entry.spendTag,

@@ -183,8 +183,11 @@ async function harness (t, overrides = {}) {
   const storage = new BlindCellStorageEngine(storageOptions)
   await storage.open()
   t.teardown(() => storage.close())
+  let signCalls = 0
   const signer = Object.freeze({
     async sign (input) {
+      signCalls++
+      if (overrides.signerHook) await overrides.signerHook(input, signCalls)
       if (!same(input.publicKey, relay.publicKey) ||
           (input.domainId !== RESULT_SIGNATURE_DOMAIN_ID.CELL_RECEIPT &&
             input.domainId !== RESULT_SIGNATURE_DOMAIN_ID.BATCH_GET_RESULT)) {
@@ -253,6 +256,7 @@ async function harness (t, overrides = {}) {
     storage,
     storageOptions,
     assemble,
+    signCalls: () => signCalls,
     advanceMillis (millis) { nowUnixMillis += BigInt(millis) },
     ...assemble(storage)
   }
@@ -662,23 +666,103 @@ test('staged CELL.PUT reaches storage without coordinator body buffering and rej
   const ingestor = new StagedCellPutDispatchIngestor({ maxQueuedBodyBytes: 1024 })
   await ingestor.push(dispatch.subarray(0, metadataBytes))
   const staged = await ingestor.ready
-  const pending = h.coordinator.dispatchStagedCellPut(staged, context())
+  const pending = h.coordinator.dispatchStagedCellPut(staged, { ...context(), outerClass: 3 })
+  let settledBeforeSourceEnd = false
+  pending.then(
+    () => { settledBeforeSourceEnd = true },
+    () => { settledBeforeSourceEnd = true }
+  )
   await ingestor.push(dispatch.subarray(metadataBytes))
+  await new Promise(resolve => setImmediate(resolve))
+  t.is(settledBeforeSourceEnd, false, 'complete bytes without authenticated source EOF cannot release a result')
+  t.is(h.signCalls(), 0, 'fresh PUT cannot use the signing key before authenticated source EOF')
+  t.is(h.storage.status().accounting.cellRecords, 0, 'storage cannot publish the staged cell before source EOF')
+  t.is(h.storage.status().accounting.storedBytes, 0, 'opaque bytes remain unpublished before source EOF')
   ingestor.finish()
   const receipt = responseValue(await pending, blindReceiptV1)
   t.is(receipt.result, CELL_RECEIPT_RESULT.STORED)
+  t.is(h.signCalls(), 1)
+
+  const replayIngestor = new StagedCellPutDispatchIngestor({ maxQueuedBodyBytes: 1024 })
+  await replayIngestor.push(dispatch.subarray(0, metadataBytes))
+  const replayStaged = await replayIngestor.ready
+  const replayPending = h.coordinator.dispatchStagedCellPut(replayStaged, { ...context(), outerClass: 3 })
+  await replayIngestor.push(dispatch.subarray(metadataBytes))
+  await new Promise(resolve => setImmediate(resolve))
+  t.is(h.signCalls(), 1, 'committed replay cannot sign before its new body validates at EOF')
+  replayIngestor.finish()
+  t.is(responseValue(await replayPending, blindReceiptV1).result, CELL_RECEIPT_RESULT.STORED)
+  t.is(h.signCalls(), 2)
 
   const changed = b4a.from(dispatch)
   changed[changed.byteLength - 1] ^= 1
   const bad = new StagedCellPutDispatchIngestor()
   await bad.push(changed.subarray(0, metadataBytes))
   const badStaged = await bad.ready
-  const rejected = h.coordinator.dispatchStagedCellPut(badStaged, context())
+  const rejected = h.coordinator.dispatchStagedCellPut(badStaged, { ...context(), outerClass: 3 })
+  const bodyError = rejected.then(() => null, error => error)
   try {
     await bad.push(changed.subarray(metadataBytes))
     bad.finish()
   } catch {}
-  t.is(errorName(await rejected), 'BAD_ENCODING')
+  t.is((await bodyError).code, 'BAD_ENCODING')
+  t.is(h.signCalls(), 2, 'hash-invalid replay cannot use the signing key')
+
+  const truncated = new StagedCellPutDispatchIngestor()
+  await truncated.push(dispatch.subarray(0, metadataBytes))
+  const truncatedStaged = await truncated.ready
+  const truncatedPending = h.coordinator.dispatchStagedCellPut(truncatedStaged,
+    { ...context(), outerClass: 3 })
+  const truncatedError = truncatedPending.then(() => null, error => error)
+  await truncated.push(dispatch.subarray(metadataBytes, -1))
+  try { truncated.finish() } catch {}
+  t.is((await truncatedError).code, 'BAD_ENCODING')
+  t.is(h.signCalls(), 2, 'truncated replay cannot use the signing key')
+})
+
+test('post-publish abort commits recovery state but suppresses receipt signing and result release', async t => {
+  const controller = new AbortController()
+  let publishFenceCalls = 0
+  const h = await harness(t, {
+    storageOptions: {
+      faultInjector (point) {
+        if (point === 'body:after-publish') {
+          publishFenceCalls++
+          controller.abort()
+        }
+      }
+    }
+  })
+  const fixture = cellFixture(h.relay.publicKey, { blobByte: 0x81, nonceByte: 0x82, spendByte: 0x83 })
+  const dispatch = encodeDispatchFrame(frame(OPERATION.CELL.PUT, putCellV1, fixture.request))
+  const metadataBytes = dispatch.byteLength - fixture.cellBlob.byteLength
+  const ingestor = new StagedCellPutDispatchIngestor({ maxQueuedBodyBytes: 1024 })
+  await ingestor.push(dispatch.subarray(0, metadataBytes))
+  const staged = await ingestor.ready
+  const pending = h.coordinator.dispatchStagedCellPut(staged, {
+    ...context(),
+    outerClass: 3,
+    signal: controller.signal
+  })
+  await ingestor.push(dispatch.subarray(metadataBytes))
+  ingestor.finish()
+  t.is(errorName(await pending), 'INTERNAL', 'aborted operation cannot release its stored receipt')
+  t.is(publishFenceCalls, 1)
+  t.is(controller.signal.aborted, true)
+  t.is(h.signCalls(), 0, 'aborted operation cannot use the signing key after durable commit')
+  t.is(h.storage.status().readOnlyReason, null)
+  t.is(h.storage.status().accounting.cellRecords, 1)
+
+  await h.storage.close()
+  const reopenedStorage = new BlindCellStorageEngine(h.storageOptions)
+  await reopenedStorage.open()
+  t.teardown(() => reopenedStorage.close())
+  const coordinator = h.assemble(reopenedStorage).coordinator
+  const replay = responseValue(await coordinator.dispatch(
+    frame(OPERATION.CELL.PUT, putCellV1, fixture.request), context()), blindReceiptV1)
+  t.is(replay.result, CELL_RECEIPT_RESULT.STORED)
+  t.is(h.signCalls(), 1, 'a fresh non-aborted replay can sign the recovered committed result')
+  t.is(reopenedStorage.status().readOnlyReason, null)
 })
 
 test('V-3 rejects a maximum-shape staged CELL.PUT proof before body, staging, WAL, or fsync work', async t => {

@@ -5,12 +5,10 @@ import b4a from 'b4a'
 import { socketPeerCredentials } from '@hiverelay/blind-peercred'
 import {
   BlindProtocolError,
-  DISPATCH_LIMITS,
   ERROR_CODE,
   ERROR_PROFILE_ID,
   FAMILY,
   FRAME_KIND,
-  OPERATION,
   assertReleaseReady,
   blindErrorV1,
   decodeDispatchFrame,
@@ -22,35 +20,52 @@ import {
   operationProfile
 } from '@hiverelay/blind-protocol'
 import {
-  LOCAL_STREAM_DIRECTION,
-  LOCAL_STREAM_FLAG,
-  LOCAL_STREAM_FRAME_KIND,
-  LOCAL_STREAM_MODE,
-  LOCAL_STREAM_OPEN_KIND,
   LOCAL_BROKER_ERROR,
   LOCAL_RESPONSE_KIND,
   LOCAL_DISPATCH_ADJACENT_HEADER_BYTES,
-  LocalStreamSequenceGuard,
   MAX_LOCAL_BODY_BYTES,
+  PRIVATE_IPC_LIMITS,
   PRIVATE_IPC_TIMING_MILLIS,
   assertPrivateIpcReady,
-  decodeLocalStreamFrame,
-  decodeLocalStreamOpen,
   decodeLocalRequest,
   encodeLocalReadyAckBody,
   encodeLocalResponse,
-  fragmentLocalContent,
-  localAuthenticatedChannelAuthority,
   localRequestFrameLength,
-  localStreamFrameLength,
-  localStreamOpenFrameLength,
-  verifyLocalAuthenticatedChannelContext
+  localStreamOpenFrameLength
 } from '@hiverelay/blind-ipc'
 import {
+  CELL_PUT_ENDPOINT_ROLE_BIT_V2,
+  CELL_PUT_OPERATION_BIT_V2,
+  LOCAL_STAGED_DIRECTION_V2,
+  LOCAL_STAGED_FLAG_V2,
+  LOCAL_STAGED_FRAME_KIND_V2,
+  PRIVATE_IPC_V2_LIMITS,
+  REQUIRED_LOCAL_IPC_FEATURE_BITS_V2,
+  TRANSPORT_ID,
+  TRANSPORT_SUPPORT,
+  assertPrecommitCellPutResultFitV2,
+  decodeLocalReadyProbeV2,
+  decodeLocalStagedCellPutFrameV2,
+  decodeLocalStagedCellPutOpenV2,
+  encodeLocalReadyAckV2,
+  readLocalReadyProbeLengthV2,
+  readLocalStagedCellPutFrameLengthV2,
+  readLocalStagedCellPutOpenLengthV2,
+  replayTupleHashV2,
+  validateLocalStagedCellPutOpenBindingV2
+} from '@hiverelay/blind-ipc/private-ipc-v2-contract'
+import {
   STAGED_CELL_PUT_DEFAULT_QUEUE_BYTES,
-  STAGED_CELL_PUT_MAX_PREFIX_BYTES,
-  StagedCellPutDispatchIngestor
+  STAGED_CELL_PUT_MAX_PREFIX_BYTES
 } from './staged-put.js'
+import {
+  STAGED_CELL_PUT_FRAME_DECODER_MAX_BUFFERED_BYTES_V2,
+  STAGED_CELL_PUT_FRAME_READER_MAX_BUFFERED_BYTES_V2,
+  STAGED_CELL_PUT_RESULT_ENCODER_MAX_BUFFERED_BYTES_V2,
+  StagedCellPutOuterEnvelopeIngestorV2,
+  StagedCellPutResultEncoderV2,
+  writeSocketFramesWithinDeadlineV2
+} from './private-ipc-v2-runtime.js'
 
 const DEFAULT_SOCKET_MODE = 0o660
 const DEFAULT_REQUEST_TIMEOUT_MS = 35_000
@@ -62,10 +77,32 @@ const REQUIRED_DESCRIBE_OPERATION_BITS = 0x00000007
 const KNOWN_OPERATION_BITS = 0x003fffff
 const KNOWN_ROLE_BITS = 0x007f
 const MAX_U64 = (1n << 64n) - 1n
-const STAGED_PUT_RESPONSE_BYTES = DISPATCH_LIMITS.PREFIX_BYTES + DISPATCH_LIMITS.HEADER_BYTES +
-  operationProfile(FAMILY.CELL, OPERATION.CELL.PUT).maxResultBodyBytes
-const STAGED_PUT_STREAM_RESERVATION_BYTES = (3 * STAGED_CELL_PUT_MAX_PREFIX_BYTES) +
-  STAGED_CELL_PUT_DEFAULT_QUEUE_BYTES + STAGED_PUT_RESPONSE_BYTES
+export const STAGED_PUT_MEMORY_LEDGER_V2 = Object.freeze({
+  socketReadBytes: 2 * PRIVATE_IPC_V2_LIMITS.LOCAL_FRAME_BYTES,
+  frameReaderBytes: STAGED_CELL_PUT_FRAME_READER_MAX_BUFFERED_BYTES_V2,
+  frameDecoderPeakBytes: STAGED_CELL_PUT_FRAME_DECODER_MAX_BUFFERED_BYTES_V2,
+  stagedIngressBytes: (5 * STAGED_CELL_PUT_MAX_PREFIX_BYTES) +
+    STAGED_CELL_PUT_DEFAULT_QUEUE_BYTES,
+  resultEncoderPeakBytes: STAGED_CELL_PUT_RESULT_ENCODER_MAX_BUFFERED_BYTES_V2
+})
+export const STAGED_PUT_SOCKET_RESERVATION_BYTES_V2 =
+  STAGED_PUT_MEMORY_LEDGER_V2.socketReadBytes
+export const STAGED_PUT_STREAM_RESERVATION_BYTES_V2 =
+  STAGED_PUT_MEMORY_LEDGER_V2.socketReadBytes +
+  STAGED_PUT_MEMORY_LEDGER_V2.frameDecoderPeakBytes +
+  STAGED_PUT_MEMORY_LEDGER_V2.stagedIngressBytes +
+  STAGED_PUT_MEMORY_LEDGER_V2.resultEncoderPeakBytes
+const STAGED_PUT_POST_READY_RESERVATION_BYTES_V2 =
+  STAGED_PUT_STREAM_RESERVATION_BYTES_V2 - STAGED_PUT_SOCKET_RESERVATION_BYTES_V2
+const OBSERVED_PEERCRED_SOCKETS = new WeakMap()
+const V2_DAEMON_AUTHORITIES = new WeakMap()
+
+export const V2_WRITE_DISABLED_REASON = Object.freeze({
+  STAGED_DISPATCHER_MISSING: 'STAGED_DISPATCHER_MISSING',
+  TRANSPORT_PROFILE_MISSING: 'TRANSPORT_PROFILE_MISSING',
+  WRITE_READINESS_PROJECTION_MISSING: 'WRITE_READINESS_PROJECTION_MISSING',
+  DURABLE_REPLAY_AUTHORITY_MISSING: 'DURABLE_REPLAY_AUTHORITY_MISSING'
+})
 
 function assertExecutableReleaseReady () {
   assertReleaseReady()
@@ -166,6 +203,22 @@ async function abortableCall (operation, signal) {
   } finally {
     signal.removeEventListener('abort', onAbort)
   }
+}
+
+function absoluteOperationSignal (parent, absoluteDeadlineMonotonicMillis, nowMonotonicMillis) {
+  if (absoluteDeadlineMonotonicMillis <= nowMonotonicMillis) throw abortError()
+  const remaining = absoluteDeadlineMonotonicMillis - nowMonotonicMillis
+  const deadline = AbortSignal.timeout(Math.max(1, Number(remaining)))
+  return parent ? AbortSignal.any([parent, deadline]) : deadline
+}
+
+function destroySocketOnAbort (socket, signal) {
+  const abort = () => {
+    if (!socket.destroyed) socket.destroy()
+  }
+  signal.addEventListener('abort', abort, { once: true })
+  if (signal.aborted) queueMicrotask(abort)
+  return () => signal.removeEventListener('abort', abort)
 }
 
 function safeErrorCode (error) {
@@ -402,8 +455,11 @@ async function cleanupBoundSocket (bound) {
   await closeOwnedSocketServer(bound.server, bound.socketPath, bound.identity)
 }
 
-async function bindSocketServer ({ socketPath, socketMode, socketGroupGid, maxConnections, accept }) {
-  const server = net.createServer({ allowHalfOpen: true }, socket => accept(socket))
+async function bindSocketServer ({ socketPath, socketMode, socketGroupGid, maxConnections, highWaterMark, accept }) {
+  const server = net.createServer({
+    allowHalfOpen: true,
+    ...(highWaterMark == null ? {} : { highWaterMark })
+  }, socket => accept(socket))
   server.maxConnections = maxConnections
   await new Promise((resolve, reject) => {
     const onError = error => {
@@ -438,57 +494,150 @@ async function bindSocketServer ({ socketPath, socketMode, socketGroupGid, maxCo
   }
 }
 
-async function * localStreamRecords (socket) {
-  let buffer = b4a.alloc(0)
-  let open = true
-  const maximum = 2 * (21 + 65_535)
-  for await (const chunk of socket.iterator({ destroyOnReturn: false })) {
-    if (buffer.byteLength + chunk.byteLength > maximum) {
-      const error = new Error('private stream record buffer exceeds two bounded records')
+function waitForSocketReadable (socket) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const cleanup = () => {
+      socket.off('readable', onReadable)
+      socket.off('end', onReadable)
+      socket.off('close', onReadable)
+      socket.off('error', onError)
+    }
+    const finish = error => {
+      if (settled) return
+      settled = true
+      cleanup()
+      if (error) reject(error)
+      else resolve()
+    }
+    const onReadable = () => finish()
+    const onError = error => finish(error)
+    socket.once('readable', onReadable)
+    socket.once('end', onReadable)
+    socket.once('close', onReadable)
+    socket.once('error', onError)
+    if (socket.readableLength > 0 || socket.readableEnded || socket.destroyed) queueMicrotask(onReadable)
+  })
+}
+
+async function readExactSocketBytesInto (socket, output, offset = 0, options = {}) {
+  const start = offset
+  while (offset < output.byteLength) {
+    const remaining = output.byteLength - offset
+    const requested = socket.readableLength > 0
+      ? Math.min(remaining, socket.readableLength)
+      : remaining
+    const chunk = socket.read(requested)
+    if (chunk && chunk.byteLength > 0) {
+      if (chunk.byteLength > remaining) {
+        throw Object.assign(new Error('private stream exact read exceeded its bounded target'), {
+          code: 'BAD_LOCAL_STREAM'
+        })
+      }
+      b4a.copy(chunk, output, offset)
+      offset += chunk.byteLength
+      continue
+    }
+    if (socket.readableEnded || socket.destroyed) break
+    await waitForSocketReadable(socket)
+  }
+  if (offset === start && options.allowEmptyEof === true && socket.readableEnded) return false
+  if (offset !== output.byteLength) {
+    throw Object.assign(new Error('private stream ended before one exact bounded open record'), {
+      code: 'BAD_LOCAL_STREAM'
+    })
+  }
+  return true
+}
+
+async function readExactSocketBytes (socket, length, options = {}) {
+  const output = b4a.alloc(length)
+  if (!(await readExactSocketBytesInto(socket, output, 0, options))) return null
+  return output
+}
+
+async function readFirstLocalStreamOpen (socket) {
+  const prefix = await readExactSocketBytes(socket, 5, { allowEmptyEof: true })
+  if (prefix == null) return null
+  const version = prefix[4]
+  const declaredLength = b4a.readUInt32BE(prefix, 0) + 4
+  if (version === 2) {
+    if (declaredLength !== PRIVATE_IPC_V2_LIMITS.STAGED_OPEN_BYTES) {
+      throw Object.assign(new Error('private IPC V2 staged open has a non-exact declared length'), {
+        code: 'BAD_LOCAL_STREAM'
+      })
+    }
+  } else if (version === 1) {
+    const maximum = PRIVATE_IPC_LIMITS.STREAM_OPEN_ADJACENT_HEADER_BYTES +
+      PRIVATE_IPC_LIMITS.MAX_STREAM_CONTEXT_BYTES
+    if (declaredLength < PRIVATE_IPC_LIMITS.STREAM_OPEN_BASE_HEADER_BYTES || declaredLength > maximum) {
+      throw Object.assign(new Error('private IPC V1 stream open has an out-of-bounds declared length'), {
+        code: 'BAD_LOCAL_STREAM'
+      })
+    }
+  } else {
+    throw Object.assign(new Error('private stream record has no registered version'), {
+      code: 'BAD_LOCAL_STREAM'
+    })
+  }
+  const suffix = await readExactSocketBytes(socket, declaredLength - prefix.byteLength)
+  const bytes = b4a.concat([prefix, suffix], declaredLength)
+  const validatedLength = version === 2
+    ? readLocalStagedCellPutOpenLengthV2(bytes)
+    : localStreamOpenFrameLength(bytes)
+  if (validatedLength !== declaredLength) {
+    throw Object.assign(new Error('private stream open did not validate as one exact record'), {
+      code: 'BAD_LOCAL_STREAM'
+    })
+  }
+  return Object.freeze({ version, bytes })
+}
+
+async function * localStagedFrameRecordsV2 (socket) {
+  for (;;) {
+    const prefix = await readExactSocketBytes(socket, 4, { allowEmptyEof: true })
+    if (prefix == null) return
+    const length = b4a.readUInt32BE(prefix, 0) + 4
+    if (length < PRIVATE_IPC_V2_LIMITS.STAGED_FRAME_HEADER_BYTES ||
+        length > PRIVATE_IPC_V2_LIMITS.LOCAL_FRAME_BYTES) {
+      const error = new Error('private stream frame declaration is outside its exact bound')
       error.code = 'BAD_LOCAL_STREAM'
       throw error
     }
-    buffer = buffer.byteLength === 0 ? b4a.from(chunk) : b4a.concat([buffer, chunk])
-    for (;;) {
-      const expected = open ? localStreamOpenFrameLength(buffer) : localStreamFrameLength(buffer)
-      if (expected == null || buffer.byteLength < expected) break
-      const record = b4a.from(buffer.subarray(0, expected))
-      buffer = b4a.from(buffer.subarray(expected))
-      open = false
-      yield record
+    const record = b4a.alloc(length)
+    b4a.copy(prefix, record, 0)
+    await readExactSocketBytesInto(socket, record, prefix.byteLength)
+    if (readLocalStagedCellPutFrameLengthV2(record) !== length) {
+      const error = new Error('private stream frame did not validate as one exact record')
+      error.code = 'BAD_LOCAL_STREAM'
+      throw error
     }
-  }
-  if (buffer.byteLength !== 0) {
-    const error = new Error('private stream ended with a truncated record')
-    error.code = 'BAD_LOCAL_STREAM'
-    throw error
+    yield record
   }
 }
 
-async function writeSocketFrames (socket, frames, timeoutMs) {
-  for (const frame of frames) {
-    if (socket.destroyed) throw new Error('private stream closed before response write')
-    await new Promise((resolve, reject) => {
-      let settled = false
-      const finish = error => {
-        if (settled) return
-        settled = true
-        clearTimeout(timer)
-        socket.off('error', finish)
-        if (error) reject(error)
-        else resolve()
-      }
-      const timer = setTimeout(() => finish(Object.assign(new Error('private stream response write timed out'), {
-        code: 'IPC_WRITE_TIMEOUT'
-      })), timeoutMs)
-      if (timer.unref) timer.unref()
-      socket.once('error', finish)
-      socket.write(frame, finish)
-    })
+function observedPeerCredentials (socket) {
+  const credentials = socket && OBSERVED_PEERCRED_SOCKETS.get(socket)
+  if (!credentials) {
+    const error = new Error('private IPC socket has no daemon-observed peer credential authority')
+    error.code = 'BLIND_PEERCRED_UNAVAILABLE'
+    throw error
   }
+  return credentials
+}
+
+function projectionBits (value, field, maximum = 0xffffffff) {
+  if (!Number.isInteger(value) || value < 0 || value > maximum) {
+    throw new TypeError(`${field} must be an unsigned integer within its generated mask`)
+  }
+  return value
 }
 
 export class BlindDaemon {
+  #v2ReplayReservationCount
+  #v2IngressConstructionCount
+  #v2WriteDescriptorFloor
+
   constructor (options = {}) {
     this.unarySocketPath = validSocketPath(options.unarySocketPath, 'unarySocketPath')
     this.streamSocketPath = validSocketPath(options.streamSocketPath, 'streamSocketPath')
@@ -527,18 +676,27 @@ export class BlindDaemon {
     if (this.streamTransportProfileHash && allZero(this.streamTransportProfileHash)) {
       throw new TypeError('streamTransportProfileHash must be nonzero')
     }
-    const streamProfileConfigured = this.streamTransportProfileHash != null ||
-      this.streamTransportProfileHashForEndpoint != null
-    if ((this.dispatchStagedPut != null) !== streamProfileConfigured) {
-      throw new TypeError('dispatchStagedPut and a stream transport profile authority must be configured together')
-    }
     this.readinessSnapshot = typeof options.readinessSnapshot === 'function' ? options.readinessSnapshot : null
+    this.writeReadinessProjection = typeof options.writeReadinessProjection === 'function'
+      ? options.writeReadinessProjection
+      : null
+    this.durableReplayAuthority = options.durableReplayAuthority == null
+      ? null
+      : options.durableReplayAuthority
+    if (this.durableReplayAuthority != null &&
+        (typeof this.durableReplayAuthority !== 'object' ||
+         typeof this.durableReplayAuthority.reserve !== 'function')) {
+      throw new TypeError('durableReplayAuthority.reserve is required')
+    }
     this.launchTopologyHash = fixed32(options.launchTopologyHash, 'launchTopologyHash', true)
     this.endpointIds = options.endpointIds == null && options.endpointId == null ? null : endpointSet(options)
     this.releaseGate = typeof options.releaseGate === 'function' ? options.releaseGate : assertExecutableReleaseReady
     this.onError = typeof options.onError === 'function' ? options.onError : () => {}
     this.now = typeof options.monotonicMillis === 'function' ? options.monotonicMillis : monotonicMillis
     currentMonotonic(this.now)
+    this.#v2ReplayReservationCount = 0
+    this.#v2IngressConstructionCount = 0
+    this.#v2WriteDescriptorFloor = null
     this.unaryServer = null
     this.streamServer = null
     this.sockets = new Set()
@@ -595,6 +753,7 @@ export class BlindDaemon {
         socketMode: this.socketMode,
         socketGroupGid: this.socketGroupGid,
         maxConnections: this.maxConnections,
+        highWaterMark: PRIVATE_IPC_V2_LIMITS.LOCAL_FRAME_BYTES,
         accept: socket => this._acceptStream(socket)
       })
       unary.server.on('error', error => this.onError(error))
@@ -632,6 +791,7 @@ export class BlindDaemon {
       }), () => socket.destroy())
       return
     }
+    OBSERVED_PEERCRED_SOCKETS.set(socket, credentials)
     this.sockets.add(socket)
     const abortController = new AbortController()
     this.abortControllers.add(abortController)
@@ -639,6 +799,7 @@ export class BlindDaemon {
     let total = 0
     let reservedBytes = 0
     let expectedLength = null
+    let requestVersion = null
     let handling = false
     let task = null
     let taskSettled = false
@@ -677,7 +838,17 @@ export class BlindDaemon {
       chunks.push(b4a.from(chunk))
       total += chunk.byteLength
       try {
-        if (expectedLength == null && total >= 4) expectedLength = localRequestFrameLength(b4a.concat(chunks, total))
+        if (expectedLength == null && total >= 5) {
+          const pending = b4a.concat(chunks, total)
+          requestVersion = pending[4]
+          if (requestVersion === 2) expectedLength = readLocalReadyProbeLengthV2(pending)
+          else if (requestVersion === 1) expectedLength = localRequestFrameLength(pending)
+          else {
+            throw Object.assign(new Error('private unary request has no registered version'), {
+              code: 'BAD_LOCAL_REQUEST'
+            })
+          }
+        }
       } catch (error) {
         this.onError(error)
         socket.destroy()
@@ -691,13 +862,29 @@ export class BlindDaemon {
       handling = true
       socket.pause()
       socket.setTimeout(0)
-      task = this._handle(b4a.concat(chunks, total), abortController.signal, credentials)
+      task = requestVersion === 2
+        ? this._handleV2ReadyProbe(b4a.concat(chunks, total), socket, abortController.signal)
+        : this._handle(b4a.concat(chunks, total), abortController.signal, credentials)
       this.tasks.add(task)
       task.then(response => {
         if (socket.destroyed) return
-        const responseTimer = setTimeout(() => socket.destroy(), PRIVATE_IPC_TIMING_MILLIS.DAEMON_RESPONSE_WRITE)
+        let responseTimeoutMillis = PRIVATE_IPC_TIMING_MILLIS.DAEMON_RESPONSE_WRITE
+        let wireResponse
+        if (requestVersion === 2) {
+          const now = currentMonotonic(this.now)
+          if (!response || !response.bytes || now >= response.absoluteDeadlineMonotonicMillis) {
+            socket.destroy()
+            return
+          }
+          responseTimeoutMillis = Math.min(responseTimeoutMillis,
+            Number(response.absoluteDeadlineMonotonicMillis - now))
+          wireResponse = response.bytes
+        } else {
+          wireResponse = encodeLocalResponse(response)
+        }
+        const responseTimer = setTimeout(() => socket.destroy(), responseTimeoutMillis)
         if (responseTimer.unref) responseTimer.unref()
-        socket.end(encodeLocalResponse(response), () => {
+        socket.end(wireResponse, () => {
           clearTimeout(responseTimer)
           releaseReservation()
         })
@@ -730,16 +917,34 @@ export class BlindDaemon {
       socket.destroy()
       return
     }
+    if (this.bufferedBytes + STAGED_PUT_SOCKET_RESERVATION_BYTES_V2 > this.maxBufferedBytes) {
+      socket.destroy()
+      return
+    }
+    this.bufferedBytes += STAGED_PUT_SOCKET_RESERVATION_BYTES_V2
+    let socketReservationReleased = false
+    const releaseSocketReservation = () => {
+      if (socketReservationReleased) return
+      socketReservationReleased = true
+      this.bufferedBytes = Math.max(0,
+        this.bufferedBytes - STAGED_PUT_SOCKET_RESERVATION_BYTES_V2)
+    }
+    OBSERVED_PEERCRED_SOCKETS.set(socket, credentials)
     this.sockets.add(socket)
     const abortController = new AbortController()
     this.abortControllers.add(abortController)
+    const handshakeTimer = setTimeout(() => socket.destroy(),
+      PRIVATE_IPC_TIMING_MILLIS.READY_PATH_CONNECT)
+    if (handshakeTimer.unref) handshakeTimer.unref()
     socket.once('close', () => {
+      clearTimeout(handshakeTimer)
       abortController.abort()
       this.sockets.delete(socket)
+      releaseSocketReservation()
     })
     socket.once('error', error => this.onError(error))
     socket.setTimeout(PRIVATE_IPC_TIMING_MILLIS.READY_PATH_CONNECT, () => socket.destroy())
-    const task = this._handleStream(socket, credentials, abortController.signal)
+    const task = this._handleStream(socket, abortController.signal, handshakeTimer)
     this.tasks.add(task)
     task.catch(error => {
       if (!abortController.signal.aborted) this.onError(error)
@@ -750,11 +955,12 @@ export class BlindDaemon {
     })
   }
 
-  async _handleStream (socket, credentials, signal) {
+  async _handleStream (socket, signal, handshakeTimer = null) {
+    const credentials = observedPeerCredentials(socket)
     const startedMonotonicMillis = currentMonotonic(this.now)
-    const records = localStreamRecords(socket)
-    const first = await records.next()
-    if (first.done) {
+    const first = await readFirstLocalStreamOpen(socket)
+    if (handshakeTimer) clearTimeout(handshakeTimer)
+    if (first == null) {
       const completedMonotonicMillis = currentMonotonic(this.now)
       const elapsed = completedMonotonicMillis - startedMonotonicMillis
       if (!this.closing && this.started && elapsed >= 0n &&
@@ -765,148 +971,397 @@ export class BlindDaemon {
       return
     }
     socket.setTimeout(0)
-    if (!this.dispatchStagedPut || (!this.streamTransportProfileHash && !this.streamTransportProfileHashForEndpoint)) {
-      throw Object.assign(new Error('staged private stream runtime is not configured'), { code: 'BLIND_STREAM_UNAVAILABLE' })
-    }
-    const open = decodeLocalStreamOpen(first.value, { copyContext: true })
-    const now = currentMonotonic(this.now)
-    if (open.openKind !== LOCAL_STREAM_OPEN_KIND.PUBLIC_CONTENT_CHANNEL ||
-        open.streamMode !== LOCAL_STREAM_MODE.DISPATCH_CONTENT ||
-        open.adjacentRelayKey != null || !this.endpointIds.has(open.endpointId) ||
-        open.acceptedMonotonicMillis > now || open.openDeadlineMonotonicMillis <= now) {
-      throw Object.assign(new Error('private stream open does not match the staged public PUT path'), {
-        code: 'BAD_LOCAL_STREAM'
+    if (first.version !== 2) {
+      // V1 remains authoritative for the existing zero-byte readiness path only.
+      // A data-bearing V1 stream can never fall back into a write runtime.
+      throw Object.assign(new Error('private IPC V1 staged writes are retired; V2 is required'), {
+        code: 'PRIVATE_IPC_V2_NO_FALLBACK'
       })
     }
-    const expectedTransportProfileHash = this.streamTransportProfileHash || fixed32(
-      await this.streamTransportProfileHashForEndpoint({
-        endpointId: open.endpointId,
-        transportId: open.transportId,
-        transportSupportBit: open.transportSupportBit,
-        signal
-      }), 'resolved stream transportProfileHash')
-    if (allZero(expectedTransportProfileHash)) throw new Error('resolved stream transportProfileHash must be nonzero')
-    const channelHandle = verifyLocalAuthenticatedChannelContext(open.contextBytes, open, {
-      launchTopologyHash: this.launchTopologyHash,
-      transportProfileHash: expectedTransportProfileHash
-    })
-    const channel = localAuthenticatedChannelAuthority(channelHandle)
-    if (channel.endpointId !== open.endpointId || channel.transportId !== open.transportId ||
-        channel.transportSupportBit !== open.transportSupportBit) {
-      throw Object.assign(new Error('private stream channel authority does not match its open'), {
-        code: 'BAD_LOCAL_STREAM'
-      })
-    }
+    await this._handleStagedPutV2(socket, first.bytes, signal)
+  }
 
-    if (this.bufferedBytes + STAGED_PUT_STREAM_RESERVATION_BYTES > this.maxBufferedBytes) {
-      throw Object.assign(new Error('staged PUT private-stream memory budget is exhausted'), {
-        code: 'BLIND_STREAM_BUSY'
+  async _resolveV2TransportProfileHash (endpointId, signal) {
+    if (!this.streamTransportProfileHash && !this.streamTransportProfileHashForEndpoint) {
+      throw Object.assign(new Error('V2 staged write transport profile is not configured'), {
+        code: 'BLIND_STREAM_UNAVAILABLE'
       })
     }
-    this.bufferedBytes += STAGED_PUT_STREAM_RESERVATION_BYTES
-    try {
-      await this._runStagedPutStream(socket, records, open, signal, now)
-    } finally {
-      this.bufferedBytes = Math.max(0, this.bufferedBytes - STAGED_PUT_STREAM_RESERVATION_BYTES)
+    const resolved = this.streamTransportProfileHash || fixed32(
+      await abortableCall(() => this.streamTransportProfileHashForEndpoint({
+        endpointId,
+        transportId: TRANSPORT_ID.HTTPS_DIRECT,
+        transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
+        signal
+      }), signal), 'resolved stream transportProfileHash')
+    if (allZero(resolved)) throw new Error('resolved stream transportProfileHash must be nonzero')
+    return b4a.from(resolved)
+  }
+
+  async _liveWriteReadinessV2 (input, signal) {
+    const disabledReason = this.v2WriteDisabledReason
+    if (disabledReason) {
+      throw Object.assign(new Error(`V2 writes are disabled: ${disabledReason}`), {
+        code: 'BLIND_STREAM_UNAVAILABLE',
+        disabledReason
+      })
+    }
+    const raw = await abortableCall(() => this.writeReadinessProjection(Object.freeze({
+      phase: input.phase,
+      endpointId: input.endpointId,
+      edgeProcessNonce: b4a.from(input.edgeProcessNonce),
+      launchTopologyHash: b4a.from(this.launchTopologyHash),
+      transportProfileHash: b4a.from(input.transportProfileHash),
+      acceptedMonotonicMillis: input.acceptedMonotonicMillis,
+      absoluteDeadlineMonotonicMillis: input.absoluteDeadlineMonotonicMillis,
+      signal
+    })), signal)
+    const now = currentMonotonic(this.now)
+    if (!raw || typeof raw !== 'object' || raw.selfVerified !== true ||
+        raw.cellRuntimeReady !== true || raw.storageReady !== true || raw.admissionReady !== true) {
+      throw Object.assign(new Error('V2 write-readiness projection is not a complete live assembly proof'), {
+        code: 'BLIND_STREAM_UNAVAILABLE'
+      })
+    }
+    const endpointId = projectionBits(raw.endpointId, 'write readiness endpointId', 0xff)
+    const launchTopologyHash = fixed32(raw.launchTopologyHash, 'write readiness launchTopologyHash')
+    const transportProfileHash = fixed32(raw.transportProfileHash, 'write readiness transportProfileHash')
+    const descriptorSequence = u64(raw.descriptorSequence, 'write readiness descriptorSequence')
+    const descriptorHash = fixed32(raw.descriptorHash, 'write readiness descriptorHash')
+    const descriptorRoleBits = projectionBits(raw.descriptorRoleBits, 'write readiness descriptorRoleBits', 0xffff)
+    const descriptorEnabledOperationBits = projectionBits(raw.descriptorEnabledOperationBits,
+      'write readiness descriptorEnabledOperationBits')
+    const readyRoleBits = projectionBits(raw.readyRoleBits, 'write readiness readyRoleBits', 0xffff)
+    const readyOperationBits = projectionBits(raw.readyOperationBits, 'write readiness readyOperationBits')
+    const readyWriteOperationBits = projectionBits(raw.readyWriteOperationBits,
+      'write readiness readyWriteOperationBits')
+    const readyIpcFeatureBits = projectionBits(raw.readyIpcFeatureBits, 'write readiness readyIpcFeatureBits')
+    const expiresMonotonicMillis = u64(raw.expiresMonotonicMillis,
+      'write readiness expiresMonotonicMillis')
+    const descriptorExpiresMonotonicMillis = u64(raw.descriptorExpiresMonotonicMillis,
+      'write readiness descriptorExpiresMonotonicMillis')
+    if (descriptorSequence === 0n || allZero(descriptorHash) || endpointId !== input.endpointId ||
+        !this.endpointIds.has(endpointId) || !sameBytes(launchTopologyHash, this.launchTopologyHash) ||
+        !sameBytes(transportProfileHash, input.transportProfileHash) ||
+        input.acceptedMonotonicMillis > now || now >= input.absoluteDeadlineMonotonicMillis ||
+        expiresMonotonicMillis <= now || expiresMonotonicMillis > input.absoluteDeadlineMonotonicMillis ||
+        descriptorExpiresMonotonicMillis <= now || expiresMonotonicMillis > descriptorExpiresMonotonicMillis ||
+        (readyRoleBits & ~descriptorRoleBits) !== 0 ||
+        (readyOperationBits & ~descriptorEnabledOperationBits) !== 0 ||
+        (readyWriteOperationBits & ~descriptorEnabledOperationBits) !== 0 ||
+        (readyRoleBits & CELL_PUT_ENDPOINT_ROLE_BIT_V2) === 0 ||
+        readyWriteOperationBits !== CELL_PUT_OPERATION_BIT_V2 ||
+        (readyWriteOperationBits & readyOperationBits) !== readyWriteOperationBits ||
+        readyIpcFeatureBits !== REQUIRED_LOCAL_IPC_FEATURE_BITS_V2) {
+      throw Object.assign(new Error('V2 write-readiness projection does not match live descriptor/profile/topology'), {
+        code: 'BLIND_STREAM_UNAVAILABLE'
+      })
+    }
+    const projection = Object.freeze({
+      endpointId,
+      descriptorSequence,
+      descriptorHash: b4a.from(descriptorHash),
+      descriptorRoleBits,
+      descriptorEnabledOperationBits,
+      readyRoleBits,
+      readyOperationBits,
+      readyWriteOperationBits,
+      readyIpcFeatureBits,
+      expiresMonotonicMillis,
+      descriptorExpiresMonotonicMillis,
+      launchTopologyHash: b4a.from(launchTopologyHash),
+      transportProfileHash: b4a.from(transportProfileHash)
+    })
+    this._acceptV2WriteDescriptorFloor(projection)
+    return projection
+  }
+
+  _acceptV2WriteDescriptorFloor (projection) {
+    const floor = this.#v2WriteDescriptorFloor
+    if (floor && (projection.descriptorSequence < floor.descriptorSequence ||
+        (projection.descriptorSequence === floor.descriptorSequence &&
+         !sameBytes(projection.descriptorHash, floor.descriptorHash)))) {
+      throw Object.assign(new Error('V2 write readiness descriptor rolled back or forked at its retained floor'), {
+        code: 'BLIND_STREAM_UNAVAILABLE'
+      })
+    }
+    if (!floor || projection.descriptorSequence > floor.descriptorSequence) {
+      this.#v2WriteDescriptorFloor = Object.freeze({
+        descriptorSequence: projection.descriptorSequence,
+        descriptorHash: b4a.from(projection.descriptorHash)
+      })
     }
   }
 
-  async _runStagedPutStream (socket, records, open, signal, now) {
-    const remainingMillis = Math.max(1, Number(open.openDeadlineMonotonicMillis - now))
-    const deadlineSignal = AbortSignal.timeout(remainingMillis)
-    const operationSignal = AbortSignal.any([signal, deadlineSignal])
-    const absoluteTimer = setTimeout(() => socket.destroy(), remainingMillis)
-    if (absoluteTimer.unref) absoluteTimer.unref()
-    socket.once('close', () => clearTimeout(absoluteTimer))
-    socket.setTimeout(PRIVATE_IPC_TIMING_MILLIS.BODY_PROGRESS_IDLE, () => socket.destroy())
-    const guard = new LocalStreamSequenceGuard(open)
-    const ingestor = new StagedCellPutDispatchIngestor()
-    const dispatched = ingestor.ready.then(staged => this.dispatchStagedPut(staged, {
-      transportId: open.transportId,
-      transportSupportBit: open.transportSupportBit,
-      endpointId: open.endpointId,
-      outerClass: null,
-      adjacentRelayKey: null,
-      acceptedMonotonicMillis: open.acceptedMonotonicMillis,
-      absoluteDeadlineMonotonicMillis: open.openDeadlineMonotonicMillis,
-      signal: operationSignal
-    }))
-    // A parser failure can reject readiness before the dispatch task is awaited.
-    dispatched.catch(() => {})
-    let ingressError = null
-    let sawFin = false
-    let sawAbort = false
-    try {
-      for await (const record of records) {
-        const frame = decodeLocalStreamFrame(record, { copyBody: true })
-        if (sawAbort) {
-          throw Object.assign(new Error('staged PUT received a record after terminal ABORT'), {
-            code: 'BAD_LOCAL_STREAM'
-          })
-        }
-        guard.accept(frame)
-        if (frame.direction !== LOCAL_STREAM_DIRECTION.EDGE_TO_DAEMON) {
-          throw Object.assign(new Error('staged PUT accepts only Edge-to-daemon frames'), {
-            code: 'BAD_LOCAL_STREAM'
-          })
-        }
-        if (frame.frameKind === LOCAL_STREAM_FRAME_KIND.ABORT) {
-          sawAbort = true
-          continue
-        }
-        if (frame.frameKind !== LOCAL_STREAM_FRAME_KIND.CONTENT) {
-          throw Object.assign(new Error('staged PUT accepts only Edge-to-daemon CONTENT frames'), {
-            code: 'BAD_LOCAL_STREAM'
-          })
-        }
-        await ingestor.push(frame.bytes)
-        if ((frame.flags & LOCAL_STREAM_FLAG.FIN) !== 0) {
-          sawFin = true
-        }
-      }
-      // A terminal frame is not sufficient by itself: the peer must half-close
-      // its request direction. Waiting for exact EOF makes both coalesced and
-      // later post-FIN bytes observable before the staged ingest can finish.
-      if (!socket.readableEnded || signal.aborted || deadlineSignal.aborted) {
-        throw Object.assign(new Error('staged PUT request direction did not end cleanly at its terminal boundary'), {
-          code: 'BAD_LOCAL_STREAM'
-        })
-      }
-      if (sawAbort) {
-        const error = new Error('staged PUT was aborted by its authenticated edge')
-        error.code = 'ABORT_ERR'
-        throw error
-      }
-      if (!sawFin) {
-        throw Object.assign(new Error('staged PUT request direction ended before terminal FIN'), {
-          code: 'BAD_LOCAL_STREAM'
-        })
-      }
-      socket.setTimeout(0)
-      ingestor.finish()
-    } catch (error) {
-      ingressError = error
-      try { ingestor.abort(error) } catch {}
+  async _handleV2ReadyProbe (bytes, socket, signal) {
+    // This lookup can only succeed after native socketPeerCredentials and the
+    // configured UID/GID policy passed in _acceptUnary.
+    observedPeerCredentials(socket)
+    const probe = decodeLocalReadyProbeV2(bytes)
+    const now = currentMonotonic(this.now)
+    if (!this.endpointIds.has(probe.endpointId) || !sameBytes(probe.launchTopologyHash, this.launchTopologyHash) ||
+        probe.acceptedMonotonicMillis > now || now >= probe.absoluteDeadlineMonotonicMillis) {
+      throw Object.assign(new Error('V2 ready probe does not match live topology, endpoint, or deadline'), {
+        code: 'BLIND_STREAM_UNAVAILABLE'
+      })
     }
+    const operationSignal = absoluteOperationSignal(signal,
+      probe.absoluteDeadlineMonotonicMillis, now)
+    const stopDestroyOnAbort = destroySocketOnAbort(socket, operationSignal)
+    try {
+      const transportProfileHash = await this._resolveV2TransportProfileHash(probe.endpointId, operationSignal)
+      const projection = await this._liveWriteReadinessV2({
+        phase: 'ready-probe',
+        endpointId: probe.endpointId,
+        edgeProcessNonce: probe.edgeProcessNonce,
+        transportProfileHash,
+        acceptedMonotonicMillis: probe.acceptedMonotonicMillis,
+        absoluteDeadlineMonotonicMillis: probe.absoluteDeadlineMonotonicMillis
+      }, operationSignal)
+      if (operationSignal.aborted || currentMonotonic(this.now) >= projection.expiresMonotonicMillis) {
+        throw Object.assign(new Error('V2 write readiness expired before ACK release'), {
+          code: 'BLIND_STREAM_UNAVAILABLE'
+        })
+      }
+      const ackDeadlineMonotonicMillis = [
+        probe.absoluteDeadlineMonotonicMillis,
+        projection.expiresMonotonicMillis,
+        projection.descriptorExpiresMonotonicMillis
+      ].reduce((minimum, value) => value < minimum ? value : minimum)
+      return Object.freeze({
+        bytes: encodeLocalReadyAckV2({
+          endpointId: probe.endpointId,
+          edgeProcessNonce: probe.edgeProcessNonce,
+          launchTopologyHash: this.launchTopologyHash,
+          descriptorSequence: projection.descriptorSequence,
+          descriptorHash: projection.descriptorHash,
+          readyRoleBits: projection.readyRoleBits,
+          readyOperationBits: projection.readyOperationBits,
+          readyWriteOperationBits: projection.readyWriteOperationBits,
+          readyIpcFeatureBits: projection.readyIpcFeatureBits,
+          expiresMonotonicMillis: projection.expiresMonotonicMillis
+        }),
+        absoluteDeadlineMonotonicMillis: ackDeadlineMonotonicMillis
+      })
+    } finally {
+      stopDestroyOnAbort()
+    }
+  }
 
-    let result
+  async _handleStagedPutV2 (socket, openBytes, signal) {
+    const credentials = observedPeerCredentials(socket)
+    if (!this.dispatchStagedPut) {
+      throw Object.assign(new Error('V2 staged write dispatcher is not configured'), {
+        code: 'BLIND_STREAM_UNAVAILABLE'
+      })
+    }
+    const open = decodeLocalStagedCellPutOpenV2(openBytes)
+    const now = currentMonotonic(this.now)
+    if (!this.endpointIds.has(open.endpointId) || open.acceptedMonotonicMillis > now ||
+        now >= open.openDeadlineMonotonicMillis) {
+      throw Object.assign(new Error('V2 staged open does not match a live configured endpoint'), {
+        code: 'BAD_LOCAL_STREAM'
+      })
+    }
+    const openSignal = absoluteOperationSignal(signal, open.openDeadlineMonotonicMillis, now)
+    const stopOpenDestroyOnAbort = destroySocketOnAbort(socket, openSignal)
     try {
-      result = await dispatched
-    } catch (error) {
-      throw ingressError || error
+      assertPrecommitCellPutResultFitV2(open.outerClass)
+      const transportProfileHash = await this._resolveV2TransportProfileHash(open.endpointId, openSignal)
+      const replayTupleHash = replayTupleHashV2(open.context)
+      // Deliberate anti-poisoning deviation pending spec reconciliation: validate
+      // binding/readiness and reserve memory before consuming the exact tuple.
+      const validation = validateLocalStagedCellPutOpenBindingV2(open, {
+        launchTopologyHash: this.launchTopologyHash,
+        transportProfileHash
+      })
+      if (validation.authorityGranted !== false || validation.peerCredentialsObserved !== false ||
+          validation.endpointId !== open.endpointId || validation.outerClass !== open.outerClass ||
+          !sameBytes(validation.replayTupleHash, replayTupleHash)) {
+        throw Object.assign(new Error('V2 contract binding validator returned an authoritative or inconsistent value'), {
+          code: 'BAD_LOCAL_STREAM'
+        })
+      }
+      const projection = await this._liveWriteReadinessV2({
+        phase: 'staged-open',
+        endpointId: open.endpointId,
+        edgeProcessNonce: open.context.edgeProcessNonce,
+        transportProfileHash,
+        acceptedMonotonicMillis: open.acceptedMonotonicMillis,
+        absoluteDeadlineMonotonicMillis: open.openDeadlineMonotonicMillis
+      }, openSignal)
+      if (this.bufferedBytes + STAGED_PUT_POST_READY_RESERVATION_BYTES_V2 > this.maxBufferedBytes) {
+        throw Object.assign(new Error('V2 staged PUT private-stream memory budget is exhausted'), {
+          code: 'BLIND_STREAM_BUSY'
+        })
+      }
+      this.bufferedBytes += STAGED_PUT_POST_READY_RESERVATION_BYTES_V2
+      try {
+        const effectiveDeadlineMonotonicMillis = [
+          open.openDeadlineMonotonicMillis,
+          projection.expiresMonotonicMillis,
+          projection.descriptorExpiresMonotonicMillis
+        ].reduce((minimum, value) => value < minimum ? value : minimum)
+        const replayNow = currentMonotonic(this.now)
+        if (replayNow >= effectiveDeadlineMonotonicMillis) throw abortError()
+        const operationSignal = absoluteOperationSignal(openSignal,
+          effectiveDeadlineMonotonicMillis, replayNow)
+        const reservation = await abortableCall(() => this.durableReplayAuthority.reserve(Object.freeze({
+          replayTupleHash: b4a.from(replayTupleHash),
+          expiresMonotonicMillis: open.openDeadlineMonotonicMillis,
+          nowMonotonicMillis: replayNow,
+          signal: operationSignal
+        })), operationSignal)
+        if (!reservation || typeof reservation !== 'object' || !Object.isFrozen(reservation) ||
+            reservation.kind !== 'reserved-new' ||
+            reservation.durablyCommitted !== true ||
+            reservation.expiresMonotonicMillis !== open.openDeadlineMonotonicMillis ||
+            !reservation.replayTupleHash ||
+            !sameBytes(reservation.replayTupleHash, replayTupleHash)) {
+          throw Object.assign(new Error('durable replay authority returned no exact committed reservation'), {
+            code: 'BLIND_STREAM_UNAVAILABLE'
+          })
+        }
+        this.#v2ReplayReservationCount++
+        const authority = Object.freeze({})
+        V2_DAEMON_AUTHORITIES.set(authority, Object.freeze({
+          credentials,
+          open,
+          projection,
+          transportProfileHash: b4a.from(transportProfileHash),
+          replayTupleHash: b4a.from(replayTupleHash),
+          effectiveDeadlineMonotonicMillis,
+          operationSignal
+        }))
+        await this._runStagedPutV2(socket, authority)
+      } finally {
+        this.bufferedBytes = Math.max(0,
+          this.bufferedBytes - STAGED_PUT_POST_READY_RESERVATION_BYTES_V2)
+      }
+    } finally {
+      stopOpenDestroyOnAbort()
     }
-    if (ingressError) throw ingressError
-    if (!result || !result.dispatch || typeof result.dispatch.byteLength !== 'number') {
-      throw Object.assign(new Error('staged PUT dispatcher returned no canonical response'), { code: 'BAD_LOCAL_STREAM' })
+  }
+
+  async _runStagedPutV2 (socket, authority) {
+    const authenticated = V2_DAEMON_AUTHORITIES.get(authority)
+    if (!authenticated) {
+      throw Object.assign(new Error('V2 staged PUT requires daemon-private peercred authority'), {
+        code: 'UNAUTHORIZED'
+      })
     }
-    const responseFrames = fragmentLocalContent(result.dispatch, {
-      direction: LOCAL_STREAM_DIRECTION.DAEMON_TO_EDGE,
-      wireClass: open.channelClass,
-      sequence: 0n,
-      fin: true
-    })
-    await writeSocketFrames(socket, responseFrames, PRIVATE_IPC_TIMING_MILLIS.DAEMON_RESPONSE_WRITE)
-    socket.end()
+    V2_DAEMON_AUTHORITIES.delete(authority)
+    const { open, effectiveDeadlineMonotonicMillis, operationSignal } = authenticated
+    const timerStartMonotonicMillis = currentMonotonic(this.now)
+    if (timerStartMonotonicMillis >= effectiveDeadlineMonotonicMillis) {
+      throw Object.assign(new Error('V2 staged PUT write readiness expired before ingress'), {
+        code: 'BLIND_STREAM_UNAVAILABLE'
+      })
+    }
+    const stopDestroyOnAbort = destroySocketOnAbort(socket, operationSignal)
+    let abortIngress = null
+    try {
+      socket.setTimeout(PRIVATE_IPC_TIMING_MILLIS.BODY_PROGRESS_IDLE, () => socket.destroy())
+      this.#v2IngressConstructionCount++
+      const ingress = new StagedCellPutOuterEnvelopeIngestorV2({ open })
+      abortIngress = () => {
+        const error = abortError()
+        try { ingress.abort(error) } catch {}
+      }
+      operationSignal.addEventListener('abort', abortIngress, { once: true })
+      if (operationSignal.aborted) queueMicrotask(abortIngress)
+      const records = localStagedFrameRecordsV2(socket)
+      let requestId = null
+      const dispatched = ingress.ready.then(staged => {
+        requestId = b4a.from(staged.frame.requestId)
+        // Built-in storage may durably reserve admission/attempt state while it
+        // drains this bounded source, but stageOpaque cannot publish a blob and
+        // the coordinator cannot sign/release a receipt until exact FIN + peer
+        // EOF closes the source and its declared length/hash validate.
+        return this.dispatchStagedPut(staged, {
+          transportId: open.transportId,
+          transportSupportBit: open.transportSupportBit,
+          endpointId: open.endpointId,
+          outerClass: open.outerClass,
+          adjacentRelayKey: null,
+          acceptedMonotonicMillis: open.acceptedMonotonicMillis,
+          absoluteDeadlineMonotonicMillis: effectiveDeadlineMonotonicMillis,
+          signal: operationSignal
+        })
+      })
+      dispatched.catch(() => {})
+      let ingressError = null
+      let expectedSequence = 0n
+      let sawFin = false
+      try {
+        for await (const record of records) {
+          const frame = decodeLocalStagedCellPutFrameV2(record)
+          if (sawFin) {
+            throw Object.assign(new Error('V2 staged PUT received a frame after request FIN'), {
+              code: 'BAD_LOCAL_STREAM'
+            })
+          }
+          if (frame.direction !== LOCAL_STAGED_DIRECTION_V2.REQUEST || frame.sequence !== expectedSequence++) {
+            throw Object.assign(new Error('V2 staged PUT request direction or sequence is invalid'), {
+              code: 'BAD_LOCAL_STREAM'
+            })
+          }
+          if (frame.frameKind === LOCAL_STAGED_FRAME_KIND_V2.ABORT) {
+            throw Object.assign(new Error('V2 staged PUT was aborted by its authenticated edge'), {
+              code: 'ABORT_ERR'
+            })
+          }
+          await ingress.push(frame.bytes)
+          if ((frame.flags & LOCAL_STAGED_FLAG_V2.FIN) !== 0) sawFin = true
+        }
+        // allowHalfOpen keeps the daemon's response direction writable here. A
+        // V2 FIN frame alone never completes ingestion: actual request EOF must
+        // also have been observed by the socket iterator.
+        if (!sawFin || !socket.readableEnded || operationSignal.aborted) {
+          throw Object.assign(new Error('V2 staged PUT requires request FIN followed by actual peer EOF'), {
+            code: 'BAD_LOCAL_STREAM'
+          })
+        }
+        socket.setTimeout(0)
+        ingress.finishRequest()
+      } catch (error) {
+        ingressError = error
+        try { ingress.abort(error) } catch {}
+      }
+
+      let result
+      try {
+        result = await abortableCall(() => dispatched, operationSignal)
+      } catch (error) {
+        throw ingressError || error
+      }
+      if (ingressError) throw ingressError
+      if (!result || !result.dispatch || typeof result.dispatch.byteLength !== 'number' ||
+          result.outerClass !== open.outerClass) {
+        throw Object.assign(new Error('V2 staged PUT dispatcher returned no same-class canonical result'), {
+          code: 'BAD_LOCAL_STREAM'
+        })
+      }
+      const resultWriteNow = currentMonotonic(this.now)
+      if (operationSignal.aborted || resultWriteNow >= effectiveDeadlineMonotonicMillis) {
+        throw Object.assign(new Error('V2 write readiness expired before result release'), {
+          code: 'BLIND_STREAM_UNAVAILABLE'
+        })
+      }
+      const resultFrames = new StagedCellPutResultEncoderV2({
+        dispatch: result.dispatch,
+        outerClass: open.outerClass,
+        requestId
+      })
+      const writeTimeoutMillis = Math.min(
+        PRIVATE_IPC_TIMING_MILLIS.DAEMON_RESPONSE_WRITE,
+        Number(effectiveDeadlineMonotonicMillis - resultWriteNow)
+      )
+      await writeSocketFramesWithinDeadlineV2(socket, resultFrames, writeTimeoutMillis, { end: true })
+    } finally {
+      if (abortIngress) operationSignal.removeEventListener('abort', abortIngress)
+      stopDestroyOnAbort()
+    }
   }
 
   _recordReadinessCheck (credentials, completedMonotonicMillis) {
@@ -1124,6 +1579,28 @@ export class BlindDaemon {
       unary: this.unaryServer.address(),
       stream: this.streamServer.address()
     }
+  }
+
+  get v2ReplayReservationCount () {
+    return this.#v2ReplayReservationCount
+  }
+
+  get v2WriteDisabledReason () {
+    if (!this.dispatchStagedPut) return V2_WRITE_DISABLED_REASON.STAGED_DISPATCHER_MISSING
+    if (!this.streamTransportProfileHash && !this.streamTransportProfileHashForEndpoint) {
+      return V2_WRITE_DISABLED_REASON.TRANSPORT_PROFILE_MISSING
+    }
+    if (!this.writeReadinessProjection) {
+      return V2_WRITE_DISABLED_REASON.WRITE_READINESS_PROJECTION_MISSING
+    }
+    if (!this.durableReplayAuthority) {
+      return V2_WRITE_DISABLED_REASON.DURABLE_REPLAY_AUTHORITY_MISSING
+    }
+    return null
+  }
+
+  get v2IngressConstructionCount () {
+    return this.#v2IngressConstructionCount
   }
 
   close () {
