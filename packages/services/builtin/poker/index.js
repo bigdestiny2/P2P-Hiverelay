@@ -62,6 +62,7 @@
 
 import { ServiceProvider } from 'p2p-hiverelay/core/services/provider.js'
 import { SignedLog, REJECT } from './signed-log.js'
+import { hashControlOptions, verifySignedLogControl } from './control-capability.js'
 
 const DEFAULT_MAX_TABLES = 1024
 const DEFAULT_TABLE_LIFETIME_MS = 24 * 60 * 60 * 1000 // 24h, see seeding-manifest 'session'
@@ -86,6 +87,7 @@ export class PokerApp extends ServiceProvider {
 
     /** @type {Map<string, {log: SignedLog, options: object, idleAt: ?number}>} */
     this._tables = new Map()
+    this._closedTables = new Map()
     /** @type {?ReturnType<typeof setInterval>} */
     this._reaper = null
     /** @type {?object} Relay node (set by start) for pubsub/seeder hooks. */
@@ -97,9 +99,12 @@ export class PokerApp extends ServiceProvider {
   manifest () {
     return {
       name: 'poker',
-      version: '0.1.0',
+      version: '0.2.0',
       description: 'Card-blind signed-log substrate for turn-based games',
-      capabilities: ['createTable', 'submitEntry', 'getLog', 'getState', 'listTables']
+      capabilities: [
+        'createTable', 'submitEntry', 'getLog', 'getState', 'listTables',
+        'createAuthorized', 'grantWriter', 'revokeWriter', 'closeAuthorized'
+      ]
     }
   }
 
@@ -120,6 +125,7 @@ export class PokerApp extends ServiceProvider {
       this._reaper = null
     }
     this._tables.clear()
+    this._closedTables.clear()
     this.node = null
   }
 
@@ -139,7 +145,11 @@ export class PokerApp extends ServiceProvider {
    */
   createTable (args) {
     if (!args || typeof args !== 'object') throw new Error('createTable: bad args')
-    if (this._tables.has(String(args.tableKey).toLowerCase())) {
+    const requestedKey = String(args.tableKey).toLowerCase()
+    if (this._closedTables.has(requestedKey)) {
+      throw new Error('createTable: table closed')
+    }
+    if (this._tables.has(requestedKey)) {
       throw new Error('createTable: table already exists')
     }
     if (this._tables.size >= this.maxTables) {
@@ -154,7 +164,9 @@ export class PokerApp extends ServiceProvider {
     const record = {
       log,
       options: args.options ? deepFreeze(JSON.parse(JSON.stringify(args.options))) : {},
-      idleAt: Date.now() + this.defaultLifetimeMs
+      idleAt: Date.now() + this.defaultLifetimeMs,
+      authority: args.authority ? String(args.authority).toLowerCase() : null,
+      controlRevision: Number.isSafeInteger(args.controlRevision) ? args.controlRevision : null
     }
     // Subscribe internally so any successful append resets the idle timer
     // and (optionally) publishes onto the node's pubsub for WS fan-out.
@@ -164,6 +176,77 @@ export class PokerApp extends ServiceProvider {
     })
     this._tables.set(log.tableKey, record)
     return this._publicDescriptor(log.tableKey, record)
+  }
+
+  createAuthorized (args) {
+    if (!args || typeof args !== 'object') return { ok: false, reason: 'bad-control' }
+    const checked = verifySignedLogControl(args.control, {
+      action: 'create', tableKey: args.tableKey, revision: 0
+    })
+    if (!checked.ok) return checked
+    const control = checked.control
+    const writers = normalizeWriters(args.writers)
+    if (!writers || JSON.stringify(writers) !== JSON.stringify(control.writers)) {
+      return { ok: false, reason: 'control-writers-mismatch' }
+    }
+    if (hashControlOptions(args.options || {}) !== control.optionsHash) {
+      return { ok: false, reason: 'control-options-mismatch' }
+    }
+    if (this._closedTables.has(control.tableKey)) return { ok: false, reason: 'table-closed' }
+    // A legacy unsigned create could otherwise squat a public table key before
+    // its owner arrives. Possession of the table secret proves authority, so an
+    // authenticated create may replace only an unauthorised legacy placeholder.
+    const existing = this._get(control.tableKey)
+    if (existing && existing.authority) return { ok: false, reason: 'table-exists' }
+    if (existing) this._tables.delete(control.tableKey)
+    try {
+      const table = this.createTable({
+        tableKey: control.tableKey,
+        writers,
+        options: args.options,
+        authority: control.authority,
+        controlRevision: control.revision
+      })
+      return { ok: true, table }
+    } catch (err) {
+      return { ok: false, reason: createFailureReason(err) }
+    }
+  }
+
+  grantWriter (args) {
+    return this._applyWriterControl(args, 'grant')
+  }
+
+  revokeWriter (args) {
+    return this._applyWriterControl(args, 'revoke')
+  }
+
+  closeAuthorized (args) {
+    if (!args || typeof args !== 'object') return { ok: false, reason: 'bad-control' }
+    const record = this._get(args.tableKey)
+    if (!record) {
+      const closed = this._closedTables.get(String(args.tableKey || '').toLowerCase())
+      return closed ? { ok: true, already: true, closure: closed } : { ok: false, reason: 'no-such-table' }
+    }
+    if (!record.authority) return { ok: false, reason: 'control-unsupported' }
+    const checked = verifySignedLogControl(args.control, {
+      action: 'close',
+      tableKey: record.log.tableKey,
+      authority: record.authority,
+      revision: record.controlRevision + 1
+    })
+    if (!checked.ok) return checked
+    const closure = Object.freeze({
+      tableKey: record.log.tableKey,
+      authority: record.authority,
+      revision: checked.control.revision,
+      closedAt: Date.now(),
+      control: checked.control
+    })
+    this._tables.delete(record.log.tableKey)
+    this._closedTables.set(record.log.tableKey, closure)
+    this._emitControl(record.log.tableKey, { type: 'closed', closure })
+    return { ok: true, closure }
   }
 
   /**
@@ -182,7 +265,10 @@ export class PokerApp extends ServiceProvider {
       tableKey = tableKey.tableKey
     }
     const record = this._get(tableKey)
-    if (!record) return { ok: false, reason: 'no-such-table' }
+    if (!record) {
+      const key = typeof tableKey === 'string' ? tableKey.toLowerCase() : ''
+      return { ok: false, reason: this._closedTables.has(key) ? 'table-closed' : 'no-such-table' }
+    }
     return record.log.append(signedEntry)
   }
 
@@ -207,11 +293,17 @@ export class PokerApp extends ServiceProvider {
   getState (tableKey) {
     if (tableKey && typeof tableKey === 'object') tableKey = tableKey.tableKey
     const record = this._get(tableKey)
-    if (!record) return null
+    if (!record) {
+      const closure = this._closedTables.get(String(tableKey || '').toLowerCase())
+      return closure ? { tableKey: closure.tableKey, closed: true, closure } : null
+    }
     return {
       ...record.log.state(),
       options: record.options,
-      idleAt: record.idleAt
+      idleAt: record.idleAt,
+      authority: record.authority,
+      controlRevision: record.controlRevision,
+      closed: false
     }
   }
 
@@ -251,6 +343,28 @@ export class PokerApp extends ServiceProvider {
    */
   closeTable (tableKey) {
     return this._tables.delete(String(tableKey).toLowerCase())
+  }
+
+  _applyWriterControl (args, action) {
+    if (!args || typeof args !== 'object') return { ok: false, reason: 'bad-control' }
+    const record = this._get(args.tableKey)
+    if (!record) return { ok: false, reason: 'no-such-table' }
+    if (!record.authority) return { ok: false, reason: 'control-unsupported' }
+    const checked = verifySignedLogControl(args.control, {
+      action,
+      tableKey: record.log.tableKey,
+      authority: record.authority,
+      revision: record.controlRevision + 1
+    })
+    if (!checked.ok) return checked
+    const result = action === 'grant'
+      ? record.log.addWriter(checked.control.writer)
+      : record.log.removeWriter(checked.control.writer)
+    if (!result.ok) return result
+    record.controlRevision = checked.control.revision
+    record.idleAt = Date.now() + this.defaultLifetimeMs
+    this._emitControl(record.log.tableKey, { type: action, control: checked.control })
+    return { ok: true, changed: result.changed, table: this._publicDescriptor(record.log.tableKey, record) }
   }
 
   /**
@@ -296,7 +410,9 @@ export class PokerApp extends ServiceProvider {
       options: record.options,
       lastTs: st.lastTs,
       length: st.length,
-      idleAt: record.idleAt
+      idleAt: record.idleAt,
+      authority: record.authority,
+      controlRevision: record.controlRevision
     }
   }
 
@@ -321,6 +437,15 @@ export class PokerApp extends ServiceProvider {
     }
   }
 
+  _emitControl (tableKey, event) {
+    if (!this.node || !this.node.router || !this.node.router.pubsub) return
+    try {
+      this.node.router.pubsub.publish('poker/control/' + tableKey, { tableKey, ...event })
+    } catch (err) {
+      this._log('control-emit-error', { error: err && err.message })
+    }
+  }
+
   /**
    * Periodic eviction of idle tables. A table whose idleAt has passed is
    * dropped from memory; the audit log can still be re-fetched from the
@@ -336,7 +461,27 @@ export class PokerApp extends ServiceProvider {
         this._log('reaped', { tableKey: key })
       }
     }
+    for (const [key, closure] of this._closedTables) {
+      if (closure.control.expiresAt < now) this._closedTables.delete(key)
+    }
   }
+}
+
+function normalizeWriters (writers) {
+  if (!Array.isArray(writers) || writers.length === 0) return null
+  const normalized = new Set()
+  for (const writer of writers) {
+    if (typeof writer !== 'string' || !/^[0-9a-f]{64}$/i.test(writer)) return null
+    normalized.add(writer.toLowerCase())
+  }
+  return [...normalized].sort()
+}
+
+function createFailureReason (err) {
+  const message = err && err.message ? err.message : ''
+  if (message.includes('already exists')) return 'table-exists'
+  if (message.includes('max tables')) return 'max-tables'
+  return 'create-failed'
 }
 
 // Helper: deep-freeze a JSON-safe object so opaque app options can't be
@@ -350,6 +495,16 @@ function deepFreeze (o) {
 
 export { REJECT }
 export { SignedLog } from './signed-log.js'
+export {
+  CONTROL_CLOCK_SKEW_MS,
+  MAX_CONTROL_VALIDITY_MS,
+  SIGNED_LOG_CONTROL_ACTIONS,
+  SIGNED_LOG_CONTROL_DOMAIN,
+  SIGNED_LOG_CONTROL_VERSION,
+  canonicalSignedLogControl,
+  hashControlOptions,
+  verifySignedLogControl
+} from './control-capability.js'
 
 // Verifiable hand-seed helpers. The relay stays card-blind; these let clients
 // derive and check an unbiasable per-hand randomness anchor from the VRF

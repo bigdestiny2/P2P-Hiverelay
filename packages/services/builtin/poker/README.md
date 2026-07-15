@@ -8,7 +8,7 @@
 
 This is **not** a poker engine. The relay never sees hole cards, never
 evaluates hands, never knows whose turn it is. It is an ordering + availability
-layer for signed entries authored by a fixed set of writer pubkeys.
+layer for signed entries authored by authority-controlled writer pubkeys.
 
 Concretely the relay provides:
 
@@ -27,6 +27,18 @@ Concretely the relay provides:
    with the same guarantees as any other seeded content. The
    `seeding-manifest.lifetime: 'session'` hint lets them evict per-hand
    ephemera without conflating it with publication drives.
+5. **Authenticated lifecycle controls.** New clients can bind table creation
+   to proof of the table secret, then grant/revoke writers with strictly
+   increasing authority-signed revisions and publish a close tombstone. The
+   relay verifies only generic authorization fields; it does not treat a
+   writer as a poker seat or interpret why membership changed. Legacy
+   `createTable` remains available for older clients, while
+   `createAuthorized` defeats unsigned table-key squatting.
+
+Control changes publish on the exact service topic
+`poker/control/<tableKey>`. Consumers feature-detect `createAuthorized`,
+`grantWriter`, `revokeWriter`, and `closeAuthorized`; older relays continue to
+support fixed writer lists.
 
 What the relay does **not** do:
 
