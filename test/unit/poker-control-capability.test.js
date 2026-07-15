@@ -98,6 +98,17 @@ test('signed-log control: grant, revoke, replay protection, regrant cursor, and 
   })
   t.ok(app.createAuthorized({ tableKey: authority.hex, writers: [host.hex], options, control: create }).ok)
 
+  const request = signControl(guest, { action: 'request', tableKey: authority.hex, revision: 0, writer: guest.hex })
+  t.ok(app.requestWriter({ tableKey: authority.hex, control: request }).ok, 'writer proves possession and requests admission')
+  const requestEvent = events.find(event => event.topic === 'poker/control-request/' + authority.hex)
+  t.is(requestEvent && requestEvent.event.control.writer, guest.hex, 'request is published only on the exact table topic')
+
+  const attacker = keyPair()
+  const forgedSignature = b4a.alloc(64)
+  sodium.crypto_sign_detached(forgedSignature, canonicalSignedLogControl(request), attacker.secretKey)
+  const forgedRequest = { ...request, signature: b4a.toString(forgedSignature, 'hex') }
+  t.is(app.requestWriter({ tableKey: authority.hex, control: forgedRequest }).reason, 'bad-control-signature', 'request signer must be the requested writer')
+
   const forgedGrant = signControl(guest, { action: 'grant', tableKey: authority.hex, revision: 1, writer: guest.hex })
   t.is(app.grantWriter({ tableKey: authority.hex, control: forgedGrant }).reason, 'wrong-control-authority', 'non-authority cannot grant itself')
 

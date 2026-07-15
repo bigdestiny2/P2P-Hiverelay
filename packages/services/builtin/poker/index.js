@@ -103,7 +103,7 @@ export class PokerApp extends ServiceProvider {
       description: 'Card-blind signed-log substrate for turn-based games',
       capabilities: [
         'createTable', 'submitEntry', 'getLog', 'getState', 'listTables',
-        'createAuthorized', 'grantWriter', 'revokeWriter', 'closeAuthorized'
+        'createAuthorized', 'requestWriter', 'grantWriter', 'revokeWriter', 'closeAuthorized'
       ]
     }
   }
@@ -215,6 +215,19 @@ export class PokerApp extends ServiceProvider {
 
   grantWriter (args) {
     return this._applyWriterControl(args, 'grant')
+  }
+
+  requestWriter (args) {
+    if (!args || typeof args !== 'object') return { ok: false, reason: 'bad-control' }
+    const record = this._get(args.tableKey)
+    if (!record) return { ok: false, reason: 'no-such-table' }
+    if (!record.authority) return { ok: false, reason: 'control-unsupported' }
+    const checked = verifySignedLogControl(args.control, {
+      action: 'request', tableKey: record.log.tableKey, revision: 0
+    })
+    if (!checked.ok) return checked
+    this._emitControlRequest(record.log.tableKey, checked.control)
+    return { ok: true, requested: checked.control.writer }
   }
 
   revokeWriter (args) {
@@ -443,6 +456,15 @@ export class PokerApp extends ServiceProvider {
       this.node.router.pubsub.publish('poker/control/' + tableKey, { tableKey, ...event })
     } catch (err) {
       this._log('control-emit-error', { error: err && err.message })
+    }
+  }
+
+  _emitControlRequest (tableKey, control) {
+    if (!this.node || !this.node.router || !this.node.router.pubsub) return
+    try {
+      this.node.router.pubsub.publish('poker/control-request/' + tableKey, { tableKey, type: 'writer-request', control })
+    } catch (err) {
+      this._log('control-request-emit-error', { error: err && err.message })
     }
   }
 

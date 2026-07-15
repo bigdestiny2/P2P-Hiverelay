@@ -3,7 +3,7 @@ import b4a from 'b4a'
 
 export const SIGNED_LOG_CONTROL_DOMAIN = 'hiverelay.signed-log-control.v1'
 export const SIGNED_LOG_CONTROL_VERSION = 1
-export const SIGNED_LOG_CONTROL_ACTIONS = Object.freeze(['create', 'grant', 'revoke', 'close'])
+export const SIGNED_LOG_CONTROL_ACTIONS = Object.freeze(['create', 'request', 'grant', 'revoke', 'close'])
 export const MAX_CONTROL_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000
 export const CONTROL_CLOCK_SKEW_MS = 5 * 60 * 1000
 
@@ -75,6 +75,11 @@ function normalizeControl (control, opts) {
     out.writers = normalizeWriters(control.writers)
     if (!HEX_KEY.test(String(control.optionsHash || ''))) throw new Error('bad optionsHash')
     out.optionsHash = String(control.optionsHash).toLowerCase()
+  } else if (action === 'request') {
+    if (!HEX_KEY.test(String(control.writer || ''))) throw new Error('bad writer')
+    out.writer = String(control.writer).toLowerCase()
+    if (authority !== out.writer) throw new Error('request authority must equal writer')
+    if (revision !== 0) throw new Error('request revision must be zero')
   } else if (action === 'grant' || action === 'revoke') {
     if (!HEX_KEY.test(String(control.writer || ''))) throw new Error('bad writer')
     out.writer = String(control.writer).toLowerCase()
