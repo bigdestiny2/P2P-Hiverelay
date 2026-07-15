@@ -3,8 +3,9 @@ import b4a from 'b4a'
 
 export const SIGNED_LOG_CONTROL_DOMAIN = 'hiverelay.signed-log-control.v1'
 export const SIGNED_LOG_CONTROL_VERSION = 1
-export const SIGNED_LOG_CONTROL_ACTIONS = Object.freeze(['create', 'request', 'grant', 'revoke', 'close'])
+export const SIGNED_LOG_CONTROL_ACTIONS = Object.freeze(['create', 'request', 'grant', 'revoke', 'close', 'presence'])
 export const MAX_CONTROL_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000
+export const MAX_PRESENCE_VALIDITY_MS = 30 * 1000
 export const CONTROL_CLOCK_SKEW_MS = 5 * 60 * 1000
 
 const HEX_KEY = /^[0-9a-f]{64}$/i
@@ -83,6 +84,11 @@ function normalizeControl (control, opts) {
   } else if (action === 'grant' || action === 'revoke') {
     if (!HEX_KEY.test(String(control.writer || ''))) throw new Error('bad writer')
     out.writer = String(control.writer).toLowerCase()
+  } else if (action === 'presence') {
+    if (!/^[0-9a-f]{32}$/i.test(String(control.instance || ''))) throw new Error('bad instance')
+    if (!Number.isSafeInteger(control.cursor) || control.cursor < 0) throw new Error('bad cursor')
+    out.instance = String(control.instance).toLowerCase()
+    out.cursor = control.cursor
   }
   if (opts.signature) {
     if (!HEX_SIG.test(String(control.signature || ''))) throw new Error('bad signature')

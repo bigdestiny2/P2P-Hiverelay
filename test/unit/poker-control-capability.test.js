@@ -144,3 +144,50 @@ test('signed-log control: expired and overlong capabilities fail closed', t => {
   const tooLong = signControl(authority, { action: 'close', revision: 1, issuedAt: Date.now(), expiresAt: Date.now() + 8 * 24 * 60 * 60 * 1000 })
   t.is(verifySignedLogControl(tooLong).reason, 'control-validity-too-long')
 })
+
+test('signed-log presence: writer membership, freshness, exact topic, and expiry', t => {
+  const authority = keyPair()
+  const host = keyPair()
+  const outsider = keyPair()
+  const events = []
+  const app = new PokerApp()
+  app.node = { router: { pubsub: { publish: (topic, event) => events.push({ topic, event }) } } }
+  const options = { opaque: true }
+  const create = signControl(authority, {
+    action: 'create', revision: 0, writers: [host.hex], optionsHash: hashControlOptions(options)
+  })
+  t.ok(app.createAuthorized({ tableKey: authority.hex, writers: [host.hex], options, control: create }).ok)
+
+  const first = signControl(host, {
+    action: 'presence',
+    tableKey: authority.hex,
+    revision: 1,
+    instance: 'ab'.repeat(16),
+    cursor: 12,
+    expiresAt: Date.now() + 20_000
+  })
+  t.ok(app.announcePresence({ tableKey: authority.hex, control: first }).ok, 'table writer announces presence')
+  t.is(app.getPresence({ tableKey: authority.hex }).presence[0].cursor, 12, 'snapshot exposes generic cursor')
+  t.is(events[0].topic, 'poker/presence/' + authority.hex, 'presence uses exact table topic')
+  t.is(app.announcePresence({ tableKey: authority.hex, control: first }).reason, 'stale-presence', 'same heartbeat cannot replay')
+
+  const notWriter = signControl(outsider, {
+    action: 'presence',
+    tableKey: authority.hex,
+    revision: 1,
+    instance: 'cd'.repeat(16),
+    cursor: 0,
+    expiresAt: Date.now() + 20_000
+  })
+  t.is(app.announcePresence({ tableKey: authority.hex, control: notWriter }).reason, 'unknown-writer')
+
+  const overlong = signControl(host, {
+    action: 'presence',
+    tableKey: authority.hex,
+    revision: 2,
+    instance: 'ab'.repeat(16),
+    cursor: 13,
+    expiresAt: Date.now() + 60_000
+  })
+  t.is(app.announcePresence({ tableKey: authority.hex, control: overlong }).reason, 'presence-validity-too-long')
+})

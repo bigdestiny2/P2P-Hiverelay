@@ -34,11 +34,20 @@ Concretely the relay provides:
    writer as a poker seat or interpret why membership changed. Legacy
    `createTable` remains available for older clients, while
    `createAuthorized` defeats unsigned table-key squatting.
+6. **Ephemeral signed writer presence.** A current writer may publish a
+   short-lived, sequenced presence lease and read the active presence snapshot.
+   The relay verifies membership, signature, freshness, and a maximum 30-second
+   validity window, then fans it out on `poker/presence/<tableKey>`. Presence is
+   not persisted in the signed log and cannot change application state.
 
 Control changes publish on the exact service topic
 `poker/control/<tableKey>`. Consumers feature-detect `createAuthorized`,
 `grantWriter`, `revokeWriter`, and `closeAuthorized`; older relays continue to
 support fixed writer lists.
+
+Presence consumers feature-detect `announcePresence` and `getPresence`. Its
+`cursor` is an opaque application high-water mark; the relay never interprets
+it as a poker hand, seat, action, or balance.
 
 What the relay does **not** do:
 

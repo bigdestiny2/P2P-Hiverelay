@@ -62,7 +62,7 @@
 
 import { ServiceProvider } from 'p2p-hiverelay/core/services/provider.js'
 import { SignedLog, REJECT } from './signed-log.js'
-import { hashControlOptions, verifySignedLogControl } from './control-capability.js'
+import { hashControlOptions, MAX_PRESENCE_VALIDITY_MS, verifySignedLogControl } from './control-capability.js'
 
 const DEFAULT_MAX_TABLES = 1024
 const DEFAULT_TABLE_LIFETIME_MS = 24 * 60 * 60 * 1000 // 24h, see seeding-manifest 'session'
@@ -85,7 +85,7 @@ export class PokerApp extends ServiceProvider {
     this.maxEntriesPerTable = opts.maxEntriesPerTable || undefined
     this._log = opts.log || (() => {})
 
-    /** @type {Map<string, {log: SignedLog, options: object, idleAt: ?number}>} */
+    /** @type {Map<string, {log: SignedLog, options: object, idleAt: ?number, presence: Map}>} */
     this._tables = new Map()
     this._closedTables = new Map()
     /** @type {?ReturnType<typeof setInterval>} */
@@ -99,11 +99,12 @@ export class PokerApp extends ServiceProvider {
   manifest () {
     return {
       name: 'poker',
-      version: '0.2.0',
+      version: '0.3.0',
       description: 'Card-blind signed-log substrate for turn-based games',
       capabilities: [
         'createTable', 'submitEntry', 'getLog', 'getState', 'listTables',
-        'createAuthorized', 'requestWriter', 'grantWriter', 'revokeWriter', 'closeAuthorized'
+        'createAuthorized', 'requestWriter', 'grantWriter', 'revokeWriter', 'closeAuthorized',
+        'announcePresence', 'getPresence'
       ]
     }
   }
@@ -166,7 +167,8 @@ export class PokerApp extends ServiceProvider {
       options: args.options ? deepFreeze(JSON.parse(JSON.stringify(args.options))) : {},
       idleAt: Date.now() + this.defaultLifetimeMs,
       authority: args.authority ? String(args.authority).toLowerCase() : null,
-      controlRevision: Number.isSafeInteger(args.controlRevision) ? args.controlRevision : null
+      controlRevision: Number.isSafeInteger(args.controlRevision) ? args.controlRevision : null,
+      presence: new Map()
     }
     // Subscribe internally so any successful append resets the idle timer
     // and (optionally) publishes onto the node's pubsub for WS fan-out.
@@ -232,6 +234,42 @@ export class PokerApp extends ServiceProvider {
 
   revokeWriter (args) {
     return this._applyWriterControl(args, 'revoke')
+  }
+
+  announcePresence (args) {
+    if (!args || typeof args !== 'object') return { ok: false, reason: 'bad-control' }
+    const record = this._get(args.tableKey)
+    if (!record) return { ok: false, reason: 'no-such-table' }
+    const checked = verifySignedLogControl(args.control, {
+      action: 'presence', tableKey: record.log.tableKey
+    })
+    if (!checked.ok) return checked
+    const presence = checked.control
+    if (!record.log.writers.has(presence.authority)) return { ok: false, reason: 'unknown-writer' }
+    if (presence.expiresAt - presence.issuedAt > MAX_PRESENCE_VALIDITY_MS) {
+      return { ok: false, reason: 'presence-validity-too-long' }
+    }
+    const prior = record.presence.get(presence.authority)
+    if (prior) {
+      const sameInstance = prior.instance === presence.instance
+      if ((sameInstance && presence.revision <= prior.revision) ||
+          (!sameInstance && presence.issuedAt <= prior.issuedAt)) {
+        return { ok: false, reason: 'stale-presence' }
+      }
+    }
+    record.presence.set(presence.authority, presence)
+    record.idleAt = Date.now() + this.defaultLifetimeMs
+    this._emitPresence(record.log.tableKey, presence)
+    return { ok: true, presence }
+  }
+
+  getPresence (args) {
+    const tableKey = args && typeof args === 'object' ? args.tableKey : args
+    const record = this._get(tableKey)
+    if (!record) return { ok: false, reason: 'no-such-table' }
+    const now = Date.now()
+    this._prunePresence(record, now)
+    return { ok: true, tableKey: record.log.tableKey, now, presence: [...record.presence.values()] }
   }
 
   closeAuthorized (args) {
@@ -468,6 +506,23 @@ export class PokerApp extends ServiceProvider {
     }
   }
 
+  _emitPresence (tableKey, presence) {
+    if (!this.node || !this.node.router || !this.node.router.pubsub) return
+    try {
+      this.node.router.pubsub.publish('poker/presence/' + tableKey, {
+        tableKey, type: 'presence', presence, relaySeenAt: Date.now()
+      })
+    } catch (err) {
+      this._log('presence-emit-error', { error: err && err.message })
+    }
+  }
+
+  _prunePresence (record, now = Date.now()) {
+    for (const [writer, presence] of record.presence) {
+      if (presence.expiresAt < now) record.presence.delete(writer)
+    }
+  }
+
   /**
    * Periodic eviction of idle tables. A table whose idleAt has passed is
    * dropped from memory; the audit log can still be re-fetched from the
@@ -520,6 +575,7 @@ export { SignedLog } from './signed-log.js'
 export {
   CONTROL_CLOCK_SKEW_MS,
   MAX_CONTROL_VALIDITY_MS,
+  MAX_PRESENCE_VALIDITY_MS,
   SIGNED_LOG_CONTROL_ACTIONS,
   SIGNED_LOG_CONTROL_DOMAIN,
   SIGNED_LOG_CONTROL_VERSION,
