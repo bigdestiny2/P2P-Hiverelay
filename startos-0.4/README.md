@@ -38,8 +38,8 @@ Prerequisites: **Node.js**, **Docker** (to pull the image per arch), and
 `Start9Labs/start-os`; it carries its own `1.x` version line).
 
 ```sh
-npm ci            # installs @start9labs/start-sdk 2.0.1 (brings in s9pk.mk)
-make              # tsc check → ncc bundle → pack x86_64 + aarch64 s9pks
+npm ci            # installs @start9labs/start-sdk 2.0.5 (brings in s9pk.mk)
+make              # tsc check → ncc bundle → pack one x86_64 + aarch64 s9pk
 ```
 
 `make` produces `blindspark.s9pk` (multi-arch). Verify / inspect with:

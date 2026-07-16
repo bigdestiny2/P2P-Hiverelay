@@ -142,6 +142,8 @@ const releaseWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'release
 const startOs04Manifest = readText(hiverelayRoot, 'startos-0.4', 'startos', 'manifest', 'index.ts')
 const startOs04Version = readText(hiverelayRoot, 'startos-0.4', 'startos', 'versions', 'current.ts')
 const startOs04Main = readText(hiverelayRoot, 'startos-0.4', 'startos', 'main.ts')
+const startOs04Makefile = readText(hiverelayRoot, 'startos-0.4', 'Makefile')
+const startOs04Package = readJson(hiverelayRoot, 'startos-0.4', 'package.json')
 const releaseStartos04Workflow = readText(hiverelayRoot, '.github', 'workflows', 'release-startos-0.4.yml')
 const releasePreflightWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'release-distribution-preflight.yml')
 const dockerPublishWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'docker-publish.yml')
@@ -7759,16 +7761,22 @@ if (
 }
 
 if (
+  startOs04Package.dependencies?.['@start9labs/start-sdk'] === '2.0.5' &&
+  startOs04Makefile.includes('ARCHES := x86 arm') &&
+  startOs04Makefile.includes('TARGETS := universal') &&
   releaseStartos04Workflow.includes('setup-build-env') &&
   releaseStartos04Workflow.includes('working-directory: startos-0.4') &&
+  releaseStartos04Workflow.includes('secrets.STARTOS_DEVELOPER_KEY_PEM') &&
   releaseStartos04Workflow.includes('npm ci') &&
   releaseStartos04Workflow.includes('make') &&
+  releaseStartos04Workflow.includes('test -f blindspark.s9pk') &&
+  releaseStartos04Workflow.includes('start-cli s9pk verify blindspark.s9pk') &&
   releaseStartos04Workflow.includes('gh release upload') &&
   releaseStartos04Workflow.includes('blindspark.s9pk')
 ) {
-  pass('release-startos-0.4 workflow builds the 0.4 s9pk and uploads it to the GitHub Release (isolated from the 0.3 pipeline)')
+  pass('release-startos-0.4 builds and verifies one universal 0.4 s9pk with Start SDK 2.0.5, then uploads it to the GitHub Release (isolated from the 0.3 pipeline)')
 } else {
-  fail('release-startos-0.4 workflow is missing the isolated build/upload steps for the 0.4 package')
+  fail('release-startos-0.4 is missing the current SDK, configured signing key, universal package target, or isolated build/verify/upload steps')
 }
 
 if (
