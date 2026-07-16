@@ -1021,6 +1021,91 @@ function buildReport (input) {
   return sealRealBlindRelayReport(report)
 }
 
+function immutableNativeRecord (values, byteFields = {}) {
+  const record = { ...values }
+  for (const [field, value] of Object.entries(byteFields)) {
+    const snapshot = b4a.from(value)
+    Object.defineProperty(record, field, {
+      enumerable: true,
+      get () { return b4a.from(snapshot) }
+    })
+  }
+  return Object.freeze(record)
+}
+
+function browserQualificationConfigFor (fixture) {
+  const pins = supportPins(fixture.descriptor)
+  const requirement = (familyId, operationId, requiredRoleBits) => Object.freeze({
+    familyId,
+    operationId,
+    endpointId: 1,
+    requiredRoleBits,
+    privacyProfileBit: PRIVACY_PROFILE.DIRECT,
+    transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP
+  })
+  const advertisedAdmission = fixture.descriptor.admissionProfiles[0]
+
+  return Object.freeze({
+    schema: 'HiveRelayRealBlindBrowserQualificationConfigV1',
+    localTestOnly: true,
+    currentEpoch: fixture.currentEpoch,
+    candidate: immutableNativeRecord({}, {
+      canonicalUrl: fixture.descriptor.endpoints[0].canonicalUrl,
+      expectedDescriptorHash: fixture.descriptorHash,
+      continuityRootRelayPublicKey: fixture.relayPublicKey,
+      storeId: fixture.descriptor.storeId
+    }),
+    // The live descriptor is sequence 1. A separate client authority must
+    // accept this signed sequence-0 descriptor before it can authenticate the
+    // continuation fetched from candidate.canonicalUrl. These bytes are public
+    // trust material; the relay signing key never leaves createRelayFixture.
+    genesis: immutableNativeRecord({}, {
+      descriptorBytes: fixture.genesisDescriptorBytes,
+      descriptorHash: fixture.genesisDescriptorHash
+    }),
+    supportedProtocolProfiles: Object.freeze(pins.supportedProtocolProfiles.map(pin =>
+      immutableNativeRecord({
+        protocolId: pin.protocolId,
+        major: pin.major,
+        minimumMinor: pin.minimumMinor
+      }, { profileHash: pin.profileHash })
+    )),
+    supportedTransportProfiles: Object.freeze(pins.supportedTransportProfiles.map(pin =>
+      immutableNativeRecord({
+        transportId: pin.transportId,
+        transportSupportBit: pin.transportSupportBit
+      }, { transportProfileHash: pin.transportProfileHash })
+    )),
+    cellPutRequirement: requirement(
+      FAMILY.CELL,
+      OPERATION.CELL.PUT,
+      ENDPOINT_ROLE.STORAGE
+    ),
+    cellGetRequirement: requirement(
+      FAMILY.CELL,
+      OPERATION.CELL.GET,
+      ENDPOINT_ROLE.STORAGE
+    ),
+    admissionParametersRequirement: requirement(
+      FAMILY.DESCRIBE,
+      OPERATION.DESCRIBE.ADMISSION_PARAMETERS,
+      ENDPOINT_ROLE.QUOTA_REDEEMER
+    ),
+    advertisedAdmissionProfile: immutableNativeRecord({
+      profileId: advertisedAdmission.profileId,
+      schemeId: advertisedAdmission.schemeId,
+      conformanceClass: advertisedAdmission.conformanceClass,
+      roleBits: advertisedAdmission.roleBits,
+      ...(advertisedAdmission.parameterUrl == null ? { parameterUrl: null } : {})
+    }, {
+      parameterHash: advertisedAdmission.parameterHash,
+      ...(advertisedAdmission.parameterUrl == null
+        ? {}
+        : { parameterUrl: advertisedAdmission.parameterUrl })
+    })
+  })
+}
+
 // Narrow cross-repository fixture for consumers such as Peerit.  The caller
 // supplies the exact client authority it ships, so opaque VerifiedEndpoint
 // brands are minted and consumed by one module instance rather than being
@@ -1089,6 +1174,10 @@ export async function createRealBlindRelayTestFixture (options = {}) {
     currentEpoch: fixture.currentEpoch,
     get relayPublicKey () { return b4a.from(fixture.relayPublicKey) },
     fetch: localTlsFetch,
+    browserQualificationConfig () {
+      if (closed || !relay) fail('real relay fixture is not running')
+      return browserQualificationConfigFor(fixture)
+    },
     async admissionProvider () {
       if (closed) fail('real relay fixture is closed')
       return Object.freeze({
