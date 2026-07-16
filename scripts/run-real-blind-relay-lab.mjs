@@ -48,6 +48,7 @@ import {
   BlindRelayQualifier,
   DescriptorTrustStore,
   openVerifiedCellGetResult,
+  verifiedEndpointContext,
   verifyDescriptorBytes,
   verifyOperationResult
 } from '@hiverelay/blind-client/control'
@@ -92,6 +93,12 @@ const execFileAsync = promisify(execFile)
 const PRIVATE_IPC_V2_STARTUP_QUARANTINE = 'PRIVATE_IPC_V2_REPLAY_JOURNAL_STARTUP_QUARANTINE'
 const V2_WRITE_READINESS_TIMEOUT_MS = 20_000
 const V2_WRITE_READINESS_POLL_MS = 50
+const SOURCE_CLIENT_API = Object.freeze({
+  BlindRelayQualifier,
+  DescriptorTrustStore,
+  verifiedEndpointContext,
+  verifyDescriptorBytes
+})
 
 function fail (message) {
   const error = new Error(message)
@@ -344,6 +351,16 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls) 
   admission.validFromEpoch = currentEpoch
   admission.expiresEpoch = currentEpoch + 4
   admission.nonce = deterministicBytes(`real-relay-${relayIndex}:admission-nonce`, 32)
+  const cellCostIndex = admission.resourceCosts.findIndex(row =>
+    row.familyId === FAMILY.CELL && row.operationId === OPERATION.CELL.PUT &&
+    row.resourceClass === 1 && row.leaseClass === 1)
+  if (cellCostIndex === -1) fail('real relay admission fixture has no baseline CELL.PUT cost row')
+  const cellCost = admission.resourceCosts[cellCostIndex]
+  admission.resourceCosts.splice(cellCostIndex + 1, 0, Object.freeze({
+    ...cellCost,
+    leaseClass: 4,
+    costUnits: cellCost.costUnits * 4n
+  }))
   const admissionBytes = signCanonical(
     admissionParametersV1,
     admission,
@@ -518,7 +535,7 @@ function admissionAdapter () {
   })
 }
 
-async function startRelay (fixture) {
+async function startRelay (fixture, options = {}) {
   const errors = []
   const diagnostics = []
   const runtime = await assembleProductionBlindDaemon({
@@ -593,6 +610,8 @@ async function startRelay (fixture) {
       socketGroupGid: process.getgid(),
       socketMode: 0o660
     },
+    allowInsecureLoopback: options.allowInsecureLoopback === true,
+    testHooks: options.testHooks,
     onError: error => errors.push(error)
   })
   try {
@@ -623,9 +642,21 @@ async function stopRelay (relay) {
   if (failure) throw failure
 }
 
-async function qualify (relay, clientRuntime, familyId, operationId, phase) {
-  const trustStore = new DescriptorTrustStore()
-  const verifiedGenesis = verifyDescriptorBytes(relay.fixture.genesisDescriptorBytes, {
+function qualificationApi (api) {
+  if (!api || typeof api !== 'object' ||
+      typeof api.DescriptorTrustStore !== 'function' ||
+      typeof api.BlindRelayQualifier !== 'function' ||
+      typeof api.verifyDescriptorBytes !== 'function' ||
+      typeof api.verifiedEndpointContext !== 'function') {
+    fail('real relay qualification requires one complete blind client authority')
+  }
+  return api
+}
+
+async function qualifyWithApi (relay, clientRuntime, familyId, operationId, phase, api) {
+  api = qualificationApi(api)
+  const trustStore = new api.DescriptorTrustStore()
+  const verifiedGenesis = api.verifyDescriptorBytes(relay.fixture.genesisDescriptorBytes, {
     nowEpoch: relay.fixture.currentEpoch,
     ...supportPins(relay.fixture.descriptor)
   })
@@ -633,7 +664,7 @@ async function qualify (relay, clientRuntime, familyId, operationId, phase) {
     pinnedDescriptorHash: relay.fixture.genesisDescriptorHash,
     continuityRootRelayPublicKey: relay.fixture.relayPublicKey
   })
-  const qualifier = new BlindRelayQualifier({
+  const qualifier = new api.BlindRelayQualifier({
     runtime: clientRuntime,
     nowEpoch: () => relay.fixture.currentEpoch,
     fetch: localTlsFetch,
@@ -676,6 +707,10 @@ async function qualify (relay, clientRuntime, familyId, operationId, phase) {
       message: error && error.message ? String(error.message) : String(error)
     })
   }
+}
+
+async function qualify (relay, clientRuntime, familyId, operationId, phase) {
+  return qualifyWithApi(relay, clientRuntime, familyId, operationId, phase, SOURCE_CLIENT_API)
 }
 
 function admissionFor (fixture, recordIndex) {
@@ -984,6 +1019,149 @@ function buildReport (input) {
     blockers: input.blockers
   }
   return sealRealBlindRelayReport(report)
+}
+
+// Narrow cross-repository fixture for consumers such as Peerit.  The caller
+// supplies the exact client authority it ships, so opaque VerifiedEndpoint
+// brands are minted and consumed by one module instance rather than being
+// substituted with this checkout's source client.  This is intentionally a
+// local test surface: it uses synthetic admission and never asserts a
+// production operator, deployment, or economic-settlement claim.
+export async function createRealBlindRelayTestFixture (options = {}) {
+  if (typeof process.getuid !== 'function' || typeof process.getgid !== 'function') {
+    fail('real relay fixture requires POSIX Unix sockets and peer credentials')
+  }
+  const keep = options.keep === true
+  const root = options.root == null
+    ? await fs.mkdtemp(path.join(await fs.realpath('/tmp'), 'brfixture-'))
+    : await fs.realpath(options.root)
+  const authorityBytes = await fs.readFile(STORE_FORMAT_AUTHORITY)
+  const tls = await ephemeralLoopbackTls(root)
+  const fixture = await createRelayFixture(
+    root,
+    boundedInteger(options.relayIndex, 0, 0, 255, 'relayIndex'),
+    await unusedLoopbackPort(),
+    authorityBytes,
+    tls
+  )
+  let relay = null
+  let closed = false
+  let dropNextPutResponse = false
+  let droppedPutResponses = 0
+  let admissionCounter = 0
+  const relayRuns = []
+
+  const testHooks = Object.freeze({
+    beforeResponseFirstByte ({ family, response, result }) {
+      if (!dropNextPutResponse || family !== FAMILY.CELL) return
+      const outer = decodeOuterEnvelope(result, { copyInner: true, copyBody: true })
+      if (outer.frame.frameKind !== FRAME_KIND.RESPONSE ||
+          outer.frame.familyId !== FAMILY.CELL ||
+          outer.frame.operationId !== OPERATION.CELL.PUT) return
+      dropNextPutResponse = false
+      droppedPutResponses++
+      // The daemon has already returned the committed result.  Closing the
+      // public socket here models response loss at the only useful boundary:
+      // after durable mutation, before the client receives one response byte.
+      response.destroy()
+    }
+  })
+
+  const launch = async phase => {
+    relay = await startRelay(fixture, {
+      allowInsecureLoopback: true,
+      testHooks
+    })
+    relayRuns.push(relay)
+    await waitForV2WriteReadiness([relay], phase)
+  }
+
+  try {
+    await launch('joint fixture start')
+  } catch (error) {
+    if (relay) await stopRelay(relay).catch(() => {})
+    if (!keep) await fs.rm(root, { recursive: true, force: true })
+    throw error
+  }
+
+  const api = Object.freeze({
+    root,
+    currentEpoch: fixture.currentEpoch,
+    get relayPublicKey () { return b4a.from(fixture.relayPublicKey) },
+    fetch: localTlsFetch,
+    async admissionProvider () {
+      if (closed) fail('real relay fixture is closed')
+      return Object.freeze({
+        profileId: fixture.descriptor.admissionProfiles[0].profileId,
+        schemeId: fixture.descriptor.admissionProfiles[0].schemeId,
+        parameterHash: b4a.from(fixture.parameterHash),
+        token: deterministicBytes(`joint-fixture:${fixture.relayIndex}:admission:${admissionCounter++}`, 32)
+      })
+    },
+    async qualifyCellPair (clientApi, clientRuntime) {
+      if (closed || !relay) fail('real relay fixture is not running')
+      const put = await qualifyWithApi(
+        relay,
+        clientRuntime,
+        FAMILY.CELL,
+        OPERATION.CELL.PUT,
+        'joint-put',
+        clientApi
+      )
+      const get = await qualifyWithApi(
+        relay,
+        clientRuntime,
+        FAMILY.CELL,
+        OPERATION.CELL.GET,
+        'joint-get',
+        clientApi
+      )
+      if (!put.qualified || !get.qualified) {
+        fail(`joint fixture qualification failed: PUT=${put.code || 'UNKNOWN'} GET=${get.code || 'UNKNOWN'}`)
+      }
+      return Object.freeze({
+        putEndpoint: put.endpoint,
+        getEndpoint: get.endpoint,
+        putContext: clientApi.verifiedEndpointContext(put.endpoint),
+        getContext: clientApi.verifiedEndpointContext(get.endpoint)
+      })
+    },
+    dropNextCellPutResponse () {
+      if (closed || !relay) fail('real relay fixture is not running')
+      if (dropNextPutResponse) fail('a CELL.PUT response drop is already armed')
+      dropNextPutResponse = true
+    },
+    droppedCellPutResponses () {
+      return droppedPutResponses
+    },
+    status () {
+      if (closed || !relay) fail('real relay fixture is not running')
+      return relay.runtime.status()
+    },
+    errors () {
+      return relayRuns.flatMap(run => run.errors).map(error => Object.freeze({
+        code: error && error.code ? String(error.code) : null,
+        message: error && error.message ? String(error.message) : String(error)
+      }))
+    },
+    async restart () {
+      if (closed || !relay) fail('real relay fixture is not running')
+      if (dropNextPutResponse) fail('armed CELL.PUT response drop was not exercised before restart')
+      const current = relay
+      relay = null
+      await stopRelay(current)
+      await launch('joint fixture restart')
+    },
+    async close () {
+      if (closed) return
+      closed = true
+      const current = relay
+      relay = null
+      if (current) await stopRelay(current).catch(() => {})
+      if (!keep) await fs.rm(root, { recursive: true, force: true })
+    }
+  })
+  return api
 }
 
 export async function runRealBlindRelayLab (options = {}) {
