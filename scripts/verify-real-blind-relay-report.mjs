@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const REAL_BLIND_RELAY_LAB_SCHEMA = 'hiverelay.blind.real-relay-lab.v2'
+export const REAL_BLIND_RELAY_LAB_SCHEMA = 'hiverelay.blind.real-relay-lab.v4'
 export const REAL_BLIND_RELAY_CANONICALIZATION = 'HIVERELAY_SORTED_JSON_V1'
 export const REAL_BLIND_RELAY_LOCAL_PERFORMANCE_THRESHOLDS = Object.freeze({
   minimumOperationsPerPath: 32,
@@ -22,6 +22,8 @@ export const REAL_BLIND_RELAY_RUNTIME_EXCLUSIONS = Object.freeze([
   'FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED',
   'FORWARD_PUBLIC_EXECUTION_UNASSEMBLED',
   'INBOX_PUBLIC_EXECUTION_UNASSEMBLED',
+  'PRODUCTION_ADMISSION_ADAPTER_CAPTURE_REQUIRED',
+  'PRODUCTION_DURABLE_REPLAY_AUTHORITY_REQUIRED',
   'PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED',
   'TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED'
 ])
@@ -29,7 +31,6 @@ export const REAL_BLIND_RELAY_MANDATORY_BLOCKERS = Object.freeze([
   'SYNTHETIC_ADMISSION_NO_ECONOMIC_SETTLEMENT',
   'PRODUCTION_RELEASE_GATE_BYPASSED',
   'INDEPENDENT_CELL_COPIES_NOT_REPLICA_PROTOCOL',
-  'PUBLIC_EDGE_STAGED_CELL_PUT_BRIDGE_UNASSEMBLED',
   'PUBLIC_CELL_REQUESTS_NOT_CLIENT_QUALIFIABLE_DUE_DEGRADED_INTEGRITY',
   'SINGLE_PROCESS_RELAY_ISOLATION_UNMEASURED',
   'SINGLE_HOST_RELAY_ISOLATION_UNMEASURED',
@@ -54,13 +55,13 @@ export const REAL_BLIND_RELAY_FAMILY_SCOPE = deepFreeze({
   },
   CELL: {
     measured: true,
-    putPath: 'blind-edge exchangeLocalContent -> authenticated staged private IPC -> BlindDaemon -> filesystem store',
+    putPath: 'public HTTPS BlindEdge -> V2 full outer-envelope staged private IPC with TLS-exporter binding -> BlindDaemon -> filesystem store',
     getPath: 'blind-client wire codec test seam -> public HTTPS BlindEdge -> private unary IPC -> BlindDaemon -> filesystem store',
     ordinaryClientQualified: false,
     ordinaryClientQualificationBlocker: 'STORAGE_INTEGRITY_REPORTED_DEGRADED',
     unqualifiedWireTestSeam: true,
-    publicHttpPutMeasured: false,
-    publicHttpPutBlocker: 'PUBLIC_EDGE_STAGED_CELL_PUT_BRIDGE_UNASSEMBLED'
+    publicHttpPutMeasured: true,
+    publicHttpPutAdmissionEvidence: 'synthetic split adapter only; no packaged production-admission or economic-settlement claim'
   },
   INBOX: {
     measured: false,
@@ -441,13 +442,33 @@ function validateMeasuredRelationships (report) {
     'cleanStopWallMs',
     'restartAndRecoveryWallMs',
     'retainedStateReadChecks',
-    'diskBytesStableAcrossRestart'
+    'diskBytesStableAcrossRestart',
+    'initialV2WriteStartupQuarantineObserved',
+    'initialV2WritePathReadyBeforeWrites',
+    'initialV2WriteReadinessWaitMs',
+    'restartV2WriteStartupQuarantineObserved',
+    'restartV2WritePathReadyBeforeWrites',
+    'restartV2WriteReadinessWaitMs',
+    'restartV2PublicHttpsExactPutAttempts',
+    'restartV2RetainedReadChecks'
   ], 'recovery')
   if (report.recovery.relaysStopped !== relayCount || report.recovery.relaysRestarted !== relayCount) {
     fail('recovery stop/restart counts must equal relayInstances')
   }
   finiteNumber(report.recovery.cleanStopWallMs, 0, 'recovery.cleanStopWallMs')
   finiteNumber(report.recovery.restartAndRecoveryWallMs, 0, 'recovery.restartAndRecoveryWallMs')
+  if (report.recovery.initialV2WriteStartupQuarantineObserved !== true ||
+      report.recovery.initialV2WritePathReadyBeforeWrites !== true ||
+      report.recovery.restartV2WriteStartupQuarantineObserved !== true ||
+      report.recovery.restartV2WritePathReadyBeforeWrites !== true) {
+    fail('recovery must retain the observed V2 replay-journal quarantine and pre-write readiness evidence')
+  }
+  finiteNumber(report.recovery.initialV2WriteReadinessWaitMs, 0, 'recovery.initialV2WriteReadinessWaitMs')
+  finiteNumber(report.recovery.restartV2WriteReadinessWaitMs, 0, 'recovery.restartV2WriteReadinessWaitMs')
+  if (report.recovery.restartV2PublicHttpsExactPutAttempts !== relayCount ||
+      report.recovery.restartV2RetainedReadChecks !== relayCount) {
+    fail('recovery must prove one exact public V2 CELL.PUT and retained read per restarted relay')
+  }
   if (report.recovery.retainedStateReadChecks !== report.metrics.recoveredPublicCellGet.count) {
     fail('recovery.retainedStateReadChecks is inconsistent with recovered reads')
   }
@@ -561,6 +582,10 @@ export function verifyRealBlindRelayReport (report, options = {}) {
       report.integrity.contentChecksBeforeRestart === attempted,
     allRecoveredReadsCompleted: report.metrics.recoveredPublicCellGet.count === attempted &&
       report.integrity.contentChecksAfterRestart === attempted,
+    restartV2WriteRecoveryObserved: report.recovery.restartV2WriteStartupQuarantineObserved === true &&
+      report.recovery.restartV2WritePathReadyBeforeWrites === true &&
+      report.recovery.restartV2PublicHttpsExactPutAttempts === measured.relayCount &&
+      report.recovery.restartV2RetainedReadChecks === measured.relayCount,
     declaredQualificationOutcomeObserved: report.integrity.ordinaryClientQualificationFailedClosed === true,
     independentRelayIdentitiesObserved: report.integrity.uniqueRelaySigningKeys === measured.relayCount,
     independentStoreIdsObserved: report.integrity.uniqueStoreIds === measured.relayCount,

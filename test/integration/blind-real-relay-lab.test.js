@@ -16,7 +16,7 @@ function resealMutation (report, mutate) {
   return sealRealBlindRelayReport(body)
 }
 
-test('real local relay lab executes two isolated store copies and proves retained reads after restart', async t => {
+test('real local relay lab executes two isolated store copies and proves retained reads after restart', { timeout: 90_000 }, async t => {
   const report = await runRealBlindRelayLab({
     relayCount: 2,
     recordsPerRelay: 2,
@@ -42,7 +42,7 @@ test('real local relay lab executes two isolated store copies and proves retaine
   t.is(report.load.replicaProtocolMeasured, false)
   t.is(report.families.DESCRIBE.measured, true)
   t.is(report.families.CELL.measured, true)
-  t.is(report.families.CELL.publicHttpPutMeasured, false)
+  t.is(report.families.CELL.publicHttpPutMeasured, true)
   t.is(report.families.INBOX.measured, false)
   t.is(report.families.CORE.measured, false)
   t.is(report.families.FORWARD.measured, false)
@@ -59,10 +59,22 @@ test('real local relay lab executes two isolated store copies and proves retaine
   t.is(report.recovery.relaysStopped, 2)
   t.is(report.recovery.relaysRestarted, 2)
   t.is(report.recovery.diskBytesStableAcrossRestart, true)
+  t.is(report.recovery.initialV2WriteStartupQuarantineObserved, true)
+  t.is(report.recovery.initialV2WritePathReadyBeforeWrites, true)
+  t.ok(report.recovery.initialV2WriteReadinessWaitMs >= 0)
+  t.is(report.recovery.restartV2WriteStartupQuarantineObserved, true)
+  t.is(report.recovery.restartV2WritePathReadyBeforeWrites, true)
+  t.ok(report.recovery.restartV2WriteReadinessWaitMs >= 0)
+  t.is(report.recovery.restartV2PublicHttpsExactPutAttempts, 2)
+  t.is(report.recovery.restartV2RetainedReadChecks, 2)
   t.is(report.runtimeErrors.length, 0)
   t.ok(report.blockers.includes('SYNTHETIC_ADMISSION_NO_ECONOMIC_SETTLEMENT'))
   t.ok(report.blockers.includes('INDEPENDENT_CELL_COPIES_NOT_REPLICA_PROTOCOL'))
-  t.ok(report.blockers.includes('PUBLIC_EDGE_STAGED_CELL_PUT_BRIDGE_UNASSEMBLED'))
+  t.ok(report.blockers.includes('PRODUCTION_ADMISSION_ADAPTER_CAPTURE_REQUIRED'))
+  t.ok(report.blockers.includes('PRODUCTION_DURABLE_REPLAY_AUTHORITY_REQUIRED'))
+  t.ok(report.runtimeExclusions.includes('PRODUCTION_ADMISSION_ADAPTER_CAPTURE_REQUIRED'))
+  t.ok(report.runtimeExclusions.includes('PRODUCTION_DURABLE_REPLAY_AUTHORITY_REQUIRED'))
+  t.absent(report.blockers.includes('PUBLIC_EDGE_STAGED_CELL_PUT_BRIDGE_UNASSEMBLED'))
   t.ok(report.blockers.includes('LOCAL_PERFORMANCE_SMOKE_GATE_NOT_MET'))
   t.is(typeof report.evidenceDigest, 'string')
   t.is(report.evidenceDigest.length, 64)

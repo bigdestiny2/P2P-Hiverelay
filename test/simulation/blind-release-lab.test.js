@@ -309,7 +309,8 @@ function realRelayFixture () {
     declaredQualificationOutcomeObserved: true,
     independentRelayIdentitiesObserved: true,
     independentStoreIdsObserved: true,
-    independentCopiesObserved: true
+    independentCopiesObserved: true,
+    restartV2WriteRecoveryObserved: true
   }
   const performance = {
     sufficientOperationSample: true,
@@ -439,6 +440,14 @@ function realRelayFixture () {
       cleanStopWallMs: 10,
       retainedStateReadChecks: attempted,
       diskBytesStableAcrossRestart: true,
+      initialV2WriteStartupQuarantineObserved: true,
+      initialV2WritePathReadyBeforeWrites: true,
+      initialV2WriteReadinessWaitMs: 15000,
+      restartV2WriteStartupQuarantineObserved: true,
+      restartV2WritePathReadyBeforeWrites: true,
+      restartV2WriteReadinessWaitMs: 15000,
+      restartV2PublicHttpsExactPutAttempts: relayCount,
+      restartV2RetainedReadChecks: relayCount,
       restartAndRecoveryWallMs: 100
     },
     resources: {

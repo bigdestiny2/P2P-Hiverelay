@@ -27,22 +27,19 @@ import {
   blindReceiptV1,
   blindServiceDescriptorV1,
   decodeCanonical,
-  decodeDispatchFrame,
+  decodeOuterEnvelope,
   durabilityContinuityBindingV1,
   durabilityContinuityHash,
   durabilityProfileHash,
   durabilityProfileV1,
   encodeCanonical,
   encodeDispatchFrame,
+  encodeOuterEnvelope,
   getCellResultV1,
   hashStoreFormat,
   resultSignaturePayload,
   serviceDescriptorHash
 } from '@hiverelay/blind-protocol'
-import {
-  LOCAL_STREAM_MODE,
-  LOCAL_STREAM_OPEN_KIND
-} from '@hiverelay/blind-ipc'
 import {
   createCellReplica,
   createGetCellRequest,
@@ -51,10 +48,12 @@ import {
   openCell
 } from '@hiverelay/blind-client'
 import {
-  BlindRelayQualifier
+  BlindRelayQualifier,
+  DescriptorTrustStore,
+  verifyDescriptorBytes
 } from '@hiverelay/blind-client/control'
 import { createNodeCryptoRuntime } from '@hiverelay/blind-client/runtime/node'
-import { BlindEdge, exchangeLocalContent } from '@hiverelay/blind-edge'
+import { BlindEdge } from '@hiverelay/blind-edge'
 import {
   PRODUCTION_DESCRIBE_AND_CELL_OPERATION_BITS,
   assembleProductionBlindDaemon
@@ -91,6 +90,9 @@ const DEFAULTS = Object.freeze({
   contentBytes: 256
 })
 const execFileAsync = promisify(execFile)
+const PRIVATE_IPC_V2_STARTUP_QUARANTINE = 'PRIVATE_IPC_V2_REPLAY_JOURNAL_STARTUP_QUARANTINE'
+const V2_WRITE_READINESS_TIMEOUT_MS = 20_000
+const V2_WRITE_READINESS_POLL_MS = 50
 
 function fail (message) {
   const error = new Error(message)
@@ -316,11 +318,14 @@ function supportPins (descriptor) {
 async function createRelayFixture (root, relayIndex, port, authorityBytes, tls) {
   const directory = path.join(root, `relay-${relayIndex}`)
   const storeRoot = path.join(directory, 'store')
+  const privateIpcReplayRoot = path.join(directory, 'private-ipc-replay')
   const ipcRoot = path.join(directory, 'ipc')
   await fs.mkdir(storeRoot, { recursive: true, mode: 0o700 })
+  await fs.mkdir(privateIpcReplayRoot, { recursive: true, mode: 0o700 })
   await fs.mkdir(ipcRoot, { recursive: true, mode: 0o700 })
   await fs.chmod(directory, 0o700)
   await fs.chmod(storeRoot, 0o700)
+  await fs.chmod(privateIpcReplayRoot, 0o700)
   await fs.chmod(ipcRoot, 0o700)
 
   const relayPublicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
@@ -353,9 +358,11 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls) 
   })
   descriptor.relayPublicKey = b4a.from(relayPublicKey)
   descriptor.storeId = deterministicBytes(`real-relay-${relayIndex}:store`, 32)
-  descriptor.descriptorNonce = deterministicBytes(`real-relay-${relayIndex}:descriptor-nonce`, 32)
-  descriptor.issuedEpoch = currentEpoch
-  descriptor.expiresEpoch = currentEpoch + 4
+  descriptor.descriptorNonce = deterministicBytes(`real-relay-${relayIndex}:descriptor-nonce:0`, 32)
+  descriptor.descriptorSequence = 0n
+  descriptor.previousDescriptorHash = null
+  descriptor.issuedEpoch = currentEpoch - 1
+  descriptor.expiresEpoch = currentEpoch + 3
   descriptor.enabledOperationBits = PRODUCTION_DESCRIBE_AND_CELL_OPERATION_BITS
   descriptor.capacityBand = 0
   descriptor.endpoints = [descriptor.endpoints[0]]
@@ -389,6 +396,18 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls) 
   descriptor.durability.storeFormatHash = hashStoreFormat(authorityBytes)
   descriptor.build.storeFormatHash = b4a.from(descriptor.durability.storeFormatHash)
   bindDurability(descriptor)
+  const genesisDescriptorBytes = signCanonical(
+    blindServiceDescriptorV1,
+    descriptor,
+    RESULT_SIGNATURE_DOMAIN_ID.DESCRIPTOR,
+    relaySecretKey
+  )
+  const genesisDescriptorHash = serviceDescriptorHash(genesisDescriptorBytes)
+  descriptor.descriptorNonce = deterministicBytes(`real-relay-${relayIndex}:descriptor-nonce:1`, 32)
+  descriptor.descriptorSequence = 1n
+  descriptor.previousDescriptorHash = b4a.from(genesisDescriptorHash)
+  descriptor.issuedEpoch = currentEpoch
+  descriptor.expiresEpoch = currentEpoch + 4
   const descriptorBytes = signCanonical(
     blindServiceDescriptorV1,
     descriptor,
@@ -397,12 +416,14 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls) 
   )
   const descriptorHash = serviceDescriptorHash(descriptorBytes)
 
+  const genesisDescriptorFile = path.join(directory, 'descriptor-genesis.bin')
   const descriptorFile = path.join(directory, 'descriptor.bin')
   const admissionFile = path.join(directory, 'admission.bin')
   const secretKeyFile = path.join(directory, 'relay-secret.bin')
   const partitionKeyFile = path.join(directory, 'partition-key.bin')
   const ownerFenceFile = path.join(directory, 'owner-fence-hash.bin')
   await Promise.all([
+    privateFile(genesisDescriptorFile, genesisDescriptorBytes),
     privateFile(descriptorFile, descriptorBytes),
     privateFile(admissionFile, admissionBytes),
     privateFile(secretKeyFile, relaySecretKey),
@@ -418,11 +439,14 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls) 
     relayIndex,
     directory,
     storeRoot,
+    privateIpcReplayRoot,
     port,
     currentEpoch,
     relayPublicKey: b4a.from(relayPublicKey),
     descriptor,
     descriptorHash: b4a.from(descriptorHash),
+    genesisDescriptorBytes: b4a.from(genesisDescriptorBytes),
+    genesisDescriptorHash: b4a.from(genesisDescriptorHash),
     parameterHash: b4a.from(parameterHash),
     launchTopologyHash,
     streamTransportProfileHash: b4a.from(descriptor.endpoints[0].transportProfileHash),
@@ -437,10 +461,11 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls) 
       endpointIds: Object.freeze([1])
     }),
     runtimeConfig: Object.freeze({
-      descriptorFiles: Object.freeze([descriptorFile]),
+      descriptorFiles: Object.freeze([genesisDescriptorFile, descriptorFile]),
       admissionParameterFiles: Object.freeze([admissionFile]),
       relaySecretKeyFile: secretKeyFile,
       storeRoot,
+      privateIpcReplayRoot,
       partitionKeyFile,
       ownerFenceTokenHashFile: ownerFenceFile,
       mapGeneration: 1n,
@@ -465,17 +490,31 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls) 
 }
 
 function admissionAdapter () {
+  const preflights = new WeakSet()
+  const prepared = input => Object.freeze({
+    spendTag: blake2b256(input.admission.token),
+    requestCommitment: b4a.from(input.requestCommitment),
+    costClass: Object.freeze({ ...input.costClass }),
+    walCommitRecord: b4a.from(input.admission.token),
+    profileId: input.admission.profileId,
+    schemeId: input.admission.schemeId,
+    parameterHash: b4a.from(input.admission.parameterHash)
+  })
   return Object.freeze({
     async prepare (input) {
-      return Object.freeze({
-        spendTag: blake2b256(input.admission.token),
-        requestCommitment: b4a.from(input.requestCommitment),
-        costClass: Object.freeze({ ...input.costClass }),
-        walCommitRecord: b4a.from(input.admission.token),
-        profileId: input.admission.profileId,
-        schemeId: input.admission.schemeId,
-        parameterHash: b4a.from(input.admission.parameterHash)
-      })
+      return prepared(input)
+    },
+    async preparePreflight () {
+      const authority = Object.freeze({})
+      preflights.add(authority)
+      return authority
+    },
+    async confirmAfterEof (input) {
+      if (!preflights.has(input.adapterPreflight)) {
+        throw new Error('unknown synthetic admission preflight')
+      }
+      preflights.delete(input.adapterPreflight)
+      return prepared(input)
     }
   })
 }
@@ -492,7 +531,7 @@ async function startRelay (fixture) {
     onError: error => errors.push(error)
   })
   for (const [field, methods] of [
-    ['operationExecutor', ['execute']],
+    ['operationExecutor', ['execute', 'stageAtomicPut', 'commitAtomicPut', 'cancelAtomicPut']],
     ['capabilityVerifier', ['verify']],
     ['relationVerifier', ['verify']],
     ['cheapStateVerifier', ['inspect']],
@@ -521,6 +560,23 @@ async function startRelay (fixture) {
       }
     }])))
   }
+  for (const method of ['preparePreflight', 'confirmAfterEof']) {
+    const original = runtime.admission[method]
+    if (typeof original !== 'function') continue
+    runtime.admission[method] = async (...args) => {
+      try {
+        return await original.apply(runtime.admission, args)
+      } catch (error) {
+        diagnostics.push(Object.freeze({
+          field: 'admission',
+          method,
+          code: error && error.code ? String(error.code) : null,
+          message: error && error.message ? String(error.message) : String(error)
+        }))
+        throw error
+      }
+    }
+  }
   await runtime.start()
   const edge = new BlindEdge({
     host: '127.0.0.1',
@@ -532,6 +588,7 @@ async function startRelay (fixture) {
       unarySocketPath: fixture.bootstrap.unarySocketPath,
       streamSocketPath: fixture.bootstrap.streamSocketPath,
       launchTopologyHash: fixture.launchTopologyHash,
+      streamTransportProfileHash: fixture.streamTransportProfileHash,
       daemonUid: process.getuid(),
       daemonGid: process.getgid(),
       socketGroupGid: process.getgid(),
@@ -568,10 +625,20 @@ async function stopRelay (relay) {
 }
 
 async function qualify (relay, clientRuntime, familyId, operationId) {
+  const trustStore = new DescriptorTrustStore()
+  const verifiedGenesis = verifyDescriptorBytes(relay.fixture.genesisDescriptorBytes, {
+    nowEpoch: relay.fixture.currentEpoch,
+    ...supportPins(relay.fixture.descriptor)
+  })
+  await trustStore.accept(verifiedGenesis, {
+    pinnedDescriptorHash: relay.fixture.genesisDescriptorHash,
+    continuityRootRelayPublicKey: relay.fixture.relayPublicKey
+  })
   const qualifier = new BlindRelayQualifier({
     runtime: clientRuntime,
     nowEpoch: () => relay.fixture.currentEpoch,
     fetch: localTlsFetch,
+    trustStore,
     ...supportPins(relay.fixture.descriptor)
   })
   const started = process.hrtime.bigint()
@@ -626,33 +693,6 @@ function logicalContent (recordIndex, contentBytes) {
   ])
 }
 
-function streamInput (relay, recordIndex) {
-  const accepted = process.hrtime.bigint() / 1_000_000n
-  return Object.freeze({
-    open: Object.freeze({
-      openKind: LOCAL_STREAM_OPEN_KIND.PUBLIC_CONTENT_CHANNEL,
-      transportId: TRANSPORT_ID.HTTPS_DIRECT,
-      transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
-      endpointId: 1,
-      streamMode: LOCAL_STREAM_MODE.DISPATCH_CONTENT,
-      channelClass: 1,
-      acceptedMonotonicMillis: accepted,
-      openDeadlineMonotonicMillis: accepted + 10_000n,
-      adjacentRelayKey: null
-    }),
-    channel: Object.freeze({
-      launchTopologyHash: relay.fixture.launchTopologyHash,
-      edgeProcessNonce: deterministicBytes(`relay-${relay.fixture.relayIndex}:record-${recordIndex}:edge`, 32),
-      localChannelNonce: deterministicBytes(`relay-${relay.fixture.relayIndex}:record-${recordIndex}:channel`, 32),
-      transportProfileHash: relay.fixture.streamTransportProfileHash,
-      finalNoiseHandshakeHash: deterministicBytes(
-        `relay-${relay.fixture.relayIndex}:record-${recordIndex}:handshake`,
-        64
-      )
-    })
-  })
-}
-
 async function putViaAuthenticatedStagedPath (relay, created, recordIndex) {
   const requestId = deterministicBytes(`relay-${relay.fixture.relayIndex}:record-${recordIndex}:put-request`, 16)
   const dispatch = encodeDispatchFrame({
@@ -662,15 +702,25 @@ async function putViaAuthenticatedStagedPath (relay, created, recordIndex) {
     requestId,
     body: created.requestBytes
   })
+  const outer = encodeOuterEnvelope({ innerDispatch: dispatch, outerClass: 3 })
+  const url = new URL(b4a.toString(relay.fixture.descriptor.endpoints[0].canonicalUrl, 'utf8'))
+  url.pathname = '/api/blind/v1/cell'
   const started = process.hrtime.bigint()
   let resultBytes
   try {
-    resultBytes = await exchangeLocalContent(
-      relay.fixture.bootstrap.streamSocketPath,
-      dispatch,
-      streamInput(relay, recordIndex),
-      { timeoutMs: 10_000 }
-    )
+    const response = await localTlsFetch(url.href, {
+      method: 'POST',
+      headers: [
+        ['content-type', PROTOCOL.mediaType],
+        ['content-length', String(outer.byteLength)]
+      ],
+      body: outer
+    })
+    if (response.status !== 200 || response.headers.get('content-type') !== PROTOCOL.mediaType ||
+        Number(response.headers.get('content-length')) !== outer.byteLength) {
+      fail('public HTTPS staged CELL.PUT returned a non-protocol HTTP response')
+    }
+    resultBytes = b4a.from(await response.arrayBuffer())
   } catch (error) {
     const diagnostic = relay.diagnostics[relay.diagnostics.length - 1]
     if (diagnostic) {
@@ -680,12 +730,23 @@ async function putViaAuthenticatedStagedPath (relay, created, recordIndex) {
     }
     throw error
   }
-  const frame = decodeDispatchFrame(resultBytes, { copyBody: true })
+  if (resultBytes.byteLength !== outer.byteLength) {
+    fail('public HTTPS staged CELL.PUT changed its selected outer class')
+  }
+  let resultOuter
+  try {
+    resultOuter = decodeOuterEnvelope(resultBytes, { copyInner: true, copyBody: true })
+  } catch {
+    fail('public HTTPS staged CELL.PUT returned an invalid outer envelope')
+  }
+  if (resultOuter.outerClass !== 3) fail('public HTTPS staged CELL.PUT returned a mismatched outer class')
+  const frame = resultOuter.frame
   if (frame.frameKind === FRAME_KIND.ERROR) {
     const value = decodeCanonical(blindErrorV1, frame.body)
     const name = Object.keys(ERROR_CODE).find(key => ERROR_CODE[key] === value.code) || value.code
     const diagnostic = relay.diagnostics[relay.diagnostics.length - 1]
-    fail(`staged CELL.PUT returned ${name}${diagnostic ? ` after ${diagnostic.field}.${diagnostic.method}: ${diagnostic.code || 'ERROR'} ${diagnostic.message}` : ''}`)
+    const daemonError = relay.errors[relay.errors.length - 1]
+    fail(`staged CELL.PUT returned ${name}${diagnostic ? ` after ${diagnostic.field}.${diagnostic.method}: ${diagnostic.code || 'ERROR'} ${diagnostic.message}` : daemonError ? `; daemon error: ${daemonError.code || 'ERROR'} ${daemonError.message}` : ''}`)
   }
   if (frame.frameKind !== FRAME_KIND.RESPONSE || frame.familyId !== FAMILY.CELL ||
       frame.operationId !== OPERATION.CELL.PUT || !b4a.equals(frame.requestId, requestId)) {
@@ -710,6 +771,47 @@ async function putViaAuthenticatedStagedPath (relay, created, recordIndex) {
     leaseEpoch: receipt.leaseEpoch,
     stateRevision: receipt.stateRevision
   })
+}
+
+function v2WriteReadiness (relay) {
+  const status = relay.runtime.status()
+  return Object.freeze({
+    relayIndex: relay.fixture.relayIndex,
+    v2WritePathReady: status.v2WritePathReady === true,
+    v2WritePathAssembled: status.v2WritePathAssembled === true,
+    admissionCaptureComplete: status.admissionCapture?.complete === true,
+    replayJournalReady: status.privateIpcReplayJournal?.ready === true,
+    replayJournalReason: status.privateIpcReplayJournal?.reason || null
+  })
+}
+
+async function waitForV2WriteReadiness (relays, phase) {
+  const initial = relays.map(v2WriteReadiness)
+  if (!initial.every(status => status.v2WritePathReady === false &&
+    status.replayJournalReady === false && status.replayJournalReason === PRIVATE_IPC_V2_STARTUP_QUARANTINE)) {
+    fail(`${phase} must begin in the mandatory V2 replay-journal startup quarantine`)
+  }
+  const started = process.hrtime.bigint()
+  const deadline = Date.now() + V2_WRITE_READINESS_TIMEOUT_MS
+  for (;;) {
+    const current = relays.map(v2WriteReadiness)
+    if (current.every(status => status.v2WritePathReady && status.replayJournalReady && status.replayJournalReason === null)) {
+      return Object.freeze({
+        phase,
+        startupQuarantineObserved: true,
+        readyBeforeWrites: true,
+        waitMs: Number(elapsedMillis(started).toFixed(3))
+      })
+    }
+    if (current.some(status => status.replayJournalReason !== PRIVATE_IPC_V2_STARTUP_QUARANTINE &&
+      status.replayJournalReason !== null)) {
+      fail(`${phase} V2 replay-journal readiness became unavailable: ${JSON.stringify(current)}`)
+    }
+    if (Date.now() >= deadline) {
+      fail(`${phase} V2 replay-journal startup quarantine did not produce a write-ready path: ${JSON.stringify(current)}`)
+    }
+    await new Promise(resolve => setTimeout(resolve, V2_WRITE_READINESS_POLL_MS))
+  }
 }
 
 async function unqualifiedLocalWireRequest (relay, clientRuntime, request, phase, recordIndex) {
@@ -810,6 +912,10 @@ function localGates (input) {
       input.contentChecksBeforeRestart === input.attemptedOperations,
     allRecoveredReadsCompleted: input.metrics.recoveredPublicCellGet.count === input.attemptedOperations &&
       input.contentChecksAfterRestart === input.attemptedOperations,
+    restartV2WriteRecoveryObserved: input.recovery.restartV2WriteStartupQuarantineObserved === true &&
+      input.recovery.restartV2WritePathReadyBeforeWrites === true &&
+      input.recovery.restartV2PublicHttpsExactPutAttempts === input.relayCount &&
+      input.recovery.restartV2RetainedReadChecks === input.relayCount,
     declaredQualificationOutcomeObserved: input.qualificationFailedClosed,
     independentRelayIdentitiesObserved: input.uniqueRelaySigningKeys === input.relayCount,
     independentStoreIdsObserved: input.uniqueStoreIds === input.relayCount,
@@ -934,6 +1040,7 @@ export async function runRealBlindRelayLab (options = {}) {
     }
     relays = await Promise.all(fixtures.map(startRelay))
     relayRuns.push(...relays)
+    const initialV2WriteReadiness = await waitForV2WriteReadiness(relays, 'initial relay start')
 
     const clientRuntimes = fixtures.map(fixture => deterministicRuntime(`client-${fixture.relayIndex}`))
     const qualificationLatencies = []
@@ -994,10 +1101,30 @@ export async function runRealBlindRelayLab (options = {}) {
     await Promise.all(relays.map(stopRelay))
     const stopMs = elapsedMillis(stopStarted)
     relays = []
-    const restartStarted = process.hrtime.bigint()
+    const restartRecoveryStarted = process.hrtime.bigint()
     relays = await Promise.all(fixtures.map(startRelay))
     relayRuns.push(...relays)
-    const restartMs = elapsedMillis(restartStarted)
+    // A restart must not merely enter the replay-journal quarantine. It must
+    // leave it, accept a real exporter-bound public V2 attempt, and then serve
+    // the retained content without changing the exact per-relay store count.
+    const restartV2WriteReadiness = await waitForV2WriteReadiness(relays, 'relay restart')
+    const restartProbeRecords = records.filter(record => record.recordIndex === 0)
+    if (restartProbeRecords.length !== relayCount) {
+      fail('restart V2 probe requires one exact retained CELL.PUT per relay')
+    }
+    await mapConcurrent(restartProbeRecords, concurrency, record => putViaAuthenticatedStagedPath(
+      relays[record.relayIndex], record.created, record.recordIndex
+    ))
+    const restartV2RetainedReadLatencies = await mapConcurrent(
+      restartProbeRecords,
+      concurrency,
+      record => getViaPublicEdge(
+        relays[record.relayIndex],
+        clientRuntimes[record.relayIndex],
+        record,
+        'after-restart-v2-exact-put'
+      )
+    )
     for (let index = 0; index < relays.length; index++) {
       const get = await qualify(relays[index], clientRuntimes[index], FAMILY.CELL, OPERATION.CELL.GET)
       qualificationLatencies.push(get.latencyMs)
@@ -1012,6 +1139,7 @@ export async function runRealBlindRelayLab (options = {}) {
       'after-restart'
     ))
     const recoveryReadMs = elapsedMillis(recoveryReadStarted)
+    const restartAndRecoveryMs = elapsedMillis(restartRecoveryStarted)
     const diskAfterRestart = await Promise.all(fixtures.map(fixture => directoryUsage(fixture.storeRoot)))
     const rssAfterRestart = process.memoryUsage().rss
 
@@ -1058,9 +1186,17 @@ export async function runRealBlindRelayLab (options = {}) {
       relaysStopped: relayCount,
       relaysRestarted: relayCount,
       cleanStopWallMs: Number(stopMs.toFixed(3)),
-      restartAndRecoveryWallMs: Number(restartMs.toFixed(3)),
+      restartAndRecoveryWallMs: Number(restartAndRecoveryMs.toFixed(3)),
       retainedStateReadChecks: recoveryReadLatencies.length,
-      diskBytesStableAcrossRestart: diskStable
+      diskBytesStableAcrossRestart: diskStable,
+      initialV2WriteStartupQuarantineObserved: initialV2WriteReadiness.startupQuarantineObserved,
+      initialV2WritePathReadyBeforeWrites: initialV2WriteReadiness.readyBeforeWrites,
+      initialV2WriteReadinessWaitMs: initialV2WriteReadiness.waitMs,
+      restartV2WriteStartupQuarantineObserved: restartV2WriteReadiness.startupQuarantineObserved,
+      restartV2WritePathReadyBeforeWrites: restartV2WriteReadiness.readyBeforeWrites,
+      restartV2WriteReadinessWaitMs: restartV2WriteReadiness.waitMs,
+      restartV2PublicHttpsExactPutAttempts: restartProbeRecords.length,
+      restartV2RetainedReadChecks: restartV2RetainedReadLatencies.length
     })
     const gates = localGates({
       allCountsExact,
