@@ -4,8 +4,9 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const REAL_BLIND_RELAY_LAB_SCHEMA = 'hiverelay.blind.real-relay-lab.v5'
+export const REAL_BLIND_RELAY_LAB_SCHEMA = 'hiverelay.blind.real-relay-lab.v6'
 export const REAL_BLIND_RELAY_CANONICALIZATION = 'HIVERELAY_SORTED_JSON_V1'
+export const REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS = 15_000
 export const REAL_BLIND_RELAY_LOCAL_PERFORMANCE_THRESHOLDS = Object.freeze({
   minimumOperationsPerPath: 32,
   stagedPutMinimumOperationsPerSecond: 5,
@@ -14,7 +15,7 @@ export const REAL_BLIND_RELAY_LOCAL_PERFORMANCE_THRESHOLDS = Object.freeze({
   publicGetMaximumP99Millis: 2000,
   recoveredGetMinimumOperationsPerSecond: 20,
   recoveredGetMaximumP99Millis: 2000,
-  restartRecoveryMaximumWallMillis: 15000
+  restartPostQuarantineRecoveryMaximumWallMillis: 15000
 })
 export const REAL_BLIND_RELAY_RUNTIME_EXCLUSIONS = Object.freeze([
   'CORE_PUBLIC_EXECUTION_UNASSEMBLED',
@@ -454,12 +455,15 @@ function validateMeasuredRelationships (report) {
     'relaysRestarted',
     'cleanStopWallMs',
     'restartAndRecoveryWallMs',
+    'restartMandatoryQuarantineAndLaunchWallMs',
+    'restartPostQuarantineRecoveryWallMs',
     'retainedStateReadChecks',
     'diskBytesStableAcrossRestart',
     'initialV2WriteStartupQuarantineObserved',
     'initialV2WritePathReadyBeforeWrites',
     'initialV2WriteReadinessWaitMs',
     'restartV2WriteStartupQuarantineObserved',
+    'restartV2WriteStartupQuarantineMillis',
     'restartV2WritePathReadyBeforeWrites',
     'restartV2WriteReadinessWaitMs',
     'restartV2PublicHttpsExactPutAttempts',
@@ -469,7 +473,26 @@ function validateMeasuredRelationships (report) {
     fail('recovery stop/restart counts must equal relayInstances')
   }
   finiteNumber(report.recovery.cleanStopWallMs, 0, 'recovery.cleanStopWallMs')
-  finiteNumber(report.recovery.restartAndRecoveryWallMs, 0, 'recovery.restartAndRecoveryWallMs')
+  const restartAndRecoveryWallMs = finiteNumber(
+    report.recovery.restartAndRecoveryWallMs,
+    0,
+    'recovery.restartAndRecoveryWallMs'
+  )
+  const restartMandatoryQuarantineAndLaunchWallMs = finiteNumber(
+    report.recovery.restartMandatoryQuarantineAndLaunchWallMs,
+    REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS,
+    'recovery.restartMandatoryQuarantineAndLaunchWallMs'
+  )
+  const restartPostQuarantineRecoveryWallMs = finiteNumber(
+    report.recovery.restartPostQuarantineRecoveryWallMs,
+    0,
+    'recovery.restartPostQuarantineRecoveryWallMs'
+  )
+  if (Math.abs(restartAndRecoveryWallMs -
+      restartMandatoryQuarantineAndLaunchWallMs -
+      restartPostQuarantineRecoveryWallMs) > 0.01) {
+    fail('recovery restart phase timings do not sum to restartAndRecoveryWallMs')
+  }
   if (report.recovery.initialV2WriteStartupQuarantineObserved !== true ||
       report.recovery.initialV2WritePathReadyBeforeWrites !== true ||
       report.recovery.restartV2WriteStartupQuarantineObserved !== true ||
@@ -477,7 +500,19 @@ function validateMeasuredRelationships (report) {
     fail('recovery must retain the observed V2 replay-journal quarantine and pre-write readiness evidence')
   }
   finiteNumber(report.recovery.initialV2WriteReadinessWaitMs, 0, 'recovery.initialV2WriteReadinessWaitMs')
-  finiteNumber(report.recovery.restartV2WriteReadinessWaitMs, 0, 'recovery.restartV2WriteReadinessWaitMs')
+  exactAuthority(
+    report.recovery.restartV2WriteStartupQuarantineMillis,
+    REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS,
+    'recovery.restartV2WriteStartupQuarantineMillis'
+  )
+  const restartV2WriteReadinessWaitMs = finiteNumber(
+    report.recovery.restartV2WriteReadinessWaitMs,
+    0,
+    'recovery.restartV2WriteReadinessWaitMs'
+  )
+  if (restartV2WriteReadinessWaitMs > restartMandatoryQuarantineAndLaunchWallMs) {
+    fail('recovery restart readiness wait must be contained by the mandatory quarantine and launch phase')
+  }
   if (report.recovery.restartV2PublicHttpsExactPutAttempts !== relayCount ||
       report.recovery.restartV2RetainedReadChecks !== relayCount) {
     fail('recovery must prove one exact public V2 CELL.PUT and retained read per restarted relay')
@@ -546,7 +581,8 @@ function performanceChecks (report) {
     publicGetP99: get.p99Ms <= thresholds.publicGetMaximumP99Millis,
     recoveredGetThroughput: recovered.operationsPerSecond >= thresholds.recoveredGetMinimumOperationsPerSecond,
     recoveredGetP99: recovered.p99Ms <= thresholds.recoveredGetMaximumP99Millis,
-    restartRecoveryWall: report.recovery.restartAndRecoveryWallMs <= thresholds.restartRecoveryMaximumWallMillis
+    restartPostQuarantineRecoveryWall: report.recovery.restartPostQuarantineRecoveryWallMs <=
+      thresholds.restartPostQuarantineRecoveryMaximumWallMillis
   }
 }
 
@@ -596,6 +632,10 @@ export function verifyRealBlindRelayReport (report, options = {}) {
     allRecoveredReadsCompleted: report.metrics.recoveredPublicCellGet.count === attempted &&
       report.integrity.contentChecksAfterRestart === attempted,
     restartV2WriteRecoveryObserved: report.recovery.restartV2WriteStartupQuarantineObserved === true &&
+      report.recovery.restartV2WriteStartupQuarantineMillis ===
+        REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS &&
+      report.recovery.restartMandatoryQuarantineAndLaunchWallMs >=
+        REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS &&
       report.recovery.restartV2WritePathReadyBeforeWrites === true &&
       report.recovery.restartV2PublicHttpsExactPutAttempts === measured.relayCount &&
       report.recovery.restartV2RetainedReadChecks === measured.relayCount,

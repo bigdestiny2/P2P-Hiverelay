@@ -3,6 +3,7 @@ import { runRealBlindRelayLab } from '../../scripts/run-real-blind-relay-lab.mjs
 import {
   REAL_BLIND_RELAY_FAMILY_SCOPE,
   REAL_BLIND_RELAY_LOCAL_PERFORMANCE_THRESHOLDS,
+  REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS,
   REAL_BLIND_RELAY_MANDATORY_BLOCKERS,
   REAL_BLIND_RELAY_RUNTIME_EXCLUSIONS,
   sealRealBlindRelayReport,
@@ -69,8 +70,20 @@ test('real local relay lab executes two isolated store copies and proves retaine
   t.is(report.recovery.initialV2WritePathReadyBeforeWrites, true)
   t.ok(report.recovery.initialV2WriteReadinessWaitMs >= 0)
   t.is(report.recovery.restartV2WriteStartupQuarantineObserved, true)
+  t.is(report.recovery.restartV2WriteStartupQuarantineMillis,
+    REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS)
   t.is(report.recovery.restartV2WritePathReadyBeforeWrites, true)
   t.ok(report.recovery.restartV2WriteReadinessWaitMs >= 0)
+  t.ok(report.recovery.restartMandatoryQuarantineAndLaunchWallMs >=
+    REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS)
+  t.ok(report.recovery.restartAndRecoveryWallMs >
+    REAL_BLIND_RELAY_LOCAL_PERFORMANCE_THRESHOLDS.restartPostQuarantineRecoveryMaximumWallMillis)
+  t.ok(report.recovery.restartPostQuarantineRecoveryWallMs <=
+    REAL_BLIND_RELAY_LOCAL_PERFORMANCE_THRESHOLDS.restartPostQuarantineRecoveryMaximumWallMillis)
+  t.ok(Math.abs(report.recovery.restartAndRecoveryWallMs -
+    report.recovery.restartMandatoryQuarantineAndLaunchWallMs -
+    report.recovery.restartPostQuarantineRecoveryWallMs) <= 0.01)
+  t.is(report.gates.performance.checks.restartPostQuarantineRecoveryWall, true)
   t.is(report.recovery.restartV2PublicHttpsExactPutAttempts, 2)
   t.is(report.recovery.restartV2RetainedReadChecks, 2)
   t.is(report.runtimeErrors.length, 0)
@@ -121,6 +134,17 @@ test('real local relay lab executes two isolated store copies and proves retaine
     body.gates.performance.thresholds.minimumOperationsPerPath = 1
   })
   t.exception(() => verifyRealBlindRelayReport(weakenedThreshold), /gates\.performance\.thresholds\.minimumOperationsPerPath/)
+  const shortenedQuarantine = resealMutation(report, body => {
+    body.recovery.restartMandatoryQuarantineAndLaunchWallMs =
+      REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS - 1
+  })
+  t.exception(() => verifyRealBlindRelayReport(shortenedQuarantine),
+    /restartMandatoryQuarantineAndLaunchWallMs/)
+  const inconsistentRestartPhases = resealMutation(report, body => {
+    body.recovery.restartPostQuarantineRecoveryWallMs++
+  })
+  t.exception(() => verifyRealBlindRelayReport(inconsistentRestartPhases),
+    /restart phase timings/)
   const broadenedCopyCount = resealMutation(report, body => {
     body.load.independentCellCopiesPerLogicalRecord++
   })

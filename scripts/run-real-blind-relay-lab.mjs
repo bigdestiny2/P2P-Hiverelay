@@ -63,6 +63,7 @@ import {
   REAL_BLIND_RELAY_CANONICALIZATION,
   REAL_BLIND_RELAY_LAB_SCHEMA,
   REAL_BLIND_RELAY_LOCAL_PERFORMANCE_THRESHOLDS,
+  REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS,
   realBlindRelayExpectedBlockers,
   sealRealBlindRelayReport,
   verifyRealBlindRelayReport
@@ -114,8 +115,8 @@ function boundedInteger (value, fallback, minimum, maximum, field) {
   return value
 }
 
-function elapsedMillis (started) {
-  return Number(process.hrtime.bigint() - started) / 1e6
+function elapsedMillis (started, ended = process.hrtime.bigint()) {
+  return Number(ended - started) / 1e6
 }
 
 function percentile (values, quantile) {
@@ -819,24 +820,33 @@ function v2WriteReadiness (relay) {
     v2WritePathAssembled: status.v2WritePathAssembled === true,
     admissionCaptureComplete: status.admissionCapture?.complete === true,
     replayJournalReady: status.privateIpcReplayJournal?.ready === true,
-    replayJournalReason: status.privateIpcReplayJournal?.reason || null
+    replayJournalReason: status.privateIpcReplayJournal?.reason || null,
+    replayJournalStartupQuarantineMillis:
+      status.privateIpcReplayJournal?.startupWriteQuarantineMillis ?? null
   })
 }
 
 async function waitForV2WriteReadiness (relays, phase) {
   const initial = relays.map(v2WriteReadiness)
   if (!initial.every(status => status.v2WritePathReady === false &&
-    status.replayJournalReady === false && status.replayJournalReason === PRIVATE_IPC_V2_STARTUP_QUARANTINE)) {
+    status.replayJournalReady === false &&
+    status.replayJournalReason === PRIVATE_IPC_V2_STARTUP_QUARANTINE &&
+    status.replayJournalStartupQuarantineMillis ===
+      REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS)) {
     fail(`${phase} must begin in the mandatory V2 replay-journal startup quarantine`)
   }
   const started = process.hrtime.bigint()
   const deadline = Date.now() + V2_WRITE_READINESS_TIMEOUT_MS
   for (;;) {
     const current = relays.map(v2WriteReadiness)
-    if (current.every(status => status.v2WritePathReady && status.replayJournalReady && status.replayJournalReason === null)) {
+    if (current.every(status => status.v2WritePathReady && status.replayJournalReady &&
+      status.replayJournalReason === null &&
+      status.replayJournalStartupQuarantineMillis ===
+        REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS)) {
       return Object.freeze({
         phase,
         startupQuarantineObserved: true,
+        startupQuarantineMillis: REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS,
         readyBeforeWrites: true,
         waitMs: Number(elapsedMillis(started).toFixed(3))
       })
@@ -927,6 +937,10 @@ function localGates (input) {
     allRecoveredReadsCompleted: input.metrics.recoveredPublicCellGet.count === input.attemptedOperations &&
       input.contentChecksAfterRestart === input.attemptedOperations,
     restartV2WriteRecoveryObserved: input.recovery.restartV2WriteStartupQuarantineObserved === true &&
+      input.recovery.restartV2WriteStartupQuarantineMillis ===
+        REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS &&
+      input.recovery.restartMandatoryQuarantineAndLaunchWallMs >=
+        REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS &&
       input.recovery.restartV2WritePathReadyBeforeWrites === true &&
       input.recovery.restartV2PublicHttpsExactPutAttempts === input.relayCount &&
       input.recovery.restartV2RetainedReadChecks === input.relayCount,
@@ -946,7 +960,8 @@ function localGates (input) {
     publicGetP99: input.metrics.publicCellGet.p99Ms <= thresholds.publicGetMaximumP99Millis,
     recoveredGetThroughput: input.metrics.recoveredPublicCellGet.operationsPerSecond >= thresholds.recoveredGetMinimumOperationsPerSecond,
     recoveredGetP99: input.metrics.recoveredPublicCellGet.p99Ms <= thresholds.recoveredGetMaximumP99Millis,
-    restartRecoveryWall: input.recovery.restartAndRecoveryWallMs <= thresholds.restartRecoveryMaximumWallMillis
+    restartPostQuarantineRecoveryWall: input.recovery.restartPostQuarantineRecoveryWallMs <=
+      thresholds.restartPostQuarantineRecoveryMaximumWallMillis
   })
   return Object.freeze({
     correctness: Object.freeze({
@@ -1360,6 +1375,10 @@ export async function runRealBlindRelayLab (options = {}) {
     // leave it, accept a real exporter-bound public V2 attempt, and then serve
     // the retained content without changing the exact per-relay store count.
     const restartV2WriteReadiness = await waitForV2WriteReadiness(relays, 'relay restart')
+    // The mandatory replay quarantine is correctness evidence, not work the
+    // local performance budget can make faster.  Budget only the qualification,
+    // exact retry, and retained readback work that begins after readiness.
+    const restartPostQuarantineRecoveryStarted = process.hrtime.bigint()
     const recoveredGetEndpoints = []
     for (let index = 0; index < relays.length; index++) {
       const get = await qualify(
@@ -1397,7 +1416,16 @@ export async function runRealBlindRelayLab (options = {}) {
       'after-restart'
     ))
     const recoveryReadMs = elapsedMillis(recoveryReadStarted)
-    const restartAndRecoveryMs = elapsedMillis(restartRecoveryStarted)
+    const restartRecoveryFinished = process.hrtime.bigint()
+    const restartAndRecoveryMs = elapsedMillis(restartRecoveryStarted, restartRecoveryFinished)
+    const restartMandatoryQuarantineAndLaunchMs = elapsedMillis(
+      restartRecoveryStarted,
+      restartPostQuarantineRecoveryStarted
+    )
+    const restartPostQuarantineRecoveryMs = elapsedMillis(
+      restartPostQuarantineRecoveryStarted,
+      restartRecoveryFinished
+    )
     const diskAfterRestart = await Promise.all(fixtures.map(fixture => directoryUsage(fixture.storeRoot)))
     const rssAfterRestart = process.memoryUsage().rss
 
@@ -1444,12 +1472,16 @@ export async function runRealBlindRelayLab (options = {}) {
       relaysRestarted: relayCount,
       cleanStopWallMs: Number(stopMs.toFixed(3)),
       restartAndRecoveryWallMs: Number(restartAndRecoveryMs.toFixed(3)),
+      restartMandatoryQuarantineAndLaunchWallMs:
+        Number(restartMandatoryQuarantineAndLaunchMs.toFixed(3)),
+      restartPostQuarantineRecoveryWallMs: Number(restartPostQuarantineRecoveryMs.toFixed(3)),
       retainedStateReadChecks: recoveryReadLatencies.length,
       diskBytesStableAcrossRestart: diskStable,
       initialV2WriteStartupQuarantineObserved: initialV2WriteReadiness.startupQuarantineObserved,
       initialV2WritePathReadyBeforeWrites: initialV2WriteReadiness.readyBeforeWrites,
       initialV2WriteReadinessWaitMs: initialV2WriteReadiness.waitMs,
       restartV2WriteStartupQuarantineObserved: restartV2WriteReadiness.startupQuarantineObserved,
+      restartV2WriteStartupQuarantineMillis: restartV2WriteReadiness.startupQuarantineMillis,
       restartV2WritePathReadyBeforeWrites: restartV2WriteReadiness.readyBeforeWrites,
       restartV2WriteReadinessWaitMs: restartV2WriteReadiness.waitMs,
       restartV2PublicHttpsExactPutAttempts: restartProbeRecords.length,

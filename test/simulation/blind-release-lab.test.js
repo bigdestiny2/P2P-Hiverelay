@@ -14,6 +14,7 @@ import {
   REAL_BLIND_RELAY_FAMILY_SCOPE,
   REAL_BLIND_RELAY_LAB_SCHEMA,
   REAL_BLIND_RELAY_LOCAL_PERFORMANCE_THRESHOLDS,
+  REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS,
   REAL_BLIND_RELAY_RUNTIME_EXCLUSIONS,
   realBlindRelayExpectedBlockers,
   sealRealBlindRelayReport
@@ -320,7 +321,7 @@ function realRelayFixture () {
     publicGetP99: true,
     recoveredGetThroughput: true,
     recoveredGetP99: true,
-    restartRecoveryWall: true
+    restartPostQuarantineRecoveryWall: true
   }
   const metric = (count, wallMs) => ({
     count,
@@ -448,13 +449,18 @@ function realRelayFixture () {
       diskBytesStableAcrossRestart: true,
       initialV2WriteStartupQuarantineObserved: true,
       initialV2WritePathReadyBeforeWrites: true,
-      initialV2WriteReadinessWaitMs: 15000,
+      initialV2WriteReadinessWaitMs: REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS,
       restartV2WriteStartupQuarantineObserved: true,
+      restartV2WriteStartupQuarantineMillis:
+        REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS,
       restartV2WritePathReadyBeforeWrites: true,
-      restartV2WriteReadinessWaitMs: 15000,
+      restartV2WriteReadinessWaitMs: REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS,
       restartV2PublicHttpsExactPutAttempts: relayCount,
       restartV2RetainedReadChecks: relayCount,
-      restartAndRecoveryWallMs: 100
+      restartAndRecoveryWallMs: REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS + 100,
+      restartMandatoryQuarantineAndLaunchWallMs:
+        REAL_BLIND_RELAY_MANDATORY_REPLAY_QUARANTINE_MILLIS,
+      restartPostQuarantineRecoveryWallMs: 100
     },
     resources: {
       processRssBytesBefore: 1_000,
@@ -553,7 +559,14 @@ test('exact full browser/fault and pinned real-relay evidence satisfy their cont
   )
   t.ok(browserValidation.passed)
   t.ok(faultValidation.passed)
-  t.ok(validateRealRelayEvidence(realRelayFixture()).passed)
+  const realRelay = realRelayFixture()
+  t.is(REAL_BLIND_RELAY_LOCAL_PERFORMANCE_THRESHOLDS
+    .restartPostQuarantineRecoveryMaximumWallMillis, 15000)
+  t.ok(realRelay.recovery.restartAndRecoveryWallMs >
+    REAL_BLIND_RELAY_LOCAL_PERFORMANCE_THRESHOLDS.restartPostQuarantineRecoveryMaximumWallMillis)
+  t.ok(realRelay.recovery.restartPostQuarantineRecoveryWallMs <
+    REAL_BLIND_RELAY_LOCAL_PERFORMANCE_THRESHOLDS.restartPostQuarantineRecoveryMaximumWallMillis)
+  t.ok(validateRealRelayEvidence(realRelay).passed)
   t.is(browserValidation.authenticityProven, false)
   t.is(browserValidation.authorizesRelease, false)
   t.is(faultValidation.authenticityProven, false)
