@@ -1,0 +1,88 @@
+name: Release StartOS 0.4 package
+
+# Builds the StartOS 0.4 (TypeScript-SDK) Blindspark package from startos-0.4/
+# and attaches the sideloadable .s9pk to the GitHub Release.
+#
+# Deliberately a SEPARATE, isolated workflow from release-surfaces.yml: the 0.4
+# toolchain is entirely different (start-cli + @start9labs/start-sdk + the new
+# signed .s9pk format) from the 0.3.5.x path (startbox/start-sdk + manifest.yaml),
+# so a failure in the new 0.4 build can never break the live 0.3 release + fleet
+# pipeline. The two package channels coexist during the transition.
+#
+# Signing: with STARTOS_DEV_KEY set, the package is signed and registry-
+# publishable. Without it, the build falls back to an ephemeral key — fine for a
+# sideloadable GitHub Release artifact, NOT for registry publication. The
+# registry/S3 marketplace publish (Start9's reusable release.yml, which needs a
+# RELEASE_REGISTRY + S3 bucket) is a documented follow-on — see
+# startos-0.4/README.md.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build + attach the .s9pk to (e.g. v0.24.3)
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-startos-0.4-${{ github.event.release.tag_name || github.event.inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Start9's maintained composite action installs the 0.4 toolchain
+      # (start-cli + docker + node) — reused so this stays correct as Start9
+      # evolves the packaging toolchain, rather than hand-rolling the install.
+      - name: Set up StartOS build environment
+        uses: Start9Labs/start-technologies/.github/actions/setup-build-env@master
+
+      - name: Configure StartOS developer key
+        working-directory: startos-0.4
+        env:
+          STARTOS_DEV_KEY: ${{ secrets.STARTOS_DEV_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.startos"
+          if [ -n "${STARTOS_DEV_KEY:-}" ]; then
+            printf '%s' "$STARTOS_DEV_KEY" > "$HOME/.startos/developer.key.pem"
+            echo "Using STARTOS_DEV_KEY — signed, registry-publishable package."
+          else
+            start-cli init-key || start-cli init
+            echo "::warning title=Ephemeral StartOS key::STARTOS_DEV_KEY is not set; built with an ephemeral key (sideloadable artifact only, not registry-publishable). Add the STARTOS_DEV_KEY secret for a signed package."
+          fi
+          chmod 600 "$HOME/.startos/developer.key.pem"
+          mkdir -p .startos
+          cp "$HOME/.startos/developer.key.pem" .startos/build-key
+
+      - name: Build the StartOS 0.4 package
+        working-directory: startos-0.4
+        run: |
+          set -euo pipefail
+          npm ci
+          make
+          ls -1 *.s9pk
+          s9pk_sha="$(sha256sum blindspark.s9pk | cut -d ' ' -f 1)"
+          if ! [[ "$s9pk_sha" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "StartOS 0.4 package SHA-256 is malformed." >&2
+            exit 1
+          fi
+          echo "Built blindspark.s9pk ($s9pk_sha)"
+
+      - name: Upload .s9pk to the GitHub Release
+        working-directory: startos-0.4
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.release.tag_name || github.event.inputs.tag }}"
+          gh release upload "$tag" blindspark.s9pk --clobber
+          echo "Attached blindspark.s9pk (StartOS 0.4) to release $tag"
