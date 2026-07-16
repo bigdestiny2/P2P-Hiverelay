@@ -87,11 +87,12 @@ Notes:
   `{type:'custody-intent-id-v1', blindContentId, ciphertextRoot, contentVersion, publisherPubkey, timestamp}`.
 - Useful defaults already applied: `custodyMode:'blind'`, `contentType:'shard-set'`,
   `deadline: now+10m`, `retainUntil: now+30d`.
-- **Client-signer caveat (task #115):** the Bare-safe client signer
-  (`packages/client/custody.js`) carries five of the six v2 fields but **not**
-  `shareManifest`, so it cannot yet emit a manifest-bearing intent. A
-  **node** dealer uses the core signer above and works today; a browser/Bare
-  dealer is blocked until `shareManifest` is mirrored into the client signer.
+- **Client-signer parity (task #115 — resolved):** the Bare-safe client signer
+  (`packages/client/custody.js`) now carries all six v2 custody-intent fields,
+  including `shareManifest` (#162), so a browser/Bare dealer can author a
+  manifest-bearing intent today — the same as a **node** dealer using the core
+  signer above. `shareManifest` stays optional: when absent it is omitted from
+  the signed payload, byte-identical to a manifest-less v2 intent.
 
 ## 3. The custody pin — `signShardPin(pin, publisherKeyPair)`
 
