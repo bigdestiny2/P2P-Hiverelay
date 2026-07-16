@@ -18,12 +18,16 @@ export async function runBlindDaemonCli (options = {}) {
   const bootstrap = loadDaemonBootstrapConfig(environment, options.identity || process)
   const releaseGate = options.releaseGate || assertProductionRuntimeReleaseReady
   const runtimeConfig = loadProductionRuntimeConfig(environment, bootstrap.endpointIds)
+  const enableCellRuntime = options.enableCellRuntime === true
   let runtime
   try {
     runtime = await assembleProductionBlindDaemon({
       bootstrap,
       runtimeConfig,
       releaseGate,
+      enableCellRuntime,
+      resolveAdmissionAdapter: options.resolveAdmissionAdapter,
+      testOnlyPrivateIpcReplayJournalOptions: options.testOnlyPrivateIpcReplayJournalOptions,
       onError: error => {
         if (typeof options.onError === 'function') options.onError(error)
         else report(error)
@@ -35,8 +39,13 @@ export async function runBlindDaemonCli (options = {}) {
     throw error
   }
 
+  const status = runtime.status()
+  const operations = enableCellRuntime ? 'DESCRIBE,CELL' : 'DESCRIBE only'
+  const writeState = enableCellRuntime
+    ? `; CELL.PUT=${status.v2WritePathReady ? 'ready' : status.privateIpcReplayJournal?.reason || 'not-ready'}`
+    : ''
   process.stdout.write(`[blind-daemon] private IPC ready at ${bootstrap.unarySocketPath} and ${bootstrap.streamSocketPath}; ` +
-    'public operations=DESCRIBE only\n')
+    `public operations=${operations}${writeState}\n`)
 
   if (options.installSignalHandlers !== false) {
     let shutdownPromise = null

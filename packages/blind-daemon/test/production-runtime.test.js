@@ -49,6 +49,7 @@ import {
   verifyStagedCellPutPublicOuterEnvelopeV2
 } from '@hiverelay/blind-ipc/private-ipc-v2-contract'
 import { loadDaemonBootstrapConfig } from '../bootstrap-config.js'
+import { runBlindDaemonCli } from '../cli.js'
 import {
   PRODUCTION_RUNTIME_EXCLUSIONS,
   PRODUCTION_RUNTIME_OPERATION_BITS,
@@ -899,6 +900,35 @@ test('packaged CLI assembly starts through its real child-process path and shuts
   const [code, signal] = await exited
   t.is(code, 0)
   t.is(signal, null)
+})
+
+test('packaged CLI can explicitly assemble the captured CELL runtime without weakening its default', async t => {
+  const fixture = await runtimeFixture({ cellRuntime: true, descriptorSequence: 1 })
+  let runtime = null
+  t.teardown(async () => {
+    if (runtime) await runtime.close().catch(() => {})
+    await removeBlindBoundaryScratch(fixture.directory)
+  })
+  const adapter = splitAdmissionAdapter()
+  let replayOffset = -15_000n
+  runtime = await runBlindDaemonCli({
+    environment: fixture.environment,
+    releaseGate: async () => {},
+    enableCellRuntime: true,
+    resolveAdmissionAdapter: async () => adapter,
+    testOnlyPrivateIpcReplayJournalOptions: {
+      monotonicMillis: () => (process.hrtime.bigint() / 1_000_000n) + replayOffset
+    },
+    installSignalHandlers: false
+  })
+  t.is(runtime.status().started, true)
+  t.is(runtime.status().v2WritePathAssembled, true)
+  t.is(runtime.status().v2WritePathReady, false)
+  t.alike(runtime.status().admissionCapture, { complete: true, required: 1, captured: 1 })
+  replayOffset = 0n
+  t.is(runtime.status().v2WritePathReady, true)
+  await runtime.close()
+  runtime = null
 })
 
 test('direct production bin stops at the draft route-scope authority blocker before runtime assembly', async t => {
