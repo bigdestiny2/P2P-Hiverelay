@@ -120,13 +120,21 @@ while IFS='|' read -r name host keyspec channel; do
   out="$(printf '%s\n' "$out" | tail -n 1)"
   IFS='|' read -r ver rest disk <<<"$out"
   read -r run apps conns <<<"${rest:-? ? ?}"
+  # Flag disk pressure so a filling box is caught BEFORE it wedges (a full disk
+  # hangs the relay → public 502). ! at >=75%, !! at >=90%.
+  disk_pct="$(printf '%s' "$disk" | tr -dc '0-9')"
+  disk_display="${disk:-?}"
+  if [ -n "$disk_pct" ]; then
+    if [ "$disk_pct" -ge 90 ] 2>/dev/null; then disk_display="${disk}!!"
+    elif [ "$disk_pct" -ge 75 ] 2>/dev/null; then disk_display="${disk}!"; fi
+  fi
   printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' \
     "$safe_name" \
     "$(clean_field "${ver:-?}")" \
     "$(clean_field "${run:-?}")" \
     "$(clean_field "${apps:-?}")" \
     "$(clean_field "${conns:-?}")" \
-    "$(clean_field "${disk:-?}")" \
+    "$(clean_field "${disk_display}")" \
     "$safe_target"
 done < <(python3 -c '
 import json,sys
@@ -135,3 +143,5 @@ for r in json.load(open(sys.argv[1]))["relays"]:
     key  = "" if r.get("sshKey") in (None,"default") else r["sshKey"]
     print("{}|{}|{}|{}".format(r["name"], host, key, r.get("channel", "stable")))
 ' "$RELAYS")
+
+printf '\nDISK flags: %s = >=75%% (set/verify maxStorageBytes), %s = >=90%% (act now — a full disk wedges the relay).\n' '!' '!!'

@@ -96,7 +96,12 @@ test('cli start uses HIVERELAY_MAX_STORAGE only before saved operator config exi
   }, 'Max Store:')
 
   t.ok(saved.sawNeedle)
-  t.ok(saved.stdout.includes('Max Store:  50.0 GB'))
+  // Once a saved config.json exists, HIVERELAY_MAX_STORAGE is ignored (env is a
+  // default, not an override) and the cap falls back to the unset default. That
+  // default is now DISK-RELATIVE (resolveStorageCap → ~75% of the volume) rather
+  // than a fixed 50 GB, so assert the env value was not applied instead of a
+  // fixed number that depends on the test machine's disk.
+  t.absent(saved.stdout.includes('Max Store:  10.0 GB'), 'HIVERELAY_MAX_STORAGE not applied once a saved config exists')
 })
 
 test('cli start uses HIVERELAY_STORAGE when --storage is absent', async (t) => {
