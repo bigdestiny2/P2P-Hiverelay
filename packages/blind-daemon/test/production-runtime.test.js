@@ -12,6 +12,7 @@ import {
   ERROR_CODE,
   FAMILY,
   FRAME_KIND,
+  HEALTH_INTEGRITY_STATE,
   OPERATION,
   RESULT_SIGNATURE_DOMAIN_ID,
   TRANSPORT_ID,
@@ -56,7 +57,8 @@ import {
   PRODUCTION_DESCRIBE_AND_CELL_OPERATION_BITS,
   assertProductionRuntimeCompleteness,
   assembleProductionBlindDaemon,
-  loadProductionRuntimeConfig
+  loadProductionRuntimeConfig,
+  productionStorageOperationalIntegrity
 } from '../production-runtime.js'
 import { BLIND_CELL_STORAGE_PRODUCTION_BLOCKERS } from '../storage-engine.js'
 import {
@@ -92,6 +94,38 @@ test('production completeness gate cannot be satisfied by publishing only ABI au
 
   assertProductionRuntimeCompleteness({ runtimeExclusions: [], storageBlockers: [] })
   t.pass('only an explicitly empty runtime and storage blocker set is complete')
+})
+
+test('production storage health separates operational integrity from promotion blockers', t => {
+  const verified = productionStorageOperationalIntegrity({
+    state: 'READY',
+    storeFormat: { bound: true },
+    blockers: ['ONLINE_REBALANCE_UNIMPLEMENTED', 'PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED']
+  })
+  t.alike(verified, {
+    fullStoreVerified: true,
+    integrityState: HEALTH_INTEGRITY_STATE.VERIFIED
+  })
+
+  const unbound = productionStorageOperationalIntegrity({
+    state: 'READY',
+    storeFormat: { bound: false },
+    blockers: []
+  })
+  t.alike(unbound, {
+    fullStoreVerified: false,
+    integrityState: HEALTH_INTEGRITY_STATE.DEGRADED
+  })
+
+  const readOnly = productionStorageOperationalIntegrity({
+    state: 'READ_ONLY',
+    storeFormat: { bound: true },
+    blockers: []
+  })
+  t.alike(readOnly, {
+    fullStoreVerified: false,
+    integrityState: HEALTH_INTEGRITY_STATE.FAILED
+  })
 })
 
 function signCanonical (codec, value, domainId, secretKey) {

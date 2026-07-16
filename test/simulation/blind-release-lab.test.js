@@ -306,7 +306,7 @@ function realRelayFixture () {
     allStagedWritesCompleted: true,
     allPublicReadsCompleted: true,
     allRecoveredReadsCompleted: true,
-    declaredQualificationOutcomeObserved: true,
+    ordinaryClientQualificationSucceeded: true,
     independentRelayIdentitiesObserved: true,
     independentStoreIdsObserved: true,
     independentCopiesObserved: true,
@@ -345,9 +345,15 @@ function realRelayFixture () {
     bytes: 4_000
   }))
   const qualificationAttempts = Array.from({ length: relayCount * 3 }, () => ({
-    qualified: false,
-    code: 'RELAY_NOT_QUALIFIED',
-    message: 'fresh health does not prove requested readiness'
+    qualified: true,
+    code: null,
+    message: null
+  })).map((attempt, index) => ({
+    ...attempt,
+    relayIndex: index % relayCount,
+    phase: index < relayCount
+      ? 'initial-put'
+      : index < relayCount * 2 ? 'initial-get' : 'recovered-get'
   }))
   return sealRealBlindRelayReport({
     schema: REAL_BLIND_RELAY_LAB_SCHEMA,
@@ -431,7 +437,7 @@ function realRelayFixture () {
       independentlyAllocatedLogicalRecords: logicalRecords,
       allCopiesIndependentlyAllocatedAndEncrypted: true,
       replicaProtocolMeasured: false,
-      ordinaryClientQualificationFailedClosed: true,
+      ordinaryClientQualificationSucceeded: true,
       qualificationAttempts
     },
     recovery: {

@@ -557,10 +557,32 @@ function contextAuthority (snapshot, supportByEndpoint, context) {
   return endpoint
 }
 
+export function productionStorageOperationalIntegrity (status) {
+  if (!status || typeof status !== 'object') {
+    throw new TypeError('production storage status is required')
+  }
+  const readOnly = status.state === 'READ_ONLY'
+  const operationalState = status.state === 'READY' || status.state === 'CLOCK_UNSAFE'
+  const formatBound = status.storeFormat?.bound === true
+  return Object.freeze({
+    fullStoreVerified: !readOnly && operationalState && formatBound,
+    integrityState: readOnly
+      ? HEALTH_INTEGRITY_STATE.FAILED
+      : operationalState && formatBound
+        ? HEALTH_INTEGRITY_STATE.VERIFIED
+        : HEALTH_INTEGRITY_STATE.DEGRADED
+  })
+}
+
 function storageDependencySnapshot (storage, enabledOperationBits, readyRoleBits, writeReadinessGuard = null) {
   return async input => {
     const status = storage.status()
-    const hasFormatBlockers = status.blockers.length !== 0
+    // Promotion blockers describe missing future surfaces (profile 2,
+    // rebalance, repair evidence, accelerated scrub). They are not evidence
+    // that this opened profile-1 store failed its own WAL/body verification.
+    // Keep those limitations visible through blockers/rebalanceState while
+    // deriving integrity only from the bound format and live store state.
+    const operationalIntegrity = productionStorageOperationalIntegrity(status)
     const writeReady = writeReadinessGuard == null || writeReadinessGuard(input) === true
     return Object.freeze({
       selfVerified: true,
@@ -568,16 +590,14 @@ function storageDependencySnapshot (storage, enabledOperationBits, readyRoleBits
       descriptorHash: b4a.from(input.descriptorHash),
       endpointId: input.endpointId,
       transportSupportBit: input.transportSupportBit,
-      fullStoreVerified: status.state !== 'READ_ONLY' && !hasFormatBlockers,
+      fullStoreVerified: operationalIntegrity.fullStoreVerified,
       readyRoleBits,
       readyOperationBits: writeReady
         ? enabledOperationBits
         : enabledOperationBits & ~CELL_PUT_OPERATION_BIT_V2,
       clockState: status.state === 'CLOCK_UNSAFE' ? HEALTH_CLOCK_STATE.UNSAFE : HEALTH_CLOCK_STATE.READY,
       effectiveEpochFloor: status.epochFloor,
-      integrityState: status.state === 'READ_ONLY'
-        ? HEALTH_INTEGRITY_STATE.FAILED
-        : hasFormatBlockers ? HEALTH_INTEGRITY_STATE.DEGRADED : HEALTH_INTEGRITY_STATE.VERIFIED,
+      integrityState: operationalIntegrity.integrityState,
       checkpointAgeBand: 0,
       scrubAgeBand: 0,
       rebalanceState: status.blockers.includes('ONLINE_REBALANCE_UNIMPLEMENTED')

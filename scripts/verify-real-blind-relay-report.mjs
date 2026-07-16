@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const REAL_BLIND_RELAY_LAB_SCHEMA = 'hiverelay.blind.real-relay-lab.v4'
+export const REAL_BLIND_RELAY_LAB_SCHEMA = 'hiverelay.blind.real-relay-lab.v5'
 export const REAL_BLIND_RELAY_CANONICALIZATION = 'HIVERELAY_SORTED_JSON_V1'
 export const REAL_BLIND_RELAY_LOCAL_PERFORMANCE_THRESHOLDS = Object.freeze({
   minimumOperationsPerPath: 32,
@@ -31,7 +31,6 @@ export const REAL_BLIND_RELAY_MANDATORY_BLOCKERS = Object.freeze([
   'SYNTHETIC_ADMISSION_NO_ECONOMIC_SETTLEMENT',
   'PRODUCTION_RELEASE_GATE_BYPASSED',
   'INDEPENDENT_CELL_COPIES_NOT_REPLICA_PROTOCOL',
-  'PUBLIC_CELL_REQUESTS_NOT_CLIENT_QUALIFIABLE_DUE_DEGRADED_INTEGRITY',
   'SINGLE_PROCESS_RELAY_ISOLATION_UNMEASURED',
   'SINGLE_HOST_RELAY_ISOLATION_UNMEASURED',
   'SAME_UID_TEST_TOPOLOGY',
@@ -56,10 +55,9 @@ export const REAL_BLIND_RELAY_FAMILY_SCOPE = deepFreeze({
   CELL: {
     measured: true,
     putPath: 'public HTTPS BlindEdge -> V2 full outer-envelope staged private IPC with TLS-exporter binding -> BlindDaemon -> filesystem store',
-    getPath: 'blind-client wire codec test seam -> public HTTPS BlindEdge -> private unary IPC -> BlindDaemon -> filesystem store',
-    ordinaryClientQualified: false,
-    ordinaryClientQualificationBlocker: 'STORAGE_INTEGRITY_REPORTED_DEGRADED',
-    unqualifiedWireTestSeam: true,
+    getPath: 'qualified BlindDirectHttpClient -> public HTTPS BlindEdge -> private unary IPC -> BlindDaemon -> filesystem store -> authenticated result verifier and cell open',
+    ordinaryClientQualified: true,
+    unqualifiedWireTestSeam: false,
     publicHttpPutMeasured: true,
     publicHttpPutAdmissionEvidence: 'synthetic split adapter only; no packaged production-admission or economic-settlement claim'
   },
@@ -376,7 +374,7 @@ function validateMeasuredRelationships (report) {
     'independentlyAllocatedLogicalRecords',
     'allCopiesIndependentlyAllocatedAndEncrypted',
     'replicaProtocolMeasured',
-    'ordinaryClientQualificationFailedClosed',
+    'ordinaryClientQualificationSucceeded',
     'qualificationAttempts'
   ], 'integrity')
   safeInteger(report.integrity.contentChecksBeforeRestart, 0, attempted, 'integrity.contentChecksBeforeRestart')
@@ -423,17 +421,32 @@ function validateMeasuredRelationships (report) {
       report.integrity.qualificationAttempts.length !== relayCount * 3) {
     fail('integrity.qualificationAttempts must contain PUT/GET and recovered GET per relay')
   }
-  let qualificationFailedClosed = true
-  for (const attempt of report.integrity.qualificationAttempts) {
-    exactKeys(attempt, ['qualified', 'code', 'message'], 'integrity.qualificationAttempts[]')
-    if (typeof attempt.qualified !== 'boolean' || (attempt.code !== null && typeof attempt.code !== 'string') ||
-        typeof attempt.message !== 'string') fail('qualification attempt fields have invalid types')
-    qualificationFailedClosed = qualificationFailedClosed && attempt.qualified === false &&
-      attempt.code === 'RELAY_NOT_QUALIFIED' &&
-      attempt.message === 'fresh health does not prove requested readiness'
+  const expectedQualificationPhases = new Set()
+  for (let relayIndex = 0; relayIndex < relayCount; relayIndex++) {
+    expectedQualificationPhases.add(`${relayIndex}:initial-put`)
+    expectedQualificationPhases.add(`${relayIndex}:initial-get`)
+    expectedQualificationPhases.add(`${relayIndex}:recovered-get`)
   }
-  if (report.integrity.ordinaryClientQualificationFailedClosed !== qualificationFailedClosed) {
-    fail('ordinaryClientQualificationFailedClosed is inconsistent with qualification attempts')
+  for (const attempt of report.integrity.qualificationAttempts) {
+    exactKeys(attempt, ['relayIndex', 'phase', 'qualified', 'code', 'message'], 'integrity.qualificationAttempts[]')
+    const relayIndex = safeInteger(
+      attempt.relayIndex,
+      0,
+      relayCount - 1,
+      'integrity.qualificationAttempts[].relayIndex'
+    )
+    if (typeof attempt.phase !== 'string' || attempt.qualified !== true || attempt.code !== null ||
+        attempt.message !== null) fail('qualification attempt must record an exact successful outcome')
+    const key = `${relayIndex}:${attempt.phase}`
+    if (!expectedQualificationPhases.delete(key)) {
+      fail('qualification attempts contain an unknown or duplicate relay phase')
+    }
+  }
+  if (expectedQualificationPhases.size !== 0) {
+    fail('qualification attempts are missing a required relay phase')
+  }
+  if (report.integrity.ordinaryClientQualificationSucceeded !== true) {
+    fail('ordinaryClientQualificationSucceeded must be proven by every qualification attempt')
   }
 
   exactKeys(report.recovery, [
@@ -586,7 +599,7 @@ export function verifyRealBlindRelayReport (report, options = {}) {
       report.recovery.restartV2WritePathReadyBeforeWrites === true &&
       report.recovery.restartV2PublicHttpsExactPutAttempts === measured.relayCount &&
       report.recovery.restartV2RetainedReadChecks === measured.relayCount,
-    declaredQualificationOutcomeObserved: report.integrity.ordinaryClientQualificationFailedClosed === true,
+    ordinaryClientQualificationSucceeded: report.integrity.ordinaryClientQualificationSucceeded === true,
     independentRelayIdentitiesObserved: report.integrity.uniqueRelaySigningKeys === measured.relayCount,
     independentStoreIdsObserved: report.integrity.uniqueStoreIds === measured.relayCount,
     independentCopiesObserved: measured.independentCopies

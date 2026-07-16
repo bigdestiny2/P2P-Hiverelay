@@ -43,6 +43,8 @@ test('real local relay lab executes two isolated store copies and proves retaine
   t.is(report.families.DESCRIBE.measured, true)
   t.is(report.families.CELL.measured, true)
   t.is(report.families.CELL.publicHttpPutMeasured, true)
+  t.is(report.families.CELL.ordinaryClientQualified, true)
+  t.is(report.families.CELL.unqualifiedWireTestSeam, false)
   t.is(report.families.INBOX.measured, false)
   t.is(report.families.CORE.measured, false)
   t.is(report.families.FORWARD.measured, false)
@@ -56,6 +58,10 @@ test('real local relay lab executes two isolated store copies and proves retaine
   t.is(report.integrity.uniqueStoreIds, 2)
   t.is(report.integrity.independentlyAllocatedLogicalRecords, 2)
   t.is(report.integrity.allCopiesIndependentlyAllocatedAndEncrypted, true)
+  t.is(report.integrity.ordinaryClientQualificationSucceeded, true)
+  t.is(report.integrity.qualificationAttempts.length, 6)
+  t.ok(report.integrity.qualificationAttempts.every(attempt =>
+    attempt.qualified === true && attempt.code === null && attempt.message === null))
   t.is(report.recovery.relaysStopped, 2)
   t.is(report.recovery.relaysRestarted, 2)
   t.is(report.recovery.diskBytesStableAcrossRestart, true)
@@ -75,6 +81,7 @@ test('real local relay lab executes two isolated store copies and proves retaine
   t.ok(report.runtimeExclusions.includes('PRODUCTION_ADMISSION_ADAPTER_CAPTURE_REQUIRED'))
   t.ok(report.runtimeExclusions.includes('PRODUCTION_DURABLE_REPLAY_AUTHORITY_REQUIRED'))
   t.absent(report.blockers.includes('PUBLIC_EDGE_STAGED_CELL_PUT_BRIDGE_UNASSEMBLED'))
+  t.absent(report.blockers.includes('PUBLIC_CELL_REQUESTS_NOT_CLIENT_QUALIFIABLE_DUE_DEGRADED_INTEGRITY'))
   t.ok(report.blockers.includes('LOCAL_PERFORMANCE_SMOKE_GATE_NOT_MET'))
   t.is(typeof report.evidenceDigest, 'string')
   t.is(report.evidenceDigest.length, 64)
@@ -126,4 +133,10 @@ test('real local relay lab executes two isolated store copies and proves retaine
   t.exception(() => verifyRealBlindRelayReport(unknownNested), /scope fields are inconsistent/)
   const missingNested = resealMutation(report, body => { delete body.families.CORE.blocker })
   t.exception(() => verifyRealBlindRelayReport(missingNested), /families\.CORE fields are inconsistent/)
+  const failedQualification = resealMutation(report, body => {
+    body.integrity.qualificationAttempts[0].qualified = false
+    body.integrity.qualificationAttempts[0].code = 'RELAY_NOT_QUALIFIED'
+    body.integrity.qualificationAttempts[0].message = 'fresh health does not prove requested readiness'
+  })
+  t.exception(() => verifyRealBlindRelayReport(failedQualification), /exact successful outcome/)
 })

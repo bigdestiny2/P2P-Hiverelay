@@ -35,22 +35,21 @@ import {
   encodeCanonical,
   encodeDispatchFrame,
   encodeOuterEnvelope,
-  getCellResultV1,
   hashStoreFormat,
   resultSignaturePayload,
   serviceDescriptorHash
 } from '@hiverelay/blind-protocol'
 import {
   createCellReplica,
-  createGetCellRequest,
-  decodeUnaryResponse,
-  encodeUnaryRequest,
-  openCell
+  createGetCellRequest
 } from '@hiverelay/blind-client'
 import {
+  BlindDirectHttpClient,
   BlindRelayQualifier,
   DescriptorTrustStore,
-  verifyDescriptorBytes
+  openVerifiedCellGetResult,
+  verifyDescriptorBytes,
+  verifyOperationResult
 } from '@hiverelay/blind-client/control'
 import { createNodeCryptoRuntime } from '@hiverelay/blind-client/runtime/node'
 import { BlindEdge } from '@hiverelay/blind-edge'
@@ -624,7 +623,7 @@ async function stopRelay (relay) {
   if (failure) throw failure
 }
 
-async function qualify (relay, clientRuntime, familyId, operationId) {
+async function qualify (relay, clientRuntime, familyId, operationId, phase) {
   const trustStore = new DescriptorTrustStore()
   const verifiedGenesis = verifyDescriptorBytes(relay.fixture.genesisDescriptorBytes, {
     nowEpoch: relay.fixture.currentEpoch,
@@ -658,6 +657,8 @@ async function qualify (relay, clientRuntime, familyId, operationId) {
       transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP
     })
     return Object.freeze({
+      relayIndex: relay.fixture.relayIndex,
+      phase,
       qualified: true,
       endpoint: qualified.endpoint,
       latencyMs: elapsedMillis(started),
@@ -666,6 +667,8 @@ async function qualify (relay, clientRuntime, familyId, operationId) {
     })
   } catch (error) {
     return Object.freeze({
+      relayIndex: relay.fixture.relayIndex,
+      phase,
       qualified: false,
       endpoint: null,
       latencyMs: elapsedMillis(started),
@@ -814,35 +817,7 @@ async function waitForV2WriteReadiness (relays, phase) {
   }
 }
 
-async function unqualifiedLocalWireRequest (relay, clientRuntime, request, phase, recordIndex) {
-  const encoded = encodeUnaryRequest({
-    runtime: clientRuntime,
-    requestId: deterministicBytes(
-      `relay-${relay.fixture.relayIndex}:record-${recordIndex}:wire:${phase}`,
-      16
-    ),
-    familyId: request.wire.familyId,
-    operationId: request.wire.operationId,
-    expectedResultBodyBytes: request.wire.expectedResultBodyBytes,
-    body: request.requestBytes
-  })
-  const url = new URL(b4a.toString(relay.fixture.descriptor.endpoints[0].canonicalUrl, 'utf8'))
-  url.pathname = '/api/blind/v1/cell'
-  const response = await localTlsFetch(url.href, {
-    method: 'POST',
-    headers: [['content-type', PROTOCOL.mediaType]],
-    body: encoded.body
-  })
-  if (response.status !== 200 || response.headers.get('content-type') !== PROTOCOL.mediaType ||
-      Number(response.headers.get('content-length')) !== encoded.body.byteLength) {
-    fail('local raw wire request returned a non-protocol HTTP response')
-  }
-  const bytes = b4a.from(await response.arrayBuffer())
-  if (bytes.byteLength !== encoded.body.byteLength) fail('local raw wire response changed its outer class')
-  return decodeUnaryResponse(bytes, encoded)
-}
-
-async function getViaPublicEdge (relay, clientRuntime, record, phase) {
+async function getViaPublicEdge (relay, clientRuntime, endpoint, record, phase) {
   const request = await createGetCellRequest({
     runtime: clientRuntime,
     readCap: record.created.readCap,
@@ -852,19 +827,23 @@ async function getViaPublicEdge (relay, clientRuntime, record, phase) {
     )
   })
   const started = process.hrtime.bigint()
-  const result = await unqualifiedLocalWireRequest(
-    relay,
-    clientRuntime,
-    request,
-    phase,
-    record.recordIndex
-  )
+  const direct = new BlindDirectHttpClient({ runtime: clientRuntime, fetch: localTlsFetch })
+  const result = await direct.request({
+    endpoint,
+    ...request.wire,
+    body: request.requestBytes
+  })
   if (!result.ok) fail('public CELL.GET returned a canonical relay error')
-  const decoded = decodeCanonical(getCellResultV1, result.body, { copyBytes: true })
-  const content = await openCell({
+  const verifiedResult = verifyOperationResult({
+    endpoint,
+    request: request.request,
+    requestCommitment: request.requestCommitment,
+    resultBytes: result.body
+  })
+  const content = await openVerifiedCellGetResult({
+    verifiedResult,
     runtime: clientRuntime,
-    ...record.created.readCap,
-    cellBlob: decoded.cellBlob
+    readCap: record.created.readCap
   })
   if (!b4a.equals(content, record.content)) fail('public CELL.GET returned content that failed integrity')
   return elapsedMillis(started)
@@ -916,7 +895,7 @@ function localGates (input) {
       input.recovery.restartV2WritePathReadyBeforeWrites === true &&
       input.recovery.restartV2PublicHttpsExactPutAttempts === input.relayCount &&
       input.recovery.restartV2RetainedReadChecks === input.relayCount,
-    declaredQualificationOutcomeObserved: input.qualificationFailedClosed,
+    ordinaryClientQualificationSucceeded: input.ordinaryClientQualificationSucceeded,
     independentRelayIdentitiesObserved: input.uniqueRelaySigningKeys === input.relayCount,
     independentStoreIdsObserved: input.uniqueStoreIds === input.relayCount,
     independentCopiesObserved: input.allCopiesIndependentlyAllocatedAndEncrypted
@@ -1045,11 +1024,16 @@ export async function runRealBlindRelayLab (options = {}) {
     const clientRuntimes = fixtures.map(fixture => deterministicRuntime(`client-${fixture.relayIndex}`))
     const qualificationLatencies = []
     const qualificationResults = []
+    const initialGetEndpoints = []
     for (let index = 0; index < relays.length; index++) {
-      const put = await qualify(relays[index], clientRuntimes[index], FAMILY.CELL, OPERATION.CELL.PUT)
-      const get = await qualify(relays[index], clientRuntimes[index], FAMILY.CELL, OPERATION.CELL.GET)
+      const put = await qualify(
+        relays[index], clientRuntimes[index], FAMILY.CELL, OPERATION.CELL.PUT, 'initial-put')
+      const get = await qualify(
+        relays[index], clientRuntimes[index], FAMILY.CELL, OPERATION.CELL.GET, 'initial-get')
+      if (!put.qualified || !get.qualified) fail('ordinary CELL client qualification did not succeed')
       qualificationLatencies.push(put.latencyMs, get.latencyMs)
       qualificationResults.push(put, get)
+      initialGetEndpoints.push(get.endpoint)
     }
 
     const work = []
@@ -1091,6 +1075,7 @@ export async function runRealBlindRelayLab (options = {}) {
     const readLatencies = await mapConcurrent(records, concurrency, record => getViaPublicEdge(
       relays[record.relayIndex],
       clientRuntimes[record.relayIndex],
+      initialGetEndpoints[record.relayIndex],
       record,
       'before-restart'
     ))
@@ -1108,6 +1093,15 @@ export async function runRealBlindRelayLab (options = {}) {
     // leave it, accept a real exporter-bound public V2 attempt, and then serve
     // the retained content without changing the exact per-relay store count.
     const restartV2WriteReadiness = await waitForV2WriteReadiness(relays, 'relay restart')
+    const recoveredGetEndpoints = []
+    for (let index = 0; index < relays.length; index++) {
+      const get = await qualify(
+        relays[index], clientRuntimes[index], FAMILY.CELL, OPERATION.CELL.GET, 'recovered-get')
+      if (!get.qualified) fail('ordinary recovered CELL.GET client qualification did not succeed')
+      qualificationLatencies.push(get.latencyMs)
+      qualificationResults.push(get)
+      recoveredGetEndpoints.push(get.endpoint)
+    }
     const restartProbeRecords = records.filter(record => record.recordIndex === 0)
     if (restartProbeRecords.length !== relayCount) {
       fail('restart V2 probe requires one exact retained CELL.PUT per relay')
@@ -1121,20 +1115,17 @@ export async function runRealBlindRelayLab (options = {}) {
       record => getViaPublicEdge(
         relays[record.relayIndex],
         clientRuntimes[record.relayIndex],
+        recoveredGetEndpoints[record.relayIndex],
         record,
         'after-restart-v2-exact-put'
       )
     )
-    for (let index = 0; index < relays.length; index++) {
-      const get = await qualify(relays[index], clientRuntimes[index], FAMILY.CELL, OPERATION.CELL.GET)
-      qualificationLatencies.push(get.latencyMs)
-      qualificationResults.push(get)
-    }
     const afterRestartCounts = exactStoreCounts(relays, recordsPerRelay)
     const recoveryReadStarted = process.hrtime.bigint()
     const recoveryReadLatencies = await mapConcurrent(records, concurrency, record => getViaPublicEdge(
       relays[record.relayIndex],
       clientRuntimes[record.relayIndex],
+      recoveredGetEndpoints[record.relayIndex],
       record,
       'after-restart'
     ))
@@ -1150,9 +1141,8 @@ export async function runRealBlindRelayLab (options = {}) {
       message: error && error.message ? String(error.message) : String(error)
     }))
     const noRuntimeErrors = runtimeErrors.length === 0
-    const qualificationFailedClosed = qualificationResults.every(result =>
-      result.qualified === false && result.code === 'RELAY_NOT_QUALIFIED' &&
-      result.message === 'fresh health does not prove requested readiness')
+    const ordinaryClientQualificationSucceeded = qualificationResults.every(result =>
+      result.qualified === true && result.code === null && result.message === null)
     const writeOpsPerSecond = work.length / (writePhaseMs / 1000)
     const readOpsPerSecond = work.length / (readPhaseMs / 1000)
     const recoveryReadOpsPerSecond = work.length / (recoveryReadMs / 1000)
@@ -1202,7 +1192,7 @@ export async function runRealBlindRelayLab (options = {}) {
       allCountsExact,
       diskStable,
       noRuntimeErrors,
-      qualificationFailedClosed,
+      ordinaryClientQualificationSucceeded,
       allCopiesIndependentlyAllocatedAndEncrypted,
       uniqueRelaySigningKeys,
       uniqueStoreIds,
@@ -1238,8 +1228,10 @@ export async function runRealBlindRelayLab (options = {}) {
         independentlyAllocatedLogicalRecords,
         allCopiesIndependentlyAllocatedAndEncrypted,
         replicaProtocolMeasured: false,
-        ordinaryClientQualificationFailedClosed: qualificationFailedClosed,
+        ordinaryClientQualificationSucceeded,
         qualificationAttempts: qualificationResults.map(result => Object.freeze({
+          relayIndex: result.relayIndex,
+          phase: result.phase,
           qualified: result.qualified,
           code: result.code,
           message: result.message
