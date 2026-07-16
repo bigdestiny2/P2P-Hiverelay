@@ -840,10 +840,16 @@ test('V-3 rejects a maximum-shape staged CELL.PUT proof before body, staging, WA
       const coordinator = new AdmissionCoordinator({
         descriptorState: state,
         verifySignature: async () => true,
+        consumePostEofAuthority: async () => {
+          throw new Error('invalid preflight must never reach post-EOF confirmation')
+        },
         resolveAdapter: async () => ({
-          async prepare () {
+          async preparePreflight () {
             proofChecks++
             return null
+          },
+          async confirmAfterEof () {
+            throw new Error('invalid preflight must never reach post-EOF confirmation')
           }
         })
       })
@@ -901,7 +907,15 @@ test('V-3 rejects a maximum-shape staged CELL.PUT proof before body, staging, WA
   t.is(h.adapter.storage, h.storage)
 
   observeOperationIo = true
-  const rejected = await h.coordinator.dispatchStagedCellPut(staged, context())
+  const rejectedPending = h.coordinator.dispatchStagedCellPut(staged, { ...context(), outerClass: 3 })
+  await new Promise(resolve => setImmediate(resolve))
+  t.is(proofChecks, 1)
+  t.is(ingestor.bodyPullCount, 0)
+  t.is(stageOpaqueCalls, 0)
+  t.is(h.storage.status().accounting.stagingBytes, 0)
+  await ingestor.push(canonical.subarray(metadataBytes))
+  ingestor.finish()
+  const rejected = await rejectedPending
   observeOperationIo = false
   const after = h.storage.status()
   const walAfter = await fs.stat(`${h.root}/control/wal.v2`)
