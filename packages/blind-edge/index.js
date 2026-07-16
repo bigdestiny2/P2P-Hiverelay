@@ -1,2 +1,2 @@
 export { BlindEdge, createBlindEdge } from './server.js'
-export { exchangeLocal, exchangeLocalContent } from './ipc-client.js'
+export { exchangeLocal, exchangeLocalContent, exchangeLocalStagedCellPutV2 } from './ipc-client.js'

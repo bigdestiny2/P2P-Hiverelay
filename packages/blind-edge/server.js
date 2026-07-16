@@ -13,16 +13,33 @@ import {
   TRANSPORT_SUPPORT,
   assertReleaseReady
 } from '@hiverelay/blind-protocol/wire-runtime-authority'
-import { decodeDispatchFrame, decodeOuterEnvelope, encodeOuterEnvelope } from '@hiverelay/blind-protocol'
+import { decodeOuterEnvelope } from '@hiverelay/blind-protocol'
 import {
-  LOCAL_STREAM_MODE,
-  LOCAL_STREAM_OPEN_KIND,
   MAX_LOCAL_BODY_BYTES,
   PRIVATE_IPC_TIMING_MILLIS,
   assertPrivateIpcReady
 } from '@hiverelay/blind-ipc'
-import { exchangeLocal, exchangeLocalContent } from './ipc-client.js'
-import { EdgeReadinessError, performReadinessHandshake, validateReadinessTopology } from './readiness.js'
+import {
+  LOCAL_STAGED_DIRECTION_V2,
+  LOCAL_TRANSPORT_AUTHORITY_KIND_V2,
+  PRIVATE_IPC_V2_LIMITS,
+  TLS_EXPORTER_LABEL_V2,
+  assertPrecommitCellPutResultFitV2,
+  decodeLocalStagedCellPutOpenV2,
+  deriveLocalStagedOpenBindingHashV2,
+  derivePublicSessionBindingHashV2,
+  deriveTlsExporterContextHashV2,
+  encodeLocalStagedCellPutOpenV2,
+  verifyStagedCellPutPublicOuterEnvelopeV2
+} from '@hiverelay/blind-ipc/private-ipc-v2-contract'
+import { exchangeLocal, exchangeLocalStagedCellPutV2 } from './ipc-client.js'
+import {
+  EdgeReadinessError,
+  performReadinessHandshake,
+  performWriteReadinessHandshakeV2,
+  verifyWriteStreamDialV2,
+  validateReadinessTopology
+} from './readiness.js'
 
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 9100
@@ -148,10 +165,6 @@ function inspectOuterEnvelope (input) {
     throw new EdgeTransportError(400, 'malformed blind envelope')
   }
   return outerClass
-}
-
-function sameBytes (left, right) {
-  return left.byteLength === right.byteLength && b4a.equals(left, right)
 }
 
 function readBoundedBody (request, maxBytes, signal, reserveBytes, timing) {
@@ -372,6 +385,98 @@ function assertExecutableReleaseReady () {
   assertPrivateIpcReady()
 }
 
+function randomNonzero32 () {
+  for (;;) {
+    const value = b4a.from(randomBytes(32))
+    for (const byte of value) {
+      if (byte !== 0) return value
+    }
+  }
+}
+
+function stagedCellPutOpenV2 ({
+  socket,
+  launchTopologyHash,
+  transportProfileHash,
+  edgeProcessNonce,
+  endpointId,
+  outerClass,
+  acceptedMonotonicMillis,
+  openDeadlineMonotonicMillis,
+  outerEnvelope
+}) {
+  if (!socket || socket.encrypted !== true || typeof socket.exportKeyingMaterial !== 'function') {
+    throw new EdgeTransportError(503, 'staged CELL.PUT requires a live TLS exporter')
+  }
+  try {
+    assertPrecommitCellPutResultFitV2(outerClass)
+    const localChannelNonce = randomNonzero32()
+    const fields = Object.freeze({
+      endpointId,
+      outerClass,
+      acceptedMonotonicMillis,
+      openDeadlineMonotonicMillis
+    })
+    const exporterContextHash = deriveTlsExporterContextHashV2({
+      open: fields,
+      launchTopologyHash,
+      edgeProcessNonce,
+      localChannelNonce
+    })
+    let exporter
+    try {
+      exporter = b4a.from(socket.exportKeyingMaterial(
+        PRIVATE_IPC_V2_LIMITS.TLS_EXPORTER_BYTES,
+        TLS_EXPORTER_LABEL_V2,
+        exporterContextHash
+      ))
+    } catch {
+      throw new EdgeTransportError(503, 'staged CELL.PUT TLS exporter is unavailable')
+    }
+    let publicSessionBindingHash
+    try {
+      publicSessionBindingHash = derivePublicSessionBindingHashV2({
+        authorityKind: LOCAL_TRANSPORT_AUTHORITY_KIND_V2.TLS_EXPORTER_BY_PEERCRED_EDGE,
+        transportProfileHash,
+        exporterContextHash,
+        sessionBindingMaterial: exporter
+      })
+    } finally {
+      // The raw exporter is a session secret. Only its domain-separated binding
+      // hash crosses this function; erase the temporary bytes immediately.
+      exporter.fill(0)
+    }
+    const openBindingHash = deriveLocalStagedOpenBindingHashV2({
+      open: fields,
+      launchTopologyHash,
+      authorityKind: LOCAL_TRANSPORT_AUTHORITY_KIND_V2.TLS_EXPORTER_BY_PEERCRED_EDGE,
+      edgeProcessNonce,
+      localChannelNonce,
+      transportProfileHash,
+      publicSessionBindingHash
+    })
+    const context = Object.freeze({
+      authorityKind: LOCAL_TRANSPORT_AUTHORITY_KIND_V2.TLS_EXPORTER_BY_PEERCRED_EDGE,
+      edgeProcessNonce,
+      localChannelNonce,
+      transportProfileHash,
+      publicSessionBindingHash,
+      openBindingHash
+    })
+    const openBytes = encodeLocalStagedCellPutOpenV2({ ...fields, context })
+    const open = decodeLocalStagedCellPutOpenV2(openBytes)
+    const request = verifyStagedCellPutPublicOuterEnvelopeV2(
+      outerEnvelope,
+      open,
+      LOCAL_STAGED_DIRECTION_V2.REQUEST
+    )
+    return Object.freeze({ openBytes, open, request })
+  } catch (error) {
+    if (error instanceof EdgeTransportError) throw error
+    throw new EdgeTransportError(400, 'malformed staged CELL.PUT envelope or V2 authority')
+  }
+}
+
 export class BlindEdge {
   constructor (options = {}) {
     this.host = options.host == null ? DEFAULT_HOST : String(options.host)
@@ -439,6 +544,12 @@ export class BlindEdge {
     this.requestStateBySocket = new WeakMap()
     this.readinessAck = null
     this.descriptorReadinessFloor = null
+    // This is deliberately process-scoped, not request-scoped. If a process
+    // object survives a fork, the PID fence regenerates it in the child before
+    // that child can open a V2 write channel.
+    this.edgeProcessNonce = randomNonzero32()
+    this.edgeProcessNoncePid = process.pid
+    this.writeDescriptorReadinessFloor = null
     this.readinessRefreshTimer = null
     this.readinessExpiryTimer = null
     this.readinessRefreshInFlight = false
@@ -537,6 +648,42 @@ export class BlindEdge {
       now: this.now,
       previous: this.descriptorReadinessFloor
     })
+  }
+
+  _currentEdgeProcessNonce () {
+    if (this.edgeProcessNoncePid !== process.pid) {
+      this.edgeProcessNonce = randomNonzero32()
+      this.edgeProcessNoncePid = process.pid
+      this.writeDescriptorReadinessFloor = null
+    }
+    return this.edgeProcessNonce
+  }
+
+  async _establishStagedWriteReadiness (absoluteDeadlineMonotonicMillis, signal) {
+    if (this.readinessMode !== 'production' || !this.streamSocketPath || !this.streamTransportProfileHash) {
+      throw new EdgeTransportError(503, 'staged CELL.PUT is not enabled by this edge topology')
+    }
+    if (signal && signal.aborted) throw new EdgeTransportError(503, 'staged CELL.PUT was cancelled before V2 readiness')
+    let acknowledgement
+    try {
+      acknowledgement = await performWriteReadinessHandshakeV2(this.readinessTopology, {
+        now: this.now,
+        edgeProcessNonce: this._currentEdgeProcessNonce(),
+        previous: this.writeDescriptorReadinessFloor
+      })
+    } catch (error) {
+      throw new EdgeTransportError(503, 'staged CELL.PUT V2 write readiness is unavailable')
+    }
+    const now = this.now()
+    if ((signal && signal.aborted) || now >= absoluteDeadlineMonotonicMillis ||
+        now >= acknowledgement.expiresMonotonicMillis) {
+      throw new EdgeTransportError(503, 'staged CELL.PUT V2 write readiness expired')
+    }
+    this.writeDescriptorReadinessFloor = Object.freeze({
+      descriptorSequence: acknowledgement.descriptorSequence,
+      descriptorHash: b4a.from(acknowledgement.descriptorHash)
+    })
+    return acknowledgement
   }
 
   _recordReadiness (ack) {
@@ -797,46 +944,49 @@ export class BlindEdge {
         if (!this.streamSocketPath || !this.streamTransportProfileHash) {
           throw new EdgeTransportError(503, 'staged CELL.PUT is not enabled by this edge topology')
         }
-        const dispatch = await exchangeLocalContent(this.streamSocketPath, outer.innerDispatch, {
-          open: {
-            openKind: LOCAL_STREAM_OPEN_KIND.PUBLIC_CONTENT_CHANNEL,
-            transportId: TRANSPORT_ID.HTTPS_DIRECT,
-            transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
-            endpointId: this.endpointId,
-            streamMode: LOCAL_STREAM_MODE.DISPATCH_CONTENT,
-            channelClass: 3,
-            acceptedMonotonicMillis,
-            openDeadlineMonotonicMillis: absoluteDeadlineMonotonicMillis,
-            adjacentRelayKey: null
-          },
-          channel: {
-            launchTopologyHash: this.readinessTopology.launchTopologyHash,
-            edgeProcessNonce: b4a.from(randomBytes(32)),
-            localChannelNonce: b4a.from(randomBytes(32)),
-            transportProfileHash: this.streamTransportProfileHash,
-            finalNoiseHandshakeHash: b4a.from(randomBytes(64))
-          }
-        }, {
-          timeoutMs: Number(remainingMillis),
-          writeTimeoutMs: Math.min(this.stageTimeouts.ipcWriteMs, Number(remainingMillis)),
-          signal: abortController.signal
+        try {
+          assertPrecommitCellPutResultFitV2(outerClass)
+        } catch {
+          throw new EdgeTransportError(400, 'staged CELL.PUT requires a V2 result-capable outer class')
+        }
+        const writeReadiness = await this._establishStagedWriteReadiness(
+          absoluteDeadlineMonotonicMillis,
+          abortController.signal
+        )
+        const openAcceptedMonotonicMillis = this.now()
+        const openDeadlineMonotonicMillis = minimumDeadline(
+          openAcceptedMonotonicMillis + BigInt(PRIVATE_IPC_V2_LIMITS.OPEN_DEADLINE_MILLIS),
+          absoluteDeadlineMonotonicMillis,
+          writeReadiness.expiresMonotonicMillis
+        )
+        if (openAcceptedMonotonicMillis >= openDeadlineMonotonicMillis) {
+          throw new EdgeTransportError(503, 'staged CELL.PUT V2 open expired before dispatch')
+        }
+        const streamRemainingMillis = openDeadlineMonotonicMillis - this.now()
+        if (streamRemainingMillis <= 0n) {
+          throw new EdgeTransportError(503, 'staged CELL.PUT V2 stream deadline elapsed before dispatch')
+        }
+        const staged = stagedCellPutOpenV2({
+          socket: request.socket,
+          launchTopologyHash: this.readinessTopology.launchTopologyHash,
+          transportProfileHash: this.streamTransportProfileHash,
+          edgeProcessNonce: this._currentEdgeProcessNonce(),
+          endpointId: this.endpointId,
+          outerClass,
+          acceptedMonotonicMillis: openAcceptedMonotonicMillis,
+          openDeadlineMonotonicMillis,
+          outerEnvelope: body
         })
-        let responseFrame
-        try {
-          responseFrame = decodeDispatchFrame(dispatch, { copyBody: false })
-        } catch {
-          throw new EdgeTransportError(503, 'staged CELL.PUT daemon response is malformed')
-        }
-        if (responseFrame.familyId !== outer.frame.familyId ||
-            responseFrame.operationId !== outer.frame.operationId ||
-            !sameBytes(responseFrame.requestId, outer.frame.requestId)) {
-          throw new EdgeTransportError(503, 'staged CELL.PUT daemon response is not correlated')
-        }
-        try {
-          result = encodeOuterEnvelope({ innerDispatch: dispatch, outerClass })
-        } catch {
-          throw new EdgeTransportError(503, 'staged CELL.PUT daemon response does not fit the selected outer class')
-        }
+        result = await exchangeLocalStagedCellPutV2(this.streamSocketPath, body, staged.openBytes, {
+          timeoutMs: Number(streamRemainingMillis),
+          writeTimeoutMs: Math.min(this.stageTimeouts.ipcWriteMs, Number(streamRemainingMillis)),
+          signal: abortController.signal,
+          verifyConnectedSocket: socket => verifyWriteStreamDialV2(
+            this.readinessTopology,
+            writeReadiness.streamSocketIdentity,
+            socket
+          )
+        })
       } else {
         result = await exchangeLocal(this.socketPath, {
           family,

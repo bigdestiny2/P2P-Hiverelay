@@ -13,10 +13,20 @@ import {
   encodeLocalReadyProbe,
   localResponseFrameLength
 } from '@hiverelay/blind-ipc'
+import {
+  CELL_PUT_ENDPOINT_ROLE_BIT_V2,
+  CELL_PUT_OPERATION_BIT_V2,
+  PRIVATE_IPC_V2_LIMITS,
+  REQUIRED_LOCAL_IPC_FEATURE_BITS_V2,
+  decodeLocalReadyAckV2,
+  encodeLocalReadyProbeV2,
+  readLocalReadyAckLengthV2
+} from '@hiverelay/blind-ipc/private-ipc-v2-contract'
 
 const REQUIRED_DESCRIBE_OPERATION_BITS = 0x00000007
 const PORTABLE_UNIX_SOCKET_PATH_BYTES = 100
 const READY_RESPONSE_BYTES = LOCAL_RESPONSE_HEADER_BYTES + LOCAL_READY_ACK_BODY_BYTES
+const WRITE_READY_RESPONSE_BYTES_V2 = PRIVATE_IPC_V2_LIMITS.READY_ACK_BYTES
 
 export class EdgeReadinessError extends Error {
   constructor (code, message, cause = null) {
@@ -260,6 +270,80 @@ function exchangeReadyProbe (socket, probe, deadlineMonotonicMillis, now) {
   })
 }
 
+function exchangeWriteReadyProbeV2 (socket, probe, deadlineMonotonicMillis, now) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let total = 0
+    let expectedLength = null
+    let settled = false
+
+    const finish = (error, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      socket.off('data', onData)
+      socket.off('end', onEnd)
+      socket.off('error', onError)
+      socket.destroy()
+      if (error) reject(error)
+      else resolve(value)
+    }
+    const onError = error => finish(new EdgeReadinessError('BLIND_WRITE_READINESS_PATH',
+      'V2 write-readiness unary socket failed', error))
+    const onEnd = () => finish(new EdgeReadinessError('BLIND_WRITE_READINESS_ACK',
+      'V2 write-readiness response ended before one complete ACK'))
+    const onData = chunk => {
+      if (now() >= deadlineMonotonicMillis) {
+        return finish(new EdgeReadinessError('BLIND_WRITE_READINESS_TIMEOUT', 'V2 write-readiness probe timed out'))
+      }
+      if (total + chunk.byteLength > WRITE_READY_RESPONSE_BYTES_V2) {
+        return finish(new EdgeReadinessError('BLIND_WRITE_READINESS_ACK',
+          'V2 write-readiness response exceeds the exact ACK bound'))
+      }
+      chunks.push(b4a.from(chunk))
+      total += chunk.byteLength
+      try {
+        if (expectedLength == null) expectedLength = readLocalReadyAckLengthV2(b4a.concat(chunks, total))
+      } catch (error) {
+        return finish(new EdgeReadinessError('BLIND_WRITE_READINESS_ACK',
+          'V2 write-readiness ACK framing is invalid', error))
+      }
+      if (expectedLength == null || total < expectedLength) return
+      if (total !== expectedLength) {
+        return finish(new EdgeReadinessError('BLIND_WRITE_READINESS_ACK',
+          'V2 write-readiness ACK has trailing bytes'))
+      }
+      try {
+        finish(null, decodeLocalReadyAckV2(b4a.concat(chunks, total)))
+      } catch (error) {
+        finish(new EdgeReadinessError('BLIND_WRITE_READINESS_ACK',
+          'V2 write-readiness ACK decoding failed', error))
+      }
+    }
+    const remaining = Number(deadlineMonotonicMillis - now())
+    const timer = timeoutAfter(remaining, () => finish(new EdgeReadinessError(
+      'BLIND_WRITE_READINESS_TIMEOUT', 'V2 write-readiness probe timed out'
+    )))
+    socket.on('data', onData)
+    socket.once('end', onEnd)
+    socket.once('error', onError)
+    try {
+      socket.write(probe, error => {
+        if (error) {
+          return finish(new EdgeReadinessError('BLIND_WRITE_READINESS_PATH',
+            'V2 write-readiness probe write failed', error))
+        }
+        if (now() >= deadlineMonotonicMillis) {
+          finish(new EdgeReadinessError('BLIND_WRITE_READINESS_TIMEOUT', 'V2 write-readiness probe write timed out'))
+        }
+      })
+    } catch (error) {
+      finish(new EdgeReadinessError('BLIND_WRITE_READINESS_PATH',
+        'V2 write-readiness probe write failed', error))
+    }
+  })
+}
+
 function validateAck (ack, expected, previous, probeT0, receivedAt) {
   if (!b4a.equals(ack.edgeInstanceNonce, expected.edgeInstanceNonce) ||
       !b4a.equals(ack.launchTopologyHash, expected.launchTopologyHash) ||
@@ -287,6 +371,39 @@ function validateAck (ack, expected, previous, probeT0, receivedAt) {
     descriptorHash: b4a.from(ack.descriptorHash),
     readyRoleBits: ack.readyRoleBits,
     readyOperationBits: ack.readyOperationBits,
+    expiresMonotonicMillis: ack.expiresMonotonicMillis
+  })
+}
+
+function validateWriteAckV2 (ack, expected, previous, probeT0, probeDeadline, receivedAt) {
+  if (!b4a.equals(ack.edgeProcessNonce, expected.edgeProcessNonce) ||
+      !b4a.equals(ack.launchTopologyHash, expected.launchTopologyHash) ||
+      ack.endpointId !== expected.endpointId) {
+    fail('BLIND_WRITE_READINESS_ACK', 'V2 write-readiness ACK echo/topology/endpoint mismatch')
+  }
+  if (ack.descriptorSequence === 0n ||
+      (ack.readyRoleBits & CELL_PUT_ENDPOINT_ROLE_BIT_V2) === 0 ||
+      ack.readyWriteOperationBits !== CELL_PUT_OPERATION_BIT_V2 ||
+      (ack.readyWriteOperationBits & ack.readyOperationBits) !== ack.readyWriteOperationBits ||
+      ack.readyIpcFeatureBits !== REQUIRED_LOCAL_IPC_FEATURE_BITS_V2) {
+    fail('BLIND_WRITE_READINESS_ACK', 'V2 write-readiness ACK omits required write authority')
+  }
+  if (ack.expiresMonotonicMillis <= receivedAt || ack.expiresMonotonicMillis > probeDeadline ||
+      receivedAt < probeT0) {
+    fail('BLIND_WRITE_READINESS_ACK', 'V2 write-readiness ACK expiry is outside exact probe bounds')
+  }
+  if (previous && (ack.descriptorSequence < previous.descriptorSequence ||
+      (ack.descriptorSequence === previous.descriptorSequence && !b4a.equals(ack.descriptorHash, previous.descriptorHash)))) {
+    fail('BLIND_WRITE_READINESS_ROLLBACK', 'V2 write-readiness descriptor tuple rolled back or forked')
+  }
+  return Object.freeze({
+    version: 2,
+    descriptorSequence: ack.descriptorSequence,
+    descriptorHash: b4a.from(ack.descriptorHash),
+    readyRoleBits: ack.readyRoleBits,
+    readyOperationBits: ack.readyOperationBits,
+    readyWriteOperationBits: ack.readyWriteOperationBits,
+    readyIpcFeatureBits: ack.readyIpcFeatureBits,
     expiresMonotonicMillis: ack.expiresMonotonicMillis
   })
 }
@@ -319,6 +436,85 @@ export async function performReadinessHandshake (topology, options = {}) {
     launchTopologyHash: topology.launchTopologyHash,
     endpointId: topology.endpointId
   }, options.previous || null, probeT0, now())
+}
+
+// V2 readiness is write-specific. The edge retains the V1 read handshake for
+// read service, but a staged CELL.PUT obtains this independent ACK immediately
+// before opening its V2 stream. There is deliberately no V1 downgrade path.
+export async function performWriteReadinessHandshakeV2 (topology, options = {}) {
+  if (!topology || !topology.streamTransportProfileHash) {
+    fail('BLIND_WRITE_READINESS_TOPOLOGY', 'V2 write readiness requires a signed stream transport profile')
+  }
+  const now = typeof options.now === 'function' ? options.now : () => process.hrtime.bigint() / 1_000_000n
+  const edgeProcessNonce = nonzeroBytes32(options.edgeProcessNonce, 'edgeProcessNonce')
+  const streamIdentity = await verifyNoFrameStreamPath(topology, now)
+  const opened = await openVerifiedSocket(topology.unarySocketPath, topology, now)
+  if (sameSocketIdentity(streamIdentity, opened.identity)) {
+    opened.socket.destroy()
+    fail('BLIND_WRITE_READINESS_PATH', 'write-readiness unary and stream paths resolve to one socket inode')
+  }
+  const probeT0 = now()
+  const probeDeadline = probeT0 + BigInt(PRIVATE_IPC_V2_LIMITS.READY_DEADLINE_MILLIS)
+  const probe = encodeLocalReadyProbeV2({
+    endpointId: topology.endpointId,
+    edgeProcessNonce,
+    launchTopologyHash: topology.launchTopologyHash,
+    edgeFeatureBits: REQUIRED_LOCAL_IPC_FEATURE_BITS_V2,
+    requestedWriteOperationBits: CELL_PUT_OPERATION_BIT_V2,
+    acceptedMonotonicMillis: probeT0,
+    absoluteDeadlineMonotonicMillis: probeDeadline
+  })
+  let ack
+  try {
+    ack = await exchangeWriteReadyProbeV2(opened.socket, probe, probeDeadline, now)
+  } finally {
+    opened.socket.destroy()
+  }
+  const acknowledgement = validateWriteAckV2(ack, {
+    edgeProcessNonce,
+    launchTopologyHash: topology.launchTopologyHash,
+    endpointId: topology.endpointId
+  }, options.previous || null, probeT0, probeDeadline, now())
+  // The edge must retain the exact stream-socket inode it qualified. The
+  // subsequent staged connection revalidates it after connect, before sending
+  // a single V2 byte; this closes the readiness-to-dial path substitution gap.
+  return Object.freeze({
+    ...acknowledgement,
+    streamSocketIdentity: Object.freeze({
+      dev: streamIdentity.dev,
+      ino: streamIdentity.ino
+    })
+  })
+}
+
+// This is intentionally separate from the readiness exchange. The stream
+// listener is a new Unix connection, so it must prove it still resolves to the
+// exact inode qualified immediately before the V2 readiness ACK and that the
+// connected daemon has the configured native peer credentials. The caller must
+// invoke this after connect and before it writes the staged open.
+export async function verifyWriteStreamDialV2 (topology, expectedStreamSocketIdentity, socket) {
+  if (!topology || !expectedStreamSocketIdentity || !socket) {
+    fail('BLIND_WRITE_READINESS_PATH', 'V2 stream dial revalidation requires topology, qualified inode, and connected socket')
+  }
+  let credentials
+  try {
+    credentials = socketPeerCredentials(socket)
+  } catch (error) {
+    fail('BLIND_WRITE_READINESS_PEER', 'V2 stream dial peer credentials are unavailable', error)
+  }
+  if (credentials.uid !== topology.daemonUid || credentials.gid !== topology.daemonGid) {
+    fail('BLIND_WRITE_READINESS_PEER', 'V2 stream dial peer credentials do not match signed topology')
+  }
+  let current
+  try {
+    current = await verifySocketPath(topology.streamSocketPath, topology)
+  } catch (error) {
+    fail('BLIND_WRITE_READINESS_PATH', 'V2 stream dial path no longer matches signed topology', error)
+  }
+  if (!sameSocketIdentity(expectedStreamSocketIdentity, current)) {
+    fail('BLIND_WRITE_READINESS_PATH', 'V2 stream dial socket inode changed after readiness qualification')
+  }
+  return Object.freeze({ dev: current.dev, ino: current.ino })
 }
 
 export { REQUIRED_DESCRIBE_OPERATION_BITS }

@@ -20,6 +20,18 @@ import {
   localStreamFrameLength,
   localResponseFrameLength
 } from '@hiverelay/blind-ipc'
+import {
+  LOCAL_STAGED_DIRECTION_V2,
+  LOCAL_STAGED_FLAG_V2,
+  LOCAL_STAGED_FRAME_KIND_V2,
+  PRIVATE_IPC_V2_LIMITS,
+  assertPrecommitCellPutResultFitV2,
+  decodeLocalStagedCellPutFrameV2,
+  decodeLocalStagedCellPutOpenV2,
+  encodeLocalStagedCellPutFrameV2,
+  readLocalStagedCellPutFrameLengthV2,
+  verifyStagedCellPutPublicOuterEnvelopeV2
+} from '@hiverelay/blind-ipc/private-ipc-v2-contract'
 
 const DEFAULT_TIMEOUT_MS = 15_000
 const DEFAULT_WRITE_TIMEOUT_MS = 2_000
@@ -317,6 +329,252 @@ export function exchangeLocalContent (socketPath, dispatch, input, options = {})
     })
     socket.once('end', () => {
       if (!settled) finish(new Error('private IPC stream ended before one complete response'))
+    })
+  })
+}
+
+function privateIpcV2Error (message, code = 'BAD_LOCAL_STREAM') {
+  const error = new Error(message)
+  error.code = code
+  return error
+}
+
+function requireAbsoluteSocketPath (socketPath) {
+  if (typeof socketPath !== 'string' || !socketPath.startsWith('/') || socketPath.includes('\0')) {
+    throw new TypeError('socketPath must be an absolute Unix socket path')
+  }
+  return socketPath
+}
+
+function fragmentStagedOuterEnvelopeV2 (outerEnvelope, direction) {
+  const frames = []
+  let sequence = 0n
+  for (let offset = 0; offset < outerEnvelope.byteLength;) {
+    const length = Math.min(PRIVATE_IPC_V2_LIMITS.LOCAL_FRAME_CONTENT_BYTES,
+      outerEnvelope.byteLength - offset)
+    const nextOffset = offset + length
+    frames.push(encodeLocalStagedCellPutFrameV2({
+      direction,
+      frameKind: LOCAL_STAGED_FRAME_KIND_V2.CONTENT,
+      sequence: sequence++,
+      flags: nextOffset === outerEnvelope.byteLength ? LOCAL_STAGED_FLAG_V2.FIN : 0,
+      bytes: outerEnvelope.subarray(offset, nextOffset)
+    }))
+    offset = nextOffset
+  }
+  if (frames.length === 0) throw privateIpcV2Error('staged CELL.PUT outer envelope is empty')
+  return frames
+}
+
+function endSocketWithinDeadlineV2 (socket, deadline, now) {
+  if (now() >= deadline) {
+    throw privateIpcV2Error('private IPC V2 write-half-close timed out', 'IPC_WRITE_TIMEOUT')
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = error => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (error) reject(error)
+      else resolve()
+    }
+    const remaining = deadline - now()
+    const timer = setTimeout(() => finish(privateIpcV2Error(
+      'private IPC V2 write-half-close timed out', 'IPC_WRITE_TIMEOUT'
+    )), Math.max(1, Number(remaining)))
+    if (timer.unref) timer.unref()
+    try {
+      socket.end(error => finish(error || null))
+    } catch (error) {
+      finish(error)
+    }
+  })
+}
+
+// This is deliberately a low-level framed transport only. It accepts a complete
+// V2 open already minted by the edge's real TLS-exporter path; it never accepts
+// raw exporter material, nonce authority, or a V1 fallback.
+export function exchangeLocalStagedCellPutV2 (socketPath, outerEnvelope, openBytes, options = {}) {
+  try { requireAbsoluteSocketPath(socketPath) } catch (error) { return Promise.reject(error) }
+  try { outerEnvelope = asBytes(outerEnvelope, 'staged CELL.PUT outer envelope') } catch (error) { return Promise.reject(error) }
+  const timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS, 'timeoutMs')
+  if (timeoutMs > DEFAULT_TIMEOUT_MS) return Promise.reject(new TypeError('timeoutMs may only tighten 15000 ms'))
+  const writeTimeoutMs = positiveInteger(options.writeTimeoutMs, DEFAULT_WRITE_TIMEOUT_MS, 'writeTimeoutMs')
+  if (writeTimeoutMs > DEFAULT_WRITE_TIMEOUT_MS) return Promise.reject(new TypeError('writeTimeoutMs may only tighten 2000 ms'))
+  const socketFactory = options.socketFactory == null ? net.createConnection : options.socketFactory
+  if (typeof socketFactory !== 'function') return Promise.reject(new TypeError('socketFactory must be a function'))
+  const verifyConnectedSocket = options.verifyConnectedSocket == null ? null : options.verifyConnectedSocket
+  if (verifyConnectedSocket != null && typeof verifyConnectedSocket !== 'function') {
+    return Promise.reject(new TypeError('verifyConnectedSocket must be a function'))
+  }
+
+  let open
+  let request
+  let requestFrames
+  try {
+    open = decodeLocalStagedCellPutOpenV2(asBytes(openBytes, 'staged CELL.PUT V2 open'))
+    assertPrecommitCellPutResultFitV2(open.outerClass)
+    request = verifyStagedCellPutPublicOuterEnvelopeV2(
+      outerEnvelope,
+      open,
+      LOCAL_STAGED_DIRECTION_V2.REQUEST
+    )
+    requestFrames = fragmentStagedOuterEnvelopeV2(outerEnvelope, LOCAL_STAGED_DIRECTION_V2.REQUEST)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+
+  return new Promise((resolve, reject) => {
+    const now = typeof options.monotonicMillis === 'function' ? options.monotonicMillis : monotonicMillis
+    const started = now()
+    if (typeof started !== 'bigint') return reject(new TypeError('monotonicMillis must return bigint milliseconds'))
+    if (started >= open.openDeadlineMonotonicMillis) {
+      return reject(privateIpcV2Error('private IPC V2 open expired before connect', 'IPC_TIMEOUT'))
+    }
+    const timeoutDeadline = started + BigInt(timeoutMs)
+    const deadline = timeoutDeadline < open.openDeadlineMonotonicMillis
+      ? timeoutDeadline
+      : open.openDeadlineMonotonicMillis
+    const writeTimeoutDeadline = started + BigInt(Math.min(timeoutMs, writeTimeoutMs))
+    const writeDeadline = writeTimeoutDeadline < deadline ? writeTimeoutDeadline : deadline
+    let socket = null
+    let settled = false
+    let record = b4a.alloc(0)
+    let expectedRecordBytes = null
+    let expectedSequence = 0n
+    let resultOffset = 0
+    let resultFinished = false
+    let dialVerified = verifyConnectedSocket == null
+    const resultOuterEnvelope = b4a.alloc(open.requestEnvelopeBytes)
+
+    const finish = (error, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (options.signal) options.signal.removeEventListener('abort', onAbort)
+      if (socket) socket.destroy()
+      if (error) reject(error)
+      else resolve(value)
+    }
+    const onAbort = () => finish(privateIpcV2Error('private IPC V2 stream aborted', 'ABORT_ERR'))
+    const timer = setTimeout(() => finish(privateIpcV2Error(
+      'private IPC V2 stream timed out', 'IPC_TIMEOUT'
+    )), Math.max(1, Number(deadline - started)))
+    if (timer.unref) timer.unref()
+    if (options.signal) {
+      if (options.signal.aborted) return onAbort()
+      options.signal.addEventListener('abort', onAbort, { once: true })
+    }
+
+    const acceptResultFrame = frame => {
+      if (resultFinished || frame.direction !== LOCAL_STAGED_DIRECTION_V2.RESULT ||
+          frame.frameKind !== LOCAL_STAGED_FRAME_KIND_V2.CONTENT || frame.sequence !== expectedSequence) {
+        throw privateIpcV2Error('private IPC V2 result frame violates the exact result sequence')
+      }
+      expectedSequence++
+      if (resultOffset + frame.bytes.byteLength > resultOuterEnvelope.byteLength) {
+        throw privateIpcV2Error('private IPC V2 result exceeds the authenticated outer class')
+      }
+      b4a.copy(frame.bytes, resultOuterEnvelope, resultOffset)
+      resultOffset += frame.bytes.byteLength
+      if ((frame.flags & LOCAL_STAGED_FLAG_V2.FIN) === 0) return false
+      if (resultOffset !== resultOuterEnvelope.byteLength) {
+        throw privateIpcV2Error('private IPC V2 result FIN does not complete the authenticated outer class')
+      }
+      verifyStagedCellPutPublicOuterEnvelopeV2(
+        resultOuterEnvelope,
+        open,
+        LOCAL_STAGED_DIRECTION_V2.RESULT,
+        request.frame.requestId
+      )
+      resultFinished = true
+      return true
+    }
+
+    const consumeResponseBytes = input => {
+      let incoming = b4a.from(input)
+      while (incoming.byteLength > 0) {
+        let target = expectedRecordBytes
+        if (target == null) {
+          if (record.byteLength < 4) target = 4
+          else {
+            const declared = b4a.readUInt32BE(record, 0) + 4
+            if (declared < PRIVATE_IPC_V2_LIMITS.STAGED_FRAME_HEADER_BYTES ||
+                declared > PRIVATE_IPC_V2_LIMITS.LOCAL_FRAME_BYTES) {
+              throw privateIpcV2Error('private IPC V2 result record has an impossible declared length')
+            }
+            target = Math.min(declared, PRIVATE_IPC_V2_LIMITS.STAGED_FRAME_HEADER_BYTES)
+          }
+        }
+        const remaining = target - record.byteLength
+        const take = Math.min(remaining, incoming.byteLength)
+        const addition = incoming.subarray(0, take)
+        record = record.byteLength === 0 ? b4a.from(addition) : b4a.concat([record, addition])
+        incoming = incoming.subarray(take)
+        if (record.byteLength < target) continue
+        if (expectedRecordBytes == null) {
+          expectedRecordBytes = readLocalStagedCellPutFrameLengthV2(record)
+          if (expectedRecordBytes == null) continue
+          if (record.byteLength < expectedRecordBytes) continue
+        }
+        if (record.byteLength !== expectedRecordBytes) {
+          throw privateIpcV2Error('private IPC V2 result record overran its declaration')
+        }
+        const frame = decodeLocalStagedCellPutFrameV2(record)
+        record = b4a.alloc(0)
+        expectedRecordBytes = null
+        if (acceptResultFrame(frame)) {
+          if (incoming.byteLength !== 0) {
+            throw privateIpcV2Error('private IPC V2 result has bytes after FIN')
+          }
+          finish(null, resultOuterEnvelope)
+          return
+        }
+      }
+    }
+
+    try {
+      socket = socketFactory({ path: socketPath, allowHalfOpen: true })
+    } catch (error) {
+      finish(error)
+      return
+    }
+    if (!socket || typeof socket.once !== 'function' || typeof socket.on !== 'function' ||
+        typeof socket.write !== 'function' || typeof socket.end !== 'function' || typeof socket.destroy !== 'function') {
+      finish(new TypeError('socketFactory must return a duplex socket-like object'))
+      return
+    }
+    socket.once('connect', () => {
+      Promise.resolve()
+        .then(async () => {
+          if (verifyConnectedSocket != null) await verifyConnectedSocket(socket)
+          if (settled) return
+          dialVerified = true
+          await writeFrames(socket, [asBytes(openBytes, 'staged CELL.PUT V2 open'), ...requestFrames], writeDeadline, now)
+          await endSocketWithinDeadlineV2(socket, writeDeadline, now)
+        })
+        .catch(finish)
+    })
+    socket.once('error', finish)
+    socket.on('data', chunk => {
+      if (!dialVerified) {
+        return finish(privateIpcV2Error('private IPC V2 stream sent a result before the connected socket was verified'))
+      }
+      if (now() >= deadline) return finish(privateIpcV2Error('private IPC V2 stream timed out', 'IPC_TIMEOUT'))
+      try {
+        consumeResponseBytes(chunk)
+      } catch (error) {
+        finish(error)
+      }
+    })
+    socket.once('end', () => {
+      if (!settled) {
+        const message = resultFinished
+          ? 'private IPC V2 stream ended after terminal result'
+          : 'private IPC V2 stream ended before one complete terminal result'
+        finish(privateIpcV2Error(message))
+      }
     })
   })
 }

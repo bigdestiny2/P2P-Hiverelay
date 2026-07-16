@@ -5,34 +5,35 @@ import test from 'brittle'
 import b4a from 'b4a'
 import {
   FAMILY,
-  FRAME_KIND,
   OPERATION,
-  TRANSPORT_ID,
-  TRANSPORT_SUPPORT,
-  decodeDispatchFrame,
-  encodeDispatchFrame
+  decodeOuterEnvelope
 } from '@hiverelay/blind-protocol'
 import {
-  LOCAL_ABORT_CODE,
-  LOCAL_STREAM_DIRECTION,
-  LOCAL_STREAM_FLAG,
-  LOCAL_STREAM_FRAME_KIND,
-  LOCAL_STREAM_MODE,
-  LOCAL_STREAM_OPEN_KIND,
-  createLocalAuthenticatedChannelContext,
-  encodeLocalStreamFrame,
-  encodeLocalStreamOpen,
-  fragmentLocalContent
-} from '@hiverelay/blind-ipc'
+  CELL_PUT_ENDPOINT_ROLE_BIT_V2,
+  CELL_PUT_OPERATION_BIT_V2,
+  LOCAL_STAGED_DIRECTION_V2,
+  LOCAL_STAGED_FLAG_V2,
+  LOCAL_STAGED_FRAME_KIND_V2,
+  OUTER_CLASS,
+  REQUIRED_LOCAL_IPC_FEATURE_BITS_V2,
+  deriveLocalStagedOpenBindingHashV2,
+  encodeLocalStagedCellPutFrameV2,
+  encodeLocalStagedCellPutOpenV2
+} from '@hiverelay/blind-ipc/private-ipc-v2-contract'
 import { BlindDaemon } from '@hiverelay/blind-daemon'
-import { exchangeLocalContent } from '../ipc-client.js'
+import { exchangeLocalStagedCellPutV2 } from '../ipc-client.js'
+import { verifyWriteStreamDialV2 } from '../readiness.js'
 import {
   createBlindBoundaryScratch,
   removeBlindBoundaryScratch
 } from '../../../test/blind-boundary-scratch.js'
 
-const putBody = await fs.readFile(new URL(
-  '../../blind-protocol/vectors/draft/cell/put-class-1.bin', import.meta.url))
+const REQUEST_OUTER = await fs.readFile(new URL(
+  '../../blind-ipc/vectors/v2/accepted/public-request-outer-envelope-class-3.bin', import.meta.url))
+const RESULT_OUTER = await fs.readFile(new URL(
+  '../../blind-ipc/vectors/v2/accepted/public-result-outer-envelope-class-3.bin', import.meta.url))
+const REQUEST_FRAME = decodeOuterEnvelope(REQUEST_OUTER, { copyInner: true, copyBody: true }).frame
+const RESULT_DISPATCH = decodeOuterEnvelope(RESULT_OUTER, { copyInner: true, copyBody: true }).innerDispatch
 
 function monotonicMillis () {
   return process.hrtime.bigint() / 1_000_000n
@@ -70,60 +71,104 @@ function rawStreamExchange (socketPath, firstWrite, lateWrite = null) {
   })
 }
 
-function streamRequestAuthority ({ launchTopologyHash, transportProfileHash, requestId, fin = true }) {
-  const accepted = monotonicMillis()
-  const openInput = {
-    openKind: LOCAL_STREAM_OPEN_KIND.PUBLIC_CONTENT_CHANNEL,
-    transportId: TRANSPORT_ID.HTTPS_DIRECT,
-    transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
-    endpointId: 1,
-    streamMode: LOCAL_STREAM_MODE.DISPATCH_CONTENT,
-    channelClass: 1,
-    acceptedMonotonicMillis: accepted,
-    openDeadlineMonotonicMillis: accepted + 5_000n,
-    adjacentRelayKey: null
-  }
-  const context = createLocalAuthenticatedChannelContext({
-    launchTopologyHash,
-    edgeProcessNonce: b4a.alloc(32, 0x45),
-    localChannelNonce: b4a.alloc(32, 0x46),
-    transportProfileHash,
-    finalNoiseHandshakeHash: b4a.alloc(64, 0x47)
-  }, openInput)
-  const open = encodeLocalStreamOpen({ ...openInput, context })
-  const request = encodeDispatchFrame({
-    frameKind: FRAME_KIND.REQUEST,
-    familyId: FAMILY.CELL,
-    operationId: OPERATION.CELL.PUT,
-    requestId,
-    body: putBody
+function durableReplayAuthority () {
+  const consumed = new Set()
+  return Object.freeze({
+    async reserve (input) {
+      const key = b4a.toString(input.replayTupleHash, 'hex')
+      if (consumed.has(key)) {
+        const error = new Error('replay')
+        error.code = 'PRIVATE_IPC_V2_REPLAY'
+        throw error
+      }
+      consumed.add(key)
+      return Object.freeze({
+        kind: 'reserved-new',
+        durablyCommitted: true,
+        replayTupleHash: b4a.from(input.replayTupleHash),
+        expiresMonotonicMillis: input.expiresMonotonicMillis
+      })
+    }
   })
-  const frames = fragmentLocalContent(request, {
-    direction: LOCAL_STREAM_DIRECTION.EDGE_TO_DAEMON,
-    wireClass: 1,
-    sequence: 0n,
-    fin
-  })
-  return { open, request, frames }
 }
 
-test('real stream socket authenticates, fragments, stages, hashes, and reassembles CELL.PUT CONTENT', async t => {
-  const directory = await createBlindBoundaryScratch('blind-stream-put-')
-  const unarySocketPath = path.join(directory, 'unary.sock')
-  const streamSocketPath = path.join(directory, 'stream.sock')
-  const launchTopologyHash = b4a.alloc(32, 0x31)
-  const transportProfileHash = b4a.alloc(32, 0x32)
-  const request = encodeDispatchFrame({
-    frameKind: FRAME_KIND.REQUEST,
-    familyId: FAMILY.CELL,
-    operationId: OPERATION.CELL.PUT,
-    requestId: b4a.alloc(16, 0x33),
-    body: putBody
+function writeReadinessProjection (launchTopologyHash, transportProfileHash) {
+  return async input => Object.freeze({
+    selfVerified: true,
+    cellRuntimeReady: true,
+    storageReady: true,
+    admissionReady: true,
+    replayJournalReady: true,
+    endpointId: 1,
+    launchTopologyHash,
+    transportProfileHash,
+    descriptorSequence: 1n,
+    descriptorHash: b4a.alloc(32, 0x34),
+    descriptorRoleBits: CELL_PUT_ENDPOINT_ROLE_BIT_V2,
+    descriptorEnabledOperationBits: CELL_PUT_OPERATION_BIT_V2,
+    readyRoleBits: CELL_PUT_ENDPOINT_ROLE_BIT_V2,
+    readyOperationBits: CELL_PUT_OPERATION_BIT_V2,
+    readyWriteOperationBits: CELL_PUT_OPERATION_BIT_V2,
+    readyIpcFeatureBits: REQUIRED_LOCAL_IPC_FEATURE_BITS_V2,
+    expiresMonotonicMillis: input.absoluteDeadlineMonotonicMillis - 1n,
+    descriptorExpiresMonotonicMillis: input.absoluteDeadlineMonotonicMillis
   })
-  let streamedBytes = 0
-  let stagedBodyWasAbsent = false
-  const daemonErrors = []
-  const daemon = new BlindDaemon({
+}
+
+function streamRequestAuthority ({ launchTopologyHash, transportProfileHash, nonceByte = 0x45, fin = true }) {
+  const accepted = monotonicMillis()
+  const fields = Object.freeze({
+    endpointId: 1,
+    outerClass: 3,
+    acceptedMonotonicMillis: accepted,
+    openDeadlineMonotonicMillis: accepted + 5_000n,
+    requestEnvelopeBytes: OUTER_CLASS[3]
+  })
+  const edgeProcessNonce = b4a.alloc(32, nonceByte)
+  const localChannelNonce = b4a.alloc(32, nonceByte + 1)
+  const publicSessionBindingHash = b4a.alloc(32, nonceByte + 2)
+  const openBindingHash = deriveLocalStagedOpenBindingHashV2({
+    open: fields,
+    launchTopologyHash,
+    authorityKind: 1,
+    edgeProcessNonce,
+    localChannelNonce,
+    transportProfileHash,
+    publicSessionBindingHash
+  })
+  const context = Object.freeze({
+    authorityKind: 1,
+    edgeProcessNonce,
+    localChannelNonce,
+    transportProfileHash,
+    publicSessionBindingHash,
+    openBindingHash
+  })
+  const open = encodeLocalStagedCellPutOpenV2({ ...fields, context })
+  const frames = []
+  for (let offset = 0, sequence = 0n; offset < REQUEST_OUTER.byteLength;) {
+    const end = Math.min(offset + 65_515, REQUEST_OUTER.byteLength)
+    frames.push(encodeLocalStagedCellPutFrameV2({
+      direction: LOCAL_STAGED_DIRECTION_V2.REQUEST,
+      frameKind: LOCAL_STAGED_FRAME_KIND_V2.CONTENT,
+      sequence: sequence++,
+      flags: fin && end === REQUEST_OUTER.byteLength ? LOCAL_STAGED_FLAG_V2.FIN : 0,
+      bytes: REQUEST_OUTER.subarray(offset, end)
+    }))
+    offset = end
+  }
+  return { open, frames }
+}
+
+function daemonOptions ({
+  unarySocketPath,
+  streamSocketPath,
+  launchTopologyHash,
+  transportProfileHash,
+  onError,
+  dispatchStagedPut
+}) {
+  return {
     unarySocketPath,
     streamSocketPath,
     releaseGate: () => {},
@@ -133,7 +178,10 @@ test('real stream socket authenticates, fragments, stages, hashes, and reassembl
     launchTopologyHash,
     endpointIds: [1],
     streamTransportProfileHash: transportProfileHash,
-    onError: error => daemonErrors.push(error),
+    stagedPutRelayPublicKey: b4a.alloc(32, 0x38),
+    durableReplayAuthority: durableReplayAuthority(),
+    writeReadinessProjection: writeReadinessProjection(launchTopologyHash, transportProfileHash),
+    onError,
     readinessSnapshot: async () => ({
       selfVerified: true,
       descriptorSequence: 1n,
@@ -142,103 +190,147 @@ test('real stream socket authenticates, fragments, stages, hashes, and reassembl
       readyOperationBits: 7
     }),
     dispatch: async () => { throw new Error('unary path must not be used') },
+    dispatchStagedPut
+  }
+}
+
+function listenUnixServer (socketPath, onConnection) {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer(onConnection)
+    const onError = error => {
+      server.off('listening', onListening)
+      reject(error)
+    }
+    const onListening = () => {
+      server.off('error', onError)
+      resolve(server)
+    }
+    server.once('error', onError)
+    server.once('listening', onListening)
+    server.listen(socketPath)
+  })
+}
+
+function closeServer (server) {
+  return new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+}
+
+test('real V2 stream authenticates the full outer envelope, half-closes, stages, hashes, and reassembles CELL.PUT', async t => {
+  const directory = await createBlindBoundaryScratch('blind-stream-put-')
+  const unarySocketPath = path.join(directory, 'unary.sock')
+  const streamSocketPath = path.join(directory, 'stream.sock')
+  const launchTopologyHash = b4a.alloc(32, 0x31)
+  const transportProfileHash = b4a.alloc(32, 0x32)
+  let streamedBytes = 0
+  let stagedBodyWasAbsent = false
+  const daemonErrors = []
+  const daemon = new BlindDaemon(daemonOptions({
+    unarySocketPath,
+    streamSocketPath,
+    launchTopologyHash,
+    transportProfileHash,
+    onError: error => daemonErrors.push(error),
     dispatchStagedPut: async staged => {
       stagedBodyWasAbsent = staged.request.cellBlob === undefined
       for await (const chunk of staged.source) streamedBytes += chunk.byteLength
-      return {
-        dispatch: encodeDispatchFrame({
-          frameKind: FRAME_KIND.RESPONSE,
-          familyId: FAMILY.CELL,
-          operationId: OPERATION.CELL.PUT,
-          requestId: staged.frame.requestId,
-          body: b4a.from([1])
-        })
-      }
+      return { dispatch: RESULT_DISPATCH, outerClass: 3 }
     }
-  })
+  }))
   await daemon.start()
   t.teardown(async () => {
     await daemon.close()
     await removeBlindBoundaryScratch(directory)
   })
 
-  const accepted = monotonicMillis()
-  const open = {
-    openKind: LOCAL_STREAM_OPEN_KIND.PUBLIC_CONTENT_CHANNEL,
-    transportId: TRANSPORT_ID.HTTPS_DIRECT,
-    transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
-    endpointId: 1,
-    streamMode: LOCAL_STREAM_MODE.DISPATCH_CONTENT,
-    channelClass: 1,
-    acceptedMonotonicMillis: accepted,
-    openDeadlineMonotonicMillis: accepted + 5_000n,
-    adjacentRelayKey: null
-  }
+  const authority = streamRequestAuthority({ launchTopologyHash, transportProfileHash })
   let result
   try {
-    result = await exchangeLocalContent(streamSocketPath, request, {
-      open,
-      channel: {
-        launchTopologyHash,
-        edgeProcessNonce: b4a.alloc(32, 0x35),
-        localChannelNonce: b4a.alloc(32, 0x36),
-        transportProfileHash,
-        finalNoiseHandshakeHash: b4a.alloc(64, 0x37)
-      }
-    }, { timeoutMs: 5_000 })
+    result = await exchangeLocalStagedCellPutV2(streamSocketPath, REQUEST_OUTER, authority.open, { timeoutMs: 5_000 })
   } catch (error) {
     if (daemonErrors[0]) error.cause = daemonErrors[0]
     throw error
   }
-  const response = decodeDispatchFrame(result, { copyBody: true })
-  t.is(response.frameKind, FRAME_KIND.RESPONSE)
-  t.alike(response.requestId, b4a.alloc(16, 0x33))
+  const response = decodeOuterEnvelope(result, { copyInner: true, copyBody: true }).frame
+  t.is(response.familyId, FAMILY.CELL)
+  t.is(response.operationId, OPERATION.CELL.PUT)
+  t.alike(response.requestId, REQUEST_FRAME.requestId)
   t.is(streamedBytes, 4096)
   t.is(stagedBodyWasAbsent, true)
   await new Promise(resolve => setImmediate(resolve))
   t.is(daemon.bufferedBytes, 0)
 })
 
+test('V2 stream rejects a post-readiness socket inode swap before it writes the staged open', async t => {
+  const directory = await createBlindBoundaryScratch('blind-stream-dial-swap-')
+  const streamSocketPath = path.join(directory, 'stream.sock')
+  const launchTopologyHash = b4a.alloc(32, 0x41)
+  const transportProfileHash = b4a.alloc(32, 0x42)
+  const topology = Object.freeze({
+    streamSocketPath,
+    daemonUid: process.getuid(),
+    daemonGid: process.getgid(),
+    socketGroupGid: process.getgid(),
+    socketMode: 0o660
+  })
+  let observedBytes = 0
+  let attacker = null
+  const qualified = await listenUnixServer(streamSocketPath, socket => socket.destroy())
+  await fs.chmod(streamSocketPath, 0o660)
+  const qualifiedIdentity = await fs.lstat(streamSocketPath)
+  await closeServer(qualified)
+  attacker = await listenUnixServer(streamSocketPath, socket => {
+    socket.on('data', chunk => { observedBytes += chunk.byteLength })
+  })
+  await fs.chmod(streamSocketPath, 0o660)
+  t.teardown(async () => {
+    await closeServer(attacker)
+    await removeBlindBoundaryScratch(directory)
+  })
+
+  const authority = streamRequestAuthority({ launchTopologyHash, transportProfileHash, nonceByte: 0x43 })
+  const error = await exchangeLocalStagedCellPutV2(
+    streamSocketPath,
+    REQUEST_OUTER,
+    authority.open,
+    {
+      timeoutMs: 5_000,
+      verifyConnectedSocket: socket => verifyWriteStreamDialV2(topology, qualifiedIdentity, socket)
+    }
+  ).then(
+    () => new Error('substituted stream socket unexpectedly accepted a staged write'),
+    error => error
+  )
+  t.is(error.code, 'BLIND_WRITE_READINESS_PATH')
+  await new Promise(resolve => setImmediate(resolve))
+  t.is(observedBytes, 0, 'the substituted socket receives no staged open or public envelope bytes')
+})
+
 const terminalAttacks = Object.freeze([
   Object.freeze({ label: 'coalesced post-FIN bytes', kind: 'post-fin', expectedCode: 'BAD_LOCAL_STREAM' }),
   Object.freeze({ label: 'late post-FIN bytes', kind: 'late-post-fin', expectedCode: 'BAD_LOCAL_STREAM' }),
   Object.freeze({ label: 'EOF before FIN', kind: 'missing-fin', expectedCode: 'BAD_LOCAL_STREAM' }),
-  Object.freeze({ label: 'FIN followed by authenticated ABORT', kind: 'fin-abort', expectedCode: 'ABORT_ERR' }),
-  Object.freeze({ label: 'coalesced post-ABORT bytes', kind: 'post-abort', expectedCode: 'BAD_LOCAL_STREAM' })
+  Object.freeze({ label: 'FIN followed by authenticated ABORT', kind: 'fin-abort', expectedCode: 'BAD_LOCAL_STREAM' }),
+  Object.freeze({ label: 'coalesced post-ABORT bytes', kind: 'post-abort', expectedCode: 'ABORT_ERR' })
 ])
 
 for (const [attackIndex, attack] of terminalAttacks.entries()) {
-  test(`real stream socket rejects ${attack.label} before staged PUT commit`, async t => {
+  test(`real V2 stream rejects ${attack.label} before staged PUT commit`, async t => {
     const directory = await createBlindBoundaryScratch('blind-stream-terminal-')
     const unarySocketPath = path.join(directory, 'unary.sock')
     const streamSocketPath = path.join(directory, 'stream.sock')
     const launchTopologyHash = b4a.alloc(32, 0x51)
     const transportProfileHash = b4a.alloc(32, 0x52)
-    const requestId = b4a.alloc(16, 0x53 + attackIndex)
     const daemonErrors = []
     let dispatchCalls = 0
     let committed = false
     let sourceFailure = null
     let streamedBytes = 0
-    const daemon = new BlindDaemon({
+    const daemon = new BlindDaemon(daemonOptions({
       unarySocketPath,
       streamSocketPath,
-      releaseGate: () => {},
-      expectedPeerUid: process.getuid(),
-      expectedPeerGid: process.getgid(),
-      socketGroupGid: process.getgid(),
       launchTopologyHash,
-      endpointIds: [1],
-      streamTransportProfileHash: transportProfileHash,
+      transportProfileHash,
       onError: error => daemonErrors.push(error),
-      readinessSnapshot: async () => ({
-        selfVerified: true,
-        descriptorSequence: 1n,
-        descriptorHash: b4a.alloc(32, 0x55),
-        readyRoleBits: 1,
-        readyOperationBits: 7
-      }),
-      dispatch: async () => { throw new Error('unary path must not be used') },
       dispatchStagedPut: async staged => {
         dispatchCalls++
         try {
@@ -248,45 +340,34 @@ for (const [attackIndex, attack] of terminalAttacks.entries()) {
           throw error
         }
         committed = true
-        return {
-          dispatch: encodeDispatchFrame({
-            frameKind: FRAME_KIND.RESPONSE,
-            familyId: FAMILY.CELL,
-            operationId: OPERATION.CELL.PUT,
-            requestId: staged.frame.requestId,
-            body: b4a.from([1])
-          })
-        }
+        return { dispatch: RESULT_DISPATCH, outerClass: 3 }
       }
-    })
+    }))
     await daemon.start()
     t.teardown(async () => {
       await daemon.close()
       await removeBlindBoundaryScratch(directory)
     })
 
-    const requestFin = attack.kind !== 'missing-fin' && attack.kind !== 'post-abort'
     const authority = streamRequestAuthority({
       launchTopologyHash,
       transportProfileHash,
-      requestId,
-      fin: requestFin
+      nonceByte: 0x53 + attackIndex,
+      fin: attack.kind !== 'missing-fin' && attack.kind !== 'post-abort'
     })
-    const extra = encodeLocalStreamFrame({
-      direction: LOCAL_STREAM_DIRECTION.EDGE_TO_DAEMON,
-      frameKind: LOCAL_STREAM_FRAME_KIND.CONTENT,
+    const extra = encodeLocalStagedCellPutFrameV2({
+      direction: LOCAL_STAGED_DIRECTION_V2.REQUEST,
+      frameKind: LOCAL_STAGED_FRAME_KIND_V2.CONTENT,
       sequence: BigInt(authority.frames.length),
-      wireClass: 1,
-      flags: LOCAL_STREAM_FLAG.FIN,
-      body: b4a.alloc(0)
+      flags: LOCAL_STAGED_FLAG_V2.FIN,
+      bytes: b4a.alloc(0)
     })
-    const abort = encodeLocalStreamFrame({
-      direction: LOCAL_STREAM_DIRECTION.EDGE_TO_DAEMON,
-      frameKind: LOCAL_STREAM_FRAME_KIND.ABORT,
+    const abort = encodeLocalStagedCellPutFrameV2({
+      direction: LOCAL_STAGED_DIRECTION_V2.REQUEST,
+      frameKind: LOCAL_STAGED_FRAME_KIND_V2.ABORT,
       sequence: BigInt(authority.frames.length),
-      wireClass: 0,
       flags: 0,
-      body: b4a.from([LOCAL_ABORT_CODE.TRANSPORT_FAILURE])
+      bytes: b4a.from([1])
     })
     const valid = b4a.concat([authority.open, ...authority.frames])
     let exchange
@@ -299,13 +380,12 @@ for (const [attackIndex, attack] of terminalAttacks.entries()) {
     } else if (attack.kind === 'fin-abort') {
       exchange = await rawStreamExchange(streamSocketPath, b4a.concat([valid, abort]))
     } else {
-      const postAbort = encodeLocalStreamFrame({
-        direction: LOCAL_STREAM_DIRECTION.EDGE_TO_DAEMON,
-        frameKind: LOCAL_STREAM_FRAME_KIND.CONTENT,
+      const postAbort = encodeLocalStagedCellPutFrameV2({
+        direction: LOCAL_STAGED_DIRECTION_V2.REQUEST,
+        frameKind: LOCAL_STAGED_FRAME_KIND_V2.CONTENT,
         sequence: BigInt(authority.frames.length + 1),
-        wireClass: 1,
-        flags: LOCAL_STREAM_FLAG.FIN,
-        body: b4a.alloc(0)
+        flags: LOCAL_STAGED_FLAG_V2.FIN,
+        bytes: b4a.alloc(0)
       })
       exchange = await rawStreamExchange(streamSocketPath, b4a.concat([valid, abort, postAbort]))
     }
