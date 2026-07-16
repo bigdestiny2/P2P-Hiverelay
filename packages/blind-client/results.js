@@ -1,6 +1,7 @@
 import b4a from 'b4a'
 import {
   AUXILIARY_SIGNATURE_DOMAIN_ID,
+  CELL_SIZE_CLASS,
   CELL_RECEIPT_RESULT,
   CORE_ACK_RESULT,
   FAMILY,
@@ -46,6 +47,7 @@ import {
 } from '@hiverelay/blind-protocol/hashes'
 import { blindExternalCommitWitnessV1 } from '@hiverelay/blind-protocol/result-binding'
 import { asBytes } from './bytes.js'
+import { openCell } from './cells.js'
 import { verifiedEndpointContext } from './verified-endpoint.js'
 import { fail } from './errors.js'
 import {
@@ -207,7 +209,7 @@ function putAllocationCommitment (context, request) {
   })
 }
 
-function recomputeRequestCommitment (context, request) {
+function recomputeRequestCommitment (context, request, getStorageSlot) {
   const relayPublicKey = context.relayPublicKey
   switch (key(context.familyId, context.operationId)) {
     case key(FAMILY.CELL, OPERATION.CELL.PUT): {
@@ -215,7 +217,7 @@ function recomputeRequestCommitment (context, request) {
       return cellPutRequestCommitment({ allocationCommitment: allocation, clientNonce: request.clientNonce })
     }
     case key(FAMILY.CELL, OPERATION.CELL.GET):
-      return cellGetRequestCommitment({ relayPublicKey, storageSlot: request.storageSlot, clientNonce: request.clientNonce })
+      return cellGetRequestCommitment({ relayPublicKey, storageSlot: getStorageSlot, clientNonce: request.clientNonce })
     case key(FAMILY.CELL, OPERATION.CELL.RENEW):
       return cellManageRequestCommitment({
         operation: 'cell-renew',
@@ -484,15 +486,78 @@ export class VerifiedOperationResult {
   snapshotBytes () { return b4a.from(resultInternals.get(this).bytes) }
 }
 
+export async function openVerifiedCellGetResult (options) {
+  if (!options || typeof options !== 'object') {
+    fail('BAD_CLIENT_INPUT', 'verified CELL.GET result options are required')
+  }
+  const internal = resultInternals.get(options.verifiedResult)
+  if (!internal) {
+    fail('BAD_CLIENT_INPUT', 'a package-owned VerifiedOperationResult is required')
+  }
+  if (internal.context.familyId !== FAMILY.CELL || internal.context.operationId !== OPERATION.CELL.GET) {
+    fail('BAD_CLIENT_INPUT', 'verifiedResult is not a CELL.GET result')
+  }
+  if (!options.readCap || typeof options.readCap !== 'object') {
+    fail('BAD_CLIENT_INPUT', 'readCap is required')
+  }
+  if (options.readCap.version !== 1) {
+    fail('BAD_CLIENT_INPUT', 'readCap version must be 1')
+  }
+
+  const relayPublicKey = b4a.from(asBytes(options.readCap.relayPublicKey, 'readCap relayPublicKey', 32))
+  const storageSlot = b4a.from(asBytes(options.readCap.storageSlot, 'readCap storageSlot', 32))
+  const cellKey = b4a.from(asBytes(options.readCap.cellKey, 'readCap cellKey', 32))
+  try {
+    const sizeClass = options.readCap.sizeClass
+    if (!Number.isInteger(sizeClass) || CELL_SIZE_CLASS[sizeClass] == null) {
+      fail('BAD_CLIENT_INPUT', 'readCap sizeClass is outside the frozen cell classes')
+    }
+    const expectedCellBlobBytes = CELL_SIZE_CLASS[sizeClass]
+    const expectedCellBlobHash = b4a.from(asBytes(
+      options.readCap.expectedCellBlobHash,
+      'readCap expectedCellBlobHash',
+      32
+    ))
+
+    if (!sameBytes(relayPublicKey, internal.context.relayPublicKey)) {
+      fail('BAD_CLIENT_INPUT', 'readCap relayPublicKey does not match the verified CELL.GET endpoint')
+    }
+    if (!sameBytes(storageSlot, internal.getStorageSlot)) {
+      fail('BAD_CLIENT_INPUT', 'readCap storageSlot does not match the verified CELL.GET request')
+    }
+    if (internal.value.sizeClass !== sizeClass) {
+      fail('RELAY_PROTOCOL_VIOLATION', 'CELL.GET result sizeClass does not match the read capability')
+    }
+    const cellBlob = b4a.from(asBytes(internal.value.cellBlob, 'CELL.GET result cellBlob', expectedCellBlobBytes))
+    return await openCell({
+      runtime: options.runtime,
+      storageSlot,
+      cellKey,
+      sizeClass,
+      expectedCellBlobHash,
+      cellBlob
+    })
+  } finally {
+    // The caller retains its encrypted capability record. Erase only this
+    // short-lived copy after the asynchronous authenticated open completes.
+    cellKey.fill(0)
+  }
+}
+
 export function verifyOperationResult (options) {
   if (!options || typeof options !== 'object') fail('BAD_CLIENT_INPUT', 'operation result verification options are required')
   const context = verifiedEndpointContext(options.endpoint)
   const entry = RESULT_TABLE.get(key(context.familyId, context.operationId))
   if (!entry) fail('BAD_CLIENT_INPUT', 'qualified endpoint has no closed result verifier')
   const requestCommitment = b4a.from(asBytes(options.requestCommitment, 'requestCommitment', 32))
+  const isCellGet = context.familyId === FAMILY.CELL && context.operationId === OPERATION.CELL.GET
+  let getStorageSlot = null
   let recomputed
   try {
-    recomputed = recomputeRequestCommitment(context, options.request)
+    if (isCellGet) {
+      getStorageSlot = b4a.from(asBytes(options.request.storageSlot, 'CELL.GET request storageSlot', 32))
+    }
+    recomputed = recomputeRequestCommitment(context, options.request, getStorageSlot)
   } catch (error) {
     if (error && error.code === 'BAD_CLIENT_INPUT') throw error
     fail('BAD_CLIENT_INPUT', 'request cannot reproduce its frozen commitment', { cause: error })
@@ -508,7 +573,8 @@ export function verifyOperationResult (options) {
   return new VerifiedOperationResult(VERIFIED_RESULT, {
     bytes: decoded.bytes,
     value: decoded.value,
-    context
+    context,
+    getStorageSlot
   })
 }
 
