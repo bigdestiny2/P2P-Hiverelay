@@ -128,6 +128,9 @@
     "lab:blind:assert": "node scripts/run-blind-release-lab.mjs --profile smoke --assert-lab",
     "lab:blind:real": "node scripts/run-real-blind-relay-lab.mjs --pretty",
     "lab:blind:real:assert": "node scripts/run-real-blind-relay-lab.mjs --assert-local --pretty",
+    "lab:blind:real:multiprocess": "node scripts/run-multiprocess-blind-relay-lab.mjs --pretty",
+    "lab:blind:real:multiprocess:assert": "node scripts/run-multiprocess-blind-relay-lab.mjs --assert-local --pretty",
+    "verify:blind:real:multiprocess:evidence": "node scripts/verify-multiprocess-blind-relay-report.mjs --input test/evidence/blind-real-multiprocess-3-local-processes.evidence.json --require-local --pretty",
     "lint": "standard",
     "lint:fix": "standard --fix"
   },

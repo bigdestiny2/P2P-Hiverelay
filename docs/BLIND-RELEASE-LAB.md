@@ -12,6 +12,9 @@ decentralized network. Every result carries an evidence class and claim boundary
 node scripts/simulate-blind-fleet.mjs --assert
 node scripts/blind-capacity-lab.mjs --pretty
 node scripts/plan-blind-capacity.mjs --release-profile release --assert-fit --pretty
+node scripts/run-multiprocess-blind-relay-lab.mjs \
+  --processes 3 --relays-per-process 2 --records 16 \
+  --assert-local --pretty
 PEERIT_ROOT=/path/to/peerit node scripts/run-blind-release-lab.mjs \
   --profile smoke --assert-lab --out reports/blind-lab-smoke.json
 PEERIT_ROOT=/path/to/peerit node scripts/run-blind-release-lab.mjs \
@@ -50,6 +53,7 @@ freshness and rollback floor are checked separately.
 | Deterministic simulation | Family-aware fleet scenarios exercise placement, leases, failures, repair, accounting and fairness; the release profile models 72 relays, 24 operator groups and 8 regions | Model invariants only; no measured disk, kernel, database or Internet performance |
 | Analytical capacity | Family-specific CELL, INBOX, CORE and FORWARD resource ceilings and bottlenecks are computed from explicit assumptions | Planning sensitivity only; the reported operations per second are not benchmarks |
 | Local assembled relay | Three signed relay identities with separate store roots exercise a real TLS edge, private Unix IPC, staged CELL writes, reads and restart recovery | One host and one process, CELL only; it does not prove process isolation, multi-host operation, independent operators or all-family production composition |
+| Local multi-process relay | Three concurrent child processes run the assembled real relay lab under distinct deterministic logical identity scopes; the sealed aggregate verifies unique PIDs, process exits, globally distinct relay keys/store IDs, exact writes/reads/store counts, restart recovery and per-child latency summaries | One host and UID with synthetic admission, self-signed loopback TLS and logical scopes controlled by one test runner; it does not prove independently owned operators, multi-host networking, public-CA transport, soak or production capacity |
 | Local application scale | Peerit's journal/index harness exercises 10,000 intents and 100,000 records | The named local backend only; no public-relay, mobile or production claim |
 | Desktop browser scale | The same 10,000-intent/100,000-record/reopen ceiling has been exercised in Chromium, Firefox and WebKit desktop engines | The tested engine versions only; mobile, live relay delivery, crash/kill and quota-pressure release gates remain separate evidence |
 | Component recovery | Daemon tests exercise individual WAL, checkpoint, replay and recovery boundaries | A complete assembled format-2 all-family crash, rebalance and garbage-collection matrix is still missing |
@@ -86,6 +90,14 @@ freshness and rollback floor are checked separately.
   content capacity, minimum enumerated bundles and bottleneck transitions while
   keeping `authorizesRelease` and `changesBaselineReleaseGate` false. See
   [BLIND-CAPACITY-SIZING.md](./BLIND-CAPACITY-SIZING.md).
+- `run-multiprocess-blind-relay-lab.mjs` launches at least three real lab child
+  processes concurrently. Each child has a domain-separated deterministic
+  identity scope, independent relay/store roots, and a checksum-sealed report.
+  The aggregate verifier revalidates every child report and records exact Git
+  commits, evidence digests, observed PIDs/exits, globally unique public relay
+  keys/store IDs, writes, reads, restart counts, store counts and latency
+  summaries. The logical operator labels are test namespaces, not evidence of
+  separate ownership or administration.
 - Peerit's `peerit-scale-lab.mjs` measures the transactional journal and local
   index at the configured ceiling. Its report remains non-production evidence.
 - `peerit-delivery-concurrency.mjs` proves bounded concurrent intents/relays and

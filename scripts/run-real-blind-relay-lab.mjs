@@ -115,6 +115,23 @@ function boundedInteger (value, fallback, minimum, maximum, field) {
   return value
 }
 
+function normalizeIdentityScope (value, required = false) {
+  if (value == null) {
+    if (required) fail('identityScope is required for a scoped real relay lab')
+    return null
+  }
+  if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(value)) {
+    fail('identityScope must match ^[a-z0-9][a-z0-9-]{0,63}$')
+  }
+  return value
+}
+
+function scopedDeterministicLabel (identityScope, label) {
+  return identityScope == null
+    ? label
+    : `hiverelay-blind-real-lab-v1:${identityScope}:${label}`
+}
+
 function elapsedMillis (started, ended = process.hrtime.bigint()) {
   return Number(ended - started) / 1e6
 }
@@ -322,7 +339,7 @@ function supportPins (descriptor) {
   })
 }
 
-async function createRelayFixture (root, relayIndex, port, authorityBytes, tls) {
+async function createRelayFixture (root, relayIndex, port, authorityBytes, tls, identityScope = null) {
   const directory = path.join(root, `relay-${relayIndex}`)
   const storeRoot = path.join(directory, 'store')
   const privateIpcReplayRoot = path.join(directory, 'private-ipc-replay')
@@ -340,7 +357,10 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls) 
   sodium.crypto_sign_seed_keypair(
     relayPublicKey,
     relaySecretKey,
-    deterministicBytes(`real-relay-${relayIndex}:signing-seed`, sodium.crypto_sign_SEEDBYTES)
+    deterministicBytes(
+      scopedDeterministicLabel(identityScope, `real-relay-${relayIndex}:signing-seed`),
+      sodium.crypto_sign_SEEDBYTES
+    )
   )
   const currentEpoch = Math.floor(Date.now() / EPOCH_MILLIS)
 
@@ -351,7 +371,10 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls) 
   admission.roleBits = ENDPOINT_ROLE.STORAGE
   admission.validFromEpoch = currentEpoch
   admission.expiresEpoch = currentEpoch + 4
-  admission.nonce = deterministicBytes(`real-relay-${relayIndex}:admission-nonce`, 32)
+  admission.nonce = deterministicBytes(
+    scopedDeterministicLabel(identityScope, `real-relay-${relayIndex}:admission-nonce`),
+    32
+  )
   const cellCostIndex = admission.resourceCosts.findIndex(row =>
     row.familyId === FAMILY.CELL && row.operationId === OPERATION.CELL.PUT &&
     row.resourceClass === 1 && row.leaseClass === 1)
@@ -374,8 +397,14 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls) 
     copyBytes: true
   })
   descriptor.relayPublicKey = b4a.from(relayPublicKey)
-  descriptor.storeId = deterministicBytes(`real-relay-${relayIndex}:store`, 32)
-  descriptor.descriptorNonce = deterministicBytes(`real-relay-${relayIndex}:descriptor-nonce:0`, 32)
+  descriptor.storeId = deterministicBytes(
+    scopedDeterministicLabel(identityScope, `real-relay-${relayIndex}:store`),
+    32
+  )
+  descriptor.descriptorNonce = deterministicBytes(
+    scopedDeterministicLabel(identityScope, `real-relay-${relayIndex}:descriptor-nonce:0`),
+    32
+  )
   descriptor.descriptorSequence = 0n
   descriptor.previousDescriptorHash = null
   descriptor.issuedEpoch = currentEpoch - 1
@@ -420,7 +449,10 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls) 
     relaySecretKey
   )
   const genesisDescriptorHash = serviceDescriptorHash(genesisDescriptorBytes)
-  descriptor.descriptorNonce = deterministicBytes(`real-relay-${relayIndex}:descriptor-nonce:1`, 32)
+  descriptor.descriptorNonce = deterministicBytes(
+    scopedDeterministicLabel(identityScope, `real-relay-${relayIndex}:descriptor-nonce:1`),
+    32
+  )
   descriptor.descriptorSequence = 1n
   descriptor.previousDescriptorHash = b4a.from(genesisDescriptorHash)
   descriptor.issuedEpoch = currentEpoch
@@ -444,16 +476,26 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls) 
     privateFile(descriptorFile, descriptorBytes),
     privateFile(admissionFile, admissionBytes),
     privateFile(secretKeyFile, relaySecretKey),
-    privateFile(partitionKeyFile, deterministicBytes(`real-relay-${relayIndex}:partition`, 32)),
-    privateFile(ownerFenceFile, deterministicBytes(`real-relay-${relayIndex}:fence`, 32))
+    privateFile(partitionKeyFile, deterministicBytes(
+      scopedDeterministicLabel(identityScope, `real-relay-${relayIndex}:partition`),
+      32
+    )),
+    privateFile(ownerFenceFile, deterministicBytes(
+      scopedDeterministicLabel(identityScope, `real-relay-${relayIndex}:fence`),
+      32
+    ))
   ])
   relaySecretKey.fill(0)
 
   const uid = process.getuid()
   const gid = process.getgid()
-  const launchTopologyHash = deterministicBytes(`real-relay-${relayIndex}:topology`, 32)
+  const launchTopologyHash = deterministicBytes(
+    scopedDeterministicLabel(identityScope, `real-relay-${relayIndex}:topology`),
+    32
+  )
   return Object.freeze({
     relayIndex,
+    identityScope,
     directory,
     storeRoot,
     privateIpcReplayRoot,
@@ -719,7 +761,10 @@ function admissionFor (fixture, recordIndex) {
     profileId: 7,
     schemeId: 9,
     parameterHash: b4a.from(fixture.parameterHash),
-    token: deterministicBytes(`relay-${fixture.relayIndex}:record-${recordIndex}:admission`, 32)
+    token: deterministicBytes(scopedDeterministicLabel(
+      fixture.identityScope,
+      `relay-${fixture.relayIndex}:record-${recordIndex}:admission`
+    ), 32)
   })
 }
 
@@ -733,7 +778,10 @@ function logicalContent (recordIndex, contentBytes) {
 }
 
 async function putViaAuthenticatedStagedPath (relay, created, recordIndex) {
-  const requestId = deterministicBytes(`relay-${relay.fixture.relayIndex}:record-${recordIndex}:put-request`, 16)
+  const requestId = deterministicBytes(scopedDeterministicLabel(
+    relay.fixture.identityScope,
+    `relay-${relay.fixture.relayIndex}:record-${recordIndex}:put-request`
+  ), 16)
   const dispatch = encodeDispatchFrame({
     frameKind: FRAME_KIND.REQUEST,
     familyId: FAMILY.CELL,
@@ -866,10 +914,10 @@ async function getViaPublicEdge (relay, clientRuntime, endpoint, record, phase) 
   const request = await createGetCellRequest({
     runtime: clientRuntime,
     readCap: record.created.readCap,
-    clientNonce: deterministicBytes(
-      `relay-${relay.fixture.relayIndex}:record-${record.recordIndex}:get:${phase}`,
-      32
-    )
+    clientNonce: deterministicBytes(scopedDeterministicLabel(
+      relay.fixture.identityScope,
+      `relay-${relay.fixture.relayIndex}:record-${record.recordIndex}:get:${phase}`
+    ), 32)
   })
   const started = process.hrtime.bigint()
   const direct = new BlindDirectHttpClient({ runtime: clientRuntime, fetch: localTlsFetch })
@@ -1269,9 +1317,25 @@ export async function createRealBlindRelayTestFixture (options = {}) {
 }
 
 export async function runRealBlindRelayLab (options = {}) {
+  return runRealBlindRelayLabInternal(options)
+}
+
+export async function runScopedRealBlindRelayLab (options = {}) {
+  const identityScope = normalizeIdentityScope(options.identityScope, true)
+  let identities = null
+  const report = await runRealBlindRelayLabInternal(
+    { ...options, identityScope },
+    value => { identities = value }
+  )
+  if (identities == null) fail('scoped real relay lab did not expose its actual relay identities')
+  return Object.freeze({ report, identities })
+}
+
+async function runRealBlindRelayLabInternal (options = {}, observeIdentities = null) {
   if (typeof process.getuid !== 'function' || typeof process.getgid !== 'function') {
     fail('real relay lab requires POSIX Unix sockets and peer credentials')
   }
+  const identityScope = normalizeIdentityScope(options.identityScope)
   const relayCount = boundedInteger(options.relayCount, DEFAULTS.relayCount, 2, 8, 'relayCount')
   const recordsPerRelay = boundedInteger(
     options.recordsPerRelay,
@@ -1297,13 +1361,33 @@ export async function runRealBlindRelayLab (options = {}) {
   try {
     for (let index = 0; index < relayCount; index++) {
       ports.push(await unusedLoopbackPort())
-      fixtures.push(await createRelayFixture(root, index, ports[index], authorityBytes, tls))
+      fixtures.push(await createRelayFixture(
+        root,
+        index,
+        ports[index],
+        authorityBytes,
+        tls,
+        identityScope
+      ))
+    }
+    if (observeIdentities) {
+      observeIdentities(Object.freeze({
+        identityScope,
+        relays: Object.freeze(fixtures.map(fixture => Object.freeze({
+          relayIndex: fixture.relayIndex,
+          relayPublicKey: b4a.toString(fixture.relayPublicKey, 'hex'),
+          storeId: b4a.toString(fixture.descriptor.storeId, 'hex')
+        })))
+      }))
     }
     relays = await Promise.all(fixtures.map(startRelay))
     relayRuns.push(...relays)
     const initialV2WriteReadiness = await waitForV2WriteReadiness(relays, 'initial relay start')
 
-    const clientRuntimes = fixtures.map(fixture => deterministicRuntime(`client-${fixture.relayIndex}`))
+    const clientRuntimes = fixtures.map(fixture => deterministicRuntime(scopedDeterministicLabel(
+      identityScope,
+      `client-${fixture.relayIndex}`
+    )))
     const qualificationLatencies = []
     const qualificationResults = []
     const initialGetEndpoints = []
@@ -1335,10 +1419,10 @@ export async function runRealBlindRelayLab (options = {}) {
         sizeClass: 1,
         leaseClass: 1,
         structuredContent: content,
-        clientNonce: deterministicBytes(
-          `relay-${item.relayIndex}:record-${item.recordIndex}:create`,
-          32
-        ),
+        clientNonce: deterministicBytes(scopedDeterministicLabel(
+          identityScope,
+          `relay-${item.relayIndex}:record-${item.recordIndex}:create`
+        ), 32),
         admission: admissionFor(relay.fixture, item.recordIndex)
       })
       const write = await putViaAuthenticatedStagedPath(
