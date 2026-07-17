@@ -2,6 +2,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 
 const usage = `
@@ -42,7 +43,7 @@ if (args.help) {
 const image = parseImageRef(args.image || '')
 const raw = args.raw ? readRawManifest(args.raw) : inspectImageRaw(args.image)
 const manifest = parseRawJson(raw, 'image manifest')
-const evidence = buildEvidence(image, manifest)
+const evidence = buildEvidence(image, manifest, raw)
 validateEvidence(evidence)
 writeJson(path.resolve(args.out || 'release-image-manifest-evidence.json'), evidence)
 console.log(`Release image manifest evidence written for ${evidence.image.ref}`)
@@ -108,7 +109,7 @@ function readRawManifest (file) {
 
 function inspectImageRaw (imageRef) {
   const result = spawnSync('docker', ['buildx', 'imagetools', 'inspect', '--raw', imageRef], {
-    encoding: 'utf8',
+    encoding: null,
     maxBuffer: MAX_RAW_MANIFEST_BYTES
   })
   if (result.status !== 0) {
@@ -121,13 +122,17 @@ function inspectImageRaw (imageRef) {
 function parseRawJson (value, label) {
   assertRawDoesNotContainSecrets(value, `${label} raw JSON`)
   try {
-    return JSON.parse(value)
+    return JSON.parse(value.toString('utf8'))
   } catch (err) {
     die(`${label} must be JSON: ${err.message}`)
   }
 }
 
-function buildEvidence (image, manifest) {
+function buildEvidence (image, manifest, raw) {
+  const rawDigest = `sha256:${crypto.createHash('sha256').update(raw).digest('hex')}`
+  if (rawDigest !== image.digest) {
+    die(`release image digest does not match the exact raw index bytes: claimed ${image.digest}, computed ${rawDigest}`)
+  }
   if (!INDEX_MEDIA_TYPES.has(manifest?.mediaType)) {
     die(`release image manifest must be a Docker manifest list or OCI image index; got ${JSON.stringify(manifest?.mediaType)}`)
   }
@@ -316,8 +321,9 @@ function assertPublicSafeString (value, label, at) {
 }
 
 function assertRawDoesNotContainSecrets (value, label) {
+  const string = value.toString('utf8')
   for (const [pattern, name] of FORBIDDEN_PUBLIC_VALUE_PATTERNS) {
-    if (pattern.test(value)) die(`${label} must not contain ${name}`)
+    if (pattern.test(string)) die(`${label} must not contain ${name}`)
   }
 }
 
@@ -330,7 +336,8 @@ function hasControlChars (value) {
 }
 
 function redactSensitiveOutput (value) {
-  return String(value)
+  const output = Buffer.isBuffer(value) ? value.toString('utf8') : String(value)
+  return output
     .replace(/-----BEGIN [A-Z ]*(?:PRIVATE|SECRET) KEY-----[\s\S]*?-----END [A-Z ]*(?:PRIVATE|SECRET) KEY-----/g, '[redacted key block]')
     .replace(/\bAuthorization\s*:\s*[^\r\n]*/gi, '[redacted authorization header]')
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi, '[redacted bearer token]')
