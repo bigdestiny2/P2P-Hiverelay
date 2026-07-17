@@ -544,6 +544,7 @@ export class BlindEdge {
     this.requestStateBySocket = new WeakMap()
     this.readinessAck = null
     this.descriptorReadinessFloor = null
+    this.descriptorAuthorityFloor = null
     // This is deliberately process-scoped, not request-scoped. If a process
     // object survives a fork, the PID fence regenerates it in the child before
     // that child can open a V2 write channel.
@@ -679,14 +680,50 @@ export class BlindEdge {
         now >= acknowledgement.expiresMonotonicMillis) {
       throw new EdgeTransportError(503, 'staged CELL.PUT V2 write readiness expired')
     }
-    this.writeDescriptorReadinessFloor = Object.freeze({
-      descriptorSequence: acknowledgement.descriptorSequence,
-      descriptorHash: b4a.from(acknowledgement.descriptorHash)
-    })
+    try {
+      this._recordWriteReadiness(acknowledgement)
+    } catch (error) {
+      if (error instanceof EdgeReadinessError && error.code === 'BLIND_READINESS_ROLLBACK') {
+        this._failReadiness(error)
+        throw new EdgeTransportError(503, 'staged CELL.PUT V2 write readiness rolled back or forked')
+      }
+      throw error
+    }
     return acknowledgement
   }
 
+  _recordDescriptorAuthorityFloor (ack) {
+    const floor = this.descriptorAuthorityFloor
+    if (floor && (ack.descriptorSequence < floor.descriptorSequence ||
+        (ack.descriptorSequence === floor.descriptorSequence &&
+         !b4a.equals(ack.descriptorHash, floor.descriptorHash)))) {
+      throw new EdgeReadinessError('BLIND_READINESS_ROLLBACK',
+        'daemon descriptor tuple rolled back or forked across readiness planes')
+    }
+    if (!floor || ack.descriptorSequence > floor.descriptorSequence) {
+      this.descriptorAuthorityFloor = Object.freeze({
+        descriptorSequence: ack.descriptorSequence,
+        descriptorHash: b4a.from(ack.descriptorHash)
+      })
+    }
+  }
+
+  _recordWriteReadiness (ack) {
+    // Compare against the current shared floor after the asynchronous
+    // handshake. This makes out-of-order V2 completions fail closed instead of
+    // allowing an older acknowledgement to overwrite a newer tuple.
+    this._recordDescriptorAuthorityFloor(ack)
+    const floor = this.writeDescriptorReadinessFloor
+    if (!floor || ack.descriptorSequence > floor.descriptorSequence) {
+      this.writeDescriptorReadinessFloor = Object.freeze({
+        descriptorSequence: ack.descriptorSequence,
+        descriptorHash: b4a.from(ack.descriptorHash)
+      })
+    }
+  }
+
   _recordReadiness (ack) {
+    this._recordDescriptorAuthorityFloor(ack)
     this.readinessAck = ack
     this.descriptorReadinessFloor = Object.freeze({
       descriptorSequence: ack.descriptorSequence,

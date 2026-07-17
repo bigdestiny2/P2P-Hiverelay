@@ -15,6 +15,11 @@ import {
   encodeCanonical
 } from '@hiverelay/blind-protocol'
 import {
+  LOCAL_RESPONSE_KIND,
+  decodeLocalResponse,
+  encodeLocalReadyProbe
+} from '@hiverelay/blind-ipc'
+import {
   CELL_PUT_ENDPOINT_ROLE_BIT_V2,
   CELL_PUT_OPERATION_BIT_V2,
   LOCAL_STAGED_DIRECTION_V2,
@@ -224,13 +229,13 @@ async function createDaemon (t, options = {}) {
     endpointIds: [ENDPOINT_ID],
     releaseGate: () => {},
     dispatch: async () => { throw new Error('V2 tests must not enter unary dispatch') },
-    readinessSnapshot: async () => ({
+    readinessSnapshot: options.readinessSnapshot || (async () => ({
       selfVerified: true,
       descriptorSequence: 9n,
       descriptorHash: DESCRIPTOR_HASH,
       readyRoleBits: CELL_PUT_ENDPOINT_ROLE_BIT_V2,
       readyOperationBits: 0x7
-    }),
+    })),
     ...profileOptions,
     dispatchStagedPut: Object.hasOwn(options, 'dispatchStagedPut')
       ? options.dispatchStagedPut
@@ -894,6 +899,73 @@ test('V2 write descriptor floor rejects rollback and equal-sequence forks across
   t.is(harness.daemon.v2ReplayReservationCount, 0,
     'staged path cannot roll back the floor established by a ready probe')
   t.ok(harness.errors.some(error => /rolled back or forked/.test(error.message)))
+})
+
+test('daemon descriptor floor is shared across V1 and V2 readiness planes', async t => {
+  const now = 5_600_000n
+  const highHash = b4a.alloc(32, 0xd3)
+  const lowHash = b4a.alloc(32, 0xd2)
+  const v1Probe = nonceByte => encodeLocalReadyProbe({
+    endpointId: ENDPOINT_ID,
+    acceptedMonotonicMillis: now,
+    edgeInstanceNonce: b4a.alloc(32, nonceByte),
+    launchTopologyHash: TOPOLOGY_HASH
+  })
+  const v2Probe = nonceByte => encodeLocalReadyProbeV2({
+    endpointId: ENDPOINT_ID,
+    edgeProcessNonce: b4a.alloc(32, nonceByte),
+    launchTopologyHash: TOPOLOGY_HASH,
+    edgeFeatureBits: REQUIRED_LOCAL_IPC_FEATURE_BITS_V2,
+    requestedWriteOperationBits: CELL_PUT_OPERATION_BIT_V2,
+    acceptedMonotonicMillis: now,
+    absoluteDeadlineMonotonicMillis: now + 2_000n
+  })
+
+  const v1First = await createDaemon(t, {
+    monotonicMillis: () => now,
+    readinessSnapshot: async () => ({
+      selfVerified: true,
+      descriptorSequence: 10n,
+      descriptorHash: highHash,
+      readyRoleBits: CELL_PUT_ENDPOINT_ROLE_BIT_V2,
+      readyOperationBits: 0x7
+    }),
+    writeReadinessProjection: async input => defaultProjection(input, {
+      descriptorSequence: 9n,
+      descriptorHash: lowHash
+    })
+  })
+  await rejectedStream(v1First.paths.streamSocketPath, [])
+  const v1Ready = decodeLocalResponse(
+    await unaryExchange(v1First.paths.unarySocketPath, v1Probe(0xf1)),
+    { copyBody: true }
+  )
+  t.is(v1Ready.responseKind, LOCAL_RESPONSE_KIND.LOCAL_READY_ACK)
+  t.is((await unaryExchange(v1First.paths.unarySocketPath, v2Probe(0xf2))).byteLength, 0,
+    'V2 cannot roll back the tuple accepted by V1')
+
+  const v2First = await createDaemon(t, {
+    monotonicMillis: () => now,
+    readinessSnapshot: async () => ({
+      selfVerified: true,
+      descriptorSequence: 9n,
+      descriptorHash: lowHash,
+      readyRoleBits: CELL_PUT_ENDPOINT_ROLE_BIT_V2,
+      readyOperationBits: 0x7
+    }),
+    writeReadinessProjection: async input => defaultProjection(input, {
+      descriptorSequence: 10n,
+      descriptorHash: highHash
+    })
+  })
+  t.ok((await unaryExchange(v2First.paths.unarySocketPath, v2Probe(0xf3))).byteLength > 0)
+  await rejectedStream(v2First.paths.streamSocketPath, [])
+  const v1Rollback = decodeLocalResponse(
+    await unaryExchange(v2First.paths.unarySocketPath, v1Probe(0xf4)),
+    { copyBody: true }
+  )
+  t.is(v1Rollback.responseKind, LOCAL_RESPONSE_KIND.LOCAL_BROKER_ERROR,
+    'V1 cannot roll back the tuple accepted by V2')
 })
 
 test('record-derived deadlines release stalled resolver and projection tasks plus connection slots', async t => {

@@ -655,7 +655,7 @@ function projectionBits (value, field, maximum = 0xffffffff) {
 export class BlindDaemon {
   #v2ReplayReservationCount
   #v2IngressConstructionCount
-  #v2WriteDescriptorFloor
+  #descriptorAuthorityFloor
 
   constructor (options = {}) {
     this.unarySocketPath = validSocketPath(options.unarySocketPath, 'unarySocketPath')
@@ -724,7 +724,7 @@ export class BlindDaemon {
     currentMonotonic(this.now)
     this.#v2ReplayReservationCount = 0
     this.#v2IngressConstructionCount = 0
-    this.#v2WriteDescriptorFloor = null
+    this.#descriptorAuthorityFloor = null
     this.unaryServer = null
     this.streamServer = null
     this.sockets = new Set()
@@ -1106,20 +1106,12 @@ export class BlindDaemon {
   }
 
   _acceptV2WriteDescriptorFloor (projection) {
-    const floor = this.#v2WriteDescriptorFloor
-    if (floor && (projection.descriptorSequence < floor.descriptorSequence ||
-        (projection.descriptorSequence === floor.descriptorSequence &&
-         !sameBytes(projection.descriptorHash, floor.descriptorHash)))) {
+    if (!this._descriptorTupleAdvances(projection)) {
       throw Object.assign(new Error('V2 write readiness descriptor rolled back or forked at its retained floor'), {
         code: 'BLIND_STREAM_UNAVAILABLE'
       })
     }
-    if (!floor || projection.descriptorSequence > floor.descriptorSequence) {
-      this.#v2WriteDescriptorFloor = Object.freeze({
-        descriptorSequence: projection.descriptorSequence,
-        descriptorHash: b4a.from(projection.descriptorHash)
-      })
-    }
+    this._recordDescriptorAuthorityFloor(projection)
   }
 
   async _handleV2ReadyProbe (bytes, socket, signal) {
@@ -1515,12 +1507,22 @@ export class BlindDaemon {
   }
 
   _descriptorTupleAdvances (snapshot) {
-    const previous = this.lastReadyDescriptor
+    const previous = this.#descriptorAuthorityFloor
     if (!previous) return true
     if (snapshot.descriptorSequence < previous.descriptorSequence) return false
     if (snapshot.descriptorSequence === previous.descriptorSequence &&
         !sameBytes(snapshot.descriptorHash, previous.descriptorHash)) return false
     return true
+  }
+
+  _recordDescriptorAuthorityFloor (snapshot) {
+    const previous = this.#descriptorAuthorityFloor
+    if (!previous || snapshot.descriptorSequence > previous.descriptorSequence) {
+      this.#descriptorAuthorityFloor = Object.freeze({
+        descriptorSequence: snapshot.descriptorSequence,
+        descriptorHash: b4a.from(snapshot.descriptorHash)
+      })
+    }
   }
 
   async _handleReadyProbe (local, operationSignal, credentials) {
@@ -1568,6 +1570,7 @@ export class BlindDaemon {
     if (!this._descriptorTupleAdvances(snapshot)) {
       return localBrokerResponse(LOCAL_BROKER_ERROR.TOPOLOGY_PROFILE_ENDPOINT_MISMATCH)
     }
+    this._recordDescriptorAuthorityFloor(snapshot)
     this.lastReadyDescriptor = {
       descriptorSequence: snapshot.descriptorSequence,
       descriptorHash: b4a.from(snapshot.descriptorHash)

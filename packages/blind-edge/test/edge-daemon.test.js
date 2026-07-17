@@ -846,6 +846,42 @@ test('descriptor rollback or equal-sequence fork closes the listener and accepte
   }
 })
 
+test('edge descriptor floor is shared and atomic across V1 and V2 readiness completions', async t => {
+  const edge = Object.create(BlindEdge.prototype)
+  edge.readinessAck = null
+  edge.descriptorReadinessFloor = null
+  edge.writeDescriptorReadinessFloor = null
+  edge.descriptorAuthorityFloor = null
+  const tuple = (descriptorSequence, fill) => ({
+    descriptorSequence,
+    descriptorHash: b4a.alloc(32, fill),
+    expiresMonotonicMillis: 10_000n
+  })
+
+  edge._recordReadiness(tuple(10n, 0x81))
+  await t.exception(() => edge._recordWriteReadiness(tuple(9n, 0x80)), {
+    code: 'BLIND_READINESS_ROLLBACK'
+  })
+  t.is(edge.descriptorAuthorityFloor.descriptorSequence, 10n,
+    'V2 cannot roll back a tuple accepted by V1')
+  t.is(edge.writeDescriptorReadinessFloor, null,
+    'rejected V2 completion does not create a write floor')
+
+  edge._recordWriteReadiness(tuple(12n, 0x83))
+  await t.exception(() => edge._recordWriteReadiness(tuple(11n, 0x82)), {
+    code: 'BLIND_READINESS_ROLLBACK'
+  })
+  t.is(edge.writeDescriptorReadinessFloor.descriptorSequence, 12n,
+    'an older out-of-order V2 completion cannot overwrite the newer write floor')
+
+  edge._recordWriteReadiness(tuple(14n, 0x85))
+  await t.exception(() => edge._recordReadiness(tuple(13n, 0x84)), {
+    code: 'BLIND_READINESS_ROLLBACK'
+  })
+  t.is(edge.descriptorAuthorityFloor.descriptorSequence, 14n,
+    'V1 cannot roll back a tuple accepted by V2')
+})
+
 test('failed refresh closes the listener and every accepted socket by ACK expiry', async t => {
   const daemon = await readinessDaemon({
     reply: (probe, index) => index === 0
