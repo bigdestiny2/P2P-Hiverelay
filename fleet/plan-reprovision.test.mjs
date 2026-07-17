@@ -84,6 +84,39 @@ test('D-7 rejects a legacy-only rollback target', () => {
     blocker.id === 'D7_DUAL_READ_ROLLBACK_ARTIFACT_REQUIRED'))
 })
 
+test('duplicate relay names make an exact target ambiguous', () => {
+  const input = completeInput()
+  input.inventory.relays.push(relay('relay-a', 'root-other'))
+  const report = buildFleetReprovisionPlan(input)
+  const blockers = report.blockers.map(blocker => blocker.id)
+
+  assert.equal(report.status, 'blocked')
+  assert.ok(blockers.includes('DUPLICATE_RELAY_NAMES'))
+  assert.ok(blockers.includes('TARGET_RELAY_AMBIGUOUS'))
+})
+
+test('new root cannot collide with any existing relay root', () => {
+  const input = completeInput()
+  input.newRootId = 'root-b'
+  const report = buildFleetReprovisionPlan(input)
+
+  assert.equal(report.status, 'blocked')
+  assert.ok(report.blockers.some(blocker =>
+    blocker.id === 'NEW_ROOT_COLLIDES_WITH_EXISTING_ROOT'))
+})
+
+test('stale and materially future inventory timestamps fail closed', () => {
+  const staleInput = completeInput()
+  staleInput.inventory.observedAt = '2026-07-17T11:00:00Z'
+  const stale = buildFleetReprovisionPlan(staleInput)
+  const futureInput = completeInput()
+  futureInput.inventory.observedAt = '2026-07-17T12:20:00Z'
+  const future = buildFleetReprovisionPlan(futureInput)
+
+  assert.ok(stale.blockers.some(blocker => blocker.id === 'FLEET_INVENTORY_STALE'))
+  assert.ok(future.blockers.some(blocker => blocker.id === 'FLEET_INVENTORY_FROM_FUTURE'))
+})
+
 test('report digest detects plan tampering', () => {
   const report = buildFleetReprovisionPlan(completeInput())
   const altered = structuredClone(report)
@@ -98,6 +131,8 @@ function completeInput () {
     schema: REPROVISION_INPUT_SCHEMA,
     targetRelay: 'relay-a',
     newRootId: 'root-a-vnext',
+    evaluatedAt: '2026-07-17T12:05:00Z',
+    maximumInventoryAgeSeconds: 600,
     artifact: {
       releaseId: 'vnext-rc.1',
       releaseSequence: 1,

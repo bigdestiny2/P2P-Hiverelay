@@ -30,7 +30,8 @@ export function buildFleetReprovisionPlan (input = {}) {
   const inventory = isObject(input.inventory) ? input.inventory : {}
   const relays = Array.isArray(inventory.relays) ? inventory.relays : []
   const targetRelay = nonEmpty(input.targetRelay) ? input.targetRelay : null
-  const target = relays.find(relay => relay?.name === targetRelay) || null
+  const targetMatches = relays.filter(relay => relay?.name === targetRelay)
+  const target = targetMatches.length === 1 ? targetMatches[0] : null
   const artifact = isObject(input.artifact) ? input.artifact : {}
   const targetContracts = isObject(input.targetContracts) ? input.targetContracts : {}
 
@@ -38,7 +39,11 @@ export function buildFleetReprovisionPlan (input = {}) {
     addBlocker('INPUT_SCHEMA_INVALID', `schema must be ${REPROVISION_INPUT_SCHEMA}`)
   }
   if (!targetRelay) addBlocker('TARGET_RELAY_REQUIRED', 'name exactly one relay')
-  else if (!target) addBlocker('TARGET_RELAY_NOT_FOUND', `${targetRelay} is not present in the inventory`)
+  else if (targetMatches.length === 0) {
+    addBlocker('TARGET_RELAY_NOT_FOUND', `${targetRelay} is not present in the inventory`)
+  } else if (targetMatches.length > 1) {
+    addBlocker('TARGET_RELAY_AMBIGUOUS', `${targetRelay} appears ${targetMatches.length} times`)
+  }
 
   if (!COMMIT.test(artifact.sourceCommit || '')) {
     addBlocker('SOURCE_COMMIT_REQUIRED', 'bind the plan to one exact 40-character source commit')
@@ -68,8 +73,16 @@ export function buildFleetReprovisionPlan (input = {}) {
   if (!validTimestamp(inventory.observedAt)) {
     addBlocker('FLEET_INVENTORY_TIMESTAMP_REQUIRED', 'inventory observedAt must be a valid timestamp')
   }
+  inspectInventoryFreshness(inventory.observedAt, input, addBlocker)
   if (relays.length === 0) {
     addBlocker('FLEET_INVENTORY_EMPTY', 'inventory must contain at least one relay')
+  }
+  const duplicateRelayNames = duplicateValues(relays.map(relay => relay?.name).filter(nonEmpty))
+  if (duplicateRelayNames.length > 0) {
+    addBlocker(
+      'DUPLICATE_RELAY_NAMES',
+      `relay names must be unique: ${duplicateRelayNames.join(', ')}`
+    )
   }
 
   const incompleteRelays = relays
@@ -96,8 +109,14 @@ export function buildFleetReprovisionPlan (input = {}) {
 
   if (!nonEmpty(input.newRootId)) {
     addBlocker('NEW_ROOT_ID_REQUIRED', 'name the disposable empty root before an operator acts')
-  } else if (target && input.newRootId === target.rootId) {
-    addBlocker('NEW_ROOT_MUST_BE_DISTINCT', 'the reprovision target cannot reuse the current root identity')
+  } else {
+    const rootOwner = relays.find(relay => relay?.rootId === input.newRootId)
+    if (rootOwner) {
+      addBlocker(
+        'NEW_ROOT_COLLIDES_WITH_EXISTING_ROOT',
+        `${input.newRootId} is already owned by ${rootOwner.name || '<unnamed>'}`
+      )
+    }
   }
 
   const inventorySummary = summarizeInventory(relays)
@@ -121,6 +140,10 @@ export function buildFleetReprovisionPlan (input = {}) {
       evidenceDigest: DIGEST.test(inventory.evidenceDigest || '') ? inventory.evidenceDigest : null,
       signatureVerified: inventory.signatureVerified === true,
       observedAt: validTimestamp(inventory.observedAt) ? inventory.observedAt : null,
+      evaluatedAt: validTimestamp(input.evaluatedAt) ? input.evaluatedAt : null,
+      maximumAgeSeconds: positiveInteger(input.maximumInventoryAgeSeconds)
+        ? input.maximumInventoryAgeSeconds
+        : null,
       ...inventorySummary
     },
     projections: summarizeProjections(input),
@@ -189,6 +212,31 @@ function inspectRetention (retention, addBlocker) {
     addBlocker(
       'UNIQUE_OR_UNKNOWN_OBJECTS_PRESENT',
       `${retention.uniqueUnknownObjects} unique or unknown objects remain`
+    )
+  }
+}
+
+function inspectInventoryFreshness (observedAt, input, addBlocker) {
+  if (!validTimestamp(input.evaluatedAt) || !positiveInteger(input.maximumInventoryAgeSeconds)) {
+    addBlocker(
+      'INVENTORY_FRESHNESS_WINDOW_REQUIRED',
+      'supply evaluatedAt and a positive maximumInventoryAgeSeconds'
+    )
+    return
+  }
+  if (!validTimestamp(observedAt)) return
+  const ageMillis = Date.parse(input.evaluatedAt) - Date.parse(observedAt)
+  const maximumAgeMillis = input.maximumInventoryAgeSeconds * 1000
+  const maximumFutureSkewMillis = 300 * 1000
+  if (ageMillis > maximumAgeMillis) {
+    addBlocker(
+      'FLEET_INVENTORY_STALE',
+      `inventory age ${Math.floor(ageMillis / 1000)}s exceeds ${input.maximumInventoryAgeSeconds}s`
+    )
+  } else if (ageMillis < -maximumFutureSkewMillis) {
+    addBlocker(
+      'FLEET_INVENTORY_FROM_FUTURE',
+      `inventory observedAt is ${Math.ceil(-ageMillis / 1000)}s ahead of evaluatedAt`
     )
   }
 }
@@ -359,6 +407,16 @@ function validDigest (value) {
   return DIGEST.test(value || '') ? value : null
 }
 
+function duplicateValues (values) {
+  const seen = new Set()
+  const duplicates = new Set()
+  for (const value of values) {
+    if (seen.has(value)) duplicates.add(value)
+    seen.add(value)
+  }
+  return [...duplicates].sort()
+}
+
 function positiveInteger (value) {
   return Number.isSafeInteger(value) && value > 0
 }
@@ -401,6 +459,8 @@ function usage () {
     '  --artifact-sha256 SHA   Exact immutable release artifact override',
     '  --release-id ID         Immutable release identity override',
     '  --release-sequence N    Monotonic release sequence override',
+    '  --as-of TIMESTAMP        Timestamp used for inventory freshness',
+    '  --max-inventory-age N    Maximum accepted inventory age in seconds',
     '  --out FILE              Write the report locally instead of stdout',
     '  --pretty | --compact    JSON formatting',
     '  --require-ready         Exit 2 when local evidence is incomplete',
@@ -424,6 +484,10 @@ async function main (argv) {
     schema: state.schema || REPROVISION_INPUT_SCHEMA,
     inventory,
     targetRelay: args.targetRelay || state.targetRelay,
+    evaluatedAt: args.asOf || state.evaluatedAt || new Date().toISOString(),
+    maximumInventoryAgeSeconds: args.maxInventoryAge
+      ? Number(args.maxInventoryAge)
+      : state.maximumInventoryAgeSeconds,
     artifact: {
       ...(isObject(state.artifact) ? state.artifact : {}),
       ...(args.sourceCommit ? { sourceCommit: args.sourceCommit } : {}),
@@ -449,6 +513,8 @@ function parseArgs (argv) {
     ['--artifact-sha256', 'artifactSha256'],
     ['--release-id', 'releaseId'],
     ['--release-sequence', 'releaseSequence'],
+    ['--as-of', 'asOf'],
+    ['--max-inventory-age', 'maxInventoryAge'],
     ['--out', 'out']
   ])
   for (let index = 0; index < argv.length; index++) {

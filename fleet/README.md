@@ -65,6 +65,7 @@ observed capacity evidence. Audit that boundary without contacting a relay:
 node fleet/plan-reprovision.mjs \
   --target-relay utah \
   --source-commit "$(git rev-parse HEAD)" \
+  --max-inventory-age 900 \
   --out /tmp/hiverelay-reprovision-plan.json \
   --require-ready
 ```
