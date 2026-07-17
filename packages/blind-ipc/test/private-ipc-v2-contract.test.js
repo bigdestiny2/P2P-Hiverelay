@@ -23,7 +23,7 @@ import * as contract from '../private-ipc-v2-contract.js'
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const repositoryRoot = path.resolve(packageRoot, '../..')
 const vectorRoot = path.join(packageRoot, 'vectors/v2')
-const baseCommit = 'fa71427da4b215e20bb083daadd590fbc5ee807d'
+const baseCommit = '9a33c3c1198442dda65d0eef9927c58c132d2c22'
 const fixed = (length, byte) => b4a.alloc(length, byte)
 const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
 
