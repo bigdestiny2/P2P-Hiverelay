@@ -42,6 +42,39 @@ signed origin/main control commit (changes only fleet/channels.json)
 **manual, single-box** layer. They compose: the timer keeps boxes on
 their channel; `manage` is for hands-on tweaks to one node.
 
+## New-root reprovision planning
+
+`plan-reprovision.mjs` is a local, dry-run-only guard for
+`hiverelay/fleet-reprovision-plan/v1`. It names exactly one target relay and
+fails closed unless the input binds:
+
+- one immutable release artifact, source commit, release sequence, and
+  protocol/store/IPC hashes;
+- signed, timestamped fleet inventory with operator, host, failure-domain,
+  role, storage-generation, admission, clock, retention, capacity, backup, and
+  root metadata;
+- a zero-unknown retention census, after-drain capacity and replica floors,
+  isolated restore proof, and a distinct empty root; and
+- a rehearsed D-7 rollback artifact that reads both blind and legacy state
+  while the old root remains retained.
+
+The current `relays.json` is discovery metadata, not signed inventory or
+observed capacity evidence. Audit that boundary without contacting a relay:
+
+```bash
+node fleet/plan-reprovision.mjs \
+  --target-relay utah \
+  --source-commit "$(git rev-parse HEAD)" \
+  --out /tmp/hiverelay-reprovision-plan.json \
+  --require-ready
+```
+
+That command is expected to remain blocked until an immutable RC and the
+required operator evidence exist. The planner has no execute, SSH, deploy,
+channel, key, root, or fleet mutation mode. Even a blocker-free result only
+means ready for independent review and a separate human operation lease; it
+does not pass PG-5 or PG-7.
+
 ## Signed releases (required)
 
 The updater resolves a channel only from the latest commit on the configured
