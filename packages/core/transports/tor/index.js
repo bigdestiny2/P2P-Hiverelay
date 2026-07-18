@@ -6,7 +6,9 @@
  * 1. **Hidden service (inbound):** persistent ED25519-V3 onion service with
  *    multi-vport forwarding, optional restricted discovery (v3 client
  *    authorization), and health-gated readiness. Peers connect without
- *    knowing the relay's real IP.
+ *    knowing the relay's real IP. When a `peerListener` (OnionPeerListener)
+ *    is attached, the peer vport (19737) is forwarded to it alongside the
+ *    read plane, so the Noise/Protomux peer protocol runs over the onion.
  *
  * 2. **SOCKS5 proxy (outbound):** routes outbound connections through Tor
  *    so the relay's IP is hidden from peers it connects to.
@@ -35,6 +37,7 @@ import { dirname } from 'path'
 import { SocksClient } from 'socks'
 import { Duplex } from 'stream'
 import { OnionRosterStore, isValidClientPub } from './auth-keys.js'
+import { DEFAULT_PEER_VPORT } from './peer-listener.js'
 
 const DEFAULT_SOCKS_HOST = '127.0.0.1'
 const DEFAULT_SOCKS_PORT = 9050
@@ -173,6 +176,15 @@ export class TorTransport extends EventEmitter {
     this.healthOpts = Object.assign({ probeIntervalMs: 900000, probeFailLimit: 3, minDescriptorUploads: 2, probeVport: null }, opts.health || {})
     this.maxStreams = opts.maxStreams || null
 
+    // Peer protocol plane: a bound OnionPeerListener the peer vport forwards
+    // to. Inbound peer connections surface through the same 'connection'
+    // event as outbound SOCKS streams — the relay's one handler serves both.
+    this.peerListener = opts.peerListener || null
+    this.peerVport = opts.peerVport || DEFAULT_PEER_VPORT
+    if (this.peerListener) {
+      this.peerListener.on('connection', (stream, info) => this.emit('connection', stream, info))
+    }
+
     // legacy: single localPort → vport 80
     this.localPort = opts.localPort || null
 
@@ -195,9 +207,18 @@ export class TorTransport extends EventEmitter {
   }
 
   _effectiveVports () {
-    if (this.vports && this.vports.length) return this.vports
-    if (this.localPort) return [{ vport: 80, targetHost: '127.0.0.1', targetPort: this.localPort }]
-    return []
+    const vports = (this.vports && this.vports.length)
+      ? [...this.vports]
+      : this.localPort
+        ? [{ vport: 80, targetHost: '127.0.0.1', targetPort: this.localPort }]
+        : []
+    // Forward the peer vport to the bound peer listener so the hidden
+    // service carries Noise/Protomux next to the read plane. An explicit
+    // vports entry for the same vport wins (operator override).
+    if (this.peerListener && !vports.some((v) => v.vport === this.peerVport)) {
+      vports.push({ vport: this.peerVport, targetHost: this.peerListener.host, targetPort: this.peerListener.port })
+    }
+    return vports
   }
 
   async start () {
@@ -205,6 +226,10 @@ export class TorTransport extends EventEmitter {
     this._setHealth(TorHealth.STARTING)
 
     await this._checkTorRunning()
+
+    // Bind the peer protocol endpoint before the hidden service is created
+    // so the peer vport forwards to the live port (ephemeral binds included).
+    if (this.peerListener && !this.peerListener.running) await this.peerListener.start()
 
     const vports = this._effectiveVports()
     if (vports.length || this.minDaemonVersion || this.pow) {
@@ -247,6 +272,7 @@ export class TorTransport extends EventEmitter {
     this._connections.clear()
 
     if (this._control) { this._control.destroy(); this._control = null }
+    if (this.peerListener) await this.peerListener.stop()
     this._descriptorUploads = 0
     this.emit('stopped')
   }

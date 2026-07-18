@@ -264,6 +264,12 @@ export default {
     // Multi-port forwarding, e.g. [{ vport: 80, targetHost: '127.0.0.1', targetPort: 9100 }].
     // When null, localPort (apiPort) is exposed on vport 80 as before.
     vports: null,
+    // Peer protocol plane (Noise/Protomux: custody, replication, RPC): a
+    // loopback-bound listener the onion peer vport forwards to, next to the
+    // read plane. host MUST stay loopback — the onion service is the only
+    // ingress (location hiding). An explicit `vports` entry for the same
+    // vport overrides this mapping.
+    peer: { enabled: true, vport: 19737, host: '127.0.0.1', port: 19737 },
     // Restricted discovery: base32 x25519 client pubkeys bound at service
     // creation (Flags=V3Auth). Roster changes rebuild the service in place
     // (same address). Empty = open service. rosterFile persists the roster

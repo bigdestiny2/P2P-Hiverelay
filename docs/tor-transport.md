@@ -54,7 +54,11 @@ v3 client authorization: only enrolled clients can connect. Semantics
 Enrollment envelopes (`hiverelay.onion.authkey/1`) and signed acceptance
 receipts are provided by `packages/core/transports/tor/auth-keys.js`
 (`createEnrollment`/`verifyEnrollment`/`createReceipt`/`verifyReceipt`);
-they are designed to ride the existing pairing channel.
+they ride the existing pairing channel: the device presents its envelope at
+pair time and the relay completes the enrollment
+(`packages/core/transports/tor/enrollment.js`, wired into
+`RelayNode.pairDevice`) — verify, roster rebuild-in-place, rosterFile
+persist, signed receipt back.
 
 ## Virtual ports
 
@@ -62,12 +66,26 @@ they are designed to ride the existing pairing channel.
 roles (`readPlane`, `peer`) so clients can separate HTTP reads from the
 peer/replication protocol. Default (legacy): vport 80 → the HTTP API port.
 
+With the transport enabled, the peer protocol plane binds automatically: an
+`OnionPeerListener` (loopback Noise XK endpoint, `tor.peer` config below)
+accepts the peer vport's forwarded connections and runs the same
+Noise/Protomux peer protocol as swarm connections (custody, replication,
+RPC), re-validated by the relay's normal connection handler. The peer vport
+is folded into the hidden-service mapping on start and on every roster
+rebuild; an explicit `vports` entry for the same vport overrides it.
+
 ```json
 "vports": [
   { "vport": 80, "targetHost": "127.0.0.1", "targetPort": 9100 },
   { "vport": 19737, "targetHost": "127.0.0.1", "targetPort": 19737 }
-]
+],
+"peer": { "enabled": true, "vport": 19737, "host": "127.0.0.1", "port": 19737 }
 ```
+
+`peer.host` must stay loopback — the onion service is the only ingress
+(location hiding). Clients dial the onion peer vport as Noise XK initiators
+with the relay's stable pubkey (from the signed capability doc) as
+`remotePublicKey`.
 
 ## Health-gated advertisement
 

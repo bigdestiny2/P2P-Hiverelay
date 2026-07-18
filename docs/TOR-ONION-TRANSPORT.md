@@ -144,12 +144,14 @@ Public surfaces get coarse health only (`running`, `activeConnections`) — the 
 2. Long-lived services accumulate guard-discovery exposure (PoPETs 2022; arXiv 2602.23560 intro-circuit intersection attack, Feb 2026) — mitigated by vanguards-lite, endpoint rotation, `hidden-only` exposure.
 3. `dual` exposure links the public and onion identities via shared uptime — operators choose: hidden-only identity, or accept the link.
 4. Operator-side deanonymization (payment rails, hosting accounts, cross-signing) is out of transport scope — see the operator checklist in `docs/tor-transport.md`.
-5. Follow-ups in flight: pairing-channel enrollment hookup (wire format + verification shipped in `auth-keys.js`), peer-vport listener binding into the relay peer protocol, 100 MB/10 min bulk gate on realistic uplinks (5 MB live gate passed at 1.19 Mbps).
+5. Remaining follow-up: 100 MB/10 min bulk gate on realistic uplinks (5 MB live gate passed at 1.19 Mbps). Shipped since (2026-07-18): pairing-channel enrollment hookup (`transports/tor/enrollment.js` — the envelope rides `RelayNode.pairDevice` extras; verify → roster rebuild-in-place → rosterFile persist → signed receipt; 4 tests in `tor-enrollment.test.js`) and peer-vport listener binding (`transports/tor/peer-listener.js` — loopback Noise XK endpoint the onion peer vport 19737 forwards to, folded into the transport's vport mapping and lifecycle; 7 tests in `tor-peer-listener.test.js`).
 
 ## 10. Test evidence
 
 - 12 transport unit tests (`tor-transport.test.js`) incl. persistent key custody, roster rebuild, health transitions, and the persistent-parser `TorControl`.
 - 9 lifecycle tests (`tor-auth-keys.test.js`): envelopes, receipts, roster store, wire formats.
+- 4 enrollment tests (`tor-enrollment.test.js`): pairing-channel verify → roster add + persist → rebuild → signed receipt; rejection cases (bad sig, expired, wrong relay, identity mismatch); gating no-ops; the `RelayNode.pairDevice` wiring.
+- 7 peer-vport tests (`tor-peer-listener.test.js`): Noise XK upgrade with a Protomux round-trip, wrong-identity rejection, connection cap, and the stubbed-listener vport mapping/binding.
 - 13 resolver tests (`privacy-policy.test.js`): fail-closed, explicit fallback ordering, coverage honesty.
 - 9 redaction tests (`tor-redaction.test.js`) incl. the audit gate.
 - 5 capability-doc tests + fixture stability (`capability-doc.test.js`, profile vectors).
