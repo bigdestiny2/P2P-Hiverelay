@@ -729,6 +729,63 @@ test('staged CELL.PUT reaches storage without coordinator body buffering and rej
   t.is(h.signCalls(), 2, 'truncated replay cannot use the signing key')
 })
 
+test('staged CELL.PUT commits exactly one WAL frame in one datasync and replays it after reopen', async t => {
+  let observeWalIo = false
+  let walWrites = 0
+  let walSyncs = 0
+  const h = await harness(t, {
+    storageOptions: {
+      faultInjector (point) {
+        if (!observeWalIo) return
+        if (point === 'wal:after-write') walWrites++
+        if (point === 'wal:after-sync') walSyncs++
+      }
+    }
+  })
+  let walDatasyncs = 0
+  const walHandle = h.storage.transactionStore.handle
+  const originalDatasync = walHandle.datasync.bind(walHandle)
+  walHandle.datasync = async () => { walDatasyncs++; return originalDatasync() }
+  const fixture = cellFixture(h.relay.publicKey, { blobByte: 0x91, nonceByte: 0x92, spendByte: 0x93 })
+  const dispatch = encodeDispatchFrame(frame(OPERATION.CELL.PUT, putCellV1, fixture.request))
+  const metadataBytes = dispatch.byteLength - fixture.cellBlob.byteLength
+  const before = h.storage.status().walSequence
+  const ingestor = new StagedCellPutDispatchIngestor({ maxQueuedBodyBytes: 1024 })
+  await ingestor.push(dispatch.subarray(0, metadataBytes))
+  const staged = await ingestor.ready
+  observeWalIo = true
+  const pending = h.coordinator.dispatchStagedCellPut(staged, { ...context(), outerClass: 3 })
+  await ingestor.push(dispatch.subarray(metadataBytes))
+  ingestor.finish()
+  const receipt = responseValue(await pending, blindReceiptV1)
+  observeWalIo = false
+  t.is(receipt.result, CELL_RECEIPT_RESULT.STORED)
+  t.is(h.storage.status().walSequence, before + 1n,
+    'one public staged CELL.PUT appends exactly one WAL commit frame')
+  t.is(walWrites, 1, 'exactly one WAL frame write')
+  t.is(walSyncs, 1, 'exactly one WAL frame sync')
+  t.is(walDatasyncs, 1, 'exactly one WAL datasync durables the single commit frame')
+
+  await h.storage.close()
+  const reopenedStorage = new BlindCellStorageEngine(h.storageOptions)
+  await reopenedStorage.open()
+  t.teardown(() => reopenedStorage.close())
+  t.is(reopenedStorage.status().walSequence, before + 1n, 'reopen replays the one committed frame')
+  t.alike((await reopenedStorage.readCell(fixture.request.storageSlot)).cellBlob, fixture.cellBlob,
+    'the published body is retained through recovery')
+
+  const coordinator = h.assemble(reopenedStorage).coordinator
+  const replayIngestor = new StagedCellPutDispatchIngestor({ maxQueuedBodyBytes: 1024 })
+  await replayIngestor.push(dispatch.subarray(0, metadataBytes))
+  const replayStaged = await replayIngestor.ready
+  const replayPending = coordinator.dispatchStagedCellPut(replayStaged, { ...context(), outerClass: 3 })
+  await replayIngestor.push(dispatch.subarray(metadataBytes))
+  replayIngestor.finish()
+  t.is(responseValue(await replayPending, blindReceiptV1).result, CELL_RECEIPT_RESULT.STORED)
+  t.is(reopenedStorage.status().walSequence, before + 1n,
+    'an exact committed replay discards its restaged body without a new frame')
+})
+
 test('descriptor advance while atomic commit waits on locks fails the final fence without type-17 authority', async t => {
   const h = await harness(t)
   const fixture = cellFixture(h.relay.publicKey, { blobByte: 0x76, nonceByte: 0x77, spendByte: 0x78 })

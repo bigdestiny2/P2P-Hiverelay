@@ -991,6 +991,72 @@ test('atomic staged PUT cancellation discards bytes without spend, cell, or WAL 
   await engine.close()
 })
 
+test('atomic staged PUT rejects a replayed spend without a second WAL frame', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-live-atomic-spend-replay')
+  const time = clock()
+  const fixture = putFixture({ spendByte: 0xaf, blobByte: 0xaf })
+  const engine = new BlindCellStorageEngine(options(root, time, {
+    storeId: STORE_ID,
+    durabilityProfileHash: DURABILITY_PROFILE_HASH
+  }))
+  await engine.open()
+  const stored = await engine.commitAtomicCellPut({
+    authority: await engine.stageAtomicCellPut({
+      request: fixture.request,
+      source: fixture.cellBlob,
+      admissionProfileId: fixture.preparedAdmission.profileId,
+      resultBinding: profile1ResultBindingBytes()
+    }),
+    preparedAdmission: fixture.preparedAdmission,
+    preCommitFence: () => true
+  })
+  t.is(stored.status, 'stored')
+  t.is(stored.replay, false)
+  const before = engine.status().walSequence
+
+  const changedNonce = putFixture({
+    keys: fixture.keys,
+    cellBlob: fixture.cellBlob,
+    clientNonce: b4a.alloc(32, 0xb9),
+    spendTag: fixture.preparedAdmission.spendTag
+  })
+  await rejectsCode(t, engine.commitAtomicCellPut({
+    authority: await engine.stageAtomicCellPut({
+      request: changedNonce.request,
+      source: changedNonce.cellBlob,
+      admissionProfileId: changedNonce.preparedAdmission.profileId,
+      resultBinding: profile1ResultBindingBytes()
+    }),
+    preparedAdmission: changedNonce.preparedAdmission,
+    preCommitFence: () => true
+  }), 'SPEND_REPLAY')
+  t.is(engine.status().walSequence, before, 'a rejected spend replay appends no frame')
+  t.is(engine.status().accounting.atomicStagingBytes, 0, 'the rejected staged body is discarded')
+  t.is(engine.status().accounting.atomicStagingLeases, 0)
+  t.is(engine.status().accounting.cellRecords, 1)
+
+  const changedSpend = putFixture({
+    keys: fixture.keys,
+    cellBlob: fixture.cellBlob,
+    clientNonce: b4a.alloc(32, 0xba),
+    spendTag: b4a.alloc(32, 0xc9)
+  })
+  await rejectsCode(t, engine.commitAtomicCellPut({
+    authority: await engine.stageAtomicCellPut({
+      request: changedSpend.request,
+      source: changedSpend.cellBlob,
+      admissionProfileId: changedSpend.preparedAdmission.profileId,
+      resultBinding: profile1ResultBindingBytes()
+    }),
+    preparedAdmission: changedSpend.preparedAdmission,
+    preCommitFence: () => true
+  }), 'CONFLICT')
+  t.is(engine.status().walSequence, before, 'a rejected slot conflict appends no frame')
+  t.is(engine.status().accounting.cellRecords, 1)
+  t.alike((await engine.readCell(fixture.request.storageSlot)).cellBlob, fixture.cellBlob)
+  await engine.close()
+})
+
 test('expired atomic staging leases are swept and release quota plus drain ownership', async t => {
   const root = await temporaryRoot(t, 'blind-cell-live-atomic-expiry')
   const time = clock()
