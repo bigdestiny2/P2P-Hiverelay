@@ -522,3 +522,92 @@ test('opts.attestedAt override works for deterministic tests', async (t) => {
   const doc = buildCapabilityDoc({ relay: { config: {} }, attestedAt: fixedTime })
   t.is(doc.attestedAt, fixedTime)
 })
+
+// --- privacyTransports (hiverelay.onion/1, RA-03) ---
+
+function relayWithTor (torTransport, config = {}) {
+  return {
+    config: { custody: { enabled: true }, tor: {}, ...config },
+    serviceRegistry: { services: new Map() },
+    torTransport
+  }
+}
+
+function readyTor (overrides = {}) {
+  return {
+    running: true,
+    health: 'ready',
+    onionAddress: 'b'.repeat(56) + '.onion',
+    startedAtMs: 1784323200000,
+    endpointKeyId: null,
+    rosterFile: null,
+    clientAuthKeys: [],
+    pow: null,
+    ...overrides
+  }
+}
+
+test('privacyTransports — omitted without tor transport (signable shape preserved)', async (t) => {
+  const doc = buildCapabilityDoc({ relay: { config: {} } })
+  t.is(doc.privacyTransports, undefined)
+  t.absent('privacyTransports' in doc)
+  t.absent(doc.features.includes('privacy-transports-v1'))
+})
+
+test('privacyTransports — health-gated: omitted unless ready', async (t) => {
+  for (const health of ['tor-starting', 'key-loaded', 'descriptor-uploaded', 'degraded']) {
+    const doc = buildCapabilityDoc({ relay: relayWithTor(readyTor({ health })) })
+    t.absent('privacyTransports' in doc, `health=${health} must not advertise`)
+  }
+})
+
+test('privacyTransports — ready onion entry shape and labels', async (t) => {
+  const doc = buildCapabilityDoc({ relay: relayWithTor(readyTor({ endpointKeyId: 'onion-2026-07-a' })) })
+  t.is(doc.privacyTransports.length, 1)
+  t.ok(doc.features.includes('privacy-transports-v1'))
+  const entry = doc.privacyTransports[0]
+  t.is(entry.id, 'tor-v3-onion-v1')
+  t.is(entry.network, 'tor')
+  t.is(entry.protocol, 'hiverelay.onion/1')
+  t.is(entry.relayLocation, 'hidden-onion')
+  t.is(entry.exposure, 'dual')
+  t.is(entry.addresses.length, 1)
+  t.is(entry.addresses[0].address, 'b'.repeat(56) + '.onion')
+  t.is(entry.addresses[0].keyId, 'onion-2026-07-a')
+  t.is(entry.addresses[0].notBefore, 1784323200000)
+  t.is(entry.addresses[0].notAfter, 1784323200000 + 90 * 24 * 60 * 60 * 1000)
+  t.is(entry.addresses[0].priority, 10)
+  t.alike(entry.vports, [80])
+  t.is(entry.vportRoles.readPlane, 80)
+  t.is(entry.auth.mode, 'none')
+  t.is(entry.pow.enabled, false)
+  t.ok(entry.supports.includes('catalog.read'))
+  t.ok(entry.supports.includes('replication.sync'))
+  t.ok(entry.supports.includes('custody.commit'))
+  t.absent(entry.supports.includes('notify.send')) // no notify service in stub
+})
+
+test('privacyTransports — client-auth mode from roster/keys; custody off drops custody kinds', async (t) => {
+  const withRoster = buildCapabilityDoc({ relay: relayWithTor(readyTor({ rosterFile: '/x/roster.json' })) })
+  t.is(withRoster.privacyTransports[0].auth.mode, 'client-auth-v3')
+  t.alike(withRoster.privacyTransports[0].auth.enrollment, ['pairing-channel'])
+
+  const withKeys = buildCapabilityDoc({ relay: relayWithTor(readyTor({ clientAuthKeys: ['a'.repeat(52)] })) })
+  t.is(withKeys.privacyTransports[0].auth.mode, 'client-auth-v3')
+
+  const noCustody = buildCapabilityDoc({ relay: relayWithTor(readyTor(), { custody: { enabled: false } }) })
+  t.absent(noCustody.privacyTransports[0].supports.includes('custody.commit'))
+})
+
+test('privacyTransports — dual vports map to roles; pow reported', async (t) => {
+  const tt = readyTor({
+    pow: { enabled: true },
+    _effectiveVports: () => [{ vport: 80 }, { vport: 19737 }]
+  })
+  const doc = buildCapabilityDoc({ relay: relayWithTor(tt) })
+  const entry = doc.privacyTransports[0]
+  t.alike(entry.vports, [80, 19737])
+  t.is(entry.vportRoles.readPlane, 80)
+  t.is(entry.vportRoles.peer, 19737)
+  t.is(entry.pow.enabled, true)
+})
