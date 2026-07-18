@@ -1,5 +1,5 @@
 import Hyperswarm from 'hyperswarm'
-import Corestore from 'corestore'
+import { openCorestore } from '../persistence/storage-root-restore.js'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import { EventEmitter } from 'events'
@@ -504,7 +504,7 @@ export class RelayNode extends EventEmitter {
     this.mode = opts.mode || opts.productProfile || 'relay-core'
     this.config = buildConfig(this.mode, opts)
     this._operatingMode = this.mode
-    this.store = new Corestore(this.config.storage)
+    this.store = openCorestore(this.config.storage)
     this.swarm = null
     this.swarmFirewall = null
     this.seeder = null
@@ -920,7 +920,7 @@ export class RelayNode extends EventEmitter {
     try {
       // Re-create store if it was closed (e.g. after self-heal restart)
       if (this.store.closed) {
-        this.store = new Corestore(this.config.storage)
+        this.store = openCorestore(this.config.storage)
         // The registry's Hyperbee is backed by the OLD (now-closed) store.
         // Drop it so setStore()/load() below reopen the bee on the fresh
         // store; otherwise reseedFromRegistry reads a closed core, gets
@@ -1278,6 +1278,15 @@ export class RelayNode extends EventEmitter {
           controlPort: torOpts.controlPort,
           controlPassword: torOpts.controlPassword,
           cookieAuthFile: torOpts.cookieAuthFile,
+          keyFile: torOpts.keyFile,
+          minDaemonVersion: torOpts.minDaemonVersion,
+          vports: torOpts.vports,
+          clientAuthKeys: torOpts.clientAuthKeys,
+          rosterFile: torOpts.rosterFile,
+          endpointKeyId: torOpts.endpointKeyId,
+          maxStreams: torOpts.maxStreams,
+          pow: torOpts.pow,
+          health: torOpts.health,
           localPort: this.config.apiPort || 9100
         })
 

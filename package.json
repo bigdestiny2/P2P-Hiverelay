@@ -12,6 +12,7 @@
   ],
   "scripts": {
     "start": "node packages/core/cli/index.js start",
+    "postinstall": "patch-package",
     "audit:workspace": "node scripts/audit-workspace-alignment.mjs",
     "audit:ecosystem-consumers": "node scripts/audit-ecosystem-consumers.mjs --check --dependency-mode npm-latest",
     "audit:ecosystem-consumers:latest": "node scripts/audit-ecosystem-consumers.mjs --check --dependency-mode npm-latest",
@@ -57,9 +58,9 @@
     "umbrel:smoke-package": "node scripts/smoke-umbrel-package.mjs",
     "startos:verify": "cd startos && make verify IMAGE_DIGEST=\"$HIVERELAY_IMAGE_DIGEST\"",
     "startos:verify:local": "cd startos && make verify ALLOW_TAG_ONLY_IMAGE=1",
-    "test": "brittle test/**/*.test.js",
-    "test:unit": "brittle --timeout 120000 test/unit/**/*.test.js",
-    "test:integration": "brittle test/integration/**/*.test.js",
+    "test": "brittle-node test/**/*.test.js",
+    "test:unit": "brittle-node --timeout 120000 test/unit/**/*.test.js",
+    "test:integration": "brittle-node test/integration/**/*.test.js",
     "test:bare": "PATH=\"$PWD/node_modules/bare/bin:$PATH\" brittle-bare test/bare/index.js",
     "demo:pearbrowser": "node scripts/pearbrowser-marketplace-demo.js",
     "demo:pearbrowser:once": "node scripts/pearbrowser-marketplace-demo.js --once",
@@ -71,7 +72,8 @@
   "devDependencies": {
     "@hyperswarm/testnet": "^3.0.0",
     "bare": "^1.28.7",
-    "brittle": "^3.19.1",
+    "brittle": "^4.0.2",
+    "patch-package": "^8.0.1",
     "standard": "^17.1.0"
   },
   "engines": {

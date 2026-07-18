@@ -19,7 +19,7 @@ import Hyperswarm from 'hyperswarm'
 import ProtomuxRPC from 'protomux-rpc'
 import c from 'compact-encoding'
 import b4a from 'b4a'
-import goodbye from 'graceful-goodbye'
+import gracedown from 'pear-gracedown'
 import { mkdirSync } from 'fs'
 
 // ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ async function main () {
   console.log('\n  Waiting for peers...\n')
 
   // 4. Graceful shutdown
-  goodbye(async () => {
+  gracedown(async () => {
     console.log('\n  Shutting down...')
     for (const p of peers.values()) {
       if (p.rpc) p.rpc.destroy()

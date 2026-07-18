@@ -14,7 +14,7 @@
 
 import { createServer } from 'http'
 import Hyperswarm from 'hyperswarm'
-import Corestore from 'corestore'
+import { openCorestore } from '../core/persistence/storage-root-restore.js'
 import Hyperdrive from 'hyperdrive'
 import { HyperGateway } from './hyper-gateway.js'
 import { RELAY_DISCOVERY_TOPIC } from '../core/constants.js'
@@ -77,7 +77,7 @@ export async function startGateway (opts = {}) {
   const corsOrigin = opts.corsOrigin || '*'
 
   // Boot P2P
-  const store = new Corestore(storagePath)
+  const store = openCorestore(storagePath)
   await store.ready()
 
   const swarm = new Hyperswarm()

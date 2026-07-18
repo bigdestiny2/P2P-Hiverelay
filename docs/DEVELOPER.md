@@ -298,7 +298,7 @@ import { HiveRelayClient } from 'p2p-hiverelay-client'
 | `ws` | WebSocket server for browser peers |
 | `@grpc/grpc-js` | Lightning Network LND communication |
 | `minimist` | CLI argument parsing |
-| `graceful-goodbye` | Clean shutdown handling |
+| `pear-gracedown` | Clean shutdown handling |
 
 ---
 
@@ -1562,7 +1562,7 @@ TCP/UDP tunneling over Hyperswarm. Enables relay services to be exposed through 
 **File:** `transports/dht-relay-ws/`
 **Since:** v0.22.0 (production hardening)
 
-A content-blind DHT byte pipe for browser peers: proxies HyperDHT operations over WebSocket so a browser can hole-punch and talk to the swarm through the relay. **Disabled by default** — enable via `config.transports.dhtRelayWs`. Built on a vendored, patched `@hyperswarm/dht-relay@0.4.3` (`transports/dht-relay-ws/vendor/dht-relay`, pinned exact); the patches fix egress backpressure, per-connection crash containment, and resource drain on close — see `vendor/dht-relay/VENDOR.md`.
+A content-blind DHT byte pipe for browser peers: proxies HyperDHT operations over WebSocket so a browser can hole-punch and talk to the swarm through the relay. **Disabled by default** — enable via `config.transports.dhtRelayWs`. Built on a vendored, patched `@hyperswarm/dht-relay@0.4.3` (`transports/dht-relay-ws/vendor/dht-relay`, pinned exact); the npm dependency is retired and the vendored copy is the single source for both server and test client. The patches fix egress backpressure, per-connection crash containment, and resource drain on close — see `vendor/dht-relay/VENDOR.md`.
 
 Every bound is **content-neutral** (frame lengths, buffer sizes, timings — never the Noise-encrypted payload), preserving the operator's transitory-conduit posture.
 
@@ -2043,7 +2043,7 @@ per minute, which keeps systemd journals bounded on unattended fleet boxes.
 [status] Apps: 3 | Conns: 47 | Stored: 4.2 GB | Served: 891.0 MB | Circuits: 2
 ```
 
-**Shutdown:** Ctrl+C triggers graceful shutdown via `graceful-goodbye`.
+**Shutdown:** Ctrl+C triggers graceful shutdown via `pear-gracedown`.
 
 ### `p2p-hiverelay seed <key>`
 

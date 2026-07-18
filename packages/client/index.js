@@ -30,6 +30,7 @@
 
 import Hyperswarm from 'hyperswarm'
 import Corestore from 'corestore'
+import { openCorestore } from 'p2p-hiverelay/core/persistence/storage-root-restore.js'
 import Hyperdrive from 'hyperdrive'
 import b4a from 'b4a'
 import Protomux from 'protomux'
@@ -290,7 +291,7 @@ export class HiveRelayClient extends EventEmitter {
 
     // Create store if we own it (only when storage path was given)
     if (this._ownsStore && !this.store && this._storagePath) {
-      this.store = new Corestore(this._storagePath)
+      this.store = openCorestore(this._storagePath)
       await this.store.ready()
     }
 
