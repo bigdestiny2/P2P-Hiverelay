@@ -45,6 +45,17 @@ v3 client authorization: only enrolled clients can connect. Semantics
 - enrollment is **rebuild-in-place**: the roster change recreates the service
   with the same address (brief intro-point churn; there is no runtime
   roster add on the control port);
+- signed enrollment expirations are enforced while the relay is running.
+  Expiry filters the in-memory roster immediately, withdraws the advertised
+  endpoint, durably tombstones the credential, and serially rebuilds the
+  service without it. Wall-clock expiry is rechecked at least once per minute,
+  and tombstones prevent a later clock rollback from reviving access. A failed
+  replacement is retried without restoring expired authorization. If Tor
+  cannot confirm deletion, HiveRelay closes the control-owned service and
+  stays degraded until the transport is restarted;
+- finite-expiry pairing enrollment requires both `keyFile` and `rosterFile`.
+  Keys supplied statically through `clientAuthKeys` remain operator-managed
+  and cannot receive a signed finite-expiry receipt;
 - the client device generates its own x25519 keypair and installs it into its
   own tor daemon (`ONION_CLIENT_AUTH_ADD ... Flags=Permanent`, survives
   restarts). The relay only ever holds **public** keys;
@@ -95,6 +106,12 @@ The onion endpoint appears in the signed capability doc
 removes the entry — clients never see a dead endpoint. Health states:
 `tor-starting → key-loaded → descriptor-uploaded → ready`, plus `degraded`
 and `disabled`.
+
+Start, stop, roster changes, and expiry rebuilds share one lifecycle queue.
+Readiness is withdrawn before `DEL_ONION`, so a capability response can never
+advertise a service while its authorized-client set is being replaced. A
+control-socket ordering barrier and service-generation fence also discard
+descriptor events and SOCKS probe results from the previous generation.
 
 ## PoW defense — packaging decision
 

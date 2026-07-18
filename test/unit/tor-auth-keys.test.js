@@ -202,6 +202,28 @@ test('roster store — persist, reload, revoke, purge, 0600', async (t) => {
   // corrupt file fails closed
   fs.writeFileSync(file, '{broken')
   await t.exception(() => new OnionRosterStore(file).load(), /corrupt onion roster/)
+
+  fs.writeFileSync(file, JSON.stringify({
+    version: 1,
+    keys: [{
+      pub: alice,
+      name: null,
+      addedAtMs: now,
+      expiresAtMs: String(now + 1000),
+      revokedAtMs: null
+    }]
+  }))
+  await t.exception(() => new OnionRosterStore(file).load(), /expiresAtMs must be a non-negative safe integer/)
+  t.exception(
+    () => new OnionRosterStore(file).add(alice, { nowMs: now, expiresAtMs: now }),
+    /expiresAtMs must be in the future/
+  )
+
+  const epochStore = new OnionRosterStore(file)
+  epochStore.add(alice, { nowMs: 0, expiresAtMs: 1000 })
+  t.is(epochStore.revoke(alice, { nowMs: 0 }), true)
+  t.is(epochStore.revoke(alice, { nowMs: 0 }), false, 'epoch-zero tombstone remains idempotent')
+  t.alike(epochStore.activeKeys({ nowMs: 0 }), [])
 })
 
 // --- TorTransport roster persistence integration ---

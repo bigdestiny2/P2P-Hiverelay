@@ -32,6 +32,12 @@ export const MAX_ENROLLMENT_CLOCK_SKEW_MS = 5 * 60 * 1000
 const B32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567'
 const CLIENT_PUB_RE = /^[a-z2-7]{52}$/
 
+function assertSafeTimestamp (value, label) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative safe integer`)
+  }
+}
+
 /** RFC4648 base32, lowercase, no padding (tor's ClientAuthV3/.auth encoding). */
 export function base32Encode (buf) {
   let bits = 0
@@ -232,8 +238,23 @@ export class OnionRosterStore {
     this.keys.clear()
     try {
       const data = JSON.parse(await readFile(this.file, 'utf8'))
-      for (const k of data.keys || []) {
-        if (isValidClientPub(k.pub)) this.keys.set(k.pub, k)
+      if (!data || data.version !== 1 || !Array.isArray(data.keys)) {
+        throw new Error('unsupported or malformed roster schema')
+      }
+      for (const k of data.keys) {
+        if (!k || typeof k !== 'object' || !isValidClientPub(k.pub)) {
+          throw new Error('invalid client entry')
+        }
+        assertSafeTimestamp(k.addedAtMs, 'addedAtMs')
+        assertSafeTimestamp(k.expiresAtMs, 'expiresAtMs')
+        if (k.expiresAtMs <= k.addedAtMs) {
+          throw new Error('expiresAtMs must be greater than addedAtMs')
+        }
+        if (k.revokedAtMs !== null) {
+          assertSafeTimestamp(k.revokedAtMs, 'revokedAtMs')
+          if (k.revokedAtMs < k.addedAtMs) throw new Error('revokedAtMs precedes addedAtMs')
+        }
+        this.keys.set(k.pub, k)
       }
     } catch (err) {
       if (err.code !== 'ENOENT') throw new Error(`corrupt onion roster at ${this.file}: ${err.message}`)
@@ -253,11 +274,17 @@ export class OnionRosterStore {
   /** Add (or re-add with fresh expiry) a client. Returns the entry. */
   add (pubB32, { name = null, expiresAtMs = null, nowMs = Date.now() } = {}) {
     if (!isValidClientPub(pubB32)) throw new Error('invalid x25519 client public key')
+    assertSafeTimestamp(nowMs, 'nowMs')
+    const effectiveExpiry = expiresAtMs === null
+      ? nowMs + this.defaultTtlMs
+      : expiresAtMs
+    assertSafeTimestamp(effectiveExpiry, 'expiresAtMs')
+    if (effectiveExpiry <= nowMs) throw new Error('expiresAtMs must be in the future')
     const entry = {
       pub: pubB32,
       name,
       addedAtMs: nowMs,
-      expiresAtMs: expiresAtMs || nowMs + this.defaultTtlMs,
+      expiresAtMs: effectiveExpiry,
       revokedAtMs: null
     }
     this.keys.set(pubB32, entry)
@@ -266,24 +293,34 @@ export class OnionRosterStore {
 
   /** Revoke a client (tombstone). Returns true if it existed. */
   revoke (pubB32, { nowMs = Date.now() } = {}) {
+    assertSafeTimestamp(nowMs, 'nowMs')
     const entry = this.keys.get(pubB32)
-    if (!entry || entry.revokedAtMs) return false
+    if (!entry || entry.revokedAtMs !== null) return false
     entry.revokedAtMs = nowMs
     return true
   }
 
   /** Active (unexpired, unrevoked) client pubkeys — the ClientAuthV3 set. */
   activeKeys ({ nowMs = Date.now() } = {}) {
+    assertSafeTimestamp(nowMs, 'nowMs')
     return [...this.keys.values()]
-      .filter((k) => !k.revokedAtMs && k.expiresAtMs > nowMs)
+      .filter((k) => (
+        k.revokedAtMs === null &&
+        Number.isSafeInteger(k.expiresAtMs) &&
+        k.expiresAtMs > nowMs
+      ))
       .map((k) => k.pub)
   }
 
   /** Drop expired/revoked entries past grace. Returns dropped count. */
   purge ({ nowMs = Date.now(), graceMs = ROTATION_GRACE_MS } = {}) {
+    assertSafeTimestamp(nowMs, 'nowMs')
+    assertSafeTimestamp(graceMs, 'graceMs')
     let dropped = 0
     for (const [pub, k] of this.keys) {
-      const dead = k.revokedAtMs ? k.revokedAtMs + graceMs <= nowMs : k.expiresAtMs + graceMs <= nowMs
+      const dead = k.revokedAtMs !== null
+        ? k.revokedAtMs + graceMs <= nowMs
+        : k.expiresAtMs + graceMs <= nowMs
       if (dead) { this.keys.delete(pub); dropped++ }
     }
     return dropped

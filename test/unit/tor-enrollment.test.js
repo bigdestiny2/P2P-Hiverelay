@@ -206,6 +206,158 @@ test('enrollment gating — clean no-op without tor / without restricted discove
   t.alike(openResult, { enrolled: false, reason: 'open-discovery' })
 })
 
+test('enrollment rejects finite expiry without enforceable persistent roster authority', async (t) => {
+  const root = tmpdir(t)
+  const relay = ed25519Keypair()
+  const client = ed25519Keypair()
+  const staticKey = generateClientAuthKeypair()
+  const newKey = generateClientAuthKeypair()
+
+  const staticOnly = await startedTransport(t, path.join(root, 'static-only'), {
+    rosterFile: null,
+    clientAuthKeys: [staticKey.publicKeyB32]
+  })
+  const newEnvelope = enrollmentFor({
+    client,
+    relayPubkeyHex: relay.publicKeyHex,
+    kp: newKey
+  })
+  const noRoster = await completeOnionEnrollment({
+    torTransport: staticOnly.tt,
+    relayKeyPair: relay,
+    devicePubkeyHex: client.publicKeyHex,
+    envelope: newEnvelope
+  })
+  t.alike(noRoster, { enrolled: false, reason: 'persistent-roster-required' })
+
+  const withRoster = await startedTransport(t, path.join(root, 'static-plus-roster'), {
+    clientAuthKeys: [staticKey.publicKeyB32]
+  })
+  const staticEnvelope = enrollmentFor({
+    client,
+    relayPubkeyHex: relay.publicKeyHex,
+    kp: staticKey
+  })
+  const staticResult = await completeOnionEnrollment({
+    torTransport: withRoster.tt,
+    relayKeyPair: relay,
+    devicePubkeyHex: client.publicKeyHex,
+    envelope: staticEnvelope
+  })
+  t.alike(staticResult, { enrolled: false, reason: 'static-auth-key' })
+  t.absent(staticResult.receipt)
+})
+
+test('enrollment crossing expiry removes the transient key and signs no receipt', async (t) => {
+  const dir = tmpdir(t)
+  const wallNow = Date.now()
+  let transportNow = wallNow
+  const { tt, control } = await startedTransport(t, dir, {
+    _now: () => transportNow
+  })
+  const relay = ed25519Keypair()
+  const client = ed25519Keypair()
+  const kp = generateClientAuthKeypair()
+  const envelope = enrollmentFor({
+    client,
+    relayPubkeyHex: relay.publicKeyHex,
+    kp,
+    now: wallNow,
+    ttlMs: 24 * 60 * 60 * 1000
+  })
+
+  const realCmd = control.cmd.bind(control)
+  let crossExpiryOnAdd = true
+  control.cmd = (command) => {
+    const response = realCmd(command)
+    if (crossExpiryOnAdd && command.startsWith('ADD_ONION')) {
+      crossExpiryOnAdd = false
+      transportNow = envelope.expiresAtMs
+    }
+    return response
+  }
+
+  const result = await completeOnionEnrollment({
+    torTransport: tt,
+    relayKeyPair: relay,
+    devicePubkeyHex: client.publicKeyHex,
+    envelope
+  })
+  t.alike(result, { enrolled: false, reason: 'expired' })
+  t.alike(tt.listAuthClients(), [])
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, 'auth-roster.json'), 'utf8'))
+  t.is(saved.keys[0].pub, kp.publicKeyB32)
+  t.is(saved.keys[0].revokedAtMs, envelope.expiresAtMs)
+  const live = control.commands.filter((command) => command.startsWith('ADD_ONION')).pop()
+  t.absent(live.includes('ClientAuthV3=' + kp.publicKeyB32))
+})
+
+test('failed crossed-expiry replacement cannot roll the expired key back', async (t) => {
+  const dir = tmpdir(t)
+  const wallNow = Date.now()
+  let transportNow = wallNow
+  const { tt, control } = await startedTransport(t, dir, {
+    _now: () => transportNow,
+    _rosterExpiryRetryMs: 60_000
+  })
+  const relay = ed25519Keypair()
+  const client = ed25519Keypair()
+  const expiredKey = generateClientAuthKeypair()
+  const replacementKey = generateClientAuthKeypair()
+  const envelope = enrollmentFor({
+    client,
+    relayPubkeyHex: relay.publicKeyHex,
+    kp: expiredKey,
+    now: wallNow,
+    ttlMs: 24 * 60 * 60 * 1000
+  })
+
+  const realCmd = control.cmd.bind(control)
+  let crossExpiryOnAdd = true
+  let failExpiryReplacement = true
+  control.cmd = (command) => {
+    const response = realCmd(command)
+    if (!command.startsWith('ADD_ONION')) return response
+    if (crossExpiryOnAdd) {
+      crossExpiryOnAdd = false
+      transportNow = envelope.expiresAtMs
+      return response
+    }
+    if (failExpiryReplacement) {
+      failExpiryReplacement = false
+      return Promise.reject(new Error('injected expiry replacement failure'))
+    }
+    return response
+  }
+
+  await t.exception(
+    completeOnionEnrollment({
+      torTransport: tt,
+      relayKeyPair: relay,
+      devicePubkeyHex: client.publicKeyHex,
+      envelope
+    }),
+    /failed to enforce authorization/
+  )
+  t.alike(tt.listAuthClients(), [])
+  t.is(tt._serviceActive, false)
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, 'auth-roster.json'), 'utf8'))
+  t.is(saved.keys[0].revokedAtMs, envelope.expiresAtMs)
+
+  transportNow = wallNow
+  await tt.addAuthClient(replacementKey.publicKeyB32, {
+    expiresAtMs: wallNow + 2 * 24 * 60 * 60 * 1000
+  })
+  const live = control.commands.filter((command) => command.startsWith('ADD_ONION')).pop()
+  t.absent(live.includes('ClientAuthV3=' + expiredKey.publicKeyB32), 'clock rewind cannot revive committed expiry')
+  t.ok(live.includes('ClientAuthV3=' + replacementKey.publicKeyB32))
+  const savedAfterRewind = JSON.parse(fs.readFileSync(path.join(dir, 'auth-roster.json'), 'utf8'))
+  t.ok(
+    savedAfterRewind.keys.find((entry) => entry.pub === expiredKey.publicKeyB32).revokedAtMs !== null,
+    'later mutation cannot overwrite the durable expiry tombstone'
+  )
+})
+
 test('RelayNode pairDevice — enrollment envelope rides the pairing extras', async (t) => {
   const dir = tmpdir(t)
   const node = new RelayNode({

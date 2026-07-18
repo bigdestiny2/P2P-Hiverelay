@@ -58,12 +58,39 @@ export async function completeOnionEnrollment ({ torTransport, relayKeyPair, dev
     return { enrolled: false, reason: 'identity-mismatch' }
   }
 
+  const enrollmentPolicy = typeof torTransport.authClientEnrollmentPolicy === 'function'
+    ? torTransport.authClientEnrollmentPolicy(check.envelope.onionAuthPubX25519)
+    : { allowed: false, reason: 'expiry-enforcement-unavailable' }
+  if (!enrollmentPolicy.allowed) {
+    return { enrolled: false, reason: enrollmentPolicy.reason }
+  }
+
   // Roster add rebuilds the service in place (same onion address) and
   // persists via rosterFile when configured.
-  await torTransport.addAuthClient(check.envelope.onionAuthPubX25519, {
-    name: deviceName,
-    expiresAtMs: check.envelope.expiresAtMs
-  })
+  try {
+    await torTransport.addAuthClient(check.envelope.onionAuthPubX25519, {
+      name: deviceName,
+      expiresAtMs: check.envelope.expiresAtMs
+    })
+  } catch (err) {
+    if (err && err.code === 'TOR_AUTH_EXPIRED') {
+      return { enrolled: false, reason: 'expired' }
+    }
+    if (err && err.code === 'TOR_AUTH_EXPIRY_UNENFORCEABLE') {
+      return { enrolled: false, reason: err.reason || 'expiry-enforcement-unavailable' }
+    }
+    throw err
+  }
+
+  const enrolledAtMs = typeof torTransport.currentTimeMs === 'function'
+    ? torTransport.currentTimeMs()
+    : Date.now()
+  if (enrolledAtMs >= check.envelope.expiresAtMs) {
+    if (typeof torTransport.expireAuthClient === 'function') {
+      await torTransport.expireAuthClient(check.envelope.onionAuthPubX25519)
+    }
+    return { enrolled: false, reason: 'expired' }
+  }
 
   const receipt = createReceipt({
     relayPubkey,
@@ -73,7 +100,7 @@ export async function completeOnionEnrollment ({ torTransport, relayKeyPair, dev
     endpointKeyId: torTransport.endpointKeyId,
     clientIdentity: check.envelope.clientIdentity,
     onionAuthPubX25519: check.envelope.onionAuthPubX25519,
-    enrolledAtMs: Date.now(),
+    enrolledAtMs,
     expiresAtMs: check.envelope.expiresAtMs
   })
   return { enrolled: true, receipt }
