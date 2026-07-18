@@ -286,7 +286,38 @@ export default {
     controlHost: '127.0.0.1',
     controlPort: 9051,
     controlPassword: null,
-    cookieAuthFile: '/var/lib/tor/control_auth_cookie'
+    cookieAuthFile: '/var/lib/tor/control_auth_cookie',
+    // hiverelay.onion/1 (RA-01b) — all default to legacy ephemeral behavior.
+    // keyFile enables a persistent v3 identity (e.g. '<storage>/tor/hs-key.blob',
+    // chmod 0600, include in the encrypted operator backup).
+    keyFile: null,
+    // Fail-closed daemon floor, e.g. '0.4.9.5' (0.4.8 leaves the network 2026-09-01).
+    minDaemonVersion: null,
+    // Multi-port forwarding, e.g. [{ vport: 80, targetHost: '127.0.0.1', targetPort: 9100 }].
+    // When null, localPort (apiPort) is exposed on vport 80 as before.
+    vports: null,
+    // Peer protocol plane (Noise/Protomux: custody, replication, RPC): a
+    // loopback-bound listener the onion peer vport forwards to, next to the
+    // read plane. host MUST stay loopback — the onion service is the only
+    // ingress (location hiding). An explicit `vports` entry for the same
+    // vport overrides this mapping.
+    peer: { enabled: true, vport: 19737, host: '127.0.0.1', port: 19737 },
+    // Restricted discovery: base32 x25519 client pubkeys bound at service
+    // creation (Flags=V3Auth). Roster changes rebuild the service in place
+    // (same address). Empty = open service. rosterFile persists the roster
+    // across restarts (operator-private; never publish or log its contents).
+    clientAuthKeys: [],
+    rosterFile: null,
+    // Signed-advertisement key id for the onion endpoint (rotation overlaps
+    // use fresh ids). exposure: 'dual' (public + onion) | 'hidden-only'.
+    endpointKeyId: null,
+    exposure: 'dual',
+    maxStreams: null,
+    // PoW defense is daemon-wide SETCONF and requires a pow-enabled tor build
+    // plus a HiddenServiceDir-configured service (M0 finding, 2026-07-17).
+    pow: { enabled: false, queueRate: 250, queueBurst: 1000 },
+    // Health-gated advertisement: descriptor uploads + optional SOCKS self-probe.
+    health: { probeIntervalMs: 900000, probeFailLimit: 3, minDescriptorUploads: 2, probeVport: null }
   },
 
   // Lightning payments

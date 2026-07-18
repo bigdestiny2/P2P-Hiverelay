@@ -30,7 +30,60 @@ import {
   evaluateRelayKernelCircuitLimitsProfile
 } from './protocol/relaykernel-circuit-limits-profile.js'
 
+const PRIVACY_TRANSPORTS_FEATURE = 'privacy-transports-v1'
+const ONION_ENDPOINT_ROTATION_MS = 90 * 24 * 60 * 60 * 1000
+
+/**
+ * privacyTransports — health-gated, signed advertisement of location-hidden
+ * endpoints (hiverelay.onion/1). The entry exists ONLY while the transport
+ * reports verified-ready health: a failed endpoint is removed, not annotated
+ * (ONION-INV-003). The containing document is signed by the stable relay
+ * identity, which is what binds the onion endpoint to this relay.
+ */
+function buildPrivacyTransports ({ relay, config, custodyEnabled }) {
+  const tt = relay && relay.torTransport
+  if (!tt || !tt.running || !tt.onionAddress) return []
+  if (tt.health !== 'ready') return []
+
+  const torCfg = (config && config.tor) || {}
+  const supports = ['capabilities.get', 'catalog.read', 'replication.sync']
+  if (hasRunningService(relay, 'notify')) supports.push('notify.send')
+  if (hasRunningService(relay, 'outboxlog')) supports.push('outbox.wake', 'outbox.read')
+  if (custodyEnabled) supports.push('custody.intent', 'custody.commit', 'custody.status', 'custody.proof.challenge')
+  if (relay && relay._publishProtocol) supports.push('seed.publish')
+
+  const notBefore = tt.startedAtMs || Date.now()
+  const authMode = (tt.clientAuthKeys && tt.clientAuthKeys.length > 0) || tt.rosterFile ? 'client-auth-v3' : 'none'
+  const vports = typeof tt._effectiveVports === 'function' ? tt._effectiveVports() : [{ vport: 80 }]
+  const vportRoles = {}
+  if (vports[0]) vportRoles.readPlane = vports[0].vport
+  if (vports[1]) vportRoles.peer = vports[1].vport
+
+  return [{
+    id: 'tor-v3-onion-v1',
+    network: 'tor',
+    protocol: 'hiverelay.onion/1',
+    mode: 'hidden-service',
+    addresses: [{
+      address: tt.onionAddress,
+      keyId: tt.endpointKeyId || torCfg.endpointKeyId || 'onion-endpoint-a',
+      notBefore,
+      notAfter: notBefore + ONION_ENDPOINT_ROTATION_MS,
+      priority: 10
+    }],
+    vports: vports.map((v) => v.vport),
+    vportRoles,
+    auth: { mode: authMode, enrollment: authMode === 'client-auth-v3' ? ['pairing-channel'] : [] },
+    pow: { enabled: !!(tt.pow && tt.pow.enabled) },
+    exposure: torCfg.exposure || 'dual',
+    relayLocation: 'hidden-onion',
+    bootstrapModes: ['bundled', 'cached', 'protected-channel', 'bootstrap-linkable'],
+    supports
+  }]
+}
+
 const SCHEMA_VERSION = 1
+
 // Signature envelope version, bumped independently of schemaVersion.
 // Adding signing in v0.6.0 doesn't change the doc shape — clients that
 // don't verify still parse the doc fine — so we don't bump schemaVersion.
@@ -183,6 +236,13 @@ export function buildCapabilityDoc (opts = {}) {
   // available; falls back to /api/v1/* REST when not.
   if (!relayKernelProfile && relay && relay._publishProtocol) features.push('publish-channel-v1')
 
+  // privacyTransports — health-gated signed advertisement of location-hidden
+  // endpoints (currently the tor-v3-onion-v1 entry). Omitted entirely unless
+  // a transport is running AND verified ready — this preserves the canonical
+  // signable shape for relays without a privacy transport (fixture-stable).
+  const privacyTransports = buildPrivacyTransports({ relay, config, custodyEnabled })
+  if (privacyTransports.length > 0) features.push(PRIVACY_TRANSPORTS_FEATURE)
+
   // Fees block — only populated if a paymentManager is configured AND the
   // operator has set a fee schedule.
   let fees = null
@@ -278,6 +338,10 @@ export function buildCapabilityDoc (opts = {}) {
     // onionGatewayUrl — Tor read-plane ingress (.onion → HTTP API/gateway port).
     // Additive; null unless the Tor hidden service is up. See note above.
     onionGatewayUrl,
+    // privacyTransports — signed, health-gated location-hidden endpoint
+    // advertisements (hiverelay.onion/1). Omitted unless verified ready
+    // (added below only when non-empty, preserving the signable shape).
+    ...(privacyTransports.length > 0 ? { privacyTransports } : {}),
     // indexRoom — z32 link to this relay's schema-sheets index room, if a
     // sidecar has published one. Additive: clients that don't understand it
     // ignore it and fall back to catalogBeeKey / /catalog.json. schemaVersion

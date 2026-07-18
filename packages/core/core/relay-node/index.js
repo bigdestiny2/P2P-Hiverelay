@@ -13,6 +13,8 @@ import { DistributedDriveBridge } from './distributed-drive-bridge.js'
 import { WebSocketTransport } from '../../transports/websocket/index.js'
 import { DHTRelayWS } from '../../transports/dht-relay-ws/index.js'
 import { TorTransport } from '../../transports/tor/index.js'
+import { OnionPeerListener } from '../../transports/tor/peer-listener.js'
+import { completeOnionEnrollment } from '../../transports/tor/enrollment.js'
 import { HolesailTransport } from '../../transports/holesail/index.js'
 import http from 'http'
 import { BootstrapCache } from '../bootstrap-cache.js'
@@ -1669,6 +1671,18 @@ export class RelayNode extends EventEmitter {
 
       if (this.config.transports && this.config.transports.tor) {
         const torOpts = this.config.tor || {}
+        // Peer protocol plane (docs/TOR-ONION-TRANSPORT.md §2): loopback
+        // Noise/Protomux endpoint the onion peer vport forwards to. On by
+        // default with the transport; opt out via tor.peer.enabled = false.
+        const torPeerCfg = torOpts.peer || {}
+        const peerListener = torPeerCfg.enabled === false
+          ? null
+          : new OnionPeerListener({
+            keyPair: this.swarm.keyPair,
+            host: torPeerCfg.host,
+            port: torPeerCfg.port,
+            maxConnections: this.config.maxConnections
+          })
         this.torTransport = new TorTransport({
           socksHost: torOpts.socksHost,
           socksPort: torOpts.socksPort,
@@ -1685,7 +1699,9 @@ export class RelayNode extends EventEmitter {
           maxStreams: torOpts.maxStreams,
           pow: torOpts.pow,
           health: torOpts.health,
-          localPort: this.config.apiPort || 9100
+          localPort: this.config.apiPort || 9100,
+          peerListener,
+          peerVport: torPeerCfg.vport
         })
 
         this.torTransport.on('connection', (stream, info) => this._onConnection(stream, info))
@@ -2938,11 +2954,43 @@ export class RelayNode extends EventEmitter {
     }
   }
 
-  async pairDevice (token, devicePubkeyHex, deviceName = 'unknown') {
+  async pairDevice (token, devicePubkeyHex, deviceName = 'unknown', extras = {}) {
     if (!this.accessControl) {
       throw new Error('Access control is only available in private/hybrid/homehive mode')
     }
-    return this.accessControl.attemptPair(token, devicePubkeyHex, deviceName)
+    const paired = await this.accessControl.attemptPair(token, devicePubkeyHex, deviceName)
+    // Legacy shape: callers that don't present an enrollment envelope keep
+    // the plain boolean.
+    if (!extras || extras.onionEnrollment === undefined) return paired
+    if (!paired) return { paired: false, onionEnrollment: null }
+    // Onion client-auth enrollment riding the pairing channel
+    // (hiverelay.onion.authkey/1 — docs/TOR-ONION-TRANSPORT.md §4). Pairing
+    // succeeds regardless; enrollment only completes when the Tor transport
+    // is running in restricted-discovery mode.
+    const onionEnrollment = await this.enrollOnionAuthClient(devicePubkeyHex, extras.onionEnrollment, { deviceName })
+    return { paired: true, onionEnrollment }
+  }
+
+  /**
+   * Enroll a just-paired device's onion client-auth key (pairing-channel
+   * enrollment). Verifies the envelope against the stable relay identity,
+   * adds the key to the client-auth roster (rebuild-in-place, persisted via
+   * rosterFile) and returns the signed acceptance receipt. Clean no-op —
+   * { enrolled: false, reason } — unless the Tor transport is running in
+   * restricted-discovery mode.
+   */
+  async enrollOnionAuthClient (devicePubkeyHex, envelope, { deviceName = 'unknown' } = {}) {
+    const result = await completeOnionEnrollment({
+      torTransport: this.torTransport,
+      relayKeyPair: this.swarm ? this.swarm.keyPair : null,
+      devicePubkeyHex,
+      envelope,
+      deviceName
+    })
+    // Operator-local signal only: never carries the onion address, roster
+    // keys, or the receipt (redaction gate — transports/tor/redaction.js).
+    this.emit('tor-enrollment', { pubkey: devicePubkeyHex, enrolled: result.enrolled, reason: result.reason || null })
+    return result
   }
 
   async addDevice (pubkeyHex, name = 'unknown') {
