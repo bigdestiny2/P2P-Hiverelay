@@ -146,7 +146,7 @@ Phase-2 follow-up candidate measured 2026-07-18: under 64-way concurrency the at
 
 Phase 3 **must** land before the blind store-format authority and protocol hashes freeze — it shares one migration with D-6 and therefore gates the giga release's freeze. Invariants every phase must preserve: atomic one-use spend, fsync-before-ack (group fsync allowed), 15-min canonical retry, O(1) drop-wins, fail-closed recovery, writer fence + continuity hash, epoch floor, spent-marker horizon.
 
-**Do-not-overclaim flags:** no WAL code exists in the main hiverelay repo (it lives in the blind line); phases 1–2 shipped on v1-integration 2026-07-18 with macOS-only numbers (Linux fleet rerun still required); Phase 3 does not exist anywhere as of 2026-07-18; Phase 0 numbers are macOS-only upper bounds.
+**Do-not-overclaim flags:** no WAL code exists in the main hiverelay repo (it lives in the blind line); phases 1–3 shipped on v1-integration 2026-07-18 (P1 `f0b4376` group commit · P2 `290bebd` single-commit PUT · P3 `76eff20` segmented WAL + checkpoint-anchored pruning, `walPruningSupported: true`) with macOS-only numbers (Linux fleet rerun still required); Phase 0 numbers are macOS-only upper bounds.
 
 ## 6. Release readiness map
 
@@ -154,11 +154,11 @@ Phase 3 **must** land before the blind store-format authority and protocol hashe
 |---|---|---|---|---|
 | Drift cleanup | hiverelay | merged | full unit suite green | — done |
 | Blind cells | hiverelay | shipped v0.22+ | e2e fleet tests green | repair/AutoHeal is roadmap (not a gate) |
-| Tor onion transport | hiverelay | shipped 2026-07-17 | 48 unit + live-tor e2e green | follow-ups: pairing hookup, peer-vport listener, 100 MB gate measurement |
+| Tor onion transport | hiverelay | shipped 2026-07-17; follow-ups shipped 2026-07-18 (`69a51dde` pairing enrollment hookup + peer-vport listener) | 148/148 across 12 suites + live-tor e2e green | 100 MB bulk-over-onion measurement (env-gated) |
 | HTTPS gateway (path) | hiverelay | shipped | streaming integration green | — done |
-| HTTPS gateway (app origins) | hr-https-gateway | Phase-1 canary | canary suites | **not merged**; readiness gates G1-G13; staging only |
-| Namespace | hiverelay | shipped v0.24.1 | unit + config/env green | bytesPerDay enforcement (minor) |
-| WAL | blind line (vnext/hq) | v2 shipped; phases 1–2 shipped 2026-07-18, phase 3 pending | Phase-0 + P1/P2 evidence | **the freeze gate** (Phase 3 + D-6 pairing + Linux rerun) |
+| HTTPS gateway (app origins) | v1-integration | Phase-1 canary merged | canary suites + G1–G6 evidence executed 2026-07-18 (role boundary T2-no-gateway ✓, heuristic-free storage classification ✓, signing foundation suites ✓, compatibility suites ✓, blind-substrate green pre-rebase ✓, clean v1-integration line ✓) | G7–G13: owner/fleet evidence (two operators, signed-tag digests, operator-contract digests, Docker nginx capture, real host ceiling) |
+| Namespace | hiverelay | shipped v0.24.1 | unit + config/env green | — done (`bytesPerDay` enforced 2026-07-18 `d9bdb405`, rolling-24h with documented restart boundaries) |
+| WAL | blind line (v1-integration) | v2 shipped; **phases 1–3 all shipped 2026-07-18** | Phase-0 + P1/P2/P3 evidence (concurrent 128→7,975 commits/s; 3→1 frames & 1,841→971 B/PUT; prune bounded 7.9 MB→0.7 MB oscillating, horizon-safe) | **Linux Phase-0 rerun** (fleet) — the last freeze-gate item |
 
 ## 7. The final test matrix (what "test everything out" means)
 
@@ -168,8 +168,8 @@ Phase 3 **must** land before the blind store-format authority and protocol hashe
    - public app served via gateway while custody entries hard-403; same relay reachable over onion (gateway × tor);
    - two apps sharing one relay's outboxlog under distinct blind namespaces, with takedown (namespace × blind);
    - wake hints over the onion control path into namespaced outboxes (namespace × tor/nym).
-3. **Adversarial/privacy gates** — fail-closed downgrade suites, redaction audit sweeps on public payloads, negative-probe on private onion endpoints, orphan-pin and cross-namespace replay rejection.
-4. **Release-gate holdouts** — WAL phase 3 (+ Phase-2 lock-narrowing follow-up) + Linux Phase-0 rerun (durability/throughput), app-origin gateway readiness checklist, 100 MB bulk-over-onion measurement.
+3. **Adversarial/privacy gates** — fail-closed downgrade suites ✓, redaction audit sweeps on public payloads ✓, orphan-pin (403 UNAUTHORIZED_PIN) ✓ and cross-namespace replay rejection ✓ verified 2026-07-18. **Gap: negative-probe on private onion endpoints is NOT implemented** — the health machine verifies positive reachability (HS_DESC uploads + SOCKS self-probe) but never verifies an intentionally-unauthorized client is refused; an all-invalid roster silently degrades to fail-open at the tor daemon level. Required before RC: a health-gate negative probe on restricted-discovery services.
+4. **Release-gate holdouts** — Linux Phase-0 rerun (durability/throughput; harness portable at `00-core/wal-phase0-evidence-2026-07-13/`), app-origin gateway G7–G13 operator/fleet evidence, 100 MB bulk-over-onion measurement. Recorded follow-ups (not gates): P1×P2 atomic-staging lock narrowing (measured ~35 vs ~126 PUTs/s under 64-way concurrency), storage-startup-rollback corestore-7 teardown drain (merge-surfaced), pre-existing v1-tip failures (blind-protocol-vectors, vnext-program-state, vnext-protocol-remediation, blind-client-late-app).
 
 ## 8. Sources of truth
 
