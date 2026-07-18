@@ -47,6 +47,12 @@ flowchart LR
 
 Trust boundaries: the app↔daemon links are loopback; the tor daemon is in the TCB but sees only already-encrypted flows (Noise at the application layer); the Tor network is an untrusted transport that supplies reachability + location hiding; application authorization is revalidated inside every handler (`ONION-INV-006`: an auth key grants *reachability*, never service authorization).
 
+The HTTP vport terminates only on a dedicated read-only gateway with
+`trustProxy` disabled. If that gateway is not configured, the default onion
+service advertises only the peer vport. RelayAPI and proxy-trusting gateway
+listeners are never valid onion targets because Tor daemon forwarding makes
+remote clients appear loopback-local.
+
 ## 3. Persistent identity
 
 ```mermaid

@@ -75,7 +75,13 @@ persist, signed receipt back.
 
 `vports` maps onion ports to local listeners; the capability doc advertises
 roles (`readPlane`, `peer`) so clients can separate HTTP reads from the
-peer/replication protocol. Default (legacy): vport 80 → the HTTP API port.
+peer/replication protocol. With a dedicated read-only gateway configured
+with `gatewayTrustProxy: false`, the default maps vport 80 to that gateway.
+Without one, the default onion service is peer-only. HiveRelay always refuses
+an explicit mapping to RelayAPI or a `trustProxy` gateway: Tor forwarding
+arrives from loopback, so those listeners cannot distinguish an onion client
+from trusted local ingress. A keyed RelayAPI is still forbidden because its
+operator UI can intentionally embed that key for an authenticating proxy.
 
 With the transport enabled, the peer protocol plane binds automatically: an
 `OnionPeerListener` (loopback Noise XK endpoint, `tor.peer` config below)
@@ -87,11 +93,18 @@ rebuild; an explicit `vports` entry for the same vport overrides it.
 
 ```json
 "vports": [
-  { "vport": 80, "targetHost": "127.0.0.1", "targetPort": 9100 },
+  { "vport": 80, "targetHost": "127.0.0.1", "targetPort": 9200 },
   { "vport": 19737, "targetHost": "127.0.0.1", "targetPort": 19737 }
 ],
 "peer": { "enabled": true, "vport": 19737, "host": "127.0.0.1", "port": 19737 }
 ```
+
+The dedicated gateway serves the signed capability document, catalog, and
+public content routes, but has no RelayAPI management routes. Its exact-host
+allowlist learns the active onion hostname when the hidden service starts.
+An HTTPS gateway that trusts a loopback reverse proxy remains a separate
+surface; use the peer vport or a separate read-only, non-`trustProxy` listener
+for Tor.
 
 `peer.host` must stay loopback — the onion service is the only ingress
 (location hiding). Clients dial the onion peer vport as Noise XK initiators

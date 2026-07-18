@@ -370,14 +370,16 @@ test('verifyCapabilityDoc rejects unsigned doc', async (t) => {
 test('onionGatewayUrl uses the ready onion read vport, and the doc still verifies', async (t) => {
   const kp = makeKeyPair()
   const relay = {
-    config: { apiPort: 9100 },
+    config: { apiPort: 9100, gatewayPort: 9200 },
     swarm: { keyPair: kp },
     torTransport: {
       running: true,
       health: 'ready',
       onionAddress: 'abcdefghijklmnop.onion',
       clientAuthKeys: [],
-      _effectiveVports: () => [{ vport: 80, targetPort: 9100 }]
+      localPort: 9200,
+      readVport: 80,
+      _effectiveVports: () => [{ vport: 80, targetPort: 9200 }]
     }
   }
   const doc = buildCapabilityDoc({ relay })
@@ -395,6 +397,8 @@ test('onionGatewayUrl is health-gated and preserves a non-default read vport', a
     health: 'degraded',
     onionAddress: 'abcdefghijklmnop.onion',
     clientAuthKeys: [],
+    localPort: 9100,
+    readVport: 8080,
     _effectiveVports: () => [{ vport: 8080, targetPort: 9100 }]
   }
   const degraded = buildCapabilityDoc({ relay: { config: {}, swarm: { keyPair: kp }, torTransport } })
@@ -567,6 +571,9 @@ function readyTor (overrides = {}) {
     rosterFile: null,
     clientAuthKeys: [],
     pow: null,
+    localPort: 9200,
+    readVport: 80,
+    _effectiveVports: () => [{ vport: 80, targetPort: 9200 }],
     ...overrides
   }
 }
@@ -587,7 +594,11 @@ test('privacyTransports — health-gated: omitted unless ready', async (t) => {
 })
 
 test('privacyTransports — ready onion entry shape and labels', async (t) => {
-  const doc = buildCapabilityDoc({ relay: relayWithTor(readyTor({ endpointKeyId: 'onion-2026-07-a' })) })
+  const advertisedAt = 1784323200000 + 1234
+  const doc = buildCapabilityDoc({
+    relay: relayWithTor(readyTor({ endpointKeyId: 'onion-2026-07-a' })),
+    attestedAt: advertisedAt
+  })
   t.is(doc.privacyTransports.length, 1)
   t.ok(doc.features.includes('privacy-transports-v1'))
   const entry = doc.privacyTransports[0]
@@ -600,7 +611,7 @@ test('privacyTransports — ready onion entry shape and labels', async (t) => {
   t.is(entry.addresses[0].address, 'b'.repeat(56) + '.onion')
   t.is(entry.addresses[0].keyId, 'onion-2026-07-a')
   t.is(entry.addresses[0].notBefore, 1784323200000)
-  t.is(entry.addresses[0].notAfter, 1784323200000 + 90 * 24 * 60 * 60 * 1000)
+  t.is(entry.addresses[0].notAfter, advertisedAt + 90 * 24 * 60 * 60 * 1000)
   t.is(entry.addresses[0].priority, 10)
   t.alike(entry.vports, [80])
   t.is(entry.vportRoles.readPlane, 80)
@@ -608,7 +619,7 @@ test('privacyTransports — ready onion entry shape and labels', async (t) => {
   t.is(entry.pow.enabled, false)
   t.ok(entry.supports.includes('catalog.read'))
   t.ok(entry.supports.includes('replication.sync'))
-  t.ok(entry.supports.includes('custody.commit'))
+  t.absent(entry.supports.includes('custody.commit'), 'read-only vport does not claim peer custody RPC')
   t.absent(entry.supports.includes('notify.send')) // no notify service in stub
 })
 
@@ -633,12 +644,80 @@ test('privacyTransports — client-auth mode from roster/keys; custody off drops
 test('privacyTransports — dual vports map to roles; pow reported', async (t) => {
   const tt = readyTor({
     pow: { enabled: true },
-    _effectiveVports: () => [{ vport: 80 }, { vport: 19737 }]
+    peerVport: 19737,
+    peerListener: { port: 19737 },
+    _effectiveVports: () => [
+      { vport: 80, targetPort: 9200 },
+      { vport: 19737, targetPort: 19737 }
+    ]
   })
   const doc = buildCapabilityDoc({ relay: relayWithTor(tt) })
   const entry = doc.privacyTransports[0]
   t.alike(entry.vports, [80, 19737])
   t.is(entry.vportRoles.readPlane, 80)
   t.is(entry.vportRoles.peer, 19737)
+  t.ok(entry.supports.includes('custody.commit'))
   t.is(entry.pow.enabled, true)
+})
+
+test('privacyTransports — reordered and peer-only mappings never advertise Noise as HTTP', async (t) => {
+  const reordered = readyTor({
+    peerVport: 19737,
+    peerListener: { port: 19737 },
+    _effectiveVports: () => [
+      { vport: 19737, targetPort: 19737 },
+      { vport: 8080, targetPort: 9200 }
+    ]
+  })
+  const reorderedDoc = buildCapabilityDoc({ relay: relayWithTor(reordered) })
+  t.is(reorderedDoc.privacyTransports[0].vportRoles.peer, 19737)
+  t.is(reorderedDoc.privacyTransports[0].vportRoles.readPlane, 8080)
+  t.is(reorderedDoc.onionGatewayUrl, `http://${reordered.onionAddress}:8080`)
+
+  const peerOnly = readyTor({
+    peerVport: 19737,
+    peerListener: { port: 19737 },
+    localPort: null,
+    readVport: null,
+    _effectiveVports: () => [{ vport: 19737, targetPort: 19737 }]
+  })
+  const peerOnlyDoc = buildCapabilityDoc({ relay: relayWithTor(peerOnly) })
+  t.alike(peerOnlyDoc.privacyTransports[0].vportRoles, { peer: 19737 })
+  t.is(peerOnlyDoc.onionGatewayUrl, null)
+  t.absent(peerOnlyDoc.privacyTransports[0].supports.includes('catalog.read'))
+
+  const externallyRemappedPeer = readyTor({
+    peerVport: 19737,
+    peerListener: { port: 19737 },
+    localPort: 9200,
+    readVport: 80,
+    _effectiveVports: () => [
+      { vport: 443, targetPort: 19737 },
+      { vport: 80, targetPort: 9200 }
+    ]
+  })
+  const remappedDoc = buildCapabilityDoc({ relay: relayWithTor(externallyRemappedPeer) })
+  t.alike(remappedDoc.privacyTransports[0].vportRoles, { readPlane: 80, peer: 443 })
+
+  const arbitraryTcp = readyTor({
+    localPort: null,
+    readVport: null,
+    _effectiveVports: () => [{ vport: 9001, targetPort: 9001 }]
+  })
+  const arbitraryDoc = buildCapabilityDoc({ relay: relayWithTor(arbitraryTcp) })
+  t.alike(arbitraryDoc.privacyTransports[0].vportRoles, {})
+  t.is(arbitraryDoc.onionGatewayUrl, null)
+})
+
+test('privacyTransports — long-running relays refresh the signed endpoint lease', async (t) => {
+  const advertisedAt = 1893456000000
+  const startedAtMs = advertisedAt - 365 * 24 * 60 * 60 * 1000
+  const doc = buildCapabilityDoc({
+    relay: relayWithTor(readyTor({ startedAtMs })),
+    attestedAt: advertisedAt
+  })
+  const address = doc.privacyTransports[0].addresses[0]
+  t.is(address.notBefore, startedAtMs)
+  t.is(address.notAfter, advertisedAt + 90 * 24 * 60 * 60 * 1000)
+  t.ok(address.notAfter > doc.attestedAt, 'fresh docs never publish an expired endpoint lease')
 })

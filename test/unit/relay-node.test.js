@@ -7,6 +7,7 @@ import { randomBytes } from 'crypto'
 import { EventEmitter } from 'events'
 import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises'
 import { mkdirSync } from 'fs'
+import { createServer } from 'net'
 
 const STORAGE_BOUND = 1024 * 1024
 
@@ -14,6 +15,19 @@ function tmpStorage () {
   const storage = path.join(tmpdir(), 'hiverelay-test-' + randomBytes(8).toString('hex'))
   mkdirSync(storage, { recursive: true })
   return storage
+}
+
+async function freeLoopbackPort () {
+  const server = createServer()
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const port = server.address().port
+  await new Promise((resolve, reject) => {
+    server.close((err) => err ? reject(err) : resolve())
+  })
+  return port
 }
 
 function deferred () {
@@ -323,6 +337,32 @@ test('RelayNode - creates and starts', async (t) => {
 
   await node.stop()
   t.is(node.running, false, 'stopped')
+})
+
+test('RelayNode - starts a dedicated gateway once after storage recovery seals', async (t) => {
+  const storage = tmpStorage()
+  const gatewayPort = await freeLoopbackPort()
+  const node = new RelayNode({
+    storage,
+    enableAPI: true,
+    apiHost: '127.0.0.1',
+    apiPort: 0,
+    gatewayHost: '127.0.0.1',
+    gatewayPort,
+    enableRelay: false,
+    enableServices: false
+  })
+  t.teardown(async () => {
+    if (node.running) await node.stop()
+    await rm(storage, { recursive: true, force: true })
+  })
+
+  await node.start()
+  t.is(node._storageIngressReady, true)
+  t.ok(node.gatewayServer && node.gatewayServer.server.listening, 'dedicated gateway starts after recovery')
+
+  await node.stop()
+  t.absent(node.gatewayServer)
 })
 
 test('RelayNode - getStats returns expected shape', async (t) => {

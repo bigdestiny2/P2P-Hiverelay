@@ -276,8 +276,11 @@ export default {
     keyFile: null,
     // Fail-closed daemon floor, e.g. '0.4.9.5' (0.4.8 leaves the network 2026-09-01).
     minDaemonVersion: null,
-    // Multi-port forwarding, e.g. [{ vport: 80, targetHost: '127.0.0.1', targetPort: 9100 }].
-    // When null, localPort (apiPort) is exposed on vport 80 as before.
+    // Multi-port forwarding, e.g. [{ vport: 80, targetHost: '127.0.0.1', targetPort: 9200 }].
+    // When null, vport 80 is added only when a dedicated read-only gateway is
+    // configured with trustProxy disabled; otherwise the onion service is
+    // peer-only. RelayAPI and trustProxy gateway listeners are never valid
+    // onion targets because Tor daemon forwarding appears loopback-local.
     vports: null,
     // Peer protocol plane (Noise/Protomux: custody, replication, RPC): a
     // loopback-bound listener the onion peer vport forwards to, next to the
