@@ -10,7 +10,7 @@
  *
  *   1. CONTENT (Hypercore intrinsic). The proof is a real Hypercore block proof
  *      (the same structure replication sends). A key-only verifier feeds it to
- *      `core.verify()`, which checks the block hashes into the drive key's
+ *      `core.applyProof()`, which checks the block hashes into the drive key's
  *      SIGNED Merkle root. A forged/substituted block fails — the relay cannot
  *      fabricate content for a key it isn't the author of.
  *
@@ -104,25 +104,28 @@ export async function buildStorageProof ({ core, index, nonce, keyPair, signatur
     throw new Error('BLOCK_NOT_LOCAL') // honest failure — we don't hold it
   }
 
-  const tree = core.core.tree
-  const req = {
-    fork: tree.fork,
-    block: { index, nodes: 0 },
-    hash: null,
-    seek: null,
-    upgrade: { start: 0, length: core.length },
-    manifest: false
-  }
-  const proof = await tree.proof(req)
-  proof.block.value = await core.core.blocks.get(index)
+  // hypercore 11: the internal Core no longer exposes .tree/.blocks — the
+  // public core.proof() builds the same wire-shaped block proof and reads
+  // the block value itself. Still local-only: proof() reads storage, never
+  // the swarm (and we verified has() above).
+  const proof = await core.proof({
+    block: { index },
+    upgrade: { start: 0, length: core.length }
+  })
+
+  // hypercore 11 cores are manifest-based (multi-sig envelope signatures), so
+  // a key-only verifier needs the core's manifest to check the upgrade — same
+  // rule the replicator uses (lib/replicator.js: no manifest for compat cores).
+  const manifest = core.core.compat ? null : core.core.header.manifest
 
   const proofBytes = c.encode(wire.data, {
     request: 0,
-    fork: tree.fork,
+    fork: proof.fork,
     block: proof.block,
     hash: null,
     seek: null,
-    upgrade: proof.upgrade || null
+    upgrade: proof.upgrade || null,
+    manifest
   })
 
   const { signable, blockHash } = storageProofSignableForProfile(
@@ -214,12 +217,14 @@ export async function verifyStorageProof ({ verifierCore, response, expect }) {
     }
     const blockValue = decoded.block.value
     try {
-      await verifierCore.core.verify(decoded)
-      r.contentValid = true
+      // hypercore 11: Core.verify() (via the public applyProof) resolves
+      // `false` on a bad proof instead of throwing — treat both as failure.
+      r.contentValid = await verifierCore.applyProof(decoded)
     } catch (e) {
       r.reason = 'CONTENT_INVALID:' + (e.code || e.message)
       return r
     }
+    if (!r.contentValid) { r.reason = 'CONTENT_INVALID:VERIFY_REJECTED'; return r }
 
     // Length-pin (optional): the proof's upgrade.length is author-signed (the
     // signature core.verify just validated covers the root at that length), so

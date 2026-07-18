@@ -139,6 +139,10 @@ const startOsMakefile = readText(hiverelayRoot, 'startos', 'Makefile')
 const startOsReadme = readText(hiverelayRoot, 'startos', 'README.md')
 const startOsEntrypoint = readText(hiverelayRoot, 'startos', 'docker_entrypoint.sh')
 const releaseWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'release-surfaces.yml')
+const startOs04Manifest = readText(hiverelayRoot, 'startos-0.4', 'startos', 'manifest', 'index.ts')
+const startOs04Version = readText(hiverelayRoot, 'startos-0.4', 'startos', 'versions', 'current.ts')
+const startOs04Main = readText(hiverelayRoot, 'startos-0.4', 'startos', 'main.ts')
+const releaseStartos04Workflow = readText(hiverelayRoot, '.github', 'workflows', 'release-startos-0.4.yml')
 const releasePreflightWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'release-distribution-preflight.yml')
 const dockerPublishWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'docker-publish.yml')
 const umbrelAppValidateWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'umbrel-app-validate.yml')
@@ -7727,6 +7731,44 @@ if (
   pass('StartOS package uses review-mode/simple-dashboard defaults plus a first-boot-only home-server storage cap')
 } else {
   fail('StartOS package is missing review-mode/simple-dashboard defaults or the first-boot storage cap documentation')
+}
+
+// ── StartOS 0.4 (TypeScript-SDK) package — a separate channel from the 0.3.5.x
+// YAML package, but the version + image pins live in TypeScript (not
+// manifest.yaml), so guard them against silent drift on a version bump.
+const startOs04ExpectedImage = `ghcr.io/bigdestiny2/p2p-hiverelay:${expectedVersion}`
+if (
+  startOs04Version.includes(`version: '${expectedVersion}:`) &&
+  startOs04Manifest.includes(`dockerTag: '${startOs04ExpectedImage}'`)
+) {
+  pass(`StartOS 0.4 package pins its version + image to the monorepo (${expectedVersion})`)
+} else {
+  fail(`StartOS 0.4 package version/image drift from monorepo ${expectedVersion} — bump startos-0.4/startos/versions/current.ts and startos-0.4/startos/manifest/index.ts together`)
+}
+
+if (
+  startOs04Main.includes("HIVERELAY_ACCEPT_MODE: 'review'") &&
+  startOs04Main.includes("HIVERELAY_MAX_STORAGE: '10GB'") &&
+  startOs04Main.includes("HIVERELAY_UI_SIMPLE: '1'") &&
+  startOs04Main.includes('/data/.app-seed') &&
+  startOs04Main.includes('exec node /app/packages/core/cli/index.js start')
+) {
+  pass('StartOS 0.4 package preserves the 0.3.x runtime contract (review-mode/simple/10GB defaults + seed-persist entrypoint)')
+} else {
+  fail('StartOS 0.4 package drifts from the 0.3.x runtime contract (defaults or seed-persist entrypoint)')
+}
+
+if (
+  releaseStartos04Workflow.includes('setup-build-env') &&
+  releaseStartos04Workflow.includes('working-directory: startos-0.4') &&
+  releaseStartos04Workflow.includes('npm ci') &&
+  releaseStartos04Workflow.includes('make') &&
+  releaseStartos04Workflow.includes('gh release upload') &&
+  releaseStartos04Workflow.includes('blindspark.s9pk')
+) {
+  pass('release-startos-0.4 workflow builds the 0.4 s9pk and uploads it to the GitHub Release (isolated from the 0.3 pipeline)')
+} else {
+  fail('release-startos-0.4 workflow is missing the isolated build/upload steps for the 0.4 package')
 }
 
 if (

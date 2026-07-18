@@ -100,9 +100,16 @@ export class OutboxLogApp extends ServiceProvider {
   manifest () {
     return {
       name: 'outboxlog',
-      version: '0.1.0',
+      version: '0.2.0',
       description: 'Single-writer signed outbox log with Peerit relay wire compatibility',
-      capabilities: ['outboxlog.sync', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces']
+      // Aggregate labels remain for existing capability-doc consumers. Exact
+      // method names make the already object-safe methods reachable through
+      // ServiceRegistry/callService, giving P2P clients parity with HTTP.
+      capabilities: [
+        'outboxlog.sync', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces',
+        'create', 'join', 'append', 'get', 'list', 'range', 'count', 'status',
+        'heads', 'directory', 'events', 'namespaces'
+      ]
     }
   }
 

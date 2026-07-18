@@ -10,8 +10,10 @@
 import test from 'brittle'
 import createTestnet from '@hyperswarm/testnet'
 import { WebSocket } from 'ws'
-import RelayedDHT from '@hyperswarm/dht-relay'
-import RelayedStream from '@hyperswarm/dht-relay/ws'
+// The npm @hyperswarm/dht-relay dep was retired — the vendored 0.4.3 copy is
+// the single source for both server (DHTRelayWS) and this browser-side client.
+import RelayedDHT from '../../packages/core/transports/dht-relay-ws/vendor/dht-relay/index.js'
+import RelayedStream from '../../packages/core/transports/dht-relay-ws/vendor/dht-relay/ws.js'
 import { DHTRelayWS } from 'p2p-hiverelay/transports/dht-relay-ws/index.js'
 
 function pickPort () {

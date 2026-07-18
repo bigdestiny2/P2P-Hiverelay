@@ -1,6 +1,7 @@
 import test from 'brittle'
 import b4a from 'b4a'
 import Corestore from 'corestore'
+import { openCorestore } from '../../packages/core/core/persistence/storage-root-restore.js'
 import { access, mkdir, mkdtemp, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -11,7 +12,7 @@ const KEY = 'a'.repeat(64)
 const BOUND = 1024 * 1024
 
 async function openRegistry (dir, opts = {}) {
-  const store = new Corestore(dir)
+  const store = openCorestore(dir)
   await store.ready()
   if (typeof opts.storageAdmission?.activatePhysicalEnforcement === 'function') {
     await opts.storageAdmission.activatePhysicalEnforcement({ purpose: 'test-startup' })
@@ -183,7 +184,7 @@ test('AppRegistry journal: post-append migration crash is idempotent on retry', 
 
   let appendedBytes = 0
   {
-    const store = new Corestore(dir)
+    const store = openCorestore(dir)
     await store.ready()
     const registry = new AppRegistry(dir, { store })
     const failed = await Promise.allSettled([registry.load()])
@@ -196,7 +197,7 @@ test('AppRegistry journal: post-append migration crash is idempotent on retry', 
 
   await rm(bakPath, { recursive: true, force: true })
   {
-    const store = new Corestore(dir)
+    const store = openCorestore(dir)
     await store.ready()
     const registry = new AppRegistry(dir, { store })
     const entries = await registry.load()

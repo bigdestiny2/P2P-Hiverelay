@@ -262,6 +262,20 @@ export class SignedLog {
     return () => { this._subscribers.delete(fn) }
   }
 
+  addWriter (writer) {
+    if (!isHexKey(writer)) return { ok: false, reason: 'bad-writer' }
+    const normalized = writer.toLowerCase()
+    const existed = this.writers.has(normalized)
+    this.writers.add(normalized)
+    return { ok: true, changed: !existed, writer: normalized }
+  }
+
+  removeWriter (writer) {
+    if (!isHexKey(writer)) return { ok: false, reason: 'bad-writer' }
+    const normalized = writer.toLowerCase()
+    return { ok: true, changed: this.writers.delete(normalized), writer: normalized }
+  }
+
   /**
    * Re-apply an array of already-validated entries — used to rehydrate a
    * log from an external store at startup. Skips validation; only the

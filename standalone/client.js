@@ -18,7 +18,7 @@ import Hyperswarm from 'hyperswarm'
 import ProtomuxRPC from 'protomux-rpc'
 import c from 'compact-encoding'
 import b4a from 'b4a'
-import goodbye from 'graceful-goodbye'
+import gracedown from 'pear-gracedown'
 import { createInterface } from 'readline'
 import { mkdirSync } from 'fs'
 import crypto from 'crypto'
@@ -72,7 +72,7 @@ async function main () {
   console.log('  Searching for server on DHT...\n')
 
   // 3. Graceful shutdown
-  goodbye(async () => {
+  gracedown(async () => {
     console.log('\n  Shutting down...')
     if (rpc) rpc.destroy()
     await swarm.destroy()

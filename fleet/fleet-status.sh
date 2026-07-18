@@ -30,7 +30,10 @@ valid_host() {
     [ "${#value}" -le 253 ] &&
     [[ "$value" != -* ]] &&
     [[ "$value" != *@* ]] &&
-    [[ "$value" =~ ^[A-Za-z0-9._:\[\]-]+$ ]]
+    # POSIX bracket expressions don't escape ] with a backslash, so a literal ]
+    # must be first and a literal - must be last, or the class closes early and
+    # rejects every host (plain IPs included). Chars: ] [ - . _ : and alnum.
+    [[ "$value" =~ ^[]A-Za-z0-9._:[-]+$ ]]
 }
 
 valid_channel() {
@@ -107,7 +110,9 @@ while IFS='|' read -r name host keyspec channel; do
   keyarg=(); [ -n "$keyspec" ] && keyarg=(-i "${keyspec/#\~/$HOME}")
   target="$(printf '%s' "$CH" | CHANNEL="$channel" python3 -c 'import os,sys,json;print(json.load(sys.stdin).get(os.environ["CHANNEL"], ""))' 2>/dev/null || echo '?')"
   safe_target="$(clean_field "$target")"
-  out="$(ssh "${keyarg[@]}" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes "root@$host" bash -s <<<"$REMOTE" 2>/dev/null || true)"
+  # ${keyarg[@]+...} so an empty keyarg (default-key boxes) doesn't trip `set -u`
+  # on bash <4.4 (macOS ships 3.2) with "unbound variable".
+  out="$(ssh ${keyarg[@]+"${keyarg[@]}"} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes "root@$host" bash -s <<<"$REMOTE" 2>/dev/null || true)"
   if [ -z "$out" ]; then
     printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' "$safe_name" UNREACH - - - - "$safe_target"
     continue
@@ -115,13 +120,21 @@ while IFS='|' read -r name host keyspec channel; do
   out="$(printf '%s\n' "$out" | tail -n 1)"
   IFS='|' read -r ver rest disk <<<"$out"
   read -r run apps conns <<<"${rest:-? ? ?}"
+  # Flag disk pressure so a filling box is caught BEFORE it wedges (a full disk
+  # hangs the relay → public 502). ! at >=75%, !! at >=90%.
+  disk_pct="$(printf '%s' "$disk" | tr -dc '0-9')"
+  disk_display="${disk:-?}"
+  if [ -n "$disk_pct" ]; then
+    if [ "$disk_pct" -ge 90 ] 2>/dev/null; then disk_display="${disk}!!"
+    elif [ "$disk_pct" -ge 75 ] 2>/dev/null; then disk_display="${disk}!"; fi
+  fi
   printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' \
     "$safe_name" \
     "$(clean_field "${ver:-?}")" \
     "$(clean_field "${run:-?}")" \
     "$(clean_field "${apps:-?}")" \
     "$(clean_field "${conns:-?}")" \
-    "$(clean_field "${disk:-?}")" \
+    "$(clean_field "${disk_display}")" \
     "$safe_target"
 done < <(python3 -c '
 import json,sys
@@ -130,3 +143,5 @@ for r in json.load(open(sys.argv[1]))["relays"]:
     key  = "" if r.get("sshKey") in (None,"default") else r["sshKey"]
     print("{}|{}|{}|{}".format(r["name"], host, key, r.get("channel", "stable")))
 ' "$RELAYS")
+
+printf '\nDISK flags: %s = >=75%% (set/verify maxStorageBytes), %s = >=90%% (act now — a full disk wedges the relay).\n' '!' '!!'

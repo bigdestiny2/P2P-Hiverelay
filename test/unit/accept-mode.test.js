@@ -224,9 +224,16 @@ test('Federation: republish does NOT auto-seed (operator must approve separately
 
 test('applyMode preserves the live Federation instance and its on-disk state', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'hr-applymode-fed-'))
-  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  let node = null
+  t.teardown(async () => {
+    // corestore 7 touches <storage>/db eagerly on construction — close the
+    // (never-started) node's store before rm or its in-flight open races the
+    // recursive remove and trips ENOTEMPTY.
+    if (node) { try { await node.store.close() } catch {} }
+    await rm(dir, { recursive: true, force: true })
+  })
 
-  const node = makeNode({ storage: dir })
+  node = makeNode({ storage: dir })
   const fed = new Federation({ node, storagePath: join(dir, 'federation.json') })
   node.federation = fed
   fed.follow('http://kept-after-applymode.example')

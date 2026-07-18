@@ -14,7 +14,10 @@ import test from 'brittle'
 import { mkdtemp, rm, readFile, writeFile, access } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import Corestore from 'corestore'
+// Production constructs corestores at state-bearing roots via the
+// corestore-7 migration guard (storage-root-restore) — mirror that here or
+// hypercore-storage's tmpFixStorage sweeps the pre-created JSON into db/.
+import { openCorestore } from '../../packages/core/core/persistence/storage-root-restore.js'
 import { AppRegistry } from 'p2p-hiverelay/core/app-registry.js'
 import { admitPublicHiveAppEntry } from 'p2p-hiverelay/gateway/public-app-admission.js'
 
@@ -33,7 +36,7 @@ test('bee mode: empty start, set, restart preserves entries', async (t) => {
 
     // Phase 1 — fresh registry, set one entry
     {
-      const store = new Corestore(dir)
+      const store = openCorestore(dir)
       await store.ready()
       const reg = new AppRegistry(dir, { store })
       await reg.load()
@@ -51,7 +54,7 @@ test('bee mode: empty start, set, restart preserves entries', async (t) => {
 
     // Phase 2 — fresh AppRegistry on same corestore, expect entry restored
     {
-      const store = new Corestore(dir)
+      const store = openCorestore(dir)
       await store.ready()
       const reg = new AppRegistry(dir, { store })
       const entries = await reg.load()
@@ -96,7 +99,7 @@ test('bee mode: migrates existing JSON on first load', async (t) => {
       }
     ], null, 2))
 
-    const store = new Corestore(dir)
+    const store = openCorestore(dir)
     await store.ready()
     const reg = new AppRegistry(dir, { store })
 
@@ -146,7 +149,7 @@ test('bee mode: mutations persist across restart (set, setAnchored, delete)', as
 
     // Phase 1
     {
-      const store = new Corestore(dir)
+      const store = openCorestore(dir)
       await store.ready()
       const reg = new AppRegistry(dir, { store })
       await reg.load()
@@ -170,7 +173,7 @@ test('bee mode: mutations persist across restart (set, setAnchored, delete)', as
 
     // Phase 2 — restart
     {
-      const store = new Corestore(dir)
+      const store = openCorestore(dir)
       await store.ready()
       const reg = new AppRegistry(dir, { store })
       await reg.load()
@@ -228,12 +231,12 @@ test('legacy JSON mode: still works when no store is passed', async (t) => {
 test('bee mode: setStore after load() throws', async (t) => {
   const dir = await freshTmp()
   try {
-    const store = new Corestore(dir)
+    const store = openCorestore(dir)
     await store.ready()
     const reg = new AppRegistry(dir, { store })
     await reg.load()
 
-    const store2 = new Corestore(dir + '-other')
+    const store2 = openCorestore(dir + '-other')
     await store2.ready()
     t.exception(() => reg.setStore(store2), /setStore must be called before load/)
 
@@ -252,7 +255,7 @@ test('bee mode: concurrent set + delete of different keys both persist', async (
     const keyB = 'b'.repeat(64)
     const keyC = 'c'.repeat(64)
 
-    const store = new Corestore(dir)
+    const store = openCorestore(dir)
     await store.ready()
     const reg = new AppRegistry(dir, { store })
     await reg.load()
@@ -265,7 +268,7 @@ test('bee mode: concurrent set + delete of different keys both persist', async (
     await reg.flush()
     await store.close()
 
-    const store2 = new Corestore(dir)
+    const store2 = openCorestore(dir)
     await store2.ready()
     const reg2 = new AppRegistry(dir, { store: store2 })
     await reg2.load()
@@ -288,7 +291,7 @@ test('bee mode: low-debt tombstone re-add reuses history and survives restart', 
     let finalDebt = 0
     let finalBytes = 0
     {
-      const store = new Corestore(dir)
+      const store = openCorestore(dir)
       await store.ready()
       const reg = new AppRegistry(dir, { store })
       await reg.load()
@@ -311,7 +314,7 @@ test('bee mode: low-debt tombstone re-add reuses history and survives restart', 
     }
 
     {
-      const store = new Corestore(dir)
+      const store = openCorestore(dir)
       await store.ready()
       const reg = new AppRegistry(dir, { store })
       const entries = await reg.load()
@@ -333,7 +336,7 @@ test('bee mode: empty JSON file is still migrated cleanly', async (t) => {
     const jsonPath = join(dir, 'app-registry.json')
     await writeFile(jsonPath, '[]') // empty array
 
-    const store = new Corestore(dir)
+    const store = openCorestore(dir)
     await store.ready()
     const reg = new AppRegistry(dir, { store })
     const entries = await reg.load()

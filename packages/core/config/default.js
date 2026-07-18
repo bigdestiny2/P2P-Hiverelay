@@ -154,7 +154,11 @@ export default {
     diskPressurePct: 80,
     resumePct: 70,
     floorMargin: 1,
-    minAgeMs: 3 * 24 * 60 * 60 * 1000,
+    // 6h (was 3 days). 3 days was too protective: a box ingesting content
+    // faster than that could never shed old-enough over-replicated entries and
+    // would fill the disk to 100% before disk-pressure eviction could act. The
+    // floor + floorMargin still protect availability regardless of age.
+    minAgeMs: 6 * 60 * 60 * 1000,
     sweepIntervalMs: 10 * 60 * 1000,
     maxEvictionsPerSweep: 20
   },

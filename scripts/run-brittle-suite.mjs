@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readdir } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import process from 'node:process'
@@ -30,7 +31,10 @@ if (!Object.hasOwn(suites, suite)) {
   } else if (listOnly) {
     for (const file of files) process.stdout.write(`${relativeTestPath(file)}\n`)
   } else {
-    const runner = path.join(root, 'node_modules', 'brittle', 'bin', 'node.js')
+    const runner = ['node_modules/brittle/brittle-node.js', 'node_modules/brittle/bin/node.js']
+      .map((candidate) => path.join(root, candidate))
+      .find((candidate) => existsSync(candidate))
+    if (!runner) throw new Error('brittle node runner not found (brittle 4: brittle-node.js at package root; brittle 3: bin/node.js)')
     const relativeFiles = files.map(relativeTestPath)
     const child = spawn(process.execPath, [runner, '--timeout', '120000', ...relativeFiles], {
       cwd: root,

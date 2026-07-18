@@ -22,7 +22,7 @@ import { createServer } from 'http'
 import { timingSafeEqual } from 'crypto'
 import { isIP } from 'net'
 import Hyperswarm from 'hyperswarm'
-import Corestore from 'corestore'
+import { openCorestore } from '../core/persistence/storage-root-restore.js'
 import Hyperdrive from 'hyperdrive'
 import { HyperGateway } from './hyper-gateway.js'
 import { RELAY_DISCOVERY_TOPIC } from '../core/constants.js'
@@ -222,7 +222,7 @@ export async function startGateway (opts = {}) {
     seedOperationTimeoutMs
   } = config
 
-  const store = new Corestore(storagePath)
+  const store = openCorestore(storagePath)
   let swarm = null
   let gateway = null
   let server = null

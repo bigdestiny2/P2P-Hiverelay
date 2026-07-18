@@ -15,7 +15,7 @@
  */
 
 import minimist from 'minimist'
-import goodbye from 'graceful-goodbye'
+import gracedown from 'pear-gracedown'
 import { RelayNode } from '../core/relay-node/index.js'
 import { createLogger } from '../core/logger.js'
 import { isValidHexKey } from '../core/constants.js'
@@ -181,11 +181,19 @@ const COMMANDS = {
   help
 }
 
+// These commands parse their own positional args and already print their own
+// usage on --help / invalid input. Everything else falls back to global help.
+const SUBCOMMAND_HELP_COMMANDS = new Set(['catalog', 'federation', 'qvac', 'ghostdrive'])
+
 async function main () {
   const handler = COMMANDS[command]
   if (!handler) {
     help()
     process.exit(command ? 1 : 0)
+  }
+  if ((args.help || args.h === true) && !SUBCOMMAND_HELP_COMMANDS.has(command)) {
+    help()
+    process.exit(0)
   }
   await handler()
 }
@@ -521,6 +529,15 @@ async function start () {
     console.log(`  ${ARROW} ${paint(C.yellow, 'default max-storage resolved')} ${formatBytes(config.maxStorageBytes)} (available-space reserve protected)`)
   }
 
+  // Scale an unset storage cap to THIS box's disk (and clamp an over-large
+  // explicit cap) so the seeder's adoption gate stops before the volume fills
+  // and wedges the node. The fixed 50 GB default is too big for small boxes.
+  resolveStorageCap(config)
+  if (config._maxStorageBytesClampedFrom != null) {
+    console.log(`  ${ARROW} ${paint(C.yellow, 'max-storage clamped')} ${formatBytes(config._maxStorageBytesClampedFrom)} ${ARROW} ${formatBytes(config.maxStorageBytes)} (90% of disk — protects the volume)`)
+    delete config._maxStorageBytesClampedFrom
+  }
+
   console.log(mainBanner(VERSION))
   console.log('  ' + ARROW + ' ' + paint(C.cyan, 'starting relay node') + ' ' + paint(C.dim, '...'))
   console.log()
@@ -659,7 +676,7 @@ async function start () {
 
   let statusInterval = null
 
-  goodbye(async () => {
+  gracedown(async () => {
     if (statusInterval) clearInterval(statusInterval)
     log.info('shutting down')
     console.log(shutdownBanner())
@@ -889,7 +906,7 @@ async function startTestnet () {
     process.stdout.write(`\r  [testnet] ${parts.join(' | ')}${clientPart}   `)
   }, 5000)
 
-  goodbye(async () => {
+  gracedown(async () => {
     clearInterval(statusInterval)
     console.log(shutdownBanner())
     console.log('  ' + ARROW + ' ' + paint(C.dim, 'tearing down testnet...'))
