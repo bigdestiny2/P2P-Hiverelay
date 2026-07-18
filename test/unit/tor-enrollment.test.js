@@ -360,9 +360,11 @@ test('failed crossed-expiry replacement cannot roll the expired key back', async
 
 test('RelayNode pairDevice — enrollment envelope rides the pairing extras', async (t) => {
   const dir = tmpdir(t)
+  const storage = path.join(dir, 'relay')
+  fs.mkdirSync(storage, { recursive: true })
   const node = new RelayNode({
     mode: 'private',
-    storage: path.join(dir, 'relay'),
+    storage,
     enableAPI: false,
     enableServices: false,
     discovery: { mdns: false }
