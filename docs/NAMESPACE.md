@@ -38,7 +38,7 @@ classDiagram
   NamespaceEntry "1" --> "many" OutboxRecord : admits
 ```
 
-Namespace names match `/^[a-z0-9][a-z0-9._-]{0,63}$/`; `caps.bytesPerDay` is parsed but not enforced today (see §7).
+Namespace names match `/^[a-z0-9][a-z0-9._-]{0,63}$/`; all four caps are enforced (see §7 for the `bytesPerDay` windowing choice and restart boundary).
 
 - Default namespace: `'outbox'`.
 - Signed payload: `` `pear.app.${driveKey}:${ns}:${canonicalOutboxRecord(type, data)}` `` — the namespace is inside the signature domain, so a record cannot be replayed across namespaces.
@@ -83,7 +83,7 @@ sequenceDiagram
   alt blind namespace
     E->>E: hasBlindForbiddenField? → reject plaintext
   end
-  E->>E: caps: maxValueBytes, maxEntriesPerOutbox
+  E->>E: caps: maxValueBytes, maxEntriesPerOutbox, bytesPerDay
   E->>E: append to group log (single writer)
 ```
 
@@ -111,7 +111,7 @@ The operator's takedown is gated by the admin key and references records by opaq
 - **Writer authentication**: per-record ed25519 signatures, `_k` must equal `appId`, namespace inside the signature domain.
 - **Operator allowlist**: unregistered namespaces reject at create, append, and verify time.
 - **Blind mode**: `BLIND_FORBIDDEN_FIELDS` hard-blocks plaintext fields on blind namespaces.
-- **Caps**: enforced per namespace — `maxOutboxes`, `maxEntriesPerOutbox`, `maxValueBytes` (each resolved as min of namespace cap and global fallback).
+- **Caps**: enforced per namespace — `maxOutboxes`, `maxEntriesPerOutbox`, `maxValueBytes`, `bytesPerDay` (each resolved as min of namespace cap and global fallback).
 - **Takedown**: admin-key-only, opaque-id, do-not-serve.
 
 ## 5. Config surface
@@ -122,7 +122,7 @@ The operator's takedown is gated by the admin key and references records by opaq
     "namespace": "outbox",
     "namespaces": {
       "outbox": { "blind": false },
-      "peerit": { "blind": true, "caps": { "maxOutboxes": 10000, "maxEntriesPerOutbox": 5000, "maxValueBytes": 8192 } },
+      "peerit": { "blind": true, "caps": { "maxOutboxes": 10000, "maxEntriesPerOutbox": 5000, "maxValueBytes": 8192, "bytesPerDay": 67108864 } },
       "poked":  { "blind": true }
     }
   }
@@ -150,7 +150,7 @@ flowchart LR
 
 ## 7. Honest limits
 
-1. `caps.bytesPerDay` is parsed but **not enforced** today — only count/byte caps are checked.
+1. `caps.bytesPerDay` **is enforced** — as a **rolling 24h** ingest window per namespace (not calendar-day; the spec previously left the windowing open). Every accepted append charges its full serialized record bytes — the same measure as `maxValueBytes`, in-place updates included (it is an ingest-rate cap, not a storage cap) — against `min(namespace cap, global maxBytesPerDay fallback)`; over budget rejects appends with `503 namespace at daily byte capacity`. The global fallback is uncapped by default, so only configured caps bite. The window survives restart exactly: journaled appends carry a `ts` and re-charge on replay, and checkpoints persist the pruned charge list (`byteWindows` in the state snapshot). Three explicit boundaries: (a) journal appends written before this enforcement carry no `ts` and do **not** re-charge — the window under-counts by that legacy volume for up to 24h after upgrade, then self-heals; (b) expiry is wall-clock (`Date.now()`) — a backward clock jump delays expiry (conservative), a forward jump frees budget early; (c) tracking is lazy — a cap added later via `configureNamespaces` observes traffic from that point on.
 2. Namespace enumeration is RPC-only; there is no public HTTP discovery of admitted namespaces (deliberate).
 3. Do not conflate with the ENS/petname "naming" roadmap (`PEAR-NAMING-IPFS-RELEASE-ROADMAP`) — that is a different concept from this shipped feature.
 4. A group permanently binds to its first namespace; there is no migration — choose names carefully.

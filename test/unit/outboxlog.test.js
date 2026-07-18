@@ -187,6 +187,153 @@ test('outboxlog: namespace registry accepts non-Peerit app records and enforces 
   t.is(unknownNamespace.status, 400)
 })
 
+test('outboxlog: namespace caps.bytesPerDay rejects appends over the rolling byte budget', (t) => {
+  const writer = keyPair(31)
+  const openWriter = keyPair(32)
+  const first = signRecord(writer, { id: 'b1', body: { move: 'tap' }, _ns: 'metered' }, 'poke')
+  const second = signRecord(writer, { id: 'b2', body: { move: 'tap' }, _ns: 'metered' }, 'poke')
+  // Budget exactly one record: "bytes" is the same measure as maxValueBytes
+  // (Buffer.byteLength(JSON.stringify(record))).
+  const namespaces = {
+    metered: { blind: false, caps: { bytesPerDay: Buffer.byteLength(JSON.stringify(first)) } },
+    open: { blind: false }
+  }
+  const log = createOutboxLog({ namespaces })
+  log.sync.create(writer.publicKeyHex, { namespace: 'metered' })
+
+  t.alike(log.sync.append(writer.publicKeyHex, { type: 'poke', data: first }), { ok: true, key: 'poke!b1' }, 'under-cap append accepted')
+
+  const capErr = throws(() => log.sync.append(writer.publicKeyHex, { type: 'poke', data: second }))
+  t.is(capErr.status, 503)
+  t.is(capErr.message, 'namespace at daily byte capacity')
+  t.is(log.sync.get(writer.publicKeyHex, 'poke!b2'), null, 'rejected append stores nothing')
+
+  // An uncapped namespace in the same registry is unaffected.
+  log.sync.create(openWriter.publicKeyHex, { namespace: 'open' })
+  const open = signRecord(openWriter, { id: 'b3', body: { move: 'tap' }, _ns: 'open' }, 'poke')
+  t.alike(log.sync.append(openWriter.publicKeyHex, { type: 'poke', data: open }), { ok: true, key: 'poke!b3' })
+})
+
+test('outboxlog: caps.bytesPerDay resolves as min(namespace cap, global fallback)', (t) => {
+  const writer = keyPair(33)
+  const record = signRecord(writer, { id: 'g1', body: { move: 'tap' }, _ns: 'roomy' }, 'poke')
+  const bytes = Buffer.byteLength(JSON.stringify(record))
+  // Namespace cap is generous; the engine-level maxBytesPerDay is tighter, so
+  // the global fallback wins. (The namespace-tighter-than-global direction is
+  // covered above: the default uncapped fallback lets the namespace cap bite.)
+  const log = createOutboxLog({
+    maxBytesPerDay: bytes,
+    namespaces: { roomy: { blind: false, caps: { bytesPerDay: bytes * 1024 } } }
+  })
+  log.sync.create(writer.publicKeyHex, { namespace: 'roomy' })
+  t.alike(log.sync.append(writer.publicKeyHex, { type: 'poke', data: record }), { ok: true, key: 'poke!g1' })
+  const err = throws(() => log.sync.append(writer.publicKeyHex, {
+    type: 'poke',
+    data: signRecord(writer, { id: 'g2', body: { move: 'tap' }, _ns: 'roomy' }, 'poke')
+  }))
+  t.is(err.status, 503)
+})
+
+test('outboxlog: global maxBytesPerDay also meters the namespace-less legacy mode', (t) => {
+  // Same always-applies behavior as the maxValueBytes fallback: with no
+  // namespace registry configured the global option is the effective cap.
+  const log = createOutboxLog({
+    verifyAppend: () => true,
+    maxBytesPerDay: Buffer.byteLength(JSON.stringify(post('p1')))
+  })
+  log.sync.create(A)
+  t.alike(log.sync.append(A, { type: 'post', data: post('p1') }), { ok: true, key: 'post!p1' })
+  const err = throws(() => log.sync.append(A, { type: 'post', data: post('p2') }))
+  t.is(err.status, 503)
+  t.is(err.message, 'namespace at daily byte capacity')
+})
+
+test('outboxlog: caps.bytesPerDay rolling 24h window frees capacity as charges expire', (t) => {
+  const writer = keyPair(34)
+  let now = 1762000000000
+  const first = signRecord(writer, { id: 'w1', body: { move: 'tap' }, _ns: 'metered' }, 'poke')
+  const second = signRecord(writer, { id: 'w2', body: { move: 'tap' }, _ns: 'metered' }, 'poke')
+  const namespaces = { metered: { blind: false, caps: { bytesPerDay: Buffer.byteLength(JSON.stringify(first)) } } }
+  const log = createOutboxLog({ namespaces, now: () => now })
+  log.sync.create(writer.publicKeyHex, { namespace: 'metered' })
+  t.alike(log.sync.append(writer.publicKeyHex, { type: 'poke', data: first }), { ok: true, key: 'poke!w1' })
+
+  t.is(throws(() => log.sync.append(writer.publicKeyHex, { type: 'poke', data: second })).status, 503, 'at budget: rejected')
+
+  now += 60 * 1000 // one minute later: still inside the rolling 24h window
+  t.is(throws(() => log.sync.append(writer.publicKeyHex, { type: 'poke', data: second })).status, 503, 'inside the window: still rejected')
+
+  now += 25 * 60 * 60 * 1000 // past the window: the first charge expired
+  t.alike(log.sync.append(writer.publicKeyHex, { type: 'poke', data: second }), { ok: true, key: 'poke!w2' }, 'expired charges free the budget')
+})
+
+test('outboxlog: caps.bytesPerDay applies to blind namespaces (sealed bytes count)', (t) => {
+  const writer = keyPair(35)
+  const sealed = (id, nonce) => signRecord(writer, {
+    id,
+    _ns: 'vault',
+    body: createOutboxBlindSealedBody({ nonce, ciphertext: 'opaque-box', keyId: 'room-key-1' })
+  }, 'message')
+  const first = sealed('s1', 'n1')
+  const namespaces = { vault: { blind: true, caps: { bytesPerDay: Buffer.byteLength(JSON.stringify(first)) } } }
+  const log = createOutboxLog({ namespaces })
+  log.sync.create(writer.publicKeyHex, { namespace: 'vault' })
+  t.alike(log.sync.append(writer.publicKeyHex, { type: 'message', data: first }), { ok: true, key: 'message!s1' }, 'blind append under cap accepted')
+  const err = throws(() => log.sync.append(writer.publicKeyHex, { type: 'message', data: sealed('s2', 'n2') }))
+  t.is(err.status, 503)
+  t.is(log.sync.get(writer.publicKeyHex, 'message!s2'), null)
+})
+
+test('outboxlog: caps.bytesPerDay window survives journal replay and snapshot restore', (t) => {
+  const writer = keyPair(36)
+  let now = 1762000000000
+  const rec = (id) => signRecord(writer, { id, body: { move: 'tap' }, _ns: 'metered' }, 'poke')
+  const namespaces = { metered: { blind: false, caps: { bytesPerDay: Buffer.byteLength(JSON.stringify(rec('r1'))) } } }
+
+  // Journal path: replayed appends re-charge the window from their journaled ts.
+  const journal = createMemoryOutboxJournal()
+  const first = createOutboxLog({ namespaces, journal, now: () => now })
+  first.sync.create(writer.publicKeyHex, { namespace: 'metered' })
+  t.alike(first.sync.append(writer.publicKeyHex, { type: 'poke', data: rec('r1') }), { ok: true, key: 'poke!r1' })
+
+  const replayed = createOutboxLog({ namespaces, journal, now: () => now })
+  t.is(throws(() => replayed.sync.append(writer.publicKeyHex, { type: 'poke', data: rec('r2') })).status, 503, 'journal replay rebuilds the window')
+  now += 25 * 60 * 60 * 1000
+  t.alike(replayed.sync.append(writer.publicKeyHex, { type: 'poke', data: rec('r2') }), { ok: true, key: 'poke!r2' }, 'replayed charges expire on the same wall clock')
+
+  // Snapshot path: checkpoints persist the pruned charge list (byteWindows).
+  now = 1762000000000
+  const persistence = createMemoryOutboxPersistence()
+  const snapFirst = createOutboxLog({ namespaces, persistence, now: () => now })
+  snapFirst.sync.create(writer.publicKeyHex, { namespace: 'metered' })
+  snapFirst.sync.append(writer.publicKeyHex, { type: 'poke', data: rec('r1') })
+  snapFirst.flush()
+  const restored = createOutboxLog({ namespaces, persistence, now: () => now })
+  t.is(throws(() => restored.sync.append(writer.publicKeyHex, { type: 'poke', data: rec('r2') })).status, 503, 'snapshot byteWindows survive restart')
+})
+
+test('outboxlog: caps.bytesPerDay — pre-feature journal entries without ts do not re-charge (documented boundary)', (t) => {
+  const writer = keyPair(37)
+  const now = 1762000000000
+  const rec = (id) => signRecord(writer, { id, body: { move: 'tap' }, _ns: 'metered' }, 'poke')
+  const namespaces = { metered: { blind: false, caps: { bytesPerDay: Buffer.byteLength(JSON.stringify(rec('r1'))) } } }
+
+  const journal = createMemoryOutboxJournal()
+  const first = createOutboxLog({ namespaces, journal, now: () => now })
+  first.sync.create(writer.publicKeyHex, { namespace: 'metered' })
+  first.sync.append(writer.publicKeyHex, { type: 'poke', data: rec('r1') })
+  t.ok(journal.entries().every(entry => entry.kind !== 'append' || Number.isFinite(entry.ts)), 'new journal appends carry ts')
+
+  // Simulate a pre-upgrade journal (entries carry no ts): the window
+  // under-counts by that legacy volume for up to 24h after upgrade.
+  const legacy = journal.entries().map((entry) => {
+    const { ts, ...rest } = entry
+    return rest
+  })
+  const restored = createOutboxLog({ namespaces, journal: createMemoryOutboxJournal(legacy), now: () => now })
+  t.alike(restored.sync.append(writer.publicKeyHex, { type: 'poke', data: rec('r2') }), { ok: true, key: 'poke!r2' }, 'legacy no-ts entries do not re-charge (explicit, never silent)')
+})
+
 test('outboxlog: blind namespace requires sealed ciphertext body and rejects unsafe plaintext fields', (t) => {
   const writer = keyPair(6)
   const log = createOutboxLog({
