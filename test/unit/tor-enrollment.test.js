@@ -208,9 +208,13 @@ test('enrollment gating — clean no-op without tor / without restricted discove
 
 test('RelayNode pairDevice — enrollment envelope rides the pairing extras', async (t) => {
   const dir = tmpdir(t)
+  // v1 mount-safety: an explicit storage path must already exist on the
+  // configured filesystem (Track A fail-closed proof) — pre-create it.
+  const storageDir = path.join(dir, 'relay')
+  fs.mkdirSync(storageDir, { recursive: true })
   const node = new RelayNode({
     mode: 'private',
-    storage: path.join(dir, 'relay'),
+    storage: storageDir,
     enableAPI: false,
     enableServices: false,
     discovery: { mdns: false }
