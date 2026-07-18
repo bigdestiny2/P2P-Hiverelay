@@ -23,6 +23,30 @@ const WAL_MIN_FRAME_BYTES = WAL_HEADER_BYTES + WAL_CHECKSUM_BYTES
 const ZERO32 = b4a.alloc(32)
 const MAX_U64 = (1n << 64n) - 1n
 
+// Segmented WAL (Phase 3). The live segment keeps the historical
+// `wal.v2` name — a pre-segmentation store imports unchanged as exactly one
+// live segment. Sealing renames the live segment to
+// `wal-<firstSequence16>-<lastSequence16>.v2`; the zero-padded hex ranges
+// sort lexicographically in sequence order. A commit group never straddles
+// a boundary: rollover runs only between groups, after the previous group's
+// datasync, so every sealed segment ends on a committed frame boundary and
+// holds exactly its named range. The seal is the rename itself (plus a
+// directory sync); the frame hash chain crosses segment boundaries, so a
+// missing, reordered, truncated, or corrupted sealed segment reads as an
+// interior break and fails closed. Torn-tail truncation remains legal only
+// at the live segment tail.
+const WAL_LIVE_SEGMENT_NAME = 'wal.v2'
+const WAL_SEALED_SEGMENT_NAME = /^wal-([0-9a-f]{16})-([0-9a-f]{16})\.v2$/
+// Default rollover threshold: 64 MiB bounds per-file recovery scan work and
+// prune granularity without creating meaningful directory fan-out (a segment
+// holds ~40k reference-size frames; fsync cost is per commit group, not per
+// byte, so a larger segment buys no group-commit throughput). The threshold
+// is soft: a segment may exceed it by at most one commit group, because a
+// group's frames always land together.
+const DEFAULT_WAL_SEGMENT_MAX_BYTES = 64 * 1024 * 1024
+const MIN_WAL_SEGMENT_MAX_BYTES = 64 * 1024
+const MAX_WAL_SEGMENT_MAX_BYTES = 1024 * 1024 * 1024
+
 const WAL_CHECKSUM_DOMAIN = b4a.from('hiverelay.blind.wal-frame-checksum.v1', 'ascii')
 const WAL_HASH_DOMAIN = b4a.from('hiverelay.blind.wal-frame-hash.v1', 'ascii')
 const OPEN_STORE_ROOTS = new Set()
@@ -309,6 +333,44 @@ function normalizeRecoveryHandoff (value) {
   })
 }
 
+function normalizeWalAnchorValue (value, field) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${field} must be an object`)
+  const sequence = asU64(value.sequence, `${field}.sequence`)
+  if (sequence === 0n) throw new TypeError(`${field}.sequence must be nonzero`)
+  const hash = bytes(value.hash, 32, `${field}.hash`, { nonzero: true })
+  return Object.freeze({ sequence, hash: b4a.from(hash) })
+}
+
+// Checkpoint-anchored recovery options (Phase 3). `checkpointAnchor` pins
+// (coveredWalSequence, coveredWalHash) from the newest validated checkpoint.
+// Recovery verifies the anchor against the retained segment chain and, by
+// default, replays only post-anchor frames (the checkpoint snapshot covers
+// the prefix). `replayCoveredFrames` instead applies every retained frame:
+// the prune-tolerant full replay used by writers that hold no snapshot
+// restore path but must still tolerate a floor-respecting prune. An anchor
+// that does not validate against the retained segments refuses to open —
+// replaying from genesis is impossible once covered segments are pruned, so
+// refusal is the only fail-closed fallback (never a silent history skip).
+function normalizeOpenRecoveryOptions (options) {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    throw new TypeError('transaction store open options must be an object')
+  }
+  const allowed = new Set(['checkpointAnchor', 'replayCoveredFrames'])
+  const unknown = Object.keys(options).find(key => !allowed.has(key))
+  if (unknown) throw new TypeError(`transaction store open options contain unknown field ${unknown}`)
+  if (options.replayCoveredFrames != null && typeof options.replayCoveredFrames !== 'boolean') {
+    throw new TypeError('replayCoveredFrames must be a boolean')
+  }
+  const checkpointAnchor = options.checkpointAnchor == null
+    ? null
+    : normalizeWalAnchorValue(options.checkpointAnchor, 'checkpointAnchor')
+  const replayCoveredFrames = options.replayCoveredFrames === true
+  if (replayCoveredFrames && checkpointAnchor === null) {
+    throw new TypeError('replayCoveredFrames requires a checkpoint anchor')
+  }
+  return Object.freeze({ checkpointAnchor, replayCoveredFrames })
+}
+
 function mintWalBarrierAuthority (store, lease) {
   const state = Object.freeze({ store, root: store.root, lease })
   const authority = Object.freeze({ root: state.root })
@@ -378,6 +440,13 @@ function randomNonzero32 () {
   do value = randomBytes(32)
   while (isZero(value))
   return value
+}
+
+function walSealedSegmentName (firstSequence, lastSequence) {
+  firstSequence = asU64(firstSequence, 'WAL segment firstSequence')
+  lastSequence = asU64(lastSequence, 'WAL segment lastSequence')
+  if (firstSequence === 0n || lastSequence < firstSequence) throw new TypeError('WAL segment sequence range is invalid')
+  return `wal-${firstSequence.toString(16).padStart(16, '0')}-${lastSequence.toString(16).padStart(16, '0')}.v2`
 }
 
 function sourceIterator (source) {
@@ -623,6 +692,12 @@ export class BlindTransactionStore {
       this.maximumOpaqueBodyBytes,
       'maximumChunkBytes'
     )
+    this.walSegmentMaxBytes = boundedInteger(
+      options.walSegmentMaxBytes == null ? DEFAULT_WAL_SEGMENT_MAX_BYTES : options.walSegmentMaxBytes,
+      MIN_WAL_SEGMENT_MAX_BYTES,
+      MAX_WAL_SEGMENT_MAX_BYTES,
+      'walSegmentMaxBytes'
+    )
     if (options.faultInjector != null && typeof options.faultInjector !== 'function') {
       throw new TypeError('faultInjector must be a function')
     }
@@ -642,7 +717,7 @@ export class BlindTransactionStore {
     this.controlDirectory = path.join(this.root, 'control')
     this.blobDirectory = path.join(this.root, 'blobs')
     this.stagingDirectory = path.join(this.root, 'staging')
-    this.walPath = path.join(this.controlDirectory, 'wal.v2')
+    this.walPath = path.join(this.controlDirectory, WAL_LIVE_SEGMENT_NAME)
     this.storeLockPath = path.join(this.controlDirectory, 'writer.lock.v1')
     this.locks = new KeyLockTable()
     this.handle = null
@@ -659,20 +734,28 @@ export class BlindTransactionStore {
     this.walOffset = 0
     this.walSequence = 0n
     this.walHash = b4a.from(ZERO32)
+    this.liveSegmentFirstSequence = 1n
+    this.sealedWalSegments = []
     this.poisoned = false
     this.walCommitQueue = []
     this.walCommitDrainActive = false
     this.staged = new Map()
   }
 
-  open (applyRecoveredFrame) {
+  open (applyRecoveredFrame, options = {}) {
     if (this.destroyed) return Promise.reject(new Error('transaction store secrets were destroyed on close'))
     if (this.handle || this.openPromise) return Promise.reject(new Error('transaction store is already opening or open'))
     if (this.closing || this.closePromise) return Promise.reject(new Error('transaction store is closing'))
     if (typeof applyRecoveredFrame !== 'function') {
       return Promise.reject(new TypeError('applyRecoveredFrame must be a function'))
     }
-    const opening = this._open(applyRecoveredFrame)
+    let recovery
+    try {
+      recovery = normalizeOpenRecoveryOptions(options)
+    } catch (error) {
+      return Promise.reject(error)
+    }
+    const opening = this._open(applyRecoveredFrame, recovery)
     this.openPromise = opening
     opening.then(
       () => { if (this.openPromise === opening) this.openPromise = null },
@@ -681,7 +764,7 @@ export class BlindTransactionStore {
     return opening
   }
 
-  async _open (applyRecoveredFrame) {
+  async _open (applyRecoveredFrame, recovery) {
     if (OPEN_STORE_ROOTS.has(this.root)) throw new BlindWalIntegrityError('store root already has an active writer in this process')
     OPEN_STORE_ROOTS.add(this.root)
     let opened = false
@@ -791,7 +874,7 @@ export class BlindTransactionStore {
       await this.#fault('wal:after-open-file-sync', { byteLength: fileStat.size })
       await syncDirectory(this.controlDirectory)
       await this.#fault('wal:after-open-directory-sync', { byteLength: fileStat.size })
-      await this.#recover(applyRecoveredFrame)
+      await this.#recover(applyRecoveredFrame, recovery)
       await this.#cleanupStaging()
       if (this.closing) throw new Error('transaction store is closing before activation')
       this.opened = true
@@ -815,52 +898,187 @@ export class BlindTransactionStore {
     }
   }
 
-  async #recover (applyRecoveredFrame) {
+  // Recovery enumerates the sealed segments in sequence order, then the live
+  // segment, replaying one continuous hash chain. Fail-closed on any interior
+  // break: a malformed segment name, a coverage gap or overlap between
+  // segments, a checksum/chain/map/fence mismatch, or a torn tail anywhere
+  // but the live segment tail. With a checkpoint anchor the retained prefix
+  // may start after sequence 1: the first retained frame's predecessor link
+  // is unverifiable from retained bytes alone, so the anchor must pin it —
+  // either the retained range begins exactly at anchor.sequence + 1 (the
+  // first frame's previousWalHash must equal the anchor hash), or the anchor
+  // frame itself is still retained and must hash to the anchor value (which
+  // transitively pins every retained frame before it, since each frame's
+  // hash covers its declared predecessor). Without an anchor the retained
+  // range must begin at genesis, exactly as the pre-segmentation store
+  // required of the single wal.v2 file.
+  async #recover (applyRecoveredFrame, recovery) {
+    const anchor = recovery.checkpointAnchor
+    const replayCoveredFrames = recovery.replayCoveredFrames
+    const segments = await this.#enumerateWalSegments()
+    const firstRetainedSequence = segments.length === 0
+      ? await this.#peekLiveFirstSequence()
+      : segments[0].firstSequence
+    if (anchor === null) {
+      if (firstRetainedSequence !== 1n) {
+        throw new BlindWalIntegrityError('WAL history begins after genesis without a checkpoint anchor')
+      }
+    } else if (firstRetainedSequence > anchor.sequence + 1n) {
+      throw new BlindWalIntegrityError('WAL begins after the checkpoint anchor')
+    }
+    const chain = {
+      expectedSequence: firstRetainedSequence,
+      expectedPreviousWalHash: firstRetainedSequence === 1n ? b4a.from(ZERO32) : null
+    }
+    let anchorVerified = false
+    if (anchor !== null && firstRetainedSequence === anchor.sequence + 1n) {
+      chain.expectedPreviousWalHash = b4a.from(anchor.hash)
+      anchorVerified = true
+    }
+    const onFrame = async (frame) => {
+      if (anchor !== null && !anchorVerified && frame.sequence === anchor.sequence) {
+        if (!b4a.equals(frame.walHash, anchor.hash)) {
+          throw new BlindWalIntegrityError('WAL checkpoint anchor hash mismatch')
+        }
+        anchorVerified = true
+      }
+      if (anchor === null || replayCoveredFrames || frame.sequence > anchor.sequence) {
+        await applyRecoveredFrame(frame)
+      }
+      chain.expectedSequence = frame.sequence + 1n
+      chain.expectedPreviousWalHash = frame.walHash
+      this.walSequence = frame.sequence
+      this.walHash = frame.walHash
+    }
+    for (const segment of segments) {
+      if (segment.firstSequence !== chain.expectedSequence) {
+        throw new BlindWalIntegrityError('WAL segment chain has an interior gap')
+      }
+      await this.#replaySealedWalSegment(segment, chain, onFrame)
+      if (chain.expectedSequence !== segment.lastSequence + 1n) {
+        throw new BlindWalIntegrityError('sealed WAL segment does not contain its sealed sequence range')
+      }
+    }
+    this.liveSegmentFirstSequence = chain.expectedSequence
     const stat = await this.handle.stat()
+    this.walOffset = await this.#scanSegmentFrames(
+      this.handle, stat.size, 'live WAL segment', false, chain, onFrame)
+    if (anchor !== null && !anchorVerified) {
+      throw new BlindWalIntegrityError('WAL does not contain the exact checkpoint anchor')
+    }
+    this.sealedWalSegments = segments
+  }
+
+  // When no sealed segment survives, the live segment's own first frame
+  // header declares the first retained sequence (a store pruned down to its
+  // live segment starts above 1). The full scan that follows verifies the
+  // chain from that frame on, so the peek fixes only the boundary the
+  // checkpoint-anchor rule pins. An empty or header-short live segment is
+  // the pre-segmentation fresh/torn case and starts at 1.
+  async #peekLiveFirstSequence () {
+    const stat = await this.handle.stat()
+    if (stat.size < WAL_HEADER_BYTES) return 1n
+    const header = b4a.alloc(WAL_HEADER_BYTES)
+    if (await readAtMost(this.handle, header, 0) !== WAL_HEADER_BYTES) return 1n
+    return inspectBlindWalFrameV2Header(header, this.maximumWalPayloadBytes).sequence
+  }
+
+  async #enumerateWalSegments () {
+    const segments = []
+    const directory = await fs.opendir(this.controlDirectory)
+    for await (const entry of directory) {
+      if (!entry.name.startsWith('wal-')) continue
+      const match = WAL_SEALED_SEGMENT_NAME.exec(entry.name)
+      if (!match || !entry.isFile()) {
+        throw new BlindWalIntegrityError(`unexpected WAL segment entry ${entry.name}`)
+      }
+      const firstSequence = BigInt(`0x${match[1]}`)
+      const lastSequence = BigInt(`0x${match[2]}`)
+      if (firstSequence === 0n || lastSequence < firstSequence) {
+        throw new BlindWalIntegrityError(`WAL segment entry ${entry.name} carries an invalid sequence range`)
+      }
+      segments.push({ name: entry.name, firstSequence, lastSequence })
+    }
+    segments.sort((left, right) => (left.firstSequence < right.firstSequence ? -1 : 1))
+    for (let index = 1; index < segments.length; index++) {
+      if (segments[index].firstSequence !== segments[index - 1].lastSequence + 1n) {
+        throw new BlindWalIntegrityError('WAL segment chain has an interior gap')
+      }
+    }
+    return segments
+  }
+
+  async #replaySealedWalSegment (segment, chain, onFrame) {
+    const segmentPath = path.join(this.controlDirectory, segment.name)
+    const linked = await fs.lstat(segmentPath)
+    assertOwnedPrivateFile(linked, 'sealed WAL segment')
+    const handle = await fs.open(segmentPath, FS_CONSTANTS.O_RDONLY | FS_CONSTANTS.O_NOFOLLOW)
+    try {
+      const opened = await handle.stat()
+      assertOwnedPrivateFile(opened, 'opened sealed WAL segment')
+      if (!sameInode(linked, opened)) {
+        throw new BlindWalIntegrityError('sealed WAL segment path and opened inode disagree')
+      }
+      await this.#scanSegmentFrames(
+        handle, opened.size, `sealed WAL segment ${segment.name}`, true, chain, onFrame)
+    } finally {
+      await handle.close()
+    }
+  }
+
+  // Walks every frame in one segment file, threading sequence and predecessor
+  // hash through `chain` across file boundaries. A sealed segment must end
+  // exactly on a frame boundary — trailing bytes are an interior break. Only
+  // the live segment may end in a torn tail, which is truncated exactly as
+  // the pre-segmentation store truncated the wal.v2 tail. Returns the byte
+  // length of the valid prefix (the live append offset after recovery).
+  async #scanSegmentFrames (handle, size, label, sealed, chain, onFrame) {
     let offset = 0
-    let expectedSequence = 1n
-    let expectedPreviousWalHash = b4a.from(ZERO32)
-    while (offset < stat.size) {
-      const remaining = stat.size - offset
+    while (offset < size) {
+      const remaining = size - offset
       if (remaining < WAL_HEADER_BYTES) {
+        if (sealed) throw new BlindWalIntegrityError(`${label} ends inside a frame header`)
         await this.#truncateTornTail(offset)
         break
       }
       const header = b4a.alloc(WAL_HEADER_BYTES)
-      const headerBytes = await readAtMost(this.handle, header, offset)
-      if (headerBytes !== WAL_HEADER_BYTES) {
+      if (await readAtMost(handle, header, offset) !== WAL_HEADER_BYTES) {
+        if (sealed) throw new BlindWalIntegrityError(`${label} frame header changed while it was read`)
         await this.#truncateTornTail(offset)
         break
       }
       const inspected = inspectBlindWalFrameV2Header(header, this.maximumWalPayloadBytes)
       if (remaining < inspected.totalLength) {
+        if (sealed) throw new BlindWalIntegrityError(`${label} ends inside a frame`)
         await this.#truncateTornTail(offset)
         break
       }
       const frameBytes = b4a.alloc(inspected.totalLength)
-      const complete = await readAtMost(this.handle, frameBytes, offset)
-      if (complete !== inspected.totalLength) {
+      b4a.copy(header, frameBytes, 0)
+      if (await readAtMost(handle, frameBytes.subarray(WAL_HEADER_BYTES), offset + WAL_HEADER_BYTES) !==
+          inspected.totalLength - WAL_HEADER_BYTES) {
+        if (sealed) throw new BlindWalIntegrityError(`${label} frame changed while it was read`)
         await this.#truncateTornTail(offset)
         break
       }
       const frame = decodeBlindWalFrameV2(
         frameBytes,
-        expectedSequence,
-        expectedPreviousWalHash,
+        chain.expectedSequence,
+        // At a pruned boundary the first retained frame's predecessor is not
+        // retained; the checkpoint anchor pins that link instead (see
+        // #recover), so the decode check passes the frame's own declared
+        // predecessor for exactly this one frame.
+        chain.expectedPreviousWalHash === null ? inspected.previousWalHash : chain.expectedPreviousWalHash,
         this.durabilityContinuityHash,
         this.maximumWalPayloadBytes
       )
       if (frame.mapGeneration !== this.mapGeneration || !b4a.equals(frame.ownerFenceTokenHash, this.ownerFenceTokenHash)) {
         throw new BlindWalIntegrityError('WAL bucket-map generation or writer fence does not match this writer')
       }
-      await applyRecoveredFrame(frame)
+      await onFrame(frame)
       offset += inspected.totalLength
-      expectedSequence++
-      expectedPreviousWalHash = frame.walHash
-      this.walSequence = frame.sequence
-      this.walHash = frame.walHash
     }
-    this.walOffset = offset
+    return offset
   }
 
   async #truncateTornTail (offset) {
@@ -944,15 +1162,19 @@ export class BlindTransactionStore {
   //      frames are contiguous and hash-chained in the order they were
   //      admitted. A fence or bounds failure ejects only that member —
   //      pre-write failures never poison, exactly as in the serial path.
-  //   2. per frame, in order: positional write plus the per-frame
+  //   2. segment rollover when the group would cross walSegmentMaxBytes:
+  //      seal the live segment (rename + directory sync), open a fresh live
+  //      segment, re-base the group's write offsets. Never splits a group.
+  //   3. per frame, in order: positional write plus the per-frame
   //      `wal:after-write` fault with that frame's own sequence.
-  //   3. ONE datasync for the whole group. fsync-before-ack is load-bearing:
+  //   4. ONE datasync for the whole group. fsync-before-ack is load-bearing:
   //      no member resolves before this completes.
-  //   4. per frame, in order: `wal:after-sync` fault, decode-verify
+  //   5. per frame, in order: `wal:after-sync` fault, decode-verify
   //      self-check, walOffset/walSequence/walHash advance, applyFrame,
   //      resolve — the same per-frame completion order a serial appender
   //      observes today.
-  // Poison semantics: any write/sync/fault/apply failure poisons the store.
+  // Poison semantics: any seal/write/sync/fault/apply failure poisons the
+  // store.
   async #commitWalGroup (group) {
     if (!this.handle || !this.opened) {
       for (const member of group) member.reject(new Error('transaction store is not open'))
@@ -1003,6 +1225,26 @@ export class BlindTransactionStore {
       offset += completeFrame.byteLength
     }
     if (frames.length === 0) return
+    // Segment rollover (Phase 3): evaluated only between groups, after every
+    // earlier group's datasync, so a group never straddles a segment
+    // boundary. An empty live segment never rolls.
+    if (this.walOffset > 0 && offset - this.walOffset > 0 &&
+        this.walOffset + (offset - this.walOffset) > this.walSegmentMaxBytes) {
+      try {
+        await this.#sealLiveSegment()
+      } catch (error) {
+        // A seal failure leaves the WAL handle state unknown; poison exactly
+        // like a commit-phase failure and settle every member.
+        this.poisoned = true
+        rejectWalGroupAsPoisoned(frames, -1, error)
+        return
+      }
+      let rebased = 0
+      for (const entry of frames) {
+        entry.offset = rebased
+        rebased += entry.completeFrame.byteLength
+      }
+    }
     let failedIndex = -1
     let failure = null
     for (let index = 0; index < frames.length; index++) {
@@ -1078,6 +1320,157 @@ export class BlindTransactionStore {
   async #syncWal () {
     if (typeof this.handle.datasync === 'function') return this.handle.datasync()
     return this.handle.sync()
+  }
+
+  // Seals the live segment and opens a fresh one. The previous group commit
+  // already datasynced every byte of the live segment, so the seal itself is
+  // name metadata: close, atomic same-directory rename to the sealed name,
+  // directory sync, then create the replacement live segment (O_EXCL — a
+  // pre-existing wal.v2 at this point is an interior anomaly) and sync file
+  // plus directory so the new live name is durable before any frame lands in
+  // it. Every crash window is recoverable: before the rename the old live
+  // segment is intact; after it the sealed segment is intact and recovery
+  // recreates the missing live segment; the frame hash chain never observes
+  // the boundary.
+  async #sealLiveSegment () {
+    const firstSequence = this.liveSegmentFirstSequence
+    const lastSequence = this.walSequence
+    if (lastSequence < firstSequence) return
+    const name = walSealedSegmentName(firstSequence, lastSequence)
+    const sealedPath = path.join(this.controlDirectory, name)
+    const sealedBytes = this.walOffset
+    await this.handle.close()
+    this.handle = null
+    await fs.rename(this.walPath, sealedPath)
+    await syncDirectory(this.controlDirectory)
+    await this.#fault('wal:after-segment-seal', { firstSequence, lastSequence, byteLength: sealedBytes })
+    this.handle = await fs.open(
+      this.walPath,
+      FS_CONSTANTS.O_RDWR | FS_CONSTANTS.O_CREAT | FS_CONSTANTS.O_EXCL | FS_CONSTANTS.O_APPEND | FS_CONSTANTS.O_NOFOLLOW,
+      0o600
+    )
+    const [fileStat, pathStat] = await Promise.all([this.handle.stat(), fs.lstat(this.walPath)])
+    if (pathStat.isSymbolicLink() || !sameInode(fileStat, pathStat)) {
+      throw new BlindWalIntegrityError('WAL path and opened inode disagree')
+    }
+    assertOwnedPrivateFile(fileStat, 'WAL file')
+    await this.handle.sync()
+    await syncDirectory(this.controlDirectory)
+    await this.#fault('wal:after-segment-rollover', { firstSequence: lastSequence + 1n })
+    this.sealedWalSegments.push(Object.freeze({ name, firstSequence, lastSequence }))
+    this.liveSegmentFirstSequence = lastSequence + 1n
+    this.walOffset = 0
+  }
+
+  // Checkpoint-anchored WAL pruning (Phase 3). A sealed segment is prunable
+  // only when BOTH bounds hold: its last sequence is covered by the
+  // checkpoint anchor (lastSequence <= anchor.sequence, with the anchor
+  // frame itself verified against the retained chain before anything is
+  // deleted) and every frame in it is older than the spent-marker horizon
+  // (lastSequence < retainFromSequence, the oldest WAL sequence a still-
+  // needed spend/terminal marker may live at). Deletion is write-then-
+  // delete ordered by construction — the checkpoint and its manifest CAS
+  // are durable before prune is called — and proceeds oldest-first with a
+  // directory sync per segment, so a crash mid-prune leaves a contiguous
+  // retained prefix whose anchor still validates at the next open. Pruning
+  // never touches the live segment.
+  async pruneWalSegments (options = {}) {
+    if (!this.handle || !this.opened) throw new Error('transaction store is not open')
+    if (this.closing) throw new Error('transaction store is closing')
+    if (this.poisoned) throw new BlindWalIntegrityError('transaction store requires recovery before WAL pruning')
+    if (!options || typeof options !== 'object' || Array.isArray(options)) {
+      throw new TypeError('WAL prune options must be an object')
+    }
+    const allowed = new Set(['checkpointAnchor', 'retainFromSequence'])
+    const unknown = Object.keys(options).find(key => !allowed.has(key))
+    if (unknown) throw new TypeError(`WAL prune options contain unknown field ${unknown}`)
+    const anchor = normalizeWalAnchorValue(options.checkpointAnchor, 'checkpointAnchor')
+    const retainFromSequence = asU64(options.retainFromSequence, 'retainFromSequence')
+    if (retainFromSequence === 0n) throw new TypeError('retainFromSequence must be nonzero')
+    return this.locks.with(['\u0000wal'], async () => {
+      if (!this.handle || !this.opened) throw new Error('transaction store is not open')
+      if (this.closing) throw new Error('transaction store is closing')
+      if (this.poisoned) throw new BlindWalIntegrityError('transaction store requires recovery before WAL pruning')
+      if (anchor.sequence > this.walSequence) {
+        throw new BlindWalIntegrityError('WAL prune checkpoint anchor is ahead of the WAL head')
+      }
+      await this.#verifyWalPruneAnchor(anchor)
+      const pruned = []
+      for (const segment of this.sealedWalSegments) {
+        if (segment.lastSequence > anchor.sequence || segment.lastSequence >= retainFromSequence) continue
+        try {
+          await fs.unlink(path.join(this.controlDirectory, segment.name))
+        } catch (error) {
+          // A crash mid-prune may already have deleted the file; a retried
+          // prune treats the missing segment as already pruned.
+          if (!error || error.code !== 'ENOENT') throw error
+        }
+        await syncDirectory(this.controlDirectory)
+        await this.#fault('wal:after-segment-prune', {
+          name: segment.name,
+          firstSequence: segment.firstSequence,
+          lastSequence: segment.lastSequence
+        })
+        pruned.push(segment)
+      }
+      if (pruned.length > 0) {
+        this.sealedWalSegments = this.sealedWalSegments.filter(segment => !pruned.includes(segment))
+      }
+      return Object.freeze({
+        checkpointSequence: anchor.sequence,
+        retainFromSequence,
+        prunedSegments: Object.freeze(pruned.map(segment => Object.freeze({
+          name: segment.name,
+          firstSequence: segment.firstSequence,
+          lastSequence: segment.lastSequence
+        })))
+      })
+    })
+  }
+
+  // Verifies the prune anchor frame against the retained chain: the frame at
+  // anchor.sequence must still be retained and must hash to anchor.hash.
+  // O(1) when the anchor is the current head; otherwise one bounded scan of
+  // exactly the segment that contains the anchor frame.
+  async #verifyWalPruneAnchor (anchor) {
+    if (anchor.sequence === this.walSequence) {
+      if (!b4a.equals(this.walHash, anchor.hash)) {
+        throw new BlindWalIntegrityError('WAL prune checkpoint anchor hash mismatch')
+      }
+      return
+    }
+    let target
+    if (anchor.sequence >= this.liveSegmentFirstSequence) {
+      target = Object.freeze({ name: WAL_LIVE_SEGMENT_NAME, firstSequence: this.liveSegmentFirstSequence })
+    } else {
+      target = this.sealedWalSegments.find(segment =>
+        segment.firstSequence <= anchor.sequence && anchor.sequence <= segment.lastSequence)
+    }
+    if (!target) {
+      throw new BlindWalIntegrityError('WAL prune checkpoint anchor frame is not retained')
+    }
+    const chain = {
+      expectedSequence: target.firstSequence,
+      expectedPreviousWalHash: null
+    }
+    let verified = false
+    const onFrame = async (frame) => {
+      if (frame.sequence === anchor.sequence) {
+        if (!b4a.equals(frame.walHash, anchor.hash)) {
+          throw new BlindWalIntegrityError('WAL prune checkpoint anchor hash mismatch')
+        }
+        verified = true
+      }
+      chain.expectedSequence = frame.sequence + 1n
+      chain.expectedPreviousWalHash = frame.walHash
+    }
+    if (anchor.sequence >= this.liveSegmentFirstSequence) {
+      await this.#scanSegmentFrames(
+        this.handle, this.walOffset, 'live WAL segment', true, chain, onFrame)
+    } else {
+      await this.#replaySealedWalSegment(target, chain, onFrame)
+    }
+    if (!verified) throw new BlindWalIntegrityError('WAL prune checkpoint anchor frame is not retained')
   }
 
   async withLocks (keys, callback) {
@@ -1504,7 +1897,16 @@ export class BlindTransactionStore {
 export const BLIND_WAL_LAYOUT = Object.freeze({
   magic: 'HRWL',
   version: WAL_VERSION,
-  fileName: 'wal.v2',
+  fileName: WAL_LIVE_SEGMENT_NAME,
+  liveSegmentFileName: WAL_LIVE_SEGMENT_NAME,
+  sealedSegmentFileName: WAL_SEALED_SEGMENT_NAME.source,
+  sealedSegmentNameExample: 'wal-0000000000000001-00000000000000f0.v2',
+  segmented: true,
+  defaultSegmentMaxBytes: DEFAULT_WAL_SEGMENT_MAX_BYTES,
+  minimumSegmentMaxBytes: MIN_WAL_SEGMENT_MAX_BYTES,
+  maximumSegmentMaxBytes: MAX_WAL_SEGMENT_MAX_BYTES,
+  checkpointAnchoredRecovery: true,
+  pruningSupported: true,
   headerBytes: WAL_HEADER_BYTES,
   checksumBytes: WAL_CHECKSUM_BYTES,
   minimumFrameBytes: WAL_MIN_FRAME_BYTES,

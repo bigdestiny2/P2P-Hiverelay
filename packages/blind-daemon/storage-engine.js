@@ -658,6 +658,22 @@ export class BlindCellStorageEngine {
       Number(MAX_RESERVATION_MILLIS),
       'reservationMillis'
     ))
+    // Optional checkpoint anchor (Phase 3): pins (coveredWalSequence,
+    // coveredWalHash) from the newest validated checkpoint so the
+    // transaction store can open a WAL whose covered sealed segments were
+    // pruned. The engine holds no snapshot restore path yet, so its anchored
+    // open is always the prune-tolerant full replay of every retained frame
+    // (replayCoveredFrames); snapshot-anchored post-anchor-only replay wires
+    // in with the shadow semantic authority.
+    this.checkpointAnchor = options.checkpointAnchor == null
+      ? null
+      : Object.freeze({
+        sequence: u64(options.checkpointAnchor.sequence, 'checkpointAnchor.sequence'),
+        hash: b4a.from(fixed(options.checkpointAnchor.hash, 32, 'checkpointAnchor.hash', true))
+      })
+    if (this.checkpointAnchor !== null && this.checkpointAnchor.sequence === 0n) {
+      fail('BAD_ENCODING', 'checkpointAnchor.sequence must be nonzero')
+    }
     this.quota = Object.freeze({
       maxStoredBytes: quotaInteger(options.maxStoredBytes, 1024 * 1024 * 1024, 4096, Number.MAX_SAFE_INTEGER - CELL_SIZE_CLASS[5], 'maxStoredBytes'),
       maxStagingBytes: quotaInteger(options.maxStagingBytes, 64 * 1024 * 1024, 4096, Number.MAX_SAFE_INTEGER - CELL_SIZE_CLASS[5], 'maxStagingBytes'),
@@ -675,6 +691,7 @@ export class BlindCellStorageEngine {
       durabilityContinuityHash: this.durabilityContinuityHash,
       maximumOpaqueBodyBytes: CELL_SIZE_CLASS[5],
       maximumChunkBytes: options.maximumChunkBytes,
+      walSegmentMaxBytes: options.walSegmentMaxBytes,
       storeSessionContext: options.storeSessionContext,
       beforeRecovery: options.beforeRecovery,
       faultInjector: options.faultInjector
@@ -698,6 +715,7 @@ export class BlindCellStorageEngine {
     }
     this.atomicStagedLeases = new Map()
     this.epochFloor = 0
+    this.compactionWalHighWater = 0n
     this.clockUnsafe = false
     this.readOnlyReason = null
     this.integrityEvidence = []
@@ -719,7 +737,10 @@ export class BlindCellStorageEngine {
     if (this.opened) throw new Error('cell storage engine is already open')
     this.closing = false
     try {
-      await this.transactionStore.open(frame => this.#applyFrame(frame, true))
+      await this.transactionStore.open(frame => this.#applyFrame(frame, true), {
+        checkpointAnchor: this.checkpointAnchor,
+        replayCoveredFrames: this.checkpointAnchor !== null
+      })
       this.opened = true
       if (this.transactionStore.walSequence === 0n) {
         await this.#appendAndApply(BLIND_CELL_WAL_TYPE.FLOOR_ADVANCE, this.transactionStore.newTransactionId(), 0, {
@@ -927,7 +948,7 @@ export class BlindCellStorageEngine {
       case BLIND_CELL_WAL_TYPE.FLOOR_ADVANCE: this.#applyFloor(value, false); break
       case BLIND_CELL_WAL_TYPE.CLOCK_UNSAFE: this.#applyClockUnsafe(value); break
       case BLIND_CELL_WAL_TYPE.CLOCK_CONFIRM: this.#applyFloor(value, true); break
-      case BLIND_CELL_WAL_TYPE.COMPACT: this.#applyCompact(value); break
+      case BLIND_CELL_WAL_TYPE.COMPACT: this.#applyCompact(frame, value); break
       case BLIND_CELL_WAL_TYPE.INTEGRITY_FAILED: this.#applyIntegrity(value, recovering); break
       case BLIND_CELL_WAL_TYPE.READ_PIN_COMMITTED: this.#applyReadPin(frame, value); break
       case BLIND_CELL_WAL_TYPE.READ_PIN_FINALIZED: this.#applyReadPinFinalized(frame, value); break
@@ -1011,6 +1032,7 @@ export class BlindCellStorageEngine {
       deadlineUnixMillis: value.deadlineUnixMillis,
       remainingAttempts: value.remainingAttempts,
       reservedEpoch: value.reservedEpoch,
+      reservedWalSequence: frame.sequence,
       terminalEpoch: null,
       resultIdentity: null,
       committedEpoch: null,
@@ -1193,6 +1215,7 @@ export class BlindCellStorageEngine {
       preparedAdmissionBytes,
       resultBindingBytes,
       declaredBytes: value.declaredBytes,
+      reservedWalSequence: frame.sequence,
       terminalEpoch: null,
       resultIdentity: b4a.from(value.resultIdentity),
       committedEpoch: value.committedEpoch,
@@ -1304,6 +1327,7 @@ export class BlindCellStorageEngine {
       preparedAdmissionBytes,
       resultBindingBytes,
       committedEpoch: value.committedEpoch,
+      reservedWalSequence: frame.sequence,
       terminalEpoch: null,
       resultCell: publicCell(record)
     }
@@ -1416,6 +1440,7 @@ export class BlindCellStorageEngine {
       entries: value.entries.map(cloneChargedReadPinEntry),
       resultCommitment: null,
       committedEpoch: value.committedEpoch,
+      reservedWalSequence: frame.sequence,
       terminalEpoch: null,
       controlBytes: frame.payload.byteLength + CHARGED_READ_FINALIZATION_CONTROL_BYTES
     }
@@ -1518,8 +1543,9 @@ export class BlindCellStorageEngine {
     this.clockUnsafe = true
   }
 
-  #applyCompact (value) {
+  #applyCompact (frame, value) {
     if (value.compactedEpoch !== this.epochFloor) throw new BlindWalIntegrityError('compaction does not bind the effective epoch floor')
+    this.compactionWalHighWater = frame.sequence
     const key = hex(value.key)
     if (value.entryKind === COMPACT_KIND.CELL) {
       const record = this.cells.get(key)
@@ -3264,6 +3290,39 @@ export class BlindCellStorageEngine {
         }
       }
     }
+  }
+
+  // Oldest WAL sequence that may still carry a needed spend/terminal marker:
+  // the minimum reservedWalSequence over every spend entry currently in
+  // state. Spend entries leave state only through COMPACT frames, which the
+  // compaction rule already refuses before the retention horizon, so this
+  // floor is the prune-side proof that no segment holding a still-needed
+  // marker is ever deleted (pruning requires segment.lastSequence < floor).
+  // MAX_U64 when no spend exists — every covered segment is then prunable.
+  spendRetentionWalFloorSequence () {
+    this.#assertOpen()
+    let floor = MAX_U64
+    for (const entry of this.spends.values()) {
+      if (entry.reservedWalSequence != null && entry.reservedWalSequence < floor) {
+        floor = entry.reservedWalSequence
+      }
+    }
+    return floor
+  }
+
+  // Highest WAL sequence of any COMPACT frame applied (0n before the first
+  // compaction). Prune cadence rule, proven by construction: the pruned
+  // prefix must end at or beyond this high-water AND below the spend floor,
+  // so no retained COMPACT/FLOOR transition can reference pruned state. The
+  // prefix becomes prunable only after the oldest live spend was reserved
+  // beyond the latest compaction — until then the legal range is empty and
+  // pruning is blocked by construction. State rebuild below that prefix is
+  // snapshot territory (epochFloor and compacted-away records are not
+  // reconstructable from the retained frames alone); full-retained replay
+  // after such a prune is not a supported engine recovery mode.
+  compactionWalHighWaterSequence () {
+    this.#assertOpen()
+    return this.compactionWalHighWater
   }
 
   status () {

@@ -1327,7 +1327,7 @@ export const BLIND_LOCAL_CHECKPOINT_LAYOUT = Object.freeze({
     'checkpoint-reopen-verify',
     'manifest-cas'
   ]),
-  walPruningSupported: false,
+  walPruningSupported: true,
   checkpointGarbageCollectionSupported: false,
   genesisPublicationSupported: false,
   zeroHash: b4a.from(ZERO32)

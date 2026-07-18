@@ -17,6 +17,7 @@ const MANIFEST_TEMP = /^\.manifest-[ab]\.v1\.[0-9a-f]{32}\.tmp$/
 const GENESIS_INTENT_TEMP = /^\.genesis-intent\.v1\.[0-9a-f]{32}\.tmp$/
 const CHECKPOINT_FINAL = /^(checkpoint|snapshot)-([0-9a-f]{64})\.v1$/
 const CHECKPOINT_TEMP = /^\.(checkpoint|snapshot)-([0-9a-f]{64})\.v1\.([0-9a-f]{32})\.tmp$/
+const WAL_SEGMENT_FINAL = /^wal-([0-9a-f]{16})-([0-9a-f]{16})\.v2$/
 const ACTIVE_SESSION_ROOTS = new Set()
 const STORE_SESSION_PRIVATE = new WeakMap()
 const STORE_SESSION_CONTEXTS = new WeakMap()
@@ -170,6 +171,12 @@ function checkpointArtifact (name) {
   return null
 }
 
+function walSegmentArtifact (name) {
+  const match = WAL_SEGMENT_FINAL.exec(name)
+  if (!match) return null
+  return Object.freeze({ kind: 'wal-segment', firstSequence: match[1], lastSequence: match[2], role: 'final' })
+}
+
 function classification (kind, root, rootState, rootNames, details = {}) {
   return Object.freeze({
     kind,
@@ -254,7 +261,7 @@ export async function classifyBlindStoreRoot (configuredRoot) {
   }
   const unknownControlName = control.names.find(name =>
     !CONTROL_NAMES.has(name) && !MANIFEST_TEMP.test(name) &&
-    !GENESIS_INTENT_TEMP.test(name) && !checkpointArtifact(name))
+    !GENESIS_INTENT_TEMP.test(name) && !checkpointArtifact(name) && !walSegmentArtifact(name))
   if (unknownControlName) {
     return classification(BLIND_STORE_ROOT_CLASSIFICATION.LEGACY_AMBIGUOUS,
       root, inspectedRoot.state, inspectedRoot.names, {
@@ -303,7 +310,7 @@ export async function classifyBlindStoreRoot (configuredRoot) {
     const hasGenesisIntent = control.names.includes(GENESIS_INTENT_FILE)
     const hasGenesisIntentTemporary = control.names.some(name => GENESIS_INTENT_TEMP.test(name))
     const hasBootstrapData = control.names.some(name =>
-      name === 'wal.v2' || checkpointArtifact(name) != null
+      name === 'wal.v2' || walSegmentArtifact(name) != null || checkpointArtifact(name) != null
     ) || inspectedRoot.names.some(name => name === 'blobs' || name === 'staging')
     if (!hasBootstrapData || hasGenesisIntent || hasGenesisIntentTemporary) {
       return classification(BLIND_STORE_ROOT_CLASSIFICATION.GENESIS_INCOMPLETE,

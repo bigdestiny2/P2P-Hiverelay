@@ -2016,6 +2016,61 @@ fence to the already validated store session before applying payload bytes. The
 old unpublished version-1 layout is rejected rather than accepted as a weak
 continuity alias.
 
+The WAL is segmented. The live segment keeps the historical `control/wal.v2`
+name; sealing renames it to
+`control/wal-<firstSequence16>-<lastSequence16>.v2` with zero-padded
+lowercase hex sequences that sort lexicographically in sequence order. The
+seal is the atomic rename plus a directory fsync; no seal record is written
+and sealed segments are immutable. Rollover runs only between commit groups
+(after the previous group's datasync), so a group never straddles a segment
+boundary and every sealed segment holds exactly its named frame range. The
+default rollover threshold is 64 MiB (configurable 64 KiB..1 GiB): it bounds
+per-file recovery scan work and prune granularity without meaningful
+directory fan-out, and it is soft — a segment may exceed it by at most one
+commit group. The frame hash chain crosses segment boundaries unchanged, so
+a missing, reordered, truncated, corrupted, or range-mismatched sealed
+segment reads as an interior break and fails closed; torn-tail truncation
+remains legal only at the live segment tail. A pre-segmentation single-file
+`wal.v2` store imports unchanged as exactly one live segment; the first
+rollover seals its frames with byte-identical content and the chain
+validates continuously across the cutover.
+
+Recovery is checkpoint-anchored. Given the newest validated checkpoint's
+`(coveredWalSequence, coveredWalHash)`, the retained prefix may start after
+sequence 1: either the first retained frame is exactly `coveredWalSequence +
+1` and its predecessor field must equal `coveredWalHash`, or the anchor
+frame itself is still retained and must hash to `coveredWalHash` (which
+transitively pins every retained frame before it, since each frame's hash
+covers its declared predecessor). Covered frames are chain-verified; only
+post-anchor frames are replayed against the checkpoint snapshot. An anchor
+that does not validate refuses startup — replaying from genesis is
+impossible once covered segments are pruned, so refusal is the only
+fail-closed fallback; history is never silently skipped. Without an anchor
+the retained prefix must begin at sequence 1, exactly as the
+pre-segmentation store required of the single `wal.v2` file.
+
+Checkpoint-covered sealed segments are prunable, by deletion, under two
+simultaneous bounds: the segment's last sequence is covered by the verified
+checkpoint anchor (`lastSequence <= coveredWalSequence`, anchor hash checked
+against the retained chain before anything is deleted), and every frame in
+it is older than the spent-marker horizon (`lastSequence <
+retainFromSequence`, the oldest WAL sequence a still-needed spend/terminal
+marker may live at). The horizon is proven by construction: spend entries
+leave engine state only through COMPACT frames, compaction already refuses
+before the retention horizon, and the prune floor is the minimum reservation
+sequence over live spend state — so no segment holding a still-needed
+spend/terminal marker is ever deleted, and SPEND_REPLAY/late-retry
+classification survive pruning. The pruned prefix must additionally end at
+or beyond the compaction high-water (the newest COMPACT frame) so no
+retained compaction references pruned state; the legal window therefore
+opens only after the oldest live spend was reserved beyond the latest
+compaction. Pruning is write-then-delete ordered — the checkpoint and
+manifest CAS are durable before any unlink — and deletes oldest-first with a
+directory fsync per segment, so a crash mid-prune leaves a contiguous
+retained prefix whose anchor still validates at the next open. Pruning never
+touches the live segment, and a retried prune tolerates already-deleted
+segments.
+
 Checkpoints are written to a new file, fsynced, atomically renamed, directory
 fsynced, and committed by WAL sequence. Startup loads the newest committed
 checkpoint and replays forward without scanning ciphertext bodies. Compaction
@@ -2199,7 +2254,9 @@ marker while Core/global recovery, genesis, manifest-runtime integration, or any
 other store-format publication blocker remains.
 
 The only canonical control paths in format 1 are
-`control/writer.lock.v1`, `control/wal.v2`, `control/manifest-a.v1`,
+`control/writer.lock.v1`, `control/wal.v2` (the live WAL segment),
+`control/wal-<firstSequence16>-<lastSequence16>.v2` (sealed WAL segments),
+`control/manifest-a.v1`,
 `control/manifest-b.v1`, content-addressed
 `control/checkpoint-<hash32>.v1`, and content-addressed
 `control/snapshot-<hash32>.v1`. Manifest temporaries are
@@ -2227,12 +2284,20 @@ selected manifest's checkpoint, revision-1 predecessor chain, snapshot, WAL
 anchor, and every binding/hash validate before repair, temp cleanup, torn-tail
 truncation, or listeners. Validation-only startup deletes nothing.
 
-Format 1 retains all complete WAL frames and all immutable checkpoint/snapshot
-finals. WAL pruning/segment replacement, checkpoint/snapshot garbage collection,
+Format 1 retains the live WAL segment plus every sealed WAL segment whose
+frames are not yet checkpoint-covered and horizon-clear, and all immutable
+checkpoint/snapshot finals. Checkpoint-anchored recovery, WAL segmentation,
+and anchor-plus-horizon WAL pruning are supported as specified in §9.3: the
+segmented layout, the anchor rule with its refuse-on-invalid fallback, the
+prune rule with its spent-marker horizon and compaction high-water proof,
+and the import-as-live-segment cutover of pre-segmentation `wal.v2` stores.
+Checkpoint/snapshot garbage collection,
 checkpoint crash-orphan temp reclamation, crash-resumable empty-root/revision-1
 genesis publication, and online/offline format migration are explicitly
-unsupported. An unknown format major, missing exact reader, WAL v1, provisional
-layout, MAC/checksum failure, empty unanchored root, or build/store/profile/
+unsupported beyond the import-as-live-segment cutover. An unknown format major, missing exact reader, WAL v1, provisional
+layout, MAC/checksum failure, empty unanchored root, malformed or
+range-mismatched WAL segment, pruned-prefix WAL without its checkpoint
+anchor, or build/store/profile/
 continuity mismatch therefore fails before listeners. A descriptor must not
 claim a writable durability implementation while any of these required lifecycle
 paths remains necessary but unsupported.
