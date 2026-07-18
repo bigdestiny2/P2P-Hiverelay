@@ -11,6 +11,7 @@ import {
   base32Decode,
   isValidClientPub,
   generateClientAuthKeypair,
+  generateClientAuthGuardKey,
   clientInstallCommand,
   dotAuthLine,
   canonicalize,
@@ -52,6 +53,13 @@ test('keypair formats for tor wire protocols', async (t) => {
   t.is(kp.publicKey.length, 32)
   t.is(kp.secretKey.length, 32)
   t.ok(/^[A-Za-z0-9+/]{43}$/.test(kp.secretKeyB64)) // base64 no padding, 43 chars
+})
+
+test('guard key is a valid public-only Tor client-auth credential', async (t) => {
+  const guard = generateClientAuthGuardKey()
+  t.is(guard.length, 52)
+  t.ok(isValidClientPub(guard))
+  t.unlike(guard, generateClientAuthGuardKey(), 'each empty-roster guard is independently generated')
 })
 
 test('clientInstallCommand matches ONION_CLIENT_AUTH_ADD wire shape', async (t) => {
@@ -113,6 +121,26 @@ test('enrollment sign/verify lifecycle', async (t) => {
   t.is(verifyEnrollment(forged, { expectedRelayPubkey: relay.publicKeyHex, nowMs: now }).reason, 'bad-signature')
   // expired
   t.is(verifyEnrollment(env, { expectedRelayPubkey: relay.publicKeyHex, nowMs: now + 200000 }).reason, 'expired')
+  // A future createdAt must not extend an otherwise bounded TTL indefinitely.
+  const future = createEnrollment({
+    clientIdentity: client.publicKeyHex,
+    clientSecretKey: client.secretKey,
+    relayPubkey: relay.publicKeyHex,
+    onionAuthPubX25519: kp.publicKeyB32,
+    createdAtMs: now + 10 * 60 * 1000,
+    expiresAtMs: now + 10 * 60 * 1000 + 100000
+  })
+  t.is(verifyEnrollment(future, { expectedRelayPubkey: relay.publicKeyHex, nowMs: now }).reason, 'created-in-future')
+  // Non-integer timestamps are rejected before arithmetic coercion.
+  const stringTime = createEnrollment({
+    clientIdentity: client.publicKeyHex,
+    clientSecretKey: client.secretKey,
+    relayPubkey: relay.publicKeyHex,
+    onionAuthPubX25519: kp.publicKeyB32,
+    createdAtMs: String(now),
+    expiresAtMs: String(now + 100000)
+  })
+  t.is(verifyEnrollment(stringTime, { expectedRelayPubkey: relay.publicKeyHex, nowMs: now }).reason, 'bad-time')
   // bad type
   t.is(verifyEnrollment({ ...env, type: 'x' }, { nowMs: now }).reason, 'wrong-type')
 })

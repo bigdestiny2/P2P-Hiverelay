@@ -22,6 +22,12 @@ import NoiseSecretStream from '@hyperswarm/secret-stream'
 
 export const DEFAULT_PEER_VPORT = 19737
 
+export function isLoopbackHost (host) {
+  if (host === '::1') return true
+  if (net.isIPv4(host)) return host.startsWith('127.')
+  return false
+}
+
 export class OnionPeerListener extends EventEmitter {
   constructor (opts = {}) {
     super()
@@ -30,6 +36,9 @@ export class OnionPeerListener extends EventEmitter {
     }
     this.keyPair = opts.keyPair
     this.host = opts.host || '127.0.0.1'
+    if (!isLoopbackHost(this.host)) {
+      throw new Error('OnionPeerListener host must be a numeric loopback address')
+    }
     this.port = opts.port === undefined ? DEFAULT_PEER_VPORT : opts.port // 0 → ephemeral (tests)
     this.maxConnections = opts.maxConnections || null
     this.running = false

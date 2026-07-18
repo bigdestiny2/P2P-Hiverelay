@@ -7,7 +7,11 @@ import { EventEmitter } from 'events'
 import NoiseSecretStream from '@hyperswarm/secret-stream'
 import Protomux from 'protomux'
 import c from 'compact-encoding'
-import { OnionPeerListener, DEFAULT_PEER_VPORT } from 'p2p-hiverelay/transports/tor/peer-listener.js'
+import {
+  OnionPeerListener,
+  DEFAULT_PEER_VPORT,
+  isLoopbackHost
+} from 'p2p-hiverelay/transports/tor/peer-listener.js'
 import { TorTransport } from 'p2p-hiverelay/transports/tor/index.js'
 
 const SERVICE_ID = 'a'.repeat(56)
@@ -74,6 +78,20 @@ class StubPeerListener extends EventEmitter {
 function addOnionCmds (control) {
   return control.commands.filter((cmd) => cmd.startsWith('ADD_ONION'))
 }
+
+test('listener rejects non-loopback bind hosts before opening a socket', async (t) => {
+  const relayKP = NoiseSecretStream.keyPair()
+  t.ok(isLoopbackHost('127.0.0.1'))
+  t.ok(isLoopbackHost('127.42.0.9'))
+  t.ok(isLoopbackHost('::1'))
+  t.absent(isLoopbackHost('0.0.0.0'))
+  t.absent(isLoopbackHost('192.168.1.5'))
+  t.absent(isLoopbackHost('localhost'), 'numeric loopback avoids hostname rebinding')
+  t.exception(
+    () => new OnionPeerListener({ keyPair: relayKP, host: '0.0.0.0' }),
+    /numeric loopback/
+  )
+})
 
 test('listener upgrades inbound TCP to a Noise XK peer stream — protomux rides it', async (t) => {
   const relayKP = NoiseSecretStream.keyPair()

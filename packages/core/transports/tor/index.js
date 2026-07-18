@@ -36,7 +36,11 @@ import { readFile, writeFile, rename, mkdir } from 'fs/promises'
 import { dirname } from 'path'
 import { SocksClient } from 'socks'
 import { Duplex } from 'stream'
-import { OnionRosterStore, isValidClientPub } from './auth-keys.js'
+import {
+  OnionRosterStore,
+  generateClientAuthGuardKey,
+  isValidClientPub
+} from './auth-keys.js'
 import { DEFAULT_PEER_VPORT } from './peer-listener.js'
 
 const DEFAULT_SOCKS_HOST = '127.0.0.1'
@@ -170,6 +174,10 @@ export class TorTransport extends EventEmitter {
     this.clientAuthKeys = Array.isArray(opts.clientAuthKeys) ? [...opts.clientAuthKeys] : [] // base32 x25519 pubkeys
     this.rosterFile = opts.rosterFile || null // persisted roster (survives restarts); operator-private
     this._roster = this.rosterFile ? new OnionRosterStore(this.rosterFile) : null
+    // Once restricted discovery is configured or activated, an empty roster
+    // must stay closed rather than silently reverting the descriptor to public.
+    this.restrictedDiscovery = !!(this.rosterFile || this.clientAuthKeys.length)
+    this._clientAuthGuardKey = null
     this.endpointKeyId = opts.endpointKeyId || null // signed-advertisement key id (rotation)
     this.startedAtMs = null
     this.pow = opts.pow || null // { enabled, queueRate?, queueBurst? } — daemon-wide SETCONF
@@ -327,6 +335,7 @@ export class TorTransport extends EventEmitter {
 
   async addAuthClient (pubB32, { name = null, expiresAtMs = null } = {}) {
     if (!isValidClientPub(pubB32)) throw new Error('invalid x25519 client public key (base32, 52 chars)')
+    this.restrictedDiscovery = true
     if (this._roster) {
       if (!this._roster.loaded) await this._roster.load()
       this._roster.add(pubB32, { name, expiresAtMs })
@@ -362,6 +371,8 @@ export class TorTransport extends EventEmitter {
   }
 
   listAuthClients () { return [...this.clientAuthKeys] }
+
+  isRestrictedDiscoveryActive () { return this.restrictedDiscovery }
 
   // ---------- health ----------
 
@@ -476,11 +487,20 @@ export class TorTransport extends EventEmitter {
   async _addOnion (keyBlob, clientKeys = [], vports = null) {
     const effective = vports || this._effectiveVports()
     const portArgs = effective.map((v) => `Port=${v.vport},${v.targetHost || '127.0.0.1'}:${v.targetPort}`).join(' ')
+    let effectiveClientKeys = clientKeys
+    if (this.restrictedDiscovery && effectiveClientKeys.length === 0) {
+      // Tor treats an ADD_ONION without ClientAuthV3 entries as public. Keep
+      // an intentionally unreachable guard credential in the daemon command
+      // until a real client is enrolled. The private half is destroyed at
+      // generation and the guard is never persisted or advertised.
+      if (!this._clientAuthGuardKey) this._clientAuthGuardKey = generateClientAuthGuardKey()
+      effectiveClientKeys = [this._clientAuthGuardKey]
+    }
     // v3 client authorization requires BOTH the V3Auth flag (auth type) and
     // per-client ClientAuthV3 keys — keys without the flag fail with
     // "512 No auth type specified" (M0 finding, tor 0.4.9.6).
-    const flags = clientKeys.length ? ' Flags=V3Auth' : ''
-    const authArgs = clientKeys.map((k) => `ClientAuthV3=${k}`).join(' ')
+    const flags = effectiveClientKeys.length ? ' Flags=V3Auth' : ''
+    const authArgs = effectiveClientKeys.map((k) => `ClientAuthV3=${k}`).join(' ')
     const keyArg = keyBlob || (this.keyFile ? 'NEW:ED25519-V3' : 'NEW:BEST')
     const maxStreams = this.maxStreams ? ` MaxStreams=${this.maxStreams}` : ''
     const cmd = [`ADD_ONION ${keyArg}${flags}`, portArgs, authArgs].filter(Boolean).join(' ') + maxStreams
@@ -566,6 +586,7 @@ export class TorTransport extends EventEmitter {
       onionAddress: this.onionAddress,
       vports: this._effectiveVports().map((v) => v.vport),
       authClients: this.clientAuthKeys.length,
+      restrictedDiscovery: this.restrictedDiscovery,
       pow: this.pow ? !!this.pow.enabled : false,
       persistent: !!this.keyFile,
       descriptorUploads: this._descriptorUploads,

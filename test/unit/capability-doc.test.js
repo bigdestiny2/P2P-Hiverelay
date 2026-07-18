@@ -367,19 +367,43 @@ test('verifyCapabilityDoc rejects unsigned doc', async (t) => {
   t.ok(check.reason.includes('no signature'))
 })
 
-test('onionGatewayUrl is advertised when Tor hidden service is up, and the doc still verifies', async (t) => {
+test('onionGatewayUrl uses the ready onion read vport, and the doc still verifies', async (t) => {
   const kp = makeKeyPair()
   const relay = {
     config: { apiPort: 9100 },
     swarm: { keyPair: kp },
-    torTransport: { running: true, onionAddress: 'abcdefghijklmnop.onion' }
+    torTransport: {
+      running: true,
+      health: 'ready',
+      onionAddress: 'abcdefghijklmnop.onion',
+      clientAuthKeys: [],
+      _effectiveVports: () => [{ vport: 80, targetPort: 9100 }]
+    }
   }
   const doc = buildCapabilityDoc({ relay })
-  t.is(doc.onionGatewayUrl, 'http://abcdefghijklmnop.onion:9100', 'onion read-plane URL advertised')
+  t.is(doc.onionGatewayUrl, 'http://abcdefghijklmnop.onion', 'external vport 80, not local target 9100, is advertised')
   t.ok(doc.supported_transports.includes('tor'))
   // The new field must not break signing/verification (it is covered by the
   // canonical signer, so an old verifier running the same logic still validates).
   t.ok(verifyCapabilityDoc(doc).valid, 'signed doc with onion field verifies')
+})
+
+test('onionGatewayUrl is health-gated and preserves a non-default read vport', async (t) => {
+  const kp = makeKeyPair()
+  const torTransport = {
+    running: true,
+    health: 'degraded',
+    onionAddress: 'abcdefghijklmnop.onion',
+    clientAuthKeys: [],
+    _effectiveVports: () => [{ vport: 8080, targetPort: 9100 }]
+  }
+  const degraded = buildCapabilityDoc({ relay: { config: {}, swarm: { keyPair: kp }, torTransport } })
+  t.is(degraded.onionGatewayUrl, null, 'degraded onion ingress is not advertised')
+
+  torTransport.health = 'ready'
+  const ready = buildCapabilityDoc({ relay: { config: {}, swarm: { keyPair: kp }, torTransport } })
+  t.is(ready.onionGatewayUrl, 'http://abcdefghijklmnop.onion:8080')
+  t.ok(verifyCapabilityDoc(ready).valid)
 })
 
 test('onionGatewayUrl is null when Tor is not running', async (t) => {
@@ -558,6 +582,7 @@ test('privacyTransports — health-gated: omitted unless ready', async (t) => {
   for (const health of ['tor-starting', 'key-loaded', 'descriptor-uploaded', 'degraded']) {
     const doc = buildCapabilityDoc({ relay: relayWithTor(readyTor({ health })) })
     t.absent('privacyTransports' in doc, `health=${health} must not advertise`)
+    t.is(doc.onionGatewayUrl, null, `health=${health} must not advertise an onion gateway URL`)
   }
 })
 
@@ -594,6 +619,12 @@ test('privacyTransports — client-auth mode from roster/keys; custody off drops
 
   const withKeys = buildCapabilityDoc({ relay: relayWithTor(readyTor({ clientAuthKeys: ['a'.repeat(52)] })) })
   t.is(withKeys.privacyTransports[0].auth.mode, 'client-auth-v3')
+
+  const emptyButRestricted = buildCapabilityDoc({
+    relay: relayWithTor(readyTor({ isRestrictedDiscoveryActive: () => true }))
+  })
+  t.is(emptyButRestricted.privacyTransports[0].auth.mode, 'client-auth-v3')
+  t.alike(emptyButRestricted.privacyTransports[0].auth.enrollment, ['pairing-channel'])
 
   const noCustody = buildCapabilityDoc({ relay: relayWithTor(readyTor(), { custody: { enabled: false } }) })
   t.absent(noCustody.privacyTransports[0].supports.includes('custody.commit'))
