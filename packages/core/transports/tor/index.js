@@ -48,6 +48,9 @@ const DEFAULT_SOCKS_PORT = 9050
 const DEFAULT_CONTROL_HOST = '127.0.0.1'
 const DEFAULT_CONTROL_PORT = 9051
 const TOR_CHECK_TIMEOUT = 5000
+const MAX_TIMER_DELAY_MS = 0x7fffffff
+const ROSTER_EXPIRY_RECHECK_MS = 60_000
+const DEFAULT_ROSTER_EXPIRY_RETRY_MS = 30_000
 const KEY_BLOB_RE = /^ED25519-V3:[A-Za-z0-9+/=]+$/
 
 export const TorHealth = Object.freeze({
@@ -171,13 +174,28 @@ export class TorTransport extends EventEmitter {
     this.keyFile = opts.keyFile || null // persistent ED25519-V3 key custody
     this.minDaemonVersion = opts.minDaemonVersion || null // fail-closed floor
     this.vports = Array.isArray(opts.vports) ? opts.vports : null // [{ vport, targetHost?, targetPort }]
-    this.clientAuthKeys = Array.isArray(opts.clientAuthKeys) ? [...opts.clientAuthKeys] : [] // base32 x25519 pubkeys
+    this._configuredClientAuthKeys = Array.isArray(opts.clientAuthKeys)
+      ? [...new Set(opts.clientAuthKeys)]
+      : []
+    this.clientAuthKeys = [...this._configuredClientAuthKeys] // effective static + roster keys
     this.rosterFile = opts.rosterFile || null // persisted roster (survives restarts); operator-private
     this._roster = this.rosterFile ? new OnionRosterStore(this.rosterFile) : null
     // Once restricted discovery is configured or activated, an empty roster
     // must stay closed rather than silently reverting the descriptor to public.
     this.restrictedDiscovery = !!(this.rosterFile || this.clientAuthKeys.length)
     this._clientAuthGuardKey = null
+    // Lifecycle and roster changes share one queue. A mutation can therefore
+    // never rebuild through a control connection that stop() has destroyed,
+    // or cross into the next start() generation.
+    this._operationQueue = Promise.resolve()
+    this._rosterExpiryTimer = null
+    this._rosterRebuildRequired = false
+    this._now = typeof opts._now === 'function' ? opts._now : Date.now
+    this._setRosterTimer = opts._setRosterTimer || ((fn, ms) => setTimeout(fn, ms))
+    this._clearRosterTimer = opts._clearRosterTimer || ((timer) => clearTimeout(timer))
+    this._rosterExpiryRetryMs = Number.isSafeInteger(opts._rosterExpiryRetryMs) && opts._rosterExpiryRetryMs > 0
+      ? opts._rosterExpiryRetryMs
+      : DEFAULT_ROSTER_EXPIRY_RETRY_MS
     this.endpointKeyId = opts.endpointKeyId || null // signed-advertisement key id (rotation)
     this.startedAtMs = null
     this.pow = opts.pow || null // { enabled, queueRate?, queueBurst? } — daemon-wide SETCONF
@@ -195,9 +213,13 @@ export class TorTransport extends EventEmitter {
 
     // legacy: single localPort → vport 80
     this.localPort = opts.localPort || null
+    this.readVport = opts.readVport === undefined
+      ? (this.localPort ? 80 : null)
+      : opts.readVport
 
     this.onionAddress = null
     this.serviceId = null
+    this._serviceActive = false
     this.daemonVersion = null
     this.health = TorHealth.DISABLED
     this.running = false
@@ -206,12 +228,22 @@ export class TorTransport extends EventEmitter {
     this._probeTimer = null
     this._probeFails = 0
     this._descriptorUploads = 0
+    this._readinessGeneration = 0
+    this._readinessBlocked = true
+    this._controlGeneration = 0
     this._controlFactory = opts._controlFactory || null // test injection
+    this._probeConnectionFactory = opts._probeConnectionFactory ||
+      ((options) => SocksClient.createConnection(options))
   }
 
   _makeControl () {
     if (this._controlFactory) return this._controlFactory()
     return new TorControl({ host: this.controlHost, port: this.controlPort })
+  }
+
+  _attachControlEvents (control) {
+    const controlGeneration = ++this._controlGeneration
+    control.on('event', (line) => this._onControlEvent(line, control, controlGeneration))
   }
 
   _effectiveVports () {
@@ -229,7 +261,17 @@ export class TorTransport extends EventEmitter {
     return vports
   }
 
-  async start () {
+  _enqueueOperation (run) {
+    const operation = this._operationQueue.then(run)
+    this._operationQueue = operation.catch(() => {})
+    return operation
+  }
+
+  start () {
+    return this._enqueueOperation(() => this._start())
+  }
+
+  async _start () {
     if (this.running) return
     this._setHealth(TorHealth.STARTING)
 
@@ -245,7 +287,7 @@ export class TorTransport extends EventEmitter {
         this._control = this._makeControl()
         await this._control.connect()
         await this._controlAuth()
-        this._control.on('event', (line) => this._onControlEvent(line))
+        this._attachControlEvents(this._control)
 
         if (this.minDaemonVersion) {
           await this._checkDaemonVersion()
@@ -261,7 +303,9 @@ export class TorTransport extends EventEmitter {
       }
 
       this.running = true
-      this.startedAtMs = Date.now()
+      this.startedAtMs = this._now()
+      this._rosterRebuildRequired = false
+      this._scheduleRosterExpiry()
       this.emit('started', {
         socksPort: this.socksPort,
         onionAddress: this.onionAddress,
@@ -274,6 +318,7 @@ export class TorTransport extends EventEmitter {
       // so lifecycle rollback and a later retry cannot inherit a bound port.
       this.running = false
       this.startedAtMs = null
+      this._clearRosterExpiryTimer()
       if (this._probeTimer) {
         clearInterval(this._probeTimer)
         this._probeTimer = null
@@ -281,31 +326,50 @@ export class TorTransport extends EventEmitter {
       if (this._control) {
         try { this._control.destroy() } catch {}
         this._control = null
+        this._controlGeneration++
       }
       if (this.peerListener && this.peerListener.running) {
         try { await this.peerListener.stop() } catch {}
       }
       this._descriptorUploads = 0
       this._probeFails = 0
+      this._invalidateReadiness()
+      this._serviceActive = false
+      this.onionAddress = null
+      this.serviceId = null
       this._setHealth(TorHealth.DISABLED)
       throw err
     }
   }
 
-  async stop () {
-    if (!this.running) return
+  stop () {
+    return this._enqueueOperation(() => this._stop())
+  }
+
+  async _stop () {
+    const wasRunning = this.running
     this.running = false
     this.startedAtMs = null
     this._setHealth(TorHealth.DISABLED)
+    this._clearRosterExpiryTimer()
     if (this._probeTimer) { clearInterval(this._probeTimer); this._probeTimer = null }
 
     for (const conn of this._connections) conn.destroy()
     this._connections.clear()
 
-    if (this._control) { this._control.destroy(); this._control = null }
-    if (this.peerListener) await this.peerListener.stop()
+    if (this._control) {
+      this._control.destroy()
+      this._control = null
+      this._controlGeneration++
+    }
     this._descriptorUploads = 0
-    this.emit('stopped')
+    this._probeFails = 0
+    this._invalidateReadiness()
+    this._serviceActive = false
+    this.onionAddress = null
+    this.serviceId = null
+    if (this.peerListener && this.peerListener.running) await this.peerListener.stop()
+    if (wasRunning) this.emit('stopped')
   }
 
   /**
@@ -343,57 +407,410 @@ export class TorTransport extends EventEmitter {
    * Tor exposes no runtime service-side roster add; the service keeps its
    * key blob and address, so this is a brief intro-point churn, not an
    * identity change. ONION-INV: address MUST stay identical after rebuild.
-   */
-  async _rebuildWithRoster (keys) {
-    if (!this.keyFile) throw new Error('client-auth roster requires persistent keyFile mode')
-    const blob = await this._loadOrThrowKey()
-    await this._control.cmd('DEL_ONION ' + this.serviceId)
+  */
+  async _rebuildWithRoster (keys, { rollbackKeys = null, failClosed = false } = {}) {
     const addressBefore = this.onionAddress
+    const serviceIdBefore = this.serviceId
+    const serviceActiveBefore = this._serviceActive
+    let blob = null
+    let deleted = false
+    let added = false
+    try {
+      if (!this.keyFile) throw new Error('client-auth roster requires persistent keyFile mode')
+      blob = await this._loadOrThrowKey()
+      this._beginReadinessTransition()
+      if (this._serviceActive) {
+        await this._control.cmd('DEL_ONION ' + this.serviceId)
+        this._serviceActive = false
+        deleted = true
+      }
+      await this._addOnion(blob, keys)
+      added = true
+      if (this.onionAddress !== addressBefore) {
+        throw new Error('onion address changed across roster rebuild — refusing to continue')
+      }
+      await this._completeReadinessTransition()
+    } catch (err) {
+      // A normal operator mutation that fails before touching Tor leaves the
+      // existing live service and its established health unchanged.
+      if (!failClosed && !blob) throw err
+      this._setHealth(TorHealth.DEGRADED)
+      const shouldRollback = blob && Array.isArray(rollbackKeys) &&
+        (deleted || added || !serviceActiveBefore)
+      if (shouldRollback) {
+        try {
+          if (added && this._serviceActive && this.serviceId) {
+            await this._control.cmd('DEL_ONION ' + this.serviceId)
+            this._serviceActive = false
+          }
+          this.serviceId = serviceIdBefore
+          this.onionAddress = addressBefore
+          this._beginReadinessTransition()
+          await this._addOnion(blob, rollbackKeys)
+          if (this.onionAddress !== addressBefore) {
+            throw new Error('onion address changed while restoring the previous roster')
+          }
+          await this._completeReadinessTransition()
+        } catch (rollbackErr) {
+          err.rollbackError = rollbackErr
+          await this._failClosedHiddenService()
+        }
+      } else if (failClosed) {
+        // Expiry may never roll an expired credential back into the live
+        // service. If a replacement was partly created, remove it. If Tor
+        // cannot confirm removal, close the owning control connection: these
+        // services are deliberately non-detached, so that tears them down.
+        if (added && this._serviceActive && this.serviceId) {
+          try {
+            await this._control.cmd('DEL_ONION ' + this.serviceId)
+            this._serviceActive = false
+          } catch (cleanupErr) {
+            err.cleanupError = cleanupErr
+          }
+        }
+        if (this._serviceActive) await this._failClosedHiddenService()
+      } else if (serviceActiveBefore && !deleted && !added) {
+        // DEL_ONION was rejected before Tor changed the service. Drain any
+        // queued descriptor events before allowing fresh health signals for
+        // the still-live previous generation.
+        try {
+          await this._completeReadinessTransition()
+        } catch (recoveryErr) {
+          err.readinessRecoveryError = recoveryErr
+        }
+      }
+      if (!this._serviceActive && this.running) {
+        this.serviceId = serviceIdBefore
+        this.onionAddress = addressBefore
+      }
+      throw err
+    }
+  }
+
+  async _failClosedHiddenService () {
+    this.running = false
+    this.startedAtMs = null
+    this._clearRosterExpiryTimer()
+    if (this._probeTimer) {
+      clearInterval(this._probeTimer)
+      this._probeTimer = null
+    }
+    for (const conn of this._connections) conn.destroy()
+    this._connections.clear()
+    if (this._control) {
+      try { this._control.destroy() } catch {}
+      this._control = null
+      this._controlGeneration++
+    }
+    if (this.peerListener && this.peerListener.running) {
+      try { await this.peerListener.stop() } catch {}
+    }
     this._descriptorUploads = 0
-    await this._addOnion(blob, keys)
-    if (this.onionAddress !== addressBefore) {
-      throw new Error('onion address changed across roster rebuild — refusing to continue')
-    }
+    this._probeFails = 0
+    this._invalidateReadiness()
+    this._serviceActive = false
+    this.onionAddress = null
+    this.serviceId = null
+    this._setHealth(TorHealth.DEGRADED)
   }
 
-  async addAuthClient (pubB32, { name = null, expiresAtMs = null } = {}) {
+  addAuthClient (pubB32, { name = null, expiresAtMs = null } = {}) {
+    return this._enqueueOperation(() => this._addAuthClient(pubB32, { name, expiresAtMs }))
+  }
+
+  async _addAuthClient (pubB32, { name = null, expiresAtMs = null } = {}) {
     if (!isValidClientPub(pubB32)) throw new Error('invalid x25519 client public key (base32, 52 chars)')
-    this.restrictedDiscovery = true
+    const mutationNowMs = this._now()
+    if (expiresAtMs !== null) {
+      if (!Number.isSafeInteger(expiresAtMs) || expiresAtMs <= mutationNowMs) {
+        const err = new Error('expiring client authorization elapsed before it could be applied')
+        err.code = 'TOR_AUTH_EXPIRED'
+        throw err
+      }
+      const policy = this.authClientEnrollmentPolicy(pubB32)
+      if (!policy.allowed) {
+        const err = new Error(`expiring client authorization rejected: ${policy.reason}`)
+        err.code = 'TOR_AUTH_EXPIRY_UNENFORCEABLE'
+        err.reason = policy.reason
+        throw err
+      }
+    }
     if (this._roster) {
       if (!this._roster.loaded) await this._roster.load()
-      this._roster.add(pubB32, { name, expiresAtMs })
-      this._roster.purge()
-      await this._roster.save()
-      this.clientAuthKeys = this._roster.activeKeys()
-    } else if (!this.clientAuthKeys.includes(pubB32)) {
-      this.clientAuthKeys = [...this.clientAuthKeys, pubB32]
-    } else {
-      return this.clientAuthKeys
+      const elapsed = this._elapsedRosterKeys(mutationNowMs)
+      if (elapsed.length) await this._commitAuthClientExpirations(elapsed, mutationNowMs)
     }
-    if (this.onionAddress) await this._rebuildWithRoster(this.clientAuthKeys)
-    this.emit('roster-changed', { added: pubB32, size: this.clientAuthKeys.length })
-    return this.clientAuthKeys
+    const previousRestrictedDiscovery = this.restrictedDiscovery
+    const previousKeys = [...this.clientAuthKeys]
+    let rosterSnapshot = null
+    let nextKeys
+    if (this._roster) {
+      if (this._configuredClientAuthKeys.includes(pubB32)) return [...this.clientAuthKeys]
+      rosterSnapshot = new Map([...this._roster.keys].map(([pub, entry]) => [pub, { ...entry }]))
+      const nowMs = mutationNowMs
+      this._roster.add(pubB32, { name, expiresAtMs, nowMs })
+      this._roster.purge({ nowMs })
+      nextKeys = this._effectiveRosterClientAuthKeys(nowMs)
+    } else if (!previousKeys.includes(pubB32)) {
+      nextKeys = [...previousKeys, pubB32]
+    } else {
+      return [...this.clientAuthKeys]
+    }
+
+    let rebuilt = false
+    try {
+      if (this.running && this._control && this.onionAddress) {
+        await this._rebuildWithRoster(nextKeys, { rollbackKeys: previousKeys })
+        rebuilt = true
+      }
+      if (this._roster) await this._roster.save()
+      const completionNowMs = this._now()
+      if (expiresAtMs !== null && expiresAtMs <= completionNowMs) {
+        try {
+          await this._commitAuthClientExpirations([pubB32], completionNowMs, { emitChange: false })
+        } catch (cause) {
+          const err = new Error('failed to enforce authorization that expired during the Tor roster transaction')
+          err.code = 'TOR_AUTH_EXPIRY_COMMIT_FAILED'
+          err.cause = cause
+          if (this.running) this._scheduleRosterExpiry({ retryMs: this._rosterExpiryRetryMs })
+          throw err
+        }
+        const err = new Error('expiring client authorization elapsed during the Tor roster transaction')
+        err.code = 'TOR_AUTH_EXPIRED'
+        throw err
+      }
+      this.clientAuthKeys = nextKeys
+      this.restrictedDiscovery = true
+      if (rebuilt) this._rosterRebuildRequired = false
+      this._scheduleRosterExpiry()
+    } catch (err) {
+      if (err && (
+        err.code === 'TOR_AUTH_EXPIRED' ||
+        err.code === 'TOR_AUTH_EXPIRY_COMMIT_FAILED'
+      )) throw err
+      if (rosterSnapshot) this._roster.keys = rosterSnapshot
+      this.clientAuthKeys = previousKeys
+      this.restrictedDiscovery = previousRestrictedDiscovery
+      if (rebuilt && this.running && this._control && this.onionAddress) {
+        try {
+          await this._rebuildWithRoster(previousKeys, { rollbackKeys: nextKeys })
+        } catch (rollbackErr) {
+          err.rollbackError = rollbackErr
+          await this._failClosedHiddenService()
+        }
+      }
+      throw err
+    }
+    this.emit('roster-changed', { added: pubB32, size: nextKeys.length })
+    return [...this.clientAuthKeys]
   }
 
-  async removeAuthClient (pubB32) {
-    let changed = true
+  removeAuthClient (pubB32) {
+    return this._enqueueOperation(() => this._removeAuthClient(pubB32))
+  }
+
+  async _removeAuthClient (pubB32) {
+    const mutationNowMs = this._now()
     if (this._roster) {
       if (!this._roster.loaded) await this._roster.load()
-      changed = this._roster.revoke(pubB32)
-      this._roster.purge()
-      await this._roster.save()
-      this.clientAuthKeys = this._roster.activeKeys()
-    } else {
-      const keys = this.clientAuthKeys.filter((k) => k !== pubB32)
-      changed = keys.length !== this.clientAuthKeys.length
-      this.clientAuthKeys = keys
+      const elapsed = this._elapsedRosterKeys(mutationNowMs)
+      if (elapsed.length) await this._commitAuthClientExpirations(elapsed, mutationNowMs)
     }
-    if (changed && this.onionAddress) await this._rebuildWithRoster(this.clientAuthKeys)
-    if (changed) this.emit('roster-changed', { removed: pubB32, size: this.clientAuthKeys.length })
-    return this.clientAuthKeys
+    const previousKeys = [...this.clientAuthKeys]
+    let changed = true
+    let rosterSnapshot = null
+    let nextKeys
+    if (this._roster) {
+      if (this._configuredClientAuthKeys.includes(pubB32)) return [...this.clientAuthKeys]
+      rosterSnapshot = new Map([...this._roster.keys].map(([pub, entry]) => [pub, { ...entry }]))
+      const nowMs = mutationNowMs
+      changed = this._roster.revoke(pubB32, { nowMs })
+      this._roster.purge({ nowMs })
+      nextKeys = this._effectiveRosterClientAuthKeys(nowMs)
+    } else {
+      nextKeys = previousKeys.filter((k) => k !== pubB32)
+      changed = nextKeys.length !== previousKeys.length
+    }
+    if (!changed) return [...this.clientAuthKeys]
+
+    let rebuilt = false
+    try {
+      if (this.running && this._control && this.onionAddress) {
+        await this._rebuildWithRoster(nextKeys, { rollbackKeys: previousKeys })
+        rebuilt = true
+      }
+      if (this._roster) await this._roster.save()
+      this.clientAuthKeys = nextKeys
+      if (rebuilt) this._rosterRebuildRequired = false
+      this._scheduleRosterExpiry()
+    } catch (err) {
+      if (rosterSnapshot) this._roster.keys = rosterSnapshot
+      this.clientAuthKeys = previousKeys
+      if (rebuilt && this.running && this._control && this.onionAddress) {
+        try {
+          await this._rebuildWithRoster(previousKeys, { rollbackKeys: nextKeys })
+        } catch (rollbackErr) {
+          err.rollbackError = rollbackErr
+          await this._failClosedHiddenService()
+        }
+      }
+      throw err
+    }
+    this.emit('roster-changed', { removed: pubB32, size: nextKeys.length })
+    return [...this.clientAuthKeys]
   }
 
   listAuthClients () { return [...this.clientAuthKeys] }
+
+  currentTimeMs () { return this._now() }
+
+  _elapsedRosterKeys (nowMs) {
+    if (!this._roster) return []
+    return [...this._roster.keys.values()]
+      .filter((entry) => entry.revokedAtMs === null && entry.expiresAtMs <= nowMs)
+      .map((entry) => entry.pub)
+  }
+
+  authClientEnrollmentPolicy (pubB32) {
+    if (!this._roster) return { allowed: false, reason: 'persistent-roster-required' }
+    if (!this.keyFile) return { allowed: false, reason: 'persistent-key-required' }
+    if (this._configuredClientAuthKeys.includes(pubB32)) {
+      return { allowed: false, reason: 'static-auth-key' }
+    }
+    return { allowed: true, reason: null }
+  }
+
+  expireAuthClient (pubB32) {
+    return this._enqueueOperation(async () => {
+      if (!this._roster) return [...this.clientAuthKeys]
+      if (!this._roster.loaded) await this._roster.load()
+      const entry = this._roster.keys.get(pubB32)
+      if (!entry || entry.revokedAtMs !== null) return [...this.clientAuthKeys]
+      return this._commitAuthClientExpirations([pubB32], this._now())
+    })
+  }
+
+  _effectiveRosterClientAuthKeys (nowMs = this._now()) {
+    const rosterKeys = this._roster ? this._roster.activeKeys({ nowMs }) : []
+    return [...new Set([...this._configuredClientAuthKeys, ...rosterKeys])]
+  }
+
+  _clearRosterExpiryTimer () {
+    if (this._rosterExpiryTimer === null) return
+    this._clearRosterTimer(this._rosterExpiryTimer)
+    this._rosterExpiryTimer = null
+  }
+
+  _scheduleRosterExpiry ({ retryMs = null } = {}) {
+    this._clearRosterExpiryTimer()
+    if (!this._roster || !this.running || !this._roster.loaded) return
+
+    const nowMs = this._now()
+    let delayMs = retryMs
+    if (delayMs === null) {
+      const activeRosterKeys = new Set(
+        this.clientAuthKeys.filter((pub) => !this._configuredClientAuthKeys.includes(pub))
+      )
+      let nextExpiryMs = Infinity
+      for (const entry of this._roster.keys.values()) {
+        if (
+          activeRosterKeys.has(entry.pub) &&
+          entry.revokedAtMs === null &&
+          Number.isSafeInteger(entry.expiresAtMs)
+        ) {
+          nextExpiryMs = Math.min(nextExpiryMs, entry.expiresAtMs)
+        }
+      }
+      if (!Number.isFinite(nextExpiryMs)) return
+      delayMs = Math.max(0, nextExpiryMs - nowMs)
+    }
+    delayMs = Math.min(MAX_TIMER_DELAY_MS, ROSTER_EXPIRY_RECHECK_MS, Math.max(0, delayMs))
+
+    let timer = null
+    const expire = () => {
+      if (this._rosterExpiryTimer !== timer) return
+      this._rosterExpiryTimer = null
+      return this._enqueueOperation(() => this._enforceRosterExpiry())
+        .catch((err) => {
+          this._emitRosterExpiryError(err)
+          if (this.running) this._scheduleRosterExpiry({ retryMs: this._rosterExpiryRetryMs })
+        })
+    }
+    timer = this._setRosterTimer(expire, delayMs)
+    this._rosterExpiryTimer = timer
+    if (timer && typeof timer.unref === 'function') timer.unref()
+  }
+
+  _emitRosterExpiryError (err) {
+    try { this.emit('roster-expiry-error', err) } catch {}
+  }
+
+  async _commitAuthClientExpirations (expired, nowMs, { emitChange = true } = {}) {
+    for (const pub of expired) this._roster.revoke(pub, { nowMs })
+    this._roster.purge({ nowMs })
+    const nextKeys = this._effectiveRosterClientAuthKeys(nowMs)
+
+    this.clientAuthKeys = nextKeys
+    this._rosterRebuildRequired = true
+    if (this.running) this._setHealth(TorHealth.DEGRADED)
+    try {
+      await this._roster.save()
+    } catch (cause) {
+      const err = new Error(`failed to persist ${expired.length} onion authorization expiry tombstone(s)`)
+      err.cause = cause
+      await this._failClosedHiddenService()
+      throw err
+    }
+
+    if (this.running && this._control && this.onionAddress) {
+      await this._rebuildWithRoster(nextKeys, { failClosed: true })
+    }
+    this._rosterRebuildRequired = false
+    this._scheduleRosterExpiry()
+    if (emitChange) {
+      try {
+        this.emit('roster-changed', { expired, size: nextKeys.length })
+      } catch (err) {
+        this._emitRosterExpiryError(err)
+      }
+    }
+    return [...this.clientAuthKeys]
+  }
+
+  async _enforceRosterExpiry () {
+    if (!this._roster || !this.running) return
+    if (!this._roster.loaded) await this._roster.load()
+
+    const nowMs = this._now()
+    const previousKeys = [...this.clientAuthKeys]
+    const nextKeys = this._effectiveRosterClientAuthKeys(nowMs)
+    const nextKeySet = new Set(nextKeys)
+    const expired = previousKeys.filter((pub) => (
+      !this._configuredClientAuthKeys.includes(pub) && !nextKeySet.has(pub)
+    ))
+    if (expired.length) {
+      await this._commitAuthClientExpirations(expired, nowMs)
+      return
+    }
+
+    const purged = this._roster.purge({ nowMs })
+    this.clientAuthKeys = nextKeys
+    if (purged) {
+      try {
+        await this._roster.save()
+      } catch (err) {
+        this._emitRosterExpiryError(err)
+      }
+    }
+
+    if (this._rosterRebuildRequired) {
+      this._setHealth(TorHealth.DEGRADED)
+      await this._rebuildWithRoster(nextKeys, { failClosed: true })
+      this._rosterRebuildRequired = false
+    }
+
+    this._scheduleRosterExpiry()
+  }
 
   isRestrictedDiscoveryActive () { return this.restrictedDiscovery }
 
@@ -402,10 +819,57 @@ export class TorTransport extends EventEmitter {
   _setHealth (state) {
     if (this.health === state) return
     this.health = state
-    this.emit('health', state)
+    // Observers must never be able to abort a fail-closed state transition.
+    try {
+      this.emit('health', state)
+    } catch (err) {
+      try { this.emit('health-observer-error', err) } catch {}
+    }
   }
 
-  _onControlEvent (line) {
+  _beginReadinessTransition () {
+    this._readinessGeneration++
+    this._readinessBlocked = true
+    this._descriptorUploads = 0
+    this._probeFails = 0
+    this._setHealth(TorHealth.KEY_LOADED)
+    return this._readinessGeneration
+  }
+
+  _invalidateReadiness () {
+    this._readinessGeneration++
+    this._readinessBlocked = true
+    this._descriptorUploads = 0
+    this._probeFails = 0
+  }
+
+  async _completeReadinessTransition () {
+    const generation = this._readinessGeneration
+    const control = this._control
+    if (!control || !this._serviceActive) throw new Error('hidden service readiness transition has no live control-owned service')
+    // This command is also an ordering barrier on the control socket: events
+    // queued for the deleted generation are parsed while readiness is blocked.
+    await control.cmd('SETEVENTS HS_DESC')
+    if (
+      generation !== this._readinessGeneration ||
+      control !== this._control ||
+      !this._serviceActive
+    ) {
+      throw new Error('hidden service readiness transition was superseded')
+    }
+    this._readinessBlocked = false
+  }
+
+  _readinessIsCurrent (generation, control, controlGeneration = this._controlGeneration) {
+    return !this._readinessBlocked &&
+      generation === this._readinessGeneration &&
+      controlGeneration === this._controlGeneration &&
+      control === this._control &&
+      this._serviceActive
+  }
+
+  _onControlEvent (line, control = this._control, controlGeneration = this._controlGeneration) {
+    if (!this._readinessIsCurrent(this._readinessGeneration, control, controlGeneration)) return
     if (line.startsWith('HS_DESC UPLOADED') && this.serviceId && line.includes(this.serviceId)) {
       this._descriptorUploads++
       if (this.health === TorHealth.KEY_LOADED && this._descriptorUploads >= this.healthOpts.minDescriptorUploads) {
@@ -424,23 +888,35 @@ export class TorTransport extends EventEmitter {
 
   /** Self-probe: SOCKS-connect back to our own onion through the network. */
   async _probeNow () {
+    const generation = this._readinessGeneration
+    const control = this._control
+    const controlGeneration = this._controlGeneration
+    if (!this._readinessIsCurrent(generation, control, controlGeneration)) return
     const vport = this.healthOpts.probeVport
     if (!vport || !this.onionAddress) {
       // No probe surface configured: descriptor uploads are the readiness signal.
       if (this.health === TorHealth.DESCRIPTOR_UPLOADED) this._setHealth(TorHealth.READY)
       return
     }
+    if (this._descriptorUploads < this.healthOpts.minDescriptorUploads) return
+    if (
+      this.health !== TorHealth.DESCRIPTOR_UPLOADED &&
+      this.health !== TorHealth.READY &&
+      this.health !== TorHealth.DEGRADED
+    ) return
     try {
-      const { socket } = await SocksClient.createConnection({
+      const { socket } = await this._probeConnectionFactory({
         proxy: { host: this.socksHost, port: this.socksPort, type: 5 },
         command: 'connect',
         destination: { host: this.onionAddress, port: vport },
         timeout: 60000
       })
       socket.destroy()
+      if (!this._readinessIsCurrent(generation, control, controlGeneration)) return
       this._probeFails = 0
       this._setHealth(TorHealth.READY)
     } catch {
+      if (!this._readinessIsCurrent(generation, control, controlGeneration)) return
       this._probeFails++
       if (this._probeFails >= this.healthOpts.probeFailLimit) this._setHealth(TorHealth.DEGRADED)
     }
@@ -482,27 +958,30 @@ export class TorTransport extends EventEmitter {
       this._control = this._makeControl()
       await this._control.connect()
       await this._controlAuth()
-      this._control.on('event', (line) => this._onControlEvent(line))
+      this._attachControlEvents(this._control)
     }
 
+    this._beginReadinessTransition()
     if (this.keyFile) {
       const blob = await this._loadOrCreateKey()
       if (this._roster) {
         await this._roster.load()
-        this._roster.purge()
-        const union = new Set([...this.clientAuthKeys, ...this._roster.activeKeys()])
-        this.clientAuthKeys = [...union]
+        const nowMs = this._now()
+        const expired = [...this._roster.keys.values()]
+          .filter((entry) => entry.revokedAtMs === null && entry.expiresAtMs <= nowMs)
+          .map((entry) => entry.pub)
+        for (const pub of expired) this._roster.revoke(pub, { nowMs })
+        const purged = this._roster.purge({ nowMs })
+        if (expired.length || purged) await this._roster.save()
+        this.clientAuthKeys = this._effectiveRosterClientAuthKeys(nowMs)
       }
       await this._addOnion(blob, this.clientAuthKeys, vports)
     } else {
       await this._addOnion(null, this.clientAuthKeys, vports)
     }
 
-    this._setHealth(TorHealth.KEY_LOADED)
     await this._startHealthLoop()
-
-    // Subscribe to descriptor events (needed for descriptor-uploaded health)
-    try { await this._control.cmd('SETEVENTS HS_DESC') } catch {}
+    await this._completeReadinessTransition()
 
     this.emit('hidden-service', { onionAddress: this.onionAddress, vports, health: this.health })
   }
@@ -529,16 +1008,21 @@ export class TorTransport extends EventEmitter {
     const cmd = [`ADD_ONION ${keyArg}${flags}`, portArgs, authArgs].filter(Boolean).join(' ') + maxStreams
 
     const response = await this._control.cmd(cmd)
+    let serviceId = null
+    let privateKey = null
     for (const line of response.split('\n')) {
       if (line.startsWith('250-ServiceID=')) {
-        this.serviceId = line.split('=')[1].trim()
-        this.onionAddress = this.serviceId + '.onion'
+        serviceId = line.split('=')[1].trim()
       }
       if (!keyBlob && line.startsWith('250-PrivateKey=')) {
-        await this._storeKey(line.slice('250-PrivateKey='.length).trim())
+        privateKey = line.slice('250-PrivateKey='.length).trim()
       }
     }
-    if (!this.onionAddress) throw new Error('Failed to create hidden service — no ServiceID in response')
+    if (!serviceId) throw new Error('Failed to create hidden service — no ServiceID in response')
+    this.serviceId = serviceId
+    this.onionAddress = serviceId + '.onion'
+    this._serviceActive = true
+    if (privateKey) await this._storeKey(privateKey)
   }
 
   async _loadOrThrowKey () {
