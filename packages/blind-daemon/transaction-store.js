@@ -191,6 +191,23 @@ async function writeAll (handle, buffer, position) {
   }
 }
 
+// Settles every not-yet-resolved member of a poisoned commit group. The
+// member whose own step failed (failedIndex) sees the raw error, exactly like
+// the failing appender does in the serial path; every other member sees the
+// standard poison error, exactly like an appender queued behind a poison.
+// Members already resolved are untouched because rejecting a settled promise
+// is a no-op.
+function rejectWalGroupAsPoisoned (frames, failedIndex, failure) {
+  for (let index = 0; index < frames.length; index++) {
+    if (index === failedIndex) frames[index].member.reject(failure)
+    else {
+      frames[index].member.reject(
+        new BlindWalIntegrityError('transaction store requires recovery after an interrupted WAL append')
+      )
+    }
+  }
+}
+
 async function readAtMost (handle, buffer, position) {
   let read = 0
   while (read < buffer.byteLength) {
@@ -643,6 +660,8 @@ export class BlindTransactionStore {
     this.walSequence = 0n
     this.walHash = b4a.from(ZERO32)
     this.poisoned = false
+    this.walCommitQueue = []
+    this.walCommitDrainActive = false
     this.staged = new Map()
   }
 
@@ -854,12 +873,7 @@ export class BlindTransactionStore {
     if (!this.handle || !this.opened) throw new Error('transaction store is not open')
     if (this.closing) throw new Error('transaction store is closing')
     if (this.poisoned) throw new BlindWalIntegrityError('transaction store requires recovery after an interrupted WAL append')
-    return this.locks.with(['\u0000wal'], () => {
-      if (!this.handle || !this.opened) throw new Error('transaction store is not open')
-      if (this.closing) throw new Error('transaction store is closing')
-      if (this.poisoned) throw new BlindWalIntegrityError('transaction store requires recovery after an interrupted WAL append')
-      return this.#appendSerialized(value)
-    })
+    return this.#enqueueWalCommit(value, null, null)
   }
 
   async appendAndApply (value, applyFrame, options = {}) {
@@ -871,60 +885,199 @@ export class BlindTransactionStore {
     if (prewriteFence != null && typeof prewriteFence !== 'function') {
       throw new TypeError('prewriteFence must be a synchronous function')
     }
-    return this.locks.with(['\u0000wal'], async () => {
-      if (!this.handle || !this.opened) throw new Error('transaction store is not open')
-      if (this.closing) throw new Error('transaction store is closing')
-      if (this.poisoned) throw new BlindWalIntegrityError('transaction store requires recovery after an interrupted WAL append')
-      if (prewriteFence) {
-        const result = prewriteFence()
-        if (result && typeof result.then === 'function') {
-          throw new TypeError('prewriteFence must not return a promise')
-        }
-      }
-      const frame = await this.#appendSerialized(value)
-      try {
-        await applyFrame(frame)
-      } catch (error) {
-        this.poisoned = true
-        throw error
-      }
-      return frame
-    })
+    return this.#enqueueWalCommit(value, applyFrame, prewriteFence)
   }
 
-  async #appendSerialized (value) {
-    const sequence = this.walSequence + 1n
-    const completeFrame = encodeWalFrame({
-      type: value.type,
-      sequence,
-      transactionId: value.transactionId,
-      virtualBucket: value.virtualBucket,
-      mapGeneration: this.mapGeneration,
-      ownerFenceTokenHash: this.ownerFenceTokenHash,
-      durabilityContinuityHash: this.durabilityContinuityHash,
-      previousWalHash: this.walHash,
-      payload: value.payload
-    }, this.maximumWalPayloadBytes)
+  // WAL group commit (Phase 1). Admission rule: a commit group is the exact
+  // set of append requests queued on `walCommitQueue` at the moment a drain
+  // turn begins. The first queued request schedules the drain on a microtask
+  // (so callers in the same event-loop turn are admitted together); each turn
+  // snapshots the queue with splice(0) and commits that snapshot under one
+  // 'wal' stripe hold (the same KeyLockTable key serializes withWalBarrier
+  // and close). There is deliberately no timer and no wait-for-more
+  // window: batching emerges because new requests pile up while the previous
+  // group's datasync is in flight. A lone appender therefore always forms a
+  // one-member group — one write plus one datasync, with frame bytes
+  // identical to the pre-group-commit store.
+  #enqueueWalCommit (value, applyFrame, prewriteFence) {
+    const commit = new Promise((resolve, reject) => {
+      this.walCommitQueue.push({ value, applyFrame, prewriteFence, resolve, reject })
+    })
+    this.#scheduleWalCommitDrain()
+    return commit
+  }
+
+  #scheduleWalCommitDrain () {
+    if (this.walCommitDrainActive) return
+    this.walCommitDrainActive = true
+    Promise.resolve().then(() => this.#drainWalCommits())
+  }
+
+  async #drainWalCommits () {
     try {
-      await writeAll(this.handle, completeFrame, this.walOffset)
-      await this.#fault('wal:after-write', { sequence, byteLength: completeFrame.byteLength })
-      await this.handle.sync()
-      await this.#fault('wal:after-sync', { sequence, byteLength: completeFrame.byteLength })
-    } catch (error) {
-      this.poisoned = true
-      throw error
+      while (this.walCommitQueue.length > 0) {
+        const group = this.walCommitQueue.splice(0)
+        try {
+          await this.locks.with(['\u0000wal'], () => this.#commitWalGroup(group))
+        } catch (error) {
+          // #commitWalGroup settles every member itself and never throws; this
+          // guard only covers a stripe-level failure, which poisons the store
+          // identically to a commit-phase failure.
+          this.poisoned = true
+          for (const member of group) member.reject(error)
+        }
+      }
+    } finally {
+      // The flag flips synchronously with the final queue check: an enqueue
+      // racing this turn either was admitted by the loop above or observes
+      // the cleared flag and schedules a fresh drain. The re-check covers an
+      // enqueue that slipped in after the last admission but before this
+      // finally ran.
+      this.walCommitDrainActive = false
+      if (this.walCommitQueue.length > 0) this.#scheduleWalCommitDrain()
     }
-    const decoded = decodeBlindWalFrameV2(
-      completeFrame,
-      sequence,
-      this.walHash,
-      this.durabilityContinuityHash,
-      this.maximumWalPayloadBytes
-    )
-    this.walOffset += completeFrame.byteLength
-    this.walSequence = sequence
-    this.walHash = decoded.walHash
-    return decoded
+  }
+
+  // One group per stripe hold:
+  //   1. per member, in admission order: synchronous prewriteFence, then
+  //      encode, chaining sequence/previousWalHash locally so the group's
+  //      frames are contiguous and hash-chained in the order they were
+  //      admitted. A fence or bounds failure ejects only that member —
+  //      pre-write failures never poison, exactly as in the serial path.
+  //   2. per frame, in order: positional write plus the per-frame
+  //      `wal:after-write` fault with that frame's own sequence.
+  //   3. ONE datasync for the whole group. fsync-before-ack is load-bearing:
+  //      no member resolves before this completes.
+  //   4. per frame, in order: `wal:after-sync` fault, decode-verify
+  //      self-check, walOffset/walSequence/walHash advance, applyFrame,
+  //      resolve — the same per-frame completion order a serial appender
+  //      observes today.
+  // Poison semantics: any write/sync/fault/apply failure poisons the store.
+  async #commitWalGroup (group) {
+    if (!this.handle || !this.opened) {
+      for (const member of group) member.reject(new Error('transaction store is not open'))
+      return
+    }
+    if (this.closing) {
+      for (const member of group) member.reject(new Error('transaction store is closing'))
+      return
+    }
+    if (this.poisoned) {
+      for (const member of group) {
+        member.reject(new BlindWalIntegrityError('transaction store requires recovery after an interrupted WAL append'))
+      }
+      return
+    }
+    const frames = []
+    let sequence = this.walSequence
+    let previousWalHash = this.walHash
+    let offset = this.walOffset
+    for (const member of group) {
+      let completeFrame = null
+      const memberSequence = sequence + 1n
+      try {
+        if (member.prewriteFence) {
+          const fence = member.prewriteFence()
+          if (fence && typeof fence.then === 'function') {
+            throw new TypeError('prewriteFence must not return a promise')
+          }
+        }
+        completeFrame = encodeWalFrame({
+          type: member.value.type,
+          sequence: memberSequence,
+          transactionId: member.value.transactionId,
+          virtualBucket: member.value.virtualBucket,
+          mapGeneration: this.mapGeneration,
+          ownerFenceTokenHash: this.ownerFenceTokenHash,
+          durabilityContinuityHash: this.durabilityContinuityHash,
+          previousWalHash,
+          payload: member.value.payload
+        }, this.maximumWalPayloadBytes)
+      } catch (error) {
+        member.reject(error)
+        continue
+      }
+      frames.push({ member, completeFrame, sequence: memberSequence, offset })
+      sequence = memberSequence
+      previousWalHash = frameHash(completeFrame)
+      offset += completeFrame.byteLength
+    }
+    if (frames.length === 0) return
+    let failedIndex = -1
+    let failure = null
+    for (let index = 0; index < frames.length; index++) {
+      const entry = frames[index]
+      try {
+        await writeAll(this.handle, entry.completeFrame, entry.offset)
+        await this.#fault('wal:after-write', { sequence: entry.sequence, byteLength: entry.completeFrame.byteLength })
+      } catch (error) {
+        failedIndex = index
+        failure = error
+        break
+      }
+    }
+    if (failure) {
+      this.poisoned = true
+      rejectWalGroupAsPoisoned(frames, failedIndex, failure)
+      return
+    }
+    try {
+      await this.#syncWal()
+    } catch (error) {
+      // The one sync genuinely belongs to every member of the group.
+      this.poisoned = true
+      for (const entry of frames) entry.member.reject(error)
+      return
+    }
+    for (let index = 0; index < frames.length; index++) {
+      const entry = frames[index]
+      let decoded = null
+      try {
+        await this.#fault('wal:after-sync', { sequence: entry.sequence, byteLength: entry.completeFrame.byteLength })
+        decoded = decodeBlindWalFrameV2(
+          entry.completeFrame,
+          entry.sequence,
+          this.walHash,
+          this.durabilityContinuityHash,
+          this.maximumWalPayloadBytes
+        )
+      } catch (error) {
+        this.poisoned = true
+        rejectWalGroupAsPoisoned(frames, index, error)
+        return
+      }
+      this.walOffset += entry.completeFrame.byteLength
+      this.walSequence = entry.sequence
+      this.walHash = decoded.walHash
+      if (entry.member.applyFrame) {
+        try {
+          await entry.member.applyFrame(decoded)
+        } catch (error) {
+          this.poisoned = true
+          rejectWalGroupAsPoisoned(frames, index, error)
+          return
+        }
+      }
+      entry.member.resolve(decoded)
+    }
+  }
+
+  // fdatasync-class durability for WAL frames (Phase 1). POSIX requires
+  // fdatasync to flush every metadata item needed to retrieve the data
+  // afterwards, and an extending append's st_size update is exactly such
+  // metadata (per the fdatasync man page a change to st_size requires a
+  // metadata flush), so recovery after a crash still observes every
+  // acknowledged byte — the same guarantee LevelDB/RocksDB rely on for their
+  // WALs on Linux. Size-changing WAL preallocation (truncate to fixed extents
+  // with a full sync on extension) is deliberately NOT used here: recovery is
+  // fail-closed and size-authoritative, so a preallocated zero tail would
+  // read as an interior break and refuse to open, and block-level
+  // preallocation that keeps st_size (fallocate KEEP_SIZE / F_PREALLOCATE) is
+  // not exposed by node:fs. Extent preallocation remains a Phase 3 fleet task
+  // alongside the store-format authority.
+  async #syncWal () {
+    if (typeof this.handle.datasync === 'function') return this.handle.datasync()
+    return this.handle.sync()
   }
 
   async withLocks (keys, callback) {
