@@ -233,40 +233,63 @@ export class TorTransport extends EventEmitter {
     if (this.running) return
     this._setHealth(TorHealth.STARTING)
 
-    await this._checkTorRunning()
+    try {
+      await this._checkTorRunning()
 
-    // Bind the peer protocol endpoint before the hidden service is created
-    // so the peer vport forwards to the live port (ephemeral binds included).
-    if (this.peerListener && !this.peerListener.running) await this.peerListener.start()
+      // Bind the peer protocol endpoint before the hidden service is created
+      // so the peer vport forwards to the live port (ephemeral binds included).
+      if (this.peerListener && !this.peerListener.running) await this.peerListener.start()
 
-    const vports = this._effectiveVports()
-    if (vports.length || this.minDaemonVersion || this.pow) {
-      this._control = this._makeControl()
-      await this._control.connect()
-      await this._controlAuth()
-      this._control.on('event', (line) => this._onControlEvent(line))
+      const vports = this._effectiveVports()
+      if (vports.length || this.minDaemonVersion || this.pow) {
+        this._control = this._makeControl()
+        await this._control.connect()
+        await this._controlAuth()
+        this._control.on('event', (line) => this._onControlEvent(line))
 
-      if (this.minDaemonVersion) {
-        await this._checkDaemonVersion()
+        if (this.minDaemonVersion) {
+          await this._checkDaemonVersion()
+        }
+        if (this.pow && this.pow.enabled) {
+          await this._applyPow()
+        }
+        if (vports.length) {
+          await this._createHiddenService(vports)
+        }
+      } else if (this.localPort) {
+        await this._createHiddenService(this.localPort) // unreachable; kept for clarity
       }
-      if (this.pow && this.pow.enabled) {
-        await this._applyPow()
+
+      this.running = true
+      this.startedAtMs = Date.now()
+      this.emit('started', {
+        socksPort: this.socksPort,
+        onionAddress: this.onionAddress,
+        health: this.health,
+        daemonVersion: this.daemonVersion
+      })
+    } catch (err) {
+      // start() can fail after the peer listener or control connection has
+      // opened but before running flips true. Release partial resources here
+      // so lifecycle rollback and a later retry cannot inherit a bound port.
+      this.running = false
+      this.startedAtMs = null
+      if (this._probeTimer) {
+        clearInterval(this._probeTimer)
+        this._probeTimer = null
       }
-      if (vports.length) {
-        await this._createHiddenService(vports)
+      if (this._control) {
+        try { this._control.destroy() } catch {}
+        this._control = null
       }
-    } else if (this.localPort) {
-      await this._createHiddenService(this.localPort) // unreachable; kept for clarity
+      if (this.peerListener && this.peerListener.running) {
+        try { await this.peerListener.stop() } catch {}
+      }
+      this._descriptorUploads = 0
+      this._probeFails = 0
+      this._setHealth(TorHealth.DISABLED)
+      throw err
     }
-
-    this.running = true
-    this.startedAtMs = Date.now()
-    this.emit('started', {
-      socksPort: this.socksPort,
-      onionAddress: this.onionAddress,
-      health: this.health,
-      daemonVersion: this.daemonVersion
-    })
   }
 
   async stop () {
