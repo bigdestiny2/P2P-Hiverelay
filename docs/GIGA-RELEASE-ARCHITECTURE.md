@@ -129,22 +129,24 @@ sequenceDiagram
   E->>E: stage blob
   E->>W: PUT_COMMITTED (+ fsync)
   W-->>C: ack (durable)
-  Note over E,W: today: 3 frames/PUT, serialized on one lock<br/>→ ~58 PUTs/s/relay, 64 appenders gain 0%
+  Note over E,W: legacy flow (pre-2026-07-18): 3 frames/PUT, serialized on one lock<br/>→ ~58 PUTs/s/relay, 64 appenders gain 0% — superseded by Phases 1–2 below
 ```
 
-**Why the release waits on it (status verified 2026-07-17):**
+**Why the release waits on it (status verified 2026-07-18):**
 
 | Phase | Content | Status |
 |---|---|---|
 | 0 — measure | capacity model + portable harnesses | **done** (macOS upper bounds; Linux fleet rerun required for release-grade evidence) |
-| 1 — group commit | batching in the `'\0wal'` mutex + fdatasync + preallocation | **not implemented** |
-| 2 — single-commit PUT | 3 frames → 1 | **not implemented** |
+| 1 — group commit | batching in the `'\0wal'` mutex + fdatasync + preallocation | **shipped** 2026-07-18 (v1-integration `f0b4376`; 64 concurrent appenders 128 → ~8k commits/s macOS) |
+| 2 — single-commit PUT | 3 frames → 1 | **shipped** 2026-07-18 (v1-integration; the atomic staged path is the *only* public CELL.PUT route — 3 → 1 WAL frame/datasync per PUT, 1,841 → 971 WAL bytes/PUT, serial p50 23 → 33 PUTs/s ≈ 1.4× on macOS; legacy 3-frame codecs/frames retained — recovery reads both, wire format unchanged) |
 | 3 — segmented WAL | pruning + checkpoint-anchored recovery, one format rev paired with the D-6 `K_partition` decision | **not implemented** (`walPruningSupported: false`) |
 | 4 — model rerun | scenarios with measured constants | partially done in Phase 0 |
 
+Phase-2 follow-up candidate measured 2026-07-18: under 64-way concurrency the atomic PUT commits serialize on the global `quota:atomic-staging` lock held across publication + the type-17 fsync (~35 PUTs/s vs ~126 for the legacy per-spend locking) — narrow that lock scope before relying on P1×P2 composition.
+
 Phase 3 **must** land before the blind store-format authority and protocol hashes freeze — it shares one migration with D-6 and therefore gates the giga release's freeze. Invariants every phase must preserve: atomic one-use spend, fsync-before-ack (group fsync allowed), 15-min canonical retry, O(1) drop-wins, fail-closed recovery, writer fence + continuity hash, epoch floor, spent-marker horizon.
 
-**Do-not-overclaim flags:** no WAL code exists in the main hiverelay repo (it lives in the blind line); phases 1–3 do not exist anywhere as of 2026-07-17; Phase 0 numbers are macOS-only upper bounds.
+**Do-not-overclaim flags:** no WAL code exists in the main hiverelay repo (it lives in the blind line); phases 1–2 shipped on v1-integration 2026-07-18 with macOS-only numbers (Linux fleet rerun still required); Phase 3 does not exist anywhere as of 2026-07-18; Phase 0 numbers are macOS-only upper bounds.
 
 ## 6. Release readiness map
 
@@ -156,7 +158,7 @@ Phase 3 **must** land before the blind store-format authority and protocol hashe
 | HTTPS gateway (path) | hiverelay | shipped | streaming integration green | — done |
 | HTTPS gateway (app origins) | hr-https-gateway | Phase-1 canary | canary suites | **not merged**; readiness gates G1-G13; staging only |
 | Namespace | hiverelay | shipped v0.24.1 | unit + config/env green | bytesPerDay enforcement (minor) |
-| WAL | blind line (vnext/hq) | v2 shipped; phases 1–3 pending | Phase-0 evidence | **the freeze gate** (Phase 3 + D-6 pairing + Linux rerun) |
+| WAL | blind line (vnext/hq) | v2 shipped; phases 1–2 shipped 2026-07-18, phase 3 pending | Phase-0 + P1/P2 evidence | **the freeze gate** (Phase 3 + D-6 pairing + Linux rerun) |
 
 ## 7. The final test matrix (what "test everything out" means)
 
@@ -167,7 +169,7 @@ Phase 3 **must** land before the blind store-format authority and protocol hashe
    - two apps sharing one relay's outboxlog under distinct blind namespaces, with takedown (namespace × blind);
    - wake hints over the onion control path into namespaced outboxes (namespace × tor/nym).
 3. **Adversarial/privacy gates** — fail-closed downgrade suites, redaction audit sweeps on public payloads, negative-probe on private onion endpoints, orphan-pin and cross-namespace replay rejection.
-4. **Release-gate holdouts** — WAL phases 1–3 + Linux Phase-0 rerun (durability/throughput), app-origin gateway readiness checklist, 100 MB bulk-over-onion measurement.
+4. **Release-gate holdouts** — WAL phase 3 (+ Phase-2 lock-narrowing follow-up) + Linux Phase-0 rerun (durability/throughput), app-origin gateway readiness checklist, 100 MB bulk-over-onion measurement.
 
 ## 8. Sources of truth
 
