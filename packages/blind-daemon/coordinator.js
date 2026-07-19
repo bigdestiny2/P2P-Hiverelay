@@ -39,6 +39,7 @@ import {
 import { stagedCellPutAuthority } from './staged-put.js'
 import { isCommittedCellResult } from './cell-runtime-adapter.js'
 import { isCommittedInboxResult } from './inbox-runtime-adapter.js'
+import { isCommittedCoreResult } from './core-runtime-adapter.js'
 
 const MAX_U64 = (1n << 64n) - 1n
 const ORDINARY_DEADLINE_MILLIS = 15_000n
@@ -425,7 +426,8 @@ function normalizeResult (profile, raw) {
     body: b4a.from(body),
     value,
     executorStreamId,
-    committedStoreResult: isCommittedCellResult(raw) || isCommittedInboxResult(raw)
+    committedStoreResult: isCommittedCellResult(raw) || isCommittedInboxResult(raw) ||
+      isCommittedCoreResult(raw)
   })
 }
 

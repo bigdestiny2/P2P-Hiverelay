@@ -558,6 +558,26 @@ export class BlindCoreStorageEngine {
     })
   }
 
+  // An exact retry of an already accepted sponsorship advances nothing, so the
+  // live billable view reports RENEW_NOT_DUE. The committed charge is still
+  // bound to the accepted attempt's stored admission: answer a length that
+  // reproduces its frozen resource class so the coordinator can re-derive the
+  // exact admitted cost before classifying the spend as a replay.
+  mirrorAcceptedBillableLength (request) {
+    request = canonical(coreMirrorRequestV1, request, 'Core mirror request').value
+    const requestCommitment = coreMirrorRequestCommitment({
+      ...request,
+      relayPublicKey: this.relayPublicKey
+    })
+    for (const attempt of this.mirrorAttempts.values()) {
+      if (!same(attempt.requestCommitment, requestCommitment)) continue
+      const admission = decodeCanonical(preparedAdmissionStoreV1,
+        attempt.preparedAdmissionBytes, { copyBytes: true })
+      return BigInt(MEBIBYTE) << BigInt(admission.resourceClass - 1)
+    }
+    return null
+  }
+
   inspectMirrorSpend (spendTag) {
     const attempt = this.mirrorAttempts.get(hex(bytes(spendTag, 32, 'spendTag')))
     return attempt ? mirrorAttemptView(attempt, true) : null

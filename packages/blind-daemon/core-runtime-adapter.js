@@ -19,7 +19,6 @@ const MAX_PROOF_BYTES = 4 * 1024 * 1024 - 256
 export const BLIND_CORE_RUNTIME_BLOCKERS = Object.freeze([
   'PINNED_BLIND_PEER_HYPERCORE_INTEROP_UNPROVEN',
   'CORE_UPSTREAM_SIGNED_HEAD_PROOF_AUTHORITY_UNASSEMBLED',
-  'CORE_COMMITTED_RESULT_COORDINATOR_BINDING_UNASSEMBLED',
   'CORE_NATIVE_CHILD_PRIVATE_IPC_HANDOFF_UNASSEMBLED',
   'CORE_ALL_FAMILY_CHECKPOINT_COMPOSITION_UNASSEMBLED'
 ])
@@ -151,7 +150,8 @@ export class BlindCoreRuntimeAdapter {
         typeof options.storage.proveState !== 'function' ||
         typeof options.storage.inspectCoreFloor !== 'function' ||
         typeof options.storage.inspectProofSource !== 'function' ||
-        typeof options.storage.mirrorBillableBytes !== 'function') {
+        typeof options.storage.mirrorBillableBytes !== 'function' ||
+        typeof options.storage.mirrorAcceptedBillableLength !== 'function') {
       throw new TypeError('complete BlindCoreStorageEngine authority is required')
     }
     if (!options.descriptorState || typeof options.descriptorState.resultBinding !== 'function') {
@@ -216,7 +216,14 @@ export class BlindCoreRuntimeAdapter {
   async inspectCheapState (raw) {
     const input = coreInput(raw)
     if (input.profile.operationId === OPERATION.CORE.MIRROR) {
-      return { coreBillableBytes: this.storage.mirrorBillableBytes(input.request) }
+      try {
+        return { coreBillableBytes: this.storage.mirrorBillableBytes(input.request) }
+      } catch (error) {
+        if (!error || error.code !== 'RENEW_NOT_DUE') throw error
+        const replayed = this.storage.mirrorAcceptedBillableLength(input.request)
+        if (replayed == null) throw error
+        return { coreBillableBytes: replayed }
+      }
     }
     if (input.profile.operationId === OPERATION.CORE.PROVE) {
       this.storage.inspectProofSource(input.request)

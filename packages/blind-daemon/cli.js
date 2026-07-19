@@ -20,6 +20,7 @@ export async function runBlindDaemonCli (options = {}) {
   const runtimeConfig = loadProductionRuntimeConfig(environment, bootstrap.endpointIds)
   const enableCellRuntime = options.enableCellRuntime === true
   const enableInboxRuntime = options.enableInboxRuntime === true
+  const enableCoreRuntime = options.enableCoreRuntime === true
   let runtime
   try {
     runtime = await assembleProductionBlindDaemon({
@@ -28,6 +29,7 @@ export async function runBlindDaemonCli (options = {}) {
       releaseGate,
       enableCellRuntime,
       enableInboxRuntime,
+      enableCoreRuntime,
       resolveAdmissionAdapter: options.resolveAdmissionAdapter,
       testOnlyPrivateIpcReplayJournalOptions: options.testOnlyPrivateIpcReplayJournalOptions,
       onError: error => {
@@ -43,7 +45,9 @@ export async function runBlindDaemonCli (options = {}) {
 
   const status = runtime.status()
   const operations = enableCellRuntime
-    ? enableInboxRuntime ? 'DESCRIBE,CELL,INBOX' : 'DESCRIBE,CELL'
+    ? enableInboxRuntime
+      ? enableCoreRuntime ? 'DESCRIBE,CELL,INBOX,CORE' : 'DESCRIBE,CELL,INBOX'
+      : 'DESCRIBE,CELL'
     : 'DESCRIBE only'
   const writeState = enableCellRuntime
     ? `; CELL.PUT=${status.v2WritePathReady ? 'ready' : status.privateIpcReplayJournal?.reason || 'not-ready'}`
