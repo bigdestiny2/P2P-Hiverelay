@@ -23,8 +23,26 @@ import { TorTransport } from 'p2p-hiverelay/transports/tor/index.js'
 const ENABLED = !!process.env.HIVERELAY_TOR_TEST
 const BULK = !!process.env.HIVERELAY_TOR_BULK
 const ASSERT_GATE = !!process.env.HIVERELAY_TOR_ASSERT_GATE
-const SOCKS_PORT = 19150
-const CONTROL_PORT = 19151
+
+// The socks package emits an unhandled 'error' event alongside its promise
+// rejection on proxy-connect timeout (onEstablishedTimeout → closeSocket →
+// emit('error')). The rejected promise already drives the retry loop below;
+// the duplicate emitter error is the SAME condition and would otherwise kill
+// the process mid-retry. Swallow exactly that signature; anything else crashes.
+process.on('uncaughtException', (err) => {
+  if (err && err.name === 'SocksClientError' && /Proxy connection timed out/.test(err.message)) return
+  throw err
+})
+
+// pid+counter-derived ports so parallel runs and leftover daemons never
+// collide (a stale tor holding the port silently stalls bootstrap); the
+// counter also separates successive tests inside one file.
+let portNonce = 0
+function nextPorts () {
+  portNonce += 1
+  const base = 19000 + ((process.pid + portNonce * 37) % 900)
+  return { socks: base, control: base + 1 }
+}
 const GATE_MS = 10 * 60 * 1000
 
 function resolveTorBin () {
@@ -34,17 +52,24 @@ function resolveTorBin () {
 
 function startTor (dataDir) {
   fs.mkdirSync(dataDir, { recursive: true })
-  fs.writeFileSync(path.join(dataDir, 'torrc'), [
+  const ports = nextPorts()
+  const lines = [
     'DataDirectory ' + dataDir,
-    'SocksPort ' + SOCKS_PORT,
-    'ControlPort ' + CONTROL_PORT,
+    'SocksPort ' + ports.socks,
+    'ControlPort ' + ports.control,
     'CookieAuthentication 1',
     'Log notice file ' + path.join(dataDir, 'tor.log')
-  ].join('\n'))
-  return spawn(resolveTorBin(), ['-f', path.join(dataDir, 'torrc')], { stdio: 'ignore' })
+  ]
+  // Optional calibrated run: HIVERELAY_TOR_BANDWIDTH_RATE=1250KB pins the
+  // daemon's relay rate (e.g. to the 10 Mbps uplink the RA-05 gate is
+  // calibrated against) so the measurement is comparable across machines.
+  if (process.env.HIVERELAY_TOR_BANDWIDTH_RATE) lines.push('BandwidthRate ' + process.env.HIVERELAY_TOR_BANDWIDTH_RATE)
+  fs.writeFileSync(path.join(dataDir, 'torrc'), lines.join('\n'))
+  const proc = spawn(resolveTorBin(), ['-f', path.join(dataDir, 'torrc')], { stdio: 'ignore' })
+  return { proc, socksPort: ports.socks, controlPort: ports.control }
 }
 
-async function waitBootstrap (dataDir, timeoutMs = 360000) {
+async function waitBootstrap (dataDir, timeoutMs = Number(process.env.HIVERELAY_TOR_BOOTSTRAP_TIMEOUT_MS) || 360000) {
   const logFile = path.join(dataDir, 'tor.log')
   const t0 = Date.now()
   for (;;) {
@@ -84,13 +109,13 @@ function stripHttp (buf) {
   return buf.subarray(idx + 4)
 }
 
-async function onionFetch (t, sizeBytes, { keyFile, cookieFile }) {
+async function onionFetch (t, sizeBytes, { keyFile, cookieFile, socksPort, controlPort }) {
   const blob = crypto.randomBytes(sizeBytes)
   const expected = crypto.createHash('sha256').update(blob).digest('hex')
   const port = await blobServer(t, { blob })
   const transport = new TorTransport({
-    socksPort: SOCKS_PORT,
-    controlPort: CONTROL_PORT,
+    socksPort,
+    controlPort,
     cookieAuthFile: cookieFile,
     keyFile,
     localPort: port,
@@ -105,8 +130,8 @@ async function onionFetch (t, sizeBytes, { keyFile, cookieFile }) {
   const firstAddress = transport.onionAddress
   await transport.stop()
   const transport2 = new TorTransport({
-    socksPort: SOCKS_PORT,
-    controlPort: CONTROL_PORT,
+    socksPort,
+    controlPort,
     cookieAuthFile: cookieFile,
     keyFile,
     localPort: port
@@ -116,7 +141,21 @@ async function onionFetch (t, sizeBytes, { keyFile, cookieFile }) {
   t.is(transport2.onionAddress, firstAddress, 'persistent address survives restart')
 
   const t0 = Date.now()
-  const stream = await transport2.connect(firstAddress, 80)
+  // A freshly created onion's descriptor takes real time to upload to HSDirs
+  // and become fetchable by this daemon — connect can fail/timeout inside the
+  // propagation window (the transport's steady-state 30 s connect timeout is
+  // correct). Retry through it; only the successful fetch is timed.
+  let stream = null
+  const deadline = t0 + 4 * 60 * 1000
+  for (;;) {
+    try {
+      stream = await transport2.connect(firstAddress, 80)
+      break
+    } catch (err) {
+      if (Date.now() > deadline) throw err
+      await new Promise((resolve) => setTimeout(resolve, 5000))
+    }
+  }
   const raw = await httpGetStream(stream, firstAddress, '/blob')
   const ms = Date.now() - t0
   const body = stripHttp(raw)
@@ -133,13 +172,13 @@ it('onion bulk fetch — 5 MB integrity + throughput (live tor)', { timeout: 900
   if (!resolveTorBin()) { t.comment('no tor binary found — skipping'); return }
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hiverelay-tor-bulk-'))
   t.teardown(() => { try { fs.rmSync(dataDir, { recursive: true, force: true }) } catch {} })
-  const proc = startTor(dataDir)
+  const { proc, socksPort, controlPort } = startTor(dataDir)
   t.teardown(() => { proc.kill('SIGTERM') })
   await waitBootstrap(dataDir)
   const keyFile = path.join(dataDir, 'hs-key.blob')
   const cookieFile = path.join(dataDir, 'control_auth_cookie')
 
-  const r = await onionFetch(t, 5 * 1024 * 1024, { keyFile, cookieFile })
+  const r = await onionFetch(t, 5 * 1024 * 1024, { keyFile, cookieFile, socksPort, controlPort })
   t.comment(`5MB over onion: ${r.ms}ms (${r.mbps} Mbps)`)
   t.ok(r.bytes === 5 * 1024 * 1024)
 })
@@ -148,13 +187,13 @@ itBulk('onion bulk fetch — 100 MB gate measurement (live tor)', { timeout: 150
   if (!resolveTorBin()) { t.comment('no tor binary found — skipping'); return }
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hiverelay-tor-bulk100-'))
   t.teardown(() => { try { fs.rmSync(dataDir, { recursive: true, force: true }) } catch {} })
-  const proc = startTor(dataDir)
+  const { proc, socksPort, controlPort } = startTor(dataDir)
   t.teardown(() => { proc.kill('SIGTERM') })
   await waitBootstrap(dataDir)
   const keyFile = path.join(dataDir, 'hs-key.blob')
   const cookieFile = path.join(dataDir, 'control_auth_cookie')
 
-  const r = await onionFetch(t, 100 * 1024 * 1024, { keyFile, cookieFile })
+  const r = await onionFetch(t, 100 * 1024 * 1024, { keyFile, cookieFile, socksPort, controlPort })
   t.comment(`100MB over onion: ${r.ms}ms (${r.mbps} Mbps) — RA-05 gate is ${GATE_MS}ms`)
   t.ok(r.bytes === 100 * 1024 * 1024)
   if (ASSERT_GATE) {
