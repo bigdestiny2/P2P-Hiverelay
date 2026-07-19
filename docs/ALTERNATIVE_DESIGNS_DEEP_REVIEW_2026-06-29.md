@@ -5,8 +5,8 @@
 This reviews the two actual adversarial-review alternative specs supplied after
 the earlier release-scope reconstruction:
 
-- `/Users/localllm/Projects/SPEC-RELAYKERNEL-v1.md`
-- `/Users/localllm/Projects/SPEC-HIVEMESH-v1.md`
+- `~/Projects/SPEC-RELAYKERNEL-v1.md`
+- `~/Projects/SPEC-HIVEMESH-v1.md`
 
 This note supersedes the speculative parts of
 `docs/RELEASE_SCOPE_ALTERNATIVES_2026-06-29.md`. That earlier note correctly

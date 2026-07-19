@@ -24,7 +24,7 @@ if (!API_KEY) {
   process.exit(1)
 }
 
-const SSH_KEY = process.env.SSH_KEY || `${process.env.HOME}/.ssh/cloudzy_hiverelay`
+const SSH_KEY = process.env.SSH_KEY || `${process.env.HOME}/.ssh/hiverelay_fleet`
 
 const RELAYS = [
   { name: 'Utah', ip: '144.172.101.215', port: 9100, region: 'NA' },

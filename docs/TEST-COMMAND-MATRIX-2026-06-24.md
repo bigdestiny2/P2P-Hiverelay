@@ -6,7 +6,7 @@ Current Level 1 command matrix for the Hiverelay / Blindspark monorepo.
 
 Source root:
 
-`/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay`
+`~/pear-ecosystem/00-core/hiverelay`
 
 This matrix updates the 2026-06-23 matrix with the current release-proof state
 and the focused validation executed for the 2026-06-24 status audit.

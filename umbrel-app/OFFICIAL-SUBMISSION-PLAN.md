@@ -149,8 +149,8 @@ git checkout -b add-blindspark
 
 # Create the app directory with ONLY the allowed files
 mkdir -p blindspark/data
-cp /Users/localllm/hiverelay/umbrel-app/umbrel-app.yml      blindspark/umbrel-app.yml
-cp /Users/localllm/hiverelay/umbrel-app/docker-compose.yml  blindspark/docker-compose.yml
+cp ~/hiverelay/umbrel-app/umbrel-app.yml      blindspark/umbrel-app.yml
+cp ~/hiverelay/umbrel-app/docker-compose.yml  blindspark/docker-compose.yml
 touch blindspark/data/.gitkeep
 
 git add blindspark

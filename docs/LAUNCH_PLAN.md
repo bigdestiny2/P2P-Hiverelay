@@ -104,7 +104,7 @@ Everything below builds on that foundation, one layer at a time.
 - Test transaction orchestration with a real multi-step workflow: `storage.drive-read` -> `compute.submit` -> result
 
 **Week 13-14: Recruit 2 high-capability operators**
-- Find 2 operators with serious hardware (Mac Studio, GPU server, 32GB+ RAM)
+- Find 2 operators with serious hardware (workstation, GPU server, 32GB+ RAM)
 - Help them configure worker pools (`routerWorkers: 4` or named pools)
 - Enable AI service with a local Ollama instance (llama3-7b or similar)
 - Enable ZK service

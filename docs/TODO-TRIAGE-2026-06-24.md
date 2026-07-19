@@ -1,6 +1,6 @@
 # Hiverelay TODO Triage - 2026-06-24
 
-Source root: `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay`
+Source root: `~/pear-ecosystem/00-core/hiverelay`
 
 This Level 2 loop checked the highest-value TODO/FIXME surface in maintained Hiverelay source. The result is intentionally a classification artifact rather than a code patch: the current worktree is already very large and dirty, and the marker scan found no active first-party TODO/FIXME implementation cluster worth forcing into this loop.
 

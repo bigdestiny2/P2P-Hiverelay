@@ -18,7 +18,7 @@ and the executable RelayKernel gateway compatibility matrix.
 
 Source root:
 
-`/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay`
+`~/pear-ecosystem/00-core/hiverelay`
 
 This matrix supersedes the 2026-06-24 matrix for the current local ship loop.
 It records only local evidence. Live fleet promotion, official Umbrel review,
