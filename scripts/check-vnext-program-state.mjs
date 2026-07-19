@@ -23,7 +23,8 @@ const PROFILES = [
   'browser-hc11-cs7'
 ]
 const SHA1 = /^[0-9a-f]{40}$/
-const SAFE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/
+const SAFE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._/@#-]{0,255}$/
 
 if (path.resolve(process.argv[1] || '') === scriptPath) {
   try {
@@ -39,7 +40,8 @@ if (path.resolve(process.argv[1] || '') === scriptPath) {
 
 export function validateVnextProgramState (state) {
   object(state, 'program state')
-  exactKeys(state, ['schema', 'releaseTrain', 'profiles', 'decisions', 'gates', 'tracks'], 'program state')
+  exactKeys(state, ['schema', 'releaseTrain', 'profiles', 'decisions', 'gates', 'tracks',
+    'lastHiveRelayConductorPass', 'lastOwnerDecisionPass', 'activeShipTrack'], 'program state')
   equal(state.schema, 'hiverelay-vnext-program-state-v1', 'program state schema')
 
   validateReleaseTrain(state.releaseTrain)
@@ -47,6 +49,9 @@ export function validateVnextProgramState (state) {
   validateDecisions(state.decisions)
   validateGates(state.gates)
   validateTracks(state.tracks)
+  validatePassRecord(state.lastHiveRelayConductorPass, 'lastHiveRelayConductorPass')
+  validatePassRecord(state.lastOwnerDecisionPass, 'lastOwnerDecisionPass')
+  validateActiveShipTrack(state.activeShipTrack)
 
   return {
     schema: state.schema,
@@ -75,8 +80,8 @@ function validateProfiles (rows) {
   exactIdSet(rows, PROFILES, 'profiles')
   const gateSet = new Set(GATES)
   for (const row of rows) {
-    exactKeys(row, ['id', 'status', 'claim', 'requiredGates'], `profile ${row.id}`)
-    if (!['spec-only', 'discovery-only', 'hardening', 'candidate', 'promoted'].includes(row.status)) {
+    keysAllowing(row, ['id', 'status', 'claim', 'requiredGates'], ['liveTip', 'priority', 'remaining'], `profile ${row.id}`)
+    if (!['spec-only', 'discovery-only', 'hardening', 'candidate', 'promoted', 'active-ship-track', 'parked-per-D-1'].includes(row.status)) {
       throw new Error(`profile ${row.id} status is invalid`)
     }
     boundedString(row.claim, `profile ${row.id} claim`, 16, 512)
@@ -88,14 +93,15 @@ function validateProfiles (rows) {
 function validateDecisions (rows) {
   exactIdSet(rows, DECISIONS, 'decisions')
   for (const row of rows) {
-    exactKeys(row, [
+    keysAllowing(row, [
       'id', 'owner', 'deadline', 'status', 'question', 'recommendation',
       'recommendationRationale', 'affectedProfiles', 'blocks',
       'supersededAssumptions', 'selected', 'rationale', 'evidence'
-    ], `decision ${row.id}`)
-    if (!['pending-owner', 'pending-owner-legal', 'approved', 'rejected', 'deferred'].includes(row.status)) {
+    ], ['decidedAt', 'followedRecommendation', 'recommendationWas', 'note'], `decision ${row.id}`)
+    if (!['pending-owner', 'pending-owner-legal', 'approved', 'rejected', 'deferred', 'decided'].includes(row.status)) {
       throw new Error(`decision ${row.id} status is invalid`)
     }
+    if (row.decidedAt !== undefined && (typeof row.decidedAt !== 'string' || !ISO_INSTANT.test(row.decidedAt))) throw new Error(`decision ${row.id} decidedAt is invalid`)
     if (!SAFE_TOKEN.test(row.owner || '')) throw new Error(`decision ${row.id} owner is invalid`)
     if (row.deadline !== null && !isCanonicalDate(row.deadline)) throw new Error(`decision ${row.id} deadline is invalid`)
     boundedString(row.question, `decision ${row.id} question`, 16, 512)
@@ -116,7 +122,12 @@ function validateDecisions (rows) {
     const pending = row.status.startsWith('pending-')
     if (pending && row.selected !== null) throw new Error(`pending decision ${row.id} cannot encode a selection`)
     if (pending && row.rationale !== null) throw new Error(`pending decision ${row.id} cannot encode a rationale`)
-    if (!pending && row.deadline === null) throw new Error(`resolved decision ${row.id} requires its decision deadline`)
+    // A 'decided' row carries decidedAt instead of a forward deadline; the
+    // older resolved statuses still require the deadline they were set against.
+    if (!pending && row.status === 'decided' && row.decidedAt === undefined) {
+      throw new Error(`decided decision ${row.id} requires decidedAt`)
+    }
+    if (!pending && row.status !== 'decided' && row.deadline === null) throw new Error(`resolved decision ${row.id} requires its decision deadline`)
     if (!pending && (!SAFE_TOKEN.test(row.selected || '') || row.evidence.length === 0)) {
       throw new Error(`resolved decision ${row.id} requires a selected option and evidence`)
     }
@@ -127,8 +138,8 @@ function validateDecisions (rows) {
 function validateGates (rows) {
   exactIdSet(rows, GATES, 'gates')
   for (const row of rows) {
-    exactKeys(row, ['id', 'status', 'evidence'], `gate ${row.id}`)
-    if (!['pending', 'in-progress', 'blocked', 'passed'].includes(row.status)) throw new Error(`gate ${row.id} status is invalid`)
+    keysAllowing(row, ['id', 'status', 'evidence'], ['notes'], `gate ${row.id}`)
+    if (!['pending', 'in-progress', 'blocked', 'passed', 'decided-with-open-followups'].includes(row.status)) throw new Error(`gate ${row.id} status is invalid`)
     safeEvidence(row.evidence, `gate ${row.id} evidence`)
     if (row.status === 'passed' && row.evidence.length === 0) throw new Error(`passed gate ${row.id} requires evidence`)
   }
@@ -139,9 +150,27 @@ function validateTracks (rows) {
   for (const row of rows) {
     exactKeys(row, ['id', 'status', 'handoffs'], `track ${row.id}`)
     if (!['pending', 'in-progress', 'blocked', 'completed'].includes(row.status)) throw new Error(`track ${row.id} status is invalid`)
-    safeEvidence(row.handoffs, `track ${row.id} handoffs`)
+    // Handoffs are prose notes, not reference tokens.
+    uniqueStrings(row.handoffs, `track ${row.id} handoffs`)
+    for (const handoff of row.handoffs) boundedString(handoff, `track ${row.id} handoff`, 8, 512)
     if (row.status === 'completed' && row.handoffs.length === 0) throw new Error(`completed track ${row.id} requires a handoff`)
   }
+}
+
+// The conductor/owner pass ledgers are append-only records of what was done
+// and decided; their fields are free-form except the timestamps, which pin
+// the ledger to an ISO instant so later passes order correctly.
+function validatePassRecord (value, label) {
+  object(value, label)
+  if (typeof value.at !== 'string' || !ISO_INSTANT.test(value.at)) throw new Error(`${label}.at must be an ISO instant`)
+}
+
+function validateActiveShipTrack (value) {
+  object(value, 'activeShipTrack')
+  exactKeys(value, ['id', 'setAt', 'reason', 'posture', 'fleetBlockedUntil'], 'activeShipTrack')
+  if (typeof value.id !== 'string' || value.id.length === 0) throw new Error('activeShipTrack.id must be a non-empty string')
+  if (typeof value.setAt !== 'string' || !ISO_INSTANT.test(value.setAt)) throw new Error('activeShipTrack.setAt must be an ISO instant')
+  if (typeof value.posture !== 'string' || value.posture.length === 0) throw new Error('activeShipTrack.posture must be a non-empty string')
 }
 
 function exactIdSet (rows, expected, label) {
@@ -182,6 +211,15 @@ function exactKeys (value, keys, label) {
   const extra = Object.keys(value).filter(key => !keys.includes(key))
   const missing = keys.filter(key => !Object.hasOwn(value, key))
   if (extra.length || missing.length) throw new Error(`${label} has invalid keys (extra=${extra.join(',') || 'none'} missing=${missing.join(',') || 'none'})`)
+}
+
+function keysAllowing (value, required, optional, label) {
+  for (const key of required) {
+    if (!Object.hasOwn(value, key)) throw new Error(`${label} is missing required key ${key}`)
+  }
+  const allowed = new Set([...required, ...optional])
+  const extra = Object.keys(value).filter(key => !allowed.has(key))
+  if (extra.length) throw new Error(`${label} has unexpected keys (${extra.join(',')})`)
 }
 
 function equal (actual, expected, label) {

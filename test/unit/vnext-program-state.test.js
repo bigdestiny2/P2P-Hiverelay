@@ -8,13 +8,17 @@ test('vNext program state validates the canonical release train without approvin
   const result = validateVnextProgramState(structuredClone(canonical))
   t.is(result.schema, 'hiverelay-vnext-program-state-v1')
   t.is(result.profiles, 5)
-  t.alike(result.pendingDecisions, ['D-1', 'D-2', 'D-3', 'D-4', 'D-5', 'D-6', 'D-7'])
+  t.alike(result.pendingDecisions, [])
   t.alike(result.passedGates, [])
-  t.alike(result.activeTracks, ['T00', 'T01', 'T01B', 'T02', 'T05'])
+  t.alike(result.activeTracks, ['T00', 'T01', 'T01B', 'T02', 'T03', 'T04', 'T05'])
 })
 
 test('vNext program state rejects recommendation-as-authorization drift', (t) => {
   const state = structuredClone(canonical)
+  // The drift rule guards PENDING decisions (a recommendation can never become
+  // a selection without an owner action) — D-1 is decided in the canonical
+  // ledger, so put it back into a pending state to exercise the guard.
+  state.decisions[0].status = 'pending-owner'
   state.decisions[0].selected = state.decisions[0].recommendation
   t.exception(() => validateVnextProgramState(state), /pending decision D-1 cannot encode a selection/)
 })
