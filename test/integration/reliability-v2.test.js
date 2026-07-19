@@ -163,7 +163,11 @@ test('Reliability v2: multi-cycle start/stop with seeded apps is clean', async (
   await publisher.start()
   const seededKeys = []
   for (let i = 0; i < 3; i++) {
-    const drive = new Hyperdrive(publisher.store.namespace('reliability-source-' + i).session())
+    // Corestore 7: session() no longer inherits the parent namespace, so
+    // namespace(name).session() collapses every drive onto the default
+    // namespace's shared 'db' core and the second Hyperdrive's exclusive
+    // open deadlocks. namespace(name) already returns the scoped session.
+    const drive = new Hyperdrive(publisher.store.namespace('reliability-source-' + i))
     await drive.ready()
     await drive.put('/initial.bin', randomBytes(64 * 1024))
     sourceDrives.push(drive)

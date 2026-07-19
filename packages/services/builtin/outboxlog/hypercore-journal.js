@@ -8,6 +8,7 @@
  */
 
 import { EventEmitter } from 'node:events'
+import Hypercore from 'hypercore'
 import { positiveStorageBound } from 'p2p-hiverelay/config/storage-cap.js'
 
 export const OUTBOXLOG_HYPERCORE_JOURNAL_NAME = 'outboxlog/operations'
@@ -181,7 +182,16 @@ class JournalStorageController {
     for (const core of this.cores) {
       if (!core || typeof core.info !== 'function') throw new Error('OutboxLog exact core storage info unavailable')
       const info = await core.info({ storage: true })
-      if (!info || !info.storage) throw new Error('OutboxLog exact core storage info unavailable')
+      if (!info) throw new Error('OutboxLog exact core storage info unavailable')
+      if (!info.storage) {
+        // corestore 7 / RocksDB-backed storage no longer exposes per-core
+        // physical file usage — core.info({ storage: true }) yields
+        // storage: null there. Fall back to the deterministic on-disk
+        // content size derived from the core itself.
+        actual += deriveCoreStorageBytes(core)
+        if (!Number.isSafeInteger(actual)) throw new Error('OutboxLog exact core storage exceeds safe integer range')
+        continue
+      }
       for (const value of Object.values(info.storage)) {
         const bytes = Number(value)
         if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error('OutboxLog exact core storage info invalid')
@@ -765,6 +775,30 @@ async function readyCore (core) {
 }
 
 async function tryOpenExistingCore (store, opts) {
+  // Corestore 7 session semantics: a store.get({ createIfMissing: false })
+  // that misses storage fails the core's opening with STORAGE_EMPTY, and
+  // hypercore can never finish closing such a session (close() rethrows the
+  // open error before unregistering it), so the failed core stays tracked by
+  // the store and every later store.close() rejects on its rejected opening.
+  // Probe existence by discovery key instead: get({ discoveryKey }) checks
+  // storage before any tracked core is created, so a miss rejects without
+  // poisoning Corestore teardown.
+  if (opts && opts.name && typeof store.createKeyPair === 'function') {
+    // Mirrors corestore's named-core auth: a namespace-derived key pair under
+    // the default single-signer manifest determines the core's discovery key.
+    const keyPair = await store.createKeyPair(opts.name)
+    const manifest = { version: store.manifestVersion || 1, signers: [{ publicKey: keyPair.publicKey }] }
+    const discoveryKey = Hypercore.discoveryKey(Hypercore.key(manifest))
+    const probe = store.get({ discoveryKey })
+    try {
+      await readyCore(probe)
+      return probe
+    } catch (err) {
+      try { await probe.close() } catch (_) {}
+      if (!err || err.code !== 'STORAGE_EMPTY') throw err
+      return null
+    }
+  }
   const core = store.get({ ...opts, createIfMissing: false })
   try {
     await readyCore(core)
@@ -774,6 +808,16 @@ async function tryOpenExistingCore (store, opts) {
     try { if (typeof core.close === 'function') await core.close() } catch (_) {}
     return null
   }
+}
+
+// Deterministic on-disk content size for backends (corestore 7 / RocksDB)
+// that cannot report per-core physical file usage: exact block payload bytes
+// plus the merkle tree (40 bytes per node, ~2 nodes per block) and the
+// bitfield (1 bit per block).
+function deriveCoreStorageBytes (core) {
+  const length = Number.isSafeInteger(core.length) && core.length > 0 ? core.length : 0
+  const byteLength = Number.isSafeInteger(core.byteLength) && core.byteLength > 0 ? core.byteLength : 0
+  return byteLength + (2 * length * 40) + Math.ceil(length / 8)
 }
 
 function coreKeyHex (core) {

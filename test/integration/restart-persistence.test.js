@@ -99,7 +99,11 @@ async function startPublisher (baseDir, bootstrap, count, label) {
   const keys = []
   await publisher.start()
   for (let i = 0; i < count; i++) {
-    const drive = new Hyperdrive(publisher.store.namespace(`${label}-${i}`).session())
+    // Corestore 7: session() no longer inherits the parent namespace, so
+    // namespace(name).session() collapses every drive onto the default
+    // namespace's shared 'db' core and the second Hyperdrive's exclusive
+    // open deadlocks. namespace(name) already returns the scoped session.
+    const drive = new Hyperdrive(publisher.store.namespace(`${label}-${i}`))
     await drive.ready()
     await drive.put('/index.bin', randomBytes(64 * 1024))
     drives.push(drive)
