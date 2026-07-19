@@ -426,6 +426,33 @@ export class HyperGateway extends EventEmitter {
     this._ready = false
     this._readyPromise = null
     this._readyController = null
+
+    // Federated signed denylist (takedown channel). Defaults to the relay
+    // node's shared store; a standalone gateway can take an explicit
+    // opts.denylist (null disables enforcement). Every verified entry added
+    // anywhere — local operator issue or federation gossip — purges the
+    // drive from this gateway's caches and stops its in-flight streams.
+    this._denylist = opts.denylist === undefined
+      ? (relayNode && relayNode.gatewayDenylist) || null
+      : opts.denylist
+    this._onDenylistEntryAdded = null
+    this._armDenylistListener()
+  }
+
+  // The purge listener is armed lazily and disarmed on close: the node-level
+  // denylist outlives any single gateway instance across restarts, so a
+  // closed gateway must not keep a stale listener (or its drive closures)
+  // reachable through it. handle() re-arms on the next request.
+  _armDenylistListener () {
+    if (this._onDenylistEntryAdded || !this._denylist || typeof this._denylist.on !== 'function') return
+    this._onDenylistEntryAdded = () => this._purgeDeniedDrives()
+    this._denylist.on('entry-added', this._onDenylistEntryAdded)
+  }
+
+  _disarmDenylistListener () {
+    if (!this._onDenylistEntryAdded || !this._denylist) return
+    this._denylist.removeListener('entry-added', this._onDenylistEntryAdded)
+    this._onDenylistEntryAdded = null
   }
 
   /**
@@ -577,12 +604,14 @@ export class HyperGateway extends EventEmitter {
       return
     }
 
+    this._armDenylistListener()
+
     const controller = new AbortController()
     let handlerSettled = false
     let responseSettled = res.destroyed || res.writableEnded || res.writableFinished
     let resolveSettled
     const settled = new Promise(resolve => { resolveSettled = resolve })
-    const state = { controller, res, settled, forceResponseSettlement: null }
+    const state = { controller, res, settled, forceResponseSettlement: null, keyHex: null }
     this._activeRequestStates.add(state)
 
     const maybeSettle = () => {
@@ -609,14 +638,14 @@ export class HyperGateway extends EventEmitter {
     res.once('close', onClose)
 
     try {
-      await this._handleRequest(req, res, context, controller.signal)
+      await this._handleRequest(req, res, context, controller.signal, state)
     } finally {
       handlerSettled = true
       maybeSettle()
     }
   }
 
-  async _handleRequest (req, res, context = null, signal = null) {
+  async _handleRequest (req, res, context = null, signal = null, requestState = null) {
     const url = new URL(req.url, 'http://localhost')
     const path = url.pathname
     if (context !== null && !isIssuedExactAppContext(context)) {
@@ -710,6 +739,23 @@ export class HyperGateway extends EventEmitter {
       return
     }
     keyHex = keyHex.toLowerCase()
+    if (requestState) requestState.keyHex = keyHex
+
+    // Federated signed denylist — fail closed BEFORE any existence-specific
+    // response or drive lookup, on both the /v1/hyper path lane and the
+    // exact app-origin lane. 451 Unavailable For Legal Reasons is honest
+    // signaling here: the channel is public by design (unlike the outboxlog
+    // DO-NOT-SERVE tombstone, whose opaque-id suppression is deliberately
+    // indistinguishable from absence).
+    const deniedEntry = this._deniedDenylistEntry(keyHex)
+    if (deniedEntry) {
+      sendJson({
+        error: 'Unavailable For Legal Reasons',
+        takedown: true,
+        reason: deniedEntry.reason
+      }, 451)
+      return
+    }
     if (exactBytes) {
       res.setHeader('X-Hive-App-Key', keyHex)
       res.setHeader('Vary', 'Host')
@@ -1135,6 +1181,61 @@ export class HyperGateway extends EventEmitter {
       sendJson({ error: 'Gateway read failed' }, 502)
     } finally {
       if (requestDriveLease) requestDriveLease.settleHandler()
+    }
+  }
+
+  _deniedDenylistEntry (keyHex) {
+    const denylist = this._denylist
+    if (!denylist || typeof denylist.entryFor !== 'function') return null
+    try {
+      return denylist.entryFor(keyHex)
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Purge every denied drive from this gateway's caches and stop its
+   * in-flight work. Triggered by the denylist's 'entry-added' event, so a
+   * takedown — local or received over federation gossip — takes effect
+   * immediately instead of at the next cache miss.
+   */
+  _purgeDeniedDrives () {
+    const denylist = this._denylist
+    if (!denylist || typeof denylist.isDenied !== 'function') return
+    const isDenied = (keyHex) => {
+      try {
+        return denylist.isDenied(keyHex) === true
+      } catch {
+        return false
+      }
+    }
+
+    // Stop in-flight request handling for denied drives first — aborting the
+    // request controller tears down its drive stream through the normal
+    // response-close path instead of racing it.
+    const takedownError = createAbortError('Drive taken down by gateway denylist')
+    for (const state of this._activeRequestStates) {
+      if (state.keyHex && isDenied(state.keyHex) && !state.controller.signal.aborted) {
+        state.controller.abort(takedownError)
+      }
+    }
+    for (const [keyHex, controller] of this._driveOpenControllers) {
+      if (isDenied(keyHex) && !controller.signal.aborted) controller.abort(takedownError)
+    }
+    for (const [keyHex, refresh] of this._driveRefreshPromises) {
+      if (isDenied(keyHex) && !refresh.controller.signal.aborted) refresh.controller.abort(takedownError)
+    }
+    for (const [keyHex, state] of this._seededDriveUpdateStates) {
+      if (isDenied(keyHex) && !state.controller.signal.aborted) state.controller.abort(takedownError)
+    }
+
+    // Evict denied drives from the LRU and retire them (closed once any
+    // outstanding borrow drains) so a later request cannot hit a warm cache.
+    for (const [keyHex, entry] of this._drives.entries()) {
+      if (!isDenied(keyHex)) continue
+      this._drives.delete(keyHex)
+      if (entry?.drive) this._retireOwnedDrive(entry.drive)
     }
   }
 
@@ -1701,6 +1802,7 @@ export class HyperGateway extends EventEmitter {
 
   async _close () {
     const shutdownError = createAbortError('Gateway is shutting down')
+    this._disarmDenylistListener()
     const requestStates = [...this._activeRequestStates]
     for (const state of requestStates) {
       if (!state.controller.signal.aborted) state.controller.abort(shutdownError)
