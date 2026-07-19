@@ -1,5 +1,5 @@
 import assert from 'node:assert'
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'brittle'
@@ -12,6 +12,7 @@ import {
   OutboxLogApp,
   canonicalOutboxRecord,
   createHypercoreOutboxJournal,
+  createJsonlOutboxJournal,
   createOutboxBlindSealedBody,
   createPartitionedHypercoreOutboxJournal,
   createMemoryOutboxPersistence,
@@ -23,6 +24,7 @@ import {
   isOutboxBlindSealedBody,
   verifyOutboxRecordSignature
 } from '../../packages/services/builtin/outboxlog/index.js'
+import { OUTBOXLOG_JOURNAL_VERSION } from '../../packages/services/builtin/outboxlog/outbox-log.js'
 
 const HEX64 = /^[0-9a-f]{64}$/i
 const A = 'a'.repeat(64)
@@ -467,8 +469,14 @@ test('outboxlog: takedown suppresses a record from every serve path but keeps it
   t.is(log.snapshot().groups.find(([id]) => id === A)[1].rows.filter(([k]) => k === 'post!p2').length, 1,
     'suppressed record remains in the persisted rows')
 
-  // takedowns() lists the opaque id without any content.
-  t.alike(log.takedowns(), { takedowns: [{ appId: A, key: 'post!p2' }], count: 1 })
+  // takedowns() lists the opaque id + audit metadata without any content.
+  const listed = log.takedowns()
+  t.is(listed.count, 1)
+  t.is(listed.takedowns[0].appId, A)
+  t.is(listed.takedowns[0].key, 'post!p2')
+  t.ok(Number.isFinite(listed.takedowns[0].ts), 'takedown carries an audit timestamp')
+  t.is(listed.takedowns[0].reason, null, 'no reason supplied')
+  t.absent(JSON.stringify(listed).includes('drop-me'), 'no record content in the audit surface')
 
   // operatorStats() is dashboard-safe: counts + namespaces, no record bodies.
   if (typeof log.operatorStats === 'function') {
@@ -548,6 +556,80 @@ test('outboxlog: takedown of a bad opaque id is rejected', (t) => {
   const log = createOutboxLog({ verifyAppend: () => true })
   const err = throws(() => log.takedown(A, ''))
   t.is(err.status, 400)
+})
+
+test('outboxlog: takedown audit fields (ts/reason) survive journal replay and snapshot reloads', (t) => {
+  const journal = createMemoryOutboxJournal()
+  const first = createOutboxLog({ verifyAppend: () => true, journal })
+  first.sync.create(A)
+  first.sync.append(A, { type: 'post', data: post('p1') })
+  first.takedown(A, 'post!p1', 'notice-2026-071')
+
+  const replayed = createOutboxLog({ verifyAppend: () => true, journal })
+  const entry = replayed.takedowns().takedowns[0]
+  t.is(entry.reason, 'notice-2026-071', 'reason replayed from journal')
+  t.ok(Number.isFinite(entry.ts), 'ts replayed from journal')
+
+  const persistence = createMemoryOutboxPersistence()
+  const snap1 = createOutboxLog({ verifyAppend: () => true, persistence })
+  snap1.sync.create(A)
+  snap1.takedown(A, 'post!p9', 'court-order-42')
+  const snap2 = createOutboxLog({ verifyAppend: () => true, persistence })
+  const fromSnapshot = snap2.takedowns().takedowns[0]
+  t.is(fromSnapshot.reason, 'court-order-42', 'reason reloaded from snapshot')
+  t.ok(Number.isFinite(fromSnapshot.ts), 'ts reloaded from snapshot')
+
+  // Legacy pre-audit snapshots carry 2-element [appId, key] pairs — they must
+  // still load, with null audit metadata.
+  const legacy = persistence.snapshot()
+  legacy.suppressed = legacy.suppressed.map(([appId, key]) => [appId, key])
+  persistence.saveSync(legacy)
+  const legacyReader = createOutboxLog({ verifyAppend: () => true, persistence })
+  t.alike(legacyReader.takedowns().takedowns[0], { appId: A, key: 'post!p9', ts: null, reason: null },
+    'legacy 2-element snapshot loads with null audit fields')
+})
+
+test('outboxlog: takedown reason must be a short string; whitespace-only means none', (t) => {
+  const log = createOutboxLog({ verifyAppend: () => true })
+  t.is(throws(() => log.takedown(A, 'post!p1', 'x'.repeat(513))).status, 400, 'over-long reason rejected')
+  t.is(throws(() => log.takedown(A, 'post!p1', 42)).status, 400, 'non-string reason rejected')
+  t.is(throws(() => log.takedown(A, 'post!p1', { note: 'x' })).status, 400, 'object reason rejected')
+  t.ok(log.isSuppressed(A, 'post!p1') === false, 'failed takedowns leave no suppression behind')
+
+  t.alike(log.takedown(A, 'post!p1', '  padded  '), { appId: A, key: 'post!p1', suppressed: true })
+  t.is(log.takedowns().takedowns[0].reason, 'padded', 'reason trimmed')
+  log.takedown(A, 'post!p2', '   ')
+  t.is(log.takedowns().takedowns.find((e) => e.key === 'post!p2').reason, null, 'whitespace-only reason stored as null')
+})
+
+test('outboxlog: jsonl journal boots past a torn final line; mid-file corruption still refuses', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'outboxlog-journal-'))
+  try {
+    const journalPath = join(dir, 'ops.jsonl')
+    const good = [
+      JSON.stringify({ version: OUTBOXLOG_JOURNAL_VERSION, seq: 1, kind: 'takedown', appId: A, key: 'post!p1', drop: true, ts: 1, reason: null }),
+      JSON.stringify({ version: OUTBOXLOG_JOURNAL_VERSION, seq: 2, kind: 'takedown', appId: A, key: 'post!p2', drop: true, ts: 2, reason: null })
+    ]
+    // Crash mid-append: the final line is a partial write.
+    await writeFile(journalPath, good.join('\n') + '\n' + '{"version":1,"seq":3,"kind":"tak', 'utf8')
+    const journal = createJsonlOutboxJournal(journalPath)
+    t.is(journal.loadSync().length, 2, 'good prefix returned despite torn tail')
+    t.is(await readFile(journalPath, 'utf8'), good.join('\n') + '\n', 'file truncated to the good prefix')
+    const names = await readdir(dir)
+    t.ok(names.some((n) => n.startsWith('ops.jsonl.torn-')), 'damaged original quarantined for forensics')
+
+    // The engine end-to-end: a torn tail no longer bricks service startup.
+    const engine = createOutboxLog({ verifyAppend: () => true, journalPath: join(dir, 'ops.jsonl') })
+    t.ok(engine.isSuppressed(A, 'post!p2'), 'engine replayed the good prefix')
+
+    // Mid-file corruption (valid lines AFTER the bad one) is real damage, not a
+    // crash artifact — boot must still refuse.
+    await writeFile(journalPath, good[0] + '\n' + '{"version":1,"seq":2,"kind":"tak\n' + good[1] + '\n', 'utf8')
+    const corrupt = createJsonlOutboxJournal(journalPath)
+    assert.throws(() => corrupt.loadSync(), /corrupt journal line 2/, 'mid-file corruption still blocks boot')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('outboxlog: append event replay is per-outbox bounded and watermark based', (t) => {

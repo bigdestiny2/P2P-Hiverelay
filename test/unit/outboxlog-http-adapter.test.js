@@ -547,6 +547,39 @@ test('outboxlog http admin: authenticated takedown suppresses serve-time reads; 
   t.alike(parseBody(p1), { id: 'p1', t: 'ok' })
 })
 
+test('outboxlog http admin: ?adminToken= query param is NOT accepted (header-only); reason is audited', async (t) => {
+  const app = new OutboxLogApp({ verifyAppend: () => true })
+  const adminAuth = createOutboxLogAdminAuth({ tokens: ['s3cret-admin-token'] })
+  const ctx = { ...createCtx({ app }), adminAuth }
+
+  // Credentials in URLs leak into access logs and browser history — the query
+  // param path is deliberately not honored on admin routes.
+  const viaQuery = fakeRes()
+  await handleOutboxLogRoute(
+    jsonReq('POST', '/api/admin/takedown?adminToken=s3cret-admin-token', { appId: A, key: 'post!p1' }),
+    viaQuery, ctx)
+  t.is(viaQuery.statusCode, 401, 'admin token in the URL is rejected')
+
+  const viaHeader = jsonReq('POST', '/api/admin/takedown', { appId: A, key: 'post!p1', reason: 'notice-9' })
+  viaHeader.headers['x-pear-admin-token'] = 's3cret-admin-token'
+  const okRes = fakeRes()
+  await handleOutboxLogRoute(viaHeader, okRes, ctx)
+  t.is(okRes.statusCode, 200, 'header token accepted')
+  t.alike(parseBody(okRes), { appId: A, key: 'post!p1', suppressed: true })
+
+  // The audit endpoint lists the opaque id + ts + reason (never content).
+  const listReq = fakeReq('GET', '/api/admin/takedowns', null, { 'x-pear-admin-token': 's3cret-admin-token' })
+  const list = fakeRes()
+  await handleOutboxLogRoute(listReq, list, ctx)
+  t.is(list.statusCode, 200)
+  const body = parseBody(list)
+  t.is(body.count, 1)
+  t.is(body.takedowns[0].appId, A)
+  t.is(body.takedowns[0].key, 'post!p1')
+  t.is(body.takedowns[0].reason, 'notice-9', 'reason surfaced on the audit endpoint')
+  t.ok(Number.isFinite(body.takedowns[0].ts), 'ts surfaced on the audit endpoint')
+})
+
 test('outboxlog http admin: takedown drops record from serve reads but not from storage', async (t) => {
   const app = new OutboxLogApp({ verifyAppend: () => true })
   const adminAuth = createOutboxLogAdminAuth({ tokens: ['admintok'] })
@@ -578,12 +611,17 @@ test('outboxlog http admin: takedown drops record from serve reads but not from 
   const rows = app.engine.snapshot().groups.find(([id]) => id === A)[1].rows.map(([k]) => k).sort()
   t.alike(rows, ['post!p1', 'post!p2'], 'suppressed record remains in storage')
 
-  // takedowns() audit surface lists the opaque id.
+  // takedowns() audit surface lists the opaque id + audit metadata.
   const listTakedowns = fakeRes()
   const listReq = fakeReq('GET', '/api/admin/takedowns')
   listReq.headers['x-pear-admin-token'] = 'admintok'
   await handleOutboxLogRoute(listReq, listTakedowns, ctx)
-  t.alike(parseBody(listTakedowns), { takedowns: [{ appId: A, key: 'post!p2' }], count: 1 })
+  const listed = parseBody(listTakedowns)
+  t.is(listed.count, 1)
+  t.is(listed.takedowns[0].appId, A)
+  t.is(listed.takedowns[0].key, 'post!p2')
+  t.ok(Number.isFinite(listed.takedowns[0].ts), 'audit ts present')
+  t.is(listed.takedowns[0].reason, null)
 
   // Restore reverses it.
   const restoreReq = jsonReq('POST', '/api/admin/restore', { appId: A, key: 'post!p2' })

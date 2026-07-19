@@ -9,7 +9,7 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, mkdirSync, readFileSync, renameSync, truncateSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import sodium from 'sodium-universal'
 import b4a from 'b4a'
@@ -96,8 +96,9 @@ export function createOutboxLog ({
   // are opaque `appId \x00 rowKey` composites — an operator drops a record by
   // its opaque id WITHOUT reading the (possibly blind) content. The record
   // stays in `group.rows`; suppression is applied only at serve time. Persisted
-  // so a takedown survives restart.
-  const suppressed = new Set()
+  // so a takedown survives restart. Values are the audit metadata recorded at
+  // takedown time ({ ts, reason }) — never any record content.
+  const suppressed = new Map()
   let namespaceRegistry = createOutboxNamespaceRegistry({ namespace, namespaces })
   // Rolling 24h per-namespace ingest charges for caps.bytesPerDay. "bytes" is
   // the same measure as maxValueBytes — Buffer.byteLength(JSON.stringify(record))
@@ -129,7 +130,7 @@ export function createOutboxLog ({
   if (!statePersistence && persistencePath) statePersistence = createJsonFileOutboxPersistence(persistencePath)
   if (!statePersistence && storagePath) statePersistence = createJsonFileOutboxPersistence(join(storagePath, 'outboxlog-state.json'))
   let operationJournal = normalizeJournal(journal)
-  if (!operationJournal && journalPath) operationJournal = createJsonlOutboxJournal(journalPath)
+  if (!operationJournal && journalPath) operationJournal = createJsonlOutboxJournal(journalPath, { log })
   let totalBytes = 0
   let directorySeq = 0
   let appendSeq = 0
@@ -319,8 +320,10 @@ export function createOutboxLog ({
     // Operator takedown: mark an opaque record id (appId + rowKey) DO-NOT-SERVE.
     // The record is NOT read, decoded, or deleted — subsequent serve-time reads
     // simply suppress it. Idempotent. Returns whether the id is now suppressed.
-    takedown (appId, key) {
-      return applyTakedown(appId, key, true)
+    // `reason` is an optional operator audit note (e.g. a case/reference id); it
+    // is journaled and listed by takedowns() but never alters the suppression.
+    takedown (appId, key, reason = null) {
+      return applyTakedown(appId, key, true, reason)
     },
 
     // Reverse a takedown for an opaque record id. Idempotent.
@@ -328,14 +331,21 @@ export function createOutboxLog ({
       return applyTakedown(appId, key, false)
     },
 
-    // List the current DO-NOT-SERVE set as opaque { appId, key } ids. Content
-    // is never read; this is the operator-facing audit surface for takedowns.
+    // List the current DO-NOT-SERVE set as opaque { appId, key, ts, reason }
+    // ids + audit metadata. Content is never read; this is the operator-facing
+    // audit surface for takedowns. `ts`/`reason` are null for suppressions
+    // restored from pre-audit journals/snapshots.
     takedowns () {
       const ids = []
-      for (const composite of suppressed) {
+      for (const [composite, meta] of suppressed) {
         const split = composite.indexOf('\x00')
         if (split < 0) continue
-        ids.push({ appId: composite.slice(0, split), key: composite.slice(split + 1) })
+        ids.push({
+          appId: composite.slice(0, split),
+          key: composite.slice(split + 1),
+          ts: meta && Number.isFinite(meta.ts) ? meta.ts : null,
+          reason: meta && typeof meta.reason === 'string' ? meta.reason : null
+        })
       }
       ids.sort((a, b) => (a.appId < b.appId ? -1 : a.appId > b.appId ? 1 : a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
       return { takedowns: ids, count: ids.length }
@@ -409,35 +419,41 @@ export function createOutboxLog ({
     return composite ? suppressed.has(composite) : false
   }
 
-  function applyTakedown (appId, key, drop) {
+  function applyTakedown (appId, key, drop, reason = null) {
     const composite = suppressionKey(appId, key)
     if (!composite) throw fail('bad takedown id', 400)
+    const auditReason = drop ? normalizeTakedownReason(reason) : null
     const already = suppressed.has(composite)
     if (drop === already) return { appId, key, suppressed: drop } // no change
-    if (drop) suppressed.add(composite)
+    const previous = already ? suppressed.get(composite) : null
+    if (drop) suppressed.set(composite, { ts: clock(), reason: auditReason })
     else suppressed.delete(composite)
     try {
-      saveState(journalTakedownEntry(appId, key, drop))
+      saveState(journalTakedownEntry(appId, key, drop, auditReason))
     } catch (err) {
       // Roll back the in-memory change so state and persistence stay coherent.
-      if (drop) suppressed.delete(composite)
-      else suppressed.add(composite)
+      if (drop) {
+        if (previous) suppressed.set(composite, previous)
+        else suppressed.delete(composite)
+      } else {
+        suppressed.set(composite, previous)
+      }
       throw fail('persistence failed', 500, err)
     }
     return { appId, key, suppressed: drop }
   }
 
-  // Remove ALL server-side state for an appId whose group is being swept:
-  // the group itself, its buffered append events, and any takedown
-  // suppressions scoped to it (nothing left to suppress). Namespace outbox
-  // counts are derived live from `groups`, so capacity self-corrects.
+  // Remove server-side state for an appId whose group is being swept: the
+  // group itself and its buffered append events. Namespace outbox counts are
+  // derived live from `groups`, so capacity self-corrects. Takedown
+  // suppressions are DELIBERATELY RETAINED: DO-NOT-SERVE is an operator legal
+  // posture keyed by opaque id, and the id can return (the writer re-appends
+  // the same key, or a future journal import re-introduces it) — a sweep must
+  // never silently re-expose a record the operator took down. Retention is
+  // bounded by operator action (restore), not by writer churn.
   function deleteGroupState (appId) {
     groups.delete(appId)
     appendEventsByApp.delete(appId)
-    const prefix = appId + '\x00'
-    for (const composite of [...suppressed]) {
-      if (composite.startsWith(prefix)) suppressed.delete(composite)
-    }
   }
 
   // Ghost-outbox sweep (2026-07-08): reclaim group slots leaked by writers that
@@ -762,7 +778,7 @@ export function createOutboxLog ({
       (persistencePath ? createJsonFileOutboxPersistence(persistencePath) : null) ||
       (storagePath ? createJsonFileOutboxPersistence(join(storagePath, 'outboxlog-state.json')) : null)
     operationJournal = normalizeJournal(journal) ||
-      (journalPath ? createJsonlOutboxJournal(journalPath) : null)
+      (journalPath ? createJsonlOutboxJournal(journalPath, { log }) : null)
     if (!statePersistence && !operationJournal) return false
     loadState()
     return true
@@ -834,9 +850,18 @@ export function createOutboxLog ({
       directorySeq,
       appendSeq,
       journalSeq,
-      // Persist DO-NOT-SERVE ids as opaque [appId, key] pairs so takedowns
-      // survive restart. Never carries any record content.
-      suppressed: [...suppressed].map(splitSuppressionKey).filter(Boolean),
+      // Persist DO-NOT-SERVE ids as opaque [appId, key, meta?] triples so
+      // takedowns survive restart. meta = { ts, reason } audit fields; legacy
+      // 2-element pairs (no audit data) still load. Never carries record
+      // content.
+      suppressed: [...suppressed].map(([composite, meta]) => {
+        const pair = splitSuppressionKey(composite)
+        if (!pair) return null
+        return [pair[0], pair[1], {
+          ts: meta && Number.isFinite(meta.ts) ? meta.ts : null,
+          reason: meta && typeof meta.reason === 'string' ? meta.reason : null
+        }]
+      }).filter(Boolean),
       // Rolling-24h ingest charges (caps.bytesPerDay) as opaque
       // [namespace, [[ts, bytes], ...]] pairs, pruned at save time, so a capped
       // namespace's byte window survives restart exactly. Additive field: old
@@ -961,9 +986,20 @@ export function createOutboxLog ({
     for (const [appId, events] of nextAppendEvents) appendEventsByApp.set(appId, events)
     suppressed.clear()
     for (const entry of Array.isArray(state.suppressed) ? state.suppressed : []) {
-      if (!Array.isArray(entry) || entry.length !== 2) continue
+      // [appId, key] legacy pairs and [appId, key, { ts, reason }] audit
+      // triples are both accepted; invalid shapes are dropped silently (the
+      // state file is not a trust root).
+      if (!Array.isArray(entry) || (entry.length !== 2 && entry.length !== 3)) continue
       const composite = suppressionKey(entry[0], entry[1])
-      if (composite) suppressed.add(composite)
+      if (!composite) continue
+      let meta = { ts: null, reason: null }
+      if (entry.length === 3 && entry[2] && typeof entry[2] === 'object' && !Array.isArray(entry[2])) {
+        meta = {
+          ts: Number.isFinite(entry[2].ts) ? entry[2].ts : null,
+          reason: typeof entry[2].reason === 'string' && entry[2].reason.length <= MAX_TAKEDOWN_REASON_LENGTH ? entry[2].reason : null
+        }
+      }
+      suppressed.set(composite, meta)
     }
     // Restore the rolling-24h ingest windows persisted by snapshot(). Invalid
     // pairs are dropped silently (the state file is not a trust root), expired
@@ -1022,12 +1058,17 @@ export function createOutboxLog ({
     }
   }
 
-  function journalTakedownEntry (appId, key, drop) {
+  function journalTakedownEntry (appId, key, drop, reason = null) {
     return {
       kind: 'takedown',
       appId,
       key,
-      drop: drop === true
+      drop: drop === true,
+      // Audit fields: wall-clock takedown time + optional operator note. Null on
+      // restore entries. Replay and takedowns() surface them; pre-audit journal
+      // entries carry none and load as null.
+      ts: drop ? clock() : null,
+      reason: drop ? reason : null
     }
   }
 
@@ -1083,7 +1124,7 @@ export function createOutboxLog ({
     if (entry.kind === 'takedown') {
       const composite = suppressionKey(entry.appId, entry.key)
       if (!composite) return
-      if (entry.drop) suppressed.add(composite)
+      if (entry.drop) suppressed.set(composite, { ts: entry.ts, reason: entry.reason })
       else suppressed.delete(composite)
       return
     }
@@ -1216,26 +1257,58 @@ export function createJsonFileOutboxPersistence (path) {
   }
 }
 
-export function createJsonlOutboxJournal (path) {
+export function createJsonlOutboxJournal (path, { log = () => {} } = {}) {
   if (typeof path !== 'string' || !path) throw new Error('OutboxLog: journal path required')
   return {
     loadSync () {
+      let text
       try {
-        const text = readFileSync(path, 'utf8')
-        return text
-          .split('\n')
-          .filter(line => line.trim() !== '')
-          .map(line => JSON.parse(line))
+        text = readFileSync(path, 'utf8')
       } catch (err) {
         if (err && err.code === 'ENOENT') return []
         throw err
       }
+      const lines = text.split('\n')
+      const entries = []
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]
+        if (line.trim() === '') continue
+        try {
+          entries.push(JSON.parse(line))
+        } catch (err) {
+          const tornTail = lines.slice(i + 1).every((rest) => rest.trim() === '')
+          if (!tornTail) {
+            // Mid-file corruption is real damage, not a crash artifact — refuse
+            // to guess which entries were lost; boot stays blocked (as before).
+            throw new Error('OutboxLog: corrupt journal line ' + (i + 1) + ' in ' + path + ': ' + err.message)
+          }
+          // Torn tail: a crash/power-loss interrupted the final append, leaving
+          // a partial last line. The good prefix is authoritative (each entry
+          // was acked only after its own append), so truncate the partial line
+          // and boot — one partial line must never brick the whole service.
+          quarantineTornJournalTail(path, lines, i, log)
+          break
+        }
+      }
+      return entries
     },
     appendSync (entry) {
       mkdirSync(dirname(path), { recursive: true })
       appendFileSync(path, JSON.stringify(entry) + '\n', 'utf8')
     }
   }
+}
+
+// Preserve the damaged file for forensics (<path>.torn-<ts>), then truncate it
+// back to the end of the last fully-written line. Best-effort copy: truncation
+// must still happen if the copy fails.
+function quarantineTornJournalTail (path, lines, tornIndex, log) {
+  try {
+    copyFileSync(path, path + '.torn-' + Date.now())
+  } catch {}
+  const prefix = tornIndex === 0 ? '' : lines.slice(0, tornIndex).join('\n') + '\n'
+  truncateSync(path, Buffer.byteLength(prefix, 'utf8'))
+  log('outboxlog journal: truncated torn final line at entry ' + tornIndex + ' in ' + path)
 }
 
 export function createOutboxNamespaceRegistry ({ namespace = DEFAULT_OUTBOXLOG_NAMESPACE, namespaces = null } = {}) {
@@ -1524,8 +1597,10 @@ function normalizeJournalEntry (entry, expectedSeq) {
   if (entry.version !== OUTBOXLOG_JOURNAL_VERSION) return null
   if (entry.seq !== expectedSeq) return null
   if (typeof entry.appId !== 'string' || !entry.appId || entry.appId.length > DEFAULT_MAX_APP_ID_LENGTH) return null
-  // Takedown entries carry no inviteKey/op — just an opaque (appId,key) id and a
-  // drop flag. Normalize them before the inviteKey requirement below.
+  // Takedown entries carry no inviteKey/op — just an opaque (appId,key) id, a
+  // drop flag, and optional audit fields (ts/reason, absent on pre-audit
+  // entries and on restores). Normalize them before the inviteKey requirement
+  // below.
   if (entry.kind === 'takedown') {
     if (typeof entry.key !== 'string' || !entry.key || entry.key.length > DEFAULT_MAX_ID_LENGTH + 65) return null
     return {
@@ -1534,7 +1609,9 @@ function normalizeJournalEntry (entry, expectedSeq) {
       kind: 'takedown',
       appId: entry.appId,
       key: entry.key,
-      drop: entry.drop === true
+      drop: entry.drop === true,
+      ts: Number.isFinite(entry.ts) ? entry.ts : null,
+      reason: typeof entry.reason === 'string' && entry.reason.length <= MAX_TAKEDOWN_REASON_LENGTH ? entry.reason : null
     }
   }
   // Sweep entries carry no inviteKey/op — just the batch of ghost appIds whose
@@ -1608,6 +1685,19 @@ function splitSuppressionKey (composite) {
   const split = composite.indexOf('\x00')
   if (split < 0) return null
   return [composite.slice(0, split), composite.slice(split + 1)]
+}
+
+// Operator-supplied audit note for a takedown (e.g. a case id or notice
+// reference). Bounded so the journal/snapshot audit surface stays small and
+// content-free; never required, never content-bearing by contract.
+const MAX_TAKEDOWN_REASON_LENGTH = 512
+function normalizeTakedownReason (reason) {
+  if (reason == null) return null
+  if (typeof reason !== 'string' || reason.length > MAX_TAKEDOWN_REASON_LENGTH) {
+    throw fail('bad takedown reason', 400)
+  }
+  const trimmed = reason.trim()
+  return trimmed === '' ? null : trimmed
 }
 
 function clone (value) {

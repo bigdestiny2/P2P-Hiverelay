@@ -265,14 +265,16 @@ function isAdminPath (path) {
 
 // The operator admin surface. Authenticated with a dedicated admin auth that is
 // distinct from the browser sync token, and passed via the X-Pear-Admin-Token
-// header (or ?adminToken=). Takedown drops a record by its opaque (appId,key)
-// id — content is never read — for operator liability parity.
+// header ONLY — credentials in URLs leak into access logs and browser history,
+// so the query-param path is deliberately not accepted on admin routes.
+// Takedown drops a record by its opaque (appId,key) id — content is never
+// read — for operator liability parity.
 async function handleAdminRoute (req, res, parsed, ctx, sync) {
   const adminAuth = ctx.adminAuth || ctx.outboxLogAdminAuth || null
   if (!adminAuth || typeof adminAuth.verify !== 'function') {
     return respond(res, 404, { error: 'not found' })
   }
-  if (!adminAuth.verify(adminTokenFrom(req, parsed))) {
+  if (!adminAuth.verify(adminTokenFrom(req))) {
     return respond(res, 401, { error: 'missing or invalid admin token' })
   }
   if (!sync) return respond(res, 503, { error: 'outboxlog sync unavailable' })
@@ -304,7 +306,7 @@ async function handleAdminRoute (req, res, parsed, ctx, sync) {
     if (typeof method !== 'function') return respond(res, 503, { error: 'outboxlog takedown unavailable' })
     const body = await readJson(req)
     if (!body.ok) return respondReadProblem(res, body)
-    return respond(res, 200, await method.call(sync, body.body.appId, body.body.key))
+    return respond(res, 200, await method.call(sync, body.body.appId, body.body.key, body.body.reason))
   } catch (err) {
     if (err && Number.isInteger(err.status) && err.status >= 400 && err.status < 500) {
       return respond(res, err.status, { error: err.message || 'outboxlog admin request failed' })
@@ -382,9 +384,9 @@ function tokenFrom (req, url) {
   return headers['x-pear-token'] || headers['X-Pear-Token'] || url.searchParams.get('token') || ''
 }
 
-function adminTokenFrom (req, url) {
+function adminTokenFrom (req) {
   const headers = req.headers || {}
-  return headers['x-pear-admin-token'] || headers['X-Pear-Admin-Token'] || url.searchParams.get('adminToken') || ''
+  return headers['x-pear-admin-token'] || headers['X-Pear-Admin-Token'] || ''
 }
 
 async function readJson (req) {

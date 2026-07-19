@@ -173,13 +173,37 @@ test('sweep: prunes stale swarm descriptors, keeps live + unattributable ones', 
   t.ok(!kept.some(d => d.includes('"appId":"' + A + '"')), "the ghost's descriptor is gone")
 })
 
-test('sweep: drops takedown suppressions scoped to swept groups', (t) => {
+test('sweep: takedown suppressions SURVIVE the ghost sweep', (t) => {
+  // DO-NOT-SERVE is an operator legal posture keyed by opaque id: it must
+  // outlive the group. A swept id can return (writer re-appends the same key,
+  // or a future journal import re-introduces it), so the sweep must never
+  // silently re-expose a taken-down record.
   const engine = createOutboxLog(engineOpts())
   engine.sync.create(A)
-  engine.takedown(A, 'post!x') // suppression can exist without rows (serve-time)
+  engine.takedown(A, 'post!x', 'notice-1') // suppression can exist without rows (serve-time)
   t.is(engine.takedowns().count, 1)
   t.is(engine.sweepGhosts({ ttlMs: 0 }).swept, 1)
-  t.is(engine.takedowns().count, 0, 'suppression for the swept group is dropped')
+  t.is(engine.takedowns().count, 1, 'suppression retained across the sweep')
+  t.ok(engine.isSuppressed(A, 'post!x'))
+
+  // The retention is not decorative: a re-created outbox re-appending the same
+  // key is still suppressed at serve time.
+  engine.sync.create(A)
+  engine.sync.append(A, { type: 'post', data: { id: 'x', body: 'illegal' } })
+  t.is(engine.sync.get(A, 'post!x'), null, 're-appended taken-down record stays suppressed')
+})
+
+test('sweep: retained suppressions survive journal replay of the sweep', (t) => {
+  const journal = createMemoryOutboxJournal()
+  const first = createOutboxLog(engineOpts({ journal }))
+  first.sync.create(A)
+  first.takedown(A, 'post!x', 'notice-2')
+  first.sweepGhosts({ ttlMs: 0 })
+  t.ok(first.isSuppressed(A, 'post!x'))
+
+  const replayed = createOutboxLog(engineOpts({ journal }))
+  t.ok(replayed.isSuppressed(A, 'post!x'), 'sweep replay neither resurrects the group nor drops the suppression')
+  t.is(replayed.takedowns().takedowns[0].reason, 'notice-2', 'audit reason survives replay')
 })
 
 test('OutboxLogApp: config-driven startup sweep + timer lifecycle', async (t) => {
