@@ -364,6 +364,11 @@ export class GatewayServer extends EventEmitter {
     this.server = server
     server.headersTimeout = 10_000
     server.requestTimeout = 60_000
+    // Node reaps slow-header sockets only from a periodic checker whose
+    // default interval (30 s) would let a stalled header phase outlive the
+    // frozen 10 s headersTimeout. Pin the checker under it; the interval is
+    // armed on 'listening', so it must be set before listen().
+    server.connectionsCheckingInterval = 5_000
     server.keepAliveTimeout = 5_000
     server.timeout = 65_000
     server.maxRequestsPerSocket = 100

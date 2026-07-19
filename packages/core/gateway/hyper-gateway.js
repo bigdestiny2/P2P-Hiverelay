@@ -83,6 +83,17 @@ function nonClosingCoreView (core) {
   })
 }
 
+// hyperdrive 11 reports version = max(1, bee length), so a `version === 0`
+// emptiness probe can never fire and an unknown drive would be served (and
+// LRU-cached) instead of waited out. The metadata core length is the honest
+// "nothing replicated yet" signal; the version fallback only shapes stubbed
+// drives without a bee core.
+function driveHasContent (drive) {
+  const length = drive?.db?.core?.length
+  if (Number.isSafeInteger(length)) return length > 0
+  return Number.isSafeInteger(drive?.version) && drive.version > 0
+}
+
 const CONTENT_TYPES = {
   html: 'text/html; charset=utf-8',
   htm: 'text/html; charset=utf-8',
@@ -1441,7 +1452,7 @@ export class HyperGateway extends EventEmitter {
       }
 
       // Wait for drive data to arrive from peers
-      if (drive.version === 0) {
+      if (!driveHasContent(drive)) {
         try {
           await updateWithTimeout(drive, {
             timeoutMs: Math.min(20_000, this._driveOperationTimeout),
@@ -1453,7 +1464,7 @@ export class HyperGateway extends EventEmitter {
       }
 
       // Still no content
-      if (drive.version === 0) {
+      if (!driveHasContent(drive)) {
         await this._closeOwnedDrive(drive, 'empty-close')
         return null
       }
