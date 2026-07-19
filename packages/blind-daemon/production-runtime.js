@@ -33,6 +33,10 @@ import {
   BLIND_CELL_RUNTIME_BLOCKERS,
   BlindCellRuntimeAdapter
 } from './cell-runtime-adapter.js'
+import {
+  BLIND_INBOX_RUNTIME_BLOCKERS,
+  BlindInboxRuntimeAdapter
+} from './inbox-runtime-adapter.js'
 import { BlindOperationCoordinator } from './coordinator.js'
 import { DescriptorState } from './descriptor-state.js'
 import { READINESS_STATE_KIND, ReadinessCoordinator } from './readiness-coordinator.js'
@@ -49,11 +53,19 @@ import {
   BLIND_CELL_STORAGE_PRODUCTION_BLOCKERS,
   BlindCellStorageEngine
 } from './storage-engine.js'
+import { BlindInboxStorageEngine } from './inbox-storage-engine.js'
 import { loadBundledBlindStoreFormatAuthority } from './store-format-binding.js'
 
 const DESCRIBE_OPERATION_BITS = 0x00000007
 const CELL_OPERATION_BITS = 0x000001f8
+const INBOX_OPERATION_BITS = 0x00007e00
 const DESCRIBE_AND_CELL_OPERATION_BITS = DESCRIBE_OPERATION_BITS | CELL_OPERATION_BITS
+const DESCRIBE_CELL_INBOX_OPERATION_BITS = DESCRIBE_AND_CELL_OPERATION_BITS | INBOX_OPERATION_BITS
+const INBOX_RESULT_SIGNATURE_DOMAIN_IDS = new Set([
+  RESULT_SIGNATURE_DOMAIN_ID.INBOX_RECEIPT,
+  RESULT_SIGNATURE_DOMAIN_ID.INBOX_APPEND_ACK,
+  RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT
+])
 const KNOWN_TRANSPORT_SUPPORT_BITS = Object.values(TRANSPORT_SUPPORT)
   .reduce((bits, bit) => bits | bit, 0)
 const MAX_U64 = (1n << 64n) - 1n
@@ -64,7 +76,9 @@ const RUNTIME_BINDING_FILE = 'runtime-binding.v1'
 
 export const PRODUCTION_RUNTIME_OPERATION_BITS = DESCRIBE_OPERATION_BITS
 export const PRODUCTION_CELL_RUNTIME_OPERATION_BITS = CELL_OPERATION_BITS
+export const PRODUCTION_INBOX_RUNTIME_OPERATION_BITS = INBOX_OPERATION_BITS
 export const PRODUCTION_DESCRIBE_AND_CELL_OPERATION_BITS = DESCRIBE_AND_CELL_OPERATION_BITS
+export const PRODUCTION_DESCRIBE_CELL_INBOX_OPERATION_BITS = DESCRIBE_CELL_INBOX_OPERATION_BITS
 export const PRODUCTION_RUNTIME_EXCLUSIONS = Object.freeze([
   'FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED',
   'TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED',
@@ -212,6 +226,8 @@ export function loadProductionRuntimeConfig (environment = process.env, endpoint
     relaySecretKeyFile: requiredPath(environment, 'HIVERELAY_BLIND_RELAY_SECRET_KEY_FILE'),
     storeRoot: requiredPath(environment, 'HIVERELAY_BLIND_STORE_ROOT'),
     privateIpcReplayRoot: optionalPath(environment, 'HIVERELAY_BLIND_PRIVATE_IPC_REPLAY_ROOT'),
+    inboxStoreRoot: optionalPath(environment, 'HIVERELAY_BLIND_INBOX_STORE_ROOT'),
+    inboxCursorKeyFile: optionalPath(environment, 'HIVERELAY_BLIND_INBOX_CURSOR_KEY_FILE'),
     partitionKeyFile: requiredPath(environment, 'HIVERELAY_BLIND_PARTITION_KEY_FILE'),
     ownerFenceTokenHashFile: requiredPath(environment, 'HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE'),
     mapGeneration: canonicalU64(environment, 'HIVERELAY_BLIND_MAP_GENERATION'),
@@ -366,14 +382,15 @@ function verifyDetached (input) {
   }
 }
 
-function currentSigner (secretKey, publicKey) {
+function currentSigner (secretKey, publicKey, inboxRuntimeEnabled) {
   let closed = false
   return Object.freeze({
     async sign (input) {
       if (closed || (input.signal && input.signal.aborted) ||
           (input.domainId !== RESULT_SIGNATURE_DOMAIN_ID.HEALTH_RESULT &&
             input.domainId !== RESULT_SIGNATURE_DOMAIN_ID.CELL_RECEIPT &&
-            input.domainId !== RESULT_SIGNATURE_DOMAIN_ID.BATCH_GET_RESULT) ||
+            input.domainId !== RESULT_SIGNATURE_DOMAIN_ID.BATCH_GET_RESULT &&
+            !(inboxRuntimeEnabled && INBOX_RESULT_SIGNATURE_DOMAIN_IDS.has(input.domainId))) ||
           !b4a.equals(input.publicKey, publicKey)) {
         runtimeFailure('BLIND_RUNTIME_SIGNING_REFUSED', 'runtime signer refused an unbound signing request')
       }
@@ -439,6 +456,65 @@ function cellHook (adapterHook, method, label) {
   })
 }
 
+function inboxHook (adapterHook, method, label) {
+  const unavailable = unavailableHook(method, label)
+  return Object.freeze({
+    async [method] (input) {
+      if (input && input.profile && input.profile.familyId === FAMILY.INBOX) {
+        return adapterHook[method](input)
+      }
+      return unavailable[method](input)
+    }
+  })
+}
+
+function cellInboxHook (cellAdapter, inboxAdapter, hookField, method, label) {
+  const cell = cellAdapter == null ? null : cellHook(cellAdapter[hookField], method, label)
+  const inbox = inboxAdapter == null ? null : inboxHook(inboxAdapter[hookField], method, label)
+  const unavailable = unavailableHook(method, label)
+  return Object.freeze({
+    async [method] (input) {
+      const familyId = input && input.profile && input.profile.familyId
+      if (familyId === FAMILY.CELL && cell) return cell[method](input)
+      if (familyId === FAMILY.INBOX && inbox) return inbox[method](input)
+      return unavailable[method](input)
+    }
+  })
+}
+
+function cellInboxTransactionCoordinator (cellAdapter, inboxAdapter) {
+  const coordinatorFor = input => {
+    const familyId = input && input.profile && input.profile.familyId
+    if (familyId === FAMILY.CELL) return cellAdapter.transactionCoordinator
+    if (familyId === FAMILY.INBOX && inboxAdapter) return inboxAdapter.transactionCoordinator
+    return null
+  }
+  const invoke = method => (input, ...rest) => {
+    const coordinator = coordinatorFor(input)
+    if (!coordinator) runtimeFailure('INTERNAL', `admission transaction reached an unwired family at ${method}`)
+    return coordinator[method](input, ...rest)
+  }
+  return Object.freeze({
+    lookup: invoke('lookup'),
+    run: invoke('run'),
+    replay: invoke('replay')
+  })
+}
+
+function cellInboxOperationExecutor (cellAdapter, inboxAdapter) {
+  return Object.freeze({
+    ...cellInboxHook(cellAdapter, inboxAdapter, 'operationExecutor', 'execute',
+      'non-CELL/INBOX operation executor'),
+    ...(cellAdapter == null
+      ? {}
+      : {
+          stageAtomicPut: input => cellAdapter.operationExecutor.stageAtomicPut(input),
+          commitAtomicPut: input => cellAdapter.operationExecutor.commitAtomicPut(input),
+          cancelAtomicPut: input => cellAdapter.operationExecutor.cancelAtomicPut(input)
+        })
+  })
+}
+
 function describeAndCellResultVerifier (cellAdapter) {
   const describe = describeResultVerifier()
   return Object.freeze({
@@ -450,14 +526,26 @@ function describeAndCellResultVerifier (cellAdapter) {
   })
 }
 
+function describeCellInboxResultVerifier (cellAdapter, inboxAdapter) {
+  const describeAndCell = describeAndCellResultVerifier(cellAdapter)
+  return Object.freeze({
+    async verify (input) {
+      if (input && input.familyId === FAMILY.INBOX) return inboxAdapter.resultVerifier.verify(input)
+      return describeAndCell.verify(input)
+    }
+  })
+}
+
 function sameNumberSet (left, right) {
   return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
-function assertRuntimeDescriptor (snapshot, bootstrap, config, cellRuntimeEnabled) {
+function assertRuntimeDescriptor (snapshot, bootstrap, config, cellRuntimeEnabled, inboxRuntimeEnabled) {
   const descriptor = snapshot.descriptor
   const expectedOperationBits = cellRuntimeEnabled
-    ? DESCRIBE_AND_CELL_OPERATION_BITS
+    ? inboxRuntimeEnabled
+      ? DESCRIBE_CELL_INBOX_OPERATION_BITS
+      : DESCRIBE_AND_CELL_OPERATION_BITS
     : DESCRIBE_OPERATION_BITS
   if (descriptor.storeLifecycleState !== STORE_LIFECYCLE_STATE.ACTIVE ||
       descriptor.enabledOperationBits !== expectedOperationBits) {
@@ -574,7 +662,7 @@ export function productionStorageOperationalIntegrity (status) {
   })
 }
 
-function storageDependencySnapshot (storage, enabledOperationBits, readyRoleBits, writeReadinessGuard = null) {
+function storageDependencySnapshot (storage, enabledOperationBits, readyRoleBits, writeReadinessGuard = null, inboxReadinessGuard = null) {
   return async input => {
     const status = storage.status()
     // Promotion blockers describe missing future surfaces (profile 2,
@@ -584,6 +672,10 @@ function storageDependencySnapshot (storage, enabledOperationBits, readyRoleBits
     // deriving integrity only from the bound format and live store state.
     const operationalIntegrity = productionStorageOperationalIntegrity(status)
     const writeReady = writeReadinessGuard == null || writeReadinessGuard(input) === true
+    const inboxReady = inboxReadinessGuard == null || inboxReadinessGuard() === true
+    const readyOperationBits = writeReady
+      ? enabledOperationBits
+      : enabledOperationBits & ~CELL_PUT_OPERATION_BIT_V2
     return Object.freeze({
       selfVerified: true,
       descriptorSequence: input.descriptorSequence,
@@ -592,9 +684,9 @@ function storageDependencySnapshot (storage, enabledOperationBits, readyRoleBits
       transportSupportBit: input.transportSupportBit,
       fullStoreVerified: operationalIntegrity.fullStoreVerified,
       readyRoleBits,
-      readyOperationBits: writeReady
-        ? enabledOperationBits
-        : enabledOperationBits & ~CELL_PUT_OPERATION_BIT_V2,
+      readyOperationBits: inboxReady
+        ? readyOperationBits
+        : readyOperationBits & ~INBOX_OPERATION_BITS,
       clockState: status.state === 'CLOCK_UNSAFE' ? HEALTH_CLOCK_STATE.UNSAFE : HEALTH_CLOCK_STATE.READY,
       effectiveEpochFloor: status.epochFloor,
       integrityState: operationalIntegrity.integrityState,
@@ -701,14 +793,37 @@ export async function assembleProductionBlindDaemon (options = {}) {
   }
   await releaseGate()
   const cellRuntimeEnabled = options.enableCellRuntime === true
+  const inboxRuntimeEnabled = options.enableInboxRuntime === true
+  if (inboxRuntimeEnabled && !cellRuntimeEnabled) {
+    runtimeFailure('BLIND_RUNTIME_INBOX_CELL_RUNTIME_REQUIRED',
+      'INBOX runtime assembly requires the assembled CELL runtime line')
+  }
   if (cellRuntimeEnabled && typeof options.resolveAdmissionAdapter !== 'function') {
     runtimeFailure('BLIND_RUNTIME_ADMISSION_ADAPTER_REQUIRED',
       'CELL runtime assembly requires an explicit admission adapter resolver')
   }
   const config = options.runtimeConfig || loadProductionRuntimeConfig(options.environment, bootstrap.endpointIds)
+  if (inboxRuntimeEnabled) {
+    if (config.inboxStoreRoot == null || config.inboxCursorKeyFile == null) {
+      runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID',
+        'INBOX runtime assembly requires HIVERELAY_BLIND_INBOX_STORE_ROOT and HIVERELAY_BLIND_INBOX_CURSOR_KEY_FILE')
+    }
+    if (config.inboxStoreRoot === config.storeRoot ||
+        config.inboxStoreRoot.startsWith(`${config.storeRoot}${path.sep}`) ||
+        config.storeRoot.startsWith(`${config.inboxStoreRoot}${path.sep}`) ||
+        (config.privateIpcReplayRoot != null &&
+          (config.inboxStoreRoot === config.privateIpcReplayRoot ||
+            config.inboxStoreRoot.startsWith(`${config.privateIpcReplayRoot}${path.sep}`) ||
+            config.privateIpcReplayRoot.startsWith(`${config.inboxStoreRoot}${path.sep}`)))) {
+      runtimeFailure('BLIND_RUNTIME_INBOX_STORE_ROOT_OVERLAP',
+        'INBOX store root must be disjoint from the cell store and replay journal roots')
+    }
+  }
   let secretKey
   let signer
   let storage
+  let inboxStorage
+  let inboxCursorKey
   let privateIpcReplayJournal
   let privateIpcReplayFailure = null
   let durableReplayAuthority
@@ -716,6 +831,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
   let daemon
   let runtime
   let cellAdapter
+  let inboxAdapter
   try {
     const descriptorBytes = await Promise.all(config.descriptorFiles.map((file, index) => readBoundFile(file, {
       field: `descriptorFiles[${index}]`,
@@ -725,7 +841,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
     let descriptorSnapshot
     for (const bytes of descriptorBytes) descriptorSnapshot = await descriptorState.activate(bytes)
     assertDescriptorLaunchFloor(descriptorSnapshot, config)
-    assertRuntimeDescriptor(descriptorSnapshot, bootstrap, config, cellRuntimeEnabled)
+    assertRuntimeDescriptor(descriptorSnapshot, bootstrap, config, cellRuntimeEnabled, inboxRuntimeEnabled)
     const storeFormatAuthority = await loadBundledBlindStoreFormatAuthority({
       expectedStoreFormatHash: descriptorSnapshot.descriptor.durability.storeFormatHash,
       expectedFormatMajor: descriptorSnapshot.descriptor.durability.storeFormatMajor,
@@ -744,7 +860,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
       runtimeFailure('BLIND_RUNTIME_SIGNING_KEY_MISMATCH',
         'relay signing secret does not match the current signed descriptor relay key')
     }
-    signer = currentSigner(secretKey, derivedPublicKey)
+    signer = currentSigner(secretKey, derivedPublicKey, inboxRuntimeEnabled)
 
     const postEofAuthorityIssuer = createDaemonPrivatePostEofAuthorityIssuer()
     let admissionResolver = options.resolveAdmissionAdapter || (async () => null)
@@ -799,6 +915,30 @@ export async function assembleProductionBlindDaemon (options = {}) {
         storeFormatAuthority
       })
       await storage.open()
+      if (inboxRuntimeEnabled) {
+        await verifyPrivateStoreRoot(config.inboxStoreRoot)
+        await bindStoreIdentity(config.inboxStoreRoot, binding)
+        inboxCursorKey = await readBoundFile(config.inboxCursorKeyFile, {
+          field: 'inbox cursor key',
+          exactBytes: 32,
+          maximumBytes: 32,
+          secret: true
+        })
+        inboxStorage = new BlindInboxStorageEngine({
+          root: config.inboxStoreRoot,
+          relayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
+          storeId: descriptorSnapshot.descriptor.storeId,
+          durabilityProfileId: descriptorSnapshot.descriptor.durability.profileId,
+          durabilityProfileHash: descriptorSnapshot.descriptor.durabilityProfileHash,
+          partitionKey,
+          cursorKey: inboxCursorKey,
+          mapGeneration: config.mapGeneration,
+          ownerFenceTokenHash,
+          durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
+          storeFormatAuthority
+        })
+        await inboxStorage.open()
+      }
       if (cellRuntimeEnabled) {
         try {
           if (config.privateIpcReplayRoot == null) {
@@ -845,17 +985,21 @@ export async function assembleProductionBlindDaemon (options = {}) {
     } finally {
       partitionKey.fill(0)
       if (ownerFenceTokenHash) ownerFenceTokenHash.fill(0)
+      if (inboxCursorKey) inboxCursorKey.fill(0)
     }
 
     const durableReplayReady = Boolean(durableReplayAuthority &&
       typeof durableReplayAuthority.reserve === 'function')
     const v2WritePathAssembled = cellRuntimeEnabled && admissionCapture.complete
     const v2WritePathReady = v2WritePathAssembled && durableReplayReady
-    const enabledOperationBits = cellRuntimeEnabled
-      ? v2WritePathReady
-        ? DESCRIBE_AND_CELL_OPERATION_BITS
-        : DESCRIBE_AND_CELL_OPERATION_BITS ^ CELL_PUT_OPERATION_BIT_V2
+    const assembledOperationBits = cellRuntimeEnabled
+      ? inboxRuntimeEnabled
+        ? DESCRIBE_CELL_INBOX_OPERATION_BITS
+        : DESCRIBE_AND_CELL_OPERATION_BITS
       : DESCRIBE_OPERATION_BITS
+    const enabledOperationBits = cellRuntimeEnabled && !v2WritePathReady
+      ? assembledOperationBits ^ CELL_PUT_OPERATION_BIT_V2
+      : assembledOperationBits
     const readyRoleBits = cellRuntimeEnabled
       ? ENDPOINT_ROLE.DESCRIPTOR_DISCOVERY | ENDPOINT_ROLE.STORAGE | ENDPOINT_ROLE.QUOTA_REDEEMER
       : ENDPOINT_ROLE.DESCRIPTOR_DISCOVERY
@@ -869,38 +1013,54 @@ export async function assembleProductionBlindDaemon (options = {}) {
           b4a.equals(current.hash, descriptorSnapshot.hash) &&
           privateIpcReplayJournal != null &&
           privateIpcReplayJournalV2Status(privateIpcReplayJournal).ready
-      }),
+      }, inboxRuntimeEnabled
+        ? () => {
+            const inboxStatus = inboxStorage.status()
+            return inboxStatus.opened === true && inboxStatus.readOnlyReason == null
+          }
+        : null),
       signer
     })
     const budget = new ResourceBudget(config.resourceBudget)
     if (cellRuntimeEnabled) {
       cellAdapter = new BlindCellRuntimeAdapter({ storage, descriptorState, signer })
     }
+    if (inboxRuntimeEnabled) {
+      inboxAdapter = new BlindInboxRuntimeAdapter({ storage: inboxStorage, descriptorState, signer })
+    }
+    const familyHook = (hookField, method, label) =>
+      cellInboxHook(cellAdapter, inboxAdapter, hookField, method, label)
     const coordinator = new BlindOperationCoordinator({
       descriptorState,
       admission,
       readiness,
       budget,
       relationVerifier: cellRuntimeEnabled
-        ? cellHook(cellAdapter.relationVerifier, 'verify', 'non-CELL relation verifier')
+        ? familyHook('relationVerifier', 'verify', 'non-CELL/INBOX relation verifier')
         : unavailableHook('verify', 'non-DESCRIBE relation verifier'),
       capabilityVerifier: cellRuntimeEnabled
-        ? cellHook(cellAdapter.capabilityVerifier, 'verify', 'non-CELL capability verifier')
+        ? familyHook('capabilityVerifier', 'verify', 'non-CELL/INBOX capability verifier')
         : unavailableHook('verify', 'non-DESCRIBE capability verifier'),
       cheapStateVerifier: cellRuntimeEnabled
-        ? cellHook(cellAdapter.cheapStateVerifier, 'inspect', 'non-CELL state inspector')
+        ? familyHook('cheapStateVerifier', 'inspect', 'non-CELL/INBOX state inspector')
         : unavailableHook('inspect', 'non-DESCRIBE state inspector'),
       terminalStateVerifier: cellRuntimeEnabled
-        ? cellHook(cellAdapter.terminalStateVerifier, 'check', 'non-CELL terminal-state verifier')
+        ? familyHook('terminalStateVerifier', 'check', 'non-CELL/INBOX terminal-state verifier')
         : unavailableHook('check', 'non-DESCRIBE terminal-state verifier'),
       capacityGuard: cellRuntimeEnabled
-        ? cellHook(cellAdapter.capacityGuard, 'check', 'non-CELL capacity guard')
+        ? familyHook('capacityGuard', 'check', 'non-CELL/INBOX capacity guard')
         : unavailableHook('check', 'non-DESCRIBE capacity guard'),
       operationExecutor: cellRuntimeEnabled
-        ? cellAdapter.operationExecutor
+        ? cellInboxOperationExecutor(cellAdapter, inboxAdapter)
         : unavailableHook('execute', 'non-DESCRIBE operation executor'),
-      transactionCoordinator: cellRuntimeEnabled ? cellAdapter.transactionCoordinator : null,
-      resultVerifier: cellRuntimeEnabled ? describeAndCellResultVerifier(cellAdapter) : describeResultVerifier(),
+      transactionCoordinator: cellRuntimeEnabled
+        ? cellInboxTransactionCoordinator(cellAdapter, inboxAdapter)
+        : null,
+      resultVerifier: cellRuntimeEnabled
+        ? inboxRuntimeEnabled
+          ? describeCellInboxResultVerifier(cellAdapter, inboxAdapter)
+          : describeAndCellResultVerifier(cellAdapter)
+        : describeResultVerifier(),
       authenticatedSessionVerifier: unavailableHook('verify', 'non-DESCRIBE authenticated session verifier')
     })
     const supportByEndpoint = new Map(config.endpointSupportBindings
@@ -995,17 +1155,19 @@ export async function assembleProductionBlindDaemon (options = {}) {
     let started = false
     let closed = false
     let closePromise = null
-    const runtimeExclusions = v2WritePathReady
+    const publicExecutionAssembled = value =>
+      (v2WritePathReady &&
+        (value === 'CELL_PUBLIC_EXECUTION_UNASSEMBLED' ||
+          value === 'PRIVATE_CONTENT_STREAM_RUNTIME_UNASSEMBLED' ||
+          value === 'ADMISSION_REDEMPTION_ADAPTER_UNASSEMBLED')) ||
+      (inboxRuntimeEnabled && value === 'INBOX_PUBLIC_EXECUTION_UNASSEMBLED')
+    const runtimeExclusions = cellRuntimeEnabled
       ? Object.freeze([
-        ...PRODUCTION_RUNTIME_EXCLUSIONS.filter(value =>
-          value !== 'CELL_PUBLIC_EXECUTION_UNASSEMBLED' &&
-          value !== 'PRIVATE_CONTENT_STREAM_RUNTIME_UNASSEMBLED' &&
-          value !== 'ADMISSION_REDEMPTION_ADAPTER_UNASSEMBLED'),
-        ...BLIND_CELL_RUNTIME_BLOCKERS
+        ...PRODUCTION_RUNTIME_EXCLUSIONS.filter(value => !publicExecutionAssembled(value)),
+        ...BLIND_CELL_RUNTIME_BLOCKERS,
+        ...(inboxRuntimeEnabled ? BLIND_INBOX_RUNTIME_BLOCKERS : [])
       ])
-      : cellRuntimeEnabled
-        ? Object.freeze([...PRODUCTION_RUNTIME_EXCLUSIONS, ...BLIND_CELL_RUNTIME_BLOCKERS])
-        : PRODUCTION_RUNTIME_EXCLUSIONS
+      : PRODUCTION_RUNTIME_EXCLUSIONS
     runtime = Object.freeze({
       descriptorState,
       admission,
@@ -1013,7 +1175,9 @@ export async function assembleProductionBlindDaemon (options = {}) {
       budget,
       coordinator,
       cellAdapter,
+      inboxAdapter,
       storage,
+      inboxStorage,
       ...(testOnlyReplayJournalOptions == null
         ? {}
         : { testOnlyDurableReplayAuthority: durableReplayAuthority }),
@@ -1042,6 +1206,11 @@ export async function assembleProductionBlindDaemon (options = {}) {
             if (privateIpcReplayJournal) {
               await closePrivateIpcReplayJournalV2(privateIpcReplayJournal)
             }
+          } catch (error) {
+            failure = failure || error
+          }
+          try {
+            if (inboxStorage) await inboxStorage.close()
           } catch (error) {
             failure = failure || error
           }
@@ -1078,7 +1247,9 @@ export async function assembleProductionBlindDaemon (options = {}) {
           }),
           exclusions: runtimeExclusions,
           cell: cellAdapter == null ? null : cellAdapter.status(),
-          storage: storage.status()
+          storage: storage.status(),
+          inbox: inboxAdapter == null ? null : inboxAdapter.status(),
+          inboxStorage: inboxStorage == null ? null : inboxStorage.status()
         })
       }
     })
@@ -1089,6 +1260,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
     if (privateIpcReplayJournal) {
       await closePrivateIpcReplayJournalV2(privateIpcReplayJournal).catch(() => {})
     }
+    if (inboxStorage) await inboxStorage.close().catch(() => {})
     if (storage) await storage.close().catch(() => {})
     if (signer) signer.close()
     else if (secretKey) secretKey.fill(0)
