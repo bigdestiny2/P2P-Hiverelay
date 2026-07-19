@@ -28,6 +28,12 @@ import { isIssuedExactAppContext } from './exact-app-context.js'
 import { updateWithTimeout } from '../core/relay-node/cancellable-drive-update.js'
 import { admitPublicHiveAppEntry } from './public-app-admission.js'
 import { isVerifyRequest, serveVerifyBundle } from './verify-bundle.js'
+import {
+  applyGatewayEdgeHeaders,
+  buildHivePathLinkHeader,
+  guardPathLaneStatelessHeaders,
+  isOnionReadPlaneHost
+} from './edge-headers.js'
 
 function stableCoreProofState (core, attempts = 4) {
   if (!core) return null
@@ -648,11 +654,21 @@ export class HyperGateway extends EventEmitter {
   async _handleRequest (req, res, context = null, signal = null, requestState = null) {
     const url = new URL(req.url, 'http://localhost')
     const path = url.pathname
-    if (context !== null && !isIssuedExactAppContext(context)) {
+    const exactBytes = isIssuedExactAppContext(context)
+    // R3/R5/R6 edge policy (edge-headers.js documents the lane × ingress
+    // matrix): the shared-origin path lane is stateless-only — Service-Worker-
+    // Allowed is structurally stripped at response commit; COOP/CORP/
+    // Referrer-Policy land on every gateway response; onion ingress adds its
+    // restrictive CSP default.
+    if (!exactBytes) guardPathLaneStatelessHeaders(res)
+    applyGatewayEdgeHeaders(res, {
+      exactBytes,
+      onionIngress: isOnionReadPlaneHost(req.headers && req.headers.host)
+    })
+    if (context !== null && !exactBytes) {
       writeGatewayJson(res, { error: 'Gateway request context is not authorized' }, 403)
       return
     }
-    const exactBytes = isIssuedExactAppContext(context)
     // R1 verifiable retrieval: ?verify=1 (or the hc-block Accept type) returns a
     // proof bundle instead of raw bytes — same admission chain, same frozen limits.
     const verifyMode = isVerifyRequest(url, req.headers)
@@ -762,6 +778,11 @@ export class HyperGateway extends EventEmitter {
       res.setHeader('Origin-Agent-Cluster', '?1')
       res.setHeader('Cache-Control', 'no-store, max-age=0')
       res.setHeader('Link', buildHiveAppLinkHeader(keyHex, filePath))
+    } else {
+      // R7 upgrade hint on the shared-origin lane: a capable client can leave
+      // HTTPS for the canonical native P2P scheme — including on the blind/tier
+      // 403s below, whose bodies already say exactly that.
+      res.setHeader('Link', buildHivePathLinkHeader(keyHex, filePath))
     }
 
     // Exact app hosts fail closed before any existence-specific response. A

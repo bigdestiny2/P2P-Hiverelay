@@ -33,6 +33,7 @@ import os from 'os'
 import path from 'path'
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
 import { TorTransport } from 'p2p-hiverelay/transports/tor/index.js'
+import { ONION_READ_PLANE_CSP } from 'p2p-hiverelay/gateway/edge-headers.js'
 import { startFakeTorDaemon } from './helpers/fake-tor.js'
 
 const READ_VPORT = 80
@@ -166,6 +167,19 @@ test('journey gateway × tor: public bytes through the onion read plane, blind c
   t.is(pub.status, 200, 'public drive serves through the onion gateway path')
   t.ok(pub.body.equals(Buffer.from(publicHtml)), 'exact bytes through the onion read plane')
 
+  // ─── 2a. R3/R5/R6/R7 edge policy on the onion read plane ─────────────
+  t.is(pub.headers['content-security-policy'], ONION_READ_PLANE_CSP,
+    'onion ingress carries the documented restrictive CSP default')
+  t.is(pub.headers['cross-origin-opener-policy'], 'same-origin')
+  t.is(pub.headers['cross-origin-resource-policy'], 'cross-origin',
+    'path-lane CORP matches the compatibility posture, even over onion')
+  t.is(pub.headers['referrer-policy'], 'no-referrer',
+    'the key/path being read never leaks via Referer')
+  t.is(pub.headers.link, `<hive://${publicKeyHex}/index.html>; rel="canonical"`,
+    'capable clients get the canonical hive:// upgrade hint through the onion')
+  t.absent(pub.headers['service-worker-allowed'],
+    'no service-worker scope escape on the shared onion origin')
+
   // ─── 3. Blind content is a hard 403 through the same onion plane ──────
   const blind = await httpGetOverOnion(clientTor, tor.onionAddress, READ_VPORT, '/v1/hyper/' + blindKeyHex + '/index.html')
   t.is(blind.status, 403, 'blind/custody content refused on the onion read plane')
@@ -173,6 +187,10 @@ test('journey gateway × tor: public bytes through the onion read plane, blind c
   t.is(blindBody.blind, true, '403 names the blind class (clearnet parity)')
   t.ok(/P2P access only/.test(blindBody.error), 'fail-closed message, not content: ' + blindBody.error)
   t.absent(blind.body.includes(blindCiphertext), 'no ciphertext leaks through the gateway')
+  t.is(blind.headers['content-security-policy'], ONION_READ_PLANE_CSP,
+    'the onion CSP default covers refusals too')
+  t.is(blind.headers.link, `<hive://${blindKeyHex}/index.html>; rel="canonical"`,
+    'the refusal and the upgrade hint agree: use the native P2P transport')
 
   // ─── 4. Capability doc over the onion: health-gated advertisement ─────
   const docRes = await httpGetOverOnion(clientTor, tor.onionAddress, READ_VPORT, '/api/capabilities')

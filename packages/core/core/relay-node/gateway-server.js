@@ -19,6 +19,7 @@ import { createServer } from 'http'
 import { EventEmitter } from 'events'
 import { isIP } from 'net'
 import { HyperGateway, selectExactByteRepresentation } from '../../gateway/hyper-gateway.js'
+import { applyGatewayEdgeHeaders } from '../../gateway/edge-headers.js'
 import { normalizeHiveAppHostSuffix, resolveHiveAppHost } from '../../gateway/hive-host.js'
 import {
   issueExactAppContext,
@@ -649,6 +650,9 @@ export class GatewayServer extends EventEmitter {
     res.setHeader('Vary', 'Host')
     res.setHeader('Origin-Agent-Cluster', '?1')
     res.setHeader('Cache-Control', 'no-store, max-age=0')
+    // R6: the app-origin lane's COOP/CORP/Referrer-Policy posture also covers
+    // responses the data plane generates before HyperGateway runs.
+    applyGatewayEdgeHeaders(res, { exactBytes: true })
   }
 
   async _handle (req, res) {
@@ -890,6 +894,7 @@ export class GatewayServer extends EventEmitter {
     res.setHeader('X-Hive-Byte-Mode', 'generated')
     res.setHeader('Vary', 'Host')
     res.setHeader('Origin-Agent-Cluster', '?1')
+    applyGatewayEdgeHeaders(res, { exactBytes: true })
     res.writeHead(representation.status)
     res.end(req.method === 'HEAD' ? null : representation.payload)
   }
