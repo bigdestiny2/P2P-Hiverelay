@@ -195,6 +195,7 @@ export class TorTransport extends EventEmitter {
     this.running = false
     this._control = null
     this._connections = new Set()
+    this._socksConnect = opts._socksConnectFactory || SocksClient.createConnection.bind(SocksClient)
     this._probeTimer = null
     this._probeFails = 0
     this._descriptorUploads = 0
@@ -397,7 +398,7 @@ export class TorTransport extends EventEmitter {
       return
     }
     try {
-      const { socket } = await SocksClient.createConnection({
+      const { socket } = await this._socksConnect({
         proxy: { host: this.socksHost, port: this.socksPort, type: 5 },
         command: 'connect',
         destination: { host: this.onionAddress, port: vport },
@@ -405,11 +406,62 @@ export class TorTransport extends EventEmitter {
       })
       socket.destroy()
       this._probeFails = 0
+      if (this._restrictedDiscoveryConfigured()) {
+        // Positive reachability is not enough under restricted discovery: the
+        // tor daemon runs FAIL-OPEN when every roster key is invalid, which
+        // would silently turn a "restricted" service into an open one while we
+        // still advertise it as restricted. Probe the negative side too.
+        const failOpen = await this._probeNegative(vport)
+        if (failOpen) {
+          this._setHealth(TorHealth.DEGRADED)
+          this.emit('health-degraded', { reason: 'restricted-discovery-fail-open' })
+          return
+        }
+      }
       this._setHealth(TorHealth.READY)
     } catch {
       this._probeFails++
       if (this._probeFails >= this.healthOpts.probeFailLimit) this._setHealth(TorHealth.DEGRADED)
     }
+  }
+
+  _restrictedDiscoveryConfigured () {
+    return this.clientAuthKeys.length > 0 || (this._roster && this._roster.keys.size > 0)
+  }
+
+  /**
+   * Negative probe: a client presenting a credential that is NOT in the roster
+   * must be refused. Installs a deliberately bogus client credential, attempts
+   * the connection, then removes it (best-effort, even on failure — it must
+   * never linger in the daemon's client-auth set). Returns true when the
+   * connection succeeded, i.e. the service accepted an unauthorized client
+   * (the fail-open state: roster present but ineffective).
+   */
+  async _probeNegative (vport) {
+    const bogusPub = 'a'.repeat(43) + 'x'
+    const bogusPriv = 'a'.repeat(43) + 'y'
+    const addCmd = `ONION_CLIENT_AUTH_ADD ${this.serviceId} x25519:${bogusPriv} Flags=Temporary`
+    const removeCmd = `ONION_CLIENT_AUTH_REMOVE ${this.serviceId} x25519:${bogusPub}`
+    try {
+      await this._control.cmd(addCmd)
+    } catch {
+      return false // daemon refuses to run the probe at all — treat as restricted holding
+    }
+    let accepted = false
+    try {
+      const { socket } = await this._socksConnect({
+        proxy: { host: this.socksHost, port: this.socksPort, type: 5 },
+        command: 'connect',
+        destination: { host: this.onionAddress, port: vport },
+        timeout: 60000
+      })
+      socket.destroy()
+      accepted = true
+    } catch {
+      accepted = false
+    }
+    try { await this._control.cmd(removeCmd) } catch {}
+    return accepted
   }
 
   // ---------- daemon setup ----------

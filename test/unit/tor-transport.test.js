@@ -317,3 +317,87 @@ test('TorControl real parser — events dispatch immediately, replies route, err
 
   ctl.destroy()
 })
+
+test('health negative probe — restricted discovery holding keeps READY', async (t) => {
+  const socksPort = await fakeSocks(t)
+  const dir = tmpdir(t)
+  const { control, factory } = fakeFactory({})
+  const connects = []
+  const tt = new TorTransport({
+    socksPort,
+    localPort: 9100,
+    keyFile: path.join(dir, 'hs-key.blob'),
+    clientAuthKeys: [BOB_PUB],
+    health: { probeVport: 80 },
+    _controlFactory: factory,
+    _socksConnectFactory: (opts) => {
+      connects.push(opts.destination)
+      if (connects.length === 1) return Promise.resolve({ socket: { destroy () {} } }) // positive self-probe
+      return Promise.reject(new Error('unauthorized client refused')) // negative probe must be refused
+    }
+  })
+  const states = []
+  tt.on('health', (s) => states.push(s))
+  await tt.start()
+  control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' xyz')
+  control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' abc')
+  await new Promise((resolve) => setTimeout(resolve, 50))
+
+  t.is(tt.health, TorHealth.READY)
+  t.is(connects.length, 2, 'positive probe + one negative probe')
+  t.ok(control.commands.some((c) => c.startsWith('ONION_CLIENT_AUTH_ADD')), 'bogus credential installed for the negative probe')
+  t.ok(control.commands.some((c) => c.startsWith('ONION_CLIENT_AUTH_REMOVE')), 'bogus credential removed afterwards')
+  await tt.stop()
+})
+
+test('health negative probe — fail-open roster drops health to DEGRADED', async (t) => {
+  const socksPort = await fakeSocks(t)
+  const dir = tmpdir(t)
+  const { control, factory } = fakeFactory({})
+  const connects = []
+  const tt = new TorTransport({
+    socksPort,
+    localPort: 9100,
+    keyFile: path.join(dir, 'hs-key.blob'),
+    clientAuthKeys: [BOB_PUB],
+    health: { probeVport: 80 },
+    _controlFactory: factory,
+    _socksConnectFactory: () => {
+      connects.push(true)
+      return Promise.resolve({ socket: { destroy () {} } }) // BOTH probes succeed = daemon accepts unauthorized clients
+    }
+  })
+  const degraded = []
+  tt.on('health-degraded', (info) => degraded.push(info))
+  await tt.start()
+  control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' xyz')
+  control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' abc')
+  await new Promise((resolve) => setTimeout(resolve, 50))
+
+  t.is(tt.health, TorHealth.DEGRADED)
+  t.alike(degraded, [{ reason: 'restricted-discovery-fail-open' }])
+  t.is(connects.length, 2)
+  await tt.stop()
+})
+
+test('health negative probe — skipped when discovery is open', async (t) => {
+  const socksPort = await fakeSocks(t)
+  const dir = tmpdir(t)
+  const { control, factory } = fakeFactory({})
+  const tt = new TorTransport({
+    socksPort,
+    localPort: 9100,
+    keyFile: path.join(dir, 'hs-key.blob'),
+    health: { probeVport: 80 },
+    _controlFactory: factory,
+    _socksConnectFactory: () => Promise.resolve({ socket: { destroy () {} } })
+  })
+  await tt.start()
+  control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' xyz')
+  control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' abc')
+  await new Promise((resolve) => setTimeout(resolve, 50))
+
+  t.is(tt.health, TorHealth.READY)
+  t.absent(control.commands.some((c) => c.startsWith('ONION_CLIENT_AUTH_ADD')), 'no negative probe on an open service')
+  await tt.stop()
+})
