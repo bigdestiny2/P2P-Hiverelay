@@ -19,6 +19,7 @@ import { HolesailTransport } from '../../transports/holesail/index.js'
 import http from 'http'
 import { BootstrapCache } from '../bootstrap-cache.js'
 import { Federation } from '../federation.js'
+import { GatewayDenylist } from '../gateway-denylist.js'
 import { AutoHeal } from '../auto-heal.js'
 import { ManifestStore } from '../manifest-store.js'
 import { resolveAcceptMode, decideAcceptance } from '../accept-mode.js'
@@ -668,6 +669,15 @@ export class RelayNode extends EventEmitter {
       ? this.config.indexSidecarUrl.replace(/\/+$/, '')
       : null
     this.appRegistry = new AppRegistry(this.config.storage)
+    // Federated signed gateway denylist (takedown channel). Always-on as a
+    // manager so the HTTP gateway, the federation gossip pull, and the
+    // /api/gateway/denylist endpoint all share one store. An empty
+    // trustedAdmins list fails closed: no entry can censor a drive here
+    // until the operator explicitly trusts takedown admin keys.
+    this.gatewayDenylist = new GatewayDenylist({
+      trustedAdmins: this.config.gatewayDenylist?.trustedAdmins || [],
+      storagePath: join(this.config.storage, 'gateway-denylist.json')
+    })
     this.appLifecycle = new AppLifecycle(this)
     // Forward lifecycle events so existing listeners on RelayNode keep working
     for (const ev of ['seeding', 'unseeded', 'reseeded', 'reseed-error', 'app-replaced', 'app-version-rejected']) {
@@ -2309,6 +2319,12 @@ export class RelayNode extends EventEmitter {
         this._sweepRevocations()
       }, 60 * 60 * 1000)
       if (this._revocationSweepInterval.unref) this._revocationSweepInterval.unref()
+
+      // Hydrate the persisted gateway denylist before federation polls can
+      // merge into it — a takedown must survive restart with the same
+      // trusted-admin gate applied to replayed entries.
+      try { await this.gatewayDenylist.load() } catch (err) { this.emit('gateway-denylist-error', err) }
+      this.gatewayDenylist.on('persistence-error', (info) => this.emit('gateway-denylist-error', info))
 
       // Federation — opt-in cross-relay catalog sharing. Always-on as a manager
       // so /api/manage/federation can mutate it; the polling loop only runs

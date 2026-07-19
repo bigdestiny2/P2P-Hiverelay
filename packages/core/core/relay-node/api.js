@@ -260,6 +260,10 @@ import {
   resolveForkProofReadRoute
 } from './api-fork-proofs.js'
 import {
+  buildGatewayDenylistRoutePayload,
+  resolveGatewayDenylistReadRoute
+} from './api-gateway-denylist.js'
+import {
   buildReputationLeaderboardRoutePayload,
   buildReputationRecordRoutePayload,
   resolveReputationLeaderboardRoute,
@@ -1092,6 +1096,19 @@ export class RelayAPI extends EventEmitter {
           const result = buildForkProofsRoutePayload({
             route: forkProofReadRoute,
             forkDetector: this.node.forkDetector
+          })
+          return this._json(res, result.payload, result.status || 200, result.headers || null)
+        }
+
+        // Federated signed gateway denylist — served unauthenticated like the
+        // fork-proof list: entries are self-authenticating signed envelopes
+        // naming hashed drive keys only, and receiving relays independently
+        // verify + trust-gate before enforcing (see gateway-denylist.js).
+        const gatewayDenylistRoute = resolveGatewayDenylistReadRoute(req.method, path)
+        if (gatewayDenylistRoute && gatewayDenylistRoute.kind === 'gateway-denylist-list') {
+          const result = buildGatewayDenylistRoutePayload({
+            route: gatewayDenylistRoute,
+            denylist: this.node.gatewayDenylist
           })
           return this._json(res, result.payload, result.status || 200, result.headers || null)
         }

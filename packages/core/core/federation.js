@@ -537,6 +537,11 @@ export class Federation extends EventEmitter {
     // endpoint or it errors, we silently move on.
     try { await this._pullForkProofs(entry.url) } catch (_) { /* non-fatal */ }
 
+    // Pull signed gateway-denylist gossip from this followed peer too —
+    // same bounded, best-effort cadence. This is how a takedown issued on
+    // one relay propagates to the rest of the fleet.
+    try { await this._pullGatewayDenylist(entry.url) } catch (_) { /* non-fatal */ }
+
     return queued
   }
 
@@ -636,6 +641,37 @@ export class Federation extends EventEmitter {
     }
     if (merged > 0 || rejected > 0) {
       this.emit('fork-proofs-merged', { source: entryUrl, count: merged, rejected })
+    }
+  }
+
+  /**
+   * Pull a remote relay's signed gateway denylist and merge verified entries
+   * into our local store. This is how a takedown issued on one relay reaches
+   * the rest of the fleet: entries are self-authenticating signed envelopes
+   * naming hashed drive keys, so no trust in the *carrying* peer is needed —
+   * GatewayDenylist.add() re-verifies every signature and gates on our local
+   * trusted-admin allow-list (empty list = fail closed, nothing merges).
+   *
+   * Best-effort like fork-proof gossip: a missing endpoint or malformed
+   * payload is silently skipped. Per-call timeout via FETCH_TIMEOUT.
+   */
+  async _pullGatewayDenylist (entryUrl) {
+    if (!this.node?.gatewayDenylist) return
+    const data = await this._fetchJson(entryUrl, '/api/gateway/denylist')
+    if (!data || !Array.isArray(data.entries)) return
+    let merged = 0
+    let rejected = 0
+    for (const entry of data.entries) {
+      if (!entry) continue
+      const result = this.node.gatewayDenylist.add(entry, { source: entryUrl })
+      if (result.ok && result.added) merged++
+      else if (!result.ok) {
+        rejected++
+        this.emit('denylist-entry-rejected', { source: entryUrl, reason: result.reason })
+      }
+    }
+    if (merged > 0 || rejected > 0) {
+      this.emit('denylist-merged', { source: entryUrl, count: merged, rejected })
     }
   }
 
