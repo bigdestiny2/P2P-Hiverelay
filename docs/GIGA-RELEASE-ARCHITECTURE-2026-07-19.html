@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Giga Release Architecture — Now (2026-07-19)</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0; background: #eef1f6; color: #1a2333;
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .page {
+    max-width: 960px; margin: 32px auto; background: #fff; padding: 56px 64px;
+    border-radius: 14px; box-shadow: 0 2px 18px rgba(20,30,60,.10);
+  }
+  @media (max-width: 720px) {
+    .page { margin: 0; border-radius: 0; padding: 28px 20px; }
+  }
+  h1 {
+    font-size: 1.85rem; line-height: 1.25; margin: 0 0 .4em;
+    padding-bottom: .35em; border-bottom: 3px solid #4a6fa5;
+  }
+  h2 {
+    font-size: 1.32rem; margin-top: 2em;
+    border-bottom: 1px solid #dde3ee; padding-bottom: .2em;
+  }
+  h3 { font-size: 1.08rem; margin-top: 1.5em; color: #2c3e63; }
+  p { margin: .7em 0; }
+  blockquote {
+    margin: 1em 0; padding: .85em 1.15em; background: #f2f6fd;
+    border-left: 4px solid #4a6fa5; border-radius: 0 8px 8px 0; color: #2c3e63;
+  }
+  code {
+    background: #f0f2f7; padding: .12em .38em; border-radius: 5px;
+    font: .86em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  pre {
+    background: #141a28; color: #e6ebf5; padding: 16px 18px;
+    border-radius: 10px; overflow-x: auto; font-size: .88rem;
+  }
+  pre code { background: none; padding: 0; color: inherit; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: .9rem; }
+  th, td { border: 1px solid #d8deea; padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #eef2fa; }
+  tr:nth-child(even) td { background: #fafbfe; }
+  a { color: #2f5fb3; }
+  .doc-badge {
+    display: inline-block; font-size: .72rem; letter-spacing: .05em; text-transform: uppercase;
+    background: #4a6fa5; color: #fff; border-radius: 999px; padding: 3px 12px; margin: 0 6px 10px 0;
+  }
+  .doc-badge.ok { background: #2c7a4f; }
+  .doc-badge.warn { background: #b7791f; }
+  .doc-badge.muted { background: #6b7280; }
+  .meta { color: #4b5568; font-size: .95rem; margin-bottom: 1.2em; }
+  .mermaid-figure {
+    margin: 1.4em 0; padding: 18px 14px; background: #fbfcfe;
+    border: 1px solid #e2e8f2; border-radius: 12px; overflow-x: auto;
+  }
+  .status-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px; margin: 1em 0 1.4em;
+  }
+  .status-card {
+    border: 1px solid #d8deea; border-radius: 10px; padding: 12px 14px; background: #fafbfe;
+  }
+  .status-card strong { display: block; font-size: .78rem; letter-spacing: .04em;
+    text-transform: uppercase; color: #5b6b88; margin-bottom: 4px; }
+  .status-card span { font-size: 1.05rem; font-weight: 650; color: #1a2333; }
+  .status-card.shipped { border-color: #b7e0c5; background: #f3fbf6; }
+  .status-card.progress { border-color: #f0d49a; background: #fffbf0; }
+  .status-card.hold { border-color: #e8c4c4; background: #fff6f6; }
+  ul.tight li { margin: .25em 0; }
+  .footer {
+    margin-top: 2.5em; padding-top: 1em; border-top: 1px solid #dde3ee;
+    font-size: .88rem; color: #5b6b88;
+  }
+  .delta {
+    background: #f6faf3; border: 1px solid #cfe6c4; border-radius: 10px;
+    padding: 12px 16px; margin: 1em 0;
+  }
+  .delta h3 { margin-top: 0; color: #2c5e3a; }
+  hr { border: none; border-top: 1px solid #dde3ee; margin: 2em 0; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<span class="doc-badge">GIGA-RELEASE-ARCHITECTURE</span>
+<span class="doc-badge ok">NOW · 2026-07-19</span>
+<span class="doc-badge warn">PEERIT FIRST APP</span>
+
+<h1>Giga Release Architecture — Where We Are Now</h1>
+
+<p class="meta">
+  <strong>Date:</strong> 2026-07-19 ·
+  <strong>Supersedes:</strong> GIGA-RELEASE-ARCHITECTURE export dated 2026-07-17/18 ·
+  <strong>Posture:</strong> giga substrate largely <em>shipped on integration lines</em>; freeze holdouts remain; <strong>Peerit</strong> is the first live application canary on the relay plane
+</p>
+
+<blockquote>
+  This is the composition map of the release as it stands <strong>today</strong>: five HiveRelay giga subsystems (blind cells, Tor onion transport, HTTPS gateway, namespace, WAL) plus the first application path — <strong>Peerit</strong> standing on blind-capable relays. Compared with the mid-July architecture export, WAL phases 1–3, Tor pairing/peer-vport follow-ups, namespace <code>bytesPerDay</code>, gen-3 Hypercore, and Peerit’s writable public canary have all moved.
+</blockquote>
+
+<div class="status-grid">
+  <div class="status-card shipped"><strong>HiveRelay</strong><span>v0.24.3</span></div>
+  <div class="status-card shipped"><strong>Blind cells</strong><span>Shipped</span></div>
+  <div class="status-card shipped"><strong>Tor onion</strong><span>Shipped + follow-ups</span></div>
+  <div class="status-card shipped"><strong>Namespace</strong><span>Shipped + caps</span></div>
+  <div class="status-card shipped"><strong>WAL P1–P3</strong><span>Shipped (v1-integration)</span></div>
+  <div class="status-card progress"><strong>Gateway app-origin</strong><span>Canary · G1–G6</span></div>
+  <div class="status-card progress"><strong>Peerit</strong><span>Live writable canary</span></div>
+  <div class="status-card hold"><strong>Freeze gates</strong><span>Linux WAL · G7–G13 · GA</span></div>
+</div>
+
+<div class="delta">
+  <h3>What changed since the previous architecture export</h3>
+  <ul class="tight">
+    <li><strong>WAL:</strong> phases 1–3 shipped on the blind/v1-integration line (2026-07-18) — group commit, single-commit atomic PUT, segmented WAL + pruning. Previous doc: phases 1–3 “not implemented.”</li>
+    <li><strong>Tor:</strong> pairing-channel onion enrollment + peer-vport listener binding landed (<code>69a51dde</code>).</li>
+    <li><strong>Namespace:</strong> <code>bytesPerDay</code> enforced with rolling 24h window (<code>d9bdb405</code>).</li>
+    <li><strong>Hypercore gen-3:</strong> Hypercore 11 / Corestore 7 / Hyperdrive 13 upgrade on HiveRelay.</li>
+    <li><strong>Gateway app origins:</strong> Phase-1 canary + G1–G6 evidence executed (G7–G13 still operator/fleet).</li>
+    <li><strong>Peerit:</strong> public writable canary on <code>peerit.site</code> + <code>outbox.peerit.site</code> (HTTP 200 verified 2026-07-19); single-ingress canary, not GA.</li>
+    <li><strong>Programme machinery:</strong> pear-agent-system, shared adoption lanes, preservation bundles (2026-07-18), blind×Peerit qualification labs.</li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2>1. The stack in one diagram</h2>
+
+<div class="mermaid-figure">
+<pre class="mermaid">
+flowchart TB
+  subgraph Edge["App / publisher edge — keys never leave"]
+    PeeritEdge["Peerit browser / PearBrowser\nsigned outbox records"]
+    Seal["blind seal + encrypt"]
+    Split["PVSS split · blind cells"]
+    Sign["ed25519 intents / records"]
+    Policy["privacy-policy resolver"]
+  end
+
+  subgraph Privacy["Privacy transports"]
+    Tor["Tor v3 onion\nrelay location hidden"]
+    Nym["Nym mixnet lane\nbounded control · spec'd"]
+    Fwd["forward-relay\nzero-dep baseline"]
+  end
+
+  subgraph Relay["HiveRelay node · v0.24.3"]
+    GW["HTTPS gateway\npublic read plane"]
+    OL["OutboxLog namespaces\napp-neutral messaging"]
+    SS["shard-store\nblind cells custody"]
+    Reg["custody registry\nintents · receipts · commits"]
+    API["control plane API"]
+  end
+
+  subgraph Spine["Durability spine · WAL wal.v2"]
+    WAL["blind-daemon WAL\nP1 group commit · P2 single-commit PUT\nP3 segmented prune"]
+  end
+
+  subgraph Apps["First application · Peerit"]
+    Site["peerit.site\nsigned web sequence"]
+    Outbox["outbox.peerit.site\nsingle-ingress canary"]
+    P2P["PearBrowser peers\ndirect replicate"]
+  end
+
+  PeeritEdge --> Sign
+  Seal --> Split --> Sign
+  Policy --> Tor & Nym & Fwd
+  Sign --> Reg
+  Sign --> OL
+  Split --> SS
+  Tor & Fwd --> GW & OL & SS & Reg
+  SS --- WAL
+  Reg --- WAL
+  OL --> Outbox
+  Outbox --> Site
+  P2P --> PeeritEdge
+  GW --> Public["browsers / curl / CDN\npublic content only"]
+</pre>
+</div>
+
+<p>
+  Design invariants (unchanged): <strong>relays are blind</strong> (content and keys stay at the edge),
+  <strong>authorization is signature-based</strong> (transport never grants authority),
+  <strong>privacy claims stay on their ladders</strong> (each lane advertises only what it can evidence).
+</p>
+
+<!-- ============================================================ -->
+<h2>2. What each feature contributes</h2>
+
+<table>
+  <thead>
+    <tr><th>Feature</th><th>Job</th><th>Trust removed</th><th>Status now</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Blind cells</strong></td>
+      <td>k-of-n verifiable custody of encrypted secrets</td>
+      <td>Single-operator key trust; unverifiable custody</td>
+      <td><strong>Shipped</strong> (v0.22+); repair/AutoHeal roadmap</td>
+    </tr>
+    <tr>
+      <td><strong>Tor v3 onion</strong></td>
+      <td>Hide relay network location; restricted discovery</td>
+      <td>Relay IP exposure; private endpoint enumeration</td>
+      <td><strong>Shipped</strong> 2026-07-17 + pairing + peer-vport 2026-07-18</td>
+    </tr>
+    <tr>
+      <td><strong>HTTPS gateway (path)</strong></td>
+      <td>Serve declared-public drives to HTTP clients</td>
+      <td>“Must speak Hyperswarm to read anything”</td>
+      <td><strong>Shipped</strong></td>
+    </tr>
+    <tr>
+      <td><strong>HTTPS gateway (app origins)</strong></td>
+      <td>App-origin canary / nginx edge</td>
+      <td>Same as path, multi-app origin map</td>
+      <td><strong>Phase-1 canary</strong> · G1–G6 evidence; G7–G13 hold</td>
+    </tr>
+    <tr>
+      <td><strong>Namespace</strong></td>
+      <td>Many apps’ outbox logs on one relay; blind mode + takedown</td>
+      <td>Relay-per-app coupling; moderation content exposure</td>
+      <td><strong>Shipped</strong> · <code>bytesPerDay</code> enforced</td>
+    </tr>
+    <tr>
+      <td><strong>WAL</strong></td>
+      <td>Atomic one-use spend; fsync-before-ack; fail-closed recovery</td>
+      <td>Torn writes; replayed spend; unverifiable recovery</td>
+      <td><strong>P1–P3 shipped</strong> on v1-integration; Linux fleet rerun remaining</td>
+    </tr>
+    <tr>
+      <td><strong>Peerit</strong> <em>(first app)</em></td>
+      <td>Signed-outbox community app; browser + PearBrowser paths</td>
+      <td>Centralized forum host as sole truth</td>
+      <td><strong>Live writable canary</strong> · not GA</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>3. Peerit on the giga stack</h2>
+
+<p>
+  Peerit is the <strong>reference consumer</strong> for the giga release: it is the first application
+  expected to prove that blind-capable relays + signed outboxes + public read planes compose into a
+  product people can actually use.
+</p>
+
+<div class="mermaid-figure">
+<pre class="mermaid">
+flowchart LR
+  subgraph Clients
+    B["Normal browser\nverify signed records"]
+    PB["PearBrowser\ndirect P2P replicate"]
+  end
+
+  subgraph Canary["Public canary · not GA"]
+    S["peerit.site\nsigned web artifact"]
+    O["outbox.peerit.site\nsingle signed ingress"]
+  end
+
+  subgraph Substrate["HiveRelay substrate"]
+    NS["OutboxLog namespace\npeerit operator-admitted"]
+    BL["Blind cells path\nG2-S profile target"]
+    T1["T1 public gateway\nexact-byte public bytes only"]
+  end
+
+  B --> S
+  B --> O
+  PB --> B
+  PB --> NS
+  O --> NS
+  S -. signed release .-> B
+  NS --> BL
+  T1 -.-> S
+</pre>
+</div>
+
+<h3>3.1 Peerit current posture (verified / evidenced)</h3>
+<table>
+  <thead><tr><th>Surface</th><th>State</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>https://peerit.site</code></td>
+      <td><strong>Live</strong> (HTTP 200, 2026-07-19)</td>
+      <td>Signed writable web canary on Render; sequence advanced through release hardening (seq 11 in recent commits)</td>
+    </tr>
+    <tr>
+      <td><code>https://outbox.peerit.site</code></td>
+      <td><strong>Live</strong> (health HTTP 200, 2026-07-19)</td>
+      <td>Single signed ingress; daily backup timer; restore drill done; same-host backup limits remain</td>
+    </tr>
+    <tr>
+      <td>Production readiness matrix</td>
+      <td>2026-07-10 baseline + later release hardening</td>
+      <td>Writable canary passes integrity/CAS; CSP headers were a fail at matrix time; multi-ingress + 2k-client still hard GA gates</td>
+    </tr>
+    <tr>
+      <td>Blind × Peerit labs</td>
+      <td>Local qualification evidence</td>
+      <td><code>vnext-custody/blind-peerit-*</code>, browser scale matrices — measured local/desktop class, not production GA</td>
+    </tr>
+    <tr>
+      <td>Source branch posture</td>
+      <td>Active on <code>codex/opt-in-writer</code></td>
+      <td>Opt-in signed single-ingress writer mode; dirty paths must stay classified before merge waves</td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote>
+  <strong>Honest label:</strong> Peerit is a <em>public writable canary</em>, not general availability.
+  One ingress, one failure domain, incomplete multi-device/capacity evidence. Do not market as independently durable or scale-cleared.
+</blockquote>
+
+<!-- ============================================================ -->
+<h2>4. One full journey (custody + public + Peerit messaging)</h2>
+
+<div class="mermaid-figure">
+<pre class="mermaid">
+sequenceDiagram
+  participant P as Publisher / Peerit edge
+  participant Pol as Policy resolver
+  participant T as Tor onion
+  participant R as Relay
+  participant Reg as Custody registry
+  participant OL as OutboxLog namespace
+  participant Rd as Reader / browser
+
+  Note over P,OL: Messaging path (Peerit canary today)
+  P->>OL: signed atomic commit (outbox.peerit.site)
+  OL-->>P: receipt / directory sequence
+  Rd->>OL: pull heads / SSE gossip
+  Rd->>Rd: verify signatures locally
+
+  Note over P,Reg: Custody path (blind cells composition)
+  P->>P: encrypt, PVSS split to n cells
+  P->>Pol: intent privacy policy
+  Pol-->>P: tor-v3-onion-v1 (evidence-bearing)
+  P->>Reg: signed custody intent v2
+  P->>T: PUT cell i + signed pin
+  T->>R: peer vport → shard-store / WAL
+  R->>Reg: custody receipt (shareVerified)
+  P->>Reg: commit at quorum
+
+  Note over Rd: Public read path (T1 only)
+  Rd->>R: GET /v1/hyper/:key/...
+  R-->>Rd: public bytes (blind hard-403)
+</pre>
+</div>
+
+<p>Three compositions (still the right mental model):</p>
+<ol>
+  <li><strong>Custody</strong> — blind cells + registry + WAL: intent → cells → receipts → commit → burn/witness.</li>
+  <li><strong>Read</strong> — HTTPS gateway + Tor read plane + capability doc (honest coverage labels).</li>
+  <li><strong>Messaging</strong> — namespaces + wake hints + privacy transports; <strong>Peerit is the first real passenger</strong> on this plane.</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2>5. Honesty layer (shared)</h2>
+
+<div class="mermaid-figure">
+<pre class="mermaid">
+flowchart TD
+  Doc["signed capability doc"] --> T1["supported_transports"]
+  Doc --> T2["privacyTransports health-gated"]
+  Doc --> T3["relayLocation + coverage labels"]
+  Pol["client policy resolver"] -->|"deny → fail closed"| X1["no silent downgrade"]
+  Pol -->|"ordered list"| X2["recorded downgrade"]
+  Red["redaction audit gate"] --> Y["no onion addrs / roster / keys\nin public logs+metrics"]
+  Ladder["claim ladders"] --> Z["never: TA-resistant on Tor\nnever: full-coverage on Nym\nnever: private content on gateway\nnever: Peerit single-ingress = multi-relay durable"]
+</pre>
+</div>
+
+<!-- ============================================================ -->
+<h2>6. WAL — from gate-in-flight to nearly closed</h2>
+
+<p>
+  The WAL is the blind custody store’s write-ahead log (<code>wal.v2</code>, magic <code>HRWL</code>) on the
+  <strong>blind / v1-integration line</strong> (not mainline hiverelay package tree). It provides atomic one-use spend,
+  fsync-before-ack durability, fail-closed recovery, writer fencing, continuity hash, and epoch floor.
+</p>
+
+<table>
+  <thead><tr><th>Phase</th><th>Content</th><th>Status (now)</th></tr></thead>
+  <tbody>
+    <tr><td>0 — measure</td><td>capacity model + portable harnesses</td><td><strong>Done</strong> (macOS; Linux fleet rerun still required)</td></tr>
+    <tr><td>1 — group commit</td><td>batching + fdatasync + preallocation</td><td><strong>Shipped</strong> 2026-07-18 · <code>f0b4376</code> · ~8k concurrent commits/s macOS</td></tr>
+    <tr><td>2 — single-commit PUT</td><td>3 frames → 1 atomic staged path</td><td><strong>Shipped</strong> 2026-07-18 · <code>290bebd</code> · 1,841→971 B/PUT</td></tr>
+    <tr><td>3 — segmented WAL</td><td>pruning + checkpoint-anchored recovery</td><td><strong>Shipped</strong> 2026-07-18 · <code>76eff20</code> · <code>walPruningSupported: true</code></td></tr>
+    <tr><td>4 — model rerun</td><td>scenarios with measured constants</td><td>Partial (Phase 0); Linux constants pending</td></tr>
+  </tbody>
+</table>
+
+<p>
+  <strong>Follow-up (not freeze gate):</strong> under 64-way concurrency, atomic PUT still serializes on
+  <code>quota:atomic-staging</code> (~35 vs ~126 PUTs/s) — narrow lock scope before relying on P1×P2 composition at scale.
+</p>
+
+<p>
+  <strong>Do-not-overclaim:</strong> WAL lives on the blind/v1-integration line; macOS numbers only until Linux Phase-0
+  fleet rerun lands; mainline <code>p2p-hiverelay@0.24.3</code> consumers still need explicit pin to the blind daemon profile
+  that carries WAL.
+</p>
+
+<!-- ============================================================ -->
+<h2>7. Release readiness map (2026-07-19)</h2>
+
+<table>
+  <thead>
+    <tr><th>Feature</th><th>Lane</th><th>Code</th><th>Tests / evidence</th><th>Gate to release</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Drift cleanup</td><td>hiverelay</td><td>merged</td><td>unit suite</td><td>— done</td>
+    </tr>
+    <tr>
+      <td>Blind cells</td><td>hiverelay</td><td>shipped v0.22+</td><td>e2e fleet green</td><td>repair/AutoHeal roadmap (not a gate)</td>
+    </tr>
+    <tr>
+      <td>Tor onion transport</td><td>hiverelay</td><td>shipped + pairing + peer-vport</td><td>148/148 suites + live-tor e2e</td><td>100&nbsp;MB bulk-over-onion; <strong>negative-probe gap</strong> on restricted discovery</td>
+    </tr>
+    <tr>
+      <td>HTTPS gateway (path)</td><td>hiverelay</td><td>shipped</td><td>streaming integration</td><td>— done</td>
+    </tr>
+    <tr>
+      <td>HTTPS gateway (app origins)</td><td>v1-integration</td><td>Phase-1 canary</td><td>G1–G6 executed 2026-07-18</td><td><strong>G7–G13</strong> operator/fleet evidence</td>
+    </tr>
+    <tr>
+      <td>Namespace</td><td>hiverelay</td><td>shipped + bytesPerDay</td><td>unit + config</td><td>— done</td>
+    </tr>
+    <tr>
+      <td>WAL</td><td>blind / v1-integration</td><td>P1–P3 shipped</td><td>macOS evidence pack</td><td><strong>Linux Phase-0 fleet rerun</strong></td>
+    </tr>
+    <tr>
+      <td>Hypercore gen-3</td><td>hiverelay</td><td>HC11 / CS7 landed</td><td>upgrade commit present</td><td>browser HC11 + new-root migration gates</td>
+    </tr>
+    <tr>
+      <td><strong>Peerit first app</strong></td><td>02-apps/peerit</td><td>1.0.1 · live canary</td><td>writable proofs, browser CI, recovery drill</td><td>multi-ingress, CSP/headers, 2k-client, 2-device PearBrowser, editorial content, GA soak</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>8. Programme view — standing up blind relays → Peerit</h2>
+
+<div class="mermaid-figure">
+<pre class="mermaid">
+flowchart TD
+  S["Giga substrate\nblind · tor · namespace · WAL · gateway"] --> C["Disposable multi-node cohort\nblind profile + public T1"]
+  C --> R["Signed client / roster\nPeerit web sequence"]
+  R --> W["Writable canary\npeerit.site + outbox.peerit.site"]
+  W --> M["Multi-ingress + capacity\n2nd operator · 2k-client staging"]
+  M --> G["GA claim window\nsoak · claim lint · support"]
+
+  S -. freeze holdouts .-> H1["Linux WAL rerun"]
+  S -. freeze holdouts .-> H2["Gateway G7–G13"]
+  S -. freeze holdouts .-> H3["Onion negative-probe"]
+  W -. canary holdouts .-> H4["CSP / headers / multi-device"]
+</pre>
+</div>
+
+<p>
+  The monumental task is not “finish five features in isolation.” It is
+  <strong>running a blind-capable relay profile that a real app (Peerit) can use in production
+  without overclaiming</strong>. Substrate features are largely code-complete on their lanes;
+  the remaining work is evidence-bound promotion: fleet numbers, operator contracts, multi-ingress
+  durability, and GA-grade Peerit gates.
+</p>
+
+<!-- ============================================================ -->
+<h2>9. Final test matrix — what still means “test everything out”</h2>
+
+<ol>
+  <li><strong>Per-feature suites</strong> — unit/e2e green for blind, tor, gateway path, namespace, WAL P1–P3 macOS.</li>
+  <li><strong>Cross-feature journeys</strong>
+    <ul class="tight">
+      <li>k-of-n cells over Tor onions → receipts → reconstruct (blind × tor)</li>
+      <li>public app via gateway while custody hard-403s (gateway × tor)</li>
+      <li>two apps / two namespaces on one relay with takedown (namespace × blind)</li>
+      <li><strong>Peerit signed commits</strong> over OutboxLog while PearBrowser peers still converge offline</li>
+    </ul>
+  </li>
+  <li><strong>Adversarial / privacy</strong> — fail-closed downgrade, redaction audits, orphan-pin, cross-namespace replay (verified 2026-07-18). <em>Gap:</em> private onion negative-probe.</li>
+  <li><strong>Release-gate holdouts</strong>
+    <ul class="tight">
+      <li>Linux WAL Phase-0 fleet rerun</li>
+      <li>App-origin gateway G7–G13</li>
+      <li>100&nbsp;MB bulk-over-onion measurement</li>
+      <li>Peerit: second operator, 2&nbsp;000-client staging, device proofs, content cleanup, CSP</li>
+    </ul>
+  </li>
+</ol>
+
+<!-- ============================================================ -->
+<h2>10. Ecosystem machinery that now surrounds the release</h2>
+
+<table>
+  <thead><tr><th>Piece</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td><code>00-core/pear-agent-system</code></td><td>Multi-agent maintenance fabric; registry of apps (Peerit wave 0 reference)</td></tr>
+    <tr><td>Shared adoption lanes (2026-07-17)</td><td>pear-tickets, pear-pos, dealroom, pearfeed, pearpaste, matchday-mesh, …</td></tr>
+    <tr><td><code>preservation-20260718</code></td><td>Bundles / patches for concurrent worktrees (mainline + vnext heads)</td></tr>
+    <tr><td><code>vnext-custody/*</code></td><td>Blind protocol remediation, staged PUT, Peerit qualification labs</td></tr>
+    <tr><td>PearBrowser desktop / mobile</td><td>HC11/CS7-native hosts; catalogue authority still needs single release ledger</td></tr>
+    <tr><td>Umbrel / StartOS packaging</td><td>Blindspark / StartOS 0.4 packages exist; store submissions still gated</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>11. Sources of truth</h2>
+
+<ul class="tight">
+  <li><strong>Architecture (code):</strong> <code>00-core/hiverelay/docs/GIGA-RELEASE-ARCHITECTURE.md</code> (sync commit <code>525a7a15</code>)</li>
+  <li><strong>Feature docs:</strong> BLIND-CELLS · TOR-ONION-TRANSPORT · HTTPS-GATEWAY · NAMESPACE · tor-transport operator guide</li>
+  <li><strong>WAL:</strong> <code>00-core/WAL-DESIGN-ATTACK-2026-07-13.md</code>, <code>wal-phase0-evidence-2026-07-13/</code>, v1-integration blind line</li>
+  <li><strong>Peerit programme:</strong> <code>02-apps/peerit/docs/PEAR-ECOSYSTEM-VNEXT-COMPLETION-AND-LAUNCH-MASTER-PLAN.md</code></li>
+  <li><strong>Peerit canary evidence:</strong> <code>02-apps/peerit/reports/2026-07-10-PRODUCTION-READINESS-MATRIX.md</code> + later release commits</li>
+  <li><strong>Gateway:</strong> <code>00-core/hr-https-gateway</code> / v1-integration PUBLIC-HTTPS-HIVE-GATEWAY-SPEC</li>
+  <li><strong>Research vault:</strong> <code>00-brain/research/</code> (Nym, Tor, anonymity matrix)</li>
+</ul>
+
+<hr />
+
+<div class="footer">
+  <p>
+    Pear / HiveRelay release documentation — rendered <strong>2026-07-19</strong>.
+    Visual language inherits the 2026-07-17 GIGA-RELEASE-ARCHITECTURE HTML export;
+    technical status is recomposed from the live <code>pear-ecosystem</code> tree (HiveRelay <code>v0.24.3</code>,
+    WAL P1–P3 on v1-integration, Peerit public canary).
+  </p>
+  <p>
+    <strong>Claim discipline:</strong> “shipped on a lane” ≠ “GA on the public internet.”
+    Peerit canary and blind substrate are complementary proofs still converging on freeze + multi-operator durability.
+  </p>
+</div>
+
+</div>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'neutral',
+    securityLevel: 'strict',
+    flowchart: { curve: 'basis', htmlLabels: true },
+    sequence: { mirrorActors: false, messageMargin: 30 }
+  });
+</script>
+</body>
+</html>

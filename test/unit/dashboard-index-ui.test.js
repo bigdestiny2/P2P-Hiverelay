@@ -187,6 +187,119 @@ test('operator header and peer list render untrusted overview fields as text', (
   t.absent(rendered.peersHtml.includes('onclick="'))
 })
 
+test('operator pulse surface is present for data-layer v0/v1/v2', (t) => {
+  t.ok(dashboard.includes('id="operatorPulseRow"'), 'primary pulse row')
+  t.ok(dashboard.includes('id="statNodeHealth"'), 'node health chip')
+  t.ok(dashboard.includes('id="statDisk"'), 'disk chip')
+  t.ok(dashboard.includes('id="statRoles"'), 'roles chip')
+  t.ok(dashboard.includes('id="statSuppress"'), 'suppressions chip')
+  t.ok(dashboard.includes('id="operatorPulseRow2"'), 'secondary pulse row')
+  t.ok(dashboard.includes('id="statOutboxWriters"'), 'outbox writers chip')
+  t.ok(dashboard.includes('id="statOutboxBytes"'), 'outbox bytes chip')
+  t.ok(dashboard.includes('id="statShardRejected"'), 'shard rejects chip')
+  t.ok(dashboard.includes('id="statPrivacy"'), 'privacy lane chip')
+  t.ok(dashboard.includes('id="namespacesPanel"'), 'namespaces panel')
+  t.ok(dashboard.includes('id="compliancePanel"'), 'compliance panel')
+  t.ok(dashboard.includes('id="walPanel"'), 'v2 wal panel')
+  t.ok(dashboard.includes('id="gatewayPanel"'), 'v2 gateway panel')
+  t.ok(dashboard.includes('id="shardPanel"'), 'v2 shard panel')
+  t.ok(dashboard.includes('id="attentionPanel"'), 'attention panel')
+  t.ok(dashboard.includes('function updateOperatorPulse(overview)'), 'pulse updater')
+  t.ok(dashboard.includes('updateOperatorPulse(overview);'), 'wired from updateDashboard')
+})
+
+test('operator pulse renders management overview and escapes namespace names', (t) => {
+  const out = JSON.parse(renderOperatorPulseWith([
+    'updateOperatorPulse({',
+    '  health: { healthy: true },',
+    '  disk: { ok: true, usedPct: 22, freeGB: 40, status: "ok" },',
+    '  roles: { t1: true, t2: true, gateway: false, outboxlog: true, witness: false },',
+    '  compliance: { adminArmed: true, suppressedKeys: 3, takedownCount: 3 },',
+    '  namespaces: {',
+    '    groups: 1,',
+    '    totalBytes: 4096,',
+    '    suppressedCount: 3,',
+    '    namespaces: [{ name: \'<img src=x onerror=alert(1)>\', blind: true, writers: 2, bytes24h: 100, capBytes24h: 1000 }]',
+    '  },',
+    '  shardStore: { put: 10, get: 5, rejected: 1, bytes: 4096 },',
+    '  wal: { source: "outboxlog-journal", healthy: true, length: 12, pruningSupported: false },',
+    '  gatewayDetail: { enabled: true, port: 9200, totalRequests: 7, totalBytesServed: 11, cachedDrives: 2, verifyFails: 0, roleConflict: false },',
+    '  privacyTransports: [{ id: "tor-v3-onion-v1", running: true, health: "ready", activeConnections: 2, negativeProbe: true }],',
+    '  errors: 0',
+    '})',
+    'JSON.stringify({',
+    '  health: document.getElementById("statNodeHealth").textContent,',
+    '  disk: document.getElementById("statDisk").textContent,',
+    '  roles: document.getElementById("statRoles").textContent,',
+    '  suppress: document.getElementById("statSuppress").textContent,',
+    '  writers: document.getElementById("statOutboxWriters").textContent,',
+    '  privacy: document.getElementById("statPrivacy").textContent,',
+    '  nsAssigned: document.getElementById("namespacesBody").innerHTMLAssignments[0] || "",',
+    '  nsDisplay: document.getElementById("namespacesPanel").style.display,',
+    '  compDisplay: document.getElementById("compliancePanel").style.display,',
+    '  walDisplay: document.getElementById("walPanel").style.display,',
+    '  walSource: document.getElementById("walSource").textContent,',
+    '  gwDisplay: document.getElementById("gatewayPanel").style.display,',
+    '  gwEnabled: document.getElementById("gwEnabled").textContent,',
+    '  shardDisplay: document.getElementById("shardPanel").style.display,',
+    '  shardPut: document.getElementById("shardPut").textContent,',
+    '  armed: document.getElementById("compAdminArmed").textContent,',
+    '  attentionAssigned: (document.getElementById("attentionList").innerHTMLAssignments || []).join("")',
+    '})'
+  ].join('\n')))
+
+  t.is(out.health, 'OK')
+  t.is(out.disk, '22%')
+  t.is(out.roles, 'T1+T2+OL')
+  t.is(out.suppress, '3')
+  t.is(out.writers, '2')
+  t.is(out.privacy, 'ready')
+  t.is(out.nsDisplay, '')
+  t.is(out.compDisplay, '')
+  t.is(out.walDisplay, '')
+  t.is(out.walSource, 'outboxlog-journal')
+  t.is(out.gwDisplay, '')
+  t.is(out.gwEnabled, 'ON')
+  t.is(out.shardDisplay, '')
+  t.is(out.shardPut, '10')
+  t.is(out.armed, 'ARMED')
+  // Use the raw assignment (FakeElement re-escapes on get).
+  t.ok(out.nsAssigned.includes('&lt;img src=x onerror=alert(1)&gt;'))
+  t.ok(out.nsAssigned.includes('blind'))
+  t.absent(out.nsAssigned.includes('<img'))
+  t.absent(out.attentionAssigned.includes('T2 custody with gateway'), 'gateway off → no co-location warning')
+})
+
+test('operator pulse public overview hides management panels', (t) => {
+  const out = JSON.parse(renderOperatorPulseWith([
+    'updateOperatorPulse({',
+    '  health: { healthy: true },',
+    '  disk: { ok: true, usedPct: 10, freeGB: 90, status: "ok" },',
+    '  roles: { t1: true, t2: false, gateway: false, outboxlog: false, witness: false },',
+    '  compliance: null,',
+    '  namespaces: null,',
+    '  shardStore: null,',
+    '  privacyTransports: [{ id: "tor-v3-onion-v1", running: true, health: "ready", activeConnections: 0 }],',
+    '  errors: 0',
+    '})',
+    'JSON.stringify({',
+    '  suppress: document.getElementById("statSuppress").textContent,',
+    '  roles: document.getElementById("statRoles").textContent,',
+    '  privacy: document.getElementById("statPrivacy").textContent,',
+    '  row2: document.getElementById("operatorPulseRow2").style.display,',
+    '  nsDisplay: document.getElementById("namespacesPanel").style.display,',
+    '  compDisplay: document.getElementById("compliancePanel").style.display',
+    '})'
+  ].join('\n')))
+
+  t.is(out.suppress, '—')
+  t.is(out.roles, 'T1')
+  t.is(out.privacy, 'ready')
+  t.is(out.row2, '')
+  t.is(out.nsDisplay, 'none')
+  t.is(out.compDisplay, 'none')
+})
+
 test('operator header public-key copy reports missing or rejected clipboard writes', async (t) => {
   const source = [
     extractFunction('clearNode'),
@@ -272,6 +385,45 @@ function renderDomWith (body) {
       },
       getElementById (id) {
         if (!elements[id]) elements[id] = new FakeElement('div')
+        return elements[id]
+      }
+    }
+  })
+}
+
+function renderOperatorPulseWith (body) {
+  const elements = {}
+  const source = [
+    extractFunction('escapeHtml'),
+    extractFunction('formatBytes'),
+    extractFunction('formatCount'),
+    extractFunction('setText'),
+    extractFunction('updateOperatorPulse'),
+    body
+  ].join('\n')
+  return vm.runInNewContext(source, {
+    String,
+    Number,
+    Array,
+    Math,
+    isNaN,
+    document: {
+      getElementById (id) {
+        if (!elements[id]) {
+          const el = new FakeElement('div')
+          // default management panels hidden like the HTML
+          if (
+            id === 'namespacesPanel' ||
+            id === 'compliancePanel' ||
+            id === 'operatorPulseRow2' ||
+            id === 'walPanel' ||
+            id === 'gatewayPanel' ||
+            id === 'shardPanel'
+          ) {
+            el.style.display = 'none'
+          }
+          elements[id] = el
+        }
         return elements[id]
       }
     }

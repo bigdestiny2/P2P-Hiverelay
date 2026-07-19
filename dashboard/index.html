@@ -101,6 +101,41 @@ button{font-family:inherit}
 .stat-value.cyan{color:var(--cyan)}
 .stat-value.green{color:var(--green)}
 .stat-value.orange{color:var(--orange)}
+.stat-value.red{color:var(--red)}
+.stat-value.accent{color:var(--accent)}
+
+/* ── Operator data-layer panels (v0/v1) ──────────────────────────── */
+.pulse-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.9rem;margin-bottom:1rem}
+.pulse-panel{
+  background:var(--card);border:1px solid var(--card-border);border-radius:var(--radius);
+  padding:1rem 1.1rem;margin-bottom:1rem;
+}
+.pulse-panel h3{
+  font-size:.7rem;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-dim);margin-bottom:.75rem;
+}
+.pulse-panel .mono-rows{font-family:var(--mono);font-size:.78rem}
+.pulse-panel .mono-rows .r{
+  display:grid;grid-template-columns:1fr auto auto;gap:.55rem;padding:.4rem 0;
+  border-bottom:1px solid rgba(255,255,255,.04);align-items:center;
+}
+.pulse-panel .mono-rows .r:last-child{border-bottom:0}
+.role-pill{
+  display:inline-flex;align-items:center;gap:.3rem;font-size:.68rem;font-family:var(--mono);
+  padding:.22rem .55rem;border-radius:999px;border:1px solid var(--card-border);color:var(--text-dim);
+  margin-right:.35rem;margin-bottom:.25rem;
+}
+.role-pill.on{color:var(--green);border-color:rgba(63,185,80,.35);background:rgba(63,185,80,.1)}
+.role-pill.warn{color:var(--orange);border-color:rgba(240,166,74,.35);background:rgba(240,166,74,.1)}
+.role-pill.off{opacity:.55}
+.attention-list{list-style:none;margin:0;padding:0}
+.attention-list li{
+  font-size:.8rem;padding:.4rem 0;border-bottom:1px solid rgba(255,255,255,.04);
+  display:flex;justify-content:space-between;gap:.75rem;color:var(--text-dim);
+}
+.attention-list li:last-child{border-bottom:0}
+.attention-list .sev{font-family:var(--mono);font-size:.72rem;color:var(--orange)}
+.attention-list .sev.ok{color:var(--green)}
+.attention-list .sev.bad{color:var(--red)}
 
 /* ── Earnings panel (subsidy) ────────────────────────────────────── */
 .earn-card{
@@ -272,6 +307,7 @@ dialog#destDialog::backdrop{background:rgba(5,8,14,.7);backdrop-filter:blur(2px)
     <a href="/payments">Payments</a>
     <a href="/calculator">Calculator</a>
     <a href="/network">Network</a>
+    <a href="/fleet">Fleet</a>
     <a href="/leaderboard">Leaderboard</a>
     <a href="/docs">Docs</a>
   </nav>
@@ -303,6 +339,112 @@ dialog#destDialog::backdrop{background:rgba(5,8,14,.7);backdrop-filter:blur(2px)
     <div class="stat-value orange" id="statRelayed">--</div>
     <div class="stat-sub" id="statRelayedSub">&nbsp;</div>
   </div>
+</div>
+
+<!-- Operator pulse (v0/v1 data layer) -->
+<div class="pulse-row" id="operatorPulseRow">
+  <div class="stat-card">
+    <div class="stat-label">Node health</div>
+    <div class="stat-value green" id="statNodeHealth">--</div>
+    <div class="stat-sub" id="statNodeHealthSub">disk · api · roles</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Disk</div>
+    <div class="stat-value cyan" id="statDisk">--</div>
+    <div class="stat-sub" id="statDiskSub">&nbsp;</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Roles</div>
+    <div class="stat-value accent" id="statRoles" style="font-size:1.1rem;line-height:1.35">--</div>
+    <div class="stat-sub" id="statRolesSub">&nbsp;</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Suppressions</div>
+    <div class="stat-value orange" id="statSuppress">--</div>
+    <div class="stat-sub" id="statSuppressSub">DO-NOT-SERVE</div>
+  </div>
+</div>
+
+<div class="stats-row" id="operatorPulseRow2" style="display:none">
+  <div class="stat-card">
+    <div class="stat-label">OutboxLog writers</div>
+    <div class="stat-value cyan" id="statOutboxWriters">--</div>
+    <div class="stat-sub" id="statOutboxWritersSub">&nbsp;</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Outbox bytes (all NS)</div>
+    <div class="stat-value" id="statOutboxBytes">--</div>
+    <div class="stat-sub" id="statOutboxBytesSub">&nbsp;</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Shard rejects</div>
+    <div class="stat-value" id="statShardRejected">--</div>
+    <div class="stat-sub" id="statShardSub">custody path</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Privacy lane</div>
+    <div class="stat-value" id="statPrivacy" style="font-size:1.05rem">--</div>
+    <div class="stat-sub" id="statPrivacySub">Tor coarse health</div>
+  </div>
+</div>
+
+<div class="pulse-panel" id="namespacesPanel" style="display:none">
+  <h3>Namespaces · OutboxLog</h3>
+  <div class="mono-rows" id="namespacesBody">
+    <div class="r"><span style="color:var(--text-faint)">No OutboxLog namespaces reported</span><span></span><span></span></div>
+  </div>
+</div>
+
+<div class="pulse-panel" id="compliancePanel" style="display:none">
+  <h3>Compliance · DO-NOT-SERVE</h3>
+  <div class="mono-rows">
+    <div class="r"><span>Admin surface</span><span id="compAdminArmed" class="sev">--</span><span id="compAdminNote" style="color:var(--text-faint)"></span></div>
+    <div class="r"><span>Suppressed opaque keys</span><span id="compSuppressKeys">--</span><span style="color:var(--text-faint)">serve-time only</span></div>
+    <div class="r"><span>Takedown count</span><span id="compTakedownCount">--</span><span style="color:var(--text-faint)">audit list size</span></div>
+  </div>
+</div>
+
+<!-- Operator data-layer v2: WAL · Gateway · Shard (Prometheus-aligned) -->
+<div class="pulse-panel" id="walPanel" style="display:none">
+  <h3>WAL · durability pulse</h3>
+  <div class="mono-rows">
+    <div class="r"><span>Source</span><span id="walSource">--</span><span id="walHealthy" class="sev">--</span></div>
+    <div class="r"><span>Frames / s</span><span id="walFrames">--</span><span style="color:var(--text-faint)">blind line</span></div>
+    <div class="r"><span>fsync p99</span><span id="walFsync">--</span><span style="color:var(--text-faint)">ms</span></div>
+    <div class="r"><span>Pruning</span><span id="walPrune">--</span><span id="walPruneNote" style="color:var(--text-faint)"></span></div>
+    <div class="r"><span>SPEND_REPLAY / 24h</span><span id="walSpend">--</span><span style="color:var(--text-faint)">fail-closed if rising</span></div>
+    <div class="r"><span>Size / length</span><span id="walSize">--</span><span id="walSizeNote" style="color:var(--text-faint)"></span></div>
+  </div>
+</div>
+
+<div class="pulse-panel" id="gatewayPanel" style="display:none">
+  <h3>T1 HTTPS gateway</h3>
+  <div class="mono-rows">
+    <div class="r"><span>Enabled</span><span id="gwEnabled" class="sev">--</span><span id="gwEndpoint" style="color:var(--text-faint)"></span></div>
+    <div class="r"><span>Total requests</span><span id="gwRequests">--</span><span style="color:var(--text-faint)">lifetime</span></div>
+    <div class="r"><span>Bytes served</span><span id="gwBytes">--</span><span style="color:var(--text-faint)">lifetime</span></div>
+    <div class="r"><span>Cached drives</span><span id="gwDrives">--</span><span style="color:var(--text-faint)">in-memory</span></div>
+    <div class="r"><span>Verify fails</span><span id="gwVerify">--</span><span style="color:var(--text-faint)">exact-byte</span></div>
+    <div class="r"><span>Role policy</span><span id="gwRole" class="sev">--</span><span id="gwRoleNote" style="color:var(--text-faint)"></span></div>
+  </div>
+</div>
+
+<div class="pulse-panel" id="shardPanel" style="display:none">
+  <h3>Shard store · custody counters</h3>
+  <div class="mono-rows">
+    <div class="r"><span>hiverelay_shard_put_total</span><span id="shardPut">--</span><span></span></div>
+    <div class="r"><span>get / proof</span><span id="shardGetProof">--</span><span style="color:var(--text-faint)">aggregate</span></div>
+    <div class="r"><span>rejected (bad pin)</span><span id="shardRejected" class="sev">--</span><span style="color:var(--text-faint)">no pin payloads</span></div>
+    <div class="r"><span>evicted / swept</span><span id="shardEvict">--</span><span style="color:var(--text-faint)"></span></div>
+    <div class="r"><span>held / bytes</span><span id="shardHeld">--</span><span style="color:var(--text-faint)">ciphertext only</span></div>
+  </div>
+</div>
+
+<div class="pulse-panel" id="attentionPanel">
+  <h3>Attention</h3>
+  <ul class="attention-list" id="attentionList">
+    <li><span>Waiting for overview…</span><span class="sev">—</span></li>
+  </ul>
 </div>
 
 <!-- Earnings (hidden unless the relay has subsidy.enabled) -->
@@ -838,6 +980,330 @@ function formatCount(n) {
   return n.toString();
 }
 
+/* ===== Operator data-layer pulse (v0/v1) ===== */
+function updateOperatorPulse(overview) {
+  if (!overview) return;
+  var health = overview.health || {};
+  var disk = overview.disk || (health.checks && health.checks.disk) || {};
+  var roles = overview.roles || {};
+  var compliance = overview.compliance || null;
+  var namespaces = overview.namespaces || null;
+  var shard = overview.shardStore || null;
+  var privacy = Array.isArray(overview.privacyTransports) ? overview.privacyTransports : [];
+  var attention = [];
+
+  // Node health
+  var healthy = health.healthy !== false && (disk.ok !== false) && (disk.status !== 'critical');
+  var healthEl = document.getElementById('statNodeHealth');
+  if (healthEl) {
+    healthEl.textContent = healthy ? 'OK' : 'ATTN';
+    healthEl.className = 'stat-value ' + (healthy ? 'green' : 'orange');
+  }
+  var healthSub = document.getElementById('statNodeHealthSub');
+  if (healthSub) {
+    var bits = [];
+    if (disk.status) bits.push('disk ' + disk.status);
+    else if (disk.usedPct != null) bits.push('disk ' + Math.round(disk.usedPct) + '%');
+    if (roles.gateway) bits.push('gateway');
+    if (roles.t2) bits.push('custody');
+    healthSub.textContent = bits.length ? bits.join(' · ') : 'disk · api · roles';
+  }
+  if (disk.status === 'critical' || disk.critical === true || (disk.usedPct != null && disk.usedPct >= 90)) {
+    attention.push({ text: 'Disk critical / nearly full', sev: 'bad' });
+  } else if (disk.usedPct != null && disk.usedPct >= 75) {
+    attention.push({ text: 'Disk above 75%', sev: 'warn' });
+  }
+
+  // Disk card
+  var diskEl = document.getElementById('statDisk');
+  var diskSub = document.getElementById('statDiskSub');
+  if (diskEl) {
+    if (disk.usedPct != null) {
+      diskEl.textContent = Math.round(disk.usedPct) + '%';
+      diskEl.className = 'stat-value ' + (disk.usedPct >= 90 ? 'red' : disk.usedPct >= 75 ? 'orange' : 'cyan');
+    } else diskEl.textContent = '--';
+  }
+  if (diskSub) {
+    diskSub.textContent = disk.freeGB != null
+      ? (disk.freeGB + ' GB free' + (disk.status ? ' · ' + disk.status : ''))
+      : (disk.status || '');
+  }
+
+  // Roles
+  var roleParts = [];
+  if (roles.t1) roleParts.push('T1');
+  if (roles.t2) roleParts.push('T2');
+  if (roles.gateway) roleParts.push('GW');
+  if (roles.outboxlog) roleParts.push('OL');
+  if (roles.witness) roleParts.push('W');
+  var rolesEl = document.getElementById('statRoles');
+  if (rolesEl) rolesEl.textContent = roleParts.length ? roleParts.join('+') : '--';
+  var rolesSub = document.getElementById('statRolesSub');
+  if (rolesSub) {
+    var notes = [];
+    if (roles.gateway && roles.t2) {
+      notes.push('check: custody+gateway co-located');
+      attention.push({ text: 'T2 custody with gateway enabled — verify role policy', sev: 'warn' });
+    }
+    if (roles.gateway) notes.push('gateway on');
+    else notes.push('gateway off');
+    rolesSub.textContent = notes.join(' · ');
+  }
+
+  // Suppressions / compliance
+  var suppressEl = document.getElementById('statSuppress');
+  var suppressSub = document.getElementById('statSuppressSub');
+  if (compliance) {
+    var sc = compliance.takedownCount != null ? compliance.takedownCount
+      : (compliance.suppressedKeys != null ? compliance.suppressedKeys : 0);
+    if (suppressEl) suppressEl.textContent = sc;
+    if (suppressSub) {
+      suppressSub.textContent = compliance.adminArmed
+        ? 'admin armed'
+        : 'admin unarmed (404)';
+    }
+    if (!compliance.adminArmed && roles.outboxlog) {
+      attention.push({ text: 'DO-NOT-SERVE admin unarmed while OutboxLog is on', sev: 'warn' });
+    }
+    var compPanel = document.getElementById('compliancePanel');
+    if (compPanel) compPanel.style.display = '';
+    var armedEl = document.getElementById('compAdminArmed');
+    if (armedEl) {
+      armedEl.textContent = compliance.adminArmed ? 'ARMED' : 'OFF';
+      armedEl.className = compliance.adminArmed ? 'sev ok' : 'sev';
+    }
+    var armedNote = document.getElementById('compAdminNote');
+    if (armedNote) armedNote.textContent = compliance.adminArmed ? 'takedown routes enabled' : 'set outboxlog.adminKey';
+    var ck = document.getElementById('compSuppressKeys');
+    if (ck) ck.textContent = compliance.suppressedKeys != null ? compliance.suppressedKeys : sc;
+    var ct = document.getElementById('compTakedownCount');
+    if (ct) ct.textContent = sc;
+  } else {
+    if (suppressEl) suppressEl.textContent = '—';
+    if (suppressSub) suppressSub.textContent = 'auth overview for detail';
+    var compPanel2 = document.getElementById('compliancePanel');
+    if (compPanel2) compPanel2.style.display = 'none';
+  }
+
+  // Namespaces + second pulse row (management fields)
+  var row2 = document.getElementById('operatorPulseRow2');
+  if (namespaces || shard || privacy.length) {
+    if (row2) row2.style.display = '';
+    if (namespaces) {
+      var writers = 0;
+      var list = Array.isArray(namespaces.namespaces) ? namespaces.namespaces : [];
+      for (var i = 0; i < list.length; i++) writers += list[i].writers || 0;
+      var wEl = document.getElementById('statOutboxWriters');
+      if (wEl) wEl.textContent = writers || namespaces.groups || 0;
+      var wSub = document.getElementById('statOutboxWritersSub');
+      if (wSub) wSub.textContent = list.length + ' namespace(s)';
+      var bEl = document.getElementById('statOutboxBytes');
+      if (bEl) bEl.textContent = formatBytes(namespaces.totalBytes || 0);
+      var bSub = document.getElementById('statOutboxBytesSub');
+      if (bSub) {
+        var day = 0;
+        for (var j = 0; j < list.length; j++) day += list[j].bytes24h || 0;
+        bSub.textContent = formatBytes(day) + ' / 24h ingest';
+      }
+      var nsPanel = document.getElementById('namespacesPanel');
+      var nsBody = document.getElementById('namespacesBody');
+      if (nsPanel && nsBody) {
+        nsPanel.style.display = '';
+        if (!list.length) {
+          nsBody.innerHTML = '<div class="r"><span style="color:var(--text-faint)">No namespaces configured</span><span></span><span></span></div>';
+        } else {
+          nsBody.innerHTML = list.map(function (ns) {
+            var cap = ns.capBytes24h != null ? formatBytes(ns.capBytes24h) : '∞';
+            var pct = (ns.capBytes24h && ns.capBytes24h > 0)
+              ? Math.min(100, Math.round((ns.bytes24h || 0) / ns.capBytes24h * 100)) + '%'
+              : '';
+            if (ns.capBytes24h && ns.bytes24h != null && ns.bytes24h / ns.capBytes24h >= 0.8) {
+              attention.push({ text: 'Namespace ' + ns.name + ' near daily byte cap', sev: 'warn' });
+            }
+            return '<div class="r"><span>' + escapeHtml(ns.name) +
+              (ns.blind ? ' <span style="color:var(--accent)">blind</span>' : '') +
+              '</span><span>' + (ns.writers || 0) + ' writers</span><span>' +
+              formatBytes(ns.bytes24h || 0) + ' / ' + cap + (pct ? ' (' + pct + ')' : '') +
+              '</span></div>';
+          }).join('');
+        }
+      }
+    }
+    if (shard) {
+      var sr = document.getElementById('statShardRejected');
+      if (sr) {
+        sr.textContent = shard.rejected != null ? shard.rejected : '--';
+        sr.className = 'stat-value' + (shard.rejected > 0 ? ' orange' : '');
+      }
+      var ss = document.getElementById('statShardSub');
+      if (ss) ss.textContent = 'put ' + (shard.put || 0) + ' · get ' + (shard.get || 0);
+    }
+  } else if (row2) {
+    row2.style.display = 'none';
+    var nsPanel2 = document.getElementById('namespacesPanel');
+    if (nsPanel2) nsPanel2.style.display = 'none';
+  }
+
+  // Privacy transports (always coarse)
+  var tor = privacy[0] || null;
+  if (!tor && overview.tor) {
+    tor = {
+      health: overview.tor.health || (overview.tor.running ? 'ready' : 'down'),
+      running: overview.tor.running,
+      activeConnections: overview.tor.activeConnections,
+      negativeProbe: overview.tor.negativeProbe
+    };
+  }
+  var pEl = document.getElementById('statPrivacy');
+  var pSub = document.getElementById('statPrivacySub');
+  if (pEl) {
+    if (!tor) {
+      pEl.textContent = 'n/a';
+      pEl.className = 'stat-value';
+    } else {
+      var h = tor.health || (tor.running ? 'ready' : 'down');
+      pEl.textContent = h;
+      pEl.className = 'stat-value ' + (h === 'ready' || h === 'ok' ? 'green' : h === 'degraded' || h === 'warn' ? 'orange' : 'red');
+      if (h === 'degraded' || h === 'down' || h === 'error') {
+        attention.push({ text: 'Tor privacy lane: ' + h, sev: h === 'down' || h === 'error' ? 'bad' : 'warn' });
+      }
+      if (tor.negativeProbe === false) {
+        attention.push({ text: 'Tor negative-probe not confirming unauthorized refuse', sev: 'warn' });
+      }
+    }
+  }
+  if (pSub) {
+    var pbits = [];
+    if (tor && tor.activeConnections != null) pbits.push(tor.activeConnections + ' conn');
+    pbits.push('no onion in UI');
+    if (tor && tor.negativeProbe === true) pbits.push('neg-probe ok');
+    else if (tor && tor.negativeProbe === false) pbits.push('neg-probe fail');
+    pSub.textContent = pbits.join(' · ');
+  }
+
+  // v2: WAL panel
+  var wal = overview.wal || null;
+  var walPanel = document.getElementById('walPanel');
+  if (wal && walPanel) {
+    walPanel.style.display = '';
+    setText('walSource', wal.source || wal.mode || 'wal');
+    var wh = document.getElementById('walHealthy');
+    if (wh) {
+      if (wal.healthy === true) { wh.textContent = 'OK'; wh.className = 'sev ok'; }
+      else if (wal.healthy === false) { wh.textContent = 'BAD'; wh.className = 'sev bad'; }
+      else { wh.textContent = '—'; wh.className = 'sev'; }
+    }
+    setText('walFrames', wal.framesPerSec != null ? wal.framesPerSec : '—');
+    setText('walFsync', wal.fsyncP99Ms != null ? wal.fsyncP99Ms + 'ms' : (wal.fsyncP50Ms != null ? '~' + wal.fsyncP50Ms + 'ms p50' : '—'));
+    setText('walPrune', wal.pruningSupported === true ? 'ON' : wal.pruningSupported === false ? 'OFF' : '—');
+    setText('walPruneNote', wal.pruningSupported === true ? 'walPruningSupported' : (wal.source === 'outboxlog-journal' ? 'journal (no prune bit)' : ''));
+    setText('walSpend', wal.spendReplay24h != null ? wal.spendReplay24h : '—');
+    var sizeParts = [];
+    if (wal.sizeBytes != null) sizeParts.push(formatBytes(wal.sizeBytes));
+    if (wal.length != null) sizeParts.push('len ' + wal.length);
+    if (wal.opsSinceSnapshot != null) sizeParts.push(wal.opsSinceSnapshot + ' ops/snap');
+    if (wal.entries != null) sizeParts.push(wal.entries + ' entries');
+    setText('walSize', sizeParts.length ? sizeParts[0] : '—');
+    setText('walSizeNote', sizeParts.length > 1 ? sizeParts.slice(1).join(' · ') : '');
+    if (wal.healthy === false) attention.push({ text: 'WAL durability unhealthy (' + (wal.source || 'wal') + ')', sev: 'bad' });
+    if (wal.spendReplay24h != null && wal.spendReplay24h > 0) {
+      attention.push({ text: 'SPEND_REPLAY count ' + wal.spendReplay24h + ' in 24h', sev: 'bad' });
+    }
+    if (wal.errors != null && wal.errors > 0) {
+      attention.push({ text: 'WAL/journal errors: ' + wal.errors, sev: 'warn' });
+    }
+  } else if (walPanel) {
+    walPanel.style.display = 'none';
+  }
+
+  // v2: Gateway panel
+  var gw = overview.gatewayDetail || null;
+  if (!gw && overview.gateway) {
+    gw = {
+      enabled: true,
+      cachedDrives: overview.gateway.cachedDrives,
+      totalRequests: overview.gateway.totalRequests,
+      totalBytesServed: overview.gateway.totalBytesServed,
+      roleConflict: !!(roles.t2 && roles.gateway)
+    };
+  }
+  if (!gw && roles.gateway) {
+    gw = { enabled: true, roleConflict: !!roles.t2, cachedDrives: 0, totalRequests: 0, totalBytesServed: 0 };
+  }
+  var gwPanel = document.getElementById('gatewayPanel');
+  if (gw && gwPanel) {
+    gwPanel.style.display = '';
+    var ge = document.getElementById('gwEnabled');
+    if (ge) {
+      ge.textContent = gw.enabled ? 'ON' : 'OFF';
+      ge.className = gw.enabled ? 'sev ok' : 'sev';
+    }
+    var ep = [];
+    if (gw.host) ep.push(gw.host);
+    if (gw.port != null) ep.push(':' + gw.port);
+    setText('gwEndpoint', ep.join('') || (gw.enabled ? 'listening' : 'not mounted'));
+    setText('gwRequests', gw.totalRequests != null ? formatCount(gw.totalRequests) : '—');
+    setText('gwBytes', gw.totalBytesServed != null ? formatBytes(gw.totalBytesServed) : '—');
+    setText('gwDrives', gw.cachedDrives != null ? gw.cachedDrives : '—');
+    setText('gwVerify', gw.verifyFails != null ? gw.verifyFails : '—');
+    var gr = document.getElementById('gwRole');
+    if (gr) {
+      if (gw.roleConflict) { gr.textContent = 'CONFLICT'; gr.className = 'sev bad'; }
+      else if (gw.enabled && roles.t2) { gr.textContent = 'CHECK'; gr.className = 'sev'; }
+      else { gr.textContent = 'ok'; gr.className = 'sev ok'; }
+    }
+    setText('gwRoleNote', gw.roleConflict
+      ? 'T2 custody + gateway co-located'
+      : (gw.enabled ? 'T1 public surface' : 'gateway off'));
+    if (gw.roleConflict) {
+      attention.push({ text: 'Gateway enabled with T2 custody — verify role policy', sev: 'bad' });
+    }
+  } else if (gwPanel) {
+    gwPanel.style.display = 'none';
+  }
+
+  // v2: Shard Prometheus-style panel
+  var shardPanel = document.getElementById('shardPanel');
+  if (shard && shardPanel) {
+    shardPanel.style.display = '';
+    setText('shardPut', shard.put != null ? formatCount(shard.put) : '—');
+    setText('shardGetProof', (shard.get != null ? formatCount(shard.get) : '—') + ' / ' + (shard.proof != null ? formatCount(shard.proof) : '—'));
+    var srEl = document.getElementById('shardRejected');
+    if (srEl) {
+      srEl.textContent = shard.rejected != null ? formatCount(shard.rejected) : '—';
+      srEl.className = (shard.rejected > 0) ? 'sev' : 'sev ok';
+    }
+    setText('shardEvict', (shard.evicted != null ? formatCount(shard.evicted) : '0') + ' / ' + (shard.sweep != null ? formatCount(shard.sweep) : '0'));
+    var heldBits = [];
+    if (shard.held != null) heldBits.push(formatCount(shard.held) + ' shards');
+    if (shard.bytes != null) heldBits.push(formatBytes(shard.bytes));
+    setText('shardHeld', heldBits.length ? heldBits.join(' · ') : '—');
+    if (shard.rejected > 0) {
+      attention.push({ text: 'Shard pin rejects: ' + shard.rejected, sev: 'warn' });
+    }
+  } else if (shardPanel) {
+    shardPanel.style.display = 'none';
+  }
+
+  if (overview.errors > 0) attention.push({ text: overview.errors + ' recorded errors', sev: 'warn' });
+  if (!attention.length) attention.push({ text: 'No operator attention items', sev: 'ok' });
+
+  var att = document.getElementById('attentionList');
+  if (att) {
+    att.innerHTML = attention.map(function (a) {
+      return '<li><span>' + escapeHtml(a.text) + '</span><span class="sev ' +
+        (a.sev === 'ok' ? 'ok' : a.sev === 'bad' ? 'bad' : '') + '">' +
+        (a.sev === 'ok' ? 'ok' : a.sev === 'bad' ? 'crit' : 'warn') +
+        '</span></li>';
+    }).join('');
+  }
+}
+
+function setText(id, value) {
+  var el = document.getElementById(id);
+  if (el) el.textContent = value == null ? '' : String(value);
+}
+
 /* ===== Dashboard Update ===== */
 function updateDashboard(overview, history, apps) {
   // Header — pubkey chip (click to copy; full key kept in dataset)
@@ -856,9 +1322,21 @@ function updateDashboard(overview, history, apps) {
   document.getElementById('statConnections').textContent = overview.connections != null ? overview.connections : '--';
   document.getElementById('statConnectionsSub').textContent = overview.maxConnections ? 'max ' + overview.maxConnections : '';
   document.getElementById('statApps').textContent = Array.isArray(apps) ? apps.length : (overview.seededApps || '--');
-  document.getElementById('statStored').textContent = formatBytes(overview.bytesStored || overview.dataStored || 0);
-  document.getElementById('statStoredSub').textContent = overview.storageMax > 1 ? 'of ' + formatBytes(overview.storageMax) : '';
-  document.getElementById('statRelayed').textContent = formatBytes(overview.bytesRelayed || overview.dataRelayed || 0);
+  var storedBytes = overview.bytesStored != null ? overview.bytesStored
+    : (overview.dataStored != null ? overview.dataStored
+      : (overview.storage && overview.storage.used) || 0);
+  var storedMax = overview.storageMax != null ? overview.storageMax
+    : (overview.storage && overview.storage.max);
+  document.getElementById('statStored').textContent = formatBytes(storedBytes);
+  document.getElementById('statStoredSub').textContent = storedMax > 1 ? 'of ' + formatBytes(storedMax) : '';
+  document.getElementById('statRelayed').textContent = formatBytes(
+    overview.bytesRelayed != null ? overview.bytesRelayed
+      : (overview.dataRelayed != null ? overview.dataRelayed
+        : (overview.relay && overview.relay.totalBytesRelayed) || 0)
+  );
+
+  // Operator data-layer pulse (v0/v1) — roles, disk, compliance, namespaces
+  updateOperatorPulse(overview);
 
   // Charts
   renderCharts(history);

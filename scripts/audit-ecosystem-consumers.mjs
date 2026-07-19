@@ -363,7 +363,7 @@ export const EXPECTED_CURRENT_CONSUMERS = [
         term: "const HIVERELAY_CLIENT_PACKAGE = 'p2p-hiverelay-client'",
         rejectTerms: [
           'p2p-hiverelay/client',
-          "from '/Users/"
+          "from '~/pear-ecosystem/00-core/hiverelay/packages/client/index.js'"
         ]
       },
       {

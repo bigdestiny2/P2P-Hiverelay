@@ -494,6 +494,15 @@ test('outboxlog: takedown suppresses a record from every serve path but keeps it
   // takedowns() lists the opaque id without any content.
   t.alike(log.takedowns(), { takedowns: [{ appId: A, key: 'post!p2' }], count: 1 })
 
+  // operatorStats() is dashboard-safe: counts + namespaces, no record bodies.
+  if (typeof log.operatorStats === 'function') {
+    const ops = log.operatorStats()
+    t.is(ops.suppressedCount, 1)
+    t.ok(ops.groups >= 1)
+    t.ok(Array.isArray(ops.namespaces))
+    t.absent(JSON.stringify(ops).includes('drop-me'))
+  }
+
   // restore() reverses it; the record serves again.
   t.alike(log.restore(A, 'post!p2'), { appId: A, key: 'post!p2', suppressed: false })
   t.alike(log.sync.get(A, 'post!p2'), post('p2', { t: 'drop-me' }))

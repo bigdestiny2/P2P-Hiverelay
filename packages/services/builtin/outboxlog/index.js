@@ -375,6 +375,11 @@ export class OutboxLogApp extends ServiceProvider {
     return this.engine.namespaces ? this.engine.namespaces() : []
   }
 
+  /** Dashboard-safe OutboxLog counters (no cell bodies). */
+  operatorStats () {
+    return this.engine.operatorStats ? this.engine.operatorStats() : null
+  }
+
   // Operator takedown surface (DO-NOT-SERVE by opaque record id). Suppresses a
   // record from serve-time reads without reading/deleting its content. The
   // record still exists in storage; restore() reverses it.

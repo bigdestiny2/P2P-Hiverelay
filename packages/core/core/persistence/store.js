@@ -32,7 +32,8 @@ import {
   renameSync,
   unlinkSync,
   mkdirSync,
-  ftruncateSync
+  ftruncateSync,
+  statSync
 } from 'fs'
 import { join } from 'path'
 import { EventEmitter } from 'events'
@@ -187,6 +188,28 @@ export class PersistentStore extends EventEmitter {
   flush () {
     if (this._walFd === null) return
     fsyncSync(this._walFd)
+  }
+
+  /**
+   * Operator-dashboard WAL pulse (no key/value bodies).
+   * Snapshots truncate wal.jsonl → pruningSupported.
+   */
+  getWalStats () {
+    let sizeBytes = null
+    try {
+      if (existsSync(this.walPath)) sizeBytes = statSync(this.walPath).size
+    } catch {
+      sizeBytes = null
+    }
+    const out = {
+      source: 'persistent-store',
+      pruningSupported: true,
+      healthy: this._closed !== true && this._walFd !== null,
+      opsSinceSnapshot: this._opsSinceSnapshot,
+      entries: this._map.size
+    }
+    if (Number.isFinite(sizeBytes) && sizeBytes >= 0) out.sizeBytes = sizeBytes
+    return out
   }
 
   /**

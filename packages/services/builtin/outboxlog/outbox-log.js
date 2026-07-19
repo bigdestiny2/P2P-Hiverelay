@@ -358,6 +358,41 @@ export function createOutboxLog ({
     sweepGhosts,
     isSuppressed,
     snapshot,
+    /**
+     * Operator-dashboard stats: namespace config + live writers + rolling 24h
+     * ingest + opaque suppression counts. No record bodies or keys are returned
+     * beyond the opaque-id takedown audit list (via takedowns()).
+     */
+    operatorStats () {
+      const now = clock()
+      const writersByNs = new Map()
+      for (const group of groups.values()) {
+        const ns = group && group.namespace ? group.namespace : DEFAULT_OUTBOXLOG_NAMESPACE
+        writersByNs.set(ns, (writersByNs.get(ns) || 0) + 1)
+      }
+      const namespaces = namespaceRegistry.snapshot().map((entry) => {
+        const bucket = byteWindows.get(entry.name)
+        if (bucket) pruneNamespaceByteWindow(bucket, now)
+        const bytes24h = bucket && Number.isFinite(bucket.total) ? bucket.total : 0
+        const capBytes24h = entry.caps && entry.caps.bytesPerDay != null
+          ? entry.caps.bytesPerDay
+          : (byteDayFallback < DEFAULT_MAX_BYTES_PER_DAY ? byteDayFallback : null)
+        return {
+          name: entry.name,
+          blind: entry.blind === true,
+          writers: writersByNs.get(entry.name) || 0,
+          bytes24h,
+          capBytes24h,
+          caps: { ...entry.caps }
+        }
+      })
+      return {
+        groups: groups.size,
+        totalBytes,
+        suppressedCount: suppressed.size,
+        namespaces
+      }
+    },
     _stats () {
       return { groups: groups.size, totalBytes, directorySeq, appendSeq }
     }

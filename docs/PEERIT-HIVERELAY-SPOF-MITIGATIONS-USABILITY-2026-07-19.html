@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SPOF Mitigations Without Sacrificing Usability — 2026-07-19</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #eef1f6; color: #1a2333;
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .page {
+    max-width: 980px; margin: 32px auto; background: #fff; padding: 56px 64px;
+    border-radius: 14px; box-shadow: 0 2px 18px rgba(20,30,60,.10);
+  }
+  @media (max-width: 720px) {
+    .page { margin: 0; border-radius: 0; padding: 28px 20px; }
+  }
+  h1 {
+    font-size: 1.75rem; margin: 0 0 .4em; padding-bottom: .35em;
+    border-bottom: 3px solid #2c7a4f;
+  }
+  h2 {
+    font-size: 1.28rem; margin-top: 2em; padding-bottom: .2em;
+    border-bottom: 1px solid #dde3ee;
+  }
+  h3 { font-size: 1.05rem; margin-top: 1.35em; color: #1e4d32; }
+  p { margin: .65em 0; }
+  blockquote {
+    margin: 1em 0; padding: .85em 1.15em; background: #f0fdf4;
+    border-left: 4px solid #2c7a4f; border-radius: 0 8px 8px 0; color: #1e3a2a;
+  }
+  code {
+    background: #f0f2f7; padding: .12em .38em; border-radius: 5px;
+    font: .86em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: .88rem; }
+  th, td { border: 1px solid #d8deea; padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #ecfdf5; color: #14532d; }
+  tr:nth-child(even) td { background: #fafbfe; }
+  a { color: #1d4f91; }
+  .doc-badge {
+    display: inline-block; font-size: .72rem; letter-spacing: .05em; text-transform: uppercase;
+    background: #2c7a4f; color: #fff; border-radius: 999px; padding: 3px 12px; margin: 0 6px 10px 0;
+  }
+  .doc-badge.muted { background: #4a6fa5; }
+  .doc-badge.warn { background: #b7791f; }
+  .meta { color: #4b5568; font-size: .95rem; margin-bottom: 1.2em; }
+  ul.tight li { margin: .28em 0; }
+  .ux {
+    display: inline-block; font-size: .65rem; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; padding: .15em .45em; border-radius: 4px; white-space: nowrap;
+  }
+  .ux-none { background: #dcfce7; color: #166534; }
+  .ux-low { background: #e0f2fe; color: #075985; }
+  .ux-med { background: #ffedd5; color: #9a3412; }
+  .ux-high { background: #fee2e2; color: #991b1b; }
+  .tag {
+    display: inline-block; font-size: .65rem; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; padding: .15em .45em; border-radius: 4px;
+  }
+  .tag-now { background: #dbeafe; color: #1e40af; }
+  .tag-near { background: #fef3c7; color: #92400e; }
+  .tag-later { background: #f3e8ff; color: #6b21a8; }
+  .tag-ops { background: #e5e7eb; color: #374151; }
+  .card {
+    border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; margin: 1em 0;
+    background: #fafbfc;
+  }
+  .card h3 { margin-top: 0; }
+  .warnbox {
+    background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px;
+    padding: 12px 16px; margin: 1em 0;
+  }
+  .okbox {
+    background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px;
+    padding: 12px 16px; margin: 1em 0;
+  }
+  .nope {
+    background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px;
+    padding: 12px 16px; margin: 1em 0;
+  }
+  .footer {
+    margin-top: 2.5em; padding-top: 1em; border-top: 1px solid #dde3ee;
+    font-size: .88rem; color: #5b6b88;
+  }
+  pre {
+    background: #141a28; color: #e6ebf5; padding: 16px 18px; border-radius: 10px;
+    overflow-x: auto; font-size: .82rem; line-height: 1.45;
+  }
+  hr { border: none; border-top: 1px solid #dde3ee; margin: 2em 0; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<span class="doc-badge">Mitigations</span>
+<span class="doc-badge muted">Usability-preserving</span>
+<span class="doc-badge warn">Complements operator diversity</span>
+
+<h1>Mitigating Design-Inherent SPOFs Without Hurting Usability</h1>
+
+<p class="meta">
+  <strong>Date:</strong> 2026-07-19 ·
+  <strong>Companion to:</strong>
+  <code>PEERIT-HIVERELAY-CENTRALIZED-FAILURE-POINTS-2026-07-19.html</code> ·
+  Peerit ops · Giga architecture · operator dashboard design
+</p>
+
+<blockquote>
+  Many failure points are <strong>by design</strong> (trust anchors, conduit liability, public-read forums).
+  <strong>Operator diversity</strong> is the primary operational mitigation for storage and ingress.
+  This note asks: <em>what else can we do that ordinary users never notice</em> — or that only appears as a
+  one-time, familiar pattern (export phrase, “try again,” automatic failover)?
+</blockquote>
+
+<div class="okbox">
+  <strong>Usability bar we refuse to break</strong>
+  <ul class="tight">
+    <li>One-tap post / vote / open community for a normal browser user</li>
+    <li>No “paste 3 multi-sig cosigners” or “run a relay” as a default path</li>
+    <li>No multi-minute crypto ceremonies on every cold start</li>
+    <li>No false promises (“operator can’t read public posts”) as a UX message</li>
+    <li>Graceful degradation &gt; hard fail when one mirror/relay is down</li>
+  </ul>
+</div>
+
+<p>
+  <strong>Legend — UX impact:</strong>
+  <span class="ux ux-none">None</span> invisible to users ·
+  <span class="ux ux-low">Low</span> rare / power-user ·
+  <span class="ux ux-med">Med</span> occasional prompt ·
+  <span class="ux ux-high">High</span> everyday friction (avoid)
+</p>
+<p>
+  <strong>Horizon:</strong>
+  <span class="tag tag-now">Now</span> shippable with current architecture ·
+  <span class="tag tag-near">Near</span> 1–2 design sprints ·
+  <span class="tag tag-later">Later</span> research / multi-party ·
+  <span class="tag tag-ops">Ops</span> process, not product UI
+</p>
+
+<!-- ============================================================ -->
+<h2>1. Design premise: what “mitigation” means here</h2>
+
+<table>
+  <thead><tr><th>Strategy class</th><th>Effect</th><th>Usability</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Diversity</strong> (many operators, regions, ASNs)</td>
+      <td>Removes correlated outage / single legal blast radius</td>
+      <td><span class="ux ux-none">None</span> if clients multi-home automatically</td>
+    </tr>
+    <tr>
+      <td><strong>Redundancy in the client</strong> (N writes, N reads, N mirrors)</td>
+      <td>Survives 1…N−1 conduit failures</td>
+      <td><span class="ux ux-none">None</span> if parallelized; <span class="ux ux-low">Low</span> if slow path shows “syncing…”</td>
+    </tr>
+    <tr>
+      <td><strong>Time dual-rail</strong> (old+new keys/epochs during migration)</td>
+      <td>Survives rotation without hard cut</td>
+      <td><span class="ux ux-none">None</span> if automatic on upgrade</td>
+    </tr>
+    <tr>
+      <td><strong>Multi-party offline roots</strong> (2-of-3 sign release/roster)</td>
+      <td>No single compromised laptop ships evil</td>
+      <td><span class="ux ux-none">None</span> for users; cost is release latency</td>
+    </tr>
+    <tr>
+      <td><strong>User-held backups</strong> (phrase, encrypted export, device link)</td>
+      <td>Survives device loss without network recovery</td>
+      <td><span class="ux ux-low">Low</span> if progressive (remind, don’t block)</td>
+    </tr>
+    <tr>
+      <td><strong>Transparent choice</strong> (Open vs Community, advanced relays)</td>
+      <td>Escapes social capture without leaving the app</td>
+      <td><span class="ux ux-low">Low</span> one toggle, not a wizard</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="nope">
+  <strong>Usually not worth it for default UX</strong>
+  <ul class="tight">
+    <li>Mandatory multi-sig every post · threshold signing for casual users</li>
+    <li>Manual “pick 5 relays from a list” before first feed</li>
+    <li>Rotating RK every week with re-encryption of the whole corpus by each user</li>
+    <li>Replacing WebPKI with a custom CA users must install</li>
+    <li>Making “run a HiveRelay” a prerequisite to read Peerit</li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2>2. Trust anchors — mitigations beyond “trust the core team”</h2>
+
+<h3>2.1 <code>PEERIT_READ_KEY</code> (public openability root)</h3>
+<p>You cannot make public forums “operator-unreadable” without breaking public readability. Mitigations target <strong>rotation survivability</strong> and <strong>key custody</strong>, not false secrecy.</p>
+
+<table>
+  <thead><tr><th>Mitigation</th><th>UX</th><th>Horizon</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Dual-epoch read window</strong> — seal with RK<sub>n</sub>; admit cells under RK<sub>n</sub> and RK<sub>n−1</sub> for a release window; then drop n−1</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>Enables planned rotation without reseeding the world overnight. Writes stay one-key simple.</td>
+    </tr>
+    <tr>
+      <td><strong>Offline multi-party generation</strong> of RK (ceremony) + encrypted shards to offline holders; runtime clients still get full RK via signed release (as today)</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-ops">Ops</span></td>
+      <td>Doesn’t stop a malicious release, but stops one laptop minting RK alone. Pair with multi-sig releases.</td>
+    </tr>
+    <tr>
+      <td><strong>RK bound into signed release</strong> with transparent log of which RK hash each sequence pins</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>Auditors detect silent RK swap; users unchanged.</td>
+    </tr>
+    <tr>
+      <td><strong>Optional private communities</strong> with capability keys (not RK) for true non-public groups</td>
+      <td><span class="ux ux-low">Low</span></td>
+      <td><span class="tag tag-later">Later</span></td>
+      <td>Already anticipated (crk hook). Public boards stay on RK; private boards opt in — no default friction.</td>
+    </tr>
+  </tbody>
+</table>
+<p><em>Do not:</em> re-encrypt every post on device for “better RK hygiene” — destroys performance and battery.</p>
+
+<h3>2.2 Web release signing key</h3>
+<table>
+  <thead><tr><th>Mitigation</th><th>UX</th><th>Horizon</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>2-of-3 (or 2-of-2) multi-sig releases</strong> — sequence valid only with M signatures</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>Users verify “the manifest”; no extra steps. Release process slower by hours, not UX.</td>
+    </tr>
+    <tr>
+      <td><strong>Sigstore / transparency log</strong> for every sequence (append-only public log)</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>Detects key misuse after the fact; enables “did this sequence appear publicly?” checks.</td>
+    </tr>
+    <tr>
+      <td><strong>Dual-rail update</strong> — new build accepted if signed by current key <em>or</em> by previous key during grace</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>Makes planned key rotation survivable without bricking offline pins.</td>
+    </tr>
+    <tr>
+      <td><strong>Content-addressed multi-mirror fetch</strong> — same signed CID/hash from Render + gateway + IPFS gateway list</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-now">Now</span>/<span class="tag tag-near">Near</span></td>
+      <td>SW already pins by hash; expand bootstrap URLs in manifest. Failover is silent.</td>
+    </tr>
+    <tr>
+      <td><strong>In-app “verified build” badge</strong> (optional Settings)</td>
+      <td><span class="ux ux-low">Low</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>Power users only; default path unchanged. Reuses <code>verify.html</code> logic.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>2.3 Roster signing key</h3>
+<table>
+  <thead><tr><th>Mitigation</th><th>UX</th><th>Horizon</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Multi-sig roster</strong> same as release keys</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>Raises bar for malicious relay injection.</td>
+    </tr>
+    <tr>
+      <td><strong>Automatic multi-relay read/write</strong> from roster (try N in parallel; need 1 success for read, k-of-n for write receipt)</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>Biggest usability-preserving win vs single-ingress. UI still one Post button.</td>
+    </tr>
+    <tr>
+      <td><strong>Last-known-good + sticky failover</strong> — remember last working relays across sessions</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>Survives temporary roster CDN blip if local cache holds prior roster (signed, not expired).</td>
+    </tr>
+    <tr>
+      <td><strong>Soft peer hints</strong> — peers may advertise additional outbox URLs; client accepts only if <em>also</em> on a signed roster or marked “untrusted experiment”</td>
+      <td><span class="ux ux-low">Low</span></td>
+      <td><span class="tag tag-later">Later</span></td>
+      <td>Never silently promote gossip URLs to full trust (Sybil). Optional advanced mode only.</td>
+    </tr>
+    <tr>
+      <td><strong>User-added relay (advanced)</strong> with clear “not in official roster” badge</td>
+      <td><span class="ux ux-low">Low</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>Escape hatch without changing defaults. Same pattern as custom email servers.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="warnbox">
+  <strong>Usability trap:</strong> exposing “choose your relays” as an onboarding step.
+  Prefer: ship a healthy multi-relay roster; advanced settings for override.
+</div>
+
+<!-- ============================================================ -->
+<h2>3. User identity — recovery without becoming a bank</h2>
+
+<table>
+  <thead><tr><th>Mitigation</th><th>UX</th><th>Horizon</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Progressive phrase backup</strong> — soft nags after first post; never block posting for 24h</td>
+      <td><span class="ux ux-low">Low</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>Already aligned with identity-export work. Timing and copy matter more than crypto.</td>
+    </tr>
+    <tr>
+      <td><strong>Passkey / WebAuthn wrap</strong> of local seed (device unlock)</td>
+      <td><span class="ux ux-none">None</span> / <span class="ux ux-low">Low</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>Often <em>improves</em> UX vs raw phrase every session. Still export phrase for device loss.</td>
+    </tr>
+    <tr>
+      <td><strong>Encrypted multi-device link</strong> (QR / short code, PAKE) without uploading plaintext seed</td>
+      <td><span class="ux ux-low">Low</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>Familiar “link device” pattern (Signal-like). Optional, not required for single-device users.</td>
+    </tr>
+    <tr>
+      <td><strong>Optional encrypted backup blob</strong> to user’s own drive / password manager file</td>
+      <td><span class="ux ux-low">Low</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>User-chosen password; no central recovery service required.</td>
+    </tr>
+    <tr>
+      <td>Social recovery (guardians)</td>
+      <td><span class="ux ux-med">Med</span></td>
+      <td><span class="tag tag-later">Later</span></td>
+      <td>Power users only; do not force on default path.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><em>Do not:</em> custodial “email me my account” recovery as default — that re-centralizes identity into whoever runs the mail service.</p>
+
+<!-- ============================================================ -->
+<h2>4. Operator diversity — make it automatic for users</h2>
+
+<p>
+  Diversity only helps if <strong>clients use it by default</strong>. The product mitigation is not “recruit operators”
+  alone — it is <strong>multi-home every write and every bootstrap</strong> so users never configure a mesh.
+</p>
+
+<table>
+  <thead><tr><th>Mitigation</th><th>UX</th><th>Horizon</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Write quorum</strong> — fan-out append to N roster relays; succeed if k receipts (e.g. 1-of-N for canary, 2-of-3 for GA)</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>Latency ≈ slowest of parallel attempts. Show generic “couldn’t reach network” only if k fails.</td>
+    </tr>
+    <tr>
+      <td><strong>Read any / merge all</strong> — pull heads from all roster relays; highest verified heads win</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>Already the OutboxLog model; ensure UI never assumes single ingress.</td>
+    </tr>
+    <tr>
+      <td><strong>Clear <code>singleIngressWriter</code></strong> only after 2nd independent operator + failure drill</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-ops">Ops</span></td>
+      <td>Process gate from ops pack; biggest canary → GA leap.</td>
+    </tr>
+    <tr>
+      <td><strong>Jurisdictional / ASN diversity metrics</strong> on roster builder (refuse all-AWS roster for GA label)</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-ops">Ops</span></td>
+      <td>Publish roster diversity score; clients unchanged.</td>
+    </tr>
+    <tr>
+      <td><strong>Seeder / PearBrowser peers as free durability</strong></td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>Keep bridge path healthy; web users benefit indirectly when peers re-seed outboxes.</td>
+    </tr>
+    <tr>
+      <td><strong>Economic: easy operator onboarding + subsidy dashboard</strong></td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>More operators → diversity; users never see economics.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>5. Bootstrap &amp; gateway — survive WebPKI without teaching TLS</h2>
+
+<table>
+  <thead><tr><th>Mitigation</th><th>UX</th><th>Horizon</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Service Worker pin</strong> (already) + multi-origin same-hash fetch list in manifest</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>After first visit, origin outage is survivable for shell. Expand mirror list.</td>
+    </tr>
+    <tr>
+      <td><strong>Signed hyper:// / pear:// install as peer path</strong></td>
+      <td><span class="ux ux-low">Low</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>Optional “Open in PearBrowser” — improves resilience for those who choose it; never required for read/write canary.</td>
+    </tr>
+    <tr>
+      <td><strong>IPFS / static mirror CIDs in release</strong> + public gateways as fallback transport for assets only</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>Asset delivery only; data plane stays OutboxLog.</td>
+    </tr>
+    <tr>
+      <td><strong>Dual T1 gateways</strong> (unrelated operators) with automatic host failover in SW</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>Matches giga G7–G13 intent.</td>
+    </tr>
+    <tr>
+      <td>Custom user-installed CA / DoH-only</td>
+      <td><span class="ux ux-high">High</span></td>
+      <td>—</td>
+      <td><strong>Reject</strong> for default product.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>6. Blind cells — durability without making every post “enterprise crypto”</h2>
+
+<table>
+  <thead><tr><th>Mitigation</th><th>UX</th><th>Horizon</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Default path stays opaque-log only</strong> for normal posts; auto-shard only above size threshold (already banded)</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>Users never choose k-of-n for a comment.</td>
+    </tr>
+    <tr>
+      <td><strong>Client also keeps local ciphertext</strong> of large bodies (device / user drive) in addition to k-of-n</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>Author can always re-disperse; readers still use network path.</td>
+    </tr>
+    <tr>
+      <td><strong>Placement diversity baked into dealer defaults</strong> (different operators/regions in share assignment)</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>Library concern, not UI.</td>
+    </tr>
+    <tr>
+      <td>User-facing “choose 5 vaults”</td>
+      <td><span class="ux ux-high">High</span></td>
+      <td>—</td>
+      <td><strong>Reject</strong> as default.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>7. Social capture — escape hatches that stay one click</h2>
+
+<table>
+  <thead><tr><th>Mitigation</th><th>UX</th><th>Horizon</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Keep Open / Consensus / Community as first-class, sticky prefs</strong> (already)</td>
+      <td><span class="ux ux-low">Low</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>Ensure default onboarding explains Open in one sentence; don’t bury the toggle.</td>
+    </tr>
+    <tr>
+      <td><strong>Local “show buried / show removed”</strong> session controls (partially present)</td>
+      <td><span class="ux ux-low">Low</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>Auditability without forcing Open for everyone.</td>
+    </tr>
+    <tr>
+      <td><strong>Export community policy snapshot</strong> (signed mod set + thresholds) for transparency pages</td>
+      <td><span class="ux ux-low">Low</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>Researchers/journalists; not required for casual use.</td>
+    </tr>
+    <tr>
+      <td><strong>Preset policy packs</strong> in release (“strict / default / open”) selectable once</td>
+      <td><span class="ux ux-low">Low</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>Avoids shipping only one global threshold philosophy.</td>
+    </tr>
+    <tr>
+      <td>On-chain governance of thresholds</td>
+      <td><span class="ux ux-high">High</span></td>
+      <td><span class="tag tag-later">Later</span></td>
+      <td>Optional subculture; not default Peerit.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>8. DO-NOT-SERVE — mitigate without pretending global erase is good UX</h2>
+
+<table>
+  <thead><tr><th>Mitigation</th><th>UX</th><th>Horizon</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Multi-relay read</strong> so one suppress ≠ gone for user</td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>Primary user-facing mitigation; aligns with diversity.</td>
+    </tr>
+    <tr>
+      <td><strong>Transparent “content unavailable from some relays”</strong> only when all reachable relays withhold the same id</td>
+      <td><span class="ux ux-low">Low</span></td>
+      <td><span class="tag tag-near">Near</span></td>
+      <td>Honest UX; avoid scary legal essays in the feed.</td>
+    </tr>
+    <tr>
+      <td><strong>Operator drill + dashboard “admin armed”</strong></td>
+      <td><span class="ux ux-none">None</span></td>
+      <td><span class="tag tag-now">Now</span></td>
+      <td>Protects users indirectly by keeping legal conduits viable (less blunt shutdowns).</td>
+    </tr>
+    <tr>
+      <td>Client-side global “ignore all suppressions” that fetches from random unofficial hosts</td>
+      <td><span class="ux ux-med">Med</span> + safety risk</td>
+      <td>—</td>
+      <td>Dangerous default; keep out of product.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>9. Cross-cutting “silent resilience” patterns</h2>
+
+<div class="card">
+  <h3>9.1 Parallelism, not wizards</h3>
+  <p>Any mitigation that can be expressed as “try more endpoints with the same signed artifact” should be the default. Users see success or a single soft error.</p>
+</div>
+
+<div class="card">
+  <h3>9.2 Dual-rail during change</h3>
+  <p>Key rotation, roster rotation, protocol v2→v3, Hypercore gen upgrades: always prefer a window where old and new both work. Hard cuts are what create user-visible outages.</p>
+</div>
+
+<div class="card">
+  <h3>9.3 Observability without content surveillance</h3>
+  <p>Operator dashboard (counts, caps, suppress list size, disk, WAL) lets operators fix SPOF-adjacent failures early — without reading posts. That is a usability mitigation for the whole network (fewer sudden outages).</p>
+</div>
+
+<div class="card">
+  <h3>9.4 Progressive trust UI</h3>
+  <p>Defaults stay simple. Advanced: custom relay, verify build, Open view, device link. Never invert the pyramid (power tools first).</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>10. Prioritized roadmap (usability-safe)</h2>
+
+<table>
+  <thead><tr><th>Priority</th><th>Item</th><th>Addresses</th><th>UX</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>P0</td>
+      <td>Default multi-relay read + write fan-out; kill sole-ingress for GA</td>
+      <td>Operator / roster / DO-NOT-SERVE concentration</td>
+      <td><span class="ux ux-none">None</span></td>
+    </tr>
+    <tr>
+      <td>P0</td>
+      <td>Multi-mirror asset fetch from signed hash list (SW)</td>
+      <td>Gateway / DNS bootstrap</td>
+      <td><span class="ux ux-none">None</span></td>
+    </tr>
+    <tr>
+      <td>P1</td>
+      <td>Multi-sig release + roster; transparency log</td>
+      <td>Release / roster key compromise</td>
+      <td><span class="ux ux-none">None</span></td>
+    </tr>
+    <tr>
+      <td>P1</td>
+      <td>Dual-epoch RK + dual-rail release key grace</td>
+      <td>Planned rotation without bricking</td>
+      <td><span class="ux ux-none">None</span></td>
+    </tr>
+    <tr>
+      <td>P1</td>
+      <td>Progressive identity backup + passkey wrap</td>
+      <td>User key loss</td>
+      <td><span class="ux ux-low">Low</span></td>
+    </tr>
+    <tr>
+      <td>P1</td>
+      <td>Operator dashboard compliance + capacity (no content)</td>
+      <td>Early detection of disk/takedown/WAL failure</td>
+      <td><span class="ux ux-none">None</span></td>
+    </tr>
+    <tr>
+      <td>P2</td>
+      <td>Dual T1 gateways + IPFS CID mirrors</td>
+      <td>Code delivery concentration</td>
+      <td><span class="ux ux-none">None</span></td>
+    </tr>
+    <tr>
+      <td>P2</td>
+      <td>Policy presets + clearer Open toggle affordance</td>
+      <td>Social capture</td>
+      <td><span class="ux ux-low">Low</span></td>
+    </tr>
+    <tr>
+      <td>P2</td>
+      <td>Device-link PAKE; optional encrypted backup file</td>
+      <td>User key / multi-device</td>
+      <td><span class="ux ux-low">Low</span></td>
+    </tr>
+    <tr>
+      <td>P3</td>
+      <td>Private groups with capability keys; social recovery (opt-in)</td>
+      <td>RK limits; key loss for power users</td>
+      <td><span class="ux ux-low">Low</span>–<span class="ux ux-med">Med</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>11. Explicit non-goals (keep usability)</h2>
+<ul class="tight">
+  <li>Making public Peerit “end-to-end secret from operators” — contradicts public-read design.</li>
+  <li>Requiring every reader to run infrastructure.</li>
+  <li>Global delete as a product feature (conflicts with P2P retention and Open view).</li>
+  <li>Daily key ceremonies or CAPTCHA walls that recreate centralized gatekeepers under another name.</li>
+  <li>Exposing raw multi-sig or k-of-n parameters in the main composer UI.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2>12. One-line synthesis</h2>
+<pre>
+Diversity of operators  ×  automatic multi-home clients  ×  multi-party offline roots
+× dual-rail rotations  ×  progressive identity backup  ×  one-click social escape hatches
+= most SPOFs shrink without teaching users distributed systems.
+</pre>
+
+<p>
+  What remains irreducible is the need for <strong>some</strong> bootstrap trust (first code, first roster, first RK epoch)
+  and the physics of <strong>public data</strong>. Mitigate those with ceremonies and transparency — not with daily UX tax.
+</p>
+
+<!-- ============================================================ -->
+<h2>13. Related documents</h2>
+<ul class="tight">
+  <li><code>PEERIT-HIVERELAY-CENTRALIZED-FAILURE-POINTS-2026-07-19.html</code> — problem statement</li>
+  <li><code>PEERIT-OPS-ARCHITECTURE-2026-07-19.html</code> · <code>peerit-ops-execution-2026-07-19/</code></li>
+  <li><code>GIGA-RELEASE-ARCHITECTURE-2026-07-19.html</code></li>
+  <li><code>HIVERELAY-OPERATOR-DASHBOARD-DESIGN-2026-07-19.html</code></li>
+</ul>
+
+<hr />
+<div class="footer">
+  <p>
+    Design note — <strong>2026-07-19</strong>. Analytical companion to the SPOF analysis:
+    mitigations ranked by residual risk reduction per unit of user friction.
+  </p>
+</div>
+
+</div>
+</body>
+</html>
