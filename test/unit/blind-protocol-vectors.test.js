@@ -166,22 +166,22 @@ test('blind vectors: frozen master catalog stays unchanged while candidate schem
   }
   t.ok(compileError)
   t.is(compileError.code, 'BLIND_MASTER_SCHEMA_INVENTORY_MISMATCH')
-  t.is(compileError.audit.namedMasterSchemaCount, 147)
-  t.is(compileError.audit.catalogSchemaCount, 150)
+  t.is(compileError.audit.namedMasterSchemaCount, 149)
+  t.is(compileError.audit.catalogSchemaCount, 152)
   t.alike(compileError.audit.missingMasterDefinitions, [
     'BlindForwardRouteHopV1',
     'BlindForwardRouteScopeV1'
   ])
   const complete = decodeSchemaCatalog(readVector('registry/master-schema-catalog.bin'), {
-    minimum: 148,
-    maximum: 148
+    minimum: 150,
+    maximum: 150
   })
-  t.is(complete.length, 148)
+  t.is(complete.length, 150)
   for (const [name, count] of [
     ['wire', 71],
     ['evidence', 28],
     ['client-example', 6],
-    ['internal-store', 36]
+    ['internal-store', 38]
   ]) {
     t.is(decodeSchemaCatalog(readVector(`registry/${name}-schema-catalog.bin`), {
       minimum: count,
