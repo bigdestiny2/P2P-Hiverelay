@@ -1,6 +1,6 @@
 # Poker — Testing Guide
 
-> Handover for Iain. How to test the relay's **card-blind poker substrate**
+> Handover for the maintainer. How to test the relay's **card-blind poker substrate**
 > (`packages/services/builtin/poker/`). Everything here is verified against
 > `origin/main` (v0.19.0).
 

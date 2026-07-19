@@ -4,7 +4,7 @@
  * Cross-Relay Discovery & Stability Test
  *
  * Joins the hiverelay-discovery-v1 topic via Hyperswarm, discovers
- * the local relay (f1b82032...) and Cloudzy relay (6d905b17...),
+ * the local relay (f1b82032...) and fleet relay (6d905b17...),
  * then verifies both connections remain stable for 15 seconds.
  */
 

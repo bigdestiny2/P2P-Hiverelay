@@ -17,6 +17,7 @@ ghost-seed-demo.mjs
 *.png
 packages/core/node_modules
 tmp-audit2/
+tmp-test-relay2/
 
 # Legacy dashboard symlink (some long-lived boxes have packages/core/dashboard ->
 # /dashboard; relay serves from repo-root /dashboard regardless). Ignore so the

@@ -798,7 +798,7 @@ Check raw fleet convergence from a workstation with SSH access:
 npm run fleet:check-rollout -- \
   --target v0.16.4 \
   --channel both \
-  --ssh-key ~/.ssh/cloudzy_hiverelay \
+  --ssh-key ~/.ssh/hiverelay_fleet \
   --evidence fleet-rollout-evidence.json
 ```
 

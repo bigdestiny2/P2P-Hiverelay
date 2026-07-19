@@ -54,13 +54,13 @@ import { promisify } from 'util'
 const exec = promisify(execFile)
 const MAX_SSH_OUTPUT = 64 * 1024 * 1024
 
-const CLOUDZY_KEY = ['-i', `${process.env.HOME}/.ssh/cloudzy_hiverelay`]
+const FLEET_KEY = ['-i', `${process.env.HOME}/.ssh/hiverelay_fleet`]
 const RELAYS = {
   utah: { host: '144.172.101.215' },
   'utah-us': { host: '144.172.91.26' },
   'singapore-1': { host: '104.194.153.179' },
-  'singapore-2': { host: '104.194.152.121', ssh: CLOUDZY_KEY },
-  bern: { host: '45.59.123.112', ssh: CLOUDZY_KEY }
+  'singapore-2': { host: '104.194.152.121', ssh: FLEET_KEY },
+  bern: { host: '45.59.123.112', ssh: FLEET_KEY }
 }
 
 const args = parseArgs(process.argv.slice(2))

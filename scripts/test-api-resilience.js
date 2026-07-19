@@ -3,7 +3,7 @@
 /**
  * HiveRelay HTTP API Resilience Test
  *
- * Tests all HTTP endpoints on both local and Cloudzy relays:
+ * Tests all HTTP endpoints on both local and fleet relays:
  *   1. Endpoint coverage: /health, /status, /metrics, /api/overview, /api/history, /api/apps, /api/peers, /dashboard
  *   2. Response time measurement + JSON/HTML validation
  *   3. Rapid-fire: 50 concurrent requests to /status
