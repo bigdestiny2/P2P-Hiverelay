@@ -1105,7 +1105,7 @@ test('atomic staging expiry is rechecked after waiting for canonical commit lock
   })
   const withLocks = engine.transactionStore.withLocks.bind(engine.transactionStore)
   engine.transactionStore.withLocks = async (keys, callback) => {
-    if (keys.length === 3 && keys[0] === 'quota:atomic-staging') time.offsetMillis = 21n
+    if (keys.length === 2 && keys[0].startsWith('spend:')) time.offsetMillis = 21n
     return withLocks(keys, callback)
   }
   let error = null
@@ -1205,7 +1205,7 @@ test('cancel racing before the atomic commit boundary wins without publication',
   const commitWaiting = new Promise(resolve => { commitEntered = resolve })
   const withLocks = engine.transactionStore.withLocks.bind(engine.transactionStore)
   engine.transactionStore.withLocks = async (keys, callback) => {
-    if (keys.length === 3 && keys[0] === 'quota:atomic-staging') {
+    if (keys.length === 2 && keys[0].startsWith('spend:')) {
       commitEntered()
       await commitBlocked
     }
@@ -1303,6 +1303,74 @@ test('cancel after the atomic publication boundary cannot touch the commit unit'
   t.is(stored.status, 'stored')
   t.is(engine.status().accounting.spends, 1)
   t.is(engine.status().accounting.cellRecords, 1)
+  await engine.close()
+})
+
+test('concurrent atomic commits for distinct authorities all land with exact quota', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-live-atomic-concurrent-commits')
+  const time = clock()
+  const count = 8
+  const fixtures = Array.from({ length: count }, (_, index) => putFixture({
+    spendByte: 0x40 + index,
+    blobByte: 0x40 + index,
+    nonceByte: 0x40 + index
+  }))
+  const engine = new BlindCellStorageEngine(options(root, time, {
+    storeId: STORE_ID,
+    durabilityProfileHash: DURABILITY_PROFILE_HASH
+  }))
+  await engine.open()
+  const authorities = []
+  for (const fixture of fixtures) {
+    authorities.push(await engine.stageAtomicCellPut({
+      request: fixture.request,
+      source: fixture.cellBlob,
+      admissionProfileId: fixture.preparedAdmission.profileId,
+      resultBinding: profile1ResultBindingBytes()
+    }))
+  }
+  t.is(engine.status().accounting.atomicStagingItems, count)
+  t.is(engine.status().accounting.atomicStagingBytes, count * 4096)
+  const before = engine.status().walSequence
+  // Barrier inside publishOpaque: every commit must be inside its critical
+  // section at the same time. If any shared lock still serialized the slow
+  // publication path, the barrier would starve and the test would time out.
+  let entered = 0
+  let releaseBarrier
+  const barrier = new Promise(resolve => { releaseBarrier = resolve })
+  const publishOpaque = engine.transactionStore.publishOpaque.bind(engine.transactionStore)
+  engine.transactionStore.publishOpaque = async (staged, virtualBucket) => {
+    if (++entered === count) releaseBarrier()
+    await barrier
+    return publishOpaque(staged, virtualBucket)
+  }
+  const results = await Promise.all(fixtures.map((fixture, index) => engine.commitAtomicCellPut({
+    authority: authorities[index],
+    preparedAdmission: fixture.preparedAdmission,
+    preCommitFence: () => true
+  })))
+  for (const stored of results) {
+    t.is(stored.status, 'stored')
+    t.is(stored.replay, false)
+  }
+  const status = engine.status()
+  t.is(Number(status.walSequence - before), count)
+  t.is(status.accounting.spends, count)
+  t.is(status.accounting.cellRecords, count)
+  t.is(status.accounting.storedBytes, count * 4096)
+  t.is(status.accounting.atomicStagingBytes, 0)
+  t.is(status.accounting.atomicStagingItems, 0)
+  t.is(status.accounting.atomicStagingLeases, 0)
+  for (const fixture of fixtures) {
+    t.alike((await engine.readCell(fixture.request.storageSlot)).cellBlob, fixture.cellBlob)
+  }
+  // A consumed authority is gone: re-committing it rejects, no double-consume.
+  await rejectsCode(t, engine.commitAtomicCellPut({
+    authority: authorities[0],
+    preparedAdmission: fixtures[0].preparedAdmission,
+    preCommitFence: () => true
+  }), 'BAD_ENCODING')
+  t.is(engine.status().accounting.spends, count)
   await engine.close()
 })
 

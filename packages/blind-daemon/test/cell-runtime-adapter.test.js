@@ -797,7 +797,7 @@ test('descriptor advance while atomic commit waits on locks fails the final fenc
   const commitBlocked = new Promise(resolve => { releaseCommit = resolve })
   const withLocks = h.storage.transactionStore.withLocks.bind(h.storage.transactionStore)
   h.storage.transactionStore.withLocks = async (keys, callback) => {
-    if (keys.length === 3 && keys[0] === 'quota:atomic-staging') {
+    if (keys.length === 2 && keys[0].startsWith('spend:')) {
       enterCommit()
       await commitBlocked
     }

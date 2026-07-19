@@ -1905,7 +1905,12 @@ export class BlindCellStorageEngine {
     }
   }
 
-  async #releaseAtomicStaging (retained, discard, quotaLockHeld = false) {
+  // The staged-body discard (slow file I/O) runs without the global staging
+  // lock; only the quota ledger mutation is serialized under
+  // 'quota:atomic-staging'. That lock guards nothing else and its callbacks
+  // never await another keyed lock, so callers may already hold spend/cell
+  // locks without risking a lock-order cycle.
+  async #releaseAtomicStaging (retained, discard) {
     if (retained.released) return false
     retained.released = true
     if (retained.authority && this.atomicStagedLeases.get(retained.authority) === retained) {
@@ -1920,7 +1925,7 @@ export class BlindCellStorageEngine {
     } finally {
       try {
         if (retained.quotaReserved) {
-          const releaseAccounting = () => {
+          await this.transactionStore.withLocks(['quota:atomic-staging'], () => {
             this.atomicStaging.bytes -= retained.declaredBytes
             this.atomicStaging.items--
             const profileBytes = (this.atomicStaging.byProfile.get(retained.profileId) || 0) - retained.declaredBytes
@@ -1928,9 +1933,7 @@ export class BlindCellStorageEngine {
             else this.atomicStaging.byProfile.set(retained.profileId, profileBytes)
             retained.quotaReserved = false
             this.#assertAccounting()
-          }
-          if (quotaLockHeld) releaseAccounting()
-          else await this.transactionStore.withLocks(['quota:atomic-staging'], releaseAccounting)
+          })
         }
       } finally {
         this.activeOperations--
@@ -2067,8 +2070,31 @@ export class BlindCellStorageEngine {
       assertPutLive(input.signal)
       await this.#refreshClock()
       this.#assertWritable(true)
+      // Only the per-spend and per-cell locks are held across the commit — the
+      // same discipline as the legacy #putCell publication path. The global
+      // 'quota:atomic-staging' lock is deliberately NOT taken here: its only
+      // shared state is the staged-quota ledger, whose mutations (stage-time
+      // claim, and the brief release inside #releaseAtomicStaging, which
+      // acquires the lock itself) stay serialized under it. Holding it across
+      // publishOpaque + the type-17 WAL commit fsync serialized every
+      // concurrent atomic commit and defeated WAL group commit batching.
+      // Race-freedom without the global lock:
+      //  - Same authority, concurrent commit/cancel: the liveness recheck
+      //    below and the 'committing' phase transition run in one synchronous
+      //    segment, so exactly one contender observes phase === 'staged'; any
+      //    other fails the recheck. The global lock never provided this —
+      //    cancelAtomicCellPut takes no locks.
+      //  - Same spendTag or same storageSlot: serialized by the two keyed
+      //    locks above; #applyAtomicPut revalidates spend/commitment/cell
+      //    uniqueness and its apply completes before these locks release, so
+      //    SPEND_REPLAY one-use semantics and first-write-wins are intact.
+      //  - Distinct spend+slot: no shared state except the quota ledger
+      //    (still locked for every mutation) and the WAL commit stripe.
+      //  - The staged-quota release runs after the commit apply, so a
+      //    concurrent stager can transiently observe the bytes as both stored
+      //    and staged — a conservative, retryable BUSY at worst, never an
+      //    over-admission.
       return await this.transactionStore.withLocks([
-        'quota:atomic-staging',
         `spend:${hex(prepared.value.spendTag)}`,
         `cell:${hex(retained.storageSlot)}`
       ], async () => {
@@ -2080,7 +2106,7 @@ export class BlindCellStorageEngine {
           ATOMIC_STAGED_PUTS.delete(input.authority)
           this.atomicStagedLeases.delete(input.authority)
           retained.phase = 'cancelled'
-          await this.#releaseAtomicStaging(retained, true, true)
+          await this.#releaseAtomicStaging(retained, true)
           fail('BUSY', 'atomic CELL.PUT staged authority expired while awaiting commit locks', true)
         }
         const existing = this.spends.get(hex(prepared.value.spendTag))
@@ -2089,7 +2115,7 @@ export class BlindCellStorageEngine {
           if (replay) {
             ATOMIC_STAGED_PUTS.delete(input.authority)
             this.atomicStagedLeases.delete(input.authority)
-            await this.#releaseAtomicStaging(retained, true, true)
+            await this.#releaseAtomicStaging(retained, true)
             return replay
           }
         }
@@ -2152,12 +2178,12 @@ export class BlindCellStorageEngine {
           const committed = this.spends.get(hex(prepared.value.spendTag))
           const result = resultView(committed, 'stored', false)
           retained.phase = 'committed'
-          await this.#releaseAtomicStaging(retained, false, true)
+          await this.#releaseAtomicStaging(retained, false)
           return result
         } catch (error) {
           retained.phase = 'ambiguous'
           this.readOnlyReason = 'AMBIGUOUS_ATOMIC_PUBLISH_REQUIRES_RECOVERY'
-          await this.#releaseAtomicStaging(retained, true, true).catch(() => {})
+          await this.#releaseAtomicStaging(retained, true).catch(() => {})
           throw error
         }
       })
