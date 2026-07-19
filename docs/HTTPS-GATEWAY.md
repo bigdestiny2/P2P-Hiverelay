@@ -101,7 +101,7 @@ flowchart TD
 
 | Route | Plane | Auth | Notes |
 |---|---|---|---|
-| `GET/HEAD /v1/hyper/:key/*` | both | none (public) | blind→403, tier→403, PolicyGuard, ranges |
+| `GET/HEAD /v1/hyper/:key/*` | both | none (public) | blind→403, tier→403, PolicyGuard, ranges; `?verify=1`/hc-block Accept → proof bundle (§6a) |
 | `GET /catalog.json` | both | none (public) | redacted custody entries; slimmer form on data plane |
 | `GET /.well-known/hiverelay.json`, `/api/capabilities` | control | none | signed capability doc |
 | `GET /api/gateway` | control | none | sanitized counters only |
@@ -116,6 +116,31 @@ flowchart TD
 - Single ranges only; malformed/unsatisfiable → 416 (canary is stricter than legacy's RFC-allowed ignore).
 - Limits (canary in parentheses): drive op timeout 30 s; empty-drive wait 20 s; LRU 20 drives; listing ≤1000 entries (and ≤1 MiB payload); max response (64 MiB/1 GiB ceiling); egress budget (256 MiB per IP×app per 60 s → 429); concurrency (256 global / 32 per app → 503); response lifetime (15 min); HTTP hardening (header caps, 10 s headersTimeout, CONNECT/upgrade rejected).
 - Canary production tuple is frozen: `PUBLIC_T1_GATEWAY_FINITE_LIMITS` = {64 MiB, 4 MiB, 256 MiB, 60 s, 15 min}.
+
+## 6a. Verifiable retrieval mode (`?verify=1`, R1)
+
+A gateway GET carrying `?verify=1` or `Accept: application/vnd.hiverelay.hc-block` returns **not the raw file** but a versioned verification bundle, so a client can confirm the bytes hash into the drive key's signed root **without trusting the gateway** (addressing honest-limit #4). Same admission chain as the raw lane (seeded, public tier, PolicyGuard, app-origin allowlist+pins — blind/custody stay hard-403) and the same frozen byte caps; single-range only.
+
+- **Resolution**: the request path resolves exactly like the raw lane (both `/v1/hyper/<key>/<path>` and the app-origin lane; directories still map to `index.html`, a bare directory 400s), then the entry's blob descriptor maps the requested range to **one blob block** (`blockSize` 64 KiB; a range spanning two blocks 400s — clients iterate blocks using the proved descriptor).
+- **Response**: `application/vnd.hiverelay.hc-block+json` with `X-Hive-Drive-Version` (app-origin lane also gets `X-Hive-Byte-Mode: verified`).
+
+Envelope `v: 1` (`packages/core/gateway/verify-bundle.js` is canonical):
+
+```json
+{
+  "v": 1, "driveKey": "<64hex>", "driveVersion": 3, "path": "/big.bin",
+  "blockIndex": 1, "blockBytes": "<hex>",
+  "fileRange": { "start": 0, "end": 65535 },
+  "blob": { "blockOffset": 1, "blockLength": 4, "byteOffset": 35, "byteLength": 200000, "blockSize": 65536 },
+  "blobsKey": "<64hex>",
+  "proof": "<hex wire.data block proof + blobs manifest>",
+  "treeHeader": { "fork": 0, "length": 5, "rootHash": "<hex>", "signature": "<hex>" },
+  "entry": { "blockIndex": 2, "blockBytes": "<hex bee node>", "proof": "<hex wire.data, pinned at driveVersion>", "treeHeader": { "fork": 0, "length": 3, "rootHash": "<hex>", "signature": "<hex>" } }
+}
+```
+
+Trust chain (re-derived client-side by `verifyBlockBundle` in `packages/client/verify-block.js`): `driveKey` = manifest hash ⇒ drive manifest ⇒ `Hyperdrive.getContentManifest` ⇒ `blobsKey`; the **entry proof** binds path→blob descriptor into the drive key's signed root **at `driveVersion`**; the **block proof** binds `blockBytes` into the blobs core's signed root; both tree headers must match the verified state (length, fork, signature, recomputed root). Forged/substituted bytes, wrong block/index, wrong path binding, stale headers, and wrong keys all reject. v1 verifies **manifest drives** (every hc11-created drive); compat drives reject with `COMPAT_DRIVE_UNSUPPORTED`.
+
 
 ## 7. TLS / deployment
 
@@ -146,4 +171,4 @@ flowchart LR
 1. The gateway is a **read plane for declared-public content only** — privacy for content comes from blind sealing/custody, not from this layer.
 2. Path-mode HTML rewriting is a convenience for shared origins; exact-byte app origins are the strong form (canary).
 3. The canary lane is **staging-only, unmerged**; live-fleet use is gated on its readiness checklist.
-4. HTTPS responses do not prove Hypercore provenance — clients that need integrity must verify content hashes out-of-band (or consume the drive over P2P).
+4. HTTPS responses do not prove Hypercore provenance — clients that need integrity use verifiable retrieval mode (§6a) or consume the drive over P2P.

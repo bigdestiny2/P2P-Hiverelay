@@ -27,6 +27,7 @@ import { join } from 'path'
 import { isIssuedExactAppContext } from './exact-app-context.js'
 import { updateWithTimeout } from '../core/relay-node/cancellable-drive-update.js'
 import { admitPublicHiveAppEntry } from './public-app-admission.js'
+import { isVerifyRequest, serveVerifyBundle } from './verify-bundle.js'
 
 function stableCoreProofState (core, attempts = 4) {
   if (!core) return null
@@ -623,6 +624,9 @@ export class HyperGateway extends EventEmitter {
       return
     }
     const exactBytes = isIssuedExactAppContext(context)
+    // R1 verifiable retrieval: ?verify=1 (or the hc-block Accept type) returns a
+    // proof bundle instead of raw bytes — same admission chain, same frozen limits.
+    const verifyMode = isVerifyRequest(url, req.headers)
 
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.setHeader('Allow', 'GET, HEAD')
@@ -856,6 +860,11 @@ export class HyperGateway extends EventEmitter {
         if (entry) {
           filePath = (filePath || '/') + 'index.html'
         } else {
+          if (verifyMode) {
+            // A directory listing is generated JSON — no single block to prove.
+            sendJson({ error: 'Verify mode proves file blocks only — request a file path', path: filePath || '/' }, 400)
+            return
+          }
           // Directory listing
           await this._serveDirectoryListing(res, readDrive, keyHex, filePath || '/', {
             head: isHead,
@@ -885,6 +894,22 @@ export class HyperGateway extends EventEmitter {
       const byteLength = entry.value.blob.byteLength
       if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
         throw new Error('Drive entry has an invalid byte length')
+      }
+
+      // Verifiable retrieval mode: proof bundle instead of raw bytes. Admission
+      // (seeded/blind/tier/PolicyGuard) already ran; byte caps mirror the raw lane.
+      if (verifyMode) {
+        await serveVerifyBundle(this, res, readDrive, keyHex, filePath, entry, byteLength, {
+          head: isHead,
+          exactBytes,
+          rangeHeader: req.headers && req.headers.range,
+          driveVersion: readDrive.version,
+          signal,
+          sendJson,
+          reserveResponseBytes: context?.reserveResponseBytes,
+          egressRetryAfterSeconds: context?.egressRetryAfterSeconds
+        })
+        return
       }
 
       res.setHeader('Content-Type', contentType)

@@ -13,6 +13,7 @@
     "./blind-custody.js": "./blind-custody.js",
     "./custody.js": "./custody.js",
     "./notify.js": "./notify.js",
+    "./verify-block.js": "./verify-block.js",
     "./privacy-policy.js": "./privacy-policy.js"
   },
   "imports": {
@@ -42,6 +43,7 @@
     "blind-custody.js",
     "custody.js",
     "notify.js",
+    "verify-block.js",
     "README.md",
     "LICENSE"
   ],
