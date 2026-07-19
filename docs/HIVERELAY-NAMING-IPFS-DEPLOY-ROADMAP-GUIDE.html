@@ -1,0 +1,1571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HiveRelay × Naming, Deploy &amp; Public Content — Developer Guide</title>
+<meta name="description" content="Developer guide for the Pear naming, deploy, and IPFS roadmap as HiveRelay substrate work. Peerit is the reference consumer that any app can copy to use the service switchboard." />
+<style>
+  :root {
+    --bg: #0b0f14;
+    --bg-elev: #121820;
+    --bg-soft: #182230;
+    --border: #243041;
+    --border-strong: #334155;
+    --text: #e6edf5;
+    --muted: #9aa8b8;
+    --faint: #6b7a8c;
+    --accent: #5eead4;
+    --accent-2: #7dd3fc;
+    --accent-3: #c4b5fd;
+    --warn: #fbbf24;
+    --danger: #f87171;
+    --ok: #4ade80;
+    --partial: #fbbf24;
+    --missing: #f87171;
+    --code-bg: #0a1018;
+    --shadow: 0 18px 50px rgba(0,0,0,.35);
+    --radius: 14px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    background:
+      radial-gradient(1200px 600px at 8% -10%, rgba(94,234,212,.09), transparent 50%),
+      radial-gradient(900px 500px at 100% 0%, rgba(125,211,252,.07), transparent 45%),
+      var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    font-size: 16px;
+  }
+  a { color: var(--accent-2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1140px; margin: 0 auto; padding: 28px 22px 80px; }
+
+  header.hero {
+    border: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(24,34,48,.95), rgba(18,24,32,.95));
+    border-radius: 20px;
+    padding: 36px 32px;
+    box-shadow: var(--shadow);
+    margin-bottom: 28px;
+  }
+  .kicker { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .pill {
+    display: inline-block;
+    font-size: 12px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    font-weight: 700;
+    padding: 5px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    color: var(--muted);
+    background: rgba(255,255,255,.03);
+  }
+  .pill.ok { color: var(--ok); border-color: rgba(74,222,128,.35); background: rgba(74,222,128,.08); }
+  .pill.warn { color: var(--warn); border-color: rgba(251,191,36,.35); background: rgba(251,191,36,.08); }
+  .pill.danger { color: var(--danger); border-color: rgba(248,113,113,.35); background: rgba(248,113,113,.08); }
+  .pill.accent { color: var(--accent); border-color: rgba(94,234,212,.35); background: rgba(94,234,212,.08); }
+
+  h1 {
+    font-size: clamp(1.75rem, 3vw, 2.4rem);
+    line-height: 1.15;
+    margin: 0 0 14px;
+    letter-spacing: -0.02em;
+  }
+  .lede { font-size: 1.08rem; color: var(--muted); max-width: 72ch; margin: 0 0 18px; }
+  .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin-top: 18px;
+  }
+  .meta-card {
+    border: 1px solid var(--border);
+    background: rgba(0,0,0,.18);
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .meta-card .label { color: var(--faint); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; font-weight: 700; }
+  .meta-card .value { margin-top: 4px; font-weight: 600; color: var(--text); font-size: 14px; }
+
+  nav.toc {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    backdrop-filter: blur(12px);
+    background: rgba(11,15,20,.82);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin-bottom: 28px;
+  }
+  nav.toc strong {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--accent);
+    font-size: 13px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  nav.toc ol { margin: 0; padding-left: 18px; columns: 2; gap: 24px; }
+  nav.toc li { margin: 4px 0; break-inside: avoid; }
+  nav.toc a { color: var(--muted); font-size: 14px; }
+  nav.toc a:hover { color: var(--text); }
+
+  section { margin: 36px 0 48px; scroll-margin-top: 88px; }
+  h2 {
+    font-size: 1.55rem;
+    margin: 0 0 12px;
+    letter-spacing: -0.015em;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+  }
+  h3 { font-size: 1.15rem; margin: 28px 0 10px; color: var(--accent-2); }
+  h4 { font-size: 1rem; margin: 20px 0 8px; color: var(--accent-3); }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; }
+  li { margin: 6px 0; }
+  li::marker { color: var(--faint); }
+
+  .callout {
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    background: var(--bg-elev);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin: 16px 0;
+  }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.danger { border-left-color: var(--danger); }
+  .callout.ok { border-left-color: var(--ok); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .rule {
+    font-family: var(--mono);
+    font-size: 13.5px;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    color: var(--accent);
+    margin: 14px 0 18px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0 20px;
+    font-size: 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    display: block;
+    overflow-x: auto;
+  }
+  thead { background: var(--bg-soft); }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    min-width: 110px;
+  }
+  th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr:hover td { background: rgba(255,255,255,.02); }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.9em;
+    background: rgba(125,211,252,.08);
+    border: 1px solid rgba(125,211,252,.15);
+    border-radius: 6px;
+    padding: 1px 6px;
+    color: #cfefff;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: #d7e3ef;
+    margin: 12px 0 18px;
+  }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 14px;
+    margin: 16px 0;
+  }
+  .card {
+    border: 1px solid var(--border);
+    background: var(--bg-elev);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+  .card h4 { margin-top: 0; }
+  .card p:last-child { margin-bottom: 0; }
+
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .03em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  .status.shipped { color: var(--ok); background: rgba(74,222,128,.1); border-color: rgba(74,222,128,.3); }
+  .status.partial { color: var(--partial); background: rgba(251,191,36,.1); border-color: rgba(251,191,36,.3); }
+  .status.missing { color: var(--missing); background: rgba(248,113,113,.1); border-color: rgba(248,113,113,.3); }
+  .status.canary { color: var(--accent-2); background: rgba(125,211,252,.1); border-color: rgba(125,211,252,.3); }
+  .status.ref { color: var(--accent-3); background: rgba(196,181,253,.1); border-color: rgba(196,181,253,.3); }
+
+  .diagram {
+    border: 1px solid var(--border);
+    background: linear-gradient(180deg, #101722, #0c121a);
+    border-radius: 16px;
+    padding: 18px;
+    margin: 16px 0 22px;
+    overflow-x: auto;
+  }
+  .diagram figcaption {
+    color: var(--faint);
+    font-size: 12.5px;
+    margin-top: 10px;
+    text-align: center;
+  }
+  .diagram svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+
+  .train {
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    margin: 18px 0 28px;
+    background: var(--bg-elev);
+  }
+  .train-head {
+    padding: 14px 16px;
+    background: var(--bg-soft);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .train-head h3 { margin: 0; color: var(--text); }
+  .train-body { padding: 16px; }
+  .train-promise {
+    font-size: 14.5px;
+    color: var(--muted);
+    border-left: 3px solid var(--accent);
+    padding-left: 12px;
+    margin: 0 0 14px;
+  }
+
+  .checklist { list-style: none; padding: 0; margin: 12px 0 18px; }
+  .checklist li {
+    display: grid;
+    grid-template-columns: 28px 1fr;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin: 8px 0;
+    background: var(--bg-elev);
+  }
+  .checklist .box {
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--border-strong);
+    border-radius: 4px;
+    margin-top: 2px;
+  }
+  .checklist .title { font-weight: 650; }
+  .checklist .why { color: var(--muted); font-size: 13.5px; margin-top: 2px; }
+
+  footer {
+    margin-top: 48px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+    color: var(--faint);
+    font-size: 13px;
+  }
+  @media (max-width: 720px) {
+    nav.toc ol { columns: 1; }
+    header.hero { padding: 24px 18px; }
+  }
+  @media print {
+    body { background: #fff; color: #111; }
+    nav.toc { position: static; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="kicker">
+    <span class="pill accent">HiveRelay substrate guide</span>
+    <span class="pill">Roadmap: 2026-07-15</span>
+    <span class="pill warn">Evidence-gated · not GA commitments</span>
+    <span class="pill">Baseline: HiveRelay 0.24.3 · PearBrowser 0.6.0</span>
+  </div>
+  <h1>HiveRelay × Naming, Deploy &amp; Public Content</h1>
+  <p class="lede">
+    This guide is for engineers working on the <strong>HiveRelay service switchboard</strong>
+    and the deploy/name/public-mirror rails that sit around it.
+    The roadmap features land as <em>app-agnostic relay and provider capabilities</em> —
+    so any Pear app can opt into seeding, outboxes, blind custody, name availability,
+    public mirrors, and proofs without custom backend code.
+  </p>
+  <p class="lede" style="margin-top:-6px">
+    <strong>Peerit is not the product that “needs” these features.</strong>
+    Peerit is the first <em>reference application</em> built against HiveRelay services —
+    a live conformance fixture that proves an ordinary app can fully utilize the surfaces.
+    PearBrowser is the independent client verifier and discovery surface.
+    <strong>Pear Deploy</strong> (when built) is the portable compiler/controller that talks to
+    providers through the same capability model — delivered primarily as a
+    <strong>PearBrowser Pear Plugin</strong> for human publish UX, with shared contracts for CLI/CI.
+  </p>
+  <div class="meta-grid">
+    <div class="meta-card">
+      <div class="label">What needs the work</div>
+      <div class="value">HiveRelay (+ Deploy plugin + browser resolve)</div>
+    </div>
+    <div class="meta-card">
+      <div class="label">Reference consumer</div>
+      <div class="value">Peerit · any app can copy the pattern</div>
+    </div>
+    <div class="meta-card">
+      <div class="label">Core promise today</div>
+      <div class="value">Availability · blind custody · optional services</div>
+    </div>
+    <div class="meta-card">
+      <div class="label">Missing spine</div>
+      <div class="value">Names avail · IPFS bridge · provider SPI</div>
+    </div>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Table of contents">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#reframe">1. Correct framing</a></li>
+    <li><a href="#north-star">2. North star &amp; hard rules</a></li>
+    <li><a href="#switchboard">3. HiveRelay service switchboard</a></li>
+    <li><a href="#roles">4. Roles: relay · browser · deploy · apps</a></li>
+    <li><a href="#today-vs-end">5. Today vs end-state architecture</a></li>
+    <li><a href="#inventory">6. Capability inventory (0.24.3)</a></li>
+    <li><a href="#trains">7. Release trains as HiveRelay work</a></li>
+    <li><a href="#reference-app">8. Peerit as reference app (not the product)</a></li>
+    <li><a href="#any-app">9. How any app uses the switchboard</a></li>
+    <li><a href="#scorecard">10. Implementation scorecard</a></li>
+    <li><a href="#enablement">11. What each capability unlocks on the network</a></li>
+    <li><a href="#sequencing">12. Sequencing for HiveRelay engineers</a></li>
+    <li><a href="#checklist">13. Provider &amp; service checklist</a></li>
+    <li><a href="#non-goals">14. Non-goals &amp; failure modes</a></li>
+    <li><a href="#sources">15. Source anchors</a></li>
+  </ol>
+</nav>
+
+<!-- 1 -->
+<section id="reframe">
+  <h2>1. Correct framing</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h4>Wrong mental model</h4>
+      <ul>
+        <li>“Peerit needs ENS and IPFS.”</li>
+        <li>“Ship roadmap features into the social app.”</li>
+        <li>“Each app invents publish/seed/name scripts.”</li>
+        <li>“Relay is Peerit’s backend.”</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Right mental model</h4>
+      <ul>
+        <li><strong>HiveRelay</strong> needs portable capabilities, receipts, and service plugins.</li>
+        <li><strong>Pear Deploy</strong> orchestrates providers without owning truth — as a <strong>PearBrowser Pear Plugin</strong> + portable CLI/CI contracts.</li>
+        <li><strong>PearBrowser</strong> needs to resolve, verify, display provenance, and host the Deploy plugin under the Plugins capability model.</li>
+        <li><strong>Peerit</strong> is the first reference consumer proving the surfaces work for <em>any</em> app.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout ok">
+    <p><strong>Design test for every roadmap feature</strong></p>
+    <p>
+      If a feature only works for Peerit, it failed. It must be selectable through the service
+      switchboard (or a signed capability) under an app-neutral contract, with Peerit merely
+      registering a namespace / binding policy like any other consumer.
+    </p>
+  </div>
+
+  <p class="muted">
+    OutboxLog already states this explicitly in HiveRelay docs: the service is
+    <em>app-neutral</em>; apps sign under a registered namespace (e.g. <code>peerit</code>).
+    Enabling <code>HIVERELAY_OUTBOXLOG=1</code> without registering namespaces rejects every append.
+    That is the pattern names, IPFS pins, and deploy leases must follow.
+  </p>
+</section>
+
+<!-- 2 -->
+<section id="north-star">
+  <h2>2. North star &amp; hard rules</h2>
+  <p>
+    The ecosystem program makes cryptographically owned Pear applications easy to build, preview,
+    promote, name, mirror, observe, and roll forward — while mutable state, private data, authority,
+    and merge policy stay in the native Pear stack and in applications.
+  </p>
+
+  <div class="rule">
+    Publishers sign meaning → content addresses / logs prove integrity → relays provide availability
+    &amp; transport → clients verify → applications decide trust and merge policy.
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h4>HiveRelay’s job</h4>
+      <ul>
+        <li>Keep Hyperdrive/Hypercore bytes available after publishers go offline.</li>
+        <li>Host optional services (outbox, notify, storage-proof, shards, later names/IPFS).</li>
+        <li>Advertise honest signed capabilities; disappear when unhealthy.</li>
+        <li>Issue receipts, leases, accounting — never ownership claims.</li>
+        <li>Stay blind for private workloads; reject plaintext key material at boundaries.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>HiveRelay never becomes</h4>
+      <ul>
+        <li>A global name registrar or ENS wallet custodian.</li>
+        <li>The source of content truth or merge authority for apps.</li>
+        <li>A mandatory hosted controller for application releases.</li>
+        <li>A public Kubo RPC or unrestricted IPFS pin free-for-all.</li>
+        <li>A place that invents Peerit-specific (or any app-specific) protocol semantics.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Three release loops (keep separate)</h3>
+  <table>
+    <thead>
+      <tr><th>Loop</th><th>Owner</th><th>Examples</th><th>Rule</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Product / substrate</strong></td>
+        <td>HiveRelay, PearBrowser, Pear Deploy packaging</td>
+        <td>npm/Docker/cosign, Umbrel/StartOS, fleet canary, browser installers</td>
+        <td>Human-authorized; never implied by app promote</td>
+      </tr>
+      <tr>
+        <td><strong>Application release</strong></td>
+        <td>App publishers via Pear Deploy / adapters</td>
+        <td>BuildRecord → Artifact → BindingSet → ReleaseProof → Release</td>
+        <td>Portable signed object; apps own meaning</td>
+      </tr>
+      <tr>
+        <td><strong>Surface convergence</strong></td>
+        <td>Independent authorities</td>
+        <td>Native channel, petname, ENS, DNS, IPFS pin, catalog</td>
+        <td>Typed observations; no overwrite across surfaces</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 3 -->
+<section id="switchboard">
+  <h2>3. HiveRelay service switchboard</h2>
+  <p>
+    HiveRelay is a two-layer machine: a <strong>kernel</strong> (availability, swarm, gateway,
+    custody, accounting) plus a <strong>services layer</strong> (opt-in providers registered,
+    supervised, catalogued, and dispatched over Protomux / HTTP).
+    Apps do not embed relay internals — they discover capabilities and call methods.
+  </p>
+
+  <figure class="diagram">
+    <svg viewBox="0 0 1000 520" role="img" aria-label="HiveRelay service switchboard architecture">
+      <defs>
+        <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#6b7a8c"/>
+        </marker>
+      </defs>
+
+      <!-- Apps -->
+      <rect x="30" y="30" width="180" height="70" rx="12" fill="#122033" stroke="#7dd3fc"/>
+      <text x="120" y="60" text-anchor="middle" fill="#e6edf5" font-size="14" font-weight="700" font-family="ui-sans-serif,system-ui">Any Pear app</text>
+      <text x="120" y="82" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">Peerit is reference #1</text>
+
+      <rect x="230" y="30" width="180" height="70" rx="12" fill="#122033" stroke="#7dd3fc"/>
+      <text x="320" y="60" text-anchor="middle" fill="#e6edf5" font-size="14" font-weight="700" font-family="ui-sans-serif,system-ui">PearBrowser</text>
+      <text x="320" y="82" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">verify · resolve · publish UX</text>
+
+      <rect x="430" y="30" width="180" height="70" rx="12" fill="#122033" stroke="#7dd3fc"/>
+      <text x="520" y="60" text-anchor="middle" fill="#e6edf5" font-size="14" font-weight="700" font-family="ui-sans-serif,system-ui">Deploy plugin</text>
+      <text x="520" y="82" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">in PearBrowser · + CLI/CI</text>
+
+      <rect x="630" y="30" width="180" height="70" rx="12" fill="#122033" stroke="#7dd3fc"/>
+      <text x="720" y="60" text-anchor="middle" fill="#e6edf5" font-size="14" font-weight="700" font-family="ui-sans-serif,system-ui">Operators / fleet</text>
+      <text x="720" y="82" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">Umbrel · VPS · multi-region</text>
+
+      <!-- Switchboard -->
+      <rect x="80" y="150" width="840" height="100" rx="16" fill="#10261f" stroke="#5eead4"/>
+      <text x="500" y="190" text-anchor="middle" fill="#ecfeff" font-size="18" font-weight="700" font-family="ui-sans-serif,system-ui">HiveRelay service switchboard</text>
+      <text x="500" y="218" text-anchor="middle" fill="#99f6e4" font-size="12" font-family="ui-sans-serif,system-ui">ServiceRegistry · Router · Catalog · Capability docs · Supervision · Rate limits · Accounting</text>
+
+      <!-- Services row -->
+      <rect x="40" y="300" width="130" height="70" rx="10" fill="#1a1528" stroke="#c4b5fd"/>
+      <text x="105" y="330" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">seed / pin</text>
+      <text x="105" y="350" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">kernel</text>
+
+      <rect x="185" y="300" width="130" height="70" rx="10" fill="#1a1528" stroke="#c4b5fd"/>
+      <text x="250" y="330" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">outboxlog</text>
+      <text x="250" y="350" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">opt-in</text>
+
+      <rect x="330" y="300" width="130" height="70" rx="10" fill="#1a1528" stroke="#c4b5fd"/>
+      <text x="395" y="330" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">shard-store</text>
+      <text x="395" y="350" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">blind</text>
+
+      <rect x="475" y="300" width="130" height="70" rx="10" fill="#1a1528" stroke="#c4b5fd"/>
+      <text x="540" y="330" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">storage-proof</text>
+      <text x="540" y="350" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">opt-in</text>
+
+      <rect x="620" y="300" width="130" height="70" rx="10" fill="#241a10" stroke="#fbbf24"/>
+      <text x="685" y="330" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">names-avail</text>
+      <text x="685" y="350" text-anchor="middle" fill="#fde68a" font-size="11" font-family="ui-sans-serif,system-ui">roadmap</text>
+
+      <rect x="765" y="300" width="160" height="70" rx="10" fill="#241a10" stroke="#fbbf24"/>
+      <text x="845" y="330" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">ipfs-bridge</text>
+      <text x="845" y="350" text-anchor="middle" fill="#fde68a" font-size="11" font-family="ui-sans-serif,system-ui">roadmap</text>
+
+      <!-- Kernel -->
+      <rect x="80" y="410" width="840" height="70" rx="14" fill="#182230" stroke="#334155"/>
+      <text x="500" y="440" text-anchor="middle" fill="#e6edf5" font-size="14" font-weight="700" font-family="ui-sans-serif,system-ui">Kernel: Hyperswarm · Corestore · gateway · custody · AutoHeal · accounting · HTTP/SSE</text>
+      <text x="500" y="462" text-anchor="middle" fill="#9aa8b8" font-size="12" font-family="ui-sans-serif,system-ui">Survives disabled/crashed optional sidecars and experimental services</text>
+
+      <line x1="120" y1="100" x2="300" y2="150" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr)"/>
+      <line x1="320" y1="100" x2="420" y2="150" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr)"/>
+      <line x1="520" y1="100" x2="500" y2="150" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr)"/>
+      <line x1="720" y1="100" x2="650" y2="150" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr)"/>
+      <line x1="500" y1="250" x2="500" y2="300" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr)"/>
+      <line x1="500" y1="370" x2="500" y2="410" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr)"/>
+    </svg>
+    <figcaption>Figure 1 — HiveRelay as switchboard. Yellow boxes are roadmap capabilities. Apps and Deploy select services; the kernel remains healthy if plugins fail.</figcaption>
+  </figure>
+
+  <h3>How the switchboard works today</h3>
+  <table>
+    <thead>
+      <tr><th>Mechanism</th><th>What it does</th><th>Why apps care</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>ServiceProvider</code> + <code>manifest()</code></td>
+        <td>Declares name, version, capabilities</td>
+        <td>Discoverable methods without hardcoding peer IPs</td>
+      </tr>
+      <tr>
+        <td><code>ServiceRegistry</code></td>
+        <td>Register, dispatch, catalog, stats, lifecycle</td>
+        <td>One client API: <code>callService</code> / HTTP facade</td>
+      </tr>
+      <tr>
+        <td>Supervision</td>
+        <td>Failed health → remove from catalog; restart budget</td>
+        <td>Broken plugins disappear instead of lying “available”</td>
+      </tr>
+      <tr>
+        <td>Signed capability docs</td>
+        <td>Advertise what this relay actually runs</td>
+        <td>Clients/Deploy select by verified capability, not package strings</td>
+      </tr>
+      <tr>
+        <td>Opt-in plugins / env flags</td>
+        <td><code>services.json</code>, <code>HIVERELAY_OUTBOXLOG=1</code>, etc.</td>
+        <td>Operators enable only what they want to host</td>
+      </tr>
+      <tr>
+        <td>Namespaces / policies</td>
+        <td>e.g. OutboxLog namespace registration</td>
+        <td>App-agnostic service + app-specific admission</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 4 -->
+<section id="roles">
+  <h2>4. Roles: relay · browser · deploy · apps</h2>
+  <table>
+    <thead>
+      <tr><th>Surface</th><th>Owns</th><th>Does not own</th><th>Roadmap focus</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>HiveRelay</strong></td>
+        <td>Availability, transport, optional services, receipts, accounting, operator packaging</td>
+        <td>App merge policy, ENS keys, content meaning, global names</td>
+        <td>Names availability, IPFS bridge, provider lifecycle, honest capabilities</td>
+      </tr>
+      <tr>
+        <td><strong>PearBrowser</strong></td>
+        <td>Client verification, resolution UX, sandbox; hosts <strong>Pear Deploy as a Pear Plugin</strong>; independent verifier of portable release proofs</td>
+        <td>Fleet promotion, ENS key custody, application merge policy, sole production authority</td>
+        <td>Typed resolve, ENS/IPFS read, trust panel, Deploy plugin install / capability re-approval</td>
+      </tr>
+      <tr>
+        <td><strong>Pear Deploy</strong></td>
+        <td>Intent → portable records, pure planner, provider adapters, evidence predicates; <strong>primary UX = PearBrowser Pear Plugin</strong>; headless CLI/CI reuse same contracts</td>
+        <td>App database, sole signer, sole artifact holder, mandatory hosted controller</td>
+        <td>M0–M7 contracts + plugin packaging (currently absent)</td>
+      </tr>
+      <tr>
+        <td><strong>Any app (ref: Peerit)</strong></td>
+        <td>Protocol, crypto authorship, merge policy, product UX</td>
+        <td>Relay implementation, global naming authority</td>
+        <td>Consume capabilities; provide conformance fixtures</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="callout">
+    <p><strong>Map decision:</strong> Pear Deploy integrates into PearBrowser as a plugin. Operators and apps talk to HiveRelay the same way whether a human used the plugin UI or a CI job used the portable planner/CLI. The plugin never becomes the only authority for “what is released.”</p>
+  </div>
+</section>
+
+<!-- 5 -->
+<section id="today-vs-end">
+  <h2>5. Today vs end-state architecture</h2>
+
+  <h3>5.1 Today (0.24.3) — strong kernel, incomplete public interoperability</h3>
+  <figure class="diagram">
+    <svg viewBox="0 0 1000 430" role="img" aria-label="Current HiveRelay topology">
+      <defs>
+        <marker id="arr2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#6b7a8c"/>
+        </marker>
+      </defs>
+      <rect x="40" y="40" width="200" height="80" rx="12" fill="#122033" stroke="#7dd3fc"/>
+      <text x="140" y="75" text-anchor="middle" fill="#e6edf5" font-size="14" font-weight="700" font-family="ui-sans-serif,system-ui">App clients</text>
+      <text x="140" y="98" text-anchor="middle" fill="#9aa8b8" font-size="12" font-family="ui-sans-serif,system-ui">Peerit · others · scripts</text>
+
+      <rect x="300" y="40" width="200" height="80" rx="12" fill="#122033" stroke="#7dd3fc"/>
+      <text x="400" y="75" text-anchor="middle" fill="#e6edf5" font-size="14" font-weight="700" font-family="ui-sans-serif,system-ui">PearBrowser</text>
+      <text x="400" y="98" text-anchor="middle" fill="#9aa8b8" font-size="12" font-family="ui-sans-serif,system-ui">petnames · seed scripts</text>
+
+      <rect x="560" y="40" width="200" height="80" rx="12" fill="#2a1414" stroke="#f87171"/>
+      <text x="660" y="75" text-anchor="middle" fill="#e6edf5" font-size="14" font-weight="700" font-family="ui-sans-serif,system-ui">Deploy plugin</text>
+      <text x="660" y="98" text-anchor="middle" fill="#fca5a5" font-size="12" font-family="ui-sans-serif,system-ui">not implemented yet</text>
+
+      <rect x="200" y="180" width="600" height="90" rx="14" fill="#10261f" stroke="#5eead4"/>
+      <text x="500" y="220" text-anchor="middle" fill="#e6edf5" font-size="16" font-weight="700" font-family="ui-sans-serif,system-ui">HiveRelay fleet (kernel + experimental services)</text>
+      <text x="500" y="245" text-anchor="middle" fill="#99f6e4" font-size="12" font-family="ui-sans-serif,system-ui">seed · outboxlog · shards · notify · storage-proof · VRF · …</text>
+
+      <rect x="80" y="320" width="220" height="70" rx="12" fill="#1a1528" stroke="#c4b5fd"/>
+      <text x="190" y="350" text-anchor="middle" fill="#e6edf5" font-size="13" font-weight="700" font-family="ui-sans-serif,system-ui">Native Hyper* bytes</text>
+      <text x="190" y="370" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">availability primary</text>
+
+      <rect x="360" y="320" width="220" height="70" rx="12" fill="#2a1414" stroke="#f87171"/>
+      <text x="470" y="350" text-anchor="middle" fill="#e6edf5" font-size="13" font-weight="700" font-family="ui-sans-serif,system-ui">IPFS bridge</text>
+      <text x="470" y="370" text-anchor="middle" fill="#fca5a5" font-size="11" font-family="ui-sans-serif,system-ui">missing</text>
+
+      <rect x="640" y="320" width="220" height="70" rx="12" fill="#2a1414" stroke="#f87171"/>
+      <text x="750" y="350" text-anchor="middle" fill="#e6edf5" font-size="13" font-weight="700" font-family="ui-sans-serif,system-ui">Names availability</text>
+      <text x="750" y="370" text-anchor="middle" fill="#fca5a5" font-size="11" font-family="ui-sans-serif,system-ui">missing</text>
+
+      <line x1="140" y1="120" x2="350" y2="180" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr2)"/>
+      <line x1="400" y1="120" x2="450" y2="180" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr2)"/>
+      <line x1="500" y1="270" x2="190" y2="320" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr2)"/>
+    </svg>
+    <figcaption>Figure 2 — Present state: apps and browser already hit HiveRelay; public name/IPFS rails and Deploy SPI are not productized.</figcaption>
+  </figure>
+
+  <h3>5.2 End state — app-agnostic public + native availability fabric</h3>
+  <figure class="diagram">
+    <svg viewBox="0 0 1000 500" role="img" aria-label="Target HiveRelay architecture">
+      <defs>
+        <marker id="arr3" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#6b7a8c"/>
+        </marker>
+      </defs>
+      <rect x="360" y="20" width="280" height="60" rx="12" fill="#122033" stroke="#7dd3fc"/>
+      <text x="500" y="55" text-anchor="middle" fill="#e6edf5" font-size="14" font-weight="700" font-family="ui-sans-serif,system-ui">Deploy plugin + portable plans</text>
+
+      <rect x="40" y="120" width="200" height="70" rx="12" fill="#122033" stroke="#7dd3fc"/>
+      <text x="140" y="150" text-anchor="middle" fill="#e6edf5" font-size="13" font-weight="700" font-family="ui-sans-serif,system-ui">Any app</text>
+      <text x="140" y="170" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">namespace + policy only</text>
+
+      <rect x="280" y="120" width="200" height="70" rx="12" fill="#122033" stroke="#7dd3fc"/>
+      <text x="380" y="150" text-anchor="middle" fill="#e6edf5" font-size="13" font-weight="700" font-family="ui-sans-serif,system-ui">PearBrowser</text>
+      <text x="380" y="170" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">resolve · trust · publish</text>
+
+      <rect x="520" y="120" width="200" height="70" rx="12" fill="#122033" stroke="#7dd3fc"/>
+      <text x="620" y="150" text-anchor="middle" fill="#e6edf5" font-size="13" font-weight="700" font-family="ui-sans-serif,system-ui">Independent ops</text>
+      <text x="620" y="170" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">multi-region · multi-id</text>
+
+      <rect x="760" y="120" width="200" height="70" rx="12" fill="#122033" stroke="#7dd3fc"/>
+      <text x="860" y="150" text-anchor="middle" fill="#e6edf5" font-size="13" font-weight="700" font-family="ui-sans-serif,system-ui">External nets</text>
+      <text x="860" y="170" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">ENS · IPFS tooling</text>
+
+      <rect x="80" y="240" width="840" height="80" rx="14" fill="#10261f" stroke="#5eead4"/>
+      <text x="500" y="275" text-anchor="middle" fill="#e6edf5" font-size="15" font-weight="700" font-family="ui-sans-serif,system-ui">HiveRelay provider SPI + switchboard</text>
+      <text x="500" y="298" text-anchor="middle" fill="#99f6e4" font-size="12" font-family="ui-sans-serif,system-ui">discover · quote · prepare · apply · reconcile · observe · verify · renew · revoke</text>
+
+      <rect x="60" y="360" width="170" height="70" rx="10" fill="#1a1528" stroke="#c4b5fd"/>
+      <text x="145" y="390" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">native seed</text>
+      <text x="145" y="410" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">Hyperdrive</text>
+
+      <rect x="250" y="360" width="170" height="70" rx="10" fill="#1a1528" stroke="#c4b5fd"/>
+      <text x="335" y="390" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">outbox / notify</text>
+      <text x="335" y="410" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">opaque bytes</text>
+
+      <rect x="440" y="360" width="170" height="70" rx="10" fill="#1a1528" stroke="#c4b5fd"/>
+      <text x="525" y="390" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">shards</text>
+      <text x="525" y="410" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">blind custody</text>
+
+      <rect x="630" y="360" width="140" height="70" rx="10" fill="#241a10" stroke="#fbbf24"/>
+      <text x="700" y="390" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">names-avail</text>
+      <text x="700" y="410" text-anchor="middle" fill="#fde68a" font-size="11" font-family="ui-sans-serif,system-ui">pointer cache</text>
+
+      <rect x="790" y="360" width="160" height="70" rx="10" fill="#241a10" stroke="#fbbf24"/>
+      <text x="870" y="390" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">ipfs-bridge</text>
+      <text x="870" y="410" text-anchor="middle" fill="#fde68a" font-size="11" font-family="ui-sans-serif,system-ui">read + pins</text>
+
+      <line x1="500" y1="80" x2="500" y2="240" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr3)"/>
+      <line x1="140" y1="190" x2="300" y2="240" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr3)"/>
+      <line x1="380" y1="190" x2="420" y2="240" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr3)"/>
+      <line x1="620" y1="190" x2="580" y2="240" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr3)"/>
+      <line x1="500" y1="320" x2="500" y2="360" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr3)"/>
+    </svg>
+    <figcaption>Figure 3 — Target: Deploy selects verified HiveRelay capabilities; names/IPFS are optional provider families; apps stay protocol owners.</figcaption>
+  </figure>
+</section>
+
+<!-- 6 -->
+<section id="inventory">
+  <h2>6. Capability inventory (HiveRelay 0.24.3)</h2>
+
+  <h3>6.1 Kernel &amp; packaging — shipped</h3>
+  <table>
+    <thead>
+      <tr><th>Capability</th><th>Status</th><th>Switchboard role</th><th>Roadmap gap</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Hyperdrive/core seed &amp; pin</td>
+        <td><span class="status shipped">Shipped</span></td>
+        <td>Primary public availability for drives</td>
+        <td>Acceptance ≠ full metadata+blob completeness evidence</td>
+      </tr>
+      <tr>
+        <td>Blind custody / shard store</td>
+        <td><span class="status shipped">Shipped</span></td>
+        <td>Private opaque custody class</td>
+        <td>Keep off public IPFS by default</td>
+      </tr>
+      <tr>
+        <td>AutoHeal / anchor proofs</td>
+        <td><span class="status shipped">Shipped</span></td>
+        <td>Replica diversity repair</td>
+        <td>Not sealed multi-operator public-mirror SLO yet</td>
+      </tr>
+      <tr>
+        <td>HTTP gateway / SSE bridges</td>
+        <td><span class="status shipped">Shipped</span></td>
+        <td>Browser/mobile ingress</td>
+        <td>Must stay separate from Kubo RPC</td>
+      </tr>
+      <tr>
+        <td>Signed capability documents</td>
+        <td><span class="status shipped">Shipped</span></td>
+        <td>Honest advertisement</td>
+        <td>Need single canonical release/capability authority for Deploy</td>
+      </tr>
+      <tr>
+        <td>Fleet / Docker / Umbrel / StartOS rails</td>
+        <td><span class="status partial">Product loop</span></td>
+        <td>Operator distribution</td>
+        <td>Separate human authority from app promote</td>
+      </tr>
+      <tr>
+        <td>Accounting (stored/served)</td>
+        <td><span class="status shipped">Shipped</span></td>
+        <td>Operator economics base</td>
+        <td>Extend to IPFS pin lifetime / transfer classes</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>6.2 Built-in / plugin services</h3>
+  <table>
+    <thead>
+      <tr><th>Service</th><th>Status</th><th>App-neutral?</th><th>Reference use</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>outboxlog</code></td>
+        <td><span class="status canary">Experimental / live</span></td>
+        <td>Yes — namespace registration</td>
+        <td>Peerit web writes; any social/log app</td>
+      </tr>
+      <tr>
+        <td><code>notify</code></td>
+        <td><span class="status partial">Experimental</span></td>
+        <td>Yes</td>
+        <td>Wake paths; non-authoritative</td>
+      </tr>
+      <tr>
+        <td><code>storage-proof</code></td>
+        <td><span class="status partial">Opt-in</span></td>
+        <td>Yes</td>
+        <td>Metadata PoR for seeded drives</td>
+      </tr>
+      <tr>
+        <td><code>shard-store</code> / blind client</td>
+        <td><span class="status shipped">Shipped</span></td>
+        <td>Yes</td>
+        <td>Private attachments; Peerit progressive path</td>
+      </tr>
+      <tr>
+        <td><code>vrf</code></td>
+        <td><span class="status shipped">Production-ready</span></td>
+        <td>Yes</td>
+        <td>Games / sortition — not Peerit-specific</td>
+      </tr>
+      <tr>
+        <td><code>identity</code> · <code>storage</code> · schema</td>
+        <td><span class="status shipped">Core builtins</span></td>
+        <td>Yes</td>
+        <td>Generic app helpers</td>
+      </tr>
+      <tr>
+        <td><code>ai</code> · <code>zk</code> · <code>sla</code> · arbitration · poker</td>
+        <td><span class="status partial">Experimental / domain</span></td>
+        <td>Yes / domain</td>
+        <td>Show switchboard extensibility</td>
+      </tr>
+      <tr>
+        <td><code>pear-names-availability-v1</code></td>
+        <td><span class="status missing">Missing</span></td>
+        <td>Must be yes</td>
+        <td>Any named registry / pointer cache</td>
+      </tr>
+      <tr>
+        <td><code>ipfs-bridge-v0</code> (+ pin lifecycle)</td>
+        <td><span class="status missing">Missing</span></td>
+        <td>Must be yes · public-only</td>
+        <td>Any public shell/dataset mirror</td>
+      </tr>
+      <tr>
+        <td><code>ens-ccip-gateway-v1</code></td>
+        <td><span class="status missing">Missing</span></td>
+        <td>Yes · no private registries</td>
+        <td>Optional offchain ENS records</td>
+      </tr>
+      <tr>
+        <td>Provider SPI lifecycle (Deploy TCK)</td>
+        <td><span class="status missing">Missing</span></td>
+        <td>Yes</td>
+        <td>discover→revoke for all provider families</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>6.3 Adjacent surfaces (not HiveRelay, but coupled)</h3>
+  <table>
+    <thead>
+      <tr><th>Surface</th><th>Status</th><th>Coupling rule</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>PearBrowser petnames / name registry / curated aliases</td>
+        <td><span class="status shipped">Shipped (0.6.0)</span></td>
+        <td>Client naming authority; relays only supply availability later</td>
+      </tr>
+      <tr>
+        <td>PearBrowser ENS / IPFS navigation</td>
+        <td><span class="status missing">Missing</span></td>
+        <td>Should consume HiveRelay bounded bridge, not embed Helia mandatorily</td>
+      </tr>
+      <tr>
+        <td>Pear Deploy <code>pear.deploy/v1alpha1</code></td>
+        <td><span class="status missing">No repo</span></td>
+        <td>Selects HiveRelay capabilities; never replaces them</td>
+      </tr>
+      <tr>
+        <td>Pear Deploy as PearBrowser plugin</td>
+        <td><span class="status missing">Map decision</span></td>
+        <td>Primary human UX inside browser Plugins model; CLI/CI share contracts; browser verifies independently of plugin UI state</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 7 -->
+<section id="trains">
+  <h2>7. Release trains as HiveRelay work</h2>
+  <p class="muted">
+    Version slots below follow the ecosystem roadmap. They are planning labels.
+    Each train answers: <em>what HiveRelay must ship</em>, <em>what Deploy/Browser consume</em>,
+    and <em>what reference apps prove</em>.
+  </p>
+
+  <article class="train">
+    <div class="train-head">
+      <h3>Foundation — Contract spine</h3>
+      <div>
+        <span class="status missing">Deploy missing</span>
+        <span class="status partial">HiveRelay capability freeze needed</span>
+      </div>
+    </div>
+    <div class="train-body">
+      <p class="train-promise">Freeze portable contracts, crypto vectors, provider SPI shapes, privacy classifications, evidence predicates, and capability advertising rules before any UI becomes authoritative.</p>
+      <h4>HiveRelay deliverables</h4>
+      <ul>
+        <li>One signed capability/release manifest as version authority (packages/README/dashboard become projections).</li>
+        <li>Reserve capability names: <code>pear-names-availability-v1</code>, <code>ipfs-bridge-v0</code> without claiming production policy satisfaction.</li>
+        <li>Freeze request limits (bytes, DAG depth, fanout, redirects, concurrency, time).</li>
+        <li>Evidence schema for benchmark/failure runs consumable by Deploy and CI.</li>
+        <li>Guarantee: sidecar disabled/crashed causes zero regression in native seed/custody/outbox paths.</li>
+      </ul>
+      <h4>Reference-app role</h4>
+      <p>Peerit (and later a second app) supply fixtures: clean seed, outbox namespace, cold reader, publisher offline. They do not define the contract.</p>
+    </div>
+  </article>
+
+  <article class="train">
+    <div class="train-head">
+      <h3>Release 1 — Verified Previews + Resolve Anywhere</h3>
+      <div>
+        <span class="status partial">Browser names yes</span>
+        <span class="status missing">Relay names/IPFS no</span>
+      </div>
+    </div>
+    <div class="train-body">
+      <p class="train-promise">Experimental name availability + read-only IPFS sidecar; browser preview resolution of Pear names, <code>.eth</code>, and <code>ipfs://</code> with provenance and bounded failure.</p>
+      <h4>HiveRelay deliverables</h4>
+      <ul>
+        <li><strong><code>pear-names-availability-v1</code> (opt-in):</strong> pin registry core sets; cache raw signed mutable-record envelopes; return all candidate versions + tombstones; signed retention/availability receipts; never assert ownership.</li>
+        <li><strong>Read-only <code>ipfs-bridge-v0</code> (opt-in):</strong> Rainbow or Kubo sidecar; bounded <code>head</code>/<code>get</code>/path/range/CAR; CID verification; explicit disabled/degraded/fetching/available/failed; no pin durability claim.</li>
+        <li>Advertise capabilities only while supervised service is healthy.</li>
+        <li>Kubo RPC loopback-only admin boundary — never app API.</li>
+      </ul>
+      <h4>Network enablement</h4>
+      <ul>
+        <li>Any app’s human-friendly entry points stay resolvable while the owner is offline (availability, not authority).</li>
+        <li>Thin clients open public IPFS content via relay bridge without a second DHT stack.</li>
+        <li>Users distinguish ownership/authenticity from relay availability.</li>
+      </ul>
+    </div>
+  </article>
+
+  <article class="train">
+    <div class="train-head">
+      <h3>Release 2 — Cryptographic Production</h3>
+      <div>
+        <span class="status partial">Fleet rails exist</span>
+        <span class="status missing">Provider SPI TCK incomplete</span>
+      </div>
+    </div>
+    <div class="train-body">
+      <p class="train-promise">Provider lifecycle required by Deploy adapters: discover → normalize → quote → compile → prepare → apply → reconcile → observe → verify → renew → revoke. Portable leases, full-request commitments, fencing, exact effect reconciliation.</p>
+      <h4>HiveRelay deliverables</h4>
+      <ul>
+        <li>Canonical signed/fresh capability + release manifest selection API for Deploy.</li>
+        <li>Full normalized request commitment + effect ID + idempotency + fencing.</li>
+        <li>Provider-signed lease/receipt semantics that distinguish: acceptance vs active lease vs metadata sample vs complete service read vs network completeness vs publisher-offline.</li>
+        <li>Optional sidecars packaged as separately health-checked, resource-bounded artifacts.</li>
+        <li>Keep infrastructure fleet promotion as a separate human-authorized workflow.</li>
+      </ul>
+      <h4>Network enablement</h4>
+      <ul>
+        <li>Any app’s production release can select HiveRelay features by verified capability.</li>
+        <li>Provider replacement/repair without rewriting application artifacts.</li>
+        <li>ENS/IPFS failure cannot invalidate native release integrity or required native availability.</li>
+      </ul>
+    </div>
+  </article>
+
+  <article class="train">
+    <div class="train-head">
+      <h3>Release 3 — Name and Mirror Anywhere</h3>
+      <div>
+        <span class="status missing">Not implemented</span>
+      </div>
+    </div>
+    <div class="train-body">
+      <p class="train-promise">Authenticated public pinning + optional ENS CCIP gateway as independent binding families. Deterministic public-only mirrors attach to already-valid native releases.</p>
+      <h4>HiveRelay deliverables</h4>
+      <ul>
+        <li>IPFS pin lifecycle: queued → fetching → pinned → degraded → expired → failed; caller refs; retention; unpin; GC after last valid ref.</li>
+        <li>Receipts that separate desired policy vs observed sidecar state; crash reconciliation.</li>
+        <li>Remote-pinning-compatible surface only where it maps safely into HiveRelay auth + accounting.</li>
+        <li>Start with public immutable data + two independent pin/service sources before “complete storage replica” claims.</li>
+        <li>Optional <code>ens-ccip-gateway-v1</code>: serve publisher-signed offchain Pear records; never private registries; reuse quotas/monitoring/accounting.</li>
+      </ul>
+      <h4>Network enablement</h4>
+      <ul>
+        <li>Any app’s public shell/dataset can dual-publish native Hyperdrive + CID/CAR.</li>
+        <li>Operators sell interoperable public retention using existing receipt models — no new token.</li>
+        <li>Non-Pear IPFS tooling can consume public artifacts without becoming authority for live app state.</li>
+      </ul>
+    </div>
+  </article>
+
+  <article class="train">
+    <div class="train-head">
+      <h3>Release 4 — Federated Durable App Platform</h3>
+      <div>
+        <span class="status partial">Multi-op intent exists</span>
+        <span class="status missing">SLO program incomplete</span>
+      </div>
+    </div>
+    <div class="train-body">
+      <p class="train-promise">Multi-operator desired-state reconciliation and repair; independent SLO observers; resource isolation for sidecars; operator UI for pins/expiry/missing blocks/abuse; promote experimental services only with repeatable evidence.</p>
+      <h4>HiveRelay deliverables</h4>
+      <ul>
+        <li>Multi-operator repair without changing CIDs (mirrors) or rewriting app authority (native).</li>
+        <li>Periodic fresh-reader probes + provider-announcement visibility metrics.</li>
+        <li>Sidecar CPU/memory/fd/storage/connection/bandwidth isolation; native services healthy under IPFS saturation.</li>
+        <li>Suppression/denylist without claiming global content removal on other networks.</li>
+        <li>Multi-relay name consistency observations / optional WitnessLog split views without voting ownership.</li>
+      </ul>
+      <h4>Network enablement</h4>
+      <ul>
+        <li>Independent operators form a measurable public availability network for sites and assets.</li>
+        <li>Apps move/add providers without changing content addresses or protocol semantics.</li>
+        <li>Thin/mobile clients reuse the verified relay boundary without embedding a second P2P stack.</li>
+      </ul>
+    </div>
+  </article>
+</section>
+
+<!-- 8 -->
+<section id="reference-app">
+  <h2>8. Peerit as reference app (not the product)</h2>
+  <p>
+    The roadmap lists Peerit under Release 4 <code>community</code> as a pilot consumer.
+    Read that as: <strong>conformance + product pressure</strong>, not as ownership of the features.
+  </p>
+
+  <div class="grid-2">
+    <div class="card">
+      <h4>What Peerit proves for the switchboard</h4>
+      <ul>
+        <li>OutboxLog can host an ordinary social app with opaque signed rows.</li>
+        <li>Namespaces + roster signing + multi-origin intent are real operator problems.</li>
+        <li>Shell publish + seed + clearnet delivery can coexist with native P2P.</li>
+        <li>Client verification works when relays are untrusted for meaning.</li>
+        <li>Blind shards can be progressive without becoming default public storage.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>What Peerit must not become</h4>
+      <ul>
+        <li>The place ENS/IPFS logic is hard-coded.</li>
+        <li>The de-facto HiveRelay API surface other apps must copy-paste.</li>
+        <li>The owner of OutboxLog wire semantics forever (service stays app-neutral).</li>
+        <li>A reason to delay multi-app TCKs (“works for Peerit” ≠ “works for any app”).</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout">
+    <p><strong>Reference-spec discipline</strong></p>
+    <p>
+      When Peerit needs a relay behavior, prefer: (1) general service capability,
+      (2) registered namespace / policy, (3) optional plugin — in that order.
+      App-local scripts (<code>publish.mjs</code>, ship reports) are temporary adapters
+      that Deploy should later wrap, then shrink.
+    </p>
+  </div>
+
+  <h3>How Peerit maps to HiveRelay services today</h3>
+  <table>
+    <thead>
+      <tr><th>Peerit concern</th><th>HiveRelay surface</th><th>Generalization rule</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Web write path</td>
+        <td><code>outboxlog</code> + namespace <code>peerit</code></td>
+        <td>Next app registers its own namespace</td>
+      </tr>
+      <tr>
+        <td>Shell availability</td>
+        <td>seed/pin Hyperdrive</td>
+        <td>Any hypersite uses same seed API</td>
+      </tr>
+      <tr>
+        <td>Private progressive storage</td>
+        <td>blind shard store</td>
+        <td>Any app with ciphertext-off-host needs</td>
+      </tr>
+      <tr>
+        <td>Relay roster / failover</td>
+        <td>Signed roster + multi-origin config</td>
+        <td>Provider BindingSet / leases later</td>
+      </tr>
+      <tr>
+        <td>Clearnet signed shell</td>
+        <td>Not a HiveRelay service (app release loop)</td>
+        <td>Pear Deploy + independent surface convergence</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 9 -->
+<section id="any-app">
+  <h2>9. How any app uses the switchboard</h2>
+  <p>Target developer experience once roadmap trains land. Copy this pattern; do not special-case Peerit.</p>
+
+  <figure class="diagram">
+    <svg viewBox="0 0 1000 280" role="img" aria-label="Any-app integration flow">
+      <defs>
+        <marker id="arr4" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#6b7a8c"/>
+        </marker>
+      </defs>
+      <rect x="20" y="90" width="150" height="80" rx="12" fill="#122033" stroke="#7dd3fc"/>
+      <text x="95" y="125" text-anchor="middle" fill="#e6edf5" font-size="13" font-weight="700" font-family="ui-sans-serif,system-ui">1. App intent</text>
+      <text x="95" y="148" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">profile · policy</text>
+
+      <rect x="200" y="90" width="160" height="80" rx="12" fill="#122033" stroke="#7dd3fc"/>
+      <text x="280" y="125" text-anchor="middle" fill="#e6edf5" font-size="13" font-weight="700" font-family="ui-sans-serif,system-ui">2. Deploy plan</text>
+      <text x="280" y="148" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">pure · no I/O</text>
+
+      <rect x="390" y="90" width="170" height="80" rx="12" fill="#10261f" stroke="#5eead4"/>
+      <text x="475" y="125" text-anchor="middle" fill="#e6edf5" font-size="13" font-weight="700" font-family="ui-sans-serif,system-ui">3. Select caps</text>
+      <text x="475" y="148" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">signed capability</text>
+
+      <rect x="590" y="90" width="170" height="80" rx="12" fill="#10261f" stroke="#5eead4"/>
+      <text x="675" y="125" text-anchor="middle" fill="#e6edf5" font-size="13" font-weight="700" font-family="ui-sans-serif,system-ui">4. Apply leases</text>
+      <text x="675" y="148" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">seed · pin · outbox</text>
+
+      <rect x="790" y="90" width="180" height="80" rx="12" fill="#1a1528" stroke="#c4b5fd"/>
+      <text x="880" y="125" text-anchor="middle" fill="#e6edf5" font-size="13" font-weight="700" font-family="ui-sans-serif,system-ui">5. Client verify</text>
+      <text x="880" y="148" text-anchor="middle" fill="#9aa8b8" font-size="11" font-family="ui-sans-serif,system-ui">proofs · freshness</text>
+
+      <line x1="170" y1="130" x2="200" y2="130" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr4)"/>
+      <line x1="360" y1="130" x2="390" y2="130" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr4)"/>
+      <line x1="560" y1="130" x2="590" y2="130" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr4)"/>
+      <line x1="760" y1="130" x2="790" y2="130" stroke="#6b7a8c" stroke-width="2" marker-end="url(#arr4)"/>
+    </svg>
+    <figcaption>Figure 4 — App-agnostic integration path. HiveRelay answers steps 3–4; apps + clients own 1 and 5; Deploy plugin or CLI owns 2 (same portable plan).</figcaption>
+  </figure>
+
+  <h3>Minimal operator enablement (pattern)</h3>
+  <pre># Example: enable an app-neutral service and admit one app namespace
+HIVERELAY_OUTBOXLOG=1
+HIVERELAY_OUTBOXLOG_NAMESPACE=myapp   # or config.outboxlog.namespaces map
+
+# Future parallel pattern (illustrative — not shipped)
+# HIVERELAY_NAMES_AVAILABILITY=1
+# HIVERELAY_IPFS_BRIDGE=1
+# capability doc advertises only while health checks pass</pre>
+
+  <h3>Data classes every service must respect</h3>
+  <table>
+    <thead>
+      <tr><th>Class</th><th>Examples</th><th>Allowed public mirror / name?</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>public</code></td>
+        <td>Static site shell, public datasets</td>
+        <td>Yes, if policy says so</td>
+      </tr>
+      <tr>
+        <td><code>application-encrypted</code></td>
+        <td>Outbox opaque rows, sealed blobs</td>
+        <td>Only with explicit metadata-leakage consent</td>
+      </tr>
+      <tr>
+        <td><code>metadata-sensitive</code></td>
+        <td>Private catalogs, contact graphs</td>
+        <td>No public IPFS routing by default</td>
+      </tr>
+      <tr>
+        <td><code>control-only</code></td>
+        <td>Leases, capability docs, receipts</td>
+        <td>Public as operational evidence when designed so</td>
+      </tr>
+      <tr>
+        <td><code>secret</code></td>
+        <td>Wallet seeds, release keys, shard secrets</td>
+        <td>Never</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 10 -->
+<section id="scorecard">
+  <h2>10. Implementation scorecard</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Area</th>
+        <th>HiveRelay</th>
+        <th>Pear Deploy</th>
+        <th>PearBrowser</th>
+        <th>Ref apps (Peerit…)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Native seed / pin</td>
+        <td><span class="status shipped">Shipped</span></td>
+        <td><span class="status missing">No adapter SPI</span></td>
+        <td><span class="status shipped">Scripts</span></td>
+        <td><span class="status shipped">Uses seed</span></td>
+      </tr>
+      <tr>
+        <td>Service switchboard core</td>
+        <td><span class="status shipped">Shipped</span></td>
+        <td><span class="status missing">—</span></td>
+        <td><span class="status partial">Consumes some</span></td>
+        <td><span class="status canary">OutboxLog</span></td>
+      </tr>
+      <tr>
+        <td>OutboxLog / Notify</td>
+        <td><span class="status canary">Experimental</span></td>
+        <td><span class="status missing">—</span></td>
+        <td><span class="status partial">Optional</span></td>
+        <td><span class="status canary">Primary consumer</span></td>
+      </tr>
+      <tr>
+        <td>Blind shards</td>
+        <td><span class="status shipped">Shipped</span></td>
+        <td><span class="status missing">—</span></td>
+        <td><span class="status partial">Tests</span></td>
+        <td><span class="status partial">Vendored path</span></td>
+      </tr>
+      <tr>
+        <td>Names availability service</td>
+        <td><span class="status missing">Missing</span></td>
+        <td><span class="status missing">Binding reserved</span></td>
+        <td><span class="status shipped">Client naming</span></td>
+        <td><span class="status ref">Fixture later</span></td>
+      </tr>
+      <tr>
+        <td>IPFS bridge + pins</td>
+        <td><span class="status missing">Missing</span></td>
+        <td><span class="status missing">publicMirror later</span></td>
+        <td><span class="status missing">No ipfs://</span></td>
+        <td><span class="status ref">Shell fixture later</span></td>
+      </tr>
+      <tr>
+        <td>Provider lifecycle TCK</td>
+        <td><span class="status missing">Missing</span></td>
+        <td><span class="status missing">Missing product</span></td>
+        <td><span class="status missing">—</span></td>
+        <td><span class="status ref">Evidence only</span></td>
+      </tr>
+      <tr>
+        <td>Multi-operator SLO program</td>
+        <td><span class="status partial">AutoHeal pieces</span></td>
+        <td><span class="status missing">—</span></td>
+        <td><span class="status missing">Trust panel later</span></td>
+        <td><span class="status canary">Single-ingress canary</span></td>
+      </tr>
+      <tr>
+        <td>ENS read/write path</td>
+        <td><span class="status missing">CCIP gw later</span></td>
+        <td><span class="status missing">names binding</span></td>
+        <td><span class="status missing">Missing</span></td>
+        <td><span class="status ref">Optional consumer</span></td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 11 -->
+<section id="enablement">
+  <h2>11. What each capability unlocks on the network</h2>
+  <table>
+    <thead>
+      <tr><th>HiveRelay / fabric capability</th><th>Network effect</th><th>First consumers</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Honest signed capabilities + supervision</td>
+        <td>Clients stop guessing; broken services vanish from catalog</td>
+        <td>All apps · Deploy · Browser</td>
+      </tr>
+      <tr>
+        <td>App-neutral OutboxLog</td>
+        <td>Browser/mobile write paths without trusting relay for authorship</td>
+        <td>Peerit now · other social/log apps next</td>
+      </tr>
+      <tr>
+        <td>Names availability (not authority)</td>
+        <td>Publisher-offline human entry; relays retain signed pointers only</td>
+        <td>Any named hypersite / registry</td>
+      </tr>
+      <tr>
+        <td>Bounded IPFS read bridge</td>
+        <td>Interop with public immutable web without embedding Helia everywhere</td>
+        <td>Browser nav · thin clients</td>
+      </tr>
+      <tr>
+        <td>Authenticated multi-op pins + receipts</td>
+        <td>Public retention market using existing accounting language</td>
+        <td>Site shells · public datasets · media later</td>
+      </tr>
+      <tr>
+        <td>Provider leases / fencing / repair</td>
+        <td>Replace operators without changing app content addresses</td>
+        <td>Deploy-managed production apps</td>
+      </tr>
+      <tr>
+        <td>Independent surface observations</td>
+        <td>ENS/DNS/IPFS lag cannot corrupt native channel</td>
+        <td>All dual-published apps</td>
+      </tr>
+      <tr>
+        <td>Multi-operator SLO + isolation</td>
+        <td>Credible public availability claims with visible repair</td>
+        <td>Fleet operators · production apps</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout ok">
+    <p><strong>Strongest ecosystem claim (from the roadmap)</strong></p>
+    <p>
+      Not “Pear now uses IPFS” or “Pear has decentralized DNS.”
+      Pear apps keep local-first state and cryptographic authority, while the fabric
+      (HiveRelay providers + Deploy + browser verification) makes builds, previews,
+      releases, names, public mirrors, evidence, and providers portable and independently verifiable.
+    </p>
+  </div>
+</section>
+
+<!-- 12 -->
+<section id="sequencing">
+  <h2>12. Sequencing for HiveRelay engineers</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 1000 200" role="img" aria-label="HiveRelay sequencing">
+      <rect x="15" y="55" width="150" height="85" rx="12" fill="#10261f" stroke="#4ade80"/>
+      <text x="90" y="95" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">A. Capability</text>
+      <text x="90" y="115" text-anchor="middle" fill="#86efac" font-size="11" font-family="ui-sans-serif,system-ui">authority freeze</text>
+
+      <rect x="180" y="55" width="150" height="85" rx="12" fill="#10261f" stroke="#4ade80"/>
+      <text x="255" y="95" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">B. Evidence</text>
+      <text x="255" y="115" text-anchor="middle" fill="#86efac" font-size="11" font-family="ui-sans-serif,system-ui">complete-byte gates</text>
+
+      <rect x="345" y="55" width="150" height="85" rx="12" fill="#122033" stroke="#7dd3fc"/>
+      <text x="420" y="95" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">C. Names avail</text>
+      <text x="420" y="115" text-anchor="middle" fill="#93c5fd" font-size="11" font-family="ui-sans-serif,system-ui">opt-in R1</text>
+
+      <rect x="510" y="55" width="150" height="85" rx="12" fill="#122033" stroke="#7dd3fc"/>
+      <text x="585" y="95" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">D. IPFS read</text>
+      <text x="585" y="115" text-anchor="middle" fill="#93c5fd" font-size="11" font-family="ui-sans-serif,system-ui">bounded sidecar</text>
+
+      <rect x="675" y="55" width="150" height="85" rx="12" fill="#1a1528" stroke="#c4b5fd"/>
+      <text x="750" y="95" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">E. Provider SPI</text>
+      <text x="750" y="115" text-anchor="middle" fill="#ddd6fe" font-size="11" font-family="ui-sans-serif,system-ui">R2 leases/TCK</text>
+
+      <rect x="840" y="55" width="145" height="85" rx="12" fill="#241a10" stroke="#fbbf24"/>
+      <text x="912" y="95" text-anchor="middle" fill="#e6edf5" font-size="12" font-weight="700" font-family="ui-sans-serif,system-ui">F. Pins/ENS</text>
+      <text x="912" y="115" text-anchor="middle" fill="#fde68a" font-size="11" font-family="ui-sans-serif,system-ui">R3 only after E</text>
+    </svg>
+    <figcaption>Figure 5 — Substrate sequencing. Do not ship coordinated ENS/IPFS publishing before production leases, proofs, and portable release authority exist.</figcaption>
+  </figure>
+
+  <ol>
+    <li><strong>Freeze capability/release authority</strong> so fleet strings cannot disagree with signed capability docs.</li>
+    <li><strong>Harden completeness evidence</strong> for seed/pin (metadata + blobs; publisher-offline; fresh reader) — this unblocks honest Deploy predicates.</li>
+    <li><strong>Ship opt-in names availability</strong> as availability-only; parallel with browser provenance UX.</li>
+    <li><strong>Ship read-only IPFS sidecar</strong> with hard bounds and fail-closed incomplete DAGs; native path must ignore sidecar death.</li>
+    <li><strong>Provider SPI + leases + fencing</strong> so Deploy can treat HiveRelay as a portable provider family.</li>
+    <li><strong>Authenticated pins + optional ENS CCIP</strong> only after R2 spine; public-only classification enforced.</li>
+    <li><strong>Multi-operator repair + SLOs + isolation</strong> before availability marketing claims.</li>
+    <li><strong>Reference apps</strong> (Peerit first, then a second independently shaped app) run TCKs — never become the API.</li>
+  </ol>
+</section>
+
+<!-- 13 -->
+<section id="checklist">
+  <h2>13. Provider &amp; service checklist</h2>
+  <p class="muted">Use this when implementing or reviewing a new HiveRelay capability.</p>
+  <ul class="checklist">
+    <li>
+      <span class="box" aria-hidden="true"></span>
+      <div>
+        <div class="title">App-neutral by default</div>
+        <div class="why">Admission via namespace/policy/capability — no Peerit-only code paths in the service core.</div>
+      </div>
+    </li>
+    <li>
+      <span class="box" aria-hidden="true"></span>
+      <div>
+        <div class="title">Signed capability advertisement only when healthy</div>
+        <div class="why">Supervision removes failed services from catalog and capability docs.</div>
+      </div>
+    </li>
+    <li>
+      <span class="box" aria-hidden="true"></span>
+      <div>
+        <div class="title">Receipts distinguish requested vs observed state</div>
+        <div class="why">Acceptance ≠ lease ≠ complete bytes ≠ publisher-offline proof.</div>
+      </div>
+    </li>
+    <li>
+      <span class="box" aria-hidden="true"></span>
+      <div>
+        <div class="title">Kernel survives plugin failure</div>
+        <div class="why">IPFS/names sidecars crash without breaking seed/custody/outbox.</div>
+      </div>
+    </li>
+    <li>
+      <span class="box" aria-hidden="true"></span>
+      <div>
+        <div class="title">Privacy classifications enforced at boundary</div>
+        <div class="why">Secrets never enter public mirror/name publish paths.</div>
+      </div>
+    </li>
+    <li>
+      <span class="box" aria-hidden="true"></span>
+      <div>
+        <div class="title">Accounting hooks for the resource class</div>
+        <div class="why">Bytes, transfer, pin lifetime, routing, repair — portable receipts.</div>
+      </div>
+    </li>
+    <li>
+      <span class="box" aria-hidden="true"></span>
+      <div>
+        <div class="title">Two independent operators in evidence before multi-op claims</div>
+        <div class="why">Single-fleet canary is not federation.</div>
+      </div>
+    </li>
+    <li>
+      <span class="box" aria-hidden="true"></span>
+      <div>
+        <div class="title">Reference app + second independently shaped app</div>
+        <div class="why">Peerit alone is insufficient for “any application” claims.</div>
+      </div>
+    </li>
+    <li>
+      <span class="box" aria-hidden="true"></span>
+      <div>
+        <div class="title">Infrastructure release loop stays human-gated</div>
+        <div class="why">App promote never rolls fleet packages or signs ENS wallets.</div>
+      </div>
+    </li>
+  </ul>
+</section>
+
+<!-- 14 -->
+<section id="non-goals">
+  <h2>14. Non-goals &amp; failure modes</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h4>Non-goals</h4>
+      <ul>
+        <li>Replacing Hyper* with IPFS</li>
+        <li>Embedding Helia in every client</li>
+        <li>CID-as-durability marketing</li>
+        <li>Public Kubo RPC</li>
+        <li>Relay-owned global Pear namespace / <code>.pear</code> TLD</li>
+        <li>ENS key custody on HiveRelay</li>
+        <li>New IPFS token / parallel marketplace by default</li>
+        <li>Deploy as sole app DB / mandatory hosted controller</li>
+        <li>Building roadmap features only for Peerit</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Failure modes</h4>
+      <ul>
+        <li><strong>False availability:</strong> seed accepted, blobs incomplete</li>
+        <li><strong>False ownership:</strong> relay order decides name winner</li>
+        <li><strong>Authority conflation:</strong> ENS/IPFS lag fails native release</li>
+        <li><strong>Capability lie:</strong> advertise while service unhealthy</li>
+        <li><strong>App capture:</strong> Peerit-shaped wire leaks into “generic” service</li>
+        <li><strong>Sidecar blast radius:</strong> IPFS saturation kills native services</li>
+        <li><strong>Privacy leak:</strong> public pin of metadata-sensitive content</li>
+        <li><strong>Loop conflation:</strong> app ship promotes fleet packages</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 15 -->
+<section id="sources">
+  <h2>15. Source anchors</h2>
+  <table>
+    <thead>
+      <tr><th>Document / surface</th><th>Why</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>00-core/PEAR-NAMING-IPFS-RELEASE-ROADMAP-2026-07-15.md</code></td>
+        <td>Program trains, gates, non-goals, pilot list</td>
+      </tr>
+      <tr>
+        <td><code>00-core/hiverelay/docs/SERVICES.md</code></td>
+        <td>Switchboard model, OutboxLog, supervision, service list</td>
+      </tr>
+      <tr>
+        <td><code>00-core/hiverelay/README.md</code></td>
+        <td>Product promise: app-agnostic availability + blind substrate</td>
+      </tr>
+      <tr>
+        <td><code>00-core/hiverelay/docs/PROTOCOL-SPEC.md</code></td>
+        <td>Capability docs, proofs, honesty limits</td>
+      </tr>
+      <tr>
+        <td><code>01-browser/pearbrowser-desktop/backend/resolve-name.cjs</code></td>
+        <td>Client naming tiers (not relay authority)</td>
+      </tr>
+      <tr>
+        <td><code>02-apps/peerit/</code></td>
+        <td>Reference consumer only — fixtures for OutboxLog, seed, shards</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout ok">
+    <p><strong>One-line summary</strong></p>
+    <p>
+      <strong>HiveRelay</strong> is the substrate that must grow portable names availability,
+      IPFS bridging, provider leases, and multi-operator evidence so the service switchboard
+      works for every app. <strong>Peerit</strong> is the first reference app that proves those
+      surfaces under real load — not the destination of the feature set.
+    </p>
+  </div>
+</section>
+
+<footer>
+  <p>
+    HiveRelay-centered developer guide derived from the Pear Naming / IPFS / Deploy roadmap (2026-07-15)
+    and codebase baselines HiveRelay 0.24.3 · PearBrowser 0.6.0. Evidence-gated planning — not GA marketing.
+  </p>
+  <p>
+    Canonical path:
+    <code>00-core/hiverelay/docs/HIVERELAY-NAMING-IPFS-DEPLOY-ROADMAP-GUIDE.html</code>
+  </p>
+</footer>
+
+</div>
+</body>
+</html>

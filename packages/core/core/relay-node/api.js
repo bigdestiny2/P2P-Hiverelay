@@ -166,6 +166,10 @@ import {
   resolveNetworkStateRoute
 } from './api-network-state.js'
 import {
+  buildFleetRoutePayload,
+  resolveFleetRoute
+} from './api-fleet.js'
+import {
   buildSubsidyRoutePayload,
   resolveSubsidyRoute,
   updateSubsidyDestination
@@ -1261,6 +1265,17 @@ export class RelayAPI extends EventEmitter {
             route: networkStateRoute,
             context: route,
             networkDiscovery: this.node.networkDiscovery
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        // Operator fleet multi-node view (v3) — management auth; public peer scrapes only.
+        const fleetRoute = resolveFleetRoute(req.method, path)
+        if (fleetRoute && fleetRoute.kind === 'fleet') {
+          if (!this._requireAuth(req, res, fleetRoute.authMessage)) return
+          const result = await buildFleetRoutePayload({
+            route: fleetRoute,
+            node: this.node
           })
           return this._json(res, result.payload, result.status || 200)
         }

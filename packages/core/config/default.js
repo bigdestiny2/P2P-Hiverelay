@@ -58,6 +58,18 @@ export default {
   strictSeedingPrivacy: true,
   enableDistributedDriveBridge: false,
 
+  // Operator fleet multi-node view (dashboard data-layer v3).
+  // Read-only HTTP scrape of public /health + /status on peer base URLs.
+  // Never pulls management/Tor-private detail. Empty peers → self card only.
+  fleet: {
+    includeSelf: true,
+    timeoutMs: 4000,
+    maxPeers: 32,
+    peers: [
+      // { id: 'bern', baseUrl: 'http://45.59.123.112:9100', region: 'EU', label: 'bern' }
+    ]
+  },
+
   // Management UI authentication.
   //
   // When `exposeToken` is true, the relay embeds its management token

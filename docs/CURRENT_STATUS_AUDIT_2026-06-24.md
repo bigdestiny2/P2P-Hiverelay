@@ -8,7 +8,7 @@ Captured at: `2026-06-24T18:21:52+0400`
 
 Source root:
 
-`/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay`
+`~/pear-ecosystem/00-core/hiverelay`
 
 This note is a current decision surface for agent loops. It does not replace the
 longer historical audit trail in `docs/CURRENT_STATUS_AUDIT_2026-06-23.md` or

@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Centralized Points of Failure — Peerit · HiveRelay · Giga (2026-07-19)</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0; background: #eef1f6; color: #1a2333;
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .page {
+    max-width: 960px; margin: 32px auto; background: #fff; padding: 56px 64px;
+    border-radius: 14px; box-shadow: 0 2px 18px rgba(20,30,60,.10);
+  }
+  @media (max-width: 720px) {
+    .page { margin: 0; border-radius: 0; padding: 28px 20px; }
+  }
+  h1 {
+    font-size: 1.8rem; line-height: 1.25; margin: 0 0 .4em;
+    padding-bottom: .35em; border-bottom: 3px solid #9b2c2c;
+  }
+  h2 {
+    font-size: 1.28rem; margin-top: 2em;
+    border-bottom: 1px solid #dde3ee; padding-bottom: .2em;
+  }
+  h3 { font-size: 1.06rem; margin-top: 1.4em; color: #7f1d1d; }
+  p { margin: .7em 0; }
+  blockquote {
+    margin: 1em 0; padding: .85em 1.15em; background: #fef2f2;
+    border-left: 4px solid #9b2c2c; border-radius: 0 8px 8px 0; color: #4a2020;
+  }
+  code {
+    background: #f0f2f7; padding: .12em .38em; border-radius: 5px;
+    font: .86em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  pre {
+    background: #141a28; color: #e6ebf5; padding: 16px 18px;
+    border-radius: 10px; overflow-x: auto; font-size: .84rem; line-height: 1.45;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: .9rem; }
+  th, td { border: 1px solid #d8deea; padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #fef2f2; color: #5b2a2a; }
+  tr:nth-child(even) td { background: #fafbfe; }
+  a { color: #2f5b9b; }
+  .doc-badge {
+    display: inline-block; font-size: .72rem; letter-spacing: .05em; text-transform: uppercase;
+    background: #9b2c2c; color: #fff; border-radius: 999px; padding: 3px 12px; margin: 0 6px 10px 0;
+  }
+  .doc-badge.muted { background: #4a6fa5; }
+  .doc-badge.ok { background: #2c7a4f; }
+  .meta { color: #4b5568; font-size: .95rem; margin-bottom: 1.2em; }
+  ul.tight li { margin: .28em 0; }
+  .sev {
+    display: inline-block; font-size: .68rem; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; padding: .15em .5em; border-radius: 4px;
+  }
+  .sev-hard { background: #fee2e2; color: #991b1b; }
+  .sev-soft { background: #ffedd5; color: #9a3412; }
+  .sev-social { background: #e0e7ff; color: #3730a3; }
+  .sev-bydesign { background: #dcfce7; color: #166534; }
+  .card {
+    border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; margin: 1em 0;
+    background: #fafbfc;
+  }
+  .card h3 { margin-top: 0; }
+  .okbox {
+    background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px;
+    padding: 12px 16px; margin: 1em 0;
+  }
+  .okbox h3 { margin-top: 0; color: #166534; }
+  .footer {
+    margin-top: 2.5em; padding-top: 1em; border-top: 1px solid #dde3ee;
+    font-size: .88rem; color: #5b6b88;
+  }
+  .map {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .82rem; background: #1a1f2e; color: #d4dce8; padding: 18px 20px;
+    border-radius: 10px; overflow-x: auto; line-height: 1.5;
+  }
+  .matrix td:first-child { font-weight: 600; white-space: nowrap; }
+  hr { border: none; border-top: 1px solid #dde3ee; margin: 2em 0; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<span class="doc-badge">Threat / Architecture</span>
+<span class="doc-badge muted">Peerit · HiveRelay · Giga</span>
+<span class="doc-badge ok">Fully executed posture</span>
+
+<h1>Centralized Points of Failure</h1>
+
+<p class="meta">
+  <strong>Date:</strong> 2026-07-19 ·
+  <strong>Scope:</strong> What remains concentrated when the design is <em>fully executed</em> —
+  multi-ingress OutboxLog, T1 HTTPS gateway cutover, Opaque-Log v2, DO-NOT-SERVE, moderation v1,
+  optional blind cells, Peerit as first app.
+</p>
+
+<blockquote>
+  Even after “full stand-up,” the system removes <strong>“one VPS owns the truth”</strong> more than it removes
+  <strong>“a small set of keys and operators own the rails.”</strong>
+  Some points are true single points of failure (SPOFs); others are shared dependencies that fail a
+  <em>class</em> of users even if the network as a whole is not one box.
+</blockquote>
+
+<!-- ============================================================ -->
+<h2>1. Severity legend</h2>
+<table>
+  <thead><tr><th>Class</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="sev sev-hard">Hard SPOF</span></td>
+      <td>One key, service, or party whose loss/compromise breaks a whole generation of the system for most users.</td>
+    </tr>
+    <tr>
+      <td><span class="sev sev-soft">Concentration</span></td>
+      <td>Multiple parties possible, but discovery, policy, or law clusters around few operators or rails.</td>
+    </tr>
+    <tr>
+      <td><span class="sev sev-social">Social / product</span></td>
+      <td>Not network-global, but captures default UX or community power.</td>
+    </tr>
+    <tr>
+      <td><span class="sev sev-bydesign">By design</span></td>
+      <td>Intentionally not global; can still look “central” if many conduits act in lockstep.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>2. Failure map (compressed)</h2>
+<pre class="map">Trust anchors (hard to distribute)
+  ├─ PEERIT_READ_KEY           → open public cells / okeys
+  ├─ Web release signing key   → “official” browser code
+  └─ Roster signing key        → which relays count
+
+Operational choke points (multi-party but coordinated)
+  ├─ Admitted OutboxLog operators + namespace policy
+  ├─ T1 gateways + DNS / WebPKI bootstrap
+  └─ Blind-cell vault set (k-of-n placement)
+
+Social / product concentration
+  ├─ Community founder + mod chain (default feed power)
+  └─ Release train that ships thresholds &amp; rankers
+
+By design not global
+  └─ DO-NOT-SERVE (per operator)
+       → can still become “central” if all ingresses comply together</pre>
+
+<!-- ============================================================ -->
+<h2>3. Hard SPOFs — trust anchors</h2>
+
+<div class="card">
+  <h3>3.1 Network read key (<code>PEERIT_READ_KEY</code>) <span class="sev sev-hard">Hard SPOF</span></h3>
+  <p><strong>What it is:</strong> One app-wide HMAC key that derives all Opaque-Log v2 <code>okey</code>s and unlocks public sealed envelopes.</p>
+  <p><strong>Why it concentrates risk</strong></p>
+  <ul class="tight">
+    <li><strong>Rotation ≈ migration.</strong> The blind-outbox design treats RK as non-rotatable without a clean cutover. Compromise or loss is existential for that generation of cells.</li>
+    <li><strong>Not confidentiality vs operators.</strong> Every client (including any operator-run client) holds RK. Blindness is “no passive grep at rest,” not “operator can’t reconstruct.”</li>
+    <li><strong>Forcing function:</strong> If RK leaks, an adversary can confirm and enumerate more cheaply offline once they have cell dumps — not forge signatures, but collapse the liability posture you paid for.</li>
+  </ul>
+  <p><strong>Failure modes:</strong> Key compromise → opaque-id / “ordinary course” story collapses for public content. Key loss → new clients can’t open the corpus without a coordinated reseal.</p>
+</div>
+
+<div class="card">
+  <h3>3.2 Web release signing key + sequence authority <span class="sev sev-hard">Hard SPOF</span></h3>
+  <p><strong>What it is:</strong> Offline Ed25519 that signs <code>asset-manifest</code> / web sequence; clients pin <code>pinnedReleaseKey</code>.</p>
+  <p><strong>Why</strong></p>
+  <ul class="tight">
+    <li>Whoever holds the release seed defines <strong>“official Peerit code”</strong> for normal browsers (SRI/SW pin what that key signed).</li>
+    <li>Sequence floor logic rejects rollbacks/forks of the same sequence with different bytes — lost/compromised key is a <strong>code-delivery CA</strong> problem.</li>
+  </ul>
+  <p><strong>Failure modes:</strong> Compromised release key → malicious web bundle that still “verifies.” Lost key → no honest upgrades without pin ceremony / hard fork of trust anchors.</p>
+  <p><em>Partial escape hatch:</em> PearBrowser host path; pure <code>peerit.site</code> users ride this rail fully.</p>
+</div>
+
+<div class="card">
+  <h3>3.3 Relay roster signing key + bootstrap list <span class="sev sev-hard">Hard SPOF</span></h3>
+  <p><strong>What it is:</strong> Signed roster of outbox/gateway endpoints; canary still starts from bootstrap URLs.</p>
+  <p><strong>Why</strong></p>
+  <ul class="tight">
+    <li>Roster key is the <strong>discovery CA</strong> for “which HTTPS outboxes are allowed.”</li>
+    <li>Even with multiple relays, clients only trust <strong>roster-admitted</strong> ones. One roster signer gates which operators count.</li>
+    <li><code>singleIngressWriter: true</code> (canary) is a hard write SPOF; after multi-ingress, <strong>admission policy</strong> remains centralized unless roster authority is federated.</li>
+  </ul>
+  <p><strong>Failure modes:</strong> Bad roster → clients steered to hostile/withholding operators. No rotation process → stuck on dead endpoints. Legal pressure on roster holder → global deplatform of <em>discovery</em>, not of peer copies.</p>
+</div>
+
+<div class="card">
+  <h3>3.4 Writer identity = outbox <code>appId</code> (Ed25519) <span class="sev sev-hard">Hard SPOF</span> <em>(per user)</em></h3>
+  <p><strong>What it is:</strong> Each user’s signing key is their outbox identity; recovery is phrase/export-dependent.</p>
+  <p><strong>Why</strong></p>
+  <ul class="tight">
+    <li>No network can restore a lost private key without a recovery design that is itself central or social.</li>
+    <li>Compromise = full impersonation (posts, votes, modactions, reports) until peers/social process stop trusting that pubkey.</li>
+  </ul>
+  <p><strong>Failure modes:</strong> Key loss → account death. Key theft → forged social graph until ban/social process.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>4. Operational concentration</h2>
+
+<div class="card">
+  <h3>4.1 OutboxLog namespaces &amp; operator admission <span class="sev sev-soft">Concentration</span></h3>
+  <p><strong>What it is:</strong> HiveRelay namespaces are operator-admitted; Peerit runs in a named namespace with policy (caps, blind mode rules, takedown).</p>
+  <p><strong>Why</strong></p>
+  <ul class="tight">
+    <li>Multi-relay only helps if <strong>several independent operators</strong> admit the same app namespace and honour the same wire rules.</li>
+    <li>Namespace config, rate limits, <code>bytesPerDay</code>, and DO-NOT-SERVE are still <strong>per-operator</strong> — coordination is social/legal, not cryptographic consensus.</li>
+  </ul>
+  <p><strong>Failure modes:</strong> Coordinated refusal or config divergence → split brain (different suppress sets, different caps). No automatic global consistency of takedowns (by design).</p>
+</div>
+
+<div class="card">
+  <h3>4.2 T1 HTTPS gateway + DNS / WebPKI <span class="sev sev-soft">Concentration</span></h3>
+  <p><strong>What it is:</strong> Exact-byte public Hyperdrive serve + TLS names (<code>peerit.site</code>, <code>*.hive.&lt;gateway&gt;</code>, etc.).</p>
+  <p><strong>Why</strong></p>
+  <ul class="tight">
+    <li><strong>Browser users must fetch code somehow.</strong> Multi-gateway still depends on DNS + CA for first load (and often updates), unless already-pinned SW / Pear / IPFS/ENS mirrors.</li>
+    <li>Gateway operators see <strong>IP, path, timing</strong> of public fetches.</li>
+    <li>Spec forbids treating gateway as identity — but it remains a high-leverage choke for <em>availability of the app binary</em>.</li>
+  </ul>
+  <p><strong>Failure modes:</strong> Domain seizure, TLS mis-issue, gateway block, CDN policy → large fraction of browser users can’t boot. Data plane may still work for clients with SW pin / Pear install.</p>
+  <p><strong>Mitigations (not free):</strong> multiple gateways, publisher domain leases, IPFS/Arweave mirrors, PearBrowser native install. Fully executed still has <strong>bootstrap concentration</strong>.</p>
+</div>
+
+<div class="card">
+  <h3>4.3 Blind cells / k-of-n custody <span class="sev sev-soft">Concentration</span></h3>
+  <p><strong>What it is:</strong> Optional large-body path: secrets split across vaults.</p>
+  <p><strong>Why</strong></p>
+  <ul class="tight">
+    <li>Still needs a <strong>roster of vault operators</strong>. Small <code>k</code> or co-located vaults (jurisdiction, hoster, identity) → collusion or correlated outage.</li>
+    <li>Placement/repair policy is an <strong>org/process</strong> concentration even if crypto is distributed.</li>
+  </ul>
+  <p><strong>Failure modes:</strong> &lt; k online → unrecoverable sealed body. ≥ k collude → reconstruct without user. One cloud region → correlated loss.</p>
+</div>
+
+<div class="card">
+  <h3>4.4 Infrastructure you cannot cryptographically eliminate <span class="sev sev-soft">Concentration</span></h3>
+  <table>
+    <thead><tr><th>Dependency</th><th>Why it remains concentrated</th></tr></thead>
+    <tbody>
+      <tr><td>Author directory / appId enumeration</td><td>OutboxLog exposes writer pubkeys; “who exists” is enumerable</td></tr>
+      <tr><td>IP + timing on HTTPS</td><td>Outbox and gateway see client network metadata</td></tr>
+      <tr><td>Hosting jurisdictions</td><td>Multi-operator still clusters under same laws if all are similar VPS regions</td></tr>
+      <tr><td>Upstream libs (Hypercore, browser crypto)</td><td>Supply-chain / CVE concentration</td></tr>
+      <tr><td>PoW / client policy constants</td><td>Global DoS/admission knobs shipped in signed releases</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<h2>5. Social / product concentration</h2>
+
+<div class="card">
+  <h3>5.1 Moderation trust roots (founder + mod chain) <span class="sev sev-social">Social</span></h3>
+  <p><strong>What it is:</strong> Client overlay; founder always a mod; <code>addmod</code>/<code>removemod</code> chain; report eligibility tied to roots.</p>
+  <p><strong>Why</strong></p>
+  <ul class="tight">
+    <li>Not global network centralization, but <strong>per-community centralization</strong> of effective visibility for Community / Consensus views.</li>
+    <li>Open view reduces this; default UX still amplifies root power.</li>
+    <li>Sybil-resistant eligibility is local — roots can still capture a small community.</li>
+  </ul>
+  <p><strong>Failure modes:</strong> Hostile founder/mod set → mass bury/remove for Community viewers. Does not delete bytes network-wide, but can nuke the default feed experience.</p>
+</div>
+
+<div class="card">
+  <h3>5.2 Client policy constants (thresholds, PoW, rankers) <span class="sev sev-social">Social</span></h3>
+  <p><strong>What it is:</strong> Bury thresholds, PoW bits, built-in algorithms shipped in the signed web build.</p>
+  <p><strong>Why:</strong> Changing “what consensus means” is a <strong>release-key decision</strong>, not an on-protocol vote of users. Policy evolution stays with whoever ships signed sequences (or Pear catalogue pins).</p>
+  <p><strong>Failure modes:</strong> Bad threshold update → mass bury or spam win; old SW pins disagree with new clients → social split.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>6. By design: DO-NOT-SERVE</h2>
+
+<div class="card">
+  <h3>6.1 Per-conduit suppression <span class="sev sev-bydesign">By design</span></h3>
+  <p><strong>What it is:</strong> Operator suppress list by opaque id / appId (serve-time veil; bytes retained).</p>
+  <p><strong>Why (design honesty)</strong></p>
+  <ul class="tight">
+    <li>Intentionally <strong>not</strong> global erasure — correct conduit posture; other peers/seeders may retain content.</li>
+    <li>Legal compliance is therefore <strong>fragmented</strong>.</li>
+    <li>Conversely, if all major ingress operators apply the same suppress set (roster-coordinated or shared legal blast radius), you get <strong>de facto centralized unavailability</strong> for browser users who only use those ingresses.</li>
+  </ul>
+  <p><strong>Failure modes:</strong> Single-operator suppress → local withholding only. Industry-wide notice → multi-ingress disappearance for web path while Pear/seeders retain copies.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>7. What is <em>not</em> a central SPOF (when fully executed)</h2>
+
+<div class="okbox">
+  <h3>Decentralized enough (honest list)</h3>
+  <ul class="tight">
+    <li><strong>Content authenticity</strong> — no relay can forge Ed25519 records; merge rejects forgeries.</li>
+    <li><strong>Single relay availability</strong> — multi-ingress + peer replication can survive one outbox host <em>if</em> clients use multiple and data has been replicated.</li>
+    <li><strong>Gateway as source of truth for posts</strong> — posts live in outboxes/peers; gateway is T1 code/media distribution.</li>
+    <li><strong>Moderation as global delete</strong> — Open view + other peers still hold signed records; moderation is not network-wide erase.</li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2>8. Threat matrix (summary)</h2>
+<table class="matrix">
+  <thead>
+    <tr>
+      <th>Asset / rail</th>
+      <th>Class</th>
+      <th>Primary impact if lost/compromised</th>
+      <th>Primary residual control</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>PEERIT_READ_KEY</code></td>
+      <td><span class="sev sev-hard">Hard</span></td>
+      <td>Public cell openness / liability posture</td>
+      <td>Offline generation, split custody of RK, no rotation without migration</td>
+    </tr>
+    <tr>
+      <td>Release signing key</td>
+      <td><span class="sev sev-hard">Hard</span></td>
+      <td>Malicious or stalled browser code</td>
+      <td>HSM/offline sign; multi-party ceremony; SW pin + verify.html</td>
+    </tr>
+    <tr>
+      <td>Roster signing key</td>
+      <td><span class="sev sev-hard">Hard</span></td>
+      <td>Discovery capture / dead ends</td>
+      <td>Multi-sig roster; transparent rotation; user-visible roster hash</td>
+    </tr>
+    <tr>
+      <td>User Ed25519</td>
+      <td><span class="sev sev-hard">Hard</span></td>
+      <td>Impersonation or permanent loss</td>
+      <td>Phrase/export UX; optional social recovery (future)</td>
+    </tr>
+    <tr>
+      <td>Outbox operators</td>
+      <td><span class="sev sev-soft">Soft</span></td>
+      <td>Withhold, cap, split config</td>
+      <td>Multi-ingress; independent jurisdictions; client multi-relay</td>
+    </tr>
+    <tr>
+      <td>T1 gateway / DNS</td>
+      <td><span class="sev sev-soft">Soft</span></td>
+      <td>Browser bootstrap outage</td>
+      <td>Multi-gateway; IPFS/ENS; Pear install; SW offline pin</td>
+    </tr>
+    <tr>
+      <td>Blind vault set</td>
+      <td><span class="sev sev-soft">Soft</span></td>
+      <td>Unrecoverable or colluding custody</td>
+      <td>Independent operators; honest k/n; placement diversity</td>
+    </tr>
+    <tr>
+      <td>Community mods</td>
+      <td><span class="sev sev-social">Social</span></td>
+      <td>Default feed capture</td>
+      <td>Open view; exit communities; social process</td>
+    </tr>
+    <tr>
+      <td>Policy in release</td>
+      <td><span class="sev sev-social">Social</span></td>
+      <td>Threshold / PoW / ranker capture</td>
+      <td>Transparent release notes; pin choice; multi-client</td>
+    </tr>
+    <tr>
+      <td>DO-NOT-SERVE</td>
+      <td><span class="sev sev-bydesign">By design</span></td>
+      <td>Local or coordinated unavailability</td>
+      <td>Multi-peer copies; Open/Pear paths; transparent suppress audit</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>9. Why this shape is intentional</h2>
+<p>The architecture optimises for:</p>
+<ol>
+  <li><strong>Unforgeable social data</strong> without trusting relays.</li>
+  <li><strong>Operator as conduit</strong> (withhold/takedown by opaque id) rather than as curator of meaning.</li>
+  <li><strong>Honest privacy ladders</strong> (no fake “operator can’t read public forums”).</li>
+</ol>
+<p>
+  The cost is that <strong>bootstrap, discovery, and policy evolution</strong> stay relatively central
+  (keys + signed releases + roster), while <strong>storage and replication</strong> can be plural.
+</p>
+<p>
+  Fully executed, you should measure success as:
+  <em>no single VPS can rewrite history</em> — not
+  <em>no one can take the web product offline or redefine the official client</em>.
+</p>
+
+<!-- ============================================================ -->
+<h2>10. Implications for operator dashboard &amp; stand-up</h2>
+<ul class="tight">
+  <li><strong>Dashboard</strong> should surface SPOF-adjacent health (disk, sole-writer, admin armed, backup age, Tor degraded) without displaying content — see <code>HIVERELAY-OPERATOR-DASHBOARD-DESIGN-2026-07-19.html</code>.</li>
+  <li><strong>Ops stand-up</strong> should explicitly track multi-ingress and roster independence as first-class gates, not afterthoughts after “features ship.”</li>
+  <li><strong>Product copy</strong> must never claim RK or multi-ingress removes what only federated discovery + offline roots remove.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2>11. Related documents</h2>
+<ul class="tight">
+  <li><code>GIGA-RELEASE-ARCHITECTURE-2026-07-19.html</code> — substrate composition</li>
+  <li><code>PEERIT-OPS-ARCHITECTURE-2026-07-19.html</code> — Peerit stand-up path</li>
+  <li><code>peerit-ops-execution-2026-07-19/</code> — execution proofs</li>
+  <li><code>HIVERELAY-OPERATOR-DASHBOARD-DESIGN-2026-07-19.html</code> — operator UI design</li>
+  <li>In-repo: <code>docs/OPERATOR-LIABILITY.md</code>, <code>BLIND-OUTBOX-MIGRATION.md</code>, <code>RELAY-TAKEDOWN-SPEC.md</code>, gateway PUBLIC-HTTPS-HIVE-GATEWAY-SPEC</li>
+</ul>
+
+<hr />
+<div class="footer">
+  <p>
+    Pear / HiveRelay / Peerit architecture note — rendered <strong>2026-07-19</strong>.
+    Analytical companion to the giga and Peerit ops architecture docs; not a threat model audit
+    of a specific deployed fleet.
+  </p>
+</div>
+
+</div>
+</body>
+</html>

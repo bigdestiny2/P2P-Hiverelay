@@ -3,7 +3,7 @@
 Generated: 2026-06-23
 Loop candidate: `hiverelay-test-matrix`
 Autonomy level: Level 1 test/documentation artifact
-Source root: `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay`
+Source root: `~/pear-ecosystem/00-core/hiverelay`
 
 ## Executive Status
 
@@ -29,7 +29,7 @@ claim ownership of those changes.
 
 ## Root Scripts
 
-Run from `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay`.
+Run from `~/pear-ecosystem/00-core/hiverelay`.
 
 | Command | Scope | When to use | Known exclusions |
 |---|---|---|---|
@@ -247,12 +247,12 @@ Run a Hiverelay release-evidence cleanup loop:
 
 ## Source Evidence
 
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/package.json`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/packages/core/package.json`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/packages/client/package.json`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/packages/verifier/package.json`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/startos/Makefile`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/docs/CURRENT_STATUS_AUDIT_2026-06-23.md`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/docs/SECURITY-BOUNDARY-ALIGNMENT-2026-06-23.md`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/docs/AUDIT-ROADMAP.md`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/docs/RELEASE_AUTOMATION.md`
+- `~/pear-ecosystem/00-core/hiverelay/package.json`
+- `~/pear-ecosystem/00-core/hiverelay/packages/core/package.json`
+- `~/pear-ecosystem/00-core/hiverelay/packages/client/package.json`
+- `~/pear-ecosystem/00-core/hiverelay/packages/verifier/package.json`
+- `~/pear-ecosystem/00-core/hiverelay/startos/Makefile`
+- `~/pear-ecosystem/00-core/hiverelay/docs/CURRENT_STATUS_AUDIT_2026-06-23.md`
+- `~/pear-ecosystem/00-core/hiverelay/docs/SECURITY-BOUNDARY-ALIGNMENT-2026-06-23.md`
+- `~/pear-ecosystem/00-core/hiverelay/docs/AUDIT-ROADMAP.md`
+- `~/pear-ecosystem/00-core/hiverelay/docs/RELEASE_AUTOMATION.md`

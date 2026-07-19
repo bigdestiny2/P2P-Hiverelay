@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-SSH_KEY="${SSH_KEY:-$HOME/.ssh/cloudzy_hiverelay}"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/hiverelay_fleet}"
 API_KEY="${HIVERELAY_API_KEY:?Set HIVERELAY_API_KEY environment variable}"
 
 # Server IPs

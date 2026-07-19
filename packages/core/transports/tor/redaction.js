@@ -32,11 +32,16 @@ export const FORBIDDEN_PATTERNS = Object.freeze([
 export function redactTorInfo (info, { operator = false } = {}) {
   if (!info || typeof info !== 'object') return null
   if (operator) return { ...info }
-  return {
+  const out = {
     running: !!info.running,
     health: typeof info.health === 'string' ? info.health : 'unknown',
     activeConnections: typeof info.activeConnections === 'number' ? info.activeConnections : 0
   }
+  // Coarse auth-gate health bit — safe on public surfaces (no addresses).
+  if (info.negativeProbe === true || info.negativeProbe === false) {
+    out.negativeProbe = info.negativeProbe
+  }
+  return out
 }
 
 /**

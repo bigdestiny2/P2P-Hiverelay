@@ -73,7 +73,7 @@ This is the bootstrap. The point is to prove operators show up reliably *before*
 |---|---|---|---|
 | **Hobbyist** | Raspberry Pi, home laptop, $5 VPS | Whatever the home connection gives | Community Core operator. Reputation builder. |
 | **Prosumer** | Mid-tier desktop or Apple Silicon Mac mini | Residential gigabit or basic VPS | Core + light Services (AI on local model, no SLA staking). |
-| **Small operator** | Mac Studio, dedicated GPU box, or rented bare-metal | Datacenter gigabit | Full Services. Multiple AI models. SLA contracts when Phase 2 lands. |
+| **Small operator** | workstation, dedicated GPU box, or rented bare-metal | Datacenter gigabit | Full Services. Multiple AI models. SLA contracts when Phase 2 lands. |
 | **Large operator** | Multi-GPU rack | Multi-Gbps datacenter | Inference farm. Treats this like a cloud business. |
 
 ## Why no token

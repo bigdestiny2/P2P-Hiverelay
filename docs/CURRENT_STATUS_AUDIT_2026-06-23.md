@@ -3,7 +3,7 @@
 Generated: 2026-06-23
 Loop candidate: `hiverelay-status-audit`
 Autonomy level: Level 1 status artifact
-Source root: `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay`
+Source root: `~/pear-ecosystem/00-core/hiverelay`
 
 ## Executive Status
 
@@ -578,7 +578,7 @@ roadmap.
 
 ## Evidence Commands For Next Proof Pass
 
-Run from `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay`:
+Run from `~/pear-ecosystem/00-core/hiverelay`:
 
 ```sh
 npm run lint
@@ -616,12 +616,12 @@ python3 outputs/agent-loop/loopctl.py score
 
 ## Source Evidence
 
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/umbrel-app/OFFICIAL-SUBMISSION-PLAN.md`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/umbrel-app/SUBMISSION-CHECKLIST.md`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/docs/AUDIT-ROADMAP.md`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/docs/THREAT-MODEL.md`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/docs/LAUNCH_PLAN.md`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/docs/AUDIT-2026-06-22.md`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/docs/RELEASE_AUTOMATION.md`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/docs/README-MAIN-UPDATE-AUDIT.md`
-- `/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay/package.json`
+- `~/pear-ecosystem/00-core/hiverelay/umbrel-app/OFFICIAL-SUBMISSION-PLAN.md`
+- `~/pear-ecosystem/00-core/hiverelay/umbrel-app/SUBMISSION-CHECKLIST.md`
+- `~/pear-ecosystem/00-core/hiverelay/docs/AUDIT-ROADMAP.md`
+- `~/pear-ecosystem/00-core/hiverelay/docs/THREAT-MODEL.md`
+- `~/pear-ecosystem/00-core/hiverelay/docs/LAUNCH_PLAN.md`
+- `~/pear-ecosystem/00-core/hiverelay/docs/AUDIT-2026-06-22.md`
+- `~/pear-ecosystem/00-core/hiverelay/docs/RELEASE_AUTOMATION.md`
+- `~/pear-ecosystem/00-core/hiverelay/docs/README-MAIN-UPDATE-AUDIT.md`
+- `~/pear-ecosystem/00-core/hiverelay/package.json`
