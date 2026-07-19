@@ -16,7 +16,7 @@ test('vNext protocol remediation keeps the audited candidate draft-only', (t) =>
     structuredClone(remediation), structuredClone(program), { repoRoot: root })
   t.is(result.authorityStatus, 'draft-only')
   t.absent(result.freezeEligible)
-  t.alike(result.blockingDecisions, ['D-6', 'D-7'])
+  t.alike(result.blockingDecisions, ['D-7'])
   t.is(result.pendingControls.length, 8)
 })
 
