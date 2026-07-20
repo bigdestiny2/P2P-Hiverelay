@@ -22,3 +22,6 @@ tmp-audit2/
 # /dashboard; relay serves from repo-root /dashboard regardless). Ignore so the
 # orphan never trips the fleet updater's dirty-tree guard.
 packages/core/dashboard
+
+# local smoke storage
+tmp-test-relay*/
