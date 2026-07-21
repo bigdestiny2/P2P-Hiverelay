@@ -76,6 +76,29 @@ channel, key, root, or fleet mutation mode. Even a blocker-free result only
 means ready for independent review and a separate human operation lease; it
 does not pass PG-5 or PG-7.
 
+## One-node pilot planning
+
+`plan-pilot-cohort.mjs` fails closed when publishing the current `canary`
+pointer would update more than Bern. It also verifies that the first Blind Cell
+pilot keeps the public HTTPS gateway explicitly disabled and binds the plan to
+an exact source commit, release identity, and artifact digest.
+
+```bash
+node fleet/plan-pilot-cohort.mjs \
+  --target-relay bern \
+  --source-commit "$(git rev-parse HEAD)" \
+  --release-id v1.0.0-rc.1 \
+  --artifact-sha256 '<immutable-artifact-sha256>' \
+  --out /tmp/hiverelay-pilot-plan.json \
+  --require-isolated
+```
+
+The report evaluates two correction paths: a dedicated signed `pilot` channel
+(recommended, but requiring reviewed publisher/checker support) or temporarily
+rebinding the other two canaries to `stable`. It never edits `channels.json`,
+`relays.json`, node configuration, or services. Either correction still needs
+independent review and a separate explicit fleet-operation lease.
+
 ## Signed releases (required)
 
 The updater resolves a channel only from the latest commit on the configured
