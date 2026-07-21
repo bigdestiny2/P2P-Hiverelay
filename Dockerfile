@@ -112,6 +112,11 @@ COPY --from=deps /app/node_modules ./node_modules
 # Copy application source (respects .dockerignore)
 COPY . .
 
+# blind-peercred is compiled in the dependency stage where node-gyp and the
+# compiler toolchain are present. Its workspace build output is not hoisted
+# into node_modules, so carry it into the otherwise toolchain-free runtime.
+COPY --from=deps /app/packages/blind-peercred/build ./packages/blind-peercred/build
+
 # Non-root user for security. Fixed UID/GID so volume permissions stay
 # consistent across image rebuilds — operators with existing data
 # volumes don't get bitten by an auto-assigned UID drift between builds.
