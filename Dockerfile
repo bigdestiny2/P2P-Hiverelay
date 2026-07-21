@@ -74,10 +74,11 @@ COPY packages/services/package.json packages/services/
 COPY packages/client/package.json packages/client/
 COPY packages/verifier/package.json packages/verifier/
 
-# Install production deps across all workspaces. --workspaces installs deps
-# for every workspace; --include-workspace-root pulls in root devDeps if any
-# are needed at runtime (none currently, but explicit is better).
-RUN npm ci --omit=dev --workspaces --include-workspace-root --no-audit --no-fund
+# Install with build-time tooling so patch-package and native workspace builds
+# run against the exact lockfile, then prune development dependencies without
+# rerunning lifecycle scripts. The resulting node_modules tree is production-only.
+RUN npm ci --workspaces --include-workspace-root --no-audit --no-fund && \
+    npm prune --omit=dev --workspaces --include-workspace-root --ignore-scripts --no-audit --no-fund
 
 # ─── Stage 2: runtime ─────────────────────────────────────────────────
 FROM node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf AS runtime
