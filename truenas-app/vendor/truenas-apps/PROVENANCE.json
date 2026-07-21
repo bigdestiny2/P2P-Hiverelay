@@ -1,0 +1,43 @@
+{
+  "schema": "hiverelay-vendored-source-provenance-v1",
+  "component": "TrueNAS apps base rendering library",
+  "version": "2.3.8",
+  "license": "LGPL-3.0-only",
+  "licenseFile": "truenas-app/vendor/truenas-apps/LICENSE.LGPL-3.0",
+  "licenseSha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118",
+  "noticeFile": "truenas-app/vendor/truenas-apps/NOTICE.md",
+  "localPath": "truenas-app/templates/library/base_v2_3_8",
+  "upstream": {
+    "repository": "https://github.com/truenas/apps.git",
+    "commit": "531009fca352356237287dbcc119c1365307ab86",
+    "sourcePath": "ix-dev/community/bambuddy/templates/library/base_v2_3_8",
+    "tree": "3d946a0dbe832cb16e5da40c4a5d6f0dafb2be21",
+    "firstObservedCommit": "912aeee7ee350e1ec5461726546ac7d582f21881",
+    "officialLibraryHash": "cd75c897a1e8fef54b5bd00d0d8849f240bc50db2ef650eccc0ee74f3b2b2dc1"
+  },
+  "localContent": {
+    "algorithm": "sha256(relative-path NUL decimal-byte-length NUL file-bytes NUL; paths sorted lexicographically)",
+    "sha256": "7d89a005614d5b568620bfbc87ec2b56bfb9449d03d9d61120f2344c72088cb6",
+    "fileCount": 78,
+    "byteCount": 397782,
+    "normalizedUpstreamGitTreeAlgorithm": "Git tree SHA-1 after replacing only the two declared newline-only deviations with their recorded upstream empty blobs",
+    "normalizedUpstreamGitTree": "3d946a0dbe832cb16e5da40c4a5d6f0dafb2be21"
+  },
+  "deviations": [
+    {
+      "path": "__init__.py",
+      "upstreamGitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "localGitBlob": "8b137891791fe96927ad78e64b0aad7bded08bdc",
+      "localBytesHex": "0a",
+      "reason": "newline-only package marker"
+    },
+    {
+      "path": "tests/__init__.py",
+      "upstreamGitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "localGitBlob": "8b137891791fe96927ad78e64b0aad7bded08bdc",
+      "localBytesHex": "0a",
+      "reason": "newline-only package marker"
+    }
+  ],
+  "verifiedAt": "2026-07-21T16:15:00Z"
+}

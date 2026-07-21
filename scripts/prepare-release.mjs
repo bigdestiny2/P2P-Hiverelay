@@ -501,6 +501,10 @@ function releaseImageReference (current, label) {
   if (imageDigest) return `${imageName}:${version}@${imageDigest}`
   if (current.version === version && current.digest) return `${imageName}:${version}@${current.digest}`
   if (allowUnpinnedImage) {
+    if (current.digest) {
+      notes.push(`${label} preserved at the last immutable ${current.version}@${current.digest} binding; it is not bound to ${version} and is not release-ready`)
+      return `${imageName}:${current.version}@${current.digest}`
+    }
     notes.push(`${label} image left tag-only because --allow-unpinned-image was set`)
     return `${imageName}:${version}`
   }

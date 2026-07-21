@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs'
+import crypto from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -15,7 +16,10 @@ const expectedFiles = [
   'questions.yaml',
   'templates/docker-compose.yaml',
   'templates/library/base_v2_3_8/render.py',
-  'templates/test_values/basic-values.yaml'
+  'templates/test_values/basic-values.yaml',
+  'vendor/truenas-apps/LICENSE.LGPL-3.0',
+  'vendor/truenas-apps/NOTICE.md',
+  'vendor/truenas-apps/PROVENANCE.json'
 ]
 
 const errors = []
@@ -42,6 +46,7 @@ function validatePackage () {
   const questions = read(path.join(appRoot, 'questions.yaml'))
   const template = read(path.join(appRoot, 'templates', 'docker-compose.yaml'))
   const testValues = read(path.join(appRoot, 'templates', 'test_values', 'basic-values.yaml'))
+  const provenance = JSON.parse(read(path.join(appRoot, 'vendor', 'truenas-apps', 'PROVENANCE.json')))
 
   const upstreamVersion = topScalar(app, 'app_version')
   const catalogVersion = topScalar(app, 'version')
@@ -58,6 +63,7 @@ function validatePackage () {
     'cd75c897a1e8fef54b5bd00d0d8849f240bc50db2ef650eccc0ee74f3b2b2dc1',
     'TrueNAS rendering library hash'
   )
+  validateVendorProvenance(provenance, app)
   includesAll(readme, [`Upstream HiveRelay release: \`${rootPackage.version}\``], 'TrueNAS app README')
 
   includesAll(app, [
@@ -99,6 +105,130 @@ function validatePackage () {
     'expose_token: false',
     'port_number: 30452'
   ], 'basic test values')
+}
+
+function validateVendorProvenance (provenance, app) {
+  const libraryRoot = path.join(appRoot, 'templates', 'library', 'base_v2_3_8')
+  const license = read(path.join(appRoot, 'vendor', 'truenas-apps', 'LICENSE.LGPL-3.0'))
+  const notice = read(path.join(appRoot, 'vendor', 'truenas-apps', 'NOTICE.md'))
+  const expectedDeviations = ['__init__.py', 'tests/__init__.py']
+  const computed = computeContentIntegrity(libraryRoot)
+
+  equal(provenance.schema, 'hiverelay-vendored-source-provenance-v1', 'vendor provenance schema')
+  equal(provenance.version, '2.3.8', 'vendor library version')
+  equal(provenance.license, 'LGPL-3.0-only', 'vendor license')
+  equal(provenance.licenseSha256, crypto.createHash('sha256').update(license).digest('hex'), 'computed vendor license SHA-256')
+  equal(provenance.localPath, 'truenas-app/templates/library/base_v2_3_8', 'vendor local path')
+  equal(provenance.upstream?.repository, 'https://github.com/truenas/apps.git', 'vendor upstream repository')
+  equal(provenance.upstream?.commit, '531009fca352356237287dbcc119c1365307ab86', 'vendor upstream commit')
+  equal(provenance.upstream?.sourcePath, 'ix-dev/community/bambuddy/templates/library/base_v2_3_8', 'vendor upstream source path')
+  equal(provenance.upstream?.tree, '3d946a0dbe832cb16e5da40c4a5d6f0dafb2be21', 'vendor upstream Git tree')
+  equal(
+    provenance.upstream?.officialLibraryHash,
+    'cd75c897a1e8fef54b5bd00d0d8849f240bc50db2ef650eccc0ee74f3b2b2dc1',
+    'vendor official library hash'
+  )
+  equal(provenance.upstream?.officialLibraryHash, topScalar(app, 'lib_version_hash'), 'vendor/app official library hash binding')
+  equal(provenance.localContent?.algorithm, 'sha256(relative-path NUL decimal-byte-length NUL file-bytes NUL; paths sorted lexicographically)', 'vendor content-integrity algorithm')
+  equal(provenance.localContent?.sha256, computed.sha256, 'computed vendor content SHA-256')
+  equal(provenance.localContent?.fileCount, computed.fileCount, 'computed vendor file count')
+  equal(provenance.localContent?.byteCount, computed.byteCount, 'computed vendor byte count')
+  equal(
+    provenance.localContent?.normalizedUpstreamGitTreeAlgorithm,
+    'Git tree SHA-1 after replacing only the two declared newline-only deviations with their recorded upstream empty blobs',
+    'normalized upstream Git-tree algorithm'
+  )
+
+  includesAll(license, [
+    'GNU LESSER GENERAL PUBLIC LICENSE',
+    'Version 3, 29 June 2007'
+  ], 'vendored TrueNAS license')
+  includesAll(notice, [
+    'They are not covered by HiveRelay\'s Apache-2.0 license.',
+    'LGPL-3.0-only',
+    provenance.upstream.commit,
+    provenance.upstream.tree,
+    provenance.upstream.officialLibraryHash
+  ], 'vendored TrueNAS notice')
+
+  const deviations = Array.isArray(provenance.deviations) ? provenance.deviations : []
+  equal(JSON.stringify(deviations.map(item => item.path)), JSON.stringify(expectedDeviations), 'vendor deviation paths')
+  for (const deviation of deviations) {
+    const bytes = fs.readFileSync(path.join(libraryRoot, deviation.path))
+    equal(bytes.toString('hex'), '0a', `vendor deviation bytes for ${deviation.path}`)
+    equal(deviation.upstreamGitBlob, 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391', `vendor upstream empty blob for ${deviation.path}`)
+    equal(deviation.localGitBlob, gitBlobHash(bytes), `vendor local blob for ${deviation.path}`)
+    equal(deviation.reason, 'newline-only package marker', `vendor deviation reason for ${deviation.path}`)
+  }
+
+  const normalizedTree = computeGitTree(libraryRoot, new Set(expectedDeviations))
+  equal(provenance.localContent?.normalizedUpstreamGitTree, normalizedTree, 'content-computed normalized upstream Git tree')
+  equal(normalizedTree, provenance.upstream.tree, 'normalized vendor content/upstream Git tree binding')
+}
+
+function computeContentIntegrity (root) {
+  const files = listFiles(root)
+  const hash = crypto.createHash('sha256')
+  let byteCount = 0
+
+  for (const rel of files) {
+    const bytes = fs.readFileSync(path.join(root, rel))
+    byteCount += bytes.length
+    hash.update(rel)
+    hash.update('\0')
+    hash.update(String(bytes.length))
+    hash.update('\0')
+    hash.update(bytes)
+    hash.update('\0')
+  }
+
+  return { sha256: hash.digest('hex'), fileCount: files.length, byteCount }
+}
+
+function listFiles (root, prefix = '') {
+  const files = []
+  for (const entry of fs.readdirSync(path.join(root, prefix), { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name
+    if (entry.isDirectory()) files.push(...listFiles(root, rel))
+    else if (entry.isFile()) files.push(rel)
+    else errors.push(`vendor library contains unsupported entry ${rel}`)
+  }
+  return files.sort()
+}
+
+function gitBlobHash (bytes) {
+  return crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')
+}
+
+function computeGitTree (root, normalizedEmptyPaths, prefix = '') {
+  const entries = fs.readdirSync(path.join(root, prefix), { withFileTypes: true })
+    .sort((left, right) => Buffer.compare(
+      Buffer.from(`${left.name}${left.isDirectory() ? '/' : ''}`),
+      Buffer.from(`${right.name}${right.isDirectory() ? '/' : ''}`)
+    ))
+  const chunks = []
+
+  for (const entry of entries) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name
+    let mode
+    let digest
+    if (entry.isDirectory()) {
+      mode = '40000'
+      digest = computeGitTree(root, normalizedEmptyPaths, rel)
+    } else if (entry.isFile()) {
+      mode = '100644'
+      const bytes = normalizedEmptyPaths.has(rel) ? Buffer.alloc(0) : fs.readFileSync(path.join(root, rel))
+      digest = gitBlobHash(bytes)
+    } else {
+      errors.push(`vendor library contains unsupported Git-tree entry ${rel}`)
+      continue
+    }
+    chunks.push(Buffer.from(`${mode} ${entry.name}\0`))
+    chunks.push(Buffer.from(digest, 'hex'))
+  }
+
+  const content = Buffer.concat(chunks)
+  return crypto.createHash('sha1').update(`tree ${content.length}\0`).update(content).digest('hex')
 }
 
 function read (file) {

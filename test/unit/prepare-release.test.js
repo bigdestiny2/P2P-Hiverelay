@@ -37,6 +37,31 @@ test('prepare-release defaults prerelease channel to none', async (t) => {
   t.absent(res.stderr.includes('hiverelay-blindspark'), 'implicit prerelease does not sync community store package files')
 })
 
+test('prepare-release local bypass preserves an existing immutable Umbrel pin', async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-preserve-pin-'))
+  t.teardown(async () => {
+    await rm(repo, { recursive: true, force: true })
+  })
+  await writeMinimalReleaseFixture(repo)
+
+  const composePath = path.join(repo, 'umbrel-app', 'docker-compose.yml')
+  const before = await readFile(composePath, 'utf8')
+  const immutableRef = before.match(/ghcr\.io\/bigdestiny2\/p2p-hiverelay:[^\s]+/)[0]
+  const res = await runPrepare([
+    'v9.9.9-beta.1',
+    '--channel', 'none',
+    '--allow-unpinned-image',
+    '--no-umbrel-store',
+    '--no-ecosystem-consumers'
+  ], path.join(repo, 'scripts', 'prepare-release.mjs'))
+
+  t.is(res.status, 0, res.stderr)
+  const after = await readFile(composePath, 'utf8')
+  t.ok(after.includes(immutableRef), 'existing immutable Umbrel ref is retained')
+  t.ok(res.stdout.includes('is not bound to 9.9.9-beta.1 and is not release-ready'))
+  t.absent(after.includes('p2p-hiverelay:9.9.9-beta.1\n'), 'local bypass does not weaken the pin to a tag')
+})
+
 test('prepare-release defaults full release channel to both', async (t) => {
   const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-both-fixture-'))
   t.teardown(async () => {
