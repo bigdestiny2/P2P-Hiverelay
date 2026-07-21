@@ -50,7 +50,7 @@
 #   https://github.com/holepunchto/udx-native
 #
 # Node 22 LTS — Bare/Pear runtime targets stay aligned.
-FROM node:22-bookworm-slim AS deps
+FROM node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf AS deps
 WORKDIR /app
 
 # Install build tools needed for any native deps that DO build from
@@ -62,6 +62,12 @@ RUN apt-get update && \
 
 # Copy ALL workspace package.json files (npm needs them all to resolve workspaces)
 COPY package.json package-lock.json ./
+COPY packages/blind-protocol/package.json packages/blind-protocol/
+COPY packages/blind-ipc/package.json packages/blind-ipc/
+COPY packages/blind-client/package.json packages/blind-client/
+COPY packages/blind-peercred/package.json packages/blind-peercred/
+COPY packages/blind-edge/package.json packages/blind-edge/
+COPY packages/blind-daemon/package.json packages/blind-daemon/
 COPY packages/core/package.json packages/core/
 COPY packages/services/package.json packages/services/
 COPY packages/client/package.json packages/client/
@@ -73,12 +79,15 @@ COPY packages/verifier/package.json packages/verifier/
 RUN npm ci --omit=dev --workspaces --include-workspace-root --no-audit --no-fund
 
 # ─── Stage 2: runtime ─────────────────────────────────────────────────
-FROM node:22-bookworm-slim AS runtime
+FROM node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf AS runtime
+
+ARG SOURCE_COMMIT
 
 LABEL org.opencontainers.image.title="p2p-hiverelay"
 LABEL org.opencontainers.image.description="Always-on P2P relay infrastructure for the Holepunch/Pear ecosystem"
 LABEL org.opencontainers.image.source="https://github.com/bigdestiny2/P2P-Hiverelay"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.revision="$SOURCE_COMMIT"
 
 # tini for proper PID 1 signal handling (graceful shutdown).
 # wget for HEALTHCHECK without bringing curl/openssl bloat.

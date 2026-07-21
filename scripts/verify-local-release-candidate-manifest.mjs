@@ -20,9 +20,9 @@ Options:
   --umbrel-store <path>            Exact clean community-store checkout bound by the manifest
   --require-local-preflight        Exit non-zero when the exact manifest is locally blocked
 
-Verification requires the exact clean source commit named by the manifest. It
-does not verify or grant signing, publication, deployment, fleet, appliance,
-marketplace, or release authority.
+Verification requires the exact clean source commit named by the manifest.
+Passing local preflight does not verify or grant signing, publication,
+deployment, fleet, appliance, marketplace, or release authority.
 `
 
 const here = path.dirname(fileURLToPath(import.meta.url))

@@ -12,7 +12,7 @@ const SOURCE_TREE = 'b'.repeat(40)
 const IMAGE_DIGEST = 'sha256:' + 'c'.repeat(64)
 const BASE_DIGEST = 'sha256:' + 'd'.repeat(64)
 
-test('local release candidate manifest is deterministic, content-addressed, and never release-ready', (t) => {
+test('local release candidate manifest separates passing local preflight from external release authority', (t) => {
   const snapshot = fixtureSnapshot()
   const first = buildLocalReleaseCandidateManifest(snapshot, {
     declaredBlockers: ['GLOBAL_PG2_IN_PROGRESS', 'D6_STORE_FORMAT_BLOCKED', 'GLOBAL_PG2_IN_PROGRESS']
@@ -22,7 +22,7 @@ test('local release candidate manifest is deterministic, content-addressed, and 
   })
 
   t.alike(first, second)
-  t.is(first.release.localPreflight, 'blocked')
+  t.is(first.release.localPreflight, 'passed')
   t.is(first.release.releaseReady, false)
   t.is(first.release.promotionAuthority, false)
   t.is(first.release.authorizesRelease, false)
@@ -31,7 +31,7 @@ test('local release candidate manifest is deterministic, content-addressed, and 
   t.is(first.image.sourceBound, false)
   t.is(first.image.sourceBindingPending, true)
   t.alike(first.declaredBlockers, ['D6_STORE_FORMAT_BLOCKED', 'GLOBAL_PG2_IN_PROGRESS'])
-  t.ok(first.blockers.includes('BLIND_WORKSPACES_DRAFT_ONLY'))
+  t.is(first.blockers.includes('BLIND_WORKSPACES_DRAFT_ONLY'), false)
   t.ok(first.blockers.includes('EXTERNAL_RELEASE_EVIDENCE_NOT_ATTACHED'))
   t.ok(first.blockers.includes('LOCAL_MANIFEST_NO_PROMOTION_AUTHORITY'))
   t.ok(first.blockers.includes('PINNED_IMAGE_NOT_SOURCE_BOUND'))
@@ -133,7 +133,8 @@ function fixtureSnapshot () {
     ].map(name => ({
       path: `packages/${name}/package.json`,
       name: `@hiverelay/${name}`,
-      version: '0.0.0-draft.1'
+      version: semver,
+      private: true
     })),
     appliances: {
       umbrel: {
@@ -152,6 +153,12 @@ function fixtureSnapshot () {
         version: semver,
         packageFormat: 'startos-0.3.5.x',
         artifactName: 'blindspark.s9pk'
+      },
+      startos04: {
+        version: semver,
+        versionWithRevision: `${semver}:0`,
+        imageRef: `ghcr.io/bigdestiny2/p2p-hiverelay:${semver}`,
+        packageFormat: 'startos-0.4'
       }
     },
     fleetChannels: {
@@ -164,6 +171,7 @@ function fixtureSnapshot () {
       baseImages: [{ ref: `node:22-bookworm-slim@${BASE_DIGEST}`, digestPinned: true }],
       sbomConfigured: true,
       provenanceConfigured: true,
+      sourceBindingConfigured: true,
       splitSourceWorkflow: false
     },
     communityStore: {

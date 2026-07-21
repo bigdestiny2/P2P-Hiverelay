@@ -47,6 +47,8 @@ const RELEASE_INPUT_PATHS = Object.freeze([
   'startos/check-web.sh',
   'startos/docker_entrypoint.sh',
   'startos/manifest.yaml',
+  'startos-0.4/startos/manifest/index.ts',
+  'startos-0.4/startos/versions/current.ts',
   'umbrel-app/docker-compose.yml',
   'umbrel-app/umbrel-app.yml'
 ].sort())
@@ -77,17 +79,20 @@ const BLOCKER_PATTERN = /^[A-Z][A-Z0-9_]{2,127}$/
 const IMAGE_REF_PATTERN = /^(ghcr\.io\/[a-z0-9_.-]+\/[a-z0-9._/-]+):(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)@(sha256:[a-f0-9]{64})$/
 
 const CHECK_BLOCKERS = Object.freeze({
-  'source.version-tag-exact': 'SOURCE_VERSION_TAG_NOT_EXACT',
+  'source.release-candidate-identity': 'SOURCE_VERSION_TAG_NOT_EXACT',
   'packages.public-version-aligned': 'PUBLIC_PACKAGE_VERSION_DRIFT',
-  'packages.blind-remain-draft': 'BLIND_PACKAGE_DRAFT_CONTRACT_DRIFT',
+  'packages.blind-internal-version-aligned': 'BLIND_PACKAGE_RELEASE_BOUNDARY_DRIFT',
   'appliances.umbrel-version-aligned': 'UMBREL_VERSION_DRIFT',
   'appliances.startos-version-aligned': 'STARTOS_VERSION_DRIFT',
+  'appliances.startos04-version-aligned': 'STARTOS_04_VERSION_DRIFT',
+  'appliances.startos04-image-aligned': 'STARTOS_04_IMAGE_DRIFT',
   'appliances.umbrel-image-pin': 'UMBREL_IMAGE_PIN_INVALID',
   'image.source-bound': 'PINNED_IMAGE_NOT_SOURCE_BOUND',
   'container.base-images-digest-pinned': 'CONTAINER_BASE_IMAGE_DIGESTS_UNPINNED',
   'workflow.multiarch': 'RELEASE_WORKFLOW_MULTIARCH_MISSING',
   'workflow.sbom': 'RELEASE_WORKFLOW_SBOM_MISSING',
   'workflow.provenance': 'RELEASE_WORKFLOW_PROVENANCE_MISSING',
+  'workflow.source-binding': 'RELEASE_WORKFLOW_SOURCE_BINDING_MISSING',
   'workflow.single-source': 'RELEASE_WORKFLOW_SPLIT_SOURCE',
   'fleet.channels-version-aligned': 'FLEET_CHANNEL_VERSION_DRIFT',
   'umbrel.official-submission-recorded': 'UMBREL_OFFICIAL_SUBMISSION_PENDING'
@@ -123,6 +128,8 @@ export function collectLocalReleaseSnapshot (repoRoot, options = {}) {
   const umbrelManifest = text(committed, 'umbrel-app/umbrel-app.yml')
   const umbrelCompose = text(committed, 'umbrel-app/docker-compose.yml')
   const startosManifest = text(committed, 'startos/manifest.yaml')
+  const startos04Manifest = text(committed, 'startos-0.4/startos/manifest/index.ts')
+  const startos04VersionSource = text(committed, 'startos-0.4/startos/versions/current.ts')
   const dockerfile = text(committed, 'Dockerfile')
   const releaseWorkflow = text(committed, '.github/workflows/release-surfaces.yml')
   const fleetChannels = parseJson(committed.get('fleet/channels.json'), 'fleet/channels.json')
@@ -162,6 +169,12 @@ export function collectLocalReleaseSnapshot (repoRoot, options = {}) {
         version: yamlScalar(startosManifest, 'version'),
         packageFormat: 'startos-0.3.5.x',
         artifactName: 'blindspark.s9pk'
+      },
+      startos04: {
+        version: tsSingleQuotedValue(startos04VersionSource, 'version').split(':')[0],
+        versionWithRevision: tsSingleQuotedValue(startos04VersionSource, 'version'),
+        imageRef: tsSingleQuotedValue(startos04Manifest, 'dockerTag'),
+        packageFormat: 'startos-0.4'
       }
     },
     fleetChannels: {
@@ -176,6 +189,8 @@ export function collectLocalReleaseSnapshot (repoRoot, options = {}) {
       baseImages: dockerBaseImages(dockerfile),
       sbomConfigured: releaseWorkflow.includes('--sbom=true'),
       provenanceConfigured: releaseWorkflow.includes('--provenance=mode=max'),
+      sourceBindingConfigured: releaseWorkflow.includes('--build-arg "SOURCE_COMMIT=$HIVERELAY_RELEASE_SHA"') &&
+        dockerfile.includes('LABEL org.opencontainers.image.revision="$SOURCE_COMMIT"'),
       splitSourceWorkflow: releaseWorkflow.indexOf('git checkout -B main origin/main') >
         releaseWorkflow.indexOf('Build and push multi-arch image')
     },
@@ -189,14 +204,17 @@ export function collectLocalReleaseSnapshot (repoRoot, options = {}) {
 export function buildLocalReleaseCandidateManifest (snapshot, options = {}) {
   const declaredBlockers = normalizeDeclaredBlockers(options.declaredBlockers || [])
   const checks = []
-  const addCheck = (id, passed, detail) => {
-    checks.push({ id, status: passed ? 'passed' : 'blocked', detail })
+  const addCheck = (id, scope, passed, detail) => {
+    checks.push({ id, scope, status: passed ? 'passed' : 'blocked', detail })
   }
   const exactTag = snapshot.source.versionTagCommit === snapshot.source.commit
+  const prerelease = snapshot.semver.includes('-')
+  const cleanPretagCandidate = prerelease && snapshot.source.versionTagCommit == null
+  const releaseCandidateIdentity = exactTag || cleanPretagCandidate
   const publicVersionsAligned = snapshot.publicPackages.length === PUBLIC_PACKAGE_PATHS.length &&
     snapshot.publicPackages.every(pkg => pkg.version === snapshot.semver)
-  const blindRemainDraft = snapshot.blindPackages.length === BLIND_PACKAGE_PATHS.length &&
-    snapshot.blindPackages.every(pkg => /^0\.0\.0-draft\.[1-9][0-9]*$/.test(pkg.version))
+  const blindInternalVersionsAligned = snapshot.blindPackages.length === BLIND_PACKAGE_PATHS.length &&
+    snapshot.blindPackages.every(pkg => pkg.version === snapshot.semver && pkg.private === true)
   const image = snapshot.appliances.umbrel.image
   const imagePinValid = image != null && image.name === EXPECTED_IMAGE_NAME && image.tag === snapshot.semver
   const allBaseImagesPinned = snapshot.build.baseImages.length > 0 &&
@@ -212,38 +230,58 @@ export function buildLocalReleaseCandidateManifest (snapshot, options = {}) {
     snapshot.communityStore.imageRef === snapshot.appliances.umbrel.imageRef
 
   addCheck(
-    'source.version-tag-exact',
-    exactTag,
+    'source.release-candidate-identity',
+    'local',
+    releaseCandidateIdentity,
     exactTag
       ? `${snapshot.source.expectedVersionTag} resolves to the exact source commit`
-      : `${snapshot.source.expectedVersionTag} resolves to ${snapshot.source.versionTagCommit || 'no commit'}, not ${snapshot.source.commit}`
+      : cleanPretagCandidate
+        ? `${snapshot.source.expectedVersionTag} is absent; the clean pre-tag candidate is bound to ${snapshot.source.commit}`
+        : `${snapshot.source.expectedVersionTag} resolves to ${snapshot.source.versionTagCommit || 'no commit'}, not ${snapshot.source.commit}`
   )
   addCheck(
     'packages.public-version-aligned',
+    'local',
     publicVersionsAligned,
     publicVersionsAligned
       ? `all four public packages equal ${snapshot.semver}`
       : 'one or more public package versions differ from the root package version'
   )
   addCheck(
-    'packages.blind-remain-draft',
-    blindRemainDraft,
-    blindRemainDraft
-      ? 'all blind workspaces retain explicit 0.0.0-draft.N versions'
-      : 'blind workspace versions are missing or no longer follow the draft-only contract'
+    'packages.blind-internal-version-aligned',
+    'local',
+    blindInternalVersionsAligned,
+    blindInternalVersionsAligned
+      ? `all six private Blind workspaces are frozen at ${snapshot.semver}`
+      : 'Blind workspaces must remain private and use the exact release-candidate version'
   )
   addCheck(
     'appliances.umbrel-version-aligned',
+    'local',
     snapshot.appliances.umbrel.version === snapshot.semver,
     `Umbrel version is ${snapshot.appliances.umbrel.version}`
   )
   addCheck(
     'appliances.startos-version-aligned',
+    'local',
     snapshot.appliances.startos.version === snapshot.semver,
     `StartOS version is ${snapshot.appliances.startos.version}`
   )
   addCheck(
+    'appliances.startos04-version-aligned',
+    'local',
+    snapshot.appliances.startos04.version === snapshot.semver,
+    `StartOS 0.4 version is ${snapshot.appliances.startos04.versionWithRevision}`
+  )
+  addCheck(
+    'appliances.startos04-image-aligned',
+    'external',
+    snapshot.appliances.startos04.imageRef === `${EXPECTED_IMAGE_NAME}:${snapshot.semver}`,
+    `StartOS 0.4 image is ${snapshot.appliances.startos04.imageRef}`
+  )
+  addCheck(
     'appliances.umbrel-image-pin',
+    'external',
     imagePinValid,
     imagePinValid
       ? `Umbrel metadata pins ${image.ref}`
@@ -251,6 +289,7 @@ export function buildLocalReleaseCandidateManifest (snapshot, options = {}) {
   )
   addCheck(
     'image.source-bound',
+    'external',
     false,
     imagePinValid && exactTag
       ? 'version metadata aligns, but external OCI provenance proving the digest was built from this commit is not attached'
@@ -258,6 +297,7 @@ export function buildLocalReleaseCandidateManifest (snapshot, options = {}) {
   )
   addCheck(
     'container.base-images-digest-pinned',
+    'local',
     allBaseImagesPinned,
     allBaseImagesPinned
       ? 'every Dockerfile base image is digest-pinned'
@@ -265,6 +305,7 @@ export function buildLocalReleaseCandidateManifest (snapshot, options = {}) {
   )
   addCheck(
     'workflow.multiarch',
+    'local',
     arrayEqual(snapshot.build.platforms, ['linux/amd64', 'linux/arm64']),
     snapshot.build.platforms.length > 0
       ? 'release workflow requests linux/amd64 and linux/arm64'
@@ -272,6 +313,7 @@ export function buildLocalReleaseCandidateManifest (snapshot, options = {}) {
   )
   addCheck(
     'workflow.sbom',
+    'local',
     snapshot.build.sbomConfigured,
     snapshot.build.sbomConfigured
       ? 'release workflow configuration explicitly requests an OCI SBOM attestation; no attestation bytes are proved here'
@@ -279,13 +321,23 @@ export function buildLocalReleaseCandidateManifest (snapshot, options = {}) {
   )
   addCheck(
     'workflow.provenance',
+    'local',
     snapshot.build.provenanceConfigured,
     snapshot.build.provenanceConfigured
       ? 'release workflow configuration explicitly requests max-mode provenance; no attestation bytes are proved here'
       : 'release build does not explicitly request max-mode provenance'
   )
   addCheck(
+    'workflow.source-binding',
+    'local',
+    snapshot.build.sourceBindingConfigured,
+    snapshot.build.sourceBindingConfigured
+      ? 'release workflow passes the exact release commit into the OCI revision label'
+      : 'release workflow does not bind the image revision label to the exact release commit'
+  )
+  addCheck(
     'workflow.single-source',
+    'local',
     !splitSourceWorkflow,
     splitSourceWorkflow
       ? 'workflow builds from the release checkout, then switches to origin/main for metadata surfaces; the future metadata commit is unbound here'
@@ -293,11 +345,13 @@ export function buildLocalReleaseCandidateManifest (snapshot, options = {}) {
   )
   addCheck(
     'fleet.channels-version-aligned',
+    'external',
     channelsAligned,
     `fleet channels are stable=${snapshot.fleetChannels.stable}, canary=${snapshot.fleetChannels.canary}`
   )
   addCheck(
     'umbrel.official-submission-recorded',
+    'external',
     umbrelSubmissionRecorded,
     umbrelSubmissionRecorded
       ? `official Umbrel submission is ${snapshot.appliances.umbrel.submission}`
@@ -305,6 +359,7 @@ export function buildLocalReleaseCandidateManifest (snapshot, options = {}) {
   )
   addCheck(
     'community-store.source-bound',
+    'external',
     communityStoreAttached,
     communityStoreAttached
       ? `community store is bound to commit ${snapshot.communityStore.source.commit} and tree ${snapshot.communityStore.source.tree}`
@@ -312,6 +367,7 @@ export function buildLocalReleaseCandidateManifest (snapshot, options = {}) {
   )
   addCheck(
     'community-store.exact-pair',
+    'external',
     communityStoreExactPair,
     communityStoreExactPair
       ? 'community-store package version and exact image ref match the Hive appliance metadata'
@@ -331,7 +387,6 @@ export function buildLocalReleaseCandidateManifest (snapshot, options = {}) {
   )
   const blockers = [...new Set([
     ...automaticBlockers.filter(Boolean),
-    'BLIND_WORKSPACES_DRAFT_ONLY',
     'EXTERNAL_RELEASE_EVIDENCE_NOT_ATTACHED',
     'LOCAL_MANIFEST_NO_PROMOTION_AUTHORITY',
     'NPM_TARBALL_ARTIFACTS_NOT_ATTACHED',
@@ -339,7 +394,10 @@ export function buildLocalReleaseCandidateManifest (snapshot, options = {}) {
     'OCI_SBOM_PROVENANCE_ARTIFACTS_NOT_ATTACHED',
     ...declaredBlockers
   ])].sort()
-  const localPreflight = checks.every(check => check.status === 'passed') ? 'passed' : 'blocked'
+  const localChecksPassed = checks
+    .filter(check => check.scope === 'local')
+    .every(check => check.status === 'passed')
+  const localPreflight = localChecksPassed ? 'passed' : 'blocked'
 
   const body = {
     schemaVersion: 1,
@@ -365,13 +423,13 @@ export function buildLocalReleaseCandidateManifest (snapshot, options = {}) {
       metadataRef: snapshot.appliances.umbrel.imageRef,
       tag: image?.tag || null,
       digest: image?.digest || null,
-      metadataVersionAligned: Boolean(imagePinValid && exactTag),
+      metadataVersionAligned: Boolean(imagePinValid && releaseCandidateIdentity),
       sourceBound: false,
       sourceBindingPending: true
     },
     packages: {
       public: snapshot.publicPackages,
-      blindDraft: snapshot.blindPackages
+      blindInternal: snapshot.blindPackages
     },
     appliances: {
       ...snapshot.appliances,
@@ -483,7 +541,8 @@ function packageSurfaces (committed, paths) {
     return {
       path: relativePath,
       name: String(body.name || ''),
-      version: String(body.version || '')
+      version: String(body.version || ''),
+      private: body.private === true
     }
   })
 }
@@ -524,6 +583,12 @@ function yamlScalar (value, key) {
   const match = new RegExp(`^${escaped}:\\s*(?:"([^"]*)"|'([^']*)'|([^#\\n]*?))\\s*(?:#.*)?$`, 'm').exec(value)
   if (!match) return ''
   return String(match[1] ?? match[2] ?? match[3] ?? '').trim()
+}
+
+function tsSingleQuotedValue (value, key) {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = new RegExp(`${escaped}:\\s*'([^']+)'`).exec(value)
+  return match ? match[1] : ''
 }
 
 function requireSemver (value, label) {

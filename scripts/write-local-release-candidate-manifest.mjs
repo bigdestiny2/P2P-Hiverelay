@@ -18,9 +18,10 @@ Options:
   --known-blocker <IDENTIFIER>     Add a durable externally-known blocker; repeatable
   --require-local-preflight        Exit non-zero after writing when local checks are blocked
 
-This command is offline and read-only except for the requested output file. It
-never signs, publishes, pushes, deploys, or treats the manifest as release
-evidence.
+This command is offline and read-only except for the requested output file.
+Local preflight covers clean pre-tag source, version, base-image, and workflow
+configuration checks. External artifact, marketplace, fleet, signing, and
+publication checks remain blockers and releaseReady remains false.
 `
 
 const here = path.dirname(fileURLToPath(import.meta.url))

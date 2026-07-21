@@ -425,7 +425,7 @@ jobs:
           set -euo pipefail
           npm run ecosystem:check-workspace -- --required --workspace-root .. --consumer-scope release
 
-      - name: Stamp branch candidate package version
+      - name: Verify exact source package versions
         if: ${{ steps.rel.outputs.is_branch_candidate == 'true' }}
         working-directory: hiverelay
         env:
@@ -437,6 +437,12 @@ jobs:
           const version = process.env.CANDIDATE_SEMVER
           const packageFiles = [
             'package.json',
+            'packages/blind-protocol/package.json',
+            'packages/blind-ipc/package.json',
+            'packages/blind-client/package.json',
+            'packages/blind-peercred/package.json',
+            'packages/blind-edge/package.json',
+            'packages/blind-daemon/package.json',
             'packages/core/package.json',
             'packages/services/package.json',
             'packages/client/package.json',
@@ -445,24 +451,17 @@ jobs:
 
           for (const file of packageFiles) {
             const json = JSON.parse(fs.readFileSync(file, 'utf8'))
-            json.version = version
-            if (json.dependencies && json.dependencies['p2p-hiverelay']) {
-              json.dependencies['p2p-hiverelay'] = `^${version}`
+            if (json.version !== version) {
+              throw new Error(`${file} is ${json.version}; expected exact source version ${version}`)
             }
-            fs.writeFileSync(file, JSON.stringify(json, null, 2) + '\n')
           }
 
           const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'))
-          lock.version = version
-          if (lock.packages && lock.packages['']) lock.packages[''].version = version
-          for (const rel of ['packages/core', 'packages/services', 'packages/client', 'packages/verifier']) {
-            if (!lock.packages || !lock.packages[rel]) continue
-            lock.packages[rel].version = version
-            const deps = lock.packages[rel].dependencies
-            if (deps && deps['p2p-hiverelay']) deps['p2p-hiverelay'] = `^${version}`
+          if (lock.version !== version || lock.packages?.['']?.version !== version) {
+            throw new Error(`package-lock.json root is not ${version}`)
           }
-          fs.writeFileSync('package-lock.json', JSON.stringify(lock, null, 2) + '\n')
           NODE
+          git diff --exit-code
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -484,6 +483,7 @@ jobs:
           fi
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
+            --build-arg "SOURCE_COMMIT=$HIVERELAY_RELEASE_SHA" \
             --sbom=true \
             --provenance=mode=max \
             "${tags[@]}" \
@@ -583,14 +583,6 @@ jobs:
           else
             echo "HIVERELAY_NPM_PUBLISH_STATUS=current" >> "$GITHUB_ENV"
           fi
-
-      - name: Return to main for metadata sync
-        if: ${{ steps.rel.outputs.is_branch_candidate != 'true' }}
-        working-directory: hiverelay
-        run: |
-          set -euo pipefail
-          git fetch origin main
-          git checkout -B main origin/main
 
       - name: Sync release metadata
         working-directory: hiverelay

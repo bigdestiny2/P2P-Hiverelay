@@ -1,6 +1,6 @@
 {
   "name": "@hiverelay/blind-peercred",
-  "version": "0.0.0-draft.1",
+  "version": "1.0.0-rc.1",
   "description": "Minimal audited Unix peer-credential, file-lock, and atomic no-replace rename binding for HiveRelay",
   "private": true,
   "type": "module",

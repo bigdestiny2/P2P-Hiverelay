@@ -1,6 +1,6 @@
 {
   "name": "@hiverelay/blind-protocol",
-  "version": "0.0.0-draft.1",
+  "version": "1.0.0-rc.1",
   "description": "Final public WIRE registry and bounded binary framing for the HiveRelay blind substrate",
   "private": true,
   "type": "module",
