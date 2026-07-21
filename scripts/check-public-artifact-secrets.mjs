@@ -10,7 +10,12 @@ const repoRoot = path.resolve(here, '..')
 const DEFAULT_TARGETS = [
   'README.md',
   'docs',
-  '.github'
+  '.github',
+  'truenas-app',
+  'unraid-app',
+  'zimaos-app',
+  'runtipi-app',
+  'hexos-app'
 ]
 
 const SKIP_DIRS = new Set([

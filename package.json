@@ -82,6 +82,8 @@
     "umbrel:write-runtime-review": "node scripts/write-umbrel-runtime-review-evidence.mjs",
     "umbrel:verify-runtime-review": "node scripts/verify-umbrel-runtime-review-evidence.mjs",
     "umbrel:smoke-package": "node scripts/smoke-umbrel-package.mjs",
+    "truenas:check": "node scripts/check-truenas-package.mjs",
+    "community-appliances:check": "node scripts/check-truenas-package.mjs && node scripts/check-community-appliance-packages.mjs",
     "startos:verify": "cd startos && make verify IMAGE_DIGEST=\"$HIVERELAY_IMAGE_DIGEST\"",
     "startos:verify:local": "cd startos && make verify ALLOW_TAG_ONLY_IMAGE=1",
     "test": "node scripts/run-brittle-suite.mjs all",

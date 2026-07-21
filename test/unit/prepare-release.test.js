@@ -58,7 +58,33 @@ test('prepare-release defaults full release channel to both', async (t) => {
 
   const startosManifest = await readFile(path.join(repo, 'startos', 'manifest.yaml'), 'utf8')
   t.absent(startosManifest.includes('metadata.license'), 'StartOS release-notes block keeps the following key on a new line')
-  t.ok(startosManifest.includes('metadata.\nlicense: apache-2.0'), 'StartOS release-notes block is newline-terminated')
+  t.ok(startosManifest.includes('HexOS.\nlicense: apache-2.0'), 'StartOS release-notes block is newline-terminated')
+
+  const truenasManifest = await readFile(path.join(repo, 'truenas-app', 'app.yaml'), 'utf8')
+  const truenasImages = await readFile(path.join(repo, 'truenas-app', 'ix_values.yaml'), 'utf8')
+  const truenasReadme = await readFile(path.join(repo, 'truenas-app', 'README.md'), 'utf8')
+  t.ok(truenasManifest.includes('app_version: 9.9.9'), 'TrueNAS upstream version is synchronized')
+  t.ok(truenasManifest.includes('version: 1.0.1'), 'TrueNAS catalog revision is bumped once')
+  t.ok(truenasImages.includes('tag: 9.9.9'), 'TrueNAS image tag is synchronized')
+  t.ok(truenasReadme.includes('Upstream HiveRelay release: `9.9.9`'), 'TrueNAS README is synchronized')
+
+  const unraidTemplate = await readFile(path.join(repo, 'unraid-app', 'templates', 'blindspark.xml'), 'utf8')
+  t.ok(unraidTemplate.includes(`ghcr.io/bigdestiny2/p2p-hiverelay:9.9.9@${DIGEST}`), 'Unraid image digest is synchronized')
+  t.ok(unraidTemplate.includes('<Changes>HiveRelay 9.9.9</Changes>'), 'Unraid release metadata is synchronized')
+
+  const zimaCompose = await readFile(path.join(repo, 'zimaos-app', 'Apps', 'Blindspark', 'docker-compose.yml'), 'utf8')
+  t.ok(zimaCompose.includes(`ghcr.io/bigdestiny2/p2p-hiverelay:9.9.9@${DIGEST}`), 'ZimaOS image digest is synchronized')
+  t.ok(zimaCompose.includes('  version: "9.9.9"'), 'ZimaOS upstream version is synchronized')
+
+  const runtipiConfig = JSON.parse(await readFile(path.join(repo, 'runtipi-app', 'apps', 'blindspark', 'config.json'), 'utf8'))
+  const runtipiCompose = await readFile(path.join(repo, 'runtipi-app', 'apps', 'blindspark', 'docker-compose.yml'), 'utf8')
+  t.is(runtipiConfig.version, '9.9.9', 'Runtipi upstream version is synchronized')
+  t.is(runtipiConfig.tipi_version, 2, 'Runtipi package revision is bumped once')
+  t.ok(runtipiCompose.includes(`ghcr.io/bigdestiny2/p2p-hiverelay:9.9.9@${DIGEST}`), 'Runtipi image digest is synchronized')
+
+  const hexos = JSON.parse(await readFile(path.join(repo, 'hexos-app', 'blindspark.json'), 'utf8'))
+  t.is(hexos.script.version, '1.0.1', 'HexOS curation revision is bumped once')
+  t.is(hexos.script.changeLog, 'Sync Blindspark for HiveRelay 9.9.9', 'HexOS upstream version is synchronized')
 })
 
 test('prepare-release cannot move fleet channels for an enabled public gateway release', async (t) => {
@@ -340,6 +366,14 @@ async function writeMinimalReleaseFixture (repo) {
   await writeText(path.join(repo, 'startos', 'manifest.yaml'), 'id: blindspark\nversion: 0.16.3\nrelease-notes: |\n  old\nlicense: apache-2.0\n')
   await writeText(path.join(repo, 'startos', 'Makefile'), 'VERSION ?= $(shell sed -n \'s/.*"version"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p\' ../package.json | head -n 1)\n')
   await writeText(path.join(repo, 'startos', 'README.md'), 'Status: v0.16.3, one-page dashboard\n')
+  await writeText(path.join(repo, 'truenas-app', 'app.yaml'), 'app_version: 0.16.3\nversion: 1.0.0\n')
+  await writeText(path.join(repo, 'truenas-app', 'ix_values.yaml'), 'images:\n  image:\n    repository: ghcr.io/bigdestiny2/p2p-hiverelay\n    tag: 0.16.3\n')
+  await writeText(path.join(repo, 'truenas-app', 'README.md'), '- Upstream HiveRelay release: `0.16.3`\n')
+  await writeText(path.join(repo, 'unraid-app', 'templates', 'blindspark.xml'), '<Repository>ghcr.io/bigdestiny2/p2p-hiverelay:0.16.3</Repository>\n<Changes>HiveRelay 0.16.3</Changes>\n<Date>2026-01-01</Date>\n')
+  await writeText(path.join(repo, 'zimaos-app', 'Apps', 'Blindspark', 'docker-compose.yml'), 'services:\n  blindspark:\n    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.16.3\nx-casaos:\n  version: "0.16.3"\n  update_at: "2026-01-01"\n  release_notes:\n    en_US: HiveRelay 0.16.3 package\n')
+  await writeJson(path.join(repo, 'runtipi-app', 'apps', 'blindspark', 'config.json'), { id: 'blindspark', version: '0.16.3', tipi_version: 1, updated_at: 1 })
+  await writeText(path.join(repo, 'runtipi-app', 'apps', 'blindspark', 'docker-compose.yml'), 'services:\n  blindspark:\n    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.16.3\n')
+  await writeJson(path.join(repo, 'hexos-app', 'blindspark.json'), { version: 4, script: { version: '1.0.0', changeLog: 'Sync Blindspark for HiveRelay 0.16.3' } })
 }
 
 async function writeCommunityStoreFixture (store, oldVersion) {

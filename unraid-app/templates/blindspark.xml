@@ -1,0 +1,38 @@
+<Container version="2">
+  <Name>Blindspark</Name>
+  <Repository>ghcr.io/bigdestiny2/p2p-hiverelay:1.0.0-rc.1</Repository>
+  <Registry>https://ghcr.io/bigdestiny2/p2p-hiverelay</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+
+  <Icon>https://raw.githubusercontent.com/bigdestiny2/P2P-Hiverelay/main/unraid-app/icon.svg</Icon>
+  <WebUI>http://[IP]:[PORT:9100]</WebUI>
+  <Support>https://github.com/bigdestiny2/P2P-Hiverelay/issues</Support>
+  <Project>https://github.com/bigdestiny2/P2P-Hiverelay</Project>
+  <TemplateURL>https://raw.githubusercontent.com/bigdestiny2/P2P-Hiverelay/main/unraid-app/templates/blindspark.xml</TemplateURL>
+  <ReadMe>https://raw.githubusercontent.com/bigdestiny2/P2P-Hiverelay/main/unraid-app/README.md</ReadMe>
+
+  <Overview>Run an always-on blind relay for Pear and Holepunch peer-to-peer applications.</Overview>
+  <Description>Blindspark stores and serves encrypted Hyperdrive data that the relay can verify but cannot read. It helps peer-to-peer applications stay reachable while their publishers and users are offline. Persistent identity, configuration, and seeded data live in the appdata directory.</Description>
+  <Category>Tools:System</Category>
+  <ExtraSearchTerms>hiverelay pear holepunch p2p relay hypercore</ExtraSearchTerms>
+  <Requires>A unique management API key of at least 32 characters. Keep the dashboard on a trusted network.</Requires>
+  <Changes>HiveRelay 1.0.0-rc.1</Changes>
+  <Date>2026-07-21</Date>
+  <MinVer>6.12</MinVer>
+  <License>Apache-2.0</License>
+
+  <Config Name="Dashboard Port" Target="9100" Default="30452" Mode="tcp" Description="Host port for the Blindspark dashboard and management API." Type="Port" Display="always" Required="true" Mask="false"/>
+  <Config Name="Appdata" Target="/data" Default="/mnt/user/appdata/blindspark" Mode="rw" Description="Persistent identity, configuration, Hypercores, and seeded content." Type="Path" Display="always" Required="true" Mask="false"/>
+  <Config Name="Management API Key" Target="HIVERELAY_API_KEY" Default="" Description="Unique secret of at least 32 characters used by the dashboard and management API." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Timezone" Target="TZ" Default="Etc/UTC" Description="Container timezone." Type="Variable" Display="advanced" Required="true" Mask="false"/>
+  <Config Name="Home" Target="HOME" Default="/data" Description="Keep HiveRelay configuration with its persistent data." Type="Variable" Display="advanced" Required="true" Mask="false"/>
+  <Config Name="Incoming Request Mode" Target="HIVERELAY_ACCEPT_MODE" Default="review" Description="review, open, allowlist, or closed. Review is the safe home-server default." Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="Storage Cap" Target="HIVERELAY_MAX_STORAGE" Default="10GB" Description="Maximum storage made available to HiveRelay on first boot." Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="Log Level" Target="HIVERELAY_LOG_LEVEL" Default="info" Description="error, warn, info, or debug." Type="Variable" Display="advanced" Required="true" Mask="false"/>
+  <Config Name="Simple Dashboard" Target="HIVERELAY_UI_SIMPLE" Default="true" Description="Use the appliance-focused dashboard." Type="Variable" Display="advanced" Required="true" Mask="false"/>
+  <Config Name="Dashboard Authentication" Target="HIVERELAY_UI_EXPOSE_TOKEN" Default="true" Description="Embed the management token so dashboard controls can authenticate. Use only on a trusted LAN or behind an authenticating proxy." Type="Variable" Display="advanced" Required="true" Mask="false"/>
+  <Config Name="Holesail Transport" Target="HIVERELAY_HOLESAIL" Default="false" Description="Enable optional Holesail transport for additional NAT traversal." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+</Container>

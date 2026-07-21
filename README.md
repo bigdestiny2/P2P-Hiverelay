@@ -34,7 +34,7 @@ dashboard configures only generic capacity, admission, transport/privacy roles,
 updates, evidence, and relay identity. Application/service selection belongs to
 the published compatibility appliance and does not carry into the blind product.
 
-**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.24.3**
+**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v1.0.0-rc.1**
 
 The current published compatibility line has four lockstep packages:
 

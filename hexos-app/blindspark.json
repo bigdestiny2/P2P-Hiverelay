@@ -1,0 +1,47 @@
+{
+  "version": 4,
+  "script": {
+    "version": "1.0.1",
+    "changeLog": "Sync Blindspark for HiveRelay 1.0.0-rc.1"
+  },
+  "requirements": {
+    "locations": [],
+    "specifications": [
+      "2CORE",
+      "2048MB"
+    ],
+    "permissions": [],
+    "ports": [
+      30452
+    ]
+  },
+  "ensure_directories_exists": [],
+  "app_values": {
+    "blindspark": {
+      "api_key": "$RANDOM_STRING(48)",
+      "accept_mode": "review",
+      "max_storage_gb": 10,
+      "log_level": "info",
+      "simple_dashboard": true,
+      "expose_token": true,
+      "holesail": false,
+      "additional_envs": []
+    },
+    "network": {
+      "host_network": false,
+      "networks": [],
+      "web_port": {
+        "bind_mode": "published",
+        "port_number": 30452,
+        "host_ips": []
+      }
+    },
+    "resources": {
+      "limits": {
+        "cpus": 2,
+        "memory": "$MEMORY(5%, 2048)"
+      }
+    },
+    "labels": []
+  }
+}

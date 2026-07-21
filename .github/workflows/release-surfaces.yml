@@ -618,6 +618,10 @@ jobs:
             --consumer-scope release \
             --github-env "$GITHUB_ENV"
 
+      - name: Check community appliance packages
+        working-directory: hiverelay
+        run: npm run community-appliances:check
+
       - name: Smoke Umbrel package
         working-directory: hiverelay
         run: |
@@ -736,7 +740,13 @@ jobs:
             packages/services/package.json \
             fleet/channels.json \
             umbrel-app/docker-compose.yml umbrel-app/umbrel-app.yml \
-            startos/manifest.yaml startos/Makefile startos/README.md
+            startos/manifest.yaml startos/Makefile startos/README.md \
+            truenas-app/app.yaml truenas-app/ix_values.yaml truenas-app/README.md \
+            unraid-app/templates/blindspark.xml \
+            zimaos-app/Apps/Blindspark/docker-compose.yml \
+            runtipi-app/apps/blindspark/config.json \
+            runtipi-app/apps/blindspark/docker-compose.yml \
+            hexos-app/blindspark.json
           git commit -m "chore: sync release surfaces ${{ steps.rel.outputs.version }}"
           git push origin HEAD:main
           release_surfaces_sha="$(git rev-parse HEAD)"
