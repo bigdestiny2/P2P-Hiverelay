@@ -37,8 +37,9 @@ Usage:
 
 Runs npm pack --dry-run --json for each publishable HiveRelay workspace and
 fails if the tarball metadata is missing README/LICENSE files, resolves to the
-wrong package name/version, or includes obvious unsafe paths such as nested
-dependencies, tests, docs, env files, npm credentials, or key material.
+wrong package name/version, does not contain every local package export target,
+or includes obvious unsafe paths such as nested dependencies, tests, docs, env
+files, npm credentials, or key material.
 `
 
 if (isMain()) main()
@@ -115,6 +116,11 @@ export function inspectPack ({ workspace, manifest, pack }) {
     errors.push(`${workspace}: unsafe packed path ${issue.path} (${issue.reason})`)
   }
 
+  const missingExportTargets = findMissingExportTargets(manifest.exports, paths)
+  for (const issue of missingExportTargets) {
+    errors.push(`${workspace}: packed tarball is missing export target ${issue.target} for ${issue.subpath}`)
+  }
+
   if (Number.isFinite(pack.entryCount) && pack.entryCount !== paths.length) {
     warnings.push(`${workspace}: npm reported entryCount ${pack.entryCount} but listed ${paths.length} files`)
   }
@@ -130,10 +136,23 @@ export function inspectPack ({ workspace, manifest, pack }) {
     entryCount: Number.isFinite(pack.entryCount) ? pack.entryCount : paths.length,
     hasReadme: paths.includes('README.md'),
     hasLicense: paths.includes('LICENSE'),
+    missingExportTargets,
     unsafe,
     errors,
     warnings
   }
+}
+
+export function findMissingExportTargets (exportsField, paths) {
+  if (exportsField === undefined || exportsField === null) return []
+  const packed = paths.map(path => slash(path))
+  const targets = collectExportTargets(exportsField)
+  return targets.filter(({ target }) => {
+    if (!target.startsWith('./')) return false
+    const normalized = target.slice(2)
+    if (!normalized.includes('*')) return !packed.includes(normalized)
+    return !packed.some(path => exportPatternMatches(normalized, path))
+  })
 }
 
 export function parsePackJson (stdout) {
@@ -167,7 +186,7 @@ export function formatReport (result) {
 
   for (const row of result.workspaces) {
     const status = row.ok ? 'PASS' : 'FAIL'
-    lines.push(`${status} ${row.name || row.workspace}@${row.version || '(unknown)'}: workspace=${row.workspace}, entries=${row.entryCount}, size=${row.size}, unpacked=${row.unpackedSize}, README=${row.hasReadme}, LICENSE=${row.hasLicense}, unsafe=${row.unsafe?.length ? row.unsafe.map(issue => issue.path).join(',') : 'none'}`)
+    lines.push(`${status} ${row.name || row.workspace}@${row.version || '(unknown)'}: workspace=${row.workspace}, entries=${row.entryCount}, size=${row.size}, unpacked=${row.unpackedSize}, README=${row.hasReadme}, LICENSE=${row.hasLicense}, exports=${row.missingExportTargets?.length ? `missing:${row.missingExportTargets.map(issue => issue.target).join(',')}` : 'closed'}, unsafe=${row.unsafe?.length ? row.unsafe.map(issue => issue.path).join(',') : 'none'}`)
     for (const warning of row.warnings || []) lines.push(`WARN ${warning}`)
     for (const error of row.errors || []) lines.push(`FAIL ${error}`)
   }
@@ -252,6 +271,27 @@ function main () {
 
 function isMain () {
   return import.meta.url === `file://${process.argv[1]}`
+}
+
+function collectExportTargets (value, subpath = '.') {
+  if (typeof value === 'string') return [{ subpath, target: value }]
+  if (Array.isArray(value)) return value.flatMap(item => collectExportTargets(item, subpath))
+  if (!value || typeof value !== 'object') return []
+
+  const rows = []
+  for (const [key, nested] of Object.entries(value)) {
+    const nextSubpath = key === '.' || key.startsWith('./') ? key : subpath
+    rows.push(...collectExportTargets(nested, nextSubpath))
+  }
+  return rows
+}
+
+function exportPatternMatches (pattern, file) {
+  const escaped = pattern
+    .split('*')
+    .map(part => part.replace(/[|\\{}()[\]^$+?.]/g, '\\$&'))
+    .join('.*')
+  return new RegExp(`^${escaped}$`).test(file)
 }
 
 function slash (value) {

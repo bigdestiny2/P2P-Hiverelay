@@ -5,6 +5,7 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import {
   checkNpmPackagePack,
+  findMissingExportTargets,
   findUnsafePackPaths,
   inspectPack,
   parsePackJson
@@ -101,6 +102,47 @@ test('npm package pack checker rejects name and version drift', (t) => {
   t.ok(row.errors.some(error => error.includes('packed package version')))
 })
 
+test('npm package pack checker rejects an export omitted from the packed tarball', async (t) => {
+  const root = fixtureRoot()
+  const out = path.join(root, 'dist')
+  t.teardown(() => fs.rmSync(root, { recursive: true, force: true }))
+  fs.mkdirSync(out)
+  fs.writeFileSync(path.join(root, 'README.md'), '# fixture\n')
+  fs.writeFileSync(path.join(root, 'LICENSE'), 'fixture\n')
+  fs.writeFileSync(path.join(root, 'index.js'), 'export const present = true\n')
+  fs.writeFileSync(path.join(root, 'exported.js'), 'export const shouldShip = true\n')
+
+  const manifest = {
+    name: 'hiverelay-export-closure-fixture',
+    version: '1.0.0',
+    type: 'module',
+    exports: {
+      '.': './index.js',
+      './exported.js': './exported.js'
+    },
+    files: ['README.md', 'LICENSE', 'index.js']
+  }
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify(manifest, null, 2) + '\n')
+
+  const pack = parsePackJson((await execFileResult('npm', [
+    'pack', '--json', '--pack-destination', out
+  ], {
+    cwd: root,
+    env: {
+      ...process.env,
+      npm_config_cache: path.join(root, '.npm-cache')
+    }
+  })).stdout)
+  const row = inspectPack({ workspace: '.', manifest, pack })
+
+  t.absent(row.ok)
+  t.alike(row.missingExportTargets, [{
+    subpath: './exported.js',
+    target: './exported.js'
+  }])
+  t.ok(row.errors.some(error => error.includes('packed tarball is missing export target ./exported.js')))
+})
+
 test('npm package pack checker parses npm JSON and rejects malformed output', (t) => {
   t.is(parsePackJson('[{"name":"pkg","files":[]}]').name, 'pkg')
   t.exception(() => parsePackJson('not-json'))
@@ -123,6 +165,27 @@ test('npm package pack checker classifies unsafe file paths', (t) => {
     '.npmrc',
     'keys/relay.key'
   ])
+})
+
+test('npm package pack checker closes exact, conditional, array, and wildcard exports', (t) => {
+  const missing = findMissingExportTargets({
+    '.': './index.js',
+    './conditional': {
+      import: './esm.js',
+      require: './cjs.cjs'
+    },
+    './fallback': ['./preferred.js', './fallback.js'],
+    './features/*': './features/*.js'
+  }, [
+    'index.js',
+    'esm.js',
+    'cjs.cjs',
+    'preferred.js',
+    'fallback.js',
+    'features/one.js'
+  ])
+
+  t.alike(missing, [])
 })
 
 test('npm package pack checker CLI emits JSON evidence', async (t) => {
@@ -163,6 +226,15 @@ function runCli (argv) {
         stdout,
         stderr
       })
+    })
+  })
+}
+
+function execFileResult (file, argv, opts) {
+  return new Promise((resolve, reject) => {
+    execFile(file, argv, opts, (err, stdout, stderr) => {
+      if (err) return reject(Object.assign(err, { stdout, stderr }))
+      resolve({ stdout, stderr })
     })
   })
 }

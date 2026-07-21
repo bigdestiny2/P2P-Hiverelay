@@ -44,6 +44,7 @@
     "custody.js",
     "notify.js",
     "verify-block.js",
+    "privacy-policy.js",
     "README.md",
     "LICENSE"
   ],
