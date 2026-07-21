@@ -82,20 +82,21 @@ RUN npm ci --omit=dev --workspaces --include-workspace-root --no-audit --no-fund
 # ─── Stage 2: runtime ─────────────────────────────────────────────────
 FROM node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf AS runtime
 
-ARG SOURCE_COMMIT
-
-LABEL org.opencontainers.image.title="p2p-hiverelay"
-LABEL org.opencontainers.image.description="Always-on P2P relay infrastructure for the Holepunch/Pear ecosystem"
-LABEL org.opencontainers.image.source="https://github.com/bigdestiny2/P2P-Hiverelay"
-LABEL org.opencontainers.image.licenses="Apache-2.0"
-LABEL org.opencontainers.image.revision="$SOURCE_COMMIT"
-
 # tini for proper PID 1 signal handling (graceful shutdown).
 # wget for HEALTHCHECK without bringing curl/openssl bloat.
 # ca-certificates so HTTPS to public registries / payment providers works.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends tini wget ca-certificates gosu && \
     rm -rf /var/lib/apt/lists/*
+
+# Keep source identity after the expensive OS layer so a new sealed commit does
+# not invalidate dependency caches. The release workflow supplies the exact SHA.
+ARG SOURCE_COMMIT
+LABEL org.opencontainers.image.title="p2p-hiverelay"
+LABEL org.opencontainers.image.description="Always-on P2P relay infrastructure for the Holepunch/Pear ecosystem"
+LABEL org.opencontainers.image.source="https://github.com/bigdestiny2/P2P-Hiverelay"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.revision="$SOURCE_COMMIT"
 
 WORKDIR /app
 
