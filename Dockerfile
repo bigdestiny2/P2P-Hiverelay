@@ -86,8 +86,11 @@ FROM node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd
 # tini for proper PID 1 signal handling (graceful shutdown).
 # wget for HEALTHCHECK without bringing curl/openssl bloat.
 # ca-certificates so HTTPS to public registries / payment providers works.
+# libatomic1 is required by the shipped rocksdb-native Linux prebuilds on ARM64
+# (and is harmless on AMD64); without it Node reports the present addon as
+# ADDON_NOT_FOUND because its dynamic linker dependency cannot be resolved.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends tini wget ca-certificates gosu && \
+    apt-get install -y --no-install-recommends tini wget ca-certificates gosu libatomic1 && \
     rm -rf /var/lib/apt/lists/*
 
 # Keep source identity after the expensive OS layer so a new sealed commit does
