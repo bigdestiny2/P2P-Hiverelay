@@ -66,6 +66,7 @@ COPY packages/blind-protocol/package.json packages/blind-protocol/
 COPY packages/blind-ipc/package.json packages/blind-ipc/
 COPY packages/blind-client/package.json packages/blind-client/
 COPY packages/blind-peercred/package.json packages/blind-peercred/
+COPY packages/blind-peercred/binding.gyp packages/blind-peercred/peercred.cc packages/blind-peercred/
 COPY packages/blind-edge/package.json packages/blind-edge/
 COPY packages/blind-daemon/package.json packages/blind-daemon/
 COPY packages/core/package.json packages/core/
