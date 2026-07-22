@@ -31,6 +31,7 @@ export {
 export * from './manifest-store.js'
 export * from './operation-catalog.js'
 export * from './private-ipc-replay-journal-v2.js'
+export * from './production-entrypoint.js'
 export * from './production-runtime.js'
 export * from './profile1-store-genesis.js'
 export * from './readiness-coordinator.js'

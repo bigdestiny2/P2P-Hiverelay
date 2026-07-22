@@ -3,6 +3,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadDaemonBootstrapConfig } from './bootstrap-config.js'
 import {
+  loadProductionAdmissionAdapter,
+  loadProductionEntrypointConfig
+} from './production-entrypoint.js'
+import {
   assertProductionRuntimeReleaseReady,
   assembleProductionBlindDaemon,
   loadProductionRuntimeConfig
@@ -17,10 +21,24 @@ export async function runBlindDaemonCli (options = {}) {
   const environment = options.environment || process.env
   const bootstrap = loadDaemonBootstrapConfig(environment, options.identity || process)
   const releaseGate = options.releaseGate || assertProductionRuntimeReleaseReady
+  const injectedAdmissionAdapter = typeof options.resolveAdmissionAdapter === 'function'
+  const entrypointConfig = loadProductionEntrypointConfig(environment, {
+    allowInjectedAdmissionAdapter: injectedAdmissionAdapter
+  })
   const runtimeConfig = loadProductionRuntimeConfig(environment, bootstrap.endpointIds)
-  const enableCellRuntime = options.enableCellRuntime === true
-  const enableInboxRuntime = options.enableInboxRuntime === true
-  const enableCoreRuntime = options.enableCoreRuntime === true
+  const enableCellRuntime = entrypointConfig.enableCellRuntime
+  const enableInboxRuntime = entrypointConfig.enableInboxRuntime
+  const enableCoreRuntime = entrypointConfig.enableCoreRuntime
+  let productionAdmissionPromise = null
+  const resolveAdmissionAdapter = options.resolveAdmissionAdapter || (enableCellRuntime
+    ? async input => {
+      productionAdmissionPromise ||= loadProductionAdmissionAdapter(entrypointConfig, bootstrap, {
+        identity: options.identity || process
+      })
+      const productionAdmission = await productionAdmissionPromise
+      return productionAdmission.resolveAdmissionAdapter(input)
+    }
+    : undefined)
   let runtime
   try {
     runtime = await assembleProductionBlindDaemon({
@@ -30,7 +48,7 @@ export async function runBlindDaemonCli (options = {}) {
       enableCellRuntime,
       enableInboxRuntime,
       enableCoreRuntime,
-      resolveAdmissionAdapter: options.resolveAdmissionAdapter,
+      resolveAdmissionAdapter,
       testOnlyPrivateIpcReplayJournalOptions: options.testOnlyPrivateIpcReplayJournalOptions,
       onError: error => {
         if (typeof options.onError === 'function') options.onError(error)

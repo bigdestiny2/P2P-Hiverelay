@@ -130,12 +130,35 @@ test('blind compose freezes two sockets, isolation, identities and a bounded ini
   t.ok(daemon.includes('network_mode: none'))
   t.absent(daemon.includes('ports:'))
   t.absent(daemon.includes('blind-public'))
+  for (const name of [
+    'HIVERELAY_BLIND_RUNTIME_PROFILE',
+    'HIVERELAY_BLIND_ADMISSION_ADAPTER_MODULE',
+    'HIVERELAY_BLIND_ADMISSION_ADAPTER_SHA256',
+    'HIVERELAY_BLIND_DESCRIPTOR_FILES',
+    'HIVERELAY_BLIND_ADMISSION_PARAMETER_FILES',
+    'HIVERELAY_BLIND_RELAY_SECRET_KEY_FILE',
+    'HIVERELAY_BLIND_STORE_ROOT',
+    'HIVERELAY_BLIND_PRIVATE_IPC_REPLAY_ROOT',
+    'HIVERELAY_BLIND_INBOX_STORE_ROOT',
+    'HIVERELAY_BLIND_INBOX_CURSOR_KEY_FILE',
+    'HIVERELAY_BLIND_CORE_STORE_ROOT',
+    'HIVERELAY_BLIND_STORE_MANIFEST_KEY_FILE',
+    'HIVERELAY_BLIND_STORE_READER_MODE',
+    'HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE',
+    'HIVERELAY_BLIND_MAP_GENERATION',
+    'HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_SEQUENCE',
+    'HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_HASH',
+    'HIVERELAY_BLIND_ENDPOINT_SUPPORT_BITS'
+  ]) {
+    t.ok(daemon.includes(name + ': "' + '$' + '{' + name + ':-}"'))
+  }
   t.ok(daemon.includes('HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH: "' + '$' + '{HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH:-}' + '"'))
   t.ok(daemon.includes('HIVERELAY_BLIND_ENDPOINT_IDS: "' + '$' + '{HIVERELAY_BLIND_ENDPOINT_IDS:-}' + '"'))
   t.ok(edge.includes('networks:\n      - blind-public'))
   t.ok(edge.includes('ports:'))
   t.ok(edge.includes('blind-runtime:/run/hiverelay-blind:ro'))
   t.ok(edge.includes('HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH: "' + '$' + '{HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH:-}' + '"'))
+  t.ok(edge.includes('HIVERELAY_BLIND_STREAM_TRANSPORT_PROFILE_HASH: "' + '$' + '{HIVERELAY_BLIND_STREAM_TRANSPORT_PROFILE_HASH:-}' + '"'))
   t.ok(edge.includes('HIVERELAY_BLIND_ENDPOINT_ID: "' + '$' + '{HIVERELAY_BLIND_ENDPOINT_ID:-}' + '"'))
   t.absent(edge.includes('HIVERELAY_BLIND_ENDPOINT_ID: "1"'))
 })

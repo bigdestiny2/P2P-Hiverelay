@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import fs from 'node:fs/promises'
 import net from 'node:net'
@@ -237,6 +238,7 @@ async function runtimeFixture (options = {}) {
   const edgeUid = uid === 0xffffffff ? uid - 1 : uid + 1
   const environment = {
     ...process.env,
+    HIVERELAY_BLIND_RUNTIME_PROFILE: options.cellRuntime ? 'CELL_V1' : 'DESCRIBE_ONLY_V1',
     HIVERELAY_BLIND_UNARY_SOCKET: path.join(directory, 'ipc', 'unary.sock'),
     HIVERELAY_BLIND_STREAM_SOCKET: path.join(directory, 'ipc', 'stream.sock'),
     HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH: '81'.repeat(32),
@@ -976,13 +978,29 @@ test('packaged CLI can explicitly assemble the captured CELL runtime without wea
     if (runtime) await runtime.close().catch(() => {})
     await removeBlindBoundaryScratch(fixture.directory)
   })
-  const adapter = splitAdmissionAdapter()
+  const admissionModuleSource = `
+const adapter = Object.freeze({
+  async prepare () { throw new Error('not exercised during entrypoint assembly') },
+  async preparePreflight () { throw new Error('not exercised during entrypoint assembly') },
+  async confirmAfterEof () { throw new Error('not exercised during entrypoint assembly') }
+})
+export function createAdmissionAdapterResolver (context) {
+  if (context.runtimeProfile !== 'CELL_V1' || context.launchTopologyHash.toString('hex') !== '${'81'.repeat(32)}' ||
+      context.endpointIds.length !== 1 || context.endpointIds[0] !== 1) {
+    throw new Error('entrypoint did not bind the adapter to its launch configuration')
+  }
+  return async () => adapter
+}
+`
+  const admissionModulePath = path.join(fixture.directory, 'admission-adapter.mjs')
+  await privateFile(admissionModulePath, Buffer.from(admissionModuleSource))
+  fixture.environment.HIVERELAY_BLIND_ADMISSION_ADAPTER_MODULE = admissionModulePath
+  fixture.environment.HIVERELAY_BLIND_ADMISSION_ADAPTER_SHA256 = createHash('sha256')
+    .update(admissionModuleSource).digest('hex')
   let replayOffset = -15_000n
   runtime = await runBlindDaemonCli({
     environment: fixture.environment,
     releaseGate: async () => {},
-    enableCellRuntime: true,
-    resolveAdmissionAdapter: async () => adapter,
     testOnlyPrivateIpcReplayJournalOptions: {
       monotonicMillis: () => (process.hrtime.bigint() / 1_000_000n) + replayOffset
     },
@@ -998,7 +1016,7 @@ test('packaged CLI can explicitly assemble the captured CELL runtime without wea
   runtime = null
 })
 
-test('direct production bin stops at the draft route-scope authority blocker before runtime assembly', async t => {
+test('direct production bin preserves the runtime completeness release blocker', async t => {
   const fixture = await runtimeFixture()
   t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
   const cli = path.resolve('packages/blind-daemon/cli.js')
@@ -1010,8 +1028,8 @@ test('direct production bin stops at the draft route-scope authority blocker bef
   const output = childOutput(child)
   const [code] = await once(child, 'exit')
   t.is(code, 1)
-  t.ok(output.stderr().includes('BLIND_ABI_INCOMPLETE'))
-  t.absent(output.stderr().includes('BLIND_RUNTIME_INCOMPLETE'))
+  t.ok(output.stderr().includes('BLIND_RUNTIME_INCOMPLETE'))
+  t.absent(output.stderr().includes('BLIND_ABI_INCOMPLETE'))
   t.absent(output.stderr().includes('BLIND_PRIVATE_IPC_INCOMPLETE'))
   t.absent(output.stderr().includes('BLIND_DISPATCHER_MISSING'))
   t.absent(output.stderr().includes('BLIND_READINESS_SNAPSHOT_MISSING'))
