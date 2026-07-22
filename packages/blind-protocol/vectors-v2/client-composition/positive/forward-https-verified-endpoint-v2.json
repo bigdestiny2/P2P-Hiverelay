@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "releaseProfileId": 2,
+  "routeKind": 7,
+  "wireV2AbiHash": "cc1abb0e24bd4c75e0cb99b824e114cf50ad91270362f39d8594a826e29d5053",
+  "verifiedEndpointHandleHash": "1111111111111111111111111111111111111111111111111111111111111111",
+  "targetCatalogEntryId": "2222222222222222222222222222222222222222222222222222222222222222",
+  "targetRelayPublicKey": "3333333333333333333333333333333333333333333333333333333333333333",
+  "targetDescriptorSequence": "22",
+  "targetDescriptorHash": "4444444444444444444444444444444444444444444444444444444444444444",
+  "signedDescriptorHash": "5555555555555555555555555555555555555555555555555555555555555555",
+  "signedHealthHash": "6666666666666666666666666666666666666666666666666666666666666666",
+  "descriptorFresh": true,
+  "signedHealthFresh": true,
+  "credentialFreeHttps": true,
+  "cookies": false,
+  "authorization": false,
+  "referrer": false,
+  "redirect": false,
+  "exactRequestBytes": 65536,
+  "exactResultBytes": 65536,
+  "continuityBackend": "INDEXEDDB_PERSISTENT"
+}

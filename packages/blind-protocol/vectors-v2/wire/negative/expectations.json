@@ -1,0 +1,4 @@
+{
+  "data-request-truncated.bin": "reject-exact-size",
+  "data-request-changed-replay.bin": "reject-terminal-changed-same-sequence"
+}

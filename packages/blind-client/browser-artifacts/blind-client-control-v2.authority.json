@@ -1,0 +1,30 @@
+{
+  "profile": "blind-client-browser-artifact-v2",
+  "authorityVersion": 2,
+  "artifactPath": "browser-artifacts/blind-client-control-v2.mjs",
+  "manifestPath": "browser-artifacts/blind-client-control-v2.manifest.cenc",
+  "baseBrowserV1ArtifactHash": "51bf061fb2d86cee91eb905a021e77774a37e27f0bba3ccb6d4e7688dcbc41a2",
+  "baseBrowserV1ManifestHash": "efd6da128b0a4d8c25db948763576babd44da9b94223eb3a32a235ddd966f580",
+  "wireV2AbiHash": "cc1abb0e24bd4c75e0cb99b824e114cf50ad91270362f39d8594a826e29d5053",
+  "clientCompositionV2FormatHash": "e289e6a1658db9f63c79ae13b50a055e16eccc997ef4c752bf1c94090b91dcc2",
+  "artifactHash": "217ac636ded5bc6358a7a33b31aab7361b65feb117cf38dce68f6041bf773122",
+  "manifestHash": "a2f70dfae9cd12ff0c82816bffa7638e59b6ae58f5b9b028f1e1661fdf19b94d",
+  "sourceClosureHash": "2ea628577cdcf2c6af754ab0699e2cdde4c6e0d683ebe11ebd07d0beb280aef0",
+  "exactRequestBytes": 65536,
+  "exactResultBytes": 65536,
+  "credentialMode": "omit",
+  "cacheMode": "no-store",
+  "redirectMode": "error",
+  "referrerPolicy": "no-referrer",
+  "forwardDescriptorOperationBits": 0,
+  "forwardAdvertisedOperationBits": 0,
+  "forwardReadinessOperationBits": 0,
+  "runtimeReady": false,
+  "realBrowserEvidenceAccepted": false,
+  "compatibilityFloor": {
+    "blind-client-control-v1.mjs": "10425bb00fb8045e63ce2869b5e6bf88af39dc0723963203a6b021e0fd28090a",
+    "blind-client-control-v1.manifest.cenc": "76a7ea97db644971203c2f94c476614a95b0320980a58504b927f04b152aadf1",
+    "blind-client-control-v1.chromium-evidence.json": "1382b24b21cae661392a199b0470a22768b85f62215db6fb943ed17b66859c2e",
+    "blind-client-control-v1.cross-host-evidence.json": "3cfd3c12a7664899a0901eff7b613f85da6fd039b930f74ade5bc820d215dcd2"
+  }
+}

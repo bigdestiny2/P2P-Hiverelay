@@ -1,0 +1,90 @@
+{
+  "authorityVersion": 3,
+  "authorizesRelease": false,
+  "contractReady": true,
+  "runtimeReleaseReady": false,
+  "importedWireV2AbiHash": "cc1abb0e24bd4c75e0cb99b824e114cf50ad91270362f39d8594a826e29d5053",
+  "basePrivateIpcV2FormatHash": "956052fa22fa4db5f0fbe83c14d8ea38309f83fa44feccd9acc53e31eadf7a41",
+  "privateIpcFormatHash": "efb4fd8eae1a2338722deced991fdc907b465d7580acfe2bde8ad692dc1c8200",
+  "privateIpcRegistrySha256": "c3e109c36d4252399a1dab655cbc94291963fedfff9826630c82c7c33492b639",
+  "privateIpcVectorSetHash": "ebb78fa92cd83f134ef823dbb9465136d5e157dcda2f73126357d399fbf6e4b5",
+  "privateIpcVectorManifestSha256": "13ab3659deb5442189f52fb326dfb6b72e4050c0ce2de1fca39de94a20c7489f",
+  "baseSchemaCount": 12,
+  "additionalSchemas": [
+    {
+      "schemaId": 13,
+      "schemaName": "LocalForwardHttpsExporterBindingV3",
+      "fields": [
+        "magic:fixed4=LFE3",
+        "version:u8=3",
+        "authorityKind:u8=TLS_EXPORTER_BINDING_HASH_BY_PEERCRED_EDGE",
+        "releaseProfileId:u8=2",
+        "routeKind:u8=7",
+        "edgeProcessNonce:fixed32[nonzero]",
+        "localChannelNonce:fixed32[nonzero]",
+        "tlsExporterBindingHash:fixed32[nonzero;never-raw-exporter]",
+        "sourceRelayPublicKey:fixed32[nonzero]",
+        "sourceDescriptorSequence:u64be",
+        "sourceDescriptorHash:fixed32[nonzero]",
+        "targetCatalogEntryId:fixed32[nonzero]",
+        "targetRelayPublicKey:fixed32[nonzero;different-source]",
+        "targetDescriptorSequence:u64be",
+        "targetDescriptorHash:fixed32[nonzero]",
+        "routeId:fixed16[nonzero]",
+        "circuitNonce:fixed32[nonzero]",
+        "issuedAtEpoch:u32be",
+        "expiresAtEpoch:u32be=issued+600",
+        "no-url-host-ip-dial-fields",
+        "exactBytes:336"
+      ]
+    },
+    {
+      "schemaId": 14,
+      "schemaName": "LocalForwardHttpsParentCapabilityV3",
+      "fields": [
+        "magic:fixed4=LFC3",
+        "version:u8=3",
+        "sessionId:fixed32[nonzero]",
+        "parentCapability:BlindForwardHttpsParentCapabilityV1[exact390]",
+        "sessionId=BLAKE2b256(aux-domain||parentCapability)",
+        "exactBytes:427"
+      ]
+    },
+    {
+      "schemaId": 15,
+      "schemaName": "LocalForwardHttpsTurnV3",
+      "fields": [
+        "magic:fixed4=LFT3",
+        "version:u8=3",
+        "direction:u8[REQUEST=1|RESULT=2]",
+        "flags:u8=0",
+        "reserved:u8=0",
+        "sessionId:fixed32[nonzero]",
+        "sequence:u64be",
+        "body:closed(direction){REQUEST:BlindForwardHttpsTurnRequestV1|RESULT:BlindForwardHttpsTurnResultV1}[exact65536]",
+        "sessionId+sequence=body",
+        "exactBytes:65584"
+      ]
+    }
+  ],
+  "schemaCount": 15,
+  "vectorCount": 10,
+  "forwardDescriptorOperationBits": 0,
+  "forwardAdvertisedOperationBits": 0,
+  "forwardReadinessOperationBits": 0,
+  "compatibilityFloor": {
+    "hiverelay-blind-private-ipc-v1.cenc": "116c78ad151543ff9973d4cb92089ddfbc2e3f861b1f502b9aa0c85a5a52e4f6",
+    "hiverelay-blind-private-ipc-v1.draft.cenc": "116c78ad151543ff9973d4cb92089ddfbc2e3f861b1f502b9aa0c85a5a52e4f6",
+    "vector-manifest-v1.cenc": "d9949afeeb9fc06db9864d388a6917ca99bbec244395932a707cd8ab9736e29e",
+    "vectors/draft/vector-manifest-v1.draft.cenc": "d9949afeeb9fc06db9864d388a6917ca99bbec244395932a707cd8ab9736e29e",
+    "hiverelay-blind-private-ipc-authority-v1.json": "cba3f4be2f616a66730a90ce92ce78a963cf5389d18e41b9cdfe4ae1eeb5a59d",
+    "hiverelay-blind-private-ipc-v2.cenc": "3475a93f8d6da4d5c516ec0017f4eb8337a2397f89dbb0000ea004f225461344",
+    "vector-manifest-v2.cenc": "0abb90824d9e5388d538ae6a49cee67437056987601717bb9bdb003218deccff",
+    "hiverelay-blind-private-ipc-authority-v2.json": "9e2abeed720afcea9165775bca0dff165901a1eab97251a7677d66e6292143a7"
+  },
+  "releaseBlockers": [
+    "runtime peer-credential enforcement and TLS exporter derivation evidence remain external",
+    "capability signing, atomic spend accounting, retry recovery and terminal replay evidence remain external",
+    "FORWARD descriptor, advertised and readiness bits remain zero pending independent acceptance"
+  ]
+}

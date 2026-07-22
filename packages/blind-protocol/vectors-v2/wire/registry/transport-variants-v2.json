@@ -1,0 +1,46 @@
+[
+  {
+    "family": "FORWARD",
+    "operation": "OPEN",
+    "routeKind": 7,
+    "releaseProfileId": 2,
+    "requestSchemaId": 74,
+    "resultSchemaId": 75,
+    "requestBytes": 65536,
+    "resultBytes": 65536,
+    "turnKind": 1
+  },
+  {
+    "family": "FORWARD",
+    "operation": "DATA",
+    "routeKind": 7,
+    "releaseProfileId": 2,
+    "requestSchemaId": 74,
+    "resultSchemaId": 75,
+    "requestBytes": 65536,
+    "resultBytes": 65536,
+    "turnKind": 2
+  },
+  {
+    "family": "FORWARD",
+    "operation": "WINDOW",
+    "routeKind": 7,
+    "releaseProfileId": 2,
+    "requestSchemaId": 74,
+    "resultSchemaId": 75,
+    "requestBytes": 65536,
+    "resultBytes": 65536,
+    "turnKind": 3
+  },
+  {
+    "family": "FORWARD",
+    "operation": "CLOSE",
+    "routeKind": 7,
+    "releaseProfileId": 2,
+    "requestSchemaId": 74,
+    "resultSchemaId": 75,
+    "requestBytes": 65536,
+    "resultBytes": 65536,
+    "turnKind": 4
+  }
+]

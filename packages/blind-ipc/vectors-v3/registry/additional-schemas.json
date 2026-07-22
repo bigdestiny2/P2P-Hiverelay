@@ -1,0 +1,57 @@
+[
+  {
+    "schemaId": 13,
+    "schemaName": "LocalForwardHttpsExporterBindingV3",
+    "fields": [
+      "magic:fixed4=LFE3",
+      "version:u8=3",
+      "authorityKind:u8=TLS_EXPORTER_BINDING_HASH_BY_PEERCRED_EDGE",
+      "releaseProfileId:u8=2",
+      "routeKind:u8=7",
+      "edgeProcessNonce:fixed32[nonzero]",
+      "localChannelNonce:fixed32[nonzero]",
+      "tlsExporterBindingHash:fixed32[nonzero;never-raw-exporter]",
+      "sourceRelayPublicKey:fixed32[nonzero]",
+      "sourceDescriptorSequence:u64be",
+      "sourceDescriptorHash:fixed32[nonzero]",
+      "targetCatalogEntryId:fixed32[nonzero]",
+      "targetRelayPublicKey:fixed32[nonzero;different-source]",
+      "targetDescriptorSequence:u64be",
+      "targetDescriptorHash:fixed32[nonzero]",
+      "routeId:fixed16[nonzero]",
+      "circuitNonce:fixed32[nonzero]",
+      "issuedAtEpoch:u32be",
+      "expiresAtEpoch:u32be=issued+600",
+      "no-url-host-ip-dial-fields",
+      "exactBytes:336"
+    ]
+  },
+  {
+    "schemaId": 14,
+    "schemaName": "LocalForwardHttpsParentCapabilityV3",
+    "fields": [
+      "magic:fixed4=LFC3",
+      "version:u8=3",
+      "sessionId:fixed32[nonzero]",
+      "parentCapability:BlindForwardHttpsParentCapabilityV1[exact390]",
+      "sessionId=BLAKE2b256(aux-domain||parentCapability)",
+      "exactBytes:427"
+    ]
+  },
+  {
+    "schemaId": 15,
+    "schemaName": "LocalForwardHttpsTurnV3",
+    "fields": [
+      "magic:fixed4=LFT3",
+      "version:u8=3",
+      "direction:u8[REQUEST=1|RESULT=2]",
+      "flags:u8=0",
+      "reserved:u8=0",
+      "sessionId:fixed32[nonzero]",
+      "sequence:u64be",
+      "body:closed(direction){REQUEST:BlindForwardHttpsTurnRequestV1|RESULT:BlindForwardHttpsTurnResultV1}[exact65536]",
+      "sessionId+sequence=body",
+      "exactBytes:65584"
+    ]
+  }
+]

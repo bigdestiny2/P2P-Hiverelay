@@ -1,0 +1,42 @@
+[
+  {
+    "path": "packages/blind-client/browser-artifact-v2.js",
+    "bytes": 4520,
+    "sha256": "f5d91cd97c2623906c9db9aef3151a47ba83b9382854bea69210dab7b3decb28"
+  },
+  {
+    "path": "packages/blind-client/browser-artifacts/blind-client-control-v1.manifest.cenc",
+    "bytes": 453,
+    "sha256": "76a7ea97db644971203c2f94c476614a95b0320980a58504b927f04b152aadf1"
+  },
+  {
+    "path": "packages/blind-client/browser-artifacts/blind-client-control-v1.mjs",
+    "bytes": 253673,
+    "sha256": "10425bb00fb8045e63ce2869b5e6bf88af39dc0723963203a6b021e0fd28090a"
+  },
+  {
+    "path": "packages/blind-client/generate-browser-artifact-v2.mjs",
+    "bytes": 8308,
+    "sha256": "74d1d15ba41e17add53d666fd1e50f1ab84b665d29b690817bbc9bb1a4ce3a81"
+  },
+  {
+    "path": "packages/blind-protocol/hiverelay-blind-abi-v2.cenc",
+    "bytes": 1909,
+    "sha256": "ff86d47c480a39156e2ab0268e3da786dbac3ff8528f98f758671ed1bf2a297c"
+  },
+  {
+    "path": "packages/blind-protocol/hiverelay-blind-client-composition-authority-v2.json",
+    "bytes": 3496,
+    "sha256": "76ec2bb659ac9efd345779256a116b3f8f051c81f47df4bff57f0b8d450479d0"
+  },
+  {
+    "path": "packages/blind-protocol/hiverelay-blind-client-composition-format-v2.cenc",
+    "bytes": 1284,
+    "sha256": "fe183dbaf484007b27bb9c2616cc6e66071a70d65f3cfc23779aa24193cd251d"
+  },
+  {
+    "path": "packages/blind-protocol/hiverelay-blind-wire-authority-v2.json",
+    "bytes": 5275,
+    "sha256": "165316d7d551afabfe6943981d80cc8ba9cbe0b2db06336a3b95eaeb17783e86"
+  }
+]

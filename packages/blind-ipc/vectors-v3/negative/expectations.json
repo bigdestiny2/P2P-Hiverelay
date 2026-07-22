@@ -1,0 +1,4 @@
+{
+  "request-turn-sequence-mismatch.bin": "reject-local-header-does-not-match-wire-body",
+  "raw-tls-exporter-field": "unrepresentable-and-rejected-by-source-encoder"
+}

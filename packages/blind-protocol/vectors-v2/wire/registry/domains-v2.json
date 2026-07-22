@@ -1,0 +1,20 @@
+[
+  {
+    "domainId": 17,
+    "name": "FORWARD_HTTPS_TURN",
+    "exactAsciiBytes": "hiverelay.blind.forward-https-turn-request.v1",
+    "purpose": "REQUEST_COMMITMENT"
+  },
+  {
+    "domainId": 112,
+    "name": "FORWARD_HTTPS_TURN_RESULT",
+    "exactAsciiBytes": "hiverelay.blind.forward-https-turn-result.v1",
+    "purpose": "RESULT_SIGNATURE"
+  },
+  {
+    "domainId": 214,
+    "name": "FORWARD_HTTPS_PARENT_CAPABILITY",
+    "exactAsciiBytes": "hiverelay.blind.forward-https-parent-capability.v1",
+    "purpose": "AUXILIARY_SIGNATURE"
+  }
+]

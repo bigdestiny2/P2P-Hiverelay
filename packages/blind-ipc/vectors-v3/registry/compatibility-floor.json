@@ -1,0 +1,10 @@
+{
+  "hiverelay-blind-private-ipc-v1.cenc": "116c78ad151543ff9973d4cb92089ddfbc2e3f861b1f502b9aa0c85a5a52e4f6",
+  "hiverelay-blind-private-ipc-v1.draft.cenc": "116c78ad151543ff9973d4cb92089ddfbc2e3f861b1f502b9aa0c85a5a52e4f6",
+  "vector-manifest-v1.cenc": "d9949afeeb9fc06db9864d388a6917ca99bbec244395932a707cd8ab9736e29e",
+  "vectors/draft/vector-manifest-v1.draft.cenc": "d9949afeeb9fc06db9864d388a6917ca99bbec244395932a707cd8ab9736e29e",
+  "hiverelay-blind-private-ipc-authority-v1.json": "cba3f4be2f616a66730a90ce92ce78a963cf5389d18e41b9cdfe4ae1eeb5a59d",
+  "hiverelay-blind-private-ipc-v2.cenc": "3475a93f8d6da4d5c516ec0017f4eb8337a2397f89dbb0000ea004f225461344",
+  "vector-manifest-v2.cenc": "0abb90824d9e5388d538ae6a49cee67437056987601717bb9bdb003218deccff",
+  "hiverelay-blind-private-ipc-authority-v2.json": "9e2abeed720afcea9165775bca0dff165901a1eab97251a7677d66e6292143a7"
+}

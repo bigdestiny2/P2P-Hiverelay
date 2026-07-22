@@ -76,6 +76,9 @@ export function assertPrivateIpcReady () {
   throw error
 }
 
+export * from './private-ipc-v3-contract.js'
+export * from './private-ipc-v3-status.js'
+
 function fail (message) {
   const error = new Error(message)
   error.code = 'BAD_LOCAL_DISPATCH'
