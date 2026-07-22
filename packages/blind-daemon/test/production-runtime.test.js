@@ -190,7 +190,7 @@ async function runtimeFixture (options = {}) {
     import.meta.url
   ))
   descriptor.durability.storeFormatMajor = 1
-  descriptor.durability.storeFormatMinor = 1
+  descriptor.durability.storeFormatMinor = 2
   descriptor.durability.storeFormatHash = options.storeFormatHash == null
     ? hashStoreFormat(authorityBytes)
     : b4a.from(options.storeFormatHash)
@@ -473,6 +473,47 @@ test('production assembler derives signed readiness and exposes only its real su
   t.ok(runtime.status().storage.blockers.length > 0)
   t.ok(runtime.status().exclusions.includes('CELL_PUBLIC_EXECUTION_UNASSEMBLED'))
   await runtime.close()
+})
+
+test('production startup enforces authenticated D7 reader floor and marker-loss recovery', async t => {
+  const fixture = await runtimeFixture()
+  t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
+  const environment = { ...fixture.environment }
+  delete environment.HIVERELAY_BLIND_PRIVATE_IPC_REPLAY_ROOT
+  const bootstrap = loadDaemonBootstrapConfig(environment)
+  const first = await assembleProductionBlindDaemon({
+    bootstrap,
+    runtimeConfig: loadProductionRuntimeConfig(environment, bootstrap.endpointIds),
+    releaseGate: async () => {}
+  })
+  await first.close()
+
+  await t.exception.all(() => assembleProductionBlindDaemon({
+    bootstrap,
+    runtimeConfig: loadProductionRuntimeConfig({
+      ...environment,
+      HIVERELAY_BLIND_STORE_READER_MODE: 'legacy-only'
+    }, bootstrap.endpointIds),
+    releaseGate: async () => {}
+  }), /D7 rollback floor/)
+
+  const dual = await assembleProductionBlindDaemon({
+    bootstrap,
+    runtimeConfig: loadProductionRuntimeConfig({
+      ...environment,
+      HIVERELAY_BLIND_STORE_READER_MODE: 'blind-plus-legacy-dual-read'
+    }, bootstrap.endpointIds),
+    releaseGate: async () => {}
+  })
+  await dual.close()
+
+  await fs.unlink(path.join(environment.HIVERELAY_BLIND_STORE_ROOT, 'control',
+    'blind-store-generation-floor-v1.json'))
+  await t.exception.all(() => assembleProductionBlindDaemon({
+    bootstrap,
+    runtimeConfig: loadProductionRuntimeConfig(environment, bootstrap.endpointIds),
+    releaseGate: async () => {}
+  }), /generation floor marker is missing/)
 })
 
 test('legacy-only admission adapter cannot advertise or dispatch production V2 CELL.PUT', async t => {

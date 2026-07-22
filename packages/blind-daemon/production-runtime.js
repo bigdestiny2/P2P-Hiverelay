@@ -64,6 +64,10 @@ import {
 import { BlindInboxStorageEngine } from './inbox-storage-engine.js'
 import { BlindCoreStorageEngine } from './core-storage-engine.js'
 import { loadBundledBlindStoreFormatAuthority } from './store-format-binding.js'
+import {
+  BLIND_STORE_READER_MODE,
+  openBlindStoreGenerationFloor
+} from './storage-generation-v12.js'
 
 const operationBits = (familyId, operationIds) => operationIds.reduce(
   (bits, operationId) => bits | operationBit(familyId, operationId), 0)
@@ -160,6 +164,14 @@ function optionalPath (environment, name) {
   return value == null || value === '' ? null : canonicalAbsolutePath(value, name)
 }
 
+function storeReaderMode (environment) {
+  const value = environment.HIVERELAY_BLIND_STORE_READER_MODE || BLIND_STORE_READER_MODE.BLIND_ONLY
+  if (!Object.values(BLIND_STORE_READER_MODE).includes(value)) {
+    runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID', 'HIVERELAY_BLIND_STORE_READER_MODE is invalid')
+  }
+  return value
+}
+
 function requiredPathList (environment, name, maximum) {
   const raw = environment[name]
   if (typeof raw !== 'string' || raw.length === 0 || raw.length > 32768 || raw.includes(' ')) {
@@ -252,6 +264,7 @@ export function loadProductionRuntimeConfig (environment = process.env, endpoint
     inboxCursorKeyFile: optionalPath(environment, 'HIVERELAY_BLIND_INBOX_CURSOR_KEY_FILE'),
     coreStoreRoot: optionalPath(environment, 'HIVERELAY_BLIND_CORE_STORE_ROOT'),
     storeManifestKeyFile: requiredPath(environment, 'HIVERELAY_BLIND_STORE_MANIFEST_KEY_FILE'),
+    storeReaderMode: storeReaderMode(environment),
     ownerFenceTokenHashFile: requiredPath(environment, 'HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE'),
     mapGeneration: canonicalU64(environment, 'HIVERELAY_BLIND_MAP_GENERATION'),
     expectedDescriptorSequence: canonicalU64(environment, 'HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_SEQUENCE', 0n),
@@ -353,6 +366,7 @@ async function syncDirectory (directory) {
 async function bindStoreIdentity (root, expected) {
   const file = path.join(root, RUNTIME_BINDING_FILE)
   let existing
+  let created = false
   try {
     existing = await readBoundFile(file, {
       field: 'runtime store binding',
@@ -379,6 +393,7 @@ async function bindStoreIdentity (root, expected) {
       handle = null
       await syncDirectory(root)
       existing = b4a.from(expected)
+      created = true
     } catch (error) {
       if (handle) await handle.close().catch(() => {})
       if (!error || error.code !== 'EEXIST') throw error
@@ -394,6 +409,7 @@ async function bindStoreIdentity (root, expected) {
     runtimeFailure('BLIND_RUNTIME_STORE_IDENTITY_MISMATCH',
       'store root is bound to another relay/store/durability/map/fence tuple')
   }
+  return created
 }
 
 function verifyDetached (input) {
@@ -1002,7 +1018,14 @@ export async function assembleProductionBlindDaemon (options = {}) {
       await verifyPrivateStoreRoot(config.storeRoot)
       const binding = encodeRuntimeBinding(descriptorSnapshot.descriptor, config.mapGeneration,
         ownerFenceTokenHash, manifestKey)
-      await bindStoreIdentity(config.storeRoot, binding)
+      const storeBindingCreated = await bindStoreIdentity(config.storeRoot, binding)
+      const storeFloor = await openBlindStoreGenerationFloor(path.join(config.storeRoot, 'control'), {
+        manifestKey,
+        storeIdentity: binding,
+        allowCreate: storeBindingCreated
+      })
+      storeFloor.assertReaderMode(config.storeReaderMode)
+      await storeFloor.acknowledgeBlindOnlyWrite()
       storage = new BlindCellStorageEngine({
         root: config.storeRoot,
         relayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
@@ -1017,7 +1040,12 @@ export async function assembleProductionBlindDaemon (options = {}) {
       await storage.open()
       if (inboxRuntimeEnabled) {
         await verifyPrivateStoreRoot(config.inboxStoreRoot)
-        await bindStoreIdentity(config.inboxStoreRoot, binding)
+        const inboxBindingCreated = await bindStoreIdentity(config.inboxStoreRoot, binding)
+        const inboxFloor = await openBlindStoreGenerationFloor(path.join(config.inboxStoreRoot, 'control'), {
+          manifestKey, storeIdentity: binding, allowCreate: inboxBindingCreated
+        })
+        inboxFloor.assertReaderMode(config.storeReaderMode)
+        await inboxFloor.acknowledgeBlindOnlyWrite()
         inboxCursorKey = await readBoundFile(config.inboxCursorKeyFile, {
           field: 'inbox cursor key',
           exactBytes: 32,
@@ -1040,7 +1068,12 @@ export async function assembleProductionBlindDaemon (options = {}) {
       }
       if (coreRuntimeEnabled) {
         await verifyPrivateStoreRoot(config.coreStoreRoot)
-        await bindStoreIdentity(config.coreStoreRoot, binding)
+        const coreBindingCreated = await bindStoreIdentity(config.coreStoreRoot, binding)
+        const coreFloor = await openBlindStoreGenerationFloor(path.join(config.coreStoreRoot, 'control'), {
+          manifestKey, storeIdentity: binding, allowCreate: coreBindingCreated
+        })
+        coreFloor.assertReaderMode(config.storeReaderMode)
+        await coreFloor.acknowledgeBlindOnlyWrite()
         coreStorage = new BlindCoreStorageEngine({
           root: config.coreStoreRoot,
           relayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,

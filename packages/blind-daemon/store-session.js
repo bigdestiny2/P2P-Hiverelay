@@ -10,9 +10,12 @@ const CONTROL_DIRECTORY = 'control'
 const WRITER_LOCK_FILE = 'writer.lock.v1'
 const RUNTIME_BINDING_FILE = 'runtime-binding.v1'
 const GENESIS_INTENT_FILE = 'genesis-intent.v1'
+const STORE_GENERATION_FLOOR_FILE = 'blind-store-generation-floor-v1.json'
 const MANIFEST_SLOT_FILES = Object.freeze(['manifest-a.v1', 'manifest-b.v1'])
 const ROOT_NAMES = new Set([CONTROL_DIRECTORY, RUNTIME_BINDING_FILE, 'blobs', 'staging'])
-const CONTROL_NAMES = new Set([WRITER_LOCK_FILE, 'wal.v2', GENESIS_INTENT_FILE, ...MANIFEST_SLOT_FILES])
+const CONTROL_NAMES = new Set([
+  WRITER_LOCK_FILE, 'wal.v2', GENESIS_INTENT_FILE, STORE_GENERATION_FLOOR_FILE, ...MANIFEST_SLOT_FILES
+])
 const MANIFEST_TEMP = /^\.manifest-[ab]\.v1\.[0-9a-f]{32}\.tmp$/
 const GENESIS_INTENT_TEMP = /^\.genesis-intent\.v1\.[0-9a-f]{32}\.tmp$/
 const CHECKPOINT_FINAL = /^(checkpoint|snapshot)-([0-9a-f]{64})\.v1$/

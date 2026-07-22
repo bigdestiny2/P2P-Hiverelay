@@ -162,7 +162,7 @@ export async function runtimeInboxFixture (options = {}) {
     import.meta.url
   ))
   descriptor.durability.storeFormatMajor = 1
-  descriptor.durability.storeFormatMinor = 1
+  descriptor.durability.storeFormatMinor = 2
   descriptor.durability.storeFormatHash = hashStoreFormat(authorityBytes)
   descriptor.build.storeFormatHash = b4a.from(descriptor.durability.storeFormatHash)
   bindDurability(descriptor)
