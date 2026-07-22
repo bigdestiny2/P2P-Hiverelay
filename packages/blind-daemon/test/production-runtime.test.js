@@ -52,6 +52,7 @@ import {
 } from '@hiverelay/blind-ipc/private-ipc-v2-contract'
 import { loadDaemonBootstrapConfig } from '../bootstrap-config.js'
 import { runBlindDaemonCli } from '../cli.js'
+import { PRODUCTION_ADMISSION_ADAPTER_SCRIPT_CONTRACT } from '../production-entrypoint.js'
 import {
   PRODUCTION_RUNTIME_EXCLUSIONS,
   PRODUCTION_RUNTIME_OPERATION_BITS,
@@ -73,6 +74,7 @@ import {
 } from '../../../test/blind-boundary-scratch.js'
 
 const SIX_HOURS_MILLIS = 6 * 60 * 60 * 1000
+const ADMISSION_SCRIPT_SCHEMA = PRODUCTION_ADMISSION_ADAPTER_SCRIPT_CONTRACT.schema
 
 test('production completeness gate cannot be satisfied by publishing only ABI authorities', t => {
   let error = null
@@ -163,6 +165,10 @@ async function runtimeFixture (options = {}) {
     validFromEpoch: currentEpoch,
     expiresEpoch: currentEpoch + 4
   })
+  if (options.excludeCellPutAdmission === true) {
+    parameters.resourceCosts = parameters.resourceCosts.filter(row =>
+      row.familyId !== FAMILY.CELL || row.operationId !== OPERATION.CELL.PUT)
+  }
   const canonicalParameters = signCanonical(admissionParametersV1, parameters,
     RESULT_SIGNATURE_DOMAIN_ID.ADMISSION_PARAMETERS, relaySecretKey)
 
@@ -262,6 +268,50 @@ async function runtimeFixture (options = {}) {
     HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_HASH: b4a.toString(serviceDescriptorHash(canonicalDescriptor), 'hex')
   }
   return { directory, environment, privateIpcReplayRoot }
+}
+
+function productionAdmissionScript () {
+  return `
+({
+  schema: '${ADMISSION_SCRIPT_SCHEMA}',
+  createAdmissionAdapterResolver (context) {
+    if (context.runtimeProfile !== 'CELL_V1' ||
+        context.launchTopologyHash.$hiverelayType !== 'bytes' ||
+        context.launchTopologyHash.hex !== '${'81'.repeat(32)}' ||
+        context.endpointIds.length !== 1 || context.endpointIds[0] !== 1) {
+      throw new Error('entrypoint launch binding mismatch')
+    }
+    const adapter = Object.freeze({
+      prepare () { throw new Error('not exercised during startup') },
+      preparePreflight () { throw new Error('not exercised during startup') },
+      confirmAfterEof () { throw new Error('not exercised during startup') }
+    })
+    return () => adapter
+  }
+})
+`
+}
+
+async function configureProductionAdmissionScript (fixture, name, source, digest = null) {
+  const file = path.join(fixture.directory, name)
+  const bytes = Buffer.from(source)
+  await privateFile(file, bytes)
+  fixture.environment.HIVERELAY_BLIND_ADMISSION_ADAPTER_SCRIPT_FILE = file
+  fixture.environment.HIVERELAY_BLIND_ADMISSION_ADAPTER_SCRIPT_SHA256 = digest ||
+    createHash('sha256').update(bytes).digest('hex')
+  return file
+}
+
+async function assertPrivateSocketsAbsent (t, fixture) {
+  for (const name of ['unary.sock', 'stream.sock']) {
+    let error = null
+    try {
+      await fs.lstat(path.join(fixture.directory, 'ipc', name))
+    } catch (failure) {
+      error = failure
+    }
+    t.is(error?.code, 'ENOENT', `${name} must not exist after rejected startup`)
+  }
 }
 
 function childOutput (child) {
@@ -978,25 +1028,7 @@ test('packaged CLI can explicitly assemble the captured CELL runtime without wea
     if (runtime) await runtime.close().catch(() => {})
     await removeBlindBoundaryScratch(fixture.directory)
   })
-  const admissionModuleSource = `
-const adapter = Object.freeze({
-  async prepare () { throw new Error('not exercised during entrypoint assembly') },
-  async preparePreflight () { throw new Error('not exercised during entrypoint assembly') },
-  async confirmAfterEof () { throw new Error('not exercised during entrypoint assembly') }
-})
-export function createAdmissionAdapterResolver (context) {
-  if (context.runtimeProfile !== 'CELL_V1' || context.launchTopologyHash.toString('hex') !== '${'81'.repeat(32)}' ||
-      context.endpointIds.length !== 1 || context.endpointIds[0] !== 1) {
-    throw new Error('entrypoint did not bind the adapter to its launch configuration')
-  }
-  return async () => adapter
-}
-`
-  const admissionModulePath = path.join(fixture.directory, 'admission-adapter.mjs')
-  await privateFile(admissionModulePath, Buffer.from(admissionModuleSource))
-  fixture.environment.HIVERELAY_BLIND_ADMISSION_ADAPTER_MODULE = admissionModulePath
-  fixture.environment.HIVERELAY_BLIND_ADMISSION_ADAPTER_SHA256 = createHash('sha256')
-    .update(admissionModuleSource).digest('hex')
+  await configureProductionAdmissionScript(fixture, 'admission-adapter.js', productionAdmissionScript())
   let replayOffset = -15_000n
   runtime = await runBlindDaemonCli({
     environment: fixture.environment,
@@ -1014,6 +1046,112 @@ export function createAdmissionAdapterResolver (context) {
   t.is(runtime.status().v2WritePathReady, true)
   await runtime.close()
   runtime = null
+})
+
+test('explicit CELL CLI rejects every adapter startup failure before creating sockets', async t => {
+  const fixture = await runtimeFixture({ cellRuntime: true, descriptorSequence: 1 })
+  t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
+  const failures = [
+    {
+      name: 'missing',
+      expected: 'BLIND_ADMISSION_ADAPTER_SCRIPT_INVALID',
+      configure: async () => {
+        fixture.environment.HIVERELAY_BLIND_ADMISSION_ADAPTER_SCRIPT_FILE =
+          path.join(fixture.directory, 'missing-adapter.js')
+        fixture.environment.HIVERELAY_BLIND_ADMISSION_ADAPTER_SCRIPT_SHA256 = '00'.repeat(32)
+      }
+    },
+    {
+      name: 'digest',
+      expected: 'BLIND_ADMISSION_ADAPTER_DIGEST_MISMATCH',
+      configure: () => configureProductionAdmissionScript(fixture, 'digest-adapter.js',
+        productionAdmissionScript(), '00'.repeat(32))
+    },
+    {
+      name: 'export',
+      expected: 'BLIND_ADMISSION_ADAPTER_EXPORT_INVALID',
+      configure: () => configureProductionAdmissionScript(fixture, 'export-adapter.js',
+        '({ schema: \'wrong\', createAdmissionAdapterResolver () { return () => null } })')
+    },
+    {
+      name: 'initialize',
+      expected: 'BLIND_ADMISSION_ADAPTER_INITIALIZATION_FAILED',
+      configure: () => configureProductionAdmissionScript(fixture, 'initialize-adapter.js', `
+({
+  schema: '${ADMISSION_SCRIPT_SCHEMA}',
+  createAdmissionAdapterResolver () { throw new Error('initialization refused') }
+})
+`)
+    },
+    {
+      name: 'required-profile',
+      expected: 'BLIND_ADMISSION_ADAPTER_RESOLUTION_FAILED',
+      configure: () => configureProductionAdmissionScript(fixture, 'null-adapter.js', `
+({
+  schema: '${ADMISSION_SCRIPT_SCHEMA}',
+  createAdmissionAdapterResolver () { return () => null }
+})
+`)
+    },
+    {
+      name: 'methods',
+      expected: 'BLIND_ADMISSION_ADAPTER_RESOLUTION_FAILED',
+      configure: () => configureProductionAdmissionScript(fixture, 'methods-adapter.js', `
+({
+  schema: '${ADMISSION_SCRIPT_SCHEMA}',
+  createAdmissionAdapterResolver () {
+    return () => Object.freeze({ prepare () {}, preparePreflight () {} })
+  }
+})
+`)
+    }
+  ]
+
+  for (const failure of failures) {
+    await failure.configure()
+    await rejectsCode(t, runBlindDaemonCli({
+      environment: fixture.environment,
+      releaseGate: async () => {},
+      installSignalHandlers: false
+    }), failure.expected)
+    await assertPrivateSocketsAbsent(t, fixture)
+    t.comment(`${failure.name} failed before listener creation`)
+  }
+})
+
+test('strict CELL CLI rejects zero required adapters before creating sockets', async t => {
+  const fixture = await runtimeFixture({
+    cellRuntime: true,
+    descriptorSequence: 1,
+    excludeCellPutAdmission: true
+  })
+  t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
+  await configureProductionAdmissionScript(fixture, 'admission-adapter.js', productionAdmissionScript())
+  await rejectsCode(t, runBlindDaemonCli({
+    environment: fixture.environment,
+    releaseGate: async () => {},
+    installSignalHandlers: false
+  }), 'BLIND_RUNTIME_ADMISSION_CAPTURE_INCOMPLETE')
+  await assertPrivateSocketsAbsent(t, fixture)
+})
+
+test('CELL CLI release gate runs before admission adapter initialization', async t => {
+  const fixture = await runtimeFixture({ cellRuntime: true, descriptorSequence: 1 })
+  t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
+  await configureProductionAdmissionScript(fixture, 'must-not-initialize.js', `
+({
+  schema: '${ADMISSION_SCRIPT_SCHEMA}',
+  createAdmissionAdapterResolver () { throw new Error('adapter initialized before release gate') }
+})
+`)
+  const gateError = new Error('release gate sentinel')
+  gateError.code = 'TEST_RELEASE_GATE_FIRST'
+  await rejectsCode(t, runBlindDaemonCli({
+    environment: fixture.environment,
+    releaseGate: async () => { throw gateError },
+    installSignalHandlers: false
+  }), 'TEST_RELEASE_GATE_FIRST')
+  await assertPrivateSocketsAbsent(t, fixture)
 })
 
 test('direct production bin preserves the runtime completeness release blocker', async t => {

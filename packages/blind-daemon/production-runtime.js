@@ -824,7 +824,8 @@ function capturedAdmissionAdapter (adapter) {
   })
 }
 
-async function captureCellPutAdmissionAdapters (resolver, snapshot, installed) {
+async function captureCellPutAdmissionAdapters (resolver, snapshot, installed, options = {}) {
+  const strict = options.strict === true
   const captured = new Map()
   const required = []
   for (const record of installed) {
@@ -834,6 +835,10 @@ async function captureCellPutAdmissionAdapters (resolver, snapshot, installed) {
       if ((record.value.roleBits & endpoint.roleBits) === 0) continue
       required.push({ record, endpoint })
     }
+  }
+  if (strict && required.length === 0) {
+    runtimeFailure('BLIND_RUNTIME_ADMISSION_CAPTURE_INCOMPLETE',
+      'strict CELL runtime requires at least one signed CELL.PUT admission profile')
   }
   let complete = required.length > 0
   for (const { record, endpoint } of required) {
@@ -849,8 +854,14 @@ async function captureCellPutAdmissionAdapters (resolver, snapshot, installed) {
         endpointRoleBits: endpoint.roleBits,
         signal: null
       }))
-    } catch {}
+    } catch (error) {
+      if (strict) throw error
+    }
     if (adapter == null) {
+      if (strict) {
+        runtimeFailure('BLIND_RUNTIME_ADMISSION_ADAPTER_RESOLUTION_FAILED',
+          'strict CELL runtime could not capture one exact required admission adapter')
+      }
       complete = false
       continue
     }
@@ -870,6 +881,11 @@ export async function assembleProductionBlindDaemon (options = {}) {
     throw new TypeError('validated daemon bootstrap configuration is required')
   }
   const releaseGate = options.releaseGate || assertProductionRuntimeReleaseReady
+  const strictAdmissionCapture = options.requireCompleteAdmissionCapture === true
+  if (options.requireCompleteAdmissionCapture != null &&
+      typeof options.requireCompleteAdmissionCapture !== 'boolean') {
+    throw new TypeError('requireCompleteAdmissionCapture must be a boolean')
+  }
   const testOnlyReplayJournalOptions = options.testOnlyPrivateIpcReplayJournalOptions
   if (testOnlyReplayJournalOptions != null) {
     if (releaseGate === assertProductionRuntimeReleaseReady ||
@@ -900,6 +916,10 @@ export async function assembleProductionBlindDaemon (options = {}) {
   if (cellRuntimeEnabled && typeof options.resolveAdmissionAdapter !== 'function') {
     runtimeFailure('BLIND_RUNTIME_ADMISSION_ADAPTER_REQUIRED',
       'CELL runtime assembly requires an explicit admission adapter resolver')
+  }
+  if (strictAdmissionCapture && !cellRuntimeEnabled) {
+    runtimeFailure('BLIND_RUNTIME_ADMISSION_CAPTURE_INCOMPLETE',
+      'strict admission capture requires an enabled CELL runtime')
   }
   const config = options.runtimeConfig || loadProductionRuntimeConfig(options.environment, bootstrap.endpointIds)
   if (inboxRuntimeEnabled) {
@@ -998,12 +1018,25 @@ export async function assembleProductionBlindDaemon (options = {}) {
       runtimeFailure('BLIND_RUNTIME_ADMISSION_MISMATCH', 'current signed admission parameters are unavailable')
     }
     const admissionCapture = cellRuntimeEnabled
-      ? await captureCellPutAdmissionAdapters(admissionResolver, descriptorSnapshot, installedParameters)
+      ? await captureCellPutAdmissionAdapters(admissionResolver, descriptorSnapshot, installedParameters, {
+        strict: strictAdmissionCapture
+      })
       : Object.freeze({ captured: new Map(), complete: false, required: 0 })
     if (cellRuntimeEnabled) {
-      const fallbackResolver = admissionResolver
-      admissionResolver = input => admissionCapture.captured.get(admissionAdapterKey(input)) ||
-        fallbackResolver(input)
+      if (strictAdmissionCapture) {
+        admissionResolver = input => {
+          const captured = admissionCapture.captured.get(admissionAdapterKey(input))
+          if (captured == null) {
+            runtimeFailure('BLIND_RUNTIME_ADMISSION_ADAPTER_RESOLUTION_FAILED',
+              'strict CELL runtime forbids live fallback outside its startup adapter capture')
+          }
+          return captured
+        }
+      } else {
+        const fallbackResolver = admissionResolver
+        admissionResolver = input => admissionCapture.captured.get(admissionAdapterKey(input)) ||
+          fallbackResolver(input)
+      }
     }
     assertDescribeResponseFit(descriptorSnapshot, descriptorBytes, parameterBytes)
 

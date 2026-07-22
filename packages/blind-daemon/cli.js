@@ -49,6 +49,7 @@ export async function runBlindDaemonCli (options = {}) {
       enableInboxRuntime,
       enableCoreRuntime,
       resolveAdmissionAdapter,
+      requireCompleteAdmissionCapture: enableCellRuntime,
       testOnlyPrivateIpcReplayJournalOptions: options.testOnlyPrivateIpcReplayJournalOptions,
       onError: error => {
         if (typeof options.onError === 'function') options.onError(error)

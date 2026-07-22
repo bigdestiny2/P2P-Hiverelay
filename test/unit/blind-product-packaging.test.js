@@ -132,8 +132,8 @@ test('blind compose freezes two sockets, isolation, identities and a bounded ini
   t.absent(daemon.includes('blind-public'))
   for (const name of [
     'HIVERELAY_BLIND_RUNTIME_PROFILE',
-    'HIVERELAY_BLIND_ADMISSION_ADAPTER_MODULE',
-    'HIVERELAY_BLIND_ADMISSION_ADAPTER_SHA256',
+    'HIVERELAY_BLIND_ADMISSION_ADAPTER_SCRIPT_FILE',
+    'HIVERELAY_BLIND_ADMISSION_ADAPTER_SCRIPT_SHA256',
     'HIVERELAY_BLIND_DESCRIPTOR_FILES',
     'HIVERELAY_BLIND_ADMISSION_PARAMETER_FILES',
     'HIVERELAY_BLIND_RELAY_SECRET_KEY_FILE',
@@ -152,6 +152,8 @@ test('blind compose freezes two sockets, isolation, identities and a bounded ini
   ]) {
     t.ok(daemon.includes(name + ': "' + '$' + '{' + name + ':-}"'))
   }
+  t.absent(daemon.includes('HIVERELAY_BLIND_ADMISSION_ADAPTER_MODULE'))
+  t.absent(daemon.includes('HIVERELAY_BLIND_ADMISSION_ADAPTER_SHA256'))
   t.ok(daemon.includes('HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH: "' + '$' + '{HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH:-}' + '"'))
   t.ok(daemon.includes('HIVERELAY_BLIND_ENDPOINT_IDS: "' + '$' + '{HIVERELAY_BLIND_ENDPOINT_IDS:-}' + '"'))
   t.ok(edge.includes('networks:\n      - blind-public'))
