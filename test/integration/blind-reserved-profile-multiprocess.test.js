@@ -16,8 +16,11 @@ test('reserved release operations fail closed in independent runtime processes',
   }))
   t.is(new Set(reports.map(report => report.pid)).size, 3)
   for (const report of reports) {
+    t.is(report.realEdgeProcess, true)
+    t.is(report.daemonConnections, 0)
     t.is(report.results.length, 5)
     t.ok(report.results.every(result =>
-      result.clientRejected && result.daemonRejected && result.budgetRejected))
+      result.clientRejected && result.daemonRejected && result.budgetRejected &&
+      result.edgeStatus === 400 && result.edgeReleasedMemory))
   }
 })

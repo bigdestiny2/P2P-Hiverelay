@@ -973,9 +973,6 @@ export class BlindEdge {
       } catch {
         throw new EdgeTransportError(400, 'operation is outside the advertised release profile')
       }
-      if (outer.frame.familyId !== family) {
-        throw new EdgeTransportError(400, 'route family does not match dispatch family')
-      }
       const stagedCellPut = family === FAMILY.CELL &&
         outer.frame.familyId === FAMILY.CELL && outer.frame.operationId === OPERATION.CELL.PUT
       const acceptedMonotonicMillis = requestState.t0
