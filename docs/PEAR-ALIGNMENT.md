@@ -1,6 +1,8 @@
 # HiveRelay ↔ Pear/Bare Alignment Plan
 
-> Status: synthesized 2026-06-12 from 5 dimension-mapping passes + 1 stack-research pass.
+> Status: **historical pre-v3 alignment analysis**, synthesized 2026-06-12
+> from 5 dimension-mapping passes + 1 stack-research pass. It is retained as
+> design evidence, not current implementation or release instruction.
 > Scope: alignment of the HiveRelay monorepo with the `hello-pear-bare` June-2026 conventions.
 > Target posture: **maximally performant and wire-compatible with the live Holepunch stack**, with risk honestly gated.
 

@@ -1,5 +1,10 @@
 # Feedback: silent partial-pin failure (PearBrowser case study)
 
+> **Historical v2 incident record.** This preserves the May-2026 failure
+> analysis for compatibility and postmortem reference. It is not a current
+> executable-delivery or release instruction; v3 native releases require
+> signed artifacts and complete cold-retrieval proof.
+
 > **TL;DR.** Relays accept a seed request whose `maxStorage` is smaller than
 > the drive's actual `byteLength`. They replicate metadata fully, stall
 > mid-blob, and never tell the publisher. End users running

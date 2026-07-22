@@ -639,7 +639,7 @@ If you seed apps but they don't show in `/catalog.json`:
 
 2. **Convert Pear keys correctly** — Pear uses z-base-32 encoding, but the API expects hex:
    ```javascript
-   // Convert pear://KEY to hex
+   // Convert a legacy Pear URI identifier to hex
    const z32 = require('z32')
    const hexKey = z32.decode('om5cpdjjp4g4wa15r9wjhjiex9jjmcsacwsw44hzsrtsz171ykfy').toString('hex')
    // Result: 82f6c68d296e8daa625b27e89e26a87fd295b2d8652d4d6b97b1236bcbb2028a

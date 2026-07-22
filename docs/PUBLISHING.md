@@ -11,10 +11,10 @@ If you only read one section, read **[The `maxStorage` trap](#the-maxstorage-tra
 
 ## The `maxStorage` trap
 
-**Symptom**: end users running `pear run pear://<your-key>` hang on
-launch indefinitely. `pear info` works. Your CI relay-health check
-passes. The relay's catalog says your app is seeded. End users see
-something indistinguishable from "no peers found."
+**Symptom**: a fresh client can resolve an older app drive but hangs while
+retrieving it. Your CI relay-health check passes and the relay catalog says the
+drive is seeded, yet the client sees something indistinguishable from "no peers
+found."
 
 **Cause**: your seed request declared a `maxStorage` cap smaller than
 the drive's actual `byteLength`. The relay accepted the request,
@@ -44,7 +44,7 @@ import { HiveRelayClient } from 'p2p-hiverelay-client'
 const client = new HiveRelayClient('./storage')
 await client.start()
 
-// publish the drive locally (or get its size from `pear info`)
+// publish the drive locally (or read its size from local drive metadata)
 const drive = await client.publish('./my-app')
 
 // Compute size = metadata + blob bytes, with headroom for future releases.
@@ -118,13 +118,13 @@ Run after every release that updates the drive:
 
 ```bash
 node verify-pin.js <your-drive-key>
-# exit 0  → end users will get a working experience
+# exit 0  → the sampled drive content is retrievable
 # exit 2  → relays returned metadata but stalled on blobs (or no peers)
 ```
 
-Bake it into your release script — `pear stage → pear release →
-hive-pin → verify-pin`. A future release literally cannot ship
-"succeeded but unreachable" if `verify-pin` is in the gate.
+Bake it into the release gate — `build → signed artifact/release record →
+hive-pin → verify-pin`. A future release cannot ship as “succeeded but
+unreachable” when `verify-pin` is a required gate.
 
 ### What `maxStorage` is NOT
 
@@ -226,8 +226,8 @@ console.log('✓ Seed request sent. Run verify-pin.js to confirm reachability.')
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `pear run` hangs forever | `maxStorage` < drive size | Re-seed with `maxStorage` ≥ `driveSize × 1.25` |
-| `pear info` works but content fetch hangs | Same as above (partial pin) | Same |
+| Fresh drive retrieval hangs forever | `maxStorage` < drive size | Re-seed with `maxStorage` ≥ `driveSize × 1.25` |
+| Drive metadata resolves but content fetch hangs | Same as above (partial pin) | Same |
 | `seeded` event fires but `verify-pin` times out | Relay is on v0.8.10 or older (no size check) | Upgrade relay to v0.8.11+, re-seed |
 | `seed-aborted` event with `reason: maxStorage-too-small` | Working as intended — v0.8.11+ relay caught it | Use `info.recommendedCap` |
 | Random `503 Retry-After` from the relay | Transient core lifecycle (v0.8.7+) | Retry per the `Retry-After` header |
@@ -240,7 +240,7 @@ If your pin succeeded but end users still see hangs, please include:
 
 1. Output of `verify-pin.js <driveKey>` from a fresh machine
 2. The `maxStorage` value you passed to `client.seed()`
-3. The drive's actual size from `pear info` or
+3. The drive's actual size from local drive metadata or
    `drive.db.core.byteLength + drive.blobs.core.byteLength`
 4. The relay's commit hash (curl `<relay-url>/.well-known/hiverelay.json`)
 
