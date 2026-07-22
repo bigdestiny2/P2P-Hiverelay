@@ -39,7 +39,7 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
   if (head.storeIdentityHash !== storeIdentityHash || head.sequence > records.at(-1).sequence) {
     throw new Error('invalid blind store generation head')
   }
-  const latest = records.at(-1)
+  let latest = records.at(-1)
   if (head.sequence < latest.sequence || head.recordHash !== recordHash(latest)) await writeHead(latest)
   if (latest.storeIdentityHash !== storeIdentityHash) throw new Error('blind store generation evidence belongs to another store')
   const latestSequence = BigInt(latest.storeEvidence.walSequence)
@@ -50,6 +50,7 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
     throw new Error('blind store generation evidence was rolled back or replayed')
   }
   let acknowledged = latest.firstBlindOnlyWriteAcknowledged
+  let acknowledgmentTail = Promise.resolve()
 
   return {
     get firstBlindOnlyWriteAcknowledged () { return acknowledged },
@@ -59,19 +60,39 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
       }
       return true
     },
-    async acknowledgeBlindOnlyWrite (storeEvidence) {
-      if (acknowledged) return false
-      const nextEvidence = evidence(storeEvidence)
-      if (BigInt(nextEvidence.walSequence) <= BigInt(latest.storeEvidence.walSequence)) {
-        throw new Error('blind-only acknowledgment must bind a newer durable WAL write')
-      }
-      const next = record(latest.sequence + 1, true, recordHash(latest), nextEvidence)
-      await writeExclusive(recordPath(next.sequence), signed(next))
-      if (options.faultInjector) await options.faultInjector('after-record-sync')
-      await writeHead(next)
-      acknowledged = true
-      return true
+    acknowledgeBlindOnlyWrite (storeEvidence) {
+      const operation = acknowledgmentTail.then(() => advanceAcknowledgment(storeEvidence))
+      acknowledgmentTail = operation.catch(() => {})
+      return operation
     }
+  }
+
+  async function advanceAcknowledgment (storeEvidence) {
+    const diskRecords = await loadRecords()
+    validateChain(diskRecords)
+    if (diskRecords.at(-1).sequence > latest.sequence) {
+      latest = diskRecords.at(-1)
+      acknowledged = latest.firstBlindOnlyWriteAcknowledged
+      await writeHead(latest)
+    }
+    const nextEvidence = evidence(storeEvidence)
+    const nextWalSequence = BigInt(nextEvidence.walSequence)
+    const latestWalSequence = BigInt(latest.storeEvidence.walSequence)
+    if (nextWalSequence < latestWalSequence) return false
+    if (nextWalSequence === latestWalSequence) {
+      if (nextEvidence.walHash !== latest.storeEvidence.walHash) {
+        throw new Error('blind-only acknowledgment conflicts with durable WAL evidence')
+      }
+      if (acknowledged) return false
+      throw new Error('blind-only acknowledgment must bind a newer durable WAL write')
+    }
+    const next = record(latest.sequence + 1, true, recordHash(latest), nextEvidence)
+    await writeExclusive(recordPath(next.sequence), signed(next))
+    if (options.faultInjector) await options.faultInjector('after-record-sync')
+    await writeHead(next)
+    latest = next
+    acknowledged = true
+    return true
   }
 
   function record (sequence, value, previousRecordHash, storeEvidence) {

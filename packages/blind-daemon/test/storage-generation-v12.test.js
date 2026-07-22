@@ -11,6 +11,7 @@ const KEY = b4a.alloc(32, 0xa1)
 const IDENTITY = b4a.from('authenticated-runtime-store-binding')
 const first = { walSequence: 1n, walHash: b4a.alloc(32, 1) }
 const second = { walSequence: 2n, walHash: b4a.alloc(32, 2) }
+const third = { walSequence: 3n, walHash: b4a.alloc(32, 3) }
 
 test('fresh 1.2 floor advances only after a newer acknowledged blind write', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'blind-store-generation-'))
@@ -78,4 +79,27 @@ test('process kill between append-only record and head rename recovers monotonic
     manifestKey: KEY, storeIdentity: IDENTITY, storeEvidence: second
   })
   t.is(recovered.firstBlindOnlyWriteAcknowledged, true)
+})
+
+test('concurrent first commits serialize and retain the highest durable WAL evidence', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'blind-store-generation-concurrent-'))
+  t.teardown(() => rm(root, { recursive: true, force: true }))
+  const floor = await openBlindStoreGenerationFloor(root, {
+    manifestKey: KEY, storeIdentity: IDENTITY, storeEvidence: first, allowCreate: true
+  })
+  t.alike(await Promise.all([
+    floor.acknowledgeBlindOnlyWrite(second),
+    floor.acknowledgeBlindOnlyWrite(third)
+  ]), [true, true])
+  const records = (await readdir(root)).filter(name => name.includes('generation-record')).sort()
+  t.is(records.length, 3)
+  const head = JSON.parse(await readFile(path.join(root, 'blind-store-generation-head-v1.json')))
+  t.is(head.sequence, 2)
+  const highest = JSON.parse(await readFile(path.join(root, records.at(-1))))
+  t.is(highest.storeEvidence.walSequence, '3')
+  const restarted = await openBlindStoreGenerationFloor(root, {
+    manifestKey: KEY, storeIdentity: IDENTITY, storeEvidence: third
+  })
+  t.is(restarted.firstBlindOnlyWriteAcknowledged, true)
+  t.is(await restarted.acknowledgeBlindOnlyWrite(second), false)
 })
