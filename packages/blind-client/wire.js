@@ -2,8 +2,7 @@ import b4a from 'b4a'
 import {
   DISPATCH_LIMITS,
   FRAME_KIND,
-  PROTOCOL,
-  operationProfile
+  PROTOCOL
 } from '@hiverelay/blind-protocol/wire-runtime-authority'
 import { blindErrorV1 } from '@hiverelay/blind-protocol/schemas'
 import { decodeCanonical } from '@hiverelay/blind-protocol/codec'
@@ -15,6 +14,7 @@ import {
 import { encodeDispatchFrame } from '@hiverelay/blind-protocol/dispatch'
 import { asBytes, randomBytes } from './bytes.js'
 import { fail } from './errors.js'
+import { selectedOperationProfile } from './selected-operation-profile.js'
 
 function isAllZero (bytes) {
   for (const byte of bytes) if (byte !== 0) return false
@@ -40,6 +40,7 @@ function sameBytes (left, right) {
 
 export function encodeUnaryRequest (options) {
   if (!options || typeof options !== 'object') fail('BAD_CLIENT_INPUT', 'unary request options are required')
+  const profile = selectedOperationProfile(options.familyId, options.operationId)
   const id = requestId(options.runtime, options.requestId)
   const body = asBytes(options.body, 'canonical operation body')
   const dispatch = encodeDispatchFrame({
@@ -49,8 +50,6 @@ export function encodeUnaryRequest (options) {
     requestId: id,
     body
   })
-  const profile = operationProfile(options.familyId, options.operationId)
-  if (!profile) fail('BAD_CLIENT_INPUT', 'family/operation pair has no frozen profile')
   const expectedResultBodyBytes = options.expectedResultBodyBytes == null
     ? profile.maxResultBodyBytes
     : options.expectedResultBodyBytes

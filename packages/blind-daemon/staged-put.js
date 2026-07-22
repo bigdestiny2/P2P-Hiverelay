@@ -7,16 +7,17 @@ import {
   FRAME_KIND,
   OPERATION,
   cellStorageSlot,
-  operationProfile,
   readDispatchLengthPrefix
 } from '@hiverelay/blind-protocol'
+import { assertAdvertisedOperation } from '@hiverelay/blind-protocol/wire-runtime-authority'
 
 const DISPATCH_WIRE_HEADER_BYTES = DISPATCH_LIMITS.PREFIX_BYTES + DISPATCH_LIMITS.HEADER_BYTES
 const PUT_FIXED_PREFIX_BYTES = 263
 const ADMISSION_FIXED_PREFIX_BYTES = 36
 const MAX_ADMISSION_TOKEN_BYTES = 4096
 const MAX_COMPACT_TOKEN_PREFIX_BYTES = 3
-const CELL_PUT_MAX_REQUEST_BODY_BYTES = operationProfile(FAMILY.CELL, OPERATION.CELL.PUT).maxRequestBodyBytes
+const CELL_PUT_MAX_REQUEST_BODY_BYTES = assertAdvertisedOperation(
+  FAMILY.CELL, OPERATION.CELL.PUT).maxRequestBodyBytes
 export const STAGED_CELL_PUT_MAX_PREFIX_BYTES = DISPATCH_WIRE_HEADER_BYTES + PUT_FIXED_PREFIX_BYTES +
   ADMISSION_FIXED_PREFIX_BYTES + MAX_COMPACT_TOKEN_PREFIX_BYTES + MAX_ADMISSION_TOKEN_BYTES
 export const STAGED_CELL_PUT_DEFAULT_QUEUE_BYTES = 65_535

@@ -271,7 +271,7 @@ test('relay-key rotation verifies both exact identity-transition signatures and 
     identityTransition: transition,
     storeLifecycleState: STORE_LIFECYCLE_STATE.ACTIVE,
     drainStartedEpoch: null,
-    enabledOperationBits: 0x003fffff,
+    enabledOperationBits: 0x0001ffff,
     issuedEpoch: transition.validFromEpoch,
     expiresEpoch: retired.descriptor.expiresEpoch
   }))
@@ -304,7 +304,7 @@ test('relay-key rotation verifies both exact identity-transition signatures and 
     identityTransition: { ...transition, oldRelayKey: b4a.from(r.descriptor.relayPublicKey) },
     storeLifecycleState: STORE_LIFECYCLE_STATE.ACTIVE,
     drainStartedEpoch: null,
-    enabledOperationBits: 0x003fffff,
+    enabledOperationBits: 0x0001ffff,
     issuedEpoch: transition.validFromEpoch,
     expiresEpoch: r.descriptor.expiresEpoch
   })), DescriptorStateError)

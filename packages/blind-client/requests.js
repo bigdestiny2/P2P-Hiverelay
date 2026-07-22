@@ -2,8 +2,7 @@ import b4a from 'b4a'
 import {
   CELL_SIZE_CLASS,
   FAMILY,
-  OPERATION,
-  operationProfile
+  OPERATION
 } from '@hiverelay/blind-protocol/wire-runtime-authority'
 import {
   allocationCommitment,
@@ -33,6 +32,7 @@ import {
 import { sealCell } from './cells.js'
 import { fail } from './errors.js'
 import { resolveAdmission } from './provider.js'
+import { selectedOperationProfile } from './selected-operation-profile.js'
 
 function u32 (value, field) {
   if (!Number.isSafeInteger(value) || value < 0 || value > 0xffffffff) fail('BAD_CLIENT_INPUT', `${field} is outside u32`)
@@ -58,8 +58,7 @@ async function admission (options, context, required) {
 }
 
 function result (encoding, request, requestCommitment, familyId, operationId, expectedResultBodyBytes = null) {
-  const profile = operationProfile(familyId, operationId)
-  if (!profile) fail('BAD_CLIENT_INPUT', 'operation has no frozen profile')
+  const profile = selectedOperationProfile(familyId, operationId)
   return {
     request,
     requestBytes: encodeCanonical(encoding, request),

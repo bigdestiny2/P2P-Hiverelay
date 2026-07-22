@@ -4,7 +4,6 @@ import {
   HEALTH_CLOCK_STATE,
   HEALTH_INTEGRITY_STATE,
   HEALTH_REBALANCE_STATE,
-  PUBLIC_PROFILE_LIMITS,
   RESULT_SIGNATURE_DOMAIN_ID,
   STORE_LIFECYCLE_STATE,
   TRANSPORT_SUPPORT,
@@ -15,14 +14,19 @@ import {
   resultSignaturePayload
 } from '@hiverelay/blind-protocol'
 import {
+  ADVERTISED_OPERATION_BITS,
+  CLOCK_UNSAFE_OPERATION_BITS
+} from '@hiverelay/blind-protocol/wire-runtime-authority'
+import {
   DESCRIPTOR_CLOSED_REASON,
   DESCRIPTOR_STATE_KIND
 } from './descriptor-state.js'
 import { OPERATION_CATALOG, daemonOperationBit } from './operation-catalog.js'
 
+export { CLOCK_UNSAFE_OPERATION_BITS }
+
 const ZERO_SIGNATURE = b4a.alloc(64)
 const REQUIRED_DESCRIBE_BITS = 0x00000007
-export const CLOCK_UNSAFE_OPERATION_BITS = 0x00009628
 const KNOWN_TRANSPORT_SUPPORT_BITS = TRANSPORT_SUPPORT.DIRECT_HTTP | TRANSPORT_SUPPORT.DIRECT_NATIVE |
   TRANSPORT_SUPPORT.OHTTP | TRANSPORT_SUPPORT.TOR_HTTP | TRANSPORT_SUPPORT.TOR_NATIVE |
   TRANSPORT_SUPPORT.MASQUE_NATIVE
@@ -112,7 +116,7 @@ function dependencyFields (input) {
   if (!input || typeof input !== 'object' || input.selfVerified !== true) return null
   const readyRoleBits = integer(input.readyRoleBits, 0, ENDPOINT_LIMITS.ROLE_BITS_MASK, 'readyRoleBits')
   const readyOperationBits = u32(input.readyOperationBits, 'readyOperationBits')
-  if ((readyOperationBits & ~PUBLIC_PROFILE_LIMITS.ENABLED_OPERATION_BITS_MASK) !== 0) {
+  if ((readyOperationBits & ~ADVERTISED_OPERATION_BITS) !== 0) {
     throw new TypeError('readyOperationBits contains a reserved bit')
   }
   return {
@@ -322,7 +326,7 @@ export class ReadinessCoordinator {
       protocolFailure('BAD_ENCODING', 'health challenge scalar or byte fields are malformed')
     }
     if (!nonzero(clientNonce) || requestedOperationBits === 0 ||
-        (requestedOperationBits & ~PUBLIC_PROFILE_LIMITS.ENABLED_OPERATION_BITS_MASK) !== 0) {
+        (requestedOperationBits & ~ADVERTISED_OPERATION_BITS) !== 0) {
       protocolFailure('BAD_ENCODING', 'health challenge nonce/operation set is empty or reserved')
     }
     const descriptorState = this.descriptorState.state()

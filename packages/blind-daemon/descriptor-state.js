@@ -16,6 +16,7 @@ import {
   resultSignaturePayload,
   serviceDescriptorHash
 } from '@hiverelay/blind-protocol'
+import { ADVERTISED_OPERATION_BITS } from '@hiverelay/blind-protocol/wire-runtime-authority'
 
 const MAX_U32 = 0xffffffff
 const MAX_U64 = (1n << 64n) - 1n
@@ -123,6 +124,13 @@ function assertDurabilityHashes (descriptor) {
       !sameBytes(descriptor.durabilityContinuityHash, durabilityContinuityHash(continuityBytes))) {
     closedError(DESCRIPTOR_CLOSED_REASON.INVALID_TRANSITION,
       'descriptor durability hashes do not match their canonical signed values')
+  }
+}
+
+function assertAdvertisedDescriptorProfile (descriptor) {
+  if ((descriptor.enabledOperationBits & ~ADVERTISED_OPERATION_BITS) !== 0) {
+    closedError(DESCRIPTOR_CLOSED_REASON.INVALID_TRANSITION,
+      'descriptor enables an operation reserved by the active release profile')
   }
 }
 
@@ -303,6 +311,7 @@ export class DescriptorState {
     let descriptor = decodeExact(blindServiceDescriptorV1, canonicalBytes,
       'descriptor bytes are not canonical')
     assertDurabilityHashes(descriptor)
+    assertAdvertisedDescriptorProfile(descriptor)
     const unsignedBytes = canonicalBytes.subarray(0, canonicalBytes.byteLength - 64)
     const payload = resultSignaturePayload(RESULT_SIGNATURE_DOMAIN_ID.DESCRIPTOR, unsignedBytes)
     const verified = await this.verifySignature({
@@ -320,6 +329,7 @@ export class DescriptorState {
     descriptor = decodeExact(blindServiceDescriptorV1, canonicalBytes,
       'descriptor verifier mutated canonical descriptor authority')
     assertDurabilityHashes(descriptor)
+    assertAdvertisedDescriptorProfile(descriptor)
     if (descriptor.identityTransition != null) await this._verifyIdentityTransition(descriptor.identityTransition, signal)
     return descriptor
   }

@@ -3,17 +3,14 @@ import test from 'brittle'
 import { FAMILY, OPERATION } from '@hiverelay/blind-protocol/registry'
 import {
   coreMirrorRequestCommitment,
-  coreOpenReplicationRequestCommitment,
   coreServeRequestCommitment
 } from '@hiverelay/blind-protocol/hashes'
 import {
   coreMirrorRequestV1,
-  coreOpenReplicationV1,
   coreServeChallengeV1
 } from '@hiverelay/blind-protocol/schemas'
 import { decodeCanonical } from '@hiverelay/blind-protocol/codec'
 import {
-  BlindClientError,
   createCoreMirrorRequest,
   createCoreOpenReplicationRequest,
   createCoreProveRequest
@@ -86,10 +83,10 @@ test('Core prove preserves sorted block selection and optional admission', async
   }), /below length/)
 })
 
-test('Core open replication is exporter-bound and explicitly native-stream-only', async t => {
+test('Core open replication fails closed while reserved by the active release profile', async t => {
   const wireProfileHash = b4a.alloc(32, 0x46)
   const parentChannelBinding = b4a.alloc(32, 0x47)
-  const created = await createCoreOpenReplicationRequest({
+  await t.exception(createCoreOpenReplicationRequest({
     runtime,
     relayPublicKey,
     wireProfileHash,
@@ -97,31 +94,7 @@ test('Core open replication is exporter-bound and explicitly native-stream-only'
     controlChannelId: 9n,
     parentChannelBinding,
     admission
-  })
-  const decoded = decodeCanonical(coreOpenReplicationV1, created.requestBytes, { copyBytes: true })
-  t.alike(created.requestCommitment, coreOpenReplicationRequestCommitment({ relayPublicKey, ...decoded }))
-  t.is(created.wire.operationId, OPERATION.CORE.OPEN_REPLICATION)
-  t.is(created.wire.requiresAuthenticatedStream, true)
-  t.is(created.wire.controlChannelId, 9n)
-  t.alike(decoded.parentChannelBinding, parentChannelBinding)
-  await t.exception(createCoreOpenReplicationRequest({
-    runtime,
-    relayPublicKey,
-    wireProfileHash,
-    sessionClass: 2,
-    controlChannelId: 0n,
-    parentChannelBinding,
-    admission
-  }), BlindClientError)
-  await t.exception(createCoreOpenReplicationRequest({
-    runtime,
-    relayPublicKey,
-    wireProfileHash,
-    sessionClass: 2,
-    controlChannelId: 9n,
-    parentChannelBinding: b4a.alloc(32),
-    admission
-  }), /must be nonzero/)
+  }), /reserved by the active release profile/)
 })
 
 test('Core mutating/open operations acquire admission only after cheap bounds', async t => {

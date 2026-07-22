@@ -5,13 +5,13 @@ import {
   OUTER_CLASS,
   PROTOCOL,
   TRANSPORT_ID,
-  TRANSPORT_SUPPORT,
-  operationProfile
+  TRANSPORT_SUPPORT
 } from '@hiverelay/blind-protocol/wire-runtime-authority'
 import { asBytes } from './bytes.js'
 import { BlindClientError, fail } from './errors.js'
 import { unwrapVerifiedEndpoint } from './verified-endpoint.js'
 import { decodeUnaryResponse, encodeUnaryRequest } from './wire.js'
+import { selectedOperationProfile } from './selected-operation-profile.js'
 
 function resolvedEndpoint (value) {
   const verified = unwrapVerifiedEndpoint(value)
@@ -55,8 +55,8 @@ function assertEndpointSupportsRequest (endpoint, encoded) {
       (endpoint.envelopeClassBits & (1 << encoded.outerClass)) === 0) {
     fail('TRANSPORT_MISMATCH', 'endpoint did not advertise the selected outer class')
   }
-  const profile = operationProfile(encoded.familyId, encoded.operationId)
-  if (!profile || (profile.transportSupportBits & TRANSPORT_SUPPORT.DIRECT_HTTP) === 0) {
+  const profile = selectedOperationProfile(encoded.familyId, encoded.operationId)
+  if ((profile.transportSupportBits & TRANSPORT_SUPPORT.DIRECT_HTTP) === 0) {
     fail('TRANSPORT_MISMATCH', 'operation is not available over direct HTTP')
   }
 }

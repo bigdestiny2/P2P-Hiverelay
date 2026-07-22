@@ -4,8 +4,7 @@ import {
   INBOX_APPEND_AUTH_MODE,
   INBOX_FRAME_CLASS,
   INBOX_MANAGE_OPERATION,
-  OPERATION,
-  operationProfile
+  OPERATION
 } from '@hiverelay/blind-protocol/wire-runtime-authority'
 import {
   blake2b256,
@@ -29,6 +28,7 @@ import { asBytes, randomBytes, wipe } from './bytes.js'
 import { generateDistinctCapabilityKeys, signCapability } from './capabilities.js'
 import { fail } from './errors.js'
 import { resolveAdmission } from './provider.js'
+import { selectedOperationProfile } from './selected-operation-profile.js'
 
 const MAX_U64 = (1n << 64n) - 1n
 const RESULT_OVERHEAD_BOUND = 4096
@@ -59,8 +59,7 @@ async function admission (options, context, required) {
 }
 
 function result (encoding, request, requestCommitment, operationId, expectedResultBodyBytes = null) {
-  const profile = operationProfile(FAMILY.INBOX, operationId)
-  if (!profile) fail('BAD_CLIENT_INPUT', 'inbox operation has no frozen profile')
+  const profile = selectedOperationProfile(FAMILY.INBOX, operationId)
   return {
     request,
     requestBytes: encodeCanonical(encoding, request),
@@ -101,7 +100,7 @@ function expectedReadResultBytes (cap, limit) {
     if ((cap.frameClassBits & (1 << (Number(id) - 1))) !== 0) largestFrameBytes = Math.max(largestFrameBytes, bytes)
   }
   if (largestFrameBytes === 0) fail('BAD_CLIENT_INPUT', 'readCap advertises no known frame class')
-  const profile = operationProfile(FAMILY.INBOX, OPERATION.INBOX.READ)
+  const profile = selectedOperationProfile(FAMILY.INBOX, OPERATION.INBOX.READ)
   return Math.min(profile.maxResultBodyBytes, RESULT_OVERHEAD_BOUND + limit * (41 + largestFrameBytes))
 }
 

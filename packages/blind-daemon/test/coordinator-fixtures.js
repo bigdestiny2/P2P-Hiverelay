@@ -14,6 +14,7 @@ import {
   encodeCanonical,
   serviceDescriptorHash
 } from '@hiverelay/blind-protocol'
+import { ADVERTISED_OPERATION_BITS } from '@hiverelay/blind-protocol/wire-runtime-authority'
 
 const descriptorVector = fs.readFileSync(new URL(
   '../../blind-protocol/vectors/draft/describe/service-descriptor.bin', import.meta.url))
@@ -45,6 +46,7 @@ export function bindDurability (descriptor) {
 export function descriptorValue (overrides = {}) {
   const value = decodeCanonical(blindServiceDescriptorV1, descriptorVector, { copyBytes: true })
   value.endpoints[0].envelopeClassBits = 0x7e
+  value.enabledOperationBits = ADVERTISED_OPERATION_BITS
   Object.assign(value, overrides)
   bindDurability(value)
   return value

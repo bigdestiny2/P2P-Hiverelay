@@ -4,9 +4,6 @@ import {
   COST_CLASS_RULE_ID,
   DRAFT_SCHEMA_CATALOG,
   EXECUTABLE_SCHEMA_CODECS,
-  FAMILY,
-  OPERATION,
-  OPERATION_PROFILE_ROWS,
   SCHEMA_CATEGORY,
   allocationCommitment,
   cellBatchGetRequestCommitment,
@@ -15,9 +12,7 @@ import {
   cellProveRequestCommitment,
   cellPutRequestCommitment,
   coreMirrorRequestCommitment,
-  coreOpenReplicationRequestCommitment,
   coreServeRequestCommitment,
-  forwardOpenRequestCommitment,
   inboxAppendRequestCommitment,
   inboxCreateCommitment,
   inboxCreateRequestCommitment,
@@ -25,6 +20,12 @@ import {
   inboxReadRequestCommitment,
   inboxWatchRequestCommitment
 } from '@hiverelay/blind-protocol'
+import {
+  ADVERTISED_OPERATION_PROFILE_ROWS,
+  FAMILY,
+  OPERATION,
+  operationOrdinal
+} from '@hiverelay/blind-protocol/wire-runtime-authority'
 
 const MiB = 1024 * 1024
 const ZERO_COST = Object.freeze({ resourceClass: 0, leaseClass: 0 })
@@ -43,7 +44,8 @@ const wireSchemaNames = new Map(DRAFT_SCHEMA_CATALOG
   .filter(entry => entry.category === SCHEMA_CATEGORY.WIRE)
   .map(entry => [entry.categoryLocalSchemaId, entry.schemaName]))
 
-export const OPERATION_CATALOG = Object.freeze(OPERATION_PROFILE_ROWS.map((profile, ordinal) => {
+export const OPERATION_CATALOG = Object.freeze(ADVERTISED_OPERATION_PROFILE_ROWS.map(profile => {
+  const ordinal = operationOrdinal(profile.familyId, profile.operationId)
   const requestSchemaName = wireSchemaNames.get(profile.requestSchemaId)
   const resultSchemaName = profile.resultSchemaId === 0 ? null : wireSchemaNames.get(profile.resultSchemaId)
   const requestCodec = requestSchemaName == null ? null : EXECUTABLE_SCHEMA_CODECS[requestSchemaName]
@@ -62,8 +64,8 @@ export const OPERATION_CATALOG = Object.freeze(OPERATION_PROFILE_ROWS.map((profi
   })
 }))
 
-if (OPERATION_CATALOG.length !== 22 || OPERATION_CATALOG.some((entry, index) => entry.ordinal !== index)) {
-  throw new Error('blind daemon operation catalog must contain the exact 22-row ABI projection')
+if (OPERATION_CATALOG.length !== 17 || OPERATION_CATALOG.some(entry => entry.ordinal < 0)) {
+  throw new Error('blind daemon operation catalog must contain the exact 17-row advertised release projection')
 }
 
 const operationByPair = new Map(OPERATION_CATALOG.map(entry => [pairKey(entry.familyId, entry.operationId), entry]))
@@ -178,14 +180,6 @@ const requestCommitmentByPair = new Map([
   [pairKey(FAMILY.CORE, OPERATION.CORE.PROVE), (request, descriptor) => coreServeRequestCommitment({
     ...request,
     relayPublicKey: relayKeyInput(descriptor)
-  })],
-  [pairKey(FAMILY.CORE, OPERATION.CORE.OPEN_REPLICATION), (request, descriptor) => coreOpenReplicationRequestCommitment({
-    ...request,
-    relayPublicKey: relayKeyInput(descriptor)
-  })],
-  [pairKey(FAMILY.FORWARD, OPERATION.FORWARD.OPEN), (request, descriptor, context) => forwardOpenRequestCommitment({
-    ...request,
-    previousRelayKey: context.adjacentRelayKey
   })]
 ])
 

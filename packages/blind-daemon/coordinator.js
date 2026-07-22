@@ -699,6 +699,7 @@ export class BlindOperationCoordinator {
     let request
     let effectiveEpochFloor = 0
     let activeStream = false
+    let outsideAdvertisedProfile = false
     try {
       const stagedPut = context[STAGED_CELL_PUT_CONTEXT] || null
       let profile
@@ -723,7 +724,11 @@ export class BlindOperationCoordinator {
         request = decodeDispatchFrame(encodeDispatchFrame(inputFrame), { copyBody: true })
         profile = daemonOperationProfile(request.familyId, request.operationId)
       }
-      if (!profile || (request.frameKind !== FRAME_KIND.REQUEST && request.frameKind !== FRAME_KIND.STREAM)) {
+      if (!profile) {
+        outsideAdvertisedProfile = true
+        protocolFailure('BAD_ENCODING', 'operation is outside the advertised release profile')
+      }
+      if (request.frameKind !== FRAME_KIND.REQUEST && request.frameKind !== FRAME_KIND.STREAM) {
         protocolFailure('BAD_ENCODING', 'coordinator accepts only registered request and stream frames')
       }
       const requestBodyBytes = stagedPut ? stagedPut.frame.bodyLength : request.body.byteLength
@@ -975,7 +980,7 @@ export class BlindOperationCoordinator {
         reservation.release()
       }
     } catch (error) {
-      if (activeStream || !request) throw error
+      if (activeStream || outsideAdvertisedProfile || !request) throw error
       const dispatch = errorDispatch(request, error, effectiveEpochFloor)
       assertOuterFit(dispatch, context.outerClass)
       return {

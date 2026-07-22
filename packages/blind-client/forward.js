@@ -6,8 +6,7 @@ import {
   FORWARD_CLOSE_KIND,
   FRAME_KIND,
   OPERATION,
-  STREAM_WIRE_CLASS,
-  operationProfile
+  STREAM_WIRE_CLASS
 } from '@hiverelay/blind-protocol/wire-runtime-authority'
 import { forwardOpenRequestCommitment } from '@hiverelay/blind-protocol/hashes'
 import {
@@ -22,6 +21,7 @@ import { decodeDispatchFrame, encodeDispatchFrame } from '@hiverelay/blind-proto
 import { asBytes, randomBytes } from './bytes.js'
 import { fail } from './errors.js'
 import { resolveAdmission } from './provider.js'
+import { selectedOperationProfile } from './selected-operation-profile.js'
 
 const MAX_U64 = (1n << 64n) - 1n
 const ZERO_REQUEST_ID = b4a.alloc(16)
@@ -70,6 +70,7 @@ function sameBytes (left, right) {
 
 export async function createForwardOpenRequest (options) {
   if (!options || typeof options !== 'object') fail('BAD_CLIENT_INPUT', 'forward open options are required')
+  selectedOperationProfile(FAMILY.FORWARD, OPERATION.FORWARD.OPEN)
   const previousRelayKey = fixed(options.previousRelayKey, 32, 'previousRelayKey', true)
   const routeId = fixed(options.routeId, 16, 'routeId', true)
   const nextDescriptorSequence = u64(options.nextDescriptorSequence, 'nextDescriptorSequence')
@@ -119,7 +120,7 @@ export async function createForwardOpenRequest (options) {
     hopAdmission,
     innerHandshake
   }
-  const profile = operationProfile(FAMILY.FORWARD, OPERATION.FORWARD.OPEN)
+  const profile = selectedOperationProfile(FAMILY.FORWARD, OPERATION.FORWARD.OPEN)
   return {
     request,
     requestBytes: encodeCanonical(blindForwardOpenV1, request),

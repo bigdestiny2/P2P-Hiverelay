@@ -11,7 +11,6 @@ import {
   FRAME_KIND,
   OPERATION,
   allocationCommitment,
-  assertReleaseReady,
   blindErrorV1,
   cellPutRequestCommitment,
   decodeDispatchFrame,
@@ -19,9 +18,13 @@ import {
   encodeCanonical,
   encodeDispatchFrame,
   encodeOuterEnvelope,
-  errorProfileEntry,
-  operationProfile
+  errorProfileEntry
 } from '@hiverelay/blind-protocol'
+import {
+  ADVERTISED_OPERATION_BITS,
+  assertAdvertisedOperation,
+  assertReleaseReady
+} from '@hiverelay/blind-protocol/wire-runtime-authority'
 import {
   LOCAL_BROKER_ERROR,
   LOCAL_RESPONSE_KIND,
@@ -81,7 +84,6 @@ const DEFAULT_CLOSE_TIMEOUT_MS = 5_000
 const DEFAULT_MAX_BUFFERED_BYTES = 64 * 1024 * 1024
 const DEFAULT_MAX_PENDING_READINESS_CHECKS = 64
 const REQUIRED_DESCRIBE_OPERATION_BITS = 0x00000007
-const KNOWN_OPERATION_BITS = 0x003fffff
 const KNOWN_ROLE_BITS = 0x007f
 const MAX_U64 = (1n << 64n) - 1n
 export const STAGED_PUT_MEMORY_LEDGER_V2 = Object.freeze({
@@ -1497,7 +1499,8 @@ export class BlindDaemon {
     if (!Number.isInteger(snapshot.readyRoleBits) || snapshot.readyRoleBits < 0 ||
         snapshot.readyRoleBits > KNOWN_ROLE_BITS) return null
     if (!Number.isInteger(snapshot.readyOperationBits) || snapshot.readyOperationBits < 0 ||
-        snapshot.readyOperationBits > 0xffffffff || (snapshot.readyOperationBits & ~KNOWN_OPERATION_BITS) !== 0) return null
+        snapshot.readyOperationBits > 0xffffffff ||
+        (snapshot.readyOperationBits & ~ADVERTISED_OPERATION_BITS) !== 0) return null
     return {
       descriptorSequence,
       descriptorHash,
@@ -1616,8 +1619,14 @@ export class BlindDaemon {
       return this._wrapForRequest(local, correlatedErrorDispatch(request,
         new BlindProtocolError('BAD_ENCODING', 'route family does not match dispatch family')))
     }
-    const profile = operationProfile(request.familyId, request.operationId)
-    if (!profile || (profile.transportSupportBits & local.transportSupportBit) === 0) {
+    let profile
+    try {
+      profile = assertAdvertisedOperation(request.familyId, request.operationId)
+    } catch {
+      return this._wrapForRequest(local, correlatedErrorDispatch(request,
+        new BlindProtocolError('TRANSPORT_UNSUPPORTED', 'operation is outside the advertised release profile')))
+    }
+    if ((profile.transportSupportBits & local.transportSupportBit) === 0) {
       return this._wrapForRequest(local, correlatedErrorDispatch(request,
         new BlindProtocolError('TRANSPORT_UNSUPPORTED', 'operation is unavailable on the bound transport')))
     }

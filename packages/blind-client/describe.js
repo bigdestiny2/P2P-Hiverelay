@@ -1,5 +1,6 @@
 import b4a from 'b4a'
 import {
+  ADVERTISED_OPERATION_BITS,
   AUXILIARY_SIGNATURE_DOMAIN_ID,
   CLOCK_UNSAFE_OPERATION_BITS,
   DISPATCH_LIMITS,
@@ -13,7 +14,8 @@ import {
   TRANSPORT_ID,
   TRANSPORT_SUPPORT,
   operationBit,
-  operationProfile
+  operationProfile,
+  isAdvertisedOperation
 } from '@hiverelay/blind-protocol/wire-runtime-authority'
 import {
   admissionParametersHash,
@@ -169,6 +171,10 @@ function verifiedFields (value) {
 export function verifyDescriptorBytes (input, options = {}) {
   const decoded = decodeCanonicalCopy(blindServiceDescriptorV1, input, 'service descriptor')
   const descriptor = decoded.value
+  if ((descriptor.enabledOperationBits & ~ADVERTISED_OPERATION_BITS) !== 0) {
+    fail('RELAY_PROTOCOL_VIOLATION',
+      'service descriptor enables an operation reserved by the active release profile')
+  }
   const descriptorHash = serviceDescriptorHash(decoded.bytes)
   if (options.expectedDescriptorHash != null &&
       !sameBytes(descriptorHash, asBytes(options.expectedDescriptorHash, 'expectedDescriptorHash', 32))) {
@@ -550,7 +556,8 @@ function qualificationAuthority (options) {
   }
   const profile = operationProfile(options.familyId, options.operationId)
   const bit = operationBit(options.familyId, options.operationId)
-  if (!profile || bit === 0 || (descriptor.enabledOperationBits & bit) === 0) {
+  if (!profile || !isAdvertisedOperation(options.familyId, options.operationId) ||
+      bit === 0 || (descriptor.enabledOperationBits & bit) === 0) {
     fail('RELAY_NOT_QUALIFIED', 'operation is not enabled by the trusted descriptor')
   }
   const advertisedProtocol = descriptor.protocols.find(value => value.protocolId === options.familyId)
@@ -701,6 +708,7 @@ export function createHealthChallenge (options) {
   if (!Number.isSafeInteger(options.requestedRoleBits) || options.requestedRoleBits <= 0 ||
       (options.requestedRoleBits & ~endpoint.roleBits) !== 0 ||
       !Number.isSafeInteger(options.requestedOperationBits) || options.requestedOperationBits <= 0 ||
+      (options.requestedOperationBits & ~ADVERTISED_OPERATION_BITS) !== 0 ||
       (options.requestedOperationBits & ~descriptor.enabledOperationBits) !== 0) {
     fail('RELAY_NOT_QUALIFIED', 'health challenge exceeds the endpoint role or descriptor operation set')
   }

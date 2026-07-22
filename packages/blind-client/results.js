@@ -13,10 +13,7 @@ import {
 import {
   batchGetResultV1,
   blindCoreAckV1,
-  blindForwardHopAcceptV1,
-  blindForwardOpenResultV1,
   blindReceiptV1,
-  coreOpenReplicationResultV1,
   coreServeResultV1,
   getCellResultV1,
   inboxAppendAckV1,
@@ -34,9 +31,7 @@ import {
   cellProveRequestCommitment,
   cellPutRequestCommitment,
   coreMirrorRequestCommitment,
-  coreOpenReplicationRequestCommitment,
   coreServeRequestCommitment,
-  forwardOpenRequestCommitment,
   inboxAppendRequestCommitment,
   inboxCreateCommitment,
   inboxCreateRequestCommitment,
@@ -151,45 +146,6 @@ function signed (encoding, value, domainId, context, label, binding, options) {
   }
 }
 
-function verifyNextHopAccept (next, previousContext, request, result, options) {
-  const nextContext = verifiedEndpointContext(options.nextHopEndpoint)
-  if (nextContext.familyId !== FAMILY.FORWARD || nextContext.operationId !== OPERATION.FORWARD.OPEN) {
-    fail('RELAY_PROTOCOL_VIOLATION', 'next-hop endpoint is not qualified for FORWARD.OPEN')
-  }
-  if (!sameBytes(next.previousRelayKey, previousContext.relayPublicKey) ||
-      BigInt(next.previousDescriptorSequence) !== BigInt(previousContext.descriptorSequence) ||
-      !sameBytes(next.previousDescriptorHash, previousContext.descriptorHash)) {
-    fail('RELAY_PROTOCOL_VIOLATION', 'next-hop accept does not bind the qualified previous relay')
-  }
-  if (!sameBytes(next.nextRelayKey, nextContext.relayPublicKey) ||
-      BigInt(next.nextDescriptorSequence) !== BigInt(nextContext.descriptorSequence) ||
-      !sameBytes(next.nextDescriptorHash, nextContext.descriptorHash)) {
-    fail('RELAY_PROTOCOL_VIOLATION', 'next-hop accept does not bind the qualified next relay')
-  }
-  verifyAuxiliarySignedValue(blindForwardHopAcceptV1, next,
-    AUXILIARY_SIGNATURE_DOMAIN_ID.FORWARD_HOP_ACCEPT,
-    nextContext.relayPublicKey, 'forward next-hop accept', 64, next.nextSignature)
-  const absent = encodeCanonical(blindForwardHopAcceptV1, {
-    ...next,
-    nextRelayBinding: { ...next.nextRelayBinding, externalCommitWitness: null }
-  })
-  verifyBinding(next.nextRelayBinding, nextContext, {
-    request,
-    requestCommitment: next.hopOpenCommitment,
-    externalWitnessVerifier: options.nextExternalWitnessVerifier
-  }, persistentResultCommitment(FAMILY.FORWARD, OPERATION.FORWARD.OPEN,
-    absent.subarray(0, absent.byteLength - 64)))
-  if (typeof options.nextHopVerifier !== 'function' ||
-      options.nextHopVerifier(Object.freeze({
-        request,
-        result,
-        nextHopAccept: next,
-        nextHopEndpoint: options.nextHopEndpoint
-      })) !== true) {
-    fail('RELAY_PROTOCOL_VIOLATION', 'forward next-hop descriptor/route verification failed')
-  }
-}
-
 function commonCorrelation (value, request, requestCommitment) {
   requireSame(value.requestNonce, requestNonce(request), 'result requestNonce')
   requireSame(value.requestCommitment, requestCommitment, 'result requestCommitment')
@@ -286,10 +242,6 @@ function recomputeRequestCommitment (context, request, getStorageSlot) {
       return coreMirrorRequestCommitment({ ...request, relayPublicKey })
     case key(FAMILY.CORE, OPERATION.CORE.PROVE):
       return coreServeRequestCommitment({ ...request, relayPublicKey })
-    case key(FAMILY.CORE, OPERATION.CORE.OPEN_REPLICATION):
-      return coreOpenReplicationRequestCommitment({ ...request, relayPublicKey })
-    case key(FAMILY.FORWARD, OPERATION.FORWARD.OPEN):
-      return forwardOpenRequestCommitment({ ...request, previousRelayKey: relayPublicKey })
     default:
       fail('BAD_CLIENT_INPUT', 'operation has no closed request commitment verifier')
   }
@@ -393,33 +345,6 @@ const RESULT_TABLE = new Map([
           options.coreProofVerifier(Object.freeze({ request, acknowledgement: ack, proofsAndBlocks: value.proofsAndBlocks })) !== true) {
         fail('RELAY_PROTOCOL_VIOLATION', 'core proof verification failed')
       }
-    }
-  }],
-  [key(FAMILY.CORE, OPERATION.CORE.OPEN_REPLICATION), {
-    encoding: coreOpenReplicationResultV1,
-    verify (value, request, commitment, context, options) {
-      signed(coreOpenReplicationResultV1, value, RESULT_SIGNATURE_DOMAIN_ID.CORE_OPEN_RESULT,
-        context, 'core OPEN result', value.relayBinding, options)
-      commonCorrelation(value, request, commitment)
-      for (const field of ['wireProfileHash', 'parentChannelBinding']) requireSame(value[field], request[field], `core OPEN ${field}`)
-      if (value.sessionClass !== request.sessionClass || BigInt(value.controlChannelId) !== BigInt(request.controlChannelId)) {
-        fail('RELAY_PROTOCOL_VIOLATION', 'core OPEN result changed the requested session tuple')
-      }
-    }
-  }],
-  [key(FAMILY.FORWARD, OPERATION.FORWARD.OPEN), {
-    encoding: blindForwardOpenResultV1,
-    verify (value, request, commitment, context, options) {
-      signed(blindForwardOpenResultV1, value, RESULT_SIGNATURE_DOMAIN_ID.FORWARD_OPEN_RESULT,
-        context, 'forward OPEN result', value.relayBinding, options)
-      requireSame(value.requestCommitment, commitment, 'forward OPEN requestCommitment')
-      for (const field of ['routeId', 'nextDescriptorHash', 'circuitNonce']) requireSame(value[field], request[field], `forward OPEN ${field}`)
-      if (BigInt(value.nextDescriptorSequence) !== BigInt(request.nextDescriptorSequence) ||
-          value.grantedWireClass !== request.requestedWireClass || value.circuitClass !== request.circuitClass) {
-        fail('RELAY_PROTOCOL_VIOLATION', 'forward OPEN result changed the requested route tuple')
-      }
-      const next = value.nextHopAccept
-      verifyNextHopAccept(next, context, request, value, options)
     }
   }]
 ])
@@ -579,12 +504,8 @@ export function verifyOperationResult (options) {
 }
 
 export const RESULT_VERIFIER_STATUS = Object.freeze({
-  expectedOperationCount: 19,
+  expectedOperationCount: 14,
   implementedOperationCount: RESULT_TABLE.size,
-  missingStreamingOperations: Object.freeze([
-    key(FAMILY.FORWARD, OPERATION.FORWARD.DATA),
-    key(FAMILY.FORWARD, OPERATION.FORWARD.WINDOW),
-    key(FAMILY.FORWARD, OPERATION.FORWARD.CLOSE)
-  ]),
-  completeForUnaryAndOpen: RESULT_TABLE.size === 19
+  reservedOperationCount: 5,
+  completeForAdvertisedOrdinary: RESULT_TABLE.size === 14
 })

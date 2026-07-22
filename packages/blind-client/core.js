@@ -1,5 +1,5 @@
 import b4a from 'b4a'
-import { FAMILY, OPERATION, operationProfile } from '@hiverelay/blind-protocol/wire-runtime-authority'
+import { FAMILY, OPERATION } from '@hiverelay/blind-protocol/wire-runtime-authority'
 import {
   coreMirrorRequestCommitment,
   coreOpenReplicationRequestCommitment,
@@ -14,6 +14,7 @@ import { encodeCanonical } from '@hiverelay/blind-protocol/codec'
 import { asBytes, randomBytes } from './bytes.js'
 import { fail } from './errors.js'
 import { resolveAdmission } from './provider.js'
+import { selectedOperationProfile } from './selected-operation-profile.js'
 
 const MAX_U64 = (1n << 64n) - 1n
 
@@ -51,8 +52,7 @@ async function admission (options, context, required) {
 }
 
 function result (encoding, request, requestCommitment, operationId, extra = {}) {
-  const profile = operationProfile(FAMILY.CORE, operationId)
-  if (!profile) fail('BAD_CLIENT_INPUT', 'core operation has no frozen profile')
+  const profile = selectedOperationProfile(FAMILY.CORE, operationId)
   return {
     request,
     requestBytes: encodeCanonical(encoding, request),
@@ -138,6 +138,7 @@ export async function createCoreProveRequest (options) {
 
 export async function createCoreOpenReplicationRequest (options) {
   if (!options || typeof options !== 'object') fail('BAD_CLIENT_INPUT', 'core open options are required')
+  selectedOperationProfile(FAMILY.CORE, OPERATION.CORE.OPEN_REPLICATION)
   const relayPublicKey = fixed(options.relayPublicKey, 32, 'relayPublicKey', true)
   const wireProfileHash = fixed(options.wireProfileHash, 32, 'wireProfileHash', true)
   const sessionClass = integer(options.sessionClass, 1, 3, 'sessionClass')

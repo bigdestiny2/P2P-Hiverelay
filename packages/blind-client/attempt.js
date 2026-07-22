@@ -1,17 +1,14 @@
 import b4a from 'b4a'
 import {
   FAMILY,
-  OPERATION,
-  operationProfile
+  OPERATION
 } from '@hiverelay/blind-protocol/wire-runtime-authority'
 import {
   batchGetV1,
   blindAdmissionParametersRequestV1,
   blindDescribeGetV1,
-  blindForwardOpenV1,
   blindHealthChallengeV1,
   coreMirrorRequestV1,
-  coreOpenReplicationV1,
   coreServeChallengeV1,
   dropCellV1,
   getCellV1,
@@ -30,6 +27,7 @@ import { verifiedEndpointContext } from './verified-endpoint.js'
 import { fail } from './errors.js'
 import { INTENT_STATE } from './intent.js'
 import { verifyOperationResult } from './results.js'
+import { selectedOperationProfile } from './selected-operation-profile.js'
 
 function pair (familyId, operationId) {
   return `${familyId}:${operationId}`
@@ -52,9 +50,7 @@ const requestCodecByPair = new Map([
   [pair(FAMILY.INBOX, OPERATION.INBOX.READ), inboxReadV1],
   [pair(FAMILY.INBOX, OPERATION.INBOX.WATCH), inboxWatchV1],
   [pair(FAMILY.CORE, OPERATION.CORE.MIRROR), coreMirrorRequestV1],
-  [pair(FAMILY.CORE, OPERATION.CORE.PROVE), coreServeChallengeV1],
-  [pair(FAMILY.CORE, OPERATION.CORE.OPEN_REPLICATION), coreOpenReplicationV1],
-  [pair(FAMILY.FORWARD, OPERATION.FORWARD.OPEN), blindForwardOpenV1]
+  [pair(FAMILY.CORE, OPERATION.CORE.PROVE), coreServeChallengeV1]
 ])
 
 function requestCodec (familyId, operationId) {
@@ -122,6 +118,7 @@ export class DurableAttempt {
     const context = verifiedEndpointContext(options.endpoint)
     let record = await this.store.read(intentId)
     if (record == null) fail('INTENT_NOT_FOUND', 'intent does not exist')
+    const profile = selectedOperationProfile(record.value.familyId, record.value.operationId)
     assertDestination(record.value, context)
     const request = decodeRequest(record.value)
     if (!same(asBytes(request.clientNonce, 'request clientNonce', 32), record.value.clientNonce)) {
@@ -157,7 +154,6 @@ export class DurableAttempt {
       attemptCount: record.value.attemptCount + 1,
       lastErrorCode: 0
     })
-    const profile = operationProfile(record.value.familyId, record.value.operationId)
     let response
     try {
       response = await this.transport.request({

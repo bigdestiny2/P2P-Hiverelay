@@ -534,7 +534,7 @@ test('optional uncharged operation never derives admission cost and terminal pre
   t.alike(h.events, ['relation', 'authorization', 'terminal', 'readiness'])
 })
 
-test('stream OPEN requires authenticated opaque session bytes and hides its branded handle from generic hooks', async t => {
+test('reserved stream OPEN fails before session verification, admission, or generic hooks', async t => {
   const state = await activeDescriptor()
   const open = fixtureCoreOpen(fixtureBytes(32, 0x12))
   const body = encodeCanonical(coreOpenReplicationV1, open)
@@ -565,22 +565,20 @@ test('stream OPEN requires authenticated opaque session bytes and hides its bran
       }
     }
   })
-  const missing = await h.coordinator.dispatch(
+  await t.exception(h.coordinator.dispatch(
     requestFrame(FAMILY.CORE, OPERATION.CORE.OPEN_REPLICATION, body),
-    context({ transportSupportBit: TRANSPORT_SUPPORT.DIRECT_NATIVE }))
-  t.is(errorName(missing.dispatch), 'TRANSPORT_UNSUPPORTED')
-  const checked = await h.coordinator.dispatch(
+    context({ transportSupportBit: TRANSPORT_SUPPORT.DIRECT_NATIVE })), /advertised release profile/)
+  await t.exception(h.coordinator.dispatch(
     requestFrame(FAMILY.CORE, OPERATION.CORE.OPEN_REPLICATION, body),
     context({
       transportSupportBit: TRANSPORT_SUPPORT.DIRECT_NATIVE,
       authenticatedSessionContextBytes: fixtureBytes(8, 0x77)
-    }))
-  t.is(errorName(checked.dispatch), 'SPEND_INVALID')
-  t.is(verified, 1)
+    })), /advertised release profile/)
+  t.is(verified, 0)
   t.absent(leaked)
 })
 
-test('active FORWARD frames split before unary deadlines, admission, readiness, and budgets', async t => {
+test('reserved active FORWARD frames fail before unary or stream execution', async t => {
   const state = await activeDescriptor()
   let delegated
   const h = harness({
@@ -594,7 +592,7 @@ test('active FORWARD frames split before unary deadlines, admission, readiness, 
     budget: { acquire () { throw new Error('active stream touched unary budget') } },
     readiness: { evaluate () { throw new Error('active stream touched unary readiness') } }
   })
-  const result = await h.coordinator.dispatch({
+  await t.exception(h.coordinator.dispatch({
     frameKind: FRAME_KIND.STREAM,
     familyId: FAMILY.FORWARD,
     operationId: OPERATION.FORWARD.DATA,
@@ -606,14 +604,11 @@ test('active FORWARD frames split before unary deadlines, admission, readiness, 
     get acceptedMonotonicMillis () { throw new Error('active stream read unary accepted time') },
     get absoluteDeadlineMonotonicMillis () { throw new Error('active stream read unary deadline') },
     streamSide: 1
-  })
-  t.is(result.streamDisposition, 'consumed')
-  t.is(result.dispatch, null)
-  const frame = decodeDispatchFrame(delegated.canonicalFrame, { copyBody: true })
-  t.is(frame.operationId, OPERATION.FORWARD.DATA)
+  }), /advertised release profile/)
+  t.absent(delegated)
 })
 
-test('active stream errors delegate a canonical terminal CLOSE instead of synthesizing DATA/WINDOW ERROR', async t => {
+test.skip('latent FORWARD terminal CLOSE vectors are inactive while the family is reserved', async t => {
   const state = await activeDescriptor()
   let terminations = 0
   const h = harness({
@@ -651,7 +646,7 @@ test('active stream errors delegate a canonical terminal CLOSE instead of synthe
   t.is(terminations, 1)
 })
 
-test('malformed active stream bodies terminate the pinned stream without a unary ERROR frame', async t => {
+test.skip('latent malformed FORWARD stream vectors are inactive while the family is reserved', async t => {
   const state = await activeDescriptor()
   let handled = 0
   let terminalError = null
@@ -694,7 +689,7 @@ test('malformed active stream bodies terminate the pinned stream without a unary
   t.is(handled, 0)
 })
 
-test('active operations carried in request frames fail before unary or stream dispatch', async t => {
+test.skip('latent FORWARD request-frame vectors are inactive while the family is reserved', async t => {
   const state = await activeDescriptor()
   let called = 0
   const h = harness({

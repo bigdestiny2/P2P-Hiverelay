@@ -11,6 +11,7 @@ import {
   PROTOCOL,
   TRANSPORT_ID,
   TRANSPORT_SUPPORT,
+  assertAdvertisedOperation,
   assertReleaseReady
 } from '@hiverelay/blind-protocol/wire-runtime-authority'
 import { decodeOuterEnvelope } from '@hiverelay/blind-protocol'
@@ -966,6 +967,14 @@ export class BlindEdge {
         outer = decodeOuterEnvelope(body, { copyInner: true, copyBody: false })
       } catch {
         throw new EdgeTransportError(400, 'malformed blind envelope')
+      }
+      try {
+        assertAdvertisedOperation(outer.frame.familyId, outer.frame.operationId)
+      } catch {
+        throw new EdgeTransportError(400, 'operation is outside the advertised release profile')
+      }
+      if (outer.frame.familyId !== family) {
+        throw new EdgeTransportError(400, 'route family does not match dispatch family')
       }
       const stagedCellPut = family === FAMILY.CELL &&
         outer.frame.familyId === FAMILY.CELL && outer.frame.operationId === OPERATION.CELL.PUT

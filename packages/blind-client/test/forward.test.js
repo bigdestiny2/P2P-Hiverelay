@@ -89,7 +89,7 @@ function circuit () {
   })
 }
 
-test('Forward OPEN selects only a signed route tuple and carries no open-proxy destination', async t => {
+test.skip('Forward OPEN latent route tuple vectors are inactive while the operation is reserved', async t => {
   const innerHandshake = b4a.alloc(32, 0x57)
   const created = await createForwardOpenRequest({
     runtime,
@@ -130,11 +130,11 @@ test('Forward OPEN validates transport shape before acquiring admission', async 
     innerHandshake: b4a.alloc(31),
     expectedInnerHandshakeBytes: 32,
     admissionProvider: async () => { calls++; return admission }
-  }), /exactly 32 bytes|transport profile/)
+  }), /reserved by the active release profile/)
   t.is(calls, 0)
 })
 
-test('Forward OPEN binds an inherited route-scope hash before admission', async t => {
+test.skip('Forward OPEN latent inherited route-scope vectors are inactive while reserved', async t => {
   const parentRouteScopeHash = b4a.alloc(32, 0x58)
   let admissionContext = null
   const created = await createForwardOpenRequest({
@@ -159,7 +159,7 @@ test('Forward OPEN binds an inherited route-scope hash before admission', async 
   t.alike(created.requestCommitment, forwardOpenRequestCommitment({ previousRelayKey, ...decoded }))
 })
 
-test('Forward OPEN result verifies both independently qualified relay bindings and signatures', async t => {
+test.skip('Forward OPEN latent result vectors are inactive while the operation is reserved', async t => {
   const previousKeys = keyPair(0x58)
   const nextKeys = keyPair(0x59)
   const previousDescriptorHash = b4a.alloc(32, 0x5a)
@@ -396,7 +396,7 @@ test('Forward circuit rejects gaps, nonce substitution and excess credit as term
   t.exception(() => excess.accept(windowFrame), /consumed bytes/)
 })
 
-test('Forward circuit accepts descriptor genesis zero and rejects a first-frame sequence gap', async t => {
+test.skip('Forward OPEN genesis vectors are inactive while the operation is reserved', async t => {
   const created = await createForwardOpenRequest({
     runtime,
     previousRelayKey,

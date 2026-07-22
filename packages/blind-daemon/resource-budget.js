@@ -1,4 +1,4 @@
-import { operationProfile } from '@hiverelay/blind-protocol'
+import { isAdvertisedOperation } from '@hiverelay/blind-protocol/wire-runtime-authority'
 
 function busy (message) {
   const error = new Error(message)
@@ -51,8 +51,8 @@ export class ResourceBudget {
     this.byOperation = new Map()
     this.quotas = new Map()
     for (const quota of options.operationQuotas || []) {
-      if (!quota || !operationProfile(quota.familyId, quota.operationId)) {
-        throw new TypeError('operation quota references an unknown operation')
+      if (!quota || !isAdvertisedOperation(quota.familyId, quota.operationId)) {
+        throw new TypeError('operation quota references an unknown or reserved operation')
       }
       const key = keyFor(quota.familyId, quota.operationId)
       if (this.quotas.has(key)) throw new TypeError('operation quotas must be unique')
@@ -64,8 +64,8 @@ export class ResourceBudget {
   }
 
   acquire (input) {
-    if (!input || !operationProfile(input.familyId, input.operationId)) {
-      throw new TypeError('budget reservation references an unknown operation')
+    if (!input || !isAdvertisedOperation(input.familyId, input.operationId)) {
+      throw new TypeError('budget reservation references an unknown or reserved operation')
     }
     const bytes = input.bytes == null
       ? checkedTotal([

@@ -1,4 +1,5 @@
 import b4a from 'b4a'
+import { isAdvertisedOperation } from '@hiverelay/blind-protocol/wire-runtime-authority'
 import { asBytes, randomBytes, wipe } from './bytes.js'
 import { fail } from './errors.js'
 
@@ -110,6 +111,11 @@ function normalizedIntent (value) {
       (privacyProfileBit & (privacyProfileBit - 1)) !== 0) {
     fail('BAD_CLIENT_INPUT', 'transport and privacy profiles must each contain one bit')
   }
+  const familyId = integer(value.familyId, 1, 5, 'familyId')
+  const operationId = integer(value.operationId, 1, 255, 'operationId')
+  if (!isAdvertisedOperation(familyId, operationId)) {
+    fail('BAD_CLIENT_INPUT', 'client intent operation is unknown or reserved by the active release profile')
+  }
   return {
     version: VERSION,
     state,
@@ -124,8 +130,8 @@ function normalizedIntent (value) {
     transportId: integer(value.transportId, 1, 255, 'transportId'),
     transportSupportBit,
     privacyProfileBit,
-    familyId: integer(value.familyId, 1, 5, 'familyId'),
-    operationId: integer(value.operationId, 1, 255, 'operationId'),
+    familyId,
+    operationId,
     requestCommitment: nonzeroBytes(value.requestCommitment, 'requestCommitment'),
     clientNonce: b4a.from(asBytes(value.clientNonce, 'clientNonce', 32)),
     operationBytes,

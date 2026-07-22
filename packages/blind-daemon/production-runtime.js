@@ -7,22 +7,26 @@ import sodium from 'sodium-universal'
 import {
   ENDPOINT_ROLE,
   DISPATCH_LIMITS,
-  FAMILY,
   HEALTH_CLOCK_STATE,
   HEALTH_INTEGRITY_STATE,
   HEALTH_REBALANCE_STATE,
-  OPERATION,
   OUTER_CLASS,
   OUTER_ENVELOPE_HEADER_BYTES,
   RESULT_SIGNATURE_DOMAIN_ID,
   STORE_LIFECYCLE_STATE,
   TRANSPORT_ID,
   TRANSPORT_SUPPORT,
-  assertReleaseReady,
   blindHealthResultV1,
   encodeCanonical,
   resultSignaturePayload
 } from '@hiverelay/blind-protocol'
+import {
+  ADVERTISED_OPERATION_BITS,
+  FAMILY,
+  OPERATION,
+  assertReleaseReady,
+  operationBit
+} from '@hiverelay/blind-protocol/wire-runtime-authority'
 import { assertPrivateIpcReady } from '@hiverelay/blind-ipc'
 import {
   CELL_PUT_OPERATION_BIT_V2,
@@ -61,13 +65,18 @@ import { BlindInboxStorageEngine } from './inbox-storage-engine.js'
 import { BlindCoreStorageEngine } from './core-storage-engine.js'
 import { loadBundledBlindStoreFormatAuthority } from './store-format-binding.js'
 
-const DESCRIBE_OPERATION_BITS = 0x00000007
-const CELL_OPERATION_BITS = 0x000001f8
-const INBOX_OPERATION_BITS = 0x00007e00
-const CORE_UNARY_OPERATION_BITS = 0x00018000
+const operationBits = (familyId, operationIds) => operationIds.reduce(
+  (bits, operationId) => bits | operationBit(familyId, operationId), 0)
+const DESCRIBE_OPERATION_BITS = operationBits(FAMILY.DESCRIBE, Object.values(OPERATION.DESCRIBE))
+const CELL_OPERATION_BITS = operationBits(FAMILY.CELL, Object.values(OPERATION.CELL))
+const INBOX_OPERATION_BITS = operationBits(FAMILY.INBOX, Object.values(OPERATION.INBOX))
+const CORE_UNARY_OPERATION_BITS = operationBits(FAMILY.CORE, [OPERATION.CORE.MIRROR, OPERATION.CORE.PROVE])
 const DESCRIBE_AND_CELL_OPERATION_BITS = DESCRIBE_OPERATION_BITS | CELL_OPERATION_BITS
 const DESCRIBE_CELL_INBOX_OPERATION_BITS = DESCRIBE_AND_CELL_OPERATION_BITS | INBOX_OPERATION_BITS
 const DESCRIBE_CELL_INBOX_CORE_OPERATION_BITS = DESCRIBE_CELL_INBOX_OPERATION_BITS | CORE_UNARY_OPERATION_BITS
+if (DESCRIBE_CELL_INBOX_CORE_OPERATION_BITS !== ADVERTISED_OPERATION_BITS) {
+  throw new Error('production runtime operation assembly drifted from the advertised release profile')
+}
 const INBOX_RESULT_SIGNATURE_DOMAIN_IDS = new Set([
   RESULT_SIGNATURE_DOMAIN_ID.INBOX_RECEIPT,
   RESULT_SIGNATURE_DOMAIN_ID.INBOX_APPEND_ACK,
