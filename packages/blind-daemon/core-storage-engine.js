@@ -432,6 +432,10 @@ export class BlindCoreStorageEngine {
       maximumChunkBytes: Math.min(this.maximumCorpusBytes, options.maximumChunkBytes || 256 * 1024),
       faultInjector: options.faultInjector
     })
+    this.onBlindWriteAcknowledged = options.onBlindWriteAcknowledged || null
+    if (this.onBlindWriteAcknowledged != null && typeof this.onBlindWriteAcknowledged !== 'function') {
+      throw new TypeError('onBlindWriteAcknowledged must be a function')
+    }
     this.ownsTransactionStore = true
     this.spends = new Map()
     this.mirrorAttempts = new Map()
@@ -1279,8 +1283,14 @@ export class BlindCoreStorageEngine {
     const codec = WAL_CODECS.get(type)
     if (!codec) throw new TypeError('unknown Core WAL type')
     const payload = encodeCanonical(codec, value)
-    return this.transactionStore.appendAndApply({ type, transactionId, virtualBucket, payload },
+    const frame = await this.transactionStore.appendAndApply({ type, transactionId, virtualBucket, payload },
       frame => this.#applyFrame(frame, false))
+    if (this.onBlindWriteAcknowledged && [
+      BLIND_CORE_WAL_TYPE.MIRROR_ACCEPTED,
+      BLIND_CORE_WAL_TYPE.MIRROR_ACTIVATED,
+      BLIND_CORE_WAL_TYPE.PROVE_PINNED
+    ].includes(type)) await this.onBlindWriteAcknowledged({ walSequence: frame.sequence, walHash: frame.walHash })
+    return frame
   }
 
   #applyFrame (frame, recovering) {

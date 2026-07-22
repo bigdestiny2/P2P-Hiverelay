@@ -475,7 +475,7 @@ test('production assembler derives signed readiness and exposes only its real su
   await runtime.close()
 })
 
-test('production startup enforces authenticated D7 reader floor and marker-loss recovery', async t => {
+test('production startup permits only fresh blind-only 1.2 stores and rejects evidence loss', async t => {
   const fixture = await runtimeFixture()
   t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
   const environment = { ...fixture.environment }
@@ -488,32 +488,22 @@ test('production startup enforces authenticated D7 reader floor and marker-loss 
   })
   await first.close()
 
-  await t.exception.all(() => assembleProductionBlindDaemon({
-    bootstrap,
-    runtimeConfig: loadProductionRuntimeConfig({
-      ...environment,
-      HIVERELAY_BLIND_STORE_READER_MODE: 'legacy-only'
-    }, bootstrap.endpointIds),
-    releaseGate: async () => {}
-  }), /D7 rollback floor/)
-
-  const dual = await assembleProductionBlindDaemon({
-    bootstrap,
-    runtimeConfig: loadProductionRuntimeConfig({
-      ...environment,
-      HIVERELAY_BLIND_STORE_READER_MODE: 'blind-plus-legacy-dual-read'
-    }, bootstrap.endpointIds),
-    releaseGate: async () => {}
-  })
-  await dual.close()
+  t.exception(() => loadProductionRuntimeConfig({
+    ...environment,
+    HIVERELAY_BLIND_STORE_READER_MODE: 'legacy-only'
+  }, bootstrap.endpointIds), /STORE_READER_MODE is invalid/)
+  t.exception(() => loadProductionRuntimeConfig({
+    ...environment,
+    HIVERELAY_BLIND_STORE_READER_MODE: 'blind-plus-legacy-dual-read'
+  }, bootstrap.endpointIds), /STORE_READER_MODE is invalid/)
 
   await fs.unlink(path.join(environment.HIVERELAY_BLIND_STORE_ROOT, 'control',
-    'blind-store-generation-floor-v1.json'))
+    'blind-store-generation-head-v1.json'))
   await t.exception.all(() => assembleProductionBlindDaemon({
     bootstrap,
     runtimeConfig: loadProductionRuntimeConfig(environment, bootstrap.endpointIds),
     releaseGate: async () => {}
-  }), /generation floor marker is missing/)
+  }), /generation head is missing/)
 })
 
 test('legacy-only admission adapter cannot advertise or dispatch production V2 CELL.PUT', async t => {
@@ -718,6 +708,8 @@ test('captured split adapter and production-owned replay journal execute one rea
   t.alike((await runtime.storage.readCell(storageSlot)).cellBlob, cellBlob)
   t.is(runtime.storage.status().accounting.atomicStagingLeases, 0)
   t.is(resolveCalls, 1, 'the live PUT uses the assembly-captured adapter without dynamic re-resolution')
+  t.ok((await fs.readdir(path.join(fixture.environment.HIVERELAY_BLIND_STORE_ROOT, 'control')))
+    .some(name => name.includes('0000000000000001')), 'first acknowledged PUT appends the D7 floor record')
   await runtime.close()
 })
 

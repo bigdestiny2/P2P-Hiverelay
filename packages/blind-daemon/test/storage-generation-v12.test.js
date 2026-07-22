@@ -1,112 +1,81 @@
 import b4a from 'b4a'
 import test from 'brittle'
-import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
+import { mkdtemp, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import {
-  BLIND_STORE_READER_MODE,
-  createBlindStoreMigrationPlan,
-  executeBlindStoreMigration,
-  openBlindStoreGenerationFloor
-} from '../storage-generation-v12.js'
-import { deriveBlindVirtualBucket } from '../virtual-bucket.js'
-import { blake2b256 } from '@hiverelay/blind-protocol'
+import { BLIND_STORE_READER_MODE, openBlindStoreGenerationFloor } from '../storage-generation-v12.js'
 
-const MANIFEST_KEY = b4a.alloc(32, 0xa1)
-const STORE_IDENTITY = b4a.from('authenticated-runtime-store-binding')
+const KEY = b4a.alloc(32, 0xa1)
+const IDENTITY = b4a.from('authenticated-runtime-store-binding')
+const first = { walSequence: 1n, walHash: b4a.alloc(32, 1) }
+const second = { walSequence: 2n, walHash: b4a.alloc(32, 2) }
 
-test('1.2 migration plan replaces keyed buckets with deterministic public buckets', t => {
-  const locator = b4a.alloc(32, 0x44)
-  const plan = createBlindStoreMigrationPlan([{
-    serviceTag: 2,
-    primaryLocator: locator,
-    legacyVirtualBucket: 0x1234,
-    objectHash: b4a.alloc(32, 0x55),
-    byteLength: 4096
-  }])
-  t.is(plan.fromFormatVersion, '1.1')
-  t.is(plan.toFormatVersion, '1.2')
-  t.is(plan.copyVerifyBeforeCommit, true)
-  t.is(plan.entries[0].publicVirtualBucket, deriveBlindVirtualBucket(2, locator))
-  t.is(plan.entries[0].legacyVirtualBucket, 0x1234)
-  t.is(plan.planHashHex.length, 64)
-  t.exception(() => createBlindStoreMigrationPlan([planInput(locator), planInput(locator)]), /duplicate migration locator/)
-})
-
-test('D7 rollback floor survives restart and rejects legacy-only recovery', async t => {
+test('fresh 1.2 floor advances only after a newer acknowledged blind write', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'blind-store-generation-'))
   t.teardown(() => rm(root, { recursive: true, force: true }))
-
-  const options = { manifestKey: MANIFEST_KEY, storeIdentity: STORE_IDENTITY, allowCreate: true }
-  const initial = await openBlindStoreGenerationFloor(root, options)
-  t.is(initial.firstBlindOnlyWriteAcknowledged, false)
-  t.ok(initial.assertReaderMode(BLIND_STORE_READER_MODE.LEGACY_ONLY))
-  t.is(await initial.acknowledgeBlindOnlyWrite(), true)
-  t.is(await initial.acknowledgeBlindOnlyWrite(), false)
-
-  const restarted = await openBlindStoreGenerationFloor(root, { ...options, allowCreate: false })
+  const options = { manifestKey: KEY, storeIdentity: IDENTITY, storeEvidence: first }
+  const floor = await openBlindStoreGenerationFloor(root, { ...options, allowCreate: true })
+  t.is(floor.firstBlindOnlyWriteAcknowledged, false)
+  t.ok(floor.assertReaderMode(BLIND_STORE_READER_MODE.BLIND_ONLY))
+  t.exception(() => floor.assertReaderMode('legacy-only'), /fresh|replacement|blind-only/)
+  await t.exception.all(() => floor.acknowledgeBlindOnlyWrite(first), /newer durable WAL write/)
+  t.is(await floor.acknowledgeBlindOnlyWrite(second), true)
+  const restarted = await openBlindStoreGenerationFloor(root, { ...options, storeEvidence: second })
   t.is(restarted.firstBlindOnlyWriteAcknowledged, true)
-  t.exception(() => restarted.assertReaderMode(BLIND_STORE_READER_MODE.LEGACY_ONLY), /D7 rollback floor/)
-  t.ok(restarted.assertReaderMode(BLIND_STORE_READER_MODE.BLIND_PLUS_LEGACY))
-  t.ok(restarted.assertReaderMode(BLIND_STORE_READER_MODE.BLIND_ONLY))
-
-  const marker = path.join(root, 'blind-store-generation-floor-v1.json')
-  const original = await readFile(marker)
-  const tampered = JSON.parse(original)
-  tampered.firstBlindOnlyWriteAcknowledged = false
-  await writeFile(marker, JSON.stringify(tampered))
-  await t.exception.all(() => openBlindStoreGenerationFloor(root, { ...options, allowCreate: false }), /invalid/)
-  await writeFile(marker, original)
-  await unlink(marker)
-  await t.exception.all(() => openBlindStoreGenerationFloor(root, { ...options, allowCreate: false }), /missing/)
 })
 
-test('migration copy/hash/commit/finalize resumes after every crash boundary and preserves legacy', async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'blind-store-migration-'))
+test('missing, tampered, replayed-false, transplanted, and partial evidence fail closed', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'blind-store-generation-'))
   t.teardown(() => rm(root, { recursive: true, force: true }))
-  const legacyPath = path.join(root, 'legacy', 'body')
-  const targetPath = path.join(root, 'public', 'body')
-  const body = b4a.from('opaque legacy body')
-  await mkdir(path.dirname(legacyPath), { recursive: true })
-  await writeFile(legacyPath, body)
-  const input = {
-    serviceTag: 2,
-    primaryLocator: b4a.alloc(32, 7),
-    legacyVirtualBucket: 9,
-    objectHash: blake2b256(body),
-    byteLength: body.byteLength
-  }
-  const plan = createBlindStoreMigrationPlan([input])
-  for (const crashAt of ['inventory', 'copy', 'hash-verify', 'commit']) {
-    let crashed = false
-    await t.exception.all(() => executeBlindStoreMigration({
-      root,
-      plan,
-      manifestKey: MANIFEST_KEY,
-      storeIdentity: STORE_IDENTITY,
-      files: [{ legacyPath, targetPath, objectHashHex: b4a.toString(input.objectHash, 'hex'), byteLength: body.byteLength }],
-      faultInjector (phase) { if (!crashed && phase === crashAt) { crashed = true; throw new Error(`crash:${phase}`) } }
-    }), new RegExp(`crash:${crashAt}`))
-  }
-  const result = await executeBlindStoreMigration({
-    root,
-    plan,
-    manifestKey: MANIFEST_KEY,
-    storeIdentity: STORE_IDENTITY,
-    files: [{ legacyPath, targetPath, objectHashHex: b4a.toString(input.objectHash, 'hex'), byteLength: body.byteLength }]
-  })
-  t.is(result.phase, 'finalize')
-  t.is(result.legacySourcesPreserved, true)
-  t.alike(await readFile(legacyPath), body)
-  t.alike(await readFile(targetPath), body)
+  const options = { manifestKey: KEY, storeIdentity: IDENTITY, storeEvidence: first }
+  const floor = await openBlindStoreGenerationFloor(root, { ...options, allowCreate: true })
+  const oldHead = await readFile(path.join(root, 'blind-store-generation-head-v1.json'))
+  await floor.acknowledgeBlindOnlyWrite(second)
+
+  const record1 = (await readdir(root)).find(name => name.includes('0000000000000001'))
+  await unlink(path.join(root, record1))
+  await writeFile(path.join(root, 'blind-store-generation-head-v1.json'), oldHead)
+  await t.exception.all(() => openBlindStoreGenerationFloor(root, { ...options, storeEvidence: second }), /rolled back|replayed/)
+
+  const fresh = await mkdtemp(path.join(os.tmpdir(), 'blind-store-generation-'))
+  t.teardown(() => rm(fresh, { recursive: true, force: true }))
+  await openBlindStoreGenerationFloor(fresh, { ...options, allowCreate: true })
+  const head = path.join(fresh, 'blind-store-generation-head-v1.json')
+  const tampered = JSON.parse(await readFile(head))
+  tampered.sequence = 9
+  await writeFile(head, JSON.stringify(tampered))
+  await t.exception.all(() => openBlindStoreGenerationFloor(fresh, options), /invalid/)
+  await unlink(head)
+  await t.exception.all(() => openBlindStoreGenerationFloor(fresh, options), /missing/)
+
+  const partial = path.join(fresh, '.blind-store-generation-head.tmp-999')
+  await writeFile(partial, '{')
+  await t.exception.all(() => openBlindStoreGenerationFloor(fresh, options), /missing/)
+  t.absent((await readdir(fresh)).includes(path.basename(partial)))
+
+  const other = await mkdtemp(path.join(os.tmpdir(), 'blind-store-generation-'))
+  t.teardown(() => rm(other, { recursive: true, force: true }))
+  await openBlindStoreGenerationFloor(other, { ...options, storeIdentity: b4a.from('other'), allowCreate: true })
+  await t.exception.all(() => openBlindStoreGenerationFloor(other, options), /another store|invalid/)
 })
 
-function planInput (locator) {
-  return {
-    serviceTag: 2,
-    primaryLocator: locator,
-    legacyVirtualBucket: 1,
-    objectHash: b4a.alloc(32, 0x55),
-    byteLength: 1
-  }
-}
+test('process kill between append-only record and head rename recovers monotonically', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'blind-store-generation-kill-'))
+  t.teardown(() => rm(root, { recursive: true, force: true }))
+  await openBlindStoreGenerationFloor(root, {
+    manifestKey: KEY, storeIdentity: IDENTITY, storeEvidence: first, allowCreate: true
+  })
+  const child = spawn(process.execPath, [
+    new URL('storage-generation-kill-fixture.mjs', import.meta.url).pathname, root
+  ], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
+  await once(child, 'message')
+  const exited = once(child, 'exit')
+  child.kill('SIGKILL')
+  await exited
+  const recovered = await openBlindStoreGenerationFloor(root, {
+    manifestKey: KEY, storeIdentity: IDENTITY, storeEvidence: second
+  })
+  t.is(recovered.firstBlindOnlyWriteAcknowledged, true)
+})

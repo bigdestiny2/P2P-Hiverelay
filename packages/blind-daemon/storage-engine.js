@@ -695,6 +695,10 @@ export class BlindCellStorageEngine {
       beforeRecovery: options.beforeRecovery,
       faultInjector: options.faultInjector
     })
+    this.onBlindWriteAcknowledged = options.onBlindWriteAcknowledged || null
+    if (this.onBlindWriteAcknowledged != null && typeof this.onBlindWriteAcknowledged !== 'function') {
+      throw new TypeError('onBlindWriteAcknowledged must be a function')
+    }
     this.spends = new Map()
     this.commitments = new Map()
     this.requestResults = new Map()
@@ -918,12 +922,17 @@ export class BlindCellStorageEngine {
   async #appendAndApply (type, transactionId, virtualBucket, value, prewriteFence = null) {
     const codec = WAL_PAYLOAD_CODEC.get(type)
     if (!codec) throw new BlindWalIntegrityError(`unknown cell WAL type ${type}`)
-    return this.transactionStore.appendAndApply({
+    const frame = await this.transactionStore.appendAndApply({
       type,
       transactionId,
       virtualBucket,
       payload: encodeCanonical(codec, value)
     }, frame => this.#applyFrame(frame, false), { prewriteFence })
+    if (this.onBlindWriteAcknowledged &&
+        (type === BLIND_CELL_WAL_TYPE.PUT_COMMITTED || type === BLIND_CELL_WAL_TYPE.PUT_ATOMIC_COMMITTED)) {
+      await this.onBlindWriteAcknowledged({ walSequence: frame.sequence, walHash: frame.walHash })
+    }
+    return frame
   }
 
   #applyFrame (frame, recovering) {

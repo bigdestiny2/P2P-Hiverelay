@@ -1019,13 +1019,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
       const binding = encodeRuntimeBinding(descriptorSnapshot.descriptor, config.mapGeneration,
         ownerFenceTokenHash, manifestKey)
       const storeBindingCreated = await bindStoreIdentity(config.storeRoot, binding)
-      const storeFloor = await openBlindStoreGenerationFloor(path.join(config.storeRoot, 'control'), {
-        manifestKey,
-        storeIdentity: binding,
-        allowCreate: storeBindingCreated
-      })
-      storeFloor.assertReaderMode(config.storeReaderMode)
-      await storeFloor.acknowledgeBlindOnlyWrite()
+      let storeFloor = null
       storage = new BlindCellStorageEngine({
         root: config.storeRoot,
         relayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
@@ -1035,17 +1029,21 @@ export async function assembleProductionBlindDaemon (options = {}) {
         mapGeneration: config.mapGeneration,
         ownerFenceTokenHash,
         durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
-        storeFormatAuthority
+        storeFormatAuthority,
+        onBlindWriteAcknowledged: evidence => storeFloor.acknowledgeBlindOnlyWrite(evidence)
       })
       await storage.open()
+      storeFloor = await openBlindStoreGenerationFloor(path.join(config.storeRoot, 'control'), {
+        manifestKey,
+        storeIdentity: binding,
+        allowCreate: storeBindingCreated,
+        storeEvidence: { walSequence: storage.transactionStore.walSequence, walHash: storage.transactionStore.walHash }
+      })
+      storeFloor.assertReaderMode(config.storeReaderMode)
       if (inboxRuntimeEnabled) {
         await verifyPrivateStoreRoot(config.inboxStoreRoot)
         const inboxBindingCreated = await bindStoreIdentity(config.inboxStoreRoot, binding)
-        const inboxFloor = await openBlindStoreGenerationFloor(path.join(config.inboxStoreRoot, 'control'), {
-          manifestKey, storeIdentity: binding, allowCreate: inboxBindingCreated
-        })
-        inboxFloor.assertReaderMode(config.storeReaderMode)
-        await inboxFloor.acknowledgeBlindOnlyWrite()
+        let inboxFloor = null
         inboxCursorKey = await readBoundFile(config.inboxCursorKeyFile, {
           field: 'inbox cursor key',
           exactBytes: 32,
@@ -1062,18 +1060,25 @@ export async function assembleProductionBlindDaemon (options = {}) {
           mapGeneration: config.mapGeneration,
           ownerFenceTokenHash,
           durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
-          storeFormatAuthority
+          storeFormatAuthority,
+          onBlindWriteAcknowledged: evidence => inboxFloor.acknowledgeBlindOnlyWrite(evidence)
         })
         await inboxStorage.open()
+        inboxFloor = await openBlindStoreGenerationFloor(path.join(config.inboxStoreRoot, 'control'), {
+          manifestKey,
+          storeIdentity: binding,
+          allowCreate: inboxBindingCreated,
+          storeEvidence: {
+            walSequence: inboxStorage.transactionStore.walSequence,
+            walHash: inboxStorage.transactionStore.walHash
+          }
+        })
+        inboxFloor.assertReaderMode(config.storeReaderMode)
       }
       if (coreRuntimeEnabled) {
         await verifyPrivateStoreRoot(config.coreStoreRoot)
         const coreBindingCreated = await bindStoreIdentity(config.coreStoreRoot, binding)
-        const coreFloor = await openBlindStoreGenerationFloor(path.join(config.coreStoreRoot, 'control'), {
-          manifestKey, storeIdentity: binding, allowCreate: coreBindingCreated
-        })
-        coreFloor.assertReaderMode(config.storeReaderMode)
-        await coreFloor.acknowledgeBlindOnlyWrite()
+        let coreFloor = null
         coreStorage = new BlindCoreStorageEngine({
           root: config.coreStoreRoot,
           relayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
@@ -1081,9 +1086,20 @@ export async function assembleProductionBlindDaemon (options = {}) {
           durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
           maximumSponsoredCoreLength: descriptorSnapshot.descriptor.maxSponsoredCoreLength,
           nowEpoch: currentLeaseEpoch,
-          nowUnixMillis: currentUnixMillis
+          nowUnixMillis: currentUnixMillis,
+          onBlindWriteAcknowledged: evidence => coreFloor.acknowledgeBlindOnlyWrite(evidence)
         })
         await coreStorage.open()
+        coreFloor = await openBlindStoreGenerationFloor(path.join(config.coreStoreRoot, 'control'), {
+          manifestKey,
+          storeIdentity: binding,
+          allowCreate: coreBindingCreated,
+          storeEvidence: {
+            walSequence: coreStorage.transactionStore.walSequence,
+            walHash: coreStorage.transactionStore.walHash
+          }
+        })
+        coreFloor.assertReaderMode(config.storeReaderMode)
       }
       if (cellRuntimeEnabled) {
         try {

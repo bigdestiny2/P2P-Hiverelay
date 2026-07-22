@@ -621,6 +621,10 @@ export class BlindInboxStorageEngine {
       beforeRecovery: options.beforeRecovery,
       faultInjector: options.faultInjector
     })
+    this.onBlindWriteAcknowledged = options.onBlindWriteAcknowledged || null
+    if (this.onBlindWriteAcknowledged != null && typeof this.onBlindWriteAcknowledged !== 'function') {
+      throw new TypeError('onBlindWriteAcknowledged must be a function')
+    }
     this.spends = new Map()
     this.commitments = new Map()
     this.requestResults = new Map()
@@ -752,12 +756,19 @@ export class BlindInboxStorageEngine {
   async #appendAndApply (type, transactionId, virtualBucket, value) {
     const codec = WAL_CODECS.get(type)
     if (!codec) throw new BlindWalIntegrityError(`unknown Inbox WAL type ${type}`)
-    return this.transactionStore.appendAndApply({
+    const frame = await this.transactionStore.appendAndApply({
       type,
       transactionId,
       virtualBucket,
       payload: encodeCanonical(codec, value)
     }, frame => this.#applyFrame(frame))
+    if (this.onBlindWriteAcknowledged && [
+      BLIND_INBOX_WAL_TYPE.CREATE_COMMITTED,
+      BLIND_INBOX_WAL_TYPE.RENEW_COMMITTED,
+      BLIND_INBOX_WAL_TYPE.CLOSE_COMMITTED,
+      BLIND_INBOX_WAL_TYPE.APPEND_COMMITTED
+    ].includes(type)) await this.onBlindWriteAcknowledged({ walSequence: frame.sequence, walHash: frame.walHash })
+    return frame
   }
 
   #applyFrame (frame) {
