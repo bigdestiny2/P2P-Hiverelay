@@ -852,7 +852,10 @@ export class AppLifecycle extends EventEmitter {
         drive.get('/manifest.json'),
         new Promise((_resolve, reject) => setTimeout(() => reject(new Error('manifest timeout')), 5000))
       ])
-      if (!manifestBuf) return
+      if (!manifestBuf) {
+        await this._indexV3Release(appKeyHex, drive)
+        return
+      }
 
       const manifest = JSON.parse(manifestBuf.toString())
       const release = await this._readV3ReleaseSummary(drive)
@@ -942,6 +945,21 @@ export class AppLifecycle extends EventEmitter {
     } catch (_) {
       return null
     }
+  }
+
+  async _indexV3Release (appKeyHex, drive) {
+    const release = await this._readV3ReleaseSummary(drive)
+    if (!release) return
+    const existing = this.node.appRegistry.get(appKeyHex)
+    if (!existing) return
+    this.node.appRegistry.update(appKeyHex, {
+      type: release.appKind === 'site' ? 'drive' : 'app',
+      appId: release.appId || existing.appId || null,
+      version: release.version || existing.version || null,
+      name: release.productName || existing.name || release.appId || null,
+      author: release.publisherKey || existing.author || null,
+      release
+    })
   }
 
   /**
