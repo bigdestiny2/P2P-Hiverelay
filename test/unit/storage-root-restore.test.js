@@ -105,3 +105,16 @@ test('interruption after Corestore layout creation resumes sidecar restoration b
   t.is(JSON.parse(readFileSync(join(a.dir, 'app-registry.json'), 'utf8'))[0].appKey, 'b'.repeat(64), 'restored sidecar remains intact')
   await resumed.close()
 })
+
+test('a trailing storage-path separator still journals beside, never inside, the Corestore root', async (t) => {
+  const a = tmpDir()
+  t.teardown(a.cleanup)
+  writeFileSync(join(a.dir, 'identity.key'), 'relay-secret')
+
+  const store = openCorestore(`${a.dir}/`)
+  await store.ready()
+  t.ok(existsSync(join(a.dir, 'identity.key')), 'sidecar is restored when storage has a trailing separator')
+  t.absent(existsSync(join(a.dir, 'db', '.hiverelay-corestore7-state')), 'journal was not swept into Corestore db')
+  t.is(readFileSync(join(a.dir, 'identity.key'), 'utf8'), 'relay-secret', 'sidecar contents remain intact')
+  await store.close()
+})

@@ -28,14 +28,17 @@ import {
   unlinkSync,
   writeFileSync
 } from 'fs'
-import { join } from 'path'
+import { basename, dirname, join, resolve } from 'path'
 
 const CORESTORE_OWNED = new Set(['CORESTORE', 'primary-key', 'cores', 'db'])
 const STAGING_SUFFIX = '.hiverelay-corestore7-state'
 const JOURNAL_NAME = 'journal.json'
 
 function stageDir (storage) {
-  return `${storage}${STAGING_SUFFIX}`
+  // `storage + suffix` makes a trailing-slash path place staging *inside* the
+  // Corestore root. Corestore would then sweep the journal itself into db/.
+  // Resolve once so all entrypoints use the same sibling directory.
+  return join(dirname(storage), `${basename(storage)}${STAGING_SUFFIX}`)
 }
 
 function journalFile (stage) {
@@ -123,9 +126,10 @@ function stageLegacyRoot (storage) {
  * the interruption regression test; production callers use two arguments.
  */
 export function openCorestore (storage, opts, hooks = {}) {
-  const stage = typeof storage === 'string' ? stageLegacyRoot(storage) : null
-  const store = new Corestore(storage, opts)
-  if (typeof hooks.afterCorestoreOpen === 'function') hooks.afterCorestoreOpen({ storage, store, stage })
-  if (stage) restoreJournal(storage, stage, readJournal(stage))
+  const root = typeof storage === 'string' ? resolve(storage) : storage
+  const stage = typeof root === 'string' ? stageLegacyRoot(root) : null
+  const store = new Corestore(root, opts)
+  if (typeof hooks.afterCorestoreOpen === 'function') hooks.afterCorestoreOpen({ storage: root, store, stage })
+  if (stage) restoreJournal(root, stage, readJournal(stage))
   return store
 }
