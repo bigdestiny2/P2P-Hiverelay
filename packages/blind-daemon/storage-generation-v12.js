@@ -50,7 +50,8 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
     throw new Error('blind store generation evidence was rolled back or replayed')
   }
   let acknowledged = latest.firstBlindOnlyWriteAcknowledged
-  let acknowledgmentTail = Promise.resolve()
+  const pendingAcknowledgments = []
+  let acknowledgmentDrain = null
 
   return {
     get firstBlindOnlyWriteAcknowledged () { return acknowledged },
@@ -61,38 +62,68 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
       return true
     },
     acknowledgeBlindOnlyWrite (storeEvidence) {
-      const operation = acknowledgmentTail.then(() => advanceAcknowledgment(storeEvidence))
-      acknowledgmentTail = operation.catch(() => {})
+      if (acknowledged) return Promise.resolve(false)
+      const normalized = evidence(storeEvidence)
+      const operation = new Promise((resolve, reject) => {
+        pendingAcknowledgments.push({ evidence: normalized, resolve, reject })
+      })
+      if (acknowledgmentDrain === null) {
+        acknowledgmentDrain = Promise.resolve().then(drainAcknowledgments)
+      }
       return operation
     }
   }
 
-  async function advanceAcknowledgment (storeEvidence) {
-    const diskRecords = await loadRecords()
-    validateChain(diskRecords)
-    if (diskRecords.at(-1).sequence > latest.sequence) {
-      latest = diskRecords.at(-1)
-      acknowledged = latest.firstBlindOnlyWriteAcknowledged
-      await writeHead(latest)
-    }
-    const nextEvidence = evidence(storeEvidence)
-    const nextWalSequence = BigInt(nextEvidence.walSequence)
-    const latestWalSequence = BigInt(latest.storeEvidence.walSequence)
-    if (nextWalSequence < latestWalSequence) return false
-    if (nextWalSequence === latestWalSequence) {
-      if (nextEvidence.walHash !== latest.storeEvidence.walHash) {
-        throw new Error('blind-only acknowledgment conflicts with durable WAL evidence')
+  async function drainAcknowledgments () {
+    const batch = pendingAcknowledgments.splice(0)
+    try {
+      const diskRecords = await loadRecords()
+      validateChain(diskRecords)
+      if (diskRecords.at(-1).sequence > latest.sequence) {
+        latest = diskRecords.at(-1)
+        acknowledged = latest.firstBlindOnlyWriteAcknowledged
+        await writeHead(latest)
       }
-      if (acknowledged) return false
-      throw new Error('blind-only acknowledgment must bind a newer durable WAL write')
+      if (acknowledged) {
+        for (const item of batch) item.resolve(false)
+        return
+      }
+      let highest = batch[0].evidence
+      for (const item of batch.slice(1)) {
+        const candidateSequence = BigInt(item.evidence.walSequence)
+        const highestSequence = BigInt(highest.walSequence)
+        if (candidateSequence === highestSequence && item.evidence.walHash !== highest.walHash) {
+          throw new Error('blind-only acknowledgment conflicts with durable WAL evidence')
+        }
+        if (candidateSequence > highestSequence) highest = item.evidence
+      }
+      const highestSequence = BigInt(highest.walSequence)
+      const latestSequence = BigInt(latest.storeEvidence.walSequence)
+      if (highestSequence <= latestSequence) {
+        if (highestSequence === latestSequence && highest.walHash !== latest.storeEvidence.walHash) {
+          throw new Error('blind-only acknowledgment conflicts with durable WAL evidence')
+        }
+        throw new Error('blind-only acknowledgment must bind a newer durable WAL write')
+      }
+      const next = record(latest.sequence + 1, true, recordHash(latest), highest)
+      await writeExclusive(recordPath(next.sequence), signed(next))
+      if (options.faultInjector) await options.faultInjector('after-record-sync')
+      await writeHead(next)
+      latest = next
+      acknowledged = true
+      for (const item of batch) item.resolve(true)
+    } catch (error) {
+      for (const item of batch) item.reject(error)
+    } finally {
+      acknowledgmentDrain = null
+      if (pendingAcknowledgments.length > 0) {
+        if (acknowledged) {
+          for (const item of pendingAcknowledgments.splice(0)) item.resolve(false)
+        } else {
+          acknowledgmentDrain = Promise.resolve().then(drainAcknowledgments)
+        }
+      }
     }
-    const next = record(latest.sequence + 1, true, recordHash(latest), nextEvidence)
-    await writeExclusive(recordPath(next.sequence), signed(next))
-    if (options.faultInjector) await options.faultInjector('after-record-sync')
-    await writeHead(next)
-    latest = next
-    acknowledged = true
-    return true
   }
 
   function record (sequence, value, previousRecordHash, storeEvidence) {
