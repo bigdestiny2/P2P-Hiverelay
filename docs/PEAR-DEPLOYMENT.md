@@ -1,224 +1,217 @@
-# Running HiveRelay as a Pear app
+# Optional HiveRelay Bare/Pear v3 engineering lane
 
-Operator install in one command, no Node.js, no npm, no Docker. The relay
-itself is a Hypercore — atomic updates propagate over the same P2P network
-the relay serves.
+> **Status: proposed, non-production engineering only.** The separately named
+> `hiverelay-bare` artifact, its Pear v3 wrapper, native packages, release
+> records, data adapter, and cross-platform runner evidence do not exist in a
+> production-ready form yet. This document defines the gate they must satisfy;
+> it is not an installation or availability claim.
 
-```bash
-pear run pear://ofdo9m6myqg3u6cozz3izgemiaabwyynp3x8fgyh1o8nfomsj58o
+Pear v3 makes a native application or binary responsible for its embedded
+runtime, packaging, storage, update behavior, and recovery. It does not turn a
+remote application link into a worker entrypoint. For HiveRelay, that makes a
+v3/Bare build an optional distribution lane, not a replacement for the proven
+service and appliance estate.
+
+## Distribution boundary
+
+The proposed product is named `hiverelay-bare`. It MUST have:
+
+- a distinct package and release identity;
+- one unambiguous executable or application artifact per supported host;
+- a new, non-critical canary relay identity and fresh canary storage;
+- an externally supervised process with health and last-known-good gates; and
+- an AppRelease v2 candidate record that remains non-promotable until its
+  native, data, signing, availability, and observation evidence passes.
+
+The existing Node/npm, systemd, Docker, raw-fleet, Umbrel, and StartOS paths
+remain the primary operator and recovery paths. A failure in the optional v3
+lane MUST be recoverable through those paths without relying on the same Pear
+deployment, runtime, publisher, or relay set.
+
+The current `packages/core/pear-entry.js` depends on an ambient Pear global and
+Pear-managed application storage. It is retained source evidence for the old
+application model, not the v3 entrypoint described here.
+
+## Runtime boundary
+
+The native wrapper owns process lifecycle, configuration, explicit data paths,
+update presentation, and supervision. It may start a bundled Bare worker only
+from a resolved local path. The following is an architecture sketch, not a
+shipped entrypoint:
+
+```js
+const path = require('node:path')
+const PearRuntime = require('pear-runtime')
+const pkg = require('./package.json')
+
+const localWorker = './worker.js'
+const runtimeDir = path.resolve(process.env.HIVERELAY_RUNTIME_DIR)
+const storageDir = path.resolve(process.env.HIVERELAY_STORAGE_DIR)
+
+const runtime = new PearRuntime({
+  dir: runtimeDir,
+  storage: storageDir,
+  name: pkg.productName,
+  version: pkg.version,
+  upgrade: pkg.upgrade,
+  updates: false
+})
+
+const worker = PearRuntime.run(
+  require.resolve(localWorker),
+  process.argv.slice(2)
+)
 ```
 
-That's it. The Bare-native relay starts, joins the public DHT, peers with
-existing Node relays, and starts seeding content for any client that asks.
+The irreducible boundary is `PearRuntime.run(require.resolve(localWorker))`:
+`PearRuntime.run()` MUST receive a bundled local worker entrypoint. A catalogue,
+deployment, upgrade, or arbitrary remote link MUST NOT be passed to it. Updates
+remain disabled until the health, controlled-restart, and recovery gates below
+are implemented and independently verified.
 
----
+Runtime, worker, Corestore, and Hyperswarm ownership must be explicit. Graceful
+shutdown is complete only after the wrapper:
 
-## What you get
+1. stops accepting new relay work and reports a draining health state;
+2. asks the worker to close and waits for its bounded acknowledgement;
+3. closes the embedded runtime and updater;
+4. closes each application-owned Corestore and Hyperswarm exactly once; and
+5. reports the final health result to the external supervisor before exit.
 
-| Feature | Pear-native (Bare) |
-|---|:-:|
-| Hyperswarm DHT discovery + peering | ✅ |
-| Seed protocol (signed accept/replicate) | ✅ |
-| Circuit relay (NAT traversal) | ✅ |
-| App registry, federation, catalog sync | ✅ |
-| Identity persistence across restarts | ✅ |
-| Always-on availability for published drives | ✅ |
-| Read-only HTTP endpoints (`/health`, `/status`, `/catalog.json`, `/api/peers`) | ✅ |
-| Auto-updates via Hypercore (next `pear release` propagates to all running nodes) | ✅ |
-| SwarmFirewall (DoS shield before Noise handshake) | ✅ |
-| **Service RPC (identity, storage, schema, SLA, arbitration, ZK)** | ❌ Node-only — Bare relays are pure relay/seed |
-| **Lightning payments (LNbits)** | ❌ Node-only |
-| **Management TUI (`hiverelay tui`)** | ❌ Node-only |
-| **Tor transport** | ❌ Node-only |
+The external supervisor, not the embedded updater alone, owns restart policy,
+health deadlines, failed-update quarantine, and selection of a last-known-good
+artifact. No automatic health rollback is claimed until a real supervisor test
+proves it.
 
-The split is intentional: **Bare = always-on data plane**, **Node = operator
-control plane**. Most serious operators will run both — Node for configuring
-the node and earning sats, Bare for the 24/7 hot path. The two runtimes
-speak the same Protomux protocols and interop seamlessly on the DHT.
+## Storage, identity, and migration
 
----
+Runtime bookkeeping and relay state use explicit, separately configured roots.
+The wrapper MUST reject an empty, relative, or ambiguous path and MUST NOT
+silently fall back to a new default when an expected relay root is missing.
 
-## Install
+The first engineering canary uses a new non-critical identity. Reusing an
+existing operator identity or pointing the artifact at an existing production
+root is forbidden without a separately reviewed, product-specific data adapter.
+That adapter follows exactly eight phases:
 
-### One-time prerequisite
+| Phase | Required result |
+|---|---|
+| `discover` | Locate supported old and target roots without opening one Corestore in two processes. |
+| `fingerprint` | Record public identities, schema/core counts, selected digests, and record counts; never log seeds or private keys. |
+| `preflight` | Require the old process closed, acquire exclusive locks, check capacity and permissions, and block divergent populated roots. |
+| `preserve` | Create a recoverable snapshot or immutable copy before mutation. |
+| `migrate` | Preserve writer/operator identity and directory semantics; do not delete the source. |
+| `validate` | Reopen through the new build and prove identity, schema, counts, and a relay-specific read/write smoke. |
+| `commitMarker` | Atomically record adapter version, source/target fingerprints, timestamp, and validation digest. |
+| `rollback` | Close the new runtime, retain diagnostics, restore or reselect the old root, and prove it remains usable. |
 
-Install the Pear runtime (a one-liner from any Mac/Linux/Windows shell):
+Identity rotation and legacy-data deletion are forbidden by default. Neither a
+new storage directory nor a successful process boot is migration evidence.
 
-```bash
-npm install -g pear
-pear run pear://runtime
+## Frozen engineering toolchain
+
+The first cohort is tested against these exact archived sources:
+
+| Component | Version | Source commit |
+|---|---:|---|
+| Pear | `3.0.0` | `5113c8569d9b01881eae2b17de14a0a2935aa515` |
+| `pear-runtime` | `1.3.1` | `70898fd9d9bb2dc7eb4cb4acb1cf349c89d1a1fc` |
+| `pear-build` | `1.1.0` | `9204b07bac08e8c9cdeb00d1eff92efd760ef692` |
+| `pear-install` | `1.2.0` | `5f4c1659d1d1f42099333064c763282edeca6898` |
+
+Future version changes require a new signed record and repeat evidence; they do
+not inherit this cohort's results.
+
+## Build output and target matrix
+
+The staged deployment has one root package and host-specific artifacts:
+
+```text
+/
+├── package.json
+└── by-arch/
+    └── <host>/
+        └── app/
+            └── <one unambiguous artifact>
 ```
 
-The second command initializes the Pear sidecar. After it runs once, Pear
-is ready and you don't need it again.
+The AppRelease tree inventory covers `/package.json` and every file or contained
+symlink under `/by-arch`. It binds normalized paths, modes, byte sizes, file
+digests, artifact subtree digests, and the complete BLAKE2b-256 tree digest.
+Sampling a block or observing a joined swarm is not complete-artifact evidence.
 
-### Run the relay
+The contract contains every desktop host exactly once:
 
-```bash
-pear run pear://ofdo9m6myqg3u6cozz3izgemiaabwyynp3x8fgyh1o8nfomsj58o
-```
+| Host | Evidence state before a claim |
+|---|---|
+| `darwin-arm64` | unavailable or built-unproven until a native runner verifies the exact artifact digest |
+| `darwin-x64` | unavailable or built-unproven until a native runner verifies the exact artifact digest |
+| `linux-arm64` | unavailable or built-unproven until a native runner verifies the exact artifact digest |
+| `linux-x64` | unavailable or built-unproven until a native runner verifies the exact artifact digest |
+| `win32-arm64` | unavailable or built-unproven until a native runner verifies the exact artifact digest |
+| `win32-x64` | unavailable or built-unproven until a native runner verifies the exact artifact digest |
 
-Defaults: HTTP API on port 9100, region NA, 50 GB max storage, persistent
-storage in Pear's app-storage directory.
+Only a target with matching artifact, platform-signing where applicable, and
+native-runner evidence may be presented as available. Local success on one host
+does not promote another architecture.
 
-### With options
+## Release flow and authority gates
 
-```bash
-pear run pear://ofdo9m6myqg3u6cozz3izgemiaabwyynp3x8fgyh1o8nfomsj58o \
-  -- --port 9199 --region EU --max-storage 100GB
-```
+The engineering flow is:
 
-Args after `--` are forwarded to the relay.
+1. **Build** the wrapper and local worker into the exact host artifacts.
+2. **Verify** the package, inventory, digests, signatures, storage behavior,
+   shutdown, and native runner results in an isolated candidate lane.
+3. **Stage** the verified tree to a non-production deployment link.
+4. **Provision** release authority for the exact staged checkout.
+5. **Multisig/deploy** the exact candidate without rebuilding it.
 
-### Persistent storage
+Stage, provision, multisig, real signing, and deployment are human-authority
+gates. This repository documentation grants none of them. A test key, local
+drive, fixture link, or candidate record MUST NOT be presented as a production
+release.
 
-By default, Pear allocates an `app-storage/by-dkey/<id>/` directory so
-state (identity, app registry, seeded content) survives restarts. To pin
-storage to a specific path:
+## Installation and update lifecycle
 
-```bash
-pear run --store /path/to/relay-data pear://ofdo9m6myqg3u6cozz3izgemiaabwyynp3x8fgyh1o8nfomsj58o
-```
+First install is a separate operation from update, repair, reinstall, and
+uninstall. The current installer refuses to overwrite an existing target, so
+the safe contract is:
 
----
+| Operation | Required behavior |
+|---|---|
+| First install | Resolve one verified host artifact, show its identity, destination, size, permissions, and digest, then install to an empty target. |
+| Repeat install | Refuse the existing target without deleting or replacing it. |
+| Update | Unsupported until app-owned update, health validation, controlled restart, and recovery are proven. |
+| Repair | Unsupported until exact file reconciliation and identity preservation are proven. |
+| Reinstall | Unsupported; it is not another install call. |
+| Uninstall | Unsupported until explicit state-retention and deletion policy exists. |
 
-## Verify it's working
+No one-command install, unattended overwrite, automatic data deletion, or
+automatic rollback claim is valid for `hiverelay-bare` today.
 
-While the relay is running:
+## Availability and canary gate
 
-```bash
-curl http://127.0.0.1:9100/status     # node overview
-curl http://127.0.0.1:9100/api/peers  # connected peers
-curl http://127.0.0.1:9100/catalog.json  # what you're seeding
-```
+A locally built artifact is not an availability result. Before any production
+availability claim, evidence MUST show:
 
-Status should report:
-- `runtime: "bare"`
-- `publicKey: <64 hex chars>` — your relay's identity
-- `connections: <number>` — peer count from the DHT
-- `seededApps: <number>` — drives you've accepted
+- full cold retrieval of `/package.json`, the tree inventory, and every
+  promoted host artifact from fresh reader storage with the publisher offline;
+- at least three complete replicas controlled by three independently identified
+  operators, with matching tree and artifact digests;
+- timestamps, regions, repair results, capacity headroom, and observation
+  evidence for those replicas;
+- an externally supervised canary observed for at least `86400` seconds; and
+- a rehearsed last-known-good recovery that preserves the Node/systemd, Docker,
+  raw-fleet, Umbrel, and StartOS paths.
 
----
+Partial downloads, timed-out prefetches, duplicate endpoints owned by one
+operator, sample-block proofs, or a publisher-online read do not satisfy this
+gate.
 
-## Upgrading
+## Current conclusion
 
-Auto-updates ship over the DHT. When the maintainer runs `pear release dev`
-on a new version, every running node:
-
-1. Pulls the update via Hypercore replication
-2. Verifies it against the maintainer's signing key
-3. Reaps the old process via `Pear.teardown`
-4. Restarts on the new version
-
-You don't need to do anything. Your data persists across the upgrade.
-
-To pin to a specific version (avoid auto-update), use a version-pinned
-link instead of the current one — `pear info dev` shows the format
-`pear://0.<length>.<key>`.
-
----
-
-## What can a Bare relay do for the network?
-
-A Bare relay is a complete protocol participant:
-
-- **Accepts and signs seed requests** from any HiveRelay client
-- **Replicates seeded drives** to its Corestore for always-on availability
-- **Bridges connections** for peers behind symmetric NAT (circuit relay)
-- **Announces on the public DHT** so clients can discover it
-- **Federates** with other relays via signed catalog sharing
-
-A drive published by a Node client and accepted by a Bare relay is
-retrievable by any Hyperswarm peer — even after the original publisher
-goes offline, even if the only relay holding it is Bare. This was verified
-end-to-end with a 3rd-party reader successfully reading the content with
-the publisher offline. (See `scripts/bare-production-verify.mjs`.)
-
----
-
-## What's missing vs the Node version
-
-The following are deliberately **not** in the Bare build:
-
-- **Service RPC layer** — Bare can register services in principle, but the
-  standard built-ins (identity, storage, etc.) live in `p2p-hiveservices`,
-  a Node-side workspace package not bundled into the Pear app today. A
-  Bare relay running today is a pure seed/relay/circuit node, not a
-  service host.
-- **Lightning payments** — `@grpc/grpc-js` is Node-only.
-- **Management TUI** — `@inquirer/prompts` is Node-only. Operator config
-  happens via the Node CLI.
-- **Tor transport** — the `socks` library is Node-only.
-- **Management HTTP API** — Bare exposes only read-only endpoints. The
-  full `/api/manage/*` routes are Node-only.
-
-If any of these matter for your operator role, run the Node version
-(`npm install -g p2p-hiverelay && p2p-hiverelay start`) instead. The two
-runtimes interoperate on the DHT — running both side-by-side is fine.
-
----
-
-## Storage layout (Bare)
-
-```
-<store>/
-├── identity.key          ← Ed25519 seed (32 bytes hex)
-├── primary-key           ← Corestore primary key
-├── app-registry.json     ← Seeded drives metadata
-├── federation.json       ← Federation peers
-└── cores/                ← Corestore (hypercore content)
-```
-
-The same key files exist regardless of runtime. You can move between
-Node and Bare runtimes by pointing each at the same storage directory.
-
----
-
-## Verification
-
-Run the full production verification suite from the repo:
-
-```bash
-git clone https://github.com/bigdestiny2/P2P-Hiverelay
-cd P2P-Hiverelay
-npm install
-
-# In terminal 1 — boot the Bare relay
-pear run pear://ofdo9m6myqg3u6cozz3izgemiaabwyynp3x8fgyh1o8nfomsj58o -- --port 9197
-
-# In terminal 2 — verify
-BARE_HTTP=http://127.0.0.1:9197 node scripts/bare-production-verify.mjs
-```
-
-Expected output: **`11/11 passed`** — protocol, mesh, seed, replication,
-round-trip availability all green.
-
----
-
-## Known limitations
-
-- **Symlink in `packages/core/node_modules`** — when developing locally,
-  the workspace symlink works for `pear run .` from `packages/core/`. For
-  the published `pear://` link, deps must be resolvable from the staged
-  Hypercore content; `pear stage` follows the symlink and bundles the
-  resolved files.
-- **Service RPC graceful degradation** — `p2p-hiveservices` is a workspace
-  package not in `dependencies` of `p2p-hiverelay`, so Bare boots without
-  it and logs `service start failed: <name>` warnings. The relay still
-  works as a seed/circuit node.
-- **First boot may take ~10s** to flush the DHT and find peers. Subsequent
-  starts (with persistent storage) are faster.
-
----
-
-## Reporting issues
-
-If a Bare-specific bug surfaces, open an issue with:
-- Output of `pear info dev` for the link you're running
-- The first 30 lines of the boot log
-- `curl http://127.0.0.1:<port>/status` output
-
-The Bare relay shares ~85% of code with the Node relay — most bugs are
-shared, but a few (Hyperdrive iterator lifecycle under Bare, bare-fs
-edge cases, bare-http1 quirks) only manifest in the Bare runtime.
-
+`hiverelay-bare` remains a proposed optional canary. Operators should continue
+to use the documented Node/systemd, Docker, raw-fleet, Umbrel, or StartOS path
+appropriate to their environment. Production adoption requires implementation,
+independent review, native proof for promoted hosts, complete multi-operator
+retrieval evidence, the observation window, and a separate operator lease.

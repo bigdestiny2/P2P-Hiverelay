@@ -12,6 +12,7 @@
 ## Table of Contents
 
 1. [Overview](#1-overview)
+   - [AppRelease v2 Availability Facts](#13-apprelease-v2-availability-facts-proposed)
 2. [Transport Layer](#2-transport-layer)
 3. [Wire Protocol Framing](#3-wire-protocol-framing)
 4. [Message Types](#4-message-types)
@@ -58,6 +59,102 @@ The protocol uses semantic versioning. The current version is `1.0.0`. The versi
 ```
 
 Peers MUST reject connections with a different major version. Minor version differences are tolerated (backward compatible).
+
+### 1.3 AppRelease v2 Availability Facts (Proposed)
+
+> **Status: proposed integration contract, not production evidence.** The
+> canonical AppRelease v2 schema and vectors are owned by
+> `@pear-deploy/contracts`. HiveRelay does not yet have accepted implementation
+> evidence for the indexing, complete-tree retrieval, or multi-operator proof
+> behavior described in this section. This section does not change the v1.0
+> protomux wire version.
+
+AppRelease v2 is a signed description of one application release. It binds the
+stable app and publisher identity, signed release sequence, normalized Pear
+links, exact build-tree digest, six-host target matrix, data policy, lifecycle
+truth, and availability evidence. HiveRelay consumes that record as an
+app-neutral availability input; applications do not gain app-specific relay
+code when they publish a new release.
+
+#### Facts a relay may index
+
+After strict parsing and schema validation, an AppRelease-aware relay may index:
+
+- the `apr_` record ID, app ID, declared publisher key, channel, version, and
+  signed sequence;
+- canonical stable and version-pinned Pear links that contain no pathname and
+  resolve to the same drive key;
+- the root `/package.json`, canonical tree-inventory digest, entry count, byte
+  total, and exact `/by-arch/<host>/app/<artifact>` subtrees;
+- each host's declared state and artifact/native-runner evidence digest;
+- publisher-seed, relay-completeness, repair, publisher-offline retrieval, and
+  canary-observation evidence; and
+- revocation, recovery, and last-known-good references as signed facts, without
+  executing them.
+
+Link normalization MUST reject malformed keys, path-bearing install links,
+unpinned version links, and stable/versioned links that name different drives.
+Artifact paths MUST be normalized before joining or mirroring and MUST remain
+inside the declared host subtree.
+
+#### Complete retrieval evidence
+
+A relay MUST NOT report a release or target as complete merely because it joined
+the swarm, observed a drive length, retrieved a manifest, or answered a sampled
+block proof. Complete evidence requires all of the following for the exact
+signed tree digest:
+
+1. fetch and validate `/package.json` and the canonical tree inventory;
+2. fetch every inventory entry for each declared target being proved;
+3. verify path, mode, size, file digest, artifact subtree digest, and full tree
+   digest;
+4. repeat the read from fresh storage with the publisher offline;
+5. record bounded timestamps, source release ID, relay identity, operator
+   identity digest, region, repair result, and evidence digest; and
+6. fail the proof on timeout, partial inventory, missing architecture, digest
+   mismatch, path ambiguity, or exhausted capacity.
+
+Production-availability input requires at least three complete replicas with
+three distinct operator identity digests. Three endpoints or relay keys under
+one operator are not independent replicas. Observation evidence also records
+the candidate canary window; a value below `86400` seconds cannot satisfy the
+programme's production availability floor.
+
+#### Authority separation
+
+HiveRelay may verify strict record bytes, content-derived IDs, signatures,
+trees, retrieval, and observation facts. Those checks do not answer whether a
+publisher should be trusted or whether a release should be installed.
+
+| Decision | HiveRelay role |
+|---|---|
+| Record/schema/signature integrity | Verify and report the result. |
+| Artifact/tree completeness | Retrieve, verify, repair, and report the result. |
+| Replica independence and observation | Report attributable facts and evidence; do not self-promote. |
+| Publisher authorization or policy threshold | Not a relay decision. |
+| Target promotion, catalogue inclusion, or install authority | Not a relay decision. |
+| Existing-install update, repair, reinstall, uninstall, or data migration | Not a relay operation. |
+
+Consumers MUST combine relay facts with the canonical publisher/policy chain,
+platform compatibility, native-runner proof, lifecycle policy, and local user
+confirmation. Transport presence, relay majority, dashboard ordering, semantic
+version, or catalogue placement MUST NOT substitute for that decision.
+
+#### Legacy and retained protocol boundaries
+
+A raw `pear-app-release-v1` object may be retained for bounded catalogue reading
+and migration diagnostics. It is normalized as `legacy` / `migration-required`,
+with `installAuthority: false`; HiveRelay MUST NOT synthesize missing v2 target,
+data, safety, or availability fields or present a v1 link as remotely executable.
+
+`public-gateway-v1` remains a separately named T1 distribution product. Its
+successful HTTPS retrieval is not a blind-privacy guarantee and is not a
+replacement for native P2P cold-retrieval evidence.
+
+AppRelease indexing also does not relax blind-storage rollback policy. After
+the first acknowledged blind-only write, rollback is to a dual-read build and
+never to a legacy-only writer. Release availability evidence cannot authorize a
+legacy write path, reveal blind plaintext, or override client-owned data policy.
 
 ---
 
