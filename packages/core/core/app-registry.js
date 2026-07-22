@@ -490,6 +490,7 @@ export class AppRegistry extends EventEmitter {
       // URL could beacon, and either reveals "this blind drive looks
       // like app X." Cascades with the name/description redaction above.
       icon: null,
+      release: null,
       redacted: true,
       addressKeyRedacted: true,
       metadataVisibility: 'redacted',
@@ -549,6 +550,7 @@ export class AppRegistry extends EventEmitter {
         // v0.17.0: display icon for catalog/PearBrowser app tiles (null if
         // unset). Redacted for blind drives in _redactCatalogEntry.
         icon: entry.icon || null,
+        release: entry.release || null,
         privacyTier: entry.privacyTier || 'public',
         seededAt: entry.startedAt || entry.seededAt || now,
         // Anchor signal — clients can prefer relays whose entries are

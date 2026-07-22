@@ -7,6 +7,7 @@ import { join } from 'path'
 import { updateWithTimeout, downloadWithTimeout, getDriveSize } from './cancellable-drive-update.js'
 import { isAbortError } from './lifecycle-scope.js'
 import { verifyShareBundleForRelay } from '../pvss.js'
+import { summarizeV3Release } from '../v3-release-summary.js'
 import {
   isValidHexKey,
   normalizeAvailabilityClass,
@@ -854,6 +855,7 @@ export class AppLifecycle extends EventEmitter {
       if (!manifestBuf) return
 
       const manifest = JSON.parse(manifestBuf.toString())
+      const release = await this._readV3ReleaseSummary(drive)
       const manifestAppId = manifest.id || (manifest.name ? manifest.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') : null)
       const version = manifest.version || '0.0.0'
       const manifestType = normalizeContentType(
@@ -895,7 +897,8 @@ export class AppLifecycle extends EventEmitter {
         categories: manifest.categories || null,
         // v0.17.0: optional display icon from the app's manifest, for
         // catalog/PearBrowser tiles. Accept manifest.icon or icons[0].
-        icon: manifest.icon || (Array.isArray(manifest.icons) ? manifest.icons[0] : null) || null
+        icon: manifest.icon || (Array.isArray(manifest.icons) ? manifest.icons[0] : null) || null,
+        release
       })
 
       if (contentType !== 'app') return
@@ -926,6 +929,18 @@ export class AppLifecycle extends EventEmitter {
       }
     } catch (_) {
       // No manifest or parse error — skip deduplication silently
+    }
+  }
+
+  async _readV3ReleaseSummary (drive) {
+    try {
+      const bytes = await Promise.race([
+        drive.get('/app-release.json'),
+        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('release timeout')), 5000))
+      ])
+      return bytes ? summarizeV3Release(JSON.parse(bytes.toString())) : null
+    } catch (_) {
+      return null
     }
   }
 

@@ -95,6 +95,19 @@ test('AppRegistry: catalogByType and catalogForBroadcast include content metadat
   t.is(broadcast[0].mountPath, '/data', 'broadcast includes mountPath')
 })
 
+test('AppRegistry: catalog carries relay-unverified v3 release availability facts', (t) => {
+  const registry = new AppRegistry(null)
+  registry.set('9'.repeat(64), {
+    type: 'app', appId: 'native-demo', release: {
+      id: 'apr_' + 'a'.repeat(64), appKind: 'desktop-app', distributionGeneration: 'pear-v3',
+      targets: [{ host: 'darwin-arm64', basename: 'Native Demo.app' }], trust: 'unverified-by-relay'
+    }
+  })
+  const release = registry.catalog()[0].release
+  t.is(release.distributionGeneration, 'pear-v3')
+  t.is(release.trust, 'unverified-by-relay', 'relay does not turn availability into install trust')
+})
+
 test('AppRegistry: redacted catalog hides blind/private metadata', (t) => {
   const registry = new AppRegistry(null)
   registry.set('f'.repeat(64), {
