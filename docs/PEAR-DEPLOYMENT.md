@@ -44,9 +44,24 @@ const path = require('node:path')
 const PearRuntime = require('pear-runtime')
 const pkg = require('./package.json')
 
+function requiredAbsoluteDirectory (name) {
+  const value = process.env[name]
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.includes('\0') ||
+    !path.isAbsolute(value) ||
+    path.normalize(value) !== value ||
+    value === path.parse(value).root
+  ) {
+    throw new Error(`${name} must be a normalized, non-root absolute directory`)
+  }
+  return value
+}
+
 const localWorker = './worker.js'
-const runtimeDir = path.resolve(process.env.HIVERELAY_RUNTIME_DIR)
-const storageDir = path.resolve(process.env.HIVERELAY_STORAGE_DIR)
+const runtimeDir = requiredAbsoluteDirectory('HIVERELAY_RUNTIME_DIR')
+const storageDir = requiredAbsoluteDirectory('HIVERELAY_STORAGE_DIR')
 
 const runtime = new PearRuntime({
   dir: runtimeDir,
