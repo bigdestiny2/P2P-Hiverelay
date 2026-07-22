@@ -75,7 +75,8 @@ function validScript () {
     if (Object.getPrototypeOf(context) !== null || !Object.isFrozen(context) ||
         !Object.isFrozen(context.endpointIds) || !Object.isFrozen(context.launchTopologyHash) ||
         context.constructor !== undefined || context.launchTopologyHash.$hiverelayType !== 'bytes' ||
-        context.launchTopologyHash.hex !== '${'42'.repeat(32)}') {
+        context.launchTopologyHash.hex !== '${'42'.repeat(32)}' ||
+        FinalizationRegistry !== undefined || WeakRef !== undefined) {
       throw new Error('runtime context is not one frozen sandbox-realm record')
     }
     const live = new WeakSet()
@@ -267,6 +268,12 @@ test('script loader rejects imports, host authorities and constructor escapes', 
     } })`,
     `({ schema: '${SCHEMA}', createAdmissionAdapterResolver () {
       new WebAssembly.Module(new Uint8Array()); return () => null
+    } })`,
+    `({ schema: '${SCHEMA}', createAdmissionAdapterResolver () {
+      new FinalizationRegistry(() => {}); return () => null
+    } })`,
+    `({ schema: '${SCHEMA}', createAdmissionAdapterResolver () {
+      new WeakRef({}); return () => null
     } })`
   ]
   for (let index = 0; index < escapes.length; index++) {

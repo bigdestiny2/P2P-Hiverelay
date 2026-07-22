@@ -68,7 +68,9 @@ const MASKED_CONTEXT_GLOBALS = Object.freeze([
   'eval',
   'WebAssembly',
   'SharedArrayBuffer',
-  'Atomics'
+  'Atomics',
+  'FinalizationRegistry',
+  'WeakRef'
 ])
 
 export const PRODUCTION_RUNTIME_PROFILE = Object.freeze({

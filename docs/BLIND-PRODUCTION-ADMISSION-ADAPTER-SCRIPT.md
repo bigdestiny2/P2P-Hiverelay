@@ -63,7 +63,9 @@ completion value fails startup.
 The script may not use static or dynamic imports. It receives no `process`,
 `require`, CommonJS state, `Buffer`, console, timers, fetch, crypto, performance,
 shared-memory, WebAssembly, or string-code-generation authority. String and wasm
-code generation are disabled in the VM context. Script evaluation, factory,
+code generation are disabled in the VM context. `FinalizationRegistry` and
+`WeakRef` are also unavailable, so adapter callbacks cannot escape the bounded
+call lifecycle through garbage-collection finalizers. Script evaluation, factory,
 resolution, lifecycle methods, and private bridge operations all execute through
 `Script.runInContext()` with a 250 ms timeout. The implementation uses stable
 `node:vm` APIs and requires no experimental VM-module feature.
