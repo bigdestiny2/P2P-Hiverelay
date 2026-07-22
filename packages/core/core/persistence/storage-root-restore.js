@@ -1,58 +1,131 @@
 /**
- * corestore 7 storage-root migration guard.
+ * Crash-safe Corestore 6 -> 7 storage-root migration guard.
  *
- * hypercore-storage 3 (corestore 7) runs a one-time `tmpFixStorage` the first
- * time it opens a pre-7 storage root: every top-level entry that isn't
- * corestore's own (cores/, primary-key, …) is moved into the new db/
- * subdirectory so the RocksDB migration owns the layout. That relocation is
- * SYNCHRONOUS inside `new Corestore(dir)` (verified against
- * hypercore-storage/index.js).
+ * Corestore 7 synchronously relocates every unrecognised top-level entry of a
+ * pre-7 root into db/. HiveRelay has durable relay state at that same level,
+ * so opening the root in place can otherwise strand app-registry.json,
+ * identities, and service sidecars. The old wrapper tried to move the files
+ * back after constructing Corestore, but a process crash in that interval made
+ * the next boot unable to distinguish a migrated sidecar from Corestore data.
  *
- * The relay keeps its own state files in the same root — app-registry.json,
- * federation.json, identity.key, services.json, the client's
- * app-drives/forks/pending-seeds JSON, … — and they get swept into db/ too,
- * invisible to every component that reads them from the root (an upgrading
- * relay would boot with an "empty" registry and forget what it seeds).
- *
- * openCorestore() is a drop-in replacement for `new Corestore(dir)` at
- * state-bearing roots: snapshot the root's top-level entries BEFORE the
- * open (only a marker-less, pre-7 root can be migrated), then move back
- * whatever the migration relocated into db/. Files that survive at the root
- * are never touched, and db/ itself is left strictly to corestore.
+ * Before Corestore is allowed to touch a legacy root, this guard atomically
+ * records a journal in a sibling directory and moves foreign entries there.
+ * Corestore then creates its new layout without seeing relay state. Only after
+ * that constructor completes are the entries restored. The journal remains
+ * until every restore succeeds, so any interrupted run resumes before another
+ * Corestore constructor is called. Restore failures are deliberately fatal:
+ * booting with a missing registry is worse than requiring operator repair.
  */
 
 import Corestore from 'corestore'
-import { existsSync, readdirSync, renameSync } from 'fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync
+} from 'fs'
 import { join } from 'path'
 
-// Entries hypercore-storage manages itself at the storage root — never ours.
 const CORESTORE_OWNED = new Set(['CORESTORE', 'primary-key', 'cores', 'db'])
+const STAGING_SUFFIX = '.hiverelay-corestore7-state'
+const JOURNAL_NAME = 'journal.json'
 
-export function openCorestore (storage, opts) {
-  let before = null
+function stageDir (storage) {
+  return `${storage}${STAGING_SUFFIX}`
+}
+
+function journalFile (stage) {
+  return join(stage, JOURNAL_NAME)
+}
+
+function isForeignName (name) {
+  return typeof name === 'string' && name !== '' && name === name.split('/').pop() && !CORESTORE_OWNED.has(name)
+}
+
+function readJournal (stage) {
+  const file = journalFile(stage)
+  if (!existsSync(file)) return null
+
+  let journal
   try {
-    // Only a pre-7 root (no CORESTORE marker yet) can be migrated on open.
-    if (typeof storage === 'string' && !existsSync(join(storage, 'CORESTORE'))) {
-      before = readdirSync(storage)
+    journal = JSON.parse(readFileSync(file, 'utf8'))
+  } catch (error) {
+    throw new Error(`HiveRelay storage migration journal is unreadable: ${file}`, { cause: error })
+  }
+
+  if (journal?.version !== 1 || !Array.isArray(journal.entries) || journal.entries.some((name) => !isForeignName(name))) {
+    throw new Error(`HiveRelay storage migration journal is invalid: ${file}`)
+  }
+  return journal
+}
+
+function writeJournal (stage, entries) {
+  mkdirSync(stage, { recursive: true })
+  const file = journalFile(stage)
+  const temporary = `${file}.tmp`
+  writeFileSync(temporary, `${JSON.stringify({ version: 1, entries })}\n`, { mode: 0o600 })
+  renameSync(temporary, file)
+}
+
+function restoreJournal (storage, stage, journal) {
+  for (const name of journal.entries) {
+    const staged = join(stage, name)
+    const target = join(storage, name)
+    if (!existsSync(staged)) continue // restored before an earlier interruption
+    if (existsSync(target)) {
+      throw new Error(`HiveRelay storage migration cannot restore ${name}: destination already exists`)
     }
+    renameSync(staged, target)
+  }
+
+  for (const name of journal.entries) {
+    if (!existsSync(join(storage, name))) {
+      throw new Error(`HiveRelay storage migration cannot verify restored state: ${name}`)
+    }
+  }
+
+  unlinkSync(journalFile(stage))
+  rmdirSync(stage)
+}
+
+function recoverInterruptedMigration (storage) {
+  const stage = stageDir(storage)
+  const journal = readJournal(stage)
+  if (journal) restoreJournal(storage, stage, journal)
+}
+
+function stageLegacyRoot (storage) {
+  recoverInterruptedMigration(storage)
+
+  if (existsSync(join(storage, 'CORESTORE'))) return null
+
+  let entries
+  try {
+    entries = readdirSync(storage).filter(isForeignName)
   } catch {
-    before = null // brand-new or unreadable root — nothing to protect
+    return null // brand-new or unreadable root — Corestore owns its outcome
   }
+  if (entries.length === 0) return null
 
+  const stage = stageDir(storage)
+  writeJournal(stage, entries)
+  for (const name of entries) renameSync(join(storage, name), join(stage, name))
+  return stage
+}
+
+/**
+ * Open a state-bearing Corestore without allowing Corestore 7 to absorb relay
+ * sidecars. `hooks.afterCorestoreOpen` is an internal fault-injection seam for
+ * the interruption regression test; production callers use two arguments.
+ */
+export function openCorestore (storage, opts, hooks = {}) {
+  const stage = typeof storage === 'string' ? stageLegacyRoot(storage) : null
   const store = new Corestore(storage, opts)
-
-  if (before) {
-    for (const name of before) {
-      if (CORESTORE_OWNED.has(name)) continue
-      if (existsSync(join(storage, name))) continue // survived at the root
-      try {
-        renameSync(join(storage, 'db', name), join(storage, name))
-      } catch {
-        // tmpFixStorage only moves, never deletes — a miss here means the
-        // entry vanished some other way; nothing to restore.
-      }
-    }
-  }
-
+  if (typeof hooks.afterCorestoreOpen === 'function') hooks.afterCorestoreOpen({ storage, store, stage })
+  if (stage) restoreJournal(storage, stage, readJournal(stage))
   return store
 }

@@ -77,3 +77,31 @@ test('second open (marker present): no sweep, root files untouched', async (t) =
   t.is(JSON.parse(readFileSync(join(a.dir, 'services.json'), 'utf8')).outboxlog, true, 'content intact')
   await second.close()
 })
+
+test('interruption after Corestore layout creation resumes sidecar restoration before restart', async (t) => {
+  const a = tmpDir()
+  t.teardown(a.cleanup)
+  writeFileSync(join(a.dir, 'app-registry.json'), JSON.stringify([{ appKey: 'b'.repeat(64) }]))
+
+  let interrupted = null
+  t.exception(() => {
+    openCorestore(a.dir, undefined, {
+      afterCorestoreOpen: ({ store }) => {
+        interrupted = store
+        throw new Error('simulated process interruption after layout rewrite')
+      }
+    })
+  }, /simulated process interruption/)
+
+  // In a real interruption the process exits here. Closing the captured test
+  // handle avoids retaining it while preserving the already-written layout.
+  await interrupted.close()
+  t.ok(existsSync(join(a.dir, 'CORESTORE')), 'Corestore marker was written before interruption')
+  t.absent(existsSync(join(a.dir, 'app-registry.json')), 'sidecar is staged, never mistaken for Corestore data')
+
+  const resumed = openCorestore(a.dir)
+  await resumed.ready()
+  t.ok(existsSync(join(a.dir, 'app-registry.json')), 'next boot resumes journal restoration before opening state')
+  t.is(JSON.parse(readFileSync(join(a.dir, 'app-registry.json'), 'utf8'))[0].appKey, 'b'.repeat(64), 'restored sidecar remains intact')
+  await resumed.close()
+})
