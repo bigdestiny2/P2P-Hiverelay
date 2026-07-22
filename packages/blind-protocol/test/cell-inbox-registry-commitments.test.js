@@ -331,13 +331,13 @@ test('all 40 frozen-plus-candidate domain rows have exact IDs, recipes and ASCII
     DOMAIN_REGISTRY.find(entry => entry.domainId === id).exactAsciiBytes))
 })
 
-test('domain and admission-cost registries distinguish frozen rows from the candidate domain', t => {
+test('domain and admission-cost registries freeze all canonical rows', t => {
   t.is(DOMAIN_REGISTRY.length, 40)
   t.is(ADMISSION_COST_RULES.length, 11)
   for (let i = 1; i < DOMAIN_REGISTRY.length; i++) {
     t.ok(DOMAIN_REGISTRY[i - 1].domainId < DOMAIN_REGISTRY[i].domainId, 'domain IDs are sorted')
   }
-  for (const entry of DOMAIN_REGISTRY.slice(0, -1)) {
+  for (const entry of DOMAIN_REGISTRY) {
     const value = { ...entry, exactAsciiBytes: b4a.from(entry.exactAsciiBytes, 'ascii') }
     const decoded = decodeCanonical(domainRegistryEntryV1, encodeCanonical(domainRegistryEntryV1, value))
     t.is(decoded.domainId, entry.domainId)
@@ -346,10 +346,10 @@ test('domain and admission-cost registries distinguish frozen rows from the cand
   }
   const candidate = DOMAIN_REGISTRY.at(-1)
   t.is(candidate.domainId, AUXILIARY_SIGNATURE_DOMAIN_ID.FORWARD_ROUTE_SCOPE)
-  t.exception(() => encodeCanonical(domainRegistryEntryV1, {
+  t.is(decodeCanonical(domainRegistryEntryV1, encodeCanonical(domainRegistryEntryV1, {
     ...candidate,
     exactAsciiBytes: b4a.from(candidate.exactAsciiBytes, 'ascii')
-  }), /not in the frozen registry/)
+  })).domainId, candidate.domainId)
   for (const rule of ADMISSION_COST_RULES) {
     t.alike(decodeCanonical(admissionCostRuleV1, encodeCanonical(admissionCostRuleV1, rule)), rule)
   }
@@ -477,7 +477,7 @@ test('error profile 1 is closed over all 20 codes and BlindError body bits', t =
   }), /does not match error profile 1/)
 })
 
-test('12 candidate CELL/INBOX rows retain exact caps and reject unfrozen schema-ID shifts', t => {
+test('12 CELL/INBOX rows retain exact caps and frozen schema IDs', t => {
   const expected = [
     [FAMILY.CELL, OPERATION.CELL.PUT, 'PutCellV1', 'BlindReceiptV1', 1056768, 16384, 2, 1, 1, 104],
     [FAMILY.CELL, OPERATION.CELL.GET, 'GetCellV1', 'GetCellResultV1', 16384, 1048832, 1, 2, 2, 0],
@@ -516,18 +516,14 @@ test('12 candidate CELL/INBOX rows retain exact caps and reject unfrozen schema-
       errorProfileId: 1,
       transportSupportBits: 31
     })
-    if (familyId === FAMILY.CELL && operationId === OPERATION.CELL.BATCH_GET) {
-      const encoded = encodeCanonical(operationProfileV1, row)
-      t.is(encoded.byteLength, 27)
-      t.alike(decodeCanonical(operationProfileV1, encoded), row)
-    } else {
-      t.exception(() => encodeCanonical(operationProfileV1, row), /not in the frozen registry/)
-    }
+    const encoded = encodeCanonical(operationProfileV1, row)
+    t.is(encoded.byteLength, 27)
+    t.alike(decodeCanonical(operationProfileV1, encoded), row)
   }
   t.is(OPERATION_PROFILE_STATUS.requiredPairs.length, 22)
   t.is(OPERATION_PROFILE_STATUS.implementedPairs.length, 22)
   t.is(OPERATION_PROFILE_STATUS.missingPairs.length, 0)
-  t.is(ABI_STATUS.releaseReady, false)
+  t.is(ABI_STATUS.releaseReady, true)
   t.is(ABI_STATUS.wireAuthorityPublished, true)
   t.is(TRANSPORT_SUPPORT.DIRECT_HTTP | TRANSPORT_SUPPORT.DIRECT_NATIVE |
     TRANSPORT_SUPPORT.OHTTP | TRANSPORT_SUPPORT.TOR_HTTP | TRANSPORT_SUPPORT.TOR_NATIVE, 31)
@@ -539,15 +535,7 @@ test('12 candidate CELL/INBOX rows retain exact caps and reject unfrozen schema-
   t.is(registry.errorProfiles.length, 20)
   t.is(registry.admissionCostRules.length, 11)
   t.is(registry.operationProfiles.length, 22)
-  let encodingError = null
-  try {
-    encodeDraftAbiRegistry()
-  } catch (error) {
-    encodingError = error
-  }
-  t.ok(encodingError)
-  t.is(encodingError.code, 'BLIND_ABI_INCOMPLETE')
-  t.alike(encodingError.releaseBlockers, ['FORWARD_ROUTE_SCOPE_AUTHORITY_REGENERATION_PENDING'])
+  t.ok(encodeDraftAbiRegistry().byteLength > 0)
 })
 
 test('OperationProfileV1 rejects wrong-purpose domains and inconsistent admission rows', t => {

@@ -75,8 +75,8 @@ function endpoint (overrides = {}) {
 }
 
 test('blind candidate schema catalog: category and operation gaps fail closed independently', t => {
-  t.is(REQUIRED_SCHEMA_NAMES.length, 150)
-  t.is(IMPLEMENTED_SCHEMAS.length, 143)
+  t.is(REQUIRED_SCHEMA_NAMES.length, 152)
+  t.is(IMPLEMENTED_SCHEMAS.length, 145)
   t.is(ABI_STATUS.missingSchemaNames.length, 0)
   t.is(ABI_STATUS.wireRequiredSchemaNames.length, 73)
   t.is(ABI_STATUS.wireImplementedSchemaNames.length, 73)

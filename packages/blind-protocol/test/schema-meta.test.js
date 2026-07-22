@@ -18,7 +18,7 @@ import {
 const ascii = value => b4a.from(value, 'ascii')
 
 test('schema meta grammar is canonical and category-local catalog rows round trip', t => {
-  t.is(EXECUTABLE_SCHEMA_CODEC_STATUS.executableCodecCount, 143)
+  t.is(EXECUTABLE_SCHEMA_CODEC_STATUS.executableCodecCount, 145)
   t.is(EXECUTABLE_SCHEMA_CODEC_STATUS.privateIpcCodecNames.length, 7)
   t.alike(EXECUTABLE_SCHEMA_CODEC_STATUS.privateIpcLeakNames, [])
   const definition = {
@@ -36,12 +36,12 @@ test('schema meta grammar is canonical and category-local catalog rows round tri
 
   const entry = {
     category: 1,
-    categoryLocalSchemaId: 68,
+    categoryLocalSchemaId: 70,
     schemaName: definition.schemaName,
     canonicalSchemaBytes
   }
   const decodedEntry = decodeCanonical(schemaCatalogEntryV1, encodeCanonical(schemaCatalogEntryV1, entry))
-  t.is(decodedEntry.categoryLocalSchemaId, 68)
+  t.is(decodedEntry.categoryLocalSchemaId, 70)
   const catalog = encodeSchemaCatalog([entry])
   t.is(decodeSchemaCatalog(catalog, { minimum: 1, maximum: 1 }).length, 1)
 })

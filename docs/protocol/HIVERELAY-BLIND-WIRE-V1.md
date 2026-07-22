@@ -43,17 +43,19 @@ be byte-identical aliases of the final files and are never separate hash inputs.
 
 ## 2. Category boundary
 
-The ABI artifact contains exactly the 71 category-1 WIRE schemas and no schema
+The ABI artifact contains exactly the 73 category-1 WIRE schemas and no schema
 from categories 2 through 5. The vector manifest contains only fixtures for those
 WIRE schemas, public dispatch/envelope framing, public commitments, domains,
 errors, and registry rows. It MUST NOT contain product-evidence, client-example,
 internal-store, or private-IPC schema catalogs or fixtures.
 
 The manifest includes one individually named canonical declaration vector for
-each of the 71 WIRE schemas, every one of the 22 operation rows, all 39 domain
+each of the 73 WIRE schemas, every one of the 22 operation rows, all 40 domain
 rows, all 20 error rows, and all 11 admission-cost rows. These exhaustive
 inventory vectors supplement the positive and negative framing/body/commitment
 fixtures; a bundled catalog alone cannot substitute for an omitted row.
+The manifest also contains `registry/release-operation-profile-v1.json`, whose
+exact canonical JSON bytes classify every frozen row as advertised or reserved.
 
 `ReadCellCapV1`, `WriteCellCapV1`, `BlindCoreReadCapV1`, opaque application-chain
 records, and replica-planning records are not relay WIRE: relays never receive or
@@ -114,6 +116,14 @@ transition, request/result caps, admission mode and cost rule, request-commitmen
 domain, result-signature domain, error profile, and allowed transport bits. The
 operation ordinal is its zero-based position in that order and its descriptor bit
 is exactly `2^ordinal`.
+
+The RC1 advertised profile contains only the first 17 rows (bits
+`0x0001ffff`). `CORE.OPEN_REPLICATION` and all four `FORWARD` rows retain their
+numeric/schema assignments solely for compatibility and are reserved (bits
+`0x003e0000`). A descriptor or readiness result MUST set every reserved bit to
+zero. Dispatch to a reserved row MUST fail closed with `UNSUPPORTED_OPERATION`
+before body allocation or admission; implementations MUST NOT advertise or
+negotiate these rows.
 
 ## 4. Canonical ABI registry bytes
 

@@ -1829,27 +1829,25 @@ before its storage path can advertise G2-W or G4-T.
 
 ### 9.1 Virtual buckets and partitions
 
-At store initialization the daemon generates a random persistent 32-byte
-`K_partition`, distinct from identity, receipt, descriptor, transport, cursor,
-and admission keys. It is never advertised or shared with another relay. There
-are exactly 65,536 relay-local virtual buckets:
+There are exactly 65,536 relay-local virtual buckets. Bucket assignment is a
+public deterministic storage function and is not a privacy or unlinkability
+boundary:
 
 ```text
-digest = HMAC-SHA-256(K_partition, serviceTag || primaryLocator)
+digest = BLAKE2b-256(ASCII("hiverelay.blind.virtual-bucket.v1") ||
+                     U8(serviceTag) || U64BE(len(primaryLocator)) || primaryLocator)
 virtualBucket = digest[0] * 256 + digest[1] // unsigned u16 big-endian
 ```
 
 `serviceTag` is the fixed ABI family byte for `CELL`, `INBOX`, or `CORE`.
 `primaryLocator` is respectively the random cell slot, physical inbox topic, or
-opaque core key. Keying prevents an identical portable locator from landing in a
-correlatable bucket number at different relays. Forward retry and descriptor/
+opaque core key. Forward retry and descriptor/
 admission control records remain in the coordinator's bounded control keyspace;
 they do not create a caller-selectable partition namespace. No app, author,
 record type, plaintext hash, origin, or client identity is an input.
 
-`K_partition` is included in the encrypted operator backup/recovery contract.
-Losing it makes deterministic index recovery impossible. Rotation requires a
-complete fenced rebalance and is never coupled to relay identity rotation.
+Recovery rederives bucket assignments from the retained locator. No partition
+secret exists or belongs in backup/recovery material.
 
 A local `BucketMapV1` maps virtual-bucket ranges to physical shard workers/volumes
 and has a monotonically increasing `mapGeneration`. Clients never address a
@@ -2324,7 +2322,7 @@ profile-2 released control RPO is exactly zero or mutation readiness is clear.
 
 The encrypted backup unit is one checkpoint plus required WAL tail, all blobs/core
 state, tombstones, spends/reservations/retry pins, bucket map/accounting, cursor/
-store keys, epoch floor, and `K_partition`. Its content manifest hashes every
+store keys and epoch floor. Its content manifest hashes every
 chunk, names the covered WAL sequence/format reader, and resides outside the live
 failure domain. Relay identity and release signing keys use separate threshold
 custody. A backup is counted successful only after automated verification; a
@@ -2681,7 +2679,7 @@ local WAL/body state, a same-sequence hash fork, missing referenced bytes, unkno
 witness binding, or refusal of that exact tail enters terminal
 `RECOVERY_GAP_READ_ONLY`. Valid pending entries are never silently truncated,
 renumbered, or re-encoded.
-Losing `K_partition` or store MAC key makes that store unrecoverable
+Losing the store MAC key makes that store unrecoverable
 and requires a new store/relay identity. Crash tests kill every migration/restore
 step, corrupt each artifact, simulate each lost key, restore to a clean machine,
 and partition a still-running old host during the fence drill, then compare visible bytes, receipts, spends, leases, bucket ownership, and

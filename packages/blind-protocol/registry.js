@@ -1783,6 +1783,35 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   forwardActiveOperationProfile(OPERATION.FORWARD.CLOSE, 'BlindForwardCloseV1', 1024, 16384, true)
 ])
 
+// Numeric rows remain frozen for decoding compatibility. The RC1 release
+// profile deliberately does not advertise or dispatch replication/forwarding.
+export const RESERVED_OPERATION_PAIRS = deepFreeze([
+  { familyId: FAMILY.CORE, operationId: OPERATION.CORE.OPEN_REPLICATION },
+  { familyId: FAMILY.FORWARD, operationId: OPERATION.FORWARD.OPEN },
+  { familyId: FAMILY.FORWARD, operationId: OPERATION.FORWARD.DATA },
+  { familyId: FAMILY.FORWARD, operationId: OPERATION.FORWARD.WINDOW },
+  { familyId: FAMILY.FORWARD, operationId: OPERATION.FORWARD.CLOSE }
+])
+
+const reservedOperationKeys = new Set(RESERVED_OPERATION_PAIRS.map(row => `${row.familyId}:${row.operationId}`))
+export const ADVERTISED_OPERATION_PROFILE_ROWS = deepFreeze(OPERATION_PROFILE_ROWS.filter(row =>
+  !reservedOperationKeys.has(`${row.familyId}:${row.operationId}`)))
+export const ADVERTISED_OPERATION_BITS = (1 << ADVERTISED_OPERATION_PROFILE_ROWS.length) - 1
+export const RESERVED_OPERATION_BITS = ((1 << OPERATION_PROFILE_ROWS.length) - 1) ^ ADVERTISED_OPERATION_BITS
+
+export function isReservedOperation (familyId, operationId) {
+  return reservedOperationKeys.has(`${familyId}:${operationId}`)
+}
+
+export function isAdvertisedOperation (familyId, operationId) {
+  return isKnownOperation(familyId, operationId) && !isReservedOperation(familyId, operationId)
+}
+
+export function assertAdvertisedOperation (familyId, operationId) {
+  if (isAdvertisedOperation(familyId, operationId)) return operationProfile(familyId, operationId)
+  protocolError('UNSUPPORTED_OPERATION', 'operation is unknown or reserved by the active release profile')
+}
+
 for (let i = 0; i < OPERATION_PROFILE_ROWS.length; i++) {
   const row = OPERATION_PROFILE_ROWS[i]
   const previous = i === 0 ? null : OPERATION_PROFILE_ROWS[i - 1]
@@ -1938,9 +1967,7 @@ export const CATEGORY_REGISTRY_STATUS = deepFreeze({
     Object.keys(CATEGORY_REGISTRY_ARTIFACTS).length === 5
 })
 
-export const ABI_RELEASE_BLOCKERS = deepFreeze([
-  'FORWARD_ROUTE_SCOPE_AUTHORITY_REGENERATION_PENDING'
-])
+export const ABI_RELEASE_BLOCKERS = deepFreeze([])
 
 export const ABI_STATUS = deepFreeze({
   profile: 'wire-authority-v1',

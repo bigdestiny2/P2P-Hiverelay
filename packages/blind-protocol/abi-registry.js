@@ -504,7 +504,8 @@ export function wireAbiRegistryValue (schemaCatalogEntries = null) {
     })
     .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
   if (catalogByName && (wireSchemas.some(schema => schema.category !== SCHEMA_CATEGORY.WIRE) ||
-      wireSchemas.some(schema => schema.categoryLocalSchemaId === 0) || wireSchemas.length !== 71)) {
+      wireSchemas.some(schema => schema.categoryLocalSchemaId === 0) ||
+      wireSchemas.length !== ABI_STATUS.wireRequiredSchemaNames.length)) {
     throw new Error('compiled master catalog does not contain the complete WIRE schema set')
   }
 

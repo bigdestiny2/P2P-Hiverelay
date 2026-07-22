@@ -2,11 +2,11 @@
   "profile": "wire-authority-v1",
   "releaseReady": true,
   "missingSchemaCount": 0,
-  "specHash": "470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9",
-  "abiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",
-  "vectorSetHash": "09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78",
+  "specHash": "c9ddd235c3963461174e3de13c25a4c995b53ff320be822d8304f870766b6592",
+  "abiHash": "199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567",
+  "vectorSetHash": "fa54012cd0d7e4e620878c67e61f435ecb31ddec05a6283917987cc84279ee05",
   "evidenceFormatHash": "f250ca2b30827f57ebf563b1236c26b3269fd63f4a9291521dcd2aa5b0336f86",
   "evidenceVectorSetHash": "69a6a567e0dab153816facda60fcaf908bb6831edec199701e2eb2ae978a326a",
-  "storeFormatHash": "6e819522154388f91295f18f963898124faf1e3a0a17bee78276e9a0fd91ed76",
-  "storeVectorSetHash": "9f1e83958e819a62792d3008a162d3ae6cce3191b9df1c62b72f227b56398644"
+  "storeFormatHash": "d590838a91655dc1cf8d04f277416caacaf1b73ddbddd9f6f19b104dfb92234c",
+  "storeVectorSetHash": "5005229ae8876b5cf7c56405ee1ca7585c054e531e48615cb47edcd32f5e3f75"
 }

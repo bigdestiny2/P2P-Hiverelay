@@ -175,9 +175,9 @@ test('client-composition authority rejects stale pins, framing drift and foreign
 
 test('client-composition artifacts cannot perturb WIRE or import relay persistence', t => {
   const wire = JSON.parse(artifact('hiverelay-blind-wire-authority-v1.json'))
-  t.is(wire.specHash, '470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9')
-  t.is(wire.abiHash, 'aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d')
-  t.is(wire.vectorSetHash, '09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78')
+  t.is(wire.specHash, 'c9ddd235c3963461174e3de13c25a4c995b53ff320be822d8304f870766b6592')
+  t.is(wire.abiHash, '199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567')
+  t.is(wire.vectorSetHash, 'fa54012cd0d7e4e620878c67e61f435ecb31ddec05a6283917987cc84279ee05')
   t.is(b4a.toString(hashSpec(fs.readFileSync(new URL(
     'docs/protocol/HIVERELAY-BLIND-WIRE-V1.md', rootUrl))), 'hex'), wire.specHash)
   t.is(b4a.toString(hashAbi(artifact('hiverelay-blind-abi-v1.cenc')), 'hex'), wire.abiHash)

@@ -217,7 +217,8 @@ export const AUXILIARY_SIGNATURE_DOMAIN_ID = deepFreeze({
   "RESTORE_EVIDENCE_HEAD": 209,
   "BACKUP_MANIFEST": 210,
   "CLEAN_RESTORE_EVIDENCE": 211,
-  "BACKUP_RETENTION_TRANSITION": 212
+  "BACKUP_RETENTION_TRANSITION": 212,
+  "FORWARD_ROUTE_SCOPE": 213
 })
 export const ERROR_PROFILE_ID = deepFreeze({
   "CANONICAL_V1": 1
@@ -460,6 +461,12 @@ export const DOMAIN_REGISTRY = deepFreeze([
     "purpose": 3,
     "recipeId": 2,
     "exactAsciiBytes": "hiverelay.blind.backup-retention-transition.v1"
+  },
+  {
+    "domainId": 213,
+    "purpose": 3,
+    "recipeId": 2,
+    "exactAsciiBytes": "hiverelay.blind.forward-route-scope.v1"
   }
 ])
 export const ADMISSION_COST_RULES = deepFreeze([
@@ -747,7 +754,7 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
     "familyId": 1,
     "operationId": 1,
     "requestSchemaId": 16,
-    "resultSchemaId": 37,
+    "resultSchemaId": 39,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
     "streamTransition": 0,
@@ -763,8 +770,8 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 1,
     "operationId": 2,
-    "requestSchemaId": 29,
-    "resultSchemaId": 30,
+    "requestSchemaId": 31,
+    "resultSchemaId": 32,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
     "streamTransition": 0,
@@ -797,8 +804,8 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 2,
     "operationId": 1,
-    "requestSchemaId": 66,
-    "resultSchemaId": 34,
+    "requestSchemaId": 68,
+    "resultSchemaId": 36,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
     "streamTransition": 0,
@@ -814,8 +821,8 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 2,
     "operationId": 2,
-    "requestSchemaId": 52,
-    "resultSchemaId": 51,
+    "requestSchemaId": 54,
+    "resultSchemaId": 53,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
     "streamTransition": 0,
@@ -831,8 +838,8 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 2,
     "operationId": 3,
-    "requestSchemaId": 69,
-    "resultSchemaId": 34,
+    "requestSchemaId": 71,
+    "resultSchemaId": 36,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
     "streamTransition": 0,
@@ -848,8 +855,8 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 2,
     "operationId": 4,
-    "requestSchemaId": 47,
-    "resultSchemaId": 34,
+    "requestSchemaId": 49,
+    "resultSchemaId": 36,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
     "streamTransition": 0,
@@ -865,8 +872,8 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 2,
     "operationId": 5,
-    "requestSchemaId": 65,
-    "resultSchemaId": 64,
+    "requestSchemaId": 67,
+    "resultSchemaId": 66,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
     "streamTransition": 0,
@@ -899,8 +906,8 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 3,
     "operationId": 1,
-    "requestSchemaId": 55,
-    "resultSchemaId": 60,
+    "requestSchemaId": 57,
+    "resultSchemaId": 62,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
     "streamTransition": 0,
@@ -916,8 +923,8 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 3,
     "operationId": 2,
-    "requestSchemaId": 56,
-    "resultSchemaId": 60,
+    "requestSchemaId": 58,
+    "resultSchemaId": 62,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
     "streamTransition": 0,
@@ -933,8 +940,8 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 3,
     "operationId": 3,
-    "requestSchemaId": 56,
-    "resultSchemaId": 60,
+    "requestSchemaId": 58,
+    "resultSchemaId": 62,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
     "streamTransition": 0,
@@ -950,8 +957,8 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 3,
     "operationId": 4,
-    "requestSchemaId": 54,
-    "resultSchemaId": 53,
+    "requestSchemaId": 56,
+    "resultSchemaId": 55,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
     "streamTransition": 0,
@@ -967,8 +974,8 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 3,
     "operationId": 5,
-    "requestSchemaId": 59,
-    "resultSchemaId": 57,
+    "requestSchemaId": 61,
+    "resultSchemaId": 59,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
     "streamTransition": 0,
@@ -984,8 +991,8 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 3,
     "operationId": 6,
-    "requestSchemaId": 61,
-    "resultSchemaId": 57,
+    "requestSchemaId": 63,
+    "resultSchemaId": 59,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
     "streamTransition": 0,
@@ -1001,7 +1008,7 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 4,
     "operationId": 1,
-    "requestSchemaId": 41,
+    "requestSchemaId": 43,
     "resultSchemaId": 15,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
@@ -1018,8 +1025,8 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 4,
     "operationId": 2,
-    "requestSchemaId": 44,
-    "resultSchemaId": 45,
+    "requestSchemaId": 46,
+    "resultSchemaId": 47,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
     "streamTransition": 0,
@@ -1035,8 +1042,8 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 4,
     "operationId": 3,
-    "requestSchemaId": 43,
-    "resultSchemaId": 42,
+    "requestSchemaId": 45,
+    "resultSchemaId": 44,
     "allowedRequestKindBits": 1,
     "allowedResultKindBits": 6,
     "streamTransition": 1,
@@ -1086,7 +1093,7 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
   {
     "familyId": 5,
     "operationId": 3,
-    "requestSchemaId": 28,
+    "requestSchemaId": 30,
     "resultSchemaId": 0,
     "allowedRequestKindBits": 8,
     "allowedResultKindBits": 8,
@@ -1118,6 +1125,321 @@ export const OPERATION_PROFILE_ROWS = deepFreeze([
     "transportSupportBits": 50
   }
 ])
+export const ADVERTISED_OPERATION_PROFILE_ROWS = deepFreeze([
+  {
+    "familyId": 1,
+    "operationId": 1,
+    "requestSchemaId": 16,
+    "resultSchemaId": 39,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 16384,
+    "maxResultBodyBytes": 16384,
+    "admissionMode": 0,
+    "costClassRuleId": 0,
+    "requestCommitmentDomainId": 0,
+    "resultSignatureDomainId": 101,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 1,
+    "operationId": 2,
+    "requestSchemaId": 31,
+    "resultSchemaId": 32,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 16384,
+    "maxResultBodyBytes": 16384,
+    "admissionMode": 0,
+    "costClassRuleId": 0,
+    "requestCommitmentDomainId": 0,
+    "resultSignatureDomainId": 102,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 1,
+    "operationId": 3,
+    "requestSchemaId": 9,
+    "resultSchemaId": 2,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 16384,
+    "maxResultBodyBytes": 16384,
+    "admissionMode": 0,
+    "costClassRuleId": 0,
+    "requestCommitmentDomainId": 0,
+    "resultSignatureDomainId": 103,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 2,
+    "operationId": 1,
+    "requestSchemaId": 68,
+    "resultSchemaId": 36,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 1056768,
+    "maxResultBodyBytes": 16384,
+    "admissionMode": 2,
+    "costClassRuleId": 1,
+    "requestCommitmentDomainId": 1,
+    "resultSignatureDomainId": 104,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 2,
+    "operationId": 2,
+    "requestSchemaId": 54,
+    "resultSchemaId": 53,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 16384,
+    "maxResultBodyBytes": 1048832,
+    "admissionMode": 1,
+    "costClassRuleId": 2,
+    "requestCommitmentDomainId": 2,
+    "resultSignatureDomainId": 0,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 2,
+    "operationId": 3,
+    "requestSchemaId": 71,
+    "resultSchemaId": 36,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 16384,
+    "maxResultBodyBytes": 16384,
+    "admissionMode": 2,
+    "costClassRuleId": 3,
+    "requestCommitmentDomainId": 3,
+    "resultSignatureDomainId": 104,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 2,
+    "operationId": 4,
+    "requestSchemaId": 49,
+    "resultSchemaId": 36,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 16384,
+    "maxResultBodyBytes": 16384,
+    "admissionMode": 0,
+    "costClassRuleId": 0,
+    "requestCommitmentDomainId": 4,
+    "resultSignatureDomainId": 104,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 2,
+    "operationId": 5,
+    "requestSchemaId": 67,
+    "resultSchemaId": 66,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 16384,
+    "maxResultBodyBytes": 1049600,
+    "admissionMode": 1,
+    "costClassRuleId": 2,
+    "requestCommitmentDomainId": 5,
+    "resultSignatureDomainId": 104,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 2,
+    "operationId": 6,
+    "requestSchemaId": 8,
+    "resultSchemaId": 6,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 16384,
+    "maxResultBodyBytes": 4194304,
+    "admissionMode": 1,
+    "costClassRuleId": 4,
+    "requestCommitmentDomainId": 6,
+    "resultSignatureDomainId": 105,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 3,
+    "operationId": 1,
+    "requestSchemaId": 57,
+    "resultSchemaId": 62,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 16384,
+    "maxResultBodyBytes": 16384,
+    "admissionMode": 2,
+    "costClassRuleId": 5,
+    "requestCommitmentDomainId": 7,
+    "resultSignatureDomainId": 106,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 3,
+    "operationId": 2,
+    "requestSchemaId": 58,
+    "resultSchemaId": 62,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 16384,
+    "maxResultBodyBytes": 16384,
+    "admissionMode": 2,
+    "costClassRuleId": 6,
+    "requestCommitmentDomainId": 8,
+    "resultSignatureDomainId": 106,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 3,
+    "operationId": 3,
+    "requestSchemaId": 58,
+    "resultSchemaId": 62,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 16384,
+    "maxResultBodyBytes": 16384,
+    "admissionMode": 0,
+    "costClassRuleId": 0,
+    "requestCommitmentDomainId": 9,
+    "resultSignatureDomainId": 106,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 3,
+    "operationId": 4,
+    "requestSchemaId": 56,
+    "resultSchemaId": 55,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 70656,
+    "maxResultBodyBytes": 16384,
+    "admissionMode": 2,
+    "costClassRuleId": 7,
+    "requestCommitmentDomainId": 10,
+    "resultSignatureDomainId": 107,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 3,
+    "operationId": 5,
+    "requestSchemaId": 61,
+    "resultSchemaId": 59,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 16384,
+    "maxResultBodyBytes": 4194304,
+    "admissionMode": 1,
+    "costClassRuleId": 4,
+    "requestCommitmentDomainId": 11,
+    "resultSignatureDomainId": 108,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 3,
+    "operationId": 6,
+    "requestSchemaId": 63,
+    "resultSchemaId": 59,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 16384,
+    "maxResultBodyBytes": 4194304,
+    "admissionMode": 2,
+    "costClassRuleId": 8,
+    "requestCommitmentDomainId": 12,
+    "resultSignatureDomainId": 108,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 4,
+    "operationId": 1,
+    "requestSchemaId": 43,
+    "resultSchemaId": 15,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 16384,
+    "maxResultBodyBytes": 16384,
+    "admissionMode": 2,
+    "costClassRuleId": 9,
+    "requestCommitmentDomainId": 13,
+    "resultSignatureDomainId": 109,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  },
+  {
+    "familyId": 4,
+    "operationId": 2,
+    "requestSchemaId": 46,
+    "resultSchemaId": 47,
+    "allowedRequestKindBits": 1,
+    "allowedResultKindBits": 6,
+    "streamTransition": 0,
+    "maxRequestBodyBytes": 16384,
+    "maxResultBodyBytes": 4194304,
+    "admissionMode": 1,
+    "costClassRuleId": 4,
+    "requestCommitmentDomainId": 14,
+    "resultSignatureDomainId": 109,
+    "errorProfileId": 1,
+    "transportSupportBits": 31
+  }
+])
+export const RESERVED_OPERATION_PAIRS = deepFreeze([
+  {
+    "familyId": 4,
+    "operationId": 3
+  },
+  {
+    "familyId": 5,
+    "operationId": 1
+  },
+  {
+    "familyId": 5,
+    "operationId": 2
+  },
+  {
+    "familyId": 5,
+    "operationId": 3
+  },
+  {
+    "familyId": 5,
+    "operationId": 4
+  }
+])
+export const ADVERTISED_OPERATION_BITS = 131071
+export const RESERVED_OPERATION_BITS = 4063232
 export const CLOCK_UNSAFE_OPERATION_BITS = 38440
 
 export function domainRegistryEntry (domainId) {
@@ -1152,6 +1474,22 @@ export function isKnownOperation (familyId, operationId) {
   return operationProfile(familyId, operationId) !== null
 }
 
+export function isReservedOperation (familyId, operationId) {
+  return RESERVED_OPERATION_PAIRS.some(row => row.familyId === familyId && row.operationId === operationId)
+}
+
+export function isAdvertisedOperation (familyId, operationId) {
+  return isKnownOperation(familyId, operationId) && !isReservedOperation(familyId, operationId)
+}
+
+export function assertAdvertisedOperation (familyId, operationId) {
+  const profile = operationProfile(familyId, operationId)
+  if (profile && !isReservedOperation(familyId, operationId)) return profile
+  const error = new Error('operation is unknown or reserved by the active release profile')
+  error.code = 'UNSUPPORTED_OPERATION'
+  throw error
+}
+
 export function familyName (familyId) {
   return Object.entries(FAMILY).find(([, id]) => id === familyId)?.[0] || null
 }
@@ -1168,14 +1506,18 @@ export const WIRE_RUNTIME_AUTHORITY = deepFreeze({
   "specArtifact": "docs/protocol/HIVERELAY-BLIND-WIRE-V1.md",
   "abiArtifact": "packages/blind-protocol/hiverelay-blind-abi-v1.cenc",
   "vectorManifestArtifact": "packages/blind-protocol/vector-manifest-v1.cenc",
-  "specHash": "470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9",
-  "abiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",
-  "vectorSetHash": "09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78",
-  "wireSchemaCount": 71,
+  "specHash": "c9ddd235c3963461174e3de13c25a4c995b53ff320be822d8304f870766b6592",
+  "abiHash": "199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567",
+  "vectorSetHash": "fa54012cd0d7e4e620878c67e61f435ecb31ddec05a6283917987cc84279ee05",
+  "wireSchemaCount": 73,
   "operationCount": 22,
+  "advertisedOperationCount": 17,
+  "reservedOperationCount": 5,
+  "advertisedOperationBits": 131071,
+  "reservedOperationBits": 4063232,
   "errorCount": 20,
-  "domainCount": 39,
-  "vectorCount": 233
+  "domainCount": 40,
+  "vectorCount": 237
 })
 export const WIRE_RUNTIME_AUTHORITY_STATUS = deepFreeze({
   profile: WIRE_RUNTIME_AUTHORITY.profile,
@@ -1184,6 +1526,10 @@ export const WIRE_RUNTIME_AUTHORITY_STATUS = deepFreeze({
   vectorSetHash: WIRE_RUNTIME_AUTHORITY.vectorSetHash,
   wireSchemaCount: WIRE_RUNTIME_AUTHORITY.wireSchemaCount,
   operationCount: WIRE_RUNTIME_AUTHORITY.operationCount,
+  advertisedOperationCount: WIRE_RUNTIME_AUTHORITY.advertisedOperationCount,
+  reservedOperationCount: WIRE_RUNTIME_AUTHORITY.reservedOperationCount,
+  advertisedOperationBits: WIRE_RUNTIME_AUTHORITY.advertisedOperationBits,
+  reservedOperationBits: WIRE_RUNTIME_AUTHORITY.reservedOperationBits,
   errorCount: WIRE_RUNTIME_AUTHORITY.errorCount,
   domainCount: WIRE_RUNTIME_AUTHORITY.domainCount,
   vectorCount: WIRE_RUNTIME_AUTHORITY.vectorCount,

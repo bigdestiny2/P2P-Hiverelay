@@ -5,6 +5,8 @@ import b4a from 'b4a'
 import {
   ADMISSION_CONFORMANCE_CLASS,
   ADMISSION_COST_RULES,
+  ADVERTISED_OPERATION_BITS,
+  ADVERTISED_OPERATION_PROFILE_ROWS,
   AUXILIARY_SIGNATURE_DOMAIN_ID,
   ABI_STATUS,
   CELL_RECEIPT_RESULT,
@@ -38,6 +40,8 @@ import {
   OUTER_CLASS,
   PROTOCOL,
   OPERATION_PROFILE_ROWS,
+  RESERVED_OPERATION_BITS,
+  RESERVED_OPERATION_PAIRS,
   PUBLIC_PROFILE_LIMITS,
   REQUEST_COMMITMENT_DOMAIN_ID,
   RESULT_SIGNATURE_DOMAIN_ID,
@@ -108,6 +112,9 @@ import {
   hashAbi,
   hashEvidenceFormat,
   hashEvidenceVectorSet,
+  hashImplementationSpec,
+  hashOwnerDecisions,
+  hashReleaseClosure,
   hashSpec,
   hashStoreFormat,
   hashStoreVectorSet,
@@ -147,6 +154,11 @@ function canonicalTextBytes (relative) {
 }
 
 const canonicalWireSpecBytes = canonicalTextBytes(['docs', 'protocol', 'HIVERELAY-BLIND-WIRE-V1.md'])
+const canonicalImplementationSpecBytes = canonicalTextBytes(['docs', 'protocol', 'BLIND-SUBSTRATE-IMPLEMENTATION-SPEC.md'])
+const canonicalOwnerDecisionsBytes = canonicalTextBytes(['docs', 'protocol', 'HIVERELAY-BLIND-OWNER-DECISIONS-V1.json'])
+const canonicalProfileBindingBytes = canonicalTextBytes(['docs', 'protocol', 'HIVERELAY-BLIND-RC1-PROFILE-BINDING-V1.json'])
+const ownerDecisions = JSON.parse(b4a.toString(canonicalOwnerDecisionsBytes, 'utf8'))
+const profileBinding = JSON.parse(b4a.toString(canonicalProfileBindingBytes, 'utf8'))
 const canonicalMasterBytes = canonicalTextBytes([
   'docs', 'protocol', 'BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md'
 ])
@@ -532,6 +544,7 @@ const forwardOpenBody = encodeCanonical(blindForwardOpenV1, {
   requestedWireClass: 1,
   circuitClass: 1,
   circuitNonce: bytes(32, 0x70),
+  parentRouteScopeHash: bytes(32, 0),
   hopAdmission: admission,
   innerHandshake: bytes(32, 0x71)
 })
@@ -543,6 +556,7 @@ const forwardOpenCommitment = forwardOpenRequestCommitment({
   requestedWireClass: 1,
   circuitClass: 1,
   circuitNonce: bytes(32, 0x70),
+  parentRouteScopeHash: bytes(32, 0),
   innerHandshake: bytes(32, 0x71)
 })
 const nextHopAccept = {
@@ -570,6 +584,8 @@ const nextHopAccept = {
   lifetimeMillis: 600000,
   openedAtEpoch: 100,
   hopOpenCommitment: bytes(32, 0x75),
+  acceptedRouteScopeHash: bytes(32, 0x7a),
+  acceptedRelayCount: 1,
   handshakeFlight2: bytes(96, 0x76),
   nextSignature: bytes(64, 0x77)
 }
@@ -594,6 +610,8 @@ const forwardOpenResultBody = encodeCanonical(blindForwardOpenResultV1, {
   lifetimeMillis: nextHopAccept.lifetimeMillis,
   openedAtEpoch: nextHopAccept.openedAtEpoch,
   requestCommitment: bytes(32, 0x78),
+  acceptedRouteScopeHash: nextHopAccept.acceptedRouteScopeHash,
+  acceptedRelayCount: nextHopAccept.acceptedRelayCount,
   nextHopAccept,
   signature: bytes(64, 0x79)
 })
@@ -965,6 +983,16 @@ const completeOperationProfileVectors = OPERATION_PROFILE_ROWS.map(row => {
     encodeCanonical(operationProfileV1, row)]
 })
 
+const releaseOperationProfile = {
+  schema: 'hiverelay.blind.release-operation-profile.v1',
+  profile: ABI_STATUS.profile,
+  advertisedOperationBits: ADVERTISED_OPERATION_BITS,
+  reservedOperationBits: RESERVED_OPERATION_BITS,
+  advertisedOperations: ADVERTISED_OPERATION_PROFILE_ROWS.map(({ familyId, operationId }) => ({ familyId, operationId })),
+  reservedOperations: RESERVED_OPERATION_PAIRS
+}
+const releaseOperationProfileBytes = b4a.from(JSON.stringify(releaseOperationProfile, null, 2) + '\n')
+
 const completeDomainVectors = DOMAIN_REGISTRY.map(row => [
   `registry/domains/${String(row.domainId).padStart(3, '0')}.bin`,
   encodeCanonical(domainRegistryEntryV1, {
@@ -1061,7 +1089,7 @@ const localCheckpointV1 = wireOnly
       durabilityContinuityHash: bytes(32, 0xd3),
       durabilityProfileHash: bytes(32, 0xd4),
       formatMajor: 1,
-      formatMinor: 1,
+      formatMinor: 2,
       storeFormatHash: bytes(32, 0xd5),
       specHash: bytes(32, 0xd6),
       abiHash: bytes(32, 0xd7),
@@ -1081,6 +1109,7 @@ const localCheckpointV1 = wireOnly
     }))
 
 const vectorFiles = [
+  ['registry/release-operation-profile-v1.json', releaseOperationProfileBytes],
   ['dispatch/cell-get-request.bin', cellGet],
   ['dispatch/forward-data.bin', forwardData],
   ['invalid/dispatch-nonzero-flags.bin', invalidFlags],
@@ -1175,7 +1204,7 @@ const actualWireVectorPaths = listedFiles(vectorRoot)
 const expectedWireVectorPaths = wireVectorFiles.map(([vectorPath]) => vectorPath).sort()
 if (actualWireVectorPaths.length !== expectedWireVectorPaths.length ||
     actualWireVectorPaths.some((value, index) => value !== expectedWireVectorPaths[index])) {
-  throw new Error('final WIRE vector directory contains missing or unmanifested package files')
+  throw new Error(`final WIRE vector directory contains missing or unmanifested package files: actual-only=${actualWireVectorPaths.filter(value => !expectedWireVectorPaths.includes(value)).join(',')} expected-only=${expectedWireVectorPaths.filter(value => !actualWireVectorPaths.includes(value)).join(',')}`)
 }
 
 const abiBytes = encodeWireAbiRegistry(wireSchemaCatalog.entries)
@@ -1203,6 +1232,10 @@ const wireAuthority = {
   vectorSetHash: hashes.vectorSetHash,
   wireSchemaCount: ABI_STATUS.wireRequiredSchemaNames.length,
   operationCount: ABI_STATUS.operationProfileStatus.requiredPairs.length,
+  advertisedOperationCount: ADVERTISED_OPERATION_PROFILE_ROWS.length,
+  reservedOperationCount: RESERVED_OPERATION_PAIRS.length,
+  advertisedOperationBits: ADVERTISED_OPERATION_BITS,
+  reservedOperationBits: RESERVED_OPERATION_BITS,
   errorCount: ERROR_PROFILE_ROWS.length,
   domainCount: DOMAIN_REGISTRY.length,
   vectorCount: wireVectorFiles.length
@@ -1271,6 +1304,10 @@ export const FORWARD_CIRCUIT_CLASS = deepFreeze(${JSON.stringify(FORWARD_CIRCUIT
 export const CORE_SESSION_CLASS = deepFreeze(${JSON.stringify(CORE_SESSION_CLASS, null, 2)})
 export const DISPATCH_LIMITS = deepFreeze(${JSON.stringify(DISPATCH_LIMITS, null, 2)})
 export const OPERATION_PROFILE_ROWS = deepFreeze(${JSON.stringify(OPERATION_PROFILE_ROWS, null, 2)})
+export const ADVERTISED_OPERATION_PROFILE_ROWS = deepFreeze(${JSON.stringify(ADVERTISED_OPERATION_PROFILE_ROWS, null, 2)})
+export const RESERVED_OPERATION_PAIRS = deepFreeze(${JSON.stringify(RESERVED_OPERATION_PAIRS, null, 2)})
+export const ADVERTISED_OPERATION_BITS = ${JSON.stringify(ADVERTISED_OPERATION_BITS)}
+export const RESERVED_OPERATION_BITS = ${JSON.stringify(RESERVED_OPERATION_BITS)}
 export const CLOCK_UNSAFE_OPERATION_BITS = ${JSON.stringify(CLOCK_UNSAFE_OPERATION_BITS)}
 
 export function domainRegistryEntry (domainId) {
@@ -1305,6 +1342,22 @@ export function isKnownOperation (familyId, operationId) {
   return operationProfile(familyId, operationId) !== null
 }
 
+export function isReservedOperation (familyId, operationId) {
+  return RESERVED_OPERATION_PAIRS.some(row => row.familyId === familyId && row.operationId === operationId)
+}
+
+export function isAdvertisedOperation (familyId, operationId) {
+  return isKnownOperation(familyId, operationId) && !isReservedOperation(familyId, operationId)
+}
+
+export function assertAdvertisedOperation (familyId, operationId) {
+  const profile = operationProfile(familyId, operationId)
+  if (profile && !isReservedOperation(familyId, operationId)) return profile
+  const error = new Error('operation is unknown or reserved by the active release profile')
+  error.code = 'UNSUPPORTED_OPERATION'
+  throw error
+}
+
 export function familyName (familyId) {
   return Object.entries(FAMILY).find(([, id]) => id === familyId)?.[0] || null
 }
@@ -1321,11 +1374,15 @@ export const WIRE_RUNTIME_AUTHORITY_STATUS = deepFreeze({
   vectorSetHash: WIRE_RUNTIME_AUTHORITY.vectorSetHash,
   wireSchemaCount: WIRE_RUNTIME_AUTHORITY.wireSchemaCount,
   operationCount: WIRE_RUNTIME_AUTHORITY.operationCount,
+  advertisedOperationCount: WIRE_RUNTIME_AUTHORITY.advertisedOperationCount,
+  reservedOperationCount: WIRE_RUNTIME_AUTHORITY.reservedOperationCount,
+  advertisedOperationBits: WIRE_RUNTIME_AUTHORITY.advertisedOperationBits,
+  reservedOperationBits: WIRE_RUNTIME_AUTHORITY.reservedOperationBits,
   errorCount: WIRE_RUNTIME_AUTHORITY.errorCount,
   domainCount: WIRE_RUNTIME_AUTHORITY.domainCount,
   vectorCount: WIRE_RUNTIME_AUTHORITY.vectorCount,
-  releaseBlockers: [],
-  releaseReady: true
+  releaseBlockers: ${JSON.stringify(ABI_STATUS.releaseBlockers)},
+  releaseReady: ${JSON.stringify(ABI_STATUS.releaseReady)}
 })
 
 export function assertWireAuthorityReady () {
@@ -1374,6 +1431,62 @@ if (!wireOnly) {
     storeFormatHash: b4a.toString(hashStoreFormat(storeFormatAuthorityBytes), 'hex'),
     storeVectorSetHash: b4a.toString(hashStoreVectorSet(storeVectorManifestBytes), 'hex')
   }
+  const privateIpcAuthority = JSON.parse(fs.readFileSync(path.join(root,
+    'packages', 'blind-ipc', 'hiverelay-blind-private-ipc-authority-v1.json'), 'utf8'))
+  const closure = {
+    schema: 'hiverelay.blind.release-closure.v1',
+    profile: ABI_STATUS.profile,
+    wire: {
+      artifact: 'packages/blind-protocol/hiverelay-blind-wire-authority-v1.json',
+      specHash: completeHashes.specHash,
+      abiHash: completeHashes.abiHash,
+      vectorSetHash: completeHashes.vectorSetHash
+    },
+    implementation: {
+      artifact: 'docs/protocol/BLIND-SUBSTRATE-IMPLEMENTATION-SPEC.md',
+      implementationSpecHash: b4a.toString(hashImplementationSpec(canonicalImplementationSpecBytes), 'hex')
+    },
+    store: {
+      artifact: 'packages/blind-protocol/hiverelay-blind-store-format-authority-v1.draft.cenc',
+      storeFormatHash: completeHashes.storeFormatHash,
+      storeVectorSetHash: completeHashes.storeVectorSetHash
+    },
+    privateIpc: {
+      artifact: 'packages/blind-ipc/hiverelay-blind-private-ipc-authority-v1.json',
+      importedWireAbiHash: privateIpcAuthority.importedWireAbiHash,
+      privateIpcFormatHash: privateIpcAuthority.privateIpcFormatHash,
+      privateIpcVectorSetHash: privateIpcAuthority.privateIpcVectorSetHash
+    },
+    profile: {
+      artifact: 'docs/protocol/HIVERELAY-BLIND-RC1-PROFILE-BINDING-V1.json',
+      ...profileBinding
+    },
+    decisions: {
+      artifact: 'docs/protocol/HIVERELAY-BLIND-OWNER-DECISIONS-V1.json',
+      decisionsHash: b4a.toString(hashOwnerDecisions(canonicalOwnerDecisionsBytes), 'hex'),
+      ids: ownerDecisions.decisions.map(decision => decision.id)
+    },
+    operationProfile: {
+      advertisedOperationBits: ADVERTISED_OPERATION_BITS,
+      advertisedOperationCount: ADVERTISED_OPERATION_PROFILE_ROWS.length,
+      reservedOperationBits: RESERVED_OPERATION_BITS,
+      reservedOperationCount: RESERVED_OPERATION_PAIRS.length,
+      reservedOperations: RESERVED_OPERATION_PAIRS
+    },
+    compatibilityBlockers: [
+      'BLIND_DAEMON_MUST_ENFORCE_RESERVED_OPERATION_PROFILE',
+      'BLIND_EDGE_MUST_ENFORCE_RESERVED_OPERATION_PROFILE',
+      'BLIND_STORAGE_MUST_MIGRATE_TO_FORMAT_1_2_DETERMINISTIC_BUCKETS',
+      'PEERIT_MUST_CONSUME_THIS_CLOSURE'
+    ],
+    contractReady: true,
+    productReleaseReady: false
+  }
+  const closurePayloadBytes = b4a.from(JSON.stringify(closure, null, 2) + '\n')
+  const closureBytes = b4a.from(JSON.stringify({
+    ...closure,
+    closureHash: b4a.toString(hashReleaseClosure(closurePayloadBytes), 'hex')
+  }, null, 2) + '\n')
   const hashesBytes = b4a.from(JSON.stringify(completeHashes, null, 2) + '\n')
   emit(path.join('packages', 'blind-protocol', 'hiverelay-blind-schema-catalog-v1.draft.cenc'),
     encodeSchemaCatalog(masterSchemaCatalog.entries))
@@ -1393,6 +1506,7 @@ if (!wireOnly) {
   emit(path.join('packages', 'blind-protocol', 'vectors', 'store', 'vector-manifest-v1.draft.cenc'),
     storeVectorManifestBytes)
   emit(path.join('packages', 'blind-protocol', 'vectors', 'draft', 'hashes.draft.json'), hashesBytes)
+  emit(path.join('packages', 'blind-protocol', 'hiverelay-blind-release-closure-v1.json'), closureBytes)
 }
 
 if (check) {

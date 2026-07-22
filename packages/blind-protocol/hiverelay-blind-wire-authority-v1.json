@@ -6,12 +6,16 @@
   "specArtifact": "docs/protocol/HIVERELAY-BLIND-WIRE-V1.md",
   "abiArtifact": "packages/blind-protocol/hiverelay-blind-abi-v1.cenc",
   "vectorManifestArtifact": "packages/blind-protocol/vector-manifest-v1.cenc",
-  "specHash": "470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9",
-  "abiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",
-  "vectorSetHash": "09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78",
-  "wireSchemaCount": 71,
+  "specHash": "c9ddd235c3963461174e3de13c25a4c995b53ff320be822d8304f870766b6592",
+  "abiHash": "199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567",
+  "vectorSetHash": "fa54012cd0d7e4e620878c67e61f435ecb31ddec05a6283917987cc84279ee05",
+  "wireSchemaCount": 73,
   "operationCount": 22,
+  "advertisedOperationCount": 17,
+  "reservedOperationCount": 5,
+  "advertisedOperationBits": 131071,
+  "reservedOperationBits": 4063232,
   "errorCount": 20,
-  "domainCount": 39,
-  "vectorCount": 233
+  "domainCount": 40,
+  "vectorCount": 237
 }

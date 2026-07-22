@@ -21,6 +21,9 @@ export const HASH_DOMAIN = Object.freeze({
   EVIDENCE_VECTOR_SET: 'hiverelay.blind.evidence-vector-set-hash.v1',
   STORE_FORMAT: 'hiverelay.blind.store-format-hash.v1',
   STORE_VECTOR_SET: 'hiverelay.blind.store-vector-set-hash.v1',
+  IMPLEMENTATION_SPEC: 'hiverelay.blind.implementation-spec-hash.v1',
+  OWNER_DECISIONS: 'hiverelay.blind.owner-decisions-hash.v1',
+  RELEASE_CLOSURE: 'hiverelay.blind.release-closure-hash.v1',
   CLIENT_COMPOSITION_FORMAT: 'hiverelay.blind.client-composition-format-hash.v1',
   CLIENT_COMPOSITION_VECTOR_SET: 'hiverelay.blind.client-composition-vector-set-hash.v1',
   LOCAL_CHECKPOINT: 'hiverelay.blind.local-checkpoint-hash.v1',
@@ -134,6 +137,9 @@ export const hashEvidenceFormat = bytes => domainLengthHash(HASH_DOMAIN.EVIDENCE
 export const hashEvidenceVectorSet = bytes => domainLengthHash(HASH_DOMAIN.EVIDENCE_VECTOR_SET, bytes)
 export const hashStoreFormat = bytes => domainLengthHash(HASH_DOMAIN.STORE_FORMAT, bytes)
 export const hashStoreVectorSet = bytes => domainLengthHash(HASH_DOMAIN.STORE_VECTOR_SET, bytes)
+export const hashImplementationSpec = bytes => domainLengthHash(HASH_DOMAIN.IMPLEMENTATION_SPEC, bytes)
+export const hashOwnerDecisions = bytes => domainLengthHash(HASH_DOMAIN.OWNER_DECISIONS, bytes)
+export const hashReleaseClosure = bytes => domainLengthHash(HASH_DOMAIN.RELEASE_CLOSURE, bytes)
 export const hashClientCompositionFormat = bytes => domainLengthHash(HASH_DOMAIN.CLIENT_COMPOSITION_FORMAT, bytes)
 export const hashClientCompositionVectorSet = bytes => domainLengthHash(HASH_DOMAIN.CLIENT_COMPOSITION_VECTOR_SET, bytes)
 export const localCheckpointHash = bytes => domainLengthHash(HASH_DOMAIN.LOCAL_CHECKPOINT, bytes)

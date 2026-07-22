@@ -2844,30 +2844,25 @@ Normative ordering:
 
 ### 9.3.1 Physical partitioning and online rebalance
 
-Logical locators remain the 32-byte values in the ABI. Every daemon generates a
-random persistent 32-byte `K_partition` during store initialization. It is
-distinct from relay identity, descriptor, receipt, transport, and admission keys;
-it is never advertised, copied except in operator-encrypted recovery material, or
-shared with another relay. Every implementation maps records into exactly 65,536
-relay-local virtual buckets:
+Logical locators remain the 32-byte values in the ABI. Every implementation maps
+records into exactly 65,536 relay-local virtual buckets. Bucket assignment is a
+public deterministic storage function and is not a privacy or unlinkability
+boundary:
 
 ```text
-virtualBucket = bigEndianU16(first2Bytes(HMAC-SHA-256(
-  K_partition,
-  serviceTag || primaryLocator
+virtualBucket = bigEndianU16(first2Bytes(BLAKE2b-256(
+  ASCII("hiverelay.blind.virtual-bucket.v1") ||
+  U8(serviceTag) || U64BE(len(primaryLocator)) || primaryLocator
 )))
 ```
 
 `serviceTag` is the fixed ABI-family byte (`CELL`, `INBOX`, or `CORE`) and
 `primaryLocator` is respectively the storage slot, physical inbox topic, or opaque
-core key. Keying prevents identical portable G2-S locators from landing in
-correlatable bucket numbers at different relays. Core storage may retain its
+core key. Core storage may retain its
 upstream physical layout, but its accounting owner is assigned through this
 bucket. The map contains no app, author, namespace, or logical replica
-relationship. Losing `K_partition` makes deterministic recovery of the index
-layout impossible, so it participates in the daemon's atomic backup/recovery
-contract; rotating it requires a full fenced rebalance and is never an identity
-rotation side effect.
+relationship. Recovery deterministically rederives the bucket from the retained
+service tag and locator; no partition secret exists or is backed up.
 
 `BucketMapV1` assigns each virtual bucket to one local shard worker/volume and has
 a monotonically increasing `mapGeneration`. The canonical protocol does not
@@ -3311,7 +3306,7 @@ BlindCoreOpenReplicationRetrySnapshotV1 {
   idleMillis:            u32 // exact session-class tuple
   lifetimeMillis:        u32 // exact session-class tuple
   openedAtEpoch:         u32
-  recordVirtualBucket:   u16 // HMAC-SHA256(K_partition, CORE || logicalRetryKey)[0..1]
+  recordVirtualBucket:   u16 // virtualBucketDerivationV1(CORE, logicalRetryKey)
   resultBytes:           optional canonical signed open-result bytes[1..16384]
   terminalReason:        optional canonical printable ASCII bytes[1..64]
 }
@@ -3783,7 +3778,7 @@ rule set, then requires its version, format, and hash to equal the signed
 durability profile. The signed build profile's `storeFormatHash` must equal that
 same durability hash. Only the verifier-minted local authority may enter the
 storage engine. `runtime-binding.v1` persists this exact format tuple together
-with relay/store/continuity/profile/map/fence identity under its `K_partition`
+with relay/store/continuity/profile/map/fence identity under its `K_store_manifest`
 MAC; a stale artifact, split signed hash, forged verifier object, or preexisting
 root binding mismatch fails before mutation. This executable binding does not
 make the `.draft` artifact final: Core/global recovery, genesis, two-slot manifest
@@ -3912,7 +3907,7 @@ an equal-revision mismatch, non-adjacent pair, or predecessor mismatch fails
 closed. Conformance vectors must cover every write/rename/directory-fsync crash
 and bit flip before the draft marker can be removed.
 
-The manifest key, `K_partition`, cursor keys,
+The manifest key, cursor keys,
 bucket map, complete checkpoint, required WAL tail, blobs/cores, tombstones,
 spends/reservations, retry pins, lease/clock floor, and accounting form one
 encrypted operator backup set. Relay identity/release signing keys use their own
@@ -3922,7 +3917,7 @@ and is written to a failure domain outside the live volume. A coverage backup ma
 be registered after every uploaded ciphertext/chunk/manifest hash and covered
 WAL/floor verifies, without pretending it has been restored. It becomes a
 restore-supported/prune anchor only after a clean-room restore verifies every
-hash/index/blob and replays through that sequence. Losing `K_partition` or the store MAC key is unrecoverable for that
+hash/index/blob and replays through that sequence. Losing the store MAC key is unrecoverable for that
 store; the operator must start a new relay/store identity rather than fabricate
 continuity.
 
@@ -6456,7 +6451,7 @@ and final modes are exactly POSIX 0750 and 0700 respectively. Its signed argv ma
 only create those root directory entries and set their exact signed owner/group/
 mode without recursive traversal, symlink following, reading file contents,
 loading a product entrypoint/module, or
-starting a listener. Relay identity and partition keys therefore arrive through
+starting a listener. Relay identity and store MAC keys therefore arrive through
 separate daemon-only handles and never live under an initializer-visible mount.
 It completes with exit code zero within `maxRuntimeMillis <= 60000` before either
 long-running component becomes ready; failure, timeout, residual initializer
@@ -7221,6 +7216,28 @@ BlindTransportRouteV1 {
   previousSignature:    64 bytes
 }
 
+// Frozen for decoder compatibility only; FORWARD is reserved by the RC1
+// advertised operation profile.
+BlindForwardRouteHopV1 {
+  hopIndex:              u8 // 0..3
+  relayPublicKey:        32 nonzero bytes
+  descriptorSequence:   u64
+  descriptorHash:       32 nonzero bytes
+  previousScopeHash:     32 bytes
+  scopeHash:             32 nonzero bytes
+  relaySignature:        64 bytes
+}
+
+BlindForwardRouteScopeV1 {
+  version:               u8 = 1
+  rootRouteId:           16 nonzero bytes
+  rootCircuitNonce:      32 nonzero bytes
+  rootRequestCommitment: 32 nonzero bytes
+  maxRelayCount:         u8 // 2..4
+  expiresEpoch:          u32 // nonzero
+  hops:                  BlindForwardRouteHopV1[1..4]
+}
+
 BlindForwardOpenV1 {
   version:              u8 = 1
   routeId:              16 bytes
@@ -7236,6 +7253,7 @@ BlindForwardOpenV1 {
 BlindForwardHopOpenV1 { // authenticated length-delimited adjacent-hop preface
   version:                  u8 = 1
   route:                    BlindTransportRouteV1
+  routeScope:               BlindForwardRouteScopeV1
   previousDescriptorSequence:u64
   previousDescriptorHash:  32 bytes
   circuitNonce:             32 bytes
@@ -7914,7 +7932,7 @@ Same-host app-aware coexistence is permitted only during a bounded migration and
 only as the separately released compatibility product whose signed
 `HiveRelayLegacyCompatibilitySunsetV1` is still valid. The final blind product is
 the signed two-component distribution: `blind-edge` alone owns public listeners,
-while `blind-daemon` owns private canonical dispatch, identity/partition keys,
+while `blind-daemon` owns private canonical dispatch, identity/store MAC keys,
 store, WAL, and signing behind Unix IPC. Both have separate users, configs, logs,
 metrics, credentials, limits, and service units. Both components MUST NOT package
 or load the general `ServiceProvider` registry, Notify, OutboxLog, semantic
@@ -8149,7 +8167,7 @@ packages/blind-daemon/
   descriptor.js         spec/ABI/vector/build/identity-transition objects
   health.js             nonce-bound readiness challenge
   store/coordinator.js  one WAL/locks for spends, retries and service state
-  store/buckets.js      K_partition + 65,536 bucket map/rebalance/fences
+  store/buckets.js      deterministic 65,536-bucket map/rebalance/fences
   store/checkpoint.js   atomic index/accounting checkpoints and startup replay
   cells/{engine,proof,receipt}.js
   inbox/{engine,watch,receipt}.js
@@ -8224,7 +8242,7 @@ new packages/blind-daemon/package.json, private bin/IPC config, service unit and
 new packages/blind-daemon descriptor/DHT discovery and identity-transition store
 new release builder for the one two-component distribution, signed launch topology,
   support horizon, build/spec/ABI/vector manifest and deterministic evidence retrieval
-new packages/blind-daemon K_partition backup, bucket map and rebalance controller
+new packages/blind-daemon deterministic bucket map and rebalance controller
 new packages/blind-daemon health, metrics, redaction and clean-image verifier
 new packages/legacy-compat frozen complete runtime source, distinct artifact/manifest,
   runtime boundary, genesis/current-head sunset chain and deadline enforcement
@@ -8334,7 +8352,7 @@ and oversized vectors fail before large allocation.
   application-serving product;
   do not load it as a `ServiceProvider` or copy the old shard pin schema.
 - Add atomic journal/replay, quota interface, signed receipts, proofs, GC, and
-  aggregate accounting, `K_partition`, 65,536 virtual buckets, and fenced online
+  aggregate accounting, deterministic 65,536 virtual buckets, and fenced online
   rebalance.
 - Implement INBOX create/auth/renew/close/append/read/watch, retention, physical
   topic striping composition, compact charged-read retry pins, flood controls,
@@ -8983,7 +9001,7 @@ The HiveRelay blind substrate can be released independently of Peerit only when:
    after startup through `open-admission-v1` without relay code, config, domain,
    plugin, allowlist, credential, metric label, or restart.
 5. WAL/crash recovery, compact charged-read retry pins, clock idle/offline safety,
-   65,536 keyed virtual buckets, online rebalance, GC, accounting, and seven-day
+   65,536 deterministic virtual buckets, online rebalance, GC, accounting, and seven-day
    scale/soak gates pass on the exact artifact.
 6. Signed implementation-neutral descriptors, admission parameters, identity
    transitions, fresh health challenges, endpoint/routes, and build evidence pass

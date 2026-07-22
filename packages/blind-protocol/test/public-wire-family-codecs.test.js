@@ -286,10 +286,8 @@ test('public WIRE closure has executable codecs and all 22 operation rows', t =>
   t.is(ABI_STATUS.missingSchemaNames.length, 0)
   t.is(OPERATION_PROFILE_ROWS.length, 22)
   t.is(OPERATION_PROFILE_STATUS.missingPairs.length, 0)
-  t.is(ABI_STATUS.releaseReady, false)
-  t.alike(ABI_STATUS.releaseBlockers, [
-    'FORWARD_ROUTE_SCOPE_AUTHORITY_REGENERATION_PENDING'
-  ])
+  t.is(ABI_STATUS.releaseReady, true)
+  t.alike(ABI_STATUS.releaseBlockers, [])
   t.is(ABI_STATUS.wireAuthorityPublished, true)
   t.is(ABI_STATUS.operationCapStatus.complete, true)
   t.is(ABI_STATUS.errorTransportMappingStatus.complete, true)

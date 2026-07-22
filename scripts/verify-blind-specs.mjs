@@ -95,7 +95,7 @@ requireText(adoption, 'DRAFT_LOCAL -> IDENTITY_COMMITTED -> INNER_EVENT_SIGNED',
 requireText(adoption, 'MUST NOT authorize authors, approve relay membership', adoptionPath)
 requireText(wire, 'hiverelay-blind-abi-v1.cenc', wirePath)
 requireText(wire, 'vector-manifest-v1.cenc', wirePath)
-requireText(wire, 'The ABI artifact contains exactly the 71 category-1 WIRE schemas', wirePath)
+requireText(wire, 'The ABI artifact contains exactly the 73 category-1 WIRE schemas', wirePath)
 requireText(wire, 'This public WIRE authority does not claim that a daemon store', wirePath)
 requireText(privateIpc, 'hiverelay-blind-private-ipc-v1.cenc', privateIpcPath)
 requireText(privateIpc, 'vector-manifest-v1.cenc', privateIpcPath)
