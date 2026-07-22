@@ -900,10 +900,16 @@ docker run -d --name hiverelay \
 
 ### Pear / Bare
 
-```bash
-pear run pear://<key>
-pear run pear://<key> -- --region EU --port 9200 --no-updates
-```
+The historical Pear v2/Bare entrypoint is retained only for existing operators
+with an explicit legacy support plan. It is not a supported Pear v3 install or
+update path, and a remote deployment link must never be supplied to
+`PearRuntime.run()`.
+
+For production relay operations, continue to use the Node/systemd, Docker,
+Umbrel, or StartOS paths above. A standalone v3/Bare relay is a separate,
+non-production canary artifact requiring explicit storage continuity, external
+health supervision, and last-known-good rollback evidence before it can be
+offered to operators.
 
 The Pear/Bare relay speaks the same wire protocol as the Node fleet and is
 tested with the real Bare runtime via `npm run test:bare`.

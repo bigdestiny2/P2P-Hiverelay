@@ -1,9 +1,11 @@
 /**
- * p2p-hiverelay — Pear/Bare runtime entry point.
+ * p2p-hiverelay — legacy Pear v2/Bare runtime entry point.
  *
- * Launch with:
- *   pear run .                               (dev, from this directory)
- *   pear run -d pear://<key>                 (prod, after publish)
+ * This file is retained only to support an explicitly operated legacy v2
+ * deployment. It is not a Pear v3 entrypoint and must not be packaged as one.
+ * Pear v3 uses a separately reviewed native/Bare artifact with explicit
+ * storage, an external health supervisor, and a resolved local worker passed
+ * to PearRuntime.run().
  *
  * Differences from the Node CLI:
  *   - Uses Pear.config.storage for persistence (app-scoped by Pear)
@@ -17,9 +19,9 @@
  *   --no-updates             disable P2P OTA updates (default: enabled)
  *
  * Parsing is sloppy() so an unexpected Pear-injected arg can never stop the
- * relay from booting. Full pear-runtime OTA is gated on the storage-stack
- * migration (see docs/PEAR-ALIGNMENT.md); the --no-updates switch is wired
- * now so the opt-out is in place when OTA lands.
+ * legacy relay from booting. This entry deliberately does not attempt an
+ * in-place runtime upgrade: replacing an operating relay's storage or update
+ * lifecycle requires the dedicated canary and rollback plan.
  */
 
 /* global Pear */
@@ -74,9 +76,8 @@ Pear.teardown(async () => {
   await relay.stop()
 })
 
-// P2P over-the-air updates (opt-out via --no-updates). The pear-updates module
-// is optional and not yet a declared dependency — full OTA is gated on the
-// storage-stack migration (Tier 3). Guarded so its absence is a no-op.
+// Legacy P2P over-the-air updates (opt-out via --no-updates). The module is
+// optional and undeclared; this is intentionally not a v3 update mechanism.
 if (updatesEnabled) {
   try {
     const { default: updates } = await import('pear-updates')
