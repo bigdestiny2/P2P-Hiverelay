@@ -1,7 +1,7 @@
 {
   "schema": "hiverelay.blind.rc1-profile-binding.v1",
   "profile": "peerit-1f2",
-  "sourceCommit": "6580a100d8607ea9a8064f3bcc2856102301d756",
+  "sourceCommit": "1f2a971e6a6bf401c2d59f904d73824e3cfbeb9a",
   "profileSpecHash": "931a85e29eb3767d8d2a1920d7e127cf20d708cce6975d967522fd07f475f473",
   "profileAbiHash": "205d935d74bec6f80f8b6ee934c9f281f85a07e1efd25d9977f111c34fb0ded6",
   "profileVectorSetHash": "c5f679378d5b84de88cadffd89612044df59443663e292c308dde19fa4583155"
