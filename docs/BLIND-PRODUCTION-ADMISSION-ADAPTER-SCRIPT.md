@@ -63,12 +63,24 @@ completion value fails startup.
 The script may not use static or dynamic imports. It receives no `process`,
 `require`, CommonJS state, `Buffer`, console, timers, fetch, crypto, performance,
 shared-memory, WebAssembly, or string-code-generation authority. String and wasm
-code generation are disabled in the VM context. `FinalizationRegistry` and
-`WeakRef` are also unavailable, so adapter callbacks cannot escape the bounded
-call lifecycle through garbage-collection finalizers. Script evaluation, factory,
-resolution, lifecycle methods, and private bridge operations all execute through
-`Script.runInContext()` with a 250 ms timeout. The implementation uses stable
-`node:vm` APIs and requires no experimental VM-module feature.
+code generation are disabled in the VM context. `FinalizationRegistry`, `WeakRef`,
+and the global `Promise` constructor are also unavailable. Source containing
+`Promise`, `async`, `await`, or direct `Array.fromAsync` syntax is rejected
+fail-closed. A trusted context-hardening prelude additionally replaces
+`Array.fromAsync` with an immutable `undefined`, including for computed-property
+access. These restrictions prevent adapter code from scheduling promise jobs or
+garbage-collection finalizers that could escape the bounded call lifecycle.
+Script evaluation, factory, resolution, lifecycle methods, and private bridge
+operations all execute through `Script.runInContext()` with a 250 ms timeout.
+The implementation uses stable `node:vm` APIs and requires no experimental
+VM-module feature. The deferred-work surface assessment is bound to the sealed
+Node runtime; a Node upgrade requires re-audit for newly added promise-producing
+intrinsics before promotion.
+
+A value thrown inside the VM is discarded without host inspection. The loader
+reports only a fixed host-owned diagnostic and never exposes the thrown value as
+an `Error.cause`, so later logging or inspection cannot invoke VM-owned traps or
+custom inspection hooks outside the timeout.
 
 ## Data and capability membrane
 

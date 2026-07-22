@@ -39,6 +39,10 @@ const BRIDGE_CANDIDATE_SLOT = '__hiverelay_admission_bridge_candidate_v1__'
 const BRIDGE_TAKE_PREFLIGHT_SLOT = '__hiverelay_admission_bridge_take_preflight_v1__'
 const FORBIDDEN_SOURCE_IDENTIFIERS = Object.freeze([
   ['import', /\bimport\b/u],
+  ['Promise', /\bPromise\b/u],
+  ['async', /\basync\b/u],
+  ['await', /\bawait\b/u],
+  ['Array.fromAsync', /\bArray\s*\.\s*fromAsync\b/u],
   ['process', /\bprocess\b/u],
   ['require', /\brequire\b/u],
   ['module', /\bmodule\b/u],
@@ -64,6 +68,7 @@ const MASKED_CONTEXT_GLOBALS = Object.freeze([
   'clearInterval',
   'clearImmediate',
   'queueMicrotask',
+  'Promise',
   'Function',
   'eval',
   'WebAssembly',
@@ -72,6 +77,18 @@ const MASKED_CONTEXT_GLOBALS = Object.freeze([
   'FinalizationRegistry',
   'WeakRef'
 ])
+const ADMISSION_ADAPTER_CONTEXT_HARDENING_SOURCE = String.raw`
+(() => {
+  'use strict'
+  Object.defineProperty(Array, 'fromAsync', {
+    value: undefined,
+    writable: false,
+    enumerable: false,
+    configurable: false
+  })
+  return true
+})()
+`
 
 export const PRODUCTION_RUNTIME_PROFILE = Object.freeze({
   DESCRIBE_ONLY_V1: 'DESCRIBE_ONLY_V1',
@@ -666,8 +683,8 @@ function adapterVmContext () {
 function runBoundedScript (script, context, code, message) {
   try {
     return script.runInContext(context, { timeout: ADMISSION_ADAPTER_EXECUTION_TIMEOUT_MILLIS })
-  } catch (error) {
-    entrypointFailure(code, message, error)
+  } catch {
+    entrypointFailure(code, message)
   }
 }
 
@@ -681,6 +698,18 @@ function compileScript (source, filename, code, message) {
 
 function createAdapterBridge (source, scriptFile) {
   const context = adapterVmContext()
+  const hardened = runBoundedScript(
+    compileScript(ADMISSION_ADAPTER_CONTEXT_HARDENING_SOURCE,
+      'hiverelay-admission-adapter-context-hardening-v1.js',
+      'BLIND_ADMISSION_ADAPTER_SCRIPT_INVALID', 'admission adapter context hardening did not compile'),
+    context,
+    'BLIND_ADMISSION_ADAPTER_SCRIPT_INVALID',
+    'admission adapter context hardening did not initialize'
+  )
+  if (hardened !== true) {
+    entrypointFailure('BLIND_ADMISSION_ADAPTER_SCRIPT_INVALID',
+      'admission adapter context hardening returned no exact success marker')
+  }
   const bridge = runBoundedScript(
     compileScript(ADMISSION_ADAPTER_BRIDGE_SOURCE, 'hiverelay-admission-adapter-bridge-v1.js',
       'BLIND_ADMISSION_ADAPTER_SCRIPT_INVALID', 'admission adapter bridge did not compile'),

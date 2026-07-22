@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { inspect } from 'node:util'
 import test from 'brittle'
 import {
   PRODUCTION_ADMISSION_ADAPTER_SCRIPT_CONTRACT,
@@ -52,6 +55,48 @@ async function writeProtected (directory, name, source) {
   return { file, bytes, digest: createHash('sha256').update(bytes).digest('hex') }
 }
 
+async function isolatedAdapterLoad (record) {
+  const moduleUrl = new URL('../production-entrypoint.js', import.meta.url).href
+  const program = `
+const entrypoint = await import(process.env.HIVERELAY_TEST_ENTRYPOINT_URL)
+let unhandledRejections = 0
+process.on('unhandledRejection', () => { unhandledRejections++ })
+const config = entrypoint.loadProductionEntrypointConfig({
+  HIVERELAY_BLIND_RUNTIME_PROFILE: entrypoint.PRODUCTION_RUNTIME_PROFILE.CELL_V1,
+  HIVERELAY_BLIND_ADMISSION_ADAPTER_SCRIPT_FILE: process.env.HIVERELAY_TEST_ADAPTER_FILE,
+  HIVERELAY_BLIND_ADMISSION_ADAPTER_SCRIPT_SHA256: process.env.HIVERELAY_TEST_ADAPTER_SHA256
+})
+let code = null
+try {
+  await entrypoint.loadProductionAdmissionAdapter(config, {
+    launchTopologyHash: Buffer.alloc(32, 0x42),
+    endpointIds: [2, 4]
+  })
+} catch (error) {
+  code = error && error.code
+}
+await new Promise(resolve => setTimeout(resolve, 50))
+process.stdout.write(JSON.stringify({ code, unhandledRejections }))
+`
+  const child = spawn(process.execPath, ['--input-type=module', '--eval', program], {
+    env: {
+      ...process.env,
+      HIVERELAY_TEST_ENTRYPOINT_URL: moduleUrl,
+      HIVERELAY_TEST_ADAPTER_FILE: record.file,
+      HIVERELAY_TEST_ADAPTER_SHA256: record.digest
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  child.stdout.setEncoding('utf8')
+  child.stderr.setEncoding('utf8')
+  let stdout = ''
+  let stderr = ''
+  child.stdout.on('data', chunk => { stdout += chunk })
+  child.stderr.on('data', chunk => { stderr += chunk })
+  const [exitCode, signal] = await once(child, 'close')
+  return { exitCode, signal, stdout, stderr }
+}
+
 function cellConfig (record, overrides = {}) {
   return loadProductionEntrypointConfig(entrypointEnvironment(PRODUCTION_RUNTIME_PROFILE.CELL_V1, {
     HIVERELAY_BLIND_ADMISSION_ADAPTER_SCRIPT_FILE: record.file,
@@ -76,7 +121,8 @@ function validScript () {
         !Object.isFrozen(context.endpointIds) || !Object.isFrozen(context.launchTopologyHash) ||
         context.constructor !== undefined || context.launchTopologyHash.$hiverelayType !== 'bytes' ||
         context.launchTopologyHash.hex !== '${'42'.repeat(32)}' ||
-        FinalizationRegistry !== undefined || WeakRef !== undefined) {
+        FinalizationRegistry !== undefined || WeakRef !== undefined ||
+        globalThis['Prom' + 'ise'] !== undefined || Array['from' + 'Async'] !== undefined) {
       throw new Error('runtime context is not one frozen sandbox-realm record')
     }
     const live = new WeakSet()
@@ -248,7 +294,11 @@ test('script loader rejects imports, host authorities and constructor escapes', 
     `({ schema: '${SCHEMA}', createAdmissionAdapterResolver () { return require } })`,
     `({ schema: '${SCHEMA}', createAdmissionAdapterResolver () { return module } })`,
     `({ schema: '${SCHEMA}', createAdmissionAdapterResolver () { return global } })`,
-    `({ schema: '${SCHEMA}', createAdmissionAdapterResolver () { return Buffer } })`
+    `({ schema: '${SCHEMA}', createAdmissionAdapterResolver () { return Buffer } })`,
+    `({ schema: '${SCHEMA}', createAdmissionAdapterResolver () { return Promise } })`,
+    `({ schema: '${SCHEMA}', async createAdmissionAdapterResolver () { return () => null } })`,
+    `({ schema: '${SCHEMA}', createAdmissionAdapterResolver () { await 0; return () => null } })`,
+    `({ schema: '${SCHEMA}', createAdmissionAdapterResolver () { return Array.fromAsync([]) } })`
   ]
   for (let index = 0; index < forbidden.length; index++) {
     const record = await writeProtected(directory, `forbidden-${index}.js`, forbidden[index])
@@ -283,6 +333,81 @@ test('script loader rejects imports, host authorities and constructor escapes', 
   }
 })
 
+test('script loader prevents promise jobs from escaping bounded VM calls', async t => {
+  const directory = await scratch(t)
+  const routes = [
+    ['direct-promise', `(() => {
+      Promise.reject(new Error('late direct rejection'))
+      return ({ schema: '${SCHEMA}', createAdmissionAdapterResolver () { return () => null } })
+    })()`],
+    ['async-method', `({
+      schema: '${SCHEMA}',
+      async createAdmissionAdapterResolver () {
+        await 0
+        throw new Error('late method rejection')
+      }
+    })`],
+    ['async-generator', `(() => {
+      const iterator = (async function * () { throw new Error('late generator rejection') })()
+      iterator.next()
+      return ({ schema: '${SCHEMA}', createAdmissionAdapterResolver () { return () => null } })
+    })()`],
+    ['computed-array-from-async', `(() => {
+      Array['from' + 'Async']([1], () => { throw new Error('late array rejection') })
+      return ({ schema: '${SCHEMA}', createAdmissionAdapterResolver () { return () => null } })
+    })()`]
+  ]
+  for (const [name, source] of routes) {
+    const record = await writeProtected(directory, `${name}.js`, source)
+    const child = await isolatedAdapterLoad(record)
+    t.is(child.exitCode, 0, `${name} child exited cleanly`)
+    t.is(child.signal, null, `${name} child received no signal`)
+    t.is(child.stderr, '', `${name} child wrote no diagnostic`)
+    t.alike(JSON.parse(child.stdout), {
+      code: 'BLIND_ADMISSION_ADAPTER_SCRIPT_INVALID',
+      unhandledRejections: 0
+    }, `${name} failed closed without a later rejection`)
+  }
+})
+
+test('script loader discards VM-thrown functions and proxies from host diagnostics', async t => {
+  const directory = await scratch(t)
+  const thrownValues = [
+    ['proxy', `(() => {
+      const target = function vmThrownTarget () {}
+      target[Symbol.for('nodejs.util.inspect.custom')] = () => {
+        throw new Error('VM_CUSTOM_INSPECT_RAN')
+      }
+      throw new Proxy(target, {
+        get () { throw new Error('VM_PROXY_GET_RAN') },
+        ownKeys () { throw new Error('VM_PROXY_OWN_KEYS_RAN') },
+        getOwnPropertyDescriptor () { throw new Error('VM_PROXY_DESCRIPTOR_RAN') }
+      })
+    })()`],
+    ['function', `(() => {
+      const thrown = function vmThrownFunction () {}
+      thrown[Symbol.for('nodejs.util.inspect.custom')] = () => {
+        throw new Error('VM_FUNCTION_INSPECT_RAN')
+      }
+      throw thrown
+    })()`]
+  ]
+  for (const [name, source] of thrownValues) {
+    const record = await writeProtected(directory, `thrown-${name}.js`, source)
+    const error = await captureRejection(loadProductionAdmissionAdapter(cellConfig(record), bootstrap()))
+    t.is(error?.code, 'BLIND_ADMISSION_ADAPTER_SCRIPT_INVALID')
+    t.is(error?.message,
+      'admission adapter script failed while producing its contract completion value')
+    t.is(Object.prototype.hasOwnProperty.call(error, 'cause'), false)
+    t.is(error?.cause, undefined)
+    const rendered = inspect(error)
+    t.is(rendered.includes('VM_CUSTOM_INSPECT_RAN'), false)
+    t.is(rendered.includes('VM_PROXY_'), false)
+    t.is(rendered.includes('VM_FUNCTION_INSPECT_RAN'), false)
+    t.is(typeof error?.stack, 'string')
+  }
+})
+
 test('script loader rejects malformed, unsafe, linked and asynchronous contracts', async t => {
   const directory = await scratch(t)
   const malformed = [
@@ -303,11 +428,11 @@ test('script loader rejects malformed, unsafe, linked and asynchronous contracts
       return contract
     })()`, 'BLIND_ADMISSION_ADAPTER_EXPORT_INVALID'],
     [`({ schema: '${SCHEMA}', async createAdmissionAdapterResolver () { return () => null } })`,
-      'BLIND_ADMISSION_ADAPTER_INITIALIZATION_FAILED'],
+      'BLIND_ADMISSION_ADAPTER_SCRIPT_INVALID'],
     [`({ schema: '${SCHEMA}', createAdmissionAdapterResolver () { while (true) {} } })`,
       'BLIND_ADMISSION_ADAPTER_INITIALIZATION_FAILED'],
     [`({ schema: '${SCHEMA}', createAdmissionAdapterResolver () { return async () => null } })`,
-      'BLIND_ADMISSION_ADAPTER_RESOLUTION_FAILED'],
+      'BLIND_ADMISSION_ADAPTER_SCRIPT_INVALID'],
     [`({ schema: '${SCHEMA}', createAdmissionAdapterResolver () {
       return () => {
         const adapter = Object.freeze({
@@ -431,20 +556,20 @@ test('host serialization rejects accessors without invoking them and methods rej
   liveSignalInput.signal = new AbortController().signal
   t.is(typeof loaded.resolveAdmissionAdapter(liveSignalInput).prepare, 'function')
 
-  const asyncMethod = await writeProtected(directory, 'async-method.js', `
+  const thenableMethod = await writeProtected(directory, 'thenable-method.js', `
 ({
   schema: '${SCHEMA}',
   createAdmissionAdapterResolver () {
     return () => Object.freeze({
-      async prepare () { return null },
+      prepare () { return Object.freeze({ then () {} }) },
       preparePreflight () { return Object.freeze({}) },
       confirmAfterEof () { return null }
     })
   }
 })
 `)
-  const asyncLoaded = await loadProductionAdmissionAdapter(cellConfig(asyncMethod), bootstrap())
-  const adapter = asyncLoaded.resolveAdmissionAdapter(resolveInput())
+  const thenableLoaded = await loadProductionAdmissionAdapter(cellConfig(thenableMethod), bootstrap())
+  const adapter = thenableLoaded.resolveAdmissionAdapter(resolveInput())
   const methodError = captureFailure(() => adapter.prepare(admissionInput()))
   t.is(methodError?.code, 'BLIND_ADMISSION_ADAPTER_EXECUTION_FAILED')
 })
