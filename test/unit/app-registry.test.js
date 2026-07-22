@@ -1,5 +1,6 @@
 import test from 'brittle'
 import { AppRegistry } from 'p2p-hiverelay/core/app-registry.js'
+import { AppLifecycle } from 'p2p-hiverelay/core/relay-node/app-lifecycle.js'
 
 test('AppRegistry: snapshot restore preserves map identity and indexes', (t) => {
   const registry = new AppRegistry(null)
@@ -106,6 +107,31 @@ test('AppRegistry: catalog carries relay-unverified v3 release availability fact
   const release = registry.catalog()[0].release
   t.is(release.distributionGeneration, 'pear-v3')
   t.is(release.trust, 'unverified-by-relay', 'relay does not turn availability into install trust')
+})
+
+test('AppLifecycle: indexes a v3-only release when legacy manifest.json is absent', async (t) => {
+  const registry = new AppRegistry(null)
+  const key = '8'.repeat(64)
+  registry.set(key, { type: 'app' }, { persist: false })
+  const lifecycle = {
+    node: { appRegistry: registry },
+    _readV3ReleaseSummary: AppLifecycle.prototype._readV3ReleaseSummary
+  }
+  const release = {
+    kind: 'AppRelease', apiVersion: 'pear.deploy/v1alpha1', metadata: { id: 'apr_' + 'd'.repeat(64) },
+    spec: {
+      identity: { appId: 'native-demo', productName: 'Native Demo', publisherKey: 'e'.repeat(64), channel: 'stable' },
+      release: { version: '1.2.3', sequence: 2 },
+      kind: { appKind: 'desktop-app', distributionGeneration: 'pear-v3' },
+      distribution: { artifacts: [{ host: 'darwin-arm64', artifact: { basename: 'Native Demo.app', byteSize: 1, treeDigest: 'blake2b256:' + 'f'.repeat(64) } }] }
+    }
+  }
+  const drive = { get: async path => path === '/app-release.json' ? Buffer.from(JSON.stringify(release)) : null }
+  await AppLifecycle.prototype._indexV3Release.call(lifecycle, key, drive)
+  const entry = registry.catalog()[0]
+  t.is(entry.id, 'native-demo')
+  t.is(entry.release.distributionGeneration, 'pear-v3')
+  t.is(entry.release.trust, 'unverified-by-relay')
 })
 
 test('AppRegistry: redacted catalog hides blind/private metadata', (t) => {
