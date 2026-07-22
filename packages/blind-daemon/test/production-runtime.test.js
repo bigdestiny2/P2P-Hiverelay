@@ -220,14 +220,14 @@ async function runtimeFixture (options = {}) {
   const successorDescriptorFile = path.join(directory, 'descriptor-successor.bin')
   const parametersFile = path.join(directory, 'admission.bin')
   const secretKeyFile = path.join(directory, 'relay-secret.bin')
-  const partitionKeyFile = path.join(directory, 'partition-key.bin')
+  const storeManifestKeyFile = path.join(directory, 'store-manifest-key.bin')
   const ownerFenceFile = path.join(directory, 'owner-fence-hash.bin')
   await Promise.all([
     ...descriptorChain.map((bytes, index) => privateFile(
       index === 0 ? descriptorFile : successorDescriptorFile, bytes)),
     privateFile(parametersFile, canonicalParameters),
     privateFile(secretKeyFile, relaySecretKey),
-    privateFile(partitionKeyFile, b4a.alloc(32, 0x71)),
+    privateFile(storeManifestKeyFile, b4a.alloc(32, 0x71)),
     privateFile(ownerFenceFile, b4a.alloc(32, 0x72))
   ])
   relaySecretKey.fill(0)
@@ -253,7 +253,7 @@ async function runtimeFixture (options = {}) {
     HIVERELAY_BLIND_RELAY_SECRET_KEY_FILE: secretKeyFile,
     HIVERELAY_BLIND_STORE_ROOT: storeRoot,
     HIVERELAY_BLIND_PRIVATE_IPC_REPLAY_ROOT: privateIpcReplayRoot,
-    HIVERELAY_BLIND_PARTITION_KEY_FILE: partitionKeyFile,
+    HIVERELAY_BLIND_STORE_MANIFEST_KEY_FILE: storeManifestKeyFile,
     HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE: ownerFenceFile,
     HIVERELAY_BLIND_MAP_GENERATION: '1',
     HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_SEQUENCE: String(activeDescriptor.descriptorSequence),
@@ -518,8 +518,8 @@ test('legacy-only admission adapter cannot advertise or dispatch production V2 C
   t.is(runtime.status().cell.productionReady, false)
   t.is(runtime.status().v2WritePathReady, false)
   t.alike(runtime.status().admissionCapture, { complete: false, required: 1, captured: 0 })
-  t.ok(runtime.storage.transactionStore.partitionKey.some(byte => byte !== 0),
-    'assembler wipe did not alias the store-owned partition key')
+  t.is('partitionKey' in runtime.storage.transactionStore, false,
+    'the assembled store retains no partition secret')
   t.ok(runtime.storage.transactionStore.ownerFenceTokenHash.some(byte => byte !== 0),
     'assembler wipe did not alias the store-owned writer fence hash')
   t.ok(runtime.storage.transactionStore.durabilityContinuityHash.some(byte => byte !== 0),
@@ -555,8 +555,8 @@ test('legacy-only admission adapter cannot advertise or dispatch production V2 C
   t.is(errorFrame.frameKind, FRAME_KIND.ERROR)
   t.is(error.code, ERROR_CODE.NOT_FOUND)
   await runtime.close()
-  t.alike(runtime.storage.transactionStore.partitionKey, b4a.alloc(32),
-    'store-owned partition key is destroyed on close')
+  t.is('partitionKey' in runtime.storage.transactionStore, false,
+    'closing the store does not reveal or retain a partition secret')
   t.alike(runtime.storage.transactionStore.ownerFenceTokenHash, b4a.alloc(32),
     'store-owned writer fence hash is destroyed on close')
   t.alike(runtime.storage.transactionStore.durabilityContinuityHash, b4a.alloc(32),

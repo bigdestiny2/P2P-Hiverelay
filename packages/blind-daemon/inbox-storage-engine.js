@@ -611,7 +611,6 @@ export class BlindInboxStorageEngine {
     })
     this.transactionStore = new BlindTransactionStore({
       root: options.root,
-      partitionKey: options.partitionKey,
       mapGeneration: options.mapGeneration,
       ownerFenceTokenHash: options.ownerFenceTokenHash,
       durabilityContinuityHash: options.durabilityContinuityHash,

@@ -685,7 +685,6 @@ export class BlindCellStorageEngine {
     })
     this.transactionStore = new BlindTransactionStore({
       root: options.root,
-      partitionKey: options.partitionKey,
       mapGeneration: options.mapGeneration,
       ownerFenceTokenHash: options.ownerFenceTokenHash,
       durabilityContinuityHash: this.durabilityContinuityHash,

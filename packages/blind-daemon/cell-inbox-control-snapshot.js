@@ -2,13 +2,11 @@ import b4a from 'b4a'
 import { FAMILY } from '@hiverelay/blind-protocol'
 import {
   verifyBlindCellControlSnapshotSemanticResult,
-  verifyBlindCellControlSnapshotSemanticVerifier,
-  verifyBlindCellControlSnapshotSemanticVerifierPartitionKey
+  verifyBlindCellControlSnapshotSemanticVerifier
 } from './cell-control-snapshot.js'
 import {
   verifyBlindInboxControlSnapshotSemanticResult,
-  verifyBlindInboxControlSnapshotSemanticVerifier,
-  verifyBlindInboxControlSnapshotSemanticVerifierPartitionKey
+  verifyBlindInboxControlSnapshotSemanticVerifier
 } from './inbox-control-snapshot.js'
 
 const MAX_U64 = (1n << 64n) - 1n
@@ -173,15 +171,6 @@ export function createBlindCellInboxControlSnapshotSemanticAuthority (options = 
   }
   const cellVerifier = verifyBlindCellControlSnapshotSemanticVerifier(options.cellVerifier)
   const inboxVerifier = verifyBlindInboxControlSnapshotSemanticVerifier(options.inboxVerifier)
-  const partitionKey = b4a.from(bytes(options.partitionKey, 32, 'partitionKey', true))
-  let verifiedPartitionKey
-  try {
-    verifyBlindCellControlSnapshotSemanticVerifierPartitionKey(cellVerifier, partitionKey)
-    verifyBlindInboxControlSnapshotSemanticVerifierPartitionKey(inboxVerifier, partitionKey)
-    verifiedPartitionKey = b4a.from(partitionKey)
-  } finally {
-    partitionKey.fill(0)
-  }
   const maximumEntries = options.maximumEntries == null
     ? 0x1000000
     : integer(options.maximumEntries, 2, 0x1000000, 'maximumEntries')
@@ -197,7 +186,6 @@ export function createBlindCellInboxControlSnapshotSemanticAuthority (options = 
   AUTHORITIES.set(authority, Object.freeze({
     cellVerifier,
     inboxVerifier,
-    partitionKey: verifiedPartitionKey,
     maximumEntries,
     maximumBufferedBytes
   }))
@@ -288,15 +276,6 @@ export function createBlindCellInboxControlSnapshotSemanticVerifier (authority) 
 
 export function verifyBlindCellInboxControlSnapshotSemanticVerifier (verifier) {
   if (!VERIFIERS.has(verifier)) throw new TypeError('a branded Cell+Inbox control snapshot semantic verifier is required')
-  return verifier
-}
-
-export function verifyBlindCellInboxControlSnapshotSemanticVerifierPartitionKey (verifier, partitionKey) {
-  const state = VERIFIERS.get(verifier)
-  if (!state) throw new TypeError('a branded Cell+Inbox control snapshot semantic verifier is required')
-  if (!b4a.equals(state.partitionKey, bytes(partitionKey, 32, 'partitionKey', true))) {
-    fail('Cell+Inbox control snapshot semantic verifier partition key does not match')
-  }
   return verifier
 }
 

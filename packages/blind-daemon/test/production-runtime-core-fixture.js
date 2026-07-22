@@ -109,14 +109,14 @@ export async function runtimeCoreFixture (options = {}) {
   const descriptorFile = path.join(directory, 'descriptor.bin')
   const parametersFile = path.join(directory, 'admission.bin')
   const secretKeyFile = path.join(directory, 'relay-secret.bin')
-  const partitionKeyFile = path.join(directory, 'partition-key.bin')
+  const storeManifestKeyFile = path.join(directory, 'store-manifest-key.bin')
   const ownerFenceFile = path.join(directory, 'owner-fence-hash.bin')
   const inboxCursorKeyFile = path.join(directory, 'inbox-cursor-key.bin')
   await Promise.all([
     privateFile(descriptorFile, canonicalDescriptor),
     privateFile(parametersFile, canonicalParameters),
     privateFile(secretKeyFile, relaySecretKey),
-    privateFile(partitionKeyFile, b4a.alloc(32, 0x71)),
+    privateFile(storeManifestKeyFile, b4a.alloc(32, 0x71)),
     privateFile(ownerFenceFile, b4a.alloc(32, 0x72)),
     privateFile(inboxCursorKeyFile, b4a.alloc(32, 0x73))
   ])
@@ -144,7 +144,7 @@ export async function runtimeCoreFixture (options = {}) {
     HIVERELAY_BLIND_INBOX_STORE_ROOT: inboxStoreRoot,
     HIVERELAY_BLIND_INBOX_CURSOR_KEY_FILE: inboxCursorKeyFile,
     HIVERELAY_BLIND_CORE_STORE_ROOT: coreStoreRoot,
-    HIVERELAY_BLIND_PARTITION_KEY_FILE: partitionKeyFile,
+    HIVERELAY_BLIND_STORE_MANIFEST_KEY_FILE: storeManifestKeyFile,
     HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE: ownerFenceFile,
     HIVERELAY_BLIND_MAP_GENERATION: '1',
     HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_SEQUENCE: String(descriptor.descriptorSequence),

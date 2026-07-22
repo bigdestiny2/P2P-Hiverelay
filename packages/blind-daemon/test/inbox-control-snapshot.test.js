@@ -1,6 +1,5 @@
 import b4a from 'b4a'
 import test from 'brittle'
-import { createHmac } from 'node:crypto'
 import sodium from 'sodium-universal'
 import {
   FAMILY,
@@ -30,8 +29,8 @@ import {
   verifyBlindInboxControlSnapshotSemanticVerifier
 } from '../inbox-control-snapshot.js'
 import { verifyBlindLocalCheckpointSnapshotSemanticAuthority } from '../local-checkpoint-store.js'
+import { deriveBlindVirtualBucket } from '../virtual-bucket.js'
 
-const PARTITION_KEY = b4a.alloc(32, 0x25)
 const FINGERPRINT_DOMAIN = b4a.from('hiverelay.blind.inbox-store-request-fingerprint.v1', 'ascii')
 const RESULT_IDENTITY_DOMAIN = b4a.from('hiverelay.blind.inbox-store-result-identity.v1', 'ascii')
 const RETRY_SOURCE_DOMAIN = b4a.from('hiverelay.blind.inbox-retry-source.v1', 'ascii')
@@ -111,15 +110,11 @@ function retrySourceCommitment (physicalTopic, sourceRevision, reconstruction, p
 }
 
 function virtualBucket (physicalTopic) {
-  const digest = createHmac('sha256', PARTITION_KEY)
-    .update(b4a.from([FAMILY.INBOX]))
-    .update(physicalTopic)
-    .digest()
-  return digest[0] * 0x100 + digest[1]
+  return deriveBlindVirtualBucket(FAMILY.INBOX, physicalTopic)
 }
 
 function authority (overrides = {}) {
-  return createBlindInboxControlSnapshotSemanticAuthority({ partitionKey: PARTITION_KEY, ...overrides })
+  return createBlindInboxControlSnapshotSemanticAuthority(overrides)
 }
 
 function spend (seed, physicalTopic, operation, overrides = {}) {
@@ -528,7 +523,7 @@ test('Inbox recovery snapshots are deterministic, bounded, exact, and preserve i
 })
 
 test('Inbox semantic result state, tuple, authority, and verifier branding are private and immutable', async t => {
-  await t.exception.all(() => createBlindInboxControlSnapshotSemanticAuthority(), /partitionKey must be bytes/)
+  t.ok(createBlindInboxControlSnapshotSemanticAuthority())
   await t.exception.all(() => authority({ maximumCandidateEntries: 0 }), /maximumCandidateEntries is outside/)
   const semanticAuthority = authority()
   const state = fixture()

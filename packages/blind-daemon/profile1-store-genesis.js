@@ -365,7 +365,6 @@ export class BlindProfile1StoreGenesisCoordinator {
     this.controlDirectory = path.join(this.root, 'control')
     this.intentPath = path.join(this.controlDirectory, INTENT_FILE)
     this.manifestKey = b4a.from(bytes(options.manifestKey, 32, 'manifestKey', true))
-    this.partitionKey = b4a.from(bytes(options.partitionKey, 32, 'partitionKey', true))
     this.manifestTemplate = canonicalManifestTemplate(options.manifestTemplate)
     this.bindings = expectedBindings(this.manifestTemplate)
     this.genesisRecord = normalizedGenesisRecord(options.genesisRecord)
@@ -402,7 +401,6 @@ export class BlindProfile1StoreGenesisCoordinator {
   _transactionOptions (extra = {}) {
     return {
       root: this.root,
-      partitionKey: this.partitionKey,
       mapGeneration: this.manifestTemplate.mapGeneration,
       ownerFenceTokenHash: this.manifestTemplate.writerFenceTokenHash,
       durabilityContinuityHash: this.manifestTemplate.durabilityContinuityHash,

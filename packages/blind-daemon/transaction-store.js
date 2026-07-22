@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import { constants as FS_CONSTANTS } from 'node:fs'
 import path from 'node:path'
-import { createHmac, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import { FAMILY, blake2b256 } from '@hiverelay/blind-protocol'
@@ -14,6 +14,7 @@ import {
   transferBlindStoreSessionTransactionLease,
   verifyBlindStoreSessionTransactionLease
 } from './store-session.js'
+import { deriveBlindVirtualBucket } from './virtual-bucket.js'
 
 const WAL_MAGIC = b4a.from('HRWL', 'ascii')
 const WAL_VERSION = 2
@@ -656,10 +657,6 @@ class KeyLockTable {
 export class BlindTransactionStore {
   constructor (options = {}) {
     this.root = canonicalRoot(options.root)
-    // The runtime loader deliberately wipes its temporary secret buffers after
-    // construction. The store must therefore own independent copies for its
-    // entire writer lifetime rather than retaining caller-owned aliases.
-    this.partitionKey = b4a.from(bytes(options.partitionKey, 32, 'partitionKey', { nonzero: true }))
     this.mapGeneration = asU64(options.mapGeneration == null ? 1n : options.mapGeneration, 'mapGeneration')
     if (this.mapGeneration === 0n) throw new TypeError('mapGeneration must be nonzero')
     this.ownerFenceTokenHash = b4a.from(bytes(
@@ -1503,13 +1500,7 @@ export class BlindTransactionStore {
   }
 
   virtualBucket (serviceTag, primaryLocator) {
-    boundedInteger(serviceTag, 1, 255, 'serviceTag')
-    primaryLocator = bytes(primaryLocator, 32, 'primaryLocator')
-    const digest = createHmac('sha256', this.partitionKey)
-      .update(b4a.from([serviceTag]))
-      .update(primaryLocator)
-      .digest()
-    return digest[0] * 0x100 + digest[1]
+    return deriveBlindVirtualBucket(serviceTag, bytes(primaryLocator, 32, 'primaryLocator'))
   }
 
   async stageOpaque (options = {}) {
@@ -1874,7 +1865,6 @@ export class BlindTransactionStore {
           }
         })
       } finally {
-        this.partitionKey.fill(0)
         this.ownerFenceTokenHash.fill(0)
         this.durabilityContinuityHash.fill(0)
         for (const value of this.staged.values()) {

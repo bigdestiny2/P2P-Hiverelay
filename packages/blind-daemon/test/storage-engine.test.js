@@ -2,7 +2,6 @@ import test from 'brittle'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import {
-  createHmac,
   generateKeyPairSync,
   sign
 } from 'node:crypto'
@@ -34,6 +33,7 @@ import {
   BlindTransactionStore,
   BlindWalIntegrityError
 } from '../transaction-store.js'
+import { deriveBlindVirtualBucket } from '../virtual-bucket.js'
 import {
   createBlindBoundaryScratch,
   removeBlindBoundaryScratch
@@ -601,22 +601,17 @@ async function findOnlyBlob (root) {
   return files[0]
 }
 
-test('transaction store uses keyed app-agnostic buckets and truncates only an incomplete WAL tail', async t => {
+test('transaction store uses public deterministic buckets and truncates only an incomplete WAL tail', async t => {
   const root = await temporaryRoot(t, 'blind-transaction-store')
   const frames = []
   const store = new BlindTransactionStore({
     root,
-    partitionKey: PARTITION_KEY,
     ownerFenceTokenHash: FENCE_HASH,
     durabilityContinuityHash: DURABILITY_CONTINUITY_HASH
   })
   await store.open(frame => frames.push(frame))
   const locator = b4a.alloc(32, 0x31)
-  const digest = createHmac('sha256', PARTITION_KEY)
-    .update(b4a.from([BLIND_STORE_SERVICE_TAG.CELL]))
-    .update(locator)
-    .digest()
-  const expectedBucket = digest[0] * 256 + digest[1]
+  const expectedBucket = deriveBlindVirtualBucket(BLIND_STORE_SERVICE_TAG.CELL, locator)
   t.is(store.virtualBucket(BLIND_STORE_SERVICE_TAG.CELL, locator), expectedBucket)
   const appended = await store.append({
     type: 201,
@@ -706,28 +701,23 @@ test('queued prewrite fence aborts under the WAL mutex before the first new byte
   await store.close()
 })
 
-test('transaction store owns runtime secrets and destroys them without retaining caller aliases', async t => {
+test('transaction store retains no partition secret and destroys writer authorities without caller aliases', async t => {
   const root = await temporaryRoot(t, 'blind-transaction-secret-ownership')
-  const partitionKey = b4a.alloc(32, 0xa1)
   const ownerFenceTokenHash = b4a.alloc(32, 0xa2)
   const durabilityContinuityHash = b4a.alloc(32, 0xa5)
-  const expectedPartitionKey = b4a.from(partitionKey)
   const expectedOwnerFenceTokenHash = b4a.from(ownerFenceTokenHash)
   const expectedDurabilityContinuityHash = b4a.from(durabilityContinuityHash)
   const store = new BlindTransactionStore({
     root,
-    partitionKey,
     ownerFenceTokenHash,
     durabilityContinuityHash
   })
 
-  t.is(store.partitionKey === partitionKey, false)
+  t.is('partitionKey' in store, false)
   t.is(store.ownerFenceTokenHash === ownerFenceTokenHash, false)
   t.is(store.durabilityContinuityHash === durabilityContinuityHash, false)
-  partitionKey.fill(0)
   ownerFenceTokenHash.fill(0)
   durabilityContinuityHash.fill(0)
-  t.alike(store.partitionKey, expectedPartitionKey)
   t.alike(store.ownerFenceTokenHash, expectedOwnerFenceTokenHash)
   t.alike(store.durabilityContinuityHash, expectedDurabilityContinuityHash)
 
@@ -740,7 +730,6 @@ test('transaction store owns runtime secrets and destroys them without retaining
   })
   await store.close()
 
-  t.alike(store.partitionKey, b4a.alloc(32))
   t.alike(store.ownerFenceTokenHash, b4a.alloc(32))
   t.alike(store.durabilityContinuityHash, b4a.alloc(32))
   await t.exception(store.open(() => {}), /secrets were destroyed/)
@@ -823,14 +812,12 @@ test('cell storage owns every identity authority and destroys its copies on term
   const time = clock()
   const relayPublicKey = b4a.alloc(32, 0xb1)
   const storeId = b4a.alloc(32, 0xb2)
-  const partitionKey = b4a.alloc(32, 0xb3)
   const ownerFenceTokenHash = b4a.alloc(32, 0xb4)
   const durabilityContinuityHash = b4a.alloc(32, 0xb5)
   const durabilityProfileHash = b4a.alloc(32, 0xb6)
   const authorities = {
     relayPublicKey,
     storeId,
-    partitionKey,
     ownerFenceTokenHash,
     durabilityContinuityHash,
     durabilityProfileHash
@@ -844,7 +831,6 @@ test('cell storage owns every identity authority and destroys its copies on term
   t.alike(engine.storeId, expected.storeId)
   t.alike(engine.durabilityContinuityHash, expected.durabilityContinuityHash)
   t.alike(engine.durabilityProfileHash, expected.durabilityProfileHash)
-  t.alike(engine.transactionStore.partitionKey, expected.partitionKey)
   t.alike(engine.transactionStore.ownerFenceTokenHash, expected.ownerFenceTokenHash)
   t.alike(engine.transactionStore.durabilityContinuityHash, expected.durabilityContinuityHash)
 
@@ -854,7 +840,6 @@ test('cell storage owns every identity authority and destroys its copies on term
   t.alike(engine.storeId, b4a.alloc(32))
   t.alike(engine.durabilityContinuityHash, b4a.alloc(32))
   t.alike(engine.durabilityProfileHash, b4a.alloc(32))
-  t.alike(engine.transactionStore.partitionKey, b4a.alloc(32))
   t.alike(engine.transactionStore.ownerFenceTokenHash, b4a.alloc(32))
   t.alike(engine.transactionStore.durabilityContinuityHash, b4a.alloc(32))
   await t.exception(engine.open(), /identity was destroyed/)

@@ -1,5 +1,4 @@
 import b4a from 'b4a'
-import { createHmac } from 'node:crypto'
 import {
   BLIND_CELL_CHARGED_READ_LIFECYCLE_STATE,
   CELL_SIZE_CLASS,
@@ -35,6 +34,7 @@ import {
   u64be
 } from '@hiverelay/blind-protocol'
 import { verifyBlindCellStorageControlSnapshotState } from './storage-engine.js'
+import { deriveBlindVirtualBucket } from './virtual-bucket.js'
 
 const CONTROL_RECORD_BYTES = 512
 const TOMBSTONE_RECORD_BYTES = 512
@@ -283,14 +283,6 @@ function chargedResultBand (bytes) {
   if (bytes <= 1024 * 1024) return 5
   if (bytes <= 4 * 1024 * 1024) return 6
   fail('charged batch result exceeds the operation result cap')
-}
-
-function virtualBucket (partitionKey, storageSlot) {
-  const digest = createHmac('sha256', partitionKey)
-    .update(b4a.from([FAMILY.CELL]))
-    .update(storageSlot)
-    .digest()
-  return digest[0] * 0x100 + digest[1]
 }
 
 function cloneBytes (value) {
@@ -961,7 +953,6 @@ async function reconstructEntries (source, context = {}) {
     fail('Cell snapshot entries must be iterable')
   }
   const relayPublicKey = asBytes(context.relayPublicKey, 32, 'relayPublicKey', true)
-  const partitionKey = asBytes(context.partitionKey, 32, 'partitionKey', true)
   const state = {
     spends: new Map(),
     commitments: new Map(),
@@ -1117,8 +1108,8 @@ async function reconstructEntries (source, context = {}) {
       if (new Set([value.createPublicKey, value.renewPublicKey, value.dropPublicKey].map(hex)).size !== 3) {
         fail('cell record management keys are not distinct')
       }
-      if (value.blobVirtualBucket !== virtualBucket(partitionKey, value.storageSlot)) {
-        fail('cell blob virtual bucket does not match the private partition mapping')
+      if (value.blobVirtualBucket !== deriveBlindVirtualBucket(FAMILY.CELL, value.storageSlot)) {
+        fail('cell blob virtual bucket does not match the public deterministic mapping')
       }
       const expectedAllocation = allocationForCell(relayPublicKey, value, value.allocationLeaseClass)
       if (!b4a.equals(expectedAllocation, value.allocationCommitment)) fail('cell allocation commitment does not match')
@@ -1435,24 +1426,22 @@ export function createBlindCellControlSnapshotSemanticAuthority (options = {}) {
   if (!options || typeof options !== 'object' || Array.isArray(options)) {
     throw new TypeError('Cell semantic authority options must be an object')
   }
-  const partitionKey = cloneBytes(asBytes(options.partitionKey, 32, 'partitionKey', true))
   const authority = Object.freeze({
     kind: 'BLIND_CELL_CONTROL_SNAPSHOT_RECOVERY_SEMANTIC_AUTHORITY_V1',
     productionComplete: false,
     publicationAuthorized: false
   })
-  AUTHORITIES.set(authority, Object.freeze({ partitionKey }))
+  AUTHORITIES.set(authority, Object.freeze({}))
   return authority
 }
 
 export async function * streamBlindCellControlSnapshotEntries (authority, engineState) {
-  const authorityState = assertAuthority(authority)
+  assertAuthority(authority)
   const entries = candidateEntries(engineState)
   const reconstructed = await reconstructEntries(entries, {
     relayPublicKey: engineState.relayPublicKey,
     storeId: engineState.storeId,
     durabilityContinuityHash: engineState.durabilityContinuityHash,
-    partitionKey: authorityState.partitionKey,
     checkpointEpochFloor: engineState.epochFloor,
     declaredEntryCount: entries.length
   })
@@ -1470,12 +1459,11 @@ export async function captureBlindCellStorageEngineControlSnapshot (authority, e
   const brandedState = await engine.captureControlSnapshotState()
   const state = verifyBlindCellStorageControlSnapshotState(brandedState)
   const entries = candidateEntries(state)
-  const authorityState = assertAuthority(authority)
+  assertAuthority(authority)
   const reconstructed = await reconstructEntries(entries, {
     relayPublicKey: state.relayPublicKey,
     storeId: state.storeId,
     durabilityContinuityHash: state.durabilityContinuityHash,
-    partitionKey: authorityState.partitionKey,
     checkpointEpochFloor: state.epochFloor,
     declaredEntryCount: entries.length
   })
@@ -1512,7 +1500,7 @@ export async function captureBlindCellStorageEngineControlSnapshot (authority, e
 }
 
 export async function reconstructBlindCellControlSnapshot (authority, input = {}) {
-  const authorityState = assertAuthority(authority)
+  assertAuthority(authority)
   const tuple = ownedTuple(input.header)
   const checkpointHeader = input.checkpointHeader
   if (!checkpointHeader || typeof checkpointHeader !== 'object') fail('checkpointHeader is required for Cell reconstruction')
@@ -1529,7 +1517,6 @@ export async function reconstructBlindCellControlSnapshot (authority, input = {}
     relayPublicKey: tuple.relayPublicKey,
     storeId: tuple.storeId,
     durabilityContinuityHash: tuple.durabilityContinuityHash,
-    partitionKey: authorityState.partitionKey,
     checkpointEpochFloor: integer(checkpointHeader.epochFloor, 0, 0xffffffff, 'checkpoint epochFloor'),
     declaredEntryCount
   })
@@ -1574,15 +1561,6 @@ export function createBlindCellControlSnapshotSemanticVerifier (authority) {
 
 export function verifyBlindCellControlSnapshotSemanticVerifier (verifier) {
   if (!VERIFIERS.has(verifier)) throw new TypeError('a branded Cell control snapshot semantic verifier is required')
-  return verifier
-}
-
-export function verifyBlindCellControlSnapshotSemanticVerifierPartitionKey (verifier, partitionKey) {
-  const state = VERIFIERS.get(verifier)
-  if (!state) throw new TypeError('a branded Cell control snapshot semantic verifier is required')
-  if (!b4a.equals(state.partitionKey, asBytes(partitionKey, 32, 'partitionKey', true))) {
-    fail('Cell control snapshot semantic verifier partition key does not match')
-  }
   return verifier
 }
 

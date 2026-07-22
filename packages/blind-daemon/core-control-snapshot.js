@@ -1,5 +1,4 @@
 import b4a from 'b4a'
-import { createHmac } from 'node:crypto'
 import sodium from 'sodium-universal'
 import {
   BLIND_CORE_OPEN_REPLICATION_LIFECYCLE_STATE,
@@ -14,6 +13,7 @@ import {
   resultSignaturePayload
 } from '@hiverelay/blind-protocol'
 import { coreOpenReplicationLogicalRetryKey } from './core-stream.js'
+import { deriveBlindVirtualBucket } from './virtual-bucket.js'
 
 const MAX_U64 = (1n << 64n) - 1n
 const AUTHORITIES = new WeakMap()
@@ -185,14 +185,6 @@ function lifecycleState (value) {
   return lifecycle
 }
 
-function virtualBucket (partitionKey, logicalRetryKey) {
-  const digest = createHmac('sha256', partitionKey)
-    .update(b4a.from([FAMILY.CORE]))
-    .update(logicalRetryKey)
-    .digest()
-  return digest[0] * 0x100 + digest[1]
-}
-
 function channelKey (parentSessionId, controlChannelId) {
   return `${hex(parentSessionId)}:${controlChannelId}`
 }
@@ -216,7 +208,7 @@ function compareEntries (left, right) {
   return left.entryKind - right.entryKind || b4a.compare(left.key, right.key)
 }
 
-function persistentRecordValue (record, partitionKey) {
+function persistentRecordValue (record) {
   if (!record || typeof record !== 'object' || Array.isArray(record)) {
     fail('Core retry record must be an object')
   }
@@ -225,10 +217,10 @@ function persistentRecordValue (record, partitionKey) {
     fail('Core retry record has the wrong operation')
   }
   const logicalRetryKey = b4a.from(bytes32(record.logicalRetryKey, 'logicalRetryKey'))
-  const derivedBucket = virtualBucket(partitionKey, logicalRetryKey)
+  const derivedBucket = deriveBlindVirtualBucket(FAMILY.CORE, logicalRetryKey)
   if (record.recordVirtualBucket != null &&
       integer(record.recordVirtualBucket, 0, 0xffff, 'recordVirtualBucket') !== derivedBucket) {
-    fail('Core retry record virtual bucket does not match the private partition mapping')
+    fail('Core retry record virtual bucket does not match the public deterministic mapping')
   }
   const lifecycle = lifecycleState(record)
   const terminal = lifecycle === BLIND_CORE_OPEN_REPLICATION_LIFECYCLE_STATE.TERMINAL
@@ -262,7 +254,7 @@ function persistentRecordValue (record, partitionKey) {
   }
 }
 
-function candidateEntries (state, maximumCandidateEntries, partitionKey) {
+function candidateEntries (state, maximumCandidateEntries) {
   if (!state || typeof state !== 'object' || Array.isArray(state)) fail('Core snapshot state must be an object')
   bytes32(state.relayPublicKey, 'relayPublicKey')
   const recordsByLogical = requireMap(state.recordsByLogical, 'recordsByLogical')
@@ -280,7 +272,7 @@ function candidateEntries (state, maximumCandidateEntries, partitionKey) {
   const output = []
   const stateCounts = { reserved: 0, live: 0, terminal: 0, results: 0, bytes: 0 }
   for (const [mapKey, record] of recordsByLogical) {
-    const value = persistentRecordValue(record, partitionKey)
+    const value = persistentRecordValue(record)
     if (typeof mapKey !== 'string' || mapKey !== hex(value.logicalRetryKey)) {
       fail('Core logical index key does not match logicalRetryKey')
     }
@@ -355,7 +347,7 @@ function verifyResultBinding (value, result, relayPublicKey, storeId, durability
   }
 }
 
-function addRecord (state, value, partitionKey, context) {
+function addRecord (state, value, context) {
   const logicalRetryKey = b4a.from(value.logicalRetryKey)
   const logicalKey = hex(logicalRetryKey)
   if (state.recordsByLogical.has(logicalKey)) fail('Core snapshot redefines a logical retry record')
@@ -376,8 +368,8 @@ function addRecord (state, value, partitionKey, context) {
   if (!same(expectedRequest, value.requestCommitment)) {
     fail('Core request commitment does not match its retained open fields')
   }
-  if (value.recordVirtualBucket !== virtualBucket(partitionKey, logicalRetryKey)) {
-    fail('Core retry record virtual bucket does not match the private partition mapping')
+  if (value.recordVirtualBucket !== deriveBlindVirtualBucket(FAMILY.CORE, logicalRetryKey)) {
+    fail('Core retry record virtual bucket does not match the public deterministic mapping')
   }
   if (value.openedAtEpoch > context.epochFloor) fail('Core retry openedAtEpoch exceeds the checkpoint floor')
   const result = value.resultBytes == null
@@ -455,7 +447,7 @@ async function reconstructEntries (input, context) {
       const value = decodeValue(blindCoreOpenReplicationRetrySnapshotV1, entry.value, 'Core retry record')
       if (!same(identity, value.logicalRetryKey)) fail('Core retry key does not match logicalRetryKey')
       snapshotRecordBytes += entry.value.byteLength
-      addRecord(state, value, context.partitionKey, context)
+      addRecord(state, value, context)
       continue
     }
     if (entry.entryKind === ENTRY_KIND.CORE_GLOBAL && entry.key[1] === SUBTYPE.GLOBAL) {
@@ -562,7 +554,6 @@ export function createBlindCoreControlSnapshotSemanticAuthority (options = {}) {
   if (!options || typeof options !== 'object' || Array.isArray(options)) {
     throw new TypeError('Core semantic authority options must be an object')
   }
-  const partitionKey = b4a.from(bytes32(options.partitionKey, 'partitionKey'))
   const maximumCandidateEntries = options.maximumCandidateEntries == null
     ? 4097
     : integer(options.maximumCandidateEntries, 1, 0x1000000, 'maximumCandidateEntries')
@@ -573,19 +564,18 @@ export function createBlindCoreControlSnapshotSemanticAuthority (options = {}) {
     publicationAuthorized: false,
     productionComplete: false
   })
-  AUTHORITIES.set(authority, Object.freeze({ partitionKey, maximumCandidateEntries }))
+  AUTHORITIES.set(authority, Object.freeze({ maximumCandidateEntries }))
   return authority
 }
 
 export async function * streamBlindCoreControlSnapshotEntries (authority, engineState) {
   const state = authorityState(authority)
-  const entries = candidateEntries(engineState, state.maximumCandidateEntries, state.partitionKey)
+  const entries = candidateEntries(engineState, state.maximumCandidateEntries)
   const reconstructed = await reconstructEntries(entries, {
     relayPublicKey: bytes32(engineState.relayPublicKey, 'relayPublicKey'),
     storeId: bytes32(engineState.storeId, 'storeId'),
     durabilityContinuityHash: bytes32(engineState.durabilityContinuityHash, 'durabilityContinuityHash'),
     epochFloor: engineState.epochFloor,
-    partitionKey: state.partitionKey,
     maximumCandidateEntries: state.maximumCandidateEntries,
     declaredEntryCount: entries.length
   })
@@ -605,7 +595,6 @@ export async function reconstructBlindCoreControlSnapshot (authority, input = {}
     storeId: tuple.storeId,
     durabilityContinuityHash: tuple.durabilityContinuityHash,
     epochFloor: checkpoint.epochFloor,
-    partitionKey: state.partitionKey,
     maximumCandidateEntries: state.maximumCandidateEntries,
     declaredEntryCount
   })
@@ -646,15 +635,6 @@ export function createBlindCoreControlSnapshotSemanticVerifier (authority) {
 
 export function verifyBlindCoreControlSnapshotSemanticVerifier (verifier) {
   if (!VERIFIERS.has(verifier)) throw new TypeError('a branded Core control snapshot semantic verifier is required')
-  return verifier
-}
-
-export function verifyBlindCoreControlSnapshotSemanticVerifierPartitionKey (verifier, partitionKey) {
-  const state = VERIFIERS.get(verifier)
-  if (!state) throw new TypeError('a branded Core control snapshot semantic verifier is required')
-  if (!same(state.partitionKey, bytes32(partitionKey, 'partitionKey'))) {
-    fail('Core control snapshot semantic verifier partition key does not match')
-  }
   return verifier
 }
 

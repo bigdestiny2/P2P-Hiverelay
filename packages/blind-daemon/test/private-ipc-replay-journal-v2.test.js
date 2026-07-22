@@ -39,7 +39,7 @@ function journalOptions (root, clock, overrides = {}) {
     storeFormatHash: fixed(0x16),
     mapGeneration: 7n,
     ownerFenceTokenHash: fixed(0x17),
-    partitionKey: fixed(0x18),
+    manifestKey: fixed(0x18),
     monotonicMillis: clock,
     ...overrides
   }
@@ -128,13 +128,13 @@ test('V2 replay timing policy is frozen, explicit, and machine-pinned', t => {
 test('V2 replay journal bootstraps one exact private format and exposes only opaque capabilities', async t => {
   const root = await temporaryRoot(t)
   let now = 1_000n
-  const partitionKey = fixed(0x18)
-  const authority = await openPrivateIpcReplayJournalV2(journalOptions(root, () => now, { partitionKey }))
+  const manifestKey = fixed(0x18)
+  const authority = await openPrivateIpcReplayJournalV2(journalOptions(root, () => now, { manifestKey }))
   t.teardown(() => closeQuietly(authority))
 
   t.alike(Object.keys(authority), [])
   t.ok(Object.isFrozen(authority))
-  t.alike(partitionKey, fixed(0x18), 'caller-owned partition material is not retained or zeroed')
+  t.alike(manifestKey, fixed(0x18), 'caller-owned manifest key material is not retained or zeroed')
   t.alike((await fs.readdir(root)).sort(), [JOURNAL_FILE, LOCK_FILE])
 
   const journalPath = path.join(root, JOURNAL_FILE)

@@ -1,5 +1,4 @@
 import b4a from 'b4a'
-import { createHmac } from 'node:crypto'
 import sodium from 'sodium-universal'
 import {
   FAMILY,
@@ -30,6 +29,7 @@ import {
   relayResultBindingV1,
   resultSignaturePayload
 } from '@hiverelay/blind-protocol'
+import { deriveBlindVirtualBucket } from './virtual-bucket.js'
 
 const CONTROL_RECORD_BYTES = 512
 const TOMBSTONE_RECORD_BYTES = 512
@@ -198,14 +198,6 @@ function requireMap (value, field) {
 
 function mapKeyMatches (mapKey, expected, field) {
   if (typeof mapKey !== 'string' || mapKey !== expected) fail(`${field} map key does not match its canonical identity`)
-}
-
-function virtualBucket (partitionKey, physicalTopic) {
-  const digest = createHmac('sha256', partitionKey)
-    .update(b4a.from([FAMILY.INBOX]))
-    .update(physicalTopic)
-    .digest()
-  return digest[0] * 0x100 + digest[1]
 }
 
 function frameMapKey (physicalTopic, appendRevision) {
@@ -761,7 +753,6 @@ async function reconstructEntries (source, context = {}) {
     fail('Inbox snapshot entries must be iterable')
   }
   const relayPublicKey = asBytes(context.relayPublicKey, 32, 'relayPublicKey', true)
-  const partitionKey = asBytes(context.partitionKey, 32, 'partitionKey', true)
   const state = {
     spends: new Map(),
     commitments: new Map(),
@@ -891,8 +882,8 @@ async function reconstructEntries (source, context = {}) {
       const value = decodeValue(blindInboxRecordSnapshotV1, entry.value, 'Inbox record')
       if (!b4a.equals(identity, value.physicalTopic)) fail('Inbox record key does not match physicalTopic')
       if (!b4a.equals(inboxPhysicalTopic(value), value.physicalTopic)) fail('Inbox physicalTopic is not self-certifying')
-      if (value.metadataVirtualBucket !== virtualBucket(partitionKey, value.physicalTopic)) {
-        fail('Inbox metadata virtual bucket does not match the private partition mapping')
+      if (value.metadataVirtualBucket !== deriveBlindVirtualBucket(FAMILY.INBOX, value.physicalTopic)) {
+        fail('Inbox metadata virtual bucket does not match the public deterministic mapping')
       }
       const expectedCreate = recordCreateCommitment(relayPublicKey, value, value.allocationLeaseClass)
       if (!b4a.equals(expectedCreate, value.createCommitment)) fail('Inbox create commitment does not match')
@@ -934,8 +925,8 @@ async function reconstructEntries (source, context = {}) {
           !b4a.equals(identity.subarray(32), u64bytes(value.appendRevision))) {
         fail('Inbox frame record key does not match topic/revision')
       }
-      if (value.frameVirtualBucket !== virtualBucket(partitionKey, value.physicalTopic)) {
-        fail('Inbox frame virtual bucket does not match the private partition mapping')
+      if (value.frameVirtualBucket !== deriveBlindVirtualBucket(FAMILY.INBOX, value.physicalTopic)) {
+        fail('Inbox frame virtual bucket does not match the public deterministic mapping')
       }
       const key = frameMapKey(value.physicalTopic, value.appendRevision)
       if (state.frames.has(key)) fail('Inbox snapshot redefines a frame revision')
@@ -1409,7 +1400,6 @@ export function createBlindInboxControlSnapshotSemanticAuthority (options = {}) 
   if (!options || typeof options !== 'object' || Array.isArray(options)) {
     throw new TypeError('Inbox semantic authority options must be an object')
   }
-  const partitionKey = cloneBytes(asBytes(options.partitionKey, 32, 'partitionKey', true))
   const maximumCandidateEntries = options.maximumCandidateEntries == null
     ? 1000000
     : integer(options.maximumCandidateEntries, 1, 0x1000000, 'maximumCandidateEntries')
@@ -1418,7 +1408,7 @@ export function createBlindInboxControlSnapshotSemanticAuthority (options = {}) 
     productionComplete: false,
     publicationAuthorized: false
   })
-  AUTHORITIES.set(authority, Object.freeze({ partitionKey, maximumCandidateEntries }))
+  AUTHORITIES.set(authority, Object.freeze({ maximumCandidateEntries }))
   return authority
 }
 
@@ -1429,7 +1419,6 @@ export async function * streamBlindInboxControlSnapshotEntries (authority, engin
     relayPublicKey: engineState.relayPublicKey,
     storeId: engineState.storeId,
     durabilityContinuityHash: engineState.durabilityContinuityHash,
-    partitionKey: authorityState.partitionKey,
     checkpointEpochFloor: engineState.epochFloor,
     declaredEntryCount: entries.length
   })
@@ -1439,7 +1428,7 @@ export async function * streamBlindInboxControlSnapshotEntries (authority, engin
 }
 
 export async function reconstructBlindInboxControlSnapshot (authority, input = {}) {
-  const authorityState = assertAuthority(authority)
+  assertAuthority(authority)
   const tuple = ownedTuple(input.header)
   const checkpointHeader = input.checkpointHeader
   if (!checkpointHeader || typeof checkpointHeader !== 'object') fail('checkpointHeader is required for Inbox reconstruction')
@@ -1458,7 +1447,6 @@ export async function reconstructBlindInboxControlSnapshot (authority, input = {
     relayPublicKey: tuple.relayPublicKey,
     storeId: tuple.storeId,
     durabilityContinuityHash: tuple.durabilityContinuityHash,
-    partitionKey: authorityState.partitionKey,
     checkpointEpochFloor: integer(checkpointHeader.epochFloor, 0, 0xffffffff, 'checkpoint epochFloor'),
     declaredEntryCount
   })
@@ -1500,15 +1488,6 @@ export function createBlindInboxControlSnapshotSemanticVerifier (authority) {
 
 export function verifyBlindInboxControlSnapshotSemanticVerifier (verifier) {
   if (!VERIFIERS.has(verifier)) throw new TypeError('a branded Inbox control snapshot semantic verifier is required')
-  return verifier
-}
-
-export function verifyBlindInboxControlSnapshotSemanticVerifierPartitionKey (verifier, partitionKey) {
-  const state = VERIFIERS.get(verifier)
-  if (!state) throw new TypeError('a branded Inbox control snapshot semantic verifier is required')
-  if (!b4a.equals(state.partitionKey, asBytes(partitionKey, 32, 'partitionKey', true))) {
-    fail('Inbox control snapshot semantic verifier partition key does not match')
-  }
   return verifier
 }
 

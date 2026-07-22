@@ -2,13 +2,11 @@ import b4a from 'b4a'
 import { FAMILY } from '@hiverelay/blind-protocol'
 import {
   verifyBlindCellInboxControlSnapshotSemanticResult,
-  verifyBlindCellInboxControlSnapshotSemanticVerifier,
-  verifyBlindCellInboxControlSnapshotSemanticVerifierPartitionKey
+  verifyBlindCellInboxControlSnapshotSemanticVerifier
 } from './cell-inbox-control-snapshot.js'
 import {
   verifyBlindCoreControlSnapshotSemanticResult,
-  verifyBlindCoreControlSnapshotSemanticVerifier,
-  verifyBlindCoreControlSnapshotSemanticVerifierPartitionKey
+  verifyBlindCoreControlSnapshotSemanticVerifier
 } from './core-control-snapshot.js'
 
 const MAX_U64 = (1n << 64n) - 1n
@@ -29,7 +27,7 @@ const EMPTY_GENESIS_GLOBAL_ENTRIES = Object.freeze([
 export const BLIND_CELL_INBOX_CORE_CONTROL_SNAPSHOT_STATUS = Object.freeze({
   cellInboxCoreRetryCompositionImplemented: true,
   exactSharedCheckpointTupleVerified: true,
-  exactSharedPartitionKeyVerified: true,
+  deterministicPublicVirtualBucketsVerified: true,
   coreOpenReplicationRetryLifecycleComplete: true,
   coreComplete: false,
   allFamilyCompositionImplemented: false,
@@ -182,13 +180,6 @@ export function createBlindCellInboxCoreControlSnapshotSemanticAuthority (option
   }
   const cellInboxVerifier = verifyBlindCellInboxControlSnapshotSemanticVerifier(options.cellInboxVerifier)
   const coreVerifier = verifyBlindCoreControlSnapshotSemanticVerifier(options.coreVerifier)
-  const partitionKey = b4a.from(bytes(options.partitionKey, 32, 'partitionKey', true))
-  try {
-    verifyBlindCellInboxControlSnapshotSemanticVerifierPartitionKey(cellInboxVerifier, partitionKey)
-    verifyBlindCoreControlSnapshotSemanticVerifierPartitionKey(coreVerifier, partitionKey)
-  } finally {
-    partitionKey.fill(0)
-  }
   const maximumEntries = options.maximumEntries == null
     ? 0x1000000
     : integer(options.maximumEntries, 3, 0x1000000, 'maximumEntries')

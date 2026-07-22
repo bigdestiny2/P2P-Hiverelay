@@ -251,7 +251,7 @@ export function loadProductionRuntimeConfig (environment = process.env, endpoint
     inboxStoreRoot: optionalPath(environment, 'HIVERELAY_BLIND_INBOX_STORE_ROOT'),
     inboxCursorKeyFile: optionalPath(environment, 'HIVERELAY_BLIND_INBOX_CURSOR_KEY_FILE'),
     coreStoreRoot: optionalPath(environment, 'HIVERELAY_BLIND_CORE_STORE_ROOT'),
-    partitionKeyFile: requiredPath(environment, 'HIVERELAY_BLIND_PARTITION_KEY_FILE'),
+    storeManifestKeyFile: requiredPath(environment, 'HIVERELAY_BLIND_STORE_MANIFEST_KEY_FILE'),
     ownerFenceTokenHashFile: requiredPath(environment, 'HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE'),
     mapGeneration: canonicalU64(environment, 'HIVERELAY_BLIND_MAP_GENERATION'),
     expectedDescriptorSequence: canonicalU64(environment, 'HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_SEQUENCE', 0n),
@@ -324,7 +324,7 @@ async function verifyPrivateStoreRoot (root) {
   }
 }
 
-function encodeRuntimeBinding (descriptor, mapGeneration, ownerFenceTokenHash, partitionKey) {
+function encodeRuntimeBinding (descriptor, mapGeneration, ownerFenceTokenHash, manifestKey) {
   const prefix = b4a.alloc(RUNTIME_BINDING_PREFIX_BYTES)
   let offset = 0
   b4a.copy(RUNTIME_BINDING_MAGIC, prefix, offset); offset += 8
@@ -337,7 +337,7 @@ function encodeRuntimeBinding (descriptor, mapGeneration, ownerFenceTokenHash, p
   b4a.copy(descriptor.durability.storeFormatHash, prefix, offset); offset += 32
   prefix.writeBigUInt64BE(mapGeneration, offset); offset += 8
   b4a.copy(ownerFenceTokenHash, prefix, offset)
-  const mac = createHmac('sha256', partitionKey).update(prefix).digest()
+  const mac = createHmac('sha256', manifestKey).update(prefix).digest()
   return b4a.concat([prefix, mac], RUNTIME_BINDING_BYTES)
 }
 
@@ -991,8 +991,8 @@ export async function assembleProductionBlindDaemon (options = {}) {
     }
     assertDescribeResponseFit(descriptorSnapshot, descriptorBytes, parameterBytes)
 
-    const partitionKey = await readBoundFile(config.partitionKeyFile, {
-      field: 'store partition key', exactBytes: 32, maximumBytes: 32, secret: true
+    const manifestKey = await readBoundFile(config.storeManifestKeyFile, {
+      field: 'store manifest key', exactBytes: 32, maximumBytes: 32, secret: true
     })
     let ownerFenceTokenHash
     try {
@@ -1001,7 +1001,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
       })
       await verifyPrivateStoreRoot(config.storeRoot)
       const binding = encodeRuntimeBinding(descriptorSnapshot.descriptor, config.mapGeneration,
-        ownerFenceTokenHash, partitionKey)
+        ownerFenceTokenHash, manifestKey)
       await bindStoreIdentity(config.storeRoot, binding)
       storage = new BlindCellStorageEngine({
         root: config.storeRoot,
@@ -1009,7 +1009,6 @@ export async function assembleProductionBlindDaemon (options = {}) {
         storeId: descriptorSnapshot.descriptor.storeId,
         durabilityProfileId: descriptorSnapshot.descriptor.durability.profileId,
         durabilityProfileHash: descriptorSnapshot.descriptor.durabilityProfileHash,
-        partitionKey,
         mapGeneration: config.mapGeneration,
         ownerFenceTokenHash,
         durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
@@ -1031,7 +1030,6 @@ export async function assembleProductionBlindDaemon (options = {}) {
           storeId: descriptorSnapshot.descriptor.storeId,
           durabilityProfileId: descriptorSnapshot.descriptor.durability.profileId,
           durabilityProfileHash: descriptorSnapshot.descriptor.durabilityProfileHash,
-          partitionKey,
           cursorKey: inboxCursorKey,
           mapGeneration: config.mapGeneration,
           ownerFenceTokenHash,
@@ -1046,7 +1044,6 @@ export async function assembleProductionBlindDaemon (options = {}) {
         coreStorage = new BlindCoreStorageEngine({
           root: config.coreStoreRoot,
           relayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
-          partitionKey,
           ownerFenceTokenHash,
           durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
           maximumSponsoredCoreLength: descriptorSnapshot.descriptor.maxSponsoredCoreLength,
@@ -1069,7 +1066,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
           }
           privateIpcReplayJournal = await openPrivateIpcReplayJournalV2({
             root: config.privateIpcReplayRoot,
-            partitionKey,
+            manifestKey,
             launchTopologyHash: bootstrap.launchTopologyHash,
             relayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
             storeId: descriptorSnapshot.descriptor.storeId,
@@ -1099,7 +1096,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
         }
       }
     } finally {
-      partitionKey.fill(0)
+      manifestKey.fill(0)
       if (ownerFenceTokenHash) ownerFenceTokenHash.fill(0)
       if (inboxCursorKey) inboxCursorKey.fill(0)
     }

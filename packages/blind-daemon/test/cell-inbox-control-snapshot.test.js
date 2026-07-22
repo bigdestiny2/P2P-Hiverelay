@@ -18,8 +18,7 @@ import {
   createBlindCellInboxControlSnapshotSemanticAuthority,
   createBlindCellInboxControlSnapshotSemanticVerifier,
   verifyBlindCellInboxControlSnapshotSemanticResult,
-  verifyBlindCellInboxControlSnapshotSemanticVerifier,
-  verifyBlindCellInboxControlSnapshotSemanticVerifierPartitionKey
+  verifyBlindCellInboxControlSnapshotSemanticVerifier
 } from '../cell-inbox-control-snapshot.js'
 
 const PARTITION_KEY = b4a.alloc(32, 0x25)
@@ -240,17 +239,9 @@ test('Cell+Inbox authority and result brands cannot be forged or widened to all-
       createBlindInboxControlSnapshotSemanticAuthority({ partitionKey: PARTITION_KEY })),
     maximumEntries: 1
   }), /maximumEntries is outside/)
-
-  await t.exception.all(() => createBlindCellInboxControlSnapshotSemanticAuthority({
-    partitionKey: PARTITION_KEY,
-    cellVerifier: createBlindCellControlSnapshotSemanticVerifier(
-      createBlindCellControlSnapshotSemanticAuthority({ partitionKey: PARTITION_KEY })),
-    inboxVerifier: createBlindInboxControlSnapshotSemanticVerifier(
-      createBlindInboxControlSnapshotSemanticAuthority({ partitionKey: b4a.alloc(32, 0x26) }))
-  }), /Inbox control snapshot semantic verifier partition key does not match/)
 })
 
-test('Cell+Inbox authority snapshots a hostile partition-key getter exactly once', t => {
+test('Cell+Inbox authority ignores removed legacy partition-secret input', t => {
   const cellVerifier = createBlindCellControlSnapshotSemanticVerifier(
     createBlindCellControlSnapshotSemanticAuthority({ partitionKey: PARTITION_KEY }))
   const inboxVerifier = createBlindInboxControlSnapshotSemanticVerifier(
@@ -266,6 +257,6 @@ test('Cell+Inbox authority snapshots a hostile partition-key getter exactly once
   })
   const verifier = createBlindCellInboxControlSnapshotSemanticVerifier(
     createBlindCellInboxControlSnapshotSemanticAuthority(options))
-  t.is(reads, 1)
-  t.is(verifyBlindCellInboxControlSnapshotSemanticVerifierPartitionKey(verifier, PARTITION_KEY), verifier)
+  t.is(reads, 0)
+  t.is(verifyBlindCellInboxControlSnapshotSemanticVerifier(verifier), verifier)
 })

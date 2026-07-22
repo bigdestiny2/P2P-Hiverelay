@@ -1,6 +1,5 @@
 import b4a from 'b4a'
 import test from 'brittle'
-import { createHmac } from 'node:crypto'
 import {
   CELL_SIZE_CLASS,
   allocationCommitment,
@@ -23,10 +22,10 @@ import {
   verifyBlindCellControlSnapshotSemanticVerifier
 } from '../cell-control-snapshot.js'
 import { verifyBlindLocalCheckpointSnapshotSemanticAuthority } from '../local-checkpoint-store.js'
+import { deriveBlindVirtualBucket } from '../virtual-bucket.js'
 
 const FINGERPRINT_DOMAIN = b4a.from('hiverelay.blind.store-request-fingerprint.v1', 'ascii')
 const RESULT_IDENTITY_DOMAIN = b4a.from('hiverelay.blind.store-result-identity.v1', 'ascii')
-const PARTITION_KEY = b4a.alloc(32, 0x05)
 
 function bytes (fill) {
   return b4a.alloc(32, fill)
@@ -64,11 +63,7 @@ function resultIdentity (operation, slot, requestCommitment, blobHash, leaseClas
 }
 
 function virtualBucket (storageSlot) {
-  const digest = createHmac('sha256', PARTITION_KEY)
-    .update(b4a.from([2]))
-    .update(storageSlot)
-    .digest()
-  return digest[0] * 0x100 + digest[1]
+  return deriveBlindVirtualBucket(2, storageSlot)
 }
 
 function profile1ResultBinding (relayPublicKey) {
@@ -88,7 +83,7 @@ function profile1ResultBinding (relayPublicKey) {
 }
 
 function semanticAuthority () {
-  return createBlindCellControlSnapshotSemanticAuthority({ partitionKey: PARTITION_KEY })
+  return createBlindCellControlSnapshotSemanticAuthority()
 }
 
 function ingress (relayPublicKey, seed, overrides = {}) {
@@ -486,7 +481,7 @@ test('Cell reconstruction rejects unknown, duplicate, incomplete, substituted, a
 })
 
 test('candidate serialization rejects in-flight reservations and divergent derived indexes', async t => {
-  await t.exception.all(() => createBlindCellControlSnapshotSemanticAuthority(), /partitionKey must be bytes/)
+  t.ok(createBlindCellControlSnapshotSemanticAuthority())
   const authority = semanticAuthority()
   const inFlight = fixture()
   for (const value of inFlight.spends.values()) {

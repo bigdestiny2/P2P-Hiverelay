@@ -203,17 +203,17 @@ function identityBytes (identity) {
   ])
 }
 
-function deriveKeys (partitionKeyInput, identity) {
-  const partitionKey = ownedBytes(partitionKeyInput, 32, 'partitionKey', { nonzero: true })
+function deriveKeys (manifestKeyInput, identity) {
+  const manifestKey = ownedBytes(manifestKeyInput, 32, 'manifestKey', { nonzero: true })
   let master = null
   try {
-    master = hmac(partitionKey, KEY_DERIVATION_DOMAIN, identityBytes(identity))
+    master = hmac(manifestKey, KEY_DERIVATION_DOMAIN, identityBytes(identity))
     return Object.freeze({
       headerKey: hmac(master, HEADER_KEY_DOMAIN),
       recordKey: hmac(master, RECORD_KEY_DOMAIN)
     })
   } finally {
-    partitionKey.fill(0)
+    manifestKey.fill(0)
     if (master) master.fill(0)
   }
 }
@@ -878,7 +878,7 @@ function normalizeOptions (options) {
       compactionRecordLimit < 1 || compactionRecordLimit > MAXIMUM_RECORDS) {
     throw new TypeError(`compactionRecordLimit must be an integer inside 1..${MAXIMUM_RECORDS}`)
   }
-  const keys = deriveKeys(options.partitionKey, identity)
+  const keys = deriveKeys(options.manifestKey, identity)
   return {
     root,
     identity,

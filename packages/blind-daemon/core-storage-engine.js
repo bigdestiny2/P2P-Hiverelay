@@ -425,7 +425,6 @@ export class BlindCoreStorageEngine {
     }
     this.transactionStore = new BlindTransactionStore({
       root: options.root,
-      partitionKey: options.partitionKey,
       ownerFenceTokenHash: options.ownerFenceTokenHash,
       durabilityContinuityHash: options.durabilityContinuityHash,
       maximumWalPayloadBytes: Math.max(1024 * 1024, options.maximumWalPayloadBytes || 1024 * 1024),

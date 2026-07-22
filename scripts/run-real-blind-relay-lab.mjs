@@ -469,15 +469,15 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls, 
   const descriptorFile = path.join(directory, 'descriptor.bin')
   const admissionFile = path.join(directory, 'admission.bin')
   const secretKeyFile = path.join(directory, 'relay-secret.bin')
-  const partitionKeyFile = path.join(directory, 'partition-key.bin')
+  const storeManifestKeyFile = path.join(directory, 'store-manifest-key.bin')
   const ownerFenceFile = path.join(directory, 'owner-fence-hash.bin')
   await Promise.all([
     privateFile(genesisDescriptorFile, genesisDescriptorBytes),
     privateFile(descriptorFile, descriptorBytes),
     privateFile(admissionFile, admissionBytes),
     privateFile(secretKeyFile, relaySecretKey),
-    privateFile(partitionKeyFile, deterministicBytes(
-      scopedDeterministicLabel(identityScope, `real-relay-${relayIndex}:partition`),
+    privateFile(storeManifestKeyFile, deterministicBytes(
+      scopedDeterministicLabel(identityScope, `real-relay-${relayIndex}:store-manifest`),
       32
     )),
     privateFile(ownerFenceFile, deterministicBytes(
@@ -525,7 +525,7 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls, 
       relaySecretKeyFile: secretKeyFile,
       storeRoot,
       privateIpcReplayRoot,
-      partitionKeyFile,
+      storeManifestKeyFile,
       ownerFenceTokenHashFile: ownerFenceFile,
       mapGeneration: 1n,
       expectedDescriptorSequence: descriptor.descriptorSequence,

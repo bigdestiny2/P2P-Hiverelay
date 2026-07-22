@@ -16,7 +16,6 @@ import {
   coreOpenReplicationV1,
   coreMirrorRequestV1,
   coreServeChallengeV1,
-  coreServeResultV1,
   decodeCanonical,
   decodeDispatchFrame,
   encodeCanonical,
@@ -241,8 +240,8 @@ test('production CORE assembly serves the unary public lifecycle through its rea
   }, coreContext())
   t.is(errorName(cellRead), 'NOT_FOUND', 'the CELL line keeps dispatching beside CORE')
   await runtime.close()
-  t.alike(runtime.coreStorage.transactionStore.partitionKey, b4a.alloc(32),
-    'CORE store-owned partition key is destroyed on close')
+  t.is('partitionKey' in runtime.coreStorage.transactionStore, false,
+    'CORE storage retains no partition secret')
 })
 
 test('production CORE assembly requires its disjoint store root and the INBOX line', async t => {

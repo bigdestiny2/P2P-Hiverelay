@@ -24,7 +24,6 @@ import {
 } from '../core-control-snapshot.js'
 import { coreOpenReplicationLogicalRetryKey } from '../core-stream.js'
 
-const PARTITION_KEY = b4a.alloc(32, 0x25)
 const SEED = b4a.alloc(sodium.crypto_sign_SEEDBYTES, 0x91)
 const RELAY_PUBLIC_KEY = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
 const RELAY_SECRET_KEY = b4a.alloc(sodium.crypto_sign_SECRETKEYBYTES)
@@ -171,7 +170,7 @@ function headers () {
 }
 
 function authority (overrides = {}) {
-  return createBlindCoreControlSnapshotSemanticAuthority({ partitionKey: PARTITION_KEY, ...overrides })
+  return createBlindCoreControlSnapshotSemanticAuthority(overrides)
 }
 
 async function entriesFor (semanticAuthority, state) {
@@ -236,7 +235,7 @@ test('Core recovery snapshots deterministically retain reserved/live/terminal re
 })
 
 test('Core semantic authority/result state and tuple are branded and immutable', async t => {
-  await t.exception.all(() => createBlindCoreControlSnapshotSemanticAuthority(), /partitionKey must be bytes/)
+  t.ok(createBlindCoreControlSnapshotSemanticAuthority())
   const semanticAuthority = authority()
   const entries = await entriesFor(semanticAuthority, fixture())
   const result = await reconstruct(semanticAuthority, entries)

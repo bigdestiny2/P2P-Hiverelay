@@ -198,6 +198,7 @@ test('Cell+Inbox+Core composition rejects uncovered, missing, unsorted, duplicat
     /branded Cell\+Inbox\+Core/)
 })
 
-test('Cell+Inbox+Core composition rejects a Core verifier with a different private partition key', async t => {
-  await t.exception(fixture({ corePartitionKey: b4a.alloc(32, 0x26) }), /partition key does not match/)
+test('Cell+Inbox+Core composition has no shared partition-secret dependency', async t => {
+  const value = await fixture({ corePartitionKey: b4a.alloc(32, 0x26) })
+  t.ok(value.verifier)
 })

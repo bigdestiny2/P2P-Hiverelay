@@ -254,8 +254,8 @@ test('production INBOX assembly serves the full public lifecycle through its rea
   }))
   t.is(errorName(cellRead), 'NOT_FOUND', 'the CELL line keeps dispatching beside INBOX')
   await runtime.close()
-  t.alike(runtime.inboxStorage.transactionStore.partitionKey, b4a.alloc(32),
-    'INBOX store-owned partition key is destroyed on close')
+  t.is('partitionKey' in runtime.inboxStorage.transactionStore, false,
+    'INBOX storage retains no partition secret')
 })
 
 test('production INBOX assembly requires its disjoint store root and cursor key', async t => {
