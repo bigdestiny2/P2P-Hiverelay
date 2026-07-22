@@ -112,3 +112,31 @@ test('concurrent first commits serialize and retain the highest durable WAL evid
   t.is(restarted.firstBlindOnlyWriteAcknowledged, true)
   t.is(await restarted.acknowledgeBlindOnlyWrite(second), false)
 })
+
+test('record fsync linearizes the floor before recoverable head publication', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'blind-store-generation-linearization-'))
+  t.teardown(() => rm(root, { recursive: true, force: true }))
+  let follower = null
+  let floor = null
+  floor = await openBlindStoreGenerationFloor(root, {
+    manifestKey: KEY,
+    storeIdentity: IDENTITY,
+    storeEvidence: first,
+    allowCreate: true,
+    async faultInjector (phase) {
+      if (phase === 'after-record-sync') follower = await floor.acknowledgeBlindOnlyWrite(third)
+    }
+  })
+  t.is(await floor.acknowledgeBlindOnlyWrite(second), true)
+  t.is(follower, false)
+  const records = (await readdir(root)).filter(name => name.includes('generation-record')).sort()
+  t.is(records.length, 2)
+  const trueRecord = JSON.parse(await readFile(path.join(root, records.at(-1))))
+  t.is(trueRecord.storeEvidence.walSequence, '2')
+  const names = await readdir(root)
+  t.is(names.filter(name => name.includes('generation-record')).length, 2)
+  const restarted = await openBlindStoreGenerationFloor(root, {
+    manifestKey: KEY, storeIdentity: IDENTITY, storeEvidence: third
+  })
+  t.is(restarted.firstBlindOnlyWriteAcknowledged, true)
+})

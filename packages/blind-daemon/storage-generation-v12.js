@@ -107,13 +107,20 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
       }
       const next = record(latest.sequence + 1, true, recordHash(latest), highest)
       await writeExclusive(recordPath(next.sequence), signed(next))
-      if (options.faultInjector) await options.faultInjector('after-record-sync')
-      await writeHead(next)
+      // The immutable true record's file fsync plus control-directory fsync is
+      // the D7 linearization point. The head is a recoverable index: callers
+      // arriving after this point are post-floor even while head publication
+      // is still in flight.
       latest = next
       acknowledged = true
+      if (options.faultInjector) await options.faultInjector('after-record-sync')
+      await writeHead(next)
       for (const item of batch) item.resolve(true)
     } catch (error) {
-      for (const item of batch) item.reject(error)
+      for (const item of batch) {
+        if (acknowledged) item.resolve(true)
+        else item.reject(error)
+      }
     } finally {
       acknowledgmentDrain = null
       if (pendingAcknowledgments.length > 0) {
