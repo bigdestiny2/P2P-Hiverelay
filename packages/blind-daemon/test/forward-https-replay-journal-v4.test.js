@@ -7,6 +7,12 @@ import {
   createBlindBoundaryScratch,
   removeBlindBoundaryScratch
 } from '../../../test/blind-boundary-scratch.js'
+import {
+  createLocalForwardHttpsOriginAuthorityV4,
+  encodeLocalForwardHttpsOriginAuthorityV4,
+  createLocalForwardHttpsTargetIngressV4,
+  encodeLocalForwardHttpsTargetIngressV4
+} from '@hiverelay/blind-ipc'
 import * as replayModule from '../forward-https-replay-journal-v4.js'
 import {
   encodeForwardHttpsRetentionPrunedV3,
@@ -81,8 +87,114 @@ async function quota (t, role) {
   })
   t.teardown(async () => { await closeForwardHttpsAggregateQuotaV3(authority).catch(() => {}) })
   const capabilities = mintForwardHttpsAggregateQuotaCapabilitiesV3(authority)
-  return { authority, capabilities, capability: role === SOURCE ? capabilities.sourceStoreQuotaCapability : capabilities.targetStoreQuotaCapability }
+  return { authority, capabilities, capability: role === SOURCE ? capabilities.sourceStoreQuotaCapability : capabilities.targetStoreQuotaCapability, roots }
 }
+
+function replayJournalOptions (role, root, capability, monotonicMillis) {
+  return {
+    role,
+    root,
+    manifestKey: b4a.alloc(32, 7),
+    replayQuotaCapability: capability,
+    wireV3AbiHash: fixed(0x01),
+    privateIpcV4Hash: fixed(0x02),
+    signedLaunchTopologyHash: fixed(0x03),
+    storeId: fixed(0x04),
+    mapGeneration: 1n,
+    ownerFenceTokenHash: fixed(0x05),
+    durabilityContinuityHash: fixed(0x06),
+    monotonicMillis
+  }
+}
+
+function sourceReplayRecord (id, now) {
+  return encodeLocalForwardHttpsOriginAuthorityV4(createLocalForwardHttpsOriginAuthorityV4({
+    version: 4,
+    authorityKind: 1,
+    transportId: 1,
+    endpointId: 1,
+    flags: 0,
+    wireV3AbiHash: fixed(0x01),
+    signedLaunchTopologyHash: fixed(0x03),
+    edgeProcessNonce: fixed(0x0a),
+    localChannelNonce: fixed(0x0b),
+    tlsExporterBindingHash: fixed(0x0c),
+    originRequestCommitment: fixed(0x0d),
+    stableSessionId: id,
+    sequence: 1n,
+    acceptedMonotonicMillis: BigInt(now),
+    absoluteDeadlineMonotonicMillis: BigInt(now) + 10000n
+  }))
+}
+
+function targetReplayRecord (id, now) {
+  return encodeLocalForwardHttpsTargetIngressV4(createLocalForwardHttpsTargetIngressV4({
+    version: 4,
+    authorityKind: 2,
+    transportId: 1,
+    endpointId: 2,
+    flags: 0,
+    wireV3AbiHash: fixed(0x01),
+    signedLaunchTopologyHash: fixed(0x03),
+    edgeProcessNonce: fixed(0x0a),
+    localChannelNonce: fixed(0x0b),
+    targetTlsExporterBindingHash: fixed(0x0c),
+    forwardedRequestCommitment: fixed(0x0d),
+    stableSessionId: id,
+    sequence: 1n,
+    acceptedMonotonicMillis: BigInt(now),
+    absoluteDeadlineMonotonicMillis: BigInt(now) + 10000n
+  }))
+}
+
+test('replay journal bootstrap: fresh-root open for both roles and snapshot reopen round trip', async t => {
+  const { capabilities, roots } = await quota(t, SOURCE)
+  const clock = () => 100000n
+  // SOURCE_ORIGIN fresh-root BOOTSTRAP then reopen
+  const sourceOptions = replayJournalOptions('SOURCE_ORIGIN', roots['source-replay'], capabilities.sourceReplayQuotaCapability, clock)
+  const source = await replayModule.openForwardHttpsReplayJournalV4(sourceOptions)
+  t.is(replayModule.forwardHttpsReplayJournalV4Status(source).state, 'OPEN')
+  await replayModule.closeForwardHttpsReplayJournalV4(source)
+  const sourceReopen = await replayModule.openForwardHttpsReplayJournalV4(sourceOptions)
+  const sourceStatus = replayModule.forwardHttpsReplayJournalV4Status(sourceReopen)
+  t.is(sourceStatus.state, 'OPEN')
+  t.is(sourceStatus.occupied, 0)
+  await replayModule.closeForwardHttpsReplayJournalV4(sourceReopen)
+  // TARGET_INGRESS fresh-root BOOTSTRAP then reopen
+  const targetOptions = replayJournalOptions('TARGET_INGRESS', roots['target-replay'], capabilities.targetReplayQuotaCapability, clock)
+  const target = await replayModule.openForwardHttpsReplayJournalV4(targetOptions)
+  t.is(replayModule.forwardHttpsReplayJournalV4Status(target).state, 'OPEN')
+  await replayModule.closeForwardHttpsReplayJournalV4(target)
+  const targetReopen = await replayModule.openForwardHttpsReplayJournalV4(targetOptions)
+  const targetStatus = replayModule.forwardHttpsReplayJournalV4Status(targetReopen)
+  t.is(targetStatus.state, 'OPEN')
+  t.is(targetStatus.occupied, 0)
+  await replayModule.closeForwardHttpsReplayJournalV4(targetReopen)
+})
+
+test('replay journal: reserve/consume persists across close and reopen, replay rejects', async t => {
+  for (const role of ['SOURCE_ORIGIN', 'TARGET_INGRESS']) {
+    const { capabilities, roots } = await quota(t, SOURCE)
+    const clock = () => 100000n
+    const replayRoot = role === 'SOURCE_ORIGIN' ? roots['source-replay'] : roots['target-replay']
+    const capability = role === 'SOURCE_ORIGIN' ? capabilities.sourceReplayQuotaCapability : capabilities.targetReplayQuotaCapability
+    const options = replayJournalOptions(role, replayRoot, capability, clock)
+    const id = fixed(role === 'SOURCE_ORIGIN' ? 0x51 : 0x52)
+    const record = role === 'SOURCE_ORIGIN' ? sourceReplayRecord(id, 100000n) : targetReplayRecord(id, 100000n)
+    const journal = await replayModule.openForwardHttpsReplayJournalV4(options)
+    const reservation = await replayModule.reserveForwardHttpsReplayV4(journal, { record })
+    t.is(replayModule.inspectForwardHttpsReplayJournalV4(journal).length, 1)
+    const consumed = await replayModule.consumeForwardHttpsReplayV4(journal, reservation, { record })
+    replayModule.verifyForwardHttpsReplayConsumedV4(consumed, { journalAuthority: journal, role, record })
+    await replayModule.closeForwardHttpsReplayJournalV4(journal)
+    const reopened = await replayModule.openForwardHttpsReplayJournalV4(options)
+    const status = replayModule.forwardHttpsReplayJournalV4Status(reopened)
+    t.is(status.state, 'OPEN')
+    t.is(status.consumed, 1, 'consumed replay tuple recovered exactly once')
+    await t.exception.all(replayModule.reserveForwardHttpsReplayV4(reopened, { record }), /occupied|REPLAY/)
+    await replayModule.closeForwardHttpsReplayJournalV4(reopened)
+  }
+})
 
 test('export surface: exactly the frozen 39 replay-module exports', async t => {
   const names = Object.keys(replayModule).sort()

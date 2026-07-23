@@ -19,7 +19,10 @@ const MAX_U64 = (1n << 64n) - 1n
 const ZERO32 = b4a.alloc(32)
 const SNAPSHOT_MAGIC = b4a.from('FRJ4', 'ascii')
 const SNAPSHOT_VERSION = 1
-const SNAPSHOT_HEADER_BYTES = 231
+// Exact written snapshot header layout: magic4 + version1 + role1 +
+// quarantined1 + reserved1 + capacity u32 + count u32 + lastMonotonic u64 +
+// four 32-byte bindings + mapGeneration u64 + two 32-byte fence bindings = 224.
+const SNAPSHOT_HEADER_BYTES = 224
 const SNAPSHOT_RECORD_BYTES = 49
 const SNAPSHOT_MAC_BYTES = 32
 const LOCK_FILE = 'writer.lock.v4'
@@ -731,7 +734,7 @@ export function inspectForwardHttpsReplayJournalV4 (journalAuthority) {
   const state = replayState(journalAuthority)
   return Object.freeze([...state.records.values()]
     .sort((left, right) => b4a.compare(left.tuple, right.tuple))
-    .map(record => deepFreeze({
+    .map(record => freezeResult({
       replayTuple: b4a.from(record.tuple),
       acceptedMonotonicMillis: record.acceptedMonotonicMillis,
       deadlineMonotonicMillis: record.deadlineMonotonicMillis,
