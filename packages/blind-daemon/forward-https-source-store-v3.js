@@ -12,7 +12,6 @@ import {
   reserveForwardHttpsAggregateQuotaV3,
   commitForwardHttpsAggregateQuotaV3,
   releaseForwardHttpsAggregateQuotaV3,
-  adjustForwardHttpsAggregateQuotaV3,
   bindForwardHttpsStoreQuotaActualBuffersV3,
   applyForwardHttpsAggregateQuotaWalFrameV3,
   assertForwardHttpsAggregateQuotaOperationalV3,
@@ -20,9 +19,6 @@ import {
   encodeForwardHttpsRetentionPrunedV3,
   decodeForwardHttpsRetentionPrunedV3
 } from './forward-https-replay-journal-v4.js'
-import {
-  encodeForwardHttpsSessionTerminalV3
-} from './forward-https-storage-authority-v3.js'
 
 const ROLE = FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3.SOURCE_STORE
 const ZERO32 = b4a.alloc(32)
@@ -455,7 +451,7 @@ async function appendOperation (state, slot, operation, frames) {
 }
 
 // Fresh source PREPARED_NEW=96: FREE -> ALLOCATED with the PREPARE quota row.
-export async function prepareForwardHttpsSourceSessionV3 (state, input) {
+export async function prepareForwardHttpsSourceTurnV3 (state, input) {
   requireOperational(state)
   const stableSessionId = b4a.from(input.stableSessionId)
   const existing = state.slots.get(keyOf(stableSessionId))
@@ -486,7 +482,7 @@ export async function prepareForwardHttpsSourceSessionV3 (state, input) {
 }
 
 // Ordinary source SESSION frame: TRANSPORT_RESERVED=97 or RESULT_PERSISTED=98.
-export async function appendForwardHttpsSourceSessionV3 (state, input) {
+export async function persistForwardHttpsSourceResultV3 (state, input) {
   requireOperational(state)
   const walType = input.walType
   if (![WAL_TYPE.TRANSPORT_RESERVED, WAL_TYPE.RESULT_PERSISTED].includes(walType)) throw new TypeError('walType must be 97 or 98')
@@ -499,8 +495,9 @@ export async function appendForwardHttpsSourceSessionV3 (state, input) {
   if (!slot || slot.state !== SLOT_STATE.ALLOCATED) fail('session is not ALLOCATED', STORE_ERROR_CODE.SEQUENCE_INVALID)
   const planned = input.plannedRemovableChargeEntryCount == null ? 1 : input.plannedRemovableChargeEntryCount
   if (slot.registry.count + planned > CHARGE_ENTRY_CAP) {
-    await terminalizeBudgetExhausted(state, slot, input)
-    fail('removable charge entry cap exceeded; session terminalized BUDGET_EXHAUSTED', STORE_ERROR_CODE.BUDGET_EXHAUSTED)
+    // Cap+1 makes no WAL mutation here; the quota ENTRY_CAP_TERMINAL arm
+    // mints the flags0 BUDGET_EXHAUSTED terminal reservation for the caller.
+    fail('removable charge entry cap exceeded; ENTRY_CAP_TERMINAL', STORE_ERROR_CODE.BUDGET_EXHAUSTED)
   }
   const payload = sessionPayload(stableSessionId, input.body || b4a.alloc(0))
   const entry = await appendOperation(state, slot, walType === WAL_TYPE.RESULT_PERSISTED ? 'RESULT' : 'PREPARE', [{
@@ -511,171 +508,6 @@ export async function appendForwardHttpsSourceSessionV3 (state, input) {
   }])
   return Object.freeze({ walSequence: entry.walSequence, walHash: b4a.from(state.store.walHash), payload })
 }
-
-async function appendTerminalPayload (state, slot, payload) {
-  const entry = await appendOperation(state, null, 'SESSION_TERMINAL', [{
-    type: WAL_TYPE.SESSION_TERMINAL,
-    transactionId: transactionIdFor(slot.stableSessionId, 0x5a),
-    virtualBucket: 0,
-    payload
-  }])
-  slot.priorRevision++
-  slot.state = SLOT_STATE.CONSUMED_UNPRUNED
-  slot.authorityBitmap = entry.authorityBitmap
-  slot.authorityCommitments = entry.authorityCommitments
-  state.consumedUnpruned++
-  return { entry, sequence: entry.walSequence, walHash: state.store.walHash }
-}
-
-async function terminalizeBudgetExhausted (state, slot, input) {
-  const payload = encodeForwardHttpsSessionTerminalV3({
-    role: ROLE,
-    flags: 0,
-    stableSessionId: slot.stableSessionId,
-    sequence: input.sequence == null ? 1n : input.sequence,
-    priorSessionRevision: slot.priorRevision,
-    newTrustedEpochHighWatermark: input.newTrustedEpochHighWatermark || 0,
-    reason: 'BUDGET_EXHAUSTED',
-    buckets: [0, 0, 0, 0, 0],
-    transportTurnsSpent: 0,
-    transportBytesSpent: 0
-  })
-  await appendTerminalPayload(state, slot, payload)
-}
-
-export async function terminalizeForwardHttpsSourceSessionV3 (state, input) {
-  requireOperational(state)
-  const slot = state.slots.get(keyOf(b4a.from(input.stableSessionId)))
-  if (!slot || slot.state !== SLOT_STATE.ALLOCATED) fail('session is not ALLOCATED', STORE_ERROR_CODE.TERMINAL)
-  const payload = encodeForwardHttpsSessionTerminalV3({
-    role: ROLE,
-    flags: 0,
-    stableSessionId: slot.stableSessionId,
-    sequence: input.sequence,
-    priorSessionRevision: slot.priorRevision,
-    newTrustedEpochHighWatermark: input.newTrustedEpochHighWatermark || 0,
-    reason: input.reason,
-    buckets: input.buckets || [0, 0, 0, 0, 0],
-    transportTurnsSpent: input.transportTurnsSpent || 0,
-    transportBytesSpent: input.transportBytesSpent || 0
-  })
-  const frame = await appendTerminalPayload(state, slot, payload)
-  return Object.freeze({ walSequence: frame.sequence, walHash: b4a.from(frame.walHash), payload })
-}
-
-export async function terminalizeForwardHttpsSourceAbsentSequenceV3 (state, input) {
-  requireOperational(state)
-  const stableSessionId = b4a.from(input.stableSessionId)
-  if (state.slots.has(keyOf(stableSessionId))) fail('session identity is not NEVER_SEEN', STORE_ERROR_CODE.SEQUENCE_INVALID)
-  if (state.unconsumed < 1) fail('no FREE slot for the minimal terminal', STORE_ERROR_CODE.CAPACITY)
-  const slot = freshSlot(state, stableSessionId)
-  state.unconsumed--
-  const payload = encodeForwardHttpsSessionTerminalV3({
-    role: ROLE,
-    flags: 1,
-    stableSessionId,
-    sequence: input.sequence,
-    priorSessionRevision: 0n,
-    newTrustedEpochHighWatermark: input.newTrustedEpochHighWatermark,
-    reason: 'FORWARD_HTTPS_SOURCE_STORE_V3_SEQUENCE_INVALID',
-    exactRequestCommitment: input.exactRequestCommitment,
-    expiresAtEpoch: input.expiresAtEpoch,
-    retainedUntilEpoch: input.expiresAtEpoch + 900
-  })
-  const applied = await appendTerminalPayload(state, slot, payload)
-  slot.priorRevision = 1n
-  slot.minimal = true
-  slot.expiresAtEpoch = input.expiresAtEpoch
-  slot.recoveryGraceUntilEpoch = input.expiresAtEpoch + 900
-  slot.trustedEpochHighWatermark = input.newTrustedEpochHighWatermark
-  slot.authorityBitmap = (1 << 7) | (1 << 9)
-  slot.authorityCommitments = applied.entry.authorityCommitments
-  return Object.freeze({ walSequence: applied.sequence, walHash: b4a.from(applied.walHash), payload })
-}
-
-export async function pruneForwardHttpsSourceSessionV3 (state, input) {
-  requireOperational(state)
-  const slot = state.slots.get(keyOf(b4a.from(input.stableSessionId)))
-  if (!slot) fail('session is absent', STORE_ERROR_CODE.INTEGRITY)
-  const consumed = slot.state === SLOT_STATE.CONSUMED_UNPRUNED
-  if (slot.state !== SLOT_STATE.ALLOCATED && !consumed) fail('session slot state cannot be pruned', STORE_ERROR_CODE.INTEGRITY)
-  const entries = slot.registry.entriesAscending()
-  const count = slot.minimal && entries.length === 0 ? 0 : entries.length
-  if (count === 0 && !slot.minimal) fail('nonterminal prune requires ordinary entries', STORE_ERROR_CODE.INTEGRITY)
-  const pruneEpochSeconds = input.pruneEpochSeconds === undefined ? state.epochSeconds() : input.pruneEpochSeconds
-  if (slot.minimal && pruneEpochSeconds <= slot.recoveryGraceUntilEpoch) fail('terminal-only prune must wait the full grace', STORE_ERROR_CODE.INTEGRITY)
-  const payload = encodeForwardHttpsRetentionPrunedV3({
-    role: ROLE,
-    stableSessionId: slot.stableSessionId,
-    priorSessionRevision: slot.priorRevision,
-    pruneEpochSeconds,
-    trustedEpochHighWatermark: Math.max(slot.trustedEpochHighWatermark, pruneEpochSeconds),
-    expiresAtEpoch: slot.expiresAtEpoch,
-    recoveryGraceUntilEpoch: slot.recoveryGraceUntilEpoch,
-    removedOrdinaryLogicalBytes: slot.registry.removedLogicalBytes(),
-    chargeEntryCount: count,
-    beforeAuthorityBitmap: slot.authorityBitmap,
-    allocationDisposition: consumed ? 0 : 1,
-    terminalSlotState: consumed ? 2 : 1,
-    chargeEntryBuffers: entries,
-    authorityCommitments: slot.authorityCommitments || Array.from({ length: 10 }, () => b4a.from(ZERO32))
-  })
-  const plan = createForwardHttpsStoreQuotaCostPlanV3(state.storeQuotaCapability, {
-    operation: 'PRUNE',
-    knownInputBuffers: [payload],
-    temporaryWriteBuffers: [],
-    existingDestinationBytes: 0
-  })
-  const union = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
-  const reservation = union.reservation || union.terminalReservation
-  let frame
-  try {
-    const { transitionAuthority } = bindForwardHttpsStoreQuotaActualBuffersV3(state.storeQuotaCapability, reservation, {
-      logicalRecordBuffers: [],
-      encryptedPlaintextBuffers: [],
-      finalWalMetadataBuffers: [payload],
-      temporaryWriteBuffers: []
-    })
-    await applyForwardHttpsAggregateQuotaWalFrameV3(state.storeQuotaCapability, reservation, transitionAuthority, {
-      type: WAL_TYPE.RETENTION_PRUNED,
-      transactionId: transactionIdFor(slot.stableSessionId, 0x5a),
-      virtualBucket: 0,
-      payload
-    }, async candidate => {
-      frame = await state.store.appendAndApply(candidate, () => {})
-      return frame
-    })
-  } catch (error) {
-    await releaseForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, reservation).catch(() => {})
-    throw error
-  }
-  try {
-    await adjustForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, {
-      durableTombstonePayloadBuffer: payload,
-      durableWalHeadSequence: frame.sequence,
-      durableWalHeadHash: frame.walHash
-    })
-  } catch (error) {
-    state.failedPruneDurablePending = true
-    state.localOperational = false
-    state.blocker = STORE_ERROR_CODE.INTEGRITY
-    fail('post-fsync prune adjustment failed; FAILED_PRUNE_DURABLE_PENDING', STORE_ERROR_CODE.INTEGRITY)
-  }
-  if (consumed) {
-    slot.state = SLOT_STATE.CONSUMED_PRUNED
-    state.consumedUnpruned--
-    state.consumedPruned++
-  } else {
-    slot.state = SLOT_STATE.FREE
-    slot.prunedReleased = true
-    state.unconsumed++
-  }
-  slot.authorityBitmap = 0
-  state.roleGlobalLogicalBytes += 736
-  state.walHeadSequence = frame.sequence
-  return Object.freeze({ walSequence: frame.sequence, walHash: b4a.from(frame.walHash), payload })
-}
-
 export function forwardHttpsSourceStoreV3Status (state) {
   return Object.freeze({
     role: ROLE,
@@ -706,7 +538,6 @@ export async function closeForwardHttpsSourceStoreV3 (state) {
   await state.store.close()
 }
 
-export const FORWARD_HTTPS_SOURCE_STORE_V3_WAL_TYPE = WAL_TYPE
 export const FORWARD_HTTPS_SOURCE_WAL_TYPE = WAL_TYPE
 
 export const FORWARD_HTTPS_SOURCE_STORE_V3_STATUS = Object.freeze({
@@ -737,8 +568,6 @@ export const FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT = Object.freeze({
 })
 
 // V18 source_module_exact names for the turn-level surface.
-export const prepareForwardHttpsSourceTurnV3 = prepareForwardHttpsSourceSessionV3
-export const persistForwardHttpsSourceResultV3 = appendForwardHttpsSourceSessionV3
 
 export function forwardHttpsSourceTurnStateV3 (state, stableSessionId) {
   const slot = state.slots.get(keyOf(b4a.from(stableSessionId))) || null

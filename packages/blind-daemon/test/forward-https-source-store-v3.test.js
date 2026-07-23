@@ -12,23 +12,126 @@ import {
   closeForwardHttpsAggregateQuotaV3,
   beginForwardHttpsAggregateQuotaRecoveryV3,
   finishForwardHttpsAggregateQuotaRecoveryV3,
-  initializeForwardHttpsAggregateQuotaV3
+  initializeForwardHttpsAggregateQuotaV3,
+  createForwardHttpsStoreQuotaCostPlanV3,
+  reserveForwardHttpsAggregateQuotaV3,
+  bindForwardHttpsStoreQuotaActualBuffersV3,
+  applyForwardHttpsAggregateQuotaWalFrameV3,
+  commitForwardHttpsAggregateQuotaV3,
+  releaseForwardHttpsAggregateQuotaV3,
+  adjustForwardHttpsAggregateQuotaV3,
+  forwardHttpsAggregateQuotaV3Status,
+  encodeForwardHttpsRetentionPrunedV3
 } from '../forward-https-replay-journal-v4.js'
 import {
   openForwardHttpsSourceStoreV3,
-  prepareForwardHttpsSourceSessionV3,
-  appendForwardHttpsSourceSessionV3,
-  terminalizeForwardHttpsSourceSessionV3,
-  terminalizeForwardHttpsSourceAbsentSequenceV3,
-  pruneForwardHttpsSourceSessionV3,
+  prepareForwardHttpsSourceTurnV3,
+  persistForwardHttpsSourceResultV3,
   forwardHttpsSourceStoreV3Status,
   closeForwardHttpsSourceStoreV3,
-  FORWARD_HTTPS_SOURCE_STORE_V3_WAL_TYPE,
+  FORWARD_HTTPS_SOURCE_WAL_TYPE,
   FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT
 } from '../forward-https-source-store-v3.js'
 
 function fixed (byte) {
   return b4a.alloc(32, byte)
+}
+
+function writeU64be (output, offset, value) {
+  let current = BigInt(value)
+  for (let index = 7; index >= 0; index--) { output[offset + index] = Number(current & 0xffn); current >>= 8n }
+  return offset + 8
+}
+
+// Test-side FTM9 payload builder (frozen 192-byte layout; caller-supplied
+// exact payloads, the requested-terminal-arm shape).
+function buildFtm9 (input) {
+  const output = b4a.alloc(192)
+  let offset = 0
+  b4a.copy(b4a.from('FTM9', 'ascii'), output, offset); offset += 4
+  output[offset++] = 1
+  output[offset++] = 1
+  output.writeUInt16BE(input.flags, offset); offset += 2
+  b4a.copy(input.stableSessionId, output, offset); offset += 32
+  offset = writeU64be(output, offset, input.sequence)
+  for (const value of input.buckets || [0, 0, 0, 0, 0]) { output.writeUInt16BE(value, offset); offset += 2 }
+  output.writeUInt16BE(input.transportTurnsSpent || 0, offset); offset += 2
+  output.writeUInt32BE(input.transportBytesSpent || 0, offset); offset += 4
+  offset = writeU64be(output, offset, input.priorSessionRevision || 0n)
+  output.writeUInt32BE(input.newTrustedEpochHighWatermark || 0, offset); offset += 4
+  const reason = b4a.from(input.reason, 'ascii')
+  output[offset++] = reason.byteLength
+  b4a.copy(reason, output, offset); offset += 64
+  if (input.flags === 1) {
+    output.writeUInt32BE(input.expiresAtEpoch, offset); offset += 4
+    output.writeUInt32BE(input.retainedUntilEpoch, offset); offset += 4
+    b4a.copy(input.exactRequestCommitment, output, offset); offset += 32
+  }
+  return output
+}
+
+// Quota-API drivers: terminal append through the composite, prune through
+// bind/apply/adjust, both with caller-supplied exact payloads.
+async function driveWal (store, operation, frames) {
+  const plan = createForwardHttpsStoreQuotaCostPlanV3(store.storeQuotaCapability, {
+    operation,
+    knownInputBuffers: frames.map(frame => frame.payload),
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const union = await reserveForwardHttpsAggregateQuotaV3(store.storeQuotaCapability, plan)
+  const reservation = union.reservation || union.terminalReservation
+  let attempted = false
+  try {
+    const { transitionAuthority } = bindForwardHttpsStoreQuotaActualBuffersV3(store.storeQuotaCapability, reservation, {
+      logicalRecordBuffers: [],
+      encryptedPlaintextBuffers: frames.slice(0, -1).map(frame => frame.payload),
+      finalWalMetadataBuffers: [frames[frames.length - 1].payload],
+      temporaryWriteBuffers: []
+    })
+    attempted = true
+    let claimOrHandoff = transitionAuthority
+    let entry = null
+    for (const candidate of frames) {
+      const applied = await applyForwardHttpsAggregateQuotaWalFrameV3(store.storeQuotaCapability, reservation, claimOrHandoff, candidate,
+        async frame => store.store.appendAndApply(frame, () => {}))
+      entry = applied.entry
+      claimOrHandoff = applied.transitionAuthorityHandoff
+    }
+    return { entry, reservation }
+  } catch (error) {
+    if (!attempted) await releaseForwardHttpsAggregateQuotaV3(store.storeQuotaCapability, reservation).catch(() => {})
+    throw error
+  }
+}
+
+async function driveTerminal (store, payload) {
+  const { entry, reservation } = await driveWal(store, 'SESSION_TERMINAL', [{
+    type: 99,
+    transactionId: b4a.alloc(32, 0x5a),
+    virtualBucket: 0,
+    payload
+  }])
+  await commitForwardHttpsAggregateQuotaV3(store.storeQuotaCapability, reservation, {
+    durableWalHeadSequence: store.store.walSequence,
+    durableWalHeadHash: store.store.walHash
+  })
+  return Object.freeze({ walSequence: entry.walSequence, walHash: b4a.from(store.store.walHash), payload })
+}
+
+async function drivePrune (store, payload) {
+  const { entry } = await driveWal(store, 'PRUNE', [{
+    type: 100,
+    transactionId: b4a.alloc(32, 0x5a),
+    virtualBucket: 0,
+    payload
+  }])
+  await adjustForwardHttpsAggregateQuotaV3(store.storeQuotaCapability, {
+    durableTombstonePayloadBuffer: payload,
+    durableWalHeadSequence: store.store.walSequence,
+    durableWalHeadHash: store.store.walHash
+  })
+  return Object.freeze({ walSequence: entry.walSequence, walHash: b4a.from(store.store.walHash), payload })
 }
 
 async function roots (t) {
@@ -107,11 +210,11 @@ test('source store: fresh PREPARED_NEW allocates one slot and recovers', async t
   const id = fixed(0x31)
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
-  const prepared = await prepareForwardHttpsSourceSessionV3(store, { stableSessionId: id, body: b4a.alloc(16, 0x41) })
+  const prepared = await prepareForwardHttpsSourceTurnV3(store, { stableSessionId: id, body: b4a.alloc(16, 0x41) })
   t.is(prepared.walSequence, 1n)
   const status = forwardHttpsSourceStoreV3Status(store)
   t.is(status.unconsumedSlots, status.slotCapacity - 1)
-  await appendForwardHttpsSourceSessionV3(store, { stableSessionId: id, walType: FORWARD_HTTPS_SOURCE_STORE_V3_WAL_TYPE.TRANSPORT_RESERVED, body: b4a.alloc(4, 0x42) })
+  await persistForwardHttpsSourceResultV3(store, { stableSessionId: id, walType: FORWARD_HTTPS_SOURCE_WAL_TYPE.TRANSPORT_RESERVED, body: b4a.alloc(4, 0x42) })
   await closeForwardHttpsSourceStoreV3(store)
   const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(reopened).catch(() => {}) })
@@ -126,11 +229,11 @@ test('source store: duplicate fresh identity rejects; slot identity ignores sequ
   const id = fixed(0x32)
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
-  await prepareForwardHttpsSourceSessionV3(store, { stableSessionId: id })
-  await t.exception.all(prepareForwardHttpsSourceSessionV3(store, { stableSessionId: id }), /not NEVER_SEEN/)
+  await prepareForwardHttpsSourceTurnV3(store, { stableSessionId: id })
+  await t.exception.all(prepareForwardHttpsSourceTurnV3(store, { stableSessionId: id }), /not NEVER_SEEN/)
   // Later sequences reuse the same ALLOCATED slot: no additional slot is consumed
-  await appendForwardHttpsSourceSessionV3(store, { stableSessionId: id, walType: 97 })
-  await appendForwardHttpsSourceSessionV3(store, { stableSessionId: id, walType: 98 })
+  await persistForwardHttpsSourceResultV3(store, { stableSessionId: id, walType: 97 })
+  await persistForwardHttpsSourceResultV3(store, { stableSessionId: id, walType: 98 })
   const status = forwardHttpsSourceStoreV3Status(store)
   t.is(status.unconsumedSlots, status.slotCapacity - 1)
 })
@@ -141,26 +244,49 @@ test('source store: FTM9 flags0 terminalization is never CAPACITY and sticks', a
   const id = fixed(0x33)
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
-  await prepareForwardHttpsSourceSessionV3(store, { stableSessionId: id })
-  const terminal = await terminalizeForwardHttpsSourceSessionV3(store, {
+  await prepareForwardHttpsSourceTurnV3(store, { stableSessionId: id })
+  const slot = store.slots.get(b4a.toString(id, 'hex'))
+  const terminal = await driveTerminal(store, buildFtm9({
+    flags: 0,
     stableSessionId: id,
     sequence: 2n,
-    reason: 'CHAIN_INVALID',
-    newTrustedEpochHighWatermark: 100
-  })
+    priorSessionRevision: slot.priorRevision,
+    newTrustedEpochHighWatermark: 100,
+    reason: 'CHAIN_INVALID'
+  }))
   t.is(terminal.payload.byteLength, 192)
-  const status = forwardHttpsSourceStoreV3Status(store)
-  t.is(status.consumedUnprunedSlots, 1)
-  await t.exception.all(appendForwardHttpsSourceSessionV3(store, { stableSessionId: id, walType: 97 }), /TERMINAL/)
+  // The durable terminal reclassifies on recovery; live work is then TERMINAL.
+  await closeForwardHttpsSourceStoreV3(store)
+  const recoveredStore = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsSourceStoreV3(recoveredStore).catch(() => {}) })
+  const recoveredSlot = recoveredStore.slots.get(b4a.toString(id, 'hex'))
+  t.is(recoveredSlot.state, 'CONSUMED_UNPRUNED')
+  await t.exception.all(persistForwardHttpsSourceResultV3(recoveredStore, { stableSessionId: id, walType: 97 }), /TERMINAL/)
   // Terminal PRUNE keeps the slot permanently consumed
-  const slot = store.slots.get(b4a.toString(id, 'hex'))
-  slot.expiresAtEpoch = 1
-  slot.recoveryGraceUntilEpoch = 1
-  await pruneForwardHttpsSourceSessionV3(store, { stableSessionId: id, pruneEpochSeconds: 200 })
-  const after = forwardHttpsSourceStoreV3Status(store)
-  t.is(after.consumedUnprunedSlots, 0)
-  t.is(after.consumedPrunedSlots, 1)
-  t.is(after.unconsumedSlots, after.slotCapacity - 1)
+  const fpr9 = encodeForwardHttpsRetentionPrunedV3({
+    role: 'SOURCE_STORE',
+    stableSessionId: id,
+    priorSessionRevision: recoveredSlot.priorRevision,
+    pruneEpochSeconds: 200,
+    trustedEpochHighWatermark: 200,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: recoveredSlot.registry.removedLogicalBytes(),
+    chargeEntryCount: recoveredSlot.registry.count,
+    beforeAuthorityBitmap: recoveredSlot.authorityBitmap,
+    allocationDisposition: 0,
+    terminalSlotState: 2,
+    chargeEntryBuffers: recoveredSlot.registry.entriesAscending(),
+    authorityCommitments: recoveredSlot.authorityCommitments || Array.from({ length: 10 }, () => b4a.alloc(32))
+  })
+  await drivePrune(recoveredStore, fpr9)
+  await closeForwardHttpsSourceStoreV3(recoveredStore)
+  const finalStore = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsSourceStoreV3(finalStore).catch(() => {}) })
+  const recovered = forwardHttpsSourceStoreV3Status(finalStore)
+  t.is(recovered.consumedUnprunedSlots, 0)
+  t.is(recovered.consumedPrunedSlots, 1)
+  t.is(recovered.unconsumedSlots, recovered.slotCapacity - 1)
 })
 
 test('source store: FTM9 flags1 minimal absent-sequence terminal then terminal-only FPR9 count0', async t => {
@@ -169,30 +295,52 @@ test('source store: FTM9 flags1 minimal absent-sequence terminal then terminal-o
   const id = fixed(0x34)
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
-  const result = await terminalizeForwardHttpsSourceAbsentSequenceV3(store, {
+  const result = await driveTerminal(store, buildFtm9({
+    flags: 1,
     stableSessionId: id,
     sequence: 5n,
+    priorSessionRevision: 0n,
+    newTrustedEpochHighWatermark: 900,
+    reason: 'FORWARD_HTTPS_SOURCE_STORE_V3_SEQUENCE_INVALID',
     exactRequestCommitment: fixed(0x35),
     expiresAtEpoch: 1000,
-    newTrustedEpochHighWatermark: 900
-  })
+    retainedUntilEpoch: 1900
+  }))
   t.is(result.payload.byteLength, 192)
   t.is(result.payload.readUInt16BE(6), 1)
   t.is(result.payload.readUInt32BE(141), 1000)
   t.is(result.payload.readUInt32BE(145), 1900)
-  // Grace not yet elapsed: pruneEpochSeconds must be strictly after 1900
-  await t.exception.all(pruneForwardHttpsSourceSessionV3(store, { stableSessionId: id, pruneEpochSeconds: 1900 }), /grace/)
-  const pruned = await pruneForwardHttpsSourceSessionV3(store, { stableSessionId: id, pruneEpochSeconds: 1901 })
+  // Grace not yet elapsed: pruneEpochSeconds must be strictly after 1900.
+  // The FPR9 fields come from the recovered mirror state after reopen.
+  await closeForwardHttpsSourceStoreV3(store)
+  const recovered1 = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsSourceStoreV3(recovered1).catch(() => {}) })
+  const slot = recovered1.slots.get(b4a.toString(id, 'hex'))
+  const fpr9 = epoch => encodeForwardHttpsRetentionPrunedV3({
+    role: 'SOURCE_STORE',
+    stableSessionId: id,
+    priorSessionRevision: slot.priorRevision,
+    pruneEpochSeconds: epoch,
+    trustedEpochHighWatermark: Math.max(slot.trustedEpochHighWatermark, epoch),
+    expiresAtEpoch: slot.expiresAtEpoch,
+    recoveryGraceUntilEpoch: slot.recoveryGraceUntilEpoch,
+    removedOrdinaryLogicalBytes: 0n,
+    chargeEntryCount: 0,
+    beforeAuthorityBitmap: slot.authorityBitmap,
+    allocationDisposition: 0,
+    terminalSlotState: 2,
+    chargeEntryBuffers: [],
+    authorityCommitments: slot.authorityCommitments
+  })
+  await t.exception.all(drivePrune(recovered1, fpr9(1900)), /recovery grace|INTEGRITY/)
+  const pruned = await drivePrune(recovered1, fpr9(1901))
   t.is(pruned.payload.byteLength, 256)
   t.is(pruned.payload.readUInt32BE(72), 0) // chargeEntryCount 0
   t.is(pruned.payload.readUInt32BE(76), 640) // beforeAuthorityBitmap bits7+9
   t.is(pruned.payload[84], 0) // NONE_CONSUMED
   t.is(pruned.payload[85], 2) // CONSUMED
-  const status = forwardHttpsSourceStoreV3Status(store)
-  t.is(status.consumedPrunedSlots, 1)
-  t.is(status.unconsumedSlots, status.slotCapacity - 1)
   // Recovery reproduces the exact slot state
-  await closeForwardHttpsSourceStoreV3(store)
+  await closeForwardHttpsSourceStoreV3(recovered1)
   const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(reopened).catch(() => {}) })
   const recovered = forwardHttpsSourceStoreV3Status(reopened)
@@ -206,12 +354,27 @@ test('source store: nonterminal PRUNE releases the slot to FREE', async t => {
   const id = fixed(0x36)
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
-  await prepareForwardHttpsSourceSessionV3(store, { stableSessionId: id })
-  const pruned = await pruneForwardHttpsSourceSessionV3(store, { stableSessionId: id, pruneEpochSeconds: 50 })
+  await prepareForwardHttpsSourceTurnV3(store, { stableSessionId: id })
+  const slot = store.slots.get(b4a.toString(id, 'hex'))
+  const fpr9 = encodeForwardHttpsRetentionPrunedV3({
+    role: 'SOURCE_STORE',
+    stableSessionId: id,
+    priorSessionRevision: slot.priorRevision,
+    pruneEpochSeconds: 50,
+    trustedEpochHighWatermark: 50,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: slot.registry.removedLogicalBytes(),
+    chargeEntryCount: slot.registry.count,
+    beforeAuthorityBitmap: slot.authorityBitmap,
+    allocationDisposition: 1,
+    terminalSlotState: 1,
+    chargeEntryBuffers: slot.registry.entriesAscending(),
+    authorityCommitments: Array.from({ length: 10 }, () => b4a.alloc(32))
+  })
+  const pruned = await drivePrune(store, fpr9)
   t.is(pruned.payload[84], 1) // RELEASE_ALLOCATED
   t.is(pruned.payload[85], 1) // ALLOCATED
-  const status = forwardHttpsSourceStoreV3Status(store)
-  t.is(status.unconsumedSlots, status.slotCapacity)
   await closeForwardHttpsSourceStoreV3(store)
   const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(reopened).catch(() => {}) })
@@ -241,7 +404,7 @@ test('open ABI: source exact required key set enforced', async t => {
   await t.exception.all(openForwardHttpsSourceStoreV3({ ...good, sourceQuotaRecoverySink: sink, bogusKey: 1 }), /unknown field/)
 })
 
-test('source store: post-fsync adjust failure enters absorbing FAILED_PRUNE_DURABLE_PENDING', async t => {
+test('source store: post-fsync adjust failure transitions the quota to absorbing FAILED_WAL', async t => {
   const r = await roots(t)
   let failAdjust = false
   const { authority, capabilities } = await quota(t, r, point => {
@@ -250,14 +413,33 @@ test('source store: post-fsync adjust failure enters absorbing FAILED_PRUNE_DURA
   const id = fixed(0x37)
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
-  await prepareForwardHttpsSourceSessionV3(store, { stableSessionId: id })
+  await prepareForwardHttpsSourceTurnV3(store, { stableSessionId: id })
+  const slot = store.slots.get(b4a.toString(id, 'hex'))
+  const fpr9 = encodeForwardHttpsRetentionPrunedV3({
+    role: 'SOURCE_STORE',
+    stableSessionId: id,
+    priorSessionRevision: slot.priorRevision,
+    pruneEpochSeconds: 50,
+    trustedEpochHighWatermark: 50,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: slot.registry.removedLogicalBytes(),
+    chargeEntryCount: slot.registry.count,
+    beforeAuthorityBitmap: slot.authorityBitmap,
+    allocationDisposition: 1,
+    terminalSlotState: 1,
+    chargeEntryBuffers: slot.registry.entriesAscending(),
+    authorityCommitments: Array.from({ length: 10 }, () => b4a.alloc(32))
+  })
   failAdjust = true
-  await t.exception.all(pruneForwardHttpsSourceSessionV3(store, { stableSessionId: id, pruneEpochSeconds: 50 }), /FAILED_PRUNE_DURABLE_PENDING/)
-  const status = forwardHttpsSourceStoreV3Status(store)
-  t.is(status.state, 'FAILED_PRUNE_DURABLE_PENDING')
-  t.absent(status.localOperational)
+  // The tombstone is durable; the adjust fault transitions the quota authority
+  // to absorbing FAILED_WAL_OUTCOME_UNKNOWN_PENDING with no retry in-process.
+  await t.exception.all(drivePrune(store, fpr9), /failed|INTEGRITY/)
+  const failed = forwardHttpsAggregateQuotaV3Status(authority)
+  t.is(failed.state, 'FAILED_WAL_OUTCOME_UNKNOWN_PENDING')
+  t.absent(failed.localOperational)
   // Every admission rejects; close is idempotent
-  await t.exception.all(appendForwardHttpsSourceSessionV3(store, { stableSessionId: id, walType: 97 }))
+  await t.exception.all(persistForwardHttpsSourceResultV3(store, { stableSessionId: id, walType: 97 }))
   await closeForwardHttpsSourceStoreV3(store)
   await closeForwardHttpsSourceStoreV3(store)
   // Restart recovery applies the durable tombstone exactly once. The failed

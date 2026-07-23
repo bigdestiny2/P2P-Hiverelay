@@ -988,6 +988,13 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
     mirror.orphanSum = (mirror.orphanSum || 0n) + BigInt(entry.ordinaryLogicalCharge)
     mirror.orphanLastRevision = mirror.priorRevision
   }
+  if (entry.terminalLogicalCharge > 0 && payload && payload.byteLength >= 149 && payload.readUInt16BE(6) === 1) {
+    // FTM9 flags1 carries the exact session expiry clock in its minimal tail:
+    // expiresAtEpoch at 141 and retainedUntilEpoch at 145. The terminal-only
+    // FPR9 waits the full FTM9-carried grace.
+    mirror.expiresAtEpoch = payload.readUInt32BE(141)
+    mirror.recoveryGraceUntilEpoch = payload.readUInt32BE(145)
+  }
   mirror.bitmap = entry.authorityBitmap
   mirror.commitments = entry.authorityCommitments
   mirror.consumed = entry.terminalLogicalCharge > 0 || (entry.authorityBitmap & 512) !== 0
@@ -1221,10 +1228,25 @@ export function bindForwardHttpsStoreQuotaActualBuffersV3 (storeQuotaCapability,
   if (finalBuffers.length !== 1 || finalBuffers[0].byteLength < 36) quotaFail('exactly one operation final frame buffer is required', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
   for (const prefix of type113Buffers) if (prefix.byteLength !== 118) quotaFail('type113 frame payload must be exactly 118 bytes', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
   const finalPayload = finalBuffers[0]
-  const stableSessionId = internal.plan.operation === 'PRUNE'
+  // The FTM9 and FPR9 headers place the session id at offset 8; ordinary
+  // session payloads place it at offset 4.
+  const stableSessionId = (internal.plan.operation === 'PRUNE' || internal.plan.operation === 'SESSION_TERMINAL')
     ? b4a.from(finalPayload.subarray(8, 40))
     : b4a.from(finalPayload.subarray(4, 36))
   if (b4a.equals(stableSessionId, ZERO32)) quotaFail('bound session identity must be nonzero', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+  if (internal.plan.operation === 'PRUNE') {
+    // Per-variant clock eligibility against the exact recovered state: flags0
+    // ordinary and terminal-existing wait the strict +900 past the recorded
+    // recoveryGraceUntilEpoch (zero for unclocked sessions, FTM9-carried for
+    // the terminal-only variant); flags1/flags2 prefix variants are the
+    // disjoint immediate exception with zeroed expiry fields.
+    const pruned = decodeForwardHttpsRetentionPrunedV3(finalPayload)
+    const mirror = internal.state.sessions.get(`${capability.role}:${b4a.toString(stableSessionId, 'hex')}`) || null
+    if (pruned.flags === 0) {
+      const grace = mirror ? (mirror.recoveryGraceUntilEpoch || 0) : 0
+      if (pruned.pruneEpochSeconds <= grace) quotaFail('FPR9 prune epoch has not passed the exact recovery grace', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    }
+  }
   internal.actual = { logicalBytes, physicalBytes, commitments: arrays.map(item => hmac(ZERO32, item)) }
   internal.totalFrames = 1 + type113Buffers.length
   internal.nextOrdinal = 0
@@ -1301,8 +1323,10 @@ export async function applyForwardHttpsAggregateQuotaWalFrameV3 (storeQuotaCapab
     beginForwardHttpsAggregateQuotaWalAttemptV3(internal, claimInternal)
     const payload = bytes(frame.payload, null, 'frame.payload')
     // Per-frame session binding: frames of a different session never share
-    // this reservation (session-A prefix with session-B final rejects).
-    const frameSession = (frameType === 100 || frameType === 118)
+    // this reservation (session-A prefix with session-B final rejects). The
+    // FTM9/FPR9 headers place the session id at offset 8; ordinary session
+    // payloads place it at offset 4.
+    const frameSession = (frameType === 99 || frameType === 117 || frameType === 100 || frameType === 118)
       ? (payload.byteLength >= 40 ? payload.subarray(8, 40) : null)
       : (payload.byteLength >= 36 ? payload.subarray(4, 36) : null)
     if (frameSession === null || !b4a.equals(frameSession, claimInternal.stableSessionId)) {
