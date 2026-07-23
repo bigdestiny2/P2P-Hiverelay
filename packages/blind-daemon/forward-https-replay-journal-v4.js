@@ -1629,6 +1629,7 @@ const DOMAIN_CHARGE_REGISTRY_FINAL = b4a.from('hiverelay.blind.forward-https-quo
 const DOMAIN_AUTHORITY_REGISTRY = b4a.from('hiverelay.blind.forward-https-authority-registry.v3', 'ascii')
 const DOMAIN_PRUNE_SESSION_STATE = b4a.from('hiverelay.blind.forward-https-prune-session-state.v3', 'ascii')
 const DOMAIN_PREFIX_SESSION_STATE = b4a.from('hiverelay.blind.forward-https-prefix-session-state.v3', 'ascii')
+const DOMAIN_MINIMAL_TERMINAL = b4a.from('hiverelay.blind.forward-https-minimal-terminal-authority.v3', 'ascii')
 const DOMAIN_RETENTION_LOOKUP = b4a.from('hiverelay.blind.forward-https-retention-lookup.v3', 'ascii')
 const DOMAIN_TERMINAL_STATE = b4a.from('hiverelay.blind.forward-https-terminal-state.v3', 'ascii')
 const DOMAIN_TERMINAL_STATE_EXISTING = b4a.from('hiverelay.blind.forward-https-terminal-state-existing.v3', 'ascii')
@@ -1747,9 +1748,21 @@ function decodeFtm9Payload (payload, expectedWalType) {
     retainedUntilEpoch = tail.readUInt32BE(4)
     if (expiresAtEpoch > EXPIRY_HORIZON) storeWalFail('FTM9 expiry horizon is invalid')
     if (retainedUntilEpoch !== expiresAtEpoch + RECOVERY_GRACE_SECONDS) storeWalFail('FTM9 retainedUntil is invalid')
-    minimalTerminalAuthorityCommitment = b4a.from(tail.subarray(8, 40))
-    if (b4a.equals(minimalTerminalAuthorityCommitment, ZERO32)) storeWalFail('FTM9 minimal authority commitment is invalid')
+    // The tail carries the exact request commitment; M is recomputed from
+    // the complete payload, never stored or trusted as an input.
+    const exactRequestCommitment = b4a.from(tail.subarray(8, 40))
+    if (b4a.equals(exactRequestCommitment, ZERO32)) storeWalFail('FTM9 request commitment is invalid')
     for (let index = 40; index < 51; index++) if (tail[index] !== 0) storeWalFail('FTM9 minimal tail padding is invalid')
+    const sequenceBytes = b4a.alloc(8)
+    writeU64(sequenceBytes, 0, sequence)
+    const scalars = b4a.alloc(13)
+    scalars.writeUInt32BE(expiresAtEpoch, 0)
+    scalars.writeUInt32BE(retainedUntilEpoch, 4)
+    scalars.writeUInt32BE(newTrustedEpochHighWatermark, 8)
+    scalars[12] = reasonLength
+    minimalTerminalAuthorityCommitment = blake2b256(b4a.concat([
+      DOMAIN_MINIMAL_TERMINAL, b4a.from([role]), stableSessionId, sequenceBytes, exactRequestCommitment, scalars, reason
+    ]))
   }
   return freezeResult({
     role,

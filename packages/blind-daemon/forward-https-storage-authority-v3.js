@@ -233,19 +233,13 @@ export function encodeForwardHttpsSessionTerminalV3 (input) {
     if (expiresAtEpoch > EXPIRY_HORIZON) throw new TypeError('expiresAtEpoch exceeds the representable horizon')
     const retainedUntilEpoch = expiresAtEpoch + RECOVERY_GRACE_SECONDS
     if (input.retainedUntilEpoch !== retainedUntilEpoch) throw new TypeError('retainedUntilEpoch must equal expiresAtEpoch+900')
-    const M = deriveForwardHttpsMinimalTerminalAuthorityCommitmentV3({
-      role: input.role,
-      stableSessionId,
-      sequence,
-      exactRequestCommitment: input.exactRequestCommitment,
-      expiresAtEpoch,
-      retainedUntilEpoch,
-      newTrustedEpochHighWatermark: highWatermark,
-      reason
-    })
+    // The frozen minimal tail carries the exact request commitment; the
+    // minimal authority commitment M is always recomputed from the payload
+    // fields, never stored.
+    const requestCommitment = asBytes32(input.exactRequestCommitment, 'exactRequestCommitment', true)
     output.writeUInt32BE(expiresAtEpoch, offset); offset += 4
     output.writeUInt32BE(retainedUntilEpoch, offset); offset += 4
-    b4a.copy(M, output, offset); offset += 32
+    b4a.copy(requestCommitment, output, offset); offset += 32
     offset += 11 // zero padding
   } else {
     offset += 51 // zero tail

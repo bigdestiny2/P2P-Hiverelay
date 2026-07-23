@@ -125,7 +125,6 @@ function sourceReplayRecord (id, now) {
   }))
 }
 
-
 test('replay journal bootstrap: fresh-root open for both roles and snapshot reopen round trip', async t => {
   const { capabilities, roots } = await quota(t, SOURCE)
   const clock = () => 100000n

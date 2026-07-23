@@ -99,7 +99,9 @@ test('FTM9 flags1 golden: minimal absent-sequence terminal, exact clock and comm
   t.is(payload.readUInt16BE(6), 1)
   t.is(payload.readUInt32BE(141), expiresAtEpoch)
   t.is(payload.readUInt32BE(145), expiresAtEpoch + 900)
-  t.ok(b4a.equals(payload.subarray(149, 181), M))
+  // The frozen minimal tail carries the exact request commitment at 149..181;
+  // M is recomputed from the payload fields, never stored in the tail.
+  t.ok(b4a.equals(payload.subarray(149, 181), fixed(0x53)))
   for (let index = 181; index < 192; index++) t.is(payload[index], 0)
   const classes = deriveForwardHttpsMinimalTerminalAuthorityClassesV3(M)
   t.is(classes.length, 10)
