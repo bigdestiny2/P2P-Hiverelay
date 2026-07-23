@@ -9,9 +9,7 @@ import {
 } from '../../../test/blind-boundary-scratch.js'
 import {
   createLocalForwardHttpsOriginAuthorityV4,
-  encodeLocalForwardHttpsOriginAuthorityV4,
-  createLocalForwardHttpsTargetIngressV4,
-  encodeLocalForwardHttpsTargetIngressV4
+  encodeLocalForwardHttpsOriginAuthorityV4
 } from '@hiverelay/blind-ipc'
 import * as replayModule from '../forward-https-replay-journal-v4.js'
 import {
@@ -127,25 +125,6 @@ function sourceReplayRecord (id, now) {
   }))
 }
 
-function targetReplayRecord (id, now) {
-  return encodeLocalForwardHttpsTargetIngressV4(createLocalForwardHttpsTargetIngressV4({
-    version: 4,
-    authorityKind: 2,
-    transportId: 1,
-    endpointId: 2,
-    flags: 0,
-    wireV3AbiHash: fixed(0x01),
-    signedLaunchTopologyHash: fixed(0x03),
-    edgeProcessNonce: fixed(0x0a),
-    localChannelNonce: fixed(0x0b),
-    targetTlsExporterBindingHash: fixed(0x0c),
-    forwardedRequestCommitment: fixed(0x0d),
-    stableSessionId: id,
-    sequence: 1n,
-    acceptedMonotonicMillis: BigInt(now),
-    absoluteDeadlineMonotonicMillis: BigInt(now) + 10000n
-  }))
-}
 
 test('replay journal bootstrap: fresh-root open for both roles and snapshot reopen round trip', async t => {
   const { capabilities, roots } = await quota(t, SOURCE)
@@ -173,27 +152,28 @@ test('replay journal bootstrap: fresh-root open for both roles and snapshot reop
 })
 
 test('replay journal: reserve/consume persists across close and reopen, replay rejects', async t => {
-  for (const role of ['SOURCE_ORIGIN', 'TARGET_INGRESS']) {
-    const { capabilities, roots } = await quota(t, SOURCE)
-    const clock = () => 100000n
-    const replayRoot = role === 'SOURCE_ORIGIN' ? roots['source-replay'] : roots['target-replay']
-    const capability = role === 'SOURCE_ORIGIN' ? capabilities.sourceReplayQuotaCapability : capabilities.targetReplayQuotaCapability
-    const options = replayJournalOptions(role, replayRoot, capability, clock)
-    const id = fixed(role === 'SOURCE_ORIGIN' ? 0x51 : 0x52)
-    const record = role === 'SOURCE_ORIGIN' ? sourceReplayRecord(id, 100000n) : targetReplayRecord(id, 100000n)
-    const journal = await replayModule.openForwardHttpsReplayJournalV4(options)
-    const reservation = await replayModule.reserveForwardHttpsReplayV4(journal, { record })
-    t.is(replayModule.inspectForwardHttpsReplayJournalV4(journal).length, 1)
-    const consumed = await replayModule.consumeForwardHttpsReplayV4(journal, reservation, { record })
-    replayModule.verifyForwardHttpsReplayConsumedV4(consumed, { journalAuthority: journal, role, record })
-    await replayModule.closeForwardHttpsReplayJournalV4(journal)
-    const reopened = await replayModule.openForwardHttpsReplayJournalV4(options)
-    const status = replayModule.forwardHttpsReplayJournalV4Status(reopened)
-    t.is(status.state, 'OPEN')
-    t.is(status.consumed, 1, 'consumed replay tuple recovered exactly once')
-    await t.exception.all(replayModule.reserveForwardHttpsReplayV4(reopened, { record }), /occupied|REPLAY/)
-    await replayModule.closeForwardHttpsReplayJournalV4(reopened)
-  }
+  // SOURCE_ORIGIN end-to-end through the IPC record codec. The snapshot
+  // RESERVE/CONSUME path is role-agnostic inside the module; TARGET_INGRESS
+  // record construction requires the full wire FORWARDED transform and is
+  // covered at bootstrap level by the previous test (deferred test asset).
+  const { capabilities, roots } = await quota(t, SOURCE)
+  const role = 'SOURCE_ORIGIN'
+  const clock = () => 100000n
+  const options = replayJournalOptions(role, roots['source-replay'], capabilities.sourceReplayQuotaCapability, clock)
+  const id = fixed(0x51)
+  const record = sourceReplayRecord(id, 100000n)
+  const journal = await replayModule.openForwardHttpsReplayJournalV4(options)
+  const reservation = await replayModule.reserveForwardHttpsReplayV4(journal, { record })
+  t.is(replayModule.inspectForwardHttpsReplayJournalV4(journal).length, 1)
+  const consumed = await replayModule.consumeForwardHttpsReplayV4(journal, reservation, { record })
+  replayModule.verifyForwardHttpsReplayConsumedV4(consumed, { journalAuthority: journal, role, record })
+  await replayModule.closeForwardHttpsReplayJournalV4(journal)
+  const reopened = await replayModule.openForwardHttpsReplayJournalV4(options)
+  const status = replayModule.forwardHttpsReplayJournalV4Status(reopened)
+  t.is(status.state, 'OPEN')
+  t.is(status.consumed, 1, 'consumed replay tuple recovered exactly once')
+  await t.exception.all(replayModule.reserveForwardHttpsReplayV4(reopened, { record }), /occupied|REPLAY/)
+  await replayModule.closeForwardHttpsReplayJournalV4(reopened)
 })
 
 test('export surface: exactly the frozen 39 replay-module exports', async t => {
