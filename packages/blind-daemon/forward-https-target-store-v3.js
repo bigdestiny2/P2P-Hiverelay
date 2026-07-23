@@ -394,9 +394,14 @@ async function appendSession (state, input) {
   }
   const stableSessionId = b4a.from(input.stableSessionId)
   const slot = sessionSlot(state, stableSessionId)
-  // ALLOCATED_WITH_PREFIX follows the exact allocated-session rules: later
-  // operations are admitted with fresh contiguous crypto revisions strictly
-  // beyond the recorded orphan last revision.
+  // Identity first-match at the store boundary (v16 stage_2): PRUNED_RELEASED
+  // returns mutation-free CONFLICT; PRESENT_PREFIX_ALLOCATED returns
+  // mutation-free SESSION_CLOSED (only the exact prefix PRUNE is eligible);
+  // consumed identities are sticky TERMINAL; ALLOCATED_WITH_PREFIX follows
+  // the exact allocated-session rules subject to the orphan-prefix surcharge.
+  if (slot && slot.prunedReleased) fail('session identity is PRUNED_RELEASED', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.CONFLICT)
+  if (slot && slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.PREFIX_ALLOCATED) fail('session prefix is closed', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.SESSION_CLOSED)
+  if (slot && (slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_UNPRUNED || slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_PRUNED)) fail('session identity is TERMINAL', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.TERMINAL)
   if (!slot || (slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED && slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED_WITH_PREFIX)) fail('session is not ALLOCATED', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.SEQUENCE_INVALID)
   const planned = input.plannedRemovableChargeEntryCount == null ? 1 : input.plannedRemovableChargeEntryCount
   if (slot.registry.count + planned > CHARGE_ENTRY_CAP) {

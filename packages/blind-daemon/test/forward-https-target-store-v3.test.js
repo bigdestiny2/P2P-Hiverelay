@@ -521,6 +521,40 @@ test('overlay terminalization: flags0 on ALLOCATED_WITH_PREFIX with orphan persi
   t.is(identityOf(recoveredSlot), IDENTITY.PRUNED_CONSUMED)
 })
 
+test('store-level precedence: PRESENT_PREFIX_ALLOCATED is SESSION_CLOSED, consumed is TERMINAL, pruned is CONFLICT', async t => {
+  const r = await roots(t)
+  const capabilities = await quota(t, r)
+  const prefixId = fixed(0x63)
+  const consumedId = fixed(0x64)
+  const prunedId = fixed(0x65)
+  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  // PREFIX_ALLOCATED: mutation-free SESSION_CLOSED before any other work
+  await rawAppend(store, 113, prefixPayload(prefixId))
+  // consumed identity: sticky TERMINAL
+  await openForwardHttpsTargetSessionV3(store, { stableSessionId: consumedId })
+  await terminalizeForwardHttpsTargetSessionV3(store, { stableSessionId: consumedId, sequence: 3n, reason: 'CHAIN_INVALID' })
+  // pruned identity: CONFLICT
+  await openForwardHttpsTargetSessionV3(store, { stableSessionId: prunedId })
+  await pruneForwardHttpsTargetSessionV3(store, { stableSessionId: prunedId, pruneEpochSeconds: 500 })
+  await closeForwardHttpsTargetStoreV3(store)
+  const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
+  t.is(identityOf(reopened.slots.get(b4a.toString(prefixId, 'hex'))), IDENTITY.PRESENT_PREFIX_ALLOCATED)
+  const headBefore = forwardHttpsTargetStoreV3Status(reopened).walHeadSequence
+  let sessionClosed = null
+  try { await appendForwardHttpsTargetSessionV3(reopened, { stableSessionId: prefixId, walType: 112 }) } catch (error) { sessionClosed = error }
+  t.is(sessionClosed && sessionClosed.code, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_SESSION_CLOSED')
+  let terminal = null
+  try { await appendForwardHttpsTargetSessionV3(reopened, { stableSessionId: consumedId, walType: 112 }) } catch (error) { terminal = error }
+  t.is(terminal && terminal.code, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_TERMINAL')
+  let conflict = null
+  try { await appendForwardHttpsTargetSessionV3(reopened, { stableSessionId: prunedId, walType: 112 }) } catch (error) { conflict = error }
+  t.is(conflict && conflict.code, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_CONFLICT')
+  // All three rejections are mutation-free
+  t.is(forwardHttpsTargetStoreV3Status(reopened).walHeadSequence, headBefore)
+})
+
 test('quota gate: OPEN admits, fail-WAL enters FAILED_WAL_OUTCOME_UNKNOWN_PENDING and blocks all work', async t => {
   const r = await roots(t)
   const authority = await openForwardHttpsAggregateQuotaV3({

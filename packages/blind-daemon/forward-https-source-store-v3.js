@@ -296,6 +296,10 @@ export async function appendForwardHttpsSourceSessionV3 (state, input) {
   if (![WAL_TYPE.TRANSPORT_RESERVED, WAL_TYPE.RESULT_PERSISTED].includes(walType)) throw new TypeError('walType must be 97 or 98')
   const stableSessionId = b4a.from(input.stableSessionId)
   const slot = state.slots.get(keyOf(stableSessionId))
+  // Identity first-match at the store boundary (v16 stage_2): PRUNED_RELEASED
+  // returns mutation-free CONFLICT; consumed identities are sticky TERMINAL.
+  if (slot && slot.prunedReleased) fail('session identity is PRUNED_RELEASED', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.CONFLICT)
+  if (slot && (slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_UNPRUNED || slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_PRUNED)) fail('session identity is TERMINAL', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.TERMINAL)
   if (!slot || slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED) fail('session is not ALLOCATED', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.SEQUENCE_INVALID)
   const planned = input.plannedRemovableChargeEntryCount == null ? 1 : input.plannedRemovableChargeEntryCount
   if (slot.registry.count + planned > CHARGE_ENTRY_CAP) {

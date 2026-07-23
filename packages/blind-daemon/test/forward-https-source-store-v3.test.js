@@ -123,7 +123,7 @@ test('source store: FTM9 flags0 terminalization is never CAPACITY and sticks', a
   t.is(terminal.payload.byteLength, 192)
   const status = forwardHttpsSourceStoreV3Status(store)
   t.is(status.consumedUnprunedSlots, 1)
-  await t.exception.all(appendForwardHttpsSourceSessionV3(store, { stableSessionId: id, walType: 97 }), /not ALLOCATED/)
+  await t.exception.all(appendForwardHttpsSourceSessionV3(store, { stableSessionId: id, walType: 97 }), /TERMINAL/)
   // Terminal PRUNE keeps the slot permanently consumed
   const slot = store.slots.get(b4a.toString(id, 'hex'))
   slot.expiresAtEpoch = 1

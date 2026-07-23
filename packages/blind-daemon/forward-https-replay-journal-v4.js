@@ -762,6 +762,7 @@ function quotaState (authority) {
   if (!state || state.authority !== authority) quotaFail('quota authority is forged', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
   if (state.closed) quotaFail('quota authority is closed', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.CLOSED)
   if (state.failed) quotaFail('quota authority is failed', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+  if (state.closing && !state.closed) quotaFail('quota authority is closing', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
   return state
 }
 
@@ -832,6 +833,7 @@ export async function openForwardHttpsAggregateQuotaV3 (options) {
     openRecoverySinks: { SOURCE_STORE: null, TARGET_STORE: null },
     initialized: false,
     capabilitiesMinted: false,
+    capabilityInternals: [],
     pendingReservation: false,
     pendingReservationObject: null,
     tail: Promise.resolve(),
@@ -861,6 +863,7 @@ export function mintForwardHttpsAggregateQuotaCapabilitiesV3 (quotaAuthority) {
   for (const [key, role] of [['sourceReplayQuotaCapability', 'SOURCE_REPLAY'], ['targetReplayQuotaCapability', 'TARGET_REPLAY'], ['sourceStoreQuotaCapability', 'SOURCE_STORE'], ['targetStoreQuotaCapability', 'TARGET_STORE']]) {
     const capability = Object.freeze({})
     QUOTA_CAPABILITIES.set(capability, { quotaAuthority, role, root: state.roots[role], burned: false })
+    state.capabilityInternals.push(QUOTA_CAPABILITIES.get(capability))
     output[key] = capability
   }
   return deepFreeze(output)
@@ -1413,7 +1416,10 @@ export function releaseForwardHttpsAggregateQuotaV3 (quotaCapability, reservatio
   const state = quotaState(capability.quotaAuthority)
   return serialize(state, async () => {
     // Release is forbidden after the first WAL attempt; pre-first-apply
-    // release burns the reservation and every minted/unissued claim.
+    // release burns the reservation and every minted/unissued claim. A
+    // terminal reservation aborted before the first begin is the terminal
+    // prewrite abort: quota transitions FAILED_PREWRITE, claims burn, the
+    // role bytes stay unchanged and the caller receives INTEGRITY.
     if (internal.walAttempted) quotaFail('release is forbidden after the first WAL attempt', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
     await quotaFault(state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.RELEASE_BEFORE_UNLOCK)
     internal.burned = true
@@ -1423,6 +1429,12 @@ export function releaseForwardHttpsAggregateQuotaV3 (quotaCapability, reservatio
     }
     state.pendingReservation = false
     state.pendingReservationObject = null
+    if (internal.plan.operation === 'SESSION_TERMINAL') {
+      state.failed = true
+      state.failureState = 'FAILED_PREWRITE'
+      state.blocker = FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY
+      quotaFail('terminal prewrite abort; FAILED_PREWRITE', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    }
   })
 }
 
@@ -1481,13 +1493,13 @@ export function adjustForwardHttpsAggregateQuotaV3 (storeQuotaCapability, input)
 
 export function forwardHttpsAggregateQuotaV3Status (quotaAuthority) {
   // Status is an exact-authority exception to the operational gate: it remains
-  // callable in FAILED_PREWRITE, FAILED_WAL_OUTCOME_UNKNOWN_PENDING and CLOSING.
+  // callable in FAILED_PREWRITE, FAILED_WAL_OUTCOME_UNKNOWN_PENDING, CLOSING
+  // and CLOSED.
   const state = quotaAuthority && QUOTA_AUTHORITIES.get(quotaAuthority)
   if (!state || state.authority !== quotaAuthority) quotaFail('quota authority is forged', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
-  if (state.closed) quotaFail('quota authority is closed', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.CLOSED)
   const physical = state.physical
   return deepFreeze({
-    state: state.failed ? (state.failureState || 'FAILED') : state.initialized ? 'OPEN' : 'UNINITIALIZED',
+    state: state.closed ? 'CLOSED' : state.failed ? (state.failureState || 'FAILED') : state.closing ? 'CLOSING' : state.initialized ? 'OPEN' : 'UNINITIALIZED',
     sourceLogicalChargedBytes: state.logical.SOURCE_STORE,
     targetLogicalChargedBytes: state.logical.TARGET_STORE,
     aggregateLogicalChargedBytes: state.logical.SOURCE_STORE + state.logical.TARGET_STORE,
@@ -1508,10 +1520,14 @@ export async function closeForwardHttpsAggregateQuotaV3 (quotaAuthority) {
   const state = quotaAuthority && QUOTA_AUTHORITIES.get(quotaAuthority)
   if (!state || state.authority !== quotaAuthority) quotaFail('quota authority is forged', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
   if (state.closed) return
+  // An ordinary pending reservation before begin-WAL: close returns INTEGRITY
+  // and leaves the owning operation responsible for ordinary release.
+  if (state.pendingReservation && !state.failed) quotaFail('quota close has a pending ordinary reservation', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+  state.closing = true
   await serialize(state, async () => {
     await quotaFault(state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.CLOSE_BEFORE_INVALIDATE)
+    for (const capability of state.capabilityInternals) capability.burned = true
     state.closed = true
-    for (const capability of QUOTA_CAPABILITIES.values?.() || []) capability.burned = true
   })
 }
 
@@ -1524,7 +1540,7 @@ export function assertForwardHttpsAggregateQuotaOperationalV3 (storeQuotaCapabil
   if (!capability || capability.burned) quotaFail('quota capability is forged', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
   const state = capability.quotaAuthority && QUOTA_AUTHORITIES.get(capability.quotaAuthority)
   if (!state || state.authority !== capability.quotaAuthority) quotaFail('quota authority is forged', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
-  if (state.closed || state.failed || !state.initialized) {
+  if (state.closed || state.closing || state.failed || !state.initialized) {
     quotaFail('quota authority is not operational', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
   }
 }

@@ -661,6 +661,61 @@ test('reserve disposition union: REQUESTED_TERMINAL for terminal plans and ENTRY
   t.ok(cappedUnion.terminalReservation)
 })
 
+test('failure states: terminal prewrite abort enters FAILED_PREWRITE; close rules reach CLOSED exactly', async t => {
+  const { authority, capability } = await quota(t, TARGET)
+  const id = fixed(0x7c)
+  const terminalPayload = encodeForwardHttpsSessionTerminalV3({
+    role: TARGET,
+    flags: 1,
+    stableSessionId: id,
+    sequence: 2n,
+    priorSessionRevision: 0n,
+    newTrustedEpochHighWatermark: 1,
+    reason: 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID',
+    exactRequestCommitment: fixed(0x7d),
+    expiresAtEpoch: 100,
+    retainedUntilEpoch: 1000
+  })
+  const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'SESSION_TERMINAL',
+    knownInputBuffers: [terminalPayload],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const { disposition, terminalReservation } = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan)
+  t.is(disposition, 'REQUESTED_TERMINAL')
+  // Terminal prewrite abort: release before the first begin enters FAILED_PREWRITE
+  await t.exception.all(replayModule.releaseForwardHttpsAggregateQuotaV3(capability, terminalReservation), /FAILED_PREWRITE/)
+  const failed = replayModule.forwardHttpsAggregateQuotaV3Status(authority)
+  t.is(failed.state, 'FAILED_PREWRITE')
+  t.absent(failed.localOperational)
+  await t.exception.all(() => replayModule.assertForwardHttpsAggregateQuotaOperationalV3(capability), /not operational/)
+  // Close reaches CLOSED and exact-owner repeat resolves without retry
+  await closeForwardHttpsAggregateQuotaV3(authority)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).state, 'CLOSED')
+  await closeForwardHttpsAggregateQuotaV3(authority)
+  // Foreign authority rejects
+  await t.exception.all(closeForwardHttpsAggregateQuotaV3(Object.freeze({})), /forged|AUTHORITY_INVALID/)
+})
+
+test('close with a pending ordinary reservation returns INTEGRITY and never steals the token', async t => {
+  const { authority, capability } = await quota(t, TARGET)
+  const id = fixed(0x7e)
+  const payload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x41)])
+  const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'TURN_FINAL',
+    knownInputBuffers: [payload],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const { reservation } = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan)
+  await t.exception.all(closeForwardHttpsAggregateQuotaV3(authority), /pending ordinary reservation/)
+  // The owning operation still holds the token and can release cleanly
+  await replayModule.releaseForwardHttpsAggregateQuotaV3(capability, reservation)
+  await closeForwardHttpsAggregateQuotaV3(authority)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).state, 'CLOSED')
+})
+
 test('claim fencing: derive rejects missing, caller-constructed and non-SYNCED claims', async t => {
   const id = fixed(0x76)
   const payload = sessionBody(id)
