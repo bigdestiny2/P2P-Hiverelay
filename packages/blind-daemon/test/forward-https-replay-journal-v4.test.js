@@ -107,7 +107,7 @@ test('FPR9 terminal-only count0: empty registry commitment and two authority dom
     expiresAtEpoch,
     retainedUntilEpoch,
     newTrustedEpochHighWatermark: 4242,
-    reason: 'SEQUENCE_INVALID'
+    reason: 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID'
   })
   const commitments = Array.from({ length: 10 }, () => b4a.from(ZERO32))
   commitments[7] = blake2b256(b4a.concat([b4a.from('hiverelay.blind.forward-https-retention-lookup.v3', 'ascii'), M]))
@@ -367,7 +367,7 @@ test('derive: FTM9 minimal terminal yields bitmap640 and rederived class7/class9
     sequence: 3n,
     priorSessionRevision: 0n,
     newTrustedEpochHighWatermark: 77,
-    reason: 'SEQUENCE_INVALID',
+    reason: 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID',
     exactRequestCommitment: fixed(0x69),
     expiresAtEpoch,
     retainedUntilEpoch: expiresAtEpoch + 900

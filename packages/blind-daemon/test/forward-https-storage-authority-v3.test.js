@@ -80,7 +80,7 @@ test('FTM9 flags1 golden: minimal absent-sequence terminal, exact clock and comm
     expiresAtEpoch,
     retainedUntilEpoch: expiresAtEpoch + 900,
     newTrustedEpochHighWatermark: 999,
-    reason: 'SEQUENCE_INVALID'
+    reason: 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID'
   })
   const payload = encodeForwardHttpsSessionTerminalV3({
     role: TARGET,
@@ -89,7 +89,7 @@ test('FTM9 flags1 golden: minimal absent-sequence terminal, exact clock and comm
     sequence: 11n,
     priorSessionRevision: 0n,
     newTrustedEpochHighWatermark: 999,
-    reason: 'SEQUENCE_INVALID',
+    reason: 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID',
     exactRequestCommitment: fixed(0x53),
     expiresAtEpoch,
     retainedUntilEpoch: expiresAtEpoch + 900
@@ -118,7 +118,7 @@ test('FTM9 horizon: expiry above 4294966394 rejects; boundary admits', async t =
     sequence: 1n,
     priorSessionRevision: 0n,
     newTrustedEpochHighWatermark: 1,
-    reason: 'SEQUENCE_INVALID',
+    reason: 'FORWARD_HTTPS_SOURCE_STORE_V3_SEQUENCE_INVALID',
     exactRequestCommitment: fixed(0x55),
     retainedUntilEpoch: 4294966394 + 900
   }
@@ -136,7 +136,7 @@ test('FTM9 flags1 rejects nonzero counters, wrong reason, nonzero revision', asy
     sequence: 1n,
     priorSessionRevision: 0n,
     newTrustedEpochHighWatermark: 1,
-    reason: 'SEQUENCE_INVALID',
+    reason: 'FORWARD_HTTPS_SOURCE_STORE_V3_SEQUENCE_INVALID',
     exactRequestCommitment: fixed(0x57),
     expiresAtEpoch: 100,
     retainedUntilEpoch: 1000

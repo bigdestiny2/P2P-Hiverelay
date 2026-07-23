@@ -419,7 +419,7 @@ export async function terminalizeForwardHttpsTargetAbsentSequenceV3 (state, inpu
     sequence: input.sequence,
     priorSessionRevision: 0n,
     newTrustedEpochHighWatermark: input.newTrustedEpochHighWatermark,
-    reason: 'SEQUENCE_INVALID',
+    reason: 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID',
     exactRequestCommitment: input.exactRequestCommitment,
     expiresAtEpoch: input.expiresAtEpoch,
     retainedUntilEpoch: input.expiresAtEpoch + 900

@@ -1327,7 +1327,10 @@ function decodeFtm9Payload (payload, expectedWalType) {
   } else {
     if (priorSessionRevision !== 0n) storeWalFail('FTM9 minimal terminal requires zero prior revision')
     if (sequence === 0n) storeWalFail('FTM9 minimal terminal requires nonzero sequence')
-    if (b4a.toString(reason, 'ascii') !== 'SEQUENCE_INVALID') storeWalFail('FTM9 minimal terminal reason is invalid')
+    const exactReason = role === 1
+      ? 'FORWARD_HTTPS_SOURCE_STORE_V3_SEQUENCE_INVALID'
+      : 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID'
+    if (b4a.toString(reason, 'ascii') !== exactReason) storeWalFail('FTM9 minimal terminal reason is invalid')
     for (const value of [...buckets, transportTurnsSpent, transportBytesSpent]) if (value !== 0) storeWalFail('FTM9 minimal terminal counters are invalid')
     expiresAtEpoch = tail.readUInt32BE(0)
     retainedUntilEpoch = tail.readUInt32BE(4)

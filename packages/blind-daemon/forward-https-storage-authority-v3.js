@@ -190,7 +190,12 @@ export function encodeForwardHttpsSessionTerminalV3 (input) {
   if (flags === 1 && (priorSessionRevision !== 0n || sequence === 0n)) fail('FTM9 minimal terminal requires zero revision and nonzero sequence', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
   const reason = typeof input.reason === 'string' ? b4a.from(input.reason, 'ascii') : b4a.from(input.reason)
   if (reason.byteLength < 1 || reason.byteLength > 64) throw new TypeError('reason must be 1..64 bytes')
-  if (flags === 1 && b4a.toString(reason, 'ascii') !== 'SEQUENCE_INVALID') fail('FTM9 minimal terminal reason must be SEQUENCE_INVALID', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
+  // flags1 carries the exact 46-byte role SEQUENCE_INVALID code; a synthetic
+  // short SEQUENCE_INVALID reason is forbidden.
+  const exactReason = role === 1
+    ? 'FORWARD_HTTPS_SOURCE_STORE_V3_SEQUENCE_INVALID'
+    : 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID'
+  if (flags === 1 && b4a.toString(reason, 'ascii') !== exactReason) fail('FTM9 minimal terminal reason must be the exact role SEQUENCE_INVALID code', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
   const buckets = input.buckets || [0, 0, 0, 0, 0]
   if (!Array.isArray(buckets) || buckets.length !== 5) throw new TypeError('buckets must contain five u16 counters')
   for (const value of buckets) if (!Number.isSafeInteger(value) || value < 0 || value > 65535) throw new TypeError('bucket counter must be u16')
