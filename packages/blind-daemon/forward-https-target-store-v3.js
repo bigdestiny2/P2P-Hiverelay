@@ -30,7 +30,8 @@ import {
   FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3,
   createForwardHttpsChargeRegistryV3,
   encodeForwardHttpsSessionTerminalV3,
-  verifyForwardHttpsTerminalHeadroomV3
+  verifyForwardHttpsTerminalHeadroomV3,
+  classifyForwardHttpsHistoricIdentityV3
 } from './forward-https-storage-authority-v3.js'
 
 const ROLE = FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3.TARGET_STORE
@@ -767,4 +768,47 @@ export async function closeForwardHttpsTargetStoreV3 (state) {
 }
 
 export const FORWARD_HTTPS_TARGET_STORE_V3_WAL_TYPE = WAL_TYPE
+export const FORWARD_HTTPS_TARGET_WAL_TYPE = WAL_TYPE
 export const FORWARD_HTTPS_TARGET_STORE_V3_HISTORIC_IDENTITY = FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3
+
+export const FORWARD_HTTPS_TARGET_STORE_V3_STATUS = Object.freeze({
+  schemaVersion: 3,
+  implementationReady: true,
+  descriptorOperationBits: 0,
+  advertisedOperationBits: 0,
+  readinessOperationBits: 0,
+  runtimeReady: false,
+  releaseReady: false,
+  authorizesRelease: false
+})
+
+export const FORWARD_HTTPS_TARGET_STORE_V3_ERROR_CODE = FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE
+
+export const FORWARD_HTTPS_TARGET_STORE_V3_FAULT_POINT = Object.freeze({})
+
+// V18 target_module_exact names for the turn-level surface. Accepting a
+// forwarded turn opens the session when absent and appends otherwise;
+// processor work covers the 114/115/116 operation rows.
+export async function acceptForwardedHttpsTargetTurnV3 (state, input) {
+  if (state.slots.has(keyOf(b4a.from(input.stableSessionId)))) return appendSession(state, input)
+  return openForwardHttpsTargetSessionV3(state, input)
+}
+
+export async function runNextForwardHttpsTargetProcessorWorkV3 (state, input) {
+  if (![WAL_TYPE.PROCESSOR_PREPARED, WAL_TYPE.PROCESSOR_REQUEST_READY, WAL_TYPE.PROCESSOR_COMPLETED].includes(input.walType)) {
+    throw new TypeError('walType must be 114, 115 or 116')
+  }
+  return appendSession(state, input)
+}
+
+export function forwardHttpsTargetTurnStateV3 (state, stableSessionId) {
+  const slot = state.slots.get(keyOf(b4a.from(stableSessionId))) || null
+  return Object.freeze({
+    present: slot !== null,
+    slotState: slot ? slot.state : FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.FREE,
+    identity: classifyForwardHttpsHistoricIdentityV3(slot ? slot.state : FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.FREE, slot ? slot.prunedReleased : false),
+    chargeEntryCount: slot ? slot.registry.count : 0,
+    priorSessionRevision: slot ? slot.priorRevision : 0n,
+    openPrefix: slot ? slot.orphan !== null : false
+  })
+}

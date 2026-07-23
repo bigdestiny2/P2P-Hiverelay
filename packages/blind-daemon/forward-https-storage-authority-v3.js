@@ -429,6 +429,21 @@ export function verifyForwardHttpsTerminalInvarianceV3 (unconsumedSlotsBefore, c
   return deepFreeze({ protectedSumInvariant: before === after + delta, logicalReduction: 608, physicalReduction: 416 })
 }
 
+// V18 storage_module_exact constant names.
+export const FORWARD_HTTPS_STORAGE_V3_LIMITS = FORWARD_HTTPS_STORAGE_AUTHORITY_V3_LIMITS
+export const FORWARD_HTTPS_STORAGE_V3_ERROR_CODE = FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE
+export const FORWARD_HTTPS_STORAGE_V3_STATUS = deepFreeze({
+  schemaVersion: 3,
+  implementationReady: true,
+  descriptorOperationBits: 0,
+  advertisedOperationBits: 0,
+  readinessOperationBits: 0,
+  runtimeReady: false,
+  releaseReady: false,
+  authorizesRelease: false
+})
+export const FORWARD_HTTPS_STORAGE_V3_FAULT_POINT = deepFreeze({})
+
 // Historic identity classification from complete canonical WAL state. The
 // latest slot-disposing transition governs: identical WAL evidence has
 // exactly one identity. A flags2 prefix-abort is never an identity

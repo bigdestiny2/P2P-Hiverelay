@@ -26,7 +26,8 @@ import {
   FORWARD_HTTPS_STORAGE_SLOT_STATE_V3,
   createForwardHttpsChargeRegistryV3,
   encodeForwardHttpsSessionTerminalV3,
-  verifyForwardHttpsTerminalHeadroomV3
+  verifyForwardHttpsTerminalHeadroomV3,
+  classifyForwardHttpsHistoricIdentityV3
 } from './forward-https-storage-authority-v3.js'
 
 const ROLE = FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3.SOURCE_STORE
@@ -513,3 +514,34 @@ export async function closeForwardHttpsSourceStoreV3 (state) {
 }
 
 export const FORWARD_HTTPS_SOURCE_STORE_V3_WAL_TYPE = WAL_TYPE
+export const FORWARD_HTTPS_SOURCE_WAL_TYPE = WAL_TYPE
+
+export const FORWARD_HTTPS_SOURCE_STORE_V3_STATUS = Object.freeze({
+  schemaVersion: 3,
+  implementationReady: true,
+  descriptorOperationBits: 0,
+  advertisedOperationBits: 0,
+  readinessOperationBits: 0,
+  runtimeReady: false,
+  releaseReady: false,
+  authorizesRelease: false
+})
+
+export const FORWARD_HTTPS_SOURCE_STORE_V3_ERROR_CODE = FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE
+
+export const FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT = Object.freeze({})
+
+// V18 source_module_exact names for the turn-level surface.
+export const prepareForwardHttpsSourceTurnV3 = prepareForwardHttpsSourceSessionV3
+export const persistForwardHttpsSourceResultV3 = appendForwardHttpsSourceSessionV3
+
+export function forwardHttpsSourceTurnStateV3 (state, stableSessionId) {
+  const slot = state.slots.get(keyOf(b4a.from(stableSessionId))) || null
+  return Object.freeze({
+    present: slot !== null,
+    slotState: slot ? slot.state : FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.FREE,
+    identity: classifyForwardHttpsHistoricIdentityV3(slot ? slot.state : FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.FREE, slot ? slot.prunedReleased : false),
+    chargeEntryCount: slot ? slot.registry.count : 0,
+    priorSessionRevision: slot ? slot.priorRevision : 0n
+  })
+}

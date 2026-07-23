@@ -226,6 +226,21 @@ test('protected admission: equality admits, plus one fails', async t => {
   t.absent(checkForwardHttpsProtectedAdmissionV3({ ...base, plannedOrdinaryPhysical: 1 }), 'physical one byte over fails')
 })
 
+test('export surfaces: V18 exact names present on source, target and storage modules', async t => {
+  const source = await import('../forward-https-source-store-v3.js')
+  const target = await import('../forward-https-target-store-v3.js')
+  const storage = await import('../forward-https-storage-authority-v3.js')
+  for (const name of ['FORWARD_HTTPS_SOURCE_STORE_V3_LIMITS', 'FORWARD_HTTPS_SOURCE_STORE_V3_STATUS', 'FORWARD_HTTPS_SOURCE_WAL_TYPE', 'FORWARD_HTTPS_SOURCE_STORE_V3_ERROR_CODE', 'FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT', 'ForwardHttpsSourceStoreV3Error', 'openForwardHttpsSourceStoreV3', 'prepareForwardHttpsSourceTurnV3', 'persistForwardHttpsSourceResultV3', 'forwardHttpsSourceTurnStateV3', 'forwardHttpsSourceStoreV3Status', 'closeForwardHttpsSourceStoreV3']) {
+    t.ok(name in source, `source exports ${name}`)
+  }
+  for (const name of ['FORWARD_HTTPS_TARGET_STORE_V3_LIMITS', 'FORWARD_HTTPS_TARGET_STORE_V3_STATUS', 'FORWARD_HTTPS_TARGET_WAL_TYPE', 'FORWARD_HTTPS_TARGET_STORE_V3_ERROR_CODE', 'FORWARD_HTTPS_TARGET_STORE_V3_FAULT_POINT', 'ForwardHttpsTargetStoreV3Error', 'openForwardHttpsTargetStoreV3', 'acceptForwardedHttpsTargetTurnV3', 'runNextForwardHttpsTargetProcessorWorkV3', 'forwardHttpsTargetTurnStateV3', 'forwardHttpsTargetStoreV3Status', 'closeForwardHttpsTargetStoreV3']) {
+    t.ok(name in target, `target exports ${name}`)
+  }
+  for (const name of ['FORWARD_HTTPS_STORAGE_V3_LIMITS', 'FORWARD_HTTPS_STORAGE_V3_STATUS', 'FORWARD_HTTPS_STORAGE_V3_ERROR_CODE', 'FORWARD_HTTPS_STORAGE_V3_FAULT_POINT', 'ForwardHttpsStorageAuthorityV3Error']) {
+    t.ok(name in storage, `storage exports ${name}`)
+  }
+})
+
 test('historic identity states classify exactly', async t => {
   t.is(Object.keys(FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3).length, 7)
   t.is(classifyForwardHttpsHistoricIdentityV3(FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.FREE, false), FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3.NEVER_SEEN)
