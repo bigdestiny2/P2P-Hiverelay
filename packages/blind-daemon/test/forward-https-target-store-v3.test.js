@@ -526,7 +526,6 @@ test('overlay terminalization: flags0 on ALLOCATED_WITH_PREFIX with orphan persi
   // No flags2 abort is possible after terminalization
   await t.exception.all(pruneForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, flags: 2, pruneEpochSeconds: 9500 }), /requires an existing-session prefix/)
   // The later terminal-existing FPR9 removes the persisted orphan entries
-  const slot2 = reopened.slots.get(b4a.toString(id, 'hex'))
   const pruned = await pruneForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, pruneEpochSeconds: 9600 })
   t.is(pruned.payload.readUInt32BE(72), 2)
   t.is(slot.state, SLOT.CONSUMED_PRUNED)
