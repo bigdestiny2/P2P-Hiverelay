@@ -23,7 +23,7 @@ import {
 } from '../forward-https-replay-journal-v4.js'
 import {
   openForwardHttpsTargetStoreV3,
-  openForwardHttpsTargetSessionV3,
+  acceptForwardedHttpsTargetTurnV3,
   forwardHttpsTargetStoreV3Status,
   closeForwardHttpsTargetStoreV3
 } from '../forward-https-target-store-v3.js'
@@ -92,7 +92,7 @@ async function main () {
       sourceRecoveryFinalState: sourceFinal,
       targetRecoveryFinalState: targetFinal
     })
-    const opened = await openForwardHttpsTargetSessionV3(store, { stableSessionId: id, body: b4a.alloc(4, 0x65) })
+    const opened = await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id, body: b4a.alloc(4, 0x65) })
     console.log(JSON.stringify({ walSequence: opened.walSequence.toString() }))
     await closeForwardHttpsTargetStoreV3(store)
     await closeForwardHttpsAggregateQuotaV3(quotaAuthority)

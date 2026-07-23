@@ -18,18 +18,21 @@ import {
   initializeForwardHttpsAggregateQuotaV3,
   assertForwardHttpsAggregateQuotaOperationalV3,
   failForwardHttpsAggregateQuotaWalAttemptV3,
-  forwardHttpsAggregateQuotaV3Status
+  forwardHttpsAggregateQuotaV3Status,
+  createForwardHttpsStoreQuotaCostPlanV3,
+  reserveForwardHttpsAggregateQuotaV3,
+  bindForwardHttpsStoreQuotaActualBuffersV3,
+  applyForwardHttpsAggregateQuotaWalFrameV3,
+  commitForwardHttpsAggregateQuotaV3,
+  releaseForwardHttpsAggregateQuotaV3,
+  adjustForwardHttpsAggregateQuotaV3,
+  encodeForwardHttpsRetentionPrunedV3
 } from '../forward-https-replay-journal-v4.js'
 import {
   openForwardHttpsTargetStoreV3,
-  openForwardHttpsTargetSessionV3,
-  appendForwardHttpsTargetSessionV3,
-  terminalizeForwardHttpsTargetSessionV3,
-  terminalizeForwardHttpsTargetAbsentSequenceV3,
-  pruneForwardHttpsTargetSessionV3,
+  acceptForwardedHttpsTargetTurnV3,
   forwardHttpsTargetStoreV3Status,
   closeForwardHttpsTargetStoreV3,
-  FORWARD_HTTPS_TARGET_STORE_V3_HISTORIC_IDENTITY,
   FORWARD_HTTPS_TARGET_STORE_V3_FAULT_POINT
 } from '../forward-https-target-store-v3.js'
 import {
@@ -54,7 +57,15 @@ const SLOT = Object.freeze({
   CONSUMED_UNPRUNED: 'CONSUMED_UNPRUNED',
   CONSUMED_PRUNED: 'CONSUMED_PRUNED'
 })
-const IDENTITY = FORWARD_HTTPS_TARGET_STORE_V3_HISTORIC_IDENTITY
+const IDENTITY = Object.freeze({
+  NEVER_SEEN: 'NEVER_SEEN',
+  PRESENT_PREFIX_ALLOCATED: 'PRESENT_PREFIX_ALLOCATED',
+  ALLOCATED_WITH_PREFIX: 'ALLOCATED_WITH_PREFIX',
+  PRESENT_ALLOCATED: 'PRESENT_ALLOCATED',
+  PRESENT_CONSUMED_UNPRUNED: 'PRESENT_CONSUMED_UNPRUNED',
+  PRUNED_RELEASED: 'PRUNED_RELEASED',
+  PRUNED_CONSUMED: 'PRUNED_CONSUMED'
+})
 
 function identityOf (slot) {
   if (slot.state === SLOT.ALLOCATED || slot.state === SLOT.PROVISIONAL) return IDENTITY.PRESENT_ALLOCATED
@@ -68,6 +79,103 @@ function identityOf (slot) {
 
 function prefixPayload (id, fill = 0x52) {
   return b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(118 - 36, fill)])
+}
+
+function writeU64be (output, offset, value) {
+  let current = BigInt(value)
+  for (let index = 7; index >= 0; index--) { output[offset + index] = Number(current & 0xffn); current >>= 8n }
+  return offset + 8
+}
+
+// Test-side FTM9 payload builder (frozen 192-byte layout; caller-supplied
+// exact payloads, the requested-terminal-arm shape).
+function buildFtm9 (input) {
+  const output = b4a.alloc(192)
+  let offset = 0
+  b4a.copy(b4a.from('FTM9', 'ascii'), output, offset); offset += 4
+  output[offset++] = 1
+  output[offset++] = 2
+  output.writeUInt16BE(input.flags, offset); offset += 2
+  b4a.copy(input.stableSessionId, output, offset); offset += 32
+  offset = writeU64be(output, offset, input.sequence)
+  for (const value of input.buckets || [0, 0, 0, 0, 0]) { output.writeUInt16BE(value, offset); offset += 2 }
+  output.writeUInt16BE(input.transportTurnsSpent || 0, offset); offset += 2
+  output.writeUInt32BE(input.transportBytesSpent || 0, offset); offset += 4
+  offset = writeU64be(output, offset, input.priorSessionRevision || 0n)
+  output.writeUInt32BE(input.newTrustedEpochHighWatermark || 0, offset); offset += 4
+  const reason = b4a.from(input.reason, 'ascii')
+  output[offset++] = reason.byteLength
+  b4a.copy(reason, output, offset); offset += 64
+  if (input.flags === 1) {
+    output.writeUInt32BE(input.expiresAtEpoch, offset); offset += 4
+    output.writeUInt32BE(input.retainedUntilEpoch, offset); offset += 4
+    b4a.copy(input.exactRequestCommitment, output, offset); offset += 32
+  }
+  return output
+}
+
+// Quota-API drivers: terminal append through the composite, prune through
+// bind/apply/adjust, both with caller-supplied exact payloads.
+async function driveWal (store, operation, frames) {
+  const plan = createForwardHttpsStoreQuotaCostPlanV3(store.storeQuotaCapability, {
+    operation,
+    knownInputBuffers: frames.map(frame => frame.payload),
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const union = await reserveForwardHttpsAggregateQuotaV3(store.storeQuotaCapability, plan)
+  const reservation = union.reservation || union.terminalReservation
+  let attempted = false
+  try {
+    const { transitionAuthority } = bindForwardHttpsStoreQuotaActualBuffersV3(store.storeQuotaCapability, reservation, {
+      logicalRecordBuffers: [],
+      encryptedPlaintextBuffers: frames.slice(0, -1).map(frame => frame.payload),
+      finalWalMetadataBuffers: [frames[frames.length - 1].payload],
+      temporaryWriteBuffers: []
+    })
+    attempted = true
+    let claimOrHandoff = transitionAuthority
+    let entry = null
+    for (const candidate of frames) {
+      const applied = await applyForwardHttpsAggregateQuotaWalFrameV3(store.storeQuotaCapability, reservation, claimOrHandoff, candidate,
+        async frame => store.store.appendAndApply(frame, () => {}))
+      entry = applied.entry
+      claimOrHandoff = applied.transitionAuthorityHandoff
+    }
+    return { entry, reservation }
+  } catch (error) {
+    if (!attempted) await releaseForwardHttpsAggregateQuotaV3(store.storeQuotaCapability, reservation).catch(() => {})
+    throw error
+  }
+}
+
+async function driveTerminal (store, payload) {
+  const { entry, reservation } = await driveWal(store, 'SESSION_TERMINAL', [{
+    type: 117,
+    transactionId: b4a.alloc(32, 0x5a),
+    virtualBucket: 0,
+    payload
+  }])
+  await commitForwardHttpsAggregateQuotaV3(store.storeQuotaCapability, reservation, {
+    durableWalHeadSequence: store.store.walSequence,
+    durableWalHeadHash: store.store.walHash
+  })
+  return Object.freeze({ walSequence: entry.walSequence, walHash: b4a.from(store.store.walHash), payload })
+}
+
+async function drivePrune (store, payload) {
+  const { entry } = await driveWal(store, 'PRUNE', [{
+    type: 118,
+    transactionId: b4a.alloc(32, 0x5a),
+    virtualBucket: 0,
+    payload
+  }])
+  await adjustForwardHttpsAggregateQuotaV3(store.storeQuotaCapability, {
+    durableTombstonePayloadBuffer: payload,
+    durableWalHeadSequence: store.store.walSequence,
+    durableWalHeadHash: store.store.walHash
+  })
+  return Object.freeze({ walSequence: entry.walSequence, walHash: b4a.from(store.store.walHash), payload })
 }
 
 // The operation final carries the exact same 32-byte requestCommitment at
@@ -202,11 +310,11 @@ test('target store: fresh OPEN TURN_FINAL allocates and type113 counts independe
   const id = fixed(0x51)
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
-  const opened = await openForwardHttpsTargetSessionV3(store, { stableSessionId: id, body: b4a.alloc(8, 0x51) })
+  const opened = await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id, body: b4a.alloc(8, 0x51) })
   t.is(opened.walSequence, 1n)
   // A type113 crypto reservation is the prefix frame of a two-frame
   // TURN_FINAL operation: 113 then the 112 final, both removable entries
-  const reserved = await appendForwardHttpsTargetSessionV3(store, {
+  const reserved = await acceptForwardedHttpsTargetTurnV3(store, {
     stableSessionId: id,
     walType: 113,
     body: b4a.alloc(118 - 36, 0x52),
@@ -230,23 +338,48 @@ test('target store: minimal absent-sequence terminal and terminal-only prune', a
   const id = fixed(0x52)
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
-  const result = await terminalizeForwardHttpsTargetAbsentSequenceV3(store, {
+  const result = await driveTerminal(store, buildFtm9({
+    flags: 1,
     stableSessionId: id,
     sequence: 4n,
+    priorSessionRevision: 0n,
     exactRequestCommitment: fixed(0x53),
     expiresAtEpoch: 2000,
-    newTrustedEpochHighWatermark: 1500
-  })
+    retainedUntilEpoch: 2900,
+    newTrustedEpochHighWatermark: 1500,
+    reason: 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID'
+  }))
   t.is(result.payload[5], 2) // TARGET role byte
   t.is(result.payload.readUInt16BE(6), 1)
-  const status = forwardHttpsTargetStoreV3Status(store)
-  t.is(status.consumedUnprunedSlots, 1)
-  const pruned = await pruneForwardHttpsTargetSessionV3(store, { stableSessionId: id, pruneEpochSeconds: 2901 })
+  // The terminal-only FPR9 carries the FTM9-carried expiry clock and count0
+  await closeForwardHttpsTargetStoreV3(store)
+  const recoveredStore = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(recoveredStore).catch(() => {}) })
+  const slot = recoveredStore.slots.get(b4a.toString(id, 'hex'))
+  const fpr9 = encodeForwardHttpsRetentionPrunedV3({
+    role: 'TARGET_STORE',
+    stableSessionId: id,
+    priorSessionRevision: slot.priorRevision,
+    pruneEpochSeconds: 2901,
+    trustedEpochHighWatermark: 2901,
+    expiresAtEpoch: slot.expiresAtEpoch,
+    recoveryGraceUntilEpoch: slot.recoveryGraceUntilEpoch,
+    removedOrdinaryLogicalBytes: 0n,
+    chargeEntryCount: 0,
+    beforeAuthorityBitmap: slot.authorityBitmap,
+    allocationDisposition: 0,
+    terminalSlotState: 2,
+    chargeEntryBuffers: [],
+    authorityCommitments: slot.authorityCommitments
+  })
+  const pruned = await drivePrune(recoveredStore, fpr9)
   t.is(pruned.payload.readUInt32BE(72), 0)
   t.is(pruned.payload.readUInt32BE(76), 640)
   t.is(pruned.payload[85], 2)
-  const after = forwardHttpsTargetStoreV3Status(store)
-  t.is(after.consumedPrunedSlots, 1)
+  await closeForwardHttpsTargetStoreV3(recoveredStore)
+  const finalStore = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(finalStore).catch(() => {}) })
+  t.is(forwardHttpsTargetStoreV3Status(finalStore).consumedPrunedSlots, 1)
 })
 
 test('target store: existing-session terminalization and budget reason', async t => {
@@ -255,16 +388,23 @@ test('target store: existing-session terminalization and budget reason', async t
   const id = fixed(0x54)
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
-  await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
-  const terminal = await terminalizeForwardHttpsTargetSessionV3(store, {
+  await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id })
+  const slot = store.slots.get(b4a.toString(id, 'hex'))
+  const terminal = await driveTerminal(store, buildFtm9({
+    flags: 0,
     stableSessionId: id,
     sequence: 9n,
+    priorSessionRevision: slot.priorRevision,
     reason: 'BUDGET_EXHAUSTED',
     newTrustedEpochHighWatermark: 5
-  })
+  }))
   t.is(terminal.payload.byteLength, 192)
   t.is(b4a.toString(terminal.payload.subarray(77, 77 + 16), 'ascii'), 'BUDGET_EXHAUSTED')
-  await t.exception.all(openForwardHttpsTargetSessionV3(store, { stableSessionId: id }), /not NEVER_SEEN/)
+  await closeForwardHttpsTargetStoreV3(store)
+  const reopened = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
+  t.is(reopened.slots.get(b4a.toString(id, 'hex')).state, SLOT.CONSUMED_UNPRUNED)
+  await t.exception.all(acceptForwardedHttpsTargetTurnV3(reopened, { stableSessionId: id }), /TERMINAL/)
 })
 
 test('target store: cross-role frame recovery is INTEGRITY', async t => {
@@ -274,7 +414,7 @@ test('target store: cross-role frame recovery is INTEGRITY', async t => {
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   // A source WAL type can never be appended through the target store
-  await t.exception.all(appendForwardHttpsTargetSessionV3(store, { stableSessionId: id, walType: 96 }), /not an ordinary target/)
+  await t.exception.all(acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id, walType: 96 }), /not an ordinary target/)
 })
 
 test('prefix partition: FRESH type113 prefix claims exactly one PREFIX_ALLOCATED slot', async t => {
@@ -305,7 +445,7 @@ test('prefix partition: EXISTING-session type113 prefix overlays ALLOCATED_WITH_
   const id = fixed(0x57)
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
-  await openForwardHttpsTargetSessionV3(store, { stableSessionId: id, body: b4a.alloc(8, 0x51) })
+  await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id, body: b4a.alloc(8, 0x51) })
   const before = store.slots.get(b4a.toString(id, 'hex'))
   t.is(before.registry.count, 1)
   await rawAppend(store, 113, prefixPayload(id))
@@ -334,7 +474,7 @@ test('prefix partition: matching final applies exactly once for both classes', a
   await rawAppend(store, 113, prefixPayload(freshId))
   await rawAppend(store, 112, finalPayload(freshId, 0x52))
   // EXISTING prefix completed by its matching final
-  await openForwardHttpsTargetSessionV3(store, { stableSessionId: existingId })
+  await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: existingId })
   await rawAppend(store, 113, prefixPayload(existingId))
   await rawAppend(store, 114, finalPayload(existingId, 0x52, 0x55))
   await closeForwardHttpsTargetStoreV3(store)
@@ -361,7 +501,7 @@ test('per-step identity goldens: latest slot-disposing transition governs', asyn
   // OPEN + target112 assigns PRESENT_ALLOCATED
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
-  await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
+  await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id })
   t.is(identityOf(store.slots.get(b4a.toString(id, 'hex'))), IDENTITY.PRESENT_ALLOCATED)
   // +k complete target113 (no final, no abort) assigns ALLOCATED_WITH_PREFIX
   await rawAppend(store, 113, prefixPayload(id))
@@ -381,7 +521,7 @@ test('flags2 abort goldens: remove-exactly-orphan, vector byte-identical, PRESEN
   const id = fixed(0x5c)
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
-  await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
+  await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id })
   await rawAppend(store, 113, prefixPayload(id))
   await closeForwardHttpsTargetStoreV3(store)
   const reopened = await openStore(authority, r, capabilities)
@@ -390,40 +530,61 @@ test('flags2 abort goldens: remove-exactly-orphan, vector byte-identical, PRESEN
   t.is(slot.state, SLOT.ALLOCATED_WITH_PREFIX)
   const beforeBitmap = slot.authorityBitmap
   // A later committed operation (no 113) is admitted while the prefix is open
-  await appendForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, walType: 112, body: b4a.alloc(8, 0x5d) })
+  await acceptForwardedHttpsTargetTurnV3(reopened, { stableSessionId: id, walType: 112, body: b4a.alloc(8, 0x5d) })
   t.is(slot.registry.count, 3)
   // The complete flags2 abort: ordinary net admission, exact orphan removal
-  const aborted = await pruneForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, flags: 2, pruneEpochSeconds: 8000 })
+  const fpr9 = encodeForwardHttpsRetentionPrunedV3({
+    role: 'TARGET_STORE',
+    flags: 2,
+    stableSessionId: id,
+    priorSessionRevision: slot.orphan.lastRevision,
+    pruneEpochSeconds: 8000,
+    trustedEpochHighWatermark: 8000,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: slot.orphan.removedSum,
+    chargeEntryCount: slot.orphan.entries.length,
+    beforeAuthorityBitmap: slot.authorityBitmap,
+    allocationDisposition: 2,
+    terminalSlotState: 1,
+    chargeEntryBuffers: slot.orphan.entries,
+    authorityCommitments: slot.authorityCommitments || Array.from({ length: 10 }, () => b4a.alloc(32))
+  })
+  const aborted = await drivePrune(reopened, fpr9)
   t.is(aborted.payload.readUInt16BE(6), 2)
   t.is(aborted.payload.readUInt32BE(56), 0)
   t.is(aborted.payload.readUInt32BE(60), 0)
   t.is(aborted.payload.readUInt32BE(72), 1)
   t.is(aborted.payload[84], 2)
   t.is(aborted.payload[85], 1)
-  // Carve-out: exactly the orphan entry removed, later entries preserved,
-  // vector byte-identical, slot retained, identity stays PRESENT_ALLOCATED
-  t.is(slot.state, SLOT.ALLOCATED)
-  t.is(slot.orphan, null)
-  t.is(slot.registry.count, 2, 'ordinary open entry plus the later committed entry')
-  t.is(slot.authorityBitmap, beforeBitmap)
-  t.absent(slot.prunedReleased)
-  t.is(identityOf(slot), IDENTITY.PRESENT_ALLOCATED)
-  // The mandated retry with fresh contiguous crypto revisions is admitted
-  const retry = await appendForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, walType: 113, body: b4a.alloc(118 - 36, 0x5e) })
-  t.is(retry.payload.byteLength, 118)
-  t.is(slot.registry.count, 4)
-  t.is(identityOf(slot), IDENTITY.PRESENT_ALLOCATED)
-  // Recovery reclassifies the continuing session exactly once
+  // Carve-out proven through exact recovery: exactly the orphan entry removed,
+  // later entries preserved, vector byte-identical, slot retained,
+  // identity stays PRESENT_ALLOCATED, no PRUNED_RELEASED recorded.
   await closeForwardHttpsTargetStoreV3(reopened)
   const recovered = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(recovered).catch(() => {}) })
   const recoveredSlot = recovered.slots.get(b4a.toString(id, 'hex'))
   t.is(recoveredSlot.state, SLOT.ALLOCATED)
   t.is(recoveredSlot.orphan, null)
+  t.is(recoveredSlot.registry.count, 2, 'ordinary open entry plus the later committed entry')
+  t.is(recoveredSlot.authorityBitmap, beforeBitmap)
+  t.absent(recoveredSlot.prunedReleased)
+  t.is(identityOf(recoveredSlot), IDENTITY.PRESENT_ALLOCATED)
+  // The mandated retry with fresh contiguous crypto revisions is admitted
+  const retry = await acceptForwardedHttpsTargetTurnV3(recovered, { stableSessionId: id, walType: 113, body: b4a.alloc(118 - 36, 0x5e) })
+  t.is(retry.payload.byteLength, 118)
   t.is(recoveredSlot.registry.count, 4)
   t.is(identityOf(recoveredSlot), IDENTITY.PRESENT_ALLOCATED)
+  // Recovery reclassifies the continuing session exactly once
+  await closeForwardHttpsTargetStoreV3(recovered)
+  const final = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(final).catch(() => {}) })
+  const finalSlot = final.slots.get(b4a.toString(id, 'hex'))
+  t.is(finalSlot.state, SLOT.ALLOCATED)
+  t.is(finalSlot.orphan, null)
+  t.is(finalSlot.registry.count, 4)
+  t.is(identityOf(finalSlot), IDENTITY.PRESENT_ALLOCATED)
 })
-
 test('flags1 orphan abort: PREFIX_ALLOCATED to FREE, PRUNED_RELEASED and mutation-free CONFLICT after', async t => {
   const r = await roots(t)
   const { authority, capabilities } = await quota(t, r)
@@ -437,29 +598,51 @@ test('flags1 orphan abort: PREFIX_ALLOCATED to FREE, PRUNED_RELEASED and mutatio
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
   const slot = reopened.slots.get(b4a.toString(id, 'hex'))
   t.is(slot.state, SLOT.PREFIX_ALLOCATED)
-  const aborted = await pruneForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, flags: 1, pruneEpochSeconds: 7000 })
+  const base = {
+    role: 'TARGET_STORE',
+    stableSessionId: id,
+    priorSessionRevision: slot.orphan.lastRevision,
+    pruneEpochSeconds: 7000,
+    trustedEpochHighWatermark: 7000,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: slot.orphan.removedSum,
+    chargeEntryCount: slot.orphan.entries.length,
+    beforeAuthorityBitmap: 0,
+    chargeEntryBuffers: slot.orphan.entries,
+    authorityCommitments: Array.from({ length: 10 }, () => b4a.alloc(32))
+  }
+  const fpr9 = encodeForwardHttpsRetentionPrunedV3({ ...base, flags: 1, allocationDisposition: 1, terminalSlotState: 3 })
+  const aborted = await drivePrune(reopened, fpr9)
   t.is(aborted.payload.readUInt16BE(6), 1)
   t.is(aborted.payload.readUInt32BE(72), 2)
   t.is(aborted.payload[84], 1)
   t.is(aborted.payload[85], 3)
-  t.is(slot.state, SLOT.FREE)
-  t.is(slot.orphan, null)
-  t.is(slot.registry.count, 0)
-  t.ok(slot.prunedReleased)
-  t.is(identityOf(slot), IDENTITY.PRUNED_RELEASED)
-  const status = forwardHttpsTargetStoreV3Status(reopened)
+  await closeForwardHttpsTargetStoreV3(reopened)
+  const recovered = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(recovered).catch(() => {}) })
+  const recoveredSlot = recovered.slots.get(b4a.toString(id, 'hex'))
+  t.is(recoveredSlot.state, SLOT.FREE)
+  t.is(recoveredSlot.orphan, null)
+  t.is(recoveredSlot.registry.count, 0)
+  t.ok(recoveredSlot.prunedReleased)
+  t.is(identityOf(recoveredSlot), IDENTITY.PRUNED_RELEASED)
+  const status = forwardHttpsTargetStoreV3Status(recovered)
   t.is(status.unconsumedSlots, status.slotCapacity)
   t.is(status.roleGlobalLogicalBytes, 736)
   // PRUNED_RELEASED returns mutation-free CONFLICT, never a NEVER_SEEN wedge
   let conflict = null
-  try { await openForwardHttpsTargetSessionV3(reopened, { stableSessionId: id }) } catch (error) { conflict = error }
+  try { await acceptForwardedHttpsTargetTurnV3(recovered, { stableSessionId: id }) } catch (error) { conflict = error }
   t.is(conflict && conflict.code, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_CONFLICT')
-  t.is(forwardHttpsTargetStoreV3Status(reopened).unconsumedSlots, status.slotCapacity, 'no mutation from the CONFLICT')
-  // flags1/flags2 variants require their exact slot states
-  await t.exception.all(pruneForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, flags: 1, pruneEpochSeconds: 7001 }), /requires a fresh recovered prefix/)
-  await t.exception.all(pruneForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, flags: 2, pruneEpochSeconds: 7001 }), /requires an existing-session prefix/)
+  t.is(forwardHttpsTargetStoreV3Status(recovered).unconsumedSlots, status.slotCapacity, 'no mutation from the CONFLICT')
+  // flags1/flags2 prefix variants require their exact recovered prefix class
+  const headBefore = forwardHttpsTargetStoreV3Status(recovered).walHeadSequence
+  const repeat1 = encodeForwardHttpsRetentionPrunedV3({ ...base, flags: 1, allocationDisposition: 1, terminalSlotState: 3 })
+  await t.exception.all(drivePrune(recovered, repeat1), /prefix variant|prefix class|INTEGRITY/)
+  const repeat2 = encodeForwardHttpsRetentionPrunedV3({ ...base, flags: 2, allocationDisposition: 2, terminalSlotState: 1 })
+  await t.exception.all(drivePrune(recovered, repeat2), /prefix variant|prefix class|INTEGRITY/)
+  t.is(forwardHttpsTargetStoreV3Status(recovered).walHeadSequence, headBefore, 'rejections are pre-WAL with zero mutation')
 })
-
 test('prefix-abort ordinary admission: exact inequality equality admits, ceiling+1 CAPACITY with zero mutation', async t => {
   // Each case builds its own crashed-prefix WAL so the equality admission
   // cannot mutate the evidence for the ceiling+1 case.
@@ -468,7 +651,7 @@ test('prefix-abort ordinary admission: exact inequality equality admits, ceiling
     const { authority, capabilities } = await quota2(t, r)
     const id = fixed(0x60)
     const store = await openStore(authority, r, capabilities)
-    await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
+    await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id })
     await rawAppend(store, 113, prefixPayload(id))
     await closeForwardHttpsTargetStoreV3(store)
     const measured = await directoryBytes(r['target-store'])
@@ -504,14 +687,35 @@ test('prefix-abort ordinary admission: exact inequality equality admits, ceiling
     const slot = reopened.slots.get(b4a.toString(id, 'hex'))
     t.is(slot.state, SLOT.ALLOCATED_WITH_PREFIX)
     const headBefore = forwardHttpsTargetStoreV3Status(reopened).walHeadSequence
+    const fpr9 = encodeForwardHttpsRetentionPrunedV3({
+      role: 'TARGET_STORE',
+      flags: 2,
+      stableSessionId: id,
+      priorSessionRevision: slot.orphan.lastRevision,
+      pruneEpochSeconds: 9000,
+      trustedEpochHighWatermark: 9000,
+      expiresAtEpoch: 0,
+      recoveryGraceUntilEpoch: 0,
+      removedOrdinaryLogicalBytes: slot.orphan.removedSum,
+      chargeEntryCount: slot.orphan.entries.length,
+      beforeAuthorityBitmap: slot.authorityBitmap,
+      allocationDisposition: 2,
+      terminalSlotState: 1,
+      chargeEntryBuffers: slot.orphan.entries,
+      authorityCommitments: Array.from({ length: 10 }, () => b4a.alloc(32))
+    })
     if (equality) {
-      const aborted = await pruneForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, flags: 2, pruneEpochSeconds: 9000 })
+      const aborted = await drivePrune(reopened, fpr9)
       t.is(aborted.payload.readUInt16BE(6), 2)
-      t.is(slot.state, SLOT.ALLOCATED)
-      t.is(identityOf(slot), IDENTITY.PRESENT_ALLOCATED)
+      await closeForwardHttpsTargetStoreV3(reopened)
+      const recovered = await openStore(authority2, r, capabilities2)
+      const recoveredSlot = recovered.slots.get(b4a.toString(id, 'hex'))
+      t.is(recoveredSlot.state, SLOT.ALLOCATED)
+      t.is(identityOf(recoveredSlot), IDENTITY.PRESENT_ALLOCATED)
+      await closeForwardHttpsTargetStoreV3(recovered)
     } else {
       let denied = null
-      try { await pruneForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, flags: 2, pruneEpochSeconds: 9000 }) } catch (error) { denied = error }
+      try { await drivePrune(reopened, fpr9) } catch (error) { denied = error }
       t.is(denied && denied.code, 'FORWARD_HTTPS_AGGREGATE_QUOTA_V3_CAPACITY')
       // Zero mutation: WAL head, slot, orphan and registry are all unchanged
       t.is(forwardHttpsTargetStoreV3Status(reopened).walHeadSequence, headBefore)
@@ -530,9 +734,29 @@ test('flags2 abort requires an open existing-session prefix; mixed commitment is
   const id = fixed(0x61)
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
-  await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
-  // flags2 on a plain ALLOCATED session (no open prefix) rejects
-  await t.exception.all(pruneForwardHttpsTargetSessionV3(store, { stableSessionId: id, flags: 2, pruneEpochSeconds: 100 }), /requires an existing-session prefix/)
+  await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id })
+  // flags2 on a plain ALLOCATED session (no open prefix) rejects pre-WAL
+  const slot = store.slots.get(b4a.toString(id, 'hex'))
+  const fpr9 = encodeForwardHttpsRetentionPrunedV3({
+    role: 'TARGET_STORE',
+    flags: 2,
+    stableSessionId: id,
+    priorSessionRevision: slot.priorRevision,
+    pruneEpochSeconds: 100,
+    trustedEpochHighWatermark: 100,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: slot.registry.removedLogicalBytes(),
+    chargeEntryCount: slot.registry.count,
+    beforeAuthorityBitmap: 0,
+    allocationDisposition: 2,
+    terminalSlotState: 1,
+    chargeEntryBuffers: slot.registry.entriesAscending(),
+    authorityCommitments: Array.from({ length: 10 }, () => b4a.alloc(32))
+  })
+  const headBefore = forwardHttpsTargetStoreV3Status(store).walHeadSequence
+  await t.exception.all(drivePrune(store, fpr9), /prefix class|prefix variant|INTEGRITY/)
+  t.is(forwardHttpsTargetStoreV3Status(store).walHeadSequence, headBefore)
   // A mixed requestCommitment inside one run is INTEGRITY in recovery
   await rawAppend(store, 113, prefixPayload(id, 0x52))
   await rawAppend(store, 113, prefixPayload(id, 0x53))
@@ -546,7 +770,7 @@ test('overlay terminalization: flags0 on ALLOCATED_WITH_PREFIX with orphan persi
   const id = fixed(0x62)
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
-  await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
+  await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id })
   await rawAppend(store, 113, prefixPayload(id))
   await closeForwardHttpsTargetStoreV3(store)
   const reopened = await openStore(authority, r, capabilities)
@@ -556,26 +780,64 @@ test('overlay terminalization: flags0 on ALLOCATED_WITH_PREFIX with orphan persi
   t.is(slot.orphan.lastRevision, 2n)
   // flags0 SESSION_TERMINAL uses the exact orphan-last revision floor,
   // preserves the vector and moves the slot to CONSUMED_UNPRUNED
-  const terminal = await terminalizeForwardHttpsTargetSessionV3(reopened, {
+  const terminal = await driveTerminal(reopened, buildFtm9({
+    flags: 0,
     stableSessionId: id,
     sequence: 7n,
+    priorSessionRevision: slot.priorRevision,
     reason: 'CHAIN_INVALID',
     newTrustedEpochHighWatermark: 9
-  })
+  }))
   t.is(terminal.payload.readUInt16BE(6), 0)
   t.is(Number(terminal.payload.readBigUInt64BE(64)), 2)
-  t.is(slot.state, SLOT.CONSUMED_UNPRUNED)
-  t.is(slot.orphan, null)
-  t.is(slot.registry.count, 2, 'orphan entries persist into the consumed registry')
-  t.is(identityOf(slot), IDENTITY.PRESENT_CONSUMED_UNPRUNED)
-  // No flags2 abort is possible after terminalization
-  await t.exception.all(pruneForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, flags: 2, pruneEpochSeconds: 9500 }), /requires an existing-session prefix/)
-  // The later terminal-existing FPR9 removes the persisted orphan entries
-  const pruned = await pruneForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, pruneEpochSeconds: 9600 })
-  t.is(pruned.payload.readUInt32BE(72), 2)
-  t.is(slot.state, SLOT.CONSUMED_PRUNED)
-  // Recovery reproduces the exact consumed-pruned disposition
   await closeForwardHttpsTargetStoreV3(reopened)
+  const consumed = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(consumed).catch(() => {}) })
+  const consumedSlot = consumed.slots.get(b4a.toString(id, 'hex'))
+  t.is(consumedSlot.state, SLOT.CONSUMED_UNPRUNED)
+  t.is(consumedSlot.orphan, null)
+  t.is(consumedSlot.registry.count, 2, 'orphan entries persist into the consumed registry')
+  t.is(identityOf(consumedSlot), IDENTITY.PRESENT_CONSUMED_UNPRUNED)
+  // No flags2 abort is possible after terminalization
+  const flags2Attempt = encodeForwardHttpsRetentionPrunedV3({
+    role: 'TARGET_STORE',
+    flags: 2,
+    stableSessionId: id,
+    priorSessionRevision: 2n,
+    pruneEpochSeconds: 9500,
+    trustedEpochHighWatermark: 9500,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: consumedSlot.registry.removedLogicalBytes(),
+    chargeEntryCount: consumedSlot.registry.count,
+    beforeAuthorityBitmap: consumedSlot.authorityBitmap,
+    allocationDisposition: 2,
+    terminalSlotState: 1,
+    chargeEntryBuffers: consumedSlot.registry.entriesAscending(),
+    authorityCommitments: consumedSlot.authorityCommitments || Array.from({ length: 10 }, () => b4a.alloc(32))
+  })
+  await t.exception.all(drivePrune(consumed, flags2Attempt), /prefix class|prefix variant|INTEGRITY/)
+  // The later terminal-existing FPR9 removes the persisted orphan entries
+  const fpr9 = encodeForwardHttpsRetentionPrunedV3({
+    role: 'TARGET_STORE',
+    stableSessionId: id,
+    priorSessionRevision: consumedSlot.priorRevision,
+    pruneEpochSeconds: 9600,
+    trustedEpochHighWatermark: 9600,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: consumedSlot.registry.removedLogicalBytes(),
+    chargeEntryCount: consumedSlot.registry.count,
+    beforeAuthorityBitmap: consumedSlot.authorityBitmap,
+    allocationDisposition: 0,
+    terminalSlotState: 2,
+    chargeEntryBuffers: consumedSlot.registry.entriesAscending(),
+    authorityCommitments: consumedSlot.authorityCommitments
+  })
+  const pruned = await drivePrune(consumed, fpr9)
+  t.is(pruned.payload.readUInt32BE(72), 2)
+  // Recovery reproduces the exact consumed-pruned disposition
+  await closeForwardHttpsTargetStoreV3(consumed)
   const recovered = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(recovered).catch(() => {}) })
   const recoveredSlot = recovered.slots.get(b4a.toString(id, 'hex'))
@@ -594,24 +856,41 @@ test('store-level precedence: PRESENT_PREFIX_ALLOCATED is SESSION_CLOSED, consum
   // PREFIX_ALLOCATED: mutation-free SESSION_CLOSED before any other work
   await rawAppend(store, 113, prefixPayload(prefixId))
   // consumed identity: sticky TERMINAL
-  await openForwardHttpsTargetSessionV3(store, { stableSessionId: consumedId })
-  await terminalizeForwardHttpsTargetSessionV3(store, { stableSessionId: consumedId, sequence: 3n, reason: 'CHAIN_INVALID' })
+  await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: consumedId })
+  const consumedSlot = store.slots.get(b4a.toString(consumedId, 'hex'))
+  await driveTerminal(store, buildFtm9({ flags: 0, stableSessionId: consumedId, sequence: 3n, priorSessionRevision: consumedSlot.priorRevision, reason: 'CHAIN_INVALID' }))
   // pruned identity: CONFLICT
-  await openForwardHttpsTargetSessionV3(store, { stableSessionId: prunedId })
-  await pruneForwardHttpsTargetSessionV3(store, { stableSessionId: prunedId, pruneEpochSeconds: 500 })
+  await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: prunedId })
+  const prunedSlot = store.slots.get(b4a.toString(prunedId, 'hex'))
+  await drivePrune(store, encodeForwardHttpsRetentionPrunedV3({
+    role: 'TARGET_STORE',
+    stableSessionId: prunedId,
+    priorSessionRevision: prunedSlot.priorRevision,
+    pruneEpochSeconds: 500,
+    trustedEpochHighWatermark: 500,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: prunedSlot.registry.removedLogicalBytes(),
+    chargeEntryCount: prunedSlot.registry.count,
+    beforeAuthorityBitmap: 0,
+    allocationDisposition: 1,
+    terminalSlotState: 1,
+    chargeEntryBuffers: prunedSlot.registry.entriesAscending(),
+    authorityCommitments: Array.from({ length: 10 }, () => b4a.alloc(32))
+  }))
   await closeForwardHttpsTargetStoreV3(store)
   const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
   t.is(identityOf(reopened.slots.get(b4a.toString(prefixId, 'hex'))), IDENTITY.PRESENT_PREFIX_ALLOCATED)
   const headBefore = forwardHttpsTargetStoreV3Status(reopened).walHeadSequence
   let sessionClosed = null
-  try { await appendForwardHttpsTargetSessionV3(reopened, { stableSessionId: prefixId, walType: 112 }) } catch (error) { sessionClosed = error }
+  try { await acceptForwardedHttpsTargetTurnV3(reopened, { stableSessionId: prefixId, walType: 112 }) } catch (error) { sessionClosed = error }
   t.is(sessionClosed && sessionClosed.code, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_SESSION_CLOSED')
   let terminal = null
-  try { await appendForwardHttpsTargetSessionV3(reopened, { stableSessionId: consumedId, walType: 112 }) } catch (error) { terminal = error }
+  try { await acceptForwardedHttpsTargetTurnV3(reopened, { stableSessionId: consumedId, walType: 112 }) } catch (error) { terminal = error }
   t.is(terminal && terminal.code, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_TERMINAL')
   let conflict = null
-  try { await appendForwardHttpsTargetSessionV3(reopened, { stableSessionId: prunedId, walType: 112 }) } catch (error) { conflict = error }
+  try { await acceptForwardedHttpsTargetTurnV3(reopened, { stableSessionId: prunedId, walType: 112 }) } catch (error) { conflict = error }
   t.is(conflict && conflict.code, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_CONFLICT')
   // All three rejections are mutation-free
   t.is(forwardHttpsTargetStoreV3Status(reopened).walHeadSequence, headBefore)
@@ -637,7 +916,7 @@ test('recovered tombstone tamper: count and commitment mismatches are INTEGRITY 
   const id = fixed(0x67)
   const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
-  await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
+  await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id })
   const slot = store.slots.get(b4a.toString(id, 'hex'))
   const { encodeForwardHttpsRetentionPrunedV3 } = await import('../forward-https-replay-journal-v4.js')
   const base = {
@@ -676,7 +955,7 @@ test('fresh OPEN on PRESENT_PREFIX_ALLOCATED is mutation-free SESSION_CLOSED', a
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
   const headBefore = forwardHttpsTargetStoreV3Status(reopened).walHeadSequence
   let closed = null
-  try { await openForwardHttpsTargetSessionV3(reopened, { stableSessionId: id }) } catch (error) { closed = error }
+  try { await acceptForwardedHttpsTargetTurnV3(reopened, { stableSessionId: id }) } catch (error) { closed = error }
   t.is(closed && closed.code, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_SESSION_CLOSED')
   t.is(forwardHttpsTargetStoreV3Status(reopened).walHeadSequence, headBefore)
 })

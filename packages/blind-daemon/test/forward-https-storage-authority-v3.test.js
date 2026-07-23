@@ -33,7 +33,6 @@ import {
 } from '../forward-https-source-store-v3.js'
 
 const SOURCE = FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3.SOURCE_STORE
-const TARGET = FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3.TARGET_STORE
 const ZERO32 = b4a.alloc(32)
 
 function fixed (byte) {
@@ -250,18 +249,66 @@ test('storage constants: exact production liabilities, headroom and ceilings', a
   t.is(FORWARD_HTTPS_STORAGE_V3_STATUS.runtimeReady, false)
 })
 
-test('export surfaces: V18 exact names present on source, target and storage modules', async t => {
+test('export surfaces: exact set equality on all four modules, removed names absent', async t => {
   const source = await import('../forward-https-source-store-v3.js')
   const target = await import('../forward-https-target-store-v3.js')
   const storage = await import('../forward-https-storage-authority-v3.js')
-  for (const name of ['FORWARD_HTTPS_SOURCE_STORE_V3_LIMITS', 'FORWARD_HTTPS_SOURCE_STORE_V3_STATUS', 'FORWARD_HTTPS_SOURCE_WAL_TYPE', 'FORWARD_HTTPS_SOURCE_STORE_V3_ERROR_CODE', 'FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT', 'ForwardHttpsSourceStoreV3Error', 'openForwardHttpsSourceStoreV3', 'prepareForwardHttpsSourceTurnV3', 'persistForwardHttpsSourceResultV3', 'forwardHttpsSourceTurnStateV3', 'forwardHttpsSourceStoreV3Status', 'closeForwardHttpsSourceStoreV3']) {
-    t.ok(name in source, `source exports ${name}`)
+  const replay = await import('../forward-https-replay-journal-v4.js')
+  t.alike(Object.keys(source).sort(), [
+    'FORWARD_HTTPS_SOURCE_STORE_V3_ERROR_CODE',
+    'FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT',
+    'FORWARD_HTTPS_SOURCE_STORE_V3_LIMITS',
+    'FORWARD_HTTPS_SOURCE_STORE_V3_STATUS',
+    'FORWARD_HTTPS_SOURCE_WAL_TYPE',
+    'ForwardHttpsSourceStoreV3Error',
+    'closeForwardHttpsSourceStoreV3',
+    'forwardHttpsSourceStoreV3Status',
+    'forwardHttpsSourceTurnStateV3',
+    'openForwardHttpsSourceStoreV3',
+    'persistForwardHttpsSourceResultV3',
+    'prepareForwardHttpsSourceTurnV3'
+  ].sort())
+  t.alike(Object.keys(target).sort(), [
+    'FORWARD_HTTPS_TARGET_STORE_V3_ERROR_CODE',
+    'FORWARD_HTTPS_TARGET_STORE_V3_FAULT_POINT',
+    'FORWARD_HTTPS_TARGET_STORE_V3_LIMITS',
+    'FORWARD_HTTPS_TARGET_STORE_V3_STATUS',
+    'FORWARD_HTTPS_TARGET_WAL_TYPE',
+    'ForwardHttpsTargetStoreV3Error',
+    'acceptForwardedHttpsTargetTurnV3',
+    'closeForwardHttpsTargetStoreV3',
+    'forwardHttpsTargetStoreV3Status',
+    'forwardHttpsTargetTurnStateV3',
+    'openForwardHttpsTargetStoreV3',
+    'runNextForwardHttpsTargetProcessorWorkV3'
+  ].sort())
+  t.alike(Object.keys(storage).sort(), [
+    'FORWARD_HTTPS_STORAGE_V3_ERROR_CODE',
+    'FORWARD_HTTPS_STORAGE_V3_FAULT_POINT',
+    'FORWARD_HTTPS_STORAGE_V3_LIMITS',
+    'FORWARD_HTTPS_STORAGE_V3_STATUS',
+    'ForwardHttpsStorageAuthorityV3Error',
+    'closeForwardHttpsStorageAuthorityV3',
+    'consumeForwardHttpsStorageReplayV3',
+    'forwardHttpsStorageAuthorityV3Status',
+    'openForwardHttpsStorageAuthorityV3',
+    'sourceForwardHttpsStorageAuthorityV3',
+    'targetForwardHttpsStorageAuthorityV3',
+    'verifyForwardHttpsStorageAuthorityV3'
+  ].sort())
+  t.is(Object.keys(replay).length, 39, 'replay module carries the frozen 39 exports')
+  t.absent(Object.keys(replay).includes('beginForwardHttpsAggregateQuotaWalAttemptV3'), 'begin is module-private')
+  t.ok(Object.keys(replay).includes('applyForwardHttpsAggregateQuotaWalFrameV3'), 'composite apply present')
+  t.absent(Object.keys(replay).includes('FORWARD_HTTPS_STORE_WAL_QUOTA_REGISTRY_V3'), 'registry never exported')
+  // Removed names are gone from the surfaces
+  for (const removed of ['prepareForwardHttpsSourceSessionV3', 'appendForwardHttpsSourceSessionV3', 'terminalizeForwardHttpsSourceSessionV3', 'terminalizeForwardHttpsSourceAbsentSequenceV3', 'pruneForwardHttpsSourceSessionV3', 'FORWARD_HTTPS_SOURCE_STORE_V3_WAL_TYPE']) {
+    t.absent(removed in source, `source no longer exports ${removed}`)
   }
-  for (const name of ['FORWARD_HTTPS_TARGET_STORE_V3_LIMITS', 'FORWARD_HTTPS_TARGET_STORE_V3_STATUS', 'FORWARD_HTTPS_TARGET_WAL_TYPE', 'FORWARD_HTTPS_TARGET_STORE_V3_ERROR_CODE', 'FORWARD_HTTPS_TARGET_STORE_V3_FAULT_POINT', 'ForwardHttpsTargetStoreV3Error', 'openForwardHttpsTargetStoreV3', 'acceptForwardedHttpsTargetTurnV3', 'runNextForwardHttpsTargetProcessorWorkV3', 'forwardHttpsTargetTurnStateV3', 'forwardHttpsTargetStoreV3Status', 'closeForwardHttpsTargetStoreV3']) {
-    t.ok(name in target, `target exports ${name}`)
+  for (const removed of ['openForwardHttpsTargetSessionV3', 'appendForwardHttpsTargetSessionV3', 'terminalizeForwardHttpsTargetSessionV3', 'terminalizeForwardHttpsTargetAbsentSequenceV3', 'pruneForwardHttpsTargetSessionV3', 'FORWARD_HTTPS_TARGET_STORE_V3_WAL_TYPE', 'FORWARD_HTTPS_TARGET_STORE_V3_HISTORIC_IDENTITY']) {
+    t.absent(removed in target, `target no longer exports ${removed}`)
   }
-  for (const name of ['FORWARD_HTTPS_STORAGE_V3_LIMITS', 'FORWARD_HTTPS_STORAGE_V3_STATUS', 'FORWARD_HTTPS_STORAGE_V3_ERROR_CODE', 'FORWARD_HTTPS_STORAGE_V3_FAULT_POINT', 'ForwardHttpsStorageAuthorityV3Error']) {
-    t.ok(name in storage, `storage exports ${name}`)
+  for (const removed of ['encodeForwardHttpsSessionTerminalV3', 'createForwardHttpsChargeRegistryV3', 'streamForwardHttpsChargeCommitmentV3', 'verifyForwardHttpsTerminalHeadroomV3', 'verifyForwardHttpsTerminalInvarianceV3', 'checkForwardHttpsProtectedAdmissionV3', 'classifyForwardHttpsHistoricIdentityV3', 'deriveForwardHttpsMinimalTerminalAuthorityCommitmentV3', 'deriveForwardHttpsMinimalTerminalAuthorityClassesV3', 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE', 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_LIMITS', 'FORWARD_HTTPS_STORAGE_SLOT_STATE_V3', 'FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3']) {
+    t.absent(removed in storage, `storage no longer exports ${removed}`)
   }
 })
 

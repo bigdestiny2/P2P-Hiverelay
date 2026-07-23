@@ -14,7 +14,6 @@ import {
   reserveForwardHttpsAggregateQuotaV3,
   commitForwardHttpsAggregateQuotaV3,
   releaseForwardHttpsAggregateQuotaV3,
-  adjustForwardHttpsAggregateQuotaV3,
   bindForwardHttpsStoreQuotaActualBuffersV3,
   applyForwardHttpsAggregateQuotaWalFrameV3,
   assertForwardHttpsAggregateQuotaOperationalV3,
@@ -723,14 +722,19 @@ export async function acceptForwardedHttpsTargetTurnV3 (state, input) {
   const stableSessionId = b4a.from(input.stableSessionId)
   const existing = state.slots.get(keyOf(stableSessionId))
   if (existing) {
-    // PRUNED_RELEASED returns mutation-free CONFLICT; a fresh prefix returns
-    // mutation-free SESSION_CLOSED; any present identity is SEQUENCE_INVALID.
+    // Identity first-match at the store boundary (v16 stage_2): PRUNED_RELEASED
+    // returns mutation-free CONFLICT; PRESENT_PREFIX_ALLOCATED returns
+    // mutation-free SESSION_CLOSED (only the exact prefix PRUNE is eligible);
+    // consumed identities are sticky TERMINAL; ALLOCATED_WITH_PREFIX follows
+    // the exact allocated-session rules subject to the orphan-prefix surcharge.
     if (existing.prunedReleased) fail('session identity is PRUNED_RELEASED', STORE_ERROR_CODE.CONFLICT)
     if (existing.state === SLOT_STATE.PREFIX_ALLOCATED) fail('session prefix is closed', STORE_ERROR_CODE.SESSION_CLOSED)
+    if (existing.state === SLOT_STATE.CONSUMED_UNPRUNED || existing.state === SLOT_STATE.CONSUMED_PRUNED) fail('session identity is TERMINAL', STORE_ERROR_CODE.TERMINAL)
     if (existing.state === SLOT_STATE.ALLOCATED || existing.state === SLOT_STATE.ALLOCATED_WITH_PREFIX) return appendSession(state, input)
     fail('session identity is not NEVER_SEEN', STORE_ERROR_CODE.SEQUENCE_INVALID)
   }
   // Fresh target OPEN TURN_FINAL=112: one FREE slot becomes ALLOCATED.
+  if (input.walType !== undefined && input.walType !== WAL_TYPE.TURN_FINAL) throw new TypeError('walType is not an ordinary target SESSION type')
   if (state.unconsumed < 1) fail('no FREE slot for a fresh target session', STORE_ERROR_CODE.CAPACITY)
   const slot = freshSlot(state, stableSessionId)
   state.unconsumed--

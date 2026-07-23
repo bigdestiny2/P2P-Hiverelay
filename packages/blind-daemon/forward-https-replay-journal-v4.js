@@ -973,6 +973,16 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
       mirror.orphanLastRevision = 0n
     }
   }
+  if (entry.terminalLogicalCharge > 0) {
+    // Terminalization closes the open prefix record: the orphan entries
+    // persist as ordinary removable charge in the consumed registry and no
+    // flags2 abort is possible after.
+    mirror.prefix = null
+    mirror.requestCommitment = null
+    mirror.orphanCount = 0
+    mirror.orphanSum = 0n
+    mirror.orphanLastRevision = 0n
+  }
   if (entry.ordinaryLogicalCharge > 0) {
     // The 65537th removable charge entry of one identity is INTEGRITY in
     // recovery (or cap+1 terminal conversion live before ordinary WAL).
@@ -1235,16 +1245,22 @@ export function bindForwardHttpsStoreQuotaActualBuffersV3 (storeQuotaCapability,
     : b4a.from(finalPayload.subarray(4, 36))
   if (b4a.equals(stableSessionId, ZERO32)) quotaFail('bound session identity must be nonzero', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
   if (internal.plan.operation === 'PRUNE') {
-    // Per-variant clock eligibility against the exact recovered state: flags0
-    // ordinary and terminal-existing wait the strict +900 past the recorded
-    // recoveryGraceUntilEpoch (zero for unclocked sessions, FTM9-carried for
-    // the terminal-only variant); flags1/flags2 prefix variants are the
-    // disjoint immediate exception with zeroed expiry fields.
+    // Per-variant clock eligibility and prefix class against the exact
+    // recovered state: flags0 ordinary and terminal-existing wait the strict
+    // +900 past the recorded recoveryGraceUntilEpoch (zero for unclocked
+    // sessions, FTM9-carried for the terminal-only variant); flags1 requires
+    // a FRESH recovered prefix; flags2 requires an EXISTING-session prefix.
+    // flags1/flags2 prefix variants are the disjoint immediate exception.
     const pruned = decodeForwardHttpsRetentionPrunedV3(finalPayload)
     const mirror = internal.state.sessions.get(`${capability.role}:${b4a.toString(stableSessionId, 'hex')}`) || null
     if (pruned.flags === 0) {
       const grace = mirror ? (mirror.recoveryGraceUntilEpoch || 0) : 0
       if (pruned.pruneEpochSeconds <= grace) quotaFail('FPR9 prune epoch has not passed the exact recovery grace', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+      if (!mirror || !mirror.present) quotaFail('FPR9 tombstone has no recovered session state', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    } else {
+      if (!mirror || (pruned.flags === 1 && mirror.prefix !== 'FRESH') || (pruned.flags === 2 && mirror.prefix !== 'EXISTING')) {
+        quotaFail('FPR9 prefix variant does not match the recovered prefix class', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+      }
     }
   }
   internal.actual = { logicalBytes, physicalBytes, commitments: arrays.map(item => hmac(ZERO32, item)) }
