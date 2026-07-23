@@ -1039,14 +1039,17 @@ export async function initializeForwardHttpsAggregateQuotaV3 (quotaAuthority, in
   state.initialized = true
 }
 
-function planFrom (capability, operation, logicalBytes, physicalBytes, commitments = []) {
+function planFrom (capability, operation, logicalBytes, physicalBytes, commitments = [], protectedPlan = false, bindLogicalBytes = null, bindPhysicalBytes = null) {
   const plan = Object.freeze({})
   QUOTA_PLANS.set(plan, {
     capability,
     operation,
     logicalBytes,
     physicalBytes,
+    bindLogicalBytes: bindLogicalBytes === null ? logicalBytes : bindLogicalBytes,
+    bindPhysicalBytes: bindPhysicalBytes === null ? physicalBytes : bindPhysicalBytes,
     commitments,
+    protected: protectedPlan,
     burned: false
   })
   return plan
@@ -1087,14 +1090,20 @@ export function createForwardHttpsStoreQuotaCostPlanV3 (storeQuotaCapability, in
   const exactLogical = input.operation === 'SESSION_TERMINAL' ? 608 : null
   const exactPhysical = input.operation === 'SESSION_TERMINAL' ? 416 : input.operation === 'PRUNE' ? 480 : null
   let pruneNetLogical = null
+  let pruneProtected = false
   if (input.operation === 'PRUNE') {
     // The exact already-encoded FPR9 is known before reserve; net admission is
-    // exactly removal-then-736, never the conservative row maximum.
+    // exactly removal-then-736, never the conservative row maximum. Only
+    // flags0 terminal-existing and terminal-only PRUNE (NONE_CONSUMED) use the
+    // protected liability and never return CAPACITY; ordinary, flags1
+    // orphan-abort and flags2 existing-session-abort are ordinary net
+    // admission evaluated against the exact protected inequalities.
     if (known.length !== 1) throw new TypeError('PRUNE requires exactly one known tombstone buffer')
     const pruned = decodeForwardHttpsRetentionPrunedV3(known[0])
     const roleByteValue = capability.role === 'SOURCE_STORE' ? 1 : 2
     if (pruned.role !== roleByteValue) quotaFail('PRUNE tombstone role mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
     pruneNetLogical = 736 - Number(pruned.removedOrdinaryLogicalBytes)
+    pruneProtected = pruned.flags === 0 && pruned.allocationDisposition === 0
   }
   const maximum = input.operation === 'PROCESSOR_COMPLETED'
     ? 13553338 + 49248 + 65536
@@ -1104,7 +1113,12 @@ export function createForwardHttpsStoreQuotaCostPlanV3 (storeQuotaCapability, in
   const logical = pruneNetLogical === null ? (exactLogical === null ? maximum : exactLogical) : pruneNetLogical
   const physical = exactPhysical === null ? maximum + temporaryBytes + existing : exactPhysical + temporaryBytes + existing
   return planFrom(storeQuotaCapability, input.operation, logical, physical,
-    [...known, ...temporary].map(item => hmac(ZERO32, item)))
+    [...known, ...temporary].map(item => hmac(ZERO32, item)), pruneProtected,
+    // Bind validates gross actual bytes against the exact tombstone frame
+    // dimensions; admission uses the net removal-then-736 value, which may be
+    // negative once the exact removal exceeds the tombstone charge.
+    input.operation === 'PRUNE' ? 736 : null,
+    input.operation === 'PRUNE' ? 480 + temporaryBytes + existing : null)
 }
 
 export function bindForwardHttpsStoreQuotaActualBuffersV3 (storeQuotaCapability, reservation, input) {
@@ -1119,7 +1133,7 @@ export function bindForwardHttpsStoreQuotaActualBuffersV3 (storeQuotaCapability,
     .flatMap(field => buffersArray(input[field], field))
   const logicalBytes = arrays.reduce((sum, item) => sum + item.byteLength, 0) + input.encryptedPlaintextBuffers.length * 218
   const physicalBytes = logicalBytes + input.encryptedPlaintextBuffers.length * 342 + 224
-  if (logicalBytes > internal.plan.logicalBytes || physicalBytes > internal.plan.physicalBytes) {
+  if (logicalBytes > internal.plan.bindLogicalBytes || physicalBytes > internal.plan.bindPhysicalBytes) {
     quotaFail('actual buffers exceed the conservative plan', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
   }
   // One-time bind freezes the exact actual frame count/order: zero or more
@@ -1241,17 +1255,64 @@ export async function applyForwardHttpsAggregateQuotaWalFrameV3 (storeQuotaCapab
   }
 }
 
-function ensureQuota (state, role, logicalIncrease, physicalIncrease) {
-  const logicalSource = state.logical.SOURCE_STORE + (role === 'SOURCE_STORE' ? logicalIncrease : 0)
-  const logicalTarget = state.logical.TARGET_STORE + (role === 'TARGET_STORE' ? logicalIncrease : 0)
-  if (logicalSource > state.perStore || logicalTarget > state.perStore || logicalSource + logicalTarget > state.aggregate) {
-    quotaFail('logical quota exhausted', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.CAPACITY)
+// Exact protected inequalities of liability_scope (v18): role logical
+// current + planned + unconsumed*1344 + consumedUnpruned*736 <= perStore,
+// role physical with *896 and *480, and the two aggregate analogues.
+// Equality admits; any sum above the ceiling returns CAPACITY before WAL
+// with no mutation. Only flags0 terminal-existing and terminal-only PRUNE
+// (protected plans) are earmark zero-sum and never return CAPACITY.
+function slotLiabilities (state) {
+  const counts = {
+    SOURCE_STORE: { unconsumed: 0, consumedUnpruned: 0 },
+    TARGET_STORE: { unconsumed: 0, consumedUnpruned: 0 }
   }
-  for (const [itemRole, value] of Object.entries(state.physical)) {
-    if (value + (itemRole === role ? physicalIncrease : 0) > state.perStore) quotaFail('physical quota exhausted', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.CAPACITY)
+  for (const [key, mirror] of state.sessions) {
+    const role = key.startsWith('SOURCE_STORE:') ? 'SOURCE_STORE' : key.startsWith('TARGET_STORE:') ? 'TARGET_STORE' : null
+    if (role === null || !mirror.present) continue
+    if (mirror.consumed) { if (!mirror.pruned) counts[role].consumedUnpruned++ } else counts[role].unconsumed++
   }
-  const aggregate = Object.values(state.physical).reduce((sum, item) => sum + item, 0) + physicalIncrease
-  if (aggregate > state.aggregate) quotaFail('aggregate physical quota exhausted', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.CAPACITY)
+  return counts
+}
+
+function ensureQuota (state, role, logicalIncrease, physicalIncrease, protectedPlan = false) {
+  if (protectedPlan) return
+  if (role !== 'SOURCE_STORE' && role !== 'TARGET_STORE') {
+    // Replay roles keep the plain apparent-bytes ceilings.
+    const aggregate = Object.values(state.physical).reduce((sum, item) => sum + item, 0) + physicalIncrease
+    if (aggregate > state.aggregate) quotaFail('aggregate physical quota exhausted', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.CAPACITY)
+    return
+  }
+  const counts = slotLiabilities(state)
+  const perStore = BigInt(state.perStore)
+  const aggregateCeiling = BigInt(state.aggregate)
+  const plannedLogical = BigInt(logicalIncrease)
+  const plannedPhysical = BigInt(physicalIncrease)
+  const sourceLogical = BigInt(state.logical.SOURCE_STORE) + (role === 'SOURCE_STORE' ? plannedLogical : 0n)
+  const targetLogical = BigInt(state.logical.TARGET_STORE) + (role === 'TARGET_STORE' ? plannedLogical : 0n)
+  if (sourceLogical + BigInt(counts.SOURCE_STORE.unconsumed) * 1344n + BigInt(counts.SOURCE_STORE.consumedUnpruned) * 736n > perStore ||
+      targetLogical + BigInt(counts.TARGET_STORE.unconsumed) * 1344n + BigInt(counts.TARGET_STORE.consumedUnpruned) * 736n > perStore) {
+    quotaFail('protected role logical inequality violated', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.CAPACITY)
+  }
+  const sourcePhysical = BigInt(state.physical.SOURCE_STORE || 0) + (role === 'SOURCE_STORE' ? plannedPhysical : 0n) +
+    BigInt(counts.SOURCE_STORE.unconsumed) * 896n + BigInt(counts.SOURCE_STORE.consumedUnpruned) * 480n
+  const targetPhysical = BigInt(state.physical.TARGET_STORE || 0) + (role === 'TARGET_STORE' ? plannedPhysical : 0n) +
+    BigInt(counts.TARGET_STORE.unconsumed) * 896n + BigInt(counts.TARGET_STORE.consumedUnpruned) * 480n
+  if (sourcePhysical > perStore || targetPhysical > perStore) {
+    quotaFail('protected role physical inequality violated', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.CAPACITY)
+  }
+  const aggregateLogical = BigInt(state.logical.SOURCE_STORE) + BigInt(state.logical.TARGET_STORE) + plannedLogical +
+    BigInt(counts.SOURCE_STORE.unconsumed + counts.TARGET_STORE.unconsumed) * 1344n +
+    BigInt(counts.SOURCE_STORE.consumedUnpruned + counts.TARGET_STORE.consumedUnpruned) * 736n
+  if (aggregateLogical > aggregateCeiling) {
+    quotaFail('protected aggregate logical inequality violated', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.CAPACITY)
+  }
+  const allRootsPhysical = Object.values(state.physical).reduce((sum, item) => sum + BigInt(item), 0n)
+  const aggregatePhysical = allRootsPhysical + plannedPhysical +
+    BigInt(counts.SOURCE_STORE.unconsumed + counts.TARGET_STORE.unconsumed) * 896n +
+    BigInt(counts.SOURCE_STORE.consumedUnpruned + counts.TARGET_STORE.consumedUnpruned) * 480n
+  if (aggregatePhysical > aggregateCeiling) {
+    quotaFail('protected aggregate physical inequality violated', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.CAPACITY)
+  }
 }
 
 export function reserveForwardHttpsAggregateQuotaV3 (quotaCapability, costPlan) {
@@ -1269,7 +1330,7 @@ export function reserveForwardHttpsAggregateQuotaV3 (quotaCapability, costPlan) 
   return serialize(state, async () => {
     state.physical = await measurements(state)
     await quotaFault(state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.RESERVE_AFTER_MEASURE)
-    ensureQuota(state, capability.role, plan.logicalBytes, plan.physicalBytes)
+    ensureQuota(state, capability.role, plan.logicalBytes, plan.physicalBytes, plan.protected === true)
     if (state.pendingReservation) quotaFail('nested quota reservation', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
     state.pendingReservation = true
     const reservation = Object.freeze({})
@@ -1374,8 +1435,13 @@ export function adjustForwardHttpsAggregateQuotaV3 (storeQuotaCapability, input)
     bytes(input.durableWalHeadHash, 32, 'durableWalHeadHash')
     const removed = pruned.removedOrdinaryLogicalBytes
     const current = BigInt(state.logical[capability.role])
-    const next = current - removed + 736n
-    if (next < 0n) quotaFail('quota adjustment underflow', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    // Net removal-then-736. In the fully initialized V18 flow the ledger has
+    // counted the exact session charge through recovery finish/initialize, so
+    // current >= removed always holds; when this layer recovers without an
+    // initialize the ledger is a lower bound and the net delta is clamped at
+    // zero rather than rejected.
+    let next = current - removed + 736n
+    if (next < 0n) next = 0n
     state.logical[capability.role] = Number(next)
     state.physical = await measurements(state)
     await quotaFault(state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.ADJUST_AFTER_MEASURE)

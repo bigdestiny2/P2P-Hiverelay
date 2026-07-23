@@ -261,7 +261,11 @@ async function appendOperation (state, slot, operation, frames) {
 export async function prepareForwardHttpsSourceSessionV3 (state, input) {
   requireOperational(state)
   const stableSessionId = b4a.from(input.stableSessionId)
-  if (state.slots.has(keyOf(stableSessionId))) fail('session identity is not NEVER_SEEN', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.SEQUENCE_INVALID)
+  const existing = state.slots.get(keyOf(stableSessionId))
+  // PRUNED_RELEASED returns mutation-free CONFLICT; a present session is
+  // SEQUENCE_INVALID; no historic state is reclassified as NEVER_SEEN.
+  if (existing && existing.prunedReleased) fail('session identity is PRUNED_RELEASED', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.CONFLICT)
+  if (existing) fail('session identity is not NEVER_SEEN', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.SEQUENCE_INVALID)
   if (state.unconsumed < 1) fail('no FREE slot for a fresh source session', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.CAPACITY)
   const slot = freshSlot(state, stableSessionId)
   state.unconsumed--
