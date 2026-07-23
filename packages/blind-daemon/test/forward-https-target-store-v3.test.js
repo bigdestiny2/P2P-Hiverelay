@@ -166,7 +166,6 @@ test('target store: cross-role frame recovery is INTEGRITY', async t => {
 
 test('quota gate: OPEN admits, fail-WAL enters FAILED_WAL_OUTCOME_UNKNOWN_PENDING and blocks all work', async t => {
   const r = await roots(t)
-  const ZERO32 = b4a.alloc(32)
   const authority = await openForwardHttpsAggregateQuotaV3({
     sourceReplayRoot: r['source-replay'],
     targetReplayRoot: r['target-replay'],

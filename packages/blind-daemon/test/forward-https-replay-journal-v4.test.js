@@ -81,7 +81,7 @@ async function quota (t, role) {
   })
   t.teardown(async () => { await closeForwardHttpsAggregateQuotaV3(authority).catch(() => {}) })
   const capabilities = mintForwardHttpsAggregateQuotaCapabilitiesV3(authority)
-  return { authority, capability: role === SOURCE ? capabilities.sourceStoreQuotaCapability : capabilities.targetStoreQuotaCapability }
+  return { authority, capabilities, capability: role === SOURCE ? capabilities.sourceStoreQuotaCapability : capabilities.targetStoreQuotaCapability }
 }
 
 test('export surface: exactly the frozen 39 replay-module exports', async t => {
@@ -618,7 +618,6 @@ test('composite: one-use handoff burn proven at every ordinal for 1, 2, 4 and 22
       temporaryWriteBuffers: []
     })
     let sequence = 0n
-    const burned = []
     const appendSync = async candidate => {
       sequence += 1n
       return { sequence, walHash: blake2b256(b4a.concat([b4a.from('wal'), candidate.payload])), payloadHash: blake2b256(candidate.payload) }
@@ -656,6 +655,50 @@ test('composite: one-use handoff burn proven at every ordinal for 1, 2, 4 and 22
       temporaryWriteBuffers: []
     }))
   }
+})
+
+test('recovery claim ABI: exclusivity, ordering, post-finish absorb and one-use final states', async t => {
+  const setup = await quota(t, TARGET)
+  const { authority, capability } = setup
+  const { initializeForwardHttpsAggregateQuotaV3, forwardHttpsAggregateQuotaV3Status } = replayModule
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  // Second concurrent begin on the same role root is AUTHORITY_INVALID
+  await t.exception.all(() => beginForwardHttpsAggregateQuotaRecoveryV3(capability), /already open/)
+  const id = fixed(0x78)
+  const first = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x51)])
+  // Out-of-order frame rejects with no state mutation
+  await t.exception.all(absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(112, first, 2n, ZERO32) }), /out-of-order|duplicate|torn/)
+  // Torn chain (wrong previousWalHash) rejects
+  await t.exception.all(absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(112, first, 1n, fixed(0x79)) }), /out-of-order|duplicate|torn/)
+  // One complete frame absorbs; a duplicate rejects
+  await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(112, first, 1n, ZERO32) })
+  await t.exception.all(absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(112, first, 1n, ZERO32) }), /out-of-order|duplicate/)
+  // finish returns the opaque final recovery state; no claim is ever exposed
+  const finalState = await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+  t.is(typeof finalState, 'object')
+  t.absent(finalState === null)
+  // Post-finish absorb rejects
+  await t.exception.all(absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, {
+    frame: recoveryFrame(112, first, 2n, blake2b256(b4a.concat([b4a.from('wal'), first])))
+  }), /invalid/)
+  // A fresh begin runs to finish after the completed predecessor
+  const sink2 = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  t.ok(await finishForwardHttpsAggregateQuotaRecoveryV3(sink2))
+  // Cross-role frame rejects
+  const sink3 = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  await t.exception.all(absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink3, { frame: recoveryFrame(96, sessionBody(id), 1n, ZERO32) }))
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink3)
+  // initialize burns final states exactly once; quota becomes OPEN
+  const sourceSink = beginForwardHttpsAggregateQuotaRecoveryV3(setup.capabilities.sourceStoreQuotaCapability)
+  const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sourceSink)
+  const targetSink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  const targetFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(targetSink)
+  await initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryFinalState: sourceFinal, targetRecoveryFinalState: targetFinal })
+  t.is(forwardHttpsAggregateQuotaV3Status(authority).state, 'OPEN')
+  await t.exception.all(
+    initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryFinalState: sourceFinal, targetRecoveryFinalState: targetFinal }),
+    /already initialized/
+  )
 })
 
 test('composite: substituted final and cross-role presentations reject', async t => {
