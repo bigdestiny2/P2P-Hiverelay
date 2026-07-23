@@ -919,6 +919,12 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
   if (entry.scope === 'PRUNE_TRANSITION') {
     const pruned = decodeForwardHttpsRetentionPrunedV3(payload)
     mirror.chargeEntryCount = Math.max(0, (mirror.chargeEntryCount || 0) - pruned.chargeEntryCount)
+    mirror.chargeSum = (mirror.chargeSum || 0n) - pruned.removedOrdinaryLogicalBytes
+    if (mirror.chargeSum < 0n) mirror.chargeSum = 0n
+    mirror.orphanCount = 0
+    mirror.orphanSum = 0n
+    mirror.orphanLastRevision = 0n
+    mirror.requestCommitment = null
     if (pruned.flags === 2) {
       // flags2 existing-session prefix-abort: the slot stays ALLOCATED and the
       // authority vector is byte-identically unchanged; only orphan charge is
@@ -945,19 +951,43 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
     return
   }
   if (entry.walType === 113) {
-    if (!mirror.present) mirror.prefix = 'FRESH'
-    else if (mirror.prefix === null) mirror.prefix = 'EXISTING'
-  } else {
-    mirror.prefix = null
+    const commitment = payload && payload.byteLength >= 68 ? b4a.from(payload.subarray(36, 68)) : null
+    if (!mirror.present) {
+      mirror.prefix = 'FRESH'
+      mirror.requestCommitment = commitment
+    } else if (mirror.prefix === null) {
+      mirror.prefix = 'EXISTING'
+      mirror.requestCommitment = commitment
+    } else if (commitment === null || !b4a.equals(commitment, mirror.requestCommitment || b4a.alloc(0))) {
+      storeWalFail('mixed prefix requestCommitment is INTEGRITY')
+    }
+  } else if (mirror.prefix !== null) {
+    // Only a final carrying the exact same requestCommitment closes the open
+    // prefix record; a final of any other operation leaves it open.
+    const commitment = payload && payload.byteLength >= 68 ? b4a.from(payload.subarray(36, 68)) : null
+    if (commitment !== null && b4a.equals(commitment, mirror.requestCommitment || b4a.alloc(0))) {
+      mirror.prefix = null
+      mirror.requestCommitment = null
+      mirror.orphanCount = 0
+      mirror.orphanSum = 0n
+      mirror.orphanLastRevision = 0n
+    }
   }
   if (entry.ordinaryLogicalCharge > 0) {
     // The 65537th removable charge entry of one identity is INTEGRITY in
     // recovery (or cap+1 terminal conversion live before ordinary WAL).
     if ((mirror.chargeEntryCount || 0) >= 65536) storeWalFail('recovered removable charge entries exceed the cap')
     mirror.chargeEntryCount = (mirror.chargeEntryCount || 0) + 1
+    mirror.chargeSum = (mirror.chargeSum || 0n) + BigInt(entry.ordinaryLogicalCharge)
   }
   mirror.present = true
   mirror.priorRevision += 1n
+  if (entry.walType === 113 && mirror.prefix !== null) {
+    // Orphan bookkeeping for the exact flags1/flags2 match at adjust.
+    mirror.orphanCount = (mirror.orphanCount || 0) + 1
+    mirror.orphanSum = (mirror.orphanSum || 0n) + BigInt(entry.ordinaryLogicalCharge)
+    mirror.orphanLastRevision = mirror.priorRevision
+  }
   mirror.bitmap = entry.authorityBitmap
   mirror.commitments = entry.authorityCommitments
   mirror.consumed = entry.terminalLogicalCharge > 0 || (entry.authorityBitmap & 512) !== 0
@@ -1293,7 +1323,12 @@ export async function applyForwardHttpsAggregateQuotaWalFrameV3 (storeQuotaCapab
       },
       transitionAuthority: claimOrHandoff
     })
-    applyEntryToSessionMirror(internal.state.sessions, `${capability.role}:${b4a.toString(derived.entry.stableSessionId === null ? ZERO32 : derived.entry.stableSessionId, 'hex')}`, derived.entry, payload)
+    // PRUNE_TRANSITION mirror transitions land at adjust (the prune commit
+    // point), never at frame durability: adjust independently matches the
+    // tombstone against the exact pre-prune mirror first.
+    if (derived.entry.scope !== 'PRUNE_TRANSITION') {
+      applyEntryToSessionMirror(internal.state.sessions, `${capability.role}:${b4a.toString(derived.entry.stableSessionId === null ? ZERO32 : derived.entry.stableSessionId, 'hex')}`, derived.entry, payload)
+    }
     internal.nextOrdinal++
     internal.lastHandoff = derived.transitionAuthorityHandoff
     internal.lastAppliedHead = { sequence: derived.entry.walSequence, hash: b4a.from(bytes(durable.walHash, 32, 'durable.walHash')) }
@@ -1562,6 +1597,32 @@ export async function adjustForwardHttpsAggregateQuotaV3 (storeQuotaCapability, 
     const pruned = decodeForwardHttpsRetentionPrunedV3(tombstone)
     const roleByteValue = capability.role === 'SOURCE_STORE' ? 1 : 2
     if (pruned.role !== roleByteValue) quotaFail('quota adjustment tombstone role mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    // Independent quota match: the tombstone is recomputed against the exact
+    // pre-prune recovered mirror — count, sum, revision, vector and slot —
+    // before any mutation. A tampered count or commitment is INTEGRITY.
+    const mirrorKey = `${capability.role}:${b4a.toString(pruned.stableSessionId, 'hex')}`
+    const mirror = state.sessions.get(mirrorKey) || null
+    if (!mirror || mirror.present !== true) quotaFail('quota adjustment has no recovered session state', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    if (pruned.flags === 0 && pruned.priorSessionRevision !== mirror.priorRevision) quotaFail('quota adjustment revision mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    if (pruned.beforeAuthorityBitmap !== mirror.bitmap) quotaFail('quota adjustment vector mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    const mirrorCommitments = mirror.commitments || Array.from({ length: AUTHORITY_CLASS_COUNT }, () => b4a.from(ZERO32))
+    const expectedAuthority = authorityRegistryCommitment(roleByteValue, pruned.stableSessionId, pruned.priorSessionRevision, pruned.beforeAuthorityBitmap, mirrorCommitments)
+    if (!b4a.equals(pruned.authorityRegistryCommitment, expectedAuthority)) quotaFail('quota adjustment authority commitment mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    if (pruned.flags === 0 &&
+        (pruned.chargeEntryCount !== (mirror.chargeEntryCount || 0) || pruned.removedOrdinaryLogicalBytes !== (mirror.chargeSum || 0n))) {
+      quotaFail('quota adjustment count/sum mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    }
+    if (pruned.flags !== 0 &&
+        (pruned.priorSessionRevision !== (mirror.orphanLastRevision || 0n) || pruned.chargeEntryCount !== (mirror.orphanCount || 0) || pruned.removedOrdinaryLogicalBytes !== (mirror.orphanSum || 0n))) {
+      quotaFail('quota adjustment orphan count/sum/revision mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    }
+    if (pruned.flags === 0 && ((pruned.allocationDisposition === 1 && mirror.consumed) || (pruned.allocationDisposition === 0 && !mirror.consumed))) {
+      quotaFail('quota adjustment slot state mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    }
+    if (pruned.flags === 1 && mirror.prefix !== 'FRESH') quotaFail('quota adjustment prefix class mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    if (pruned.flags === 2 && mirror.prefix !== 'EXISTING') quotaFail('quota adjustment prefix class mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    // Matched: apply the exact prune transition to the canonical mirror.
+    applyEntryToSessionMirror(state.sessions, mirrorKey, { scope: 'PRUNE_TRANSITION', stableSessionId: pruned.stableSessionId, walType: roleByteValue === 1 ? 100 : 118, authorityBitmap: 0, ordinaryLogicalCharge: 0, terminalLogicalCharge: 0 }, tombstone)
     const removed = pruned.removedOrdinaryLogicalBytes
     const current = BigInt(state.logical[capability.role])
     // Net removal-then-736 in one charge-unit model: the ledger counts the

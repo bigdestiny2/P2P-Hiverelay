@@ -527,8 +527,6 @@ test('overlay terminalization: flags0 on ALLOCATED_WITH_PREFIX with orphan persi
   await t.exception.all(pruneForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, flags: 2, pruneEpochSeconds: 9500 }), /requires an existing-session prefix/)
   // The later terminal-existing FPR9 removes the persisted orphan entries
   const slot2 = reopened.slots.get(b4a.toString(id, 'hex'))
-  slot2.expiresAtEpoch = 1
-  slot2.recoveryGraceUntilEpoch = 1
   const pruned = await pruneForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, pruneEpochSeconds: 9600 })
   t.is(pruned.payload.readUInt32BE(72), 2)
   t.is(slot.state, SLOT.CONSUMED_PRUNED)
@@ -572,6 +570,70 @@ test('store-level precedence: PRESENT_PREFIX_ALLOCATED is SESSION_CLOSED, consum
   try { await appendForwardHttpsTargetSessionV3(reopened, { stableSessionId: prunedId, walType: 112 }) } catch (error) { conflict = error }
   t.is(conflict && conflict.code, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_CONFLICT')
   // All three rejections are mutation-free
+  t.is(forwardHttpsTargetStoreV3Status(reopened).walHeadSequence, headBefore)
+})
+
+test('matching-final wrong-operation: non-matching final on a fresh prefix is INTEGRITY, never admitted', async t => {
+  const r = await roots(t)
+  const { capabilities } = await quota(t, r)
+  const id = fixed(0x66)
+  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  await rawAppend(store, 113, prefixPayload(id))
+  // A final of a DIFFERENT operation (different requestCommitment) follows
+  await rawAppend(store, 112, finalPayload(id, 0x53))
+  await closeForwardHttpsTargetStoreV3(store)
+  // Recovery has exactly one disposition: INTEGRITY, never an admission
+  await t.exception.all(openForwardHttpsTargetStoreV3(storeOptions(r, capabilities)), /non-matching final|INTEGRITY/)
+})
+
+test('recovered tombstone tamper: count and commitment mismatches are INTEGRITY at recovery', async t => {
+  const r = await roots(t)
+  const { authority, capabilities } = await quota(t, r)
+  const id = fixed(0x67)
+  const store = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
+  const slot = store.slots.get(b4a.toString(id, 'hex'))
+  const { encodeForwardHttpsRetentionPrunedV3 } = await import('../forward-https-replay-journal-v4.js')
+  const base = {
+    role: 'TARGET_STORE',
+    stableSessionId: id,
+    priorSessionRevision: slot.priorRevision,
+    pruneEpochSeconds: 500,
+    trustedEpochHighWatermark: 500,
+    expiresAtEpoch: slot.expiresAtEpoch,
+    recoveryGraceUntilEpoch: slot.recoveryGraceUntilEpoch,
+    removedOrdinaryLogicalBytes: slot.registry.removedLogicalBytes(),
+    chargeEntryCount: slot.registry.count,
+    beforeAuthorityBitmap: slot.authorityBitmap,
+    allocationDisposition: 1,
+    terminalSlotState: 1,
+    chargeEntryBuffers: slot.registry.entriesAscending(),
+    authorityCommitments: Array.from({ length: 10 }, () => b4a.alloc(32))
+  }
+  // count=2 against a 1-entry registry (review probe)
+  const countTampered = encodeForwardHttpsRetentionPrunedV3({ ...base, chargeEntryCount: 1 })
+  countTampered.writeUInt32BE(2, 72)
+  await rawAppend(store, 118, countTampered)
+  await closeForwardHttpsTargetStoreV3(store)
+  await t.exception.all(openForwardHttpsTargetStoreV3(storeOptions(r, capabilities)), /independently match|INTEGRITY/)
+})
+
+test('fresh OPEN on PRESENT_PREFIX_ALLOCATED is mutation-free SESSION_CLOSED', async t => {
+  const r = await roots(t)
+  const { authority, capabilities } = await quota(t, r)
+  const id = fixed(0x68)
+  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  await rawAppend(store, 113, prefixPayload(id))
+  await closeForwardHttpsTargetStoreV3(store)
+  const reopened = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
+  const headBefore = forwardHttpsTargetStoreV3Status(reopened).walHeadSequence
+  let closed = null
+  try { await openForwardHttpsTargetSessionV3(reopened, { stableSessionId: id }) } catch (error) { closed = error }
+  t.is(closed && closed.code, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_SESSION_CLOSED')
   t.is(forwardHttpsTargetStoreV3Status(reopened).walHeadSequence, headBefore)
 })
 

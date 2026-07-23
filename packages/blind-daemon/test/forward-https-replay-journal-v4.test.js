@@ -921,8 +921,8 @@ test('composite: one-use handoff burn proven at every ordinal for 1, 2, 4 and 22
     const { capability } = await quota(t, role)
     const id = fixed(0x70 + prefix)
     const magic = role === SOURCE ? 'FSS3' : 'FTS3'
-    const prefixPayloads = Array.from({ length: prefix }, (_, index) => b4a.concat([b4a.from(magic, 'ascii'), id, b4a.alloc(118 - 36, index & 0xff)]))
-    const finalPayload = b4a.concat([b4a.from(magic, 'ascii'), id, b4a.alloc(8, 0x43)])
+    const prefixPayloads = Array.from({ length: prefix }, (_, index) => b4a.concat([b4a.from(magic, 'ascii'), id, b4a.alloc(118 - 36, 0x42)]))
+    const finalPayload = b4a.concat([b4a.from(magic, 'ascii'), id, b4a.alloc(32, 0x42), b4a.alloc(8, 0x43)])
     const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
       operation,
       knownInputBuffers: [...prefixPayloads, finalPayload],

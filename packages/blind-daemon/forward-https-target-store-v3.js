@@ -166,15 +166,23 @@ async function recoverFrame (state, frame) {
       slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED
       state.unconsumed--
     }
-    if (slot.orphan && b4a.equals(payloadCommitment(frame.payload) || b4a.alloc(0), slot.orphan.requestCommitment)) {
-      // Matching final for the exact same operation, requestCommitment and
-      // revision chain: the open prefix is applied exactly once. Orphan
-      // entries become ordinary session entries and the record closes;
-      // FRESH PREFIX_ALLOCATED and EXISTING ALLOCATED_WITH_PREFIX both
-      // return to ALLOCATED. A final of any other operation does not close
-      // the record and its entry is preserved by a later flags2 abort.
-      slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED
-      slot.orphan = null
+    if (slot.orphan) {
+      const finalCommitment = payloadCommitment(frame.payload)
+      if (slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.PREFIX_ALLOCATED && !b4a.equals(finalCommitment || b4a.alloc(0), slot.orphan.requestCommitment)) {
+        // A fresh prefix admits no later operation: a non-matching final is
+        // never admitted onto the PREFIX_ALLOCATED slot.
+        fail('non-matching final on a fresh prefix is INTEGRITY', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
+      }
+      if (b4a.equals(finalCommitment || b4a.alloc(0), slot.orphan.requestCommitment)) {
+        // Matching final for the exact same operation, requestCommitment and
+        // revision chain: the open prefix is applied exactly once. Orphan
+        // entries become ordinary session entries and the record closes;
+        // FRESH PREFIX_ALLOCATED and EXISTING ALLOCATED_WITH_PREFIX both
+        // return to ALLOCATED. A final of any other operation does not close
+        // the record and its entry is preserved by a later flags2 abort.
+        slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED
+        slot.orphan = null
+      }
     }
     slot.registry.admit(derived)
     slot.priorRevision++
@@ -262,9 +270,15 @@ function applyTerminalRecovery (state, slot, key, frame, derived) {
     slot.minimal = true
     slot.authorityBitmap = derived.authorityBitmap
     slot.authorityCommitments = derived.authorityCommitments
+    // The FTM9-carried exact expiry clock is recovered with the session.
+    slot.expiresAtEpoch = frame.payload.readUInt32BE(141)
+    slot.recoveryGraceUntilEpoch = frame.payload.readUInt32BE(145)
+    slot.trustedEpochHighWatermark = frame.payload.readUInt32BE(72)
   } else {
     if (slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED && slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED_WITH_PREFIX) fail('duplicate terminal is INTEGRITY', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
     slot.priorRevision++
+    slot.authorityBitmap = derived.authorityBitmap
+    slot.authorityCommitments = derived.authorityCommitments
   }
   // Overlay terminalization: orphan prefix entries persist as ordinary
   // removable entries inside the consumed registry and are removed only by
@@ -303,12 +317,14 @@ function applyPruneRecovery (state, slot, key, derived, frame) {
     slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED
   } else if (slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED) {
     // nonterminal PRUNE: RELEASE_ALLOCATED, slot returns FREE
+    assertPruneMatch(slot, pruned)
     slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.FREE
     slot.prunedReleased = true
     state.unconsumed++
     slot.authorityBitmap = 0
   } else if (slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_UNPRUNED) {
     // terminal PRUNE: slot stays permanently consumed
+    assertPruneMatch(slot, pruned)
     slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_PRUNED
     state.consumedUnpruned--
     state.consumedPruned++
@@ -317,6 +333,21 @@ function applyPruneRecovery (state, slot, key, derived, frame) {
     fail('duplicate or misordered prune tombstone is INTEGRITY', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
   }
   state.roleGlobalLogicalBytes += derived.ordinaryLogicalCharge
+}
+
+// Independent match of a recovered flags0 tombstone against the recovered
+// session registry: count, exact sum, streaming chain commitment, revision,
+// vector and clocks must all reproduce exactly; any tamper is INTEGRITY.
+function assertPruneMatch (slot, pruned) {
+  if (pruned.priorSessionRevision !== slot.priorRevision ||
+      pruned.beforeAuthorityBitmap !== slot.authorityBitmap ||
+      pruned.chargeEntryCount !== slot.registry.count ||
+      pruned.removedOrdinaryLogicalBytes !== slot.registry.removedLogicalBytes() ||
+      pruned.expiresAtEpoch !== slot.expiresAtEpoch ||
+      pruned.recoveryGraceUntilEpoch !== slot.recoveryGraceUntilEpoch ||
+      !b4a.equals(pruned.chargeRegistryCommitment, slot.registry.commitment())) {
+    fail('recovered tombstone does not independently match the session registry', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
+  }
 }
 
 function assertOrphanMatch (slot, pruned) {
@@ -408,7 +439,16 @@ async function appendSession (state, input) {
   if (slot && slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.PREFIX_ALLOCATED) fail('session prefix is closed', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.SESSION_CLOSED)
   if (slot && (slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_UNPRUNED || slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_PRUNED)) fail('session identity is TERMINAL', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.TERMINAL)
   if (!slot || (slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED && slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED_WITH_PREFIX)) fail('session is not ALLOCATED', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.SEQUENCE_INVALID)
-  const planned = input.plannedRemovableChargeEntryCount == null ? 1 : input.plannedRemovableChargeEntryCount
+  // Planned removable charge-entry count from the exact bound operation row:
+  // type113 count plus the ordinary final SESSION indicator (TURN_FINAL=2,
+  // PROCESSOR_REQUEST_READY=4, PROCESSOR_COMPLETED=22, others=1).
+  const planned = input.plannedRemovableChargeEntryCount == null
+    ? (walType === WAL_TYPE.TURN_FINAL || walType === WAL_TYPE.TRANSPORT_RESERVED
+        ? 2
+        : walType === WAL_TYPE.PROCESSOR_REQUEST_READY
+          ? 4
+          : walType === WAL_TYPE.PROCESSOR_COMPLETED ? 22 : 1)
+    : input.plannedRemovableChargeEntryCount
   if (slot.registry.count + planned > CHARGE_ENTRY_CAP) {
     await terminalizeBudgetExhausted(state, slot, input)
     fail('removable charge entry cap exceeded; session terminalized BUDGET_EXHAUSTED', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.BUDGET_EXHAUSTED)
@@ -443,8 +483,10 @@ export async function openForwardHttpsTargetSessionV3 (state, input) {
   const stableSessionId = b4a.from(input.stableSessionId)
   const existing = state.slots.get(keyOf(stableSessionId))
   // PRUNED_RELEASED returns mutation-free CONFLICT; a present session is
-  // SEQUENCE_INVALID; no historic state is reclassified as NEVER_SEEN.
+  // SEQUENCE_INVALID; no historic state is reclassified as NEVER_SEEN. A
+  // fresh prefix returns mutation-free SESSION_CLOSED.
   if (existing && existing.prunedReleased) fail('session identity is PRUNED_RELEASED', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.CONFLICT)
+  if (existing && existing.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.PREFIX_ALLOCATED) fail('session prefix is closed', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.SESSION_CLOSED)
   if (existing) fail('session identity is not NEVER_SEEN', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.SEQUENCE_INVALID)
   if (state.unconsumed < 1) fail('no FREE slot for a fresh target session', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.CAPACITY)
   const slot = freshSlot(state, stableSessionId)
@@ -493,6 +535,8 @@ async function appendTerminalPayload (state, slot, payload) {
   }])
   slot.priorRevision++
   slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_UNPRUNED
+  slot.authorityBitmap = entry.authorityBitmap
+  slot.authorityCommitments = entry.authorityCommitments
   state.consumedUnpruned++
   return { entry, sequence: entry.walSequence, walHash: state.store.walHash }
 }

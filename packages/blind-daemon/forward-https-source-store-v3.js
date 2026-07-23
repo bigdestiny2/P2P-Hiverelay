@@ -19,7 +19,8 @@ import {
   beginForwardHttpsAggregateQuotaRecoveryV3,
   absorbForwardHttpsAggregateQuotaRecoveryFrameV3,
   finishForwardHttpsAggregateQuotaRecoveryV3,
-  encodeForwardHttpsRetentionPrunedV3
+  encodeForwardHttpsRetentionPrunedV3,
+  decodeForwardHttpsRetentionPrunedV3
 } from './forward-https-replay-journal-v4.js'
 import {
   FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE,
@@ -165,19 +166,28 @@ async function recoverFrame (state, frame) {
       slot.minimal = true
       slot.authorityBitmap = derived.authorityBitmap
       slot.authorityCommitments = derived.authorityCommitments
+      // The FTM9-carried exact expiry clock is recovered with the session.
+      slot.expiresAtEpoch = frame.payload.readUInt32BE(141)
+      slot.recoveryGraceUntilEpoch = frame.payload.readUInt32BE(145)
+      slot.trustedEpochHighWatermark = frame.payload.readUInt32BE(72)
     } else {
       if (slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED) fail('duplicate terminal is INTEGRITY', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
       slot.priorRevision++
+      slot.authorityBitmap = derived.authorityBitmap
+      slot.authorityCommitments = derived.authorityCommitments
     }
     slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_UNPRUNED
     state.consumedUnpruned++
   } else if (derived.walType === WAL_TYPE.RETENTION_PRUNED) {
     if (!slot) fail('unmatched prune tombstone is INTEGRITY', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
+    const pruned = decodeForwardHttpsRetentionPrunedV3(frame.payload)
     if (slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED) {
+      assertPruneMatch(slot, pruned)
       slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.FREE
       slot.prunedReleased = true
       state.unconsumed++
     } else if (slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_UNPRUNED) {
+      assertPruneMatch(slot, pruned)
       slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_PRUNED
       state.consumedUnpruned--
       state.consumedPruned++
@@ -188,6 +198,21 @@ async function recoverFrame (state, frame) {
     state.roleGlobalLogicalBytes += derived.ordinaryLogicalCharge
   }
   state.walHeadSequence = derived.walSequence
+}
+
+// Independent match of a recovered flags0 tombstone against the recovered
+// session registry: count, exact sum, streaming chain commitment, revision,
+// vector and clocks must all reproduce exactly; any tamper is INTEGRITY.
+function assertPruneMatch (slot, pruned) {
+  if (pruned.priorSessionRevision !== slot.priorRevision ||
+      pruned.beforeAuthorityBitmap !== slot.authorityBitmap ||
+      pruned.chargeEntryCount !== slot.registry.count ||
+      pruned.removedOrdinaryLogicalBytes !== slot.registry.removedLogicalBytes() ||
+      pruned.expiresAtEpoch !== slot.expiresAtEpoch ||
+      pruned.recoveryGraceUntilEpoch !== slot.recoveryGraceUntilEpoch ||
+      !b4a.equals(pruned.chargeRegistryCommitment, slot.registry.commitment())) {
+    fail('recovered tombstone does not independently match the session registry', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
+  }
 }
 
 function freshSlot (state, stableSessionId) {
@@ -330,6 +355,8 @@ async function appendTerminalPayload (state, slot, payload) {
   }])
   slot.priorRevision++
   slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_UNPRUNED
+  slot.authorityBitmap = entry.authorityBitmap
+  slot.authorityCommitments = entry.authorityCommitments
   state.consumedUnpruned++
   return { entry, sequence: entry.walSequence, walHash: state.store.walHash }
 }
