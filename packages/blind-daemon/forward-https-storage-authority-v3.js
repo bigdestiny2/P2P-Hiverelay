@@ -84,13 +84,20 @@ export const FORWARD_HTTPS_STORAGE_AUTHORITY_V3_LIMITS = deepFreeze({
 export const FORWARD_HTTPS_STORAGE_SLOT_STATE_V3 = deepFreeze({
   FREE: 'FREE',
   PROVISIONAL: 'PROVISIONAL',
+  PREFIX_ALLOCATED: 'PREFIX_ALLOCATED',
   ALLOCATED: 'ALLOCATED',
+  ALLOCATED_WITH_PREFIX: 'ALLOCATED_WITH_PREFIX',
   CONSUMED_UNPRUNED: 'CONSUMED_UNPRUNED',
   CONSUMED_PRUNED: 'CONSUMED_PRUNED'
 })
 
+// Exact seven-state identity model. PRESENT_PREFIX_ALLOCATED is the FRESH
+// type113 prefix predecessor; ALLOCATED_WITH_PREFIX is the EXISTING-session
+// type113 prefix overlay, which reuses the one ALLOCATED slot and adds none.
 export const FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3 = deepFreeze({
   NEVER_SEEN: 'NEVER_SEEN',
+  PRESENT_PREFIX_ALLOCATED: 'PRESENT_PREFIX_ALLOCATED',
+  ALLOCATED_WITH_PREFIX: 'ALLOCATED_WITH_PREFIX',
   PRESENT_ALLOCATED: 'PRESENT_ALLOCATED',
   PRESENT_CONSUMED_UNPRUNED: 'PRESENT_CONSUMED_UNPRUNED',
   PRUNED_RELEASED: 'PRUNED_RELEASED',
@@ -404,11 +411,16 @@ export function verifyForwardHttpsTerminalInvarianceV3 (unconsumedSlotsBefore, c
   return deepFreeze({ protectedSumInvariant: before === after + delta, logicalReduction: 608, physicalReduction: 416 })
 }
 
-// Historic identity classification from complete canonical WAL state.
+// Historic identity classification from complete canonical WAL state. The
+// latest slot-disposing transition governs: identical WAL evidence has
+// exactly one identity. A flags2 prefix-abort is never an identity
+// transition; the slot stays ALLOCATED and the identity PRESENT_ALLOCATED.
 export function classifyForwardHttpsHistoricIdentityV3 (slotState, hadPruneTombstone) {
   if (slotState === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED || slotState === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.PROVISIONAL) {
     return FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3.PRESENT_ALLOCATED
   }
+  if (slotState === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.PREFIX_ALLOCATED) return FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3.PRESENT_PREFIX_ALLOCATED
+  if (slotState === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED_WITH_PREFIX) return FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3.ALLOCATED_WITH_PREFIX
   if (slotState === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_UNPRUNED) return FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3.PRESENT_CONSUMED_UNPRUNED
   if (slotState === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_PRUNED) return FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3.PRUNED_CONSUMED
   if (slotState === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.FREE && hadPruneTombstone) return FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3.PRUNED_RELEASED
