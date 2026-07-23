@@ -2,6 +2,10 @@ import b4a from 'b4a'
 import test from 'brittle'
 import { blake2b256 } from '@hiverelay/blind-protocol'
 import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
+import {
   FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3
 } from '../forward-https-replay-journal-v4.js'
 import {
@@ -16,8 +20,19 @@ import {
   verifyForwardHttpsTerminalHeadroomV3,
   verifyForwardHttpsTerminalInvarianceV3,
   checkForwardHttpsProtectedAdmissionV3,
-  classifyForwardHttpsHistoricIdentityV3
+  classifyForwardHttpsHistoricIdentityV3,
+  openForwardHttpsStorageAuthorityV3,
+  sourceForwardHttpsStorageAuthorityV3,
+  targetForwardHttpsStorageAuthorityV3,
+  consumeForwardHttpsStorageReplayV3,
+  forwardHttpsStorageAuthorityV3Status,
+  verifyForwardHttpsStorageAuthorityV3,
+  closeForwardHttpsStorageAuthorityV3
 } from '../forward-https-storage-authority-v3.js'
+import {
+  prepareForwardHttpsSourceSessionV3,
+  forwardHttpsSourceStoreV3Status
+} from '../forward-https-source-store-v3.js'
 
 const SOURCE = FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3.SOURCE_STORE
 const TARGET = FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3.TARGET_STORE
@@ -241,6 +256,69 @@ test('export surfaces: V18 exact names present on source, target and storage mod
   for (const name of ['FORWARD_HTTPS_STORAGE_V3_LIMITS', 'FORWARD_HTTPS_STORAGE_V3_STATUS', 'FORWARD_HTTPS_STORAGE_V3_ERROR_CODE', 'FORWARD_HTTPS_STORAGE_V3_FAULT_POINT', 'ForwardHttpsStorageAuthorityV3Error']) {
     t.ok(name in storage, `storage exports ${name}`)
   }
+})
+
+test('composite storage authority: exact open order, exposed children, status, verify, consume replay negative, close', async t => {
+  const root = await createBlindBoundaryScratch('fhcomp-')
+  t.teardown(async () => { await removeBlindBoundaryScratch(root) })
+  const options = {
+    root,
+    manifestKey: fixed(0x30),
+    atRestKey: fixed(0x31),
+    wireV3AbiHash: fixed(0x32),
+    privateIpcV4Hash: fixed(0x33),
+    signedLaunchTopologyHash: fixed(0x34),
+    sourceStoreId: fixed(0x35),
+    targetStoreId: fixed(0x36),
+    mapGeneration: 1n,
+    ownerFenceTokenHash: fixed(0x37),
+    sourceDurabilityContinuityHash: fixed(0x38),
+    targetDurabilityContinuityHash: fixed(0x39),
+    targetSignerPublicKey: fixed(0x3a),
+    targetSignerDescriptorSequence: 1n,
+    targetSignerDescriptorHash: fixed(0x3b),
+    signResult: async () => b4a.alloc(64),
+    createResponderState: () => ({}),
+    advanceResponderIngress: () => {},
+    advanceResponderOutcome: () => {},
+    epochSeconds: () => 1000000,
+    monotonicMillis: () => Date.now()
+  }
+  const authority = await openForwardHttpsStorageAuthorityV3(options)
+  t.teardown(async () => { await closeForwardHttpsStorageAuthorityV3(authority).catch(() => {}) })
+  // Children are exposed only after successful initialization
+  const source = sourceForwardHttpsStorageAuthorityV3(authority)
+  const target = targetForwardHttpsStorageAuthorityV3(authority)
+  t.ok(source && target)
+  const status = forwardHttpsStorageAuthorityV3Status(authority)
+  t.is(status.state, 'OPEN')
+  t.ok(status.localOperational)
+  t.is(status.descriptorOperationBits, 0)
+  // The exposed child store is fully operational through its own API
+  const prepared = await prepareForwardHttpsSourceSessionV3(source, { stableSessionId: fixed(0x3c), body: b4a.alloc(8, 0x41) })
+  t.is(prepared.walSequence, 1n)
+  t.is(forwardHttpsSourceStoreV3Status(source).unconsumedSlots, forwardHttpsSourceStoreV3Status(source).slotCapacity - 1)
+  // Exact authority verification passes and carries both heads
+  const verified = verifyForwardHttpsStorageAuthorityV3(authority)
+  t.ok(verified.consistent)
+  t.is(verified.source.walHeadSequence, 1n)
+  // consume replay: a forged consumed capability rejects, no mutation
+  await t.exception.all(() => consumeForwardHttpsStorageReplayV3(authority, {
+    consumed: Object.freeze({}),
+    role: 'SOURCE_ORIGIN',
+    record: b4a.alloc(292)
+  }), /forged|CONSUMED_INVALID|INVALID/)
+  // Missing/unknown open keys reject
+  const missing = { ...options }
+  delete missing.manifestKey
+  await t.exception.all(openForwardHttpsStorageAuthorityV3(missing), /manifestKey/)
+  await t.exception.all(openForwardHttpsStorageAuthorityV3({ ...options, bogusKey: 1 }), /unknown field/)
+  // Close is exact reverse order and idempotent; foreign authority rejects
+  await closeForwardHttpsStorageAuthorityV3(authority)
+  t.is(forwardHttpsStorageAuthorityV3Status(authority).state, 'CLOSED')
+  await closeForwardHttpsStorageAuthorityV3(authority)
+  await t.exception.all(closeForwardHttpsStorageAuthorityV3(Object.freeze({})), /forged|AUTHORITY_INVALID/)
+  await t.exception.all(() => sourceForwardHttpsStorageAuthorityV3(authority), /closed|CLOSED/)
 })
 
 test('historic identity states classify exactly', async t => {

@@ -10,10 +10,26 @@
 // contract assigns to the store-side authority.
 
 import b4a from 'b4a'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import { blake2b256 } from '@hiverelay/blind-protocol'
 import {
-  FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3
+  FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3,
+  FORWARD_HTTPS_REPLAY_ROLE_V4,
+  openForwardHttpsAggregateQuotaV3,
+  mintForwardHttpsAggregateQuotaCapabilitiesV3,
+  closeForwardHttpsAggregateQuotaV3,
+  forwardHttpsAggregateQuotaV3Status,
+  assertForwardHttpsAggregateQuotaOperationalV3,
+  beginForwardHttpsAggregateQuotaRecoveryV3,
+  finishForwardHttpsAggregateQuotaRecoveryV3,
+  initializeForwardHttpsAggregateQuotaV3,
+  openForwardHttpsReplayJournalV4,
+  closeForwardHttpsReplayJournalV4,
+  verifyForwardHttpsReplayConsumedV4
 } from './forward-https-replay-journal-v4.js'
+
+const STORAGE_AUTHORITIES = new WeakMap()
 
 const ZERO32 = b4a.alloc(32)
 const U32_MAX = 4294967295
@@ -465,4 +481,273 @@ export function classifyForwardHttpsHistoricIdentityV3 (slotState, hadPruneTombs
   if (slotState === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_PRUNED) return FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3.PRUNED_CONSUMED
   if (slotState === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.FREE && hadPruneTombstone) return FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3.PRUNED_RELEASED
   return FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3.NEVER_SEEN
+}
+
+// ---------------------------------------------------------------------------
+// Composite storage authority (retained v4 open_abi.storage composite). The
+// composite validates and owns the clocks/callbacks, opens the quota
+// authority with exact callback deadline authority, and privately passes only
+// role-correct opaque capabilities/sinks to children.
+// ---------------------------------------------------------------------------
+
+const COMPOSITE_CHILD_DIRS = ['source-replay', 'target-replay', 'source-store', 'target-store']
+
+function compositeState (authority) {
+  const state = authority && STORAGE_AUTHORITIES.get(authority)
+  if (!state || state.authority !== authority) fail('storage authority is forged', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.AUTHORITY_INVALID)
+  return state
+}
+
+function requireClosedObjectKeys (options, required, optional) {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) throw new TypeError('options must be a closed object')
+  for (const key of required) if (!Object.hasOwn(options, key)) throw new TypeError(`options.${key} is required`)
+  for (const key of Object.keys(options)) if (!required.includes(key) && !optional.includes(key)) throw new TypeError(`options contains unknown field ${key}`)
+}
+
+export async function openForwardHttpsStorageAuthorityV3 (options) {
+  const required = ['root', 'manifestKey', 'atRestKey', 'wireV3AbiHash', 'privateIpcV4Hash', 'signedLaunchTopologyHash', 'sourceStoreId', 'targetStoreId', 'mapGeneration', 'ownerFenceTokenHash', 'sourceDurabilityContinuityHash', 'targetDurabilityContinuityHash', 'targetSignerPublicKey', 'targetSignerDescriptorSequence', 'targetSignerDescriptorHash', 'signResult', 'createResponderState', 'advanceResponderIngress', 'advanceResponderOutcome', 'epochSeconds', 'monotonicMillis']
+  requireClosedObjectKeys(options, required, ['limits', 'faultInjector'])
+  if (typeof options.root !== 'string' || !path.isAbsolute(options.root)) throw new TypeError('root must be a canonical absolute path')
+  const manifestKey = b4a.from(asBytes32(options.manifestKey, 'manifestKey', true))
+  const atRestKey = b4a.from(asBytes32(options.atRestKey, 'atRestKey', true))
+  const hashes = {}
+  for (const field of ['wireV3AbiHash', 'privateIpcV4Hash', 'signedLaunchTopologyHash', 'sourceStoreId', 'targetStoreId', 'ownerFenceTokenHash', 'sourceDurabilityContinuityHash', 'targetDurabilityContinuityHash', 'targetSignerPublicKey', 'targetSignerDescriptorHash']) {
+    hashes[field] = asBytes32(options[field], field, true)
+  }
+  if (typeof options.mapGeneration !== 'bigint' || options.mapGeneration <= 0n) throw new TypeError('mapGeneration must be a nonzero u64')
+  if (typeof options.targetSignerDescriptorSequence !== 'bigint' || options.targetSignerDescriptorSequence <= 0n) throw new TypeError('targetSignerDescriptorSequence must be a nonzero u64')
+  for (const callback of ['signResult', 'createResponderState', 'advanceResponderIngress', 'advanceResponderOutcome']) {
+    if (typeof options[callback] !== 'function') throw new TypeError(`${callback} must be a function`)
+  }
+  if (typeof options.epochSeconds !== 'function') throw new TypeError('epochSeconds must be a function')
+  if (typeof options.monotonicMillis !== 'function') throw new TypeError('monotonicMillis must be a function')
+  // 1: the composite root and exactly four distinct mode-0700 role children,
+  // canonical by path, realpath and dev+ino.
+  await fs.mkdir(options.root, { recursive: true, mode: 0o700 })
+  await fs.chmod(options.root, 0o700)
+  const roots = {}
+  for (const name of COMPOSITE_CHILD_DIRS) {
+    roots[name] = path.join(options.root, name)
+    await fs.mkdir(roots[name], { recursive: true, mode: 0o700 })
+    await fs.chmod(roots[name], 0o700)
+    if (await fs.realpath(roots[name]) !== roots[name]) fail(`storage child ${name} traverses a symlink`, FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INVALID)
+  }
+  const faultInjector = options.faultInjector === undefined ? null : options.faultInjector
+  const { openForwardHttpsSourceStoreV3, forwardHttpsSourceStoreV3Status, closeForwardHttpsSourceStoreV3 } = await import('./forward-https-source-store-v3.js')
+  const { openForwardHttpsTargetStoreV3, forwardHttpsTargetStoreV3Status, closeForwardHttpsTargetStoreV3 } = await import('./forward-https-target-store-v3.js')
+  const opened = { quota: null, capabilities: null, sourceReplay: null, targetReplay: null, sourceStore: null, targetStore: null }
+  try {
+    // 2: aggregate quota physical authority over all four roots.
+    opened.quota = await openForwardHttpsAggregateQuotaV3({
+      sourceReplayRoot: roots['source-replay'],
+      targetReplayRoot: roots['target-replay'],
+      sourceStoreRoot: roots['source-store'],
+      targetStoreRoot: roots['target-store'],
+      maximumDurableBytesPerStore: options.limits && typeof options.limits.maximumDurableBytesPerStore === 'number' ? options.limits.maximumDurableBytesPerStore : 8589934592,
+      maximumForwardStorageBytesAggregate: options.limits && typeof options.limits.maximumForwardStorageBytesAggregate === 'number' ? options.limits.maximumForwardStorageBytesAggregate : 17179869184,
+      monotonicMillis: options.monotonicMillis,
+      callbackTimeoutMillis: options.limits && typeof options.limits.callbackTimeoutMillis === 'number' ? options.limits.callbackTimeoutMillis : 15000,
+      faultInjector
+    })
+    // 3: exactly four opaque role capabilities and the two recovery sinks.
+    opened.capabilities = mintForwardHttpsAggregateQuotaCapabilitiesV3(opened.quota)
+    const sourceSink = beginForwardHttpsAggregateQuotaRecoveryV3(opened.capabilities.sourceStoreQuotaCapability)
+    const targetSink = beginForwardHttpsAggregateQuotaRecoveryV3(opened.capabilities.targetStoreQuotaCapability)
+    // 4: both replay journals, physical-only bootstrap permitted.
+    const replayBase = {
+      manifestKey: b4a.from(manifestKey),
+      wireV3AbiHash: hashes.wireV3AbiHash,
+      privateIpcV4Hash: hashes.privateIpcV4Hash,
+      signedLaunchTopologyHash: hashes.signedLaunchTopologyHash,
+      mapGeneration: options.mapGeneration,
+      ownerFenceTokenHash: hashes.ownerFenceTokenHash,
+      monotonicMillis: options.monotonicMillis
+    }
+    opened.sourceReplay = await openForwardHttpsReplayJournalV4({
+      ...replayBase,
+      role: FORWARD_HTTPS_REPLAY_ROLE_V4.SOURCE_ORIGIN,
+      root: roots['source-replay'],
+      replayQuotaCapability: opened.capabilities.sourceReplayQuotaCapability,
+      storeId: hashes.sourceStoreId,
+      durabilityContinuityHash: hashes.sourceDurabilityContinuityHash,
+      faultInjector
+    })
+    opened.targetReplay = await openForwardHttpsReplayJournalV4({
+      ...replayBase,
+      role: FORWARD_HTTPS_REPLAY_ROLE_V4.TARGET_INGRESS,
+      root: roots['target-replay'],
+      replayQuotaCapability: opened.capabilities.targetReplayQuotaCapability,
+      storeId: hashes.targetStoreId,
+      durabilityContinuityHash: hashes.targetDurabilityContinuityHash,
+      faultInjector
+    })
+    // 5: both stores with their recovery sinks; only recovery plans are
+    // permitted before initialization.
+    const storeBase = {
+      wireV3AbiHash: hashes.wireV3AbiHash,
+      privateIpcV4Hash: hashes.privateIpcV4Hash,
+      signedLaunchTopologyHash: hashes.signedLaunchTopologyHash,
+      mapGeneration: options.mapGeneration,
+      ownerFenceTokenHash: hashes.ownerFenceTokenHash,
+      epochSeconds: options.epochSeconds,
+      monotonicMillis: options.monotonicMillis,
+      faultInjector,
+      limits: options.limits
+    }
+    opened.sourceStore = await openForwardHttpsSourceStoreV3({
+      ...storeBase,
+      root: roots['source-store'],
+      replayJournalAuthority: opened.sourceReplay,
+      sourceStoreQuotaCapability: opened.capabilities.sourceStoreQuotaCapability,
+      sourceQuotaRecoverySink: sourceSink,
+      storeId: hashes.sourceStoreId,
+      durabilityContinuityHash: hashes.sourceDurabilityContinuityHash
+    })
+    opened.targetStore = await openForwardHttpsTargetStoreV3({
+      ...storeBase,
+      root: roots['target-store'],
+      replayJournalAuthority: opened.targetReplay,
+      targetStoreQuotaCapability: opened.capabilities.targetStoreQuotaCapability,
+      targetQuotaRecoverySink: targetSink,
+      storeId: hashes.targetStoreId,
+      durabilityContinuityHash: hashes.targetDurabilityContinuityHash,
+      targetSignerPublicKey: hashes.targetSignerPublicKey,
+      targetSignerDescriptorSequence: options.targetSignerDescriptorSequence,
+      targetSignerDescriptorHash: hashes.targetSignerDescriptorHash,
+      signResult: options.signResult,
+      createResponderState: options.createResponderState,
+      advanceResponderIngress: options.advanceResponderIngress,
+      advanceResponderOutcome: options.advanceResponderOutcome,
+      atRestKey: b4a.from(atRestKey)
+    })
+    // 6: both sinks finished and quota initialized with the two one-use
+    // final recovery states.
+    const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sourceSink)
+    const targetFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(targetSink)
+    await initializeForwardHttpsAggregateQuotaV3(opened.quota, {
+      sourceRecoveryFinalState: sourceFinal,
+      targetRecoveryFinalState: targetFinal
+    })
+    // 7: child authorities and localOperational only after successful
+    // initialization.
+    assertForwardHttpsAggregateQuotaOperationalV3(opened.capabilities.sourceStoreQuotaCapability)
+    const authority = Object.freeze({})
+    const state = {
+      authority,
+      root: options.root,
+      roots,
+      quota: opened.quota,
+      capabilities: opened.capabilities,
+      sourceReplay: opened.sourceReplay,
+      targetReplay: opened.targetReplay,
+      sourceStore: opened.sourceStore,
+      targetStore: opened.targetStore,
+      storeApis: {
+        sourceStatus: forwardHttpsSourceStoreV3Status,
+        targetStatus: forwardHttpsTargetStoreV3Status,
+        closeSource: closeForwardHttpsSourceStoreV3,
+        closeTarget: closeForwardHttpsTargetStoreV3
+      },
+      closePromise: null,
+      closed: false
+    }
+    STORAGE_AUTHORITIES.set(authority, state)
+    return authority
+  } catch (error) {
+    // Exact reverse-order cleanup: no partially opened child is exposed.
+    if (opened.targetStore) await closeForwardHttpsTargetStoreV3(opened.targetStore).catch(() => {})
+    if (opened.sourceStore) await closeForwardHttpsSourceStoreV3(opened.sourceStore).catch(() => {})
+    if (opened.targetReplay) await closeForwardHttpsReplayJournalV4(opened.targetReplay).catch(() => {})
+    if (opened.sourceReplay) await closeForwardHttpsReplayJournalV4(opened.sourceReplay).catch(() => {})
+    if (opened.quota) await closeForwardHttpsAggregateQuotaV3(opened.quota).catch(() => {})
+    throw error
+  } finally {
+    manifestKey.fill(0)
+    atRestKey.fill(0)
+  }
+}
+
+export function sourceForwardHttpsStorageAuthorityV3 (authority) {
+  const state = compositeState(authority)
+  if (state.closed) fail('storage authority is closed', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.CLOSED)
+  return state.sourceStore
+}
+
+export function targetForwardHttpsStorageAuthorityV3 (authority) {
+  const state = compositeState(authority)
+  if (state.closed) fail('storage authority is closed', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.CLOSED)
+  return state.targetStore
+}
+
+// Burn one process-local consumed replay capability against the role-matched
+// composite replay journal. One-use; never refunded or reminted.
+export function consumeForwardHttpsStorageReplayV3 (authority, input) {
+  const state = compositeState(authority)
+  if (state.closed) fail('storage authority is closed', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.CLOSED)
+  requireClosedObjectKeys(input, ['consumed', 'role', 'record'], [])
+  const role = input.role
+  if (role !== FORWARD_HTTPS_REPLAY_ROLE_V4.SOURCE_ORIGIN && role !== FORWARD_HTTPS_REPLAY_ROLE_V4.TARGET_INGRESS) throw new TypeError('role must be SOURCE_ORIGIN or TARGET_INGRESS')
+  const journalAuthority = role === FORWARD_HTTPS_REPLAY_ROLE_V4.SOURCE_ORIGIN ? state.sourceReplay : state.targetReplay
+  verifyForwardHttpsReplayConsumedV4(input.consumed, { journalAuthority, role, record: input.record })
+}
+
+export function forwardHttpsStorageAuthorityV3Status (authority) {
+  const state = compositeState(authority)
+  const quota = forwardHttpsAggregateQuotaV3Status(state.quota)
+  return deepFreeze({
+    state: state.closed ? 'CLOSED' : 'OPEN',
+    localOperational: !state.closed && quota.localOperational,
+    blocker: quota.blocker,
+    source: state.storeApis.sourceStatus(state.sourceStore),
+    target: state.storeApis.targetStatus(state.targetStore),
+    descriptorOperationBits: 0,
+    advertisedOperationBits: 0,
+    readinessOperationBits: 0,
+    runtimeReady: false,
+    releaseReady: false,
+    authorizesRelease: false
+  })
+}
+
+// Exact authority verification: both child stores are operational, their WAL
+// heads match their own status surfaces and the quota authority is OPEN.
+export function verifyForwardHttpsStorageAuthorityV3 (authority) {
+  const state = compositeState(authority)
+  if (state.closed) fail('storage authority is closed', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.CLOSED)
+  assertForwardHttpsAggregateQuotaOperationalV3(state.capabilities.sourceStoreQuotaCapability)
+  assertForwardHttpsAggregateQuotaOperationalV3(state.capabilities.targetStoreQuotaCapability)
+  const source = state.storeApis.sourceStatus(state.sourceStore)
+  const target = state.storeApis.targetStatus(state.targetStore)
+  if (!source.localOperational || !target.localOperational ||
+      source.walHeadSequence !== state.sourceStore.walHeadSequence ||
+      target.walHeadSequence !== state.targetStore.walHeadSequence ||
+      !b4a.equals(source.walHeadHash, state.sourceStore.walHeadHash) ||
+      !b4a.equals(target.walHeadHash, state.targetStore.walHeadHash)) {
+    fail('storage authority verification failed', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
+  }
+  return deepFreeze({
+    consistent: true,
+    source: Object.freeze({ walHeadSequence: source.walHeadSequence, walHeadHash: b4a.from(source.walHeadHash) }),
+    target: Object.freeze({ walHeadSequence: target.walHeadSequence, walHeadHash: b4a.from(target.walHeadHash) })
+  })
+}
+
+// Exact reverse-order close: target store, source store, target replay,
+// source replay, quota. Idempotent for the exact owner.
+export function closeForwardHttpsStorageAuthorityV3 (authority) {
+  const state = authority && STORAGE_AUTHORITIES.get(authority)
+  if (!state || state.authority !== authority) {
+    return Promise.reject(new ForwardHttpsStorageAuthorityV3Error('storage authority is forged', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.AUTHORITY_INVALID))
+  }
+  if (state.closePromise) return state.closePromise
+  state.closePromise = (async () => {
+    if (state.closed) return
+    state.closed = true
+    await state.storeApis.closeTarget(state.targetStore).catch(() => {})
+    await state.storeApis.closeSource(state.sourceStore).catch(() => {})
+    await closeForwardHttpsReplayJournalV4(state.targetReplay).catch(() => {})
+    await closeForwardHttpsReplayJournalV4(state.sourceReplay).catch(() => {})
+    await closeForwardHttpsAggregateQuotaV3(state.quota).catch(() => {})
+  })()
+  return state.closePromise
 }
