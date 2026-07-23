@@ -20,7 +20,8 @@ import {
   beginForwardHttpsAggregateQuotaRecoveryV3,
   absorbForwardHttpsAggregateQuotaRecoveryFrameV3,
   finishForwardHttpsAggregateQuotaRecoveryV3,
-  encodeForwardHttpsRetentionPrunedV3
+  encodeForwardHttpsRetentionPrunedV3,
+  decodeForwardHttpsRetentionPrunedV3
 } from './forward-https-replay-journal-v4.js'
 import {
   FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE,
@@ -153,7 +154,9 @@ async function recoverFrame (state, frame) {
   if (slot && (slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_PRUNED || slot.prunedReleased)) {
     fail('post-prune SESSION entry is INTEGRITY', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
   }
-  if (derived.scope === 'SESSION' && derived.walType !== WAL_TYPE.SESSION_TERMINAL) {
+  if (derived.scope === 'SESSION' && derived.walType === WAL_TYPE.TRANSPORT_RESERVED) {
+    recoverPrefixFrame(state, slot, key, derived)
+  } else if (derived.scope === 'SESSION' && derived.walType !== WAL_TYPE.SESSION_TERMINAL) {
     if (!slot) {
       if (derived.walType !== WAL_TYPE.TURN_FINAL) fail('first session frame must create the allocation', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
       if (state.unconsumed < 1) fail('recovered slots exceed capacity', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
@@ -161,14 +164,55 @@ async function recoverFrame (state, frame) {
       slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED
       state.unconsumed--
     }
+    if (slot.orphan) {
+      // Matching final for the exact same operation: the open prefix is
+      // applied exactly once. Orphan entries become ordinary session entries
+      // and the record closes; FRESH PREFIX_ALLOCATED and EXISTING
+      // ALLOCATED_WITH_PREFIX both return to ALLOCATED.
+      slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED
+      slot.orphan = null
+    }
     slot.registry.admit(derived)
     slot.priorRevision++
   } else if (derived.walType === WAL_TYPE.SESSION_TERMINAL) {
     applyTerminalRecovery(state, slot, key, frame, derived)
   } else if (derived.walType === WAL_TYPE.RETENTION_PRUNED) {
-    applyPruneRecovery(state, slot, key, derived)
+    applyPruneRecovery(state, slot, key, derived, frame)
   }
   state.walHeadSequence = derived.walSequence
+}
+
+function newOrphanRecord () {
+  return { entries: [], removedSum: 0n, lastRevision: 0n, headSequence: 0n }
+}
+
+// Crashed-prefix recovery: the predecessor identity of every complete
+// same-operation target113 run is classified solely from complete canonical
+// WAL. FRESH (no prior complete session frame) claims exactly one recovered
+// FREE slot as PREFIX_ALLOCATED. EXISTING overlays ALLOCATED_WITH_PREFIX on
+// the one ALLOCATED slot with the complete pre-operation state preserved and
+// the prefix recorded as bounded orphan removable entries. No second slot is
+// ever claimed.
+function recoverPrefixFrame (state, slot, key, derived) {
+  if (!slot) {
+    if (state.unconsumed < 1) fail('recovered prefix slots exceed capacity', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
+    slot = freshSlot(state, derived.stableSessionId)
+    slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.PREFIX_ALLOCATED
+    state.unconsumed--
+    slot.orphan = newOrphanRecord()
+  } else if (slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED) {
+    slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED_WITH_PREFIX
+    slot.orphan = newOrphanRecord()
+  } else if (slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.PREFIX_ALLOCATED && slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED_WITH_PREFIX) {
+    fail('prefix frame after a closed disposition is INTEGRITY', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
+  }
+  const entry = slot.registry.admit(derived)
+  slot.priorRevision++
+  slot.orphan.entries.push(entry)
+  slot.orphan.removedSum += BigInt(derived.ordinaryLogicalCharge)
+  slot.orphan.lastRevision = slot.priorRevision
+  slot.orphan.headSequence = derived.walSequence
+  state.slots.set(key, slot)
 }
 
 function freshSlot (state, stableSessionId) {
@@ -183,7 +227,8 @@ function freshSlot (state, stableSessionId) {
     trustedEpochHighWatermark: 0,
     authorityBitmap: 0,
     authorityCommitments: null,
-    prunedReleased: false
+    prunedReleased: false,
+    orphan: null
   }
   state.slots.set(keyOf(stableSessionId), slot)
   return slot
@@ -200,30 +245,68 @@ function applyTerminalRecovery (state, slot, key, frame, derived) {
     slot.authorityBitmap = derived.authorityBitmap
     slot.authorityCommitments = derived.authorityCommitments
   } else {
-    if (slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED) fail('duplicate terminal is INTEGRITY', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
+    if (slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED && slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED_WITH_PREFIX) fail('duplicate terminal is INTEGRITY', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
     slot.priorRevision++
   }
+  // Overlay terminalization: orphan prefix entries persist as ordinary
+  // removable entries inside the consumed registry and are removed only by
+  // the later terminal-existing or terminal-only FPR9. No flags2 abort is
+  // possible after terminalization.
+  slot.orphan = null
   slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_UNPRUNED
   state.consumedUnpruned++
 }
 
-function applyPruneRecovery (state, slot, key, derived) {
+function applyPruneRecovery (state, slot, key, derived, frame) {
   if (!slot) fail('unmatched prune tombstone is INTEGRITY', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
-  if (slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED) {
+  const pruned = decodeForwardHttpsRetentionPrunedV3(frame.payload)
+  if (pruned.flags === 1) {
+    // flags1 fresh-orphan abort: exact recorded orphan removal, slot returns
+    // FREE and the historic identity is PRUNED_RELEASED.
+    if (slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.PREFIX_ALLOCATED || !slot.orphan) {
+      fail('flags1 abort without a fresh recovered prefix is INTEGRITY', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
+    }
+    assertOrphanMatch(slot, pruned)
+    slot.registry.removeExact(slot.orphan.entries)
+    slot.orphan = null
+    slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.FREE
+    slot.prunedReleased = true
+    state.unconsumed++
+  } else if (pruned.flags === 2) {
+    // flags2 existing-session prefix-abort: removes exactly the recorded
+    // orphan entries; slot, authority vector, PREPARED state and session
+    // clock are byte-identically preserved; never an identity transition.
+    if (slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED_WITH_PREFIX || !slot.orphan) {
+      fail('flags2 abort without an existing-session prefix is INTEGRITY', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
+    }
+    assertOrphanMatch(slot, pruned)
+    slot.registry.removeExact(slot.orphan.entries)
+    slot.orphan = null
+    slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED
+  } else if (slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED) {
     // nonterminal PRUNE: RELEASE_ALLOCATED, slot returns FREE
     slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.FREE
     slot.prunedReleased = true
     state.unconsumed++
+    slot.authorityBitmap = 0
   } else if (slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_UNPRUNED) {
     // terminal PRUNE: slot stays permanently consumed
     slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_PRUNED
     state.consumedUnpruned--
     state.consumedPruned++
+    slot.authorityBitmap = 0
   } else {
     fail('duplicate or misordered prune tombstone is INTEGRITY', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
   }
-  slot.authorityBitmap = 0
   state.roleGlobalLogicalBytes += derived.ordinaryLogicalCharge
+}
+
+function assertOrphanMatch (slot, pruned) {
+  if (pruned.chargeEntryCount !== slot.orphan.entries.length ||
+      pruned.removedOrdinaryLogicalBytes !== slot.orphan.removedSum ||
+      pruned.priorSessionRevision !== slot.orphan.lastRevision) {
+    fail('prefix abort does not match the recorded orphan entries', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
+  }
 }
 
 function requireOperational (state) {

@@ -880,33 +880,46 @@ function mintQuotaClaim (bindings) {
 
 // Advance the canonical per-session mirror (bounded identity/vector state)
 // from one closed derived entry. The payload is needed only for FPR9
-// allocation dispositions.
+// allocation dispositions. An open unpruned type113 run marks the exact
+// prefix class: FRESH claims a PREFIX_ALLOCATED identity; EXISTING overlays
+// ALLOCATED_WITH_PREFIX on the one ALLOCATED identity. A matching final or a
+// flags2 abort closes the prefix record; the latest slot-disposing
+// transition governs and no earlier frame reopens a closed disposition.
 function applyEntryToSessionMirror (sessions, key, entry, payload) {
   if (entry.scope === 'ROLE_GLOBAL' || entry.stableSessionId === null) return
-  const mirror = sessions.get(key) || { present: false, consumed: false, pruned: false, bitmap: 0, commitments: null, priorRevision: 0n }
+  const mirror = sessions.get(key) || { present: false, consumed: false, pruned: false, prefix: null, bitmap: 0, commitments: null, priorRevision: 0n }
   if (entry.scope === 'PRUNE_TRANSITION') {
     const pruned = decodeForwardHttpsRetentionPrunedV3(payload)
     if (pruned.flags === 2) {
       // flags2 existing-session prefix-abort: the slot stays ALLOCATED and the
       // authority vector is byte-identically unchanged; only orphan charge is
-      // removed. No identity transition is recorded.
+      // removed. The identity remains PRESENT_ALLOCATED; no PRUNED_RELEASED.
       mirror.present = true
       mirror.consumed = false
+      mirror.prefix = null
     } else if (pruned.allocationDisposition === 1) {
       mirror.present = false
       mirror.consumed = false
       mirror.pruned = true
+      mirror.prefix = null
       mirror.bitmap = 0
       mirror.commitments = null
     } else {
       mirror.present = true
       mirror.consumed = true
       mirror.pruned = true
+      mirror.prefix = null
       mirror.bitmap = 0
       mirror.commitments = null
     }
     sessions.set(key, mirror)
     return
+  }
+  if (entry.walType === 113) {
+    if (!mirror.present) mirror.prefix = 'FRESH'
+    else if (mirror.prefix === null) mirror.prefix = 'EXISTING'
+  } else {
+    mirror.prefix = null
   }
   mirror.present = true
   mirror.priorRevision += 1n
@@ -1857,11 +1870,13 @@ export function deriveForwardHttpsStoreWalQuotaEntryV3 (input) {
         return commitment
       })
     } else {
-      // flags0 existing terminal: requires PRESENT_ALLOCATED with matching
-      // nonzero revision and class9 absent; preserves bitmap bits and
-      // commitments0..8 byte-identically and adds the exact C9 over domain
-      // hiverelay.blind.forward-https-terminal-state-existing.v3.
-      if (!predecessor || !predecessor.present || predecessor.consumed || (predecessor.bitmap & 512) !== 0) {
+      // flags0 existing terminal: requires PRESENT_ALLOCATED (including
+      // ALLOCATED_WITH_PREFIX with the exact current orphan-last revision
+      // floor) with class9 absent; preserves bitmap bits and commitments0..8
+      // byte-identically and adds the exact C9 over domain
+      // hiverelay.blind.forward-https-terminal-state-existing.v3. A FRESH
+      // prefix predecessor (PRESENT_PREFIX_ALLOCATED) is never eligible.
+      if (!predecessor || !predecessor.present || predecessor.consumed || predecessor.prefix === 'FRESH' || (predecessor.bitmap & 512) !== 0) {
         storeWalFail('flags0 terminal requires a PRESENT_ALLOCATED predecessor')
       }
       if (predecessor.priorRevision !== terminal.priorSessionRevision) storeWalFail('flags0 terminal prior revision mismatch')

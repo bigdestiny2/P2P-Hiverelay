@@ -28,13 +28,35 @@ import {
   terminalizeForwardHttpsTargetAbsentSequenceV3,
   pruneForwardHttpsTargetSessionV3,
   forwardHttpsTargetStoreV3Status,
-  closeForwardHttpsTargetStoreV3
+  closeForwardHttpsTargetStoreV3,
+  FORWARD_HTTPS_TARGET_STORE_V3_HISTORIC_IDENTITY
 } from '../forward-https-target-store-v3.js'
+import {
+  FORWARD_HTTPS_STORAGE_SLOT_STATE_V3,
+  classifyForwardHttpsHistoricIdentityV3
+} from '../forward-https-storage-authority-v3.js'
 
 const execFileAsync = promisify(execFile)
 
 function fixed (byte) {
   return b4a.alloc(32, byte)
+}
+
+const SLOT = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3
+const IDENTITY = FORWARD_HTTPS_TARGET_STORE_V3_HISTORIC_IDENTITY
+
+function identityOf (slot) {
+  return classifyForwardHttpsHistoricIdentityV3(slot.state, slot.prunedReleased)
+}
+
+function prefixPayload (id, fill = 0x52) {
+  return b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(118 - 36, fill)])
+}
+
+// Raw durable WAL append outside any quota operation, used to construct
+// crashed-prefix evidence; recovery replays it exactly once on reopen.
+async function rawAppend (store, type, payload) {
+  return store.store.appendAndApply({ type, transactionId: b4a.alloc(32, 0x66), virtualBucket: 0, payload }, () => {})
 }
 
 async function roots (t) {
@@ -162,6 +184,104 @@ test('target store: cross-role frame recovery is INTEGRITY', async t => {
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   // A source WAL type can never be appended through the target store
   await t.exception.all(appendForwardHttpsTargetSessionV3(store, { stableSessionId: id, walType: 96 }), /not an ordinary target/)
+})
+
+test('prefix partition: FRESH type113 prefix claims exactly one PREFIX_ALLOCATED slot', async t => {
+  const r = await roots(t)
+  const capabilities = await quota(t, r)
+  const id = fixed(0x56)
+  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  await rawAppend(store, 113, prefixPayload(id))
+  await rawAppend(store, 113, prefixPayload(id, 0x53))
+  await closeForwardHttpsTargetStoreV3(store)
+  const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
+  const slot = reopened.slots.get(b4a.toString(id, 'hex'))
+  t.is(slot.state, SLOT.PREFIX_ALLOCATED)
+  t.is(identityOf(slot), IDENTITY.PRESENT_PREFIX_ALLOCATED)
+  t.is(slot.registry.count, 2)
+  t.is(slot.orphan.entries.length, 2)
+  t.is(slot.orphan.removedSum, 920n)
+  t.is(slot.orphan.lastRevision, 2n)
+  const status = forwardHttpsTargetStoreV3Status(reopened)
+  t.is(status.unconsumedSlots, status.slotCapacity - 1, 'exactly one slot claimed')
+})
+
+test('prefix partition: EXISTING-session type113 prefix overlays ALLOCATED_WITH_PREFIX with complete preservation', async t => {
+  const r = await roots(t)
+  const capabilities = await quota(t, r)
+  const id = fixed(0x57)
+  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  await openForwardHttpsTargetSessionV3(store, { stableSessionId: id, body: b4a.alloc(8, 0x51) })
+  const before = store.slots.get(b4a.toString(id, 'hex'))
+  t.is(before.registry.count, 1)
+  await rawAppend(store, 113, prefixPayload(id))
+  await closeForwardHttpsTargetStoreV3(store)
+  const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
+  const slot = reopened.slots.get(b4a.toString(id, 'hex'))
+  t.is(slot.state, SLOT.ALLOCATED_WITH_PREFIX)
+  t.is(identityOf(slot), IDENTITY.ALLOCATED_WITH_PREFIX)
+  t.is(slot.registry.count, 2, 'pre-operation entry preserved plus the orphan entry')
+  t.is(slot.orphan.entries.length, 1)
+  t.is(slot.orphan.removedSum, 460n)
+  t.is(slot.orphan.lastRevision, 2n)
+  const status = forwardHttpsTargetStoreV3Status(reopened)
+  t.is(status.unconsumedSlots, status.slotCapacity - 1, 'no second slot is claimed')
+})
+
+test('prefix partition: matching final applies exactly once for both classes', async t => {
+  const r = await roots(t)
+  const capabilities = await quota(t, r)
+  const freshId = fixed(0x58)
+  const existingId = fixed(0x59)
+  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  // FRESH prefix completed by its matching final
+  await rawAppend(store, 113, prefixPayload(freshId))
+  await rawAppend(store, 112, b4a.concat([b4a.from('FTS3', 'ascii'), freshId, b4a.alloc(8, 0x54)]))
+  // EXISTING prefix completed by its matching final
+  await openForwardHttpsTargetSessionV3(store, { stableSessionId: existingId })
+  await rawAppend(store, 113, prefixPayload(existingId))
+  await rawAppend(store, 114, b4a.concat([b4a.from('FTS3', 'ascii'), existingId, b4a.alloc(8, 0x55)]))
+  await closeForwardHttpsTargetStoreV3(store)
+  const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
+  const fresh = reopened.slots.get(b4a.toString(freshId, 'hex'))
+  t.is(fresh.state, SLOT.ALLOCATED)
+  t.is(identityOf(fresh), IDENTITY.PRESENT_ALLOCATED)
+  t.is(fresh.orphan, null)
+  t.is(fresh.registry.count, 2)
+  const existing = reopened.slots.get(b4a.toString(existingId, 'hex'))
+  t.is(existing.state, SLOT.ALLOCATED)
+  t.is(identityOf(existing), IDENTITY.PRESENT_ALLOCATED)
+  t.is(existing.orphan, null)
+  t.is(existing.registry.count, 3)
+  const status = forwardHttpsTargetStoreV3Status(reopened)
+  t.is(status.unconsumedSlots, status.slotCapacity - 2)
+})
+
+test('per-step identity goldens: latest slot-disposing transition governs', async t => {
+  const r = await roots(t)
+  const capabilities = await quota(t, r)
+  const id = fixed(0x5a)
+  // OPEN + target112 assigns PRESENT_ALLOCATED
+  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
+  t.is(identityOf(store.slots.get(b4a.toString(id, 'hex'))), IDENTITY.PRESENT_ALLOCATED)
+  // +k complete target113 (no final, no abort) assigns ALLOCATED_WITH_PREFIX
+  await rawAppend(store, 113, prefixPayload(id))
+  await rawAppend(store, 113, prefixPayload(id, 0x5b))
+  await closeForwardHttpsTargetStoreV3(store)
+  const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
+  const slot = reopened.slots.get(b4a.toString(id, 'hex'))
+  t.is(identityOf(slot), IDENTITY.ALLOCATED_WITH_PREFIX)
+  t.is(slot.orphan.entries.length, 2)
+  t.is(slot.orphan.removedSum, 920n)
 })
 
 test('quota gate: OPEN admits, fail-WAL enters FAILED_WAL_OUTCOME_UNKNOWN_PENDING and blocks all work', async t => {

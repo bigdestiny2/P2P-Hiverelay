@@ -303,6 +303,23 @@ export function createForwardHttpsChargeRegistryV3 (role, stableSessionId) {
         return sum + value
       }, 0n)
     },
+    // flags2 existing-session prefix abort: remove exactly the recorded orphan
+    // prefix entries (count, sum and chain). Every later committed entry is
+    // preserved; there is no snapshot restore.
+    removeExact (entryBuffers) {
+      let removedSum = 0n
+      let removedCount = 0
+      for (const target of entryBuffers) {
+        const index = entries.findIndex(entry => b4a.equals(entry, target))
+        if (index === -1) fail('orphan entry is not in the charge registry', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
+        const removed = entries.splice(index, 1)[0]
+        let value = 0n
+        for (let byte = 41; byte < 49; byte++) value = (value << 8n) | BigInt(removed[byte])
+        removedSum += value
+        removedCount++
+      }
+      return Object.freeze({ count: removedCount, removedSum })
+    },
     commitment () {
       return streamingCommitment(roleByteValue, session, entries)
     },
