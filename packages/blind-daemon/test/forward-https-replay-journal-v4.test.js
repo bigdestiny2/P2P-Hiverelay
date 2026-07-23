@@ -860,19 +860,35 @@ test('quota FIFO mutex: overlapping reservations queue in submission order and n
   t.teardown(async () => { await closeForwardHttpsAggregateQuotaV3(authority).catch(() => {}) })
   const capabilities = mintForwardHttpsAggregateQuotaCapabilitiesV3(authority)
   const { openForwardHttpsTargetStoreV3, openForwardHttpsTargetSessionV3, appendForwardHttpsTargetSessionV3, closeForwardHttpsTargetStoreV3 } = await import('../forward-https-target-store-v3.js')
+  const storeSink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.targetStoreQuotaCapability)
   const store = await openForwardHttpsTargetStoreV3({
     root: path.join(r, 'target-store'),
-    storeQuotaCapability: capabilities.targetStoreQuotaCapability,
+    replayJournalAuthority: Object.freeze({}),
+    targetStoreQuotaCapability: capabilities.targetStoreQuotaCapability,
+    targetQuotaRecoverySink: storeSink,
+    wireV3AbiHash: fixed(0x44),
+    privateIpcV4Hash: fixed(0x45),
+    signedLaunchTopologyHash: fixed(0x46),
     storeId: fixed(0x41),
     mapGeneration: 1n,
     ownerFenceTokenHash: fixed(0x42),
     durabilityContinuityHash: fixed(0x43),
+    targetSignerPublicKey: fixed(0x47),
+    targetSignerDescriptorSequence: 1n,
+    targetSignerDescriptorHash: fixed(0x48),
+    signResult: async () => b4a.alloc(64),
+    createResponderState: () => ({}),
+    advanceResponderIngress: () => {},
+    advanceResponderOutcome: () => {},
+    atRestKey: fixed(0x49),
+    epochSeconds: () => 1000000,
     monotonicMillis: () => Date.now()
   })
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  const storeFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(storeSink)
   const sourceSink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.sourceStoreQuotaCapability)
   const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sourceSink)
-  await replayModule.initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryFinalState: sourceFinal, targetRecoveryFinalState: store.recoveryFinalState })
+  await replayModule.initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryFinalState: sourceFinal, targetRecoveryFinalState: storeFinal })
   const id = fixed(0x85)
   await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
   const attempts = await Promise.all([

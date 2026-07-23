@@ -23,7 +23,8 @@ import {
   pruneForwardHttpsSourceSessionV3,
   forwardHttpsSourceStoreV3Status,
   closeForwardHttpsSourceStoreV3,
-  FORWARD_HTTPS_SOURCE_STORE_V3_WAL_TYPE
+  FORWARD_HTTPS_SOURCE_STORE_V3_WAL_TYPE,
+  FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT
 } from '../forward-https-source-store-v3.js'
 
 function fixed (byte) {
@@ -68,24 +69,33 @@ async function quota (t, r, faultInjector = null) {
 // role's recovery and initialize exactly once per authority.
 const initializedAuthorities = new Set()
 async function openStore (authority, r, capabilities, overrides) {
-  const store = await openForwardHttpsSourceStoreV3(storeOptions(r, capabilities, overrides))
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.sourceStoreQuotaCapability)
+  const store = await openForwardHttpsSourceStoreV3(storeOptions(r, capabilities, { sourceQuotaRecoverySink: sink, ...overrides }))
+  const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
   if (!initializedAuthorities.has(authority)) {
     initializedAuthorities.add(authority)
-    const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.targetStoreQuotaCapability)
-    const targetFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
-    await initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryFinalState: store.recoveryFinalState, targetRecoveryFinalState: targetFinal })
+    const targetSink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.targetStoreQuotaCapability)
+    const targetFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(targetSink)
+    await initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryFinalState: sourceFinal, targetRecoveryFinalState: targetFinal })
   }
   return store
 }
 
+const PLACEHOLDER_JOURNAL = Object.freeze({})
+
 function storeOptions (r, capabilities, overrides = {}) {
   return {
     root: r['source-store'],
-    storeQuotaCapability: capabilities.sourceStoreQuotaCapability,
+    replayJournalAuthority: PLACEHOLDER_JOURNAL,
+    sourceStoreQuotaCapability: capabilities.sourceStoreQuotaCapability,
+    wireV3AbiHash: fixed(0x24),
+    privateIpcV4Hash: fixed(0x25),
+    signedLaunchTopologyHash: fixed(0x26),
     storeId: fixed(0x21),
     mapGeneration: 1n,
     ownerFenceTokenHash: fixed(0x22),
     durabilityContinuityHash: fixed(0x23),
+    epochSeconds: () => 1000000,
     monotonicMillis: () => Date.now(),
     ...overrides
   }
@@ -207,6 +217,28 @@ test('source store: nonterminal PRUNE releases the slot to FREE', async t => {
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(reopened).catch(() => {}) })
   const recovered = forwardHttpsSourceStoreV3Status(reopened)
   t.is(recovered.unconsumedSlots, recovered.slotCapacity)
+})
+
+test('open ABI: source exact required key set enforced', async t => {
+  const r = await roots(t)
+  const { capabilities } = await quota(t, r)
+  t.is(Object.keys(FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT).length, 11)
+  const good = storeOptions(r, capabilities)
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.sourceStoreQuotaCapability)
+  const store = await openForwardHttpsSourceStoreV3({ ...good, sourceQuotaRecoverySink: sink })
+  t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+  for (const key of ['replayJournalAuthority', 'sourceStoreQuotaCapability', 'wireV3AbiHash', 'privateIpcV4Hash', 'signedLaunchTopologyHash', 'epochSeconds', 'monotonicMillis']) {
+    const missing = { ...good }
+    delete missing[key]
+    const attempt = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.sourceStoreQuotaCapability)
+    await t.exception.all(openForwardHttpsSourceStoreV3({ ...missing, sourceQuotaRecoverySink: attempt }), new RegExp(key))
+    await finishForwardHttpsAggregateQuotaRecoveryV3(attempt)
+  }
+  const noSink = { ...good }
+  delete noSink.sourceQuotaRecoverySink
+  await t.exception.all(openForwardHttpsSourceStoreV3(noSink), /sourceQuotaRecoverySink/)
+  await t.exception.all(openForwardHttpsSourceStoreV3({ ...good, sourceQuotaRecoverySink: sink, bogusKey: 1 }), /unknown field/)
 })
 
 test('source store: post-fsync adjust failure enters absorbing FAILED_PRUNE_DURABLE_PENDING', async t => {

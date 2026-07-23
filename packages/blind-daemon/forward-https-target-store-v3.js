@@ -18,9 +18,7 @@ import {
   bindForwardHttpsStoreQuotaActualBuffersV3,
   applyForwardHttpsAggregateQuotaWalFrameV3,
   assertForwardHttpsAggregateQuotaOperationalV3,
-  beginForwardHttpsAggregateQuotaRecoveryV3,
   absorbForwardHttpsAggregateQuotaRecoveryFrameV3,
-  finishForwardHttpsAggregateQuotaRecoveryV3,
   encodeForwardHttpsRetentionPrunedV3,
   decodeForwardHttpsRetentionPrunedV3
 } from './forward-https-replay-journal-v4.js'
@@ -89,10 +87,45 @@ function sessionPayload (walTypeMagic, stableSessionId, body) {
   return b4a.concat([walTypeMagic, stableSessionId, body || b4a.alloc(0)])
 }
 
+function requireBytes32 (value, field, nonzero = true) {
+  if (!value || typeof value.byteLength !== 'number') throw new TypeError(`${field} must be bytes`)
+  const output = b4a.isBuffer(value) ? value : b4a.from(value)
+  if (output.byteLength !== 32) throw new TypeError(`${field} must be exactly 32 bytes`)
+  if (nonzero && b4a.equals(output, ZERO32)) throw new TypeError(`${field} must be nonzero`)
+  return output
+}
+
+// Exact retained v4 open ABI for the target store: 21 required keys, 2
+// optional. The recovery sink is begun by the caller through the quota ABI
+// and passed in; the store absorbs through it but never begins or finishes
+// it. Signer callbacks and the at-rest key are validated and held by the
+// composite; they are never retained by this store.
 export async function openForwardHttpsTargetStoreV3 (options) {
-  if (!options || typeof options !== 'object') throw new TypeError('options must be a closed object')
+  const required = ['root', 'replayJournalAuthority', 'targetStoreQuotaCapability', 'targetQuotaRecoverySink', 'wireV3AbiHash', 'privateIpcV4Hash', 'signedLaunchTopologyHash', 'storeId', 'mapGeneration', 'ownerFenceTokenHash', 'durabilityContinuityHash', 'targetSignerPublicKey', 'targetSignerDescriptorSequence', 'targetSignerDescriptorHash', 'signResult', 'createResponderState', 'advanceResponderIngress', 'advanceResponderOutcome', 'atRestKey', 'epochSeconds', 'monotonicMillis']
+  const optional = ['limits', 'faultInjector']
+  if (!options || typeof options !== 'object' || Array.isArray(options)) throw new TypeError('options must be a closed object')
+  for (const key of required) if (!Object.hasOwn(options, key)) throw new TypeError(`options.${key} is required`)
+  for (const key of Object.keys(options)) if (!required.includes(key) && !optional.includes(key)) throw new TypeError(`options contains unknown field ${key}`)
   if (typeof options.root !== 'string') throw new TypeError('root is required')
-  if (!options.storeQuotaCapability) throw new TypeError('storeQuotaCapability is required')
+  if (!options.replayJournalAuthority || typeof options.replayJournalAuthority !== 'object') throw new TypeError('replayJournalAuthority is required')
+  if (!options.targetStoreQuotaCapability || typeof options.targetStoreQuotaCapability !== 'object') throw new TypeError('targetStoreQuotaCapability is required')
+  if (!options.targetQuotaRecoverySink || typeof options.targetQuotaRecoverySink !== 'object') throw new TypeError('targetQuotaRecoverySink is required')
+  const wireV3AbiHash = requireBytes32(options.wireV3AbiHash, 'wireV3AbiHash')
+  const privateIpcV4Hash = requireBytes32(options.privateIpcV4Hash, 'privateIpcV4Hash')
+  const signedLaunchTopologyHash = requireBytes32(options.signedLaunchTopologyHash, 'signedLaunchTopologyHash')
+  const storeId = requireBytes32(options.storeId, 'storeId')
+  if (typeof options.mapGeneration !== 'bigint' || options.mapGeneration <= 0n) throw new TypeError('mapGeneration must be a nonzero u64')
+  const ownerFenceTokenHash = requireBytes32(options.ownerFenceTokenHash, 'ownerFenceTokenHash')
+  const durabilityContinuityHash = requireBytes32(options.durabilityContinuityHash, 'durabilityContinuityHash')
+  requireBytes32(options.targetSignerPublicKey, 'targetSignerPublicKey')
+  if (typeof options.targetSignerDescriptorSequence !== 'bigint' || options.targetSignerDescriptorSequence <= 0n) throw new TypeError('targetSignerDescriptorSequence must be a nonzero u64')
+  requireBytes32(options.targetSignerDescriptorHash, 'targetSignerDescriptorHash')
+  for (const callback of ['signResult', 'createResponderState', 'advanceResponderIngress', 'advanceResponderOutcome']) {
+    if (typeof options[callback] !== 'function') throw new TypeError(`${callback} must be a function`)
+  }
+  requireBytes32(options.atRestKey, 'atRestKey')
+  if (typeof options.epochSeconds !== 'function') throw new TypeError('epochSeconds must be a function')
+  if (typeof options.monotonicMillis !== 'function') throw new TypeError('monotonicMillis must be a function')
   const capacity = options.limits && typeof options.limits.maximumRetainedTurnsPerRole === 'number'
     ? options.limits.maximumRetainedTurnsPerRole
     : PRODUCTION_SLOTS
@@ -106,12 +139,17 @@ export async function openForwardHttpsTargetStoreV3 (options) {
   }
   const state = {
     role: ROLE,
-    storeQuotaCapability: options.storeQuotaCapability,
+    storeQuotaCapability: options.targetStoreQuotaCapability,
+    replayJournalAuthority: options.replayJournalAuthority,
+    epochSeconds: options.epochSeconds,
+    wireV3AbiHash,
+    privateIpcV4Hash,
+    signedLaunchTopologyHash,
     capacity,
-    storeId: b4a.from(options.storeId),
-    mapGeneration: options.mapGeneration == null ? 1n : BigInt(options.mapGeneration),
-    ownerFenceTokenHash: b4a.from(options.ownerFenceTokenHash),
-    durabilityContinuityHash: b4a.from(options.durabilityContinuityHash),
+    storeId,
+    mapGeneration: options.mapGeneration,
+    ownerFenceTokenHash,
+    durabilityContinuityHash,
     slots: new Map(),
     unconsumed: capacity,
     consumedUnpruned: 0,
@@ -126,18 +164,17 @@ export async function openForwardHttpsTargetStoreV3 (options) {
     store: new BlindTransactionStore({
       root: options.root,
       mapGeneration: options.mapGeneration == null ? 1n : options.mapGeneration,
-      ownerFenceTokenHash: options.ownerFenceTokenHash,
-      durabilityContinuityHash: options.durabilityContinuityHash,
+      ownerFenceTokenHash,
+      durabilityContinuityHash,
       maximumWalPayloadBytes: 16777216,
       faultInjector: options.faultInjector || null
     })
   }
-  // Recovery runs through the quota recovery sink: sink-private one-use
-  // claims are minted, derived and burned inside absorb; finish merges the
-  // canonical predecessor state and is mandatory before localOperational.
-  state.recoverySink = beginForwardHttpsAggregateQuotaRecoveryV3(state.storeQuotaCapability)
+  // Recovery absorbs through the caller-begun quota recovery sink. The caller
+  // (composite) finishes the sink and initializes the quota authority; only
+  // recovery work is permitted before initialization.
+  state.recoverySink = options.targetQuotaRecoverySink
   await state.store.open(frame => recoverFrame(state, frame))
-  state.recoveryFinalState = await finishForwardHttpsAggregateQuotaRecoveryV3(state.recoverySink)
   state.recoverySink = null
   state.walHeadSequence = state.store.walSequence
   state.walHeadHash = b4a.from(state.store.walHash)
@@ -619,7 +656,7 @@ export async function pruneForwardHttpsTargetSessionV3 (state, input) {
   const entries = slot.registry.entriesAscending()
   const count = slot.minimal && entries.length === 0 ? 0 : entries.length
   if (count === 0 && !slot.minimal) fail('nonterminal prune requires ordinary entries', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
-  const pruneEpochSeconds = input.pruneEpochSeconds
+  const pruneEpochSeconds = input.pruneEpochSeconds === undefined ? state.epochSeconds() : input.pruneEpochSeconds
   if (slot.minimal && pruneEpochSeconds <= slot.recoveryGraceUntilEpoch) fail('terminal-only prune must wait the full grace', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
   const payload = encodeForwardHttpsRetentionPrunedV3({
     role: ROLE,
@@ -662,7 +699,7 @@ async function pruneForwardHttpsPrefixOrphanAbortV3 (state, slot, input) {
   if (slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.PREFIX_ALLOCATED || !slot.orphan) {
     fail('flags1 abort requires a fresh recovered prefix', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
   }
-  const pruneEpochSeconds = input.pruneEpochSeconds
+  const pruneEpochSeconds = input.pruneEpochSeconds === undefined ? state.epochSeconds() : input.pruneEpochSeconds
   if (!Number.isSafeInteger(pruneEpochSeconds) || pruneEpochSeconds < 1) fail('flags1 abort requires a nonzero trusted prune epoch', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
   const payload = encodeForwardHttpsRetentionPrunedV3({
     role: ROLE,
@@ -703,7 +740,7 @@ async function pruneForwardHttpsExistingPrefixAbortV3 (state, slot, input) {
   if (slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED_WITH_PREFIX || !slot.orphan) {
     fail('flags2 abort requires an existing-session prefix', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
   }
-  const pruneEpochSeconds = input.pruneEpochSeconds
+  const pruneEpochSeconds = input.pruneEpochSeconds === undefined ? state.epochSeconds() : input.pruneEpochSeconds
   if (!Number.isSafeInteger(pruneEpochSeconds) || pruneEpochSeconds < 1) fail('flags2 abort requires a nonzero trusted prune epoch', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
   const payload = encodeForwardHttpsRetentionPrunedV3({
     role: ROLE,
@@ -828,7 +865,30 @@ export const FORWARD_HTTPS_TARGET_STORE_V3_STATUS = Object.freeze({
 
 export const FORWARD_HTTPS_TARGET_STORE_V3_ERROR_CODE = FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE
 
-export const FORWARD_HTTPS_TARGET_STORE_V3_FAULT_POINT = Object.freeze({})
+export const FORWARD_HTTPS_TARGET_STORE_V3_FAULT_POINT = Object.freeze({
+  OPEN_AFTER_RECOVERY: 'OPEN_AFTER_RECOVERY',
+  TURN_AFTER_REPLAY_BURN: 'TURN_AFTER_REPLAY_BURN',
+  CRYPTO_RESERVATION_BEFORE_WAL_APPEND: 'CRYPTO_RESERVATION_BEFORE_WAL_APPEND',
+  CRYPTO_RESERVATION_AFTER_WAL_WRITE_BEFORE_FSYNC: 'CRYPTO_RESERVATION_AFTER_WAL_WRITE_BEFORE_FSYNC',
+  CRYPTO_RESERVATION_AFTER_WAL_FSYNC: 'CRYPTO_RESERVATION_AFTER_WAL_FSYNC',
+  TURN_AFTER_SIGN: 'TURN_AFTER_SIGN',
+  TURN_BEFORE_WAL_APPEND: 'TURN_BEFORE_WAL_APPEND',
+  TURN_AFTER_WAL_FSYNC: 'TURN_AFTER_WAL_FSYNC',
+  PROCESSOR_INGRESS_AFTER_CALLBACK: 'PROCESSOR_INGRESS_AFTER_CALLBACK',
+  PROCESSOR_REQUEST_READY_BEFORE_WAL_APPEND: 'PROCESSOR_REQUEST_READY_BEFORE_WAL_APPEND',
+  PROCESSOR_REQUEST_READY_AFTER_WAL_FSYNC: 'PROCESSOR_REQUEST_READY_AFTER_WAL_FSYNC',
+  PROCESSOR_PREPARED_AFTER_WAL_FSYNC: 'PROCESSOR_PREPARED_AFTER_WAL_FSYNC',
+  PROCESSOR_BEFORE_RECOVER: 'PROCESSOR_BEFORE_RECOVER',
+  PROCESSOR_AFTER_RECOVER: 'PROCESSOR_AFTER_RECOVER',
+  PROCESSOR_BEFORE_APPLY: 'PROCESSOR_BEFORE_APPLY',
+  PROCESSOR_AFTER_APPLY: 'PROCESSOR_AFTER_APPLY',
+  PROCESSOR_OUTCOME_AFTER_CALLBACK: 'PROCESSOR_OUTCOME_AFTER_CALLBACK',
+  PROCESSOR_COMPLETED_BEFORE_WAL_APPEND: 'PROCESSOR_COMPLETED_BEFORE_WAL_APPEND',
+  PROCESSOR_COMPLETED_AFTER_WAL_FSYNC: 'PROCESSOR_COMPLETED_AFTER_WAL_FSYNC',
+  QUARANTINE_AFTER_WAL_FSYNC: 'QUARANTINE_AFTER_WAL_FSYNC',
+  PRUNE_AFTER_WAL_FSYNC: 'PRUNE_AFTER_WAL_FSYNC',
+  CLOSE_BEFORE_STORE_CLOSE: 'CLOSE_BEFORE_STORE_CLOSE'
+})
 
 // V18 target_module_exact names for the turn-level surface. Accepting a
 // forwarded turn opens the session when absent and appends otherwise;

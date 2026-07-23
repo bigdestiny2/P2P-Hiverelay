@@ -57,16 +57,32 @@ async function main () {
   })
   const capabilities = mintForwardHttpsAggregateQuotaCapabilitiesV3(quotaAuthority)
   const id = fixed(0x61)
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.targetStoreQuotaCapability)
   const options = {
     root: roots['target-store'],
-    storeQuotaCapability: capabilities.targetStoreQuotaCapability,
+    replayJournalAuthority: Object.freeze({}),
+    targetStoreQuotaCapability: capabilities.targetStoreQuotaCapability,
+    targetQuotaRecoverySink: sink,
+    wireV3AbiHash: fixed(0x44),
+    privateIpcV4Hash: fixed(0x45),
+    signedLaunchTopologyHash: fixed(0x46),
     storeId: fixed(0x62),
     mapGeneration: 1n,
     ownerFenceTokenHash: fixed(0x63),
     durabilityContinuityHash: fixed(0x64),
+    targetSignerPublicKey: fixed(0x47),
+    targetSignerDescriptorSequence: 1n,
+    targetSignerDescriptorHash: fixed(0x48),
+    signResult: async () => b4a.alloc(64),
+    createResponderState: () => ({}),
+    advanceResponderIngress: () => {},
+    advanceResponderOutcome: () => {},
+    atRestKey: fixed(0x49),
+    epochSeconds: () => 1000000,
     monotonicMillis: () => Date.now()
   }
   const store = await openForwardHttpsTargetStoreV3(options)
+  const targetFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
   if (mode === 'setup') {
     // The gate requires an OPEN quota authority: finish the other role's
     // recovery and initialize before the first operation.
@@ -74,7 +90,7 @@ async function main () {
     const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sourceSink)
     await initializeForwardHttpsAggregateQuotaV3(quotaAuthority, {
       sourceRecoveryFinalState: sourceFinal,
-      targetRecoveryFinalState: store.recoveryFinalState
+      targetRecoveryFinalState: targetFinal
     })
     const opened = await openForwardHttpsTargetSessionV3(store, { stableSessionId: id, body: b4a.alloc(4, 0x65) })
     console.log(JSON.stringify({ walSequence: opened.walSequence.toString() }))

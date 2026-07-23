@@ -29,10 +29,15 @@ import {
   pruneForwardHttpsTargetSessionV3,
   forwardHttpsTargetStoreV3Status,
   closeForwardHttpsTargetStoreV3,
-  FORWARD_HTTPS_TARGET_STORE_V3_HISTORIC_IDENTITY
+  FORWARD_HTTPS_TARGET_STORE_V3_HISTORIC_IDENTITY,
+  FORWARD_HTTPS_TARGET_STORE_V3_FAULT_POINT
 } from '../forward-https-target-store-v3.js'
 import {
+  FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT
+} from '../forward-https-source-store-v3.js'
+import {
   FORWARD_HTTPS_STORAGE_SLOT_STATE_V3,
+  FORWARD_HTTPS_STORAGE_V3_FAULT_POINT,
   classifyForwardHttpsHistoricIdentityV3
 } from '../forward-https-storage-authority-v3.js'
 
@@ -118,12 +123,14 @@ async function quota2 (t, r) {
 // role's recovery and initialize exactly once per authority.
 const initializedAuthorities = new Set()
 async function openStore (authority, r, capabilities, overrides) {
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities, overrides))
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.targetStoreQuotaCapability)
+  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities, { targetQuotaRecoverySink: sink, ...overrides }))
+  const targetFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
   if (!initializedAuthorities.has(authority)) {
     initializedAuthorities.add(authority)
-    const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.sourceStoreQuotaCapability)
-    const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
-    await initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryFinalState: sourceFinal, targetRecoveryFinalState: store.recoveryFinalState })
+    const sourceSink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.sourceStoreQuotaCapability)
+    const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sourceSink)
+    await initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryFinalState: sourceFinal, targetRecoveryFinalState: targetFinal })
   }
   return store
 }
@@ -138,14 +145,40 @@ async function directoryBytes (root) {
   return total
 }
 
+// Raw recovery opens (no gate initialization): the recovery sink is begun by
+// the caller and always finished, including when recovery rejects.
+async function recoverWithSink (capabilities, options) {
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.targetStoreQuotaCapability)
+  try {
+    return await openForwardHttpsTargetStoreV3({ ...options, targetQuotaRecoverySink: sink })
+  } finally {
+    await finishForwardHttpsAggregateQuotaRecoveryV3(sink).catch(() => {})
+  }
+}
+
+const PLACEHOLDER_JOURNAL = Object.freeze({})
+
 function storeOptions (r, capabilities, overrides = {}) {
   return {
     root: r['target-store'],
-    storeQuotaCapability: capabilities.targetStoreQuotaCapability,
+    replayJournalAuthority: PLACEHOLDER_JOURNAL,
+    targetStoreQuotaCapability: capabilities.targetStoreQuotaCapability,
+    wireV3AbiHash: fixed(0x44),
+    privateIpcV4Hash: fixed(0x45),
+    signedLaunchTopologyHash: fixed(0x46),
     storeId: fixed(0x41),
     mapGeneration: 1n,
     ownerFenceTokenHash: fixed(0x42),
     durabilityContinuityHash: fixed(0x43),
+    targetSignerPublicKey: fixed(0x47),
+    targetSignerDescriptorSequence: 1n,
+    targetSignerDescriptorHash: fixed(0x48),
+    signResult: async () => b4a.alloc(64),
+    createResponderState: () => ({}),
+    advanceResponderIngress: () => {},
+    advanceResponderOutcome: () => {},
+    atRestKey: fixed(0x49),
+    epochSeconds: () => 1000000,
     monotonicMillis: () => Date.now(),
     ...overrides
   }
@@ -576,14 +609,14 @@ test('matching-final wrong-operation: non-matching final on a fresh prefix is IN
   const r = await roots(t)
   const { capabilities } = await quota(t, r)
   const id = fixed(0x66)
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const store = await recoverWithSink(capabilities, storeOptions(r, capabilities))
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   await rawAppend(store, 113, prefixPayload(id))
   // A final of a DIFFERENT operation (different requestCommitment) follows
   await rawAppend(store, 112, finalPayload(id, 0x53))
   await closeForwardHttpsTargetStoreV3(store)
   // Recovery has exactly one disposition: INTEGRITY, never an admission
-  await t.exception.all(openForwardHttpsTargetStoreV3(storeOptions(r, capabilities)), /non-matching final|INTEGRITY/)
+  await t.exception.all(recoverWithSink(capabilities, storeOptions(r, capabilities)), /non-matching final|INTEGRITY/)
 })
 
 test('recovered tombstone tamper: count and commitment mismatches are INTEGRITY at recovery', async t => {
@@ -616,14 +649,14 @@ test('recovered tombstone tamper: count and commitment mismatches are INTEGRITY 
   countTampered.writeUInt32BE(2, 72)
   await rawAppend(store, 118, countTampered)
   await closeForwardHttpsTargetStoreV3(store)
-  await t.exception.all(openForwardHttpsTargetStoreV3(storeOptions(r, capabilities)), /independently match|INTEGRITY/)
+  await t.exception.all(recoverWithSink(capabilities, storeOptions(r, capabilities)), /independently match|INTEGRITY/)
 })
 
 test('fresh OPEN on PRESENT_PREFIX_ALLOCATED is mutation-free SESSION_CLOSED', async t => {
   const r = await roots(t)
   const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x68)
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const store = await recoverWithSink(capabilities, storeOptions(r, capabilities))
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   await rawAppend(store, 113, prefixPayload(id))
   await closeForwardHttpsTargetStoreV3(store)
@@ -634,6 +667,29 @@ test('fresh OPEN on PRESENT_PREFIX_ALLOCATED is mutation-free SESSION_CLOSED', a
   try { await openForwardHttpsTargetSessionV3(reopened, { stableSessionId: id }) } catch (error) { closed = error }
   t.is(closed && closed.code, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_SESSION_CLOSED')
   t.is(forwardHttpsTargetStoreV3Status(reopened).walHeadSequence, headBefore)
+})
+
+test('open ABI: exact required key set enforced and fault registry carries the exact key sets', async t => {
+  const r = await roots(t)
+  const { capabilities } = await quota(t, r)
+  t.is(Object.keys(FORWARD_HTTPS_TARGET_STORE_V3_FAULT_POINT).length, 22)
+  t.is(Object.keys(FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT).length, 11)
+  t.is(Object.keys(FORWARD_HTTPS_STORAGE_V3_FAULT_POINT).length, 12)
+  const good = storeOptions(r, capabilities)
+  const store = await recoverWithSink(capabilities, good)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  // Missing each required key rejects before any mutation. The recovery sink
+  // key itself is probed without a sink supplied.
+  for (const key of ['replayJournalAuthority', 'targetStoreQuotaCapability', 'wireV3AbiHash', 'privateIpcV4Hash', 'signedLaunchTopologyHash', 'storeId', 'mapGeneration', 'ownerFenceTokenHash', 'durabilityContinuityHash', 'targetSignerPublicKey', 'targetSignerDescriptorSequence', 'targetSignerDescriptorHash', 'signResult', 'createResponderState', 'advanceResponderIngress', 'advanceResponderOutcome', 'atRestKey', 'epochSeconds', 'monotonicMillis']) {
+    const missing = { ...good }
+    delete missing[key]
+    await t.exception.all(recoverWithSink(capabilities, missing), new RegExp(key))
+  }
+  const noSink = { ...good }
+  delete noSink.targetQuotaRecoverySink
+  await t.exception.all(openForwardHttpsTargetStoreV3(noSink), /targetQuotaRecoverySink/)
+  // Unknown keys reject
+  await t.exception.all(recoverWithSink(capabilities, { ...good, bogusKey: 1 }), /unknown field/)
 })
 
 test('quota gate: OPEN admits, fail-WAL enters FAILED_WAL_OUTCOME_UNKNOWN_PENDING and blocks all work', async t => {
