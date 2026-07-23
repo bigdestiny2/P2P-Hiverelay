@@ -154,8 +154,6 @@ test('FTM9 flags1 rejects nonzero counters, wrong reason, nonzero revision', asy
 
 
 
-
-
 test('storage constants: exact production liabilities, headroom and ceilings', async t => {
   t.is(FORWARD_HTTPS_STORAGE_V3_LIMITS.slotLiabilityUnconsumedLogicalBytes, 1344)
   t.is(FORWARD_HTTPS_STORAGE_V3_LIMITS.slotLiabilityUnconsumedPhysicalBytes, 896)
@@ -251,4 +249,3 @@ test('composite storage authority: exact open order, exposed children, status, v
   await t.exception.all(closeForwardHttpsStorageAuthorityV3(Object.freeze({})), /forged|AUTHORITY_INVALID/)
   await t.exception.all(() => sourceForwardHttpsStorageAuthorityV3(authority), /closed|CLOSED/)
 })
-
