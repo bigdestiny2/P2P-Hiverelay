@@ -1,0 +1,1332 @@
+{
+  "schema": "HiveRelayBlindClientBrowserSourceClosureV3",
+  "toolchain": "esbuild@0.28.1",
+  "buildProfile": {
+    "bundle": true,
+    "platform": "browser",
+    "format": "esm",
+    "target": "es2020",
+    "minify": true,
+    "sourcemap": false,
+    "charset": "utf8",
+    "legalComments": "none"
+  },
+  "buildProfileText": "bundle=true;platform=browser;format=esm;target=es2020;minify=true;sourcemap=false;charset=utf8;legalComments=none",
+  "externalArtifacts": [
+    "./blind-client-control-v2.mjs"
+  ],
+  "metafileInputs": [
+    {
+      "path": "(disabled):crypto",
+      "bytes": 0,
+      "format": null,
+      "imports": []
+    },
+    {
+      "path": "node_modules/b4a/browser.js",
+      "bytes": 13336,
+      "format": "cjs",
+      "imports": [
+        {
+          "path": "node_modules/b4a/lib/ascii.js",
+          "kind": "require-call",
+          "original": "./lib/ascii",
+          "external": false
+        },
+        {
+          "path": "node_modules/b4a/lib/base64.js",
+          "kind": "require-call",
+          "original": "./lib/base64",
+          "external": false
+        },
+        {
+          "path": "node_modules/b4a/lib/hex.js",
+          "kind": "require-call",
+          "original": "./lib/hex",
+          "external": false
+        },
+        {
+          "path": "node_modules/b4a/lib/latin1.js",
+          "kind": "require-call",
+          "original": "./lib/latin1",
+          "external": false
+        },
+        {
+          "path": "node_modules/b4a/lib/utf16le.js",
+          "kind": "require-call",
+          "original": "./lib/utf16le",
+          "external": false
+        },
+        {
+          "path": "node_modules/b4a/lib/utf8.js",
+          "kind": "require-call",
+          "original": "./lib/utf8",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "node_modules/b4a/lib/ascii.js",
+      "bytes": 459,
+      "format": "cjs",
+      "imports": []
+    },
+    {
+      "path": "node_modules/b4a/lib/base64.js",
+      "bytes": 1474,
+      "format": "cjs",
+      "imports": []
+    },
+    {
+      "path": "node_modules/b4a/lib/hex.js",
+      "bytes": 1028,
+      "format": "cjs",
+      "imports": []
+    },
+    {
+      "path": "node_modules/b4a/lib/latin1.js",
+      "bytes": 452,
+      "format": "cjs",
+      "imports": []
+    },
+    {
+      "path": "node_modules/b4a/lib/utf16le.js",
+      "bytes": 641,
+      "format": "cjs",
+      "imports": []
+    },
+    {
+      "path": "node_modules/b4a/lib/utf8.js",
+      "bytes": 2732,
+      "format": "cjs",
+      "imports": []
+    },
+    {
+      "path": "node_modules/blake2b-wasm/blake2b.js",
+      "bytes": 12248,
+      "format": "cjs",
+      "imports": []
+    },
+    {
+      "path": "node_modules/blake2b-wasm/index.js",
+      "bytes": 4605,
+      "format": "cjs",
+      "imports": [
+        {
+          "path": "node_modules/b4a/browser.js",
+          "kind": "require-call",
+          "original": "b4a",
+          "external": false
+        },
+        {
+          "path": "node_modules/blake2b-wasm/blake2b.js",
+          "kind": "require-call",
+          "original": "./blake2b",
+          "external": false
+        },
+        {
+          "path": "node_modules/nanoassert/index.js",
+          "kind": "require-call",
+          "original": "nanoassert",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "node_modules/blake2b/index.js",
+      "bytes": 9670,
+      "format": "cjs",
+      "imports": [
+        {
+          "path": "node_modules/blake2b-wasm/index.js",
+          "kind": "require-call",
+          "original": "blake2b-wasm",
+          "external": false
+        },
+        {
+          "path": "node_modules/nanoassert/index.js",
+          "kind": "require-call",
+          "original": "nanoassert",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "node_modules/compact-encoding/endian.js",
+      "bytes": 105,
+      "format": "cjs",
+      "imports": []
+    },
+    {
+      "path": "node_modules/compact-encoding/index.js",
+      "bytes": 26406,
+      "format": "cjs",
+      "imports": [
+        {
+          "path": "node_modules/b4a/browser.js",
+          "kind": "require-call",
+          "original": "b4a",
+          "external": false
+        },
+        {
+          "path": "node_modules/compact-encoding/endian.js",
+          "kind": "require-call",
+          "original": "./endian",
+          "external": false
+        },
+        {
+          "path": "node_modules/compact-encoding/lexint.js",
+          "kind": "require-call",
+          "original": "./lexint",
+          "external": false
+        },
+        {
+          "path": "node_modules/compact-encoding/raw.js",
+          "kind": "require-call",
+          "original": "./raw",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "node_modules/compact-encoding/lexint.js",
+      "bytes": 2851,
+      "format": "cjs",
+      "imports": []
+    },
+    {
+      "path": "node_modules/compact-encoding/raw.js",
+      "bytes": 3977,
+      "format": "cjs",
+      "imports": [
+        {
+          "path": "node_modules/b4a/browser.js",
+          "kind": "require-call",
+          "original": "b4a",
+          "external": false
+        },
+        {
+          "path": "node_modules/compact-encoding/endian.js",
+          "kind": "require-call",
+          "original": "./endian",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "node_modules/nanoassert/index.js",
+      "bytes": 438,
+      "format": "cjs",
+      "imports": []
+    },
+    {
+      "path": "node_modules/sha512-universal/index.js",
+      "bytes": 499,
+      "format": "cjs",
+      "imports": [
+        {
+          "path": "node_modules/sha512-universal/sha512.js",
+          "kind": "require-call",
+          "original": "./sha512.js",
+          "external": false
+        },
+        {
+          "path": "node_modules/sha512-wasm/index.js",
+          "kind": "require-call",
+          "original": "sha512-wasm",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "node_modules/sha512-universal/sha512.js",
+      "bytes": 13197,
+      "format": "cjs",
+      "imports": [
+        {
+          "path": "node_modules/b4a/browser.js",
+          "kind": "require-call",
+          "original": "b4a",
+          "external": false
+        },
+        {
+          "path": "node_modules/nanoassert/index.js",
+          "kind": "require-call",
+          "original": "nanoassert",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "node_modules/sha512-wasm/index.js",
+      "bytes": 4394,
+      "format": "cjs",
+      "imports": [
+        {
+          "path": "node_modules/b4a/browser.js",
+          "kind": "require-call",
+          "original": "b4a",
+          "external": false
+        },
+        {
+          "path": "node_modules/nanoassert/index.js",
+          "kind": "require-call",
+          "original": "nanoassert",
+          "external": false
+        },
+        {
+          "path": "node_modules/sha512-wasm/sha512.js",
+          "kind": "require-call",
+          "original": "./sha512.js",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "node_modules/sha512-wasm/sha512.js",
+      "bytes": 6573,
+      "format": "cjs",
+      "imports": []
+    },
+    {
+      "path": "node_modules/sodium-javascript/crypto_generichash.js",
+      "bytes": 1388,
+      "format": "cjs",
+      "imports": [
+        {
+          "path": "node_modules/blake2b/index.js",
+          "kind": "require-call",
+          "original": "blake2b",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "node_modules/sodium-javascript/crypto_hash.js",
+      "bytes": 692,
+      "format": "cjs",
+      "imports": [
+        {
+          "path": "node_modules/nanoassert/index.js",
+          "kind": "require-call",
+          "original": "nanoassert",
+          "external": false
+        },
+        {
+          "path": "node_modules/sha512-universal/index.js",
+          "kind": "require-call",
+          "original": "sha512-universal",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "node_modules/sodium-javascript/crypto_scalarmult.js",
+      "bytes": 1745,
+      "format": "cjs",
+      "imports": [
+        {
+          "path": "node_modules/sodium-javascript/internal/ed25519.js",
+          "kind": "require-call",
+          "original": "./internal/ed25519",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "node_modules/sodium-javascript/crypto_sign.js",
+      "bytes": 11785,
+      "format": "cjs",
+      "imports": [
+        {
+          "path": "node_modules/nanoassert/index.js",
+          "kind": "require-call",
+          "original": "nanoassert",
+          "external": false
+        },
+        {
+          "path": "node_modules/sodium-javascript/crypto_hash.js",
+          "kind": "require-call",
+          "original": "./crypto_hash.js",
+          "external": false
+        },
+        {
+          "path": "node_modules/sodium-javascript/crypto_hash.js",
+          "kind": "require-call",
+          "original": "./crypto_hash",
+          "external": false
+        },
+        {
+          "path": "node_modules/sodium-javascript/crypto_scalarmult.js",
+          "kind": "require-call",
+          "original": "./crypto_scalarmult.js",
+          "external": false
+        },
+        {
+          "path": "node_modules/sodium-javascript/crypto_verify.js",
+          "kind": "require-call",
+          "original": "./crypto_verify",
+          "external": false
+        },
+        {
+          "path": "node_modules/sodium-javascript/internal/ed25519.js",
+          "kind": "require-call",
+          "original": "./internal/ed25519",
+          "external": false
+        },
+        {
+          "path": "node_modules/sodium-javascript/randombytes.js",
+          "kind": "require-call",
+          "original": "./randombytes",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "node_modules/sodium-javascript/crypto_verify.js",
+      "bytes": 613,
+      "format": "cjs",
+      "imports": []
+    },
+    {
+      "path": "node_modules/sodium-javascript/internal/ed25519.js",
+      "bytes": 10715,
+      "format": "cjs",
+      "imports": []
+    },
+    {
+      "path": "node_modules/sodium-javascript/randombytes.js",
+      "bytes": 1072,
+      "format": "cjs",
+      "imports": [
+        {
+          "path": "(disabled):crypto",
+          "kind": "require-call",
+          "original": "crypto",
+          "external": false
+        },
+        {
+          "path": "<runtime>",
+          "kind": "import-statement",
+          "original": null,
+          "external": true
+        },
+        {
+          "path": "node_modules/nanoassert/index.js",
+          "kind": "require-call",
+          "original": "nanoassert",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "packages/blind-client/browser-artifacts/blind-client-control-v3.entry.mjs",
+      "bytes": 93,
+      "format": "esm",
+      "imports": [
+        {
+          "path": "./blind-client-control-v2.mjs",
+          "kind": "import-statement",
+          "original": null,
+          "external": true
+        },
+        {
+          "path": "packages/blind-client/browser-forward-state-v3.js",
+          "kind": "import-statement",
+          "original": "../browser-forward-state-v3.js",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "packages/blind-client/browser-forward-state-v3.js",
+      "bytes": 33391,
+      "format": "esm",
+      "imports": [
+        {
+          "path": "node_modules/b4a/browser.js",
+          "kind": "import-statement",
+          "original": "b4a",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/client-composition-v3.js",
+          "kind": "import-statement",
+          "original": "../blind-protocol/client-composition-v3.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/codec.js",
+          "kind": "import-statement",
+          "original": "../blind-protocol/codec.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/wire-v3.js",
+          "kind": "import-statement",
+          "original": "../blind-protocol/wire-v3.js",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/client-composition-v3.js",
+      "bytes": 20313,
+      "format": "esm",
+      "imports": [
+        {
+          "path": "node_modules/b4a/browser.js",
+          "kind": "import-statement",
+          "original": "b4a",
+          "external": false
+        },
+        {
+          "path": "node_modules/compact-encoding/index.js",
+          "kind": "import-statement",
+          "original": "compact-encoding",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/codec.js",
+          "kind": "import-statement",
+          "original": "./codec.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/wire-v3.js",
+          "kind": "import-statement",
+          "original": "./wire-v3.js",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/codec.js",
+      "bytes": 18789,
+      "format": "esm",
+      "imports": [
+        {
+          "path": "node_modules/b4a/browser.js",
+          "kind": "import-statement",
+          "original": "b4a",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/crypto-browser.js",
+      "bytes": 881,
+      "format": "esm",
+      "imports": [
+        {
+          "path": "node_modules/sodium-javascript/crypto_generichash.js",
+          "kind": "import-statement",
+          "original": "sodium-javascript/crypto_generichash.js",
+          "external": false
+        },
+        {
+          "path": "node_modules/sodium-javascript/crypto_sign.js",
+          "kind": "import-statement",
+          "original": "sodium-javascript/crypto_sign.js",
+          "external": false
+        },
+        {
+          "path": "node_modules/sodium-javascript/randombytes.js",
+          "kind": "import-statement",
+          "original": "sodium-javascript/randombytes.js",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/errors.js",
+      "bytes": 260,
+      "format": "esm",
+      "imports": []
+    },
+    {
+      "path": "packages/blind-protocol/hashes.js",
+      "bytes": 29218,
+      "format": "esm",
+      "imports": [
+        {
+          "path": "node_modules/b4a/browser.js",
+          "kind": "import-statement",
+          "original": "b4a",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/codec.js",
+          "kind": "import-statement",
+          "original": "./codec.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/crypto-browser.js",
+          "kind": "import-statement",
+          "original": "./crypto.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/wire-runtime-authority.js",
+          "kind": "import-statement",
+          "original": "./wire-runtime-authority.js",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/result-binding.js",
+      "bytes": 5899,
+      "format": "esm",
+      "imports": [
+        {
+          "path": "node_modules/b4a/browser.js",
+          "kind": "import-statement",
+          "original": "b4a",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/codec.js",
+          "kind": "import-statement",
+          "original": "./codec.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/wire-runtime-authority.js",
+          "kind": "import-statement",
+          "original": "./wire-runtime-authority.js",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/schema-catalog-runtime-authority.js",
+      "bytes": 11433,
+      "format": "esm",
+      "imports": []
+    },
+    {
+      "path": "packages/blind-protocol/schemas.js",
+      "bytes": 70001,
+      "format": "esm",
+      "imports": [
+        {
+          "path": "node_modules/b4a/browser.js",
+          "kind": "import-statement",
+          "original": "b4a",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/codec.js",
+          "kind": "import-statement",
+          "original": "./codec.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/hashes.js",
+          "kind": "import-statement",
+          "original": "./hashes.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/result-binding.js",
+          "kind": "import-statement",
+          "original": "./result-binding.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/schema-catalog-runtime-authority.js",
+          "kind": "import-statement",
+          "original": "./schema-catalog-runtime-authority.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/wire-runtime-authority.js",
+          "kind": "import-statement",
+          "original": "./wire-runtime-authority.js",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/wire-runtime-authority.js",
+      "bytes": 37869,
+      "format": "esm",
+      "imports": []
+    },
+    {
+      "path": "packages/blind-protocol/wire-v2.js",
+      "bytes": 28968,
+      "format": "esm",
+      "imports": [
+        {
+          "path": "<runtime>",
+          "kind": "import-statement",
+          "original": null,
+          "external": true
+        },
+        {
+          "path": "node_modules/b4a/browser.js",
+          "kind": "import-statement",
+          "original": "b4a",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/codec.js",
+          "kind": "import-statement",
+          "original": "./codec.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/hashes.js",
+          "kind": "import-statement",
+          "original": "./hashes.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/schemas.js",
+          "kind": "import-statement",
+          "original": "./schemas.js",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/wire-v3.js",
+      "bytes": 63191,
+      "format": "esm",
+      "imports": [
+        {
+          "path": "<runtime>",
+          "kind": "import-statement",
+          "original": null,
+          "external": true
+        },
+        {
+          "path": "node_modules/b4a/browser.js",
+          "kind": "import-statement",
+          "original": "b4a",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/codec.js",
+          "kind": "import-statement",
+          "original": "./codec.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/crypto-browser.js",
+          "kind": "import-statement",
+          "original": "./crypto.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/hashes.js",
+          "kind": "import-statement",
+          "original": "./hashes.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/schemas.js",
+          "kind": "import-statement",
+          "original": "./schemas.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/wire-v2.js",
+          "kind": "import-statement",
+          "original": "./wire-v2.js",
+          "external": false
+        }
+      ]
+    }
+  ],
+  "entries": [
+    {
+      "path": "(disabled):crypto",
+      "bytes": 56,
+      "sha256": "2e8fe0ee8a0fd364b1dc38be04547d592b044fd1d78fc248731f745bd37ba1f3",
+      "roles": [
+        "DISABLED_BROWSER_MODULE",
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "docs/protocol/HIVERELAY-BLIND-CLIENT-COMPOSITION-V3.md",
+      "bytes": 1331,
+      "sha256": "4c0a4b64245f11381758f9036bfcb3096fea5882f9177c50bd561989984cf8b1",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "docs/protocol/HIVERELAY-BLIND-WIRE-V3.md",
+      "bytes": 2491,
+      "sha256": "c85be9329610c8c1b5f8d782ad673d7ff53e16c548022fc01c6fffaf5ebb43c4",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "node_modules/b4a/browser.js",
+      "bytes": 13336,
+      "sha256": "dadbd42b71ad0b40285d44ccfdb31c91abbfb088e4336422d4e2948cad7afe01",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/b4a/lib/ascii.js",
+      "bytes": 459,
+      "sha256": "14c2f2bcba3d735d473b2a99c80035a1a31963ee6ec079457a7552567602f97d",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/b4a/lib/base64.js",
+      "bytes": 1474,
+      "sha256": "aea51ec32d2e4a536af4741fdaefb5fa5d42f820e559c7f481505e9f07ce5215",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/b4a/lib/hex.js",
+      "bytes": 1028,
+      "sha256": "5032f1fdb25757f3214fb5b5fd4628a5b8796138718d03ace0ae1b50f0f53863",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/b4a/lib/latin1.js",
+      "bytes": 452,
+      "sha256": "3032dcbd3121decbc265f57b477001e57fdaf59650efcf85bc5936c0f4be1fc1",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/b4a/lib/utf16le.js",
+      "bytes": 641,
+      "sha256": "b39c0cd40e2709417421cfcbdc177d36a609a83edb192e78a979acdab87bc75e",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/b4a/lib/utf8.js",
+      "bytes": 2732,
+      "sha256": "8122851133ec42e520e687924370854a7c8fc9118210a45aef2bf6f08a856ffd",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/b4a/package.json",
+      "bytes": 1245,
+      "sha256": "8bca7126107a091957db1d7f091d636fa54d634f38e3b9f0c66c7c571945bd0a",
+      "roles": [
+        "RESOLUTION_METADATA"
+      ]
+    },
+    {
+      "path": "node_modules/blake2b-wasm/blake2b.js",
+      "bytes": 12248,
+      "sha256": "ab8919c1546bd3015afb834e6f0948a7c53121be4f4107ce2a3f4eb31c3e77e9",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/blake2b-wasm/index.js",
+      "bytes": 4605,
+      "sha256": "0ab2389048116330718b012ce387aa693e3f318e9cc9b697d32a96d65bef25bd",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/blake2b-wasm/package.json",
+      "bytes": 782,
+      "sha256": "5bda19aefb010a8fccff1fc5dce0e9d3ff75ae1921e584d1becb4c371b3b4541",
+      "roles": [
+        "RESOLUTION_METADATA"
+      ]
+    },
+    {
+      "path": "node_modules/blake2b/index.js",
+      "bytes": 9670,
+      "sha256": "89d35ca4687b8ad3bd659b1a39f44a8a4a393ac977be5af1e1ce32116c25c064",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/blake2b/package.json",
+      "bytes": 742,
+      "sha256": "47bcf83fa22df55efb1759c46153bc6e994036c2146d5a0de3867953a603f870",
+      "roles": [
+        "RESOLUTION_METADATA"
+      ]
+    },
+    {
+      "path": "node_modules/compact-encoding/endian.js",
+      "bytes": 105,
+      "sha256": "7ea1ab9b548c8eb56a6efcc2268b046f59518f1e457ac9c6b3a161a2e79cc4c5",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/compact-encoding/index.js",
+      "bytes": 26406,
+      "sha256": "d2d1ef500c38453ac835e2d0c35f010463e815c7b00dbc6cd1f2de9fa3d93f65",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/compact-encoding/lexint.js",
+      "bytes": 2851,
+      "sha256": "a3fdf80a7b64093d82f42d363bf13a0453e0c5d1ff1a6793ad9d103335ab6569",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/compact-encoding/package.json",
+      "bytes": 866,
+      "sha256": "575a4b13e8650cf13dc96b807ed540c7c1d43a837fb432abf803b39febc1a533",
+      "roles": [
+        "RESOLUTION_METADATA"
+      ]
+    },
+    {
+      "path": "node_modules/compact-encoding/raw.js",
+      "bytes": 3977,
+      "sha256": "ffb71c3d42bb42162badd613a264661b7bc00517b46ba31615a71997de5deb18",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/esbuild/package.json",
+      "bytes": 3980,
+      "sha256": "d55d1d19fcc5b6079e4a71dd4111340c79c682bc36835ac7058a0c364c7db58a",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "node_modules/nanoassert/index.js",
+      "bytes": 438,
+      "sha256": "5a3c8dce33093172d9cb3d6bdd34e464d17a1da175a8f8b74f0c0d22dde94fbb",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/nanoassert/package.json",
+      "bytes": 647,
+      "sha256": "2152421c559e2aeb7c002ecfeac306340d23cf3783446cea607a284658df30bd",
+      "roles": [
+        "RESOLUTION_METADATA"
+      ]
+    },
+    {
+      "path": "node_modules/sha512-universal/index.js",
+      "bytes": 499,
+      "sha256": "77c44d468e26b37ecee71bf4f157ad9cefadcd1c1ab5b3debc1bba8b3e555e66",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/sha512-universal/package.json",
+      "bytes": 689,
+      "sha256": "a6f9c3419fbcd21e7f32627725f5ff1454aae7a16eae841d9b4813345c4b8fb6",
+      "roles": [
+        "RESOLUTION_METADATA"
+      ]
+    },
+    {
+      "path": "node_modules/sha512-universal/sha512.js",
+      "bytes": 13197,
+      "sha256": "22dd67404b7dea4ec2f41fe2a69c4e1610c6dfdd719dd350035f1b1148c72bb8",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/sha512-wasm/index.js",
+      "bytes": 4394,
+      "sha256": "5eab1d5b2222cea2c225728d93725a8ba7cf92f4a400d6811f0902ec5bde439c",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/sha512-wasm/package.json",
+      "bytes": 677,
+      "sha256": "8494354b43d54613edd58483f3412024186f13f814898bd664cbe33188d97511",
+      "roles": [
+        "RESOLUTION_METADATA"
+      ]
+    },
+    {
+      "path": "node_modules/sha512-wasm/sha512.js",
+      "bytes": 6573,
+      "sha256": "332c687f89518986ba4ed66b1e5b199f1f0202e18d1d9478e0c7161abc4d3282",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/sodium-javascript/crypto_generichash.js",
+      "bytes": 1388,
+      "sha256": "0872aae2f6a7ed03314634378b3133914f2085ad3a07c486865c0489b8a2f5d0",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/sodium-javascript/crypto_hash.js",
+      "bytes": 692,
+      "sha256": "5c92725a85938a16585a108c5a29713d0286c25c01dd647aab70f2a11f80da26",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/sodium-javascript/crypto_scalarmult.js",
+      "bytes": 1745,
+      "sha256": "ffbcd85fd94e77b1d6679797d5b36d2d3fae09bb4955aea165e0ff67a3e5de6e",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/sodium-javascript/crypto_sign.js",
+      "bytes": 11785,
+      "sha256": "4ddf20bd4904516f0ad2b1b2da9c9d6d1f0a88d0618a96d1c44a912eeb926a89",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/sodium-javascript/crypto_verify.js",
+      "bytes": 613,
+      "sha256": "478c87e0ebf9f6d25a3634d0f2e5516423c6d4fa25bf8f7f7d5973ed0cc54c35",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/sodium-javascript/internal/ed25519.js",
+      "bytes": 10715,
+      "sha256": "509e76092cb251c3590fb3a339643efe20335b76fe7ff1d7b976c08ab3665f7b",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "node_modules/sodium-javascript/package.json",
+      "bytes": 1288,
+      "sha256": "9768339364bcd487bbdc8a30b75e46eaa9e58646bfd5c7bc4468f518b686d9ef",
+      "roles": [
+        "RESOLUTION_METADATA"
+      ]
+    },
+    {
+      "path": "node_modules/sodium-javascript/randombytes.js",
+      "bytes": 1072,
+      "sha256": "28b5e789bb9566174e18976e72479747802be4158f1b82b5a6c80812f169c6a3",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "package-lock.json",
+      "bytes": 187185,
+      "sha256": "0fd817314b75cecd0060585fb2dc59bef4def7ff89cacf71a9b8af8a4d9c47d2",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "package.json",
+      "bytes": 12852,
+      "sha256": "fddb7b5465f657f9df2340a57aee39f558e0da7364e374975593fc43b77e7032",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "packages/blind-client/browser-artifact-v3.js",
+      "bytes": 7490,
+      "sha256": "64095fb3cd90d499f6ec8849cb05767128f17b0f9a131df5d8304edb249b9075",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "packages/blind-client/browser-artifacts/blind-client-control-v2.authority.json",
+      "bytes": 1721,
+      "sha256": "eef9468bc97b04fb53692ca7096997ce71e5e56f85a451d1aacdcde12215b43c",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "packages/blind-client/browser-artifacts/blind-client-control-v2.manifest.cenc",
+      "bytes": 214,
+      "sha256": "eb37a674bb92e218088f9f6e9a820866e1eca9f540feeeee825923e311b81731",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "packages/blind-client/browser-artifacts/blind-client-control-v2.mjs",
+      "bytes": 1795,
+      "sha256": "dfb4276ae74a42d487ad1ef77783309a93ba8985591799ea298c01f8f47442aa",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "packages/blind-client/browser-artifacts/blind-client-control-v2.source-closure.json",
+      "bytes": 1508,
+      "sha256": "b6dac623480fd1e36ffe39bed8fab6e16df4139488e2039abe6bd71e2f03cf6f",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "packages/blind-client/browser-artifacts/blind-client-control-v3.entry.mjs",
+      "bytes": 93,
+      "sha256": "4b6cedcd31d85b5d33a46c749ae030bcb588445e5bbad8ec79c3c7b93bac9be3",
+      "roles": [
+        "METAFILE_INPUT",
+        "VIRTUAL_ENTRY"
+      ]
+    },
+    {
+      "path": "packages/blind-client/browser-forward-state-v3.js",
+      "bytes": 33391,
+      "sha256": "607ec90aa805dc285baf460a4b8ea32e2207f51793a6f7625dec50e0cd6557fd",
+      "roles": [
+        "FIXED_AUTHORITY",
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "packages/blind-client/generate-browser-artifact-v3.mjs",
+      "bytes": 17364,
+      "sha256": "1461b18840e9cc8c77a046013bafc40666da9172300cff8c5b250ad3a5018684",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "packages/blind-client/package.json",
+      "bytes": 2173,
+      "sha256": "39ca1e16d47b42c529683a4ae13e437292c67f55ce67e404c9894a2444dbb3a8",
+      "roles": [
+        "FIXED_AUTHORITY",
+        "RESOLUTION_METADATA"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/client-composition-v3.js",
+      "bytes": 20313,
+      "sha256": "ab053dcd846b6ff34f86e14b82874de8c68858886ad4412d7c159204e2390bea",
+      "roles": [
+        "FIXED_AUTHORITY",
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/codec.js",
+      "bytes": 18789,
+      "sha256": "4102aac14a1cc3192d76b7c8d351ffc7e9fd7b7e5023b8f599e6424923d17e83",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/crypto-browser.js",
+      "bytes": 881,
+      "sha256": "aea85ecef438c475134bdd19243fbb7b66eae6b433903bf203bca947904ee73c",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/errors.js",
+      "bytes": 260,
+      "sha256": "de209985fcfb90ff2e4da4440ddf0ccf3c024206f6e7f8fefd2d66d71e6fccf2",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/generate-client-composition-v3.mjs",
+      "bytes": 9979,
+      "sha256": "10656e9a29dd1e4e35e47fe51abc8d9b48f9b57f8a41dedb778091b55bcb4e29",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/generate-wire-v3.mjs",
+      "bytes": 19083,
+      "sha256": "01068d3a75dc862b138ff6b995ece7b1cdbf4b43ad1e033e192d7770bec6dcb2",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/hashes.js",
+      "bytes": 29218,
+      "sha256": "5c764dee359d9fba7324cca1e5fb7491e12c4ecb581b292ac2da3151ad0b8fd6",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/hiverelay-blind-abi-v3.cenc",
+      "bytes": 3324,
+      "sha256": "1befa42da59518cd8c430ebac1de79825e270111c4fddddc9ba7f04a04d3259f",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/hiverelay-blind-client-composition-authority-v3.json",
+      "bytes": 4834,
+      "sha256": "a5a266d241e952cf5c43d28445af08766d8a3315ce12cef54c7a1b529ae4307e",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/hiverelay-blind-client-composition-format-v3.cenc",
+      "bytes": 1781,
+      "sha256": "8a82ae7650f1cafe1e7c09ce8d4b812178f3e3cc41e364d16c393ecd45535d02",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/hiverelay-blind-wire-authority-v3.json",
+      "bytes": 8244,
+      "sha256": "a5b907c9e59fb497b2d15ea09f7cd5e349f034fe85ef38ef539254a3442f3a08",
+      "roles": [
+        "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/package.json",
+      "bytes": 1697,
+      "sha256": "6294132c7c1778775f5b088dfbbc52ed4200e51cca867b830cae7c1a75e84493",
+      "roles": [
+        "FIXED_AUTHORITY",
+        "RESOLUTION_METADATA"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/result-binding.js",
+      "bytes": 5899,
+      "sha256": "987d2a593497ae66b9e90831677859a7db78cb80b010658d192caec9c408f8b3",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/schema-catalog-runtime-authority.js",
+      "bytes": 11433,
+      "sha256": "6c0c7a8be1f77709cd60edad083606fa3e3889f2f50396592bfe290db6404fcc",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/schemas.js",
+      "bytes": 70001,
+      "sha256": "f9bd83e70fe802f099e9bbf6c1ebc053fedc4b7f511b9286200d37d1bb87054d",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/wire-runtime-authority.js",
+      "bytes": 37869,
+      "sha256": "3c861d390f8f6b60a390334e3320cd22cdce6071dfe3a5f42231460e73f52cea",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/wire-v2.js",
+      "bytes": 28968,
+      "sha256": "678b417f8ca3adacb50442f46c2e8ae0500334f81d039e3552c1d8b89acd19d4",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/wire-v3.js",
+      "bytes": 63191,
+      "sha256": "ee483915e08836b678e7b73df54f7356bf2e7c7badcd7601de725fa96a951959",
+      "roles": [
+        "FIXED_AUTHORITY",
+        "METAFILE_INPUT"
+      ]
+    }
+  ]
+}

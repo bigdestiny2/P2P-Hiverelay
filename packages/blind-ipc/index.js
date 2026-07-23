@@ -78,6 +78,8 @@ export function assertPrivateIpcReady () {
 
 export * from './private-ipc-v3-contract.js'
 export * from './private-ipc-v3-status.js'
+export * from './private-ipc-v4-contract.js'
+export * from './private-ipc-v4-status.js'
 
 function fail (message) {
   const error = new Error(message)

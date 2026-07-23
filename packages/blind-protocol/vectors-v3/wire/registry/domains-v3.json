@@ -1,0 +1,74 @@
+[
+  {
+    "domainId": 18,
+    "purpose": "REQUEST_COMMITMENT",
+    "purposeId": 1,
+    "recipeId": 1,
+    "name": "FORWARD_HTTPS_ORIGIN_FORWARD_TURN",
+    "exactAsciiBytes": "hiverelay.blind.forward-https-origin-forward-turn-request.v1"
+  },
+  {
+    "domainId": 113,
+    "purpose": "RESULT_SIGNATURE",
+    "purposeId": 2,
+    "recipeId": 2,
+    "name": "FORWARD_HTTPS_TARGET_TURN_RESULT",
+    "exactAsciiBytes": "hiverelay.blind.forward-https-target-turn-result.v1"
+  },
+  {
+    "domainId": 114,
+    "purpose": "RESULT_SIGNATURE",
+    "purposeId": 2,
+    "recipeId": 2,
+    "name": "FORWARD_HTTPS_SOURCE_PRE_FORWARD_ERROR",
+    "exactAsciiBytes": "hiverelay.blind.forward-https-source-pre-forward-error.v1"
+  },
+  {
+    "domainId": 115,
+    "purpose": "RESULT_SIGNATURE",
+    "purposeId": 2,
+    "recipeId": 2,
+    "name": "FORWARD_HTTPS_SOURCE_POST_FORWARD_AMBIGUOUS",
+    "exactAsciiBytes": "hiverelay.blind.forward-https-source-post-forward-ambiguous.v1"
+  },
+  {
+    "domainId": 215,
+    "purpose": "AUXILIARY_SIGNATURE",
+    "purposeId": 3,
+    "recipeId": 2,
+    "name": "FORWARD_HTTPS_SOURCE_TRANSFORM",
+    "exactAsciiBytes": "hiverelay.blind.forward-https-source-transform.v1"
+  },
+  {
+    "domainId": 216,
+    "purpose": "HASH_DOMAIN",
+    "purposeId": 4,
+    "recipeId": 4,
+    "name": "FORWARD_HTTPS_STABLE_SESSION",
+    "exactAsciiBytes": "hiverelay.blind.forward-https-stable-session.v1"
+  },
+  {
+    "domainId": 217,
+    "purpose": "HASH_DOMAIN",
+    "purposeId": 4,
+    "recipeId": 3,
+    "name": "FORWARD_HTTPS_TARGET_RESULT_CHAIN",
+    "exactAsciiBytes": "hiverelay.blind.forward-https-target-result-chain.v1"
+  },
+  {
+    "domainId": 218,
+    "purpose": "HASH_DOMAIN",
+    "purposeId": 4,
+    "recipeId": 3,
+    "name": "FORWARD_HTTPS_TLS_EXPORTER_CONTEXT",
+    "exactAsciiBytes": "hiverelay.blind.forward-https-tls-exporter-context.v1"
+  },
+  {
+    "domainId": 219,
+    "purpose": "HASH_DOMAIN",
+    "purposeId": 4,
+    "recipeId": 4,
+    "name": "FORWARD_HTTPS_TLS_EXPORTER_BINDING",
+    "exactAsciiBytes": "hiverelay.blind.forward-https-tls-exporter-binding.v1"
+  }
+]

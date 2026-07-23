@@ -1,0 +1,16 @@
+{
+  "source-origin-bad-magic.bin": "reject-ID16-magic",
+  "source-origin-extra-record.bin": "reject-exact-transcript-length",
+  "source-origin-role-forwarded.bin": "reject-source-socket-role-confusion",
+  "source-origin-exchange-mismatch.bin": "reject-ID16-ID17-binding",
+  "target-ingress-origin-role.bin": "reject-target-role-origin-template",
+  "target-ingress-bad-binding.bin": "reject-target-exchange-recomputation",
+  "target-ingress-bad-exchange.bin": "reject-target-exchange-recomputation",
+  "target-result-source-role.bin": "reject-target-result-role-confusion",
+  "missing-eof": "reject-before-claim-sign-spend-dial-or-response",
+  "ID16-on-target-socket": "reject-record-family",
+  "ID18-on-source-socket": "reject-record-family",
+  "outer-envelope-or-native-stream-fallback": "unrepresentable",
+  "raw-exporter-source-address-credentials": "unrepresentable",
+  "socket-or-journal-alias": "reject"
+}

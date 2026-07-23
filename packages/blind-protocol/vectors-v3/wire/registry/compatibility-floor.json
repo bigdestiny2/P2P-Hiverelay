@@ -1,0 +1,11 @@
+{
+  "hiverelay-blind-abi-v1.cenc": "8fcc75ed7f32af8f118a521fe230d77ec1e4b2b209296adda2e73e87b74ff5b6",
+  "hiverelay-blind-abi-v2.cenc": "ff86d47c480a39156e2ab0268e3da786dbac3ff8528f98f758671ed1bf2a297c",
+  "vector-manifest-v1.cenc": "e23137dc90f52a1c9c3c8ac1e6ecb98eb32b653260fe1049f078ff8cebabc522",
+  "vector-manifest-v2.cenc": "803717545ff5f51f396bf06646dda7ca4b12596c61bffc640a244360d287aa7f",
+  "hiverelay-blind-wire-authority-v1.json": "d6b757334bbec7b85d949085ce4b896a5fe960bc4c86c7f9001f81be78d0cefc",
+  "hiverelay-blind-wire-authority-v2.json": "165316d7d551afabfe6943981d80cc8ba9cbe0b2db06336a3b95eaeb17783e86",
+  "wire-v2.js": "678b417f8ca3adacb50442f46c2e8ae0500334f81d039e3552c1d8b89acd19d4",
+  "abi-registry-v2.js": "8aabef205df158f49a08c5bd7a2c7bb6318355c16b3cb1b6dea38eddd361a126",
+  "registry.js": "782075a117d9946b53fae90a90cd7cf957ba469cce522151dcc8f8b570b8f61f"
+}
