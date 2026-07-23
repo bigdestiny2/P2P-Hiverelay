@@ -451,7 +451,7 @@ async function installSnapshot (state, operation) {
     existingDestinationBytes: await fileSizeOrZero(state.statePath),
     temporaryAndDestinationCanCoexist: true
   })
-  const reservation = await reserveForwardHttpsAggregateQuotaV3(state.replayQuotaCapability, plan)
+  const { reservation } = await reserveForwardHttpsAggregateQuotaV3(state.replayQuotaCapability, plan)
   let handle
   let mutated = false
   try {
@@ -890,6 +890,7 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
   const mirror = sessions.get(key) || { present: false, consumed: false, pruned: false, prefix: null, bitmap: 0, commitments: null, priorRevision: 0n }
   if (entry.scope === 'PRUNE_TRANSITION') {
     const pruned = decodeForwardHttpsRetentionPrunedV3(payload)
+    mirror.chargeEntryCount = Math.max(0, (mirror.chargeEntryCount || 0) - pruned.chargeEntryCount)
     if (pruned.flags === 2) {
       // flags2 existing-session prefix-abort: the slot stays ALLOCATED and the
       // authority vector is byte-identically unchanged; only orphan charge is
@@ -920,6 +921,12 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
     else if (mirror.prefix === null) mirror.prefix = 'EXISTING'
   } else {
     mirror.prefix = null
+  }
+  if (entry.ordinaryLogicalCharge > 0) {
+    // The 65537th removable charge entry of one identity is INTEGRITY in
+    // recovery (or cap+1 terminal conversion live before ordinary WAL).
+    if ((mirror.chargeEntryCount || 0) >= 65536) storeWalFail('recovered removable charge entries exceed the cap')
+    mirror.chargeEntryCount = (mirror.chargeEntryCount || 0) + 1
   }
   mirror.present = true
   mirror.priorRevision += 1n
@@ -1039,7 +1046,7 @@ export async function initializeForwardHttpsAggregateQuotaV3 (quotaAuthority, in
   state.initialized = true
 }
 
-function planFrom (capability, operation, logicalBytes, physicalBytes, commitments = [], protectedPlan = false, bindLogicalBytes = null, bindPhysicalBytes = null) {
+function planFrom (capability, operation, logicalBytes, physicalBytes, commitments = [], protectedPlan = false, bindLogicalBytes = null, bindPhysicalBytes = null, stableSessionId = null) {
   const plan = Object.freeze({})
   QUOTA_PLANS.set(plan, {
     capability,
@@ -1050,6 +1057,7 @@ function planFrom (capability, operation, logicalBytes, physicalBytes, commitmen
     bindPhysicalBytes: bindPhysicalBytes === null ? physicalBytes : bindPhysicalBytes,
     commitments,
     protected: protectedPlan,
+    stableSessionId,
     burned: false
   })
   return plan
@@ -1077,18 +1085,18 @@ export function createForwardHttpsStoreQuotaCostPlanV3 (storeQuotaCapability, in
   const capability = quotaCapabilityState(storeQuotaCapability)
   if (capability.role !== 'SOURCE_STORE' && capability.role !== 'TARGET_STORE') quotaFail('store cost-plan role is invalid', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
   closedObject(input, ['operation', 'knownInputBuffers', 'temporaryWriteBuffers', 'existingDestinationBytes'], [], 'store cost plan')
-  const operations = ['OPEN_RECOVERY', 'PREPARE', 'RESULT', 'TURN_FINAL', 'PROCESSOR_REQUEST_READY', 'PROCESSOR_PREPARED', 'PROCESSOR_COMPLETED', 'SESSION_TERMINAL', 'QUARANTINE', 'PRUNE']
-  if (!operations.includes(input.operation)) throw new TypeError('store operation is invalid')
+  const row = FORWARD_HTTPS_STORE_OPERATION_ROWS[input.operation]
+  if (!row) throw new TypeError('store operation is invalid')
+  // Inapplicable role/operation pair is INVALID before plan creation.
+  if (row.roles !== 'BOTH' && row.roles !== capability.role) {
+    quotaFail('operation is inapplicable for the capability role', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INVALID)
+  }
   const known = buffersArray(input.knownInputBuffers, 'knownInputBuffers')
   const temporary = buffersArray(input.temporaryWriteBuffers, 'temporaryWriteBuffers')
   const existing = safeUint(input.existingDestinationBytes, 'existingDestinationBytes')
   const knownBytes = known.reduce((sum, item) => sum + item.byteLength, 0)
   const temporaryBytes = temporary.reduce((sum, item) => sum + item.byteLength, 0)
-  // Exact fixed rows: SESSION_TERMINAL is 608 logical/416 physical; PRUNE is
-  // 736 logical/480 physical before any proven ordinary removal. All other
-  // rows reserve their conservative maximum.
-  const exactLogical = input.operation === 'SESSION_TERMINAL' ? 608 : null
-  const exactPhysical = input.operation === 'SESSION_TERMINAL' ? 416 : input.operation === 'PRUNE' ? 480 : null
+  if (knownBytes > row.knownInputMaximum) quotaFail('known input exceeds the operation row', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INVALID)
   let pruneNetLogical = null
   let pruneProtected = false
   if (input.operation === 'PRUNE') {
@@ -1105,20 +1113,22 @@ export function createForwardHttpsStoreQuotaCostPlanV3 (storeQuotaCapability, in
     pruneNetLogical = 736 - Number(pruned.removedOrdinaryLogicalBytes)
     pruneProtected = pruned.flags === 0 && pruned.allocationDisposition === 0
   }
-  const maximum = input.operation === 'PROCESSOR_COMPLETED'
-    ? 13553338 + 49248 + 65536
-    : input.operation === 'PROCESSOR_REQUEST_READY'
-      ? 8645538 + 4 * 342 + 65536
-      : knownBytes + 224 + 65536
-  const logical = pruneNetLogical === null ? (exactLogical === null ? maximum : exactLogical) : pruneNetLogical
-  const physical = exactPhysical === null ? maximum + temporaryBytes + existing : exactPhysical + temporaryBytes + existing
+  // Every number is the exact conservative admission ceiling of the frozen
+  // operation row. Terminal append (608/416) and terminal prune are earmark
+  // zero-sum and never return CAPACITY.
+  const logical = pruneNetLogical === null ? row.logical : pruneNetLogical
+  const physical = row.physical + temporaryBytes + existing
+  const planSession = input.operation === 'PRUNE'
+    ? (known.length === 1 ? b4a.from(known[0].subarray(8, 40)) : null)
+    : (known.length > 0 && known[0].byteLength >= 36 && input.operation !== 'OPEN_RECOVERY' && input.operation !== 'QUARANTINE' ? b4a.from(known[0].subarray(4, 36)) : null)
   return planFrom(storeQuotaCapability, input.operation, logical, physical,
-    [...known, ...temporary].map(item => hmac(ZERO32, item)), pruneProtected,
+    [...known, ...temporary].map(item => hmac(ZERO32, item)), pruneProtected || input.operation === 'SESSION_TERMINAL',
     // Bind validates gross actual bytes against the exact tombstone frame
     // dimensions; admission uses the net removal-then-736 value, which may be
     // negative once the exact removal exceeds the tombstone charge.
     input.operation === 'PRUNE' ? 736 : null,
-    input.operation === 'PRUNE' ? 480 + temporaryBytes + existing : null)
+    input.operation === 'PRUNE' ? 480 + temporaryBytes + existing : null,
+    planSession)
 }
 
 export function bindForwardHttpsStoreQuotaActualBuffersV3 (storeQuotaCapability, reservation, input) {
@@ -1332,11 +1342,29 @@ export function reserveForwardHttpsAggregateQuotaV3 (quotaCapability, costPlan) 
     await quotaFault(state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.RESERVE_AFTER_MEASURE)
     ensureQuota(state, capability.role, plan.logicalBytes, plan.physicalBytes, plan.protected === true)
     if (state.pendingReservation) quotaFail('nested quota reservation', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    // Reserve returns the exact frozen disposition union. The plan is burned
+    // in every arm; a rejected ordinary plan in the entry-cap arm mints one
+    // terminalReservation bound to the exact rejected operation/count and the
+    // flags0 BUDGET_EXHAUSTED expectation.
+    let disposition = 'ORDINARY'
+    let terminal = null
+    if (plan.operation === 'SESSION_TERMINAL') {
+      disposition = 'REQUESTED_TERMINAL'
+      terminal = 'REQUESTED'
+    } else if (plan.stableSessionId !== null) {
+      const mirror = state.sessions.get(`${capability.role}:${b4a.toString(plan.stableSessionId, 'hex')}`)
+      const row = FORWARD_HTTPS_STORE_OPERATION_ROWS[plan.operation]
+      if (mirror && mirror.present && !mirror.consumed && (mirror.chargeEntryCount || 0) + (row ? row.removable : 0) > 65536) {
+        disposition = 'ENTRY_CAP_TERMINAL'
+        terminal = 'ENTRY_CAP'
+      }
+    }
     state.pendingReservation = true
     const reservation = Object.freeze({})
-    QUOTA_RESERVATIONS.set(reservation, { state, capability: quotaCapability, plan, actual: null, burned: false, mutated: false, walAttempted: false, totalFrames: 0, nextOrdinal: 0, lastHandoff: null, claims: new Set(), stableSessionId: null })
+    QUOTA_RESERVATIONS.set(reservation, { state, capability: quotaCapability, plan, actual: null, burned: false, mutated: false, walAttempted: false, totalFrames: 0, nextOrdinal: 0, lastHandoff: null, claims: new Set(), stableSessionId: null, terminal })
     state.pendingReservationObject = reservation
-    return reservation
+    if (disposition === 'ORDINARY') return Object.freeze({ disposition, reservation })
+    return Object.freeze({ disposition, terminalReservation: reservation })
   })
 }
 
@@ -1585,6 +1613,23 @@ const DOMAIN_PREFIX_SESSION_STATE = b4a.from('hiverelay.blind.forward-https-pref
 const DOMAIN_RETENTION_LOOKUP = b4a.from('hiverelay.blind.forward-https-retention-lookup.v3', 'ascii')
 const DOMAIN_TERMINAL_STATE = b4a.from('hiverelay.blind.forward-https-terminal-state.v3', 'ascii')
 const DOMAIN_TERMINAL_STATE_EXISTING = b4a.from('hiverelay.blind.forward-https-terminal-state-existing.v3', 'ascii')
+
+// Exact operation rows of the v18 complete_operation_bound_table: the
+// conservative admission ceilings, the planned removable charge-entry count
+// (type113 count plus the ordinary final SESSION indicator) and the known
+// input maximum. Every number is the exact frozen ceiling.
+const FORWARD_HTTPS_STORE_OPERATION_ROWS = deepFreeze({
+  OPEN_RECOVERY: { roles: 'BOTH', logical: 0, physical: 0, removable: 0, knownInputMaximum: 16777440 },
+  PREPARE: { roles: 'SOURCE_STORE', logical: 33554656, physical: 16777440, removable: 1, knownInputMaximum: 16777216 },
+  RESULT: { roles: 'SOURCE_STORE', logical: 33554656, physical: 16777440, removable: 1, knownInputMaximum: 16777216 },
+  TURN_FINAL: { roles: 'TARGET_STORE', logical: 33555116, physical: 16777782, removable: 2, knownInputMaximum: 16777216 },
+  PROCESSOR_REQUEST_READY: { roles: 'TARGET_STORE', logical: 2362286, physical: 1181591, removable: 4, knownInputMaximum: 16777216 },
+  PROCESSOR_PREPARED: { roles: 'TARGET_STORE', logical: 33554656, physical: 16777440, removable: 1, knownInputMaximum: 16777216 },
+  PROCESSOR_COMPLETED: { roles: 'TARGET_STORE', logical: 4683994, physical: 2344461, removable: 22, knownInputMaximum: 16777216 },
+  SESSION_TERMINAL: { roles: 'BOTH', logical: 608, physical: 416, removable: 0, knownInputMaximum: 65976 },
+  QUARANTINE: { roles: 'BOTH', logical: 33554656, physical: 16777440, removable: 0, knownInputMaximum: 16777216 },
+  PRUNE: { roles: 'BOTH', logical: 736, physical: 480, removable: 0, knownInputMaximum: 256 }
+})
 
 // Exact actual frame order per operation row: zero or more type113 prefix
 // frames followed by exactly one operation final frame (v18 bound table).

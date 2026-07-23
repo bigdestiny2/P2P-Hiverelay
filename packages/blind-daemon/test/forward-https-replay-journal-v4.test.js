@@ -563,6 +563,104 @@ test('derive: cross-role and unknown types are INTEGRITY', async t => {
   await finishForwardHttpsAggregateQuotaRecoveryV3(sink3)
 })
 
+test('operation bound rows: exact conservative ceilings, inapplicable pairs and bind ceilings', async t => {
+  const { capability } = await quota(t, TARGET)
+  const { capability: sourceCapability } = await quota(t, SOURCE)
+  const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'PROCESSOR_COMPLETED',
+    knownInputBuffers: [b4a.alloc(1024)],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  // The union disposition for an ordinary row is ORDINARY with the exact row ceiling
+  const { disposition, reservation } = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan)
+  t.is(disposition, 'ORDINARY')
+  t.ok(reservation)
+  // Bind actual cannot exceed the exact row (4683994 logical / 2344461 physical)
+  await t.exception.all(() => replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, reservation, {
+    logicalRecordBuffers: [b4a.alloc(4683994)],
+    encryptedPlaintextBuffers: [],
+    finalWalMetadataBuffers: [b4a.alloc(36, 1)],
+    temporaryWriteBuffers: []
+  }), /exceed the conservative plan|must be exactly 118/)
+  // Inapplicable role/operation pair is INVALID before plan creation
+  await t.exception.all(() => replayModule.createForwardHttpsStoreQuotaCostPlanV3(sourceCapability, {
+    operation: 'PROCESSOR_COMPLETED',
+    knownInputBuffers: [],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  }), /inapplicable|INVALID/)
+  await t.exception.all(() => replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'PREPARE',
+    knownInputBuffers: [],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  }), /inapplicable|INVALID/)
+  // Known input above the row maximum is INVALID
+  await t.exception.all(() => replayModule.createForwardHttpsStoreQuotaCostPlanV3(sourceCapability, {
+    operation: 'RESULT',
+    knownInputBuffers: [b4a.alloc(16777217)],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  }), /exceeds the operation row|INVALID|must be/)
+})
+
+test('reserve disposition union: REQUESTED_TERMINAL for terminal plans and ENTRY_CAP_TERMINAL at the 65536 cap', async t => {
+  const { capability } = await quota(t, TARGET)
+  const id = fixed(0x7a)
+  const terminalPayload = encodeForwardHttpsSessionTerminalV3({
+    role: TARGET,
+    flags: 1,
+    stableSessionId: id,
+    sequence: 2n,
+    priorSessionRevision: 0n,
+    newTrustedEpochHighWatermark: 1,
+    reason: 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID',
+    exactRequestCommitment: fixed(0x7b),
+    expiresAtEpoch: 100,
+    retainedUntilEpoch: 1000
+  })
+  const terminalPlan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'SESSION_TERMINAL',
+    knownInputBuffers: [terminalPayload],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const terminalUnion = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, terminalPlan)
+  t.is(terminalUnion.disposition, 'REQUESTED_TERMINAL')
+  t.ok(terminalUnion.terminalReservation)
+  t.absent('reservation' in terminalUnion)
+  // ENTRY_CAP_TERMINAL: recovered count 65536 plus planned 1 exceeds the cap.
+  // Seed the canonical mirror through one recovery sink replaying 65536
+  // entries of one session, then reserve an ordinary row for that session.
+  const { capability: cappedCapability } = await quota(t, TARGET)
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(cappedCapability)
+  let previous = ZERO32
+  for (let index = 1; index <= 65536; index++) {
+    const payload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, index & 0xff)])
+    const walHash = blake2b256(b4a.concat([b4a.from('wal'), payload, u64be(BigInt(index))]))
+    await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, {
+      frame: { type: 112, payload, payloadHash: blake2b256(payload), sequence: BigInt(index), previousWalHash: previous, walHash, frameBytes: payload.byteLength + 224 }
+    })
+    previous = walHash
+  }
+  // A 65537th recovered charge entry is INTEGRITY before localOperational
+  const overflowPayload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0xff)])
+  await t.exception.all(absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, {
+    frame: { type: 112, payload: overflowPayload, payloadHash: blake2b256(overflowPayload), sequence: 65537n, previousWalHash: previous, walHash: blake2b256(b4a.concat([b4a.from('wal'), overflowPayload])), frameBytes: overflowPayload.byteLength + 224 }
+  }), /exceed the cap|INTEGRITY/)
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+  const cappedPlan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(cappedCapability, {
+    operation: 'TURN_FINAL',
+    knownInputBuffers: [b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x01)])],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const cappedUnion = await replayModule.reserveForwardHttpsAggregateQuotaV3(cappedCapability, cappedPlan)
+  t.is(cappedUnion.disposition, 'ENTRY_CAP_TERMINAL')
+  t.ok(cappedUnion.terminalReservation)
+})
+
 test('claim fencing: derive rejects missing, caller-constructed and non-SYNCED claims', async t => {
   const id = fixed(0x76)
   const payload = sessionBody(id)
@@ -577,7 +675,7 @@ test('claim fencing: derive rejects missing, caller-constructed and non-SYNCED c
     temporaryWriteBuffers: [],
     existingDestinationBytes: 0
   })
-  const reservation = await reserveForwardHttpsAggregateQuotaV3(capability, plan)
+  const { reservation } = await reserveForwardHttpsAggregateQuotaV3(capability, plan)
   const { transitionAuthority } = bindForwardHttpsStoreQuotaActualBuffersV3(capability, reservation, {
     logicalRecordBuffers: [],
     encryptedPlaintextBuffers: [],
@@ -610,7 +708,7 @@ test('composite: one-use handoff burn proven at every ordinal for 1, 2, 4 and 22
       temporaryWriteBuffers: [],
       existingDestinationBytes: 0
     })
-    const reservation = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan)
+    const { reservation } = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan)
     const { transitionAuthority } = replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, reservation, {
       logicalRecordBuffers: [],
       encryptedPlaintextBuffers: prefixPayloads,
@@ -712,7 +810,7 @@ test('composite: substituted final and cross-role presentations reject', async t
     temporaryWriteBuffers: [],
     existingDestinationBytes: 0
   })
-  const reservation = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan)
+  const { reservation } = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan)
   const { transitionAuthority } = replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, reservation, {
     logicalRecordBuffers: [],
     encryptedPlaintextBuffers: [prefixPayload],

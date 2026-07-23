@@ -223,7 +223,8 @@ async function appendOperation (state, slot, operation, frames) {
     temporaryWriteBuffers: [],
     existingDestinationBytes: 0
   })
-  const reservation = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
+  const union = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
+  const reservation = union.reservation || union.terminalReservation
   let attempted = false
   try {
     const { transitionAuthority } = bindForwardHttpsStoreQuotaActualBuffersV3(state.storeQuotaCapability, reservation, {
@@ -423,7 +424,8 @@ export async function pruneForwardHttpsSourceSessionV3 (state, input) {
     temporaryWriteBuffers: [],
     existingDestinationBytes: 0
   })
-  const reservation = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
+  const union = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
+  const reservation = union.reservation || union.terminalReservation
   let frame
   try {
     const { transitionAuthority } = bindForwardHttpsStoreQuotaActualBuffersV3(state.storeQuotaCapability, reservation, {
