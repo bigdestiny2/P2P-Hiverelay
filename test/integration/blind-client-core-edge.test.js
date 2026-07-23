@@ -124,7 +124,7 @@ test('public CORE unary operations round-trip through the metadata-stripping edg
   await edge.start()
 
   const port = edge.address().port
-  async function exchangePublicCore (operationId, codec, request, requestByte) {
+  async function postPublicCore (operationId, codec, request, requestByte) {
     const dispatch = encodeDispatchFrame({
       frameKind: FRAME_KIND.REQUEST,
       familyId: FAMILY.CORE,
@@ -133,11 +133,15 @@ test('public CORE unary operations round-trip through the metadata-stripping edg
       body: encodeCanonical(codec, request)
     })
     const outer = encodeOuterEnvelope({ innerDispatch: dispatch, outerClass: 3 })
-    const response = await fetch(`http://127.0.0.1:${port}/api/blind/v1/core`, {
+    return fetch(`http://127.0.0.1:${port}/api/blind/v1/core`, {
       method: 'POST',
       headers: { 'content-type': PROTOCOL.mediaType },
       body: outer
     })
+  }
+
+  async function exchangePublicCore (operationId, codec, request, requestByte) {
+    const response = await postPublicCore(operationId, codec, request, requestByte)
     t.is(response.status, 200)
     t.is(response.headers.get('content-type'), PROTOCOL.mediaType)
     const resultBytes = b4a.from(await response.arrayBuffer())
@@ -181,11 +185,14 @@ test('public CORE unary operations round-trip through the metadata-stripping edg
     'PROVE serves only an ACTIVE sponsored generation')
 
   const open = coreOpenReplicationFixture(fixture.parameterHash)
-  const opened = await exchangePublicCore(
+  const rejected = await postPublicCore(
     OPERATION.CORE.OPEN_REPLICATION, coreOpenReplicationV1, open, 0xa4)
-  t.is(opened.frameKind, FRAME_KIND.ERROR)
-  t.is(decodeCanonical(blindErrorV1, opened.body).code, ERROR_CODE.TRANSPORT_UNSUPPORTED,
-    'OPEN_REPLICATION stays outside the assembled unary descriptor bits over public HTTPS')
+  t.is(rejected.status, 400,
+    'reserved OPEN_REPLICATION fails closed at the public edge before daemon dispatch')
+  t.is(rejected.headers.get('content-type'), 'text/plain; charset=utf-8',
+    'the fail-closed edge rejection is a plain transport response, not a Blind envelope')
+  t.is((await rejected.arrayBuffer()).byteLength, 0,
+    'the fail-closed edge rejection carries no Blind envelope body')
 
   t.is(runtime.coreStorage.status().accounting.mirrorAttempts, 1)
   t.is(runtime.coreStorage.inspectMirrorSpend(blake2b256(mirror.admission.token)).state, 'RETRY_PENDING')

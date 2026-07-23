@@ -200,10 +200,11 @@ test('production CORE assembly serves the unary public lifecycle through its rea
     'the failed charged PROVE consumed no spend')
 
   const open = coreOpenReplicationFixture(fixture.parameterHash)
-  const opened = await runtime.coordinator.dispatch(
-    coreFrame(OPERATION.CORE.OPEN_REPLICATION, coreOpenReplicationV1, open, 0xa4), coreContext())
-  t.is(errorName(opened), 'TRANSPORT_UNSUPPORTED',
-    'OPEN_REPLICATION stays outside the assembled unary descriptor bits')
+  await t.exception(
+    runtime.coordinator.dispatch(
+      coreFrame(OPERATION.CORE.OPEN_REPLICATION, coreOpenReplicationV1, open, 0xa4), coreContext()),
+    /operation is outside the advertised release profile/,
+    'OPEN_REPLICATION stays fail-closed outside the advertised release profile at the daemon')
 
   const extension = coreMirrorFixture(fixture.parameterHash, {
     length: CORE_TEST_SHAPE.extensionLength,
