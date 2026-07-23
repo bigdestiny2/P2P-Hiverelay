@@ -12,7 +12,13 @@ import {
 import {
   openForwardHttpsAggregateQuotaV3,
   mintForwardHttpsAggregateQuotaCapabilitiesV3,
-  closeForwardHttpsAggregateQuotaV3
+  closeForwardHttpsAggregateQuotaV3,
+  beginForwardHttpsAggregateQuotaRecoveryV3,
+  finishForwardHttpsAggregateQuotaRecoveryV3,
+  initializeForwardHttpsAggregateQuotaV3,
+  assertForwardHttpsAggregateQuotaOperationalV3,
+  failForwardHttpsAggregateQuotaWalAttemptV3,
+  forwardHttpsAggregateQuotaV3Status
 } from '../forward-https-replay-journal-v4.js'
 import {
   openForwardHttpsTargetStoreV3,
@@ -155,6 +161,46 @@ test('target store: cross-role frame recovery is INTEGRITY', async t => {
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   // A source WAL type can never be appended through the target store
   await t.exception.all(appendForwardHttpsTargetSessionV3(store, { stableSessionId: id, walType: 96 }), /not an ordinary target/)
+})
+
+test('quota gate: OPEN admits, fail-WAL enters FAILED_WAL_OUTCOME_UNKNOWN_PENDING and blocks all work', async t => {
+  const r = await roots(t)
+  const ZERO32 = b4a.alloc(32)
+  const authority = await openForwardHttpsAggregateQuotaV3({
+    sourceReplayRoot: r['source-replay'],
+    targetReplayRoot: r['target-replay'],
+    sourceStoreRoot: r['source-store'],
+    targetStoreRoot: r['target-store'],
+    maximumDurableBytesPerStore: 8589934592,
+    maximumForwardStorageBytesAggregate: 17179869184,
+    monotonicMillis: () => Date.now(),
+    callbackTimeoutMillis: 15000,
+    faultInjector: null
+  })
+  t.teardown(async () => { await closeForwardHttpsAggregateQuotaV3(authority).catch(() => {}) })
+  const caps = mintForwardHttpsAggregateQuotaCapabilitiesV3(authority)
+  // Gate before initialize: quota is not yet OPEN
+  await t.exception.all(() => assertForwardHttpsAggregateQuotaOperationalV3(caps.targetStoreQuotaCapability), /not operational/)
+  // Initialize from empty role roots through the recovery claim ABI
+  const sourceSink = beginForwardHttpsAggregateQuotaRecoveryV3(authority, caps.sourceStoreQuotaCapability, {
+    storeId: fixed(0x21), mapGeneration: 1n, ownerFenceTokenHash: fixed(0x22), durabilityContinuityHash: fixed(0x23)
+  })
+  const sourceClaim = await finishForwardHttpsAggregateQuotaRecoveryV3(sourceSink, { walHeadSequence: 0n, walHeadHash: ZERO32 })
+  const targetSink = beginForwardHttpsAggregateQuotaRecoveryV3(authority, caps.targetStoreQuotaCapability, {
+    storeId: fixed(0x41), mapGeneration: 1n, ownerFenceTokenHash: fixed(0x42), durabilityContinuityHash: fixed(0x43)
+  })
+  const targetClaim = await finishForwardHttpsAggregateQuotaRecoveryV3(targetSink, { walHeadSequence: 0n, walHeadHash: ZERO32 })
+  await initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryClaim: sourceClaim, targetRecoveryClaim: targetClaim })
+  // OPEN and localOperational: the gate succeeds without mutation
+  t.is(assertForwardHttpsAggregateQuotaOperationalV3(caps.targetStoreQuotaCapability), undefined)
+  t.is(forwardHttpsAggregateQuotaV3Status(authority).state, 'OPEN')
+  // fail-WAL: absorbing FAILED_WAL_OUTCOME_UNKNOWN_PENDING; gate and later work reject
+  failForwardHttpsAggregateQuotaWalAttemptV3(caps.targetStoreQuotaCapability)
+  const failed = forwardHttpsAggregateQuotaV3Status(authority)
+  t.is(failed.state, 'FAILED_WAL_OUTCOME_UNKNOWN_PENDING')
+  t.absent(failed.localOperational)
+  t.is(failed.blocker, 'FORWARD_HTTPS_AGGREGATE_QUOTA_V3_INTEGRITY')
+  await t.exception.all(() => assertForwardHttpsAggregateQuotaOperationalV3(caps.targetStoreQuotaCapability), /not operational/)
 })
 
 test('target store: kill after complete tombstone recovers applied exactly once', async t => {

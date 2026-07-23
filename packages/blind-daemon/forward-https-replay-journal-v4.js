@@ -1155,10 +1155,14 @@ export function adjustForwardHttpsAggregateQuotaV3 (storeQuotaCapability, input)
 }
 
 export function forwardHttpsAggregateQuotaV3Status (quotaAuthority) {
-  const state = quotaState(quotaAuthority)
+  // Status is an exact-authority exception to the operational gate: it remains
+  // callable in FAILED_PREWRITE, FAILED_WAL_OUTCOME_UNKNOWN_PENDING and CLOSING.
+  const state = quotaAuthority && QUOTA_AUTHORITIES.get(quotaAuthority)
+  if (!state || state.authority !== quotaAuthority) quotaFail('quota authority is forged', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+  if (state.closed) quotaFail('quota authority is closed', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.CLOSED)
   const physical = state.physical
   return deepFreeze({
-    state: state.failed ? 'FAILED' : state.initialized ? 'OPEN' : 'UNINITIALIZED',
+    state: state.failed ? (state.failureState || 'FAILED') : state.initialized ? 'OPEN' : 'UNINITIALIZED',
     sourceLogicalChargedBytes: state.logical.SOURCE_STORE,
     targetLogicalChargedBytes: state.logical.TARGET_STORE,
     aggregateLogicalChargedBytes: state.logical.SOURCE_STORE + state.logical.TARGET_STORE,
@@ -1184,6 +1188,36 @@ export async function closeForwardHttpsAggregateQuotaV3 (quotaAuthority) {
     state.closed = true
     for (const capability of QUOTA_CAPABILITIES.values?.() || []) capability.burned = true
   })
+}
+
+// Universal operational gate (adopted v13): succeeds only for an exact OPEN
+// localOperational quota authority bound to the role/root; FAILED_PREWRITE,
+// FAILED_WAL_OUTCOME_UNKNOWN_PENDING, CLOSING or CLOSED return exact INTEGRITY
+// with no token burn and no role mutation.
+export function assertForwardHttpsAggregateQuotaOperationalV3 (storeQuotaCapability) {
+  const capability = storeQuotaCapability && QUOTA_CAPABILITIES.get(storeQuotaCapability)
+  if (!capability || capability.burned) quotaFail('quota capability is forged', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+  const state = capability.quotaAuthority && QUOTA_AUTHORITIES.get(capability.quotaAuthority)
+  if (!state || state.authority !== capability.quotaAuthority) quotaFail('quota authority is forged', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+  if (state.closed || state.failed || !state.initialized) {
+    quotaFail('quota authority is not operational', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+  }
+}
+
+// fail-WAL control (v16 aggregate_quota_failure_state_machine): every catch
+// from first append through remeasure transitions atomically to
+// FAILED_WAL_OUTCOME_UNKNOWN_PENDING, invalidates transition claims, retains
+// the operation token, sets blocker INTEGRITY and rejects all later work.
+export function failForwardHttpsAggregateQuotaWalAttemptV3 (storeQuotaCapability, token) {
+  const capability = quotaCapabilityState(storeQuotaCapability)
+  if (capability.role !== 'SOURCE_STORE' && capability.role !== 'TARGET_STORE') quotaFail('fail-WAL role is invalid', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+  const state = quotaState(capability.quotaAuthority)
+  if (token !== undefined && token !== null && token !== state.pendingReservationObject) {
+    quotaFail('fail-WAL token is not the retained operation token', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+  }
+  state.failed = true
+  state.failureState = 'FAILED_WAL_OUTCOME_UNKNOWN_PENDING'
+  state.blocker = FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY
 }
 
 function normalizeTestLimits (limits) {
