@@ -807,7 +807,7 @@ test('close with a pending ordinary reservation returns INTEGRITY and never stea
   t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).state, 'CLOSED')
 })
 
-test('quota FIFO mutex: overlapping reservations reject in submission order and retry never starves', async t => {
+test('quota FIFO mutex: overlapping reservations queue in submission order and never starve', async t => {
   const { capability } = await quota(t, TARGET)
   const makePlan = byte => replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
     operation: 'TURN_FINAL',
@@ -815,22 +815,29 @@ test('quota FIFO mutex: overlapping reservations reject in submission order and 
     temporaryWriteBuffers: [],
     existingDestinationBytes: 0
   })
-  // One outstanding reservation per authority: overlapping submissions are
-  // rejected (waiters are rejected) in exact FIFO submission order.
+  // One outstanding operation per authority: a second submission queues
+  // behind the holder and completes only after the holder releases.
   const first = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, makePlan(0x81))
-  const outcomes = []
-  await Promise.all([
-    replayModule.reserveForwardHttpsAggregateQuotaV3(capability, makePlan(0x82))
-      .then(() => outcomes.push('second-admitted'), error => outcomes.push(`second:${error.code}`)),
-    replayModule.reserveForwardHttpsAggregateQuotaV3(capability, makePlan(0x83))
-      .then(() => outcomes.push('third-admitted'), error => outcomes.push(`third:${error.code}`))
-  ])
-  t.alike(outcomes, ['second:FORWARD_HTTPS_AGGREGATE_QUOTA_V3_INTEGRITY', 'third:FORWARD_HTTPS_AGGREGATE_QUOTA_V3_INTEGRITY'])
-  // No starvation: once the holder releases, the next admission succeeds.
+  let secondCompleted = false
+  const secondPromise = replayModule.reserveForwardHttpsAggregateQuotaV3(capability, makePlan(0x82)).then(union => {
+    secondCompleted = true
+    return union
+  })
+  await new Promise(resolve => setTimeout(resolve, 25))
+  t.absent(secondCompleted, 'the queued second reservation waits for the holder')
   await replayModule.releaseForwardHttpsAggregateQuotaV3(capability, first.reservation)
-  const second = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, makePlan(0x84))
+  const second = await secondPromise
+  t.ok(secondCompleted, 'no starvation: the queued reservation completes after release')
   t.is(second.disposition, 'ORDINARY')
   await replayModule.releaseForwardHttpsAggregateQuotaV3(capability, second.reservation)
+  // Five-way queue: submissions complete in exact FIFO order.
+  const order = []
+  await Promise.all([0x83, 0x84, 0x85, 0x86, 0x87].map(byte => (async () => {
+    const union = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, makePlan(byte))
+    order.push(byte)
+    await replayModule.releaseForwardHttpsAggregateQuotaV3(capability, union.reservation)
+  })()))
+  t.alike(order, [0x83, 0x84, 0x85, 0x86, 0x87], 'exact submission-order fairness')
   // Store-level: two concurrent operations on one store serialize through the
   // mutex; exactly one wins at a time and the loser succeeds on retry.
   const r = await createBlindBoundaryScratch('fhfifo-')
@@ -930,9 +937,11 @@ test('composite: one-use handoff burn proven at every ordinal for 1, 2, 4 and 22
       temporaryWriteBuffers: []
     })
     let sequence = 0n
+    let lastDurable = null
     const appendSync = async candidate => {
       sequence += 1n
-      return { sequence, walHash: blake2b256(b4a.concat([b4a.from('wal'), candidate.payload])), payloadHash: blake2b256(candidate.payload) }
+      lastDurable = { sequence, walHash: blake2b256(b4a.concat([b4a.from('wal'), candidate.payload])), payloadHash: blake2b256(candidate.payload) }
+      return lastDurable
     }
     let claimOrHandoff = transitionAuthority
     const handoffs = [claimOrHandoff]
@@ -956,8 +965,8 @@ test('composite: one-use handoff burn proven at every ordinal for 1, 2, 4 and 22
     t.is(claimOrHandoff, null, 'null handoff at the exact final ordinal')
     t.is(handoffs.length, prefix + 1)
     await replayModule.commitForwardHttpsAggregateQuotaV3(capability, reservation, {
-      durableWalHeadSequence: sequence,
-      durableWalHeadHash: blake2b256(b4a.from('head'))
+      durableWalHeadSequence: lastDurable.sequence,
+      durableWalHeadHash: lastDurable.walHash
     })
     // Second bind on a burned reservation is impossible; a foreign claim rejects
     await t.exception.all(() => replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, reservation, {
@@ -1011,6 +1020,97 @@ test('recovery claim ABI: exclusivity, ordering, post-finish absorb and one-use 
     initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryFinalState: sourceFinal, targetRecoveryFinalState: targetFinal }),
     /already initialized/
   )
+})
+
+test('per-frame session binding: cross-session frame rejects under one reservation', async t => {
+  const { capability } = await quota(t, TARGET)
+  const id = fixed(0x88)
+  const payload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x41)])
+  const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'TURN_FINAL',
+    knownInputBuffers: [payload],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const { reservation } = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan)
+  const { transitionAuthority } = replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, reservation, {
+    logicalRecordBuffers: [],
+    encryptedPlaintextBuffers: [],
+    finalWalMetadataBuffers: [payload],
+    temporaryWriteBuffers: []
+  })
+  const foreign = b4a.concat([b4a.from('FTS3', 'ascii'), fixed(0x89), b4a.alloc(8, 0x42)])
+  await t.exception.all(
+    replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, reservation, transitionAuthority, { type: 112, payload: foreign }, async candidate => ({ sequence: 1n, walHash: blake2b256(candidate.payload), payloadHash: blake2b256(candidate.payload) })),
+    /does not match the bound reservation/
+  )
+})
+
+test('commit and adjust authenticate the exact durable head; fabricated heads reject', async t => {
+  const { authority, capability } = await quota(t, TARGET)
+  const id = fixed(0x8c)
+  const payload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x41)])
+  const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'TURN_FINAL',
+    knownInputBuffers: [payload],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const { reservation } = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan)
+  const { transitionAuthority } = replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, reservation, {
+    logicalRecordBuffers: [],
+    encryptedPlaintextBuffers: [],
+    finalWalMetadataBuffers: [payload],
+    temporaryWriteBuffers: []
+  })
+  await replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, reservation, transitionAuthority, { type: 112, payload },
+    async candidate => ({ sequence: 1n, walHash: blake2b256(candidate.payload), payloadHash: blake2b256(candidate.payload) }))
+  // Fabricated (seq 9999, hash 0xee) head rejects without mutation
+  await t.exception.all(replayModule.commitForwardHttpsAggregateQuotaV3(capability, reservation, {
+    durableWalHeadSequence: 9999n,
+    durableWalHeadHash: b4a.alloc(32, 0xee)
+  }), /exact applied head/)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).state, 'FAILED_WAL_OUTCOME_UNKNOWN_PENDING')
+  t.absent(replayModule.forwardHttpsAggregateQuotaV3Status(authority).localOperational)
+})
+
+test('FPR9 decode rejects expiry above the u32 horizon pre-mutation', async t => {
+  const id2 = fixed(0x8a)
+  const horizonPayload = replayModule.encodeForwardHttpsRetentionPrunedV3({
+    role: TARGET,
+    stableSessionId: id2,
+    priorSessionRevision: 1n,
+    pruneEpochSeconds: 4000000000,
+    trustedEpochHighWatermark: 4000000000,
+    expiresAtEpoch: 4294966394,
+    recoveryGraceUntilEpoch: 4294966394 + 900,
+    removedOrdinaryLogicalBytes: 460n,
+    chargeEntryCount: 1,
+    beforeAuthorityBitmap: 0,
+    allocationDisposition: 1,
+    terminalSlotState: 1,
+    chargeEntryBuffers: [chargeEntry(113, 1n, fixed(0x8b), 460)],
+    authorityCommitments: Array.from({ length: 10 }, () => b4a.from(ZERO32))
+  })
+  const tampered = b4a.from(horizonPayload)
+  tampered.writeUInt32BE(4294967000, 56)
+  await t.exception.all(() => replayModule.decodeForwardHttpsRetentionPrunedV3(tampered), /horizon/)
+  await t.exception.all(() => replayModule.encodeForwardHttpsRetentionPrunedV3({
+    role: TARGET,
+    stableSessionId: id2,
+    priorSessionRevision: 1n,
+    pruneEpochSeconds: 4000000000,
+    trustedEpochHighWatermark: 4000000000,
+    expiresAtEpoch: 4294967000,
+    recoveryGraceUntilEpoch: 900,
+    removedOrdinaryLogicalBytes: 460n,
+    chargeEntryCount: 1,
+    beforeAuthorityBitmap: 0,
+    allocationDisposition: 1,
+    terminalSlotState: 1,
+    chargeEntryBuffers: [chargeEntry(113, 1n, fixed(0x8b), 460)],
+    authorityCommitments: Array.from({ length: 10 }, () => b4a.from(ZERO32))
+  }), /horizon/)
 })
 
 test('composite: substituted final and cross-role presentations reject', async t => {

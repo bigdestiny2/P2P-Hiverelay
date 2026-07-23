@@ -228,9 +228,12 @@ test('source store: post-fsync adjust failure enters absorbing FAILED_PRUNE_DURA
   await t.exception.all(appendForwardHttpsSourceSessionV3(store, { stableSessionId: id, walType: 97 }))
   await closeForwardHttpsSourceStoreV3(store)
   await closeForwardHttpsSourceStoreV3(store)
-  // Restart recovery applies the durable tombstone exactly once
+  // Restart recovery applies the durable tombstone exactly once. The failed
+  // authority is absorbing in-process; a fresh process recovers from a fresh
+  // authority over the same roots.
   failAdjust = false
-  const reopened = await openStore(authority, r, capabilities)
+  const { authority: authority2, capabilities: capabilities2 } = await quota(t, r)
+  const reopened = await openStore(authority2, r, capabilities2)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(reopened).catch(() => {}) })
   const recovered = forwardHttpsSourceStoreV3Status(reopened)
   t.is(recovered.state, 'OPEN')

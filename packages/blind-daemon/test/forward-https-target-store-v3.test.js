@@ -427,10 +427,15 @@ test('prefix-abort ordinary admission: exact inequality equality admits, ceiling
     await rawAppend(store, 113, prefixPayload(id))
     await closeForwardHttpsTargetStoreV3(store)
     const measured = await directoryBytes(r['target-store'])
+    // The abort-time role logical: the committed open-frame charge from the
+    // ledger plus the raw orphan type113 frame's exact 460 charge, which the
+    // recovery replay seeds authoritatively.
+    const roleLogical = forwardHttpsAggregateQuotaV3Status(authority).targetLogicalChargedBytes + 460
     await closeForwardHttpsAggregateQuotaV3(authority)
-    // Exact boundary: current physical + 480 planned + one unconsumed
-    // identity at 896 against the per-store ceiling
-    const perStore = measured + 480 + 896 - (equality ? 0 : 1)
+    // Exact boundary: current physical + 480 planned + one unconsumed identity
+    // at 896, and the seeded role logical plus net 276 plus the 1344
+    // unconsumed liability, against the per-store ceiling.
+    const perStore = Math.max(measured + 480 + 896, roleLogical + 276 + 1344) - (equality ? 0 : 1)
     const authority2 = await openForwardHttpsAggregateQuotaV3({
       sourceReplayRoot: r['source-replay'],
       targetReplayRoot: r['target-replay'],

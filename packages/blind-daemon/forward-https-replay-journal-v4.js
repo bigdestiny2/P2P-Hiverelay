@@ -760,6 +760,26 @@ export function closeForwardHttpsReplayJournalV4 (journalAuthority) {
   return state.closePromise
 }
 
+// Aggregate FIFO op-lifecycle mutex. A successful reserve holds the mutex
+// through every per-frame composite apply and the closing commit, release or
+// adjust; later submissions queue in exact submission order instead of being
+// rejected. Failure paths resolve the queue so waiters wake and reject
+// against the failed authority.
+function acquireOp (state) {
+  const acquired = state.opTail
+  let release
+  state.opTail = new Promise(resolve => { release = resolve })
+  return { acquired, release }
+}
+
+function releaseOpFor (internal) {
+  if (internal && internal.opRelease) {
+    const release = internal.opRelease
+    internal.opRelease = null
+    release()
+  }
+}
+
 function quotaState (authority) {
   const state = authority && QUOTA_AUTHORITIES.get(authority)
   if (!state || state.authority !== authority) quotaFail('quota authority is forged', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
@@ -834,6 +854,8 @@ export async function openForwardHttpsAggregateQuotaV3 (options) {
     physical: {},
     sessions: new Map(),
     openRecoverySinks: { SOURCE_STORE: null, TARGET_STORE: null },
+    opTail: Promise.resolve(),
+    opRelease: null,
     initialized: false,
     capabilitiesMinted: false,
     capabilityInternals: [],
@@ -1004,7 +1026,9 @@ export async function absorbForwardHttpsAggregateQuotaRecoveryFrameV3 (recoveryS
     transitionAuthority: claim
   })
   applyEntryToSessionMirror(sink.sessions, b4a.toString(derived.entry.stableSessionId === null ? ZERO32 : derived.entry.stableSessionId, 'hex'), derived.entry, frame.payload)
-  sink.logicalBytes += bytes(frame.payload, null, 'frame.payload').byteLength
+  // One charge-unit ledger model end to end: recovery seeds the exact derived
+  // charge, the same units commits and adjustments move.
+  sink.logicalBytes += derived.entry.ordinaryLogicalCharge + derived.entry.terminalLogicalCharge
   sink.lastSequence = u64(frame.sequence, 'frame.sequence')
   sink.lastHash = b4a.from(bytes(frame.walHash, 32, 'frame.walHash'))
   await quotaFault(sink.state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.RECOVERY_AFTER_FRAME)
@@ -1017,8 +1041,11 @@ export async function finishForwardHttpsAggregateQuotaRecoveryV3 (recoverySink) 
   sink.finished = true
   sink.state.openRecoverySinks[sink.role] = null
   // Recovery is complete: merge the recovered canonical identity/vector state
-  // into the quota authority so live claims bind exact predecessors.
+  // into the quota authority so live claims bind exact predecessors, and
+  // rebuild the role ledger authoritatively from the complete canonical WAL
+  // in the one charge-unit model.
   for (const [key, mirror] of sink.sessions) sink.state.sessions.set(`${sink.role}:${key}`, mirror)
+  sink.state.logical[sink.role] = sink.logicalBytes
   const finalState = Object.freeze({})
   QUOTA_RECOVERY_FINALS.set(finalState, {
     quotaAuthority: sink.quotaAuthority,
@@ -1243,6 +1270,14 @@ export async function applyForwardHttpsAggregateQuotaWalFrameV3 (storeQuotaCapab
   try {
     beginForwardHttpsAggregateQuotaWalAttemptV3(internal, claimInternal)
     const payload = bytes(frame.payload, null, 'frame.payload')
+    // Per-frame session binding: frames of a different session never share
+    // this reservation (session-A prefix with session-B final rejects).
+    const frameSession = (frameType === 100 || frameType === 118)
+      ? (payload.byteLength >= 40 ? payload.subarray(8, 40) : null)
+      : (payload.byteLength >= 36 ? payload.subarray(4, 36) : null)
+    if (frameSession === null || !b4a.equals(frameSession, claimInternal.stableSessionId)) {
+      quotaFail('composite apply frame session does not match the bound reservation', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    }
     const durable = await appendSync(frame)
     if (!durable || typeof durable !== 'object') throw new TypeError('appendSync must return the durable frame')
     claimInternal.state = 'SYNCED'
@@ -1261,6 +1296,8 @@ export async function applyForwardHttpsAggregateQuotaWalFrameV3 (storeQuotaCapab
     applyEntryToSessionMirror(internal.state.sessions, `${capability.role}:${b4a.toString(derived.entry.stableSessionId === null ? ZERO32 : derived.entry.stableSessionId, 'hex')}`, derived.entry, payload)
     internal.nextOrdinal++
     internal.lastHandoff = derived.transitionAuthorityHandoff
+    internal.lastAppliedHead = { sequence: derived.entry.walSequence, hash: b4a.from(bytes(durable.walHash, 32, 'durable.walHash')) }
+    internal.derivedLogical += derived.entry.ordinaryLogicalCharge + derived.entry.terminalLogicalCharge
     if (internal.lastHandoff !== null) internal.claims.add(internal.lastHandoff)
     return freezeResult({ entry: derived.entry, transitionAuthorityHandoff: derived.transitionAuthorityHandoff })
   } catch (error) {
@@ -1331,7 +1368,7 @@ function ensureQuota (state, role, logicalIncrease, physicalIncrease, protectedP
   }
 }
 
-export function reserveForwardHttpsAggregateQuotaV3 (quotaCapability, costPlan) {
+export async function reserveForwardHttpsAggregateQuotaV3 (quotaCapability, costPlan) {
   let capability
   let plan
   try {
@@ -1343,17 +1380,22 @@ export function reserveForwardHttpsAggregateQuotaV3 (quotaCapability, costPlan) 
     return Promise.reject(error)
   }
   const state = quotaState(capability.quotaAuthority)
-  return serialize(state, async () => {
+  // The aggregate FIFO op-lifecycle mutex: a successful reserve holds the
+  // mutex through the whole operation; later submissions queue in exact
+  // submission order.
+  const opTicket = acquireOp(state)
+  await opTicket.acquired
+  try {
     state.physical = await measurements(state)
     await quotaFault(state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.RESERVE_AFTER_MEASURE)
     ensureQuota(state, capability.role, plan.logicalBytes, plan.physicalBytes, plan.protected === true)
-    if (state.pendingReservation) quotaFail('nested quota reservation', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
     // Reserve returns the exact frozen disposition union. The plan is burned
     // in every arm; a rejected ordinary plan in the entry-cap arm mints one
     // terminalReservation bound to the exact rejected operation/count and the
     // flags0 BUDGET_EXHAUSTED expectation.
     let disposition = 'ORDINARY'
     let terminal = null
+    let terminalExpectation = null
     if (plan.operation === 'SESSION_TERMINAL') {
       disposition = 'REQUESTED_TERMINAL'
       terminal = 'REQUESTED'
@@ -1363,18 +1405,32 @@ export function reserveForwardHttpsAggregateQuotaV3 (quotaCapability, costPlan) 
       if (mirror && mirror.present && !mirror.consumed && (mirror.chargeEntryCount || 0) + (row ? row.removable : 0) > 65536) {
         disposition = 'ENTRY_CAP_TERMINAL'
         terminal = 'ENTRY_CAP'
+        terminalExpectation = Object.freeze({
+          operation: 'SESSION_TERMINAL',
+          flags: 0,
+          reason: 'BUDGET_EXHAUSTED',
+          stableSessionId: b4a.from(plan.stableSessionId),
+          rejectedOperation: plan.operation,
+          rejectedChargeEntryCount: mirror.chargeEntryCount || 0,
+          plannedRemovableCount: row.removable
+        })
       }
     }
     state.pendingReservation = true
     const reservation = Object.freeze({})
-    QUOTA_RESERVATIONS.set(reservation, { state, capability: quotaCapability, plan, actual: null, burned: false, mutated: false, walAttempted: false, totalFrames: 0, nextOrdinal: 0, lastHandoff: null, claims: new Set(), stableSessionId: null, terminal })
+    QUOTA_RESERVATIONS.set(reservation, { state, capability: quotaCapability, plan, actual: null, burned: false, mutated: false, walAttempted: false, totalFrames: 0, nextOrdinal: 0, lastHandoff: null, claims: new Set(), stableSessionId: null, terminal, terminalExpectation, lastAppliedHead: null, derivedLogical: 0, opRelease: opTicket.release })
     state.pendingReservationObject = reservation
     if (disposition === 'ORDINARY') return Object.freeze({ disposition, reservation })
     return Object.freeze({ disposition, terminalReservation: reservation })
-  })
+  } catch (error) {
+    state.pendingReservation = false
+    state.pendingReservationObject = null
+    opTicket.release()
+    throw error
+  }
 }
 
-export function commitForwardHttpsAggregateQuotaV3 (quotaCapability, reservation, input) {
+export async function commitForwardHttpsAggregateQuotaV3 (quotaCapability, reservation, input) {
   let capability
   let internal
   try {
@@ -1388,25 +1444,42 @@ export function commitForwardHttpsAggregateQuotaV3 (quotaCapability, reservation
     return Promise.reject(error)
   }
   const state = quotaState(capability.quotaAuthority)
-  return serialize(state, async () => {
+  try {
     if (internal.plan.operation === 'PRUNE') quotaFail('commit is forbidden for PRUNE; use adjust', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
     // Commit is legal only after the final composite apply, the final derive
     // and with no remaining live claim or outstanding handoff.
     if (internal.actual !== null && (internal.nextOrdinal !== internal.totalFrames || internal.lastHandoff !== null)) {
       quotaFail('quota commit has a remaining claim or outstanding handoff', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
     }
+    // Exact durable head equality: a fabricated head rejects without mutation.
+    if (internal.lastAppliedHead !== null &&
+        (u64(input.durableWalHeadSequence, 'durableWalHeadSequence') !== internal.lastAppliedHead.sequence ||
+         !b4a.equals(bytes(input.durableWalHeadHash, 32, 'durableWalHeadHash'), internal.lastAppliedHead.hash))) {
+      quotaFail('quota commit durable head is not the exact applied head', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    }
     internal.burned = true
-    const cost = internal.actual || internal.plan
+    // Commit applies the exact derived logical of the operation's closed
+    // entries (never the caller's bind-actual estimate).
+    const cost = internal.actual !== null ? { logicalBytes: internal.derivedLogical } : internal.plan
     if (capability.role === 'SOURCE_STORE' || capability.role === 'TARGET_STORE') state.logical[capability.role] += cost.logicalBytes
     state.physical = await measurements(state)
     await quotaFault(state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.COMMIT_AFTER_MEASURE)
     ensureQuota(state, null, 0, 0)
     state.pendingReservation = false
     state.pendingReservationObject = null
-  })
+    releaseOpFor(internal)
+  } catch (error) {
+    if (internal.walAttempted) {
+      try { failForwardHttpsAggregateQuotaWalAttemptV3(quotaCapability, reservation) } catch {}
+    }
+    state.pendingReservation = false
+    state.pendingReservationObject = null
+    releaseOpFor(internal)
+    throw error
+  }
 }
 
-export function releaseForwardHttpsAggregateQuotaV3 (quotaCapability, reservation) {
+export async function releaseForwardHttpsAggregateQuotaV3 (quotaCapability, reservation) {
   let capability
   let internal
   try {
@@ -1417,7 +1490,7 @@ export function releaseForwardHttpsAggregateQuotaV3 (quotaCapability, reservatio
     return Promise.reject(error)
   }
   const state = quotaState(capability.quotaAuthority)
-  return serialize(state, async () => {
+  try {
     // Release is forbidden after the first WAL attempt; pre-first-apply
     // release burns the reservation and every minted/unissued claim. A
     // terminal reservation aborted before the first begin is the terminal
@@ -1432,16 +1505,24 @@ export function releaseForwardHttpsAggregateQuotaV3 (quotaCapability, reservatio
     }
     state.pendingReservation = false
     state.pendingReservationObject = null
-    if (internal.plan.operation === 'SESSION_TERMINAL') {
+    releaseOpFor(internal)
+    if (internal.plan.operation === 'SESSION_TERMINAL' || internal.terminal !== null) {
       state.failed = true
       state.failureState = 'FAILED_PREWRITE'
       state.blocker = FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY
       quotaFail('terminal prewrite abort; FAILED_PREWRITE', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
     }
-  })
+  } catch (error) {
+    if (!internal.burned) {
+      state.pendingReservation = false
+      state.pendingReservationObject = null
+      releaseOpFor(internal)
+    }
+    throw error
+  }
 }
 
-export function adjustForwardHttpsAggregateQuotaV3 (storeQuotaCapability, input) {
+export async function adjustForwardHttpsAggregateQuotaV3 (storeQuotaCapability, input) {
   let capability
   let internal
   try {
@@ -1452,19 +1533,26 @@ export function adjustForwardHttpsAggregateQuotaV3 (storeQuotaCapability, input)
     return Promise.reject(error)
   }
   const state = quotaState(capability.quotaAuthority)
-  return serialize(state, async () => {
+  let pending = null
+  try {
     // PRUNE adjust is the only adjust path: it requires the exact pending
     // bound PRUNE reservation, revalidates the tombstone and applies
     // logical = current - provenRemoval + 736 atomically.
-    const pending = state.pendingReservationObject
+    pending = state.pendingReservationObject
     internal = pending ? QUOTA_RESERVATIONS.get(pending) : null
     if (!internal || internal.burned || internal.capability !== storeQuotaCapability || internal.plan.operation !== 'PRUNE') {
       quotaFail('quota adjustment has no pending PRUNE reservation', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
     }
     // Adjust follows the complete final composite apply of the FPR9 frame:
-    // exact final derive, no remaining claim, no outstanding handoff.
+    // exact final derive, no remaining claim, no outstanding handoff, and the
+    // exact durable head of the tombstone frame.
     if (internal.actual === null || internal.nextOrdinal !== internal.totalFrames || internal.lastHandoff !== null) {
       quotaFail('quota adjustment has a remaining claim or outstanding handoff', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    }
+    if (internal.lastAppliedHead !== null &&
+        (u64(input.durableWalHeadSequence, 'durableWalHeadSequence') !== internal.lastAppliedHead.sequence ||
+         !b4a.equals(bytes(input.durableWalHeadHash, 32, 'durableWalHeadHash'), internal.lastAppliedHead.hash))) {
+      quotaFail('quota adjustment durable head is not the exact applied head', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
     }
     const tombstone = bytes(input.durableTombstonePayloadBuffer, null, 'durableTombstonePayloadBuffer')
     const commitment = hmac(ZERO32, tombstone)
@@ -1474,24 +1562,29 @@ export function adjustForwardHttpsAggregateQuotaV3 (storeQuotaCapability, input)
     const pruned = decodeForwardHttpsRetentionPrunedV3(tombstone)
     const roleByteValue = capability.role === 'SOURCE_STORE' ? 1 : 2
     if (pruned.role !== roleByteValue) quotaFail('quota adjustment tombstone role mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
-    u64(input.durableWalHeadSequence, 'durableWalHeadSequence')
-    bytes(input.durableWalHeadHash, 32, 'durableWalHeadHash')
     const removed = pruned.removedOrdinaryLogicalBytes
     const current = BigInt(state.logical[capability.role])
-    // Net removal-then-736. In the fully initialized V18 flow the ledger has
-    // counted the exact session charge through recovery finish/initialize, so
-    // current >= removed always holds; when this layer recovers without an
-    // initialize the ledger is a lower bound and the net delta is clamped at
-    // zero rather than rejected.
-    let next = current - removed + 736n
-    if (next < 0n) next = 0n
+    // Net removal-then-736 in one charge-unit model: the ledger counts the
+    // exact derived charge through recovery seeds and commits, so current
+    // never underflows a proven removal.
+    const next = current - removed + 736n
+    if (next < 0n) quotaFail('quota adjustment removal exceeds the exact ledger', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
     state.logical[capability.role] = Number(next)
     state.physical = await measurements(state)
     await quotaFault(state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.ADJUST_AFTER_MEASURE)
     internal.burned = true
     state.pendingReservation = false
     state.pendingReservationObject = null
-  })
+    releaseOpFor(internal)
+  } catch (error) {
+    if (internal && internal.walAttempted) {
+      try { failForwardHttpsAggregateQuotaWalAttemptV3(storeQuotaCapability, pending) } catch {}
+    }
+    state.pendingReservation = false
+    state.pendingReservationObject = null
+    releaseOpFor(internal)
+    throw error
+  }
 }
 
 export function forwardHttpsAggregateQuotaV3Status (quotaAuthority) {
@@ -1562,6 +1655,9 @@ export function failForwardHttpsAggregateQuotaWalAttemptV3 (storeQuotaCapability
   state.failed = true
   state.failureState = 'FAILED_WAL_OUTCOME_UNKNOWN_PENDING'
   state.blocker = FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY
+  // Wake queued waiters; every later admission rejects against the failed
+  // authority. The token is retained for close-only teardown.
+  releaseOpFor(state.pendingReservationObject ? QUOTA_RESERVATIONS.get(state.pendingReservationObject) : null)
 }
 
 function normalizeTestLimits (limits) {
@@ -1829,6 +1925,7 @@ export function encodeForwardHttpsRetentionPrunedV3 (input) {
   const trustedEpochHighWatermark = safeUint(input.trustedEpochHighWatermark, 'trustedEpochHighWatermark', 0, U32_MAX)
   const expiresAtEpoch = safeUint(input.expiresAtEpoch, 'expiresAtEpoch', 0, U32_MAX)
   const recoveryGraceUntilEpoch = safeUint(input.recoveryGraceUntilEpoch, 'recoveryGraceUntilEpoch', 0, U32_MAX)
+  if (expiresAtEpoch > EXPIRY_HORIZON) storeWalFail('FPR9 expiry horizon is invalid')
   const removedOrdinaryLogicalBytes = u64(input.removedOrdinaryLogicalBytes, 'removedOrdinaryLogicalBytes')
   const chargeEntryCount = safeUint(input.chargeEntryCount, 'chargeEntryCount', 0, 65536)
   const beforeAuthorityBitmap = safeUint(input.beforeAuthorityBitmap, 'beforeAuthorityBitmap', 0, 1023)
@@ -1905,6 +2002,7 @@ export function decodeForwardHttpsRetentionPrunedV3 (payload) {
   const trustedEpochHighWatermark = payload.readUInt32BE(52)
   const expiresAtEpoch = payload.readUInt32BE(56)
   const recoveryGraceUntilEpoch = payload.readUInt32BE(60)
+  if (expiresAtEpoch > EXPIRY_HORIZON) storeWalFail('FPR9 expiry horizon is invalid')
   const removedOrdinaryLogicalBytes = readU64(payload, 64)
   const chargeEntryCount = payload.readUInt32BE(72)
   const beforeAuthorityBitmap = payload.readUInt32BE(76)
