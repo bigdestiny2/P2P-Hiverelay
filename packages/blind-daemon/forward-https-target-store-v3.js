@@ -17,6 +17,7 @@ import {
   adjustForwardHttpsAggregateQuotaV3,
   bindForwardHttpsStoreQuotaActualBuffersV3,
   applyForwardHttpsAggregateQuotaWalFrameV3,
+  assertForwardHttpsAggregateQuotaOperationalV3,
   beginForwardHttpsAggregateQuotaRecoveryV3,
   absorbForwardHttpsAggregateQuotaRecoveryFrameV3,
   finishForwardHttpsAggregateQuotaRecoveryV3,
@@ -329,6 +330,9 @@ function requireOperational (state) {
   if (state.closed) fail('target store is closed', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.CLOSED)
   if (state.failedPruneDurablePending) fail('target store is FAILED_PRUNE_DURABLE_PENDING', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
   if (!state.localOperational) fail('target store is not operational', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INVALID)
+  // The universal operational gate: every role operation passes it before
+  // any identity, cache, callback or mutation work (v13).
+  assertForwardHttpsAggregateQuotaOperationalV3(state.storeQuotaCapability)
 }
 
 function sessionSlot (state, stableSessionId) {

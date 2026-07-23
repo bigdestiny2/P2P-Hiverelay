@@ -16,6 +16,9 @@ import {
   openForwardHttpsAggregateQuotaV3,
   mintForwardHttpsAggregateQuotaCapabilitiesV3,
   closeForwardHttpsAggregateQuotaV3,
+  beginForwardHttpsAggregateQuotaRecoveryV3,
+  finishForwardHttpsAggregateQuotaRecoveryV3,
+  initializeForwardHttpsAggregateQuotaV3,
   encodeForwardHttpsRetentionPrunedV3
 } from '../forward-https-replay-journal-v4.js'
 import {
@@ -65,6 +68,14 @@ async function main () {
   }
   const store = await openForwardHttpsTargetStoreV3(options)
   if (mode === 'setup') {
+    // The gate requires an OPEN quota authority: finish the other role's
+    // recovery and initialize before the first operation.
+    const sourceSink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.sourceStoreQuotaCapability)
+    const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sourceSink)
+    await initializeForwardHttpsAggregateQuotaV3(quotaAuthority, {
+      sourceRecoveryFinalState: sourceFinal,
+      targetRecoveryFinalState: store.recoveryFinalState
+    })
     const opened = await openForwardHttpsTargetSessionV3(store, { stableSessionId: id, body: b4a.alloc(4, 0x65) })
     console.log(JSON.stringify({ walSequence: opened.walSequence.toString() }))
     await closeForwardHttpsTargetStoreV3(store)

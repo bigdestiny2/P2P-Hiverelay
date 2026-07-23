@@ -9,7 +9,10 @@ import {
 import {
   openForwardHttpsAggregateQuotaV3,
   mintForwardHttpsAggregateQuotaCapabilitiesV3,
-  closeForwardHttpsAggregateQuotaV3
+  closeForwardHttpsAggregateQuotaV3,
+  beginForwardHttpsAggregateQuotaRecoveryV3,
+  finishForwardHttpsAggregateQuotaRecoveryV3,
+  initializeForwardHttpsAggregateQuotaV3
 } from '../forward-https-replay-journal-v4.js'
 import {
   openForwardHttpsSourceStoreV3,
@@ -57,7 +60,22 @@ async function quota (t, r, faultInjector = null) {
   t.teardown(async () => {
     await closeForwardHttpsAggregateQuotaV3(authority).catch(() => {})
   })
-  return mintForwardHttpsAggregateQuotaCapabilitiesV3(authority)
+  return { authority, capabilities: mintForwardHttpsAggregateQuotaCapabilitiesV3(authority) }
+}
+
+// Every store operation passes the operational gate, so the quota authority
+// must be OPEN: after the first store recovery completes, finish the other
+// role's recovery and initialize exactly once per authority.
+const initializedAuthorities = new Set()
+async function openStore (authority, r, capabilities, overrides) {
+  const store = await openForwardHttpsSourceStoreV3(storeOptions(r, capabilities, overrides))
+  if (!initializedAuthorities.has(authority)) {
+    initializedAuthorities.add(authority)
+    const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.targetStoreQuotaCapability)
+    const targetFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+    await initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryFinalState: store.recoveryFinalState, targetRecoveryFinalState: targetFinal })
+  }
+  return store
 }
 
 function storeOptions (r, capabilities, overrides = {}) {
@@ -75,9 +93,9 @@ function storeOptions (r, capabilities, overrides = {}) {
 
 test('source store: fresh PREPARED_NEW allocates one slot and recovers', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x31)
-  const store = await openForwardHttpsSourceStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
   const prepared = await prepareForwardHttpsSourceSessionV3(store, { stableSessionId: id, body: b4a.alloc(16, 0x41) })
   t.is(prepared.walSequence, 1n)
@@ -85,7 +103,7 @@ test('source store: fresh PREPARED_NEW allocates one slot and recovers', async t
   t.is(status.unconsumedSlots, status.slotCapacity - 1)
   await appendForwardHttpsSourceSessionV3(store, { stableSessionId: id, walType: FORWARD_HTTPS_SOURCE_STORE_V3_WAL_TYPE.TRANSPORT_RESERVED, body: b4a.alloc(4, 0x42) })
   await closeForwardHttpsSourceStoreV3(store)
-  const reopened = await openForwardHttpsSourceStoreV3(storeOptions(r, capabilities))
+  const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(reopened).catch(() => {}) })
   const recovered = forwardHttpsSourceStoreV3Status(reopened)
   t.is(recovered.unconsumedSlots, recovered.slotCapacity - 1)
@@ -94,9 +112,9 @@ test('source store: fresh PREPARED_NEW allocates one slot and recovers', async t
 
 test('source store: duplicate fresh identity rejects; slot identity ignores sequence', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x32)
-  const store = await openForwardHttpsSourceStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
   await prepareForwardHttpsSourceSessionV3(store, { stableSessionId: id })
   await t.exception.all(prepareForwardHttpsSourceSessionV3(store, { stableSessionId: id }), /not NEVER_SEEN/)
@@ -109,9 +127,9 @@ test('source store: duplicate fresh identity rejects; slot identity ignores sequ
 
 test('source store: FTM9 flags0 terminalization is never CAPACITY and sticks', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x33)
-  const store = await openForwardHttpsSourceStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
   await prepareForwardHttpsSourceSessionV3(store, { stableSessionId: id })
   const terminal = await terminalizeForwardHttpsSourceSessionV3(store, {
@@ -137,9 +155,9 @@ test('source store: FTM9 flags0 terminalization is never CAPACITY and sticks', a
 
 test('source store: FTM9 flags1 minimal absent-sequence terminal then terminal-only FPR9 count0', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x34)
-  const store = await openForwardHttpsSourceStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
   const result = await terminalizeForwardHttpsSourceAbsentSequenceV3(store, {
     stableSessionId: id,
@@ -165,7 +183,7 @@ test('source store: FTM9 flags1 minimal absent-sequence terminal then terminal-o
   t.is(status.unconsumedSlots, status.slotCapacity - 1)
   // Recovery reproduces the exact slot state
   await closeForwardHttpsSourceStoreV3(store)
-  const reopened = await openForwardHttpsSourceStoreV3(storeOptions(r, capabilities))
+  const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(reopened).catch(() => {}) })
   const recovered = forwardHttpsSourceStoreV3Status(reopened)
   t.is(recovered.consumedPrunedSlots, 1)
@@ -174,9 +192,9 @@ test('source store: FTM9 flags1 minimal absent-sequence terminal then terminal-o
 
 test('source store: nonterminal PRUNE releases the slot to FREE', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x36)
-  const store = await openForwardHttpsSourceStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
   await prepareForwardHttpsSourceSessionV3(store, { stableSessionId: id })
   const pruned = await pruneForwardHttpsSourceSessionV3(store, { stableSessionId: id, pruneEpochSeconds: 50 })
@@ -185,7 +203,7 @@ test('source store: nonterminal PRUNE releases the slot to FREE', async t => {
   const status = forwardHttpsSourceStoreV3Status(store)
   t.is(status.unconsumedSlots, status.slotCapacity)
   await closeForwardHttpsSourceStoreV3(store)
-  const reopened = await openForwardHttpsSourceStoreV3(storeOptions(r, capabilities))
+  const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(reopened).catch(() => {}) })
   const recovered = forwardHttpsSourceStoreV3Status(reopened)
   t.is(recovered.unconsumedSlots, recovered.slotCapacity)
@@ -194,11 +212,11 @@ test('source store: nonterminal PRUNE releases the slot to FREE', async t => {
 test('source store: post-fsync adjust failure enters absorbing FAILED_PRUNE_DURABLE_PENDING', async t => {
   const r = await roots(t)
   let failAdjust = false
-  const capabilities = await quota(t, r, point => {
+  const { authority, capabilities } = await quota(t, r, point => {
     if (failAdjust && point === 'ADJUST_AFTER_MEASURE') throw new Error('injected adjust failure')
   })
   const id = fixed(0x37)
-  const store = await openForwardHttpsSourceStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
   await prepareForwardHttpsSourceSessionV3(store, { stableSessionId: id })
   failAdjust = true
@@ -212,7 +230,7 @@ test('source store: post-fsync adjust failure enters absorbing FAILED_PRUNE_DURA
   await closeForwardHttpsSourceStoreV3(store)
   // Restart recovery applies the durable tombstone exactly once
   failAdjust = false
-  const reopened = await openForwardHttpsSourceStoreV3(storeOptions(r, capabilities))
+  const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(reopened).catch(() => {}) })
   const recovered = forwardHttpsSourceStoreV3Status(reopened)
   t.is(recovered.state, 'OPEN')

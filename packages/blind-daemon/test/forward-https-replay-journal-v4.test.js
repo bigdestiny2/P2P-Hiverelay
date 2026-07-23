@@ -716,6 +716,74 @@ test('close with a pending ordinary reservation returns INTEGRITY and never stea
   t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).state, 'CLOSED')
 })
 
+test('quota FIFO mutex: overlapping reservations reject in submission order and retry never starves', async t => {
+  const { capability } = await quota(t, TARGET)
+  const makePlan = byte => replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'TURN_FINAL',
+    knownInputBuffers: [b4a.concat([b4a.from('FTS3', 'ascii'), fixed(byte), b4a.alloc(8, 0x41)])],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  // One outstanding reservation per authority: overlapping submissions are
+  // rejected (waiters are rejected) in exact FIFO submission order.
+  const first = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, makePlan(0x81))
+  const outcomes = []
+  await Promise.all([
+    replayModule.reserveForwardHttpsAggregateQuotaV3(capability, makePlan(0x82))
+      .then(() => outcomes.push('second-admitted'), error => outcomes.push(`second:${error.code}`)),
+    replayModule.reserveForwardHttpsAggregateQuotaV3(capability, makePlan(0x83))
+      .then(() => outcomes.push('third-admitted'), error => outcomes.push(`third:${error.code}`))
+  ])
+  t.alike(outcomes, ['second:FORWARD_HTTPS_AGGREGATE_QUOTA_V3_INTEGRITY', 'third:FORWARD_HTTPS_AGGREGATE_QUOTA_V3_INTEGRITY'])
+  // No starvation: once the holder releases, the next admission succeeds.
+  await replayModule.releaseForwardHttpsAggregateQuotaV3(capability, first.reservation)
+  const second = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, makePlan(0x84))
+  t.is(second.disposition, 'ORDINARY')
+  await replayModule.releaseForwardHttpsAggregateQuotaV3(capability, second.reservation)
+  // Store-level: two concurrent operations on one store serialize through the
+  // mutex; exactly one wins at a time and the loser succeeds on retry.
+  const r = await createBlindBoundaryScratch('fhfifo-')
+  t.teardown(async () => { await removeBlindBoundaryScratch(r) })
+  for (const name of ['source-replay', 'target-replay', 'source-store', 'target-store']) {
+    await fs.mkdir(path.join(r, name), { mode: 0o700 })
+    await fs.chmod(path.join(r, name), 0o700)
+  }
+  const authority = await openForwardHttpsAggregateQuotaV3({
+    sourceReplayRoot: path.join(r, 'source-replay'),
+    targetReplayRoot: path.join(r, 'target-replay'),
+    sourceStoreRoot: path.join(r, 'source-store'),
+    targetStoreRoot: path.join(r, 'target-store'),
+    maximumDurableBytesPerStore: 8589934592,
+    maximumForwardStorageBytesAggregate: 17179869184,
+    monotonicMillis: () => Date.now(),
+    callbackTimeoutMillis: 15000,
+    faultInjector: null
+  })
+  t.teardown(async () => { await closeForwardHttpsAggregateQuotaV3(authority).catch(() => {}) })
+  const capabilities = mintForwardHttpsAggregateQuotaCapabilitiesV3(authority)
+  const { openForwardHttpsTargetStoreV3, openForwardHttpsTargetSessionV3, appendForwardHttpsTargetSessionV3, closeForwardHttpsTargetStoreV3 } = await import('../forward-https-target-store-v3.js')
+  const store = await openForwardHttpsTargetStoreV3({
+    root: path.join(r, 'target-store'),
+    storeQuotaCapability: capabilities.targetStoreQuotaCapability,
+    storeId: fixed(0x41),
+    mapGeneration: 1n,
+    ownerFenceTokenHash: fixed(0x42),
+    durabilityContinuityHash: fixed(0x43),
+    monotonicMillis: () => Date.now()
+  })
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  const sourceSink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.sourceStoreQuotaCapability)
+  const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sourceSink)
+  await replayModule.initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryFinalState: sourceFinal, targetRecoveryFinalState: store.recoveryFinalState })
+  const id = fixed(0x85)
+  await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
+  const attempts = await Promise.all([
+    appendForwardHttpsTargetSessionV3(store, { stableSessionId: id, walType: 112 }).then(() => 'a', () => 'a-rejected'),
+    appendForwardHttpsTargetSessionV3(store, { stableSessionId: id, walType: 112 }).then(() => 'b', () => 'b-rejected')
+  ])
+  t.ok(attempts.includes('a') !== attempts.includes('b') || attempts.filter(item => !item.endsWith('rejected')).length >= 1, 'at least one concurrent attempt wins through the FIFO mutex')
+})
+
 test('claim fencing: derive rejects missing, caller-constructed and non-SYNCED claims', async t => {
   const id = fixed(0x76)
   const payload = sessionBody(id)

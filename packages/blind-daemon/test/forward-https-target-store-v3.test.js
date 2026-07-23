@@ -95,7 +95,7 @@ async function quota (t, r) {
   t.teardown(async () => {
     await closeForwardHttpsAggregateQuotaV3(authority).catch(() => {})
   })
-  return mintForwardHttpsAggregateQuotaCapabilitiesV3(authority)
+  return { authority, capabilities: mintForwardHttpsAggregateQuotaCapabilitiesV3(authority) }
 }
 
 async function quota2 (t, r) {
@@ -111,6 +111,21 @@ async function quota2 (t, r) {
     faultInjector: null
   })
   return { authority, capabilities: mintForwardHttpsAggregateQuotaCapabilitiesV3(authority) }
+}
+
+// Every store operation passes the operational gate, so the quota authority
+// must be OPEN: after the first store recovery completes, finish the other
+// role's recovery and initialize exactly once per authority.
+const initializedAuthorities = new Set()
+async function openStore (authority, r, capabilities, overrides) {
+  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities, overrides))
+  if (!initializedAuthorities.has(authority)) {
+    initializedAuthorities.add(authority)
+    const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.sourceStoreQuotaCapability)
+    const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+    await initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryFinalState: sourceFinal, targetRecoveryFinalState: store.recoveryFinalState })
+  }
+  return store
 }
 
 async function directoryBytes (root) {
@@ -138,9 +153,9 @@ function storeOptions (r, capabilities, overrides = {}) {
 
 test('target store: fresh OPEN TURN_FINAL allocates and type113 counts independently', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x51)
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   const opened = await openForwardHttpsTargetSessionV3(store, { stableSessionId: id, body: b4a.alloc(8, 0x51) })
   t.is(opened.walSequence, 1n)
@@ -158,7 +173,7 @@ test('target store: fresh OPEN TURN_FINAL allocates and type113 counts independe
   const status = forwardHttpsTargetStoreV3Status(store)
   t.is(status.unconsumedSlots, status.slotCapacity - 1)
   await closeForwardHttpsTargetStoreV3(store)
-  const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
   const recoveredSlot = reopened.slots.get(b4a.toString(id, 'hex'))
   t.is(recoveredSlot.registry.count, 3)
@@ -166,9 +181,9 @@ test('target store: fresh OPEN TURN_FINAL allocates and type113 counts independe
 
 test('target store: minimal absent-sequence terminal and terminal-only prune', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x52)
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   const result = await terminalizeForwardHttpsTargetAbsentSequenceV3(store, {
     stableSessionId: id,
@@ -191,9 +206,9 @@ test('target store: minimal absent-sequence terminal and terminal-only prune', a
 
 test('target store: existing-session terminalization and budget reason', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x54)
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
   const terminal = await terminalizeForwardHttpsTargetSessionV3(store, {
@@ -209,9 +224,9 @@ test('target store: existing-session terminalization and budget reason', async t
 
 test('target store: cross-role frame recovery is INTEGRITY', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x55)
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   // A source WAL type can never be appended through the target store
   await t.exception.all(appendForwardHttpsTargetSessionV3(store, { stableSessionId: id, walType: 96 }), /not an ordinary target/)
@@ -219,14 +234,14 @@ test('target store: cross-role frame recovery is INTEGRITY', async t => {
 
 test('prefix partition: FRESH type113 prefix claims exactly one PREFIX_ALLOCATED slot', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x56)
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   await rawAppend(store, 113, prefixPayload(id))
   await rawAppend(store, 113, prefixPayload(id))
   await closeForwardHttpsTargetStoreV3(store)
-  const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
   const slot = reopened.slots.get(b4a.toString(id, 'hex'))
   t.is(slot.state, SLOT.PREFIX_ALLOCATED)
@@ -241,16 +256,16 @@ test('prefix partition: FRESH type113 prefix claims exactly one PREFIX_ALLOCATED
 
 test('prefix partition: EXISTING-session type113 prefix overlays ALLOCATED_WITH_PREFIX with complete preservation', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x57)
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   await openForwardHttpsTargetSessionV3(store, { stableSessionId: id, body: b4a.alloc(8, 0x51) })
   const before = store.slots.get(b4a.toString(id, 'hex'))
   t.is(before.registry.count, 1)
   await rawAppend(store, 113, prefixPayload(id))
   await closeForwardHttpsTargetStoreV3(store)
-  const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
   const slot = reopened.slots.get(b4a.toString(id, 'hex'))
   t.is(slot.state, SLOT.ALLOCATED_WITH_PREFIX)
@@ -265,10 +280,10 @@ test('prefix partition: EXISTING-session type113 prefix overlays ALLOCATED_WITH_
 
 test('prefix partition: matching final applies exactly once for both classes', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const freshId = fixed(0x58)
   const existingId = fixed(0x59)
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   // FRESH prefix completed by its matching final
   await rawAppend(store, 113, prefixPayload(freshId))
@@ -278,7 +293,7 @@ test('prefix partition: matching final applies exactly once for both classes', a
   await rawAppend(store, 113, prefixPayload(existingId))
   await rawAppend(store, 114, finalPayload(existingId, 0x52, 0x55))
   await closeForwardHttpsTargetStoreV3(store)
-  const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
   const fresh = reopened.slots.get(b4a.toString(freshId, 'hex'))
   t.is(fresh.state, SLOT.ALLOCATED)
@@ -296,10 +311,10 @@ test('prefix partition: matching final applies exactly once for both classes', a
 
 test('per-step identity goldens: latest slot-disposing transition governs', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x5a)
   // OPEN + target112 assigns PRESENT_ALLOCATED
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
   t.is(identityOf(store.slots.get(b4a.toString(id, 'hex'))), IDENTITY.PRESENT_ALLOCATED)
@@ -307,7 +322,7 @@ test('per-step identity goldens: latest slot-disposing transition governs', asyn
   await rawAppend(store, 113, prefixPayload(id))
   await rawAppend(store, 113, prefixPayload(id))
   await closeForwardHttpsTargetStoreV3(store)
-  const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
   const slot = reopened.slots.get(b4a.toString(id, 'hex'))
   t.is(identityOf(slot), IDENTITY.ALLOCATED_WITH_PREFIX)
@@ -317,14 +332,14 @@ test('per-step identity goldens: latest slot-disposing transition governs', asyn
 
 test('flags2 abort goldens: remove-exactly-orphan, vector byte-identical, PRESENT_ALLOCATED continuity and retry', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x5c)
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
   await rawAppend(store, 113, prefixPayload(id))
   await closeForwardHttpsTargetStoreV3(store)
-  const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
   const slot = reopened.slots.get(b4a.toString(id, 'hex'))
   t.is(slot.state, SLOT.ALLOCATED_WITH_PREFIX)
@@ -355,7 +370,7 @@ test('flags2 abort goldens: remove-exactly-orphan, vector byte-identical, PRESEN
   t.is(identityOf(slot), IDENTITY.PRESENT_ALLOCATED)
   // Recovery reclassifies the continuing session exactly once
   await closeForwardHttpsTargetStoreV3(reopened)
-  const recovered = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const recovered = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(recovered).catch(() => {}) })
   const recoveredSlot = recovered.slots.get(b4a.toString(id, 'hex'))
   t.is(recoveredSlot.state, SLOT.ALLOCATED)
@@ -366,14 +381,14 @@ test('flags2 abort goldens: remove-exactly-orphan, vector byte-identical, PRESEN
 
 test('flags1 orphan abort: PREFIX_ALLOCATED to FREE, PRUNED_RELEASED and mutation-free CONFLICT after', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x5f)
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   await rawAppend(store, 113, prefixPayload(id))
   await rawAppend(store, 113, prefixPayload(id))
   await closeForwardHttpsTargetStoreV3(store)
-  const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
   const slot = reopened.slots.get(b4a.toString(id, 'hex'))
   t.is(slot.state, SLOT.PREFIX_ALLOCATED)
@@ -407,7 +422,7 @@ test('prefix-abort ordinary admission: exact inequality equality admits, ceiling
     const r = await roots(t)
     const { authority, capabilities } = await quota2(t, r)
     const id = fixed(0x60)
-    const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+    const store = await openStore(authority, r, capabilities)
     await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
     await rawAppend(store, 113, prefixPayload(id))
     await closeForwardHttpsTargetStoreV3(store)
@@ -429,13 +444,13 @@ test('prefix-abort ordinary admission: exact inequality equality admits, ceiling
     })
     t.teardown(async () => { await closeForwardHttpsAggregateQuotaV3(authority2).catch(() => {}) })
     const capabilities2 = mintForwardHttpsAggregateQuotaCapabilitiesV3(authority2)
-    const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities2, {
+    const reopened = await openStore(authority2, r, capabilities2, {
       limits: {
         maximumRetainedTurnsPerRole: 1,
         maximumDurableBytesPerStore: perStore,
         maximumForwardStorageBytesAggregate: 2 * perStore
       }
-    }))
+    })
     const slot = reopened.slots.get(b4a.toString(id, 'hex'))
     t.is(slot.state, SLOT.ALLOCATED_WITH_PREFIX)
     const headBefore = forwardHttpsTargetStoreV3Status(reopened).walHeadSequence
@@ -461,9 +476,9 @@ test('prefix-abort ordinary admission: exact inequality equality admits, ceiling
 
 test('flags2 abort requires an open existing-session prefix; mixed commitment is INTEGRITY', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x61)
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
   // flags2 on a plain ALLOCATED session (no open prefix) rejects
@@ -472,19 +487,19 @@ test('flags2 abort requires an open existing-session prefix; mixed commitment is
   await rawAppend(store, 113, prefixPayload(id, 0x52))
   await rawAppend(store, 113, prefixPayload(id, 0x53))
   await closeForwardHttpsTargetStoreV3(store)
-  await t.exception.all(openForwardHttpsTargetStoreV3(storeOptions(r, capabilities)), /mixed prefix requestCommitment|INTEGRITY/)
+  await t.exception.all(openStore(authority, r, capabilities), /mixed prefix requestCommitment|INTEGRITY/)
 })
 
 test('overlay terminalization: flags0 on ALLOCATED_WITH_PREFIX with orphan persistence and no flags2 after', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const id = fixed(0x62)
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
   await rawAppend(store, 113, prefixPayload(id))
   await closeForwardHttpsTargetStoreV3(store)
-  const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
   const slot = reopened.slots.get(b4a.toString(id, 'hex'))
   t.is(slot.state, SLOT.ALLOCATED_WITH_PREFIX)
@@ -514,7 +529,7 @@ test('overlay terminalization: flags0 on ALLOCATED_WITH_PREFIX with orphan persi
   t.is(slot.state, SLOT.CONSUMED_PRUNED)
   // Recovery reproduces the exact consumed-pruned disposition
   await closeForwardHttpsTargetStoreV3(reopened)
-  const recovered = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const recovered = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(recovered).catch(() => {}) })
   const recoveredSlot = recovered.slots.get(b4a.toString(id, 'hex'))
   t.is(recoveredSlot.state, SLOT.CONSUMED_PRUNED)
@@ -523,11 +538,11 @@ test('overlay terminalization: flags0 on ALLOCATED_WITH_PREFIX with orphan persi
 
 test('store-level precedence: PRESENT_PREFIX_ALLOCATED is SESSION_CLOSED, consumed is TERMINAL, pruned is CONFLICT', async t => {
   const r = await roots(t)
-  const capabilities = await quota(t, r)
+  const { authority, capabilities } = await quota(t, r)
   const prefixId = fixed(0x63)
   const consumedId = fixed(0x64)
   const prunedId = fixed(0x65)
-  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const store = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   // PREFIX_ALLOCATED: mutation-free SESSION_CLOSED before any other work
   await rawAppend(store, 113, prefixPayload(prefixId))
@@ -538,7 +553,7 @@ test('store-level precedence: PRESENT_PREFIX_ALLOCATED is SESSION_CLOSED, consum
   await openForwardHttpsTargetSessionV3(store, { stableSessionId: prunedId })
   await pruneForwardHttpsTargetSessionV3(store, { stableSessionId: prunedId, pruneEpochSeconds: 500 })
   await closeForwardHttpsTargetStoreV3(store)
-  const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  const reopened = await openStore(authority, r, capabilities)
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
   t.is(identityOf(reopened.slots.get(b4a.toString(prefixId, 'hex'))), IDENTITY.PRESENT_PREFIX_ALLOCATED)
   const headBefore = forwardHttpsTargetStoreV3Status(reopened).walHeadSequence
