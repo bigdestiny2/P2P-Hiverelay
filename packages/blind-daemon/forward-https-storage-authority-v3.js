@@ -56,7 +56,7 @@ const DOMAIN_CHARGE_REGISTRY_INIT = b4a.from('hiverelay.blind.forward-https-quot
 const DOMAIN_CHARGE_REGISTRY_STEP = b4a.from('hiverelay.blind.forward-https-quota-charge-registry-step.v4', 'ascii')
 const DOMAIN_CHARGE_REGISTRY_FINAL = b4a.from('hiverelay.blind.forward-https-quota-charge-registry-final.v4', 'ascii')
 
-export const FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE = deepFreeze({
+const FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE = deepFreeze({
   INVALID: 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_INVALID',
   CAPACITY: 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_CAPACITY',
   TERMINAL: 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_TERMINAL',
@@ -69,7 +69,7 @@ export const FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE = deepFreeze({
   INTEGRITY: 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_INTEGRITY'
 })
 
-export const FORWARD_HTTPS_STORAGE_AUTHORITY_V3_LIMITS = deepFreeze({
+const FORWARD_HTTPS_STORAGE_AUTHORITY_V3_LIMITS = deepFreeze({
   productionSlotsPerRole: PRODUCTION_SLOTS_PER_ROLE,
   removableChargeEntryCapPerSession: CHARGE_ENTRY_CAP,
   chargeEntryBytes: CHARGE_ENTRY_BYTES,
@@ -98,7 +98,7 @@ export const FORWARD_HTTPS_STORAGE_AUTHORITY_V3_LIMITS = deepFreeze({
   authorizesRelease: false
 })
 
-export const FORWARD_HTTPS_STORAGE_SLOT_STATE_V3 = deepFreeze({
+const FORWARD_HTTPS_STORAGE_SLOT_STATE_V3 = deepFreeze({
   FREE: 'FREE',
   PROVISIONAL: 'PROVISIONAL',
   PREFIX_ALLOCATED: 'PREFIX_ALLOCATED',
@@ -111,7 +111,7 @@ export const FORWARD_HTTPS_STORAGE_SLOT_STATE_V3 = deepFreeze({
 // Exact seven-state identity model. PRESENT_PREFIX_ALLOCATED is the FRESH
 // type113 prefix predecessor; ALLOCATED_WITH_PREFIX is the EXISTING-session
 // type113 prefix overlay, which reuses the one ALLOCATED slot and adds none.
-export const FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3 = deepFreeze({
+const FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3 = deepFreeze({
   NEVER_SEEN: 'NEVER_SEEN',
   PRESENT_PREFIX_ALLOCATED: 'PRESENT_PREFIX_ALLOCATED',
   ALLOCATED_WITH_PREFIX: 'ALLOCATED_WITH_PREFIX',
@@ -162,7 +162,7 @@ function writeU64 (output, offset, value) {
   return offset + 8
 }
 
-export function deriveForwardHttpsMinimalTerminalAuthorityCommitmentV3 (input) {
+function deriveForwardHttpsMinimalTerminalAuthorityCommitmentV3 (input) {
   if (!input || typeof input !== 'object') throw new TypeError('input must be a closed object')
   const role = roleByte(input.role)
   const stableSessionId = asBytes32(input.stableSessionId, 'stableSessionId', true)
@@ -191,7 +191,7 @@ function checkEpoch (value, field) {
   return value
 }
 
-export function deriveForwardHttpsMinimalTerminalAuthorityClassesV3 (minimalTerminalAuthorityCommitment) {
+function deriveForwardHttpsMinimalTerminalAuthorityClassesV3 (minimalTerminalAuthorityCommitment) {
   const M = asBytes32(minimalTerminalAuthorityCommitment, 'minimalTerminalAuthorityCommitment', true)
   const commitments = Array.from({ length: AUTHORITY_CLASS_COUNT }, () => b4a.from(ZERO32))
   commitments[7] = blake2b256(b4a.concat([DOMAIN_RETENTION_LOOKUP, M]))
@@ -285,7 +285,7 @@ function streamingCommitment (roleByteValue, session, walOrderedEntries) {
 // Per-session removable charge-entry registry. Counts are streamed in WAL
 // order with bounded constant working memory; the exact49-byte entries are
 // walType:u8 || walSequence:u64be || payloadHash:bytes32 || charge:u64be.
-export function createForwardHttpsChargeRegistryV3 (role, stableSessionId) {
+function createForwardHttpsChargeRegistryV3 (role, stableSessionId) {
   const roleByteValue = roleByte(role)
   const session = asBytes32(stableSessionId, 'stableSessionId', true)
   const entries = []
@@ -347,7 +347,7 @@ export function createForwardHttpsChargeRegistryV3 (role, stableSessionId) {
 // computed in one pass over the entries in WAL order with O(1) working memory
 // beyond the bounded per-session runs. Used by recovery so a 65536-entry
 // session never requires an attacker-sized duplicate buffer.
-export function streamForwardHttpsChargeCommitmentV3 (role, stableSessionId, orderedEntries) {
+function streamForwardHttpsChargeCommitmentV3 (role, stableSessionId, orderedEntries) {
   const roleByteValue = roleByte(role)
   const session = asBytes32(stableSessionId, 'stableSessionId', true)
   const buffered = []
@@ -367,7 +367,7 @@ export function streamForwardHttpsChargeCommitmentV3 (role, stableSessionId, ord
 // Protected aggregate terminal headroom. capacity is the effective per-role
 // terminal slot capacity (65536 production; maximumRetainedTurnsPerRole under
 // test limits). All four inequalities must hold before child mutation.
-export function verifyForwardHttpsTerminalHeadroomV3 (input) {
+function verifyForwardHttpsTerminalHeadroomV3 (input) {
   if (!input || typeof input !== 'object') throw new TypeError('input must be a closed object')
   const capacity = input.capacity
   if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > PRODUCTION_SLOTS_PER_ROLE) throw new TypeError('capacity is outside 1..65536')
@@ -398,7 +398,7 @@ export function verifyForwardHttpsTerminalHeadroomV3 (input) {
 // addition for the operation; unconsumed/consumedUnpruned slot counts are
 // recovered. Terminal and terminal-PRUNE admissions are guaranteed by the
 // protected liability and never return CAPACITY here.
-export function checkForwardHttpsProtectedAdmissionV3 (input) {
+function checkForwardHttpsProtectedAdmissionV3 (input) {
   const required = ['currentSourceLogical', 'currentTargetLogical', 'currentSourcePhysical', 'currentTargetPhysical', 'currentReplayPhysical', 'plannedOrdinaryLogical', 'plannedOrdinaryPhysical', 'sourceUnconsumedSlots', 'targetUnconsumedSlots', 'sourceConsumedUnprunedSlots', 'targetConsumedUnprunedSlots', 'maximumDurableBytesPerStore', 'maximumForwardStorageBytesAggregate']
   for (const key of required) if (!Object.hasOwn(input || {}, key)) throw new TypeError(`input.${key} is required`)
   const role = input.role || null
@@ -429,7 +429,7 @@ export function checkForwardHttpsProtectedAdmissionV3 (input) {
 // Terminal invariance: appending FTM9 adds exactly608 logical/416 physical
 // while converting one unconsumed slot (liability1344/896) to consumed-unpruned
 // (liability736/480); the protected sum is invariant and cannot return CAPACITY.
-export function verifyForwardHttpsTerminalInvarianceV3 (unconsumedSlotsBefore, consumedUnprunedBefore) {
+function verifyForwardHttpsTerminalInvarianceV3 (unconsumedSlotsBefore, consumedUnprunedBefore) {
   if (!Number.isSafeInteger(unconsumedSlotsBefore) || unconsumedSlotsBefore < 1) {
     fail('terminalization requires one unconsumed slot', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.CAPACITY)
   }
@@ -471,7 +471,7 @@ export const FORWARD_HTTPS_STORAGE_V3_FAULT_POINT = deepFreeze({
 // latest slot-disposing transition governs: identical WAL evidence has
 // exactly one identity. A flags2 prefix-abort is never an identity
 // transition; the slot stays ALLOCATED and the identity PRESENT_ALLOCATED.
-export function classifyForwardHttpsHistoricIdentityV3 (slotState, hadPruneTombstone) {
+function classifyForwardHttpsHistoricIdentityV3 (slotState, hadPruneTombstone) {
   if (slotState === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED || slotState === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.PROVISIONAL) {
     return FORWARD_HTTPS_STORAGE_HISTORIC_IDENTITY_V3.PRESENT_ALLOCATED
   }

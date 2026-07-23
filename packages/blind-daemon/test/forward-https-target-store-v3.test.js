@@ -36,9 +36,7 @@ import {
   FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT
 } from '../forward-https-source-store-v3.js'
 import {
-  FORWARD_HTTPS_STORAGE_SLOT_STATE_V3,
-  FORWARD_HTTPS_STORAGE_V3_FAULT_POINT,
-  classifyForwardHttpsHistoricIdentityV3
+  FORWARD_HTTPS_STORAGE_V3_FAULT_POINT
 } from '../forward-https-storage-authority-v3.js'
 
 const execFileAsync = promisify(execFile)
@@ -47,11 +45,25 @@ function fixed (byte) {
   return b4a.alloc(32, byte)
 }
 
-const SLOT = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3
+const SLOT = Object.freeze({
+  FREE: 'FREE',
+  PROVISIONAL: 'PROVISIONAL',
+  PREFIX_ALLOCATED: 'PREFIX_ALLOCATED',
+  ALLOCATED: 'ALLOCATED',
+  ALLOCATED_WITH_PREFIX: 'ALLOCATED_WITH_PREFIX',
+  CONSUMED_UNPRUNED: 'CONSUMED_UNPRUNED',
+  CONSUMED_PRUNED: 'CONSUMED_PRUNED'
+})
 const IDENTITY = FORWARD_HTTPS_TARGET_STORE_V3_HISTORIC_IDENTITY
 
 function identityOf (slot) {
-  return classifyForwardHttpsHistoricIdentityV3(slot.state, slot.prunedReleased)
+  if (slot.state === SLOT.ALLOCATED || slot.state === SLOT.PROVISIONAL) return IDENTITY.PRESENT_ALLOCATED
+  if (slot.state === SLOT.PREFIX_ALLOCATED) return IDENTITY.PRESENT_PREFIX_ALLOCATED
+  if (slot.state === SLOT.ALLOCATED_WITH_PREFIX) return IDENTITY.ALLOCATED_WITH_PREFIX
+  if (slot.state === SLOT.CONSUMED_UNPRUNED) return IDENTITY.PRESENT_CONSUMED_UNPRUNED
+  if (slot.state === SLOT.CONSUMED_PRUNED) return IDENTITY.PRUNED_CONSUMED
+  if (slot.state === SLOT.FREE && slot.prunedReleased) return IDENTITY.PRUNED_RELEASED
+  return IDENTITY.NEVER_SEEN
 }
 
 function prefixPayload (id, fill = 0x52) {

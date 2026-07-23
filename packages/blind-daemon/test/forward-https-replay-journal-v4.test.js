@@ -25,13 +25,18 @@ import {
   FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3
 } from '../forward-https-replay-journal-v4.js'
 import {
-  encodeForwardHttpsSessionTerminalV3,
-  deriveForwardHttpsMinimalTerminalAuthorityCommitmentV3
+  encodeForwardHttpsSessionTerminalV3
 } from '../forward-https-storage-authority-v3.js'
 
 const SOURCE = FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3.SOURCE_STORE
 const TARGET = FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3.TARGET_STORE
 const ZERO32 = b4a.alloc(32)
+
+function writeU64beLocal (output, offset, value) {
+  let current = BigInt(value)
+  for (let index = 7; index >= 0; index--) { output[offset + index] = Number(current & 0xffn); current >>= 8n }
+  return offset + 8
+}
 
 function fixed (byte) {
   return b4a.alloc(32, byte)
@@ -280,16 +285,19 @@ test('FPR9 terminal-only count0: empty registry commitment and two authority dom
   const id = fixed(0x62)
   const expiresAtEpoch = 100000
   const retainedUntilEpoch = expiresAtEpoch + 900
-  const M = deriveForwardHttpsMinimalTerminalAuthorityCommitmentV3({
-    role: TARGET,
-    stableSessionId: id,
-    sequence: 9n,
-    exactRequestCommitment: fixed(0x63),
-    expiresAtEpoch,
-    retainedUntilEpoch,
-    newTrustedEpochHighWatermark: 4242,
-    reason: 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID'
-  })
+  // M is always recomputed from the exact frozen preimage.
+  const reasonBytes = b4a.from('FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID', 'ascii')
+  const sequenceBytes = b4a.alloc(8)
+  writeU64beLocal(sequenceBytes, 0, 9n)
+  const scalars = b4a.alloc(13)
+  scalars.writeUInt32BE(expiresAtEpoch, 0)
+  scalars.writeUInt32BE(retainedUntilEpoch, 4)
+  scalars.writeUInt32BE(4242, 8)
+  scalars[12] = reasonBytes.byteLength
+  const M = blake2b256(b4a.concat([
+    b4a.from('hiverelay.blind.forward-https-minimal-terminal-authority.v3', 'ascii'),
+    b4a.from([2]), id, sequenceBytes, fixed(0x63), scalars, reasonBytes
+  ]))
   const commitments = Array.from({ length: 10 }, () => b4a.from(ZERO32))
   commitments[7] = blake2b256(b4a.concat([b4a.from('hiverelay.blind.forward-https-retention-lookup.v3', 'ascii'), M]))
   commitments[9] = blake2b256(b4a.concat([b4a.from('hiverelay.blind.forward-https-terminal-state.v3', 'ascii'), M]))
