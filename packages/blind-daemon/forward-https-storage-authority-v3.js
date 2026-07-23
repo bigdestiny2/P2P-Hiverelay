@@ -13,7 +13,6 @@ import b4a from 'b4a'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import {
-  FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3,
   FORWARD_HTTPS_REPLAY_ROLE_V4,
   openForwardHttpsAggregateQuotaV3,
   mintForwardHttpsAggregateQuotaCapabilitiesV3,
@@ -31,9 +30,6 @@ import {
 const STORAGE_AUTHORITIES = new WeakMap()
 
 const ZERO32 = b4a.alloc(32)
-const U32_MAX = 4294967295
-const EXPIRY_HORIZON = 4294966394 // UINT32_MAX-901
-const RECOVERY_GRACE_SECONDS = 900
 const FTM9_PAYLOAD_BYTES = 192
 const FTM9_FRAME_BYTES = 416
 const FTM9_LOGICAL_BYTES = 608
@@ -109,12 +105,6 @@ function fail (message, code) {
   throw new ForwardHttpsStorageAuthorityV3Error(message, code)
 }
 
-function roleByte (role) {
-  if (role === FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3.SOURCE_STORE) return 1
-  if (role === FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3.TARGET_STORE) return 2
-  throw new TypeError('role must be SOURCE_STORE or TARGET_STORE')
-}
-
 function asBytes32 (value, field, nonzero = false) {
   if (!value || typeof value.byteLength !== 'number') throw new TypeError(`${field} must be bytes`)
   const output = b4a.isBuffer(value) ? value : b4a.from(value)
@@ -123,80 +113,6 @@ function asBytes32 (value, field, nonzero = false) {
   return output
 }
 
-function writeU64 (output, offset, value) {
-  if (typeof value === 'number') value = BigInt(value)
-  if (typeof value !== 'bigint' || value < 0n || value > (1n << 64n) - 1n) throw new TypeError('u64 is out of range')
-  for (let index = 7; index >= 0; index--) { output[offset + index] = Number(value & 0xffn); value >>= 8n }
-  return offset + 8
-}
-function checkEpoch (value, field) {
-  if (!Number.isSafeInteger(value) || value < 0 || value > U32_MAX) throw new TypeError(`${field} must be a u32 epoch`)
-  return value
-}
-// FTM9 ForwardHttpsSessionTerminalV3 encoder. flags0 (EXISTING_DELTA, nonzero
-// prior revision, zero 51-byte tail) and flags1 (MINIMAL_ABSENT_SEQUENCE,
-// prior revision 0, exact expiry/+900/authority-commitment tail).
-export function encodeForwardHttpsSessionTerminalV3 (input) {
-  if (!input || typeof input !== 'object') throw new TypeError('input must be a closed object')
-  const role = roleByte(input.role)
-  const flags = input.flags
-  if (flags !== 0 && flags !== 1) throw new TypeError('flags must be EXISTING_DELTA=0 or MINIMAL_ABSENT_SEQUENCE=1')
-  const stableSessionId = asBytes32(input.stableSessionId, 'stableSessionId', true)
-  const sequence = typeof input.sequence === 'bigint' ? input.sequence : BigInt(input.sequence)
-  const priorSessionRevision = typeof input.priorSessionRevision === 'bigint' ? input.priorSessionRevision : BigInt(input.priorSessionRevision)
-  if (flags === 0 && priorSessionRevision === 0n) fail('FTM9 existing delta requires nonzero prior revision', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
-  if (flags === 1 && (priorSessionRevision !== 0n || sequence === 0n)) fail('FTM9 minimal terminal requires zero revision and nonzero sequence', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
-  const reason = typeof input.reason === 'string' ? b4a.from(input.reason, 'ascii') : b4a.from(input.reason)
-  if (reason.byteLength < 1 || reason.byteLength > 64) throw new TypeError('reason must be 1..64 bytes')
-  // flags1 carries the exact 46-byte role SEQUENCE_INVALID code; a synthetic
-  // short SEQUENCE_INVALID reason is forbidden.
-  const exactReason = role === 1
-    ? 'FORWARD_HTTPS_SOURCE_STORE_V3_SEQUENCE_INVALID'
-    : 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID'
-  if (flags === 1 && b4a.toString(reason, 'ascii') !== exactReason) fail('FTM9 minimal terminal reason must be the exact role SEQUENCE_INVALID code', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
-  const buckets = input.buckets || [0, 0, 0, 0, 0]
-  if (!Array.isArray(buckets) || buckets.length !== 5) throw new TypeError('buckets must contain five u16 counters')
-  for (const value of buckets) if (!Number.isSafeInteger(value) || value < 0 || value > 65535) throw new TypeError('bucket counter must be u16')
-  const turns = input.transportTurnsSpent || 0
-  const spent = input.transportBytesSpent || 0
-  if (!Number.isSafeInteger(turns) || turns < 0 || turns > 65535) throw new TypeError('transportTurnsSpent must be u16')
-  if (!Number.isSafeInteger(spent) || spent < 0 || spent > U32_MAX) throw new TypeError('transportBytesSpent must be u32')
-  if (flags === 1 && (buckets.some(value => value !== 0) || turns !== 0 || spent !== 0)) fail('FTM9 minimal terminal counters must be zero', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
-  const highWatermark = checkEpoch(input.newTrustedEpochHighWatermark, 'newTrustedEpochHighWatermark')
-  const output = b4a.alloc(FTM9_PAYLOAD_BYTES)
-  let offset = 0
-  b4a.copy(b4a.from('FTM9', 'ascii'), output, offset); offset += 4
-  output[offset++] = 1
-  output[offset++] = role
-  output.writeUInt16BE(flags, offset); offset += 2
-  b4a.copy(stableSessionId, output, offset); offset += 32
-  offset = writeU64(output, offset, sequence)
-  for (const value of buckets) { output.writeUInt16BE(value, offset); offset += 2 }
-  output.writeUInt16BE(turns, offset); offset += 2
-  output.writeUInt32BE(spent, offset); offset += 4
-  offset = writeU64(output, offset, priorSessionRevision)
-  output.writeUInt32BE(highWatermark, offset); offset += 4
-  output[offset++] = reason.byteLength
-  b4a.copy(reason, output, offset); offset += 64
-  if (flags === 1) {
-    const expiresAtEpoch = checkEpoch(input.expiresAtEpoch, 'expiresAtEpoch')
-    if (expiresAtEpoch > EXPIRY_HORIZON) throw new TypeError('expiresAtEpoch exceeds the representable horizon')
-    const retainedUntilEpoch = expiresAtEpoch + RECOVERY_GRACE_SECONDS
-    if (input.retainedUntilEpoch !== retainedUntilEpoch) throw new TypeError('retainedUntilEpoch must equal expiresAtEpoch+900')
-    // The frozen minimal tail carries the exact request commitment; the
-    // minimal authority commitment M is always recomputed from the payload
-    // fields, never stored.
-    const requestCommitment = asBytes32(input.exactRequestCommitment, 'exactRequestCommitment', true)
-    output.writeUInt32BE(expiresAtEpoch, offset); offset += 4
-    output.writeUInt32BE(retainedUntilEpoch, offset); offset += 4
-    b4a.copy(requestCommitment, output, offset); offset += 32
-    offset += 11 // zero padding
-  } else {
-    offset += 51 // zero tail
-  }
-  if (offset !== FTM9_PAYLOAD_BYTES) throw new Error('FTM9 payload accounting mismatch')
-  return output
-}
 // V18 storage_module_exact constant names.
 export const FORWARD_HTTPS_STORAGE_V3_LIMITS = FORWARD_HTTPS_STORAGE_AUTHORITY_V3_LIMITS
 export const FORWARD_HTTPS_STORAGE_V3_ERROR_CODE = FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE

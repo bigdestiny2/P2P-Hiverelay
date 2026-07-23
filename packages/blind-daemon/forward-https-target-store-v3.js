@@ -22,9 +22,6 @@ import {
   encodeForwardHttpsRetentionPrunedV3,
   decodeForwardHttpsRetentionPrunedV3
 } from './forward-https-replay-journal-v4.js'
-import {
-  encodeForwardHttpsSessionTerminalV3
-} from './forward-https-storage-authority-v3.js'
 
 const ROLE = FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3.TARGET_STORE
 const ZERO32 = b4a.alloc(32)
@@ -622,8 +619,9 @@ async function appendSession (state, input) {
           : walType === WAL_TYPE.PROCESSOR_COMPLETED ? 22 : 1)
     : input.plannedRemovableChargeEntryCount
   if (slot.registry.count + planned > CHARGE_ENTRY_CAP) {
-    await terminalizeBudgetExhausted(state, slot, input)
-    fail('removable charge entry cap exceeded; session terminalized BUDGET_EXHAUSTED', STORE_ERROR_CODE.BUDGET_EXHAUSTED)
+    // Cap+1 makes no WAL mutation here; the quota ENTRY_CAP_TERMINAL arm
+    // mints the flags0 BUDGET_EXHAUSTED terminal reservation for the caller.
+    fail('removable charge entry cap exceeded; ENTRY_CAP_TERMINAL', STORE_ERROR_CODE.BUDGET_EXHAUSTED)
   }
   const payload = sessionPayload(SESSION_MAGIC, stableSessionId, input.body || b4a.alloc(0))
   const operation = walType === WAL_TYPE.TURN_FINAL || walType === WAL_TYPE.TRANSPORT_RESERVED
@@ -644,312 +642,6 @@ async function appendSession (state, input) {
   const entry = await appendOperation(state, slot, operation, frames)
   return Object.freeze({ walSequence: entry.walSequence, walHash: b4a.from(state.store.walHash), payload })
 }
-
-export function appendForwardHttpsTargetSessionV3 (state, input) {
-  return appendSession(state, input)
-}
-
-// Fresh target OPEN TURN_FINAL=112: one FREE slot becomes ALLOCATED.
-export async function openForwardHttpsTargetSessionV3 (state, input) {
-  requireOperational(state)
-  const stableSessionId = b4a.from(input.stableSessionId)
-  const existing = state.slots.get(keyOf(stableSessionId))
-  // PRUNED_RELEASED returns mutation-free CONFLICT; a present session is
-  // SEQUENCE_INVALID; no historic state is reclassified as NEVER_SEEN. A
-  // fresh prefix returns mutation-free SESSION_CLOSED.
-  if (existing && existing.prunedReleased) fail('session identity is PRUNED_RELEASED', STORE_ERROR_CODE.CONFLICT)
-  if (existing && existing.state === SLOT_STATE.PREFIX_ALLOCATED) fail('session prefix is closed', STORE_ERROR_CODE.SESSION_CLOSED)
-  if (existing) fail('session identity is not NEVER_SEEN', STORE_ERROR_CODE.SEQUENCE_INVALID)
-  if (state.unconsumed < 1) fail('no FREE slot for a fresh target session', STORE_ERROR_CODE.CAPACITY)
-  const slot = freshSlot(state, stableSessionId)
-  state.unconsumed--
-  const payload = sessionPayload(SESSION_MAGIC, stableSessionId, input.body || b4a.alloc(0))
-  try {
-    const entry = await appendOperation(state, slot, 'TURN_FINAL', [{
-      type: WAL_TYPE.TURN_FINAL,
-      transactionId: input.transactionId || transactionIdFor(stableSessionId, 0xa5),
-      virtualBucket: 0,
-      payload
-    }])
-    slot.state = SLOT_STATE.ALLOCATED
-    return Object.freeze({ walSequence: entry.walSequence, walHash: b4a.from(state.store.walHash), payload })
-  } catch (error) {
-    if (slot.state === SLOT_STATE.FREE) {
-      state.slots.delete(keyOf(stableSessionId))
-      state.unconsumed++
-    }
-    throw error
-  }
-}
-
-async function terminalizeBudgetExhausted (state, slot, input) {
-  const payload = encodeForwardHttpsSessionTerminalV3({
-    role: ROLE,
-    flags: 0,
-    stableSessionId: slot.stableSessionId,
-    sequence: input.sequence == null ? 1n : input.sequence,
-    priorSessionRevision: slot.priorRevision,
-    newTrustedEpochHighWatermark: input.newTrustedEpochHighWatermark || 0,
-    reason: 'BUDGET_EXHAUSTED',
-    buckets: [0, 0, 0, 0, 0],
-    transportTurnsSpent: 0,
-    transportBytesSpent: 0
-  })
-  await appendTerminalPayload(state, slot, payload)
-}
-
-async function appendTerminalPayload (state, slot, payload) {
-  const entry = await appendOperation(state, null, 'SESSION_TERMINAL', [{
-    type: WAL_TYPE.SESSION_TERMINAL,
-    transactionId: transactionIdFor(slot.stableSessionId, 0x5a),
-    virtualBucket: 0,
-    payload
-  }])
-  slot.priorRevision++
-  slot.state = SLOT_STATE.CONSUMED_UNPRUNED
-  slot.authorityBitmap = entry.authorityBitmap
-  slot.authorityCommitments = entry.authorityCommitments
-  state.consumedUnpruned++
-  return { entry, sequence: entry.walSequence, walHash: state.store.walHash }
-}
-
-// FTM9 flags0: existing ALLOCATED or ALLOCATED_WITH_PREFIX session
-// terminalization. Never CAPACITY. On an open prefix the exact orphan-last
-// revision floor applies and the orphan entries persist as ordinary removable
-// entries inside the consumed registry; no flags2 abort is possible after.
-export async function terminalizeForwardHttpsTargetSessionV3 (state, input) {
-  requireOperational(state)
-  const slot = sessionSlot(state, b4a.from(input.stableSessionId))
-  if (!slot || (slot.state !== SLOT_STATE.ALLOCATED && slot.state !== SLOT_STATE.ALLOCATED_WITH_PREFIX)) fail('session is not ALLOCATED', STORE_ERROR_CODE.TERMINAL)
-  const payload = encodeForwardHttpsSessionTerminalV3({
-    role: ROLE,
-    flags: 0,
-    stableSessionId: slot.stableSessionId,
-    sequence: input.sequence,
-    priorSessionRevision: slot.priorRevision,
-    newTrustedEpochHighWatermark: input.newTrustedEpochHighWatermark || 0,
-    reason: input.reason,
-    buckets: input.buckets || [0, 0, 0, 0, 0],
-    transportTurnsSpent: input.transportTurnsSpent || 0,
-    transportBytesSpent: input.transportBytesSpent || 0
-  })
-  const frame = await appendTerminalPayload(state, slot, payload)
-  // The orphan record closes with terminalization; its entries persist into
-  // the consumed registry and are removed only by the later terminal-existing
-  // or terminal-only FPR9.
-  slot.orphan = null
-  return Object.freeze({ walSequence: frame.sequence, walHash: b4a.from(frame.walHash), payload })
-}
-
-// FTM9 flags1: NEVER_SEEN canonical non-OPEN SEQUENCE_INVALID minimal terminal.
-export async function terminalizeForwardHttpsTargetAbsentSequenceV3 (state, input) {
-  requireOperational(state)
-  const stableSessionId = b4a.from(input.stableSessionId)
-  if (state.slots.has(keyOf(stableSessionId))) fail('session identity is not NEVER_SEEN', STORE_ERROR_CODE.SEQUENCE_INVALID)
-  if (state.unconsumed < 1) fail('no FREE slot for the minimal terminal', STORE_ERROR_CODE.CAPACITY)
-  const slot = freshSlot(state, stableSessionId)
-  state.unconsumed--
-  const payload = encodeForwardHttpsSessionTerminalV3({
-    role: ROLE,
-    flags: 1,
-    stableSessionId,
-    sequence: input.sequence,
-    priorSessionRevision: 0n,
-    newTrustedEpochHighWatermark: input.newTrustedEpochHighWatermark,
-    reason: 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID',
-    exactRequestCommitment: input.exactRequestCommitment,
-    expiresAtEpoch: input.expiresAtEpoch,
-    retainedUntilEpoch: input.expiresAtEpoch + 900
-  })
-  const applied = await appendTerminalPayload(state, slot, payload)
-  slot.priorRevision = 1n
-  slot.minimal = true
-  slot.expiresAtEpoch = input.expiresAtEpoch
-  slot.recoveryGraceUntilEpoch = input.expiresAtEpoch + 900
-  slot.trustedEpochHighWatermark = input.newTrustedEpochHighWatermark
-  slot.authorityBitmap = (1 << 7) | (1 << 9)
-  slot.authorityCommitments = applied.entry.authorityCommitments
-  return Object.freeze({ walSequence: applied.sequence, walHash: b4a.from(applied.walHash), payload })
-}
-
-// FPR9 retention prune. flags0 nonterminal releases the slot to FREE;
-// terminal keeps it permanently consumed. Terminal/terminal-only never
-// return CAPACITY. flags1 fresh-orphan abort and flags2 existing-session
-// prefix-abort are ordinary net-admission transitions evaluated against the
-// exact protected inequalities: equality admits, ceiling+1 returns CAPACITY
-// before WAL with zero mutation, and no clock wait applies.
-export async function pruneForwardHttpsTargetSessionV3 (state, input) {
-  requireOperational(state)
-  const slot = sessionSlot(state, b4a.from(input.stableSessionId))
-  if (!slot) fail('session is absent', STORE_ERROR_CODE.INTEGRITY)
-  const flags = input.flags === undefined ? 0 : input.flags
-  if (flags !== 0 && flags !== 1 && flags !== 2) throw new TypeError('flags must be 0, 1 or 2')
-  if (flags === 1) return pruneForwardHttpsPrefixOrphanAbortV3(state, slot, input)
-  if (flags === 2) return pruneForwardHttpsExistingPrefixAbortV3(state, slot, input)
-  const consumed = slot.state === SLOT_STATE.CONSUMED_UNPRUNED
-  if (slot.state !== SLOT_STATE.ALLOCATED && !consumed) fail('session slot state cannot be pruned', STORE_ERROR_CODE.INTEGRITY)
-  const entries = slot.registry.entriesAscending()
-  const count = slot.minimal && entries.length === 0 ? 0 : entries.length
-  if (count === 0 && !slot.minimal) fail('nonterminal prune requires ordinary entries', STORE_ERROR_CODE.INTEGRITY)
-  const pruneEpochSeconds = input.pruneEpochSeconds === undefined ? state.epochSeconds() : input.pruneEpochSeconds
-  if (slot.minimal && pruneEpochSeconds <= slot.recoveryGraceUntilEpoch) fail('terminal-only prune must wait the full grace', STORE_ERROR_CODE.INTEGRITY)
-  const payload = encodeForwardHttpsRetentionPrunedV3({
-    role: ROLE,
-    stableSessionId: slot.stableSessionId,
-    priorSessionRevision: slot.priorRevision,
-    pruneEpochSeconds,
-    trustedEpochHighWatermark: Math.max(slot.trustedEpochHighWatermark, pruneEpochSeconds),
-    expiresAtEpoch: slot.expiresAtEpoch,
-    recoveryGraceUntilEpoch: slot.recoveryGraceUntilEpoch,
-    removedOrdinaryLogicalBytes: slot.registry.removedLogicalBytes(),
-    chargeEntryCount: count,
-    beforeAuthorityBitmap: slot.authorityBitmap,
-    allocationDisposition: consumed ? 0 : 1,
-    terminalSlotState: consumed ? 2 : 1,
-    chargeEntryBuffers: entries,
-    authorityCommitments: slot.authorityCommitments || Array.from({ length: 10 }, () => b4a.from(ZERO32))
-  })
-  const frame = await appendPruneTombstone(state, slot, payload)
-  if (consumed) {
-    slot.state = SLOT_STATE.CONSUMED_PRUNED
-    state.consumedUnpruned--
-    state.consumedPruned++
-  } else {
-    slot.state = SLOT_STATE.FREE
-    slot.prunedReleased = true
-    state.unconsumed++
-  }
-  slot.authorityBitmap = 0
-  state.roleGlobalLogicalBytes += 736
-  state.walHeadSequence = frame.sequence
-  return Object.freeze({ walSequence: frame.sequence, walHash: b4a.from(frame.walHash), payload })
-}
-
-// flags1 RECOVERED_PREFIX_ORPHAN abort: only for a TARGET PREFIX_ALLOCATED
-// fresh orphan. Removes all positive prefix ordinary charge, adds the
-// 736/480 tombstone under ordinary net admission, clears prefix authority,
-// moves PREFIX_ALLOCATED to FREE and leaves PRUNED_RELEASED. Eligibility is
-// immediate after successful fresh recovery.
-async function pruneForwardHttpsPrefixOrphanAbortV3 (state, slot, input) {
-  if (slot.state !== SLOT_STATE.PREFIX_ALLOCATED || !slot.orphan) {
-    fail('flags1 abort requires a fresh recovered prefix', STORE_ERROR_CODE.INTEGRITY)
-  }
-  const pruneEpochSeconds = input.pruneEpochSeconds === undefined ? state.epochSeconds() : input.pruneEpochSeconds
-  if (!Number.isSafeInteger(pruneEpochSeconds) || pruneEpochSeconds < 1) fail('flags1 abort requires a nonzero trusted prune epoch', STORE_ERROR_CODE.INTEGRITY)
-  const payload = encodeForwardHttpsRetentionPrunedV3({
-    role: ROLE,
-    flags: 1,
-    stableSessionId: slot.stableSessionId,
-    priorSessionRevision: slot.orphan.lastRevision,
-    pruneEpochSeconds,
-    trustedEpochHighWatermark: Math.max(slot.trustedEpochHighWatermark, pruneEpochSeconds),
-    expiresAtEpoch: 0,
-    recoveryGraceUntilEpoch: 0,
-    removedOrdinaryLogicalBytes: slot.orphan.removedSum,
-    chargeEntryCount: slot.orphan.entries.length,
-    beforeAuthorityBitmap: slot.authorityBitmap,
-    allocationDisposition: 1,
-    terminalSlotState: 3,
-    chargeEntryBuffers: slot.orphan.entries,
-    authorityCommitments: slot.authorityCommitments || Array.from({ length: 10 }, () => b4a.from(ZERO32))
-  })
-  const frame = await appendPruneTombstone(state, slot, payload)
-  slot.registry.removeExact(slot.orphan.entries)
-  slot.orphan = null
-  slot.state = SLOT_STATE.FREE
-  slot.prunedReleased = true
-  slot.authorityBitmap = 0
-  state.unconsumed++
-  state.roleGlobalLogicalBytes += 736
-  state.walHeadSequence = frame.sequence
-  return Object.freeze({ walSequence: frame.sequence, walHash: b4a.from(frame.walHash), payload })
-}
-
-// flags2 EXISTING_SESSION_PREFIX_ABORT: only for an ALLOCATED_WITH_PREFIX
-// session. Removes exactly the recorded orphan entries (count, sum and
-// chain), leaves the authority vector byte-identically unchanged, preserves
-// PREPARED state and the session clock and keeps the slot ALLOCATED. It is
-// never an identity transition: no PRUNED_RELEASED is recorded and there is
-// no restore clause. Later committed entries are preserved.
-async function pruneForwardHttpsExistingPrefixAbortV3 (state, slot, input) {
-  if (slot.state !== SLOT_STATE.ALLOCATED_WITH_PREFIX || !slot.orphan) {
-    fail('flags2 abort requires an existing-session prefix', STORE_ERROR_CODE.INTEGRITY)
-  }
-  const pruneEpochSeconds = input.pruneEpochSeconds === undefined ? state.epochSeconds() : input.pruneEpochSeconds
-  if (!Number.isSafeInteger(pruneEpochSeconds) || pruneEpochSeconds < 1) fail('flags2 abort requires a nonzero trusted prune epoch', STORE_ERROR_CODE.INTEGRITY)
-  const payload = encodeForwardHttpsRetentionPrunedV3({
-    role: ROLE,
-    flags: 2,
-    stableSessionId: slot.stableSessionId,
-    priorSessionRevision: slot.orphan.lastRevision,
-    pruneEpochSeconds,
-    trustedEpochHighWatermark: Math.max(slot.trustedEpochHighWatermark, pruneEpochSeconds),
-    expiresAtEpoch: 0,
-    recoveryGraceUntilEpoch: 0,
-    removedOrdinaryLogicalBytes: slot.orphan.removedSum,
-    chargeEntryCount: slot.orphan.entries.length,
-    beforeAuthorityBitmap: slot.authorityBitmap,
-    allocationDisposition: 2,
-    terminalSlotState: 1,
-    chargeEntryBuffers: slot.orphan.entries,
-    authorityCommitments: slot.authorityCommitments || Array.from({ length: 10 }, () => b4a.from(ZERO32))
-  })
-  const frame = await appendPruneTombstone(state, slot, payload)
-  slot.registry.removeExact(slot.orphan.entries)
-  slot.orphan = null
-  slot.state = SLOT_STATE.ALLOCATED
-  state.roleGlobalLogicalBytes += 736
-  state.walHeadSequence = frame.sequence
-  return Object.freeze({ walSequence: frame.sequence, walHash: b4a.from(frame.walHash), payload })
-}
-
-async function appendPruneTombstone (state, slot, payload) {
-  const plan = createForwardHttpsStoreQuotaCostPlanV3(state.storeQuotaCapability, {
-    operation: 'PRUNE',
-    knownInputBuffers: [payload],
-    temporaryWriteBuffers: [],
-    existingDestinationBytes: 0
-  })
-  const union = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
-  const reservation = union.reservation || union.terminalReservation
-  let frame
-  try {
-    const { transitionAuthority } = bindForwardHttpsStoreQuotaActualBuffersV3(state.storeQuotaCapability, reservation, {
-      logicalRecordBuffers: [],
-      encryptedPlaintextBuffers: [],
-      finalWalMetadataBuffers: [payload],
-      temporaryWriteBuffers: []
-    })
-    await applyForwardHttpsAggregateQuotaWalFrameV3(state.storeQuotaCapability, reservation, transitionAuthority, {
-      type: WAL_TYPE.RETENTION_PRUNED,
-      transactionId: transactionIdFor(slot.stableSessionId, 0x5a),
-      virtualBucket: 0,
-      payload
-    }, async candidate => {
-      frame = await state.store.appendAndApply(candidate, () => {})
-      return frame
-    })
-  } catch (error) {
-    await releaseForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, reservation).catch(() => {})
-    throw error
-  }
-  // The tombstone is durable. The adjust path is the only permitted commit;
-  // any failure here enters the absorbing FAILED_PRUNE_DURABLE_PENDING state.
-  try {
-    await adjustForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, {
-      durableTombstonePayloadBuffer: payload,
-      durableWalHeadSequence: frame.sequence,
-      durableWalHeadHash: frame.walHash
-    })
-  } catch (error) {
-    state.failedPruneDurablePending = true
-    state.localOperational = false
-    state.blocker = STORE_ERROR_CODE.INTEGRITY
-    fail('post-fsync prune adjustment failed; FAILED_PRUNE_DURABLE_PENDING', STORE_ERROR_CODE.INTEGRITY)
-  }
-  return frame
-}
-
 export function forwardHttpsTargetStoreV3Status (state) {
   return Object.freeze({
     role: ROLE,
@@ -983,9 +675,7 @@ export async function closeForwardHttpsTargetStoreV3 (state) {
   await state.store.close()
 }
 
-export const FORWARD_HTTPS_TARGET_STORE_V3_WAL_TYPE = WAL_TYPE
 export const FORWARD_HTTPS_TARGET_WAL_TYPE = WAL_TYPE
-export const FORWARD_HTTPS_TARGET_STORE_V3_HISTORIC_IDENTITY = HISTORIC_IDENTITY
 
 export const FORWARD_HTTPS_TARGET_STORE_V3_STATUS = Object.freeze({
   schemaVersion: 3,
@@ -1029,8 +719,38 @@ export const FORWARD_HTTPS_TARGET_STORE_V3_FAULT_POINT = Object.freeze({
 // forwarded turn opens the session when absent and appends otherwise;
 // processor work covers the 114/115/116 operation rows.
 export async function acceptForwardedHttpsTargetTurnV3 (state, input) {
-  if (state.slots.has(keyOf(b4a.from(input.stableSessionId)))) return appendSession(state, input)
-  return openForwardHttpsTargetSessionV3(state, input)
+  requireOperational(state)
+  const stableSessionId = b4a.from(input.stableSessionId)
+  const existing = state.slots.get(keyOf(stableSessionId))
+  if (existing) {
+    // PRUNED_RELEASED returns mutation-free CONFLICT; a fresh prefix returns
+    // mutation-free SESSION_CLOSED; any present identity is SEQUENCE_INVALID.
+    if (existing.prunedReleased) fail('session identity is PRUNED_RELEASED', STORE_ERROR_CODE.CONFLICT)
+    if (existing.state === SLOT_STATE.PREFIX_ALLOCATED) fail('session prefix is closed', STORE_ERROR_CODE.SESSION_CLOSED)
+    if (existing.state === SLOT_STATE.ALLOCATED || existing.state === SLOT_STATE.ALLOCATED_WITH_PREFIX) return appendSession(state, input)
+    fail('session identity is not NEVER_SEEN', STORE_ERROR_CODE.SEQUENCE_INVALID)
+  }
+  // Fresh target OPEN TURN_FINAL=112: one FREE slot becomes ALLOCATED.
+  if (state.unconsumed < 1) fail('no FREE slot for a fresh target session', STORE_ERROR_CODE.CAPACITY)
+  const slot = freshSlot(state, stableSessionId)
+  state.unconsumed--
+  const payload = sessionPayload(SESSION_MAGIC, stableSessionId, input.body || b4a.alloc(0))
+  try {
+    const entry = await appendOperation(state, slot, 'TURN_FINAL', [{
+      type: WAL_TYPE.TURN_FINAL,
+      transactionId: input.transactionId || transactionIdFor(stableSessionId, 0xa5),
+      virtualBucket: 0,
+      payload
+    }])
+    slot.state = SLOT_STATE.ALLOCATED
+    return Object.freeze({ walSequence: entry.walSequence, walHash: b4a.from(state.store.walHash), payload })
+  } catch (error) {
+    if (slot.state === SLOT_STATE.FREE) {
+      state.slots.delete(keyOf(stableSessionId))
+      state.unconsumed++
+    }
+    throw error
+  }
 }
 
 export async function runNextForwardHttpsTargetProcessorWorkV3 (state, input) {

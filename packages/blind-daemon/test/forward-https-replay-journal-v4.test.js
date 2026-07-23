@@ -24,9 +24,6 @@ import {
   finishForwardHttpsAggregateQuotaRecoveryV3,
   FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3
 } from '../forward-https-replay-journal-v4.js'
-import {
-  encodeForwardHttpsSessionTerminalV3
-} from '../forward-https-storage-authority-v3.js'
 
 const SOURCE = FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3.SOURCE_STORE
 const TARGET = FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3.TARGET_STORE
@@ -36,6 +33,33 @@ function writeU64beLocal (output, offset, value) {
   let current = BigInt(value)
   for (let index = 7; index >= 0; index--) { output[offset + index] = Number(current & 0xffn); current >>= 8n }
   return offset + 8
+}
+
+// Test-side FTM9 payload builder (frozen 192-byte layout; caller-supplied
+// exact payloads, the requested-terminal-arm shape).
+function buildFtm9 (input) {
+  const output = b4a.alloc(192)
+  let offset = 0
+  b4a.copy(b4a.from('FTM9', 'ascii'), output, offset); offset += 4
+  output[offset++] = 1
+  output[offset++] = input.role === 'TARGET' ? 2 : 1
+  output.writeUInt16BE(input.flags, offset); offset += 2
+  b4a.copy(input.stableSessionId, output, offset); offset += 32
+  offset = writeU64beLocal(output, offset, input.sequence)
+  for (const value of input.buckets || [0, 0, 0, 0, 0]) { output.writeUInt16BE(value, offset); offset += 2 }
+  output.writeUInt16BE(input.transportTurnsSpent || 0, offset); offset += 2
+  output.writeUInt32BE(input.transportBytesSpent || 0, offset); offset += 4
+  offset = writeU64beLocal(output, offset, input.priorSessionRevision || 0n)
+  output.writeUInt32BE(input.newTrustedEpochHighWatermark || 0, offset); offset += 4
+  const reason = b4a.from(input.reason, 'ascii')
+  output[offset++] = reason.byteLength
+  b4a.copy(reason, output, offset); offset += 64
+  if (input.flags === 1) {
+    output.writeUInt32BE(input.expiresAtEpoch, offset); offset += 4
+    output.writeUInt32BE(input.retainedUntilEpoch, offset); offset += 4
+    b4a.copy(input.exactRequestCommitment, output, offset); offset += 32
+  }
+  return output
 }
 
 function fixed (byte) {
@@ -556,8 +580,8 @@ test('derive: FTM9 minimal terminal yields bitmap640 and rederived class7/class9
   const { capability } = await quota(t, TARGET)
   const id = fixed(0x68)
   const expiresAtEpoch = 200000
-  const payload = encodeForwardHttpsSessionTerminalV3({
-    role: TARGET,
+  const payload = buildFtm9({
+    role: 'TARGET',
     flags: 1,
     stableSessionId: id,
     sequence: 3n,
@@ -586,8 +610,8 @@ test('derive: flags0 existing terminal preserves the vector and adds exact C9 (t
   const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
   const first = sessionBody(id)
   await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(96, first, 1n, ZERO32) })
-  const terminalPayload = encodeForwardHttpsSessionTerminalV3({
-    role: SOURCE,
+  const terminalPayload = buildFtm9({
+    role: 'SOURCE',
     flags: 0,
     stableSessionId: id,
     sequence: 9n,
@@ -707,8 +731,8 @@ test('operation bound rows: exact conservative ceilings, inapplicable pairs and 
 test('reserve disposition union: REQUESTED_TERMINAL for terminal plans and ENTRY_CAP_TERMINAL at the 65536 cap', async t => {
   const { capability } = await quota(t, TARGET)
   const id = fixed(0x7a)
-  const terminalPayload = encodeForwardHttpsSessionTerminalV3({
-    role: TARGET,
+  const terminalPayload = buildFtm9({
+    role: 'TARGET',
     flags: 1,
     stableSessionId: id,
     sequence: 2n,
@@ -763,8 +787,8 @@ test('reserve disposition union: REQUESTED_TERMINAL for terminal plans and ENTRY
 test('failure states: terminal prewrite abort enters FAILED_PREWRITE; close rules reach CLOSED exactly', async t => {
   const { authority, capability } = await quota(t, TARGET)
   const id = fixed(0x7c)
-  const terminalPayload = encodeForwardHttpsSessionTerminalV3({
-    role: TARGET,
+  const terminalPayload = buildFtm9({
+    role: 'TARGET',
     flags: 1,
     stableSessionId: id,
     sequence: 2n,
@@ -867,7 +891,7 @@ test('quota FIFO mutex: overlapping reservations queue in submission order and n
   })
   t.teardown(async () => { await closeForwardHttpsAggregateQuotaV3(authority).catch(() => {}) })
   const capabilities = mintForwardHttpsAggregateQuotaCapabilitiesV3(authority)
-  const { openForwardHttpsTargetStoreV3, openForwardHttpsTargetSessionV3, appendForwardHttpsTargetSessionV3, closeForwardHttpsTargetStoreV3 } = await import('../forward-https-target-store-v3.js')
+  const { openForwardHttpsTargetStoreV3, acceptForwardedHttpsTargetTurnV3, closeForwardHttpsTargetStoreV3 } = await import('../forward-https-target-store-v3.js')
   const storeSink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.targetStoreQuotaCapability)
   const store = await openForwardHttpsTargetStoreV3({
     root: path.join(r, 'target-store'),
@@ -898,10 +922,10 @@ test('quota FIFO mutex: overlapping reservations queue in submission order and n
   const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sourceSink)
   await replayModule.initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryFinalState: sourceFinal, targetRecoveryFinalState: storeFinal })
   const id = fixed(0x85)
-  await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
+  await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id })
   const attempts = await Promise.all([
-    appendForwardHttpsTargetSessionV3(store, { stableSessionId: id, walType: 112 }).then(() => 'a', () => 'a-rejected'),
-    appendForwardHttpsTargetSessionV3(store, { stableSessionId: id, walType: 112 }).then(() => 'b', () => 'b-rejected')
+    acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id, walType: 112 }).then(() => 'a', () => 'a-rejected'),
+    acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id, walType: 112 }).then(() => 'b', () => 'b-rejected')
   ])
   t.ok(attempts.includes('a') !== attempts.includes('b') || attempts.filter(item => !item.endsWith('rejected')).length >= 1, 'at least one concurrent attempt wins through the FIFO mutex')
 })

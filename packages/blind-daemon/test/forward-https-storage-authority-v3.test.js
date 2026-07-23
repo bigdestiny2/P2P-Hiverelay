@@ -1,4 +1,6 @@
 import b4a from 'b4a'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import test from 'brittle'
 import { blake2b256 } from '@hiverelay/blind-protocol'
 import {
@@ -6,12 +8,17 @@ import {
   removeBlindBoundaryScratch
 } from '../../../test/blind-boundary-scratch.js'
 import {
-  FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3
+  FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3,
+  openForwardHttpsAggregateQuotaV3,
+  mintForwardHttpsAggregateQuotaCapabilitiesV3,
+  closeForwardHttpsAggregateQuotaV3,
+  beginForwardHttpsAggregateQuotaRecoveryV3,
+  absorbForwardHttpsAggregateQuotaRecoveryFrameV3,
+  finishForwardHttpsAggregateQuotaRecoveryV3
 } from '../forward-https-replay-journal-v4.js'
 import {
   FORWARD_HTTPS_STORAGE_V3_LIMITS,
   FORWARD_HTTPS_STORAGE_V3_STATUS,
-  encodeForwardHttpsSessionTerminalV3,
   openForwardHttpsStorageAuthorityV3,
   sourceForwardHttpsStorageAuthorityV3,
   targetForwardHttpsStorageAuthorityV3,
@@ -21,7 +28,7 @@ import {
   closeForwardHttpsStorageAuthorityV3
 } from '../forward-https-storage-authority-v3.js'
 import {
-  prepareForwardHttpsSourceSessionV3,
+  prepareForwardHttpsSourceTurnV3,
   forwardHttpsSourceStoreV3Status
 } from '../forward-https-source-store-v3.js'
 
@@ -31,6 +38,75 @@ const ZERO32 = b4a.alloc(32)
 
 function fixed (byte) {
   return b4a.alloc(32, byte)
+}
+
+async function quota (t, role) {
+  const base = await createBlindBoundaryScratch('fhq-')
+  t.teardown(async () => { await removeBlindBoundaryScratch(base) })
+  const roots = {}
+  for (const name of ['source-replay', 'target-replay', 'source-store', 'target-store']) {
+    roots[name] = path.join(base, name)
+    await fs.mkdir(roots[name], { mode: 0o700 })
+    await fs.chmod(roots[name], 0o700)
+  }
+  const authority = await openForwardHttpsAggregateQuotaV3({
+    sourceReplayRoot: roots['source-replay'],
+    targetReplayRoot: roots['target-replay'],
+    sourceStoreRoot: roots['source-store'],
+    targetStoreRoot: roots['target-store'],
+    maximumDurableBytesPerStore: 8589934592,
+    maximumForwardStorageBytesAggregate: 17179869184,
+    monotonicMillis: () => Date.now(),
+    callbackTimeoutMillis: 15000,
+    faultInjector: null
+  })
+  t.teardown(async () => { await closeForwardHttpsAggregateQuotaV3(authority).catch(() => {}) })
+  const capabilities = mintForwardHttpsAggregateQuotaCapabilitiesV3(authority)
+  return { authority, capabilities, capability: role === SOURCE ? capabilities.sourceStoreQuotaCapability : capabilities.targetStoreQuotaCapability, roots }
+}
+
+async function absorbOne (capability, walType, payload) {
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  try {
+    return await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, {
+      frame: { type: walType, payload, payloadHash: blake2b256(payload), sequence: 1n, previousWalHash: ZERO32, walHash: blake2b256(b4a.concat([b4a.from('wal'), payload])), frameBytes: payload.byteLength + 224 }
+    })
+  } finally {
+    await finishForwardHttpsAggregateQuotaRecoveryV3(sink).catch(() => {})
+  }
+}
+
+function writeU64be (output, offset, value) {
+  let current = BigInt(value)
+  for (let index = 7; index >= 0; index--) { output[offset + index] = Number(current & 0xffn); current >>= 8n }
+  return offset + 8
+}
+
+// Test-side FTM9 payload builder (frozen 192-byte layout; caller-supplied
+// exact payloads, the requested-terminal-arm shape).
+function buildFtm9 (input) {
+  const output = b4a.alloc(192)
+  let offset = 0
+  b4a.copy(b4a.from('FTM9', 'ascii'), output, offset); offset += 4
+  output[offset++] = 1
+  output[offset++] = input.role === 'TARGET' ? 2 : 1
+  output.writeUInt16BE(input.flags, offset); offset += 2
+  b4a.copy(input.stableSessionId, output, offset); offset += 32
+  offset = writeU64be(output, offset, input.sequence)
+  for (const value of input.buckets || [0, 0, 0, 0, 0]) { output.writeUInt16BE(value, offset); offset += 2 }
+  output.writeUInt16BE(input.transportTurnsSpent || 0, offset); offset += 2
+  output.writeUInt32BE(input.transportBytesSpent || 0, offset); offset += 4
+  offset = writeU64be(output, offset, input.priorSessionRevision || 0n)
+  output.writeUInt32BE(input.newTrustedEpochHighWatermark || 0, offset); offset += 4
+  const reason = b4a.from(input.reason, 'ascii')
+  output[offset++] = reason.byteLength
+  b4a.copy(reason, output, offset); offset += 64
+  if (input.flags === 1) {
+    output.writeUInt32BE(input.expiresAtEpoch, offset); offset += 4
+    output.writeUInt32BE(input.retainedUntilEpoch, offset); offset += 4
+    b4a.copy(input.exactRequestCommitment, output, offset); offset += 32
+  }
+  return output
 }
 
 // The exact minimal-terminal authority commitment preimage (v13): M is
@@ -52,8 +128,8 @@ function minimalTerminalM (roleByte, id, sequence, requestCommitment, expiresAtE
 
 test('FTM9 flags0 golden: exact192 payload, zero tail, nonzero prior revision', async t => {
   const id = fixed(0x51)
-  const payload = encodeForwardHttpsSessionTerminalV3({
-    role: SOURCE,
+  const payload = buildFtm9({
+    role: 'SOURCE',
     flags: 0,
     stableSessionId: id,
     sequence: 7n,
@@ -84,8 +160,8 @@ test('FTM9 flags0 golden: exact192 payload, zero tail, nonzero prior revision', 
 test('FTM9 flags1 golden: minimal absent-sequence terminal, exact clock and commitment', async t => {
   const id = fixed(0x52)
   const expiresAtEpoch = 300000
-  const payload = encodeForwardHttpsSessionTerminalV3({
-    role: TARGET,
+  const payload = buildFtm9({
+    role: 'TARGET',
     flags: 1,
     stableSessionId: id,
     sequence: 11n,
@@ -114,10 +190,10 @@ test('FTM9 flags1 golden: minimal absent-sequence terminal, exact clock and comm
   t.absent(b4a.equals(c7, c9))
 })
 
-test('FTM9 horizon: expiry above 4294966394 rejects; boundary admits', async t => {
+test('FTM9 decode horizon: expiry above 4294966394 is INTEGRITY; boundary admits', async t => {
   const id = fixed(0x54)
   const base = {
-    role: SOURCE,
+    role: 'SOURCE',
     flags: 1,
     stableSessionId: id,
     sequence: 1n,
@@ -127,15 +203,19 @@ test('FTM9 horizon: expiry above 4294966394 rejects; boundary admits', async t =
     exactRequestCommitment: fixed(0x55),
     retainedUntilEpoch: 4294966394 + 900
   }
-  await t.exception.all(() => encodeForwardHttpsSessionTerminalV3({ ...base, expiresAtEpoch: 4294966395 }))
-  const ok = encodeForwardHttpsSessionTerminalV3({ ...base, expiresAtEpoch: 4294966394 })
+  const { capability } = await quota(t, SOURCE)
+  await t.exception.all(absorbOne(capability, 99, buildFtm9({ ...base, expiresAtEpoch: 4294966395 })), /horizon|INTEGRITY/)
+  const ok = buildFtm9({ ...base, expiresAtEpoch: 4294966394 })
   t.is(ok.readUInt32BE(145), 4294966394 + 900)
+  const { entry } = await absorbOne(capability, 99, ok)
+  t.is(entry.terminalLogicalCharge, 608)
+  t.is(entry.authorityBitmap, 640)
 })
 
-test('FTM9 flags1 rejects nonzero counters, wrong reason, nonzero revision', async t => {
+test('FTM9 flags1 decode rejects nonzero counters, wrong reason, nonzero revision', async t => {
   const id = fixed(0x56)
   const base = {
-    role: SOURCE,
+    role: 'SOURCE',
     flags: 1,
     stableSessionId: id,
     sequence: 1n,
@@ -146,10 +226,10 @@ test('FTM9 flags1 rejects nonzero counters, wrong reason, nonzero revision', asy
     expiresAtEpoch: 100,
     retainedUntilEpoch: 1000
   }
-  await t.exception.all(() => encodeForwardHttpsSessionTerminalV3({ ...base, buckets: [1, 0, 0, 0, 0] }))
-  await t.exception.all(() => encodeForwardHttpsSessionTerminalV3({ ...base, reason: 'CHAIN_INVALID' }))
-  await t.exception.all(() => encodeForwardHttpsSessionTerminalV3({ ...base, priorSessionRevision: 1n }))
-  await t.exception.all(() => encodeForwardHttpsSessionTerminalV3({ ...base, flags: 0 }))
+  const { capability } = await quota(t, SOURCE)
+  await t.exception.all(absorbOne(capability, 99, buildFtm9({ ...base, buckets: [1, 0, 0, 0, 0] })), /FTM9/)
+  await t.exception.all(absorbOne(capability, 99, buildFtm9({ ...base, reason: 'CHAIN_INVALID' })), /FTM9/)
+  await t.exception.all(absorbOne(capability, 99, buildFtm9({ ...base, priorSessionRevision: 1n })), /FTM9/)
 })
 
 test('storage constants: exact production liabilities, headroom and ceilings', async t => {
@@ -222,7 +302,7 @@ test('composite storage authority: exact open order, exposed children, status, v
   t.ok(status.localOperational)
   t.is(status.descriptorOperationBits, 0)
   // The exposed child store is fully operational through its own API
-  const prepared = await prepareForwardHttpsSourceSessionV3(source, { stableSessionId: fixed(0x3c), body: b4a.alloc(8, 0x41) })
+  const prepared = await prepareForwardHttpsSourceTurnV3(source, { stableSessionId: fixed(0x3c), body: b4a.alloc(8, 0x41) })
   t.is(prepared.walSequence, 1n)
   t.is(forwardHttpsSourceStoreV3Status(source).unconsumedSlots, forwardHttpsSourceStoreV3Status(source).slotCapacity - 1)
   // Exact authority verification passes and carries both heads
