@@ -152,8 +152,6 @@ test('FTM9 flags1 rejects nonzero counters, wrong reason, nonzero revision', asy
   await t.exception.all(() => encodeForwardHttpsSessionTerminalV3({ ...base, flags: 0 }))
 })
 
-
-
 test('storage constants: exact production liabilities, headroom and ceilings', async t => {
   t.is(FORWARD_HTTPS_STORAGE_V3_LIMITS.slotLiabilityUnconsumedLogicalBytes, 1344)
   t.is(FORWARD_HTTPS_STORAGE_V3_LIMITS.slotLiabilityUnconsumedPhysicalBytes, 896)
