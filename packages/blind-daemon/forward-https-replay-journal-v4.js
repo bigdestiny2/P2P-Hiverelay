@@ -1245,9 +1245,12 @@ const FORWARD_HTTPS_STORE_WAL_QUOTA_REGISTRY_V3 = deepFreeze({
 const AUTHORITY_CLASS_COUNT = 10
 const MINIMAL_TERMINAL_BITMAP = (1 << 7) | (1 << 9) // 640
 
-const DOMAIN_CHARGE_REGISTRY = b4a.from('hiverelay.blind.forward-https-quota-charge-registry.v3', 'ascii')
+const DOMAIN_CHARGE_REGISTRY_INIT = b4a.from('hiverelay.blind.forward-https-quota-charge-registry-init.v4', 'ascii')
+const DOMAIN_CHARGE_REGISTRY_STEP = b4a.from('hiverelay.blind.forward-https-quota-charge-registry-step.v4', 'ascii')
+const DOMAIN_CHARGE_REGISTRY_FINAL = b4a.from('hiverelay.blind.forward-https-quota-charge-registry-final.v4', 'ascii')
 const DOMAIN_AUTHORITY_REGISTRY = b4a.from('hiverelay.blind.forward-https-authority-registry.v3', 'ascii')
 const DOMAIN_PRUNE_SESSION_STATE = b4a.from('hiverelay.blind.forward-https-prune-session-state.v3', 'ascii')
+const DOMAIN_PREFIX_SESSION_STATE = b4a.from('hiverelay.blind.forward-https-prefix-session-state.v3', 'ascii')
 const DOMAIN_RETENTION_LOOKUP = b4a.from('hiverelay.blind.forward-https-retention-lookup.v3', 'ascii')
 const DOMAIN_TERMINAL_STATE = b4a.from('hiverelay.blind.forward-https-terminal-state.v3', 'ascii')
 
@@ -1355,13 +1358,17 @@ function decodeFtm9Payload (payload, expectedWalType) {
 // FPR9 ForwardHttpsRetentionPrunedV3 (exported codec)
 // ---------------------------------------------------------------------------
 
-function chargeRegistryCommitment (roleByteValue, stableSessionId, chargeEntryCount, ascendingEntryBuffers) {
-  const parts = [DOMAIN_CHARGE_REGISTRY, b4a.from([roleByteValue]), stableSessionId]
+// Adopted V13 streaming charge-registry commitment. E0 over the init domain,
+// one step per exact49-byte entry in WAL order, final over count, exact
+// removed sum and the chain. O(1) working memory; no raw entry buffering.
+function chargeRegistryCommitment (roleByteValue, stableSessionId, chargeEntryCount, removedOrdinaryLogicalBytes, walOrderedEntryBuffers) {
+  let chain = blake2b256(b4a.concat([DOMAIN_CHARGE_REGISTRY_INIT, b4a.from([roleByteValue]), stableSessionId]))
+  for (const entry of walOrderedEntryBuffers) chain = blake2b256(b4a.concat([DOMAIN_CHARGE_REGISTRY_STEP, chain, entry]))
   const count = b4a.alloc(4)
   count.writeUInt32BE(chargeEntryCount, 0)
-  parts.push(count)
-  for (const entry of ascendingEntryBuffers) parts.push(entry)
-  return blake2b256(b4a.concat(parts))
+  const removed = b4a.alloc(8)
+  writeU64(removed, 0, removedOrdinaryLogicalBytes)
+  return blake2b256(b4a.concat([DOMAIN_CHARGE_REGISTRY_FINAL, b4a.from([roleByteValue]), stableSessionId, count, removed, chain]))
 }
 
 function authorityRegistryCommitment (roleByteValue, stableSessionId, priorSessionRevision, beforeAuthorityBitmap, commitments) {
@@ -1372,15 +1379,23 @@ function authorityRegistryCommitment (roleByteValue, stableSessionId, priorSessi
   return blake2b256(b4a.concat([DOMAIN_AUTHORITY_REGISTRY, b4a.from([roleByteValue]), stableSessionId, revision, bitmap, ...commitments]))
 }
 
-function previousSessionStateCommitment (roleByteValue, stableSessionId, priorSessionRevision, chargeCommitment, authorityCommitment, terminalSlotState) {
+// flags0 uses the prune-session-state.v3 domain; the flags1/flags2 prefix
+// variants use the unique prefix-session-state.v3 domain with the identical
+// typed field order. flags is the exact u16be variant scalar in both.
+function previousSessionStateCommitment (flags, roleByteValue, stableSessionId, priorSessionRevision, chargeCommitment, authorityCommitment, terminalSlotState) {
+  const domain = flags === 0 ? DOMAIN_PRUNE_SESSION_STATE : DOMAIN_PREFIX_SESSION_STATE
+  const flagsBytes = b4a.alloc(2)
+  flagsBytes.writeUInt16BE(flags, 0)
   const revision = b4a.alloc(8)
   writeU64(revision, 0, priorSessionRevision)
-  return blake2b256(b4a.concat([DOMAIN_PRUNE_SESSION_STATE, b4a.from([roleByteValue]), stableSessionId, revision, chargeCommitment, authorityCommitment, b4a.from([terminalSlotState])]))
+  return blake2b256(b4a.concat([domain, flagsBytes, b4a.from([roleByteValue]), stableSessionId, revision, chargeCommitment, authorityCommitment, b4a.from([terminalSlotState])]))
 }
 
 export function encodeForwardHttpsRetentionPrunedV3 (input) {
-  closedObject(input, ['role', 'stableSessionId', 'priorSessionRevision', 'pruneEpochSeconds', 'trustedEpochHighWatermark', 'expiresAtEpoch', 'recoveryGraceUntilEpoch', 'removedOrdinaryLogicalBytes', 'chargeEntryCount', 'beforeAuthorityBitmap', 'allocationDisposition', 'terminalSlotState', 'chargeEntryBuffers', 'authorityCommitments'], [], 'FPR9 encode input')
+  closedObject(input, ['role', 'stableSessionId', 'priorSessionRevision', 'pruneEpochSeconds', 'trustedEpochHighWatermark', 'expiresAtEpoch', 'recoveryGraceUntilEpoch', 'removedOrdinaryLogicalBytes', 'chargeEntryCount', 'beforeAuthorityBitmap', 'allocationDisposition', 'terminalSlotState', 'chargeEntryBuffers', 'authorityCommitments'], ['flags'], 'FPR9 encode input')
   const roleByteValue = quotaRoleByte(input.role)
+  const flags = input.flags === undefined ? 0 : input.flags
+  if (flags !== 0 && flags !== 1 && flags !== 2) throw new TypeError('flags must be ORDINARY_OR_TERMINAL=0, RECOVERED_PREFIX_ORPHAN=1 or EXISTING_SESSION_PREFIX_ABORT=2')
   const stableSessionId = b4a.from(bytes(input.stableSessionId, 32, 'stableSessionId', true))
   const priorSessionRevision = u64(input.priorSessionRevision, 'priorSessionRevision', true)
   const pruneEpochSeconds = safeUint(input.pruneEpochSeconds, 'pruneEpochSeconds', 0, U32_MAX)
@@ -1390,23 +1405,44 @@ export function encodeForwardHttpsRetentionPrunedV3 (input) {
   const removedOrdinaryLogicalBytes = u64(input.removedOrdinaryLogicalBytes, 'removedOrdinaryLogicalBytes')
   const chargeEntryCount = safeUint(input.chargeEntryCount, 'chargeEntryCount', 0, 65536)
   const beforeAuthorityBitmap = safeUint(input.beforeAuthorityBitmap, 'beforeAuthorityBitmap', 0, 1023)
-  if (input.allocationDisposition !== 0 && input.allocationDisposition !== 1) throw new TypeError('allocationDisposition must be NONE_CONSUMED=0 or RELEASE_ALLOCATED=1')
-  if (input.terminalSlotState !== 1 && input.terminalSlotState !== 2) throw new TypeError('terminalSlotState must be ALLOCATED=1 or CONSUMED=2')
+  if (input.allocationDisposition !== 0 && input.allocationDisposition !== 1 && input.allocationDisposition !== 2) throw new TypeError('allocationDisposition must be NONE_CONSUMED=0, RELEASE_ALLOCATED=1 or NONE_RETAINED_ALLOCATED=2')
+  if (input.terminalSlotState !== 1 && input.terminalSlotState !== 2 && input.terminalSlotState !== 3) throw new TypeError('terminalSlotState must be ALLOCATED=1, CONSUMED=2 or PREFIX_ALLOCATED=3')
   if (!Array.isArray(input.chargeEntryBuffers) || input.chargeEntryBuffers.length !== chargeEntryCount) throw new TypeError('chargeEntryBuffers must match chargeEntryCount')
   const entries = input.chargeEntryBuffers.map((entry, index) => b4a.from(bytes(entry, 49, `chargeEntryBuffers[${index}]`)))
   if (!Array.isArray(input.authorityCommitments) || input.authorityCommitments.length !== AUTHORITY_CLASS_COUNT) throw new TypeError('authorityCommitments must contain exactly ten entries')
   const commitments = input.authorityCommitments.map((commitment, index) => b4a.from(bytes(commitment, 32, `authorityCommitments[${index}]`)))
   if (chargeEntryCount === 0 && removedOrdinaryLogicalBytes !== 0n) storeWalFail('FPR9 terminal-only variant requires zero removal')
   if (chargeEntryCount > 0 && removedOrdinaryLogicalBytes === 0n) storeWalFail('FPR9 ordinary variant requires positive removal')
-  const chargeCommitment = chargeRegistryCommitment(roleByteValue, stableSessionId, chargeEntryCount, entries)
+  // Exact variant matrix: flags0 RELEASE_ALLOCATED/ALLOCATED or
+  // NONE_CONSUMED/CONSUMED; flags1 RELEASE_ALLOCATED/PREFIX_ALLOCATED; flags2
+  // NONE_RETAINED_ALLOCATED/ALLOCATED. Every other pair is INTEGRITY. The
+  // flags1/flags2 immediate exception zeroes both expiry fields and requires
+  // a nonzero trusted prune epoch; prefix variants remove exact positive
+  // orphan charge, so count is 1..65536.
+  const pairValid =
+    (flags === 0 && ((input.allocationDisposition === 1 && input.terminalSlotState === 1) || (input.allocationDisposition === 0 && input.terminalSlotState === 2))) ||
+    (flags === 1 && input.allocationDisposition === 1 && input.terminalSlotState === 3) ||
+    (flags === 2 && input.allocationDisposition === 2 && input.terminalSlotState === 1)
+  if (!pairValid) storeWalFail('FPR9 allocation/slot pairing is invalid for the variant')
+  if (flags !== 0) {
+    if (expiresAtEpoch !== 0 || recoveryGraceUntilEpoch !== 0) storeWalFail('FPR9 prefix variants require zeroed expiry fields')
+    if (pruneEpochSeconds === 0) storeWalFail('FPR9 prefix variants require a nonzero trusted prune epoch')
+    if (chargeEntryCount === 0) storeWalFail('FPR9 prefix variants require exact positive orphan entries')
+  }
+  // The commitment stream independently matches count, sum and chain: the
+  // removed sum must equal the exact total of the supplied entry charges.
+  let entrySum = 0n
+  for (const entry of entries) entrySum += readU64(entry, 41)
+  if (entrySum !== removedOrdinaryLogicalBytes) storeWalFail('FPR9 removal does not match the charge entry sum')
+  const chargeCommitment = chargeRegistryCommitment(roleByteValue, stableSessionId, chargeEntryCount, removedOrdinaryLogicalBytes, entries)
   const authorityCommitment = authorityRegistryCommitment(roleByteValue, stableSessionId, priorSessionRevision, beforeAuthorityBitmap, commitments)
-  const stateCommitment = previousSessionStateCommitment(roleByteValue, stableSessionId, priorSessionRevision, chargeCommitment, authorityCommitment, input.terminalSlotState)
+  const stateCommitment = previousSessionStateCommitment(flags, roleByteValue, stableSessionId, priorSessionRevision, chargeCommitment, authorityCommitment, input.terminalSlotState)
   const output = b4a.alloc(FPR9_PAYLOAD_BYTES)
   let offset = 0
   b4a.copy(b4a.from('FPR9', 'ascii'), output, offset); offset += 4
   output[offset++] = 1
   output[offset++] = roleByteValue
-  offset = writeU16(output, offset, 0)
+  offset = writeU16(output, offset, flags)
   b4a.copy(stableSessionId, output, offset); offset += 32
   offset = writeU64(output, offset, priorSessionRevision)
   offset = writeU32(output, offset, pruneEpochSeconds)
@@ -1433,7 +1469,8 @@ export function decodeForwardHttpsRetentionPrunedV3 (payload) {
   if (payload[4] !== 1) storeWalFail('FPR9 version is invalid')
   const role = payload[5]
   if (role !== 1 && role !== 2) storeWalFail('FPR9 role is invalid')
-  if (readU16(payload, 6) !== 0) storeWalFail('FPR9 flags are invalid')
+  const flags = readU16(payload, 6)
+  if (flags !== 0 && flags !== 1 && flags !== 2) storeWalFail('FPR9 flags are invalid')
   const stableSessionId = b4a.from(payload.subarray(8, 40))
   const priorSessionRevision = readU64(payload, 40)
   if (priorSessionRevision === 0n) storeWalFail('FPR9 prior revision is invalid')
@@ -1447,18 +1484,28 @@ export function decodeForwardHttpsRetentionPrunedV3 (payload) {
   if (payload.readUInt32BE(80) !== 0) storeWalFail('FPR9 after bitmap is invalid')
   const allocationDisposition = payload[84]
   const terminalSlotState = payload[85]
-  if (allocationDisposition !== 0 && allocationDisposition !== 1) storeWalFail('FPR9 allocation disposition is invalid')
-  if (terminalSlotState !== 1 && terminalSlotState !== 2) storeWalFail('FPR9 terminal slot state is invalid')
+  if (allocationDisposition !== 0 && allocationDisposition !== 1 && allocationDisposition !== 2) storeWalFail('FPR9 allocation disposition is invalid')
+  if (terminalSlotState !== 1 && terminalSlotState !== 2 && terminalSlotState !== 3) storeWalFail('FPR9 terminal slot state is invalid')
   if (readU16(payload, 86) !== 0) storeWalFail('FPR9 reserved field is invalid')
   if (beforeAuthorityBitmap > 1023) storeWalFail('FPR9 authority bitmap is invalid')
   if (chargeEntryCount > 65536) storeWalFail('FPR9 charge entry count is invalid')
   if ((chargeEntryCount === 0) !== (removedOrdinaryLogicalBytes === 0n)) storeWalFail('FPR9 count/removal pairing is invalid')
+  // Exact variant matrix; every other flags/disposition/slot triple is INTEGRITY.
+  const pairValid =
+    (flags === 0 && ((allocationDisposition === 1 && terminalSlotState === 1) || (allocationDisposition === 0 && terminalSlotState === 2))) ||
+    (flags === 1 && allocationDisposition === 1 && terminalSlotState === 3) ||
+    (flags === 2 && allocationDisposition === 2 && terminalSlotState === 1)
+  if (!pairValid) storeWalFail('FPR9 allocation/slot pairing is invalid for the variant')
+  if (flags !== 0 && (expiresAtEpoch !== 0 || recoveryGraceUntilEpoch !== 0 || pruneEpochSeconds === 0 || chargeEntryCount === 0)) {
+    storeWalFail('FPR9 prefix variant fields are invalid')
+  }
   const chargeCommitment = b4a.from(payload.subarray(88, 120))
   const authorityCommitment = b4a.from(payload.subarray(120, 152))
   const stateCommitment = b4a.from(payload.subarray(152, 184))
   for (let index = 184; index < FPR9_PAYLOAD_BYTES; index++) if (payload[index] !== 0) storeWalFail('FPR9 padding is invalid')
   return freezeResult({
     role,
+    flags,
     stableSessionId,
     priorSessionRevision,
     pruneEpochSeconds,

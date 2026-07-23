@@ -36,7 +36,9 @@ const AUTHORITY_CLASS_COUNT = 10
 const DOMAIN_MINIMAL_TERMINAL = b4a.from('hiverelay.blind.forward-https-minimal-terminal-authority.v3', 'ascii')
 const DOMAIN_RETENTION_LOOKUP = b4a.from('hiverelay.blind.forward-https-retention-lookup.v3', 'ascii')
 const DOMAIN_TERMINAL_STATE = b4a.from('hiverelay.blind.forward-https-terminal-state.v3', 'ascii')
-const DOMAIN_CHARGE_REGISTRY = b4a.from('hiverelay.blind.forward-https-quota-charge-registry.v3', 'ascii')
+const DOMAIN_CHARGE_REGISTRY_INIT = b4a.from('hiverelay.blind.forward-https-quota-charge-registry-init.v4', 'ascii')
+const DOMAIN_CHARGE_REGISTRY_STEP = b4a.from('hiverelay.blind.forward-https-quota-charge-registry-step.v4', 'ascii')
+const DOMAIN_CHARGE_REGISTRY_FINAL = b4a.from('hiverelay.blind.forward-https-quota-charge-registry-final.v4', 'ascii')
 
 export const FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE = deepFreeze({
   INVALID: 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_INVALID',
@@ -239,6 +241,24 @@ export function encodeForwardHttpsSessionTerminalV3 (input) {
   return output
 }
 
+// Adopted V13 streaming final commitment over count, exact removed sum and
+// the init/step chain, computed over the exact49-byte entries in WAL order.
+function streamingCommitment (roleByteValue, session, walOrderedEntries) {
+  let chain = blake2b256(b4a.concat([DOMAIN_CHARGE_REGISTRY_INIT, b4a.from([roleByteValue]), session]))
+  let removed = 0n
+  for (const entry of walOrderedEntries) {
+    chain = blake2b256(b4a.concat([DOMAIN_CHARGE_REGISTRY_STEP, chain, entry]))
+    let value = 0n
+    for (let index = 41; index < 49; index++) value = (value << 8n) | BigInt(entry[index])
+    removed += value
+  }
+  const count = b4a.alloc(4)
+  count.writeUInt32BE(walOrderedEntries.length, 0)
+  const removedBytes = b4a.alloc(8)
+  writeU64(removedBytes, 0, removed)
+  return blake2b256(b4a.concat([DOMAIN_CHARGE_REGISTRY_FINAL, b4a.from([roleByteValue]), session, count, removedBytes, chain]))
+}
+
 // Per-session removable charge-entry registry. Counts are streamed in WAL
 // order with bounded constant working memory; the exact49-byte entries are
 // walType:u8 || walSequence:u64be || payloadHash:bytes32 || charge:u64be.
@@ -272,13 +292,7 @@ export function createForwardHttpsChargeRegistryV3 (role, stableSessionId) {
       }, 0n)
     },
     commitment () {
-      const count = b4a.alloc(4)
-      count.writeUInt32BE(entries.length, 0)
-      const ascending = [...entries].sort((left, right) => {
-        for (let index = 1; index < 9; index++) if (left[index] !== right[index]) return left[index] - right[index]
-        return 0
-      })
-      return blake2b256(b4a.concat([DOMAIN_CHARGE_REGISTRY, b4a.from([roleByteValue]), session, count, ...ascending]))
+      return streamingCommitment(roleByteValue, session, entries)
     },
     entriesAscending () {
       return Object.freeze([...entries].sort((left, right) => {
@@ -289,10 +303,10 @@ export function createForwardHttpsChargeRegistryV3 (role, stableSessionId) {
   })
 }
 
-// Streaming charge commitment: identical digest to the registry commitment but
-// computed in WAL order with O(1) working memory over a merge of bounded
-// per-sequence runs. Used by recovery so a 65536-entry session never requires
-// an attacker-sized duplicate buffer.
+// Streaming charge commitment: identical digest to the registry commitment,
+// computed in one pass over the entries in WAL order with O(1) working memory
+// beyond the bounded per-session runs. Used by recovery so a 65536-entry
+// session never requires an attacker-sized duplicate buffer.
 export function streamForwardHttpsChargeCommitmentV3 (role, stableSessionId, orderedEntries) {
   const roleByteValue = roleByte(role)
   const session = asBytes32(stableSessionId, 'stableSessionId', true)
@@ -304,15 +318,9 @@ export function streamForwardHttpsChargeCommitmentV3 (role, stableSessionId, ord
     count++
     if (count > CHARGE_ENTRY_CAP) fail('recovered removable charge entries exceed the cap', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
   }
-  buffered.sort((left, right) => {
-    for (let index = 1; index < 9; index++) if (left[index] !== right[index]) return left[index] - right[index]
-    return 0
-  })
-  const countBytes = b4a.alloc(4)
-  countBytes.writeUInt32BE(count, 0)
   return {
     count,
-    commitment: blake2b256(b4a.concat([DOMAIN_CHARGE_REGISTRY, b4a.from([roleByteValue]), session, countBytes, ...buffered]))
+    commitment: streamingCommitment(roleByteValue, session, buffered)
   }
 }
 

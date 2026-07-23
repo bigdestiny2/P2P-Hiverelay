@@ -64,9 +64,10 @@ test('FPR9 ordinary variant: exact 256-byte layout, round trip and arithmetic', 
   }
   const payload = encodeForwardHttpsRetentionPrunedV3(input)
   t.is(payload.byteLength, 256)
-  t.is(b4a.toString(payload.subarray(0, 4), 'ascii'), 'FPR9')
   t.is(payload[4], 1)
   t.is(payload[5], 1)
+  t.is(payload.readUInt16BE(6), 0)
+  t.is(b4a.toString(payload.subarray(0, 4), 'ascii'), 'FPR9')
   t.is(payload.readUInt32BE(72), 1)
   t.is(payload.readUInt32BE(80), 0)
   t.is(payload[84], 1)
@@ -74,15 +75,13 @@ test('FPR9 ordinary variant: exact 256-byte layout, round trip and arithmetic', 
   for (let index = 184; index < 256; index++) t.is(payload[index], 0)
   const decoded = decodeForwardHttpsRetentionPrunedV3(payload)
   t.is(decoded.role, 1)
+  t.is(decoded.flags, 0)
   t.ok(b4a.equals(decoded.stableSessionId, id))
   t.is(decoded.priorSessionRevision, 3n)
   t.is(decoded.removedOrdinaryLogicalBytes, 808n)
   t.is(decoded.chargeEntryCount, 1)
   t.is(decoded.beforeAuthorityBitmap, 3)
-  const expectedCharge = blake2b256(b4a.concat([
-    b4a.from('hiverelay.blind.forward-https-quota-charge-registry.v3', 'ascii'),
-    b4a.from([1]), id, u32be(1), ...entries
-  ]))
+  const expectedCharge = streamingCharge(1, id, entries)
   t.ok(b4a.equals(decoded.chargeRegistryCommitment, expectedCharge))
   const expectedAuthority = blake2b256(b4a.concat([
     b4a.from('hiverelay.blind.forward-https-authority-registry.v3', 'ascii'),
@@ -91,7 +90,7 @@ test('FPR9 ordinary variant: exact 256-byte layout, round trip and arithmetic', 
   t.ok(b4a.equals(decoded.authorityRegistryCommitment, expectedAuthority))
   const expectedState = blake2b256(b4a.concat([
     b4a.from('hiverelay.blind.forward-https-prune-session-state.v3', 'ascii'),
-    b4a.from([1]), id, u64be(3n), expectedCharge, expectedAuthority, b4a.from([1])
+    u16be(0), b4a.from([1]), id, u64be(3n), expectedCharge, expectedAuthority, b4a.from([1])
   ]))
   t.ok(b4a.equals(decoded.previousSessionStateCommitment, expectedState))
 })
@@ -136,10 +135,7 @@ test('FPR9 terminal-only count0: empty registry commitment and two authority dom
   t.is(decoded.beforeAuthorityBitmap, 640)
   t.is(decoded.allocationDisposition, 0)
   t.is(decoded.terminalSlotState, 2)
-  const emptyCharge = blake2b256(b4a.concat([
-    b4a.from('hiverelay.blind.forward-https-quota-charge-registry.v3', 'ascii'),
-    b4a.from([2]), id, u32be(0)
-  ]))
+  const emptyCharge = streamingCharge(2, id, [])
   t.ok(b4a.equals(decoded.chargeRegistryCommitment, emptyCharge))
   const expectedAuthority = blake2b256(b4a.concat([
     b4a.from('hiverelay.blind.forward-https-authority-registry.v3', 'ascii'),
@@ -185,6 +181,156 @@ test('FPR9 rejects count/removal mismatch and noncanonical padding', async t => 
   const corrupted = b4a.from(good)
   corrupted[255] = 1
   await t.exception.all(() => decodeForwardHttpsRetentionPrunedV3(corrupted))
+})
+
+test('FPR9 flags1 recovered-prefix orphan variant: exact fields and prefix domain', async t => {
+  const id = fixed(0x6d)
+  const entries = [chargeEntry(113, 4n, fixed(0x6e), 460), chargeEntry(113, 5n, fixed(0x6f), 460)]
+  const payload = encodeForwardHttpsRetentionPrunedV3({
+    role: TARGET,
+    flags: 1,
+    stableSessionId: id,
+    priorSessionRevision: 5n,
+    pruneEpochSeconds: 7000,
+    trustedEpochHighWatermark: 7000,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: 920n,
+    chargeEntryCount: 2,
+    beforeAuthorityBitmap: 0,
+    allocationDisposition: 1,
+    terminalSlotState: 3,
+    chargeEntryBuffers: entries,
+    authorityCommitments: Array.from({ length: 10 }, () => b4a.from(ZERO32))
+  })
+  t.is(payload.readUInt16BE(6), 1)
+  t.is(payload.readUInt32BE(56), 0)
+  t.is(payload.readUInt32BE(60), 0)
+  t.is(payload[84], 1)
+  t.is(payload[85], 3)
+  const decoded = decodeForwardHttpsRetentionPrunedV3(payload)
+  t.is(decoded.flags, 1)
+  t.is(decoded.terminalSlotState, 3)
+  t.is(decoded.chargeEntryCount, 2)
+  t.is(decoded.removedOrdinaryLogicalBytes, 920n)
+  const expectedCharge = streamingCharge(2, id, entries)
+  const expectedAuthority = blake2b256(b4a.concat([
+    b4a.from('hiverelay.blind.forward-https-authority-registry.v3', 'ascii'),
+    b4a.from([2]), id, u64be(5n), u32be(0), ...Array.from({ length: 10 }, () => b4a.from(ZERO32))
+  ]))
+  const expectedState = blake2b256(b4a.concat([
+    b4a.from('hiverelay.blind.forward-https-prefix-session-state.v3', 'ascii'),
+    u16be(1), b4a.from([2]), id, u64be(5n), expectedCharge, expectedAuthority, b4a.from([3])
+  ]))
+  t.ok(b4a.equals(decoded.chargeRegistryCommitment, expectedCharge))
+  t.ok(b4a.equals(decoded.authorityRegistryCommitment, expectedAuthority))
+  t.ok(b4a.equals(decoded.previousSessionStateCommitment, expectedState))
+  // Byte-identical re-encode
+  t.ok(b4a.equals(encodeForwardHttpsRetentionPrunedV3({
+    role: TARGET,
+    flags: 1,
+    stableSessionId: id,
+    priorSessionRevision: 5n,
+    pruneEpochSeconds: 7000,
+    trustedEpochHighWatermark: 7000,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: 920n,
+    chargeEntryCount: 2,
+    beforeAuthorityBitmap: 0,
+    allocationDisposition: 1,
+    terminalSlotState: 3,
+    chargeEntryBuffers: entries,
+    authorityCommitments: Array.from({ length: 10 }, () => b4a.from(ZERO32))
+  }), payload))
+})
+
+test('FPR9 flags2 existing-session prefix-abort variant: retained slot, prefix domain', async t => {
+  const id = fixed(0x70)
+  const entries = [chargeEntry(113, 9n, fixed(0x71), 460)]
+  const before = Array.from({ length: 10 }, () => b4a.from(ZERO32))
+  before[4] = fixed(0x72)
+  const payload = encodeForwardHttpsRetentionPrunedV3({
+    role: TARGET,
+    flags: 2,
+    stableSessionId: id,
+    priorSessionRevision: 9n,
+    pruneEpochSeconds: 8000,
+    trustedEpochHighWatermark: 8000,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: 460n,
+    chargeEntryCount: 1,
+    beforeAuthorityBitmap: 1 << 4,
+    allocationDisposition: 2,
+    terminalSlotState: 1,
+    chargeEntryBuffers: entries,
+    authorityCommitments: before
+  })
+  t.is(payload.readUInt16BE(6), 2)
+  t.is(payload[84], 2)
+  t.is(payload[85], 1)
+  const decoded = decodeForwardHttpsRetentionPrunedV3(payload)
+  t.is(decoded.flags, 2)
+  t.is(decoded.allocationDisposition, 2)
+  t.is(decoded.terminalSlotState, 1)
+  const expectedCharge = streamingCharge(2, id, entries)
+  const expectedAuthority = blake2b256(b4a.concat([
+    b4a.from('hiverelay.blind.forward-https-authority-registry.v3', 'ascii'),
+    b4a.from([2]), id, u64be(9n), u32be(1 << 4), ...before
+  ]))
+  const expectedState = blake2b256(b4a.concat([
+    b4a.from('hiverelay.blind.forward-https-prefix-session-state.v3', 'ascii'),
+    u16be(2), b4a.from([2]), id, u64be(9n), expectedCharge, expectedAuthority, b4a.from([1])
+  ]))
+  t.ok(b4a.equals(decoded.chargeRegistryCommitment, expectedCharge))
+  t.ok(b4a.equals(decoded.authorityRegistryCommitment, expectedAuthority))
+  t.ok(b4a.equals(decoded.previousSessionStateCommitment, expectedState))
+})
+
+test('FPR9 variant matrix and substitution negatives reject', async t => {
+  const id = fixed(0x73)
+  const entries = [chargeEntry(113, 2n, fixed(0x74), 460)]
+  const base = {
+    role: TARGET,
+    flags: 1,
+    stableSessionId: id,
+    priorSessionRevision: 2n,
+    pruneEpochSeconds: 100,
+    trustedEpochHighWatermark: 100,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: 460n,
+    chargeEntryCount: 1,
+    beforeAuthorityBitmap: 0,
+    allocationDisposition: 1,
+    terminalSlotState: 3,
+    chargeEntryBuffers: entries,
+    authorityCommitments: Array.from({ length: 10 }, () => b4a.from(ZERO32))
+  }
+  // flags1 with nonzero expiry fields violates the immediate exception
+  await t.exception.all(() => encodeForwardHttpsRetentionPrunedV3({ ...base, expiresAtEpoch: 5 }))
+  // flags1 with terminal-only count0 is not a prefix variant
+  await t.exception.all(() => encodeForwardHttpsRetentionPrunedV3({ ...base, chargeEntryCount: 0, chargeEntryBuffers: [], removedOrdinaryLogicalBytes: 0n }))
+  // removed sum must match the exact entry chain
+  await t.exception.all(() => encodeForwardHttpsRetentionPrunedV3({ ...base, removedOrdinaryLogicalBytes: 461n }))
+  // flags2 requires NONE_RETAINED_ALLOCATED/ALLOCATED
+  await t.exception.all(() => encodeForwardHttpsRetentionPrunedV3({ ...base, flags: 2 }))
+  // unknown flags scalar
+  await t.exception.all(() => encodeForwardHttpsRetentionPrunedV3({ ...base, flags: 3 }))
+  const good = encodeForwardHttpsRetentionPrunedV3(base)
+  // flags-encoding substitution: flags1 payload presented with flags2 rejects
+  const swapped = b4a.from(good)
+  swapped.writeUInt16BE(2, 6)
+  await t.exception.all(() => decodeForwardHttpsRetentionPrunedV3(swapped))
+  // padding substitution rejects
+  const padded = b4a.from(good)
+  padded[255] = 1
+  await t.exception.all(() => decodeForwardHttpsRetentionPrunedV3(padded))
+  // disposition/slot substitution rejects
+  const disposition = b4a.from(good)
+  disposition[84] = 2
+  await t.exception.all(() => decodeForwardHttpsRetentionPrunedV3(disposition))
 })
 
 test('derive: ordinary SESSION frame charge is payload+frame', async t => {
@@ -268,10 +414,43 @@ test('derive: cross-role and unknown types are INTEGRITY', async t => {
   await t.exception.all(() => deriveForwardHttpsStoreWalQuotaEntryV3({ role: SOURCE, frame: frame(112, payload) }))
 })
 
+function u16be (value) {
+  const output = b4a.alloc(2)
+  output.writeUInt16BE(value, 0)
+  return output
+}
+
 function u32be (value) {
   const output = b4a.alloc(4)
   output.writeUInt32BE(value, 0)
   return output
+}
+
+// Adopted V13 streaming final commitment over count, exact removed sum and
+// the init/step chain, entries in WAL order.
+function streamingCharge (roleByte, id, entries) {
+  let chain = blake2b256(b4a.concat([
+    b4a.from('hiverelay.blind.forward-https-quota-charge-registry-init.v4', 'ascii'),
+    b4a.from([roleByte]), id
+  ]))
+  let removed = 0n
+  for (const entry of entries) {
+    chain = blake2b256(b4a.concat([
+      b4a.from('hiverelay.blind.forward-https-quota-charge-registry-step.v4', 'ascii'),
+      chain, entry
+    ]))
+    removed += readU64be(entry, 41)
+  }
+  return blake2b256(b4a.concat([
+    b4a.from('hiverelay.blind.forward-https-quota-charge-registry-final.v4', 'ascii'),
+    b4a.from([roleByte]), id, u32be(entries.length), u64be(removed), chain
+  ]))
+}
+
+function readU64be (input, offset) {
+  let value = 0n
+  for (let index = 0; index < 8; index++) value = (value << 8n) | BigInt(input[offset + index])
+  return value
 }
 
 function u64be (value) {
