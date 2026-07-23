@@ -1,11 +1,23 @@
 import b4a from 'b4a'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import test from 'brittle'
 import { blake2b256 } from '@hiverelay/blind-protocol'
+import {
+  createBlindBoundaryScratch,
+  removeBlindBoundaryScratch
+} from '../../../test/blind-boundary-scratch.js'
 import * as replayModule from '../forward-https-replay-journal-v4.js'
 import {
   encodeForwardHttpsRetentionPrunedV3,
   decodeForwardHttpsRetentionPrunedV3,
   deriveForwardHttpsStoreWalQuotaEntryV3,
+  openForwardHttpsAggregateQuotaV3,
+  mintForwardHttpsAggregateQuotaCapabilitiesV3,
+  closeForwardHttpsAggregateQuotaV3,
+  beginForwardHttpsAggregateQuotaRecoveryV3,
+  absorbForwardHttpsAggregateQuotaRecoveryFrameV3,
+  finishForwardHttpsAggregateQuotaRecoveryV3,
   FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3
 } from '../forward-https-replay-journal-v4.js'
 import {
@@ -31,15 +43,93 @@ function frame (type, payload, sequence = 1n) {
   }
 }
 
+function recoveryFrame (type, payload, sequence, previousWalHash) {
+  return {
+    type,
+    payload,
+    payloadHash: blake2b256(payload),
+    sequence,
+    previousWalHash,
+    walHash: blake2b256(b4a.concat([b4a.from('wal'), payload])),
+    frameBytes: payload.byteLength + 224
+  }
+}
+
 function sessionBody (id) {
   return b4a.concat([b4a.from('FSS3', 'ascii'), id, b4a.alloc(8, 0x41)])
 }
 
-test('export surface: exactly three additions and no registry export', async t => {
-  const names = Object.keys(replayModule)
-  t.ok(names.includes('encodeForwardHttpsRetentionPrunedV3'))
-  t.ok(names.includes('decodeForwardHttpsRetentionPrunedV3'))
-  t.ok(names.includes('deriveForwardHttpsStoreWalQuotaEntryV3'))
+async function quota (t, role) {
+  const base = await createBlindBoundaryScratch('fhq-')
+  t.teardown(async () => { await removeBlindBoundaryScratch(base) })
+  const roots = {}
+  for (const name of ['source-replay', 'target-replay', 'source-store', 'target-store']) {
+    roots[name] = path.join(base, name)
+    await fs.mkdir(roots[name], { mode: 0o700 })
+    await fs.chmod(roots[name], 0o700)
+  }
+  const authority = await openForwardHttpsAggregateQuotaV3({
+    sourceReplayRoot: roots['source-replay'],
+    targetReplayRoot: roots['target-replay'],
+    sourceStoreRoot: roots['source-store'],
+    targetStoreRoot: roots['target-store'],
+    maximumDurableBytesPerStore: 8589934592,
+    maximumForwardStorageBytesAggregate: 17179869184,
+    monotonicMillis: () => Date.now(),
+    callbackTimeoutMillis: 15000,
+    faultInjector: null
+  })
+  t.teardown(async () => { await closeForwardHttpsAggregateQuotaV3(authority).catch(() => {}) })
+  const capabilities = mintForwardHttpsAggregateQuotaCapabilitiesV3(authority)
+  return { authority, capability: role === SOURCE ? capabilities.sourceStoreQuotaCapability : capabilities.targetStoreQuotaCapability }
+}
+
+test('export surface: exactly the frozen 39 replay-module exports', async t => {
+  const names = Object.keys(replayModule).sort()
+  const expected = [
+    'FORWARD_HTTPS_REPLAY_ROLE_V4',
+    'FORWARD_HTTPS_REPLAY_JOURNAL_V4_LIMITS',
+    'FORWARD_HTTPS_REPLAY_JOURNAL_V4_STATUS',
+    'FORWARD_HTTPS_REPLAY_JOURNAL_V4_ERROR_CODE',
+    'FORWARD_HTTPS_REPLAY_JOURNAL_V4_FAULT_POINT',
+    'ForwardHttpsReplayJournalV4Error',
+    'openForwardHttpsReplayJournalV4',
+    'reserveForwardHttpsReplayV4',
+    'consumeForwardHttpsReplayV4',
+    'verifyForwardHttpsReplayConsumedV4',
+    'forwardHttpsReplayJournalV4Status',
+    'inspectForwardHttpsReplayJournalV4',
+    'closeForwardHttpsReplayJournalV4',
+    'FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE',
+    'FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT',
+    'FORWARD_HTTPS_AGGREGATE_QUOTA_V3_LIMITS',
+    'FORWARD_HTTPS_AGGREGATE_QUOTA_ROLE_V3',
+    'ForwardHttpsAggregateQuotaV3Error',
+    'openForwardHttpsAggregateQuotaV3',
+    'mintForwardHttpsAggregateQuotaCapabilitiesV3',
+    'beginForwardHttpsAggregateQuotaRecoveryV3',
+    'absorbForwardHttpsAggregateQuotaRecoveryFrameV3',
+    'finishForwardHttpsAggregateQuotaRecoveryV3',
+    'initializeForwardHttpsAggregateQuotaV3',
+    'createForwardHttpsReplayQuotaCostPlanV3',
+    'createForwardHttpsStoreQuotaCostPlanV3',
+    'bindForwardHttpsStoreQuotaActualBuffersV3',
+    'reserveForwardHttpsAggregateQuotaV3',
+    'commitForwardHttpsAggregateQuotaV3',
+    'releaseForwardHttpsAggregateQuotaV3',
+    'adjustForwardHttpsAggregateQuotaV3',
+    'forwardHttpsAggregateQuotaV3Status',
+    'closeForwardHttpsAggregateQuotaV3',
+    'encodeForwardHttpsRetentionPrunedV3',
+    'decodeForwardHttpsRetentionPrunedV3',
+    'deriveForwardHttpsStoreWalQuotaEntryV3',
+    'assertForwardHttpsAggregateQuotaOperationalV3',
+    'applyForwardHttpsAggregateQuotaWalFrameV3',
+    'failForwardHttpsAggregateQuotaWalAttemptV3'
+  ].sort()
+  t.is(names.length, 39, 'exactly 39 named exports')
+  t.alike(names, expected)
+  t.absent(names.includes('beginForwardHttpsAggregateQuotaWalAttemptV3'), 'begin is module-private and never exported')
   t.absent(names.includes('FORWARD_HTTPS_STORE_WAL_QUOTA_REGISTRY_V3'), 'registry must never be exported')
 })
 
@@ -334,9 +424,11 @@ test('FPR9 variant matrix and substitution negatives reject', async t => {
 })
 
 test('derive: ordinary SESSION frame charge is payload+frame', async t => {
+  const { capability } = await quota(t, SOURCE)
   const id = fixed(0x66)
   const payload = sessionBody(id)
-  const derived = deriveForwardHttpsStoreWalQuotaEntryV3({ role: SOURCE, frame: frame(96, payload) })
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  const { entry: derived } = await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(96, payload, 1n, ZERO32) })
   t.is(derived.role, SOURCE)
   t.is(derived.scope, 'SESSION')
   t.is(derived.walType, 96)
@@ -346,18 +438,23 @@ test('derive: ordinary SESSION frame charge is payload+frame', async t => {
   t.is(derived.authorityBitmap, 0)
   t.ok(b4a.equals(derived.stableSessionId, id))
   t.is(derived.authorityCommitments.length, 10)
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
 })
 
 test('derive: type113 independent charge is exactly460', async t => {
+  const { capability } = await quota(t, TARGET)
   const id = fixed(0x67)
   const payload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(118 - 36, 0x42)])
-  const derived = deriveForwardHttpsStoreWalQuotaEntryV3({ role: TARGET, frame: frame(113, payload) })
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  const { entry: derived } = await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(113, payload, 1n, ZERO32) })
   t.is(derived.ordinaryLogicalCharge, 460)
   t.is(derived.scope, 'SESSION')
   t.ok(b4a.equals(derived.stableSessionId, id))
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
 })
 
 test('derive: FTM9 minimal terminal yields bitmap640 and rederived class7/class9 commitments', async t => {
+  const { capability } = await quota(t, TARGET)
   const id = fixed(0x68)
   const expiresAtEpoch = 200000
   const payload = encodeForwardHttpsSessionTerminalV3({
@@ -372,7 +469,8 @@ test('derive: FTM9 minimal terminal yields bitmap640 and rederived class7/class9
     expiresAtEpoch,
     retainedUntilEpoch: expiresAtEpoch + 900
   })
-  const derived = deriveForwardHttpsStoreWalQuotaEntryV3({ role: TARGET, frame: frame(117, payload) })
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  const { entry: derived } = await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(117, payload, 1n, ZERO32) })
   t.is(derived.ordinaryLogicalCharge, 0)
   t.is(derived.terminalLogicalCharge, 608)
   t.is(derived.authorityBitmap, 640)
@@ -380,9 +478,50 @@ test('derive: FTM9 minimal terminal yields bitmap640 and rederived class7/class9
     if (index === 7 || index === 9) t.absent(b4a.equals(derived.authorityCommitments[index], ZERO32))
     else t.ok(b4a.equals(derived.authorityCommitments[index], ZERO32))
   }
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+})
+
+test('derive: flags0 existing terminal preserves the vector and adds exact C9 (terminal-state-existing.v3)', async t => {
+  const { capability } = await quota(t, SOURCE)
+  const id = fixed(0x75)
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  const first = sessionBody(id)
+  await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(96, first, 1n, ZERO32) })
+  const terminalPayload = encodeForwardHttpsSessionTerminalV3({
+    role: SOURCE,
+    flags: 0,
+    stableSessionId: id,
+    sequence: 9n,
+    priorSessionRevision: 1n,
+    newTrustedEpochHighWatermark: 5,
+    reason: 'CHAIN_INVALID'
+  })
+  const { entry: derived } = await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, {
+    frame: recoveryFrame(99, terminalPayload, 2n, blake2b256(b4a.concat([b4a.from('wal'), first])))
+  })
+  t.is(derived.terminalLogicalCharge, 608)
+  t.is(derived.authorityBitmap, 512)
+  const expectedC9 = blake2b256(b4a.concat([
+    b4a.from('hiverelay.blind.forward-https-terminal-state-existing.v3', 'ascii'),
+    b4a.from([1]), id, u64be(1n), u32be(0),
+    ...Array.from({ length: 9 }, () => b4a.from(ZERO32)),
+    u64be(2n), blake2b256(terminalPayload)
+  ]))
+  for (let index = 0; index < 9; index++) t.ok(b4a.equals(derived.authorityCommitments[index], ZERO32))
+  t.ok(b4a.equals(derived.authorityCommitments[9], expectedC9))
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+  // A duplicate terminal now rejects: the predecessor is consumed
+  const sink2 = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink2, { frame: recoveryFrame(96, first, 1n, ZERO32) })
+  await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink2, { frame: recoveryFrame(99, terminalPayload, 2n, blake2b256(b4a.concat([b4a.from('wal'), first]))) })
+  await t.exception.all(absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink2, {
+    frame: recoveryFrame(99, terminalPayload, 3n, blake2b256(b4a.concat([b4a.from('wal'), terminalPayload])))
+  }), /PRESENT_ALLOCATED|INTEGRITY/)
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink2)
 })
 
 test('derive: FPR9 prune transition has 736 role-global charge', async t => {
+  const { capability } = await quota(t, SOURCE)
   const id = fixed(0x6a)
   const payload = encodeForwardHttpsRetentionPrunedV3({
     role: SOURCE,
@@ -400,18 +539,155 @@ test('derive: FPR9 prune transition has 736 role-global charge', async t => {
     chargeEntryBuffers: [chargeEntry(96, 1n, fixed(0x6b), 10)],
     authorityCommitments: Array.from({ length: 10 }, () => b4a.from(ZERO32))
   })
-  const derived = deriveForwardHttpsStoreWalQuotaEntryV3({ role: SOURCE, frame: frame(100, payload) })
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  const { entry: derived } = await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(100, payload, 1n, ZERO32) })
   t.is(derived.scope, 'PRUNE_TRANSITION')
   t.is(derived.ordinaryLogicalCharge, 736)
   t.ok(b4a.equals(derived.stableSessionId, id))
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
 })
 
 test('derive: cross-role and unknown types are INTEGRITY', async t => {
+  const { capability } = await quota(t, TARGET)
   const id = fixed(0x6c)
   const payload = sessionBody(id)
-  await t.exception.all(() => deriveForwardHttpsStoreWalQuotaEntryV3({ role: TARGET, frame: frame(96, payload) }))
-  await t.exception.all(() => deriveForwardHttpsStoreWalQuotaEntryV3({ role: SOURCE, frame: frame(55, payload) }))
-  await t.exception.all(() => deriveForwardHttpsStoreWalQuotaEntryV3({ role: SOURCE, frame: frame(112, payload) }))
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  await t.exception.all(absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(96, payload, 1n, ZERO32) }))
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+  const sink2 = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  await t.exception.all(absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink2, { frame: recoveryFrame(55, payload, 1n, ZERO32) }))
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink2)
+  const { capability: sourceCapability } = await quota(t, SOURCE)
+  const sink3 = beginForwardHttpsAggregateQuotaRecoveryV3(sourceCapability)
+  await t.exception.all(absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink3, { frame: recoveryFrame(112, payload, 1n, ZERO32) }))
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink3)
+})
+
+test('claim fencing: derive rejects missing, caller-constructed and non-SYNCED claims', async t => {
+  const id = fixed(0x76)
+  const payload = sessionBody(id)
+  await t.exception.all(() => deriveForwardHttpsStoreWalQuotaEntryV3({ role: SOURCE, frame: frame(96, payload) }), /transitionAuthority|unknown field/)
+  await t.exception.all(() => deriveForwardHttpsStoreWalQuotaEntryV3({ role: SOURCE, frame: frame(96, payload), transitionAuthority: Object.freeze({}) }), /forged|not SYNCED/)
+  // A MINTED_UNBEGUN live claim (fresh from bind) is rejected by derive
+  const { capability } = await quota(t, SOURCE)
+  const { createForwardHttpsStoreQuotaCostPlanV3, reserveForwardHttpsAggregateQuotaV3, bindForwardHttpsStoreQuotaActualBuffersV3, releaseForwardHttpsAggregateQuotaV3 } = replayModule
+  const plan = createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'PREPARE',
+    knownInputBuffers: [payload],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const reservation = await reserveForwardHttpsAggregateQuotaV3(capability, plan)
+  const { transitionAuthority } = bindForwardHttpsStoreQuotaActualBuffersV3(capability, reservation, {
+    logicalRecordBuffers: [],
+    encryptedPlaintextBuffers: [],
+    finalWalMetadataBuffers: [payload],
+    temporaryWriteBuffers: []
+  })
+  await t.exception.all(() => deriveForwardHttpsStoreWalQuotaEntryV3({ role: SOURCE, frame: frame(96, payload), transitionAuthority }), /not SYNCED|forged/)
+  await releaseForwardHttpsAggregateQuotaV3(capability, reservation)
+  // After release the claim is burned and rejected as reused
+  await t.exception.all(() => deriveForwardHttpsStoreWalQuotaEntryV3({ role: SOURCE, frame: frame(96, payload), transitionAuthority }), /forged|reused/)
+})
+
+test('composite: one-use handoff burn proven at every ordinal for 1, 2, 4 and 22 frame operations', async t => {
+  const cases = [
+    { operation: 'PREPARE', finalType: 96, prefix: 0 },
+    { operation: 'TURN_FINAL', finalType: 112, prefix: 1 },
+    { operation: 'PROCESSOR_REQUEST_READY', finalType: 115, prefix: 3 },
+    { operation: 'PROCESSOR_COMPLETED', finalType: 116, prefix: 21 }
+  ]
+  for (const { operation, finalType, prefix } of cases) {
+    const role = finalType < 112 ? SOURCE : TARGET
+    const { capability } = await quota(t, role)
+    const id = fixed(0x70 + prefix)
+    const magic = role === SOURCE ? 'FSS3' : 'FTS3'
+    const prefixPayloads = Array.from({ length: prefix }, (_, index) => b4a.concat([b4a.from(magic, 'ascii'), id, b4a.alloc(118 - 36, index & 0xff)]))
+    const finalPayload = b4a.concat([b4a.from(magic, 'ascii'), id, b4a.alloc(8, 0x43)])
+    const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+      operation,
+      knownInputBuffers: [...prefixPayloads, finalPayload],
+      temporaryWriteBuffers: [],
+      existingDestinationBytes: 0
+    })
+    const reservation = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan)
+    const { transitionAuthority } = replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, reservation, {
+      logicalRecordBuffers: [],
+      encryptedPlaintextBuffers: prefixPayloads,
+      finalWalMetadataBuffers: [finalPayload],
+      temporaryWriteBuffers: []
+    })
+    let sequence = 0n
+    const burned = []
+    const appendSync = async candidate => {
+      sequence += 1n
+      return { sequence, walHash: blake2b256(b4a.concat([b4a.from('wal'), candidate.payload])), payloadHash: blake2b256(candidate.payload) }
+    }
+    let claimOrHandoff = transitionAuthority
+    const handoffs = [claimOrHandoff]
+    let entry = null
+    for (let ordinal = 0; ordinal < prefix + 1; ordinal++) {
+      const payload = ordinal < prefix ? prefixPayloads[ordinal] : finalPayload
+      const type = ordinal < prefix ? 113 : finalType
+      const applied = await replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, reservation, claimOrHandoff, { type, payload }, appendSync)
+      entry = applied.entry
+      claimOrHandoff = applied.transitionAuthorityHandoff
+      if (claimOrHandoff !== null) handoffs.push(claimOrHandoff)
+      // One-use burn: re-presenting the just-consumed claim rejects without mutation
+      const consumed = handoffs[handoffs.length - 2]
+      await t.exception.all(
+        replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, reservation, consumed, { type, payload }, appendSync),
+        /forged|reused|early|skipped|reordered/
+      )
+    }
+    t.is(entry.walType, finalType)
+    t.is(entry.walSequence, BigInt(prefix + 1))
+    t.is(claimOrHandoff, null, 'null handoff at the exact final ordinal')
+    t.is(handoffs.length, prefix + 1)
+    await replayModule.commitForwardHttpsAggregateQuotaV3(capability, reservation, {
+      durableWalHeadSequence: sequence,
+      durableWalHeadHash: blake2b256(b4a.from('head'))
+    })
+    // Second bind on a burned reservation is impossible; a foreign claim rejects
+    await t.exception.all(() => replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, reservation, {
+      logicalRecordBuffers: [],
+      encryptedPlaintextBuffers: [],
+      finalWalMetadataBuffers: [finalPayload],
+      temporaryWriteBuffers: []
+    }))
+  }
+})
+
+test('composite: substituted final and cross-role presentations reject', async t => {
+  const { capability } = await quota(t, TARGET)
+  const id = fixed(0x77)
+  const prefixPayload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(118 - 36, 0x01)])
+  const finalPayload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x44)])
+  const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'TURN_FINAL',
+    knownInputBuffers: [prefixPayload, finalPayload],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const reservation = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan)
+  const { transitionAuthority } = replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, reservation, {
+    logicalRecordBuffers: [],
+    encryptedPlaintextBuffers: [prefixPayload],
+    finalWalMetadataBuffers: [finalPayload],
+    temporaryWriteBuffers: []
+  })
+  const appendSync = async candidate => ({ sequence: 1n, walHash: blake2b256(candidate.payload), payloadHash: blake2b256(candidate.payload) })
+  // Substituted final at ordinal0 (prefix ordinal expects type113)
+  await t.exception.all(
+    replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, reservation, transitionAuthority, { type: 112, payload: finalPayload }, appendSync),
+    /bound ordinal|forged/
+  )
+  // Cross-role claim: present the same claim against the other role capability
+  const { capability: sourceCapability } = await quota(t, SOURCE)
+  await t.exception.all(
+    replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(sourceCapability, reservation, transitionAuthority, { type: 113, payload: prefixPayload }, appendSync),
+    /forged|invalid/
+  )
 })
 
 function u16be (value) {

@@ -14,7 +14,10 @@ import {
   releaseForwardHttpsAggregateQuotaV3,
   adjustForwardHttpsAggregateQuotaV3,
   bindForwardHttpsStoreQuotaActualBuffersV3,
-  deriveForwardHttpsStoreWalQuotaEntryV3,
+  applyForwardHttpsAggregateQuotaWalFrameV3,
+  beginForwardHttpsAggregateQuotaRecoveryV3,
+  absorbForwardHttpsAggregateQuotaRecoveryFrameV3,
+  finishForwardHttpsAggregateQuotaRecoveryV3,
   encodeForwardHttpsRetentionPrunedV3
 } from './forward-https-replay-journal-v4.js'
 import {
@@ -117,15 +120,21 @@ export async function openForwardHttpsSourceStoreV3 (options) {
       faultInjector: options.faultInjector || null
     })
   }
+  // Recovery runs through the quota recovery sink: sink-private one-use
+  // claims are minted, derived and burned inside absorb; finish merges the
+  // canonical predecessor state and is mandatory before localOperational.
+  state.recoverySink = beginForwardHttpsAggregateQuotaRecoveryV3(state.storeQuotaCapability)
   await state.store.open(frame => recoverFrame(state, frame))
+  state.recoveryFinalState = await finishForwardHttpsAggregateQuotaRecoveryV3(state.recoverySink)
+  state.recoverySink = null
   state.walHeadSequence = state.store.walSequence
   state.walHeadHash = b4a.from(state.store.walHash)
   state.localOperational = true
   return state
 }
 
-function recoverFrame (state, frame) {
-  const derived = deriveForwardHttpsStoreWalQuotaEntryV3({ role: ROLE, frame })
+async function recoverFrame (state, frame) {
+  const { entry: derived } = await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(state.recoverySink, { frame })
   if (derived.scope === 'ROLE_GLOBAL') {
     state.roleGlobalLogicalBytes += derived.ordinaryLogicalCharge
     return
@@ -203,6 +212,51 @@ function requireOperational (state) {
   if (!state.localOperational) fail('source store is not operational', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INVALID)
 }
 
+// Append one operation through the atomic composite: bind mints the ordinal0
+// claim, each frame runs validate->begin->appendSync->derive inside one call,
+// and commit follows the final derive with no remaining claim. The slot
+// mutation happens only after the frame is durable and derived.
+async function appendOperation (state, slot, operation, frames) {
+  const plan = createForwardHttpsStoreQuotaCostPlanV3(state.storeQuotaCapability, {
+    operation,
+    knownInputBuffers: frames.map(frame => frame.payload),
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const reservation = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
+  let attempted = false
+  try {
+    const { transitionAuthority } = bindForwardHttpsStoreQuotaActualBuffersV3(state.storeQuotaCapability, reservation, {
+      logicalRecordBuffers: [],
+      encryptedPlaintextBuffers: frames.slice(0, -1).map(frame => frame.payload),
+      finalWalMetadataBuffers: [frames[frames.length - 1].payload],
+      temporaryWriteBuffers: []
+    })
+    attempted = true
+    let claimOrHandoff = transitionAuthority
+    let entry = null
+    for (const frame of frames) {
+      const applied = await applyForwardHttpsAggregateQuotaWalFrameV3(state.storeQuotaCapability, reservation, claimOrHandoff, frame,
+        async candidate => state.store.appendAndApply(candidate, () => {}))
+      entry = applied.entry
+      claimOrHandoff = applied.transitionAuthorityHandoff
+      if (slot) {
+        slot.registry.admit(entry)
+        slot.priorRevision++
+      }
+      state.walHeadSequence = entry.walSequence
+    }
+    await commitForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, reservation, {
+      durableWalHeadSequence: state.store.walSequence,
+      durableWalHeadHash: state.store.walHash
+    })
+    return entry
+  } catch (error) {
+    if (!attempted) await releaseForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, reservation).catch(() => {})
+    throw error
+  }
+}
+
 // Fresh source PREPARED_NEW=96: FREE -> ALLOCATED with the PREPARE quota row.
 export async function prepareForwardHttpsSourceSessionV3 (state, input) {
   requireOperational(state)
@@ -212,42 +266,20 @@ export async function prepareForwardHttpsSourceSessionV3 (state, input) {
   const slot = freshSlot(state, stableSessionId)
   state.unconsumed--
   const payload = sessionPayload(stableSessionId, input.body || b4a.alloc(0))
-  const plan = createForwardHttpsStoreQuotaCostPlanV3(state.storeQuotaCapability, {
-    operation: 'PREPARE',
-    knownInputBuffers: [payload],
-    temporaryWriteBuffers: [],
-    existingDestinationBytes: 0
-  })
-  const reservation = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
   try {
-    bindForwardHttpsStoreQuotaActualBuffersV3(state.storeQuotaCapability, reservation, {
-      logicalRecordBuffers: [],
-      encryptedPlaintextBuffers: [],
-      finalWalMetadataBuffers: [payload],
-      temporaryWriteBuffers: []
-    })
-    const frame = await state.store.appendAndApply({
+    const entry = await appendOperation(state, slot, 'PREPARE', [{
       type: WAL_TYPE.PREPARED_NEW,
       transactionId: input.transactionId || transactionIdFor(stableSessionId, 0xa5),
       virtualBucket: 0,
       payload
-    }, recovered => {
-      const derived = deriveForwardHttpsStoreWalQuotaEntryV3({ role: ROLE, frame: recovered })
-      slot.registry.admit(derived)
-      slot.priorRevision++
-      slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED
-      state.walHeadSequence = derived.walSequence
-    })
-    await commitForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, reservation, {
-      durableWalHeadSequence: frame.sequence,
-      durableWalHeadHash: frame.walHash
-    })
-    return Object.freeze({ walSequence: frame.sequence, walHash: b4a.from(frame.walHash), payload })
+    }])
+    slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED
+    return Object.freeze({ walSequence: entry.walSequence, walHash: b4a.from(state.store.walHash), payload })
   } catch (error) {
-    slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.FREE
-    state.slots.delete(keyOf(stableSessionId))
-    state.unconsumed++
-    await releaseForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, reservation).catch(() => {})
+    if (slot.state === FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.FREE) {
+      state.slots.delete(keyOf(stableSessionId))
+      state.unconsumed++
+    }
     throw error
   }
 }
@@ -266,72 +298,26 @@ export async function appendForwardHttpsSourceSessionV3 (state, input) {
     fail('removable charge entry cap exceeded; session terminalized BUDGET_EXHAUSTED', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.BUDGET_EXHAUSTED)
   }
   const payload = sessionPayload(stableSessionId, input.body || b4a.alloc(0))
-  const plan = createForwardHttpsStoreQuotaCostPlanV3(state.storeQuotaCapability, {
-    operation: walType === WAL_TYPE.RESULT_PERSISTED ? 'RESULT' : 'PREPARE',
-    knownInputBuffers: [payload],
-    temporaryWriteBuffers: [],
-    existingDestinationBytes: 0
-  })
-  const reservation = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
-  try {
-    bindForwardHttpsStoreQuotaActualBuffersV3(state.storeQuotaCapability, reservation, {
-      logicalRecordBuffers: [],
-      encryptedPlaintextBuffers: [],
-      finalWalMetadataBuffers: [payload],
-      temporaryWriteBuffers: []
-    })
-    const frame = await state.store.appendAndApply({
-      type: walType,
-      transactionId: input.transactionId || transactionIdFor(stableSessionId, 0xa5),
-      virtualBucket: 0,
-      payload
-    }, recovered => {
-      const derived = deriveForwardHttpsStoreWalQuotaEntryV3({ role: ROLE, frame: recovered })
-      slot.registry.admit(derived)
-      slot.priorRevision++
-      state.walHeadSequence = derived.walSequence
-    })
-    await commitForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, reservation, {
-      durableWalHeadSequence: frame.sequence,
-      durableWalHeadHash: frame.walHash
-    })
-    return Object.freeze({ walSequence: frame.sequence, walHash: b4a.from(frame.walHash), payload })
-  } catch (error) {
-    await releaseForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, reservation).catch(() => {})
-    throw error
-  }
+  const entry = await appendOperation(state, slot, walType === WAL_TYPE.RESULT_PERSISTED ? 'RESULT' : 'PREPARE', [{
+    type: walType,
+    transactionId: input.transactionId || transactionIdFor(stableSessionId, 0xa5),
+    virtualBucket: 0,
+    payload
+  }])
+  return Object.freeze({ walSequence: entry.walSequence, walHash: b4a.from(state.store.walHash), payload })
 }
 
 async function appendTerminalPayload (state, slot, payload) {
-  const plan = createForwardHttpsStoreQuotaCostPlanV3(state.storeQuotaCapability, {
-    operation: 'SESSION_TERMINAL',
-    knownInputBuffers: [payload],
-    temporaryWriteBuffers: [],
-    existingDestinationBytes: 0
-  })
-  const reservation = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
-  try {
-    const frame = await state.store.appendAndApply({
-      type: WAL_TYPE.SESSION_TERMINAL,
-      transactionId: transactionIdFor(slot.stableSessionId, 0x5a),
-      virtualBucket: 0,
-      payload
-    }, recovered => {
-      const derived = deriveForwardHttpsStoreWalQuotaEntryV3({ role: ROLE, frame: recovered })
-      slot.priorRevision++
-      slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_UNPRUNED
-      state.consumedUnpruned++
-      state.walHeadSequence = derived.walSequence
-    })
-    await commitForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, reservation, {
-      durableWalHeadSequence: frame.sequence,
-      durableWalHeadHash: frame.walHash
-    })
-    return frame
-  } catch (error) {
-    await releaseForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, reservation).catch(() => {})
-    throw error
-  }
+  const entry = await appendOperation(state, null, 'SESSION_TERMINAL', [{
+    type: WAL_TYPE.SESSION_TERMINAL,
+    transactionId: transactionIdFor(slot.stableSessionId, 0x5a),
+    virtualBucket: 0,
+    payload
+  }])
+  slot.priorRevision++
+  slot.state = FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.CONSUMED_UNPRUNED
+  state.consumedUnpruned++
+  return { entry, sequence: entry.walSequence, walHash: state.store.walHash }
 }
 
 async function terminalizeBudgetExhausted (state, slot, input) {
@@ -389,19 +375,15 @@ export async function terminalizeForwardHttpsSourceAbsentSequenceV3 (state, inpu
     expiresAtEpoch: input.expiresAtEpoch,
     retainedUntilEpoch: input.expiresAtEpoch + 900
   })
-  const frame = await appendTerminalPayload(state, slot, payload)
+  const applied = await appendTerminalPayload(state, slot, payload)
   slot.priorRevision = 1n
   slot.minimal = true
   slot.expiresAtEpoch = input.expiresAtEpoch
   slot.recoveryGraceUntilEpoch = input.expiresAtEpoch + 900
   slot.trustedEpochHighWatermark = input.newTrustedEpochHighWatermark
   slot.authorityBitmap = (1 << 7) | (1 << 9)
-  const derived = deriveForwardHttpsStoreWalQuotaEntryV3({
-    role: ROLE,
-    frame: { type: WAL_TYPE.SESSION_TERMINAL, payload, payloadHash: frame.payloadHash, sequence: frame.sequence, frameBytes: 416 }
-  })
-  slot.authorityCommitments = derived.authorityCommitments
-  return Object.freeze({ walSequence: frame.sequence, walHash: b4a.from(frame.walHash), payload })
+  slot.authorityCommitments = applied.entry.authorityCommitments
+  return Object.freeze({ walSequence: applied.sequence, walHash: b4a.from(applied.walHash), payload })
 }
 
 export async function pruneForwardHttpsSourceSessionV3 (state, input) {
@@ -440,12 +422,21 @@ export async function pruneForwardHttpsSourceSessionV3 (state, input) {
   const reservation = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
   let frame
   try {
-    frame = await state.store.appendAndApply({
+    const { transitionAuthority } = bindForwardHttpsStoreQuotaActualBuffersV3(state.storeQuotaCapability, reservation, {
+      logicalRecordBuffers: [],
+      encryptedPlaintextBuffers: [],
+      finalWalMetadataBuffers: [payload],
+      temporaryWriteBuffers: []
+    })
+    await applyForwardHttpsAggregateQuotaWalFrameV3(state.storeQuotaCapability, reservation, transitionAuthority, {
       type: WAL_TYPE.RETENTION_PRUNED,
       transactionId: transactionIdFor(slot.stableSessionId, 0x5a),
       virtualBucket: 0,
       payload
-    }, () => {})
+    }, async candidate => {
+      frame = await state.store.appendAndApply(candidate, () => {})
+      return frame
+    })
   } catch (error) {
     await releaseForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, reservation).catch(() => {})
     throw error

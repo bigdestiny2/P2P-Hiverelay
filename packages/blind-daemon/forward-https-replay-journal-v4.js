@@ -31,6 +31,7 @@ const QUOTA_AUTHORITIES = new WeakMap()
 const QUOTA_CAPABILITIES = new WeakMap()
 const QUOTA_SINKS = new WeakMap()
 const QUOTA_CLAIMS = new WeakMap()
+const QUOTA_RECOVERY_FINALS = new WeakMap()
 const QUOTA_PLANS = new WeakMap()
 const QUOTA_RESERVATIONS = new WeakMap()
 
@@ -827,6 +828,8 @@ export async function openForwardHttpsAggregateQuotaV3 (options) {
     lastMonotonicMillis: u64(options.monotonicMillis(), 'monotonicMillis()'),
     logical: { SOURCE_STORE: 0, TARGET_STORE: 0 },
     physical: {},
+    sessions: new Map(),
+    openRecoverySinks: { SOURCE_STORE: null, TARGET_STORE: null },
     initialized: false,
     capabilitiesMinted: false,
     pendingReservation: false,
@@ -863,29 +866,83 @@ export function mintForwardHttpsAggregateQuotaCapabilitiesV3 (quotaAuthority) {
   return deepFreeze(output)
 }
 
-export function beginForwardHttpsAggregateQuotaRecoveryV3 (quotaAuthority, storeQuotaCapability, input) {
-  const state = quotaState(quotaAuthority)
+// ---------------------------------------------------------------------------
+// Recovery claim ABI (v16 recovery_claims): recovery claims are quota-minted,
+// sink-private, one-use, burned inside absorb and never exposed to any caller.
+// Live claims and recovery claims are disjoint classes.
+// ---------------------------------------------------------------------------
+
+function mintQuotaClaim (bindings) {
+  const claim = Object.freeze({})
+  QUOTA_CLAIMS.set(claim, { ...bindings, object: claim, burned: false })
+  return claim
+}
+
+// Advance the canonical per-session mirror (bounded identity/vector state)
+// from one closed derived entry. The payload is needed only for FPR9
+// allocation dispositions.
+function applyEntryToSessionMirror (sessions, key, entry, payload) {
+  if (entry.scope === 'ROLE_GLOBAL' || entry.stableSessionId === null) return
+  const mirror = sessions.get(key) || { present: false, consumed: false, pruned: false, bitmap: 0, commitments: null, priorRevision: 0n }
+  if (entry.scope === 'PRUNE_TRANSITION') {
+    const pruned = decodeForwardHttpsRetentionPrunedV3(payload)
+    if (pruned.flags === 2) {
+      // flags2 existing-session prefix-abort: the slot stays ALLOCATED and the
+      // authority vector is byte-identically unchanged; only orphan charge is
+      // removed. No identity transition is recorded.
+      mirror.present = true
+      mirror.consumed = false
+    } else if (pruned.allocationDisposition === 1) {
+      mirror.present = false
+      mirror.consumed = false
+      mirror.pruned = true
+      mirror.bitmap = 0
+      mirror.commitments = null
+    } else {
+      mirror.present = true
+      mirror.consumed = true
+      mirror.pruned = true
+      mirror.bitmap = 0
+      mirror.commitments = null
+    }
+    sessions.set(key, mirror)
+    return
+  }
+  mirror.present = true
+  mirror.priorRevision += 1n
+  mirror.bitmap = entry.authorityBitmap
+  mirror.commitments = entry.authorityCommitments
+  mirror.consumed = entry.terminalLogicalCharge > 0 || (entry.authorityBitmap & 512) !== 0
+  mirror.pruned = false
+  sessions.set(key, mirror)
+}
+
+export function beginForwardHttpsAggregateQuotaRecoveryV3 (storeQuotaCapability) {
   const capability = quotaCapabilityState(storeQuotaCapability)
-  if (capability.quotaAuthority !== quotaAuthority || (capability.role !== 'SOURCE_STORE' && capability.role !== 'TARGET_STORE')) {
+  if (capability.role !== 'SOURCE_STORE' && capability.role !== 'TARGET_STORE') {
     quotaFail('recovery capability role is invalid', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
   }
-  closedObject(input, ['storeId', 'mapGeneration', 'ownerFenceTokenHash', 'durabilityContinuityHash'], [], 'recovery input')
+  const state = quotaState(capability.quotaAuthority)
+  // Sink exclusivity: exactly one open recovery sink per role root. A second
+  // begin while a sink is open is AUTHORITY_INVALID; a crashed or abandoned
+  // sink leaves the store non-localOperational until a fresh begin finishes.
+  if (state.openRecoverySinks[capability.role] !== null) {
+    quotaFail('a recovery sink is already open for this role root', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+  }
   const sink = Object.freeze({})
   QUOTA_SINKS.set(sink, {
-    quotaAuthority,
+    quotaAuthority: capability.quotaAuthority,
     capability: storeQuotaCapability,
     role: capability.role,
-    storeId: b4a.from(bytes(input.storeId, 32, 'storeId', true)),
-    mapGeneration: u64(input.mapGeneration, 'mapGeneration', true),
-    ownerFenceTokenHash: b4a.from(bytes(input.ownerFenceTokenHash, 32, 'ownerFenceTokenHash', true)),
-    durabilityContinuityHash: b4a.from(bytes(input.durabilityContinuityHash, 32, 'durabilityContinuityHash', true)),
     logicalBytes: 0,
     lastSequence: 0n,
     lastHash: b4a.from(ZERO32),
+    sessions: new Map(),
     finished: false,
     burned: false,
     state
   })
+  state.openRecoverySinks[capability.role] = sink
   return sink
 }
 
@@ -894,48 +951,75 @@ export async function absorbForwardHttpsAggregateQuotaRecoveryFrameV3 (recoveryS
   const sink = recoverySink && QUOTA_SINKS.get(recoverySink)
   if (!sink || sink.finished || sink.burned) quotaFail('recovery sink is invalid', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
   const frame = input.frame
-  if (!frame || typeof frame !== 'object' || u64(frame.sequence, 'frame.sequence') !== sink.lastSequence + 1n ||
+  if (!frame || typeof frame !== 'object' || Array.isArray(frame) ||
+      u64(frame.sequence, 'frame.sequence') !== sink.lastSequence + 1n ||
       !b4a.equals(bytes(frame.previousWalHash, 32, 'frame.previousWalHash'), sink.lastHash) ||
-      u64(frame.mapGeneration, 'frame.mapGeneration') !== sink.mapGeneration ||
-      !b4a.equals(bytes(frame.ownerFenceTokenHash, 32, 'frame.ownerFenceTokenHash'), sink.ownerFenceTokenHash) ||
-      !b4a.equals(bytes(frame.durabilityContinuityHash, 32, 'frame.durabilityContinuityHash'), sink.durabilityContinuityHash) ||
-      safeUint(frame.frameBytes, 'frame.frameBytes') !== bytes(frame.payload, null, 'frame.payload').byteLength + 224) {
-    quotaFail('recovery frame binding is invalid', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+      safeUint(frame.frameBytes, 'frame.frameBytes') !== bytes(frame.payload, null, 'frame.payload').byteLength + WAL_FRAME_OVERHEAD_BYTES) {
+    quotaFail('recovery frame is out-of-order, duplicate, torn or cross-root', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
   }
-  sink.logicalBytes += frame.payload.byteLength
-  sink.lastSequence = frame.sequence
+  // Mint the one-use recovery-sink claim bound to this ordinal, invoke derive
+  // with it and burn it exactly once inside this call.
+  const claim = mintQuotaClaim({
+    kind: 'recovery',
+    state: 'MINTED',
+    role: sink.role,
+    resolvePredecessor: stableSessionId => sink.sessions.get(b4a.toString(stableSessionId, 'hex')) || null
+  })
+  const derived = deriveForwardHttpsStoreWalQuotaEntryV3({
+    role: sink.role,
+    frame: {
+      type: safeUint(frame.type, 'frame.type', 1, 255),
+      payload: bytes(frame.payload, null, 'frame.payload'),
+      payloadHash: bytes(frame.payloadHash, 32, 'frame.payloadHash'),
+      sequence: u64(frame.sequence, 'frame.sequence'),
+      frameBytes: safeUint(frame.frameBytes, 'frame.frameBytes'),
+      walHash: bytes(frame.walHash, 32, 'frame.walHash')
+    },
+    transitionAuthority: claim
+  })
+  applyEntryToSessionMirror(sink.sessions, b4a.toString(derived.entry.stableSessionId === null ? ZERO32 : derived.entry.stableSessionId, 'hex'), derived.entry, frame.payload)
+  sink.logicalBytes += bytes(frame.payload, null, 'frame.payload').byteLength
+  sink.lastSequence = u64(frame.sequence, 'frame.sequence')
   sink.lastHash = b4a.from(bytes(frame.walHash, 32, 'frame.walHash'))
   await quotaFault(sink.state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.RECOVERY_AFTER_FRAME)
+  return freezeResult({ entry: derived.entry })
 }
 
-export async function finishForwardHttpsAggregateQuotaRecoveryV3 (recoverySink, input) {
-  closedObject(input, ['walHeadSequence', 'walHeadHash'], [], 'recovery finish input')
+export async function finishForwardHttpsAggregateQuotaRecoveryV3 (recoverySink) {
   const sink = recoverySink && QUOTA_SINKS.get(recoverySink)
   if (!sink || sink.finished || sink.burned) quotaFail('recovery sink is invalid', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
-  if (u64(input.walHeadSequence, 'walHeadSequence') !== sink.lastSequence ||
-      !b4a.equals(bytes(input.walHeadHash, 32, 'walHeadHash'), sink.lastHash)) {
-    quotaFail('recovery head is invalid', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
-  }
   sink.finished = true
-  const claim = Object.freeze({})
-  QUOTA_CLAIMS.set(claim, { sink, burned: false })
+  sink.state.openRecoverySinks[sink.role] = null
+  // Recovery is complete: merge the recovered canonical identity/vector state
+  // into the quota authority so live claims bind exact predecessors.
+  for (const [key, mirror] of sink.sessions) sink.state.sessions.set(`${sink.role}:${key}`, mirror)
+  const finalState = Object.freeze({})
+  QUOTA_RECOVERY_FINALS.set(finalState, {
+    quotaAuthority: sink.quotaAuthority,
+    role: sink.role,
+    logicalBytes: sink.logicalBytes,
+    walHeadSequence: sink.lastSequence,
+    walHeadHash: b4a.from(sink.lastHash),
+    sessionCount: sink.sessions.size,
+    burned: false
+  })
   await quotaFault(sink.state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.RECOVERY_AFTER_FINISH)
-  return claim
+  return finalState
 }
 
 export async function initializeForwardHttpsAggregateQuotaV3 (quotaAuthority, input) {
   const state = quotaState(quotaAuthority)
-  closedObject(input, ['sourceRecoveryClaim', 'targetRecoveryClaim'], [], 'quota initialize input')
+  closedObject(input, ['sourceRecoveryFinalState', 'targetRecoveryFinalState'], [], 'quota initialize input')
   if (state.initialized) quotaFail('quota is already initialized', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
-  const source = input.sourceRecoveryClaim && QUOTA_CLAIMS.get(input.sourceRecoveryClaim)
-  const target = input.targetRecoveryClaim && QUOTA_CLAIMS.get(input.targetRecoveryClaim)
-  if (!source || !target || source.burned || target.burned || source.sink.role !== 'SOURCE_STORE' || target.sink.role !== 'TARGET_STORE' ||
-      source.sink.quotaAuthority !== quotaAuthority || target.sink.quotaAuthority !== quotaAuthority) {
-    quotaFail('quota recovery claims are invalid', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+  const source = input.sourceRecoveryFinalState && QUOTA_RECOVERY_FINALS.get(input.sourceRecoveryFinalState)
+  const target = input.targetRecoveryFinalState && QUOTA_RECOVERY_FINALS.get(input.targetRecoveryFinalState)
+  if (!source || !target || source.burned || target.burned || source.role !== 'SOURCE_STORE' || target.role !== 'TARGET_STORE' ||
+      source.quotaAuthority !== quotaAuthority || target.quotaAuthority !== quotaAuthority) {
+    quotaFail('quota recovery final states are invalid', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
   }
   source.burned = target.burned = true
-  state.logical.SOURCE_STORE = source.sink.logicalBytes
-  state.logical.TARGET_STORE = target.sink.logicalBytes
+  state.logical.SOURCE_STORE = source.logicalBytes
+  state.logical.TARGET_STORE = target.logicalBytes
   state.physical = await measurements(state)
   await quotaFault(state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.INITIALIZE_AFTER_MEASURE)
   ensureQuota(state, null, 0, 0)
@@ -1017,6 +1101,7 @@ export function bindForwardHttpsStoreQuotaActualBuffersV3 (storeQuotaCapability,
     quotaFail('quota reservation is invalid', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
   }
   closedObject(input, ['logicalRecordBuffers', 'encryptedPlaintextBuffers', 'finalWalMetadataBuffers', 'temporaryWriteBuffers'], [], 'actual buffer binding')
+  if (internal.actual !== null) quotaFail('quota reservation is already bound', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
   const arrays = ['logicalRecordBuffers', 'encryptedPlaintextBuffers', 'finalWalMetadataBuffers', 'temporaryWriteBuffers']
     .flatMap(field => buffersArray(input[field], field))
   const logicalBytes = arrays.reduce((sum, item) => sum + item.byteLength, 0) + input.encryptedPlaintextBuffers.length * 218
@@ -1024,7 +1109,123 @@ export function bindForwardHttpsStoreQuotaActualBuffersV3 (storeQuotaCapability,
   if (logicalBytes > internal.plan.logicalBytes || physicalBytes > internal.plan.physicalBytes) {
     quotaFail('actual buffers exceed the conservative plan', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
   }
+  // One-time bind freezes the exact actual frame count/order: zero or more
+  // type113 prefix frames (bound as encrypted plaintext records) followed by
+  // exactly one operation final frame. Actual dimensions above the reserved
+  // operation row are INTEGRITY.
+  const row = FORWARD_HTTPS_STORE_WAL_QUOTA_FRAME_ROWS[internal.plan.operation]
+  if (!row || row.finalTypes.length === 0) quotaFail('operation cannot bind WAL frames', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+  const type113Buffers = buffersArray(input.encryptedPlaintextBuffers, 'encryptedPlaintextBuffers')
+  if (type113Buffers.length > row.type113) quotaFail('type113 frame count exceeds the operation row', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+  const finalBuffers = buffersArray(input.finalWalMetadataBuffers, 'finalWalMetadataBuffers')
+  if (finalBuffers.length !== 1 || finalBuffers[0].byteLength < 36) quotaFail('exactly one operation final frame buffer is required', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+  for (const prefix of type113Buffers) if (prefix.byteLength !== 118) quotaFail('type113 frame payload must be exactly 118 bytes', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+  const finalPayload = finalBuffers[0]
+  const stableSessionId = internal.plan.operation === 'PRUNE'
+    ? b4a.from(finalPayload.subarray(8, 40))
+    : b4a.from(finalPayload.subarray(4, 36))
+  if (b4a.equals(stableSessionId, ZERO32)) quotaFail('bound session identity must be nonzero', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
   internal.actual = { logicalBytes, physicalBytes, commitments: arrays.map(item => hmac(ZERO32, item)) }
+  internal.totalFrames = 1 + type113Buffers.length
+  internal.nextOrdinal = 0
+  internal.lastHandoff = null
+  internal.stableSessionId = stableSessionId
+  // Mint the ordinal0 MINTED_UNBEGUN claim bound to the independently held
+  // reservation, role, session, operation, exact total and the quota-private
+  // canonical predecessor state. Returned exactly once.
+  const state = internal.state
+  const claim = mintQuotaClaim({
+    kind: 'live',
+    state: 'MINTED_UNBEGUN',
+    role: capability.role,
+    reservation,
+    ordinal: 0,
+    totalFrames: internal.totalFrames,
+    stableSessionId,
+    predecessorHead: null,
+    resolvePredecessor: sessionId => state.sessions.get(`${capability.role}:${b4a.toString(sessionId, 'hex')}`) || null
+  })
+  internal.claims.add(claim)
+  return Object.freeze({ transitionAuthority: claim })
+}
+
+// ---------------------------------------------------------------------------
+// Composite per-frame operation (v17 transition_authority_lifecycle). The
+// module-private begin step executes only inside this operation; no caller can
+// begin, derive or present a handoff outside the atomic append+sync+derive.
+// ---------------------------------------------------------------------------
+
+// Module-private begin step: ordinal0 marks the reservation WAL_ATTEMPTED;
+// ordinal>0 consumes the sole prior PENDING_DURABILITY handoff once.
+function beginForwardHttpsAggregateQuotaWalAttemptV3 (internal, claimInternal) {
+  if (claimInternal.ordinal === 0) {
+    if (claimInternal.state !== 'MINTED_UNBEGUN') quotaFail('ordinal0 claim is not MINTED_UNBEGUN', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+    internal.walAttempted = true
+    internal.mutated = true
+  } else {
+    if (claimInternal.state !== 'PENDING_DURABILITY' || internal.lastHandoff !== claimInternal.object) {
+      quotaFail('ordinal handoff is not the sole prior PENDING_DURABILITY handoff', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+    }
+    internal.lastHandoff = null
+  }
+  claimInternal.state = 'BEGUN'
+}
+
+function compositeReject (storeQuotaCapability, token, internal, message, code) {
+  if (internal.walAttempted) {
+    try { failForwardHttpsAggregateQuotaWalAttemptV3(storeQuotaCapability, token) } catch {}
+  }
+  quotaFail(message, code)
+}
+
+export async function applyForwardHttpsAggregateQuotaWalFrameV3 (storeQuotaCapability, token, claimOrHandoff, frame, appendSync) {
+  const capability = quotaCapabilityState(storeQuotaCapability)
+  const internal = token && QUOTA_RESERVATIONS.get(token)
+  const claimInternal = claimOrHandoff && QUOTA_CLAIMS.get(claimOrHandoff)
+  if (!internal || internal.burned || internal.capability !== storeQuotaCapability ||
+      !claimInternal || claimInternal.burned || claimInternal.kind !== 'live' || claimInternal.reservation !== token ||
+      claimInternal.role !== capability.role || !frame || typeof frame !== 'object' || Array.isArray(frame) ||
+      typeof appendSync !== 'function') {
+    quotaFail('composite apply presentation is forged', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+  }
+  if (claimInternal.ordinal !== internal.nextOrdinal || claimInternal.ordinal >= internal.totalFrames) {
+    compositeReject(storeQuotaCapability, token, internal, 'composite apply ordinal is early, skipped, reordered or reused', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+  }
+  const row = FORWARD_HTTPS_STORE_WAL_QUOTA_FRAME_ROWS[internal.plan.operation]
+  const frameType = safeUint(frame.type, 'frame.type', 1, 255)
+  const prefixOrdinal = claimInternal.ordinal < internal.totalFrames - 1
+  if ((prefixOrdinal && frameType !== 113) || (!prefixOrdinal && !row.finalTypes.includes(frameType))) {
+    compositeReject(storeQuotaCapability, token, internal, 'composite apply frame type does not match the bound ordinal', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+  }
+  try {
+    beginForwardHttpsAggregateQuotaWalAttemptV3(internal, claimInternal)
+    const payload = bytes(frame.payload, null, 'frame.payload')
+    const durable = await appendSync(frame)
+    if (!durable || typeof durable !== 'object') throw new TypeError('appendSync must return the durable frame')
+    claimInternal.state = 'SYNCED'
+    const derived = deriveForwardHttpsStoreWalQuotaEntryV3({
+      role: capability.role,
+      frame: {
+        type: frameType,
+        payload,
+        payloadHash: bytes(durable.payloadHash, 32, 'durable.payloadHash'),
+        sequence: u64(durable.sequence, 'durable.sequence'),
+        frameBytes: payload.byteLength + WAL_FRAME_OVERHEAD_BYTES,
+        walHash: bytes(durable.walHash, 32, 'durable.walHash')
+      },
+      transitionAuthority: claimOrHandoff
+    })
+    applyEntryToSessionMirror(internal.state.sessions, `${capability.role}:${b4a.toString(derived.entry.stableSessionId === null ? ZERO32 : derived.entry.stableSessionId, 'hex')}`, derived.entry, payload)
+    internal.nextOrdinal++
+    internal.lastHandoff = derived.transitionAuthorityHandoff
+    if (internal.lastHandoff !== null) internal.claims.add(internal.lastHandoff)
+    return freezeResult({ entry: derived.entry, transitionAuthorityHandoff: derived.transitionAuthorityHandoff })
+  } catch (error) {
+    if (internal.walAttempted) {
+      try { failForwardHttpsAggregateQuotaWalAttemptV3(storeQuotaCapability, token) } catch {}
+    }
+    throw error
+  }
 }
 
 function ensureQuota (state, role, logicalIncrease, physicalIncrease) {
@@ -1059,7 +1260,7 @@ export function reserveForwardHttpsAggregateQuotaV3 (quotaCapability, costPlan) 
     if (state.pendingReservation) quotaFail('nested quota reservation', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
     state.pendingReservation = true
     const reservation = Object.freeze({})
-    QUOTA_RESERVATIONS.set(reservation, { state, capability: quotaCapability, plan, actual: null, burned: false, mutated: false })
+    QUOTA_RESERVATIONS.set(reservation, { state, capability: quotaCapability, plan, actual: null, burned: false, mutated: false, walAttempted: false, totalFrames: 0, nextOrdinal: 0, lastHandoff: null, claims: new Set(), stableSessionId: null })
     state.pendingReservationObject = reservation
     return reservation
   })
@@ -1081,6 +1282,11 @@ export function commitForwardHttpsAggregateQuotaV3 (quotaCapability, reservation
   const state = quotaState(capability.quotaAuthority)
   return serialize(state, async () => {
     if (internal.plan.operation === 'PRUNE') quotaFail('commit is forbidden for PRUNE; use adjust', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    // Commit is legal only after the final composite apply, the final derive
+    // and with no remaining live claim or outstanding handoff.
+    if (internal.actual !== null && (internal.nextOrdinal !== internal.totalFrames || internal.lastHandoff !== null)) {
+      quotaFail('quota commit has a remaining claim or outstanding handoff', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    }
     internal.burned = true
     const cost = internal.actual || internal.plan
     if (capability.role === 'SOURCE_STORE' || capability.role === 'TARGET_STORE') state.logical[capability.role] += cost.logicalBytes
@@ -1104,8 +1310,15 @@ export function releaseForwardHttpsAggregateQuotaV3 (quotaCapability, reservatio
   }
   const state = quotaState(capability.quotaAuthority)
   return serialize(state, async () => {
+    // Release is forbidden after the first WAL attempt; pre-first-apply
+    // release burns the reservation and every minted/unissued claim.
+    if (internal.walAttempted) quotaFail('release is forbidden after the first WAL attempt', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
     await quotaFault(state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.RELEASE_BEFORE_UNLOCK)
     internal.burned = true
+    for (const claim of internal.claims) {
+      const claimInternal = QUOTA_CLAIMS.get(claim)
+      if (claimInternal) { claimInternal.burned = true; claimInternal.state = 'BURNED' }
+    }
     state.pendingReservation = false
     state.pendingReservationObject = null
   })
@@ -1130,6 +1343,11 @@ export function adjustForwardHttpsAggregateQuotaV3 (storeQuotaCapability, input)
     internal = pending ? QUOTA_RESERVATIONS.get(pending) : null
     if (!internal || internal.burned || internal.capability !== storeQuotaCapability || internal.plan.operation !== 'PRUNE') {
       quotaFail('quota adjustment has no pending PRUNE reservation', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+    }
+    // Adjust follows the complete final composite apply of the FPR9 frame:
+    // exact final derive, no remaining claim, no outstanding handoff.
+    if (internal.actual === null || internal.nextOrdinal !== internal.totalFrames || internal.lastHandoff !== null) {
+      quotaFail('quota adjustment has a remaining claim or outstanding handoff', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
     }
     const tombstone = bytes(input.durableTombstonePayloadBuffer, null, 'durableTombstonePayloadBuffer')
     const commitment = hmac(ZERO32, tombstone)
@@ -1287,6 +1505,22 @@ const DOMAIN_PRUNE_SESSION_STATE = b4a.from('hiverelay.blind.forward-https-prune
 const DOMAIN_PREFIX_SESSION_STATE = b4a.from('hiverelay.blind.forward-https-prefix-session-state.v3', 'ascii')
 const DOMAIN_RETENTION_LOOKUP = b4a.from('hiverelay.blind.forward-https-retention-lookup.v3', 'ascii')
 const DOMAIN_TERMINAL_STATE = b4a.from('hiverelay.blind.forward-https-terminal-state.v3', 'ascii')
+const DOMAIN_TERMINAL_STATE_EXISTING = b4a.from('hiverelay.blind.forward-https-terminal-state-existing.v3', 'ascii')
+
+// Exact actual frame order per operation row: zero or more type113 prefix
+// frames followed by exactly one operation final frame (v18 bound table).
+const FORWARD_HTTPS_STORE_WAL_QUOTA_FRAME_ROWS = deepFreeze({
+  OPEN_RECOVERY: { type113: 0, finalTypes: [] },
+  PREPARE: { type113: 0, finalTypes: [96, 97] },
+  RESULT: { type113: 0, finalTypes: [98] },
+  TURN_FINAL: { type113: 1, finalTypes: [112] },
+  PROCESSOR_REQUEST_READY: { type113: 3, finalTypes: [115] },
+  PROCESSOR_PREPARED: { type113: 0, finalTypes: [114] },
+  PROCESSOR_COMPLETED: { type113: 21, finalTypes: [116] },
+  SESSION_TERMINAL: { type113: 0, finalTypes: [99, 117] },
+  QUARANTINE: { type113: 0, finalTypes: [101, 119] },
+  PRUNE: { type113: 0, finalTypes: [100, 118] }
+})
 
 function storeWalFail (message) {
   throw new ForwardHttpsAggregateQuotaV3Error(message, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
@@ -1566,8 +1800,18 @@ export function decodeForwardHttpsRetentionPrunedV3 (payload) {
 // ---------------------------------------------------------------------------
 
 export function deriveForwardHttpsStoreWalQuotaEntryV3 (input) {
-  closedObject(input, ['role', 'frame'], [], 'derive input')
+  closedObject(input, ['role', 'frame', 'transitionAuthority'], [], 'derive input')
   const roleByteValue = quotaRoleByte(input.role)
+  // Claim fencing: derive burns exactly one claim and only a SYNCED live claim
+  // or a recovery-sink claim minted inside absorb. A MINTED_UNBEGUN or BEGUN
+  // claim, a caller-constructed value, a static capability, a reused or
+  // cross-role value is AUTHORITY_INVALID with no WAL mutation.
+  const claim = input.transitionAuthority && QUOTA_CLAIMS.get(input.transitionAuthority)
+  if (!claim || claim.burned || claim.role !== input.role ||
+      (claim.kind !== 'live' && claim.kind !== 'recovery') ||
+      (claim.kind === 'live' && claim.state !== 'SYNCED')) {
+    quotaFail('transition authority is forged, reused, cross-role or not SYNCED', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+  }
   const frame = input.frame
   if (!frame || typeof frame !== 'object' || Array.isArray(frame)) throw new TypeError('frame must be a verified complete BlindWalFrameV2 object')
   const payload = bytes(frame.payload, null, 'frame.payload')
@@ -1602,13 +1846,38 @@ export function deriveForwardHttpsStoreWalQuotaEntryV3 (input) {
     const terminal = decodeFtm9Payload(payload, walType)
     terminalLogicalCharge = FTM9_LOGICAL_BYTES
     stableSessionId = terminal.stableSessionId
+    const predecessor = claim.resolvePredecessor ? claim.resolvePredecessor(stableSessionId) : null
     if (terminal.flags === 1) {
+      // flags1 minimal terminal: NEVER_SEEN predecessor only.
+      if (predecessor && predecessor.present) storeWalFail('flags1 minimal terminal requires a NEVER_SEEN predecessor')
       authorityBitmap = MINIMAL_TERMINAL_BITMAP
       authorityCommitments = authorityCommitments.map((commitment, index) => {
         if (index === 7) return blake2b256(b4a.concat([DOMAIN_RETENTION_LOOKUP, terminal.minimalTerminalAuthorityCommitment]))
         if (index === 9) return blake2b256(b4a.concat([DOMAIN_TERMINAL_STATE, terminal.minimalTerminalAuthorityCommitment]))
         return commitment
       })
+    } else {
+      // flags0 existing terminal: requires PRESENT_ALLOCATED with matching
+      // nonzero revision and class9 absent; preserves bitmap bits and
+      // commitments0..8 byte-identically and adds the exact C9 over domain
+      // hiverelay.blind.forward-https-terminal-state-existing.v3.
+      if (!predecessor || !predecessor.present || predecessor.consumed || (predecessor.bitmap & 512) !== 0) {
+        storeWalFail('flags0 terminal requires a PRESENT_ALLOCATED predecessor')
+      }
+      if (predecessor.priorRevision !== terminal.priorSessionRevision) storeWalFail('flags0 terminal prior revision mismatch')
+      const predecessorCommitments = predecessor.commitments || Array.from({ length: AUTHORITY_CLASS_COUNT }, () => b4a.from(ZERO32))
+      const revision = b4a.alloc(8)
+      writeU64(revision, 0, terminal.priorSessionRevision)
+      const bitmap = b4a.alloc(4)
+      bitmap.writeUInt32BE(predecessor.bitmap, 0)
+      const sequenceBytes = b4a.alloc(8)
+      writeU64(sequenceBytes, 0, walSequence)
+      authorityBitmap = predecessor.bitmap | 512
+      authorityCommitments = predecessorCommitments.map(commitment => b4a.from(commitment))
+      authorityCommitments[9] = blake2b256(b4a.concat([
+        DOMAIN_TERMINAL_STATE_EXISTING, b4a.from([roleByteValue]), stableSessionId, revision, bitmap,
+        ...predecessorCommitments.slice(0, 9), sequenceBytes, payloadHash
+      ]))
     }
   } else if (row.class === 'PRUNE_TRANSITION') {
     scope = 'PRUNE_TRANSITION'
@@ -1621,7 +1890,11 @@ export function deriveForwardHttpsStoreWalQuotaEntryV3 (input) {
     scope = 'ROLE_GLOBAL'
     ordinaryLogicalCharge = payload.byteLength + frameBytes
   }
-  return freezeResult({
+  // Burn exactly this one claim and mint the opaque next handoff (or null at
+  // the exact final ordinal).
+  claim.burned = true
+  claim.state = 'BURNED'
+  const entry = freezeResult({
     role: input.role,
     scope,
     stableSessionId,
@@ -1633,4 +1906,19 @@ export function deriveForwardHttpsStoreWalQuotaEntryV3 (input) {
     authorityBitmap,
     authorityCommitments: Object.freeze(authorityCommitments)
   })
+  let handoff = null
+  if (claim.kind === 'live' && claim.ordinal + 1 < claim.totalFrames) {
+    handoff = mintQuotaClaim({
+      kind: 'live',
+      state: 'PENDING_DURABILITY',
+      role: claim.role,
+      reservation: claim.reservation,
+      ordinal: claim.ordinal + 1,
+      totalFrames: claim.totalFrames,
+      stableSessionId: claim.stableSessionId,
+      predecessorHead: { sequence: walSequence, hash: b4a.from(bytes(frame.walHash, 32, 'frame.walHash')) },
+      resolvePredecessor: claim.resolvePredecessor
+    })
+  }
+  return freezeResult({ entry, transitionAuthorityHandoff: handoff })
 }

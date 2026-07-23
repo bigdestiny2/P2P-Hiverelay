@@ -91,23 +91,24 @@ test('target store: fresh OPEN TURN_FINAL allocates and type113 counts independe
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
   const opened = await openForwardHttpsTargetSessionV3(store, { stableSessionId: id, body: b4a.alloc(8, 0x51) })
   t.is(opened.walSequence, 1n)
-  // A type113 crypto reservation is an independent removable charge entry
+  // A type113 crypto reservation is the prefix frame of a two-frame
+  // TURN_FINAL operation: 113 then the 112 final, both removable entries
   const reserved = await appendForwardHttpsTargetSessionV3(store, {
     stableSessionId: id,
     walType: 113,
     body: b4a.alloc(118 - 36, 0x52),
-    plannedRemovableChargeEntryCount: 1
+    plannedRemovableChargeEntryCount: 2
   })
   t.is(reserved.payload.byteLength, 118)
   const slot = store.slots.get(b4a.toString(id, 'hex'))
-  t.is(slot.registry.count, 2)
+  t.is(slot.registry.count, 3)
   const status = forwardHttpsTargetStoreV3Status(store)
   t.is(status.unconsumedSlots, status.slotCapacity - 1)
   await closeForwardHttpsTargetStoreV3(store)
   const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
   const recoveredSlot = reopened.slots.get(b4a.toString(id, 'hex'))
-  t.is(recoveredSlot.registry.count, 2)
+  t.is(recoveredSlot.registry.count, 3)
 })
 
 test('target store: minimal absent-sequence terminal and terminal-only prune', async t => {
@@ -181,16 +182,13 @@ test('quota gate: OPEN admits, fail-WAL enters FAILED_WAL_OUTCOME_UNKNOWN_PENDIN
   const caps = mintForwardHttpsAggregateQuotaCapabilitiesV3(authority)
   // Gate before initialize: quota is not yet OPEN
   await t.exception.all(() => assertForwardHttpsAggregateQuotaOperationalV3(caps.targetStoreQuotaCapability), /not operational/)
-  // Initialize from empty role roots through the recovery claim ABI
-  const sourceSink = beginForwardHttpsAggregateQuotaRecoveryV3(authority, caps.sourceStoreQuotaCapability, {
-    storeId: fixed(0x21), mapGeneration: 1n, ownerFenceTokenHash: fixed(0x22), durabilityContinuityHash: fixed(0x23)
-  })
-  const sourceClaim = await finishForwardHttpsAggregateQuotaRecoveryV3(sourceSink, { walHeadSequence: 0n, walHeadHash: ZERO32 })
-  const targetSink = beginForwardHttpsAggregateQuotaRecoveryV3(authority, caps.targetStoreQuotaCapability, {
-    storeId: fixed(0x41), mapGeneration: 1n, ownerFenceTokenHash: fixed(0x42), durabilityContinuityHash: fixed(0x43)
-  })
-  const targetClaim = await finishForwardHttpsAggregateQuotaRecoveryV3(targetSink, { walHeadSequence: 0n, walHeadHash: ZERO32 })
-  await initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryClaim: sourceClaim, targetRecoveryClaim: targetClaim })
+  // Initialize from empty role roots through the recovery claim ABI: claims
+  // are sink-private; finish returns the final recovery state.
+  const sourceSink = beginForwardHttpsAggregateQuotaRecoveryV3(caps.sourceStoreQuotaCapability)
+  const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sourceSink)
+  const targetSink = beginForwardHttpsAggregateQuotaRecoveryV3(caps.targetStoreQuotaCapability)
+  const targetFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(targetSink)
+  await initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryFinalState: sourceFinal, targetRecoveryFinalState: targetFinal })
   // OPEN and localOperational: the gate succeeds without mutation
   t.is(assertForwardHttpsAggregateQuotaOperationalV3(caps.targetStoreQuotaCapability), undefined)
   t.is(forwardHttpsAggregateQuotaV3Status(authority).state, 'OPEN')
