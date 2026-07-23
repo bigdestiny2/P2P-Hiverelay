@@ -486,11 +486,14 @@ async function appendTerminalPayload (state, slot, payload) {
   return { entry, sequence: entry.walSequence, walHash: state.store.walHash }
 }
 
-// FTM9 flags0: existing ALLOCATED session terminalization. Never CAPACITY.
+// FTM9 flags0: existing ALLOCATED or ALLOCATED_WITH_PREFIX session
+// terminalization. Never CAPACITY. On an open prefix the exact orphan-last
+// revision floor applies and the orphan entries persist as ordinary removable
+// entries inside the consumed registry; no flags2 abort is possible after.
 export async function terminalizeForwardHttpsTargetSessionV3 (state, input) {
   requireOperational(state)
   const slot = sessionSlot(state, b4a.from(input.stableSessionId))
-  if (!slot || slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED) fail('session is not ALLOCATED', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.TERMINAL)
+  if (!slot || (slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED && slot.state !== FORWARD_HTTPS_STORAGE_SLOT_STATE_V3.ALLOCATED_WITH_PREFIX)) fail('session is not ALLOCATED', FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.TERMINAL)
   const payload = encodeForwardHttpsSessionTerminalV3({
     role: ROLE,
     flags: 0,
@@ -504,6 +507,10 @@ export async function terminalizeForwardHttpsTargetSessionV3 (state, input) {
     transportBytesSpent: input.transportBytesSpent || 0
   })
   const frame = await appendTerminalPayload(state, slot, payload)
+  // The orphan record closes with terminalization; its entries persist into
+  // the consumed registry and are removed only by the later terminal-existing
+  // or terminal-only FPR9.
+  slot.orphan = null
   return Object.freeze({ walSequence: frame.sequence, walHash: b4a.from(frame.walHash), payload })
 }
 

@@ -475,6 +475,52 @@ test('flags2 abort requires an open existing-session prefix; mixed commitment is
   await t.exception.all(openForwardHttpsTargetStoreV3(storeOptions(r, capabilities)), /mixed prefix requestCommitment|INTEGRITY/)
 })
 
+test('overlay terminalization: flags0 on ALLOCATED_WITH_PREFIX with orphan persistence and no flags2 after', async t => {
+  const r = await roots(t)
+  const capabilities = await quota(t, r)
+  const id = fixed(0x62)
+  const store = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  await openForwardHttpsTargetSessionV3(store, { stableSessionId: id })
+  await rawAppend(store, 113, prefixPayload(id))
+  await closeForwardHttpsTargetStoreV3(store)
+  const reopened = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
+  const slot = reopened.slots.get(b4a.toString(id, 'hex'))
+  t.is(slot.state, SLOT.ALLOCATED_WITH_PREFIX)
+  t.is(slot.orphan.lastRevision, 2n)
+  // flags0 SESSION_TERMINAL uses the exact orphan-last revision floor,
+  // preserves the vector and moves the slot to CONSUMED_UNPRUNED
+  const terminal = await terminalizeForwardHttpsTargetSessionV3(reopened, {
+    stableSessionId: id,
+    sequence: 7n,
+    reason: 'CHAIN_INVALID',
+    newTrustedEpochHighWatermark: 9
+  })
+  t.is(terminal.payload.readUInt16BE(6), 0)
+  t.is(Number(terminal.payload.readBigUInt64BE(64)), 2)
+  t.is(slot.state, SLOT.CONSUMED_UNPRUNED)
+  t.is(slot.orphan, null)
+  t.is(slot.registry.count, 2, 'orphan entries persist into the consumed registry')
+  t.is(identityOf(slot), IDENTITY.PRESENT_CONSUMED_UNPRUNED)
+  // No flags2 abort is possible after terminalization
+  await t.exception.all(pruneForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, flags: 2, pruneEpochSeconds: 9500 }), /requires an existing-session prefix/)
+  // The later terminal-existing FPR9 removes the persisted orphan entries
+  const slot2 = reopened.slots.get(b4a.toString(id, 'hex'))
+  slot2.expiresAtEpoch = 1
+  slot2.recoveryGraceUntilEpoch = 1
+  const pruned = await pruneForwardHttpsTargetSessionV3(reopened, { stableSessionId: id, pruneEpochSeconds: 9600 })
+  t.is(pruned.payload.readUInt32BE(72), 2)
+  t.is(slot.state, SLOT.CONSUMED_PRUNED)
+  // Recovery reproduces the exact consumed-pruned disposition
+  await closeForwardHttpsTargetStoreV3(reopened)
+  const recovered = await openForwardHttpsTargetStoreV3(storeOptions(r, capabilities))
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(recovered).catch(() => {}) })
+  const recoveredSlot = recovered.slots.get(b4a.toString(id, 'hex'))
+  t.is(recoveredSlot.state, SLOT.CONSUMED_PRUNED)
+  t.is(identityOf(recoveredSlot), IDENTITY.PRUNED_CONSUMED)
+})
+
 test('quota gate: OPEN admits, fail-WAL enters FAILED_WAL_OUTCOME_UNKNOWN_PENDING and blocks all work', async t => {
   const r = await roots(t)
   const authority = await openForwardHttpsAggregateQuotaV3({
