@@ -42,9 +42,18 @@ Built/verified:
   stops/removes only the 3 sidecar containers, retains roots, T1 untouched.
 - T1 file verified byte-identical & disabled (sha256 bfcc1266…).
 
-## BLOCKING DEFECT FOUND + REMEDIATED (disclosed, escalated)
+## F1 BLOCKING DEFECT — RESOLVED in ba710dc (was: found + Dockerfile-remediated, escalated)
 
-Accepted-source packaging metadata defect: `packages/blind-ipc/package.json`
+RESOLUTION: conductor commit ba710dc fixed the accepted-source packaging
+metadata: packages/blind-ipc files[] now includes private-ipc-v3/v4
+contract/status + authority v3/v4 + vectors-v3/v4; packages/blind-edge files[]
+now includes forward-https-vnext.js. The Dockerfile-level workaround below was
+REMOVED in window 3; images are again the plain npm-pack filtered install.
+Build-time test -f gates on the previously-omitted files and the closure
+module-graph import gate are retained as regression gates.
+
+Original defect record (window 1-2 state): accepted-source packaging metadata
+defect: `packages/blind-ipc/package.json`
 `files[]` omits runtime-required accepted source (private-ipc-v3/v4
 contract/status + authority v3/v4 + vectors-v3/v4), so `npm ci --install-links`
 (npm-pack filtered) images fail at startup with ERR_MODULE_NOT_FOUND
@@ -81,8 +90,46 @@ remediation, this evidence supports either path.
 - Large artifacts (oci-archives 707M, trivy-cache 1.1G) retained on disk,
   git-ignored, digests bound in the manifest.
 
+## Window 3 (2026-07-24T19:35–19:55Z) — F1 source-level remediation rebuild
+
+Conductor remediated F1 at source level in ba710dc (`fix(packaging)`: blind-ipc
+files[] += private-ipc v3/v4 contract/status/authority + vectors-v3/v4;
+blind-edge files[] += forward-https-vnext.js). Verified via npm pack dry-run.
+
+- Dockerfile workaround (exact-source closure copies) FULLY REMOVED from both
+  Dockerfiles; builds are now the plain npm-pack filtered lockfile install.
+  Kept: digest-pinned bases, no apt inputs, labels, CA roots + SSL_CERT_FILE,
+  test -f gates on the previously-omitted files, module-graph import gate.
+- Source identity updated: commit ba710dc682a2cd0fa8a5bcc8a332e5a568eeb9ff,
+  tree edfe1e64754c84a9e852a8ef177b573e739f7136, SOURCE_DATE_EPOCH=1784917371.
+- Rebuilt both images (linux/amd64+linux/arm64), two consecutive clean builds
+  each: platform manifests byte-identical (edge amd64 609a3283…/arm64
+  4ce8f78c…; daemon amd64 ff43ddea…/arm64 62ba17e1…). New index digests:
+  edge 036617ad…, daemon 91100a9e… (build2 canonical).
+- Smoke re-passed: correct fail-closed behavior (config errors, not module
+  errors), CA roots 145/284, zero browser bytes in both images, previously-
+  omitted files present in the packed install (F1 regression gate).
+- Provenance re-verified (SLSA v0.2, subjects match, ba710dc revision present).
+- F2 binding re-verified at ba710dc: browser artifact unchanged
+  (874afd4a…), generator --check passes, still zero browser bytes in images.
+
+## Window 4 (2026-07-24T19:55–20:35Z) — scans + manifest + evidence refresh
+
+- syft v1.49.0 SPDX SBOMs ×4 regenerated (300 packages each; new digests:
+  edge amd64 fbddb7be…/arm64 71d60635…; daemon amd64 229e8a0d…/arm64 0300e761…).
+- trivy 0.72.0 scans ×4 regenerated (same DB schema 2, db file sha256
+  c1dfc514…, re-downloaded 2026-07-24T18:30:37Z): identical severity shape
+  (6 CRITICAL/21 HIGH base-image only), ZERO relay-closure findings in all
+  four reports; disposition updated — gate result NO_BLOCKING_FINDING.
+- artifact-manifest.json regenerated: source ba710dc/tree edfe1e64, all new
+  image/platform/index digests, new SBOM/provenance/scan digests, F1
+  RESOLVED note, still UNSIGNED-PENDING-INDEPENDENT-ASSURANCE. Manifest
+  sha256 ef237bf49e0df57576b6d617a50d73bd2bd40c57755188c12f54f28884bc6bef.
+- Compose overlay + rollback script + vulnerability policy re-pinned to the
+  new index digests; compose config re-validated.
+- Lane evidence: assignments/release-and-appliances/evidence/release-artifacts-20260724t183139z.json
+  (supersedes release-artifacts-20260724t181322z).
+
 ## Remaining
 
-- commit A: regenerated browser artifacts (separate commit per lane brief)
-- commit B: release-lane tooling (Dockerfiles, compose overlay, release/blind-public-test/**)
-- handoff to independent assurance
+- handoff to independent assurance (signing is the later gate)

@@ -8,8 +8,8 @@ import os
 ROOT = os.path.dirname(os.path.abspath(__file__)) + "/../../.."
 REL = "release/blind-public-test"
 VERSION = "1.0.0-rc.1.public-test.1"
-SOURCE_REVISION = "447bbbf6fa17f8f4629a4a427e151937d06e29b4"
-SOURCE_TREE = "f21cc0d13e0c3dbb612c3e36f4bbe655affd2c23"
+SOURCE_REVISION = "ba710dc682a2cd0fa8a5bcc8a332e5a568eeb9ff"
+SOURCE_TREE = "edfe1e64754c84a9e852a8ef177b573e739f7136"
 
 
 def sha256_file(path):
@@ -91,7 +91,7 @@ manifest = {
         "commit": SOURCE_REVISION,
         "tree": SOURCE_TREE,
         "acceptance_record_sha256": "1febe4dbe0070fbf74e7f6707974ae0decd4174c3e351e78f97b5f1a8974d3a5",
-        "note": "images and browser artifact built from the exact accepted source; release tooling (Dockerfile.blind-edge, Dockerfile.blind-daemon, docker-compose.blind-public-test.yml, release/blind-public-test/**) is additive on branch codex/hiverelay-vnext-release-artifacts-20260724t110740z and contains no runtime-code changes",
+        "note": "accepted runtime source is 447bbbf (acceptance record above); ba710dc = 447bbbf + browser-artifact regeneration 51a0b37 (F2) + release tooling c579e24 + conductor source-level packaging fix (F1). Image-consumed runtime source differs from 447bbbf ONLY by the files[] whitelist additions in ba710dc; browser artifact bytes are not copied into either image",
     },
     "base_images": {
         "toolchain": "node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37",
@@ -139,8 +139,9 @@ manifest = {
         "summary": "stops/removes only the sidecar Edge listener + daemon + volume-init containers of project hiverelay-blind-public-test; retains all named-volume roots; leaves fleet and T1 untouched",
     },
     "disclosed_defects_and_remediation": {
-        "packaging_metadata_files_omissions": "packages/blind-ipc files[] omits private-ipc-v3/v4 contract/status + authority v3/v4 + vectors-v3/v4 (startup-blocking under npm-pack filtered install); packages/blind-edge files[] omits forward-https-vnext.js (not startup-blocking; production cli.js wires server.js). Escalated to runtime lane for a files[] amendment; no package metadata modified by this lane (outside authority).",
-        "dockerfile_level_remediation": "after npm ci, the @hiverelay closure is installed as exact copies of the accepted source tree; third-party dependencies remain exactly the lockfile install; closure isolation re-asserted; build gates on full module-graph import; smoke shows both images fail closed on missing signed config",
+        "packaging_metadata_files_omissions": "F1 RESOLVED at source level: ba710dc (fix(packaging)) adds private-ipc v3/v4 contract/status/authority + vectors-v3/v4 to packages/blind-ipc files[] and forward-https-vnext.js to packages/blind-edge files[]; verified via npm pack dry-run and build-time test -f gates. The release lane's earlier Dockerfile-level workaround (exact-source closure copies, used for the 447bbbf builds) is fully removed; images are now the plain npm-pack filtered lockfile install from the corrected source.",
+        "build_gates_retained": "test -f assertions on the previously-omitted files plus a full closure module-graph import gate remain in both Dockerfiles (they caught the original omission)",
+        "browser_artifact_staleness": "F2 remains as previously disclosed: the v3 artifact committed at 447bbbf was stale vs package-lock.json; the lockfile-faithful regeneration (lane commit 51a0b37, in ba710dc ancestry) is bound below and verified unchanged at ba710dc via generator --check",
     },
     "t1": {
         "file": "fleet/public-hive-gateway-release.json",

@@ -14,10 +14,10 @@ ROUND="${2:?round number}"
 NOCACHE="${3:-}"
 
 RELEASE_VERSION="1.0.0-rc.1.public-test.1"
-SOURCE_REVISION="447bbbf6fa17f8f4629a4a427e151937d06e29b4"
-SOURCE_TREE="f21cc0d13e0c3dbb612c3e36f4bbe655affd2c23"
-# git show -s --format=%ct 447bbbf6fa17f8f4629a4a427e151937d06e29b4
-SOURCE_DATE_EPOCH="1784907855"
+SOURCE_REVISION="ba710dc682a2cd0fa8a5bcc8a332e5a568eeb9ff"
+SOURCE_TREE="edfe1e64754c84a9e852a8ef177b573e739f7136"
+# git show -s --format=%ct ba710dc682a2cd0fa8a5bcc8a332e5a568eeb9ff
+SOURCE_DATE_EPOCH="1784917371"
 IMAGE_NAME="hiverelay/blind-${COMPONENT}"
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"

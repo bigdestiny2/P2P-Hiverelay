@@ -23,25 +23,16 @@ COPY packages/blind-protocol /opt/hiverelay/packages/blind-protocol
 COPY packages/blind-ipc /opt/hiverelay/packages/blind-ipc
 COPY packages/blind-peercred /opt/hiverelay/packages/blind-peercred
 COPY packages/blind-daemon /opt/hiverelay/packages/blind-daemon
-# Packaging-metadata remediation (disclosed in release/blind-public-test evidence):
-# the accepted blind-ipc npm "files" whitelist omits runtime-required accepted
-# source (private-ipc-v3/v4 contract/status/authority), so the npm-pack filtered
-# install does not start. The closure is installed as exact copies of the
-# accepted source tree; third-party dependencies remain exactly the lockfile
-# install. Package metadata is NOT modified; the files[] fix is escalated to
-# the runtime lane.
+# The npm-pack filtered install closes correctly on its own: the accepted-source
+# packaging fix (ba710dc) includes private-ipc v3/v4 contract/status/authority +
+# vectors in the blind-ipc files[] whitelist. The test -f gates below pin that
+# closure; the module-graph import gate proves the packed install loads (this
+# previously caught the files[] omission).
 RUN printf '%s\n' "$TARGETARCH" > /opt/hiverelay/peercred-target-architecture && \
     npm_config_build_from_source=true npm ci --omit=dev --install-links --no-audit --no-fund && \
     npm cache clean --force && \
     test ! -e node_modules/@hiverelay/blind-edge && \
     test -f node_modules/@hiverelay/blind-peercred/build/Release/blind_peercred.node && \
-    for closure_pkg in blind-protocol blind-ipc blind-daemon; do \
-      rm -rf "node_modules/@hiverelay/${closure_pkg}" && \
-      mkdir -p "node_modules/@hiverelay/${closure_pkg}" && \
-      (cd "/opt/hiverelay/packages/${closure_pkg}" && tar -cf - --exclude=node_modules .) | \
-        tar -xf - -C "node_modules/@hiverelay/${closure_pkg}"; \
-    done && \
-    test ! -e node_modules/@hiverelay/blind-edge && \
     test -f node_modules/@hiverelay/blind-ipc/private-ipc-v3-contract.js && \
     test -f node_modules/@hiverelay/blind-ipc/private-ipc-v4-contract.js && \
     test -f node_modules/@hiverelay/blind-ipc/hiverelay-blind-private-ipc-authority-v3.json && \
@@ -52,8 +43,8 @@ RUN printf '%s\n' "$TARGETARCH" > /opt/hiverelay/peercred-target-architecture &&
 FROM --platform=$TARGETPLATFORM ${NODE_RUNTIME_IMAGE} AS blind-daemon
 ARG HIVERELAY_BLIND_BUNDLE_ID=1.0.0-rc.1.public-test.1
 ARG HIVERELAY_BLIND_BUILD_ID=1.0.0-rc.1.public-test.1
-ARG HIVERELAY_BLIND_SOURCE_REVISION=447bbbf6fa17f8f4629a4a427e151937d06e29b4
-ARG HIVERELAY_BLIND_SOURCE_TREE=f21cc0d13e0c3dbb612c3e36f4bbe655affd2c23
+ARG HIVERELAY_BLIND_SOURCE_REVISION=ba710dc682a2cd0fa8a5bcc8a332e5a568eeb9ff
+ARG HIVERELAY_BLIND_SOURCE_TREE=edfe1e64754c84a9e852a8ef177b573e739f7136
 LABEL org.opencontainers.image.title="HiveRelay Blind Daemon" \
       org.opencontainers.image.description="Private canonical dispatcher, storage, and signing daemon for the blind app substrate" \
       org.opencontainers.image.licenses="Apache-2.0" \

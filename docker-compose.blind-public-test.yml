@@ -32,7 +32,7 @@ services:
   # the only root process, killed by the signed 60-second maximum, never loads
   # product code.
   blind-volume-init:
-    image: "hiverelay/blind-daemon@sha256:d9c343d9846dc3d76dff4033499276f7f526f9a0a7e338dc24e778b1da96e716"
+    image: "hiverelay/blind-daemon@sha256:91100a9e92fd84700bbe8217f02feea5edccc5868f2509837688da27f3259721"
     restart: "no"
     read_only: true
     user: "0:0"
@@ -66,7 +66,7 @@ services:
 
   blind-daemon:
     <<: *blind-hardening
-    image: "hiverelay/blind-daemon@sha256:d9c343d9846dc3d76dff4033499276f7f526f9a0a7e338dc24e778b1da96e716"
+    image: "hiverelay/blind-daemon@sha256:91100a9e92fd84700bbe8217f02feea5edccc5868f2509837688da27f3259721"
     user: "999:997"
     depends_on:
       blind-volume-init:
@@ -111,7 +111,7 @@ services:
 
   blind-edge:
     <<: *blind-hardening
-    image: "hiverelay/blind-edge@sha256:7b0ae890bf806bb0382529aeac4d20618333922b847809f730a8e0fafe48fb2b"
+    image: "hiverelay/blind-edge@sha256:036617ad8bd986d6493eee756a7c84c1656d7ad1d7947b3c3d91b2076f11d2f3"
     user: "998:997"
     depends_on:
       blind-daemon:
