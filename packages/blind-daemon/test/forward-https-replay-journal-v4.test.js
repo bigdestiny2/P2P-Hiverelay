@@ -1761,6 +1761,72 @@ test('plan/bind flags consistency: a flags or session swap against the reserved 
   await t.exception.all(() => bind(third.capability, thirdPlanned.terminalReservation, existingTerminal(freshId, 3n, 1n)), /does not match the reserved terminal plan|INTEGRITY/)
 })
 
+test('apply-time prefix re-proof: a substituted prefix frame rejects pre-WAL; the honest run then commits (probe A6)', async t => {
+  const { authority, capability } = await quota(t, TARGET)
+  const id = fixed(0xa3)
+  const c1 = fixed(0xc1)
+  const c9 = fixed(0xc9)
+  const prefix113 = commitment => b4a.concat([b4a.from('FTS3', 'ascii'), id, commitment, b4a.alloc(118 - 68, 0x42)])
+  const finalPayload = commitment => b4a.concat([b4a.from('FTS3', 'ascii'), id, commitment, b4a.alloc(8, 0x43)])
+  const turnPlan = buffers => replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'TURN_FINAL',
+    knownInputBuffers: buffers,
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const bind = (bindCapability, reservation, prefixes, final) => replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(bindCapability, reservation, {
+    logicalRecordBuffers: [],
+    encryptedPlaintextBuffers: prefixes,
+    finalWalMetadataBuffers: [final],
+    temporaryWriteBuffers: []
+  })
+  let appended = 0
+  const appendSync = async candidate => {
+    appended++
+    return { sequence: BigInt(appended), walHash: blake2b256(b4a.concat([b4a.from('wal'), candidate.payload])), payloadHash: blake2b256(candidate.payload) }
+  }
+  // Bind honest [113(c1), 112(c1)]; apply the substituted prefix 113(c9).
+  const first = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, turnPlan([prefix113(c1), finalPayload(c1)]))
+  const { transitionAuthority } = bind(capability, first.reservation, [prefix113(c1)], finalPayload(c1))
+  await t.exception.all(
+    replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, first.reservation, transitionAuthority, { type: 113, payload: prefix113(c9) }, appendSync),
+    /requestCommitment|INTEGRITY/
+  )
+  t.is(appended, 0, 'the substituted frame never reaches the WAL')
+  // The reservation never began: ordinary release is clean, authority unfailed.
+  await replayModule.releaseForwardHttpsAggregateQuotaV3(capability, first.reservation)
+  t.absent(replayModule.forwardHttpsAggregateQuotaV3Status(authority).pendingReservation)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).state, 'UNINITIALIZED')
+  // The honest run [113(c1), 112(c1)] then applies and commits.
+  const second = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, turnPlan([prefix113(c1), finalPayload(c1)]))
+  const honest = bind(capability, second.reservation, [prefix113(c1)], finalPayload(c1))
+  const p1 = await replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, second.reservation, honest.transitionAuthority, { type: 113, payload: prefix113(c1) }, appendSync)
+  const f1 = await replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, second.reservation, p1.transitionAuthorityHandoff, { type: 112, payload: finalPayload(c1) }, appendSync)
+  t.absent(f1.transitionAuthorityHandoff)
+  await replayModule.commitForwardHttpsAggregateQuotaV3(capability, second.reservation, {
+    durableWalHeadSequence: BigInt(appended),
+    durableWalHeadHash: blake2b256(b4a.concat([b4a.from('wal'), finalPayload(c1)]))
+  })
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).targetLogicalChargedBytes, 460 + 376)
+  // A substituted later ordinal is still rejected pre-WAL for that frame; the
+  // begun operation transitions FAILED_WAL_OUTCOME_UNKNOWN_PENDING.
+  const mid = await quota(t, TARGET)
+  const midPlan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(mid.capability, {
+    operation: 'PROCESSOR_REQUEST_READY',
+    knownInputBuffers: [prefix113(c1), prefix113(c1), finalPayload(c1)],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const midUnion = await replayModule.reserveForwardHttpsAggregateQuotaV3(mid.capability, midPlan)
+  const midBound = bind(mid.capability, midUnion.reservation, [prefix113(c1), prefix113(c1)], finalPayload(c1))
+  const midFirst = await replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(mid.capability, midUnion.reservation, midBound.transitionAuthority, { type: 113, payload: prefix113(c1) }, appendSync)
+  await t.exception.all(
+    replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(mid.capability, midUnion.reservation, midFirst.transitionAuthorityHandoff, { type: 113, payload: prefix113(c9) }, appendSync),
+    /requestCommitment|INTEGRITY/
+  )
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(mid.authority).state, 'FAILED_WAL_OUTCOME_UNKNOWN_PENDING')
+})
+
 // Live PRUNE driver: reserve/bind/apply/adjust one exact tombstone through the
 // composite quota path, exactly as the store drives it.
 async function driveLivePrune (capability, payload, sequence) {

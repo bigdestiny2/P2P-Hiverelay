@@ -1529,12 +1529,13 @@ export async function applyForwardHttpsAggregateQuotaWalFrameV3 (storeQuotaCapab
   }
   try {
     const payload = bytes(frame.payload, null, 'frame.payload')
-    // The operation final re-proves the exact bound requestCommitment before
-    // the begin step: a final that does not carry the prefix commitment never
-    // closes the composite run.
-    if (!prefixOrdinal && internal.requestCommitment !== null &&
+    // EVERY applied frame re-proves the exact bound requestCommitment before
+    // the begin step: a substituted prefix or final never appends, so the
+    // composite can never commit WAL its own recovery rejects (REREVIEW2-
+    // P1-005). The rejection is pre-WAL for the substituted frame.
+    if (internal.requestCommitment !== null &&
         (payload.byteLength < 68 || !b4a.equals(payload.subarray(36, 68), internal.requestCommitment))) {
-      quotaFail('composite final requestCommitment does not match the bound prefixes', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+      quotaFail('composite frame requestCommitment does not match the bound prefixes', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
     }
     beginForwardHttpsAggregateQuotaWalAttemptV3(internal, claimInternal)
     // Per-frame session binding: frames of a different session never share
