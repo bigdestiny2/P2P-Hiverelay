@@ -1407,6 +1407,15 @@ export function bindForwardHttpsStoreQuotaActualBuffersV3 (storeQuotaCapability,
           !b4a.equals(terminal.stableSessionId, expectation.stableSessionId)) {
         quotaFail('terminal reservation frame is not the exact flags0 BUDGET_EXHAUSTED expectation', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
       }
+    } else if (internal.terminal === 'REQUESTED') {
+      // The bound FTM9 must be exactly the reserved terminal plan's frame: a
+      // flags or session swap against the plan rejects pre-WAL, so the flags1
+      // FREE-slot admission decided at reserve is always the admitted frame
+      // (adversarial REREVIEW2-P1-004).
+      if ((terminal.flags === 1) !== (internal.plan.terminalMinimal === true) ||
+          !b4a.equals(terminal.stableSessionId, internal.plan.stableSessionId || b4a.alloc(0))) {
+        quotaFail('bound FTM9 does not match the reserved terminal plan', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+      }
     }
   }
   // Composite per-operation commitment binding (adversarial REREVIEW-P1-004):

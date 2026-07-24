@@ -1697,6 +1697,70 @@ test('prune epoch eligibility: pruneEpochSeconds == recoveryGraceUntilEpoch reje
   }), /grace|INTEGRITY/)
 })
 
+test('plan/bind flags consistency: a flags or session swap against the reserved terminal plan rejects pre-WAL (probe C2)', async t => {
+  const occupiedId = fixed(0xa1)
+  const freshId = fixed(0xa2)
+  const minimalTerminal = (id, sequence) => buildFtm9({
+    role: 'TARGET',
+    flags: 1,
+    stableSessionId: id,
+    sequence,
+    priorSessionRevision: 0n,
+    newTrustedEpochHighWatermark: 1,
+    reason: 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID',
+    exactRequestCommitment: fixed(0x92),
+    expiresAtEpoch: 100,
+    retainedUntilEpoch: 1000
+  })
+  const existingTerminal = (id, sequence, priorRevision) => buildFtm9({
+    role: 'TARGET',
+    flags: 0,
+    stableSessionId: id,
+    sequence,
+    priorSessionRevision: priorRevision,
+    newTrustedEpochHighWatermark: 2,
+    reason: 'BUDGET_EXHAUSTED'
+  })
+  const terminalPlan = (capability, payload) => replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'SESSION_TERMINAL',
+    knownInputBuffers: [payload],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const bind = (capability, reservation, payload) => replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, reservation, {
+    logicalRecordBuffers: [],
+    encryptedPlaintextBuffers: [],
+    finalWalMetadataBuffers: [payload],
+    temporaryWriteBuffers: []
+  })
+  // Capacity-1 authority with one ALLOCATED session (probe C2 shape).
+  const full = await quota(t, TARGET, { slotCapacityPerRole: 1 })
+  const seedSink = beginForwardHttpsAggregateQuotaRecoveryV3(full.capability)
+  const seedPayload = b4a.concat([b4a.from('FTS3', 'ascii'), occupiedId, b4a.alloc(8, 0x01)])
+  await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(seedSink, {
+    frame: { type: 112, payload: seedPayload, payloadHash: blake2b256(seedPayload), sequence: 1n, previousWalHash: ZERO32, walHash: blake2b256(b4a.concat([b4a.from('wal'), seedPayload])), frameBytes: seedPayload.byteLength + 224 }
+  })
+  await finishForwardHttpsAggregateQuotaRecoveryV3(seedSink)
+  // flags0 plan (no FREE-slot check at reserve), flags1 bind for a fresh sid:
+  // rejected pre-WAL — before the fix this committed over capacity and the
+  // resulting WAL was unrecoverable.
+  const planned = await replayModule.reserveForwardHttpsAggregateQuotaV3(full.capability, terminalPlan(full.capability, existingTerminal(occupiedId, 4n, 1n)))
+  t.is(planned.disposition, 'REQUESTED_TERMINAL')
+  await t.exception.all(() => bind(full.capability, planned.terminalReservation, minimalTerminal(freshId, 5n)), /does not match the reserved terminal plan|INTEGRITY/)
+  t.ok(replayModule.forwardHttpsAggregateQuotaV3Status(full.authority).pendingReservation, 'reservation unburned, no WAL mutation')
+  // The exact plan frame still binds (the failed swap bound nothing).
+  const exact = bind(full.capability, planned.terminalReservation, existingTerminal(occupiedId, 4n, 1n))
+  t.ok(exact.transitionAuthority)
+  // flags1 plan with the exact flags1 bind succeeds on an empty authority.
+  const empty = await quota(t, TARGET, { slotCapacityPerRole: 1 })
+  const minimalPlanned = await replayModule.reserveForwardHttpsAggregateQuotaV3(empty.capability, terminalPlan(empty.capability, minimalTerminal(freshId, 2n)))
+  t.ok(bind(empty.capability, minimalPlanned.terminalReservation, minimalTerminal(freshId, 2n)).transitionAuthority)
+  // Same-sid flags swap (flags1 plan, flags0 bind) also rejects.
+  const third = await quota(t, TARGET, { slotCapacityPerRole: 1 })
+  const thirdPlanned = await replayModule.reserveForwardHttpsAggregateQuotaV3(third.capability, terminalPlan(third.capability, minimalTerminal(freshId, 2n)))
+  await t.exception.all(() => bind(third.capability, thirdPlanned.terminalReservation, existingTerminal(freshId, 3n, 1n)), /does not match the reserved terminal plan|INTEGRITY/)
+})
+
 // Live PRUNE driver: reserve/bind/apply/adjust one exact tombstone through the
 // composite quota path, exactly as the store drives it.
 async function driveLivePrune (capability, payload, sequence) {
