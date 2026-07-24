@@ -16,9 +16,12 @@ import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import {
   CELL_RECEIPT_RESULT,
+  CORE_ACK_RESULT,
   ERROR_CODE,
   FAMILY,
   FRAME_KIND,
+  INBOX_APPEND_RESULT,
+  INBOX_RECEIPT_RESULT,
   OPERATION,
   OUTER_CLASS,
   PROTOCOL,
@@ -30,14 +33,16 @@ import {
   blindReceiptV1,
   blindServiceDescriptorV1,
   cellStorageSlot,
+  coreMirrorRequestV1,
+  coreOpenReplicationV1,
+  coreServeChallengeV1,
+  blindCoreAckV1,
   decodeCanonical,
   encodeCanonical,
   encodeDispatchFrame,
   encodeOuterEnvelope,
   getCellResultV1,
   getCellV1,
-  INBOX_APPEND_RESULT,
-  INBOX_RECEIPT_RESULT,
   inboxAppendAckV1,
   inboxAppendV1,
   inboxCreateCommitment,
@@ -74,6 +79,11 @@ import {
   inboxRenewFixture,
   inboxCloseFixture
 } from '../../blind-daemon/test/production-runtime-inbox-fixture.js'
+import {
+  coreMirrorFixture,
+  coreOpenReplicationFixture,
+  coreProveFixture
+} from '../../blind-daemon/test/production-runtime-core-fixture.js'
 import {
   createRelayIdentityFixture,
   createRelayEnvironmentFixture,
@@ -1119,6 +1129,210 @@ test('INBOX frames persist across relay restart with signed read pages', async t
   verifyResultSignedValue(inboxReadResultV1, page, RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, identity.relayPublicKey, 'inbox read result')
   t.is(page.entries.length, 1)
   t.ok(b4a.equals(page.entries[0].frame, appended.frame), 'exact frame readback survives the restart')
+  await edge.close()
+  await relay2.close()
+})
+
+// ---------------------------------------------------------------------------
+// CORE route evidence (serial route 4/5): unary MIRROR/PROVE on the same
+// exact path with signed acknowledgement, exact replay, the fail-closed
+// non-advertised OPEN_REPLICATION behavior, negatives and restart recovery.
+// ---------------------------------------------------------------------------
+
+test('CORE.MIRROR returns a signed acknowledgement and replays it exactly; PROVE fails closed without an active core', async t => {
+  const { identity, layout, relay, baseUrl, fetchImpl } = await bootRelay(t)
+  const trusted = await trustedRelay(identity, baseUrl, layout, fetchImpl)
+  const health = await healthFor(trusted, identity, fetchImpl, 0x1ffff)
+
+  const mirror = coreMirrorFixture(identity.parameterHash)
+  const mirrorBody = encodeCanonical(coreMirrorRequestV1, mirror)
+  const mirrorClient = qualifiedClient(trusted, health, FAMILY.CORE, OPERATION.CORE.MIRROR, identity.currentEpoch, fetchImpl)
+  const first = await mirrorClient.client.request({
+    endpoint: mirrorClient.endpoint,
+    familyId: FAMILY.CORE,
+    operationId: OPERATION.CORE.MIRROR,
+    body: mirrorBody
+  })
+  t.ok(first.ok, 'CORE.MIRROR is answered')
+  const accepted = decodeCanonical(blindCoreAckV1, first.body, { copyBytes: true })
+  verifyResultSignedValue(blindCoreAckV1, accepted, RESULT_SIGNATURE_DOMAIN_ID.CORE_ACK, identity.relayPublicKey, 'core ack')
+  t.is(accepted.result, CORE_ACK_RESULT.MIRROR_ACCEPTED)
+  t.ok(b4a.equals(accepted.corePublicKey, mirror.corePublicKey), 'ack binds the exact core public key')
+  t.ok(b4a.equals(accepted.signedHeadHash, mirror.signedHeadHash), 'ack binds the exact signed head hash')
+
+  // Exact replay: the same charged MIRROR returns the byte-identical
+  // committed acknowledgement through production wiring.
+  const replay = await mirrorClient.client.request({
+    endpoint: mirrorClient.endpoint,
+    familyId: FAMILY.CORE,
+    operationId: OPERATION.CORE.MIRROR,
+    body: mirrorBody
+  })
+  t.ok(replay.ok, 'CORE.MIRROR replay is answered')
+  t.ok(b4a.equals(replay.body, first.body), 'charged MIRROR replays the exact committed acknowledgement')
+
+  // PROVE serves only an ACTIVE sponsored generation: the unassembled
+  // upstream cannot activate one, so PROVE fails closed (charged or not).
+  const prove = coreProveFixture(mirror, identity.parameterHash)
+  const proveClient = qualifiedClient(trusted, health, FAMILY.CORE, OPERATION.CORE.PROVE, identity.currentEpoch, fetchImpl)
+  const unsponsored = await proveClient.client.request({
+    endpoint: proveClient.endpoint,
+    familyId: FAMILY.CORE,
+    operationId: OPERATION.CORE.PROVE,
+    body: encodeCanonical(coreServeChallengeV1, prove)
+  })
+  t.ok(!unsponsored.ok, 'PROVE fails closed without an active sponsored generation')
+  t.is(unsponsored.error.code, ERROR_CODE.NOT_FOUND)
+  const charged = await proveClient.client.request({
+    endpoint: proveClient.endpoint,
+    familyId: FAMILY.CORE,
+    operationId: OPERATION.CORE.PROVE,
+    body: encodeCanonical(coreServeChallengeV1, coreProveFixture(mirror, identity.parameterHash, { charged: true }))
+  })
+  t.ok(!charged.ok, 'charged PROVE fails closed before its spend')
+  t.is(charged.error.code, ERROR_CODE.NOT_FOUND)
+
+  // Accepted storage accounting: the sponsorship is durably pending on the
+  // unavailable upstream, and no proof spend was consumed.
+  const accounting = relay.unary.coreStorage.status().accounting
+  t.is(accounting.mirrorAttempts, 1)
+  t.is(accounting.activeCores, 0)
+  t.is(accounting.proofSpendTombstones, 0)
+  const spendTag = blake2b256(mirror.admission.token)
+  t.is(relay.unary.coreStorage.inspectMirrorSpend(spendTag).state, 'RETRY_PENDING')
+})
+
+test('CORE fails closed on the reserved OPEN_REPLICATION and on bogus credentials', async t => {
+  const { identity, layout, baseUrl, fetchImpl } = await bootRelay(t)
+  const trusted = await trustedRelay(identity, baseUrl, layout, fetchImpl)
+  const health = await healthFor(trusted, identity, fetchImpl, 0x1ffff)
+
+  // The reserved operation is outside the advertised release profile: the
+  // client cannot even qualify an endpoint for it.
+  let qualifyError = null
+  try {
+    qualifyRelay({
+      trustedDescriptor: trusted,
+      health,
+      familyId: FAMILY.CORE,
+      operationId: OPERATION.CORE.OPEN_REPLICATION,
+      endpointId: 1,
+      transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
+      requiredRoleBits: 0x31,
+      privacyProfileBit: 1,
+      nowEpoch: identity.currentEpoch
+    })
+  } catch (error) {
+    qualifyError = error
+  }
+  t.is(qualifyError && qualifyError.code, 'RELAY_NOT_QUALIFIED', 'reserved OPEN_REPLICATION has no qualified endpoint')
+
+  // At the public edge the reserved operation fails closed with a bare
+  // transport 400, never a Blind envelope (the corrected fixture behavior).
+  const open = coreOpenReplicationFixture(identity.parameterHash)
+  const openEnvelope = encodeOuterEnvelope({
+    innerDispatch: encodeDispatchFrame({
+      frameKind: FRAME_KIND.REQUEST,
+      familyId: FAMILY.CORE,
+      operationId: OPERATION.CORE.OPEN_REPLICATION,
+      requestId: b4a.alloc(16, 0xa4),
+      body: encodeCanonical(coreOpenReplicationV1, open)
+    }),
+    outerClass: 2
+  })
+  const rejected = await fetchImpl(`${baseUrl}/api/blind/v1/core`, {
+    method: 'POST',
+    headers: { 'content-type': MEDIA_TYPE },
+    body: openEnvelope
+  })
+  t.is(rejected.status, 400, 'reserved OPEN_REPLICATION fails closed at the public edge')
+  t.is(rejected.headers.get('content-type'), 'text/plain; charset=utf-8')
+  t.is((await rejected.arrayBuffer()).byteLength, 0, 'fail-closed rejection carries no Blind envelope body')
+
+  // Bogus admission credentials fail closed through the qualified path.
+  const mirror = coreMirrorFixture(identity.parameterHash)
+  mirror.admission = fixtureAdmission(b4a.alloc(32, 0x66), 0xb5)
+  const mirrorClient = qualifiedClient(trusted, health, FAMILY.CORE, OPERATION.CORE.MIRROR, identity.currentEpoch, fetchImpl)
+  const bogus = await mirrorClient.client.request({
+    endpoint: mirrorClient.endpoint,
+    familyId: FAMILY.CORE,
+    operationId: OPERATION.CORE.MIRROR,
+    body: encodeCanonical(coreMirrorRequestV1, mirror)
+  })
+  t.ok(!bogus.ok, 'bogus admission credentials fail closed')
+
+  // A sponsorship advancing no admitted dimension is refused before spend.
+  const mirror2 = coreMirrorFixture(identity.parameterHash, { spendByte: 0xb6 })
+  t.ok((await mirrorClient.client.request({
+    endpoint: mirrorClient.endpoint,
+    familyId: FAMILY.CORE,
+    operationId: OPERATION.CORE.MIRROR,
+    body: encodeCanonical(coreMirrorRequestV1, mirror2)
+  })).ok, 'second MIRROR is answered')
+  const notDue = await mirrorClient.client.request({
+    endpoint: mirrorClient.endpoint,
+    familyId: FAMILY.CORE,
+    operationId: OPERATION.CORE.MIRROR,
+    body: encodeCanonical(coreMirrorRequestV1, coreMirrorFixture(identity.parameterHash, {
+      clientNonce: b4a.alloc(32, 0x53),
+      spendByte: 0xb7
+    }))
+  })
+  t.ok(!notDue.ok, 'non-advancing sponsorship is refused')
+  t.is(notDue.error.code, ERROR_CODE.RENEW_NOT_DUE)
+})
+
+test('CORE committed acknowledgement replays byte-identically across relay restart', async t => {
+  const first = await bootRelay(t)
+  const { identity, layout, baseUrl } = first
+  const firstFetch = first.fetchImpl
+  const trusted = await trustedRelay(identity, baseUrl, layout, firstFetch)
+  const health = await healthFor(trusted, identity, firstFetch, 0x1ffff)
+  const mirror = coreMirrorFixture(identity.parameterHash)
+  const mirrorBody = encodeCanonical(coreMirrorRequestV1, mirror)
+  const mirrorClient = qualifiedClient(trusted, health, FAMILY.CORE, OPERATION.CORE.MIRROR, identity.currentEpoch, firstFetch)
+  const before = await mirrorClient.client.request({
+    endpoint: mirrorClient.endpoint,
+    familyId: FAMILY.CORE,
+    operationId: OPERATION.CORE.MIRROR,
+    body: mirrorBody
+  })
+  t.ok(before.ok, 'CORE.MIRROR is answered before restart')
+  await first.edge.close()
+  await first.relay.close()
+
+  const daemonErrors = []
+  const replayOffset = { value: -15_000n }
+  const relay2 = await assembleRelayFixture(identity, layout, {
+    onError: error => daemonErrors.push(error),
+    replayJournalOptions: {
+      monotonicMillis: () => (process.hrtime.bigint() / 1_000_000n) + replayOffset.value
+    }
+  })
+  replayOffset.value = 0n
+  await relay2.start()
+  const edge = await createEdgeFixture({
+    port: first.port,
+    tls: first.tls,
+    unarySocketPath: layout.environment.HIVERELAY_BLIND_UNARY_SOCKET,
+    launchTopologyHash: layout.launchTopologyHash,
+    onError: error => daemonErrors.push(error)
+  })
+  t.teardown(async () => {
+    await edge.close().catch(() => {})
+    await relay2.close().catch(() => {})
+  })
+  const after = await mirrorClient.client.request({
+    endpoint: mirrorClient.endpoint,
+    familyId: FAMILY.CORE,
+    operationId: OPERATION.CORE.MIRROR,
+    body: mirrorBody
+  })
+  t.ok(after.ok, 'CORE.MIRROR is answered after restart')
+  t.ok(b4a.equals(after.body, before.body), 'the committed acknowledgement replays byte-identically after restart')
+  const spendTag = blake2b256(mirror.admission.token)
+  t.is(relay2.unary.coreStorage.inspectMirrorSpend(spendTag).state, 'RETRY_PENDING',
+    'mirror spend state recovers across restart')
   await edge.close()
   await relay2.close()
 })
