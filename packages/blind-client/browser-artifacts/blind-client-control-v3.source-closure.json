@@ -152,68 +152,6 @@
       ]
     },
     {
-      "path": "node_modules/compact-encoding/endian.js",
-      "bytes": 105,
-      "format": "cjs",
-      "imports": []
-    },
-    {
-      "path": "node_modules/compact-encoding/index.js",
-      "bytes": 26406,
-      "format": "cjs",
-      "imports": [
-        {
-          "path": "node_modules/b4a/browser.js",
-          "kind": "require-call",
-          "original": "b4a",
-          "external": false
-        },
-        {
-          "path": "node_modules/compact-encoding/endian.js",
-          "kind": "require-call",
-          "original": "./endian",
-          "external": false
-        },
-        {
-          "path": "node_modules/compact-encoding/lexint.js",
-          "kind": "require-call",
-          "original": "./lexint",
-          "external": false
-        },
-        {
-          "path": "node_modules/compact-encoding/raw.js",
-          "kind": "require-call",
-          "original": "./raw",
-          "external": false
-        }
-      ]
-    },
-    {
-      "path": "node_modules/compact-encoding/lexint.js",
-      "bytes": 2851,
-      "format": "cjs",
-      "imports": []
-    },
-    {
-      "path": "node_modules/compact-encoding/raw.js",
-      "bytes": 3977,
-      "format": "cjs",
-      "imports": [
-        {
-          "path": "node_modules/b4a/browser.js",
-          "kind": "require-call",
-          "original": "b4a",
-          "external": false
-        },
-        {
-          "path": "node_modules/compact-encoding/endian.js",
-          "kind": "require-call",
-          "original": "./endian",
-          "external": false
-        }
-      ]
-    },
-    {
       "path": "node_modules/nanoassert/index.js",
       "bytes": 438,
       "format": "cjs",
@@ -481,12 +419,6 @@
           "external": false
         },
         {
-          "path": "node_modules/compact-encoding/index.js",
-          "kind": "import-statement",
-          "original": "compact-encoding",
-          "external": false
-        },
-        {
           "path": "packages/blind-protocol/codec.js",
           "kind": "import-statement",
           "original": "./codec.js",
@@ -496,6 +428,12 @@
           "path": "packages/blind-protocol/errors.js",
           "kind": "import-statement",
           "original": "./errors.js",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/node_modules/compact-encoding/index.js",
+          "kind": "import-statement",
+          "original": "compact-encoding",
           "external": false
         },
         {
@@ -589,6 +527,68 @@
           "path": "packages/blind-protocol/wire-runtime-authority.js",
           "kind": "import-statement",
           "original": "./wire-runtime-authority.js",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/node_modules/compact-encoding/endian.js",
+      "bytes": 105,
+      "format": "cjs",
+      "imports": []
+    },
+    {
+      "path": "packages/blind-protocol/node_modules/compact-encoding/index.js",
+      "bytes": 24454,
+      "format": "cjs",
+      "imports": [
+        {
+          "path": "node_modules/b4a/browser.js",
+          "kind": "require-call",
+          "original": "b4a",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/node_modules/compact-encoding/endian.js",
+          "kind": "require-call",
+          "original": "./endian",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/node_modules/compact-encoding/lexint.js",
+          "kind": "require-call",
+          "original": "./lexint",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/node_modules/compact-encoding/raw.js",
+          "kind": "require-call",
+          "original": "./raw",
+          "external": false
+        }
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/node_modules/compact-encoding/lexint.js",
+      "bytes": 2851,
+      "format": "cjs",
+      "imports": []
+    },
+    {
+      "path": "packages/blind-protocol/node_modules/compact-encoding/raw.js",
+      "bytes": 4093,
+      "format": "cjs",
+      "imports": [
+        {
+          "path": "node_modules/b4a/browser.js",
+          "kind": "require-call",
+          "original": "b4a",
+          "external": false
+        },
+        {
+          "path": "packages/blind-protocol/node_modules/compact-encoding/endian.js",
+          "kind": "require-call",
+          "original": "./endian",
           "external": false
         }
       ]
@@ -915,46 +915,6 @@
       ]
     },
     {
-      "path": "node_modules/compact-encoding/endian.js",
-      "bytes": 105,
-      "sha256": "7ea1ab9b548c8eb56a6efcc2268b046f59518f1e457ac9c6b3a161a2e79cc4c5",
-      "roles": [
-        "METAFILE_INPUT"
-      ]
-    },
-    {
-      "path": "node_modules/compact-encoding/index.js",
-      "bytes": 26406,
-      "sha256": "d2d1ef500c38453ac835e2d0c35f010463e815c7b00dbc6cd1f2de9fa3d93f65",
-      "roles": [
-        "METAFILE_INPUT"
-      ]
-    },
-    {
-      "path": "node_modules/compact-encoding/lexint.js",
-      "bytes": 2851,
-      "sha256": "a3fdf80a7b64093d82f42d363bf13a0453e0c5d1ff1a6793ad9d103335ab6569",
-      "roles": [
-        "METAFILE_INPUT"
-      ]
-    },
-    {
-      "path": "node_modules/compact-encoding/package.json",
-      "bytes": 866,
-      "sha256": "575a4b13e8650cf13dc96b807ed540c7c1d43a837fb432abf803b39febc1a533",
-      "roles": [
-        "RESOLUTION_METADATA"
-      ]
-    },
-    {
-      "path": "node_modules/compact-encoding/raw.js",
-      "bytes": 3977,
-      "sha256": "ffb71c3d42bb42162badd613a264661b7bc00517b46ba31615a71997de5deb18",
-      "roles": [
-        "METAFILE_INPUT"
-      ]
-    },
-    {
       "path": "node_modules/esbuild/package.json",
       "bytes": 3980,
       "sha256": "d55d1d19fcc5b6079e4a71dd4111340c79c682bc36835ac7058a0c364c7db58a",
@@ -1268,6 +1228,46 @@
       "sha256": "a5b907c9e59fb497b2d15ea09f7cd5e349f034fe85ef38ef539254a3442f3a08",
       "roles": [
         "FIXED_AUTHORITY"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/node_modules/compact-encoding/endian.js",
+      "bytes": 105,
+      "sha256": "7ea1ab9b548c8eb56a6efcc2268b046f59518f1e457ac9c6b3a161a2e79cc4c5",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/node_modules/compact-encoding/index.js",
+      "bytes": 24454,
+      "sha256": "6354ba44f4ec26479c421e3c2178fad5a63366cbe2db41afc626419bcef4786c",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/node_modules/compact-encoding/lexint.js",
+      "bytes": 2851,
+      "sha256": "a3fdf80a7b64093d82f42d363bf13a0453e0c5d1ff1a6793ad9d103335ab6569",
+      "roles": [
+        "METAFILE_INPUT"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/node_modules/compact-encoding/package.json",
+      "bytes": 786,
+      "sha256": "d1f7706a80073f430c8a01d79298bb971e0b3513c058445e76a2b8b079fa5efc",
+      "roles": [
+        "RESOLUTION_METADATA"
+      ]
+    },
+    {
+      "path": "packages/blind-protocol/node_modules/compact-encoding/raw.js",
+      "bytes": 4093,
+      "sha256": "d02b1f83d1d2bbd48d6bd321f29f2f1c3b01a0482c30d5e31394045e38f934ce",
+      "roles": [
+        "METAFILE_INPUT"
       ]
     },
     {
