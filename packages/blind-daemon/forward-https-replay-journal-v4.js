@@ -1625,6 +1625,10 @@ export async function reserveForwardHttpsAggregateQuotaV3 (quotaCapability, cost
   const opTicket = acquireOp(state)
   await opTicket.acquired
   try {
+    // FIFO waiter re-validation (quota P1-001): the holder ahead may have
+    // failed, closed or started closing the authority while this operation
+    // waited; a woken waiter re-validates before any measurement or mutation.
+    quotaState(capability.quotaAuthority)
     state.physical = await measurements(state)
     await quotaFault(state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.RESERVE_AFTER_MEASURE)
     ensureQuota(state, capability.role, plan.logicalBytes, plan.physicalBytes, plan.protected === true)

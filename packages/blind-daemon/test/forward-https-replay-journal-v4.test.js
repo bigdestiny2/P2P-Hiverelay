@@ -1085,6 +1085,41 @@ test('quota FIFO mutex: overlapping reservations queue in submission order and n
   t.ok(attempts.includes('a') !== attempts.includes('b') || attempts.filter(item => !item.endsWith('rejected')).length >= 1, 'at least one concurrent attempt wins through the FIFO mutex')
 })
 
+test('quota FIFO mutex: a woken waiter re-validates the authority and rejects INTEGRITY after the holder fails', async t => {
+  const { authority, capability } = await quota(t, TARGET)
+  const makePlan = byte => replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'TURN_FINAL',
+    knownInputBuffers: [b4a.concat([b4a.from('FTS3', 'ascii'), fixed(byte), b4a.alloc(8, 0x41)])],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const holder = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, makePlan(0xa1))
+  // The waiter queues behind the holder inside the FIFO op-lifecycle mutex.
+  let waiterSettled = null
+  const waiterPromise = replayModule.reserveForwardHttpsAggregateQuotaV3(capability, makePlan(0xa2))
+    .then(union => { waiterSettled = { union } })
+    .catch(error => { waiterSettled = { error } })
+  await new Promise(resolve => setTimeout(resolve, 25))
+  t.absent(waiterSettled, 'the waiter is still queued behind the holder')
+  // The holder binds, begins the WAL and fails mid-operation.
+  const payload = b4a.concat([b4a.from('FTS3', 'ascii'), fixed(0xa1), b4a.alloc(8, 0x41)])
+  const { transitionAuthority } = replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, holder.reservation, {
+    logicalRecordBuffers: [],
+    encryptedPlaintextBuffers: [],
+    finalWalMetadataBuffers: [payload],
+    temporaryWriteBuffers: []
+  })
+  await replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, holder.reservation, transitionAuthority, { type: 112, payload }, async candidate => ({ sequence: 1n, walHash: blake2b256(candidate.payload), payloadHash: blake2b256(candidate.payload) }))
+  replayModule.failForwardHttpsAggregateQuotaWalAttemptV3(capability, holder.reservation)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).state, 'FAILED_WAL_OUTCOME_UNKNOWN_PENDING')
+  // The woken waiter re-validates and rejects instead of being admitted
+  // against the failed authority.
+  await waiterPromise
+  t.ok(waiterSettled && waiterSettled.error, 'the woken waiter rejects')
+  t.is(waiterSettled.error.code, 'FORWARD_HTTPS_AGGREGATE_QUOTA_V3_INTEGRITY')
+  t.absent(replayModule.forwardHttpsAggregateQuotaV3Status(authority).pendingReservation)
+})
+
 test('claim fencing: derive rejects missing, caller-constructed and non-SYNCED claims', async t => {
   const id = fixed(0x76)
   const payload = sessionBody(id)
