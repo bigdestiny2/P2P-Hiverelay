@@ -1249,6 +1249,71 @@ test('per-frame session binding: cross-session frame rejects under one reservati
   )
 })
 
+test('composite commitment binding: mismatched prefix/final rejects at bind pre-WAL; the matching run commits and closes the prefix', async t => {
+  const { authority, capability } = await quota(t, TARGET)
+  const id = fixed(0x95)
+  const c1 = fixed(0xc1)
+  const c2 = fixed(0xc2)
+  const prefix113 = commitment => b4a.concat([b4a.from('FTS3', 'ascii'), id, commitment, b4a.alloc(118 - 68, 0x42)])
+  const finalPayload = commitment => b4a.concat([b4a.from('FTS3', 'ascii'), id, commitment, b4a.alloc(8, 0x43)])
+  const turnPlan = buffers => replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'TURN_FINAL',
+    knownInputBuffers: buffers,
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const bind = (reservation, prefixes, final) => replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, reservation, {
+    logicalRecordBuffers: [],
+    encryptedPlaintextBuffers: prefixes,
+    finalWalMetadataBuffers: [final],
+    temporaryWriteBuffers: []
+  })
+  // [113(c1), 112(c2)]: the mismatched final rejects at bind with no WAL mutation
+  const mismatched = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, turnPlan([prefix113(c1), finalPayload(c2)]))
+  await t.exception.all(() => bind(mismatched.reservation, [prefix113(c1)], finalPayload(c2)), /requestCommitment|INTEGRITY/)
+  // Never bound nor attempted: the ordinary release path is clean
+  await replayModule.releaseForwardHttpsAggregateQuotaV3(capability, mismatched.reservation)
+  t.absent(replayModule.forwardHttpsAggregateQuotaV3Status(authority).pendingReservation)
+  // Mixed prefixes [113(c1), 113(c2)] reject at bind on a multi-prefix row
+  const mixedPlan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'PROCESSOR_REQUEST_READY',
+    knownInputBuffers: [prefix113(c1), prefix113(c2), finalPayload(c1)],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const mixed = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, mixedPlan)
+  await t.exception.all(() => bind(mixed.reservation, [prefix113(c1), prefix113(c2)], finalPayload(c1)), /requestCommitment|INTEGRITY/)
+  await replayModule.releaseForwardHttpsAggregateQuotaV3(capability, mixed.reservation)
+  // The matching run [113(c1), 112(c1)] binds, applies at both ordinals and commits
+  let sequence = 0n
+  const appendSync = async candidate => {
+    sequence += 1n
+    return { sequence, walHash: blake2b256(b4a.concat([b4a.from('wal'), candidate.payload])), payloadHash: blake2b256(candidate.payload) }
+  }
+  const matching = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, turnPlan([prefix113(c1), finalPayload(c1)]))
+  const { transitionAuthority } = bind(matching.reservation, [prefix113(c1)], finalPayload(c1))
+  const first = await replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, matching.reservation, transitionAuthority, { type: 113, payload: prefix113(c1) }, appendSync)
+  t.ok(first.transitionAuthorityHandoff)
+  const second = await replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, matching.reservation, first.transitionAuthorityHandoff, { type: 112, payload: finalPayload(c1) }, appendSync)
+  t.absent(second.transitionAuthorityHandoff)
+  await replayModule.commitForwardHttpsAggregateQuotaV3(capability, matching.reservation, {
+    durableWalHeadSequence: sequence,
+    durableWalHeadHash: blake2b256(b4a.concat([b4a.from('wal'), finalPayload(c1)]))
+  })
+  // The matching final closed the prefix record exactly: a second composite
+  // with a fresh commitment on the same session runs clean end to end — a
+  // leaked open prefix would reject the new prefix as a mixed commitment.
+  const again = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, turnPlan([prefix113(c2), finalPayload(c2)]))
+  const reopened = bind(again.reservation, [prefix113(c2)], finalPayload(c2))
+  const nextPrefix = await replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, again.reservation, reopened.transitionAuthority, { type: 113, payload: prefix113(c2) }, appendSync)
+  const nextFinal = await replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, again.reservation, nextPrefix.transitionAuthorityHandoff, { type: 112, payload: finalPayload(c2) }, appendSync)
+  t.absent(nextFinal.transitionAuthorityHandoff)
+  await replayModule.commitForwardHttpsAggregateQuotaV3(capability, again.reservation, {
+    durableWalHeadSequence: sequence,
+    durableWalHeadHash: blake2b256(b4a.concat([b4a.from('wal'), finalPayload(c2)]))
+  })
+})
+
 test('commit and adjust authenticate the exact durable head; fabricated heads reject', async t => {
   const { authority, capability } = await quota(t, TARGET)
   const id = fixed(0x8c)
@@ -1320,7 +1385,10 @@ test('composite: substituted final and cross-role presentations reject', async t
   const { capability } = await quota(t, TARGET)
   const id = fixed(0x77)
   const prefixPayload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(118 - 36, 0x01)])
-  const finalPayload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x44)])
+  // The final carries the exact same requestCommitment at offset 36 as the
+  // bound prefix (R2-4 composite commitment binding); only the type is wrong
+  // for the ordinal it is presented at below.
+  const finalPayload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(32, 0x01), b4a.alloc(8, 0x44)])
   const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
     operation: 'TURN_FINAL',
     knownInputBuffers: [prefixPayload, finalPayload],

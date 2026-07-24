@@ -1383,6 +1383,20 @@ export function bindForwardHttpsStoreQuotaActualBuffersV3 (storeQuotaCapability,
       }
     }
   }
+  // Composite per-operation commitment binding (adversarial REREVIEW-P1-004):
+  // with any type113 prefix frame the whole operation shares the exact 32-byte
+  // requestCommitment at payload offset 36 — every prefix and the operation
+  // final must carry it byte-identically, else INTEGRITY before any WAL.
+  if (type113Buffers.length > 0) {
+    const requestCommitment = type113Buffers[0].subarray(36, 68)
+    for (const prefix of type113Buffers) {
+      if (!b4a.equals(prefix.subarray(36, 68), requestCommitment)) quotaFail('composite prefix requestCommitment is mixed', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    }
+    if (finalPayload.byteLength < 68 || !b4a.equals(finalPayload.subarray(36, 68), requestCommitment)) {
+      quotaFail('composite final requestCommitment does not match the bound prefixes', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    }
+    internal.requestCommitment = b4a.from(requestCommitment)
+  }
   const stableSessionId = (internal.plan.operation === 'PRUNE' || internal.plan.operation === 'SESSION_TERMINAL' || internal.terminal !== null)
     ? b4a.from(finalPayload.subarray(8, 40))
     : b4a.from(finalPayload.subarray(4, 36))
@@ -1479,8 +1493,15 @@ export async function applyForwardHttpsAggregateQuotaWalFrameV3 (storeQuotaCapab
     compositeReject(storeQuotaCapability, token, internal, 'composite apply frame type does not match the bound ordinal', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
   }
   try {
-    beginForwardHttpsAggregateQuotaWalAttemptV3(internal, claimInternal)
     const payload = bytes(frame.payload, null, 'frame.payload')
+    // The operation final re-proves the exact bound requestCommitment before
+    // the begin step: a final that does not carry the prefix commitment never
+    // closes the composite run.
+    if (!prefixOrdinal && internal.requestCommitment !== null &&
+        (payload.byteLength < 68 || !b4a.equals(payload.subarray(36, 68), internal.requestCommitment))) {
+      quotaFail('composite final requestCommitment does not match the bound prefixes', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    }
+    beginForwardHttpsAggregateQuotaWalAttemptV3(internal, claimInternal)
     // Per-frame session binding: frames of a different session never share
     // this reservation (session-A prefix with session-B final rejects). The
     // FTM9/FPR9 headers place the session id at offset 8; ordinary session
@@ -1651,7 +1672,7 @@ export async function reserveForwardHttpsAggregateQuotaV3 (quotaCapability, cost
     }
     state.pendingReservation = true
     const reservation = Object.freeze({})
-    QUOTA_RESERVATIONS.set(reservation, { state, capability: quotaCapability, plan, actual: null, burned: false, mutated: false, walAttempted: false, totalFrames: 0, nextOrdinal: 0, lastHandoff: null, claims: new Set(), stableSessionId: null, terminal, terminalExpectation, lastAppliedHead: null, derivedLogical: 0, opRelease: opTicket.release })
+    QUOTA_RESERVATIONS.set(reservation, { state, capability: quotaCapability, plan, actual: null, burned: false, mutated: false, walAttempted: false, totalFrames: 0, nextOrdinal: 0, lastHandoff: null, claims: new Set(), stableSessionId: null, terminal, terminalExpectation, lastAppliedHead: null, derivedLogical: 0, opRelease: opTicket.release, requestCommitment: null })
     state.pendingReservationObject = reservation
     if (disposition === 'ORDINARY') return Object.freeze({ disposition, reservation })
     return Object.freeze({ disposition, terminalReservation: reservation })
