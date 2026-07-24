@@ -430,7 +430,7 @@ export class ForwardHttpsEdgeVnext {
         if (aggregate > MAX_AGGREGATE_HEADER_BYTES) return this._transportFailure(response, 400, request)
         if (family === FAMILY.FORWARD) {
           const body = await this._readTurn(request)
-          return this._forward(request, response, body)
+          return await this._forward(request, response, body)
         }
         const outerClass = this._outerClassFor(request)
         const body = await this._readEnvelope(request, outerClass)
