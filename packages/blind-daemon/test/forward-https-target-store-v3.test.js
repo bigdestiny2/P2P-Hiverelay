@@ -1088,3 +1088,28 @@ test('readiness flags: the target store STATUS constant is not implementation-re
   t.is(FORWARD_HTTPS_TARGET_STORE_V3_STATUS.releaseReady, false)
   t.is(FORWARD_HTTPS_TARGET_STORE_V3_STATUS.authorizesRelease, false)
 })
+
+test('open ABI: a recovery sink begun on a foreign quota authority rejects at open (G5)', async t => {
+  const r = await roots(t)
+  const { authority, capabilities } = await quota(t, r)
+  const id = fixed(0x69)
+  // Pre-populate the target-store WAL with one live session.
+  const store = await openStore(authority, r, capabilities)
+  await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id, body: b4a.alloc(8, 0x51) })
+  await closeForwardHttpsTargetStoreV3(store)
+  // Store capability from the roots' authority but a sink begun on a foreign
+  // authority: the first recovered frame rejects the miswire with a coded
+  // AUTHORITY_INVALID and no state split.
+  const rB = await roots(t)
+  const { capabilities: foreign } = await quota(t, rB)
+  const foreignSink = beginForwardHttpsAggregateQuotaRecoveryV3(foreign.targetStoreQuotaCapability)
+  await t.exception.all(
+    openForwardHttpsTargetStoreV3(storeOptions(r, capabilities, { targetQuotaRecoverySink: foreignSink })),
+    /not bound to the presented store capability|AUTHORITY_INVALID/
+  )
+  await finishForwardHttpsAggregateQuotaRecoveryV3(foreignSink).catch(() => {})
+  // The correctly bound reopen recovers the session exactly.
+  const reopened = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
+  t.is(forwardHttpsTargetStoreV3Status(reopened).walHeadSequence, 1n)
+})

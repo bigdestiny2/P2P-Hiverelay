@@ -1133,9 +1133,15 @@ export function beginForwardHttpsAggregateQuotaRecoveryV3 (storeQuotaCapability)
 }
 
 export async function absorbForwardHttpsAggregateQuotaRecoveryFrameV3 (recoverySink, input) {
-  closedObject(input, ['frame'], [], 'recovery frame input')
+  closedObject(input, ['frame'], ['storeQuotaCapability'], 'recovery frame input')
   const sink = recoverySink && QUOTA_SINKS.get(recoverySink)
   if (!sink || sink.finished || sink.burned) quotaFail('recovery sink is invalid', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+  // Same-composite binding (adversarial REREVIEW-P2-003): when the caller
+  // presents its store capability, the sink must have been begun with exactly
+  // that capability — a foreign-authority sink never absorbs into this store.
+  if (input.storeQuotaCapability !== undefined && sink.capability !== input.storeQuotaCapability) {
+    quotaFail('recovery sink is not bound to the presented store capability', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+  }
   const frame = input.frame
   if (!frame || typeof frame !== 'object' || Array.isArray(frame) ||
       u64(frame.sequence, 'frame.sequence') !== sink.lastSequence + 1n ||
@@ -1182,9 +1188,15 @@ export async function absorbForwardHttpsAggregateQuotaRecoveryFrameV3 (recoveryS
   return freezeResult({ entry: derived.entry })
 }
 
-export async function finishForwardHttpsAggregateQuotaRecoveryV3 (recoverySink) {
+export async function finishForwardHttpsAggregateQuotaRecoveryV3 (recoverySink, expectedStoreQuotaCapability) {
   const sink = recoverySink && QUOTA_SINKS.get(recoverySink)
   if (!sink || sink.finished || sink.burned) quotaFail('recovery sink is invalid', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+  // Same-composite binding at finish (adversarial REREVIEW-P2-003): when the
+  // caller presents its store capability, the sink must match it exactly, so
+  // an empty recovered WAL cannot silently finish into a foreign authority.
+  if (expectedStoreQuotaCapability !== undefined && sink.capability !== expectedStoreQuotaCapability) {
+    quotaFail('recovery sink is not bound to the presented store capability', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
+  }
   sink.finished = true
   sink.state.openRecoverySinks[sink.role] = null
   // Recovery is complete: merge the recovered canonical identity/vector state

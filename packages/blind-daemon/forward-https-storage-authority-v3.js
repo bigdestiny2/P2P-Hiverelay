@@ -294,10 +294,10 @@ export async function openForwardHttpsStorageAuthorityV3 (options) {
       atRestKey: b4a.from(atRestKey)
     })
     await compositeFault(faultInjector, FORWARD_HTTPS_STORAGE_V3_FAULT_POINT.OPEN_AFTER_TARGET_STORE)
-    // 6: both sinks finished and quota initialized with the two one-use
-    // final recovery states.
-    const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sourceSink)
-    const targetFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(targetSink)
+    // 6: both sinks finished with the exact same-composite capability binding
+    // and quota initialized with the two one-use final recovery states.
+    const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sourceSink, opened.capabilities.sourceStoreQuotaCapability)
+    const targetFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(targetSink, opened.capabilities.targetStoreQuotaCapability)
     await initializeForwardHttpsAggregateQuotaV3(opened.quota, {
       sourceRecoveryFinalState: sourceFinal,
       targetRecoveryFinalState: targetFinal

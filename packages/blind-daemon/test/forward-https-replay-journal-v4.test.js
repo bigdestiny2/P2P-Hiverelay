@@ -1260,6 +1260,29 @@ test('recovery claim ABI: exclusivity, ordering, post-finish absorb and one-use 
   )
 })
 
+test('recovery sink binds the exact store capability: foreign capability rejects at absorb and finish', async t => {
+  const a = await quota(t, TARGET)
+  const b = await quota(t, TARGET)
+  const id = fixed(0x9c)
+  const payload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x01)])
+  // A sink begun on authority B rejects the presented authority-A capability
+  // before any frame validation or mutation.
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(b.capability)
+  await t.exception.all(
+    absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(112, payload, 1n, ZERO32), storeQuotaCapability: a.capability }),
+    /not bound to the presented store capability|AUTHORITY_INVALID/
+  )
+  // The exact capability absorbs the same frame cleanly.
+  await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(112, payload, 1n, ZERO32), storeQuotaCapability: b.capability })
+  // Finish with a foreign capability rejects and the sink survives; the exact
+  // capability finishes.
+  await t.exception.all(
+    finishForwardHttpsAggregateQuotaRecoveryV3(sink, a.capability),
+    /not bound to the presented store capability|AUTHORITY_INVALID/
+  )
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink, b.capability)
+})
+
 test('per-frame session binding: cross-session frame rejects under one reservation', async t => {
   const { capability } = await quota(t, TARGET)
   const id = fixed(0x88)

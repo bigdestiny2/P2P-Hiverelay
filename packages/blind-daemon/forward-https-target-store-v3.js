@@ -318,7 +318,7 @@ export async function openForwardHttpsTargetStoreV3 (options) {
 }
 
 async function recoverFrame (state, frame) {
-  const { entry: derived } = await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(state.recoverySink, { frame })
+  const { entry: derived } = await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(state.recoverySink, { frame, storeQuotaCapability: state.storeQuotaCapability })
   if (derived.scope === 'ROLE_GLOBAL') {
     state.roleGlobalLogicalBytes += derived.ordinaryLogicalCharge
     return
