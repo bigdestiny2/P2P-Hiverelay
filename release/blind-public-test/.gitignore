@@ -1,0 +1,4 @@
+# Large local artifacts: kept on disk for custody, digests bound in
+# artifact-manifest.json and the lane evidence; not committed to git.
+oci-archives/
+security/trivy-cache/

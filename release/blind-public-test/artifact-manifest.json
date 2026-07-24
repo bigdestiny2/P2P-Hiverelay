@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "manifest_id": "hiverelay-blind-public-test-artifact-manifest-v1",
+  "signature_status": "UNSIGNED-PENDING-INDEPENDENT-ASSURANCE",
+  "signature_note": "This manifest is NOT signed. Signing is a later gate after independent assurance accepts this exact artifact set (test-activation lease). Do not deploy from this file until the signed successor exists.",
+  "release": "1.0.0-rc.1.public-test.1",
+  "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+  "claim_boundary_detail": "no GA; no catalogue; no marketplace; no stable promotion; no documentation-complete claim; readiness stays zero",
+  "source": {
+    "repository": "https://github.com/bigdestiny2/p2p-hiverelay",
+    "commit": "447bbbf6fa17f8f4629a4a427e151937d06e29b4",
+    "tree": "f21cc0d13e0c3dbb612c3e36f4bbe655affd2c23",
+    "acceptance_record_sha256": "1febe4dbe0070fbf74e7f6707974ae0decd4174c3e351e78f97b5f1a8974d3a5",
+    "note": "images and browser artifact built from the exact accepted source; release tooling (Dockerfile.blind-edge, Dockerfile.blind-daemon, docker-compose.blind-public-test.yml, release/blind-public-test/**) is additive on branch codex/hiverelay-vnext-release-artifacts-20260724t110740z and contains no runtime-code changes"
+  },
+  "base_images": {
+    "toolchain": "node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37",
+    "runtime": "node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf",
+    "dockerfile_frontend": "docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e",
+    "apt_inputs": "none \u2014 no apt-get in any build stage; Debian package inputs are exactly the pinned base-image contents"
+  },
+  "build": {
+    "builder": "docker buildx v0.31.1-desktop.1 / buildkit v0.27.0 (Docker 29.2.0, containerd image store)",
+    "source_date_epoch": "1784907855",
+    "provenance": "mode=max (SLSA v0.2), verified: subjects match platform manifests; materials pin dockerfile frontend and both base images by digest; HIVERELAY_BLIND_SOURCE_REVISION build-arg present",
+    "reproducibility": "two consecutive clean builds per image; platform manifests byte-identical",
+    "build_script": "release/blind-public-test/build/build-image.sh",
+    "build_script_sha256": "sha256:93d8be36b1f1031142de6112cedc3e1cc4c28c8bb29a662c740cf8cc4c07bdb7",
+    "build_logs": "release/blind-public-test/build/logs/"
+  },
+  "images": [
+    {
+      "component": "edge",
+      "image": "hiverelay/blind-edge",
+      "version": "1.0.0-rc.1.public-test.1",
+      "dockerfile": "Dockerfile.blind-edge",
+      "dockerfile_sha256": "sha256:04a29b4a0b4fd8701840c0c6cb7b5636eb6e2099f6745e39e968c791ef7cce7e",
+      "canonical_image_index_digest": "sha256:7b0ae890bf806bb0382529aeac4d20618333922b847809f730a8e0fafe48fb2b",
+      "reproducibility_build1_image_index_digest": "sha256:23198234ae7589e15d9b9f172723e09f991cdb1b18a7ff1b7c291e5cc8233adf",
+      "index_note": "image indexes differ between clean builds only in attestation-manifest entries (provenance build timestamps); platform manifests are byte-identical",
+      "oci_archive_build2": "release/blind-public-test/oci-archives/blind-edge-1.0.0-rc.1.public-test.1-build2.oci.tar",
+      "oci_archive_build2_sha256": "sha256:e1a34823675545ecda6939865b6a5308bc9f2ab08849af0341288826ebdd7d44",
+      "oci_archive_build1_sha256": "sha256:86b165eea2abd93ddff7572dc1ab9e2a3f16e2b2821ab765a69eccdd7c0f3d64",
+      "platforms": [
+        {
+          "platform": "linux/amd64",
+          "manifest_digest": "sha256:65751c8f89278349af7f3fbcbc641f144a5c9b876df7308bc6decc6b1a9b1b33",
+          "config_digest": "sha256:4dd49393df21a327e791e0d9fb1787548302b618b318d677b9dbb2ccaa096119",
+          "reproducibility_build1_manifest_digest": "sha256:65751c8f89278349af7f3fbcbc641f144a5c9b876df7308bc6decc6b1a9b1b33",
+          "reproducible": true,
+          "attestation_manifest_digest": "sha256:d37c332c1e61c6dfca0391286a1832c5d3dba9afb96666f1b1157041512bb8e3",
+          "provenance_statement_file": "release/blind-public-test/provenance/edge-linux-amd64.slsa.json",
+          "provenance_statement_sha256": "sha256:a545ff6b9d673fc72ce51d781e61d5ace92340407041e61c32be4be2f0c5835e"
+        },
+        {
+          "platform": "linux/arm64",
+          "manifest_digest": "sha256:ebb7f2f99d151303d981b38dc11480dcef8b21ceebfdc31856cd719c3614af29",
+          "config_digest": "sha256:82d964fac28e7a6ef3e00bc71c4edca332497548ac26bd513eb5d32f78bdf05c",
+          "reproducibility_build1_manifest_digest": "sha256:ebb7f2f99d151303d981b38dc11480dcef8b21ceebfdc31856cd719c3614af29",
+          "reproducible": true,
+          "attestation_manifest_digest": "sha256:fea1adf84e92ea677da76903131e47a20466d9b2fbda08b8bb547d6d3e1fdc8e",
+          "provenance_statement_file": "release/blind-public-test/provenance/edge-linux-arm64.slsa.json",
+          "provenance_statement_sha256": "sha256:c0819aedfc788d199da442a589398b4d93ed0c954753fd8fdd19fd0658911ffa"
+        }
+      ],
+      "sbom": {
+        "linux/amd64": {
+          "file": "release/blind-public-test/sbom/blind-edge-linux-amd64.spdx.json",
+          "sha256": "sha256:ad9bfd03d555e30db88d5670853270e94a80df45619e1383f83ae68c267b4906",
+          "format": "SPDX-2.3",
+          "generator": "anchore/syft:v1.49.0@sha256:13b53ebabe3d215268c90cf8fb9b875f0183908245f376fd4b3a2cb69d21d484"
+        },
+        "linux/arm64": {
+          "file": "release/blind-public-test/sbom/blind-edge-linux-arm64.spdx.json",
+          "sha256": "sha256:179b3dad296e63cf06c75d3ef67105fcf1e672c564fca6a323200b902ff017ce",
+          "format": "SPDX-2.3",
+          "generator": "anchore/syft:v1.49.0@sha256:13b53ebabe3d215268c90cf8fb9b875f0183908245f376fd4b3a2cb69d21d484"
+        }
+      }
+    },
+    {
+      "component": "daemon",
+      "image": "hiverelay/blind-daemon",
+      "version": "1.0.0-rc.1.public-test.1",
+      "dockerfile": "Dockerfile.blind-daemon",
+      "dockerfile_sha256": "sha256:eea6cab6630886e583d595d6d75a8f36acf9bec7e0e08e5e63ddd1788e303034",
+      "canonical_image_index_digest": "sha256:d9c343d9846dc3d76dff4033499276f7f526f9a0a7e338dc24e778b1da96e716",
+      "reproducibility_build1_image_index_digest": "sha256:4d1705cd541baa6cb471dba183a3a32b94211b7433d73d7e95e116eab6481516",
+      "index_note": "image indexes differ between clean builds only in attestation-manifest entries (provenance build timestamps); platform manifests are byte-identical",
+      "oci_archive_build2": "release/blind-public-test/oci-archives/blind-daemon-1.0.0-rc.1.public-test.1-build2.oci.tar",
+      "oci_archive_build2_sha256": "sha256:85016b49a2225376f8b8de511acfcc2b98f5c6a8af534a5f46139567d0ac7998",
+      "oci_archive_build1_sha256": "sha256:efa7604880cc91b334ad911e9922fcf66028c9d006a28d669747932502e86486",
+      "platforms": [
+        {
+          "platform": "linux/amd64",
+          "manifest_digest": "sha256:b4f90134bb8364d83442c2dbda8c03034c89fa2f24f09981932fbea31f8929ac",
+          "config_digest": "sha256:10f09e77e31c9b430d2bd907ee8f49495dceb5c6ff846bed2e6b056380817137",
+          "reproducibility_build1_manifest_digest": "sha256:b4f90134bb8364d83442c2dbda8c03034c89fa2f24f09981932fbea31f8929ac",
+          "reproducible": true,
+          "attestation_manifest_digest": "sha256:0df660a4acc3c06b06b4d8f89a75cd5df0ad26a36efb505d4c6faef97454e857",
+          "provenance_statement_file": "release/blind-public-test/provenance/daemon-linux-amd64.slsa.json",
+          "provenance_statement_sha256": "sha256:30f591951261b8d5d725ac4b7b84843e8e6590a8813ebff355cc3396ae0c3c92"
+        },
+        {
+          "platform": "linux/arm64",
+          "manifest_digest": "sha256:41f474a629bc73f0a7320dfb0b1168f77451d55e0f8bc3eb85e1e3ee7cb7c32c",
+          "config_digest": "sha256:e110a43df8ba05938a177106a9f631791583cacf0b02924042e2535dc2282213",
+          "reproducibility_build1_manifest_digest": "sha256:41f474a629bc73f0a7320dfb0b1168f77451d55e0f8bc3eb85e1e3ee7cb7c32c",
+          "reproducible": true,
+          "attestation_manifest_digest": "sha256:3952d62e75dc1581c4cf79294789dedd80cb2688cf5cd68dd3749d00d280852e",
+          "provenance_statement_file": "release/blind-public-test/provenance/daemon-linux-arm64.slsa.json",
+          "provenance_statement_sha256": "sha256:b9037ab2f7084885989e45664b564b2b0ab7b2f0bca9e0560d8989db0abdc3be"
+        }
+      ],
+      "sbom": {
+        "linux/amd64": {
+          "file": "release/blind-public-test/sbom/blind-daemon-linux-amd64.spdx.json",
+          "sha256": "sha256:b1e043ee61b91b68267ce8153ca78afa259b2647513c4a49a09d8987255ff8f2",
+          "format": "SPDX-2.3",
+          "generator": "anchore/syft:v1.49.0@sha256:13b53ebabe3d215268c90cf8fb9b875f0183908245f376fd4b3a2cb69d21d484"
+        },
+        "linux/arm64": {
+          "file": "release/blind-public-test/sbom/blind-daemon-linux-arm64.spdx.json",
+          "sha256": "sha256:3470d16980ef54eb9905a99b30e21c05b83d31a657358629fc9cb9421e6bf458",
+          "format": "SPDX-2.3",
+          "generator": "anchore/syft:v1.49.0@sha256:13b53ebabe3d215268c90cf8fb9b875f0183908245f376fd4b3a2cb69d21d484"
+        }
+      }
+    }
+  ],
+  "browser_artifact": {
+    "path": "packages/blind-client/browser-artifacts/blind-client-control-v3.mjs",
+    "sha256": "sha256:874afd4a1927d4df2f0b439c1ecb72679de7eadde91ab256a330d85378e98744",
+    "artifact_hash_v3": "46a86079fb5fcaaeee42362113182ca0d41b9d004f0f5d62ec04869c0844f3ff",
+    "manifest_cenc_sha256": "sha256:819358a1638cf13e5ce149b52ddae922159c595558081135b1e74737ddcca3c4",
+    "authority_json_sha256": "sha256:3943a61c1b8fd7d75b339620d17320954729f1516b100a8ff858a265731cb928",
+    "source_closure_json_sha256": "sha256:f9f49e6a58f8861cde0aff1c5b2d75938cde0c9d8a002ed1764c9f9659280563",
+    "determinism": "regenerated twice from the exact accepted source with esbuild@0.28.1 (lockfile npm ci); byte-identical; generator --check passes; test/unit/blind-client-composition-v3.test.js 1/1",
+    "binding": "OUTSIDE both relay images (separate artifact); verified zero blind-client-control-* files inside both images",
+    "disclosed_staleness_finding": "the v3 artifact committed at 447bbbf (mjs sha256 bbef09b6c0cf2b27673dba31a53288f4ae31b85646d5d7adf6a7ad66105369ea, artifactHash 2197a9600f0c2e453155acfd03e63ecbae15cba00ae4616934f3026012cceb9b) was generated from a node_modules tree that did not match package-lock.json (root compact-encoding 3.3.0 instead of the locked packages/blind-protocol/node_modules compact-encoding 2.19.2); the regenerated artifact bound here is lockfile-faithful and is committed separately by this lane"
+  },
+  "compose_overlay": {
+    "file": "docker-compose.blind-public-test.yml",
+    "sha256": "sha256:7f546d7fe2133fc2d94d7e1f8408eb27b5ef7d717d6ac56dbdde2922daf3144e",
+    "properties": "digest-pinned images; host TCP 443 mapped directly to Edge TLS 9100 (no reverse proxy); daemon network_mode none on private Unix-socket volume; mem/cpu/pids/ulimit limits; compose config validated"
+  },
+  "vulnerability": {
+    "policy": "release/blind-public-test/security/vulnerability-policy.json",
+    "policy_sha256": "sha256:2777c447a3c62d5877f5b3531f2c9bd99d687a0500f882d567802c3161f90262",
+    "disposition": "release/blind-public-test/security/scan-disposition.json",
+    "disposition_sha256": "sha256:2394756c7a753ddc6cebba628adcb1a4d012763faa7b4a955f0a6e7edbc8a9a6",
+    "gate_result": "NO_BLOCKING_FINDING (report-only gate); zero findings in the relay closure /opt/hiverelay"
+  },
+  "rollback": {
+    "plan": "release/blind-public-test/rollback/README.md",
+    "script": "release/blind-public-test/rollback/rollback-public-test.sh",
+    "script_sha256": "sha256:1063f3ed8ca25bfdef0899ed70fd9702e2502bb57a4ec92ef6a8b80508dbe9f5",
+    "summary": "stops/removes only the sidecar Edge listener + daemon + volume-init containers of project hiverelay-blind-public-test; retains all named-volume roots; leaves fleet and T1 untouched"
+  },
+  "disclosed_defects_and_remediation": {
+    "packaging_metadata_files_omissions": "packages/blind-ipc files[] omits private-ipc-v3/v4 contract/status + authority v3/v4 + vectors-v3/v4 (startup-blocking under npm-pack filtered install); packages/blind-edge files[] omits forward-https-vnext.js (not startup-blocking; production cli.js wires server.js). Escalated to runtime lane for a files[] amendment; no package metadata modified by this lane (outside authority).",
+    "dockerfile_level_remediation": "after npm ci, the @hiverelay closure is installed as exact copies of the accepted source tree; third-party dependencies remain exactly the lockfile install; closure isolation re-asserted; build gates on full module-graph import; smoke shows both images fail closed on missing signed config"
+  },
+  "t1": {
+    "file": "fleet/public-hive-gateway-release.json",
+    "sha256": "sha256:bfcc12664be108cdb13b1ca83f088a87fdcb03efa598377aca1c1d34a0f36064",
+    "enabled": false,
+    "note": "byte-identical and disabled; untouched by this lane"
+  },
+  "readiness_zero": true,
+  "not_performed": [
+    "signing",
+    "registry push/tag",
+    "transfer",
+    "deployment",
+    "T1 mutation",
+    "runtime-code changes"
+  ]
+}

@@ -1,0 +1,12 @@
+--- edge fail-closed without TLS/config (expect non-zero, no listener) ---
+/bin/bash: timeout: command not found
+edge exit: 0
+--- daemon fail-closed without config ---
+/bin/bash: timeout: command not found
+daemon exit: 0
+--- daemon browser bytes (expect 0) ---
+0
+--- labels edge ---
+{"org.opencontainers.image.description":"Public metadata-stripping transport edge for the blind app substrate","org.opencontainers.image.hiverelay.build-id":"1.0.0-rc.1.public-test.1","org.opencontainers.image.hiverelay.bundle-id":"1.0.0-rc.1.public-test.1","org.opencontainers.image.hiverelay.claim-boundary":"LIVE_PUBLIC_TEST_ONLY","org.opencontainers.image.hiverelay.component":"edge","org.opencontainers.image.hiverelay.product-mode":"BLIND_APPLICATION_SUBSTRATE_V1","org.opencontainers.image.hiverelay.source-tree":"f21cc0d13e0c3dbb612c3e36f4bbe655affd2c23","org.opencontainers.image.licenses":"Apache-2.0","org.opencontainers.image.revision":"447bbbf6fa17f8f4629a4a427e151937d06e29b4","org.opencontainers.image.source":"https://github.com/bigdestiny2/p2p-hiverelay","org.opencontainers.image.title":"HiveRelay Blind Edge","org.opencontainers.image.version":"1.0.0-rc.1.public-test.1"}
+--- labels daemon ---
+{"org.opencontainers.image.description":"Private canonical dispatcher, storage, and signing daemon for the blind app substrate","org.opencontainers.image.hiverelay.build-id":"1.0.0-rc.1.public-test.1","org.opencontainers.image.hiverelay.bundle-id":"1.0.0-rc.1.public-test.1","org.opencontainers.image.hiverelay.claim-boundary":"LIVE_PUBLIC_TEST_ONLY","org.opencontainers.image.hiverelay.component":"daemon","org.opencontainers.image.hiverelay.product-mode":"BLIND_APPLICATION_SUBSTRATE_V1","org.opencontainers.image.hiverelay.source-tree":"f21cc0d13e0c3dbb612c3e36f4bbe655affd2c23","org.opencontainers.image.licenses":"Apache-2.0","org.opencontainers.image.revision":"447bbbf6fa17f8f4629a4a427e151937d06e29b4","org.opencontainers.image.source":"https://github.com/bigdestiny2/p2p-hiverelay","org.opencontainers.image.title":"HiveRelay Blind Daemon","org.opencontainers.image.version":"1.0.0-rc.1.public-test.1"}

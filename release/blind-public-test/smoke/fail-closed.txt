@@ -1,0 +1,11 @@
+--- remediated fail-closed edge ---
+file:///opt/hiverelay/edge/node_modules/@hiverelay/blind-edge/cli.js:8
+    throw new Error(`${name} is required from the signed launch topology as an unsigned integer`)
+          ^
+--- remediated fail-closed daemon ---
+[blind-daemon] startup failed BLIND_BOOTSTRAP_CONFIG_INVALID: HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH must be the exact 32-byte signed topology hash in hex
+--- CA roots edge ---
+default: 145 system: 284
+--- browser bytes edge/daemon (expect 0 0) ---
+0
+0
