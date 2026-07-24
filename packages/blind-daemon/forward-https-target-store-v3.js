@@ -185,6 +185,18 @@ function fail (message, code) {
   throw new ForwardHttpsTargetStoreV3Error(message, code)
 }
 
+// Module-level fault points (FORWARD_HTTPS_TARGET_STORE_V3_FAULT_POINT): the
+// injector observes the exact point with a frozen context; any injector
+// failure is a coded INTEGRITY error, never an uncoded callback escape.
+async function storeFault (state, point) {
+  if (state.faultInjector === null) return
+  try {
+    await state.faultInjector(point, Object.freeze({ role: state.role }))
+  } catch (error) {
+    fail(`fault injector failed at ${point}`, STORE_ERROR_CODE.INTEGRITY)
+  }
+}
+
 function transactionIdFor (stableSessionId, salt) {
   const id = b4a.from(stableSessionId)
   id[31] = (id[31] ^ salt) | 1
@@ -273,6 +285,7 @@ export async function openForwardHttpsTargetStoreV3 (options) {
     blocker: null,
     closed: false,
     localOperational: false,
+    faultInjector: options.faultInjector || null,
     store: new BlindTransactionStore({
       root: options.root,
       mapGeneration: options.mapGeneration == null ? 1n : options.mapGeneration,
@@ -291,6 +304,16 @@ export async function openForwardHttpsTargetStoreV3 (options) {
   state.walHeadSequence = state.store.walSequence
   state.walHeadHash = b4a.from(state.store.walHash)
   state.localOperational = true
+  try {
+    await storeFault(state, FORWARD_HTTPS_TARGET_STORE_V3_FAULT_POINT.OPEN_AFTER_RECOVERY)
+  } catch (error) {
+    // A rejected open never leaks a live engine: the store is failure-atomic
+    // toward CLOSED before the coded error escapes.
+    state.closed = true
+    state.localOperational = false
+    await state.store.close().catch(() => {})
+    throw error
+  }
   return state
 }
 
@@ -671,14 +694,23 @@ export async function closeForwardHttpsTargetStoreV3 (state) {
   if (state.closed) return
   state.closed = true
   state.localOperational = false
+  // Failure-atomic toward CLOSED: a close-fault failure is reported after the
+  // engine closes, never leaving the store stuck or the engine open.
+  let closeFault = null
+  try {
+    await storeFault(state, FORWARD_HTTPS_TARGET_STORE_V3_FAULT_POINT.CLOSE_BEFORE_STORE_CLOSE)
+  } catch (error) {
+    closeFault = error
+  }
   await state.store.close()
+  if (closeFault !== null) throw closeFault
 }
 
 export const FORWARD_HTTPS_TARGET_WAL_TYPE = WAL_TYPE
 
 export const FORWARD_HTTPS_TARGET_STORE_V3_STATUS = Object.freeze({
   schemaVersion: 3,
-  implementationReady: true,
+  implementationReady: false,
   descriptorOperationBits: 0,
   advertisedOperationBits: 0,
   readinessOperationBits: 0,

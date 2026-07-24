@@ -53,7 +53,8 @@ const FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE = deepFreeze({
   SEQUENCE_INVALID: 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_SEQUENCE_INVALID',
   CHAIN_INVALID: 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_CHAIN_INVALID',
   CLOSED: 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_CLOSED',
-  INTEGRITY: 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_INTEGRITY'
+  INTEGRITY: 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_INTEGRITY',
+  AUTHORITY_INVALID: 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_AUTHORITY_INVALID'
 })
 
 const FORWARD_HTTPS_STORAGE_AUTHORITY_V3_LIMITS = deepFreeze({
@@ -105,6 +106,18 @@ function fail (message, code) {
   throw new ForwardHttpsStorageAuthorityV3Error(message, code)
 }
 
+// Composite lifecycle fault points (FORWARD_HTTPS_STORAGE_V3_FAULT_POINT):
+// the injector observes the exact point with a frozen context; any injector
+// failure is a coded INTEGRITY error, never an uncoded callback escape.
+async function compositeFault (faultInjector, point) {
+  if (faultInjector === null) return
+  try {
+    await faultInjector(point, Object.freeze({ composite: true }))
+  } catch (error) {
+    fail(`fault injector failed at ${point}`, FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
+  }
+}
+
 function asBytes32 (value, field, nonzero = false) {
   if (!value || typeof value.byteLength !== 'number') throw new TypeError(`${field} must be bytes`)
   const output = b4a.isBuffer(value) ? value : b4a.from(value)
@@ -118,7 +131,7 @@ export const FORWARD_HTTPS_STORAGE_V3_LIMITS = FORWARD_HTTPS_STORAGE_AUTHORITY_V
 export const FORWARD_HTTPS_STORAGE_V3_ERROR_CODE = FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE
 export const FORWARD_HTTPS_STORAGE_V3_STATUS = deepFreeze({
   schemaVersion: 3,
-  implementationReady: true,
+  implementationReady: false,
   descriptorOperationBits: 0,
   advertisedOperationBits: 0,
   readinessOperationBits: 0,
@@ -194,6 +207,7 @@ export async function openForwardHttpsStorageAuthorityV3 (options) {
   const { openForwardHttpsTargetStoreV3, forwardHttpsTargetStoreV3Status, closeForwardHttpsTargetStoreV3 } = await import('./forward-https-target-store-v3.js')
   const opened = { quota: null, capabilities: null, sourceReplay: null, targetReplay: null, sourceStore: null, targetStore: null }
   try {
+    await compositeFault(faultInjector, FORWARD_HTTPS_STORAGE_V3_FAULT_POINT.OPEN_AFTER_ROOT_VERIFY)
     // 2: aggregate quota physical authority over all four roots.
     opened.quota = await openForwardHttpsAggregateQuotaV3({
       sourceReplayRoot: roots['source-replay'],
@@ -206,6 +220,7 @@ export async function openForwardHttpsStorageAuthorityV3 (options) {
       callbackTimeoutMillis: options.limits && typeof options.limits.callbackTimeoutMillis === 'number' ? options.limits.callbackTimeoutMillis : 15000,
       faultInjector
     })
+    await compositeFault(faultInjector, FORWARD_HTTPS_STORAGE_V3_FAULT_POINT.OPEN_AFTER_QUOTA_AUTHORITY)
     // 3: exactly four opaque role capabilities and the two recovery sinks.
     opened.capabilities = mintForwardHttpsAggregateQuotaCapabilitiesV3(opened.quota)
     const sourceSink = beginForwardHttpsAggregateQuotaRecoveryV3(opened.capabilities.sourceStoreQuotaCapability)
@@ -260,6 +275,7 @@ export async function openForwardHttpsStorageAuthorityV3 (options) {
       storeId: hashes.sourceStoreId,
       durabilityContinuityHash: hashes.sourceDurabilityContinuityHash
     })
+    await compositeFault(faultInjector, FORWARD_HTTPS_STORAGE_V3_FAULT_POINT.OPEN_AFTER_SOURCE_STORE)
     opened.targetStore = await openForwardHttpsTargetStoreV3({
       ...storeBase,
       root: roots['target-store'],
@@ -277,6 +293,7 @@ export async function openForwardHttpsStorageAuthorityV3 (options) {
       advanceResponderOutcome: options.advanceResponderOutcome,
       atRestKey: b4a.from(atRestKey)
     })
+    await compositeFault(faultInjector, FORWARD_HTTPS_STORAGE_V3_FAULT_POINT.OPEN_AFTER_TARGET_STORE)
     // 6: both sinks finished and quota initialized with the two one-use
     // final recovery states.
     const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sourceSink)
@@ -288,6 +305,7 @@ export async function openForwardHttpsStorageAuthorityV3 (options) {
     // 7: child authorities and localOperational only after successful
     // initialization.
     assertForwardHttpsAggregateQuotaOperationalV3(opened.capabilities.sourceStoreQuotaCapability)
+    await compositeFault(faultInjector, FORWARD_HTTPS_STORAGE_V3_FAULT_POINT.OPEN_AFTER_QUOTA_INITIALIZE)
     const authority = Object.freeze({})
     const state = {
       authority,
@@ -305,6 +323,7 @@ export async function openForwardHttpsStorageAuthorityV3 (options) {
         closeSource: closeForwardHttpsSourceStoreV3,
         closeTarget: closeForwardHttpsTargetStoreV3
       },
+      faultInjector,
       closePromise: null,
       closed: false
     }
@@ -405,6 +424,19 @@ export function closeForwardHttpsStorageAuthorityV3 (authority) {
     await closeForwardHttpsReplayJournalV4(state.targetReplay).catch(() => {})
     await closeForwardHttpsReplayJournalV4(state.sourceReplay).catch(() => {})
     await closeForwardHttpsAggregateQuotaV3(state.quota).catch(() => {})
+    // Failure-atomic toward CLOSED: a close-fault failure is reported once on
+    // this first close; the exact-owner repeat resolves because every child
+    // already closed absorbing.
+    let closeFault = null
+    try {
+      await compositeFault(state.faultInjector, FORWARD_HTTPS_STORAGE_V3_FAULT_POINT.CLOSE_AFTER_QUOTA)
+    } catch (error) {
+      closeFault = error
+    }
+    if (closeFault !== null) {
+      state.closePromise = Promise.resolve()
+      throw closeFault
+    }
   })()
   return state.closePromise
 }

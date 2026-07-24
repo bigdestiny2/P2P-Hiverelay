@@ -56,7 +56,7 @@ export const FORWARD_HTTPS_REPLAY_JOURNAL_V4_LIMITS = deepFreeze({
 
 export const FORWARD_HTTPS_REPLAY_JOURNAL_V4_STATUS = deepFreeze({
   schemaVersion: 4,
-  implementationReady: true,
+  implementationReady: false,
   descriptorOperationBits: 0,
   advertisedOperationBits: 0,
   readinessOperationBits: 0,
@@ -1717,8 +1717,13 @@ export async function commitForwardHttpsAggregateQuotaV3 (quotaCapability, reser
     }
     internal.burned = true
     // Commit applies the exact derived logical of the operation's closed
-    // entries (never the caller's bind-actual estimate).
-    const cost = internal.actual !== null ? { logicalBytes: internal.derivedLogical } : internal.plan
+    // entries (never the caller's bind-actual estimate). A store-role commit
+    // with no bound frame charges exactly zero: the conservative plan ceiling
+    // is an admission earmark, not a charge. Replay-role snapshot reservations
+    // carry no frames and keep their exact plan charge.
+    const cost = internal.actual !== null
+      ? { logicalBytes: internal.derivedLogical }
+      : (capability.role === 'SOURCE_STORE' || capability.role === 'TARGET_STORE' ? { logicalBytes: 0 } : internal.plan)
     if (capability.role === 'SOURCE_STORE' || capability.role === 'TARGET_STORE') state.logical[capability.role] += cost.logicalBytes
     state.physical = await measurements(state)
     await quotaFault(state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.COMMIT_AFTER_MEASURE)
@@ -1873,7 +1878,7 @@ export function forwardHttpsAggregateQuotaV3Status (quotaAuthority) {
     perStoreQuotaBytes: state.perStore,
     aggregateQuotaBytes: state.aggregate,
     pendingReservation: state.pendingReservation,
-    localOperational: state.initialized && !state.failed,
+    localOperational: state.initialized && !state.failed && !state.closed,
     blocker: state.blocker
   })
 }
@@ -1886,11 +1891,21 @@ export async function closeForwardHttpsAggregateQuotaV3 (quotaAuthority) {
   // and leaves the owning operation responsible for ordinary release.
   if (state.pendingReservation && !state.failed) quotaFail('quota close has a pending ordinary reservation', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
   state.closing = true
+  let closeFault = null
   await serialize(state, async () => {
-    await quotaFault(state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.CLOSE_BEFORE_INVALIDATE)
+    try {
+      await quotaFault(state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.CLOSE_BEFORE_INVALIDATE)
+    } catch (error) {
+      // Close is failure-atomic toward CLOSED: a close-fault hook failure is
+      // captured and reported after the invalidation below, never leaving the
+      // authority stuck in CLOSING with live capabilities.
+      closeFault = error
+    }
     for (const capability of state.capabilityInternals) capability.burned = true
     state.closed = true
+    if (closeFault !== null) state.blocker = FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY
   })
+  if (closeFault !== null) quotaFail('quota close fault hook failed; the authority is CLOSED with blocker INTEGRITY', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
 }
 
 // Universal operational gate (adopted v13): succeeds only for an exact OPEN

@@ -19,6 +19,8 @@ import {
 import {
   FORWARD_HTTPS_STORAGE_V3_LIMITS,
   FORWARD_HTTPS_STORAGE_V3_STATUS,
+  FORWARD_HTTPS_STORAGE_V3_ERROR_CODE,
+  FORWARD_HTTPS_STORAGE_V3_FAULT_POINT,
   openForwardHttpsStorageAuthorityV3,
   sourceForwardHttpsStorageAuthorityV3,
   targetForwardHttpsStorageAuthorityV3,
@@ -373,4 +375,85 @@ test('composite storage authority: exact open order, exposed children, status, v
   await closeForwardHttpsStorageAuthorityV3(authority)
   await t.exception.all(closeForwardHttpsStorageAuthorityV3(Object.freeze({})), /forged|AUTHORITY_INVALID/)
   await t.exception.all(() => sourceForwardHttpsStorageAuthorityV3(authority), /closed|CLOSED/)
+})
+
+function compositeOptions (root, faultInjector) {
+  return {
+    root,
+    manifestKey: fixed(0x30),
+    atRestKey: fixed(0x31),
+    wireV3AbiHash: fixed(0x32),
+    privateIpcV4Hash: fixed(0x33),
+    signedLaunchTopologyHash: fixed(0x34),
+    sourceStoreId: fixed(0x35),
+    targetStoreId: fixed(0x36),
+    mapGeneration: 1n,
+    ownerFenceTokenHash: fixed(0x37),
+    sourceDurabilityContinuityHash: fixed(0x38),
+    targetDurabilityContinuityHash: fixed(0x39),
+    targetSignerPublicKey: fixed(0x3a),
+    targetSignerDescriptorSequence: 1n,
+    targetSignerDescriptorHash: fixed(0x3b),
+    signResult: async () => b4a.alloc(64),
+    createResponderState: () => ({}),
+    advanceResponderIngress: () => {},
+    advanceResponderOutcome: () => {},
+    epochSeconds: () => 1000000,
+    monotonicMillis: () => Date.now(),
+    faultInjector
+  }
+}
+
+test('composite fault registry: lifecycle points fire and injector failures are coded INTEGRITY', async t => {
+  // The composite lifecycle subset fires over one open/close, alongside the
+  // quota, replay and store points the same injector observes downstream.
+  const r1 = await createBlindBoundaryScratch('fhcomp-fault-')
+  t.teardown(async () => { await removeBlindBoundaryScratch(r1) })
+  const observed = []
+  const authority = await openForwardHttpsStorageAuthorityV3(compositeOptions(r1, async point => { observed.push(point) }))
+  for (const point of ['OPEN_AFTER_ROOT_VERIFY', 'OPEN_AFTER_QUOTA_AUTHORITY', 'OPEN_AFTER_SOURCE_STORE', 'OPEN_AFTER_TARGET_STORE', 'OPEN_AFTER_QUOTA_INITIALIZE']) {
+    t.ok(observed.includes(point), `${point} fired`)
+  }
+  await closeForwardHttpsStorageAuthorityV3(authority)
+  t.ok(observed.includes(FORWARD_HTTPS_STORAGE_V3_FAULT_POINT.CLOSE_AFTER_QUOTA), 'close fault point fired')
+  // An open-side injector failure rejects the open with coded INTEGRITY.
+  const r2 = await createBlindBoundaryScratch('fhcomp-fault-')
+  t.teardown(async () => { await removeBlindBoundaryScratch(r2) })
+  await t.exception.all(openForwardHttpsStorageAuthorityV3(compositeOptions(r2, async point => {
+    if (point === FORWARD_HTTPS_STORAGE_V3_FAULT_POINT.OPEN_AFTER_QUOTA_INITIALIZE) throw new Error('injected composite fault')
+  })), /fault injector failed at OPEN_AFTER_QUOTA_INITIALIZE|INTEGRITY/)
+  // A close-side injector failure is reported once with coded INTEGRITY; the
+  // exact-owner repeat resolves because every child already closed.
+  const r3 = await createBlindBoundaryScratch('fhcomp-fault-')
+  t.teardown(async () => { await removeBlindBoundaryScratch(r3) })
+  const authority3 = await openForwardHttpsStorageAuthorityV3(compositeOptions(r3, async point => {
+    if (point === FORWARD_HTTPS_STORAGE_V3_FAULT_POINT.CLOSE_AFTER_QUOTA) throw new Error('injected close fault')
+  }))
+  let closeError = null
+  try {
+    await closeForwardHttpsStorageAuthorityV3(authority3)
+  } catch (error) {
+    closeError = error
+  }
+  t.ok(closeError, 'the first close reports the fault')
+  t.is(closeError.code, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_INTEGRITY')
+  await closeForwardHttpsStorageAuthorityV3(authority3)
+  t.is(forwardHttpsStorageAuthorityV3Status(authority3).state, 'CLOSED')
+})
+
+test('readiness flags and error codes: storage STATUS is not implementation-ready and AUTHORITY_INVALID is defined', async t => {
+  t.is(FORWARD_HTTPS_STORAGE_V3_STATUS.implementationReady, false)
+  t.is(FORWARD_HTTPS_STORAGE_V3_STATUS.runtimeReady, false)
+  t.is(FORWARD_HTTPS_STORAGE_V3_STATUS.releaseReady, false)
+  t.is(FORWARD_HTTPS_STORAGE_V3_STATUS.authorizesRelease, false)
+  t.is(FORWARD_HTTPS_STORAGE_V3_ERROR_CODE.AUTHORITY_INVALID, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_AUTHORITY_INVALID')
+  // A forged authority close rejects with the exact coded AUTHORITY_INVALID.
+  let forged = null
+  try {
+    await closeForwardHttpsStorageAuthorityV3(Object.freeze({}))
+  } catch (error) {
+    forged = error
+  }
+  t.ok(forged)
+  t.is(forged.code, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_AUTHORITY_INVALID')
 })

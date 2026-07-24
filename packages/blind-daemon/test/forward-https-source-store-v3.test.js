@@ -30,6 +30,7 @@ import {
   forwardHttpsSourceStoreV3Status,
   closeForwardHttpsSourceStoreV3,
   FORWARD_HTTPS_SOURCE_WAL_TYPE,
+  FORWARD_HTTPS_SOURCE_STORE_V3_STATUS,
   FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT
 } from '../forward-https-source-store-v3.js'
 
@@ -452,4 +453,52 @@ test('source store: post-fsync adjust failure transitions the quota to absorbing
   const recovered = forwardHttpsSourceStoreV3Status(reopened)
   t.is(recovered.state, 'OPEN')
   t.is(recovered.unconsumedSlots, recovered.slotCapacity)
+})
+
+test('fault registry: OPEN_AFTER_RECOVERY and CLOSE_BEFORE_STORE_CLOSE fire with coded errors', async t => {
+  // The module-level points fire alongside the engine points on a plain
+  // open/close lifecycle.
+  const r1 = await roots(t)
+  const { authority: a1, capabilities: c1 } = await quota(t, r1)
+  const observed = []
+  const store = await openStore(a1, r1, c1, { faultInjector: async (point, context) => { observed.push(point) } })
+  t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
+  t.ok(observed.includes(FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT.OPEN_AFTER_RECOVERY), 'open fault point fired')
+  await closeForwardHttpsSourceStoreV3(store)
+  t.ok(observed.includes(FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT.CLOSE_BEFORE_STORE_CLOSE), 'close fault point fired')
+  // Open fault: the injector failure is a coded INTEGRITY rejection of open
+  // with no live engine left behind.
+  const r2 = await roots(t)
+  const { authority: a2, capabilities: c2 } = await quota(t, r2)
+  await t.exception.all(openStore(a2, r2, c2, {
+    faultInjector: async point => {
+      if (point === FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT.OPEN_AFTER_RECOVERY) throw new Error('injected open fault')
+    }
+  }), /fault injector failed at OPEN_AFTER_RECOVERY|INTEGRITY/)
+  // Close fault: the first close reports coded INTEGRITY, the store still
+  // reaches CLOSED and the exact-owner repeat resolves.
+  const r3 = await roots(t)
+  const { authority: a3, capabilities: c3 } = await quota(t, r3)
+  const store3 = await openStore(a3, r3, c3, {
+    faultInjector: async point => {
+      if (point === FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT.CLOSE_BEFORE_STORE_CLOSE) throw new Error('injected close fault')
+    }
+  })
+  let closeError = null
+  try {
+    await closeForwardHttpsSourceStoreV3(store3)
+  } catch (error) {
+    closeError = error
+  }
+  t.ok(closeError, 'the first close reports the fault')
+  t.is(closeError.code, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_INTEGRITY')
+  t.is(store3.closed, true)
+  await closeForwardHttpsSourceStoreV3(store3)
+})
+
+test('readiness flags: the source store STATUS constant is not implementation-ready', async t => {
+  t.is(FORWARD_HTTPS_SOURCE_STORE_V3_STATUS.implementationReady, false)
+  t.is(FORWARD_HTTPS_SOURCE_STORE_V3_STATUS.runtimeReady, false)
+  t.is(FORWARD_HTTPS_SOURCE_STORE_V3_STATUS.releaseReady, false)
+  t.is(FORWARD_HTTPS_SOURCE_STORE_V3_STATUS.authorizesRelease, false)
 })

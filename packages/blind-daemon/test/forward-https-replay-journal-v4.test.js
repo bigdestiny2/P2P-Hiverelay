@@ -1451,6 +1451,142 @@ test('composite: substituted final and cross-role presentations reject', async t
   )
 })
 
+test('FPR9 independent match: chain and clock tampering reject at recovery absorb and live adjust', async t => {
+  const id = fixed(0x9b)
+  const session = b4a.concat([b4a.from('FTS3', 'ascii'), id])
+  const removed = 296
+  const sessionWalHash = blake2b256(b4a.concat([b4a.from('wal'), session]))
+  const tombstone = overrides => encodeForwardHttpsRetentionPrunedV3({
+    role: TARGET,
+    stableSessionId: id,
+    priorSessionRevision: 1n,
+    pruneEpochSeconds: 9,
+    trustedEpochHighWatermark: 9,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: BigInt(removed),
+    chargeEntryCount: 1,
+    beforeAuthorityBitmap: 0,
+    allocationDisposition: 1,
+    terminalSlotState: 1,
+    chargeEntryBuffers: [chargeEntry(112, 1n, blake2b256(session), removed)],
+    authorityCommitments: Array.from({ length: 10 }, () => b4a.from(ZERO32)),
+    ...overrides
+  })
+  const seedSession = sink => absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(112, session, 1n, ZERO32) })
+  // Positive control: the exact tombstone absorbs against the exact mirror.
+  const control = await quota(t, TARGET)
+  const controlSink = beginForwardHttpsAggregateQuotaRecoveryV3(control.capability)
+  await seedSession(controlSink)
+  const controlled = await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(controlSink, { frame: recoveryFrame(118, tombstone(), 2n, sessionWalHash) })
+  t.is(controlled.entry.scope, 'PRUNE_TRANSITION')
+  await finishForwardHttpsAggregateQuotaRecoveryV3(controlSink)
+  const cases = [
+    { name: 'charge chain mismatch', overrides: { chargeEntryBuffers: [chargeEntry(112, 1n, fixed(0xff), removed)] } },
+    { name: 'watermark mismatch', overrides: { trustedEpochHighWatermark: 10 } },
+    { name: 'expiry clock mismatch', overrides: { expiresAtEpoch: 100 } },
+    { name: 'grace clock mismatch', overrides: { recoveryGraceUntilEpoch: 100 } }
+  ]
+  // Absorb-side tamper negatives on fresh sinks of one authority.
+  const absorb = await quota(t, TARGET)
+  for (const { name, overrides } of cases) {
+    const sink = beginForwardHttpsAggregateQuotaRecoveryV3(absorb.capability)
+    await seedSession(sink)
+    await t.exception.all(
+      absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(118, tombstone(overrides), 2n, sessionWalHash) }),
+      new RegExp(`recovered tombstone does not independently match: ${name}`)
+    )
+    await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+  }
+  // Live-adjust tamper negatives: the same tombstones reject at the exact
+  // pre-prune mirror match with no ledger mutation.
+  for (const { name, overrides } of cases) {
+    const setup = await quota(t, TARGET)
+    const sink = beginForwardHttpsAggregateQuotaRecoveryV3(setup.capability)
+    await seedSession(sink)
+    await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+    t.is(replayModule.forwardHttpsAggregateQuotaV3Status(setup.authority).targetLogicalChargedBytes, removed)
+    const payload = tombstone(overrides)
+    const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(setup.capability, {
+      operation: 'PRUNE',
+      knownInputBuffers: [payload],
+      temporaryWriteBuffers: [],
+      existingDestinationBytes: 0
+    })
+    const { reservation } = await replayModule.reserveForwardHttpsAggregateQuotaV3(setup.capability, plan)
+    const { transitionAuthority } = replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(setup.capability, reservation, {
+      logicalRecordBuffers: [],
+      encryptedPlaintextBuffers: [],
+      finalWalMetadataBuffers: [payload],
+      temporaryWriteBuffers: []
+    })
+    const walHash = blake2b256(b4a.concat([b4a.from('wal'), payload]))
+    await replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(setup.capability, reservation, transitionAuthority, { type: 118, payload }, async () => ({ sequence: 2n, walHash, payloadHash: blake2b256(payload) }))
+    await t.exception.all(
+      replayModule.adjustForwardHttpsAggregateQuotaV3(setup.capability, { durableTombstonePayloadBuffer: payload, durableWalHeadSequence: 2n, durableWalHeadHash: walHash }),
+      new RegExp(`quota adjustment does not independently match: ${name}`)
+    )
+    t.is(replayModule.forwardHttpsAggregateQuotaV3Status(setup.authority).targetLogicalChargedBytes, removed, 'no prune ledger mutation')
+  }
+})
+
+test('quota close is failure-atomic toward CLOSED under a persistent close fault', async t => {
+  const setup = await quota(t, TARGET, {
+    faultInjector: async point => {
+      if (point === 'CLOSE_BEFORE_INVALIDATE') throw new Error('injected close fault')
+    }
+  })
+  const { authority, capability, capabilities } = setup
+  // Initialize so localOperational is observable before close.
+  const sourceSink = beginForwardHttpsAggregateQuotaRecoveryV3(capabilities.sourceStoreQuotaCapability)
+  const sourceFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(sourceSink)
+  const targetSink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  const targetFinal = await finishForwardHttpsAggregateQuotaRecoveryV3(targetSink)
+  await replayModule.initializeForwardHttpsAggregateQuotaV3(authority, { sourceRecoveryFinalState: sourceFinal, targetRecoveryFinalState: targetFinal })
+  t.ok(replayModule.forwardHttpsAggregateQuotaV3Status(authority).localOperational)
+  // The first close reports the fault but still reaches CLOSED with the
+  // capabilities burned and blocker INTEGRITY.
+  await t.exception.all(closeForwardHttpsAggregateQuotaV3(authority), /CLOSED with blocker INTEGRITY|INTEGRITY/)
+  const status = replayModule.forwardHttpsAggregateQuotaV3Status(authority)
+  t.is(status.state, 'CLOSED')
+  t.is(status.blocker, 'FORWARD_HTTPS_AGGREGATE_QUOTA_V3_INTEGRITY')
+  t.absent(status.localOperational)
+  await t.exception.all(() => replayModule.assertForwardHttpsAggregateQuotaOperationalV3(capability), /forged|AUTHORITY_INVALID/)
+  // The exact-owner repeat close resolves.
+  await closeForwardHttpsAggregateQuotaV3(authority)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).state, 'CLOSED')
+})
+
+test('commit without bind charges exactly zero frames on store roles', async t => {
+  const { authority, capability } = await quota(t, TARGET)
+  const payload = b4a.concat([b4a.from('FTS3', 'ascii'), fixed(0x9a), b4a.alloc(8, 0x41)])
+  const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'TURN_FINAL',
+    knownInputBuffers: [payload],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const { reservation } = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan)
+  // Zero frames applied: commit charges exactly zero, never the conservative
+  // plan earmark.
+  await replayModule.commitForwardHttpsAggregateQuotaV3(capability, reservation, {
+    durableWalHeadSequence: 0n,
+    durableWalHeadHash: ZERO32
+  })
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).targetLogicalChargedBytes, 0)
+  await t.exception.all(replayModule.commitForwardHttpsAggregateQuotaV3(capability, reservation, {
+    durableWalHeadSequence: 0n,
+    durableWalHeadHash: ZERO32
+  }), /invalid|AUTHORITY_INVALID/)
+})
+
+test('readiness flags: the replay module STATUS constant is not implementation-ready', async t => {
+  t.is(replayModule.FORWARD_HTTPS_REPLAY_JOURNAL_V4_STATUS.implementationReady, false)
+  t.is(replayModule.FORWARD_HTTPS_REPLAY_JOURNAL_V4_STATUS.runtimeReady, false)
+  t.is(replayModule.FORWARD_HTTPS_REPLAY_JOURNAL_V4_STATUS.releaseReady, false)
+  t.is(replayModule.FORWARD_HTTPS_REPLAY_JOURNAL_V4_STATUS.authorizesRelease, false)
+})
+
 function u16be (value) {
   const output = b4a.alloc(2)
   output.writeUInt16BE(value, 0)
