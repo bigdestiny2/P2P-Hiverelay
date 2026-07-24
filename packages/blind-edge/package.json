@@ -16,7 +16,8 @@
     "index.js",
     "ipc-client.js",
     "readiness.js",
-    "server.js"
+    "server.js",
+    "forward-https-vnext.js"
   ],
   "dependencies": {
     "@hiverelay/blind-ipc": "1.0.0-rc.1",
