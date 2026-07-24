@@ -1229,8 +1229,9 @@ export function bindForwardHttpsStoreQuotaActualBuffersV3 (storeQuotaCapability,
   // One-time bind freezes the exact actual frame count/order: zero or more
   // type113 prefix frames (bound as encrypted plaintext records) followed by
   // exactly one operation final frame. Actual dimensions above the reserved
-  // operation row are INTEGRITY.
-  const row = FORWARD_HTTPS_STORE_WAL_QUOTA_FRAME_ROWS[internal.plan.operation]
+  // operation row are INTEGRITY. A terminalReservation binds the exact
+  // SESSION_TERMINAL row instead of the rejected operation's row.
+  const row = internal.terminal !== null ? FORWARD_HTTPS_STORE_WAL_QUOTA_FRAME_ROWS.SESSION_TERMINAL : FORWARD_HTTPS_STORE_WAL_QUOTA_FRAME_ROWS[internal.plan.operation]
   if (!row || row.finalTypes.length === 0) quotaFail('operation cannot bind WAL frames', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
   const type113Buffers = buffersArray(input.encryptedPlaintextBuffers, 'encryptedPlaintextBuffers')
   if (type113Buffers.length > row.type113) quotaFail('type113 frame count exceeds the operation row', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
@@ -1240,7 +1241,28 @@ export function bindForwardHttpsStoreQuotaActualBuffersV3 (storeQuotaCapability,
   const finalPayload = finalBuffers[0]
   // The FTM9 and FPR9 headers place the session id at offset 8; ordinary
   // session payloads place it at offset 4.
-  const stableSessionId = (internal.plan.operation === 'PRUNE' || internal.plan.operation === 'SESSION_TERMINAL')
+  // A terminalReservation binds only the exact flags0 BUDGET_EXHAUSTED FTM9
+  // matching the minted expectation; the original rejected operation's frames
+  // reject here with no WAL mutation. A REQUESTED terminal binds its exact
+  // role FTM9 (flags0 existing or flags1 minimal absent).
+  if (internal.terminal !== null) {
+    if (type113Buffers.length !== 0) quotaFail('terminal reservation binds no prefix frames', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    let terminal
+    try {
+      terminal = decodeFtm9Payload(finalPayload, capability.role === 'SOURCE_STORE' ? 99 : 117)
+    } catch (error) {
+      quotaFail('terminal reservation binds only an exact FTM9', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    }
+    if (internal.terminal === 'ENTRY_CAP') {
+      const expectation = internal.terminalExpectation
+      if (!expectation) quotaFail('terminal reservation has no expectation', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+      if (terminal.flags !== 0 || b4a.toString(terminal.reason, 'ascii') !== 'BUDGET_EXHAUSTED' ||
+          !b4a.equals(terminal.stableSessionId, expectation.stableSessionId)) {
+        quotaFail('terminal reservation frame is not the exact flags0 BUDGET_EXHAUSTED expectation', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+      }
+    }
+  }
+  const stableSessionId = (internal.plan.operation === 'PRUNE' || internal.plan.operation === 'SESSION_TERMINAL' || internal.terminal !== null)
     ? b4a.from(finalPayload.subarray(8, 40))
     : b4a.from(finalPayload.subarray(4, 36))
   if (b4a.equals(stableSessionId, ZERO32)) quotaFail('bound session identity must be nonzero', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
@@ -1329,7 +1351,7 @@ export async function applyForwardHttpsAggregateQuotaWalFrameV3 (storeQuotaCapab
   if (claimInternal.ordinal !== internal.nextOrdinal || claimInternal.ordinal >= internal.totalFrames) {
     compositeReject(storeQuotaCapability, token, internal, 'composite apply ordinal is early, skipped, reordered or reused', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.AUTHORITY_INVALID)
   }
-  const row = FORWARD_HTTPS_STORE_WAL_QUOTA_FRAME_ROWS[internal.plan.operation]
+  const row = internal.terminal !== null ? FORWARD_HTTPS_STORE_WAL_QUOTA_FRAME_ROWS.SESSION_TERMINAL : FORWARD_HTTPS_STORE_WAL_QUOTA_FRAME_ROWS[internal.plan.operation]
   const frameType = safeUint(frame.type, 'frame.type', 1, 255)
   const prefixOrdinal = claimInternal.ordinal < internal.totalFrames - 1
   if ((prefixOrdinal && frameType !== 113) || (!prefixOrdinal && !row.finalTypes.includes(frameType))) {

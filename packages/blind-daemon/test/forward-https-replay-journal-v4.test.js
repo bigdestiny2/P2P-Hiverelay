@@ -784,6 +784,90 @@ test('reserve disposition union: REQUESTED_TERMINAL for terminal plans and ENTRY
   t.ok(cappedUnion.terminalReservation)
 })
 
+test('ENTRY_CAP terminalReservation drivability: original frames reject, exact flags0 BUDGET_EXHAUSTED FTM9 terminalizes the one session', async t => {
+  const { authority, capability } = await quota(t, TARGET)
+  const id = fixed(0x7f)
+  // Seed the mirror with 65535 entries of one session through recovery
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  let previous = ZERO32
+  for (let index = 1; index <= 65535; index++) {
+    const payload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, index & 0xff)])
+    const walHash = blake2b256(b4a.concat([b4a.from('wal'), payload, u64be(BigInt(index))]))
+    await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, {
+      frame: { type: 112, payload, payloadHash: blake2b256(payload), sequence: BigInt(index), previousWalHash: previous, walHash, frameBytes: payload.byteLength + 224 }
+    })
+    previous = walHash
+  }
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+  // Cap+1: recovered 65535 plus planned 2 exceeds 65536
+  const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'TURN_FINAL',
+    knownInputBuffers: [b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x01)])],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const union = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan)
+  t.is(union.disposition, 'ENTRY_CAP_TERMINAL')
+  const terminalReservation = union.terminalReservation
+  // The original rejected operation's frames reject at bind with no WAL mutation
+  const rejectedPayload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x01)])
+  await t.exception.all(() => replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, terminalReservation, {
+    logicalRecordBuffers: [],
+    encryptedPlaintextBuffers: [],
+    finalWalMetadataBuffers: [rejectedPayload],
+    temporaryWriteBuffers: []
+  }), /FTM9|expectation|INTEGRITY/)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).pendingReservation, true)
+  // The exact flags0 BUDGET_EXHAUSTED expectation binds, applies and commits
+  const ftm9 = buildFtm9({
+    role: 'TARGET',
+    flags: 0,
+    stableSessionId: id,
+    sequence: 70000n,
+    priorSessionRevision: 65535n,
+    newTrustedEpochHighWatermark: 4242,
+    reason: 'BUDGET_EXHAUSTED'
+  })
+  const { transitionAuthority } = replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, terminalReservation, {
+    logicalRecordBuffers: [],
+    encryptedPlaintextBuffers: [],
+    finalWalMetadataBuffers: [ftm9],
+    temporaryWriteBuffers: []
+  })
+  let sequence = 65535n
+  const applied = await replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, terminalReservation, transitionAuthority, { type: 117, payload: ftm9 }, async frame => {
+    sequence += 1n
+    return { sequence, walHash: blake2b256(b4a.concat([b4a.from('wal'), frame.payload])), payloadHash: blake2b256(frame.payload) }
+  })
+  t.is(applied.entry.terminalLogicalCharge, 608)
+  t.is(applied.entry.authorityBitmap, 512)
+  t.is(applied.transitionAuthorityHandoff, null)
+  await replayModule.commitForwardHttpsAggregateQuotaV3(capability, terminalReservation, {
+    durableWalHeadSequence: sequence,
+    durableWalHeadHash: blake2b256(b4a.concat([b4a.from('wal'), ftm9]))
+  })
+  // The ONE session is now terminally consumed in the canonical mirror: a
+  // second flags0 terminal on it rejects at derive with no second apply.
+  const secondPlan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'SESSION_TERMINAL',
+    knownInputBuffers: [ftm9],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const secondUnion = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, secondPlan)
+  const secondReservation = secondUnion.reservation || secondUnion.terminalReservation
+  const second = replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, secondReservation, {
+    logicalRecordBuffers: [],
+    encryptedPlaintextBuffers: [],
+    finalWalMetadataBuffers: [ftm9],
+    temporaryWriteBuffers: []
+  })
+  await t.exception.all(
+    replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, secondReservation, second.transitionAuthority, { type: 117, payload: ftm9 }, async frame => ({ sequence: 65537n, walHash: blake2b256(frame.payload), payloadHash: blake2b256(frame.payload) })),
+    /PRESENT_ALLOCATED|predecessor|INTEGRITY/
+  )
+})
+
 test('failure states: terminal prewrite abort enters FAILED_PREWRITE; close rules reach CLOSED exactly', async t => {
   const { authority, capability } = await quota(t, TARGET)
   const id = fixed(0x7c)
