@@ -107,15 +107,18 @@ function fail (message, code) {
 }
 
 // Composite lifecycle fault points (FORWARD_HTTPS_STORAGE_V3_FAULT_POINT):
-// the injector observes the exact point with a frozen context; any injector
-// failure is a coded INTEGRITY error, never an uncoded callback escape.
+// the injector observes exactly the point string (no context); any injector
+// failure or non-undefined return is a coded INTEGRITY error, never an
+// uncoded callback escape.
 async function compositeFault (faultInjector, point) {
   if (faultInjector === null) return
+  let result
   try {
-    await faultInjector(point, Object.freeze({ composite: true }))
+    result = await faultInjector(point)
   } catch (error) {
     fail(`fault injector failed at ${point}`, FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
   }
+  if (result !== undefined) fail(`fault injector returned a value at ${point}`, FORWARD_HTTPS_STORAGE_AUTHORITY_V3_ERROR_CODE.INTEGRITY)
 }
 
 function asBytes32 (value, field, nonzero = false) {

@@ -410,18 +410,27 @@ test('composite fault registry: lifecycle points fire and injector failures are 
   const r1 = await createBlindBoundaryScratch('fhcomp-fault-')
   t.teardown(async () => { await removeBlindBoundaryScratch(r1) })
   const observed = []
-  const authority = await openForwardHttpsStorageAuthorityV3(compositeOptions(r1, async point => { observed.push(point) }))
+  const contexts = []
+  const authority = await openForwardHttpsStorageAuthorityV3(compositeOptions(r1, async (point, context) => { observed.push(point); contexts.push(context) }))
   for (const point of ['OPEN_AFTER_ROOT_VERIFY', 'OPEN_AFTER_QUOTA_AUTHORITY', 'OPEN_AFTER_SOURCE_STORE', 'OPEN_AFTER_TARGET_STORE', 'OPEN_AFTER_QUOTA_INITIALIZE']) {
     t.ok(observed.includes(point), `${point} fired`)
   }
   await closeForwardHttpsStorageAuthorityV3(authority)
   t.ok(observed.includes(FORWARD_HTTPS_STORAGE_V3_FAULT_POINT.CLOSE_AFTER_QUOTA), 'close fault point fired')
+  t.ok(contexts.every(context => context === undefined), 'no context is passed at any layer')
   // An open-side injector failure rejects the open with coded INTEGRITY.
   const r2 = await createBlindBoundaryScratch('fhcomp-fault-')
   t.teardown(async () => { await removeBlindBoundaryScratch(r2) })
   await t.exception.all(openForwardHttpsStorageAuthorityV3(compositeOptions(r2, async point => {
     if (point === FORWARD_HTTPS_STORAGE_V3_FAULT_POINT.OPEN_AFTER_QUOTA_INITIALIZE) throw new Error('injected composite fault')
   })), /fault injector failed at OPEN_AFTER_QUOTA_INITIALIZE|INTEGRITY/)
+  // A non-undefined injector return maps to coded INTEGRITY as well.
+  const r2b = await createBlindBoundaryScratch('fhcomp-fault-')
+  t.teardown(async () => { await removeBlindBoundaryScratch(r2b) })
+  await t.exception.all(openForwardHttpsStorageAuthorityV3(compositeOptions(r2b, async point => {
+    if (point === FORWARD_HTTPS_STORAGE_V3_FAULT_POINT.OPEN_AFTER_QUOTA_INITIALIZE) return 'injected'
+    return undefined
+  })), /returned a value|INTEGRITY/)
   // A close-side injector failure is reported once with coded INTEGRITY; the
   // exact-owner repeat resolves because every child already closed.
   const r3 = await createBlindBoundaryScratch('fhcomp-fault-')

@@ -1508,28 +1508,30 @@ test('FPR9 independent match: chain and clock tampering reject at recovery absor
     { name: 'charge chain mismatch', overrides: { chargeEntryBuffers: [chargeEntry(112, 1n, fixed(0xff), removed)] } },
     { name: 'watermark mismatch', overrides: { trustedEpochHighWatermark: 10 } },
     { name: 'expiry clock mismatch', overrides: { expiresAtEpoch: 100 } },
-    { name: 'grace clock mismatch', overrides: { recoveryGraceUntilEpoch: 100 } }
+    { name: 'grace clock mismatch', overrides: { recoveryGraceUntilEpoch: 100 } },
+    { name: 'state commitment mismatch', mutate: payload => { const out = b4a.from(payload); out[152] ^= 0xff; return out } }
   ]
   // Absorb-side tamper negatives on fresh sinks of one authority.
   const absorb = await quota(t, TARGET)
-  for (const { name, overrides } of cases) {
+  for (const { name, overrides, mutate } of cases) {
     const sink = beginForwardHttpsAggregateQuotaRecoveryV3(absorb.capability)
     await seedSession(sink)
+    const payload = mutate ? mutate(tombstone(overrides)) : tombstone(overrides)
     await t.exception.all(
-      absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(118, tombstone(overrides), 2n, sessionWalHash) }),
+      absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(118, payload, 2n, sessionWalHash) }),
       new RegExp(`recovered tombstone does not independently match: ${name}`)
     )
     await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
   }
   // Live-adjust tamper negatives: the same tombstones reject at the exact
   // pre-prune mirror match with no ledger mutation.
-  for (const { name, overrides } of cases) {
+  for (const { name, overrides, mutate } of cases) {
     const setup = await quota(t, TARGET)
     const sink = beginForwardHttpsAggregateQuotaRecoveryV3(setup.capability)
     await seedSession(sink)
     await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
     t.is(replayModule.forwardHttpsAggregateQuotaV3Status(setup.authority).targetLogicalChargedBytes, removed)
-    const payload = tombstone(overrides)
+    const payload = mutate ? mutate(tombstone(overrides)) : tombstone(overrides)
     const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(setup.capability, {
       operation: 'PRUNE',
       knownInputBuffers: [payload],
@@ -1580,7 +1582,7 @@ test('quota close is failure-atomic toward CLOSED under a persistent close fault
   t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).state, 'CLOSED')
 })
 
-test('commit without bind charges exactly zero frames on store roles', async t => {
+test('commit without bind is forbidden on store roles: no zero-charge no-op commit', async t => {
   const { authority, capability } = await quota(t, TARGET)
   const payload = b4a.concat([b4a.from('FTS3', 'ascii'), fixed(0x9a), b4a.alloc(8, 0x41)])
   const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
@@ -1590,17 +1592,54 @@ test('commit without bind charges exactly zero frames on store roles', async t =
     existingDestinationBytes: 0
   })
   const { reservation } = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan)
-  // Zero frames applied: commit charges exactly zero, never the conservative
-  // plan earmark.
-  await replayModule.commitForwardHttpsAggregateQuotaV3(capability, reservation, {
-    durableWalHeadSequence: 0n,
-    durableWalHeadHash: ZERO32
-  })
-  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).targetLogicalChargedBytes, 0)
+  // A store-role commit with no bound final durability rejects INTEGRITY; the
+  // reservation survives unburned with zero charge and no WAL mutation.
   await t.exception.all(replayModule.commitForwardHttpsAggregateQuotaV3(capability, reservation, {
     durableWalHeadSequence: 0n,
     durableWalHeadHash: ZERO32
-  }), /invalid|AUTHORITY_INVALID/)
+  }), /bound final durability|INTEGRITY/)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).targetLogicalChargedBytes, 0)
+  // The reservation still drives the honest bound operation to commit.
+  const { transitionAuthority } = replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(capability, reservation, {
+    logicalRecordBuffers: [],
+    encryptedPlaintextBuffers: [],
+    finalWalMetadataBuffers: [payload],
+    temporaryWriteBuffers: []
+  })
+  await replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, reservation, transitionAuthority, { type: 112, payload }, async () => ({ sequence: 1n, walHash: blake2b256(b4a.concat([b4a.from('wal'), payload])), payloadHash: blake2b256(payload) }))
+  await replayModule.commitForwardHttpsAggregateQuotaV3(capability, reservation, {
+    durableWalHeadSequence: 1n,
+    durableWalHeadHash: blake2b256(b4a.concat([b4a.from('wal'), payload]))
+  })
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).targetLogicalChargedBytes, 312)
+})
+
+test('ENTRY_CAP arm is scoped to allocated identities: a FRESH crashed-prefix session never mints the arm (quota P3-001)', async t => {
+  const { capability } = await quota(t, TARGET)
+  const id = fixed(0xa4)
+  // Seed 65535 orphan type113 entries of one session: PRESENT_PREFIX_ALLOCATED
+  // (FRESH crashed prefix) at the cap boundary.
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  let previous = ZERO32
+  for (let index = 1; index <= 65535; index++) {
+    const payload = b4a.concat([b4a.from('FTS3', 'ascii'), id, fixed(0xc1), b4a.alloc(118 - 68, index & 0xff)])
+    const walHash = blake2b256(b4a.concat([b4a.from('wal'), payload]))
+    await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, {
+      frame: { type: 113, payload, payloadHash: blake2b256(payload), sequence: BigInt(index), previousWalHash: previous, walHash, frameBytes: payload.byteLength + 224 }
+    })
+    previous = walHash
+  }
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+  const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'TURN_FINAL',
+    knownInputBuffers: [b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x01)])],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const union = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan)
+  t.is(union.disposition, 'ORDINARY', 'no ENTRY_CAP_TERMINAL mint for PRESENT_PREFIX_ALLOCATED')
+  t.absent('terminalReservation' in union)
+  await replayModule.releaseForwardHttpsAggregateQuotaV3(capability, union.reservation)
 })
 
 test('readiness flags: the replay module STATUS constant is not implementation-ready', async t => {

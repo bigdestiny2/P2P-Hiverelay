@@ -461,11 +461,16 @@ test('fault registry: OPEN_AFTER_RECOVERY and CLOSE_BEFORE_STORE_CLOSE fire with
   const r1 = await roots(t)
   const { authority: a1, capabilities: c1 } = await quota(t, r1)
   const observed = []
-  const store = await openStore(a1, r1, c1, { faultInjector: async (point, context) => { observed.push(point) } })
+  const contexts = []
+  const store = await openStore(a1, r1, c1, { faultInjector: async (point, context) => { observed.push(point); contexts.push(context) } })
   t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
   t.ok(observed.includes(FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT.OPEN_AFTER_RECOVERY), 'open fault point fired')
   await closeForwardHttpsSourceStoreV3(store)
   t.ok(observed.includes(FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT.CLOSE_BEFORE_STORE_CLOSE), 'close fault point fired')
+  // Only the module's frozen points reach the caller, never raw engine points
+  // or a context argument.
+  t.ok(observed.every(point => Object.values(FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT).includes(point)), 'no raw engine points escape')
+  t.ok(contexts.every(context => context === undefined), 'no context is passed')
   // Open fault: the injector failure is a coded INTEGRITY rejection of open
   // with no live engine left behind.
   const r2 = await roots(t)
@@ -475,8 +480,17 @@ test('fault registry: OPEN_AFTER_RECOVERY and CLOSE_BEFORE_STORE_CLOSE fire with
       if (point === FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT.OPEN_AFTER_RECOVERY) throw new Error('injected open fault')
     }
   }), /fault injector failed at OPEN_AFTER_RECOVERY|INTEGRITY/)
+  // A non-undefined injector return maps to coded INTEGRITY as well.
+  const r2b = await roots(t)
+  const { authority: a2b, capabilities: c2b } = await quota(t, r2b)
+  await t.exception.all(openStore(a2b, r2b, c2b, {
+    faultInjector: async point => {
+      if (point === FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT.OPEN_AFTER_RECOVERY) return 'injected'
+      return undefined
+    }
+  }), /returned a value|INTEGRITY/)
   // Close fault: the first close reports coded INTEGRITY, the store still
-  // reaches CLOSED and the exact-owner repeat resolves.
+  // reaches CLOSED with blocker INTEGRITY and the exact-owner repeat resolves.
   const r3 = await roots(t)
   const { authority: a3, capabilities: c3 } = await quota(t, r3)
   const store3 = await openStore(a3, r3, c3, {
@@ -493,6 +507,7 @@ test('fault registry: OPEN_AFTER_RECOVERY and CLOSE_BEFORE_STORE_CLOSE fire with
   t.ok(closeError, 'the first close reports the fault')
   t.is(closeError.code, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_INTEGRITY')
   t.is(store3.closed, true)
+  t.is(forwardHttpsSourceStoreV3Status(store3).blocker, 'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_INTEGRITY')
   await closeForwardHttpsSourceStoreV3(store3)
 })
 

@@ -1114,6 +1114,11 @@ function matchFpr9AgainstMirror (mirror, pruned, roleByteValue, stableSessionId)
     if (pruned.allocationDisposition === 0 && !mirror.consumed) return 'slot state mismatch'
   } else if (pruned.flags === 1 && (mirror.prefix !== 'FRESH' || mirror.consumed)) return 'prefix class mismatch'
   else if (pruned.flags === 2 && (mirror.prefix !== 'EXISTING' || mirror.consumed)) return 'prefix class mismatch'
+  // The previous-session-state commitment is independently recomputed from
+  // the mirror-verified charge/authority commitments, never just accepted as
+  // caller input (REREVIEW2-P3-001).
+  const expectedState = previousSessionStateCommitment(pruned.flags, roleByteValue, stableSessionId, pruned.priorSessionRevision, pruned.chargeRegistryCommitment, pruned.authorityRegistryCommitment, pruned.terminalSlotState)
+  if (!b4a.equals(pruned.previousSessionStateCommitment, expectedState)) return 'state commitment mismatch'
   return null
 }
 
@@ -1696,7 +1701,11 @@ export async function reserveForwardHttpsAggregateQuotaV3 (quotaCapability, cost
     } else if (plan.stableSessionId !== null) {
       const mirror = state.sessions.get(`${capability.role}:${b4a.toString(plan.stableSessionId, 'hex')}`)
       const row = FORWARD_HTTPS_STORE_OPERATION_ROWS[plan.operation]
-      if (mirror && mirror.present && !mirror.consumed && (mirror.chargeEntryCount || 0) + (row ? row.removable : 0) > 65536) {
+      // The arm is scoped to PRESENT_ALLOCATED and ALLOCATED_WITH_PREFIX: a
+      // FRESH crashed-prefix session terminalizes only via its own prefix
+      // rules (the flags1 prefix PRUNE), never through the cap arm
+      // (REREVIEW2-QUOTA-P3-001).
+      if (mirror && mirror.present && !mirror.consumed && mirror.prefix !== 'FRESH' && (mirror.chargeEntryCount || 0) + (row ? row.removable : 0) > 65536) {
         disposition = 'ENTRY_CAP_TERMINAL'
         terminal = 'ENTRY_CAP'
         terminalExpectation = Object.freeze({
@@ -1751,15 +1760,18 @@ export async function commitForwardHttpsAggregateQuotaV3 (quotaCapability, reser
          !b4a.equals(bytes(input.durableWalHeadHash, 32, 'durableWalHeadHash'), internal.lastAppliedHead.hash))) {
       quotaFail('quota commit durable head is not the exact applied head', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
     }
+    // A store-role commit requires the bound final durability: a commit with
+    // no bind is INTEGRITY (never a zero-charge no-op; a terminal reservation
+    // can never bypass FAILED_PREWRITE through a no-op commit). Replay-role
+    // snapshot reservations carry no frames and are unaffected.
+    if (internal.actual === null && (capability.role === 'SOURCE_STORE' || capability.role === 'TARGET_STORE')) {
+      quotaFail('quota commit requires the bound final durability', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    }
     internal.burned = true
     // Commit applies the exact derived logical of the operation's closed
-    // entries (never the caller's bind-actual estimate). A store-role commit
-    // with no bound frame charges exactly zero: the conservative plan ceiling
-    // is an admission earmark, not a charge. Replay-role snapshot reservations
-    // carry no frames and keep their exact plan charge.
-    const cost = internal.actual !== null
-      ? { logicalBytes: internal.derivedLogical }
-      : (capability.role === 'SOURCE_STORE' || capability.role === 'TARGET_STORE' ? { logicalBytes: 0 } : internal.plan)
+    // entries (never the caller's bind-actual estimate). Replay-role snapshot
+    // reservations carry no frames and keep their exact plan charge.
+    const cost = internal.actual !== null ? { logicalBytes: internal.derivedLogical } : internal.plan
     if (capability.role === 'SOURCE_STORE' || capability.role === 'TARGET_STORE') state.logical[capability.role] += cost.logicalBytes
     state.physical = await measurements(state)
     await quotaFault(state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.COMMIT_AFTER_MEASURE)

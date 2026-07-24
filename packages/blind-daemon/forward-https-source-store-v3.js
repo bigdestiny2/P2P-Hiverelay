@@ -183,15 +183,18 @@ function fail (message, code) {
 }
 
 // Module-level fault points (FORWARD_HTTPS_SOURCE_STORE_V3_FAULT_POINT): the
-// injector observes the exact point with a frozen context; any injector
-// failure is a coded INTEGRITY error, never an uncoded callback escape.
+// injector observes exactly the point string (no context); any injector
+// failure or non-undefined return is a coded INTEGRITY error, never an
+// uncoded callback escape.
 async function storeFault (state, point) {
   if (state.faultInjector === null) return
+  let result
   try {
-    await state.faultInjector(point, Object.freeze({ role: state.role }))
+    result = await state.faultInjector(point)
   } catch (error) {
     fail(`fault injector failed at ${point}`, STORE_ERROR_CODE.INTEGRITY)
   }
+  if (result !== undefined) fail(`fault injector returned a value at ${point}`, STORE_ERROR_CODE.INTEGRITY)
 }
 
 function transactionIdFor (stableSessionId, salt) {
@@ -277,7 +280,9 @@ export async function openForwardHttpsSourceStoreV3 (options) {
       ownerFenceTokenHash,
       durabilityContinuityHash,
       maximumWalPayloadBytes: 16777216,
-      faultInjector: options.faultInjector || null
+      // The caller's injector observes only this module's frozen fault points;
+      // raw engine points (with contexts) never escape to callers.
+      faultInjector: null
     })
   }
   // Recovery absorbs through the caller-begun quota recovery sink. The caller
@@ -636,6 +641,8 @@ export async function closeForwardHttpsSourceStoreV3 (state) {
   } catch (error) {
     closeFault = error
   }
+  // A faulted close carries blocker INTEGRITY on the store status.
+  if (closeFault !== null) state.blocker = STORE_ERROR_CODE.INTEGRITY
   await state.store.close()
   if (closeFault !== null) throw closeFault
 }
