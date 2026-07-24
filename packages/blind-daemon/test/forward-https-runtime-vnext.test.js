@@ -16,10 +16,20 @@ import {
   HEALTH_CLOCK_STATE,
   HEALTH_INTEGRITY_STATE,
   HEALTH_REBALANCE_STATE,
+  RESULT_SIGNATURE_DOMAIN_ID,
   TRANSPORT_SUPPORT,
+  allocationCommitment,
+  blake2b256,
+  blindErrorV1,
   blindHealthResultV1,
-  decodeCanonical
+  blindReceiptV1,
+  cellStorageSlot,
+  decodeCanonical,
+  encodeCanonical,
+  putCellV1,
+  resultSignaturePayload
 } from '@hiverelay/blind-protocol'
+import { decodeDispatchFrame } from '@hiverelay/blind-protocol/dispatch'
 import {
   DESCRIPTOR_CLOSED_REASON,
   DESCRIPTOR_STATE_KIND,
@@ -31,6 +41,10 @@ import {
 } from '../readiness-coordinator.js'
 import {
   createRelayIdentityFixture,
+  createRelayEnvironmentFixture,
+  assembleRelayFixture,
+  fixtureAdmission,
+  removeFixtureScratch,
   signCanonicalFixture
 } from '../../blind-edge/test/forward-https-vnext-integration-fixture.mjs'
 import {
@@ -266,4 +280,132 @@ test('signed health result binds the current descriptor; failed integrity degrad
     wrongEndpoint = error
   }
   t.is(wrongEndpoint && wrongEndpoint.code, 'BAD_ENCODING', 'challenge endpoint must match the accepted channel')
+})
+
+// ---------------------------------------------------------------------------
+// CELL route daemon evidence (serial route 2/5): unary dispatch through the
+// accepted coordinator into the accepted cell storage engine.
+// ---------------------------------------------------------------------------
+
+test('daemon CELL.PUT dispatch signs STORED and persists an exact fixed-size cell', async t => {
+  const identity = await createRelayIdentityFixture({ port: 61280 })
+  const layout = await createRelayEnvironmentFixture(identity)
+  const replayOffset = { value: -15_000n }
+  const relay = await assembleRelayFixture(identity, layout, {
+    replayJournalOptions: { monotonicMillis: () => (process.hrtime.bigint() / 1_000_000n) + replayOffset.value }
+  })
+  replayOffset.value = 0n
+  await relay.start()
+  t.teardown(async () => {
+    await relay.close().catch(() => {})
+    await removeFixtureScratch(layout)
+  })
+
+  const keys = [0, 1, 2].map(() => {
+    const publicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
+    const secretKey = b4a.alloc(sodium.crypto_sign_SECRETKEYBYTES)
+    sodium.crypto_sign_keypair(publicKey, secretKey)
+    return { publicKey, secretKey }
+  })
+  const allocationEpoch = relay.unary.storage.status().epochFloor
+  const cellBlob = b4a.alloc(4096, 0xc1)
+  const declaredBlobHash = blake2b256(cellBlob)
+  const storageSlot = cellStorageSlot({ allocationEpoch, createPublicKey: keys[0].publicKey })
+  const allocation = allocationCommitment({
+    relayPublicKey: identity.relayPublicKey,
+    storageSlot,
+    allocationEpoch,
+    sizeClass: 1,
+    leaseClass: 1,
+    declaredCellBlobHash: declaredBlobHash,
+    createPublicKey: keys[0].publicKey,
+    renewPublicKey: keys[1].publicKey,
+    dropPublicKey: keys[2].publicKey
+  })
+  const createSignature = b4a.alloc(64)
+  sodium.crypto_sign_detached(createSignature, allocation, keys[0].secretKey)
+  const now = process.hrtime.bigint() / 1_000_000n
+  const context = () => ({
+    endpointId: 1,
+    transportId: 1,
+    transportSupportBit: 1,
+    outerClass: null,
+    acceptedMonotonicMillis: now,
+    absoluteDeadlineMonotonicMillis: now + 15_000n
+  })
+  const put = await relay.unary.coordinator.dispatch({
+    frameKind: 1,
+    familyId: 2,
+    operationId: 1,
+    requestId: b4a.alloc(16, 0xc2),
+    body: encodeCanonical(putCellV1, {
+      version: 1,
+      storageSlot,
+      allocationEpoch,
+      sizeClass: 1,
+      leaseClass: 1,
+      clientNonce: b4a.alloc(32, 0xc3),
+      createPublicKey: keys[0].publicKey,
+      renewPublicKey: keys[1].publicKey,
+      dropPublicKey: keys[2].publicKey,
+      declaredBlobHash,
+      createSignature,
+      admission: fixtureAdmission(identity.parameterHash, 0xc4),
+      cellBlob
+    })
+  }, context())
+  const putFrame = decodeDispatchFrame(put.dispatch, { copyBody: true })
+  t.is(putFrame.frameKind, 2, 'PUT answers with a response frame')
+  const receipt = decodeCanonical(blindReceiptV1, putFrame.body, { copyBytes: true })
+  t.is(receipt.result, 1, 'signed STORED acknowledgement')
+  const unsignedReceipt = encodeCanonical(blindReceiptV1, { ...receipt, signature: b4a.alloc(64) })
+  t.ok(sodium.crypto_sign_verify_detached(receipt.signature,
+    resultSignaturePayload(RESULT_SIGNATURE_DOMAIN_ID.CELL_RECEIPT,
+      unsignedReceipt.subarray(0, unsignedReceipt.byteLength - 64)),
+    identity.relayPublicKey), 'receipt signature verifies under the relay key')
+  const stored = await relay.unary.storage.readCell(storageSlot)
+  t.ok(b4a.equals(stored.cellBlob, cellBlob), 'accepted storage holds the exact fixed-size blob')
+
+  // Bad create signature is rejected closed before any mutation.
+  const foreign = { secretKey: b4a.alloc(64), publicKey: b4a.alloc(32) }
+  sodium.crypto_sign_keypair(foreign.publicKey, foreign.secretKey)
+  const badSignature = b4a.alloc(64)
+  sodium.crypto_sign_detached(badSignature, allocation, foreign.secretKey)
+  const bad = await relay.unary.coordinator.dispatch({
+    frameKind: 1,
+    familyId: 2,
+    operationId: 1,
+    requestId: b4a.alloc(16, 0xc5),
+    body: encodeCanonical(putCellV1, {
+      version: 1,
+      storageSlot,
+      allocationEpoch,
+      sizeClass: 1,
+      leaseClass: 1,
+      clientNonce: b4a.alloc(32, 0xc6),
+      createPublicKey: keys[0].publicKey,
+      renewPublicKey: keys[1].publicKey,
+      dropPublicKey: keys[2].publicKey,
+      declaredBlobHash,
+      createSignature: badSignature,
+      admission: fixtureAdmission(identity.parameterHash, 0xc7),
+      cellBlob
+    })
+  }, context())
+  const badFrame = decodeDispatchFrame(bad.dispatch, { copyBody: true })
+  t.is(badFrame.frameKind, 3, 'bad signature answers with an error frame')
+  t.is(decodeCanonical(blindErrorV1, badFrame.body).code, 5, 'BAD_CREATE_SIG')
+
+  // Exact readback after a full daemon restart on the same roots.
+  await relay.close()
+  const replayOffset2 = { value: -15_000n }
+  const relay2 = await assembleRelayFixture(identity, layout, {
+    replayJournalOptions: { monotonicMillis: () => (process.hrtime.bigint() / 1_000_000n) + replayOffset2.value }
+  })
+  replayOffset2.value = 0n
+  await relay2.start()
+  t.teardown(async () => { await relay2.close().catch(() => {}) })
+  const restored = await relay2.unary.storage.readCell(storageSlot)
+  t.ok(b4a.equals(restored.cellBlob, cellBlob), 'accepted storage preserves the cell across daemon restart')
+  await relay2.close()
 })

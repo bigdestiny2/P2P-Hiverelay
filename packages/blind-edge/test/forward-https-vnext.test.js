@@ -15,6 +15,7 @@ import path from 'node:path'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import {
+  CELL_RECEIPT_RESULT,
   ERROR_CODE,
   FAMILY,
   FRAME_KIND,
@@ -23,12 +24,21 @@ import {
   PROTOCOL,
   TRANSPORT_SUPPORT,
   RESULT_SIGNATURE_DOMAIN_ID,
+  allocationCommitment,
+  blake2b256,
   blindHealthChallengeV1,
+  blindReceiptV1,
   blindServiceDescriptorV1,
+  cellStorageSlot,
   decodeCanonical,
   encodeCanonical,
   encodeDispatchFrame,
   encodeOuterEnvelope,
+  getCellResultV1,
+  getCellV1,
+  proveCellResultV1,
+  proveCellV1,
+  putCellV1,
   resultSignaturePayload,
   serviceDescriptorHash
 } from '@hiverelay/blind-protocol'
@@ -37,12 +47,14 @@ import {
   DescriptorTrustStore,
   createDescribeGetRequest,
   createHealthChallenge,
+  qualifyDescribeControlEndpoint,
+  qualifyRelay,
   verifyDescriptorBytes,
-  verifyHealthResultBytes,
-  qualifyDescribeControlEndpoint
+  verifyHealthResultBytes
 } from '../../blind-client/describe.js'
 import { BlindDirectHttpClient } from '../../blind-client/direct-http.js'
 import { encodeUnaryRequest } from '../../blind-client/wire.js'
+import { verifyResultSignedValue } from '../../blind-client/signed.js'
 import { createNodeCryptoRuntime } from '../../blind-client/runtime/node.js'
 import {
   createRelayIdentityFixture,
@@ -52,6 +64,7 @@ import {
   createLoopbackTlsFixture,
   edgeBaseUrl,
   edgeFetchFixture,
+  fixtureAdmission,
   removeFixtureScratch
 } from './forward-https-vnext-integration-fixture.mjs'
 
@@ -584,4 +597,316 @@ test('restart recovers descriptor, health and admission capability on the same d
   // scratch, so the daemon must be closed before it runs.
   await edge.close()
   await relay.close()
+})
+
+// ---------------------------------------------------------------------------
+// CELL route evidence (serial route 2/5): fixed-size cell PUT/GET with signed
+// acknowledgement and exact readback through Edge -> peercred IPC -> daemon
+// -> accepted storage.
+// ---------------------------------------------------------------------------
+
+function cellKeyPair (byte) {
+  const publicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
+  const secretKey = b4a.alloc(sodium.crypto_sign_SECRETKEYBYTES)
+  sodium.crypto_sign_keypair(publicKey, secretKey)
+  return { publicKey, secretKey }
+}
+
+function cellPutRequest (relay, identity, overrides = {}) {
+  const keys = overrides.keys || [cellKeyPair(), cellKeyPair(), cellKeyPair()]
+  const allocationEpoch = overrides.allocationEpoch == null
+    ? relay.unary.storage.status().epochFloor
+    : overrides.allocationEpoch
+  const cellBlob = overrides.cellBlob || b4a.alloc(4096, 0xe1)
+  const declaredBlobHash = blake2b256(cellBlob)
+  const storageSlot = overrides.storageSlot || cellStorageSlot({
+    allocationEpoch,
+    createPublicKey: keys[0].publicKey
+  })
+  const allocation = allocationCommitment({
+    relayPublicKey: identity.relayPublicKey,
+    storageSlot,
+    allocationEpoch,
+    sizeClass: 1,
+    leaseClass: 1,
+    declaredCellBlobHash: declaredBlobHash,
+    createPublicKey: keys[0].publicKey,
+    renewPublicKey: keys[1].publicKey,
+    dropPublicKey: keys[2].publicKey
+  })
+  const createSignature = b4a.alloc(64)
+  sodium.crypto_sign_detached(createSignature, allocation,
+    overrides.signingKey || keys[0].secretKey)
+  return {
+    keys,
+    allocationEpoch,
+    cellBlob,
+    declaredBlobHash,
+    storageSlot,
+    value: {
+      version: 1,
+      storageSlot,
+      allocationEpoch,
+      sizeClass: 1,
+      leaseClass: 1,
+      clientNonce: b4a.alloc(32, 0xe3),
+      createPublicKey: keys[0].publicKey,
+      renewPublicKey: keys[1].publicKey,
+      dropPublicKey: keys[2].publicKey,
+      declaredBlobHash,
+      createSignature,
+      admission: fixtureAdmission(identity.parameterHash, overrides.spendByte == null ? 0xe4 : overrides.spendByte),
+      cellBlob
+    }
+  }
+}
+
+async function healthFor (trusted, identity, fetchImpl, requestedOperationBits) {
+  const { endpoint, client } = qualifiedControlClient(trusted, OPERATION.DESCRIBE.CHALLENGE, identity.currentEpoch, fetchImpl)
+  const challenge = createHealthChallenge({
+    trustedDescriptor: trusted,
+    endpointId: 1,
+    transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
+    requestedRoleBits: 0x31,
+    requestedOperationBits,
+    runtime
+  })
+  const result = await client.request({
+    endpoint,
+    familyId: FAMILY.DESCRIBE,
+    operationId: OPERATION.DESCRIBE.CHALLENGE,
+    body: challenge.requestBytes,
+    expectedResultBodyBytes: challenge.wire.expectedResultBodyBytes
+  })
+  if (!result.ok) throw new Error(`health challenge failed: ${JSON.stringify(result.error)}`)
+  return verifyHealthResultBytes(result.body, trusted, challenge.request, { nowEpoch: identity.currentEpoch })
+}
+
+function qualifiedClient (trusted, health, familyId, operationId, nowEpoch, fetchImpl) {
+  const endpoint = qualifyRelay({
+    trustedDescriptor: trusted,
+    health,
+    familyId,
+    operationId,
+    endpointId: 1,
+    transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
+    requiredRoleBits: 0x31,
+    privacyProfileBit: 1,
+    nowEpoch
+  })
+  return { endpoint, client: new BlindDirectHttpClient({ runtime, fetch: fetchImpl, allowInsecureLoopback: true }) }
+}
+
+async function trustedRelay (identity, baseUrl, layout, fetchImpl) {
+  const profiles = supportedProfiles(identity)
+  const trust = new DescriptorTrustStore(new JsonFileTrustBackend(path.join(layout.directory, `trust-${Date.now()}-${Math.random()}.json`)))
+  await trust.accept(verifyDescriptorBytes(identity.genesisBytes, profiles), { pinnedDescriptorHash: identity.genesisHash })
+  const { bytes } = await describeGet(baseUrl, null, fetchImpl)
+  const trusted = await trust.accept(verifyDescriptorBytes(descriptorBody(bytes), profiles), {
+    continuityRootRelayPublicKey: identity.relayPublicKey
+  })
+  return trusted
+}
+
+test('CELL.PUT stores a fixed-size cell with a signed acknowledgement; GET and PROVE return exact readback', async t => {
+  const { identity, layout, relay, baseUrl, exchanges, fetchImpl } = await bootRelay(t, { capture: true })
+  const trusted = await trustedRelay(identity, baseUrl, layout, fetchImpl)
+  const health = await healthFor(trusted, identity, fetchImpl, 0x1ff)
+  t.is(health.readyOperationBits & 0x8, 0x8, 'signed health proves CELL.PUT readiness')
+
+  const put = cellPutRequest(relay, identity)
+  const { endpoint, client } = qualifiedClient(trusted, health, FAMILY.CELL, OPERATION.CELL.PUT, identity.currentEpoch, fetchImpl)
+  const putResult = await client.request({
+    endpoint,
+    familyId: FAMILY.CELL,
+    operationId: OPERATION.CELL.PUT,
+    body: encodeCanonical(putCellV1, put.value)
+  })
+  t.ok(putResult.ok, 'CELL.PUT is answered')
+  const receipt = decodeCanonical(blindReceiptV1, putResult.body, { copyBytes: true })
+  verifyResultSignedValue(blindReceiptV1, receipt, RESULT_SIGNATURE_DOMAIN_ID.CELL_RECEIPT, identity.relayPublicKey, 'cell receipt')
+  t.is(receipt.result, CELL_RECEIPT_RESULT.STORED, 'receipt is a signed STORED acknowledgement')
+  t.ok(b4a.equals(receipt.cellBlobHash, put.declaredBlobHash), 'receipt binds the exact blob hash')
+  t.ok(b4a.equals(receipt.slotCommitment, blake2b256(put.storageSlot)), 'receipt binds the exact storage slot commitment')
+
+  // Exact readback through the unary GET path.
+  const read = qualifiedClient(trusted, health, FAMILY.CELL, OPERATION.CELL.GET, identity.currentEpoch, fetchImpl)
+  const getResult = await read.client.request({
+    endpoint: read.endpoint,
+    familyId: FAMILY.CELL,
+    operationId: OPERATION.CELL.GET,
+    body: encodeCanonical(getCellV1, {
+      version: 1,
+      storageSlot: put.storageSlot,
+      clientNonce: b4a.alloc(32, 0xe5),
+      admission: null
+    })
+  })
+  t.ok(getResult.ok, 'CELL.GET is answered')
+  const readback = decodeCanonical(getCellResultV1, getResult.body, { copyBytes: true })
+  t.is(readback.sizeClass, 1)
+  t.ok(b4a.equals(readback.cellBlob, put.cellBlob), 'GET returns the exact stored blob')
+
+  // Signed proof with readback evidence.
+  const prove = qualifiedClient(trusted, health, FAMILY.CELL, OPERATION.CELL.PROVE, identity.currentEpoch, fetchImpl)
+  const proveResult = await prove.client.request({
+    endpoint: prove.endpoint,
+    familyId: FAMILY.CELL,
+    operationId: OPERATION.CELL.PROVE,
+    body: encodeCanonical(proveCellV1, {
+      version: 1,
+      storageSlot: put.storageSlot,
+      clientNonce: b4a.alloc(32, 0xe6),
+      admission: null
+    })
+  })
+  t.ok(proveResult.ok, 'CELL.PROVE is answered')
+  const proof = decodeCanonical(proveCellResultV1, proveResult.body, { copyBytes: true })
+  verifyResultSignedValue(blindReceiptV1, proof.receipt, RESULT_SIGNATURE_DOMAIN_ID.CELL_RECEIPT, identity.relayPublicKey, 'cell proof receipt')
+  t.is(proof.receipt.result, CELL_RECEIPT_RESULT.SERVED)
+  t.ok(b4a.equals(proof.cellBlob, put.cellBlob), 'PROVE returns the exact stored blob with its signed receipt')
+
+  // Relay-visible bytes: the PUT/GET/PROVE exchanges crossed the edge as
+  // exact opaque fixed-class envelopes; the edge forwarded the posted bytes
+  // byte-identically and returned the daemon envelope byte-identically.
+  t.ok(exchanges.length >= 8, 'IPC exchanges captured for the route')
+  const putExchange = exchanges[exchanges.length - 6]
+  t.is(putExchange.phase, 'request')
+  const putEnvelope = decodeOuterEnvelope(putExchange.body, { copyBody: true })
+  t.is(putEnvelope.frame.familyId, FAMILY.CELL, 'edge sees only the opaque envelope')
+  t.is(putEnvelope.frame.operationId, OPERATION.CELL.PUT)
+  t.ok(!putExchange.bytes.toString('latin1').includes('authorization'), 'no credential material crosses')
+
+  // Accepted storage evidence: the daemon's cell engine durably holds the blob.
+  const stored = await relay.unary.storage.readCell(put.storageSlot)
+  t.ok(b4a.equals(stored.cellBlob, put.cellBlob), 'accepted cell storage holds the exact blob')
+})
+
+test('CELL negatives fail closed: bogus credentials, bad signatures, unknown slots and credential headers', async t => {
+  const { identity, layout, relay, baseUrl, fetchImpl } = await bootRelay(t)
+  const trusted = await trustedRelay(identity, baseUrl, layout, fetchImpl)
+  const health = await healthFor(trusted, identity, fetchImpl, 0x1ff)
+  const { endpoint, client } = qualifiedClient(trusted, health, FAMILY.CELL, OPERATION.CELL.PUT, identity.currentEpoch, fetchImpl)
+
+  // Bad create signature (signed by a foreign key).
+  const foreign = cellKeyPair()
+  const badSign = cellPutRequest(relay, identity, { signingKey: foreign.secretKey })
+  const badSignResult = await client.request({
+    endpoint,
+    familyId: FAMILY.CELL,
+    operationId: OPERATION.CELL.PUT,
+    body: encodeCanonical(putCellV1, badSign.value)
+  })
+  t.ok(!badSignResult.ok, 'foreign create signature fails closed')
+  t.is(badSignResult.error.code, ERROR_CODE.BAD_CREATE_SIG)
+
+  // Bogus admission parameter hash (the relay never signed those parameters).
+  const bogusAdmission = cellPutRequest(relay, identity)
+  bogusAdmission.value.admission = fixtureAdmission(b4a.alloc(32, 0x77), 0xe7)
+  const bogusResult = await client.request({
+    endpoint,
+    familyId: FAMILY.CELL,
+    operationId: OPERATION.CELL.PUT,
+    body: encodeCanonical(putCellV1, bogusAdmission.value)
+  })
+  t.ok(!bogusResult.ok, 'bogus admission credentials fail closed')
+
+  // Unknown slot readback is a canonical NOT_FOUND.
+  const read = qualifiedClient(trusted, health, FAMILY.CELL, OPERATION.CELL.GET, identity.currentEpoch, fetchImpl)
+  const missing = await read.client.request({
+    endpoint: read.endpoint,
+    familyId: FAMILY.CELL,
+    operationId: OPERATION.CELL.GET,
+    body: encodeCanonical(getCellV1, {
+      version: 1,
+      storageSlot: b4a.alloc(32, 0x41),
+      clientNonce: b4a.alloc(32, 0xe8),
+      admission: null
+    })
+  })
+  t.ok(!missing.ok, 'unknown slot fails closed')
+  t.is(missing.error.code, ERROR_CODE.NOT_FOUND)
+
+  // Credential-bearing headers on the operation path fail closed at the edge.
+  const put = cellPutRequest(relay, identity)
+  const envelope = encodeUnaryRequest({
+    runtime,
+    familyId: FAMILY.CELL,
+    operationId: OPERATION.CELL.PUT,
+    body: encodeCanonical(putCellV1, put.value)
+  }).body
+  const credentialed = await fetchImpl(`${baseUrl}/api/blind/v1/cell`, {
+    method: 'POST',
+    headers: { 'content-type': MEDIA_TYPE, cookie: 'session=abc' },
+    body: envelope
+  })
+  t.is(credentialed.status, 400, 'credential header fails closed')
+
+  // Family mismatch: a CELL envelope posted to the INBOX route.
+  const mismatch = await fetchImpl(`${baseUrl}/api/blind/v1/inbox`, {
+    method: 'POST',
+    headers: { 'content-type': MEDIA_TYPE },
+    body: envelope
+  })
+  t.is(mismatch.status, 400, 'family/operation/transport binding enforced before allocation')
+})
+
+test('CELL persists across relay restart with readback and signed proof', async t => {
+  const first = await bootRelay(t)
+  const { identity, layout, relay, baseUrl } = first
+  const firstFetch = first.fetchImpl
+  const trusted = await trustedRelay(identity, baseUrl, layout, firstFetch)
+  const health = await healthFor(trusted, identity, firstFetch, 0x1ff)
+  const put = cellPutRequest(relay, identity)
+  const { endpoint, client } = qualifiedClient(trusted, health, FAMILY.CELL, OPERATION.CELL.PUT, identity.currentEpoch, firstFetch)
+  const putResult = await client.request({
+    endpoint,
+    familyId: FAMILY.CELL,
+    operationId: OPERATION.CELL.PUT,
+    body: encodeCanonical(putCellV1, put.value)
+  })
+  t.ok(putResult.ok, 'CELL.PUT is answered before restart')
+  await first.edge.close()
+  await first.relay.close()
+
+  const daemonErrors = []
+  const replayOffset = { value: -15_000n }
+  const relay2 = await assembleRelayFixture(identity, layout, {
+    onError: error => daemonErrors.push(error),
+    replayJournalOptions: {
+      monotonicMillis: () => (process.hrtime.bigint() / 1_000_000n) + replayOffset.value
+    }
+  })
+  replayOffset.value = 0n
+  await relay2.start()
+  const edge = await createEdgeFixture({
+    port: first.port,
+    tls: first.tls,
+    unarySocketPath: layout.environment.HIVERELAY_BLIND_UNARY_SOCKET,
+    launchTopologyHash: layout.launchTopologyHash,
+    onError: error => daemonErrors.push(error)
+  })
+  t.teardown(async () => {
+    await edge.close().catch(() => {})
+    await relay2.close().catch(() => {})
+  })
+  const read = qualifiedClient(trusted, health, FAMILY.CELL, OPERATION.CELL.GET, identity.currentEpoch, firstFetch)
+  const getResult = await read.client.request({
+    endpoint: read.endpoint,
+    familyId: FAMILY.CELL,
+    operationId: OPERATION.CELL.GET,
+    body: encodeCanonical(getCellV1, {
+      version: 1,
+      storageSlot: put.storageSlot,
+      clientNonce: b4a.alloc(32, 0xe9),
+      admission: null
+    })
+  })
+  t.ok(getResult.ok, 'CELL.GET is answered after restart')
+  const readback = decodeCanonical(getCellResultV1, getResult.body, { copyBytes: true })
+  t.ok(b4a.equals(readback.cellBlob, put.cellBlob), 'exact readback survives the restart')
+  const stored = await relay2.unary.storage.readCell(put.storageSlot)
+  t.ok(b4a.equals(stored.cellBlob, put.cellBlob), 'accepted storage preserves the cell across restart')
+  await edge.close()
+  await relay2.close()
 })
