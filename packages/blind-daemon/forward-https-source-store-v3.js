@@ -511,9 +511,9 @@ export async function prepareForwardHttpsSourceTurnV3 (state, input) {
 
 // The exact 192-byte flags0 BUDGET_EXHAUSTED FTM9 the store constructs for
 // the wired cap+1 terminal conversion (frozen layout; module-private, never
-// exported): the prior revision and watermark come from the exact slot, the
+// exported): the prior revision comes from the exact minted expectation, the
 // flags0 tail is zeroed.
-function terminalFtm9Payload (state, slot, stableSessionId) {
+function terminalFtm9Payload (state, slot, stableSessionId, priorSessionRevision) {
   const output = b4a.alloc(192)
   let offset = 0
   b4a.copy(b4a.from('FTM9', 'ascii'), output, offset); offset += 4
@@ -525,7 +525,7 @@ function terminalFtm9Payload (state, slot, stableSessionId) {
   for (let index = 0; index < 5; index++) { output.writeUInt16BE(0, offset); offset += 2 }
   output.writeUInt16BE(0, offset); offset += 2
   output.writeUInt32BE(0, offset); offset += 4
-  offset = writeU64be(output, offset, slot.priorRevision)
+  offset = writeU64be(output, offset, priorSessionRevision)
   output.writeUInt32BE(slot.trustedEpochHighWatermark || 0, offset); offset += 4
   const reason = b4a.from('BUDGET_EXHAUSTED', 'ascii')
   output[offset++] = reason.byteLength
@@ -533,23 +533,12 @@ function terminalFtm9Payload (state, slot, stableSessionId) {
   return output
 }
 
-// Wired cap+1 terminal conversion (required_tests[15], REREVIEW2-P1-006):
-// reserve the rejected ordinary operation so the quota ENTRY_CAP_TERMINAL arm
-// mints the exact expectation, bind the exact flags0 BUDGET_EXHAUSTED FTM9,
-// append and commit, and transition the slot ALLOCATED -> CONSUMED_UNPRUNED
-// exactly as the recoverFrame terminal arm does on reopen.
-async function terminalizeEntryCap (state, slot, operation, frames, stableSessionId) {
-  const payload = terminalFtm9Payload(state, slot, stableSessionId)
-  const plan = createForwardHttpsStoreQuotaCostPlanV3(state.storeQuotaCapability, {
-    operation,
-    knownInputBuffers: frames.map(frame => frame.payload),
-    temporaryWriteBuffers: [],
-    existingDestinationBytes: 0
-  })
-  const union = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
-  if (union.disposition !== 'ENTRY_CAP_TERMINAL') {
-    fail('ENTRY_CAP_TERMINAL arm did not fire for the proven cap+1', STORE_ERROR_CODE.INTEGRITY)
-  }
+// Drive the exact ENTRY_CAP terminal conversion against the minted terminal
+// reservation: bind the exact flags0 BUDGET_EXHAUSTED FTM9, append and
+// commit, and transition the slot ALLOCATED -> CONSUMED_UNPRUNED exactly as
+// the recoverFrame terminal arm does on reopen.
+async function driveEntryCapTerminal (state, slot, union, stableSessionId) {
+  const payload = terminalFtm9Payload(state, slot, stableSessionId, union.terminalExpectation.priorSessionRevision)
   const { transitionAuthority } = bindForwardHttpsStoreQuotaActualBuffersV3(state.storeQuotaCapability, union.terminalReservation, {
     logicalRecordBuffers: [],
     encryptedPlaintextBuffers: [],
@@ -574,6 +563,27 @@ async function terminalizeEntryCap (state, slot, operation, frames, stableSessio
   state.walHeadSequence = applied.entry.walSequence
 }
 
+// Store-side cap+1 decision: reserve the rejected ordinary operation and
+// either drive the exact terminal conversion (the canonical mirror proves
+// cap+1 too) or release the ordinary reservation cleanly (the mirror admits
+// what the store registry cannot hold) — the minted reservation and the FIFO
+// op ticket are never abandoned (REREVIEW3-P1-001).
+async function terminalizeEntryCap (state, slot, operation, frames, stableSessionId) {
+  const plan = createForwardHttpsStoreQuotaCostPlanV3(state.storeQuotaCapability, {
+    operation,
+    knownInputBuffers: frames.map(frame => frame.payload),
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const union = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
+  if (union.disposition !== 'ENTRY_CAP_TERMINAL') {
+    await releaseForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, union.reservation)
+    fail('removable charge entry cap exceeded; ENTRY_CAP_TERMINAL', STORE_ERROR_CODE.BUDGET_EXHAUSTED)
+  }
+  await driveEntryCapTerminal(state, slot, union, stableSessionId)
+  fail('removable charge entry cap exceeded; ENTRY_CAP_TERMINAL', STORE_ERROR_CODE.BUDGET_EXHAUSTED)
+}
+
 // Ordinary source SESSION frame: TRANSPORT_RESERVED=97 or RESULT_PERSISTED=98.
 export async function persistForwardHttpsSourceResultV3 (state, input) {
   requireOperational(state)
@@ -587,6 +597,11 @@ export async function persistForwardHttpsSourceResultV3 (state, input) {
   if (slot && (slot.state === SLOT_STATE.CONSUMED_UNPRUNED || slot.state === SLOT_STATE.CONSUMED_PRUNED)) fail('session identity is TERMINAL', STORE_ERROR_CODE.TERMINAL)
   if (!slot || slot.state !== SLOT_STATE.ALLOCATED) fail('session is not ALLOCATED', STORE_ERROR_CODE.SEQUENCE_INVALID)
   const planned = input.plannedRemovableChargeEntryCount == null ? 1 : input.plannedRemovableChargeEntryCount
+  // The exact operation row plans exactly one removable entry; a caller hint
+  // above it rejects at the boundary, pre-mutation.
+  if (!Number.isSafeInteger(planned) || planned !== 1) {
+    throw new TypeError('plannedRemovableChargeEntryCount exceeds the exact operation row')
+  }
   const payload = sessionPayload(stableSessionId, input.body || b4a.alloc(0))
   const operation = walType === WAL_TYPE.RESULT_PERSISTED ? 'RESULT' : 'PREPARE'
   const frames = [{

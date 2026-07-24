@@ -1409,7 +1409,8 @@ export function bindForwardHttpsStoreQuotaActualBuffersV3 (storeQuotaCapability,
       const expectation = internal.terminalExpectation
       if (!expectation) quotaFail('terminal reservation has no expectation', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
       if (terminal.flags !== 0 || b4a.toString(terminal.reason, 'ascii') !== 'BUDGET_EXHAUSTED' ||
-          !b4a.equals(terminal.stableSessionId, expectation.stableSessionId)) {
+          !b4a.equals(terminal.stableSessionId, expectation.stableSessionId) ||
+          terminal.priorSessionRevision !== expectation.priorSessionRevision) {
         quotaFail('terminal reservation frame is not the exact flags0 BUDGET_EXHAUSTED expectation', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
       }
     } else if (internal.terminal === 'REQUESTED') {
@@ -1713,6 +1714,7 @@ export async function reserveForwardHttpsAggregateQuotaV3 (quotaCapability, cost
           flags: 0,
           reason: 'BUDGET_EXHAUSTED',
           stableSessionId: b4a.from(plan.stableSessionId),
+          priorSessionRevision: mirror.priorRevision,
           rejectedOperation: plan.operation,
           rejectedChargeEntryCount: mirror.chargeEntryCount || 0,
           plannedRemovableCount: row.removable
@@ -1724,7 +1726,10 @@ export async function reserveForwardHttpsAggregateQuotaV3 (quotaCapability, cost
     QUOTA_RESERVATIONS.set(reservation, { state, capability: quotaCapability, plan, actual: null, burned: false, mutated: false, walAttempted: false, totalFrames: 0, nextOrdinal: 0, lastHandoff: null, claims: new Set(), stableSessionId: null, terminal, terminalExpectation, lastAppliedHead: null, derivedLogical: 0, opRelease: opTicket.release, requestCommitment: null })
     state.pendingReservationObject = reservation
     if (disposition === 'ORDINARY') return Object.freeze({ disposition, reservation })
-    return Object.freeze({ disposition, terminalReservation: reservation })
+    // The ENTRY_CAP union exposes the exact minted expectation (including the
+    // mirror prior revision) so the driver can construct the exact FTM9; the
+    // reservation itself stays opaque (REREVIEW3-P1-002 drivability).
+    return Object.freeze({ disposition, terminalReservation: reservation, terminalExpectation })
   } catch (error) {
     state.pendingReservation = false
     state.pendingReservationObject = null

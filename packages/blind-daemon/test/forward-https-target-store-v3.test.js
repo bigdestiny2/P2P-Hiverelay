@@ -5,6 +5,7 @@ import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import b4a from 'b4a'
 import test from 'brittle'
+import { blake2b256 } from '@hiverelay/blind-protocol'
 import {
   createBlindBoundaryScratch,
   removeBlindBoundaryScratch
@@ -1159,4 +1160,114 @@ test('wired cap+1 terminal conversion: the 65535-entry session ends CONSUMED_UNP
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
   t.is(reopened.slots.get(b4a.toString(id, 'hex')).state, SLOT.CONSUMED_UNPRUNED)
   await t.exception.all(acceptForwardedHttpsTargetTurnV3(reopened, { stableSessionId: id, walType: 112 }), /TERMINAL/)
+})
+
+test('planned hint above the exact operation row rejects at the boundary with zero mutation (probe w1)', async t => {
+  const r = await roots(t)
+  const { authority, capabilities } = await quota(t, r)
+  const id = fixed(0x71)
+  const store = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id, body: b4a.alloc(4, 0x51) })
+  const headBefore = forwardHttpsTargetStoreV3Status(store).walHeadSequence
+  // plannedRemovableChargeEntryCount=65536 on a healthy session: rejected at
+  // the boundary before any reservation or WAL mutation (REREVIEW3-P1-001
+  // probe (i)).
+  await t.exception.all(
+    acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id, walType: 112, plannedRemovableChargeEntryCount: 65536 }),
+    /exceeds the exact operation row|TypeError/
+  )
+  t.is(forwardHttpsTargetStoreV3Status(store).walHeadSequence, headBefore)
+  t.absent(forwardHttpsAggregateQuotaV3Status(authority).pendingReservation)
+  // A lawful turn with an in-row hint succeeds; close succeeds.
+  await acceptForwardedHttpsTargetTurnV3(store, { stableSessionId: id, walType: 112, plannedRemovableChargeEntryCount: 2 })
+  await closeForwardHttpsTargetStoreV3(store)
+  await closeForwardHttpsAggregateQuotaV3(authority)
+  t.is(forwardHttpsAggregateQuotaV3Status(authority).state, 'CLOSED')
+})
+
+test('cap decision mismatch releases the reservation: flags2 abort then wired cap+1 rejects cleanly, authority stays OPEN (probe w3a)', async t => {
+  const r = await roots(t)
+  const { authority, capabilities } = await quota(t, r)
+  const id = fixed(0x72)
+  const c1 = fixed(0xc1)
+  const store = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  // Seed 65533 ordinary entries plus 2 orphan prefix entries (registry and
+  // mirror both at 65535, EXISTING prefix) through group-committed appends.
+  const seedPayload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x51)])
+  for (let chunk = 0; chunk * 500 < 65533; chunk++) {
+    const appends = []
+    for (let index = 0; index < 500 && chunk * 500 + index < 65533; index++) {
+      appends.push(store.store.appendAndApply({ type: 112, transactionId: b4a.alloc(32, 0x66), virtualBucket: 0, payload: seedPayload }, () => {}))
+    }
+    await Promise.all(appends)
+  }
+  const o1 = b4a.concat([b4a.from('FTS3', 'ascii'), id, c1, b4a.alloc(118 - 68, 0x01)])
+  const o2 = b4a.concat([b4a.from('FTS3', 'ascii'), id, c1, b4a.alloc(118 - 68, 0x02)])
+  await store.store.appendAndApply({ type: 113, transactionId: b4a.alloc(32, 0x66), virtualBucket: 0, payload: o1 }, () => {})
+  await store.store.appendAndApply({ type: 113, transactionId: b4a.alloc(32, 0x66), virtualBucket: 0, payload: o2 }, () => {})
+  await closeForwardHttpsTargetStoreV3(store)
+  const seeded = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(seeded).catch(() => {}) })
+  t.is(seeded.slots.get(b4a.toString(id, 'hex')).registry.count, 65535)
+  // A raw-quota flags2 abort removes the two orphans from the canonical
+  // mirror only (the store registry keeps 65535).
+  const abortEntry = (walSequence, payload) => {
+    const entry = b4a.alloc(49)
+    entry[0] = 113
+    let current = walSequence
+    for (let index = 8; index >= 1; index--) { entry[index] = Number(current & 0xffn); current >>= 8n }
+    b4a.copy(blake2b256(payload), entry, 9)
+    let cost = 460n
+    for (let index = 48; index >= 41; index--) { entry[index] = Number(cost & 0xffn); cost >>= 8n }
+    return entry
+  }
+  const abort = encodeForwardHttpsRetentionPrunedV3({
+    role: 'TARGET_STORE',
+    stableSessionId: id,
+    priorSessionRevision: 65535n,
+    pruneEpochSeconds: 10,
+    trustedEpochHighWatermark: 10,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: 920n,
+    chargeEntryCount: 2,
+    beforeAuthorityBitmap: 0,
+    allocationDisposition: 2,
+    terminalSlotState: 1,
+    chargeEntryBuffers: [abortEntry(65534n, o1), abortEntry(65535n, o2)],
+    authorityCommitments: Array.from({ length: 10 }, () => b4a.alloc(32)),
+    flags: 2
+  })
+  const abortPlan = createForwardHttpsStoreQuotaCostPlanV3(seeded.storeQuotaCapability, {
+    operation: 'PRUNE',
+    knownInputBuffers: [abort],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const abortUnion = await reserveForwardHttpsAggregateQuotaV3(seeded.storeQuotaCapability, abortPlan)
+  const { transitionAuthority } = bindForwardHttpsStoreQuotaActualBuffersV3(seeded.storeQuotaCapability, abortUnion.reservation, {
+    logicalRecordBuffers: [],
+    encryptedPlaintextBuffers: [],
+    finalWalMetadataBuffers: [abort],
+    temporaryWriteBuffers: []
+  })
+  const abortWalHash = blake2b256(b4a.concat([b4a.from('wal'), abort]))
+  await applyForwardHttpsAggregateQuotaWalFrameV3(seeded.storeQuotaCapability, abortUnion.reservation, transitionAuthority, { type: 118, payload: abort }, async () => ({ sequence: 65536n, walHash: abortWalHash, payloadHash: blake2b256(abort) }))
+  await adjustForwardHttpsAggregateQuotaV3(seeded.storeQuotaCapability, {
+    durableTombstonePayloadBuffer: abort,
+    durableWalHeadSequence: 65536n,
+    durableWalHeadHash: abortWalHash
+  })
+  // The wired turn at registry 65535: the mirror admits (65533+2) but the
+  // store registry cannot hold it — clean BUDGET_EXHAUSTED rejection with the
+  // reservation released and the authority left OPEN (REREVIEW3-P1-001 (ii)).
+  await t.exception.all(acceptForwardedHttpsTargetTurnV3(seeded, { stableSessionId: id, walType: 112 }), /BUDGET_EXHAUSTED|cap exceeded/)
+  t.absent(forwardHttpsAggregateQuotaV3Status(authority).pendingReservation)
+  // A follow-on lawful turn on a fresh session settles; close succeeds.
+  await acceptForwardedHttpsTargetTurnV3(seeded, { stableSessionId: fixed(0x73), body: b4a.alloc(4, 0x52) })
+  await closeForwardHttpsTargetStoreV3(seeded)
+  await closeForwardHttpsAggregateQuotaV3(authority)
+  t.is(forwardHttpsAggregateQuotaV3Status(authority).state, 'CLOSED')
 })

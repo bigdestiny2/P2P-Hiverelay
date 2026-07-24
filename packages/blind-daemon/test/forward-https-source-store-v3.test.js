@@ -550,3 +550,26 @@ test('wired cap+1 terminal conversion: the 65535-entry source session ends CONSU
   t.is(reopened.slots.get(b4a.toString(id, 'hex')).state, 'CONSUMED_UNPRUNED')
   await t.exception.all(persistForwardHttpsSourceResultV3(reopened, { stableSessionId: id, walType: 97 }), /TERMINAL/)
 })
+
+test('planned hint above the exact operation row rejects at the boundary with zero mutation (probe w1)', async t => {
+  const r = await roots(t)
+  const { authority, capabilities } = await quota(t, r)
+  const id = fixed(0x71)
+  const store = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
+  await prepareForwardHttpsSourceTurnV3(store, { stableSessionId: id, body: b4a.alloc(4, 0x51) })
+  const headBefore = forwardHttpsSourceStoreV3Status(store).walHeadSequence
+  // plannedRemovableChargeEntryCount=65536 on a healthy session: rejected at
+  // the boundary before any reservation or WAL mutation (REREVIEW3-P1-001
+  // probe (i)).
+  await t.exception.all(
+    persistForwardHttpsSourceResultV3(store, { stableSessionId: id, walType: 97, plannedRemovableChargeEntryCount: 65536 }),
+    /exceeds the exact operation row|TypeError/
+  )
+  t.is(forwardHttpsSourceStoreV3Status(store).walHeadSequence, headBefore)
+  t.absent(forwardHttpsAggregateQuotaV3Status(authority).pendingReservation)
+  await persistForwardHttpsSourceResultV3(store, { stableSessionId: id, walType: 97 })
+  await closeForwardHttpsSourceStoreV3(store)
+  await closeForwardHttpsAggregateQuotaV3(authority)
+  t.is(forwardHttpsAggregateQuotaV3Status(authority).state, 'CLOSED')
+})
