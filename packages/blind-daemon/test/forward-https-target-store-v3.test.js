@@ -1271,3 +1271,62 @@ test('cap decision mismatch releases the reservation: flags2 abort then wired ca
   await closeForwardHttpsAggregateQuotaV3(authority)
   t.is(forwardHttpsAggregateQuotaV3Status(authority).state, 'CLOSED')
 })
+
+test('mirror-ahead wired turn terminalizes through the ENTRY_CAP arm instead of killing the authority FAILED_PREWRITE (probe w3b)', async t => {
+  const r = await roots(t)
+  const { authority, capabilities } = await quota(t, r)
+  const id = fixed(0x74)
+  const store = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  // Seed 65534 wired entries (group-committed).
+  const seedPayload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x51)])
+  for (let chunk = 0; chunk * 500 < 65534; chunk++) {
+    const appends = []
+    for (let index = 0; index < 500 && chunk * 500 + index < 65534; index++) {
+      appends.push(store.store.appendAndApply({ type: 112, transactionId: b4a.alloc(32, 0x66), virtualBucket: 0, payload: seedPayload }, () => {}))
+    }
+    await Promise.all(appends)
+  }
+  await closeForwardHttpsTargetStoreV3(store)
+  const seeded = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(seeded).catch(() => {}) })
+  t.is(seeded.slots.get(b4a.toString(id, 'hex')).registry.count, 65534)
+  // Two raw-quota PROCESSOR_PREPARED operations push the canonical mirror to
+  // 65536 while the store registry stays 65534 (mirror-ahead divergence).
+  const capability = seeded.storeQuotaCapability
+  for (let index = 0; index < 2; index++) {
+    const payload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x60 + index)])
+    const plan = createForwardHttpsStoreQuotaCostPlanV3(capability, {
+      operation: 'PROCESSOR_PREPARED',
+      knownInputBuffers: [payload],
+      temporaryWriteBuffers: [],
+      existingDestinationBytes: 0
+    })
+    const union = await reserveForwardHttpsAggregateQuotaV3(capability, plan)
+    const { transitionAuthority } = bindForwardHttpsStoreQuotaActualBuffersV3(capability, union.reservation, {
+      logicalRecordBuffers: [],
+      encryptedPlaintextBuffers: [],
+      finalWalMetadataBuffers: [payload],
+      temporaryWriteBuffers: []
+    })
+    const walHash = blake2b256(b4a.concat([b4a.from('wal'), payload]))
+    const sequence = BigInt(65535 + index)
+    await applyForwardHttpsAggregateQuotaWalFrameV3(capability, union.reservation, transitionAuthority, { type: 114, payload }, async () => ({ sequence, walHash, payloadHash: blake2b256(payload) }))
+    await commitForwardHttpsAggregateQuotaV3(capability, union.reservation, {
+      durableWalHeadSequence: sequence,
+      durableWalHeadHash: walHash
+    })
+  }
+  // A lawful in-cap wired turn: the mirror proves cap+1, so the store
+  // terminalizes the session through the ENTRY_CAP arm — never a
+  // FAILED_PREWRITE authority kill (REREVIEW3-P1-002).
+  await t.exception.all(acceptForwardedHttpsTargetTurnV3(seeded, { stableSessionId: id, walType: 112 }), /BUDGET_EXHAUSTED|cap exceeded/)
+  t.is(seeded.slots.get(b4a.toString(id, 'hex')).state, SLOT.CONSUMED_UNPRUNED)
+  t.is(forwardHttpsAggregateQuotaV3Status(authority).state, 'OPEN')
+  t.absent(forwardHttpsAggregateQuotaV3Status(authority).pendingReservation)
+  // Follow-on lawful work settles and close succeeds.
+  await acceptForwardedHttpsTargetTurnV3(seeded, { stableSessionId: fixed(0x75), body: b4a.alloc(4, 0x52) })
+  await closeForwardHttpsTargetStoreV3(seeded)
+  await closeForwardHttpsAggregateQuotaV3(authority)
+  t.is(forwardHttpsAggregateQuotaV3Status(authority).state, 'CLOSED')
+})

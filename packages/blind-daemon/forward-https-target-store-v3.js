@@ -581,7 +581,16 @@ async function appendOperation (state, slot, operation, frames) {
     existingDestinationBytes: 0
   })
   const union = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
-  const reservation = union.reservation || union.terminalReservation
+  if (union.disposition === 'ENTRY_CAP_TERMINAL') {
+    // The canonical mirror proves cap+1 even where the store-side pre-check
+    // passed (the mirror runs ahead of the store registry): drive the exact
+    // terminal conversion instead of binding the ordinary frames — a lawful
+    // in-cap turn never releases a terminal reservation into FAILED_PREWRITE
+    // (REREVIEW3-P1-002).
+    await driveEntryCapTerminal(state, slot, union, slot.stableSessionId)
+    fail('removable charge entry cap exceeded; ENTRY_CAP_TERMINAL', STORE_ERROR_CODE.BUDGET_EXHAUSTED)
+  }
+  const reservation = union.reservation
   let attempted = false
   try {
     const { transitionAuthority } = bindForwardHttpsStoreQuotaActualBuffersV3(state.storeQuotaCapability, reservation, {
