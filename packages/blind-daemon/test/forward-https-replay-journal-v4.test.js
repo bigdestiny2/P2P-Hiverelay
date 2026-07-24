@@ -1948,9 +1948,9 @@ test('post-abort chain re-base: lawful flags0 prune after lawful flags2 abort ad
     previous = walHash
   }
   await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
-  // Recovery seeds the exact derived charge of every frame: the retained
-  // entries plus 736 per tombstone (the one charge-unit model).
-  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(recovered.authority).targetLogicalChargedBytes, 2704)
+  // Recovery applies the exact net transition per tombstone (removal-then-736,
+  // identical to live adjust): 1232 - 920 + 736 - 312 + 736 = 1472.
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(recovered.authority).targetLogicalChargedBytes, 1472)
   // Scenario c3: a committed entry DURING the open prefix (post-run fold).
   // [e1@1, o1(c1)@2, e2(c3)@3, o2(c1)@4] then flags2 (orphans o1,o2) then
   // flags0 over the retained [e1, e2].
@@ -1995,7 +1995,141 @@ test('post-abort chain re-base: lawful flags0 prune after lawful flags2 abort ad
     previous = walHash
   }
   await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
-  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(recoveredC3.authority).targetLogicalChargedBytes, 3080)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(recoveredC3.authority).targetLogicalChargedBytes, 1472)
+})
+
+test('recovery ledger nets proven removals byte-identically to live adjust (probe w5: flags0/flags1/flags2/terminal-only)', async t => {
+  const id = fixed(0xa5)
+  const c1 = fixed(0xc1)
+  // 76-byte session frames carry a 376 charge; type113 entries charge 460.
+  const e1 = b4a.concat([b4a.from('FTS3', 'ascii'), id, fixed(0xc3), b4a.alloc(8, 0xe1)])
+  const o1 = b4a.concat([b4a.from('FTS3', 'ascii'), id, c1, b4a.alloc(118 - 68, 0x01)])
+  const o2 = b4a.concat([b4a.from('FTS3', 'ascii'), id, c1, b4a.alloc(118 - 68, 0x02)])
+  const tombstone = overrides => encodeForwardHttpsRetentionPrunedV3({
+    role: TARGET,
+    stableSessionId: id,
+    priorSessionRevision: 1n,
+    pruneEpochSeconds: 10,
+    trustedEpochHighWatermark: 10,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: 376n,
+    chargeEntryCount: 1,
+    beforeAuthorityBitmap: 0,
+    allocationDisposition: 1,
+    terminalSlotState: 1,
+    chargeEntryBuffers: [chargeEntry(112, 1n, blake2b256(e1), 376)],
+    authorityCommitments: Array.from({ length: 10 }, () => b4a.from(ZERO32)),
+    flags: 0,
+    ...overrides
+  })
+  const absorbWal = async (capability, frames) => {
+    const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+    let previous = ZERO32
+    let sequence = 0n
+    for (const [type, payload] of frames) {
+      const walHash = blake2b256(b4a.concat([b4a.from('wal'), payload]))
+      sequence += 1n
+      await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(type, payload, sequence, previous) })
+      previous = walHash
+    }
+    await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+  }
+  const flags2 = tombstone({
+    priorSessionRevision: 3n,
+    removedOrdinaryLogicalBytes: 920n,
+    chargeEntryCount: 2,
+    allocationDisposition: 2,
+    chargeEntryBuffers: [chargeEntry(113, 2n, blake2b256(o1), 460), chargeEntry(113, 3n, blake2b256(o2), 460)],
+    flags: 2
+  })
+  const flags0 = tombstone({ priorSessionRevision: 3n, pruneEpochSeconds: 20, trustedEpochHighWatermark: 20 })
+  // Sequence 1 (probe w5 main): [112, 113, 113, FPR9-flags2, FPR9-flags0].
+  const recovered = await quota(t, TARGET)
+  await absorbWal(recovered.capability, [[112, e1], [113, o1], [113, o2], [118, flags2], [118, flags0]])
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(recovered.authority).targetLogicalChargedBytes, 1472, 'recovery net == live net')
+  // The identical live sequence: seed 3 frames, adjust the same two tombstones.
+  const live = await quota(t, TARGET)
+  await absorbWal(live.capability, [[112, e1], [113, o1], [113, o2]])
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(live.authority).targetLogicalChargedBytes, 1296)
+  await driveLivePrune(live.capability, flags2, 4n)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(live.authority).targetLogicalChargedBytes, 1112)
+  await driveLivePrune(live.capability, flags0, 5n)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(live.authority).targetLogicalChargedBytes, 1472)
+  // Sequence 2 (flags0-only pair): [112, FPR9-flags0] -> 736 both ways.
+  const pair = await quota(t, TARGET)
+  await absorbWal(pair.capability, [[112, e1], [118, tombstone({})]])
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(pair.authority).targetLogicalChargedBytes, 736)
+  const pairLive = await quota(t, TARGET)
+  await absorbWal(pairLive.capability, [[112, e1]])
+  await driveLivePrune(pairLive.capability, tombstone({}), 2n)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(pairLive.authority).targetLogicalChargedBytes, 736)
+  // Sequence 3 (flags1 orphan abort of a FRESH prefix): 920 - 920 + 736 = 736.
+  const flags1 = tombstone({
+    priorSessionRevision: 2n,
+    removedOrdinaryLogicalBytes: 920n,
+    chargeEntryCount: 2,
+    allocationDisposition: 1,
+    terminalSlotState: 3,
+    chargeEntryBuffers: [chargeEntry(113, 1n, blake2b256(o1), 460), chargeEntry(113, 2n, blake2b256(o2), 460)],
+    flags: 1
+  })
+  const orphan = await quota(t, TARGET)
+  await absorbWal(orphan.capability, [[113, o1], [113, o2], [118, flags1]])
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(orphan.authority).targetLogicalChargedBytes, 736)
+  const orphanLive = await quota(t, TARGET)
+  await absorbWal(orphanLive.capability, [[113, o1], [113, o2]])
+  await driveLivePrune(orphanLive.capability, flags1, 3n)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(orphanLive.authority).targetLogicalChargedBytes, 736)
+  // Sequence 4 (terminal-only count0, removal 0): 608 + 736 = 1344.
+  const ftm9 = buildFtm9({
+    role: 'TARGET',
+    flags: 1,
+    stableSessionId: id,
+    sequence: 9n,
+    priorSessionRevision: 0n,
+    newTrustedEpochHighWatermark: 4242,
+    reason: 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID',
+    exactRequestCommitment: fixed(0x63),
+    expiresAtEpoch: 1000,
+    retainedUntilEpoch: 1900
+  })
+  const reasonBytes = b4a.from('FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID', 'ascii')
+  const sequenceBytes = b4a.alloc(8)
+  writeU64beLocal(sequenceBytes, 0, 9n)
+  const scalars = b4a.alloc(13)
+  scalars.writeUInt32BE(1000, 0)
+  scalars.writeUInt32BE(1900, 4)
+  scalars.writeUInt32BE(4242, 8)
+  scalars[12] = reasonBytes.byteLength
+  const M = blake2b256(b4a.concat([
+    b4a.from('hiverelay.blind.forward-https-minimal-terminal-authority.v3', 'ascii'),
+    b4a.from([2]), id, sequenceBytes, fixed(0x63), scalars, reasonBytes
+  ]))
+  const terminalCommitments = Array.from({ length: 10 }, () => b4a.from(ZERO32))
+  terminalCommitments[7] = blake2b256(b4a.concat([b4a.from('hiverelay.blind.forward-https-retention-lookup.v3', 'ascii'), M]))
+  terminalCommitments[9] = blake2b256(b4a.concat([b4a.from('hiverelay.blind.forward-https-terminal-state.v3', 'ascii'), M]))
+  const terminalOnly = tombstone({
+    priorSessionRevision: 1n,
+    pruneEpochSeconds: 1901,
+    trustedEpochHighWatermark: 4242,
+    expiresAtEpoch: 1000,
+    recoveryGraceUntilEpoch: 1900,
+    removedOrdinaryLogicalBytes: 0n,
+    chargeEntryCount: 0,
+    beforeAuthorityBitmap: 640,
+    allocationDisposition: 0,
+    terminalSlotState: 2,
+    chargeEntryBuffers: [],
+    authorityCommitments: terminalCommitments
+  })
+  const terminal = await quota(t, TARGET)
+  await absorbWal(terminal.capability, [[117, ftm9], [118, terminalOnly]])
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(terminal.authority).targetLogicalChargedBytes, 1344)
+  const terminalLive = await quota(t, TARGET)
+  await absorbWal(terminalLive.capability, [[117, ftm9]])
+  await driveLivePrune(terminalLive.capability, terminalOnly, 2n)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(terminalLive.authority).targetLogicalChargedBytes, 1344)
 })
 
 test('sequential prefix runs: matching final closes run 1 and the run-2 flags2 abort is admitted live and at recovery (probes D2a/D2b)', async t => {
@@ -2074,7 +2208,7 @@ test('sequential prefix runs: matching final closes run 1 and the run-2 flags2 a
     previous = walHash
   }
   await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
-  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(recovered.authority).targetLogicalChargedBytes, 3080)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(recovered.authority).targetLogicalChargedBytes, 1472)
 })
 
 function u16be (value) {

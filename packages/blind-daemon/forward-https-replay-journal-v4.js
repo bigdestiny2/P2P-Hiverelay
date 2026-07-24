@@ -1191,16 +1191,20 @@ export async function absorbForwardHttpsAggregateQuotaRecoveryFrameV3 (recoveryS
   // Independent match of every recovered prune tombstone against the exact
   // pre-transition sink mirror: count/sum/chain/revision/vector/slot/prefix
   // class and clocks, recomputed before the transition is applied.
-  if (derived.entry.scope === 'PRUNE_TRANSITION') {
-    const pruned = decodeForwardHttpsRetentionPrunedV3(frame.payload)
+  const pruned = derived.entry.scope === 'PRUNE_TRANSITION' ? decodeForwardHttpsRetentionPrunedV3(frame.payload) : null
+  if (pruned !== null) {
     const mirror = sink.sessions.get(b4a.toString(pruned.stableSessionId, 'hex')) || null
     const mismatch = matchFpr9AgainstMirror(mirror, pruned, pruned.role, pruned.stableSessionId)
     if (mismatch !== null) quotaFail(`recovered tombstone does not independently match: ${mismatch}`, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
   }
   applyEntryToSessionMirror(sink.sessions, b4a.toString(derived.entry.stableSessionId === null ? ZERO32 : derived.entry.stableSessionId, 'hex'), derived.entry, frame.payload)
   // One charge-unit ledger model end to end: recovery seeds the exact derived
-  // charge, the same units commits and adjustments move.
-  sink.logicalBytes += derived.entry.ordinaryLogicalCharge + derived.entry.terminalLogicalCharge
+  // charge, the same units commits and adjustments move. A prune tombstone
+  // applies the exact net transition — removal-then-736, byte-identical to
+  // the live adjust arithmetic (REREVIEW3-P1-003).
+  sink.logicalBytes += pruned === null
+    ? derived.entry.ordinaryLogicalCharge + derived.entry.terminalLogicalCharge
+    : derived.entry.ordinaryLogicalCharge - Number(pruned.removedOrdinaryLogicalBytes)
   sink.lastSequence = u64(frame.sequence, 'frame.sequence')
   sink.lastHash = b4a.from(bytes(frame.walHash, 32, 'frame.walHash'))
   await quotaFault(sink.state, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FAULT_POINT.RECOVERY_AFTER_FRAME)
