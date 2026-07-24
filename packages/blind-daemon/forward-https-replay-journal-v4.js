@@ -1006,6 +1006,11 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
       mirror.orphanCount = 0
       mirror.orphanSum = 0n
       mirror.orphanLastRevision = 0n
+      // A matching final closes the run completely: no orphan chain or run
+      // snapshot survives into a later sequential run (R2-P1-001).
+      mirror.orphanChain = undefined
+      mirror.preRunChain = undefined
+      mirror.postRunChain = undefined
     }
   }
   if (entry.terminalLogicalCharge > 0) {
@@ -1026,6 +1031,7 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
       mirror.trustedEpochHighWatermark = Math.max(mirror.trustedEpochHighWatermark || 0, watermark)
     }
   }
+  let preFoldChain = null
   if (entry.ordinaryLogicalCharge > 0) {
     // The 65537th removable charge entry of one identity is INTEGRITY in
     // recovery (or cap+1 terminal conversion live before ordinary WAL).
@@ -1033,6 +1039,10 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
     mirror.chargeEntryCount = (mirror.chargeEntryCount || 0) + 1
     mirror.chargeSum = (mirror.chargeSum || 0n) + BigInt(entry.ordinaryLogicalCharge)
     const roleByteValue = entry.role === 'TARGET_STORE' ? 2 : 1
+    // The pre-run snapshot is the chain BEFORE this entry folds: the flags2
+    // re-base restores exactly the retained-entry chain, never a chain that
+    // already commits to the run's first orphan (R2-P1-002).
+    preFoldChain = mirror.chargeChain !== undefined ? mirror.chargeChain : chargeChainInit(roleByteValue, entry.stableSessionId)
     if (mirror.chargeChain === undefined) mirror.chargeChain = chargeChainInit(roleByteValue, entry.stableSessionId)
     mirror.chargeChain = chargeChainStep(mirror.chargeChain, mirrorEntry49(entry))
   }
@@ -1042,7 +1052,7 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
     // Orphan bookkeeping for the exact flags1/flags2 match at adjust, with
     // the bounded orphan chain and the pre-run chain snapshot so the
     // post-abort registry chain remains exactly derivable without rewind.
-    if (mirror.preRunChain === undefined && mirror.orphanCount === undefined) mirror.preRunChain = mirror.chargeChain
+    if (mirror.preRunChain === undefined && (mirror.orphanCount || 0) === 0) mirror.preRunChain = preFoldChain === null ? mirror.chargeChain : preFoldChain
     const roleByteValue = entry.role === 'TARGET_STORE' ? 2 : 1
     mirror.orphanCount = (mirror.orphanCount || 0) + 1
     mirror.orphanSum = (mirror.orphanSum || 0n) + BigInt(entry.ordinaryLogicalCharge)
