@@ -1610,6 +1610,93 @@ test('readiness flags: the replay module STATUS constant is not implementation-r
   t.is(replayModule.FORWARD_HTTPS_REPLAY_JOURNAL_V4_STATUS.authorizesRelease, false)
 })
 
+test('prune epoch eligibility: pruneEpochSeconds == recoveryGraceUntilEpoch rejects at absorb exactly as at bind (probes B6b/t5)', async t => {
+  const id = fixed(0xa0)
+  const expiresAtEpoch = 1000
+  const retainedUntilEpoch = 1900
+  const watermark = 4242
+  const ftm9 = buildFtm9({
+    role: 'TARGET',
+    flags: 1,
+    stableSessionId: id,
+    sequence: 9n,
+    priorSessionRevision: 0n,
+    newTrustedEpochHighWatermark: watermark,
+    reason: 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID',
+    exactRequestCommitment: fixed(0x63),
+    expiresAtEpoch,
+    retainedUntilEpoch
+  })
+  // The exact minimal-terminal authority commitment (same construction as the
+  // terminal-only tombstone test).
+  const reasonBytes = b4a.from('FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID', 'ascii')
+  const sequenceBytes = b4a.alloc(8)
+  writeU64beLocal(sequenceBytes, 0, 9n)
+  const scalars = b4a.alloc(13)
+  scalars.writeUInt32BE(expiresAtEpoch, 0)
+  scalars.writeUInt32BE(retainedUntilEpoch, 4)
+  scalars.writeUInt32BE(watermark, 8)
+  scalars[12] = reasonBytes.byteLength
+  const M = blake2b256(b4a.concat([
+    b4a.from('hiverelay.blind.forward-https-minimal-terminal-authority.v3', 'ascii'),
+    b4a.from([2]), id, sequenceBytes, fixed(0x63), scalars, reasonBytes
+  ]))
+  const commitments = Array.from({ length: 10 }, () => b4a.from(ZERO32))
+  commitments[7] = blake2b256(b4a.concat([b4a.from('hiverelay.blind.forward-https-retention-lookup.v3', 'ascii'), M]))
+  commitments[9] = blake2b256(b4a.concat([b4a.from('hiverelay.blind.forward-https-terminal-state.v3', 'ascii'), M]))
+  const terminalOnlyTombstone = pruneEpochSeconds => encodeForwardHttpsRetentionPrunedV3({
+    role: TARGET,
+    stableSessionId: id,
+    priorSessionRevision: 1n,
+    pruneEpochSeconds,
+    trustedEpochHighWatermark: watermark,
+    expiresAtEpoch,
+    recoveryGraceUntilEpoch: retainedUntilEpoch,
+    removedOrdinaryLogicalBytes: 0n,
+    chargeEntryCount: 0,
+    beforeAuthorityBitmap: 640,
+    allocationDisposition: 0,
+    terminalSlotState: 2,
+    chargeEntryBuffers: [],
+    authorityCommitments: commitments
+  })
+  const ftm9WalHash = blake2b256(b4a.concat([b4a.from('wal'), ftm9]))
+  // Equality boundary (probe B6b/t5): absorbed before the fix, rejected now.
+  const boundary = await quota(t, TARGET)
+  let sink = beginForwardHttpsAggregateQuotaRecoveryV3(boundary.capability)
+  await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(117, ftm9, 1n, ZERO32) })
+  await t.exception.all(
+    absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(118, terminalOnlyTombstone(1900), 2n, ftm9WalHash) }),
+    /prune epoch within recovery grace|INTEGRITY/
+  )
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+  // Strictly past the grace: the lawful terminal-only prune absorbs.
+  const lawful = await quota(t, TARGET)
+  sink = beginForwardHttpsAggregateQuotaRecoveryV3(lawful.capability)
+  await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(117, ftm9, 1n, ZERO32) })
+  const { entry } = await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(118, terminalOnlyTombstone(1901), 2n, ftm9WalHash) })
+  t.is(entry.scope, 'PRUNE_TRANSITION')
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+  // Live parity (probe B6a): the identical equality tombstone rejects at bind.
+  const live = await quota(t, TARGET)
+  sink = beginForwardHttpsAggregateQuotaRecoveryV3(live.capability)
+  await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(117, ftm9, 1n, ZERO32) })
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+  const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(live.capability, {
+    operation: 'PRUNE',
+    knownInputBuffers: [terminalOnlyTombstone(1900)],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const { reservation } = await replayModule.reserveForwardHttpsAggregateQuotaV3(live.capability, plan)
+  await t.exception.all(() => replayModule.bindForwardHttpsStoreQuotaActualBuffersV3(live.capability, reservation, {
+    logicalRecordBuffers: [],
+    encryptedPlaintextBuffers: [],
+    finalWalMetadataBuffers: [terminalOnlyTombstone(1900)],
+    temporaryWriteBuffers: []
+  }), /grace|INTEGRITY/)
+})
+
 // Live PRUNE driver: reserve/bind/apply/adjust one exact tombstone through the
 // composite quota path, exactly as the store drives it.
 async function driveLivePrune (capability, payload, sequence) {

@@ -1105,6 +1105,10 @@ function matchFpr9AgainstMirror (mirror, pruned, roleByteValue, stableSessionId)
   if (pruned.expiresAtEpoch !== (mirror.expiresAtEpoch || 0)) return 'expiry clock mismatch'
   if (pruned.recoveryGraceUntilEpoch !== (mirror.recoveryGraceUntilEpoch || 0)) return 'grace clock mismatch'
   if (pruned.trustedEpochHighWatermark !== Math.max(mirror.trustedEpochHighWatermark || 0, pruned.pruneEpochSeconds)) return 'watermark mismatch'
+  // prune epoch eligibility exactly as at live bind (R2-P1-003): the strict
+  // inequality pruneEpochSeconds > recoveryGraceUntilEpoch for the
+  // grace-carrying flags0 variants; the equality boundary is ineligible.
+  if (pruned.flags === 0 && pruned.pruneEpochSeconds <= (mirror.recoveryGraceUntilEpoch || 0)) return 'prune epoch within recovery grace'
   if (pruned.flags === 0) {
     if (pruned.allocationDisposition === 1 && mirror.consumed) return 'slot state mismatch'
     if (pruned.allocationDisposition === 0 && !mirror.consumed) return 'slot state mismatch'
