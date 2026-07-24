@@ -8,6 +8,7 @@
 // to syd-1 qualification and recorded in the lane evidence.
 
 import test from 'brittle'
+import path from 'node:path'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import {
@@ -19,17 +20,39 @@ import {
   RESULT_SIGNATURE_DOMAIN_ID,
   TRANSPORT_SUPPORT,
   allocationCommitment,
+  assertForwardHttpsResultForOriginRequestV1,
   blake2b256,
   blindErrorV1,
+  blindForwardHttpsOriginForwardTurnRequestV1,
+  blindForwardHttpsOriginForwardTurnResultV1,
   blindHealthResultV1,
   blindReceiptV1,
   cellStorageSlot,
   decodeCanonical,
   encodeCanonical,
+  forwardHttpsOriginRequestCommitmentV1,
+  forwardHttpsStableSessionIdV1,
+  forwardHttpsTargetResultChainHashV1,
   putCellV1,
   resultSignaturePayload
 } from '@hiverelay/blind-protocol'
 import { decodeDispatchFrame } from '@hiverelay/blind-protocol/dispatch'
+import {
+  createLocalForwardHttpsOriginAuthorityV4,
+  createLocalForwardHttpsTargetIngressV4,
+  decodeLocalForwardHttpsTurnV4,
+  encodeLocalForwardHttpsSourceOriginTranscriptV4,
+  encodeLocalForwardHttpsTargetIngressV4
+} from '@hiverelay/blind-ipc'
+import {
+  forwardHttpsSourceTurnStateV3
+} from '../forward-https-source-store-v3.js'
+import {
+  forwardHttpsTargetTurnStateV3
+} from '../forward-https-target-store-v3.js'
+import {
+  inspectForwardHttpsReplayJournalV4
+} from '../forward-https-replay-journal-v4.js'
 import {
   DESCRIPTOR_CLOSED_REASON,
   DESCRIPTOR_STATE_KIND,
@@ -40,6 +63,8 @@ import {
   ReadinessCoordinator
 } from '../readiness-coordinator.js'
 import {
+  PINNED_LAUNCH_TOPOLOGY_HASH,
+  PINNED_WIRE_V3_ABI_HASH,
   createRelayIdentityFixture,
   createRelayEnvironmentFixture,
   assembleRelayFixture,
@@ -408,4 +433,430 @@ test('daemon CELL.PUT dispatch signs STORED and persists an exact fixed-size cel
   const restored = await relay2.unary.storage.readCell(storageSlot)
   t.ok(b4a.equals(restored.cellBlob, cellBlob), 'accepted storage preserves the cell across daemon restart')
   await relay2.close()
+})
+
+// ---------------------------------------------------------------------------
+// FORWARD one-hop daemon evidence (serial route 5/5): the vNext source and
+// target runtimes over the accepted storage layer — exact 65536-byte turns,
+// signed capabilities/results, idempotent retries, changed-replay terminal,
+// durable replay rejection, and restart capability recovery. The TLS exporter
+// derivation itself is edge-side (see the edge test file); at the daemon the
+// binding is opaque bytes, verified for binding, not re-derived.
+// ---------------------------------------------------------------------------
+
+const FORWARD_TEST_CATALOG_ENTRY_ID = b4a.alloc(32, 0x42)
+
+async function forwardRelayPair (t, options = {}) {
+  const sourceIdentity = await createRelayIdentityFixture()
+  const targetIdentity = await createRelayIdentityFixture()
+  const sourceLayout = await createRelayEnvironmentFixture(sourceIdentity, { prefix: 'fhs-' })
+  const targetLayout = await createRelayEnvironmentFixture(targetIdentity, { prefix: 'fht-' })
+  t.teardown(async () => {
+    await removeFixtureScratch(sourceLayout)
+    await removeFixtureScratch(targetLayout)
+  })
+
+  const targetSnapshot = () => targetRelay.unary.descriptorState.requireCurrent()
+  const sourceReplayOffset = { value: -15_000n }
+  const targetReplayOffset = { value: -15_000n }
+  const targetReplayOffsetRef = targetReplayOffset
+
+  const targetRelay = await assembleRelayFixture(targetIdentity, targetLayout, {
+    onError: options.onTargetError,
+    replayJournalOptions: {
+      monotonicMillis: () => (process.hrtime.bigint() / 1_000_000n) + targetReplayOffsetRef.value
+    },
+    target: {
+      socketPath: path.join(targetLayout.socketDirectory, 'target-ingress.sock'),
+      resolveCatalogEntry: async catalogEntryId => Object.freeze({
+        catalogEntryId,
+        relayPublicKey: b4a.from(targetIdentity.relayPublicKey),
+        descriptorSequence: targetSnapshot().descriptorSequence,
+        descriptorHash: b4a.from(targetSnapshot().hash)
+      })
+    }
+  })
+  targetReplayOffsetRef.value = 0n
+
+  const dialTarget = async input => {
+    const ingressBytes = buildTargetIngress(input.forwardedBytes, targetIdentity)
+    const resultTurn = await targetRelay.targetRuntime.handleTargetIngressTranscript(ingressBytes, {})
+    const turn = decodeLocalForwardHttpsTurnV4(resultTurn)
+    return b4a.from(turn.body)
+  }
+  const sourceRelay = await assembleRelayFixture(sourceIdentity, sourceLayout, {
+    onError: options.onSourceError,
+    replayJournalOptions: {
+      monotonicMillis: () => (process.hrtime.bigint() / 1_000_000n) + sourceReplayOffset.value
+    },
+    source: {
+      socketPath: path.join(sourceLayout.socketDirectory, 'source-origin.sock'),
+      resolveTargetDescriptor: async relayPublicKey => Object.freeze({
+        relayPublicKey,
+        descriptorSequence: targetSnapshot().descriptorSequence,
+        descriptorHash: b4a.from(targetSnapshot().hash)
+      }),
+      resolveCatalogEntry: async catalogEntryId => Object.freeze({
+        catalogEntryId,
+        relayPublicKey: b4a.from(targetIdentity.relayPublicKey),
+        descriptorSequence: targetSnapshot().descriptorSequence,
+        descriptorHash: b4a.from(targetSnapshot().hash)
+      }),
+      dialTarget
+    }
+  })
+  sourceReplayOffset.value = 0n
+  return { sourceIdentity, targetIdentity, sourceLayout, targetLayout, sourceRelay, targetRelay }
+}
+
+function originCapability (source, target, overrides = {}) {
+  const issuedAtEpoch = overrides.issuedAtEpoch == null
+    ? Math.floor(Date.now() / 1000) - 10
+    : overrides.issuedAtEpoch
+  return {
+    version: 1,
+    routeKind: 7,
+    releaseProfileId: 2,
+    sourceRelayPublicKey: b4a.from(source.descriptor.relayPublicKey),
+    sourceDescriptorSequence: source.descriptorSequence,
+    sourceDescriptorHash: b4a.from(source.hash),
+    targetRelayPublicKey: b4a.from(target.descriptor.relayPublicKey),
+    targetDescriptorSequence: target.descriptorSequence,
+    targetDescriptorHash: b4a.from(target.hash),
+    targetCatalogEntryId: b4a.from(FORWARD_TEST_CATALOG_ENTRY_ID),
+    routeId: overrides.routeId || b4a.alloc(16, 0x31),
+    routePrefixRelayPublicKey: b4a.from(source.descriptor.relayPublicKey),
+    maxRelayCount: 2,
+    remainingTransitions: 1,
+    circuitClass: 1,
+    maxCircuitBytes: 16n * 1024n * 1024n,
+    initialWindowBytes: 65_536,
+    idleMillis: 30_000,
+    lifetimeMillis: 600_000,
+    issuedAtEpoch,
+    expiresAtEpoch: issuedAtEpoch + 600,
+    circuitNonce: overrides.circuitNonce || b4a.alloc(32, 0x33),
+    tlsExporterBindingHash: b4a.alloc(32),
+    signature: b4a.alloc(64)
+  }
+}
+
+function originTurn (capability, requestKind, sequence, previousTargetResultHash, inner, overrides = {}) {
+  const clientSessionNonce = overrides.clientSessionNonce || b4a.alloc(32, 0x34)
+  const request = {
+    version: 1,
+    routeKind: 7,
+    releaseProfileId: 2,
+    requestRole: 0,
+    requestKind,
+    flags: 0,
+    stableSessionId: forwardHttpsStableSessionIdV1(capability, clientSessionNonce),
+    sequence,
+    clientSessionNonce,
+    requestNonce: overrides.requestNonce || b4a.alloc(32, 0x35),
+    previousTargetResultHash,
+    parentCapability: capability,
+    turnTlsExporterBindingHash: b4a.alloc(32),
+    originRequestCommitment: b4a.alloc(32),
+    sourceTransformSignature: b4a.alloc(64),
+    inner
+  }
+  return encodeCanonical(blindForwardHttpsOriginForwardTurnRequestV1, request)
+}
+
+function buildSourceOriginTranscript (originBytes, identity, overrides = {}) {
+  const commitment = forwardHttpsOriginRequestCommitmentV1(originBytes)
+  const decoded = decodeCanonical(blindForwardHttpsOriginForwardTurnRequestV1, originBytes, { copyBytes: true })
+  const now = BigInt(Number(process.hrtime.bigint() / 1_000_000n))
+  const authority = createLocalForwardHttpsOriginAuthorityV4({
+    version: 4,
+    authorityKind: 1,
+    transportId: 1,
+    endpointId: 1,
+    flags: 0,
+    wireV3AbiHash: overrides.wireV3AbiHash || PINNED_WIRE_V3_ABI_HASH,
+    signedLaunchTopologyHash: overrides.signedLaunchTopologyHash || identity.launchTopologyHash || PINNED_LAUNCH_TOPOLOGY_HASH,
+    edgeProcessNonce: overrides.edgeProcessNonce || b4a.alloc(32, 0x51),
+    localChannelNonce: overrides.localChannelNonce || b4a.alloc(32, 0x52),
+    tlsExporterBindingHash: overrides.tlsExporterBindingHash || b4a.alloc(32, 0x53),
+    originRequestCommitment: commitment,
+    stableSessionId: decoded.stableSessionId,
+    sequence: decoded.sequence,
+    acceptedMonotonicMillis: overrides.acceptedMonotonicMillis == null ? now : overrides.acceptedMonotonicMillis,
+    absoluteDeadlineMonotonicMillis: overrides.absoluteDeadlineMonotonicMillis == null ? now + 10_000n : overrides.absoluteDeadlineMonotonicMillis
+  })
+  return encodeLocalForwardHttpsSourceOriginTranscriptV4(authority, {
+    version: 4,
+    direction: 1,
+    wireRole: 0,
+    flags: 0,
+    wireV3AbiHash: overrides.wireV3AbiHash || PINNED_WIRE_V3_ABI_HASH,
+    localExchangeId: authority.localExchangeId,
+    originRequestCommitment: commitment,
+    stableSessionId: decoded.stableSessionId,
+    sequence: decoded.sequence,
+    body: originBytes
+  })
+}
+
+function buildTargetIngress (forwardedBytes, targetIdentity, overrides = {}) {
+  const now = BigInt(Number(process.hrtime.bigint() / 1_000_000n))
+  const ingress = createLocalForwardHttpsTargetIngressV4({
+    endpointId: 1,
+    wireV3AbiHash: overrides.wireV3AbiHash || PINNED_WIRE_V3_ABI_HASH,
+    signedLaunchTopologyHash: overrides.signedLaunchTopologyHash || targetIdentity.launchTopologyHash || PINNED_LAUNCH_TOPOLOGY_HASH,
+    edgeProcessNonce: overrides.edgeProcessNonce || b4a.alloc(32, 0x54),
+    localChannelNonce: overrides.localChannelNonce || b4a.alloc(32, 0x55),
+    targetTlsExporterBindingHash: overrides.targetTlsExporterBindingHash || b4a.alloc(32, 0x56),
+    acceptedMonotonicMillis: overrides.acceptedMonotonicMillis == null ? now : overrides.acceptedMonotonicMillis,
+    absoluteDeadlineMonotonicMillis: overrides.absoluteDeadlineMonotonicMillis == null ? now + 10_000n : overrides.absoluteDeadlineMonotonicMillis,
+    body: forwardedBytes
+  })
+  return encodeLocalForwardHttpsTargetIngressV4(ingress)
+}
+
+function openInner (capability, overrides = {}) {
+  return {
+    version: 1,
+    routeId: b4a.from(capability.routeId),
+    nextDescriptorSequence: capability.targetDescriptorSequence,
+    nextDescriptorHash: b4a.from(capability.targetDescriptorHash),
+    requestedWireClass: 1,
+    circuitClass: 1,
+    circuitNonce: b4a.from(capability.circuitNonce),
+    parentRouteScopeHash: overrides.parentRouteScopeHash || b4a.alloc(32),
+    hopAdmission: {
+      profileId: 7,
+      schemeId: 9,
+      parameterHash: b4a.alloc(32, 0x44),
+      token: b4a.alloc(32, 0x45)
+    },
+    innerHandshake: b4a.alloc(32)
+  }
+}
+
+test('FORWARD one-hop: signed OPEN/DATA/WINDOW/CLOSE turns through source and target runtimes on the accepted storage', async t => {
+  const pair = await forwardRelayPair(t)
+  const { sourceRelay, targetRelay, sourceIdentity, targetIdentity } = pair
+  const sourceSnapshot = sourceRelay.unary.descriptorState.requireCurrent()
+  const targetSnapshot = targetRelay.unary.descriptorState.requireCurrent()
+  const capability = originCapability(sourceSnapshot, targetSnapshot)
+
+  const openBytes = originTurn(capability, 1, 0n, b4a.alloc(32), openInner(capability))
+  const openResult = await sourceRelay.sourceRuntime.handleOriginTranscript(
+    buildSourceOriginTranscript(openBytes, sourceIdentity), {})
+  const openTurn = decodeLocalForwardHttpsTurnV4(openResult)
+  t.is(openTurn.wireRole, 1, 'OPEN answers a TARGET_RESULT turn')
+  const openVerified = assertForwardHttpsResultForOriginRequestV1(openBytes, b4a.from(openTurn.body))
+  t.is(openVerified.result.responseKind, 1, 'OPEN_ACCEPT')
+  t.ok(b4a.equals(openVerified.result.signerPublicKey, targetIdentity.relayPublicKey), 'result signed by the target relay')
+
+  const openChainHash = forwardHttpsTargetResultChainHashV1(b4a.from(openTurn.body))
+  const dataInner = { version: 1, circuitNonce: capability.circuitNonce, offset: 0n, bytes: b4a.alloc(64, 0x61) }
+  const dataBytes = originTurn(capability, 2, 1n, openChainHash, dataInner, {
+    clientSessionNonce: decodeCanonical(blindForwardHttpsOriginForwardTurnRequestV1, openBytes, { copyBytes: true }).clientSessionNonce
+  })
+  const dataResult = await sourceRelay.sourceRuntime.handleOriginTranscript(
+    buildSourceOriginTranscript(dataBytes, sourceIdentity, { localChannelNonce: b4a.alloc(32, 0x62) }), {})
+  const dataTurn = decodeLocalForwardHttpsTurnV4(dataResult)
+  const dataVerified = assertForwardHttpsResultForOriginRequestV1(dataBytes, b4a.from(dataTurn.body))
+  t.is(dataVerified.result.responseKind, 2, 'DATA answers ACK')
+
+  const windowInner = { version: 1, circuitNonce: capability.circuitNonce, consumedThrough: 64n, creditIncrement: 64 }
+  const windowBytes = originTurn(capability, 3, 2n, forwardHttpsTargetResultChainHashV1(b4a.from(dataTurn.body)), windowInner, {
+    clientSessionNonce: decodeCanonical(blindForwardHttpsOriginForwardTurnRequestV1, openBytes, { copyBytes: true }).clientSessionNonce
+  })
+  const windowResult = await sourceRelay.sourceRuntime.handleOriginTranscript(
+    buildSourceOriginTranscript(windowBytes, sourceIdentity, { localChannelNonce: b4a.alloc(32, 0x63) }), {})
+  const windowTurn = decodeLocalForwardHttpsTurnV4(windowResult)
+  const windowVerified = assertForwardHttpsResultForOriginRequestV1(windowBytes, b4a.from(windowTurn.body))
+  t.is(windowVerified.result.responseKind, 2, 'WINDOW answers ACK')
+
+  const closeInner = { version: 1, circuitNonce: capability.circuitNonce, closeKind: 1, finalSendOffset: 64n, reasonCode: 0 }
+  const closeBytes = originTurn(capability, 4, 3n, forwardHttpsTargetResultChainHashV1(b4a.from(windowTurn.body)), closeInner, {
+    clientSessionNonce: decodeCanonical(blindForwardHttpsOriginForwardTurnRequestV1, openBytes, { copyBytes: true }).clientSessionNonce
+  })
+  const closeResult = await sourceRelay.sourceRuntime.handleOriginTranscript(
+    buildSourceOriginTranscript(closeBytes, sourceIdentity, { localChannelNonce: b4a.alloc(32, 0x64) }), {})
+  const closeTurn = decodeLocalForwardHttpsTurnV4(closeResult)
+  const closeVerified = assertForwardHttpsResultForOriginRequestV1(closeBytes, b4a.from(closeTurn.body))
+  t.is(closeVerified.result.responseKind, 6, 'CLOSE answers CLOSE')
+
+  // Accepted storage evidence on both sides.
+  const stableSessionId = decodeCanonical(blindForwardHttpsOriginForwardTurnRequestV1, openBytes, { copyBytes: true }).stableSessionId
+  const sourceState = forwardHttpsSourceTurnStateV3(sourceRelay.sourceRuntime.sourceStore, stableSessionId)
+  t.is(sourceState.slotState, 'ALLOCATED', 'source session slot allocated on the accepted store')
+  t.ok(sourceState.priorSessionRevision >= 5n, 'source WAL carries prepare plus per-turn results')
+  const targetState = forwardHttpsTargetTurnStateV3(targetRelay.targetRuntime.targetStore, stableSessionId)
+  t.is(targetState.slotState, 'ALLOCATED', 'target session slot allocated on the accepted store')
+  t.ok(targetState.priorSessionRevision >= 3n, 'target WAL carries turn-final and processor work')
+  const sourceReplay = inspectForwardHttpsReplayJournalV4(sourceRelay.sourceRuntime.replayJournal)
+  t.is(sourceReplay.length, 4, 'source replay journal burned one tuple per turn')
+  t.ok(sourceReplay.every(entry => entry.state === 'CONSUMED'), 'source tuples are consumed')
+  const targetReplay = inspectForwardHttpsReplayJournalV4(targetRelay.targetRuntime.replayJournal)
+  t.is(targetReplay.length, 4, 'target replay journal burned one tuple per turn')
+  t.ok(targetReplay.every(entry => entry.state === 'CONSUMED'), 'target tuples are consumed')
+
+  await sourceRelay.close()
+  await targetRelay.close()
+})
+
+test('FORWARD idempotent retry and changed-replay terminal', async t => {
+  const pair = await forwardRelayPair(t)
+  const { sourceRelay, targetRelay, sourceIdentity } = pair
+  const capability = originCapability(
+    sourceRelay.unary.descriptorState.requireCurrent(),
+    targetRelay.unary.descriptorState.requireCurrent())
+  const openBytes = originTurn(capability, 1, 0n, b4a.alloc(32), openInner(capability))
+
+  const first = await sourceRelay.sourceRuntime.handleOriginTranscript(
+    buildSourceOriginTranscript(openBytes, sourceIdentity), {})
+  const retry = await sourceRelay.sourceRuntime.handleOriginTranscript(
+    buildSourceOriginTranscript(openBytes, sourceIdentity, { localChannelNonce: b4a.alloc(32, 0x71) }), {})
+  const firstBody = b4a.from(decodeLocalForwardHttpsTurnV4(first).body)
+  const retryBody = b4a.from(decodeLocalForwardHttpsTurnV4(retry).body)
+  t.ok(b4a.equals(firstBody, retryBody), 'exact retry returns the byte-identical definitive result')
+
+  // Changed bytes on the same sequence terminalize the session: the source
+  // signs a non-definitive RETRY_TERMINAL and later turns stay terminal.
+  const sessionNonce = decodeCanonical(blindForwardHttpsOriginForwardTurnRequestV1, openBytes, { copyBytes: true }).clientSessionNonce
+  const chainHash = forwardHttpsTargetResultChainHashV1(firstBody)
+  const changedBytes = originTurn(capability, 2, 1n, chainHash,
+    { version: 1, circuitNonce: capability.circuitNonce, offset: 0n, bytes: b4a.alloc(64, 0x72) },
+    { clientSessionNonce: sessionNonce })
+  const changedAgain = originTurn(capability, 2, 1n, chainHash,
+    { version: 1, circuitNonce: capability.circuitNonce, offset: 0n, bytes: b4a.alloc(64, 0x73) },
+    { clientSessionNonce: sessionNonce })
+  await sourceRelay.sourceRuntime.handleOriginTranscript(
+    buildSourceOriginTranscript(changedBytes, sourceIdentity, { localChannelNonce: b4a.alloc(32, 0x72) }), {})
+  const conflict = await sourceRelay.sourceRuntime.handleOriginTranscript(
+    buildSourceOriginTranscript(changedAgain, sourceIdentity, { localChannelNonce: b4a.alloc(32, 0x73) }), {})
+  const conflictTurn = decodeLocalForwardHttpsTurnV4(conflict)
+  t.is(conflictTurn.wireRole, 2, 'changed replay answers a source pre-forward error')
+  const conflictResult = decodeCanonical(blindForwardHttpsOriginForwardTurnResultV1, b4a.from(conflictTurn.body), { copyBytes: true })
+  t.is(conflictResult.responseKind, 7, 'ERROR')
+  t.is(conflictResult.inner.code, 19, 'RETRY_TERMINAL')
+  t.ok(b4a.equals(conflictResult.signerPublicKey, sourceIdentity.relayPublicKey), 'error signed by the source relay')
+
+  // Sequence gap terminalizes a fresh session as well.
+  const capability2 = originCapability(
+    sourceRelay.unary.descriptorState.requireCurrent(),
+    targetRelay.unary.descriptorState.requireCurrent(), { circuitNonce: b4a.alloc(32, 0x81) })
+  const gapBytes = originTurn(capability2, 2, 2n, chainHash,
+    { version: 1, circuitNonce: capability2.circuitNonce, offset: 0n, bytes: b4a.alloc(64, 0x82) })
+  const gap = await sourceRelay.sourceRuntime.handleOriginTranscript(
+    buildSourceOriginTranscript(gapBytes, sourceIdentity, { localChannelNonce: b4a.alloc(32, 0x74) }), {})
+  const gapTurn = decodeLocalForwardHttpsTurnV4(gap)
+  t.is(gapTurn.wireRole, 2, 'sequence gap answers a source pre-forward error')
+  const gapResult = decodeCanonical(blindForwardHttpsOriginForwardTurnResultV1, b4a.from(gapTurn.body), { copyBytes: true })
+  t.is(gapResult.inner.code, 19, 'RETRY_TERMINAL')
+
+  await sourceRelay.close()
+  await targetRelay.close()
+})
+
+test('FORWARD durable replay rejection, authority binding and restart capability recovery', async t => {
+  const pair = await forwardRelayPair(t)
+  const { sourceRelay, targetRelay, sourceIdentity, targetIdentity, sourceLayout } = pair
+  const capability = originCapability(
+    sourceRelay.unary.descriptorState.requireCurrent(),
+    targetRelay.unary.descriptorState.requireCurrent())
+  const openBytes = originTurn(capability, 1, 0n, b4a.alloc(32), openInner(capability))
+  const transcript = buildSourceOriginTranscript(openBytes, sourceIdentity)
+  const first = await sourceRelay.sourceRuntime.handleOriginTranscript(transcript, {})
+  t.ok(first.byteLength === 65684, 'first turn answered')
+
+  // The exact same IPC transcript is durably rejected as replay.
+  let replayError = null
+  try {
+    await sourceRelay.sourceRuntime.handleOriginTranscript(transcript, {})
+  } catch (error) {
+    replayError = error
+  }
+  t.is(replayError && replayError.code, 'FORWARD_HTTPS_REPLAY_JOURNAL_V4_REPLAY', 'exact IPC transcript replay is durably rejected')
+
+  // Authority binding: a foreign ABI hash fails closed.
+  let abiError = null
+  try {
+    await sourceRelay.sourceRuntime.handleOriginTranscript(
+      buildSourceOriginTranscript(openBytes, sourceIdentity, {
+        localChannelNonce: b4a.alloc(32, 0x91),
+        wireV3AbiHash: b4a.alloc(32, 0x99)
+      }), {})
+  } catch (error) {
+    abiError = error
+  }
+  t.is(abiError && abiError.code, 'BLIND_FORWARD_RUNTIME_VNEXT_AUTHORITY_MISMATCH', 'foreign ABI hash fails closed')
+
+  // Expired capability is a signed source pre-forward error (RETRY_TERMINAL).
+  const expiredCapability = originCapability(
+    sourceRelay.unary.descriptorState.requireCurrent(),
+    targetRelay.unary.descriptorState.requireCurrent(),
+    { issuedAtEpoch: Math.floor(Date.now() / 1000) - 1200, circuitNonce: b4a.alloc(32, 0x92) })
+  const expiredBytes = originTurn(expiredCapability, 1, 0n, b4a.alloc(32), openInner(expiredCapability))
+  const expired = await sourceRelay.sourceRuntime.handleOriginTranscript(
+    buildSourceOriginTranscript(expiredBytes, sourceIdentity, { localChannelNonce: b4a.alloc(32, 0x93) }), {})
+  const expiredTurn = decodeLocalForwardHttpsTurnV4(expired)
+  t.is(expiredTurn.wireRole, 2, 'expired capability answers a source pre-forward error')
+  const expiredResult = decodeCanonical(blindForwardHttpsOriginForwardTurnResultV1, b4a.from(expiredTurn.body), { copyBytes: true })
+  t.is(expiredResult.inner.code, 19, 'RETRY_TERMINAL')
+
+  // Restart the source relay on the same durable roots; the target relay
+  // stays live and keeps its own storage.
+  await sourceRelay.close()
+  const targetSnapshot = () => targetRelay.unary.descriptorState.requireCurrent()
+  const dialTarget = async input => {
+    const ingressBytes = buildTargetIngress(input.forwardedBytes, targetIdentity)
+    const resultTurn = await targetRelay.targetRuntime.handleTargetIngressTranscript(ingressBytes, {})
+    return b4a.from(decodeLocalForwardHttpsTurnV4(resultTurn).body)
+  }
+  const replayOffset = { value: -15_000n }
+  const sourceRelay2 = await assembleRelayFixture(sourceIdentity, sourceLayout, {
+    replayJournalOptions: {
+      monotonicMillis: () => (process.hrtime.bigint() / 1_000_000n) + replayOffset.value
+    },
+    source: {
+      socketPath: path.join(sourceLayout.socketDirectory, 'source-origin.sock'),
+      resolveTargetDescriptor: async relayPublicKey => Object.freeze({
+        relayPublicKey,
+        descriptorSequence: targetSnapshot().descriptorSequence,
+        descriptorHash: b4a.from(targetSnapshot().hash)
+      }),
+      resolveCatalogEntry: async catalogEntryId => Object.freeze({
+        catalogEntryId,
+        relayPublicKey: b4a.from(targetIdentity.relayPublicKey),
+        descriptorSequence: targetSnapshot().descriptorSequence,
+        descriptorHash: b4a.from(targetSnapshot().hash)
+      }),
+      dialTarget
+    }
+  })
+  replayOffset.value = 0n
+  const recovered = inspectForwardHttpsReplayJournalV4(sourceRelay2.sourceRuntime.replayJournal)
+  t.is(recovered.length, 2, 'replay journal recovered both burned tuples across restart')
+  t.ok(recovered.every(entry => entry.state === 'CONSUMED'), 'the tuples stay consumed')
+  const stableSessionId = decodeCanonical(blindForwardHttpsOriginForwardTurnRequestV1, openBytes, { copyBytes: true }).stableSessionId
+  const sourceState = forwardHttpsSourceTurnStateV3(sourceRelay2.sourceRuntime.sourceStore, stableSessionId)
+  t.is(sourceState.identity, 'PRESENT_ALLOCATED', 'source session identity recovered as allocated')
+  let replayedAgain = null
+  try {
+    await sourceRelay2.sourceRuntime.handleOriginTranscript(transcript, {})
+  } catch (error) {
+    replayedAgain = error
+  }
+  t.is(replayedAgain && replayedAgain.code, 'FORWARD_HTTPS_REPLAY_JOURNAL_V4_REPLAY',
+    'the pre-restart transcript is still durably rejected after recovery')
+
+  // A fresh session completes end-to-end on the recovered runtime.
+  const capability2 = originCapability(
+    sourceRelay2.unary.descriptorState.requireCurrent(),
+    targetSnapshot(), { circuitNonce: b4a.alloc(32, 0x94) })
+  const open2 = originTurn(capability2, 1, 0n, b4a.alloc(32), openInner(capability2))
+  const result2 = await sourceRelay2.sourceRuntime.handleOriginTranscript(
+    buildSourceOriginTranscript(open2, sourceIdentity, { localChannelNonce: b4a.alloc(32, 0x95) }), {})
+  const verified2 = assertForwardHttpsResultForOriginRequestV1(open2, b4a.from(decodeLocalForwardHttpsTurnV4(result2).body))
+  t.is(verified2.result.responseKind, 1, 'fresh session completes after restart')
+
+  await sourceRelay2.close()
+  await targetRelay.close()
 })

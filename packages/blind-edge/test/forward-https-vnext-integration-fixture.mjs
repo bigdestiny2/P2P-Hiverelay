@@ -14,6 +14,7 @@ import http from 'node:http'
 import https from 'node:https'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { pathToFileURL } from 'node:url'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import {
@@ -186,6 +187,7 @@ export async function createRelayIdentityFixture (options = {}) {
   descriptor.endpoints[0].endpointId = 1
   descriptor.endpoints[0].transportId = 1
   descriptor.endpoints[0].roleBits = RELAY_PUBLIC_ROLE_BITS
+  descriptor.protocols = [1, 2, 3, 4].map(protocolId => ({ ...descriptor.protocols[0], protocolId }))
   if (options.port != null) {
     descriptor.endpoints[0].canonicalUrl = b4a.from(`https://127.0.0.1:${options.port}/api/blind/v1/describe`, 'utf8')
   }
@@ -318,6 +320,7 @@ export async function readSecretFile (file, length) {
 
 export const PINNED_WIRE_V3_ABI_HASH = b4a.from(PRIVATE_IPC_V4_STATUS.importedWireV3AbiHash, 'hex')
 export const PINNED_PRIVATE_IPC_V4_FORMAT_HASH = b4a.from(PRIVATE_IPC_V4_STATUS.privateIpcFormatHash, 'hex')
+export const PINNED_LAUNCH_TOPOLOGY_HASH = b4a.from('81'.repeat(32), 'hex')
 
 // Assemble the full vNext relay (unary + forward runtimes) on the accepted base.
 export async function assembleRelayFixture (identity, layout, forward = {}) {
@@ -514,4 +517,92 @@ export async function removeFixtureScratch (layout) {
   await removeBlindBoundaryScratch(directory)
   const socketDirectory = typeof layout === 'string' ? null : layout.socketDirectory
   if (socketDirectory) await fs.rm(socketDirectory, { recursive: true, force: true })
+}
+
+// ---------------------------------------------------------------------------
+// FORWARD one-hop: target-relay child-process runner. Executed directly
+// (node forward-https-vnext-integration-fixture.mjs --target-child), it boots
+// the complete target relay (unary assembly, forward target runtime on the
+// accepted storage, target edge with real TLS) as a separate OS process and
+// prints one JSON readiness line on stdout. The parent test drives the source
+// relay against it and terminates it with SIGTERM. This is the real
+// multiprocess boundary: the target daemon verifies the target edge's
+// peercred (getpeereid on macOS here; SO_PEERCRED on syd-1) across processes.
+// ---------------------------------------------------------------------------
+
+async function targetChildMain () {
+  const net = await import('node:net')
+  const port = await new Promise(resolve => {
+    const server = net.createServer()
+    server.listen(0, '127.0.0.1', () => {
+      const assigned = server.address().port
+      server.close(() => resolve(assigned))
+    })
+  })
+  const identity = await createRelayIdentityFixture({ port })
+  const layout = await createRelayEnvironmentFixture(identity)
+  const tls = await createLoopbackTlsFixture(layout.directory)
+  const { ForwardHttpsEdgeVnext, FORWARD_HTTPS_EDGE_ROLE_VNEXT } = await import('../forward-https-vnext.js')
+  const replayOffset = { value: -15_000n }
+  const relay = await assembleRelayFixture(identity, layout, {
+    onError: error => console.error(`[target-child] daemon error: ${error.code || 'ERROR'} ${error.message}`),
+    replayJournalOptions: {
+      monotonicMillis: () => (process.hrtime.bigint() / 1_000_000n) + replayOffset.value
+    },
+    target: {
+      socketPath: layout.environment.HIVERELAY_BLIND_UNARY_SOCKET.replace('unary.sock', 'target-ingress.sock'),
+      resolveCatalogEntry: async catalogEntryId => {
+        const snapshot = relay.unary.descriptorState.requireCurrent()
+        return Object.freeze({
+          catalogEntryId,
+          relayPublicKey: b4a.from(identity.relayPublicKey),
+          descriptorSequence: snapshot.descriptorSequence,
+          descriptorHash: b4a.from(snapshot.hash)
+        })
+      }
+    }
+  })
+  replayOffset.value = 0n
+  await relay.start()
+  const edge = new ForwardHttpsEdgeVnext({
+    host: '127.0.0.1',
+    port,
+    endpointId: 1,
+    role: FORWARD_HTTPS_EDGE_ROLE_VNEXT.TARGET,
+    tls,
+    unarySocketPath: layout.environment.HIVERELAY_BLIND_UNARY_SOCKET,
+    forwardSocketPath: relay.targetIpc.socketPath,
+    launchTopologyHash: layout.launchTopologyHash,
+    wireV3AbiHash: PINNED_WIRE_V3_ABI_HASH,
+    expectedDaemonUid: process.getuid(),
+    expectedDaemonGid: process.getgid(),
+    onError: error => console.error(`[target-child] edge error: ${error.code || 'ERROR'} ${error.message}`)
+  })
+  await edge.start()
+  const snapshot = relay.unary.descriptorState.requireCurrent()
+  process.stdout.write(`${JSON.stringify({
+    ready: true,
+    port,
+    relayPublicKey: b4a.toString(identity.relayPublicKey, 'hex'),
+    descriptorSequence: snapshot.descriptorSequence.toString(),
+    descriptorHash: b4a.toString(snapshot.hash, 'hex'),
+    genesisHash: b4a.toString(identity.genesisHash, 'hex'),
+    parameterHash: b4a.toString(identity.parameterHash, 'hex')
+  })}\n`)
+  const shutdown = async () => {
+    await edge.close().catch(() => {})
+    await relay.close().catch(() => {})
+    await removeFixtureScratch(layout)
+    process.exit(0)
+  }
+  process.on('SIGTERM', shutdown)
+  process.on('SIGINT', shutdown)
+}
+
+const invokedAsScript = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
+if (invokedAsScript && process.argv.includes('--target-child')) {
+  targetChildMain().catch(error => {
+    console.error(`[target-child] fatal: ${error.code || 'ERROR'} ${error.message}`)
+    process.exit(1)
+  })
 }

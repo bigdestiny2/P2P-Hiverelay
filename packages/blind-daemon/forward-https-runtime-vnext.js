@@ -34,8 +34,7 @@ import {
   forwardHttpsForwardedRequestCommitmentV1,
   forwardHttpsOriginRequestCommitmentV1,
   forwardHttpsParentCapabilitySignaturePayloadV1,
-  forwardHttpsResultSignaturePayloadV1,
-  forwardOpenRequestCommitment
+  forwardHttpsResultSignaturePayloadV1
 } from '@hiverelay/blind-protocol'
 import {
   LOCAL_FORWARD_HTTPS_DIRECTION_V4,
@@ -339,13 +338,20 @@ export class ForwardHttpsSourceRuntimeVnext {
     assertResolvedDescriptor(targetDescriptor, capability.targetRelayPublicKey,
       capability.targetDescriptorSequence, capability.targetDescriptorHash, 'targetDescriptor')
     assertNoDialFields(catalogEntry, 'catalogEntry')
+    return { snapshot, targetDescriptor, catalogEntry }
+  }
+
+  // The exact catalogue pin is enforced against the FINALIZED capability: the
+  // catalogue assertion requires the nonzero exporter binding, which exists
+  // only after the source edge's binding is minted into the capability.
+  _assertCataloguePin (finalizedCapability, catalogEntry) {
     try {
-      assertForwardHttpsCatalogTargetV1(capability, catalogEntry)
+      assertForwardHttpsCatalogTargetV1(finalizedCapability, catalogEntry)
     } catch {
       fail('catalogue entry does not exactly pin the capability target',
         FORWARD_HTTPS_RUNTIME_VNEXT_ERROR_CODE.CATALOGUE_MISMATCH)
     }
-    return { snapshot, targetDescriptor, catalogEntry }
+    return true
   }
 
   _mintForwarded (origin, originBytes, tlsExporterBindingHash) {
@@ -477,7 +483,39 @@ export class ForwardHttpsSourceRuntimeVnext {
         })
       }
       const { snapshot } = preContact
-      const admission = entry.contract.acceptOrigin(turn.body, { nowEpoch: this.nowEpoch() })
+      let admission
+      try {
+        admission = entry.contract.acceptOrigin(turn.body, { nowEpoch: this.nowEpoch() })
+      } catch (error) {
+        // Session-contract terminalization (changed bytes, gaps, reset) is a
+        // signed non-definitive source pre-forward error, never an uncaught
+        // escape: the caller learns the exact terminal class.
+        const { finalized, forwardedBytes } = this._mintForwarded(origin, turn.body, authority.tlsExporterBindingHash)
+        const forwarded = decodeCanonical(blindForwardHttpsOriginForwardTurnRequestV1, forwardedBytes, { copyBytes: true })
+        const resultBytes = this._preForwardError({
+          request: origin,
+          originBytes: turn.body,
+          forwardedBytes,
+          forwarded,
+          finalized,
+          snapshot
+        }, error)
+        await consumeForwardHttpsReplayV4(this.replayJournal, reservation, { record: replayRecord })
+          .then(consumed => consumeForwardHttpsStorageReplayV3(this.storageAuthority, {
+            consumed,
+            role: FORWARD_HTTPS_REPLAY_ROLE_V4.SOURCE_ORIGIN,
+            record: replayRecord
+          }))
+        return encodeResultTurn({
+          resultRole: FORWARD_HTTPS_RESULT_ROLE_V1.SOURCE_PRE_FORWARD_ERROR,
+          wireV3AbiHash: this.wireV3AbiHash,
+          exchangeId: authority.localExchangeId,
+          originRequestCommitment: authority.originRequestCommitment,
+          stableSessionId: authority.stableSessionId,
+          sequence: authority.sequence,
+          resultBytes
+        })
+      }
       if (admission.disposition === 'CACHED_TARGET_RESULT') {
         await consumeForwardHttpsReplayV4(this.replayJournal, reservation, { record: replayRecord })
           .then(consumed => consumeForwardHttpsStorageReplayV3(this.storageAuthority, {
@@ -500,6 +538,7 @@ export class ForwardHttpsSourceRuntimeVnext {
       const forwarded = decodeCanonical(blindForwardHttpsOriginForwardTurnRequestV1, forwardedBytes, { copyBytes: true })
       const resultInput = { request: origin, originBytes: turn.body, forwardedBytes, forwarded, finalized, snapshot }
       try {
+        this._assertCataloguePin(finalized, preContact.catalogEntry)
         if (admission.disposition === 'ACCEPTED') {
           await this._persistPrepare(origin, turn.body)
         }
@@ -788,12 +827,15 @@ export class ForwardHttpsTargetRuntimeVnext {
         await acceptForwardedHttpsTargetTurnV3(this.targetStore, { stableSessionId, body: ingress.body })
       } else {
         // Exact durable retry on a recovered or live session: the two-frame
-        // crypto reservation (113 prefix + 112 final) binds the same exact
-        // forwarded commitment and applies exactly once.
+        // crypto reservation (exact 118-byte 113 prefix + 112 final) binds the
+        // same exact forwarded commitment and applies exactly once.
+        const reservationBody = b4a.alloc(82)
+        b4a.copy(forwardHttpsForwardedRequestCommitmentV1(ingress.body), reservationBody, 0)
+        reservationBody.writeBigUInt64BE(forwarded.request.sequence, 32)
         await acceptForwardedHttpsTargetTurnV3(this.targetStore, {
           walType: FORWARD_HTTPS_TARGET_WAL_TYPE.TRANSPORT_RESERVED,
           stableSessionId,
-          body: forwardHttpsForwardedRequestCommitmentV1(ingress.body),
+          body: reservationBody,
           finalBody: ingress.body
         })
       }
@@ -931,7 +973,7 @@ export function createForwardHttpsEchoResponderVnext (options = {}) {
           idleMillis: hopTuple.idleMillis,
           lifetimeMillis: hopTuple.lifetimeMillis,
           openedAtEpoch: Math.floor(Date.now() / 1000),
-          hopOpenCommitment: forwardOpenRequestCommitment(inner),
+          hopOpenCommitment: b4a.from(input.forwardedRequestCommitment),
           acceptedRouteScopeHash: b4a.alloc(32),
           acceptedRelayCount: 2,
           handshakeFlight2: b4a.alloc(96),
@@ -955,7 +997,7 @@ export function createForwardHttpsEchoResponderVnext (options = {}) {
             idleMillis: hopTuple.idleMillis,
             lifetimeMillis: hopTuple.lifetimeMillis,
             openedAtEpoch: nextHopAccept.openedAtEpoch,
-            requestCommitment: forwardOpenRequestCommitment(inner),
+            requestCommitment: b4a.from(input.forwardedRequestCommitment),
             acceptedRouteScopeHash: b4a.alloc(32),
             acceptedRelayCount: 2,
             nextHopAccept,
@@ -1051,8 +1093,8 @@ export class ForwardHttpsIpcServerVnext {
       ? SOURCE_ORIGIN_TRANSCRIPT_BYTES
       : TARGET_INGRESS_TRANSCRIPT_BYTES
     this.handler = this.role === FORWARD_HTTPS_IPC_ROLE_VNEXT.SOURCE_ORIGIN
-      ? this.runtime.handleOriginTranscript
-      : this.runtime.handleTargetIngressTranscript
+      ? (transcript, context) => this.runtime.handleOriginTranscript(transcript, context)
+      : (transcript, context) => this.runtime.handleTargetIngressTranscript(transcript, context)
     if (typeof this.handler !== 'function') throw new TypeError('runtime does not handle this transcript role')
     this.server = null
     this.identity = null
