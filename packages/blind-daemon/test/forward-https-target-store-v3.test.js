@@ -1330,3 +1330,52 @@ test('mirror-ahead wired turn terminalizes through the ENTRY_CAP arm instead of 
   await closeForwardHttpsAggregateQuotaV3(authority)
   t.is(forwardHttpsAggregateQuotaV3Status(authority).state, 'CLOSED')
 })
+
+test('cap+1 storm with lawful below-row hint: 4 concurrent turns at 65535 — convert once, sticky TERMINAL, no double FTM9, reopen recovers (REREVIEW4 d9/d10)', async t => {
+  const r = await roots(t)
+  const { authority, capabilities } = await quota(t, r)
+  const id = fixed(0x7b)
+  const store = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  // Seed 65535 charge entries (group-committed).
+  const seedPayload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x51)])
+  for (let chunk = 0; chunk * 500 < 65535; chunk++) {
+    const appends = []
+    for (let index = 0; index < 500 && chunk * 500 + index < 65535; index++) {
+      appends.push(store.store.appendAndApply({ type: 112, transactionId: b4a.alloc(32, 0x66), virtualBucket: 0, payload: seedPayload }, () => {}))
+    }
+    await Promise.all(appends)
+  }
+  await closeForwardHttpsTargetStoreV3(store)
+  const seeded = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(seeded).catch(() => {}) })
+  t.is(seeded.slots.get(b4a.toString(id, 'hex')).registry.count, 65535)
+  // Four concurrent turns with the lawful below-row hint planned=1: op0
+  // converts through the ENTRY_CAP arm (the quota-side row count proves
+  // cap+1); op1, op2 and op3 answer sticky TERMINAL on the consumed mirror —
+  // no ordinary commit onto a terminal session, no second FTM9.
+  const outcomes = await Promise.all([0, 1, 2, 3].map(() =>
+    acceptForwardedHttpsTargetTurnV3(seeded, { stableSessionId: id, walType: 112, plannedRemovableChargeEntryCount: 1 }).then(
+      () => 'committed',
+      error => (error && error.code) || String(error)
+    )
+  ))
+  t.alike(outcomes, [
+    'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_BUDGET_EXHAUSTED',
+    'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_TERMINAL',
+    'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_TERMINAL',
+    'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_TERMINAL'
+  ])
+  t.is(seeded.slots.get(b4a.toString(id, 'hex')).state, SLOT.CONSUMED_UNPRUNED)
+  t.is(forwardHttpsAggregateQuotaV3Status(authority).state, 'OPEN')
+  t.absent(forwardHttpsAggregateQuotaV3Status(authority).pendingReservation)
+  // Exactly one FTM9 in the WAL: 65535 ordinary entries + the conversion.
+  t.is(forwardHttpsTargetStoreV3Status(seeded).walHeadSequence, 65536n)
+  await closeForwardHttpsTargetStoreV3(seeded)
+  // Fresh-authority reopen: the root recovers the exact consumed state and
+  // the terminal identity is sticky.
+  const reopened = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
+  t.is(reopened.slots.get(b4a.toString(id, 'hex')).state, SLOT.CONSUMED_UNPRUNED)
+  await t.exception.all(acceptForwardedHttpsTargetTurnV3(reopened, { stableSessionId: id, walType: 112 }), /TERMINAL/)
+})

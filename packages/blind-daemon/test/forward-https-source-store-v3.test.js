@@ -573,3 +573,51 @@ test('planned hint above the exact operation row rejects at the boundary with ze
   await closeForwardHttpsAggregateQuotaV3(authority)
   t.is(forwardHttpsAggregateQuotaV3Status(authority).state, 'CLOSED')
 })
+
+test('cap+1 storm: 4 concurrent default persists at 65535 — commit, convert, sticky TERMINAL, reopen recovers (REREVIEW4 d6b/d7/d8)', async t => {
+  const r = await roots(t)
+  const { authority, capabilities } = await quota(t, r)
+  const id = fixed(0x7a)
+  const store = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
+  // Seed 65535 charge entries (group-committed).
+  const seedPayload = b4a.concat([b4a.from('FSS3', 'ascii'), id, b4a.alloc(8, 0x51)])
+  for (let chunk = 0; chunk * 500 < 65535; chunk++) {
+    const appends = []
+    for (let index = 0; index < 500 && chunk * 500 + index < 65535; index++) {
+      appends.push(store.store.appendAndApply({ type: 96, transactionId: b4a.alloc(32, 0x66), virtualBucket: 0, payload: seedPayload }, () => {}))
+    }
+    await Promise.all(appends)
+  }
+  await closeForwardHttpsSourceStoreV3(store)
+  const seeded = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsSourceStoreV3(seeded).catch(() => {}) })
+  t.is(seeded.slots.get(b4a.toString(id, 'hex')).registry.count, 65535)
+  // Four concurrent default persists: op0 commits entry #65536, op1 converts
+  // through the ENTRY_CAP arm, op2 and op3 answer sticky TERMINAL — no
+  // FAILED_WAL, no durable frame recovery would reject.
+  const outcomes = await Promise.all([0, 1, 2, 3].map(() =>
+    persistForwardHttpsSourceResultV3(seeded, { stableSessionId: id, walType: 97 }).then(
+      () => 'committed',
+      error => (error && error.code) || String(error)
+    )
+  ))
+  t.alike(outcomes, [
+    'committed',
+    'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_BUDGET_EXHAUSTED',
+    'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_TERMINAL',
+    'FORWARD_HTTPS_STORAGE_AUTHORITY_V3_TERMINAL'
+  ])
+  t.is(seeded.slots.get(b4a.toString(id, 'hex')).state, 'CONSUMED_UNPRUNED')
+  t.is(forwardHttpsAggregateQuotaV3Status(authority).state, 'OPEN')
+  t.absent(forwardHttpsAggregateQuotaV3Status(authority).pendingReservation)
+  // Exactly one FTM9 in the WAL: 65536 ordinary entries + the conversion.
+  t.is(forwardHttpsSourceStoreV3Status(seeded).walHeadSequence, 65537n)
+  await closeForwardHttpsSourceStoreV3(seeded)
+  // Fresh-authority reopen: the root recovers the exact consumed state and
+  // the terminal identity is sticky.
+  const reopened = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsSourceStoreV3(reopened).catch(() => {}) })
+  t.is(reopened.slots.get(b4a.toString(id, 'hex')).state, 'CONSUMED_UNPRUNED')
+  await t.exception.all(persistForwardHttpsSourceResultV3(reopened, { stableSessionId: id, walType: 97 }), /TERMINAL/)
+})

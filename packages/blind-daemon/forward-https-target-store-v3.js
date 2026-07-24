@@ -580,7 +580,17 @@ async function appendOperation (state, slot, operation, frames) {
     temporaryWriteBuffers: [],
     existingDestinationBytes: 0
   })
-  const union = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
+  let union
+  try {
+    union = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
+  } catch (error) {
+    // An op queued behind a terminal conversion answers with the exact sticky
+    // terminal result, mutation-free (REREVIEW4-P1-001).
+    if (error && error.code === 'FORWARD_HTTPS_AGGREGATE_QUOTA_V3_TERMINAL') {
+      fail('session identity is TERMINAL', STORE_ERROR_CODE.TERMINAL)
+    }
+    throw error
+  }
   if (union.disposition === 'ENTRY_CAP_TERMINAL') {
     // The canonical mirror proves cap+1 even where the store-side pre-check
     // passed (the mirror runs ahead of the store registry): drive the exact

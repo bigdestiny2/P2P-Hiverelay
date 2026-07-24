@@ -119,6 +119,7 @@ export const FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE = deepFreeze({
   FILESYSTEM_INVALID: 'FORWARD_HTTPS_AGGREGATE_QUOTA_V3_FILESYSTEM_INVALID',
   CLOCK_UNSAFE: 'FORWARD_HTTPS_AGGREGATE_QUOTA_V3_CLOCK_UNSAFE',
   CLOSED: 'FORWARD_HTTPS_AGGREGATE_QUOTA_V3_CLOSED',
+  TERMINAL: 'FORWARD_HTTPS_AGGREGATE_QUOTA_V3_TERMINAL',
   INTEGRITY: 'FORWARD_HTTPS_AGGREGATE_QUOTA_V3_INTEGRITY'
 })
 
@@ -1074,10 +1075,17 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
     mirror.expiresAtEpoch = payload.readUInt32BE(141)
     mirror.recoveryGraceUntilEpoch = payload.readUInt32BE(145)
   }
-  mirror.bitmap = entry.authorityBitmap
-  mirror.commitments = entry.authorityCommitments
-  mirror.consumed = entry.terminalLogicalCharge > 0 || (entry.authorityBitmap & 512) !== 0
-  mirror.pruned = false
+  if (!mirror.consumed) {
+    mirror.bitmap = entry.authorityBitmap
+    mirror.commitments = entry.authorityCommitments
+    mirror.consumed = entry.terminalLogicalCharge > 0 || (entry.authorityBitmap & 512) !== 0
+    mirror.pruned = false
+  }
+  // Terminal state is absorbing (REREVIEW4-P1-001 defense in depth): an
+  // ordinary fold on an already-consumed identity preserves
+  // consumed/bitmap/commitments/pruned exactly — no ordinary entry ever
+  // un-terminalizes the mirror. Reserve already rejects ordinary operations
+  // on a consumed mirror pre-WAL; a terminal duplicate rejects at derive.
   sessions.set(key, mirror)
 }
 
@@ -1705,6 +1713,15 @@ export async function reserveForwardHttpsAggregateQuotaV3 (quotaCapability, cost
       terminal = 'REQUESTED'
     } else if (plan.stableSessionId !== null) {
       const mirror = state.sessions.get(`${capability.role}:${b4a.toString(plan.stableSessionId, 'hex')}`)
+      // A consumed (terminalized) identity is absorbing: an ordinary SESSION
+      // operation on it never mints a reservation (REREVIEW4-P1-001). The
+      // rejection is pre-WAL under the FIFO mutex; the catch releases the op
+      // ticket exactly once with no reservation and no authority kill. PRUNE
+      // is the lawful post-consumed operation (flags0 terminal-existing
+      // eligibility requires the consumed predecessor).
+      if (mirror && mirror.consumed && plan.operation !== 'PRUNE') {
+        quotaFail('quota session identity is consumed; ordinary operations are TERMINAL', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.TERMINAL)
+      }
       const row = FORWARD_HTTPS_STORE_OPERATION_ROWS[plan.operation]
       // The arm is scoped to PRESENT_ALLOCATED and ALLOCATED_WITH_PREFIX: a
       // FRESH crashed-prefix session terminalizes only via its own prefix

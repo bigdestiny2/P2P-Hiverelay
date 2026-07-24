@@ -1642,6 +1642,104 @@ test('ENTRY_CAP arm is scoped to allocated identities: a FRESH crashed-prefix se
   await replayModule.releaseForwardHttpsAggregateQuotaV3(capability, union.reservation)
 })
 
+test('consumed identity never mints an ordinary reservation: coded TERMINAL rejection at reserve, PRUNE still admitted (probe d11)', async t => {
+  const { authority, capability } = await quota(t, TARGET)
+  const id = fixed(0xa6)
+  const first = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x51)])
+  const ftm9 = buildFtm9({
+    role: 'TARGET',
+    flags: 0,
+    stableSessionId: id,
+    sequence: 2n,
+    priorSessionRevision: 1n,
+    newTrustedEpochHighWatermark: 5,
+    reason: 'CHAIN_INVALID'
+  })
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(112, first, 1n, ZERO32) })
+  await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(117, ftm9, 2n, blake2b256(b4a.concat([b4a.from('wal'), first]))) })
+  await finishForwardHttpsAggregateQuotaRecoveryV3(sink)
+  // Ordinary op on the consumed session: coded TERMINAL rejection at reserve
+  // — no reservation, no pending state, authority not failed.
+  const plan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'TURN_FINAL',
+    knownInputBuffers: [first],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const error = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, plan).then(() => null, rejected => rejected)
+  t.ok(error, 'ordinary reserve on a consumed mirror rejects')
+  t.is(error.code, 'FORWARD_HTTPS_AGGREGATE_QUOTA_V3_TERMINAL')
+  t.absent(replayModule.forwardHttpsAggregateQuotaV3Status(authority).pendingReservation)
+  t.is(replayModule.forwardHttpsAggregateQuotaV3Status(authority).state, 'UNINITIALIZED')
+  // PRUNE remains the lawful post-consumed operation (flags0 terminal-existing).
+  const expectedC9 = blake2b256(b4a.concat([
+    b4a.from('hiverelay.blind.forward-https-terminal-state-existing.v3', 'ascii'),
+    b4a.from([2]), id, u64be(1n), u32be(0),
+    ...Array.from({ length: 9 }, () => b4a.from(ZERO32)),
+    u64be(2n), blake2b256(ftm9)
+  ]))
+  const commitments = Array.from({ length: 10 }, () => b4a.from(ZERO32))
+  commitments[9] = expectedC9
+  const tombstone = encodeForwardHttpsRetentionPrunedV3({
+    role: TARGET,
+    stableSessionId: id,
+    priorSessionRevision: 2n,
+    pruneEpochSeconds: 1,
+    trustedEpochHighWatermark: 5,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: 0n,
+    chargeEntryCount: 0,
+    beforeAuthorityBitmap: 512,
+    allocationDisposition: 0,
+    terminalSlotState: 2,
+    chargeEntryBuffers: [],
+    authorityCommitments: commitments
+  })
+  const prunePlan = replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'PRUNE',
+    knownInputBuffers: [tombstone],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const pruneUnion = await replayModule.reserveForwardHttpsAggregateQuotaV3(capability, prunePlan)
+  t.is(pruneUnion.disposition, 'ORDINARY')
+  await replayModule.releaseForwardHttpsAggregateQuotaV3(capability, pruneUnion.reservation)
+  // Fold preservation (defense in depth): an ordinary entry folded onto the
+  // consumed mirror at recovery preserves the terminal state — the
+  // terminal-existing prune (disposition NONE_CONSUMED, exact retained
+  // registry) still matches afterwards.
+  const second = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x52)])
+  const foldedTombstone = encodeForwardHttpsRetentionPrunedV3({
+    role: TARGET,
+    stableSessionId: id,
+    priorSessionRevision: 3n,
+    pruneEpochSeconds: 1,
+    trustedEpochHighWatermark: 5,
+    expiresAtEpoch: 0,
+    recoveryGraceUntilEpoch: 0,
+    removedOrdinaryLogicalBytes: 624n,
+    chargeEntryCount: 2,
+    beforeAuthorityBitmap: 512,
+    allocationDisposition: 0,
+    terminalSlotState: 2,
+    chargeEntryBuffers: [chargeEntry(112, 1n, blake2b256(first), 312), chargeEntry(112, 3n, blake2b256(second), 312)],
+    authorityCommitments: commitments
+  })
+  const folded = await quota(t, TARGET)
+  const foldedSink = beginForwardHttpsAggregateQuotaRecoveryV3(folded.capability)
+  let previous = ZERO32
+  let sequence = 0n
+  for (const [type, payload] of [[112, first], [117, ftm9], [112, second], [118, foldedTombstone]]) {
+    const walHash = blake2b256(b4a.concat([b4a.from('wal'), payload]))
+    sequence += 1n
+    await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(foldedSink, { frame: recoveryFrame(type, payload, sequence, previous) })
+    previous = walHash
+  }
+  await finishForwardHttpsAggregateQuotaRecoveryV3(foldedSink)
+})
+
 test('readiness flags: the replay module STATUS constant is not implementation-ready', async t => {
   t.is(replayModule.FORWARD_HTTPS_REPLAY_JOURNAL_V4_STATUS.implementationReady, false)
   t.is(replayModule.FORWARD_HTTPS_REPLAY_JOURNAL_V4_STATUS.runtimeReady, false)
