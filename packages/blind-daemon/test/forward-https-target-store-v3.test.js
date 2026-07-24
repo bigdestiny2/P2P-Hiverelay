@@ -1113,3 +1113,35 @@ test('open ABI: a recovery sink begun on a foreign quota authority rejects at op
   t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
   t.is(forwardHttpsTargetStoreV3Status(reopened).walHeadSequence, 1n)
 })
+
+test('wired cap+1 terminal conversion: the 65535-entry session ends CONSUMED_UNPRUNED on reopen (required_tests[15])', async t => {
+  const r = await roots(t)
+  const { authority, capabilities } = await quota(t, r)
+  const id = fixed(0x6f)
+  const store = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(store).catch(() => {}) })
+  // Seed 65535 charge entries through raw WAL appends (group-committed).
+  const seedPayload = b4a.concat([b4a.from('FTS3', 'ascii'), id, b4a.alloc(8, 0x51)])
+  for (let chunk = 0; chunk * 500 < 65535; chunk++) {
+    const appends = []
+    for (let index = 0; index < 500 && chunk * 500 + index < 65535; index++) {
+      appends.push(store.store.appendAndApply({ type: 112, transactionId: b4a.alloc(32, 0x66), virtualBucket: 0, payload: seedPayload }, () => {}))
+    }
+    await Promise.all(appends)
+  }
+  await closeForwardHttpsTargetStoreV3(store)
+  const seeded = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(seeded).catch(() => {}) })
+  t.is(seeded.slots.get(b4a.toString(id, 'hex')).registry.count, 65535)
+  // The wired turn at cap+1 terminalizes through the ENTRY_CAP arm, then
+  // surfaces BUDGET_EXHAUSTED to the caller.
+  await t.exception.all(acceptForwardedHttpsTargetTurnV3(seeded, { stableSessionId: id, walType: 112 }), /BUDGET_EXHAUSTED|cap exceeded/)
+  t.is(seeded.slots.get(b4a.toString(id, 'hex')).state, SLOT.CONSUMED_UNPRUNED)
+  await closeForwardHttpsTargetStoreV3(seeded)
+  // On reopen the session is durably CONSUMED_UNPRUNED and the terminal
+  // identity is sticky mutation-free.
+  const reopened = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsTargetStoreV3(reopened).catch(() => {}) })
+  t.is(reopened.slots.get(b4a.toString(id, 'hex')).state, SLOT.CONSUMED_UNPRUNED)
+  await t.exception.all(acceptForwardedHttpsTargetTurnV3(reopened, { stableSessionId: id, walType: 112 }), /TERMINAL/)
+})

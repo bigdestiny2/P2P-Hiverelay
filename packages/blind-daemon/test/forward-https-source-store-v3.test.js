@@ -502,3 +502,36 @@ test('readiness flags: the source store STATUS constant is not implementation-re
   t.is(FORWARD_HTTPS_SOURCE_STORE_V3_STATUS.releaseReady, false)
   t.is(FORWARD_HTTPS_SOURCE_STORE_V3_STATUS.authorizesRelease, false)
 })
+
+test('wired cap+1 terminal conversion: the 65535-entry source session ends CONSUMED_UNPRUNED on reopen (required_tests[15])', async t => {
+  const r = await roots(t)
+  const { authority, capabilities } = await quota(t, r)
+  const id = fixed(0x6e)
+  const store = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsSourceStoreV3(store).catch(() => {}) })
+  // Seed 65536 charge entries through raw WAL appends (group-committed): the
+  // exact cap is legal; the next entry exceeds it.
+  const seedPayload = b4a.concat([b4a.from('FSS3', 'ascii'), id, b4a.alloc(8, 0x51)])
+  for (let chunk = 0; chunk * 500 < 65536; chunk++) {
+    const appends = []
+    for (let index = 0; index < 500 && chunk * 500 + index < 65536; index++) {
+      appends.push(store.store.appendAndApply({ type: 96, transactionId: b4a.alloc(32, 0x66), virtualBucket: 0, payload: seedPayload }, () => {}))
+    }
+    await Promise.all(appends)
+  }
+  await closeForwardHttpsSourceStoreV3(store)
+  const seeded = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsSourceStoreV3(seeded).catch(() => {}) })
+  t.is(seeded.slots.get(b4a.toString(id, 'hex')).registry.count, 65536)
+  // The wired persist at cap+1 terminalizes through the ENTRY_CAP arm, then
+  // surfaces BUDGET_EXHAUSTED to the caller.
+  await t.exception.all(persistForwardHttpsSourceResultV3(seeded, { stableSessionId: id, walType: 97 }), /BUDGET_EXHAUSTED|cap exceeded/)
+  t.is(seeded.slots.get(b4a.toString(id, 'hex')).state, 'CONSUMED_UNPRUNED')
+  await closeForwardHttpsSourceStoreV3(seeded)
+  // On reopen the session is durably CONSUMED_UNPRUNED and the terminal
+  // identity is sticky mutation-free.
+  const reopened = await openStore(authority, r, capabilities)
+  t.teardown(async () => { await closeForwardHttpsSourceStoreV3(reopened).catch(() => {}) })
+  t.is(reopened.slots.get(b4a.toString(id, 'hex')).state, 'CONSUMED_UNPRUNED')
+  await t.exception.all(persistForwardHttpsSourceResultV3(reopened, { stableSessionId: id, walType: 97 }), /TERMINAL/)
+})

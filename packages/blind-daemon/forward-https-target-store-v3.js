@@ -610,6 +610,71 @@ async function appendOperation (state, slot, operation, frames) {
   }
 }
 
+// The exact 192-byte flags0 BUDGET_EXHAUSTED FTM9 the store constructs for
+// the wired cap+1 terminal conversion (frozen layout; module-private, never
+// exported): the prior revision and watermark come from the exact slot, the
+// flags0 tail is zeroed.
+function terminalFtm9Payload (state, slot, stableSessionId) {
+  const output = b4a.alloc(192)
+  let offset = 0
+  b4a.copy(b4a.from('FTM9', 'ascii'), output, offset); offset += 4
+  output[offset++] = 1
+  output[offset++] = 2
+  output.writeUInt16BE(0, offset); offset += 2
+  b4a.copy(stableSessionId, output, offset); offset += 32
+  offset = writeU64be(output, offset, state.walHeadSequence + 1n)
+  for (let index = 0; index < 5; index++) { output.writeUInt16BE(0, offset); offset += 2 }
+  output.writeUInt16BE(0, offset); offset += 2
+  output.writeUInt32BE(0, offset); offset += 4
+  offset = writeU64be(output, offset, slot.priorRevision)
+  output.writeUInt32BE(slot.trustedEpochHighWatermark || 0, offset); offset += 4
+  const reason = b4a.from('BUDGET_EXHAUSTED', 'ascii')
+  output[offset++] = reason.byteLength
+  b4a.copy(reason, output, offset)
+  return output
+}
+
+// Wired cap+1 terminal conversion (required_tests[15], REREVIEW2-P1-006):
+// reserve the rejected ordinary operation so the quota ENTRY_CAP_TERMINAL arm
+// mints the exact expectation, bind the exact flags0 BUDGET_EXHAUSTED FTM9,
+// append and commit, and transition the slot ALLOCATED -> CONSUMED_UNPRUNED
+// exactly as the recoverFrame terminal arm does on reopen.
+async function terminalizeEntryCap (state, slot, operation, frames, stableSessionId) {
+  const payload = terminalFtm9Payload(state, slot, stableSessionId)
+  const plan = createForwardHttpsStoreQuotaCostPlanV3(state.storeQuotaCapability, {
+    operation,
+    knownInputBuffers: frames.map(frame => frame.payload),
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  const union = await reserveForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, plan)
+  if (union.disposition !== 'ENTRY_CAP_TERMINAL') {
+    fail('ENTRY_CAP_TERMINAL arm did not fire for the proven cap+1', STORE_ERROR_CODE.INTEGRITY)
+  }
+  const { transitionAuthority } = bindForwardHttpsStoreQuotaActualBuffersV3(state.storeQuotaCapability, union.terminalReservation, {
+    logicalRecordBuffers: [],
+    encryptedPlaintextBuffers: [],
+    finalWalMetadataBuffers: [payload],
+    temporaryWriteBuffers: []
+  })
+  const applied = await applyForwardHttpsAggregateQuotaWalFrameV3(state.storeQuotaCapability, union.terminalReservation, transitionAuthority, {
+    type: WAL_TYPE.SESSION_TERMINAL,
+    transactionId: transactionIdFor(stableSessionId, 0x5a),
+    virtualBucket: 0,
+    payload
+  }, async candidate => state.store.appendAndApply(candidate, () => {}))
+  await commitForwardHttpsAggregateQuotaV3(state.storeQuotaCapability, union.terminalReservation, {
+    durableWalHeadSequence: state.store.walSequence,
+    durableWalHeadHash: state.store.walHash
+  })
+  slot.priorRevision++
+  slot.authorityBitmap = applied.entry.authorityBitmap
+  slot.authorityCommitments = applied.entry.authorityCommitments
+  slot.state = SLOT_STATE.CONSUMED_UNPRUNED
+  state.consumedUnpruned++
+  state.walHeadSequence = applied.entry.walSequence
+}
+
 // Append one ordinary SESSION operation. type112/114/115/116 are single-frame
 // operations; a type113 crypto reservation is the prefix frame of a two-frame
 // TURN_FINAL operation (113 then the 112 final).
@@ -640,11 +705,6 @@ async function appendSession (state, input) {
           ? 4
           : walType === WAL_TYPE.PROCESSOR_COMPLETED ? 22 : 1)
     : input.plannedRemovableChargeEntryCount
-  if (slot.registry.count + planned > CHARGE_ENTRY_CAP) {
-    // Cap+1 makes no WAL mutation here; the quota ENTRY_CAP_TERMINAL arm
-    // mints the flags0 BUDGET_EXHAUSTED terminal reservation for the caller.
-    fail('removable charge entry cap exceeded; ENTRY_CAP_TERMINAL', STORE_ERROR_CODE.BUDGET_EXHAUSTED)
-  }
   const payload = sessionPayload(SESSION_MAGIC, stableSessionId, input.body || b4a.alloc(0))
   const operation = walType === WAL_TYPE.TURN_FINAL || walType === WAL_TYPE.TRANSPORT_RESERVED
     ? 'TURN_FINAL'
@@ -661,6 +721,14 @@ async function appendSession (state, input) {
         { type: WAL_TYPE.TURN_FINAL, transactionId: input.transactionId || transactionIdFor(stableSessionId, 0xa5), virtualBucket: 0, payload: sessionPayload(SESSION_MAGIC, stableSessionId, b4a.concat([b4a.from(payload.subarray(36, 68)), input.finalBody || b4a.alloc(0)])) }
       ]
     : [{ type: walType, transactionId: input.transactionId || transactionIdFor(stableSessionId, 0xa5), virtualBucket: 0, payload }]
+  if (slot.registry.count + planned > CHARGE_ENTRY_CAP) {
+    // Cap+1 terminalizes through the quota ENTRY_CAP_TERMINAL arm before the
+    // caller sees BUDGET_EXHAUSTED: the exact flags0 BUDGET_EXHAUSTED FTM9
+    // binds the minted terminal reservation, appends and commits, and the
+    // session ends CONSUMED_UNPRUNED.
+    await terminalizeEntryCap(state, slot, operation, frames, stableSessionId)
+    fail('removable charge entry cap exceeded; ENTRY_CAP_TERMINAL', STORE_ERROR_CODE.BUDGET_EXHAUSTED)
+  }
   const entry = await appendOperation(state, slot, operation, frames)
   return Object.freeze({ walSequence: entry.walSequence, walHash: b4a.from(state.store.walHash), payload })
 }
