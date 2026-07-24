@@ -906,6 +906,33 @@ function mintQuotaClaim (bindings) {
   return claim
 }
 
+// Exact49-byte charge entry image for the bounded streaming chain.
+function mirrorEntry49 (entry) {
+  const out = b4a.alloc(49)
+  out[0] = entry.walType
+  writeU64(out, 1, entry.walSequence)
+  b4a.copy(entry.payloadHash, out, 9)
+  writeU64(out, 41, BigInt(entry.ordinaryLogicalCharge)
+  )
+  return out
+}
+
+function chargeChainInit (roleByteValue, stableSessionId) {
+  return blake2b256(b4a.concat([DOMAIN_CHARGE_REGISTRY_INIT, b4a.from([roleByteValue]), stableSessionId]))
+}
+
+function chargeChainStep (chain, entry49) {
+  return blake2b256(b4a.concat([DOMAIN_CHARGE_REGISTRY_STEP, chain, entry49]))
+}
+
+function chargeChainFinal (roleByteValue, stableSessionId, count, removedSum, chain) {
+  const countBytes = b4a.alloc(4)
+  countBytes.writeUInt32BE(count, 0)
+  const removedBytes = b4a.alloc(8)
+  writeU64(removedBytes, 0, removedSum)
+  return blake2b256(b4a.concat([DOMAIN_CHARGE_REGISTRY_FINAL, b4a.from([roleByteValue]), stableSessionId, countBytes, removedBytes, chain]))
+}
+
 // Advance the canonical per-session mirror (bounded identity/vector state)
 // from one closed derived entry. The payload is needed only for FPR9
 // allocation dispositions. An open unpruned type113 run marks the exact
@@ -921,14 +948,12 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
     mirror.chargeEntryCount = Math.max(0, (mirror.chargeEntryCount || 0) - pruned.chargeEntryCount)
     mirror.chargeSum = (mirror.chargeSum || 0n) - pruned.removedOrdinaryLogicalBytes
     if (mirror.chargeSum < 0n) mirror.chargeSum = 0n
-    mirror.orphanCount = 0
-    mirror.orphanSum = 0n
-    mirror.orphanLastRevision = 0n
-    mirror.requestCommitment = null
     if (pruned.flags === 2) {
       // flags2 existing-session prefix-abort: the slot stays ALLOCATED and the
       // authority vector is byte-identically unchanged; only orphan charge is
-      // removed. The identity remains PRESENT_ALLOCATED; no PRUNED_RELEASED.
+      // removed. The registry chain re-bases to the exact post-abort entries
+      // (pre-run snapshot folded with the later committed entries).
+      mirror.chargeChain = mirror.postRunChain !== undefined ? mirror.postRunChain : (mirror.preRunChain !== undefined ? mirror.preRunChain : chargeChainInit(pruned.role, pruned.stableSessionId))
       mirror.present = true
       mirror.consumed = false
       mirror.prefix = null
@@ -939,6 +964,7 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
       mirror.prefix = null
       mirror.bitmap = 0
       mirror.commitments = null
+      mirror.chargeChain = undefined
     } else {
       mirror.present = true
       mirror.consumed = true
@@ -946,7 +972,15 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
       mirror.prefix = null
       mirror.bitmap = 0
       mirror.commitments = null
+      mirror.chargeChain = undefined
     }
+    mirror.orphanCount = 0
+    mirror.orphanSum = 0n
+    mirror.orphanLastRevision = 0n
+    mirror.orphanChain = undefined
+    mirror.preRunChain = undefined
+    mirror.postRunChain = undefined
+    mirror.requestCommitment = null
     sessions.set(key, mirror)
     return
   }
@@ -982,6 +1016,14 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
     mirror.orphanCount = 0
     mirror.orphanSum = 0n
     mirror.orphanLastRevision = 0n
+    mirror.orphanChain = undefined
+    mirror.preRunChain = undefined
+    mirror.postRunChain = undefined
+    // The trusted epoch high watermark only advances.
+    if (payload && payload.byteLength >= 76) {
+      const watermark = payload.readUInt32BE(72)
+      mirror.trustedEpochHighWatermark = Math.max(mirror.trustedEpochHighWatermark || 0, watermark)
+    }
   }
   if (entry.ordinaryLogicalCharge > 0) {
     // The 65537th removable charge entry of one identity is INTEGRITY in
@@ -989,14 +1031,30 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
     if ((mirror.chargeEntryCount || 0) >= 65536) storeWalFail('recovered removable charge entries exceed the cap')
     mirror.chargeEntryCount = (mirror.chargeEntryCount || 0) + 1
     mirror.chargeSum = (mirror.chargeSum || 0n) + BigInt(entry.ordinaryLogicalCharge)
+    const roleByteValue = entry.role === 'TARGET_STORE' ? 2 : 1
+    if (mirror.chargeChain === undefined) mirror.chargeChain = chargeChainInit(roleByteValue, entry.stableSessionId)
+    mirror.chargeChain = chargeChainStep(mirror.chargeChain, mirrorEntry49(entry))
   }
   mirror.present = true
   mirror.priorRevision += 1n
   if (entry.walType === 113 && mirror.prefix !== null) {
-    // Orphan bookkeeping for the exact flags1/flags2 match at adjust.
+    // Orphan bookkeeping for the exact flags1/flags2 match at adjust, with
+    // the bounded orphan chain and the pre-run chain snapshot so the
+    // post-abort registry chain remains exactly derivable without rewind.
+    if (mirror.preRunChain === undefined && mirror.orphanCount === undefined) mirror.preRunChain = mirror.chargeChain
+    const roleByteValue = entry.role === 'TARGET_STORE' ? 2 : 1
     mirror.orphanCount = (mirror.orphanCount || 0) + 1
     mirror.orphanSum = (mirror.orphanSum || 0n) + BigInt(entry.ordinaryLogicalCharge)
     mirror.orphanLastRevision = mirror.priorRevision
+    if (mirror.orphanChain === undefined) mirror.orphanChain = chargeChainInit(roleByteValue, entry.stableSessionId)
+    mirror.orphanChain = chargeChainStep(mirror.orphanChain, mirrorEntry49(entry))
+  }
+  if (entry.walType !== 113 && mirror.prefix !== null && entry.ordinaryLogicalCharge > 0) {
+    // A later committed operation during an open prefix: its entries fold
+    // into the post-run chain (the exact registry chain after a flags2 abort).
+    const roleByteValue = entry.role === 'TARGET_STORE' ? 2 : 1
+    if (mirror.postRunChain === undefined) mirror.postRunChain = mirror.preRunChain === undefined ? chargeChainInit(roleByteValue, entry.stableSessionId) : mirror.preRunChain
+    mirror.postRunChain = chargeChainStep(mirror.postRunChain, mirrorEntry49(entry))
   }
   if (entry.terminalLogicalCharge > 0 && payload && payload.byteLength >= 149 && payload.readUInt16BE(6) === 1) {
     // FTM9 flags1 carries the exact session expiry clock in its minimal tail:
@@ -1010,6 +1068,38 @@ function applyEntryToSessionMirror (sessions, key, entry, payload) {
   mirror.consumed = entry.terminalLogicalCharge > 0 || (entry.authorityBitmap & 512) !== 0
   mirror.pruned = false
   sessions.set(key, mirror)
+}
+
+// Independent FPR9 match against the exact recovered mirror. Every variant
+// (flags0 ordinary, flags0 terminal-existing, flags0 terminal-only, flags1,
+// flags2) is independently recomputed: count, exact sum, bounded streaming
+// chain, revision, authority vector, slot state, prefix class and clock
+// fields (terminal-only FTM9-carried expiry/grace, strict prune epoch, and
+// the max-watermark rule). Returns null on match or the exact mismatch label.
+function matchFpr9AgainstMirror (mirror, pruned, roleByteValue, stableSessionId) {
+  if (!mirror || mirror.present !== true) return 'no recovered session state'
+  if (pruned.flags === 0 && pruned.priorSessionRevision !== mirror.priorRevision) return 'revision mismatch'
+  if (pruned.flags !== 0 && pruned.priorSessionRevision !== (mirror.orphanLastRevision || 0n)) return 'orphan revision mismatch'
+  if (pruned.beforeAuthorityBitmap !== mirror.bitmap) return 'vector mismatch'
+  const mirrorCommitments = mirror.commitments || Array.from({ length: AUTHORITY_CLASS_COUNT }, () => b4a.from(ZERO32))
+  const expectedAuthority = authorityRegistryCommitment(roleByteValue, stableSessionId, pruned.priorSessionRevision, pruned.beforeAuthorityBitmap, mirrorCommitments)
+  if (!b4a.equals(pruned.authorityRegistryCommitment, expectedAuthority)) return 'authority commitment mismatch'
+  const expectedCount = pruned.flags === 0 ? (mirror.chargeEntryCount || 0) : (mirror.orphanCount || 0)
+  const expectedSum = pruned.flags === 2 ? (mirror.orphanSum || 0n) : (pruned.flags === 1 ? (mirror.orphanSum || 0n) : (mirror.chargeSum || 0n))
+  if (pruned.chargeEntryCount !== expectedCount || pruned.removedOrdinaryLogicalBytes !== expectedSum) return 'count/sum mismatch'
+  const chain = pruned.flags === 2
+    ? (mirror.orphanChain !== undefined ? mirror.orphanChain : chargeChainInit(roleByteValue, stableSessionId))
+    : (mirror.chargeChain !== undefined ? mirror.chargeChain : chargeChainInit(roleByteValue, stableSessionId))
+  if (!b4a.equals(pruned.chargeRegistryCommitment, chargeChainFinal(roleByteValue, stableSessionId, expectedCount, expectedSum, chain))) return 'charge chain mismatch'
+  if (pruned.expiresAtEpoch !== (mirror.expiresAtEpoch || 0)) return 'expiry clock mismatch'
+  if (pruned.recoveryGraceUntilEpoch !== (mirror.recoveryGraceUntilEpoch || 0)) return 'grace clock mismatch'
+  if (pruned.trustedEpochHighWatermark !== Math.max(mirror.trustedEpochHighWatermark || 0, pruned.pruneEpochSeconds)) return 'watermark mismatch'
+  if (pruned.flags === 0) {
+    if (pruned.allocationDisposition === 1 && mirror.consumed) return 'slot state mismatch'
+    if (pruned.allocationDisposition === 0 && !mirror.consumed) return 'slot state mismatch'
+  } else if (pruned.flags === 1 && (mirror.prefix !== 'FRESH' || mirror.consumed)) return 'prefix class mismatch'
+  else if (pruned.flags === 2 && (mirror.prefix !== 'EXISTING' || mirror.consumed)) return 'prefix class mismatch'
+  return null
 }
 
 export function beginForwardHttpsAggregateQuotaRecoveryV3 (storeQuotaCapability) {
@@ -1072,6 +1162,15 @@ export async function absorbForwardHttpsAggregateQuotaRecoveryFrameV3 (recoveryS
     },
     transitionAuthority: claim
   })
+  // Independent match of every recovered prune tombstone against the exact
+  // pre-transition sink mirror: count/sum/chain/revision/vector/slot/prefix
+  // class and clocks, recomputed before the transition is applied.
+  if (derived.entry.scope === 'PRUNE_TRANSITION') {
+    const pruned = decodeForwardHttpsRetentionPrunedV3(frame.payload)
+    const mirror = sink.sessions.get(b4a.toString(pruned.stableSessionId, 'hex')) || null
+    const mismatch = matchFpr9AgainstMirror(mirror, pruned, pruned.role, pruned.stableSessionId)
+    if (mismatch !== null) quotaFail(`recovered tombstone does not independently match: ${mismatch}`, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+  }
   applyEntryToSessionMirror(sink.sessions, b4a.toString(derived.entry.stableSessionId === null ? ZERO32 : derived.entry.stableSessionId, 'hex'), derived.entry, frame.payload)
   // One charge-unit ledger model end to end: recovery seeds the exact derived
   // charge, the same units commits and adjustments move.
@@ -1659,30 +1758,12 @@ export async function adjustForwardHttpsAggregateQuotaV3 (storeQuotaCapability, 
     const pruned = decodeForwardHttpsRetentionPrunedV3(tombstone)
     const roleByteValue = capability.role === 'SOURCE_STORE' ? 1 : 2
     if (pruned.role !== roleByteValue) quotaFail('quota adjustment tombstone role mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
-    // Independent quota match: the tombstone is recomputed against the exact
-    // pre-prune recovered mirror — count, sum, revision, vector and slot —
-    // before any mutation. A tampered count or commitment is INTEGRITY.
+    // Independent quota match: count/sum/bounded chain/revision/vector/slot/
+    // prefix class and clocks recomputed against the exact pre-prune mirror.
     const mirrorKey = `${capability.role}:${b4a.toString(pruned.stableSessionId, 'hex')}`
     const mirror = state.sessions.get(mirrorKey) || null
-    if (!mirror || mirror.present !== true) quotaFail('quota adjustment has no recovered session state', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
-    if (pruned.flags === 0 && pruned.priorSessionRevision !== mirror.priorRevision) quotaFail('quota adjustment revision mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
-    if (pruned.beforeAuthorityBitmap !== mirror.bitmap) quotaFail('quota adjustment vector mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
-    const mirrorCommitments = mirror.commitments || Array.from({ length: AUTHORITY_CLASS_COUNT }, () => b4a.from(ZERO32))
-    const expectedAuthority = authorityRegistryCommitment(roleByteValue, pruned.stableSessionId, pruned.priorSessionRevision, pruned.beforeAuthorityBitmap, mirrorCommitments)
-    if (!b4a.equals(pruned.authorityRegistryCommitment, expectedAuthority)) quotaFail('quota adjustment authority commitment mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
-    if (pruned.flags === 0 &&
-        (pruned.chargeEntryCount !== (mirror.chargeEntryCount || 0) || pruned.removedOrdinaryLogicalBytes !== (mirror.chargeSum || 0n))) {
-      quotaFail('quota adjustment count/sum mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
-    }
-    if (pruned.flags !== 0 &&
-        (pruned.priorSessionRevision !== (mirror.orphanLastRevision || 0n) || pruned.chargeEntryCount !== (mirror.orphanCount || 0) || pruned.removedOrdinaryLogicalBytes !== (mirror.orphanSum || 0n))) {
-      quotaFail('quota adjustment orphan count/sum/revision mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
-    }
-    if (pruned.flags === 0 && ((pruned.allocationDisposition === 1 && mirror.consumed) || (pruned.allocationDisposition === 0 && !mirror.consumed))) {
-      quotaFail('quota adjustment slot state mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
-    }
-    if (pruned.flags === 1 && mirror.prefix !== 'FRESH') quotaFail('quota adjustment prefix class mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
-    if (pruned.flags === 2 && mirror.prefix !== 'EXISTING') quotaFail('quota adjustment prefix class mismatch', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    const mismatch = matchFpr9AgainstMirror(mirror, pruned, roleByteValue, pruned.stableSessionId)
+    if (mismatch !== null) quotaFail(`quota adjustment does not independently match: ${mismatch}`, FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
     // Matched: apply the exact prune transition to the canonical mirror.
     applyEntryToSessionMirror(state.sessions, mirrorKey, { scope: 'PRUNE_TRANSITION', stableSessionId: pruned.stableSessionId, walType: roleByteValue === 1 ? 100 : 118, authorityBitmap: 0, ordinaryLogicalCharge: 0, terminalLogicalCharge: 0 }, tombstone)
     const removed = pruned.removedOrdinaryLogicalBytes

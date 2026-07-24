@@ -646,24 +646,28 @@ test('derive: flags0 existing terminal preserves the vector and adds exact C9 (t
 test('derive: FPR9 prune transition has 736 role-global charge', async t => {
   const { capability } = await quota(t, SOURCE)
   const id = fixed(0x6a)
+  // A recovered tombstone must independently match the recovered session
+  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
+  const session = b4a.concat([b4a.from('FSS3', 'ascii'), id])
+  await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(96, session, 1n, ZERO32) })
+  const removed = 36 + 224 + 36
   const payload = encodeForwardHttpsRetentionPrunedV3({
     role: SOURCE,
     stableSessionId: id,
-    priorSessionRevision: 2n,
+    priorSessionRevision: 1n,
     pruneEpochSeconds: 9,
     trustedEpochHighWatermark: 9,
     expiresAtEpoch: 0,
     recoveryGraceUntilEpoch: 0,
-    removedOrdinaryLogicalBytes: 10n,
+    removedOrdinaryLogicalBytes: BigInt(removed),
     chargeEntryCount: 1,
-    beforeAuthorityBitmap: 1,
+    beforeAuthorityBitmap: 0,
     allocationDisposition: 1,
     terminalSlotState: 1,
-    chargeEntryBuffers: [chargeEntry(96, 1n, fixed(0x6b), 10)],
+    chargeEntryBuffers: [chargeEntry(96, 1n, blake2b256(session), removed)],
     authorityCommitments: Array.from({ length: 10 }, () => b4a.from(ZERO32))
   })
-  const sink = beginForwardHttpsAggregateQuotaRecoveryV3(capability)
-  const { entry: derived } = await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(100, payload, 1n, ZERO32) })
+  const { entry: derived } = await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(sink, { frame: recoveryFrame(100, payload, 2n, blake2b256(b4a.concat([b4a.from('wal'), session]))) })
   t.is(derived.scope, 'PRUNE_TRANSITION')
   t.is(derived.ordinaryLogicalCharge, 736)
   t.ok(b4a.equals(derived.stableSessionId, id))
