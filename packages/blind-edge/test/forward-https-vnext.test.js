@@ -36,6 +36,16 @@ import {
   encodeOuterEnvelope,
   getCellResultV1,
   getCellV1,
+  INBOX_APPEND_RESULT,
+  INBOX_RECEIPT_RESULT,
+  inboxAppendAckV1,
+  inboxAppendV1,
+  inboxCreateCommitment,
+  inboxCreateV1,
+  inboxManageV1,
+  inboxReadResultV1,
+  inboxReadV1,
+  inboxReceiptV1,
   proveCellResultV1,
   proveCellV1,
   putCellV1,
@@ -56,6 +66,14 @@ import { BlindDirectHttpClient } from '../../blind-client/direct-http.js'
 import { encodeUnaryRequest } from '../../blind-client/wire.js'
 import { verifyResultSignedValue } from '../../blind-client/signed.js'
 import { createNodeCryptoRuntime } from '../../blind-client/runtime/node.js'
+import {
+  inboxAppendFixture,
+  inboxCreateFixture,
+  inboxKeyPair,
+  inboxReadFixture,
+  inboxRenewFixture,
+  inboxCloseFixture
+} from '../../blind-daemon/test/production-runtime-inbox-fixture.js'
 import {
   createRelayIdentityFixture,
   createRelayEnvironmentFixture,
@@ -907,6 +925,200 @@ test('CELL persists across relay restart with readback and signed proof', async 
   t.ok(b4a.equals(readback.cellBlob, put.cellBlob), 'exact readback survives the restart')
   const stored = await relay2.unary.storage.readCell(put.storageSlot)
   t.ok(b4a.equals(stored.cellBlob, put.cellBlob), 'accepted storage preserves the cell across restart')
+  await edge.close()
+  await relay2.close()
+})
+
+// ---------------------------------------------------------------------------
+// INBOX route evidence (serial route 3/5): unary inbox operations on the same
+// exact path — CREATE/APPEND/READ with signed receipts, exact readback,
+// negatives and restart recovery.
+// ---------------------------------------------------------------------------
+
+test('INBOX CREATE, APPEND and READ serve signed receipts with exact readback', async t => {
+  const { identity, layout, relay, baseUrl, fetchImpl } = await bootRelay(t)
+  const trusted = await trustedRelay(identity, baseUrl, layout, fetchImpl)
+  const health = await healthFor(trusted, identity, fetchImpl, 0x7fff)
+  const allocationEpoch = relay.unary.inboxStorage.status().epochFloor
+
+  const created = inboxCreateFixture(identity.relayPublicKey, identity.parameterHash, allocationEpoch)
+  const create = qualifiedClient(trusted, health, FAMILY.INBOX, OPERATION.INBOX.CREATE, identity.currentEpoch, fetchImpl)
+  const createResult = await create.client.request({
+    endpoint: create.endpoint,
+    familyId: FAMILY.INBOX,
+    operationId: OPERATION.INBOX.CREATE,
+    body: encodeCanonical(inboxCreateV1, created.request)
+  })
+  t.ok(createResult.ok, 'INBOX.CREATE is answered')
+  const receipt = decodeCanonical(inboxReceiptV1, createResult.body, { copyBytes: true })
+  verifyResultSignedValue(inboxReceiptV1, receipt, RESULT_SIGNATURE_DOMAIN_ID.INBOX_RECEIPT, identity.relayPublicKey, 'inbox receipt')
+  t.is(receipt.result, INBOX_RECEIPT_RESULT.CREATED)
+  t.ok(b4a.equals(receipt.topicCommitment, blake2b256(created.request.physicalTopic)), 'receipt binds the exact topic commitment')
+
+  const appended = inboxAppendFixture(created, identity.relayPublicKey, identity.parameterHash, 0xb3)
+  const append = qualifiedClient(trusted, health, FAMILY.INBOX, OPERATION.INBOX.APPEND, identity.currentEpoch, fetchImpl)
+  const appendResult = await append.client.request({
+    endpoint: append.endpoint,
+    familyId: FAMILY.INBOX,
+    operationId: OPERATION.INBOX.APPEND,
+    body: encodeCanonical(inboxAppendV1, appended)
+  })
+  t.ok(appendResult.ok, 'INBOX.APPEND is answered')
+  const ack = decodeCanonical(inboxAppendAckV1, appendResult.body, { copyBytes: true })
+  verifyResultSignedValue(inboxAppendAckV1, ack, RESULT_SIGNATURE_DOMAIN_ID.INBOX_APPEND_ACK, identity.relayPublicKey, 'inbox append ack')
+  t.is(ack.result, INBOX_APPEND_RESULT.STORED)
+
+  const read = qualifiedClient(trusted, health, FAMILY.INBOX, OPERATION.INBOX.READ, identity.currentEpoch, fetchImpl)
+  const readResult = await read.client.request({
+    endpoint: read.endpoint,
+    familyId: FAMILY.INBOX,
+    operationId: OPERATION.INBOX.READ,
+    body: encodeCanonical(inboxReadV1, inboxReadFixture(created, identity.parameterHash))
+  })
+  t.ok(readResult.ok, 'INBOX.READ is answered')
+  const page = decodeCanonical(inboxReadResultV1, readResult.body, { copyBytes: true })
+  verifyResultSignedValue(inboxReadResultV1, page, RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, identity.relayPublicKey, 'inbox read result')
+  t.is(page.entries.length, 1, 'exact one-frame page')
+  t.ok(b4a.equals(page.entries[0].frame, appended.frame), 'exact frame readback')
+
+  // Signed RENEW and CLOSE complete the unary lifecycle.
+  const renewed = inboxRenewFixture(created, receipt, identity.relayPublicKey, identity.parameterHash)
+  const renew = qualifiedClient(trusted, health, FAMILY.INBOX, OPERATION.INBOX.RENEW, identity.currentEpoch, fetchImpl)
+  const renewResult = await renew.client.request({
+    endpoint: renew.endpoint,
+    familyId: FAMILY.INBOX,
+    operationId: OPERATION.INBOX.RENEW,
+    body: encodeCanonical(inboxManageV1, renewed)
+  })
+  t.ok(renewResult.ok, 'INBOX.RENEW is answered')
+  const renewReceipt = decodeCanonical(inboxReceiptV1, renewResult.body, { copyBytes: true })
+  verifyResultSignedValue(inboxReceiptV1, renewReceipt, RESULT_SIGNATURE_DOMAIN_ID.INBOX_RECEIPT, identity.relayPublicKey, 'inbox renew receipt')
+  t.is(renewReceipt.result, INBOX_RECEIPT_RESULT.RENEWED)
+
+  const closed = inboxCloseFixture(created, renewReceipt, identity.relayPublicKey)
+  const close = qualifiedClient(trusted, health, FAMILY.INBOX, OPERATION.INBOX.CLOSE, identity.currentEpoch, fetchImpl)
+  const closeResult = await close.client.request({
+    endpoint: close.endpoint,
+    familyId: FAMILY.INBOX,
+    operationId: OPERATION.INBOX.CLOSE,
+    body: encodeCanonical(inboxManageV1, closed)
+  })
+  t.ok(closeResult.ok, 'INBOX.CLOSE is answered')
+  const closeReceipt = decodeCanonical(inboxReceiptV1, closeResult.body, { copyBytes: true })
+  verifyResultSignedValue(inboxReceiptV1, closeReceipt, RESULT_SIGNATURE_DOMAIN_ID.INBOX_RECEIPT, identity.relayPublicKey, 'inbox close receipt')
+  t.is(closeReceipt.result, INBOX_RECEIPT_RESULT.CLOSED)
+})
+
+test('INBOX negatives fail closed: bogus signatures, unknown topics and credential headers', async t => {
+  const { identity, layout, relay, baseUrl, fetchImpl } = await bootRelay(t)
+  const trusted = await trustedRelay(identity, baseUrl, layout, fetchImpl)
+  const health = await healthFor(trusted, identity, fetchImpl, 0x7fff)
+  const allocationEpoch = relay.unary.inboxStorage.status().epochFloor
+  const created = inboxCreateFixture(identity.relayPublicKey, identity.parameterHash, allocationEpoch)
+  const create = qualifiedClient(trusted, health, FAMILY.INBOX, OPERATION.INBOX.CREATE, identity.currentEpoch, fetchImpl)
+
+  // Bogus create signature (foreign key).
+  const foreign = inboxKeyPair()
+  const bogusCreate = inboxCreateFixture(identity.relayPublicKey, identity.parameterHash, allocationEpoch, { nonceByte: 0xb5 })
+  bogusCreate.request.createSignature = b4a.alloc(64)
+  sodium.crypto_sign_detached(bogusCreate.request.createSignature,
+    inboxCreateCommitment({ ...bogusCreate.request, relayPublicKey: identity.relayPublicKey }),
+    foreign.secretKey)
+  const bogus = await create.client.request({
+    endpoint: create.endpoint,
+    familyId: FAMILY.INBOX,
+    operationId: OPERATION.INBOX.CREATE,
+    body: encodeCanonical(inboxCreateV1, bogusCreate.request)
+  })
+  t.ok(!bogus.ok, 'foreign create signature fails closed')
+  t.is(bogus.error.code, ERROR_CODE.BAD_CREATE_SIG)
+
+  // Unknown topic append fails closed.
+  const append = qualifiedClient(trusted, health, FAMILY.INBOX, OPERATION.INBOX.APPEND, identity.currentEpoch, fetchImpl)
+  const ghostAppend = inboxAppendFixture(created, identity.relayPublicKey, identity.parameterHash, 0xd2)
+  ghostAppend.physicalTopic = b4a.alloc(32, 0x99)
+  const ghost = await append.client.request({
+    endpoint: append.endpoint,
+    familyId: FAMILY.INBOX,
+    operationId: OPERATION.INBOX.APPEND,
+    body: encodeCanonical(inboxAppendV1, ghostAppend)
+  })
+  t.ok(!ghost.ok, 'append to an unknown topic fails closed')
+
+  // Credential-bearing headers on the inbox path fail closed at the edge.
+  const envelope = encodeUnaryRequest({
+    runtime,
+    familyId: FAMILY.INBOX,
+    operationId: OPERATION.INBOX.CREATE,
+    body: encodeCanonical(inboxCreateV1, created.request)
+  }).body
+  const credentialed = await fetchImpl(`${baseUrl}/api/blind/v1/inbox`, {
+    method: 'POST',
+    headers: { 'content-type': MEDIA_TYPE, authorization: 'Bearer bogus' },
+    body: envelope
+  })
+  t.is(credentialed.status, 400, 'authorization credential fails closed')
+})
+
+test('INBOX frames persist across relay restart with signed read pages', async t => {
+  const first = await bootRelay(t)
+  const { identity, layout, relay, baseUrl } = first
+  const firstFetch = first.fetchImpl
+  const trusted = await trustedRelay(identity, baseUrl, layout, firstFetch)
+  const health = await healthFor(trusted, identity, firstFetch, 0x7fff)
+  const allocationEpoch = relay.unary.inboxStorage.status().epochFloor
+  const created = inboxCreateFixture(identity.relayPublicKey, identity.parameterHash, allocationEpoch)
+  const create = qualifiedClient(trusted, health, FAMILY.INBOX, OPERATION.INBOX.CREATE, identity.currentEpoch, firstFetch)
+  t.ok((await create.client.request({
+    endpoint: create.endpoint,
+    familyId: FAMILY.INBOX,
+    operationId: OPERATION.INBOX.CREATE,
+    body: encodeCanonical(inboxCreateV1, created.request)
+  })).ok, 'INBOX.CREATE is answered before restart')
+  const appended = inboxAppendFixture(created, identity.relayPublicKey, identity.parameterHash, 0xd3)
+  const append = qualifiedClient(trusted, health, FAMILY.INBOX, OPERATION.INBOX.APPEND, identity.currentEpoch, firstFetch)
+  t.ok((await append.client.request({
+    endpoint: append.endpoint,
+    familyId: FAMILY.INBOX,
+    operationId: OPERATION.INBOX.APPEND,
+    body: encodeCanonical(inboxAppendV1, appended)
+  })).ok, 'INBOX.APPEND is answered before restart')
+  await first.edge.close()
+  await first.relay.close()
+
+  const daemonErrors = []
+  const replayOffset = { value: -15_000n }
+  const relay2 = await assembleRelayFixture(identity, layout, {
+    onError: error => daemonErrors.push(error),
+    replayJournalOptions: {
+      monotonicMillis: () => (process.hrtime.bigint() / 1_000_000n) + replayOffset.value
+    }
+  })
+  replayOffset.value = 0n
+  await relay2.start()
+  const edge = await createEdgeFixture({
+    port: first.port,
+    tls: first.tls,
+    unarySocketPath: layout.environment.HIVERELAY_BLIND_UNARY_SOCKET,
+    launchTopologyHash: layout.launchTopologyHash,
+    onError: error => daemonErrors.push(error)
+  })
+  t.teardown(async () => {
+    await edge.close().catch(() => {})
+    await relay2.close().catch(() => {})
+  })
+  const read = qualifiedClient(trusted, health, FAMILY.INBOX, OPERATION.INBOX.READ, identity.currentEpoch, firstFetch)
+  const readResult = await read.client.request({
+    endpoint: read.endpoint,
+    familyId: FAMILY.INBOX,
+    operationId: OPERATION.INBOX.READ,
+    body: encodeCanonical(inboxReadV1, inboxReadFixture(created, identity.parameterHash))
+  })
+  t.ok(readResult.ok, 'INBOX.READ is answered after restart')
+  const page = decodeCanonical(inboxReadResultV1, readResult.body, { copyBytes: true })
+  verifyResultSignedValue(inboxReadResultV1, page, RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, identity.relayPublicKey, 'inbox read result')
+  t.is(page.entries.length, 1)
+  t.ok(b4a.equals(page.entries[0].frame, appended.frame), 'exact frame readback survives the restart')
   await edge.close()
   await relay2.close()
 })
