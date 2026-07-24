@@ -829,7 +829,7 @@ async function quotaFault (state, point) {
 
 export async function openForwardHttpsAggregateQuotaV3 (options) {
   const required = ['sourceReplayRoot', 'targetReplayRoot', 'sourceStoreRoot', 'targetStoreRoot', 'maximumDurableBytesPerStore', 'maximumForwardStorageBytesAggregate', 'monotonicMillis', 'callbackTimeoutMillis', 'faultInjector']
-  closedObject(options, required)
+  closedObject(options, required, ['slotCapacityPerRole'])
   if (typeof options.monotonicMillis !== 'function') throw new TypeError('monotonicMillis must be a function')
   if (options.faultInjector !== null && typeof options.faultInjector !== 'function') throw new TypeError('faultInjector must be null or a function')
   const perStore = safeUint(options.maximumDurableBytesPerStore, 'maximumDurableBytesPerStore', 1, 8589934592)
@@ -856,6 +856,7 @@ export async function openForwardHttpsAggregateQuotaV3 (options) {
     openRecoverySinks: { SOURCE_STORE: null, TARGET_STORE: null },
     opTail: Promise.resolve(),
     opRelease: null,
+    slotCapacityPerRole: options.slotCapacityPerRole === undefined ? 65536 : safeUint(options.slotCapacityPerRole, 'slotCapacityPerRole', 1, 65536),
     initialized: false,
     capabilitiesMinted: false,
     capabilityInternals: [],
@@ -1225,7 +1226,7 @@ export async function initializeForwardHttpsAggregateQuotaV3 (quotaAuthority, in
   state.initialized = true
 }
 
-function planFrom (capability, operation, logicalBytes, physicalBytes, commitments = [], protectedPlan = false, bindLogicalBytes = null, bindPhysicalBytes = null, stableSessionId = null) {
+function planFrom (capability, operation, logicalBytes, physicalBytes, commitments = [], protectedPlan = false, bindLogicalBytes = null, bindPhysicalBytes = null, stableSessionId = null, terminalMinimal = false) {
   const plan = Object.freeze({})
   QUOTA_PLANS.set(plan, {
     capability,
@@ -1237,6 +1238,7 @@ function planFrom (capability, operation, logicalBytes, physicalBytes, commitmen
     commitments,
     protected: protectedPlan,
     stableSessionId,
+    terminalMinimal,
     burned: false
   })
   return plan
@@ -1292,14 +1294,33 @@ export function createForwardHttpsStoreQuotaCostPlanV3 (storeQuotaCapability, in
     pruneNetLogical = 736 - Number(pruned.removedOrdinaryLogicalBytes)
     pruneProtected = pruned.flags === 0 && pruned.allocationDisposition === 0
   }
+  let terminalMinimal = false
+  let terminalSessionId = null
+  if (input.operation === 'SESSION_TERMINAL') {
+    // The exact already-encoded FTM9 is known before reserve: decode it at
+    // plan creation so the flags1 minimal variant is distinguishable at
+    // admission and the plan session id comes from the exact FTM9 header
+    // (offset 8), never the ordinary frame layout.
+    if (known.length !== 1) throw new TypeError('SESSION_TERMINAL requires exactly one known FTM9 buffer')
+    let terminal
+    try {
+      terminal = decodeFtm9Payload(known[0], capability.role === 'SOURCE_STORE' ? 99 : 117)
+    } catch (error) {
+      quotaFail('SESSION_TERMINAL known buffer is not an exact role FTM9', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.INTEGRITY)
+    }
+    terminalMinimal = terminal.flags === 1
+    terminalSessionId = b4a.from(terminal.stableSessionId)
+  }
   // Every number is the exact conservative admission ceiling of the frozen
   // operation row. Terminal append (608/416) and terminal prune are earmark
   // zero-sum and never return CAPACITY.
   const logical = pruneNetLogical === null ? row.logical : pruneNetLogical
   const physical = row.physical + temporaryBytes + existing
-  const planSession = input.operation === 'PRUNE'
-    ? (known.length === 1 ? b4a.from(known[0].subarray(8, 40)) : null)
-    : (known.length > 0 && known[0].byteLength >= 36 && input.operation !== 'OPEN_RECOVERY' && input.operation !== 'QUARANTINE' ? b4a.from(known[0].subarray(4, 36)) : null)
+  const planSession = input.operation === 'SESSION_TERMINAL'
+    ? terminalSessionId
+    : input.operation === 'PRUNE'
+      ? (known.length === 1 ? b4a.from(known[0].subarray(8, 40)) : null)
+      : (known.length > 0 && known[0].byteLength >= 36 && input.operation !== 'OPEN_RECOVERY' && input.operation !== 'QUARANTINE' ? b4a.from(known[0].subarray(4, 36)) : null)
   return planFrom(storeQuotaCapability, input.operation, logical, physical,
     [...known, ...temporary].map(item => hmac(ZERO32, item)), pruneProtected || input.operation === 'SESSION_TERMINAL',
     // Bind validates gross actual bytes against the exact tombstone frame
@@ -1307,7 +1328,8 @@ export function createForwardHttpsStoreQuotaCostPlanV3 (storeQuotaCapability, in
     // negative once the exact removal exceeds the tombstone charge.
     input.operation === 'PRUNE' ? 736 : null,
     input.operation === 'PRUNE' ? 480 + temporaryBytes + existing : null,
-    planSession)
+    planSession,
+    terminalMinimal)
 }
 
 export function bindForwardHttpsStoreQuotaActualBuffersV3 (storeQuotaCapability, reservation, input) {
@@ -1593,6 +1615,21 @@ export async function reserveForwardHttpsAggregateQuotaV3 (quotaCapability, cost
     let terminal = null
     let terminalExpectation = null
     if (plan.operation === 'SESSION_TERMINAL') {
+      if (plan.terminalMinimal) {
+        // A flags1 minimal terminal allocates one fresh session slot: the exact
+        // session must be absent from the canonical mirror for the role and one
+        // FREE slot must remain under the per-role slot capacity, else CAPACITY
+        // before any mutation (adversarial REREVIEW-P1-003).
+        const key = `${capability.role}:${b4a.toString(plan.stableSessionId, 'hex')}`
+        const mirror = state.sessions.get(key)
+        let presentCount = 0
+        for (const [mirrorKey, entry] of state.sessions) {
+          if (mirrorKey.startsWith(`${capability.role}:`) && entry.present === true) presentCount++
+        }
+        if ((mirror && mirror.present === true) || presentCount >= state.slotCapacityPerRole) {
+          quotaFail('flags1 minimal terminal has no FREE session slot', FORWARD_HTTPS_AGGREGATE_QUOTA_V3_ERROR_CODE.CAPACITY)
+        }
+      }
       disposition = 'REQUESTED_TERMINAL'
       terminal = 'REQUESTED'
     } else if (plan.stableSessionId !== null) {

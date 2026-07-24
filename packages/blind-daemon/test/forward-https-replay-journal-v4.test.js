@@ -92,7 +92,7 @@ function sessionBody (id) {
   return b4a.concat([b4a.from('FSS3', 'ascii'), id, b4a.alloc(8, 0x41)])
 }
 
-async function quota (t, role) {
+async function quota (t, role, extraOptions = {}) {
   const base = await createBlindBoundaryScratch('fhq-')
   t.teardown(async () => { await removeBlindBoundaryScratch(base) })
   const roots = {}
@@ -110,7 +110,8 @@ async function quota (t, role) {
     maximumForwardStorageBytesAggregate: 17179869184,
     monotonicMillis: () => Date.now(),
     callbackTimeoutMillis: 15000,
-    faultInjector: null
+    faultInjector: null,
+    ...extraOptions
   })
   t.teardown(async () => { await closeForwardHttpsAggregateQuotaV3(authority).catch(() => {}) })
   const capabilities = mintForwardHttpsAggregateQuotaCapabilitiesV3(authority)
@@ -870,6 +871,72 @@ test('ENTRY_CAP terminalReservation drivability: original frames reject, exact f
     replayModule.applyForwardHttpsAggregateQuotaWalFrameV3(capability, secondReservation, second.transitionAuthority, { type: 117, payload: ftm9 }, async frame => ({ sequence: 65537n, walHash: blake2b256(frame.payload), payloadHash: blake2b256(frame.payload) })),
     /PRESENT_ALLOCATED|predecessor|INTEGRITY/
   )
+})
+
+test('flags1 minimal terminal requires a FREE slot: occupied session or full role rejects CAPACITY before mutation', async t => {
+  const occupiedId = fixed(0x91)
+  const minimalTerminal = (id, sequence) => buildFtm9({
+    role: 'TARGET',
+    flags: 1,
+    stableSessionId: id,
+    sequence,
+    priorSessionRevision: 0n,
+    newTrustedEpochHighWatermark: 1,
+    reason: 'FORWARD_HTTPS_TARGET_STORE_V3_SEQUENCE_INVALID',
+    exactRequestCommitment: fixed(0x92),
+    expiresAtEpoch: 100,
+    retainedUntilEpoch: 1000
+  })
+  const terminalPlan = (capability, payload) => replayModule.createForwardHttpsStoreQuotaCostPlanV3(capability, {
+    operation: 'SESSION_TERMINAL',
+    knownInputBuffers: [payload],
+    temporaryWriteBuffers: [],
+    existingDestinationBytes: 0
+  })
+  // A one-slot authority holding one ALLOCATED session: the role is full.
+  const full = await quota(t, TARGET, { slotCapacityPerRole: 1 })
+  const seedSink = beginForwardHttpsAggregateQuotaRecoveryV3(full.capability)
+  const seedPayload = b4a.concat([b4a.from('FTS3', 'ascii'), occupiedId, b4a.alloc(8, 0x01)])
+  await absorbForwardHttpsAggregateQuotaRecoveryFrameV3(seedSink, {
+    frame: { type: 112, payload: seedPayload, payloadHash: blake2b256(seedPayload), sequence: 1n, previousWalHash: ZERO32, walHash: blake2b256(b4a.concat([b4a.from('wal'), seedPayload])), frameBytes: seedPayload.byteLength + 224 }
+  })
+  await finishForwardHttpsAggregateQuotaRecoveryV3(seedSink)
+  const before = replayModule.forwardHttpsAggregateQuotaV3Status(full.authority)
+  // Fresh session id with no FREE slot: CAPACITY before any mutation.
+  await t.exception.all(
+    replayModule.reserveForwardHttpsAggregateQuotaV3(full.capability, terminalPlan(full.capability, minimalTerminal(fixed(0x93), 2n))),
+    /FREE session slot|CAPACITY/
+  )
+  // The already-occupied session id has no FREE slot for it either.
+  await t.exception.all(
+    replayModule.reserveForwardHttpsAggregateQuotaV3(full.capability, terminalPlan(full.capability, minimalTerminal(occupiedId, 3n))),
+    /FREE session slot|CAPACITY/
+  )
+  // Zero authority/WAL mutation: no pending reservation, ledgers and state unchanged.
+  const after = replayModule.forwardHttpsAggregateQuotaV3Status(full.authority)
+  t.absent(after.pendingReservation)
+  t.is(after.state, before.state)
+  t.is(after.targetLogicalChargedBytes, before.targetLogicalChargedBytes)
+  t.is(after.targetStorePhysicalApparentBytes, before.targetStorePhysicalApparentBytes)
+  // flags0 existing-session terminals are not gated by the FREE-slot check.
+  const flags0 = buildFtm9({
+    role: 'TARGET',
+    flags: 0,
+    stableSessionId: occupiedId,
+    sequence: 4n,
+    priorSessionRevision: 1n,
+    newTrustedEpochHighWatermark: 2,
+    reason: 'BUDGET_EXHAUSTED'
+  })
+  const flags0Union = await replayModule.reserveForwardHttpsAggregateQuotaV3(full.capability, terminalPlan(full.capability, flags0))
+  t.is(flags0Union.disposition, 'REQUESTED_TERMINAL')
+  t.ok(flags0Union.terminalReservation)
+  // Positive control: a fresh one-slot authority with no sessions admits the
+  // flags1 minimal terminal.
+  const empty = await quota(t, TARGET, { slotCapacityPerRole: 1 })
+  const admitUnion = await replayModule.reserveForwardHttpsAggregateQuotaV3(empty.capability, terminalPlan(empty.capability, minimalTerminal(fixed(0x94), 2n)))
+  t.is(admitUnion.disposition, 'REQUESTED_TERMINAL')
+  t.ok(admitUnion.terminalReservation)
 })
 
 test('failure states: terminal prewrite abort enters FAILED_PREWRITE; close rules reach CLOSED exactly', async t => {
