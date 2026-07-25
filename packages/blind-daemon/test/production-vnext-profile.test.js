@@ -708,3 +708,31 @@ test('engine recovery fails closed on a tampered genesis floor record', async t 
   t.is(control.status().epochFloor, currentEpoch)
   await control.close()
 })
+
+test('F-01: a serve against a pristine un-sealed root fails coded pre-mutation and leaves it pristine', async t => {
+  const fixture = await vnextSealedFixture({ functionalAdmission: true })
+  t.teardown(() => cleanup(fixture.directory))
+  const storeRoot = fixture.environment.HIVERELAY_BLIND_STORE_ROOT
+
+  // A requireManifestFloor serve against the pristine (un-sealed) root must fail
+  // coded BEFORE any runtime-binding / WAL / generation-floor mutation.
+  const serveError = await failure(() => assembleVnextRuntime(fixture))
+  t.is(serveError && serveError.code, 'BLIND_RUNTIME_MANIFEST_REQUIRED',
+    'a pristine un-sealed root is refused with the manifest-required coded error')
+
+  // The root stays pristine: no runtime binding and no control directory (WAL,
+  // generation-floor record, manifest slots) was written by the refused serve.
+  t.alike(await fs.readdir(storeRoot), [], 'no runtime binding or store content was written')
+  const controlStat = await failure(() => fs.lstat(path.join(storeRoot, 'control')))
+  t.is(controlStat && controlStat.code, 'ENOENT', 'no control directory was created')
+
+  // The later correct ceremony (bind -> genesis -> generation-floor bootstrap)
+  // still succeeds on the same untouched root, and serving then assembles with
+  // zero baseline exclusions.
+  await orchestrateVnextServingStore(fixture)
+  const runtime = await assembleVnextRuntime(fixture)
+  t.teardown(() => runtime.close())
+  const baselineExcluded = runtime.status().exclusions.filter(name =>
+    BASELINE_COMPLETENESS_EXCLUSIONS.includes(name))
+  t.alike(baselineExcluded, [], 'the correct ceremony then assembles with zero baseline exclusions')
+})

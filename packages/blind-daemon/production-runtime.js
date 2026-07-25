@@ -695,6 +695,35 @@ export async function bootstrapVnextStoreGenerationFloor ({
   })
 }
 
+// Pre-flight the sealed two-slot manifest check (MAC + exact launch bindings)
+// READ-ONLY (validationOnly), before any pristine-root mutation (runtime
+// binding, fresh WAL, generation-floor record). requireManifestFloor serving
+// must prove the store-genesis ceremony already sealed this root before it may
+// be mutated; otherwise a serve against a pristine un-sealed root would bind
+// it, write a fresh WAL and a generation-floor record, and only then discover
+// the absent manifest — fencing the root against the later correct ceremony
+// (adversarial finding F-01). This check mutates nothing: an absent manifest
+// (missing control root or no valid slot) fails coded
+// BLIND_RUNTIME_MANIFEST_REQUIRED; a forged or binding-mismatched manifest
+// propagates the manifest store's coded integrity error. The root stays
+// pristine so the correct ceremony still succeeds on it afterwards.
+async function preflightVnextManifestRequired ({ controlDirectory, manifestKey, expectedBindings }) {
+  const manifestStore = new TwoSlotManifestStore({ controlDirectory, manifestKey, expectedBindings })
+  try {
+    await manifestStore.open({ validationOnly: true })
+    await manifestStore.load()
+  } catch (error) {
+    if (error && (error.code === 'ENOENT' ||
+        (error.code === 'RECOVERY_GAP_READ_ONLY' && /no valid manifest slot/.test(error.message)))) {
+      runtimeFailure('BLIND_RUNTIME_MANIFEST_REQUIRED',
+        'the vNext public-test profile requires a sealed two-slot store manifest before any store mutation')
+    }
+    throw error
+  } finally {
+    await manifestStore.close().catch(() => {})
+  }
+}
+
 // Load the sealed two-slot store manifest and enforce its persisted descriptor
 // floor against the activated chain head (#2 TWO_SLOT_MANIFEST runtime
 // integration, #3 DESCRIPTOR_REFRESH persisted floor across restart). A
@@ -1391,6 +1420,18 @@ export async function assembleProductionBlindDaemon (options = {}) {
         field: 'owner fence token hash', exactBytes: 32, maximumBytes: 32, secret: true
       })
       await verifyPrivateStoreRoot(config.storeRoot)
+      if (requireManifestFloor) {
+        // F-01: pre-flight the sealed-manifest MAC/binding check READ-ONLY before
+        // any pristine-root mutation (runtime binding, WAL, generation-floor
+        // record). A serve against a pristine un-sealed root fails coded here
+        // without mutating it, so the later correct ceremony still succeeds.
+        await preflightVnextManifestRequired({
+          controlDirectory: path.join(config.storeRoot, 'control'),
+          manifestKey,
+          expectedBindings: vnextStoreGenesisExpectedBindings(
+            descriptorSnapshot.descriptor, descriptorSnapshot.hash, config.mapGeneration, ownerFenceTokenHash)
+        })
+      }
       const binding = encodeRuntimeBinding(descriptorSnapshot.descriptor, config.mapGeneration,
         ownerFenceTokenHash, manifestKey)
       const storeBindingCreated = await bindStoreIdentity(config.storeRoot, binding)
