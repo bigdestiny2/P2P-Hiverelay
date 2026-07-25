@@ -2,7 +2,12 @@ import test from 'brittle'
 import fs from 'node:fs/promises'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
-import { PRODUCTION_RUNTIME_EXCLUSIONS, assertProductionRuntimeReleaseReady } from '../production-runtime.js'
+import {
+  BASELINE_COMPLETENESS_EXCLUSIONS,
+  PROFILE2_COMPLETENESS_EXCLUSIONS,
+  PRODUCTION_RUNTIME_EXCLUSIONS,
+  assertProductionRuntimeReleaseReady
+} from '../production-runtime.js'
 import { loadVnextForwardConfig } from '../production-vnext-profile.js'
 import { vnextSealedFixture } from './production-vnext-profile-fixture.js'
 
@@ -33,11 +38,11 @@ async function gateError (environment) {
   return error
 }
 
-test('vNext gate genuinely assembles the runtime line and binding, honestly keeps the rest', async t => {
+test('vNext gate genuinely assembles the baseline line and binding, scoped to baseline items', async t => {
   const fixture = await vnextSealedFixture()
   t.teardown(() => cleanup(fixture.directory))
   const error = await gateError(fixture.environment)
-  t.is(error && error.code, 'BLIND_RUNTIME_INCOMPLETE', 'gate still fails closed while exclusions remain')
+  t.is(error && error.code, 'BLIND_RUNTIME_INCOMPLETE', 'gate still fails closed while baseline exclusions remain')
 
   // Genuinely assembled and therefore cleared (validated by real code paths):
   // the profile/descriptor/identity binding, the CELL/INBOX/CORE public
@@ -47,11 +52,19 @@ test('vNext gate genuinely assembles the runtime line and binding, honestly keep
     t.absent(error.message.includes(cleared), `${cleared} is genuinely assembled, not merely filtered`)
   }
   // Honestly still unassembled until their serving wiring is delivered: the
-  // two-slot manifest floor, the persisted refresh floor, the bounded FORWARD
-  // class and the profile-2 external journal witness keep the gate closed.
-  for (const kept of [TWO_SLOT_MANIFEST, REFRESH_FLOOR, FORWARD_EXEC, PROFILE2_WITNESS]) {
+  // two-slot manifest floor and the persisted refresh floor keep the baseline
+  // gate closed.
+  for (const kept of [TWO_SLOT_MANIFEST, REFRESH_FLOOR]) {
     t.ok(error.message.includes(kept), `${kept} stays honestly unassembled`)
   }
+  // FORWARD serving and the profile-2 journal witness are profile-2 items: out
+  // of scope for the baseline, they never appear in its completeness set.
+  for (const profile2 of [FORWARD_EXEC, PROFILE2_WITNESS]) {
+    t.absent(error.message.includes(profile2), `${profile2} is profile-2 scoped, not a baseline item`)
+  }
+  // The baseline remaining set is exactly the two genuine blockers, nothing else.
+  const listed = PRODUCTION_RUNTIME_EXCLUSIONS.filter(name => error.message.includes(name))
+  t.alike(listed, [TWO_SLOT_MANIFEST, REFRESH_FLOOR], 'baseline remaining set is exactly #2/#3')
 })
 
 test('vNext gate fails closed on a forged relay identity binding', async t => {
@@ -111,22 +124,50 @@ test('non-vNext profiles keep the strict static completeness gate', async t => {
   }
 })
 
-test('configuring the bounded FORWARD class clears its exclusion at the gate', async t => {
+test('completeness scope is frozen: baseline never evaluates profile-2 items, even with FORWARD configured', async t => {
+  // The frozen scope: baseline = the 8 baseline exclusions, never FORWARD or
+  // the profile-2 witness; profile-2 = exactly those two.
+  t.is(BASELINE_COMPLETENESS_EXCLUSIONS.length, 8)
+  t.absent(BASELINE_COMPLETENESS_EXCLUSIONS.includes(FORWARD_EXEC))
+  t.absent(BASELINE_COMPLETENESS_EXCLUSIONS.includes(PROFILE2_WITNESS))
+  t.alike([...PROFILE2_COMPLETENESS_EXCLUSIONS], [FORWARD_EXEC, PROFILE2_WITNESS])
+
+  // With no FORWARD material the baseline gate reports only the genuine #2/#3.
   const without = await vnextSealedFixture()
   t.teardown(() => cleanup(without.directory))
-  t.is(loadVnextForwardConfig(without.environment), null, 'absent FORWARD material is not assembled')
+  t.is(loadVnextForwardConfig(without.environment), null, 'absent FORWARD material parses as unconfigured')
+  const withoutError = await gateError(without.environment)
+  t.alike(PRODUCTION_RUNTIME_EXCLUSIONS.filter(name => withoutError.message.includes(name)),
+    [TWO_SLOT_MANIFEST, REFRESH_FLOOR], 'baseline reports exactly #2/#3 with no FORWARD material')
 
+  // Even with a complete FORWARD storage identity configured, the baseline gate
+  // still does not evaluate profile-2 items; its set stays exactly #2/#3.
   const withForward = await vnextSealedFixture({ forward: true })
   t.teardown(() => cleanup(withForward.directory))
-  const forwardConfig = loadVnextForwardConfig(withForward.environment)
-  t.ok(forwardConfig && forwardConfig.storage && typeof forwardConfig.storage.root === 'string',
-    'complete FORWARD storage identity parses')
-  const error = await gateError(withForward.environment)
-  t.is(error && error.code, 'BLIND_RUNTIME_INCOMPLETE')
-  t.absent(error.message.includes(FORWARD_EXEC), 'configured FORWARD class is assembled')
-  t.absent(error.message.includes(PROFILE2_WITNESS), 'FORWARD journal witness is assembled with the class')
-  t.ok(error.message.includes(TWO_SLOT_MANIFEST), 'manifest floor still honestly unassembled')
-  t.ok(error.message.includes(REFRESH_FLOOR), 'refresh floor still honestly unassembled')
+  t.ok(loadVnextForwardConfig(withForward.environment), 'complete FORWARD storage identity parses')
+  const withError = await gateError(withForward.environment)
+  t.is(withError && withError.code, 'BLIND_RUNTIME_INCOMPLETE')
+  t.absent(withError.message.includes(FORWARD_EXEC), 'FORWARD is never a baseline exclusion')
+  t.absent(withError.message.includes(PROFILE2_WITNESS), 'profile-2 witness is never a baseline exclusion')
+  t.alike(PRODUCTION_RUNTIME_EXCLUSIONS.filter(name => withError.message.includes(name)),
+    [TWO_SLOT_MANIFEST, REFRESH_FLOOR], 'baseline reports exactly #2/#3 even with FORWARD configured')
+})
+
+test('the profile-2 acceptance profile stays fail-closed (static gate, FORWARD bits zero)', async t => {
+  const fixture = await vnextSealedFixture({ forward: true })
+  t.teardown(() => cleanup(fixture.directory))
+  // Selecting the profile-2 one-hop FORWARD profile does not enter the baseline
+  // path; it falls through to the strict static completeness gate and lists all
+  // 10 shipped exclusions. FORWARD has no independent acceptance yet, so it can
+  // never pass here.
+  const environment = {
+    ...fixture.environment,
+    HIVERELAY_BLIND_RUNTIME_PROFILE: 'LIMITED_PUBLIC_TEST_FORWARD_ONE_HOP_V1'
+  }
+  const error = await gateError(environment)
+  t.is(error && error.code, 'BLIND_RUNTIME_INCOMPLETE', 'profile-2 keeps the strict static gate')
+  t.ok(error.message.includes(FORWARD_EXEC), 'profile-2 profile still lists FORWARD as unassembled')
+  t.ok(error.message.includes(PROFILE2_WITNESS), 'profile-2 profile still lists the journal witness')
 })
 
 test('a half-configured FORWARD class fails closed instead of assembling partially', async t => {

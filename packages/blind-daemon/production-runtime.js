@@ -72,8 +72,7 @@ import { loadProductionEntrypointConfig } from './production-entrypoint.js'
 import { loadDaemonBootstrapConfig } from './bootstrap-config.js'
 import {
   LIMITED_PUBLIC_TEST_V1_OPERATION_BITS,
-  isVnextPublicTestProfile,
-  loadVnextForwardConfig
+  isVnextPublicTestProfile
 } from './production-vnext-profile.js'
 
 const operationBits = (familyId, operationIds) => operationIds.reduce(
@@ -181,46 +180,76 @@ export function assertProductionRuntimeCompleteness ({
   }
 }
 
-// Genuinely compute which production exclusions remain unassembled for the
-// vNext public-test profile. Every exclusion cleared here is backed by a real
-// code path: the CELL/INBOX/CORE line and admission adapter by the entrypoint
-// configuration (deep capture/resolution runs during assembly), the
-// sealed-material binding / two-slot chain / persisted floor by cryptographic
-// verification below, and the bounded FORWARD class by its configured storage
-// identity. Anything not genuinely assembled stays in the returned list and
-// keeps the gate closed. Storage promotion blockers (profile 2, rebalance,
-// repair evidence, accelerated scrub) describe future surfaces, not a failed
-// profile-1 store; they stay visible in status but do not block this profile,
-// consistent with productionStorageOperationalIntegrity.
+// Profile-scoped completeness. The baseline LIMITED_PUBLIC_TEST_V1 profile
+// (release profile ID 1, mask 0x0001ffff) is evaluated ONLY against the eight
+// baseline exclusions below. FORWARD serving and the profile-2 external
+// journal witness belong to the separate, later
+// LIMITED_PUBLIC_TEST_FORWARD_ONE_HOP_V1 (release profile ID 2) acceptance
+// gate: they are never evaluated under the baseline, their descriptor and
+// readiness bits stay zero, and the profile-2 profile itself is never selected
+// here (it has its own independent serial acceptance after the baseline
+// ships). This scoping is frozen in the gate — it is the correct boundary
+// between two release profiles with separate completeness contracts, not a way
+// to drop exclusions from a list.
+export const BASELINE_COMPLETENESS_EXCLUSIONS = Object.freeze([
+  'FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED',
+  'TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED',
+  'DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED',
+  'CELL_PUBLIC_EXECUTION_UNASSEMBLED',
+  'INBOX_PUBLIC_EXECUTION_UNASSEMBLED',
+  'CORE_PUBLIC_EXECUTION_UNASSEMBLED',
+  'PRIVATE_CONTENT_STREAM_RUNTIME_UNASSEMBLED',
+  'ADMISSION_REDEMPTION_ADAPTER_UNASSEMBLED'
+])
+// Profile-2 (bounded one-hop FORWARD) items. These are evaluated only under
+// the profile-2 acceptance profile — which is disabled and keeps its
+// descriptor/readiness bits zero — and never under the baseline.
+export const PROFILE2_COMPLETENESS_EXCLUSIONS = Object.freeze([
+  'FORWARD_PUBLIC_EXECUTION_UNASSEMBLED',
+  'PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED'
+])
+
+// Genuinely compute which of the BASELINE profile's exclusions remain
+// unassembled. Every exclusion cleared here is backed by a real code path: the
+// CELL/INBOX/CORE line and admission adapter by the entrypoint configuration
+// (deep capture/resolution runs during assembly), and the sealed-material
+// binding / two-slot chain by cryptographic verification below. Anything not
+// genuinely assembled stays in the returned list and keeps the gate closed.
+// FORWARD/profile-2 items are out of scope for the baseline (see above).
+// Storage promotion blockers (profile 2, rebalance, repair evidence,
+// accelerated scrub) describe future surfaces, not a failed profile-1 store;
+// they stay visible in status but do not block this profile, consistent with
+// productionStorageOperationalIntegrity.
 async function vnextPublicTestCompleteness (environment) {
-  const remaining = []
+  const assembled = new Set()
   const entrypointConfig = loadProductionEntrypointConfig(environment)
-  if (!(entrypointConfig.enableCellRuntime && entrypointConfig.enableInboxRuntime &&
-      entrypointConfig.enableCoreRuntime)) {
-    remaining.push('CELL_PUBLIC_EXECUTION_UNASSEMBLED', 'INBOX_PUBLIC_EXECUTION_UNASSEMBLED',
-      'CORE_PUBLIC_EXECUTION_UNASSEMBLED', 'PRIVATE_CONTENT_STREAM_RUNTIME_UNASSEMBLED')
+  if (entrypointConfig.enableCellRuntime && entrypointConfig.enableInboxRuntime &&
+      entrypointConfig.enableCoreRuntime) {
+    assembled.add('CELL_PUBLIC_EXECUTION_UNASSEMBLED')
+    assembled.add('INBOX_PUBLIC_EXECUTION_UNASSEMBLED')
+    assembled.add('CORE_PUBLIC_EXECUTION_UNASSEMBLED')
+    assembled.add('PRIVATE_CONTENT_STREAM_RUNTIME_UNASSEMBLED')
   }
-  if (!entrypointConfig.admissionAdapter) {
-    remaining.push('ADMISSION_REDEMPTION_ADAPTER_UNASSEMBLED')
+  if (entrypointConfig.admissionAdapter) {
+    assembled.add('ADMISSION_REDEMPTION_ADAPTER_UNASSEMBLED')
   }
   const bootstrap = loadDaemonBootstrapConfig(environment)
   const runtimeConfig = loadProductionRuntimeConfig(environment, bootstrap.endpointIds)
   // #1 FINAL_BUILD_PROFILE_LOCAL_BINDING is proven statically: the
   // profile/descriptor/relay-identity binding exists and validates against the
   // sealed material (this throws on any forgery). #2
-  // TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION and #3 DESCRIPTOR_REFRESH_PERSISTED_FLOOR
-  // are wired into assembleProductionBlindDaemon (the descriptor floor is
-  // persisted to, and restored from, the two-slot store manifest across
-  // restart); manifestFloorAssembled reflects that genuine serving wiring.
+  // TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION and #3
+  // DESCRIPTOR_REFRESH_PERSISTED_FLOOR require the two-slot store manifest to
+  // persist and restore the descriptor floor across restart; that serving
+  // integration is not yet genuinely delivered (see the assembly evidence), so
+  // they stay unassembled.
   await verifyVnextSealedMaterialBinding(runtimeConfig)
-  if (!vnextManifestFloorAssembled()) {
-    remaining.push('TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED',
-      'DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED')
+  assembled.add('FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED')
+  if (vnextManifestFloorAssembled()) {
+    assembled.add('TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED')
+    assembled.add('DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED')
   }
-  if (loadVnextForwardConfig(environment) == null) {
-    remaining.push('FORWARD_PUBLIC_EXECUTION_UNASSEMBLED',
-      'PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED')
-  }
+  const remaining = BASELINE_COMPLETENESS_EXCLUSIONS.filter(value => !assembled.has(value))
   return Object.freeze({
     runtimeExclusions: Object.freeze(remaining),
     storageBlockers: Object.freeze([])
