@@ -269,6 +269,18 @@ async function vnextPublicTestCompleteness (environment) {
 // declared blocker in the frozen profile1-store-genesis module). So #2/#3 stay
 // honestly unassembled in serving until that engine-restore gap is closed in
 // the accepted storage layer.
+// Reports whether the vNext assembly genuinely persists and enforces the
+// descriptor floor through the two-slot store manifest in runtime SERVING. The
+// store-genesis ceremony now produces a sealed manifest whose genesis floor
+// record carries the exact floorTransitionV1 payload, so the serving cell
+// engine's WAL recovery ACCEPTS it (the first half of the engine-restore gap is
+// resolved). The descriptor-floor enforcement is wired and proven standalone.
+// But full serving is STILL blocked one layer down: bootstrapping the
+// storage-generation floor (openBlindStoreGenerationFloor) on a
+// genesis-manifested store needs its WAL-anchor evidence reconciled with the
+// recovered genesis WAL (the post-floor recovery transition half of
+// CELL_INBOX_CORE_WAL_STATE_MACHINE_AND_ENGINE_RESTORE_UNIMPLEMENTED). So #2/#3
+// stay honestly unassembled in serving until that is resolved.
 function vnextManifestFloorAssembled () {
   return false
 }

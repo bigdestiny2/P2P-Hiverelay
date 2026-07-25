@@ -508,6 +508,29 @@ async function ensureGenesisStoreRoot (storeRoot) {
   }
 }
 
+// Encode the exact floorTransitionV1 payload the serving cell engine's WAL
+// recovery decodes for a BLIND_CELL_WAL_TYPE.FLOOR_ADVANCE (type 9) frame:
+// struct[['version', u8 constant 1], ['oldEpochFloor', u32be],
+// ['newEpochFloor', u32be]] (storage-engine.js floorTransitionV1, 9 bytes).
+// The genesis floor record must carry this payload so the engine recovers it
+// as a valid epoch-floor transition on a manifested store instead of rejecting
+// a freeform payload (RECOVERY_GAP_READ_ONLY). Byte parity with the engine is
+// proven by recovering the manifested store in the tests.
+function floorAdvancePayloadV1 (oldEpochFloor, newEpochFloor) {
+  const payload = b4a.alloc(9)
+  payload[0] = 1
+  payload.writeUInt32BE(oldEpochFloor, 1)
+  payload.writeUInt32BE(newEpochFloor, 5)
+  return payload
+}
+
+function genesisEpochFloor (value) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 0xffffffff) {
+    genesisFailure('descriptor.issuedEpoch (the genesis epoch floor) must be one u32 integer')
+  }
+  return value
+}
+
 // Runs the store-genesis ceremony against options.storeRoot and returns a
 // frozen result exposing the sealed manifest floor
 // (descriptorSequenceFloor/descriptorHashFloor), the manifest revision and
@@ -555,7 +578,7 @@ export async function runVnextStoreGenesisCeremony (options = {}) {
     genesisRecord: {
       type: 9,
       virtualBucket: 0,
-      payload: b4a.from('profile-1-floor-genesis-v1', 'utf8')
+      payload: floorAdvancePayloadV1(0, genesisEpochFloor(descriptor.issuedEpoch))
     },
     genesisSnapshotEntries: snapshot.entries,
     snapshotSemanticVerifier: snapshot.verifier,
