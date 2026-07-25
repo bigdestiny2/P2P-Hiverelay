@@ -7,9 +7,9 @@ import {
   loadProductionEntrypointConfig
 } from './production-entrypoint.js'
 import {
-  assertProductionRuntimeReleaseReady,
   assembleProductionBlindDaemon,
-  loadProductionRuntimeConfig
+  loadProductionRuntimeConfig,
+  productionReleaseGateFor
 } from './production-runtime.js'
 
 function report (error, phase = 'runtime') {
@@ -20,7 +20,7 @@ function report (error, phase = 'runtime') {
 export async function runBlindDaemonCli (options = {}) {
   const environment = options.environment || process.env
   const bootstrap = loadDaemonBootstrapConfig(environment, options.identity || process)
-  const releaseGate = options.releaseGate || assertProductionRuntimeReleaseReady
+  const releaseGate = options.releaseGate || productionReleaseGateFor(environment)
   const injectedAdmissionAdapter = typeof options.resolveAdmissionAdapter === 'function'
   const entrypointConfig = loadProductionEntrypointConfig(environment, {
     allowInjectedAdmissionAdapter: injectedAdmissionAdapter

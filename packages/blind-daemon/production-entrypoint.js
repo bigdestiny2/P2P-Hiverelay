@@ -94,7 +94,15 @@ export const PRODUCTION_RUNTIME_PROFILE = Object.freeze({
   DESCRIBE_ONLY_V1: 'DESCRIBE_ONLY_V1',
   CELL_V1: 'CELL_V1',
   CELL_INBOX_V1: 'CELL_INBOX_V1',
-  CELL_INBOX_CORE_V1: 'CELL_INBOX_CORE_V1'
+  CELL_INBOX_CORE_V1: 'CELL_INBOX_CORE_V1',
+  // The bounded vNext direct-HTTPS public-test profile. This is the release
+  // profile ID 1 (mask 0x0001ffff, the baseline 17 DESCRIBE/CELL/INBOX/CORE
+  // operations) assembled for live public testing. Selecting it assembles the
+  // full CELL/INBOX/CORE public execution line plus the bounded one-hop
+  // FORWARD class (whose descriptor/readiness bits stay zero per the run's
+  // forward-activation rule). It is distinct from the incremental runtime-line
+  // selectors above, which remain fail-closed at the release gate.
+  LIMITED_PUBLIC_TEST_V1: 'LIMITED_PUBLIC_TEST_V1'
 })
 
 export const PRODUCTION_ADMISSION_ADAPTER_SCRIPT_CONTRACT = Object.freeze({
@@ -147,6 +155,8 @@ function profileFlags (profile) {
     case PRODUCTION_RUNTIME_PROFILE.CELL_INBOX_V1:
       return { enableCellRuntime: true, enableInboxRuntime: true, enableCoreRuntime: false }
     case PRODUCTION_RUNTIME_PROFILE.CELL_INBOX_CORE_V1:
+      return { enableCellRuntime: true, enableInboxRuntime: true, enableCoreRuntime: true }
+    case PRODUCTION_RUNTIME_PROFILE.LIMITED_PUBLIC_TEST_V1:
       return { enableCellRuntime: true, enableInboxRuntime: true, enableCoreRuntime: true }
     default:
       entrypointFailure('BLIND_ENTRYPOINT_CONFIG_INVALID',

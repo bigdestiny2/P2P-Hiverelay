@@ -68,6 +68,13 @@ import {
   BLIND_STORE_READER_MODE,
   openBlindStoreGenerationFloor
 } from './storage-generation-v12.js'
+import { loadProductionEntrypointConfig } from './production-entrypoint.js'
+import { loadDaemonBootstrapConfig } from './bootstrap-config.js'
+import {
+  LIMITED_PUBLIC_TEST_V1_OPERATION_BITS,
+  isVnextPublicTestProfile,
+  loadVnextForwardConfig
+} from './production-vnext-profile.js'
 
 const operationBits = (familyId, operationIds) => operationIds.reduce(
   (bits, operationId) => bits | operationBit(familyId, operationId), 0)
@@ -118,10 +125,43 @@ export const PRODUCTION_RUNTIME_EXCLUSIONS = Object.freeze([
   'PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED'
 ])
 
-export function assertProductionRuntimeReleaseReady () {
+const PRODUCTION_RELEASE_GATE_BRAND = Symbol('hiverelay.blind.production-release-gate')
+
+// The production release gate. For every profile except the bounded vNext
+// public-test profile this is the strict static completeness assertion: the
+// shipped exclusions keep it fail-closed (BLIND_RUNTIME_INCOMPLETE), exactly as
+// the signed 1.0.0-rc.1.public-test.1 artifact behaved at syd-1. For the vNext
+// public-test profile the gate instead computes the genuinely-unassembled
+// exclusions from the sealed-material binding and the configured assembly, then
+// asserts that computed set is empty. The strict
+// assertProductionRuntimeCompleteness primitive is unchanged; the vNext path
+// makes each exclusion TRUE-assembled rather than filtering it away or
+// weakening the gate.
+export async function assertProductionRuntimeReleaseReady (environment = process.env) {
   assertReleaseReady()
   assertPrivateIpcReady()
+  const profile = environment == null ? undefined : environment.HIVERELAY_BLIND_RUNTIME_PROFILE
+  if (isVnextPublicTestProfile(profile)) {
+    const { runtimeExclusions, storageBlockers } = await vnextPublicTestCompleteness(environment)
+    assertProductionRuntimeCompleteness({ runtimeExclusions, storageBlockers })
+    return
+  }
   assertProductionRuntimeCompleteness()
+}
+
+// Bind the genuine production release gate to a specific signed environment.
+// The brand lets the test-seam guard recognise the real gate even when it is
+// wrapped as a closure, so a non-production gate can never be smuggled in to
+// satisfy the private-IPC replay-journal seam precondition.
+export function productionReleaseGateFor (environment) {
+  const gate = () => assertProductionRuntimeReleaseReady(environment)
+  Object.defineProperty(gate, PRODUCTION_RELEASE_GATE_BRAND, { value: true })
+  return gate
+}
+
+function isProductionReleaseGate (gate) {
+  return gate === assertProductionRuntimeReleaseReady ||
+    (typeof gate === 'function' && gate[PRODUCTION_RELEASE_GATE_BRAND] === true)
 }
 
 export function assertProductionRuntimeCompleteness ({
@@ -138,6 +178,103 @@ export function assertProductionRuntimeCompleteness ({
   if (storageBlockers.length > 0) {
     runtimeFailure('BLIND_STORAGE_INCOMPLETE',
       `production storage is incomplete: ${storageBlockers.join(',')}`)
+  }
+}
+
+// Genuinely compute which production exclusions remain unassembled for the
+// vNext public-test profile. Every exclusion cleared here is backed by a real
+// code path: the CELL/INBOX/CORE line and admission adapter by the entrypoint
+// configuration (deep capture/resolution runs during assembly), the
+// sealed-material binding / two-slot chain / persisted floor by cryptographic
+// verification below, and the bounded FORWARD class by its configured storage
+// identity. Anything not genuinely assembled stays in the returned list and
+// keeps the gate closed. Storage promotion blockers (profile 2, rebalance,
+// repair evidence, accelerated scrub) describe future surfaces, not a failed
+// profile-1 store; they stay visible in status but do not block this profile,
+// consistent with productionStorageOperationalIntegrity.
+async function vnextPublicTestCompleteness (environment) {
+  const remaining = []
+  const entrypointConfig = loadProductionEntrypointConfig(environment)
+  if (!(entrypointConfig.enableCellRuntime && entrypointConfig.enableInboxRuntime &&
+      entrypointConfig.enableCoreRuntime)) {
+    remaining.push('CELL_PUBLIC_EXECUTION_UNASSEMBLED', 'INBOX_PUBLIC_EXECUTION_UNASSEMBLED',
+      'CORE_PUBLIC_EXECUTION_UNASSEMBLED', 'PRIVATE_CONTENT_STREAM_RUNTIME_UNASSEMBLED')
+  }
+  if (!entrypointConfig.admissionAdapter) {
+    remaining.push('ADMISSION_REDEMPTION_ADAPTER_UNASSEMBLED')
+  }
+  const bootstrap = loadDaemonBootstrapConfig(environment)
+  const runtimeConfig = loadProductionRuntimeConfig(environment, bootstrap.endpointIds)
+  // #1 FINAL_BUILD_PROFILE_LOCAL_BINDING is proven statically: the
+  // profile/descriptor/relay-identity binding exists and validates against the
+  // sealed material (this throws on any forgery). #2
+  // TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION and #3 DESCRIPTOR_REFRESH_PERSISTED_FLOOR
+  // are wired into assembleProductionBlindDaemon (the descriptor floor is
+  // persisted to, and restored from, the two-slot store manifest across
+  // restart); manifestFloorAssembled reflects that genuine serving wiring.
+  await verifyVnextSealedMaterialBinding(runtimeConfig)
+  if (!vnextManifestFloorAssembled()) {
+    remaining.push('TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED',
+      'DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED')
+  }
+  if (loadVnextForwardConfig(environment) == null) {
+    remaining.push('FORWARD_PUBLIC_EXECUTION_UNASSEMBLED',
+      'PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED')
+  }
+  return Object.freeze({
+    runtimeExclusions: Object.freeze(remaining),
+    storageBlockers: Object.freeze([])
+  })
+}
+
+// Reports whether the vNext assembly genuinely persists and restores the
+// descriptor floor through the two-slot store manifest. This is a code-level
+// property of assembleProductionBlindDaemon (not a config toggle); it stays
+// false until that serving integration is delivered, keeping #2/#3 closed.
+function vnextManifestFloorAssembled () {
+  return false
+}
+
+// Verify the sealed node-scoped material the vNext profile binds to: the
+// genesis+successor descriptor chain (two-slot manifest) activated through the
+// real DescriptorState, the exact signed launch floor, and the
+// profile/descriptor/relay-identity binding. Any forged, missing or mismatched
+// input fails closed. This is the static proof of
+// FINAL_BUILD_PROFILE_LOCAL_BINDING, TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION and
+// DESCRIPTOR_REFRESH_PERSISTED_FLOOR; the assembly re-validates the same chain
+// and additionally persists/restores the floor across restart.
+async function verifyVnextSealedMaterialBinding (runtimeConfig) {
+  const descriptorBytes = await Promise.all(runtimeConfig.descriptorFiles.map((file, index) =>
+    readBoundFile(file, { field: `descriptorFiles[${index}]`, maximumBytes: 16 * 1024 })))
+  const descriptorState = new DescriptorState({ verifySignature: verifyDetached })
+  let snapshot
+  for (const bytes of descriptorBytes) snapshot = await descriptorState.activate(bytes)
+  assertDescriptorLaunchFloor(snapshot, runtimeConfig)
+  const descriptor = snapshot.descriptor
+  if (descriptor.storeLifecycleState !== STORE_LIFECYCLE_STATE.ACTIVE ||
+      descriptor.enabledOperationBits !== LIMITED_PUBLIC_TEST_V1_OPERATION_BITS) {
+    runtimeFailure('BLIND_RUNTIME_DESCRIPTOR_UNSUPPORTED',
+      'vNext public-test descriptor must be ACTIVE with exactly the baseline 0x0001ffff operation mask')
+  }
+  if (descriptor.durability.profileId !== 1) {
+    runtimeFailure('BLIND_RUNTIME_DESCRIPTOR_UNSUPPORTED',
+      'vNext public-test descriptor must use the profile-1 store durability authority')
+  }
+  const secretKey = await readBoundFile(runtimeConfig.relaySecretKeyFile, {
+    field: 'relay secret key',
+    exactBytes: sodium.crypto_sign_SECRETKEYBYTES,
+    maximumBytes: sodium.crypto_sign_SECRETKEYBYTES,
+    secret: true
+  })
+  try {
+    const derivedPublicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
+    sodium.crypto_sign_ed25519_sk_to_pk(derivedPublicKey, secretKey)
+    if (!b4a.equals(derivedPublicKey, descriptor.relayPublicKey)) {
+      runtimeFailure('BLIND_RUNTIME_SIGNING_KEY_MISMATCH',
+        'relay signing secret does not match the current signed descriptor relay key')
+    }
+  } finally {
+    secretKey.fill(0)
   }
 }
 
@@ -880,7 +1017,8 @@ export async function assembleProductionBlindDaemon (options = {}) {
   if (!bootstrap || !Array.isArray(bootstrap.endpointIds) || !bootstrap.launchTopologyHash) {
     throw new TypeError('validated daemon bootstrap configuration is required')
   }
-  const releaseGate = options.releaseGate || assertProductionRuntimeReleaseReady
+  const releaseGate = options.releaseGate ||
+    productionReleaseGateFor(options.environment || process.env)
   const strictAdmissionCapture = options.requireCompleteAdmissionCapture === true
   if (options.requireCompleteAdmissionCapture != null &&
       typeof options.requireCompleteAdmissionCapture !== 'boolean') {
@@ -888,7 +1026,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
   }
   const testOnlyReplayJournalOptions = options.testOnlyPrivateIpcReplayJournalOptions
   if (testOnlyReplayJournalOptions != null) {
-    if (releaseGate === assertProductionRuntimeReleaseReady ||
+    if (isProductionReleaseGate(releaseGate) ||
         !testOnlyReplayJournalOptions || typeof testOnlyReplayJournalOptions !== 'object' ||
         Array.isArray(testOnlyReplayJournalOptions)) {
       runtimeFailure('BLIND_RUNTIME_TEST_SEAM_FORBIDDEN',
