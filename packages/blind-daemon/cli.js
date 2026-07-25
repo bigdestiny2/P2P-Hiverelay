@@ -11,6 +11,7 @@ import {
   loadProductionRuntimeConfig,
   productionReleaseGateFor
 } from './production-runtime.js'
+import { isVnextPublicTestProfile } from './production-vnext-profile.js'
 
 function report (error, phase = 'runtime') {
   const code = error && typeof error.code === 'string' ? ` ${error.code}` : ''
@@ -50,6 +51,7 @@ export async function runBlindDaemonCli (options = {}) {
       enableCoreRuntime,
       resolveAdmissionAdapter,
       requireCompleteAdmissionCapture: enableCellRuntime,
+      requireManifestFloor: isVnextPublicTestProfile(entrypointConfig.profile),
       testOnlyPrivateIpcReplayJournalOptions: options.testOnlyPrivateIpcReplayJournalOptions,
       onError: error => {
         if (typeof options.onError === 'function') options.onError(error)
