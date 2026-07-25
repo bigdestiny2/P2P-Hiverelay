@@ -5,6 +5,9 @@ import sodium from 'sodium-universal'
 import { createHash } from 'node:crypto'
 import {
   ENDPOINT_ROLE,
+  FAMILY,
+  INBOX_FRAME_CLASS,
+  OPERATION,
   RESULT_SIGNATURE_DOMAIN_ID,
   TRANSPORT_SUPPORT,
   admissionParametersHash,
@@ -15,11 +18,13 @@ import {
   resultSignaturePayload,
   serviceDescriptorHash
 } from '@hiverelay/blind-protocol'
+import { daemonOperationProfile, deriveAdmissionCost } from '../operation-catalog.js'
 import {
   bindDurability,
   descriptorValue,
   parameterValue
 } from './coordinator-fixtures.js'
+import { INBOX_TEST_SHAPE } from './production-runtime-inbox-fixture.js'
 
 const SIX_HOURS_MILLIS = 6 * 60 * 60 * 1000
 const PUBLIC_ROLE_BITS = ENDPOINT_ROLE.DESCRIPTOR_DISCOVERY |
@@ -66,6 +71,104 @@ export function vnextAdmissionScript (launchTopologyHashHex) {
 `
 }
 
+// A second sealed adapter script analogue whose adapter GENUINELY redeems:
+// prepare/confirmAfterEof echo the exact admission binding and cost tuple the
+// AdmissionCoordinator pins (spendTag/walCommitRecord bind the presented
+// token), so admitted baseline routes (INBOX.CREATE/READ, CORE.MIRROR) serve
+// real signed results through the production VM bridge in the e2e. Byte-pinned
+// by its SHA-256 in the signed environment exactly like the startup-only
+// variant. The sandbox forbids host authorities, so the script is
+// self-contained and only re-exports fields of its own input.
+export function vnextFunctionalAdmissionScript (launchTopologyHashHex) {
+  return `
+({
+  schema: 'hiverelay-admission-adapter-script-v1',
+  createAdmissionAdapterResolver (context) {
+    if (context.runtimeProfile !== '${VNEXT_PROFILE}' ||
+        context.launchTopologyHash.$hiverelayType !== 'bytes' ||
+        context.launchTopologyHash.hex !== '${launchTopologyHashHex}' ||
+        context.endpointIds.length !== 1 || context.endpointIds[0] !== 1) {
+      throw new Error('entrypoint launch binding mismatch')
+    }
+    const prepared = (input) => Object.freeze({
+      spendTag: input.admission.token,
+      requestCommitment: input.requestCommitment,
+      costClass: Object.freeze({
+        resourceClass: input.costClass.resourceClass,
+        leaseClass: input.costClass.leaseClass,
+        costUnits: input.costClass.costUnits
+      }),
+      walCommitRecord: input.admission.token,
+      profileId: input.admission.profileId,
+      schemeId: input.admission.schemeId,
+      parameterHash: input.admission.parameterHash
+    })
+    const adapter = Object.freeze({
+      prepare (input) { return prepared(input) },
+      preparePreflight () { return Object.freeze({}) },
+      confirmAfterEof (input) { return prepared(input) }
+    })
+    return () => adapter
+  }
+})
+`
+}
+
+// The INBOX resource-cost rows the sealed parameters need so the baseline
+// INBOX operations are genuinely redeemable (the bundled vector carries only
+// CELL.PUT and CORE.MIRROR rows). Mirrors the accepted INBOX runtime fixture:
+// the same INBOX_TEST_SHAPE derivations, sorted into canonical order.
+function vnextInboxResourceCostRows () {
+  const shape = INBOX_TEST_SHAPE
+  const largestFrameBytes = INBOX_FRAME_CLASS[shape.frameClassBits]
+  const predictedReadBytes = 4096 + shape.pageLimit * (41 + largestFrameBytes)
+  const storedShape = Object.freeze({
+    inboxRetentionClass: shape.retentionClass,
+    inboxFrameClassBits: shape.frameClassBits
+  })
+  const costs = [
+    deriveAdmissionCost(daemonOperationProfile(FAMILY.INBOX, OPERATION.INBOX.CREATE), {
+      retentionClass: shape.retentionClass,
+      frameClassBits: shape.frameClassBits,
+      leaseClass: shape.createLeaseClass
+    }),
+    deriveAdmissionCost(daemonOperationProfile(FAMILY.INBOX, OPERATION.INBOX.RENEW), {
+      leaseClass: shape.renewLeaseClass
+    }, storedShape),
+    deriveAdmissionCost(daemonOperationProfile(FAMILY.INBOX, OPERATION.INBOX.APPEND), {
+      frameClass: shape.appendFrameClass
+    }, storedShape),
+    deriveAdmissionCost(daemonOperationProfile(FAMILY.INBOX, OPERATION.INBOX.READ), {}, {
+      canonicalResultBytes: predictedReadBytes
+    }),
+    deriveAdmissionCost(daemonOperationProfile(FAMILY.INBOX, OPERATION.INBOX.WATCH), {
+      maxWaitMillis: shape.watchMaxWaitMillis
+    }, { canonicalResultBytes: predictedReadBytes })
+  ]
+  return costs.map((cost, index) => Object.freeze({
+    familyId: FAMILY.INBOX,
+    operationId: index === 0
+      ? OPERATION.INBOX.CREATE
+      : index === 1
+        ? OPERATION.INBOX.RENEW
+        : index === 2
+          ? OPERATION.INBOX.APPEND
+          : index === 3
+            ? OPERATION.INBOX.READ
+            : OPERATION.INBOX.WATCH,
+    resourceClass: cost.resourceClass,
+    leaseClass: cost.leaseClass,
+    costUnits: 10n
+  }))
+}
+
+function compareResourceCostRows (left, right) {
+  for (const field of ['familyId', 'operationId', 'resourceClass', 'leaseClass']) {
+    if (left[field] !== right[field]) return left[field] - right[field]
+  }
+  return 0
+}
+
 // Build a sealed node-scoped material fixture for the vNext public-test profile
 // under /tmp (never in the repo). The /tmp root is realpath-resolved so the
 // private socket/store paths stay inside the 100-byte portable bound and are
@@ -94,6 +197,12 @@ export async function vnextSealedFixture (options = {}) {
     validFromEpoch: currentEpoch,
     expiresEpoch: currentEpoch + 4
   })
+  if (options.functionalAdmission === true) {
+    // Make the baseline INBOX operations genuinely redeemable in this fixture:
+    // append their exact resource-cost rows in canonical sorted order.
+    parameters.resourceCosts = [...parameters.resourceCosts, ...vnextInboxResourceCostRows()]
+      .sort(compareResourceCostRows)
+  }
   const canonicalParameters = signCanonical(admissionParametersV1, parameters,
     RESULT_SIGNATURE_DOMAIN_ID.ADMISSION_PARAMETERS, relaySecretKey)
   const parameterHash = admissionParametersHash(canonicalParameters)
@@ -181,7 +290,9 @@ export async function vnextSealedFixture (options = {}) {
 
   const launchTopologyHash = '81'.repeat(32)
   const adapterScriptFile = path.join(root, 'admission-adapter.js')
-  const adapterScriptBytes = Buffer.from(vnextAdmissionScript(launchTopologyHash))
+  const adapterScriptBytes = Buffer.from(options.functionalAdmission === true
+    ? vnextFunctionalAdmissionScript(launchTopologyHash)
+    : vnextAdmissionScript(launchTopologyHash))
   await privateFile(adapterScriptFile, adapterScriptBytes)
   const adapterScriptSha256 = createHash('sha256').update(adapterScriptBytes).digest('hex')
 

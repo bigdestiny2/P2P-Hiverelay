@@ -17,8 +17,10 @@ import {
   TRANSPORT_ID,
   TRANSPORT_SUPPORT,
   blindHealthResultV1,
+  blindServiceDescriptorV1,
   encodeCanonical,
-  resultSignaturePayload
+  resultSignaturePayload,
+  serviceDescriptorHash
 } from '@hiverelay/blind-protocol'
 import {
   ADVERTISED_OPERATION_BITS,
@@ -241,10 +243,11 @@ async function vnextPublicTestCompleteness (environment) {
   // profile/descriptor/relay-identity binding exists and validates against the
   // sealed material (this throws on any forgery). #2
   // TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION and #3
-  // DESCRIPTOR_REFRESH_PERSISTED_FLOOR require the two-slot store manifest to
-  // persist and restore the descriptor floor across restart; that serving
-  // integration is not yet genuinely delivered (see the assembly evidence), so
-  // they stay unassembled.
+  // DESCRIPTOR_REFRESH_PERSISTED_FLOOR are genuinely delivered in serving (the
+  // two-slot store manifest persists, restores and enforces the descriptor
+  // floor across restart) once the generation-floor bootstrap closed the
+  // serving integration; vnextManifestFloorAssembled reports that delivery and
+  // the vNext profile e2e proves it end-to-end.
   await verifyVnextSealedMaterialBinding(runtimeConfig)
   assembled.add('FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED')
   if (vnextManifestFloorAssembled()) {
@@ -260,29 +263,18 @@ async function vnextPublicTestCompleteness (environment) {
 
 // Reports whether the vNext assembly genuinely persists and enforces the
 // descriptor floor through the two-slot store manifest in runtime SERVING. The
-// manifest floor enforcement (enforceVnextManifestFloor) is wired and proven
-// against a sealed manifest, and the store-genesis ceremony produces + seals
-// the manifest. But the serving integration is currently BLOCKED: the accepted
-// CELL/INBOX/CORE storage engines cannot open a genesis-manifested store
-// (their WAL recovery rejects the genesis floor record;
-// CELL_INBOX_CORE_WAL_STATE_MACHINE_AND_ENGINE_RESTORE_UNIMPLEMENTED is a
-// declared blocker in the frozen profile1-store-genesis module). So #2/#3 stay
-// honestly unassembled in serving until that engine-restore gap is closed in
-// the accepted storage layer.
-// Reports whether the vNext assembly genuinely persists and enforces the
-// descriptor floor through the two-slot store manifest in runtime SERVING. The
-// store-genesis ceremony now produces a sealed manifest whose genesis floor
-// record carries the exact floorTransitionV1 payload, so the serving cell
-// engine's WAL recovery ACCEPTS it (the first half of the engine-restore gap is
-// resolved). The descriptor-floor enforcement is wired and proven standalone.
-// But full serving is STILL blocked one layer down: bootstrapping the
-// storage-generation floor (openBlindStoreGenerationFloor) on a
-// genesis-manifested store needs its WAL-anchor evidence reconciled with the
-// recovered genesis WAL (the post-floor recovery transition half of
-// CELL_INBOX_CORE_WAL_STATE_MACHINE_AND_ENGINE_RESTORE_UNIMPLEMENTED). So #2/#3
-// stay honestly unassembled in serving until that is resolved.
+// store-genesis ceremony seals a manifest whose genesis floor record carries
+// the exact floorTransitionV1 payload (the serving cell engine's WAL recovery
+// accepts it), and the generation-floor bootstrap
+// (bootstrapVnextStoreGenerationFloor) establishes the storage-generation floor
+// evidence from the serving engine's own recovered WAL anchor on the
+// genesis-manifested store, so the full serving path — bind, engine open,
+// generation floor, two-slot manifest floor enforcement across restart — is
+// genuinely assembled and proven end-to-end by the vNext profile e2e. Keep this
+// true ONLY while that e2e passes; if the serving integration regresses, set it
+// back to false so #2/#3 stay honestly unassembled.
 function vnextManifestFloorAssembled () {
-  return false
+  return true
 }
 
 // Verify the sealed node-scoped material the vNext profile binds to: the
@@ -597,6 +589,110 @@ export async function bindStoreIdentity (root, expected) {
       'store root is bound to another relay/store/durability/map/fence tuple')
   }
   return created
+}
+
+// Generation-floor bootstrap for the vNext genesis-manifested store
+// (orchestration step 3 of bind -> genesis -> generation-floor bootstrap ->
+// serve). The serving path creates the storage-generation floor only when it
+// binds a pristine store itself (allowCreate: storeBindingCreated), so on a
+// store that was bound BEFORE the store-genesis ceremony ran it correctly
+// refuses to invent evidence ('blind store generation evidence is missing').
+// This helper is the explicit ceremony-side step that establishes that
+// evidence. It:
+//  1. fails fast unless the two-slot genesis manifest MAC-verifies under the
+//     launch key and the exact descriptor-floor/map/fence bindings (i.e. the
+//     store-genesis ceremony genuinely sealed this store);
+//  2. re-verifies the on-disk runtime binding against the recomputed binding
+//     (bindStoreIdentity returns false on an already-bound store);
+//  3. opens the cell storage engine with the SAME constructor arguments the
+//     serving path uses and reads the WAL anchor (walSequence/walHash) from the
+//     engine's own recovery — including any clock reconciliation the engine
+//     itself appends during open — so the recorded evidence is exactly the
+//     anchor the serving path recovers on its first boot (the anchor is read,
+//     never predicted or re-derived);
+//  4. creates the generation-floor record with allowCreate: true. Re-running
+//    the helper is idempotent: an existing record is re-validated against the
+//    same anchor by the frozen generation-floor chain rules.
+//
+// Timing: run after the store-genesis ceremony and before the first serve
+// boot, within the same lease epoch. If the wall-clock epoch rolls between
+// the bootstrap and the first serve boot, the serving engine's clock
+// reconciliation advances the WAL past the recorded anchor and the frozen
+// generation floor fails closed ('evidence was rolled back or replayed') —
+// the same fail-closed rule the accepted fresh-store flow already lives with
+// across restarts before the first acknowledged blind write.
+//
+// Secret hygiene: manifestKey and ownerFenceTokenHash stay caller-owned; they
+// are consumed (HMAC/MAC verification) but never copied, logged, or zeroed
+// here.
+export async function bootstrapVnextStoreGenerationFloor ({
+  storeRoot,
+  descriptor,
+  manifestKey,
+  ownerFenceTokenHash,
+  mapGeneration,
+  storeReaderMode = BLIND_STORE_READER_MODE.BLIND_ONLY
+}) {
+  const controlDirectory = path.join(storeRoot, 'control')
+  const binding = encodeRuntimeBinding(descriptor, mapGeneration, ownerFenceTokenHash, manifestKey)
+  await verifyPrivateStoreRoot(storeRoot)
+  const manifestStore = new TwoSlotManifestStore({
+    controlDirectory,
+    manifestKey,
+    expectedBindings: vnextStoreGenesisExpectedBindings(
+      descriptor,
+      serviceDescriptorHash(encodeCanonical(blindServiceDescriptorV1, descriptor)),
+      mapGeneration,
+      ownerFenceTokenHash)
+  })
+  await manifestStore.open({ validationOnly: true })
+  try {
+    await manifestStore.load()
+  } finally {
+    await manifestStore.close()
+  }
+  const bindingCreated = await bindStoreIdentity(storeRoot, binding)
+  const storeFormatAuthority = await loadBundledBlindStoreFormatAuthority({
+    expectedStoreFormatHash: descriptor.durability.storeFormatHash,
+    expectedFormatMajor: descriptor.durability.storeFormatMajor,
+    expectedFormatMinor: descriptor.durability.storeFormatMinor
+  })
+  const storage = new BlindCellStorageEngine({
+    root: storeRoot,
+    relayPublicKey: descriptor.relayPublicKey,
+    storeId: descriptor.storeId,
+    durabilityProfileId: descriptor.durability.profileId,
+    durabilityProfileHash: descriptor.durabilityProfileHash,
+    mapGeneration,
+    ownerFenceTokenHash,
+    durabilityContinuityHash: descriptor.durabilityContinuityHash,
+    storeFormatAuthority
+  })
+  await storage.open()
+  let storeEvidence
+  try {
+    storeEvidence = {
+      walSequence: storage.transactionStore.walSequence,
+      walHash: b4a.from(storage.transactionStore.walHash)
+    }
+  } finally {
+    await storage.close()
+  }
+  const floor = await openBlindStoreGenerationFloor(controlDirectory, {
+    manifestKey,
+    storeIdentity: binding,
+    allowCreate: true,
+    storeEvidence
+  })
+  floor.assertReaderMode(storeReaderMode)
+  return Object.freeze({
+    bindingCreated,
+    storeEvidence: Object.freeze({
+      walSequence: storeEvidence.walSequence,
+      walHash: b4a.from(storeEvidence.walHash)
+    }),
+    firstBlindOnlyWriteAcknowledged: floor.firstBlindOnlyWriteAcknowledged
+  })
 }
 
 // Load the sealed two-slot store manifest and enforce its persisted descriptor
@@ -1630,9 +1726,21 @@ export async function assembleProductionBlindDaemon (options = {}) {
           value === 'ADMISSION_REDEMPTION_ADAPTER_UNASSEMBLED')) ||
       (inboxRuntimeEnabled && value === 'INBOX_PUBLIC_EXECUTION_UNASSEMBLED') ||
       (coreRuntimeEnabled && value === 'CORE_PUBLIC_EXECUTION_UNASSEMBLED')
+    // #1/#2/#3 are genuinely assembled in this serving runtime once the
+    // two-slot manifest floor was loaded and enforced at startup
+    // (requireManifestFloor): the profile/descriptor/relay-identity binding was
+    // re-validated above and the persisted descriptor floor is now enforced and
+    // advanced across restarts. Non-vNext assemblies (manifestFloorState null)
+    // keep listing them, unchanged.
+    const manifestFloorAssembled = value =>
+      manifestFloorState != null &&
+      (value === 'FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED' ||
+        value === 'TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED' ||
+        value === 'DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED')
     const runtimeExclusions = cellRuntimeEnabled
       ? Object.freeze([
-        ...PRODUCTION_RUNTIME_EXCLUSIONS.filter(value => !publicExecutionAssembled(value)),
+        ...PRODUCTION_RUNTIME_EXCLUSIONS.filter(value =>
+          !publicExecutionAssembled(value) && !manifestFloorAssembled(value)),
         ...BLIND_CELL_RUNTIME_BLOCKERS,
         ...(inboxRuntimeEnabled ? BLIND_INBOX_RUNTIME_BLOCKERS : []),
         ...(coreRuntimeEnabled ? BLIND_CORE_RUNTIME_BLOCKERS : [])
