@@ -99,9 +99,14 @@ test('AppRegistry: catalogByType and catalogForBroadcast include content metadat
 test('AppRegistry: catalog carries relay-unverified v3 release availability facts', (t) => {
   const registry = new AppRegistry(null)
   registry.set('9'.repeat(64), {
-    type: 'app', appId: 'native-demo', release: {
-      id: 'apr_' + 'a'.repeat(64), appKind: 'desktop-app', distributionGeneration: 'pear-v3',
-      targets: [{ host: 'darwin-arm64', basename: 'Native Demo.app' }], trust: 'unverified-by-relay'
+    type: 'app',
+    appId: 'native-demo',
+    release: {
+      id: 'apr_' + 'a'.repeat(64),
+      appKind: 'desktop-app',
+      distributionGeneration: 'pear-v3',
+      targets: [{ host: 'darwin-arm64', basename: 'Native Demo.app' }],
+      trust: 'unverified-by-relay'
     }
   })
   const release = registry.catalog()[0].release
@@ -118,7 +123,9 @@ test('AppLifecycle: indexes a v3-only release when legacy manifest.json is absen
     _readV3ReleaseSummary: AppLifecycle.prototype._readV3ReleaseSummary
   }
   const release = {
-    kind: 'AppRelease', apiVersion: 'pear.deploy/v1alpha1', metadata: { id: 'apr_' + 'd'.repeat(64) },
+    kind: 'AppRelease',
+    apiVersion: 'pear.deploy/v1alpha1',
+    metadata: { id: 'apr_' + 'd'.repeat(64) },
     spec: {
       identity: { appId: 'native-demo', productName: 'Native Demo', publisherKey: 'e'.repeat(64), channel: 'stable' },
       release: { version: '1.2.3', sequence: 2 },

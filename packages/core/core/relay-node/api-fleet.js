@@ -93,7 +93,7 @@ export function normalizeFleetBaseUrl (value) {
   if (!isAllowedFleetBaseUrl(value)) return null
   const u = new URL(value.trim())
   // Drop path noise except intentional path prefix (e.g. reverse-proxy mount).
-  let base = u.origin + (u.pathname === '/' ? '' : u.pathname.replace(/\/+$/, ''))
+  const base = u.origin + (u.pathname === '/' ? '' : u.pathname.replace(/\/+$/, ''))
   return base
 }
 
@@ -472,11 +472,11 @@ export async function buildFleetRoutePayload ({
           seededApps: stats && stats.seededApps,
           health: typeof node.getHealthStatus === 'function'
             ? (() => {
-              try {
-                const h = node.getHealthStatus()
-                return h ? { healthy: h.healthy === true } : null
-              } catch { return null }
-            })()
+                try {
+                  const h = node.getHealthStatus()
+                  return h ? { healthy: h.healthy === true } : null
+                } catch { return null }
+              })()
             : null,
           disk: stats && stats.disk,
           storage: stats && stats.storage,
