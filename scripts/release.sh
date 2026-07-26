@@ -213,12 +213,12 @@ cmd_cut() {
       fs.writeFileSync(p, JSON.stringify(j,null,2)+"\n");
     ' "$REPO_ROOT/fleet/channels.json" "$version"
     git -C "$REPO_ROOT" add fleet/channels.json
-    git -C "$REPO_ROOT" commit -m "fleet: promote canary → $version" >/dev/null
+    git -C "$REPO_ROOT" commit -m "fleet: promote canary → ${version}" >/dev/null
     git -C "$REPO_ROOT" push origin HEAD
-    log "canary promoted — the canary tier pulls $version on its next updater tick (health-gated)."
+    log "canary promoted — the canary tier pulls ${version} on its next updater tick (health-gated)."
   fi
 
-  log "done: $version released$([ "$promote_canary" = 1 ] && echo ' + canary promoted')."
+  log "done: ${version} released$([ "$promote_canary" = 1 ] && echo ' + canary promoted')."
 }
 
 # ---------------------------------------------------------------------------
