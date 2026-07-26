@@ -45,8 +45,8 @@ RUN printf '%s\n' "$TARGETARCH" > /opt/hiverelay/peercred-target-architecture &&
 FROM --platform=$TARGETPLATFORM ${NODE_RUNTIME_IMAGE} AS blind-edge
 ARG HIVERELAY_BLIND_BUNDLE_ID=1.0.0-rc.1.public-test.1
 ARG HIVERELAY_BLIND_BUILD_ID=1.0.0-rc.1.public-test.1
-ARG HIVERELAY_BLIND_SOURCE_REVISION=ba710dc682a2cd0fa8a5bcc8a332e5a568eeb9ff
-ARG HIVERELAY_BLIND_SOURCE_TREE=edfe1e64754c84a9e852a8ef177b573e739f7136
+ARG HIVERELAY_BLIND_SOURCE_REVISION=973f25c212553653b65811eacd28ed35b1b54124
+ARG HIVERELAY_BLIND_SOURCE_TREE=ebd504fa318a90f34fc52e9febb9385db606330d
 LABEL org.opencontainers.image.title="HiveRelay Blind Edge" \
       org.opencontainers.image.description="Public metadata-stripping transport edge for the blind app substrate" \
       org.opencontainers.image.licenses="Apache-2.0" \

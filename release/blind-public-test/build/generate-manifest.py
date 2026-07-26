@@ -8,8 +8,8 @@ import os
 ROOT = os.path.dirname(os.path.abspath(__file__)) + "/../../.."
 REL = "release/blind-public-test"
 VERSION = "1.0.0-rc.1.public-test.1"
-SOURCE_REVISION = "ba710dc682a2cd0fa8a5bcc8a332e5a568eeb9ff"
-SOURCE_TREE = "edfe1e64754c84a9e852a8ef177b573e739f7136"
+SOURCE_REVISION = "973f25c212553653b65811eacd28ed35b1b54124"
+SOURCE_TREE = "ebd504fa318a90f34fc52e9febb9385db606330d"
 
 
 def sha256_file(path):
@@ -81,8 +81,8 @@ def component(c):
 manifest = {
     "schema_version": 1,
     "manifest_id": "hiverelay-blind-public-test-artifact-manifest-v1",
-    "signature_status": "UNSIGNED-PENDING-INDEPENDENT-ASSURANCE",
-    "signature_note": "This manifest is NOT signed. Signing is a later gate after independent assurance accepts this exact artifact set (test-activation lease). Do not deploy from this file until the signed successor exists.",
+    "signature_status": "UNSIGNED-PENDING-CONDUCTOR-RESIGN",
+    "signature_note": "This manifest is NOT signed. It was RECONSTRUCTED after an external actor destroyed the release worktree and branch (incident assignments/programme-control/external-worktree-teardown-incident-20260726t130752z.json: commits 3088ee1/866fec3/a4ba363 and the signed manifest, phase-2 manifest and pin-history files lost from git). The conductor re-signs this reconstructed manifest as a separate step; pin-history.json is reconstructed with signature fields marked PENDING-RESIGN. Do not deploy from this file until the re-signed successor exists.",
     "release": VERSION,
     "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
     "claim_boundary_detail": "no GA; no catalogue; no marketplace; no stable promotion; no documentation-complete claim; readiness stays zero",
@@ -90,8 +90,9 @@ manifest = {
         "repository": "https://github.com/bigdestiny2/p2p-hiverelay",
         "commit": SOURCE_REVISION,
         "tree": SOURCE_TREE,
-        "acceptance_record_sha256": "1febe4dbe0070fbf74e7f6707974ae0decd4174c3e351e78f97b5f1a8974d3a5",
-        "note": "accepted runtime source is 447bbbf (acceptance record above); ba710dc = 447bbbf + browser-artifact regeneration 51a0b37 (F2) + release tooling c579e24 + conductor source-level packaging fix (F1). Image-consumed runtime source differs from 447bbbf ONLY by the files[] whitelist additions in ba710dc; browser artifact bytes are not copied into either image",
+        "runtime_acceptance_record_sha256": "1febe4dbe0070fbf74e7f6707974ae0decd4174c3e351e78f97b5f1a8974d3a5",
+        "assembly_acceptance_record_sha256": "59bcf6862722fb94f009b50bcd84783a15968d7f90364790637e9e73a41e6d69",
+        "note": "merged rebuild-branch HEAD: accepted runtime 447bbbf + browser regeneration 51a0b37 (F2) + release tooling + packaging fix ba710dc (F1) + independently ACCEPTED production-profile assembly 66e0fa7/tree 64ad55eb779abae8ef8035c3d8a6c62c4d2056d8 + independently-accepted FLEET-DURABILITY-P1-1 boot-restore fix 49e12d8 (merge 973f25c). This build carries the assembled production profile AND the verified manifest-floor boot-restore fix; the daemon passes its own release gate for LIMITED_PUBLIC_TEST_V1 and boots restored past lapsed chain windows. Browser artifact bytes are not copied into either image",
     },
     "base_images": {
         "toolchain": "node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37",
@@ -101,9 +102,10 @@ manifest = {
     },
     "build": {
         "builder": "docker buildx v0.31.1-desktop.1 / buildkit v0.27.0 (Docker 29.2.0, containerd image store)",
-        "source_date_epoch": "1784907855",
-        "provenance": "mode=max (SLSA v0.2), verified: subjects match platform manifests; materials pin dockerfile frontend and both base images by digest; HIVERELAY_BLIND_SOURCE_REVISION build-arg present",
-        "reproducibility": "two consecutive clean builds per image; platform manifests byte-identical",
+        "source_date_epoch": 1785072458,
+        "source_date_epoch_note": "matches merged HEAD 973f25c commit timestamp used by build-image.sh and all four SLSA predicates",
+        "provenance": "mode=max (SLSA v0.2), verified: subjects match platform manifests; materials pin dockerfile frontend and both base images by digest; HIVERELAY_BLIND_SOURCE_REVISION build-arg present (merged source revision)",
+        "reproducibility": "two consecutive clean builds per image (BOTH rounds --no-cache: buildkit rewrite-timestamp only rewrites layers built in the same invocation; a fully cache-hit round exports stale wall-clock mtimes); platform manifests byte-identical",
         "build_script": f"{REL}/build/build-image.sh",
         "build_script_sha256": sha256_file(rel(f"{REL}/build/build-image.sh")),
         "build_logs": f"{REL}/build/logs/",

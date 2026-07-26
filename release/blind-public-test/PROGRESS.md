@@ -130,6 +130,49 @@ blind-edge files[] += forward-https-vnext.js). Verified via npm pack dry-run.
 - Lane evidence: assignments/release-and-appliances/evidence/release-artifacts-20260724t183139z.json
   (supersedes release-artifacts-20260724t181322z).
 
+## Window 7 (2026-07-26T13:15–13:45Z) — POST-TEARDOWN RECONSTRUCTION (973f25c)
+
+External actor destroyed the release worktree/branch (incident
+external-worktree-teardown-incident-20260726t130752z.json: commits 3088ee1,
+866fec3, a4ba363 and the signed manifest/phase-2/pin-history files lost).
+Worktree recreated at f72a733 + merge 973f25c (assembly 66e0fa7 +
+independently-accepted FLEET-DURABILITY-P1-1 boot-restore fix 49e12d8), branch
+codex/hiverelay-vnext-release-artifacts-rebuild-20260726. Windows 5-6 notes
+were lost with a4ba363; their substance is superseded by this window.
+
+- Source identity: commit 973f25c212553653b65811eacd28ed35b1b54124, tree
+  ebd504fa318a90f34fc52e9febb9385db606330d, SOURCE_DATE_EPOCH=1785072458;
+  lost a4ba363 tooling restored (--no-cache discipline, release-gate smoke,
+  generator fixes).
+- Rebuilds (BOTH rounds --no-cache): platform manifests byte-identical.
+  - blind-edge  index(build2) 79a4e8e735681497772c06f6c35544bf4d6d77afdd0ed9f06bc6c5b2ae564fe7
+    amd64 ae95c673f1df8de1d4a719b72fd36a140a12f3821f0ce7379376cadbc1331f57
+    arm64 291f1e01d181d3159c95bae5c461c33e8e71ec0967f6c6efe2868fd1f66743dc
+  - blind-daemon index(build2) 57b7c2b1645b2c728efd761904b40a838b2db6111b0e9957b081d800ccf98f9f
+    amd64 1903df25efbd10bd564a9029245f2812f0bc61cee43bfc36d6063f35186413b4
+    arm64 7e079cce9d8c0f8e2906772d1f7d181a2999fbd85a6577a96a97f4acb991afe9
+- CROSS-TEARDOWN REPRODUCIBILITY: edge payload /opt/hiverelay aggregate sha256
+  e1930f9c… identical between pre-teardown (d53d21b4, 5248c4e) and rebuilt
+  (79a4e8e7, 973f25c) images — byte-identical payload; only revision label /
+  created epoch differ by design.
+- Smoke: fail-closed both, CA roots 145/284, zero browser bytes, revision
+  label 973f25c; DAEMON_RELEASE_GATE_PASS LIMITED_PUBLIC_TEST_V1;
+  BOOT_RESTORE_PASS FLEET-DURABILITY-P1-1 (expired genesis+middle, intact
+  store, MAC-verified floor → restored head=seq2, READY, zero exclusions).
+- Browser artifact: unchanged (874afd4a…), deterministic ×2, --check passes,
+  absent from both images.
+- Scans: syft ×4 + trivy ×4 (fresh DB UpdatedAt 2026-07-26T07:38:45Z, db
+  sha256 05b65128…): zero relay-closure findings; NO_BLOCKING_FINDING.
+- Provenance: SLSA v0.2 subjects match, 973f25c revision present.
+- RECONSTRUCTED: artifact-manifest.json (sha256 a2dc6113…,
+  UNSIGNED-PENDING-CONDUCTOR-RESIGN) and pin-history.json (sha256 24f7ad96…;
+  entries 1-3 verbatim from signing/acceptance/phase-2 evidence records +
+  entry 4 PENDING-RESIGN + reconstruction_note citing the incident).
+- Compose/rollback/policy re-pinned; compose valid; rollback re-smoke-tested.
+- Lane evidence: assignments/release-and-appliances/evidence/release-artifacts-20260726t134316z.json
+
 ## Remaining
 
-- handoff to independent assurance (signing is the later gate)
+- conductor re-signs the reconstructed manifest + pin-history (separate step);
+  syd-1 recovery + dallas-1 patch with the fixed image per incident recovery
+  plan; PT-5-LIVE gates

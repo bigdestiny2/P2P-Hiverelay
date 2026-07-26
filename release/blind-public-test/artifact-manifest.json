@@ -1,17 +1,18 @@
 {
   "schema_version": 1,
   "manifest_id": "hiverelay-blind-public-test-artifact-manifest-v1",
-  "signature_status": "UNSIGNED-PENDING-INDEPENDENT-ASSURANCE",
-  "signature_note": "This manifest is NOT signed. Signing is a later gate after independent assurance accepts this exact artifact set (test-activation lease). Do not deploy from this file until the signed successor exists.",
+  "signature_status": "UNSIGNED-PENDING-CONDUCTOR-RESIGN",
+  "signature_note": "This manifest is NOT signed. It was RECONSTRUCTED after an external actor destroyed the release worktree and branch (incident assignments/programme-control/external-worktree-teardown-incident-20260726t130752z.json: commits 3088ee1/866fec3/a4ba363 and the signed manifest, phase-2 manifest and pin-history files lost from git). The conductor re-signs this reconstructed manifest as a separate step; pin-history.json is reconstructed with signature fields marked PENDING-RESIGN. Do not deploy from this file until the re-signed successor exists.",
   "release": "1.0.0-rc.1.public-test.1",
   "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
   "claim_boundary_detail": "no GA; no catalogue; no marketplace; no stable promotion; no documentation-complete claim; readiness stays zero",
   "source": {
     "repository": "https://github.com/bigdestiny2/p2p-hiverelay",
-    "commit": "ba710dc682a2cd0fa8a5bcc8a332e5a568eeb9ff",
-    "tree": "edfe1e64754c84a9e852a8ef177b573e739f7136",
-    "acceptance_record_sha256": "1febe4dbe0070fbf74e7f6707974ae0decd4174c3e351e78f97b5f1a8974d3a5",
-    "note": "accepted runtime source is 447bbbf (acceptance record above); ba710dc = 447bbbf + browser-artifact regeneration 51a0b37 (F2) + release tooling c579e24 + conductor source-level packaging fix (F1). Image-consumed runtime source differs from 447bbbf ONLY by the files[] whitelist additions in ba710dc; browser artifact bytes are not copied into either image"
+    "commit": "973f25c212553653b65811eacd28ed35b1b54124",
+    "tree": "ebd504fa318a90f34fc52e9febb9385db606330d",
+    "runtime_acceptance_record_sha256": "1febe4dbe0070fbf74e7f6707974ae0decd4174c3e351e78f97b5f1a8974d3a5",
+    "assembly_acceptance_record_sha256": "59bcf6862722fb94f009b50bcd84783a15968d7f90364790637e9e73a41e6d69",
+    "note": "merged rebuild-branch HEAD: accepted runtime 447bbbf + browser regeneration 51a0b37 (F2) + release tooling + packaging fix ba710dc (F1) + independently ACCEPTED production-profile assembly 66e0fa7/tree 64ad55eb779abae8ef8035c3d8a6c62c4d2056d8 + independently-accepted FLEET-DURABILITY-P1-1 boot-restore fix 49e12d8 (merge 973f25c). This build carries the assembled production profile AND the verified manifest-floor boot-restore fix; the daemon passes its own release gate for LIMITED_PUBLIC_TEST_V1 and boots restored past lapsed chain windows. Browser artifact bytes are not copied into either image"
   },
   "base_images": {
     "toolchain": "node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37",
@@ -21,11 +22,12 @@
   },
   "build": {
     "builder": "docker buildx v0.31.1-desktop.1 / buildkit v0.27.0 (Docker 29.2.0, containerd image store)",
-    "source_date_epoch": "1784907855",
-    "provenance": "mode=max (SLSA v0.2), verified: subjects match platform manifests; materials pin dockerfile frontend and both base images by digest; HIVERELAY_BLIND_SOURCE_REVISION build-arg present",
-    "reproducibility": "two consecutive clean builds per image; platform manifests byte-identical",
+    "source_date_epoch": 1785072458,
+    "source_date_epoch_note": "matches merged HEAD 973f25c commit timestamp used by build-image.sh and all four SLSA predicates",
+    "provenance": "mode=max (SLSA v0.2), verified: subjects match platform manifests; materials pin dockerfile frontend and both base images by digest; HIVERELAY_BLIND_SOURCE_REVISION build-arg present (merged source revision)",
+    "reproducibility": "two consecutive clean builds per image (BOTH rounds --no-cache: buildkit rewrite-timestamp only rewrites layers built in the same invocation; a fully cache-hit round exports stale wall-clock mtimes); platform manifests byte-identical",
     "build_script": "release/blind-public-test/build/build-image.sh",
-    "build_script_sha256": "sha256:908e09a4d6edc711dd2dd9bac9d558e6e48c6f3d8caff49d342462f252f389ad",
+    "build_script_sha256": "sha256:d637cadf5f714d01faf6f63ad96bb0a7f0d5f4ed5e18d333e59186829f96a8d4",
     "build_logs": "release/blind-public-test/build/logs/"
   },
   "images": [
@@ -34,45 +36,45 @@
       "image": "hiverelay/blind-edge",
       "version": "1.0.0-rc.1.public-test.1",
       "dockerfile": "Dockerfile.blind-edge",
-      "dockerfile_sha256": "sha256:d584fab93e945edce3f28ab37fb053f2965ada49c942f533f64fce02d8a9d14e",
-      "canonical_image_index_digest": "sha256:036617ad8bd986d6493eee756a7c84c1656d7ad1d7947b3c3d91b2076f11d2f3",
-      "reproducibility_build1_image_index_digest": "sha256:45e785677e91fbfa280421b1f3f34fbaaba1aa9cf2d8e4f40eaeb8a5feec2059",
+      "dockerfile_sha256": "sha256:cc7d579a07e97958fb72f94013f513821e5bd165e63d84f7b065296407109c29",
+      "canonical_image_index_digest": "sha256:79a4e8e735681497772c06f6c35544bf4d6d77afdd0ed9f06bc6c5b2ae564fe7",
+      "reproducibility_build1_image_index_digest": "sha256:ed20a5d9da90d6476b375fbcd797994b7849adc59bad4ebaf10f05a242b97ac2",
       "index_note": "image indexes differ between clean builds only in attestation-manifest entries (provenance build timestamps); platform manifests are byte-identical",
       "oci_archive_build2": "release/blind-public-test/oci-archives/blind-edge-1.0.0-rc.1.public-test.1-build2.oci.tar",
-      "oci_archive_build2_sha256": "sha256:43f20ffdb11b6804b31ee4fb0ec16a6ef983be47dd421b2e477499db74050e47",
-      "oci_archive_build1_sha256": "sha256:700f42844f56cbd6670ad620ea476e6d37ac577ba9e79ef474cd5955171a024c",
+      "oci_archive_build2_sha256": "sha256:e3afae96608518d662cce5597ff78c02fa075cb27bfb0095ae5ed74b9808b27b",
+      "oci_archive_build1_sha256": "sha256:e61e68b411802ef61c11f946ffa854731464d208439e0a7d9cb3ffea3d2c4e42",
       "platforms": [
         {
           "platform": "linux/amd64",
-          "manifest_digest": "sha256:609a328332f9482fd399ebff8e642970d136a4976d0e833a71533db30796cd9d",
-          "config_digest": "sha256:db00dab28b4e8bdfbb41e6ec2b4e45ef20a1aeafb107911aa0634e7c4fe51cf3",
-          "reproducibility_build1_manifest_digest": "sha256:609a328332f9482fd399ebff8e642970d136a4976d0e833a71533db30796cd9d",
+          "manifest_digest": "sha256:ae95c673f1df8de1d4a719b72fd36a140a12f3821f0ce7379376cadbc1331f57",
+          "config_digest": "sha256:06e50794d9f10dcb4b57228ef45ecc13f449affa80c4fcdb2d1c72b529684131",
+          "reproducibility_build1_manifest_digest": "sha256:ae95c673f1df8de1d4a719b72fd36a140a12f3821f0ce7379376cadbc1331f57",
           "reproducible": true,
-          "attestation_manifest_digest": "sha256:912da96d78a34325c182e1adf8754825b3ac682a2806e057a8a0480d8b335415",
+          "attestation_manifest_digest": "sha256:192c1d4080ace8cc2325008404302af39a54bd578b7b23df281d759176782465",
           "provenance_statement_file": "release/blind-public-test/provenance/edge-linux-amd64.slsa.json",
-          "provenance_statement_sha256": "sha256:588fe08ebd14a7196c86f70f98eff0dcaecf7af68c70b834fbc8eb6db2b6a2b6"
+          "provenance_statement_sha256": "sha256:0b9d75d6e530d40d8e2949dd2aebc7ef8ab1a7b255369023a83838f332d5f7f8"
         },
         {
           "platform": "linux/arm64",
-          "manifest_digest": "sha256:4ce8f78c9fb5da99678e7f7f8721d55cacb643271c5362a5d09aeab58f70a2db",
-          "config_digest": "sha256:4e93254c5c869d8603125a969b68098d6adc12e6a9bc87c7137a050b3db54361",
-          "reproducibility_build1_manifest_digest": "sha256:4ce8f78c9fb5da99678e7f7f8721d55cacb643271c5362a5d09aeab58f70a2db",
+          "manifest_digest": "sha256:291f1e01d181d3159c95bae5c461c33e8e71ec0967f6c6efe2868fd1f66743dc",
+          "config_digest": "sha256:01904975ddce5deb1fd7a334c3ab2158c3f9ef7c578eba5c0f49c5f517f6477b",
+          "reproducibility_build1_manifest_digest": "sha256:291f1e01d181d3159c95bae5c461c33e8e71ec0967f6c6efe2868fd1f66743dc",
           "reproducible": true,
-          "attestation_manifest_digest": "sha256:580c8c617ba81b988acd02bec76a1e92f9e8cb259da5ad0204196ef014713d54",
+          "attestation_manifest_digest": "sha256:fdc1528379c30654e000b3af6b2a6e4145d80deb44ea5a8fe464bb2910109eee",
           "provenance_statement_file": "release/blind-public-test/provenance/edge-linux-arm64.slsa.json",
-          "provenance_statement_sha256": "sha256:6ea150ec5232c205a849a2fb9c264ceded913e5001c57fc3fc81ef2b7cb6e4f3"
+          "provenance_statement_sha256": "sha256:40643eb019910b2b8f088541c106c935b57aea04c63754c1843ec988e4dae68b"
         }
       ],
       "sbom": {
         "linux/amd64": {
           "file": "release/blind-public-test/sbom/blind-edge-linux-amd64.spdx.json",
-          "sha256": "sha256:fbddb7be13266172fff9956ea6e046bd9c85362a7bbafb3fe6292859ece7857e",
+          "sha256": "sha256:6aeb7193dd0abf5f8ef6df7efca6eab8a158459432a54f10464d459882dd70f7",
           "format": "SPDX-2.3",
           "generator": "anchore/syft:v1.49.0@sha256:13b53ebabe3d215268c90cf8fb9b875f0183908245f376fd4b3a2cb69d21d484"
         },
         "linux/arm64": {
           "file": "release/blind-public-test/sbom/blind-edge-linux-arm64.spdx.json",
-          "sha256": "sha256:71d606352196445020e93b17c6534d23c035f4fdafa5d2bcc25f0e625c9a661e",
+          "sha256": "sha256:4aae7c56f1442163457765c3ad91aefbd105aa8733dd65ccadc552a860331015",
           "format": "SPDX-2.3",
           "generator": "anchore/syft:v1.49.0@sha256:13b53ebabe3d215268c90cf8fb9b875f0183908245f376fd4b3a2cb69d21d484"
         }
@@ -83,45 +85,45 @@
       "image": "hiverelay/blind-daemon",
       "version": "1.0.0-rc.1.public-test.1",
       "dockerfile": "Dockerfile.blind-daemon",
-      "dockerfile_sha256": "sha256:5cbdd2951de47f8e47c58900be3bd680ca1172a0dc9d2666c51fd0e0acfe0f08",
-      "canonical_image_index_digest": "sha256:91100a9e92fd84700bbe8217f02feea5edccc5868f2509837688da27f3259721",
-      "reproducibility_build1_image_index_digest": "sha256:2e2717603f0c8250a32179728a3905d46571091bea647e79ab82400b50d516e6",
+      "dockerfile_sha256": "sha256:6c96afeb73f8657cd6258a6ddac904419bb4c676d69f037d80fd69a6811185cb",
+      "canonical_image_index_digest": "sha256:57b7c2b1645b2c728efd761904b40a838b2db6111b0e9957b081d800ccf98f9f",
+      "reproducibility_build1_image_index_digest": "sha256:84e6e2d402928bfc09526778bab2a525952296905dab1f3502b202c42e794d17",
       "index_note": "image indexes differ between clean builds only in attestation-manifest entries (provenance build timestamps); platform manifests are byte-identical",
       "oci_archive_build2": "release/blind-public-test/oci-archives/blind-daemon-1.0.0-rc.1.public-test.1-build2.oci.tar",
-      "oci_archive_build2_sha256": "sha256:eb84758cbac2d314e17782e2b9f2d3a2fb0713e59ff5bc195bf1fdd3c253198f",
-      "oci_archive_build1_sha256": "sha256:73a8261674019b15e3d3b912d4be703119473801f6c777b32b31c0f51c5e97de",
+      "oci_archive_build2_sha256": "sha256:7f9bcdd0b805b2af3503cfec2a9ec187fcb3845e842e6c4c281def1965a27d47",
+      "oci_archive_build1_sha256": "sha256:4a330f1a7fe1dd4bc06662b46b4c2ec85c5c6b0e2dd51a8293b8338880098863",
       "platforms": [
         {
           "platform": "linux/amd64",
-          "manifest_digest": "sha256:ff43ddea0d7bc4385cbf16bb5d9f46f09c5967a9c7ce5fe6824e51e9d81ee6f2",
-          "config_digest": "sha256:15c415b631435d9a5a7a3acd5f20c85f3269d1971b37a2ff9efcaafd4d2873a4",
-          "reproducibility_build1_manifest_digest": "sha256:ff43ddea0d7bc4385cbf16bb5d9f46f09c5967a9c7ce5fe6824e51e9d81ee6f2",
+          "manifest_digest": "sha256:1903df25efbd10bd564a9029245f2812f0bc61cee43bfc36d6063f35186413b4",
+          "config_digest": "sha256:b65770ee94ee1797aadf4c7ed0921f4d81e8ea3134eddfc0dff1a7c8aa4e5227",
+          "reproducibility_build1_manifest_digest": "sha256:1903df25efbd10bd564a9029245f2812f0bc61cee43bfc36d6063f35186413b4",
           "reproducible": true,
-          "attestation_manifest_digest": "sha256:3716493b8d5af4d3a9e8b72eaf80cd8e7f676d2294bc24cb199505a59c5f0631",
+          "attestation_manifest_digest": "sha256:3b224527053a2c3c8e046709a220d9f4c5d9850cfcfebb86aa9d137db67b484d",
           "provenance_statement_file": "release/blind-public-test/provenance/daemon-linux-amd64.slsa.json",
-          "provenance_statement_sha256": "sha256:57f8909ea1e64164f4a15206005991932b80a634ffafbdc0684b11ede5f664bb"
+          "provenance_statement_sha256": "sha256:5a5f8d6e47eacf44ebabc60a0a9dddeb2b536c8e4cc84f2dba0ac0d7dc2ab4f3"
         },
         {
           "platform": "linux/arm64",
-          "manifest_digest": "sha256:62ba17e1821c1c373d083ea0cf5da7021e95c72c7978ae108783fa9657b29db6",
-          "config_digest": "sha256:fcdca300333ec60a06801dfbb47c3893b87c4a95c4ba665f709d079db6de0c54",
-          "reproducibility_build1_manifest_digest": "sha256:62ba17e1821c1c373d083ea0cf5da7021e95c72c7978ae108783fa9657b29db6",
+          "manifest_digest": "sha256:7e079cce9d8c0f8e2906772d1f7d181a2999fbd85a6577a96a97f4acb991afe9",
+          "config_digest": "sha256:479f42035ccfe8539e20f65057c30ce1ba56c1a4bfce4cfa51ab5d21155af8c2",
+          "reproducibility_build1_manifest_digest": "sha256:7e079cce9d8c0f8e2906772d1f7d181a2999fbd85a6577a96a97f4acb991afe9",
           "reproducible": true,
-          "attestation_manifest_digest": "sha256:c5009afd3c495b31fa3d24800f6fde620ff0dbb2cdd1b85fde09c67dbf877d8c",
+          "attestation_manifest_digest": "sha256:b861e1fd7458e3eef7d2d0f7178e8be7fbfbb291cb1948024ecb520d75c61b85",
           "provenance_statement_file": "release/blind-public-test/provenance/daemon-linux-arm64.slsa.json",
-          "provenance_statement_sha256": "sha256:1e65b9509e2386f34cbb0a3058a07c822fde35b500c1053580e9fd02d88215b6"
+          "provenance_statement_sha256": "sha256:ad2f42ddd2b8b80163cabc9874c3508634bfb877687394e7c5c923e65326b539"
         }
       ],
       "sbom": {
         "linux/amd64": {
           "file": "release/blind-public-test/sbom/blind-daemon-linux-amd64.spdx.json",
-          "sha256": "sha256:229e8a0dd460b6cd869d79c38e6ac436895e14d1de75d7544503b1019492804f",
+          "sha256": "sha256:710ba46b3095c05ef55745dad857069ca2b32bdc374fea77d07b99bfd94e0004",
           "format": "SPDX-2.3",
           "generator": "anchore/syft:v1.49.0@sha256:13b53ebabe3d215268c90cf8fb9b875f0183908245f376fd4b3a2cb69d21d484"
         },
         "linux/arm64": {
           "file": "release/blind-public-test/sbom/blind-daemon-linux-arm64.spdx.json",
-          "sha256": "sha256:0300e7615b64e3654ca55ede6a6938896a023b788ee67800727e2db49cc5087f",
+          "sha256": "sha256:cedf744edada1b478fdcab4515aa8c651ddfd623050d8fc661f414987e67bbbf",
           "format": "SPDX-2.3",
           "generator": "anchore/syft:v1.49.0@sha256:13b53ebabe3d215268c90cf8fb9b875f0183908245f376fd4b3a2cb69d21d484"
         }
@@ -141,20 +143,20 @@
   },
   "compose_overlay": {
     "file": "docker-compose.blind-public-test.yml",
-    "sha256": "sha256:3a3c75fd4c7c45d7734a42ba95fd4cebb7623f2ee5ee7251041140e06312c628",
+    "sha256": "sha256:1d7df29e560959d4a40b7c3e337d430af8430ce3ba98ef8d2f2c446e544963e2",
     "properties": "digest-pinned images; host TCP 443 mapped directly to Edge TLS 9100 (no reverse proxy); daemon network_mode none on private Unix-socket volume; mem/cpu/pids/ulimit limits; compose config validated"
   },
   "vulnerability": {
     "policy": "release/blind-public-test/security/vulnerability-policy.json",
-    "policy_sha256": "sha256:f912063fb7f0e26b9395f1d342b1cf39e037702a9743873f71bbc49ec8267de6",
+    "policy_sha256": "sha256:5351886a63c943b0b20f5e806b03f3fa17009159c97730d34977ec6d155cd41d",
     "disposition": "release/blind-public-test/security/scan-disposition.json",
-    "disposition_sha256": "sha256:d9e2861088784ab003da82ad513e917452763f51dc7694b2041b700ed5c493a8",
+    "disposition_sha256": "sha256:d2fc6e438c4867e501cb24e41ff8be6aae637ec62fe355e45002df4204c1aa6e",
     "gate_result": "NO_BLOCKING_FINDING (report-only gate); zero findings in the relay closure /opt/hiverelay"
   },
   "rollback": {
     "plan": "release/blind-public-test/rollback/README.md",
     "script": "release/blind-public-test/rollback/rollback-public-test.sh",
-    "script_sha256": "sha256:30f55268862b4f34720affc8a169e28365219b0e67daf1ceea0eae3b92100efa",
+    "script_sha256": "sha256:20e877b068a96766ded45be0f0acb77b3a53ffaebdaa2e592089c75a060a3cab",
     "summary": "stops/removes only the sidecar Edge listener + daemon + volume-init containers of project hiverelay-blind-public-test; retains all named-volume roots; leaves fleet and T1 untouched"
   },
   "disclosed_defects_and_remediation": {

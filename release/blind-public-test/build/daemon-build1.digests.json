@@ -1,15 +1,15 @@
 {
   "archive": "blind-daemon-1.0.0-rc.1.public-test.1-build1.oci.tar",
-  "top_index_digest": "sha256:363b548cf1ea7bbd9327024b2f185057e3067317da263f6cd092183f1d9c6ca6",
-  "image_index_digest": "sha256:2e2717603f0c8250a32179728a3905d46571091bea647e79ab82400b50d516e6",
+  "top_index_digest": "sha256:96746805b9a25f00471b3c254afb70e64f53e19df420e85204b315a70f598e46",
+  "image_index_digest": "sha256:84e6e2d402928bfc09526778bab2a525952296905dab1f3502b202c42e794d17",
   "ref_annotations": {
     "io.containerd.image.name": "docker.io/hiverelay/blind-daemon:1.0.0-rc.1.public-test.1",
-    "org.opencontainers.image.created": "2026-07-24T18:22:51Z",
+    "org.opencontainers.image.created": "2026-07-26T13:27:38Z",
     "org.opencontainers.image.ref.name": "1.0.0-rc.1.public-test.1"
   },
   "platform_manifests": [
     {
-      "digest": "sha256:ff43ddea0d7bc4385cbf16bb5d9f46f09c5967a9c7ce5fe6824e51e9d81ee6f2",
+      "digest": "sha256:1903df25efbd10bd564a9029245f2812f0bc61cee43bfc36d6063f35186413b4",
       "mediaType": "application/vnd.oci.image.manifest.v1+json",
       "size": 2615,
       "platform": {
@@ -18,22 +18,22 @@
       },
       "annotations": null,
       "subject_digest": null,
-      "config_digest": "sha256:15c415b631435d9a5a7a3acd5f20c85f3269d1971b37a2ff9efcaafd4d2873a4",
+      "config_digest": "sha256:b65770ee94ee1797aadf4c7ed0921f4d81e8ea3134eddfc0dff1a7c8aa4e5227",
       "layer_digests": [
         "sha256:68629629b516c3cd6f5e71ffbe18e32afb1ae5b4926c92d058c0f11ef1fd58a3",
         "sha256:8a8f99d8b62deb507fbd5795068231986ca9788dc403c54373a862cbbdc1090a",
         "sha256:3de69d675a4de6c71e2311f1e547de804e6e68f051a0b9e17e6283d500894468",
         "sha256:6c81c36100ac3e6b034b455564d4455ecaa854542bc46cfb4a0bbca4817a6dcd",
         "sha256:c08735c7f0f9602a107c9b3b786ca0e9d07d35af36c3434a8c3fd9328aa4dd16",
-        "sha256:93124cc4975131a575848507fefa2bb103dd0ea7d20a7ac6a851614e524b0a16",
+        "sha256:330176a555edd6d01a11fab3a7331980aada9a2700df8f35478d6a7c3a0c75ac",
         "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
-        "sha256:f34dfa3090faa4367104b1b0cc48ab7934e578b3e9bbd10e578e1cb0122b4bf6",
-        "sha256:e39446c2d23063e552910e7aa811b1ec369ccbf69f7465d7b0013ab6ff9cda3f",
-        "sha256:854bd8f144ae2133a046bde1b5cf2eb51ebc995da03f17861039b97023c0b0ad"
+        "sha256:4231dae16e4b647bff01edbe3a3cfb4feef1bdcd90b0387c3078fe04b7f2474a",
+        "sha256:540da46ff5cf161ee4380735edcac3b98767165885c7d4477e051af068626f6f",
+        "sha256:fc604df406583d9cf605fac6fc42769efd2f4abe01fe4b24d7959e9af04fa11d"
       ]
     },
     {
-      "digest": "sha256:62ba17e1821c1c373d083ea0cf5da7021e95c72c7978ae108783fa9657b29db6",
+      "digest": "sha256:7e079cce9d8c0f8e2906772d1f7d181a2999fbd85a6577a96a97f4acb991afe9",
       "mediaType": "application/vnd.oci.image.manifest.v1+json",
       "size": 2615,
       "platform": {
@@ -42,24 +42,24 @@
       },
       "annotations": null,
       "subject_digest": null,
-      "config_digest": "sha256:fcdca300333ec60a06801dfbb47c3893b87c4a95c4ba665f709d079db6de0c54",
+      "config_digest": "sha256:479f42035ccfe8539e20f65057c30ce1ba56c1a4bfce4cfa51ab5d21155af8c2",
       "layer_digests": [
         "sha256:74f1dcfcc9c80045f6f6394ffcfc261cb19d0c71b97e964aec3d4abf4e0f7009",
         "sha256:0e832fa8743efe71bf8a2524827700e16ac83b74942073675f4c8f267b866306",
         "sha256:bbce3da877fb05b8743f5ab454ae860f44f2de31c26fee07de6573e328084d7c",
         "sha256:4bc834702693a20ef8e6f2b58d80b8e54faf0094e6377ad8464ed4ebb7715ff1",
         "sha256:1bc538ee50930e70026931c3ae28ad62b53277c37a9bc8c13a816f10e155ca04",
-        "sha256:78c111eaa0f47401f7a0fa7dbdfefbc54a9a39497be94afbc04ac78ff971c19b",
+        "sha256:3553ffcc007dbf8a10f30e5701c50cffc3f4bfae2cbb62763f363402764020d0",
         "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
-        "sha256:c7d5ed346211b52bd80308c6be084585e544b3ea6e1309802633598ad8386569",
-        "sha256:47d69d6c5e17ee76f65e120b8d556a9ae0001d96d9a7607debd7b9e1f6f76abc",
-        "sha256:854bd8f144ae2133a046bde1b5cf2eb51ebc995da03f17861039b97023c0b0ad"
+        "sha256:0376aa31d2ddeb4505a60f42e9e431b84f6e0b730780b1b1ea30be4ad8423af7",
+        "sha256:38481e383988cac56705e21ec6e38b4ee95f2473a08b85efb50a4d36136f5433",
+        "sha256:fc604df406583d9cf605fac6fc42769efd2f4abe01fe4b24d7959e9af04fa11d"
       ]
     }
   ],
   "attestation_manifests": [
     {
-      "digest": "sha256:823fff9cbd6b076546b1052e04ae08b2cb827b7374b01d09fea370c23afa62ff",
+      "digest": "sha256:c94d4d2c8039695242cdc2d06f996babdaf71a11312430015d65ba4182f1dc7b",
       "mediaType": "application/vnd.oci.image.manifest.v1+json",
       "size": 567,
       "platform": {
@@ -67,14 +67,14 @@
         "os": "unknown"
       },
       "annotations": {
-        "vnd.docker.reference.digest": "sha256:ff43ddea0d7bc4385cbf16bb5d9f46f09c5967a9c7ce5fe6824e51e9d81ee6f2",
+        "vnd.docker.reference.digest": "sha256:1903df25efbd10bd564a9029245f2812f0bc61cee43bfc36d6063f35186413b4",
         "vnd.docker.reference.type": "attestation-manifest"
       },
       "subject_digest": null,
-      "config_digest": "sha256:c8318e1000d7c1907c649881eccdd311e7626efd437fa659421b19023a59a778"
+      "config_digest": "sha256:b0c6723e1a34e17b4219a7ae4c2d4409561b35a6bd8120cd3c45d4f504c71c8c"
     },
     {
-      "digest": "sha256:9705689e30742faf27835bd4d58869fad4b48808bd5bead6ca3e0306a51ff36b",
+      "digest": "sha256:b8e19cea757168839faff9c389d9e0108f146813ea46262bb1b2159d5e3788af",
       "mediaType": "application/vnd.oci.image.manifest.v1+json",
       "size": 567,
       "platform": {
@@ -82,11 +82,11 @@
         "os": "unknown"
       },
       "annotations": {
-        "vnd.docker.reference.digest": "sha256:62ba17e1821c1c373d083ea0cf5da7021e95c72c7978ae108783fa9657b29db6",
+        "vnd.docker.reference.digest": "sha256:7e079cce9d8c0f8e2906772d1f7d181a2999fbd85a6577a96a97f4acb991afe9",
         "vnd.docker.reference.type": "attestation-manifest"
       },
       "subject_digest": null,
-      "config_digest": "sha256:4e1fbce8d2e5fc38193b238159e9a21618b64adaba436bca34d3938aa6420ef5"
+      "config_digest": "sha256:fbd81042016bedb546c2d36427543f9ed82b6af91a472849d32567e546fd8089"
     }
   ]
 }

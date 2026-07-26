@@ -1,18 +1,12 @@
---- edge fail-closed (expect config error, NOT module error) ---
+--- edge fail-closed ---
 file:///opt/hiverelay/edge/node_modules/@hiverelay/blind-edge/cli.js:8
     throw new Error(`${name} is required from the signed launch topology as an unsigned integer`)
 --- daemon fail-closed ---
 [blind-daemon] startup failed BLIND_BOOTSTRAP_CONFIG_INVALID: HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH must be the exact 32-byte signed topology hash in hex
 --- CA roots edge ---
-default: 145 system: 284 SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
---- browser bytes edge/daemon (expect 0 0) ---
+default: 145 system: 284
+--- browser bytes (expect 0 0) ---
 0
 0
---- closure files present in packed install (F1 regression gate) ---
-/opt/hiverelay/edge/node_modules/@hiverelay/blind-edge/forward-https-vnext.js
-/opt/hiverelay/edge/node_modules/@hiverelay/blind-ipc/private-ipc-v3-contract.js
-/opt/hiverelay/edge/node_modules/@hiverelay/blind-ipc/private-ipc-v4-contract.js
-negative
-positive
-/opt/hiverelay/daemon/node_modules/@hiverelay/blind-ipc/private-ipc-v3-contract.js
-/opt/hiverelay/daemon/node_modules/@hiverelay/blind-daemon/forward-https-runtime-vnext.js
+--- revision label ---
+973f25c212553653b65811eacd28ed35b1b54124

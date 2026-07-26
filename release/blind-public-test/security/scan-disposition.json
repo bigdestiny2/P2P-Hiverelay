@@ -2,24 +2,24 @@
   "schema_version": 1,
   "disposition_id": "hiverelay-blind-public-test-scan-disposition-20260724",
   "policy": "release/blind-public-test/security/vulnerability-policy.json",
-  "evaluated_at": "2026-07-24T19:55Z",
+  "evaluated_at": "2026-07-26T13:45Z",
   "scanner": {
     "image": "aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f",
     "version": "0.72.0",
     "db": {
       "repository_used": "mirror.gcr.io/aquasec/trivy-db:2",
       "schema_version": 2,
-      "db_updated_at": "2026-07-24T13:17:21.111371Z",
-      "db_downloaded_at": "2026-07-24T18:30:37.384096669Z",
-      "db_file_sha256": "c1dfc5141623454c7c578aa26651028fb3ee1f32962f0712c721d8c6b5fab904",
+      "db_updated_at": "2026-07-26T07:38:45.384765931Z",
+      "db_downloaded_at": "2026-07-26T13:41:44.464145055Z",
+      "db_file_sha256": "05b65128e1b932ac35d82d4783022b41f300347484b3709450bee6f4b3549563",
       "ghcr_reference_digest_observed": "ghcr.io/aquasecurity/trivy-db:2@sha256:1fbb72d41752bad0028c6564d64ccd61a48ee085f60e8290f03c88769292b36b"
     }
   },
   "reports": {
-    "trivy-blind-edge-linux-amd64.json": "sha256:3159dede79380bdf696378fc7158a4a9a9ab3e9f52a1b0f91e2db7eedc4d6e0e",
-    "trivy-blind-edge-linux-arm64.json": "sha256:aa8a24cc076bf09651d481688200b4703752a712eb3b0fb4d1839b3e59ec47e8",
-    "trivy-blind-daemon-linux-amd64.json": "sha256:d7b78739765117ddf5455e15e079271835ac84169fdfb0c9e30c5b561ce451bf",
-    "trivy-blind-daemon-linux-arm64.json": "sha256:c31c3068d4a4e135cb9098a85f317e6faf0a39d76e97f11881d70a35e4a223a6"
+    "trivy-blind-edge-linux-amd64.json": "sha256:ebc936a34993e294b062e3998b33ebba2b97564fdf160a217aa35760eef46186",
+    "trivy-blind-edge-linux-arm64.json": "sha256:53244a88450ae78536dc1d14c19f1ceea0a4fb02dd8a69185af2e2247bc78a79",
+    "trivy-blind-daemon-linux-amd64.json": "sha256:0974884315620ad13d2fcf844a93fb4452c2bf9fefc2b99e16b8996e0500a8e6",
+    "trivy-blind-daemon-linux-arm64.json": "sha256:9822e18a339d326b7618a1af7ee3ea3ec3a72c04d3ff73eb1c875f9c1c642c6f"
   },
   "finding_summary_per_image_per_platform": {
     "lang-pkgs": {
@@ -72,5 +72,5 @@
     }
   ],
   "gate_result": "NO_BLOCKING_FINDING under vulnerability-policy.json v1; report-only gate satisfied for the readiness-zero LIVE_PUBLIC_TEST_ONLY artifact set. Independent assurance must re-verify before any test-activation lease is exercised.",
-  "images_rebuilt_from": "ba710dc682a2cd0fa8a5bcc8a332e5a568eeb9ff (F1 source-level files[] fix; Dockerfile workaround removed)"
+  "images_rebuilt_from": "973f25c212553653b65811eacd28ed35b1b54124 (post-teardown rebuild: assembly 66e0fa7 + FLEET-DURABILITY-P1-1 boot-restore fix 49e12d8)"
 }

@@ -5,8 +5,11 @@
 # rewritten timestamps for reproducible platform manifests.
 #
 # Usage: build-image.sh <edge|daemon> <round> [--no-cache]
-#   round 1|2  — output archive/log are suffixed with the round; round 2 is the
-#                reproducibility check and MUST be run with --no-cache.
+#   round 1|2  — output archive/log are suffixed with the round.
+#   RELEASE DISCIPLINE: run BOTH rounds with --no-cache. buildkit's
+#   rewrite-timestamp only rewrites layers built in the same invocation; a
+#   fully cache-hit round exports stale wall-clock mtimes and breaks
+#   platform-manifest equality (observed 2026-07-25 on cache-warm edge round 1).
 set -euo pipefail
 
 COMPONENT="${1:?edge|daemon}"
@@ -14,10 +17,10 @@ ROUND="${2:?round number}"
 NOCACHE="${3:-}"
 
 RELEASE_VERSION="1.0.0-rc.1.public-test.1"
-SOURCE_REVISION="ba710dc682a2cd0fa8a5bcc8a332e5a568eeb9ff"
-SOURCE_TREE="edfe1e64754c84a9e852a8ef177b573e739f7136"
-# git show -s --format=%ct ba710dc682a2cd0fa8a5bcc8a332e5a568eeb9ff
-SOURCE_DATE_EPOCH="1784917371"
+SOURCE_REVISION="973f25c212553653b65811eacd28ed35b1b54124"
+SOURCE_TREE="ebd504fa318a90f34fc52e9febb9385db606330d"
+# git show -s --format=%ct 973f25c212553653b65811eacd28ed35b1b54124
+SOURCE_DATE_EPOCH="1785072458"
 IMAGE_NAME="hiverelay/blind-${COMPONENT}"
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"

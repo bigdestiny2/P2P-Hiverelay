@@ -8,8 +8,8 @@ set -euo pipefail
 PROJECT="hiverelay-blind-public-test"
 REMOVE_IMAGES=0
 T1_PATH=""
-EDGE_IMAGE="hiverelay/blind-edge@sha256:036617ad8bd986d6493eee756a7c84c1656d7ad1d7947b3c3d91b2076f11d2f3"
-DAEMON_IMAGE="hiverelay/blind-daemon@sha256:91100a9e92fd84700bbe8217f02feea5edccc5868f2509837688da27f3259721"
+EDGE_IMAGE="hiverelay/blind-edge@sha256:79a4e8e735681497772c06f6c35544bf4d6d77afdd0ed9f06bc6c5b2ae564fe7"
+DAEMON_IMAGE="hiverelay/blind-daemon@sha256:57b7c2b1645b2c728efd761904b40a838b2db6111b0e9957b081d800ccf98f9f"
 T1_SHA256="bfcc12664be108cdb13b1ca83f088a87fdcb03efa598377aca1c1d34a0f36064"
 
 while [ $# -gt 0 ]; do
