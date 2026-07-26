@@ -47,7 +47,7 @@ function buildPrivacyTransports ({ relay, config, custodyEnabled }) {
 
   const torCfg = (config && config.tor) || {}
   const supports = ['capabilities.get', 'catalog.read', 'replication.sync']
-  if (hasRunningService(relay, 'notify')) supports.push('notify.send')
+  if (hasRunningService(relay, 'notify') && notifyEgressLive(relay)) supports.push('notify.send')
   if (hasRunningService(relay, 'outboxlog')) supports.push('outbox.wake', 'outbox.read')
   if (custodyEnabled) supports.push('custody.intent', 'custody.commit', 'custody.status', 'custody.proof.challenge')
   if (relay && relay._publishProtocol) supports.push('seed.publish')
@@ -213,7 +213,7 @@ export function buildCapabilityDoc (opts = {}) {
     features.push(CIRCUIT_LIMITS_PROFILE_FEATURE)
   }
   if (relay && typeof relay.createAccountingReceipt === 'function') features.push('accounting-receipts')
-  if (servicesEnabled && hasRunningService(relay, 'notify')) features.push('notify-v1')
+  if (servicesEnabled && hasRunningService(relay, 'notify') && notifyEgressLive(relay)) features.push('notify-v1')
   if (servicesEnabled && hasRunningService(relay, 'outboxlog')) features.push('outboxlog-v1')
   features.push('capability-doc') // we're advertising this doc, so always set
   // Revocability — this build understands and enforces the v0.8 seed-request
@@ -466,23 +466,38 @@ function buildServicesProtocolProfile (relay, servicesEnabled) {
   if (!servicesEnabled || !relay || !relay.serviceRegistry || !relay.serviceRegistry.services) return null
   const services = relay.serviceRegistry.services
   const profile = {}
-  if (hasRunningService(relay, 'notify')) {
+  // Gated on egress, not on liveness — same condition as the `notify-v1`
+  // feature flag, so `features[]` and this profile can never disagree about
+  // whether this relay can push.
+  if (hasRunningService(relay, 'notify') && notifyEgressLive(relay)) {
+    // Driven from the service's own limits() rather than retyped here; the
+    // literals below are fallbacks for a provider that predates them. This
+    // block used to hardcode all of it, which is how it came to advertise
+    // capabilities the running service did not have.
+    const notifyLimits = serviceLimits(services.get('notify'))
     profile.notify = {
-      version: '0.1.0',
-      providers: ['runtime', 'apns', 'fcm', 'webpush'],
-      credential_modes: ['runtime-owned', 'app-owned'],
-      modes: ['direct', 'watch', 'presence-fallback'],
+      version: serviceVersion(services.get('notify')) || '0.1.0',
+      providers: notifyLimits.providers || ['runtime', 'apns', 'fcm', 'webpush'],
+      credential_modes: notifyLimits.credentialModes || ['runtime-owned', 'app-owned'],
+      modes: notifyLimits.modes || ['direct', 'watch', 'presence-fallback'],
       payload: {
-        max_ciphertext_bytes: 3072,
+        max_ciphertext_bytes: notifyLimits.maxPayloadBytes || 3072,
         plaintext_allowed: false,
-        privacy_profiles: ['generic', 'local-template']
+        privacy_profiles: notifyLimits.privacyProfiles || ['generic', 'local-template']
       },
       limits: {
-        max_ttl_seconds: 604800,
-        max_devices_per_user_app: 32,
-        max_watches_per_receive_cap: 128,
-        default_channel_per_hour: 30
-      }
+        // `max_devices_per_user_app` was advertised here but never enforced
+        // anywhere — `register-device` has no such cap. Removed rather than
+        // replaced with a number nobody checks.
+        max_ttl_seconds: notifyLimits.maxTtlSeconds || 604800,
+        max_watches_per_receive_cap: notifyLimits.maxWatchesPerReceiveCap || 128,
+        max_channels_per_receive_cap: notifyLimits.maxChannelsPerReceiveCap || 32,
+        default_channel_per_hour: notifyLimits.defaultChannelPerHour || 30
+      },
+      // `live` is the honesty signal peers route on. The adapter kind stays out
+      // of the public doc — it is operator infrastructure detail, and it is
+      // available auth-gated via the notify production-gates route.
+      egress: { live: true }
     }
   }
   if (hasRunningService(relay, 'outboxlog')) {
@@ -637,6 +652,40 @@ function hasRunningService (relay, name) {
 function serviceEntry (relay, name) {
   const services = relay && relay.serviceRegistry && relay.serviceRegistry.services
   return services && typeof services.get === 'function' ? services.get(name) : null
+}
+
+/**
+ * Read a service provider's self-declared limits, duck-typed and fail-soft.
+ *
+ * Registry entries are not uniform — some tests and some providers register a
+ * bare object with no `provider` key and no `limits()`. Mirrors the `safeLimits`
+ * helper in api-notify.js: never throw while building the doc.
+ */
+function serviceLimits (entry) {
+  if (!entry) return {}
+  const provider = entry.provider || entry
+  if (!provider || typeof provider.limits !== 'function') return {}
+  try {
+    const limits = provider.limits()
+    return limits && typeof limits === 'object' ? limits : {}
+  } catch (_) {
+    return {}
+  }
+}
+
+/**
+ * Can this relay actually deliver a push?
+ *
+ * The notify service running is not the same thing as notify working: until an
+ * operator configures `config.notify.push`, the service holds an in-memory stub
+ * that accepts every send and delivers nothing. Advertising `notify-v1` in that
+ * state tells peers to route wakes into a black hole, so the doc gates on the
+ * provider's own `egress.live` tag instead of on service liveness.
+ */
+function notifyEgressLive (relay) {
+  if (!relay || !relay.serviceRegistry || !relay.serviceRegistry.services) return false
+  const egress = serviceLimits(relay.serviceRegistry.services.get('notify')).egress
+  return !!(egress && egress.live === true)
 }
 
 function serviceVersion (entry) {
