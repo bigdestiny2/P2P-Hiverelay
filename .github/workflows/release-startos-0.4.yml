@@ -9,7 +9,7 @@ name: Release StartOS 0.4 package
 # so a failure in the new 0.4 build can never break the live 0.3 release + fleet
 # pipeline. The two package channels coexist during the transition.
 #
-# Signing: with STARTOS_DEV_KEY set, the package is signed and registry-
+# Signing: with STARTOS_DEVELOPER_KEY_PEM set, the package is signed and registry-
 # publishable. Without it, the build falls back to an ephemeral key — fine for a
 # sideloadable GitHub Release artifact, NOT for registry publication. The
 # registry/S3 marketplace publish (Start9's reusable release.yml, which needs a
@@ -48,16 +48,16 @@ jobs:
       - name: Configure StartOS developer key
         working-directory: startos-0.4
         env:
-          STARTOS_DEV_KEY: ${{ secrets.STARTOS_DEV_KEY }}
+          STARTOS_DEVELOPER_KEY_PEM: ${{ secrets.STARTOS_DEVELOPER_KEY_PEM }}
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.startos"
-          if [ -n "${STARTOS_DEV_KEY:-}" ]; then
-            printf '%s' "$STARTOS_DEV_KEY" > "$HOME/.startos/developer.key.pem"
-            echo "Using STARTOS_DEV_KEY — signed, registry-publishable package."
+          if [ -n "${STARTOS_DEVELOPER_KEY_PEM:-}" ]; then
+            printf '%s' "$STARTOS_DEVELOPER_KEY_PEM" > "$HOME/.startos/developer.key.pem"
+            echo "Using the configured StartOS developer key — signed, registry-publishable package."
           else
             start-cli init-key || start-cli init
-            echo "::warning title=Ephemeral StartOS key::STARTOS_DEV_KEY is not set; built with an ephemeral key (sideloadable artifact only, not registry-publishable). Add the STARTOS_DEV_KEY secret for a signed package."
+            echo "::warning title=Ephemeral StartOS key::STARTOS_DEVELOPER_KEY_PEM is not set; built with an ephemeral key (sideloadable artifact only, not registry-publishable). Add the STARTOS_DEVELOPER_KEY_PEM secret for a signed package."
           fi
           chmod 600 "$HOME/.startos/developer.key.pem"
           mkdir -p .startos
@@ -69,7 +69,8 @@ jobs:
           set -euo pipefail
           npm ci
           make
-          ls -1 *.s9pk
+          test -f blindspark.s9pk
+          start-cli s9pk verify blindspark.s9pk
           s9pk_sha="$(sha256sum blindspark.s9pk | cut -d ' ' -f 1)"
           if ! [[ "$s9pk_sha" =~ ^[a-f0-9]{64}$ ]]; then
             echo "StartOS 0.4 package SHA-256 is malformed." >&2
