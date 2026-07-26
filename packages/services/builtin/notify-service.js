@@ -30,6 +30,21 @@ export const NOTIFY_PROVIDERS = Object.freeze([
   'webpush'
 ])
 
+// Advertised in the capability doc and enforced by `bind-provider` / the cap
+// validators. Exported so the doc reads the same constant the service checks —
+// previously both lists were retyped as literals in capability-doc.js and could
+// drift apart silently.
+export const NOTIFY_CREDENTIAL_MODES = Object.freeze([
+  'runtime-owned',
+  'app-owned'
+])
+
+export const NOTIFY_MODES = Object.freeze([
+  'direct',
+  'watch',
+  'presence-fallback'
+])
+
 const HEX_32 = /^[0-9a-f]{64}$/i
 const HEX_16 = /^[0-9a-f]{32}$/i
 const HEX_SIG = /^[0-9a-f]{128}$/i
@@ -40,6 +55,8 @@ const DEFAULT_EVENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const DEFAULT_MAX_EVENTS = 10000
 const DEFAULT_MAX_WATCHES = 128
 const DEFAULT_PERSIST_FLUSH_MS = 250
+const DEFAULT_RECEIVE_CAP_QUOTA = Object.freeze({ perHour: 30, burst: 5, maxTtlSeconds: 86400, maxUrgency: 'normal' })
+const DEFAULT_MAX_CHANNELS_PER_RECEIVE_CAP = 32
 const DEFAULT_ABUSE_LIMITS = Object.freeze({
   app: { perHour: 10000, burst: 1000 },
   sender: { perHour: 1000, burst: 100 },
@@ -56,7 +73,9 @@ const URGENCY_RANK = Object.freeze({
 export class NotifyService extends ServiceProvider {
   constructor (opts = {}) {
     super()
-    this.provider = opts.provider || createMemoryPushProvider(opts.providerResult)
+    this.provider = normalizePushProvider(opts.provider) || createMemoryPushProvider(opts.providerResult)
+    // An explicitly injected provider is never clobbered by config in start().
+    this._providerInjected = !!opts.provider
     this.keyPair = opts.keyPair || null
     this.clock = typeof opts.clock === 'function' ? opts.clock : () => Date.now()
     this.maxPayloadBytes = positiveInteger(opts.maxPayloadBytes, DEFAULT_MAX_PAYLOAD_BYTES)
@@ -236,6 +255,7 @@ export class NotifyService extends ServiceProvider {
     if (!this.keyPair) this.keyPair = extractRelayKeyPair(this.node)
     const notifyConfig = objectOr(objectOr(context && context.config, {}).notify, {})
     if (notifyConfig.abuseLimits) this.abuseLimits = normalizeAbuseLimits(notifyConfig.abuseLimits, this.abuseLimits)
+    await this._resolvePushProvider(notifyConfig.push)
     if (!this.persistence) this.persistence = await this._createDefaultPersistence(context)
     await this._loadState()
   }
@@ -261,7 +281,7 @@ export class NotifyService extends ServiceProvider {
     if (params.audience) this._requireAudience(params.audience)
     if (!NOTIFY_PROVIDERS.includes(params.provider)) throw fail('PROVIDER_UNSUPPORTED', 'unsupported provider')
     if (params.mode !== 'runtimePush' && params.mode !== 'standalonePush') throw fail('MODE_UNSUPPORTED', 'unsupported provider binding mode')
-    if (params.credentialMode !== 'runtime-owned' && params.credentialMode !== 'app-owned') throw fail('CREDENTIAL_MODE_UNSUPPORTED', 'unsupported credential mode')
+    if (!NOTIFY_CREDENTIAL_MODES.includes(params.credentialMode)) throw fail('CREDENTIAL_MODE_UNSUPPORTED', 'unsupported credential mode')
     if (!Number.isSafeInteger(params.generation) || params.generation < 0) throw fail('BAD_GENERATION', 'generation must be a non-negative integer')
     if (!isFuture(params.expiresAt, now)) throw fail('EXPIRED', 'provider binding expired')
     verifySigned(params, NOTIFY_DOMAINS.providerBinding, params.signatureKey || params.device)
@@ -357,9 +377,9 @@ export class NotifyService extends ServiceProvider {
       device: params.device,
       bindingId: params.bindingId,
       tokenHash: params.tokenHash.toLowerCase(),
-      channels: normalizeStringList(params.channels, 64, 32),
+      channels: normalizeStringList(params.channels, 64, DEFAULT_MAX_CHANNELS_PER_RECEIVE_CAP),
       modes: normalizeStringList(params.modes || ['direct'], 64, 8),
-      quota: normalizeQuota(params.quota, { perHour: 30, burst: 5, maxTtlSeconds: 86400, maxUrgency: 'normal' }),
+      quota: normalizeQuota(params.quota, DEFAULT_RECEIVE_CAP_QUOTA),
       createdAt: safeTime(params.createdAt, now),
       expiresAt: params.expiresAt,
       nonce: validHex(params.nonce, 16) ? params.nonce.toLowerCase() : null,
@@ -662,7 +682,8 @@ export class NotifyService extends ServiceProvider {
         { id: 'receive-cap', ok: receiveCaps.length > 0, detail: 'at least one receive capability installed' },
         { id: 'send-cap', ok: sendCaps.length > 0, detail: 'at least one sender capability installed' },
         { id: 'generic-privacy', ok: true, detail: 'v1 service only exposes generic provider display' },
-        { id: 'delivery-events-redacted', ok: true, detail: 'delivery events omit provider tokens and plaintext' }
+        { id: 'delivery-events-redacted', ok: true, detail: 'delivery events omit provider tokens and plaintext' },
+        { id: 'push-provider', ok: pushEgressProfile(this.provider).live === true, detail: 'a non-stub push provider adapter is configured' }
       ]
     }
   }
@@ -672,8 +693,15 @@ export class NotifyService extends ServiceProvider {
       maxPayloadBytes: this.maxPayloadBytes,
       maxTtlSeconds: this.maxTtlSeconds,
       maxWatchesPerReceiveCap: this.maxWatchesPerReceiveCap,
+      maxChannelsPerReceiveCap: DEFAULT_MAX_CHANNELS_PER_RECEIVE_CAP,
+      defaultChannelPerHour: DEFAULT_RECEIVE_CAP_QUOTA.perHour,
+      channelAbusePerHour: this.abuseLimits.channel.perHour,
       privacyProfiles: NOTIFY_PRIVACY_PROFILES,
-      providers: NOTIFY_PROVIDERS
+      providers: NOTIFY_PROVIDERS,
+      credentialModes: NOTIFY_CREDENTIAL_MODES,
+      modes: NOTIFY_MODES,
+      // The capability doc reads this to decide whether to advertise notify-v1.
+      egress: pushEgressProfile(this.provider)
     }
   }
 
@@ -869,6 +897,37 @@ export class NotifyService extends ServiceProvider {
     sweepExpiryMap(this.dedupe, now)
   }
 
+  /**
+   * Resolve the push egress adapter from operator config.
+   *
+   * This happens in start() rather than the constructor because a real adapter
+   * needs the relay key pair (to open sealed device tokens) and needs to await
+   * a dynamic import — neither is available synchronously at construction.
+   *
+   * Resolution is fail-closed: a bad descriptor throws here, ServiceRegistry
+   * drops the service, and RelayNode refuses to boot. A relay that was told to
+   * push must never come up silently holding the memory stub.
+   */
+  async _resolvePushProvider (push) {
+    // An explicitly injected provider always wins — embedders and every test
+    // suite construct with `{ provider }`, and config must not clobber it.
+    if (this._providerInjected || !push) return
+
+    if (typeof push === 'object' && typeof push.send === 'function') {
+      this.provider = normalizePushProvider(push)
+      return
+    }
+    if (typeof push === 'function') {
+      this.provider = normalizePushProvider(await push({ keyPair: this.keyPair, node: this.node, store: this.store }))
+      return
+    }
+    if (typeof push !== 'object') {
+      throw new Error('NotifyService: config.notify.push must be a descriptor object, provider object, or factory function')
+    }
+    const { createPushProvider } = await import('./notify-push/index.js')
+    this.provider = normalizePushProvider(await createPushProvider(push, { keyPair: this.keyPair, now: this.clock }))
+  }
+
   async _createDefaultPersistence (context) {
     if (this.persistenceDisabled) return null
     const config = objectOr(context && context.config, {})
@@ -971,6 +1030,11 @@ export class NotifyService extends ServiceProvider {
 export function createMemoryPushProvider (result = {}) {
   const attempts = []
   return {
+    // `live: false` is the one place that opts out of egress capability. The
+    // capability doc gates `notify-v1` on it, so a relay holding this stub
+    // stops advertising a notify it cannot actually deliver.
+    kind: 'memory',
+    live: false,
     attempts,
     async send (delivery) {
       attempts.push({ ...delivery, providerTokenCiphertext: delivery.providerTokenCiphertext ? '[redacted]' : null })
@@ -1245,6 +1309,28 @@ function normalizePersistence (persistence) {
     throw new Error('NotifyService: persistence requires load() and save(snapshot)')
   }
   return persistence
+}
+
+// Mirrors normalizePersistence: fail at wiring time, not at the first send.
+// Until this existed, `new NotifyService({ provider: {} })` was accepted and
+// every delivery threw deep inside _deliver as a `provider_exception`.
+function normalizePushProvider (provider) {
+  if (!provider) return null
+  if (typeof provider.send !== 'function') {
+    throw new Error('NotifyService: push provider requires send(delivery)')
+  }
+  return provider
+}
+
+// A provider is "live" unless it explicitly says otherwise. Defaulting the
+// other way would demote every hand-rolled `{ async send () {} }` test fake and
+// every operator adapter that predates the `live` tag; only the memory stub has
+// a reason to disclaim egress, and it does so by name.
+function pushEgressProfile (provider) {
+  return {
+    kind: typeof provider?.kind === 'string' ? provider.kind : 'custom',
+    live: !!(provider && provider.live !== false && typeof provider.send === 'function')
+  }
 }
 
 function canUseNodeFs () {
