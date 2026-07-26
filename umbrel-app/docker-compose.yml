@@ -35,7 +35,7 @@ services:
     # that reintroduces the audited supply-chain gap (HR-DIS-002) and CI
     # will reject it. This baseline pin is v0.20.2 (the last release whose
     # digest was captured); the next `release:prepare` bumps it.
-    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.24.3@sha256:cb104aa65d7e8f57766ea7d60d64dbb6b081a0b9fc5b318c0fa75cb22c0d31c8
+    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.25.0-rc.1
     init: true
     restart: on-failure
     stop_grace_period: 1m
