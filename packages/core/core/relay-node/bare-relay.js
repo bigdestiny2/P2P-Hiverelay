@@ -311,7 +311,10 @@ export class BareRelay extends EventEmitter {
           }
           const provider = new Ctor(spec.opts || {})
           this.serviceRegistry.register(provider)
-          if (typeof provider.start === 'function') await provider.start({ node: this, store: this.store })
+          // `config` is part of the start context on the Node path too. Omitting
+          // it here silently dropped every `config.<service>.*` operator setting
+          // on Bare — notify's abuseLimits and persistencePath among them.
+          if (typeof provider.start === 'function') await provider.start({ node: this, store: this.store, config: this.config })
           registered++
         } catch (err) {
           // First-time MODULE_NOT_FOUND on the whole package → skip rest quietly.
