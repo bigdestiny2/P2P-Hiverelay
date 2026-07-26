@@ -37,16 +37,48 @@ export class AppLifecycle extends EventEmitter {
     return this.node.appRegistry.apps
   }
 
-  async reseedFromRegistry () {
+  /**
+   * Load the durable drive registry (and run the one-shot seeded-apps.json
+   * migration when empty). Does NOT re-seed drives — callers that need the
+   * drives back online after start() await this, then fire-and-forget
+   * reseedDrives(entries). Seals storage-admission drive recovery so
+   * writable services cannot open before the inventory is known.
+   */
+  async loadRegistry () {
     const node = this.node
     const entries = await node.appRegistry.load()
+    if (node.storageAdmission) {
+      for (const entry of entries) {
+        if (!entry || !entry.appKey) continue
+        if (typeof node.storageAdmission.adoptRecovery === 'function') {
+          node.storageAdmission.adoptRecovery(`drive:${entry.appKey}`, entry.maxStorage, { kind: 'drive' })
+        }
+      }
+    }
     if (!entries.length) {
       await this.migrateOldSeededApps()
-      return
+      const migrated = typeof node.appRegistry.entries === 'function'
+        ? [...node.appRegistry.entries()].map(([appKey, entry]) => ({ appKey, ...entry }))
+        : []
+      if (node.storageAdmission && typeof node.storageAdmission.markRecoveryReady === 'function') {
+        node.storageAdmission.markRecoveryReady('drives')
+      }
+      return migrated
     }
+    if (node.storageAdmission && typeof node.storageAdmission.markRecoveryReady === 'function') {
+      node.storageAdmission.markRecoveryReady('drives')
+    }
+    return entries
+  }
 
+  /**
+   * Re-seed drives for previously-persisted registry entries. Safe to run
+   * fire-and-forget after start(); each seedApp cascades into eagerReplicate.
+   */
+  async reseedDrives (entries) {
+    if (!Array.isArray(entries) || !entries.length) return
     for (const entry of entries) {
-      if (!entry.appKey) continue
+      if (!entry || !entry.appKey) continue
       try {
         await this.seedApp(entry.appKey, {
           appId: entry.appId || null,
@@ -70,13 +102,23 @@ export class AppLifecycle extends EventEmitter {
           // that case (matches v0.8.11 reseed behavior).
           maxStorage: Number.isFinite(entry.maxStorage) && entry.maxStorage > 0
             ? entry.maxStorage
-            : undefined
+            : undefined,
+          leaseManaged: entry.leaseManaged === true
         })
         this.emit('reseeded', { appKey: entry.appKey })
       } catch (err) {
         this.emit('reseed-error', { appKey: entry.appKey, error: err })
       }
     }
+  }
+
+  /**
+   * Combined load + reseed. Retained for callers (e.g. bare-relay) that want
+   * the whole recovery in one await.
+   */
+  async reseedFromRegistry () {
+    const entries = await this.loadRegistry()
+    await this.reseedDrives(entries)
   }
 
   /**

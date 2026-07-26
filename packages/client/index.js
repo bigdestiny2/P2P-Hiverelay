@@ -3004,6 +3004,151 @@ export class HiveRelayClient extends EventEmitter {
     return res.body
   }
 
+  // ─── Service HTTP helpers ──────────────────────────────────────────
+  // Thin wrappers over the relay's public service routes. Each builds the
+  // correct URL + method, posts/gets JSON via _fetchJson, and returns the
+  // parsed body. No business logic — the signed payloads / pins are
+  // constructed by the caller (or by packages/client/notify.js helpers).
+
+  /**
+   * POST a signed notify intent to `/api/v1/notify/send`.
+   * @param {string} relayUrl
+   * @param {object} body  signed notify intent (from createNotifyIntent)
+   * @param {object} [opts]
+   */
+  async notifySend (relayUrl, body, opts = {}) {
+    return this._serviceJson(relayUrl, 'POST', '/api/v1/notify/send', body, opts)
+  }
+
+  /**
+   * POST a signed notify watch registration to `/api/v1/notify/watch`.
+   * @param {string} relayUrl
+   * @param {object} body  signed watch request
+   * @param {object} [opts]
+   */
+  async notifyWatch (relayUrl, body, opts = {}) {
+    return this._serviceJson(relayUrl, 'POST', '/api/v1/notify/watch', body, opts)
+  }
+
+  /**
+   * PUT opaque shard bytes to `/api/v1/shard` (authorized by signed pin).
+   * @param {string} relayUrl
+   * @param {Uint8Array|Buffer|string} bytes  opaque shard payload
+   * @param {object} pin  signed shard pin (JSON-serializable)
+   * @param {object} [opts]
+   * @returns {Promise<object>} e.g. { shard: 'shard:<hash>' }
+   */
+  async shardPut (relayUrl, bytes, pin, opts = {}) {
+    if (typeof relayUrl !== 'string' || !relayUrl.length) {
+      throw new Error('shardPut: relayUrl required')
+    }
+    if (typeof globalThis.fetch !== 'function') {
+      throw new Error('shardPut: globalThis.fetch unavailable')
+    }
+    const base = relayUrl.replace(/\/+$/, '')
+    const body = typeof bytes === 'string' ? b4a.from(bytes) : bytes
+    const headers = {
+      'Content-Type': 'application/octet-stream',
+      'X-Shard-Pin': JSON.stringify(pin || {})
+    }
+    if (opts.apiKey) headers.Authorization = 'Bearer ' + opts.apiKey
+    const response = await globalThis.fetch(base + '/api/v1/shard', {
+      method: 'POST',
+      headers,
+      body
+    })
+    let parsed = null
+    try {
+      const text = await response.text()
+      if (text) parsed = JSON.parse(text)
+    } catch (_) { parsed = null }
+    if (!response.ok) {
+      const err = new Error('shardPut failed: ' + ((parsed && parsed.error) || response.status))
+      err.status = response.status
+      err.body = parsed
+      throw err
+    }
+    return parsed
+  }
+
+  /**
+   * GET a shard by content-address hash from `/api/v1/shard/<hash>`.
+   * @param {string} relayUrl
+   * @param {string} hash  64-hex content hash (with or without `shard:` prefix)
+   * @param {object} [opts]
+   * @returns {Promise<Uint8Array>}
+   */
+  async shardGet (relayUrl, hash, opts = {}) {
+    if (typeof relayUrl !== 'string' || !relayUrl.length) {
+      throw new Error('shardGet: relayUrl required')
+    }
+    if (typeof globalThis.fetch !== 'function') {
+      throw new Error('shardGet: globalThis.fetch unavailable')
+    }
+    const base = relayUrl.replace(/\/+$/, '')
+    const h = String(hash || '').replace(/^shard:/i, '').toLowerCase()
+    const headers = {}
+    if (opts.apiKey) headers.Authorization = 'Bearer ' + opts.apiKey
+    const response = await globalThis.fetch(base + '/api/v1/shard/' + encodeURIComponent(h), {
+      method: 'GET',
+      headers
+    })
+    if (!response.ok) {
+      let detail = null
+      try { detail = await response.json() } catch (_) {}
+      const err = new Error('shardGet failed: ' + ((detail && detail.error) || response.status))
+      err.status = response.status
+      err.body = detail
+      throw err
+    }
+    return new Uint8Array(await response.arrayBuffer())
+  }
+
+  /**
+   * POST a signed availability observation to `/api/witness/append`.
+   * @param {string} relayUrl
+   * @param {object} body  { record } or the signed record itself
+   * @param {object} [opts]
+   */
+  async witnessAdd (relayUrl, body, opts = {}) {
+    const payload = body && body.record ? body : { record: body }
+    return this._serviceJson(relayUrl, 'POST', '/api/witness/append', payload, opts)
+  }
+
+  /**
+   * GET the latest VRF beacon round from `/api/v1/vrf/beacon-latest`.
+   * @param {string} relayUrl
+   * @param {object} [opts]
+   */
+  async vrfBeaconLatest (relayUrl, opts = {}) {
+    return this._serviceJson(relayUrl, 'GET', '/api/v1/vrf/beacon-latest', null, opts)
+  }
+
+  /**
+   * Shared JSON service helper for the notify / witness / vrf routes.
+   * @private
+   */
+  async _serviceJson (relayUrl, method, path, body, opts = {}) {
+    if (typeof relayUrl !== 'string' || !relayUrl.length) {
+      throw new Error('relayUrl required')
+    }
+    const base = relayUrl.replace(/\/+$/, '')
+    const headers = { 'Content-Type': 'application/json' }
+    if (opts.apiKey) headers.Authorization = 'Bearer ' + opts.apiKey
+    const fetchOpts = { method, headers }
+    if (method !== 'GET' && method !== 'HEAD' && body != null) {
+      fetchOpts.body = JSON.stringify(body)
+    }
+    const res = await _fetchJson(base + path, fetchOpts)
+    if (!res.ok) {
+      const err = new Error('service request failed (' + method + ' ' + path + '): ' + (res.body?.error || res.status))
+      err.status = res.status
+      err.body = res.body
+      throw err
+    }
+    return res.body
+  }
+
   async _postCustody (relayUrl, path, body, opts = {}) {
     if (typeof relayUrl !== 'string' || !relayUrl.length) {
       throw new Error('relayUrl required')

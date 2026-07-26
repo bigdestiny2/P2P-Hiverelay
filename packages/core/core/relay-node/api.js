@@ -50,6 +50,7 @@ import {
   isPokerHttpRoute,
   isRepairTicketHttpRoute,
   isShardHttpRoute,
+  isVrfHttpRoute,
   isWitnessLogHttpRoute,
   resolvePokerHttpRoutePolicy
 } from './api-route-mounts.js'
@@ -82,6 +83,7 @@ import {
   resolvePokerServiceProvider,
   resolveRepairTicketServiceProvider,
   resolveShardServiceProvider,
+  resolveVrfServiceProvider,
   resolveWitnessLogServiceProvider
 } from './api-service-provider.js'
 import {
@@ -93,6 +95,10 @@ import {
   resolveNotifyRoute,
   runNotifyRouteAction
 } from './api-notify.js'
+import {
+  resolveVrfRoute,
+  runVrfRouteAction
+} from './api-vrf.js'
 import {
   buildRouterInfoRoutePayload,
   resolveRouterReadRoute
@@ -150,6 +156,9 @@ import {
   loadShardHttpAdapterModule,
   resolveShardHttpAdapter
 } from './api-shard-http-adapter.js'
+import {
+  loadVrfHttpAdapterModule
+} from './api-vrf-http-adapter.js'
 import {
   buildCapabilityRoutePayload,
   resolveCapabilityRoute
@@ -407,17 +416,20 @@ export class RelayAPI extends EventEmitter {
     this._loadWitnessLogHttpAdapter = opts.loadWitnessLogHttpAdapter || loadWitnessLogHttpAdapterModule
     this._loadRepairTicketHttpAdapter = opts.loadRepairTicketHttpAdapter || loadRepairTicketHttpAdapterModule
     this._loadShardHttpAdapter = opts.loadShardHttpAdapter || loadShardHttpAdapterModule
+    this._loadVrfHttpAdapter = opts.loadVrfHttpAdapter || loadVrfHttpAdapterModule
     this._outboxLogHttpAdapter = null
     this._outboxLogHttpAdapterSetupFailed = false
     this._witnessLogHttpAdapter = null
     this._repairTicketHttpAdapter = null
     this._shardHttpAdapter = null
+    this._vrfHttpAdapter = null
     this._outboxLogHttpAuth = opts.outboxLogHttpAuth || null
     this._outboxLogHttpAdminAuth = opts.outboxLogHttpAdminAuth || null
     this._outboxLogHttpState = opts.outboxLogHttpState || null
     this._witnessLogHttpState = opts.witnessLogHttpState || null
     this._repairTicketHttpState = opts.repairTicketHttpState || null
     this._shardHttpState = opts.shardHttpState || null
+    this._vrfHttpState = opts.vrfHttpState || null
     this._gateway = new HyperGateway(relayNode, { store: relayNode.store })
     this._retrievabilityProofProvider = new RetrievabilityProofProvider()
   }
@@ -928,6 +940,32 @@ export class RelayAPI extends EventEmitter {
         })
         if (handled) return
         return this._json(res, { error: 'not found' }, 404)
+      }
+
+      // VRF (verifiable randomness) — beacon + sortition surface.
+      // Routed through api-vrf.js (resolve + run against the VRF ServiceProvider),
+      // same shape as notify. GET routes are public; POST routes take a JSON body.
+      if (isVrfHttpRoute(path)) {
+        const vrfRoute = resolveVrfRoute(req.method, path)
+        if (!vrfRoute) return this._json(res, { error: 'not found' }, 404)
+        if (vrfRoute.kind === 'options') {
+          res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+          res.writeHead(204)
+          res.end()
+          return
+        }
+        const vrf = resolveVrfServiceProvider(this.node)
+        let body = {}
+        if (req.method === 'POST') {
+          try { body = await this._readBody(req) } catch { return this._json(res, { error: 'invalid body' }, 400) }
+        }
+        const result = await runVrfRouteAction({
+          route: vrfRoute,
+          providerResult: vrf,
+          body,
+          query: notifyQueryParams(url)
+        })
+        return this._json(res, result.payload, result.status || 200)
       }
 
       const usageRoute = resolveUsageTelemetryRoute(req.method, path)

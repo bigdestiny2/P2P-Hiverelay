@@ -641,16 +641,24 @@ test('outboxlog: jsonl journal boots past a torn final line; mid-file corruption
     t.is(await readFile(journalPath, 'utf8'), good.join('\n') + '\n', 'file truncated to the good prefix')
     const names = await readdir(dir)
     t.ok(names.some((n) => n.startsWith('ops.jsonl.torn-')), 'damaged original quarantined for forensics')
+    // Exclusive writer ownership: release before the engine re-opens the same
+    // path (the gen-based journal holds a process-local lock).
+    journal.close()
 
     // The engine end-to-end: a torn tail no longer bricks service startup.
     const engine = createOutboxLog({ verifyAppend: () => true, journalPath: join(dir, 'ops.jsonl') })
     t.ok(engine.isSuppressed(A, 'post!p2'), 'engine replayed the good prefix')
+    engine.close()
 
     // Mid-file corruption (valid lines AFTER the bad one) is real damage, not a
     // crash artifact — boot must still refuse.
     await writeFile(journalPath, good[0] + '\n' + '{"version":1,"seq":2,"kind":"tak\n' + good[1] + '\n', 'utf8')
     const corrupt = createJsonlOutboxJournal(journalPath)
-    assert.throws(() => corrupt.loadSync(), /corrupt journal line 2/, 'mid-file corruption still blocks boot')
+    try {
+      assert.throws(() => corrupt.loadSync(), /corrupt journal line 2/, 'mid-file corruption still blocks boot')
+    } finally {
+      corrupt.close()
+    }
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

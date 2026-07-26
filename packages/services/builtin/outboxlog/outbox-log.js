@@ -9,7 +9,7 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto'
-import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, truncateSync, unlinkSync, writeSync } from 'node:fs'
+import { closeSync, copyFileSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, truncateSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import sodium from 'sodium-universal'
@@ -42,6 +42,12 @@ export const DEFAULT_MAX_COMMIT_MUTATIONS = 256
 export const DEFAULT_MAX_JOURNAL_BYTES = 64 * 1024 * 1024
 export const OUTBOXLOG_MAX_REPLAY_COMMIT_BYTES = 1024 * 1024
 export const DEFAULT_OUTBOXLOG_SERVICE_VERSION = '0.24.3'
+// caps.bytesPerDay: rolling 24h ingest window per namespace (NOT calendar-day).
+// Uncapped by default — only bites when a namespace sets a finite cap (or the
+// operator sets a finite global maxBytesPerDay). "bytes" is the same measure
+// as maxValueBytes: Buffer.byteLength(JSON.stringify(record)).
+export const OUTBOXLOG_BYTE_WINDOW_MS = 24 * 60 * 60 * 1000
+export const DEFAULT_MAX_BYTES_PER_DAY = Number.MAX_SAFE_INTEGER
 // App-neutral default namespace. Registered apps SHOULD pass an explicit
 // namespace; this fallback exists only so an operator who configures nothing
 // still gets a working single-namespace registry. It is intentionally NOT
@@ -74,6 +80,7 @@ export function createOutboxLog ({
   maxAppIdLength = DEFAULT_MAX_APP_ID_LENGTH,
   maxValueBytes = DEFAULT_MAX_VALUE_BYTES,
   maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES,
+  maxBytesPerDay = DEFAULT_MAX_BYTES_PER_DAY,
   directoryLimit = DEFAULT_DIRECTORY_LIMIT,
   maxDirectoryLimit = DEFAULT_MAX_DIRECTORY_LIMIT,
   maxAppendEventsPerOutbox = DEFAULT_MAX_APPEND_EVENTS_PER_OUTBOX,
@@ -97,18 +104,25 @@ export function createOutboxLog ({
   serviceVersion = DEFAULT_OUTBOXLOG_SERVICE_VERSION,
   legacyWrites = true,
   onAppend = null,
+  now = null,
   log = () => {}
 } = {}) {
   const groups = new Map()
   const subscribers = new Map()
   const appendEventsByApp = new Map()
-  // DO-NOT-SERVE suppression set (operator takedown / liability parity). Keys
-  // are opaque `appId \x00 rowKey` composites — an operator drops a record by
-  // its opaque id WITHOUT reading the (possibly blind) content. The record
-  // stays in `group.rows`; suppression is applied only at serve time. Persisted
-  // so a takedown survives restart.
-  const suppressed = new Set()
+  // DO-NOT-SERVE suppressions (operator takedown / liability parity). Keys are
+  // opaque `appId \x00 rowKey` composites — an operator drops a record by its
+  // opaque id WITHOUT reading the (possibly blind) content. Values are audit
+  // metadata `{ ts, reason }` recorded at takedown time — never any record
+  // content. The record stays in `group.rows`; suppression is applied only at
+  // serve time. Persisted so a takedown survives restart.
+  const suppressed = new Map()
   let namespaceRegistry = createOutboxNamespaceRegistry({ namespace, namespaces })
+  // Rolling 24h per-namespace ingest charges for caps.bytesPerDay. Keyed by
+  // namespace name. Lazy: uncapped namespaces record nothing.
+  const byteWindows = new Map()
+  const byteDayFallback = positiveInteger(maxBytesPerDay, DEFAULT_MAX_BYTES_PER_DAY)
+  const clock = typeof now === 'function' ? now : Date.now
   const customVerifyAppend = typeof verifyAppend === 'function' ? verifyAppend : null
   const shouldVerifyAppend = verifyAppend !== false
   let statePersistence = normalizePersistence(persistence)
@@ -239,6 +253,10 @@ export function createOutboxLog ({
       const previousAppEvents = appendEventsByApp.has(appId) ? appendEventsByApp.get(appId).slice() : null
       if (old === undefined && group.rows.size >= namespaceCap(namespaceInfo, 'maxEntriesPerOutbox', maxRowsPerGroup)) throw fail('outbox at row capacity', 503)
       if (size > oldSize && totalBytes - oldSize + size > maxTotalBytes) throw fail('relay at storage capacity', 503)
+      // caps.bytesPerDay — check-before-charge so a rejected append never
+      // consumes budget (retrying through a 503 is not self-locking).
+      const appendNow = clock()
+      const byteBucket = assertNamespaceByteBudget(namespaceInfo, size, appendNow)
 
       group.rows.set(key, clone(op.data))
       group.atomicCensus = null
@@ -254,10 +272,12 @@ export function createOutboxLog ({
         type: op.type,
         version: group.version
       })
+      if (byteBucket) chargeNamespaceByteBucket(byteBucket, size, appendNow)
 
       try {
-        saveState(journalAppendEntry(appId, group, op))
+        saveState(journalAppendEntry(appId, group, op, appendNow))
       } catch (err) {
+        if (byteBucket) unchargeNamespaceByteBucket(byteBucket)
         if (old === undefined) group.rows.delete(key)
         else group.rows.set(key, old)
         totalBytes += oldSize - size
@@ -358,8 +378,10 @@ export function createOutboxLog ({
     // Operator takedown: mark an opaque record id (appId + rowKey) DO-NOT-SERVE.
     // The record is NOT read, decoded, or deleted — subsequent serve-time reads
     // simply suppress it. Idempotent. Returns whether the id is now suppressed.
-    takedown (appId, key) {
-      return applyTakedown(appId, key, true)
+    // `reason` is an optional operator audit note (e.g. a case/reference id);
+    // it is journaled and listed by takedowns() but never alters suppression.
+    takedown (appId, key, reason = null) {
+      return applyTakedown(appId, key, true, reason)
     },
 
     // Reverse a takedown for an opaque record id. Idempotent.
@@ -367,14 +389,20 @@ export function createOutboxLog ({
       return applyTakedown(appId, key, false)
     },
 
-    // List the current DO-NOT-SERVE set as opaque { appId, key } ids. Content
-    // is never read; this is the operator-facing audit surface for takedowns.
+    // List the current DO-NOT-SERVE set as opaque { appId, key, ts, reason }.
+    // Content is never read. `ts`/`reason` are null for suppressions restored
+    // from pre-audit journals/snapshots.
     takedowns () {
       const ids = []
-      for (const composite of suppressed) {
+      for (const [composite, meta] of suppressed) {
         const split = composite.indexOf('\x00')
         if (split < 0) continue
-        ids.push({ appId: composite.slice(0, split), key: composite.slice(split + 1) })
+        ids.push({
+          appId: composite.slice(0, split),
+          key: composite.slice(split + 1),
+          ts: meta && Number.isFinite(meta.ts) ? meta.ts : null,
+          reason: meta && typeof meta.reason === 'string' ? meta.reason : null
+        })
       }
       ids.sort((a, b) => (a.appId < b.appId ? -1 : a.appId > b.appId ? 1 : a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
       return { takedowns: ids, count: ids.length }
@@ -457,6 +485,64 @@ export function createOutboxLog ({
     if (operationJournal && typeof operationJournal.markFailed === 'function') {
       try { operationJournal.markFailed(err) } catch {}
     }
+  }
+
+  // caps.bytesPerDay gate for the live append path. Returns the bucket to
+  // charge AFTER the append's other checks pass (null when uncapped).
+  function assertNamespaceByteBudget (namespaceInfo, size, ts) {
+    const cap = namespaceCap(namespaceInfo, 'bytesPerDay', byteDayFallback)
+    if (cap >= DEFAULT_MAX_BYTES_PER_DAY) return null // uncapped: not tracked
+    const bucket = namespaceByteBucket(namespaceInfo)
+    pruneNamespaceByteWindow(bucket, ts)
+    if (bucket.total + size > cap) throw fail('namespace at daily byte capacity', 503)
+    return bucket
+  }
+
+  function namespaceByteBucket (namespaceInfo) {
+    const key = namespaceInfo ? namespaceInfo.name : null
+    let bucket = byteWindows.get(key)
+    if (!bucket) {
+      bucket = { charges: [], total: 0 }
+      byteWindows.set(key, bucket)
+    }
+    return bucket
+  }
+
+  function chargeNamespaceByteBucket (bucket, size, ts) {
+    bucket.charges.push({ ts, bytes: size })
+    bucket.total += size
+  }
+
+  // LIFO twin of charge — only used by the append rollback path.
+  function unchargeNamespaceByteBucket (bucket) {
+    const last = bucket.charges.pop()
+    if (last) bucket.total -= last.bytes
+  }
+
+  function pruneNamespaceByteWindow (bucket, ts) {
+    const cutoff = ts - OUTBOXLOG_BYTE_WINDOW_MS
+    let expired = 0
+    let bytes = 0
+    while (expired < bucket.charges.length && bucket.charges[expired].ts <= cutoff) {
+      bytes += bucket.charges[expired].bytes
+      expired++
+    }
+    if (expired > 0) {
+      bucket.charges.splice(0, expired)
+      bucket.total -= bytes
+    }
+  }
+
+  // Journal/snapshot replay re-charges the window for already-accepted history
+  // — never throws. Entries without a finite ts (pre-feature journals) skip.
+  function noteNamespaceByteCharge (namespaceInfo, size, ts) {
+    if (!Number.isFinite(ts)) return
+    if (namespaceCap(namespaceInfo, 'bytesPerDay', byteDayFallback) >= DEFAULT_MAX_BYTES_PER_DAY) return
+    const now = clock()
+    if (ts <= now - OUTBOXLOG_BYTE_WINDOW_MS) return
+    const bucket = namespaceByteBucket(namespaceInfo)
+    pruneNamespaceByteWindow(bucket, now)
+    chargeNamespaceByteBucket(bucket, size, ts)
   }
 
   function assertAtomicWriteReady ({ requireFsyncedPath = false } = {}) {
@@ -913,38 +999,44 @@ export function createOutboxLog ({
     return composite ? suppressed.has(composite) : false
   }
 
-  function applyTakedown (appId, key, drop) {
+  function applyTakedown (appId, key, drop, reason = null) {
     assertJournalMutationAllowed()
     const composite = suppressionKey(appId, key)
     if (!composite) throw fail('bad takedown id', 400)
+    const auditReason = drop ? normalizeTakedownReason(reason) : null
     const already = suppressed.has(composite)
-    if (drop === already) return { appId, key, suppressed: drop } // no change
-    if (drop) suppressed.add(composite)
+    if (drop === already && !(drop && auditReason != null)) {
+      // Idempotent: same suppress state, and either a restore or a re-takedown
+      // with no new reason. (Re-takedown with a reason updates the audit note.)
+      if (!drop || auditReason == null) return { appId, key, suppressed: drop }
+    }
+    const previous = already ? suppressed.get(composite) : null
+    const auditTs = drop ? clock() : null
+    if (drop) suppressed.set(composite, { ts: auditTs, reason: auditReason })
     else suppressed.delete(composite)
     try {
-      saveState(journalTakedownEntry(appId, key, drop))
+      saveState(journalTakedownEntry(appId, key, drop, auditReason, auditTs))
     } catch (err) {
       // Roll back the in-memory change so state and persistence stay coherent.
-      if (drop) suppressed.delete(composite)
-      else suppressed.add(composite)
+      if (drop) {
+        if (previous) suppressed.set(composite, previous)
+        else suppressed.delete(composite)
+      } else if (previous) {
+        suppressed.set(composite, previous)
+      }
       throw fail('persistence failed', 500, err)
     }
     return { appId, key, suppressed: drop }
   }
 
   // Remove ALL server-side state for an appId whose group is being swept:
-  // the group itself, its buffered append events, and any takedown
-  // suppressions scoped to it (nothing left to suppress). Namespace outbox
-  // counts are derived live from `groups`, so capacity self-corrects.
+  // the group itself and its buffered append events. Takedown suppressions
+  // are retained so a re-appended taken-down key stays suppressed.
   function deleteGroupState (appId) {
     const group = groups.get(appId)
     if (group) commitHistoryCount -= (group.commits ? group.commits.size : 0) + (group.commitTombstones ? group.commitTombstones.size : 0)
     groups.delete(appId)
     appendEventsByApp.delete(appId)
-    const prefix = appId + '\x00'
-    for (const composite of [...suppressed]) {
-      if (composite.startsWith(prefix)) suppressed.delete(composite)
-    }
   }
 
   // Ghost-outbox sweep (2026-07-08): reclaim group slots leaked by writers that
@@ -1230,7 +1322,7 @@ export function createOutboxLog ({
     return {
       groups: [...groups.entries()].map(([appId, group]) => [appId, cloneRuntimeGroup(group)]),
       appendEvents: [...appendEventsByApp.entries()].map(([appId, events]) => [appId, clone(events)]),
-      suppressed: [...suppressed],
+      suppressed: [...suppressed.entries()].map(([composite, meta]) => [composite, meta ? { ...meta } : { ts: null, reason: null }]),
       totalBytes,
       directorySeq,
       appendSeq,
@@ -1250,7 +1342,16 @@ export function createOutboxLog ({
     appendEventsByApp.clear()
     for (const [appId, events] of state.appendEvents) appendEventsByApp.set(appId, events)
     suppressed.clear()
-    for (const composite of state.suppressed) suppressed.add(composite)
+    for (const entry of state.suppressed) {
+      if (typeof entry === 'string') {
+        suppressed.set(entry, { ts: null, reason: null })
+      } else if (Array.isArray(entry) && entry.length >= 1) {
+        // restoreRuntimeState may carry Map entries as [composite, meta]
+        if (typeof entry[0] === 'string' && entry[0].includes('\x00')) {
+          suppressed.set(entry[0], entry[1] && typeof entry[1] === 'object' ? entry[1] : { ts: null, reason: null })
+        }
+      }
+    }
     totalBytes = state.totalBytes
     directorySeq = state.directorySeq
     appendSeq = state.appendSeq
@@ -1366,12 +1467,16 @@ export function createOutboxLog ({
     }
   }
 
-  function close () {
+  async function close () {
     if (closed) return
     closeRequested = true
     subscribers.clear()
     try {
-      if (operationJournal && typeof operationJournal.close === 'function') operationJournal.close()
+      // Hypercore journals expose async close() that drains late settlements —
+      // always await so a timed-out-but-still-landing append is observed.
+      if (operationJournal && typeof operationJournal.close === 'function') {
+        await operationJournal.close()
+      }
       closed = true
     } catch (err) {
       fenceJournalWrite(err)
@@ -1396,9 +1501,25 @@ export function createOutboxLog ({
       appendSeq,
       journalSeq,
       commitHistoryOrder: serializedCommitHistoryOrder(),
-      // Persist DO-NOT-SERVE ids as opaque [appId, key] pairs so takedowns
-      // survive restart. Never carries any record content.
-      suppressed: [...suppressed].map(splitSuppressionKey).filter(Boolean),
+      // Persist DO-NOT-SERVE ids as opaque [appId, key, ts, reason] so
+      // takedowns (and their audit trail) survive restart. Never carries
+      // any record content. Legacy 2-element form still loads (ts/reason null).
+      suppressed: [...suppressed.entries()].map(([composite, meta]) => {
+        const pair = splitSuppressionKey(composite)
+        if (!pair) return null
+        return [
+          pair[0],
+          pair[1],
+          meta && Number.isFinite(meta.ts) ? meta.ts : null,
+          meta && typeof meta.reason === 'string' ? meta.reason : null
+        ]
+      }).filter(Boolean),
+      // Rolling-24h ingest charges (caps.bytesPerDay) as opaque
+      // [namespace, [[ts, bytes], ...]] pairs, pruned at save time.
+      byteWindows: [...byteWindows.entries()].map(([name, bucket]) => {
+        pruneNamespaceByteWindow(bucket, clock())
+        return [name, bucket.charges.map(charge => [charge.ts, charge.bytes])]
+      }),
       appendEvents: [...appendEventsByApp.entries()].map(([appId, events]) => [
         appId,
         events.map(event => clone(event))
@@ -1534,11 +1655,40 @@ export function createOutboxLog ({
     evictGlobalCommitHistory()
     appendEventsByApp.clear()
     for (const [appId, events] of nextAppendEvents) appendEventsByApp.set(appId, events)
+    // Restore rolling byte windows (caps.bytesPerDay). Additive field: old
+    // snapshots without it load fine (windows start empty and re-fill on
+    // subsequent appends / journal replay).
+    byteWindows.clear()
+    for (const entry of Array.isArray(state.byteWindows) ? state.byteWindows : []) {
+      if (!Array.isArray(entry) || entry.length !== 2) continue
+      const name = entry[0]
+      const charges = entry[1]
+      if (name != null && typeof name !== 'string') continue
+      if (!Array.isArray(charges)) continue
+      if (name != null) {
+        if (!name || byteWindows.has(name)) continue
+      } else if (byteWindows.has(null)) continue
+      const bucket = { charges: [], total: 0 }
+      for (const charge of charges) {
+        if (!Array.isArray(charge) || charge.length !== 2) continue
+        const ts = charge[0]
+        const bytes = charge[1]
+        if (!Number.isFinite(ts) || !Number.isSafeInteger(bytes) || bytes < 0) continue
+        bucket.charges.push({ ts, bytes })
+        bucket.total += bytes
+      }
+      pruneNamespaceByteWindow(bucket, clock())
+      if (bucket.charges.length > 0) byteWindows.set(name, bucket)
+    }
     suppressed.clear()
     for (const entry of Array.isArray(state.suppressed) ? state.suppressed : []) {
-      if (!Array.isArray(entry) || entry.length !== 2) continue
+      if (!Array.isArray(entry) || entry.length < 2) continue
       const composite = suppressionKey(entry[0], entry[1])
-      if (composite) suppressed.add(composite)
+      if (!composite) continue
+      // Accept 2-element (legacy) or 4-element (ts, reason) snapshot rows.
+      const ts = entry.length >= 3 && Number.isFinite(entry[2]) ? entry[2] : null
+      const reason = entry.length >= 4 && typeof entry[3] === 'string' ? entry[3] : null
+      suppressed.set(composite, { ts, reason })
     }
     totalBytes = nextTotalBytes
     directorySeq = Math.max(
@@ -1572,21 +1722,26 @@ export function createOutboxLog ({
     }
   }
 
-  function journalTakedownEntry (appId, key, drop) {
+  function journalTakedownEntry (appId, key, drop, reason = null, ts = null) {
     return {
       kind: 'takedown',
       appId,
       key,
-      drop: drop === true
+      drop: drop === true,
+      ts: drop === true && Number.isFinite(ts) ? ts : null,
+      reason: drop === true && typeof reason === 'string' ? reason : null
     }
   }
 
-  function journalAppendEntry (appId, group, op) {
+  function journalAppendEntry (appId, group, op, ts = null) {
     return {
       kind: 'append',
       appId,
       inviteKey: group.inviteKey,
       namespace: group.namespace || recordNamespace(op.data),
+      // Wall-clock of the accepted append — used to re-charge caps.bytesPerDay
+      // on journal replay. Pre-feature entries lack `ts` and do not re-charge.
+      ts: Number.isFinite(ts) ? ts : null,
       op: {
         type: op.type,
         data: clone(op.data)
@@ -1648,8 +1803,14 @@ export function createOutboxLog ({
     if (entry.kind === 'takedown') {
       const composite = suppressionKey(entry.appId, entry.key)
       if (!composite) return
-      if (entry.drop) suppressed.add(composite)
-      else suppressed.delete(composite)
+      if (entry.drop) {
+        suppressed.set(composite, {
+          ts: Number.isFinite(entry.ts) ? entry.ts : null,
+          reason: typeof entry.reason === 'string' ? entry.reason : null
+        })
+      } else {
+        suppressed.delete(composite)
+      }
       return
     }
     if (entry.kind === 'commit') {
@@ -1740,6 +1901,8 @@ export function createOutboxLog ({
       type: op.type,
       version: group.version
     })
+    // Re-charge caps.bytesPerDay from journaled ts (no-op when ts missing).
+    noteNamespaceByteCharge(opNamespaceInfo, size, entry.ts)
   }
 }
 
@@ -2318,25 +2481,68 @@ function readJsonlGenerationSync (path, allowTornTail) {
     throw err
   }
   if (!text) return []
-  const lastNewline = text.lastIndexOf('\n')
-  if (!text.endsWith('\n')) {
-    if (!allowTornTail) throw new Error('OutboxLog: torn non-final journal generation')
-    const safeLength = lastNewline < 0 ? 0 : Buffer.byteLength(text.slice(0, lastNewline + 1), 'utf8')
-    truncateFsyncedSync(path, safeLength)
-    text = lastNewline < 0 ? '' : text.slice(0, lastNewline + 1)
+
+  // Split preserving the distinction between "file ends mid-line" (crash tail)
+  // and "file ends with a newline" (complete last record). Empty trailing
+  // segment after a final \n is dropped so line indices match operator-facing
+  // 1-based entry numbers.
+  const endsWithNewline = text.endsWith('\n')
+  const rawLines = text.split('\n')
+  if (endsWithNewline && rawLines.length > 0 && rawLines[rawLines.length - 1] === '') {
+    rawLines.pop()
   }
-  if (!text) return []
-  const lines = text.slice(0, -1).split('\n')
+
   const entries = []
-  for (const line of lines) {
-    if (!line) throw new Error('OutboxLog: corrupt interior journal entry')
+  for (let i = 0; i < rawLines.length; i++) {
+    const line = rawLines[i]
+    // Empty interior lines are corruption (not a trailing blank after \n —
+    // those were already dropped).
+    if (!line) {
+      throw new Error('OutboxLog: corrupt journal line ' + (i + 1) + ' in ' + path)
+    }
     try {
       entries.push(JSON.parse(line))
-    } catch {
-      throw new Error('OutboxLog: corrupt interior journal entry')
+    } catch (err) {
+      // If every subsequent line is empty AND this is the final generation,
+      // the bad line is a crash/power-loss torn tail: quarantine the damaged
+      // file, truncate back to the last fully-written entry, and boot. Mid-file
+      // corruption (valid lines AFTER the bad one) still refuses boot.
+      const rest = rawLines.slice(i + 1)
+      const onlyEmptyAfter = rest.every((restLine) => restLine.trim() === '')
+      // A non-terminated last line (no trailing \n) is always a candidate tail.
+      // A terminated last line that fails to parse is also a torn-tail candidate
+      // when nothing follows (e.g. `"{\n` written then crash before more data).
+      const isLastLine = i === rawLines.length - 1 || onlyEmptyAfter
+      if (allowTornTail && isLastLine && onlyEmptyAfter) {
+        quarantineTornJournalTail(path, rawLines, i)
+        break
+      }
+      if (!allowTornTail && isLastLine && onlyEmptyAfter && !endsWithNewline) {
+        throw new Error('OutboxLog: torn non-final journal generation')
+      }
+      throw new Error('OutboxLog: corrupt journal line ' + (i + 1) + ' in ' + path + ': ' + (err && err.message ? err.message : 'bad json'))
     }
   }
   return entries
+}
+
+// Preserve the damaged file for forensics (<path>.torn-<ts>), then truncate it
+// back to the end of the last fully-written line. Best-effort copy: truncation
+// must still happen if the copy fails. `tornIndex` is the 0-based line that
+// failed to parse; lines before it are the good prefix.
+function quarantineTornJournalTail (path, lines, tornIndex) {
+  try {
+    // Prefer copyFileSync (Node) when available; fall back to read+write so the
+    // path works under any fs shim that only exposes the basic primitives.
+    if (typeof copyFileSync === 'function') {
+      copyFileSync(path, path + '.torn-' + Date.now())
+    } else {
+      const damaged = readFileSync(path)
+      writeFileSync(path + '.torn-' + Date.now(), damaged)
+    }
+  } catch {}
+  const prefix = tornIndex === 0 ? '' : lines.slice(0, tornIndex).join('\n') + '\n'
+  truncateFsyncedSync(path, Buffer.byteLength(prefix, 'utf8'))
 }
 
 function appendFsyncedSync (path, bytes) {
@@ -2625,6 +2831,26 @@ function namespaceCap (namespaceInfo, cap, fallback) {
   return value == null ? fallback : Math.min(value, fallback)
 }
 
+// Optional operator audit note on takedown. Max 512 chars; whitespace-only → null.
+// Throws with status 400 for non-string or over-long values so bad input never
+// lands in the journal/snapshot.
+function normalizeTakedownReason (reason) {
+  if (reason == null) return null
+  if (typeof reason !== 'string') {
+    const err = new Error('takedown reason must be a string')
+    err.status = 400
+    throw err
+  }
+  const trimmed = reason.trim()
+  if (!trimmed) return null
+  if (trimmed.length > 512) {
+    const err = new Error('takedown reason too long')
+    err.status = 400
+    throw err
+  }
+  return trimmed
+}
+
 function namespaceOutboxCountIn (groups, name) {
   let count = 0
   for (const group of groups.values()) {
@@ -2739,7 +2965,9 @@ function normalizeJournalEntry (entry, expectedSeq) {
       kind: 'takedown',
       appId: entry.appId,
       key: entry.key,
-      drop: entry.drop === true
+      drop: entry.drop === true,
+      ts: Number.isFinite(entry.ts) ? entry.ts : null,
+      reason: typeof entry.reason === 'string' ? entry.reason : null
     }
   }
   // Sweep entries carry no inviteKey/op — just the batch of ghost appIds whose
@@ -2823,6 +3051,8 @@ function normalizeJournalEntry (entry, expectedSeq) {
     appId: entry.appId,
     inviteKey: entry.inviteKey,
     namespace,
+    // Optional: pre-feature journals lack ts and do not re-charge windows.
+    ts: Number.isFinite(entry.ts) ? entry.ts : null,
     op: {
       type: op.type,
       data: clone(op.data)

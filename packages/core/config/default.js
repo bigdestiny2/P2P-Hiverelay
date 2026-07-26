@@ -211,6 +211,25 @@ export default {
     intervalMs: 30_000,
     maxRestarts: 3
   },
+
+  // Notify (encrypted wakeup). Only loaded when the `notify` service/plugin is
+  // enabled. `push` is null by default → memory stub (live:false) so the relay
+  // never pretends it can deliver OS pushes. Operators set a descriptor:
+  //   notify: {
+  //     push: {
+  //       kind: 'webpush' | 'apns' | 'fcm' | 'multi',
+  //       credentials: { ... },   // kind-specific; never commit real keys
+  //       tokenEncoding: 'sealed' // default; 'plaintext' only for tests
+  //     }
+  //   }
+  // Resolved in NotifyService.start() via createPushProvider. A bad descriptor
+  // fails closed (service does not start).
+  notify: {
+    push: null,
+    persistencePath: null,
+    abuseLimits: null
+  },
+
   signedDirectory: {
     enabled: false,
     maxEntryBytes: 8 * 1024,

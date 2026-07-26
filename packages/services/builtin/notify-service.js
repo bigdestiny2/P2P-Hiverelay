@@ -618,22 +618,45 @@ export class NotifyService extends ServiceProvider {
       if (device && entry.device != null && entry.device !== device) return false
       return true
     }
+    // Delivery outcome aggregates for operator dashboards. "Attempts" is the
+    // count of recorded delivery events (each send/watch-wake produces one);
+    // success = accepted_by_provider; everything else counts as a failure for
+    // the operator pulse (rejected/expired/rate_limited/token_invalid/…).
+    let deliveryAttempts = 0
+    let deliverySuccesses = 0
+    let deliveryFailures = 0
+    for (const event of this.deliveryEvents.values()) {
+      if (!matches(event)) continue
+      deliveryAttempts++
+      if (event.status === 'accepted_by_provider') deliverySuccesses++
+      else deliveryFailures++
+    }
+    const limits = this.limits()
     return {
       ok: true,
+      ready: true,
       service: 'notify',
       version: NOTIFY_SERVICE_VERSION,
       privacy: {
         plaintextAllowed: false,
         profiles: NOTIFY_PRIVACY_PROFILES
       },
-      limits: this.limits(),
+      limits,
+      // Top-level aliases for the dashboard pulse panel (and any operator
+      // tooling that prefers a flat shape over nested counts/limits).
+      deliveryAttempts,
+      deliverySuccesses,
+      deliveryFailures,
+      egress: limits.egress || null,
       counts: {
         providerBindings: countMap(this.providerBindings, matches),
         devices: countMap(this.devices, matches),
         receiveCaps: countMap(this.receiveCaps, matches),
         sendCaps: countMap(this.sendCaps, matches),
         watches: countMap(this.watches, matches),
-        deliveryEvents: countMap(this.deliveryEvents, matches),
+        deliveryEvents: deliveryAttempts,
+        deliverySuccesses,
+        deliveryFailures,
         revocations: countMap(this.revocations, matches)
       }
     }

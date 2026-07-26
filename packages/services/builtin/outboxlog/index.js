@@ -24,6 +24,7 @@ import {
 } from './hypercore-journal.js'
 import { createOutboxSwarmHub } from './swarm-hub.js'
 import { createOutboxFederationQuorum } from './federation-quorum.js'
+import { positiveStorageBound } from 'p2p-hiverelay/config/storage-cap.js'
 export {
   OUTBOXLOG_BLIND_SEAL_AAD_DOMAIN,
   OUTBOXLOG_BLIND_SEAL_AAD_VERSION,
@@ -90,6 +91,8 @@ export class OutboxLogApp extends ServiceProvider {
     // journal cores to the fleet seeder. 0 disables the periodic re-affirm
     // (the one-shot initial seed still runs). Default 10 minutes.
     this.seedReaffirmMs = normalizeReaffirmMs(opts.seedReaffirmMs, OUTBOXLOG_SEED_REAFFIRM_DEFAULT_MS)
+    this.seedMaxStorageBytes = positiveStorageBound(opts.seedMaxStorageBytes)
+    this.journalMaxStorageBytes = positiveStorageBound(opts.journalMaxStorageBytes)
     this._seedTimer = null
     // Ghost-outbox sweep (see outbox-log.js sweepGhosts). opts.sweep === false
     // disables; ttl/interval overridable here and via config.outboxlog.sweep.
@@ -124,6 +127,12 @@ export class OutboxLogApp extends ServiceProvider {
     if (outboxlog.seedReaffirmMs !== undefined) {
       this.seedReaffirmMs = normalizeReaffirmMs(outboxlog.seedReaffirmMs, this.seedReaffirmMs)
     }
+    if (Object.prototype.hasOwnProperty.call(outboxlog, 'seedMaxStorageBytes')) {
+      this.seedMaxStorageBytes = positiveStorageBound(outboxlog.seedMaxStorageBytes)
+    }
+    if (Object.prototype.hasOwnProperty.call(outboxlog, 'maxJournalStorageBytes')) {
+      this.journalMaxStorageBytes = positiveStorageBound(outboxlog.maxJournalStorageBytes)
+    }
     if (this.engine.configureNamespaces && (outboxlog.namespaces || typeof outboxlog.namespace === 'string')) {
       this.engine.configureNamespaces({
         namespace: typeof outboxlog.namespace === 'string' ? outboxlog.namespace : DEFAULT_OUTBOXLOG_NAMESPACE,
@@ -139,6 +148,14 @@ export class OutboxLogApp extends ServiceProvider {
         outboxlog.hypercore === true
     const configuredJournalPath = this.journalPath || (typeof outboxlog.journalPath === 'string' ? outboxlog.journalPath : null)
     if (!this.persistenceDisabled && this.engine.configurePersistence) {
+      // Storage-authority relays must use bounded hypercore journals. File /
+      // JSONL backends have no aggregate byte admission and are refused when
+      // node.storageAdmission is present (migration action in the error text).
+      if (!useHypercoreJournal && context.node && context.node.storageAdmission) {
+        const err = new Error('OutboxLog persistent file/JSONL backends are not storage-authority bounded; configure journal="hypercore" or "hypercore-outboxes" with maxJournalStorageBytes, or disable persistence')
+        err.code = 'OUTBOXLOG_BOUNDED_PERSISTENCE_REQUIRED'
+        throw err
+      }
       let journal = null
       if (usePartitionedHypercoreJournal) {
         journal = await createPartitionedHypercoreOutboxJournal({
@@ -146,12 +163,16 @@ export class OutboxLogApp extends ServiceProvider {
           indexName: typeof outboxlog.indexName === 'string'
             ? outboxlog.indexName
             : (typeof outboxlog.journalName === 'string' ? outboxlog.journalName : undefined),
-          coreNamePrefix: typeof outboxlog.outboxCorePrefix === 'string' ? outboxlog.outboxCorePrefix : undefined
+          coreNamePrefix: typeof outboxlog.outboxCorePrefix === 'string' ? outboxlog.outboxCorePrefix : undefined,
+          storageAdmission: context.node && context.node.storageAdmission,
+          maxJournalStorageBytes: this.journalMaxStorageBytes
         })
       } else if (useHypercoreJournal) {
         journal = await createHypercoreOutboxJournal({
           store: context.store || (context.node && context.node.store) || null,
-          name: typeof outboxlog.journalName === 'string' ? outboxlog.journalName : undefined
+          name: typeof outboxlog.journalName === 'string' ? outboxlog.journalName : undefined,
+          storageAdmission: context.node && context.node.storageAdmission,
+          maxJournalStorageBytes: this.journalMaxStorageBytes
         })
       }
       const configured = this.engine.configurePersistence({
@@ -289,7 +310,13 @@ export class OutboxLogApp extends ServiceProvider {
       try {
         // Release exclusive JSONL ownership even when a fenced/failed flush
         // reports an error; a failed release remains retryable on stop().
+        // Hypercore journals expose async close() that drains in-flight
+        // settlements — await both the engine and the journal handle so a
+        // late-success append is observed before ownership is released.
         if (this.engine.close) await this.engine.close()
+        if (this.journal && typeof this.journal.close === 'function') {
+          await this.journal.close()
+        }
         closeSucceeded = true
       } catch (err) {
         if (!failure) failure = err

@@ -440,6 +440,29 @@ dialog#destDialog::backdrop{background:rgba(5,8,14,.7);backdrop-filter:blur(2px)
   </div>
 </div>
 
+<div class="pulse-panel" id="notifyPanel" style="display:none">
+  <h3>Notify · delivery stats</h3>
+  <div class="mono-rows">
+    <div class="r"><span>service</span><span id="notifyReady">--</span><span style="color:var(--text-faint)">/api/manage/notify</span></div>
+    <div class="r"><span>delivery events</span><span id="notifyAttempts">--</span><span style="color:var(--text-faint)">counts.deliveryEvents</span></div>
+    <div class="r"><span>successes</span><span id="notifySuccesses" class="sev ok">--</span><span style="color:var(--text-faint)">accepted_by_provider</span></div>
+    <div class="r"><span>failures</span><span id="notifyFailures" class="sev">--</span><span style="color:var(--text-faint)">rejected / expired / …</span></div>
+    <div class="r"><span>egress</span><span id="notifyEgress">--</span><span style="color:var(--text-faint)">limits.egress</span></div>
+    <div class="r"><span>watches / caps</span><span id="notifyInventory">--</span><span style="color:var(--text-faint)">active inventory</span></div>
+  </div>
+</div>
+
+<div class="pulse-panel" id="vrfPanel" style="display:none">
+  <h3>VRF · randomness beacon</h3>
+  <div class="mono-rows">
+    <div class="r"><span>service</span><span id="vrfReady">--</span><span style="color:var(--text-faint)">/api/v1/vrf/status</span></div>
+    <div class="r"><span>beacon round</span><span id="vrfRound">--</span><span style="color:var(--text-faint)">/api/v1/vrf/beacon-latest</span></div>
+    <div class="r"><span>latest beta / hash</span><span id="vrfHash">--</span><span style="color:var(--text-faint)">(truncated)</span></div>
+    <div class="r"><span>pubkey</span><span id="vrfPubkey">--</span><span style="color:var(--text-faint)">suite key</span></div>
+    <div class="r"><span>interval</span><span id="vrfInterval">--</span><span style="color:var(--text-faint)">ms</span></div>
+  </div>
+</div>
+
 <div class="pulse-panel" id="attentionPanel">
   <h3>Attention</h3>
   <ul class="attention-list" id="attentionList">
@@ -1299,6 +1322,123 @@ function updateOperatorPulse(overview) {
   }
 }
 
+/* ===== Notify + VRF service panels (public /api/v1 surfaces) ===== */
+function truncateHex(value, keep) {
+  if (value == null) return '—';
+  var s = String(value);
+  var n = keep || 12;
+  if (s.length <= n * 2 + 1) return s;
+  return s.slice(0, n) + '…' + s.slice(-n);
+}
+
+function applyNotifyPanel(status) {
+  var panel = document.getElementById('notifyPanel');
+  if (!panel) return;
+  if (!status || status.ok === false) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = '';
+  setText('notifyReady', status.ready === false ? 'not ready' : 'ready');
+
+  // Prefer the flat delivery* fields status() now emits; fall back to nested
+  // counts.* which has always been the durable shape on /api/manage/notify.
+  var counts = status.counts || {};
+  var attempts = status.deliveryAttempts != null ? status.deliveryAttempts
+    : (counts.deliveryEvents != null ? counts.deliveryEvents : null);
+  var successes = status.deliverySuccesses != null ? status.deliverySuccesses
+    : (counts.deliverySuccesses != null ? counts.deliverySuccesses : null);
+  var failures = status.deliveryFailures != null ? status.deliveryFailures
+    : (counts.deliveryFailures != null ? counts.deliveryFailures : null);
+
+  setText('notifyAttempts', attempts != null ? formatCount(attempts) : '—');
+  setText('notifySuccesses', successes != null ? formatCount(successes) : '—');
+  var failEl = document.getElementById('notifyFailures');
+  if (failEl) {
+    failEl.textContent = failures != null ? formatCount(failures) : '—';
+    failEl.className = (failures > 0) ? 'sev' : 'sev ok';
+  }
+
+  // limits.egress is the authoritative push-provider profile from status().
+  var egress = (status.egress) ||
+    (status.limits && status.limits.egress) ||
+    {};
+  var egressBits = [];
+  if (egress.kind) egressBits.push(String(egress.kind));
+  if (egress.live === true) egressBits.push('live');
+  if (egress.live === false) egressBits.push('stub');
+  setText('notifyEgress', egressBits.length ? egressBits.join(' · ') : '—');
+
+  var invBits = [];
+  if (counts.watches != null) invBits.push(formatCount(counts.watches) + ' watches');
+  if (counts.receiveCaps != null) invBits.push(formatCount(counts.receiveCaps) + ' recv');
+  if (counts.sendCaps != null) invBits.push(formatCount(counts.sendCaps) + ' send');
+  if (counts.devices != null) invBits.push(formatCount(counts.devices) + ' devices');
+  setText('notifyInventory', invBits.length ? invBits.join(' · ') : '—');
+}
+
+function applyVrfPanel(status, latest, info) {
+  var panel = document.getElementById('vrfPanel');
+  if (!panel) return;
+  if (!status && !latest && !info) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = '';
+  setText('vrfReady', (status && status.ready) || (latest || info) ? 'ready' : '—');
+  var round = latest && latest.round != null ? latest.round
+    : (info && (info.round != null ? info.round : info.currentRound));
+  setText('vrfRound', round != null ? String(round) : '—');
+  var hash = (latest && (latest.beta || latest.hash || latest.pi)) || null;
+  setText('vrfHash', hash ? truncateHex(hash, 10) : (latest && latest.pending ? 'pending' : '—'));
+  var pubkey = (info && info.pubkey) || (latest && latest.pubkey) || null;
+  setText('vrfPubkey', pubkey ? truncateHex(pubkey, 8) : '—');
+  var interval = (info && info.intervalMs) || (latest && latest.intervalMs) || null;
+  setText('vrfInterval', interval != null ? String(interval) : '—');
+}
+
+async function fetchNotifyPanel() {
+  try {
+    // Operator diagnostics: GET /api/manage/notify (API-key / localhost /
+    // UI-token shim). This is NotifyService.status() without a client
+    // signature. The public notify status route requires a signed body and
+    // the capabilities route has no delivery counts — do not use either here.
+    var res = await fetchWithTimeout('/api/manage/notify');
+    if (res.ok) {
+      applyNotifyPanel(await res.json());
+      return;
+    }
+    // 503 = service not enabled; 401/403 = auth not available on this view.
+    // Hide the panel rather than show empty em-dashes.
+    applyNotifyPanel(null);
+  } catch (e) {
+    applyNotifyPanel(null);
+  }
+}
+
+async function fetchVrfPanel() {
+  try {
+    var statusRes = await fetchWithTimeout('/api/v1/vrf/status');
+    var status = statusRes.ok ? await statusRes.json() : null;
+    if (!status && !statusRes.ok) {
+      applyVrfPanel(null, null, null);
+      return;
+    }
+    var latestRes = await fetchWithTimeout('/api/v1/vrf/beacon-latest');
+    var latest = latestRes.ok ? await latestRes.json() : null;
+    var infoRes = await fetchWithTimeout('/api/v1/vrf/beacon-info');
+    var info = infoRes.ok ? await infoRes.json() : null;
+    // If beacon is disabled, still show status + suite info.
+    if (!info) {
+      var suiteRes = await fetchWithTimeout('/api/v1/vrf/info');
+      info = suiteRes.ok ? await suiteRes.json() : null;
+    }
+    applyVrfPanel(status || { ready: true }, latest, info);
+  } catch (e) {
+    applyVrfPanel(null, null, null);
+  }
+}
+
 function setText(id, value) {
   var el = document.getElementById(id);
   if (el) el.textContent = value == null ? '' : String(value);
@@ -1533,6 +1673,8 @@ async function fetchData() {
     if (fetchErrors <= 1) console.warn('Dashboard fetch failed:', e);
   }
   fetchSubsidy();
+  fetchNotifyPanel();
+  fetchVrfPanel();
 }
 
 function refreshData(force) {

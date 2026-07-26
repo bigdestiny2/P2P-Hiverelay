@@ -29,6 +29,8 @@ export const REPAIRTICKET_HTTP_ROUTE = '/api/repair'
 export const REPAIRTICKET_HTTP_ROUTE_PREFIX = '/api/repair/'
 export const SHARD_HTTP_ROUTE = '/api/v1/shard'
 export const SHARD_HTTP_ROUTE_PREFIX = '/api/v1/shard/'
+export const VRF_HTTP_ROUTE = '/api/v1/vrf'
+export const VRF_HTTP_ROUTE_PREFIX = '/api/v1/vrf/'
 export const POKER_HTTP_ROUTE = '/api/poker'
 export const POKER_HTTP_ROUTE_PREFIX = '/api/poker/'
 export const POKER_TABLE_CREATE_ROUTE = '/api/poker/tables'
@@ -96,6 +98,11 @@ export function isRepairTicketHttpRoute (path) {
 export function isShardHttpRoute (path) {
   return typeof path === 'string' &&
     (path === SHARD_HTTP_ROUTE || path.startsWith(SHARD_HTTP_ROUTE_PREFIX))
+}
+
+export function isVrfHttpRoute (path) {
+  return typeof path === 'string' &&
+    (path === VRF_HTTP_ROUTE || path.startsWith(VRF_HTTP_ROUTE_PREFIX))
 }
 
 export function resolvePokerHttpRoutePolicy (method, path) {

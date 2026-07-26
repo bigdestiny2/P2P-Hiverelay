@@ -447,6 +447,8 @@ export class HypercoreOutboxJournal extends EventEmitter {
   }
 
   async close () {
+    if (this._closed) return
+    this._closed = true
     await this.flush({ throwOnError: false })
     await this.storageController.drainSettlements(this.appendTimeoutMs)
     this.storageController.close()
@@ -521,6 +523,8 @@ export class PartitionedHypercoreOutboxJournal extends EventEmitter {
   }
 
   async close () {
+    if (this._closed) return
+    this._closed = true
     await this.flush({ throwOnError: false })
     await this.storageController.drainSettlements(this.appendTimeoutMs)
     await this.withdrawSeedCores()

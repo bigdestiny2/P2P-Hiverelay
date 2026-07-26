@@ -141,3 +141,23 @@ export function resolveNotifyServiceProvider (node) {
 
   return { ok: true, provider, entry }
 }
+
+export function resolveVrfServiceProvider (node) {
+  const entry = serviceEntry(node, 'vrf')
+  if (!entry) {
+    return { ok: false, status: 503, error: 'VRF service is not enabled on this relay' }
+  }
+
+  if (entry.status && entry.status !== 'running') {
+    return { ok: false, status: 503, error: 'VRF service is not running (status=' + entry.status + ')' }
+  }
+
+  const provider = entry.provider || entry
+  // Core capabilities used by the HTTP surface. Beacon methods are optional
+  // (beacon may be disabled); info/pubkey/prove/verify are the floor.
+  if (!provider || typeof provider.info !== 'function') {
+    return { ok: false, status: 503, error: 'VRF service does not expose info method' }
+  }
+
+  return { ok: true, provider, entry }
+}
