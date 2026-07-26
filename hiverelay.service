@@ -17,6 +17,29 @@ WorkingDirectory=/opt/hiverelay
 Environment=NODE_ENV=production
 Environment=HIVERELAY_LOG_LEVEL=info
 
+# ─── Utility services (enabled by default across the fleet) ────────
+# These make the relay useful to all apps on the substrate.
+Environment=HIVERELAY_ENABLE_SERVICES=1
+Environment=HIVERELAY_OUTBOXLOG=1
+Environment=HIVERELAY_NOTIFY=1
+Environment=HIVERELAY_STORAGE_PROOF=1
+Environment=HIVERELAY_VRF=1
+Environment=HIVERELAY_WITNESSLOG=1
+Environment=HIVERELAY_REPAIRTICKET=1
+# Shard-store is opt-in per relay (needs disk space for blind custody).
+# Enable on high-capacity relays: HIVERELAY_SHARD_STORE=1
+
+# ─── Tor (enabled by default — relay IP hidden from peers) ────────
+# Requires tor >= 0.4.9.5 installed on the box with ControlPort 9051
+# and CookieAuthentication enabled. See deploy/tor/torrc.
+Environment=HIVERELAY_TOR=1
+Environment=HIVERELAY_TOR_SOCKS_HOST=127.0.0.1
+Environment=HIVERELAY_TOR_SOCKS_PORT=9050
+Environment=HIVERELAY_TOR_CONTROL_HOST=127.0.0.1
+Environment=HIVERELAY_TOR_CONTROL_PORT=9051
+Environment=HIVERELAY_TOR_KEY_FILE=/var/lib/hiverelay/tor-onion-key.blob
+Environment=HIVERELAY_TOR_CLIENT_AUTH_DIR=/var/lib/hiverelay/tor-client-auth
+
 # Restart policy — RestartSec=15 prevents ELOCKED crash loops
 # (random-access-file needs time to release primary-key lock)
 Restart=always

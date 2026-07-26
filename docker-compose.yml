@@ -1,17 +1,20 @@
 # p2p-hiverelay — Docker Compose orchestration
 #
 # Quick start:
-#   docker compose up -d          # single relay, default config
+#   docker compose up -d          # relay + tor + all utility services
 #   docker compose logs -f relay  # tail logs
 #   docker compose exec relay p2p-hiverelay tui   # open management TUI
 #   docker compose down           # stop (data persists in the named volume)
 #
 # Multi-region mesh:
 #   docker compose --profile mesh up -d
-#   (runs 3 relays — NA, EU, AS — that discover each other via DHT)
+#   (runs 3 relays — NA, EU, AS — that discover each other via DHT, each with its own tor sidecar)
 #
 # Home-relay mode (behind NAT, no port forwarding needed):
 #   HIVERELAY_HOLESAIL=1 docker compose up -d
+#
+# Tor is enabled by default. To run without tor:
+#   HIVERELAY_TOR=0 docker compose up --no-deps -d relay
 #
 # Switch to host networking for maximal DHT reachability (Linux only):
 #   uncomment the `network_mode: host` line below and comment out `ports:`
@@ -37,29 +40,70 @@ services:
       - HIVERELAY_API_KEY=${HIVERELAY_API_KEY:-}
       # Uncomment to enable Holesail transport for home relays behind NAT
       # - HIVERELAY_HOLESAIL=1
-      # Tor sidecar (use with --profile tor):
-      # - HIVERELAY_TOR=1
-      # - HIVERELAY_TOR_SOCKS_HOST=hiverelay-tor
-      # - HIVERELAY_TOR_SOCKS_PORT=9050
-      # - HIVERELAY_TOR_CONTROL_HOST=hiverelay-tor
-      # - HIVERELAY_TOR_CONTROL_PORT=9051
-      # - HIVERELAY_TOR_KEY_FILE=/config/tor-onion-key.blob
-      # - HIVERELAY_TOR_CLIENT_AUTH_DIR=/config/tor-client-auth
+      #
+      # ─── Tor (enabled by default) ────────────────────────────────
+      # The tor sidecar below provides SOCKS5 + control port.
+      # The relay creates a persistent v3 onion service via ADD_ONION.
+      # Set HIVERELAY_TOR=0 to disable.
+      - HIVERELAY_TOR=${HIVERELAY_TOR:-1}
+      - HIVERELAY_TOR_SOCKS_HOST=hiverelay-tor
+      - HIVERELAY_TOR_SOCKS_PORT=9050
+      - HIVERELAY_TOR_CONTROL_HOST=hiverelay-tor
+      - HIVERELAY_TOR_CONTROL_PORT=9051
+      - HIVERELAY_TOR_KEY_FILE=/config/tor-onion-key.blob
+      - HIVERELAY_TOR_CLIENT_AUTH_DIR=/config/tor-client-auth
+      #
+      # ─── Utility services (enabled by default) ───────────────────
+      # These make the relay useful to all apps on the substrate:
+      # outboxlog = signed append-only outboxes (every app uses this)
+      # notify    = encrypted wake-up push (APNs/FCM/WebPush)
+      # shard-store = k-of-n blind custody for BlindShard
+      # storage-proof = prove a relay holds bytes (challenge-response)
+      # vrf       = verifiable randomness (public, checkable)
+      # witnesslog = signed availability notes
+      # repairticket = self-healing work orders
+      - HIVERELAY_ENABLE_SERVICES=1
+      - HIVERELAY_OUTBOXLOG=1
+      - HIVERELAY_NOTIFY=1
+      - HIVERELAY_SHARD_STORE=1
+      - HIVERELAY_STORAGE_PROOF=1
+      - HIVERELAY_VRF=1
+      - HIVERELAY_WITNESSLOG=1
+      - HIVERELAY_REPAIRTICKET=1
     command: >
       start
       --storage /data
       --region ${HIVERELAY_REGION:-NA}
       --max-storage ${HIVERELAY_MAX_STORAGE:-50GB}
-    # When using --profile tor, the relay depends on the tor sidecar.
-    # Uncomment depends_on if you run both services in the same profile.
-    # depends_on:
-    #   tor:
-    #     condition: service_healthy
+    depends_on:
+      tor:
+        condition: service_healthy
     # Linux hosts only — gives direct UDP/DHT reachability.
     # network_mode: host
 
+  # ─── Tor sidecar (default companion) ────────────────────────────────
+  # Provides a v3 onion service so peers can reach the relay without
+  # knowing its real IP. PoW defense (prop 327) + vanguards-lite enabled.
+  # Pin: tor 0.4.9.x (0.4.8 hard-sunset 2026-09-01).
+  tor:
+    image: djschilling/tor:0.4.9
+    container_name: hiverelay-tor
+    restart: unless-stopped
+    volumes:
+      - hiverelay-tor-data:/var/lib/tor
+      - ./deploy/tor/torrc:/etc/tor/torrc:ro
+    environment:
+      - TOR_LOG=notice
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test -S /var/lib/tor/control_auth_cookie"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
   # ─── Multi-region mesh profile ──────────────────────────────────────
   # Spin up three relays in NA / EU / AS that discover each other via DHT.
+  # Each relay gets its own tor sidecar.
   # Run with:  docker compose --profile mesh up -d
 
   relay-na:
@@ -76,7 +120,37 @@ services:
     environment:
       - NODE_ENV=production
       - HIVERELAY_LOG_LEVEL=info
+      - HIVERELAY_TOR=1
+      - HIVERELAY_TOR_SOCKS_HOST=hiverelay-na-tor
+      - HIVERELAY_TOR_CONTROL_HOST=hiverelay-na-tor
+      - HIVERELAY_ENABLE_SERVICES=1
+      - HIVERELAY_OUTBOXLOG=1
+      - HIVERELAY_NOTIFY=1
+      - HIVERELAY_SHARD_STORE=1
+      - HIVERELAY_STORAGE_PROOF=1
+      - HIVERELAY_VRF=1
+      - HIVERELAY_WITNESSLOG=1
+    depends_on:
+      relay-na-tor:
+        condition: service_healthy
     command: ["start", "--storage", "/data", "--region", "NA", "--max-storage", "50GB"]
+
+  relay-na-tor:
+    image: djschilling/tor:0.4.9
+    container_name: hiverelay-na-tor
+    profiles: ["mesh"]
+    restart: unless-stopped
+    volumes:
+      - hiverelay-na-tor-data:/var/lib/tor
+      - ./deploy/tor/torrc:/etc/tor/torrc:ro
+    environment:
+      - TOR_LOG=notice
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test -S /var/lib/tor/control_auth_cookie"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
 
   relay-eu:
     image: ghcr.io/bigdestiny2/p2p-hiverelay:latest
@@ -92,7 +166,37 @@ services:
     environment:
       - NODE_ENV=production
       - HIVERELAY_LOG_LEVEL=info
+      - HIVERELAY_TOR=1
+      - HIVERELAY_TOR_SOCKS_HOST=hiverelay-eu-tor
+      - HIVERELAY_TOR_CONTROL_HOST=hiverelay-eu-tor
+      - HIVERELAY_ENABLE_SERVICES=1
+      - HIVERELAY_OUTBOXLOG=1
+      - HIVERELAY_NOTIFY=1
+      - HIVERELAY_SHARD_STORE=1
+      - HIVERELAY_STORAGE_PROOF=1
+      - HIVERELAY_VRF=1
+      - HIVERELAY_WITNESSLOG=1
+    depends_on:
+      relay-eu-tor:
+        condition: service_healthy
     command: ["start", "--storage", "/data", "--region", "EU", "--max-storage", "50GB"]
+
+  relay-eu-tor:
+    image: djschilling/tor:0.4.9
+    container_name: hiverelay-eu-tor
+    profiles: ["mesh"]
+    restart: unless-stopped
+    volumes:
+      - hiverelay-eu-tor-data:/var/lib/tor
+      - ./deploy/tor/torrc:/etc/tor/torrc:ro
+    environment:
+      - TOR_LOG=notice
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test -S /var/lib/tor/control_auth_cookie"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
 
   relay-as:
     image: ghcr.io/bigdestiny2/p2p-hiverelay:latest
@@ -108,36 +212,29 @@ services:
     environment:
       - NODE_ENV=production
       - HIVERELAY_LOG_LEVEL=info
+      - HIVERELAY_TOR=1
+      - HIVERELAY_TOR_SOCKS_HOST=hiverelay-as-tor
+      - HIVERELAY_TOR_CONTROL_HOST=hiverelay-as-tor
+      - HIVERELAY_ENABLE_SERVICES=1
+      - HIVERELAY_OUTBOXLOG=1
+      - HIVERELAY_NOTIFY=1
+      - HIVERELAY_SHARD_STORE=1
+      - HIVERELAY_STORAGE_PROOF=1
+      - HIVERELAY_VRF=1
+      - HIVERELAY_WITNESSLOG=1
+    depends_on:
+      relay-as-tor:
+        condition: service_healthy
     command: ["start", "--storage", "/data", "--region", "AS", "--max-storage", "50GB"]
 
-# ─── Tor onion transport profile ────────────────────────────────────
-# Run with:  HIVERELAY_TOR=1 docker compose --profile tor up -d
-#
-# Adds a tor sidecar that provides:
-#   - SOCKS5 proxy on 9050 (outbound Tor for the relay)
-#   - Control port on 9051 (ADD_ONION for v3 hidden service)
-#   - PoW defense (prop 327) + vanguards-lite enabled
-#
-# The relay's TorTransport connects to the sidecar's control port,
-# creates a persistent v3 onion service, and forwards its read-plane
-# and peer-vport through the onion. Peers connect via the onion address
-# without knowing the relay's real IP.
-#
-# Pin: tor 0.4.9.x (0.4.8 hard-sunset 2026-09-01).
-# Image: https://hub.docker.com/r/djschilling/tor (multi-arch, 0.4.9.x)
-
-  tor:
+  relay-as-tor:
     image: djschilling/tor:0.4.9
-    container_name: hiverelay-tor
-    profiles: ["tor"]
+    container_name: hiverelay-as-tor
+    profiles: ["mesh"]
     restart: unless-stopped
     volumes:
-      - hiverelay-tor-data:/var/lib/tor
+      - hiverelay-as-tor-data:/var/lib/tor
       - ./deploy/tor/torrc:/etc/tor/torrc:ro
-    # No published ports — the relay talks to tor over the internal
-    # Docker network (hiverelay-tor:9050, hiverelay-tor:9051).
-    # The onion service is reachable from the Tor network; no host
-    # port mapping needed.
     environment:
       - TOR_LOG=notice
     healthcheck:
@@ -150,10 +247,13 @@ services:
 volumes:
   hiverelay-data:
   hiverelay-config:
+  hiverelay-tor-data:
   hiverelay-na-data:
   hiverelay-na-config:
+  hiverelay-na-tor-data:
   hiverelay-eu-data:
   hiverelay-eu-config:
+  hiverelay-eu-tor-data:
   hiverelay-as-data:
   hiverelay-as-config:
-  hiverelay-tor-data:
+  hiverelay-as-tor-data:

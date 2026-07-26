@@ -498,6 +498,40 @@ export class BareRelay extends EventEmitter {
           })
         }
 
+        // Shard-store — k-of-n blind custody for BlindShard body dispersal.
+        // Opt-in like the others so a stock node stays minimal.
+        const shardStoreSelected = (Array.isArray(appServices) && appServices.includes('shard-store')) ||
+        env.HIVERELAY_SHARD_STORE === '1'
+        if (shardStoreSelected) {
+          bareSafeServices.push({
+            name: 'shard-store',
+            module: 'p2p-hiveservices/builtin/shard-store/index.js',
+            className: 'ShardStoreService'
+          })
+        }
+
+        // Witness-log — signed availability notes from other relays/peers.
+        const witnessLogSelected = (Array.isArray(appServices) && appServices.includes('witnesslog')) ||
+        env.HIVERELAY_WITNESSLOG === '1'
+        if (witnessLogSelected) {
+          bareSafeServices.push({
+            name: 'witnesslog',
+            module: 'p2p-hiveservices/builtin/witnesslog/index.js',
+            className: 'WitnessLogApp'
+          })
+        }
+
+        // Repair-ticket — self-healing work orders for missing/replicated data.
+        const repairTicketSelected = (Array.isArray(appServices) && appServices.includes('repairticket')) ||
+        env.HIVERELAY_REPAIRTICKET === '1'
+        if (repairTicketSelected) {
+          bareSafeServices.push({
+            name: 'repairticket',
+            module: 'p2p-hiveservices/builtin/repairticket/index.js',
+            className: 'RepairTicketApp'
+          })
+        }
+
         let registered = 0
         let servicesPackageMissing = false
         for (const spec of bareSafeServices) {
