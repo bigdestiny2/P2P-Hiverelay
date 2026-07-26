@@ -265,7 +265,37 @@ export class AppLifecycle extends EventEmitter {
     const drive = new Hyperdrive(node.store.session(), appKey)
 
     try {
-      await drive.ready()
+      // 2026-05-24: hard timeout on drive.ready(). On a drive whose
+      // underlying hypercore is in a bad state (corrupted index, hung
+      // session, etc.), ready() can hang indefinitely — and because
+      // reseedFromRegistry awaits seedApp sequentially, ONE such drive
+      // blocks every subsequent entry from getting opened. Observed
+      // live on milkyb-iad where reseed processed only 12 of 145
+      // entries at startup, then hung forever on entry 13. The other
+      // 132 entries' drives were never opened, so the periodic anchor
+      // check + repair loop had nothing to iterate (skipped by the
+      // `if (!entry.drive) continue` guards).
+      //
+      // 8 seconds is generous — drive.ready() on a healthy entry
+      // resolves in milliseconds. If it doesn't, throw so seedApp's
+      // outer try/catch in reseedFromRegistry catches it, emits a
+      // reseed-error, and the next entry gets its turn.
+      const READY_TIMEOUT_MS = 8000
+      let readyTimer
+      try {
+        await Promise.race([
+          drive.ready(),
+          new Promise((_, reject) => {
+            readyTimer = setTimeout(
+              () => reject(new Error('DRIVE_READY_TIMEOUT after ' + READY_TIMEOUT_MS + 'ms')),
+              READY_TIMEOUT_MS
+            )
+            if (readyTimer.unref) readyTimer.unref()
+          })
+        ])
+      } finally {
+        if (readyTimer) clearTimeout(readyTimer)
+      }
 
       const discoveryKey = drive.discoveryKey
 
@@ -960,8 +990,46 @@ export class AppLifecycle extends EventEmitter {
    * @param {Hyperdrive} drive
    * @returns {Promise<boolean>}
    */
-  async _isDriveFullyReplicated (drive) {
+  async _isDriveFullyReplicated (drive, opts = {}) {
     if (!drive || drive.closed || drive.closing) return false
+
+    // 2026-05-24: hard timeout on the whole check. drive.getBlobs() can
+    // hang indefinitely on a freshly-loaded entry whose blob layer
+    // hasn't been resolved by any peer yet (the lazy init awaits a
+    // hypercore replication session that may never come). Without a
+    // timeout, a single such entry deadlocks the entire _runAnchorCheck
+    // sequential loop — observed live on milkyb-iad where the first
+    // anchor pass at startup processed 5 of 145 entries, then hung
+    // forever on entry 6. 15h uptime, 144 entries never checked again.
+    //
+    // Default 3s is generous: getBlobs() resolves in milliseconds when
+    // it works at all. If it doesn't resolve quickly, the drive's blob
+    // layer isn't accessible from any current peer, so we should return
+    // false (treat as not-fully-replicated) and move on so the loop
+    // can keep making progress on other entries. Next pass will retry.
+    const timeoutMs = Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0
+      ? Math.floor(opts.timeoutMs)
+      : 3000
+
+    let timer
+    const timeout = new Promise(resolve => {
+      timer = setTimeout(() => resolve('__TIMEOUT__'), timeoutMs)
+      if (timer.unref) timer.unref()
+    })
+
+    try {
+      const result = await Promise.race([this._isDriveFullyReplicatedInner(drive), timeout])
+      if (result === '__TIMEOUT__') return false
+      return result === true
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  // Inner implementation — extracted so _isDriveFullyReplicated can
+  // wrap it in a timeout race without duplicating the logic. Pre-2026-
+  // 05-24 this was the body of _isDriveFullyReplicated directly.
+  async _isDriveFullyReplicatedInner (drive) {
     const blobs = drive.blobs || (typeof drive.getBlobs === 'function'
       ? await drive.getBlobs().catch(() => null)
       : null)
