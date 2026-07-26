@@ -109,7 +109,7 @@ test('capability doc advertises notify and outboxlog service profiles when runni
     config: { enableServices: true },
     serviceRegistry: {
       services: new Map([
-        ['notify', { status: 'running', version: '0.1.0' }],
+        ['notify', { status: 'running', version: '0.1.0', provider: { limits: () => ({ providers: ['runtime', 'apns', 'fcm', 'webpush'], credentialModes: ['runtime-owned', 'app-owned'], modes: ['direct', 'watch', 'presence-fallback'], egress: { live: true } }) } }],
         ['outboxlog', { status: 'running', version: '0.1.0' }]
       ]),
       catalog: () => [
