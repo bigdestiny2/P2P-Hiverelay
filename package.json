@@ -108,6 +108,6 @@
   },
   "overrides": {
     "js-yaml": "^4.2.0",
-    "protobufjs": "^7.6.4"
+    "protobufjs": "^7.6.5"
   }
 }
