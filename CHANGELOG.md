@@ -122,6 +122,35 @@ The packages are versioned in lockstep.
   scanner), `release:check-npm-packages`, the ecosystem-consumers test, and
   `npm run test:unit` stay hard-blocking.
 
+### Added
+- **`HIVERELAY_OUTBOXLOG_NAMESPACE` env var registers an app's outbox namespace.**
+  The app-neutral outboxlog rejects records signed under an unregistered namespace
+  with `unknown namespace` (`400`). Apps sign under a specific namespace (e.g.
+  Peerit signs `'peerit'`), and until now there was no env-only way to register it
+  — an ENV-provisioned fleet/appliance box (`HIVERELAY_OUTBOXLOG=1`) `400`'d every
+  publish. The new env var maps to `config.outboxlog.namespace`, which
+  `OutboxLogApp.start()` hands to the engine's namespace registry so a
+  `'peerit'`-signed append is accepted. It is a **default, not an override**: a
+  namespace persisted in `config.json` wins (matching `HIVERELAY_ACCEPT_MODE` /
+  `HIVERELAY_MAX_STORAGE`), and env-unset leaves the default behavior unchanged.
+  Wired in `packages/core/cli/index.js` via the pure, unit-tested
+  `applyOutboxlogNamespaceEnv` helper in `packages/core/config/loader.js`.
+
+### Fixed
+- **StartOS package version drift.** `startos/manifest.yaml` and the
+  `startos/README.md` status line were pinned at `0.21.0` while the monorepo is at
+  `0.24.0`, tripping two workspace-alignment audit checks. Both are bumped to
+  `0.24.0` so `scripts/audit-workspace-alignment.mjs` no longer flags the StartOS
+  manifest/README version mismatch.
+
+### Documentation
+- **OutboxLog namespace-registration requirement documented.** `docs/SERVICES.md`
+  now spells out that an app which signs under a specific namespace (e.g. Peerit's
+  `'peerit'`) must have that namespace registered on the relay
+  (`config.outboxlog.namespace` or `HIVERELAY_OUTBOXLOG_NAMESPACE`) or every append
+  is rejected `unknown namespace` — the most common cause of a freshly
+  ENV-provisioned box refusing an otherwise-working app.
+
 ## [0.24.0] — 2026-07-06
 
 ### Security (audit hardening — five HIGH blockers closed before public exposure)
