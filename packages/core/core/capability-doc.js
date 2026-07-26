@@ -69,7 +69,7 @@ function buildPrivacyTransports ({ relay, config, custodyEnabled, advertisedAtMs
   const supports = []
   if (classified.readPlane != null) supports.push('capabilities.get', 'catalog.read')
   if (classified.readPlane != null || classified.peer != null) supports.push('replication.sync')
-  if (classified.peer != null && hasRunningService(relay, 'notify')) supports.push('notify.send')
+  if (classified.peer != null && hasRunningService(relay, 'notify') && notifyEgressLive(relay)) supports.push('notify.send')
   if (classified.peer != null && hasRunningService(relay, 'outboxlog')) supports.push('outbox.wake', 'outbox.read')
   if (classified.peer != null && custodyEnabled) {
     supports.push('custody.intent', 'custody.commit', 'custody.status', 'custody.proof.challenge')
@@ -234,7 +234,7 @@ export function buildCapabilityDoc (opts = {}) {
     features.push(CIRCUIT_LIMITS_PROFILE_FEATURE)
   }
   if (relay && typeof relay.createAccountingReceipt === 'function') features.push('accounting-receipts')
-  if (servicesEnabled && hasRunningService(relay, 'notify')) features.push('notify-v1')
+  if (servicesEnabled && hasRunningService(relay, 'notify') && notifyEgressLive(relay)) features.push('notify-v1')
   if (servicesEnabled && hasRunningService(relay, 'outboxlog')) features.push('outboxlog-v1')
   features.push('capability-doc') // we're advertising this doc, so always set
   // Revocability — this build understands and enforces the v0.8 seed-request
@@ -497,23 +497,33 @@ function buildServicesProtocolProfile (relay, servicesEnabled) {
   if (!servicesEnabled || !relay || !relay.serviceRegistry || !relay.serviceRegistry.services) return null
   const services = relay.serviceRegistry.services
   const profile = {}
-  if (hasRunningService(relay, 'notify')) {
+  if (hasRunningService(relay, 'notify') && notifyEgressLive(relay)) {
+    // Driven from the service's own limits() rather than retyped literals, so
+    // the doc cannot claim a vocabulary or quota the service doesn't enforce.
+    // Literals remain only as the fallback for a service without limits().
+    const notifyLimits = serviceLimits(services.get('notify'))
     profile.notify = {
-      version: '0.1.0',
-      providers: ['runtime', 'apns', 'fcm', 'webpush'],
-      credential_modes: ['runtime-owned', 'app-owned'],
-      modes: ['direct', 'watch', 'presence-fallback'],
+      version: serviceVersion(services.get('notify')) || '0.1.0',
+      providers: notifyLimits.providers || ['runtime', 'apns', 'fcm', 'webpush'],
+      credential_modes: notifyLimits.credentialModes || ['runtime-owned', 'app-owned'],
+      modes: notifyLimits.modes || ['direct', 'watch', 'presence-fallback'],
       payload: {
-        max_ciphertext_bytes: 3072,
+        max_ciphertext_bytes: notifyLimits.maxCiphertextBytes || 3072,
         plaintext_allowed: false,
-        privacy_profiles: ['generic', 'local-template']
+        privacy_profiles: notifyLimits.privacyProfiles || ['generic', 'local-template']
       },
       limits: {
-        max_ttl_seconds: 604800,
-        max_devices_per_user_app: 32,
-        max_watches_per_receive_cap: 128,
-        default_channel_per_hour: 30
-      }
+        max_ttl_seconds: notifyLimits.maxTtlSeconds || 604800,
+        // `max_devices_per_user_app` used to be advertised here but was never
+        // enforced anywhere in the service — it is dropped rather than kept as
+        // a promise the relay doesn't keep.
+        max_watches_per_receive_cap: notifyLimits.maxChannelsPerReceiveCap || 128,
+        default_channel_per_hour: notifyLimits.defaultChannelPerHour || 30
+      },
+      // Published so a client can tell a delivering relay from a running one.
+      // Deliberately reports only liveness, not which provider — the adapter in
+      // use is operator infrastructure, not a client-relevant capability.
+      egress: { live: true }
     }
   }
   if (hasRunningService(relay, 'outboxlog')) {
@@ -681,6 +691,36 @@ function serviceVersion (entry) {
     } catch (_) {}
   }
   return null
+}
+
+/**
+ * Read a service's self-reported limits(). Duck-typed and defensive: a service
+ * that predates limits(), or throws from it, must not take down the capability
+ * doc — every caller falls back to its own literals.
+ */
+function serviceLimits (entry) {
+  if (!entry) return {}
+  const provider = entry.provider || entry
+  if (provider && typeof provider.limits === 'function') {
+    try {
+      const limits = provider.limits()
+      if (limits && typeof limits === 'object') return limits
+    } catch (_) {}
+  }
+  return {}
+}
+
+/**
+ * Honesty gate for notify advertisement.
+ *
+ * A running NotifyService is not the same as a relay that can actually deliver
+ * a push. Without a configured provider adapter the service falls back to an
+ * in-memory sink that accepts every send and delivers nothing — advertising
+ * `notify-v1` in that state tells clients to route wakes into a black hole.
+ * All three advertisement sites share this one condition so they cannot drift.
+ */
+function notifyEgressLive (relay) {
+  return serviceLimits(serviceEntry(relay, 'notify')).egress?.live === true
 }
 
 /**

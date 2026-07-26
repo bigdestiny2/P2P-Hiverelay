@@ -39,6 +39,10 @@ test('wake loop: a pear-bots mailbox enqueue wakes the recipient device', async 
 
   const provider = { attempts: [], async send (d) { this.attempts.push(d); return { status: 'accepted_by_provider' } } }
   const outbox = new OutboxLogApp({ verifyAppend: () => true, persistence: false })
+  // A relay only accepts records tagged `_ns: 'pear-bots'` if that namespace is
+  // registered. Without this, every enqueue is rejected 400 "unknown namespace"
+  // — so this line is a real operator prerequisite, not test scaffolding.
+  await outbox.start({ config: { outboxlog: { namespaces: { [PB_NAMESPACE]: { blind: false } } } } })
   const notify = new NotifyService({ keyPair: relay, provider, clock: () => NOW })
 
   // Verbatim the closure relay-node/index.js installs at startup.
@@ -107,6 +111,10 @@ test('wake loop: the wake reaches a real signing adapter', async (t) => {
   const requests = []
 
   const outbox = new OutboxLogApp({ verifyAppend: () => true, persistence: false })
+  // A relay only accepts records tagged `_ns: 'pear-bots'` if that namespace is
+  // registered. Without this, every enqueue is rejected 400 "unknown namespace"
+  // — so this line is a real operator prerequisite, not test scaffolding.
+  await outbox.start({ config: { outboxlog: { namespaces: { [PB_NAMESPACE]: { blind: false } } } } })
   const notify = new NotifyService({ keyPair: relay, clock: () => NOW })
 
   // Resolve the provider the way an operator does — through config, in start().
