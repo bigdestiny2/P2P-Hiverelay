@@ -14,7 +14,7 @@ and key-material fields at the schema boundary.
 a one-page dashboard, first-run setup, wallet destination, service selection,
 and persistent identity behind each platform's authenticated app proxy.
 
-**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.25.0-rc.1**
+**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.25.0-rc.2**
 
 The four packages are versioned in lockstep:
 

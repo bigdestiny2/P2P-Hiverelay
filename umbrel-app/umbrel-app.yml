@@ -2,7 +2,7 @@ manifestVersion: 1.1
 id: blindspark
 category: networking
 name: Blindspark
-version: "0.25.0-rc.1"
+version: "0.25.0-rc.2"
 tagline: A blind relay that keeps peer-to-peer apps online
 description: >-
   Blindspark turns your Umbrel into a blind relay for the Pear / Holepunch
@@ -65,11 +65,5 @@ gallery: []
 path: ""
 defaultUsername: ""
 defaultPassword: ""
-releaseNotes: >-
-  v0.25.0-rc.1 (prerelease / canary): Tor packaging defaults, utility services
-  on by default, VRF + notify HTTP wiring and dashboard panels, outboxlog
-  durability fixes. Stable fleet remains on 0.24.3 until soak. Not blind GA;
-  live onions still need host Tor. Details:
-  https://github.com/bigdestiny2/P2P-Hiverelay/releases/tag/v0.25.0-rc.1
-submitter: bigdestiny2
+releaseNotes: ""submitter: bigdestiny2
 submission: https://github.com/getumbrel/umbrel-apps/pull/PENDING

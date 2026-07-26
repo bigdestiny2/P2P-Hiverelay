@@ -6,6 +6,26 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.25.0-rc.2] — 2026-07-26
+
+Hotfix prerelease. Prefer this over **v0.25.0-rc.1** (do not deploy rc.1).
+
+### Fixed
+- **Missing gateway modules** required by `gateway-server.js` / relay-node:
+  `exact-app-context.js`, `hive-host.js`, `public-app-admission.js`,
+  `public-hive-gateway-env.js`, and `selectExactByteRepresentation` on hyper-gateway.
+- **Duplicate `resolveStorageCap` export** in `packages/core/config/loader.js`
+  (re-export from `storage-cap.js` collided with a stale local function) —
+  caused `SyntaxError` crash-loop on canary checkout of rc.1.
+
+### Includes (from rc.1)
+- Tor packaging defaults; utility services packaging defaults; VRF/notify HTTP
+  wiring, client helpers, dashboard panels; outboxlog durability; ladder +
+  community docs.
+
+### Fleet
+- Canary target: `v0.25.0-rc.2`. Stable remains `v0.24.3` until soak.
+
 ## [0.25.0-rc.1] — 2026-07-26
 
 Prerelease. Fleet **canary** channel targets this tag; **stable** remains
