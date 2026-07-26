@@ -13,8 +13,11 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-RELAYS="$HERE/relays.json"
-[ -f "$RELAYS" ] || { echo "relays.json not found"; exit 1; }
+# The committed inventory always carries sshKey="default" — real key paths are
+# operator-specific and never land in the repo. Point HIVERELAY_FLEET_INVENTORY
+# at a private copy (e.g. fleet/relays.local.json, gitignored) to supply them.
+RELAYS="${HIVERELAY_FLEET_INVENTORY:-$HERE/relays.json}"
+[ -f "$RELAYS" ] || { echo "fleet inventory not found: $RELAYS"; exit 1; }
 
 CH="$(curl -fsS --max-time 15 https://raw.githubusercontent.com/bigdestiny2/P2P-Hiverelay/main/fleet/channels.json 2>/dev/null || cat "$HERE/channels.json")"
 

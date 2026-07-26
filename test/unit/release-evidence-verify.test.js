@@ -24,9 +24,12 @@ const FLEET_RELAYS = Object.freeze([
   ['utah-2gb-a', 'stable', '50%'],
   ['utah-0.5gb', 'canary', '49%'],
   ['utah-8gb', 'stable', '48%'],
+  ['miami', 'stable', '44%'],
   ['sing-1', 'stable', '52%'],
   ['sing-2', 'stable', '53%'],
+  ['sydney', 'stable', '45%'],
   ['bern', 'canary', '54%'],
+  ['amsterdam', 'stable', '46%'],
   ['dubai', 'stable', '47%']
 ])
 

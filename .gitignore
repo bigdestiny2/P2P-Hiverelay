@@ -25,3 +25,8 @@ packages/core/dashboard
 
 # local smoke storage
 tmp-test-relay*/
+
+# Private fleet inventory: same shape as fleet/relays.json but with real
+# operator SSH key paths. Never commit key paths — the tracked inventory uses
+# the "default" sentinel. Consume via HIVERELAY_FLEET_INVENTORY / --relays.
+fleet/relays.local.json

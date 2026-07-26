@@ -1,5 +1,5 @@
 {
-  "_doc": "Single source of truth for the raw systemd fleet (the boxes we operate directly; Umbrel/StartOS relays auto-update via their own registries and are not listed here). `tailnet` is filled in after `tailscale up` enrolls each box; until then fleet-status falls back to publicIp. `sshKey` is the local key file fleet tooling uses for break-glass.",
+  "_doc": "Single source of truth for the raw systemd fleet (the boxes we operate directly; Umbrel/StartOS relays auto-update via their own registries and are not listed here). `tailnet` is filled in after `tailscale up` enrolls each box; until then fleet-status falls back to publicIp. `sshKey` is always the `default` sentinel here: local key paths are operator-specific and are never committed. Point tooling at a private inventory via HIVERELAY_FLEET_INVENTORY (fleet-status.sh) or --relays / HIVERELAY_FLEET_SSH_KEY (check-fleet-rollout.mjs).",
   "relays": [
     {
       "name": "utah",
@@ -25,7 +25,7 @@
       "name": "utah-2gb-a",
       "publicIp": "216.126.237.3",
       "tailnet": null,
-      "sshKey": "~/.ssh/hiverelay_fleet",
+      "sshKey": "default",
       "channel": "stable",
       "region": "NA",
       "diskGB": 60,
@@ -45,40 +45,70 @@
       "name": "utah-8gb",
       "publicIp": "144.172.97.68",
       "tailnet": null,
-      "sshKey": "~/.ssh/hiverelay_fleet",
+      "sshKey": "default",
       "channel": "stable",
       "region": "NA",
       "diskGB": 960,
       "role": "seed"
     },
     {
+      "name": "miami",
+      "publicIp": "144.172.111.80",
+      "tailnet": null,
+      "sshKey": "default",
+      "channel": "stable",
+      "region": "NA",
+      "diskGB": 20,
+      "role": "seed"
+    },
+    {
       "name": "sing-1",
-      "publicIp": "104.194.153.179",
+      "publicIp": "153.75.94.187",
       "tailnet": null,
       "sshKey": "default",
       "channel": "stable",
       "region": "APAC",
-      "diskGB": 24,
+      "diskGB": 25,
       "role": "seed"
     },
     {
       "name": "sing-2",
-      "publicIp": "104.194.152.121",
+      "publicIp": "153.75.94.144",
       "tailnet": null,
-      "sshKey": "~/.ssh/hiverelay_fleet",
+      "sshKey": "default",
       "channel": "stable",
       "region": "APAC",
-      "diskGB": 62,
+      "diskGB": 65,
+      "role": "seed"
+    },
+    {
+      "name": "sydney",
+      "publicIp": "104.194.135.205",
+      "tailnet": null,
+      "sshKey": "default",
+      "channel": "stable",
+      "region": "APAC",
+      "diskGB": 60,
       "role": "seed"
     },
     {
       "name": "bern",
       "publicIp": "45.59.123.112",
       "tailnet": null,
-      "sshKey": "~/.ssh/hiverelay_fleet",
+      "sshKey": "default",
       "channel": "canary",
       "region": "EU",
-      "diskGB": 484,
+      "diskGB": 500,
+      "role": "seed"
+    },
+    {
+      "name": "amsterdam",
+      "publicIp": "153.75.89.206",
+      "tailnet": null,
+      "sshKey": "default",
+      "channel": "stable",
+      "region": "EU",
+      "diskGB": 60,
       "role": "seed"
     },
     {
