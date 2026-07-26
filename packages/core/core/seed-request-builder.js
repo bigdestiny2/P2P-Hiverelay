@@ -38,6 +38,7 @@ import {
   SEED_REQUEST_REPLAY_SIGNATURE_DOMAIN,
   verifySeedRequestSignatureDetails
 } from './protocol/seed-request.js'
+import { positiveStorageBound } from '../config/storage-cap.js'
 
 export const MAX_DISCOVERY_KEYS = 100
 export const PUBLISHER_SEED_REPLAY_WINDOW_MS = 60 * 60 * 1000
@@ -195,8 +196,8 @@ export function buildPublisherSignedSeedOpts (body, opts = {}) {
   if (replicationFactor < 1 || replicationFactor > 255) {
     return reject('replicationFactor must be in [1,255]')
   }
-  const maxStorageBytes = Number.isFinite(body.maxStorageBytes) ? body.maxStorageBytes : 500 * 1024 * 1024
-  if (maxStorageBytes < 0) return reject('maxStorageBytes must be non-negative')
+  const maxStorageBytes = positiveStorageBound(body.maxStorageBytes)
+  if (maxStorageBytes === null) return reject('maxStorageBytes must be a positive safe integer')
   const ttlSeconds = Number.isFinite(body.ttlSeconds) ? body.ttlSeconds : 30 * 24 * 3600
   if (ttlSeconds < 0) return reject('ttlSeconds must be non-negative')
   const bountyRate = Number.isFinite(body.bountyRate) ? body.bountyRate : 0
@@ -357,7 +358,7 @@ export function buildPublisherSignedSeedOpts (body, opts = {}) {
     }
   }
 
-  return { ok: true, appKey: body.appKey, opts: seedOpts, replay: replayEnvelope.replay }
+  return { ok: true, appKey: body.appKey.toLowerCase(), opts: seedOpts, replay: replayEnvelope.replay }
 }
 
 function validatePublisherSeedReplayEnvelope (body, opts) {

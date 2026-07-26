@@ -12,12 +12,24 @@ import { join } from 'path'
 import { homedir } from 'os'
 import { createHmac } from 'crypto'
 import defaults from './default.js'
+import {
+  getStorageCapProvenance,
+  markStorageCapDefault,
+  markStorageCapExplicit
+} from './storage-cap.js'
 
 const HIVERELAY_DIR = join(homedir(), '.hiverelay')
 const CONFIG_PATH = join(HIVERELAY_DIR, 'config.json')
 const STORAGE_DIR = join(HIVERELAY_DIR, 'storage')
 
 export { HIVERELAY_DIR, CONFIG_PATH, STORAGE_DIR }
+export {
+  copyStorageCapProvenance,
+  getStorageCapProvenance,
+  markStorageCapDefault,
+  markStorageCapExplicit,
+  resolveStorageCap
+} from './storage-cap.js'
 
 /**
  * Derive a stable management token from a host-provided seed (e.g. the
@@ -146,6 +158,18 @@ export function loadConfig (cliOverrides = {}) {
   // Deep merge: defaults < file < CLI (preserves nested object keys)
   const config = deepMerge(deepMerge(defaults, fileConfig), cliOverrides)
 
+  // Presence, not numeric equality, is provenance. In particular, an
+  // explicitly configured 50 GiB cap must not be mistaken for the built-in
+  // 50 GiB default and rewritten by disk-relative resolution.
+  if (Object.prototype.hasOwnProperty.call(cliOverrides, 'maxStorageBytes')) {
+    const overrideProvenance = getStorageCapProvenance(cliOverrides)
+    markStorageCapExplicit(config, overrideProvenance?.source || 'cli')
+  } else if (Object.prototype.hasOwnProperty.call(fileConfig, 'maxStorageBytes')) {
+    markStorageCapExplicit(config, 'persisted')
+  } else {
+    markStorageCapDefault(config)
+  }
+
   // Always resolve storage to absolute path
   if (config.storage === defaults.storage && fileConfig.storage == null && cliOverrides.storage == null) {
     config.storage = STORAGE_DIR
@@ -163,7 +187,19 @@ export function saveConfig (config) {
 
   // Only persist non-default values
   const toSave = {}
+  const storageCapProvenance = getStorageCapProvenance(config)
   for (const [key, val] of Object.entries(config)) {
+    if (key === 'maxStorageBytes') {
+      // A resolved default may be below 50 GiB. Persisting that derived value
+      // would turn it into an operator designation on restart and ratchet the
+      // cap down again. Explicit values, including exactly 50 GiB, must always
+      // be written.
+      const explicit = storageCapProvenance
+        ? storageCapProvenance.explicit === true
+        : Object.prototype.hasOwnProperty.call(config, 'maxStorageBytes')
+      if (explicit) toSave[key] = val
+      continue
+    }
     if (JSON.stringify(val) !== JSON.stringify(defaults[key])) {
       toSave[key] = val
     }

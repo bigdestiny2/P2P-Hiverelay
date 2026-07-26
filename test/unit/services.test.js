@@ -261,11 +261,13 @@ test('ServiceRegistry - startAll fail-closed unregisters failed service', async 
   class GoodService extends ServiceProvider {
     manifest () { return { name: 'good', version: '1.0.0', capabilities: [] } }
     async start () {}
+    async stop () {}
   }
 
   class BadService extends ServiceProvider {
     manifest () { return { name: 'bad', version: '1.0.0', capabilities: [] } }
     async start () { throw new Error('boom') }
+    async stop () {}
   }
 
   registry.register(new GoodService())
@@ -276,6 +278,50 @@ test('ServiceRegistry - startAll fail-closed unregisters failed service', async 
   t.is(result.failed[0].name, 'bad', 'failed service recorded')
   t.is(registry.services.has('good'), true, 'healthy service stays registered')
   t.is(registry.services.has('bad'), false, 'failed service removed')
+})
+
+test('ServiceRegistry - failed start strictly stops partially-started provider', async (t) => {
+  const registry = new ServiceRegistry()
+  const events = []
+
+  class PartialService extends ServiceProvider {
+    manifest () { return { name: 'partial', version: '1.0.0', capabilities: [] } }
+    async start () {
+      events.push('resource-open')
+      throw new Error('injected start failure')
+    }
+
+    async stop () { events.push('resource-closed') }
+  }
+
+  registry.register(new PartialService())
+  const result = await registry.startAll({})
+  t.alike(events, ['resource-open', 'resource-closed'], 'partial resource settles before return')
+  t.is(result.failed.length, 1)
+  t.is(registry.services.has('partial'), false, 'settled failed provider is removed')
+})
+
+test('ServiceRegistry - failed startup teardown retains provider for strict retry', async (t) => {
+  const registry = new ServiceRegistry()
+  let rejectStop = true
+  let stops = 0
+
+  class PartialService extends ServiceProvider {
+    manifest () { return { name: 'partial-retry', version: '1.0.0', capabilities: [] } }
+    async start () { throw new Error('injected start failure') }
+    async stop () {
+      stops++
+      if (rejectStop) throw new Error('injected stop failure')
+    }
+  }
+
+  registry.register(new PartialService())
+  await t.exception(registry.startAll({}), /startup teardown did not settle/)
+  t.is(registry.services.get('partial-retry')?.status, 'start-stop-failed')
+  rejectStop = false
+  await registry.stopAll({ throwOnError: true })
+  t.is(stops, 2, 'failed provider stop retried exactly once')
+  t.is(registry.services.size, 0)
 })
 
 test('ServiceRegistry - runtime failed service fails closed and can restart', async (t) => {
@@ -312,6 +358,173 @@ test('ServiceRegistry - runtime failed service fails closed and can restart', as
 })
 
 // ─── ZKService tests (secp256k1 EC-based) ──────────────────────────
+
+test('ServiceRegistry - rejects start without matching stop authority', async (t) => {
+  const registry = new ServiceRegistry()
+  class UnsafeService extends ServiceProvider {
+    manifest () { return { name: 'unsafe-lifecycle', version: '1.0.0', capabilities: [] } }
+    async start () {}
+  }
+  try {
+    registry.register(new UnsafeService())
+    t.fail('unsafe provider should be rejected')
+  } catch (err) {
+    t.is(err.code, 'SERVICE_INVALID_LIFECYCLE')
+  }
+  t.is(registry.services.size, 0)
+})
+
+test('ServiceRegistry - default stopAll retains a provider whose stop rejects', async (t) => {
+  const registry = new ServiceRegistry()
+  class StickyService extends ServiceProvider {
+    manifest () { return { name: 'sticky-stop', version: '1.0.0', capabilities: [] } }
+    async start () {}
+    async stop () { throw new Error('injected stop failure') }
+  }
+  registry.register(new StickyService())
+  await registry.startAll({})
+  await registry.stopAll()
+  t.is(registry.services.get('sticky-stop')?.status, 'stop-failed')
+  t.is(registry.services.size, 1, 'failed owner remains registered for retry')
+})
+
+test('ServiceRegistry - failed restart stop never starts the provider again', async (t) => {
+  const registry = new ServiceRegistry()
+  let starts = 0
+  class StopFailureService extends ServiceProvider {
+    manifest () { return { name: 'restart-stop-failure', version: '1.0.0', capabilities: [] } }
+    async start () { starts++ }
+    async stop () { throw new Error('injected restart stop failure') }
+  }
+  registry.register(new StopFailureService())
+  await registry.startAll({})
+  await t.exception(registry.restart('restart-stop-failure'), /SERVICE_RESTART_STOP_FAILED/)
+  t.is(starts, 1, 'restart start is never entered after failed stop')
+  t.is(registry.services.get('restart-stop-failure')?.status, 'stop-failed')
+})
+
+test('ServiceRegistry - failed restart start strictly retains failed cleanup owner', async (t) => {
+  const registry = new ServiceRegistry()
+  let starts = 0
+  let stops = 0
+  class PartialRestartService extends ServiceProvider {
+    manifest () { return { name: 'partial-restart', version: '1.0.0', capabilities: [] } }
+    async start () {
+      starts++
+      if (starts > 1) throw new Error('injected restart start failure')
+    }
+
+    async stop () {
+      stops++
+      if (stops > 1) throw new Error('injected restart cleanup failure')
+    }
+  }
+  registry.register(new PartialRestartService())
+  await registry.startAll({})
+  let failure = null
+  try { await registry.restart('partial-restart') } catch (err) { failure = err }
+  t.is(failure?.code, 'SERVICE_RESTART_START_TEARDOWN_FAILED')
+  t.is(failure?.startCause?.message, 'injected restart start failure')
+  t.is(failure?.teardownCause?.message, 'injected restart cleanup failure')
+  t.is(registry.services.get('partial-restart')?.status, 'restart-start-stop-failed')
+})
+
+test('ServiceRegistry - synchronous stop intent cancels a gated restart without duplicate stop', async (t) => {
+  const registry = new ServiceRegistry()
+  let starts = 0
+  let stops = 0
+  let releaseStop = null
+  const stopGate = new Promise(resolve => { releaseStop = resolve })
+  class GatedRestartService extends ServiceProvider {
+    manifest () { return { name: 'gated-restart', version: '1.0.0', capabilities: [] } }
+    async start () { starts++ }
+    async stop () { stops++; await stopGate }
+  }
+  registry.register(new GatedRestartService())
+  await registry.startAll({})
+  const restarting = registry.restart('gated-restart')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const stopping = registry.stopAll({ throwOnError: true })
+  releaseStop()
+  const [restartResult, stopResult] = await Promise.allSettled([restarting, stopping])
+  t.is(restartResult.reason?.code, 'SERVICE_RESTART_CANCELLED')
+  t.is(stopResult.status, 'fulfilled')
+  t.is(starts, 1, 'no detached restart occurs after stop intent')
+  t.is(stops, 1, 'queued stopAll does not stop an already-stopped owner twice')
+  t.is(registry.services.size, 0)
+})
+
+test('ServiceRegistry - stop intent settles gated startAll and blocks dispatch', async (t) => {
+  const registry = new ServiceRegistry()
+  let releaseStart = null
+  const startGate = new Promise(resolve => { releaseStart = resolve })
+  let firstStarts = 0
+  let firstStops = 0
+  let secondStarts = 0
+  class FirstService extends ServiceProvider {
+    manifest () { return { name: 'gated-first', version: '1.0.0', capabilities: ['echo'] } }
+    async start () { firstStarts++; await startGate }
+    async stop () { firstStops++ }
+    async echo (params) { return params }
+  }
+  class SecondService extends ServiceProvider {
+    manifest () { return { name: 'gated-second', version: '1.0.0', capabilities: [] } }
+    async start () { secondStarts++ }
+    async stop () {}
+  }
+  registry.register(new FirstService())
+  registry.register(new SecondService())
+  const starting = registry.startAll({})
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const stopping = registry.stopAll({ throwOnError: true })
+  await t.exception(
+    registry.handleRequest('gated-first', 'echo', {}, {}),
+    /lifecycle mutation pending/
+  )
+  releaseStart()
+  await Promise.all([starting, stopping])
+  t.is(firstStarts, 1)
+  t.is(firstStops, 1, 'in-flight start owner is settled exactly once')
+  t.is(secondStarts, 0, 'later providers never start after stop intent')
+  t.is(registry.services.size, 0)
+})
+
+test('ServiceRegistry - stop intent during restart start tears down exact owner without restarted event', async (t) => {
+  const registry = new ServiceRegistry()
+  let starts = 0
+  let stops = 0
+  let restartedEvents = 0
+  let releaseRestartStart = null
+  let restartStartEntered = null
+  const startGate = new Promise(resolve => { releaseRestartStart = resolve })
+  const entered = new Promise(resolve => { restartStartEntered = resolve })
+  class GatedPostStartService extends ServiceProvider {
+    manifest () { return { name: 'gated-post-start', version: '1.0.0', capabilities: [] } }
+    async start () {
+      starts++
+      if (starts > 1) {
+        restartStartEntered()
+        await startGate
+      }
+    }
+
+    async stop () { stops++ }
+  }
+  registry.on('service-restarted', () => { restartedEvents++ })
+  registry.register(new GatedPostStartService())
+  await registry.startAll({})
+  const restarting = registry.restart('gated-post-start')
+  await entered
+  const stopping = registry.stopAll({ throwOnError: true })
+  releaseRestartStart()
+  const [restartResult, stopResult] = await Promise.allSettled([restarting, stopping])
+  t.is(restartResult.reason?.code, 'SERVICE_RESTART_CANCELLED')
+  t.is(stopResult.status, 'fulfilled')
+  t.is(starts, 2)
+  t.is(stops, 2, 'pre-restart stop plus immediate post-start teardown, with no duplicate queued stop')
+  t.is(restartedEvents, 0)
+  t.is(registry.services.size, 0)
+})
 
 test('ZKService - manifest v2', async (t) => {
   const svc = new ZKService()

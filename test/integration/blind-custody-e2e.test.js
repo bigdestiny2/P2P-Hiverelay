@@ -23,6 +23,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { hashHex } from 'p2p-hiverelay/core/custody-signing.js'
 
+const TEST_MAX_STORAGE_BYTES = 64 * 1024 * 1024
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
 async function waitFor (label, fn, timeoutMs = 30_000) {
@@ -42,18 +43,30 @@ test('e2e blind custody: intent → quorum → commit → retired → proof → 
   const testnet = await createTestnet(3)
   const relays = []
   let publisher = null
+  let sourceDrive = null
+  let sourceDiscovery = null
 
   await mkdir(baseDir, { recursive: true })
+  await mkdir(join(baseDir, 'publisher'), { recursive: true })
+  for (let i = 0; i < 3; i++) await mkdir(join(baseDir, `relay-${i}`), { recursive: true })
 
   t.teardown(async () => {
+    let firstError = null
     for (const relay of relays) {
-      try { await relay.stop() } catch {}
+      try { await relay.stop() } catch (err) { if (!firstError) firstError = err }
+    }
+    if (sourceDiscovery) {
+      try { await sourceDiscovery.destroy() } catch (err) { if (!firstError) firstError = err }
+    }
+    if (sourceDrive) {
+      try { await sourceDrive.close() } catch (err) { if (!firstError) firstError = err }
     }
     if (publisher) {
-      try { await publisher.stop() } catch {}
+      try { await publisher.stop() } catch (err) { if (!firstError) firstError = err }
     }
-    try { await testnet.destroy() } catch {}
-    try { await rm(baseDir, { recursive: true, force: true }) } catch {}
+    try { await testnet.destroy() } catch (err) { if (!firstError) firstError = err }
+    try { await rm(baseDir, { recursive: true, force: true }) } catch (err) { if (!firstError) firstError = err }
+    if (firstError) throw firstError
   })
 
   // ─── Bring up publisher ───
@@ -92,19 +105,19 @@ test('e2e blind custody: intent → quorum → commit → retired → proof → 
   const ciphertext = randomBytes(2048)
   const ciphertextHash = createHash('sha256').update(ciphertext).digest('hex')
 
-  const drive = new Hyperdrive(publisher.store, null)
-  await drive.ready()
-  await drive.put('/sealed/blob.bin', ciphertext)
-  await drive.put('/sealed/manifest.json', b4a.from(JSON.stringify({
+  sourceDrive = new Hyperdrive(publisher.store.session(), null)
+  await sourceDrive.ready()
+  await sourceDrive.put('/sealed/blob.bin', ciphertext)
+  await sourceDrive.put('/sealed/manifest.json', b4a.from(JSON.stringify({
     version: 1,
     blindContentId: hashHex({ id, ciphertextHash }),
     ciphertextRoot: ciphertextHash
   }, null, 2)))
 
-  publisher.swarm.join(drive.discoveryKey, { server: true, client: true })
+  sourceDiscovery = publisher.swarm.join(sourceDrive.discoveryKey, { server: true, client: true })
   await publisher.swarm.flush()
 
-  const appKey = b4a.toString(drive.key, 'hex')
+  const appKey = b4a.toString(sourceDrive.key, 'hex')
   const publisherKeyPair = publisher.swarm.keyPair
   const retainUntil = Date.now() + 8_000 // expires in 8 seconds
   const blindContentId = hashHex({ appKey, ciphertextHash, id })
@@ -135,9 +148,11 @@ test('e2e blind custody: intent → quorum → commit → retired → proof → 
       blindContentId,
       ciphertextRoot: ciphertextHash,
       contentVersion: 1,
+      maxStorage: TEST_MAX_STORAGE_BYTES,
       retainUntil,
       shardIds: [i]
     })
+    t.is(relays[i].appRegistry.get(appKey)?.maxStorage, TEST_MAX_STORAGE_BYTES, 'storage bound persisted')
   }
 
   // Wait for all relays to anchor

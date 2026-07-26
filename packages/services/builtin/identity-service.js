@@ -46,6 +46,10 @@ export class IdentityService extends ServiceProvider {
     this.node = context.node
   }
 
+  async stop () {
+    this.node = null
+  }
+
   async whoami () {
     const result = {
       pubkey: this.node.publicKey ? b4a.toString(this.node.publicKey, 'hex') : null,

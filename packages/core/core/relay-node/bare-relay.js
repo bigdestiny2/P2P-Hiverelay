@@ -37,7 +37,7 @@
  */
 
 import Hyperswarm from 'hyperswarm'
-import { openCorestore } from '../persistence/storage-root-restore.js'
+import Corestore from 'corestore'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 // Use Node-shaped names. Under Bare/Pear they get remapped via the
@@ -51,12 +51,13 @@ import { join } from 'path'
 import { Seeder } from './seeder.js'
 import { Relay } from './relay.js'
 import { AppLifecycle } from './app-lifecycle.js'
+import { LifecycleScope } from './lifecycle-scope.js'
 import { SeedProtocol } from '../protocol/seed-request.js'
 import { extractCustodySeedOpts } from '../seed-request-builder.js'
 import { CircuitRelay } from '../protocol/relay-circuit.js'
 import { ProofOfRelay } from '../protocol/proof-of-relay.js'
 import { AppRegistry } from '../app-registry.js'
-import { RELAY_DISCOVERY_TOPIC, FOUNDATION_TOPIC, DISCOVERY_EPOCH_MS, syncEpochDiscoveryTopics, clearEpochDiscoveryTopics } from '../constants.js'
+import { RELAY_DISCOVERY_TOPIC, FOUNDATION_TOPIC, DISCOVERY_EPOCH_MS, syncEpochDiscoveryTopics } from '../constants.js'
 import { SwarmFirewall } from './swarm-firewall.js'
 
 // Services framework lives in Core (p2p-hiverelay). Builtin service
@@ -82,6 +83,15 @@ import { Federation } from '../federation.js'
 
 // Minimal HTTP surface — bare-http1
 import { BareHttpServer } from './bare-http-server.js'
+import {
+  getStorageCapProvenance,
+  markStorageCapDefault,
+  markStorageCapExplicit,
+  measureProvenStorageTreeBytes,
+  positiveStorageBound,
+  resolveStorageCap
+} from '../../config/storage-cap.js'
+import { StorageAdmissionAuthority } from '../../config/storage-admission-authority.js'
 
 // Simple log helper — Bare has no pino, use plain console.
 // Bare doesn't expose `process` as a global; guard env lookup.
@@ -93,6 +103,20 @@ function identityTempPath (keyPath) {
   const suffix = b4a.alloc(8)
   sodium.randombytes_buf(suffix)
   return keyPath + '.tmp-' + Date.now() + '-' + b4a.toString(suffix, 'hex')
+}
+
+function withTimeout (promise, ms, label) {
+  let timer
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_resolve, reject) => {
+      timer = setTimeout(() => {
+        const err = new Error(`${label} timed out after ${ms}ms`)
+        err.code = 'OPERATION_TIMEOUT'
+        reject(err)
+      }, ms)
+    })
+  ])
 }
 
 const log = {
@@ -123,7 +147,15 @@ const DEFAULT_CONFIG = {
 export class BareRelay extends EventEmitter {
   constructor (opts = {}) {
     super()
+    this._storagePathExplicit = Object.prototype.hasOwnProperty.call(opts, 'storage')
     this.config = { ...DEFAULT_CONFIG, ...opts }
+    if (Object.prototype.hasOwnProperty.call(opts, 'maxStorageBytes') && positiveStorageBound(opts.maxStorageBytes) === null) {
+      throw new TypeError('maxStorageBytes must be a positive safe integer')
+    }
+    if (!getStorageCapProvenance(this.config)) {
+      if (Object.prototype.hasOwnProperty.call(opts, 'maxStorageBytes')) markStorageCapExplicit(this.config, 'constructor')
+      else markStorageCapDefault(this.config, positiveStorageBound(this.config.maxStorageBytes))
+    }
     this.store = null
     this.swarm = null
     this.seeder = null
@@ -133,9 +165,14 @@ export class BareRelay extends EventEmitter {
     this._seedProtocol = null
     this._circuitRelay = null
     this._proofOfRelay = null
+    this._serviceProtocol = null
+    this.serviceRegistry = null
     this._discovery = null
+    this._foundationDiscovery = null
+    this._regionDiscovery = null
     this._epochDiscoveryTimer = null
     this._epochDiscoveryTopics = new Map()
+    this._retiringEpochDiscoveryHandles = new Set()
     this.federation = null
     // BareRelay has no operator TUI for the review queue; we still expose
     // the same `_pendingRequests` map for symmetry with RelayNode so any
@@ -148,6 +185,22 @@ export class BareRelay extends EventEmitter {
     this.connections = new Map() // Map<conn, { lastActivity }>
     this.running = false
     this.startedAt = null
+    this._starting = false
+    this._stopping = null
+    this._ownerOperations = new WeakMap()
+    this._ownerDeadline = null
+    this._startCompletion = null
+    this._lastStartCompletion = null
+    this._stopRequested = false
+    this._startupRollbackPending = false
+    this._storageIngressReady = false
+    this._scope = null
+    this.storageAdmission = new StorageAdmissionAuthority(this.config, {
+      getUsedBytes: () => this._storageUsedBytes(),
+      getActualBytes: (key) => this._storageActualBytes(key),
+      recoveryKinds: ['drives', 'cores'],
+      physicalEnforcer: this.config.physicalEnforcer || null
+    })
   }
 
   // Symmetry with RelayNode so Federation can call it.
@@ -156,292 +209,831 @@ export class BareRelay extends EventEmitter {
     this._epochDiscoveryTopics = syncEpochDiscoveryTopics(
       this._epochDiscoveryTopics,
       this.swarm,
-      { server: true, client: false }
+      { server: true, client: false },
+      null,
+      DISCOVERY_EPOCH_MS,
+      (handle) => this._queueEpochDiscoveryDestroy(handle)
     )
+  }
+
+  _queueEpochDiscoveryDestroy (handle) {
+    if (!handle || typeof handle.destroy !== 'function') return
+    const entry = { handle, promise: null }
+    this._retiringEpochDiscoveryHandles.add(entry)
+    const run = Promise.resolve().then(() => handle.destroy())
+    entry.promise = run
+    run.then(
+      () => this._retiringEpochDiscoveryHandles.delete(entry),
+      () => { entry.promise = null }
+    )
+  }
+
+  async _destroyDiscoveryHandles (timeout) {
+    const destroy = async (handle, label) => {
+      if (!handle || typeof handle.destroy !== 'function') return
+      await this._awaitOwnerOperation(handle, label, () => handle.destroy(), timeout)
+    }
+    for (const entry of [...this._retiringEpochDiscoveryHandles]) {
+      if (entry.promise) {
+        await this._awaitOwnerOperation(
+          entry,
+          'retiringEpochDiscovery.destroy',
+          () => entry.promise,
+          timeout
+        )
+      } else {
+        await destroy(entry.handle, 'retiringEpochDiscovery.destroy')
+      }
+      this._retiringEpochDiscoveryHandles.delete(entry)
+    }
+    for (const [key, handle] of this._epochDiscoveryTopics) {
+      await destroy(handle, `epochDiscovery(${key.slice(0, 8)}).destroy`)
+      this._epochDiscoveryTopics.delete(key)
+    }
+    for (const [field, label] of [
+      ['_foundationDiscovery', 'foundationDiscovery.destroy'],
+      ['_regionDiscovery', 'regionDiscovery.destroy'],
+      ['_discovery', 'relayDiscovery.destroy']
+    ]) {
+      if (!this[field]) continue
+      await destroy(this[field], label)
+      this[field] = null
+    }
   }
 
   _resolveAcceptMode () { return resolveAcceptMode(this.config) }
   _decideAcceptance (req, mode) { return decideAcceptance(req, mode, this.config.acceptAllowlist || []) }
 
+  _emitSafely (event, ...args) {
+    let firstError = null
+    for (const listener of this.rawListeners(event)) {
+      try { listener.apply(this, args) } catch (err) { if (!firstError) firstError = err }
+    }
+    if (firstError && event !== 'observer-error') {
+      for (const listener of this.rawListeners('observer-error')) {
+        try { listener.call(this, { event, error: firstError }) } catch (_) {}
+      }
+    }
+    return this.listenerCount(event) > 0
+  }
+
+  _storageUsedBytes () {
+    try { return measureProvenStorageTreeBytes(this.config) } catch (_) { return NaN }
+  }
+
+  _storageActualBytes (key) {
+    if (typeof key !== 'string' || !key.startsWith('core:') || !this.seeder) return 0
+    const entry = this.seeder.cores.get(key.slice('core:'.length))
+    return Number.isSafeInteger(entry?.bytesStored) && entry.bytesStored >= 0 ? entry.bytesStored : 0
+  }
+
+  _storageAdmission (additionalBytes = 0) {
+    return this.storageAdmission.admission(additionalBytes, { refresh: true })
+  }
+
   get publicKey () { return this.swarm ? this.swarm.keyPair.publicKey : null }
+  get seededApps () { return this.appRegistry ? this.appRegistry.apps : new Map() }
+  seedApp (appKey, opts) { return this.appLifecycle.seedApp(appKey, opts) }
+  unseedApp (appKey, opts) { return this.appLifecycle.unseedApp(appKey, opts) }
 
   // The Node RelayNode sets this.keyPair; Bare only has this.swarm.keyPair.
   // Alias it so services that sign with the relay identity (e.g. storage-proof)
   // work identically on both runtimes.
   get keyPair () { return this.swarm ? this.swarm.keyPair : null }
 
-  async start () {
-    if (this.running) throw new Error('already running')
-
-    log.info('BareRelay starting…')
-    log.info('  storage:', this.config.storage)
-
-    // 1. Corestore — persistent hypercore storage
-    this.store = openCorestore(this.config.storage)
-    await this.store.ready()
-
-    // 2. App registry — tracks what we're seeding.
-    // AppRegistry takes a storage *directory*, not a full file path.
-    // v0.8.25: also pass the corestore so persistence uses a Hyperbee
-    // sibling-core instead of the JSON-blob file. setStore() must be
-    // called BEFORE load() — load() does one-time JSON→bee migration
-    // on first boot if app-registry.json exists.
-    this.appRegistry = new AppRegistry(this.config.storage)
-    this.appRegistry.setStore(this.store)
-    await this.appRegistry.load()
-
-    // 3. Connection-layer firewall — runs before Noise handshake. Cheapest
-    //    DoS defense available. See packages/core/core/relay-node/swarm-firewall.js
-    this.swarmFirewall = new SwarmFirewall({
-      allowlist: this.config.swarmAllowlist || [],
-      blocklist: this.config.swarmBlocklist || [],
-      ipMaxConnects: this.config.swarmIpMaxConnects ?? 100,
-      ipWindowMs: this.config.swarmIpWindowMs ?? 60_000,
-      minReputation: this.config.swarmMinReputation ?? -1000,
-      onReject: ({ reason, pubkey, ip }) => {
-        log.debug('  ⊘ firewall:', reason, pubkey ? pubkey.slice(0, 16) : '?')
-      }
-    })
-
-    // 4. Hyperswarm — DHT + peer connections
-    this.swarm = new Hyperswarm({
-      maxPeers: this.config.maxConnections,
-      keyPair: await this._deriveKeypair(),
-      firewall: (remotePubKey, payload) => this.swarmFirewall.check(remotePubKey, payload)
-    })
-
-    this.swarm.on('connection', (conn, info) => this._onConnection(conn, info))
-
-    // 4. Seeder — pulls and keeps hypercores replicating
-    this.seeder = new Seeder(this.store, {
-      maxStorageBytes: this.config.maxStorageBytes
-    })
-
-    // 5. Relay for circuit traversal (optional)
-    if (this.config.enableRelay) {
-      this.relay = new Relay(this.swarm, {
-        maxCircuits: 256,
-        maxBandwidthMbps: 100
-      })
+  start () {
+    if (this._startCompletion) return this._startCompletion
+    if (!this._stopping && this.running) {
+      if (!this._lastStartCompletion) this._lastStartCompletion = Promise.resolve(this)
+      return this._lastStartCompletion
     }
 
-    // 6. Protocol handlers — these attach to every incoming connection.
-    // SeedProtocol has signature (swarm, opts); event-driven API.
-    this._seedProtocol = new SeedProtocol(this.swarm, { keyPair: this.swarm.keyPair })
-    this._seedProtocol.on('seed-request', (msg, channel) => this._onSeedRequest(msg, channel))
-    this._seedProtocol.on('unseed-request', (msg) => this._onUnseedRequest(msg))
-
-    this._circuitRelay = this.relay
-      ? new CircuitRelay(this.relay)
-      : null
-    this._proofOfRelay = new ProofOfRelay(this.swarm.keyPair)
-
-    // 7. App lifecycle — seed/unseed/index operations
-    this.appLifecycle = new AppLifecycle(this)
-
-    // 8. Services layer — Bare-safe subset.
-    //
-    // We dynamic-import each builtin from p2p-hiveservices so that:
-    //   - operators who only install Core get a clean "no services" mode
-    //   - Compute and AI builtins, which need Node-only deps (vm / dns), are
-    //     simply not in the list below
-    if (this.config.enableServices !== false) {
-      this.serviceRegistry = new ServiceRegistry()
-      const bareSafeServices = [
-        { name: 'identity', module: 'p2p-hiveservices/builtin/identity-service.js', className: 'IdentityService', opts: { keyPair: this.swarm.keyPair } },
-        { name: 'storage', module: 'p2p-hiveservices/builtin/storage-service.js', className: 'StorageService', opts: { store: this.store } },
-        { name: 'schema', module: 'p2p-hiveservices/builtin/schema-service.js', className: 'SchemaService' },
-        { name: 'sla', module: 'p2p-hiveservices/builtin/sla-service.js', className: 'SLAService', opts: { maxContracts: 1000 } },
-        { name: 'arbitration', module: 'p2p-hiveservices/builtin/arbitration-service.js', className: 'ArbitrationService' },
-        { name: 'zk', module: 'p2p-hiveservices/builtin/zk-service.js', className: 'ZKService' },
-        { name: 'vrf', module: 'p2p-hiveservices/builtin/vrf-service.js', className: 'VRFService', opts: { keyPair: this.swarm.keyPair, beacon: this.config.vrfBeacon } }
-      ]
-
-      // Poker is an APP-level service (card-blind signed-log substrate for
-      // turn-based games), not relay infrastructure — so it is opt-in only:
-      // register it when the operator selected it (setup checkbox → config.services
-      // / config.plugins, or HIVERELAY_POKER=1). The module ships in
-      // p2p-hiveservices but no relay registered it before, so poker tables were
-      // unreachable on a stock node. PokerApp fits the generic registration loop
-      // below (it reads context.node in start()). Tables are in-memory with a 24h
-      // idle TTL; the durable hypercore mirror (persistence-hypercore.js) is a
-      // follow-up that routes service-created tables through createPersistentTable.
-      const appServices = this.config.services || this.config.plugins || []
-      const pokerSelected = (Array.isArray(appServices) && appServices.includes('poker')) ||
-        env.HIVERELAY_POKER === '1'
-      if (pokerSelected) {
-        bareSafeServices.push({ name: 'poker', module: 'p2p-hiveservices/builtin/poker/index.js', className: 'PokerApp' })
+    this._starting = true
+    const operation = this._startLifecycle()
+    this._startCompletion = operation
+    operation.then(
+      value => {
+        if (this._startCompletion !== operation) return
+        this._startCompletion = null
+        this._starting = false
+        if (value === this && this.running) this._lastStartCompletion = operation
+      },
+      () => {
+        if (this._startCompletion !== operation) return
+        this._startCompletion = null
+        this._starting = false
       }
+    )
+    return operation
+  }
 
-      const outboxLogSelected = (Array.isArray(appServices) && appServices.includes('outboxlog')) ||
-        env.HIVERELAY_OUTBOXLOG === '1'
-      if (outboxLogSelected) {
-        bareSafeServices.push({ name: 'outboxlog', module: 'p2p-hiveservices/builtin/outboxlog/index.js', className: 'OutboxLogApp' })
+  async _startLifecycle () {
+    if (this._stopping) await this._stopping
+    if (this.running) return this
+    if (this._startupRollbackPending) {
+      const err = new Error('startup rollback is still pending storage mutation settlement')
+      err.code = 'STORAGE_STARTUP_ROLLBACK_PENDING'
+      throw err
+    }
+    this._stopRequested = false
+    this._storageIngressReady = false
+    this._scope = new LifecycleScope()
+
+    try {
+      log.info('BareRelay starting…')
+      log.info('  storage:', this.config.storage)
+
+      // Only the built-in relative default may be created automatically;
+      // custom paths must pre-exist so a missing mount fails closed.
+      if (!this._storagePathExplicit) await mkdir(this.config.storage, { recursive: true })
+      resolveStorageCap(this.config)
+      const storageProof = getStorageCapProvenance(this.config)
+      if (!storageProof || storageProof.status !== 'resolved') {
+        const err = new Error('configured storage filesystem is unresolved: ' + (storageProof?.reason || 'unknown'))
+        err.code = 'STORAGE_FILESYSTEM_UNRESOLVED'
+        throw err
       }
+      this.storageAdmission.setConfig(this.config)
+      this.storageAdmission.beginRecovery(['drives', 'cores'])
+      this.storageAdmission.refreshFilesystem()
+      await this.storageAdmission.activatePhysicalEnforcement({ purpose: 'bare-relay-startup' })
 
-      const notifySelected = (Array.isArray(appServices) && appServices.includes('notify')) ||
-        env.HIVERELAY_NOTIFY === '1'
-      if (notifySelected) {
-        bareSafeServices.push({ name: 'notify', module: 'p2p-hiveservices/builtin/notify-service.js', className: 'NotifyService' })
-      }
+      // 1. Corestore — persistent hypercore storage
+      this.store = new Corestore(this.config.storage)
+      await this.store.ready()
 
-      // Storage-proof — Tier-2 trustless seed verification (signed proof that
-      // this relay holds a seeded block). Opt-in like poker so a stock node
-      // stays minimal; uses node.appRegistry + the relay identity (node.keyPair
-      // aliased above). Self-guards blind/private drives + rate-limits.
-      const storageProofSelected = (Array.isArray(appServices) && appServices.includes('storage-proof')) ||
-        env.HIVERELAY_STORAGE_PROOF === '1'
-      if (storageProofSelected) {
-        bareSafeServices.push({
-          name: 'storage-proof',
-          module: 'p2p-hiveservices/builtin/storage-proof-service.js',
-          className: 'StorageProofService'
+      // 2. App registry — tracks what we're seeding.
+      // AppRegistry takes a storage *directory*, not a full file path.
+      // v0.8.25: also pass the corestore so persistence uses a Hyperbee
+      // sibling-core instead of the JSON-blob file. setStore() must be
+      // called BEFORE load() — load() does one-time JSON→bee migration
+      // on first boot if app-registry.json exists.
+      this.appRegistry = new AppRegistry(this.config.storage, {
+        storageAdmission: this.storageAdmission,
+        requirePhysicalEnforcement: this.config.requirePhysicalEnforcement === true ||
+          !!this.config.physicalEnforcer
+      })
+      this.appRegistry.setStore(this.store)
+      await this.appRegistry.load()
+
+      // 3. Connection-layer firewall — runs before Noise handshake. Cheapest
+      //    DoS defense available. See packages/core/core/relay-node/swarm-firewall.js
+      this.swarmFirewall = new SwarmFirewall({
+        allowlist: this.config.swarmAllowlist || [],
+        blocklist: this.config.swarmBlocklist || [],
+        ipMaxConnects: this.config.swarmIpMaxConnects ?? 100,
+        ipWindowMs: this.config.swarmIpWindowMs ?? 60_000,
+        minReputation: this.config.swarmMinReputation ?? -1000,
+        onReject: ({ reason, pubkey, ip }) => {
+          log.debug('  ⊘ firewall:', reason, pubkey ? pubkey.slice(0, 16) : '?')
+        }
+      })
+
+      // 4. Hyperswarm — DHT + peer connections
+      this.swarm = new Hyperswarm({
+        maxPeers: this.config.maxConnections,
+        keyPair: await this._deriveKeypair(),
+        firewall: (remotePubKey, payload) => this.swarmFirewall.check(remotePubKey, payload)
+      })
+
+      // 4. Seeder — pulls and keeps hypercores replicating
+      this.seeder = new Seeder(this.store, this.swarm, {
+        maxStorageBytes: this.config.maxStorageBytes,
+        storageAdmission: this.storageAdmission,
+        storagePath: join(this.config.storage, 'seeded-cores.json')
+      })
+      await this.seeder.start()
+
+      // 5. Relay for circuit traversal (optional)
+      if (this.config.enableRelay) {
+        this.relay = new Relay(this.swarm, {
+          maxCircuits: 256,
+          maxBandwidthMbps: 100
         })
       }
 
-      let registered = 0
-      let servicesPackageMissing = false
-      for (const spec of bareSafeServices) {
-        try {
-          const mod = await import(spec.module)
-          const Ctor = mod[spec.className]
-          if (!Ctor) {
-            log.warn('  service skipped (missing export):', spec.name)
-            continue
-          }
-          const provider = new Ctor(spec.opts || {})
-          this.serviceRegistry.register(provider)
-          // `config` is part of the start context on the Node path too. Omitting
-          // it here silently dropped every `config.<service>.*` operator setting
-          // on Bare — notify's abuseLimits and persistencePath among them.
-          if (typeof provider.start === 'function') await provider.start({ node: this, store: this.store, config: this.config })
-          registered++
-        } catch (err) {
+      // 6. Protocol handlers — these attach to every incoming connection.
+      // SeedProtocol has signature (swarm, opts); event-driven API.
+      this._seedProtocol = new SeedProtocol(this.swarm, { keyPair: this.swarm.keyPair })
+      this._seedProtocol.on('seed-request', (msg, channel) => {
+        this._onSeedRequest(msg, channel).catch((err) => this.emit('seed-error', { error: err }))
+      })
+      this._seedProtocol.on('unseed-request', (msg) => this._onUnseedRequest(msg))
+
+      this._circuitRelay = this.relay
+        ? new CircuitRelay(this.relay)
+        : null
+      this._proofOfRelay = new ProofOfRelay(this.swarm.keyPair)
+
+      // 7. App lifecycle — seed/unseed/index operations
+      this.appLifecycle = new AppLifecycle(this)
+      // Core inventory sealed in Seeder.start(); seal the drive inventory before
+      // any storage-producing service provider is constructed or started.
+      const reseedEntries = await this.appLifecycle.loadRegistry()
+      if (!this.storageAdmission.recoveryReady) {
+        const err = new Error('storage recovery inventories did not seal before writable services')
+        err.code = 'STORAGE_RECOVERY_INVENTORY_INCOMPLETE'
+        throw err
+      }
+      this._storageIngressReady = true
+      this.swarm.on('connection', (conn, info) => this._onConnection(conn, info))
+
+      // 8. Services layer — Bare-safe subset.
+      //
+      // We dynamic-import each builtin from p2p-hiveservices so that:
+      //   - operators who only install Core get a clean "no services" mode
+      //   - Compute and AI builtins, which need Node-only deps (vm / dns), are
+      //     simply not in the list below
+      if (this.config.enableServices !== false) {
+        this.serviceRegistry = new ServiceRegistry()
+        const bareSafeServices = [
+          { name: 'identity', module: 'p2p-hiveservices/builtin/identity-service.js', className: 'IdentityService', opts: { keyPair: this.swarm.keyPair } },
+          { name: 'storage', module: 'p2p-hiveservices/builtin/storage-service.js', className: 'StorageService', opts: { store: this.store } },
+          { name: 'schema', module: 'p2p-hiveservices/builtin/schema-service.js', className: 'SchemaService' },
+          { name: 'sla', module: 'p2p-hiveservices/builtin/sla-service.js', className: 'SLAService', opts: { maxContracts: 1000 } },
+          { name: 'arbitration', module: 'p2p-hiveservices/builtin/arbitration-service.js', className: 'ArbitrationService' },
+          { name: 'zk', module: 'p2p-hiveservices/builtin/zk-service.js', className: 'ZKService' },
+          { name: 'vrf', module: 'p2p-hiveservices/builtin/vrf-service.js', className: 'VRFService', opts: { keyPair: this.swarm.keyPair, beacon: this.config.vrfBeacon } }
+        ]
+
+        // Poker is an APP-level service (card-blind signed-log substrate for
+        // turn-based games), not relay infrastructure — so it is opt-in only:
+        // register it when the operator selected it (setup checkbox → config.services
+        // / config.plugins, or HIVERELAY_POKER=1). The module ships in
+        // p2p-hiveservices but no relay registered it before, so poker tables were
+        // unreachable on a stock node. PokerApp fits the generic registration loop
+        // below (it reads context.node in start()). Tables are in-memory with a 24h
+        // idle TTL; the durable hypercore mirror (persistence-hypercore.js) is a
+        // follow-up that routes service-created tables through createPersistentTable.
+        const appServices = this.config.services || this.config.plugins || []
+        const pokerSelected = (Array.isArray(appServices) && appServices.includes('poker')) ||
+        env.HIVERELAY_POKER === '1'
+        if (pokerSelected) {
+          bareSafeServices.push({ name: 'poker', module: 'p2p-hiveservices/builtin/poker/index.js', className: 'PokerApp' })
+        }
+
+        const outboxLogSelected = (Array.isArray(appServices) && appServices.includes('outboxlog')) ||
+        env.HIVERELAY_OUTBOXLOG === '1'
+        if (outboxLogSelected) {
+          bareSafeServices.push({ name: 'outboxlog', module: 'p2p-hiveservices/builtin/outboxlog/index.js', className: 'OutboxLogApp' })
+        }
+
+        const notifySelected = (Array.isArray(appServices) && appServices.includes('notify')) ||
+        env.HIVERELAY_NOTIFY === '1'
+        if (notifySelected) {
+          bareSafeServices.push({ name: 'notify', module: 'p2p-hiveservices/builtin/notify-service.js', className: 'NotifyService' })
+        }
+
+        // Storage-proof — Tier-2 trustless seed verification (signed proof that
+        // this relay holds a seeded block). Opt-in like poker so a stock node
+        // stays minimal; uses node.appRegistry + the relay identity (node.keyPair
+        // aliased above). Self-guards blind/private drives + rate-limits.
+        const storageProofSelected = (Array.isArray(appServices) && appServices.includes('storage-proof')) ||
+        env.HIVERELAY_STORAGE_PROOF === '1'
+        if (storageProofSelected) {
+          bareSafeServices.push({
+            name: 'storage-proof',
+            module: 'p2p-hiveservices/builtin/storage-proof-service.js',
+            className: 'StorageProofService'
+          })
+        }
+
+        let registered = 0
+        let servicesPackageMissing = false
+        for (const spec of bareSafeServices) {
+          try {
+            const mod = await import(spec.module)
+            const Ctor = mod[spec.className]
+            if (!Ctor) {
+              log.warn('  service skipped (missing export):', spec.name)
+              continue
+            }
+            const provider = new Ctor(spec.opts || {})
+            this.serviceRegistry.register(provider)
+            registered++
+          } catch (err) {
           // First-time MODULE_NOT_FOUND on the whole package → skip rest quietly.
-          if (err.code === 'ERR_MODULE_NOT_FOUND' && err.message.includes('p2p-hiveservices')) {
-            servicesPackageMissing = true
-            break
+            if (err.code === 'ERR_MODULE_NOT_FOUND' && err.message.includes('p2p-hiveservices')) {
+              servicesPackageMissing = true
+              break
+            }
+            log.warn('  service start failed:', spec.name, '-', err.message)
           }
-          log.warn('  service start failed:', spec.name, '-', err.message)
+        }
+
+        if (servicesPackageMissing) {
+          log.info('  services: p2p-hiveservices not installed — running Core-only')
+        } else {
+          const startup = await this.serviceRegistry.startAll({ node: this, store: this.store })
+          registered = startup.started.length
+          for (const failure of startup.failed) {
+            log.warn('  service start failed:', failure.name, '-', failure.error)
+          }
+          // ServiceProtocol signature is (registry, opts)
+          // Secure-by-default: anonymous swarm peers cannot reach
+          // authenticated-user/relay-admin routes. Operators opt into an open
+          // surface explicitly via config.serviceDefaultPeerRole.
+          this._serviceProtocol = new ServiceProtocol(this.serviceRegistry, {
+            defaultPeerRole: (this.config && this.config.serviceDefaultPeerRole) || 'anonymous'
+          })
+          log.info('  services:', registered, 'registered')
         }
       }
 
-      if (servicesPackageMissing) {
-        log.info('  services: p2p-hiveservices not installed — running Core-only')
-      } else {
-        // ServiceProtocol signature is (registry, opts)
-        // Secure-by-default: anonymous swarm peers cannot reach
-        // authenticated-user/relay-admin routes. Operators opt into an open
-        // surface explicitly via config.serviceDefaultPeerRole.
-        this._serviceProtocol = new ServiceProtocol(this.serviceRegistry, {
-          defaultPeerRole: (this.config && this.config.serviceDefaultPeerRole) || 'anonymous'
+      // 9. Optional minimal HTTP server (bare-http1) — read-only endpoints
+      if (this.config.enableHttp !== false) {
+        this.httpServer = new BareHttpServer(this, {
+          port: this.config.httpPort,
+          host: this.config.httpHost || '0.0.0.0'
         })
-        log.info('  services:', registered, 'registered')
+        try {
+          const { port } = await this.httpServer.start()
+          log.info('  http: http://127.0.0.1:' + port + '/status')
+        } catch (startErr) {
+          const server = this.httpServer
+          try {
+            await this._awaitOwnerOperation(
+              server,
+              'httpServer.stop',
+              () => server.stop(),
+              this.config.shutdownTimeoutMs || 30_000
+            )
+            if (this.httpServer === server) this.httpServer = null
+          } catch (teardownErr) {
+            const failure = new Error('bare HTTP startup teardown did not settle')
+            failure.code = 'BARE_HTTP_START_TEARDOWN_FAILED'
+            failure.startCause = startErr
+            failure.teardownCause = teardownErr
+            throw failure
+          }
+          log.warn('  http start failed (continuing without):', startErr.message)
+        }
       }
-    }
 
-    // 9. Optional minimal HTTP server (bare-http1) — read-only endpoints
-    if (this.config.enableHttp !== false) {
-      this.httpServer = new BareHttpServer(this, {
-        port: this.config.httpPort,
-        host: this.config.httpHost || '0.0.0.0'
+      // 10. Announce on the global discovery topic. Foundation relays opt-in
+      //    via config.foundation = true. Region-sharded topics are available
+      //    via regionTopic(code) but not auto-joined — premature at <10 relays.
+      // Epoch-rotated discovery (opt-in via config.privacy.rotateDiscoveryTopic):
+      // mirrors the Node relay (relay-node/index.js). 'additive' keeps the static
+      // topic; 'strict' drops it. Default (off) is unchanged behaviour.
+      const rotateMode = this.config.privacy && this.config.privacy.rotateDiscoveryTopic
+      if (rotateMode !== 'strict') {
+        this._discovery = this.swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: true })
+      }
+      if (rotateMode === 'additive' || rotateMode === 'strict') {
+        this._joinEpochDiscoveryTopics()
+        this._epochDiscoveryTimer = setInterval(
+          () => { try { this._joinEpochDiscoveryTopics() } catch (_) {} },
+          Math.max(60_000, Math.floor(DISCOVERY_EPOCH_MS / 2))
+        )
+        if (this._epochDiscoveryTimer.unref) this._epochDiscoveryTimer.unref()
+      }
+      if (this.config.foundation === true) {
+        this._foundationDiscovery = this.swarm.join(FOUNDATION_TOPIC, { server: true, client: false })
+      }
+
+      // 11. Federation — opt-in cross-relay catalog sharing. Always-on as a
+      // manager so a Pear app could expose follow/mirror controls in its UI;
+      // the polling loop only runs if the operator has actually followed
+      // any relays. Storage co-located with the rest of the Bare relay state.
+      this.federation = new Federation({
+        node: this,
+        followInterval: this.config.federation?.followInterval,
+        followed: this.config.federation?.followed || [],
+        mirrored: this.config.federation?.mirrored || [],
+        republished: this.config.federation?.republished || [],
+        trustedForkObservers: this.config.federation?.trustedForkObservers || [],
+        storagePath: join(this.config.storage, 'federation.json')
       })
+      try { await this.federation.load() } catch (err) { log.warn('  federation load failed:', err.message) }
+      if (this.config.federation?.enabled !== false) {
+        this.federation.start()
+      }
+
+      // Bound flush — don't hang indefinitely if no peers
+      await Promise.race([
+        this.swarm.flush().catch(() => {}),
+        new Promise(resolve => {
+          const t = setTimeout(resolve, 2000)
+          if (t.unref) t.unref()
+        })
+      ])
+
+      // 9. Replay any previously-seeded apps from the registry
+      if (this.config.enableSeeding) {
+        await this.appLifecycle.reseedDrives(reseedEntries)
+      }
+
+      if (this._stopRequested) throw new Error('START_CANCELLED_BY_STOP')
+      this.running = true
+      this.startedAt = Date.now()
+
+      const pkHex = b4a.toString(this.swarm.keyPair.publicKey, 'hex')
+      log.info('  pubkey:', pkHex)
+      log.info('  topic:', b4a.toString(RELAY_DISCOVERY_TOPIC, 'hex').slice(0, 16) + '…')
+      log.info('  seeded apps:', this.appRegistry.apps.size)
+      log.info('BareRelay running. Press Ctrl+C to stop.')
+
+      this._emitSafely('started', { publicKey: this.swarm.keyPair.publicKey })
+      return this
+    } catch (err) {
+      let failure = err
+      this._ownerDeadline = Date.now() + (this.config.shutdownTimeoutMs || 30_000)
       try {
-        const { port } = await this.httpServer.start()
-        log.info('  http: http://127.0.0.1:' + port + '/status')
-      } catch (err) {
-        log.warn('  http start failed (continuing without):', err.message)
-        this.httpServer = null
+        await this._rollbackFailedStart()
+      } catch (rollbackErr) {
+        rollbackErr.cause = err
+        failure = rollbackErr
+        this._startupRollbackPending = rollbackErr.code === 'STORAGE_MUTATION_DRAIN_TIMEOUT' ||
+          rollbackErr.code === 'STORAGE_WRITER_QUIESCE_FAILED'
+      } finally {
+        this._ownerDeadline = null
       }
+      throw failure
     }
-
-    // 10. Announce on the global discovery topic. Foundation relays opt-in
-    //    via config.foundation = true. Region-sharded topics are available
-    //    via regionTopic(code) but not auto-joined — premature at <10 relays.
-    // Epoch-rotated discovery (opt-in via config.privacy.rotateDiscoveryTopic):
-    // mirrors the Node relay (relay-node/index.js). 'additive' keeps the static
-    // topic; 'strict' drops it. Default (off) is unchanged behaviour.
-    const rotateMode = this.config.privacy && this.config.privacy.rotateDiscoveryTopic
-    if (rotateMode !== 'strict') {
-      this._discovery = this.swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: true })
-    }
-    if (rotateMode === 'additive' || rotateMode === 'strict') {
-      this._joinEpochDiscoveryTopics()
-      this._epochDiscoveryTimer = setInterval(
-        () => { try { this._joinEpochDiscoveryTopics() } catch (_) {} },
-        Math.max(60_000, Math.floor(DISCOVERY_EPOCH_MS / 2))
-      )
-      if (this._epochDiscoveryTimer.unref) this._epochDiscoveryTimer.unref()
-    }
-    if (this.config.foundation === true) {
-      this._foundationDiscovery = this.swarm.join(FOUNDATION_TOPIC, { server: true, client: false })
-    }
-
-    // 11. Federation — opt-in cross-relay catalog sharing. Always-on as a
-    // manager so a Pear app could expose follow/mirror controls in its UI;
-    // the polling loop only runs if the operator has actually followed
-    // any relays. Storage co-located with the rest of the Bare relay state.
-    this.federation = new Federation({
-      node: this,
-      followInterval: this.config.federation?.followInterval,
-      followed: this.config.federation?.followed || [],
-      mirrored: this.config.federation?.mirrored || [],
-      republished: this.config.federation?.republished || [],
-      trustedForkObservers: this.config.federation?.trustedForkObservers || [],
-      storagePath: join(this.config.storage, 'federation.json')
-    })
-    try { await this.federation.load() } catch (err) { log.warn('  federation load failed:', err.message) }
-    if (this.config.federation?.enabled !== false) {
-      this.federation.start()
-    }
-
-    // Bound flush — don't hang indefinitely if no peers
-    await Promise.race([
-      this.swarm.flush().catch(() => {}),
-      new Promise(resolve => {
-        const t = setTimeout(resolve, 2000)
-        if (t.unref) t.unref()
-      })
-    ])
-
-    // 9. Replay any previously-seeded apps from the registry
-    if (this.config.enableSeeding) {
-      await this.appLifecycle.reseedFromRegistry()
-    }
-
-    this.running = true
-    this.startedAt = Date.now()
-
-    const pkHex = b4a.toString(this.swarm.keyPair.publicKey, 'hex')
-    log.info('  pubkey:', pkHex)
-    log.info('  topic:', b4a.toString(RELAY_DISCOVERY_TOPIC, 'hex').slice(0, 16) + '…')
-    log.info('  seeded apps:', this.appRegistry.apps.size)
-    log.info('BareRelay running. Press Ctrl+C to stop.')
-
-    this.emit('started', { publicKey: this.swarm.keyPair.publicKey })
-    return this
   }
 
-  async stop () {
-    if (!this.running) return
+  async _rollbackFailedStart () {
+    this._storageIngressReady = false
+    let writerQuiesceError = null
+    if (this._epochDiscoveryTimer) { clearInterval(this._epochDiscoveryTimer); this._epochDiscoveryTimer = null }
+    if (this.httpServer) {
+      const server = this.httpServer
+      try {
+        await this._awaitOwnerOperation(
+          server,
+          'httpServer.stop',
+          () => server.stop(),
+          this.config.shutdownTimeoutMs || 30_000
+        )
+        if (this.httpServer === server) this.httpServer = null
+      } catch (stopErr) {
+        writerQuiesceError = stopErr
+      }
+    }
+    try {
+      await this._destroyProtocolHandlers(this.config.shutdownTimeoutMs || 30_000)
+    } catch (stopErr) {
+      writerQuiesceError = stopErr
+    }
+    if (this.serviceRegistry) {
+      const registry = this.serviceRegistry
+      try {
+        await this._awaitOwnerOperation(
+          registry,
+          'serviceRegistry.stopAll',
+          () => registry.stopAll({ throwOnError: true }),
+          this.config.shutdownTimeoutMs || 30_000
+        )
+        if (this.serviceRegistry === registry) this.serviceRegistry = null
+      } catch (stopErr) {
+        writerQuiesceError = stopErr
+      }
+    }
+    if (this.federation) {
+      const federation = this.federation
+      try {
+        await this._awaitOwnerOperation(
+          federation,
+          'federation.stop',
+          () => federation.stop(),
+          this.config.shutdownTimeoutMs || 30_000
+        )
+        if (this.federation === federation) this.federation = null
+      } catch (stopErr) {
+        if (!writerQuiesceError) writerQuiesceError = stopErr
+      }
+    }
+    try {
+      await this._drainLifecycleAndSeededDrives(this.config.shutdownTimeoutMs || 30_000)
+    } catch (stopErr) {
+      if (!writerQuiesceError) writerQuiesceError = stopErr
+    }
+    if (this.seeder) {
+      const seeder = this.seeder
+      try {
+        await this._awaitOwnerOperation(
+          seeder,
+          'seeder.stop',
+          () => seeder.stop(),
+          this.config.shutdownTimeoutMs || 30_000
+        )
+        if (this.seeder === seeder) this.seeder = null
+      } catch (stopErr) {
+        if (!writerQuiesceError) writerQuiesceError = stopErr
+      }
+    }
+    if (this.appRegistry && this.store) {
+      try {
+        await this._awaitOwnerOperation(
+          this.appRegistry,
+          'appRegistry.flush',
+          () => this.appRegistry.flush({ throwOnError: true }),
+          this.config.shutdownTimeoutMs || 30_000
+        )
+      } catch (flushErr) {
+        if (!writerQuiesceError) writerQuiesceError = flushErr
+      }
+    }
+    if (this.storageAdmission) this.storageAdmission.closeMutations('storage-startup-rollback')
+    if (this.storageAdmission) {
+      await this.storageAdmission.drainMutations({
+        timeoutMs: this._remainingOwnerBudget(this.config.shutdownTimeoutMs || 30_000)
+      })
+    }
+    try {
+      await this._destroyDiscoveryHandles(this.config.shutdownTimeoutMs || 30_000)
+    } catch (discoveryErr) {
+      if (!writerQuiesceError) writerQuiesceError = discoveryErr
+    }
+    if (writerQuiesceError) {
+      if (this.storageAdmission) this.storageAdmission.failClosed('storage-writer-quiesce-failed')
+      const failure = new Error('storage writer quiescence did not settle')
+      failure.code = 'STORAGE_WRITER_QUIESCE_FAILED'
+      failure.cause = writerQuiesceError
+      throw failure
+    }
+    if (this.relay) {
+      const relay = this.relay
+      try {
+        await this._awaitOwnerOperation(
+          relay,
+          'relay.stop',
+          () => relay.stop(),
+          this.config.shutdownTimeoutMs || 30_000
+        )
+        if (this.relay === relay) this.relay = null
+      } catch (relayErr) {
+        if (this.storageAdmission) this.storageAdmission.failClosed('storage-writer-quiesce-failed')
+        const failure = new Error('relay teardown did not settle')
+        failure.code = 'STORAGE_WRITER_QUIESCE_FAILED'
+        failure.cause = relayErr
+        throw failure
+      }
+    }
+    if (this.swarm) {
+      try {
+        const swarm = this.swarm
+        await this._awaitOwnerOperation(
+          swarm,
+          'swarm.destroy',
+          () => swarm.destroy(),
+          this.config.shutdownTimeoutMs || 30_000
+        )
+        if (this.swarm === swarm) this.swarm = null
+      } catch (swarmErr) {
+        if (this.storageAdmission) this.storageAdmission.failClosed('storage-writer-quiesce-failed')
+        const failure = new Error('swarm teardown did not settle')
+        failure.code = 'STORAGE_WRITER_QUIESCE_FAILED'
+        failure.cause = swarmErr
+        throw failure
+      }
+    }
+    if (this.swarmFirewall) { try { this.swarmFirewall.destroy() } catch (_) {} this.swarmFirewall = null }
+    if (this.store) {
+      const store = this.store
+      try {
+        await this._awaitOwnerOperation(
+          store,
+          'store.close',
+          () => store.close(),
+          this.config.shutdownTimeoutMs || 30_000
+        )
+        if (this.store === store) this.store = null
+      } catch (storeErr) {
+        if (this.storageAdmission) this.storageAdmission.failClosed('storage-writer-quiesce-failed')
+        const failure = new Error('corestore teardown did not settle')
+        failure.code = 'STORAGE_WRITER_QUIESCE_FAILED'
+        failure.cause = storeErr
+        throw failure
+      }
+    }
+    if (this.appRegistry) {
+      try { this.appRegistry.detachStore() } catch (_) {}
+    }
+    this.running = false
+    this.startedAt = null
+    this._startupRollbackPending = false
+  }
+
+  async _destroyProtocolHandlers (timeout) {
+    let firstError = null
+    for (const field of ['_serviceProtocol', '_seedProtocol', '_circuitRelay', '_proofOfRelay']) {
+      const protocol = this[field]
+      if (!protocol) continue
+      try {
+        if (typeof protocol.destroy === 'function') {
+          await this._awaitOwnerOperation(
+            protocol,
+            `${field}.destroy`,
+            () => protocol.destroy(),
+            timeout
+          )
+        }
+        if (this[field] === protocol) this[field] = null
+      } catch (err) {
+        if (!firstError) firstError = err
+      }
+    }
+    if (firstError) throw firstError
+  }
+
+  _ownerOperation (owner, label, run) {
+    const existing = this._ownerOperations.get(owner)
+    if (existing) {
+      if (existing.label === label) return existing.operation
+      return existing.operation.catch(() => {}).then(() => this._ownerOperation(owner, label, run))
+    }
+    const operation = Promise.resolve().then(run)
+    const entry = { label, operation }
+    this._ownerOperations.set(owner, entry)
+    operation.then(
+      () => { if (this._ownerOperations.get(owner) === entry) this._ownerOperations.delete(owner) },
+      () => { if (this._ownerOperations.get(owner) === entry) this._ownerOperations.delete(owner) }
+    )
+    return operation
+  }
+
+  _awaitOwnerOperation (owner, label, run, timeout) {
+    const budget = this._remainingOwnerBudget(timeout)
+    return withTimeout(this._ownerOperation(owner, label, run), budget, label)
+  }
+
+  _remainingOwnerBudget (timeout) {
+    let budget = timeout || 30_000
+    if (this._ownerDeadline) budget = Math.max(1, Math.min(budget, this._ownerDeadline - Date.now()))
+    return budget
+  }
+
+  async _drainLifecycleAndSeededDrives (timeout) {
+    const scope = this._scope
+    if (scope) {
+      await withTimeout(scope.drain(), this._remainingOwnerBudget(timeout), 'lifecycleScope.drain')
+      if (this._scope === scope) this._scope = null
+    }
+    if (!this.appLifecycle || !this.appRegistry) return
+    if (typeof this.appLifecycle.drainRetiringDrives === 'function') {
+      await withTimeout(
+        this.appLifecycle.drainRetiringDrives(),
+        this._remainingOwnerBudget(timeout),
+        'retiringDrives.drain'
+      )
+    }
+    for (const appKey of [...this.appRegistry.apps.keys()]) {
+      await withTimeout(
+        this.appLifecycle.unseedApp(appKey, { forget: false }),
+        this._remainingOwnerBudget(timeout),
+        `unseedApp(${appKey.slice(0, 8)})`
+      )
+    }
+  }
+
+  stop () {
+    if (this._stopping) return this._stopping
+    const operation = this._stop()
+    const stopping = operation.finally(() => {
+      if (this._stopping === stopping) this._stopping = null
+      this._ownerDeadline = null
+    })
+    this._stopping = stopping
+    return stopping
+  }
+
+  async _stop () {
+    if (!this.running && !this._starting && !this._startupRollbackPending) return
+    this._stopRequested = true
+    this._storageIngressReady = false
+    this._ownerDeadline = Date.now() + (this.config.shutdownTimeoutMs || 30_000)
     log.info('BareRelay stopping…')
 
-    if (this._epochDiscoveryTimer) { clearInterval(this._epochDiscoveryTimer); this._epochDiscoveryTimer = null }
-    clearEpochDiscoveryTopics(this._epochDiscoveryTopics)
-    if (this._discovery) { try { await this._discovery.destroy() } catch (_) {} this._discovery = null }
-    if (this._regionDiscovery) { try { await this._regionDiscovery.destroy() } catch (_) {} this._regionDiscovery = null }
-    if (this._foundationDiscovery) { try { await this._foundationDiscovery.destroy() } catch (_) {} this._foundationDiscovery = null }
-    if (this.federation) { try { await this.federation.stop() } catch (_) {} this.federation = null }
-    if (this.httpServer) { try { await this.httpServer.stop() } catch (_) {} this.httpServer = null }
-    if (this.serviceRegistry) { try { await this.serviceRegistry.stopAll() } catch (_) {} }
-    if (this.relay) { try { await this.relay.stop() } catch (_) {} }
-    if (this.seeder) { try { await this.seeder.stop() } catch (_) {} }
-    if (this.swarm) { try { await this.swarm.destroy() } catch (_) {} }
+    if (this._starting && this.storageAdmission) this.storageAdmission.closeMutations()
+    if (this._starting && this._startCompletion) {
+      const scopeDuringStart = this._scope
+      if (scopeDuringStart) scopeDuringStart.abort()
+      try {
+        await withTimeout(
+          this._startCompletion,
+          this._remainingOwnerBudget(this.config.shutdownTimeoutMs || 30_000),
+          'bare relay start completion'
+        )
+      } catch (cause) {
+        if (cause?.code !== 'OPERATION_TIMEOUT') {
+          if (this._startupRollbackPending) throw cause
+          return
+        }
+        const failure = new Error('bare relay startup settlement is still pending')
+        failure.code = 'STORAGE_START_TEARDOWN_PENDING'
+        failure.cause = cause
+        throw failure
+      }
+      if (scopeDuringStart && this._scope === scopeDuringStart) {
+        try {
+          await withTimeout(
+            scopeDuringStart.drain(),
+            this._remainingOwnerBudget(this.config.shutdownTimeoutMs || 30_000),
+            'startup lifecycleScope.drain'
+          )
+          if (this._scope === scopeDuringStart) this._scope = null
+        } catch (cause) {
+          const failure = new Error('bare relay startup lifecycle teardown is still pending')
+          failure.code = 'STORAGE_START_TEARDOWN_PENDING'
+          failure.cause = cause
+          throw failure
+        }
+      }
+      if (!this.running) {
+        return
+      }
+    }
+
+    // Stop ingress and every append-capable provider while their final flush
+    // can still use the authority. A failure seals admission and deliberately
+    // leaves Corestore owned for a later supervisor retry.
+    try {
+      if (this._epochDiscoveryTimer) { clearInterval(this._epochDiscoveryTimer); this._epochDiscoveryTimer = null }
+      if (this.httpServer) {
+        const server = this.httpServer
+        await this._awaitOwnerOperation(server, 'httpServer.stop', () => server.stop(), this.config.shutdownTimeoutMs || 30_000)
+        if (this.httpServer === server) this.httpServer = null
+      }
+      await this._destroyProtocolHandlers(this.config.shutdownTimeoutMs || 30_000)
+      if (this.serviceRegistry) {
+        const registry = this.serviceRegistry
+        await this._awaitOwnerOperation(
+          registry,
+          'serviceRegistry.stopAll',
+          () => registry.stopAll({ throwOnError: true }),
+          this.config.shutdownTimeoutMs || 30_000
+        )
+        if (this.serviceRegistry === registry) this.serviceRegistry = null
+      }
+      if (this.federation) {
+        const federation = this.federation
+        await this._awaitOwnerOperation(
+          federation,
+          'federation.stop',
+          () => federation.stop(),
+          this.config.shutdownTimeoutMs || 30_000
+        )
+        if (this.federation === federation) this.federation = null
+      }
+      await this._drainLifecycleAndSeededDrives(this.config.shutdownTimeoutMs || 30_000)
+      if (this.seeder) {
+        const seeder = this.seeder
+        await this._awaitOwnerOperation(
+          seeder,
+          'seeder.stop',
+          () => seeder.stop(),
+          this.config.shutdownTimeoutMs || 30_000
+        )
+        if (this.seeder === seeder) this.seeder = null
+      }
+      if (this.appRegistry) {
+        await this._awaitOwnerOperation(
+          this.appRegistry,
+          'appRegistry.flush',
+          () => this.appRegistry.flush({ throwOnError: true }),
+          this.config.shutdownTimeoutMs || 30_000
+        )
+      }
+      await this._destroyDiscoveryHandles(this.config.shutdownTimeoutMs || 30_000)
+    } catch (err) {
+      if (this.storageAdmission) {
+        this.storageAdmission.closeMutations('storage-writer-quiesce-failed')
+        this.storageAdmission.failClosed('storage-writer-quiesce-failed')
+      }
+      const failure = new Error('storage writer quiescence did not settle')
+      failure.code = 'STORAGE_WRITER_QUIESCE_FAILED'
+      failure.cause = err
+      throw failure
+    }
+    if (this.storageAdmission) this.storageAdmission.closeMutations()
+    if (this.storageAdmission) {
+      await this.storageAdmission.drainMutations({
+        timeoutMs: this._remainingOwnerBudget(this.config.shutdownTimeoutMs || 30_000)
+      })
+    }
+
+    if (this.relay) {
+      const relay = this.relay
+      await this._awaitOwnerOperation(relay, 'relay.stop', () => relay.stop(), this.config.shutdownTimeoutMs || 30_000)
+      if (this.relay === relay) this.relay = null
+    }
+    if (this.swarm) {
+      const swarm = this.swarm
+      await this._awaitOwnerOperation(swarm, 'swarm.destroy', () => swarm.destroy(), this.config.shutdownTimeoutMs || 30_000)
+      if (this.swarm === swarm) this.swarm = null
+    }
     if (this.swarmFirewall) { try { this.swarmFirewall.destroy() } catch (_) {} this.swarmFirewall = null }
-    if (this.appRegistry) { try { await this.appRegistry.save() } catch (_) {} }
-    if (this.store) { try { await this.store.close() } catch (_) {} }
+    if (this.store) {
+      const store = this.store
+      await this._awaitOwnerOperation(store, 'store.close', () => store.close(), this.config.shutdownTimeoutMs || 30_000)
+      if (this.store === store) this.store = null
+    }
 
     this.running = false
+    this._startupRollbackPending = false
+    this._ownerDeadline = null
     this.emit('stopped')
     log.info('BareRelay stopped.')
   }
@@ -481,6 +1073,10 @@ export class BareRelay extends EventEmitter {
   // ─── Connection handling ─────────────────────────────────────────
 
   _onConnection (conn, info) {
+    if (!this._storageIngressReady) {
+      try { conn.destroy() } catch (_) {}
+      return
+    }
     const remoteHex = info.publicKey ? b4a.toString(info.publicKey, 'hex') : 'anon'
     log.info('  + peer:', remoteHex.slice(0, 16))
     this.connections.set(conn, { lastActivity: Date.now() })
@@ -618,10 +1214,12 @@ export class BareRelay extends EventEmitter {
     return { ok: true, primaryPubkey: result.primaryPubkey }
   }
 
-  _onSeedRequest (msg, channel = null) {
+  async _onSeedRequest (msg, channel = null, trackedMutation = false) {
+    if (!trackedMutation && this.storageAdmission?.runMutation) {
+      return this.storageAdmission.runMutation(() => this._onSeedRequest(msg, channel, true))
+    }
     if (!this.config.enableSeeding || !this.seeder) return
     const appKeyHex = b4a.toString(msg.appKey, 'hex')
-    const availableBytes = this.config.maxStorageBytes - (this.seeder.totalBytesStored || 0)
 
     // Wire-level deny so the publisher sees why instead of timing out —
     // same contract as the Node RelayNode handler.
@@ -631,7 +1229,19 @@ export class BareRelay extends EventEmitter {
       }
     }
 
-    if (availableBytes < (msg.maxStorageBytes || 0)) {
+    const maxStorageBytes = positiveStorageBound(msg.maxStorageBytes)
+    if (maxStorageBytes === null) {
+      this.emit('seed-rejected', { appKey: appKeyHex, reason: 'storage-bound-invalid' })
+      deny('storage-bound-invalid', 'maxStorageBytes must be a positive safe integer')
+      return
+    }
+    const existingApp = this.appRegistry?.has(appKeyHex) === true
+    const admission = existingApp && this.storageAdmission?.recoveryReady && !this.storageAdmission?.fatalReason
+      ? { allowed: true, availableBytes: this._storageAdmission(0).availableBytes }
+      : this._storageAdmission(maxStorageBytes)
+    const availableBytes = admission.availableBytes
+
+    if (!admission.allowed) {
       log.warn('  seed rejected (insufficient storage):', appKeyHex.slice(0, 16))
       this.emit('seed-rejected', { appKey: appKeyHex, reason: 'insufficient storage' })
       deny('insufficient-storage', 'relay has ' + Math.max(0, availableBytes) + ' bytes available, request asked for ' + (msg.maxStorageBytes || 0))
@@ -674,37 +1284,62 @@ export class BareRelay extends EventEmitter {
       effectivePublisher = delegationCheck.primaryPubkey
     }
 
-    // Send signed acceptance back to requester
-    this._seedProtocol.acceptSeedRequest(
-      msg.appKey,
-      this.swarm.keyPair.publicKey,
-      (this.config.regions && this.config.regions[0]) || 'unknown',
-      availableBytes
-    )
-
     // Propagate revocability commitments + any atomic-custody linkage from
     // the signed seed request, matching the Node relay's _onSeedRequest. The
     // custody fields keep parity with the publish-channel path so a custody
     // seed accepted here records the same intent binding (see
     // extractCustodySeedOpts). The binary wire encoding doesn't yet carry
     // them, so they only arrive on an enriched msg today.
-    this.appLifecycle.seedApp(appKeyHex, {
-      publisherPubkey: effectivePublisher,
-      revocable: msg.revocable !== false,
-      unseedFreezeMs: msg.unseedFreezeMs || 0,
-      durability: msg.durability || 0,
-      blind: msg.blind === true,
-      storageClass: msg.storageClass || null,
-      availabilityClass: msg.availabilityClass || null,
-      ...extractCustodySeedOpts(msg)
-    }).then(() => {
-      log.info('  ✓ seeded:', appKeyHex.slice(0, 16))
-    }).catch((err) => {
+    try {
+      const appResult = await this.appLifecycle.seedApp(appKeyHex, {
+        publisherPubkey: effectivePublisher,
+        maxStorage: maxStorageBytes,
+        revocable: msg.revocable !== false,
+        unseedFreezeMs: msg.unseedFreezeMs || 0,
+        durability: msg.durability || 0,
+        blind: msg.blind === true,
+        storageClass: msg.storageClass || null,
+        availabilityClass: msg.availabilityClass || null,
+        ...extractCustodySeedOpts(msg)
+      })
+      const newCoreKeys = []
+      try {
+        for (const dk of (msg.discoveryKeys || [])) {
+          const keyHex = b4a.toString(dk, 'hex')
+          if (keyHex === appKeyHex) continue
+          const existed = this.seeder.cores.has(keyHex)
+          await this.seeder.seedCore(keyHex, { maxStorageBytes })
+          if (!existed) newCoreKeys.push(keyHex)
+        }
+      } catch (err) {
+        for (const keyHex of newCoreKeys.reverse()) {
+          try { await this.seeder.unseedCore(keyHex) } catch (_) {}
+        }
+        if (appResult.alreadySeeded !== true) {
+          try { await this.appLifecycle.unseedApp(appKeyHex) } catch (_) {}
+        }
+        throw err
+      }
+    } catch (err) {
       log.warn('  seed error:', err.message)
       this.emit('seed-error', { appKey: appKeyHex, error: err })
-    })
+      deny('storage-admission-blocked', err.message || 'durable storage admission failed')
+      return
+    }
 
-    this.emit('seed-accepted', { appKey: appKeyHex, mode, publisherPubkey: effectivePublisher })
+    try {
+      this._seedProtocol.acceptSeedRequest(
+        msg.appKey,
+        this.swarm.keyPair.publicKey,
+        (this.config.regions && this.config.regions[0]) || 'unknown',
+        this._storageAdmission(0).availableBytes
+      )
+    } catch (err) {
+      try { this.emit('seed-ack-error', { appKey: appKeyHex, error: err }) } catch (_) {}
+      return
+    }
+    log.info('  ✓ seeded:', appKeyHex.slice(0, 16))
+    try { this.emit('seed-accepted', { appKey: appKeyHex, mode, publisherPubkey: effectivePublisher }) } catch (_) {}
   }
 
   _onUnseedRequest (msg) {

@@ -27,6 +27,7 @@ const args = minimist(process.argv.slice(2))
 const NODE_COUNT = parseInt(args.nodes) || 3
 const BASE_PORT = parseInt(args.port) || 9100
 const SEED_KEYS = args.seed ? [].concat(args.seed) : []
+const SEED_MAX_STORAGE_BYTES = 1024 * 1024 * 1024
 
 const networkId = randomBytes(4).toString('hex')
 const networkDir = join(tmpdir(), `hiverelay-network-${networkId}`)
@@ -83,7 +84,7 @@ async function startNetwork () {
       // Seed on every node for redundancy
       for (const { node, index } of nodes) {
         try {
-          const result = await node.seedApp(key)
+          const result = await node.seedApp(key, { maxStorage: SEED_MAX_STORAGE_BYTES })
           console.log(`  [node ${index}] Seeding ${key.slice(0, 12)}... (dk: ${result.discoveryKey.slice(0, 12)}...)`)
         } catch (err) {
           console.log(`  [node ${index}] Seed error: ${err.message}`)

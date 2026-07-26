@@ -104,8 +104,8 @@ test('Federation: poll routes new apps through accept-mode (review queues)', asy
   // Bypass the HTTP fetch — invoke the per-relay poll handler directly.
   fed._fetchCatalog = async () => ({
     apps: [
-      { appKey: 'a'.repeat(64), publisherPubkey: 'p'.repeat(64), type: 'app' },
-      { appKey: 'b'.repeat(64), publisherPubkey: 'q'.repeat(64), type: 'app' }
+      { appKey: 'a'.repeat(64), publisherPubkey: 'p'.repeat(64), type: 'app', maxStorageBytes: 1024 * 1024 },
+      { appKey: 'b'.repeat(64), publisherPubkey: 'q'.repeat(64), type: 'app', maxStorageBytes: 1024 * 1024 }
     ]
   })
 
@@ -122,7 +122,7 @@ test('Federation: poll under closed mode rejects everything (no queue)', async (
 
   const fed = new Federation({ node })
   fed._fetchCatalog = async () => ({
-    apps: [{ appKey: 'a'.repeat(64), publisherPubkey: 'p'.repeat(64), type: 'app' }]
+    apps: [{ appKey: 'a'.repeat(64), publisherPubkey: 'p'.repeat(64), type: 'app', maxStorageBytes: 1024 * 1024 }]
   })
 
   let rejectedCount = 0

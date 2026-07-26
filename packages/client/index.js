@@ -30,7 +30,6 @@
 
 import Hyperswarm from 'hyperswarm'
 import Corestore from 'corestore'
-import { openCorestore } from 'p2p-hiverelay/core/persistence/storage-root-restore.js'
 import Hyperdrive from 'hyperdrive'
 import b4a from 'b4a'
 import Protomux from 'protomux'
@@ -87,7 +86,6 @@ import {
   RELAY_DISCOVERY_TOPIC,
   DISCOVERY_EPOCH_MS,
   syncEpochDiscoveryTopics,
-  clearEpochDiscoveryTopics,
   SEED_PROTOCOL_NAME,
   CIRCUIT_PROTOCOL_NAME,
   FORWARD_PROTOCOL_NAME,
@@ -126,6 +124,8 @@ export const _pairing = {
 
 const FORWARD_MAX_FRAME = MAX_FORWARD_DATA_MSG_BYTES
 const CORE_RETRIEVABILITY_HTTP_FEATURE = 'retrievability-proof-http'
+const TRACKED_PUBLISH_LANE = Symbol('tracked-publish-lane')
+const TRACKED_SEED_LANE = Symbol('tracked-seed-lane')
 
 /**
  * Parse the total object size out of an HTTP Content-Range header
@@ -139,6 +139,40 @@ function parseContentRangeTotal (value) {
   if (!m) return null
   const n = Number(m[1])
   return Number.isFinite(n) ? n : null
+}
+
+// Internal/test-visible cancellation boundary for client.open(). A successful
+// drive update must clear its losing timeout; a timeout must also detach the
+// Hypercore upgrade request before open() continues with a partially-known
+// drive. This mirrors the relay-side cancellable update contract without
+// coupling the standalone client package to RelayNode lifecycle code.
+export async function _waitForDriveUpdate (drive, timeoutMs) {
+  const activeRequests = []
+  const core = drive?.db?.core || drive?.core || null
+  let timer = null
+  const clearActive = (error) => {
+    if (activeRequests.length === 0) return
+    if (core?.replicator && typeof core.replicator.clearRequests === 'function') {
+      try { core.replicator.clearRequests(activeRequests, error) } catch {}
+    }
+    activeRequests.length = 0
+  }
+
+  try {
+    await new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error('Drive update timed out')
+        clearActive(error)
+        reject(error)
+      }, timeoutMs)
+      Promise.resolve()
+        .then(() => drive.update({ wait: true, activeRequests }))
+        .then(resolve, reject)
+    })
+  } finally {
+    if (timer) clearTimeout(timer)
+    clearActive(new Error('Drive update settled'))
+  }
 }
 
 export class HiveRelayClient extends EventEmitter {
@@ -167,6 +201,7 @@ export class HiveRelayClient extends EventEmitter {
 
     this._ownsSwarm = !config.swarm
     this._ownsStore = !config.store
+    this._keyPairExplicit = !!config.keyPair
     this._storagePath = config.storage || null
 
     this.store = config.store || null
@@ -188,9 +223,18 @@ export class HiveRelayClient extends EventEmitter {
     this._discoverEpochTopics = config.discoverEpochTopics === true || this.ephemeral
     this._epochDiscoveryTimer = null
     this._epochDiscoveryTopics = new Map()
+    this._retiringDiscoveryHandles = new Set()
+    this._driveDiscoveryHandles = new Map()
+    this._shareBundleCores = new Map()
+    this._operations = new Set()
+    this._openingDrives = new Map()
+    this._provisionalPublishDrives = new Map()
+    this._ownerOperations = new WeakMap()
+    this._lifecycleAbort = null
     this.autoDiscover = config.autoDiscover !== false
     this.maxRelays = config.maxRelays || 10
     this.connectionTimeout = config.connectionTimeout || 10_000
+    this._destroyTimeout = config.destroyTimeout || 15_000
     this.bootstrap = config.bootstrap || null
 
     // Relay tracking
@@ -201,6 +245,9 @@ export class HiveRelayClient extends EventEmitter {
     // Drive management
     this.drives = new Map() // key hex -> Hyperdrive
     this._appDrives = new Map() // appId string -> key hex (persistent app→drive mapping)
+    this._appDriveMappingTail = Promise.resolve()
+    this._publishTails = new Map()
+    this._seedTails = new Map()
 
     // Seed defaults
     this.autoSeed = config.autoSeed !== false
@@ -208,6 +255,9 @@ export class HiveRelayClient extends EventEmitter {
     this.seedTimeout = config.seedTimeout || 10_000
 
     this._started = false
+    this._starting = null
+    this._destroying = null
+    this._stopping = false
     this._discoveryTopic = null
     this._reconnect = { timer: null, delay: 5000, attempt: 0 }
     this._relayHealthInterval = null
@@ -225,6 +275,7 @@ export class HiveRelayClient extends EventEmitter {
     // Persistent seed retry queue
     // Stored at {storagePath}/pending-seeds.json; survives process restart.
     this._pendingSeeds = new Map() // appKey hex -> { appKey, opts, enqueuedAt, attempts, lastAttempt, nextRetryAt, reason }
+    this._pendingSeedSaveTail = Promise.resolve()
     this._pendingSeedTimers = new Map() // appKey hex -> setTimeout handle
     this._pendingSeedsLoaded = false
     this._pendingSeedConfig = {
@@ -279,20 +330,437 @@ export class HiveRelayClient extends EventEmitter {
     this._epochDiscoveryTopics = syncEpochDiscoveryTopics(
       this._epochDiscoveryTopics,
       this.swarm,
-      { server: false, client: true }
+      { server: false, client: true },
+      null,
+      DISCOVERY_EPOCH_MS,
+      (handle) => this._queueDiscoveryDestroy(handle)
     )
+  }
+
+  _trackOperation (operation) {
+    const promise = Promise.resolve(operation)
+    this._operations.add(promise)
+    const cleanup = () => this._operations.delete(promise)
+    promise.then(cleanup, cleanup)
+    return promise
+  }
+
+  _queuePublishLane (lane, run) {
+    const previous = this._publishTails.get(lane) || Promise.resolve()
+    const operation = previous.catch(() => {}).then(run)
+    const tail = operation.catch(() => {})
+    this._publishTails.set(lane, tail)
+    const cleanup = () => {
+      if (this._publishTails.get(lane) === tail) this._publishTails.delete(lane)
+    }
+    tail.then(cleanup, cleanup)
+    return operation
+  }
+
+  _queueSeedLane (keyHex, run) {
+    const previous = this._seedTails.get(keyHex) || Promise.resolve()
+    const operation = previous.catch(() => {}).then(run)
+    const tail = operation.catch(() => {})
+    this._seedTails.set(keyHex, tail)
+    const cleanup = () => {
+      if (this._seedTails.get(keyHex) === tail) this._seedTails.delete(keyHex)
+    }
+    tail.then(cleanup, cleanup)
+    return operation
+  }
+
+  async _raceLifecycle (operation, timeoutMs, label) {
+    const signal = this._lifecycleAbort?.signal
+    let timer = null
+    let onAbort = null
+    try {
+      await Promise.race([
+        Promise.resolve(operation),
+        new Promise((_resolve, reject) => {
+          timer = setTimeout(() => {
+            const err = new Error(label + ' timed out')
+            err.code = 'CLIENT_OPERATION_TIMEOUT'
+            reject(err)
+          }, timeoutMs)
+        }),
+        new Promise((_resolve, reject) => {
+          onAbort = () => {
+            const err = new Error(label + ' aborted')
+            err.name = 'AbortError'
+            err.code = 'ABORT_ERR'
+            reject(err)
+          }
+          if (!signal || signal.aborted) onAbort()
+          else signal.addEventListener('abort', onAbort, { once: true })
+        })
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+      if (onAbort && signal) signal.removeEventListener('abort', onAbort)
+    }
+  }
+
+  async _drainOperations () {
+    const pending = Promise.allSettled([...this._operations])
+    let timer = null
+    try {
+      await Promise.race([
+        pending,
+        new Promise((_resolve, reject) => {
+          timer = setTimeout(() => {
+            const err = new Error('client operation drain timed out')
+            err.code = 'CLIENT_OPERATION_DRAIN_TIMEOUT'
+            reject(err)
+          }, this._destroyTimeout)
+        })
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  _ownerOperation (label, owner, run) {
+    const existing = this._ownerOperations.get(owner)
+    if (existing) {
+      if (existing.label === label) return existing.operation
+      return existing.operation.catch(() => {}).then(() => this._ownerOperation(label, owner, run))
+    }
+    const operation = Promise.resolve().then(run)
+    const entry = { label, operation }
+    this._ownerOperations.set(owner, entry)
+    operation.then(
+      () => { if (this._ownerOperations.get(owner) === entry) this._ownerOperations.delete(owner) },
+      () => { if (this._ownerOperations.get(owner) === entry) this._ownerOperations.delete(owner) }
+    )
+    return operation
+  }
+
+  async _awaitOwnerOperation (label, owner, run, timeoutMs = this._destroyTimeout) {
+    const operation = this._ownerOperation(label, owner, run)
+    let timer = null
+    try {
+      return await Promise.race([
+        operation,
+        new Promise((_resolve, reject) => {
+          timer = setTimeout(() => {
+            const err = new Error(label + ' timed out')
+            err.code = 'CLIENT_TEARDOWN_TIMEOUT'
+            reject(err)
+          }, timeoutMs)
+        })
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  async _awaitLifecycleOwnerOperation (label, owner, run, timeoutMs) {
+    const operation = this._ownerOperation(label, owner, run)
+    const signal = this._lifecycleAbort?.signal
+    let timer = null
+    let onAbort = null
+    try {
+      return await Promise.race([
+        operation,
+        new Promise((_resolve, reject) => {
+          timer = setTimeout(() => {
+            const err = new Error(label + ' timed out')
+            err.code = 'CLIENT_OPERATION_TIMEOUT'
+            reject(err)
+          }, timeoutMs)
+        }),
+        new Promise((_resolve, reject) => {
+          if (!signal) return
+          onAbort = () => {
+            const err = new Error(label + ' aborted')
+            err.name = 'AbortError'
+            err.code = 'ABORT_ERR'
+            reject(err)
+          }
+          if (signal.aborted) onAbort()
+          else signal.addEventListener('abort', onAbort, { once: true })
+        })
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+      if (onAbort && signal) signal.removeEventListener('abort', onAbort)
+    }
+  }
+
+  _queueDiscoveryDestroy (handle) {
+    if (!handle || typeof handle.destroy !== 'function') return
+    const entry = { id: randomNameSuffix(), handle, promise: null }
+    this._retiringDiscoveryHandles.add(entry)
+    const operation = this._ownerOperation(
+      'queued-discovery-destroy:' + entry.id,
+      handle,
+      () => handle.destroy()
+    )
+    entry.promise = operation
+    operation.then(
+      () => this._retiringDiscoveryHandles.delete(entry),
+      () => { entry.promise = null }
+    )
+  }
+
+  _retainDiscoveryHandle (handle) {
+    if (!handle || typeof handle.destroy !== 'function') return
+    this._retiringDiscoveryHandles.add({ id: randomNameSuffix(), handle, promise: null })
+  }
+
+  _joinDriveDiscovery (keyHex, topic, opts) {
+    const previous = this._driveDiscoveryHandles.get(keyHex)
+    const handle = this.swarm.join(topic, opts)
+    if (previous && previous !== handle) this._queueDiscoveryDestroy(previous)
+    this._driveDiscoveryHandles.set(keyHex, handle)
+    return handle
+  }
+
+  async _destroyDriveDiscovery (keyHex) {
+    const handle = this._driveDiscoveryHandles.get(keyHex)
+    if (!handle) return
+    if (typeof handle.destroy === 'function') {
+      await this._awaitOwnerOperation(
+        `drive-discovery:${keyHex}`,
+        handle,
+        () => handle.destroy()
+      )
+    }
+    if (this._driveDiscoveryHandles.get(keyHex) === handle) {
+      this._driveDiscoveryHandles.delete(keyHex)
+    }
+  }
+
+  async _failOpen (keyHex, drive, cause) {
+    try {
+      await this._destroyDriveDiscovery(keyHex)
+      if (drive && typeof drive.close === 'function') {
+        await this._awaitOwnerOperation(`drive:${keyHex}`, drive, () => drive.close())
+      }
+    } catch (teardownError) {
+      // Preserve the exact owner for destroy() retry. Never lose a drive whose
+      // discovery/core teardown may still be live.
+      if (drive) this.drives.set(keyHex, drive)
+      const failure = new Error('client open teardown did not settle')
+      failure.code = 'CLIENT_OPEN_TEARDOWN_FAILED'
+      failure.cause = teardownError
+      failure.openCause = cause
+      throw failure
+    }
+    this._removeDriveForkListeners(keyHex)
+    throw cause
+  }
+
+  _createPublishDrive (store, key, opts) {
+    return new Hyperdrive(store, key, opts)
+  }
+
+  _createOpenDrive (store, key, opts) {
+    return new Hyperdrive(store, key, opts)
+  }
+
+  async _resolveLivePublishDrive (keyHex) {
+    const opening = this._openingDrives.get(keyHex)
+    if (opening) {
+      try { await opening } catch (_) {}
+      this._assertPublishActive()
+    }
+    return this.drives.get(keyHex) || null
+  }
+
+  _assertPublishActive () {
+    if (!this._started || this._stopping || this._lifecycleAbort?.signal.aborted) {
+      const err = new Error('client publish cancelled by lifecycle teardown')
+      err.code = 'CLIENT_PUBLISH_CANCELLED'
+      throw err
+    }
+  }
+
+  async _closeProvisionalPublish (id, owner) {
+    if (owner.keyHex) await this._destroyDriveDiscovery(owner.keyHex)
+    await this._awaitOwnerOperation(
+      `publish-drive:${id}`,
+      owner.drive,
+      () => owner.drive.close()
+    )
+    if (this._provisionalPublishDrives.get(id) === owner) {
+      this._provisionalPublishDrives.delete(id)
+    }
+  }
+
+  async _destroyProvisionalPublishes () {
+    let firstError = null
+    for (const [id, owner] of [...this._provisionalPublishDrives]) {
+      try { await this._closeProvisionalPublish(id, owner) } catch (err) {
+        if (!firstError) firstError = err
+      }
+    }
+    if (firstError) throw firstError
+  }
+
+  _removeDriveForkListeners (keyHex) {
+    if (!this._driveForkListeners || !this._driveForkListeners.has(keyHex)) return
+    const { core, onTruncate, onVerifyError } = this._driveForkListeners.get(keyHex)
+    try { core.removeListener('truncate', onTruncate) } catch (_) {}
+    try { core.removeListener('verification-error', onVerifyError) } catch (_) {}
+    this._driveForkListeners.delete(keyHex)
+  }
+
+  async _destroyDiscoveryHandles () {
+    let firstError = null
+    const settle = async (run) => {
+      try { await run() } catch (err) { if (!firstError) firstError = err }
+    }
+
+    for (const entry of [...this._retiringDiscoveryHandles]) {
+      await settle(async () => {
+        if (entry.promise) {
+          await this._awaitOwnerOperation('retiring-discovery:' + entry.id, entry, () => entry.promise)
+        } else {
+          await this._awaitOwnerOperation('retiring-discovery:' + entry.id, entry, () => entry.handle.destroy())
+        }
+        this._retiringDiscoveryHandles.delete(entry)
+      })
+    }
+    for (const [key, handle] of [...this._epochDiscoveryTopics]) {
+      await settle(async () => {
+        if (handle && typeof handle.destroy === 'function') {
+          await this._awaitOwnerOperation(`epoch-discovery:${key}`, handle, () => handle.destroy())
+        }
+        if (this._epochDiscoveryTopics.get(key) === handle) this._epochDiscoveryTopics.delete(key)
+      })
+    }
+    for (const [key, handle] of [...this._driveDiscoveryHandles]) {
+      await settle(async () => {
+        if (handle && typeof handle.destroy === 'function') {
+          await this._awaitOwnerOperation(`drive-discovery:${key}`, handle, () => handle.destroy())
+        }
+        if (this._driveDiscoveryHandles.get(key) === handle) this._driveDiscoveryHandles.delete(key)
+      })
+    }
+    const main = this._discoveryTopic
+    if (main) {
+      await settle(async () => {
+        if (typeof main.destroy === 'function') {
+          await this._awaitOwnerOperation('main-discovery', main, () => main.destroy())
+        }
+        if (this._discoveryTopic === main) this._discoveryTopic = null
+      })
+    }
+    if (firstError) throw firstError
+  }
+
+  async _destroyShareBundles () {
+    let firstError = null
+    for (const [key, entry] of [...this._shareBundleCores]) {
+      let settled = true
+      if (entry.discovery && typeof entry.discovery.destroy === 'function') {
+        try {
+          await this._awaitOwnerOperation(
+            `share-discovery:${key}`,
+            entry.discovery,
+            () => entry.discovery.destroy()
+          )
+          entry.discovery = null
+        } catch (err) {
+          settled = false
+          if (!firstError) firstError = err
+        }
+      }
+      if (settled && entry.core && typeof entry.core.close === 'function') {
+        try {
+          await this._awaitOwnerOperation(`share-core:${key}`, entry.core, () => entry.core.close())
+        } catch (err) {
+          settled = false
+          if (!firstError) firstError = err
+        }
+      }
+      if (settled && this._shareBundleCores.get(key) === entry) {
+        this._shareBundleCores.delete(key)
+      }
+    }
+    if (firstError) throw firstError
+  }
+
+  _retainShareBundleOwner (key, owner) {
+    let id = key || ('share-owner-' + randomNameSuffix())
+    while (this._shareBundleCores.has(id) && this._shareBundleCores.get(id) !== owner) {
+      id = key + ':' + randomNameSuffix()
+    }
+    this._shareBundleCores.set(id, owner)
+    return id
+  }
+
+  async _closeTransientShareBundle (key, owner, operationCause = null) {
+    try {
+      if (owner.discovery && typeof owner.discovery.destroy === 'function') {
+        await this._awaitOwnerOperation(
+          `share-discovery:${key}`,
+          owner.discovery,
+          () => owner.discovery.destroy()
+        )
+        owner.discovery = null
+      }
+      if (owner.core && typeof owner.core.close === 'function') {
+        await this._awaitOwnerOperation(`share-core:${key}`, owner.core, () => owner.core.close())
+        owner.core = null
+      }
+    } catch (teardownCause) {
+      this._retainShareBundleOwner(key, owner)
+      const failure = new Error('share bundle lifecycle teardown did not settle')
+      failure.code = 'CLIENT_SHARE_BUNDLE_TEARDOWN_FAILED'
+      failure.operationCause = operationCause
+      failure.teardownCause = teardownCause
+      throw failure
+    }
   }
 
   /**
    * Initialize everything and start discovering relay nodes.
    */
-  async start () {
-    if (this._started) return this
+  start () {
+    if (this._starting) return this._starting
+    const operation = this._startLifecycle()
+    const starting = operation.finally(() => {
+      if (this._starting === starting) this._starting = null
+    })
+    this._starting = starting
+    return starting
+  }
 
+  async _startLifecycle () {
+    if (this._destroying) await this._destroying
+    if (this._stopping) {
+      const err = new Error('client teardown is still pending')
+      err.code = 'CLIENT_TEARDOWN_PENDING'
+      throw err
+    }
+    if (this._started) return this
+    this._stopping = false
+    try {
+      return await this._start()
+    } catch (startCause) {
+      try {
+        await this._rollbackFailedStart()
+      } catch (teardownCause) {
+        const failure = new Error('client startup teardown did not settle')
+        failure.code = 'CLIENT_START_TEARDOWN_FAILED'
+        failure.startCause = startCause
+        failure.teardownCause = teardownCause
+        throw failure
+      }
+      throw startCause
+    }
+  }
+
+  async _start () {
+    this._lifecycleAbort = new AbortController()
     // Create store if we own it (only when storage path was given)
     if (this._ownsStore && !this.store && this._storagePath) {
-      this.store = openCorestore(this._storagePath)
-      await this.store.ready()
+      this.store = new Corestore(this._storagePath)
+    }
+    if (this._ownsStore && this.store) {
+      await this._awaitOwnerOperation('owned-store-ready', this.store, () => this.store.ready())
     }
 
     // Create swarm if we own it
@@ -346,28 +814,53 @@ export class HiveRelayClient extends EventEmitter {
         )
         if (this._epochDiscoveryTimer.unref) this._epochDiscoveryTimer.unref()
       }
-      // Bound the flush — in test environments or offline startup there may
-      // be no peers to flush to. Proceed after a short wait; the reconnect
-      // loop will keep trying to connect in the background.
-      const flushTimeout = new Promise(resolve => {
-        const t = setTimeout(resolve, 500)
-        if (t.unref) t.unref()
-      })
-      await Promise.race([this.swarm.flush().catch(() => {}), flushTimeout])
+      // A handle-scoped flush is retained in the exact-owner lane. Timeout is
+      // non-fatal, but later destroy remains serialized behind the real flush.
+      if (typeof this._discoveryTopic.flushed === 'function') {
+        const discovery = this._discoveryTopic
+        try {
+          await this._awaitLifecycleOwnerOperation(
+            'main-discovery-flush',
+            discovery,
+            () => discovery.flushed(),
+            500
+          )
+        } catch (err) {
+          if (err?.name === 'AbortError' || err?.code === 'ABORT_ERR') throw err
+        }
+      }
     }
 
     // Start seeding registry for persistent seed request discovery
     if (this.store) {
       try {
         const registryStore = this.store.namespace('seeding-registry')
-        this._registry = new SeedingRegistry(registryStore, this.swarm)
-        await this._registry.start()
+        const registry = new SeedingRegistry(registryStore, this.swarm)
+        this._registry = registry
+        await this._awaitOwnerOperation('registry-start', registry, () => registry.start())
       } catch (err) {
         this.emit('registry-error', { context: 'registry-start', error: err })
-        this._registry = null
+        const registry = this._registry
+        if (registry) {
+          try {
+            await this._awaitOwnerOperation('registry-stop', registry, () => registry.stop())
+            if (this._registry === registry) this._registry = null
+          } catch (stopErr) {
+            const failure = new Error('client seeding registry startup teardown did not settle')
+            failure.code = 'CLIENT_REGISTRY_START_TEARDOWN_FAILED'
+            failure.cause = stopErr
+            failure.startCause = err
+            throw failure
+          }
+        }
       }
     }
 
+    if (this._stopping) {
+      const err = new Error('client startup cancelled by destroy')
+      err.code = 'CLIENT_START_CANCELLED'
+      throw err
+    }
     this._started = true
     this._startReconnectLoop()
     this._startRelayHealthChecks()
@@ -400,6 +893,91 @@ export class HiveRelayClient extends EventEmitter {
     return this
   }
 
+  async _rollbackFailedStart () {
+    this._stopping = true
+    if (this._lifecycleAbort) this._lifecycleAbort.abort()
+    this._started = false
+    if (this._relayHealthInterval) {
+      clearInterval(this._relayHealthInterval)
+      this._relayHealthInterval = null
+    }
+    if (this._reconnect.timer) {
+      clearInterval(this._reconnect.timer)
+      this._reconnect.timer = null
+    }
+    if (this._epochDiscoveryTimer) {
+      clearInterval(this._epochDiscoveryTimer)
+      this._epochDiscoveryTimer = null
+    }
+    if (this._replicationMonitors) {
+      for (const [key, handle] of [...this._replicationMonitors]) {
+        handle.stop()
+        this._replicationMonitors.delete(key)
+      }
+    }
+    for (const timer of this._pendingSeedTimers.values()) clearTimeout(timer)
+    this._pendingSeedTimers.clear()
+    if (this._operations.size > 0) await this._drainOperations()
+    await this._awaitOwnerOperation(
+      'pending-seeds-save',
+      this,
+      () => this._savePendingSeeds()
+    )
+    if (this._registry) {
+      const registry = this._registry
+      await this._awaitOwnerOperation('registry-stop', registry, () => registry.stop())
+      if (this._registry === registry) this._registry = null
+    }
+    if (this._pairing) {
+      const pairing = this._pairing
+      await this._awaitOwnerOperation('pairing', pairing, () => pairing.destroy())
+      if (this._pairing === pairing) this._pairing = null
+    }
+    if (this._connectionHandler && this.swarm) {
+      this.swarm.removeListener('connection', this._connectionHandler)
+      this._connectionHandler = null
+    }
+    for (const pending of this._pendingServiceRequests.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(new Error('CLIENT_START_FAILED'))
+    }
+    this._pendingServiceRequests.clear()
+    this._serviceSubscriptions.clear()
+    await this._destroyDiscoveryHandles()
+    await this._destroyShareBundles()
+    await this._destroyProvisionalPublishes()
+    for (const [keyHex] of [...this.drives]) await this.closeDrive(keyHex)
+    if (this.forkDetector) {
+      const detector = this.forkDetector
+      await this._awaitOwnerOperation('fork-detector-save', detector, () => detector.save())
+      detector.removeAllListeners()
+      if (this.forkDetector === detector) this.forkDetector = null
+    }
+    if (this._bootstrapCache) {
+      const cache = this._bootstrapCache
+      cache.stop()
+      await this._awaitOwnerOperation('bootstrap-cache-save', cache, () => cache.save())
+      if (this._bootstrapCache === cache) this._bootstrapCache = null
+    }
+    if (this._ownsSwarm && this.swarm) {
+      const swarm = this.swarm
+      await this._awaitOwnerOperation('owned-swarm', swarm, () => swarm.destroy())
+      if (this.swarm === swarm) this.swarm = null
+    }
+    if (this._ownsStore && this.store) {
+      const store = this.store
+      await this._awaitOwnerOperation('owned-store', store, () => store.close())
+      if (this.store === store) this.store = null
+    }
+    if (this._ownsSwarm && !this._keyPairExplicit) this.keyPair = null
+    this.relays.clear()
+    this.seedRequests.clear()
+    this.reservations.clear()
+    this._capabilityCache.clear()
+    this._lifecycleAbort = null
+    this._stopping = false
+  }
+
   // ─── Content API ─────────────────────────────────────────────────
 
   /**
@@ -418,108 +996,211 @@ export class HiveRelayClient extends EventEmitter {
    * @param {number} opts.timeout - Seed request timeout in ms
    * @returns {Promise<Hyperdrive>} The published drive
    */
-  async publish (filesOrDir, opts = {}) {
+  publish (filesOrDir, opts = {}) {
+    return this._trackOperation(this._publishOwned(filesOrDir, opts))
+  }
+
+  async _publishOwned (filesOrDir, opts = {}) {
     this._ensureStarted()
+    let drive = null
+    let provisionalId = null
+    let provisionalOwner = null
+    let keyHex = null
+    let published = false
+    let borrowedDrive = false
+    let mappingWriteAttempted = false
+    let priorMemoryMapping = { present: false, key: null }
+    let priorPersistedMapping = null
 
-    // Support directory path: client.publish('./my-app') reads all files from disk
-    let files
-    if (typeof filesOrDir === 'string') {
-      const dirPath = resolve(filesOrDir)
-      files = await this._readDirectory(dirPath)
-      if (files.length === 0) throw new Error('No files found in ' + dirPath)
-      // Auto-derive appId from directory name if not set
-      if (!opts.appId) {
-        const dirName = dirPath.split('/').pop() || dirPath.split('\\').pop()
-        opts.appId = dirName
+    try {
+      // Support directory path: client.publish('./my-app') reads all files from disk
+      let files
+      if (typeof filesOrDir === 'string') {
+        const dirPath = resolve(filesOrDir)
+        files = await this._readDirectory(dirPath)
+        this._assertPublishActive()
+        if (files.length === 0) throw new Error('No files found in ' + dirPath)
+        // Auto-derive appId from directory name if not set
+        if (!opts.appId) {
+          const dirName = dirPath.split('/').pop() || dirPath.split('\\').pop()
+          opts.appId = dirName
+        }
+      } else {
+        files = filesOrDir
       }
-    } else {
-      files = filesOrDir
-    }
 
-    let drive
-    let isUpdate = false
+      // One client-level publish transaction owns drive-map promotion, app
+      // mapping, observers, and rollback. A global lane deliberately trades
+      // publish throughput for collision safety across mixed identities
+      // ({appId,key}, key-only, or two appIds resolving to one drive key).
+      const publishLane = 'client-publish'
+      if (opts[TRACKED_PUBLISH_LANE] !== publishLane) {
+        return await this._queuePublishLane(publishLane, () => this._publishOwned(files, {
+          ...opts,
+          [TRACKED_PUBLISH_LANE]: publishLane
+        }))
+      }
 
-    // Encryption key for blind mode (relay stores ciphertext, can't read content)
-    const driveOpts = opts.encryptionKey ? { encryptionKey: opts.encryptionKey } : {}
+      let isUpdate = false
 
-    // Priority 1: explicit key (resume publishing to a known drive)
-    if (opts.key) {
-      const keyBuf = typeof opts.key === 'string' ? b4a.from(opts.key, 'hex') : opts.key
-      drive = new Hyperdrive(this.store, keyBuf, driveOpts)
-      isUpdate = true
-    // Priority 2: appId lookup (reuse drive for same app)
-    } else if (opts.appId && this._appDrives.has(opts.appId)) {
-      const existingKey = this._appDrives.get(opts.appId)
-      drive = new Hyperdrive(this.store, b4a.from(existingKey, 'hex'), driveOpts)
-      isUpdate = true
-    // Priority 3: check persisted app→drive mapping from storage
-    } else if (opts.appId && this._storagePath) {
-      const savedKey = await this._loadAppDriveMapping(opts.appId)
-      if (savedKey) {
-        drive = new Hyperdrive(this.store, b4a.from(savedKey, 'hex'), driveOpts)
+      priorMemoryMapping = opts.appId && this._appDrives.has(opts.appId)
+        ? { present: true, key: this._appDrives.get(opts.appId) }
+        : { present: false, key: null }
+
+      // Capture disk authority before an explicit-key update can replace it.
+      // The final commit can then restore the exact prior mapping if lifecycle
+      // cancellation lands during its atomic write.
+      if (opts.appId && this._storagePath) {
+        priorPersistedMapping = await this._loadAppDriveMapping(opts.appId)
+        this._assertPublishActive()
+      }
+
+      // Encryption key for blind mode (relay stores ciphertext, can't read content)
+      const driveOpts = opts.encryptionKey ? { encryptionKey: opts.encryptionKey } : {}
+
+      // Priority 1: explicit key (resume publishing to a known drive)
+      if (opts.key) {
+        const keyBuf = typeof opts.key === 'string' ? b4a.from(opts.key, 'hex') : opts.key
+        const requestedKeyHex = b4a.toString(keyBuf, 'hex')
+        drive = await this._resolveLivePublishDrive(requestedKeyHex)
+        borrowedDrive = !!drive
+        if (!drive) drive = this._createPublishDrive(this.store, keyBuf, driveOpts)
+        isUpdate = true
+      // Priority 2: appId lookup (reuse drive for same app)
+      } else if (opts.appId && this._appDrives.has(opts.appId)) {
+        const existingKey = this._appDrives.get(opts.appId)
+        drive = await this._resolveLivePublishDrive(existingKey)
+        borrowedDrive = !!drive
+        if (!drive) drive = this._createPublishDrive(this.store, b4a.from(existingKey, 'hex'), driveOpts)
+        isUpdate = true
+      // Priority 3: check persisted app→drive mapping from storage
+      } else if (opts.appId && priorPersistedMapping) {
+        drive = await this._resolveLivePublishDrive(priorPersistedMapping)
+        borrowedDrive = !!drive
+        if (!drive) drive = this._createPublishDrive(this.store, b4a.from(priorPersistedMapping, 'hex'), driveOpts)
         isUpdate = true
       }
-    }
 
-    // No existing drive found — create new with unique namespace
-    // (avoids Corestore contention under active replication in Pear/Bare runtime)
-    if (!drive) {
-      const ns = this.store.namespace('drive-' + Date.now() + '-' + randomNameSuffix())
-      drive = new Hyperdrive(ns, null, driveOpts)
-    }
-
-    await drive.ready()
-
-    // Write all files to the drive
-    for (const file of files) {
-      const content = typeof file.content === 'string'
-        ? b4a.from(file.content)
-        : file.content
-      await drive.put(file.path, content)
-    }
-
-    this.swarm.join(drive.discoveryKey, { server: true, client: true })
-    // Flush in background — don't block publish on DHT propagation
-    this.swarm.flush().catch(() => {})
-
-    const keyHex = b4a.toString(drive.key, 'hex')
-    this.drives.set(keyHex, drive)
-
-    // Persist the appId→driveKey mapping for future publishes
-    if (opts.appId) {
-      this._appDrives.set(opts.appId, keyHex)
-      this._saveAppDriveMapping(opts.appId, keyHex).catch(() => {})
-    }
-
-    const shouldSeed = opts.seed !== undefined ? opts.seed : this.autoSeed
-    if (shouldSeed) {
-      const target = opts.replicas || this.seedReplicas
-      const timeout = opts.timeout || this.seedTimeout
-      try {
-        const acceptances = await this.seed(drive.key, { replicas: target, timeout })
-        // Attach the outcome directly to the drive so callers have a one-shot
-        // view of "did my publish actually reach the target?" without a
-        // follow-up call to getReplicationStatus().
-        drive.replicas = {
-          target,
-          accepted: acceptances.length,
-          healthy: acceptances.length >= target,
-          relays: acceptances.map((a) => ({
-            pubkey: a.relayPubkey ? b4a.toString(a.relayPubkey, 'hex') : null,
-            region: a.region || null
-          }))
-        }
-        this.emit('seeded', { key: keyHex, acceptances: acceptances.length, target })
-      } catch (err) {
-        drive.replicas = { target, accepted: 0, healthy: false, relays: [], error: err.message }
-        this.emit('seed-error', { key: keyHex, error: err })
+      // No existing drive found — create new with unique namespace
+      // (avoids Corestore contention under active replication in Pear/Bare runtime)
+      if (!drive) {
+        const ns = this.store.namespace('drive-' + Date.now() + '-' + randomNameSuffix())
+        drive = this._createPublishDrive(ns, null, driveOpts)
       }
-    } else {
-      drive.replicas = null // explicitly signal: caller opted out of seeding
-    }
 
-    this.emit('published', { key: keyHex, files: files.length, isUpdate, replicas: drive.replicas })
-    return drive
+      // Publish tentative ownership before drive.ready() can overlap teardown.
+      // Failed cleanup retains this exact owner for rollback/destroy retry.
+      if (!borrowedDrive) {
+        provisionalId = 'publish-' + randomNameSuffix()
+        provisionalOwner = { drive, keyHex: null }
+        this._provisionalPublishDrives.set(provisionalId, provisionalOwner)
+      }
+
+      await drive.ready()
+      this._assertPublishActive()
+      keyHex = b4a.toString(drive.key, 'hex')
+      if (provisionalOwner) provisionalOwner.keyHex = keyHex
+
+      // Write all files to the drive
+      for (const file of files) {
+        const content = typeof file.content === 'string'
+          ? b4a.from(file.content)
+          : file.content
+        await drive.put(file.path, content)
+        this._assertPublishActive()
+      }
+
+      if (!borrowedDrive) {
+        this._joinDriveDiscovery(keyHex, drive.discoveryKey, { server: true, client: true })
+        this.drives.set(keyHex, drive)
+      }
+      published = true
+      if (provisionalOwner && this._provisionalPublishDrives.get(provisionalId) === provisionalOwner) {
+        this._provisionalPublishDrives.delete(provisionalId)
+      }
+
+      // Joining is sufficient for normal DHT announcement. Do not launch an
+      // explicit background flush: Hyperswarm has no cancellation primitive,
+      // so a losing timeout race could otherwise outlive client teardown.
+
+      const shouldSeed = opts.seed !== undefined ? opts.seed : this.autoSeed
+      if (shouldSeed) {
+        const target = opts.replicas || this.seedReplicas
+        const timeout = opts.timeout || this.seedTimeout
+        try {
+          const acceptances = await this.seed(drive.key, { replicas: target, timeout })
+          // Attach the outcome directly to the drive so callers have a one-shot
+          // view of "did my publish actually reach the target?" without a
+          // follow-up call to getReplicationStatus().
+          drive.replicas = {
+            target,
+            accepted: acceptances.length,
+            healthy: acceptances.length >= target,
+            relays: acceptances.map((a) => ({
+              pubkey: a.relayPubkey ? b4a.toString(a.relayPubkey, 'hex') : null,
+              region: a.region || null
+            }))
+          }
+          this.emit('seeded', { key: keyHex, acceptances: acceptances.length, target })
+        } catch (err) {
+          drive.replicas = { target, accepted: 0, healthy: false, relays: [], error: err.message }
+          this.emit('seed-error', { key: keyHex, error: err })
+        }
+        this._assertPublishActive()
+      } else {
+        drive.replicas = null // explicitly signal: caller opted out of seeding
+      }
+
+      this._assertPublishActive()
+      // Commit the app mapping atomically after seed settlement. Any abort or
+      // observer failure below restores the exact prior memory + disk mapping.
+      if (opts.appId) {
+        mappingWriteAttempted = true
+        await this._saveAppDriveMapping(opts.appId, keyHex, { throwOnError: true })
+        this._assertPublishActive()
+        this._appDrives.set(opts.appId, keyHex)
+      }
+      this.emit('published', { key: keyHex, files: files.length, isUpdate, replicas: drive.replicas })
+      return drive
+    } catch (publishCause) {
+      let mappingTeardownCause = null
+      if (mappingWriteAttempted) {
+        try {
+          await this._saveAppDriveMapping(opts.appId, priorPersistedMapping, {
+            throwOnError: true,
+            expectedCurrentKey: keyHex
+          })
+        } catch (err) {
+          mappingTeardownCause = err
+        }
+      }
+      if (opts.appId && mappingWriteAttempted && this._appDrives.get(opts.appId) === keyHex) {
+        if (priorMemoryMapping.present) this._appDrives.set(opts.appId, priorMemoryMapping.key)
+        else this._appDrives.delete(opts.appId)
+      }
+      try {
+        if (!borrowedDrive && published && keyHex && this.drives.get(keyHex) === drive) {
+          await this._closeDriveOwned(keyHex)
+        } else if (provisionalId && provisionalOwner) {
+          await this._closeProvisionalPublish(provisionalId, provisionalOwner)
+        }
+      } catch (teardownCause) {
+        const failure = new Error('client publish teardown did not settle')
+        failure.code = 'CLIENT_PUBLISH_TEARDOWN_FAILED'
+        failure.publishCause = publishCause
+        failure.teardownCause = teardownCause
+        failure.mappingTeardownCause = mappingTeardownCause
+        throw failure
+      }
+      if (mappingTeardownCause) {
+        const failure = new Error('client publish mapping rollback did not settle')
+        failure.code = 'CLIENT_PUBLISH_MAPPING_ROLLBACK_FAILED'
+        failure.publishCause = publishCause
+        failure.mappingTeardownCause = mappingTeardownCause
+        throw failure
+      }
+      throw publishCause
+    }
   }
 
   /**
@@ -538,7 +1219,23 @@ export class HiveRelayClient extends EventEmitter {
    *   bytes onward.
    * @returns {Promise<Hyperdrive>} The opened drive
    */
-  async open (key, opts = {}) {
+  open (key, opts = {}) {
+    const keyBuf = typeof key === 'string' ? b4a.from(key, 'hex') : key
+    const keyHex = b4a.toString(keyBuf, 'hex')
+    const publishing = this._publishTails.get('client-publish')
+    if (publishing) return publishing.catch(() => {}).then(() => this.open(keyBuf, opts))
+    if (this.drives.has(keyHex)) return Promise.resolve(this.drives.get(keyHex))
+    if (this._openingDrives.has(keyHex)) return this._openingDrives.get(keyHex)
+    const operation = this._trackOperation(this._open(keyBuf, opts))
+    this._openingDrives.set(keyHex, operation)
+    const cleanup = () => {
+      if (this._openingDrives.get(keyHex) === operation) this._openingDrives.delete(keyHex)
+    }
+    operation.then(cleanup, cleanup)
+    return operation
+  }
+
+  async _open (key, opts = {}) {
     this._ensureStarted()
 
     const keyBuf = typeof key === 'string' ? b4a.from(key, 'hex') : key
@@ -577,8 +1274,17 @@ export class HiveRelayClient extends EventEmitter {
     }
 
     const driveOpts = opts.encryptionKey ? { encryptionKey: opts.encryptionKey } : {}
-    const drive = new Hyperdrive(this.store, keyBuf, driveOpts)
-    await drive.ready()
+    const drive = this._createOpenDrive(this.store, keyBuf, driveOpts)
+    try {
+      await this._awaitLifecycleOwnerOperation(
+        `drive-ready:${keyHex}`,
+        drive,
+        () => drive.ready(),
+        opts.readyTimeout || this.connectionTimeout
+      )
+    } catch (err) {
+      return this._failOpen(keyHex, drive, err)
+    }
 
     // ─── Auto-detect forks during replication (Defect 2 fix) ────────
     //
@@ -631,8 +1337,19 @@ export class HiveRelayClient extends EventEmitter {
     // Default authors-only preserves prior behaviour for callers that didn't
     // ask for redundancy.
     const serveOnward = isAuthor || opts.seedAsReader === true
-    this.swarm.join(drive.discoveryKey, { server: serveOnward, client: true })
-    await this.swarm.flush()
+    try {
+      const discovery = this._joinDriveDiscovery(keyHex, drive.discoveryKey, { server: serveOnward, client: true })
+      if (discovery && typeof discovery.flushed === 'function') {
+        await this._awaitLifecycleOwnerOperation(
+          `drive-discovery-flush:${keyHex}`,
+          discovery,
+          () => discovery.flushed(),
+          opts.discoveryTimeout || this.connectionTimeout
+        )
+      }
+    } catch (err) {
+      return this._failOpen(keyHex, drive, err)
+    }
     if (opts.seedAsReader === true && !isAuthor) {
       if (!this._readerReplicas) this._readerReplicas = new Set()
       this._readerReplicas.add(keyHex)
@@ -642,14 +1359,11 @@ export class HiveRelayClient extends EventEmitter {
     const shouldWait = opts.wait !== false
     if (shouldWait) {
       const timeout = opts.timeout || 15000
-      await Promise.race([
-        drive.update({ wait: true }),
-        new Promise((_resolve, reject) =>
-          setTimeout(() => reject(new Error('Drive update timed out')), timeout)
-        )
-      ]).catch((err) => {
+      try {
+        await _waitForDriveUpdate(drive, timeout)
+      } catch (err) {
         this.emit('open-timeout', { key: keyHex, error: err })
-      })
+      }
     }
 
     this.drives.set(keyHex, drive)
@@ -703,21 +1417,29 @@ export class HiveRelayClient extends EventEmitter {
   /**
    * Close a specific drive and leave its swarm topic.
    */
-  async closeDrive (driveKey) {
+  closeDrive (driveKey) {
     const keyHex = typeof driveKey === 'string' ? driveKey : b4a.toString(driveKey, 'hex')
+    // Close is itself a publish-lane transaction. It therefore cannot be
+    // overtaken by a publish queued after an earlier publish that close was
+    // waiting on, and a later publish cannot borrow a drive mid-close.
+    const operation = this._queuePublishLane(
+      'client-publish',
+      () => this._closeDriveOwned(keyHex)
+    )
+    return operation
+  }
+
+  async _closeDriveOwned (keyHex) {
+    const opening = this._openingDrives.get(keyHex)
+    if (opening) {
+      try { await opening } catch (_) {}
+    }
     const drive = this.drives.get(keyHex)
     if (!drive) return
-    // Detach fork-detection listeners before closing the drive (so
-    // we don't leak listeners on the underlying core).
-    if (this._driveForkListeners && this._driveForkListeners.has(keyHex)) {
-      const { core, onTruncate, onVerifyError } = this._driveForkListeners.get(keyHex)
-      try { core.removeListener('truncate', onTruncate) } catch (_) {}
-      try { core.removeListener('verification-error', onVerifyError) } catch (_) {}
-      this._driveForkListeners.delete(keyHex)
-    }
-    try { await this.swarm.leave(drive.discoveryKey) } catch (_) {}
-    try { await drive.close() } catch (_) {}
-    this.drives.delete(keyHex)
+    await this._destroyDriveDiscovery(keyHex)
+    await this._awaitOwnerOperation(`drive:${keyHex}`, drive, () => drive.close())
+    this._removeDriveForkListeners(keyHex)
+    if (this.drives.get(keyHex) === drive) this.drives.delete(keyHex)
   }
 
   // ─── Relay API ───────────────────────────────────────────────────
@@ -730,9 +1452,20 @@ export class HiveRelayClient extends EventEmitter {
    * @param {object} opts - { replicas, region, maxStorage, ttlDays, timeout }
    * @returns {Promise<object[]>} Array of relay acceptances
    */
-  async seed (appKey, opts = {}) {
+  seed (appKey, opts = {}) {
+    return this._trackOperation(this._seedOwned(appKey, opts))
+  }
+
+  async _seedOwned (appKey, opts = {}) {
+    this._assertPublishActive()
     const keyBuf = typeof appKey === 'string' ? b4a.from(appKey, 'hex') : appKey
     const keyHex = b4a.toString(keyBuf, 'hex')
+    if (opts[TRACKED_SEED_LANE] !== keyHex) {
+      return await this._queueSeedLane(keyHex, () => this._seedOwned(keyBuf, {
+        ...opts,
+        [TRACKED_SEED_LANE]: keyHex
+      }))
+    }
 
     // Hypercore/Hyperdrive discoveryKeys are a KEYED BLAKE2b of the pubkey
     // (key = the ASCII string "hypercore"), not a plain BLAKE2b hash.
@@ -744,8 +1477,7 @@ export class HiveRelayClient extends EventEmitter {
     const discoveryKey = opts.discoveryKey
       ? (typeof opts.discoveryKey === 'string' ? b4a.from(opts.discoveryKey, 'hex') : opts.discoveryKey)
       : hypercoreCrypto.discoveryKey(keyBuf)
-    this.swarm.join(discoveryKey, { server: true, client: true })
-    this.swarm.flush().catch(() => {})
+    this._joinDriveDiscovery(keyHex, discoveryKey, { server: true, client: true })
 
     // Publisher commitments — all committed by the publisher signature so
     // a relay-side check can enforce them throughout the drive's lifetime.
@@ -863,10 +1595,22 @@ export class HiveRelayClient extends EventEmitter {
     // If no relays connected yet, wait briefly for discovery before broadcasting
     if (this.relays.size === 0 && this.autoDiscover) {
       await new Promise((resolve) => {
-        const onRelay = () => { this.removeListener('relay-connected', onRelay); clearTimeout(t); resolve() }
-        const t = setTimeout(() => { this.removeListener('relay-connected', onRelay); resolve() }, 5000)
+        const signal = this._lifecycleAbort?.signal
+        let onAbort = null
+        const done = () => {
+          this.removeListener('relay-connected', onRelay)
+          if (onAbort && signal) signal.removeEventListener('abort', onAbort)
+          clearTimeout(t)
+          resolve()
+        }
+        const onRelay = () => done()
+        const t = setTimeout(done, 5000)
+        onAbort = () => done()
         this.on('relay-connected', onRelay)
+        if (signal?.aborted) onAbort()
+        else if (signal) signal.addEventListener('abort', onAbort, { once: true })
       })
+      this._assertPublishActive()
     }
 
     // Broadcast seed request via Protomux to all connected relays (instant path)
@@ -880,7 +1624,20 @@ export class HiveRelayClient extends EventEmitter {
 
     // Also publish to the distributed registry (persistent path — relays scanning later will find it)
     if (this._registry) {
-      this._registry.publishRequest(request).catch(() => {})
+      const registry = this._registry
+      const registryOperationId = randomNameSuffix()
+      try {
+        await this._awaitLifecycleOwnerOperation(
+          `registry-publish-request:${keyHex}:${registryOperationId}`,
+          registry,
+          () => registry.publishRequest(request),
+          opts.registryTimeout || this.connectionTimeout
+        )
+      } catch (err) {
+        if (err?.name === 'AbortError' || err?.code === 'ABORT_ERR') throw err
+        this.emit('registry-error', { context: 'publish-request', error: err })
+      }
+      this._assertPublishActive()
     }
 
     // Re-broadcast to any relays that connect during the wait window
@@ -891,54 +1648,63 @@ export class HiveRelayClient extends EventEmitter {
       }
     }
     this.on('relay-connected', onNewRelay)
+    try {
+      this.emit('seed-request-published', { appKey: keyHex })
 
-    this.emit('seed-request-published', { appKey: keyHex })
+      const targetReplicas = opts.replicas || 3
+      const timeout = opts.timeout || 15_000
 
-    const targetReplicas = opts.replicas || 3
-    const timeout = opts.timeout || 15_000
+      await new Promise((resolve) => {
+        let timer = null
+        const signal = this._lifecycleAbort?.signal
+        let onAbort = null
+        const done = () => {
+          if (timer) clearTimeout(timer)
+          this.removeListener('seed-accepted', check)
+          this.removeListener('seed-denied', checkDenied)
+          if (onAbort && signal) signal.removeEventListener('abort', onAbort)
+          resolve()
+        }
+        const check = () => {
+          if (entry.acceptances.length >= targetReplicas) done()
+        }
+        // Fast-fail: once every connected relay has terminally denied and
+        // nothing accepted, waiting out the timeout buys nothing — resolve
+        // now so the caller sees the denial reasons immediately instead of
+        // an indistinguishable-from-network-down hang.
+        const checkDenied = (evt) => {
+          if (evt.appKey !== keyHex) return
+          const terminalDenials = entry.denials.filter(d => d.terminal).length
+          if (entry.acceptances.length === 0 && this.relays.size > 0 && terminalDenials >= this.relays.size) done()
+        }
+        this.on('seed-accepted', check)
+        this.on('seed-denied', checkDenied)
+        onAbort = () => done()
+        timer = setTimeout(done, timeout)
+        if (signal?.aborted) onAbort()
+        else if (signal) signal.addEventListener('abort', onAbort, { once: true })
+      })
 
-    await new Promise((resolve) => {
-      let timer = null
-      const done = () => {
-        if (timer) clearTimeout(timer)
-        this.removeListener('seed-accepted', check)
-        this.removeListener('seed-denied', checkDenied)
-        resolve()
+      this._assertPublishActive()
+
+      // Persistent retry: if we didn't get enough acceptances and the caller
+      // didn't explicitly disable persistence, enqueue for retry across restarts.
+      if (opts.retryPersistent !== false && entry.acceptances.length < targetReplicas) {
+        // Carry any wire-level deny reasons into the retry record so the
+        // shortfall is attributable (vs. an anonymous timeout).
+        const denySummary = entry.denials.length > 0
+          ? ';denied:' + entry.denials.map(d => d.reasonCode).join(',')
+          : ''
+        this._enqueuePendingSeed(keyHex, opts, `insufficient-acceptances:${entry.acceptances.length}/${targetReplicas}${denySummary}`)
+      } else if (opts.retryPersistent !== false && entry.acceptances.length >= targetReplicas) {
+        // Success — clear any existing pending retry for this key
+        this._clearPendingSeed(keyHex, 'success')
       }
-      const check = () => {
-        if (entry.acceptances.length >= targetReplicas) done()
-      }
-      // Fast-fail: once every connected relay has terminally denied and
-      // nothing accepted, waiting out the timeout buys nothing — resolve
-      // now so the caller sees the denial reasons immediately instead of
-      // an indistinguishable-from-network-down hang.
-      const checkDenied = (evt) => {
-        if (evt.appKey !== keyHex) return
-        const terminalDenials = entry.denials.filter(d => d.terminal).length
-        if (entry.acceptances.length === 0 && this.relays.size > 0 && terminalDenials >= this.relays.size) done()
-      }
-      this.on('seed-accepted', check)
-      this.on('seed-denied', checkDenied)
-      timer = setTimeout(done, timeout)
-    })
 
-    this.removeListener('relay-connected', onNewRelay)
-
-    // Persistent retry: if we didn't get enough acceptances and the caller
-    // didn't explicitly disable persistence, enqueue for retry across restarts.
-    if (opts.retryPersistent !== false && entry.acceptances.length < targetReplicas) {
-      // Carry any wire-level deny reasons into the retry record so the
-      // shortfall is attributable (vs. an anonymous timeout).
-      const denySummary = entry.denials.length > 0
-        ? ';denied:' + entry.denials.map(d => d.reasonCode).join(',')
-        : ''
-      this._enqueuePendingSeed(keyHex, opts, `insufficient-acceptances:${entry.acceptances.length}/${targetReplicas}${denySummary}`)
-    } else if (opts.retryPersistent !== false && entry.acceptances.length >= targetReplicas) {
-      // Success — clear any existing pending retry for this key
-      this._clearPendingSeed(keyHex, 'success')
+      return entry.acceptances
+    } finally {
+      this.removeListener('relay-connected', onNewRelay)
     }
-
-    return entry.acceptances
   }
 
   /**
@@ -1010,7 +1776,13 @@ export class HiveRelayClient extends EventEmitter {
     this._pendingSeedsLoaded = true
   }
 
-  async _savePendingSeeds () {
+  _savePendingSeeds () {
+    const operation = this._pendingSeedSaveTail.catch(() => {}).then(() => this._savePendingSeedsOwned())
+    this._pendingSeedSaveTail = operation.catch(() => {})
+    return operation
+  }
+
+  async _savePendingSeedsOwned () {
     const file = this._pendingSeedsFile()
     if (!file) return
     try {
@@ -1048,7 +1820,7 @@ export class HiveRelayClient extends EventEmitter {
       reason
     }
     this._pendingSeeds.set(appKey, entry)
-    this._savePendingSeeds().catch(() => {})
+    this._trackOperation(this._savePendingSeeds()).catch(() => {})
     this._scheduleSinglePendingSeed(appKey)
     this.emit('seed-pending-enqueued', { appKey, attempts, nextRetryAt: entry.nextRetryAt })
   }
@@ -1059,7 +1831,7 @@ export class HiveRelayClient extends EventEmitter {
       this._pendingSeedTimers.delete(appKey)
     }
     if (this._pendingSeeds.delete(appKey)) {
-      this._savePendingSeeds().catch(() => {})
+      this._trackOperation(this._savePendingSeeds()).catch(() => {})
       if (reason === 'cancelled') this.emit('seed-pending-cancelled', { appKey })
       else if (reason === 'success') this.emit('seed-pending-success', { appKey })
     }
@@ -1081,7 +1853,7 @@ export class HiveRelayClient extends EventEmitter {
     const delay = Math.max(0, entry.nextRetryAt - Date.now())
     const timer = setTimeout(() => {
       this._pendingSeedTimers.delete(appKey)
-      this._retryPendingSeed(appKey).catch((err) => {
+      this._trackOperation(this._retryPendingSeed(appKey)).catch((err) => {
         this.emit('seed-pending-retry-error', { appKey, error: err.message })
       })
     }, delay)
@@ -1508,7 +2280,7 @@ export class HiveRelayClient extends EventEmitter {
     const drive = this.drives.get(keyHex)
     if (!drive) throw new Error('Drive not open: ' + keyHex.slice(0, 12) + '...')
     if (drive.core?.writable) return false // author already serves
-    this.swarm.join(drive.discoveryKey, { server: true, client: true })
+    this._joinDriveDiscovery(keyHex, drive.discoveryKey, { server: true, client: true })
     if (!this._readerReplicas) this._readerReplicas = new Set()
     if (this._readerReplicas.has(keyHex)) return false
     this._readerReplicas.add(keyHex)
@@ -1528,7 +2300,7 @@ export class HiveRelayClient extends EventEmitter {
     if (drive.core?.writable) return false
     if (!this._readerReplicas?.has(keyHex)) return false
     // Re-join as client-only to drop the server announcement.
-    this.swarm.join(drive.discoveryKey, { server: false, client: true })
+    this._joinDriveDiscovery(keyHex, drive.discoveryKey, { server: false, client: true })
     this._readerReplicas.delete(keyHex)
     this.emit('reader-replica-left', { key: keyHex })
     return true
@@ -1600,7 +2372,7 @@ export class HiveRelayClient extends EventEmitter {
     }
     // If the user was already opted in, auto-mirror any newly-added drives.
     if (this._communityOptedIn) {
-      this._autoMirrorCommunity().catch((err) => this.emit('community-replica-error', err))
+      this._trackOperation(this._autoMirrorCommunity()).catch((err) => this.emit('community-replica-error', err))
     }
   }
 
@@ -2268,8 +3040,12 @@ export class HiveRelayClient extends EventEmitter {
    * Bearer API key (opts.apiKey).
    */
   async _seedForCustody (relayUrl, intent, opts = {}) {
+    if (!Number.isSafeInteger(opts.maxStorage) || opts.maxStorage <= 0) {
+      throw new Error('_seedForCustody: opts.maxStorage must be a positive safe integer')
+    }
     const body = {
       appKey: intent.addressKey,
+      maxStorageBytes: opts.maxStorage,
       blind: true,
       custodyIntentId: intent.intentId,
       blindContentId: intent.blindContentId,
@@ -2329,8 +3105,9 @@ export class HiveRelayClient extends EventEmitter {
    * @param {Array<{url:string,pubkey:string}>} params.relays custodying relays
    *   (length n); relays[i] is assigned shareIndex i+1
    * @param {string} params.appKey 64-hex content drive key this custody binds to
-   * @param {object} [params.opts] blindContentId, ciphertextRoot, contentVersion,
-   *   deadlineMs, retainMs, apiKey, pollIntervalMs, pollTimeoutMs, timestamp
+   * @param {object} params.opts blindContentId, ciphertextRoot, contentVersion,
+   *   deadlineMs, retainMs, apiKey, maxStorage, pollIntervalMs, pollTimeoutMs,
+   *   timestamp. maxStorage is a required positive safe-integer byte bound.
    * @returns {Promise<{intentId:string, commitmentRoot:string,
    *   shareBundleKey:string, key:string, secretPoint:string, intent:object,
    *   commit:object, receipts:object[]}>}
@@ -2355,6 +3132,10 @@ export class HiveRelayClient extends EventEmitter {
     if (!appKeyHex || !/^[0-9a-f]{64}$/i.test(appKeyHex)) {
       throw new Error('splitForCustody: appKey must be a 64-hex drive key')
     }
+    if (!Number.isSafeInteger(opts.maxStorage) || opts.maxStorage <= 0) {
+      throw new Error('splitForCustody: opts.maxStorage must be a positive safe integer')
+    }
+    const maxStorage = opts.maxStorage
 
     // 1. Split the secret to the guardian recipient pubkeys.
     const res = await _pvssSplit({ threshold, shareholders: guardians, secret })
@@ -2406,7 +3187,7 @@ export class HiveRelayClient extends EventEmitter {
     //     the quorum poll decides overall success vs. timeout.
     for (const r of relays) {
       try {
-        await this._seedForCustody(r.url, intent, { apiKey: opts.apiKey })
+        await this._seedForCustody(r.url, intent, { apiKey: opts.apiKey, maxStorage })
       } catch (err) {
         this.emit('custody-seed-error', {
           relay: r.url,
@@ -2558,21 +3339,50 @@ export class HiveRelayClient extends EventEmitter {
    * so custodying relays can replicate block 0. Returns the 64-hex core key
    * (named in the signed intent as shareBundleKey). No secret material.
    */
-  async _writeShareBundle (bundle) {
+  _writeShareBundle (bundle) {
+    return this._trackOperation(this._writeShareBundleOwned(bundle))
+  }
+
+  async _writeShareBundleOwned (bundle) {
     if (!this.store) throw new Error('_writeShareBundle: client store not ready (call start() first)')
     const name = 'share-bundle-' + Date.now() + '-' + randomNameSuffix()
     const core = this.store.get({ name })
-    await core.ready()
-    await core.append(b4a.from(JSON.stringify(bundle)))
-    // Serve block 0. Kept open for the client's lifetime so the bundle stays
-    // available while the custody is live.
-    if (this.swarm) {
-      try {
-        this.swarm.join(core.discoveryKey, { server: true, client: false })
-        this.swarm.flush().catch(() => {})
-      } catch (_) {}
+    let discovery = null
+    try {
+      await this._awaitLifecycleOwnerOperation(
+        'share-bundle-core-ready:' + name,
+        core,
+        () => core.ready(),
+        this.connectionTimeout
+      )
+      await this._awaitLifecycleOwnerOperation(
+        'share-bundle-core-append:' + name,
+        core,
+        () => core.append(b4a.from(JSON.stringify(bundle))),
+        this.connectionTimeout
+      )
+      // Serve block 0. The exact core + discovery session are owned until
+      // destroy(), so custody publication cannot leave a hidden Corestore
+      // writer or DHT announcement behind.
+      if (this.swarm) {
+        discovery = this.swarm.join(core.discoveryKey, { server: true, client: false })
+        if (discovery && typeof discovery.flushed === 'function') {
+          await this._awaitLifecycleOwnerOperation(
+            'share-bundle-discovery-flush:' + name,
+            discovery,
+            () => discovery.flushed(),
+            this.connectionTimeout
+          )
+        }
+      }
+      const keyHex = b4a.toString(core.key, 'hex')
+      this._shareBundleCores.set(keyHex, { core, discovery })
+      return keyHex
+    } catch (err) {
+      const keyHex = core.key ? b4a.toString(core.key, 'hex') : ('write:' + name)
+      await this._closeTransientShareBundle(keyHex, { core, discovery }, err)
+      throw err
     }
-    return b4a.toString(core.key, 'hex')
   }
 
   /**
@@ -2580,35 +3390,50 @@ export class HiveRelayClient extends EventEmitter {
    * already local (the dealer's own write), returns it without joining a topic.
    * Best-effort + non-throwing: returns the parsed bundle or null.
    */
-  async _readShareBundle (shareBundleKey, opts = {}) {
+  _readShareBundle (shareBundleKey, opts = {}) {
+    return this._trackOperation(this._readShareBundleOwned(shareBundleKey, opts))
+  }
+
+  async _readShareBundleOwned (shareBundleKey, opts = {}) {
     if (typeof shareBundleKey !== 'string' || !/^[0-9a-f]{64}$/i.test(shareBundleKey) || !this.store) return null
     const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 30_000
     let core = null
-    let joined = false
+    let discovery = null
+    let readError = null
     try {
       core = this.store.get({ key: b4a.from(shareBundleKey, 'hex') })
-      await core.ready()
+      await this._awaitLifecycleOwnerOperation(
+        'share-bundle-read-ready:' + shareBundleKey,
+        core,
+        () => core.ready(),
+        Math.min(timeoutMs, this.connectionTimeout)
+      )
       if (core.length === 0 && this.swarm) {
-        const discovery = this.swarm.join(core.discoveryKey, { server: false, client: true })
-        joined = true
+        discovery = this.swarm.join(core.discoveryKey, { server: false, client: true })
         if (discovery && typeof discovery.flushed === 'function') {
-          await Promise.race([
-            discovery.flushed().catch(() => {}),
-            new Promise(resolve => setTimeout(resolve, Math.min(timeoutMs, 5_000)))
-          ])
+          await this._awaitLifecycleOwnerOperation(
+            'share-bundle-read-discovery-flush:' + shareBundleKey,
+            discovery,
+            () => discovery.flushed(),
+            Math.min(timeoutMs, 5_000)
+          )
         }
       }
       const block = await core.get(0, { timeout: timeoutMs })
       if (!block) return null
       const parsed = JSON.parse(b4a.toString(block))
       return parsed && typeof parsed === 'object' ? parsed : null
-    } catch (_) {
+    } catch (err) {
+      readError = err
       return null
     } finally {
-      if (joined && core && this.swarm) {
-        try { await this.swarm.leave(core.discoveryKey) } catch (_) {}
+      if (core || discovery) {
+        await this._closeTransientShareBundle(
+          'read:' + shareBundleKey + ':' + randomNameSuffix(),
+          { core, discovery },
+          readError
+        )
       }
-      if (core) { try { await core.close() } catch (_) {} }
     }
   }
 
@@ -3857,14 +4682,14 @@ export class HiveRelayClient extends EventEmitter {
 
     // Destroy old discovery handle to prevent leaked DHT queries
     if (this._discoveryTopic) {
-      try { this._discoveryTopic.destroy() } catch (_) {}
+      this._queueDiscoveryDestroy(this._discoveryTopic)
+      this._discoveryTopic = null
     }
 
     this._discoveryTopic = this.swarm.join(RELAY_DISCOVERY_TOPIC, {
       server: false,
       client: true
     })
-    this.swarm.flush().catch(() => {})
 
     const nextDelay = Math.min(delay * 2, 60_000)
     this._reconnect.delay = nextDelay
@@ -4146,7 +4971,7 @@ export class HiveRelayClient extends EventEmitter {
   }
 
   _ensureStarted () {
-    if (!this._started) throw new Error('Client not started — call await app.start() first')
+    if (!this._started || this._stopping) throw new Error('Client not started — call await app.start() first')
     if (!this.store) throw new Error('No store available — pass a storage path or { store } option')
   }
 
@@ -4191,23 +5016,75 @@ export class HiveRelayClient extends EventEmitter {
     }
   }
 
-  async _saveAppDriveMapping (appId, keyHex) {
+  _saveAppDriveMapping (appId, keyHex, opts = {}) {
+    const operation = this._appDriveMappingTail.catch(() => {}).then(() => {
+      return this._saveAppDriveMappingOwned(appId, keyHex, opts)
+    })
+    this._appDriveMappingTail = operation.catch(() => {})
+    return operation
+  }
+
+  async _saveAppDriveMappingOwned (appId, keyHex, opts = {}) {
     if (!this._storagePath) return
+    const throwOnError = opts.throwOnError === true
+    let tempPath = null
     try {
       await mkdir(this._storagePath, { recursive: true })
       const mapPath = join(this._storagePath, 'app-drives.json')
       let data = {}
       try { data = JSON.parse(await readFile(mapPath, 'utf8')) } catch (_) {}
-      data[appId] = keyHex
-      await writeFile(mapPath, JSON.stringify(data, null, 2))
-    } catch (_) {}
+      if (Object.prototype.hasOwnProperty.call(opts, 'expectedCurrentKey')) {
+        const current = data[appId] || null
+        if (current !== opts.expectedCurrentKey) return { changed: false, current }
+      }
+      if (keyHex) data[appId] = keyHex
+      else delete data[appId]
+      tempPath = mapPath + '.tmp-' + randomNameSuffix()
+      await writeFile(tempPath, JSON.stringify(data, null, 2))
+      await rename(tempPath, mapPath)
+      tempPath = null
+      return { changed: true, current: keyHex || null }
+    } catch (err) {
+      if (tempPath) {
+        try { await rm(tempPath, { force: true }) } catch (_) {}
+      }
+      if (throwOnError) throw err
+    }
   }
 
   /**
    * Shut down everything cleanly.
    */
-  async destroy () {
-    if (!this._started) return
+  destroy () {
+    if (this._destroying) return this._destroying
+    const operation = this._destroy()
+    const destroying = operation.finally(() => {
+      if (this._destroying === destroying) this._destroying = null
+    })
+    this._destroying = destroying
+    return destroying
+  }
+
+  async _destroy () {
+    this._stopping = true
+    if (this._lifecycleAbort) this._lifecycleAbort.abort()
+
+    // Let a concurrent start reach its cancellation check before touching any
+    // owner it created. Startup flush is bounded; registry failure teardown is
+    // strict, so this cannot silently strand a partially-started provider.
+    const starting = this._starting
+    if (starting) {
+      try {
+        await this._awaitOwnerOperation('client-start', starting, () => starting)
+      } catch (err) {
+        if (err?.code === 'CLIENT_TEARDOWN_TIMEOUT') {
+          const failure = new Error('client startup did not settle before teardown')
+          failure.code = 'CLIENT_TEARDOWN_FAILED'
+          failure.cause = err
+          throw failure
+        }
+      }
+    }
 
     // Clean up health check timer
     if (this._relayHealthInterval) {
@@ -4234,6 +5111,11 @@ export class HiveRelayClient extends EventEmitter {
       clearTimeout(timer)
     }
     this._pendingSeedTimers.clear()
+
+    // open()/share-bundle reads may have created Corestore sessions which are
+    // not in `drives` yet. Drain them before closing discovery, swarm, or store.
+    if (this._operations.size > 0) await this._drainOperations()
+
     // Flush queue to disk before teardown
     try { await this._savePendingSeeds() } catch (_) {}
 
@@ -4254,29 +5136,11 @@ export class HiveRelayClient extends EventEmitter {
       this._connectionHandler = null
     }
 
-    // Close all drives
-    for (const [keyHex, drive] of this.drives) {
-      try { await this.swarm.leave(drive.discoveryKey) } catch (_) {}
-      try { await drive.close() } catch (_) {}
-      this.drives.delete(keyHex)
-    }
-
-    // Stop epoch-discovery refresh + leave the epoch buckets
+    // Stop epoch-discovery refresh before destroying the exact sessions.
     if (this._epochDiscoveryTimer) {
       clearInterval(this._epochDiscoveryTimer)
       this._epochDiscoveryTimer = null
     }
-    clearEpochDiscoveryTopics(this._epochDiscoveryTopics)
-
-    // Leave discovery topic
-    if (this._discoveryTopic) {
-      try { await this.swarm.leave(RELAY_DISCOVERY_TOPIC) } catch (_) {}
-      this._discoveryTopic = null
-    }
-
-    this.relays.clear()
-    this.seedRequests.clear()
-    this.reservations.clear()
 
     // Clean up pending service requests
     for (const pending of this._pendingServiceRequests.values()) {
@@ -4286,16 +5150,29 @@ export class HiveRelayClient extends EventEmitter {
     this._pendingServiceRequests.clear()
     this._serviceSubscriptions.clear()
 
-    // Stop registry
+    let firstOwnershipError = null
+
+    // Stop registry strictly. A rejected stop retains the object and prevents
+    // owner teardown so a later destroy() can retry against a live Corestore.
     if (this._registry) {
-      try { await this._registry.stop() } catch (_) {}
-      this._registry = null
+      const registry = this._registry
+      try {
+        await this._awaitOwnerOperation('registry-stop', registry, () => registry.stop())
+        if (this._registry === registry) this._registry = null
+      } catch (err) {
+        firstOwnershipError = err
+      }
     }
 
     // Tear down any pending pair codes / listeners
     if (this._pairing) {
-      try { await this._pairing.destroy() } catch (_) {}
-      this._pairing = null
+      const pairing = this._pairing
+      try {
+        await this._awaitOwnerOperation('pairing', pairing, () => pairing.destroy())
+        if (this._pairing === pairing) this._pairing = null
+      } catch (err) {
+        if (!firstOwnershipError) firstOwnershipError = err
+      }
     }
 
     // Stop and persist bootstrap cache
@@ -4305,15 +5182,56 @@ export class HiveRelayClient extends EventEmitter {
       this._bootstrapCache = null
     }
 
-    // Only destroy things we created
-    if (this._ownsSwarm && this.swarm) {
-      try { await this.swarm.destroy() } catch (_) {}
+    try { await this._destroyDiscoveryHandles() } catch (err) {
+      if (!firstOwnershipError) firstOwnershipError = err
     }
-    if (this._ownsStore && this.store) {
-      try { await this.store.close() } catch (_) {}
+    try { await this._destroyShareBundles() } catch (err) {
+      if (!firstOwnershipError) firstOwnershipError = err
+    }
+    try { await this._destroyProvisionalPublishes() } catch (err) {
+      if (!firstOwnershipError) firstOwnershipError = err
     }
 
+    // Close all drives only after their exact DHT sessions settle.
+    if (!firstOwnershipError) {
+      for (const [keyHex] of [...this.drives]) {
+        try {
+          await this.closeDrive(keyHex)
+        } catch (err) {
+          if (!firstOwnershipError) firstOwnershipError = err
+        }
+      }
+    }
+
+    if (firstOwnershipError) {
+      const failure = new Error('client lifecycle teardown did not settle')
+      failure.code = 'CLIENT_TEARDOWN_FAILED'
+      failure.cause = firstOwnershipError
+      throw failure
+    }
+
+    this.relays.clear()
+    this.seedRequests.clear()
+    this.reservations.clear()
+
+    // Only destroy things we created. Null exact owned instances after their
+    // teardown settles so start() allocates fresh owners instead of reusing a
+    // dead Hyperswarm/Corestore.
+    if (this._ownsSwarm && this.swarm) {
+      const swarm = this.swarm
+      await this._awaitOwnerOperation('owned-swarm', swarm, () => swarm.destroy())
+      if (this.swarm === swarm) this.swarm = null
+    }
+    if (this._ownsStore && this.store) {
+      const store = this.store
+      await this._awaitOwnerOperation('owned-store', store, () => store.close())
+      if (this.store === store) this.store = null
+    }
+    if (this._ownsSwarm && !this._keyPairExplicit) this.keyPair = null
+    this._lifecycleAbort = null
+
     this._started = false
+    this._stopping = false
     this.emit('destroyed')
   }
 }

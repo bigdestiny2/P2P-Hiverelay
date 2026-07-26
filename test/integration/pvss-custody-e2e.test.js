@@ -37,6 +37,8 @@ import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
 import { HiveRelayClient } from 'p2p-hiverelay-client'
 import { keygen } from 'p2p-hiverelay-client/secret-sharing.js'
 
+const TEST_MAX_STORAGE_BYTES = 64 * 1024 * 1024
+
 // @hyperswarm/testnet teardown race: destroying the testnet DHT while a swarm
 // still has an in-flight announce/lookup query in its commit phase throws an
 // uncaught "Node destroyed" / "Request destroyed" from dht-rpc — AFTER every
@@ -64,6 +66,7 @@ process.on('unhandledRejection', (err) => {
 
 async function bringUp (t, baseDir, testnet) {
   const API_KEY = 'pvss-e2e-' + randomBytes(8).toString('hex')
+  await mkdir(join(baseDir, 'relay'), { recursive: true })
 
   // One custody relay with the HTTP management API enabled.
   const relay = new RelayNode({
@@ -131,7 +134,12 @@ test('e2e PVSS custody: clean first-seed → share-verified receipt → commit �
     threshold: 1,
     relays: [{ url: relayUrl, pubkey: relayPubkey }],
     appKey,
-    opts: { apiKey: API_KEY, pollIntervalMs: 500, pollTimeoutMs: 90_000 }
+    opts: {
+      apiKey: API_KEY,
+      maxStorage: TEST_MAX_STORAGE_BYTES,
+      pollIntervalMs: 500,
+      pollTimeoutMs: 90_000
+    }
   })
 
   // ─── Dealer-side outcome ───
@@ -147,6 +155,7 @@ test('e2e PVSS custody: clean first-seed → share-verified receipt → commit �
   // ─── Relay-side reality: it anchored a real v2 PVSS receipt ───
   const status = relay.seedingRegistry.getCustodyStatus(res.intentId)
   t.is(status.receiptCount, 1, 'relay registry holds exactly one receipt')
+  t.is(relay.appRegistry.get(appKey)?.maxStorage, TEST_MAX_STORAGE_BYTES, 'custody seed persists the exact finite storage bound')
   const relayReceipt = status.receipts[0]
   t.is(relayReceipt.shareVerified, true, 'stored receipt records public share verification')
   t.is(relayReceipt.version, 2, 'stored receipt is v2 (PVSS)')
@@ -198,12 +207,16 @@ test('e2e PVSS custody: already-seeded re-pin still anchors a share receipt', as
   // seededApps and seedApp short-circuits ({ alreadySeeded:true }). Without
   // the _recordCustodyReceiptOnRepin fix, no PVSS receipt would ever anchor on
   // this path and the split below would time out.
-  await client._postSeed(relayUrl, { appKey }, { apiKey: API_KEY })
+  await client._postSeed(relayUrl, {
+    appKey,
+    maxStorageBytes: TEST_MAX_STORAGE_BYTES
+  }, { apiKey: API_KEY })
 
   // Give the plain seed a moment to register the entry (seedApp returns the
   // discoveryKey synchronously once the drive is created + tracked).
   await new Promise(resolve => setTimeout(resolve, 250))
   t.ok(relay.appRegistry.has(appKey), 'addressKey is already seeded before custody')
+  t.is(relay.appRegistry.get(appKey)?.maxStorage, TEST_MAX_STORAGE_BYTES, 'plain pre-seed persists the exact finite storage bound')
 
   const g = await keygen()
   const res = await client.splitForCustody({
@@ -211,12 +224,18 @@ test('e2e PVSS custody: already-seeded re-pin still anchors a share receipt', as
     threshold: 1,
     relays: [{ url: relayUrl, pubkey: relayPubkey }],
     appKey,
-    opts: { apiKey: API_KEY, pollIntervalMs: 500, pollTimeoutMs: 90_000 }
+    opts: {
+      apiKey: API_KEY,
+      maxStorage: TEST_MAX_STORAGE_BYTES,
+      pollIntervalMs: 500,
+      pollTimeoutMs: 90_000
+    }
   })
 
   t.is(res.receipts.length, 1, 're-pin custody path still reaches quorum')
   t.is(res.receipts[0].shareVerified, true, 'share verified on the already-seeded relay')
   t.is(res.receipts[0].anchored, true, 'receipt anchored on re-pin')
+  t.is(relay.appRegistry.get(appKey)?.maxStorage, TEST_MAX_STORAGE_BYTES, 'custody re-pin preserves the exact finite storage bound')
 
   const recovered = await client.reconstructFromCustody({
     intentId: res.intentId,

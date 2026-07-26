@@ -7,9 +7,12 @@ import b4a from 'b4a'
 import path from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
+import { mkdirSync } from 'fs'
 
 function tmpStorage () {
-  return path.join(tmpdir(), 'hiverelay-client-test-' + randomBytes(8).toString('hex'))
+  const storage = path.join(tmpdir(), 'hiverelay-client-test-' + randomBytes(8).toString('hex'))
+  mkdirSync(storage, { recursive: true })
+  return storage
 }
 
 test('integration: client discovers relay node via DHT', async (t) => {

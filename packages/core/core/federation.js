@@ -27,6 +27,7 @@ import http from 'http'
 import { readFile, writeFile, mkdir, rename, unlink } from 'fs/promises'
 import { dirname, basename, join } from 'path'
 import { verifyForkProof, verifyForkEvidence } from './fork-proof-signing.js'
+import { positiveStorageBound } from '../config/storage-cap.js'
 
 const DEFAULT_FOLLOW_INTERVAL = 5 * 60 * 1000 // 5 minutes
 const FETCH_TIMEOUT = 10_000
@@ -459,6 +460,11 @@ export class Federation extends EventEmitter {
     for (const app of data.apps) {
       const appKey = app.appKey || app.driveKey || app.key
       if (!appKey) continue
+      const maxStorageBytes = positiveStorageBound(app.maxStorageBytes ?? app.maxStorage)
+      if (maxStorageBytes === null) {
+        this.emit('federation-rejected', { appKey, source: entry.url, reason: 'storage-bound-invalid' })
+        continue
+      }
       // Skip apps we already seed or have already queued.
       if (this.node?.seededApps?.has?.(appKey)) continue
       if (this.node?.appRegistry?.has?.(appKey)) continue
@@ -477,7 +483,8 @@ export class Federation extends EventEmitter {
         parentKey: app.parentKey || null,
         mountPath: app.mountPath || null,
         source: 'federation',
-        sourceRelay: entry.url
+        sourceRelay: entry.url,
+        maxStorageBytes
       }
 
       const mode = this.node._resolveAcceptMode()
@@ -498,7 +505,8 @@ export class Federation extends EventEmitter {
             privacyTier: synthRequest.privacyTier,
             blind: synthRequest.blind,
             storageClass: synthRequest.storageClass,
-            availabilityClass: synthRequest.availabilityClass
+            availabilityClass: synthRequest.availabilityClass,
+            maxStorage: maxStorageBytes
           })
           this.emit('federation-seeded', { appKey, source: entry.url, mode })
         } catch (err) {

@@ -109,6 +109,26 @@ test('LifecycleScope: drain() is idempotent', async (t) => {
   t.is(scope.aborted, true)
 })
 
+test('LifecycleScope: concurrent drains share the pending settlement barrier', async (t) => {
+  const scope = new LifecycleScope()
+  let release = null
+  const gate = new Promise(resolve => { release = resolve })
+  scope.tracked(gate)
+
+  const first = scope.drain()
+  const second = scope.drain()
+  t.is(first, second, 'both callers receive the exact drain promise')
+
+  let secondSettled = false
+  second.then(() => { secondSettled = true })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  t.is(secondSettled, false, 'second caller remains blocked on the first snapshot')
+
+  release()
+  await Promise.all([first, second])
+  t.is(secondSettled, true)
+})
+
 test('LifecycleScope: tracked() after drain() is a no-op (does not block second drain)', async (t) => {
   const scope = new LifecycleScope()
   await scope.drain()

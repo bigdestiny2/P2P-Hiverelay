@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import test from 'brittle'
 import sodium from 'sodium-universal'
 import b4a from 'b4a'
+import { StorageAdmissionAuthority } from '../../packages/core/config/storage-admission-authority.js'
 import {
   DEFAULT_OUTBOXLOG_NAMESPACE,
   OUTBOXLOG_OUTBOX_CORE_PREFIX,
@@ -30,8 +31,31 @@ const HEX64 = /^[0-9a-f]{64}$/i
 const A = 'a'.repeat(64)
 const B = 'b'.repeat(64)
 const C = 'c'.repeat(64)
+const JOURNAL_BOUND = 32 * 1024 * 1024
 
 const post = (id, extra = {}) => ({ id, ...extra })
+
+function createJournalAdmission (getUsedBytes = () => 0, maxStorageBytes = 256 * 1024 * 1024) {
+  return new StorageAdmissionAuthority({ storage: '/mock', maxStorageBytes }, {
+    recoveryKinds: [],
+    getUsedBytes,
+    getActualBytes: () => 0,
+    sampleFilesystem: () => ({
+      ok: true,
+      checkedAt: Date.now(),
+      storagePath: '/mock',
+      realpath: '/mock',
+      device: '1',
+      inode: '1',
+      totalBytes: 100 * 1024 * 1024 * 1024,
+      freeBytes: 80 * 1024 * 1024 * 1024
+    })
+  })
+}
+
+function journalStorage (storageAdmission = createJournalAdmission()) {
+  return { storageAdmission, maxJournalStorageBytes: JOURNAL_BOUND }
+}
 
 // Ported from peerit-relay/test/wire-conformance.mjs. The old relay accepts
 // unsigned records, so this gate runs with a permissive verifier and the strict
@@ -745,7 +769,8 @@ test('outboxlog: JSONL operation journal restores accepted rows', async (t) => {
 
 test('outboxlog: Corestore operation journal mirrors and replays accepted rows', async (t) => {
   const store = createMockCorestore()
-  const journal = await createHypercoreOutboxJournal({ store })
+  const admission = createJournalAdmission()
+  const journal = await createHypercoreOutboxJournal({ store, ...journalStorage(admission) })
   const first = createOutboxLog({ verifyAppend: () => true, journal })
   first.sync.create(A)
   first.sync.append(A, { type: 'post', data: post('p1', { body: 'opaque-core' }) })
@@ -755,7 +780,8 @@ test('outboxlog: Corestore operation journal mirrors and replays accepted rows',
   t.is(store.core('outboxlog/operations').length, 2)
   t.alike(store.blocks('outboxlog/operations').map(block => JSON.parse(block.toString('utf8')).kind), ['create', 'append'])
 
-  const secondJournal = await createHypercoreOutboxJournal({ store })
+  await journal.close()
+  const secondJournal = await createHypercoreOutboxJournal({ store, ...journalStorage(admission) })
   const second = createOutboxLog({ verifyAppend: () => true, journal: secondJournal })
   t.alike(second.sync.get(A, 'post!p1'), post('p1', { body: 'opaque-core' }))
   t.alike(second.sync.events(A).events.map(event => event.key), ['post!p1'])
@@ -765,13 +791,19 @@ test('outboxlog: Corestore operation journal rejects corrupt blocks before repla
   const store = createMockCorestore()
   const core = store.get({ name: 'outboxlog/operations' })
   await core.append(Buffer.from('{not-json', 'utf8'))
+  const admission = createJournalAdmission()
 
-  await t.exception(createHypercoreOutboxJournal({ store }), /corrupt block 0/)
+  await t.exception(createHypercoreOutboxJournal({ store, ...journalStorage(admission) }), /corrupt block 0/)
+  core._blocks[0] = Buffer.from(JSON.stringify({ seq: 1, kind: 'create', appId: A, inviteKey: '1'.repeat(64) }))
+  const retry = await createHypercoreOutboxJournal({ store, ...journalStorage(admission) })
+  t.is(retry.loadSync().length, 1, 'factory failure releases only its lease, so corrected state can retry in-process')
+  await retry.close()
 })
 
 test('outboxlog: partitioned Corestore journal mirrors accepted rows into per-outbox cores', async (t) => {
   const store = createMockCorestore()
-  const journal = await createPartitionedHypercoreOutboxJournal({ store })
+  const admission = createJournalAdmission()
+  const journal = await createPartitionedHypercoreOutboxJournal({ store, ...journalStorage(admission) })
   const first = createOutboxLog({ verifyAppend: () => true, journal })
   first.sync.create(A)
   first.sync.append(A, { type: 'post', data: post('p1', { body: 'opaque-core-a' }) })
@@ -793,7 +825,8 @@ test('outboxlog: partitioned Corestore journal mirrors accepted rows into per-ou
   t.is(info.index.name, OUTBOXLOG_PARTITIONED_JOURNAL_INDEX_NAME)
   t.alike(info.outboxes.map(outbox => outbox.appId), [A, B])
 
-  const secondJournal = await createPartitionedHypercoreOutboxJournal({ store })
+  await journal.close()
+  const secondJournal = await createPartitionedHypercoreOutboxJournal({ store, ...journalStorage(admission) })
   const second = createOutboxLog({ verifyAppend: () => true, journal: secondJournal })
   t.alike(second.sync.get(A, 'post!p1'), post('p1', { body: 'opaque-core-a' }))
   t.alike(second.sync.get(B, 'post!b1'), post('b1', { body: 'opaque-core-b' }))
@@ -803,7 +836,7 @@ test('outboxlog: partitioned Corestore journal mirrors accepted rows into per-ou
 
 test('outboxlog: partitioned Corestore journal exposes seed-core pickup keys', async (t) => {
   const store = createMockCorestore()
-  const journal = await createPartitionedHypercoreOutboxJournal({ store })
+  const journal = await createPartitionedHypercoreOutboxJournal({ store, ...journalStorage() })
   const log = createOutboxLog({ verifyAppend: () => true, journal })
   log.sync.create(A)
   log.sync.append(A, { type: 'post', data: post('p1') })
@@ -812,10 +845,11 @@ test('outboxlog: partitioned Corestore journal exposes seed-core pickup keys', a
 
   const calls = []
   const seeded = await journal.seedCores({
-    seedCore: async (coreKey) => {
-      calls.push(coreKey)
+    announceAuthorityOwnedCore: async (core) => {
+      calls.push(core.key.toString('hex'))
       return { ok: true }
-    }
+    },
+    withdrawAuthorityOwnedCore: async () => true
   })
   const info = journal.info()
 
@@ -841,7 +875,160 @@ test('outboxlog: partitioned Corestore journal rejects corrupt outbox blocks bef
   }), 'utf8'))
   await store.get({ name: OUTBOXLOG_OUTBOX_CORE_PREFIX + A }).append(Buffer.from('{not-json', 'utf8'))
 
-  await t.exception(createPartitionedHypercoreOutboxJournal({ store }), /corrupt outbox block 0/)
+  await t.exception(createPartitionedHypercoreOutboxJournal({ store, ...journalStorage() }), /corrupt outbox block 0/)
+})
+
+test('outboxlog aggregate commitment composes burst appends without per-partition multiplication', async (t) => {
+  const admission = createJournalAdmission()
+  const store = createMockCorestore()
+  const journal = await createPartitionedHypercoreOutboxJournal({ store, ...journalStorage(admission) })
+  for (let i = 0; i < 5; i++) {
+    journal.appendSync({ seq: i + 1, kind: 'append', appId: String.fromCharCode(97 + i).repeat(64), inviteKey: '1'.repeat(64) })
+  }
+  await journal.flush()
+  const records = admission.snapshot().records
+  t.is(records.length, 1, 'one aggregate journal commitment covers index plus every partition')
+  t.is(records[0].kind, 'outboxlog')
+  t.is(records[0].boundBytes, JOURNAL_BOUND)
+  t.is(journal.info().outboxes.length, 5)
+  await journal.close()
+})
+
+test('outboxlog exact reconciliation ignores concurrent unrelated tree growth', async (t) => {
+  let unrelatedBytes = 0
+  const admission = createJournalAdmission(() => unrelatedBytes)
+  const store = createMockCorestore()
+  const journal = await createHypercoreOutboxJournal({ store, ...journalStorage(admission) })
+  unrelatedBytes = 100 * 1024 * 1024
+  journal.appendSync({ seq: 1, kind: 'append', appId: A })
+  await journal.flush()
+  const record = admission.get('outboxlog:outboxlog/operations')
+  t.ok(record.actualBytesOverride < 1024 * 1024, 'actual is derived from the unique journal core, not whole-tree delta')
+  t.is(record.boundBytes, JOURNAL_BOUND)
+  await journal.close()
+})
+
+test('outboxlog blocks new appends after authority close/fatal and keeps the core unchanged', async (t) => {
+  for (const mode of ['closed', 'fatal']) {
+    const admission = createJournalAdmission()
+    const store = createMockCorestore()
+    const journal = await createHypercoreOutboxJournal({ store, ...journalStorage(admission) })
+    const before = journal.core.length
+    if (mode === 'closed') admission.closeMutations('test-stop')
+    else admission.failClosed('test-fatal')
+    t.exception(() => journal.appendSync({ seq: 1, kind: 'append', appId: A }), /storage mutation blocked/)
+    t.is(journal.core.length, before, mode + ': no bytes dispatched')
+    await journal.close()
+  }
+})
+
+test('outboxlog timeout tracks a late successful append and retains conservative debt', async (t) => {
+  const admission = createJournalAdmission()
+  const core = createMockCore('late-success')
+  let settle = null
+  core.append = block => new Promise(resolve => {
+    settle = () => {
+      core._blocks.push(Buffer.from(block))
+      resolve()
+    }
+  })
+  const journal = await createHypercoreOutboxJournal({
+    core,
+    appendTimeoutMs: 10,
+    ...journalStorage(admission)
+  })
+  const beforeDebt = journal.storageController.consumedBytes
+  journal.appendSync({ seq: 1, kind: 'append', appId: A })
+  await t.exception(journal.flush(), /append-timeout/)
+  t.ok(journal.storageController.consumedBytes > beforeDebt, 'timeout never returns admitted debt')
+  t.is(admission.fatalReason, 'outboxlog-append-outcome-ambiguous')
+  settle()
+  await admission.drainMutations({ timeoutMs: 100 })
+  t.is(core.length, 1, 'late append is observed through its real settlement promise')
+  t.ok(admission.get('outboxlog:outboxlog/operations').actualBytesOverride > 0)
+  await journal.close()
+})
+
+test('OutboxLogApp stop drains a late-success timeout before releasing journal ownership', async (t) => {
+  const admission = createJournalAdmission()
+  const core = createMockCore('late-stop-success')
+  core.append = block => new Promise(resolve => {
+    setTimeout(() => {
+      core._blocks.push(Buffer.from(block))
+      resolve()
+    }, 15)
+  })
+  const journal = await createHypercoreOutboxJournal({
+    core,
+    appendTimeoutMs: 10,
+    ...journalStorage(admission)
+  })
+  const app = new OutboxLogApp({
+    journal,
+    persistence: false,
+    verifyAppend: () => true
+  })
+  app.create({ appId: A })
+  await t.exception(app.stop(), /append failed/)
+  t.is(core.length, 1, 'real append settled before stop returned')
+  t.absent(journal.storageController.ownershipHandoff, 'safe settlement permits lease release')
+  t.ok(admission.get('outboxlog:outboxlog/operations').actualBytesOverride > 0)
+})
+
+test('outboxlog never-settling append causes bounded terminal drain without releasing ownership', async (t) => {
+  const admission = createJournalAdmission()
+  const core = createMockCore('never-settles')
+  core.append = () => new Promise(() => {})
+  const journal = await createHypercoreOutboxJournal({
+    core,
+    appendTimeoutMs: 10,
+    ...journalStorage(admission)
+  })
+  journal.appendSync({ seq: 1, kind: 'append', appId: A })
+  await t.exception(journal.flush(), /append-timeout/)
+  await t.exception(journal.close(), /settlement timeout/)
+  await t.exception(admission.drainMutations({ timeoutMs: 10 }), /drain timeout/)
+  t.ok(journal.storageController.ownershipHandoff, 'terminal failure does not release the aggregate owner')
+  t.ok(admission.get('outboxlog:outboxlog/operations'), 'aggregate debt remains installed')
+})
+
+test('outboxlog aggregate controller is exclusive and restores its monotonic ledger', async (t) => {
+  const admission = createJournalAdmission()
+  const core = createMockCore('exclusive-restart')
+  const first = await createHypercoreOutboxJournal({ core, ...journalStorage(admission) })
+  await t.exception(createHypercoreOutboxJournal({ core, ...journalStorage(admission) }), /handoff unavailable/)
+  first.appendSync({ seq: 1, kind: 'append', appId: A })
+  await first.flush()
+  const consumed = first.storageController.consumedBytes
+  await first.close()
+
+  const second = await createHypercoreOutboxJournal({ core, ...journalStorage(admission) })
+  t.ok(second.storageController.consumedBytes >= consumed, 'restart cannot reuse previously consumed budget')
+  await second.close()
+})
+
+test('outboxlog process restart retains full aggregate debt after exact bytes materialize', async (t) => {
+  const core = createMockCore('process-restart')
+  const firstAdmission = createJournalAdmission()
+  const first = await createHypercoreOutboxJournal({ core, ...journalStorage(firstAdmission) })
+  first.appendSync({ seq: 1, kind: 'append', appId: A })
+  await first.flush()
+  await first.close()
+  const storage = await core.info({ storage: true })
+  const actual = Object.values(storage.storage).reduce((sum, bytes) => sum + bytes, 0)
+
+  const tooSmall = createJournalAdmission(() => actual, JOURNAL_BOUND)
+  await t.exception(createHypercoreOutboxJournal({ core, ...journalStorage(tooSmall) }), /storage admission blocked/)
+
+  // Exact tree bytes and the full future-growth promise are separate safety
+  // terms. A restart needs capacity for both; stale-high attribution is never
+  // subtracted from the commitment.
+  const restartedAdmission = createJournalAdmission(() => actual, JOURNAL_BOUND + actual)
+  const restarted = await createHypercoreOutboxJournal({ core, ...journalStorage(restartedAdmission) })
+  t.is(restartedAdmission.get('outboxlog:outboxlog/operations').actualBytesOverride, actual)
+  t.is(restartedAdmission.snapshot().committedRemainderBytes, JOURNAL_BOUND)
+  t.ok(restarted.storageController.consumedBytes >= actual)
+  await restarted.close()
 })
 
 test('outboxlog app: wraps the engine as a ServiceProvider', async (t) => {
@@ -860,6 +1047,29 @@ test('outboxlog app: wraps the engine as a ServiceProvider', async (t) => {
   t.alike(app.node, { id: 'relay' })
   await app.stop()
   t.is(app.node, null)
+})
+
+test('outboxlog app: storage-authority relay refuses legacy file/JSONL persistence', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'outboxlog-bounded-required-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const app = new OutboxLogApp({
+    storagePath: dir,
+    persistencePath: join(dir, 'outboxlog-state.json')
+  })
+  let failure = null
+  try {
+    await app.start({
+      node: { storageAdmission: {} },
+      config: {
+        storage: dir,
+        outboxlog: { journal: 'jsonl', journalPath: join(dir, 'outboxlog-ops.jsonl') }
+      }
+    })
+  } catch (err) {
+    failure = err
+  }
+  t.is(failure?.code, 'OUTBOXLOG_BOUNDED_PERSISTENCE_REQUIRED')
+  t.ok(/journal="hypercore"/.test(failure?.message || ''), 'migration action is explicit')
 })
 
 test('outboxlog app: namespace config admits Poked-style apps without a relay fork', async (t) => {
@@ -926,14 +1136,23 @@ test('outboxlog app: an unregistered namespace is still rejected (unknown namesp
 
 test('outboxlog app: hypercore journal config restores rows from context store', async (t) => {
   const store = createMockCorestore()
+  const storageAdmission = createJournalAdmission()
   const first = new OutboxLogApp({ verifyAppend: () => true })
-  await first.start({ config: { outboxlog: { journal: 'hypercore' } }, store, node: { id: 'relay-a' } })
+  await first.start({
+    config: { outboxlog: { journal: 'hypercore', maxJournalStorageBytes: JOURNAL_BOUND } },
+    store,
+    node: { id: 'relay-a', storageAdmission }
+  })
   first.create({ appId: A })
   first.append({ appId: A, op: { type: 'post', data: post('p1', { body: 'app-core' }) } })
   await first.stop()
 
   const second = new OutboxLogApp({ verifyAppend: () => true })
-  await second.start({ config: { outboxlog: { journal: 'hypercore' } }, store, node: { id: 'relay-b' } })
+  await second.start({
+    config: { outboxlog: { journal: 'hypercore', maxJournalStorageBytes: JOURNAL_BOUND } },
+    store,
+    node: { id: 'relay-b', storageAdmission }
+  })
   t.alike(second.get({ appId: A, key: 'post!p1' }), post('p1', { body: 'app-core' }))
   t.alike(second.events({ appId: A }).events.map(event => event.key), ['post!p1'])
   await second.stop()
@@ -941,8 +1160,13 @@ test('outboxlog app: hypercore journal config restores rows from context store',
 
 test('outboxlog app: partitioned hypercore journal config restores rows and exposes seed cores', async (t) => {
   const store = createMockCorestore()
+  const storageAdmission = createJournalAdmission()
   const first = new OutboxLogApp({ verifyAppend: () => true })
-  await first.start({ config: { outboxlog: { journal: 'hypercore-outboxes' } }, store, node: { id: 'relay-a' } })
+  await first.start({
+    config: { outboxlog: { journal: 'hypercore-outboxes', maxJournalStorageBytes: JOURNAL_BOUND } },
+    store,
+    node: { id: 'relay-a', storageAdmission }
+  })
   first.create({ appId: A })
   first.append({ appId: A, op: { type: 'post', data: post('p1', { body: 'app-outbox-core' }) } })
   await first.stop()
@@ -953,17 +1177,20 @@ test('outboxlog app: partitioned hypercore journal config restores rows and expo
   const pinned = new Set()
   const second = new OutboxLogApp({ verifyAppend: () => true })
   await second.start({
-    config: { outboxlog: { persistence: 'hypercore-outboxes' } },
+    config: { outboxlog: { persistence: 'hypercore-outboxes', maxJournalStorageBytes: JOURNAL_BOUND, seedMaxStorageBytes: 4 * 1024 * 1024 } },
     store,
     node: {
       id: 'relay-b',
+      storageAdmission,
       seeder: {
-        seedCore: async (coreKey) => {
+        announceAuthorityOwnedCore: async (core) => {
+          const coreKey = core.key.toString('hex')
           if (pinned.has(coreKey)) return { ok: true }
           pinned.add(coreKey)
           calls.push(coreKey)
           return { ok: true }
-        }
+        },
+        withdrawAuthorityOwnedCore: async (coreKey) => pinned.delete(coreKey)
       }
     }
   })
@@ -1161,7 +1388,8 @@ function createMockCorestore () {
   const names = []
   return {
     names,
-    get ({ name }) {
+    get ({ name, createIfMissing = true }) {
+      if (createIfMissing === false && !cores.has(name)) return createMissingMockCore()
       names.push(name)
       if (!cores.has(name)) cores.set(name, createMockCore(name))
       return cores.get(name)
@@ -1176,13 +1404,29 @@ function createMockCorestore () {
   }
 }
 
+function createMissingMockCore () {
+  return {
+    async ready () {
+      const err = new Error('no stored core')
+      err.code = 'STORAGE_EMPTY'
+      throw err
+    },
+    async close () {}
+  }
+}
+
 function createMockCore (name) {
   const blocks = []
+  const userData = new Map()
   return {
     key: Buffer.from(name.padEnd(32, '0').slice(0, 32)),
+    writable: true,
     _blocks: blocks,
     get length () {
       return blocks.length
+    },
+    get byteLength () {
+      return blocks.reduce((total, block) => total + block.byteLength, 0)
     },
     async ready () {},
     async get (index) {
@@ -1190,6 +1434,22 @@ function createMockCore (name) {
     },
     async append (block) {
       blocks.push(Buffer.from(block))
+    },
+    async getUserData (key) {
+      return userData.get(key) || null
+    },
+    async setUserData (key, value) {
+      userData.set(key, Buffer.from(value))
+    },
+    async info () {
+      return {
+        storage: {
+          oplog: 4096,
+          tree: 4096,
+          blocks: blocks.reduce((total, block) => total + block.byteLength, 0),
+          bitfield: 4096
+        }
+      }
     }
   }
 }

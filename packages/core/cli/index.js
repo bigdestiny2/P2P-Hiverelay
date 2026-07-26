@@ -15,11 +15,22 @@
  */
 
 import minimist from 'minimist'
-import gracedown from 'pear-gracedown'
+import goodbye from 'graceful-goodbye'
 import { RelayNode } from '../core/relay-node/index.js'
 import { createLogger } from '../core/logger.js'
 import { isValidHexKey } from '../core/constants.js'
-import { loadConfig, saveConfig, ensureDirs, CONFIG_PATH, deriveTokenFromSeed, applyOutboxlogNamespaceEnv, resolveStorageCap } from '../config/loader.js'
+import {
+  loadConfig,
+  saveConfig,
+  ensureDirs,
+  CONFIG_PATH,
+  STORAGE_DIR,
+  deriveTokenFromSeed,
+  applyOutboxlogNamespaceEnv,
+  getStorageCapProvenance,
+  markStorageCapExplicit,
+  resolveStorageCap
+} from '../config/loader.js'
 import b4a from 'b4a'
 import { existsSync, mkdirSync, cpSync, readFileSync } from 'fs'
 import { join, dirname } from 'path'
@@ -149,19 +160,11 @@ const COMMANDS = {
   help
 }
 
-// These commands parse their own positional args and already print their own
-// usage on --help / invalid input. Everything else falls back to global help.
-const SUBCOMMAND_HELP_COMMANDS = new Set(['catalog', 'federation', 'qvac', 'ghostdrive'])
-
 async function main () {
   const handler = COMMANDS[command]
   if (!handler) {
     help()
     process.exit(command ? 1 : 0)
-  }
-  if ((args.help || args.h === true) && !SUBCOMMAND_HELP_COMMANDS.has(command)) {
-    help()
-    process.exit(0)
   }
   await handler()
 }
@@ -225,10 +228,13 @@ async function init () {
 
   // 1. Create directories and config
   ensureDirs()
-  const config = loadConfig({
-    region: args.region || undefined,
-    maxStorageBytes: args['max-storage'] ? parseBytesOrExit(args['max-storage'], '--max-storage') : undefined
-  })
+  const initOverrides = {}
+  if (args.region) initOverrides.region = args.region
+  if (args['max-storage']) {
+    initOverrides.maxStorageBytes = parseBytesOrExit(args['max-storage'], '--max-storage')
+    markStorageCapExplicit(initOverrides, 'cli')
+  }
+  const config = loadConfig(initOverrides)
   const configPath = saveConfig(config)
   console.log(`  [ok] Config:  ${configPath}`)
   console.log(`  [ok] Storage: ${config.storage}`)
@@ -304,10 +310,15 @@ async function start () {
   const cliOverrides = {}
   if (args.storage) cliOverrides.storage = args.storage
   else if (process.env.HIVERELAY_STORAGE) cliOverrides.storage = process.env.HIVERELAY_STORAGE
-  if (args['max-storage']) cliOverrides.maxStorageBytes = parseBytesOrExit(args['max-storage'], '--max-storage')
-  else if (process.env.HIVERELAY_MAX_STORAGE) {
+  if (args['max-storage']) {
+    cliOverrides.maxStorageBytes = parseBytesOrExit(args['max-storage'], '--max-storage')
+    markStorageCapExplicit(cliOverrides, 'cli')
+  } else if (process.env.HIVERELAY_MAX_STORAGE) {
     const maxStorageBytes = parseBytesOrExit(process.env.HIVERELAY_MAX_STORAGE, 'HIVERELAY_MAX_STORAGE')
-    if (!hasPersistedConfig()) cliOverrides.maxStorageBytes = maxStorageBytes
+    if (!hasPersistedMaxStorage()) {
+      cliOverrides.maxStorageBytes = maxStorageBytes
+      markStorageCapExplicit(cliOverrides, 'environment')
+    }
   }
   if (args['max-connections']) cliOverrides.maxConnections = parseInt(args['max-connections'])
   if (args['max-bandwidth']) cliOverrides.maxRelayBandwidthMbps = parseInt(args['max-bandwidth'])
@@ -461,13 +472,17 @@ async function start () {
 
   const config = loadConfig(cliOverrides)
 
-  // Scale an unset storage cap to THIS box's disk (and clamp an over-large
-  // explicit cap) so the seeder's adoption gate stops before the volume fills
-  // and wedges the node. The fixed 50 GB default is too big for small boxes.
+  // The built-in storage directory is owned by HiveRelay and safe to create.
+  // A custom path may be an intended future mount, so it must already exist;
+  // resolveStorageCap measures the exact path and startup fails closed if that
+  // proof cannot be established.
+  if (config.storage === STORAGE_DIR) ensureDirs()
   resolveStorageCap(config)
-  if (config._maxStorageBytesClampedFrom != null) {
-    console.log(`  ${ARROW} ${paint(C.yellow, 'max-storage clamped')} ${formatBytes(config._maxStorageBytesClampedFrom)} ${ARROW} ${formatBytes(config.maxStorageBytes)} (90% of disk — protects the volume)`)
-    delete config._maxStorageBytesClampedFrom
+  const storageCap = getStorageCapProvenance(config)
+  if (storageCap?.status !== 'resolved') {
+    console.log(`  ${ARROW} ${paint(C.red, 'storage startup blocked')} (${storageCap?.reason || 'filesystem unresolved'}; restore the configured path or mount before retrying)`)
+  } else if (storageCap.explicit !== true && config.maxStorageBytes < storageCap.requestedBytes) {
+    console.log(`  ${ARROW} ${paint(C.yellow, 'default max-storage resolved')} ${formatBytes(config.maxStorageBytes)} (available-space reserve protected)`)
   }
 
   console.log(mainBanner(VERSION))
@@ -608,7 +623,7 @@ async function start () {
 
   let statusInterval = null
 
-  gracedown(async () => {
+  goodbye(async () => {
     if (statusInterval) clearInterval(statusInterval)
     log.info('shutting down')
     console.log(shutdownBanner())
@@ -622,8 +637,11 @@ async function start () {
 
   // If seed keys provided via CLI, seed them immediately
   const seedKeys = args.seed ? [].concat(args.seed) : []
+  const seedMaxStorage = seedKeys.length > 0
+    ? parseBytesOrExit(args['seed-max-storage'], '--seed-max-storage')
+    : null
   for (const key of seedKeys) {
-    await node.seedApp(key)
+    await node.seedApp(key, { maxStorage: seedMaxStorage })
   }
 
   // Print status periodically. Keep the live carriage-return status bar for
@@ -835,7 +853,7 @@ async function startTestnet () {
     process.stdout.write(`\r  [testnet] ${parts.join(' | ')}${clientPart}   `)
   }, 5000)
 
-  gracedown(async () => {
+  goodbye(async () => {
     clearInterval(statusInterval)
     console.log(shutdownBanner())
     console.log('  ' + ARROW + ' ' + paint(C.dim, 'tearing down testnet...'))
@@ -1522,6 +1540,7 @@ Init Options:
 Start Options:
   --storage <path>              Storage directory
   --max-storage <size>          Max storage (e.g., 50GB, 100GB)
+  --seed-max-storage <size>     Required finite bound for each --seed app
   --max-connections <n>         Max peer connections (default: 256)
   --max-bandwidth <mbps>        Max relay bandwidth in Mbps (default: 100)
   --region <code>               Region code
@@ -1602,7 +1621,7 @@ Environment:
   HIVERELAY_LOG_LEVEL           Log level: fatal, error, warn, info, debug, trace
   HIVERELAY_ACCEPT_MODE         Catalog mode: open, review, allowlist, or closed
   HIVERELAY_STORAGE             Storage path used when --storage is absent
-  HIVERELAY_MAX_STORAGE         First-boot storage cap, e.g. 10GB or 500MB
+  HIVERELAY_MAX_STORAGE         Storage cap until maxStorageBytes is persisted
 
 Examples:
   npx p2p-hiverelay setup                              # Interactive setup wizard
@@ -1674,11 +1693,12 @@ function hasPersistedAcceptMode () {
   }
 }
 
-function hasPersistedConfig () {
+function hasPersistedMaxStorage () {
   if (!existsSync(CONFIG_PATH)) return false
   try {
     const parsed = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
-    return !!(parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+    return !!(parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
+      Object.prototype.hasOwnProperty.call(parsed, 'maxStorageBytes'))
   } catch (_) {
     return false
   }

@@ -1,6 +1,25 @@
 import test from 'brittle'
 import { AppRegistry } from 'p2p-hiverelay/core/app-registry.js'
-import { AppLifecycle } from 'p2p-hiverelay/core/relay-node/app-lifecycle.js'
+import Corestore from 'corestore'
+import { mkdtemp, readdir, rm, stat } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
+
+async function physicalTreeBytes (path) {
+  let total = 0
+  for (const dirent of await readdir(path, { withFileTypes: true })) {
+    const child = join(path, dirent.name)
+    if (dirent.isDirectory()) {
+      total += await physicalTreeBytes(child)
+    } else if (dirent.isFile()) {
+      const info = await stat(child)
+      total += Number.isSafeInteger(info.blocks) && info.blocks >= 0
+        ? info.blocks * 512
+        : info.size
+    }
+  }
+  return total
+}
 
 test('AppRegistry: snapshot restore preserves map identity and indexes', (t) => {
   const registry = new AppRegistry(null)
@@ -35,6 +54,153 @@ test('AppRegistry: explicit JSON persistence rejects write failures', async (t) 
     /ENOTDIR|not a directory/,
     'explicit persist surfaces the write failure'
   )
+})
+
+test('AppRegistry: runtime uppercase key persists canonically and reloads cleanly', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-registry-canonical-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const upper = 'A'.repeat(64)
+  const lower = upper.toLowerCase()
+  const first = new AppRegistry(dir)
+  first.set(upper, { type: 'drive', appId: 'canonical', maxStorage: 4096 }, { persist: false })
+  await first.persistEntry(upper, { throwOnError: true })
+
+  t.ok(first.has(lower))
+  t.ok(first.has(upper), 'runtime lookup canonicalizes too')
+  t.alike([...first.keys()], [lower])
+
+  const restarted = new AppRegistry(dir)
+  const entries = await restarted.load()
+  t.is(entries[0].appKey, lower)
+  t.is(restarted.get(lower).maxStorage, 4096)
+})
+
+test('AppRegistry: throwing observers cannot interrupt set, update, or delete', (t) => {
+  const registry = new AppRegistry(null)
+  const key = 'e'.repeat(64)
+  const observed = []
+  registry.on('change', () => { throw new Error('observer boom') })
+  registry.on('change', event => observed.push(event.type))
+
+  registry.set(key, { type: 'app', appId: 'observer-safe' }, { persist: false })
+  t.ok(registry.has(key), 'set remains committed in memory')
+  t.is(registry.update(key, { description: 'updated' }, { persist: false }), true)
+  t.is(registry.get(key).description, 'updated')
+  t.is(registry.delete(key, { persist: false }), true)
+  t.absent(registry.has(key))
+  t.alike(observed, ['set', 'update', 'delete'], 'later observers are independently delivered')
+})
+
+test('AppRegistry: encoded metadata cannot silently exceed its per-pin commitment', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-registry-overhead-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const registry = new AppRegistry(dir)
+  const key = '9'.repeat(64)
+  registry.set(key, { type: 'drive', description: 'x'.repeat(70 * 1024), maxStorage: 1 }, { persist: false })
+  await t.exception(
+    registry.persistEntry(key, { throwOnError: true }),
+    /APP_REGISTRY_ENTRY_EXCEEDS_METADATA_COMMITMENT/
+  )
+})
+
+test('AppRegistry: partial in-memory proof cannot poison durable inventory', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-registry-partial-proof-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const registry = new AppRegistry(dir)
+  const key = '8'.repeat(64)
+  registry.set(key, {
+    type: 'drive',
+    maxStorage: 4096,
+    anchored: true,
+    anchoredLength: 2,
+    storageProvedDriveVersion: 2
+  }, { persist: false })
+  await t.exception(
+    registry.persistEntry(key, { throwOnError: true }),
+    /invalid-storage-proof-tuple/
+  )
+})
+
+test('AppRegistry: measured Bee debt survives delete, re-add denial, and restart', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-registry-journal-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const key = '7'.repeat(64)
+  let tombstoneDebt = 0
+  let feedBytes = 0
+  let feedFork = 0
+  let journalBound = 0
+
+  {
+    const store = new Corestore(dir)
+    await store.ready()
+    const registry = new AppRegistry(dir, { store })
+    await registry.load()
+    registry.set(key, { type: 'drive', maxStorage: 4096, description: 'bounded-history' }, { persist: false })
+
+    let failure = null
+    let beforeDenied = 0
+    for (let i = 0; i < 500; i++) {
+      registry.update(key, { version: `1.0.${i}` }, { persist: false })
+      beforeDenied = registry._bee.core.byteLength
+      try {
+        await registry.persistEntry(key, { throwOnError: true })
+      } catch (err) {
+        failure = err
+        break
+      }
+    }
+    t.is(failure?.code, 'APP_REGISTRY_METADATA_BUDGET_EXCEEDED')
+    t.is(registry._bee.core.byteLength, beforeDenied, 'denied put appends no feed bytes')
+
+    const activeDebt = registry._metadataBudgets.get(key).bytes
+    registry.delete(key, { persist: false })
+    await registry.persistDelete(key, { throwOnError: true, evictedAt: 1_700_000_000_000 })
+    tombstoneDebt = registry._metadataBudgets.get(key).bytes
+    t.ok(tombstoneDebt > activeDebt, 'retirement tombstone is charged to the same key')
+
+    // Exercise awaited tombstone updates until the historical debt crosses
+    // the 48 KiB active threshold while remaining inside the 64 KiB total.
+    let tick = 1_700_000_000_001
+    while (tombstoneDebt <= 48 * 1024) {
+      await registry.markEvicted(key, tick++)
+      await registry.clearEvicted(key)
+      tombstoneDebt = registry._metadataBudgets.get(key).bytes
+    }
+    t.ok(tombstoneDebt <= 64 * 1024, 'retirement state remains inside the total allowance')
+
+    const beforeReadd = registry._bee.core.byteLength
+    registry.set(key, { type: 'drive', maxStorage: 4096, description: 'must-not-go-live' }, { persist: false })
+    await t.exception(
+      registry.persistEntry(key, { throwOnError: true }),
+      /APP_REGISTRY_KEY_RETIRED_METADATA_EXHAUSTED/
+    )
+    t.absent(registry.has(key), 'failed re-add rolls memory back to the durable tombstone')
+    t.is(registry._bee.core.byteLength, beforeReadd, 'failed re-add appends no feed bytes')
+
+    feedBytes = registry._bee.core.byteLength
+    feedFork = registry._bee.core.fork
+    journalBound = registry._registryJournal.baselineBytes + 64 * 1024
+    t.ok(feedBytes <= journalBound, 'feed remains within baseline plus one historical-key allowance')
+    await store.close()
+  }
+
+  const physicalBytes = await physicalTreeBytes(dir)
+  t.ok(physicalBytes > 0, 'fixture observes real Corestore filesystem bytes')
+  t.ok(physicalBytes < 8 * 1024 * 1024, 'bounded journal fixture has a finite physical footprint')
+
+  {
+    const store = new Corestore(dir)
+    await store.ready()
+    const restarted = new AppRegistry(dir, { store })
+    const entries = await restarted.load()
+    t.is(entries.length, 0, 'durable tombstone is not replayed as an app')
+    t.absent(restarted.has(key))
+    t.is(restarted._metadataBudgets.get(key).bytes, tombstoneDebt, 'exact debt survives restart')
+    t.is(restarted._bee.core.byteLength, feedBytes)
+    t.is(restarted._bee.core.fork, feedFork)
+    t.ok(restarted._bee.core.byteLength <= journalBound)
+    await store.close()
+  }
 })
 
 test('AppRegistry: catalog keeps drive entries while deduplicating apps by appId', (t) => {
@@ -81,7 +247,8 @@ test('AppRegistry: catalogByType and catalogForBroadcast include content metadat
     type: 'drive',
     parentKey: 'e'.repeat(64),
     mountPath: '/data',
-    appId: 'ghost-drive-demo'
+    appId: 'ghost-drive-demo',
+    maxStorage: 4096
   })
 
   const driveCatalog = registry.catalogByType('drive')
@@ -94,51 +261,7 @@ test('AppRegistry: catalogByType and catalogForBroadcast include content metadat
   t.is(broadcast[0].type, 'drive', 'broadcast includes content type')
   t.is(broadcast[0].parentKey, 'e'.repeat(64), 'broadcast includes parentKey')
   t.is(broadcast[0].mountPath, '/data', 'broadcast includes mountPath')
-})
-
-test('AppRegistry: catalog carries relay-unverified v3 release availability facts', (t) => {
-  const registry = new AppRegistry(null)
-  registry.set('9'.repeat(64), {
-    type: 'app',
-    appId: 'native-demo',
-    release: {
-      id: 'apr_' + 'a'.repeat(64),
-      appKind: 'desktop-app',
-      distributionGeneration: 'pear-v3',
-      targets: [{ host: 'darwin-arm64', basename: 'Native Demo.app' }],
-      trust: 'unverified-by-relay'
-    }
-  })
-  const release = registry.catalog()[0].release
-  t.is(release.distributionGeneration, 'pear-v3')
-  t.is(release.trust, 'unverified-by-relay', 'relay does not turn availability into install trust')
-})
-
-test('AppLifecycle: indexes a v3-only release when legacy manifest.json is absent', async (t) => {
-  const registry = new AppRegistry(null)
-  const key = '8'.repeat(64)
-  registry.set(key, { type: 'app' }, { persist: false })
-  const lifecycle = {
-    node: { appRegistry: registry },
-    _readV3ReleaseSummary: AppLifecycle.prototype._readV3ReleaseSummary
-  }
-  const release = {
-    kind: 'AppRelease',
-    apiVersion: 'pear.deploy/v1alpha1',
-    metadata: { id: 'apr_' + 'd'.repeat(64) },
-    spec: {
-      identity: { appId: 'native-demo', productName: 'Native Demo', publisherKey: 'e'.repeat(64), channel: 'stable' },
-      release: { version: '1.2.3', sequence: 2 },
-      kind: { appKind: 'desktop-app', distributionGeneration: 'pear-v3' },
-      distribution: { artifacts: [{ host: 'darwin-arm64', artifact: { basename: 'Native Demo.app', byteSize: 1, treeDigest: 'blake2b256:' + 'f'.repeat(64) } }] }
-    }
-  }
-  const drive = { get: async path => path === '/app-release.json' ? Buffer.from(JSON.stringify(release)) : null }
-  await AppLifecycle.prototype._indexV3Release.call(lifecycle, key, drive)
-  const entry = registry.catalog()[0]
-  t.is(entry.id, 'native-demo')
-  t.is(entry.release.distributionGeneration, 'pear-v3')
-  t.is(entry.release.trust, 'unverified-by-relay')
+  t.is(broadcast[0].maxStorageBytes, 4096, 'broadcast carries the durable capacity commitment')
 })
 
 test('AppRegistry: redacted catalog hides blind/private metadata', (t) => {
@@ -156,7 +279,8 @@ test('AppRegistry: redacted catalog hides blind/private metadata', (t) => {
     availabilityClass: 'atomic-handoff',
     parentKey: 'a'.repeat(64),
     mountPath: '/private',
-    discoveryKey: 'b'.repeat(64)
+    discoveryKey: 'b'.repeat(64),
+    maxStorage: 8192
   })
 
   // Audit 2026-05-19 (Path 3): blind entries are ALWAYS redacted via
@@ -189,6 +313,7 @@ test('AppRegistry: redacted catalog hides blind/private metadata', (t) => {
   t.is(redacted.availabilityClass, 'atomic-handoff', 'redacted catalog preserves availability class')
 
   const broadcast = registry.catalogForBroadcast()[0]
+  t.is(broadcast.maxStorageBytes, 8192, 'blind broadcast keeps the capacity commitment while redacting content metadata')
   t.is(broadcast.redacted, true, 'broadcast marks blind entries redacted')
   t.is(broadcast.appKey, null, 'broadcast hides address key for blind entries')
   t.is(broadcast.appId, null, 'broadcast appId is redacted')

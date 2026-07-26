@@ -32,7 +32,8 @@ test('gap 1: client.mirror is equivalent to open({ seedAsReader: true })', async
   const keyHex = 'a'.repeat(64)
   const fakeDrive = {
     discoveryKey: Buffer.alloc(32, 0xee),
-    core: { writable: false }
+    core: { writable: false },
+    async close () {}
   }
   client.drives.set(keyHex, fakeDrive)
 
@@ -80,6 +81,7 @@ test('gap 3: publish attaches drive.replicas with {target, accepted, relays}', a
 
   // Stub away the store/flush/join mechanics so publish() can run in-process.
   client.store = {
+    async close () {},
     namespace: () => ({
       // Minimal mock — publish wraps this in `new Hyperdrive(ns, null, ...)`.
       // We swap out Hyperdrive construction below by intercepting the flow
