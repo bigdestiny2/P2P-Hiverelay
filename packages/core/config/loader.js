@@ -7,7 +7,7 @@
  *   3. config/default.js (built-in defaults)
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statfsSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 import { createHmac } from 'crypto'
@@ -79,66 +79,6 @@ export function applyOutboxlogNamespaceEnv (cliOverrides = {}, rawEnvValue, hasP
     cliOverrides.outboxlog.namespace = namespace
   }
   return cliOverrides
-}
-
-// Storage-cap safety fractions of the volume. The built-in default
-// (config/default.js maxStorageBytes = 50 GB) is a FIXED value that does not
-// scale to the disk — on a small box it is too big: a 58 GB box with a 50 GB
-// seeded cap fills the disk to 100% (seeded bytes + gateway store + OS + Hypercore
-// overhead) BEFORE the 50 GB cap binds, wedging the node (writes fail → /health
-// hangs → public 502). See the 2026-07 relay-us disk-full incident. So we make an
-// UNSET cap scale to the actual disk, and clamp any explicit cap that would risk
-// filling the volume.
-const DEFAULT_STORAGE_DISK_FRACTION = 0.75 // unset cap → 75% of the volume
-const MAX_STORAGE_DISK_FRACTION = 0.90 // hard ceiling any explicit cap is clamped to
-
-function existingAncestor (p) {
-  let cur = p
-  for (let i = 0; i < 64 && cur; i++) {
-    if (existsSync(cur)) return cur
-    const parent = join(cur, '..')
-    if (parent === cur) break
-    cur = parent
-  }
-  return cur
-}
-
-/**
- * Resolve a disk-relative storage cap so an unset maxStorageBytes scales to the
- * actual volume instead of the fixed 50 GB default. Rules:
- *   - unset (equals the built-in default): cap = 75% of total disk.
- *   - explicit but > 90% of disk: clamped to 90% (config._maxStorageBytesClampedFrom
- *     records the original so the CLI can warn).
- *   - disk unmeasurable / non-positive: config is left unchanged (safe fallback to
- *     the merged value — never make the cap worse than it already was).
- *
- * Pure and testable: pass `opts.statfs` (a statfsSync-shaped fn returning
- * { blocks, bsize }) to simulate a volume; defaults to fs.statfsSync of the
- * storage path's nearest existing ancestor. Mutates and returns `config`.
- */
-export function resolveStorageCap (config, opts = {}) {
-  const statfs = opts.statfs || statfsSync
-  const target = opts.storagePath || (config && config.storage) || STORAGE_DIR
-  let totalBytes = 0
-  try {
-    const s = statfs(existingAncestor(target))
-    totalBytes = Number(s.blocks) * Number(s.bsize)
-  } catch {
-    totalBytes = 0
-  }
-  if (!Number.isFinite(totalBytes) || totalBytes <= 0) return config
-
-  const diskDefault = Math.floor(totalBytes * DEFAULT_STORAGE_DISK_FRACTION)
-  const diskCeiling = Math.floor(totalBytes * MAX_STORAGE_DISK_FRACTION)
-  const isDefault = config.maxStorageBytes === defaults.maxStorageBytes
-
-  if (isDefault) {
-    config.maxStorageBytes = diskDefault
-  } else if (typeof config.maxStorageBytes === 'number' && config.maxStorageBytes > diskCeiling) {
-    config._maxStorageBytesClampedFrom = config.maxStorageBytes
-    config.maxStorageBytes = diskCeiling
-  }
-  return config
 }
 
 /**

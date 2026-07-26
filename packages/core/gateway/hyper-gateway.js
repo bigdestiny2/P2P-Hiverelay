@@ -163,6 +163,35 @@ function parseRange (rangeHeader, totalSize) {
   return { start, end }
 }
 
+/**
+ * Exact byte representation for public Hive-app gateway responses.
+ * Used by GatewayServer when serving range requests over the exact-app path.
+ * Exported so the isolation-validated gateway can share one Range parser.
+ */
+export function selectExactByteRepresentation (payload, rangeHeader) {
+  const bytes = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
+  if (!rangeHeader) {
+    return { ok: true, status: 200, payload: bytes, contentRange: null, totalSize: bytes.byteLength }
+  }
+  const parsed = parseRange(rangeHeader, bytes.byteLength)
+  if (!parsed || parsed === 'invalid' || parsed === 'unsupported') {
+    return {
+      ok: false,
+      status: 416,
+      payload: null,
+      contentRange: `bytes */${bytes.byteLength}`,
+      totalSize: bytes.byteLength
+    }
+  }
+  return {
+    ok: true,
+    status: 206,
+    payload: bytes.subarray(parsed.start, parsed.end + 1),
+    contentRange: `bytes ${parsed.start}-${parsed.end}/${bytes.byteLength}`,
+    totalSize: bytes.byteLength
+  }
+}
+
 function parseBytePosition (value) {
   const text = String(value).trim()
   if (!/^\d+$/.test(text)) return null
