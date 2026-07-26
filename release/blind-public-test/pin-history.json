@@ -1,70 +1,99 @@
 {
-  "schema_version": 1,
-  "pin_history_id": "hiverelay-blind-public-test-pin-history",
-  "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
-  "status": "RECONSTRUCTED-PENDING-CONDUCTOR-RESIGN",
-  "reconstruction_note": "RECONSTRUCTED 2026-07-26 by the release-and-appliances lane after an external actor destroyed the release worktree and branch refs (incident assignments/programme-control/external-worktree-teardown-incident-20260726t130752z.json: commits 3088ee1, 866fec3, a4ba363 and the signed artifact-manifest.json, phase-2-manifest.json and pin-history.json files lost from git; the same actor tore the worktree down twice). Chain entries 1-3 are rebuilt verbatim from the recorded evidence: entry 1 from assignments/release-and-appliances/evidence/live-public-test-manifest-signing-20260724t204048z.json and the acceptance record assignments/programme-control/release-artifacts-acceptance-20260724t190203z.json; entry 2 from assignments/release-and-appliances/evidence/assembled-source-manifest-resigning-20260725t212812z.json; entry 3 from the phase-2 evidence assignments/fleet-and-cohort/evidence/dallas-1-deployment-qualification-20260726t1106z.json and the syd-1 acceptance pin-chain record. Entry 4 binds the rebuilt-from-source artifact set produced after the teardown; its signature fields are PENDING-RESIGN — the conductor re-signs as a separate step. The recorded file_sha256_after_entry values are the hashes of the LOST file states, retained for chain continuity; this reconstructed file's own hash necessarily differs and will be bound by the conductor's re-signature.",
-  "signer": {
-    "identity": "hiverelay-live-public-test@hiverelay.local",
-    "mechanism": "OpenSSH ssh-keygen -Y sign (ed25519)",
-    "namespace": "hiverelay-live-public-test",
-    "key_fingerprint": "ED25519 SHA256:QqRyAPc+8g5EWjcOBXSFWuEBBF/bMg8XdhncVyEf1IQ",
-    "scope": "run-scoped test signer; explicitly NOT a release/GA key"
+ "schema_version": 1,
+ "pin_history_id": "hiverelay-blind-public-test-pin-history",
+ "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+ "status": "RECONSTRUCTED-PENDING-CONDUCTOR-RESIGN",
+ "reconstruction_note": "RECONSTRUCTED 2026-07-26 by the release-and-appliances lane after an external actor destroyed the release worktree and branch refs (incident assignments/programme-control/external-worktree-teardown-incident-20260726t130752z.json: commits 3088ee1, 866fec3, a4ba363 and the signed artifact-manifest.json, phase-2-manifest.json and pin-history.json files lost from git; the same actor tore the worktree down twice). Chain entries 1-3 are rebuilt verbatim from the recorded evidence: entry 1 from assignments/release-and-appliances/evidence/live-public-test-manifest-signing-20260724t204048z.json and the acceptance record assignments/programme-control/release-artifacts-acceptance-20260724t190203z.json; entry 2 from assignments/release-and-appliances/evidence/assembled-source-manifest-resigning-20260725t212812z.json; entry 3 from the phase-2 evidence assignments/fleet-and-cohort/evidence/dallas-1-deployment-qualification-20260726t1106z.json and the syd-1 acceptance pin-chain record. Entry 4 binds the rebuilt-from-source artifact set produced after the teardown; its signature fields are PENDING-RESIGN \u2014 the conductor re-signs as a separate step. The recorded file_sha256_after_entry values are the hashes of the LOST file states, retained for chain continuity; this reconstructed file's own hash necessarily differs and will be bound by the conductor's re-signature.",
+ "signer": {
+  "identity": "hiverelay-live-public-test@hiverelay.local",
+  "mechanism": "OpenSSH ssh-keygen -Y sign (ed25519)",
+  "namespace": "hiverelay-live-public-test",
+  "key_fingerprint": "ED25519 SHA256:QqRyAPc+8g5EWjcOBXSFWuEBBF/bMg8XdhncVyEf1IQ",
+  "scope": "run-scoped test signer; explicitly NOT a release/GA key"
+ },
+ "entries": [
+  {
+   "entry": 1,
+   "kind": "genesis",
+   "signed_at": "2026-07-24T20:40:48Z",
+   "signing_commit": "d4e0443 (destroyed in teardown; recorded in signing evidence)",
+   "assurance_gate": "assignments/independent-assurance/evidence/programme-wide-assurance-review-20260724t192445z.json sha256 f1d170bd295b1a1d78459030d1cf4964e208b681982078f5b7f6ef90c8bdcae6 ACCEPT",
+   "source": "ba710dc682a2cd0fa8a5bcc8a332e5a568eeb9ff (runtime 447bbbf + F1 packaging fix)",
+   "manifest": "release/blind-public-test/artifact-manifest.json",
+   "manifest_sha256": "983499b0784f97a14a7f4f817e33cd7be38fa07462cde0e5144a7f3f46d956e5",
+   "signature_sha256": "de4dbe3fd530cf5edde8b5898c9f2fff0881b1d1c98f13dd6fff5277b44b42c6",
+   "allowed_signers_sha256": "9d98859db850f05c67e443b8ca05f92f70088c253ce55b5a7cf3ede591b07603",
+   "file_sha256_after_entry_recorded": "f8ecae06b277591a329976289dc6b2b8fbce7c7ef49aeed611dcc9c06e109c2f"
   },
-  "entries": [
-    {
-      "entry": 1,
-      "kind": "genesis",
-      "signed_at": "2026-07-24T20:40:48Z",
-      "signing_commit": "d4e0443 (destroyed in teardown; recorded in signing evidence)",
-      "assurance_gate": "assignments/independent-assurance/evidence/programme-wide-assurance-review-20260724t192445z.json sha256 f1d170bd295b1a1d78459030d1cf4964e208b681982078f5b7f6ef90c8bdcae6 ACCEPT",
-      "source": "ba710dc682a2cd0fa8a5bcc8a332e5a568eeb9ff (runtime 447bbbf + F1 packaging fix)",
-      "manifest": "release/blind-public-test/artifact-manifest.json",
-      "manifest_sha256": "983499b0784f97a14a7f4f817e33cd7be38fa07462cde0e5144a7f3f46d956e5",
-      "signature_sha256": "de4dbe3fd530cf5edde8b5898c9f2fff0881b1d1c98f13dd6fff5277b44b42c6",
-      "allowed_signers_sha256": "9d98859db850f05c67e443b8ca05f92f70088c253ce55b5a7cf3ede591b07603",
-      "file_sha256_after_entry_recorded": "f8ecae06b277591a329976289dc6b2b8fbce7c7ef49aeed611dcc9c06e109c2f"
+  {
+   "entry": 2,
+   "kind": "assembled-source rebuild",
+   "signed_at": "2026-07-25T21:28:12Z",
+   "signing_commit": "3088ee1 (destroyed in teardown; recorded in resigning evidence)",
+   "previous_entry": 1,
+   "previous_manifest_sha256": "983499b0784f97a14a7f4f817e33cd7be38fa07462cde0e5144a7f3f46d956e5",
+   "supersedes": "entry 1 (ba710dc images superseded by assembled-source images)",
+   "source": "5248c4e9986566fd55ae0db13432e0c089f49ada (merged: assembly 66e0fa7 ACCEPTED sha256 59bcf6862722fb94f009b50bcd84783a15968d7f90364790637e9e73a41e6d69)",
+   "manifest": "release/blind-public-test/artifact-manifest.json",
+   "manifest_sha256": "ea2fa4a29780d0950cdab53e4dbc26551cbd3fe4fb8f28e91e8e89979669f0b2",
+   "signature_sha256": "1ec50c33a670ee82ed106bf166c8c3609f0002a502c6d280693946fc090b7203",
+   "file_sha256_after_entry_recorded": "ebd89a8961356f2ea80c7372ffd61d4857bf440d4b787b7a0ee5246d0fbf3b7c"
+  },
+  {
+   "entry": 3,
+   "kind": "phase-2 cohort continuity",
+   "signed_at": "2026-07-26 (exact timestamp was in destroyed commit 866fec3; phase-2 evidence recorded 2026-07-26T11:06:07Z)",
+   "signing_commit": "866fec3 (destroyed in teardown; phase-2 manifest commit)",
+   "previous_entry": 2,
+   "base_artifact_manifest_sha256": "ea2fa4a29780d0950cdab53e4dbc26551cbd3fe4fb8f28e91e8e89979669f0b2",
+   "phase_2_manifest": "release/blind-public-test/phase-2-manifest.json",
+   "phase_2_manifest_sha256": "53076591ed6616d9ad216dc5ae545289c7ce3a7a926963adf33468cf657c62aa",
+   "phase_2_signature_sha256": "cb117b60d25b68b1fa6530c1fbd17e99df3cd5c69eb9fe826942a4027cd26649",
+   "note": "phase-2 cohort continuity: same accepted image digests (edge 949d82e3.../daemon baaa83c3... amd64) qualified live on dallas-1 as the second owner-operated failure domain beside syd-1",
+   "file_sha256_after_entry_recorded": "6324548b9a99e0bcb41975d54e9648495e15186077a6cbb676dc5ed013fe6e61"
+  },
+  {
+   "entry": 4,
+   "kind": "boot-restore fix rebuild",
+   "signed_at": "PENDING-RESIGN",
+   "signing_commit": "PENDING-RESIGN (rebuild branch codex/hiverelay-vnext-release-artifacts-rebuild-20260726)",
+   "previous_entry": 3,
+   "previous_manifest_sha256": "ea2fa4a29780d0950cdab53e4dbc26551cbd3fe4fb8f28e91e8e89979669f0b2",
+   "supersedes": "entries 1-3 image pins: images rebuilt from 973f25c with the independently-accepted FLEET-DURABILITY-P1-1 boot-restore fix 49e12d8; the entry-2/3 images remain the currently deployed phase-1/2 state until the cohort is patched under the re-signed manifest",
+   "source": "973f25c212553653b65811eacd28ed35b1b54124 / tree ebd504fa318a90f34fc52e9febb9385db606330d",
+   "manifest": {
+    "path": "artifact-manifest.json",
+    "sha256": "a2dc6113d4b6965cb9895cc18023059638a71992e5abe448b3f1bd84b5570176"
+   },
+   "manifest_sha256": "PENDING-RESIGN (recorded in release/blind-public-test/artifact-manifest.json and the lane evidence)",
+   "signature_sha256": "PENDING-RESIGN",
+   "file_sha256_after_entry_recorded": "PENDING-RESIGN",
+   "created_at": "2026-07-26T13:49:14Z",
+   "signature": {
+    "path": "artifact-manifest.json.sig",
+    "sha256": "baacfea3a35beba3e137e0699e15c5dba057d1f85e117874030080c550b566da",
+    "mechanism": "OpenSSH ssh-keygen -Y sign (ed25519)",
+    "namespace": "hiverelay-live-public-test"
+   },
+   "signer": {
+    "identity": "hiverelay-live-public-test@hiverelay.local",
+    "allowed_signers_path": "allowed_signers",
+    "allowed_signers_sha256": "9d98859db850f05c67e443b8ca05f92f70088c253ce55b5a7cf3ede591b07603"
+   },
+   "verification_command": "ssh-keygen -Y verify -f allowed_signers -I hiverelay-live-public-test@hiverelay.local -n hiverelay-live-public-test -s artifact-manifest.json.sig < artifact-manifest.json",
+   "images": {
+    "blind_edge": {
+     "index": "sha256:79a4e8e735681497772c06f6c35544bf4d6d77afdd0ed9f06bc6c5b2ae564fe7",
+     "amd64": "sha256:ae95c673f1df8de1d4a719b72fd36a140a12f3821f0ce7379376cadbc1331f57",
+     "arm64": "sha256:291f1e01d181d3159c95bae5c461c33e8e71ec0967f6c6efe2868fd1f66743dc"
     },
-    {
-      "entry": 2,
-      "kind": "assembled-source rebuild",
-      "signed_at": "2026-07-25T21:28:12Z",
-      "signing_commit": "3088ee1 (destroyed in teardown; recorded in resigning evidence)",
-      "previous_entry": 1,
-      "previous_manifest_sha256": "983499b0784f97a14a7f4f817e33cd7be38fa07462cde0e5144a7f3f46d956e5",
-      "supersedes": "entry 1 (ba710dc images superseded by assembled-source images)",
-      "source": "5248c4e9986566fd55ae0db13432e0c089f49ada (merged: assembly 66e0fa7 ACCEPTED sha256 59bcf6862722fb94f009b50bcd84783a15968d7f90364790637e9e73a41e6d69)",
-      "manifest": "release/blind-public-test/artifact-manifest.json",
-      "manifest_sha256": "ea2fa4a29780d0950cdab53e4dbc26551cbd3fe4fb8f28e91e8e89979669f0b2",
-      "signature_sha256": "1ec50c33a670ee82ed106bf166c8c3609f0002a502c6d280693946fc090b7203",
-      "file_sha256_after_entry_recorded": "ebd89a8961356f2ea80c7372ffd61d4857bf440d4b787b7a0ee5246d0fbf3b7c"
-    },
-    {
-      "entry": 3,
-      "kind": "phase-2 cohort continuity",
-      "signed_at": "2026-07-26 (exact timestamp was in destroyed commit 866fec3; phase-2 evidence recorded 2026-07-26T11:06:07Z)",
-      "signing_commit": "866fec3 (destroyed in teardown; phase-2 manifest commit)",
-      "previous_entry": 2,
-      "base_artifact_manifest_sha256": "ea2fa4a29780d0950cdab53e4dbc26551cbd3fe4fb8f28e91e8e89979669f0b2",
-      "phase_2_manifest": "release/blind-public-test/phase-2-manifest.json",
-      "phase_2_manifest_sha256": "53076591ed6616d9ad216dc5ae545289c7ce3a7a926963adf33468cf657c62aa",
-      "phase_2_signature_sha256": "cb117b60d25b68b1fa6530c1fbd17e99df3cd5c69eb9fe826942a4027cd26649",
-      "note": "phase-2 cohort continuity: same accepted image digests (edge 949d82e3.../daemon baaa83c3... amd64) qualified live on dallas-1 as the second owner-operated failure domain beside syd-1",
-      "file_sha256_after_entry_recorded": "6324548b9a99e0bcb41975d54e9648495e15186077a6cbb676dc5ed013fe6e61"
-    },
-    {
-      "entry": 4,
-      "kind": "boot-restore rebuild (post-teardown reconstruction)",
-      "signed_at": "PENDING-RESIGN",
-      "signing_commit": "PENDING-RESIGN (rebuild branch codex/hiverelay-vnext-release-artifacts-rebuild-20260726)",
-      "previous_entry": 3,
-      "previous_manifest_sha256": "ea2fa4a29780d0950cdab53e4dbc26551cbd3fe4fb8f28e91e8e89979669f0b2",
-      "supersedes": "entries 1-3 image pins: images rebuilt from 973f25c with the independently-accepted FLEET-DURABILITY-P1-1 boot-restore fix 49e12d8; the entry-2/3 images remain the currently deployed phase-1/2 state until the cohort is patched under the re-signed manifest",
-      "source": "973f25c212553653b65811eacd28ed35b1b54124 / tree ebd504fa318a90f34fc52e9febb9385db606330d",
-      "manifest": "release/blind-public-test/artifact-manifest.json",
-      "manifest_sha256": "PENDING-RESIGN (recorded in release/blind-public-test/artifact-manifest.json and the lane evidence)",
-      "signature_sha256": "PENDING-RESIGN",
-      "file_sha256_after_entry_recorded": "PENDING-RESIGN"
+    "blind_daemon": {
+     "index": "sha256:57b7c2b1645b2c728efd761904b40a838b2db6111b0e9957b081d800ccf98f9f",
+     "amd64": "sha256:1903df25efbd10bd564a9029245f2812f0bc61cee43bfc36d6063f35186413b4",
+     "arm64": "sha256:7e079cce9d8c0f8e2906772d1f7d181a2999fbd85a6577a96a97f4acb991afe9"
     }
-  ]
+   },
+   "note": "rebuilt with independently-accepted boot-restore fix 49e12d8 (FLEET-DURABILITY-P1-1); source 973f25c/tree ebd504fa; supersedes entry-2 build; reconstructed after external teardown (incident 26781955625d)"
+  }
+ ]
 }
