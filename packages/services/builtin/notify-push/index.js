@@ -36,6 +36,11 @@ export async function createPushProvider (descriptor, context = {}) {
   if (!PUSH_PROVIDER_KINDS.includes(kind)) {
     throw new Error('NOTIFY_PUSH_UNKNOWN_KIND: expected one of ' + PUSH_PROVIDER_KINDS.join(', ') + ', got ' + String(kind))
   }
+  // Structural validation before key material, so a shape mistake reports as a
+  // shape mistake rather than as whatever the token opener complains about first.
+  if (kind === 'multi' && Object.keys(descriptor.providers || {}).filter(k => descriptor.providers[k]).length === 0) {
+    throw new Error('NOTIFY_PUSH_BAD_CONFIG: multi provider requires at least one entry in `providers`')
+  }
 
   const openToken = descriptor.openToken || createTokenOpener(descriptor.tokenEncoding || 'sealed', context.keyPair || null)
   const shared = { openToken, now: context.now, transport: descriptor.transport, tokenTransport: descriptor.tokenTransport }

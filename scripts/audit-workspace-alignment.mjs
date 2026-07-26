@@ -2381,15 +2381,29 @@ if (
   capabilityDoc.includes("features.push('notify-v1')") &&
   capabilityDoc.includes("features.push('outboxlog-v1')") &&
   capabilityDoc.includes('function buildServicesProtocolProfile') &&
-  capabilityDoc.includes("providers: ['runtime', 'apns', 'fcm', 'webpush']") &&
-  capabilityDoc.includes("credential_modes: ['runtime-owned', 'app-owned']") &&
-  capabilityDoc.includes("modes: ['direct', 'watch', 'presence-fallback']") &&
+  // The notify profile is now driven from the service's own limits() instead of
+  // retyped literals, so these pin the wiring rather than the values. The
+  // vocabulary itself is pinned at its source, in notify-service.js, below.
+  capabilityDoc.includes('providers: notifyLimits.providers') &&
+  capabilityDoc.includes('credential_modes: notifyLimits.credentialModes') &&
+  capabilityDoc.includes('modes: notifyLimits.modes') &&
   capabilityDoc.includes('plaintext_allowed: false') &&
-  capabilityDoc.includes("privacy_profiles: ['generic', 'local-template']") &&
+  capabilityDoc.includes('privacy_profiles: notifyLimits.privacyProfiles') &&
   capabilityDoc.includes("model: 'single-writer-signed-outbox'") &&
   capabilityDoc.includes("bridge: 'peerit-compatible-http-sse'") &&
   capabilityDoc.includes('function hasRunningService') &&
   capabilityDoc.includes('function serviceVersion') &&
+  capabilityDoc.includes('function serviceLimits') &&
+  // Honesty gate: notify-v1 must be advertised only when a real push adapter is
+  // configured, and all three advertisement sites must share one condition.
+  capabilityDoc.includes('function notifyEgressLive') &&
+  capabilityDoc.includes("hasRunningService(relay, 'notify') && notifyEgressLive(relay)) features.push('notify-v1')") &&
+  capabilityDoc.includes("hasRunningService(relay, 'notify') && notifyEgressLive(relay)) supports.push('notify.send')") &&
+  capabilityDoc.includes("hasRunningService(relay, 'notify') && notifyEgressLive(relay)) {") &&
+  notifyService.includes('export const NOTIFY_CREDENTIAL_MODES') &&
+  notifyService.includes('export const NOTIFY_MODES') &&
+  notifyService.includes('function normalizePushProvider') &&
+  notifyService.includes('function pushEgressProfile') &&
   bareRelay.includes("HIVERELAY_OUTBOXLOG === '1'") &&
   bareRelay.includes("HIVERELAY_NOTIFY === '1'") &&
   bareRelay.includes("name: 'outboxlog', module: 'p2p-hiveservices/builtin/outboxlog/index.js', className: 'OutboxLogApp'") &&
