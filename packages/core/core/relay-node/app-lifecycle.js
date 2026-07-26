@@ -343,6 +343,32 @@ export class AppLifecycle extends EventEmitter {
         maxStorage
       })
 
+      // 2026-05-23: register persistent download ranges on the drive's
+      // cores so they actively pull missing blocks from any peer that
+      // has them — not only during the one-shot _eagerReplicate +
+      // 60s-per-tick repairUnanchored windows. Without this, the
+      // drive's cores have no registered "wants" between download
+      // attempts; even when peers connect with missing blocks, no
+      // requests fire. See bigdestiny2/p2p-hiverelay#23.
+      //
+      // Mirrors the pattern seeder.seedCore() uses for plain hypercores
+      // (the seedingRegistry's local log core, hence the lone
+      // hiverelay_cores_seeded=1 metric across an entire 112-app relay
+      // before this fix). Now the drives' meta + blob cores get the
+      // same persistent-want treatment.
+      //
+      // Best-effort + don't await: getBlobs() is lazy; if the blob core
+      // isn't ready yet, the catch swallows + we skip blob registration
+      // for this seed cycle. _eagerReplicate's drive.download('/') will
+      // populate the blob core on next pass, then a subsequent
+      // _registerPersistentDownloads call picks up the slack.
+      this._registerPersistentDownloads(appKeyHex, drive).catch((err) => {
+        this.emit('persistent-download-error', {
+          appKey: appKeyHex,
+          error: err.message || String(err)
+        })
+      })
+
       if (node.distributedDriveBridge) {
         node.distributedDriveBridge.registerDrive(appKeyHex, drive)
       }
@@ -1039,6 +1065,17 @@ export class AppLifecycle extends EventEmitter {
     const entry = node.appRegistry.get(appKeyHex)
     if (!entry) return
 
+    // Destroy persistent download ranges before tearing down the drive
+    // so their replicator refs don't leak into the closing core's
+    // session pool. Same defensive pattern as _trackEagerReplicate +
+    // LifecycleScope from Reliability v2.
+    if (Array.isArray(entry.downloadRanges)) {
+      for (const dl of entry.downloadRanges) {
+        try { if (dl && typeof dl.destroy === 'function') dl.destroy() } catch (_) {}
+      }
+      entry.downloadRanges = null
+    }
+
     if (node.distributedDriveBridge) {
       node.distributedDriveBridge.unregisterDrive(appKeyHex)
     }
@@ -1048,6 +1085,65 @@ export class AppLifecycle extends EventEmitter {
     node.appRegistry.delete(appKeyHex) // auto-cleans dedup index + persists
 
     this.emit('unseeded', { appKey: appKeyHex })
+  }
+
+  /**
+   * Register persistent download ranges on a drive's metadata + blob
+   * cores so they actively request missing blocks from any peer that
+   * has them, continuously, between repair-tick windows.
+   *
+   * Stored on entry.downloadRanges so unseedApp can destroy them
+   * cleanly before drive.close (avoids leaking replicator refs into
+   * the closing core's session pool).
+   *
+   * Idempotent — calling twice on the same entry destroys the previous
+   * ranges and registers fresh ones (e.g. when the blob core wasn't
+   * ready on the first attempt and we want to retry after some blocks
+   * land).
+   *
+   * Best-effort + non-throwing — failures emit a
+   * persistent-download-error event instead. The drive remains
+   * registered + serving whatever blocks it has; only the active-pull
+   * optimisation is lost.
+   *
+   * @param {string} appKeyHex
+   * @param {Hyperdrive} drive
+   * @returns {Promise<void>}
+   */
+  async _registerPersistentDownloads (appKeyHex, drive) {
+    const node = this.node
+    const entry = node.appRegistry && node.appRegistry.get(appKeyHex)
+    if (!entry) return
+    if (!drive || drive.closed || drive.closing) return
+
+    // Replace any prior ranges (idempotent — see retry path above).
+    if (Array.isArray(entry.downloadRanges)) {
+      for (const dl of entry.downloadRanges) {
+        try { if (dl && typeof dl.destroy === 'function') dl.destroy() } catch (_) {}
+      }
+    }
+    entry.downloadRanges = []
+
+    // Metadata core — always present after drive.ready().
+    if (drive.db && drive.db.core && typeof drive.db.core.download === 'function') {
+      try {
+        const metaDl = drive.db.core.download({ start: 0, end: -1 })
+        entry.downloadRanges.push(metaDl)
+      } catch (_) { /* core may already be closing — skip */ }
+    }
+
+    // Blob core — lazy. getBlobs() lazily creates / opens it. May fail
+    // if the drive is mid-close; that's fine, skip + retry next cycle.
+    let blobs = drive.blobs
+    if (!blobs && typeof drive.getBlobs === 'function') {
+      blobs = await drive.getBlobs().catch(() => null)
+    }
+    if (blobs && blobs.core && typeof blobs.core.download === 'function') {
+      try {
+        const blobDl = blobs.core.download({ start: 0, end: -1 })
+        entry.downloadRanges.push(blobDl)
+      } catch (_) { /* skip */ }
+    }
   }
 
   /**
