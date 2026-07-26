@@ -21,11 +21,6 @@
  *     without the SESSION_CLOSED prefix (older hypercore versions).
  *   - "CORE_CLOSED" / "SESSION_CLOSED" prefixes — typed-ish error codes
  *     from newer hypercore releases.
- *   - "Mutex has been destroyed" — thrown when an operation runs against
- *     a hypercore whose internal mutex has been torn down. Same class of
- *     recoverable failure as a closed core, just at a different layer of
- *     the shutdown chain. Observed live against a production relay's
- *     publish-channel intent submit in 2026-05.
  *
  * If you add new detection patterns, please also add a unit case in
  * test/unit/transient-core-errors.test.js.
@@ -35,8 +30,7 @@ const TRANSIENT_MARKERS = [
   'The corestore is closed',
   'Cannot make sessions on a closing core',
   'SESSION_CLOSED',
-  'CORE_CLOSED',
-  'Mutex has been destroyed'
+  'CORE_CLOSED'
 ]
 
 /**
