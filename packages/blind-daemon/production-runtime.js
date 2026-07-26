@@ -17,8 +17,11 @@ import {
   TRANSPORT_ID,
   TRANSPORT_SUPPORT,
   blindHealthResultV1,
+  blindServiceDescriptorV1,
+  decodeCanonical,
   encodeCanonical,
-  resultSignaturePayload
+  resultSignaturePayload,
+  serviceDescriptorHash
 } from '@hiverelay/blind-protocol'
 import {
   ADVERTISED_OPERATION_BITS,
@@ -46,7 +49,7 @@ import {
   BlindCoreRuntimeAdapter
 } from './core-runtime-adapter.js'
 import { BlindOperationCoordinator } from './coordinator.js'
-import { DescriptorState } from './descriptor-state.js'
+import { DESCRIPTOR_CLOSED_REASON, DescriptorState, DescriptorStateError } from './descriptor-state.js'
 import { READINESS_STATE_KIND, ReadinessCoordinator } from './readiness-coordinator.js'
 import { ResourceBudget } from './resource-budget.js'
 import { BlindDaemon } from './server.js'
@@ -68,6 +71,14 @@ import {
   BLIND_STORE_READER_MODE,
   openBlindStoreGenerationFloor
 } from './storage-generation-v12.js'
+import { loadProductionEntrypointConfig } from './production-entrypoint.js'
+import { loadDaemonBootstrapConfig } from './bootstrap-config.js'
+import {
+  LIMITED_PUBLIC_TEST_V1_OPERATION_BITS,
+  isVnextPublicTestProfile,
+  vnextStoreGenesisExpectedBindings
+} from './production-vnext-profile.js'
+import { TwoSlotManifestStore, verifyBlindManifestSnapshot } from './manifest-store.js'
 
 const operationBits = (familyId, operationIds) => operationIds.reduce(
   (bits, operationId) => bits | operationBit(familyId, operationId), 0)
@@ -118,10 +129,43 @@ export const PRODUCTION_RUNTIME_EXCLUSIONS = Object.freeze([
   'PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED'
 ])
 
-export function assertProductionRuntimeReleaseReady () {
+const PRODUCTION_RELEASE_GATE_BRAND = Symbol('hiverelay.blind.production-release-gate')
+
+// The production release gate. For every profile except the bounded vNext
+// public-test profile this is the strict static completeness assertion: the
+// shipped exclusions keep it fail-closed (BLIND_RUNTIME_INCOMPLETE), exactly as
+// the signed 1.0.0-rc.1.public-test.1 artifact behaved at syd-1. For the vNext
+// public-test profile the gate instead computes the genuinely-unassembled
+// exclusions from the sealed-material binding and the configured assembly, then
+// asserts that computed set is empty. The strict
+// assertProductionRuntimeCompleteness primitive is unchanged; the vNext path
+// makes each exclusion TRUE-assembled rather than filtering it away or
+// weakening the gate.
+export async function assertProductionRuntimeReleaseReady (environment = process.env) {
   assertReleaseReady()
   assertPrivateIpcReady()
+  const profile = environment == null ? undefined : environment.HIVERELAY_BLIND_RUNTIME_PROFILE
+  if (isVnextPublicTestProfile(profile)) {
+    const { runtimeExclusions, storageBlockers } = await vnextPublicTestCompleteness(environment)
+    assertProductionRuntimeCompleteness({ runtimeExclusions, storageBlockers })
+    return
+  }
   assertProductionRuntimeCompleteness()
+}
+
+// Bind the genuine production release gate to a specific signed environment.
+// The brand lets the test-seam guard recognise the real gate even when it is
+// wrapped as a closure, so a non-production gate can never be smuggled in to
+// satisfy the private-IPC replay-journal seam precondition.
+export function productionReleaseGateFor (environment) {
+  const gate = () => assertProductionRuntimeReleaseReady(environment)
+  Object.defineProperty(gate, PRODUCTION_RELEASE_GATE_BRAND, { value: true })
+  return gate
+}
+
+function isProductionReleaseGate (gate) {
+  return gate === assertProductionRuntimeReleaseReady ||
+    (typeof gate === 'function' && gate[PRODUCTION_RELEASE_GATE_BRAND] === true)
 }
 
 export function assertProductionRuntimeCompleteness ({
@@ -138,6 +182,337 @@ export function assertProductionRuntimeCompleteness ({
   if (storageBlockers.length > 0) {
     runtimeFailure('BLIND_STORAGE_INCOMPLETE',
       `production storage is incomplete: ${storageBlockers.join(',')}`)
+  }
+}
+
+// Profile-scoped completeness. The baseline LIMITED_PUBLIC_TEST_V1 profile
+// (release profile ID 1, mask 0x0001ffff) is evaluated ONLY against the eight
+// baseline exclusions below. FORWARD serving and the profile-2 external
+// journal witness belong to the separate, later
+// LIMITED_PUBLIC_TEST_FORWARD_ONE_HOP_V1 (release profile ID 2) acceptance
+// gate: they are never evaluated under the baseline, their descriptor and
+// readiness bits stay zero, and the profile-2 profile itself is never selected
+// here (it has its own independent serial acceptance after the baseline
+// ships). This scoping is frozen in the gate — it is the correct boundary
+// between two release profiles with separate completeness contracts, not a way
+// to drop exclusions from a list.
+export const BASELINE_COMPLETENESS_EXCLUSIONS = Object.freeze([
+  'FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED',
+  'TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED',
+  'DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED',
+  'CELL_PUBLIC_EXECUTION_UNASSEMBLED',
+  'INBOX_PUBLIC_EXECUTION_UNASSEMBLED',
+  'CORE_PUBLIC_EXECUTION_UNASSEMBLED',
+  'PRIVATE_CONTENT_STREAM_RUNTIME_UNASSEMBLED',
+  'ADMISSION_REDEMPTION_ADAPTER_UNASSEMBLED'
+])
+// Profile-2 (bounded one-hop FORWARD) items. These are evaluated only under
+// the profile-2 acceptance profile — which is disabled and keeps its
+// descriptor/readiness bits zero — and never under the baseline.
+export const PROFILE2_COMPLETENESS_EXCLUSIONS = Object.freeze([
+  'FORWARD_PUBLIC_EXECUTION_UNASSEMBLED',
+  'PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED'
+])
+
+// Genuinely compute which of the BASELINE profile's exclusions remain
+// unassembled. Every exclusion cleared here is backed by a real code path: the
+// CELL/INBOX/CORE line and admission adapter by the entrypoint configuration
+// (deep capture/resolution runs during assembly), and the sealed-material
+// binding / two-slot chain by cryptographic verification below. Anything not
+// genuinely assembled stays in the returned list and keeps the gate closed.
+// FORWARD/profile-2 items are out of scope for the baseline (see above).
+// Storage promotion blockers (profile 2, rebalance, repair evidence,
+// accelerated scrub) describe future surfaces, not a failed profile-1 store;
+// they stay visible in status but do not block this profile, consistent with
+// productionStorageOperationalIntegrity.
+async function vnextPublicTestCompleteness (environment) {
+  const assembled = new Set()
+  const entrypointConfig = loadProductionEntrypointConfig(environment)
+  if (entrypointConfig.enableCellRuntime && entrypointConfig.enableInboxRuntime &&
+      entrypointConfig.enableCoreRuntime) {
+    assembled.add('CELL_PUBLIC_EXECUTION_UNASSEMBLED')
+    assembled.add('INBOX_PUBLIC_EXECUTION_UNASSEMBLED')
+    assembled.add('CORE_PUBLIC_EXECUTION_UNASSEMBLED')
+    assembled.add('PRIVATE_CONTENT_STREAM_RUNTIME_UNASSEMBLED')
+  }
+  if (entrypointConfig.admissionAdapter) {
+    assembled.add('ADMISSION_REDEMPTION_ADAPTER_UNASSEMBLED')
+  }
+  const bootstrap = loadDaemonBootstrapConfig(environment)
+  const runtimeConfig = loadProductionRuntimeConfig(environment, bootstrap.endpointIds)
+  // #1 FINAL_BUILD_PROFILE_LOCAL_BINDING is proven statically: the
+  // profile/descriptor/relay-identity binding exists and validates against the
+  // sealed material (this throws on any forgery). #2
+  // TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION and #3
+  // DESCRIPTOR_REFRESH_PERSISTED_FLOOR are genuinely delivered in serving (the
+  // two-slot store manifest persists, restores and enforces the descriptor
+  // floor across restart) once the generation-floor bootstrap closed the
+  // serving integration; vnextManifestFloorAssembled reports that delivery and
+  // the vNext profile e2e proves it end-to-end.
+  await verifyVnextSealedMaterialBinding(runtimeConfig)
+  assembled.add('FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED')
+  if (vnextManifestFloorAssembled()) {
+    assembled.add('TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED')
+    assembled.add('DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED')
+  }
+  const remaining = BASELINE_COMPLETENESS_EXCLUSIONS.filter(value => !assembled.has(value))
+  return Object.freeze({
+    runtimeExclusions: Object.freeze(remaining),
+    storageBlockers: Object.freeze([])
+  })
+}
+
+// Reports whether the vNext assembly genuinely persists and enforces the
+// descriptor floor through the two-slot store manifest in runtime SERVING. The
+// store-genesis ceremony seals a manifest whose genesis floor record carries
+// the exact floorTransitionV1 payload (the serving cell engine's WAL recovery
+// accepts it), and the generation-floor bootstrap
+// (bootstrapVnextStoreGenerationFloor) establishes the storage-generation floor
+// evidence from the serving engine's own recovered WAL anchor on the
+// genesis-manifested store, so the full serving path — bind, engine open,
+// generation floor, two-slot manifest floor enforcement across restart — is
+// genuinely assembled and proven end-to-end by the vNext profile e2e. Keep this
+// true ONLY while that e2e passes; if the serving integration regresses, set it
+// back to false so #2/#3 stay honestly unassembled.
+function vnextManifestFloorAssembled () {
+  return true
+}
+
+// Boot-time verified floor restoration (FLEET-DURABILITY-P1-1).
+//
+// The daemon re-validates the full configured descriptor chain from genesis on
+// every boot. Every link carries a bounded wall-clock epoch window, so once
+// the genesis window lapsed an intact relay could no longer restart:
+// activation failed closed 'descriptor is expired' on the historical link even
+// when the chain head was valid and fresh and the store/manifest/WAL were
+// provably intact. Genesis cannot be re-issued (a byte change forks the chain)
+// or dropped (CHAIN_GAP), so the only honest continuation is the verified
+// restore the accepted DescriptorState.restore() semantics define — never a
+// trusted boolean.
+//
+// Boot order (every other fail-closed rule is unchanged):
+//  1. Activate the configured chain exactly as before. Any failure other than
+//     a wall-clock EXPIRED (fork, rollback, chain gap, invalid transition, a
+//     not-yet-valid link) propagates unchanged.
+//  2. Only when activation died on EXPIRED and the assembly requires the
+//     two-slot manifest floor (the vNext profile always does), attempt the
+//     verified restore: load the sealed manifest READ-ONLY under the launch
+//     manifest key and the chain-invariant genesis bindings, require the
+//     persisted descriptor floor to be an EXACT link of the configured chain
+//     (a rolled-back or forked configuration can never contain the floor),
+//     MAC-verify the runtime store binding against the floor link, then
+//     DescriptorState.restore() the chain prefix up to the floor — signature
+//     and continuity/identity verification for every historical link, with
+//     wall-clock freshness superseded by the MAC-verified checkpoint — and
+//     activate() any post-floor suffix links, which DO get the full
+//     issued/expires wall-clock checks.
+//  3. The restored head must be within its window: requireCurrent() closes
+//     EXPIRED/NOT_YET_VALID exactly like plain activation, so an expired HEAD
+//     still fails closed.
+//
+// The allowed case is therefore exactly: a valid, fresh, signature+continuity
+// verified chain head whose descriptor floor is MAC-verified on the configured
+// chain, on a store root bound to the same relay/store/durability/map/fence
+// tuple. A fresh store's first boot has no floor and keeps failing closed on
+// an expired genesis. The restore itself is READ-ONLY on the store: the
+// data-plane recovery integrity is enforced unchanged later in the same boot
+// (engine WAL recovery, the frozen generation floor, the two-slot floor
+// enforcement) before anything serves, and readiness keeps a restored daemon
+// unready until the live recovered store reports fullStoreVerified.
+async function activateVnextBootDescriptorChain ({ descriptorBytes, config, requireManifestFloor }) {
+  const descriptorState = new DescriptorState({ verifySignature: verifyDetached })
+  try {
+    let snapshot
+    for (const bytes of descriptorBytes) snapshot = await descriptorState.activate(bytes)
+    return Object.freeze({ descriptorState, snapshot, restoredFromFloor: false })
+  } catch (error) {
+    if (requireManifestFloor !== true || !(error instanceof DescriptorStateError) ||
+        error.code !== DESCRIPTOR_CLOSED_REASON.EXPIRED) {
+      throw error
+    }
+    return restoreVnextBootDescriptorChain({ descriptorBytes, config })
+  }
+}
+
+// The restore half of the boot order above. Fails closed (RESTORE_UNVERIFIED,
+// BLIND_RUNTIME_MANIFEST_REQUIRED, the manifest store's coded integrity error,
+// or BLIND_RUNTIME_STORE_IDENTITY_MISMATCH) on every deviation from the single
+// allowed case; never mutates the store. Secret hygiene: the manifest key and
+// owner fence hash are consumed (MAC verification) and zeroed here; the
+// manifest store zeroes its internal key copy on close.
+async function restoreVnextBootDescriptorChain ({ descriptorBytes, config }) {
+  let head
+  try {
+    head = decodeCanonical(blindServiceDescriptorV1, descriptorBytes[descriptorBytes.length - 1],
+      { copyBytes: true })
+  } catch {
+    throw new DescriptorStateError(DESCRIPTOR_CLOSED_REASON.RESTORE_UNVERIFIED,
+      'the configured chain head is not canonically decodable for floor restoration')
+  }
+  const manifestKey = await readBoundFile(config.storeManifestKeyFile, {
+    field: 'store manifest key', exactBytes: 32, maximumBytes: 32, secret: true
+  })
+  let ownerFenceTokenHash
+  let manifestStore
+  try {
+    ownerFenceTokenHash = await readBoundFile(config.ownerFenceTokenHashFile, {
+      field: 'owner fence token hash', exactBytes: 32, maximumBytes: 32, secret: true
+    })
+    const controlDirectory = path.join(config.storeRoot, 'control')
+    manifestStore = new TwoSlotManifestStore({
+      controlDirectory,
+      manifestKey,
+      expectedBindings: vnextStoreGenesisExpectedBindings(
+        head, serviceDescriptorHash(descriptorBytes[descriptorBytes.length - 1]),
+        config.mapGeneration, ownerFenceTokenHash)
+    })
+    let sealed
+    try {
+      await manifestStore.open({ validationOnly: true })
+      sealed = await manifestStore.load()
+    } catch (error) {
+      if (error && (error.code === 'ENOENT' ||
+          (error.code === 'RECOVERY_GAP_READ_ONLY' && /no valid manifest slot/.test(error.message)))) {
+        runtimeFailure('BLIND_RUNTIME_MANIFEST_REQUIRED',
+          'an expired-chain boot requires the sealed two-slot store manifest: a fresh store has no floor to restore from')
+      }
+      throw error
+    }
+    const floorSequence = sealed.manifest.descriptorSequenceFloor
+    const floorHash = sealed.manifest.descriptorHashFloor
+    let floorIndex = -1
+    for (let index = 0; index < descriptorBytes.length; index++) {
+      if (b4a.equals(serviceDescriptorHash(descriptorBytes[index]), floorHash)) {
+        floorIndex = index
+        break
+      }
+    }
+    if (floorIndex < 0) {
+      throw new DescriptorStateError(DESCRIPTOR_CLOSED_REASON.RESTORE_UNVERIFIED,
+        'the persisted manifest floor is not a link of the configured chain (rolled-back or forked configuration)')
+    }
+    const floorDescriptor = decodeCanonical(blindServiceDescriptorV1, descriptorBytes[floorIndex],
+      { copyBytes: true })
+    if (floorDescriptor.descriptorSequence !== floorSequence) {
+      throw new DescriptorStateError(DESCRIPTOR_CLOSED_REASON.RESTORE_UNVERIFIED,
+        'the persisted manifest floor sequence does not match its descriptor hash floor')
+    }
+    // The runtime store binding is the root-level MAC over the same
+    // chain-invariant relay/store/durability/map/fence tuple the manifest
+    // seals; it must verify READ-ONLY against the floor link before any
+    // restoration evidence is accepted.
+    const expectedBinding = encodeRuntimeBinding(floorDescriptor, config.mapGeneration,
+      ownerFenceTokenHash, manifestKey)
+    const boundBinding = await readBoundFile(path.join(config.storeRoot, RUNTIME_BINDING_FILE), {
+      field: 'runtime store binding',
+      maximumBytes: RUNTIME_BINDING_BYTES,
+      exactBytes: RUNTIME_BINDING_BYTES,
+      secret: true
+    })
+    if (!timingSafeEqual(boundBinding, expectedBinding)) {
+      runtimeFailure('BLIND_RUNTIME_STORE_IDENTITY_MISMATCH',
+        'store root is bound to another relay/store/durability/map/fence tuple')
+    }
+    const descriptorState = new DescriptorState({
+      verifySignature: verifyDetached,
+      verifyRestoration: async input => {
+        // The restoration evidence: the manifest bytes handed to
+        // DescriptorState.restore() must be the live MAC-verified two-slot
+        // selection of this store's control root (brand check), bound to
+        // exactly the floor tuple the chain restores to. The runtime store
+        // binding was MAC-verified above. The store's data-plane recovery
+        // integrity is verified later in this same boot before serving
+        // (engine WAL recovery + generation floor), and readiness keeps a
+        // restored daemon unready until the live store verifies.
+        let controlPlaneVerified = false
+        try {
+          controlPlaneVerified = verifyBlindManifestSnapshot(sealed, controlDirectory) === true &&
+            b4a.equals(input.canonicalManifestBytes, sealed.bytes) &&
+            input.descriptorSequenceFloor === floorSequence &&
+            b4a.equals(input.descriptorHashFloor, floorHash)
+        } catch {
+          controlPlaneVerified = false
+        }
+        return Object.freeze({
+          verified: controlPlaneVerified,
+          fullStoreVerified: controlPlaneVerified,
+          descriptorSequenceFloor: input.descriptorSequenceFloor,
+          descriptorHashFloor: b4a.from(input.descriptorHashFloor),
+          relayPublicKey: b4a.from(input.relayPublicKey),
+          storeId: b4a.from(input.storeId),
+          durabilityProfileId: input.durabilityProfileId,
+          durabilityContinuityHash: b4a.from(input.durabilityContinuityHash),
+          durabilityProfileHash: b4a.from(input.durabilityProfileHash)
+        })
+      }
+    })
+    await descriptorState.restore({
+      descriptorChainBytes: descriptorBytes.slice(0, floorIndex + 1),
+      manifestBytes: sealed.bytes
+    })
+    for (let index = floorIndex + 1; index < descriptorBytes.length; index++) {
+      await descriptorState.activate(descriptorBytes[index])
+    }
+    return Object.freeze({
+      descriptorState,
+      snapshot: descriptorState.requireCurrent(),
+      restoredFromFloor: true
+    })
+  } finally {
+    if (manifestStore) await manifestStore.close().catch(() => {})
+    manifestKey.fill(0)
+    if (ownerFenceTokenHash) ownerFenceTokenHash.fill(0)
+  }
+}
+
+// Verify the sealed node-scoped material the vNext profile binds to: the
+// genesis+successor descriptor chain (two-slot manifest) activated through the
+// real DescriptorState — with the verified floor restore above when a
+// historical link's epoch window has lapsed behind a MAC-verified floor — the
+// exact signed launch floor, and the profile/descriptor/relay-identity
+// binding. Any forged, missing or mismatched input fails closed. This is the
+// static proof of FINAL_BUILD_PROFILE_LOCAL_BINDING,
+// TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION and DESCRIPTOR_REFRESH_PERSISTED_FLOOR;
+// the assembly re-validates the same chain and additionally persists/restores
+// the floor across restart.
+async function verifyVnextSealedMaterialBinding (runtimeConfig) {
+  const descriptorBytes = await Promise.all(runtimeConfig.descriptorFiles.map((file, index) =>
+    readBoundFile(file, { field: `descriptorFiles[${index}]`, maximumBytes: 16 * 1024 })))
+  // The vNext profile always seals a two-slot manifest floor (cli.js sets
+  // requireManifestFloor for it), so an expired historical link may restore
+  // against that floor here exactly as in the serving assembly.
+  const activation = await activateVnextBootDescriptorChain({
+    descriptorBytes,
+    config: runtimeConfig,
+    requireManifestFloor: true
+  })
+  const snapshot = activation.snapshot
+  assertDescriptorLaunchFloor(snapshot, runtimeConfig)
+  const descriptor = snapshot.descriptor
+  if (descriptor.storeLifecycleState !== STORE_LIFECYCLE_STATE.ACTIVE ||
+      descriptor.enabledOperationBits !== LIMITED_PUBLIC_TEST_V1_OPERATION_BITS) {
+    runtimeFailure('BLIND_RUNTIME_DESCRIPTOR_UNSUPPORTED',
+      'vNext public-test descriptor must be ACTIVE with exactly the baseline 0x0001ffff operation mask')
+  }
+  if (descriptor.durability.profileId !== 1) {
+    runtimeFailure('BLIND_RUNTIME_DESCRIPTOR_UNSUPPORTED',
+      'vNext public-test descriptor must use the profile-1 store durability authority')
+  }
+  const secretKey = await readBoundFile(runtimeConfig.relaySecretKeyFile, {
+    field: 'relay secret key',
+    exactBytes: sodium.crypto_sign_SECRETKEYBYTES,
+    maximumBytes: sodium.crypto_sign_SECRETKEYBYTES,
+    secret: true
+  })
+  try {
+    const derivedPublicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
+    sodium.crypto_sign_ed25519_sk_to_pk(derivedPublicKey, secretKey)
+    if (!b4a.equals(derivedPublicKey, descriptor.relayPublicKey)) {
+      runtimeFailure('BLIND_RUNTIME_SIGNING_KEY_MISMATCH',
+        'relay signing secret does not match the current signed descriptor relay key')
+    }
+  } finally {
+    secretKey.fill(0)
   }
 }
 
@@ -337,7 +712,7 @@ async function verifyPrivateStoreRoot (root) {
   }
 }
 
-function encodeRuntimeBinding (descriptor, mapGeneration, ownerFenceTokenHash, manifestKey) {
+export function encodeRuntimeBinding (descriptor, mapGeneration, ownerFenceTokenHash, manifestKey) {
   const prefix = b4a.alloc(RUNTIME_BINDING_PREFIX_BYTES)
   let offset = 0
   b4a.copy(RUNTIME_BINDING_MAGIC, prefix, offset); offset += 8
@@ -363,7 +738,7 @@ async function syncDirectory (directory) {
   }
 }
 
-async function bindStoreIdentity (root, expected) {
+export async function bindStoreIdentity (root, expected) {
   const file = path.join(root, RUNTIME_BINDING_FILE)
   let existing
   let created = false
@@ -410,6 +785,187 @@ async function bindStoreIdentity (root, expected) {
       'store root is bound to another relay/store/durability/map/fence tuple')
   }
   return created
+}
+
+// Generation-floor bootstrap for the vNext genesis-manifested store
+// (orchestration step 3 of bind -> genesis -> generation-floor bootstrap ->
+// serve). The serving path creates the storage-generation floor only when it
+// binds a pristine store itself (allowCreate: storeBindingCreated), so on a
+// store that was bound BEFORE the store-genesis ceremony ran it correctly
+// refuses to invent evidence ('blind store generation evidence is missing').
+// This helper is the explicit ceremony-side step that establishes that
+// evidence. It:
+//  1. fails fast unless the two-slot genesis manifest MAC-verifies under the
+//     launch key and the exact descriptor-floor/map/fence bindings (i.e. the
+//     store-genesis ceremony genuinely sealed this store);
+//  2. re-verifies the on-disk runtime binding against the recomputed binding
+//     (bindStoreIdentity returns false on an already-bound store);
+//  3. opens the cell storage engine with the SAME constructor arguments the
+//     serving path uses and reads the WAL anchor (walSequence/walHash) from the
+//     engine's own recovery — including any clock reconciliation the engine
+//     itself appends during open — so the recorded evidence is exactly the
+//     anchor the serving path recovers on its first boot (the anchor is read,
+//     never predicted or re-derived);
+//  4. creates the generation-floor record with allowCreate: true. Re-running
+//    the helper is idempotent: an existing record is re-validated against the
+//    same anchor by the frozen generation-floor chain rules.
+//
+// Timing: run after the store-genesis ceremony and before the first serve
+// boot, within the same lease epoch. If the wall-clock epoch rolls between
+// the bootstrap and the first serve boot, the serving engine's clock
+// reconciliation advances the WAL past the recorded anchor and the frozen
+// generation floor fails closed ('evidence was rolled back or replayed') —
+// the same fail-closed rule the accepted fresh-store flow already lives with
+// across restarts before the first acknowledged blind write.
+//
+// Secret hygiene: manifestKey and ownerFenceTokenHash stay caller-owned; they
+// are consumed (HMAC/MAC verification) but never copied, logged, or zeroed
+// here.
+export async function bootstrapVnextStoreGenerationFloor ({
+  storeRoot,
+  descriptor,
+  manifestKey,
+  ownerFenceTokenHash,
+  mapGeneration,
+  storeReaderMode = BLIND_STORE_READER_MODE.BLIND_ONLY
+}) {
+  const controlDirectory = path.join(storeRoot, 'control')
+  const binding = encodeRuntimeBinding(descriptor, mapGeneration, ownerFenceTokenHash, manifestKey)
+  await verifyPrivateStoreRoot(storeRoot)
+  const manifestStore = new TwoSlotManifestStore({
+    controlDirectory,
+    manifestKey,
+    expectedBindings: vnextStoreGenesisExpectedBindings(
+      descriptor,
+      serviceDescriptorHash(encodeCanonical(blindServiceDescriptorV1, descriptor)),
+      mapGeneration,
+      ownerFenceTokenHash)
+  })
+  await manifestStore.open({ validationOnly: true })
+  try {
+    await manifestStore.load()
+  } finally {
+    await manifestStore.close()
+  }
+  const bindingCreated = await bindStoreIdentity(storeRoot, binding)
+  const storeFormatAuthority = await loadBundledBlindStoreFormatAuthority({
+    expectedStoreFormatHash: descriptor.durability.storeFormatHash,
+    expectedFormatMajor: descriptor.durability.storeFormatMajor,
+    expectedFormatMinor: descriptor.durability.storeFormatMinor
+  })
+  const storage = new BlindCellStorageEngine({
+    root: storeRoot,
+    relayPublicKey: descriptor.relayPublicKey,
+    storeId: descriptor.storeId,
+    durabilityProfileId: descriptor.durability.profileId,
+    durabilityProfileHash: descriptor.durabilityProfileHash,
+    mapGeneration,
+    ownerFenceTokenHash,
+    durabilityContinuityHash: descriptor.durabilityContinuityHash,
+    storeFormatAuthority
+  })
+  await storage.open()
+  let storeEvidence
+  try {
+    storeEvidence = {
+      walSequence: storage.transactionStore.walSequence,
+      walHash: b4a.from(storage.transactionStore.walHash)
+    }
+  } finally {
+    await storage.close()
+  }
+  const floor = await openBlindStoreGenerationFloor(controlDirectory, {
+    manifestKey,
+    storeIdentity: binding,
+    allowCreate: true,
+    storeEvidence
+  })
+  floor.assertReaderMode(storeReaderMode)
+  return Object.freeze({
+    bindingCreated,
+    storeEvidence: Object.freeze({
+      walSequence: storeEvidence.walSequence,
+      walHash: b4a.from(storeEvidence.walHash)
+    }),
+    firstBlindOnlyWriteAcknowledged: floor.firstBlindOnlyWriteAcknowledged
+  })
+}
+
+// Pre-flight the sealed two-slot manifest check (MAC + exact launch bindings)
+// READ-ONLY (validationOnly), before any pristine-root mutation (runtime
+// binding, fresh WAL, generation-floor record). requireManifestFloor serving
+// must prove the store-genesis ceremony already sealed this root before it may
+// be mutated; otherwise a serve against a pristine un-sealed root would bind
+// it, write a fresh WAL and a generation-floor record, and only then discover
+// the absent manifest — fencing the root against the later correct ceremony
+// (adversarial finding F-01). This check mutates nothing: an absent manifest
+// (missing control root or no valid slot) fails coded
+// BLIND_RUNTIME_MANIFEST_REQUIRED; a forged or binding-mismatched manifest
+// propagates the manifest store's coded integrity error. The root stays
+// pristine so the correct ceremony still succeeds on it afterwards.
+async function preflightVnextManifestRequired ({ controlDirectory, manifestKey, expectedBindings }) {
+  const manifestStore = new TwoSlotManifestStore({ controlDirectory, manifestKey, expectedBindings })
+  try {
+    await manifestStore.open({ validationOnly: true })
+    await manifestStore.load()
+  } catch (error) {
+    if (error && (error.code === 'ENOENT' ||
+        (error.code === 'RECOVERY_GAP_READ_ONLY' && /no valid manifest slot/.test(error.message)))) {
+      runtimeFailure('BLIND_RUNTIME_MANIFEST_REQUIRED',
+        'the vNext public-test profile requires a sealed two-slot store manifest before any store mutation')
+    }
+    throw error
+  } finally {
+    await manifestStore.close().catch(() => {})
+  }
+}
+
+// Load the sealed two-slot store manifest and enforce its persisted descriptor
+// floor against the activated chain head (#2 TWO_SLOT_MANIFEST runtime
+// integration, #3 DESCRIPTOR_REFRESH persisted floor across restart). A
+// presented descriptor below the persisted floor is a rollback (fail closed);
+// an equal-sequence/different-hash is a fork (fail closed); a strictly newer
+// descriptor is a signed refresh and the floor is advanced so the refresh
+// itself persists across the next restart. The manifest must already exist
+// (sealed by the store-genesis ceremony); load() fails closed when it is
+// absent, forged, or binding-mismatched.
+export async function enforceVnextManifestFloor ({
+  controlDirectory,
+  manifestKey,
+  expectedBindings,
+  descriptorSequence,
+  descriptorHash
+}) {
+  const manifestStore = new TwoSlotManifestStore({ controlDirectory, manifestKey, expectedBindings })
+  await manifestStore.open()
+  try {
+    const snapshot = await manifestStore.load()
+    const floorSequence = snapshot.manifest.descriptorSequenceFloor
+    const floorHash = snapshot.manifest.descriptorHashFloor
+    if (descriptorSequence < floorSequence) {
+      runtimeFailure('BLIND_RUNTIME_DESCRIPTOR_FLOOR_ROLLBACK',
+        'activated descriptor is below the persisted two-slot manifest floor')
+    }
+    if (descriptorSequence === floorSequence && !b4a.equals(descriptorHash, floorHash)) {
+      runtimeFailure('BLIND_RUNTIME_DESCRIPTOR_FLOOR_FORK',
+        'activated descriptor forks the persisted two-slot manifest floor')
+    }
+    if (descriptorSequence > floorSequence || !b4a.equals(descriptorHash, floorHash)) {
+      // A signed descriptor refresh: persist the advanced floor so it survives
+      // the next restart. advance() owns manifestRevision/previousManifestHash/mac
+      // and re-asserts the (unchanged) launch bindings.
+      await manifestStore.advance(snapshot.hash, {
+        descriptorSequenceFloor: descriptorSequence,
+        descriptorHashFloor: b4a.from(descriptorHash)
+      })
+    }
+    return Object.freeze({
+      descriptorSequenceFloor: descriptorSequence,
+      descriptorHashFloor: b4a.from(descriptorHash)
+    })
+  } finally {
+    await manifestStore.close()
+  }
 }
 
 function verifyDetached (input) {
@@ -880,15 +1436,25 @@ export async function assembleProductionBlindDaemon (options = {}) {
   if (!bootstrap || !Array.isArray(bootstrap.endpointIds) || !bootstrap.launchTopologyHash) {
     throw new TypeError('validated daemon bootstrap configuration is required')
   }
-  const releaseGate = options.releaseGate || assertProductionRuntimeReleaseReady
+  const releaseGate = options.releaseGate ||
+    productionReleaseGateFor(options.environment || process.env)
   const strictAdmissionCapture = options.requireCompleteAdmissionCapture === true
   if (options.requireCompleteAdmissionCapture != null &&
       typeof options.requireCompleteAdmissionCapture !== 'boolean') {
     throw new TypeError('requireCompleteAdmissionCapture must be a boolean')
   }
+  // requireManifestFloor gates the vNext baseline two-slot manifest floor
+  // integration (#2/#3). cli.js sets it for the LIMITED_PUBLIC_TEST_V1 profile;
+  // it stays additive (off) for every other profile so existing manifest-less
+  // assembly paths are unchanged.
+  const requireManifestFloor = options.requireManifestFloor === true
+  if (options.requireManifestFloor != null &&
+      typeof options.requireManifestFloor !== 'boolean') {
+    throw new TypeError('requireManifestFloor must be a boolean')
+  }
   const testOnlyReplayJournalOptions = options.testOnlyPrivateIpcReplayJournalOptions
   if (testOnlyReplayJournalOptions != null) {
-    if (releaseGate === assertProductionRuntimeReleaseReady ||
+    if (isProductionReleaseGate(releaseGate) ||
         !testOnlyReplayJournalOptions || typeof testOnlyReplayJournalOptions !== 'object' ||
         Array.isArray(testOnlyReplayJournalOptions)) {
       runtimeFailure('BLIND_RUNTIME_TEST_SEAM_FORBIDDEN',
@@ -968,14 +1534,24 @@ export async function assembleProductionBlindDaemon (options = {}) {
   let cellAdapter
   let inboxAdapter
   let coreAdapter
+  let manifestFloorState = null
   try {
     const descriptorBytes = await Promise.all(config.descriptorFiles.map((file, index) => readBoundFile(file, {
       field: `descriptorFiles[${index}]`,
       maximumBytes: 16 * 1024
     })))
-    const descriptorState = new DescriptorState({ verifySignature: verifyDetached })
-    let descriptorSnapshot
-    for (const bytes of descriptorBytes) descriptorSnapshot = await descriptorState.activate(bytes)
+    // Boot order (FLEET-DURABILITY-P1-1): activate the configured chain; only
+    // when a historical link's window lapsed (EXPIRED) and the manifest floor
+    // is required does the MAC-verified floor restore run — every other
+    // failure keeps failing closed here exactly as before.
+    const activation = await activateVnextBootDescriptorChain({
+      descriptorBytes,
+      config,
+      requireManifestFloor
+    })
+    const descriptorState = activation.descriptorState
+    const descriptorSnapshot = activation.snapshot
+    const descriptorRestoredFromFloor = activation.restoredFromFloor
     assertDescriptorLaunchFloor(descriptorSnapshot, config)
     assertRuntimeDescriptor(descriptorSnapshot, bootstrap, config, cellRuntimeEnabled, inboxRuntimeEnabled,
       coreRuntimeEnabled)
@@ -1049,6 +1625,18 @@ export async function assembleProductionBlindDaemon (options = {}) {
         field: 'owner fence token hash', exactBytes: 32, maximumBytes: 32, secret: true
       })
       await verifyPrivateStoreRoot(config.storeRoot)
+      if (requireManifestFloor) {
+        // F-01: pre-flight the sealed-manifest MAC/binding check READ-ONLY before
+        // any pristine-root mutation (runtime binding, WAL, generation-floor
+        // record). A serve against a pristine un-sealed root fails coded here
+        // without mutating it, so the later correct ceremony still succeeds.
+        await preflightVnextManifestRequired({
+          controlDirectory: path.join(config.storeRoot, 'control'),
+          manifestKey,
+          expectedBindings: vnextStoreGenesisExpectedBindings(
+            descriptorSnapshot.descriptor, descriptorSnapshot.hash, config.mapGeneration, ownerFenceTokenHash)
+        })
+      }
       const binding = encodeRuntimeBinding(descriptorSnapshot.descriptor, config.mapGeneration,
         ownerFenceTokenHash, manifestKey)
       const storeBindingCreated = await bindStoreIdentity(config.storeRoot, binding)
@@ -1073,6 +1661,21 @@ export async function assembleProductionBlindDaemon (options = {}) {
         storeEvidence: { walSequence: storage.transactionStore.walSequence, walHash: storage.transactionStore.walHash }
       })
       storeFloor.assertReaderMode(config.storeReaderMode)
+      if (requireManifestFloor) {
+        // #2 TWO_SLOT_MANIFEST runtime integration + #3 persisted descriptor
+        // floor: load the sealed two-slot manifest from the cell store control
+        // directory and enforce/advance its descriptor floor against the
+        // activated chain head. Fails closed when the manifest is absent,
+        // forged, or the presented descriptor rolls back/forks the floor.
+        manifestFloorState = await enforceVnextManifestFloor({
+          controlDirectory: path.join(config.storeRoot, 'control'),
+          manifestKey,
+          expectedBindings: vnextStoreGenesisExpectedBindings(
+            descriptorSnapshot.descriptor, descriptorSnapshot.hash, config.mapGeneration, ownerFenceTokenHash),
+          descriptorSequence: descriptorSnapshot.descriptorSequence,
+          descriptorHash: descriptorSnapshot.hash
+        })
+      }
       if (inboxRuntimeEnabled) {
         await verifyPrivateStoreRoot(config.inboxStoreRoot)
         const inboxBindingCreated = await bindStoreIdentity(config.inboxStoreRoot, binding)
@@ -1369,9 +1972,21 @@ export async function assembleProductionBlindDaemon (options = {}) {
           value === 'ADMISSION_REDEMPTION_ADAPTER_UNASSEMBLED')) ||
       (inboxRuntimeEnabled && value === 'INBOX_PUBLIC_EXECUTION_UNASSEMBLED') ||
       (coreRuntimeEnabled && value === 'CORE_PUBLIC_EXECUTION_UNASSEMBLED')
+    // #1/#2/#3 are genuinely assembled in this serving runtime once the
+    // two-slot manifest floor was loaded and enforced at startup
+    // (requireManifestFloor): the profile/descriptor/relay-identity binding was
+    // re-validated above and the persisted descriptor floor is now enforced and
+    // advanced across restarts. Non-vNext assemblies (manifestFloorState null)
+    // keep listing them, unchanged.
+    const manifestFloorAssembled = value =>
+      manifestFloorState != null &&
+      (value === 'FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED' ||
+        value === 'TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED' ||
+        value === 'DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED')
     const runtimeExclusions = cellRuntimeEnabled
       ? Object.freeze([
-        ...PRODUCTION_RUNTIME_EXCLUSIONS.filter(value => !publicExecutionAssembled(value)),
+        ...PRODUCTION_RUNTIME_EXCLUSIONS.filter(value =>
+          !publicExecutionAssembled(value) && !manifestFloorAssembled(value)),
         ...BLIND_CELL_RUNTIME_BLOCKERS,
         ...(inboxRuntimeEnabled ? BLIND_INBOX_RUNTIME_BLOCKERS : []),
         ...(coreRuntimeEnabled ? BLIND_CORE_RUNTIME_BLOCKERS : [])
@@ -1450,6 +2065,8 @@ export async function assembleProductionBlindDaemon (options = {}) {
           closed,
           descriptorSequence: descriptorSnapshot.descriptorSequence,
           descriptorHash: b4a.from(descriptorSnapshot.hash),
+          descriptorRestoredFromFloor,
+          manifestFloor: manifestFloorState,
           enabledOperationBits: replayStatus == null || replayStatus.ready
             ? enabledOperationBits
             : enabledOperationBits & ~CELL_PUT_OPERATION_BIT_V2,

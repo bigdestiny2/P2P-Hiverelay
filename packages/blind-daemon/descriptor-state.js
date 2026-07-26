@@ -421,6 +421,18 @@ export class DescriptorState {
     return snapshotFor(record)
   }
 
+  // Verified restoration from a MAC-verified store manifest floor. Every
+  // presented link is signature- and continuity/identity-verified exactly as
+  // in activate(); historical links up to the manifest floor are NOT
+  // wall-clock-freshness checked — their freshness is superseded by the
+  // MAC-verified checkpoint the floor pins. Freshness is still enforced where
+  // it is a security property: the restored head must satisfy state()/
+  // requireCurrent() (an expired or not-yet-valid head closes the state), and
+  // any post-floor links must go through activate(), which applies the full
+  // issued/expires epoch checks. A non-genesis restore requires the canonical
+  // MAC-verified manifest and a verifyRestoration authority echoing the exact
+  // recovered floor with fullStoreVerified evidence; a trustedRestore boolean
+  // is never restoration evidence.
   restore (input, options = {}) {
     if (!input || !Array.isArray(input.descriptorChainBytes) || input.descriptorChainBytes.length === 0 ||
         input.descriptorChainBytes.length > this.maxHistory) {
