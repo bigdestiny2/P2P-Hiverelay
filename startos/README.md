@@ -167,7 +167,7 @@ Three paths, smallest to widest reach:
 ## Status
 
 Package source targets multi-arch image tarballs (x86_64 + aarch64),
-v0.25.0-rc.2, one-page dashboard via `HIVERELAY_UI_SIMPLE`, review-mode first boot,
+v0.25.0-rc.4, one-page dashboard via `HIVERELAY_UI_SIMPLE`, review-mode first boot,
 and a first-boot-only 10 GB storage cap. Current `v0.20.2` package verification
 is externally gated on the published GHCR image/tag and digest; once that image
 exists, `make verify IMAGE_DIGEST=sha256:<multi-arch-digest>` is the release

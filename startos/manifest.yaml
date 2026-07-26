@@ -13,11 +13,10 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.25.0-rc.2
+version: 0.25.0-rc.4
 release-notes: |
-  HiveRelay v0.25.0-rc.2: fix broken rc.1 (missing gateway modules + loader
-  export). Same Track A contents: Tor packaging, utility services, service HTTP
-  wiring. Prefer this tag over v0.25.0-rc.1.
+  HiveRelay v0.25.0-rc.4: complete canary fix on the wiring branch. Gateway
+  modules, loader fix, ETIMEDOUT recoverable. Prefer over rc.1–rc.3.
 license: apache-2.0
 wrapper-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
 upstream-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"

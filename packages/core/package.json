@@ -1,6 +1,6 @@
 {
   "name": "p2p-hiverelay",
-  "version": "0.25.0-rc.2",
+  "version": "0.25.0-rc.4",
   "description": "HiveRelay Core — minimal always-on P2P availability infrastructure (seeding, circuit relay, proof-of-relay, gateway)",
   "type": "module",
   "main": "core/index.js",

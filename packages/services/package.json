@@ -1,6 +1,6 @@
 {
   "name": "p2p-hiveservices",
-  "version": "0.25.0-rc.2",
+  "version": "0.25.0-rc.4",
   "description": "HiveRelay Services — application-layer services (AI inference, identity, schemas, SLAs, storage CRUD) that ride on top of HiveRelay Core",
   "type": "module",
   "exports": {
@@ -20,7 +20,7 @@
     "@noble/hashes": "^2.2.0",
     "@noble/secp256k1": "^3.1.0",
     "b4a": "^1.8.1",
-    "p2p-hiverelay": "^0.25.0-rc.2",
+    "p2p-hiverelay": "^0.25.0-rc.4",
     "sodium-universal": "^5.0.1"
   },
   "engines": {

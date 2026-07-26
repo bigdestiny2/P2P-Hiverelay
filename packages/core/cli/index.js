@@ -111,8 +111,27 @@ function isRecoverableDHTError (err) {
   )
 }
 
+// Plain Node network errors from udx/Hyperswarm/Noise during discovery or
+// peer dial. Not typed as DHTError (so isRecoverableDHTError misses them).
+function isRecoverableNetworkError (err) {
+  if (!err) return false
+  const code = err.code || ''
+  if (
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNRESET' ||
+    code === 'EPIPE' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ENETUNREACH' ||
+    code === 'EHOSTUNREACH'
+  ) {
+    return true
+  }
+  const msg = String(err.message || '')
+  return /connection timed out|ECONNRESET|EPIPE/i.test(msg)
+}
+
 function isRecoverable (err) {
-  return isRecoverableHypercoreError(err) || isRecoverableDHTError(err)
+  return isRecoverableHypercoreError(err) || isRecoverableDHTError(err) || isRecoverableNetworkError(err)
 }
 
 process.on('uncaughtException', (err) => {

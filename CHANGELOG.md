@@ -6,6 +6,19 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.25.0-rc.4] — 2026-07-26
+
+**Preferred canary prerelease.** Do not deploy rc.1–rc.3.
+
+### Fixed (cumulative)
+- Missing gateway modules (from rc.2 intent)
+- Duplicate `resolveStorageCap` export
+- Uncaught `ETIMEDOUT` / network errors treated as recoverable
+- **rc.3 was cut from `main` by mistake** (missing wiring) — this tag is from `feat/service-http-wiring`
+
+### Includes
+- Full Track A: Tor packaging, utility services, VRF/notify HTTP, client helpers, dashboard panels, outboxlog durability, docs
+
 ## [0.25.0-rc.2] — 2026-07-26
 
 Hotfix prerelease. Prefer this over **v0.25.0-rc.1** (do not deploy rc.1).
