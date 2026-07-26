@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HiveRelay · Release, Fleet &amp; Peerit — 2026-07-26</title>
+<style>
+  :root{
+    --bg:#0a0e14; --panel:#111821; --panel-2:#0d141d;
+    --ink:#e8eef6; --dim:#8b9bb0; --faint:#5b6b80;
+    --line:#1f2a3a; --line-2:#152028;
+    --accent:#4fd1c5; --accent-2:#5b9fd4; --gold:#e0a54b; --rose:#e0533d; --violet:#9b7ed9; --green:#3ecf8e;
+    --cutover:#22d3ee;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--accent-2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{background:#0a0f16;border:1px solid var(--line);padding:.05em .4em;border-radius:4px;
+    font:.86em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cfe3ff}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 1.4em}
+  main{padding-bottom:5em}
+
+  header.hero{padding:3.5em 0 2.2em;border-bottom:1px solid var(--line);
+    background:
+      radial-gradient(ellipse 80% 60% at 20% -10%,rgba(62,207,142,.1),transparent 55%),
+      radial-gradient(ellipse 50% 40% at 90% 0%,rgba(34,211,238,.07),transparent 50%)}
+  .eyebrow{color:var(--green);font-size:.78em;font-weight:700;letter-spacing:.18em;text-transform:uppercase;margin:0 0 .8em}
+  h1{font-size:clamp(1.8em,4vw,2.4em);line-height:1.12;margin:.1em 0 .35em;letter-spacing:-.025em;font-weight:800}
+  h1 .grad{background:linear-gradient(120deg,var(--green),var(--accent),var(--accent-2));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:1.15em;color:var(--dim);max-width:68ch;margin:1em 0 0}
+  .meta{margin-top:1.4em;display:flex;flex-wrap:wrap;gap:.5em;font-size:.8em;color:var(--faint)}
+  .meta span{padding:.3em .7em;border:1px solid var(--line);border-radius:999px;background:var(--panel)}
+
+  section{padding:2.4em 0;border-bottom:1px solid var(--line-2)}
+  section:last-of-type{border-bottom:0}
+  h2{font-size:1.5em;letter-spacing:-.015em;margin:0 0 .55em;font-weight:700}
+  h2 .num{color:var(--green);font-variant-numeric:tabular-nums;margin-right:.45em;font-weight:800}
+  h3{font-size:1.12em;margin:1.35em 0 .4em;font-weight:700}
+  p{margin:.55em 0}
+  ul,ol{margin:.55em 0;padding-left:1.45em}
+  li{margin:.28em 0}
+
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.85em;margin:1.2em 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1em 1.1em}
+  .card .label{font-size:.72em;text-transform:uppercase;letter-spacing:.1em;color:var(--faint);font-weight:700;margin:0 0 .35em}
+  .card .value{font-size:1.25em;font-weight:700;letter-spacing:-.02em;margin:0}
+  .card .sub{font-size:.88em;color:var(--dim);margin:.35em 0 0}
+
+  .callout{border-left:3px solid var(--accent);background:rgba(79,209,197,.05);
+    padding:.9em 1.2em;border-radius:0 10px 10px 0;margin:1.2em 0}
+  .callout.warn{border-color:var(--gold);background:rgba(224,165,75,.06)}
+  .callout.danger{border-color:var(--rose);background:rgba(224,83,61,.06)}
+  .callout.green{border-color:var(--green);background:rgba(62,207,142,.06)}
+  .callout.blue{border-color:var(--accent-2);background:rgba(91,159,212,.06)}
+  .callout h4{margin:.1em 0 .3em;font-size:.76em;text-transform:uppercase;letter-spacing:.1em}
+  .callout.warn h4{color:var(--gold)}
+  .callout.danger h4{color:var(--rose)}
+  .callout.green h4{color:var(--green)}
+  .callout.blue h4{color:var(--accent-2)}
+  .callout p:last-child{margin-bottom:0}
+
+  table{border-collapse:collapse;width:100%;margin:1em 0;font-size:.9em}
+  th,td{border:1px solid var(--line);padding:.5em .7em;text-align:left;vertical-align:top}
+  th{background:#0a0f16;color:var(--dim);font-weight:600;font-size:.78em;text-transform:uppercase;letter-spacing:.04em}
+  tr:nth-child(even) td{background:rgba(255,255,255,.015)}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.88em;word-break:break-all}
+
+  .status{display:inline-block;padding:.12em .5em;border-radius:4px;font-size:.7em;font-weight:700;
+    text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--line);white-space:nowrap}
+  .s-done{color:var(--green);border-color:#1d3a2c;background:rgba(62,207,142,.08)}
+  .s-progress{color:var(--cutover);border-color:#0f3a44;background:rgba(34,211,238,.1)}
+  .s-gated{color:var(--gold);border-color:#3a2a14;background:rgba(224,165,75,.08)}
+  .s-off{color:var(--faint);border-color:#2a3340;background:rgba(91,107,128,.08)}
+  .s-stale{color:var(--rose);border-color:#3a1d18;background:rgba(224,83,61,.08)}
+
+  .tracks{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:.9em;margin:1.1em 0}
+  .track{border:1px solid var(--line);border-radius:12px;padding:1.1em 1.15em;background:var(--panel)}
+  .track h3{margin:0 0 .4em;font-size:1.05em}
+  .track.a{border-color:#1d3a2c}
+  .track.b{border-color:#0f3a44}
+  .track.c{border-color:#3a2a14}
+  .track .tag{font-size:.72em;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:.5em}
+  .track.a .tag{color:var(--green)}
+  .track.b .tag{color:var(--cutover)}
+  .track.c .tag{color:var(--gold)}
+
+  .live-banner{background:linear-gradient(135deg,rgba(62,207,142,.1),rgba(34,211,238,.06));
+    border:1px solid #1d3a2c;border-radius:14px;padding:1.15em 1.35em;margin:1.4em 0}
+  .live-banner h3{margin:0 0 .35em;color:var(--green);font-size:1.05em;display:flex;align-items:center;gap:.5em}
+  .live-dot{width:9px;height:9px;border-radius:50%;background:var(--green);display:inline-block;
+    box-shadow:0 0 8px var(--green);animation:pulse 2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  .toc{display:flex;flex-wrap:wrap;gap:.45em;margin:1.2em 0 0}
+  .toc a{font-size:.82em;padding:.35em .7em;border:1px solid var(--line);border-radius:8px;
+    background:var(--panel);color:var(--dim)}
+  .toc a:hover{color:var(--ink);border-color:var(--accent-2);text-decoration:none}
+
+  footer{padding:2em 0 0;border-top:1px solid var(--line);margin-top:2.5em;color:var(--faint);font-size:.84em}
+  footer p{margin:.35em 0}
+
+  @media print{
+    :root{--bg:#fff;--ink:#111;--dim:#444;--panel:#f6f6f6;--line:#ddd}
+    body{background:#fff;color:#111}
+    .live-dot{animation:none}
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Release · fleet · Peerit · honesty</p>
+    <h1>HiveRelay snapshot: <span class="grad">what shipped, what’s live</span></h1>
+    <p class="lede">
+      One page for operators and Peerit: the <strong>v0.25.0-rc.1</strong> canary cut,
+      what it enables, the emergency hold after a bad canary pull, the <strong>Tor + utility cohort</strong>
+      on two large fleet boxes, and where <strong>Peerit blind public-test bind</strong> sits.
+    </p>
+    <div class="meta">
+      <span>As of 2026-07-26</span>
+      <span>Fleet code baseline: <code>v0.24.3</code></span>
+      <span>Channels (main): stable + canary → <code>v0.24.3</code></span>
+      <span>Prerelease tag: <code>v0.25.0-rc.1</code> (held)</span>
+    </div>
+    <nav class="toc" aria-label="On this page">
+      <a href="#release">Release</a>
+      <a href="#enables">What it enables</a>
+      <a href="#tracks">Tracks A / B / C</a>
+      <a href="#fleet">Fleet state</a>
+      <a href="#peerit">Peerit</a>
+      <a href="#honesty">Honesty</a>
+      <a href="#next">Next</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="live-banner">
+    <h3><span class="live-dot"></span> Live right now</h3>
+    <p>
+      <strong>utah</strong> and <strong>utah-8gb</strong> run Tor onions + full utility service set
+      (notify, witnesslog, repairticket, storage-proof, shard-store, outboxlog, poker bundle).
+      Fleet-wide version remains <strong>0.24.3</strong>. Peerit blind bind remains
+      <strong>scaffold / not live</strong> (seed publish off).
+    </p>
+  </div>
+
+  <!-- 01 RELEASE -->
+  <section id="release">
+    <h2><span class="num">01</span>The release</h2>
+
+    <div class="cards">
+      <div class="card">
+        <p class="label">GitHub prerelease</p>
+        <p class="value">v0.25.0-rc.1</p>
+        <p class="sub"><a href="https://github.com/bigdestiny2/P2P-Hiverelay/releases/tag/v0.25.0-rc.1">Release notes</a> · SSH-signed tag</p>
+      </div>
+      <div class="card">
+        <p class="label">Fleet channel (main)</p>
+        <p class="value">held @ 0.24.3</p>
+        <p class="sub">Canary was pointed at rc.1, then held after startup crash-loop (PR #200)</p>
+      </div>
+      <div class="card">
+        <p class="label">Hotfix branch</p>
+        <p class="value mono" style="font-size:.95em">feat/service-http-wiring</p>
+        <p class="sub">Missing gateway modules + loader fix for next RC</p>
+      </div>
+      <div class="card">
+        <p class="label">Community pack</p>
+        <p class="value" style="font-size:1.05em">Short + long copy</p>
+        <p class="sub"><code>docs/COMMUNITY-UPDATE-0.25.0-rc.1.md</code></p>
+      </div>
+    </div>
+
+    <h3>What was cut into the tag</h3>
+    <ul>
+      <li><strong>Tor packaging defaults</strong> — Docker / systemd / Umbrel set <code>HIVERELAY_TOR=1</code> (host Tor still required on systemd fleet).</li>
+      <li><strong>Utility services default-on in packaging</strong> — outboxlog, notify, storage-proof, VRF, witnesslog, repairticket; shard-store opt-in for large disks.</li>
+      <li><strong>Service HTTP wiring</strong> — VRF <code>/api/v1/vrf/*</code>, notify push resolution, client helpers, dashboard notify/VRF panels.</li>
+      <li><strong>Outboxlog durability</strong> — journal / lifecycle fixes covered by unit tests.</li>
+      <li><strong>Ship ladder</strong> — <code>docs/LADDER-SHIP-MAP.md</code> (Track A fleet vs Track B blind public-test vs later merge).</li>
+    </ul>
+
+    <div class="callout danger">
+      <h4>Why canary is not on rc.1</h4>
+      <p>
+        The <code>v0.25.0-rc.1</code> tree imported gateway modules that were not in the tag
+        (<code>exact-app-context</code>, <code>hive-host</code>, …) and had a duplicate
+        <code>resolveStorageCap</code> export. Canary boxes crash-looped. Canary channel on
+        GitHub <code>main</code> was held back to <code>v0.24.3</code>. Fixes live on
+        <code>feat/service-http-wiring</code> for a future <strong>rc.2</strong>.
+      </p>
+    </div>
+  </section>
+
+  <!-- 02 ENABLES -->
+  <section id="enables">
+    <h2><span class="num">02</span>What this work enables</h2>
+
+    <table>
+      <thead>
+        <tr><th>Capability</th><th>In packaging / tag</th><th>Live on Tor cohort</th><th>Notes</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Tor v3 onion</strong></td>
+          <td><span class="status s-done">Default-on</span></td>
+          <td><span class="status s-done">On</span></td>
+          <td>Host Tor 0.4.9.11 + <code>config.transports.tor</code>. Cohort only.</td>
+        </tr>
+        <tr>
+          <td><strong>Outboxlog</strong> (Peerit messaging)</td>
+          <td><span class="status s-done">Default-on</span></td>
+          <td><span class="status s-done">On</span></td>
+          <td>Namespaces peerit + pearcup on cohort.</td>
+        </tr>
+        <tr>
+          <td><strong>Notify</strong></td>
+          <td><span class="status s-done">Default-on</span></td>
+          <td><span class="status s-done">On</span></td>
+          <td>Plugin loaded; push provider still needs real webpush keys for OS push.</td>
+        </tr>
+        <tr>
+          <td><strong>VRF</strong> (service)</td>
+          <td><span class="status s-done">Default-on</span></td>
+          <td><span class="status s-done">On</span></td>
+          <td>Poker bundle + listing. HTTP <code>/api/v1/vrf/*</code> needs fixed 0.25 process.</td>
+        </tr>
+        <tr>
+          <td><strong>Witnesslog / repairticket</strong></td>
+          <td><span class="status s-done">Default-on</span></td>
+          <td><span class="status s-done">On</span></td>
+          <td><code>/api/witness/status</code> → ready on cohort.</td>
+        </tr>
+        <tr>
+          <td><strong>Storage-proof</strong></td>
+          <td><span class="status s-done">Default-on</span></td>
+          <td><span class="status s-done">On</span></td>
+          <td>Loaded via <code>services.json</code>.</td>
+        </tr>
+        <tr>
+          <td><strong>Shard-store</strong></td>
+          <td><span class="status s-gated">Opt-in (disk)</span></td>
+          <td><span class="status s-done">On (large boxes)</span></td>
+          <td>Enabled on utah / utah-8gb only — not for tiny VPS.</td>
+        </tr>
+        <tr>
+          <td><strong>Service HTTP + client helpers + dash panels</strong></td>
+          <td><span class="status s-progress">In rc.1 code</span></td>
+          <td><span class="status s-gated">Needs rc.2 process</span></td>
+          <td>Tagged but not running fleet-wide; tag was held.</td>
+        </tr>
+        <tr>
+          <td><strong>Blind cells public-test product</strong></td>
+          <td><span class="status s-off">Separate line</span></td>
+          <td><span class="status s-progress">Pilot B pilot</span></td>
+          <td><code>1.0.0-rc.1.public-test.1</code> — not the fleet tag.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 03 TRACKS -->
+  <section id="tracks">
+    <h2><span class="num">03</span>Three tracks (don’t mash the versions)</h2>
+    <p class="lede" style="font-size:1em;margin-top:0">Marketing one-liner when both matter:
+      <strong>“Fleet 0.24.3 utility + Tor cohort · Blind public-test on syd/dal · 0.25 RC held”</strong>
+      — three stories, not one tag.</p>
+
+    <div class="tracks">
+      <div class="track a">
+        <div class="tag">Track A · Fleet</div>
+        <h3>Utility substrate</h3>
+        <p>Channels, systemd boxes, Docker/Umbrel packaging. Today’s live code is <code>v0.24.3</code>.
+           Tag <code>v0.25.0-rc.1</code> was cut for canary then held. Tor + utilities can be enabled on boxes without waiting for 0.25 process.</p>
+      </div>
+      <div class="track b">
+        <div class="tag">Track B · Blind public-test</div>
+        <h3>syd-1 + dal-1</h3>
+        <p>Edge <code>:443</code> + daemon OCI <code>1.0.0-rc.1.public-test.1</code>.
+           Co-located with fleet <code>:9100</code> but <strong>not</strong> the same version.
+           Peerit bind scaffold exists; catalogue <code>bound: false</code>, seed publish off.</p>
+      </div>
+      <div class="track c">
+        <div class="tag">Track C · Later product</div>
+        <h3>Boot-restore → monorepo blind</h3>
+        <p>Blind packages into main, opt-in fleet profile, likely <code>0.26.x</code> story.
+           Not claimed by this release.</p>
+      </div>
+    </div>
+
+    <p>Full chronology: <a href="../LADDER-SHIP-MAP.md"><code>docs/LADDER-SHIP-MAP.md</code></a>
+       · Tor cohort ops: <a href="../FLEET-TOR-COHORT.md"><code>docs/FLEET-TOR-COHORT.md</code></a></p>
+  </section>
+
+  <!-- 04 FLEET -->
+  <section id="fleet">
+    <h2><span class="num">04</span>Fleet state (probed 2026-07-26)</h2>
+
+    <div class="callout blue">
+      <h4>Channel control plane</h4>
+      <p><code>origin/main</code> → <code>fleet/channels.json</code>:
+        <strong>stable = v0.24.3</strong>, <strong>canary = v0.24.3</strong> (hold after rc.1 incident).
+        Updaters read raw GitHub <code>main</code>.</p>
+    </div>
+
+    <h3>Tor + utility cohort</h3>
+    <table>
+      <thead>
+        <tr><th>Box</th><th>Channel</th><th>Disk</th><th>Version</th><th>Tor</th><th>Services (live)</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>utah</strong></td>
+          <td>canary</td>
+          <td>350 GB</td>
+          <td><code>0.24.3</code></td>
+          <td><span class="status s-done">running</span></td>
+          <td class="mono">outboxlog, poker, vrf, arbitration, zk, notify, storage-proof, witnesslog, repairticket, shard-store</td>
+        </tr>
+        <tr>
+          <td><strong>utah-8gb</strong></td>
+          <td>stable</td>
+          <td>960 GB</td>
+          <td><code>0.24.3</code></td>
+          <td><span class="status s-done">running</span></td>
+          <td class="mono">same full utility set</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p><strong>Onion addresses</strong> (from boot logs; treat as operator-private in public posts if you prefer only “Tor-capable” language):</p>
+    <ul>
+      <li>utah → <code class="mono">fspwtbvyjbfihelxqpyu2bdpfu26hsxfm4djrgg4mv6zcmnpbvgpz7id.onion</code></li>
+      <li>utah-8gb → <code class="mono">fagxjurvyggru4eyjcypkf2btxz37q7yinm3m6zvsk2bytexqgiwgpyd.onion</code></li>
+    </ul>
+
+    <h3>Rest of fleet (snapshot)</h3>
+    <table>
+      <thead>
+        <tr><th>Box</th><th>Channel</th><th>Version (probe)</th><th>Tor</th><th>Notes</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>utah-us</td><td>stable</td><td><code>0.24.3</code></td><td><span class="status s-off">off</span></td><td>outboxlog</td></tr>
+        <tr><td>utah-2gb-a</td><td>stable</td><td><code>0.24.3</code></td><td><span class="status s-off">off</span></td><td>minimal services</td></tr>
+        <tr><td>miami</td><td>stable</td><td><code>0.24.3</code></td><td><span class="status s-off">off</span></td><td>outboxlog</td></tr>
+        <tr><td>amsterdam</td><td>stable</td><td><code>0.24.3</code></td><td><span class="status s-off">off</span></td><td>poker bundle</td></tr>
+        <tr><td>sing-1 / sing-2</td><td>stable</td><td><code>0.24.3</code> / mixed</td><td><span class="status s-off">off</span></td><td>small disks</td></tr>
+        <tr><td>sydney (:9100)</td><td>stable</td><td><code>0.24.3</code></td><td><span class="status s-off">off</span></td><td>Fleet utility; Blind PT separate on :443</td></tr>
+        <tr><td>utah-0.5gb / bern / dubai</td><td>canary/stable</td><td><span class="status s-stale">no probe</span></td><td>—</td><td>timeout / SSH issues at probe time</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 05 PEERIT -->
+  <section id="peerit">
+    <h2><span class="num">05</span>Peerit — where bind stands</h2>
+
+    <div class="cards">
+      <div class="card">
+        <p class="label">Bind status</p>
+        <p class="value" style="font-size:1.1em">scaffold_not_live</p>
+        <p class="sub">No seed publish · catalogue slots unbound</p>
+      </div>
+      <div class="card">
+        <p class="label">Claim boundary</p>
+        <p class="value" style="font-size:1.05em">LIVE_PUBLIC_TEST_ONLY</p>
+        <p class="sub">Not GA · not fleet stable · not marketplace</p>
+      </div>
+      <div class="card">
+        <p class="label">Failure domains</p>
+        <p class="value">syd-1 · dal-1</p>
+        <p class="sub">Owner-operated FDs (not independent ops claim)</p>
+      </div>
+      <div class="card">
+        <p class="label">Fleet relation</p>
+        <p class="value" style="font-size:1.05em">Parallel</p>
+        <p class="sub">Does not wait on 0.25 canary · not the same tag</p>
+      </div>
+    </div>
+
+    <h3>Artifacts</h3>
+    <ul>
+      <li><code>02-apps/peerit/config/blind-public-test-bind.scaffold.json</code> — pins + two FD slots + checklist</li>
+      <li><code>02-apps/peerit/docs/BLIND-PUBLIC-TEST-BIND-SCAFFOLD.md</code> — human-readable</li>
+      <li><code>02-apps/peerit/docs/HIVERELAY-0.25.0-rc.1-COMMUNITY-BLURB.md</code> — short Peerit paste</li>
+    </ul>
+
+    <h3>Endpoints (from frozen run evidence — verify before live bind)</h3>
+    <table>
+      <thead><tr><th>FD</th><th>Describe URL</th><th>Fleet port</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>syd-1</td>
+          <td class="mono">https://relay-syd.p2phiverelay.xyz:443/api/blind/v1/describe</td>
+          <td>sydney :9100 (utility HiveRelay)</td>
+        </tr>
+        <tr>
+          <td>dal-1</td>
+          <td class="mono">https://relay-dal.p2phiverelay.xyz:443/api/blind/v1/describe</td>
+          <td>separate Dallas host (phase-2 seat)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout warn">
+      <h4>Peerit bind agent</h4>
+      <p>
+        Another agent is (or was) doing live Peerit binding against those FDs.
+        Scaffold stays honest until DESCRIBE/CELL e2e + owner seed-spec review.
+        Do not set <code>seed_publish: true</code> from this status page alone.
+      </p>
+    </div>
+
+    <h3>How Peerit uses the fleet today</h3>
+    <ul>
+      <li><strong>Messaging / outbox</strong> — outboxlog on utility relays (cohort has peerit namespace).</li>
+      <li><strong>Blind cells</strong> — Track B public-test edge/daemon, not fleet tag.</li>
+      <li><strong>Tor path for apps</strong> — only where Tor cohort is up (utah / utah-8gb); not a Peerit product claim yet.</li>
+    </ul>
+  </section>
+
+  <!-- 06 HONESTY -->
+  <section id="honesty">
+    <h2><span class="num">06</span>Honesty board — say this, not that</h2>
+    <table>
+      <thead><tr><th>OK to say</th><th>Don’t say</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>We cut a <strong>canary prerelease</strong> v0.25.0-rc.1 and documented it; canary is held on 0.24.3 while we fix the tag.</td>
+          <td>Stable fleet is on 0.25.</td>
+        </tr>
+        <tr>
+          <td>Two large relays run <strong>Tor onions + full utility services</strong>.</td>
+          <td>The whole fleet is Tor-hidden.</td>
+        </tr>
+        <tr>
+          <td>Blind public-test is a <strong>parallel pilot</strong> (syd/dal) with a Peerit bind scaffold.</td>
+          <td>0.25 is blind GA / blind is in the fleet tag.</td>
+        </tr>
+        <tr>
+          <td>Utility plugins are on for the cohort via <code>services.json</code>.</td>
+          <td>Every HTTP surface from 0.25 is live (VRF HTTP needs fixed process).</td>
+        </tr>
+        <tr>
+          <td>G5 for public content is impossible — we never claim it.</td>
+          <td>Active-reader resistance on public data.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 07 NEXT -->
+  <section id="next">
+    <h2><span class="num">07</span>Suggested next moves</h2>
+    <ol>
+      <li><strong>Cut <code>v0.25.0-rc.2</code></strong> from <code>feat/service-http-wiring</code> (gateway modules + loader fix) → smoke on one canary → re-point channel.</li>
+      <li><strong>Peerit bind</strong> — finish two-FD e2e; update scaffold <code>bound</code> flags; keep seed publish gated.</li>
+      <li><strong>Optional cohort growth</strong> — Tor + utilities on dubai / bern when reachable; never on tiny boxes first.</li>
+      <li><strong>Notify push</strong> — configure real webpush (or other) provider if OS push is required.</li>
+      <li><strong>Track C</strong> — boot-restore merge remains a later monorepo story.</li>
+    </ol>
+
+    <div class="callout green">
+      <h4>Links</h4>
+      <p>
+        <a href="https://github.com/bigdestiny2/P2P-Hiverelay/releases/tag/v0.25.0-rc.1">GitHub v0.25.0-rc.1</a> ·
+        <a href="../COMMUNITY-UPDATE-0.25.0-rc.1.md">Community update pack</a> ·
+        <a href="../LADDER-SHIP-MAP.md">Ladder ship map</a> ·
+        <a href="../FLEET-TOR-COHORT.md">Tor cohort</a> ·
+        <a href="https://github.com/bigdestiny2/P2P-Hiverelay/blob/feat/service-http-wiring/CHANGELOG.md">CHANGELOG (branch)</a>
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <p><strong>HiveRelay / Blindspark</strong> · status HTML generated 2026-07-26 for operators and Peerit.</p>
+    <p>Source tree: <code>00-core/hiverelay/docs/html/STATUS-RELEASE-FLEET-PEERIT-2026-07-26.html</code>.
+       Probe data is point-in-time; re-check <code>/health</code> and <code>/status</code> before public claims.</p>
+  </footer>
+
+</main>
+</body>
+</html>
