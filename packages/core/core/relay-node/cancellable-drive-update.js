@@ -131,127 +131,28 @@ export async function updateWithTimeout (drive, opts = {}) {
  */
 export async function downloadWithTimeout (drive, path = '/', opts = {}) {
   const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : DEFAULT_DOWNLOAD_TIMEOUT_MS
-  const signal = opts.signal || null
+  // drive.download() throws synchronously if the drive is closing;
+  // let that bubble up so the caller can handle it the same way it
+  // would have without the timeout wrapper.
+  const dl = drive.download(path)
+  const isOldTrackerApi = dl && typeof dl.done === 'function' && typeof dl.destroy === 'function'
 
-  // 2026-06-07 (#28): for hyperdrive 11.x's Promise-shape download API,
-  // we re-implement the download loop here so we can collect every inner
-  // blob.core.download tracker and destroy() them on abort/timeout.
-  // Without this, the orphaned trackers keep the event loop alive after
-  // stop() — fine in production (drives close cleanly via corestore.close
-  // on shutdown), but causes reliability-v2 test runner to hang at the
-  // file-level timeout. The trackers DO eventually settle on their own
-  // (bounded by each file's blob extent) so this is a developer-
-  // experience fix, not a production reliability concern.
-  //
-  // For the old tracker API (hyperdrive 10.x), preserve the prior
-  // single-tracker path — destroy() on the top-level tracker cancels
-  // its inner block requests via hypercore's documented API.
-
-  // Probe: call drive.download(path) once with no opts to detect API shape.
-  // If old API, the result has .done() + .destroy() and we use the
-  // tracker-based path. If new (Promise), we throw away the result and
-  // run our cancellable re-implementation instead.
-  // drive.download() throws synchronously if the drive is closing; let
-  // that bubble up — the caller sees the same error path it would have
-  // without the timeout wrapper.
-  let oldTrackerProbe = null
-  let promiseProbe = null
-  const probe = drive.download(path)
-  if (probe && typeof probe.done === 'function' && typeof probe.destroy === 'function') {
-    oldTrackerProbe = probe
-  } else if (probe && typeof probe.then === 'function') {
-    // New API — we re-do the work below. Detach the orphan Promise so
-    // unhandled rejection warnings don't surface.
-    promiseProbe = probe
-    probe.catch(() => {})
-  }
-
-  if (oldTrackerProbe) {
-    return _runOldTrackerDownload(oldTrackerProbe, timeoutMs, signal)
-  }
-
-  // The #28 re-implementation walks the drive itself (entry/getBlobs/list)
-  // so it can destroy per-blob trackers on abort. A drive that lacks that
-  // surface (hyperdrive fork, test double) can't be walked — fall back to
-  // racing the download() Promise against the timeout/abort, the pre-#28
-  // semantics. Same guarded-getBlobs posture as AppLifecycle._isDriveFullyReplicated.
-  const hasWalkSurface = typeof drive.getBlobs === 'function' &&
-    typeof drive.entry === 'function' && typeof drive.list === 'function'
-  if (!hasWalkSurface) {
-    if (promiseProbe) return _awaitPromiseDownload(promiseProbe, timeoutMs, signal)
-    return // download() returned nothing awaitable; nothing to wait on
-  }
-
-  return _runNewPromiseDownload(drive, path, timeoutMs, signal)
-}
-
-// ─── Fallback: race the bare download() Promise ─────────────────────
-// Used when the drive can't be walked for per-blob trackers. Resolution,
-// rejection, and timeout semantics match the walk path; only inner-tracker
-// cancellation is unavailable (the orphan settles on its own, bounded by
-// the file's blob extent).
-async function _awaitPromiseDownload (promise, timeoutMs, signal) {
   let timer = null
-  let abortHandler = null
-  try {
-    return await new Promise((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error('download timeout')), timeoutMs)
-      if (signal) {
-        if (signal.aborted) {
-          const err = new Error('Aborted')
-          err.name = 'AbortError'
-          reject(err)
-          return
-        }
-        abortHandler = () => {
-          const err = new Error('Aborted')
-          err.name = 'AbortError'
-          reject(err)
-        }
-        signal.addEventListener('abort', abortHandler)
-      }
-      promise.then(resolve, reject)
-    })
-  } finally {
-    if (timer) clearTimeout(timer)
-    if (signal && abortHandler) signal.removeEventListener('abort', abortHandler)
-  }
-}
-
-// ─── Old tracker API (hyperdrive 10.x) ──────────────────────────────
-async function _runOldTrackerDownload (dl, timeoutMs, signal) {
-  let timer = null
-  let abortHandler = null
   let timedOut = false
 
   try {
     return await new Promise((resolve, reject) => {
       timer = setTimeout(() => {
         timedOut = true
-        try { dl.destroy() } catch {}
+        if (isOldTrackerApi) {
+          try { dl.destroy() } catch { /* best-effort */ }
+        }
         reject(new Error('download timeout'))
       }, timeoutMs)
+      // No .unref() — see updateWithTimeout for the brittle-deadlock note.
 
-      if (signal) {
-        if (signal.aborted) {
-          clearTimeout(timer)
-          try { dl.destroy() } catch {}
-          const err = new Error('Aborted')
-          err.name = 'AbortError'
-          reject(err)
-          return
-        }
-        abortHandler = () => {
-          timedOut = true
-          try { dl.destroy() } catch {}
-          const err = new Error('Aborted')
-          err.name = 'AbortError'
-          reject(err)
-        }
-        signal.addEventListener('abort', abortHandler)
-      }
-
-      dl.done().then(
+      const settledPromise = isOldTrackerApi ? dl.done() : dl
+      settledPromise.then(
         () => {
           if (!timedOut) {
             clearTimeout(timer)
@@ -268,106 +169,12 @@ async function _runOldTrackerDownload (dl, timeoutMs, signal) {
     })
   } finally {
     if (timer) clearTimeout(timer)
-    if (signal && abortHandler) signal.removeEventListener('abort', abortHandler)
-    try { dl.destroy() } catch {}
-  }
-}
-
-// ─── New Promise API (hyperdrive 11.x) ──────────────────────────────
-async function _runNewPromiseDownload (drive, path, timeoutMs, signal) {
-  // We re-implement drive.download(path) here so we control the inner
-  // trackers. Mirrors hyperdrive's own implementation (entry vs folder
-  // dispatch, blob extent calculation, allSettled on per-blob trackers)
-  // but exposes the trackers for explicit destroy() on abort/timeout.
-
-  const activeTrackers = []
-  let aborted = false
-  let abortReason = null
-
-  const destroyAll = () => {
-    for (const t of activeTrackers) {
-      try { t.destroy() } catch {}
+    // Defensive: destroy() is idempotent on hyperdrive download trackers.
+    // For Promise-shape (hyperdrive 11.x), there's no tracker to destroy
+    // here — the inner blob.core.download trackers settle naturally.
+    if (isOldTrackerApi) {
+      try { dl.destroy() } catch {}
     }
-  }
-
-  let timer = null
-  let abortHandler = null
-
-  const arm = () => {
-    timer = setTimeout(() => {
-      aborted = true
-      abortReason = new Error('download timeout')
-      destroyAll()
-    }, timeoutMs)
-    if (signal) {
-      if (signal.aborted) {
-        aborted = true
-        abortReason = new Error('Aborted')
-        abortReason.name = 'AbortError'
-        destroyAll()
-        return
-      }
-      abortHandler = () => {
-        aborted = true
-        abortReason = new Error('Aborted')
-        abortReason.name = 'AbortError'
-        destroyAll()
-      }
-      signal.addEventListener('abort', abortHandler)
-    }
-  }
-
-  const disarm = () => {
-    if (timer) clearTimeout(timer)
-    if (signal && abortHandler) signal.removeEventListener('abort', abortHandler)
-  }
-
-  arm()
-
-  try {
-    // Single-file path: drive.entry(path) returns metadata for a leaf.
-    const isFolder = !path || path.endsWith('/')
-    if (!isFolder) {
-      const entry = await drive.entry(path)
-      if (aborted) throw abortReason
-      if (entry) {
-        const b = entry.value && entry.value.blob
-        if (b) {
-          const blobs = await drive.getBlobs()
-          if (aborted) throw abortReason
-          const tracker = blobs.core.download({ start: b.blockOffset, length: b.blockLength })
-          activeTrackers.push(tracker)
-          await tracker.downloaded()
-        }
-      }
-      if (aborted) throw abortReason
-      return
-    }
-
-    // Folder path: walk entries, start a tracker per blob.
-    const blobs = await drive.getBlobs()
-    if (aborted) throw abortReason
-
-    for await (const entry of drive.list(path)) {
-      if (aborted) throw abortReason
-      const b = entry.value && entry.value.blob
-      if (!b) continue
-      const tracker = blobs.core.download({ start: b.blockOffset, length: b.blockLength })
-      activeTrackers.push(tracker)
-    }
-
-    if (aborted) throw abortReason
-
-    // Wait for all trackers; allSettled so a single block-fetch failure
-    // doesn't cascade — matches hyperdrive's own download() behavior.
-    await Promise.allSettled(activeTrackers.map(t => t.downloaded()))
-    if (aborted) throw abortReason
-  } finally {
-    disarm()
-    // Defense in depth: if anything threw mid-walk and we accumulated
-    // trackers but didn't cleanly resolve them, destroy them now so
-    // the inner blob refs release the event loop.
-    if (aborted) destroyAll()
   }
 }
 
@@ -397,36 +204,14 @@ export const DOWNLOAD_TIMEOUT_MS = DEFAULT_DOWNLOAD_TIMEOUT_MS
  */
 export async function getDriveSize (drive, opts = {}) {
   const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 10_000
-  const requireAuthoritative = opts.requireAuthoritative === true
-  const pinSnapshots = opts.pinSnapshots === true
-  const readDriveVersion = () => {
-    const version = drive?.version
-    return Number.isSafeInteger(version) ? version : null
-  }
 
   const metaCore = drive && drive.db && drive.db.core
-  let blobs = drive && drive.blobs
-  if (!blobs && drive && typeof drive.getBlobs === 'function') {
-    let blobsTimer = null
-    try {
-      blobs = await Promise.race([
-        drive.getBlobs(),
-        new Promise((_resolve, reject) => {
-          blobsTimer = setTimeout(() => reject(new Error('get-blobs timeout')), timeoutMs)
-        })
-      ])
-    } catch (err) {
-      if (requireAuthoritative) throw err
-    } finally {
-      if (blobsTimer) clearTimeout(blobsTimer)
-    }
-  }
-  const blobCore = blobs && blobs.core
+  const blobCore = drive && drive.blobs && drive.blobs.core
 
   // Helper to update a raw hypercore with a cancellable timeout.
   // Mirrors updateWithTimeout but for a core (not a drive).
   async function updateCore (core) {
-    if (!core || typeof core.update !== 'function') return false
+    if (!core || typeof core.update !== 'function') return
     const activeRequests = []
     let timer = null
     try {
@@ -441,11 +226,9 @@ export async function getDriveSize (drive, opts = {}) {
           () => { clearTimeout(timer); resolve() },
           (err) => { clearTimeout(timer); reject(err) }
         )
+      }).catch(() => {
+        // Best-effort: partial size info is fine for the caller's decision.
       })
-      return true
-    } catch (err) {
-      if (requireAuthoritative) throw err
-      return false
     } finally {
       if (timer) clearTimeout(timer)
       if (core.replicator && typeof core.replicator.clearRequests === 'function' && activeRequests.length > 0) {
@@ -454,96 +237,14 @@ export async function getDriveSize (drive, opts = {}) {
     }
   }
 
-  function stableSnapshot (core) {
-    if (!core) return { byteLength: 0, length: 0, fork: 0 }
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const forkBefore = Number(core.fork ?? 0)
-      const lengthBefore = Number(core.length)
-      const byteLengthBefore = Number(core.byteLength)
-      const lengthMiddle = Number(core.length)
-      const byteLengthAfter = Number(core.byteLength)
-      const lengthAfter = Number(core.length)
-      const forkAfter = Number(core.fork ?? 0)
-      if (Number.isSafeInteger(lengthBefore) && lengthBefore >= 0 &&
-          Number.isSafeInteger(byteLengthBefore) && byteLengthBefore >= 0 &&
-          Number.isSafeInteger(forkBefore) && forkBefore >= 0 && forkBefore === forkAfter &&
-          lengthBefore === lengthMiddle && lengthMiddle === lengthAfter &&
-          byteLengthBefore === byteLengthAfter) {
-        return { byteLength: byteLengthAfter, length: lengthAfter, fork: forkAfter }
-      }
-    }
-    throw new Error('DRIVE_SIZE_CHANGED_DURING_PROOF')
-  }
-
   // Metadata core size — usually already known after the initial drive.update,
   // but we re-update just in case the caller hasn't done one yet.
-  const metaUpdated = await updateCore(metaCore)
-  // Blob core size — separate update required; drive.update doesn't touch it.
-  const blobUpdated = await updateCore(blobCore)
-  const driveVersionBeforeProof = readDriveVersion()
-  const metaSnapshot = stableSnapshot(metaCore)
-  const blobSnapshot = stableSnapshot(blobCore)
-  const metaBytes = metaSnapshot.byteLength
-  const metaLength = metaSnapshot.length
-  const blobBytes = blobSnapshot.byteLength
-  const blobLength = blobSnapshot.length
+  await updateCore(metaCore)
+  const metaBytes = (metaCore && metaCore.byteLength) || 0
 
-  const totalBytes = metaBytes + blobBytes
-  if (requireAuthoritative && (!metaUpdated || !blobUpdated ||
-      !Number.isSafeInteger(metaBytes) || metaBytes < 0 ||
-      !Number.isSafeInteger(blobBytes) || blobBytes < 0 ||
-      !Number.isSafeInteger(metaLength) || metaLength < 0 ||
-      !Number.isSafeInteger(blobLength) || blobLength < 0 ||
-      !Number.isSafeInteger(totalBytes))) {
-    throw new Error('DRIVE_SIZE_UNRESOLVED')
-  }
-  let metaCoreSnapshot = null
-  let blobCoreSnapshot = null
-  let provedDriveVersion = driveVersionBeforeProof
-  if (pinSnapshots) {
-    try {
-      if (typeof metaCore?.snapshot !== 'function' || typeof blobCore?.snapshot !== 'function') {
-        throw new Error('DRIVE_SNAPSHOT_UNAVAILABLE')
-      }
-      metaCoreSnapshot = metaCore.snapshot({ wait: false })
-      blobCoreSnapshot = blobCore.snapshot({ wait: false })
-      if (typeof metaCoreSnapshot.ready === 'function') await metaCoreSnapshot.ready()
-      if (typeof blobCoreSnapshot.ready === 'function') await blobCoreSnapshot.ready()
-      const pinnedMeta = stableSnapshot(metaCoreSnapshot)
-      const pinnedBlob = stableSnapshot(blobCoreSnapshot)
-      if (pinnedMeta.length !== metaSnapshot.length || pinnedMeta.byteLength !== metaSnapshot.byteLength || pinnedMeta.fork !== metaSnapshot.fork ||
-          pinnedBlob.length !== blobSnapshot.length || pinnedBlob.byteLength !== blobSnapshot.byteLength || pinnedBlob.fork !== blobSnapshot.fork) {
-        throw new Error('DRIVE_SIZE_CHANGED_BEFORE_SNAPSHOT')
-      }
-      const driveVersionAfterProof = readDriveVersion()
-      if (!Number.isSafeInteger(driveVersionBeforeProof) || driveVersionBeforeProof <= 0 ||
-          driveVersionAfterProof !== driveVersionBeforeProof) {
-        throw new Error('DRIVE_VERSION_CHANGED_DURING_PROOF')
-      }
-      provedDriveVersion = driveVersionBeforeProof
-    } catch (err) {
-      if (metaCoreSnapshot) try { await metaCoreSnapshot.close() } catch (_) {}
-      if (blobCoreSnapshot) try { await blobCoreSnapshot.close() } catch (_) {}
-      throw err
-    }
-  } else {
-    const driveVersionAfterProof = readDriveVersion()
-    if (requireAuthoritative && driveVersionBeforeProof !== null && driveVersionAfterProof !== driveVersionBeforeProof) {
-      throw new Error('DRIVE_VERSION_CHANGED_DURING_PROOF')
-    }
-    provedDriveVersion = driveVersionBeforeProof
-  }
-  return {
-    totalBytes,
-    metaBytes,
-    blobBytes,
-    metaLength,
-    blobLength,
-    metaFork: metaSnapshot.fork,
-    blobFork: blobSnapshot.fork,
-    driveVersion: provedDriveVersion,
-    authoritative: metaUpdated && blobUpdated,
-    metaCoreSnapshot,
-    blobCoreSnapshot
-  }
+  // Blob core size — separate update required; drive.update doesn't touch it.
+  await updateCore(blobCore)
+  const blobBytes = (blobCore && blobCore.byteLength) || 0
+
+  return { totalBytes: metaBytes + blobBytes, metaBytes, blobBytes }
 }
