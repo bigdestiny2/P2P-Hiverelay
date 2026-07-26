@@ -18,6 +18,7 @@ import {
   TRANSPORT_SUPPORT,
   blindHealthResultV1,
   blindServiceDescriptorV1,
+  decodeCanonical,
   encodeCanonical,
   resultSignaturePayload,
   serviceDescriptorHash
@@ -48,7 +49,7 @@ import {
   BlindCoreRuntimeAdapter
 } from './core-runtime-adapter.js'
 import { BlindOperationCoordinator } from './coordinator.js'
-import { DescriptorState } from './descriptor-state.js'
+import { DESCRIPTOR_CLOSED_REASON, DescriptorState, DescriptorStateError } from './descriptor-state.js'
 import { READINESS_STATE_KIND, ReadinessCoordinator } from './readiness-coordinator.js'
 import { ResourceBudget } from './resource-budget.js'
 import { BlindDaemon } from './server.js'
@@ -77,7 +78,7 @@ import {
   isVnextPublicTestProfile,
   vnextStoreGenesisExpectedBindings
 } from './production-vnext-profile.js'
-import { TwoSlotManifestStore } from './manifest-store.js'
+import { TwoSlotManifestStore, verifyBlindManifestSnapshot } from './manifest-store.js'
 
 const operationBits = (familyId, operationIds) => operationIds.reduce(
   (bits, operationId) => bits | operationBit(familyId, operationId), 0)
@@ -277,20 +278,215 @@ function vnextManifestFloorAssembled () {
   return true
 }
 
+// Boot-time verified floor restoration (FLEET-DURABILITY-P1-1).
+//
+// The daemon re-validates the full configured descriptor chain from genesis on
+// every boot. Every link carries a bounded wall-clock epoch window, so once
+// the genesis window lapsed an intact relay could no longer restart:
+// activation failed closed 'descriptor is expired' on the historical link even
+// when the chain head was valid and fresh and the store/manifest/WAL were
+// provably intact. Genesis cannot be re-issued (a byte change forks the chain)
+// or dropped (CHAIN_GAP), so the only honest continuation is the verified
+// restore the accepted DescriptorState.restore() semantics define — never a
+// trusted boolean.
+//
+// Boot order (every other fail-closed rule is unchanged):
+//  1. Activate the configured chain exactly as before. Any failure other than
+//     a wall-clock EXPIRED (fork, rollback, chain gap, invalid transition, a
+//     not-yet-valid link) propagates unchanged.
+//  2. Only when activation died on EXPIRED and the assembly requires the
+//     two-slot manifest floor (the vNext profile always does), attempt the
+//     verified restore: load the sealed manifest READ-ONLY under the launch
+//     manifest key and the chain-invariant genesis bindings, require the
+//     persisted descriptor floor to be an EXACT link of the configured chain
+//     (a rolled-back or forked configuration can never contain the floor),
+//     MAC-verify the runtime store binding against the floor link, then
+//     DescriptorState.restore() the chain prefix up to the floor — signature
+//     and continuity/identity verification for every historical link, with
+//     wall-clock freshness superseded by the MAC-verified checkpoint — and
+//     activate() any post-floor suffix links, which DO get the full
+//     issued/expires wall-clock checks.
+//  3. The restored head must be within its window: requireCurrent() closes
+//     EXPIRED/NOT_YET_VALID exactly like plain activation, so an expired HEAD
+//     still fails closed.
+//
+// The allowed case is therefore exactly: a valid, fresh, signature+continuity
+// verified chain head whose descriptor floor is MAC-verified on the configured
+// chain, on a store root bound to the same relay/store/durability/map/fence
+// tuple. A fresh store's first boot has no floor and keeps failing closed on
+// an expired genesis. The restore itself is READ-ONLY on the store: the
+// data-plane recovery integrity is enforced unchanged later in the same boot
+// (engine WAL recovery, the frozen generation floor, the two-slot floor
+// enforcement) before anything serves, and readiness keeps a restored daemon
+// unready until the live recovered store reports fullStoreVerified.
+async function activateVnextBootDescriptorChain ({ descriptorBytes, config, requireManifestFloor }) {
+  const descriptorState = new DescriptorState({ verifySignature: verifyDetached })
+  try {
+    let snapshot
+    for (const bytes of descriptorBytes) snapshot = await descriptorState.activate(bytes)
+    return Object.freeze({ descriptorState, snapshot, restoredFromFloor: false })
+  } catch (error) {
+    if (requireManifestFloor !== true || !(error instanceof DescriptorStateError) ||
+        error.code !== DESCRIPTOR_CLOSED_REASON.EXPIRED) {
+      throw error
+    }
+    return restoreVnextBootDescriptorChain({ descriptorBytes, config })
+  }
+}
+
+// The restore half of the boot order above. Fails closed (RESTORE_UNVERIFIED,
+// BLIND_RUNTIME_MANIFEST_REQUIRED, the manifest store's coded integrity error,
+// or BLIND_RUNTIME_STORE_IDENTITY_MISMATCH) on every deviation from the single
+// allowed case; never mutates the store. Secret hygiene: the manifest key and
+// owner fence hash are consumed (MAC verification) and zeroed here; the
+// manifest store zeroes its internal key copy on close.
+async function restoreVnextBootDescriptorChain ({ descriptorBytes, config }) {
+  let head
+  try {
+    head = decodeCanonical(blindServiceDescriptorV1, descriptorBytes[descriptorBytes.length - 1],
+      { copyBytes: true })
+  } catch {
+    throw new DescriptorStateError(DESCRIPTOR_CLOSED_REASON.RESTORE_UNVERIFIED,
+      'the configured chain head is not canonically decodable for floor restoration')
+  }
+  const manifestKey = await readBoundFile(config.storeManifestKeyFile, {
+    field: 'store manifest key', exactBytes: 32, maximumBytes: 32, secret: true
+  })
+  let ownerFenceTokenHash
+  let manifestStore
+  try {
+    ownerFenceTokenHash = await readBoundFile(config.ownerFenceTokenHashFile, {
+      field: 'owner fence token hash', exactBytes: 32, maximumBytes: 32, secret: true
+    })
+    const controlDirectory = path.join(config.storeRoot, 'control')
+    manifestStore = new TwoSlotManifestStore({
+      controlDirectory,
+      manifestKey,
+      expectedBindings: vnextStoreGenesisExpectedBindings(
+        head, serviceDescriptorHash(descriptorBytes[descriptorBytes.length - 1]),
+        config.mapGeneration, ownerFenceTokenHash)
+    })
+    let sealed
+    try {
+      await manifestStore.open({ validationOnly: true })
+      sealed = await manifestStore.load()
+    } catch (error) {
+      if (error && (error.code === 'ENOENT' ||
+          (error.code === 'RECOVERY_GAP_READ_ONLY' && /no valid manifest slot/.test(error.message)))) {
+        runtimeFailure('BLIND_RUNTIME_MANIFEST_REQUIRED',
+          'an expired-chain boot requires the sealed two-slot store manifest: a fresh store has no floor to restore from')
+      }
+      throw error
+    }
+    const floorSequence = sealed.manifest.descriptorSequenceFloor
+    const floorHash = sealed.manifest.descriptorHashFloor
+    let floorIndex = -1
+    for (let index = 0; index < descriptorBytes.length; index++) {
+      if (b4a.equals(serviceDescriptorHash(descriptorBytes[index]), floorHash)) {
+        floorIndex = index
+        break
+      }
+    }
+    if (floorIndex < 0) {
+      throw new DescriptorStateError(DESCRIPTOR_CLOSED_REASON.RESTORE_UNVERIFIED,
+        'the persisted manifest floor is not a link of the configured chain (rolled-back or forked configuration)')
+    }
+    const floorDescriptor = decodeCanonical(blindServiceDescriptorV1, descriptorBytes[floorIndex],
+      { copyBytes: true })
+    if (floorDescriptor.descriptorSequence !== floorSequence) {
+      throw new DescriptorStateError(DESCRIPTOR_CLOSED_REASON.RESTORE_UNVERIFIED,
+        'the persisted manifest floor sequence does not match its descriptor hash floor')
+    }
+    // The runtime store binding is the root-level MAC over the same
+    // chain-invariant relay/store/durability/map/fence tuple the manifest
+    // seals; it must verify READ-ONLY against the floor link before any
+    // restoration evidence is accepted.
+    const expectedBinding = encodeRuntimeBinding(floorDescriptor, config.mapGeneration,
+      ownerFenceTokenHash, manifestKey)
+    const boundBinding = await readBoundFile(path.join(config.storeRoot, RUNTIME_BINDING_FILE), {
+      field: 'runtime store binding',
+      maximumBytes: RUNTIME_BINDING_BYTES,
+      exactBytes: RUNTIME_BINDING_BYTES,
+      secret: true
+    })
+    if (!timingSafeEqual(boundBinding, expectedBinding)) {
+      runtimeFailure('BLIND_RUNTIME_STORE_IDENTITY_MISMATCH',
+        'store root is bound to another relay/store/durability/map/fence tuple')
+    }
+    const descriptorState = new DescriptorState({
+      verifySignature: verifyDetached,
+      verifyRestoration: async input => {
+        // The restoration evidence: the manifest bytes handed to
+        // DescriptorState.restore() must be the live MAC-verified two-slot
+        // selection of this store's control root (brand check), bound to
+        // exactly the floor tuple the chain restores to. The runtime store
+        // binding was MAC-verified above. The store's data-plane recovery
+        // integrity is verified later in this same boot before serving
+        // (engine WAL recovery + generation floor), and readiness keeps a
+        // restored daemon unready until the live store verifies.
+        let controlPlaneVerified = false
+        try {
+          controlPlaneVerified = verifyBlindManifestSnapshot(sealed, controlDirectory) === true &&
+            b4a.equals(input.canonicalManifestBytes, sealed.bytes) &&
+            input.descriptorSequenceFloor === floorSequence &&
+            b4a.equals(input.descriptorHashFloor, floorHash)
+        } catch {
+          controlPlaneVerified = false
+        }
+        return Object.freeze({
+          verified: controlPlaneVerified,
+          fullStoreVerified: controlPlaneVerified,
+          descriptorSequenceFloor: input.descriptorSequenceFloor,
+          descriptorHashFloor: b4a.from(input.descriptorHashFloor),
+          relayPublicKey: b4a.from(input.relayPublicKey),
+          storeId: b4a.from(input.storeId),
+          durabilityProfileId: input.durabilityProfileId,
+          durabilityContinuityHash: b4a.from(input.durabilityContinuityHash),
+          durabilityProfileHash: b4a.from(input.durabilityProfileHash)
+        })
+      }
+    })
+    await descriptorState.restore({
+      descriptorChainBytes: descriptorBytes.slice(0, floorIndex + 1),
+      manifestBytes: sealed.bytes
+    })
+    for (let index = floorIndex + 1; index < descriptorBytes.length; index++) {
+      await descriptorState.activate(descriptorBytes[index])
+    }
+    return Object.freeze({
+      descriptorState,
+      snapshot: descriptorState.requireCurrent(),
+      restoredFromFloor: true
+    })
+  } finally {
+    if (manifestStore) await manifestStore.close().catch(() => {})
+    manifestKey.fill(0)
+    if (ownerFenceTokenHash) ownerFenceTokenHash.fill(0)
+  }
+}
+
 // Verify the sealed node-scoped material the vNext profile binds to: the
 // genesis+successor descriptor chain (two-slot manifest) activated through the
-// real DescriptorState, the exact signed launch floor, and the
-// profile/descriptor/relay-identity binding. Any forged, missing or mismatched
-// input fails closed. This is the static proof of
-// FINAL_BUILD_PROFILE_LOCAL_BINDING, TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION and
-// DESCRIPTOR_REFRESH_PERSISTED_FLOOR; the assembly re-validates the same chain
-// and additionally persists/restores the floor across restart.
+// real DescriptorState — with the verified floor restore above when a
+// historical link's epoch window has lapsed behind a MAC-verified floor — the
+// exact signed launch floor, and the profile/descriptor/relay-identity
+// binding. Any forged, missing or mismatched input fails closed. This is the
+// static proof of FINAL_BUILD_PROFILE_LOCAL_BINDING,
+// TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION and DESCRIPTOR_REFRESH_PERSISTED_FLOOR;
+// the assembly re-validates the same chain and additionally persists/restores
+// the floor across restart.
 async function verifyVnextSealedMaterialBinding (runtimeConfig) {
   const descriptorBytes = await Promise.all(runtimeConfig.descriptorFiles.map((file, index) =>
     readBoundFile(file, { field: `descriptorFiles[${index}]`, maximumBytes: 16 * 1024 })))
-  const descriptorState = new DescriptorState({ verifySignature: verifyDetached })
-  let snapshot
-  for (const bytes of descriptorBytes) snapshot = await descriptorState.activate(bytes)
+  // The vNext profile always seals a two-slot manifest floor (cli.js sets
+  // requireManifestFloor for it), so an expired historical link may restore
+  // against that floor here exactly as in the serving assembly.
+  const activation = await activateVnextBootDescriptorChain({
+    descriptorBytes,
+    config: runtimeConfig,
+    requireManifestFloor: true
+  })
+  const snapshot = activation.snapshot
   assertDescriptorLaunchFloor(snapshot, runtimeConfig)
   const descriptor = snapshot.descriptor
   if (descriptor.storeLifecycleState !== STORE_LIFECYCLE_STATE.ACTIVE ||
@@ -1344,9 +1540,18 @@ export async function assembleProductionBlindDaemon (options = {}) {
       field: `descriptorFiles[${index}]`,
       maximumBytes: 16 * 1024
     })))
-    const descriptorState = new DescriptorState({ verifySignature: verifyDetached })
-    let descriptorSnapshot
-    for (const bytes of descriptorBytes) descriptorSnapshot = await descriptorState.activate(bytes)
+    // Boot order (FLEET-DURABILITY-P1-1): activate the configured chain; only
+    // when a historical link's window lapsed (EXPIRED) and the manifest floor
+    // is required does the MAC-verified floor restore run — every other
+    // failure keeps failing closed here exactly as before.
+    const activation = await activateVnextBootDescriptorChain({
+      descriptorBytes,
+      config,
+      requireManifestFloor
+    })
+    const descriptorState = activation.descriptorState
+    const descriptorSnapshot = activation.snapshot
+    const descriptorRestoredFromFloor = activation.restoredFromFloor
     assertDescriptorLaunchFloor(descriptorSnapshot, config)
     assertRuntimeDescriptor(descriptorSnapshot, bootstrap, config, cellRuntimeEnabled, inboxRuntimeEnabled,
       coreRuntimeEnabled)
@@ -1860,6 +2065,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
           closed,
           descriptorSequence: descriptorSnapshot.descriptorSequence,
           descriptorHash: b4a.from(descriptorSnapshot.hash),
+          descriptorRestoredFromFloor,
           manifestFloor: manifestFloorState,
           enabledOperationBits: replayStatus == null || replayStatus.ready
             ? enabledOperationBits

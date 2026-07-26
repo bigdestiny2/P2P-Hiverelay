@@ -169,6 +169,48 @@ function compareResourceCostRows (left, right) {
   return 0
 }
 
+// Build one signed chain link with the exact field mutations the historical
+// genesis/successor below carry (endpoint trimmed to the single public
+// endpoint, the sealed admission profile set, the profile-1 durability tuple
+// bound to the real store-format authority). Link 0 keeps the template nonce
+// and null predecessor (the genesis shape assertGenesis requires); link N>0
+// links the complete previous hash and varies its nonce deterministically.
+function vnextChainLink ({
+  parameters, parameterHash, storeFormatHash, operationBits, durabilityProfileId,
+  relayPublicKey, sequence, previousHash, issuedEpoch, expiresEpoch
+}) {
+  const link = descriptorValue({
+    relayPublicKey: b4a.from(relayPublicKey),
+    storeId: b4a.alloc(32, 0x63),
+    enabledOperationBits: operationBits,
+    issuedEpoch,
+    expiresEpoch,
+    capacityBand: 0
+  })
+  link.endpoints = [link.endpoints[0]]
+  link.endpoints[0].endpointId = 1
+  link.endpoints[0].transportId = 1
+  link.endpoints[0].roleBits = PUBLIC_ROLE_BITS
+  link.admissionProfiles = [link.admissionProfiles[0]]
+  link.admissionProfiles[0].profileId = parameters.profileId
+  link.admissionProfiles[0].schemeId = parameters.schemeId
+  link.admissionProfiles[0].conformanceClass = parameters.conformanceClass
+  link.admissionProfiles[0].roleBits = parameters.roleBits
+  link.admissionProfiles[0].parameterHash = b4a.from(parameterHash)
+  link.durability.profileId = durabilityProfileId
+  link.durability.storeFormatMajor = 1
+  link.durability.storeFormatMinor = 2
+  link.durability.storeFormatHash = b4a.from(storeFormatHash)
+  link.build.storeFormatHash = b4a.from(storeFormatHash)
+  if (sequence > 0) {
+    link.descriptorSequence = BigInt(sequence)
+    link.previousDescriptorHash = b4a.from(previousHash)
+    link.descriptorNonce = b4a.alloc(32, 0x63 + sequence)
+  }
+  bindDurability(link)
+  return link
+}
+
 // Build a sealed node-scoped material fixture for the vNext public-test profile
 // under /tmp (never in the repo). The /tmp root is realpath-resolved so the
 // private socket/store paths stay inside the 100-byte portable bound and are
@@ -209,78 +251,58 @@ export async function vnextSealedFixture (options = {}) {
 
   const authorityBytes = await fs.readFile(new URL(
     '../../blind-protocol/hiverelay-blind-store-format-authority-v1.draft.cenc', import.meta.url))
+  const storeFormatHash = hashStoreFormat(authorityBytes)
   const operationBits = options.operationBits == null ? VNEXT_BASELINE_OPERATION_BITS : options.operationBits
-  const genesis = descriptorValue({
-    relayPublicKey: b4a.from(relayPublicKey),
-    storeId: b4a.alloc(32, 0x63),
-    enabledOperationBits: operationBits,
-    issuedEpoch: currentEpoch - 1,
-    expiresEpoch: currentEpoch + 3,
-    capacityBand: 0
-  })
-  genesis.endpoints = [genesis.endpoints[0]]
-  genesis.endpoints[0].endpointId = 1
-  genesis.endpoints[0].transportId = 1
-  genesis.endpoints[0].roleBits = PUBLIC_ROLE_BITS
-  genesis.admissionProfiles = [genesis.admissionProfiles[0]]
-  genesis.admissionProfiles[0].profileId = parameters.profileId
-  genesis.admissionProfiles[0].schemeId = parameters.schemeId
-  genesis.admissionProfiles[0].conformanceClass = parameters.conformanceClass
-  genesis.admissionProfiles[0].roleBits = parameters.roleBits
-  genesis.admissionProfiles[0].parameterHash = b4a.from(parameterHash)
-  genesis.durability.profileId = options.durabilityProfileId == null ? 1 : options.durabilityProfileId
-  genesis.durability.storeFormatMajor = 1
-  genesis.durability.storeFormatMinor = 2
-  genesis.durability.storeFormatHash = hashStoreFormat(authorityBytes)
-  genesis.build.storeFormatHash = b4a.from(genesis.durability.storeFormatHash)
-  bindDurability(genesis)
-  const canonicalGenesis = signCanonical(blindServiceDescriptorV1, genesis,
-    RESULT_SIGNATURE_DOMAIN_ID.DESCRIPTOR, relaySecretKey)
+  const durabilityProfileId = options.durabilityProfileId == null ? 1 : options.durabilityProfileId
+  // The default sealed chain is the historical two-link genesis+successor
+  // pair (windows [-1,+3] and [0,+4] around the fixture epoch), byte-for-byte
+  // as before. A caller may pin exact per-link windows (expired historical
+  // links behind a fresh head) for the boot-restore paths; every link keeps
+  // the same signed shape through vnextChainLink, so no clock seam exists.
+  const chainWindows = options.chainWindows == null
+    ? [[-1, 3], [0, 4]]
+    : options.chainWindows
+  if (!Array.isArray(chainWindows) || chainWindows.length < 1 ||
+      chainWindows.some(window => !Array.isArray(window) || window.length !== 2 ||
+        !Number.isSafeInteger(window[0]) || !Number.isSafeInteger(window[1]))) {
+    throw new TypeError('chainWindows must be [issuedOffset, expiresOffset] integer pairs')
+  }
+  const chainBytes = []
+  const chainHashes = []
+  for (let sequence = 0; sequence < chainWindows.length; sequence++) {
+    const [issuedOffset, expiresOffset] = chainWindows[sequence]
+    const link = vnextChainLink({
+      parameters,
+      parameterHash,
+      storeFormatHash,
+      operationBits,
+      durabilityProfileId,
+      relayPublicKey,
+      sequence,
+      previousHash: sequence === 0 ? null : chainHashes[sequence - 1],
+      issuedEpoch: currentEpoch + issuedOffset,
+      expiresEpoch: currentEpoch + expiresOffset
+    })
+    chainBytes.push(signCanonical(blindServiceDescriptorV1, link,
+      RESULT_SIGNATURE_DOMAIN_ID.DESCRIPTOR, relaySecretKey))
+    chainHashes.push(serviceDescriptorHash(chainBytes[sequence]))
+  }
+  const genesisHash = chainHashes[0]
+  const successorHash = chainHashes[chainHashes.length - 1]
 
-  // Successor descriptor (sequence 1) links the complete genesis hash, forming
-  // the genesis+successor two-slot chain the manifest integration serves.
-  const successor = descriptorValue({
-    relayPublicKey: b4a.from(relayPublicKey),
-    storeId: b4a.alloc(32, 0x63),
-    enabledOperationBits: operationBits,
-    issuedEpoch: currentEpoch,
-    expiresEpoch: currentEpoch + 4,
-    capacityBand: 0
-  })
-  successor.endpoints = [successor.endpoints[0]]
-  successor.endpoints[0].endpointId = 1
-  successor.endpoints[0].transportId = 1
-  successor.endpoints[0].roleBits = PUBLIC_ROLE_BITS
-  successor.admissionProfiles = [successor.admissionProfiles[0]]
-  successor.admissionProfiles[0].profileId = parameters.profileId
-  successor.admissionProfiles[0].schemeId = parameters.schemeId
-  successor.admissionProfiles[0].conformanceClass = parameters.conformanceClass
-  successor.admissionProfiles[0].roleBits = parameters.roleBits
-  successor.admissionProfiles[0].parameterHash = b4a.from(parameterHash)
-  successor.durability.profileId = genesis.durability.profileId
-  successor.durability.storeFormatMajor = 1
-  successor.durability.storeFormatMinor = 2
-  successor.durability.storeFormatHash = b4a.from(genesis.durability.storeFormatHash)
-  successor.build.storeFormatHash = b4a.from(genesis.durability.storeFormatHash)
-  successor.descriptorSequence = 1n
-  successor.previousDescriptorHash = serviceDescriptorHash(canonicalGenesis)
-  successor.descriptorNonce = b4a.alloc(32, 0x64)
-  bindDurability(successor)
-  const canonicalSuccessor = signCanonical(blindServiceDescriptorV1, successor,
-    RESULT_SIGNATURE_DOMAIN_ID.DESCRIPTOR, relaySecretKey)
-  const genesisHash = serviceDescriptorHash(canonicalGenesis)
-  const successorHash = serviceDescriptorHash(canonicalSuccessor)
-
-  const descriptorFile = path.join(root, 'descriptor.bin')
-  const successorDescriptorFile = path.join(root, 'descriptor-successor.bin')
+  const chainFiles = chainBytes.map((bytes, sequence) => path.join(root,
+    options.chainWindows == null
+      ? (sequence === 0 ? 'descriptor.bin' : 'descriptor-successor.bin')
+      : `descriptor-${sequence}.bin`))
+  const descriptorFile = chainFiles[0]
+  const successorDescriptorFile = chainFiles[chainFiles.length - 1]
   const parametersFile = path.join(root, 'admission.bin')
   const secretKeyFile = path.join(root, 'relay-secret.bin')
   const storeManifestKeyFile = path.join(root, 'store-manifest-key.bin')
   const ownerFenceFile = path.join(root, 'owner-fence-hash.bin')
   const inboxCursorKeyFile = path.join(root, 'inbox-cursor-key.bin')
   await Promise.all([
-    privateFile(descriptorFile, canonicalGenesis),
-    privateFile(successorDescriptorFile, canonicalSuccessor),
+    ...chainBytes.map((bytes, sequence) => privateFile(chainFiles[sequence], bytes)),
     privateFile(parametersFile, canonicalParameters),
     privateFile(secretKeyFile, relaySecretKey),
     privateFile(storeManifestKeyFile, b4a.alloc(32, 0x71)),
@@ -311,7 +333,7 @@ export async function vnextSealedFixture (options = {}) {
     HIVERELAY_BLIND_DAEMON_UID: String(uid),
     HIVERELAY_BLIND_DAEMON_GID: String(gid),
     HIVERELAY_BLIND_SHARED_GID: String(gid),
-    HIVERELAY_BLIND_DESCRIPTOR_FILES: `${descriptorFile},${successorDescriptorFile}`,
+    HIVERELAY_BLIND_DESCRIPTOR_FILES: chainFiles.join(','),
     HIVERELAY_BLIND_ADMISSION_PARAMETER_FILES: parametersFile,
     HIVERELAY_BLIND_RELAY_SECRET_KEY_FILE: secretKeyFile,
     HIVERELAY_BLIND_STORE_ROOT: storeRoot,
@@ -322,7 +344,7 @@ export async function vnextSealedFixture (options = {}) {
     HIVERELAY_BLIND_STORE_MANIFEST_KEY_FILE: storeManifestKeyFile,
     HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE: ownerFenceFile,
     HIVERELAY_BLIND_MAP_GENERATION: '1',
-    HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_SEQUENCE: '1',
+    HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_SEQUENCE: String(chainBytes.length - 1),
     HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_HASH: b4a.toString(successorHash, 'hex'),
     HIVERELAY_BLIND_ADMISSION_ADAPTER_SCRIPT_FILE: adapterScriptFile,
     HIVERELAY_BLIND_ADMISSION_ADAPTER_SCRIPT_SHA256: adapterScriptSha256
@@ -353,6 +375,8 @@ export async function vnextSealedFixture (options = {}) {
     genesisHash,
     successorHash,
     descriptorFile,
-    successorDescriptorFile
+    successorDescriptorFile,
+    chainFiles: Object.freeze(chainFiles),
+    chainHashes: Object.freeze(chainHashes)
   })
 }
