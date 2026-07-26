@@ -19,25 +19,302 @@ import { fileURLToPath } from 'url'
 import { createRequire } from 'module'
 import { EventEmitter } from 'events'
 import { DashboardFeed } from './ws-feed.js'
+import { PokerFeed } from './ws-feed-poker.js'
 import { HyperGateway } from '../../gateway/hyper-gateway.js'
-import {
-  AVAILABILITY_CLASSES,
-  CONTENT_TYPES,
-  STORAGE_CLASSES,
-  isValidHexKey,
-  normalizeAvailabilityClass,
-  normalizeContentType,
-  normalizePrivacyTier,
-  normalizeStorageClass
-} from '../constants.js'
-import { buildCapabilityDoc } from '../capability-doc.js'
-import { verifySeedingManifest } from '../seeding-manifest.js'
 import { ERR, formatErr } from '../error-prefixes.js'
 import { SetupWizard } from '../wizard.js'
-import { verifyForkProof } from '../fork-proof-signing.js'
-import { verifySeedRequestSignature } from '../protocol/seed-request.js'
 import { isTransientCoreError, TRANSIENT_RETRY_AFTER_SECONDS } from '../transient-core-errors.js'
-import b4a from 'b4a'
+import {
+  authFailureRoute,
+  escapePrometheusLabelValue,
+  sanitizeAuthFailureRouteChars
+} from './api-auth-failures.js'
+import {
+  constantTimeStringEqual,
+  hasLoopbackHostHeader,
+  hasLoopbackOrigin,
+  isLoopbackLocalRequest
+} from './api-auth-helpers.js'
+import { readJsonBody } from './api-body.js'
+import { buildCorsDecision, getAllowedOrigin } from './api-cors.js'
+import { buildDashboardHtmlResponse, setDashboardSecurityHeaders } from './api-dashboard-html.js'
+import { resolveDashboardGetRoute } from './api-dashboard-routes.js'
+import { buildIndexProxyRouteResponse } from './api-index-proxy.js'
+import { getPostJsonContentTypeProblem } from './api-request.js'
+import {
+  isHyperGatewayRoute,
+  isIndexProxyRoute,
+  isManagementApiRoute,
+  isOutboxLogHttpReadRequest,
+  isOutboxLogHttpRoute,
+  isPokerHttpRoute,
+  isRepairTicketHttpRoute,
+  isShardHttpRoute,
+  isWitnessLogHttpRoute,
+  resolvePokerHttpRoutePolicy
+} from './api-route-mounts.js'
+import { appendVaryHeader, writeJson, writeText } from './api-response.js'
+import {
+  API_RATE_LIMIT_MAX,
+  API_RATE_LIMIT_WINDOW_MS,
+  checkApiRateLimit,
+  checkEndpointRateLimit,
+  clientIpFromRequest,
+  sweepRateLimitMap
+} from './api-rate-limit.js'
+import {
+  resolveConfigUpdateRoute,
+  runConfigUpdateAction
+} from './api-config-update.js'
+import {
+  resolveServiceConfigUpdateRoute,
+  runServiceConfigUpdateAction,
+  serviceConfigPayload
+} from './api-service-config.js'
+import {
+  resolveServiceManagementRoute,
+  runServiceManagementAction
+} from './api-service-management.js'
+import {
+  resolveAIServiceProvider,
+  resolveNotifyServiceProvider,
+  resolveOutboxLogServiceProvider,
+  resolvePokerServiceProvider,
+  resolveRepairTicketServiceProvider,
+  resolveShardServiceProvider,
+  resolveWitnessLogServiceProvider
+} from './api-service-provider.js'
+import {
+  buildServiceReadRoutePayload,
+  resolveServiceReadRoute
+} from './api-service-read.js'
+import {
+  notifyQueryParams,
+  resolveNotifyRoute,
+  runNotifyRouteAction
+} from './api-notify.js'
+import {
+  buildRouterInfoRoutePayload,
+  resolveRouterReadRoute
+} from './api-router-read.js'
+import {
+  buildMetricsRouteResponse,
+  resolveMetricsRoute
+} from './api-metrics.js'
+import {
+  buildStatusRoutePayload,
+  resolveStatusRoute
+} from './api-status-read.js'
+import {
+  buildUsageTelemetryRoutePayload,
+  resolveUsageTelemetryRoute,
+  usageTelemetryPayload
+} from './api-usage-telemetry.js'
+import {
+  buildOverviewRouteResponse,
+  resolveOverviewRoute
+} from './api-overview.js'
+import {
+  buildOperatorTelemetryRoutePayload,
+  resolveOperatorTelemetryRoute
+} from './api-operator-telemetry.js'
+import {
+  buildAccountingReceiptRoutePayload,
+  resolveAccountingReceiptRoute
+} from './api-accounting-receipt.js'
+import {
+  buildPokerHttpAdapterUnavailableResponse,
+  loadPokerHttpAdapterModule,
+  resolvePokerHttpRouteHandler
+} from './api-poker-http-adapter.js'
+import {
+  buildOutboxLogHttpAdapterUnavailableResponse,
+  configuredOutboxLogHttpRateLimit,
+  loadOutboxLogHttpAdapterModule,
+  normalizeOutboxLogHttpRateLimit,
+  outboxLogHttpRateLimitAdapterConfig,
+  resolveOutboxLogHttpAdapter
+} from './api-outboxlog-http-adapter.js'
+import {
+  buildWitnessLogHttpAdapterUnavailableResponse,
+  loadWitnessLogHttpAdapterModule,
+  resolveWitnessLogHttpAdapter
+} from './api-witnesslog-http-adapter.js'
+import {
+  buildRepairTicketHttpAdapterUnavailableResponse,
+  loadRepairTicketHttpAdapterModule,
+  resolveRepairTicketHttpAdapter
+} from './api-repairticket-http-adapter.js'
+import {
+  buildShardHttpAdapterUnavailableResponse,
+  loadShardHttpAdapterModule,
+  resolveShardHttpAdapter
+} from './api-shard-http-adapter.js'
+import {
+  buildCapabilityRoutePayload,
+  resolveCapabilityRoute
+} from './api-capabilities.js'
+import {
+  resolveAIModelManagementRoute,
+  runAIModelManagementRouteAction
+} from './api-ai-models.js'
+import {
+  buildAnchorProofRoutePayload,
+  buildAnchorStatusRoutePayload,
+  buildAnchorStatusRouteContext,
+  resolveAnchorProofRoute,
+  resolveAnchorStatusRoute
+} from './api-anchor-status.js'
+import {
+  buildNetworkStateRoutePayload,
+  buildNetworkStateRouteContext,
+  resolveNetworkStateRoute
+} from './api-network-state.js'
+import {
+  buildSubsidyRoutePayload,
+  resolveSubsidyRoute,
+  updateSubsidyDestination
+} from './api-subsidy.js'
+import {
+  RetrievabilityProofProvider,
+  resolveRetrievabilityProofRoute,
+  runRetrievabilityProofAction
+} from './retrievability-proof.js'
+import {
+  buildLeaseRoutePayload,
+  resolveLeaseRoute,
+  runLeaseConfigAction
+} from './api-lease.js'
+import {
+  buildWizardSnapshotRoutePayload,
+  resolveWizardSnapshotRoute,
+  runWizardAction,
+  wizardActionFromPath
+} from './api-wizard-actions.js'
+import {
+  resolveModeTransportManagementRoute,
+  runModeTransportManagementRouteAction
+} from './api-mode-transport.js'
+import {
+  resolveDevicePairingManagementRoute,
+  runDevicePairingManagementRouteAction
+} from './api-device-pairing.js'
+import {
+  resolveDispatchRoute,
+  runDispatchAction
+} from './api-dispatch.js'
+import {
+  buildPendingCatalogRoutePayload,
+  resolveCatalogManagementRoute,
+  resolvePendingCatalogRoute,
+  runCatalogManagementRouteAction
+} from './api-catalog-management.js'
+import {
+  buildCatalogReadRoutePayload,
+  resolveCatalogReadRoute
+} from './api-catalog-read.js'
+import {
+  buildRegistryStatusRoutePayload,
+  resolveRegistryStatusRoute
+} from './api-registry-status.js'
+import {
+  resolveOperatorCustodyRoute,
+  resolvePublisherCustodyRoute,
+  runOperatorCustodyRouteAction,
+  runPublisherCustodyRouteAction
+} from './api-custody-management.js'
+import {
+  buildCustodyStatusRoutePayload,
+  resolveCustodyStatusRoute
+} from './api-custody-status.js'
+import {
+  buildFederationSnapshotRoutePayload,
+  resolveFederationManagementRoute,
+  resolveFederationSnapshotRoute,
+  runFederationManagementRouteAction
+} from './api-federation-management.js'
+import {
+  resolveSeedPublishRoute,
+  runSeedPublishRouteAction
+} from './api-seed-publish.js'
+import {
+  resolveSeedCoreRoute,
+  runSeedCoreAction
+} from './api-seed-core.js'
+import {
+  resolveUnseedRoute,
+  runOperatorUnseedAction,
+  runPublisherUnseedAction
+} from './api-unseed-actions.js'
+import {
+  authorManifestPubkeyFromPath,
+  buildAuthorManifestFetchRoutePayload,
+  resolveSignedIngressRoute,
+  runAuthorManifestPublishAction,
+  runForkProofPublishAction
+} from './api-signed-ingress.js'
+import {
+  buildForkProofsRoutePayload,
+  resolveForkProofReadRoute
+} from './api-fork-proofs.js'
+import {
+  buildReputationLeaderboardRoutePayload,
+  buildReputationRecordRoutePayload,
+  resolveReputationLeaderboardRoute,
+  resolveReputationRecordRoute
+} from './api-reputation-read.js'
+import {
+  buildHealthResponse,
+  resolveHealthRoute
+} from './api-health.js'
+import {
+  resolveAlertManagementRoute,
+  runAlertManagementRouteAction
+} from './api-alert-management.js'
+import {
+  resolveEvictionPurgeRoute,
+  runEvictionPurgeAction
+} from './api-eviction-purge.js'
+import {
+  resolveDedupReclaimRoute,
+  runDedupReclaimAction
+} from './api-dedup-reclaim.js'
+import {
+  resolveIndexRoomRoute,
+  runIndexRoomAction
+} from './api-index-room.js'
+import {
+  resolveLifecycleManagementRoute,
+  runLifecycleAction
+} from './api-lifecycle-actions.js'
+import {
+  buildGatewayStatsRoutePayload,
+  resolveGatewayStatsRoute
+} from './api-gateway-stats.js'
+import {
+  buildManagementSnapshotRoutePayload,
+  resolveManagementSnapshotRoute
+} from './api-management-snapshots.js'
+import {
+  configPersistFailureResult,
+  persistErrorMessage,
+  wizardPersistFailureResult
+} from './api-persist-failures.js'
+import {
+  buildDelegationRevocationsRoutePayload,
+  resolveDelegationManagementRoute,
+  runDelegationRevokeAction
+} from './api-delegation-management.js'
+import {
+  buildSafeConfigPayload,
+  restoreWizardConfig,
+  snapshotWizardConfig
+} from './api-safe-config.js'
+import {
+  buildPeerStateRoutePayload,
+  resolvePeerStateRoute
+} from './api-peer-state.js'
+import { redactIp } from '../privacy.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -52,56 +329,7 @@ function _getSyncRequire () {
 
 const DEFAULT_PORT = 9100
 
-// Rate limit: 60 requests per minute per IP
-const RATE_LIMIT_WINDOW_MS = 60_000
-const RATE_LIMIT_MAX = 60
-
-// Per-endpoint stricter rate limits. Closes attack 8.1: an attacker
-// on the same Docker host could brute-force the LNbits-key collection
-// endpoint at up to 60 attempts/min under the general limit. These
-// override the general limit for sensitive paths.
-const ENDPOINT_RATE_LIMITS = {
-  '/api/wizard/lnbits': 5, // operator should never need >5 attempts/min
-  '/api/wizard/complete': 10,
-  '/api/wizard/relay-name': 30,
-  '/api/wizard/accept-mode': 30,
-  '/api/wizard/goto': 30,
-  '/api/wizard/reset': 5,
-  '/api/forks/proof': 20, // signed proofs; multiple legitimate publishes may happen but not 60/min
-  // Publisher-signed endpoints — gated by signature, not by API key. Rate
-  // limit per-IP to bound DoS surface from anonymous publishers spending
-  // relay storage/CPU. Numbers chosen to be permissive for legitimate
-  // app workflows while still bounding abuse: a publisher running drop
-  // creation loops at full tilt won't hit 30/min.
-  '/api/v1/seed': 30,
-  '/api/v1/custody/intent': 30
-}
-
-const MAX_DISCOVERY_KEYS = 100
-const PRIVACY_TIER_ERROR = 'privacyTier must be one of: public, local-first, p2p-only'
-const CONTENT_TYPE_ERROR = `type must be one of: ${Array.from(CONTENT_TYPES).join(', ')}`
-const STORAGE_CLASS_ERROR = `storageClass must be one of: ${Array.from(STORAGE_CLASSES).join(', ')}`
-const AVAILABILITY_CLASS_ERROR = `availabilityClass must be one of: ${Array.from(AVAILABILITY_CLASSES).join(', ')}`
 const MANAGEMENT_AUTH_ERROR = 'Unauthorized — management API requires API key or localhost access'
-const LOCAL_ONLY_DISPATCH_ROUTES = new Set([
-  'identity.sign',
-  'identity.verify'
-])
-const AVAILABLE_MODES = [
-  'relay-core',
-  'custody-relay',
-  'public',
-  'standard',
-  'private',
-  'hybrid',
-  'homehive',
-  'seed-only',
-  'relay-only',
-  'stealth',
-  'gateway',
-  'service-operator',
-  'experimental-lab'
-]
 
 export class RelayAPI extends EventEmitter {
   constructor (relayNode, opts = {}) {
@@ -113,25 +341,89 @@ export class RelayAPI extends EventEmitter {
     this.host = opts.apiHost || '0.0.0.0'
     this.corsOrigins = opts.corsOrigins || []
     this.trustProxy = opts.trustProxy || false
+    // When true, the served dashboard/wizard HTML embeds the management
+    // token so the browser UI can authenticate behind a trusted proxy.
+    // See config/default.js `ui.exposeToken` for the security contract.
+    this._uiExposeToken = opts.uiExposeToken || false
+    // Simple mode (Blindspark appliance packaging): /dashboard serves the
+    // single-page blindspark.html and the full operator tabs (network,
+    // payments, calculator, leaderboard, catalog, docs) redirect back to
+    // it. PC operators leave this off for the full multi-tab dashboard.
+    this._uiSimple = opts.uiSimple || false
     this.server = null
 
     // API key for authenticated endpoints (manage, seed, unseed)
     // Read from opts, env var, or generate a random one
     this._apiKey = opts.apiKey || process.env.HIVERELAY_API_KEY || null
 
+    // Operator-provisioned admin credential for the OutboxLog takedown surface
+    // (/api/admin/takedown|restore|takedowns). Separate from _apiKey and from
+    // the browser sync token by design: only an operator who sets this up front
+    // can take content down. When unset the admin surface stays 404
+    // (safe-by-default) — the takedown routes are simply not enabled. Read from
+    // opts, config.outboxlog.adminKey, or the HIVERELAY_OUTBOXLOG_ADMIN_KEY env
+    // var, mirroring how HIVERELAY_API_KEY is wired.
+    this._outboxLogAdminKey = opts.outboxLogAdminKey || process.env.HIVERELAY_OUTBOXLOG_ADMIN_KEY || null
+    // Public OutboxLog data-plane limiter. The established 1200/60s/IP
+    // default remains unless an operator explicitly sets the constructor
+    // option or config.outboxlog.http.rateLimit. Validate synchronously so a
+    // malformed production config fails startup instead of silently disabling
+    // protection or surfacing only on the first browser request.
+    const nodeOutboxRateLimit = configuredOutboxLogHttpRateLimit(relayNode && relayNode.config)
+    this._outboxLogHttpRateLimitOperatorConfigured = opts.outboxLogHttpRateLimit !== undefined || nodeOutboxRateLimit !== undefined
+    const configuredOutboxRateLimit = opts.outboxLogHttpRateLimit !== undefined
+      ? opts.outboxLogHttpRateLimit
+      : nodeOutboxRateLimit
+    this._outboxLogHttpRateLimit = normalizeOutboxLogHttpRateLimit(configuredOutboxRateLimit)
+    this._outboxLogHttpRateLimitAdapterConfig = outboxLogHttpRateLimitAdapterConfig(this._outboxLogHttpRateLimit)
+    this._outboxLogEffectivePublicWriteRateLimit = this._outboxLogHttpRateLimitOperatorConfigured
+      ? this._outboxLogHttpRateLimit
+      : { enabled: true, windowMs: API_RATE_LIMIT_WINDOW_MS, max: API_RATE_LIMIT_MAX }
+
     // Per-IP request counts: ip -> { count, resetAt }
     this._rateLimits = new Map()
+    this._endpointRateLimits = new Map()
     this._rateLimitCleanup = null
+
+    // Auth-failure observability. A 401 from _requireAuth fires before the
+    // request body is parsed, so without these counters a refused publisher
+    // leaves zero server-side trace (surfaced by the 0/5-acceptances
+    // incident where every relay 401'd a /seed pin and nothing was logged).
+    // Counted per normalized route, surfaced on /metrics, warn-logged with
+    // a per-route throttle so a 401 flood can't flood the log.
+    this._authFailures = new Map() // normalized route -> count
+    this._authFailureTotal = 0
+    this._authFailureLogAt = new Map() // normalized route -> last warn ts
     this._dashboardHtml = null
+    this._blindsparkHtml = null
     this._networkHtml = null
     this._docsHtml = null
     this._wizardHtml = null
     this._dashboardFeed = null
+    this._pokerFeed = null
     this._wizard = null // lazily constructed by _getWizard() on first /api/wizard hit
+    this._loadPokerHttpAdapter = opts.loadPokerHttpAdapter || loadPokerHttpAdapterModule
+    this._loadOutboxLogHttpAdapter = opts.loadOutboxLogHttpAdapter || loadOutboxLogHttpAdapterModule
+    this._loadWitnessLogHttpAdapter = opts.loadWitnessLogHttpAdapter || loadWitnessLogHttpAdapterModule
+    this._loadRepairTicketHttpAdapter = opts.loadRepairTicketHttpAdapter || loadRepairTicketHttpAdapterModule
+    this._loadShardHttpAdapter = opts.loadShardHttpAdapter || loadShardHttpAdapterModule
+    this._outboxLogHttpAdapter = null
+    this._outboxLogHttpAdapterSetupFailed = false
+    this._witnessLogHttpAdapter = null
+    this._repairTicketHttpAdapter = null
+    this._shardHttpAdapter = null
+    this._outboxLogHttpAuth = opts.outboxLogHttpAuth || null
+    this._outboxLogHttpAdminAuth = opts.outboxLogHttpAdminAuth || null
+    this._outboxLogHttpState = opts.outboxLogHttpState || null
+    this._witnessLogHttpState = opts.witnessLogHttpState || null
+    this._repairTicketHttpState = opts.repairTicketHttpState || null
+    this._shardHttpState = opts.shardHttpState || null
     this._gateway = new HyperGateway(relayNode, { store: relayNode.store })
+    this._retrievabilityProofProvider = new RetrievabilityProofProvider()
   }
 
   async start () {
+    this._retrievabilityProofProvider.start({ node: this.node })
     this.server = createServer((req, res) => this._handle(req, res))
 
     // Clean stale rate limit entries every 2 minutes. unref so it never
@@ -140,15 +432,8 @@ export class RelayAPI extends EventEmitter {
     // stop()" in a test doesn't hang the Node event loop.
     this._rateLimitCleanup = setInterval(() => {
       const now = Date.now()
-      for (const [ip, entry] of this._rateLimits) {
-        if (now > entry.resetAt) this._rateLimits.delete(ip)
-      }
-      // Also sweep the per-endpoint limiter map.
-      if (this._endpointRateLimits) {
-        for (const [key, entry] of this._endpointRateLimits) {
-          if (now > entry.resetAt) this._endpointRateLimits.delete(key)
-        }
-      }
+      sweepRateLimitMap(this._rateLimits, now)
+      sweepRateLimitMap(this._endpointRateLimits, now)
     }, 120_000)
     if (this._rateLimitCleanup.unref) this._rateLimitCleanup.unref()
 
@@ -162,6 +447,48 @@ export class RelayAPI extends EventEmitter {
         this.node.emit('security-warning', { message: msg })
       }
       console.warn(msg)
+    }
+
+    // With trustProxy on and no API key, the localhost auth fallback is
+    // disabled (it can't be trusted — see _isLocalRequest), so management
+    // and local-only routes are unreachable until a key is set. Tell the
+    // operator explicitly rather than letting them hit silent 401s.
+    if (!this._apiKey && this.trustProxy) {
+      const msg = '[SECURITY WARNING] trustProxy is enabled with no API key. ' +
+        'The localhost auth fallback is disabled in this mode (X-Forwarded-For is spoofable), ' +
+        'so management and local-only endpoints will reject all requests. ' +
+        'Set an API key via HIVERELAY_API_KEY or opts.apiKey.'
+      if (this.node && typeof this.node.emit === 'function') {
+        this.node.emit('security-warning', { message: msg })
+      }
+      console.warn(msg)
+    }
+
+    // exposeToken embeds the management token into served HTML. That is
+    // only safe behind an authenticating proxy with the port unpublished
+    // to the host/LAN — anyone who can load the page can read the token.
+    // Warn loudly, and refuse to expose a token we don't have.
+    if (this._uiExposeToken) {
+      if (!this._apiKey) {
+        // Nothing to embed and management would be unreachable; disable.
+        this._uiExposeToken = false
+        const msg = '[SECURITY WARNING] ui.exposeToken is set but no API key is configured ' +
+          '(no HIVERELAY_API_KEY/apiKey, and $APP_SEED missing or too short to derive one). ' +
+          'Token exposure disabled; the management UI will be localhost-only.'
+        if (this.node && typeof this.node.emit === 'function') {
+          this.node.emit('security-warning', { message: msg })
+        }
+        console.warn(msg)
+      } else {
+        const msg = '[SECURITY NOTICE] ui.exposeToken is enabled — the management token is ' +
+          'embedded in served dashboard/wizard HTML so the UI can authenticate behind a ' +
+          'reverse proxy. Ensure this API port is reachable ONLY through an authenticating ' +
+          'proxy and is NEVER published to the host/LAN.'
+        if (this.node && typeof this.node.emit === 'function') {
+          this.node.emit('security-warning', { message: msg })
+        }
+        console.warn(msg)
+      }
     }
 
     // Retry on EADDRINUSE — when self-heal restarts the node, the previous
@@ -186,6 +513,19 @@ export class RelayAPI extends EventEmitter {
           apiKey: this._apiKey
         })
         this._dashboardFeed.start()
+
+        // Poker table live feed (/api/poker/:table/events). Coexists with the
+        // dashboard feed on the same upgrade event; resolves the running
+        // PokerApp lazily so it serves whether poker is enabled at boot or
+        // toggled on later.
+        this._pokerFeed = new PokerFeed({
+          server: this.server,
+          getPokerApp: () => {
+            const pk = resolvePokerServiceProvider(this.node)
+            return pk.ok ? pk.provider : null
+          }
+        })
+        this._pokerFeed.start()
 
         this.emit('started', { port: this.port })
         resolve()
@@ -214,16 +554,7 @@ export class RelayAPI extends EventEmitter {
   }
 
   _checkRateLimit (ip) {
-    const now = Date.now()
-    let entry = this._rateLimits.get(ip)
-
-    if (!entry || now > entry.resetAt) {
-      entry = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS }
-      this._rateLimits.set(ip, entry)
-    }
-
-    entry.count++
-    return entry.count <= RATE_LIMIT_MAX
+    return checkApiRateLimit(this._rateLimits, ip)
   }
 
   /**
@@ -233,18 +564,7 @@ export class RelayAPI extends EventEmitter {
    * is under the cap.
    */
   _checkEndpointRateLimit (ip, path) {
-    const cap = ENDPOINT_RATE_LIMITS[path]
-    if (!cap) return true // no specific limit; general limiter governs
-    if (!this._endpointRateLimits) this._endpointRateLimits = new Map()
-    const key = path + '\x00' + ip
-    const now = Date.now()
-    let entry = this._endpointRateLimits.get(key)
-    if (!entry || now > entry.resetAt) {
-      entry = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS }
-      this._endpointRateLimits.set(key, entry)
-    }
-    entry.count++
-    return entry.count <= cap
+    return checkEndpointRateLimit(this._endpointRateLimits, ip, path)
   }
 
   /**
@@ -256,8 +576,7 @@ export class RelayAPI extends EventEmitter {
     // If API key is configured, require it
     if (this._apiKey) {
       const auth = req.headers.authorization || ''
-      if (auth === 'Bearer ' + this._apiKey) return true
-      return false
+      return constantTimeStringEqual(auth, 'Bearer ' + this._apiKey)
     }
 
     // No API key configured — restrict to localhost only
@@ -270,26 +589,36 @@ export class RelayAPI extends EventEmitter {
    * Otherwise falls back to socket remoteAddress.
    */
   _getClientIP (req) {
-    if (this.trustProxy) {
-      const xff = req.headers['x-forwarded-for']
-      if (xff) {
-        // X-Forwarded-For may contain multiple IPs; the leftmost is the client
-        const first = xff.split(',')[0].trim()
-        if (first) return first
-      }
-      const realIP = req.headers['x-real-ip']
-      if (realIP) return realIP.trim()
-    }
-    return req.socket.remoteAddress || ''
+    return clientIpFromRequest(req, this.trustProxy)
   }
 
   _isLocalRequest (req) {
-    const ip = this._getClientIP(req)
-    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1'
+    // Authorization must be based on the REAL socket address, never on
+    // _getClientIP — that honors X-Forwarded-For / X-Real-IP, which are
+    // attacker-controlled, so trusting them here let a remote caller spoof
+    // `X-Forwarded-For: 127.0.0.1` and pass every localhost-gated check
+    // (the API-key-less auth fallback AND the dispatch local-only route
+    // gate for identity.sign).
+    //
+    // And when trustProxy is set the relay sits behind a reverse proxy, so
+    // a 127.0.0.1 socket is the proxy forwarding an arbitrary external
+    // request — not a trusted local admin. We cannot distinguish the two,
+    // so localhost is never sufficient for authorization in that mode;
+    // an API key is required (see the startup warning in start()).
+    return isLoopbackLocalRequest(req, this.trustProxy)
+  }
+
+  _hasLoopbackHostHeader (req) {
+    return hasLoopbackHostHeader(req)
+  }
+
+  _hasLoopbackOrigin (req) {
+    return hasLoopbackOrigin(req)
   }
 
   _requireAuth (req, res, errorMessage) {
     if (this._checkAuth(req)) return true
+    this._recordAuthFailure(req)
     // `error` is the legacy human-readable string — kept for back-compat so
     // existing clients string-matching on it don't break. `errorCode` is the
     // machine-readable prefix form new clients should branch
@@ -301,36 +630,83 @@ export class RelayAPI extends EventEmitter {
     return false
   }
 
-  _readPrivacyTier (value, fallback = 'public') {
-    return normalizePrivacyTier(value, fallback)
+  _recordAuthFailure (req) {
+    const route = this._authFailureRoute(req)
+    this._authFailureTotal++
+    if (this._authFailures.has(route) || this._authFailures.size < 64) {
+      this._authFailures.set(route, (this._authFailures.get(route) || 0) + 1)
+    }
+    const now = Date.now()
+    const last = this._authFailureLogAt.get(route) || 0
+    if (now - last >= 10_000) {
+      this._authFailureLogAt.set(route, now)
+      // Real socket address, not _getClientIP — XFF is attacker-controlled
+      // and this line exists precisely to attribute unauthenticated calls.
+      // Redacted to a per-process salted digest: still distinguishes/ correlates
+      // a 401 burst by source, without writing raw IPs to the log.
+      const ip = redactIp((req.socket && req.socket.remoteAddress) || null)
+      const routeCount = this._authFailures.get(route) || this._authFailureTotal
+      console.warn(`[api] 401 auth failure on ${route} from ${ip} (${routeCount} on this route, ${this._authFailureTotal} total)`)
+    }
   }
 
-  _readContentType (value, fallback = 'app') {
-    return normalizeContentType(value, fallback)
+  // Peer-identifier redaction posture for public payloads. Defaults ON; an
+  // operator can expose raw pubkeys via config.privacy.redactPeerIdentifiers=false.
+  _redactPeers () {
+    const privacy = this.node && this.node.config && this.node.config.privacy
+    return !(privacy && privacy.redactPeerIdentifiers === false)
   }
 
-  _readStorageClass (value, fallback = 'persistent') {
-    return normalizeStorageClass(value, fallback)
+  _authFailureRoute (req) {
+    return authFailureRoute(req)
   }
 
-  _readAvailabilityClass (value, fallback = 'always-on') {
-    return normalizeAvailabilityClass(value, fallback)
+  _sanitizeAuthFailureRouteChars (value) {
+    return sanitizeAuthFailureRouteChars(value)
+  }
+
+  _authFailureMetricsLines () {
+    if (this._authFailureTotal === 0) return ''
+    const lines = [
+      '# HELP hiverelay_auth_failures_total Requests rejected with 401 by API-key auth, by route (hex ids collapsed to :hex)',
+      '# TYPE hiverelay_auth_failures_total counter'
+    ]
+    for (const [route, count] of this._authFailures) {
+      const label = escapePrometheusLabelValue(route)
+      lines.push(`hiverelay_auth_failures_total{route="${label}"} ${count}`)
+    }
+    return '\n' + lines.join('\n') + '\n'
   }
 
   async _handle (req, res) {
     const ip = this._getClientIP(req) || '127.0.0.1'
     const requestOrigin = req.headers.origin
+    const requestPath = new URL(req.url, `http://0.0.0.0:${this.port}`).pathname
+    const cors = buildCorsDecision(this.corsOrigins, requestOrigin, requestPath)
 
     // CORS headers on all responses
-    const allowedOrigin = this._getAllowedOrigin(requestOrigin)
-    if (allowedOrigin) {
-      res.setHeader('Access-Control-Allow-Origin', allowedOrigin)
+    if (cors.varyOrigin) {
+      appendVaryHeader(res, 'Origin')
     }
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+    // The outboxlog HTTP surface is a PUBLIC, app-agnostic blind pipe: any browser
+    // or app may call it, auth is a bearer token in a header (no cookies), so it
+    // gets ACAO '*' plus the outboxlog auth headers. The global handler runs BEFORE
+    // the outboxlog adapter, so without this a cross-origin preflight (which only
+    // browsers send — Node clients don't, hence local tests passed) is denied 403 or
+    // returned without X-Pear-Token, breaking every authenticated browser call.
+    // buildCorsDecision already extends the same public treatment to poker.
+    const publicOutboxLog = isOutboxLogHttpRoute(requestPath)
+    if (cors.allowedOrigin || publicOutboxLog) {
+      res.setHeader('Access-Control-Allow-Origin', publicOutboxLog ? '*' : cors.allowedOrigin)
+    }
+    res.setHeader('Access-Control-Allow-Headers', publicOutboxLog
+      ? 'Content-Type, X-Pear-Token, X-Pear-Admin-Token'
+      : 'Content-Type, Authorization')
+    if (publicOutboxLog) res.setHeader('Access-Control-Expose-Headers', 'Retry-After')
 
     // Handle CORS preflight
     if (req.method === 'OPTIONS') {
-      if (requestOrigin && !allowedOrigin) {
+      if (cors.preflightDenied && !publicOutboxLog) {
         return this._json(res, { error: 'CORS origin denied' }, 403)
       }
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
@@ -339,13 +715,19 @@ export class RelayAPI extends EventEmitter {
       return
     }
 
-    // Rate limit check
-    if (!this._checkRateLimit(ip)) {
-      res.setHeader('Content-Type', 'application/json')
-      res.setHeader('Retry-After', '60')
-      res.writeHead(429)
-      res.end(JSON.stringify({ error: 'Too many requests' }) + '\n')
-      return
+    // Rate limit check. OutboxLog reads remain exempt from the coarse budget.
+    // When (and only when) an operator explicitly configures the dedicated
+    // OutboxLog envelope, that validated envelope also becomes authoritative
+    // for its public writes. This lets shared-NAT writers exceed the generic
+    // management API's 60/minute ceiling without changing the existing default.
+    // Admin routes retain the coarse gate in addition to adapter admin auth.
+    const outboxLogRead = publicOutboxLog && isOutboxLogHttpReadRequest(req.method, requestPath)
+    const configuredOutboxLogDataPlane = publicOutboxLog &&
+      !requestPath.startsWith('/api/admin/') &&
+      this._outboxLogHttpRateLimitOperatorConfigured
+    const delegatedOutboxLogRateLimit = outboxLogRead || configuredOutboxLogDataPlane
+    if (!delegatedOutboxLogRateLimit && !this._checkRateLimit(ip)) {
+      return this._json(res, { error: 'Too many requests' }, 429, { 'Retry-After': '60' })
     }
 
     const url = new URL(req.url, `http://0.0.0.0:${this.port}`)
@@ -355,207 +737,348 @@ export class RelayAPI extends EventEmitter {
     // after general limit so the general limit still bounds total
     // request volume.
     if (!this._checkEndpointRateLimit(ip, path)) {
-      res.setHeader('Content-Type', 'application/json')
-      res.setHeader('Retry-After', '60')
-      res.writeHead(429)
-      res.end(JSON.stringify({
+      return this._json(res, {
         error: formatErr('RATE_LIMITED', 'too many requests to ' + path),
         errorCode: 'rate-limited'
-      }) + '\n')
-      return
+      }, 429, { 'Retry-After': '60' })
     }
-
-    res.setHeader('Content-Type', 'application/json')
 
     try {
       // Hyper Gateway — serve Hyperdrive content over HTTP
-      if (path.startsWith('/v1/hyper/')) {
+      if (isHyperGatewayRoute(path)) {
         return this._gateway.handle(req, res)
       }
 
+      const gatewayStatsRoute = resolveGatewayStatsRoute(req.method, path)
+
       // Gateway stats endpoint
-      if (req.method === 'GET' && path === '/api/gateway') {
-        return this._json(res, this._gateway.getStats())
+      if (gatewayStatsRoute && gatewayStatsRoute.kind === 'gateway-stats') {
+        const result = buildGatewayStatsRoutePayload({
+          route: gatewayStatsRoute,
+          gateway: this._gateway
+        })
+        return this._json(res, result.payload, result.status || 200)
+      }
+
+      // Index-layer query routes (§2 of the schema-sheets contract). The index
+      // is hosted out-of-process by the sidecar; the relay reverse-proxies the
+      // read-only GET routes so the desktop hits a single gatewayUrl. Disabled
+      // (501) until config.indexSidecarUrl points at a running sidecar. Only
+      // GET passthrough of method+path+query — no client headers/IP forwarded.
+      if (isIndexProxyRoute(req.method, path)) {
+        return this._proxyIndex(req, res, url)
+      }
+
+      // OutboxLog Peerit bridge mount. The route behavior lives in the optional
+      // p2p-hiveservices package and is covered there; core only resolves the
+      // running provider and lazily delegates the exact token/sync/swarm routes.
+      if (isOutboxLogHttpRoute(path)) {
+        // After an adapter setup failure, spend the generic budget before
+        // retrying provider/import work so repeated failures cannot become an
+        // unthrottled public CPU/logging endpoint. The first resolution attempt
+        // is allowed through: a healthy adapter must not depend on the generic
+        // bucket when an operator configured a dedicated envelope or disabled
+        // it for staging.
+        let fallbackRateLimitConsumed = false
+        if (delegatedOutboxLogRateLimit && this._outboxLogHttpAdapterSetupFailed) {
+          if (!this._checkRateLimit(ip)) {
+            return this._json(res, { error: 'Too many requests' }, 429, { 'Retry-After': '60' })
+          }
+          fallbackRateLimitConsumed = true
+        }
+        const outbox = resolveOutboxLogServiceProvider(this.node)
+        if (!outbox.ok) {
+          // Reads and explicitly configured data-plane requests normally
+          // delegate limiting to the adapter. If the provider is unavailable
+          // there is no adapter gate, so retain the generic fail-safe.
+          if (delegatedOutboxLogRateLimit && !fallbackRateLimitConsumed && !this._checkRateLimit(ip)) {
+            return this._json(res, { error: 'Too many requests' }, 429, { 'Retry-After': '60' })
+          }
+          return this._json(res, { error: outbox.error }, outbox.status)
+        }
+        let adapter
+        try {
+          adapter = await resolveOutboxLogHttpAdapter({
+            cachedAdapter: this._outboxLogHttpAdapter,
+            loadAdapter: this._loadOutboxLogHttpAdapter
+          })
+          this._outboxLogHttpAdapter = adapter
+          if (!this._outboxLogHttpAuth) this._outboxLogHttpAuth = adapter.createOutboxLogTokenAuth()
+          if (!this._outboxLogHttpState) this._outboxLogHttpState = adapter.createOutboxLogHttpState()
+          // Construct the takedown admin auth only when the operator has
+          // provisioned a credential. No credential => adminAuth stays null =>
+          // the adapter serves the /api/admin/* surface as 404 (safe-by-default).
+          if (!this._outboxLogHttpAdminAuth && this._outboxLogAdminKey) {
+            this._outboxLogHttpAdminAuth = adapter.createOutboxLogAdminAuth({ tokens: [this._outboxLogAdminKey] })
+          }
+          this._outboxLogHttpAdapterSetupFailed = false
+        } catch (err) {
+          this._outboxLogHttpAdapterSetupFailed = true
+          // Dynamic adapter setup failed before its dedicated limiter could
+          // run. Fall back to the generic gate rather than leaving delegated
+          // reads or configured data-plane traffic unthrottled.
+          if (delegatedOutboxLogRateLimit && !fallbackRateLimitConsumed && !this._checkRateLimit(ip)) {
+            return this._json(res, { error: 'Too many requests' }, 429, { 'Retry-After': '60' })
+          }
+          const unavailable = buildOutboxLogHttpAdapterUnavailableResponse(err)
+          this.emit(unavailable.event.name, unavailable.event.detail)
+          return this._json(res, unavailable.payload, unavailable.status)
+        }
+        const handled = await adapter.handleOutboxLogRoute(req, res, {
+          outboxLogApp: outbox.provider,
+          auth: this._outboxLogHttpAuth,
+          adminAuth: this._outboxLogHttpAdminAuth,
+          state: this._outboxLogHttpState,
+          rateLimit: this._outboxLogHttpRateLimitAdapterConfig,
+          effectivePublicWriteRateLimit: this._outboxLogEffectivePublicWriteRateLimit,
+          rateLimitSource: this._outboxLogHttpRateLimitOperatorConfigured ? 'operator' : 'relay-api-default',
+          allowOrigin: this.corsOrigins && this.corsOrigins.length ? this.corsOrigins : '*',
+          trustProxy: this.trustProxy
+        })
+        if (handled) return
+        return this._json(res, { error: 'not found' }, 404)
+      }
+
+      // WitnessLog availability observations. Like OutboxLog, the protocol
+      // implementation is optional and service-owned; Core only brokers the
+      // running provider to a lazily-loaded HTTP adapter.
+      if (isWitnessLogHttpRoute(path)) {
+        const witness = resolveWitnessLogServiceProvider(this.node)
+        if (!witness.ok) return this._json(res, { error: witness.error }, witness.status)
+        let adapter
+        try {
+          adapter = await resolveWitnessLogHttpAdapter({
+            cachedAdapter: this._witnessLogHttpAdapter,
+            loadAdapter: this._loadWitnessLogHttpAdapter
+          })
+          this._witnessLogHttpAdapter = adapter
+          if (!this._witnessLogHttpState) this._witnessLogHttpState = adapter.createWitnessLogHttpState()
+        } catch (err) {
+          const unavailable = buildWitnessLogHttpAdapterUnavailableResponse(err)
+          this.emit(unavailable.event.name, unavailable.event.detail)
+          return this._json(res, unavailable.payload, unavailable.status)
+        }
+        const handled = await adapter.handleWitnessLogRoute(req, res, {
+          witnessLogApp: witness.provider,
+          state: this._witnessLogHttpState,
+          allowOrigin: this.corsOrigins && this.corsOrigins.length ? this.corsOrigins : '*',
+          trustProxy: this.trustProxy
+        })
+        if (handled) return
+        return this._json(res, { error: 'not found' }, 404)
+      }
+
+      // RepairTicket self-healing loop. Service-owned records make Core a
+      // broker only: it verifies there is a running provider, then delegates
+      // repair tickets/claims/receipts/closures to the optional adapter.
+      if (isRepairTicketHttpRoute(path)) {
+        const repair = resolveRepairTicketServiceProvider(this.node)
+        if (!repair.ok) return this._json(res, { error: repair.error }, repair.status)
+        let adapter
+        try {
+          adapter = await resolveRepairTicketHttpAdapter({
+            cachedAdapter: this._repairTicketHttpAdapter,
+            loadAdapter: this._loadRepairTicketHttpAdapter
+          })
+          this._repairTicketHttpAdapter = adapter
+          if (!this._repairTicketHttpState) this._repairTicketHttpState = adapter.createRepairTicketHttpState()
+        } catch (err) {
+          const unavailable = buildRepairTicketHttpAdapterUnavailableResponse(err)
+          this.emit(unavailable.event.name, unavailable.event.detail)
+          return this._json(res, unavailable.payload, unavailable.status)
+        }
+        const handled = await adapter.handleRepairTicketRoute(req, res, {
+          repairTicketApp: repair.provider,
+          state: this._repairTicketHttpState,
+          allowOrigin: this.corsOrigins && this.corsOrigins.length ? this.corsOrigins : '*',
+          trustProxy: this.trustProxy
+        })
+        if (handled) return
+        return this._json(res, { error: 'not found' }, 404)
+      }
+
+      // Blind shard store — content-addressed custody-shard dispersal surface.
+      // GET/HEAD/prove/DELETE are content-neutral (opaque bytes by hash); PUT is
+      // authorized by a signed pin the service verifies against a custody intent
+      // this relay has indexed (relayPubkey -> shareIndex -> shard). Core is a
+      // broker: resolve the running provider, then delegate the resolved route to
+      // the optional service-owned adapter. The adapter writes the response.
+      if (isShardHttpRoute(path)) {
+        const shard = resolveShardServiceProvider(this.node)
+        if (!shard.ok) return this._json(res, { error: shard.error }, shard.status)
+        let adapter
+        try {
+          adapter = await resolveShardHttpAdapter({
+            cachedAdapter: this._shardHttpAdapter,
+            loadAdapter: this._loadShardHttpAdapter
+          })
+          this._shardHttpAdapter = adapter
+          if (!this._shardHttpState) this._shardHttpState = adapter.createShardHttpState()
+        } catch (err) {
+          const unavailable = buildShardHttpAdapterUnavailableResponse(err)
+          this.emit(unavailable.event.name, unavailable.event.detail)
+          return this._json(res, unavailable.payload, unavailable.status)
+        }
+        const route = adapter.resolveShardRoute(req.method, path)
+        if (!route) return this._json(res, { error: 'not found' }, 404)
+        const handled = await adapter.handleShardHttp(shard.provider, route, req, res, {
+          url,
+          state: this._shardHttpState,
+          trustProxy: this.trustProxy
+        })
+        if (handled) return
+        return this._json(res, { error: 'not found' }, 404)
+      }
+
+      const usageRoute = resolveUsageTelemetryRoute(req.method, path)
+      const catalogReadRoute = resolveCatalogReadRoute(req.method, path)
+      const serviceReadRoute = resolveServiceReadRoute(req.method, path)
+      const routerReadRoute = resolveRouterReadRoute(req.method, path)
+      const notifyRoute = resolveNotifyRoute(req.method, path)
+
+      // Poker honest-usage measure (operator earnings/activity view) — derived
+      // from the PLAYER-signed log, so the relay cannot forge the count. This is
+      // poker's payout-relevant signal: a per-table append + writer-seat tally,
+      // counts ONLY — never card/hole/payload data. Sits ahead of the generic
+      // /api/poker/* mount so "usage" isn't routed as a table key. Auth-gated.
+      if (usageRoute && usageRoute.kind === 'poker-usage') {
+        if (!this._requireAuth(req, res, usageRoute.authMessage)) return
+        const pk = resolvePokerServiceProvider(this.node)
+        const provider = pk.ok ? pk.provider : this._getPokerApp()
+        if (!provider) return this._json(res, { error: pk.error }, pk.status)
+        const result = buildUsageTelemetryRoutePayload({
+          route: usageRoute,
+          pokerProvider: provider
+        })
+        return this._json(res, result.payload, result.status || 200)
+      }
+
+      // Poker substrate (card-blind SignedLog) — served only when the 'poker'
+      // service is enabled + running. handlePokerRoute does its own CORS + body
+      // parsing, so it sits here ahead of any JSON/body guard. Table CREATE is
+      // gated (anti-DoS on the maxTables cap); GET reads + signed /move stay open
+      // (the signed log entry is itself the authorization). The adapter lives in
+      // the optional p2p-hiveservices package, so it is dynamic-imported — core
+      // stays decoupled when services aren't installed.
+      if (isPokerHttpRoute(path)) {
+        const pk = resolvePokerServiceProvider(this.node)
+        if (!pk.ok) return this._json(res, { error: pk.error }, pk.status)
+        const pokerRoutePolicy = resolvePokerHttpRoutePolicy(req.method, path)
+        if (pokerRoutePolicy && pokerRoutePolicy.authRequired) {
+          if (!this._requireAuth(req, res, pokerRoutePolicy.authMessage)) return
+        }
+        let handlePokerRoute
+        try {
+          handlePokerRoute = await resolvePokerHttpRouteHandler({
+            cachedHandler: this._handlePokerRoute,
+            loadAdapter: this._loadPokerHttpAdapter
+          })
+          this._handlePokerRoute = handlePokerRoute
+        } catch (err) {
+          const unavailable = buildPokerHttpAdapterUnavailableResponse(err)
+          this.emit(unavailable.event.name, unavailable.event.detail)
+          return this._json(res, unavailable.payload, unavailable.status)
+        }
+        const handled = await handlePokerRoute(req, res, { pokerApp: pk.provider })
+        if (handled) return
+        return this._json(res, { error: 'not found' }, 404)
+      }
+
+      // Honest metering — counterparty-signed usage receipts. A consumer submits
+      // a receipt IT signed ("relay R provided <service>.<cap>, N units"); the
+      // relay verifies the signature + dedups replays, then aggregates. Only
+      // verified receipts are payout-eligible — the registry's own per-service
+      // call counters are self-reported (statsVerified:false). POST is open: the
+      // receipt's own signature IS the authorization (rejected unless it
+      // verifies + is non-replayed); it carries no payload/content/IP. The
+      // digest view is auth-gated (operator earnings evidence).
+      if (usageRoute && usageRoute.kind === 'receipt-submit') {
+        let body
+        try { body = await this._readBody(req) } catch { return this._json(res, { error: 'invalid body' }, 400) }
+        const result = buildUsageTelemetryRoutePayload({
+          route: usageRoute,
+          usageLedger: this.node.usageLedger,
+          body
+        })
+        return this._json(res, result.payload, result.status || 200)
+      }
+      if (usageRoute && usageRoute.kind === 'usage-digest') {
+        if (!this._requireAuth(req, res, usageRoute.authMessage)) return
+        const result = buildUsageTelemetryRoutePayload({
+          route: usageRoute,
+          usageLedger: this.node.usageLedger,
+          bandwidthReceiptPayload: this.node._bandwidthReceipt ? this._getUsageTelemetryPayload() : null
+        })
+        return this._json(res, result.payload, result.status || 200)
       }
 
       // Catalog endpoint — typed content catalog (apps, drives, resources, datasets, media)
-      if (req.method === 'GET' && path === '/catalog.json') {
-        const page = Math.max(parseInt(url.searchParams.get('page')) || 1, 1)
-        const pageSize = Math.min(Math.max(parseInt(url.searchParams.get('pageSize')) || 50, 1), 500)
-        const requestedType = url.searchParams.get('type')
-        const parent = url.searchParams.get('parent')
-        const category = url.searchParams.get('category')
-        const normalizedType = requestedType ? this._readContentType(requestedType, null) : null
-        if (requestedType && !normalizedType) {
-          return this._json(res, { error: CONTENT_TYPE_ERROR }, 400)
-        }
-
-        const allEntries = this.node.appRegistry.catalog({
-          redactPrivate: this.node.config?.custody?.redactedCatalog !== false
+      if (catalogReadRoute && catalogReadRoute.kind === 'catalog') {
+        const result = buildCatalogReadRoutePayload({
+          route: catalogReadRoute,
+          node: this.node,
+          url
         })
-        const filtered = allEntries.filter((entry) => {
-          if (normalizedType && entry.type !== normalizedType) return false
-          if (parent && entry.parentKey !== parent) return false
-          if (category) {
-            const categories = Array.isArray(entry.categories) ? entry.categories : []
-            if (!categories.some(c => String(c).toLowerCase() === String(category).toLowerCase())) return false
-          }
-          return true
-        })
-
-        const total = filtered.length
-        const start = (page - 1) * pageSize
-        const paged = filtered.slice(start, start + pageSize)
-        const apps = paged.filter(entry => entry.type === 'app')
-        const drives = paged.filter(entry => entry.type === 'drive' && !entry.parentKey)
-        const resources = paged.filter(entry => entry.type === 'drive' && entry.parentKey)
-        const datasets = paged.filter(entry => entry.type === 'dataset')
-        const media = paged.filter(entry => entry.type === 'media')
-
-        res.setHeader('Content-Type', 'application/json')
-        return this._json(res, {
-          version: 2,
-          name: 'HiveRelay Content Catalog',
-          relayKey: this.node.swarm
-            ? Buffer.from(this.node.swarm.keyPair.publicKey).toString('hex')
-            : null,
-          // Surface region + operator so peer relays' AutoHeal can score
-          // diversity correctly. operator is optional — when absent, peers
-          // fall back to treating each pubkey as its own operator (less
-          // sybil-resistant). Operators set this in node.config.operator.
-          region: (this.node.config?.regions?.[0]) || null,
-          operator: this.node.config?.operator || null,
-          filters: {
-            type: normalizedType,
-            parent: parent || null,
-            category: category || null
-          },
-          pagination: {
-            page,
-            pageSize,
-            total,
-            totalPages: Math.ceil(total / pageSize),
-            hasNext: start + pageSize < total,
-            hasPrev: page > 1
-          },
-          count: {
-            total,
-            apps: filtered.filter(entry => entry.type === 'app').length,
-            drives: filtered.filter(entry => entry.type === 'drive' && !entry.parentKey).length,
-            resources: filtered.filter(entry => entry.type === 'drive' && entry.parentKey).length,
-            datasets: filtered.filter(entry => entry.type === 'dataset').length,
-            media: filtered.filter(entry => entry.type === 'media').length
-          },
-          // apps remains for backward compatibility with existing catalog clients.
-          apps,
-          drives,
-          resources,
-          datasets,
-          media,
-          entries: paged,
-          // Per-relay local catalog model: declare which other relays this
-          // operator has chosen to follow / mirror so clients can reason about
-          // where content came from and which other catalogs to also query.
-          federation: this.node.federation ? this.node.federation.snapshot() : null,
-          acceptMode: this.node._resolveAcceptMode ? this.node._resolveAcceptMode() : null
-        })
+        return this._json(res, result.payload, result.status || 200)
       }
 
       // GET routes
       if (req.method === 'GET') {
-        if (path === '/health') {
-          return this._json(res, {
-            ok: true,
-            uptime: this.node.metrics ? this.node.metrics.getSummary().uptime : null,
-            running: this.node.running
+        const peerStateRoute = resolvePeerStateRoute(req.method, path)
+        const healthRoute = resolveHealthRoute(req.method, path)
+        const statusRoute = resolveStatusRoute(req.method, path)
+        const metricsRoute = resolveMetricsRoute(req.method, path)
+        const wizardSnapshotRoute = resolveWizardSnapshotRoute(req.method, path)
+
+        if (healthRoute && healthRoute.kind === 'health') {
+          // v0.8.28 (#27): include disk status in the health payload.
+          // When config.diskHealthGate=true AND disk.status='critical',
+          // return 503 so load balancers / uptime monitors can drain
+          // traffic away from a relay that's about to run out of disk.
+          // Default behavior unchanged (still returns 200 even on
+          // critical) to preserve existing operator expectations.
+          const result = buildHealthResponse({
+            node: this.node,
+            version: this._relayVersion()
           })
+          return this._json(res, result.payload, result.status)
         }
 
-        if (path === '/status') {
-          return this._json(res, this.node.getStats())
+        if (statusRoute && statusRoute.kind === 'status') {
+          const result = buildStatusRoutePayload({
+            route: statusRoute,
+            node: this.node
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/metrics') {
-          if (this.node.metrics) {
-            res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-            res.writeHead(200)
-            res.end(this.node.metrics.toPrometheus())
-            return
-          }
-          return this._json(res, { error: 'Metrics not enabled' }, 503)
+        if (metricsRoute && metricsRoute.kind === 'metrics') {
+          const result = buildMetricsRouteResponse({
+            metrics: this.node.metrics,
+            authFailureLines: this._authFailureMetricsLines()
+          })
+          if (!result.ok) return this._json(res, result.payload, result.status || 503)
+          return writeText(res, result.text, result.status || 200)
         }
 
-        if (path === '/peers') {
-          const peers = []
-          if (this.node.swarm) {
-            for (const conn of this.node.swarm.connections) {
-              peers.push({
-                remotePublicKey: conn.remotePublicKey ? Buffer.from(conn.remotePublicKey).toString('hex') : null
-              })
-            }
-          }
-          return this._json(res, { count: peers.length, peers })
+        if (peerStateRoute && peerStateRoute.kind === 'legacy-peer-list') {
+          const result = buildPeerStateRoutePayload({
+            route: peerStateRoute,
+            swarm: this.node.swarm,
+            redact: this._redactPeers()
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // --- Dashboard endpoints ---
+        const dashboardRoute = await this._resolveDashboardGetRoute(req, path)
+        if (dashboardRoute) return this._sendDashboardGetRoute(res, dashboardRoute)
 
-        if (path === '/dashboard') {
-          return this._serveDashboard(res, '_dashboardHtml', 'index.html')
-        }
-
-        // First-run setup wizard UI. Localhost-only because the form
-        // collects secrets (LNbits admin key); the JSON endpoints
-        // /api/wizard/* enforce the same restriction.
-        if (path === '/wizard') {
-          if (!this._isLocalRequest(req)) {
-            res.setHeader('Content-Type', 'text/plain')
-            res.writeHead(403)
-            res.end('Wizard is localhost-only.\n')
-            return
-          }
-          return this._serveDashboard(res, '_wizardHtml', 'wizard.html')
-        }
-
-        // Smart root route: send freshly-installed users to the wizard,
-        // returning operators to the dashboard. Uses HTTP 302 so browser
-        // refreshes don't get cached.
-        if (path === '/') {
-          const wizard = await this._getWizard()
-          const target = wizard.isComplete() ? '/dashboard' : '/wizard'
-          res.setHeader('Location', target)
-          res.writeHead(302)
-          res.end()
-          return
-        }
-
-        if (path === '/network') {
-          return this._serveDashboard(res, '_networkHtml', 'network.html')
-        }
-
-        if (path === '/docs') {
-          return this._serveDashboard(res, '_docsHtml', 'docs.html')
-        }
-
-        if (path === '/payments') {
-          return this._serveDashboard(res, '_paymentsHtml', 'payments.html')
-        }
-
-        if (path === '/calculator') {
-          return this._serveDashboard(res, '_calculatorHtml', 'calculator.html')
-        }
-
-        if (path === '/leaderboard') {
-          return this._serveDashboard(res, '_leaderboardHtml', 'leaderboard.html')
-        }
-
-        if (path === '/catalog') {
-          return this._serveDashboard(res, '_catalogHtml', 'catalog.html')
-        }
-
-        if (path === '/api/health-detail') {
-          const healthStatus = this.node.getHealthStatus()
-          const actions = this.node.selfHeal ? this.node.selfHeal.getActions() : []
-          return this._json(res, { ...healthStatus, actions })
+        const operatorTelemetryRoute = resolveOperatorTelemetryRoute(req.method, path)
+        if (operatorTelemetryRoute && operatorTelemetryRoute.kind === 'health-detail') {
+          if (!this._requireAuth(req, res, operatorTelemetryRoute.authMessage)) return
+          const result = buildOperatorTelemetryRoutePayload({ route: operatorTelemetryRoute, node: this.node, url })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // Capability advertisement — served at /.well-known/hiverelay.json so
@@ -563,193 +1086,175 @@ export class RelayAPI extends EventEmitter {
         // policy, fees, features) without speaking Hypercore first. Also
         // mirrored at /api/capabilities for convenience. Both responses are
         // identical and cheap (<1ms to build).
-        if (path === '/.well-known/hiverelay.json' || path === '/api/capabilities') {
-          const doc = buildCapabilityDoc({
-            relay: this.node,
+        const capabilityRoute = resolveCapabilityRoute(req.method, path)
+        if (capabilityRoute && capabilityRoute.kind === 'capability-doc') {
+          const result = buildCapabilityRoutePayload({
+            node: this.node,
             version: this._relayVersion(),
             runtime: 'node'
           })
-          res.setHeader('Cache-Control', 'public, max-age=60')
-          return this._json(res, doc)
+          return this._json(res, result.payload, result.status || 200, result.headers || null)
         }
 
         // Author seeding manifest fetch. Clients GET this to discover which
         // relays an author uses for seeding. Returns 404 if we haven't cached
         // a manifest for this author — that's a normal state, not an error.
-        const authorMatch = path.match(/^\/api\/authors\/([0-9a-f]{64})\/seeding\.json$/i)
-        if (authorMatch) {
-          if (!this.node.manifestStore) {
-            return this._json(res, { error: formatErr('UNSUPPORTED', 'manifest store not initialized') }, 503)
-          }
-          const manifest = this.node.manifestStore.get(authorMatch[1])
-          if (!manifest) {
-            return this._json(res, { error: formatErr('NOT_FOUND', 'no seeding manifest for this author') }, 404)
-          }
-          res.setHeader('Cache-Control', 'public, max-age=30')
-          return this._json(res, manifest)
+        const authorPubkey = authorManifestPubkeyFromPath(path)
+        if (authorPubkey) {
+          const result = buildAuthorManifestFetchRoutePayload({
+            manifestStore: this.node.manifestStore,
+            path
+          })
+          return this._json(res, result.payload, result.status || 200, result.headers || null)
         }
 
-        // Fork-proof gossip — public list of signed observer
-        // attestations this relay has accepted. Federation peers pull
-        // this to merge into their own ForkDetector. Capped at 200
-        // entries per response. Each entry is the SIGNED envelope so
-        // pulling peers can re-verify the observer signature.
-        //
-        // Note: bare ForkDetector records (locally-detected via
-        // Hypercore truncate events) are NOT included here — they
-        // weren't signed by an observer (they're our own observation,
-        // and there's no separate "observer" identity to attest with
-        // until we wrap them in a signed envelope on emit). A future
-        // version will sign locally-detected proofs with the relay's
-        // identity key automatically.
-        if (path === '/api/forks/proofs') {
-          if (!this.node.forkDetector) {
-            return this._json(res, { schemaVersion: 1, proofs: [] })
-          }
-          // Currently we only have the raw records on the server side;
-          // expose them in a forward-compatible shape (proofs array
-          // is what M2 will populate with signed envelopes once
-          // local-detection auto-signing ships).
-          const records = this.node.forkDetector.list().slice(0, 200)
-          res.setHeader('Cache-Control', 'public, max-age=30')
-          return this._json(res, { schemaVersion: 1, proofs: records })
+        const forkProofReadRoute = resolveForkProofReadRoute(req.method, path)
+        if (forkProofReadRoute && forkProofReadRoute.kind === 'fork-proof-list') {
+          const result = buildForkProofsRoutePayload({
+            route: forkProofReadRoute,
+            forkDetector: this.node.forkDetector
+          })
+          return this._json(res, result.payload, result.status || 200, result.headers || null)
         }
 
         // First-run setup wizard — serves the current state machine. The
         // dashboard checks `isComplete` on load and either renders the
-        // wizard or the main UI. Localhost-only by design (the wizard
-        // accepts secrets like LNbits admin keys).
-        if (path === '/api/wizard') {
-          if (!this._isLocalRequest(req)) {
-            return this._json(res, { error: formatErr('NOT_ALLOWED', 'wizard is localhost-only') }, 403)
-          }
-          const wizard = await this._getWizard()
-          return this._json(res, wizard.snapshot())
+        // wizard or the main UI. Auth: API key (bearer) or localhost. In
+        // exposeToken mode the UI supplies the embedded token; without a
+        // key configured this reduces to the original localhost-only gate.
+        if (wizardSnapshotRoute && wizardSnapshotRoute.kind === 'wizard-snapshot') {
+          if (!this._requireAuth(req, res, wizardSnapshotRoute.authMessage)) return
+          const result = await buildWizardSnapshotRoutePayload({
+            route: wizardSnapshotRoute,
+            getWizard: () => this._getWizard()
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/alerts') {
-          if (!this.node.alertManager) {
-            return this._json(res, { enabled: false, total: 0, offset: 0, limit: 0, items: [] })
-          }
-          const offset = parseInt(url.searchParams.get('offset')) || 0
-          const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit')) || 50, 1), 500)
-          const severity = url.searchParams.get('severity') || undefined
-          const typeFilter = url.searchParams.get('type') || undefined
-          const logOut = this.node.alertManager.getLog({ offset, limit, severity, type: typeFilter })
-          return this._json(res, { enabled: true, ...logOut })
+        // Largest measured drives — operator visibility for storage
+        // triage and the input for manual purges. Management auth.
+        if (operatorTelemetryRoute && operatorTelemetryRoute.kind === 'storage-top') {
+          if (!this._requireAuth(req, res, operatorTelemetryRoute.authMessage)) return
+          const result = buildOperatorTelemetryRoutePayload({ route: operatorTelemetryRoute, node: this.node, url })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/auto-heal') {
+        const accountingReceiptRoute = resolveAccountingReceiptRoute(req.method, path)
+        if (accountingReceiptRoute && accountingReceiptRoute.kind === 'receipt') {
+          if (!this._requireAuth(req, res, accountingReceiptRoute.authMessage)) return
+          const result = await buildAccountingReceiptRoutePayload({
+            route: accountingReceiptRoute,
+            node: this.node,
+            url
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        // Operator subsidy status (Phase 1). Accrued ESTIMATE + payout
+        // destination — operator-private, so management auth (bearer or
+        // localhost), same gate as the wizard. {enabled:false} when the
+        // subsidy is off so the dashboard card knows to stay hidden.
+        const subsidyRoute = resolveSubsidyRoute(req.method, path)
+        if (subsidyRoute && subsidyRoute.kind === 'status') {
+          if (!this._requireAuth(req, res, subsidyRoute.authMessage)) return
+          const result = buildSubsidyRoutePayload({
+            route: subsidyRoute,
+            config: this.node.config,
+            subsidyAccrual: this.node.subsidyAccrual
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        // Paid pin-lease status (operator-facing). {enabled:false} when off so
+        // the dashboard card stays hidden. activeLeases is counted live from
+        // the registry (entries currently under a paid, unexpired lease).
+        const leaseRoute = resolveLeaseRoute(req.method, path)
+        if (leaseRoute && leaseRoute.kind === 'status') {
+          if (!this._checkAuth(req)) {
+            return this._json(res, { error: formatErr('NOT_ALLOWED', leaseRoute.authMessage) }, 403)
+          }
+          const result = buildLeaseRoutePayload({
+            route: leaseRoute,
+            leaseManager: this.node.leaseManager,
+            appRegistry: this.node.appRegistry
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        // Signed subsidy claim export — what the Phase-2 coordinator
+        // fetches (and independently verifies) to dispatch payouts.
+        if (subsidyRoute && subsidyRoute.kind === 'claim') {
+          if (!this._requireAuth(req, res, subsidyRoute.authMessage)) return
+          const result = buildSubsidyRoutePayload({
+            route: subsidyRoute,
+            subsidyAccrual: this.node.subsidyAccrual
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        const alertRoute = resolveAlertManagementRoute(req.method, path)
+        if (alertRoute && alertRoute.kind === 'log') {
+          if (!this._requireAuth(req, res, alertRoute.authMessage)) return
+          const result = runAlertManagementRouteAction({
+            route: alertRoute,
+            alertManager: this.node.alertManager,
+            url
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        if (operatorTelemetryRoute && operatorTelemetryRoute.kind === 'auto-heal') {
           // Read-only operator telemetry. Surfaces the AutoHeal scheduler's
           // current view of archive-tier drives + which ones are below
           // diversity threshold + per-drive backoff state. Useful for the
           // dashboard, ops monitoring, and debugging recruitment decisions.
-          if (!this.node.autoHeal) {
-            return this._json(res, { enabled: false, reason: 'AutoHeal not enabled in config' })
-          }
-          return this._json(res, this.node.autoHeal.snapshot())
+          if (!this._requireAuth(req, res, operatorTelemetryRoute.authMessage)) return
+          const result = buildOperatorTelemetryRoutePayload({ route: operatorTelemetryRoute, node: this.node, url })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/overview') {
-          const stats = this.node.getStats()
-          const mem = process.memoryUsage()
-          const uptimeMs = this.node.metrics ? Date.now() - this.node.metrics.startedAt : 0
-          const hours = Math.round(uptimeMs / 3600000 * 100) / 100
-          const days = Math.floor(uptimeMs / 86400000)
-          const h = Math.floor((uptimeMs % 86400000) / 3600000)
-          const m = Math.floor((uptimeMs % 3600000) / 60000)
-          const parts = []
-          if (days > 0) parts.push(`${days}d`)
-          if (h > 0) parts.push(`${h}h`)
-          parts.push(`${m}m`)
-
-          const config = this.node.config || {}
-          const maxStorage = config.maxStorageBytes || 5368709120
-          const bytesStored = stats.seeder ? stats.seeder.totalBytesStored : 0
-          const reputationSummary = this.node.reputation
-            ? {
-                trackedRelays: Object.keys(this.node.reputation.export()).length,
-                topRelay: (() => {
-                  const lb = this.node.reputation.getLeaderboard(1)
-                  return lb.length ? lb[0] : null
-                })()
-              }
-            : null
-          const bandwidthSummary = this.node._bandwidthReceipt
-            ? {
-                totalProvenBytes: this.node._bandwidthReceipt.getTotalProvenBandwidth(),
-                receiptsIssued: this.node._bandwidthReceipt._issuedReceipts ? this.node._bandwidthReceipt._issuedReceipts.length : 0
-              }
-            : null
-          const registrySummary = this.node.seedingRegistry
-            ? {
-                running: this.node.seedingRegistry.running,
-                autoAccept: this.node.config.registryAutoAccept !== false
-              }
-            : null
-          const gatewayStats = this._gateway ? this._gateway.getStats() : null
-
-          return this._json(res, {
-            uptime: { ms: uptimeMs, hours, human: parts.join(' ') },
-            publicKey: stats.publicKey,
-            region: (config.regions && config.regions[0]) || null,
-            connections: stats.connections,
-            seededApps: stats.seededApps,
-            storage: {
-              used: bytesStored,
-              max: maxStorage,
-              pct: maxStorage > 0 ? Math.round(bytesStored / maxStorage * 10000) / 10000 : 0
-            },
-            relay: stats.relay || { activeCircuits: 0, totalCircuitsServed: 0, totalBytesRelayed: 0 },
-            seeder: stats.seeder || { coresSeeded: 0, totalBytesStored: 0, totalBytesServed: 0 },
-            memory: { heapUsed: mem.heapUsed, rss: mem.rss },
-            errors: this.node.metrics ? this.node.metrics._errorCount : 0,
-            reputation: reputationSummary,
-            tor: this.node.torTransport ? this.node.torTransport.getInfo() : null,
-            holesailKey: this.node.holesailTransport ? this.node.holesailTransport.connectionKey : null,
-            health: this.node.getHealthStatus(),
-            bandwidth: bandwidthSummary,
-            registry: registrySummary,
-            gateway: gatewayStats
+        const overviewRoute = resolveOverviewRoute(req.method, path)
+        if (overviewRoute && overviewRoute.kind === 'overview') {
+          // Unauthenticated like /status — redact transport secrets unless
+          // the caller is authenticated.
+          const authed = this._checkAuth(req)
+          const result = buildOverviewRouteResponse({
+            route: overviewRoute,
+            node: this.node,
+            authed,
+            memory: process.memoryUsage(),
+            gateway: this._gateway
           })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/history') {
-          if (!this.node.metrics) {
-            return this._json(res, { error: 'Metrics not enabled' }, 503)
+        if (operatorTelemetryRoute && operatorTelemetryRoute.kind === 'history') {
+          if (!this._requireAuth(req, res, operatorTelemetryRoute.authMessage)) return
+          const result = buildOperatorTelemetryRoutePayload({ route: operatorTelemetryRoute, node: this.node, url })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        if (catalogReadRoute && catalogReadRoute.kind === 'legacy-type') {
+          const result = buildCatalogReadRoutePayload({
+            route: catalogReadRoute,
+            node: this.node,
+            url
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        const custodyStatusRoute = resolveCustodyStatusRoute(req.method, path)
+        if (custodyStatusRoute && custodyStatusRoute.kind === 'custody-status') {
+          const result = buildCustodyStatusRoutePayload({
+            path,
+            url,
+            registry: this.node.seedingRegistry,
+            disabled: this._custodyApiDisabled()
+          })
+          if (result.requiresAuth) {
+            if (!this._requireAuth(req, res, result.authMessage)) return
           }
-          const minutes = parseInt(url.searchParams.get('minutes')) || 60
-          const cutoff = Date.now() - (minutes * 60_000)
-          const snapshots = this.node.metrics.snapshots
-            .filter(s => s.timestamp >= cutoff)
-          return this._json(res, snapshots)
-        }
-
-        if (path === '/api/apps') {
-          const apps = this.node.appRegistry.catalog({
-            redactPrivate: this.node.config?.custody?.redactedCatalog !== false
-          }).filter(entry => entry.type === 'app')
-          return this._json(res, apps)
-        }
-
-        if (path === '/api/drives') {
-          const drives = this.node.appRegistry.catalog({
-            redactPrivate: this.node.config?.custody?.redactedCatalog !== false
-          }).filter(entry => entry.type === 'drive')
-          return this._json(res, drives)
-        }
-
-        if (req.method === 'GET' && path.startsWith('/api/custody/') && path.endsWith('/status')) {
-          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
-          const intentId = path.slice('/api/custody/'.length, -'/status'.length)
-          if (!isValidHexKey(intentId, 64)) return this._json(res, { error: 'intentId must be 64 hex characters' }, 400)
-          const status = this.node.seedingRegistry.getCustodyStatus(intentId)
-          const detailed = url.searchParams.get('detailed') === '1' || url.searchParams.get('detailed') === 'true'
-          if (detailed) {
-            if (!this._requireAuth(req, res, 'Unauthorized — API key required for detailed custody status')) return
-            return this._json(res, status)
-          }
-          return this._json(res, this._redactCustodyStatus(status))
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // Anchor proof — signed attestation for a single drive. Returns
@@ -765,241 +1270,187 @@ export class RelayAPI extends EventEmitter {
         //             utf8('hiverelay-anchor-proof-v1') || appKey ||
         //             uint64(version) || uint64(attestedAt) ||
         //             uint8(anchored ? 1 : 0)
-        if (path.startsWith('/api/anchors/') && path.endsWith('/proof')) {
-          const appKey = path.slice('/api/anchors/'.length, -'/proof'.length)
-          if (!isValidHexKey(appKey)) {
-            return this._json(res, { error: 'invalid appKey' }, 400)
-          }
-          try {
-            const proof = await this.node.createAnchorProof(appKey)
-            return this._json(res, proof)
-          } catch (err) {
-            const code = /invalid appKey/.test(err.message) ? 400 : 503
-            return this._json(res, { error: err.message || 'proof generation failed' }, code)
-          }
+        const anchorProofRoute = resolveAnchorProofRoute(req.method, path)
+        if (anchorProofRoute && anchorProofRoute.kind === 'anchor-proof') {
+          const result = await buildAnchorProofRoutePayload({
+            node: this.node,
+            path
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // Anchor status — distinguishes "we accepted seeding" from "we
         // actually have replicated blocks." Operators + clients can use
         // this to detect ghost entries that need re-replication.
-        if (path === '/api/anchors') {
-          if (!this.node.appRegistry || typeof this.node.appRegistry.anchorStats !== 'function') {
-            return this._json(res, { error: 'anchor stats unavailable' }, 503)
-          }
-          const stats = this.node.appRegistry.anchorStats()
-          const detailedQuery = url.searchParams.get('detailed')
-          let entries = null
-          if (detailedQuery === '1' || detailedQuery === 'true') {
-            entries = this.node.appRegistry.catalog().map(e => ({
-              appKey: e.appKey,
-              type: e.type,
-              anchored: e.anchored,
-              anchoredAt: e.anchoredAt,
-              anchoredLength: e.anchoredLength
-            }))
-          }
-          return this._json(res, { ...stats, lastCheckedAt: this.node._lastAnchorCheckAt || null, entries })
-        }
-
-        if (path === '/api/peers') {
-          const peers = []
-          const now = Date.now()
-          if (this.node.swarm) {
-            for (const conn of this.node.swarm.connections) {
-              const entry = this.node.connections.get(conn)
-              const peerPubkey = conn.remotePublicKey ? Buffer.from(conn.remotePublicKey).toString('hex') : null
-              const peerData = {
-                remotePublicKey: peerPubkey,
-                type: conn.type || null,
-                connectedFor: entry ? now - entry.lastActivity : null
-              }
-              if (peerPubkey && this.node.reputation) {
-                const record = this.node.reputation.getRecord(peerPubkey)
-                peerData.reputation = record || null
-              }
-              peers.push(peerData)
-            }
-          }
-          return this._json(res, { count: peers.length, peers })
-        }
-
-        if (path === '/api/network') {
-          if (!this.node.networkDiscovery) {
-            return this._json(res, { error: 'Network discovery not running' }, 503)
-          }
-          return this._json(res, this.node.networkDiscovery.getNetworkState())
-        }
-
-        if (path === '/api/registry/pending' || path === '/api/manage/catalog/pending') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for ' + path)) return
-          const pending = []
-          for (const [appKey, entry] of this.node._pendingRequests) {
-            pending.push({ appKey, ...entry })
-          }
-          return this._json(res, {
-            count: pending.length,
-            mode: this.node._resolveAcceptMode ? this.node._resolveAcceptMode() : null,
-            requests: pending
+        const anchorStatusRoute = resolveAnchorStatusRoute(req.method, path)
+        if (anchorStatusRoute && anchorStatusRoute.kind === 'anchor-status') {
+          const route = buildAnchorStatusRouteContext(url)
+          if (route.requiresAuth && !this._requireAuth(req, res, 'Unauthorized — API key required for detailed anchor status')) return
+          const result = buildAnchorStatusRoutePayload({
+            route: anchorStatusRoute,
+            context: route,
+            appRegistry: this.node.appRegistry,
+            lastCheckedAt: this.node._lastAnchorCheckAt || null
           })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/manage/federation') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/federation')) return
-          if (!this.node.federation) return this._json(res, { error: 'Federation not initialized' }, 503)
-          return this._json(res, this.node.federation.snapshot())
-        }
-
-        if (path === '/api/manage/delegation/revocations') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/delegation/revocations')) return
-          const list = this.node.listRevocations ? this.node.listRevocations() : []
-          return this._json(res, { count: list.length, revocations: list })
-        }
-
-        if (path === '/api/registry') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/registry')) return
-          if (!this.node.seedingRegistry) {
-            return this._json(res, { error: 'Registry not running' }, 503)
-          }
-          const requests = await this.node.seedingRegistry.getActiveRequests()
-          const enriched = []
-          for (const req of requests) {
-            const relays = await this.node.seedingRegistry.getRelaysForApp(req.appKey)
-            enriched.push({
-              ...req,
-              acceptedRelays: relays.length,
-              relays: relays.map(r => ({ pubkey: r.relayPubkey, region: r.region }))
-            })
-          }
-          return this._json(res, {
-            key: this.node.seedingRegistry.key
-              ? Buffer.from(this.node.seedingRegistry.key).toString('hex')
-              : null,
-            activeRequests: enriched.length,
-            requests: enriched
+        if (peerStateRoute && peerStateRoute.kind === 'peer-list') {
+          const result = buildPeerStateRoutePayload({
+            route: peerStateRoute,
+            swarm: this.node.swarm,
+            connections: this.node.connections,
+            reputation: this.node.reputation,
+            redact: this._redactPeers()
           })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/reputation') {
-          const leaderboard = this.node.reputation ? this.node.reputation.getLeaderboard(100) : []
-          return this._json(res, leaderboard)
+        const networkStateRoute = resolveNetworkStateRoute(req.method, path)
+        if (networkStateRoute && networkStateRoute.kind === 'network-state') {
+          const route = buildNetworkStateRouteContext(url)
+          if (route.requiresAuth && !this._requireAuth(req, res, 'Unauthorized — API key required for detailed network state')) return
+          const result = buildNetworkStateRoutePayload({
+            route: networkStateRoute,
+            context: route,
+            networkDiscovery: this.node.networkDiscovery
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path.startsWith('/api/reputation/')) {
-          const pubkey = path.slice('/api/reputation/'.length)
-          if (!pubkey || !/^[0-9a-f]{64}$/.test(pubkey)) {
-            return this._json(res, { error: 'Invalid pubkey' }, 400)
-          }
-          if (!this.node.reputation) return this._json(res, null)
-          const record = this.node.reputation.getRecord(pubkey)
-          return this._json(res, record)
+        const pendingCatalogRoute = resolvePendingCatalogRoute(req.method, path)
+        if (pendingCatalogRoute && pendingCatalogRoute.kind === 'pending-catalog') {
+          if (!this._requireAuth(req, res, pendingCatalogRoute.authMessage)) return
+          const result = buildPendingCatalogRoutePayload({
+            route: pendingCatalogRoute,
+            pendingRequests: this.node._pendingRequests,
+            resolveAcceptMode: this.node._resolveAcceptMode
+              ? () => this.node._resolveAcceptMode()
+              : null
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        const federationSnapshotRoute = resolveFederationSnapshotRoute(req.method, path)
+        if (federationSnapshotRoute && federationSnapshotRoute.kind === 'federation-snapshot') {
+          if (!this._requireAuth(req, res, federationSnapshotRoute.authMessage)) return
+          const result = buildFederationSnapshotRoutePayload({
+            route: federationSnapshotRoute,
+            federation: this.node.federation,
+            disabled: this._federationApiDisabled()
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        const delegationRoute = resolveDelegationManagementRoute(req.method, path)
+        if (delegationRoute && delegationRoute.kind === 'list') {
+          if (!this._requireAuth(req, res, delegationRoute.authMessage)) return
+          const result = buildDelegationRevocationsRoutePayload({
+            route: delegationRoute,
+            listRevocations: this.node.listRevocations ? () => this.node.listRevocations() : null
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        const registryStatusRoute = resolveRegistryStatusRoute(req.method, path)
+        if (registryStatusRoute && registryStatusRoute.kind === 'registry-status') {
+          if (!this._requireAuth(req, res, registryStatusRoute.authMessage)) return
+          const result = await buildRegistryStatusRoutePayload({
+            route: registryStatusRoute,
+            registry: this.node.seedingRegistry
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        const reputationLeaderboardRoute = resolveReputationLeaderboardRoute(req.method, path)
+        if (reputationLeaderboardRoute && reputationLeaderboardRoute.kind === 'reputation-leaderboard') {
+          const result = buildReputationLeaderboardRoutePayload({
+            route: reputationLeaderboardRoute,
+            reputation: this.node.reputation
+          })
+          return this._json(res, result.payload, result.status || 200, result.headers || null)
+        }
+
+        const reputationRecordRoute = resolveReputationRecordRoute(req.method, path)
+        if (reputationRecordRoute && reputationRecordRoute.kind === 'reputation-record') {
+          const result = buildReputationRecordRoutePayload({
+            reputation: this.node.reputation,
+            path
+          })
+          return this._json(res, result.payload, result.status || 200, result.headers || null)
         }
       }
 
       // ─── Services & Router ───
-      if (req.method === 'GET' && path === '/api/v1/services') {
-        if (!this.node.serviceRegistry) {
-          return this._json(res, { error: 'Services not enabled' }, 503)
-        }
-        return this._json(res, {
-          services: this.node.serviceRegistry.catalog(),
-          count: this.node.serviceRegistry.services.size
+      if (serviceReadRoute && serviceReadRoute.kind === 'service-catalog') {
+        const result = buildServiceReadRoutePayload({
+          route: serviceReadRoute,
+          registry: this.node.serviceRegistry
         })
+        return this._json(res, result.payload, result.status || 200, result.headers || null)
       }
 
-      if (req.method === 'GET' && path === '/api/v1/router') {
-        if (!this.node.router) {
-          return this._json(res, { error: 'Router not enabled' }, 503)
-        }
-        const pubsubInfo = this.node.router.pubsub
-          ? {
-              topics: this.node.router.pubsub.topics?.() || []
-            }
-          : null
-        return this._json(res, {
-          routes: this.node.router.routes().length,
-          pubsub: pubsubInfo
+      if (routerReadRoute && routerReadRoute.kind === 'router-info') {
+        const result = buildRouterInfoRoutePayload({
+          route: routerReadRoute,
+          router: this.node.router
         })
+        return this._json(res, result.payload, result.status || 200, result.headers || null)
+      }
+
+      if (notifyRoute && !notifyRoute.management && req.method === 'GET') {
+        const result = await runNotifyRouteAction({
+          route: notifyRoute,
+          providerResult: resolveNotifyServiceProvider(this.node),
+          body: notifyQueryParams(url)
+        })
+        return this._json(res, result.payload, result.status || 200, result.headers || null)
       }
 
       // ─── Content-Type validation for POST requests ─────────────────
-      if (req.method === 'POST') {
-        const contentType = req.headers['content-type'] || ''
-        const contentLength = req.headers['content-length']
-        const isEmptyBody = contentLength === '0' || contentLength === undefined
-        if (contentType && !contentType.includes('application/json')) {
-          return this._json(res, { error: 'Content-Type must be application/json' }, 400)
-        }
-        if (!contentType && !isEmptyBody) {
-          return this._json(res, { error: 'Content-Type must be application/json' }, 400)
-        }
+      const contentTypeProblem = getPostJsonContentTypeProblem(req)
+      if (contentTypeProblem) {
+        if (contentTypeProblem.close) res.shouldKeepAlive = false
+        return this._json(res, { error: contentTypeProblem.error }, 400, contentTypeProblem.close ? { Connection: 'close' } : null)
       }
 
-      if (req.method === 'POST' && path === '/api/v1/dispatch') {
-        if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/v1/dispatch')) return
-        if (!this.node.router) {
-          return this._json(res, { error: 'Router not enabled' }, 503)
-        }
+      const dispatchRoute = resolveDispatchRoute(req.method, path)
+      if (dispatchRoute && dispatchRoute.kind === 'dispatch') {
+        if (!this._requireAuth(req, res, dispatchRoute.authMessage)) return
         const body = await this._readBody(req)
-        if (!body.route || typeof body.route !== 'string') {
-          return this._json(res, { error: 'route required (e.g. "ai.infer", "zk.commit")' }, 400)
-        }
-
-        const isLocalRequest = this._isLocalRequest(req)
-        if (LOCAL_ONLY_DISPATCH_ROUTES.has(body.route) && !isLocalRequest) {
-          return this._json(res, { error: `ACCESS_DENIED: ${body.route} is local-only` }, 403)
-        }
-
-        const routeAccess = this.node.router.getRouteAccess
-          ? this.node.router.getRouteAccess(body.route)
-          : null
-        const routeRole = isLocalRequest
-          ? 'local'
-          : (routeAccess === 'relay-admin' ? 'relay-admin' : 'authenticated-user')
-        try {
-          const result = await this.node.router.dispatch(body.route, body.params || {}, {
-            transport: 'http',
-            caller: 'remote',
-            role: routeRole,
-            authenticated: true
-          })
-          return this._json(res, { ok: true, result })
-        } catch (err) {
-          return this._json(res, { error: err.message }, 400)
-        }
+        const result = await runDispatchAction({
+          body,
+          router: this.node.router,
+          isLocalRequest: this._isLocalRequest(req)
+        })
+        return this._json(res, result.payload, result.status || 200)
       }
 
       // POST routes
       if (req.method === 'POST') {
         const body = await this._readBody(req)
 
+        if (notifyRoute && !notifyRoute.management) {
+          const result = await runNotifyRouteAction({
+            route: notifyRoute,
+            providerResult: resolveNotifyServiceProvider(this.node),
+            body
+          })
+          return this._json(res, result.payload, result.status || 200, result.headers || null)
+        }
+
         // Seeding manifest publish. Any signed, verified manifest is
         // accepted — no API key required, because the signature on the
         // manifest IS the authorization. Unsigned or tampered manifests
         // are rejected at the signature-verification step below.
-        if (path === '/api/authors/seeding.json') {
-          if (!this.node.manifestStore) {
-            return this._json(res, { error: formatErr('UNSUPPORTED', 'manifest store not initialized') }, 503)
-          }
-          if (!body || typeof body !== 'object') {
-            return this._json(res, { error: formatErr('BAD_REQUEST', 'manifest required') }, 400)
-          }
-          // Double-check signature before even touching the store (defence in
-          // depth — the store also verifies, but failing fast here avoids
-          // log noise for obvious garbage).
-          const check = verifySeedingManifest(body)
-          if (!check.valid) {
-            return this._json(res, { error: formatErr('BAD_REQUEST', 'invalid manifest: ' + check.reason) }, 400)
-          }
-          const result = this.node.manifestStore.put(body)
-          if (!result.ok) {
-            // 'stale' is a normal outcome (client has an older copy); 409 Conflict.
-            const status = /stale/.test(result.reason) ? 409 : 400
-            return this._json(res, { error: formatErr('BAD_REQUEST', result.reason) }, status)
-          }
-          try { await this.node.manifestStore.save() } catch (err) {
-            return this._json(res, { error: formatErr('UNSUPPORTED', 'manifest persist failed: ' + err.message) }, 500)
-          }
-          return this._json(res, { ok: true, pubkey: check.pubkey, replaced: result.replaced })
+        const signedIngressRoute = resolveSignedIngressRoute(req.method, path)
+        if (signedIngressRoute && signedIngressRoute.kind === 'author-manifest-publish') {
+          const result = await runAuthorManifestPublishAction({
+            body,
+            manifestStore: this.node.manifestStore,
+            emit: (...args) => this.emit(...args)
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // Fork-proof gossip — receive a fork proof from a federation
@@ -1009,559 +1460,255 @@ export class RelayAPI extends EventEmitter {
         // every cross-network fork proof MUST be signed by the
         // observer's identity key. Unsigned proofs accepted via this
         // endpoint would let any anonymous actor flood quarantines.
-        if (path === '/api/forks/proof') {
-          if (!this.node.forkDetector) {
-            return this._json(res, { error: formatErr('UNSUPPORTED', 'fork detector not initialized') }, 503)
-          }
-          if (!body || typeof body !== 'object') {
-            return this._json(res, { error: formatErr('BAD_REQUEST', 'fork proof body required') }, 400)
-          }
-          // Body must be a SIGNED envelope: { version, proof, observer }
-          const verify = verifyForkProof(body)
-          if (!verify.valid) {
-            return this._json(res, { error: formatErr('BAD_REQUEST', 'invalid signed proof: ' + verify.reason) }, 400)
-          }
-          const result = this.node.forkDetector.report({
-            hypercoreKey: body.proof.hypercoreKey,
-            blockIndex: body.proof.blockIndex,
-            evidenceA: body.proof.evidence[0],
-            evidenceB: body.proof.evidence[1]
+        if (signedIngressRoute && signedIngressRoute.kind === 'fork-proof-publish') {
+          const result = await runForkProofPublishAction({
+            body,
+            forkDetector: this.node.forkDetector,
+            emit: (...args) => this.emit(...args)
           })
-          if (!result.ok) {
-            return this._json(res, { error: formatErr('BAD_REQUEST', result.reason) }, 400)
-          }
-          try { await this.node.forkDetector.save() } catch (err) {
-            return this._json(res, { error: formatErr('UNSUPPORTED', 'fork persist failed: ' + err.message) }, 500)
-          }
-          return this._json(res, { ok: true, recordExists: result.recordExists, observer: verify.observer })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        // Core proof-of-retrievability endpoint. This mirrors the
+        // storage-proof service request shape but does not require the optional
+        // services runtime, which lets the RelayKernel profile expose proof as
+        // a kernel-compatible surface while legacy service clients continue to
+        // work unchanged.
+        const retrievabilityProofRoute = resolveRetrievabilityProofRoute(req.method, path)
+        if (retrievabilityProofRoute && retrievabilityProofRoute.kind === 'retrievability-proof') {
+          const result = await runRetrievabilityProofAction({
+            body,
+            provider: this._retrievabilityProofProvider,
+            context: { caller: ip }
+          })
+          return this._json(res, result.payload, result.status || 200, result.headers || null)
         }
 
         // ─── Setup wizard mutations ──────────────────────────────
-        // Five POST endpoints, one per wizard step. All localhost-only —
-        // they accept secrets (LNbits admin key) and configuration
-        // changes. The dashboard front-end calls these in sequence as
-        // the operator clicks through the 5-step flow.
-        if (path.startsWith('/api/wizard/')) {
-          if (!this._isLocalRequest(req)) {
-            return this._json(res, { error: formatErr('NOT_ALLOWED', 'wizard is localhost-only') }, 403)
-          }
-          const wizard = await this._getWizard()
-          const action = path.slice('/api/wizard/'.length)
-          let result
-          switch (action) {
-            case 'goto':
-              result = wizard.goToStep({ step: body && body.step })
-              break
-            case 'relay-name':
-              result = wizard.setRelayName({ relayName: body && body.relayName })
-              break
-            case 'lnbits':
-              // setLNbitsCredentials is async — it encrypts the admin key
-              // before storing. Failures here are reported as bad-request
-              // since the most likely cause is a bad input (missing key)
-              // rather than internal failure.
-              result = await wizard.setLNbitsCredentials({ url: body && body.url, adminKey: body && body.adminKey })
-              break
-            case 'accept-mode':
-              result = wizard.setAcceptMode({ acceptMode: body && body.acceptMode })
-              break
-            case 'complete':
-              result = wizard.complete()
-              // Apply wizard answers to the live config. toConfig() is
-              // async because it decrypts the LNbits admin key.
-              if (result.ok && this.node._applyWizardConfig) {
-                try {
-                  const cfg = await wizard.toConfig()
-                  this.node._applyWizardConfig(cfg)
-                } catch (err) {
-                  return this._json(res, { error: formatErr('UNSUPPORTED', 'failed to apply wizard config: ' + err.message) }, 500)
-                }
-              }
-              break
-            case 'reset':
-              wizard.reset()
-              result = { ok: true, state: wizard.snapshot() }
-              break
-            default:
-              return this._json(res, { error: formatErr('NOT_FOUND', 'unknown wizard action: ' + action) }, 404)
-          }
-          if (!result.ok) {
-            return this._json(res, { error: formatErr('BAD_REQUEST', result.reason) }, 400)
-          }
-          try { await wizard.save() } catch (err) {
-            return this._json(res, { error: formatErr('UNSUPPORTED', 'wizard persist failed: ' + err.message) }, 500)
-          }
-          return this._json(res, { ok: true, state: result.state })
-        }
-
-        if (path === '/api/alerts/test') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/alerts/test')) return
-          if (!this.node.alertManager) {
-            return this._json(res, { error: 'AlertManager not enabled' }, 503)
-          }
-          const dispatched = this.node.alertManager.fireTest({
-            severity: body && typeof body.severity === 'string' ? body.severity : undefined,
-            message: body && typeof body.message === 'string' ? body.message : undefined,
-            details: body && typeof body.details === 'object' ? body.details : undefined
+        // POST endpoints, one per wizard step. Auth: API key (bearer) or
+        // localhost — _checkAuth reduces to the original localhost-only
+        // gate when no key is configured (fleet/default), and accepts the
+        // embedded token in exposeToken mode. The dashboard front-end
+        // calls these in sequence as the operator clicks through the flow.
+        // Operator-initiated purge (option-A disk recovery): unseed +
+        // purge cores from disk + tombstone for each listed appKey,
+        // bypassing the sweep's replica-census gates — the authenticated
+        // operator is the authorization. Archive-tier and custody-bound
+        // entries are refused per-key (durability promises hold even
+        // here); results are reported per key, not all-or-nothing.
+        const evictionPurgeRoute = resolveEvictionPurgeRoute(req.method, path)
+        if (evictionPurgeRoute && evictionPurgeRoute.kind === 'eviction-purge') {
+          if (!this._requireAuth(req, res, evictionPurgeRoute.authMessage)) return
+          const result = await runEvictionPurgeAction({
+            body,
+            node: this.node
           })
-          return this._json(res, { ok: true, dispatched })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/seed') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /seed')) return
-          if (!body.appKey) return this._json(res, { error: 'appKey required' }, 400)
-          if (!isValidHexKey(body.appKey, 64)) return this._json(res, { error: 'appKey must be 64 hex characters' }, 400)
-          const seedOpts = body.opts || {}
-          const requestedType = body.type !== undefined ? body.type : seedOpts.type
-          if (requestedType !== undefined) {
-            const type = this._readContentType(requestedType, null)
-            if (!type) return this._json(res, { error: CONTENT_TYPE_ERROR }, 400)
-            seedOpts.type = type
+        // Single-relay dedup: reclaim disk held by SUPERSEDED app versions
+        // (stale versions the catalog already hides). DRY-RUN by default —
+        // pass { execute: true } to actually unseed+tombstone+purge. Gated by
+        // assertPurgable (archive/custody/lease are never reclaimed even when
+        // superseded). Distinct from /api/eviction/purge (operator names keys)
+        // and from the disk-pressure sweep (fleet over-replication).
+        const dedupReclaimRoute = resolveDedupReclaimRoute(req.method, path)
+        if (dedupReclaimRoute && dedupReclaimRoute.kind === 'dedup-reclaim') {
+          if (!this._requireAuth(req, res, dedupReclaimRoute.authMessage)) return
+          const result = await runDedupReclaimAction({
+            body,
+            node: this.node,
+            emit: (...args) => this.emit(...args)
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        // Set/replace the subsidy payout destination (operator's own
+        // lightning address / BOLT12 offer / on-chain address — the relay
+        // never holds funds). Management auth, same gate as the wizard.
+        const subsidyRoute = resolveSubsidyRoute(req.method, path)
+        if (subsidyRoute && subsidyRoute.kind === 'destination') {
+          if (!this._requireAuth(req, res, subsidyRoute.authMessage)) return
+          const result = await updateSubsidyDestination({
+            body,
+            config: this.node.config,
+            wizard: this._wizard,
+            subsidyAccrual: this.node.subsidyAccrual,
+            persistConfig: () => this._persistConfig(),
+            emit: (...args) => this.emit(...args)
+          })
+          if (!result.ok) {
+            if (result.kind === 'wizard-persist' || result.kind === 'config-persist') return this._persistFailureResponse(res, result)
+            if (result.payload) return this._json(res, result.payload, result.status || 400)
+            return this._json(res, { error: formatErr('BAD_REQUEST', result.message) }, 400)
           }
-          const requestedStorageClass = body.storageClass !== undefined ? body.storageClass : seedOpts.storageClass
-          if (requestedStorageClass !== undefined) {
-            const storageClass = this._readStorageClass(requestedStorageClass, null)
-            if (!storageClass) return this._json(res, { error: STORAGE_CLASS_ERROR }, 400)
-            seedOpts.storageClass = storageClass
+          return this._json(res, result.payload)
+        }
+
+        // Set the paid-seeding rate at runtime. Enabling/disabling the lease
+        // requires the config flag + restart (the manager + LN provider are
+        // wired at boot); the per-GiB-day rate is live-settable here.
+        const leaseRoute = resolveLeaseRoute(req.method, path)
+        if (leaseRoute && leaseRoute.kind === 'config') {
+          if (!this._checkAuth(req)) {
+            return this._json(res, { error: formatErr('NOT_ALLOWED', leaseRoute.authMessage) }, 403)
           }
-          const requestedAvailabilityClass = body.availabilityClass !== undefined ? body.availabilityClass : seedOpts.availabilityClass
-          if (requestedAvailabilityClass !== undefined) {
-            const availabilityClass = this._readAvailabilityClass(requestedAvailabilityClass, null)
-            if (!availabilityClass) return this._json(res, { error: AVAILABILITY_CLASS_ERROR }, 400)
-            seedOpts.availabilityClass = availabilityClass
-          }
-          // Forward appId from request body for deduplication
-          if (body.appId && typeof body.appId === 'string') seedOpts.appId = body.appId
-          if (body.version && typeof body.version === 'string') seedOpts.version = body.version
-          if (body.parentKey !== undefined) {
-            if (typeof body.parentKey !== 'string' || !isValidHexKey(body.parentKey, 64)) {
-              return this._json(res, { error: 'parentKey must be a 64-character hex key' }, 400)
+          const result = await runLeaseConfigAction({
+            body,
+            leaseManager: this.node.leaseManager
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        const wizardAction = wizardActionFromPath(path)
+        if (wizardAction !== null) {
+          if (!this._requireAuth(req, res, 'Unauthorized — wizard requires API key or localhost')) return
+          const wizard = await this._getWizard()
+          const result = await runWizardAction({
+            wizard,
+            action: wizardAction,
+            body,
+            applyConfig: this.node._applyWizardConfig ? cfg => this.node._applyWizardConfig(cfg) : null,
+            persistConfig: () => this._persistConfig(),
+            snapshotConfig: () => this._snapshotWizardConfig(),
+            restoreConfig: snapshot => this._restoreWizardConfig(snapshot),
+            emit: (...args) => this.emit(...args)
+          })
+          if (!result.ok) {
+            if (result.kind === 'not-found') return this._json(res, { error: formatErr('NOT_FOUND', result.message) }, 404)
+            if (result.kind === 'apply-config') {
+              const message = result.error && result.error.message ? result.error.message : String(result.error || 'unknown error')
+              return this._json(res, { error: formatErr('UNSUPPORTED', 'failed to apply wizard config: ' + message) }, 500)
             }
-            seedOpts.parentKey = body.parentKey
+            if (result.kind === 'config-persist' || result.kind === 'wizard-persist') return this._persistFailureResponse(res, result)
+            return this._json(res, { error: formatErr('BAD_REQUEST', result.message) }, 400)
           }
-          if (body.mountPath !== undefined) {
-            if (typeof body.mountPath !== 'string') return this._json(res, { error: 'mountPath must be a string' }, 400)
-            const mountPath = body.mountPath.trim()
-            if (!mountPath.startsWith('/')) return this._json(res, { error: 'mountPath must start with "/"' }, 400)
-            if (mountPath.length > 256) return this._json(res, { error: 'mountPath exceeds max length (256)' }, 400)
-            seedOpts.mountPath = mountPath
-          }
-          if ((seedOpts.parentKey || seedOpts.mountPath) && !seedOpts.type) {
-            seedOpts.type = 'drive'
-          }
-          if ((seedOpts.parentKey || seedOpts.mountPath) && seedOpts.type && seedOpts.type !== 'drive') {
-            return this._json(res, { error: 'parentKey and mountPath are only supported when type is "drive"' }, 400)
-          }
-          if (body.name !== undefined) {
-            if (typeof body.name !== 'string') return this._json(res, { error: 'name must be a string' }, 400)
-            seedOpts.name = body.name.trim().slice(0, 120)
-          }
-          if (body.description !== undefined) {
-            if (typeof body.description !== 'string') return this._json(res, { error: 'description must be a string' }, 400)
-            seedOpts.description = body.description.slice(0, 2000)
-          }
-          if (body.author !== undefined) {
-            if (typeof body.author !== 'string') return this._json(res, { error: 'author must be a string' }, 400)
-            seedOpts.author = body.author.trim().slice(0, 120)
-          }
-          if (body.categories !== undefined) {
-            if (!Array.isArray(body.categories)) return this._json(res, { error: 'categories must be an array of strings' }, 400)
-            const categories = []
-            for (const category of body.categories) {
-              if (typeof category !== 'string') return this._json(res, { error: 'categories must be an array of strings' }, 400)
-              const normalized = category.trim()
-              if (!normalized) continue
-              categories.push(normalized.slice(0, 64))
-            }
-            seedOpts.categories = [...new Set(categories)].slice(0, 20)
-          }
-          if (body.privacyTier !== undefined) {
-            const tier = this._readPrivacyTier(body.privacyTier, null)
-            if (!tier) return this._json(res, { error: PRIVACY_TIER_ERROR }, 400)
-            seedOpts.privacyTier = tier
-          }
-          if (seedOpts.blind !== undefined && typeof seedOpts.blind !== 'boolean') {
-            return this._json(res, { error: 'blind must be a boolean' }, 400)
-          }
-          if (body.blind !== undefined) {
-            if (typeof body.blind !== 'boolean') return this._json(res, { error: 'blind must be a boolean' }, 400)
-            seedOpts.blind = body.blind
-          }
-          for (const field of ['custodyIntentId', 'blindContentId', 'ciphertextRoot']) {
-            if (body[field] !== undefined) {
-              if (typeof body[field] !== 'string' || !isValidHexKey(body[field], 64)) {
-                return this._json(res, { error: `${field} must be 64 hex characters` }, 400)
-              }
-              seedOpts[field] = body[field].toLowerCase()
-            }
-          }
-          if (body.contentVersion !== undefined) {
-            if (!Number.isFinite(body.contentVersion) || body.contentVersion < 0) {
-              return this._json(res, { error: 'contentVersion must be a non-negative number' }, 400)
-            }
-            seedOpts.contentVersion = Math.floor(body.contentVersion)
-          }
-          if (body.retainUntil !== undefined) {
-            if (!Number.isFinite(body.retainUntil) || body.retainUntil < 0) {
-              return this._json(res, { error: 'retainUntil must be a non-negative number' }, 400)
-            }
-            seedOpts.retainUntil = Math.floor(body.retainUntil)
-          }
-          if (body.shardIds !== undefined) {
-            if (!Array.isArray(body.shardIds)) return this._json(res, { error: 'shardIds must be an array' }, 400)
-            seedOpts.shardIds = []
-            for (const shardId of body.shardIds) {
-              if (!Number.isInteger(shardId) || shardId < 0) {
-                return this._json(res, { error: 'shardIds must contain non-negative integers' }, 400)
-              }
-              seedOpts.shardIds.push(shardId)
-            }
-          }
-          const result = await this.node.seedApp(body.appKey, seedOpts)
-          return this._json(res, { ok: true, ...result })
+          return this._json(res, result.payload)
         }
 
-        if (path === '/registry/publish') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /registry/publish')) return
-          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
-          if (!body.appKey) return this._json(res, { error: 'appKey required' }, 400)
-          if (!isValidHexKey(body.appKey, 64)) return this._json(res, { error: 'appKey must be 64 hex characters' }, 400)
-          const rawContentType = body.contentType !== undefined ? body.contentType : body.type
-          const contentType = this._readContentType(rawContentType, 'app')
-          if (rawContentType !== undefined && this._readContentType(rawContentType, null) === null) {
-            return this._json(res, { error: CONTENT_TYPE_ERROR }, 400)
-          }
-          let parentKey = null
-          if (body.parentKey !== undefined) {
-            if (typeof body.parentKey !== 'string' || !isValidHexKey(body.parentKey, 64)) {
-              return this._json(res, { error: 'parentKey must be a 64-character hex key' }, 400)
-            }
-            parentKey = body.parentKey
-          }
-          let mountPath = null
-          if (body.mountPath !== undefined) {
-            if (typeof body.mountPath !== 'string') return this._json(res, { error: 'mountPath must be a string' }, 400)
-            mountPath = body.mountPath.trim()
-            if (!mountPath.startsWith('/')) return this._json(res, { error: 'mountPath must start with "/"' }, 400)
-            if (mountPath.length > 256) return this._json(res, { error: 'mountPath exceeds max length (256)' }, 400)
-          }
-          if ((parentKey || mountPath) && contentType !== 'drive') {
-            return this._json(res, { error: 'parentKey and mountPath are only supported when type is "drive"' }, 400)
-          }
-
-          const dks = body.discoveryKeys || []
-          if (!Array.isArray(dks) || dks.length > MAX_DISCOVERY_KEYS) {
-            return this._json(res, { error: `discoveryKeys must be an array of at most ${MAX_DISCOVERY_KEYS} items` }, 400)
-          }
-          for (const dk of dks) {
-            if (!isValidHexKey(dk, 64)) return this._json(res, { error: 'Each discoveryKey must be 64 hex characters' }, 400)
-          }
-
-          const privacyTier = body.privacyTier === undefined
-            ? 'public'
-            : this._readPrivacyTier(body.privacyTier, null)
-          if (!privacyTier) return this._json(res, { error: PRIVACY_TIER_ERROR }, 400)
-          const storageClass = body.storageClass === undefined
-            ? (body.blind === true ? 'temporary' : 'persistent')
-            : this._readStorageClass(body.storageClass, null)
-          if (!storageClass) return this._json(res, { error: STORAGE_CLASS_ERROR }, 400)
-          const availabilityClass = body.availabilityClass === undefined
-            ? (body.blind === true ? 'atomic-handoff' : 'always-on')
-            : this._readAvailabilityClass(body.availabilityClass, null)
-          if (!availabilityClass) return this._json(res, { error: AVAILABILITY_CLASS_ERROR }, 400)
-          if (body.blind !== undefined && typeof body.blind !== 'boolean') {
-            return this._json(res, { error: 'blind must be a boolean' }, 400)
-          }
-
-          let appKeyBuf, dkBufs
-          try {
-            appKeyBuf = Buffer.from(body.appKey, 'hex')
-            dkBufs = dks.map(dk => Buffer.from(dk, 'hex'))
-          } catch (err) {
-            return this._json(res, { error: 'Invalid hex encoding: ' + err.message }, 400)
-          }
-
-          const request = {
-            appKey: appKeyBuf,
-            discoveryKeys: dkBufs,
-            contentType,
-            parentKey,
-            mountPath,
-            blind: body.blind === true,
-            storageClass,
-            availabilityClass,
-            replicationFactor: body.replicas || 3,
-            geoPreference: body.geo ? [].concat(body.geo) : [],
-            maxStorageBytes: body.maxStorageBytes || 0,
-            bountyRate: body.bountyRate || 0,
-            ttlSeconds: body.ttlDays ? body.ttlDays * 86400 : 30 * 86400,
-            privacyTier,
-            publisherPubkey: this.node.swarm ? this.node.swarm.keyPair.publicKey : Buffer.alloc(32)
-          }
-
-          const entry = await this.node.seedingRegistry.publishRequest(request)
-          return this._json(res, { ok: true, ...entry })
+        const alertRoute = resolveAlertManagementRoute(req.method, path)
+        if (alertRoute && alertRoute.kind === 'test') {
+          if (!this._requireAuth(req, res, alertRoute.authMessage)) return
+          const result = runAlertManagementRouteAction({
+            route: alertRoute,
+            body,
+            alertManager: this.node.alertManager
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/custody/intent') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/intent')) return
-          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
-          if (!this.node.swarm?.keyPair && !body.signature) return this._json(res, { error: 'Relay keypair unavailable' }, 503)
-          try {
-            const entry = await this.node.seedingRegistry.publishCustodyIntent(body, this.node.swarm?.keyPair)
-            return this._json(res, { ok: true, ...entry })
-          } catch (err) {
-            return this._json(res, { error: err.message || String(err) }, 400)
-          }
+        const seedPublishRoute = resolveSeedPublishRoute(req.method, path)
+        if (seedPublishRoute && seedPublishRoute.kind === 'operator-seed') {
+          if (!this._requireAuth(req, res, seedPublishRoute.authMessage)) return
+          const result = await runSeedPublishRouteAction({
+            route: seedPublishRoute,
+            body,
+            node: this.node,
+            disabled: this._custodyApiDisabled()
+          })
+          if (!result.ok && result.kind === 'seed-error') return this._custodyErrorResponse(res, result.error)
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path.startsWith('/api/custody/') && path.endsWith('/commit')) {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/:intentId/commit')) return
-          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
-          const intentId = path.slice('/api/custody/'.length, -'/commit'.length)
-          if (!isValidHexKey(intentId, 64)) return this._json(res, { error: 'intentId must be 64 hex characters' }, 400)
-          try {
-            const entry = await this.node.seedingRegistry.publishCustodyCommit({ ...body, intentId }, this.node.swarm?.keyPair)
-            return this._json(res, { ok: true, ...entry })
-          } catch (err) {
-            return this._json(res, { error: err.message || String(err) }, 400)
-          }
+        const seedCoreRoute = resolveSeedCoreRoute(req.method, path)
+        if (seedCoreRoute && seedCoreRoute.kind === 'seed-core') {
+          if (!this._requireAuth(req, res, seedCoreRoute.authMessage)) return
+          const result = await runSeedCoreAction({ node: this.node, body })
+          if (!result.ok && result.kind === 'seed-error') return this._custodyErrorResponse(res, result.error)
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path.startsWith('/api/custody/') && path.endsWith('/source-retired')) {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/:intentId/source-retired')) return
-          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
-          const intentId = path.slice('/api/custody/'.length, -'/source-retired'.length)
-          if (!isValidHexKey(intentId, 64)) return this._json(res, { error: 'intentId must be 64 hex characters' }, 400)
-          try {
-            const entry = await this.node.seedingRegistry.publishSourceRetired({ ...body, intentId }, this.node.swarm?.keyPair)
-            return this._json(res, { ok: true, ...entry })
-          } catch (err) {
-            return this._json(res, { error: err.message || String(err) }, 400)
-          }
+        // Publish this relay's index-room pointer. Called by the index sidecar
+        // (loopback) once its schema-sheets room is ready, so the relay can
+        // advertise it in the capability doc + /catalog.json. Operator-authed.
+        const indexRoomRoute = resolveIndexRoomRoute(req.method, path)
+        if (indexRoomRoute && indexRoomRoute.kind === 'index-room') {
+          if (!this._requireAuth(req, res, indexRoomRoute.authMessage)) return
+          const result = await runIndexRoomAction({
+            body,
+            node: this.node,
+            emit: (...args) => this.emit(...args)
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/custody/proof') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/proof')) return
-          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
-          try {
-            const entry = await this.node.seedingRegistry.recordCustodyProof(body, this.node.swarm?.keyPair)
-            return this._json(res, { ok: true, ...entry })
-          } catch (err) {
-            return this._json(res, { error: err.message || String(err) }, 400)
-          }
+        if (seedPublishRoute && seedPublishRoute.kind === 'registry-publish') {
+          if (!this._requireAuth(req, res, seedPublishRoute.authMessage)) return
+          const result = await runSeedPublishRouteAction({
+            route: seedPublishRoute,
+            body,
+            node: this.node,
+            disabled: this._custodyApiDisabled()
+          })
+          if (!result.ok && result.kind === 'seed-error') return this._custodyErrorResponse(res, result.error)
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path.startsWith('/api/custody/') && path.endsWith('/witness')) {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/:intentId/witness')) return
-          if (req.method !== 'POST') return this._json(res, { error: 'method not allowed' }, 405)
-          const intentId = path.slice('/api/custody/'.length, -'/witness'.length)
-          if (!this.node.seedingRegistry) return this._json(res, { error: 'registry not running' }, 503)
-          try {
-            const body = await this._readBody(req)
-            const entry = await this.node.seedingRegistry.recordCustodyExpiryWitness(
-              { ...body, intentId },
-              this.node.swarm?.keyPair
-            )
-            return this._json(res, entry)
-          } catch (err) {
-            return this._json(res, { error: err.message || 'witness rejected' }, 400)
-          }
-        }
-
-        if (path.startsWith('/api/custody/') && path.endsWith('/non-serving-proof')) {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/:intentId/non-serving-proof')) return
-          const intentId = path.slice('/api/custody/'.length, -'/non-serving-proof'.length)
-          if (!isValidHexKey(intentId, 64)) return this._json(res, { error: 'intentId must be 64 hex characters' }, 400)
-          try {
-            const entry = await this.node.createCustodyNonServingProof(intentId, body || {})
-            return this._json(res, { ok: true, ...entry })
-          } catch (err) {
-            const message = err.message || String(err)
-            const status = message.startsWith('STILL_SERVING') ? 409 : 400
-            return this._json(res, { error: message }, status)
-          }
-        }
-
-        if (path === '/registry/auto-accept') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /registry/auto-accept')) return
-          this.node.config.registryAutoAccept = body.enabled !== false
-          return this._json(res, { ok: true, autoAccept: this.node.config.registryAutoAccept })
-        }
-
-        if (path === '/registry/approve') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /registry/approve')) return
-          if (!body.appKey) return this._json(res, { error: 'appKey required' }, 400)
-          if (!isValidHexKey(body.appKey, 64)) return this._json(res, { error: 'appKey must be 64 hex characters' }, 400)
-          await this.node.approveRequest(body.appKey)
-          return this._json(res, { ok: true })
-        }
-
-        if (path === '/registry/reject') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /registry/reject')) return
-          if (!body.appKey) return this._json(res, { error: 'appKey required' }, 400)
-          if (!isValidHexKey(body.appKey, 64)) return this._json(res, { error: 'appKey must be 64 hex characters' }, 400)
-          this.node.rejectRequest(body.appKey)
-          return this._json(res, { ok: true })
-        }
-
-        if (path === '/registry/cancel') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /registry/cancel')) return
-          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
-          if (!body.appKey) return this._json(res, { error: 'appKey required' }, 400)
-          if (!isValidHexKey(body.appKey, 64)) return this._json(res, { error: 'appKey must be 64 hex characters' }, 400)
-          const pubkey = this.node.swarm ? Buffer.from(this.node.swarm.keyPair.publicKey).toString('hex') : null
-          await this.node.seedingRegistry.cancelRequest(body.appKey, pubkey)
-          return this._json(res, { ok: true })
+        const operatorCustodyRoute = resolveOperatorCustodyRoute(req.method, path)
+        if (operatorCustodyRoute) {
+          if (!this._requireAuth(req, res, operatorCustodyRoute.authMessage)) return
+          const result = await runOperatorCustodyRouteAction({
+            route: operatorCustodyRoute,
+            body,
+            node: this.node,
+            disabled: this._custodyApiDisabled()
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // ─── /api/manage/catalog/* — operator catalog controls ───────────
         // Replaces the older /registry/{auto-accept,approve,reject} endpoints
         // with a clearer surface aligned to the per-relay local-catalog model.
 
-        if (path === '/api/manage/catalog/mode') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/catalog/mode')) return
-          const m = body.mode
-          if (!['open', 'review', 'allowlist', 'closed'].includes(m)) {
-            return this._json(res, { error: 'mode must be one of: open, review, allowlist, closed' }, 400)
-          }
-          this.node.config.acceptMode = m
-          delete this.node.config.registryAutoAccept // disambiguate
-          return this._json(res, { ok: true, mode: m })
-        }
-
-        if (path === '/api/manage/catalog/allowlist') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/catalog/allowlist')) return
-          if (!Array.isArray(body.allowlist)) {
-            return this._json(res, { error: 'allowlist must be an array of publisher pubkeys (hex)' }, 400)
-          }
-          // Validate each entry is a hex pubkey before accepting.
-          for (const k of body.allowlist) {
-            if (typeof k !== 'string' || !isValidHexKey(k, 64)) {
-              return this._json(res, { error: 'allowlist entries must be 64-char hex pubkeys' }, 400)
-            }
-          }
-          this.node.config.acceptAllowlist = body.allowlist.slice()
-          return this._json(res, { ok: true, allowlist: this.node.config.acceptAllowlist })
-        }
-
-        if (path === '/api/manage/catalog/approve') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/catalog/approve')) return
-          if (!body.appKey) return this._json(res, { error: 'appKey required' }, 400)
-          if (!isValidHexKey(body.appKey, 64)) return this._json(res, { error: 'appKey must be 64 hex characters' }, 400)
-          await this.node.approveRequest(body.appKey)
-          return this._json(res, { ok: true })
-        }
-
-        if (path === '/api/manage/catalog/reject') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/catalog/reject')) return
-          if (!body.appKey) return this._json(res, { error: 'appKey required' }, 400)
-          if (!isValidHexKey(body.appKey, 64)) return this._json(res, { error: 'appKey must be 64 hex characters' }, 400)
-          this.node.rejectRequest(body.appKey)
-          return this._json(res, { ok: true })
-        }
-
-        if (path === '/api/manage/catalog/remove') {
-          // Operator-initiated removal of an app from the local catalog (and unseed).
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/catalog/remove')) return
-          if (!body.appKey) return this._json(res, { error: 'appKey required' }, 400)
-          if (!isValidHexKey(body.appKey, 64)) return this._json(res, { error: 'appKey must be 64 hex characters' }, 400)
-          await this.node.unseedApp(body.appKey)
-          return this._json(res, { ok: true })
+        const catalogRoute = resolveCatalogManagementRoute(req.method, path)
+        if (catalogRoute) {
+          if (!this._requireAuth(req, res, catalogRoute.authMessage)) return
+          const result = await runCatalogManagementRouteAction({
+            route: catalogRoute,
+            body,
+            config: this.node.config,
+            node: this.node,
+            persistConfig: () => this._persistConfig(),
+            emit: (...args) => this.emit(...args)
+          })
+          if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // ─── /api/manage/federation/* — explicit cross-relay federation ──
 
-        if (path === '/api/manage/federation/follow') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/federation/follow')) return
-          if (!body.url || typeof body.url !== 'string') return this._json(res, { error: 'url required' }, 400)
-          if (!this.node.federation) return this._json(res, { error: 'Federation not initialized' }, 503)
-          this.node.federation.follow(body.url, { pubkey: body.pubkey || null })
-          return this._json(res, { ok: true, mode: 'follow', url: body.url })
-        }
-
-        if (path === '/api/manage/federation/mirror') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/federation/mirror')) return
-          if (!body.url || typeof body.url !== 'string') return this._json(res, { error: 'url required' }, 400)
-          if (!this.node.federation) return this._json(res, { error: 'Federation not initialized' }, 503)
-          this.node.federation.mirror(body.url, { pubkey: body.pubkey || null })
-          return this._json(res, { ok: true, mode: 'mirror', url: body.url })
-        }
-
-        if (path === '/api/manage/federation/unfollow') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/federation/unfollow')) return
-          if (!body.url || typeof body.url !== 'string') return this._json(res, { error: 'url required' }, 400)
-          if (!this.node.federation) return this._json(res, { error: 'Federation not initialized' }, 503)
-          const removed = this.node.federation.unfollow(body.url)
-          return this._json(res, { ok: true, removed, url: body.url })
-        }
-
-        if (path === '/api/manage/federation/republish') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/federation/republish')) return
-          if (!body.appKey) return this._json(res, { error: 'appKey required' }, 400)
-          if (!isValidHexKey(body.appKey, 64)) return this._json(res, { error: 'appKey must be 64 hex characters' }, 400)
-          if (!this.node.federation) return this._json(res, { error: 'Federation not initialized' }, 503)
-          this.node.federation.republish(body.appKey, {
-            sourceUrl: body.sourceUrl || null,
-            sourcePubkey: body.sourcePubkey || null,
-            channel: body.channel || null,
-            note: body.note || null
+        const federationRoute = resolveFederationManagementRoute(req.method, path)
+        if (federationRoute) {
+          if (!this._requireAuth(req, res, federationRoute.authMessage)) return
+          const result = await runFederationManagementRouteAction({
+            route: federationRoute,
+            body,
+            federation: this.node.federation,
+            emit: (...args) => this.emit(...args),
+            disabled: this._federationApiDisabled()
           })
-          return this._json(res, { ok: true, appKey: body.appKey })
-        }
-
-        if (path === '/api/manage/federation/unrepublish') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/federation/unrepublish')) return
-          if (!body.appKey) return this._json(res, { error: 'appKey required' }, 400)
-          if (!isValidHexKey(body.appKey, 64)) return this._json(res, { error: 'appKey must be 64 hex characters' }, 400)
-          if (!this.node.federation) return this._json(res, { error: 'Federation not initialized' }, 503)
-          const removed = this.node.federation.unrepublish(body.appKey)
-          return this._json(res, { ok: true, removed, appKey: body.appKey })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // ─── /api/manage/delegation/* — device-attestation revocation ────
 
-        if (path === '/api/manage/delegation/revoke') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/manage/delegation/revoke')) return
-          const rev = body.revocation
-          if (!rev || typeof rev !== 'object') {
-            return this._json(res, { error: 'revocation required (signed message from primary identity)' }, 400)
-          }
-          const result = this.node.submitRevocation(rev, { certExpiresAt: body.certExpiresAt })
-          if (!result.ok) return this._json(res, { error: result.reason }, 400)
-          return this._json(res, result)
+        const delegationRoute = resolveDelegationManagementRoute(req.method, path)
+        if (delegationRoute && delegationRoute.kind === 'revoke') {
+          if (!this._requireAuth(req, res, delegationRoute.authMessage)) return
+          const result = runDelegationRevokeAction({ body, node: this.node })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/unseed') {
-          // Operator unseed — requires API key (use /api/v1/unseed for developer-signed unseed)
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /unseed (use /api/v1/unseed for developer-signed unseed)')) return
-          if (!body.appKey) return this._json(res, { error: 'appKey required' }, 400)
-          if (!isValidHexKey(body.appKey, 64)) return this._json(res, { error: 'appKey must be 64 hex characters' }, 400)
-          await this.node.unseedApp(body.appKey)
-          return this._json(res, { ok: true })
+        const unseedRoute = resolveUnseedRoute(req.method, path)
+        if (unseedRoute && unseedRoute.kind === 'operator-unseed') {
+          if (!this._requireAuth(req, res, unseedRoute.authMessage)) return
+          const result = await runOperatorUnseedAction({ body, node: this.node })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        // ─── Developer Authenticated Unseed (Kill Switch) ───────────
-        if (path === '/api/v1/unseed') {
-          if (!body.appKey) return this._json(res, { error: 'appKey required' }, 400)
-          if (!isValidHexKey(body.appKey, 64)) return this._json(res, { error: 'appKey must be 64 hex characters' }, 400)
-          if (!body.publisherPubkey) return this._json(res, { error: 'publisherPubkey required' }, 400)
-          if (!isValidHexKey(body.publisherPubkey, 64)) return this._json(res, { error: 'publisherPubkey must be 64 hex characters' }, 400)
-          if (!body.signature) return this._json(res, { error: 'signature required' }, 400)
-          if (!isValidHexKey(body.signature, 128)) return this._json(res, { error: 'signature must be 128 hex characters' }, 400)
-          if (!body.timestamp || typeof body.timestamp !== 'number') return this._json(res, { error: 'timestamp required (unix ms)' }, 400)
-
-          const result = this.node.verifyUnseedRequest(body.appKey, body.publisherPubkey, body.signature, body.timestamp)
-          if (!result.ok) {
-            return this._json(res, { error: result.error }, 403)
-          }
-
-          await this.node.unseedApp(body.appKey)
-
-          // Propagate unseed to other relays via P2P
-          this.node.broadcastUnseed(body.appKey, body.publisherPubkey, body.signature, body.timestamp)
-
-          return this._json(res, { ok: true, message: 'App unseeded and unseed broadcast to network' })
+        if (unseedRoute && unseedRoute.kind === 'publisher-unseed') {
+          const result = await runPublisherUnseedAction({ body, node: this.node })
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // ─── Publisher-signed seed (no operator API key required) ────
@@ -1573,163 +1720,15 @@ export class RelayAPI extends EventEmitter {
         // extended to the publish side. Crucially this is the path that
         // accepts custodyIntentId/blindContentId/ciphertextRoot and
         // triggers the auto-emit custody-receipt downstream.
-        if (path === '/api/v1/seed') {
-          if (!this.node.seedingRegistry && !this.node.appLifecycle && !this.node.seedApp) {
-            return this._json(res, { error: 'seedApp not available' }, 503)
-          }
-          if (!body.appKey) return this._json(res, { error: 'appKey required' }, 400)
-          if (!isValidHexKey(body.appKey, 64)) return this._json(res, { error: 'appKey must be 64 hex characters' }, 400)
-          if (!body.publisherPubkey) return this._json(res, { error: 'publisherPubkey required' }, 400)
-          if (!isValidHexKey(body.publisherPubkey, 64)) return this._json(res, { error: 'publisherPubkey must be 64 hex characters' }, 400)
-          if (!body.publisherSignature) return this._json(res, { error: 'publisherSignature required' }, 400)
-          if (!isValidHexKey(body.publisherSignature, 128)) return this._json(res, { error: 'publisherSignature must be 128 hex characters' }, 400)
-
-          // Optional discoveryKeys — if omitted, signature payload uses the
-          // empty-set hash (matches Protomux behavior when array is missing).
-          let discoveryKeys = []
-          if (body.discoveryKeys !== undefined) {
-            if (!Array.isArray(body.discoveryKeys)) return this._json(res, { error: 'discoveryKeys must be an array of 64-hex strings' }, 400)
-            if (body.discoveryKeys.length > MAX_DISCOVERY_KEYS) return this._json(res, { error: 'discoveryKeys exceeds maximum (' + MAX_DISCOVERY_KEYS + ')' }, 400)
-            for (const dk of body.discoveryKeys) {
-              if (typeof dk !== 'string' || !isValidHexKey(dk, 64)) {
-                return this._json(res, { error: 'each discoveryKey must be 64 hex characters' }, 400)
-              }
-            }
-            discoveryKeys = body.discoveryKeys.map(dk => b4a.from(dk, 'hex'))
-          }
-
-          // Reconstruct the canonical seed-request shape that the publisher
-          // signed. Field defaults match Protomux SeedProtocol so a publisher
-          // who only sets appKey + a signature over the empty-defaults
-          // payload still verifies.
-          const replicationFactor = Number.isFinite(body.replicationFactor) ? body.replicationFactor : 3
-          if (replicationFactor < 1 || replicationFactor > 255) return this._json(res, { error: 'replicationFactor must be in [1,255]' }, 400)
-          const maxStorageBytes = Number.isFinite(body.maxStorageBytes) ? body.maxStorageBytes : 500 * 1024 * 1024
-          if (maxStorageBytes < 0) return this._json(res, { error: 'maxStorageBytes must be non-negative' }, 400)
-          const ttlSeconds = Number.isFinite(body.ttlSeconds) ? body.ttlSeconds : 30 * 24 * 3600
-          if (ttlSeconds < 0) return this._json(res, { error: 'ttlSeconds must be non-negative' }, 400)
-          const bountyRate = Number.isFinite(body.bountyRate) ? body.bountyRate : 0
-          if (bountyRate < 0) return this._json(res, { error: 'bountyRate must be non-negative' }, 400)
-          const revocable = body.revocable !== false
-          const unseedFreezeMs = Number.isFinite(body.unseedFreezeMs) && body.unseedFreezeMs > 0 ? Math.floor(body.unseedFreezeMs) : 0
-          const durability = Number.isFinite(body.durability) && body.durability > 0 ? Math.floor(body.durability) : 0
-
-          const sigMsg = {
-            appKey: b4a.from(body.appKey, 'hex'),
-            discoveryKeys,
-            replicationFactor,
-            maxStorageBytes,
-            ttlSeconds,
-            bountyRate,
-            revocable,
-            unseedFreezeMs,
-            durability,
-            publisherPubkey: b4a.from(body.publisherPubkey, 'hex'),
-            publisherSignature: b4a.from(body.publisherSignature, 'hex')
-          }
-          if (!verifySeedRequestSignature(sigMsg)) {
-            return this._json(res, { error: 'INVALID_SIGNATURE: publisher signature does not match canonical seed-request payload (v2 layout)' }, 403)
-          }
-
-          // Translate to the seedApp opts shape — same field set the operator
-          // /seed handler uses, plus the publisher identity recorded for
-          // future authenticated-unseed checks.
-          const seedOpts = {
-            replicas: replicationFactor,
-            maxStorage: maxStorageBytes,
-            ttlDays: Math.max(1, Math.round(ttlSeconds / 86400)),
-            bountyRate,
-            revocable,
-            unseedFreezeMs,
-            durability,
-            publisherPubkey: body.publisherPubkey.toLowerCase(),
-            publisherSignature: body.publisherSignature.toLowerCase()
-          }
-
-          // Optional content metadata — same validation as /seed.
-          if (body.type !== undefined) {
-            const type = this._readContentType(body.type, null)
-            if (!type) return this._json(res, { error: CONTENT_TYPE_ERROR }, 400)
-            seedOpts.type = type
-          }
-          if (body.storageClass !== undefined) {
-            const sc = this._readStorageClass(body.storageClass, null)
-            if (!sc) return this._json(res, { error: STORAGE_CLASS_ERROR }, 400)
-            seedOpts.storageClass = sc
-          }
-          if (body.availabilityClass !== undefined) {
-            const ac = this._readAvailabilityClass(body.availabilityClass, null)
-            if (!ac) return this._json(res, { error: AVAILABILITY_CLASS_ERROR }, 400)
-            seedOpts.availabilityClass = ac
-          }
-          if (body.privacyTier !== undefined) {
-            const tier = this._readPrivacyTier(body.privacyTier, null)
-            if (!tier) return this._json(res, { error: PRIVACY_TIER_ERROR }, 400)
-            seedOpts.privacyTier = tier
-          }
-          if (body.blind !== undefined) {
-            if (typeof body.blind !== 'boolean') return this._json(res, { error: 'blind must be a boolean' }, 400)
-            seedOpts.blind = body.blind
-          }
-
-          // Atomic-custody binding — the whole reason this endpoint exists
-          // for permissionless publishers. Same shape as /seed.
-          for (const field of ['custodyIntentId', 'blindContentId', 'ciphertextRoot']) {
-            if (body[field] !== undefined) {
-              if (typeof body[field] !== 'string' || !isValidHexKey(body[field], 64)) {
-                return this._json(res, { error: `${field} must be 64 hex characters` }, 400)
-              }
-              seedOpts[field] = body[field].toLowerCase()
-            }
-          }
-          if (body.contentVersion !== undefined) {
-            if (!Number.isFinite(body.contentVersion) || body.contentVersion < 0) {
-              return this._json(res, { error: 'contentVersion must be a non-negative number' }, 400)
-            }
-            seedOpts.contentVersion = Math.floor(body.contentVersion)
-          }
-          if (body.retainUntil !== undefined) {
-            if (!Number.isFinite(body.retainUntil) || body.retainUntil < 0) {
-              return this._json(res, { error: 'retainUntil must be a non-negative number' }, 400)
-            }
-            seedOpts.retainUntil = Math.floor(body.retainUntil)
-          }
-          if (body.shardIds !== undefined) {
-            if (!Array.isArray(body.shardIds)) return this._json(res, { error: 'shardIds must be an array' }, 400)
-            seedOpts.shardIds = []
-            for (const shardId of body.shardIds) {
-              if (!Number.isInteger(shardId) || shardId < 0) {
-                return this._json(res, { error: 'shardIds must contain non-negative integers' }, 400)
-              }
-              seedOpts.shardIds.push(shardId)
-            }
-          }
-
-          // If custodyIntentId is supplied, cross-check it against the local
-          // registry: the publisherPubkey on this seed request must match
-          // the publisher who signed the intent. Stops a publisher from
-          // anchoring their own appKey to someone else's intent.
-          if (seedOpts.custodyIntentId && this.node.seedingRegistry?.getCustodyIntent) {
-            try {
-              const intent = this.node.seedingRegistry.getCustodyIntent(seedOpts.custodyIntentId)
-              if (intent && intent.publisherPubkey &&
-                  intent.publisherPubkey.toLowerCase() !== body.publisherPubkey.toLowerCase()) {
-                return this._json(res, {
-                  error: 'CUSTODY_PUBLISHER_MISMATCH: seed publisherPubkey does not match the publisher who signed this custodyIntentId'
-                }, 403)
-              }
-            } catch (_) { /* registry lookup is best-effort here */ }
-          }
-
-          try {
-            const result = await this.node.seedApp(body.appKey, seedOpts)
-            return this._json(res, { ok: true, ...result })
-          } catch (err) {
-            // Transient corestore/hypercore lifecycle errors → 503 +
-            // Retry-After so the client retries. Everything else stays
-            // as a 400 (malformed request, policy violations, etc.).
-            return this._custodyErrorResponse(res, err)
-          }
+        if (seedPublishRoute && seedPublishRoute.kind === 'publisher-seed') {
+          const result = await runSeedPublishRouteAction({
+            route: seedPublishRoute,
+            body,
+            node: this.node,
+            disabled: this._custodyApiDisabled()
+          })
+          if (!result.ok && result.kind === 'seed-error') return this._custodyErrorResponse(res, result.error)
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // ─── Publisher-signed custody pipeline (no operator API key) ─
@@ -1739,268 +1738,144 @@ export class RelayAPI extends EventEmitter {
         // append, so the publisher's signing key IS the authorization.
         // We pass `null` as the keypair so the registry refuses to
         // fall back to relay-side signing — body MUST be pre-signed.
-        if (path === '/api/v1/custody/intent') {
-          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
-          if (!body.signature) return this._json(res, { error: 'signature required (entry must be publisher-signed; see custody-signing.createCustodyIntent)' }, 400)
-          try {
-            const entry = await this.node.seedingRegistry.publishCustodyIntent(body, null)
-            return this._json(res, { ok: true, ...entry })
-          } catch (err) {
-            return this._custodyErrorResponse(res, err)
-          }
-        }
-
-        if (path.startsWith('/api/v1/custody/') && path.endsWith('/commit')) {
-          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
-          const intentId = path.slice('/api/v1/custody/'.length, -'/commit'.length)
-          if (!isValidHexKey(intentId, 64)) return this._json(res, { error: 'intentId must be 64 hex characters' }, 400)
-          if (!body.signature) return this._json(res, { error: 'signature required (entry must be publisher-signed)' }, 400)
-          try {
-            const entry = await this.node.seedingRegistry.publishCustodyCommit({ ...body, intentId }, null)
-            return this._json(res, { ok: true, ...entry })
-          } catch (err) {
-            return this._custodyErrorResponse(res, err)
-          }
-        }
-
-        if (path.startsWith('/api/v1/custody/') && path.endsWith('/source-retired')) {
-          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
-          const intentId = path.slice('/api/v1/custody/'.length, -'/source-retired'.length)
-          if (!isValidHexKey(intentId, 64)) return this._json(res, { error: 'intentId must be 64 hex characters' }, 400)
-          if (!body.signature) return this._json(res, { error: 'signature required (entry must be publisher-signed)' }, 400)
-          try {
-            const entry = await this.node.seedingRegistry.publishSourceRetired({ ...body, intentId }, null)
-            return this._json(res, { ok: true, ...entry })
-          } catch (err) {
-            return this._custodyErrorResponse(res, err)
-          }
+        const publisherCustodyRoute = resolvePublisherCustodyRoute(req.method, path)
+        if (publisherCustodyRoute) {
+          const result = await runPublisherCustodyRouteAction({
+            route: publisherCustodyRoute,
+            body,
+            node: this.node,
+            disabled: this._custodyApiDisabled()
+          })
+          if (!result.ok && result.kind === 'custody-error') return this._custodyErrorResponse(res, result.error)
+          return this._json(res, result.payload, result.status || 200)
         }
 
         // ─── Live Management API (requires API key or localhost) ─────
 
-        if (path.startsWith('/api/manage/')) {
+        if (isManagementApiRoute(path)) {
           if (!this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return
         }
 
-        if (path === '/api/manage/config') {
-          return this._handleConfigUpdate(res, body)
+        const aiModelManagementRoute = resolveAIModelManagementRoute(req.method, path)
+        if (aiModelManagementRoute) {
+          const service = resolveAIServiceProvider(this.node)
+          if (!service.ok) return this._json(res, { error: service.error }, service.status)
+          const result = await runAIModelManagementRouteAction({
+            route: aiModelManagementRoute,
+            provider: service.provider,
+            body,
+            node: this.node,
+            emit: (...args) => this.emit(...args)
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/manage/services') {
-          return this._handleServiceManagement(res, body)
+        const configUpdateRoute = resolveConfigUpdateRoute(req.method, path)
+        if (configUpdateRoute && configUpdateRoute.kind === 'config-update') {
+          const result = await runConfigUpdateAction({
+            body,
+            config: this.node.config,
+            persistConfig: () => this._persistConfig(),
+            safeConfigPayload: () => this._getSafeConfig()
+          })
+          if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)
+          // Live-apply a storage designation: persisting maxStorageBytes alone
+          // does not re-cap the running seeder or shed to fit. Push it into the
+          // seeder + enable eviction + kick a sweep so lowering the cap frees
+          // space without a restart.
+          if (result.ok && Array.isArray(result.payload?.applied) && result.payload.applied.includes('maxStorageBytes') &&
+              typeof this.node.applyStorageDesignation === 'function') {
+            try { await this.node.applyStorageDesignation(this.node.config.maxStorageBytes) } catch (_) {}
+          }
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/manage/mode') {
-          return this._handleModeSwitch(res, body)
+        const serviceConfigUpdateRoute = resolveServiceConfigUpdateRoute(req.method, path)
+        if (serviceConfigUpdateRoute && serviceConfigUpdateRoute.kind === 'service-config-update') {
+          const result = await runServiceConfigUpdateAction({
+            body,
+            config: this.node.config,
+            registry: this.node.serviceRegistry,
+            persistConfig: () => this._persistConfig(),
+            serviceConfigPayload: () => serviceConfigPayload(this.node.config, this.node.serviceRegistry)
+          })
+          if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/manage/devices') {
-          return this._handleDeviceManagement(res, body)
+        const serviceManagementRoute = resolveServiceManagementRoute(req.method, path)
+        if (serviceManagementRoute && serviceManagementRoute.kind === 'service-management') {
+          const result = await runServiceManagementAction({
+            body,
+            registry: this.node.serviceRegistry,
+            config: this.node.config,
+            node: this.node,
+            store: this.node.store,
+            persistConfig: () => this._persistConfig(),
+            serviceConfigPayload: () => serviceConfigPayload(this.node.config, this.node.serviceRegistry)
+          })
+          if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/manage/pairing') {
-          return this._handlePairingManagement(res, body)
+        const modeTransportRoute = resolveModeTransportManagementRoute(req.method, path)
+        if (modeTransportRoute) {
+          const result = await runModeTransportManagementRouteAction({
+            route: modeTransportRoute,
+            body,
+            node: this.node,
+            config: this.node.config,
+            persistConfig: () => this._persistConfig(),
+            emit: (...args) => this.emit(...args)
+          })
+          if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/manage/transport') {
-          return this._handleTransportToggle(res, body)
+        const devicePairingRoute = resolveDevicePairingManagementRoute(req.method, path)
+        if (devicePairingRoute) {
+          const result = await runDevicePairingManagementRouteAction({
+            route: devicePairingRoute,
+            body,
+            node: this.node,
+            emit: (...args) => this.emit(...args)
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
 
-        if (path === '/api/manage/restart') {
-          this._json(res, { ok: true, message: 'Restarting node...' })
-          setTimeout(async () => {
-            try {
-              await this.node.stop()
-              await this.node.start()
-            } catch (err) {
-              this.emit('error', { context: 'restart', error: err })
-            }
-          }, 500)
-          return
-        }
-
-        if (path === '/api/manage/shutdown') {
-          this._json(res, { ok: true, message: 'Shutting down...' })
-          setTimeout(async () => {
-            try {
-              await this.node.stop()
-              this.node.emit('shutdown-complete', { clean: true })
-            } catch (err) {
-              this.node.emit('shutdown-complete', { clean: false, error: err })
-            }
-          }, 500)
-          return
+        const lifecycleRoute = resolveLifecycleManagementRoute(req.method, path)
+        if (lifecycleRoute) {
+          const result = runLifecycleAction({
+            action: lifecycleRoute.action,
+            node: this.node,
+            emit: (...args) => this.emit(...args)
+          })
+          return this._json(res, result.payload, result.status || 200)
         }
       }
 
       // GET — Management info endpoints (require auth)
       if (req.method === 'GET') {
-        if (path.startsWith('/api/manage/') && !this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return
+        if (isManagementApiRoute(path) && !this._requireAuth(req, res, MANAGEMENT_AUTH_ERROR)) return
 
-        if (path === '/api/manage/config') {
-          return this._json(res, {
-            config: this._getSafeConfig(),
-            mode: this.node._operatingMode || 'standard'
+        if (notifyRoute && notifyRoute.management) {
+          const result = await runNotifyRouteAction({
+            route: notifyRoute,
+            providerResult: resolveNotifyServiceProvider(this.node),
+            query: notifyQueryParams(url)
           })
+          return this._json(res, result.payload, result.status || 200, result.headers || null)
         }
 
-        if (path === '/api/manage/services') {
-          if (!this.node.serviceRegistry) {
-            return this._json(res, { services: [], count: 0 })
-          }
-          const services = []
-          for (const [name, provider] of this.node.serviceRegistry.services) {
-            services.push({
-              name,
-              running: provider.running || false,
-              methods: provider.methods
-                ? Object.keys(provider.methods)
-                : [],
-              stats: provider.stats
-                ? provider.stats()
-                : null
-            })
-          }
-          return this._json(res, { services, count: services.length })
-        }
-
-        if (path === '/api/manage/transports') {
-          return this._json(res, {
-            udp: true,
-            holesail: {
-              enabled: !!this.node.holesailTransport,
-              connectionKey: this.node.holesailTransport
-                ? this.node.holesailTransport.connectionKey
-                : null,
-              running: this.node.holesailTransport
-                ? this.node.holesailTransport.running
-                : false
-            },
-            tor: {
-              enabled: !!this.node.torTransport,
-              onionAddress: this.node.torTransport
-                ? this.node.torTransport.onionAddress
-                : null,
-              running: this.node.torTransport
-                ? this.node.torTransport.running
-                : false
-            },
-            websocket: {
-              enabled: !!(this.node.config.transports && this.node.config.transports.websocket),
-              port: this.node.config.wsPort || 8765
-            }
+        const managementSnapshotRoute = resolveManagementSnapshotRoute(req.method, path)
+        if (managementSnapshotRoute) {
+          const result = await buildManagementSnapshotRoutePayload({
+            route: managementSnapshotRoute,
+            node: this.node,
+            aiModelProvider: managementSnapshotRoute.kind === 'ai-models' ? resolveAIServiceProvider(this.node) : null,
+            emit: (...args) => this.emit(...args)
           })
-        }
-
-        if (path === '/api/manage/devices') {
-          if (!this.node.accessControl) {
-            return this._json(res, {
-              enabled: false,
-              mode: this.node.mode,
-              devices: []
-            })
-          }
-          const devices = this.node.listDevices()
-          return this._json(res, {
-            enabled: true,
-            mode: this.node.mode,
-            count: devices.length,
-            devices
-          })
-        }
-
-        if (path === '/api/manage/pairing') {
-          if (!this.node.accessControl) {
-            return this._json(res, {
-              enabled: false,
-              mode: this.node.mode,
-              pairing: null
-            })
-          }
-          const state = this.node.accessControl._pairingState
-          return this._json(res, {
-            enabled: true,
-            mode: this.node.mode,
-            pairing: state
-              ? {
-                  active: this.node.accessControl.isPairing,
-                  expiresAt: state.expiresAt
-                }
-              : { active: false, expiresAt: null }
-          })
-        }
-
-        if (path === '/api/manage/modes') {
-          return this._json(res, {
-            current: this.node._operatingMode || 'relay-core',
-            available: [
-              {
-                id: 'relay-core',
-                name: 'Relay Core',
-                description: 'Default focused kernel — availability, registry, gateway, custody, no service plugins'
-              },
-              {
-                id: 'custody-relay',
-                name: 'Custody Relay',
-                description: 'Blind atomic custody profile — encrypted temporary handoff and expiry proofs'
-              },
-              {
-                id: 'public',
-                name: 'Public',
-                description: 'Public relay defaults with open access'
-              },
-              {
-                id: 'standard',
-                name: 'Standard Relay',
-                description: 'Legacy alias for Relay Core defaults'
-              },
-              {
-                id: 'private',
-                name: 'Private',
-                description: 'LAN-friendly closed mode with allowlist and pairing'
-              },
-              {
-                id: 'hybrid',
-                name: 'Hybrid',
-                description: 'Public discovery with private admission control'
-              },
-              {
-                id: 'homehive',
-                name: 'HomeHive',
-                description: 'Home/personal relay — LAN priority, low resources, family-friendly'
-              },
-              {
-                id: 'seed-only',
-                name: 'Seed Only',
-                description: 'App seeding only — no circuit relay'
-              },
-              {
-                id: 'relay-only',
-                name: 'Relay Only',
-                description: 'Circuit relay only — no app seeding'
-              },
-              {
-                id: 'stealth',
-                name: 'Stealth',
-                description: 'Tor-only, minimal footprint, no HTTP API on clearnet'
-              },
-              {
-                id: 'gateway',
-                name: 'Gateway',
-                description: 'HTTP gateway focus — serve Hyperdrive content over HTTPS'
-              },
-              {
-                id: 'service-operator',
-                name: 'Service Operator',
-                description: 'Opt-in service plugin host on top of the relay core'
-              },
-              {
-                id: 'experimental-lab',
-                name: 'Experimental Lab',
-                description: 'AI/ZK/SLA/arbitration plugin playground, not a default production profile'
-              }
-            ]
-          })
+          return this._json(res, result.payload, result.status || 200)
         }
       }
 
@@ -2010,8 +1885,12 @@ export class RelayAPI extends EventEmitter {
       if (err && err.message === 'Invalid JSON body') {
         return this._json(res, { error: 'Invalid JSON body' }, 400)
       }
+      if (err && err.message === 'JSON body must be an object') {
+        return this._json(res, { error: 'JSON body must be an object' }, 400)
+      }
       if (err && err.message === 'Request body too large') {
-        return this._json(res, { error: 'Request body too large' }, 413)
+        res.shouldKeepAlive = false
+        return this._json(res, { error: 'Request body too large' }, 413, { Connection: 'close' })
       }
       this.emit('error', { context: 'api-handler', error: err })
       this._json(res, { error: 'Internal server error' }, 500)
@@ -2023,33 +1902,130 @@ export class RelayAPI extends EventEmitter {
    * Returns the origin string to set, or null if the origin is not allowed.
    */
   _getAllowedOrigin (requestOrigin) {
-    if (this.corsOrigins === '*') return '*'
+    return getAllowedOrigin(this.corsOrigins, requestOrigin)
+  }
 
-    const allowed = Array.isArray(this.corsOrigins) ? this.corsOrigins : [this.corsOrigins]
-
-    if (!requestOrigin) return null
-    if (allowed.includes(requestOrigin)) return requestOrigin
-    return null
+  // Resolve a dashboard asset across the two layouts this package ships
+  // in. The git-tracked source lives at the repo root (/dashboard) — that
+  // is what a fresh clone and the Docker image (`COPY . .` → /app) have.
+  // Some long-lived installs also have a legacy copy at
+  // packages/core/dashboard. Probe repo-root first, fall back to legacy,
+  // and cache the working dir so we only probe once.
+  async _readDashboardFile (filename) {
+    if (this._dashboardDir) {
+      return readFile(join(this._dashboardDir, filename), 'utf-8')
+    }
+    const candidates = [
+      join(__dirname, '..', '..', '..', '..', 'dashboard'), // repo root
+      join(__dirname, '..', '..', 'dashboard') // legacy packages/core
+    ]
+    let lastErr
+    for (const dir of candidates) {
+      try {
+        const content = await readFile(join(dir, filename), 'utf-8')
+        this._dashboardDir = dir
+        return content
+      } catch (err) {
+        lastErr = err
+      }
+    }
+    throw lastErr
   }
 
   async _serveDashboard (res, cacheKey, filename) {
     if (!this[cacheKey]) {
-      const htmlPath = join(__dirname, '..', '..', 'dashboard', filename)
-      this[cacheKey] = await readFile(htmlPath, 'utf-8')
+      this[cacheKey] = await this._readDashboardFile(filename)
     }
-    res.setHeader('Content-Type', 'text/html')
+    const body = buildDashboardHtmlResponse(this[cacheKey], {
+      exposeToken: this._uiExposeToken,
+      apiKey: this._apiKey
+    })
+    // In exposeToken mode, embed the management token so the UI's bundled
+    // fetch wrapper can send it as `Authorization: Bearer`. Injected per
+    // response (not cached) and only when a key exists — start() disables
+    // exposeToken otherwise. The page's <head> already ships an inert
+    // reader for this meta; absent the tag it's a no-op (localhost path).
+    this._setDashboardSecurityHeaders(res)
+    // The token is request-scoped and must never be cached by a shared
+    // proxy/browser cache.
+    if (body.noStore) res.setHeader('Cache-Control', 'no-store, max-age=0')
     res.writeHead(200)
-    res.end(this[cacheKey])
+    res.end(body.html)
+  }
+
+  async _resolveDashboardGetRoute (req, path) {
+    let wizardComplete = null
+    if (path === '/') {
+      const wizard = await this._getWizard()
+      wizardComplete = wizard.isComplete()
+    }
+    return resolveDashboardGetRoute({
+      path,
+      uiSimple: this._uiSimple,
+      uiExposeToken: this._uiExposeToken,
+      isLocalRequest: this._isLocalRequest(req),
+      wizardComplete
+    })
+  }
+
+  _sendDashboardGetRoute (res, route) {
+    if (route.kind === 'serve') return this._serveDashboard(res, route.cacheKey, route.filename)
+    if (route.kind === 'redirect') {
+      res.setHeader('Location', route.location)
+      res.writeHead(302)
+      res.end()
+      return
+    }
+    if (route.kind === 'forbidden') {
+      res.setHeader('Content-Type', route.contentType || 'text/plain')
+      res.writeHead(403)
+      res.end(route.message || 'Forbidden\n')
+    }
+  }
+
+  _setDashboardSecurityHeaders (res) {
+    return setDashboardSecurityHeaders(res)
   }
 
   _json (res, data, status = 200, headers = null) {
-    if (headers) {
-      for (const [name, value] of Object.entries(headers)) {
-        res.setHeader(name, value)
-      }
-    }
-    res.writeHead(status)
-    res.end(JSON.stringify(data) + '\n')
+    return writeJson(res, data, status, headers)
+  }
+
+  _relayKernelProfileActive () {
+    return this.node && (
+      this.node.mode === 'relaykernel' ||
+      (this.node.config && this.node.config.productProfile === 'relaykernel')
+    )
+  }
+
+  _custodyApiDisabled () {
+    return this._relayKernelProfileActive() ||
+      !!(this.node && this.node.config && this.node.config.custody && this.node.config.custody.enabled === false)
+  }
+
+  _federationApiDisabled () {
+    return this._relayKernelProfileActive()
+  }
+
+  /**
+   * Reverse-proxy a read-only index query to the sidecar. The schema-sheets
+   * index lives out-of-process (corestore-7/hc11, dependency-isolated); the
+   * relay forwards only the method + path + query string so the desktop can
+   * use a single gatewayUrl (contract §2.2). No client headers, cookies, or
+   * IP are forwarded — the sidecar sees only the relay (loopback). Returns
+   * 501 when no sidecar is configured. 8s timeout; the 5MB cap is enforced
+   * INCREMENTALLY (Content-Length precheck + streamed byte budget) so a buggy
+   * or compromised sidecar can't OOM the relay by sending a huge body.
+   */
+  async _proxyIndex (req, res, url) {
+    const result = await buildIndexProxyRouteResponse({
+      base: this.node.indexSidecarUrl,
+      url
+    })
+    if (result.event) this.emit(result.event.name, result.event.detail)
+    if (result.kind === 'json') return this._json(res, result.payload, result.status || 200, result.headers || null)
+    res.writeHead(result.status || 200, result.headers || { 'Content-Type': 'application/json' })
+    return res.end(result.kind === 'buffer' ? result.body : result.text)
   }
 
   /**
@@ -2123,447 +2099,101 @@ export class RelayAPI extends EventEmitter {
   }
 
   _readBody (req, maxBytes = 65536) {
-    return new Promise((resolve, reject) => {
-      let settled = false
-      const done = (fn, val) => { if (!settled) { settled = true; fn(val) } }
-      let data = ''
-      let size = 0
-
-      req.on('data', (chunk) => {
-        size += chunk.length
-        if (size > maxBytes) {
-          req.destroy()
-          done(reject, new Error('Request body too large'))
-          return
-        }
-        data += chunk
-      })
-      req.on('end', () => {
-        try {
-          done(resolve, data ? JSON.parse(data) : {})
-        } catch {
-          done(reject, new Error('Invalid JSON body'))
-        }
-      })
-      req.on('error', (err) => done(reject, err))
-    })
+    return readJsonBody(req, maxBytes)
   }
 
-  // ─── Management Handlers ──────────────────────────────────────────
-
-  _validatePositiveInt (value, min, max, name) {
-    const parsed = parseInt(value, 10)
-    if (Number.isNaN(parsed) || !Number.isFinite(parsed)) {
-      return { ok: false, value: null, error: name + ' must be a valid integer' }
-    }
-    if (parsed < min || parsed > max) {
-      return { ok: false, value: null, error: name + ' must be between ' + min + ' and ' + max }
-    }
-    return { ok: true, value: parsed, error: null }
+  _getUsageTelemetryPayload () {
+    const stats = typeof this.node.getStats === 'function' ? this.node.getStats() : {}
+    return usageTelemetryPayload(this.node._bandwidthReceipt, stats)
   }
 
-  _validatePositiveNumber (value, min, max, name) {
-    const parsed = Number(value)
-    if (Number.isNaN(parsed) || !Number.isFinite(parsed)) {
-      return { ok: false, value: null, error: name + ' must be a valid number' }
-    }
-    if (parsed < min || parsed > max) {
-      return { ok: false, value: null, error: name + ' must be between ' + min + ' and ' + max }
-    }
-    return { ok: true, value: parsed, error: null }
-  }
-
-  _handleConfigUpdate (res, body) {
-    const applied = []
-    const config = this.node.config
-
-    // Bounds definitions for numeric config fields
-    const intFields = {
-      maxStorageBytes: { min: 1048576, max: 10e12 },
-      maxConnections: { min: 1, max: 100000 },
-      maxCircuitsPerPeer: { min: 1, max: 1000 },
-      maxCircuitDuration: { min: 1000, max: 86400000 },
-      maxCircuitBytes: { min: 1024, max: 10e12 },
-      announceInterval: { min: 1000, max: 3600000 },
-      replicationCheckInterval: { min: 10000, max: 3600000 },
-      targetReplicaFloor: { min: 1, max: 16 },
-      catalogSignatureMaxAgeMs: { min: 1000, max: 86400000 },
-      catalogMaxAppAgeMs: { min: 0, max: 31536000000 },
-      shutdownTimeoutMs: { min: 1000, max: 300000 }
-    }
-
-    for (const [field, bounds] of Object.entries(intFields)) {
-      if (body[field] !== undefined) {
-        const result = this._validatePositiveInt(body[field], bounds.min, bounds.max, field)
-        if (!result.ok) {
-          return this._json(res, { error: result.error }, 400)
-        }
-        config[field] = result.value
-        applied.push(field)
-      }
-    }
-
-    if (body.maxRelayBandwidthMbps !== undefined) {
-      const result = this._validatePositiveNumber(body.maxRelayBandwidthMbps, 0.1, 100000, 'maxRelayBandwidthMbps')
-      if (!result.ok) {
-        return this._json(res, { error: result.error }, 400)
-      }
-      config.maxRelayBandwidthMbps = result.value
-      applied.push('maxRelayBandwidthMbps')
-    }
-
-    if (body.registryAutoAccept !== undefined) {
-      config.registryAutoAccept = body.registryAutoAccept !== false
-      applied.push('registryAutoAccept')
-    }
-    if (body.replicationRepairEnabled !== undefined) {
-      config.replicationRepairEnabled = body.replicationRepairEnabled !== false
-      applied.push('replicationRepairEnabled')
-    }
-    if (body.gatewayPublicOnlyPrivacyTier !== undefined) {
-      config.gatewayPublicOnlyPrivacyTier = body.gatewayPublicOnlyPrivacyTier !== false
-      applied.push('gatewayPublicOnlyPrivacyTier')
-    }
-    if (body.strictSeedingPrivacy !== undefined) {
-      config.strictSeedingPrivacy = body.strictSeedingPrivacy !== false
-      applied.push('strictSeedingPrivacy')
-    }
-    if (body.enableDistributedDriveBridge !== undefined) {
-      config.enableDistributedDriveBridge = body.enableDistributedDriveBridge !== false
-      applied.push('enableDistributedDriveBridge')
-    }
-    if (body.requireSignedCatalog !== undefined) {
-      config.requireSignedCatalog = body.requireSignedCatalog === true
-      applied.push('requireSignedCatalog')
-    }
-    if (body.regions !== undefined) {
-      config.regions = Array.isArray(body.regions) ? body.regions : []
-      applied.push('regions')
-    }
-    if (body.discovery && typeof body.discovery === 'object') {
-      config.discovery = {
-        ...(config.discovery || {}),
-        ...body.discovery
-      }
-      applied.push('discovery')
-    }
-    if (body.access && typeof body.access === 'object') {
-      config.access = {
-        ...(config.access || {}),
-        ...body.access
-      }
-      applied.push('access')
-    }
-    if (body.pairing && typeof body.pairing === 'object') {
-      config.pairing = {
-        ...(config.pairing || {}),
-        ...body.pairing
-      }
-      applied.push('pairing')
-    }
-
-    // Persist config changes to disk
-    this._persistConfig().catch(() => {})
-
-    return this._json(res, {
-      ok: true,
-      applied,
-      config: this._getSafeConfig()
-    })
-  }
-
-  async _handleServiceManagement (res, body) {
-    if (!this.node.serviceRegistry) {
-      return this._json(res, { error: 'Services not enabled' }, 503)
-    }
-
-    const { action, service } = body
-    if (!action || !service) {
-      return this._json(res, {
-        error: 'action and service required (action: enable|disable|restart)'
-      }, 400)
-    }
-
-    const registry = this.node.serviceRegistry
-
-    if (action === 'disable') {
-      if (!registry.services.has(service)) {
-        return this._json(res, { error: `Service '${service}' not found` }, 404)
-      }
-      try {
-        await registry.unregister(service)
-        this._json(res, { ok: true, action: 'disabled', service })
-      } catch (err) {
-        this._json(res, { error: err.message }, 500)
-      }
-      return
-    }
-
-    if (action === 'restart') {
-      const provider = registry.services.get(service)
-      if (!provider) {
-        return this._json(res, { error: `Service '${service}' not found` }, 404)
-      }
-      const ctx = { node: this.node, store: this.node.store, config: this.node.config }
-      try {
-        await provider.stop()
-        await provider.start(ctx)
-        this._json(res, { ok: true, action: 'restarted', service })
-      } catch (err) {
-        this._json(res, { error: err.message }, 500)
-      }
-      return
-    }
-
-    return this._json(res, {
-      error: 'Unknown action: ' + action + ' (use: disable, restart)'
-    }, 400)
-  }
-
-  async _handleModeSwitch (res, body) {
-    const { mode } = body
-    if (!mode) {
-      return this._json(res, { error: 'mode required' }, 400)
-    }
-
-    if (!AVAILABLE_MODES.includes(mode)) {
-      return this._json(res, {
-        error: 'Unknown mode: ' + mode,
-        available: AVAILABLE_MODES
-      }, 400)
-    }
-
-    try {
-      const overrides = {}
-      if (body.maxConnections !== undefined) {
-        const val = Number(body.maxConnections)
-        if (!Number.isFinite(val) || val < 0) {
-          return this._json(res, { error: 'maxConnections must be a non-negative number' }, 400)
-        }
-        overrides.maxConnections = val
-      }
-      if (body.maxRelayBandwidthMbps !== undefined) {
-        const val = Number(body.maxRelayBandwidthMbps)
-        if (!Number.isFinite(val) || val < 0) {
-          return this._json(res, { error: 'maxRelayBandwidthMbps must be a non-negative number' }, 400)
-        }
-        overrides.maxRelayBandwidthMbps = val
-      }
-      if (body.maxStorageBytes !== undefined) {
-        const val = Number(body.maxStorageBytes)
-        if (!Number.isFinite(val) || val < 0) {
-          return this._json(res, { error: 'maxStorageBytes must be a non-negative number' }, 400)
-        }
-        overrides.maxStorageBytes = val
-      }
-      if (body.discovery && typeof body.discovery === 'object') overrides.discovery = body.discovery
-      if (body.access && typeof body.access === 'object') overrides.access = body.access
-      if (body.pairing && typeof body.pairing === 'object') overrides.pairing = body.pairing
-      if (body.registryAutoAccept !== undefined) overrides.registryAutoAccept = body.registryAutoAccept !== false
-
-      await this.node.applyMode(mode, overrides)
-    } catch (err) {
-      return this._json(res, { error: err.message || 'Failed to apply mode' }, 400)
-    }
-
-    // Persist
-    this._persistConfig().catch(() => {})
-
-    return this._json(res, {
-      ok: true,
-      mode,
-      applied: ['mode'],
-      note: mode === 'stealth'
-        ? 'Enable Tor transport for full stealth mode'
-        : mode === 'homehive'
-          ? 'HomeHive mode active — low resource, LAN-priority'
-          : mode === 'custody-relay'
-            ? 'Custody relay mode active — blind atomic handoff focused'
-            : mode === 'relay-core'
-              ? 'Relay Core active — focused availability/custody kernel'
-              : null
-    })
-  }
-
-  async _handleDeviceManagement (res, body) {
-    if (!this.node.accessControl) {
-      return this._json(res, {
-        error: 'Access control is not active in current mode',
-        mode: this.node.mode
-      }, 400)
-    }
-
-    const action = body.action || 'list'
-    if (action === 'list') {
-      const devices = this.node.listDevices()
-      return this._json(res, { ok: true, count: devices.length, devices })
-    }
-
-    if (action === 'add') {
-      if (!body.pubkey || !isValidHexKey(body.pubkey, 64)) {
-        return this._json(res, { error: 'pubkey must be 64 hex characters' }, 400)
-      }
-      await this.node.addDevice(body.pubkey, body.name || 'manual')
-      return this._json(res, { ok: true, action: 'added', pubkey: body.pubkey })
-    }
-
-    if (action === 'remove') {
-      if (!body.pubkey || !isValidHexKey(body.pubkey, 64)) {
-        return this._json(res, { error: 'pubkey must be 64 hex characters' }, 400)
-      }
-      await this.node.removeDevice(body.pubkey)
-      return this._json(res, { ok: true, action: 'removed', pubkey: body.pubkey })
-    }
-
-    return this._json(res, { error: 'Unknown action (use list, add, remove)' }, 400)
-  }
-
-  _handlePairingManagement (res, body) {
-    if (!this.node.accessControl) {
-      return this._json(res, {
-        error: 'Pairing is not available in current mode',
-        mode: this.node.mode
-      }, 400)
-    }
-
-    const action = body.action || 'status'
-    if (action === 'status') {
-      const state = this.node.accessControl._pairingState
-      return this._json(res, {
-        ok: true,
-        active: this.node.accessControl.isPairing,
-        expiresAt: state ? state.expiresAt : null
-      })
-    }
-
-    if (action === 'start') {
-      const timeoutMs = body.timeoutMs ? Number(body.timeoutMs) : undefined
-      if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs < 10_000 || timeoutMs > 30 * 60 * 1000)) {
-        return this._json(res, { error: 'timeoutMs must be between 10000 and 1800000' }, 400)
-      }
-      const pairing = this.node.enablePairing({ timeoutMs })
-      return this._json(res, {
-        ok: true,
-        active: true,
-        ...pairing
-      })
-    }
-
-    if (action === 'stop') {
-      this.node.accessControl.disablePairing()
-      return this._json(res, { ok: true, active: false })
-    }
-
-    return this._json(res, { error: 'Unknown action (use status, start, stop)' }, 400)
-  }
-
-  _handleTransportToggle (res, body) {
-    const { transport, enabled } = body
-    if (!transport || typeof transport !== 'string') {
-      return this._json(res, { error: 'transport required' }, 400)
-    }
-
-    if (transport === '__proto__' || transport === 'constructor' || transport === 'prototype') {
-      return this._json(res, { error: 'Invalid transport name' }, 400)
-    }
-
-    if (!/^[a-z0-9-]+$/.test(transport)) {
-      return this._json(res, { error: 'Invalid transport name' }, 400)
-    }
-
-    if (!this.node.config.transports) {
-      this.node.config.transports = { udp: true }
-    }
-
-    this.node.config.transports[transport] = enabled !== false
-
-    this._persistConfig().catch(() => {})
-
-    return this._json(res, {
-      ok: true,
-      transport,
-      enabled: this.node.config.transports[transport],
-      note: 'Transport changes may require a node restart to take full effect'
-    })
-  }
-
-  _redactCustodyStatus (status = {}) {
-    return {
-      intentId: status.intentId || null,
-      blindContentId: status.blindContentId || null,
-      custodyMode: status.custodyMode || 'blind',
-      requiredReplicas: status.requiredReplicas || 0,
-      receiptCount: status.receiptCount || 0,
-      quorumReached: status.quorumReached === true,
-      receiptRoot: status.receiptRoot || null,
-      relayQuorum: Array.isArray(status.relayQuorum) ? status.relayQuorum : [],
-      committed: status.committed === true,
-      sourceRetired: status.sourceRetired === true,
-      proofCount: status.proofCount || 0,
-      passingProofs: status.passingProofs || 0,
-      nonServingProofCount: status.nonServingProofCount || 0,
-      nonServingRelays: Array.isArray(status.nonServingRelays) ? status.nonServingRelays : [],
-      expiryWitnessCount: status.expiryWitnessCount || 0,
-      validExpiryWitnessCount: status.validExpiryWitnessCount || 0,
-      expiryWitnessRelays: Array.isArray(status.expiryWitnessRelays) ? status.expiryWitnessRelays : []
-    }
+  _getPokerApp () {
+    if (this.node.pokerApp) return this.node.pokerApp
+    if (this.node._pokerApp) return this.node._pokerApp
+    if (this.node.poker && typeof this.node.poker.listTables === 'function') return this.node.poker
+    const services = this.node.serviceRegistry && this.node.serviceRegistry.services
+    const entry = services && typeof services.get === 'function' ? services.get('poker') : null
+    if (!entry) return null
+    if (entry.provider && typeof entry.provider.listTables === 'function') return entry.provider
+    if (typeof entry.listTables === 'function') return entry
+    return null
   }
 
   _getSafeConfig () {
-    const c = this.node.config
-    return {
-      storage: c.storage,
-      maxStorageBytes: c.maxStorageBytes,
-      maxConnections: c.maxConnections,
-      maxRelayBandwidthMbps: c.maxRelayBandwidthMbps,
-      enableRelay: c.enableRelay,
-      enableSeeding: c.enableSeeding,
-      enableMetrics: c.enableMetrics,
-      enableAPI: c.enableAPI,
-      apiPort: c.apiPort,
-      apiHost: c.apiHost,
-      corsOrigins: c.corsOrigins,
-      regions: c.regions || [],
-      discovery: c.discovery || { dht: true, announce: true, mdns: false },
-      access: c.access || { open: true, allowlist: [] },
-      pairing: c.pairing || { enabled: false },
-      transports: c.transports || { udp: true },
-      registryAutoAccept: c.registryAutoAccept,
-      maxCircuitsPerPeer: c.maxCircuitsPerPeer,
-      maxCircuitDuration: c.maxCircuitDuration,
-      maxCircuitBytes: c.maxCircuitBytes,
-      announceInterval: c.announceInterval,
-      requireSignedCatalog: c.requireSignedCatalog,
-      catalogSignatureMaxAgeMs: c.catalogSignatureMaxAgeMs,
-      catalogMaxAppAgeMs: c.catalogMaxAppAgeMs,
-      strictSeedingPrivacy: c.strictSeedingPrivacy,
-      enableDistributedDriveBridge: c.enableDistributedDriveBridge,
-      gatewayPublicOnlyPrivacyTier: c.gatewayPublicOnlyPrivacyTier,
-      replicationCheckInterval: c.replicationCheckInterval,
-      replicationRepairEnabled: c.replicationRepairEnabled,
-      targetReplicaFloor: c.targetReplicaFloor,
-      shutdownTimeoutMs: c.shutdownTimeoutMs,
-      mode: this.node._operatingMode || 'standard'
-    }
+    return buildSafeConfigPayload(this.node)
+  }
+
+  _snapshotWizardConfig () {
+    return snapshotWizardConfig(this.node.config)
+  }
+
+  _restoreWizardConfig (snapshot) {
+    return restoreWizardConfig(this.node.config, snapshot)
   }
 
   async _persistConfig () {
     try {
       const { saveConfig } = await import('../../config/loader.js')
-      saveConfig(this._getSafeConfig())
-    } catch (_) {
-      // Config persistence is best-effort
+      return saveConfig(this._getSafeConfig())
+    } catch (err) {
+      this.emit('config-persist-error', {
+        message: persistErrorMessage(err),
+        error: err
+      })
+      throw err
     }
   }
 
+  async _persistConfigOrRespond (res, rollback = null) {
+    try {
+      await this._persistConfig()
+      return true
+    } catch (_) {
+      if (typeof rollback === 'function') {
+        try {
+          await rollback()
+        } catch (err) {
+          this.emit('config-rollback-error', {
+            message: persistErrorMessage(err),
+            error: err
+          })
+        }
+      }
+      this._persistFailureResponse(res, { kind: 'config-persist' })
+      return false
+    }
+  }
+
+  _persistFailureResponse (res, result) {
+    const out = result && result.kind === 'wizard-persist'
+      ? wizardPersistFailureResult({ error: result.error, emit: (...args) => this.emit(...args) })
+      : configPersistFailureResult()
+    return this._json(res, out.payload, out.status)
+  }
+
   async stop () {
+    if (this._retrievabilityProofProvider) {
+      try { await this._retrievabilityProofProvider.stop() } catch (_) {}
+    }
+
     if (this._dashboardFeed) {
-      this._dashboardFeed.stop()
+      try { await this._dashboardFeed.stop() } catch (_) {}
       this._dashboardFeed = null
     }
 
+    if (this._pokerFeed) {
+      this._pokerFeed.stop()
+      this._pokerFeed = null
+    }
+
     if (this._gateway) {
-      await this._gateway.close()
+      // Never let a gateway-close failure abort the rest of teardown —
+      // skipping server.close() below would leak the listening socket and
+      // cause EADDRINUSE when start() re-binds the port on a self-heal
+      // restart.
+      try { await this._gateway.close() } catch (err) {
+        this.emit('gateway-close-error', { error: err.message })
+      }
     }
 
     if (this._rateLimitCleanup) {
@@ -2571,9 +2201,24 @@ export class RelayAPI extends EventEmitter {
       this._rateLimitCleanup = null
     }
     this._rateLimits.clear()
+    this._endpointRateLimits.clear()
 
     if (!this.server) return
     return new Promise((resolve) => {
+      // Terminate idle keep-alive connections so close() doesn't stall
+      // waiting for dashboard/WS clients to disconnect (Node 18.2+).
+      if (typeof this.server.closeIdleConnections === 'function') {
+        try { this.server.closeIdleConnections() } catch (_) {}
+      }
+      if (typeof this.server.closeAllConnections === 'function') {
+        // stop() is an operator-requested shutdown/restart. Active HTTP
+        // requests should not be allowed to keep the API process alive
+        // indefinitely after the listener has stopped accepting new work.
+        try { this.server.closeAllConnections() } catch (_) {}
+        setImmediate(() => {
+          try { this.server?.closeAllConnections() } catch (_) {}
+        })
+      }
       this.server.close(() => {
         this.server = null
         this.emit('stopped')

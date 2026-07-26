@@ -60,8 +60,10 @@ export function isOutboxLogHttpRoute (path) {
 // integrity property — and a cold browser boot legitimately bursts ~10+ reads,
 // which is how the coarse per-IP budget locked returning visitors out to an
 // empty feed. /api/sync/heads is POST (appIds ride in the body) but is a read.
-// Writes (/api/token, create/join/append, swarm join/send/leave) and the admin
-// surface are NOT reads and stay under the global budget.
+// By default, writes (/api/token, create/join/append, swarm join/send/leave)
+// and the admin surface also stay under the global budget. An explicitly
+// configured OutboxLog HTTP envelope replaces that coarse budget for the
+// public data plane only; admin routes retain both their global and auth gates.
 export const OUTBOXLOG_HTTP_READ_GET_ROUTES = Object.freeze([
   '/api/bridge/status',
   '/api/directory',

@@ -7,8 +7,11 @@
  * without moving sync, auth, or SSE mechanics into the large relay dispatcher.
  */
 
-import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { readJsonBody } from 'p2p-hiverelay/core/relay-node/api-body.js'
+import {
+  normalizeOutboxLogHttpRateLimit
+} from 'p2p-hiverelay/core/relay-node/api-outboxlog-http-adapter.js'
 import { getPostJsonContentTypeProblem } from 'p2p-hiverelay/core/relay-node/api-request.js'
 import { appendVaryHeader, writeJson } from 'p2p-hiverelay/core/relay-node/api-response.js'
 
@@ -16,17 +19,28 @@ export const OUTBOXLOG_API_PREFIX = '/api'
 export const OUTBOXLOG_MAX_JSON_BODY_BYTES = 1024 * 1024
 export const OUTBOXLOG_SSE_PING_MS = 25000
 
-const DEFAULT_RATE_LIMIT = { windowMs: 60000, max: 1200 }
 const DEFAULT_SSE_MAX_PER_IP = 8
 const DEFAULT_SSE_MAX_TOTAL = 2000
 const DEFAULT_SYNC_EVENT_APP_ID_LIMIT = 128
 const DEFAULT_SYNC_EVENT_APP_ID_LENGTH = 128
 const DEFAULT_SYNC_EVENT_REPLAY_LIMIT = 1000
-const MAX_RATE_BUCKETS = 50000
+export const OUTBOXLOG_HTTP_MAX_RATE_BUCKETS = 50000
+export const OUTBOXLOG_TOKEN_TTL_MS = 15 * 60 * 1000
 
 export function createOutboxLogHttpHandler (opts = {}) {
   const state = createOutboxLogHttpState()
-  return (req, res) => handleOutboxLogRoute(req, res, { ...opts, state })
+  const rateLimit = normalizeOutboxLogHttpRateLimit(opts.rateLimit)
+  const effectivePublicWriteRateLimit = opts.effectivePublicWriteRateLimit === undefined
+    ? rateLimit
+    : normalizeOutboxLogHttpRateLimit(opts.effectivePublicWriteRateLimit)
+  const rateLimitSource = opts.rateLimitSource || (opts.rateLimit === undefined ? 'outboxlog-default' : 'operator')
+  return (req, res) => handleOutboxLogRoute(req, res, {
+    ...opts,
+    effectivePublicWriteRateLimit,
+    rateLimit,
+    rateLimitSource,
+    state
+  })
 }
 
 export function createOutboxLogHttpState () {
@@ -37,29 +51,34 @@ export function createOutboxLogHttpState () {
   }
 }
 
-export function createOutboxLogTokenAuth ({ tokenBytes = 32, maxTokens = 4096 } = {}) {
-  const tokens = new Set()
-  const order = []
+export function createOutboxLogTokenAuth ({ tokenBytes = 16, ttlMs = OUTBOXLOG_TOKEN_TTL_MS, secret = randomBytes(32), now = () => Date.now() } = {}) {
+  const nonceBytes = Number.isSafeInteger(tokenBytes) && tokenBytes >= 8 && tokenBytes <= 64 ? tokenBytes : 16
+  const lifetime = Number.isSafeInteger(ttlMs) && ttlMs > 0 ? ttlMs : OUTBOXLOG_TOKEN_TTL_MS
+  const key = Buffer.isBuffer(secret) || secret instanceof Uint8Array ? Buffer.from(secret) : Buffer.from(String(secret), 'utf8')
+  if (key.byteLength < 16) throw new Error('OutboxLog: token auth secret must be at least 16 bytes')
 
   return {
+    ttlMs: lifetime,
     issue () {
-      const token = randomBytes(tokenBytes).toString('hex')
-      tokens.add(token)
-      order.push(token)
-      while (order.length > maxTokens) tokens.delete(order.shift())
-      return token
+      const expiresAt = Math.floor(now() + lifetime)
+      const payload = 'v1.' + expiresAt.toString(36) + '.' + randomBytes(nonceBytes).toString('hex')
+      return payload + '.' + tokenMac(key, payload)
     },
 
     verify (token) {
-      if (typeof token !== 'string' || !token) return false
-      for (const known of tokens) {
-        if (safeTokenEqual(token, known)) return true
-      }
-      return false
+      const parsed = parseStatelessToken(token)
+      if (!parsed || parsed.expiresAt < now()) return false
+      const expected = tokenMac(key, parsed.payload)
+      return safeTokenEqual(parsed.mac, expected)
+    },
+
+    expiresAt (token) {
+      const parsed = parseStatelessToken(token)
+      return parsed ? parsed.expiresAt : null
     },
 
     _size () {
-      return tokens.size
+      return 0
     }
   }
 }
@@ -111,13 +130,37 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
 
   const state = ctx.state || createOutboxLogHttpState()
   const ip = clientIp(req, ctx)
-  if (overLimit(ip, ctx.rateLimit || DEFAULT_RATE_LIMIT, state)) {
+  const rateLimit = normalizeOutboxLogHttpRateLimit(ctx.rateLimit)
+  const rate = consumeRateLimit(ip, rateLimit, state)
+  if (!rate.allowed) {
+    res.setHeader('Retry-After', String(rate.retryAfterSeconds))
     return respond(res, 429, { error: 'rate limited' })
   }
 
   const app = ctx.outboxLogApp || ctx.outboxlogApp || ctx.app || ctx.core
   const sync = ctx.sync || (app && app.sync)
   const swarm = ctx.swarm || (app && app.swarm)
+
+  // Federation traffic has its own relay-identity authentication. It is
+  // intentionally handled before browser-token authentication: an operator
+  // never distributes browser bearer tokens to another operator.
+  if (path === '/api/sync/federation/commit') {
+    if (req.method !== 'POST') return respond(res, 405, { error: 'method not allowed' })
+    const federation = app && app.federationQuorum
+    if (!federation || federation.enabled !== true || typeof federation.accept !== 'function') {
+      return respond(res, 404, { error: 'not found' })
+    }
+    const body = await readJson(req)
+    if (!body.ok) return respondReadProblem(res, body)
+    try {
+      return respond(res, 200, { receipt: await federation.accept(body.body, sync) })
+    } catch (err) {
+      if (err && Number.isInteger(err.status) && err.status >= 400 && err.status < 600) {
+        return respond(res, err.status, { error: err.message || 'federation request failed', errorCode: err.code || null })
+      }
+      return respond(res, 500, { error: 'federation request failed' })
+    }
+  }
 
   // Operator admin surface (DO-NOT-SERVE takedown). Gated by a SEPARATE admin
   // auth — never the browser sync token — so an ordinary client that holds a
@@ -131,7 +174,12 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
   if (path === '/api/token') {
     if (req.method !== 'POST') return respond(res, 405, { error: 'method not allowed' })
     if (!auth || typeof auth.issue !== 'function') return respond(res, 503, { error: 'outboxlog auth unavailable' })
-    return respond(res, 200, { token: auth.issue() })
+    const token = auth.issue()
+    return respond(res, 200, {
+      token,
+      expiresAt: typeof auth.expiresAt === 'function' ? auth.expiresAt(token) : null,
+      ttlMs: Number.isSafeInteger(auth.ttlMs) ? auth.ttlMs : null
+    })
   }
 
   if (!auth || typeof auth.verify !== 'function' || !auth.verify(tokenFrom(req, parsed))) {
@@ -141,7 +189,18 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
   try {
     if (path === '/api/bridge/status') {
       if (req.method !== 'GET') return respond(res, 405, { error: 'method not allowed' })
-      return respond(res, 200, { ready: true, service: 'outboxlog' })
+      const capabilities = sync && typeof sync.capabilities === 'function'
+        ? await sync.capabilities()
+        : unavailableCommitCapabilities()
+      return respond(res, 200, {
+        ready: capabilities.ready === true,
+        service: 'outboxlog',
+        serviceVersion: capabilities.serviceVersion,
+        atomicCommit: capabilities.atomicCommit,
+        legacyWrites: capabilities.legacyWrites,
+        networkQuorum: federationCapabilities(app),
+        httpRateLimit: publicRateLimit(rateLimit, ctx)
+      })
     }
 
     if (path.startsWith('/api/identity')) {
@@ -149,6 +208,11 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
     }
 
     if (!sync) return respond(res, 503, { error: 'outboxlog sync unavailable' })
+
+    if (path === '/api/sync/capabilities' && req.method === 'GET') {
+      const capabilities = typeof sync.capabilities === 'function' ? await sync.capabilities() : unavailableCommitCapabilities()
+      return respond(res, 200, { ...capabilities, networkQuorum: federationCapabilities(app) })
+    }
 
     if (path === '/api/sync/create' && req.method === 'POST') {
       const body = await readJson(req)
@@ -166,6 +230,21 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
       const body = await readJson(req)
       if (!body.ok) return respondReadProblem(res, body)
       return respond(res, 200, await sync.append(body.body.appId, body.body.op))
+    }
+
+    if (path === '/api/sync/commit' && req.method === 'POST') {
+      if (typeof sync.commit !== 'function') return respond(res, 503, { error: 'atomic commit unavailable' })
+      const body = await readJson(req)
+      if (!body.ok) return respondReadProblem(res, body)
+      const receipt = await sync.commit(body.body.appId, body.body.commit)
+      const federation = app && app.federationQuorum
+      if (!federation || federation.enabled !== true || typeof federation.confirm !== 'function') return respond(res, 200, receipt)
+      const networkDurability = await federation.confirm({
+        appId: body.body.appId,
+        commit: body.body.commit,
+        localReceipt: receipt
+      })
+      return respond(res, 200, { ...receipt, networkDurability })
     }
 
     if (path === '/api/sync/heads' && req.method === 'POST') {
@@ -237,7 +316,7 @@ export async function handleOutboxLogRoute (req, res, ctx = {}) {
     if (isMethodMismatch(path, req.method)) return respond(res, 405, { error: 'method not allowed' })
     return respond(res, 404, { error: 'not found' })
   } catch (err) {
-    if (err && Number.isInteger(err.status) && err.status >= 400 && err.status < 500) {
+    if (err && Number.isInteger(err.status) && err.status >= 400 && (err.status < 500 || err.status === 503)) {
       return respond(res, err.status, { error: err.message || 'outboxlog request failed' })
     }
     return respond(res, 500, { error: 'outboxlog route failed' })
@@ -257,6 +336,12 @@ function isOutboxLogApiPath (path) {
     // adapter is mounted standalone.
     isAdminPath(path)
   )
+}
+
+function federationCapabilities (app) {
+  if (app && typeof app.federationCapabilities === 'function') return app.federationCapabilities()
+  if (app && app.federationQuorum && typeof app.federationQuorum.descriptor === 'function') return app.federationQuorum.descriptor()
+  return { enabled: false }
 }
 
 function isAdminPath (path) {
@@ -320,6 +405,7 @@ function isMethodMismatch (path, method) {
     '/api/sync/create',
     '/api/sync/join',
     '/api/sync/append',
+    '/api/sync/commit',
     '/api/sync/heads',
     '/api/swarm/join',
     '/api/swarm/send',
@@ -333,10 +419,34 @@ function isMethodMismatch (path, method) {
     '/api/sync/count',
     '/api/sync/status',
     '/api/sync/events',
+    '/api/sync/capabilities',
     '/api/directory',
     '/api/swarm/events'
   ])
   return (postOnly.has(path) && method !== 'POST') || (getOnly.has(path) && method !== 'GET')
+}
+
+function unavailableCommitCapabilities () {
+  return {
+    schema: 1,
+    ready: false,
+    serviceVersion: null,
+    atomicCommit: {
+      schema: 1,
+      method: 'POST',
+      route: '/api/sync/commit',
+      enabled: false,
+      durable: false,
+      ready: false,
+      cas: true,
+      idempotent: false,
+      idempotency: null
+    },
+    legacyWrites: {
+      create: false,
+      append: false
+    }
+  }
 }
 
 function applyCors (req, res, ctx) {
@@ -347,6 +457,7 @@ function applyCors (req, res, ctx) {
     : (Array.isArray(allowOrigin) && requestOrigin && allowOrigin.includes(requestOrigin) ? requestOrigin : allowOrigin[0] || '*')
   res.setHeader('Access-Control-Allow-Origin', origin)
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Pear-Token, X-Pear-Admin-Token')
+  res.setHeader('Access-Control-Expose-Headers', 'Retry-After')
   res.setHeader('Access-Control-Max-Age', '86400')
   appendVaryHeader(res, 'Origin')
 }
@@ -358,25 +469,51 @@ function clientIp (req, ctx) {
   return (req.socket && req.socket.remoteAddress) || 'unknown'
 }
 
-function overLimit (ip, rateLimit, state) {
-  if (!rateLimit || rateLimit.max === false || rateLimit.max === Infinity) return false
+function consumeRateLimit (ip, rateLimit, state) {
+  if (!rateLimit.enabled) return { allowed: true }
   const now = Date.now()
   let bucket = state.buckets.get(ip)
-  if (!bucket || now - bucket.start > rateLimit.windowMs) {
+  if (!bucket || now - bucket.start >= rateLimit.windowMs) {
+    // Keep attacker-controlled IP cardinality from growing memory without
+    // bound. Deleting and reinserting expired buckets keeps Map insertion
+    // order aligned with window age, so the first entry is the oldest window
+    // and can be evicted in O(1) when the fixed cap is full.
+    if (bucket) state.buckets.delete(ip)
+    while (state.buckets.size >= OUTBOXLOG_HTTP_MAX_RATE_BUCKETS) {
+      state.buckets.delete(state.buckets.keys().next().value)
+    }
     bucket = { start: now, count: 0 }
     state.buckets.set(ip, bucket)
-  }
-  if (state.buckets.size > MAX_RATE_BUCKETS) {
-    for (const [key, value] of state.buckets) {
-      if (now - value.start > rateLimit.windowMs) state.buckets.delete(key)
-    }
   }
   // Check-before-increment: a rejected request must not consume window budget,
   // otherwise a client retrying through a 429 can never recover within the
   // window even when its accepted-rate would fit (self-lockout).
-  if (bucket.count >= rateLimit.max) return true
+  if (bucket.count >= rateLimit.max) {
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.max(1, Math.ceil((bucket.start + rateLimit.windowMs - now) / 1000))
+    }
+  }
   bucket.count++
-  return false
+  return { allowed: true }
+}
+
+function publicRateLimit (rateLimit, ctx) {
+  const effective = ctx.effectivePublicWriteRateLimit
+    ? normalizeOutboxLogHttpRateLimit(ctx.effectivePublicWriteRateLimit)
+    : rateLimit
+  return {
+    scope: 'public-writes',
+    source: ctx.rateLimitSource || 'outboxlog-default',
+    enabled: effective.enabled,
+    windowMs: effective.windowMs,
+    max: effective.max,
+    outboxLogEnvelope: {
+      enabled: rateLimit.enabled,
+      windowMs: rateLimit.windowMs,
+      max: rateLimit.max
+    }
+  }
 }
 
 function tokenFrom (req, url) {
@@ -656,6 +793,19 @@ function attachSseCleanup (req, res, ping, onCleanup) {
   req.on('close', cleanup)
   res.on('close', cleanup)
   return cleanup
+}
+
+function tokenMac (key, payload) {
+  return createHmac('sha256', key).update(payload, 'utf8').digest('hex')
+}
+
+function parseStatelessToken (token) {
+  if (typeof token !== 'string' || token.length < 32 || token.length > 512) return null
+  const parts = token.split('.')
+  if (parts.length !== 4 || parts[0] !== 'v1' || !/^[0-9a-z]+$/.test(parts[1]) || !/^[0-9a-f]{16,128}$/.test(parts[2]) || !/^[0-9a-f]{64}$/.test(parts[3])) return null
+  const expiresAt = Number.parseInt(parts[1], 36)
+  if (!Number.isSafeInteger(expiresAt) || expiresAt < 0) return null
+  return { payload: parts.slice(0, 3).join('.'), expiresAt, mac: parts[3] }
 }
 
 function safeTokenEqual (a, b) {

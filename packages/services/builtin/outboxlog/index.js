@@ -1,8 +1,10 @@
 import { ServiceProvider } from 'p2p-hiverelay/core/services/provider.js'
 import {
   DEFAULT_OUTBOXLOG_NAMESPACE,
+  DEFAULT_OUTBOXLOG_SERVICE_VERSION,
   OUTBOXLOG_BLIND_SEAL_DEFAULT_ALG,
   OUTBOXLOG_BLIND_SEAL_VERSION,
+  OUTBOXLOG_MAX_REPLAY_COMMIT_BYTES,
   canonicalOutboxRecord,
   createOutboxBlindSealedBody,
   createJsonFileOutboxPersistence,
@@ -21,7 +23,7 @@ import {
   createPartitionedHypercoreOutboxJournal
 } from './hypercore-journal.js'
 import { createOutboxSwarmHub } from './swarm-hub.js'
-import { positiveStorageBound } from 'p2p-hiverelay/config/storage-cap.js'
+import { createOutboxFederationQuorum } from './federation-quorum.js'
 export {
   OUTBOXLOG_BLIND_SEAL_AAD_DOMAIN,
   OUTBOXLOG_BLIND_SEAL_AAD_VERSION,
@@ -79,6 +81,8 @@ export class OutboxLogApp extends ServiceProvider {
     this.swarm = opts.swarm || this.engine.swarm || createOutboxSwarmHub(opts)
     this.persistencePath = typeof opts.persistencePath === 'string' ? opts.persistencePath : null
     this.storagePath = typeof opts.storagePath === 'string' ? opts.storagePath : null
+    this.journalPath = typeof opts.journalPath === 'string' ? opts.journalPath : null
+    this.atomicOnlyRequested = opts.legacyWrites === false
     this.persistenceDisabled = opts.persistence === false
     this.journal = opts.journal || null
     this.node = null
@@ -86,8 +90,6 @@ export class OutboxLogApp extends ServiceProvider {
     // journal cores to the fleet seeder. 0 disables the periodic re-affirm
     // (the one-shot initial seed still runs). Default 10 minutes.
     this.seedReaffirmMs = normalizeReaffirmMs(opts.seedReaffirmMs, OUTBOXLOG_SEED_REAFFIRM_DEFAULT_MS)
-    this.seedMaxStorageBytes = positiveStorageBound(opts.seedMaxStorageBytes)
-    this.journalMaxStorageBytes = positiveStorageBound(opts.journalMaxStorageBytes)
     this._seedTimer = null
     // Ghost-outbox sweep (see outbox-log.js sweepGhosts). opts.sweep === false
     // disables; ttl/interval overridable here and via config.outboxlog.sweep.
@@ -95,21 +97,20 @@ export class OutboxLogApp extends ServiceProvider {
     this.sweepTtlMs = normalizeReaffirmMs(opts.sweepTtlMs, OUTBOXLOG_SWEEP_DEFAULT_TTL_MS)
     this.sweepIntervalMs = normalizeReaffirmMs(opts.sweepIntervalMs, OUTBOXLOG_SWEEP_DEFAULT_INTERVAL_MS)
     this._sweepTimer = null
+    this._stopRequested = false
+    this._stopped = false
+    this._swarmDestroyed = false
+    // Null unless explicitly configured. Federation quorum is opt-in because
+    // local durability is still a valid mode for general OutboxLog users.
+    this.federationQuorum = opts.federationQuorum || null
   }
 
   manifest () {
     return {
       name: 'outboxlog',
-      version: '0.2.0',
+      version: '0.1.0',
       description: 'Single-writer signed outbox log with Peerit relay wire compatibility',
-      // Aggregate labels remain for existing capability-doc consumers. Exact
-      // method names make the already object-safe methods reachable through
-      // ServiceRegistry/callService, giving P2P clients parity with HTTP.
-      capabilities: [
-        'outboxlog.sync', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces',
-        'create', 'join', 'append', 'get', 'list', 'range', 'count', 'status',
-        'heads', 'directory', 'events', 'namespaces'
-      ]
+      capabilities: ['outboxlog.sync', 'outboxlog.commit', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces']
     }
   }
 
@@ -117,14 +118,11 @@ export class OutboxLogApp extends ServiceProvider {
     this.node = context.node || null
     const config = context && context.config && typeof context.config === 'object' ? context.config : {}
     const outboxlog = config.outboxlog && typeof config.outboxlog === 'object' ? config.outboxlog : {}
+    if (outboxlog.legacyWrites !== undefined && this.engine.configureLegacyWrites) {
+      this.engine.configureLegacyWrites(outboxlog.legacyWrites)
+    }
     if (outboxlog.seedReaffirmMs !== undefined) {
       this.seedReaffirmMs = normalizeReaffirmMs(outboxlog.seedReaffirmMs, this.seedReaffirmMs)
-    }
-    if (Object.prototype.hasOwnProperty.call(outboxlog, 'seedMaxStorageBytes')) {
-      this.seedMaxStorageBytes = positiveStorageBound(outboxlog.seedMaxStorageBytes)
-    }
-    if (Object.prototype.hasOwnProperty.call(outboxlog, 'maxJournalStorageBytes')) {
-      this.journalMaxStorageBytes = positiveStorageBound(outboxlog.maxJournalStorageBytes)
     }
     if (this.engine.configureNamespaces && (outboxlog.namespaces || typeof outboxlog.namespace === 'string')) {
       this.engine.configureNamespaces({
@@ -132,19 +130,15 @@ export class OutboxLogApp extends ServiceProvider {
         namespaces: outboxlog.namespaces || null
       })
     }
-    if (!this.persistenceDisabled && this.engine.configurePersistence) {
-      const usePartitionedHypercoreJournal = outboxlog.journal === 'hypercore-outboxes' ||
+    const usePartitionedHypercoreJournal = outboxlog.journal === 'hypercore-outboxes' ||
         outboxlog.persistence === 'hypercore-outboxes' ||
         outboxlog.perOutboxHypercore === true
-      const useHypercoreJournal = usePartitionedHypercoreJournal ||
+    const useHypercoreJournal = usePartitionedHypercoreJournal ||
         outboxlog.journal === 'hypercore' ||
         outboxlog.persistence === 'hypercore' ||
         outboxlog.hypercore === true
-      if (!useHypercoreJournal && context.node?.storageAdmission) {
-        const err = new Error('OutboxLog persistent file/JSONL backends are not storage-authority bounded; configure journal="hypercore" or "hypercore-outboxes" with maxJournalStorageBytes, or disable persistence')
-        err.code = 'OUTBOXLOG_BOUNDED_PERSISTENCE_REQUIRED'
-        throw err
-      }
+    const configuredJournalPath = this.journalPath || (typeof outboxlog.journalPath === 'string' ? outboxlog.journalPath : null)
+    if (!this.persistenceDisabled && this.engine.configurePersistence) {
       let journal = null
       if (usePartitionedHypercoreJournal) {
         journal = await createPartitionedHypercoreOutboxJournal({
@@ -152,25 +146,43 @@ export class OutboxLogApp extends ServiceProvider {
           indexName: typeof outboxlog.indexName === 'string'
             ? outboxlog.indexName
             : (typeof outboxlog.journalName === 'string' ? outboxlog.journalName : undefined),
-          coreNamePrefix: typeof outboxlog.outboxCorePrefix === 'string' ? outboxlog.outboxCorePrefix : undefined,
-          storageAdmission: context.node && context.node.storageAdmission,
-          maxJournalStorageBytes: this.journalMaxStorageBytes
+          coreNamePrefix: typeof outboxlog.outboxCorePrefix === 'string' ? outboxlog.outboxCorePrefix : undefined
         })
       } else if (useHypercoreJournal) {
         journal = await createHypercoreOutboxJournal({
           store: context.store || (context.node && context.node.store) || null,
-          name: typeof outboxlog.journalName === 'string' ? outboxlog.journalName : undefined,
-          storageAdmission: context.node && context.node.storageAdmission,
-          maxJournalStorageBytes: this.journalMaxStorageBytes
+          name: typeof outboxlog.journalName === 'string' ? outboxlog.journalName : undefined
         })
       }
       const configured = this.engine.configurePersistence({
         persistencePath: useHypercoreJournal ? null : this.persistencePath || (typeof outboxlog.persistencePath === 'string' ? outboxlog.persistencePath : null),
         journal,
-        journalPath: useHypercoreJournal ? null : (typeof outboxlog.journalPath === 'string' ? outboxlog.journalPath : null),
+        journalPath: useHypercoreJournal ? null : configuredJournalPath,
         storagePath: useHypercoreJournal ? null : this.storagePath || (typeof config.storage === 'string' ? config.storage : null)
       })
       if (journal && configured !== false) this.journal = journal
+    }
+    const capabilities = this.sync && typeof this.sync.capabilities === 'function' ? this.sync.capabilities() : null
+    const atomicOnly = this.atomicOnlyRequested || outboxlog.legacyWrites === false || (
+      capabilities && capabilities.legacyWrites &&
+      capabilities.legacyWrites.create === false && capabilities.legacyWrites.append === false
+    )
+    if (atomicOnly) {
+      if (this.persistenceDisabled || useHypercoreJournal || !configuredJournalPath) {
+        throw new Error('OutboxLog: atomic-only mode requires a durable JSONL journalPath')
+      }
+      if (typeof this.engine.assertAtomicWriteReady === 'function') {
+        this.engine.assertAtomicWriteReady({ requireFsyncedPath: true })
+      } else if (!capabilities || capabilities.ready !== true || !capabilities.atomicCommit || capabilities.atomicCommit.durable !== true || capabilities.atomicCommit.ready !== true) {
+        throw new Error('OutboxLog: atomic-only mode failed durable journal readiness')
+      }
+    }
+    if (outboxlog.federationQuorum !== undefined) {
+      const keyPair = context.keyPair || (context.node && (context.node.keyPair || (context.node.swarm && context.node.swarm.keyPair))) || null
+      this.federationQuorum = createOutboxFederationQuorum({
+        config: outboxlog.federationQuorum,
+        keyPair
+      })
     }
     await this._startFleetSeeding()
     this._startGhostSweep(outboxlog)
@@ -217,13 +229,8 @@ export class OutboxLogApp extends ServiceProvider {
   async _startFleetSeeding () {
     if (!this.journal || typeof this.journal.seedCores !== 'function') return
     const seeder = this.node && this.node.seeder
-    if (!seeder || typeof seeder.announceAuthorityOwnedCore !== 'function' ||
-        typeof seeder.withdrawAuthorityOwnedCore !== 'function') {
+    if (!seeder || typeof seeder.seedCore !== 'function') {
       this._logSeedWarn('[outboxlog] hypercore journal configured but node.seeder unavailable — outbox cores will NOT be fleet-durable; enable relay seeding')
-      return
-    }
-    if (this.seedMaxStorageBytes === null) {
-      this._logSeedWarn('[outboxlog] hypercore journal has no positive safe-integer outboxlog.seedMaxStorageBytes — outbox cores remain local-only')
       return
     }
     // Initial one-shot seed (awaited so the log is fleet-durable by the time
@@ -261,6 +268,7 @@ export class OutboxLogApp extends ServiceProvider {
   }
 
   async stop () {
+    if (this._stopped) return
     if (this._seedTimer) {
       clearInterval(this._seedTimer)
       this._seedTimer = null
@@ -269,19 +277,33 @@ export class OutboxLogApp extends ServiceProvider {
       clearInterval(this._sweepTimer)
       this._sweepTimer = null
     }
-    let flushError = null
+    const shouldFlush = !this._stopRequested
+    this._stopRequested = true
+    let failure = null
+    let closeSucceeded = false
     try {
-      if (this.engine.flush) await this.engine.flush()
+      if (shouldFlush && this.engine.flush) await this.engine.flush()
     } catch (err) {
-      flushError = err
+      failure = err
+    } finally {
+      try {
+        // Release exclusive JSONL ownership even when a fenced/failed flush
+        // reports an error; a failed release remains retryable on stop().
+        if (this.engine.close) await this.engine.close()
+        closeSucceeded = true
+      } catch (err) {
+        if (!failure) failure = err
+      } finally {
+        // Teardown must still complete if ownership release reports an error.
+        if (!this._swarmDestroyed && this.swarm && typeof this.swarm.destroy === 'function') {
+          this.swarm.destroy()
+          this._swarmDestroyed = true
+        }
+        this.node = null
+      }
     }
-    if (this.journal && typeof this.journal.close === 'function') await this.journal.close()
-    // Tear down the swarm hub so no descriptor delivery fires after stop and
-    // its channel/descriptor state is released. Guard the method so an
-    // injected swarm without destroy()/close() is tolerated.
-    if (this.swarm && typeof this.swarm.destroy === 'function') this.swarm.destroy()
-    this.node = null
-    if (flushError) throw flushError
+    if (closeSucceeded) this._stopped = true
+    if (failure) throw failure
   }
 
   create (appId, opts = {}) {
@@ -306,6 +328,24 @@ export class OutboxLogApp extends ServiceProvider {
       appId = appId.appId
     }
     return this.sync.append(appId, op)
+  }
+
+  commit (appId, commit) {
+    if (appId && typeof appId === 'object') {
+      commit = appId.commit
+      appId = appId.appId
+    }
+    return this.sync.commit(appId, commit)
+  }
+
+  capabilities () {
+    return this.sync.capabilities()
+  }
+
+  federationCapabilities () {
+    return this.federationQuorum && typeof this.federationQuorum.descriptor === 'function'
+      ? this.federationQuorum.descriptor()
+      : { enabled: false }
   }
 
   get (appId, key) {
@@ -375,11 +415,6 @@ export class OutboxLogApp extends ServiceProvider {
     return this.engine.namespaces ? this.engine.namespaces() : []
   }
 
-  /** Dashboard-safe OutboxLog counters (no cell bodies). */
-  operatorStats () {
-    return this.engine.operatorStats ? this.engine.operatorStats() : null
-  }
-
   // Operator takedown surface (DO-NOT-SERVE by opaque record id). Suppresses a
   // record from serve-time reads without reading/deleting its content. The
   // record still exists in storage; restore() reverses it.
@@ -405,17 +440,16 @@ export class OutboxLogApp extends ServiceProvider {
 
   async seedPersistenceCores (seeder = this.node && this.node.seeder) {
     if (!this.journal || typeof this.journal.seedCores !== 'function') return []
-    if (this.seedMaxStorageBytes === null) {
-      throw new Error('OutboxLog fleet seeding requires positive safe-integer outboxlog.seedMaxStorageBytes')
-    }
-    return this.journal.seedCores(seeder, { maxStorageBytes: this.seedMaxStorageBytes })
+    return this.journal.seedCores(seeder)
   }
 }
 
 export {
   DEFAULT_OUTBOXLOG_NAMESPACE,
+  DEFAULT_OUTBOXLOG_SERVICE_VERSION,
   OUTBOXLOG_BLIND_SEAL_DEFAULT_ALG,
   OUTBOXLOG_BLIND_SEAL_VERSION,
+  OUTBOXLOG_MAX_REPLAY_COMMIT_BYTES,
   canonicalOutboxRecord,
   createOutboxBlindSealedBody,
   createJsonFileOutboxPersistence,
@@ -429,6 +463,18 @@ export {
   isOutboxBlindSealedBody,
   verifyOutboxRecordSignature
 }
+
+export {
+  OUTBOXLOG_FEDERATION_QUORUM_PATH,
+  OUTBOXLOG_FEDERATION_QUORUM_PROTOCOL,
+  OUTBOXLOG_FEDERATION_QUORUM_VERSION,
+  createFederationReceipt,
+  createOutboxFederationQuorum,
+  normalizeOutboxFederationQuorumConfig,
+  signFederationRequest,
+  verifyFederationReceipt,
+  verifyFederationRequest
+} from './federation-quorum.js'
 
 export {
   OUTBOXLOG_OUTBOX_CORE_PREFIX,

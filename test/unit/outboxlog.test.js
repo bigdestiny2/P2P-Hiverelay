@@ -761,6 +761,7 @@ test('outboxlog: JSONL operation journal restores accepted rows', async (t) => {
   const first = createOutboxLog({ verifyAppend: () => true, journalPath })
   first.sync.create(A)
   first.sync.append(A, { type: 'post', data: post('p1', { body: 'opaque-jsonl' }) })
+  first.close()
 
   const second = createOutboxLog({ verifyAppend: () => true, journalPath })
   t.alike(second.sync.get(A, 'post!p1'), post('p1', { body: 'opaque-jsonl' }))
@@ -1280,20 +1281,29 @@ test('outboxlog: snapshot checkpoints lag the journal, restore replays the tail 
   for (let i = 0; i < 25; i++) {
     log.sync.append(writer.publicKeyHex, { type: 'post', data: signRecord(writer, { id: 'r' + i, body: { ciphertext: 'c' + i } }) })
   }
-  // 26 journaled mutations (create + 25 appends) at interval 10 -> 2 snapshot
-  // writes, not 26. The journal carries per-append durability.
-  t.is(snapshotSaves, 2, 'snapshot writes are checkpointed, not per-append')
+  // 26 journaled mutations (create + 25 appends) at interval 10 -> two
+  // journal-managed checkpoints. The redundant compatibility snapshot is not
+  // rewritten: each full-state checkpoint is fsynced only once.
+  t.is(snapshotSaves, 0, 'compacting journal avoids duplicate full-state snapshot writes')
+  const manifestBeforeFlush = JSON.parse(await readFile(journalFile + '.manifest.json', 'utf8'))
+  t.is(manifestBeforeFlush.active, 2, 'two generational checkpoints landed')
 
-  // Crash without flush(): a fresh instance restores checkpoint + journal tail.
+  // Crash without flush(): release only the writer lease (no checkpoint), then
+  // a fresh instance restores checkpoint + journal tail.
+  log.close()
   const restored = createOutboxLog({ persistence: countingPersistence, journalPath: journalFile })
   for (const i of [0, 9, 19, 24]) {
     t.alike(restored.sync.get(writer.publicKeyHex, 'post!r' + i).body, { ciphertext: 'c' + i }, 'row r' + i + ' survives (tail replay)')
   }
 
-  // flush() forces the pending checkpoint.
+  // A new tail mutation plus flush() forces the pending journal checkpoint
+  // without duplicating it through compatibility persistence.
+  restored.sync.append(writer.publicKeyHex, { type: 'post', data: signRecord(writer, { id: 'r25', body: { ciphertext: 'c25' } }) })
   const before = snapshotSaves
-  log.flush()
-  t.is(snapshotSaves, before + 1, 'flush() writes the dirty checkpoint')
+  restored.flush()
+  const manifestAfterFlush = JSON.parse(await readFile(journalFile + '.manifest.json', 'utf8'))
+  t.is(manifestAfterFlush.active, 3, 'flush() writes the dirty journal checkpoint')
+  t.is(snapshotSaves, before, 'flush does not duplicate the checkpoint through compatibility persistence')
 })
 
 test('outboxlog: append lands in the journal even when snapshot persistence is configured (#146)', async (t) => {
@@ -1314,6 +1324,7 @@ test('outboxlog: append lands in the journal even when snapshot persistence is c
   t.ok(journalText.includes('"kind":"append"'), 'append op landed in the journal')
 
   // ...and the journal alone replays into a fresh instance.
+  log.close()
   const replay = createOutboxLog({ journalPath: journalFile })
   t.alike(replay.sync.get(writer.publicKeyHex, 'post!j1').body, rec.body)
 })

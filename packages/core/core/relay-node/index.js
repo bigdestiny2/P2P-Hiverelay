@@ -3,8 +3,8 @@ import Corestore from 'corestore'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import { EventEmitter } from 'events'
-import { readFile, writeFile, mkdir, chmod } from 'fs/promises'
-import { join } from 'path'
+import { readFile, writeFile, rename, unlink, mkdir, chmod } from 'fs/promises'
+import { join, dirname } from 'path'
 import { Seeder } from './seeder.js'
 import { Relay } from './relay.js'
 import { Metrics } from './metrics.js'
@@ -24,13 +24,34 @@ import { SeedProtocol } from '../protocol/seed-request.js'
 import { AnchorProtocol } from '../protocol/anchor-channel.js'
 import { CustodyProtocol } from '../protocol/custody-channel.js'
 import { PublishProtocol } from '../protocol/publish-channel.js'
+import {
+  accountingFieldsFromStorageSummary,
+  createAccountingReceipt
+} from '../protocol/accounting-receipt.js'
+import {
+  buildPublisherSignedSeedOpts,
+  consumePublisherSeedReplayNonce,
+  extractCustodySeedOpts
+} from '../seed-request-builder.js'
+import { isTransientCoreError } from '../transient-core-errors.js'
 import { verifyDelegationCert, verifyRevocation } from '../delegation.js'
 import { CircuitRelay } from '../protocol/relay-circuit.js'
+import { ForwardRelay } from '../protocol/forward-relay.js'
+import { SignedDirectory } from '../services/signed-directory.js'
 import { ProofOfRelay } from '../protocol/proof-of-relay.js'
 import { BandwidthReceipt } from '../protocol/bandwidth-receipt.js'
+import { UsageLedger } from '../protocol/usage-receipt.js'
 import { ReputationSystem } from '../../incentive/reputation/index.js'
 import { NetworkDiscovery } from '../network-discovery.js'
 import { HealthMonitor } from './health-monitor.js'
+import { DiskMonitor } from './disk-monitor.js'
+import { StorageAccounting } from './storage-accounting.js'
+import { ServedAccounting } from './served-accounting.js'
+import { EvictionManager, assertPurgable, purgeDriveCores } from './eviction.js'
+import { SubsidyAccrual } from '../../incentive/subsidy/index.js'
+import { LeaseManager } from '../../incentive/lease/index.js'
+import { evaluateSeedLease, isLeaseExempt } from '../../incentive/lease/gate.js'
+import { MockProvider } from '../../incentive/payment/mock-provider.js'
 import { AlertManager } from './alert-manager.js'
 import { SelfHeal } from './self-heal.js'
 import { AccessControl } from './access-control.js'
@@ -39,12 +60,15 @@ import { ServiceRegistry, ServiceProtocol } from '../services/index.js'
 // Builtin services live in the p2p-hiveservices package and are loaded at
 // runtime via PluginLoader when an operator opts in (config.plugins).
 // Core no longer hardcodes Services constructors.
-import { PluginLoader } from '../plugin-loader.js'
+import { PluginLoader, expandServiceDeps } from '../plugin-loader.js'
 import { Router } from '../router/index.js'
 import { AppRegistry } from '../app-registry.js'
 import {
   RELAY_DISCOVERY_TOPIC,
   FOUNDATION_TOPIC,
+  DISCOVERY_EPOCH_MS,
+  syncEpochDiscoveryTopics,
+  clearEpochDiscoveryTopics,
   isValidHexKey,
   normalizeAvailabilityClass,
   normalizePrivacyTier,
@@ -54,6 +78,14 @@ import { SwarmFirewall } from './swarm-firewall.js'
 import { PolicyGuard } from '../policy-guard.js'
 import { AppLifecycle } from './app-lifecycle.js'
 import { GatewayServer } from './gateway-server.js'
+import { LifecycleScope, isAbortError } from './lifecycle-scope.js'
+import { buildDedupReport } from './dedup-report.js'
+import { encodeRelayRecord, relayRecordHasContent } from './relay-record.js'
+import { hashHex } from '../custody-signing.js'
+
+// z32-encoded 32-byte key (the Hypercore/Autobase z-base-32 alphabet), 52 chars.
+// Used to validate the index-room pointer published by the sidecar.
+const Z32_KEY_RE = /^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/
 
 const DEFAULT_CONFIG = {
   productProfile: 'relay-core',
@@ -61,6 +93,11 @@ const DEFAULT_CONFIG = {
   maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
   maxConnections: 256,
   maxRelayBandwidthMbps: 100,
+  maxCircuitDuration: 10 * 60 * 1000,
+  maxCircuitBytes: 64 * 1024 * 1024,
+  maxCircuitsPerPeer: 5,
+  maxCircuitRateBytesPerSecond: 1024 * 1024,
+  reservationTTL: 60 * 60 * 1000,
   announceInterval: 15 * 60 * 1000, // 15 minutes
   regions: [],
   enableRelay: true,
@@ -88,6 +125,13 @@ const DEFAULT_CONFIG = {
   requireSignedCatalog: false,
   catalogSignatureMaxAgeMs: 5 * 60 * 1000,
   catalogMaxAppAgeMs: 30 * 24 * 60 * 60 * 1000,
+  // Optional bare 64-hex key of a signed Hyperbee catalog to advertise (in
+  // /catalog.json and the gateway firehose) as `catalogBeeKey`. Clients that
+  // can replicate + verify a signed P2P catalog (e.g. PearBrowser) PREFER it
+  // over the HTTP firehose, so an operator can pin a curated, queryable
+  // catalogue. Empty = don't advertise (each operator sets their own key; it's
+  // intentionally NOT a product default). Read at boot + by /seed-core.
+  catalogBeeKey: '',
   // Catalog accept-mode controls how inbound seed requests are handled.
   //   'open'      — auto-accept every signed seed request (legacy behaviour)
   //   'review'    — queue seed requests for operator approval (default)
@@ -97,9 +141,14 @@ const DEFAULT_CONFIG = {
   // when callers haven't migrated. Default mode is decided in `_resolveAcceptMode`.
   acceptMode: undefined,
   acceptAllowlist: [], // array of publisher pubkeys (hex) — only used when acceptMode === 'allowlist'
-  // P2P service auth defaults. Noise-session peers are treated as authenticated
-  // users by default; operators can promote selected pubkeys to relay-admin.
-  serviceDefaultPeerRole: 'authenticated-user',
+  // P2P service auth defaults. Secure-by-default: anonymous swarm peers get the
+  // 'anonymous' role and therefore cannot reach 'authenticated-user' or
+  // 'relay-admin' service routes. Operators promote selected pubkeys to
+  // relay-admin via serviceAdminAllowlist, or — only if they explicitly want an
+  // open, unauthenticated service surface — set serviceDefaultPeerRole to
+  // 'authenticated-user'. Knowing the discovery key must not be enough to call
+  // storage/ai/zk/arbitration/sla over the swarm.
+  serviceDefaultPeerRole: 'anonymous',
   serviceAdminAllowlist: [],
   enableServices: false,
   plugins: [],
@@ -107,6 +156,35 @@ const DEFAULT_CONFIG = {
     enabled: true,
     intervalMs: 30_000,
     maxRestarts: 3
+  },
+  subsidy: {
+    enabled: false,
+    rateSatsPerDay: 500,
+    epochMs: 10 * 60 * 1000,
+    payoutDestination: null
+  },
+  lease: {
+    enabled: false,
+    satsPerGiBDay: 10,
+    maxSatsPerGiBDay: 1_000_000,
+    quoteTtlMs: 60 * 60 * 1000,
+    minLeaseDays: 1,
+    maxLeaseDays: 3650,
+    provider: 'mock'
+  },
+  payment: {
+    enabled: false,
+    settlementInterval: 24 * 60 * 60 * 1000,
+    minSettlementSats: 1000
+  },
+  signedDirectory: {
+    enabled: false,
+    maxEntryBytes: 8 * 1024,
+    ttlSeconds: 24 * 60 * 60,
+    maxEntriesPerAuthor: 1,
+    publishRatePerMinute: 5,
+    maxTotalEntries: 10_000,
+    clockSkewToleranceSeconds: 60
   },
   // Federation: opt-in cross-relay catalog sharing. No automatic sync.
   // Operators explicitly follow / mirror / unfollow other relays at runtime.
@@ -132,6 +210,7 @@ const DEFAULT_CONFIG = {
   replicationRepairEnabled: true,
   targetReplicaFloor: 2,
   bootstrapNodes: null, // null = use HyperDHT defaults
+  dhtFlushTimeoutMs: 1000,
   shutdownTimeoutMs: 10_000,
   enableEviction: true,
   // Bound the in-memory pending-approval queue. With `acceptMode: 'review'` an
@@ -151,6 +230,48 @@ const MODE_PRESETS = {
     plugins: [],
     maxConnections: 256,
     maxRelayBandwidthMbps: 100
+  },
+  relaykernel: {
+    productProfile: 'relaykernel',
+    enableRelay: true,
+    enableSeeding: true,
+    enableMetrics: true,
+    enableAPI: true,
+    enableServices: false,
+    plugins: [],
+    acceptMode: 'review',
+    registryAutoAccept: false,
+    strictSeedingPrivacy: true,
+    gatewayPublicOnlyPrivacyTier: true,
+    requireSignedCatalog: true,
+    custody: {
+      enabled: false,
+      defaultMode: 'blind',
+      allowTransparent: false,
+      requireEncryptedPayload: true,
+      metadataVisibility: 'redacted',
+      redactedCatalog: true,
+      proofTarget: 'ciphertext',
+      defaultRetainMs: 0
+    },
+    signedDirectory: {
+      enabled: false
+    },
+    federation: {
+      enabled: false,
+      followed: [],
+      mirrored: []
+    },
+    lease: {
+      enabled: false
+    },
+    payment: {
+      enabled: false
+    },
+    subsidy: {
+      enabled: false,
+      payoutDestination: null
+    }
   },
   'custody-relay': {
     productProfile: 'custody-relay',
@@ -251,7 +372,7 @@ function buildConfig (mode, opts) {
     throw new Error('Invalid mode: ' + mode + ' (expected one of: ' + Object.keys(MODE_PRESETS).join(', ') + ')')
   }
 
-  return {
+  const config = {
     ...DEFAULT_CONFIG,
     ...preset,
     ...opts,
@@ -274,8 +395,84 @@ function buildConfig (mode, opts) {
       ...DEFAULT_CONFIG.custody,
       ...(preset.custody || {}),
       ...(opts.custody || {})
+    },
+    signedDirectory: {
+      ...DEFAULT_CONFIG.signedDirectory,
+      ...(preset.signedDirectory || {}),
+      ...(opts.signedDirectory || {})
+    },
+    federation: {
+      ...DEFAULT_CONFIG.federation,
+      ...(preset.federation || {}),
+      ...(opts.federation || {})
+    },
+    lease: {
+      ...(DEFAULT_CONFIG.lease || {}),
+      ...(preset.lease || {}),
+      ...(opts.lease || {})
+    },
+    payment: {
+      ...(DEFAULT_CONFIG.payment || {}),
+      ...(preset.payment || {}),
+      ...(opts.payment || {})
+    },
+    subsidy: {
+      ...(DEFAULT_CONFIG.subsidy || {}),
+      ...(preset.subsidy || {}),
+      ...(opts.subsidy || {})
     }
   }
+
+  return mode === 'relaykernel' ? enforceRelayKernelProfile(config) : config
+}
+
+function enforceRelayKernelProfile (config) {
+  return {
+    ...config,
+    productProfile: 'relaykernel',
+    enableServices: false,
+    plugins: [],
+    custody: {
+      ...(config.custody || {}),
+      enabled: false,
+      allowTransparent: false,
+      requireEncryptedPayload: true,
+      metadataVisibility: 'redacted',
+      redactedCatalog: true,
+      proofTarget: 'ciphertext'
+    },
+    signedDirectory: {
+      ...(config.signedDirectory || {}),
+      enabled: false
+    },
+    federation: {
+      ...(config.federation || {}),
+      enabled: false,
+      followed: [],
+      mirrored: []
+    },
+    lease: {
+      ...(config.lease || {}),
+      enabled: false
+    },
+    payment: {
+      ...(config.payment || {}),
+      enabled: false
+    },
+    subsidy: {
+      ...(config.subsidy || {}),
+      enabled: false,
+      payoutDestination: null
+    }
+  }
+}
+
+function isRelayKernelProfile (node) {
+  return !!node && (
+    node.mode === 'relaykernel' ||
+    node._operatingMode === 'relaykernel' ||
+    (node.config && node.config.productProfile === 'relaykernel')
+  )
 }
 
 function withTimeout (promise, ms, label) {
@@ -286,6 +483,19 @@ function withTimeout (promise, ms, label) {
       timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
     })
   ])
+}
+
+function receiptCounter (value, fallback = 0, name = 'counter') {
+  const n = value == null ? fallback : value
+  if (Number.isSafeInteger(n) && n >= 0) return n
+  if (value != null) throw new Error('ACCOUNTING_RECEIPT_INVALID: bad ' + name)
+  return 0
+}
+
+function identityTempPath (keyPath) {
+  const suffix = b4a.alloc(8)
+  sodium.randombytes_buf(suffix)
+  return keyPath + '.tmp-' + Date.now() + '-' + b4a.toString(suffix, 'hex')
 }
 
 export class RelayNode extends EventEmitter {
@@ -307,6 +517,24 @@ export class RelayNode extends EventEmitter {
     this.torTransport = null
     this.paymentManager = null
     this.settlementInterval = null
+    // Pointer to this relay's replicable catalog bee (a Hyperbee whose core is
+    // pinned via /seed-core). Surfaced in /catalog.json so consumers (e.g.
+    // PearBrowser) can replicate the catalog over P2P instead of polling HTTP.
+    // Set by /seed-core { catalog: true } or config; persisted in catalog-bee.json.
+    this.catalogBeeKey = (typeof this.config.catalogBeeKey === 'string' && /^[0-9a-f]{64}$/i.test(this.config.catalogBeeKey))
+      ? this.config.catalogBeeKey.toLowerCase()
+      : null
+    // Pointer (z32) to this relay's schema-sheets index room, published by the
+    // index sidecar. Surfaced in the capability doc + /catalog.json so clients
+    // can blind-replicate the richer signed index. Persisted in index-room.json.
+    // The room itself is hosted out-of-process (corestore-7/hc11), so the relay
+    // only advertises the pointer + optionally proxies the sidecar's query API.
+    this.indexRoom = (typeof this.config.indexRoom === 'string' && Z32_KEY_RE.test(this.config.indexRoom))
+      ? this.config.indexRoom
+      : null
+    this.indexSidecarUrl = (typeof this.config.indexSidecarUrl === 'string' && this.config.indexSidecarUrl)
+      ? this.config.indexSidecarUrl.replace(/\/+$/, '')
+      : null
     this.appRegistry = new AppRegistry(this.config.storage)
     this.appLifecycle = new AppLifecycle(this)
     // Forward lifecycle events so existing listeners on RelayNode keep working
@@ -322,10 +550,20 @@ export class RelayNode extends EventEmitter {
     this.reputation = new ReputationSystem()
     this._proofOfRelay = null
     this._bandwidthReceipt = null
+    // Honest metering: collects consumer-signed UsageReceipts (payout-eligible).
+    // Lightweight + in-memory; available before start() so the API can record
+    // submitted receipts whether or not the services layer is enabled.
+    this.usageLedger = new UsageLedger()
     this._reputationDecayInterval = null
     this._reputationSaveInterval = null
     this.networkDiscovery = null
     this.healthMonitor = null
+    this.diskMonitor = null
+    this.storageAccounting = null
+    this.servedAccounting = null
+    this.eviction = null
+    this.subsidyAccrual = null
+    this.leaseManager = null
     this.alertManager = null
     this.selfHeal = null
     this.seedingRegistry = null
@@ -362,12 +600,37 @@ export class RelayNode extends EventEmitter {
     this._lastRepairAt = null
     this._custodyExpiryInterval = null
     this._lastCustodyExpiryAt = null
+    // LifecycleScope — cancellation contract for fire-and-forget loops and
+    // event handlers (see lifecycle-scope.js). Recreated by every start()
+    // call so post-stop+start sequences get a fresh signal. stop()'s
+    // first action is `await this._scope.drain()` so no closure outlives
+    // the corestore.
+    this._scope = null
+    this._epochDiscoveryTopics = new Map()
     this.running = false
   }
 
   // Backwards compat: expose the seeded apps Map owned by AppLifecycle.
   get seededApps () {
     return this.appLifecycle.seededApps
+  }
+
+  /**
+   * Register a fire-and-forget promise with the active LifecycleScope so
+   * stop() drains it before tearing down state. Used by all the
+   * `setInterval(...)`/`setTimeout(...)` handlers that previously did
+   * `someAsync().catch(() => {})` — see CANCELLATION-CONTRACT.md.
+   *
+   * Returns the promise unchanged. If start() has not run (no active
+   * scope), the promise is left alone — caller is responsible for its
+   * lifetime.
+   *
+   * @param {Promise} promise
+   * @returns {Promise}
+   */
+  _trackFireAndForget (promise) {
+    if (this._scope) this._scope.tracked(promise)
+    return promise
   }
 
   _isRestrictedMode () {
@@ -427,7 +690,14 @@ export class RelayNode extends EventEmitter {
       'federation',
       'discovery',
       'access',
-      'pairing'
+      'pairing',
+      'custody',
+      'custodyExpiryInterval',
+      'custodyExpiryGraceMs',
+      'signedDirectory',
+      'lease',
+      'payment',
+      'subsidy'
     ]) {
       delete carry[key]
     }
@@ -449,15 +719,245 @@ export class RelayNode extends EventEmitter {
     return this.config
   }
 
+  // ─── Services-layer opt-in (Services tab; config + restart) ────────
+  _servicesOverridePath () {
+    return this.config.storage ? join(this.config.storage, 'services.json') : null
+  }
+
+  async _loadServicesOverride () {
+    if (isRelayKernelProfile(this)) {
+      this.config.enableServices = false
+      this.config.plugins = []
+      return
+    }
+
+    const path = this._servicesOverridePath()
+    if (!path) return
+    try {
+      const data = JSON.parse(await readFile(path, 'utf8'))
+      if (data && data.enabled === true && Array.isArray(data.plugins)) {
+        this.config.enableServices = true
+        // expandServiceDeps pulls in bundle support services (e.g. poker -> vrf+
+        // arbitration+zk) and filters to builtins, in case services.json was
+        // hand-edited to list a bundle key without its deps.
+        this.config.plugins = expandServiceDeps(data.plugins)
+      }
+    } catch {
+      // Missing/corrupt -> leave config as-is (services stay off by default).
+    }
+  }
+
+  /**
+   * Persist the operator's Services-layer choice (the Services tab toggle).
+   * Takes full effect on the next restart — _loadServicesOverride reads it
+   * before the services-init block. Validates plugin names against builtins.
+   */
+  async setServicesConfig ({ enabled, plugins } = {}) {
+    // expandServiceDeps dedups, filters to builtins, AND auto-unions bundle
+    // support services so enabling 'poker' also enables vrf+arbitration+zk.
+    const locked = isRelayKernelProfile(this)
+    const list = locked ? [] : (Array.isArray(plugins) ? expandServiceDeps(plugins) : [])
+    const payload = {
+      enabled: locked ? false : enabled === true,
+      plugins: list,
+      updatedAt: Date.now()
+    }
+    if (locked) {
+      payload.locked = true
+      payload.lockReason = 'relaykernel-profile'
+    }
+    const path = this._servicesOverridePath()
+    if (path) {
+      const tmp = path + '.tmp'
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(tmp, JSON.stringify(payload))
+        await rename(tmp, path)
+      } catch (err) {
+        try { await unlink(tmp) } catch (_) {}
+        this.emit('services-config-persist-error', err)
+      }
+    }
+    // Reflect in live config; the registry itself (re)starts on restart.
+    this.config.enableServices = payload.enabled
+    this.config.plugins = payload.plugins
+    return payload
+  }
+
+  _catalogBeePath () {
+    return this.config.storage ? join(this.config.storage, 'catalog-bee.json') : null
+  }
+
+  async _loadCatalogBeeKey () {
+    const path = this._catalogBeePath()
+    if (!path) return
+    try {
+      const data = JSON.parse(await readFile(path, 'utf8'))
+      if (typeof data.key === 'string' && /^[0-9a-f]{64}$/i.test(data.key)) {
+        this.catalogBeeKey = data.key.toLowerCase()
+      }
+    } catch {
+      // Missing/corrupt -> keep whatever the constructor set from config (or null).
+    }
+  }
+
+  /**
+   * Set + persist this relay's advertised catalog-bee pointer. The key is the
+   * core key of a Hyperbee catalog pinned via /seed-core; it is surfaced in
+   * /catalog.json so consumers (e.g. PearBrowser) can replicate the catalog
+   * over P2P instead of polling HTTP. Atomic tmp+rename.
+   */
+  async setCatalogBeeKey (hex) {
+    if (typeof hex !== 'string' || !/^[0-9a-f]{64}$/i.test(hex)) {
+      throw new Error('catalogBeeKey must be 64 hex characters')
+    }
+    this.catalogBeeKey = hex.toLowerCase()
+    const path = this._catalogBeePath()
+    if (path) {
+      const tmp = path + '.tmp'
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(tmp, JSON.stringify({ key: this.catalogBeeKey, updatedAt: Date.now() }))
+        await rename(tmp, path)
+      } catch (err) {
+        try { await unlink(tmp) } catch (_) {}
+        this.emit('catalog-bee-persist-error', err)
+      }
+    }
+    this.emit('catalog-bee-key', { key: this.catalogBeeKey })
+    return this.catalogBeeKey
+  }
+
+  _indexRoomPath () {
+    return this.config.storage ? join(this.config.storage, 'index-room.json') : null
+  }
+
+  async _loadIndexRoom () {
+    const path = this._indexRoomPath()
+    if (!path) return
+    try {
+      const data = JSON.parse(await readFile(path, 'utf8'))
+      if (typeof data.room === 'string' && Z32_KEY_RE.test(data.room)) {
+        this.indexRoom = data.room
+      }
+    } catch {
+      // Missing/corrupt -> keep whatever the constructor set from config (or null).
+    }
+  }
+
+  /**
+   * Set + persist this relay's advertised index-room pointer. The value is the
+   * z32 room link of the schema-sheets index hosted by the index sidecar; it is
+   * surfaced in the capability doc + /catalog.json so clients can blind-replicate
+   * the richer signed index. Called by the sidecar (loopback) once its room is
+   * ready. Atomic tmp+rename. Idempotent on an unchanged value.
+   */
+  async setIndexRoom (z32) {
+    if (typeof z32 !== 'string' || !Z32_KEY_RE.test(z32)) {
+      throw new Error('indexRoom must be a 52-char z32 key')
+    }
+    if (this.indexRoom === z32) return this.indexRoom
+    this.indexRoom = z32
+    const path = this._indexRoomPath()
+    if (path) {
+      const tmp = path + '.tmp'
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(tmp, JSON.stringify({ room: this.indexRoom, updatedAt: Date.now() }))
+        await rename(tmp, path)
+      } catch (err) {
+        try { await unlink(tmp) } catch (_) {}
+        this.emit('index-room-persist-error', err)
+      }
+    }
+    this.emit('index-room', { room: this.indexRoom })
+    // A newly-published index room should propagate to the DHT record promptly
+    // so key-only clients resolve it without waiting for the next republish.
+    this.publishRelayRecord()
+    return this.indexRoom
+  }
+
+  /**
+   * Publish this relay's self-description (gatewayUrl + indexRoom) as a hyperdht
+   * MUTABLE record keyed by the relay's identity key, so a client that knows
+   * only the relay's pubkey can resolve its current address + index room over
+   * the DHT (hyperdht verifies the signature on get). Phase 1 of the iroh
+   * adoption — see docs/IROH-ADOPTION-ROADMAP.md. Best-effort: failures log and
+   * retry on the next republish tick; never throws into the caller.
+   */
+  async publishRelayRecord () {
+    const dht = this.swarm && this.swarm.dht
+    if (!dht || typeof dht.mutablePut !== 'function' || !this.keyPair) return false
+    const record = { gatewayUrl: this.config.gatewayUrl || null, indexRoom: this.indexRoom || null }
+    if (!relayRecordHasContent(record)) return false // nothing to advertise yet
+    // Monotonic seq is REQUIRED: hyperdht rejects a *changed* value at an equal
+    // or lower seq (SEQ_REUSED / SEQ_TOO_LOW), so the default seq=0 would pin us
+    // to the first value forever — the gateway-only boot record could never gain
+    // its indexRoom, and the 30-min republish could never correct a changed
+    // value. Seed from the wall clock (so a fresh process after restart is still
+    // ahead of the last published seq) and bump per publish (so two republishes
+    // in the same second still differ).
+    if (this._recordSeq === undefined) this._recordSeq = Math.floor(Date.now() / 1000)
+    const seq = this._recordSeq++
+    try {
+      await dht.mutablePut(this.keyPair, encodeRelayRecord(record), { seq })
+      return true
+    } catch (err) {
+      this.emit('relay-record-error', err)
+      return false
+    }
+  }
+
   async start () {
     if (this.running) return
+
+    // Fresh lifecycle scope — every loop / handler that participates in
+    // the cancellation contract reads `this._scope` and is automatically
+    // aborted + drained by stop(). Recreated here so a stop()/start()
+    // cycle (e.g. self-heal restart) gets a clean signal.
+    this._scope = new LifecycleScope()
 
     try {
       // Re-create store if it was closed (e.g. after self-heal restart)
       if (this.store.closed) {
         this.store = new Corestore(this.config.storage)
+        // The registry's Hyperbee is backed by the OLD (now-closed) store.
+        // Drop it so setStore()/load() below reopen the bee on the fresh
+        // store; otherwise reseedFromRegistry reads a closed core, gets
+        // SESSION_CLOSED, and silently repopulates nothing.
+        this.appRegistry.detachStore()
       }
       await this.store.ready()
+
+      // v0.8.25: attach the (now-ready) corestore to AppRegistry so its
+      // persistence layer uses a Hyperbee sibling-core instead of the
+      // JSON-blob file. Must be called BEFORE the first registry load
+      // (which happens in _reseedFromRegistry). Safe on self-heal
+      // restart: setStore is idempotent on the same store, and after a
+      // store re-create we detached above so this re-attaches cleanly.
+      try {
+        this.appRegistry.setStore(this.store)
+      } catch (_) {
+        // Already attached + bee already opened (same-store restart path
+        // can fall through here). Harmless.
+      }
+
+      // Restore the advertised catalog-bee pointer (persisted across restart;
+      // the bee's core itself is re-seeded by the Seeder). config value, if
+      // valid, was set in the constructor and is the fallback.
+      await this._loadCatalogBeeKey()
+      await this._loadIndexRoom()
+
+      // Honest outbound (served) byte counting. Attached to the corestore
+      // here — before the swarm exists, so no served block can slip past —
+      // it sums uploads across EVERY core (registry log + every drive's
+      // meta/blob cores), unlike seeder.totalBytesServed which only sees
+      // Seeder.seedCore-routed cores and reads ~0 on registry-drive relays.
+      // Re-created per start(); a self-heal restart recreates the store
+      // above, so stop the old tracker first to drop its stale listener.
+      if (this.servedAccounting) this.servedAccounting.stop()
+      this.servedAccounting = new ServedAccounting({ store: this.store })
+      this.servedAccounting.start()
 
       await this.bootstrapCache.load()
       const bootstrap = this.bootstrapCache.merge(this.config.bootstrapNodes)
@@ -502,7 +1002,26 @@ export class RelayNode extends EventEmitter {
       // available via regionTopic(code) but not auto-joined at current scale —
       // splitting <10 relays across regions reduces discovery, not load.
       // Will revisit when N grows.)
-      this.swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: false })
+      //
+      // Epoch-rotated discovery (opt-in via config.privacy.rotateDiscoveryTopic):
+      //   - 'additive' keeps the static topic (full back-compat) AND announces
+      //     on the rotating epoch topics for privacy-aware peers.
+      //   - 'strict' drops the static topic for maximum unlinkability.
+      // Default (off) leaves behaviour identical to before.
+      const rotateMode = this.config.privacy && this.config.privacy.rotateDiscoveryTopic
+      if (rotateMode !== 'strict') {
+        this.swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: false })
+      }
+      if (rotateMode === 'additive' || rotateMode === 'strict') {
+        this._joinEpochDiscoveryTopics()
+        // Re-join current+next every half-epoch so the node is always announced
+        // on the bucket clients are looking up, across the rollover boundary.
+        this._epochDiscoveryTimer = setInterval(
+          () => { try { this._joinEpochDiscoveryTopics() } catch (_) {} },
+          Math.max(60_000, Math.floor(DISCOVERY_EPOCH_MS / 2))
+        )
+        if (this._epochDiscoveryTimer.unref) this._epochDiscoveryTimer.unref()
+      }
 
       // Foundation relays (operator-of-last-resort) opt-in by setting
       // config.foundation = true — gives quorum-pinned clients a stable
@@ -517,7 +1036,10 @@ export class RelayNode extends EventEmitter {
       if (this.config.enableSeeding) {
         this.seeder = new Seeder(this.store, this.swarm, {
           maxStorageBytes: this.config.maxStorageBytes,
-          announceInterval: this.config.announceInterval
+          announceInterval: this.config.announceInterval,
+          // Persist bare-core pins (catalog bees + any /seed-core) so they
+          // survive a restart. Null storage (tests) -> persistence is a no-op.
+          storagePath: this.config.storage ? join(this.config.storage, 'seeded-cores.json') : null
         })
         startups.push(this.seeder.start())
 
@@ -531,7 +1053,11 @@ export class RelayNode extends EventEmitter {
       if (this.config.enableRelay) {
         this.relay = new Relay(this.swarm, {
           maxBandwidthMbps: this.config.maxRelayBandwidthMbps,
-          maxConnections: this.config.maxConnections
+          maxConnections: this.config.maxConnections,
+          maxCircuitDuration: this.config.maxCircuitDuration,
+          maxCircuitBytes: this.config.maxCircuitBytes,
+          maxCircuitsPerPeer: this.config.maxCircuitsPerPeer,
+          maxCircuitRateBytesPerSecond: this.config.maxCircuitRateBytesPerSecond
         })
         startups.push(this.relay.start())
       }
@@ -540,19 +1066,67 @@ export class RelayNode extends EventEmitter {
       this._seedProtocol = new SeedProtocol(this.swarm, {
         keyPair: this.swarm.keyPair
       })
-      this._seedProtocol.on('seed-request', (msg) => this._onSeedRequest(msg))
+      this._seedProtocol.on('seed-request', (msg, channel) => this._onSeedRequest(msg, channel))
       this._seedProtocol.on('unseed-request', (msg) => this._onUnseedRequest(msg))
 
       if (this.relay) {
         this._circuitRelay = new CircuitRelay(this.swarm, this.relay, {
-          maxCircuitsPerPeer: this.config.maxCircuitsPerPeer || 5
+          reservationTTL: this.config.reservationTTL,
+          maxCircuitDuration: this.config.maxCircuitDuration,
+          maxCircuitBytes: this.config.maxCircuitBytes,
+          maxCircuitsPerPeer: this.config.maxCircuitsPerPeer,
+          maxCircuitRateBytesPerSecond: this.config.maxCircuitRateBytesPerSecond
+        })
+      }
+
+      // Forward relay (opt-in): demand-dialled relay TRANSPORT for apps behind
+      // NAT / UDP-blocking, and the building block for onion routing. OFF
+      // unless explicitly enabled by the operator (config.forwardRelay.enabled),
+      // since it lets peers reach other DHT peers through this node (bounded by
+      // per-peer + byte caps + the SwarmFirewall; never an internet proxy).
+      if (this.config.forwardRelay && this.config.forwardRelay.enabled) {
+        // Optional operator allowlist: if config.forwardRelay.allowTargets
+        // is a non-empty array of hex pubkeys, the relay will only dial
+        // those targets. Left unset, forward acts as a general transport
+        // (any DHT peer) but is bounded by the per-peer concurrency + dial
+        // rate caps below. Previously allowTarget was never wired, so an
+        // enabled forward-relay would dial ANY 32-byte pubkey on demand.
+        const allowList = Array.isArray(this.config.forwardRelay.allowTargets) && this.config.forwardRelay.allowTargets.length
+          ? new Set(this.config.forwardRelay.allowTargets.map(k => String(k).toLowerCase()))
+          : null
+        this._forwardRelay = new ForwardRelay(this.swarm, {
+          maxForwardsPerPeer: this.config.forwardRelay.maxForwardsPerPeer,
+          maxForwardBytes: this.config.forwardRelay.maxForwardBytes,
+          maxDialsPerMinPerPeer: this.config.forwardRelay.maxDialsPerMinPerPeer,
+          allowTarget: allowList ? (targetHex) => allowList.has(String(targetHex).toLowerCase()) : null
+        })
+      }
+
+      // Signed directory (opt-in): relay-hosted openly-writable registry
+      // of signed records keyed by author pubkey. First consumer:
+      // marketplace offer discovery (sellers publish a signed Offer;
+      // buyers list + verify). Generic shape for any "signed record set
+      // by author" use case. OFF by default — operators opt in via
+      // config.signedDirectory.enabled. Trust model identical to the
+      // topic-swarm (relay can omit/reorder; cannot forge). See issue
+      // #33 + PRODUCTION.md "SignedDirectory" section.
+      if (this.config.signedDirectory && this.config.signedDirectory.enabled) {
+        this._signedDirectory = new SignedDirectory(this.swarm, {
+          maxEntryBytes: this.config.signedDirectory.maxEntryBytes,
+          ttlSeconds: this.config.signedDirectory.ttlSeconds,
+          maxEntriesPerAuthor: this.config.signedDirectory.maxEntriesPerAuthor,
+          publishRatePerMinute: this.config.signedDirectory.publishRatePerMinute,
+          maxTotalEntries: this.config.signedDirectory.maxTotalEntries,
+          clockSkewToleranceSeconds: this.config.signedDirectory.clockSkewToleranceSeconds
         })
       }
 
       // Initialize proof-of-relay challenge system
       this._proofOfRelay = new ProofOfRelay({
         maxLatencyMs: this.config.proofMaxLatencyMs || 5000,
-        challengeInterval: this.config.proofChallengeInterval || 300000
+        challengeInterval: this.config.proofChallengeInterval || 300000,
+        maxPendingChallenges: this.config.proofMaxPendingChallenges || 2048,
+        maxBatchSize: this.config.proofMaxBatchSize || 64
       })
 
       // Anchor proof channel — lets peers request our signed anchor proofs
@@ -623,7 +1197,16 @@ export class RelayNode extends EventEmitter {
           apiHost: this.config.apiHost,
           corsOrigins: this.config.corsOrigins,
           apiKey: this.config.apiKey,
-          trustProxy: this.config.trustProxy || false
+          // Operator credential for the OutboxLog takedown admin surface. When
+          // unset here (and no HIVERELAY_OUTBOXLOG_ADMIN_KEY env), the admin
+          // routes stay 404 (safe-by-default) — takedown is opt-in per operator.
+          outboxLogAdminKey: this.config.outboxlog?.adminKey || null,
+          // Optional shared-NAT capacity envelope. RelayAPI validates this and
+          // otherwise preserves the established 1200 requests/60s/IP default.
+          outboxLogHttpRateLimit: this.config.outboxlog?.http?.rateLimit,
+          trustProxy: this.config.trustProxy || false,
+          uiExposeToken: this.config.ui?.exposeToken || false,
+          uiSimple: this.config.ui?.simple || false
         })
         startups.push(this.api.start())
 
@@ -645,8 +1228,10 @@ export class RelayNode extends EventEmitter {
         }
       }
 
-      // Flush DHT + start subsystems concurrently
-      startups.push(this.swarm.flush())
+      // Flush DHT + start subsystems concurrently. The flush is bounded so
+      // local API/dashboard startup is not blocked for seconds by a slow DHT
+      // bootstrap; the joined swarm continues discovering peers afterwards.
+      startups.push(this._flushDhtForStartup())
       await Promise.all(startups)
 
       if (this.config.transports && this.config.transports.websocket) {
@@ -662,11 +1247,26 @@ export class RelayNode extends EventEmitter {
       // Distinct from `wsTransport` above (which carries Hypercore replication).
       // Disabled by default — operator opts in via config.transports.dhtRelayWs.
       if (this.config.transports && this.config.transports.dhtRelayWs) {
+        const dhtRelayWsCfg = this.config.dhtRelayWs || {}
         this.dhtRelayWs = new DHTRelayWS({
           dht: this.swarm.dht,
           port: this.config.dhtRelayWsPort || 8766,
-          host: this.config.dhtRelayWsHost,
-          maxConnections: this.config.maxConnections
+          // Behind a TLS reverse proxy (the supported deploy), bind loopback
+          // so the plaintext ws:// port is never publicly reachable; Caddy
+          // owns public 443. Falls back to the transport default (0.0.0.0)
+          // only when no host + no proxy is configured (bare/dev).
+          host: this.config.dhtRelayWsHost || (dhtRelayWsCfg.trustProxy ? '127.0.0.1' : undefined),
+          // Distinct from the Hyperswarm P2P maxConnections: the pipe's fd
+          // ceiling should be sized against ulimit -n + per-conn buffers,
+          // not tied to the swarm peer cap. Falls back to it if unset.
+          maxConnections: dhtRelayWsCfg.maxConnections || this.config.maxConnections,
+          trustProxy: dhtRelayWsCfg.trustProxy || false,
+          // Pure-pipe prod bounds — all content-neutral (lengths/timings
+          // only). Operators tune via config.dhtRelayWs.{rateLimit,
+          // keepalive,flow}; defaults are safe for an unattended 24/7 pipe.
+          rateLimit: dhtRelayWsCfg.rateLimit || undefined,
+          keepalive: dhtRelayWsCfg.keepalive || undefined,
+          flow: dhtRelayWsCfg.flow || undefined
         })
         this.dhtRelayWs.on('relay-error', (info) => this.emit('dht-relay-error', info))
         await this.dhtRelayWs.start()
@@ -744,10 +1344,13 @@ export class RelayNode extends EventEmitter {
       // Default: Core-only (no services). To enable Services, install
       // p2p-hiveservices and set config.plugins, e.g.:
       //   plugins: ['storage', 'identity', 'ai', 'zk', 'sla', 'schema', 'arbitration']
+      // Operator opt-in persists in <storage>/services.json (set via the
+      // Services tab; applied on this restart). Overrides config when present.
+      await this._loadServicesOverride()
       if (this.config.enableServices !== false && this.config.plugins) {
         this.serviceRegistry = new ServiceRegistry()
         this.serviceProtocol = new ServiceProtocol(this.serviceRegistry, {
-          defaultPeerRole: this.config.serviceDefaultPeerRole || 'authenticated-user'
+          defaultPeerRole: this.config.serviceDefaultPeerRole || 'anonymous'
         })
         this.pluginLoader = new PluginLoader()
 
@@ -763,7 +1366,7 @@ export class RelayNode extends EventEmitter {
         }
 
         // Start all services (passes { node: this } as context)
-        this._serviceContext = { node: this, store: this.store, config: this.config }
+        this._serviceContext = this._buildServiceContext()
         const startupResult = await this.serviceRegistry.startAll(this._serviceContext)
         if (startupResult.failed.length > 0 && this.config.servicesFailOpen !== true) {
           const names = startupResult.failed.map(s => s.name).join(', ')
@@ -771,10 +1374,29 @@ export class RelayNode extends EventEmitter {
         }
         this._startServiceSupervision()
 
+        // Compose notify Mode-2 with the co-resident outboxlog: a
+        // 'notify-feed-head' watch observes the outbox's signed head row via
+        // the engine's own subscribe() — one event path, no parallel
+        // observer machinery. Without outboxlog enabled, notify keeps
+        // rejecting that source kind (SOURCE_UNAVAILABLE) instead of
+        // accepting watches that can never fire. (#142/#145)
+        const notifyEntry = this.serviceRegistry.services.get('notify')
+        const outboxEntry = this.serviceRegistry.services.get('outboxlog')
+        if (notifyEntry && outboxEntry && typeof notifyEntry.provider.attachWatchSource === 'function') {
+          const outboxApp = outboxEntry.provider
+          notifyEntry.provider.attachWatchSource('notify-feed-head', (source, onChange) => {
+            return outboxApp.subscribe(source.key, {}, (event) => {
+              if (event && event.key === 'head!' + source.key && !event.replay) onChange(event)
+            })
+          })
+        }
+
         // Set up seeded apps callback for catalog broadcast
         this.serviceProtocol._getSeededApps = () => this.appRegistry.catalogForBroadcast()
-        this.serviceProtocol._getCatalogEnvelope = () => {
-          const apps = this.appRegistry.catalogForBroadcast()
+        this.serviceProtocol._getCatalogEnvelope = (opts = {}) => {
+          const apps = Array.isArray(opts.apps)
+            ? opts.apps
+            : this.appRegistry.catalogForBroadcast()
           const relayPubkey = this.swarm
             ? b4a.toString(this.swarm.keyPair.publicKey, 'hex')
             : null
@@ -870,8 +1492,8 @@ export class RelayNode extends EventEmitter {
             const peerScoreOk = peerScore === null
               ? true
               : peerScore >= (this.config.followAnchoredMinReputation ?? 0)
-            const storagePctUsed = (this.seeder && this.config.maxStorageBytes > 0)
-              ? (this.seeder.totalBytesStored / this.config.maxStorageBytes)
+            const storagePctUsed = (this.config.maxStorageBytes > 0)
+              ? (this._storageUsedBytes() / this.config.maxStorageBytes)
               : 0
             const hasHeadroom = storagePctUsed < (this.config.followAnchoredStorageCeiling ?? 0.8)
 
@@ -913,7 +1535,7 @@ export class RelayNode extends EventEmitter {
               if (isMirrored || followThisAnchored) {
                 // Trusted partner OR auto-followed anchored content.
                 acted++
-                this.seedApp(appKey, {
+                this._trackFireAndForget(this.seedApp(appKey, {
                   appId: app.id || app.appId || null,
                   name: app.name || null,
                   version: app.version || null,
@@ -933,8 +1555,9 @@ export class RelayNode extends EventEmitter {
                     sourceRelay: relayPubkey
                   })
                 }).catch((err) => {
+                  if (isAbortError(err)) return
                   this.emit('catalog-sync-error', { appKey, error: err.message })
-                })
+                }))
                 continue
               }
 
@@ -955,7 +1578,7 @@ export class RelayNode extends EventEmitter {
               }
               if (decision === 'accept') {
                 acted++
-                this.seedApp(appKey, {
+                this._trackFireAndForget(this.seedApp(appKey, {
                   appId: app.id || app.appId || null,
                   name: app.name || null,
                   version: app.version || null,
@@ -971,8 +1594,9 @@ export class RelayNode extends EventEmitter {
                 }).then(() => {
                   this.emit('catalog-sync', { appKey, source: 'remote-catalog', mode: acceptMode })
                 }).catch((err) => {
+                  if (isAbortError(err)) return
                   this.emit('catalog-sync-error', { appKey, error: err.message })
-                })
+                }))
                 continue
               }
               // 'review' — queue for operator approval.
@@ -1010,7 +1634,11 @@ export class RelayNode extends EventEmitter {
           // Registry uses its own Corestore namespace to avoid conflicts
           const registryStore = this.store.namespace('seeding-registry')
           this.seedingRegistry = new SeedingRegistry(registryStore, this.swarm, {
-            registryKey: this.config.registryKey || null
+            registryKey: this.config.registryKey || null,
+            // Pass the node's LifecycleScope so _indexLog can bail on
+            // stop() instead of running against a freshly-closed log
+            // (vector A3 in STALE-REF-INVENTORY.md).
+            scope: this._scope
           })
 
           // Custody push channel — broadcasts new custody entries to every
@@ -1036,26 +1664,79 @@ export class RelayNode extends EventEmitter {
           // verifyCustodyEntry path the HTTP route does — there is no shorter
           // route in, so a malicious caller cannot bypass signature checks
           // by submitting via Protomux instead.
-          this._publishProtocol = new PublishProtocol({
-            onSubmitIntent: async (body) => {
-              const entry = await this.seedingRegistry.publishCustodyIntent(body, null)
+          // Wrap each registry call so transient corestore/hypercore
+          // lifecycle errors surface as `{ ok: false, error, retryable: true }`
+          // — same convention as the seed handler below + the HTTPS
+          // /api/v1/* routes. Without this, exceptions thrown by the
+          // registry (e.g. "The corestore is closed", "Mutex has been
+          // destroyed") bubble up to PublishProtocol's default catch
+          // which converts them to `retryable: false` — making clients
+          // give up on what is actually a recoverable relay-state issue.
+          const wrapTransient = async (work) => {
+            try {
+              const entry = await work()
               return { ok: true, result: entry }
-            },
-            onSubmitCommit: async (body) => {
-              const entry = await this.seedingRegistry.publishCustodyCommit(body, null)
-              return { ok: true, result: entry }
-            },
-            onSubmitSourceRetired: async (body) => {
-              const entry = await this.seedingRegistry.publishSourceRetired(body, null)
-              return { ok: true, result: entry }
+            } catch (err) {
+              const msg = err && err.message ? err.message : String(err)
+              if (isTransientCoreError(err)) {
+                return { ok: false, error: msg, retryable: true }
+              }
+              return { ok: false, error: msg }
             }
-            // onSubmitSeed: intentionally omitted in v1 — the seed-request
-            // validation + seedApp opts assembly currently lives inline in
-            // api.js's /api/v1/seed handler. A follow-up extracts that into
-            // a shared helper so both transports use the same code path.
-            // Until then, the channel returns a typed
-            //   { ok: false, error: "submit kind 'seed' not configured ..." }
-            // so clients fail fast instead of waiting on a timeout.
+          }
+          this._publishProtocol = new PublishProtocol({
+            onSubmitIntent: (body) => wrapTransient(() => this.seedingRegistry.publishCustodyIntent(body, null)),
+            onSubmitCommit: (body) => wrapTransient(() => this.seedingRegistry.publishCustodyCommit(body, null)),
+            onSubmitSourceRetired: (body) => wrapTransient(() => this.seedingRegistry.publishSourceRetired(body, null)),
+            // Seed handler — runs the publisher-signed body through the
+            // same shared builder the HTTPS /api/v1/seed route uses, so
+            // both transports speak identical vocabulary. Validation
+            // failures surface as { ok: false, error } with no retry
+            // hint; transient core errors from seedApp surface with
+            // retryable: true so the client can wait + retry the
+            // submit (mirrors HTTPS 503 + Retry-After convention).
+            onSubmitSeed: async (body) => {
+              const built = buildPublisherSignedSeedOpts(body, {
+                seedingRegistry: this.seedingRegistry
+              })
+              if (!built.ok) {
+                return { ok: false, error: built.error }
+              }
+              // Paid pin-lease gate — SAME shared module as the HTTP route, so
+              // this publisher-signed transport can't be a free back door.
+              const gate = await evaluateSeedLease({
+                leaseManager: this.leaseManager,
+                seedingRegistry: this.seedingRegistry,
+                appKey: built.appKey,
+                opts: built.opts,
+                body
+              })
+              if (gate.outcome === 'quote') {
+                return { ok: false, error: gate.error, leaseRequired: true, ...(gate.quote || {}) }
+              }
+              if (gate.outcome === 'error') {
+                return { ok: false, error: gate.error, leaseRequired: true }
+              }
+              if (gate.outcome === 'paid') {
+                built.opts.retainUntil = gate.retainUntil
+                built.opts.leaseManaged = true
+              }
+              if (!this._publisherSeedReplayCache) this._publisherSeedReplayCache = new Map()
+              const replay = consumePublisherSeedReplayNonce(built.replay, this._publisherSeedReplayCache)
+              if (!replay.ok) {
+                return { ok: false, error: replay.error }
+              }
+              try {
+                const result = await this.seedApp(built.appKey, built.opts)
+                return { ok: true, result }
+              } catch (err) {
+                const msg = err && err.message ? err.message : String(err)
+                if (isTransientCoreError(err)) {
+                  return { ok: false, error: msg, retryable: true }
+                }
+                return { ok: false, error: msg }
+              }
+            }
           })
 
           // When the registry appends a new custody entry locally, push it
@@ -1093,20 +1774,35 @@ export class RelayNode extends EventEmitter {
           // Periodic scan for matching seed requests
           const scanInterval = this.config.registryScanInterval || 60_000 // 1 min default
           this._registryScanInterval = setInterval(() => {
-            this._scanRegistry().catch((err) => {
+            this._trackFireAndForget(this._scanRegistry().catch((err) => {
+              if (isAbortError(err)) return
               this.emit('registry-error', { error: err })
-            })
+            }))
           }, scanInterval)
           if (this._registryScanInterval.unref) this._registryScanInterval.unref()
 
           // Run initial scan after a short delay to let the registry sync
           setTimeout(() => {
-            this._scanRegistry().catch(() => {})
+            this._trackFireAndForget(this._scanRegistry().catch(() => {}))
           }, 5000)
 
           this._startReplicationMonitor()
           this._startAnchorMonitor()
           this._startRepairMonitor()
+
+          // Acceptance reconciliation (v0.15.3): boot-replay reseeds
+          // never wrote seed-accept records, so the shared census
+          // undercounted true replication — on the 2026-06-11 canary,
+          // 547/961 entries had no census and 252 were floor-blocked
+          // even though copies existed fleet-wide. Backfill "I hold
+          // this" records for every entry we actually hold so eviction
+          // and repair reason over real replica counts. Paced; safe to
+          // re-run (skips entries already recorded).
+          if (this.config.acceptanceReconcile !== false) {
+            setTimeout(() => {
+              this._trackFireAndForget(this._reconcileAcceptances().catch(() => {}))
+            }, 15_000)
+          }
 
           // Cold-start primer — runs once after a brief delay so the
           // swarm has a chance to come up before we start fetching peer
@@ -1114,9 +1810,10 @@ export class RelayNode extends EventEmitter {
           // start.
           if (Array.isArray(this.config.coldStartRelays) && this.config.coldStartRelays.length > 0) {
             setTimeout(() => {
-              this._runColdStartPrimer().catch((err) => {
+              this._trackFireAndForget(this._runColdStartPrimer().catch((err) => {
+                if (isAbortError(err)) return
                 this.emit('cold-start-error', { error: err.message || String(err) })
-              })
+              }))
             }, 15_000)
           }
         } catch (err) {
@@ -1127,10 +1824,25 @@ export class RelayNode extends EventEmitter {
 
       this._startCustodyExpiryMonitor()
 
-      // Load app registry from disk and reseed all persisted apps
-      this._reseedFromRegistry().catch((err) => {
+      // Load app registry from disk and reseed all persisted apps.
+      // The load/hydrate half is AWAITED here so the registry's Hyperbee
+      // is open before start() returns — otherwise an app seeded in the
+      // gap before the (formerly fire-and-forget) reseed opened the bee
+      // is set in memory but silently never persisted.
+      // The drive re-seeding half is tracked fire-and-forget so a stop()
+      // that fires while it fans out (each seedApp cascades into
+      // eagerReplicate — see vector A1) drains every fan-out before
+      // tearing down the corestore.
+      let reseedEntries = []
+      try {
+        reseedEntries = await this.appLifecycle.loadRegistry()
+      } catch (err) {
+        if (!isAbortError(err)) this.emit('reseed-error', { error: err })
+      }
+      this._trackFireAndForget(this.appLifecycle.reseedDrives(reseedEntries).catch((err) => {
+        if (isAbortError(err)) return
         this.emit('reseed-error', { error: err })
-      })
+      }))
 
       // Start network discovery — shares this node's swarm to discover other relays
       this.networkDiscovery = new NetworkDiscovery({ swarm: this.swarm })
@@ -1152,6 +1864,7 @@ export class RelayNode extends EventEmitter {
         followInterval: this.config.federation?.followInterval,
         followed: this.config.federation?.followed || [],
         mirrored: this.config.federation?.mirrored || [],
+        trustedForkObservers: this.config.federation?.trustedForkObservers || [],
         storagePath: join(this.config.storage, 'federation.json')
       })
       // Hydrate persisted follow/mirror state. The bootstrap entries from
@@ -1212,6 +1925,13 @@ export class RelayNode extends EventEmitter {
 
       this.running = true
 
+      // Publish this relay's DHT-resolvable record (gatewayUrl + indexRoom) so
+      // key-only clients can discover it, and republish periodically since DHT
+      // mutable records expire. Best-effort; never blocks startup.
+      this.publishRelayRecord()
+      this._relayRecordTimer = setInterval(() => { this.publishRelayRecord() }, 30 * 60 * 1000)
+      if (this._relayRecordTimer.unref) this._relayRecordTimer.unref()
+
       // Start health monitoring and self-healing
       this.healthMonitor = new HealthMonitor(this, this.config.healthMonitor)
       this.selfHeal = new SelfHeal(this, this.config.selfHeal)
@@ -1221,6 +1941,98 @@ export class RelayNode extends EventEmitter {
       this.selfHeal.on('self-heal-action', (action) => this.emit('self-heal-action', action))
       this.healthMonitor.start()
 
+      // v0.8.28 (#27): operator-visible disk-usage signal. Surfaces via
+      // /status (always) and optionally gates /health → 503 when over
+      // criticalThreshold (config.diskHealthGate, default false to keep
+      // existing /health semantics). milkyb-iad's 1 GB Fly volume
+      // hitting 100% was the root cause of the v0.8.22 fire-drill;
+      // this is the cheap signal that closes that observability gap.
+      this.diskMonitor = new DiskMonitor(this.config.storage || '/data', {
+        warnThreshold: this.config.diskWarnThreshold,
+        criticalThreshold: this.config.diskCriticalThreshold,
+        refreshIntervalMs: this.config.diskRefreshIntervalMs
+      })
+      this.diskMonitor.start()
+
+      // Honest per-drive storage accounting (always on — it is the input
+      // for the repair storage guard, the eviction ranking, and the
+      // dashboard's Storage panel; the paced sweep keeps IO negligible).
+      this.storageAccounting = new StorageAccounting({
+        appRegistry: this.appRegistry,
+        // Real on-disk corestore path — the authoritative footprint, immune to
+        // bare/lazy cores the per-entry drive walk can't see (the miss that let
+        // the adoption guard read ~0 and overfill, 2026-06).
+        storagePath: this.config.storage,
+        tickMs: this.config.storageAccounting?.tickMs,
+        batchSize: this.config.storageAccounting?.batchSize,
+        diskIntervalMs: this.config.storageAccounting?.diskIntervalMs
+      })
+      // An 'error' emit with no listener crashes the process — route to
+      // a logged event instead (v0.15.6).
+      this.storageAccounting.on('error', (err) => this.emit('accounting-error', { error: err && err.message }))
+      this.storageAccounting.start()
+
+      // Over-replication eviction (Phase A). Off by default — sheds
+      // surplus replicas under disk pressure. See eviction.js for the
+      // policy contract.
+      if (this.config.eviction?.enabled) {
+        this._ensureEviction()
+      }
+
+      // Operator subsidy accrual (Phase 1, relay side). Off by default;
+      // accrues a capped sats ESTIMATE for blind-peer work and exports a
+      // signed claim the Phase-2 coordinator verifies + pays. Moves no
+      // money. See incentive/subsidy/index.js + OPERATOR-INCENTIVES-Y1.md.
+      if (this.config.subsidy?.enabled) {
+        this.subsidyAccrual = new SubsidyAccrual({
+          keyPair: this.swarm.keyPair,
+          statsFn: () => this.getStats({ includeSecrets: false }),
+          storagePath: join(this.config.storage, 'subsidy.json'),
+          rateSatsPerDay: this.config.subsidy.rateSatsPerDay,
+          epochMs: this.config.subsidy.epochMs,
+          payoutDestination: this.config.subsidy.payoutDestination || undefined
+        })
+        await this.subsidyAccrual.start()
+      }
+
+      // Paid pin-lease (demand side). Off by default. When enabled, the
+      // publisher-signed seed path charges a byte-days lease; funds settle to
+      // the operator's OWN LN node (zero-custody) and the lease is enforced by
+      // the custody-expiry sweep. Operator self-seeds (POST /seed) are free.
+      // See incentive/lease/index.js + the payment-for-seeding design.
+      if (this.config.lease?.enabled) {
+        let provider = this.config.leaseProvider || null
+        if (!provider) {
+          // 'mock' (in-memory, for test/demo) is the default; 'lightning'
+          // expects the operator to supply a connected provider via
+          // config.leaseProvider (the LND gRPC proto is not bundled here).
+          provider = new MockProvider()
+        }
+        // Fail loud if the wired provider can't VERIFY settlement — otherwise
+        // every redemption would 503 and no lease could ever be granted.
+        if (typeof provider.lookupInvoice !== 'function') {
+          throw new Error('lease.enabled requires a payment provider with lookupInvoice() (got ' +
+            ((provider.constructor && provider.constructor.name) || 'unknown') +
+            '); supply one via config.leaseProvider or set lease.enabled=false')
+        }
+        const payTo = (this.subsidyAccrual && this.subsidyAccrual.payoutDestination
+          ? this.subsidyAccrual.payoutDestination.value
+          : null) ||
+          (this.config.subsidy && this.config.subsidy.payoutDestination) ||
+          this.config.lease.payTo || null
+        this.leaseManager = new LeaseManager({
+          keyPair: this.swarm.keyPair,
+          provider,
+          storagePath: join(this.config.storage, 'lease.json'),
+          satsPerGiBDay: this.config.lease.satsPerGiBDay,
+          quoteTtlMs: this.config.lease.quoteTtlMs,
+          minDays: this.config.lease.minLeaseDays,
+          maxDays: this.config.lease.maxLeaseDays,
+          payTo
+        })
+        await this.leaseManager.start()
+      }
+
       // Start alert manager (if configured) — wires to health monitor + subsystems
       if (this.config.alerts?.enabled) {
         this.alertManager = new AlertManager(this, this.config.alerts)
@@ -1228,13 +2040,23 @@ export class RelayNode extends EventEmitter {
 
       this.emit('started', { publicKey: this.swarm.keyPair.publicKey })
 
-      // Auto-enable holesail if API is not publicly reachable
+      // Auto-enable holesail if API is not publicly reachable.
+      // Tracked so the 15s setTimeout inside doesn't fire post-stop
+      // and start a transport on a destroyed swarm (vector B13).
       if (!this.holesailTransport && this.config.enableAPI) {
-        this._autoEnableHolesail().catch(() => {})
+        this._trackFireAndForget(this._autoEnableHolesail().catch(() => {}))
       }
     } catch (err) {
-      // Rollback in reverse order
+      // Rollback in reverse order. Drain the scope first so any
+      // fire-and-forget that already fired (e.g. _reseedFromRegistry)
+      // unwinds before we tear down the corestore.
+      if (this._scope) {
+        try { await this._scope.drain() } catch (_) {}
+        this._scope = null
+      }
       this.bootstrapCache.stop()
+      if (this._epochDiscoveryTimer) { clearInterval(this._epochDiscoveryTimer); this._epochDiscoveryTimer = null }
+      clearEpochDiscoveryTopics(this._epochDiscoveryTopics)
       if (this._catalogThrottleCleanup) { clearInterval(this._catalogThrottleCleanup); this._catalogThrottleCleanup = null }
       if (this._reputationSaveInterval) { clearInterval(this._reputationSaveInterval); this._reputationSaveInterval = null }
       if (this._reputationDecayInterval) { clearInterval(this._reputationDecayInterval); this._reputationDecayInterval = null }
@@ -1281,8 +2103,8 @@ export class RelayNode extends EventEmitter {
     return this.appLifecycle.seedApp(appKeyHex, opts)
   }
 
-  async unseedApp (appKeyHex) {
-    return this.appLifecycle.unseedApp(appKeyHex)
+  async unseedApp (appKeyHex, opts = {}) {
+    return this.appLifecycle.unseedApp(appKeyHex, opts)
   }
 
   verifyUnseedRequest (appKeyHex, publisherPubkeyHex, signatureHex, timestamp) {
@@ -1293,7 +2115,20 @@ export class RelayNode extends EventEmitter {
     return this.appLifecycle.broadcastUnseed(appKeyHex, publisherPubkeyHex, signatureHex, timestamp)
   }
 
-  getStats () {
+  /**
+   * @param {object} [opts]
+   * @param {boolean} [opts.includeSecrets=true] - when false, redact
+   *   transport credentials and infra identifiers that must not be exposed
+   *   to an unauthenticated caller: the holesail connectionKey (a leak of
+   *   it lets a remote attacker tunnel to the API and ride the localhost
+   *   auth fallback), the Tor onion address (defeats a stealth relay), the
+   *   disk mountPath (server FS layout), and the seeding-registry key.
+   *   Defaults to true so trusted in-process callers (CLI, metrics) are
+   *   unchanged; HTTP /status, HTTP /api/overview, and the live dashboard
+   *   WebSocket feed request the redacted shape at their own boundaries.
+   */
+  getStats (opts = {}) {
+    const includeSecrets = opts.includeSecrets !== false
     const accessControlStats = this.accessControl
       ? {
           pairedDevices: this.accessControl.allowedDevices.size,
@@ -1302,7 +2137,7 @@ export class RelayNode extends EventEmitter {
       : null
     const underReplicated = [...this._replicationHealth.values()].filter(v => v.state === 'under-replicated').length
 
-    return {
+    const stats = {
       running: this.running,
       mode: this.mode,
       publicKey: this.swarm ? b4a.toString(this.swarm.keyPair.publicKey, 'hex') : null,
@@ -1335,6 +2170,44 @@ export class RelayNode extends EventEmitter {
         settlementIntervalMs: this.config.payment?.settlementInterval || null
       },
       accessControl: accessControlStats,
+      disk: this.diskMonitor ? this.diskMonitor.getInfo() : null,
+      storage: this.storageAccounting
+        ? { ...this.storageAccounting.getSummary(), dedup: buildDedupReport(this.appRegistry, this.storageAccounting) }
+        : null,
+      // Honest served total measured at the replication layer (every core,
+      // not just Seeder.seedCore-routed ones). The served-bytes twin of
+      // `storage` above — see api.js /api/overview for how it's preferred
+      // over the misleading seeder.totalBytesServed counter.
+      served: this.servedAccounting ? this.servedAccounting.getSummary() : null,
+      eviction: this.eviction ? this.eviction.getSummary() : null,
+      subsidy: this.subsidyAccrual ? this.subsidyAccrual.getSummary() : null,
+      signedDirectory: this._signedDirectory ? this._signedDirectory.getStats() : null,
+      // v0.8.28 (#29): existing seeder.coresSeeded only counts the
+      // seedingRegistry's local log core (it's the only thing routed
+      // through Seeder.seedCore). The appRegistry-managed Hyperdrives
+      // — meta + blob cores per entry — are missing from that count,
+      // so a relay with 555 seeded apps still shows coresSeeded=1.
+      // Expose the actual operator-visible counts here without
+      // breaking existing dashboards that read seeder.coresSeeded.
+      // Each Hyperdrive has 2 underlying hypercores (meta + blob);
+      // anchored entries have both fully replicated.
+      appRegistry: this.appRegistry
+        ? (() => {
+            const stats = typeof this.appRegistry.anchorStats === 'function'
+              ? this.appRegistry.anchorStats()
+              : { total: this.appRegistry.size || 0, anchored: 0, unanchored: 0 }
+            return {
+              entries: stats.total,
+              anchored: stats.anchored,
+              unanchored: stats.unanchored,
+              // Each Hyperdrive is 2 cores (db + blob). Approximation —
+              // see Hyperdrive._open() for the actual subcore graph.
+              // This is the operator-visible "what's actually being
+              // replicated" count that v0.8.21 #24 made meaningful.
+              cores: stats.total * 2
+            }
+          })()
+        : null,
       distributedDrive: this.distributedDriveBridge
         ? this.distributedDriveBridge.getStats()
         : {
@@ -1346,6 +2219,73 @@ export class RelayNode extends EventEmitter {
             lastError: null
           }
     }
+
+    if (!includeSecrets) {
+      // Strip transport credentials / infra identifiers for unauthenticated
+      // callers. Keep the running/enabled booleans so the dashboard still
+      // shows transport state — only the secret value is removed.
+      if (stats.holesail && stats.holesail.connectionKey != null) {
+        stats.holesail = { ...stats.holesail, connectionKey: null }
+      }
+      if (stats.tor && stats.tor.onionAddress != null) {
+        stats.tor = { ...stats.tor, onionAddress: null }
+      }
+      if (stats.disk && stats.disk.mountPath != null) {
+        stats.disk = { ...stats.disk, mountPath: null }
+      }
+      if (stats.registry && stats.registry.key != null) {
+        stats.registry = { ...stats.registry, key: null }
+      }
+      // The dedup report is operator-triage detail (per-version appKeys an
+      // appId's catalog row deliberately hides). Keep the aggregate
+      // storage.totalBytes on the unauthenticated /status, drop the breakdown.
+      if (stats.storage && stats.storage.dedup != null) {
+        stats.storage = { ...stats.storage, dedup: null }
+      }
+    }
+
+    return stats
+  }
+
+  async createAccountingReceipt (opts = {}) {
+    const keyPair = this.keyPair || (this.swarm && this.swarm.keyPair)
+    if (!keyPair || !keyPair.publicKey || !keyPair.secretKey) {
+      throw new Error('ACCOUNTING_RECEIPT_UNAVAILABLE: relay identity unavailable')
+    }
+    if (!this.storageAccounting || typeof this.storageAccounting.getSummary !== 'function') {
+      throw new Error('ACCOUNTING_RECEIPT_UNAVAILABLE: storage accounting unavailable')
+    }
+
+    if (opts.refresh !== false && typeof this.storageAccounting.measureDisk === 'function') {
+      await this.storageAccounting.measureDisk()
+    }
+
+    const summary = this.storageAccounting.getSummary()
+    if (!Number.isSafeInteger(summary.diskBytes) || summary.diskBytes < 0) {
+      throw new Error('ACCOUNTING_RECEIPT_UNAVAILABLE: OS disk measurement unavailable')
+    }
+
+    const served = this.servedAccounting && typeof this.servedAccounting.getSummary === 'function'
+      ? this.servedAccounting.getSummary()
+      : null
+    const seeder = this.seeder && typeof this.seeder.getStats === 'function'
+      ? this.seeder.getStats()
+      : null
+    const lease = this.leaseManager && typeof this.leaseManager.getSummary === 'function'
+      ? this.leaseManager.getSummary()
+      : null
+
+    const fields = accountingFieldsFromStorageSummary(summary, {
+      periodStart: opts.periodStart,
+      periodEnd: opts.periodEnd,
+      measuredAt: opts.measuredAt,
+      bytesServed: receiptCounter(opts.bytesServed, served?.totalBytesServed ?? seeder?.totalBytesServed ?? 0, 'bytesServed'),
+      bytesReceived: receiptCounter(opts.bytesReceived, 0, 'bytesReceived'),
+      leaseCount: receiptCounter(opts.leaseCount, lease?.leaseCount ?? 0, 'leaseCount'),
+      seededCount: receiptCounter(opts.seededCount, summary.measuredEntries || 0, 'seededCount')
+    })
+
+    return createAccountingReceipt(keyPair, { ...fields, nonce: opts.nonce })
   }
 
   listDevices () {
@@ -1498,11 +2438,18 @@ export class RelayNode extends EventEmitter {
       const secretKey = b4a.alloc(64)
       sodium.crypto_sign_keypair(publicKey, secretKey)
       await mkdir(this.config.storage, { recursive: true })
-      await writeFile(keyPath, JSON.stringify({
-        publicKey: b4a.toString(publicKey, 'hex'),
-        secretKey: b4a.toString(secretKey, 'hex')
-      }, null, 2))
-      await chmod(keyPath, 0o600)
+      const tmpPath = identityTempPath(keyPath)
+      try {
+        await writeFile(tmpPath, JSON.stringify({
+          publicKey: b4a.toString(publicKey, 'hex'),
+          secretKey: b4a.toString(secretKey, 'hex')
+        }, null, 2), { mode: 0o600 })
+        await chmod(tmpPath, 0o600)
+        await rename(tmpPath, keyPath)
+      } catch (err) {
+        try { await unlink(tmpPath) } catch (_) {}
+        throw err
+      }
       return { publicKey, secretKey }
     }
   }
@@ -1560,6 +2507,16 @@ export class RelayNode extends EventEmitter {
     if (this._circuitRelay) {
       try { this._circuitRelay.attach(conn) } catch (err) {
         this.emit('protocol-error', { protocol: 'circuit', error: err })
+      }
+    }
+    if (this._forwardRelay) {
+      try { this._forwardRelay.attach(conn) } catch (err) {
+        this.emit('protocol-error', { protocol: 'forward', error: err })
+      }
+    }
+    if (this._signedDirectory) {
+      try { this._signedDirectory.attach(conn) } catch (err) {
+        this.emit('protocol-error', { protocol: 'signed-directory', error: err })
       }
     }
     if (this._proofOfRelay) {
@@ -1656,8 +2613,105 @@ export class RelayNode extends EventEmitter {
    * @param {object} cfg - Output of SetupWizard.toConfig()
    * @param {string} [cfg.name]        - operator-chosen relay name
    * @param {string} [cfg.acceptMode]  - 'open' | 'review' | 'allowlist' | 'closed'
-   * @param {object} [cfg.lnbits]      - { url, adminKey } for the LNbits payment provider
+   * @param {object} [cfg.subsidy]     - { payoutDestination } payout destination
    */
+  // Construct + start the eviction manager (idempotent). Extracted from start()
+  // so the storage-designation flow can turn eviction on at runtime. The
+  // getStorageCap dep makes the sweep shed down to the operator-designated
+  // maxStorageBytes even when the physical disk is nowhere near full.
+  _ensureEviction () {
+    if (this.eviction) return this.eviction
+    this.eviction = new EvictionManager({
+      appRegistry: this.appRegistry,
+      seedingRegistry: this.seedingRegistry,
+      storageAccounting: this.storageAccounting,
+      diskMonitor: this.diskMonitor,
+      getReplicationHealth: () => this._replicationHealth,
+      myPubkeyHex: b4a.toString(this.swarm.keyPair.publicKey, 'hex'),
+      unseed: (appKeyHex) => this.unseedApp(appKeyHex),
+      getStorageCap: () => this.config.maxStorageBytes || 0,
+      store: this.store
+    }, { targetFloor: Math.max(1, Number(this.config.targetReplicaFloor) || 1), ...this.config.eviction })
+    this.eviction.on('evicted', (e) => this.emit('eviction', e))
+    this.eviction.on('evict-failed', (e) => this.emit('eviction-failed', e))
+    this.eviction.on('error', (err) => this.emit('eviction-error', { error: err && err.message }))
+    // Drive the shard-store's own disk-pressure eviction on the SAME periodic
+    // cadence (STO-005). The EvictionManager sweeps app drives; the shard-store
+    // owns a dedicated hypercore the app-eviction path never touches, so it must
+    // shed its own expired/over-pressure shards or a filling box leaks shard
+    // bytes. Reuses the sweep tick (no new timer); disk usage is read live so a
+    // 'no-disk-signal' summary still gets an accurate reading (or is skipped).
+    this.eviction.on('sweep', () => { this._trackFireAndForget(this._sweepShardStoreUnderPressure()) })
+    this.eviction.start()
+    return this.eviction
+  }
+
+  /** The started shard-store service provider, or null if the service is off. */
+  _shardStoreProvider () {
+    if (!this.serviceRegistry) return null
+    const entry = this.serviceRegistry.services.get('shard-store')
+    return entry && entry.provider && typeof entry.provider.evictUnderPressure === 'function'
+      ? entry.provider
+      : null
+  }
+
+  /**
+   * Ask the shard-store to shed expired / over-pressure shards, using the live
+   * disk reading. Best-effort and non-throwing: a filling disk must not be able
+   * to crash the eviction loop. Below the shard-store's own pressure gate this
+   * is a cheap no-op (returns skipped: 'below-pressure').
+   */
+  async _sweepShardStoreUnderPressure () {
+    const svc = this._shardStoreProvider()
+    if (!svc) return
+    const disk = this.diskMonitor ? this.diskMonitor.getInfo() : null
+    if (!disk || !Number.isFinite(disk.usedPct)) return
+    try {
+      const res = await svc.evictUnderPressure({ usedPct: disk.usedPct })
+      if (res && res.evicted > 0) this.emit('shard-eviction', { usedPct: disk.usedPct, ...res })
+    } catch (err) {
+      this.emit('shard-eviction-error', { error: err && err.message })
+    }
+  }
+
+  // Apply an operator storage designation live (no restart): set the byte cap
+  // on the seeder's adoption gate + config, turn eviction on so we shrink to
+  // fit, and kick a forced sweep so lowering the cap frees space immediately.
+  // Returns a small summary for the API/UI. `maxStorageBytes` is assumed
+  // already validated by the config-update layer (min 1 MiB).
+  async applyStorageDesignation (maxStorageBytes) {
+    const cap = Number(maxStorageBytes)
+    if (!Number.isFinite(cap) || cap <= 0) return { ok: false, error: 'invalid maxStorageBytes' }
+
+    this.config.maxStorageBytes = cap
+    // Live adoption cap: the seeder cached this at construction, so update it
+    // in place — otherwise new content keeps being adopted against the old cap.
+    if (this.seeder) this.seeder.maxStorageBytes = cap
+
+    // Designating a cap implies "keep me under it": enable eviction so the
+    // sweep can shed surplus down to the cap (never below the replication
+    // floor). Persisted so it survives restart.
+    this.config.eviction = { ...(this.config.eviction || {}), enabled: true }
+    this._ensureEviction()
+
+    // Kick a forced sweep in the background (force:true → shed now even below
+    // physical-disk pressure; the getStorageCap gate shrinks us toward the
+    // cap). A full shed can unseed many drives and take a while, so we do NOT
+    // block the config response on it — the dashboard polls storage stats to
+    // watch usage fall. Periodic sweeps continue converging afterward.
+    Promise.resolve()
+      .then(() => this.eviction.sweep({ force: true }))
+      .catch((err) => this.emit('eviction-error', { error: err && err.message }))
+
+    return {
+      ok: true,
+      maxStorageBytes: cap,
+      evictionEnabled: true,
+      usedBytes: this._storageUsedBytes(),
+      sweeping: true
+    }
+  }
+
   _applyWizardConfig (cfg) {
     if (!cfg || typeof cfg !== 'object') return
     if (typeof cfg.name === 'string' && cfg.name.length > 0) {
@@ -1665,11 +2719,16 @@ export class RelayNode extends EventEmitter {
     }
     if (typeof cfg.acceptMode === 'string') {
       this.config.acceptMode = cfg.acceptMode
+      delete this.config.registryAutoAccept
     }
-    if (cfg.lnbits && typeof cfg.lnbits === 'object') {
-      this.config.lnbits = {
-        url: cfg.lnbits.url || null,
-        adminKey: cfg.lnbits.adminKey || null
+    if (cfg.subsidy && typeof cfg.subsidy === 'object' && Object.prototype.hasOwnProperty.call(cfg.subsidy, 'payoutDestination')) {
+      const payoutDestination = typeof cfg.subsidy.payoutDestination === 'string' && cfg.subsidy.payoutDestination.length > 0
+        ? cfg.subsidy.payoutDestination
+        : null
+      this.config.subsidy = { ...this.config.subsidy, payoutDestination }
+      // If subsidy accrual is already running, update its destination live.
+      if (this.subsidyAccrual && typeof this.subsidyAccrual.setPayoutDestination === 'function') {
+        Promise.resolve(this.subsidyAccrual.setPayoutDestination(payoutDestination)).catch(() => {})
       }
     }
     this.emit('wizard-applied', { name: this.config.name, acceptMode: this.config.acceptMode })
@@ -1830,11 +2889,24 @@ export class RelayNode extends EventEmitter {
     return { ok: true, primaryPubkey: result.primaryPubkey }
   }
 
+  /**
+   * Bytes this relay currently stores, for ALL adoption guards. Prefers the
+   * measured on-disk corestore footprint (StorageAccounting) — `seeder.
+   * totalBytesStored` only counts Seeder.seedCore traffic (~0 on a registry-
+   * driven relay), which is how the guard failed to bind and disks filled to
+   * 100% (2026-06). Falls back to the seeder counter only before the first
+   * disk measurement lands.
+   */
+  _storageUsedBytes () {
+    const measured = this.storageAccounting ? this.storageAccounting.getSummary().totalBytes : 0
+    return measured > 0 ? measured : ((this.seeder && this.seeder.totalBytesStored) || 0)
+  }
+
   async _scanRegistry () {
     if (!this.seedingRegistry || !this.seeder) return
 
     const region = (this.config.regions && this.config.regions[0]) || null
-    let availableBytes = this.config.maxStorageBytes - (this.seeder.totalBytesStored || 0)
+    let availableBytes = this.config.maxStorageBytes - this._storageUsedBytes()
     const acceptMode = this._resolveAcceptMode()
 
     const requests = await this.seedingRegistry.getActiveRequests({
@@ -1845,7 +2917,7 @@ export class RelayNode extends EventEmitter {
     const myPubkey = this.swarm ? b4a.toString(this.swarm.keyPair.publicKey, 'hex') : null
 
     for (const req of requests) {
-      availableBytes = this.config.maxStorageBytes - (this.seeder.totalBytesStored || 0)
+      availableBytes = this.config.maxStorageBytes - this._storageUsedBytes()
       const reqTier = normalizePrivacyTier(req.privacyTier, 'public')
 
       // If a delegation cert is attached, verify the chain before accepting.
@@ -1926,11 +2998,21 @@ export class RelayNode extends EventEmitter {
       }
 
       if (decision === 'accept') {
+        const publisherHex = typeof req.publisherPubkey === 'string'
+          ? req.publisherPubkey
+          : (req.publisherPubkey ? b4a.toString(req.publisherPubkey, 'hex') : null)
+        // Paid pin-lease: this registry auto-accept path carries no payment
+        // proof, so a chargeable seed cannot settle here. Skip + route payers
+        // to the gated HTTP / publish-channel path. Verified custody is exempt.
+        if (this.leaseManager && !isLeaseExempt(
+          { custodyIntentId: req.custodyIntentId || null, publisherPubkey: publisherHex },
+          { seedingRegistry: this.seedingRegistry }
+        )) {
+          this.emit('registry-rejected', { appKey: req.appKey, publisher: req.publisherPubkey, mode: acceptMode, reason: 'payment-required' })
+          continue
+        }
         // Auto-accept: seed immediately ('open' or 'allowlist' hit)
         try {
-          const publisherHex = typeof req.publisherPubkey === 'string'
-            ? req.publisherPubkey
-            : (req.publisherPubkey ? b4a.toString(req.publisherPubkey, 'hex') : null)
           await this.seedApp(req.appKey, {
             publisherPubkey: publisherHex,
             type: req.contentType || req.type || 'app',
@@ -2044,15 +3126,24 @@ export class RelayNode extends EventEmitter {
     })
   }
 
-  _onSeedRequest (msg) {
+  _onSeedRequest (msg, channel = null) {
     if (!this.seeder) return
 
     const appKeyHex = b4a.toString(msg.appKey, 'hex')
-    const availableBytes = this.config.maxStorageBytes - this.seeder.totalBytesStored
+    const availableBytes = this.config.maxStorageBytes - this._storageUsedBytes()
+
+    // Reply with a wire-level deny so the publisher sees WHY instead of
+    // timing out. Best-effort: channel may be null for in-process callers.
+    const deny = (reasonCode, detail) => {
+      if (channel && this._seedProtocol) {
+        this._seedProtocol.denySeedRequest(channel, msg.appKey, reasonCode, detail)
+      }
+    }
 
     // Check capacity
     if (availableBytes < msg.maxStorageBytes) {
       this.emit('seed-rejected', { appKey: appKeyHex, reason: 'insufficient storage' })
+      deny('insufficient-storage', 'relay has ' + Math.max(0, availableBytes) + ' bytes available, request asked for ' + msg.maxStorageBytes)
       return
     }
 
@@ -2060,6 +3151,9 @@ export class RelayNode extends EventEmitter {
     const decision = this._decideAcceptance(msg, acceptMode)
     if (decision === 'reject') {
       this.emit('seed-rejected', { appKey: appKeyHex, reason: 'acceptMode:' + acceptMode })
+      deny('accept-mode:' + acceptMode, acceptMode === 'allowlist'
+        ? 'publisher is not on this relay\'s accept allowlist'
+        : 'relay is not accepting inbound seed requests')
       return
     }
 
@@ -2098,6 +3192,9 @@ export class RelayNode extends EventEmitter {
             : null
         })
       }
+      // Non-terminal notice: tells the publisher to stop waiting for an
+      // accept from this relay — the request is parked for the operator.
+      deny('queued-for-review', 'request queued for operator approval; an accept may follow later')
       return
     }
 
@@ -2122,9 +3219,24 @@ export class RelayNode extends EventEmitter {
           reason: delegationCheck.reason
         })
         this.emit('seed-rejected', { appKey: appKeyHex, reason: 'delegation:' + delegationCheck.reason })
+        deny('delegation:' + delegationCheck.reason, 'delegation certificate chain failed verification')
         return
       }
       effectivePublisher = delegationCheck.primaryPubkey
+    }
+
+    // Paid pin-lease: the binary seed-protocol carries no payment-proof field,
+    // so a chargeable seed cannot be settled over this transport. Deny + route
+    // paying publishers to the gated HTTP / publish-channel path rather than
+    // seeding for free. A verified custody intent stays exempt.
+    const custodyOpts = extractCustodySeedOpts(msg)
+    if (this.leaseManager && !isLeaseExempt(
+      { custodyIntentId: custodyOpts.custodyIntentId || null, publisherPubkey: effectivePublisher },
+      { seedingRegistry: this.seedingRegistry }
+    )) {
+      this.emit('seed-rejected', { appKey: appKeyHex, reason: 'payment-required' })
+      deny('payment-required', 'this relay charges to seed; submit via the publish channel or HTTPS /api/v1/seed with a paid lease')
+      return
     }
 
     // Accept and start seeding
@@ -2143,6 +3255,19 @@ export class RelayNode extends EventEmitter {
     const publisherHex = msg.publisherPubkey
       ? (typeof msg.publisherPubkey === 'string' ? msg.publisherPubkey : b4a.toString(msg.publisherPubkey, 'hex'))
       : null
+    // Propagate atomic-custody linkage when the request carries it, so a
+    // custody seed accepted over the legacy seed-protocol path records the
+    // SAME intent binding the publish-channel / HTTP path does (see
+    // buildPublisherSignedSeedOpts). Without this, the registry entry would
+    // carry no custodyIntentId/retainUntil and the expiry sweep could never
+    // sign a non-serving-proof for it — i.e. anything seeded this way would
+    // silently never attest.
+    //
+    // NOTE: the binary seedRequestEncoding does not yet carry these fields,
+    // so over the wire they only arrive if a future encoding adds them (with
+    // publisher-signature coverage) or an in-process caller supplies an
+    // enriched msg. The authenticated, canonical custody path remains the
+    // publish channel; this closes the latent drop so the two paths agree.
     this.seedApp(appKeyHex, {
       publisherPubkey: effectivePublisher || publisherHex,
       revocable: msg.revocable !== false,
@@ -2150,7 +3275,8 @@ export class RelayNode extends EventEmitter {
       durability: msg.durability || 0,
       blind: msg.blind === true,
       storageClass: msg.storageClass || null,
-      availabilityClass: msg.availabilityClass || null
+      availabilityClass: msg.availabilityClass || null,
+      ...custodyOpts
     }).catch((err) => {
       this.emit('seed-error', { appKey: appKeyHex, error: err })
     })
@@ -2212,6 +3338,59 @@ export class RelayNode extends EventEmitter {
     }
   }
 
+  /**
+   * Operator-initiated purge of a single entry (option-A disk recovery,
+   * 2026-06-11): unseed + purge the drive's cores from disk + tombstone,
+   * WITHOUT the sweep's replica-census checks — the operator is the
+   * authorization. The sacred guard still applies: archive-tier and
+   * custody-bound entries are refused even here (durability promises are
+   * not housekeeping). Works regardless of eviction.enabled.
+   */
+  async manualPurge (appKeyHex) {
+    if (!this.appRegistry) throw new Error('registry not ready')
+    const entry = this.appRegistry.get(appKeyHex)
+    assertPurgable(entry)
+    let bytes = this.storageAccounting ? this.storageAccounting.getBytes(appKeyHex) : null
+    if (bytes == null && this.storageAccounting) {
+      try { bytes = await this.storageAccounting.measure(appKeyHex) } catch { bytes = null }
+    }
+    await this.unseedApp(appKeyHex)
+    // Tombstone before purging — even if the purge fails on a corrupt
+    // core, repair must not re-adopt what the operator just removed.
+    this.appRegistry.markEvicted(appKeyHex, Date.now())
+    const method = await purgeDriveCores(this.store, appKeyHex)
+    this.emit('eviction', { appKey: appKeyHex, bytes: bytes || 0, manual: true, method })
+    return { appKey: appKeyHex, bytes: bytes || 0, method }
+  }
+
+  /**
+   * Backfill seed-accept records for entries this relay holds but never
+   * recorded (boot-replay adoption skipped recordAcceptance). Truth
+   * repair, not policy: the census should reflect what is actually held.
+   * Paced (~20/s) to keep autobase append pressure negligible.
+   */
+  async _reconcileAcceptances () {
+    if (!this.seedingRegistry || !this.appRegistry || !this.swarm) return
+    const myPubkey = b4a.toString(this.swarm.keyPair.publicKey, 'hex')
+    const region = (this.config.regions && this.config.regions[0]) || 'unknown'
+    let backfilled = 0
+    for (const appKey of [...this.appRegistry.keys()]) {
+      if (this._scope && this._scope.aborted) return
+      try {
+        const relays = await this.seedingRegistry.getRelaysForApp(appKey)
+        const counted = (relays || []).some(r => r.relayPubkey === myPubkey)
+        if (!counted) {
+          await this.seedingRegistry.recordAcceptance(appKey, myPubkey, region)
+          backfilled++
+          if (backfilled % 20 === 0) await new Promise(resolve => setTimeout(resolve, 1000))
+        }
+      } catch {
+        // registry closing / transient append failure — next boot retries
+      }
+    }
+    if (backfilled > 0) this.emit('acceptance-reconciled', { backfilled })
+  }
+
   _scheduleCatalogBroadcast () {
     if (this._catalogBroadcastTimer) clearTimeout(this._catalogBroadcastTimer)
     this._catalogBroadcastTimer = setTimeout(() => {
@@ -2228,13 +3407,14 @@ export class RelayNode extends EventEmitter {
 
     const intervalMs = Math.max(10_000, Number(this.config.replicationCheckInterval) || 60_000)
     this._replicationCheckInterval = setInterval(() => {
-      this._checkReplicationHealth().catch((err) => {
+      this._trackFireAndForget(this._checkReplicationHealth().catch((err) => {
+        if (isAbortError(err)) return
         this.emit('replication-error', { error: err.message || String(err) })
-      })
+      }))
     }, intervalMs)
     if (this._replicationCheckInterval.unref) this._replicationCheckInterval.unref()
 
-    this._checkReplicationHealth().catch(() => {})
+    this._trackFireAndForget(this._checkReplicationHealth().catch(() => {}))
   }
 
   _startAnchorMonitor () {
@@ -2247,14 +3427,15 @@ export class RelayNode extends EventEmitter {
     // gets its first honest verification right away.
     const intervalMs = Math.max(30_000, Number(this.config.anchorCheckInterval) || 300_000)
     this._anchorCheckInterval = setInterval(() => {
-      this._runAnchorCheck().catch((err) => {
+      this._trackFireAndForget(this._runAnchorCheck().catch((err) => {
+        if (isAbortError(err)) return
         this.emit('anchor-check-error', { error: err.message || String(err) })
-      })
+      }))
     }, intervalMs)
     if (this._anchorCheckInterval.unref) this._anchorCheckInterval.unref()
 
     setTimeout(() => {
-      this._runAnchorCheck().catch(() => {})
+      this._trackFireAndForget(this._runAnchorCheck().catch(() => {}))
     }, 5000)
   }
 
@@ -2276,16 +3457,17 @@ export class RelayNode extends EventEmitter {
     // min after seedApp; this monitor takes over for the long tail.
     const intervalMs = Math.max(60_000, Number(this.config.repairInterval) || 300_000)
     this._repairInterval = setInterval(() => {
-      this._runRepairPass().catch((err) => {
+      this._trackFireAndForget(this._runRepairPass().catch((err) => {
+        if (isAbortError(err)) return
         this.emit('repair-error', { error: err.message || String(err) })
-      })
+      }))
     }, intervalMs)
     if (this._repairInterval.unref) this._repairInterval.unref()
 
     // First pass shortly after startup so we attempt to recover ghost
     // entries from the previous run.
     setTimeout(() => {
-      this._runRepairPass().catch(() => {})
+      this._trackFireAndForget(this._runRepairPass().catch(() => {}))
     }, 30_000)
   }
 
@@ -2352,7 +3534,7 @@ export class RelayNode extends EventEmitter {
       }
 
       try {
-        await this.serviceRegistry.restart(name, this._serviceContext || { node: this, store: this.store, config: this.config })
+        await this.serviceRegistry.restart(name, this._serviceContext || this._buildServiceContext())
         restarted++
       } catch (err) {
         failed++
@@ -2365,10 +3547,51 @@ export class RelayNode extends EventEmitter {
     return result
   }
 
+  // Resolve a custody-shard assignment for the blind shard store's PUT auth.
+  // Given a custody intent this relay has indexed, return THIS relay's assigned
+  // { shareIndex, shard } — binding relayPubkey -> shareIndex (shareAssignments)
+  // -> shard hash (shareManifest), both signed into the intent. Returns null
+  // when this relay was not assigned a share, so a relay can only pin the exact
+  // share the dealer committed to it. Read-only; never throws.
+  _resolveShardCustodyAssignment (custodyIntentId, relayPubkey) {
+    const reg = this.seedingRegistry
+    if (!reg || typeof reg.getCustodyIntent !== 'function') return null
+    const intent = reg.getCustodyIntent(custodyIntentId)
+    if (!intent || !Array.isArray(intent.shareAssignments) || !Array.isArray(intent.shareManifest)) return null
+    const mine = intent.shareAssignments.find(a => a && a.relayPubkey === relayPubkey)
+    if (!mine) return null
+    const share = intent.shareManifest.find(m => m && m.shareIndex === mine.shareIndex)
+    if (!share) return null
+    return { shareIndex: mine.shareIndex, shard: share.shard }
+  }
+
+  // Service start context. Adds the shard-store authorization seam: a custody
+  // assignment resolver (backed by the seeding registry) plus the operator's
+  // enforceable pin reasons (custody-only by default; payment needs per-pinner
+  // quota that does not exist relay-side yet). Services that don't read these
+  // keys ignore them.
+  _buildServiceContext () {
+    return {
+      node: this,
+      store: this.store,
+      config: this.config,
+      // Let the shard-store register its bytes with StorageAccounting so its
+      // dedicated-hypercore footprint is visible to the adoption/eviction
+      // guards (STO-005) — otherwise valid long-retain pins fill the disk
+      // unaccounted, re-opening the disk-full failure this fleet hit.
+      storageAccounting: this.storageAccounting || null,
+      resolveCustodyAssignment: (custodyIntentId, relayPubkey) =>
+        this._resolveShardCustodyAssignment(custodyIntentId, relayPubkey),
+      shardPutAuth: (this.config.shardStore && Array.isArray(this.config.shardStore.putAuth))
+        ? this.config.shardStore.putAuth
+        : ['custody']
+    }
+  }
+
   async _checkServiceHealth (entry) {
     const provider = entry?.provider
     if (!provider) return false
-    const context = this._serviceContext || { node: this, store: this.store, config: this.config }
+    const context = this._serviceContext || this._buildServiceContext()
     if (typeof provider.healthCheck === 'function') {
       const result = await provider.healthCheck(context)
       return result !== false && result?.ok !== false
@@ -2395,15 +3618,31 @@ export class RelayNode extends EventEmitter {
     if (this.config.custody?.enabled === false) return
 
     const intervalMs = Math.max(10_000, Number(this.config.custodyExpiryInterval) || 60_000)
+    const runBoth = async () => {
+      // Expiry pass first — unseeds locally-owned expired entries and
+      // auto-emits non-serving-proofs about our own deletions.
+      try { await this._runCustodyExpiryPass() } catch (err) {
+        if (!isAbortError(err)) {
+          this.emit('custody-expiry-error', { error: err.message || String(err) })
+        }
+      }
+      // Witness pass second — observes peer relays' non-serving-proofs
+      // and signs independent witness attestations. Disabled via
+      // config.custodyWitnessEnabled = false.
+      if (this.config.custodyWitnessEnabled === false) return
+      try { await this._runCustodyExpiryWitnessPass() } catch (err) {
+        if (!isAbortError(err)) {
+          this.emit('custody-witness-error', { error: err.message || String(err) })
+        }
+      }
+    }
     this._custodyExpiryInterval = setInterval(() => {
-      this._runCustodyExpiryPass().catch((err) => {
-        this.emit('custody-expiry-error', { error: err.message || String(err) })
-      })
+      this._trackFireAndForget(runBoth())
     }, intervalMs)
     if (this._custodyExpiryInterval.unref) this._custodyExpiryInterval.unref()
 
     setTimeout(() => {
-      this._runCustodyExpiryPass().catch(() => {})
+      this._trackFireAndForget(runBoth())
     }, 5000)
   }
 
@@ -2413,11 +3652,45 @@ export class RelayNode extends EventEmitter {
     const availabilityClass = normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on')
     return storageClass === 'temporary' ||
       availabilityClass === 'atomic-handoff' ||
-      (entry.blind === true && Number.isFinite(entry.retainUntil))
+      (entry.blind === true && Number.isFinite(entry.retainUntil)) ||
+      // Paid pin-lease: retainUntil is an enforced lease deadline. Gated
+      // STRICTLY on leaseManaged so operator self-pins and custody intents
+      // (which set retainUntil for other reasons) are never swept here.
+      (entry.leaseManaged === true && Number.isFinite(entry.retainUntil))
+  }
+
+  /**
+   * Write a custody intent's binding onto an already-seeded appRegistry entry
+   * that was registered without it (seed-request channel drops custody fields).
+   * Copies custodyIntentId plus retainUntil/blindContentId from the signed
+   * intent when the entry is missing them, and persists so the linkage survives
+   * restart + shows on GET /api/anchors?detailed=1. Best-effort + non-throwing.
+   */
+  _backfillCustodyLinkage (appKey, entry, intentId) {
+    if (!entry || !intentId) return
+    const intent = this.seedingRegistry && typeof this.seedingRegistry.getCustodyIntent === 'function'
+      ? this.seedingRegistry.getCustodyIntent(intentId)
+      : null
+    entry.custodyIntentId = intentId
+    if (entry.retainUntil == null && intent && Number.isFinite(intent.retainUntil)) {
+      entry.retainUntil = intent.retainUntil
+    }
+    if (!entry.blindContentId && intent && intent.blindContentId) {
+      entry.blindContentId = intent.blindContentId
+    }
+    try {
+      if (this.appRegistry && typeof this.appRegistry.update === 'function') {
+        this.appRegistry.update(appKey, {
+          custodyIntentId: entry.custodyIntentId,
+          retainUntil: entry.retainUntil,
+          blindContentId: entry.blindContentId
+        })
+      }
+    } catch (_) { /* persistence is best-effort; in-memory linkage already set */ }
   }
 
   async _runCustodyExpiryPass (now = Date.now()) {
-    if (!this.appRegistry) return { checked: 0, expired: 0, skipped: 0 }
+    if (!this.appRegistry) return { checked: 0, expired: 0, skipped: 0, attested: 0 }
 
     const graceMs = Math.max(0, Number(this.config.custodyExpiryGraceMs) || 0)
     const expiredKeys = []
@@ -2430,29 +3703,110 @@ export class RelayNode extends EventEmitter {
         continue
       }
       checked++
+      let custodyIntentId = entry.custodyIntentId || null
+      // Content seeded over the seed-request channel carries no custody fields
+      // (the binary seedRequestEncoding drops them — see _onSeedRequest), so a
+      // temporary custody entry can lack custodyIntentId even though a signed
+      // intent for its addressKey exists in the registry. Recover the linkage
+      // by addressKey and backfill the entry — otherwise the sweep can never
+      // attest a non-serving-proof for it (the gap Drop hit: committed +
+      // source-retired, but proofCount 0).
+      if (!custodyIntentId && this.seedingRegistry &&
+          typeof this.seedingRegistry.getCustodyIntentIdByAddressKey === 'function') {
+        const resolved = this.seedingRegistry.getCustodyIntentIdByAddressKey(appKey)
+        if (resolved) {
+          custodyIntentId = resolved
+          this._backfillCustodyLinkage(appKey, entry, resolved)
+        }
+      }
       const retainUntil = Number(entry.retainUntil)
-      if (!Number.isFinite(retainUntil) || retainUntil <= 0) {
+      const retainElapsed = Number.isFinite(retainUntil) && retainUntil > 0 &&
+        (retainUntil + graceMs) <= now
+
+      // Claim-path erasure witness. The retainUntil deadline only covers
+      // the UNCLAIMED-expiry path: content sat untouched until its retain
+      // window lapsed. A *claimed* drop — where the publisher has signed a
+      // source-retired entry ("I deleted the original; the handoff is
+      // complete") — should be burned + attested immediately, not held for
+      // the (often weeks-long) retain window. Without this, a recipient who
+      // claimed a drop has no third-party-provable destruction until
+      // retainUntil, which is the exact gap dmc flagged. Reuses the same
+      // unseed + non-serving-proof machinery; the only change is the
+      // trigger condition.
+      let retired = false
+      if (custodyIntentId && this.seedingRegistry) {
+        try {
+          const status = this.seedingRegistry.getCustodyStatus(custodyIntentId)
+          retired = !!status?.sourceRetirement
+        } catch (_) { /* status lookup is best-effort */ }
+      }
+
+      if (!retainElapsed && !retired) {
         skipped++
         continue
       }
-      if ((retainUntil + graceMs) <= now) {
-        expiredKeys.push({ appKey, retainUntil })
-      }
+
+      // Capture the custody linkage BEFORE unseedApp removes the entry —
+      // we need it to sign a custody-non-serving-proof afterward. The
+      // reason distinguishes the claim path (source-retired) from the
+      // time path (expired-unseeded) in the signed proof.
+      expiredKeys.push({
+        appKey,
+        retainUntil: Number.isFinite(retainUntil) && retainUntil > 0 ? retainUntil : null,
+        custodyIntentId,
+        blindContentId: entry.blindContentId || null,
+        notServingReason: retired && !retainElapsed ? 'source-retired' : 'expired-unseeded'
+      })
     }
 
     let expired = 0
-    for (const { appKey, retainUntil } of expiredKeys) {
+    let attested = 0
+    for (const { appKey, retainUntil, custodyIntentId, blindContentId, notServingReason } of expiredKeys) {
       try {
         await this.unseedApp(appKey)
         expired++
-        this.emit('custody-expired', { appKey, retainUntil, at: now })
+        this.emit('custody-expired', { appKey, retainUntil, reason: notServingReason, at: now })
       } catch (err) {
         this.emit('custody-expiry-error', { appKey, error: err.message || String(err) })
+        // Don't attempt to sign a non-serving-proof if we couldn't even
+        // unseed — createCustodyNonServingProof would throw STILL_SERVING
+        // and we'd be lying about what we cleaned up.
+        continue
+      }
+
+      // Auto-emit a custody-non-serving-proof so recipients probing for
+      // BURNED don't need an out-of-band orchestrator to ask each relay
+      // to attest. The proof closes the "K is gone" cryptographic loop
+      // alongside source-retired: source-retired = publisher signs "I
+      // deleted K"; non-serving-proof = relay signs "I deleted my copy".
+      // Together with ≥ threshold such proofs, the recipient gets
+      // provable destruction.
+      if (!custodyIntentId || !this.seedingRegistry) continue
+      try {
+        await this.createCustodyNonServingProof(custodyIntentId, {
+          appKey,
+          blindContentId,
+          retainUntil,
+          notServingReason
+        })
+        attested++
+        this.emit('custody-non-serving-attested', {
+          appKey, custodyIntentId, retainUntil, reason: notServingReason, at: now
+        })
+      } catch (err) {
+        // Don't fail the pass — the entry is unseeded either way. Surface
+        // the attestation failure for observability. Common causes:
+        // intent not in this relay's registry (federation hasn't gossiped
+        // it back), STILL_SERVING race (another concurrent reseed put it
+        // back), missing relay keypair.
+        this.emit('custody-non-serving-attest-error', {
+          appKey, custodyIntentId, error: err.message || String(err)
+        })
       }
     }
 
     this._lastCustodyExpiryAt = now
-    const result = { checked, expired, skipped }
+    const result = { checked, expired, skipped, attested }
     this.emit('custody-expiry-pass', { ...result, at: now })
     return result
   }
@@ -2505,6 +3859,24 @@ export class RelayNode extends EventEmitter {
     }
   }
 
+  /**
+   * Return a valid 64-hex challengeNonce, generating a random one when the
+   * caller supplies none. Non-serving-proof + expiry-witness signing both
+   * require a 64-hex nonce; the auto-attestation paths (the expiry sweep and
+   * the periodic witness scan) have no challenger to provide one, so without a
+   * default every auto-attest threw "challengeNonce must be 64 hex characters"
+   * — which is why Fix #1's claim-path witness never actually emitted a proof
+   * through the sweep. A self-generated nonce is correct here: the proof is
+   * already relay-signed; the nonce only needs to be unique, not challenger-
+   * issued. Explicit challenge-response callers still pass their own.
+   */
+  _resolveChallengeNonce (provided) {
+    if (typeof provided === 'string' && /^[0-9a-f]{64}$/i.test(provided)) return provided
+    const nonce = b4a.alloc(32)
+    sodium.randombytes_buf(nonce)
+    return b4a.toString(nonce, 'hex')
+  }
+
   async createCustodyNonServingProof (intentId, opts = {}) {
     if (!this.seedingRegistry) throw new Error('Registry not running')
     if (!this.swarm?.keyPair) throw new Error('Relay keypair unavailable')
@@ -2527,13 +3899,144 @@ export class RelayNode extends EventEmitter {
       intentId,
       addressKey: appKey,
       blindContentId: opts.blindContentId || intent.blindContentId,
-      challengeNonce: opts.challengeNonce,
+      challengeNonce: this._resolveChallengeNonce(opts.challengeNonce),
       retainUntil: opts.retainUntil ?? intent.retainUntil,
       notServing: true,
       notServingReason: opts.notServingReason || 'expired-unseeded',
       catalogPresent,
       activeSwarmServing
     }, this.swarm.keyPair)
+  }
+
+  /**
+   * Sign and record a custody-expiry-witness attestation about a peer
+   * relay we observed having posted a custody-non-serving-proof for
+   * this intent. This is the third-party-confirmation primitive that
+   * closes the BURNED loop for recipients: relay-X signs "I deleted
+   * my copy" (custody-non-serving-proof), then independent relay-Y
+   * signs "I observed relay-X's signed deletion" (custody-expiry-
+   * witness referring by nonServingProofHash). ≥ threshold of these
+   * witnesses gives recipients cryptographic confirmation that's
+   * resistant to a single relay self-attesting falsely.
+   *
+   * Refuses to witness our own proofs — only peer relays.
+   */
+  async createCustodyExpiryWitness (intentId, subjectRelayPubkey, opts = {}) {
+    if (!this.seedingRegistry) throw new Error('Registry not running')
+    if (!this.swarm?.keyPair) throw new Error('Relay keypair unavailable')
+    if (!isValidHexKey(intentId, 64)) throw new Error('intentId must be 64 hex characters')
+    if (!isValidHexKey(subjectRelayPubkey, 64)) throw new Error('subjectRelayPubkey must be 64 hex characters')
+
+    const myPubkey = b4a.toString(this.swarm.keyPair.publicKey, 'hex')
+    if (subjectRelayPubkey === myPubkey) {
+      throw new Error('SELF_WITNESS_REFUSED: cannot witness own non-serving-proof; use createCustodyNonServingProof instead')
+    }
+
+    const intent = this.seedingRegistry.getCustodyIntent(intentId)
+    if (!intent) throw new Error('Custody intent not found')
+
+    return this.seedingRegistry.recordCustodyExpiryWitness({
+      intentId,
+      blindContentId: opts.blindContentId || intent.blindContentId,
+      relayPubkey: subjectRelayPubkey,
+      challengeNonce: this._resolveChallengeNonce(opts.challengeNonce),
+      nonServingProofHash: opts.nonServingProofHash || null,
+      catalogPresent: opts.catalogPresent === true,
+      gatewayServing: opts.gatewayServing === true,
+      activeSwarmObserved: opts.activeSwarmObserved === true
+    }, this.swarm.keyPair)
+  }
+
+  /**
+   * Periodically scan custody intents whose retainUntil has passed and
+   * — for every peer relay's published custody-non-serving-proof we
+   * haven't already witnessed — sign + push an independent
+   * custody-expiry-witness attestation.
+   *
+   * This is the v1 cross-relay witness pass: "I observed relay-X's
+   * signed deletion." Active swarm/HTTP probing (verifying the relay
+   * is reachable but no longer serves) is a follow-up — see
+   * docs/CUSTODY-WITNESS-NEXT.md when written.
+   *
+   * Manifesto-pure: pure P2P, no central witness role, no required
+   * infrastructure. Every relay automatically witnesses every other
+   * relay's deletions. Threshold-many witnesses = strong BURNED
+   * guarantee for recipients.
+   */
+  async _runCustodyExpiryWitnessPass (now = Date.now()) {
+    if (!this.seedingRegistry) return { checked: 0, witnessed: 0, skipped: 0 }
+    if (!this.swarm?.keyPair) return { checked: 0, witnessed: 0, skipped: 0 }
+
+    const myPubkey = b4a.toString(this.swarm.keyPair.publicKey, 'hex')
+    const graceMs = Math.max(0, Number(this.config.custodyExpiryGraceMs) || 0)
+    let checked = 0
+    let witnessed = 0
+    let skipped = 0
+    let errors = 0
+
+    // Enumerate all known intents (replicated via registry gossip).
+    // Direct access to _custodyIntents is the only enumeration path
+    // today — a public iterator on SeedingRegistry would be nicer but
+    // adding one is out of scope for this pass.
+    const intentIds = this.seedingRegistry._custodyIntents
+      ? [...this.seedingRegistry._custodyIntents.keys()]
+      : []
+
+    for (const intentId of intentIds) {
+      const status = this.seedingRegistry.getCustodyStatus(intentId)
+      if (!status?.intent) { skipped++; continue }
+
+      const retainUntil = Number(status.intent.retainUntil)
+      const retainElapsed = Number.isFinite(retainUntil) && (retainUntil + graceMs) <= now
+      // Claim path: an intent whose source the publisher has retired can be
+      // witnessed before retainUntil, mirroring _runCustodyExpiryPass. This
+      // is what lets a peer relay's "I observed relay-X delete its copy"
+      // attestation materialize for a *claimed* drop instead of waiting for
+      // the (often weeks-long) retain window. Outside it, nothing to witness
+      // until the window lapses.
+      if (!retainElapsed && !status.sourceRetirement) {
+        skipped++
+        continue
+      }
+
+      checked++
+
+      for (const proof of status.nonServingProofs || []) {
+        // Skip our own proofs; we'd just be witnessing ourselves.
+        if (proof.relayPubkey === myPubkey) continue
+        // Skip if we've already witnessed this (intent, relay) pair.
+        const alreadyWitnessed = (status.expiryWitnesses || []).some(w =>
+          w.witnessPubkey === myPubkey &&
+          w.relayPubkey === proof.relayPubkey &&
+          w.intentId === intentId
+        )
+        if (alreadyWitnessed) continue
+
+        try {
+          await this.createCustodyExpiryWitness(intentId, proof.relayPubkey, {
+            blindContentId: status.intent.blindContentId,
+            nonServingProofHash: hashHex(proof),
+            catalogPresent: false,
+            gatewayServing: false,
+            activeSwarmObserved: false
+          })
+          witnessed++
+          this.emit('custody-witness-attested', {
+            intentId, relayPubkey: proof.relayPubkey, at: now
+          })
+        } catch (err) {
+          errors++
+          this.emit('custody-witness-attest-error', {
+            intentId, relayPubkey: proof.relayPubkey, error: err.message || String(err)
+          })
+        }
+      }
+    }
+
+    this._lastCustodyWitnessPassAt = now
+    const result = { checked, witnessed, skipped, errors }
+    this.emit('custody-witness-pass', { ...result, at: now })
+    return result
   }
 
   // ─── Cold-start primer ────────────────────────────────────────
@@ -2614,8 +4117,10 @@ export class RelayNode extends EventEmitter {
     if (!this.appRegistry) return
     const entry = this.appRegistry.get(appKeyHex)
     if (!entry || entry.anchored === true) return
-    // Fire-and-forget; runRepairPass will retry if this one fails
-    this.appLifecycle.repairUnanchored(appKeyHex).catch(() => {})
+    // Fire-and-forget; runRepairPass will retry if this one fails.
+    // Tracked so stop() drains an in-flight targeted repair before
+    // closing the corestore (vector B18 in STALE-REF-INVENTORY.md).
+    this._trackFireAndForget(this.appLifecycle.repairUnanchored(appKeyHex).catch(() => {}))
   }
 
   async _checkReplicationHealth () {
@@ -2678,8 +4183,20 @@ export class RelayNode extends EventEmitter {
       if (!drive) continue
       checked++
       try {
+        // 2026-05-22: anchored now means "every blob block present",
+        // not just "drive.version > 0". The metadata-only check used
+        // to rubber-stamp partial-pin entries (metadata replicates
+        // long before blob content does), which then made
+        // runRepairPass skip them indefinitely. The full-replication
+        // check is delegated to AppLifecycle._isDriveFullyReplicated
+        // so the contract lives in one place. See
+        // docs/AUTO-HEAL-ROOT-CAUSE-2026-05-22.md.
         const length = drive.version || 0
-        if (length > 0) {
+        const fullyReplicated = length > 0 &&
+          this.appLifecycle &&
+          typeof this.appLifecycle._isDriveFullyReplicated === 'function' &&
+          await this.appLifecycle._isDriveFullyReplicated(drive)
+        if (fullyReplicated) {
           const wasAnchored = entry.anchored === true
           this.appRegistry.setAnchored(appKey, length)
           if (!wasAnchored && this.appLifecycle && typeof this.appLifecycle._recordCustodyReceipt === 'function') {
@@ -2687,9 +4204,12 @@ export class RelayNode extends EventEmitter {
           }
           anchored++
         } else {
-          // No blocks — clear anchored if it was set, record the check
+          // Not fully replicated — clear anchored if it was set so the
+          // repair monitor picks the entry back up.
           if (entry.anchored === true) {
-            this.appRegistry.clearAnchored(appKey, 'length=0 on periodic check')
+            this.appRegistry.clearAnchored(appKey, length > 0
+              ? 'partial-pin detected on periodic check (blob blocks missing)'
+              : 'length=0 on periodic check')
           } else {
             this.appRegistry.recordAnchorCheck(appKey)
           }
@@ -2750,8 +4270,39 @@ export class RelayNode extends EventEmitter {
     const alreadySeeding = this.seededApps.has(request.appKey)
     if (alreadyAccepted && alreadySeeding) return false
 
-    const availableBytes = this.config.maxStorageBytes - (this.seeder.totalBytesStored || 0)
+    // Eviction tombstone gate (Phase A): an entry this relay deliberately
+    // shed is only re-adopted when the network has actually fallen under
+    // the replica floor — otherwise every sweep would be undone by the
+    // next repair pass and the fleet re-converges on union-of-catalogs.
+    const floor = Math.max(1, Number(this.config.targetReplicaFloor) || 1)
+    if (this.appRegistry && typeof this.appRegistry.isEvicted === 'function' && this.appRegistry.isEvicted(request.appKey)) {
+      if (status.current >= floor) return false
+      this.appRegistry.clearEvicted(request.appKey) // genuinely under floor — we're needed again
+    }
+
+    // Storage guard on REAL bytes (Phase 0), via _storageUsedBytes() — the
+    // measured on-disk corestore footprint. seeder.totalBytesStored only counts
+    // Seeder.seedCore traffic (~0 on registry-driven relays), so the old guard
+    // never bound and adoption was effectively uncapped (how the fleet's disks
+    // filled, 2026-06). Also reject when the budget is simply exhausted, not
+    // only when the request declares a size.
+    const availableBytes = this.config.maxStorageBytes - this._storageUsedBytes()
+    if (availableBytes <= 0) return false
     if (request.maxStorageBytes > 0 && request.maxStorageBytes > availableBytes) return false
+
+    // Paid pin-lease: don't auto-adopt a non-exempt publisher's registry
+    // request for free here. The MVP charges each relay individually (no
+    // free cross-relay mirroring), so a chargeable drive we're not already
+    // seeding must come through the gated HTTP/publish path, not the
+    // replication-repair monitor. Verified custody intents stay exempt; this
+    // never fires for drives we already seed (caught by alreadySeeding above).
+    if (this.leaseManager && !isLeaseExempt(
+      { custodyIntentId: request.custodyIntentId || null, publisherPubkey: effectivePublisher },
+      { seedingRegistry: this.seedingRegistry }
+    )) {
+      this.emit('replication-repair-skipped', { appKey: request.appKey, reason: 'payment-required' })
+      return false
+    }
 
     try {
       await this.seedApp(request.appKey, {
@@ -2795,8 +4346,81 @@ export class RelayNode extends EventEmitter {
     if (this._healthCheckInterval.unref) this._healthCheckInterval.unref()
   }
 
+  async _flushDhtForStartup () {
+    if (!this.swarm || typeof this.swarm.flush !== 'function') return false
+    const timeoutMs = Number.isFinite(this.config.dhtFlushTimeoutMs)
+      ? Math.max(0, Math.floor(this.config.dhtFlushTimeoutMs))
+      : DEFAULT_CONFIG.dhtFlushTimeoutMs
+
+    const flush = this.swarm.flush().then(
+      () => ({ ok: true }),
+      (err) => ({ ok: false, error: err })
+    )
+
+    if (timeoutMs === 0) {
+      flush.then((result) => {
+        if (!result.ok) this.emit('dht-flush-error', { error: result.error?.message || String(result.error) })
+      })
+      return false
+    }
+
+    let timer
+    const timeout = new Promise(resolve => {
+      timer = setTimeout(() => resolve({ ok: false, timedOut: true }), timeoutMs)
+    })
+    const result = await Promise.race([flush, timeout])
+    clearTimeout(timer)
+
+    if (result.timedOut) {
+      this.emit('dht-flush-timeout', { timeoutMs })
+      return false
+    }
+    if (!result.ok) {
+      this.emit('dht-flush-error', { error: result.error?.message || String(result.error) })
+      return false
+    }
+    return true
+  }
+
+  /**
+   * Announce on the current + next epoch discovery buckets. Idempotent:
+   * swarm.join() on an already-joined topic is a no-op, so calling this on a
+   * timer simply rolls the announcement forward across epoch boundaries.
+   */
+  _joinEpochDiscoveryTopics () {
+    if (!this.swarm) return
+    this._epochDiscoveryTopics = syncEpochDiscoveryTopics(
+      this._epochDiscoveryTopics,
+      this.swarm,
+      { server: true, client: false }
+    )
+  }
+
   async stop () {
     if (!this.running) return
+
+    // Cancellation contract: fire the abort signal FIRST and drain every
+    // fire-and-forget that participates in the LifecycleScope before
+    // touching any subsystem. By the time we reach swarm.destroy() and
+    // store.close() below, no captured-reference closure is still
+    // running against the corestore. This is the fix for the
+    // "Mutex has been destroyed" / "corestore is closed" leaks (see
+    // STALE-REF-INVENTORY.md + CANCELLATION-CONTRACT.md).
+    //
+    // Drain is bounded by shutdownTimeoutMs * each tracked promise's
+    // own timeout; in practice every contract-aware loop exits within
+    // a few hundred ms of the abort.
+    const scope = this._scope
+    this._scope = null
+    if (scope) {
+      try { await scope.drain() } catch (_) {}
+    }
+
+    // Stop the relay-record republish timer.
+    if (this._relayRecordTimer) {
+      clearInterval(this._relayRecordTimer)
+      this._relayRecordTimer = null
+    }
 
     // Clean up catalog broadcast debounce timer and peer throttle map
     if (this._catalogBroadcastTimer) {
@@ -2808,6 +4432,7 @@ export class RelayNode extends EventEmitter {
       this._catalogThrottleCleanup = null
     }
     this._catalogPeerThrottle.clear()
+    if (this._publisherSeedReplayCache) this._publisherSeedReplayCache.clear()
 
     const timeout = this.config.shutdownTimeoutMs
 
@@ -2819,6 +4444,12 @@ export class RelayNode extends EventEmitter {
     if (this.selfHeal) { this.selfHeal.stop(); this.selfHeal = null }
     if (this.alertManager) { this.alertManager.stop(); this.alertManager = null }
     if (this.healthMonitor) { this.healthMonitor.stop(); this.healthMonitor = null }
+    if (this.diskMonitor) { this.diskMonitor.stop(); this.diskMonitor = null }
+    if (this.eviction) { this.eviction.stop(); this.eviction = null }
+    if (this.storageAccounting) { this.storageAccounting.stop(); this.storageAccounting = null }
+    if (this.servedAccounting) { this.servedAccounting.stop(); this.servedAccounting = null }
+    if (this.subsidyAccrual) { await this.subsidyAccrual.destroy(); this.subsidyAccrual = null }
+    if (this.leaseManager) { await this.leaseManager.destroy(); this.leaseManager = null }
     if (this._healthCheckInterval) { clearInterval(this._healthCheckInterval); this._healthCheckInterval = null }
     if (this.settlementInterval) { clearInterval(this.settlementInterval); this.settlementInterval = null }
     if (this._replicationCheckInterval) { clearInterval(this._replicationCheckInterval); this._replicationCheckInterval = null }
@@ -2882,6 +4513,14 @@ export class RelayNode extends EventEmitter {
       if (this._circuitRelay.destroy) this._circuitRelay.destroy()
       this._circuitRelay = null
     }
+    if (this._forwardRelay) {
+      if (this._forwardRelay.destroy) this._forwardRelay.destroy()
+      this._forwardRelay = null
+    }
+    if (this._signedDirectory) {
+      if (this._signedDirectory.destroy) this._signedDirectory.destroy()
+      this._signedDirectory = null
+    }
     if (this._registryScanInterval) { clearInterval(this._registryScanInterval); this._registryScanInterval = null }
     if (this.seedingRegistry) { try { await this.seedingRegistry.stop() } catch (_) {} this.seedingRegistry = null }
     if (this.networkDiscovery) { try { await this.networkDiscovery.stop() } catch (_) {} this.networkDiscovery = null }
@@ -2907,10 +4546,14 @@ export class RelayNode extends EventEmitter {
       try { await this.reputation.save(join(this.config.storage, 'reputation.json')) } catch (_) {}
     }
 
-    // Unseed all apps
+    // Tear down all apps' live resources WITHOUT forgetting them. A clean
+    // shutdown must not erase the registry — the entries are reloaded by
+    // reseedFromRegistry on the next start() (operator restart, SIGTERM,
+    // or in-process self-heal). Using forget:true here was a data-loss bug
+    // that wiped all seeded content on every restart.
     for (const appKeyHex of this.seededApps.keys()) {
       try {
-        await withTimeout(this.unseedApp(appKeyHex), timeout, `unseedApp(${appKeyHex.slice(0, 8)})`)
+        await withTimeout(this.unseedApp(appKeyHex, { forget: false }), timeout, `unseedApp(${appKeyHex.slice(0, 8)})`)
       } catch (_) {}
     }
 
