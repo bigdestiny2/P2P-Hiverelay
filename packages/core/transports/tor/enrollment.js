@@ -22,7 +22,11 @@ import { verifyEnrollment, createReceipt } from './auth-keys.js'
  * doc's auth-mode rule).
  */
 export function restrictedDiscoveryActive (torTransport) {
-  return !!(torTransport && (torTransport.rosterFile || (torTransport.clientAuthKeys && torTransport.clientAuthKeys.length > 0)))
+  if (!torTransport) return false
+  if (typeof torTransport.isRestrictedDiscoveryActive === 'function') {
+    return torTransport.isRestrictedDiscoveryActive()
+  }
+  return !!(torTransport.rosterFile || (torTransport.clientAuthKeys && torTransport.clientAuthKeys.length > 0))
 }
 
 /**

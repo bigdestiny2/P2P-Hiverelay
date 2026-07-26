@@ -27,6 +27,7 @@ export const ENROLLMENT_TYPE = 'hiverelay.onion.authkey/1'
 export const RECEIPT_TYPE = 'hiverelay.onion.authkey.receipt/1'
 export const DEFAULT_KEY_TTL_MS = 365 * 24 * 60 * 60 * 1000 // 12 months
 export const ROTATION_GRACE_MS = 7 * 24 * 60 * 60 * 1000
+export const MAX_ENROLLMENT_CLOCK_SKEW_MS = 5 * 60 * 1000
 
 const B32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567'
 const CLIENT_PUB_RE = /^[a-z2-7]{52}$/
@@ -84,6 +85,18 @@ export function generateClientAuthKeypair () {
     publicKeyB32: base32Encode(publicKey),
     secretKeyB64: b4a.toString(secretKey, 'base64').replace(/=+$/, '')
   }
+}
+
+/**
+ * Generate an unreachable client-auth public key for fail-closed empty
+ * rosters. The private half is destroyed immediately and never returned.
+ */
+export function generateClientAuthGuardKey () {
+  const publicKey = b4a.alloc(sodium.crypto_box_PUBLICKEYBYTES)
+  const secretKey = b4a.alloc(sodium.crypto_box_SECRETKEYBYTES)
+  sodium.crypto_box_keypair(publicKey, secretKey)
+  secretKey.fill(0)
+  return base32Encode(publicKey)
 }
 
 /** Command the device runs against its own tor daemon to install the credential. */
@@ -146,14 +159,23 @@ export function createEnrollment ({ clientIdentity, clientSecretKey, relayPubkey
 }
 
 /** Verify an enrollment envelope (relay side). Returns { ok, reason?, envelope }. */
-export function verifyEnrollment (envelope, { expectedRelayPubkey, nowMs = Date.now(), maxTtlMs = DEFAULT_KEY_TTL_MS * 2 } = {}) {
+export function verifyEnrollment (envelope, {
+  expectedRelayPubkey,
+  nowMs = Date.now(),
+  maxTtlMs = DEFAULT_KEY_TTL_MS * 2,
+  maxClockSkewMs = MAX_ENROLLMENT_CLOCK_SKEW_MS
+} = {}) {
   if (!envelope || typeof envelope !== 'object') return { ok: false, reason: 'malformed' }
   const { signature, ...body } = envelope
   if (body.type !== ENROLLMENT_TYPE) return { ok: false, reason: 'wrong-type' }
   if (!isValidClientPub(body.onionAuthPubX25519)) return { ok: false, reason: 'bad-auth-key' }
   if (expectedRelayPubkey && body.relayPubkey !== expectedRelayPubkey) return { ok: false, reason: 'wrong-relay' }
+  if (!Number.isSafeInteger(body.createdAtMs) || !Number.isSafeInteger(body.expiresAtMs)) {
+    return { ok: false, reason: 'bad-time' }
+  }
   if (!(body.expiresAtMs > body.createdAtMs)) return { ok: false, reason: 'bad-expiry' }
   if (body.expiresAtMs - body.createdAtMs > maxTtlMs) return { ok: false, reason: 'ttl-too-long' }
+  if (body.createdAtMs > nowMs + maxClockSkewMs) return { ok: false, reason: 'created-in-future' }
   if (body.expiresAtMs <= nowMs) return { ok: false, reason: 'expired' }
   if (!verify(body, signature, body.clientIdentity)) return { ok: false, reason: 'bad-signature' }
   return { ok: true, envelope: body }

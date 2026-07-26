@@ -53,7 +53,10 @@ function buildPrivacyTransports ({ relay, config, custodyEnabled }) {
   if (relay && relay._publishProtocol) supports.push('seed.publish')
 
   const notBefore = tt.startedAtMs || Date.now()
-  const authMode = (tt.clientAuthKeys && tt.clientAuthKeys.length > 0) || tt.rosterFile ? 'client-auth-v3' : 'none'
+  const restrictedDiscovery = typeof tt.isRestrictedDiscoveryActive === 'function'
+    ? tt.isRestrictedDiscoveryActive()
+    : !!((tt.clientAuthKeys && tt.clientAuthKeys.length > 0) || tt.rosterFile)
+  const authMode = restrictedDiscovery ? 'client-auth-v3' : 'none'
   const vports = typeof tt._effectiveVports === 'function' ? tt._effectiveVports() : [{ vport: 80 }]
   const vportRoles = {}
   if (vports[0]) vportRoles.readPlane = vports[0].vport
@@ -280,9 +283,14 @@ export function buildCapabilityDoc (opts = {}) {
   // WITHOUT revealing its IP to the relay — a genuine Tor-grade property on the
   // HTTP read path, additive to (not a replacement for) the fast UDX path.
   let onionGatewayUrl = null
-  if (relay && relay.torTransport && relay.torTransport.running && relay.torTransport.onionAddress) {
-    const onionPort = numberOr(config.apiPort, 9100)
-    onionGatewayUrl = 'http://' + relay.torTransport.onionAddress + ':' + onionPort
+  const readyOnionTransport = privacyTransports.find((transport) => transport.network === 'tor')
+  const onionReadVport = readyOnionTransport &&
+    readyOnionTransport.vportRoles &&
+    readyOnionTransport.vportRoles.readPlane
+  const onionAddress = readyOnionTransport && readyOnionTransport.addresses[0] && readyOnionTransport.addresses[0].address
+  if (onionAddress && Number.isSafeInteger(onionReadVport)) {
+    const portSuffix = onionReadVport === 80 ? '' : ':' + onionReadVport
+    onionGatewayUrl = 'http://' + onionAddress + portSuffix
   }
 
   const gatewayUrl = (typeof opts.gatewayUrl === 'string' && opts.gatewayUrl) ||

@@ -199,6 +199,44 @@ test('roster add/remove rebuilds service with same address and updated ClientAut
   await tt.stop()
 })
 
+test('restricted discovery stays fail-closed with an empty roster', async (t) => {
+  const socksPort = await fakeSocks(t)
+  const dir = tmpdir(t)
+  const { control, factory } = fakeFactory({})
+  const tt = new TorTransport({
+    socksPort,
+    localPort: 9100,
+    keyFile: path.join(dir, 'hs-key.blob'),
+    rosterFile: path.join(dir, 'auth-roster.json'),
+    _controlFactory: factory
+  })
+  await tt.start()
+
+  const initial = control.commands.find((c) => c.startsWith('ADD_ONION'))
+  t.ok(initial.includes('Flags=V3Auth'), 'empty persisted roster never creates a public descriptor')
+  const guard = initial.match(/ClientAuthV3=([a-z2-7]{52})/)
+  t.ok(guard, 'an unreachable guard credential closes the empty roster')
+  t.alike(tt.listAuthClients(), [], 'guard is not exposed as an enrolled client')
+  t.is(tt.isRestrictedDiscoveryActive(), true)
+
+  await tt.addAuthClient(ALICE_PUB)
+  const enrolled = control.commands.filter((c) => c.startsWith('ADD_ONION')).pop()
+  t.ok(enrolled.includes('ClientAuthV3=' + ALICE_PUB))
+  t.absent(enrolled.includes('ClientAuthV3=' + guard[1]), 'guard leaves the live roster once a real client exists')
+
+  await tt.removeAuthClient(ALICE_PUB)
+  const emptied = control.commands.filter((c) => c.startsWith('ADD_ONION')).pop()
+  t.ok(emptied.includes('Flags=V3Auth'), 'removing the final client remains closed')
+  t.absent(emptied.includes('ClientAuthV3=' + ALICE_PUB))
+  t.ok(emptied.includes('ClientAuthV3=' + guard[1]))
+  t.alike(tt.listAuthClients(), [])
+
+  const info = tt.getInfo()
+  t.is(info.restrictedDiscovery, true)
+  t.is(info.authClients, 0)
+  await tt.stop()
+})
+
 test('health — descriptor uploads drive readiness without probe vport', async (t) => {
   const socksPort = await fakeSocks(t)
   const dir = tmpdir(t)

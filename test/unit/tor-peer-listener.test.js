@@ -7,8 +7,12 @@ import { EventEmitter } from 'events'
 import NoiseSecretStream from '@hyperswarm/secret-stream'
 import Protomux from 'protomux'
 import c from 'compact-encoding'
-import { OnionPeerListener, DEFAULT_PEER_VPORT } from 'p2p-hiverelay/transports/tor/peer-listener.js'
-import { TorTransport } from 'p2p-hiverelay/transports/tor/index.js'
+import {
+  OnionPeerListener,
+  DEFAULT_PEER_VPORT,
+  isLoopbackHost
+} from 'p2p-hiverelay/transports/tor/peer-listener.js'
+import { TorHealth, TorTransport } from 'p2p-hiverelay/transports/tor/index.js'
 
 const SERVICE_ID = 'a'.repeat(56)
 const KEY_BLOB = 'ED25519-V3:' + Buffer.alloc(64, 7).toString('base64')
@@ -74,6 +78,20 @@ class StubPeerListener extends EventEmitter {
 function addOnionCmds (control) {
   return control.commands.filter((cmd) => cmd.startsWith('ADD_ONION'))
 }
+
+test('listener rejects non-loopback bind hosts before opening a socket', async (t) => {
+  const relayKP = NoiseSecretStream.keyPair()
+  t.ok(isLoopbackHost('127.0.0.1'))
+  t.ok(isLoopbackHost('127.42.0.9'))
+  t.ok(isLoopbackHost('::1'))
+  t.absent(isLoopbackHost('0.0.0.0'))
+  t.absent(isLoopbackHost('192.168.1.5'))
+  t.absent(isLoopbackHost('localhost'), 'numeric loopback avoids hostname rebinding')
+  t.exception(
+    () => new OnionPeerListener({ keyPair: relayKP, host: '0.0.0.0' }),
+    /numeric loopback/
+  )
+})
 
 test('listener upgrades inbound TCP to a Noise XK peer stream — protomux rides it', async (t) => {
   const relayKP = NoiseSecretStream.keyPair()
@@ -212,6 +230,27 @@ test('peer vport binding — stubbed listener is started, mapped, and stopped wi
 
   await tt.stop()
   t.is(stub.stopped, 1, 'listener stopped with the transport')
+})
+
+test('failed transport startup releases a partially started peer listener', async (t) => {
+  const socksPort = await fakeSocks(t)
+  const control = new FakeControl()
+  control.connect = async () => { throw new Error('control unavailable') }
+  const stub = new StubPeerListener()
+  const tt = new TorTransport({
+    socksPort,
+    localPort: 9100,
+    peerListener: stub,
+    _controlFactory: () => control
+  })
+
+  await t.exception(tt.start(), /control unavailable/)
+  t.is(stub.started, 1)
+  t.is(stub.stopped, 1, 'failed start releases the bound listener')
+  t.is(stub.running, false)
+  t.is(control.destroyed, true, 'failed start releases the control client')
+  t.is(tt.running, false)
+  t.is(tt.health, TorHealth.DISABLED)
 })
 
 test('explicit vports config wins over the automatic peer mapping', async (t) => {
