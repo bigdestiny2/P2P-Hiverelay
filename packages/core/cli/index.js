@@ -100,8 +100,32 @@ function isRecoverableDHTError (err) {
   )
 }
 
+// Plain Node network errors from udx/Hyperswarm/Noise during discovery or
+// peer dial. Not typed as DHTError (so isRecoverableDHTError misses them).
+// Observed on utah canary with v0.25.0-rc.2: uncaughtException
+// { code: 'ETIMEDOUT', message: 'connection timed out' } exited the process
+// before the API ever bound :9100. Treat as recoverable noise — same class
+// as REQUEST_TIMEOUT on the public DHT.
+function isRecoverableNetworkError (err) {
+  if (!err) return false
+  const code = err.code || ''
+  if (
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNRESET' ||
+    code === 'EPIPE' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ENETUNREACH' ||
+    code === 'EHOSTUNREACH'
+  ) {
+    return true
+  }
+  // Some stacks only put the code in the message.
+  const msg = String(err.message || '')
+  return /connection timed out|ECONNRESET|EPIPE/i.test(msg)
+}
+
 function isRecoverable (err) {
-  return isRecoverableHypercoreError(err) || isRecoverableDHTError(err)
+  return isRecoverableHypercoreError(err) || isRecoverableDHTError(err) || isRecoverableNetworkError(err)
 }
 
 process.on('uncaughtException', (err) => {

@@ -13,10 +13,11 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.24.3
+version: 0.25.0-rc.3
 release-notes: |
-  Blindspark v0.24.3: synchronized HiveRelay release for the fleet, Umbrel
-  packages, and StartOS metadata.
+  HiveRelay v0.25.0-rc.3: treat ETIMEDOUT/ECONNRESET uncaught network errors as
+  recoverable so canary boot is not killed mid-start. Includes rc.2
+  gateway/loader fixes.
 license: apache-2.0
 wrapper-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
 upstream-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
