@@ -24,8 +24,6 @@ import { SeedProtocol } from '../protocol/seed-request.js'
 import { AnchorProtocol } from '../protocol/anchor-channel.js'
 import { CustodyProtocol } from '../protocol/custody-channel.js'
 import { PublishProtocol } from '../protocol/publish-channel.js'
-import { buildPublisherSignedSeedOpts } from '../seed-request-builder.js'
-import { isTransientCoreError } from '../transient-core-errors.js'
 import { verifyDelegationCert, verifyRevocation } from '../delegation.js'
 import { CircuitRelay } from '../protocol/relay-circuit.js'
 import { ProofOfRelay } from '../protocol/proof-of-relay.js'
@@ -56,7 +54,6 @@ import { SwarmFirewall } from './swarm-firewall.js'
 import { PolicyGuard } from '../policy-guard.js'
 import { AppLifecycle } from './app-lifecycle.js'
 import { GatewayServer } from './gateway-server.js'
-import { LifecycleScope, isAbortError } from './lifecycle-scope.js'
 
 const DEFAULT_CONFIG = {
   productProfile: 'relay-core',
@@ -365,36 +362,12 @@ export class RelayNode extends EventEmitter {
     this._lastRepairAt = null
     this._custodyExpiryInterval = null
     this._lastCustodyExpiryAt = null
-    // LifecycleScope — cancellation contract for fire-and-forget loops and
-    // event handlers (see lifecycle-scope.js). Recreated by every start()
-    // call so post-stop+start sequences get a fresh signal. stop()'s
-    // first action is `await this._scope.drain()` so no closure outlives
-    // the corestore.
-    this._scope = null
     this.running = false
   }
 
   // Backwards compat: expose the seeded apps Map owned by AppLifecycle.
   get seededApps () {
     return this.appLifecycle.seededApps
-  }
-
-  /**
-   * Register a fire-and-forget promise with the active LifecycleScope so
-   * stop() drains it before tearing down state. Used by all the
-   * `setInterval(...)`/`setTimeout(...)` handlers that previously did
-   * `someAsync().catch(() => {})` — see CANCELLATION-CONTRACT.md.
-   *
-   * Returns the promise unchanged. If start() has not run (no active
-   * scope), the promise is left alone — caller is responsible for its
-   * lifetime.
-   *
-   * @param {Promise} promise
-   * @returns {Promise}
-   */
-  _trackFireAndForget (promise) {
-    if (this._scope) this._scope.tracked(promise)
-    return promise
   }
 
   _isRestrictedMode () {
@@ -478,12 +451,6 @@ export class RelayNode extends EventEmitter {
 
   async start () {
     if (this.running) return
-
-    // Fresh lifecycle scope — every loop / handler that participates in
-    // the cancellation contract reads `this._scope` and is automatically
-    // aborted + drained by stop(). Recreated here so a stop()/start()
-    // cycle (e.g. self-heal restart) gets a clean signal.
-    this._scope = new LifecycleScope()
 
     try {
       // Re-create store if it was closed (e.g. after self-heal restart)
@@ -946,7 +913,7 @@ export class RelayNode extends EventEmitter {
               if (isMirrored || followThisAnchored) {
                 // Trusted partner OR auto-followed anchored content.
                 acted++
-                this._trackFireAndForget(this.seedApp(appKey, {
+                this.seedApp(appKey, {
                   appId: app.id || app.appId || null,
                   name: app.name || null,
                   version: app.version || null,
@@ -966,9 +933,8 @@ export class RelayNode extends EventEmitter {
                     sourceRelay: relayPubkey
                   })
                 }).catch((err) => {
-                  if (isAbortError(err)) return
                   this.emit('catalog-sync-error', { appKey, error: err.message })
-                }))
+                })
                 continue
               }
 
@@ -989,7 +955,7 @@ export class RelayNode extends EventEmitter {
               }
               if (decision === 'accept') {
                 acted++
-                this._trackFireAndForget(this.seedApp(appKey, {
+                this.seedApp(appKey, {
                   appId: app.id || app.appId || null,
                   name: app.name || null,
                   version: app.version || null,
@@ -1005,9 +971,8 @@ export class RelayNode extends EventEmitter {
                 }).then(() => {
                   this.emit('catalog-sync', { appKey, source: 'remote-catalog', mode: acceptMode })
                 }).catch((err) => {
-                  if (isAbortError(err)) return
                   this.emit('catalog-sync-error', { appKey, error: err.message })
-                }))
+                })
                 continue
               }
               // 'review' — queue for operator approval.
@@ -1045,11 +1010,7 @@ export class RelayNode extends EventEmitter {
           // Registry uses its own Corestore namespace to avoid conflicts
           const registryStore = this.store.namespace('seeding-registry')
           this.seedingRegistry = new SeedingRegistry(registryStore, this.swarm, {
-            registryKey: this.config.registryKey || null,
-            // Pass the node's LifecycleScope so _indexLog can bail on
-            // stop() instead of running against a freshly-closed log
-            // (vector A3 in STALE-REF-INVENTORY.md).
-            scope: this._scope
+            registryKey: this.config.registryKey || null
           })
 
           // Custody push channel — broadcasts new custody entries to every
@@ -1075,55 +1036,26 @@ export class RelayNode extends EventEmitter {
           // verifyCustodyEntry path the HTTP route does — there is no shorter
           // route in, so a malicious caller cannot bypass signature checks
           // by submitting via Protomux instead.
-          // Wrap each registry call so transient corestore/hypercore
-          // lifecycle errors surface as `{ ok: false, error, retryable: true }`
-          // — same convention as the seed handler below + the HTTPS
-          // /api/v1/* routes. Without this, exceptions thrown by the
-          // registry (e.g. "The corestore is closed", "Mutex has been
-          // destroyed") bubble up to PublishProtocol's default catch
-          // which converts them to `retryable: false` — making clients
-          // give up on what is actually a recoverable relay-state issue.
-          const wrapTransient = async (work) => {
-            try {
-              const entry = await work()
-              return { ok: true, result: entry }
-            } catch (err) {
-              const msg = err && err.message ? err.message : String(err)
-              if (isTransientCoreError(err)) {
-                return { ok: false, error: msg, retryable: true }
-              }
-              return { ok: false, error: msg }
-            }
-          }
           this._publishProtocol = new PublishProtocol({
-            onSubmitIntent: (body) => wrapTransient(() => this.seedingRegistry.publishCustodyIntent(body, null)),
-            onSubmitCommit: (body) => wrapTransient(() => this.seedingRegistry.publishCustodyCommit(body, null)),
-            onSubmitSourceRetired: (body) => wrapTransient(() => this.seedingRegistry.publishSourceRetired(body, null)),
-            // Seed handler — runs the publisher-signed body through the
-            // same shared builder the HTTPS /api/v1/seed route uses, so
-            // both transports speak identical vocabulary. Validation
-            // failures surface as { ok: false, error } with no retry
-            // hint; transient core errors from seedApp surface with
-            // retryable: true so the client can wait + retry the
-            // submit (mirrors HTTPS 503 + Retry-After convention).
-            onSubmitSeed: async (body) => {
-              const built = buildPublisherSignedSeedOpts(body, {
-                seedingRegistry: this.seedingRegistry
-              })
-              if (!built.ok) {
-                return { ok: false, error: built.error }
-              }
-              try {
-                const result = await this.seedApp(built.appKey, built.opts)
-                return { ok: true, result }
-              } catch (err) {
-                const msg = err && err.message ? err.message : String(err)
-                if (isTransientCoreError(err)) {
-                  return { ok: false, error: msg, retryable: true }
-                }
-                return { ok: false, error: msg }
-              }
+            onSubmitIntent: async (body) => {
+              const entry = await this.seedingRegistry.publishCustodyIntent(body, null)
+              return { ok: true, result: entry }
+            },
+            onSubmitCommit: async (body) => {
+              const entry = await this.seedingRegistry.publishCustodyCommit(body, null)
+              return { ok: true, result: entry }
+            },
+            onSubmitSourceRetired: async (body) => {
+              const entry = await this.seedingRegistry.publishSourceRetired(body, null)
+              return { ok: true, result: entry }
             }
+            // onSubmitSeed: intentionally omitted in v1 — the seed-request
+            // validation + seedApp opts assembly currently lives inline in
+            // api.js's /api/v1/seed handler. A follow-up extracts that into
+            // a shared helper so both transports use the same code path.
+            // Until then, the channel returns a typed
+            //   { ok: false, error: "submit kind 'seed' not configured ..." }
+            // so clients fail fast instead of waiting on a timeout.
           })
 
           // When the registry appends a new custody entry locally, push it
@@ -1161,16 +1093,15 @@ export class RelayNode extends EventEmitter {
           // Periodic scan for matching seed requests
           const scanInterval = this.config.registryScanInterval || 60_000 // 1 min default
           this._registryScanInterval = setInterval(() => {
-            this._trackFireAndForget(this._scanRegistry().catch((err) => {
-              if (isAbortError(err)) return
+            this._scanRegistry().catch((err) => {
               this.emit('registry-error', { error: err })
-            }))
+            })
           }, scanInterval)
           if (this._registryScanInterval.unref) this._registryScanInterval.unref()
 
           // Run initial scan after a short delay to let the registry sync
           setTimeout(() => {
-            this._trackFireAndForget(this._scanRegistry().catch(() => {}))
+            this._scanRegistry().catch(() => {})
           }, 5000)
 
           this._startReplicationMonitor()
@@ -1183,10 +1114,9 @@ export class RelayNode extends EventEmitter {
           // start.
           if (Array.isArray(this.config.coldStartRelays) && this.config.coldStartRelays.length > 0) {
             setTimeout(() => {
-              this._trackFireAndForget(this._runColdStartPrimer().catch((err) => {
-                if (isAbortError(err)) return
+              this._runColdStartPrimer().catch((err) => {
                 this.emit('cold-start-error', { error: err.message || String(err) })
-              }))
+              })
             }, 15_000)
           }
         } catch (err) {
@@ -1197,14 +1127,10 @@ export class RelayNode extends EventEmitter {
 
       this._startCustodyExpiryMonitor()
 
-      // Load app registry from disk and reseed all persisted apps.
-      // Tracked so a stop() that fires while reseed is fanning out
-      // (each seedApp cascades into eagerReplicate — see vector A1)
-      // drains every fan-out before tearing down the corestore.
-      this._trackFireAndForget(this._reseedFromRegistry().catch((err) => {
-        if (isAbortError(err)) return
+      // Load app registry from disk and reseed all persisted apps
+      this._reseedFromRegistry().catch((err) => {
         this.emit('reseed-error', { error: err })
-      }))
+      })
 
       // Start network discovery — shares this node's swarm to discover other relays
       this.networkDiscovery = new NetworkDiscovery({ swarm: this.swarm })
@@ -1302,20 +1228,12 @@ export class RelayNode extends EventEmitter {
 
       this.emit('started', { publicKey: this.swarm.keyPair.publicKey })
 
-      // Auto-enable holesail if API is not publicly reachable.
-      // Tracked so the 15s setTimeout inside doesn't fire post-stop
-      // and start a transport on a destroyed swarm (vector B13).
+      // Auto-enable holesail if API is not publicly reachable
       if (!this.holesailTransport && this.config.enableAPI) {
-        this._trackFireAndForget(this._autoEnableHolesail().catch(() => {}))
+        this._autoEnableHolesail().catch(() => {})
       }
     } catch (err) {
-      // Rollback in reverse order. Drain the scope first so any
-      // fire-and-forget that already fired (e.g. _reseedFromRegistry)
-      // unwinds before we tear down the corestore.
-      if (this._scope) {
-        try { await this._scope.drain() } catch (_) {}
-        this._scope = null
-      }
+      // Rollback in reverse order
       this.bootstrapCache.stop()
       if (this._catalogThrottleCleanup) { clearInterval(this._catalogThrottleCleanup); this._catalogThrottleCleanup = null }
       if (this._reputationSaveInterval) { clearInterval(this._reputationSaveInterval); this._reputationSaveInterval = null }
@@ -2310,14 +2228,13 @@ export class RelayNode extends EventEmitter {
 
     const intervalMs = Math.max(10_000, Number(this.config.replicationCheckInterval) || 60_000)
     this._replicationCheckInterval = setInterval(() => {
-      this._trackFireAndForget(this._checkReplicationHealth().catch((err) => {
-        if (isAbortError(err)) return
+      this._checkReplicationHealth().catch((err) => {
         this.emit('replication-error', { error: err.message || String(err) })
-      }))
+      })
     }, intervalMs)
     if (this._replicationCheckInterval.unref) this._replicationCheckInterval.unref()
 
-    this._trackFireAndForget(this._checkReplicationHealth().catch(() => {}))
+    this._checkReplicationHealth().catch(() => {})
   }
 
   _startAnchorMonitor () {
@@ -2330,15 +2247,14 @@ export class RelayNode extends EventEmitter {
     // gets its first honest verification right away.
     const intervalMs = Math.max(30_000, Number(this.config.anchorCheckInterval) || 300_000)
     this._anchorCheckInterval = setInterval(() => {
-      this._trackFireAndForget(this._runAnchorCheck().catch((err) => {
-        if (isAbortError(err)) return
+      this._runAnchorCheck().catch((err) => {
         this.emit('anchor-check-error', { error: err.message || String(err) })
-      }))
+      })
     }, intervalMs)
     if (this._anchorCheckInterval.unref) this._anchorCheckInterval.unref()
 
     setTimeout(() => {
-      this._trackFireAndForget(this._runAnchorCheck().catch(() => {}))
+      this._runAnchorCheck().catch(() => {})
     }, 5000)
   }
 
@@ -2360,17 +2276,16 @@ export class RelayNode extends EventEmitter {
     // min after seedApp; this monitor takes over for the long tail.
     const intervalMs = Math.max(60_000, Number(this.config.repairInterval) || 300_000)
     this._repairInterval = setInterval(() => {
-      this._trackFireAndForget(this._runRepairPass().catch((err) => {
-        if (isAbortError(err)) return
+      this._runRepairPass().catch((err) => {
         this.emit('repair-error', { error: err.message || String(err) })
-      }))
+      })
     }, intervalMs)
     if (this._repairInterval.unref) this._repairInterval.unref()
 
     // First pass shortly after startup so we attempt to recover ghost
     // entries from the previous run.
     setTimeout(() => {
-      this._trackFireAndForget(this._runRepairPass().catch(() => {}))
+      this._runRepairPass().catch(() => {})
     }, 30_000)
   }
 
@@ -2481,15 +2396,14 @@ export class RelayNode extends EventEmitter {
 
     const intervalMs = Math.max(10_000, Number(this.config.custodyExpiryInterval) || 60_000)
     this._custodyExpiryInterval = setInterval(() => {
-      this._trackFireAndForget(this._runCustodyExpiryPass().catch((err) => {
-        if (isAbortError(err)) return
+      this._runCustodyExpiryPass().catch((err) => {
         this.emit('custody-expiry-error', { error: err.message || String(err) })
-      }))
+      })
     }, intervalMs)
     if (this._custodyExpiryInterval.unref) this._custodyExpiryInterval.unref()
 
     setTimeout(() => {
-      this._trackFireAndForget(this._runCustodyExpiryPass().catch(() => {}))
+      this._runCustodyExpiryPass().catch(() => {})
     }, 5000)
   }
 
@@ -2700,10 +2614,8 @@ export class RelayNode extends EventEmitter {
     if (!this.appRegistry) return
     const entry = this.appRegistry.get(appKeyHex)
     if (!entry || entry.anchored === true) return
-    // Fire-and-forget; runRepairPass will retry if this one fails.
-    // Tracked so stop() drains an in-flight targeted repair before
-    // closing the corestore (vector B18 in STALE-REF-INVENTORY.md).
-    this._trackFireAndForget(this.appLifecycle.repairUnanchored(appKeyHex).catch(() => {}))
+    // Fire-and-forget; runRepairPass will retry if this one fails
+    this.appLifecycle.repairUnanchored(appKeyHex).catch(() => {})
   }
 
   async _checkReplicationHealth () {
@@ -2766,20 +2678,8 @@ export class RelayNode extends EventEmitter {
       if (!drive) continue
       checked++
       try {
-        // 2026-05-22: anchored now means "every blob block present",
-        // not just "drive.version > 0". The metadata-only check used
-        // to rubber-stamp partial-pin entries (metadata replicates
-        // long before blob content does), which then made
-        // runRepairPass skip them indefinitely. The full-replication
-        // check is delegated to AppLifecycle._isDriveFullyReplicated
-        // so the contract lives in one place. See
-        // docs/AUTO-HEAL-ROOT-CAUSE-2026-05-22.md.
         const length = drive.version || 0
-        const fullyReplicated = length > 0 &&
-          this.appLifecycle &&
-          typeof this.appLifecycle._isDriveFullyReplicated === 'function' &&
-          await this.appLifecycle._isDriveFullyReplicated(drive)
-        if (fullyReplicated) {
+        if (length > 0) {
           const wasAnchored = entry.anchored === true
           this.appRegistry.setAnchored(appKey, length)
           if (!wasAnchored && this.appLifecycle && typeof this.appLifecycle._recordCustodyReceipt === 'function') {
@@ -2787,12 +2687,9 @@ export class RelayNode extends EventEmitter {
           }
           anchored++
         } else {
-          // Not fully replicated — clear anchored if it was set so the
-          // repair monitor picks the entry back up.
+          // No blocks — clear anchored if it was set, record the check
           if (entry.anchored === true) {
-            this.appRegistry.clearAnchored(appKey, length > 0
-              ? 'partial-pin detected on periodic check (blob blocks missing)'
-              : 'length=0 on periodic check')
+            this.appRegistry.clearAnchored(appKey, 'length=0 on periodic check')
           } else {
             this.appRegistry.recordAnchorCheck(appKey)
           }
@@ -2900,23 +2797,6 @@ export class RelayNode extends EventEmitter {
 
   async stop () {
     if (!this.running) return
-
-    // Cancellation contract: fire the abort signal FIRST and drain every
-    // fire-and-forget that participates in the LifecycleScope before
-    // touching any subsystem. By the time we reach swarm.destroy() and
-    // store.close() below, no captured-reference closure is still
-    // running against the corestore. This is the fix for the
-    // "Mutex has been destroyed" / "corestore is closed" leaks (see
-    // STALE-REF-INVENTORY.md + CANCELLATION-CONTRACT.md).
-    //
-    // Drain is bounded by shutdownTimeoutMs * each tracked promise's
-    // own timeout; in practice every contract-aware loop exits within
-    // a few hundred ms of the abort.
-    const scope = this._scope
-    this._scope = null
-    if (scope) {
-      try { await scope.drain() } catch (_) {}
-    }
 
     // Clean up catalog broadcast debounce timer and peer throttle map
     if (this._catalogBroadcastTimer) {
