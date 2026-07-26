@@ -207,6 +207,7 @@ cmd_cut() {
 
   if [ "$promote_canary" = 1 ]; then
     log "promoting fleet canary channel → ${version}…"
+    log "promoting fleet canary channel → $version…"
     node -e '
       const fs=require("fs"), p=process.argv[1], v=process.argv[2];
       const j=JSON.parse(fs.readFileSync(p,"utf8")); j.canary=v;
