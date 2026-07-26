@@ -1,0 +1,57 @@
+# Tor configuration for HiveRelay onion transport
+#
+# This file is a template — the tor sidecar reads it at startup.
+# The HiveRelay tor transport connects to the control port and
+# creates a v3 onion service programmatically via ADD_ONION.
+#
+# Pin: tor 0.4.9.x (0.4.8 hard-sunset 2026-09-01).
+# ML-KEM768 hybrid channel crypto shipped in 0.4.8.17.
+# A rendezvous MitM fix shipped in 0.4.9.11 (2026-06-25).
+# Currency is a security property — keep tor updated.
+
+# ─── Sockets ────────────────────────────────────────────────────────
+# SOCKS5 proxy for outbound Tor connections (relay → peers via Tor)
+SocksPort 9050
+
+# Control port for ADD_ONION / SETCONF (HiveRelay transport connects here)
+ControlPort 9051
+# Cookie auth — the transport reads the cookie file to authenticate
+CookieAuthentication 1
+CookieAuthFile /var/lib/tor/control_auth_cookie
+
+# ─── Hidden service ────────────────────────────────────────────────
+# The onion service is created dynamically by HiveRelay via ADD_ONION
+# on the control port. Persistent keys are managed by the transport
+# (ED25519-V3:<blob> restore). Do NOT configure HiddenServiceDir here —
+# it would conflict with the dynamic ADD_ONION path.
+
+# ─── PoW defense (prop 327) ────────────────────────────────────────
+# Enabled by default for public-advertised relays.
+# Authorized clients (restricted discovery) bypass the puzzle.
+# Note: daemon-wide via SETCONF, not per-service.
+HiddenServicePoWDefensesEnabled 1
+HiddenServicePoWQueueRate 200
+HiddenServicePoWQueueBurst 400
+
+# ─── Vanguards ─────────────────────────────────────────────────────
+# Lite vanguards (one extra fixed L2 guard) is core-default for onion
+# circuits. Guard discovery is a live threat (PoPETs 2022; arXiv 2602.23560).
+# Explicitly set to lite for clarity.
+Vanguards lite
+
+# ─── Logging ───────────────────────────────────────────────────────
+# Minimal logging — the transport handles its own structured logs.
+# NEVER log at debug in production (leaks circuit metadata).
+Log notice stderr
+SafeLogging 1
+
+# ─── Concurrency ───────────────────────────────────────────────────
+# Concurrency is good since 0.4.7 (prop 324). Default is fine.
+# Conflux multipath does NOT help onion services today.
+
+# ─── Data directory ────────────────────────────────────────────────
+DataDirectory /var/lib/tor
+
+# ─── Security hardening ────────────────────────────────────────────
+# Drop privileges (tor runs as the tor user inside the container)
+User tor

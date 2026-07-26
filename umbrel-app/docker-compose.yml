@@ -81,3 +81,27 @@ services:
       # injects $APP_SEED (derived from the user's Umbrel seed and this app
       # id); the relay reads it from the container environment.
       APP_SEED: ${APP_SEED}
+
+      # Tor onion transport (optional — uncomment to enable relay anonymity).
+      # The tor companion below provides SOCKS5 + control port. The relay
+      # creates a persistent v3 onion service via ADD_ONION. Peers connect
+      # through the onion without knowing the relay's real IP.
+      # HIVERELAY_TOR: "true"
+      # HIVERELAY_TOR_SOCKS_HOST: tor
+      # HIVERELAY_TOR_SOCKS_PORT: "9050"
+      # HIVERELAY_TOR_CONTROL_HOST: tor
+      # HIVERELAY_TOR_CONTROL_PORT: "9051"
+      # HIVERELAY_TOR_KEY_FILE: /data/tor-onion-key.blob
+
+  # ─── Tor companion (optional) ─────────────────────────────────────
+  # Uncomment the block below to enable Tor onion transport.
+  # Provides a v3 onion service so peers can reach the relay without
+  # knowing its real IP. PoW defense + vanguards-lite enabled.
+  #
+  # tor:
+  #   image: djschilling/tor:0.4.9
+  #   restart: on-failure
+  #   volumes:
+  #     - ${APP_DATA_DIR}/tor-data:/var/lib/tor
+  #   environment:
+  #     TOR_LOG: notice
