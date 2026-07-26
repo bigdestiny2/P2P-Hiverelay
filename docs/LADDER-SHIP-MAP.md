@@ -1,6 +1,6 @@
 # Ladder ship map (chronological)
 
-**Date:** 2026-07-26 · **Status:** living operator/product plan · **Baseline:** monorepo `v0.24.3` (`fleet/channels.json` stable = canary)
+**Date:** 2026-07-26 · **Status:** living operator/product plan · **Baseline:** monorepo canary `v0.25.0-rc.1` · stable `v0.24.3` (see [community update](./COMMUNITY-UPDATE-0.25.0-rc.1.md))
 
 > Two parallel tracks, one honesty ladder. **Version tags and claim badges stay separate until a deliberate merge.** Do not call the blind public-test pilot “fleet v0.25.0,” and do not claim rungs the current ship has not evidenced.
 
@@ -54,11 +54,13 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 
 | Item | State |
 |------|--------|
-| Fleet channel | **v0.24.3** stable = canary |
-| Main tip (packaging) | Tor + utility **defaults** in Docker/systemd/Umbrel (`dad9f44` lineage) |
-| Service wiring (Track A content) | VRF/notify HTTP, client helpers, dashboard panels, outboxlog durability fixes — land via `feat/service-http-wiring` then tag |
+| Fleet channel | **canary `v0.25.0-rc.1`** · **stable `v0.24.3`** (GitHub `main` `channels.json`) |
+| Tag / GH prerelease | [`v0.25.0-rc.1`](https://github.com/bigdestiny2/P2P-Hiverelay/releases/tag/v0.25.0-rc.1) signed + published |
+| Packaging in RC | Tor + utility **defaults** in Docker/systemd/Umbrel |
+| Service wiring (Track A content) | VRF/notify HTTP, client helpers, dashboard panels, outboxlog durability — in the RC tag |
+| Live fleet (as of 2026-07-26 probe) | Most boxes still **0.24.3** until canary updater tick; `transports.tor` often null until host Tor |
 | Dubai pattern | Utility services live via **`services.json`** (runtime authority for plugins), not config alone |
-| Track B | Signed public-test manifest; **deploy parked** on DNS / live syd-1 qualify |
+| Track B | Blind public-test pilot (syd/dal) — **parallel** version line, not this fleet tag |
 | Boot-restore | Worktree only — **not on main** until Track C |
 | Blind packages on main | **Absent** (`blind-daemon` / edge only in vNext worktrees) |
 

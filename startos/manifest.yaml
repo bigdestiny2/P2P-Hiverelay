@@ -15,9 +15,10 @@ id: blindspark
 title: "Blindspark"
 version: 0.25.0-rc.1
 release-notes: |
-  HiveRelay v0.25.0-rc.1 canary: Tor+utility defaults, service HTTP wiring
-  (VRF/notify/client helpers), outboxlog durability. Track A only — not blind
-  public-test.
+  v0.25.0-rc.1 (prerelease / canary): Tor packaging defaults, utility services
+  on by default, VRF + notify HTTP wiring and dashboard panels, outboxlog
+  durability. Stable fleet remains 0.24.3 until soak. Not blind GA; live onions
+  need host Tor. https://github.com/bigdestiny2/P2P-Hiverelay/releases/tag/v0.25.0-rc.1
 license: apache-2.0
 wrapper-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
 upstream-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"

@@ -65,6 +65,11 @@ gallery: []
 path: ""
 defaultUsername: ""
 defaultPassword: ""
-releaseNotes: ""
+releaseNotes: >-
+  v0.25.0-rc.1 (prerelease / canary): Tor packaging defaults, utility services
+  on by default, VRF + notify HTTP wiring and dashboard panels, outboxlog
+  durability fixes. Stable fleet remains on 0.24.3 until soak. Not blind GA;
+  live onions still need host Tor. Details:
+  https://github.com/bigdestiny2/P2P-Hiverelay/releases/tag/v0.25.0-rc.1
 submitter: bigdestiny2
 submission: https://github.com/getumbrel/umbrel-apps/pull/PENDING

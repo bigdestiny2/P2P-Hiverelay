@@ -44,6 +44,14 @@ and StartOS metadata so the published release surfaces agree.
 
 ## What Changed Recently
 
+**v0.25.0-rc.1 (2026-07-26, canary prerelease):** Tor + utility services
+default-on in packaging; VRF/notify HTTP + client helpers + dashboard panels;
+outboxlog durability fixes; dual-track ship map. Stable channel remains
+**v0.24.3**. Community copy:
+[docs/COMMUNITY-UPDATE-0.25.0-rc.1.md](./docs/COMMUNITY-UPDATE-0.25.0-rc.1.md) ·
+[CHANGELOG](./CHANGELOG.md) ·
+[release](https://github.com/bigdestiny2/P2P-Hiverelay/releases/tag/v0.25.0-rc.1).
+
 The repo has moved from a relay prototype into a Core3 infrastructure stack:
 
 - **Application-agnostic Pear app availability**: hand the relay a Hyperdrive key

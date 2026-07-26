@@ -6,6 +6,48 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.25.0-rc.1] — 2026-07-26
+
+Prerelease. Fleet **canary** channel targets this tag; **stable** remains
+`v0.24.3` until soak. Community copy:
+[`docs/COMMUNITY-UPDATE-0.25.0-rc.1.md`](./docs/COMMUNITY-UPDATE-0.25.0-rc.1.md).
+Ship ladder: [`docs/LADDER-SHIP-MAP.md`](./docs/LADDER-SHIP-MAP.md).
+
+### Added
+- **Tor packaging defaults (Docker / systemd / Umbrel).** Compose and unit
+  files ship `HIVERELAY_TOR=1` with SOCKS/control host wiring and key-file
+  paths. Host still needs Tor ≥ 0.4.9 with cookie control for live onions —
+  packaging path, not a fleet-wide “onions everywhere” claim.
+- **Utility services default-on in packaging.** Outboxlog, notify,
+  storage-proof, VRF, witnesslog, repairticket enabled via env in the unit /
+  compose path. **Shard-store** remains opt-in (disk).
+- **VRF HTTP surface** — `/api/v1/vrf/*` (beacon-info, beacon-latest, select,
+  status, info, …) via `api-vrf.js` + service provider mount.
+- **Notify push provider resolution** documented and tested (webpush
+  descriptor → live non-memory provider; fail-closed bad config).
+- **Client helpers** on `HiveRelayClient`: notify send/watch, shard put/get,
+  witness append, VRF beacon-latest.
+- **Dashboard panels** for notify (manage status aggregates) and VRF.
+- **Ladder ship map** — dual-track chronology (fleet `0.25.x` vs blind
+  public-test `1.0.0-rc.1.public-test.1` vs later merge).
+
+### Fixed
+- **Outboxlog durability / journal** — bytes-per-day metering, torn-tail and
+  takedown audit paths, storage-authority close behavior covered by unit suite.
+- **App lifecycle** — `loadRegistry()` vs `reseedDrives()` split so recovery
+  can seal storage-admission before reseed.
+- **release.sh --promote-canary** — brace `${version}` under macOS bash 3.2
+  `set -u` (ellipsis crash after successful tag cut; #188 regression).
+
+### Fleet
+- Canary → `v0.25.0-rc.1` (signed tag + GitHub prerelease).
+- Stable → `v0.24.3` (unchanged).
+
+### Not in this RC
+- Stable-channel promote, npm latest, or community-store lag catch-up.
+- Live onion evidence on every box.
+- Blind public-test GA / monorepo blind-daemon product cut.
+
 ## [0.24.3] — 2026-07-08
 
 ### Added
