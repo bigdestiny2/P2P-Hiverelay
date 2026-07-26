@@ -1197,13 +1197,6 @@ export class RelayNode extends EventEmitter {
           apiHost: this.config.apiHost,
           corsOrigins: this.config.corsOrigins,
           apiKey: this.config.apiKey,
-          // Operator credential for the OutboxLog takedown admin surface. When
-          // unset here (and no HIVERELAY_OUTBOXLOG_ADMIN_KEY env), the admin
-          // routes stay 404 (safe-by-default) — takedown is opt-in per operator.
-          outboxLogAdminKey: this.config.outboxlog?.adminKey || null,
-          // Optional shared-NAT capacity envelope. RelayAPI validates this and
-          // otherwise preserves the established 1200 requests/60s/IP default.
-          outboxLogHttpRateLimit: this.config.outboxlog?.http?.rateLimit,
           trustProxy: this.config.trustProxy || false,
           uiExposeToken: this.config.ui?.exposeToken || false,
           uiSimple: this.config.ui?.simple || false
@@ -1864,7 +1857,6 @@ export class RelayNode extends EventEmitter {
         followInterval: this.config.federation?.followInterval,
         followed: this.config.federation?.followed || [],
         mirrored: this.config.federation?.mirrored || [],
-        trustedForkObservers: this.config.federation?.trustedForkObservers || [],
         storagePath: join(this.config.storage, 'federation.json')
       })
       // Hydrate persisted follow/mirror state. The bootstrap entries from
@@ -2635,43 +2627,8 @@ export class RelayNode extends EventEmitter {
     this.eviction.on('evicted', (e) => this.emit('eviction', e))
     this.eviction.on('evict-failed', (e) => this.emit('eviction-failed', e))
     this.eviction.on('error', (err) => this.emit('eviction-error', { error: err && err.message }))
-    // Drive the shard-store's own disk-pressure eviction on the SAME periodic
-    // cadence (STO-005). The EvictionManager sweeps app drives; the shard-store
-    // owns a dedicated hypercore the app-eviction path never touches, so it must
-    // shed its own expired/over-pressure shards or a filling box leaks shard
-    // bytes. Reuses the sweep tick (no new timer); disk usage is read live so a
-    // 'no-disk-signal' summary still gets an accurate reading (or is skipped).
-    this.eviction.on('sweep', () => { this._trackFireAndForget(this._sweepShardStoreUnderPressure()) })
     this.eviction.start()
     return this.eviction
-  }
-
-  /** The started shard-store service provider, or null if the service is off. */
-  _shardStoreProvider () {
-    if (!this.serviceRegistry) return null
-    const entry = this.serviceRegistry.services.get('shard-store')
-    return entry && entry.provider && typeof entry.provider.evictUnderPressure === 'function'
-      ? entry.provider
-      : null
-  }
-
-  /**
-   * Ask the shard-store to shed expired / over-pressure shards, using the live
-   * disk reading. Best-effort and non-throwing: a filling disk must not be able
-   * to crash the eviction loop. Below the shard-store's own pressure gate this
-   * is a cheap no-op (returns skipped: 'below-pressure').
-   */
-  async _sweepShardStoreUnderPressure () {
-    const svc = this._shardStoreProvider()
-    if (!svc) return
-    const disk = this.diskMonitor ? this.diskMonitor.getInfo() : null
-    if (!disk || !Number.isFinite(disk.usedPct)) return
-    try {
-      const res = await svc.evictUnderPressure({ usedPct: disk.usedPct })
-      if (res && res.evicted > 0) this.emit('shard-eviction', { usedPct: disk.usedPct, ...res })
-    } catch (err) {
-      this.emit('shard-eviction-error', { error: err && err.message })
-    }
   }
 
   // Apply an operator storage designation live (no restart): set the byte cap
@@ -3553,11 +3510,24 @@ export class RelayNode extends EventEmitter {
   // -> shard hash (shareManifest), both signed into the intent. Returns null
   // when this relay was not assigned a share, so a relay can only pin the exact
   // share the dealer committed to it. Read-only; never throws.
-  _resolveShardCustodyAssignment (custodyIntentId, relayPubkey) {
+  //
+  // Ciphertext blobs use shareIndex:0 and are authorized by the separate
+  // ciphertextAssignments + ciphertextShard fields in the signed intent, so the
+  // body ciphertext can be stored on the shard cohort under the same custody
+  // intent while staying separated from the PVSS key shares.
+  _resolveShardCustodyAssignment (custodyIntentId, relayPubkey, shareIndex) {
     const reg = this.seedingRegistry
     if (!reg || typeof reg.getCustodyIntent !== 'function') return null
     const intent = reg.getCustodyIntent(custodyIntentId)
-    if (!intent || !Array.isArray(intent.shareAssignments) || !Array.isArray(intent.shareManifest)) return null
+    if (!intent) return null
+    // shareIndex 0 is the body ciphertext blob; >0 are PVSS key shares.
+    // A relay may hold both, so route by the requested shareIndex.
+    if (shareIndex === 0 && Array.isArray(intent.ciphertextAssignments) && intent.ciphertextShard) {
+      const holdsCiphertext = intent.ciphertextAssignments.find(a => a && a.relayPubkey === relayPubkey)
+      if (holdsCiphertext) return { shareIndex: 0, shard: intent.ciphertextShard }
+      return null
+    }
+    if (!Array.isArray(intent.shareAssignments) || !Array.isArray(intent.shareManifest)) return null
     const mine = intent.shareAssignments.find(a => a && a.relayPubkey === relayPubkey)
     if (!mine) return null
     const share = intent.shareManifest.find(m => m && m.shareIndex === mine.shareIndex)
@@ -3575,13 +3545,8 @@ export class RelayNode extends EventEmitter {
       node: this,
       store: this.store,
       config: this.config,
-      // Let the shard-store register its bytes with StorageAccounting so its
-      // dedicated-hypercore footprint is visible to the adoption/eviction
-      // guards (STO-005) — otherwise valid long-retain pins fill the disk
-      // unaccounted, re-opening the disk-full failure this fleet hit.
-      storageAccounting: this.storageAccounting || null,
-      resolveCustodyAssignment: (custodyIntentId, relayPubkey) =>
-        this._resolveShardCustodyAssignment(custodyIntentId, relayPubkey),
+      resolveCustodyAssignment: (custodyIntentId, relayPubkey, shareIndex) =>
+        this._resolveShardCustodyAssignment(custodyIntentId, relayPubkey, shareIndex),
       shardPutAuth: (this.config.shardStore && Array.isArray(this.config.shardStore.putAuth))
         ? this.config.shardStore.putAuth
         : ['custody']
