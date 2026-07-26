@@ -81,7 +81,7 @@ Recorded honestly, including the cuts:
 ## Benchmark snapshot
 
 `npm run bench:outboxlog` (standalone, `release-local-v1` budget profile, 0 failures) on
-2026-07-02 — local run on a workstation M3 Ultra, Node v22.22.0, otherwise idle. These are
+2026-07-02 — local run on a workstation (M3 Ultra), Node v22.22.0, otherwise idle. These are
 single-machine loopback numbers, not a load test; treat them as a regression baseline.
 
 ```
