@@ -105,9 +105,30 @@ export class AppLifecycle extends EventEmitter {
             : undefined,
           leaseManaged: entry.leaseManaged === true
         })
-        this.emit('reseeded', { appKey: entry.appKey })
+        this._safeEmit('reseeded', { appKey: entry.appKey })
       } catch (err) {
-        this.emit('reseed-error', { appKey: entry.appKey, error: err })
+        this._safeEmit('reseed-error', { appKey: entry.appKey, error: err })
+      }
+    }
+  }
+
+  /**
+   * Emit without letting a throwing observer truncate the caller OR starve
+   * later observers of the same event. Node's EventEmitter stops calling the
+   * remaining listeners for an event the moment one throws; recovery loops
+   * cannot tolerate that (a buggy 'reseed-error' handler would silently drop
+   * the event for every well-behaved listener after it). Call each listener
+   * in its own try/catch so all observers receive the event.
+   */
+  _safeEmit (event, payload) {
+    const listeners = this.listeners(event)
+    for (const listener of listeners) {
+      try {
+        listener.call(this, payload)
+      } catch (err) {
+        // Continue to the remaining observers. Surface the failure on a
+        // separate throw-free channel so operators still see it.
+        try { this.emit('observer-error', { event, error: err }) } catch (_) {}
       }
     }
   }
@@ -1263,6 +1284,16 @@ export class AppLifecycle extends EventEmitter {
    */
   verifyUnseedRequest (appKeyHex, publisherPubkeyHex, signatureHex, timestamp) {
     const node = this.node
+    // Be total: malformed inputs are MALFORMED_REQUEST, never a throw or a
+    // misleading domain error. Validate types and shapes before any lookup so
+    // a bad request cannot surface internal state (e.g. APP_NOT_FOUND for a
+    // non-string key that was never going to match).
+    if (typeof appKeyHex !== 'string' || appKeyHex.length !== 64 || !/^[0-9a-f]+$/i.test(appKeyHex) ||
+        typeof publisherPubkeyHex !== 'string' || publisherPubkeyHex.length !== 64 || !/^[0-9a-f]+$/i.test(publisherPubkeyHex) ||
+        typeof signatureHex !== 'string' || signatureHex.length === 0 ||
+        !Number.isSafeInteger(timestamp) || timestamp < 0) {
+      return { ok: false, error: 'MALFORMED_REQUEST' }
+    }
     const entry = node.appRegistry.get(appKeyHex)
     if (!entry) return { ok: false, error: 'APP_NOT_FOUND' }
 
@@ -1319,6 +1350,10 @@ export class AppLifecycle extends EventEmitter {
     const appKeyBuf = b4a.from(appKeyHex, 'hex')
     const pubkeyBuf = b4a.from(publisherPubkeyHex, 'hex')
     const sigBuf = b4a.from(signatureHex, 'hex')
+    if (!sigBuf || sigBuf.length < sodium.crypto_sign_BYTES ||
+        !pubkeyBuf || pubkeyBuf.length !== sodium.crypto_sign_PUBLICKEYBYTES) {
+      return { ok: false, error: 'MALFORMED_REQUEST' }
+    }
 
     const tsBuf = b4a.alloc(8)
     const tsView = new DataView(tsBuf.buffer, tsBuf.byteOffset)

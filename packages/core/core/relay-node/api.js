@@ -180,6 +180,10 @@ import {
   resolveNetworkStateRoute
 } from './api-network-state.js'
 import {
+  buildFleetRoutePayload,
+  resolveFleetRoute
+} from './api-fleet.js'
+import {
   buildSubsidyRoutePayload,
   resolveSubsidyRoute,
   updateSubsidyDestination
@@ -983,7 +987,12 @@ export class RelayAPI extends EventEmitter {
         if (!this._requireAuth(req, res, usageRoute.authMessage)) return
         const pk = resolvePokerServiceProvider(this.node)
         const provider = pk.ok ? pk.provider : this._getPokerApp()
-        if (!provider) return this._json(res, { error: pk.error }, pk.status)
+        if (!provider) {
+          // A stock relay without poker should report the service as
+          // disabled (200), not unavailable (503). The usage endpoint is an
+          // operator telemetry read — it must work on every relay.
+          return this._json(res, { enabled: false, service: 'poker', tables: 0, appends: 0, seats: 0, perTable: [] }, 200)
+        }
         const result = buildUsageTelemetryRoutePayload({
           route: usageRoute,
           pokerProvider: provider
@@ -1352,6 +1361,17 @@ export class RelayAPI extends EventEmitter {
             route: networkStateRoute,
             context: route,
             networkDiscovery: this.node.networkDiscovery
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        // Operator fleet multi-node view (v3) — management auth; public peer scrapes only.
+        const fleetRoute = resolveFleetRoute(req.method, path)
+        if (fleetRoute && fleetRoute.kind === 'fleet') {
+          if (!this._requireAuth(req, res, fleetRoute.authMessage)) return
+          const result = await buildFleetRoutePayload({
+            route: fleetRoute,
+            node: this.node
           })
           return this._json(res, result.payload, result.status || 200)
         }
