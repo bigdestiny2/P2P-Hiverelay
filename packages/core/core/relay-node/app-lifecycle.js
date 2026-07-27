@@ -6,6 +6,8 @@ import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { updateWithTimeout, downloadWithTimeout, getDriveSize } from './cancellable-drive-update.js'
 import { isAbortError } from './lifecycle-scope.js'
+import { verifyShareBundleForRelay } from '../pvss.js'
+import { STORAGE_SHARE_BUNDLE_MAX_BYTES } from '../../config/storage-admission-authority.js'
 import {
   isValidHexKey,
   normalizeAvailabilityClass,
@@ -32,6 +34,9 @@ export class AppLifecycle extends EventEmitter {
     // restored to the registry and parked here so a retry can finish the
     // retirement without re-closing already-settled resources.
     this._retiringDrives = new Map()
+    // Active auxiliary share-bundle fetches. unseedApp drains these before
+    // releasing drive debt so a concurrent fetch cannot race with teardown.
+    this._auxShareBundleResources = new Set()
   }
 
   /**
@@ -1225,9 +1230,203 @@ export class AppLifecycle extends EventEmitter {
     return { checked, repaired, stillUnanchored }
   }
 
+  async _drainAuxShareBundleResources (appKeyHex) {
+    if (this._auxShareBundleResources.size === 0) return
+    const pending = []
+    for (const res of this._auxShareBundleResources) {
+      if (appKeyHex && res.appKey !== appKeyHex) continue
+      // Wait for the full operation (update + snapshot + read) to settle, not
+      // just the download tracker — the fetch may be blocked in core.update().
+      if (res.operationSettled) pending.push(res.operationSettled.catch(() => {}))
+    }
+    if (pending.length > 0) await Promise.allSettled(pending)
+  }
+
+  async _releaseAuxShareBundleResource (resource) {
+    if (!resource) return
+    this._auxShareBundleResources.delete(resource)
+    try { if (resource.tracker && typeof resource.tracker.destroy === 'function') resource.tracker.destroy() } catch (_) {}
+    try { if (resource.snapshotCore && typeof resource.snapshotCore.close === 'function') await resource.snapshotCore.close() } catch (_) {}
+  }
+
+  async _readShareBundle (shareBundleKey, opts = {}) {
+    const node = this.node
+    const appKey = isValidHexKey(opts.appKey, 64) ? opts.appKey.toLowerCase() : null
+    if (!isValidHexKey(shareBundleKey, 64) || !appKey || !node.swarm) return null
+    // Storage admission gate: the aux read must be admitted before any core
+    // materializes on disk.
+    if (node.storageAdmission && typeof node.storageAdmission.mutationAdmission === 'function') {
+      if (!node.storageAdmission.mutationAdmission().allowed) return null
+    }
+    if (node.storageAdmission && typeof node.storageAdmission.canAcknowledge === 'function') {
+      if (!node.storageAdmission.canAcknowledge(`drive:${appKey}`)) return null
+    }
+    const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 30_000
+    let core = null
+    let auxStore = null
+    let discovery = null
+    let onConnection = null
+    try {
+      if (typeof opts.createAuxStore === 'function') {
+        auxStore = await opts.createAuxStore()
+      } else if (node.store && typeof node.store.get === 'function') {
+        auxStore = node.store
+      } else {
+        return null
+      }
+      if (!auxStore || typeof auxStore.get !== 'function') return null
+      if (typeof auxStore.ready === 'function') await auxStore.ready()
+      onConnection = (conn) => {
+        try { auxStore.replicate(conn) } catch (_) {}
+      }
+      if (typeof node.swarm.on === 'function') node.swarm.on('connection', onConnection)
+      core = auxStore.get({ key: b4a.from(shareBundleKey, 'hex') })
+      await core.ready()
+      discovery = node.swarm.join(core.discoveryKey, { server: false, client: true })
+      if (discovery && typeof discovery.flushed === 'function') {
+        await Promise.race([
+          discovery.flushed().catch(() => {}),
+          new Promise(resolve => { const tmr = setTimeout(resolve, Math.min(timeoutMs, 5_000)); if (typeof tmr.unref === 'function') tmr.unref() })
+        ])
+      }
+      core = auxStore.get({ key: b4a.from(shareBundleKey, 'hex') })
+      await core.ready()
+      discovery = node.swarm.join(core.discoveryKey, { server: false, client: true })
+      if (discovery && typeof discovery.flushed === 'function') {
+        await Promise.race([
+          discovery.flushed().catch(() => {}),
+          new Promise(resolve => { const tmr = setTimeout(resolve, Math.min(timeoutMs, 5_000)); if (typeof tmr.unref === 'function') tmr.unref() })
+        ])
+      }
+      // Reject oversized proofs BEFORE downloading any body range.
+      const byteLength = Number(core.byteLength)
+      if (Number.isSafeInteger(byteLength) && byteLength > STORAGE_SHARE_BUNDLE_MAX_BYTES) {
+        return null
+      }
+      // Register the active resource early so a concurrent unseedApp drains
+      // this fetch before releasing drive debt — even while update() is in
+      // flight.
+      let resolveSettled
+      const operationSettled = new Promise(resolve => { resolveSettled = resolve })
+      const ownedResource = { appKey, core, snapshotCore: null, tracker: null, auxStore, discovery, onConnection, operationSettled }
+      this._auxShareBundleResources.add(ownedResource)
+      try {
+        if (typeof core.update === 'function') {
+          try { await core.update({ wait: true }) } catch (_) {}
+        }
+        const byteLengthAfter = Number(core.byteLength)
+        if (Number.isSafeInteger(byteLengthAfter) && byteLengthAfter > STORAGE_SHARE_BUNDLE_MAX_BYTES) {
+          return null
+        }
+        // Snapshot-based read: if the core supports snapshots, read block 0
+        // from a wait:false snapshot. A fork swap between the proof and the
+        // snapshot cannot authorize a body read.
+        let readCore = core
+        if (typeof core.snapshot === 'function') {
+          const snapshotCore = core.snapshot({ wait: false })
+          ownedResource.snapshotCore = snapshotCore
+          if (typeof snapshotCore.ready === 'function') await snapshotCore.ready()
+          // Fork stability: the snapshot must match the core's fork, otherwise
+          // a fork swap between proof and snapshot could authorize a body read
+          // from a different chain.
+          const coreFork = Number(core.fork ?? 0)
+          const snapshotFork = Number(snapshotCore.fork ?? 0)
+          if (coreFork !== snapshotFork) return null
+          const pinnedByteLength = Number(snapshotCore.byteLength)
+          if (Number.isSafeInteger(pinnedByteLength) && pinnedByteLength > STORAGE_SHARE_BUNDLE_MAX_BYTES) {
+            return null
+          }
+          readCore = snapshotCore
+          const tracker = readCore.download ? readCore.download({ start: 0, end: 1 }) : null
+          ownedResource.tracker = tracker
+          if (tracker && typeof tracker.done === 'function') {
+            await Promise.race([
+              tracker.done(),
+              new Promise((_, reject) => { const tmr = setTimeout(() => reject(new Error('share bundle range timeout')), timeoutMs); if (typeof tmr.unref === 'function') tmr.unref() })
+            ])
+          }
+        }
+        const block = await readCore.get(0, { wait: false, timeout: timeoutMs })
+        if (!block) return null
+        if (Number.isSafeInteger(block.byteLength) && block.byteLength > STORAGE_SHARE_BUNDLE_MAX_BYTES) return null
+        const parsed = JSON.parse(b4a.toString(block))
+        return parsed && typeof parsed === 'object' ? parsed : null
+      } finally {
+        this._auxShareBundleResources.delete(ownedResource)
+        resolveSettled()
+      }
+    } catch (_) {
+      return null
+    } finally {
+      if (onConnection && typeof node.swarm.removeListener === 'function') {
+        try { node.swarm.removeListener('connection', onConnection) } catch (_) {}
+      }
+      if (discovery && typeof discovery.destroy === 'function') {
+        try { await discovery.destroy() } catch (_) {}
+      } else if (core) {
+        try { await node.swarm.leave(core.discoveryKey) } catch (_) {}
+      }
+      if (core) {
+        try { await core.close() } catch (_) {}
+      }
+      if (auxStore && auxStore !== node.store && typeof auxStore.close === 'function') {
+        try { await auxStore.close() } catch (_) {}
+      }
+    }
+  }
+
   async _recordCustodyReceipt (appKeyHex, opts = {}, contentVersion = 0) {
     const node = this.node
     if (!opts.blind || !opts.custodyIntentId || !node.seedingRegistry || !node.swarm?.keyPair) return null
+
+    // PVSS share custody (v2). If the bound intent declares a share scheme,
+    // this relay must PUBLICLY verify the encrypted share it was assigned —
+    // no secret key — before anchoring a receipt. SD2: a failed (or
+    // unavailable) verification must NOT anchor; emit
+    // `custody:share-verify-failed` and skip the receipt.
+    let pvssFields = null
+    let intent = null
+    try {
+      intent = typeof node.seedingRegistry.getCustodyIntent === 'function'
+        ? node.seedingRegistry.getCustodyIntent(opts.custodyIntentId)
+        : null
+    } catch (_) { intent = null }
+
+    const wantsPvss = !!(intent && intent.shareScheme) || !!opts.shareScheme
+    if (wantsPvss) {
+      if (!intent || !intent.shareScheme) {
+        this._safeEmit('custody:share-verify-failed', {
+          appKey: appKeyHex,
+          intentId: opts.custodyIntentId,
+          shareBundleKey: null,
+          reason: 'intent-unavailable'
+        })
+        return null
+      }
+      const relayPubkey = b4a.toString(node.swarm.keyPair.publicKey, 'hex')
+      const bundle = typeof this._readShareBundle === 'function'
+        ? await this._readShareBundle(intent.shareBundleKey)
+        : null
+      const result = verifyShareBundleForRelay(intent, bundle, relayPubkey)
+      if (!result.ok) {
+        this._safeEmit('custody:share-verify-failed', {
+          appKey: appKeyHex,
+          intentId: opts.custodyIntentId,
+          shareBundleKey: intent.shareBundleKey || null,
+          reason: result.reason
+        })
+        return null
+      }
+      pvssFields = {
+        version: 2,
+        shareScheme: result.shareScheme,
+        commitmentRoot: result.commitmentRoot,
+        shareIndex: result.shareIndex,
+        shareCommitment: result.shareCommitment,
+        shareVerified: true
+      }
+    }
+
     try {
       const receipt = await node.seedingRegistry.recordCustodyReceipt({
         intentId: opts.custodyIntentId,
@@ -1238,12 +1437,13 @@ export class AppLifecycle extends EventEmitter {
         relayRegion: node.config.region || 'unknown',
         shardIds: Array.isArray(opts.shardIds) ? opts.shardIds : [],
         anchored: true,
-        retainUntil: opts.retainUntil || (Date.now() + 30 * 24 * 60 * 60 * 1000)
+        retainUntil: opts.retainUntil || (Date.now() + 30 * 24 * 60 * 60 * 1000),
+        ...(pvssFields || {})
       }, node.swarm.keyPair)
-      this.emit('custody-receipt', { appKey: appKeyHex, intentId: opts.custodyIntentId, receipt })
+      this._safeEmit('custody-receipt', { appKey: appKeyHex, intentId: opts.custodyIntentId, receipt })
       return receipt
     } catch (err) {
-      this.emit('custody-receipt-error', {
+      this._safeEmit('custody-receipt-error', {
         appKey: appKeyHex,
         intentId: opts.custodyIntentId,
         error: err.message || String(err)
@@ -1300,6 +1500,10 @@ export class AppLifecycle extends EventEmitter {
       owner.driveSettled = true
     }
 
+    // Drain any active auxiliary share-bundle fetches for this app before
+    // the durable delete — a concurrent fetch must not race with teardown.
+    await this._drainAuxShareBundleResources(appKeyHex)
+
     // Phase 2: Durable delete. The live resources are already settled, so a
     // failure here leaves the entry restored in the registry and parked in
     // _retiringDrives for retry. Swarm leave is deferred to Phase 3 so a
@@ -1321,8 +1525,11 @@ export class AppLifecycle extends EventEmitter {
     }
 
     // Phase 3: Complete — the durable delete succeeded, so leave the swarm
-    // and clean up the retirement tracking.
+    // and release the storage admission commitment.
     try { if (node.swarm && typeof node.swarm.leave === 'function') await node.swarm.leave(owner.entry.discoveryKey) } catch (_) {}
+    if (owner.forget && node.storageAdmission && typeof node.storageAdmission.release === 'function') {
+      try { node.storageAdmission.release(`drive:${appKeyHex}`) } catch (_) {}
+    }
 
     owner.entry.retiring = false
     this._retiringDrives.delete(appKeyHex)
