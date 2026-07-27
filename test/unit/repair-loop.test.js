@@ -10,6 +10,17 @@ function tmpDir () {
   return { dir: d, cleanup: () => rmSync(d, { recursive: true, force: true }) }
 }
 
+// AppRegistry.set validates that app keys are 64 hex characters (an ed25519
+// public key). Tests use short semantic labels for readability; map each to a
+// deterministic valid key so cross-references (set/get/repair/find) stay bound.
+const _labelKeys = new Map()
+function k (label) {
+  if (!_labelKeys.has(label)) {
+    _labelKeys.set(label, (_labelKeys.size + 1).toString(16).padStart(64, '0'))
+  }
+  return _labelKeys.get(label)
+}
+
 // Minimal mock of RelayNode for AppLifecycle's repair primitive
 function mockNode (registry, opts = {}) {
   return {
@@ -48,7 +59,7 @@ function mockDrive ({
     discoveryKey: Buffer.alloc(32, 0xab),
     update: async () => {
       if (throwsOnUpdate) throw new Error('boom')
-      if (!updateOk) await new Promise(resolve => setTimeout(resolve, 100_000))
+      if (!updateOk) await new Promise(resolve => { const tmr = setTimeout(resolve, 100_000); if (typeof tmr.unref === 'function') tmr.unref() })
       drive.version = Math.max(drive.version, 1)
     },
     download: () => {
@@ -56,7 +67,7 @@ function mockDrive ({
         destroyed: false,
         destroy: () => { dl.destroyed = true },
         done: async () => {
-          if (!downloadOk) await new Promise(resolve => setTimeout(resolve, 100_000))
+          if (!downloadOk) await new Promise(resolve => { const tmr = setTimeout(resolve, 100_000); if (typeof tmr.unref === 'function') tmr.unref() })
         }
       }
       return dl
@@ -80,9 +91,9 @@ function mockDrive ({
 test('repair: returns false when drive missing', async (t) => {
   const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
   const reg = new AppRegistry(dir)
-  reg.set('aa', { type: 'app' })
+  reg.set(k('aa'), { type: 'app' })
   const lifecycle = new AppLifecycle(mockNode(reg))
-  const ok = await lifecycle.repairUnanchored('aa')
+  const ok = await lifecycle.repairUnanchored(k('aa'))
   t.is(ok, false)
 })
 
@@ -90,10 +101,10 @@ test('repair: returns true when already anchored', async (t) => {
   const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
   const reg = new AppRegistry(dir)
   const drive = mockDrive({ version: 5 })
-  reg.set('bb', { type: 'app', drive })
-  reg.setAnchored('bb', 5)
+  reg.set(k('bb'), { type: 'app', drive })
+  reg.setAnchored(k('bb'), 5)
   const lifecycle = new AppLifecycle(mockNode(reg))
-  const ok = await lifecycle.repairUnanchored('bb')
+  const ok = await lifecycle.repairUnanchored(k('bb'))
   t.is(ok, true)
 })
 
@@ -101,11 +112,11 @@ test('repair: succeeds when drive update yields version > 0', async (t) => {
   const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
   const reg = new AppRegistry(dir)
   const drive = mockDrive({ version: 0, updateOk: true })
-  reg.set('cc', { type: 'app', drive, discoveryKey: drive.discoveryKey })
+  reg.set(k('cc'), { type: 'app', drive, discoveryKey: drive.discoveryKey })
   const lifecycle = new AppLifecycle(mockNode(reg))
-  const ok = await lifecycle.repairUnanchored('cc', { updateTimeout: 500, downloadTimeout: 500 })
+  const ok = await lifecycle.repairUnanchored(k('cc'), { updateTimeout: 500, downloadTimeout: 500 })
   t.is(ok, true, 'returns true')
-  const e = reg.get('cc')
+  const e = reg.get(k('cc'))
   t.is(e.anchored, true, 'entry marked anchored')
   t.ok(e.anchoredLength > 0)
 })
@@ -114,11 +125,11 @@ test('repair: returns false on update timeout', async (t) => {
   const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
   const reg = new AppRegistry(dir)
   const drive = mockDrive({ version: 0, updateOk: false })
-  reg.set('dd', { type: 'app', drive, discoveryKey: drive.discoveryKey })
+  reg.set(k('dd'), { type: 'app', drive, discoveryKey: drive.discoveryKey })
   const lifecycle = new AppLifecycle(mockNode(reg))
-  const ok = await lifecycle.repairUnanchored('dd', { updateTimeout: 200, downloadTimeout: 200 })
+  const ok = await lifecycle.repairUnanchored(k('dd'), { updateTimeout: 200, downloadTimeout: 200 })
   t.is(ok, false)
-  const e = reg.get('dd')
+  const e = reg.get(k('dd'))
   t.is(e.anchored, false, 'entry stays unanchored')
 })
 
@@ -126,9 +137,9 @@ test('repair: returns false on update throw', async (t) => {
   const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
   const reg = new AppRegistry(dir)
   const drive = mockDrive({ version: 0, throwsOnUpdate: true })
-  reg.set('ee', { type: 'app', drive, discoveryKey: drive.discoveryKey })
+  reg.set(k('ee'), { type: 'app', drive, discoveryKey: drive.discoveryKey })
   const lifecycle = new AppLifecycle(mockNode(reg))
-  const ok = await lifecycle.repairUnanchored('ee', { updateTimeout: 500, downloadTimeout: 500 })
+  const ok = await lifecycle.repairUnanchored(k('ee'), { updateTimeout: 500, downloadTimeout: 500 })
   t.is(ok, false)
 })
 
@@ -137,19 +148,19 @@ test('runRepairPass: aggregates checked / repaired / stillUnanchored', async (t)
   const reg = new AppRegistry(dir)
   // 1 already-anchored (skipped)
   const d1 = mockDrive({ version: 3 })
-  reg.set('a1', { type: 'app', drive: d1, discoveryKey: d1.discoveryKey })
-  reg.setAnchored('a1', 3)
+  reg.set(k('a1'), { type: 'app', drive: d1, discoveryKey: d1.discoveryKey })
+  reg.setAnchored(k('a1'), 3)
   // 1 will-repair
   const d2 = mockDrive({ version: 0, updateOk: true })
-  reg.set('a2', { type: 'app', drive: d2, discoveryKey: d2.discoveryKey })
+  reg.set(k('a2'), { type: 'app', drive: d2, discoveryKey: d2.discoveryKey })
   // 1 won't-repair (timeout)
   const d3 = mockDrive({ version: 0, updateOk: false })
-  reg.set('a3', { type: 'app', drive: d3, discoveryKey: d3.discoveryKey })
+  reg.set(k('a3'), { type: 'app', drive: d3, discoveryKey: d3.discoveryKey })
 
   const lifecycle = new AppLifecycle(mockNode(reg))
   // Override default timeouts for fast tests
   lifecycle.repairUnanchored = async function (key) {
-    if (key === 'a2') {
+    if (key === k('a2')) {
       reg.setAnchored(key, 1)
       return true
     }
@@ -166,7 +177,7 @@ test('runRepairPass: respects budget', async (t) => {
   const reg = new AppRegistry(dir)
   for (let i = 0; i < 10; i++) {
     const d = mockDrive()
-    reg.set('app' + i, { type: 'app', drive: d, discoveryKey: d.discoveryKey })
+    reg.set(k('app' + i), { type: 'app', drive: d, discoveryKey: d.discoveryKey })
   }
   const lifecycle = new AppLifecycle(mockNode(reg))
   lifecycle.repairUnanchored = async () => false // all fail, but counted
@@ -177,9 +188,9 @@ test('runRepairPass: respects budget', async (t) => {
 test('runRepairPass: skips entries without drive', async (t) => {
   const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
   const reg = new AppRegistry(dir)
-  reg.set('nodrive', { type: 'app' }) // no drive instance
+  reg.set(k('nodrive'), { type: 'app' }) // no drive instance
   const d = mockDrive()
-  reg.set('hasdrive', { type: 'app', drive: d, discoveryKey: d.discoveryKey })
+  reg.set(k('hasdrive'), { type: 'app', drive: d, discoveryKey: d.discoveryKey })
 
   const lifecycle = new AppLifecycle(mockNode(reg))
   lifecycle.repairUnanchored = async () => false
@@ -201,11 +212,11 @@ test('repair: partial pin (metadata replicated, blocks missing) stays unanchored
   const reg = new AppRegistry(dir)
   // Drive replies "metadata synced" but blob core has gaps.
   const drive = mockDrive({ version: 5, updateOk: true, downloadOk: true, blobsComplete: false })
-  reg.set('partial', { type: 'app', drive, discoveryKey: drive.discoveryKey })
+  reg.set(k('partial'), { type: 'app', drive, discoveryKey: drive.discoveryKey })
   const lifecycle = new AppLifecycle(mockNode(reg))
-  const ok = await lifecycle.repairUnanchored('partial', { updateTimeout: 500, downloadTimeout: 500 })
+  const ok = await lifecycle.repairUnanchored(k('partial'), { updateTimeout: 500, downloadTimeout: 500 })
   t.is(ok, false, 'repair reports failure on partial pin (would have returned true before the fix)')
-  const e = reg.get('partial')
+  const e = reg.get(k('partial'))
   t.is(e.anchored, false, 'entry stays unanchored on partial pin')
 })
 
@@ -213,20 +224,20 @@ test('repair: partial pin gets anchored once all blob blocks land', async (t) =>
   const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
   const reg = new AppRegistry(dir)
   const drive = mockDrive({ version: 5, updateOk: true, downloadOk: true, blobsComplete: false })
-  reg.set('eventually', { type: 'app', drive, discoveryKey: drive.discoveryKey })
+  reg.set(k('eventually'), { type: 'app', drive, discoveryKey: drive.discoveryKey })
   const lifecycle = new AppLifecycle(mockNode(reg))
 
   // First pass: blocks missing → not anchored
-  let ok = await lifecycle.repairUnanchored('eventually', { updateTimeout: 500, downloadTimeout: 500 })
+  let ok = await lifecycle.repairUnanchored(k('eventually'), { updateTimeout: 500, downloadTimeout: 500 })
   t.is(ok, false)
-  t.is(reg.get('eventually').anchored, false)
+  t.is(reg.get(k('eventually')).anchored, false)
 
   // Simulate the next repair tick: peer transmitted the missing blocks.
   drive._setBlobsComplete(true)
 
-  ok = await lifecycle.repairUnanchored('eventually', { updateTimeout: 500, downloadTimeout: 500 })
+  ok = await lifecycle.repairUnanchored(k('eventually'), { updateTimeout: 500, downloadTimeout: 500 })
   t.is(ok, true, 'repair anchors once blob core is fully present')
-  t.is(reg.get('eventually').anchored, true)
+  t.is(reg.get(k('eventually')).anchored, true)
 })
 
 test('_isDriveFullyReplicated: empty blob core (metadata-only drive) counts as anchored', async (t) => {
@@ -262,15 +273,15 @@ test('runRepairPass: re-queues entries the periodic check downgraded from anchor
   const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
   const reg = new AppRegistry(dir)
   const d1 = mockDrive({ version: 3, blobsComplete: false })
-  reg.set('p1', { type: 'app', drive: d1, discoveryKey: d1.discoveryKey })
+  reg.set(k('p1'), { type: 'app', drive: d1, discoveryKey: d1.discoveryKey })
   // Simulate the situation post-_runAnchorCheck on a stale anchored entry
   // (this is the path the fix enables: the periodic check downgrades the
   // entry from anchored:true → false when it detects partial-pin, and
   // runRepairPass MUST re-queue it).
-  reg.setAnchored('p1', 3)
-  t.is(reg.get('p1').anchored, true, 'starts anchored (pre-detection)')
-  reg.clearAnchored('p1', 'simulated partial-pin detection')
-  t.is(reg.get('p1').anchored, false, 'periodic check cleared anchored')
+  reg.setAnchored(k('p1'), 3)
+  t.is(reg.get(k('p1')).anchored, true, 'starts anchored (pre-detection)')
+  reg.clearAnchored(k('p1'), 'simulated partial-pin detection')
+  t.is(reg.get(k('p1')).anchored, false, 'periodic check cleared anchored')
 
   const lifecycle = new AppLifecycle(mockNode(reg))
   let repairCalls = 0
@@ -287,12 +298,12 @@ test('runRepairPass: re-queues entries the periodic check downgraded from anchor
 test('catalogForBroadcast includes anchored field', (t) => {
   const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
   const reg = new AppRegistry(dir)
-  reg.set('a', { type: 'app' })
-  reg.set('b', { type: 'app' })
-  reg.setAnchored('a', 5)
+  reg.set(k('a'), { type: 'app' })
+  reg.set(k('b'), { type: 'app' })
+  reg.setAnchored(k('a'), 5)
   const broadcast = reg.catalogForBroadcast()
-  const a = broadcast.find(x => x.appKey === 'a')
-  const b = broadcast.find(x => x.appKey === 'b')
+  const a = broadcast.find(x => x.appKey === k('a'))
+  const b = broadcast.find(x => x.appKey === k('b'))
   t.is(a.anchored, true, 'a is anchored')
   t.is(b.anchored, false, 'b is not anchored')
 })
