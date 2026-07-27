@@ -302,8 +302,26 @@ export class AppLifecycle extends EventEmitter {
       // else: placeholder entry from load() — fall through.
     }
 
+    // Storage admission gate: a fresh seed must pass the admission check
+    // before any drive is created or swarm joined. This is the hard cap
+    // that prevents a relay from accepting content it cannot durably host.
+    const admissionCap = Number.isFinite(opts.maxStorage) && opts.maxStorage > 0
+      ? Math.floor(opts.maxStorage)
+      : null
+    if (node.storageAdmission && typeof node.storageAdmission.reserve === 'function' && admissionCap !== null) {
+      const reservation = node.storageAdmission.reserve(`drive:${appKeyHex}`, admissionCap)
+      if (!reservation || reservation.allowed !== true) {
+        const err = new Error('Storage admission blocked: ' + (reservation && reservation.reason))
+        err.code = 'STORAGE_ADMISSION_BLOCKED'
+        err.storageAdmission = reservation
+        throw err
+      }
+      // Commit on successful seed (after drive creation); for now track it.
+      this._pendingAdmission = reservation
+    }
+
     // Evict oldest app if storage capacity would be exceeded
-    if (node.config.enableEviction !== false && node.seeder.totalBytesStored >= node.config.maxStorageBytes && this.seededApps.size > 0) {
+    if (node.config.enableEviction !== false && node.seeder && node.seeder.totalBytesStored >= node.config.maxStorageBytes && this.seededApps.size > 0) {
       const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000
       let oldestKey = null
       let oldestTime = Infinity
