@@ -27,6 +27,11 @@ export class AppLifecycle extends EventEmitter {
     super()
     this.node = node
     this._seedMutex = false
+    // Drives whose live resources (ranges, drive, bridge) have been settled
+    // but whose durable delete has not yet completed. On failure the entry is
+    // restored to the registry and parked here so a retry can finish the
+    // retirement without re-closing already-settled resources.
+    this._retiringDrives = new Map()
   }
 
   /**
@@ -1191,31 +1196,81 @@ export class AppLifecycle extends EventEmitter {
     }
   }
 
-  async unseedApp (appKeyHex) {
+  async unseedApp (appKeyHex, opts = {}) {
     const node = this.node
-    const entry = node.appRegistry.get(appKeyHex)
-    if (!entry) return
+    let owner = this._retiringDrives.get(appKeyHex)
 
-    // Destroy persistent download ranges before tearing down the drive
-    // so their replicator refs don't leak into the closing core's
-    // session pool. Same defensive pattern as _trackEagerReplicate +
-    // LifecycleScope from Reliability v2.
-    if (Array.isArray(entry.downloadRanges)) {
-      for (const dl of entry.downloadRanges) {
-        try { if (dl && typeof dl.destroy === 'function') dl.destroy() } catch (_) {}
+    if (!owner) {
+      const entry = node.appRegistry.get(appKeyHex)
+      if (!entry) return
+      entry.retiring = true
+      owner = {
+        appKey: appKeyHex,
+        entry,
+        forget: opts.forget !== false,
+        bridgeRegistered: !!node.distributedDriveBridge,
+        rangesSettled: false,
+        driveSettled: false
       }
-      entry.downloadRanges = null
+      this._retiringDrives.set(appKeyHex, owner)
+    } else {
+      if (opts.forget !== undefined) owner.forget = opts.forget !== false
     }
 
-    if (node.distributedDriveBridge) {
+    // Phase 1: Settle live resources (download ranges → bridge → drive).
+    // Ordered so the durable delete (Phase 2) cannot race with in-flight
+    // replication or bridge lookups. Only runs once — on retry these are
+    // already null.
+    if (!owner.rangesSettled) {
+      if (Array.isArray(owner.entry.downloadRanges)) {
+        for (const dl of owner.entry.downloadRanges) {
+          try { if (dl && typeof dl.destroy === 'function') dl.destroy() } catch (_) {}
+        }
+        owner.entry.downloadRanges = null
+      }
+      owner.rangesSettled = true
+    }
+
+    if (owner.bridgeRegistered && node.distributedDriveBridge) {
       node.distributedDriveBridge.unregisterDrive(appKeyHex)
+      owner.bridgeRegistered = false
     }
 
-    try { await node.swarm.leave(entry.discoveryKey) } catch (_) {}
-    try { await entry.drive.close() } catch (_) {}
-    node.appRegistry.delete(appKeyHex) // auto-cleans dedup index + persists
+    if (!owner.driveSettled) {
+      if (owner.entry.drive && typeof owner.entry.drive.close === 'function') {
+        await owner.entry.drive.close()
+        owner.entry.drive = null
+      }
+      owner.driveSettled = true
+    }
 
-    this.emit('unseeded', { appKey: appKeyHex })
+    // Phase 2: Durable delete. The live resources are already settled, so a
+    // failure here leaves the entry restored in the registry and parked in
+    // _retiringDrives for retry. Swarm leave is deferred to Phase 3 so a
+    // failed retirement retains the topic for the retry attempt.
+    if (owner.forget && !owner.durableDeleted) {
+      node.appRegistry.delete(appKeyHex, { persist: false })
+      try {
+        if (typeof node.appRegistry.persistDelete === 'function') {
+          await node.appRegistry.persistDelete(appKeyHex, { throwOnError: true })
+        }
+        owner.durableDeleted = true
+      } catch (err) {
+        // Restore the entry so a retry finds it; keep it in _retiringDrives.
+        if (!node.appRegistry.has(appKeyHex)) {
+          node.appRegistry.set(appKeyHex, owner.entry, { persist: false })
+        }
+        throw err
+      }
+    }
+
+    // Phase 3: Complete — the durable delete succeeded, so leave the swarm
+    // and clean up the retirement tracking.
+    try { if (node.swarm && typeof node.swarm.leave === 'function') await node.swarm.leave(owner.entry.discoveryKey) } catch (_) {}
+
+    owner.entry.retiring = false
+    this._retiringDrives.delete(appKeyHex)
+    this._safeEmit('unseeded', { appKey: appKeyHex })
   }
 
   /**

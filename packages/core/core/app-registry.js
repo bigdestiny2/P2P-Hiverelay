@@ -730,7 +730,10 @@ export class AppRegistry extends EventEmitter {
     if (appKey === null) return false
     const entry = this.apps.get(appKey)
     if (!entry) return false
-    this._assertPhysicalWritesAvailable()
+    // A non-persisting delete (e.g. during retirement: delete-then-persistDelete)
+    // must not trip the physical-writes gate — the durable write happens later
+    // via persistDelete, and the in-memory removal is always safe.
+    if (opts.persist !== false) this._assertPhysicalWritesAvailable()
     this._advanceEntryGeneration(appKey)
 
     // Clean dedup index
