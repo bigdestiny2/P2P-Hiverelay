@@ -70,7 +70,7 @@
     "timestamp": 1800000000000,
     "type": "custody-intent",
     "version": 2,
-    "signature": "eeea7fc46dc38b9161dfc90a4d2e9692b9718fb84fea8fcf630f08abe748869bcca1d24cda0d3817f70951d49bf605f2ba90cf98fbc02235a15b2c67b30b920f"
+    "signature": "bb55801ae06d78ee8b0751cb0424e6804885d80c74379138af4f541a2760ac9b4b68cb0e078cba30321aee9352f887d9e737e42195d45ab7defecf0e26dd0c06"
   },
   "validVerdict": {
     "valid": true,
@@ -109,7 +109,7 @@
       "shareBundleKey": "dddd29ba6c90d5c49c138f6d757a665482689074677c65ef4acf38ab56c45d4f",
       "shareScheme": "pvss-secp256k1-v1",
       "shareThreshold": 2,
-      "signature": "eeea7fc46dc38b9161dfc90a4d2e9692b9718fb84fea8fcf630f08abe748869bcca1d24cda0d3817f70951d49bf605f2ba90cf98fbc02235a15b2c67b30b920f",
+      "signature": "bb55801ae06d78ee8b0751cb0424e6804885d80c74379138af4f541a2760ac9b4b68cb0e078cba30321aee9352f887d9e737e42195d45ab7defecf0e26dd0c06",
       "timestamp": 1800000000000,
       "type": "custody-intent",
       "version": 2
