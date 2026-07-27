@@ -8,6 +8,7 @@ import { updateWithTimeout, downloadWithTimeout, getDriveSize } from './cancella
 import { isAbortError } from './lifecycle-scope.js'
 import { verifyShareBundleForRelay } from '../pvss.js'
 import { STORAGE_SHARE_BUNDLE_MAX_BYTES } from '../../config/storage-admission-authority.js'
+import { positiveStorageBound } from '../../config/storage-cap.js'
 import {
   isValidHexKey,
   normalizeAvailabilityClass,
@@ -768,16 +769,62 @@ export class AppLifecycle extends EventEmitter {
    * @param {object} existing - entry from this.seededApps
    * @param {object} newOpts - normalized opts from the new seedApp call
    */
+  _preflightRecoveredEntryCap (appKeyHex, existing, newOpts) {
+    const oldCap = positiveStorageBound(existing?.maxStorage)
+    const hasNewCap = newOpts && Object.prototype.hasOwnProperty.call(newOpts, 'maxStorage') && newOpts.maxStorage !== undefined
+    const newCap = positiveStorageBound(newOpts?.maxStorage)
+
+    if (hasNewCap && newCap === null) {
+      return { ok: false, changed: false, reason: 'storage-bound-invalid', oldCap, newCap: null, effectiveCap: oldCap }
+    }
+
+    if (newCap === null || newCap === oldCap) {
+      return {
+        ok: true, changed: false,
+        reason: newCap === null ? 'cap-omitted-on-recovery' : 'cap-unchanged',
+        oldCap, newCap, effectiveCap: oldCap
+      }
+    }
+
+    if (oldCap !== null && newCap < oldCap) {
+      const warning = {
+        appKey: appKeyHex, reason: 'cap-lowered-on-repin', oldCap, newCap,
+        hint: 'Lowering maxStorage on a recovered entry is not honored; relay keeps the higher persisted cap.'
+      }
+      this._safeEmit('seed-cap-warning', warning)
+      return { ok: true, changed: false, effectiveCap: oldCap, ...warning }
+    }
+
+    if (oldCap === null) {
+      const warning = {
+        appKey: appKeyHex, reason: 'cap-baseline-unknown-on-repin', oldCap, newCap,
+        incrementalBytes: null, effectiveCap: oldCap,
+        hint: 'Cannot safely calculate incremental storage for a previously-uncapped recovered entry. Let recovery finish, unseed it, then seed fresh with maxStorage.'
+      }
+      this._safeEmit('seed-cap-warning', warning)
+      return { ok: false, changed: false, ...warning }
+    }
+
+    const incrementalBytes = newCap - oldCap
+    return { ok: true, changed: true, reason: 'cap-raised', oldCap, newCap, incrementalBytes, effectiveCap: newCap }
+  }
+
   async _reconcileSeedOptsOnRepin (appKeyHex, existing, newOpts) {
     const node = this.node
     if (!existing) return { ok: false, changed: false, reason: 'no-existing-entry' }
 
+    const hasNewCap = newOpts && Object.prototype.hasOwnProperty.call(newOpts, 'maxStorage') && newOpts.maxStorage !== undefined
     const newCap = Number.isFinite(newOpts.maxStorage) && newOpts.maxStorage > 0
       ? Math.floor(newOpts.maxStorage)
       : null
     const oldCap = Number.isFinite(existing.maxStorage) && existing.maxStorage > 0
       ? Math.floor(existing.maxStorage)
       : null
+
+    // Explicitly-provided invalid cap (0, negative, NaN) fails closed.
+    if (hasNewCap && newCap === null) {
+      return { ok: false, changed: false, reason: 'storage-bound-invalid', oldCap, newCap: null, effectiveCap: oldCap }
+    }
 
     // Omitted cap (null) with a finite prior cap → preserve the old cap.
     if (newCap === null && oldCap !== null) {
