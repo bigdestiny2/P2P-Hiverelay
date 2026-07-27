@@ -254,7 +254,13 @@ export class AppLifecycle extends EventEmitter {
         const dkHex = typeof existing.discoveryKey === 'string'
           ? existing.discoveryKey
           : b4a.toString(existing.discoveryKey, 'hex')
-        this._reconcileSeedOptsOnRepin(appKeyHex, existing, normalizedOpts)
+        const reconcile = await this._reconcileSeedOptsOnRepin(appKeyHex, existing, normalizedOpts)
+        if (reconcile && reconcile.ok === false && reconcile.reason && reconcile.reason.startsWith('cap-raise-storage-admission')) {
+          const err = new Error('Storage cap blocks re-pin cap raise: ' + reconcile.admissionReason)
+          err.code = 'STORAGE_CAP_REPIN_BLOCKED'
+          err.repin = reconcile
+          throw err
+        }
         return { discoveryKey: dkHex, alreadySeeded: true }
       }
       // else: placeholder entry from load() — fall through to seed properly.
@@ -284,7 +290,13 @@ export class AppLifecycle extends EventEmitter {
         const dkHex = typeof existing.discoveryKey === 'string'
           ? existing.discoveryKey
           : b4a.toString(existing.discoveryKey, 'hex')
-        this._reconcileSeedOptsOnRepin(appKeyHex, existing, opts)
+        const reconcile = await this._reconcileSeedOptsOnRepin(appKeyHex, existing, opts)
+        if (reconcile && reconcile.ok === false && reconcile.reason && reconcile.reason.startsWith('cap-raise-storage-admission')) {
+          const err = new Error('Storage cap blocks re-pin cap raise: ' + reconcile.admissionReason)
+          err.code = 'STORAGE_CAP_REPIN_BLOCKED'
+          err.repin = reconcile
+          throw err
+        }
         return { discoveryKey: dkHex, alreadySeeded: true }
       }
       // else: placeholder entry from load() — fall through.
@@ -733,9 +745,9 @@ export class AppLifecycle extends EventEmitter {
    * @param {object} existing - entry from this.seededApps
    * @param {object} newOpts - normalized opts from the new seedApp call
    */
-  _reconcileSeedOptsOnRepin (appKeyHex, existing, newOpts) {
+  async _reconcileSeedOptsOnRepin (appKeyHex, existing, newOpts) {
     const node = this.node
-    if (!existing) return
+    if (!existing) return { ok: false, changed: false, reason: 'no-existing-entry' }
 
     const newCap = Number.isFinite(newOpts.maxStorage) && newOpts.maxStorage > 0
       ? Math.floor(newOpts.maxStorage)
@@ -744,38 +756,85 @@ export class AppLifecycle extends EventEmitter {
       ? Math.floor(existing.maxStorage)
       : null
 
-    // No cap declared on either side — no change to honor.
-    if (newCap === null && oldCap === null) return
+    // Omitted cap (null) with a finite prior cap → preserve the old cap.
+    if (newCap === null && oldCap !== null) {
+      return { ok: true, changed: false, reason: 'cap-omitted-on-repin' }
+    }
+
+    // No cap declared on either side — nothing to reconcile.
+    if (newCap === null && oldCap === null) {
+      return { ok: true, changed: false, reason: 'no-cap-declared' }
+    }
 
     // Cap unchanged — no-op.
-    if (newCap === oldCap) return
+    if (newCap === oldCap) {
+      return { ok: true, changed: false, reason: 'cap-unchanged' }
+    }
 
-    // Cap lowered — emit warning, keep the prior (higher) cap. We don't
-    // honor shrinking on re-pin because the publisher already accepted
-    // the larger commitment; reducing it now would mean unseeding blocks
-    // we already replicated. If the publisher really wants to reduce
-    // storage, they should unseedApp first, then seed fresh.
+    // Cap lowered — emit warning, keep the prior (higher) cap.
     if (newCap !== null && oldCap !== null && newCap < oldCap) {
-      this.emit('seed-cap-warning', {
+      this._safeEmit('seed-cap-warning', {
         appKey: appKeyHex,
         reason: 'cap-lowered-on-repin',
         oldCap,
         newCap,
         hint: 'Lowering maxStorage on already-seeded content is not honored on re-pin; relay keeps the higher prior cap. Unseed first if you want to reduce.'
       })
-      return
+      return { ok: false, changed: false, reason: 'cap-lowered-on-repin', oldCap, newCap }
     }
 
-    // Cap raised (or newly declared where it was previously absent).
-    //
-    // Update entry's stored cap so future re-pin comparisons work, and
-    // so the periodic repair monitor / catalog reflect the new value.
-    existing.maxStorage = newCap
-    if (node.appRegistry && typeof node.appRegistry.update === 'function') {
-      try { node.appRegistry.update(appKeyHex, { maxStorage: newCap }) } catch (_) {}
+    // Cap newly declared where old baseline is unknown → fail closed.
+    // We can't compute incremental growth from an unknown baseline.
+    if (newCap !== null && oldCap === null) {
+      this._safeEmit('seed-cap-warning', {
+        appKey: appKeyHex,
+        reason: 'cap-baseline-unknown-on-repin',
+        oldCap: null,
+        newCap
+      })
+      return { ok: false, changed: false, reason: 'cap-baseline-unknown-on-repin', incrementalBytes: null }
     }
 
-    this.emit('seed-cap-raised', {
+    // Cap raised — admission-gate the incremental growth before mutating.
+    const incrementalBytes = newCap - oldCap
+    if (node.storageAdmission && typeof node.storageAdmission.reserve === 'function') {
+      const reservation = node.storageAdmission.reserve(`drive:${appKeyHex}`, newCap)
+      if (!reservation || reservation.allowed !== true) {
+        this._safeEmit('seed-cap-warning', {
+          appKey: appKeyHex,
+          reason: 'cap-raise-storage-admission-blocked',
+          oldCap,
+          newCap,
+          incrementalBytes,
+          admissionReason: reservation && reservation.reason
+        })
+        return {
+          ok: false,
+          changed: false,
+          reason: 'cap-raise-storage-admission-blocked',
+          admissionReason: reservation && reservation.reason,
+          incrementalBytes
+        }
+      }
+      // Persist the cap update BEFORE committing the reservation so a crash
+      // between persist and commit doesn't leave an untracked reservation.
+      existing.maxStorage = newCap
+      if (node.appRegistry && typeof node.appRegistry.update === 'function') {
+        try { node.appRegistry.update(appKeyHex, { maxStorage: newCap }) } catch (_) {}
+      }
+      if (typeof node.appRegistry.persistEntry === 'function') {
+        try { await node.appRegistry.persistEntry(appKeyHex, { throwOnError: true }) } catch (_) {}
+      }
+      if (node.storageAdmission.owns(reservation)) node.storageAdmission.commit(reservation)
+    } else {
+      // No storage admission configured — update the cap directly.
+      existing.maxStorage = newCap
+      if (node.appRegistry && typeof node.appRegistry.update === 'function') {
+        try { node.appRegistry.update(appKeyHex, { maxStorage: newCap }) } catch (_) {}
+      }
+    }
+
+    this._safeEmit('seed-cap-raised', {
       appKey: appKeyHex,
       oldCap,
       newCap,
@@ -785,46 +844,25 @@ export class AppLifecycle extends EventEmitter {
         : 'Cap raised; retriggering replication to drain blocks the prior cap blocked.'
     })
 
-    // Already replicating from a prior call — let it finish. The entry's
-    // maxStorage was updated above, so the periodic repair monitor (which
-    // reads entry.maxStorage, not the captured opts) will use the new cap
-    // on its next sweep if the in-flight call doesn't suffice.
-    if (existing._replicating) return
+    // Already replicating — the entry's updated cap will be picked up on the
+    // next repair sweep.
+    if (existing._replicating) {
+      return { ok: true, changed: true, incrementalBytes, replicationStarted: false }
+    }
 
-    // Drive must be open to retrigger. Stale entry (no drive yet, or drive
-    // closed) means seeding is happening elsewhere — let that path finish.
     const drive = existing.drive
-    if (!drive || drive.closed || drive.closing) return
+    if (!drive || drive.closed || drive.closing) {
+      return { ok: true, changed: true, incrementalBytes, replicationStarted: false }
+    }
 
     existing._replicating = true
-    const scope = node && node._scope
-    const promise = this._eagerReplicate(appKeyHex, drive, { ...newOpts, maxStorage: newCap }, { source: 'repin-cap-raised' })
-      .catch((err) => {
-        // Swallow AbortError silently; surface unexpected errors so
-        // observers see them (same shape as _trackEagerReplicate).
-        if (isAbortError(err)) return
-        this.emit('reseed-error', {
-          appKey: appKeyHex,
-          error: (err && err.message) || String(err),
-          recoverable: true,
-          source: 'repin-cap-raised',
-          hint: 'unexpected error in eagerReplicate retrigger; periodic repair monitor will keep retrying'
-        })
-      })
-      .finally(() => {
-        // Signal-aware finally: if stop() / unseedApp ran during the
-        // replicate and removed the entry, writing _replicating = false
-        // would mutate state that no longer should exist (see vector A4
-        // in STALE-REF-INVENTORY.md). Re-check the live registry instead
-        // of trusting the captured `existing` reference.
-        const liveEntry = node.appRegistry ? node.appRegistry.get(appKeyHex) : null
-        if (liveEntry && liveEntry === existing) {
-          existing._replicating = false
-        }
-      })
-    if (scope) scope.tracked(promise)
-  }
+    // Fire-and-forget — the caller (seedApp) already has its own replication
+    // lifecycle. The meta tags the source for observability.
+    this._eagerReplicate(appKeyHex, drive, { ...newOpts, maxStorage: newCap }, { source: 'repin-cap-raised' })
+      .finally(() => { existing._replicating = false })
 
+    return { ok: true, changed: true, incrementalBytes, replicationStarted: true }
+  }
   /**
    * Read manifest.json from a drive and deduplicate by appId.
    * If an older version of the same app is already seeded, unseed it.
