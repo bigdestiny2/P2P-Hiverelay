@@ -210,7 +210,7 @@ const SIGNABLE_FIELDS_BY_TYPE = {
 // the field list, OPTIONAL_SIGNABLE_FIELDS, normalizeShareManifest,
 // normalizeShardAddressField, and the allowlist all move together.
 const SHARE_FIELDS_BY_TYPE = {
-  'custody-intent': ['shareScheme', 'shareThreshold', 'commitmentRoot', 'shareBundleKey', 'shareAssignments', 'shareManifest'],
+  'custody-intent': ['shareScheme', 'shareThreshold', 'commitmentRoot', 'shareBundleKey', 'shareAssignments', 'shareManifest', 'ciphertextAssignments', 'ciphertextShard', 'plaintextHash'],
   'custody-receipt': ['shareScheme', 'commitmentRoot', 'shareIndex', 'shareCommitment', 'shareVerified']
 }
 
