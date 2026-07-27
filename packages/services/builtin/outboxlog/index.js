@@ -113,7 +113,7 @@ export class OutboxLogApp extends ServiceProvider {
       name: 'outboxlog',
       version: '0.1.0',
       description: 'Single-writer signed outbox log with Peerit relay wire compatibility',
-      capabilities: ['outboxlog.sync', 'outboxlog.commit', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces']
+      capabilities: ['create', 'append', 'get', 'range', 'directory', 'outboxlog.sync', 'outboxlog.commit', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces']
     }
   }
 
@@ -250,8 +250,18 @@ export class OutboxLogApp extends ServiceProvider {
   async _startFleetSeeding () {
     if (!this.journal || typeof this.journal.seedCores !== 'function') return
     const seeder = this.node && this.node.seeder
-    if (!seeder || typeof seeder.seedCore !== 'function') {
+    // Probe the method the journal actually requires: seedCores() calls
+    // announceAuthorityOwnedCore/withdrawAuthorityOwnedCore (revocable
+    // authority-owned announcement), not the generic seedCore().
+    if (!seeder || typeof seeder.announceAuthorityOwnedCore !== 'function') {
       this._logSeedWarn('[outboxlog] hypercore journal configured but node.seeder unavailable — outbox cores will NOT be fleet-durable; enable relay seeding')
+      return
+    }
+    // A missing seed bound means the relay has not committed to host the
+    // outbox cores durably; keep the journal local-only rather than
+    // announcing cores it cannot serve.
+    if (!this.seedMaxStorageBytes) {
+      this._logSeedWarn('[outboxlog] seedMaxStorageBytes not configured — outbox cores kept local-only; set seedMaxStorageBytes to fleet-seed')
       return
     }
     // Initial one-shot seed (awaited so the log is fleet-durable by the time
@@ -467,7 +477,10 @@ export class OutboxLogApp extends ServiceProvider {
 
   async seedPersistenceCores (seeder = this.node && this.node.seeder) {
     if (!this.journal || typeof this.journal.seedCores !== 'function') return []
-    return this.journal.seedCores(seeder)
+    if (!this.seedMaxStorageBytes) {
+      throw new Error('OutboxLog seedMaxStorageBytes not configured — cannot fleet-seed outbox cores without a committed storage bound')
+    }
+    return this.journal.seedCores(seeder, { maxStorageBytes: this.seedMaxStorageBytes })
   }
 }
 

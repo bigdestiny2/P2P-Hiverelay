@@ -11,6 +11,7 @@
 //   5. Legacy JSON mode still works (no setStore call)
 
 import test from 'brittle'
+import Corestore from 'corestore'
 import { mkdtemp, rm, readFile, writeFile, access } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'

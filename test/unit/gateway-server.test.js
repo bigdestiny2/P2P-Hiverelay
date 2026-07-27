@@ -568,6 +568,10 @@ test('GatewayServer - app Host routes through HyperGateway exact serving', async
       const end = opts.length == null ? value.length : start + opts.length
       return Readable.from([value.subarray(start, end)])
     },
+    async get (path) {
+      const value = files[path]
+      return value ? Buffer.from(value) : null
+    },
     async * list () {}
   }
   drive.checkout = () => ({ ...drive, closed: false, closing: false })

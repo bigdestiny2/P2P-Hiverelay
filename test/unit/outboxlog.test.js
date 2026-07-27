@@ -655,7 +655,7 @@ test('outboxlog: jsonl journal boots past a torn final line; mid-file corruption
     await writeFile(journalPath, good[0] + '\n' + '{"version":1,"seq":2,"kind":"tak\n' + good[1] + '\n', 'utf8')
     const corrupt = createJsonlOutboxJournal(journalPath)
     try {
-      assert.throws(() => corrupt.loadSync(), /corrupt journal line 2/, 'mid-file corruption still blocks boot')
+      assert.throws(() => corrupt.loadSync(), /corrupt interior journal entry 2/, 'mid-file corruption still blocks boot')
     } finally {
       corrupt.close()
     }

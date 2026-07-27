@@ -427,7 +427,9 @@ test('outboxlog configurePersistence: failed partial replay restores all engine 
   t.is(engine.sync.heads([a]).heads[a], 1, 'repaired retry applies the append exactly once')
   t.is(engine.sync.get(a, 'post!p1').id, 'p1')
   t.ok(engine.sync.status(b).inviteKey, 'later group is restored after repair')
-  t.alike(engine.sync.takedowns(), { takedowns: [{ appId: c, key: 'post!preexisting' }], count: 1 }, 'pre-existing moderation state survives failure and repaired retry')
+  const survivedTakedowns = engine.sync.takedowns()
+  t.is(survivedTakedowns.count, 1, 'pre-existing moderation state survives failure and repaired retry')
+  t.alike(survivedTakedowns.takedowns.map((tk) => ({ appId: tk.appId, key: tk.key })), [{ appId: c, key: 'post!preexisting' }], 'pre-existing takedown identity survives')
   engine.close()
 
   const constructorPath = join(dir, 'constructor-corrupt.jsonl')

@@ -182,6 +182,8 @@ export class TorTransport extends EventEmitter {
     this.restrictedDiscovery = !!(this.rosterFile || this.clientAuthKeys.length)
     this._clientAuthGuardKey = null
     this._rosterMutationQueue = Promise.resolve()
+    this._now = typeof opts._now === 'function' ? opts._now : () => Date.now()
+    this._serviceActive = false // onion service liveness (false during/after teardown)
     this.endpointKeyId = opts.endpointKeyId || null // signed-advertisement key id (rotation)
     this.startedAtMs = null
     this.pow = opts.pow || null // { enabled, queueRate?, queueBurst? } — daemon-wide SETCONF
@@ -305,6 +307,7 @@ export class TorTransport extends EventEmitter {
     if (!this.running) return
     this.running = false
     this.startedAtMs = null
+    this._serviceActive = false
     this._setHealth(TorHealth.DISABLED)
     if (this._probeTimer) { clearInterval(this._probeTimer); this._probeTimer = null }
 
@@ -402,8 +405,45 @@ export class TorTransport extends EventEmitter {
     return this._enqueueRosterMutation(() => this._addAuthClient(pubB32, { name, expiresAtMs }))
   }
 
+  /**
+   * Enrollment policy for an expiring client authorization. Enrollment
+   * (completeOnionEnrollment in enrollment.js) calls this before adding a
+   * client so a relay that cannot enforce expiry rejects the key up front
+   * rather than granting permanent descriptor access. Fail-closed: absence
+   * of a persistent roster or key means expiry cannot be enforced.
+   */
+  authClientEnrollmentPolicy (pubB32) {
+    if (!this._roster) return { allowed: false, reason: 'persistent-roster-required' }
+    if (!this.keyFile) return { allowed: false, reason: 'persistent-key-required' }
+    if (this._configuredClientAuthKeys.includes(pubB32)) {
+      return { allowed: false, reason: 'static-auth-key' }
+    }
+    return { allowed: true, reason: null }
+  }
+
+  /**
+   * Transport clock — enrollment reads this to detect expiry crossing
+   * mid-enrollment. Tests inject _now to simulate clock advance; production
+   * uses Date.now().
+   */
+  currentTimeMs () {
+    return this._now()
+  }
+
   async _addAuthClient (pubB32, { name = null, expiresAtMs = null } = {}) {
     if (!isValidClientPub(pubB32)) throw new Error('invalid x25519 client public key (base32, 52 chars)')
+    // Reject expiring client authorizations whose expiry this relay cannot
+    // enforce (no persistent roster/key). Mirrors the enrollment gate so a
+    // direct addAuthClient call cannot bypass the fail-closed contract.
+    if (expiresAtMs !== null) {
+      const policy = this.authClientEnrollmentPolicy(pubB32)
+      if (!policy.allowed) {
+        const err = new Error(`expiring client authorization rejected: ${policy.reason}`)
+        err.code = 'TOR_AUTH_EXPIRY_UNENFORCEABLE'
+        err.reason = policy.reason
+        throw err
+      }
+    }
     const previousRestrictedDiscovery = this.restrictedDiscovery
     const previousKeys = [...this.clientAuthKeys]
     let rosterSnapshot = null
@@ -492,6 +532,50 @@ export class TorTransport extends EventEmitter {
       throw err
     }
     this.emit('roster-changed', { removed: pubB32, size: nextKeys.length })
+    return [...this.clientAuthKeys]
+  }
+
+  /**
+   * Revoke a client whose expiry has elapsed (e.g. enrollment crossed
+   * expiry mid-flight). Marks the roster entry revoked at the transport
+   * clock, rebuilds the service without it, and persists. Mirrors
+   * _removeAuthClient's rollback contract.
+   */
+  expireAuthClient (pubB32) {
+    return this._enqueueRosterMutation(() => this._expireAuthClient(pubB32))
+  }
+
+  async _expireAuthClient (pubB32) {
+    const nowMs = this._now()
+    if (!this._roster) return [...this.clientAuthKeys]
+    if (!this._roster.loaded) await this._roster.load()
+    const entry = this._roster.keys.get(pubB32)
+    if (!entry || entry.revokedAtMs !== null) return [...this.clientAuthKeys]
+    // Durable tombstone: persist the revocation BEFORE touching the live
+    // service so a rebuild failure cannot roll the expired key back.
+    this._roster.revoke(pubB32, { nowMs })
+    this._roster.purge()
+    await this._roster.save()
+    const nextKeys = this._effectiveRosterClientAuthKeys(nowMs)
+    this.clientAuthKeys = nextKeys
+    // Fail-closed rebuild: if the service cannot be rebuilt without the
+    // expired key, leave it down rather than reviving the expired key. A
+    // tombstone must survive its own enforcement.
+    if (this.onionAddress && this.keyFile) {
+      try {
+        await this._control.cmd('DEL_ONION ' + this.serviceId)
+        this._serviceActive = false
+        const blob = await this._loadOrThrowKey()
+        await this._addOnion(blob, nextKeys)
+        this._setHealth(TorHealth.KEY_LOADED)
+      } catch (err) {
+        this._setHealth(TorHealth.DEGRADED)
+        const wrapped = new Error('failed to enforce authorization expiry: ' + (err && err.message ? err.message : String(err)))
+        wrapped.cause = err
+        throw wrapped
+      }
+    }
+    this.emit('roster-changed', { expired: pubB32, size: nextKeys.length })
     return [...this.clientAuthKeys]
   }
 
@@ -651,6 +735,7 @@ export class TorTransport extends EventEmitter {
       }
     }
     if (!this.onionAddress) throw new Error('Failed to create hidden service — no ServiceID in response')
+    this._serviceActive = true
   }
 
   async _loadOrThrowKey () {

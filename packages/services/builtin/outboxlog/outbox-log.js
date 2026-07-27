@@ -2520,7 +2520,11 @@ function readJsonlGenerationSync (path, allowTornTail) {
       if (!allowTornTail && isLastLine && onlyEmptyAfter && !endsWithNewline) {
         throw new Error('OutboxLog: torn non-final journal generation')
       }
-      throw new Error('OutboxLog: corrupt journal line ' + (i + 1) + ' in ' + path + ': ' + (err && err.message ? err.message : 'bad json'))
+      // A non-empty line after the bad one is true interior corruption
+      // (valid entries surround the damaged one) — surface it distinctly so
+      // operators can tell a torn tail from a mid-file integrity break.
+      const interior = !onlyEmptyAfter
+      throw new Error('OutboxLog: ' + (interior ? 'corrupt interior journal entry' : 'corrupt journal line') + ' ' + (i + 1) + ' in ' + path + ': ' + (err && err.message ? err.message : 'bad json'))
     }
   }
   return entries
