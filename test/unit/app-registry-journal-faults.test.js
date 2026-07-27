@@ -178,13 +178,15 @@ test('AppRegistry journal: post-append migration crash is idempotent on retry', 
   t.teardown(() => rm(dir, { recursive: true, force: true }))
   const jsonPath = join(dir, 'app-registry.json')
   const bakPath = jsonPath + '.bak'
-  await writeFile(jsonPath, JSON.stringify([{ appKey: KEY, type: 'drive', maxStorage: BOUND }]))
-  await mkdir(bakPath)
 
   let appendedBytes = 0
   {
     const store = new Corestore(dir)
     await store.ready()
+    // Write the JSON AFTER store.ready() — Corestore's storage-root sweep
+    // during ready() would otherwise move the pre-created JSON into db/.
+    await writeFile(jsonPath, JSON.stringify([{ appKey: KEY, type: 'drive', maxStorage: BOUND }]))
+    await mkdir(bakPath)
     const registry = new AppRegistry(dir, { store })
     const failed = await Promise.allSettled([registry.load()])
     t.is(failed[0].status, 'rejected')
@@ -213,11 +215,16 @@ test('AppRegistry journal: legacy eviction sidecar becomes a measured Bee tombst
   t.teardown(() => rm(dir, { recursive: true, force: true }))
   const sidecar = join(dir, 'evicted.json')
   const evictedAt = 1_700_000_000_000
-  await writeFile(sidecar, JSON.stringify({ [KEY]: evictedAt }))
   let debt = 0
   let feedBytes = 0
   {
-    const { store, registry } = await openRegistry(dir)
+    // Write the sidecar AFTER Corestore.ready() — the storage-root sweep
+    // during ready() would otherwise move the pre-created file into db/.
+    const store = new Corestore(dir)
+    await store.ready()
+    await writeFile(sidecar, JSON.stringify({ [KEY]: evictedAt }))
+    const registry = new AppRegistry(dir, { store })
+    await registry.load()
     t.is(registry.size, 0)
     t.ok(registry.isEvicted(KEY))
     debt = registry._metadataBudgets.get(KEY).bytes
