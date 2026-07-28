@@ -71,6 +71,30 @@ export function buildHealthResponse ({ node, version }) {
   const diskSummary = diskHealthSummary(disk)
   const uptime = node && node.metrics ? node.metrics.getSummary().uptime : null
   const running = node ? node.running : false
+  const storageFatal = node && node.storageAdmission ? node.storageAdmission.fatalReason : null
+
+  // A fail-closed storage authority is a terminal state that used to be
+  // invisible everywhere: failClosed() sets _fatalReason with no emit, log or
+  // metric, and nothing reads the snapshot. Worse than silent — canAcknowledge()
+  // then returns false, so every gateway drive read 404s as "still replicating",
+  // which actively misdirects whoever is debugging it.
+  //
+  // Report it before the disk gate: if storage has failed closed, that is the
+  // more fundamental fact, and unlike a disk drain a restart will not clear it.
+  if (storageFatal) {
+    return {
+      status: 503,
+      payload: {
+        ok: false,
+        reason: 'storage-fail-closed',
+        storageFatalReason: String(storageFatal),
+        version,
+        uptime,
+        running,
+        disk: diskSummary
+      }
+    }
+  }
 
   if (
     node &&

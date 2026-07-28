@@ -30,6 +30,14 @@ REPO_DIR="${HIVERELAY_REPO_DIR:-$HOME/hiverelay}"
 CONF="${HIVERELAY_UPDATER_CONF:-/etc/hiverelay-updater.conf}"
 CHANNELS_URL="${HIVERELAY_CHANNELS_URL:-https://raw.githubusercontent.com/bigdestiny2/P2P-Hiverelay/main/fleet/channels.json}"
 SERVICE="${HIVERELAY_SERVICE:-hiverelay}"
+# Where this agent is installed, for the post-update self-refresh. Resolved from
+# $0 so a non-standard install path still refreshes itself; falls back to the
+# canonical location when $0 is not a readable file (e.g. piped from stdin).
+SELF_PATH="${HIVERELAY_UPDATER_PATH:-}"
+if [ -z "$SELF_PATH" ]; then
+  if [ -f "$0" ]; then SELF_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  else SELF_PATH="/usr/local/bin/hiverelay-updater"; fi
+fi
 API="${HIVERELAY_API:-http://127.0.0.1:9100}"
 ENV_FILE="${HIVERELAY_ENV_FILE:-/etc/hiverelay/hiverelay.env}"
 HEALTH_TIMEOUT="${HIVERELAY_HEALTH_TIMEOUT:-120}"
@@ -242,6 +250,24 @@ deps_if_changed() { # $1=from-ref $2=to-ref
   fi
 }
 
+# Prove the runtime can actually boot BEFORE restarting the live service.
+#
+# `npm ci` succeeding does not mean the relay can start. On 2026-07-28
+# utah-0.5gb installed cleanly and then crash-looped, because require-addon
+# resolved the package root to "/" and looked for
+# /prebuilds/linux-x64/sodium-native.node — the binary was present and correct
+# inside node_modules. Same tag, same install; the difference was Node
+# v22.22.2 vs v22.22.0 on the box that worked. `engines: >=20.0.0` admits both.
+#
+# Loading hyperswarm walks the exact chain that failed
+# (hyperswarm -> hyperdht -> dht-rpc -> udx-native -> require-addon ->
+# sodium-native), so this catches native-addon breakage of any origin — bad
+# prebuild, wrong libc, Node ABI drift — without pinning a version we would
+# then have to chase. Cheap: a require, no network, no listeners.
+preflight_runtime() {
+  node -e 'require("hyperswarm")' >/dev/null 2>&1
+}
+
 rollback_to_previous() {
   local reason="$1"
   log "FAIL $reason — ROLLING BACK to $CUR_VER ($CUR_SHA)"
@@ -278,6 +304,34 @@ verify_tag "$TARGET" || die "refusing to update: tag $TARGET is not signed by a 
 
 git checkout --quiet "$TARGET" || die "checkout $TARGET failed"
 deps_if_changed "$CUR_SHA" "$TARGET_SHA" || rollback_to_previous "dependency install failed on $TARGET"
+preflight_runtime || rollback_to_previous "runtime preflight failed on $TARGET (native addon or Node ABI)"
+
+# SELF-UPDATE. The agent is the one component an update could never fix: it
+# runs from /usr/local/bin and nothing here reinstalled it, so a bug in the
+# update path could only be repaired by hand-visiting every box. That is
+# exactly what happened with the missing --force on the rollback checkout —
+# the fix shipped in the tag and reached no relay.
+#
+# Ordering matters. This runs AFTER verify_tag and AFTER the deps install, so
+# the script being installed comes from a signature-verified tree that has
+# already proven it can install. It runs BEFORE the service restart so a
+# failed restart rolls back with the NEW agent's logic.
+#
+# The running shell is unaffected: bash has already read this file, and the
+# replacement takes effect on the next tick. Install atomically (write a temp
+# beside the target, then rename) so a crash mid-copy cannot leave a partial
+# interpreter script at a path systemd will execute.
+if [ -f "$REPO_DIR/fleet/updater.sh" ] && ! cmp -s "$REPO_DIR/fleet/updater.sh" "$SELF_PATH"; then
+  if install -m 0755 "$REPO_DIR/fleet/updater.sh" "$SELF_PATH.next" 2>/dev/null &&
+     bash -n "$SELF_PATH.next" 2>/dev/null &&
+     mv -f "$SELF_PATH.next" "$SELF_PATH" 2>/dev/null; then
+    log "agent self-updated from $TARGET — active next tick"
+  else
+    rm -f "$SELF_PATH.next" 2>/dev/null || true
+    log "WARN agent self-update failed (non-fatal); continuing with the running agent"
+  fi
+fi
+
 systemctl restart "$SERVICE"
 
 if healthy "${TARGET#v}"; then

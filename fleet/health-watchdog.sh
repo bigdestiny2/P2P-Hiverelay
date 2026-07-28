@@ -42,8 +42,30 @@ if [ -n "$MainPID" ] && [ "$MainPID" != "0" ] && [ -r "/proc/$MainPID" ]; then
   fi
 fi
 
-body=$(curl -fsS --max-time "$TIMEOUT" "$URL" 2>/dev/null || true)
+# NOTE: deliberately not `curl -f`. -f discards the response body on a non-2xx
+# status, and the relay answers 503 with {"ok":false,"reason":"disk-critical"}
+# as a DELIBERATE drain signal (PRODUCTION.md:433-436). Without the body this
+# watchdog cannot tell "draining on purpose" from "event-loop hung", so it
+# counted the drain as a failure and SIGKILLed — and since a restart frees no
+# disk, the box then looped every ~4 minutes forever.
+body=$(curl -sS --max-time "$TIMEOUT" "$URL" 2>/dev/null || true)
 if echo "$body" | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
+  echo 0 >"$STATE_FILE"
+  exit 0
+fi
+
+# This watchdog exists for ONE failure mode: an event-loop hang that systemd
+# cannot see, where the unit is active and :9100 is listening but /health never
+# answers. A structured JSON answer — whatever it says — proves the loop is
+# turning, so it is by definition not the thing we are here to kill.
+#
+# Deliberate not-ok states (disk-critical drain, storage-fail-closed) are
+# reported precisely so an operator can act. SIGKILLing them destroys the signal
+# and fixes nothing: a restart frees no disk and does not clear a fail-closed
+# storage authority. Treat any reasoned reply as "responsive" and stand down.
+if echo "$body" | grep -q '"reason"[[:space:]]*:'; then
+  reason=$(echo "$body" | sed -n 's/.*"reason"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  log "relay responsive but not ok (reason=${reason:-unknown}) — reporting, not a hang; not restarting"
   echo 0 >"$STATE_FILE"
   exit 0
 fi
