@@ -2,6 +2,7 @@ import test from 'brittle'
 import { readFileSync } from 'node:fs'
 
 const updater = readFileSync('fleet/updater.sh', 'utf8')
+const watchdog = readFileSync('fleet/health-watchdog.sh', 'utf8')
 const fleetStatus = readFileSync('fleet/fleet-status.sh', 'utf8')
 const deployVps = readFileSync('scripts/deploy-vps.sh', 'utf8')
 const rolloutCheck = readFileSync('scripts/check-fleet-rollout.mjs', 'utf8')
@@ -20,7 +21,16 @@ test('fleet scripts pass channel names into JSON parsing as data', (t) => {
 test('fleet updater routes dependency-install failures through rollback', (t) => {
   t.ok(updater.includes('rollback_to_previous'))
   t.ok(updater.includes('deps_if_changed "$CUR_SHA" "$TARGET_SHA" || rollback_to_previous'))
-  t.ok(updater.includes('if ! git checkout --quiet "$CUR_SHA"; then'))
+  // --force is required, and this assertion previously locked in its absence.
+  // npm ci rewrites package-lock.json, so by the time a dependency install has
+  // failed the tree is dirty and a plain checkout refuses — stranding the box on
+  // the NEW tree with a half-built node_modules, which is the opposite of a
+  // rollback. Observed on utah 2026-07-28: "CRITICAL could not checkout previous
+  // SHA". Safe because the pre-update dirty-tree guard already refused to start
+  // on a dirty tree, so anything dirty at rollback time was created by that run.
+  t.ok(updater.includes('if ! git checkout --quiet --force "$CUR_SHA"; then'))
+  t.absent(updater.includes('if ! git checkout --quiet "$CUR_SHA"; then'),
+    'a rollback checkout without --force cannot survive npm ci dirtying the lockfile')
   t.ok(updater.includes('CRITICAL could not checkout previous SHA'))
   t.ok(updater.includes('if ! deps_if_changed "$TARGET_SHA" "$CUR_SHA"; then'))
   t.absent(updater.includes('git checkout --quiet "$CUR_SHA" || log "CRITICAL could not checkout previous SHA"'))
@@ -124,4 +134,58 @@ test('relay CLI keeps high-frequency status output off service logs', (t) => {
   t.ok(cli.includes('function statusSnapshot (node)'))
   t.ok(cli.includes('stats.served ? stats.served.totalBytesServed'))
   t.absent(cli.includes('if (!args.quiet) {\n    statusInterval = setInterval(() =>'))
+})
+
+test('fleet updater proves the runtime boots before restarting the live service', (t) => {
+  // npm ci succeeding does not mean the relay can start. utah-0.5gb installed
+  // cleanly on 2026-07-28 and then crash-looped: require-addon resolved the
+  // package root to "/" and looked for /prebuilds/linux-x64/sodium-native.node
+  // while the binary sat correct inside node_modules. Same tag, same install —
+  // the difference was Node v22.22.2 vs v22.22.0, and `engines: >=20.0.0`
+  // admits both, so a version pin would not have caught it either.
+  t.ok(updater.includes('preflight_runtime'), 'preflight helper exists')
+  t.ok(updater.includes('require("hyperswarm")'),
+    'loads the chain that actually broke: hyperswarm -> hyperdht -> dht-rpc -> udx-native -> require-addon -> sodium-native')
+
+  // Ordering is the whole point: prove the runtime AFTER deps are installed and
+  // BEFORE the service is restarted, so a bad install rolls back instead of
+  // leaving a crash-looping relay.
+  const preflightAt = updater.indexOf('preflight_runtime || rollback_to_previous')
+  const depsAt = updater.indexOf('deps_if_changed "$CUR_SHA" "$TARGET_SHA"')
+  // `systemctl restart` appears twice — the first is inside
+  // rollback_to_previous(), which is defined above the update path. Search from
+  // the preflight so this compares against the UPDATE path's restart.
+  const restartAt = updater.indexOf('systemctl restart "$SERVICE"', preflightAt)
+  t.ok(preflightAt > depsAt, 'preflight runs after the dependency install')
+  t.ok(restartAt > preflightAt, 'preflight runs before the service restart')
+})
+
+test('fleet updater refreshes its own agent so update-path fixes can reach a box', (t) => {
+  // The agent runs from /usr/local/bin and nothing reinstalled it, so a bug in
+  // the update path could only ever be fixed by hand-visiting every relay. That
+  // is why rc.6's --force rollback fix reached no box at all.
+  t.ok(updater.includes('SELF_PATH'), 'knows where it is installed')
+  t.ok(updater.includes('agent self-updated'), 'reports the refresh')
+
+  // Atomic install: write beside the target, syntax-check, then rename. A crash
+  // mid-copy must not leave a partial interpreter script at a path systemd runs.
+  t.ok(updater.includes('bash -n "$SELF_PATH.next"'), 'syntax-checks before adopting')
+  t.ok(updater.includes('mv -f "$SELF_PATH.next" "$SELF_PATH"'), 'adopts by rename, not in-place write')
+
+  // Must come after the signature gate — never install an agent from an
+  // unverified tree — and after a deps install that has proven itself.
+  t.ok(updater.indexOf('verify_tag "$TARGET"') < updater.indexOf('SELF_PATH.next'),
+    'self-update happens only after the supply-chain gate has passed')
+})
+
+test('health watchdog does not kill a relay that is answering honestly', (t) => {
+  // This watchdog exists for event-loop hangs that systemd cannot see. A
+  // structured reply proves the loop is turning. `curl -f` discarded the body on
+  // non-2xx, so a deliberate 503 drain was indistinguishable from a hang — and
+  // since a restart frees no disk, the box looped SIGKILL every ~4 minutes.
+  t.absent(watchdog.includes('curl -fsS --max-time "$TIMEOUT" "$URL"'),
+    '-f discards the body that distinguishes a drain from a hang')
+  t.ok(watchdog.includes('curl -sS --max-time "$TIMEOUT" "$URL"'))
+  t.ok(watchdog.includes('"reason"[[:space:]]*:'), 'stands down on any reasoned reply')
+  t.ok(watchdog.includes('not a hang; not restarting'))
 })
