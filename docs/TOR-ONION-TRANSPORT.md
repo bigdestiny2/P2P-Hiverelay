@@ -99,7 +99,16 @@ Load-bearing semantics (each verified live against tor 0.4.9.6 in the M0 spike):
 - `Flags=V3Auth` is **mandatory** with `ClientAuthV3`; the daemon never holds client secrets — only public keys.
 - **No runtime roster add exists**: enrollment rebuilds the service in place (same address; brief intro-point churn). Roster persists in `rosterFile` (operator-private) and re-applies at start.
 - Client credential install is one control-port command with `Flags=Permanent`; no hand-written files.
-- Filesystem deployments (`HiddenServiceDir` + `authorized_clients/*.auth` + RELOAD) are the PoW-capable shape; the valid `.auth` line is exactly `descriptor:x25519:<pub>` (3 fields), and an all-invalid roster runs **fail-open** — hence the negative probe in the health gate.
+- Filesystem deployments (`HiddenServiceDir` + `authorized_clients/*.auth` + RELOAD) are the PoW-capable shape; the valid `.auth` line is exactly `descriptor:x25519:<pub>` (3 fields), and an all-invalid roster runs **fail-open**.
+
+  > **No negative probe exists.** This sentence previously claimed one "in the health gate";
+  > it is unbuilt and is tracked as Ship 8 (`LADDER-SHIP-MAP.md:230`), consistent with
+  > `GIGA-RELEASE-ARCHITECTURE.md:171` ("NOT implemented … Required before RC").
+  > Note also that this fail-open scenario is **not reachable in this runtime**: the transport
+  > uses control-port `ADD_ONION` with ClientAuthV3, where invalid entries throw
+  > (`auth-keys.js:245-246`) and an empty roster installs an unreachable guard credential
+  > (`tor/index.js:709-717`). The filesystem shape described above is the one that would
+  > fail open, and we do not deploy it.
 
 ## 5. Health-gated advertisement
 

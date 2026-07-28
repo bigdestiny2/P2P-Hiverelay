@@ -444,7 +444,7 @@ const weather = await protocol.request(relayPubkey, 'weather', 'current', { loca
 
 ## Configuration
 
-Services are enabled automatically when the relay node starts. Individual services can be disabled via the config or by not registering them. The SLA service requires proof-of-relay to be active for automated enforcement.
+Services are **opt-in**, not automatic. A relay starts with none: `config/default.js` ships `enableServices: false` and `plugins: []`, and `relay-node/index.js` only constructs the registry when `enableServices` is set. To run services, either set `enableServices` and list `plugins` in the config, or write `<storage>/services.json` — which is the **runtime authority** and overrides config. A plugin name that does not match a registered builtin fails to load silently, so verify with `GET /api/v1/services` (or `node scripts/probe-fleet-services.mjs`) rather than trusting the config. The SLA service requires proof-of-relay to be active for automated enforcement.
 
 Service lifecycle is controlled by:
 
