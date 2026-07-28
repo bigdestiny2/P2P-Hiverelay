@@ -40,26 +40,83 @@ At prep time this was **124 commits**. Open a PR from `feat/service-http-wiring`
 rather than fast-forwarding — `rc.3` was previously cut from `main` by mistake
 without the feature tree, and that is exactly the failure this gap invites.
 
-### 1b. No signing key is configured
+### 1b. The release signing key is not on this machine
 
-The updater refuses any tag that is not an annotated tag signed by a key in
-`/etc/hiverelay/allowed-signers`. It fails closed: a box that cannot verify the
-tag stays on its current version. This repo currently has no signing config:
+The fleet trusts exactly one signer, in both `fleet/allowed-signers` and the copy
+installed on the provisioned boxes (verified identical on miami):
 
-```bash
-git config --get user.signingkey   # empty
-git config --get gpg.format        # empty
-git config --get tag.gpgsign       # empty
+```
+bigdestiny2@users.noreply.github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxvfmV3/yKO0C5HMCGRiOMiqfEwkzr6/aMlz4TUfojO hiverelay-release
 ```
 
-Configure it, then tag. **An unsigned tag is refused by every box.**
+None of the local keys match it (`cloudzy_hiverelay`, `id_ed25519`,
+`peerit_vps_deploy`), the ssh-agent is empty, and git has no signing config
+(`user.signingkey`, `gpg.format`, `tag.gpgsign` all unset). **Sign on whichever
+machine or token holds `hiverelay-release`**, or rotate the release key and
+redistribute `/etc/hiverelay/allowed-signers` fleet-wide.
+
+Prior tags *are* signed — `git tag -v v0.24.3` errors only because local
+verification is unconfigured, not because the signature is missing. To verify
+locally:
+
+```bash
+git config gpg.ssh.allowedSignersFile "$PWD/fleet/allowed-signers"
+git config gpg.format ssh
+git tag -v v0.24.3
+```
+
+### 1c. `main`'s canary channel is parked at v0.24.3
+
+`origin/main:fleet/channels.json` currently reads `canary: v0.24.3` — PR #203
+(`ops/canary-hold-after-rc4`) deliberately held it after rc.4. utah is on rc.4
+only because it was placed there by hand. Promoting means moving canary forward
+from `v0.24.3`, not from `v0.25.0-rc.4`.
+
+### 1d. The pull-based automation is not actually provisioned (read this first)
+
+Surveyed 2026-07-28. The fleet is in three states, and the "boxes self-update
+within ~15 min" model in `fleet/README.md` does not currently hold:
+
+| State | Boxes | Agent | Signed-tag gate | Timer |
+|-------|-------|-------|-----------------|-------|
+| **Provisioned** | miami, sydney, amsterdam | 13796 B (current) | ✅ `verify_tag`, signers installed | active |
+| **Stale agent** | utah-us, utah-2gb-a, utah-0.5gb, sing-1, sing-2, dubai | 6799 B (2026-06-22) | ❌ no `verify_tag`, no signers | active |
+| **Automation off** | utah, utah-8gb, dallas | stale / none | ❌ | inactive |
+
+Three consequences:
+
+1. **The supply-chain gate is not deployed on 9 of 12 boxes.** The six
+   stale-agent boxes would check out *any* tag the channel names, signed or not.
+   `fleet/README.md` describes this as fail-closed; that is currently true only
+   for miami, sydney, and amsterdam.
+2. **utah — the designated canary — has its updater timer off**, so a canary
+   promotion would not reach it at all. The only canary box that would move is
+   **utah-0.5gb**, the 0.5 GB box that was ABRT-looping under the full plugin
+   suite.
+3. **sydney is one of the three boxes that WILL enforce the gate.** Pinning it to
+   `hold` (§3) is still the right move, but note it is already the strictest box
+   in the fleet, not the loosest.
+
+**Recommended order: provision before promoting.** Reinstall the current agent and
+allowed-signers on the nine boxes that lack them, and re-enable the timers you
+intend to be automatic, *then* cut the tag and bump the channel. Otherwise the
+promotion is a no-op on the intended canary and an unverified checkout on six
+others.
+
+```bash
+# per box, from a workstation with SSH:
+ssh root@<box> 'bash -s' < fleet/install-updater.sh <canary|stable>
+scp fleet/allowed-signers root@<box>:/etc/hiverelay/allowed-signers
+```
 
 ---
 
 ## 2. Cut the release
 
+Run from the repo, not `~`:
+
 ```bash
-git tag -s v0.25.0-rc.5 -m "v0.25.0-rc.5 — restore orphaned lifecycle/gateway features"
+cd /Users/localllm/Projects/pear-ecosystem/00-core/hiverelay && git tag -s v0.25.0-rc.5 -m "v0.25.0-rc.5 — restore orphaned lifecycle/gateway features"
 ```
 
 Verify before pushing — this is the exact check each box performs:
