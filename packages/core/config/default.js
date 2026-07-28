@@ -202,7 +202,15 @@ export default {
   pairing: {
     enabled: false
   },
-  serviceDefaultPeerRole: 'authenticated-user',
+  // Anonymous swarm peers get the anonymous role. Raising this default grants
+  // every unauthenticated peer that reaches the service router the rights of a
+  // known user — on a public relay that is the whole internet.
+  //
+  // This file is the one the CLI actually loads, and it is the one commit
+  // 9125f3c missed: that commit set 'anonymous' in relay-node/index.js and
+  // bare-relay.js, but the value here is merged in AFTER those defaults, so it
+  // won. A default install was silently back on 'authenticated-user'.
+  serviceDefaultPeerRole: 'anonymous',
   serviceAdminAllowlist: [],
   enableServices: false,
   plugins: [],

@@ -20,13 +20,42 @@
  */
 
 const http = require('http')
-const { exec } = require('child_process')
+const crypto = require('crypto')
+const { exec, execFile } = require('child_process')
 const fs = require('fs')
 const path = require('path')
 const { createController } = require('./controller.cjs')
 
 const INTERVAL_S = parseInt(process.env.FLEET_INTERVAL || '60', 10)
 const PORT = parseInt(process.env.PORT || '3458', 10)
+
+// This process is a fleet-root control plane: it holds every relay's SSH key and
+// its endpoints restart services, run `git pull && npm install`, rewrite
+// config.json and edit /etc/fstab. Treat it accordingly.
+//
+// It previously bound 0.0.0.0 with no authentication, which made it remote root
+// on all 13 relays for anyone on the same network. Two independent guards now:
+// bind loopback, and require a shared secret on every request.
+const HOST = process.env.HIVERELAY_ADMIN_HOST || '127.0.0.1'
+const TOKEN = process.env.HIVERELAY_ADMIN_TOKEN || crypto.randomBytes(24).toString('hex')
+const TOKEN_WAS_GENERATED = !process.env.HIVERELAY_ADMIN_TOKEN
+
+// Timing-safe compare so the token can't be recovered byte-by-byte.
+function tokenOk (presented) {
+  if (typeof presented !== 'string' || presented.length !== TOKEN.length) return false
+  return crypto.timingSafeEqual(Buffer.from(presented), Buffer.from(TOKEN))
+}
+
+function presentedToken (req) {
+  const auth = req.headers.authorization || ''
+  if (auth.startsWith('Bearer ')) return auth.slice(7)
+  if (req.headers['x-admin-token']) return String(req.headers['x-admin-token'])
+  try {
+    return new URL(req.url, 'http://localhost').searchParams.get('token') || ''
+  } catch (_) {
+    return ''
+  }
+}
 const POLICY_PATH = process.env.HIVERELAY_CONTROL_POLICY
   || path.join(__dirname, 'control-policy.json')
 
@@ -74,6 +103,15 @@ function loadRelays () {
   return JSON.parse(fs.readFileSync(RELAYS_JSON, 'utf8')).relays
 }
 
+// Hostname/IP allowlist, applied before any value from the inventory reaches a
+// child process. Deliberately strict: letters, digits, dot, colon (IPv6) and
+// hyphen. Rejects everything a shell would treat as syntax, so an inventory
+// entry can never become a command even if a future call site drops execFile.
+function isSafeHost (host) {
+  return typeof host === 'string' && host.length > 0 && host.length <= 255 &&
+    /^[A-Za-z0-9.:-]+$/.test(host)
+}
+
 function probeNode (relay) {
   return new Promise((resolve) => {
     const ip = relay.publicIp
@@ -103,14 +141,31 @@ function probeNode (relay) {
       'printf \'{"version":"%s","diskPct":%s,"diskGB":%s,"swapMB":%s,"ramUsedPct":%s,"loadAvg":%s,"uptime":"%s","restarts":%s,"memCurrentMB":%s,"tasks":%s,"env":"%s","watchdog":"%s","healthOk":%s,"config":%s,"status":%s}\\n\' "$V" "${D:-0}" "${DG:-0}" "${SW:-0}" "${RM:-0}" "${LA:-0}" "$UP" "${RT:-0}" "${MC:-0}" "${TS:-0}" "$ENV" "$WD" "$HO" "$CFG" "$STATUS"'
     ].join('\n')
 
+    // `ip` comes from the inventory, and POST /api/relay appends to that
+    // inventory after validating only truthiness — so it is caller-controlled.
+    // Interpolating it into a shell string made this a remote command-execution
+    // sink, re-triggered every 60s by the probe interval. execFile takes an argv
+    // array and spawns no shell, so the value can only ever be an argument.
+    if (!isSafeHost(ip)) {
+      return resolve({ ...makeOffline(relay), note: 'invalid host in inventory' })
+    }
+
     // timeout is required: macOS nc -w is unreliable and can hang forever on dead hosts
-    exec(`nc -z -G 3 -w 3 ${ip} 22 2>&1`, { timeout: 6000 }, (tcpErr) => {
+    execFile('nc', ['-z', '-G', '3', '-w', '3', ip, '22'], { timeout: 6000 }, (tcpErr) => {
       if (tcpErr) {
         return resolve(makeOffline(relay))
       }
 
-      const sshBase = `ssh ${keyArg.join(' ')} -o IdentitiesOnly=yes -o ConnectTimeout=8 -o BatchMode=yes -o StrictHostKeyChecking=accept-new root@${ip}`
-      exec(`${sshBase} '${remote.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 25000 }, (err, stdout) => {
+      const sshArgs = [
+        ...keyArg,
+        '-o', 'IdentitiesOnly=yes',
+        '-o', 'ConnectTimeout=8',
+        '-o', 'BatchMode=yes',
+        '-o', 'StrictHostKeyChecking=accept-new',
+        `root@${ip}`,
+        remote
+      ]
+      execFile('ssh', sshArgs, { timeout: 25000 }, (err, stdout) => {
         if (err || !stdout || !stdout.trim().startsWith('{')) {
           return resolve({ ...makeOffline(relay), reachable: true, status: 'degraded' })
         }
@@ -295,14 +350,23 @@ function sshAction (relay, command, label) {
 // --- HTTP server ----------------------------------------------------------
 
 const server = http.createServer(async (req, res) => {
+  // No wildcard CORS. A browser on any origin could otherwise drive this
+  // control plane with the operator's own loopback access.
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type' })
+    res.writeHead(204, { 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization, x-admin-token' })
     return res.end()
+  }
+
+  // Auth gate ahead of every route, including the static UI and the SSE stream:
+  // the stream leaks the full inventory and action log.
+  if (!tokenOk(presentedToken(req))) {
+    res.writeHead(401, { 'content-type': 'application/json' })
+    return res.end(JSON.stringify({ error: 'unauthorized' }))
   }
 
   // SSE
   if (req.url === '/api/events') {
-    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'connection': 'keep-alive', 'access-control-allow-origin': '*' })
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'connection': 'keep-alive' })
     res.write(`data: ${JSON.stringify({ type: 'fleet', data: fleetState, timestamp: lastProbe })}\n\n`)
     res.write(`data: ${JSON.stringify({ type: 'actions', data: actionLog })}\n\n`)
     sseClients.push(res)
@@ -395,6 +459,15 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/relay' && req.method === 'POST') {
     const body = await readBody(req)
     if (!body.name || !body.publicIp) return sendJson(res, 400, { error: 'name and publicIp required' })
+    // Validate at the boundary, not only at the call site. This value is
+    // persisted to the inventory and then handed to ssh every 60s; a truthiness
+    // check is not enough to let it become an argv element.
+    if (!isSafeHost(body.publicIp)) {
+      return sendJson(res, 400, { error: 'publicIp must be a hostname or IP address' })
+    }
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(body.name)) {
+      return sendJson(res, 400, { error: 'name must be 1-64 chars of [A-Za-z0-9._-]' })
+    }
 
     const relays = loadRelays()
     if (relays.find(r => r.name === body.name)) {
@@ -619,8 +692,16 @@ async function main () {
   console.log(`[admin-operator] ${relays.length} nodes configured`)
   // Listen first so UI is available while the (slow) fleet probe runs
   await new Promise((resolve, reject) => {
-    server.listen(PORT, () => {
-      console.log(`\n  [admin-operator] Dashboard Admin Operator → http://localhost:${PORT}\n`)
+    server.listen(PORT, HOST, () => {
+      console.log(`\n  [admin-operator] Dashboard Admin Operator → http://${HOST}:${PORT}/?token=${TOKEN}\n`)
+      if (TOKEN_WAS_GENERATED) {
+        console.log('  [admin-operator] Generated a one-off token for this run.')
+        console.log('  [admin-operator] Set HIVERELAY_ADMIN_TOKEN to pin it across restarts.\n')
+      }
+      if (HOST !== '127.0.0.1' && HOST !== 'localhost') {
+        console.log(`  [admin-operator] WARNING: bound to ${HOST}, not loopback. This process can`)
+        console.log('  [admin-operator] run commands as root on every relay in the inventory.\n')
+      }
       resolve()
     })
     server.on('error', reject)
