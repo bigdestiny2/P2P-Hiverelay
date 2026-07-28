@@ -352,7 +352,6 @@ export function buildCapabilityDoc (opts = {}) {
     version: opts.version || null,
     runtime,
     region,
-    operator,
     contact: opts.contact || config.contact || null,
     terms_of_service: opts.termsOfService || config.termsOfService || null,
     supported_transports: transports,
@@ -393,6 +392,13 @@ export function buildCapabilityDoc (opts = {}) {
     // advertisements (hiverelay.onion/1). Omitted unless verified ready
     // (added below only when non-empty, preserving the signable shape).
     ...(privacyTransports.length > 0 ? { privacyTransports } : {}),
+    // operator — present only when declared, for the same reason: the canonical
+    // signer covers every key, so emitting `operator: null` everywhere would
+    // change the signed bytes of every relay in the fleet, including the ones
+    // that have nothing to say. Conditional inclusion keeps the default
+    // signable shape byte-identical (the checked-in capability-doc conformance
+    // vector pins it) and changes the doc only where it carries information.
+    ...(operator ? { operator } : {}),
     // indexRoom — z32 link to this relay's schema-sheets index room, if a
     // sidecar has published one. Additive: clients that don't understand it
     // ignore it and fall back to catalogBeeKey / /catalog.json. schemaVersion

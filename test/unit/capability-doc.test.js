@@ -81,8 +81,12 @@ test('publishes operator identity so quorum diversity can be counted honestly', 
   // own operator — so five boxes in one datacenter under one owner satisfied a
   // minOperators floor of five. The CLI accepted --operator all along; it was
   // simply never published, so no client could see the concentration.
+  // Absent, not null: the canonical signer covers every key present, so
+  // emitting `operator: null` everywhere would change the signed bytes of every
+  // relay — including those with nothing to declare — and break the checked-in
+  // capability-doc conformance vector that pins the default signable shape.
   const unset = buildCapabilityDoc({ relay: { config: {} } })
-  t.is(unset.operator, null, 'absent when the operator has not declared one')
+  t.absent('operator' in unset, 'key is omitted entirely when undeclared')
 
   const declared = buildCapabilityDoc({
     relay: { config: { operator: 'hive-foundation-utah', regions: ['NA'] } }
@@ -90,7 +94,7 @@ test('publishes operator identity so quorum diversity can be counted honestly', 
   t.is(declared.operator, 'hive-foundation-utah')
   t.is(declared.region, 'NA')
 
-  t.is(buildCapabilityDoc({ relay: { config: { operator: '   ' } } }).operator, null,
+  t.absent('operator' in buildCapabilityDoc({ relay: { config: { operator: '   ' } } }),
     'whitespace is not an operator identity')
 })
 
