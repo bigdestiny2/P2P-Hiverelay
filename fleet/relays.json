@@ -36,7 +36,7 @@
       "publicIp": "144.172.101.215",
       "tailnet": null,
       "sshKey": "default",
-      "channel": "canary",
+      "channel": "hold",
       "region": "NA",
       "diskGB": 20,
       "role": "canary"
@@ -86,7 +86,7 @@
       "publicIp": "104.194.135.205",
       "tailnet": null,
       "sshKey": "default",
-      "channel": "stable",
+      "channel": "hold",
       "region": "APAC",
       "diskGB": 60,
       "role": "seed"
