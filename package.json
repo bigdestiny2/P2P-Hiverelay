@@ -1,6 +1,6 @@
 {
   "name": "p2p-hiverelay-monorepo",
-  "version": "0.25.0-rc.4",
+  "version": "0.25.0-rc.5",
   "description": "Monorepo root for HiveRelay (Core + Services + Client)",
   "private": true,
   "type": "module",
@@ -51,6 +51,9 @@
     "release:check-image-manifest": "node scripts/check-release-image-manifest.mjs",
     "release:smoke-image": "node scripts/smoke-release-image.mjs",
     "fleet:check-rollout": "node scripts/check-fleet-rollout.mjs",
+    "dashboard:admin-operator": "node dashboard-admin-operator/server.cjs",
+    "dashboard:admin-operator:dev": "PORT=3458 FLEET_INTERVAL=30 node dashboard-admin-operator/server.cjs",
+    "fleet:control": "node dashboard-admin-operator/server.cjs",
     "umbrel:check-gallery": "node scripts/check-umbrel-gallery.mjs",
     "umbrel:export-official": "node scripts/export-official-umbrel-app.mjs",
     "umbrel:write-runtime-review": "node scripts/write-umbrel-runtime-review-evidence.mjs",

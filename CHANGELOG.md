@@ -6,6 +6,83 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.25.0-rc.5] — 2026-07-28
+
+**Preferred canary prerelease.** Supersedes rc.4. Restores a set of features that
+convergence refactors had orphaned — the code was gone but the tests, docs, and
+capability claims still described it — and fixes three defects that were live on
+the public read plane.
+
+### Fixed — public read plane
+- **Every non-HEAD file GET returned 502.** `HyperGateway.handle()` dereferenced
+  the optional exact-app `context` without a null guard, and `gateway-server`
+  serves the `/v1/hyper/:key/...` route with no context. Any request for drive
+  content threw before headers were sent.
+- **The per-window egress byte budget was silently unenforced** on exact
+  app-origin responses. The gateway's storage-lease wrapper re-entered
+  `handle(req, res)` without forwarding `context`, dropping
+  `reserveResponseBytes` along with the `X-Hive-App-Key` / `X-Hive-Byte-Mode`
+  headers.
+
+### Fixed — storage durability
+- **A seed reported success when its durable registry write failed.**
+  `AppRegistry.set()` persists fire-and-forget, so the drive served traffic and
+  then was simply absent after restart. The seed path now persists explicitly,
+  awaits it, and restores the pre-seed entry on failure.
+- **Durable retirement could begin while an HTTP response was still streaming**
+  from pinned core sessions. `unseedApp` now takes the same per-drive storage
+  lease HyperGateway holds for reads. It bypasses the lease once the authority
+  stops accepting mutations, because `stop()` retires every drive after that
+  point and must still be able to close its own drives.
+- **A concurrent shutdown and forget retired the same drive twice** — closing the
+  drive, persisting the delete, and releasing the storage commitment two times.
+  Both callers now share one coalesced retirement owner.
+- **Mixed-case app keys bypassed the live-entry check**, seeding a duplicate
+  drive for the same content under a different storage-admission mutation key.
+- **Manifest indexing read from the live drive**, so indexed metadata did not
+  have to match the proven version. It now reads `{ wait: false }` from a
+  checkout pinned to the storage proof, with fork/length stability checks, and
+  always closes the checkout. This also removes a timed-out manifest read that
+  left an in-flight network request alive after its caller had given up.
+
+### Restored (orphaned by convergence refactors)
+- **Seed-admission queue.** The old spin-wait mutex could not cancel: a caller
+  that timed out, or a node shutting down, still had its queued closure run
+  later against the registry and storage ledger. Queued work is now cancellable;
+  work that has already started runs to completion.
+- **`getDriveSize` authoritative-proof mode** (`requireAuthoritative`,
+  `pinSnapshots`). `length` and `byteLength` are separate getters, so an append
+  between them produced a tuple that never existed and under-counted the drive.
+  They are now read as one bracketed tuple, and pinned snapshots reject
+  `DRIVE_VERSION_CHANGED_DURING_PROOF`.
+- **Ordered auxiliary share-bundle teardown**, which had no production caller at
+  all — snapshot sessions and download trackers leaked on every PVSS
+  share-bundle read.
+- **Exact drive-discovery teardown and download-snapshot-core release** during
+  drive retirement, with per-owner retry on failure.
+- **`hiverelay-forward` transport advertisement.** The client path resolver gates
+  on `supported_transports`, which never contained it, so the shipped
+  source-ip-hidden / hidden-1hop privacy tier was unreachable end to end.
+
+### Fail-closed hardening
+- Seed and repair now stop before Corestore session, Hyperdrive adoption, or
+  storage reservation when the physical authority cannot accept durable writes,
+  instead of failing later with a reservation error that masked the cause.
+- Seeding before recovery inventories seal reports
+  `STORAGE_RECOVERY_INVENTORY_PENDING`.
+
+### Tests
+- The unit suite previously aborted at test 727 on a hard `TypeError` in the
+  app-lifecycle teardown path, leaving most of the 327 files unexecuted. It now
+  runs 3510 tests with 3 known failures (serve-only recovery mode, and two
+  startup-rollback cases blocked on the Corestore-7 storage-sweep question).
+
+### Fleet
+- Canary target: `v0.25.0-rc.5`. Stable remains `v0.24.3`.
+- `sydney` and `dallas` are held off this rollout (Track B blind public-test
+  hosts). `dallas` has no updater installed and is excluded by construction;
+  `sydney` must be pinned explicitly before any `stable` bump.
+
 ## [0.25.0-rc.4] — 2026-07-26
 
 **Preferred canary prerelease.** Do not deploy rc.1–rc.3.
