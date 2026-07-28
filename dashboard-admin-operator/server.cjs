@@ -134,11 +134,15 @@ function probeNode (relay) {
       'TS=$(systemctl show hiverelay -p TasksCurrent --value 2>/dev/null || echo \'?\')',
       'ENV=$(systemctl show hiverelay -p Environment --value 2>/dev/null | tr \'\' \';\' | tr \' \' \';\')',
       'CFG=$(cat ~/hiverelay/config.json 2>/dev/null || cat ~/.hiverelay/config.json 2>/dev/null || echo \'{}\')',
+      // Capability doc is what the relay ACTUALLY advertises. config.json is
+      // what someone wrote; the dubai incident is the standing reminder that
+      // those differ. Diversity must be read from the advertised document.
+      'CAP=$(curl -fsS --max-time 4 http://127.0.0.1:9100/.well-known/hiverelay.json 2>/dev/null || echo \'{}\')',
       'STATUS=$(curl -fsS --max-time 8 http://127.0.0.1:9100/status 2>/dev/null || echo \'{}\')',
       'HEALTH=$(curl -fsS --max-time 4 http://127.0.0.1:9100/health 2>/dev/null || echo \'\')',
       'WD=$(systemctl is-enabled hiverelay-health-watchdog.timer 2>/dev/null || echo missing)',
       'HO=0; echo "$HEALTH" | grep -q \'"ok"[[:space:]]*:[[:space:]]*true\' && HO=1',
-      'printf \'{"version":"%s","diskPct":%s,"diskGB":%s,"swapMB":%s,"ramUsedPct":%s,"loadAvg":%s,"uptime":"%s","restarts":%s,"memCurrentMB":%s,"tasks":%s,"env":"%s","watchdog":"%s","healthOk":%s,"config":%s,"status":%s}\\n\' "$V" "${D:-0}" "${DG:-0}" "${SW:-0}" "${RM:-0}" "${LA:-0}" "$UP" "${RT:-0}" "${MC:-0}" "${TS:-0}" "$ENV" "$WD" "$HO" "$CFG" "$STATUS"'
+      'printf \'{"version":"%s","diskPct":%s,"diskGB":%s,"swapMB":%s,"ramUsedPct":%s,"loadAvg":%s,"uptime":"%s","restarts":%s,"memCurrentMB":%s,"tasks":%s,"env":"%s","watchdog":"%s","healthOk":%s,"config":%s,"status":%s,"cap":%s}\\n\' "$V" "${D:-0}" "${DG:-0}" "${SW:-0}" "${RM:-0}" "${LA:-0}" "$UP" "${RT:-0}" "${MC:-0}" "${TS:-0}" "$ENV" "$WD" "$HO" "$CFG" "$STATUS" "$CAP"'
     ].join('\n')
 
     // `ip` comes from the inventory, and POST /api/relay appends to that
@@ -191,8 +195,17 @@ function probeNode (relay) {
 
           const features = extractFeatures(config, env, st)
 
+          // Advertised identity. `operator` is who owns it (the trust axis);
+          // `failureDomain` is what dies with it (the scheduling axis). They
+          // were one field until they were split, which is why a single-owner
+          // fleet used to report as many independent operators.
+          const cap = d.cap || {}
+
           resolve({
             ...relay,
+            operator: cap.operator || null,
+            failureDomain: cap.failureDomain || null,
+            advertisedRegion: cap.region || null,
             status,
             reachable: true,
             version: d.version || 'none',
@@ -379,6 +392,7 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, {
       nodes: fleetState,
       summary: computeSummary(),
+      diversity: computeDiversity(),
       lastProbe,
       channels,
       interval: INTERVAL_S,
@@ -656,6 +670,46 @@ function serveStatic (res, filePath) {
     res.writeHead(200, { 'content-type': ct })
     res.end(data)
   } catch { sendJson(res, 404, { error: 'not found' }) }
+}
+
+// Diversity, as advertised rather than as configured.
+//
+// The point of this block is to make concentration impossible to miss. A fleet
+// can be spread across many hosts and regions and still be ONE operator — and
+// a quorum drawn from it is only as independent as that number. Reporting
+// relays-as-operators is exactly the accounting error that let a single-owner
+// fleet satisfy a minOperators floor of five.
+function computeDiversity () {
+  const online = fleetState.filter(n => n.reachable)
+  const operators = new Set()
+  const domains = new Set()
+  const regions = new Set()
+  let undeclared = 0
+
+  for (const n of online) {
+    if (n.operator) operators.add(n.operator)
+    else undeclared++
+    // Fall back to the relay name for spreading only — never for operator.
+    domains.add(n.failureDomain || n.name)
+    regions.add(n.advertisedRegion || n.region || 'Unknown')
+  }
+
+  return {
+    relays: online.length,
+    operators: operators.size,
+    operatorNames: [...operators].sort(),
+    // Undeclared is UNKNOWN, not independent. Surfaced separately so it can
+    // never be quietly counted toward an independence claim.
+    operatorsUndeclared: undeclared,
+    failureDomains: domains.size,
+    regions: regions.size,
+    regionNames: [...regions].sort(),
+    // The honest headline: many boxes under one owner is not many operators.
+    singleOperator: operators.size <= 1 && online.length > 1,
+    concentrationNote: operators.size <= 1 && online.length > 1
+      ? `${online.length} relays, ${operators.size || 0} declared operator — spread across ${domains.size} failure domains, but not independent`
+      : null
+  }
 }
 
 function computeSummary () {
