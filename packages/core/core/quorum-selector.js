@@ -110,11 +110,43 @@ export function selectQuorum (candidates, opts = {}) {
  * with highest-scoring candidates — we want SOMETHING served over
  * nothing when the pool is small or concentrated.
  */
+/**
+ * The two axes, kept apart on purpose.
+ *
+ * `failureDomain` answers "if this host/rack/datacenter dies, what else dies
+ * with it?" — the SCHEDULING question. `operator` answers "who could collude
+ * or be compelled?" — the TRUST question, and the one a G3 claim rests on.
+ *
+ * They were one field, and the consequence was not theoretical: the fleet
+ * deploy script assigned `hive-foundation-utah`, `hive-foundation-utah-us`,
+ * `hive-foundation-singapore`, `hive-foundation-singapore-2` … distinct IDs
+ * for one owner, with a comment saying they exist so the scheduler treats the
+ * boxes as separate nodes. That is the right answer for spreading and the
+ * wrong one for independence: it made a fourteen-box, single-owner fleet
+ * report up to fourteen operators and satisfy any minOperators floor.
+ *
+ * Splitting them lets spreading keep working while the independence count
+ * becomes honest — which means some quorums will now correctly fail their
+ * minOperators floor. That is the intended outcome, not a regression.
+ */
+function failureDomainOf (r) {
+  return r.failureDomain || r.operator || r.pubkey
+}
+
+function operatorOf (r) {
+  // No `|| pubkey` fallback. Defaulting an undeclared operator to the relay's
+  // own key is precisely what manufactured diversity out of nothing; an
+  // undeclared operator is UNKNOWN, and unknowns are not independent from
+  // each other.
+  return r.operator || '__undeclared__'
+}
+
 function selectDiverse (pool, size, minRegions, minOperators) {
   const ranked = [...pool].sort(byScoreDesc)
   const selected = []
   const taken = new Set()
   const seenRegions = new Set()
+  const seenDomains = new Set()
   const seenOperators = new Set()
 
   while (selected.length < size) {
@@ -123,8 +155,10 @@ function selectDiverse (pool, size, minRegions, minOperators) {
     for (const r of ranked) {
       if (taken.has(r.pubkey)) continue
       const region = r.region || '__unknown__'
-      const op = r.operator || r.pubkey
-      const gain = (seenRegions.has(region) ? 0 : 1) + (seenOperators.has(op) ? 0 : 1)
+      // SPREADING axis. Distinct hosts under one owner are still worth
+      // spreading across — losing a box should not lose every replica — so
+      // this deliberately does NOT use `operator`.
+      const gain = (seenRegions.has(region) ? 0 : 1) + (seenDomains.has(failureDomainOf(r)) ? 0 : 1)
       if (!best || gain > bestGain || (gain === bestGain && byScoreDesc(r, best) < 0)) {
         best = r
         bestGain = gain
@@ -134,7 +168,9 @@ function selectDiverse (pool, size, minRegions, minOperators) {
     selected.push(best)
     taken.add(best.pubkey)
     seenRegions.add(best.region || '__unknown__')
-    seenOperators.add(best.operator || best.pubkey)
+    seenDomains.add(failureDomainOf(best))
+    // INDEPENDENCE axis, counted separately and never widened by spreading.
+    seenOperators.add(operatorOf(best))
   }
 
   // If we couldn't reach minRegions, the caller should know — emit a
@@ -153,7 +189,12 @@ function selectDiverse (pool, size, minRegions, minOperators) {
       observedRegions: seenRegions.size,
       requiredRegions: minRegions,
       observedOperators: seenOperators.size,
-      requiredOperators: minOperators
+      requiredOperators: minOperators,
+      observedFailureDomains: seenDomains.size,
+      // Distinguishes "one owner, well spread" from "genuinely independent".
+      // Both can serve the same replicas; only the second survives collusion
+      // or a single legal demand.
+      operatorsUndeclared: seenOperators.has('__undeclared__')
     }
   }
 
@@ -228,11 +269,13 @@ export function describeQuorum (selected) {
     return { size: 0, regions: [], operators: [], warning: null }
   }
   const regions = [...new Set(selected.map(r => r.region || '__unknown__'))]
-  const operators = [...new Set(selected.map(r => r.operator || r.pubkey))]
+  const operators = [...new Set(selected.map(operatorOf))]
+  const failureDomains = [...new Set(selected.map(failureDomainOf))]
   return {
     size: selected.length,
     regions,
     operators,
+    failureDomains,
     warning: selected.diversityWarning || null
   }
 }

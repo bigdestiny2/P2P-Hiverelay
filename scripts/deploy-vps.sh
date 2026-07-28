@@ -25,14 +25,34 @@ SINGAPORE_API_KEY="${SINGAPORE_API_KEY:-}"
 SINGAPORE2_API_KEY="${SINGAPORE2_API_KEY:-}"
 BERN_API_KEY="${BERN_API_KEY:-}"
 
-# Per-relay operator identifiers (for AutoHeal v2 sybil resistance).
-# Singapore-1 and Singapore-2 share a region but get distinct operator IDs
-# so the diversity-enforced replica scheduler treats them as separate nodes.
-UTAH_OPERATOR="${UTAH_OPERATOR:-hive-foundation-utah}"
-UTAH_US_OPERATOR="${UTAH_US_OPERATOR:-hive-foundation-utah-us}"
-SINGAPORE_OPERATOR="${SINGAPORE_OPERATOR:-hive-foundation-singapore}"
-SINGAPORE2_OPERATOR="${SINGAPORE2_OPERATOR:-hive-foundation-singapore-2}"
-BERN_OPERATOR="${BERN_OPERATOR:-hive-foundation-bern}"
+# Operator identity — WHO OWNS THE RELAY. This is the trust axis: quorum
+# independence, and any claim that a quorum spans parties who cannot collude,
+# is counted from this value. Every box below is run by one operator, so they
+# all declare the SAME id. A fourteen-box single-owner fleet is one operator,
+# and saying so is what makes a future independence claim believable.
+#
+# This previously assigned a distinct id per box (hive-foundation-utah,
+# -utah-us, -singapore, -singapore-2 ...) with a comment explaining that they
+# existed so the replica scheduler would treat the boxes as separate nodes.
+# That is the right goal and was the wrong field: it made one owner report as
+# up to fourteen operators and satisfy any minOperators floor automatically.
+# Spreading now lives in FAILURE_DOMAIN below.
+HIVE_OPERATOR="${HIVE_OPERATOR:-hive-foundation}"
+UTAH_OPERATOR="${UTAH_OPERATOR:-$HIVE_OPERATOR}"
+UTAH_US_OPERATOR="${UTAH_US_OPERATOR:-$HIVE_OPERATOR}"
+SINGAPORE_OPERATOR="${SINGAPORE_OPERATOR:-$HIVE_OPERATOR}"
+SINGAPORE2_OPERATOR="${SINGAPORE2_OPERATOR:-$HIVE_OPERATOR}"
+BERN_OPERATOR="${BERN_OPERATOR:-$HIVE_OPERATOR}"
+
+# Failure domain — WHAT DIES TOGETHER. This is the scheduling axis, and it is
+# per-box on purpose: losing one host should not lose every replica. Distinct
+# values here assert nothing about independence, so they are free to be as
+# granular as the topology warrants.
+UTAH_FAILURE_DOMAIN="${UTAH_FAILURE_DOMAIN:-cloudzy-utah}"
+UTAH_US_FAILURE_DOMAIN="${UTAH_US_FAILURE_DOMAIN:-cloudzy-utah-us}"
+SINGAPORE_FAILURE_DOMAIN="${SINGAPORE_FAILURE_DOMAIN:-cloudzy-singapore-1}"
+SINGAPORE2_FAILURE_DOMAIN="${SINGAPORE2_FAILURE_DOMAIN:-cloudzy-singapore-2}"
+BERN_FAILURE_DOMAIN="${BERN_FAILURE_DOMAIN:-cloudzy-bern}"
 
 deploy_server() {
     local IP=$1

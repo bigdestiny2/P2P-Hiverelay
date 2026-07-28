@@ -98,6 +98,20 @@ test('publishes operator identity so quorum diversity can be counted honestly', 
     'whitespace is not an operator identity')
 })
 
+test('publishes failureDomain separately from operator', async (t) => {
+  // Two axes, deliberately distinct. `operator` is who could collude;
+  // `failureDomain` is what dies together. Boxes one owner runs in different
+  // datacenters share an operator and must NOT share a failure domain.
+  const doc = buildCapabilityDoc({
+    relay: { config: { operator: 'hive-foundation', failureDomain: 'cloudzy-singapore-2', regions: ['APAC'] } }
+  })
+  t.is(doc.operator, 'hive-foundation')
+  t.is(doc.failureDomain, 'cloudzy-singapore-2')
+
+  t.absent('failureDomain' in buildCapabilityDoc({ relay: { config: {} } }),
+    'omitted when undeclared, so the default signable shape is unchanged')
+})
+
 test('advertises hiverelay-forward only when the opt-in forward relay is enabled', async (t) => {
   const base = { config: { discovery: { dht: true } } }
 

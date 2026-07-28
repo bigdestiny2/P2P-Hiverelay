@@ -318,6 +318,12 @@ export function buildCapabilityDoc (opts = {}) {
   // floor was being met by an accounting artefact.
   const operator = (typeof config.operator === 'string' && config.operator.trim()) || null
 
+  // failureDomain — the SCHEDULING axis, kept distinct from `operator`.
+  // "If this host dies, what dies with it?" rather than "who could collude?".
+  // Two boxes one owner runs in different datacenters should spread replicas
+  // (distinct failure domains) while counting as ONE operator.
+  const failureDomain = (typeof config.failureDomain === 'string' && config.failureDomain.trim()) || null
+
   // onionGatewayUrl — when the Tor transport is running with a hidden service,
   // the .onion forwards to the relay's HTTP API/gateway port, so the read plane
   // (/catalog.json, /v1/hyper/:key, /.well-known/hiverelay.json) is reachable
@@ -399,6 +405,7 @@ export function buildCapabilityDoc (opts = {}) {
     // signable shape byte-identical (the checked-in capability-doc conformance
     // vector pins it) and changes the doc only where it carries information.
     ...(operator ? { operator } : {}),
+    ...(failureDomain ? { failureDomain } : {}),
     // indexRoom — z32 link to this relay's schema-sheets index room, if a
     // sidecar has published one. Additive: clients that don't understand it
     // ignore it and fall back to catalogBeeKey / /catalog.json. schemaVersion
