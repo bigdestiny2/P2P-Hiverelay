@@ -25,34 +25,38 @@ SINGAPORE_API_KEY="${SINGAPORE_API_KEY:-}"
 SINGAPORE2_API_KEY="${SINGAPORE2_API_KEY:-}"
 BERN_API_KEY="${BERN_API_KEY:-}"
 
-# Operator identity — WHO OWNS THE RELAY. This is the trust axis: quorum
-# independence, and any claim that a quorum spans parties who cannot collude,
-# is counted from this value. Every box below is run by one operator, so they
-# all declare the SAME id. A fourteen-box single-owner fleet is one operator,
-# and saying so is what makes a future independence claim believable.
+# Operator — DELIBERATELY UNSET. This is an anonymity network.
 #
-# This previously assigned a distinct id per box (hive-foundation-utah,
-# -utah-us, -singapore, -singapore-2 ...) with a comment explaining that they
-# existed so the replica scheduler would treat the boxes as separate nodes.
-# That is the right goal and was the wrong field: it made one owner report as
-# up to fourteen operators and satisfy any minOperators floor automatically.
-# Spreading now lives in FAILURE_DOMAIN below.
-HIVE_OPERATOR="${HIVE_OPERATOR:-hive-foundation}"
+# The capability doc is unauthenticated: anything set here is served to anyone
+# who asks. Declaring an operator publishes a linkage set naming every relay
+# one party runs — precisely the correlation the Tor path, blind cells and
+# split transport exist to prevent. A named value ("hive-foundation-utah") is
+# worse still: it links the fleet to a real-world entity that can be
+# subpoenaed, pressured or blocked wholesale.
+#
+# Leaving it unset is not a gap. quorum-selector treats undeclared as
+# `__undeclared__` and never counts it toward independence, so this fleet
+# forfeits diversity credit instead of leaking identity to claim it. For a
+# single-owner fleet that credit would have been false anyway.
+#
+# If a future deployment must be countable, set an OPAQUE random token shared
+# across that operator's relays — never a name. See capability-doc.js.
+HIVE_OPERATOR="${HIVE_OPERATOR:-}"
 UTAH_OPERATOR="${UTAH_OPERATOR:-$HIVE_OPERATOR}"
 UTAH_US_OPERATOR="${UTAH_US_OPERATOR:-$HIVE_OPERATOR}"
 SINGAPORE_OPERATOR="${SINGAPORE_OPERATOR:-$HIVE_OPERATOR}"
 SINGAPORE2_OPERATOR="${SINGAPORE2_OPERATOR:-$HIVE_OPERATOR}"
 BERN_OPERATOR="${BERN_OPERATOR:-$HIVE_OPERATOR}"
 
-# Failure domain — WHAT DIES TOGETHER. This is the scheduling axis, and it is
-# per-box on purpose: losing one host should not lose every replica. Distinct
-# values here assert nothing about independence, so they are free to be as
-# granular as the topology warrants.
-UTAH_FAILURE_DOMAIN="${UTAH_FAILURE_DOMAIN:-cloudzy-utah}"
-UTAH_US_FAILURE_DOMAIN="${UTAH_US_FAILURE_DOMAIN:-cloudzy-utah-us}"
-SINGAPORE_FAILURE_DOMAIN="${SINGAPORE_FAILURE_DOMAIN:-cloudzy-singapore-1}"
-SINGAPORE2_FAILURE_DOMAIN="${SINGAPORE2_FAILURE_DOMAIN:-cloudzy-singapore-2}"
-BERN_FAILURE_DOMAIN="${BERN_FAILURE_DOMAIN:-cloudzy-bern}"
+# Failure domain — the SCHEDULING axis, and also published, so keep it opaque.
+# Clients need only inequality ("these two die together / they do not"); they
+# never need to learn the provider or the datacenter. Values are per-box
+# pseudonyms rather than "cloudzy-utah", which would leak both.
+UTAH_FAILURE_DOMAIN="${UTAH_FAILURE_DOMAIN:-fd-a1}"
+UTAH_US_FAILURE_DOMAIN="${UTAH_US_FAILURE_DOMAIN:-fd-a2}"
+SINGAPORE_FAILURE_DOMAIN="${SINGAPORE_FAILURE_DOMAIN:-fd-b1}"
+SINGAPORE2_FAILURE_DOMAIN="${SINGAPORE2_FAILURE_DOMAIN:-fd-b2}"
+BERN_FAILURE_DOMAIN="${BERN_FAILURE_DOMAIN:-fd-c1}"
 
 deploy_server() {
     local IP=$1
@@ -60,7 +64,10 @@ deploy_server() {
     local REGION=$3
     local MAX_MEM=$4  # systemd MemoryMax (e.g., 384M, 1G)
     local HEAP=$5     # Node --max-old-space-size in MB
-    local OPERATOR=${6:-hive-foundation}  # operator identifier for AutoHeal v2 sybil resistance
+    # Empty by default: unset means the relay declares no operator, which is
+    # the anonymous and conservative choice (see the header). Pass an OPAQUE
+    # token only if this deployment must be countable for quorum diversity.
+    local OPERATOR=${6:-}
     local API_KEY_OVERRIDE=${7:-}  # optional per-relay API key override
 
     # Resolve effective API key (per-relay override beats env var)
@@ -68,7 +75,7 @@ deploy_server() {
     validate_deploy_value "relay name" "$NAME" '^[A-Za-z0-9._-]{1,64}$'
     validate_deploy_value "relay IP/host" "$IP" '^[A-Za-z0-9:._-]{1,255}$'
     validate_deploy_value "relay region" "$REGION" '^[A-Za-z0-9._-]{1,32}$'
-    validate_deploy_value "relay operator" "$OPERATOR" '^[A-Za-z0-9._-]{1,64}$'
+    [ -n "$OPERATOR" ] && validate_deploy_value "relay operator" "$OPERATOR" '^[A-Za-z0-9._-]{1,64}$'
     validate_deploy_value "heap size" "$HEAP" '^[0-9]{2,6}$'
     validate_deploy_value "memory limit" "$MAX_MEM" '^[0-9]+[MG]$'
     validate_api_key "$EFFECTIVE_KEY"
@@ -153,7 +160,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/root/hiverelay
-ExecStart=/usr/bin/node --max-old-space-size=HEAP_PLACEHOLDER packages/core/cli/index.js start --mode public --region REGION_PLACEHOLDER --operator OPERATOR_PLACEHOLDER --auto-heal
+ExecStart=/usr/bin/node --max-old-space-size=HEAP_PLACEHOLDER packages/core/cli/index.js start --mode public --region REGION_PLACEHOLDER OPERATOR_FLAG_PLACEHOLDER --auto-heal
 Restart=always
 RestartSec=15
 KillSignal=SIGTERM
@@ -177,7 +184,13 @@ SYSTEMD_UNIT
         # Replace placeholders
         sed -i "s/HEAP_PLACEHOLDER/${HEAP}/" /etc/systemd/system/hiverelay.service
         sed -i "s/REGION_PLACEHOLDER/${REGION}/" /etc/systemd/system/hiverelay.service
-        sed -i "s/OPERATOR_PLACEHOLDER/${OPERATOR}/" /etc/systemd/system/hiverelay.service
+        # Substitute the whole flag, so an unset operator emits nothing at all
+        # rather than `--operator ""` (which would publish an empty identity).
+        if [ -n "${OPERATOR}" ]; then
+            sed -i "s|OPERATOR_FLAG_PLACEHOLDER|--operator ${OPERATOR}|" /etc/systemd/system/hiverelay.service
+        else
+            sed -i "s| OPERATOR_FLAG_PLACEHOLDER||" /etc/systemd/system/hiverelay.service
+        fi
         sed -i "s/MEM_PLACEHOLDER/${MAX_MEM}/" /etc/systemd/system/hiverelay.service
         sed -i "s/MEMHIGH_PLACEHOLDER/${MEMORY_HIGH}/" /etc/systemd/system/hiverelay.service
 

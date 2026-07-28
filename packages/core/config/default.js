@@ -210,10 +210,11 @@ export default {
   // 9125f3c missed: that commit set 'anonymous' in relay-node/index.js and
   // bare-relay.js, but the value here is merged in AFTER those defaults, so it
   // won. A default install was silently back on 'authenticated-user'.
-  // Who owns this relay. The TRUST axis: quorum diversity, and any claim that
-  // a quorum spans independent parties, is counted from this. Boxes under one
-  // owner must share one value even when they are in different datacenters —
-  // use failureDomain to keep them scheduled apart.
+  // Opaque same-party token. NOT a name. See capability-doc.js — declaring it
+  // publishes a linkage set for every relay you run, on an unauthenticated
+  // endpoint. Null (the default) is the anonymous and conservative choice:
+  // undeclared is never counted toward quorum independence, so you forfeit
+  // diversity credit rather than leak identity to claim it.
   operator: null,
   // Where this relay fails together. The SCHEDULING axis: distinct values make
   // the replica scheduler spread across hosts/racks/datacenters. Safe to make

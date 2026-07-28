@@ -289,3 +289,25 @@ test('an undeclared operator is unknown, not independent', async (t) => {
   t.is(selected.diversityWarning.operatorsUndeclared, true)
   t.is(desc.failureDomains.length, 3, 'they are still spread, falling back to pubkey')
 })
+
+test('an anonymous fleet forfeits diversity credit rather than leaking identity', async (t) => {
+  // This is an anonymity network, and the capability doc is unauthenticated.
+  // Declaring an operator publishes a linkage set naming every relay one party
+  // runs — the exact correlation the Tor path and blind cells exist to prevent.
+  // So the fleet declares nothing, and the selector must respond by refusing to
+  // credit independence, NOT by inventing it from relay keys.
+  const anonFleet = [
+    { pubkey: 'd1', region: 'NA', failureDomain: 'fd-a1', score: 0.9 },
+    { pubkey: 'd2', region: 'EU', failureDomain: 'fd-c1', score: 0.8 },
+    { pubkey: 'd3', region: 'APAC', failureDomain: 'fd-b1', score: 0.7 }
+  ]
+  const selected = selectQuorum(anonFleet, { strategy: 'diverse', size: 3, minRegions: 3, minOperators: 2 })
+  const desc = describeQuorum(selected)
+
+  t.is(desc.regions.length, 3, 'region diversity is real and still counted')
+  t.is(desc.failureDomains.length, 3, 'spreading still works with no operator declared')
+  t.is(desc.operators.length, 1, 'three anonymous relays are one unknown, not three operators')
+  t.is(selected.diversityWarning.reason, 'insufficient-operator-diversity')
+  t.is(selected.diversityWarning.operatorsUndeclared, true,
+    'the caller can tell "undeclared" from "declared but concentrated"')
+})

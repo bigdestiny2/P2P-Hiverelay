@@ -304,18 +304,25 @@ export function buildCapabilityDoc (opts = {}) {
   // Region — operators configure via regions[]. First entry is canonical.
   const region = (Array.isArray(config.regions) && config.regions[0]) || null
 
-  // Operator identity. Additive (schemaVersion stays 1); null when unset.
+  // Operator — an OPAQUE same-party token. Not a name, not an organisation,
+  // not anything that resolves to a legal entity.
   //
-  // Load-bearing for quorum diversity, not cosmetic. quorum-selector's
-  // selectDiverse() keys on `r.operator || r.pubkey`, so an absent operator
-  // makes every relay its own operator — and a quorum drawn from five boxes in
-  // one datacenter under one owner scores as five independent operators. The
-  // CLI has accepted --operator all along and stores it in config; it simply
-  // was never published, so no client could ever see it.
+  // Quorum safety needs one bit: "could these relays collude or be compelled
+  // together?" It never needs to know WHO. Publishing an identity instead of a
+  // token hands a passive observer a ready-made cluster of every relay one
+  // party runs, on an unauthenticated endpoint, which is the opposite of what
+  // the Tor path, blind cells and split transport exist to achieve.
   //
-  // Publishing it makes concentration VISIBLE, which will make some current
-  // quorums honestly fail their minOperators floor. That is the point: the
-  // floor was being met by an accounting artefact.
+  // DECLARING IS OPT-IN AND LEAKS A LINKAGE SET. Omitting it is the safe
+  // default: quorum-selector treats undeclared as `__undeclared__`, which is
+  // never counted toward independence, so an anonymous operator forfeits
+  // diversity credit rather than silently manufacturing it. That trade is the
+  // correct direction — a quorum that cannot prove independence should assume
+  // it has none.
+  //
+  // If you do declare, use a random token (e.g. 32 hex) shared across your own
+  // relays, and rotate it if the linkage set becomes sensitive. Never encode a
+  // hostname, provider, organisation or region here.
   const operator = (typeof config.operator === 'string' && config.operator.trim()) || null
 
   // failureDomain — the SCHEDULING axis, kept distinct from `operator`.
