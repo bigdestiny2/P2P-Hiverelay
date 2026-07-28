@@ -240,11 +240,98 @@ export async function getDriveSize (drive, opts = {}) {
   // Metadata core size — usually already known after the initial drive.update,
   // but we re-update just in case the caller hasn't done one yet.
   await updateCore(metaCore)
-  const metaBytes = (metaCore && metaCore.byteLength) || 0
 
   // Blob core size — separate update required; drive.update doesn't touch it.
   await updateCore(blobCore)
-  const blobBytes = (blobCore && blobCore.byteLength) || 0
 
-  return { totalBytes: metaBytes + blobBytes, metaBytes, blobBytes }
+  if (!opts.requireAuthoritative) {
+    const metaBytes = (metaCore && metaCore.byteLength) || 0
+    const blobBytes = (blobCore && blobCore.byteLength) || 0
+    return { totalBytes: metaBytes + blobBytes, metaBytes, blobBytes }
+  }
+
+  // ── Authoritative mode ────────────────────────────────────────────────
+  // A storage proof must describe ONE state of the drive. `length` and
+  // `byteLength` are two separate getters, so an append landing between them
+  // yields a tuple that never existed: the old byteLength paired with the new
+  // length (or vice versa). Sizing a cap or signing a proof off that tuple
+  // under-counts the drive. Read length → byteLength → length again and retry
+  // until the bracketing reads agree.
+  const metaState = readStableCoreState(metaCore)
+  const blobState = readStableCoreState(blobCore)
+
+  const result = {
+    metaBytes: metaState.byteLength,
+    blobBytes: blobState.byteLength,
+    totalBytes: metaState.byteLength + blobState.byteLength,
+    metaLength: metaState.length,
+    blobLength: blobState.length,
+    metaFork: metaState.fork,
+    blobFork: blobState.fork
+  }
+
+  if (!opts.pinSnapshots) return result
+
+  // Pinned proof: capture a snapshot session per core so the caller can read
+  // the exact bytes the proof covers. drive.version must not move across the
+  // capture — if it does, the two snapshots belong to different drive states
+  // and the proof would attest to a version that never existed.
+  const versionBefore = drive ? drive.version : undefined
+  const snapshots = []
+  try {
+    for (const core of [metaCore, blobCore]) {
+      if (core && typeof core.snapshot === 'function') {
+        const snap = core.snapshot()
+        snapshots.push(snap)
+        if (snap && typeof snap.ready === 'function') await snap.ready()
+      } else {
+        snapshots.push(null)
+      }
+    }
+    const versionAfter = drive ? drive.version : undefined
+    if (versionBefore !== versionAfter) {
+      const err = new Error(
+        `DRIVE_VERSION_CHANGED_DURING_PROOF: ${versionBefore} -> ${versionAfter}`
+      )
+      err.code = 'DRIVE_VERSION_CHANGED_DURING_PROOF'
+      throw err
+    }
+    result.driveVersion = versionAfter
+    result.metaCoreSnapshot = snapshots[0]
+    result.blobCoreSnapshot = snapshots[1]
+    return result
+  } catch (err) {
+    // Stale snapshots are ours to release — the caller never saw them.
+    for (const snap of snapshots) {
+      if (snap && typeof snap.close === 'function') {
+        try { await snap.close() } catch (_) {}
+      }
+    }
+    throw err
+  }
+}
+
+const STABLE_READ_ATTEMPTS = 8
+
+/**
+ * Read a core's (length, byteLength, fork) as one consistent tuple.
+ *
+ * Bracketing: read length, then byteLength, then length again. Matching
+ * bracket reads mean no append landed in between, so the byteLength belongs
+ * to that length. Bounded so a core appending in a tight loop fails loudly
+ * instead of spinning.
+ */
+function readStableCoreState (core) {
+  if (!core) return { length: 0, byteLength: 0, fork: 0 }
+  for (let attempt = 0; attempt < STABLE_READ_ATTEMPTS; attempt++) {
+    const lengthBefore = core.length || 0
+    const byteLength = core.byteLength || 0
+    const lengthAfter = core.length || 0
+    if (lengthBefore === lengthAfter) {
+      return { length: lengthAfter, byteLength, fork: core.fork || 0 }
+    }
+  }
+  const err = new Error('CORE_STATE_UNSTABLE: core kept appending across size reads')
+  err.code = 'CORE_STATE_UNSTABLE'
+  throw err
 }

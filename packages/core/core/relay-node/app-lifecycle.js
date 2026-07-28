@@ -17,6 +17,19 @@ import {
   normalizeStorageClass
 } from '../constants.js'
 
+function seedAdmissionTimeoutError (timeoutMs) {
+  const err = new Error(`Seed admission timed out after ${timeoutMs}ms`)
+  err.code = 'STORAGE_SEED_ADMISSION_TIMEOUT'
+  return err
+}
+
+function seedAdmissionAbortError () {
+  const err = new Error('Seed admission aborted')
+  err.name = 'AbortError'
+  err.code = 'ABORT_ERR'
+  return err
+}
+
 /**
  * AppLifecycle — owns seeding, unseeding, and manifest indexing for a RelayNode.
  *
@@ -30,6 +43,10 @@ export class AppLifecycle extends EventEmitter {
     super()
     this.node = node
     this._seedMutex = false
+    // Serialization tail for seed admission. Callers queue behind it via
+    // _queueSeedAdmission; the tail itself never rejects, so stop paths can
+    // `await lifecycle._seedTail` to know the chain has drained.
+    this._seedTail = Promise.resolve()
     // Drives whose live resources (ranges, drive, bridge) have been settled
     // but whose durable delete has not yet completed. On failure the entry is
     // restored to the registry and parked here so a retry can finish the
@@ -38,6 +55,10 @@ export class AppLifecycle extends EventEmitter {
     // Active auxiliary share-bundle fetches. unseedApp drains these before
     // releasing drive debt so a concurrent fetch cannot race with teardown.
     this._auxShareBundleResources = new Set()
+    // Drive keys whose storage lease this lifecycle already holds, so a
+    // re-entrant call (seed → evict → unseed) doesn't deadlock on the
+    // non-reentrant per-key mutation lock.
+    this._heldDriveLeases = new Set()
   }
 
   /**
@@ -46,6 +67,82 @@ export class AppLifecycle extends EventEmitter {
    */
   get seededApps () {
     return this.node.appRegistry.apps
+  }
+
+  /**
+   * Serialize a seed-admission closure behind every earlier one.
+   *
+   * Why a queue and not a spin-wait mutex: a caller that gives up (timeout)
+   * or a node that is shutting down (scope abort) must ALSO cancel the work
+   * it queued. The old `while (this._seedMutex) await sleep(50)` loop could
+   * not do that — the waiter's closure still ran when the mutex freed, so a
+   * seed that had already reported failure to its caller went on to mutate
+   * the registry and storage-admission ledger afterwards.
+   *
+   * Cancellation only applies while a closure is WAITING. Once it starts it
+   * owns the admission slot and runs to completion; aborting mid-seed would
+   * strand a half-registered drive, which is exactly what the retirement
+   * owner in unseedApp exists to avoid.
+   *
+   * @param {() => Promise<any>} run  the admission-critical closure
+   * @returns {Promise<any>} the closure's result, or a rejection with code
+   *   `STORAGE_SEED_ADMISSION_TIMEOUT` / `ABORT_ERR` if it never ran.
+   */
+  _queueSeedAdmission (run) {
+    const node = this.node || {}
+    const scope = node._scope || null
+    const signal = scope && scope.signal ? scope.signal : null
+    const configured = Number(node.config && node.config.seedAdmissionTimeoutMs)
+    const timeoutMs = Number.isFinite(configured) && configured > 0 ? configured : 0
+
+    const gate = { started: false, cancelled: false }
+    let resolveCaller = null
+    let rejectCaller = null
+    const caller = new Promise((resolve, reject) => {
+      resolveCaller = resolve
+      rejectCaller = reject
+    })
+
+    let timer = null
+    let onAbort = null
+    const disarm = () => {
+      if (timer) { clearTimeout(timer); timer = null }
+      if (onAbort && signal) { signal.removeEventListener('abort', onAbort); onAbort = null }
+    }
+    const cancel = (err) => {
+      if (gate.started || gate.cancelled) return
+      gate.cancelled = true
+      disarm()
+      rejectCaller(err)
+    }
+
+    const previous = this._seedTail || Promise.resolve()
+    this._seedTail = previous.then(async () => {
+      if (gate.cancelled) return
+      gate.started = true
+      disarm()
+      try {
+        resolveCaller(await run())
+      } catch (err) {
+        rejectCaller(err)
+      }
+    })
+
+    if (signal && signal.aborted) {
+      cancel(seedAdmissionAbortError())
+    } else {
+      // Deliberately NOT unref'd: a caller is blocked on this timeout, so the
+      // event loop must stay alive long enough to deliver it. It is cleared as
+      // soon as the closure starts or the wait is cancelled, so it can only
+      // hold the process for at most seedAdmissionTimeoutMs.
+      if (timeoutMs > 0) timer = setTimeout(() => cancel(seedAdmissionTimeoutError(timeoutMs)), timeoutMs)
+      if (signal) {
+        onAbort = () => cancel(seedAdmissionAbortError())
+        signal.addEventListener('abort', onAbort, { once: true })
+      }
+    }
+
+    return caller
   }
 
   /**
@@ -188,8 +285,24 @@ export class AppLifecycle extends EventEmitter {
 
   async seedApp (appKeyHex, opts = {}) {
     const node = this.node
+    // Recovery inventories have not sealed, so the relay does not yet know
+    // what it already owns — admitting new content here could double-count
+    // storage against a commitment the recovery pass is about to adopt.
+    // Checked before every other gate (including "seeding not enabled") so
+    // the caller gets the specific, retryable cause rather than a generic
+    // refusal that hides the fact that startup simply hasn't finished.
+    if (node._storageIngressReady === false) {
+      const err = new Error('storage recovery inventory has not sealed')
+      err.code = 'STORAGE_RECOVERY_INVENTORY_PENDING'
+      throw err
+    }
     if (!node.seeder) throw new Error('Seeding not enabled')
     if (!isValidHexKey(appKeyHex)) throw new Error('Invalid app key: must be 64 hex characters')
+    // Canonicalize before ANYTHING keys off it. AppRegistry stores lowercase,
+    // so a mixed-case caller otherwise misses the live entry, seeds a second
+    // drive for the same content, and serializes under a different
+    // storage-admission mutation key than the call it is racing.
+    appKeyHex = appKeyHex.toLowerCase()
 
     const contentType = normalizeContentType(opts.type, 'app')
     const blind = opts.blind === true
@@ -254,9 +367,97 @@ export class AppLifecycle extends EventEmitter {
     // those re-pins now via _reconcileSeedOptsOnRepin: cap-up + unanchored
     // retriggers replication; cap-down emits a warning; same/missing is
     // a no-op (matches prior behavior).
+    const mutationKey = `drive:${appKeyHex}`
+    return this._withDriveLease(appKeyHex, () => this._seedAppAdmitted(
+      appKeyHex, normalizedOpts, contentType, parentKey, mountPath, privacyTier, mutationKey
+    ))
+  }
+
+  /**
+   * Run `run` while holding this drive's per-key storage lease.
+   *
+   * The same lease is taken by seedApp, unseedApp, the PVSS auxiliary fetch,
+   * and HyperGateway's HTTP reads, so a durable retirement cannot begin while
+   * a stalled HTTP response is still reading pinned core sessions, and a new
+   * read cannot enter after retirement starts.
+   *
+   * runKeyMutation is NOT re-entrant, so a held key is tracked and re-entered
+   * directly — a seed that evicts and unseeds the same key would otherwise
+   * wait on a lock it is itself holding.
+   */
+  /**
+   * True when the registry can accept a durable write right now. Non-throwing
+   * probe used to stop storage-PRODUCING work (seed, repair) early while still
+   * allowing serve-only paths to run under a read-only physical authority.
+   */
+  _durableWritesAvailable () {
+    const registry = this.node && this.node.appRegistry
+    if (!registry || typeof registry.assertDurableWritesAvailable !== 'function') return true
+    try {
+      registry.assertDurableWritesAvailable()
+      return true
+    } catch (_) {
+      return false
+    }
+  }
+
+  _withDriveLease (appKeyHex, run, opts = {}) {
+    const admission = this.node && this.node.storageAdmission
+    if (!admission || typeof admission.runKeyMutation !== 'function') return run()
+    if (this._heldDriveLeases.has(appKeyHex)) return run()
+    // stop() retires every seeded drive AFTER the authority stops accepting
+    // mutations, and runKeyMutation fails closed in that state. Gating a
+    // retirement on it would leave shutdown unable to close its own drives.
+    // Seeds keep failing closed here — refusing new content while storage is
+    // stopping is the correct answer; refusing to release it is not.
+    if (opts.allowWhenStopping && typeof admission.mutationAdmission === 'function' &&
+        admission.mutationAdmission().allowed !== true) {
+      return run()
+    }
+    return admission.runKeyMutation(`drive:${appKeyHex}`, async () => {
+      this._heldDriveLeases.add(appKeyHex)
+      try {
+        return await run()
+      } finally {
+        this._heldDriveLeases.delete(appKeyHex)
+      }
+    })
+  }
+
+  /**
+   * seedApp's body, already serialized on this drive's storage-admission
+   * mutation key. Split out so the already-seeded fast path runs UNDER that
+   * lock: evaluating it outside lets two concurrent callers both conclude the
+   * drive needs seeding.
+   */
+  async _seedAppAdmitted (appKeyHex, normalizedOpts, contentType, parentKey, mountPath, privacyTier, mutationKey) {
+    const node = this.node
+
+    // Fail before ANY storage adoption. Seeding ends in a durable registry
+    // write, so if the physical authority cannot accept one there is no point
+    // opening a Corestore session, building a Hyperdrive, or taking a storage
+    // reservation first — each of those is a resource we would then have to
+    // unwind, and the reservation error (STORAGE_ADMISSION_BLOCKED) would
+    // mask the real cause.
+    if (node.appRegistry && typeof node.appRegistry.assertDurableWritesAvailable === 'function') {
+      node.appRegistry.assertDurableWritesAvailable()
+    }
+
     if (this.seededApps.has(appKeyHex)) {
       const existing = this.seededApps.get(appKeyHex)
       if (existing && existing.discoveryKey) {
+        // Returning alreadySeeded ACKNOWLEDGES durable state to the caller.
+        // That is only honest if the storage ledger holds a committed record
+        // for this drive. When admission cannot acknowledge, the live entry is
+        // stale relative to durable state (crash between the registry write
+        // and the ledger commit, or a fail-closed authority) — reconcile
+        // instead of reporting a success nothing durable backs.
+        if (node.storageAdmission && typeof node.storageAdmission.canAcknowledge === 'function' &&
+            !node.storageAdmission.canAcknowledge(mutationKey)) {
+          const err = new Error('seeded drive storage authority requires reconciliation')
+          err.code = 'STORAGE_RECONCILIATION_REQUIRED'
+          throw err
+        }
         const dkHex = typeof existing.discoveryKey === 'string'
           ? existing.discoveryKey
           : b4a.toString(existing.discoveryKey, 'hex')
@@ -272,16 +473,17 @@ export class AppLifecycle extends EventEmitter {
       // else: placeholder entry from load() — fall through to seed properly.
     }
 
-    // Acquire seed mutex to prevent concurrent eviction races
-    while (this._seedMutex) {
-      await new Promise(resolve => setTimeout(resolve, 50))
-    }
-    this._seedMutex = true
-    try {
-      return await this._seedAppInner(appKeyHex, normalizedOpts, contentType, parentKey, mountPath, privacyTier)
-    } finally {
-      this._seedMutex = false
-    }
+    // Serialize against concurrent eviction races. Queued (not yet started)
+    // admissions are cancellable by shutdown or by seedAdmissionTimeoutMs, so
+    // a caller that has already been told "no" never mutates state later.
+    return this._queueSeedAdmission(async () => {
+      this._seedMutex = true
+      try {
+        return await this._seedAppInner(appKeyHex, normalizedOpts, contentType, parentKey, mountPath, privacyTier)
+      } finally {
+        this._seedMutex = false
+      }
+    })
   }
 
   async _seedAppInner (appKeyHex, opts, contentType, parentKey, mountPath, privacyTier) {
@@ -314,6 +516,7 @@ export class AppLifecycle extends EventEmitter {
     const admissionCap = Number.isFinite(opts.maxStorage) && opts.maxStorage > 0
       ? Math.floor(opts.maxStorage)
       : null
+    let admissionReservation = null
     if (node.storageAdmission && typeof node.storageAdmission.reserve === 'function' && admissionCap !== null) {
       const reservation = node.storageAdmission.reserve(`drive:${appKeyHex}`, admissionCap)
       if (!reservation || reservation.allowed !== true) {
@@ -322,53 +525,61 @@ export class AppLifecycle extends EventEmitter {
         err.storageAdmission = reservation
         throw err
       }
-      // Commit on successful seed (after drive creation); for now track it.
-      this._pendingAdmission = reservation
+      // Held in the `reserved` state until the drive exists AND its registry
+      // entry is durably persisted, then committed below. EVERY exit path
+      // between here and that commit must roll it back, so the eviction check
+      // and the Hyperdrive construction moved inside the try below — both can
+      // throw, and a reservation abandoned in `reserved` state is not merely a
+      // leaked byte count: reserve() rejects the next attempt on this key with
+      // `storage-reservation-in-progress` and canAcknowledge() stays false, so
+      // the drive can never be re-seeded, re-pinned, or acknowledged again.
+      admissionReservation = reservation
     }
 
-    // Evict oldest app if storage capacity would be exceeded
-    if (node.config.enableEviction !== false && node.seeder && node.seeder.totalBytesStored >= node.config.maxStorageBytes && this.seededApps.size > 0) {
-      const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000
-      let oldestKey = null
-      let oldestTime = Infinity
+    let drive = null
+    try {
+      // Evict oldest app if storage capacity would be exceeded
+      if (node.config.enableEviction !== false && node.seeder && node.seeder.totalBytesStored >= node.config.maxStorageBytes && this.seededApps.size > 0) {
+        const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000
+        let oldestKey = null
+        let oldestTime = Infinity
 
-      for (const [appKey, entry] of this.seededApps) {
-        if (entry.startedAt < oldestTime) {
-          oldestTime = entry.startedAt
-          oldestKey = appKey
+        for (const [appKey, entry] of this.seededApps) {
+          if (entry.startedAt < oldestTime) {
+            oldestTime = entry.startedAt
+            oldestKey = appKey
+          }
+        }
+
+        const shouldEvict = oldestKey && (
+          (opts.replicationFactor && opts.replicationFactor > (this.seededApps.get(oldestKey)?.replicationFactor || 1)) ||
+          (Date.now() - oldestTime > TWENTY_FOUR_HOURS)
+        )
+
+        if (shouldEvict) {
+          await node._evictOldestApp()
+        } else {
+          throw new Error('Storage capacity exceeded and no eligible app to evict')
         }
       }
 
-      const shouldEvict = oldestKey && (
-        (opts.replicationFactor && opts.replicationFactor > (this.seededApps.get(oldestKey)?.replicationFactor || 1)) ||
-        (Date.now() - oldestTime > TWENTY_FOUR_HOURS)
-      )
+      const publisherPubkey = opts.publisherPubkey
+        ? (typeof opts.publisherPubkey === 'string'
+            ? opts.publisherPubkey
+            : b4a.toString(opts.publisherPubkey, 'hex'))
+        : null
 
-      if (shouldEvict) {
-        await node._evictOldestApp()
-      } else {
-        throw new Error('Storage capacity exceeded and no eligible app to evict')
-      }
-    }
+      const appKey = b4a.from(appKeyHex, 'hex')
+      // Use a per-app corestore session so drive.close() does NOT propagate to
+      // the shared root store. A session shares the same key-addressed hypercore
+      // objects (same _root.cores map, same key derivation for explicit keys) but
+      // its _close() only tears down this session's refs — the root store stays
+      // open for all other seeded drives. Without this, any unseed path (custody
+      // expiry, eviction, manual unseed) would call corestore.close() on the root
+      // store and wedge the entire relay until systemd restarted the process.
+      // See: .planning/debug/CAPTURED-TRACE-2026-05-18.md (root cause confirmed).
+      drive = new Hyperdrive(node.store.session(), appKey)
 
-    const publisherPubkey = opts.publisherPubkey
-      ? (typeof opts.publisherPubkey === 'string'
-          ? opts.publisherPubkey
-          : b4a.toString(opts.publisherPubkey, 'hex'))
-      : null
-
-    const appKey = b4a.from(appKeyHex, 'hex')
-    // Use a per-app corestore session so drive.close() does NOT propagate to
-    // the shared root store. A session shares the same key-addressed hypercore
-    // objects (same _root.cores map, same key derivation for explicit keys) but
-    // its _close() only tears down this session's refs — the root store stays
-    // open for all other seeded drives. Without this, any unseed path (custody
-    // expiry, eviction, manual unseed) would call corestore.close() on the root
-    // store and wedge the entire relay until systemd restarted the process.
-    // See: .planning/debug/CAPTURED-TRACE-2026-05-18.md (root cause confirmed).
-    const drive = new Hyperdrive(node.store.session(), appKey)
-
-    try {
       // 2026-05-24: hard timeout on drive.ready(). On a drive whose
       // underlying hypercore is in a bad state (corrupted index, hung
       // session, etc.), ready() can hang indefinitely — and because
@@ -446,6 +657,11 @@ export class AppLifecycle extends EventEmitter {
         ? Math.floor(opts.maxStorage)
         : null
 
+      // Captured before the write so a failed durable persist can restore the
+      // exact pre-seed view (usually the null-discoveryKey placeholder that
+      // load() created), rather than leaving a half-seeded entry behind.
+      const previousEntry = node.appRegistry.get(appKeyHex) || null
+
       node.appRegistry.set(appKeyHex, {
         drive,
         discoveryKey,
@@ -475,7 +691,38 @@ export class AppLifecycle extends EventEmitter {
         unseedFreezeMs,
         durability,
         maxStorage
-      })
+      }, { persist: false })
+
+      // Durability gate: persist EXPLICITLY and await it before reporting the
+      // seed as successful. AppRegistry.set() persists fire-and-forget, so a
+      // failed durable write used to be swallowed — seedApp returned a
+      // discoveryKey, the drive served traffic, and the entry simply was not
+      // there after the next restart. On failure, restore the pre-seed view
+      // and rethrow; the enclosing catch closes the drive.
+      if (typeof node.appRegistry.persistEntry === 'function') {
+        try {
+          await node.appRegistry.persistEntry(appKeyHex, { throwOnError: true })
+        } catch (err) {
+          if (previousEntry) node.appRegistry.set(appKeyHex, previousEntry, { persist: false })
+          else node.appRegistry.delete(appKeyHex, { persist: false })
+          throw err
+        }
+      }
+
+      // Durable state now exists for this drive, so the reservation becomes a
+      // committed commitment. Ordered AFTER persistEntry for the same reason
+      // _reconcileSeedOptsOnRepin commits last: a crash between the persist and
+      // the commit leaves a durable entry that startup re-adopts via
+      // adoptRecovery(), whereas committing first would leave a commitment in
+      // the ledger with no durable entry backing it.
+      //
+      // owns() guards the commit because commit() on a token this authority no
+      // longer holds trips failClosed() and wedges the whole relay.
+      if (admissionReservation && typeof node.storageAdmission.owns === 'function' &&
+          node.storageAdmission.owns(admissionReservation)) {
+        node.storageAdmission.commit(admissionReservation)
+        admissionReservation = null
+      }
 
       // 2026-05-23: register persistent download ranges on the drive's
       // cores so they actively pull missing blocks from any peer that
@@ -510,9 +757,36 @@ export class AppLifecycle extends EventEmitter {
       this.emit('seeding', { appKey: appKeyHex, discoveryKey: b4a.toString(discoveryKey, 'hex') })
       return { discoveryKey: b4a.toString(discoveryKey, 'hex') }
     } catch (err) {
-      try { await drive.close() } catch (_) {}
+      // Drive first (it may not exist yet — the eviction check and the
+      // Hyperdrive constructor both throw with `drive` still null), then undo
+      // the admission reservation so a failed seed leaves the ledger exactly as
+      // it found it.
+      if (drive) { try { await drive.close() } catch (_) {} }
+      this._rollbackSeedAdmission(admissionReservation)
       throw err
     }
+  }
+
+  /**
+   * Undo a still-reserved drive admission from _seedAppInner's failure paths.
+   *
+   * rollback() — not release() — is reserve()'s counterpart. rollback restores
+   * the token's `previous` record, which on the reseed-a-placeholder path is
+   * the adoptRecovery() commitment made for this drive at startup. release()
+   * would delete that record outright, dropping a durable commitment from the
+   * ledger and understating the relay's storage debt by the drive's whole cap.
+   *
+   * owns() guards the call so a reservation that was already committed (or
+   * superseded by another holder) is left alone rather than clobbered.
+   */
+  _rollbackSeedAdmission (reservation) {
+    const node = this.node
+    if (!reservation || !node || !node.storageAdmission) return
+    const authority = node.storageAdmission
+    if (typeof authority.rollback !== 'function' || typeof authority.owns !== 'function') return
+    try {
+      if (authority.owns(reservation)) authority.rollback(reservation)
+    } catch (_) {}
   }
 
   /**
@@ -934,10 +1208,61 @@ export class AppLifecycle extends EventEmitter {
     return { ok: true, changed: true, incrementalBytes, replicationStarted: true }
   }
   /**
+   * Read /manifest.json for indexing.
+   *
+   * With a storage proof, the read is taken from a checkout pinned to the
+   * proven drive version and is strictly LOCAL (`wait: false`). Two reasons:
+   *
+   *  - Honesty: the metadata we index must be the bytes the proof covers. A
+   *    live `drive.get()` can resolve against a newer version — or a forked
+   *    chain — so the registry would advertise a version nobody proved.
+   *  - Leak: the old read raced `drive.get()` against a 5s timer. Losing the
+   *    race rejected the caller but left the get outstanding, so a timed-out
+   *    manifest lookup kept an in-flight network request alive against a
+   *    drive the caller had already given up on.
+   *
+   * The checkout is always closed, including on the mismatch and error paths.
+   * Without a proof this falls back to the legacy timed live read.
+   */
+  async _readPinnedManifest (drive, proof) {
+    if (!proof || typeof drive.checkout !== 'function') {
+      return Promise.race([
+        drive.get('/manifest.json'),
+        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('manifest timeout')), 5000))
+      ])
+    }
+
+    let checkout = null
+    try {
+      checkout = drive.checkout(proof.driveVersion)
+      if (!checkout) return null
+      if (typeof checkout.ready === 'function') await checkout.ready()
+
+      // Fork/length stability: the checkout must be the exact metadata-core
+      // state the proof covers. A fork swap between proving and reading would
+      // otherwise authorize indexing bytes from a different chain.
+      const snapshot = proof.metaCoreSnapshot
+      const core = checkout.db && checkout.db.core
+      if (snapshot && core) {
+        if (Number(core.fork ?? 0) !== Number(snapshot.fork ?? 0) ||
+            Number(core.length ?? -1) !== Number(snapshot.length ?? -2)) {
+          return null
+        }
+      }
+
+      return await checkout.get('/manifest.json', { wait: false })
+    } finally {
+      if (checkout && typeof checkout.close === 'function') {
+        try { await checkout.close() } catch (_) {}
+      }
+    }
+  }
+
+  /**
    * Read manifest.json from a drive and deduplicate by appId.
    * If an older version of the same app is already seeded, unseed it.
    */
-  async _indexAppManifest (appKeyHex, drive) {
+  async _indexAppManifest (appKeyHex, drive, proof = null) {
     const node = this.node
     // Blind drives: publisher's privacy contract says "do not inspect."
     // We don't open /manifest.json, don't persist any manifest-derived
@@ -953,10 +1278,7 @@ export class AppLifecycle extends EventEmitter {
     if (existingForBlindCheck && existingForBlindCheck.blind === true) return
 
     try {
-      const manifestBuf = await Promise.race([
-        drive.get('/manifest.json'),
-        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('manifest timeout')), 5000))
-      ])
+      const manifestBuf = await this._readPinnedManifest(drive, proof)
       if (!manifestBuf) return
 
       const manifest = JSON.parse(manifestBuf.toString())
@@ -1049,6 +1371,10 @@ export class AppLifecycle extends EventEmitter {
   async repairUnanchored (appKeyHex, opts = {}) {
     const node = this.node
     if (!node.appRegistry) return false
+    // Repair pulls blocks and re-anchors — both storage-producing. Under a
+    // read-only physical authority the relay may still SERVE what it holds,
+    // but it must not grow. Stop before drive.update()/download().
+    if (!this._durableWritesAvailable()) return false
     const entry = node.appRegistry.get(appKeyHex)
     if (!entry || !entry.drive) return false
     if (entry.anchored === true) return true // already anchored, nothing to do
@@ -1236,6 +1562,7 @@ export class AppLifecycle extends EventEmitter {
   async runRepairPass (opts = {}) {
     const node = this.node
     if (!node.appRegistry) return { checked: 0, repaired: 0, stillUnanchored: 0 }
+    if (!this._durableWritesAvailable()) return { checked: 0, repaired: 0, stillUnanchored: 0 }
     const scope = node && node._scope
     if (scope && scope.aborted) return { checked: 0, repaired: 0, stillUnanchored: 0 }
 
@@ -1289,11 +1616,75 @@ export class AppLifecycle extends EventEmitter {
     if (pending.length > 0) await Promise.allSettled(pending)
   }
 
+  /**
+   * Ordered, retry-safe teardown of one auxiliary share-bundle resource.
+   *
+   * Order matters and is the inverse of acquisition: stop new replication
+   * (listener) → stop discovery → stop the download tracker → close the
+   * snapshot session → close the core → close a store we own. Closing the
+   * core before its snapshot session, or the store before its cores, throws
+   * SESSION_CLOSED / "Mutex has been destroyed" out of teardown.
+   *
+   * Each step records its own settled flag, so a step that rejects leaves
+   * every DOWNSTREAM owner untouched and the resource parked in
+   * _auxShareBundleResources for a retry — the same ownership discipline
+   * unseedApp uses for drive retirement. The error propagates; callers that
+   * must not fail (best-effort cleanup) catch it themselves.
+   */
   async _releaseAuxShareBundleResource (resource) {
     if (!resource) return
+    const node = this.node || {}
+
+    if (!resource.listenerSettled) {
+      const swarm = node.swarm
+      if (resource.onConnection && swarm && typeof swarm.removeListener === 'function') {
+        swarm.removeListener('connection', resource.onConnection)
+      }
+      resource.listenerSettled = true
+    }
+
+    if (!resource.discoverySettled) {
+      if (resource.discovery && typeof resource.discovery.destroy === 'function') {
+        await resource.discovery.destroy()
+      } else if (resource.core && node.swarm && typeof node.swarm.leave === 'function') {
+        await node.swarm.leave(resource.core.discoveryKey)
+      }
+      resource.discoverySettled = true
+    }
+
+    if (!resource.trackerSettled) {
+      if (resource.tracker && typeof resource.tracker.destroy === 'function') {
+        resource.tracker.destroy()
+      }
+      resource.trackerSettled = true
+    }
+
+    if (!resource.snapshotSettled) {
+      if (resource.snapshotCore && typeof resource.snapshotCore.close === 'function') {
+        await resource.snapshotCore.close()
+      }
+      resource.snapshotSettled = true
+    }
+
+    if (!resource.coreSettled) {
+      if (resource.core && typeof resource.core.close === 'function') {
+        await resource.core.close()
+      }
+      resource.coreSettled = true
+    }
+
+    if (!resource.storeSettled) {
+      // Only close a store this read OWNS. When _readShareBundle falls back to
+      // node.store the corestore belongs to the node — closing it here would
+      // tear down every drive on the relay.
+      if (resource.auxStore && resource.auxStore !== node.store &&
+          typeof resource.auxStore.close === 'function') {
+        await resource.auxStore.close()
+      }
+      resource.storeSettled = true
+    }
+
     this._auxShareBundleResources.delete(resource)
-    try { if (resource.tracker && typeof resource.tracker.destroy === 'function') resource.tracker.destroy() } catch (_) {}
-    try { if (resource.snapshotCore && typeof resource.snapshotCore.close === 'function') await resource.snapshotCore.close() } catch (_) {}
   }
 
   async _readShareBundle (shareBundleKey, opts = {}) {
@@ -1313,6 +1704,7 @@ export class AppLifecycle extends EventEmitter {
     let auxStore = null
     let discovery = null
     let onConnection = null
+    let ownedResource = null
     try {
       if (typeof opts.createAuxStore === 'function') {
         auxStore = await opts.createAuxStore()
@@ -1327,15 +1719,12 @@ export class AppLifecycle extends EventEmitter {
         try { auxStore.replicate(conn) } catch (_) {}
       }
       if (typeof node.swarm.on === 'function') node.swarm.on('connection', onConnection)
-      core = auxStore.get({ key: b4a.from(shareBundleKey, 'hex') })
-      await core.ready()
-      discovery = node.swarm.join(core.discoveryKey, { server: false, client: true })
-      if (discovery && typeof discovery.flushed === 'function') {
-        await Promise.race([
-          discovery.flushed().catch(() => {}),
-          new Promise(resolve => { const tmr = setTimeout(resolve, Math.min(timeoutMs, 5_000)); if (typeof tmr.unref === 'function') tmr.unref() })
-        ])
-      }
+      // Exactly one core session + one topic join per read. This block was
+      // duplicated verbatim by the da70b0f restore: the second acquisition
+      // overwrote `core`/`discovery` with the first pair still open, so every
+      // read leaked one core session and one PeerDiscovery join (neither is
+      // reachable from the teardown resource, which only ever saw the second
+      // pair) and paid the flush race twice.
       core = auxStore.get({ key: b4a.from(shareBundleKey, 'hex') })
       await core.ready()
       discovery = node.swarm.join(core.discoveryKey, { server: false, client: true })
@@ -1355,7 +1744,7 @@ export class AppLifecycle extends EventEmitter {
       // flight.
       let resolveSettled
       const operationSettled = new Promise(resolve => { resolveSettled = resolve })
-      const ownedResource = { appKey, core, snapshotCore: null, tracker: null, auxStore, discovery, onConnection, operationSettled }
+      ownedResource = { appKey, core, snapshotCore: null, tracker: null, auxStore, discovery, onConnection, operationSettled }
       this._auxShareBundleResources.add(ownedResource)
       try {
         if (typeof core.update === 'function') {
@@ -1405,20 +1794,17 @@ export class AppLifecycle extends EventEmitter {
     } catch (_) {
       return null
     } finally {
-      if (onConnection && typeof node.swarm.removeListener === 'function') {
-        try { node.swarm.removeListener('connection', onConnection) } catch (_) {}
-      }
-      if (discovery && typeof discovery.destroy === 'function') {
-        try { await discovery.destroy() } catch (_) {}
-      } else if (core) {
-        try { await node.swarm.leave(core.discoveryKey) } catch (_) {}
-      }
-      if (core) {
-        try { await core.close() } catch (_) {}
-      }
-      if (auxStore && auxStore !== node.store && typeof auxStore.close === 'function') {
-        try { await auxStore.close() } catch (_) {}
-      }
+      // Single ordered teardown. Previously this block open-coded the release
+      // and did NOT close the snapshot session or destroy the download
+      // tracker — _releaseAuxShareBundleResource was the only code that did,
+      // and nothing called it. Every snapshot-path share-bundle read therefore
+      // leaked a core session and a download tracker.
+      //
+      // The synthetic fallback covers the early `return null` paths that bail
+      // before the tracked resource exists but after cores/discovery are open.
+      const resource = ownedResource ||
+        { appKey, core, snapshotCore: null, tracker: null, auxStore, discovery, onConnection }
+      try { await this._releaseAuxShareBundleResource(resource) } catch (_) {}
     }
   }
 
@@ -1506,6 +1892,15 @@ export class AppLifecycle extends EventEmitter {
     if (!owner) {
       const entry = node.appRegistry.get(appKeyHex)
       if (!entry) return
+      // A forget retirement ENDS in a durable delete, and that delete hits
+      // memory first. If the durable write then fails we restore the entry —
+      // but the restore is itself a registry write, so under an unavailable
+      // physical authority it fails too and the drive vanishes from the
+      // registry entirely. Refuse before the first mutation instead of
+      // discovering it half-way through teardown.
+      if (opts.forget !== false && typeof node.appRegistry.assertDurableWritesAvailable === 'function') {
+        node.appRegistry.assertDurableWritesAvailable()
+      }
       entry.retiring = true
       owner = {
         appKey: appKeyHex,
@@ -1513,25 +1908,85 @@ export class AppLifecycle extends EventEmitter {
         forget: opts.forget !== false,
         bridgeRegistered: !!node.distributedDriveBridge,
         rangesSettled: false,
-        driveSettled: false
+        snapshotCoresSettled: false,
+        discoverySettled: false,
+        driveSettled: false,
+        commitmentReleased: false,
+        completed: false,
+        inflight: null
       }
       this._retiringDrives.set(appKeyHex, owner)
     } else {
       if (opts.forget !== undefined) owner.forget = opts.forget !== false
     }
 
-    // Phase 1: Settle live resources (download ranges → bridge → drive).
-    // Ordered so the durable delete (Phase 2) cannot race with in-flight
-    // replication or bridge lookups. Only runs once — on retry these are
-    // already null.
+    // Coalesce concurrent retirements of the same drive onto ONE owner. A
+    // second caller (e.g. an eviction upgrading a shutdown to a forget) must
+    // not re-close resources the first caller already has in flight — it
+    // chains behind it instead. Its intent is applied above, so a forget
+    // arriving mid-shutdown is still honoured by the in-flight pass.
+    const previous = owner.inflight || Promise.resolve()
+    const run = previous.catch(() => {})
+      .then(() => this._withDriveLease(appKeyHex, () => this._retireDrive(owner), { allowWhenStopping: true }))
+    owner.inflight = run.catch(() => {})
+    return run
+  }
+
+  /**
+   * Idempotent drive retirement. Every step records a settled flag on the
+   * owner, so a rejection parks the owner in _retiringDrives with all
+   * DOWNSTREAM owners intact and a retry resumes exactly where it stopped.
+   */
+  async _retireDrive (owner) {
+    if (owner.completed) return
+    const node = this.node
+    const appKeyHex = owner.appKey
+
+    // Phase 1: Settle live resources, inverse of acquisition — stop pulling
+    // bytes (ranges → proof snapshots), stop being findable (discovery),
+    // stop bridging, then close the drive. Ordered so the durable delete
+    // (Phase 2) cannot race with in-flight replication or bridge lookups.
+    // A step that throws leaves everything after it untouched for the retry.
     if (!owner.rangesSettled) {
-      if (Array.isArray(owner.entry.downloadRanges)) {
-        for (const dl of owner.entry.downloadRanges) {
-          try { if (dl && typeof dl.destroy === 'function') dl.destroy() } catch (_) {}
+      const ranges = owner.entry.downloadRanges
+      if (Array.isArray(ranges)) {
+        while (ranges.length > 0) {
+          const dl = ranges[0]
+          if (dl && typeof dl.destroy === 'function') dl.destroy()
+          ranges.shift()
         }
         owner.entry.downloadRanges = null
       }
       owner.rangesSettled = true
+    }
+
+    if (!owner.snapshotCoresSettled) {
+      const cores = owner.entry.downloadSnapshotCores
+      if (Array.isArray(cores)) {
+        while (cores.length > 0) {
+          const core = cores[0]
+          if (core && typeof core.close === 'function') await core.close()
+          cores.shift()
+        }
+        owner.entry.downloadSnapshotCores = null
+      }
+      owner.snapshotCoresSettled = true
+    }
+
+    // Destroy the exact PeerDiscovery handles this drive owns, rather than
+    // leaving the topic by key: swarm.leave(discoveryKey) cannot distinguish
+    // this drive's join from another subsystem's join on the same topic. A
+    // handle that fails to destroy is retained by identity for the retry.
+    if (!owner.discoverySettled) {
+      const handles = owner.entry.discoveryHandles
+      if (handles && typeof handles.delete === 'function') {
+        for (const handle of [...handles]) {
+          if (handle && typeof handle.destroy === 'function') await handle.destroy()
+          handles.delete(handle)
+        }
+        owner.entry.discoveryHandles = null
+      }
+      owner.discoverySettled = true
     }
 
     if (owner.bridgeRegistered && node.distributedDriveBridge) {
@@ -1574,10 +2029,13 @@ export class AppLifecycle extends EventEmitter {
     // Phase 3: Complete — the durable delete succeeded, so leave the swarm
     // and release the storage admission commitment.
     try { if (node.swarm && typeof node.swarm.leave === 'function') await node.swarm.leave(owner.entry.discoveryKey) } catch (_) {}
-    if (owner.forget && node.storageAdmission && typeof node.storageAdmission.release === 'function') {
+    if (owner.forget && !owner.commitmentReleased &&
+        node.storageAdmission && typeof node.storageAdmission.release === 'function') {
       try { node.storageAdmission.release(`drive:${appKeyHex}`) } catch (_) {}
+      owner.commitmentReleased = true
     }
 
+    owner.completed = true
     owner.entry.retiring = false
     this._retiringDrives.delete(appKeyHex)
     this._safeEmit('unseeded', { appKey: appKeyHex })

@@ -182,6 +182,11 @@ export function buildCapabilityDoc (opts = {}) {
   if (relay && relay.dhtRelayWs && relay.dhtRelayWs.running) transports.push('dht-relay-ws')
   if (relay && relay.torTransport && relay.torTransport.running) transports.push('tor')
   if (relay && relay.holesailTransport) transports.push('holesail')
+  // Opt-in forward transport (`config.forwardRelay.enabled`). Without this the
+  // client-side path resolver can never select PATH_FORWARD_RELAY — it gates on
+  // supported_transports containing 'hiverelay-forward' — so the shipped
+  // source-ip-hidden / hidden-1hop privacy tier was unreachable end to end.
+  if (relay && relay.forwardRelay && relay.forwardRelay.enabled) transports.push('hiverelay-forward')
 
   // Federation — snapshot is a pure read, no I/O.
   let federation = null

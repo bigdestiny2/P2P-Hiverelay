@@ -779,6 +779,14 @@ export class RelayNode extends EventEmitter {
     return this.appLifecycle.seededApps
   }
 
+  // Public read-only view of the opt-in forward transport, so the capability
+  // doc can advertise `hiverelay-forward` the same way it advertises tor /
+  // dht-relay-ws / holesail. The backing field stays `_forwardRelay` because
+  // the shutdown paths destroy protocol handlers by that key name.
+  get forwardRelay () {
+    return this._forwardRelay || null
+  }
+
   /**
    * Register a fire-and-forget promise with the active LifecycleScope so
    * stop() drains it before tearing down state. Used by all the

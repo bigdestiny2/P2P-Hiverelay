@@ -553,3 +553,58 @@ test('_readShareBundle: active auxiliary fetch drains before concurrent unseed r
   t.ok(events.indexOf('range-destroy') < events.indexOf('authority-release'))
   t.ok(events.indexOf('drive-close') < events.indexOf('authority-release'))
 })
+
+test('_readShareBundle: acquires exactly one core session and one topic join per read', async (t) => {
+  // The da70b0f restore duplicated the acquire-core + join-topic block verbatim.
+  // Both copies ran, the second overwrote `core`/`discovery`, and only that
+  // second pair reached teardown — so each read stranded one core session and
+  // one PeerDiscovery join. The harnesses above cannot see it: they hand back
+  // one shared core object and discard the join handle. Count both here.
+  let sessions = 0
+  let joins = 0
+  let closes = 0
+  let destroys = 0
+
+  const newCore = () => ({
+    key: b4a.alloc(32, 9),
+    discoveryKey: b4a.alloc(32, 10),
+    fork: 0,
+    length: 1,
+    byteLength: 16,
+    async ready () {},
+    async update () { return true },
+    async get () { return b4a.from('{"ok":true}') },
+    async close () { closes++ }
+  })
+
+  const node = {
+    swarm: {
+      join () { joins++; return { async flushed () {}, async destroy () { destroys++ } } },
+      async leave () {},
+      on () {},
+      removeListener () {}
+    },
+    storageAdmission: {
+      mutationAdmission: () => ({ allowed: true }),
+      canAcknowledge: () => true
+    }
+  }
+
+  const lifecycle = new AppLifecycle(node)
+  const result = await lifecycle._readShareBundle('d'.repeat(64), {
+    appKey: 'c'.repeat(64),
+    timeoutMs: 100,
+    createAuxStore: async () => ({
+      async ready () {},
+      get () { sessions++; return newCore() },
+      replicate () {},
+      async close () {}
+    })
+  })
+
+  t.alike(result, { ok: true }, 'the bundle still parses')
+  t.is(sessions, 1, 'one core session per read')
+  t.is(joins, 1, 'one topic join per read')
+  t.is(closes, 1, 'the single session is closed — no orphan left behind')
+  t.is(destroys, 1, 'the single discovery is destroyed — no orphan join left behind')
+})

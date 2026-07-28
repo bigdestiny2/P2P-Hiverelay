@@ -458,7 +458,11 @@ export class HyperGateway extends EventEmitter {
         return await this.node.storageAdmission.runKeyMutation(`drive:${keyHex}`, async () => {
           req[TRACKED_GATEWAY_STORAGE_LEASE] = true
           try {
-            return await this.handle(req, res)
+            // Forward `context`. Dropping it here silently disabled the
+            // per-window egress byte budget (reserveResponseBytes) and the
+            // X-Hive-App-Key / X-Hive-Byte-Mode headers for every exact
+            // app-origin response, because the re-entrant call saw context=null.
+            return await this.handle(req, res, context)
           } finally {
             delete req[TRACKED_GATEWAY_STORAGE_LEASE]
           }
@@ -551,7 +555,11 @@ export class HyperGateway extends EventEmitter {
       // caller-supplied egress budget BEFORE headers so a body-bearing
       // response cannot exceed the per-window byte cap. HEAD is body-free
       // and does not consume the budget.
-      if (!isHead && typeof context.reserveResponseBytes === 'function' &&
+      // `context` is null on the key-path route (gateway-server serves
+      // /v1/hyper/:key with no exact-app context), so this must null-guard —
+      // without it every non-HEAD file GET on the public read plane threw
+      // "Cannot read properties of null" and returned 502.
+      if (!isHead && context && typeof context.reserveResponseBytes === 'function' &&
           context.reserveResponseBytes(byteLength) !== true) {
         const retryAfter = Math.ceil((context.egressRetryAfterSeconds || 60))
         // A rate-limited response is gateway-generated (not an exact drive

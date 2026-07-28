@@ -412,3 +412,89 @@ test('AppLifecycle: queued seed admission times out or aborts without later exec
     t.is(runs, 1, `${mode}: cancelled queued closure never runs later`)
   }
 })
+
+async function admissionNode (t) {
+  const storage = tmpStorage()
+  await mkdir(storage, { recursive: true })
+  const node = new RelayNode({
+    storage,
+    enableAPI: false,
+    enableNetworkDiscovery: false,
+    enableHolesail: false,
+    physicalEnforcer: testPhysicalEnforcer(storage)
+  })
+  t.teardown(async () => {
+    try { await node.stop() } catch (_) {}
+    try { await node.store.close() } catch (_) {}
+    await rm(storage, { recursive: true, force: true })
+  })
+  await node.start()
+  return node
+}
+
+test('AppLifecycle: successful seed commits its storage admission reservation', async (t) => {
+  const node = await admissionNode(t)
+  const appKey = randomBytes(32).toString('hex')
+  const cap = 1024 * 1024
+
+  await node.seedApp(appKey, { maxStorage: cap })
+
+  const record = node.storageAdmission.get(`drive:${appKey}`)
+  t.is(record.state, 'committed', 'seed commits the reservation instead of abandoning it in `reserved`')
+  t.is(record.boundBytes, cap, 'the committed bound is the requested cap')
+  t.ok(node.storageAdmission.canAcknowledge(`drive:${appKey}`), 'the drive can be acknowledged from durable state')
+
+  // An abandoned `reserved` record makes canAcknowledge() false, which turns
+  // every re-pin into STORAGE_RECONCILIATION_REQUIRED.
+  const repin = await node.seedApp(appKey, { maxStorage: cap })
+  t.ok(repin.alreadySeeded, 're-pin ACKs from the committed ledger record')
+
+  // ...and makes reserve() fail with `storage-reservation-in-progress`, which
+  // surfaces as STORAGE_CAP_REPIN_BLOCKED on any cap raise.
+  await node.seedApp(appKey, { maxStorage: cap * 2 })
+  t.is(node.storageAdmission.get(`drive:${appKey}`).boundBytes, cap * 2, 'a later cap raise can still reserve this key')
+  t.absent(node.storageAdmission.fatalReason, 'no invariant violation was tripped')
+})
+
+test('AppLifecycle: failed seed rolls its reservation back to the adopted commitment', async (t) => {
+  const node = await admissionNode(t)
+  const appKey = randomBytes(32).toString('hex')
+  const cap = 1024 * 1024
+
+  node.appRegistry.set(appKey, { discoveryKey: null, maxStorage: cap, type: 'app' }, { persist: false })
+  const adopted = node.storageAdmission.adoptRecovery(`drive:${appKey}`, cap, { kind: 'drive' })
+
+  const persistEntry = node.appRegistry.persistEntry.bind(node.appRegistry)
+  node.appRegistry.persistEntry = async () => { throw new Error('disk full') }
+
+  await t.exception(node.seedApp(appKey, { maxStorage: cap }), /disk full/)
+
+  // rollback() restores the startup adoptRecovery() commitment. release() would
+  // have deleted it, silently dropping this drive's durable debt from the ledger.
+  t.alike(node.storageAdmission.get(`drive:${appKey}`), adopted, 'the failed seed restores the adopted commitment exactly')
+  t.ok(node.storageAdmission.canAcknowledge(`drive:${appKey}`), 'the recovered drive is still acknowledgeable')
+
+  node.appRegistry.persistEntry = persistEntry
+  const retry = await node.seedApp(appKey, { maxStorage: cap })
+  t.ok(retry.discoveryKey, 'a failed seed does not wedge the key in `reserved` against every retry')
+  t.is(node.storageAdmission.get(`drive:${appKey}`).state, 'committed')
+  t.absent(node.storageAdmission.fatalReason)
+})
+
+test('AppLifecycle: seed failure before the drive exists still rolls the reservation back', async (t) => {
+  const node = await admissionNode(t)
+  const appKey = randomBytes(32).toString('hex')
+
+  // Throws from the Hyperdrive construction — earlier than the drive-close
+  // catch that used to be _seedAppInner's only failure handler.
+  const session = node.store.session.bind(node.store)
+  node.store.session = () => { throw new Error('store wedged') }
+
+  await t.exception(node.seedApp(appKey, { maxStorage: 1024 * 1024 }), /store wedged/)
+  t.absent(node.storageAdmission.get(`drive:${appKey}`), 'a reservation with no prior record is removed, not left reserved')
+
+  node.store.session = session
+  const retry = await node.seedApp(appKey, { maxStorage: 1024 * 1024 })
+  t.ok(retry.discoveryKey, 'the key is reservable again after the pre-drive failure')
+  t.absent(node.storageAdmission.fatalReason)
+})

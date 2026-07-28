@@ -75,6 +75,19 @@ test('detects transports from runtime state', async (t) => {
   t.ok(doc.supported_transports.includes('holesail'))
 })
 
+test('advertises hiverelay-forward only when the opt-in forward relay is enabled', async (t) => {
+  const base = { config: { discovery: { dht: true } } }
+
+  const off = buildCapabilityDoc({ relay: { ...base } })
+  t.absent(off.supported_transports.includes('hiverelay-forward'), 'not advertised when forward relay is absent')
+
+  const disabled = buildCapabilityDoc({ relay: { ...base, forwardRelay: { enabled: false } } })
+  t.absent(disabled.supported_transports.includes('hiverelay-forward'), 'not advertised when constructed but disabled')
+
+  const on = buildCapabilityDoc({ relay: { ...base, forwardRelay: { enabled: true } } })
+  t.ok(on.supported_transports.includes('hiverelay-forward'), 'advertised when the operator opted in')
+})
+
 test('features list is sorted and reflects wired subsystems', async (t) => {
   const relay = {
     config: {},
