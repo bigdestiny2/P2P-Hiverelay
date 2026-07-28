@@ -89,13 +89,13 @@
     <h1>The <span class="grad">0.25 canary saga</span> — fixed, held, documented</h1>
     <p class="lede">
       We cut a Track A prerelease, canary crashed, we fixed modules, fixed ETIMEDOUT handling,
-      cut a correct tree as <strong>v0.25.0-rc.4</strong>, then discovered a
-      <strong>production Corestore open hang</strong> on utah. Fleet stays healthy on
-      <strong>0.24.3</strong> with Tor + utilities on two large boxes. Peerit blind bind remains scaffold.
+      cut a correct tree as <strong>v0.25.0-rc.4</strong>, then discovered a production hang from <strong>corrupt partial CS7 <code>db/</code></strong>.
+      <strong>Fixed 2026-07-26 evening:</strong> quarantine bad <code>db/</code>, remigrate from <code>cores/</code>.
+      <strong>utah + utah-8gb live on <code>v0.25.0-rc.4</code></strong> with Tor + utilities. Peerit blind bind remains scaffold.
     </p>
     <div class="meta">
       <span>Updated 2026-07-26 (evening)</span>
-      <span>Live fleet: <code>v0.24.3</code></span>
+      <span>Live cohort: <code>v0.25.0-rc.4</code> (utah, utah-8gb) · rest <code>v0.24.3</code></span>
       <span>Channels: canary+stable → <code>v0.24.3</code></span>
       <span>Preferred tag for lab: <code>v0.25.0-rc.4</code></span>
     </div>

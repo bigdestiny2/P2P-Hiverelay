@@ -30,6 +30,10 @@ fleet/channels.json   ──(raw.githubusercontent)──▶  each box's updater
 |---|---|
 | `channels.json` | **The control plane.** Target tag per channel. Edit + commit to release. |
 | `relays.json` | Inventory: the boxes, their channel, SSH key, tailnet name. |
+| `relays.local.json` | Local inventory with real SSH key paths (gitignored). Preferred by Admin Operator. |
+| `../dashboard-admin-operator/` | **Dashboard Admin Operator** — live manage UI (`npm run dashboard:admin-operator`). |
+| `health-watchdog.sh` + `hiverelay-health-watchdog.{service,timer}` | Local timer: if `/health` fails twice, SIGKILL+restart (fixes event-loop hangs systemd cannot see). |
+| `install-health-watchdog.sh` | Install the timer on a box (`ssh root@box 'bash -s' < fleet/install-health-watchdog.sh`). |
 | `updater.sh` | The agent. Resolve target → checkout → restart → health-gate → rollback. |
 | `hiverelay-updater.{service,timer}` | systemd units (every 15 min, 5 min jitter). |
 | `install-updater.sh` | Install the agent on a box, set its channel. |

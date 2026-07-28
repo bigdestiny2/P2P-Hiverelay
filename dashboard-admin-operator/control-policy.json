@@ -1,0 +1,46 @@
+{
+  "_doc": "Fleet control plane policy — healthy ranges + auto-remediation. Used by Dashboard Admin Operator.",
+  "autoControl": true,
+  "cooldownsSec": {
+    "forceRestart": 480,
+    "doctor": 1800,
+    "ensureBaseline": 3600,
+    "ensureSwap": 7200
+  },
+  "global": {
+    "requireHealthOk": true,
+    "requireRunning": true,
+    "requireWatchdog": true,
+    "minSwapMB": 256,
+    "diskPctWarn": 75,
+    "diskPctCritical": 90,
+    "forceRestartOnDegraded": true,
+    "forceRestartOnHung": true,
+    "maxConcurrentRemediations": 3
+  },
+  "tiers": {
+    "small": {
+      "ramGBMax": 1.1,
+      "memMBMax": 420,
+      "memMBWarn": 340,
+      "diskPctMax": 85,
+      "plugins": ["outboxlog", "notify", "vrf"],
+      "description": "≤1GB boxes — light plugins only"
+    },
+    "medium": {
+      "ramGBMin": 1.1,
+      "ramGBMax": 4,
+      "memMBMax": 1600,
+      "memMBWarn": 1200,
+      "diskPctMax": 85,
+      "description": "2–4GB seed boxes"
+    },
+    "large": {
+      "ramGBMin": 4,
+      "memMBMax": 4800,
+      "memMBWarn": 3500,
+      "diskPctMax": 90,
+      "description": "≥4GB canaries / capacity nodes"
+    }
+  }
+}

@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HiveRelay 0.25 — what we're standing up</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%2316213e'/%3E%3Cpath d='M50 10 C 54 38 60 44 88 50 C 60 56 54 62 50 90 C 46 62 40 56 12 50 C 40 44 46 38 50 10 Z' fill='%23f5c842'/%3E%3C/svg%3E">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0e1118;--bg-glow:#131a2b;
+  --card:#151a26;--card-hi:#1a2132;--card-border:#222b3e;--card-border-hi:#2e3b56;
+  --green:#3fb950;--orange:#f0a64a;--cyan:#58a6ff;--red:#f47067;--accent:#f5c842;--purple:#a371f7;
+  --text:#d6dde8;--text-dim:#8493a8;--text-faint:#7c89a0;--text-bright:#fff;
+  --mono:'SF Mono','Cascadia Code','Fira Code','Consolas',monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  --radius:16px;--radius-sm:10px;
+}
+html{font-size:16px;scroll-behavior:smooth}
+body{
+  background:var(--bg);
+  background-image:
+    radial-gradient(1200px 600px at 50% -200px,var(--bg-glow),transparent),
+    radial-gradient(900px 500px at 100% 0%,rgba(88,166,255,.05),transparent);
+  color:var(--text);font-family:var(--sans);line-height:1.55;
+  min-height:100vh;-webkit-font-smoothing:antialiased;
+}
+a{color:var(--cyan);text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.88em}
+:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:4px}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
+.wrap{max-width:1080px;margin:0 auto;padding:0 1.5rem}
+
+/* ── Top bar ──────────────────────────────────────────────────── */
+.topbar{
+  position:sticky;top:0;z-index:50;
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  background:rgba(14,17,24,.78);border-bottom:1px solid var(--card-border);
+}
+.topbar-inner{display:flex;align-items:center;gap:.8rem;padding:.8rem 0}
+.brand{display:flex;align-items:center;gap:.65rem}
+.spark{width:26px;height:26px;flex-shrink:0;filter:drop-shadow(0 0 7px rgba(245,200,66,.35))}
+.brand-name{font-size:1rem;font-weight:650;color:var(--text-bright);letter-spacing:.2px}
+.brand-sub{font-size:.62rem;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-left:.1rem}
+.topbar-nav{margin-left:auto;display:flex;gap:1.3rem}
+.topbar-nav a{color:var(--text-dim);font-size:.83rem;transition:color .15s}
+.topbar-nav a:hover{color:var(--text-bright);text-decoration:none}
+@media(max-width:680px){.topbar-nav{display:none}}
+
+/* ── Hero ─────────────────────────────────────────────────────── */
+.hero{padding:5rem 0 3.2rem;text-align:center}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:.5rem;
+  font-family:var(--mono);font-size:.72rem;letter-spacing:1.4px;text-transform:uppercase;
+  color:var(--accent);background:rgba(245,200,66,.08);
+  border:1px solid rgba(245,200,66,.25);padding:.4rem .9rem;border-radius:999px;margin-bottom:1.6rem;
+}
+.eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent)}
+.hero h1{
+  font-size:clamp(2.2rem,6vw,3.7rem);line-height:1.05;font-weight:700;
+  color:var(--text-bright);letter-spacing:-1px;margin-bottom:1.1rem;
+}
+.hero h1 .grad{
+  background:linear-gradient(120deg,var(--accent),var(--orange));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+}
+.hero p.lead{font-size:1.12rem;color:var(--text-dim);max-width:640px;margin:0 auto 2rem}
+.chans{display:flex;flex-wrap:wrap;gap:.7rem;justify-content:center;margin-bottom:2.2rem}
+.chip{
+  display:inline-flex;align-items:center;gap:.45rem;font-family:var(--mono);font-size:.78rem;
+  padding:.4rem .85rem;border-radius:999px;border:1px solid var(--card-border);background:var(--card);color:var(--text);
+}
+.chip .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.chip.canary .dot{background:var(--accent);box-shadow:0 0 6px var(--accent)}
+.chip.stable .dot{background:var(--green);box-shadow:0 0 6px var(--green)}
+.chip.track .dot{background:var(--purple);box-shadow:0 0 6px var(--purple)}
+.cta-row{display:flex;gap:.8rem;justify-content:center;flex-wrap:wrap}
+.btn{
+  font-family:inherit;font-size:.9rem;font-weight:550;padding:.72rem 1.3rem;border-radius:10px;
+  border:1px solid transparent;transition:transform .12s,background .15s,border-color .15s;cursor:pointer;
+}
+.btn:active{transform:translateY(1px)}
+.btn-primary{background:var(--accent);color:#1a1400;border-color:var(--accent)}
+.btn-primary:hover{background:#ffcf52}
+.btn-ghost{background:transparent;color:var(--text);border-color:var(--card-border-hi)}
+.btn-ghost:hover{border-color:var(--cyan);color:var(--cyan)}
+
+/* ── Section scaffold ─────────────────────────────────────────── */
+section{padding:3.4rem 0}
+.sec-head{margin-bottom:2rem;max-width:720px}
+.sec-head.center{margin-left:auto;margin-right:auto;text-align:center}
+.sec-kicker{font-family:var(--mono);font-size:.72rem;letter-spacing:1.3px;text-transform:uppercase;color:var(--cyan);margin-bottom:.6rem}
+.sec-head h2{font-size:clamp(1.6rem,3.5vw,2.2rem);font-weight:650;color:var(--text-bright);letter-spacing:-.4px;margin-bottom:.6rem}
+.sec-head p{color:var(--text-dim);font-size:1.02rem}
+
+/* ── Status strip ─────────────────────────────────────────────── */
+.status-strip{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1px;
+  background:var(--card-border);border:1px solid var(--card-border);border-radius:var(--radius);overflow:hidden;
+  margin-top:-1rem;
+}
+.stat{background:var(--card);padding:1.3rem 1.4rem}
+.stat .k{font-size:.7rem;letter-spacing:.5px;text-transform:uppercase;color:var(--text-faint);margin-bottom:.5rem}
+.stat .v{font-family:var(--mono);font-size:1.35rem;font-weight:600;color:var(--text-bright)}
+.stat .sub{font-size:.78rem;color:var(--text-dim);margin-top:.3rem}
+.stat .v.green{color:var(--green)} .stat .v.accent{color:var(--accent)} .stat .v.orange{color:var(--orange)}
+
+/* ── Feature cards ────────────────────────────────────────────── */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:1.1rem}
+.card{
+  background:linear-gradient(180deg,var(--card-hi),var(--card));
+  border:1px solid var(--card-border);border-radius:var(--radius);padding:1.5rem;
+  transition:border-color .18s,transform .18s;display:flex;flex-direction:column;
+}
+.card:hover{border-color:var(--card-border-hi);transform:translateY(-2px)}
+.card .ico{
+  width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+  background:rgba(88,166,255,.1);color:var(--cyan);margin-bottom:1rem;font-size:1.15rem;
+}
+.card.h-accent .ico{background:rgba(245,200,66,.1);color:var(--accent)}
+.card.h-orange .ico{background:rgba(240,166,74,.12);color:var(--orange)}
+.card.h-green .ico{background:rgba(63,185,80,.12);color:var(--green)}
+.card.h-purple .ico{background:rgba(163,113,247,.12);color:var(--purple)}
+.card h3{font-size:1.06rem;color:var(--text-bright);font-weight:600;margin-bottom:.5rem;letter-spacing:.1px}
+.card p{font-size:.92rem;color:var(--text-dim);margin-bottom:.85rem}
+.card .unlocks{
+  margin-top:auto;padding-top:.9rem;border-top:1px dashed var(--card-border);font-size:.83rem;
+}
+.card .unlocks .lbl{color:var(--text-faint);text-transform:uppercase;letter-spacing:.6px;font-size:.66rem;display:block;margin-bottom:.4rem}
+.card .unlocks .rung{display:inline-flex;align-items:center;gap:.3rem;font-family:var(--mono);font-size:.74rem;padding:.18rem .5rem;border-radius:6px;background:rgba(88,166,255,.08);color:var(--cyan);margin-right:.25rem;margin-bottom:.25rem}
+.card ul.tags{display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.4rem}
+.card ul.tags li{font-family:var(--mono);font-size:.72rem;color:var(--text-dim);background:rgba(255,255,255,.04);padding:.15rem .45rem;border-radius:5px;list-style:none}
+code.endpoint{display:inline-block;font-family:var(--mono);font-size:.8rem;background:rgba(255,255,255,.05);color:var(--green);padding:.12rem .42rem;border-radius:5px;margin-top:.2rem}
+
+/* ── Honesty ladder ───────────────────────────────────────────── */
+.ladder{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem}
+.rung{
+  background:var(--card);border:1px solid var(--card-border);border-left-width:4px;border-radius:var(--radius-sm);
+  padding:1.2rem 1.3rem;display:flex;flex-direction:column;
+}
+.rung.live{border-left-color:var(--green)}
+.rung.partial{border-left-color:var(--orange)}
+.rung.path{border-left-color:var(--cyan)}
+.rung.future{border-left-color:var(--card-border-hi);opacity:.82}
+.rung.never{border-left-color:var(--red);opacity:.78}
+.rung .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:.45rem}
+.rung .code{font-family:var(--mono);font-size:.95rem;font-weight:700;color:var(--text-bright)}
+.badge{font-family:var(--mono);font-size:.64rem;letter-spacing:.5px;text-transform:uppercase;padding:.22rem .55rem;border-radius:5px}
+.badge.live{background:rgba(63,185,80,.14);color:var(--green)}
+.badge.partial{background:rgba(240,166,74,.14);color:var(--orange)}
+.badge.path{background:rgba(88,166,255,.14);color:var(--cyan)}
+.badge.future{background:rgba(255,255,255,.05);color:var(--text-dim)}
+.badge.never{background:rgba(244,112,103,.14);color:var(--red)}
+.rung .name{font-size:.95rem;color:var(--text);font-weight:550;margin-bottom:.35rem}
+.rung .desc{font-size:.84rem;color:var(--text-dim)}
+
+/* ── Tracks ───────────────────────────────────────────────────── */
+.tracks{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.1rem}
+.track{
+  background:linear-gradient(180deg,var(--card-hi),var(--card));
+  border:1px solid var(--card-border);border-radius:var(--radius);padding:1.6rem;position:relative;overflow:hidden;
+}
+.track::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.track.a::before{background:linear-gradient(90deg,var(--green),transparent)}
+.track.b::before{background:linear-gradient(90deg,var(--purple),transparent)}
+.track.c::before{background:linear-gradient(90deg,var(--accent),transparent)}
+.track .label{font-family:var(--mono);font-size:.7rem;letter-spacing:1px;text-transform:uppercase;color:var(--text-faint);margin-bottom:.4rem}
+.track h3{font-size:1.1rem;color:var(--text-bright);font-weight:600;margin-bottom:.3rem}
+.track .ver{font-family:var(--mono);font-size:.82rem;color:var(--cyan);margin-bottom:.9rem}
+.track p{font-size:.9rem;color:var(--text-dim);margin-bottom:.8rem}
+.track ul{list-style:none;font-size:.85rem;color:var(--text)}
+.track ul li{padding:.2rem 0;padding-left:1rem;position:relative}
+.track ul li::before{content:'›';position:absolute;left:0;color:var(--text-faint)}
+
+/* ── Roadmap ──────────────────────────────────────────────────── */
+.road{position:relative;padding-left:2.2rem}
+.road::before{content:'';position:absolute;left:.5rem;top:.4rem;bottom:.4rem;width:2px;background:var(--card-border)}
+.ship{position:relative;padding:1.1rem 0 1.1rem 0;border-bottom:1px solid var(--card-border)}
+.ship:last-child{border-bottom:none}
+.ship::before{
+  content:'';position:absolute;left:-1.85rem;top:1.45rem;width:14px;height:14px;border-radius:50%;
+  background:var(--bg);border:2px solid var(--card-border-hi);
+}
+.ship.now::before{background:var(--accent);border-color:var(--accent);box-shadow:0 0 10px rgba(245,200,66,.5)}
+.ship.next::before{border-color:var(--cyan)}
+.ship .row{display:flex;align-items:baseline;gap:.7rem;flex-wrap:wrap;margin-bottom:.3rem}
+.ship .tag{font-family:var(--mono);font-size:.72rem;font-weight:600;color:var(--text-bright);
+  background:rgba(255,255,255,.05);padding:.2rem .55rem;border-radius:6px}
+.ship.now .tag{background:rgba(245,200,66,.16);color:var(--accent)}
+.ship .when{font-size:.82rem;color:var(--text-faint)}
+.ship h4{font-size:1rem;color:var(--text-bright);font-weight:550;margin-bottom:.3rem}
+.ship p{font-size:.9rem;color:var(--text-dim);max-width:680px}
+
+/* ── Non-claims callout ───────────────────────────────────────── */
+.nonclaim{
+  background:rgba(244,112,103,.04);border:1px solid rgba(244,112,103,.22);border-radius:var(--radius);
+  padding:1.8rem;
+}
+.nonclaim h3{color:var(--red);font-size:1.05rem;font-weight:600;margin-bottom:1rem;display:flex;align-items:center;gap:.5rem}
+.nc-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1rem}
+.nc{background:var(--card);border:1px solid var(--card-border);border-radius:var(--radius-sm);padding:1rem 1.1rem}
+.nc .dont{font-family:var(--mono);font-size:.83rem;color:var(--red);margin-bottom:.3rem}
+.nc .why{font-size:.85rem;color:var(--text-dim)}
+
+/* ── Footer ───────────────────────────────────────────────────── */
+footer{border-top:1px solid var(--card-border);padding:2.5rem 0;margin-top:3rem;color:var(--text-dim);font-size:.85rem}
+.foot-grid{display:flex;justify-content:space-between;gap:1.5rem;flex-wrap:wrap}
+.foot-grid a{color:var(--cyan)}
+.spark-foot{display:flex;align-items:center;gap:.55rem;color:var(--text)}
+.spark-foot .spark{width:20px;height:20px}
+
+@media(max-width:560px){
+  .hero{padding:3.5rem 0 2.5rem}
+  section{padding:2.6rem 0}
+}
+</style>
+</head>
+<body>
+
+<!-- ─── Top bar ─── -->
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <div class="brand">
+      <svg class="spark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" rx="14" fill="#16213e"/><path d="M50 10 C 54 38 60 44 88 50 C 60 56 54 62 50 90 C 46 62 40 56 12 50 C 40 44 46 38 50 10 Z" fill="#f5c842"/></svg>
+      <span class="brand-name">HiveRelay</span>
+      <span class="brand-sub">0.25</span>
+    </div>
+    <nav class="topbar-nav">
+      <a href="#standing-up">Features</a>
+      <a href="#capabilities">Capabilities</a>
+      <a href="#tracks">Tracks</a>
+      <a href="#whats-next">Roadmap</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ─── Hero ─── -->
+<div class="wrap">
+  <section class="hero">
+    <span class="eyebrow"><span class="dot"></span> Canary · v0.25.0-rc.4</span>
+    <h1>The utility relay,<br><span class="grad">made useful — honestly.</span></h1>
+    <p class="lead">HiveRelay 0.25 turns the raw DHT seeder into a real substrate operators and apps can rely on: Tor + utility services on by default, app-reachable service HTTP, fleet stability hardening — and a published ladder that keeps every claim bounded.</p>
+    <div class="chans">
+      <span class="chip canary"><span class="dot"></span> Canary → rc.4</span>
+      <span class="chip stable"><span class="dot"></span> Stable → 0.24.3</span>
+      <span class="chip track"><span class="dot"></span> Track A (fleet)</span>
+    </div>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/bigdestiny2/P2P-Hiverelay/releases" target="_blank" rel="noopener">View release</a>
+      <a class="btn btn-ghost" href="#standing-up">See what's new ↓</a>
+    </div>
+  </section>
+
+  <!-- Status strip -->
+  <div class="status-strip">
+    <div class="stat"><div class="k">Fleet healthy</div><div class="v green">12 / 13</div><div class="sub">bern offline (infra, not process)</div></div>
+    <div class="stat"><div class="k">Canary tag</div><div class="v accent">0.25.0-rc.4</div><div class="sub">signed, health-gated updater</div></div>
+    <div class="stat"><div class="k">Stable tag</div><div class="v">0.24.3</div><div class="sub">unchanged through soak</div></div>
+    <div class="stat"><div class="k">utah-8gb RSS</div><div class="v green">~110 MB</div><div class="sub">down from 5.5 GB after remigrate</div></div>
+  </div>
+</div>
+
+<!-- ─── What's being stood up ─── -->
+<div class="wrap">
+<section id="standing-up">
+  <div class="sec-head">
+    <div class="sec-kicker">What we're standing up</div>
+    <h2>Ten workstreams, one coherent ship</h2>
+    <p>0.25 isn't a single feature — it's the wiring that turns a bare seeder into an always-on utility relay apps can call, operators can monitor, and the network can depend on.</p>
+  </div>
+
+  <div class="grid">
+
+    <div class="card h-accent">
+      <div class="ico">🧅</div>
+      <h3>Tor as a packaging default</h3>
+      <p>Docker Compose, the systemd unit, and the Umbrel appliance now ship with <code>HIVERELAY_TOR=1</code> and full SOCKS / control / key-file wiring. The path to onion-hidden relays is on by default — live endpoints still need host Tor ≥ 0.4.9 with cookie control.</p>
+      <div class="unlocks">
+        <span class="lbl">Capability path</span>
+        <span class="rung">G4-T route separation</span>
+      </div>
+    </div>
+
+    <div class="card h-green">
+      <div class="ico">⚙️</div>
+      <h3>Utility services, on by default</h3>
+      <p>A fresh appliance is no longer an empty seeder. Outboxlog, notify, storage-proof, VRF, witnesslog, and repairticket are enabled in the unit / compose path. <code>shard-store</code> stays opt-in for disks that can carry it.</p>
+      <ul class="tags"><li>outboxlog</li><li>notify</li><li>vrf</li><li>witnesslog</li><li>repairticket</li><li>storage-proof</li></ul>
+    </div>
+
+    <div class="card">
+      <div class="ico">🎲</div>
+      <h3>VRF HTTP surface</h3>
+      <p>Verifiable randomness is now reachable over HTTP for apps that need leaderless sortition, fair ordering, or unbiasable beacons.</p>
+      <code class="endpoint">GET /api/v1/vrf/beacon-info</code><br>
+      <code class="endpoint">GET /api/v1/vrf/beacon-latest</code><br>
+      <code class="endpoint">POST /api/v1/vrf/select</code>
+      <div class="unlocks"><span class="lbl">Unlocks</span><span class="rung">on-chain-style fairness for p2p apps</span></div>
+    </div>
+
+    <div class="card h-purple">
+      <div class="ico">🔔</div>
+      <h3>Notify push provider resolution</h3>
+      <p>The relay-hosted encrypted wake-up service now resolves a webpush descriptor to a live, non-memory provider — and fails closed on bad config so a misconfigured box never silently drops wakes.</p>
+      <div class="unlocks"><span class="lbl">Unlocks</span><span class="rung">asynchronous p2p apps that wake on event</span></div>
+    </div>
+
+    <div class="card">
+      <div class="ico">🧰</div>
+      <h3>Client SDK helpers</h3>
+      <p><code>HiveRelayClient</code> gains first-class methods for the new surfaces — notify send/watch, shard put/get, witness append, and VRF beacon-latest — so app developers stop reimplementing transport.</p>
+      <ul class="tags"><li>notify</li><li>shard</li><li>witness</li><li>vrf</li></ul>
+    </div>
+
+    <div class="card h-orange">
+      <div class="ico">📊</div>
+      <h3>Dashboard panels</h3>
+      <p>Operators get visibility into the two new live surfaces: a notify manage-status aggregate panel and a VRF panel. What the relay is actually doing is now on the dashboard, not buried in logs.</p>
+      <div class="unlocks"><span class="lbl">Unlocks</span><span class="rung">operator observability for G1 services</span></div>
+    </div>
+
+    <div class="card">
+      <div class="ico">🛡️</div>
+      <h3>Outboxlog durability & lifecycle</h3>
+      <p>Journal and torn-tail audit paths are covered, <code>loadRegistry()</code> is split from <code>reseedDrives()</code> so recovery can seal storage-admission before reseed, and bytes-per-day metering is honest under restart.</p>
+      <ul class="tags"><li>journal</li><li>takedown audit</li><li>storage-authority close</li></ul>
+    </div>
+
+    <div class="card h-green">
+      <div class="ico">🩺</div>
+      <h3>Fleet health watchdog</h3>
+      <p>systemd couldn't recover an event-loop hang — the main PID stayed alive, so <code>Restart=</code> never fired. A new local watchdog pings <code>/health</code> every 2 min and SIGKILLs + restarts on two consecutive failures, now rolled across every reachable box.</p>
+      <div class="unlocks"><span class="lbl">Unlocks</span><span class="rung">12/13 fleet healthy vs repeated hangs</span></div>
+    </div>
+
+    <div class="card h-accent">
+      <div class="ico">🧱</div>
+      <h3>utah-8gb remigrate + memory</h3>
+      <p>The 8.6 GB bloated RocksDB was quarantined and rebuilt from <code>cores/</code>; RSS fell from 5.5 GB to ~110 MB. Added 4 GB swap, dropped the thrashing <code>MemoryHigh</code> soft-lock, and kept the full feature plugin set.</p>
+      <ul class="tags"><li>CS7 rebuild</li><li>swap</li><li>MemoryMax=6G</li></ul>
+    </div>
+
+    <div class="card h-purple">
+      <div class="ico">📐</div>
+      <h3>Ladder ship map</h3>
+      <p>The defining artifact of 0.25: <code>docs/LADDER-SHIP-MAP.md</code> documents Track A (fleet), Track B (blind public-test), and Track C (merge) on one chronological honesty ladder, so fleet vs blind never get mashed into one claim.</p>
+      <div class="unlocks"><span class="lbl">Unlocks</span><span class="rung">bounded, evidence-graded marketing</span></div>
+    </div>
+
+  </div>
+</section>
+</div>
+
+<!-- ─── Capabilities unlocked ─── -->
+<div class="wrap">
+<section id="capabilities">
+  <div class="sec-head center">
+    <div class="sec-kicker">The honesty ladder</div>
+    <h2>Capabilities, by rung</h2>
+    <p>Every feature maps to a privacy / integrity rung. We badge only what's evidenced — never what's "coming soon."</p>
+  </div>
+
+  <div class="ladder">
+    <div class="rung live">
+      <div class="top"><span class="code">G0</span><span class="badge live">Live</span></div>
+      <div class="name">Integrity</div>
+      <div class="desc">Can't forge bytes or signatures. Hypercore Merkle roots + signed envelopes. The foundation the whole stack is built on.</div>
+    </div>
+    <div class="rung live">
+      <div class="top"><span class="code">G1</span><span class="badge live">Live</span></div>
+      <div class="name">Payload opacity</div>
+      <div class="desc">Encrypted, signed envelopes; utility services HTTP. <strong>0.25 makes this fleet-wide and app-reachable.</strong></div>
+    </div>
+    <div class="rung partial">
+      <div class="top"><span class="code">G2-S</span><span class="badge partial">Partial</span></div>
+      <div class="name">Storage-schema opacity</div>
+      <div class="desc">Blind cells — no app semantics at rest. Code exists; blind public-test pilot runs in parallel (Track B).</div>
+    </div>
+    <div class="rung partial">
+      <div class="top"><span class="code">G3</span><span class="badge partial">Partial</span></div>
+      <div class="name">At-rest unlinkability</div>
+      <div class="desc">BlindShard / cells + multi-relay cohort. shard-store code complete; not fleet-wide until 0.26.</div>
+    </div>
+    <div class="rung partial">
+      <div class="top"><span class="code">G4-T</span><span class="badge partial">Partial</span></div>
+      <div class="name">Route separation</div>
+      <div class="desc">Tor onion path. <strong>0.25 ships the packaging default</strong>; host deploy + negative-probe still uneven.</div>
+    </div>
+    <div class="rung future">
+      <div class="top"><span class="code">G2-W</span><span class="badge future">Spec'd</span></div>
+      <div class="name">Wire opacity</div>
+      <div class="desc">Split transport (OHTTP + Protomux). Spec exists; code does not. Lands after 0.26.</div>
+    </div>
+    <div class="rung future">
+      <div class="top"><span class="code">G4-I</span><span class="badge future">Research</span></div>
+      <div class="name">Read-interest privacy</div>
+      <div class="desc">Bucket / PIR patterns for "can't tell which post I read." Optional research track, not on the near map.</div>
+    </div>
+    <div class="rung never">
+      <div class="top"><span class="code">G5</span><span class="badge never">Never (public)</span></div>
+      <div class="name">Active-reader resistance</div>
+      <div class="desc">Impossible for public data. We document this on every public explainer rather than claim it.</div>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ─── Tracks ─── -->
+<div class="wrap">
+<section id="tracks">
+  <div class="sec-head">
+    <div class="sec-kicker">Two tracks, one ladder</div>
+    <h2>Version tags stay separate until a deliberate merge</h2>
+    <p>0.25 is deliberately scoped. The blind substrate is a parallel public-test version line, not a redefinition of the fleet tag.</p>
+  </div>
+
+  <div class="tracks">
+    <div class="track a">
+      <div class="label">Track A · this release</div>
+      <h3>Fleet channel</h3>
+      <div class="ver">v0.25.x → rc.4 now, 0.25.0 stable after soak</div>
+      <p>All raw fleet relays (systemd / Docker / Umbrel via <code>channels.json</code>).</p>
+      <ul>
+        <li>Tor + utility defaults in packaging</li>
+        <li>App-reachable service HTTP</li>
+        <li>G0 + G1 + partial G3 (shard-store opt-in) + partial G4-T path</li>
+      </ul>
+    </div>
+    <div class="track b">
+      <div class="label">Track B · parallel</div>
+      <h3>Blind public-test</h3>
+      <div class="ver">1.0.0-rc.1.public-test.1</div>
+      <p>syd-1 first, then a second owner-operated failure domain (Dallas / Bern).</p>
+      <ul>
+        <li>blind-edge :443 + blind-daemon (Unix socket)</li>
+        <li>LIVE_PUBLIC_TEST_ONLY lease — no GA, no stable channel</li>
+        <li>Peerit binds as client only after two-FD acceptance</li>
+      </ul>
+    </div>
+    <div class="track c">
+      <div class="label">Track C · later</div>
+      <h3>Merge + promote</h3>
+      <div class="ver">v0.26.x</div>
+      <p>When Track B is accepted and boot-restore lands on main.</p>
+      <ul>
+        <li>blind packages in the monorepo tree</li>
+        <li>opt-in blind-cell relay profile</li>
+        <li>First time "blind" is a fleet version story</li>
+      </ul>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ─── What's next ─── -->
+<div class="wrap">
+<section id="whats-next">
+  <div class="sec-head">
+    <div class="sec-kicker">What's next</div>
+    <h2>The ship ladder</h2>
+    <p>A chronological map from the canary we just cut to the rungs we'll never claim. Each ship advances one ladder rung — and earns its badge.</p>
+  </div>
+
+  <div class="road">
+    <div class="ship now">
+      <div class="row"><span class="tag">Ship 1</span><span class="when">now · canary</span></div>
+      <h4>v0.25.0-rc.1 → rc.4 · Fleet canary (Track A)</h4>
+      <p>Service HTTP wiring, dashboard panels, Tor + utilities default-on. Gate to promote: canary green 24–48h, no OOM thrash.</p>
+    </div>
+    <div class="ship next">
+      <div class="row"><span class="tag">Ship 2</span><span class="when">after soak</span></div>
+      <h4>v0.25.0 · Fleet stable</h4>
+      <p>Roll all raw relays. Large disks (utah-8gb, bern, dubai) get optional shard-store → partial G3. Small boxes stay utilities-only.</p>
+    </div>
+    <div class="ship">
+      <div class="row"><span class="tag">Ship 3</span><span class="when">parallel</span></div>
+      <h4>Blind public-test live · syd → dal</h4>
+      <p>DNS + ACME on syd-1, qualify DESCRIBE / CELL / INBOX / CORE / FORWARD, then a second failure domain. Two owner-operated FDs, not independent operators.</p>
+    </div>
+    <div class="ship">
+      <div class="row"><span class="tag">Ship 4</span><span class="when">after Track B accept</span></div>
+      <h4>Boot-restore → main merge</h4>
+      <p><code>packages/blind-daemon</code>, blind-edge, IPC, boot floors, sealed-manifest recovery land on main. Service-http-wiring rebases on top.</p>
+    </div>
+    <div class="ship">
+      <div class="row"><span class="tag">Ship 5–6</span><span class="when">post-merge</span></div>
+      <h4>v0.26.0-rc.1 → 0.26.0 · Blind-capable monorepo</h4>
+      <p>First tag where blind is in the tree. Operators can run a verified blind-cell relay profile on large seeds. Code-complete G0–G3 for the GA path.</p>
+    </div>
+    <div class="ship">
+      <div class="row"><span class="tag">Ship 7</span><span class="when">overlaps late 5–6</span></div>
+      <h4>App-origin HTTPS gateway evidence</h4>
+      <p>Signed-tag digests, two-operator gateway evidence, public read plane honesty. Public content gets an evidenced HTTPS plane; private/blind still fail closed.</p>
+    </div>
+    <div class="ship">
+      <div class="row"><span class="tag">Ship 8</span><span class="when">after Ship 2</span></div>
+      <h4>Tor hardening RC · full G4-T evidence</h4>
+      <p>Persistent onion keys, negative-probe on restricted discovery, 100 MB bulk-over-onion measurement. "Onion-hidden with measured limits" — never mixnet-level anonymity.</p>
+    </div>
+    <div class="ship">
+      <div class="row"><span class="tag">Ship 9</span><span class="when">after 0.26 stable</span></div>
+      <h4>Split transport · G2-W</h4>
+      <p>OHTTP ingress + Protomux data plane per the split-transport spec. Wire opacity under stated non-collusion assumptions.</p>
+    </div>
+    <div class="ship">
+      <div class="row"><span class="tag">Ship 11</span><span class="when">never</span></div>
+      <h4>G5 for public content</h4>
+      <p>Documented as unachievable and badged on every public explainer. Some rungs you earn; this one you respect by not claiming it.</p>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ─── Honest non-claims ─── -->
+<div class="wrap">
+<section id="non-claims">
+  <div class="nonclaim">
+    <h3>⚠️ What 0.25 is NOT</h3>
+    <p style="color:var(--text-dim);font-size:.92rem;margin-bottom:1.4rem">We hold ourselves to evidence-graded badges. These are the claims you will <em>not</em> hear from us about this release:</p>
+    <div class="nc-list">
+      <div class="nc">
+        <div class="dont">"Stable fleet is 0.25"</div>
+        <div class="why">Stable remains <strong>0.24.3</strong> until canary soaks green.</div>
+      </div>
+      <div class="nc">
+        <div class="dont">"Tor is live on every relay"</div>
+        <div class="why">Status shows no onion until host Tor + cookie control + upgrade evidence. Packaging is the path, not the proof.</div>
+      </div>
+      <div class="nc">
+        <div class="dont">"Blind substrate is GA / in 0.25"</div>
+        <div class="why">Blind public-test is a <strong>parallel</strong> version line and lease, on ≤2 pilot nodes.</div>
+      </div>
+      <div class="nc">
+        <div class="dont">"The browser is a full DHT peer"</div>
+        <div class="why">Still false. We use honest stack language — the browser is a client of the relay.</div>
+      </div>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ─── Footer ─── -->
+<footer>
+  <div class="wrap foot-grid">
+    <div class="spark-foot">
+      <svg class="spark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" rx="14" fill="#16213e"/><path d="M50 10 C 54 38 60 44 88 50 C 60 56 54 62 50 90 C 46 62 40 56 12 50 C 40 44 46 38 50 10 Z" fill="#f5c842"/></svg>
+      <span>HiveRelay / Blindspark — v0.25 canary</span>
+    </div>
+    <div>
+      <a href="https://github.com/bigdestiny2/P2P-Hiverelay" target="_blank" rel="noopener">GitHub</a> ·
+      <a href="https://github.com/bigdestiny2/P2P-Hiverelay/releases" target="_blank" rel="noopener">Releases</a> ·
+      <a href="#" onclick="return false">Ladder ship map</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
