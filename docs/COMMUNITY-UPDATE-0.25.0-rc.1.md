@@ -78,7 +78,7 @@ Journal and app-lifecycle fixes (including registry load vs reseed split) that k
 - **Track B** — blind public-test images (`1.0.0-rc.1.public-test.1`) on pilot FDs (syd / dal)  
 - **Track C** — later monorepo merge / opt-in blind profile (`v0.26.x` story)
 
-Marketing line when both are live: **“Fleet v0.25 + Blind public-test on syd1 (+ dal)”** — two components, not one tag.
+Marketing line when both are live: **“Fleet v0.25 + Blind public-test on relay-syd (+ relay-dal)”** — two components, not one tag.
 
 #### Explicit non-claims (please don’t oversell)
 

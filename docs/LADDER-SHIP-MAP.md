@@ -31,7 +31,7 @@ v0.26.x / later            = first tag where blind-daemon is IN the monorepo
                              + optional fleet enable                               ← Track C
 ```
 
-Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test on syd1 (+ dal)”** — two components, one sentence, **not one tag**.
+Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test on relay-syd (+ relay-dal)”** — two components, one sentence, **not one tag**.
 
 ---
 
@@ -42,7 +42,7 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 | **G0** | Integrity (can't forge bytes/sigs) | Core already |
 | **G1** | Payload opacity | Encrypted/outbox/signed envelopes; utility services HTTP |
 | **G2-S** | Storage-schema opacity | Blind cells / no app semantics at rest |
-| **G2-W** | Wire opacity | Split transport (OHTTP + Protomux) — **spec’d, not built** |
+| **G2-W** | Wire opacity | Split transport (OHTTP + Protomux) — **wire layer built in vnext; runtime not built** (see Ship 9) |
 | **G3** | At-rest unlinkability | BlindShard/cells + multi-relay cohort |
 | **G4-T** | Route separation | Tor onion path (+ later split-web) |
 | **G4-I** | Read-interest privacy | Bucket/PIR later — **not in near map** |
@@ -157,14 +157,16 @@ Still **not** “blind public-test complete” or “WAL boot-restore GA.”
 
 | Step | Action |
 |------|--------|
-| 3a.1 | A record `syd1.p2phiverelay.xyz` → syd-1 public IP (fleet **sydney**) |
-| 3a.2 | (Later) Dallas (or Bern) name, e.g. `dal1.p2phiverelay.xyz` |
+| 3a.1 | **Shipped** — A record `relay-syd.p2phiverelay.xyz` → `104.194.135.205` (fleet **sydney**) |
+| 3a.2 | **Shipped** — A record `relay-dal.p2phiverelay.xyz` → `172.86.90.115` (fleet **dallas**, phase-2 seat) |
+
+> Naming: the pilot names follow the existing fleet convention (`relay-us`, `relay-sg`, `relay-eu`) — **`relay-syd` / `relay-dal`**, not `syd1` / `dal1`. `syd1.p2phiverelay.xyz` and `dal1.p2phiverelay.xyz` were placeholder names in an earlier draft of this map and have never existed in DNS. The signed Peerit bind artifacts (`02-apps/peerit-release-bind/config/blind-public-test-*.json`) are authoritative for these hostnames.
 
 #### 3b — **syd-1** deploy + qualify
 
 | Step | Action | Ladder / product |
 |------|--------|------------------|
-| 3b.1 | ACME cert for syd1; open 443; **leave 9100 alone** | Edge TLS |
+| 3b.1 | ACME cert for `relay-syd`; open 443; **leave 9100 alone** | Edge TLS |
 | 3b.2 | Load digest-pinned edge+daemon OCI; compose `docker-compose.blind-public-test.yml` | Blind runtime |
 | 3b.3 | Node ceremony: new Blind root; preserve `/opt/hiverelay` + `~/.hiverelay` | Store genesis |
 | 3b.4 | Qualify: DESCRIBE / CELL / INBOX / CORE / FORWARD-one-hop + negatives | G2-S + **G3 path** + partial G4-T if Tor in pilot |
@@ -278,7 +280,27 @@ Never: TA-resistant / mixnet-level anonymity.
 
 ### Ship 9 — Split transport (G2-W + stronger G4-T)
 
-**When:** after Ship 6–8 stable; **spec exists, code does not**
+**When:** after Ship 6–8 stable
+
+> **State correction (2026-07-27, verified):** this row previously read *"spec exists, code does not."* That is wrong. The **wire layer is built** — in `00-core/hiverelay-blind-vnext-integration/packages/blind-protocol/`, not in main. What is missing is the **runtime**, the **transport descriptor**, and the **main-tree merge**. See the gap table below before scoping this ship.
+
+| Component | State | Where |
+|-----------|-------|-------|
+| `BlindOhttpKeyConfigV1` (schema, signing domain `hiverelay.blind.ohttp-key-config.v1`, domainId 201, rotation validity ≤120 epochs = 30 days) | ✅ built | vnext `blind-protocol/schemas.js`, `registry.js` |
+| `BlindOhttpTransportErrorV1` + delivery-boundary / retry-action taxonomy (3 rows) | ✅ built | vnext `blind-protocol` |
+| Relay roles `OHTTP_INGRESS=3`, `OHTTP_GATEWAY=4`; `TRANSPORT_SUPPORT.OHTTP` bit | ✅ built | vnext `registry.js` |
+| FORWARD family (`Open` / `OpenResult` / `Data` / `Window` / `Close` + `HopOpen` / `HopAccept` / `RouteScope`), circuit classes, flow-control fields, route-scope hashing | ✅ built | vnext `blind-protocol` |
+| Codec conformance tests (`public-wire-family-codecs`, `frozen-control-codecs`, `wire-runtime-authority`) | ✅ built | vnext `blind-protocol/test/` |
+| Client path resolver: strict/balanced downgrade, evidence-bearing result, `hiverelay-forward` candidate | ✅ built **in main** | [`packages/client/privacy-policy.js`](../packages/client/privacy-policy.js) |
+| `BlindTransportDescriptorV1` (spec §5) | ❌ nowhere | — |
+| Oblivious ingress service (receive → strip headers → forward) | ❌ not built | — |
+| Gateway HPKE decapsulation adapter | ❌ not built | — |
+| Browser OHTTP client + opaque-origin iframe (`ST-10`) | ❌ not built | — |
+| Padding-bucket enforcement | ⚠️ **mismatch** — spec §3.5 wants 1/4/16/64 KiB; `STREAM_WIRE_CLASS` ships 4 KiB / 16 KiB / 65535 | vnext `registry.js` |
+| `forward-relay.js` runtime upgraded to BlindForward frames | ❌ still the 329-line varint byte-bridge, **no flow control** | [`packages/core/core/protocol/forward-relay.js`](../packages/core/core/protocol/forward-relay.js) |
+| Any of the above in **main** | ❌ `blind-protocol` is not a main workspace | — |
+
+**The spec document is behind the code, not ahead of it.** `SPLIT-TRANSPORT-SPEC-V1-2026-07-26.md` §4.2 specifies fixed-offset frames with a `targetPubkey`, explicit `requestedInitialWindow/IdleMillis/LifetimeMillis`, and a signature on `Open`. The built `blindForwardOpenV1` has none of those — it uses a `circuitClass` enum, adds `parentRouteScopeHash` / `innerHandshake` / `nextDescriptorSequence`, and carries no `Open` signature. Reconcile the spec text against the registry before quoting §4.2 as a build target.
 
 | Contents | Ladder |
 |----------|--------|
@@ -388,7 +410,7 @@ You can call the **product ladder complete for honest marketing** when:
 ## 9. Immediate next three moves (in order)
 
 1. **Branch + tag path for Track A:** `feat/service-http-wiring` → `v0.25.0-rc.1` canary → `v0.25.0` stable.
-2. **Unblock Track B:** DNS `syd1.p2phiverelay.xyz` → deploy/qualify syd-1 → Dallas as 2nd FD.
+2. **Unblock Track B:** DNS `relay-syd.p2phiverelay.xyz` (live) → deploy/qualify syd-1 → Dallas as 2nd FD.
 3. **Only then** merge boot-restore + tag **0.26** for “blind-capable product.”
 
 ---

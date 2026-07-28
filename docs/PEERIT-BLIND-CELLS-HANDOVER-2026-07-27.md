@@ -79,15 +79,19 @@ utah's signed capability doc carries a **real advertised onion**:
 
 ## 3. Prerequisites NOT done yet (blockers)
 
+> **Correction (2026-07-27, re-verified):** an earlier draft of this brief listed the pilot hostnames as `syd1` / `dal1` and reported DNS as a blocker. Those names were placeholders carried over from `docs/LADDER-SHIP-MAP.md` and **have never existed in DNS**. The real names follow the fleet convention (`relay-us`, `relay-sg`, `relay-eu`) and **already resolve**. Use `relay-syd` / `relay-dal`. The signed Peerit bind artifacts (`02-apps/peerit-release-bind/config/blind-public-test-*.json`) are authoritative.
+
 | Prereq | Status | Action |
 |--------|--------|--------|
-| **DNS `syd1.p2phiverelay.xyz`** | ❌ not resolving | Create A record → `104.194.135.205` |
-| **DNS `dal1.p2phiverelay.xyz`** | ❌ not resolving | Create A record → `172.86.90.115` (do this AFTER syd-1 accepts) |
+| **DNS `relay-syd.p2phiverelay.xyz`** | ✅ resolves → `104.194.135.205` | none — live |
+| **DNS `relay-dal.p2phiverelay.xyz`** | ✅ resolves → `172.86.90.115` | none — live |
+| `syd1.p2phiverelay.xyz` / `dal1.p2phiverelay.xyz` | ⛔ NXDOMAIN | **placeholder names — do not create these** |
+| **:443 reachable on both hosts** | ✅ TCP open (syd + dal) | — |
+| **TLS on :443** | ⚠️ handshake failed from workstation on 2026-07-27 | Re-check edge liveness; the 2026-07-26 Peerit DESCRIBE probe passed against both, so this is a regression or a network-path artifact — confirm before re-issuing certs |
 | **Blind OCI images built/pushed** | ⚠️ in worktree, not published | Build + push `1.0.0-rc.1.public-test.1` digests (see §4) |
-| **ACME cert for syd1** | ❌ pending | Issue after DNS lands; blind-edge terminates TLS |
 | **`docker-compose.blind-public-test.yml`** | ⚠️ exists as `docker-compose.blind.yml` | Adapt for public-test (see §4) |
 
-**Do NOT start deploy until DNS + cert are live on syd-1.** The edge needs a valid public-CA cert; a self-signed cert violates the public-test lease.
+**DNS is not a blocker.** The open question is edge liveness on :443 — TCP accepts but TLS did not complete from this workstation, while `reports/blind-public-test-describe-probe-20260726.json` shows both DESCRIBE endpoints passing the day before. Establish which is true before touching certs; a re-issue against a healthy edge is wasted churn. The edge needs a valid public-CA cert — a self-signed cert violates the public-test lease.
 
 ---
 
@@ -125,8 +129,8 @@ Per `docs/LADDER-SHIP-MAP.md` Ship 3. **Strict order: syd-1 fully accepts BEFORE
 
 ### 3a — DNS + cert
 
-1. `syd1.p2phiverelay.xyz` A record → `104.194.135.205`
-2. ACME cert for `syd1.p2phiverelay.xyz` (blind-edge terminates :443)
+1. ~~`relay-syd.p2phiverelay.xyz` A record → `104.194.135.205`~~ — **already live**
+2. ACME cert for `relay-syd.p2phiverelay.xyz` (blind-edge terminates :443)
 
 ### 3b — syd-1 deploy + qualify
 
@@ -146,7 +150,7 @@ Per `docs/LADDER-SHIP-MAP.md` Ship 3. **Strict order: syd-1 fully accepts BEFORE
 ### 3c — Dallas (2nd failure domain) — ONLY after 3b accepts
 
 1. Continuity-linked phase-2 manifest (new pin-history entry, same digests)
-2. `dal1.p2phiverelay.xyz` A record → `172.86.90.115`
+2. ~~`relay-dal.p2phiverelay.xyz` A record → `172.86.90.115`~~ — **already live**
 3. Baseline capture BEFORE mutate; full qualify (same as 3b.4)
 4. **Two-relay cell write/readback** — write to syd-1, read from dal-1 (and vice versa)
 5. **One-relay-down behavior** — kill dal-1 daemon, verify syd-1 still serves; restart, verify recovery
@@ -176,7 +180,7 @@ This is `LIVE_PUBLIC_TEST_ONLY`. Do NOT:
 - Edge HTTPS on public-CA TLS
 - G4-T only if a Tor path is piloted (optional, not required for blind-edge)
 
-**Marketing line when live:** *"Fleet v0.25.0 + Blind public-test on syd1 (+ dal)"* — two components, one sentence, **not one tag.**
+**Marketing line when live:** *"Fleet v0.25.0 + Blind public-test on relay-syd (+ relay-dal)"* — two components, one sentence, **not one tag.**
 
 ---
 
