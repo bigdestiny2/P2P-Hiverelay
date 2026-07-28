@@ -304,6 +304,20 @@ export function buildCapabilityDoc (opts = {}) {
   // Region — operators configure via regions[]. First entry is canonical.
   const region = (Array.isArray(config.regions) && config.regions[0]) || null
 
+  // Operator identity. Additive (schemaVersion stays 1); null when unset.
+  //
+  // Load-bearing for quorum diversity, not cosmetic. quorum-selector's
+  // selectDiverse() keys on `r.operator || r.pubkey`, so an absent operator
+  // makes every relay its own operator — and a quorum drawn from five boxes in
+  // one datacenter under one owner scores as five independent operators. The
+  // CLI has accepted --operator all along and stores it in config; it simply
+  // was never published, so no client could ever see it.
+  //
+  // Publishing it makes concentration VISIBLE, which will make some current
+  // quorums honestly fail their minOperators floor. That is the point: the
+  // floor was being met by an accounting artefact.
+  const operator = (typeof config.operator === 'string' && config.operator.trim()) || null
+
   // onionGatewayUrl — when the Tor transport is running with a hidden service,
   // the .onion forwards to the relay's HTTP API/gateway port, so the read plane
   // (/catalog.json, /v1/hyper/:key, /.well-known/hiverelay.json) is reachable
@@ -338,6 +352,7 @@ export function buildCapabilityDoc (opts = {}) {
     version: opts.version || null,
     runtime,
     region,
+    operator,
     contact: opts.contact || config.contact || null,
     terms_of_service: opts.termsOfService || config.termsOfService || null,
     supported_transports: transports,

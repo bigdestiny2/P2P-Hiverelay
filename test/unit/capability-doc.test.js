@@ -75,6 +75,25 @@ test('detects transports from runtime state', async (t) => {
   t.ok(doc.supported_transports.includes('holesail'))
 })
 
+test('publishes operator identity so quorum diversity can be counted honestly', async (t) => {
+  // quorum-selector's selectDiverse() keys on `r.operator || r.pubkey`. While
+  // the capability doc omitted `operator`, that fallback made every relay its
+  // own operator — so five boxes in one datacenter under one owner satisfied a
+  // minOperators floor of five. The CLI accepted --operator all along; it was
+  // simply never published, so no client could see the concentration.
+  const unset = buildCapabilityDoc({ relay: { config: {} } })
+  t.is(unset.operator, null, 'absent when the operator has not declared one')
+
+  const declared = buildCapabilityDoc({
+    relay: { config: { operator: 'hive-foundation-utah', regions: ['NA'] } }
+  })
+  t.is(declared.operator, 'hive-foundation-utah')
+  t.is(declared.region, 'NA')
+
+  t.is(buildCapabilityDoc({ relay: { config: { operator: '   ' } } }).operator, null,
+    'whitespace is not an operator identity')
+})
+
 test('advertises hiverelay-forward only when the opt-in forward relay is enabled', async (t) => {
   const base = { config: { discovery: { dht: true } } }
 
