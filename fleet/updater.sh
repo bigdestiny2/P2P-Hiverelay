@@ -245,7 +245,13 @@ deps_if_changed() { # $1=from-ref $2=to-ref
 rollback_to_previous() {
   local reason="$1"
   log "FAIL $reason — ROLLING BACK to $CUR_VER ($CUR_SHA)"
-  if ! git checkout --quiet "$CUR_SHA"; then
+  # --force is required, not optional. `npm ci` rewrites package-lock.json, so by
+  # the time a dependency install has failed the tree is dirty and a plain
+  # checkout refuses — which strands the box on the NEW tree with a half-built
+  # node_modules, the exact opposite of what a rollback is for. Forcing is safe
+  # here: the pre-update dirty-tree guard already refused to start on a dirty
+  # tree, so anything dirty at this point was created by this run.
+  if ! git checkout --quiet --force "$CUR_SHA"; then
     log "CRITICAL could not checkout previous SHA"
     exit 1
   fi

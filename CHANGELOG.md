@@ -6,6 +6,41 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.25.0-rc.6] — 2026-07-28
+
+**Use this, not rc.5.** rc.5 cannot be installed by the fleet updater — see below.
+Contents are otherwise identical to rc.5.
+
+### Fixed — fleet update path (release-blocking)
+
+- **`patch-package` was a devDependency while `postinstall` invoked it.**
+  `fleet/updater.sh` installs with `npm ci --omit=dev`, which skips
+  devDependencies, so `postinstall` ran a binary that was not there and exited
+  **127**. Every box updating from `v0.24.3` would fail — the `postinstall` entry
+  was introduced in rc.4 and `v0.24.3` has none, so no box had exercised this
+  path. utah reached rc.4 by hand, which is exactly why it went unnoticed.
+
+  This matters beyond the failed install: the skipped patch is
+  `patches/hypercore-storage+3.2.0.patch`, which corrects `corePointer` /
+  `dataPointer` allocation in hypercore-storage's **Corestore-7 v0→v1 storage
+  migration**. Silently proceeding without it would have been worse than the
+  failure. `patch-package` now ships as a production dependency; verified with
+  `npm ci --omit=dev` in a clean tree → `patch-package 8.0.1 … hypercore-storage@3.2.0 ✔`.
+
+- **A failed update stranded the box on the new tree.**
+  `rollback_to_previous()` ran `git checkout` without `--force`. `npm ci` rewrites
+  `package-lock.json`, so by the time a dependency install has failed the tree is
+  dirty and the checkout refuses — producing
+  `CRITICAL could not checkout previous SHA` and leaving the relay pointed at the
+  new tag with a half-built `node_modules`, the opposite of a rollback. Forcing is
+  safe on this path: the pre-update dirty-tree guard already refuses to start on a
+  dirty tree, so anything dirty at rollback time was created by that run.
+
+Observed on utah 2026-07-28: update to rc.5 failed at dependency install, rollback
+then failed, and the box was left with an rc.5 checkout while the running process
+stayed on rc.4. The relay itself never went down — the failure occurs before the
+service restart.
+
 ## [0.25.0-rc.5] — 2026-07-28
 
 **Preferred canary prerelease.** Supersedes rc.4. Restores a set of features that
