@@ -140,9 +140,11 @@ test('fleet updater proves the runtime boots before restarting the live service'
   // npm ci succeeding does not mean the relay can start. utah-0.5gb installed
   // cleanly on 2026-07-28 and then crash-looped: require-addon resolved the
   // package root to "/" and looked for /prebuilds/linux-x64/sodium-native.node
-  // while the binary sat correct inside node_modules. Same tag, same install —
-  // the difference was Node v22.22.2 vs v22.22.0, and `engines: >=20.0.0`
-  // admits both, so a version pin would not have caught it either.
+  // while the binary sat correct inside node_modules. The cause was a
+  // memory-starved install on a 458MB box leaving node_modules partial — not a
+  // Node incompatibility: three other relays run the identical v22.22.2 and
+  // pass. A version pin would have caught nothing; only executing the runtime
+  // does, which is why the gate is a require rather than a version comparison.
   t.ok(updater.includes('preflight_runtime'), 'preflight helper exists')
   t.ok(updater.includes('require("hyperswarm")'),
     'loads the chain that actually broke: hyperswarm -> hyperdht -> dht-rpc -> udx-native -> require-addon -> sodium-native')

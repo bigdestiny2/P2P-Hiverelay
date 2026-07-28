@@ -252,12 +252,17 @@ deps_if_changed() { # $1=from-ref $2=to-ref
 
 # Prove the runtime can actually boot BEFORE restarting the live service.
 #
-# `npm ci` succeeding does not mean the relay can start. On 2026-07-28
-# utah-0.5gb installed cleanly and then crash-looped, because require-addon
-# resolved the package root to "/" and looked for
-# /prebuilds/linux-x64/sodium-native.node — the binary was present and correct
-# inside node_modules. Same tag, same install; the difference was Node
-# v22.22.2 vs v22.22.0 on the box that worked. `engines: >=20.0.0` admits both.
+# `npm ci` REPORTING success does not mean the relay can start. On 2026-07-28
+# utah-0.5gb's install exited 0 and the relay then crash-looped 188 times:
+# require-addon resolved the package root to "/" and looked for
+# /prebuilds/linux-x64/sodium-native.node, while the binary sat present and
+# correct inside node_modules.
+#
+# The cause was a memory-starved install — 458MB RAM with swap exhausted — that
+# left node_modules partially written. NOT a Node incompatibility: three other
+# relays run the identical v22.22.2 and pass, and the fleet spans v18.19.1
+# through v22.23.1 with 11 of 12 passing. A version pin would have caught
+# nothing; only executing the runtime does.
 #
 # Loading hyperswarm walks the exact chain that failed
 # (hyperswarm -> hyperdht -> dht-rpc -> udx-native -> require-addon ->

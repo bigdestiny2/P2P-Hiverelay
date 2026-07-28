@@ -55,9 +55,14 @@ Error: Cannot find module '/prebuilds/linux-x64/sodium-native.node'
 The path is **root-relative**: `require-addon` resolved the package root to `/`. The binary is
 present and intact at
 `node_modules/dht-rpc/node_modules/sodium-native/prebuilds/linux-x64/sodium-native.node` (919 KB).
-utah runs **Node v22.22.0** and works; utah-0.5gb runs **v22.22.2** and does not. This is
-environmental, not a HiveRelay code defect — but it is a fleet-wide risk, because any box on
-v22.22.2 that reinstalls dependencies will hit it.
+**Corrected after a fleet-wide survey:** this is *not* a Node-version issue. `sing-1`, `sing-2`
+and `dubai` all run the identical v22.22.2 and pass; the fleet spans v18.19.1 through v22.23.1
+with 11 of 12 reachable boxes passing the runtime check. The cause is a **memory-starved
+`npm ci`** on a 458 MB box with swap exhausted, which exited 0 while leaving `node_modules`
+partially written — corroborated by a follow-up `npm rebuild` failing inside patch-package's own
+dependency tree, and by the box having no compiler (only `python3`), so it depends entirely on
+prebuilt binaries. The risk is therefore specific to memory-constrained boxes during dependency
+reinstall, not to any Node version.
 
 **`dashboard-admin-operator` is an unauthenticated fleet-root control plane.** Verified live on the
 workstation: `node PID 51423 … TCP *:3458 (LISTEN)`. Zero auth references in `server.cjs`,
@@ -118,7 +123,7 @@ exists, every enablement is a manual, unrepeatable, undocumented act.
 | # | Action |
 |---|---|
 | 1.1 | **Canary-of-one throwaway host.** Provision a disposable VPS matching the fleet's OS and Node. Every promotion runs there first: fresh clone at the tag → `npm ci --omit=dev` → start → `/health` green → only then bump the channel |
-| 1.2 | **Pin the Node version.** utah v22.22.0 works, utah-0.5gb v22.22.2 does not. Add `engines` + an updater pre-flight assertion, or ship a known-good Node with the appliance |
+| 1.2 | **~~Pin the Node version~~ — falsified, superseded by a runtime preflight.** The fleet spans v18.19.1–v22.23.1 and 11 of 12 pass; three boxes share utah-0.5gb's exact v22.22.2 and are fine. A version pin would have caught nothing. The gate that works is executing the runtime (`node -e 'require("hyperswarm")'`) after the deps install and before the restart — shipped in `updater.sh`. Separately: guard low-memory boxes against a partial `npm ci`, which is the actual cause |
 | 1.3 | **Make the updater self-update.** It never reinstalls `/usr/local/bin/hiverelay-updater`, so the `--force` rollback fix in rc.6 is on *no* box. A fix to the update agent currently cannot reach the fleet except by hand |
 | 1.4 | **Surface `storageAdmission.failClosed()`** on `/health` (R-8). Today it is invisible to every health surface *and* makes gateway reads 404 with "still replicating" — actively misleading |
 | 1.5 | **Whitelist the disk-drain 503** in `health-watchdog.sh` (R-4). As written, `diskHealthGate` + watchdog is a 4-minute SIGKILL loop that frees no disk. Latent only because the gate defaults off — it arms the moment an operator follows `PRODUCTION.md` |
