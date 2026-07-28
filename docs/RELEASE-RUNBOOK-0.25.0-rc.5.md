@@ -40,29 +40,55 @@ At prep time this was **124 commits**. Open a PR from `feat/service-http-wiring`
 rather than fast-forwarding — `rc.3` was previously cut from `main` by mistake
 without the feature tree, and that is exactly the failure this gap invites.
 
-### 1b. The release signing key is not on this machine
+### 1b. Do NOT sign by hand — use `scripts/release.sh`
 
-The fleet trusts exactly one signer, in both `fleet/allowed-signers` and the copy
-installed on the provisioned boxes (verified identical on miami):
+`git tag -s` defaults to **GPG**, but the fleet verifies **SSH** signatures
+(`ssh-ed25519` in `allowed-signers`). A hand-cut GPG tag produces a signature
+every enforcing box rejects, and `gpg` will simply fail with "No secret key"
+because no GPG key exists here.
 
-```
-bigdestiny2@users.noreply.github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxvfmV3/yKO0C5HMCGRiOMiqfEwkzr6/aMlz4TUfojO hiverelay-release
-```
-
-None of the local keys match it (`cloudzy_hiverelay`, `id_ed25519`,
-`peerit_vps_deploy`), the ssh-agent is empty, and git has no signing config
-(`user.signingkey`, `gpg.format`, `tag.gpgsign` all unset). **Sign on whichever
-machine or token holds `hiverelay-release`**, or rotate the release key and
-redistribute `/etc/hiverelay/allowed-signers` fleet-wide.
-
-Prior tags *are* signed — `git tag -v v0.24.3` errors only because local
-verification is unconfigured, not because the signature is missing. To verify
-locally:
+The repo ships a keyvault-integrated cutter that does the right thing: sign with
+SSH from the vault, **self-verify against `fleet/allowed-signers` before pushing**,
+push, and create the GitHub prerelease.
 
 ```bash
-git config gpg.ssh.allowedSignersFile "$PWD/fleet/allowed-signers"
-git config gpg.format ssh
-git tag -v v0.24.3
+scripts/release.sh status                    # what is configured
+scripts/release.sh cut v0.25.0-rc.5          # sign + verify + push + prerelease
+```
+
+Two prerequisites, both currently unmet:
+
+**The vault is locked.** `status` reports
+`locked: no agent running for ~/.keyvault/secrets.vault`, and consequently cannot
+see the key (`signing key: NOT in vault` is what a locked vault looks like — it is
+not proof the key is absent). Unlock first:
+
+```bash
+keyvault agent --daemonize
+# or run the cut under: keyvault exec --scope hiverelay-release -- scripts/release.sh cut v0.25.0-rc.5
+```
+
+**The signer principal does not match `allowed-signers`.** `release.sh` derives
+`SIGNER_EMAIL` from `git config user.email`, which is
+`33146784+bigdestiny2@users.noreply.github.com`, but the principal in
+`fleet/allowed-signers` — and in the copy installed on every enforcing box — is
+`bigdestiny2@users.noreply.github.com`, with no numeric prefix. Signing with the
+default tags under a principal that is not in the file, so `verify_tag` on miami,
+sydney, and amsterdam would refuse the checkout. Override it:
+
+```bash
+HIVERELAY_RELEASE_SIGNER_EMAIL=bigdestiny2@users.noreply.github.com \
+  scripts/release.sh cut v0.25.0-rc.5
+```
+
+`release.sh` self-verifies against `fleet/allowed-signers` before it pushes, so a
+principal mismatch fails locally rather than shipping a tag the fleet rejects.
+
+Prior tags *are* signed — `git tag -v v0.24.3` errors only because local
+verification is unconfigured, not because a signature is missing:
+
+```bash
+git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$PWD/fleet/allowed-signers" tag -v v0.24.3
 ```
 
 ### 1c. `main`'s canary channel is parked at v0.24.3
@@ -113,23 +139,20 @@ scp fleet/allowed-signers root@<box>:/etc/hiverelay/allowed-signers
 
 ## 2. Cut the release
 
-Run from the repo, not `~`:
+From the repo root, with the vault unlocked (§1b). `release.sh` signs, self-verifies
+against `fleet/allowed-signers`, pushes the tag, and creates the GitHub prerelease:
 
 ```bash
-cd /Users/localllm/Projects/pear-ecosystem/00-core/hiverelay && git tag -s v0.25.0-rc.5 -m "v0.25.0-rc.5 — restore orphaned lifecycle/gateway features"
+cd /Users/localllm/Projects/pear-ecosystem/00-core/hiverelay && HIVERELAY_RELEASE_SIGNER_EMAIL=bigdestiny2@users.noreply.github.com scripts/release.sh cut v0.25.0-rc.5
 ```
 
-Verify before pushing — this is the exact check each box performs:
+The tag must be **exactly** `v0.25.0-rc.5` — `release.sh status` cross-checks it
+against `package.json`, and the updater's health gate compares the running
+version against the tag.
 
-```bash
-git tag -v v0.25.0-rc.5
-```
-
-Then:
-
-```bash
-git push origin v0.25.0-rc.5
-```
+`--promote-canary` also bumps `channels.json`. Do **not** use it here: §1d shows
+the canary box is not actually self-updating, so promote deliberately (§4) after
+provisioning.
 
 ---
 
