@@ -120,6 +120,16 @@
       "region": "ME",
       "diskGB": 120,
       "role": "seed"
+    },
+    {
+      "name": "dubai-2gb",
+      "publicIp": "144.172.88.9",
+      "tailnet": null,
+      "sshKey": "default",
+      "channel": "hold",
+      "region": "ME",
+      "diskGB": 60,
+      "role": "seed"
     }
   ]
 }
