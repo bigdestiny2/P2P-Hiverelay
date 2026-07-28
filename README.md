@@ -14,7 +14,7 @@ and key-material fields at the schema boundary.
 a one-page dashboard, first-run setup, wallet destination, service selection,
 and persistent identity behind each platform's authenticated app proxy.
 
-**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.25.0-rc.6**
+**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.25.0-rc.7**
 
 The four packages are versioned in lockstep:
 
@@ -34,7 +34,7 @@ and StartOS metadata so the published release surfaces agree.
 
 | Surface | Current source state | Publication/evidence boundary |
 |---|---|---|
-| Core3 packages | Monorepo and package manifests are at `v0.25.0-rc.6`; the last release with a captured multi-arch GHCR digest is `v0.20.2` | A tag/release must run `npm run release:prepare` so versions, fleet channels, Umbrel, and StartOS metadata move together |
+| Core3 packages | Monorepo and package manifests are at `v0.25.0-rc.7`; the last release with a captured multi-arch GHCR digest is `v0.20.2` | A tag/release must run `npm run release:prepare` so versions, fleet channels, Umbrel, and StartOS metadata move together |
 | Blindspark on Umbrel | In-repo package uses app proxy, persistent `/data`, review-mode default, and guarded setup/add-wallet/service-manager smoke paths with visible in-flight state | Official App Store inclusion still needs the upstream `getumbrel/umbrel-apps` PR/review plus real-device `umbrel-runtime-review-evidence.json` |
 | StartOS | Source can build and verify a digest-pinned `.s9pk` from a published GHCR release image and publish to a configured registry | Current `v0.20.2` package proof is blocked until `ghcr.io/bigdestiny2/p2p-hiverelay:0.20.2` resolves to a multi-arch digest; registry proof requires `startos-registry-evidence.json`; marketplace/community inclusion remains Start9 review-controlled |
 | Raw fleet | Pull updater, channel metadata, health gate, rollback, and rollout verifier are in-repo | A release is live on the selected fleet only when `fleet-rollout-evidence.json` proves target SHA, package version, `/health.version`, and relay health |

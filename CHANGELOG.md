@@ -6,6 +6,84 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.25.0-rc.7] — 2026-07-28
+
+**Security release. Supersedes rc.6 — deploy this.**
+
+### Fixed — security
+
+- **Every default relay granted anonymous swarm peers the `authenticated-user`
+  role.** Commit `9125f3c` ("default services to anonymous role") set
+  `'anonymous'` in `relay-node/index.js` and `bare-relay.js` but not in
+  `config/default.js` — and that is the file the CLI loads, merged last, so it
+  won. Any relay started from the CLI, which is every packaged path, silently
+  ran with the raised default.
+
+  Effect: `protocol.js` handed any unauthenticated peer the `authenticated-user`
+  role, and the service router then opened `arbitration.submit` — whose pending
+  Map is uncapped — to the whole swarm. Verified before and after with
+  `HOME=$(mktemp -d) loadConfig({})`: `"authenticated-user"` → `"anonymous"`.
+  No test asserted the value in either file, which is why the revert went
+  unnoticed; there is one now, and it asserts the *effective* value so it still
+  fails if precedence between the two defaults changes again.
+
+- **`dashboard-admin-operator` was an unauthenticated fleet-root control plane.**
+  It holds every relay's SSH key and its endpoints restart services, run
+  `git pull && npm install`, rewrite `config.json` and edit `/etc/fstab` — while
+  listening on `0.0.0.0` with zero authentication and wildcard CORS. Its own
+  README says "do not expose port 3458". Now binds `127.0.0.1`, requires a
+  shared secret (timing-safe) on every route including the SSE stream that
+  leaked the inventory, drops wildcard CORS, and uses `execFile(argv)` instead
+  of interpolating a caller-supplied `publicIp` into a shell command that the
+  probe re-ran every 60s. Host and name are validated at the `POST /api/relay`
+  boundary, which previously checked only truthiness.
+
+### Fixed — fleet update path
+
+- **Runtime preflight before the service restart.** `npm ci` reporting success
+  does not mean the relay can boot: utah-0.5gb's install exited 0 and the relay
+  then crash-looped 188 times, because a memory-starved install left
+  `node_modules` partially written and `require-addon` resolved the package root
+  to `/`. The updater now executes the runtime after the dependency install and
+  before the restart, and rolls back on failure instead of leaving a
+  crash-looping relay. Deliberately a `require` rather than a version check —
+  the fleet spans Node v18.19.1 to v22.23.1 and three relays share the exact
+  version of the box that failed.
+- **The agent self-updates.** It runs from `/usr/local/bin` and nothing
+  reinstalled it, so a bug in the update path could only be fixed by
+  hand-visiting every box — which is why rc.6's `--force` rollback fix reached
+  no relay. Installs atomically (temp + `bash -n` + rename) after the
+  supply-chain gate and a proven-good dependency install.
+- **The watchdog no longer kills a relay for answering honestly.** It used
+  `curl -f`, which discards the body on non-2xx, so a deliberate 503
+  `{"ok":false,"reason":"disk-critical"}` drain was indistinguishable from an
+  event-loop hang — and since a restart frees no disk, the box looped SIGKILL
+  every ~4 minutes. Any structured reply now proves the loop is turning.
+
+### Added
+
+- `storageAdmission.failClosed()` is reported on `/health` as
+  `reason: "storage-fail-closed"`. It previously set `_fatalReason` with no
+  emit, log or metric while `canAcknowledge()` returned false — so every gateway
+  drive read 404'd as "still replicating", actively misdirecting whoever was
+  debugging it.
+- Capability docs publish `operator` when declared. `quorum-selector` keys on
+  `r.operator || r.pubkey`, so an absent operator made every relay its own
+  operator — five boxes in one datacenter satisfied a `minOperators` floor of
+  five. Emitted only when set, so the default signable shape is unchanged.
+- `scripts/probe-fleet-services.mjs` reads `GET /api/v1/services` on every relay:
+  what is *loaded*, not what is configured. First run found `sing-1` and
+  `sing-2` on the same 1 GB tier running 3 and 9 services respectively, and
+  `shard-store` on a 2 GB box.
+
+### Docs
+
+Seven claims corrected, two of which *understated* what is built. Both headline
+packaging claims were inert: none of the `HIVERELAY_*` service or Tor variables
+have a reader on the Node runtime that Docker, systemd and Umbrel all launch —
+with all of them exported, `loadConfig()` still returns
+`enableServices: false, plugins: [], transports.tor: false`.
+
 ## [0.25.0-rc.6] — 2026-07-28
 
 **Use this, not rc.5.** rc.5 cannot be installed by the fleet updater — see below.
