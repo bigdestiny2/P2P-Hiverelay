@@ -75,7 +75,7 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 |---------|-----------------|-----|
 | `v0.25.0-rc.5` | Retired; never deploy | Its updater install path cannot complete. |
 | RC4 / RC6 fleet targets | Retired by RC7 and the next repair prerelease | They lack the complete updater/security/health corrections. |
-| Stable `v0.24.3` `notify-v1` claim | Must be retired by a health-gated stable promotion | Eight live relays advertise wake while using a non-live memory sink. |
+| Stable `v0.24.3` `notify-v1` claim | Must be retired by a health-gated stable promotion | Seven in-scope live relays advertise wake while using a non-live memory sink. |
 | `notify-feed-head` | Compatibility-only; deprecated in signed capabilities when exact lanes are wired | Global sender-head changes can wake unrelated recipients; `notify-outbox-lane` is precise and opaque. |
 | Config-derived fleet service reports | Replaced by runtime `/api/v1/services` plus signed capability evidence | Config can be overridden by `services.json` and previously reported services that never loaded. |
 | Grep-and-strip package version parsing | Replaced by exact package JSON parsing | It changed `v0.25.0-rc.7` into the misleading `v0.25.0.7`. |

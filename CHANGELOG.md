@@ -20,6 +20,9 @@ The packages are versioned in lockstep.
 - Release-evidence negative tests now explicitly clear the workflow's fallback
   StartOS registry variable when exercising a missing-URL case. The assertion
   is hermetic even when the release workflow supplies real registry secrets.
+- The core package restores the conditional `crypto` to `bare-crypto` mapping,
+  so the same storage-admission authority imports and constructs under the
+  genuine Bare runtime as well as Node.
 - Dev-only lint transitive dependencies are pinned above the current
   `brace-expansion` and `js-yaml` denial-of-service advisories, so the complete
   dependency audit is clean as well as the production-only release gate.
