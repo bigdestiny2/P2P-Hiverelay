@@ -2,6 +2,7 @@ import {
   EXTENDED_SCHEMA_METADATA,
   SCHEMA_METADATA_OVERRIDES
 } from './extended-schema-metadata.js'
+import { protocolError } from './errors.js'
 
 const KiB = 1024
 const MiB = 1024 * KiB

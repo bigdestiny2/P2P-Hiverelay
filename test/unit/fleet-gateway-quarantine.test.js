@@ -12,13 +12,12 @@ import {
   writeFileSync
 } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 const tool = path.resolve('fleet/quarantine-public-gateway.sh')
 
 function fixture (t) {
-  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'hr-gateway-quarantine-')))
+  const root = realpathSync(mkdtempSync(path.join(realpathSync(process.cwd()), '.hr-gateway-quarantine-')))
   const active = path.join(root, 'hiverelay-public-apps.conf')
   const backup = path.join(root, 'hiverelay-public-apps.conf.pre-quarantine')
   const nginx = path.join(root, 'nginx')

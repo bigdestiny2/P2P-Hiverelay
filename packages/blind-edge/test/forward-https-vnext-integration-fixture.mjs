@@ -233,7 +233,7 @@ export async function createRelayIdentityFixture (options = {}) {
 }
 
 // Materialize one relay's launch environment under a contained scratch root.
-// Unix socket paths live under a short /private/tmp root: the portable
+// Unix socket paths live under the short POSIX /tmp root: the portable
 // <=100-byte socket path bound cannot be met inside this run's deep checkout
 // (a pre-existing environment limitation of every boundary test here, noted
 // in the lane evidence). The tmp root is real (no symlink ancestors) and is
@@ -241,7 +241,7 @@ export async function createRelayIdentityFixture (options = {}) {
 export async function createRelayEnvironmentFixture (identity, options = {}) {
   const directory = options.directory || await createBlindBoundaryScratch(options.prefix || 'fhv-')
   await fs.chmod(directory, 0o700)
-  const socketDirectory = await fs.mkdtemp(path.join('/private/tmp', 'fhv-'))
+  const socketDirectory = await fs.mkdtemp(path.join(await fs.realpath('/tmp'), 'fhv-'))
   await fs.chmod(socketDirectory, 0o700)
   const roots = {}
   for (const name of ['store', 'inbox-store', 'core-store', 'private-ipc-replay', 'forward-storage']) {

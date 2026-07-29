@@ -148,7 +148,7 @@ function writeReadinessProjection (launchTopologyHash, transportProfileHash) {
 }
 
 test('generic blind client reaches daemon through the metadata-stripping edge', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-client-e2e-')
+  const directory = await fs.mkdtemp(path.join(await fs.realpath('/tmp'), 'blind-client-e2e-'))
   const unarySocketPath = path.join(directory, 'unary.sock')
   const streamSocketPath = path.join(directory, 'stream.sock')
   const launchTopologyHash = b4a.alloc(32, 45)
@@ -242,7 +242,7 @@ test('generic blind client reaches daemon through the metadata-stripping edge', 
 })
 
 test('public CELL.PUT reaches the daemon staged-content path instead of unary IPC', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-client-staged-put-e2e-')
+  const directory = await fs.mkdtemp(path.join(await fs.realpath('/tmp'), 'blind-client-staged-put-e2e-'))
   const unarySocketPath = path.join(directory, 'unary.sock')
   const streamSocketPath = path.join(directory, 'stream.sock')
   const launchTopologyHash = b4a.alloc(32, 51)

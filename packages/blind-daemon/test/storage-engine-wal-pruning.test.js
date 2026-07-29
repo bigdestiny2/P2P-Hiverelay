@@ -6,7 +6,6 @@ import b4a from 'b4a'
 import {
   allocationCommitment,
   blake2b256,
-  blindPreparedAdmissionStoreV1,
   cellPutRequestCommitment,
   cellStorageSlot,
   encodeCanonical,

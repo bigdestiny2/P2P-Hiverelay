@@ -170,6 +170,7 @@
       "scripts/test-*.js",
       "examples/**",
       "**/dist/**",
+      "packages/blind-client/browser-artifacts/**",
       "**/transports/dht-relay-ws/vendor/**"
     ]
   },
@@ -179,6 +180,9 @@
   },
   "overrides": {
     "js-yaml": "^4.2.0",
-    "protobufjs": "^7.6.4"
+    "protobufjs": "^7.6.5"
+  },
+  "optionalDependencies": {
+    "bare-runtime-linux-x64": "1.28.7"
   }
 }

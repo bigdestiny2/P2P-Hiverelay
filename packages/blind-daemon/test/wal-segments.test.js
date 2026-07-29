@@ -328,7 +328,7 @@ test('crash mid-prune leaves a contiguous retained prefix and an unpoisoned writ
   const root = await temporaryRoot(t)
   const store = new BlindTransactionStore(storeOptions(root))
   await store.open(() => {})
-  const frames = await appendFrames(store, 1, 16)
+  await appendFrames(store, 1, 16)
   await store.close()
 
   let pruneFaults = 0

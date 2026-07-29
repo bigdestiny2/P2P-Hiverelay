@@ -161,7 +161,7 @@ function contains (haystack, needle) {
 }
 
 test('a running generic relay accepts unrelated and later-created apps without restart or configuration', async t => {
-  const directory = await fs.mkdtemp('/private/tmp/blind-late-app-')
+  const directory = await fs.mkdtemp(path.join(await fs.realpath('/tmp'), 'blind-late-app-'))
   const unarySocketPath = path.join(directory, 'unary.sock')
   const streamSocketPath = path.join(directory, 'stream.sock')
   const launchTopologyHash = b4a.alloc(32, 0x71)

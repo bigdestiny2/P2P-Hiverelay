@@ -1,6 +1,5 @@
 import test from 'brittle'
 import b4a from 'b4a'
-import Corestore from 'corestore'
 import { openCorestore } from '../../packages/core/core/persistence/storage-root-restore.js'
 import { access, mkdir, mkdtemp, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'

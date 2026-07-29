@@ -1435,7 +1435,10 @@ if (!wireOnly) {
     'packages', 'blind-ipc', 'hiverelay-blind-private-ipc-authority-v1.json'), 'utf8'))
   const closure = {
     schema: 'hiverelay.blind.release-closure.v1',
-    profile: ABI_STATUS.profile,
+    profile: {
+      artifact: 'docs/protocol/HIVERELAY-BLIND-RC1-PROFILE-BINDING-V1.json',
+      ...profileBinding
+    },
     wire: {
       artifact: 'packages/blind-protocol/hiverelay-blind-wire-authority-v1.json',
       specHash: completeHashes.specHash,
@@ -1456,10 +1459,6 @@ if (!wireOnly) {
       importedWireAbiHash: privateIpcAuthority.importedWireAbiHash,
       privateIpcFormatHash: privateIpcAuthority.privateIpcFormatHash,
       privateIpcVectorSetHash: privateIpcAuthority.privateIpcVectorSetHash
-    },
-    profile: {
-      artifact: 'docs/protocol/HIVERELAY-BLIND-RC1-PROFILE-BINDING-V1.json',
-      ...profileBinding
     },
     decisions: {
       artifact: 'docs/protocol/HIVERELAY-BLIND-OWNER-DECISIONS-V1.json',

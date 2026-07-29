@@ -42,7 +42,7 @@ function reservedEnvelope (pair) {
   }, { randomFill: padding => padding.fill(0x5a) })
 }
 
-const root = await fs.mkdtemp(path.join('/private/tmp', 'blind-reserved-edge-'))
+const root = await fs.mkdtemp(path.join(await fs.realpath('/tmp'), 'blind-reserved-edge-'))
 const socketPath = path.join(root, 'daemon.sock')
 let daemonConnections = 0
 const daemonTrap = net.createServer(socket => {
