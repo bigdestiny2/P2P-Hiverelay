@@ -410,7 +410,9 @@ jobs:
         working-directory: hiverelay
         run: |
           set -euo pipefail
-          npm audit
+          # Match the protected CI audit gate: release artifacts contain production
+          # dependencies only; the dev-only lint toolchain is exercised below.
+          npm audit --omit=dev
           npm run lint
           npm run audit:public-artifacts
           npm run release:check-npm-packages
